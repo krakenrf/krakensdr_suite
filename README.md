@@ -9,7 +9,7 @@ Install:
 ```
 git clone https://github.com/krakenrf/krakensdr_suite
 cd krakensdr_suite
-./install
+./install.sh
 ```
 
 You may need to reboot after running ./install.
@@ -19,7 +19,7 @@ To Run:
 Simply use the command:
 
 ```
-./run
+./run.sh
 ```
 
 In any terminal window, with your KrakenSDR connected and powered up.
