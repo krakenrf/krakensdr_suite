@@ -6,8 +6,6 @@
 #include "../core/buffer_pool.hpp"
 #include "../net/tcp_data_server.hpp"  // Need full definition to call methods
 #include "../net/rtl_tcp_server.hpp"   // Need full definition to call methods
-#include <execution>
-#include <numeric>
 #include <iostream>
 #include <algorithm>
 
@@ -60,12 +58,14 @@ static void recycle_raw_set(std::vector<SampleBuffer>& set) {
 // reads it.
 static std::atomic<uint32_t> flush_generation{0};
 
-ComplexBuffer samples_to_complex_with_compensation(const uint8_t* samples, int count, int channel) {
+void samples_to_complex_with_compensation(const uint8_t* samples, int count, int channel,
+                                          ComplexBuffer& out) {
     // Validate channel index
     if (channel < 0 || channel >= NUM_DEVICES) {
         std::cerr << "ERROR: Invalid channel " << channel
                   << " in samples_to_complex_with_compensation" << std::endl;
-        return ComplexBuffer(count, Complex(0.0f, 0.0f));
+        out.assign(count, Complex(0.0f, 0.0f));
+        return;
     }
 
     // OPTIMIZED: Lock-free atomic load - no mutex!
@@ -120,8 +120,16 @@ ComplexBuffer samples_to_complex_with_compensation(const uint8_t* samples, int c
     // kernel is a pure delta until a correction is commanded. This gives
     // deterministic sub-sample alignment - hardware register writes kick the
     // lag by a random +/-0.2-0.3 samples, so the final trim must be digital.
+    //
+    // `out` is the caller's (pooled) buffer, written in place so a recycled
+    // buffer's capacity is reused. When the per-bin EQ stage follows, the lag
+    // FIR writes to a thread-local intermediate and the EQ writes into `out`.
     auto& dev = devices[channel];
-    ComplexBuffer out(count);
+    const bool eq_active = per_bin_cal.enabled.load(std::memory_order_relaxed) &&
+                           per_bin_cal.ready.load(std::memory_order_acquire);
+    static thread_local ComplexBuffer fir_tmp;
+    ComplexBuffer& fir_out = eq_active ? fir_tmp : out;
+    fir_out.resize(count);
     {
         const float d = dev->compensation.frac_delay.load(std::memory_order_relaxed);
         if (d != dev->frac_coeff_for) {
@@ -143,7 +151,7 @@ ComplexBuffer samples_to_complex_with_compensation(const uint8_t* samples, int c
         const auto& h = dev->frac_coeff;
         auto& tail = dev->frac_tail;
         const Complex* __restrict x = tmp.data();
-        Complex* __restrict y = out.data();
+        Complex* __restrict y = fir_out.data();
 
         // Head: taps reach into the previous chunk's tail
         const int head = std::min(7, count);
@@ -176,14 +184,13 @@ ComplexBuffer samples_to_complex_with_compensation(const uint8_t* samples, int c
     // complex FIR_LEN-tap filter that flattens the residual frequency-dependent
     // phase across the band; reference channel's filter is a pure delta, so all
     // channels share the same FIR_LEN/2 group delay and stay aligned.
-    if (per_bin_cal.enabled.load(std::memory_order_relaxed) &&
-        per_bin_cal.ready.load(std::memory_order_acquire)) {
+    if (eq_active) {
         constexpr int L = PerBinCalibration::FIR_LEN;
-        ComplexBuffer eqout(count);
+        out.resize(count);
         const Complex* __restrict h    = dev->eq_coeff.data();      // L taps
         Complex*       __restrict etail = dev->eq_tail.data();      // L-1 carry-over
-        const Complex* __restrict x    = out.data();
-        Complex*       __restrict y    = eqout.data();
+        const Complex* __restrict x    = fir_out.data();
+        Complex*       __restrict y    = out.data();
 
         const int head = std::min(L - 1, count);
         for (int i = 0; i < head; i++) {
@@ -204,10 +211,7 @@ ComplexBuffer samples_to_complex_with_compensation(const uint8_t* samples, int c
         if (count >= L - 1) {
             for (int t = 0; t < L - 1; t++) etail[t] = x[count - (L - 1) + t];
         }
-        return eqout;
     }
-
-    return out;
 }
 
 // Minimal, time-critical L1 -> L2-raw drain (#4). Does ONLY the cheap aligned
@@ -326,8 +330,6 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
     // converted-output rate dips - USB keep-up is unaffected (that is the drain).
     set_thread_realtime("convert", 0);
 
-    std::vector<int> dev_idx;
-
     while (global_running && pipeline_running.load(std::memory_order_acquire)) {
         std::vector<SampleBuffer> raw_set;
         if (!l2_raw_buffer.wait_dequeue_timed(raw_set, std::chrono::milliseconds(100))) {
@@ -340,21 +342,20 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
         }
         l2_raw_buffer_size.fetch_sub(1, std::memory_order_relaxed);
 
-        // -------- Convert (parallel across channels) --------
+        // -------- Convert (in place into the pooled set) --------
         // Channel count comes from the SET, not a captured constant: the drain
         // sizes each aligned set to the element count it collected under.
         const int num_elements = static_cast<int>(std::min(raw_set.size(), devices.size()));
-        dev_idx.resize(num_elements);
-        std::iota(dev_idx.begin(), dev_idx.end(), 0);
 
         auto complex_samples = l2_buffer_pool.acquire();
         complex_samples.resize(num_elements);
-        std::for_each(std::execution::par, dev_idx.begin(), dev_idx.end(), [&](int i) {
+        for (int i = 0; i < num_elements; ++i) {
             auto& sb = raw_set[i];
             // sb.size() is bytes of interleaved IQ; divide by 2 for complex count
-            complex_samples[i] = samples_to_complex_with_compensation(
-                sb.data(), static_cast<int>(sb.size()) / 2, devices[i]->index);
-        });
+            samples_to_complex_with_compensation(
+                sb.data(), static_cast<int>(sb.size()) / 2, devices[i]->index,
+                complex_samples[i]);
+        }
 
         // -------- Broadcast / handoff (every set, in order) --------
         if (tcp_data_server) tcp_data_server->broadcast_data(complex_samples);
@@ -466,25 +467,4 @@ void clear_l2_buffer() {
         l2_buffer_pool.release(std::move(discard));  // Return to pool
     }
     // No store(0): see clear_l2_raw_buffer (avoids the size_t underflow race).
-}
-
-void clear_l2_buffer(int channel) {
-    if (channel < 0 || channel >= NUM_DEVICES) {
-        std::cerr << "ERROR: Invalid channel " << channel << " in clear_l2_buffer" << std::endl;
-        return;
-    }
-
-    std::cout << "Removing L2 buffer entries containing channel " << channel << " data" << std::endl;
-
-    // For L2 buffer, we need to remove entire sample sets that contain the problematic channel
-    // because correlation processing expects all channels to have synchronized data
-    clear_l2_raw_buffer();  // flush the upstream staging too, so it can't refill L2
-    std::vector<ComplexBuffer> discard;
-    while (l2_buffer.try_dequeue(discard)) {
-        l2_buffer_size.fetch_sub(1, std::memory_order_relaxed);
-        l2_buffer_pool.release(std::move(discard));  // Return to pool
-    }
-    // No store(0): see clear_l2_raw_buffer (avoids the size_t underflow race).
-
-    std::cout << "L2 buffer completely cleared to maintain channel synchronization" << std::endl;
 }

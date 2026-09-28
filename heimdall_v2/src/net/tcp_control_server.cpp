@@ -437,36 +437,9 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                                          "Disconnect antennas and press Recalibrate." << std::endl;
                         }
                     } else if (changed && !recovery_in_progress.load(std::memory_order_acquire)) {
-                        // Coherent mode: Disable bias tee and start cooldown
-                        set_bias_tee_all_devices(false, devices);
-
-                        // Start cooldown timer instead of immediate calibration
-                        // This allows rapid frequency scrolling without triggering calibration
-                        if (phase_compensation) {
-                            std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
-                            phase_compensation->last_frequency_change = std::chrono::steady_clock::now();
-                            phase_compensation->cooldown_active = true;
-                            phase_compensation->state = PhaseCompensatorState::WAITING_FOR_STABILITY;
-
-                            // Reset compensation state for fresh calibration after cooldown
-                            phase_compensation->compensation_applied = false;
-                            phase_compensation->convergence_count = 0;
-                            phase_compensation->stable_nonzero_count = 0;
-                            phase_compensation->failed_convergence_attempts = 0;
-                            phase_compensation->checks_since_compensation = 0;
-                            // Stop applying the stale per-bin equalizer during cooldown.
-                            phase_compensation->per_bin_measured = false;
-                            per_bin_cal.ready.store(false, std::memory_order_release);
-
-                            // Reset compensation vector to identity
-                            for (int i = 0; i < NUM_DEVICES; i++) {
-                                if (i != REF_CHANNEL) {
-                                    phase_compensation->compensation_vector.store(i, Complex(1.0f, 0.0f));
-                                }
-                            }
-
-                            std::cout << "Frequency changed: entering " << phase_compensation->stability_delay_override_ms.load() << "ms cooldown (bias tee OFF)" << std::endl;
-                        }
+                        // Coherent mode: start the cooldown instead of an immediate
+                        // calibration, so rapid frequency scrolling doesn't trigger one
+                        begin_retune_cooldown("Frequency changed");
                     }
                     return "{\"status\":\"success\",\"frequency\":" + std::to_string(frequency) + "}";
                 } else {
@@ -537,31 +510,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         // flow a frequency change uses (skip during a coherence recovery,
         // which will recalibrate at the current settings anyway).
         if (!recovery_in_progress.load(std::memory_order_acquire)) {
-            set_bias_tee_all_devices(false, devices);
-
-            if (phase_compensation) {
-                std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
-                phase_compensation->last_frequency_change = std::chrono::steady_clock::now();
-                phase_compensation->cooldown_active = true;
-                phase_compensation->state = PhaseCompensatorState::WAITING_FOR_STABILITY;
-                phase_compensation->compensation_applied = false;
-                phase_compensation->convergence_count = 0;
-                phase_compensation->stable_nonzero_count = 0;
-                phase_compensation->failed_convergence_attempts = 0;
-                phase_compensation->checks_since_compensation = 0;
-                phase_compensation->per_bin_measured = false;
-                per_bin_cal.ready.store(false, std::memory_order_release);
-
-                for (int i = 0; i < NUM_DEVICES; i++) {
-                    if (i != REF_CHANNEL) {
-                        phase_compensation->compensation_vector.store(i, Complex(1.0f, 0.0f));
-                    }
-                }
-
-                std::cout << "Mixer side changed: entering "
-                          << phase_compensation->stability_delay_override_ms.load()
-                          << "ms cooldown (bias tee OFF)" << std::endl;
-            }
+            begin_retune_cooldown("Mixer side changed");
         }
 
         return "{\"status\":\"success\"," + side_json +
@@ -608,31 +557,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         // phase-recal flow a frequency change uses (skip during a coherence
         // recovery, which recalibrates at current settings anyway).
         if (!recovery_in_progress.load(std::memory_order_acquire)) {
-            set_bias_tee_all_devices(false, devices);
-
-            if (phase_compensation) {
-                std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
-                phase_compensation->last_frequency_change = std::chrono::steady_clock::now();
-                phase_compensation->cooldown_active = true;
-                phase_compensation->state = PhaseCompensatorState::WAITING_FOR_STABILITY;
-                phase_compensation->compensation_applied = false;
-                phase_compensation->convergence_count = 0;
-                phase_compensation->stable_nonzero_count = 0;
-                phase_compensation->failed_convergence_attempts = 0;
-                phase_compensation->checks_since_compensation = 0;
-                phase_compensation->per_bin_measured = false;
-                per_bin_cal.ready.store(false, std::memory_order_release);
-
-                for (int i = 0; i < NUM_DEVICES; i++) {
-                    if (i != REF_CHANNEL) {
-                        phase_compensation->compensation_vector.store(i, Complex(1.0f, 0.0f));
-                    }
-                }
-
-                std::cout << "Array changed: entering "
-                          << phase_compensation->stability_delay_override_ms.load()
-                          << "ms cooldown (bias tee OFF)" << std::endl;
-            }
+            begin_retune_cooldown("Array changed");
         }
 
         return "{\"status\":\"success\",\"array\":" + std::to_string(array) + "}";
@@ -710,36 +635,9 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                             // state or kill its noise source (it covers the new gain).
                             std::cout << "Gain changed during coherence recovery: deferring to the full recal" << std::endl;
                         } else {
-                            // Coherent mode: Disable bias tee and start cooldown
-                            set_bias_tee_all_devices(false, devices);
-
-                            // Start cooldown timer instead of immediate calibration
-                            // This allows rapid gain adjustments without triggering calibration
-                            if (phase_compensation) {
-                                std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
-                                phase_compensation->last_frequency_change = std::chrono::steady_clock::now();
-                                phase_compensation->cooldown_active = true;
-                                phase_compensation->state = PhaseCompensatorState::WAITING_FOR_STABILITY;
-
-                                // Reset compensation state for fresh calibration after cooldown
-                                phase_compensation->compensation_applied = false;
-                                phase_compensation->convergence_count = 0;
-                                phase_compensation->stable_nonzero_count = 0;
-                                phase_compensation->failed_convergence_attempts = 0;
-                                phase_compensation->checks_since_compensation = 0;
-                                // Stop applying the stale per-bin equalizer during cooldown.
-                                phase_compensation->per_bin_measured = false;
-                                per_bin_cal.ready.store(false, std::memory_order_release);
-
-                                // Reset compensation vector to identity
-                                for (int i = 0; i < NUM_DEVICES; i++) {
-                                    if (i != REF_CHANNEL) {
-                                        phase_compensation->compensation_vector.store(i, Complex(1.0f, 0.0f));
-                                    }
-                                }
-
-                                std::cout << "Gain changed: entering 3s cooldown (bias tee OFF)" << std::endl;
-                            }
+                            // Coherent mode: start the cooldown instead of an immediate
+                            // calibration, so rapid gain adjustments don't trigger one
+                            begin_retune_cooldown("Gain changed");
                         }
                     }
                     return "{\"status\":\"success\",\"gain\":" + std::to_string(gain_db) + "}";

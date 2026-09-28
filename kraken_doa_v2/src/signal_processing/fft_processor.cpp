@@ -29,13 +29,11 @@ namespace {
         const int usable_bins = static_cast<int>(total_bins * 0.8f);  // Center 80%
         const int skip_bins = (total_bins - usable_bins) / 2;  // Skip 10% on each side
 
-        // Extract magnitudes from usable region
-        std::vector<float> mags;
-        mags.reserve(usable_bins);
-        for (int i = 0; i < usable_bins; i++) {
-            int fft_idx = skip_bins + i;
-            mags.push_back(fft_data[fft_idx]);
-        }
+        // Extract magnitudes from usable region into per-thread scratch: this
+        // runs per decimator per packet (squelch, auto-eigen, FM path), often
+        // under the global fft_mutex, so skip the heap allocation each call.
+        thread_local std::vector<float> mags;
+        mags.assign(fft_data.begin() + skip_bins, fft_data.begin() + skip_bins + usable_bins);
 
         // Use nth_element O(n) instead of sort O(n log n) to find 10th percentile
         int percentile_idx = static_cast<int>(mags.size() * 0.10f);
@@ -923,8 +921,10 @@ bool FFTProcessor::check_squelch_beamformed(const BeamformedFFTData& bf, float s
         return false;  // No data, squelch closed
     }
 
-    // Calculate noise floor using 10th percentile (nth_element is O(n) vs sort O(n log n))
-    std::vector<float> sorted_mags = bf.averaged;
+    // Calculate noise floor using 10th percentile (nth_element is O(n) vs sort O(n log n)).
+    // Per-thread scratch: called per packet from the pipeline and FM threads.
+    thread_local std::vector<float> sorted_mags;
+    sorted_mags.assign(bf.averaged.begin(), bf.averaged.end());
     size_t percentile_idx = static_cast<size_t>(sorted_mags.size() * 0.10f);
     std::nth_element(sorted_mags.begin(), sorted_mags.begin() + percentile_idx, sorted_mags.end());
     float noise_floor = sorted_mags[percentile_idx];

@@ -34,7 +34,6 @@ krakensdr_v2/                        # repository root
     │   ├── networking/         # TCP client, data receiver, WebSocket server
     │   ├── utils/              # Ring buffers, IQ conversion, stats
     │   ├── channel_manager.cpp
-    │   ├── bandwidth_manager.cpp
     │   ├── scanner_manager.cpp
     │   └── main.cpp            # Client entry point
     ├── include/
@@ -146,7 +145,7 @@ See `heimdall_v2/CLAUDE.md` → *Coherence-Loss Detection and Recovery* and *Pip
 - **Signal Processing**: FFT processor, FM demodulator, MUSIC DoA algorithm
 - **Networking**: TCP client (connects to Heimdall server), WebSocket server (browser UI)
 - **Utils**: Ring buffers, optimized IQ conversion (ARM NEON), system stats
-- **Managers**: Channel manager, bandwidth manager, decimator manager
+- **Managers**: Channel manager, decimator manager
 
 **Data Flow**:
 1. TCP client → Receive IQ data from Heimdall server (port 8091)

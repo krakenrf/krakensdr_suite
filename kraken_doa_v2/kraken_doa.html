@@ -1051,16 +1051,15 @@ h3 {color:#7cb3f0;margin:0 0 10px 0;font-size:15px;border-bottom:1px solid #333;
 
 <script>
 // Globals
-let ws,fftPlot,audioEngine,frameCount=0,lastTime=Date.now(),activeChannel=0,currentAveraging=85,
-    fmEnabled=true,doaEnabled=true,doaUpdateCount=0,lastDoaUpdateTime=Date.now(),currentTopology='UCA',
+let ws,fftPlot,audioEngine,activeChannel=0,currentAveraging=85,
+    fmEnabled=true,doaEnabled=true,currentTopology='UCA',
     audioInitialized=false,currentBandwidth=7,currentCenterFreq=100,currentFrequencies=[],
     currentMagnitudes=[],isDragging=false,dragStartX=0,isDraggingEdge=false,draggedEdge=null,pendingOffsetTimeout=null,
     dragStartBandwidth=null,dragStartOffset=null,activeDecimatorId=0,currentEdgeClip=0.8,fullFrequencies=[],fullMagnitudes=[],
     isScrollDragging=false,scrollDragStartX=0,scrollDragStartY=0,scrollDragStartFreq=0,scrollDragSavedBoxes=null,scrollDragLock=false,scrollDragMoved=false,
     lastFreqSendTime=0,freqSendThrottleMs=50,
-    currentFreqOffset=0,currentFreqOffset2=0,doaPlots={},widebandEnabled=false,fbAveragingEnabled=false,
+    doaPlots={},widebandEnabled=false,fbAveragingEnabled=false,
     scannerConfig=null,scannerRunning=false,scannerFileName='scanner.json',scannerState='IDLE',showScannerSquelch=false,
-    squelchEnabled=false,squelchLevel=15,squelchOpen=false,
     channelBeforeWideband=0,  // Save channel when wideband enabled via button
     activeNumElements=5,  // Synced from server (set via -n flag on heimdall)
     // Continuous scanner state
@@ -1129,23 +1128,31 @@ function scheduleScrollSync() {
   pendingScrollSyncTimeout = setTimeout(finishScrollSync, 1500);
 }
 
+// After a center-frequency change, re-derive every VFO's offset from its
+// saved (pre-pan) tuning-bar pixel position so each bar keeps its visual
+// position, clamp it and send it. Returns false when there is nothing saved.
+function resyncOffsetsFromSavedBoxes() {
+  if (!scrollDragSavedBoxes || !fftPlot) return false;
+  scrollDragSavedBoxes.forEach(savedBox => {
+    const dec = decimatorInfo.find(d => d.id === savedBox.id);
+    if (dec) {
+      const savedCenterX = savedBox.x + savedBox.w / 2;
+      const savedFreq = fftPlot.posToVal(savedCenterX, 'x');
+      const newOffset = (savedFreq - currentCenterFreq) * 1000000;
+      const bw = bwo[dec.bandwidth_index ?? 0].bandwidth;
+      const maxOffset = maxOffsetHz(bw);
+      const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffset));
+      dec.freq_offset_hz = clampedOffset;
+      setDecimatorFreq(dec.id, clampedOffset / 1000);
+    }
+  });
+  return true;
+}
+
 function finishScrollSync() {
   if (pendingScrollSyncTimeout) { clearTimeout(pendingScrollSyncTimeout); pendingScrollSyncTimeout = null; }
   pendingScrollSync = null;
-  if (scrollDragSavedBoxes && fftPlot) {
-    scrollDragSavedBoxes.forEach(savedBox => {
-      const dec = decimatorInfo.find(d => d.id === savedBox.id);
-      if (dec) {
-        const savedCenterX = savedBox.x + savedBox.w / 2;
-        const savedFreq = fftPlot.posToVal(savedCenterX, 'x');
-        const newOffset = (savedFreq - currentCenterFreq) * 1000000;
-        const bw = bwo[dec.bandwidth_index ?? 0].bandwidth;
-        const maxOffset = maxOffsetHz(bw);
-        const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffset));
-        dec.freq_offset_hz = clampedOffset;
-        setDecimatorFreq(dec.id, clampedOffset / 1000);
-      }
-    });
+  if (resyncOffsetsFromSavedBoxes()) {
     decimatorInfo.forEach(dec => refreshDecimatorPanelItem(dec.id));
   }
   scrollDragLock = false;
@@ -1388,51 +1395,50 @@ class WaterfallDisplay {
     const freqRange = maxFreq - minFreq;
     const dbRange = this.maxDb - this.minDb;
 
-    // Draw new line(s) at top
-    for (let line = 0; line < linesToScroll; line++) {
-      const rowOffset = line * rowSize;
+    // Draw the new line into row 0 (each pixel in the plot area maps to a
+    // frequency/magnitude), then copy it into the other new rows
+    for (let px = 0; px < w; px++) {
+      let r = 0, g = 0, b = 0;
 
-      // Map each pixel in the plot area to a frequency/magnitude
-      for (let px = 0; px < w; px++) {
-        let r = 0, g = 0, b = 0;
+      // Only draw in the plot area
+      if (px >= this.plotLeft && px < this.plotLeft + this.plotWidth) {
+        // Convert pixel to frequency
+        const plotX = px - this.plotLeft;
+        const freq = minFreq + (plotX / this.plotWidth) * freqRange;
 
-        // Only draw in the plot area
-        if (px >= this.plotLeft && px < this.plotLeft + this.plotWidth) {
-          // Convert pixel to frequency
-          const plotX = px - this.plotLeft;
-          const freq = minFreq + (plotX / this.plotWidth) * freqRange;
+        // Find nearest magnitude value using linear interpolation
+        const freqIdx = ((freq - minFreq) / freqRange) * (frequencies.length - 1);
+        const idx0 = Math.floor(freqIdx);
+        const idx1 = Math.min(idx0 + 1, magnitudes.length - 1);
+        const frac = freqIdx - idx0;
 
-          // Find nearest magnitude value using linear interpolation
-          const freqIdx = ((freq - minFreq) / freqRange) * (frequencies.length - 1);
-          const idx0 = Math.floor(freqIdx);
-          const idx1 = Math.min(idx0 + 1, magnitudes.length - 1);
-          const frac = freqIdx - idx0;
-
-          let mag;
-          if (idx0 >= 0 && idx1 < magnitudes.length) {
-            mag = magnitudes[idx0] * (1 - frac) + magnitudes[idx1] * frac;
-          } else if (idx0 >= 0 && idx0 < magnitudes.length) {
-            mag = magnitudes[idx0];
-          } else {
-            mag = this.minDb;
-          }
-
-          // Map magnitude to color index (0-255)
-          const normalized = Math.max(0, Math.min(1, (mag - this.minDb) / dbRange));
-          const colorIdx = Math.floor(normalized * 255);
-          const color = this.colormap[colorIdx];
-          r = color.r;
-          g = color.g;
-          b = color.b;
+        let mag;
+        if (idx0 >= 0 && idx1 < magnitudes.length) {
+          mag = magnitudes[idx0] * (1 - frac) + magnitudes[idx1] * frac;
+        } else if (idx0 >= 0 && idx0 < magnitudes.length) {
+          mag = magnitudes[idx0];
+        } else {
+          mag = this.minDb;
         }
 
-        // Set pixel (RGBA)
-        const offset = rowOffset + px * 4;
-        data[offset] = r;
-        data[offset + 1] = g;
-        data[offset + 2] = b;
-        data[offset + 3] = 255;
+        // Map magnitude to color index (0-255)
+        const normalized = Math.max(0, Math.min(1, (mag - this.minDb) / dbRange));
+        const colorIdx = Math.floor(normalized * 255);
+        const color = this.colormap[colorIdx];
+        r = color.r;
+        g = color.g;
+        b = color.b;
       }
+
+      // Set pixel (RGBA)
+      const offset = px * 4;
+      data[offset] = r;
+      data[offset + 1] = g;
+      data[offset + 2] = b;
+      data[offset + 3] = 255;
+    }
+    for (let line = 1; line < linesToScroll; line++) {
+      data.copyWithin(line * rowSize, 0, rowSize);
     }
 
     // Render the updated image data
@@ -1857,7 +1863,6 @@ class PolarPlot {
     this.data=new Array(360).fill(0);
     this.peakAngle=0;
     this.peakIdx=0;
-    this.topology='UCA';
     this.min=0;
     this.max=1;
     this.resolution=1.0;  // Angular resolution in degrees
@@ -1867,11 +1872,6 @@ class PolarPlot {
     // The lobe is ALWAYS drawn at the array-aligned azimuth; the convention only
     // changes the angle labels/markers and the reported peak number.
     this.convention='compass';
-    this.drawBg();
-  }
-
-  setTopology(t) {
-    this.topology=t;
     this.drawBg();
   }
 
@@ -1969,9 +1969,8 @@ class PolarPlot {
     }
   }
 
-  updateData(spectrum,topology,resolution=1.0) {
+  updateData(spectrum,resolution=1.0) {
     if(spectrum.length===0)return;
-    if(topology&&topology!==this.topology)this.setTopology(topology);
 
     // Validate spectrum data - skip frames during resolution transition
     // Check if spectrum is all zeros or nearly all zeros (indicates transition)
@@ -2954,83 +2953,94 @@ function drawBox() {
 }
 
 
-function handleDown(e) {
-  if(!fftPlot || !decimatorInfo.length)return;
-  const c=$id('fo');
+// Tuning-bar pointer interaction. The FFT overlay ('fo') and the waterfall
+// overlay share one implementation; a "surface" supplies only what differs
+// between them: the canvas, the pixel<->frequency mapping and the hover
+// redraw. (drawBox() manages the 'fo' cursor itself; the waterfall overlay
+// sets its own.)
+const fftSurface = {
+  active: () => !!fftPlot,
+  el: () => $id('fo'),
+  canMap: () => true,
+  xToMhz: x => fftPlot.posToVal(x, 'x'),
+  dxToMhz: dx => fftPlot.posToVal(dx, 'x') - fftPlot.posToVal(0, 'x'),
+  hoverRedraw: () => drawBox()
+};
+const wfSurface = {
+  active: () => !!waterfall,
+  el: () => waterfall ? waterfall.overlay : null,
+  canMap: () => !!(waterfall.lastFrequencies && waterfall.lastFrequencies.length),
+  // Data is drawn inside [plotLeft, plotLeft+plotWidth] (matching uPlot)
+  xToMhz: x => {
+    const f = waterfall.lastFrequencies, minFreq = f[0];
+    return minFreq + ((x - waterfall.plotLeft) / waterfall.plotWidth) * (f[f.length - 1] - minFreq);
+  },
+  dxToMhz: dx => {
+    const f = waterfall.lastFrequencies;
+    return (dx / waterfall.plotWidth) * (f[f.length - 1] - f[0]);
+  },
+  hoverRedraw: (c, cursor) => {
+    c.style.cursor = cursor;
+    waterfall.drawOverlay(decimatorInfo, currentCenterFreq, activeDecimatorId);
+  }
+};
+
+function inRect(x, y, r) {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+// Center the active tuning bar on freqMhz (clamped to the visible span).
+// Returns false when there is no active decimator.
+function centerActiveBarAt(freqMhz) {
+  const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
+  if (!activeDec) return false;
+  const newOffsetHz = (freqMhz - currentCenterFreq) * 1000000;
+  const bw = bwo[activeDec.bandwidth_index ?? 0].bandwidth;
+  const maxOffset = maxOffsetHz(bw);
+  const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffsetHz));
+  setDecimatorFreq(activeDecimatorId, clampedOffset / 1000); // Send in kHz
+  activeDec.freq_offset_hz = clampedOffset;
+  return true;
+}
+
+function pointerDown(s, e) {
+  if(!s.active() || !decimatorInfo.length)return;
+  const c=s.el();
   if(!c || !c.boxes)return;
   const r=c.getBoundingClientRect();
   const x=e.clientX-r.left,y=e.clientY-r.top;
 
-  // If scroll drag lock is active, check if clicking on tuning bar
-  if(scrollDragLock) {
-    // Check if clicking on tuning bar - if so, sync offsets and clear lock
-    for(const box of c.boxes) {
-      if(x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h) {
-        // Before clearing lock, sync all decimator offsets to match their visual positions
-        // This prevents the tuning bar from jumping when the lock is released
-        if (scrollDragSavedBoxes && fftPlot) {
-          scrollDragSavedBoxes.forEach(savedBox => {
-            const dec = decimatorInfo.find(d => d.id === savedBox.id);
-            if (dec) {
-              // Calculate frequency at the saved box center
-              const savedCenterX = savedBox.x + savedBox.w / 2;
-              const savedFreq = fftPlot.posToVal(savedCenterX, 'x');
-              // Calculate new offset to maintain this visual position with current center freq
-              const newOffset = (savedFreq - currentCenterFreq) * 1000000;
-              // Clamp to valid range
-              const bw = bwo[dec.bandwidth_index ?? 0].bandwidth;
-              const maxOffset = maxOffsetHz(bw);
-              const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffset));
-              dec.freq_offset_hz = clampedOffset;
-              // Send to server
-              setDecimatorFreq(dec.id, clampedOffset / 1000);
-            }
-          });
-        }
-        // Now clear lock
-        scrollDragLock = false;
-        scrollDragSavedBoxes = null;
-        // Fall through to normal tuning bar handling below
-        break;
-      }
-    }
+  // If scroll drag lock is active, clicking on a tuning bar releases it. First
+  // sync all decimator offsets to their visual positions so the bars don't
+  // jump when the lock is released, then fall through to normal handling.
+  if(scrollDragLock && c.boxes.some(box => inRect(x, y, box))) {
+    resyncOffsetsFromSavedBoxes();
+    scrollDragLock = false;
+    scrollDragSavedBoxes = null;
   }
 
   if(!scrollDragLock) {
+    const beginBarDrag = (box) => {
+      activeDecimatorId = box.id;
+      isDragging = true;
+      dragStartX = x;
+      dragStartOffset = box.offset_hz;
+      e.preventDefault();
+      drawBox();
+    };
+
     // PRIORITY 1: Check middle handle area first (always grabbable, works for any decimator)
     // This makes it easy to grab and move tuning bars even when spectrum is small
-    for(const box of c.boxes) {
-      if(box.handleMiddle && x >= box.handleMiddle.x && x <= box.handleMiddle.x + box.handleMiddle.w &&
-         y >= box.handleMiddle.y && y <= box.handleMiddle.y + box.handleMiddle.h) {
-        activeDecimatorId = box.id;
-        isDragging = true;
-        dragStartX = x;
-        dragStartOffset = box.offset_hz;
-        e.preventDefault();
-        drawBox();
-        return;
-      }
-    }
+    const handleBox = c.boxes.find(box => box.handleMiddle && inRect(x, y, box.handleMiddle));
+    if(handleBox) { beginBarDrag(handleBox); return; }
 
     // PRIORITY 2: Check edges for resizing (only for active decimator)
     for(const box of c.boxes) {
       if(box.id !== activeDecimatorId) continue;
-      // Check edges
-      if(x >= box.left_edge.x && x <= box.left_edge.x + box.left_edge.w &&
-         y >= box.left_edge.y && y <= box.left_edge.y + box.left_edge.h) {
+      const edge = inRect(x, y, box.left_edge) ? 'left' : inRect(x, y, box.right_edge) ? 'right' : null;
+      if(edge) {
         isDraggingEdge = true;
-        draggedEdge = 'left';
-        dragStartX = x;
-        dragStartBandwidth = bwo[box.bandwidth_index ?? 0].bandwidth;
-        dragStartOffset = box.offset_hz;
-        e.preventDefault();
-        drawBox();
-        return;
-      }
-      if(x >= box.right_edge.x && x <= box.right_edge.x + box.right_edge.w &&
-         y >= box.right_edge.y && y <= box.right_edge.y + box.right_edge.h) {
-        isDraggingEdge = true;
-        draggedEdge = 'right';
+        draggedEdge = edge;
         dragStartX = x;
         dragStartBandwidth = bwo[box.bandwidth_index ?? 0].bandwidth;
         dragStartOffset = box.offset_hz;
@@ -3040,19 +3050,9 @@ function handleDown(e) {
       }
     }
 
-    // PRIORITY 3: Check if clicking anywhere within a tuning bar box - start tuning bar drag
-    for(const box of c.boxes) {
-      if(x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h) {
-        // Clicked on tuning bar body - start dragging this tuning bar
-        activeDecimatorId = box.id;
-        isDragging = true;
-        dragStartX = x;
-        dragStartOffset = box.offset_hz;
-        e.preventDefault();
-        drawBox();
-        return;
-      }
-    }
+    // PRIORITY 3: Clicked anywhere within a tuning bar body - start dragging it
+    const bodyBox = c.boxes.find(box => inRect(x, y, box));
+    if(bodyBox) { beginBarDrag(bodyBox); return; }
   }
 
   // PRIORITY 4: If not on any tuning bar element, start scroll drag for center frequency
@@ -3064,30 +3064,35 @@ function handleDown(e) {
     scrollDragStartY = y;
     scrollDragStartFreq = currentCenterFreq;
     scrollDragMoved = false;  // Track if this is a click vs drag
-    // Save current box positions to keep tuning bars locked during scroll
-    scrollDragSavedBoxes = c.boxes.map(box => ({
-      id: box.id,
-      x: box.x,
-      y: box.y,
-      w: box.w,
-      h: box.h,
-      handleMiddle: box.handleMiddle ? {...box.handleMiddle} : null,
-      left_edge: {...box.left_edge},
-      right_edge: {...box.right_edge},
-      color: box.color,
-      handleColor: box.handleColor
-    }));
+    // Save current box positions to keep tuning bars locked during scroll.
+    // Always the FFT overlay's boxes: that is where drawBox stores them.
+    const fo = $id('fo');
+    if (fo && fo.boxes) {
+      scrollDragSavedBoxes = fo.boxes.map(box => ({
+        id: box.id,
+        x: box.x,
+        y: box.y,
+        w: box.w,
+        h: box.h,
+        handleMiddle: box.handleMiddle ? {...box.handleMiddle} : null,
+        left_edge: {...box.left_edge},
+        right_edge: {...box.right_edge},
+        color: box.color,
+        handleColor: box.handleColor
+      }));
+    }
     c.style.cursor = 'grabbing';
     e.preventDefault();
   }
 }
 
-function handleMove(e) {
-  if(!fftPlot || !decimatorInfo.length)return;
-  const c=$id('fo');
+function pointerMove(s, e) {
+  if(!s.active() || !decimatorInfo.length)return;
+  const c=s.el();
   if(!c || !c.boxes)return;
   const r=c.getBoundingClientRect();
   const x=e.clientX-r.left,y=e.clientY-r.top;
+  if(!s.canMap())return;
 
   // Handle scroll drag for center frequency
   if (isScrollDragging) {
@@ -3101,9 +3106,8 @@ function handleMove(e) {
 
     // Only process scroll if actually dragging
     if (scrollDragMoved) {
-      const u = fftPlot;
       // Invert for natural scroll direction (drag right = lower freq)
-      const df = u.posToVal(0, 'x') - u.posToVal(dx, 'x');
+      const df = -s.dxToMhz(dx);
       const newFreq = Math.max(FREQ_MIN, Math.min(FREQ_MAX, scrollDragStartFreq + df));
 
       // Set flag to prevent server echo flicker during drag
@@ -3127,9 +3131,7 @@ function handleMove(e) {
   }
 
   if(isDraggingEdge) {
-    const dx=x-dragStartX;
-    const u=fftPlot;
-    const df=u.posToVal(dx,'x')-u.posToVal(0,'x');
+    const df=s.dxToMhz(x-dragStartX);
     let dbw=draggedEdge==='left'?dragStartBandwidth-df*2:dragStartBandwidth+df*2;
     dbw=Math.max(MIN_BW_MHZ,Math.min(2.4,dbw));
     const newBwIdx=Math.min(findNearestBw(dbw), MIN_BW_INDEX);
@@ -3148,9 +3150,7 @@ function handleMove(e) {
     }
     e.preventDefault();
   } else if(isDragging) {
-    const dx=x-dragStartX;
-    const u=fftPlot;
-    const df=u.posToVal(dx,'x')-u.posToVal(0,'x');
+    const df=s.dxToMhz(x-dragStartX);
 
     // Calculate new offset
     const newOffset = dragStartOffset + df * 1000000; // Convert MHz to Hz
@@ -3159,8 +3159,6 @@ function handleMove(e) {
     const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
     if(activeDec) {
       const bw = bwo[activeDec.bandwidth_index ?? 0].bandwidth;
-      // In wideband mode, allow full 9.6 MHz range; otherwise use single-tuner 2.4 MHz range
-      // Account for edge clipping - visible bandwidth is reduced by currentEdgeClip
       const maxOffset = maxOffsetHz(bw);
       const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffset));
 
@@ -3181,76 +3179,52 @@ function handleMove(e) {
     c.hoveredEdge = null;
     c.hoveredHandle = null;
 
-    if(c.boxes) {
-      // PRIORITY 1: Check middle handle hover (any decimator)
-      for(const box of c.boxes) {
-        if(box.handleMiddle && x >= box.handleMiddle.x && x <= box.handleMiddle.x + box.handleMiddle.w &&
-           y >= box.handleMiddle.y && y <= box.handleMiddle.y + box.handleMiddle.h) {
-          c.hoveredHandle = box.id;
-          drawBox();
-          return;
-        }
-      }
+    // PRIORITY 1: Check middle handle hover (any decimator)
+    const handleBox = c.boxes.find(box => box.handleMiddle && inRect(x, y, box.handleMiddle));
+    if(handleBox) {
+      c.hoveredHandle = handleBox.id;
+      s.hoverRedraw(c, 'grab');
+      return;
+    }
 
-      for(const box of c.boxes) {
-        // Check edge hover (only for active decimator)
-        if(box.id === activeDecimatorId) {
-          if(x >= box.left_edge.x && x <= box.left_edge.x + box.left_edge.w &&
-             y >= box.left_edge.y && y <= box.left_edge.y + box.left_edge.h) {
-            c.hoveredEdge = 'left';
-            drawBox();
-            return;
-          }
-          if(x >= box.right_edge.x && x <= box.right_edge.x + box.right_edge.w &&
-             y >= box.right_edge.y && y <= box.right_edge.y + box.right_edge.h) {
-            c.hoveredEdge = 'right';
-            drawBox();
-            return;
-          }
-        }
-        // Check box hover
-        if(x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h) {
-          if(box.id === activeDecimatorId) {
-            c.hoveredBox = true;
-            drawBox();
-            return;
-          }
-        }
+    // Edge and body hover (only for active decimator)
+    for(const box of c.boxes) {
+      if(box.id !== activeDecimatorId) continue;
+      if(inRect(x, y, box.left_edge)) {
+        c.hoveredEdge = 'left';
+        s.hoverRedraw(c, 'ew-resize');
+        return;
+      }
+      if(inRect(x, y, box.right_edge)) {
+        c.hoveredEdge = 'right';
+        s.hoverRedraw(c, 'ew-resize');
+        return;
+      }
+      if(inRect(x, y, box)) {
+        c.hoveredBox = true;
+        s.hoverRedraw(c, 'grab');
+        return;
       }
     }
-    drawBox();
+    s.hoverRedraw(c, 'default');
   }
 }
 
-function handleUp(e) {
+function pointerUp(s, e) {
   // Handle scroll drag release - send final frequency to server
   if (isScrollDragging) {
     isScrollDragging = false;
-    $id('fo').style.cursor = 'default';
+    const c = s.el();
+    if (c) c.style.cursor = 'default';
 
     // Check if this was a click (no significant movement) vs a drag
     if (!scrollDragMoved) {
-      // Single click on spectrum - move tuning bar to this position
-      const c = $id('fo');
-      const r = c.getBoundingClientRect();
-      const x = e.clientX - r.left;
-
-      // Calculate the frequency at click position
-      const clickFreq = fftPlot.posToVal(x, 'x');
-      // Calculate new offset to center tuning bar at click position
-      const newOffsetHz = (clickFreq - currentCenterFreq) * 1000000;
-
-      // Clamp offset to valid range
-      const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
-      if (activeDec) {
-        const bw = bwo[activeDec.bandwidth_index ?? 0].bandwidth;
-        const maxOffset = maxOffsetHz(bw);
-        const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffsetHz));
-
-        // Update decimator position
-        setDecimatorFreq(activeDecimatorId, clampedOffset / 1000);
-        activeDec.freq_offset_hz = clampedOffset;
-        refreshDecimatorPanelItem(activeDecimatorId);
+      // Single click - move the active tuning bar to this position
+      if (s.canMap()) {
+        const r = c.getBoundingClientRect();
+        if (centerActiveBarAt(s.xToMhz(e.clientX - r.left))) {
+          refreshDecimatorPanelItem(activeDecimatorId);
+        }
       }
 
       // Clear lock since we're done with this interaction
@@ -3282,439 +3256,34 @@ function handleUp(e) {
   }
 }
 
-// Waterfall mouse handlers - similar to FFT spectrum handlers but using waterfall overlay
-function handleWaterfallDown(e) {
-  if(!waterfall || !waterfall.overlay || !decimatorInfo.length) return;
-  const c = waterfall.overlay;
-  if(!c || !c.boxes) return;
-  const r = c.getBoundingClientRect();
-  const x = e.clientX - r.left, y = e.clientY - r.top;
-
-  // If scroll drag lock is active, check if clicking on tuning bar
-  if(scrollDragLock) {
-    // Check if clicking on tuning bar - if so, sync offsets and clear lock
-    for(const box of c.boxes) {
-      if(x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h) {
-        // Before clearing lock, sync all decimator offsets to match their visual positions
-        // This prevents the tuning bar from jumping when the lock is released
-        if (scrollDragSavedBoxes && fftPlot) {
-          scrollDragSavedBoxes.forEach(savedBox => {
-            const dec = decimatorInfo.find(d => d.id === savedBox.id);
-            if (dec) {
-              // Calculate frequency at the saved box center using fftPlot (source of truth)
-              const savedCenterX = savedBox.x + savedBox.w / 2;
-              const savedFreq = fftPlot.posToVal(savedCenterX, 'x');
-              // Calculate new offset to maintain this visual position with current center freq
-              const newOffset = (savedFreq - currentCenterFreq) * 1000000;
-              // Clamp to valid range
-              const bw = bwo[dec.bandwidth_index ?? 0].bandwidth;
-              const maxOffset = maxOffsetHz(bw);
-              const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffset));
-              dec.freq_offset_hz = clampedOffset;
-              // Send to server
-              setDecimatorFreq(dec.id, clampedOffset / 1000);
-            }
-          });
-        }
-        // Now clear lock
-        scrollDragLock = false;
-        scrollDragSavedBoxes = null;
-        // Fall through to normal tuning bar handling below
-        break;
-      }
-    }
-  }
-
-  if(!scrollDragLock) {
-    // PRIORITY 1: Check middle handle area first
-    for(const box of c.boxes) {
-      if(box.handleMiddle && x >= box.handleMiddle.x && x <= box.handleMiddle.x + box.handleMiddle.w &&
-         y >= box.handleMiddle.y && y <= box.handleMiddle.y + box.handleMiddle.h) {
-        activeDecimatorId = box.id;
-        isDragging = true;
-        dragStartX = x;
-        dragStartOffset = box.offset_hz;
-        e.preventDefault();
-        drawBox();
-        return;
-      }
-    }
-
-    // PRIORITY 2: Check edges for resizing (only for active decimator)
-    for(const box of c.boxes) {
-      if(box.id !== activeDecimatorId) continue;
-      if(x >= box.left_edge.x && x <= box.left_edge.x + box.left_edge.w &&
-         y >= box.left_edge.y && y <= box.left_edge.y + box.left_edge.h) {
-        isDraggingEdge = true;
-        draggedEdge = 'left';
-        dragStartX = x;
-        dragStartBandwidth = bwo[box.bandwidth_index ?? 0].bandwidth;
-        dragStartOffset = box.offset_hz;
-        e.preventDefault();
-        drawBox();
-        return;
-      }
-      if(x >= box.right_edge.x && x <= box.right_edge.x + box.right_edge.w &&
-         y >= box.right_edge.y && y <= box.right_edge.y + box.right_edge.h) {
-        isDraggingEdge = true;
-        draggedEdge = 'right';
-        dragStartX = x;
-        dragStartBandwidth = bwo[box.bandwidth_index ?? 0].bandwidth;
-        dragStartOffset = box.offset_hz;
-        e.preventDefault();
-        drawBox();
-        return;
-      }
-    }
-
-    // PRIORITY 3: Check if clicking anywhere within a tuning bar box - start tuning bar drag
-    for(const box of c.boxes) {
-      if(x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h) {
-        // Clicked on tuning bar body - start dragging this tuning bar
-        activeDecimatorId = box.id;
-        isDragging = true;
-        dragStartX = x;
-        dragStartOffset = box.offset_hz;
-        e.preventDefault();
-        drawBox();
-        return;
-      }
-    }
-  }
-
-  // PRIORITY 4: If not on any tuning bar element, start scroll drag for center frequency
-  // Skip if scanner running (scanner controls frequency)
-  if (!scannerRunning) {
-    isScrollDragging = true;
-    scrollDragLock = true;  // Lock tuning bar operations
-    scrollDragStartX = x;
-    scrollDragStartY = y;
-    scrollDragStartFreq = currentCenterFreq;
-    scrollDragMoved = false;  // Track if this is a click vs drag
-    // Save current box positions to keep tuning bars locked during scroll
-    // Use FFT overlay boxes since that's where drawBox stores them
-    const fftOverlay = $id('fo');
-    if (fftOverlay && fftOverlay.boxes) {
-      scrollDragSavedBoxes = fftOverlay.boxes.map(box => ({
-        id: box.id,
-        x: box.x,
-        y: box.y,
-        w: box.w,
-        h: box.h,
-        handleMiddle: box.handleMiddle ? {...box.handleMiddle} : null,
-        left_edge: {...box.left_edge},
-        right_edge: {...box.right_edge},
-        color: box.color,
-        handleColor: box.handleColor
-      }));
-    }
-    c.style.cursor = 'grabbing';
-    e.preventDefault();
-  }
-}
-
-function handleWaterfallMove(e) {
-  if(!waterfall || !waterfall.overlay || !decimatorInfo.length) return;
-  const c = waterfall.overlay;
-  if(!c || !c.boxes) return;
-  const r = c.getBoundingClientRect();
-  const x = e.clientX - r.left, y = e.clientY - r.top;
-
-  // Use the same frequency conversion as waterfall
-  if(!waterfall.lastFrequencies.length) return;
-  const minFreq = waterfall.lastFrequencies[0];
-  const maxFreq = waterfall.lastFrequencies[waterfall.lastFrequencies.length - 1];
-  const freqRange = maxFreq - minFreq;
-
-  // Handle scroll drag for center frequency on waterfall
-  if (isScrollDragging) {
-    const dx = x - scrollDragStartX;
-    const dy = y - scrollDragStartY;
-
-    // Check if this is actually a drag (moved more than 5 pixels)
-    if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
-      scrollDragMoved = true;
-    }
-
-    // Only process scroll if actually dragging
-    if (scrollDragMoved) {
-      // Convert pixel delta to frequency delta using waterfall mapping
-      // Invert for natural scroll direction (drag right = lower freq)
-      const df = -(dx / waterfall.plotWidth) * freqRange;
-      const newFreq = Math.max(FREQ_MIN, Math.min(FREQ_MAX, scrollDragStartFreq + df));
-
-      // Set flag to prevent server echo flicker during drag
-      freqUserChanging = true;
-      if (freqUserChangeTimeout) clearTimeout(freqUserChangeTimeout);
-      freqUserChangeTimeout = setTimeout(() => { freqUserChanging = false; }, 500);
-
-      currentCenterFreq = newFreq;
-      updateFreqDisplay(newFreq, true);  // Force update for user action
-
-      // Throttle frequency updates to reduce RTL-SDR retune commands
-      const now = Date.now();
-      if (now - lastFreqSendTime >= freqSendThrottleMs) {
-        sendFreqChange(currentCenterFreq);
-        lastFreqSendTime = now;
-      }
-    }
-
-    e.preventDefault();
-    return;
-  }
-
-  if(isDraggingEdge) {
-    const dx = x - dragStartX;
-    // Convert pixel delta to frequency delta using waterfall mapping
-    const df = (dx / waterfall.plotWidth) * freqRange;
-    let dbw = draggedEdge === 'left' ? dragStartBandwidth - df * 2 : dragStartBandwidth + df * 2;
-    dbw = Math.max(MIN_BW_MHZ, Math.min(2.4, dbw));
-    const newBwIdx = Math.min(findNearestBw(dbw), MIN_BW_INDEX);
-    showBwTooltip(e, bwo[newBwIdx].bandwidth);
-
-    const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
-    if(activeDec && newBwIdx !== activeDec.bandwidth_index) {
-      setDecimatorBandwidth(activeDecimatorId, newBwIdx);
-      activeDec.bandwidth_index = newBwIdx;
-      activeDec.bandwidth_mhz = bwo[newBwIdx].bandwidth;
-      drawBox();
-      refreshDecimatorPanelItem(activeDecimatorId);
-    }
-    e.preventDefault();
-  } else if(isDragging) {
-    const dx = x - dragStartX;
-    const df = (dx / waterfall.plotWidth) * freqRange;
-    const newOffset = dragStartOffset + df * 1000000;
-
-    const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
-    if(activeDec) {
-      const bw = bwo[activeDec.bandwidth_index ?? 0].bandwidth;
-      const maxOffset = maxOffsetHz(bw);
-      const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffset));
-
-      if(Math.abs(clampedOffset - activeDec.freq_offset_hz) > 1000) {
-        setDecimatorFreq(activeDecimatorId, clampedOffset / 1000);
-        activeDec.freq_offset_hz = clampedOffset;
-        dragStartX = x;
-        dragStartOffset = clampedOffset;
-        drawBox();
-        refreshDecimatorPanelItem(activeDecimatorId);
-      }
-    }
-    e.preventDefault();
-  } else {
-    // Check for hover
-    c.hoveredBox = false;
-    c.hoveredEdge = null;
-    c.hoveredHandle = null;
-
-    if(c.boxes) {
-      // PRIORITY 1: Check middle handle hover
-      for(const box of c.boxes) {
-        if(box.handleMiddle && x >= box.handleMiddle.x && x <= box.handleMiddle.x + box.handleMiddle.w &&
-           y >= box.handleMiddle.y && y <= box.handleMiddle.y + box.handleMiddle.h) {
-          c.hoveredHandle = box.id;
-          c.style.cursor = 'grab';
-          waterfall.drawOverlay(decimatorInfo, currentCenterFreq, activeDecimatorId);
-          return;
-        }
-      }
-
-      for(const box of c.boxes) {
-        if(box.id === activeDecimatorId) {
-          if(x >= box.left_edge.x && x <= box.left_edge.x + box.left_edge.w &&
-             y >= box.left_edge.y && y <= box.left_edge.y + box.left_edge.h) {
-            c.hoveredEdge = 'left';
-            c.style.cursor = 'ew-resize';
-            waterfall.drawOverlay(decimatorInfo, currentCenterFreq, activeDecimatorId);
-            return;
-          }
-          if(x >= box.right_edge.x && x <= box.right_edge.x + box.right_edge.w &&
-             y >= box.right_edge.y && y <= box.right_edge.y + box.right_edge.h) {
-            c.hoveredEdge = 'right';
-            c.style.cursor = 'ew-resize';
-            waterfall.drawOverlay(decimatorInfo, currentCenterFreq, activeDecimatorId);
-            return;
-          }
-        }
-        if(x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h) {
-          if(box.id === activeDecimatorId) {
-            c.hoveredBox = true;
-            c.style.cursor = 'grab';
-            waterfall.drawOverlay(decimatorInfo, currentCenterFreq, activeDecimatorId);
-            return;
-          }
-        }
-      }
-    }
-    c.style.cursor = 'default';
-    waterfall.drawOverlay(decimatorInfo, currentCenterFreq, activeDecimatorId);
-  }
-}
-
-function handleWaterfallUp(e) {
-  // Handle scroll drag release - send final frequency to server
-  if (isScrollDragging) {
-    isScrollDragging = false;
-    if (waterfall && waterfall.overlay) {
-      waterfall.overlay.style.cursor = 'default';
-    }
-
-    // Check if this was a click (no significant movement) vs a drag
-    if (!scrollDragMoved) {
-      // Single click on waterfall - move tuning bar to this position
-      const c = waterfall.overlay;
-      const r = c.getBoundingClientRect();
-      const x = e.clientX - r.left;
-
-      // Calculate the frequency at click position using waterfall mapping
-      if (waterfall.lastFrequencies && waterfall.lastFrequencies.length > 0) {
-        const minFreq = waterfall.lastFrequencies[0];
-        const maxFreq = waterfall.lastFrequencies[waterfall.lastFrequencies.length - 1];
-        // Map through the plot area (data is drawn inside
-        // [plotLeft, plotLeft+plotWidth]), matching handleWaterfallClick -
-        // using the full canvas width put the bar at the wrong frequency
-        const plotX = x - waterfall.plotLeft;
-        const clickFreq = minFreq + (plotX / waterfall.plotWidth) * (maxFreq - minFreq);
-        // Calculate new offset to center tuning bar at click position
-        const newOffsetHz = (clickFreq - currentCenterFreq) * 1000000;
-
-        // Clamp offset to valid range
-        const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
-        if (activeDec) {
-          const bw = bwo[activeDec.bandwidth_index ?? 0].bandwidth;
-          const maxOffset = maxOffsetHz(bw);
-          const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffsetHz));
-
-          // Update decimator position
-          setDecimatorFreq(activeDecimatorId, clampedOffset / 1000);
-          activeDec.freq_offset_hz = clampedOffset;
-          refreshDecimatorPanelItem(activeDecimatorId);
-        }
-      }
-
-      // Clear lock since we're done with this interaction
-      scrollDragLock = false;
-      scrollDragSavedBoxes = null;
-      drawBox();
-    } else {
-      // Was a drag - send final frequency, then sync the bars once an FFT
-      // frame at the new frequency has updated the plot scale
-      sendFreqChange(currentCenterFreq);
-      scheduleScrollSync();
-    }
-
-    e.preventDefault();
-    return;
-  }
-
-  if(isDragging || isDraggingEdge) {
-    isDragging = false;
-    isDraggingEdge = false;
-    draggedEdge = null;
-    dragStartBandwidth = null;
-    dragStartOffset = null;
-    // Set timeout to protect against server overwriting our local offset
-    if (pendingOffsetTimeout) clearTimeout(pendingOffsetTimeout);
-    pendingOffsetTimeout = setTimeout(() => { pendingOffsetTimeout = null; }, 500);
-    drawBox();
-    e.preventDefault();
-  }
-}
-
-function handleWaterfallClick(e) {
-  if(!waterfall || isDragging || isDraggingEdge) return;
-  const c = waterfall.overlay;
-  if(!c || !c.boxes || !waterfall.lastFrequencies.length) return;
-
-  const r = c.getBoundingClientRect();
-  const x = e.clientX - r.left, y = e.clientY - r.top;
-
-  // Check if clicked on existing box
-  if(c.boxes) {
-    for(const box of c.boxes) {
-      if(x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h) {
-        return;
-      }
-      if((x >= box.left_edge.x && x <= box.left_edge.x + box.left_edge.w &&
-          y >= box.left_edge.y && y <= box.left_edge.y + box.left_edge.h) ||
-         (x >= box.right_edge.x && x <= box.right_edge.x + box.right_edge.w &&
-          y >= box.right_edge.y && y <= box.right_edge.y + box.right_edge.h)) {
-        return;
-      }
-    }
-  }
-
-  // Convert click to frequency using waterfall mapping
-  const minFreq = waterfall.lastFrequencies[0];
-  const maxFreq = waterfall.lastFrequencies[waterfall.lastFrequencies.length - 1];
-  const freqRange = maxFreq - minFreq;
-  const plotX = x - waterfall.plotLeft;
-  const clickedFreq = minFreq + (plotX / waterfall.plotWidth) * freqRange;
-  const offsetHz = (clickedFreq - currentCenterFreq) * 1000000;
-
-  const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
-  if(!activeDec) return;
-
-  const bw = bwo[activeDec.bandwidth_index ?? 0].bandwidth;
-  const maxOffset = maxOffsetHz(bw);
-  const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, offsetHz));
-
-  setDecimatorFreq(activeDecimatorId, clampedOffset / 1000);
-  activeDec.freq_offset_hz = clampedOffset;
-  drawBox();
-}
-
-function handleClick(e) {
-  if(!fftPlot||isDragging||isDraggingEdge)return;
-  const c=$id('fo');
-  if(!c)return;
-
-  // Check if we clicked on an existing box or edge (if so, don't move)
+// Click (fires after mouseup). A plain click on empty spectrum is normally
+// already handled by pointerUp's scroll-drag branch (the bar then sits under
+// the cursor, so this returns early; at the clamp edge the repeat
+// setDecimatorFreq collapses into the same debounced send). It is still
+// needed for clicks pointerDown doesn't turn into a scroll drag - e.g. while
+// the scanner is running - so it stays.
+function pointerClick(s, e) {
+  if(!s.active()||isDragging||isDraggingEdge)return;
+  const c=s.el();
+  if(!c || !s.canMap())return;
   const r=c.getBoundingClientRect();
   const x=e.clientX-r.left,y=e.clientY-r.top;
 
-  if(c.boxes) {
-    for(const box of c.boxes) {
-      // Check if clicked on box body
-      if(x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h) {
-        return; // Don't move if clicking on existing box
-      }
-      // Check if clicked on edges
-      if((x >= box.left_edge.x && x <= box.left_edge.x + box.left_edge.w &&
-          y >= box.left_edge.y && y <= box.left_edge.y + box.left_edge.h) ||
-         (x >= box.right_edge.x && x <= box.right_edge.x + box.right_edge.w &&
-          y >= box.right_edge.y && y <= box.right_edge.y + box.right_edge.h)) {
-        return; // Don't move if clicking on edge
-      }
-    }
-  }
+  // Don't move if the click landed on an existing bar or one of its edges
+  if(c.boxes && c.boxes.some(box => inRect(x, y, box) ||
+                              inRect(x, y, box.left_edge) || inRect(x, y, box.right_edge))) return;
 
-  // Convert click position to frequency
-  const u=fftPlot;
-  const clickedFreq=u.posToVal(x,'x');
-  const center=currentCenterFreq;
-  const offsetHz=(clickedFreq-center)*1000000; // Convert MHz to Hz
-
-  // Find active decimator info
-  const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
-  if(!activeDec) return;
-
-  const bw = bwo[activeDec.bandwidth_index ?? 0].bandwidth;
-
-  // Calculate max offset based on mode
-  // In wideband mode, allow full 9.6 MHz range; otherwise use single-tuner 2.4 MHz range
-  // Account for edge clipping - visible bandwidth is reduced by currentEdgeClip
-  const maxOffset = maxOffsetHz(bw);
-  const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, offsetHz));
-
-  // Update decimator frequency
-  setDecimatorFreq(activeDecimatorId, clampedOffset / 1000); // Send in kHz
-
-  // Update local state
-  activeDec.freq_offset_hz = clampedOffset;
-  drawBox();
+  if(centerActiveBarAt(s.xToMhz(x))) drawBox();
 }
+
+function handleDown(e) { pointerDown(fftSurface, e); }
+function handleMove(e) { pointerMove(fftSurface, e); }
+function handleUp(e) { pointerUp(fftSurface, e); }
+function handleClick(e) { pointerClick(fftSurface, e); }
+function handleWaterfallDown(e) { pointerDown(wfSurface, e); }
+function handleWaterfallMove(e) { pointerMove(wfSurface, e); }
+function handleWaterfallUp(e) { pointerUp(wfSurface, e); }
+function handleWaterfallClick(e) { pointerClick(wfSurface, e); }
 
 // UI Functions
 function sac() {
@@ -4007,17 +3576,6 @@ function initFreqSelector() {
   });
 }
 
-function sfq() {
-  const f = getFreqFromDigits();
-  if(f>=FREQ_MIN && f<=FREQ_MAX) {
-    sendFreqChange(f);
-    currentCenterFreq=f;
-    // Refresh all decimator actual frequency displays since center frequency changed
-    decimatorInfo.forEach(dec => refreshDecimatorPanelItem(dec.id));
-    // Don't call drawBox() - let server response trigger redraw to prevent tuning bar jump
-  }
-}
-
 // Helper function to send frequency change - uses WIDEBAND_FREQ in wideband mode
 function sendFreqChange(freqMhz) {
   if (widebandEnabled) {
@@ -4066,15 +3624,6 @@ function sgn() {
 
   send('GAIN:' + gainDb);
   restartCooldownCountdown();
-}
-
-function updateFreqLimits() {
-  const hbw=bwo[currentBandwidth].bandwidth*500;
-  const maxO=Math.floor(1200-hbw);
-  if(Math.abs(currentFreqOffset)>maxO) {
-    currentFreqOffset=0;
-    send('FREQ_OFFSET:0');
-  }
 }
 
 function tfm() {
@@ -4375,9 +3924,9 @@ function sto(t) {
     updateWbReadout();
   }
 
-  // Update all DoA plots with new topology (WIDEBAND draws as a UCA)
+  // Topology does not change the polar rendering; clear the stale lobe
   Object.values(doaPlots).forEach(plot => {
-    if(plot) plot.setTopology(t==='WIDEBAND'?'UCA':t);
+    if(plot) plot.drawBg();
   });
 
   // Update all topology display texts
@@ -5074,7 +4623,6 @@ function createDoaDisplay(decimatorId) {
 
   container.appendChild(doaDiv);
   doaPlots[decimatorId] = new PolarPlot(`dcan-${decimatorId}`);
-  doaPlots[decimatorId].setTopology(currentTopology);
   doaPlots[decimatorId].setConvention(doaConvention);  // match current display setting
   elevationPlots[decimatorId] = new ElevationPlot(`elcan-${decimatorId}`);
 }
@@ -5155,24 +4703,8 @@ function setDecimatorBandwidthFromUI(id, bw_index) {
 
   // If there are saved box positions from a drag, sync the offsets first
   // This ensures the tuning bar stays at its visual position after bandwidth change
-  if (scrollDragSavedBoxes && fftPlot) {
-    scrollDragSavedBoxes.forEach(savedBox => {
-      const dec2 = decimatorInfo.find(d => d.id === savedBox.id);
-      if (dec2) {
-        // Calculate frequency at the saved box center
-        const savedCenterX = savedBox.x + savedBox.w / 2;
-        const savedFreq = fftPlot.posToVal(savedCenterX, 'x');
-        // Calculate new offset to maintain this visual position
-        const newOffset = (savedFreq - currentCenterFreq) * 1000000;
-        // Clamp to valid range (use NEW bandwidth for the decimator being changed)
-        const newBw = (dec2.id === id) ? bwo[bw_index].bandwidth : bwo[dec2.bandwidth_index ?? 0].bandwidth;
-        const maxOffset = maxOffsetHz(newBw);
-        const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffset));
-        dec2.freq_offset_hz = clampedOffset;
-        setDecimatorFreq(dec2.id, clampedOffset / 1000);
-      }
-    });
-  }
+  // (the changed decimator already carries its NEW bandwidth_index for the clamp)
+  resyncOffsetsFromSavedBoxes();
 
   // Now clear saved box positions so drawBox uses fresh calculated values
   scrollDragSavedBoxes = null;
@@ -5670,14 +5202,8 @@ function connect() {
             }
           }
           else if(msg.demod_mode) {
-            // Update demod mode and optionally bandwidth when mode changes
-            // Update the current demod mode display if it exists
-            const demodBtnContainer = document.querySelector('.ctrl-row:has(#demod-mode)');
-            if (demodBtnContainer) {
-              const modeVal = document.querySelector('#demod-mode-val');
-              if (modeVal) modeVal.textContent = msg.demod_mode.mode;
-            }
-            // If bandwidth_index is provided, update the FM decimator's bandwidth selector
+            // Legacy DEMOD_MODE reply (this UI sends the per-VFO
+            // SET_DECIMATOR_DEMOD instead). If bandwidth_index is provided, update the FM decimator's bandwidth selector
             if (msg.demod_mode.bandwidth_index !== undefined) {
               const fmDecId = decimatorInfo.find(d => d.is_fm_source)?.id;
               if (fmDecId !== undefined) {
@@ -5751,9 +5277,6 @@ function connect() {
             resetAudioWorklet();
           }
           // Demod mode is now per-decimator - see msg.decimator_demod handler above
-          else if(msg.scanner_status) {
-            updateScannerStatus(msg);
-          }
           else if(msg.continuous_scanner) {
             updateContinuousScannerStatus(msg.continuous_scanner);
           }
@@ -5948,12 +5471,10 @@ function connect() {
             // Update DoA display for this decimator
             const plot=doaPlots[decimatorId];
             if(plot) {
-              plot.updateData(spectrum,currentTopology,resolution);
+              plot.updateData(spectrum,resolution);
               const peakEl=$id(`dpk-${decimatorId}`);
-              const timeEl=$id(`dpt-${decimatorId}`);
               const offsetEl=$id(`fo-${decimatorId}`);
               if(peakEl)peakEl.textContent=plot.getFormattedPeakAngle();
-              if(timeEl)timeEl.textContent='0.0 ms';
               if(offsetEl)offsetEl.textContent=freqOffsetKhz.toFixed(1);
 
               // Update elevation plot if 3D array
@@ -5976,7 +5497,6 @@ function connect() {
             }
           }
         }
-        doaUpdateCount++;
         return;
       }
 
@@ -6179,13 +5699,6 @@ function connect() {
       }
 
       if(!fftPlot)createPlot();
-      
-      frameCount++;
-      const now=Date.now();
-      if(now-lastTime>=1000) {
-        // FPS tracking (status display removed from top bar)
-        frameCount=0;lastTime=now;
-      }
     } catch(err){console.error('Error:',err);}
   };
 }
@@ -7081,43 +6594,6 @@ function addTouchHandlers(el, down, move, up) {
     }
   }
 
-  function updateScannerStatus(msg) {
-    // Update status text
-    const statusEl = $id('scan-status');
-    if (statusEl && msg.scanner_status) {
-      const status = msg.scanner_status;
-      let statusText = 'Status: ' + status.state;
-
-      // Track scanner state globally for tuning bar visibility
-      scannerState = status.state;
-
-      if (status.state === 'SCANNING') {
-        statusText += ' (Group ' + (status.current_group + 1) + ')';
-      } else if (status.state === 'LOCKED') {
-        statusText += ' (' + status.locked_freq.toFixed(3) + ' MHz, ' + status.locked_signal_db.toFixed(1) + ' dB)';
-      }
-
-      statusEl.textContent = statusText;
-    }
-
-    // Update lock info
-    const lockInfo = $id('scanner-lock-info');
-    if (lockInfo && msg.scanner_status) {
-      const status = msg.scanner_status;
-
-      if (status.state === 'LOCKED') {
-        lockInfo.style.display = 'block';
-        lockInfo.innerHTML =
-          '<strong>Locked Signal:</strong><br>' +
-          'Frequency: ' + status.locked_freq.toFixed(3) + ' MHz<br>' +
-          'Signal: ' + status.locked_signal_db.toFixed(1) + ' dB<br>' +
-          'Label: ' + (status.locked_label || 'N/A');
-      } else {
-        lockInfo.style.display = 'none';
-      }
-    }
-  }
-
   // ============================================================================
   // END SCANNER FUNCTIONS
   // ============================================================================
@@ -7417,7 +6893,6 @@ window.addEventListener('load',()=>{
 
   createPlot();
   initFreqSelector();
-  updateFreqLimits();
   drawArrayDiagrams();
   generateCustomPositionsTable();
   updateSNRDisplaysHTML();

@@ -331,30 +331,7 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                             }
                         } else if (new_freq > 0) {
                             // Frequency changed - use cooldown approach
-                            set_bias_tee_all_devices(false, devices);
-
-                            if (phase_compensation) {
-                                std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
-                                phase_compensation->last_frequency_change = std::chrono::steady_clock::now();
-                                phase_compensation->cooldown_active = true;
-                                phase_compensation->state = PhaseCompensatorState::WAITING_FOR_STABILITY;
-                                phase_compensation->compensation_applied = false;
-                                phase_compensation->convergence_count = 0;
-                                phase_compensation->stable_nonzero_count = 0;
-                                phase_compensation->failed_convergence_attempts = 0;
-                                phase_compensation->checks_since_compensation = 0;
-                                // Stop applying the old-frequency per-bin equalizer during the
-                                // cooldown; it will be rebuilt when recalibration completes.
-                                phase_compensation->per_bin_measured = false;
-                                per_bin_cal.ready.store(false, std::memory_order_release);
-
-                                for (int i = 0; i < NUM_DEVICES; i++) {
-                                    if (i != REF_CHANNEL) {
-                                        phase_compensation->compensation_vector.store(i, Complex(1.0f, 0.0f));
-                                    }
-                                }
-                                std::cout << "Frequency changed via web UI: entering " << phase_compensation->stability_delay_override_ms.load() << "ms cooldown" << std::endl;
-                            }
+                            begin_retune_cooldown("Frequency changed via web UI");
                         } else {
                             // Gain-only change - immediate calibration
                             handle_settings_change();

@@ -25,7 +25,7 @@
 // per-channel state). The number actually opened/used at runtime is
 // active_num_elements: the -n flag or the web UI's element-count selector,
 // bounded by this ceiling AND by the length of the expected-serials list
-// (--serials flag, default "1000".."1004" in src/core/config.hpp).
+// (--serials flag, default "1000".."1007" in main.cpp).
 #define NUM_DEVICES 8
 
 // Reference channel (0-based index)
@@ -67,11 +67,6 @@
 #define NUM_SAMPLES     16384       // Samples per FFT (power of 2)
 #define CORRELATION_SIZE (NUM_SAMPLES * 2)  // Zero-padded correlation size
 
-#ifndef CHANNEL_SAMPLE_BUFFER_SIZE
-#define CHANNEL_SAMPLE_BUFFER_SIZE 10  // Match Python default
-#endif
-
-
 // Buffer Management
 #define BUFFER_SIZE     100          // Number of sample sets to buffer (L1 depth cap)
 
@@ -93,22 +88,15 @@
 #define L2_RAW_CAL_MAX  4
 
 // ========================================================================
-// COMMUNICATION CONFIGURATION  
+// COMMUNICATION CONFIGURATION
 // ========================================================================
 
-// Port for communication between C program and Python server
-#define PYTHON_PORT     8081
-
-// Python web server port (must match heimdall_server.py)
+// Web interface port (HTTP + WebSocket)
 #define WEB_PORT        8070
 
 // ========================================================================
 // PERFORMANCE TUNING
 // ========================================================================
-
-// Thread priorities (0 = normal, higher = more priority)
-#define RTL_THREAD_PRIORITY     0
-#define PROCESS_THREAD_PRIORITY 0
 
 // Realtime (SCHED_RR) priorities for the time-critical ingest threads. These
 // resist CFS preemption under load (the cause of USB FIFO overflow). Applied
@@ -116,10 +104,9 @@
 // priority. USB readers > sample drain so reads always win a core. The
 // conversion worker deliberately runs at NORMAL priority (it can fall behind
 // safely, and at RT its malloc/mutex use would priority-invert against the web/
-// FFTW threads), so RT_PRIO_CONVERSION is retained only for reference.
+// FFTW threads), so it has no RT priority here.
 #define RT_PRIO_USB_READER      20  // per-device librtlsdr async reader threads
 #define RT_PRIO_SAMPLE_DRAIN    15  // L1 -> L2-raw aligned-collection thread
-#define RT_PRIO_CONVERSION      10  // (unused) conversion worker runs at normal priority
 
 // librtlsdr async USB transfer buffers (buf_num passed to rtlsdr_read_async).
 // 0 = library default (15 x 32 KB ~= 102 ms cushion @ 2.4 MSPS). A larger ring
@@ -163,13 +150,7 @@
 #define PERIODIC_RECAL_PHASE_THRESHOLD  10.0f  // avg |residual phase| in degrees above this == bad
 
 // Processing delays (microseconds)
-#define RTL_READ_DELAY          1000    // Delay between RTL-SDR reads
 #define PROCESS_LOOP_DELAY      10000   // Delay in main processing loop
-#define RECONNECT_DELAY         1000000 // Delay when reconnecting to Python
-
-// Buffer timeouts (microseconds)
-#define BUFFER_WAIT_TIMEOUT     100     // Wait for buffer ready
-#define PYTHON_CONNECT_TIMEOUT  5000000 // Timeout for Python connection
 
 // ========================================================================
 // HARDWARE OPTIMIZATION
@@ -177,12 +158,10 @@
 
 // RTL-SDR device configuration
 #define ENABLE_BIAS_TEE         1       // Enable bias tee on all devices
-#define ENABLE_DITHERING        0       // Enable/disable dithering
 #define AUTO_GAIN_MODE          0       // 0=manual gain, 1=auto gain
 
 // USB configuration hints
 #define USB_RESET_ON_INIT       1       // Reset USB endpoint on init
-#define USB_BULK_TRANSFER_SIZE  0       // 0=default, or specify size
 
 // --kerberos_sw: Raspberry Pi header GPIOs driving the third-party CKOVAL
 // antenna switches (BCM numbering; same pins the V1 DAQ firmware used).
@@ -192,28 +171,6 @@
 #define KERBEROS_SW_GPIO_ANT2   24
 
 // ========================================================================
-// DEBUG AND LOGGING
-// ========================================================================
-
-// Statistics reporting interval (seconds)
-#define STATS_INTERVAL          5
-
-// Debug output levels
-#ifdef DEBUG
-    #define DEBUG_RTL_SDR       1       // RTL-SDR debug messages
-    #define DEBUG_FFT           0       // FFT processing debug
-    #define DEBUG_CORRELATION   0       // Correlation debug
-    #define DEBUG_COMMUNICATION 1       // Python communication debug
-    #define DEBUG_TIMING        0       // Timing measurements
-#else
-    #define DEBUG_RTL_SDR       0
-    #define DEBUG_FFT           0
-    #define DEBUG_CORRELATION   0
-    #define DEBUG_COMMUNICATION 0
-    #define DEBUG_TIMING        0
-#endif
-
-// ========================================================================
 // FFTW CONFIGURATION
 // ========================================================================
 
@@ -221,16 +178,14 @@
 // Options: FFTW_ESTIMATE, FFTW_MEASURE, FFTW_PATIENT, FFTW_EXHAUSTIVE
 #define FFTW_PLANNER_EFFORT     FFTW_MEASURE
 
-// Number of threads for FFTW (0 = auto-detect)
-#define FFTW_THREADS            0
-
 // ========================================================================
 // DEVICE MAPPING
 // ========================================================================
 
 // Channel N is the device whose USB serial matches entry N of the expected-
-// serials list. Default list (KrakenSDR "1000".."1004") lives in
-// src/core/config.hpp; override at runtime with --serials s0,s1,...
+// serials list. Default list (KrakenSDR "1000".."1007") is defined in
+// main.cpp (declared in src/core/config.hpp); override at runtime with
+// --serials s0,s1,...
 
 // ========================================================================
 // VALIDATION MACROS

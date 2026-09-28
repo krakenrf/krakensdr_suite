@@ -11,6 +11,21 @@ bool check_phase_convergence(const std::map<int, float>& current_phases,
                              const std::map<int, float>& current_amplitudes);
 std::optional<PhaseCompensatorState> get_phase_compensation_state();
 
+// Reset the phase machine for a fresh calibration pass: enter `state`, zero the
+// convergence counters, set the compensation vector to identity and (unless
+// drop_per_bin_eq is false) drop the per-bin equalizer so it is re-measured.
+// Gating policy (kerberos / recovery / scan checks), the noise source and FFT
+// stay with the caller. Caller holds phase_compensation->state_mutex and has
+// checked phase_compensation.
+void reset_phase_state_locked(PhaseCompensatorState state, bool drop_per_bin_eq = true);
+
+// Retune / gain / mixer-side / antenna-ring cooldown: noise source off, then
+// reset the phase machine into WAITING_FOR_STABILITY with the cooldown timer
+// restarted. The phase-driver lag thread starts the phase-only recal
+// (handle_settings_change) once the stability delay elapses. `what` prefixes
+// the log line. The caller applies its own gating first.
+void begin_retune_cooldown(const char* what);
+
 // Lag compensation functions
 bool process_channel_lag_compensation(int channel, float lag);
 void reset_lag_compensation_all_channels();

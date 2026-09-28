@@ -8,6 +8,7 @@
 #include "scanner_manager.hpp"
 #include "station_info.hpp"
 #include "signal_processing/music_processor.hpp"
+#include "utils/json_escape.hpp"
 
 #include <sqlite3.h>
 
@@ -40,14 +41,7 @@ bool doa_is_calibrating() {
     // the noise source (+ a short hold for bursts between polls), matching the
     // DOA_value.html handler. Steady-state DoA reports phase_state 4, so a
     // phase_state test would wrongly freeze everything.
-    constexpr long NOISE_QUIET_MS = 750;  // catch bursts between polls
-    bool recent_noise = false;
-    int64_t last_noise_ns = scanner_manager.getLastNoiseActiveNs();
-    if (last_noise_ns != 0) {
-        int64_t now_ns = chrono::steady_clock::now().time_since_epoch().count();
-        recent_noise = ((now_ns - last_noise_ns) / 1000000) < NOISE_QUIET_MS;
-    }
-    return scanner_manager.isNoiseSourceActive() || recent_noise;
+    return scanner_manager.isNoiseRecentlyActive();
 }
 
 std::vector<DoaRecord> capture_doa_records() {
@@ -249,22 +243,6 @@ bool doa_delete_recording(const std::string& name) {
 // ---------------------------------------------------------------------------
 
 namespace {
-    std::string json_escape(const std::string& s) {
-        std::string out;
-        out.reserve(s.size() + 8);
-        for (char c : s) {
-            switch (c) {
-                case '"':  out += "\\\""; break;
-                case '\\': out += "\\\\"; break;
-                case '\n': out += "\\n";  break;
-                case '\r': out += "\\r";  break;
-                case '\t': out += "\\t";  break;
-                default:   out += c;      break;
-            }
-        }
-        return out;
-    }
-
     std::string iso8601_utc_now() {
         std::time_t t = std::time(nullptr);
         std::tm tmv{};

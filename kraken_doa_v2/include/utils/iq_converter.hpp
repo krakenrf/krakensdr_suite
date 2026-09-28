@@ -1,6 +1,5 @@
 #pragma once
 
-#include <vector>
 #include <complex>
 #include <cstdint>
 #include <cstddef>
@@ -21,23 +20,5 @@ public:
         std::complex<float>* output,
         size_t num_samples,
         bool dc_correction = true
-    );
-
-    // Batch convert for multiple channels with optimized memory access
-    // Processes each channel sequentially (single-threaded is fastest per channel)
-    static void convert_multi_channel(
-        const uint8_t* input,
-        std::vector<std::vector<std::complex<float>>>& output,
-        size_t num_channels,
-        size_t samples_per_channel
-    );
-
-    // Batch convert with pre-allocated output buffers
-    // Avoids allocation overhead when buffers are reused
-    static void convert_multi_channel_preallocated(
-        const uint8_t* input,
-        std::complex<float>** output_channels,
-        size_t num_channels,
-        size_t samples_per_channel
     );
 };

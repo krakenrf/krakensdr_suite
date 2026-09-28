@@ -542,22 +542,8 @@ void handle_settings_change() {
         std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
         // Skip directly to phase measurement - lag calibration remains valid for settings
         // changes. The settle gate is anchored by set_bias_tee_all_devices(true) above.
-        phase_compensation->state = PhaseCompensatorState::MEASURING_INITIAL_PHASE;
-        phase_compensation->compensation_applied = false;
-        phase_compensation->convergence_count = 0;
-        phase_compensation->stable_nonzero_count = 0;
-        phase_compensation->failed_convergence_attempts = 0;
-        phase_compensation->checks_since_compensation = 0;
-        // Per-bin equalizer must be re-measured for the new settings; stop
-        // applying any stale FIR immediately. Clearing ready under state_mutex
-        // (same lock design uses to publish) makes the recal-vs-design race safe.
-        phase_compensation->per_bin_measured = false;
-        per_bin_cal.ready.store(false, std::memory_order_release);
-        // Reset atomic compensation vector to identity
-        for (int i = 0; i < NUM_DEVICES; ++i) {
-            phase_compensation->compensation_vector.store(i, Complex(1.0f, 0.0f));
-        }
-        phase_compensation->convergence_check_active = false;
+        // Also drops the per-bin equalizer (must be re-measured for the new settings).
+        reset_phase_state_locked(PhaseCompensatorState::MEASURING_INITIAL_PHASE);
     }
 
     // Keep device lag compensation states as CONVERGED - don't reset them for settings changes
@@ -608,7 +594,9 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
         wideband_config.enabled = true;
 
         // Reset phase calibration state to prevent eigenvalue calculations during wideband
-        // This prevents race condition where calibration was in progress when wideband enabled
+        // This prevents race condition where calibration was in progress when wideband enabled.
+        // Deliberately NOT reset_phase_state_locked(): this parks the machine but keeps the
+        // applied compensation vector (and counters it doesn't list) as they were.
         if (phase_compensation) {
             std::lock_guard<std::mutex> ph_lock(phase_compensation->state_mutex);
             PhaseCompensatorState old_state = phase_compensation->state;
@@ -616,7 +604,6 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
             phase_compensation->compensation_applied = false;
             phase_compensation->convergence_count = 0;
             phase_compensation->stable_nonzero_count = 0;
-            phase_compensation->convergence_check_active = false;
 
             // If we interrupted active calibration, turn off bias tee
             if (old_state != PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION &&
@@ -654,18 +641,10 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
         // Re-enable phase calibration by resetting to wait for lag convergence state
         if (phase_compensation) {
             std::lock_guard<std::mutex> ph_lock(phase_compensation->state_mutex);
-            phase_compensation->state = PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION;
-            phase_compensation->compensation_applied = false;
-            phase_compensation->convergence_count = 0;
-            phase_compensation->stable_nonzero_count = 0;
-            phase_compensation->failed_convergence_attempts = 0;
-            phase_compensation->checks_since_compensation = 0;
-
-            // Reset compensation vector to identity
-            for (int i = 0; i < NUM_DEVICES; ++i) {
-                phase_compensation->compensation_vector.store(i, Complex(1.0f, 0.0f));
-            }
-            phase_compensation->convergence_check_active = false;
+            // Identity vector, counters reset; the per-bin equalizer is kept
+            // (historical behavior of this path).
+            reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION,
+                                     /*drop_per_bin_eq=*/false);
         }
 
         // DO NOT reset lag compensation states when returning from wideband mode

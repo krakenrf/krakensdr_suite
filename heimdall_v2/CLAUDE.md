@@ -126,7 +126,6 @@ TCP servers for remote control and IQ data streaming.
 - **TCP Control Server**: Accepts JSON commands, broadcasts status at 2 Hz
 - **RTL-TCP Server**: Compatible with rtl_tcp clients (SDR#, GQRX), source channel selectable via web UI
 - All servers run in separate threads and use atomic variables for thread-safe config access
-- **KrakenSDR-compat (dormant)**: `kraken_iq_header.{hpp,cpp}` (1024-byte IQ header + float32 IQ, port 5000) and `kraken_control_server.{hpp,cpp}` (128-byte command frames, port 5001) implement a KrakenSDR-compatible streaming/control protocol. They exist in `src/net/` but are **not in the Makefile/CMake build and not started by `main()`** — experimental/dormant, not a live interface.
 
 ### Web Module (`src/web/`)
 
@@ -135,7 +134,7 @@ uWebSockets-based web interface for visualization and control.
 **Key Files:**
 - `html_loader.{hpp,cpp}`: HTML file loading with template variable substitution
 - `web_server.{hpp,cpp}`: uWebSockets HTTP server and WebSocket interface on port 8070
-- `index.html`: Complete web UI (can be embedded via `embedded_html.hpp`)
+- `index.html` (project root, NOT under `src/web/`): Complete web UI, read from the working directory at startup by `html_loader.cpp`
 
 **Important Concepts:**
 - Uses uWebSockets (not standard POSIX sockets) for high performance
@@ -175,7 +174,7 @@ All runtime configuration is in `config.h` at the project root:
 - `RTL_USB_BUF_COUNT`: librtlsdr async USB transfer buffers (default 32 ≈ 218 ms cushion @ 2.4 MSPS; 0 = library default 15). Wider ring = more slack before the RTL2832 FIFO overflows if the reader thread stalls.
 - `L2_RAW_MAX`: L2-raw staging depth cap (default 16). Bounds added latency under conversion overload; the per-device sample pool is sized from this.
 - `STUCK_DEVICE_MAX_TIMEOUTS`: consecutive 100 ms drain timeouts on one device before declaring coherence lost (default 30 ≈ 3 s).
-- `RT_PRIO_USB_READER`, `RT_PRIO_SAMPLE_DRAIN`: SCHED_RR realtime priorities (best-effort). `RT_PRIO_CONVERSION` is retained for reference only — the conversion worker runs at normal priority.
+- `RT_PRIO_USB_READER`, `RT_PRIO_SAMPLE_DRAIN`: SCHED_RR realtime priorities (best-effort). The conversion worker deliberately runs at normal priority.
 - `ENABLE_COHERENCE_MONITOR`: low-rate streaming coherence backstop (default **0/OFF**). A differential cross-correlation heuristic; needs ≥3 elements and on-hardware threshold tuning before enabling (a false positive triggers a disruptive ~30–60 s recalibration). The application-level detectors (L1 overflow / pool exhaustion / stuck device) are always on and cover the high-CPU-load case.
 
 **Realtime scheduling (optional):** the USB readers and sample drain use SCHED_RR if the process is granted it. Without privilege they run at normal priority (safe default). To enable: add `<user> - rtprio 30` to `/etc/security/limits.conf` (or grant `CAP_SYS_NICE`).
@@ -252,7 +251,7 @@ loss under high CPU load.
    - On staging overflow it drops the oldest **whole aligned set** (coherence-safe). A set that straddled a flush (recovery / retune) is discarded via `flush_generation`. A persistently stalled device trips `STUCK_DEVICE_MAX_TIMEOUTS` → `signal_coherence_lost()`.
 
 3. **Conversion Worker** (`conversion_worker` in sdr_pipeline.cpp):
-   - Consumes `l2_raw_buffer` **in order**; converts uint8 IQ → complex with phase/lag/EQ compensation (`samples_to_complex_with_compensation`, parallel across channels).
+   - Consumes `l2_raw_buffer` **in order**; converts uint8 IQ → complex with phase/lag/EQ compensation (`samples_to_complex_with_compensation`, per channel, written in place into a recycled `l2_buffer_pool` set).
    - Broadcasts **every** set to the TCP servers (tcp_data_server, rtl_tcp_server), then pushes the converted set to the L2 global queue (`l2_buffer`).
    - Runs at **normal** priority on purpose: it may fall behind safely (whole sets drop upstream at L2-raw) and at realtime priority its malloc/mutex use would priority-invert against the web/FFTW threads.
 
@@ -453,10 +452,6 @@ The time-critical L1 drain (`sample_processor`) is separated from the heavy IQ c
 4. Test with netcat: `echo '{"command":"new_command"}' | nc localhost 8092`
 
 ## Debugging
-
-**Compile-time Debug Output:**
-- Edit config.h debug flags: `DEBUG_RTL_SDR`, `DEBUG_FFT`, `DEBUG_CORRELATION`, `DEBUG_COMMUNICATION`
-- Rebuild with `make rebuild` to apply changes
 
 **Runtime Inspection:**
 - Web interface shows live correlation plots and compensation state at http://localhost:8070

@@ -14,6 +14,7 @@
 #include "doa_logger.hpp"
 #include "station_info.hpp"
 #include "signal_processing/music_processor.hpp"
+#include "utils/json_escape.hpp"
 
 #include <openssl/evp.h>
 #include <openssl/err.h>
@@ -53,29 +54,6 @@ namespace {
 int64_t now_ms() {
     return chrono::duration_cast<chrono::milliseconds>(
         chrono::steady_clock::now().time_since_epoch()).count();
-}
-
-string json_escape(const string& s) {
-    string out;
-    out.reserve(s.size() + 8);
-    for (char c : s) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    char buf[8];
-                    snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-                    out += buf;
-                } else {
-                    out += c;
-                }
-        }
-    }
-    return out;
 }
 
 // Shortest-ish numeric formatting, close to JS String(number) so the settings

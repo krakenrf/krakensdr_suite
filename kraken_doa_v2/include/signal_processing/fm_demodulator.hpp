@@ -22,8 +22,6 @@ private:
     // liquid-dsp objects. Must be null-initialized: recreateFilters() and the
     // destructor call *_destroy() on any non-null pointer, which would free
     // garbage for a stack/heap-constructed instance.
-    freqdem fm_demod = nullptr;
-    firdecim_rrrf audio_decim = nullptr;
     agc_crcf rf_agc = nullptr;
     iirfilt_rrrf deemphasis = nullptr;
     iirfilt_rrrf dc_blocker = nullptr;
@@ -52,8 +50,6 @@ private:
     static constexpr float WBFM_DEVIATION_HZ = 75000.0f;  // 75kHz for wideband FM (broadcast)
     static constexpr float NBFM_DEVIATION_HZ = 5000.0f;   // 5kHz for narrowband FM (voice comms)
     std::atomic<DemodulatorMode> current_mode{DemodulatorMode::WBFM};
-    std::atomic<int> current_audio_decimation{5};
-    std::atomic<bool> needs_resampling{false};
 
     // DC removal for NBFM/AM (simple IIR high-pass, faster than WBFM DC blocker)
     float nbfm_dc_alpha{0.995f};  // Faster DC removal for NBFM
@@ -78,7 +74,6 @@ private:
     // Pre-allocated work buffers (avoid heap alloc per call in process_decimated_samples)
     std::vector<float> work_demod_audio_;
     std::vector<float> work_processed_audio_;
-    std::vector<float> work_output_audio_;
 
 public:
     FMDemodulatorRobust();
@@ -94,8 +89,11 @@ public:
     DemodulatorMode getDemodulatorMode() const;
     float getCurrentDeviation() const;
     
-    // Process pre-decimated complex samples (move-only, no const-ref copy overload)
-    std::vector<float> process_decimated_samples(std::vector<std::complex<float>>&& decimated_samples);
+    // Process pre-decimated complex samples into 48 kHz audio. audio_out is
+    // cleared and refilled; the caller keeps it across calls so its capacity is
+    // reused (left empty when nothing was produced).
+    void process_decimated_samples(std::vector<std::complex<float>>&& decimated_samples,
+                                   std::vector<float>& audio_out);
     
     void add_audio_samples(const std::vector<float>& samples);
     std::vector<float> get_audio_buffer(size_t requested_samples = 480);
@@ -118,9 +116,7 @@ public:
 
 private:
     void recreateFilters();
-    int calculateOptimalAudioDecimation(float input_rate) const;
     void setupAudioProcessing(float input_rate);
-    bool shouldUseResampling(float input_rate) const;
 
     // OPTIMIZATION: Fast atan2 approximation (13.8x faster than std::atan2)
     // Error < 0.005 radians (~0.3 degrees) - suitable for FM demodulation

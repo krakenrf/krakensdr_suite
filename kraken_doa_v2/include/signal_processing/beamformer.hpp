@@ -91,10 +91,6 @@ public:
     bool process(const SharedDecimator::MultiChannelDecimated& input,
                  std::vector<std::complex<float>>& output);
 
-    // Copy of the most recent beamformed block (returns false if none)
-    bool getBeamformedData(std::vector<std::complex<float>>& output) const;
-    bool getBeamformedAudioSamples(std::vector<float>& output) const;
-
     // Selection diversity: currently selected channel index
     int getSelectedChannel() const;
 
@@ -134,7 +130,6 @@ private:
 
     // SNR estimation: peak minus 10th-percentile noise floor over a
     // 256-point FFT, in dB
-    float computeChannelSNR(const std::vector<std::complex<float>>& samples);
     float computeChannelSNR_FFT(const std::vector<std::complex<float>>& samples);
 
     // Frequency-domain DAS internals
@@ -183,10 +178,6 @@ private:
     float mvdr_condition_number_ = 0.0f;
     Eigen::MatrixXcd covariance_accum_;  // Snapshot accumulator
     size_t snapshot_count_ = 0;
-
-    // --- Output cache ---
-    mutable std::mutex data_mutex_;
-    std::vector<std::complex<float>> beamformed_data_;
 
     // --- Statistics ---
     mutable std::mutex stats_mutex_;

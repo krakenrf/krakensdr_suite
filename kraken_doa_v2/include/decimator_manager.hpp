@@ -69,7 +69,7 @@ private:
     mutable std::mutex decimator_mutex;
     std::atomic<int> next_id{0};
     std::atomic<int> fm_decimator_id{0}; // Which decimator feeds the FM demodulator
-    std::atomic<double> last_process_ms_{0.0}; // Duration of last processAllDecimators() pass
+    std::atomic<double> last_process_ms_{0.0}; // Duration of the last decimation pass (see getLastProcessMs)
     static constexpr int MAX_DECIMATORS = 16;
 
     // Beamforming config shared by every decimator's beamformer. Stored here so
@@ -102,7 +102,7 @@ public:
     std::vector<std::shared_ptr<DecimatorInstance>> getAllDecimators();
     size_t getDecimatorCount() const;
 
-    // Wall-clock duration of the most recent processAllDecimators() pass, in
+    // Wall-clock duration of the most recent decimation pass, in
     // milliseconds. Surfaced live on the status dashboard (replaces the old
     // periodic "PERFORMANCE WARNING: parallel decimation..." log line).
     double getLastProcessMs() const { return last_process_ms_.load(std::memory_order_relaxed); }
@@ -171,7 +171,7 @@ public:
     static std::string demodModeToString(DemodulatorMode mode);
     static DemodulatorMode stringToDemodMode(const std::string& str);
 
-    // Process data through all decimators
+    // Per-decimator result of one pipeline pass (data_receiver.cpp)
     struct ProcessResult {
         int decimator_id;
         SharedDecimator::MultiChannelDecimated decimated_data;
@@ -182,9 +182,6 @@ public:
         std::vector<std::complex<float>> beamformed_samples;
         bool have_beamformed = false;
     };
-
-    std::vector<ProcessResult> processAllDecimators(
-        const std::vector<std::vector<std::complex<float>>>& channel_data);
 
     // Get decimator info for UI
     struct DecimatorInfo {

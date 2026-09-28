@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
-#include <limits>
 #include <sstream>
 
 #include "globals.hpp"
@@ -255,32 +254,14 @@ float ContinuousScanner::getScanBandwidthHz() {
     return std::max(bw_hz, 10000.0f);
 }
 
-// The noise source must have been continuously OFF for this long before the
-// spectrum is trusted again. The server pulses the noise source during
-// calibration/verification; packets arrive at 50-80/s but the scanner only
-// polls every 100ms, so this relies on the per-packet timestamp kept by
-// ScannerManager to catch bursts that fall between polls.
-static constexpr long NOISE_QUIET_MS = 750;
-
-// Milliseconds since the last packet that reported the noise source active
-// (effectively "forever" if it was never seen).
-static long msSinceNoiseActive() {
-    int64_t last_ns = scanner_manager.getLastNoiseActiveNs();
-    if (last_ns == 0) {
-        return std::numeric_limits<long>::max();
-    }
-    int64_t now_ns = std::chrono::steady_clock::now().time_since_epoch().count();
-    return (long)((now_ns - last_ns) / 1000000);
-}
-
 bool ContinuousScanner::isCalibrationActive() {
     // Same criterion the RETUNING handler uses for "calibration in progress":
     // noise source on, or phase compensation not yet in VERIFYING/CONVERGED.
-    // Additionally require a continuous noise-quiet window so short
-    // calibration bursts between polls don't slip through unnoticed.
-    return scanner_manager.isNoiseSourceActive() ||
-           scanner_manager.getPhaseState() <= 3 ||
-           msSinceNoiseActive() < NOISE_QUIET_MS;
+    // Additionally require a continuous noise-quiet window
+    // (ScannerManager::NOISE_QUIET_MS) so short calibration bursts between
+    // polls (every 100ms here) don't slip through unnoticed.
+    return scanner_manager.isNoiseRecentlyActive() ||
+           scanner_manager.getPhaseState() <= 3;
 }
 
 std::vector<std::pair<float, float>> ContinuousScanner::findAllSignals() {
@@ -1055,7 +1036,7 @@ void ContinuousScanner::scannerThread() {
                     // a continuous window: the server pulses it during
                     // verification, and a momentary OFF reading between
                     // bursts must not count as "calibration finished".
-                    if (!noise && phase > 3 && msSinceNoiseActive() >= NOISE_QUIET_MS) {
+                    if (!noise && phase > 3 && scanner_manager.msSinceNoiseActive() >= ScannerManager::NOISE_QUIET_MS) {
                         std::cout << "ContinuousScanner: Calibration complete (phase=" << phase_name
                                   << ", noise=OFF, elapsed=" << elapsed_ms << "ms) — settling"
                                   << std::endl;

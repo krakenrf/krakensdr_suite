@@ -41,19 +41,3 @@ inline bool kerberos_manual_cal_only() {
            !kerberos_sw_mode.load(std::memory_order_relaxed);
 }
 
-// Compile-time flags
-#ifndef ENABLE_BIAS_TEE
-#define ENABLE_BIAS_TEE 1
-#endif
-
-#ifndef USB_RESET_ON_INIT
-#define USB_RESET_ON_INIT 0
-#endif
-
-#ifndef AUTO_GAIN_MODE
-#define AUTO_GAIN_MODE 0
-#endif
-
-#ifndef PROCESS_LOOP_DELAY
-#define PROCESS_LOOP_DELAY 0
-#endif

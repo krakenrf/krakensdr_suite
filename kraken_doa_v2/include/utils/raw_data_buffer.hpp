@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <deque>
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
@@ -8,42 +9,21 @@
 #include <cstdint>
 #include <complex>
 #include "types.hpp"
-#include "concurrentqueue.h"
 
 // Raw packet structure for buffering complete TCP packets with pre-converted float IQ data
 struct RawDataPacket {
-    std::vector<uint8_t> raw_header;                    // Just the header portion
     std::vector<std::vector<std::complex<float>>> channel_iq_data;  // Pre-converted IQ data per channel
-    size_t header_size;                                 // Size of header portion
     uint32_t num_channels;                              // Number of channels in packet
     uint32_t samples_per_channel;                       // Samples per channel
-    std::vector<ChannelInfo> channel_metadata;          // Per-channel frequency/gain info
     uint32_t phase_compensation_state;                  // Phase calibration state from server
     uint32_t noise_source_active;                       // Bias tee / noise source status
-    uint32_t frequency_change_counter;                  // Discrete scanner: increments on frequency change
-    uint32_t current_group_index;                       // Discrete scanner: current frequency group (0-N)
     std::chrono::steady_clock::time_point timestamp;
 
-    RawDataPacket() : header_size(0), num_channels(0), samples_per_channel(0),
-                      phase_compensation_state(0), noise_source_active(0),
-                      frequency_change_counter(0), current_group_index(0) {
+    RawDataPacket() : num_channels(0), samples_per_channel(0),
+                      phase_compensation_state(0), noise_source_active(0) {
         timestamp = std::chrono::steady_clock::now();
     }
-    
-    // Get pointer to IQ data for specific channel (now returns complex float)
-    const std::complex<float>* get_channel_data(int channel) const {
-        if (channel < 0 || channel >= static_cast<int>(num_channels) || 
-            channel >= static_cast<int>(channel_iq_data.size())) {
-            return nullptr;
-        }
-        return channel_iq_data[channel].data();
-    }
-    
-    // Get number of complex samples for one channel
-    size_t get_channel_sample_count() const {
-        return samples_per_channel;
-    }
-    
+
     // Check if packet is too old (for automatic cleanup)
     bool is_stale(std::chrono::milliseconds max_age = std::chrono::milliseconds(1000)) const {
         auto age = std::chrono::steady_clock::now() - timestamp;
@@ -52,7 +32,7 @@ struct RawDataPacket {
     
     // Calculate memory usage for this packet
     size_t memory_usage() const {
-        size_t total = raw_header.size();
+        size_t total = 0;
         for (const auto& channel : channel_iq_data) {
             total += channel.size() * sizeof(std::complex<float>);
         }
@@ -60,13 +40,15 @@ struct RawDataPacket {
     }
 };
 
-// Bounded queue for raw data packets with automatic old data removal
+// Bounded queue for raw data packets with automatic old data removal.
+// Every operation runs under queue_mutex (the consumer waits on it anyway), so
+// a plain deque suffices. Single FIFO producer: packets are timestamped at
+// construction just before push, so the oldest (stale) ones are at the front.
 class RawDataBuffer {
 private:
-    moodycamel::ConcurrentQueue<RawDataPacket> packet_queue;
+    std::deque<RawDataPacket> packet_queue;
     mutable std::mutex queue_mutex;
     std::condition_variable data_available;
-    std::condition_variable space_available;
     
     std::atomic<bool> shutdown_flag{false};
     
@@ -86,7 +68,7 @@ private:
     void cleanup_stale_packets();
     void enforce_memory_limit();
     void enforce_queue_size_limit();
-    size_t calculate_memory_usage() const;
+    void drop_front(std::atomic<size_t>& drop_counter);
 
 public:
     RawDataBuffer(size_t max_packets = 100, size_t max_memory_mb = 256, 
@@ -95,10 +77,8 @@ public:
     
     // Producer interface - non-blocking with automatic cleanup
     bool push_packet(RawDataPacket&& packet);
-    bool try_push_packet(RawDataPacket&& packet, std::chrono::milliseconds timeout = std::chrono::milliseconds(10));
-    
-    // Consumer interface - blocking and non-blocking variants
-    bool pop_packet(RawDataPacket& packet);
+
+    // Consumer interface - waits up to timeout for a packet
     bool try_pop_packet(RawDataPacket& packet, std::chrono::milliseconds timeout = std::chrono::milliseconds(100));
     
     // Queue management

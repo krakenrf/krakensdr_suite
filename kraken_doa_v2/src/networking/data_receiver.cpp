@@ -26,6 +26,7 @@
 #include <vector>
 #include <algorithm>
 #include <sstream>
+#include <array>
 #include <future>
 #include <cerrno>
 
@@ -271,26 +272,18 @@ void DataReceiver::data_receiver_thread() {
                 raw_packet.samples_per_channel = samples;
                 raw_packet.phase_compensation_state = phase_comp_state;
                 raw_packet.noise_source_active = noise_source;
-                raw_packet.frequency_change_counter = frequency_change_counter;
-                raw_packet.current_group_index = current_group_index;
-                raw_packet.header_size = header_size;
-                raw_packet.raw_header.resize(header_size);
-                raw_packet.channel_metadata.resize(channels);
                 raw_packet.channel_iq_data.resize(channels);
 
-                // Copy header
-                memcpy(raw_packet.raw_header.data(), buffer.data() + offset, header_size);
-
                 // Parse channel metadata (now starts at offset 32 after retuning_in_progress field)
+                std::array<float, MAX_CHANNELS> ch_freq_hz{};
                 for (uint32_t ch = 0; ch < channels && ch < MAX_CHANNELS; ch++) {
-                    size_t ch_info_offset = 32 + ch * 8;
-                    
-                    float frequency_hz = EndianUtils::read_le_float(raw_packet.raw_header.data(), ch_info_offset);
-                    float gain_db = EndianUtils::read_le_float(raw_packet.raw_header.data(), ch_info_offset + 4);
-                    
-                    raw_packet.channel_metadata[ch].frequency_hz = frequency_hz;
-                    raw_packet.channel_metadata[ch].gain_db = gain_db;
-                    
+                    size_t ch_info_offset = offset + 32 + ch * 8;
+
+                    float frequency_hz = EndianUtils::read_le_float(buffer.data(), ch_info_offset);
+                    float gain_db = EndianUtils::read_le_float(buffer.data(), ch_info_offset + 4);
+
+                    ch_freq_hz[ch] = frequency_hz;
+
                     ChannelManager::update_channel_info(ch, frequency_hz, gain_db);
                 }
                 
@@ -304,8 +297,7 @@ void DataReceiver::data_receiver_thread() {
                 // noise source OFF (so doa_is_calibrating() can't see it).
                 {
                     static float last_ref_freq_hz = 0.0f;
-                    const float ref_freq_hz = raw_packet.channel_metadata.empty()
-                        ? 0.0f : static_cast<float>(raw_packet.channel_metadata[0].frequency_hz);
+                    const float ref_freq_hz = ch_freq_hz[0];
                     if (last_ref_freq_hz != 0.0f && ref_freq_hz != 0.0f &&
                         std::abs(ref_freq_hz - last_ref_freq_hz) > 1.0f) {
                         g_last_retune_complete_ms.store(steady_now_ms(), std::memory_order_relaxed);
@@ -321,7 +313,7 @@ void DataReceiver::data_receiver_thread() {
                 if (is_retuning) {
                     // Still update tuner frequencies so UI shows correct target frequency
                     for (uint32_t ch = 0; ch < channels && ch < MAX_CHANNELS; ch++) {
-                        tuner_frequencies[ch].store(static_cast<uint64_t>(raw_packet.channel_metadata[ch].frequency_hz),
+                        tuner_frequencies[ch].store(static_cast<uint64_t>(ch_freq_hz[ch]),
                                                     std::memory_order_relaxed);
                     }
                     offset += packet_size;
@@ -400,7 +392,6 @@ void DataReceiver::data_receiver_thread() {
                     }
 
                     // Convert all channels in one optimized pass
-                    #pragma omp parallel for schedule(dynamic) if(num_channels_to_convert > 2)
                     for (int ch = 0; ch < MAX_CHANNELS; ch++) {
                         if (channels_to_convert[ch]) {
                             const uint8_t* channel_iq_bytes = buffer.data() + offset + header_size + ch * samples * 2;
@@ -504,19 +495,18 @@ void DataReceiver::decimation_processor_thread() {
         if ((music_needs_processing || fm_needs_processing || beamforming_needs_processing) && decimator_manager.getDecimatorCount() > 0) {
             // OPTIMIZED PIPELINE: Process decimation + MUSIC in single async tasks
             // This eliminates the synchronization barrier between decimation and MUSIC stages
-            auto all_decimators = decimator_manager.getAllDecimators();
-
-            vector<future<DecimatorManager::ProcessResult>> pipeline_futures;
-            pipeline_futures.reserve(all_decimators.size());
-
-            for (const auto& inst : all_decimators) {
+            vector<shared_ptr<DecimatorManager::DecimatorInstance>> active_decimators;
+            for (auto& inst : decimator_manager.getAllDecimators()) {
                 // Skip disabled or being-deleted decimators
                 if (!inst || !inst->enabled || inst->being_deleted.load(std::memory_order_relaxed)) continue;
+                active_decimators.push_back(std::move(inst));
+            }
 
-                // Launch pipelined task: decimation → MUSIC (no intermediate barrier)
-                // In wideband mode, each decimator gets data from its specific tuner
-                pipeline_futures.push_back(async(launch::async,
-                    [inst, &raw_packet, fm_id = decimator_manager.getFMDecimatorId(), wideband_enabled, packet_elements]() -> DecimatorManager::ProcessResult {
+            // Pipelined task per decimator: decimation → MUSIC (no intermediate barrier)
+            // In wideband mode, each decimator gets data from its specific tuner
+            auto run_pipeline =
+                [&raw_packet, fm_id = decimator_manager.getFMDecimatorId(), wideband_enabled, packet_elements](
+                    const shared_ptr<DecimatorManager::DecimatorInstance>& inst) -> DecimatorManager::ProcessResult {
 
                     DecimatorManager::ProcessResult result;
                     result.decimator_id = inst->id;
@@ -709,15 +699,25 @@ void DataReceiver::decimation_processor_thread() {
                     }
 
                     return result;
-                }));
-            }
+                };
 
-            // Wait for all pipelined tasks to complete (single barrier at the end)
             vector<DecimatorManager::ProcessResult> results;
-            results.reserve(pipeline_futures.size());
+            results.reserve(active_decimators.size());
 
-            for (auto& future : pipeline_futures) {
-                results.push_back(future.get());
+            if (active_decimators.size() == 1) {
+                // Common case: run inline instead of spawning an OS thread per packet
+                results.push_back(run_pipeline(active_decimators[0]));
+            } else {
+                // One async task per decimator, then a single barrier at the end
+                vector<future<DecimatorManager::ProcessResult>> pipeline_futures;
+                pipeline_futures.reserve(active_decimators.size());
+                for (const auto& inst : active_decimators) {
+                    pipeline_futures.push_back(async(launch::async,
+                        [&run_pipeline, inst]() { return run_pipeline(inst); }));
+                }
+                for (auto& future : pipeline_futures) {
+                    results.push_back(future.get());
+                }
             }
 
             // Beamforming: steer each active decimator's coherent combine by its
@@ -952,6 +952,9 @@ void DataReceiver::fm_processor_thread() {
     // Track consecutive timeouts to detect stalls
     int consecutive_timeouts = 0;
 
+    // Demodulated audio, reused across packets (capacity survives each call)
+    std::vector<float> audio_samples;
+
     while (running) {
         if (!fm_enabled.load(std::memory_order_relaxed)) {
             this_thread::sleep_for(milliseconds(50));
@@ -1013,7 +1016,7 @@ void DataReceiver::fm_processor_thread() {
             last_fm_rate = work_item.output_rate_hz;
         }
 
-        auto audio_samples = fm_demod.process_decimated_samples(std::move(work_item.decimated_samples));
+        fm_demod.process_decimated_samples(std::move(work_item.decimated_samples), audio_samples);
 
         if (!audio_samples.empty()) {
             // Check squelch for the FM source decimator - if enabled and closed, output silence

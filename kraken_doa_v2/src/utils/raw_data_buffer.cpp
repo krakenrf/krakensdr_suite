@@ -20,70 +20,34 @@ RawDataBuffer::~RawDataBuffer() {
     shutdown();
 }
 
+void RawDataBuffer::drop_front(atomic<size_t>& drop_counter) {
+    // Discard the oldest packet (caller must hold lock)
+    total_memory_bytes.fetch_sub(packet_queue.front().memory_usage());
+    packet_queue.pop_front();
+    drop_counter.fetch_add(1);
+}
+
 void RawDataBuffer::cleanup_stale_packets() {
-    // Remove packets that are too old (caller must hold lock)
-    // With ConcurrentQueue, we need to dequeue, check, and re-enqueue valid packets
-    size_t removed = 0;
-    size_t queue_size = packet_queue.size_approx();
-    std::vector<RawDataPacket> valid_packets;
-    valid_packets.reserve(queue_size);
-
-    // Dequeue all packets and filter out stale ones
-    RawDataPacket packet;
-    while (packet_queue.try_dequeue(packet)) {
-        if (packet.is_stale(max_packet_age)) {
-            total_memory_bytes.fetch_sub(packet.memory_usage());
-            removed++;
-        } else {
-            valid_packets.push_back(std::move(packet));
-        }
-    }
-
-    // Re-enqueue valid packets
-    for (auto& p : valid_packets) {
-        packet_queue.enqueue(std::move(p));
-    }
-
-    if (removed > 0) {
-        packets_dropped_stale.fetch_add(removed);
+    // Remove packets that are too old (caller must hold lock). Oldest first,
+    // so stop at the first fresh one.
+    while (!packet_queue.empty() && packet_queue.front().is_stale(max_packet_age)) {
+        drop_front(packets_dropped_stale);
     }
 }
 
 void RawDataBuffer::enforce_memory_limit() {
     // Remove oldest packets if memory usage exceeds limit (caller must hold lock)
     size_t max_bytes = max_memory_mb * 1024 * 1024;
-    size_t removed = 0;
-
-    RawDataPacket packet;
-    while (total_memory_bytes.load() > max_bytes && packet_queue.try_dequeue(packet)) {
-        total_memory_bytes.fetch_sub(packet.memory_usage());
-        removed++;
-    }
-
-    if (removed > 0) {
-        packets_dropped_full.fetch_add(removed);
+    while (total_memory_bytes.load() > max_bytes && !packet_queue.empty()) {
+        drop_front(packets_dropped_full);
     }
 }
 
 void RawDataBuffer::enforce_queue_size_limit() {
     // Remove oldest packets if queue size exceeds limit (caller must hold lock)
-    size_t removed = 0;
-
-    RawDataPacket packet;
-    while (packet_queue.size_approx() > max_queue_size && packet_queue.try_dequeue(packet)) {
-        total_memory_bytes.fetch_sub(packet.memory_usage());
-        removed++;
+    while (packet_queue.size() > max_queue_size) {
+        drop_front(packets_dropped_full);
     }
-
-    if (removed > 0) {
-        packets_dropped_full.fetch_add(removed);
-    }
-}
-
-size_t RawDataBuffer::calculate_memory_usage() const {
-    // Caller must hold lock
-    // With ConcurrentQueue, we can't iterate, so we rely on the atomic counter
-    return total_memory_bytes.load();
 }
 
 bool RawDataBuffer::push_packet(RawDataPacket&& packet) {
@@ -98,7 +62,7 @@ bool RawDataBuffer::push_packet(RawDataPacket&& packet) {
     
     // Add new packet
     size_t packet_size = packet.memory_usage();
-    packet_queue.enqueue(std::move(packet));
+    packet_queue.push_back(std::move(packet));
     total_memory_bytes.fetch_add(packet_size);
     packets_added.fetch_add(1);
     
@@ -112,107 +76,32 @@ bool RawDataBuffer::push_packet(RawDataPacket&& packet) {
     return true;
 }
 
-bool RawDataBuffer::try_push_packet(RawDataPacket&& packet, milliseconds timeout) {
-    if (shutdown_flag.load()) {
-        return false;
-    }
-    
-    unique_lock<mutex> lock(queue_mutex);
-    
-    // Wait for space if queue is full
-    if (!space_available.wait_for(lock, timeout, [this]() {
-        return shutdown_flag.load() || packet_queue.size_approx() < max_queue_size;
-    })) {
-        return false; // Timeout
-    }
-    
-    if (shutdown_flag.load()) {
-        return false;
-    }
-    
-    // Cleanup and add packet
-    cleanup_stale_packets();
-
-    size_t packet_size = packet.memory_usage();
-    packet_queue.enqueue(std::move(packet));
-    total_memory_bytes.fetch_add(packet_size);
-    packets_added.fetch_add(1);
-    
-    // Enforce limits
-    enforce_memory_limit();
-    enforce_queue_size_limit();
-    
-    // Notify consumers
-    data_available.notify_one();
-    
-    return true;
-}
-
-bool RawDataBuffer::pop_packet(RawDataPacket& packet) {
-    unique_lock<mutex> lock(queue_mutex);
-    
-    data_available.wait(lock, [this]() {
-        return shutdown_flag.load() || packet_queue.size_approx() > 0;
-    });
-
-    if (shutdown_flag.load()) {
-        return false;
-    }
-
-    // Get packet
-    if (!packet_queue.try_dequeue(packet)) {
-        return false;
-    }
-
-    size_t packet_size = packet.memory_usage();
-    total_memory_bytes.fetch_sub(packet_size);
-    packets_consumed.fetch_add(1);
-    
-    // Notify producers that space is available
-    space_available.notify_one();
-    
-    return true;
-}
-
 bool RawDataBuffer::try_pop_packet(RawDataPacket& packet, milliseconds timeout) {
     unique_lock<mutex> lock(queue_mutex);
     
     if (!data_available.wait_for(lock, timeout, [this]() {
-        return shutdown_flag.load() || packet_queue.size_approx() > 0;
+        return shutdown_flag.load() || !packet_queue.empty();
     })) {
         return false; // Timeout
     }
 
-    if (shutdown_flag.load()) {
+    if (shutdown_flag.load() || packet_queue.empty()) {
         return false;
     }
 
-    // Get packet
-    if (!packet_queue.try_dequeue(packet)) {
-        return false;
-    }
+    packet = std::move(packet_queue.front());
+    packet_queue.pop_front();
 
-    size_t packet_size = packet.memory_usage();
-    total_memory_bytes.fetch_sub(packet_size);
+    total_memory_bytes.fetch_sub(packet.memory_usage());
     packets_consumed.fetch_add(1);
-    
-    // Notify producers
-    space_available.notify_one();
     
     return true;
 }
 
 void RawDataBuffer::clear() {
     lock_guard<mutex> lock(queue_mutex);
-
-    // Dequeue all packets to clear the queue
-    RawDataPacket packet;
-    while (packet_queue.try_dequeue(packet)) {
-        // Just discard
-    }
-
+    packet_queue.clear();
     total_memory_bytes = 0;
-    space_available.notify_all();
 }
 
 void RawDataBuffer::shutdown() {
@@ -220,28 +109,27 @@ void RawDataBuffer::shutdown() {
     {
         lock_guard<mutex> lock(queue_mutex);
         data_available.notify_all();
-        space_available.notify_all();
     }
 }
 
 size_t RawDataBuffer::size() const {
     lock_guard<mutex> lock(queue_mutex);
-    return packet_queue.size_approx();
+    return packet_queue.size();
 }
 
 bool RawDataBuffer::empty() const {
     lock_guard<mutex> lock(queue_mutex);
-    return packet_queue.size_approx() == 0;
+    return packet_queue.empty();
 }
 
 bool RawDataBuffer::full() const {
     lock_guard<mutex> lock(queue_mutex);
-    return packet_queue.size_approx() >= max_queue_size;
+    return packet_queue.size() >= max_queue_size;
 }
 
 float RawDataBuffer::fill_percentage() const {
     lock_guard<mutex> lock(queue_mutex);
-    return (static_cast<float>(packet_queue.size_approx()) / max_queue_size) * 100.0f;
+    return (static_cast<float>(packet_queue.size()) / max_queue_size) * 100.0f;
 }
 
 RawDataBuffer::Stats RawDataBuffer::get_stats() const {
@@ -252,9 +140,9 @@ RawDataBuffer::Stats RawDataBuffer::get_stats() const {
     stats.packets_consumed = packets_consumed.load();
     stats.packets_dropped_full = packets_dropped_full.load();
     stats.packets_dropped_stale = packets_dropped_stale.load();
-    stats.current_queue_size = packet_queue.size_approx();
+    stats.current_queue_size = packet_queue.size();
     stats.memory_usage_bytes = total_memory_bytes.load();
-    stats.fill_percentage = (static_cast<float>(packet_queue.size_approx()) / max_queue_size) * 100.0f;
+    stats.fill_percentage = (static_cast<float>(packet_queue.size()) / max_queue_size) * 100.0f;
     
     return stats;
 }

@@ -111,7 +111,7 @@ public:
     bool initialize(int num_channels);
     void cleanup();
     
-    // Bandwidth management (integrated from BandwidthManager)
+    // Bandwidth management (per-decimator bandwidth option / decimation factor)
     void setBandwidthIndex(int index);
     int getBandwidthIndex() const { return current_bandwidth_index.load(); }
     int getDecimationFactor() const;

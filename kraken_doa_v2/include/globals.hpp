@@ -27,7 +27,6 @@ class ScannerManager;
 class ContinuousScanner;
 class GpsdClient;
 class StationInfo;
-template<typename T> class BlockingRingBuffer;
 
 // Global state declarations
 extern std::atomic<bool> running;

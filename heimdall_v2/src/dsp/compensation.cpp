@@ -267,11 +267,10 @@ void apply_phase_compensation_once(const std::map<int, float>& measured_phases,
 
 bool check_phase_convergence(const std::map<int, float>& current_phases,
                              const std::map<int, float>& current_amplitudes) {
-    if (!phase_compensation || phase_compensation->convergence_check_active.exchange(true)) return false;
+    if (!phase_compensation) return false;
 
     // Skip phase compensation in wideband scan mode
     if (operating_mode.load() == OperatingMode::WIDEBAND_SCAN) {
-        phase_compensation->convergence_check_active = false;
         return false;
     }
 
@@ -312,7 +311,6 @@ bool check_phase_convergence(const std::map<int, float>& current_phases,
         if (phase_compensation->convergence_count >= phase_compensation->required_convergence_readings) {
             // Either finish, or (per-bin mode) enter the equalizer measurement window.
             proceed_after_scalar_convergence_locked();
-            phase_compensation->convergence_check_active = false;
             return true;
         }
     } else {
@@ -354,7 +352,6 @@ bool check_phase_convergence(const std::map<int, float>& current_phases,
         }
     }
     
-    phase_compensation->convergence_check_active = false;
     return false;
 }
 
@@ -362,6 +359,40 @@ std::optional<PhaseCompensatorState> get_phase_compensation_state() {
     if (!phase_compensation) return std::nullopt;
     std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
     return phase_compensation->state;
+}
+
+void reset_phase_state_locked(PhaseCompensatorState state, bool drop_per_bin_eq) {
+    phase_compensation->state = state;
+    phase_compensation->compensation_applied = false;
+    phase_compensation->convergence_count = 0;
+    phase_compensation->stable_nonzero_count = 0;
+    phase_compensation->failed_convergence_attempts = 0;
+    phase_compensation->checks_since_compensation = 0;
+    if (drop_per_bin_eq) {
+        // The per-bin equalizer must be re-measured; stop applying any stale
+        // FIR immediately. Clearing ready under state_mutex (the same lock the
+        // design uses to publish) makes the recal-vs-design race safe.
+        phase_compensation->per_bin_measured = false;
+        per_bin_cal.ready.store(false, std::memory_order_release);
+    }
+    // Identity for every channel. The reference entry is never written (apply
+    // and verify skip REF_CHANNEL), so this is equivalent to resetting only the
+    // non-reference entries.
+    for (int i = 0; i < NUM_DEVICES; ++i) {
+        phase_compensation->compensation_vector.store(i, Complex(1.0f, 0.0f));
+    }
+}
+
+void begin_retune_cooldown(const char* what) {
+    set_bias_tee_all_devices(false, devices);
+
+    if (!phase_compensation) return;
+    std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+    phase_compensation->last_frequency_change = std::chrono::steady_clock::now();
+    phase_compensation->cooldown_active = true;
+    reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_STABILITY);
+    std::cout << what << ": entering " << phase_compensation->stability_delay_override_ms.load()
+              << "ms cooldown (bias tee OFF)" << std::endl;
 }
 
 void reset_lag_compensation_all_channels() {
@@ -413,19 +444,8 @@ void kerberos_enter_uncalibrated(const char* reason) {
 
     if (phase_compensation) {
         std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
-        phase_compensation->state = PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION;
-        phase_compensation->compensation_applied = false;
-        phase_compensation->convergence_count = 0;
-        phase_compensation->stable_nonzero_count = 0;
-        phase_compensation->failed_convergence_attempts = 0;
-        phase_compensation->checks_since_compensation = 0;
+        reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION);
         phase_compensation->cooldown_active = false;
-        phase_compensation->per_bin_measured = false;
-        per_bin_cal.ready.store(false, std::memory_order_release);
-        for (int i = 0; i < NUM_DEVICES; ++i) {
-            phase_compensation->compensation_vector.store(i, Complex(1.0f, 0.0f));
-        }
-        phase_compensation->convergence_check_active = false;
     }
 
     {
@@ -508,18 +528,7 @@ void recover_coherence(bool manual) {
     //    for lag to complete) and drop any stale per-bin equalizer.
     if (phase_compensation) {
         std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
-        phase_compensation->state = PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION;
-        phase_compensation->compensation_applied = false;
-        phase_compensation->convergence_count = 0;
-        phase_compensation->stable_nonzero_count = 0;
-        phase_compensation->failed_convergence_attempts = 0;
-        phase_compensation->checks_since_compensation = 0;
-        phase_compensation->per_bin_measured = false;
-        per_bin_cal.ready.store(false, std::memory_order_release);
-        for (int i = 0; i < NUM_DEVICES; ++i) {
-            phase_compensation->compensation_vector.store(i, Complex(1.0f, 0.0f));
-        }
-        phase_compensation->convergence_check_active = false;
+        reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION);
     }
 
     // Re-check the mode just before committing FFT-on. If wideband or scanning
@@ -1007,26 +1016,18 @@ bool process_channel_lag_compensation(int channel, float lag) {
             // If initial calibration is complete, always stay converged
             if (device->compensation.initial_calibration_complete) return true;
 
-            // If lag compensation is locked, don't automatically recalibrate
-            if (comp.lag_compensation_locked) {
-                // Only log significant drift, but don't recalibrate
-                if (std::abs(lag) > comp.convergence_threshold * 2.0f) {
-                    static std::chrono::steady_clock::time_point last_warning;
-                    auto now = std::chrono::steady_clock::now();
-                    if (std::chrono::duration_cast<std::chrono::seconds>(now - last_warning).count() > 10) {
-                        std::cerr << "Channel " << channel << " lag drift detected (lag=" << lag
-                                  << "), but locked. Use 'reset_lag_compensation' to recalibrate." << std::endl;
-                        last_warning = now;
-                    }
+            // CONVERGED always carries lag_compensation_locked (both are set
+            // together at lock and cleared together by
+            // reset_lag_compensation_all_channels(), all under
+            // compensation_mutex), so never automatically recalibrate here.
+            // Only log significant drift (throttled per channel).
+            if (std::abs(lag) > comp.convergence_threshold * 2.0f) {
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::seconds>(now - comp.last_drift_warning).count() > 10) {
+                    std::cerr << "Channel " << channel << " lag drift detected (lag=" << lag
+                              << "), but locked. Use 'reset_lag_compensation' to recalibrate." << std::endl;
+                    comp.last_drift_warning = now;
                 }
-                return true;
-            }
-
-            // If not locked and drift exceeds threshold, recalibrate
-            if (std::abs(lag) > comp.convergence_threshold) {
-                comp.state = LagCompensatorState::MEASURING;
-                comp.zero_lag_count = 0;
-                return false;
             }
             return true;
     }
@@ -1126,7 +1127,7 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                                 phase_compensation->state = PhaseCompensatorState::MEASURING_INITIAL_PHASE;
                                 phase_compensation->stable_nonzero_count = 0;
                                 std::cout << "Phase: All channels lag converged" << std::endl;
-                                clear_l2_buffer(channel);
+                                clear_l2_buffer();
                             }
                             break;
                         }

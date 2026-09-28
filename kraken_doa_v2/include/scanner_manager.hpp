@@ -3,8 +3,8 @@
 #include "scanner_config.hpp"
 #include <thread>
 #include <mutex>
-#include <condition_variable>
 #include <chrono>
+#include <limits>
 #include <vector>
 #include <string>
 
@@ -22,8 +22,6 @@ public:
     // Scanner control
     bool start();
     bool stop();
-    bool pause();
-    bool resume();
     bool next();
 
     // Status queries
@@ -50,10 +48,29 @@ public:
     // bursts are visible even to consumers that only poll occasionally.
     int64_t getLastNoiseActiveNs() const { return last_noise_active_ns_.load(); }
 
-private:
-    // Thread function
-    void scannerThread();
+    // The noise source must have been continuously OFF for this long before
+    // data is trusted again. The server pulses it during calibration /
+    // verification; packets arrive at 50-80/s but consumers poll far less
+    // often, so the per-packet timestamp above catches bursts between polls.
+    static constexpr long NOISE_QUIET_MS = 750;
 
+    // Milliseconds since the last packet that reported the noise source
+    // active (effectively "forever" if it was never seen).
+    long msSinceNoiseActive() const {
+        int64_t last_ns = getLastNoiseActiveNs();
+        if (last_ns == 0) {
+            return std::numeric_limits<long>::max();
+        }
+        int64_t now_ns = std::chrono::steady_clock::now().time_since_epoch().count();
+        return (long)((now_ns - last_ns) / 1000000);
+    }
+
+    // Noise source on now, or seen within the last NOISE_QUIET_MS.
+    bool isNoiseRecentlyActive() const {
+        return isNoiseSourceActive() || msSinceNoiseActive() < NOISE_QUIET_MS;
+    }
+
+private:
     // Core algorithms
     void buildFrequencyGroups();
     bool checkSignalPresent(size_t freq_index, const std::vector<float>& magnitudes,
@@ -66,12 +83,6 @@ private:
     // thread, which calls updateFFTData while holding the global fft_mutex.
     void startLockTransition(size_t freq_index, float signal_db);
     void startResumeTransition();
-    void tuneToGroup(size_t group_index);
-
-    // State machine helpers
-    void processScanning();
-    void processLocked();
-    void processSignalLostWait();
 
     // Data members
     ScannerConfig config_;
@@ -79,12 +90,10 @@ private:
     std::vector<FrequencyGroup> groups_;
 
     // Threading
-    std::thread scanner_thread_;
     std::atomic<bool> running_;
     std::atomic<bool> transition_in_progress_{false};  // Lock/resume worker active
     mutable std::mutex config_mutex_;  // Mutable for const getConfig functions
     std::mutex fft_mutex_;
-    std::condition_variable state_cv_;
 
     // FFT data cache
     std::vector<float> cached_magnitudes_;

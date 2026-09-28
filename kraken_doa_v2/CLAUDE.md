@@ -106,7 +106,6 @@ WebSocket Server (port 8080, HTTPS)
 
 **Managers** (`src/`):
 - `channel_manager.cpp`: Channel state (frequency, gain, tuner mappings)
-- `bandwidth_manager.cpp`: Decimation factor selection
 - `decimator_manager.cpp`: Dynamic decimator allocation (FM + MUSIC)
 - `control_handler.cpp`: WebSocket command processing
 - `message_builders.cpp`: JSON/binary message construction

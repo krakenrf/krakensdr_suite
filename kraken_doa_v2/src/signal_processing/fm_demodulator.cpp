@@ -102,8 +102,6 @@ FMDemodulatorRobust::~FMDemodulatorRobust() {
 
     // Cleanup liquid-dsp objects
     if (rf_agc) agc_crcf_destroy(rf_agc);
-    if (fm_demod) freqdem_destroy(fm_demod);
-    if (audio_decim) firdecim_rrrf_destroy(audio_decim);
     if (deemphasis) iirfilt_rrrf_destroy(deemphasis);
     if (dc_blocker) iirfilt_rrrf_destroy(dc_blocker);
     if (audio_resampler) resamp_rrrf_destroy(audio_resampler);
@@ -123,27 +121,9 @@ float FMDemodulatorRobust::getInputSampleRate() const {
     return input_sample_rate.load();
 }
 
-bool FMDemodulatorRobust::shouldUseResampling(float /*input_rate*/) const {
-    // ALWAYS use resampling to guarantee exactly 48kHz output
-    // This ensures perfect audio sample rate regardless of input bandwidth
-    return true;
-}
-
-int FMDemodulatorRobust::calculateOptimalAudioDecimation(float input_rate) const {
-    if (input_rate <= AUDIO_SAMPLE_RATE) {
-        return 1;  // No decimation for upsampling cases
-    }
-    
-    // Find the decimation factor that gets us closest to 48kHz
-    int best_decimation = static_cast<int>(std::round(input_rate / AUDIO_SAMPLE_RATE));
-    if (best_decimation < 1) best_decimation = 1;
-    
-    return best_decimation;
-}
-
 void FMDemodulatorRobust::setupAudioProcessing(float input_rate) {
-    needs_resampling = shouldUseResampling(input_rate);
-
+    // ALWAYS resample (no integer audio decimation) to guarantee exactly 48kHz
+    // output regardless of input bandwidth.
     // Calculate base resampling ratio for 48kHz output
     float base_ratio = AUDIO_SAMPLE_RATE / input_rate;
 
@@ -168,7 +148,6 @@ void FMDemodulatorRobust::setupAudioProcessing(float input_rate) {
     }
 
     resampling_ratio = base_ratio * compensation;
-    current_audio_decimation = 1;  // No decimation when using resampler
 
     std::cout << "Audio processing: " << (input_rate/1000.0f) << "kHz -> 48.0kHz using resampling"
               << " (base_ratio=" << base_ratio << ", compensation=" << compensation
@@ -191,8 +170,6 @@ void FMDemodulatorRobust::recreateFilters() {
 
     // Cleanup existing filters
     if (rf_agc) agc_crcf_destroy(rf_agc);
-    if (fm_demod) freqdem_destroy(fm_demod);
-    if (audio_decim) firdecim_rrrf_destroy(audio_decim);
     if (deemphasis) iirfilt_rrrf_destroy(deemphasis);
     if (dc_blocker) iirfilt_rrrf_destroy(dc_blocker);
     if (audio_resampler) resamp_rrrf_destroy(audio_resampler);
@@ -222,31 +199,17 @@ void FMDemodulatorRobust::recreateFilters() {
         default: mode_name = "Unknown"; break;
     }
 
+    // Demodulation itself is done inline in process_decimated_samples
+    // (envelope detection / fast_atan2 discriminator) - no liquid-dsp object.
     if (mode == DemodulatorMode::AM) {
-        // AM mode doesn't need FM demodulator, but we create one anyway for compatibility
-        float kf = 0.1f;  // Minimal value
-        fm_demod = freqdem_create(kf);
         std::cout << "Created AM demodulator: mode=" << mode_name
                   << ", input_rate=" << (current_input_rate/1000.0f)
                   << "kHz (envelope detection)" << std::endl;
     } else {
-        // FM demodulator with mode-dependent deviation
         float deviation_hz = (mode == DemodulatorMode::WBFM) ? WBFM_DEVIATION_HZ : NBFM_DEVIATION_HZ;
-        float kf = deviation_hz / (current_input_rate / 2.0f);
-
-        // Clamp kf to prevent instability at low sample rates
-        // kf should be < 0.5 for stable FM demodulation
-        if (kf > 0.45f) {
-            std::cout << "WARNING: FM modulation index kf=" << kf << " is too high, clamping to 0.45" << std::endl;
-            kf = 0.45f;
-        }
-
-        fm_demod = freqdem_create(kf);
-
         std::cout << "Created FM demodulator: mode=" << mode_name
                   << ", deviation=" << (deviation_hz/1000.0f)
-                  << "kHz, input_rate=" << (current_input_rate/1000.0f)
-                  << "kHz, kf=" << kf << std::endl;
+                  << "kHz, input_rate=" << (current_input_rate/1000.0f) << "kHz" << std::endl;
     }
     
     // ALWAYS use audio resampler to guarantee exactly 48kHz output
@@ -298,9 +261,7 @@ void FMDemodulatorRobust::recreateFilters() {
 
     std::cout << "Created audio resampler: " << (current_input_rate/1000.0f) << "kHz -> 48.0kHz exactly"
              << " (ratio=" << ratio << ", cutoff=" << cutoff_freq << ", filter_len=" << filter_len << ")" << std::endl;
-    
-    // No decimation filter needed - we always use resampling
-    audio_decim = nullptr;
+
 
     // De-emphasis filter (75µs time constant for FM broadcast)
     // Only used for WBFM - NBFM/AM don't use pre-emphasis
@@ -339,21 +300,20 @@ void FMDemodulatorRobust::recreateFilters() {
 }
 
 // OPTIMIZATION: Move version - takes ownership of input data
-std::vector<float> FMDemodulatorRobust::process_decimated_samples(
-    std::vector<std::complex<float>>&& decimated_samples) {
+void FMDemodulatorRobust::process_decimated_samples(
+    std::vector<std::complex<float>>&& decimated_samples, std::vector<float>& audio_out) {
 
+    audio_out.clear();
     if (!processing_enabled.load() || decimated_samples.empty()) {
-        return std::vector<float>();
+        return;
     }
 
     updateFiltersIfNeeded();
 
     std::unique_lock<std::mutex> lock(process_mutex, std::try_to_lock);
     if (!lock.owns_lock() || !processing_enabled.load()) {
-        return std::vector<float>();
+        return;
     }
-
-    work_output_audio_.clear();
 
     // Calculate signal strength
     float sum_power = 0.0f;
@@ -472,7 +432,7 @@ std::vector<float> FMDemodulatorRobust::process_decimated_samples(
     // BUGFIX: Check if audio_resampler is valid before using it
     if (!audio_resampler) {
         std::cerr << "ERROR: audio_resampler is null, cannot process FM audio!" << std::endl;
-        return std::vector<float>();
+        return;
     }
 
     // Use resampler to get exactly 48kHz - no decimation path
@@ -528,14 +488,12 @@ std::vector<float> FMDemodulatorRobust::process_decimated_samples(
             audio_sample = 0.95f * tanhf(audio_sample / 0.95f);
         }
 
-        work_output_audio_.push_back(audio_sample);
+        audio_out.push_back(audio_sample);
         // Peak meter with decay - a pure max() would ratchet up and stick at
         // the historical peak forever
         float lvl = audio_level.load();
         audio_level = std::max(lvl * 0.999f, fabsf(audio_sample));
     }
-
-    return std::move(work_output_audio_);
 }
 
 

@@ -27,7 +27,10 @@ extern BufferPool<std::vector<SampleBuffer>> l2_raw_buffer_pool;
 extern std::atomic<size_t> l2_raw_cap;  // C5: runtime L2-raw depth cap (tighter during calibration)
 
 // Sample conversion and processing
-ComplexBuffer samples_to_complex_with_compensation(const uint8_t* samples, int count, int channel);
+// Writes `count` compensated samples into `out` (resized in place, so a pooled
+// buffer's capacity is reused).
+void samples_to_complex_with_compensation(const uint8_t* samples, int count, int channel,
+                                          ComplexBuffer& out);
 
 // L1 -> L2-raw drain (cheap, time-critical, realtime priority).
 void sample_processor(const std::vector<std::unique_ptr<SDRDevice>>& devices);
@@ -41,7 +44,6 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
 void clear_l1_buffer();
 void clear_l1_buffer(int channel);
 void clear_l2_buffer();
-void clear_l2_buffer(int channel);
 void clear_l2_raw_buffer();
 
 // Coherence-loss signalling. Cheap and callable from any thread (including the

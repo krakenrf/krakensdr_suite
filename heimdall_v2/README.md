@@ -221,10 +221,6 @@ surfaced in the control-port status; a recovery that never converges is aborted 
 | **TCP control** | **8092** | line JSON | Programmatic control + 2 Hz status broadcast |
 | **RTL-TCP** | **1234** | `rtl_tcp` | One selectable channel for SDR#/GQRX/SDR++/CubicSDR |
 
-> A KrakenSDR-compatible IQ-header/control protocol (`src/net/kraken_*.cpp`,
-> ports 5000/5001) exists in the source but is **not currently in the Makefile or
-> started by `main()`** — it's experimental/dormant.
-
 ### Web interface (port 8070)
 
 uWebSockets serves `index.html` (loaded at runtime — edit and refresh, no rebuild)

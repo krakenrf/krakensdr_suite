@@ -10,17 +10,13 @@ template<typename T>
 class BufferPool {
 private:
     moodycamel::ConcurrentQueue<T> available;
-    std::vector<T> storage;  // Keep ownership of all buffers
     size_t pool_size;
 
 public:
     explicit BufferPool(size_t size) : pool_size(size) {
-        storage.reserve(size);
-
-        // Pre-allocate all buffers
+        // Seed the pool with default-constructed buffers
         for (size_t i = 0; i < size; ++i) {
-            storage.emplace_back();
-            available.enqueue(std::move(storage[i]));
+            available.enqueue(T());
         }
     }
 

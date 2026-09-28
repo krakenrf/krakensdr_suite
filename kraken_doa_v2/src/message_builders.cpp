@@ -13,6 +13,7 @@
 #include "channel_manager.hpp"
 #include "doa_logger.hpp"
 #include "utils/system_stats.hpp"
+#include "utils/json_escape.hpp"
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
@@ -24,30 +25,6 @@ using namespace std;
 using namespace std::chrono;
 
 extern DecimatorManager decimator_manager;
-
-// Minimal JSON string escaping for user-supplied text (the station callsign).
-static string json_escape_str(const string& s) {
-    string out;
-    out.reserve(s.size() + 8);
-    for (char c : s) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    char buf[8];
-                    snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-                    out += buf;
-                } else {
-                    out += c;
-                }
-        }
-    }
-    return out;
-}
 
 // Cached frequency arrays for scanner (avoid heap alloc every frame)
 static std::vector<float> cached_wideband_freqs;
@@ -536,7 +513,7 @@ string MessageBuilders::build_system_status_message() {
     // mobile (0's), static (manual), or gps (live fix)).
     StationLocation sl = station_info.resolve();
     json << ",\"station\":{";
-    json << "\"id\":\"" << json_escape_str(sl.id) << "\"";
+    json << "\"id\":\"" << json_escape(sl.id) << "\"";
     json << ",\"source\":\"" << sl.source_str() << "\"";
     json << ",\"lat\":" << fixed << setprecision(7) << sl.lat;
     json << ",\"lon\":" << setprecision(7) << sl.lon;
@@ -715,4 +692,65 @@ string MessageBuilders::build_beamformed_fft_message(int decimator_id) {
     msg.add_vector(compressed);
 
     return msg.to_string();
+}
+
+string MessageBuilders::build_decimator_info_message(bool force_zero_offset) {
+    auto info_list = decimator_manager.getDecimatorInfoList();
+
+    // In wideband mode, convert offsets to be relative to wideband center for UI
+    bool wideband = wideband_mode_enabled.load();
+    float wideband_center_hz = 100e6f;  // Default
+
+    if (wideband) {
+        int nc = num_channels.load();
+        if (nc > 0) {
+            float min_tuner_freq = ChannelManager::get_frequency(0);
+            float max_tuner_freq = ChannelManager::get_frequency(nc - 1);
+            wideband_center_hz = (min_tuner_freq + max_tuner_freq) / 2.0f;
+        }
+    }
+
+    stringstream json;
+    json << "{\"decimator_info\":[";
+    bool first = true;
+
+    for (auto& info : info_list) {
+        // Convert offset to wideband-center-relative for UI
+        float ui_offset_hz = info.frequency_offset_hz;
+
+        if (force_zero_offset) {
+            ui_offset_hz = 0.0f;
+        } else if (wideband) {
+            // Get this decimator's tuner channel
+            auto decimator_inst = decimator_manager.getDecimator(info.id);
+            if (decimator_inst) {
+                int tuner_ch = decimator_inst->wideband_tuner_channel;
+                float tuner_freq_hz = ChannelManager::get_frequency(tuner_ch);
+
+                // Convert: tuner_relative → absolute → wideband_center_relative
+                float absolute_freq = tuner_freq_hz + info.frequency_offset_hz;
+                ui_offset_hz = absolute_freq - wideband_center_hz;
+            }
+        }
+
+        if (!first) json << ",";
+        first = false;
+
+        json << "{\"id\":" << info.id
+             << ",\"freq_offset_hz\":" << ui_offset_hz  // Send UI-friendly offset
+             << ",\"bandwidth_index\":" << info.bandwidth_index
+             << ",\"bandwidth_mhz\":" << info.bandwidth_mhz
+             << ",\"enabled\":" << (info.enabled ? "true" : "false")
+             << ",\"is_fm_source\":" << (info.is_fm_source ? "true" : "false")
+             << ",\"demod_mode\":\"" << DecimatorManager::demodModeToString(info.demod_mode) << "\""
+             << ",\"squelch_enabled\":" << (info.squelch_enabled ? "true" : "false")
+             << ",\"squelch_level\":" << info.squelch_level
+             << ",\"squelch_open\":" << (info.squelch_open ? "true" : "false")
+             << ",\"squelch_method\":\"" << (info.squelch_method == 2 ? "EIGEN_AUTO" : (info.squelch_method == 1 ? "EIGEN" : "FFT")) << "\""
+             << ",\"squelch_eigen_threshold\":" << info.squelch_eigen_threshold
+             << "}";
+    }
+    json << "]}";
+
+    return json.str();
 }

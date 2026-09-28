@@ -13,7 +13,6 @@
 #include <cmath>
 #include <thread>
 #include <chrono>
-#include <future>
 
 DecimatorManager decimator_manager;
 
@@ -468,78 +467,6 @@ DemodulatorMode DecimatorManager::stringToDemodMode(const std::string& str) {
     if (str == "NBFM" || str == "nbfm") return DemodulatorMode::NBFM;
     if (str == "AM" || str == "am") return DemodulatorMode::AM;
     return DemodulatorMode::WBFM;  // Default
-}
-
-// ============================================
-// HYBRID PARALLELIZATION LEVEL 2: Per-Decimator-Stage Threading
-// Each system-level decimator runs in parallel
-// Combined with Level 1 (per-antenna threading in SharedDecimator)
-// ============================================
-std::vector<DecimatorManager::ProcessResult> DecimatorManager::processAllDecimators(
-    const std::vector<std::vector<std::complex<float>>>& channel_data) {
-
-    auto start_time = std::chrono::steady_clock::now();
-
-    std::vector<ProcessResult> results;
-    auto all_decimators = getAllDecimators();
-
-    // HYBRID PARALLELIZATION LEVEL 2: Launch async tasks for each decimator stage
-    // Note: Each decimator internally parallelizes across antennas (Level 1)
-    std::vector<std::future<std::pair<bool, ProcessResult>>> futures;
-    futures.reserve(all_decimators.size());
-
-    for (const auto& inst : all_decimators) {
-        // Skip disabled or being-deleted decimators
-        if (!inst || !inst->enabled || inst->being_deleted.load()) continue;
-
-        // Launch async task for this decimator stage
-        // Inside decimateMultiChannel, antennas are processed in parallel (Level 1)
-        futures.push_back(std::async(std::launch::async, [inst, &channel_data, this]() -> std::pair<bool, ProcessResult> {
-            try {
-                ProcessResult result;
-                result.decimator_id = inst->id;
-                result.is_fm_source = (inst->id == fm_decimator_id.load());
-
-                // Process through decimator
-                result.decimated_data = inst->decimator->decimateMultiChannel(
-                    channel_data,
-                    inst->decimator->getDecimationFactor(),
-                    inst->frequency_offset_hz
-                );
-
-                // Restore user-facing offset sign for downstream consumers (FM, DoA)
-                result.decimated_data.freq_offset_hz = inst->frequency_offset_hz;
-                for (auto& channel_data_out : result.decimated_data.channels) {
-                    channel_data_out.freq_offset_hz = inst->frequency_offset_hz;
-                }
-
-                return {true, std::move(result)};
-            } catch (const std::exception& e) {
-                std::cerr << "Decimator " << inst->id << " error: " << e.what() << std::endl;
-                return {false, ProcessResult{}};
-            }
-        }));
-    }
-
-    // Collect results from all futures
-    results.reserve(futures.size());
-    for (auto& future : futures) {
-        auto [success, result] = future.get();
-        if (success) {
-            results.push_back(std::move(result));
-        }
-    }
-
-    auto end_time = std::chrono::steady_clock::now();
-    auto total_duration_us = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
-
-    // Publish the live timing for the status dashboard (PERF field). This used
-    // to be a throttled "PERFORMANCE WARNING" log; the dashboard now shows the
-    // number continuously and colors it when it climbs into the danger zone
-    // (>4ms with multiple decimators indicates a CPU bottleneck).
-    last_process_ms_.store(total_duration_us / 1000.0, std::memory_order_relaxed);
-
-    return results;
 }
 
 std::vector<DecimatorManager::DecimatorInfo> DecimatorManager::getDecimatorInfoList() const {

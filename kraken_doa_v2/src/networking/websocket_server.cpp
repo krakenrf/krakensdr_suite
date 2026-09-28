@@ -226,10 +226,6 @@ void stream_download(uWS::HttpResponse<SSL>* res, const std::string& fullpath,
 
 } // namespace
 
-void WebSocketServer::initialize() {
-    // WebSocket server initialization if needed
-}
-
 string WebSocketServer::load_html_content() {
     ifstream file(HTML_FILE);
     if (!file.is_open()) {
@@ -473,10 +469,6 @@ void WebSocketServer::web_server_main() {
         cerr << "FATAL SSL ERROR: " << e.what() << endl;
         _Exit(1);
     }
-}
-
-void WebSocketServer::handle_websocket_message(string_view message) {
-    ControlHandler::handle_websocket_message(message);
 }
 
 void WebSocketServer::broadcast_json_message(const string& json) {

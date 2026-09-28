@@ -173,7 +173,7 @@ are decimal; booleans are `1`/`0` unless noted.
 |---|---|
 | `WIDEBAND_MODE:<0\|1>` / `WIDEBAND_BASE_FREQ:<MHz>` | Wideband enable / base freq. |
 | `SCANNER_LOAD_CONFIG:<...>` / `SCANNER_GET_CONFIG` | Scanner config load / query. |
-| `SCANNER_START` / `SCANNER_STOP` / `SCANNER_PAUSE` / `SCANNER_RESUME` / `SCANNER_NEXT` | Discrete scanner control. |
+| `SCANNER_START` / `SCANNER_STOP` / `SCANNER_NEXT` | Discrete scanner control. |
 | `SCANNER_SET_SQUELCH:<v>` / `SCANNER_SET_DWELL:<ms>` | Discrete scanner params. |
 | `CONTINUOUS_SCANNER_START` / `CONTINUOUS_SCANNER_STOP` / `CONTINUOUS_SCANNER_STATUS` | Continuous scanner control. |
 | `CONTINUOUS_SCANNER_SQUELCH:<v>` / `CONTINUOUS_SCANNER_DWELL:<ms>` / `CONTINUOUS_SCANNER_DECAY:<s>` | Continuous scanner params. |

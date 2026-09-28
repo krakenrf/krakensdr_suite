@@ -374,10 +374,6 @@ void Beamformer::delayAndSum(const SharedDecimator::MultiChannelDecimated& input
 // SNR estimation (256-point FFT, peak minus 10th-percentile noise floor)
 // ============================================================================
 
-float Beamformer::computeChannelSNR(const std::vector<std::complex<float>>& samples) {
-    return computeChannelSNR_FFT(samples);
-}
-
 float Beamformer::computeChannelSNR_FFT(const std::vector<std::complex<float>>& samples) {
     if (!snr_plan_ || samples.empty()) return 0.0f;
 
@@ -776,12 +772,6 @@ bool Beamformer::process(const SharedDecimator::MultiChannelDecimated& input,
         last_snr_improvement_db_ = out_snr - ref_snr;
     }
 
-    // Cache the output for getBeamformedData()
-    {
-        std::lock_guard<std::mutex> lock(data_mutex_);
-        beamformed_data_ = output;
-    }
-
     // Update statistics
     {
         std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -804,21 +794,6 @@ bool Beamformer::process(const SharedDecimator::MultiChannelDecimated& input,
 // ============================================================================
 // Data access
 // ============================================================================
-
-bool Beamformer::getBeamformedData(std::vector<std::complex<float>>& output) const {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    if (beamformed_data_.empty()) {
-        return false;
-    }
-    output = beamformed_data_;
-    return true;
-}
-
-bool Beamformer::getBeamformedAudioSamples(std::vector<float>& output) const {
-    // Not implemented - FM demodulation consumes beamformed IQ directly
-    output.clear();
-    return false;
-}
 
 int Beamformer::getSelectedChannel() const {
     return selected_channel_.load(std::memory_order_relaxed);

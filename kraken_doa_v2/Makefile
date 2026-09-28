@@ -67,7 +67,6 @@ APP_SRCS = \
 	$(SRCDIR)/settings_store.cpp \
 	$(SRCDIR)/message_builders.cpp \
 	$(SRCDIR)/decimator_manager.cpp \
-	$(SRCDIR)/bandwidth_manager.cpp \
 	$(SRCDIR)/scanner_manager.cpp \
 	$(SRCDIR)/continuous_scanner.cpp
 

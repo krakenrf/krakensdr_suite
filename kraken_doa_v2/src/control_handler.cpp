@@ -12,9 +12,11 @@
 #include "station_info.hpp"
 #include "settings_store.hpp"
 #include "doa_logger.hpp"
+#include "message_builders.hpp"
 #include "networking/data_receiver.hpp"
 #include "networking/web_mapper.hpp"
 #include "networking/websocket_server.hpp"
+#include "utils/json_escape.hpp"
 #include <string>
 #include <sstream>
 #include <iostream>
@@ -46,9 +48,6 @@ static double parse_double(string_view msg, size_t offset) {
 static int parse_int(string_view msg, size_t offset) {
     return stoi(string(msg.substr(offset)));
 }
-static int64_t parse_int64(string_view msg, size_t offset) {
-    return stoll(string(msg.substr(offset)));
-}
 
 // --- Decimator iteration helpers ---
 template<typename Fn>
@@ -71,31 +70,6 @@ static void broadcast(const string& json) {
 // clients (the backend, not the browser, is the source of truth).
 static std::map<string, string> sync_replay_store;
 static std::mutex sync_store_mutex;
-
-static string json_escape(string_view s) {
-    string out;
-    out.reserve(s.size() + 8);
-    for (char c : s) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\b': out += "\\b"; break;
-            case '\f': out += "\\f"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    char buf[8];
-                    snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-                    out += buf;
-                } else {
-                    out += c;
-                }
-        }
-    }
-    return out;
-}
 
 static string make_sync_cmd_json(string_view cmd) {
     return "{\"sync_cmd\":\"" + json_escape(cmd) + "\"}";
@@ -1251,62 +1225,7 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("GET_DECIMATOR_INFO")) {
         // Send current decimator configuration to UI
-        auto info_list = decimator_manager.getDecimatorInfoList();
-
-        // In wideband mode, convert offsets to be relative to wideband center for UI
-        bool wideband = wideband_mode_enabled.load();
-        float wideband_center_hz = 100e6f;  // Default
-
-        if (wideband) {
-            int nc = num_channels.load();
-            if (nc > 0) {
-                float min_tuner_freq = ChannelManager::get_frequency(0);
-                float max_tuner_freq = ChannelManager::get_frequency(nc - 1);
-                wideband_center_hz = (min_tuner_freq + max_tuner_freq) / 2.0f;
-            }
-        }
-
-        stringstream json;
-        json << "{\"decimator_info\":[";
-        bool first = true;
-
-        for (auto& info : info_list) {
-            // Convert offset to wideband-center-relative for UI
-            float ui_offset_hz = info.frequency_offset_hz;
-
-            if (wideband) {
-                // Get this decimator's tuner channel
-                auto decimator_inst = decimator_manager.getDecimator(info.id);
-                if (decimator_inst) {
-                    int tuner_ch = decimator_inst->wideband_tuner_channel;
-                    float tuner_freq_hz = ChannelManager::get_frequency(tuner_ch);
-
-                    // Convert: tuner_relative → absolute → wideband_center_relative
-                    float absolute_freq = tuner_freq_hz + info.frequency_offset_hz;
-                    ui_offset_hz = absolute_freq - wideband_center_hz;
-                }
-            }
-
-            if (!first) json << ",";
-            first = false;
-
-            json << "{\"id\":" << info.id
-                 << ",\"freq_offset_hz\":" << ui_offset_hz  // Send UI-friendly offset
-                 << ",\"bandwidth_index\":" << info.bandwidth_index
-                 << ",\"bandwidth_mhz\":" << info.bandwidth_mhz
-                 << ",\"enabled\":" << (info.enabled ? "true" : "false")
-                 << ",\"is_fm_source\":" << (info.is_fm_source ? "true" : "false")
-                 << ",\"demod_mode\":\"" << DecimatorManager::demodModeToString(info.demod_mode) << "\""
-                 << ",\"squelch_enabled\":" << (info.squelch_enabled ? "true" : "false")
-                 << ",\"squelch_level\":" << info.squelch_level
-                 << ",\"squelch_open\":" << (info.squelch_open ? "true" : "false")
-                 << ",\"squelch_method\":\"" << (info.squelch_method == 2 ? "EIGEN_AUTO" : (info.squelch_method == 1 ? "EIGEN" : "FFT")) << "\""
-                 << ",\"squelch_eigen_threshold\":" << info.squelch_eigen_threshold
-                 << "}";
-        }
-        json << "]}";
-
-        broadcast(json.str());
+        broadcast(MessageBuilders::build_decimator_info_message());
     }
     else if (message.starts_with("DECIMATORS:")) {
         // Persisted-settings replay: rebuild the whole VFO setup in one shot.
@@ -1382,12 +1301,6 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("SCANNER_STOP")) {
         // Stop discrete scanner
         scanner_manager.stop();
-    }
-    else if (message.starts_with("SCANNER_PAUSE")) {
-        scanner_manager.pause();
-    }
-    else if (message.starts_with("SCANNER_RESUME")) {
-        scanner_manager.resume();
     }
     else if (message.starts_with("SCANNER_NEXT")) {
         scanner_manager.next();

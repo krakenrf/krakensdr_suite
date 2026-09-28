@@ -4,7 +4,7 @@
 #include "networking/websocket_server.hpp"
 #include "networking/data_receiver.hpp"
 #include "channel_manager.hpp"
-#include "bandwidth_manager.hpp"
+#include "message_builders.hpp"
 #include "decimator_manager.hpp"
 #include "config.hpp"
 #include <iostream>
@@ -387,16 +387,6 @@ bool ScannerManager::stop() {
     return true;
 }
 
-bool ScannerManager::pause() {
-    // No-op for now
-    return false;
-}
-
-bool ScannerManager::resume() {
-    // No-op for now
-    return false;
-}
-
 bool ScannerManager::next() {
     // Force continue scanning (skip current locked signal)
     if (running_.load() && status_.state == ScannerState::LOCKED) {
@@ -409,23 +399,6 @@ bool ScannerManager::next() {
 
 bool ScannerManager::isRunning() const {
     return running_.load();
-}
-
-// ============================================================================
-// SCANNER THREAD - NO LONGER USED (SERVER-SIDE SCANNER)
-// ============================================================================
-
-void ScannerManager::scannerThread() {
-    // OBSOLETE: Scanner thread no longer needed with server-side implementation
-    // The server handles all frequency switching internally
-    // Client just detects changes from packet headers
-    cout << "scannerThread() called but server-side scanner is active - this should not happen!" << endl;
-}
-
-void ScannerManager::tuneToGroup(size_t group_index) {
-    // OBSOLETE: Frequency tuning now handled server-side
-    // This function kept for backward compatibility but does nothing
-    cout << "tuneToGroup(" << group_index << ") called but server-side scanner handles tuning" << endl;
 }
 
 // ============================================================================
@@ -710,7 +683,6 @@ void ScannerManager::lockOnSignal(size_t freq_index, float signal_db) {
     }
 
     // Apply bandwidth setting to all decimators
-    BandwidthManager::set_bandwidth_index(best_bandwidth_index);
     for (const auto& dec : all_decimators) {
         if (dec && !dec->being_deleted.load(std::memory_order_relaxed)) {
             decimator_manager.setBandwidthIndex(dec->id, best_bandwidth_index);
@@ -721,28 +693,8 @@ void ScannerManager::lockOnSignal(size_t freq_index, float signal_db) {
          << " (target: " << freq.bandwidth_khz << " kHz)" << endl;
 
     // NOW send updated decimator info to browser with correct offset AND bandwidth
-    auto info_list = decimator_manager.getDecimatorInfoList();
-    stringstream decimator_json;
-    decimator_json << "{\"decimator_info\":[";
-    bool first = true;
-    for (const auto& info : info_list) {
-        if (!first) decimator_json << ",";
-        first = false;
-        decimator_json << "{\"id\":" << info.id
-                      << ",\"freq_offset_hz\":0"  // All offsets are now 0
-                      << ",\"bandwidth_index\":" << info.bandwidth_index  // Now has updated bandwidth
-                      << ",\"bandwidth_mhz\":" << info.bandwidth_mhz
-                      << ",\"enabled\":" << (info.enabled ? "true" : "false")
-                      << ",\"is_fm_source\":" << (info.is_fm_source ? "true" : "false")
-                      << ",\"squelch_enabled\":" << (info.squelch_enabled ? "true" : "false")
-                      << ",\"squelch_level\":" << info.squelch_level
-                      << ",\"squelch_open\":" << (info.squelch_open ? "true" : "false")
-                      << ",\"squelch_method\":\"" << (info.squelch_method == 2 ? "EIGEN_AUTO" : (info.squelch_method == 1 ? "EIGEN" : "FFT")) << "\""
-                      << ",\"squelch_eigen_threshold\":" << info.squelch_eigen_threshold
-                      << "}";
-    }
-    decimator_json << "]}";
-    WebSocketServer::broadcast_json_message(decimator_json.str());
+    WebSocketServer::broadcast_json_message(
+        MessageBuilders::build_decimator_info_message(/*force_zero_offset=*/true));
     cout << "Decimator info broadcast to browser (offset=0, bandwidth=" << best_bandwidth_index << ")" << endl;
 
     // Give server time to switch mode, tune, and send first coherent FFT packet

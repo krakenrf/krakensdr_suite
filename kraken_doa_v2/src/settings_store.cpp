@@ -1,4 +1,5 @@
 #include "settings_store.hpp"
+#include "utils/json_escape.hpp"
 
 #include <map>
 #include <mutex>
@@ -120,21 +121,6 @@ namespace {
         for (const Setting& s : SCHEMA)
             if (cmd.starts_with(s.prefix)) return &s;
         return nullptr;
-    }
-
-    string json_escape(string_view s) {
-        string out;
-        for (char c : s) {
-            switch (c) {
-                case '"':  out += "\\\""; break;
-                case '\\': out += "\\\\"; break;
-                case '\n': out += "\\n";  break;
-                case '\r': out += "\\r";  break;
-                case '\t': out += "\\t";  break;
-                default:   out += c;      break;
-            }
-        }
-        return out;
     }
 
     // Locate the value for a flat-object key. Returns the unescaped string for a

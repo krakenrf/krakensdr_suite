@@ -54,7 +54,7 @@ struct FFTProcessingControl {
 
 struct ChannelCompensation {
     LagCompensatorState state = LagCompensatorState::MEASURING;
-    float convergence_threshold = 0.15f;  // |lag| drift that re-triggers cal (unlocked)
+    float convergence_threshold = 0.15f;  // locked-channel drift warning fires at 2x this |lag|
     // Closed-loop proportional servo (SERVOING state) - the whole lag
     // acquisition mechanism. The correction register stays live
     // (rtlsdr_set_sample_freq_correction_f, RTL2832 regs 0x3e/0x3f): it
@@ -110,6 +110,9 @@ struct ChannelCompensation {
     int zero_lag_count = 0;
     std::atomic<bool> initial_calibration_complete{false};
     std::atomic<bool> lag_compensation_locked{false};  // Lock after initial convergence
+    // Throttle for the locked-channel drift warning (per channel: touched only
+    // by this channel's lag thread, under compensation_mutex)
+    std::chrono::steady_clock::time_point last_drift_warning;
 };
 
 struct PhaseCompensationData {
@@ -167,7 +170,6 @@ struct PhaseCompensationData {
 
     // Mutex only for state changes, NOT for compensation vector reads
     std::mutex state_mutex;
-    std::atomic<bool> convergence_check_active{false};
 
     // Optional per-bin equalizer: true once the equalizer has been measured/
     // built for the current calibration cycle (reset on every recalibration).

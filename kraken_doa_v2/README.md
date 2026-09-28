@@ -140,9 +140,9 @@ src/networking/   tcp_client, data_receiver, websocket_server, binary_message
 src/signal_processing/  fft_processor, fm_demodulator, music_processor,
                         beamformer, shared_decimator
 src/utils/        iq_converter, raw_data_buffer, ring_buffer, system_stats
-src/              channel_manager, bandwidth_manager, decimator_manager,
-                  scanner_manager, continuous_scanner, control_handler,
-                  message_builders, main.cpp
+src/              channel_manager, decimator_manager, scanner_manager,
+                  continuous_scanner, control_handler, message_builders,
+                  main.cpp
 include/config.hpp   all compile-time constants
 kraken_doa.html      browser UI (loaded at runtime — edit & refresh, no rebuild)
 ```

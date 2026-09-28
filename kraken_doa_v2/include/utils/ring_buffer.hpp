@@ -2,10 +2,6 @@
 
 #include <vector>
 #include <atomic>
-#include <mutex>
-#include <condition_variable>
-#include <chrono>
-#include <memory>
 #include <cstring>
 
 template<typename T>
@@ -31,24 +27,6 @@ public:
     void get_stats(size_t& writes, size_t& reads, size_t& over, size_t& under) const;
     void reset_stats();
     void clear();
-};
-
-template<typename T>
-class BlockingRingBuffer : public RingBufferBase<T> {
-private:
-    mutable std::mutex cv_mutex;
-    mutable std::condition_variable data_available;
-    std::atomic<bool> shutdown_flag{false};
-    
-public:
-    BlockingRingBuffer(size_t size);
-    
-    bool write(const T* data, size_t count);
-    bool write_overwrite(const T* data, size_t count);
-    size_t read(T* data, size_t max_count);
-    size_t read_blocking_min(T* data, size_t max_count, size_t min_count, 
-                            std::chrono::milliseconds timeout = std::chrono::milliseconds(1000));
-    void shutdown();
 };
 
 class AudioRingBuffer : public RingBufferBase<float> {
@@ -103,109 +81,4 @@ template<typename T>
 void RingBufferBase<T>::clear() {
     write_pos.store(0, std::memory_order_release);
     read_pos.store(0, std::memory_order_release);
-}
-
-template<typename T>
-BlockingRingBuffer<T>::BlockingRingBuffer(size_t size) : RingBufferBase<T>(size) {}
-
-template<typename T>
-bool BlockingRingBuffer<T>::write(const T* data, size_t count) {
-    if (shutdown_flag.load()) return false;
-    
-    size_t current_write = this->write_pos.load();
-    size_t current_read = this->read_pos.load();
-    
-    size_t available_space = (current_read - current_write - 1) & this->size_mask;
-    if (count > available_space) {
-        return false;
-    }
-    
-    for (size_t i = 0; i < count; i++) {
-        this->buffer[(current_write + i) & this->size_mask] = data[i];
-    }
-    
-    this->write_pos.store((current_write + count) & this->size_mask);
-    this->total_writes.fetch_add(1);
-    
-    {
-        std::lock_guard<std::mutex> lock(cv_mutex);
-        data_available.notify_one();
-    }
-    
-    return true;
-}
-
-template<typename T>
-bool BlockingRingBuffer<T>::write_overwrite(const T* data, size_t count) {
-    if (shutdown_flag.load()) return false;
-    
-    size_t current_write = this->write_pos.load();
-    size_t current_read = this->read_pos.load();
-    
-    size_t available_space = (current_read - current_write - 1) & this->size_mask;
-    
-    size_t to_write = std::min(count, available_space);
-    
-    if (to_write < count) {
-        this->overruns.fetch_add(count - to_write);
-    }
-    
-    for (size_t i = 0; i < to_write; i++) {
-        this->buffer[(current_write + i) & this->size_mask] = data[i];
-    }
-    
-    this->write_pos.store((current_write + to_write) & this->size_mask);
-    this->total_writes.fetch_add(1);
-    
-    {
-        std::lock_guard<std::mutex> lock(cv_mutex);
-        data_available.notify_one();
-    }
-    
-    return true;
-}
-
-template<typename T>
-size_t BlockingRingBuffer<T>::read(T* data, size_t max_count) {
-    size_t current_write = this->write_pos.load();
-    size_t current_read = this->read_pos.load();
-    
-    size_t available = (current_write - current_read) & this->size_mask;
-    size_t to_read = std::min(max_count, available);
-    
-    for (size_t i = 0; i < to_read; i++) {
-        data[i] = this->buffer[(current_read + i) & this->size_mask];
-    }
-    
-    this->read_pos.store((current_read + to_read) & this->size_mask);
-    if (to_read > 0) this->total_reads.fetch_add(1);
-    
-    return to_read;
-}
-
-template<typename T>
-size_t BlockingRingBuffer<T>::read_blocking_min(T* data, size_t max_count, size_t min_count, 
-                        std::chrono::milliseconds timeout) {
-    std::unique_lock<std::mutex> lock(cv_mutex);
-    
-    if (!data_available.wait_for(lock, timeout, [this, min_count]() {
-        return shutdown_flag.load() || this->available() >= min_count;
-    })) {
-        lock.unlock();
-        return read(data, max_count);
-    }
-    
-    if (shutdown_flag.load()) return 0;
-    
-    lock.unlock();
-    return read(data, max_count);
-}
-
-template<typename T>
-void BlockingRingBuffer<T>::shutdown() {
-    shutdown_flag = true;
-    {
-        std::lock_guard<std::mutex> lock(cv_mutex);
-        data_available.notify_all();
-    }
 }
