@@ -124,34 +124,13 @@ float FMDemodulatorRobust::getInputSampleRate() const {
 void FMDemodulatorRobust::setupAudioProcessing(float input_rate) {
     // ALWAYS resample (no integer audio decimation) to guarantee exactly 48kHz
     // output regardless of input bandwidth.
-    // Calculate base resampling ratio for 48kHz output
-    float base_ratio = AUDIO_SAMPLE_RATE / input_rate;
-
-    // Compensate for decimation truncation loss
-    // When a block of samples is decimated by a non-power-of-2 factor,
-    // integer truncation causes sample loss. For example:
-    // - Block size 16384, decimation 150: floor(16384/150) = 109 instead of 109.23
-    // - This 0.21% loss accumulates into audio underruns
-    //
-    // Calculate compensation based on typical block size (16384) and sample rate (2.4 MHz)
-    constexpr float TYPICAL_BLOCK_SIZE = 16384.0f;
-    constexpr float BASE_SAMPLE_RATE = 2400000.0f;
-
-    float decimation_factor = BASE_SAMPLE_RATE / input_rate;
-    float theoretical_samples = TYPICAL_BLOCK_SIZE / decimation_factor;
-    float actual_samples = std::floor(theoretical_samples);
-
-    // Only apply compensation if there's actual truncation loss
-    float compensation = 1.0f;
-    if (actual_samples > 0 && theoretical_samples > actual_samples) {
-        compensation = theoretical_samples / actual_samples;
-    }
-
-    resampling_ratio = base_ratio * compensation;
+    // Exact 48 kHz ratio. The decimator carries each block's leftover input
+    // into the next block, so the demod input runs at exactly the nominal
+    // rate (no per-block truncation loss to compensate for).
+    resampling_ratio = AUDIO_SAMPLE_RATE / input_rate;
 
     std::cout << "Audio processing: " << (input_rate/1000.0f) << "kHz -> 48.0kHz using resampling"
-              << " (base_ratio=" << base_ratio << ", compensation=" << compensation
-              << ", final_ratio=" << resampling_ratio.load() << ")" << std::endl;
+              << " (ratio=" << resampling_ratio.load() << ")" << std::endl;
 }
 
 void FMDemodulatorRobust::updateFiltersIfNeeded() {
@@ -220,10 +199,13 @@ void FMDemodulatorRobust::recreateFilters() {
     float as = 60.0f;                  // Stop-band attenuation
     float cutoff_freq = 0.4f;          // Conservative cutoff frequency
 
-    // For upsampling (ratio > 1), use more conservative cutoff
+    // liquid's cutoff is relative to the INPUT rate (its own default is
+    // min(0.49, rate/2)). Upsampling (ratio > 1) only has to reject images
+    // above the input Nyquist, so cut just under it. (0.4/ratio cut the audio
+    // itself - ~1.2 kHz at 12 kHz bandwidth, ~250 Hz at 5 kHz - and made
+    // NBFM voice muffled.)
     if (ratio > 1.0f) {
-        cutoff_freq = 0.4f / ratio;
-        if (cutoff_freq < 0.05f) cutoff_freq = 0.05f;  // Minimum cutoff
+        cutoff_freq = 0.45f;
     }
     // For downsampling (ratio < 1), use formula that prevents aliasing
     else if (ratio < 1.0f) {

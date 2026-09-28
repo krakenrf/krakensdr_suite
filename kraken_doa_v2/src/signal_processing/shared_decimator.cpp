@@ -156,6 +156,7 @@ SharedDecimator::ChannelDecimState* SharedDecimator::ensureChannelState(
         st.decimation_factor = decimation_factor;
         st.freq_offset_hz = freq_offset_hz;
         st.mixer_phase = complex<float>(1.0f, 0.0f);
+        st.carry.clear();
     } else if (fabs(st.freq_offset_hz - freq_offset_hz) > 0.1f) {
         // Offset changed: the low-pass stages are offset-independent, so
         // only the mixer retunes (phase continuity is meaningless across a
@@ -163,6 +164,7 @@ SharedDecimator::ChannelDecimState* SharedDecimator::ensureChannelState(
         // filter built for one offset served requests up to 1 kHz away.
         st.freq_offset_hz = freq_offset_hz;
         st.mixer_phase = complex<float>(1.0f, 0.0f);
+        st.carry.clear();  // mixed with the old offset
     }
     return &st;
 }
@@ -248,27 +250,24 @@ SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
         return result;
     }
 
-    size_t num_output_samples = num_samples / decimation_factor;
-    if (num_output_samples == 0) {
-        return result;
-    }
-    size_t consumed = num_output_samples * static_cast<size_t>(decimation_factor);
+    const size_t D = static_cast<size_t>(decimation_factor);
 
     // Transient scratch buffers - no cross-block state, so thread_local is
     // safe here even though worker<->channel mapping varies between blocks
     thread_local vector<complex<float>> mix_buffer;
+    thread_local vector<complex<float>> head_buffer;
     thread_local vector<complex<float>> stage_buffer_a;
     thread_local vector<complex<float>> stage_buffer_b;
 
     const complex<float>* src = iq_data;
 
     // Mix the wanted band to baseband at the INPUT rate, before any
-    // filtering. The oscillator phase persists across blocks
-    // (st->mixer_phase) - restarting at (1,0) every block would put a phase
-    // step at each boundary, audible as clicks in FM and contaminating
-    // MUSIC snapshots that span blocks.
+    // filtering. The oscillator runs over EVERY input sample and its phase
+    // persists across blocks (st->mixer_phase) - a phase step at a block
+    // boundary is audible as clicks in FM and contaminates MUSIC snapshots
+    // that span blocks.
     if (fabs(freq_offset_hz) > 1.0f) {
-        mix_buffer.resize(consumed);
+        mix_buffer.resize(num_samples);
 
         float phase_increment = -2.0f * M_PI * freq_offset_hz / SAMPLE_RATE;
         float sin_val, cos_val;
@@ -276,7 +275,7 @@ SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
         complex<float> phase_step(cos_val, sin_val);
         complex<float> phase = st->mixer_phase;
 
-        for (size_t i = 0; i < consumed; i++) {
+        for (size_t i = 0; i < num_samples; i++) {
             mix_buffer[i] = iq_data[i] * phase;
             phase *= phase_step;
 
@@ -295,22 +294,27 @@ SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
         src = mix_buffer.data();
     }
 
-    if (st->stages.empty()) {
-        // Decimation factor 1: mixer-only pass-through
-        result.samples.assign(src, src + consumed);
-    } else {
-        // Run the cascade, ping-ponging between scratch buffers; the last
-        // stage writes directly into the result (std::complex<float> and
-        // liquid_float_complex share memory layout)
-        size_t cur_n = consumed;
-        const complex<float>* cur_src = src;
-
+    // Run n (a multiple of D) mixed samples through the cascade, APPENDING
+    // the n / D outputs to result.samples. The FIR stages keep their history
+    // between calls, so running a block in pieces equals running it whole.
+    auto run_cascade = [&](const complex<float>* in, size_t n) {
+        const size_t base = result.samples.size();
+        if (st->stages.empty()) {
+            // Decimation factor 1: mixer-only pass-through
+            result.samples.insert(result.samples.end(), in, in + n);
+            return;
+        }
+        // Ping-pong between scratch buffers; the last stage writes directly
+        // into the result (std::complex<float> and liquid_float_complex
+        // share memory layout)
+        size_t cur_n = n;
+        const complex<float>* cur_src = in;
         for (size_t s = 0; s < st->stages.size(); s++) {
             size_t out_n = cur_n / static_cast<size_t>(st->stage_factors[s]);
             complex<float>* dst;
             if (s + 1 == st->stages.size()) {
-                result.samples.resize(out_n);
-                dst = result.samples.data();
+                result.samples.resize(base + out_n);
+                dst = result.samples.data() + base;
             } else {
                 vector<complex<float>>& buf = (s % 2 == 0) ? stage_buffer_a : stage_buffer_b;
                 buf.resize(out_n);
@@ -327,6 +331,38 @@ SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
             cur_src = dst;
             cur_n = out_n;
         }
+    };
+
+    // Consume the previous block's leftover tail plus this block, D samples
+    // at a time; whatever doesn't fill a whole D-chunk carries over. (Dropping
+    // it, as before, spliced the signal and jumped the mixer phase at every
+    // block boundary - an audible buzz on any off-center VFO whose factor
+    // doesn't divide the block size.)
+    result.samples.clear();
+    result.samples.reserve((st->carry.size() + num_samples) / D);
+    size_t pos = 0;
+    if (!st->carry.empty()) {
+        const size_t need = D - st->carry.size();
+        if (num_samples < need) {
+            st->carry.insert(st->carry.end(), src, src + num_samples);
+            pos = num_samples;
+        } else {
+            // One D-chunk from the carry + the head of this block (a short
+            // copy - at most D samples - instead of copying the whole block)
+            head_buffer.assign(st->carry.begin(), st->carry.end());
+            head_buffer.insert(head_buffer.end(), src, src + need);
+            run_cascade(head_buffer.data(), D);
+            st->carry.clear();
+            pos = need;
+        }
+    }
+    const size_t body = ((num_samples - pos) / D) * D;
+    if (body > 0) {
+        run_cascade(src + pos, body);
+        pos += body;
+    }
+    if (pos < num_samples) {
+        st->carry.insert(st->carry.end(), src + pos, src + num_samples);
     }
 
     result.num_samples = result.samples.size();
@@ -373,12 +409,14 @@ SharedDecimator::MultiChannelDecimated SharedDecimator::decimateMultiChannel(
         min_samples = min(min_samples, channel_ptrs[ch] ? channel_lens[ch] : 0);
     }
 
-    size_t expected_output_samples = min_samples / decimation_factor;
-    result.min_samples = expected_output_samples;
-
-    if (expected_output_samples == 0) {
+    if (min_samples == 0 || min_samples == SIZE_MAX) {
         return result;
     }
+    // Per-channel output counts come from the channels themselves: with the
+    // carried-over tail a block yields floor(N/D) or floor(N/D)+1 samples.
+    // Every channel gets the same input length, so their carries - and
+    // output counts - stay equal; min_samples is the common count.
+    result.min_samples = SIZE_MAX;
 
     // HYBRID PARALLELIZATION: Launch parallel tasks for each antenna using ThreadPool
     vector<std::future<DecimatedData>> antenna_futures(result.num_channels);
@@ -402,7 +440,7 @@ SharedDecimator::MultiChannelDecimated SharedDecimator::decimateMultiChannel(
     for (size_t ch = 0; ch < result.num_channels; ch++) {
         DecimatedData ch_data = antenna_futures[ch].get();
 
-        if (ch_data.samples.empty()) {
+        if (ch_data.samples.empty() && min_samples >= static_cast<size_t>(decimation_factor)) {
             cerr << "SharedDecimator: No samples generated for channel " << ch << endl;
             // Consumers iterate channels[ch].samples[0..min_samples); an
             // empty channel makes the whole block unusable for coherent
@@ -410,11 +448,6 @@ SharedDecimator::MultiChannelDecimated SharedDecimator::decimateMultiChannel(
             // min_samples that would read past the empty vector
             result.min_samples = 0;
             continue;
-        }
-
-        if (ch_data.samples.size() > expected_output_samples) {
-            ch_data.samples.resize(expected_output_samples);
-            ch_data.num_samples = expected_output_samples;
         }
 
         if (ch_data.num_samples < result.min_samples) {

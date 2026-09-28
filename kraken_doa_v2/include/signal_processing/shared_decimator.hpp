@@ -81,6 +81,11 @@ private:
         int decimation_factor = 0;           // Total factor (0 = not built)
         float freq_offset_hz = 0.0f;         // Mixer frequency
         std::complex<float> mixer_phase{1.0f, 0.0f};  // Persists across blocks
+        // Already-mixed input samples not yet consumed by the cascade (always
+        // fewer than decimation_factor): a block that isn't a multiple of the
+        // factor leaves its tail here for the next block, so no input sample
+        // is dropped and the stream stays continuous across blocks.
+        std::vector<std::complex<float>> carry;
 
         void destroyStages() {
             for (auto s : stages) {
