@@ -3,8 +3,12 @@
 # install-service.sh - Run the KrakenSDR suite automatically at boot.
 #
 #   * systemd starts run.sh at boot (detached tmux session, no attach)
-#   * a single desktop autostart opens ONE terminal viewing that session
-#   * on a Lite/console image, tty1 autologin attaches instead
+#   * desktop boot: a single desktop autostart opens ONE terminal viewing it
+#   * console boot: tty1 autologin attaches instead
+#
+# Both viewers are installed and each checks the boot target at login, so the
+# Pi can be switched between desktop and console boot later (raspi-config ->
+# System Options -> Boot / Auto Login) without re-running this script.
 #
 # Safe to re-run; every step is idempotent.
 #
@@ -13,11 +17,13 @@
 #   VARIANT_FLAGS=--wideband ./install-service.sh
 #   VARIANT_FLAGS=--kerberos_sw KRAKEN_TUNERS=4 ./install-service.sh
 #   APP_DIR=/opt/krakensdr_suite ./install-service.sh
+#   BOOT_MODE=console ./install-service.sh   # auto|desktop|console|keep
 #   ./install-service.sh --uninstall
 #
 set -euo pipefail
 
 SESSION="${TMUX_SESSION:-krakensdr}"
+BOOT_MODE="${BOOT_MODE:-auto}"
 VARIANT_FLAGS="${VARIANT_FLAGS:-}"
 KRAKEN_TUNERS="${KRAKEN_TUNERS:-5}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-600}"
@@ -34,6 +40,18 @@ warn() { echo -e "\033[33m   !   $*\033[0m"; }
 die()  { echo -e "\033[31;1mError:\033[0m $*" >&2; exit 1; }
 asuser() { sudo -u "$RUN_USER" "$@"; }
 
+# Any ~/.bash_profile makes login bash skip ~/.profile (and with it the PATH
+# setup and ~/.bashrc), so one we create always chains to ~/.profile, and we
+# delete it again once our block is the only thing in it.
+PROFILE_CHAIN='[ -f ~/.profile ] && . ~/.profile'
+strip_console_attach() {
+    local p="$RUN_HOME/.bash_profile" rest
+    [[ -f "$p" ]] || return 0
+    sed -i '/# --- KrakenSDR console attach/,/# --- end KrakenSDR/d' "$p"
+    rest="$(grep -vxF "$PROFILE_CHAIN" "$p" || true)"
+    [[ "$rest" =~ [^[:space:]] ]] || rm -f "$p"
+}
+
 # ---------------------------------------------------------------- uninstall --
 if [[ "${1:-}" == "--uninstall" ]]; then
     sudo systemctl disable --now krakensdr.service 2>/dev/null || true
@@ -42,7 +60,7 @@ if [[ "${1:-}" == "--uninstall" ]]; then
     rm -f "$RUN_HOME/.config/autostart/kraken-term.desktop"
     sed -i '/kraken-term/d' "$RUN_HOME/.config/labwc/autostart" 2>/dev/null || true
     sed -i '/kraken-term/d' "$RUN_HOME/.config/wayfire.ini" 2>/dev/null || true
-    sed -i '/# --- KrakenSDR console attach/,/# --- end KrakenSDR/d' "$RUN_HOME/.bash_profile" 2>/dev/null || true
+    strip_console_attach
     sudo systemctl daemon-reload
     ok "Uninstalled."
     exit 0
@@ -50,6 +68,7 @@ fi
 
 # -------------------------------------------------------------- preflight ----
 [[ -f "$RUN_SH" ]] || die "run.sh not found at $RUN_SH (set APP_DIR= to override)"
+[[ "$BOOT_MODE" =~ ^(auto|desktop|console|keep)$ ]] || die "BOOT_MODE must be auto, desktop, console or keep"
 chmod +x "$RUN_SH"
 
 say "User $RUN_USER, app dir $APP_DIR, session '$SESSION'"
@@ -196,23 +215,29 @@ EOF
     fi
 fi
 
-# ------------------------------------------------ console fallback (no GUI) ---
+# ------------------------------------------------------- console viewer ------
+# Installed in both modes. Desktop autologin (B4) also autologins tty1 behind
+# the desktop, where an attach -d would steal the session from the desktop
+# window, so it only attaches when booted to the console target.
 P="$RUN_HOME/.bash_profile"
-asuser touch "$P"
-sed -i '/# --- KrakenSDR console attach/,/# --- end KrakenSDR/d' "$P" 2>/dev/null || true
-if [[ "$HAS_DESKTOP" == "0" ]]; then
-    asuser tee -a "$P" >/dev/null <<EOF
+strip_console_attach
+if [[ ! -f "$P" ]]; then
+    echo "$PROFILE_CHAIN" | asuser tee "$P" >/dev/null
+elif ! grep -q '\.profile' "$P"; then
+    warn "$P does not source ~/.profile; login shells will skip PATH/.bashrc setup"
+fi
+asuser tee -a "$P" >/dev/null <<EOF
 
 # --- KrakenSDR console attach
-if [ "\$(tty)" = "/dev/tty1" ] && [ -z "\${TMUX:-}" ]; then
+if [ "\$(tty)" = "/dev/tty1" ] && [ -z "\${TMUX:-}" ] \\
+   && [ "\$(systemctl get-default)" != "graphical.target" ]; then
     export TMUX_TMPDIR=/tmp
     for i in \$(seq 1 90); do tmux has-session -t $SESSION 2>/dev/null && break; sleep 1; done
     tmux attach -d -t $SESSION
 fi
 # --- end KrakenSDR
 EOF
-    ok "console fallback on tty1"
-fi
+ok "console viewer on tty1 (console boot only)"
 
 # ------------------------------------------------------------- tmux config ---
 T="$RUN_HOME/.tmux.conf"
@@ -220,11 +245,19 @@ asuser touch "$T"
 grep -q aggressive-resize "$T" || echo "set -g aggressive-resize on" | asuser tee -a "$T" >/dev/null
 
 # ----------------------------------------------------------------- autologin --
-if [[ "$HAS_DESKTOP" == "1" ]]; then
-    sudo raspi-config nonint do_boot_behaviour B4 2>/dev/null || warn "set desktop autologin manually"
-else
-    sudo raspi-config nonint do_boot_behaviour B2 2>/dev/null || warn "set console autologin manually"
+# Only picks the initial mode; both viewers stay installed either way.
+if [[ "$BOOT_MODE" == "auto" ]]; then
+    [[ "$HAS_DESKTOP" == "1" ]] && BOOT_MODE=desktop || BOOT_MODE=console
 fi
+case "$BOOT_MODE" in
+    desktop)
+        [[ "$HAS_DESKTOP" == "1" ]] || warn "BOOT_MODE=desktop but no desktop detected"
+        sudo raspi-config nonint do_boot_behaviour B4 2>/dev/null || warn "set desktop autologin manually" ;;
+    console)
+        sudo raspi-config nonint do_boot_behaviour B2 2>/dev/null || warn "set console autologin manually" ;;
+    keep)
+        ok "boot mode left as $(systemctl get-default)" ;;
+esac
 
 # ------------------------------------------------- force HDMI (headless boot) --
 # With no monitor at boot, KMS creates no framebuffer -> the desktop never

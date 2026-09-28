@@ -746,6 +746,25 @@ std::string build_correlation_message(const CorrelationResult& correlation_resul
     message.insert(message.end(), reinterpret_cast<const uint8_t*>(phases_array.data()),
                    reinterpret_cast<const uint8_t*>(phases_array.data() + phases_array.size()));
 
+    // Live measured amplitude (eigen correction factor |e_ref|/|e_ch|, 1.0 =
+    // matched; the Amp column shows the channel's gain vs the reference, the
+    // amplitude counterpart of the Phase column) and the APPLIED compensation
+    // vector as (gain dB, phase deg) pairs - the same values as the control
+    // port's channel_comp. Parsed by index.html.
+    std::vector<float> amps_array(num_elements, 1.0f), comp_array(num_elements * 2, 0.0f);
+    for (int ch = 0; ch < num_elements; ch++) {
+        if (correlation_result.amplitudes.count(ch)) amps_array[ch] = correlation_result.amplitudes.at(ch);
+        if (phase_compensation) {
+            const Complex c = phase_compensation->compensation_vector.load(ch);
+            comp_array[ch * 2]     = 20.0f * std::log10(std::max(std::abs(c), 1e-6f));
+            comp_array[ch * 2 + 1] = std::arg(c) * 180.0f / static_cast<float>(M_PI);
+        }
+    }
+    message.insert(message.end(), reinterpret_cast<const uint8_t*>(amps_array.data()),
+                   reinterpret_cast<const uint8_t*>(amps_array.data() + amps_array.size()));
+    message.insert(message.end(), reinterpret_cast<const uint8_t*>(comp_array.data()),
+                   reinterpret_cast<const uint8_t*>(comp_array.data() + comp_array.size()));
+
     // Compensation status
     std::vector<uint32_t> comp_status(num_elements * 4, 0);
     for (const auto& [channel, state] : correlation_result.channel_states) {

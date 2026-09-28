@@ -360,6 +360,10 @@ argument = phase correction) in `samples_to_complex_with_compensation()`.
 
 **Visibility**: the control-port status JSON (port 8092, 2 Hz) reports the live
 applied vector per channel as `"channel_comp":[{"amp_db":..,"phase_deg":..},..]`.
+The web UI channel table shows the same applied vector in its **Correction**
+column (red beyond ±2 dB) next to the live measured **Phase** / **Amp** (gain vs
+the reference); both ride the 8070 binary correlation message after the phases
+array (`build_correlation_message` in correlation.cpp ↔ `processData` in index.html).
 
 ### Coherence-Loss Detection and Recovery
 

@@ -170,19 +170,18 @@ void apply_phase_compensation_once(const std::map<int, float>& measured_phases,
 
     // Noise-source settle gate. Ignore readings (and restart the accumulation streak)
     // until NOISE_SETTLE_MS after the noise source was engaged, so the pre-noise samples
-    // in the USB ring and the bias-tee turn-on transient cannot bias the calibration.
+    // in the USB ring and the tuner AGC turn-on ramp cannot bias the calibration.
     // Anchored to NOISE-ON (noise_on_ns): a retune just switched the noise on so the gate
     // waits; startup / post-recovery has the noise already settled so the gate is already
     // open and adds no wait. Stamped once per noise-on, so it opens after at most
     // NOISE_SETTLE_MS and cannot stall the machine.
-    {
-        const long long now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-        const long long since_ns = now_ns - phase_compensation->noise_on_ns.load(std::memory_order_relaxed);
-        if (since_ns < static_cast<long long>(PhaseCompensationData::NOISE_SETTLE_MS) * 1000000LL) {
-            phase_compensation->stable_nonzero_count = 0;
-            return;
-        }
+    const long long since_noise_on_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count() -
+        phase_compensation->noise_on_ns.load(std::memory_order_relaxed);
+    if (since_noise_on_ns < static_cast<long long>(PhaseCompensationData::NOISE_SETTLE_MS) * 1000000LL) {
+        phase_compensation->stable_nonzero_count = 0;
+        return;
     }
 
     // A channel counts as mismatched when its PHASE or its GAIN is off. A
@@ -212,6 +211,22 @@ void apply_phase_compensation_once(const std::map<int, float>& measured_phases,
     // is what makes the reduced required_stable_readings safe. Tied to
     // stable_nonzero_count: a fresh streak (count == 0, e.g. just reset by the settle
     // gate, a zero reading, or handle_settings_change) restarts the average.
+    //
+    // AGC settle: soon after noise-on, a snapshot that disagrees with the streak's
+    // running mean amplitude (the AGC ramp tail) restarts the streak with itself as
+    // the first reading - see PhaseCompensationData::AMP_SETTLE_DB.
+    if (phase_compensation->stable_nonzero_count > 0 && phase_compensation->phase_accum_count > 0 &&
+        since_noise_on_ns < static_cast<long long>(PhaseCompensationData::AMP_SETTLE_MAX_MS) * 1000000LL) {
+        for (const auto& [channel, amplitude] : measured_amplitudes) {
+            if (channel == REF_CHANNEL || channel < 0 || channel >= NUM_DEVICES) continue;
+            const float mean = phase_compensation->amp_accum[channel] / phase_compensation->phase_accum_count;
+            if (mean > 0.0f && amplitude > 0.0f &&
+                std::abs(20.0f * std::log10(amplitude / mean)) > PhaseCompensationData::AMP_SETTLE_DB) {
+                phase_compensation->stable_nonzero_count = 0;
+                break;
+            }
+        }
+    }
     if (phase_compensation->stable_nonzero_count == 0) {
         phase_compensation->phase_accum.fill(Complex(0.0f, 0.0f));
         phase_compensation->amp_accum.fill(0.0f);

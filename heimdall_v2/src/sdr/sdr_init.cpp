@@ -345,7 +345,7 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
     bias_tee_enabled = enable;
     // Anchor the phase-cal settle gate to the moment the noise source comes ON. Only on
     // ENABLE: a retune turns it on just before measuring, so the gate then waits out the
-    // in-flight pre-noise USB samples. Startup turns the bias tee on per-device in
+    // in-flight pre-noise USB samples and the tuner AGC ramp. Startup turns the bias tee on per-device in
     // init_rtlsdr_device() (not via this function), so noise_on_ns stays 0 there and the
     // startup calibration is never gated (the noise has been on through lag cal already).
     if (enable && phase_compensation) {

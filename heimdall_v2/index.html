@@ -35,6 +35,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
         .s4{background:#cce5ff;color:#004085}
         .s5{background:#e2d9f3;color:#42297a}
         .l1{color:var(--red)}.l0{color:var(--green);font-weight:bold}.l-1{color:var(--blue)}
+        .k-warn{color:var(--red);font-weight:bold}
         .plots{display:flex;flex-wrap:wrap;gap:15px;justify-content:center}
         .plot{background:var(--card);padding:10px;border-radius:5px;box-shadow:var(--shadow)}
         .plot-title{text-align:center;font-weight:bold;margin-bottom:10px;color:var(--text)}
@@ -232,7 +233,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
     <div class="card">
         <h3>🎯 Compensation Status</h3>
         <div id="comp-status" class="comp-inactive"><strong>Status:</strong> <span id="comp-txt">Waiting...</span></div>
-        <table><colgroup><col style="width:8%"><col style="width:14%"><col style="width:18%"><col style="width:12%"><col style="width:14%"><col style="width:34%"></colgroup><thead><tr><th>Ch</th><th>Lag</th><th>State</th><th>Count</th><th>Phase</th><th>Status</th></tr></thead><tbody id="tbody"></tbody></table>
+        <table><colgroup><col style="width:6%"><col style="width:10%"><col style="width:14%"><col style="width:8%"><col style="width:10%"><col style="width:10%"><col style="width:20%"><col style="width:22%"></colgroup><thead><tr><th>Ch</th><th>Lag</th><th>State</th><th>Count</th><th title="Live measured phase vs the reference channel (degrees)">Phase</th><th title="Live measured gain vs the reference channel (dB). Like Phase, it reflects channel mismatch only while the noise source is on; measurement is clamped at &#177;6 dB">Amp</th><th title="Calibration correction currently applied to this channel (gain dB / phase deg). Normally within &#177;2 dB; red means it is larger than that">Correction</th><th>Status</th></tr></thead><tbody id="tbody"></tbody></table>
         <div style="text-align:center;margin-top:15px;">
             <button id="reset-lag-btn" style="padding:8px 20px;background:#dc3545;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:14px;">
                 🔄 Reset Lag Compensation
@@ -683,7 +684,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             }, pData, $('phase-plot'));
         };
         
-        const updateTable = (lags, phases, cData, active) => {
+        const updateTable = (lags, phases, amps, comp, cData, active) => {
             const [sd, st] = [$('comp-status'), $('comp-txt')];
             if (active) {
                 sd.className = 'comp-active';
@@ -706,7 +707,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                 if (!chComp) allComp = 0;
                 if (cd.converged) anyConv = 1;
 
-                const [lEl, sEl, cEl, pEl, stEl] = [`l${ch}`, `s${ch}`, `c${ch}`, `p${ch}`, `st${ch}`].map($);
+                const [lEl, sEl, cEl, pEl, aEl, kEl, stEl] = [`l${ch}`, `s${ch}`, `c${ch}`, `p${ch}`, `a${ch}`, `k${ch}`, `st${ch}`].map($);
                 if (!lEl) continue;  // Skip if element doesn't exist (element count mismatch)
                 lEl.textContent = lag.toFixed(2);
                 lEl.className = lag > 0.5 ? 'l1' : lag < -0.5 ? 'l-1' : 'l0';
@@ -715,6 +716,14 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                 sEl.className = 's' + cd.state_code;
                 cEl.textContent = cd.zero_lag_count;
                 pEl.textContent = phase.toFixed(1);
+                // Channel gain vs the reference, from the correction factor
+                const ampDb = -20 * Math.log10(Math.max(amps[ch] || 1, 1e-6));
+                aEl.textContent = (ampDb >= 0 ? '+' : '') + ampDb.toFixed(1);
+                const [kDb, kDeg] = comp[ch] || [0, 0];
+                kEl.textContent = `${kDb >= 0 ? '+' : ''}${kDb.toFixed(1)} dB / ${kDeg.toFixed(1)}°`;
+                // A healthy calibration corrects well under 2 dB; more usually
+                // means it latched a transient (or a real hardware fault)
+                kEl.className = Math.abs(kDb) > 2 ? 'k-warn' : '';
 
                 if (ps >= 10) {
                     stEl.textContent = '✅ CALIBRATED';
@@ -905,7 +914,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             for (let ch = 0; ch < activeElements; ch++) {
                 if (ch === RC) continue;
                 const row = document.createElement('tr');
-                row.innerHTML = `<td><b>Ch${ch}</b></td><td id="l${ch}" class="l0">0</td><td id="s${ch}" class="s0">MEASURING</td><td id="c${ch}">0</td><td id="p${ch}">0</td><td id="st${ch}">Init...</td>`;
+                row.innerHTML = `<td><b>Ch${ch}</b></td><td id="l${ch}" class="l0">0</td><td id="s${ch}" class="s0">MEASURING</td><td id="c${ch}">0</td><td id="p${ch}">0</td><td id="a${ch}">0</td><td id="k${ch}">-</td><td id="st${ch}">Init...</td>`;
                 tb.appendChild(row);
             }
         };
@@ -1126,7 +1135,12 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             const [allLags, allPhases] = [{}, {}];
             for (let ch = 0; ch < nDev; ch++) { allLags[ch] = v.getFloat32(o, 1); o += 4; }
             for (let ch = 0; ch < nDev; ch++) { allPhases[ch] = v.getFloat32(o, 1); o += 4; }
-            
+            // Live measured amplitude (correction factor, 1 = matched) and the
+            // applied compensation vector as [gain dB, phase deg] per channel
+            const [allAmps, allComp] = [{}, {}];
+            for (let ch = 0; ch < nDev; ch++) { allAmps[ch] = v.getFloat32(o, 1); o += 4; }
+            for (let ch = 0; ch < nDev; ch++) { allComp[ch] = [v.getFloat32(o, 1), v.getFloat32(o + 4, 1)]; o += 8; }
+
             const cData = {};
             let anyCalibrationComplete = false;
             for (let ch = 0; ch < nDev; ch++) {
@@ -1254,7 +1268,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                 pi++;
             }
             
-            updateTable(allLags, allPhases, cData, compAct === 1);
+            updateTable(allLags, allPhases, allAmps, allComp, cData, compAct === 1);
             if (pTrack) updatePhase(allPhases);
             
             fCnt++;
