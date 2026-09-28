@@ -15,6 +15,8 @@
 #include <string>
 #include <algorithm>
 #include <thread>
+#include <optional>
+#include <cmath>
 
 // Global web server state
 std::thread web_thread;
@@ -209,222 +211,240 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                 return;
             }
 
-            static const std::map<std::string_view, std::function<void()>> handlers = {
-                {"FFT_ENABLE", [&fft_control]() {
-                    std::lock_guard<std::mutex> lock(fft_control.control_mutex);
-                    bool was_auto = fft_control.auto_disabled;
-                    fft_control.fft_enabled = true;
-                    fft_control.auto_disabled = false;
-                    if (was_auto) fft_control.user_override = true;
-                    std::cout << "FFT: Enabled" << std::endl;
-                }},
-                {"FFT_DISABLE", [&fft_control]() {
-                    std::lock_guard<std::mutex> lock(fft_control.control_mutex);
-                    fft_control.fft_enabled = false;
-                    fft_control.auto_disabled = false;
-                    std::cout << "FFT: Disabled" << std::endl;
-                }},
-                {"BIAS_TEE_ENABLE", []() { set_bias_tee_all_devices(true, devices); }},
-                {"BIAS_TEE_DISABLE", []() { set_bias_tee_all_devices(false, devices); }},
-                {"PER_BIN_ENABLE", []() {
-                    per_bin_cal.enabled.store(true, std::memory_order_release);
-                    settings::save();  // remember across restarts
-                    std::cout << "Per-bin phase calibration: Enabled" << std::endl;
-                    // If calibration already finished, re-open it to build the
-                    // equalizer; otherwise the in-progress run will build it on
-                    // convergence (per_bin_measured is false).
-                    bool converged = false;
-                    if (phase_compensation) {
-                        std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
-                        converged = (phase_compensation->state == PhaseCompensatorState::CONVERGED);
-                    }
-                    if (converged) handle_settings_change();
-                }},
-                {"PER_BIN_DISABLE", []() {
-                    per_bin_cal.enabled.store(false, std::memory_order_release);
-                    per_bin_cal.ready.store(false, std::memory_order_release);
-                    settings::save();  // remember across restarts
-                    std::cout << "Per-bin phase calibration: Disabled" << std::endl;
-                }},
-                {"PERIODIC_RECAL_ENABLE", []() {
-                    periodic_recal_enabled.store(true, std::memory_order_release);
-                    settings::save();  // remember across restarts
-                    std::cout << "Periodic calibration check: Enabled" << std::endl;
-                }},
-                {"PERIODIC_RECAL_DISABLE", []() {
-                    periodic_recal_enabled.store(false, std::memory_order_release);
-                    settings::save();  // remember across restarts
-                    std::cout << "Periodic calibration check: Disabled" << std::endl;
-                }},
-                {"FORCE_RECAL", []() {
-                    // Routed through the coherence watchdog so all recalibration
-                    // stays serialized on one thread (see coherence_watchdog).
-                    force_recalibration.store(true, std::memory_order_release);
-                    std::cout << "Force recalibration requested via web UI" << std::endl;
-                }},
-                {"FWD_COMP_ENABLE", []() {
-                    forward_comp.enabled.store(true, std::memory_order_release);
-                    // Build the correction at the current center frequency so it
-                    // takes effect immediately (no recal needed - it is independent
-                    // of the noise-source loop).
-                    fwdcomp::recompute(static_cast<double>(current_frequency.load()));
-                    settings::save();
-                    std::cout << "Forward phase compensation: Enabled" << std::endl;
-                }},
-                {"FWD_COMP_DISABLE", []() {
-                    forward_comp.enabled.store(false, std::memory_order_release);
-                    settings::save();
-                    std::cout << "Forward phase compensation: Disabled" << std::endl;
-                }},
-                {"FWD_COMP_AMP_ON", []() {
-                    forward_comp.correct_amplitude.store(true, std::memory_order_release);
-                    fwdcomp::recompute(static_cast<double>(current_frequency.load()));
-                    settings::save();
-                    std::cout << "Forward comp: amplitude correction ON" << std::endl;
-                }},
-                {"FWD_COMP_AMP_OFF", []() {
-                    forward_comp.correct_amplitude.store(false, std::memory_order_release);
-                    fwdcomp::recompute(static_cast<double>(current_frequency.load()));
-                    settings::save();
-                    std::cout << "Forward comp: amplitude correction OFF (phase-only)" << std::endl;
-                }}
-            };
-            
-            // Check for SDR settings
-            if (message.find("SDR_SETTINGS:") == 0) {
-                auto json_part = message.substr(13);
-                uint64_t new_freq = 0;
-                int new_gain = -999;
-                
-                auto extract_value = [&](std::string_view key) -> double {
-                    auto pos = json_part.find(key);
-                    if (pos == std::string_view::npos) return -999;
-                    pos += key.length();
-                    auto end = json_part.find_first_of(",}", pos);
-                    return (end != std::string_view::npos) ? std::stod(std::string(json_part.substr(pos, end - pos))) : -999;
-                };
-                
-                if (auto freq = extract_value("\"frequency\":"); freq > 0) {
-                    new_freq = static_cast<uint64_t>(freq);
-                }
-                if (auto gain = extract_value("\"gain\":"); gain != -999) {
-                    new_gain = (gain < 0) ? -1 : static_cast<int>(gain * 10);
-                }
-                
-                if (new_freq > 0 || new_gain != -999) {
-                    if (update_sdr_settings(new_freq, new_gain, devices)) {
-                        if (new_freq > 0 && recovery_in_progress.load(std::memory_order_acquire)) {
-                            // A coherence recovery is recalibrating: update_sdr_settings
-                            // already retuned the hardware, and the recovery will
-                            // recalibrate lag+phase at the new frequency. Do NOT run the
-                            // cooldown override here - clobbering the recovery's phase
-                            // state and killing its noise source would wedge calibration.
-                            std::cout << "Frequency changed during coherence recovery: deferring to the full recal" << std::endl;
-                        } else if (new_freq > 0 && kerberos_manual_cal_only()) {
-                            // --kerberos: no automatic recal after a retune.
-                            // Keep the old compensation applied (approximately
-                            // valid nearby) and mark it STALE for the UIs.
-                            if (get_phase_compensation_state() == PhaseCompensatorState::CONVERGED) {
-                                kerberos_cal_stale.store(true, std::memory_order_release);
-                                std::cerr << "KerberosSDR: frequency changed - calibration is STALE. "
-                                             "Disconnect antennas and press Recalibrate." << std::endl;
-                            }
-                        } else if (new_freq > 0) {
-                            // Frequency changed - use cooldown approach
-                            begin_retune_cooldown("Frequency changed via web UI");
-                        } else {
-                            // Gain-only change - immediate calibration
-                            handle_settings_change();
+            // Backstop: an exception escaping a uWS handler aborts the whole
+            // server, so any malformed command a handler failed to guard is
+            // logged and dropped here instead.
+            try {
+                static const std::map<std::string_view, std::function<void()>> handlers = {
+                    {"FFT_ENABLE", [&fft_control]() {
+                        std::lock_guard<std::mutex> lock(fft_control.control_mutex);
+                        bool was_auto = fft_control.auto_disabled;
+                        fft_control.fft_enabled = true;
+                        fft_control.auto_disabled = false;
+                        if (was_auto) fft_control.user_override = true;
+                        std::cout << "FFT: Enabled" << std::endl;
+                    }},
+                    {"FFT_DISABLE", [&fft_control]() {
+                        std::lock_guard<std::mutex> lock(fft_control.control_mutex);
+                        fft_control.fft_enabled = false;
+                        fft_control.auto_disabled = false;
+                        std::cout << "FFT: Disabled" << std::endl;
+                    }},
+                    {"BIAS_TEE_ENABLE", []() { set_bias_tee_all_devices(true, devices); }},
+                    {"BIAS_TEE_DISABLE", []() { set_bias_tee_all_devices(false, devices); }},
+                    {"PER_BIN_ENABLE", []() {
+                        per_bin_cal.enabled.store(true, std::memory_order_release);
+                        settings::save();  // remember across restarts
+                        std::cout << "Per-bin phase calibration: Enabled" << std::endl;
+                        // If calibration already finished, re-open it to build the
+                        // equalizer; otherwise the in-progress run will build it on
+                        // convergence (per_bin_measured is false).
+                        bool converged = false;
+                        if (phase_compensation) {
+                            std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+                            converged = (phase_compensation->state == PhaseCompensatorState::CONVERGED);
                         }
-                    }
-                }
-            } 
-            // Runtime element-count change: "NUM_ELEMENTS:<n>". Runs on a
-            // detached worker - it stops the pipeline and reopens devices
-            // (seconds), which must never block the uWS event loop. Progress
-            // is visible via the "reconfiguring" flag in the STATE broadcast,
-            // and the recalibration that follows via the normal status feed.
-            else if (message.find("NUM_ELEMENTS:") == 0) {
-                auto n_str = message.substr(13);
-                try {
-                    const int n = std::stoi(std::string(n_str));
-                    std::thread([n]() {
-                        std::string err;
-                        if (!reconfigure_num_elements(n, err)) {
-                            std::cerr << "Element-count change to " << n << " failed: " << err << std::endl;
-                        }
-                    }).detach();
-                } catch (const std::exception&) {
-                    std::cerr << "Web: invalid NUM_ELEMENTS: " << n_str << std::endl;
-                }
-            }
-            // RTL-TCP channel selection
-            else if (message.find("RTL_TCP_CHANNEL:") == 0) {
-                auto channel_str = message.substr(16);
-                try {
-                    int channel = std::stoi(std::string(channel_str));
-                    if (channel >= 0 && channel < active_num_elements.load()) {
-                        rtl_tcp_channel = channel;
-                        // Note: RTL-TCP server update would be handled by the calling code
-                        std::cout << "RTL-TCP: Channel changed to " << channel << std::endl;
-                    } else {
-                        std::cerr << "RTL-TCP: Invalid channel " << channel << " (must be 0-" << (active_num_elements.load() - 1) << ")" << std::endl;
-                    }
-                } catch (const std::exception& e) {
-                    std::cerr << "RTL-TCP: Invalid channel format: " << channel_str << std::endl;
-                }
-            }
-            // Per-port antenna bias tees: "ANT_BIAS_MASK:<bitmask>" (bit N = channel N)
-            else if (message.find("ANT_BIAS_MASK:") == 0) {
-                auto mask_str = message.substr(14);
-                try {
-                    const uint32_t mask = static_cast<uint32_t>(std::stoul(std::string(mask_str)))
-                                          & ((1u << NUM_DEVICES) - 1);
-                    apply_antenna_bias_tees(mask, devices);
-                    settings::save();  // remember across restarts
-                } catch (const std::exception&) {
-                    std::cerr << "Bias tees: invalid ANT_BIAS_MASK: " << mask_str << std::endl;
-                }
-            }
-            // Periodic recalibration check period (minutes)
-            else if (message.find("PERIODIC_RECAL_PERIOD:") == 0) {
-                auto minutes_str = message.substr(22);
-                try {
-                    int minutes = std::stoi(std::string(minutes_str));
-                    minutes = std::max(1, std::min(minutes, 1440));  // clamp 1 min .. 24 h
-                    periodic_recal_minutes.store(minutes, std::memory_order_release);
-                    settings::save();  // remember across restarts
-                    std::cout << "Periodic calibration check: period set to " << minutes << " min" << std::endl;
-                } catch (const std::exception& e) {
-                    std::cerr << "Periodic recal: invalid period: " << minutes_str << std::endl;
-                }
-            }
-            // Forward-comp per-channel file: "FWD_COMP_FILE:<ch>:<filename>"
-            // (empty filename clears the channel).
-            else if (message.find("FWD_COMP_FILE:") == 0) {
-                auto rest = message.substr(14);
-                auto colon = rest.find(':');
-                if (colon != std::string_view::npos) {
-                    try {
-                        int ch = std::stoi(std::string(rest.substr(0, colon)));
-                        std::string fname(rest.substr(colon + 1));
-                        std::string err;
-                        bool ok = fwdcomp::set_channel_file(ch, fname, err);
-                        if (!ok && !fname.empty())
-                            std::cerr << "Forward comp: ch" << ch << " load failed: " << err << std::endl;
-                        else
-                            std::cout << "Forward comp: ch" << ch << " file = '" << fname << "'" << std::endl;
-                        // Re-interpolate at the current frequency and persist.
+                        if (converged) handle_settings_change();
+                    }},
+                    {"PER_BIN_DISABLE", []() {
+                        per_bin_cal.enabled.store(false, std::memory_order_release);
+                        per_bin_cal.ready.store(false, std::memory_order_release);
+                        settings::save();  // remember across restarts
+                        std::cout << "Per-bin phase calibration: Disabled" << std::endl;
+                    }},
+                    {"PERIODIC_RECAL_ENABLE", []() {
+                        periodic_recal_enabled.store(true, std::memory_order_release);
+                        settings::save();  // remember across restarts
+                        std::cout << "Periodic calibration check: Enabled" << std::endl;
+                    }},
+                    {"PERIODIC_RECAL_DISABLE", []() {
+                        periodic_recal_enabled.store(false, std::memory_order_release);
+                        settings::save();  // remember across restarts
+                        std::cout << "Periodic calibration check: Disabled" << std::endl;
+                    }},
+                    {"FORCE_RECAL", []() {
+                        // Routed through the coherence watchdog so all recalibration
+                        // stays serialized on one thread (see coherence_watchdog).
+                        force_recalibration.store(true, std::memory_order_release);
+                        std::cout << "Force recalibration requested via web UI" << std::endl;
+                    }},
+                    {"FWD_COMP_ENABLE", []() {
+                        forward_comp.enabled.store(true, std::memory_order_release);
+                        // Build the correction at the current center frequency so it
+                        // takes effect immediately (no recal needed - it is independent
+                        // of the noise-source loop).
                         fwdcomp::recompute(static_cast<double>(current_frequency.load()));
                         settings::save();
-                    } catch (const std::exception& e) {
-                        std::cerr << "Forward comp: bad FWD_COMP_FILE: " << e.what() << std::endl;
+                        std::cout << "Forward phase compensation: Enabled" << std::endl;
+                    }},
+                    {"FWD_COMP_DISABLE", []() {
+                        forward_comp.enabled.store(false, std::memory_order_release);
+                        settings::save();
+                        std::cout << "Forward phase compensation: Disabled" << std::endl;
+                    }},
+                    {"FWD_COMP_AMP_ON", []() {
+                        forward_comp.correct_amplitude.store(true, std::memory_order_release);
+                        fwdcomp::recompute(static_cast<double>(current_frequency.load()));
+                        settings::save();
+                        std::cout << "Forward comp: amplitude correction ON" << std::endl;
+                    }},
+                    {"FWD_COMP_AMP_OFF", []() {
+                        forward_comp.correct_amplitude.store(false, std::memory_order_release);
+                        fwdcomp::recompute(static_cast<double>(current_frequency.load()));
+                        settings::save();
+                        std::cout << "Forward comp: amplitude correction OFF (phase-only)" << std::endl;
+                    }}
+                };
+            
+                // Check for SDR settings
+                if (message.find("SDR_SETTINGS:") == 0) {
+                    auto json_part = message.substr(13);
+                    uint64_t new_freq = 0;
+                    int new_gain = -999;
+                
+                    // Absent, malformed or non-finite values come back empty (a
+                    // malformed one is logged), so a bad field is ignored, not fatal.
+                    auto extract_value = [&](std::string_view key) -> std::optional<double> {
+                        auto pos = json_part.find(key);
+                        if (pos == std::string_view::npos) return std::nullopt;
+                        pos += key.length();
+                        auto end = json_part.find_first_of(",}", pos);
+                        if (end == std::string_view::npos) return std::nullopt;
+                        try {
+                            const double v = std::stod(std::string(json_part.substr(pos, end - pos)));
+                            if (std::isfinite(v)) return v;
+                        } catch (const std::exception&) {}
+                        std::cerr << "Web: ignoring malformed SDR_SETTINGS " << key << " value" << std::endl;
+                        return std::nullopt;
+                    };
+
+                    // Bounds only keep the integer casts defined; the tuners
+                    // clamp gain to their own table.
+                    if (auto freq = extract_value("\"frequency\":"); freq && *freq > 0 && *freq < 1e12) {
+                        new_freq = static_cast<uint64_t>(*freq);
+                    }
+                    if (auto gain = extract_value("\"gain\":")) {
+                        new_gain = (*gain < 0) ? -1 : static_cast<int>(std::min(*gain, 100.0) * 10);
+                    }
+                
+                    if (new_freq > 0 || new_gain != -999) {
+                        if (update_sdr_settings(new_freq, new_gain, devices)) {
+                            if (new_freq > 0 && recovery_in_progress.load(std::memory_order_acquire)) {
+                                // A coherence recovery is recalibrating: update_sdr_settings
+                                // already retuned the hardware, and the recovery will
+                                // recalibrate lag+phase at the new frequency. Do NOT run the
+                                // cooldown override here - clobbering the recovery's phase
+                                // state and killing its noise source would wedge calibration.
+                                std::cout << "Frequency changed during coherence recovery: deferring to the full recal" << std::endl;
+                            } else if (new_freq > 0 && kerberos_manual_cal_only()) {
+                                // --kerberos: no automatic recal after a retune.
+                                // Keep the old compensation applied (approximately
+                                // valid nearby) and mark it STALE for the UIs.
+                                if (get_phase_compensation_state() == PhaseCompensatorState::CONVERGED) {
+                                    kerberos_cal_stale.store(true, std::memory_order_release);
+                                    std::cerr << "KerberosSDR: frequency changed - calibration is STALE. "
+                                                 "Disconnect antennas and press Recalibrate." << std::endl;
+                                }
+                            } else if (new_freq > 0) {
+                                // Frequency changed - use cooldown approach
+                                begin_retune_cooldown("Frequency changed via web UI");
+                            } else {
+                                // Gain-only change - immediate calibration
+                                handle_settings_change();
+                            }
+                        }
+                    }
+                } 
+                // Runtime element-count change: "NUM_ELEMENTS:<n>". Runs on a
+                // detached worker - it stops the pipeline and reopens devices
+                // (seconds), which must never block the uWS event loop. Progress
+                // is visible via the "reconfiguring" flag in the STATE broadcast,
+                // and the recalibration that follows via the normal status feed.
+                else if (message.find("NUM_ELEMENTS:") == 0) {
+                    auto n_str = message.substr(13);
+                    try {
+                        const int n = std::stoi(std::string(n_str));
+                        std::thread([n]() {
+                            std::string err;
+                            if (!reconfigure_num_elements(n, err)) {
+                                std::cerr << "Element-count change to " << n << " failed: " << err << std::endl;
+                            }
+                        }).detach();
+                    } catch (const std::exception&) {
+                        std::cerr << "Web: invalid NUM_ELEMENTS: " << n_str << std::endl;
                     }
                 }
-            }
-            else {
-                auto it = handlers.find(message);
-                if (it != handlers.end()) it->second();
+                // RTL-TCP channel selection
+                else if (message.find("RTL_TCP_CHANNEL:") == 0) {
+                    auto channel_str = message.substr(16);
+                    try {
+                        int channel = std::stoi(std::string(channel_str));
+                        if (channel >= 0 && channel < active_num_elements.load()) {
+                            rtl_tcp_channel = channel;
+                            // Note: RTL-TCP server update would be handled by the calling code
+                            std::cout << "RTL-TCP: Channel changed to " << channel << std::endl;
+                        } else {
+                            std::cerr << "RTL-TCP: Invalid channel " << channel << " (must be 0-" << (active_num_elements.load() - 1) << ")" << std::endl;
+                        }
+                    } catch (const std::exception& e) {
+                        std::cerr << "RTL-TCP: Invalid channel format: " << channel_str << std::endl;
+                    }
+                }
+                // Per-port antenna bias tees: "ANT_BIAS_MASK:<bitmask>" (bit N = channel N)
+                else if (message.find("ANT_BIAS_MASK:") == 0) {
+                    auto mask_str = message.substr(14);
+                    try {
+                        const uint32_t mask = static_cast<uint32_t>(std::stoul(std::string(mask_str)))
+                                              & ((1u << NUM_DEVICES) - 1);
+                        apply_antenna_bias_tees(mask, devices);
+                        settings::save();  // remember across restarts
+                    } catch (const std::exception&) {
+                        std::cerr << "Bias tees: invalid ANT_BIAS_MASK: " << mask_str << std::endl;
+                    }
+                }
+                // Periodic recalibration check period (minutes)
+                else if (message.find("PERIODIC_RECAL_PERIOD:") == 0) {
+                    auto minutes_str = message.substr(22);
+                    try {
+                        int minutes = std::stoi(std::string(minutes_str));
+                        minutes = std::max(1, std::min(minutes, 1440));  // clamp 1 min .. 24 h
+                        periodic_recal_minutes.store(minutes, std::memory_order_release);
+                        settings::save();  // remember across restarts
+                        std::cout << "Periodic calibration check: period set to " << minutes << " min" << std::endl;
+                    } catch (const std::exception& e) {
+                        std::cerr << "Periodic recal: invalid period: " << minutes_str << std::endl;
+                    }
+                }
+                // Forward-comp per-channel file: "FWD_COMP_FILE:<ch>:<filename>"
+                // (empty filename clears the channel).
+                else if (message.find("FWD_COMP_FILE:") == 0) {
+                    auto rest = message.substr(14);
+                    auto colon = rest.find(':');
+                    if (colon != std::string_view::npos) {
+                        try {
+                            int ch = std::stoi(std::string(rest.substr(0, colon)));
+                            std::string fname(rest.substr(colon + 1));
+                            std::string err;
+                            bool ok = fwdcomp::set_channel_file(ch, fname, err);
+                            if (!ok && !fname.empty())
+                                std::cerr << "Forward comp: ch" << ch << " load failed: " << err << std::endl;
+                            else
+                                std::cout << "Forward comp: ch" << ch << " file = '" << fname << "'" << std::endl;
+                            // Re-interpolate at the current frequency and persist.
+                            fwdcomp::recompute(static_cast<double>(current_frequency.load()));
+                            settings::save();
+                        } catch (const std::exception& e) {
+                            std::cerr << "Forward comp: bad FWD_COMP_FILE: " << e.what() << std::endl;
+                        }
+                    }
+                }
+                else {
+                    auto it = handlers.find(message);
+                    if (it != handlers.end()) it->second();
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "Web: ignoring malformed command '" << std::string(message).substr(0, 60)
+                          << "' (" << e.what() << ")" << std::endl;
             }
         },
         

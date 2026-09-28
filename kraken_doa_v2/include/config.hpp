@@ -78,6 +78,10 @@ inline void wb_variant_rf_union_range(uint64_t& min_hz, uint64_t& max_hz) {
     max_hz = WB_VARIANT_IF_HZ + WB_LO_MAX_HZ;
 }
 
+// Sanity ceiling for a continuous-scanner wideband range: the highest RF any
+// supported hardware reaches (the Wideband variant's union span).
+constexpr float MAX_WIDEBAND_SCAN_MHZ = (WB_VARIANT_IF_HZ + WB_LO_MAX_HZ) / 1e6f;
+
 inline bool wb_side_valid(int side, uint64_t rf_hz) {
     uint64_t min_hz, max_hz;
     wb_variant_rf_range(side, min_hz, max_hz);

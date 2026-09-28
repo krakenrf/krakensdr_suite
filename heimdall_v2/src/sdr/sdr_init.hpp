@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include <mutex>
 
 // Device enumeration functions
 std::string get_device_serial(int device_index);
@@ -60,3 +61,6 @@ void handle_settings_change();
 bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>>& devices);
 bool set_tuner_frequency(int tuner_index, uint32_t frequency, const std::vector<std::unique_ptr<SDRDevice>>& devices);
 void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+
+// Serializes librtlsdr handle operations (see sdr_init.cpp). Innermost lock.
+extern std::recursive_mutex device_io_mutex;

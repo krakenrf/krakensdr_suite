@@ -430,7 +430,15 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
     std::map<int, float> current_lags;
     current_lags[REF_CHANNEL] = 0.0f;
     
-    // Process each channel against reference for lag detection
+    // Process each channel against reference for lag detection. The per-pair
+    // correlation traces and peak scales are staged here and swapped into
+    // correlation_result under data_mutex below: the web thread reads those
+    // vectors under the lock, and an element-count reconfiguration resizes them.
+    static thread_local std::vector<float> staged_scale;
+    static thread_local std::vector<std::vector<float>> staged_corr;
+    staged_scale.resize(num_channels - 1);
+    staged_corr.resize(num_channels - 1);
+    for (auto& trace : staged_corr) trace.resize(CORRELATION_SIZE);
     int corr_idx = 0;
     for (int ch = 0; ch < num_channels; ch++) {
         if (ch == REF_CHANNEL) continue;
@@ -530,11 +538,11 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
         current_lags[ch] = lag;
         
         // Store correlation data at the correct index
-        correlation_result.scale_factors[corr_idx] = refined_peak.refined_magnitude;
+        staged_scale[corr_idx] = refined_peak.refined_magnitude;
         float scale = refined_peak.refined_magnitude > 0 ? 1.0f / refined_peak.refined_magnitude : 1.0f;
         
         std::transform(correlation_time, correlation_time + CORRELATION_SIZE,
-                 correlation_result.correlation_data[corr_idx].begin(),
+                 staged_corr[corr_idx].begin(),
                  [scale](const auto& val) { return std::abs(val) * scale; });
         
         corr_idx++;
@@ -653,6 +661,14 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
         correlation_result.lags = current_lags;
         correlation_result.phases = current_phases;
         correlation_result.amplitudes = current_amplitudes;
+        // Swap (O(1)) the staged traces in - unless this set's channel count no
+        // longer matches the result arrays: a set dequeued just before an
+        // element-count reconfiguration resized them is stale, so its traces
+        // are dropped rather than written out of bounds.
+        if (staged_corr.size() == correlation_result.correlation_data.size()) {
+            correlation_result.scale_factors.swap(staged_scale);
+            correlation_result.correlation_data.swap(staged_corr);
+        }
         correlation_result.data_ready = true;
         correlation_result.data_sequence++;
         
@@ -697,8 +713,12 @@ std::string build_correlation_message(const CorrelationResult& correlation_resul
                                     const FFTProcessingControl& fft_control) {
     std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
 
-    // Get active element count (set at startup via -n flag)
-    const int num_elements = active_num_elements.load();
+    // Channel count for THIS message: the live element count, capped at what
+    // the per-pair arrays hold. A reconfiguration stores the new count before
+    // it resizes them, and this timer can fire in between - reading past the
+    // arrays (growing) or emitting a header that disagrees with them.
+    const int num_elements = std::min(active_num_elements.load(),
+                                      static_cast<int>(correlation_result.correlation_data.size()) + 1);
 
     std::vector<uint8_t> message;
     message.reserve(16384);
@@ -725,9 +745,12 @@ std::string build_correlation_message(const CorrelationResult& correlation_resul
     message.insert(message.end(), reinterpret_cast<const uint8_t*>(&rtl_channel), 
                    reinterpret_cast<const uint8_t*>(&rtl_channel) + sizeof(uint32_t));
     
-    // Scale factors
-    const auto& sf = fft_control.fft_enabled && correlation_result.data_ready ?
-                     correlation_result.scale_factors : std::vector<float>(num_elements - 1, 0.0f);
+    // Scale factors (exactly num_elements - 1 entries, whatever the vector holds)
+    std::vector<float> sf(num_elements - 1, 0.0f);
+    if (fft_control.fft_enabled && correlation_result.data_ready) {
+        std::copy_n(correlation_result.scale_factors.begin(),
+                    std::min(sf.size(), correlation_result.scale_factors.size()), sf.begin());
+    }
     message.insert(message.end(), reinterpret_cast<const uint8_t*>(sf.data()), 
                   reinterpret_cast<const uint8_t*>(sf.data() + sf.size()));
     

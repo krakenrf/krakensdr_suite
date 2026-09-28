@@ -17,6 +17,7 @@
 #include "networking/web_mapper.hpp"
 #include "networking/websocket_server.hpp"
 #include "utils/json_escape.hpp"
+#include "utils/parse_num.hpp"
 #include <string>
 #include <sstream>
 #include <iostream>
@@ -40,10 +41,10 @@ static bool parse_bool(string_view sv) {
     return sv == "1" || sv == "true";
 }
 static float parse_float(string_view msg, size_t offset) {
-    return stof(string(msg.substr(offset)));
+    return stof_finite(string(msg.substr(offset)));
 }
 static double parse_double(string_view msg, size_t offset) {
-    return stod(string(msg.substr(offset)));
+    return stod_finite(string(msg.substr(offset)));
 }
 static int parse_int(string_view msg, size_t offset) {
     return stoi(string(msg.substr(offset)));
@@ -202,11 +203,11 @@ static bool apply_decimator_snapshot(const string& snap) {
             array<string, 7> f;
             for (auto& tok : f)
                 if (!getline(es, tok, ',')) return false;
-            vfos.push_back({stof(f[0]),
+            vfos.push_back({stof_finite(f[0]),
                             std::clamp(stoi(f[1]), 0, NUM_BANDWIDTH_OPTIONS - 1),
                             DecimatorManager::stringToDemodMode(f[2]),
-                            f[3] == "1", stof(f[4]),
-                            std::clamp(stoi(f[5]), 0, 2), stof(f[6])});
+                            f[3] == "1", stof_finite(f[4]),
+                            std::clamp(stoi(f[5]), 0, 2), stof_finite(f[6])});
         }
     } catch (const exception&) {
         return false;
@@ -549,7 +550,9 @@ void ControlHandler::handle_message_impl(string_view message) {
         }
     }
     else if (message.starts_with("AVG:")) {
-        float alpha = parse_float(message, 4);
+        // Weight of the newest FFT frame; the UI sends 1 - slider/100. Outside
+        // [0, 1] the running average diverges.
+        float alpha = std::clamp(parse_float(message, 4), 0.0f, 1.0f);
         averaging_alpha = alpha;
 
         // In wideband mode, reset ALL channel FFTs and the wideband stitched buffer
@@ -777,8 +780,7 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("STEERING_ANGLE:")) {
         float angle = parse_float(message, 15);
-        while (angle < 0) angle += 360.0f;
-        while (angle >= 360) angle -= 360.0f;
+        angle = wrap_degrees(angle);
         manual_steering_angle.store(angle, std::memory_order_relaxed);
 
         stringstream json;
@@ -851,7 +853,7 @@ void ControlHandler::handle_message_impl(string_view message) {
 
             while (getline(elem_ss, coord, ',') && coord_idx < 3) {
                 try {
-                    float val = stof(coord);
+                    float val = stof_finite(coord);
                     switch (coord_idx) {
                         case 0: positions[elem_idx].x_mm = val; break;
                         case 1: positions[elem_idx].y_mm = val; break;
@@ -1009,9 +1011,9 @@ void ControlHandler::handle_message_impl(string_view message) {
         size_t c1 = payload.find(',');
         size_t c2 = (c1 == string::npos) ? string::npos : payload.find(',', c1 + 1);
         if (c1 != string::npos && c2 != string::npos) {
-            double lat = stod(payload.substr(0, c1));
-            double lon = stod(payload.substr(c1 + 1, c2 - c1 - 1));
-            double heading = stod(payload.substr(c2 + 1));
+            double lat = stod_finite(payload.substr(0, c1));
+            double lon = stod_finite(payload.substr(c1 + 1, c2 - c1 - 1));
+            double heading = stod_finite(payload.substr(c2 + 1));
             station_info.setStatic(lat, lon, heading);
             cout << "Static location set to " << lat << ", " << lon
                  << ", heading " << heading << endl;
@@ -1083,7 +1085,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         size_t colon_pos = params.find(':');
         if (colon_pos != string::npos) {
             int id = stoi(params.substr(0, colon_pos));
-            float offset_khz = stof(params.substr(colon_pos + 1));
+            float offset_khz = stof_finite(params.substr(colon_pos + 1));
             float offset_hz = offset_khz * 1000.0f;
 
             // The UI works in wideband-center-relative coordinates. In wideband
@@ -1354,8 +1356,13 @@ void ControlHandler::handle_message_impl(string_view message) {
         string params = string(message.substr(34));
         size_t colon_pos = params.find(':');
         if (colon_pos != string::npos) {
-            float start_mhz = stof(params.substr(0, colon_pos));
-            float end_mhz = stof(params.substr(colon_pos + 1));
+            float start_mhz = stof_finite(params.substr(0, colon_pos));
+            float end_mhz = stof_finite(params.substr(colon_pos + 1));
+            // Reject (not stored, not echoed) anything that can't be a scan
+            // range; buildBandPlan also caps the band count.
+            if (!(start_mhz > 0.0f && end_mhz > start_mhz && end_mhz <= MAX_WIDEBAND_SCAN_MHZ)) {
+                throw std::invalid_argument("wideband scan range out of bounds");
+            }
             float start_hz = start_mhz * 1e6f;
             float end_hz = end_mhz * 1e6f;
 
@@ -1460,7 +1467,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         size_t colon_pos = params.find(':');
         if (colon_pos != string::npos) {
             int id = stoi(params.substr(0, colon_pos));
-            float level = stof(params.substr(colon_pos + 1));
+            float level = stof_finite(params.substr(colon_pos + 1));
             if (decimator_manager.setSquelchLevel(id, level))
                 record_decimator_snapshot();
         }
@@ -1485,7 +1492,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         size_t colon_pos = params.find(':');
         if (colon_pos != string::npos) {
             int id = stoi(params.substr(0, colon_pos));
-            float threshold = stof(params.substr(colon_pos + 1));
+            float threshold = stof_finite(params.substr(colon_pos + 1));
             if (decimator_manager.setSquelchEigenThreshold(id, threshold))
                 record_decimator_snapshot();
         }

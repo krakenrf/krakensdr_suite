@@ -15,6 +15,7 @@
 #include "station_info.hpp"
 #include "signal_processing/music_processor.hpp"
 #include "utils/json_escape.hpp"
+#include "utils/parse_num.hpp"
 
 #include <openssl/evp.h>
 #include <openssl/err.h>
@@ -767,9 +768,9 @@ void apply_cloud_settings_on_loop(map<string, string> s) {
         double lat, lon, hd;
         station_info.getStatic(lat, lon, hd);
         try {
-            if (has("latitude"))  lat = stod(s["latitude"]);
-            if (has("longitude")) lon = stod(s["longitude"]);
-            if (has("heading"))   hd  = stod(s["heading"]);
+            if (has("latitude"))  lat = stod_finite(s["latitude"]);
+            if (has("longitude")) lon = stod_finite(s["longitude"]);
+            if (has("heading"))   hd  = stod_finite(s["heading"]);
             cmd("STATIC_LOCATION:" + fmt_num(lat) + "," + fmt_num(lon) + "," + fmt_num(hd));
         } catch (const exception&) { /* malformed number: leave unchanged */ }
     }
@@ -790,7 +791,7 @@ void apply_cloud_settings_on_loop(map<string, string> s) {
     // for a ULA.
     if (has("ant_spacing_meters")) {
         try {
-            long mm = lround(stod(s["ant_spacing_meters"]) * 1000.0);
+            long mm = lround(stod_finite(s["ant_spacing_meters"]) * 1000.0);
             string topo = arrangement;
             if (topo.empty()) {
                 for (const auto& d : decimator_manager.getAllDecimators()) {
@@ -834,7 +835,7 @@ void apply_cloud_settings_on_loop(map<string, string> s) {
         string k = "vfo_freq_" + to_string(i);
         if (has(k.c_str()) && center_hz > 0) {
             try {
-                double offset_khz = (stod(s[k]) - center_hz) / 1000.0;
+                double offset_khz = (stod_finite(s[k]) - center_hz) / 1000.0;
                 cmd("SET_DECIMATOR_FREQ:" + to_string(id) + ":" + fmt_num(offset_khz));
             } catch (const exception&) {}
         }
@@ -843,7 +844,7 @@ void apply_cloud_settings_on_loop(map<string, string> s) {
         k = "vfo_bw_" + to_string(i);
         if (has(k.c_str())) {
             try {
-                int idx = closest_bandwidth_index(stod(s[k]));
+                int idx = closest_bandwidth_index(stod_finite(s[k]));
                 cmd("SET_DECIMATOR_BW:" + to_string(id) + ":" + to_string(idx));
             } catch (const exception&) {}
         }

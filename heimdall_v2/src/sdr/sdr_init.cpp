@@ -14,6 +14,19 @@
 #include <iomanip>
 #include <optional>
 
+// Serializes every librtlsdr handle operation outside the USB reader threads
+// (tuning, gain, bias tee / noise source, GPIO switch banks) against each
+// other and against the element-count reconfiguration's close/reopen. Without
+// it a noise-source switch from the watchdog or periodic check could run on a
+// handle the reconfiguration just closed (use-after-free), and two threads
+// doing read-modify-write on the channel-0 GPIO register could lose each
+// other's bits. Recursive: these helpers call one another (device open
+// re-applies the antenna bias tees, a retune can throw the RF switches).
+// Lock order: device_io_mutex is INNERMOST - settings_mutex and the phase
+// machine's state_mutex may be held when taking it (noise-source switches run
+// under state_mutex), but never take either while holding it.
+std::recursive_mutex device_io_mutex;
+
 // Forward declarations for functions defined elsewhere
 extern void clear_l2_buffer();
 extern std::atomic<size_t> l2_raw_cap;  // C5: runtime L2-raw depth cap (defined in sdr_pipeline.cpp)
@@ -217,7 +230,9 @@ bool open_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
 
     // Initialize devices in parallel
     std::vector<std::thread> init_threads;
-    std::vector<bool> init_results(num_to_open, false);
+    // char, not bool: vector<bool> packs results into shared words, so the
+    // init threads' concurrent writes would race and could lose a result.
+    std::vector<char> init_results(num_to_open, 0);
 
     for (int i = 0; i < num_to_open; i++) {
         init_threads.emplace_back([i, &init_results, &devices]() {
@@ -326,6 +341,7 @@ void wideband_set_noise_path(bool noise_on, const std::vector<std::unique_ptr<SD
 
 void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
 #if ENABLE_BIAS_TEE
+    std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
     std::cout << "Bias Tee: " << (enable ? "Enabling" : "Disabling") << " on all devices..." << std::endl;
     for (const auto& device : devices) {
         if (device && device->dev) {
@@ -361,9 +377,12 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
 }
 
 void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
     // One GPIO per OPEN channel (GPIO ch+1 on the channel-0 chip) - the RTL2832
     // only has GPIO0-7, so never sweep the compile-time ceiling here.
-    const int nch = static_cast<int>(devices.size());
+    // devices holds one slot per EXPECTED serial (8 by default); only the
+    // first active_num_elements are open.
+    const int nch = std::min(active_num_elements.load(), static_cast<int>(devices.size()));
     mask &= (nch >= 32) ? ~0u : ((1u << nch) - 1);
 
     if (downconverter.enabled.load()) {
@@ -402,6 +421,7 @@ void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SD
 }
 
 bool wideband_retune_rf(uint64_t rf_hz, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
     // Mixer side follows the frequency: keep the current side (it may be a
     // user preference, e.g. low for image dodging) as long as it can reach
     // the RF, otherwise auto-select.
@@ -430,6 +450,7 @@ bool wideband_retune_rf(uint64_t rf_hz, const std::vector<std::unique_ptr<SDRDev
 
 bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
     std::lock_guard<std::mutex> lock(settings_mutex);
+    std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
 
     bool changed = false;
     uint64_t prev_frequency = current_frequency.load();
@@ -457,7 +478,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
     // Update all devices in parallel - each RTL-SDR has independent PLL settling time
     // Parallel execution reduces total time from N*latency to max(latency)
     std::vector<std::thread> update_threads;
-    std::vector<bool> results(devices.size(), true);
+    std::vector<char> results(devices.size(), 1);  // char: see init_results
 
     for (size_t i = 0; i < devices.size(); i++) {
         if (devices[i] && devices[i]->dev) {
@@ -631,10 +652,13 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
 
         // Restore all tuners to the same frequency
         uint32_t coherent_freq = static_cast<uint32_t>(current_frequency.load());
-        for (const auto& device : devices) {
-            if (device && device->dev) {
-                rtlsdr_set_center_freq(device->dev, coherent_freq);
-                wideband_config.set_tuner_frequency(device->index, coherent_freq);
+        {
+            std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
+            for (const auto& device : devices) {
+                if (device && device->dev) {
+                    rtlsdr_set_center_freq(device->dev, coherent_freq);
+                    wideband_config.set_tuner_frequency(device->index, coherent_freq);
+                }
             }
         }
 
@@ -698,6 +722,7 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
 }
 
 bool set_tuner_frequency(int tuner_index, uint32_t frequency, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
     if (tuner_index < 0 || tuner_index >= static_cast<int>(devices.size())) {
         std::cerr << "Wideband: Invalid tuner index " << tuner_index << std::endl;
         return false;
@@ -734,6 +759,7 @@ bool set_tuner_frequency(int tuner_index, uint32_t frequency, const std::vector<
 }
 
 void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
     if (operating_mode.load() != OperatingMode::WIDEBAND_SCAN) {
         std::cerr << "Wideband: Not in wideband scan mode" << std::endl;
         return;
@@ -759,7 +785,11 @@ void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::
 
     // Spread across the tuners actually open (runtime count, not the ceiling).
     // Calculate all target frequencies first (tuner domain, fits uint32)
-    const int num_tuners = static_cast<int>(devices.size());
+    // devices holds one slot per EXPECTED serial (8 by default), not per open
+    // dongle: spreading over the slots put the requested center on the top
+    // open tuner, so the stitched spectrum (centered on the open tuners) sat
+    // two spacings below every requested pan and snapped away from it.
+    const int num_tuners = std::min(active_num_elements.load(), static_cast<int>(devices.size()));
     std::vector<uint32_t> target_freqs(num_tuners);
     for (int i = 0; i < num_tuners; i++) {
         int offset_from_center = i - (num_tuners / 2);  // e.g. -2..2 for 5 tuners
@@ -770,7 +800,7 @@ void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::
     // Each RTL-SDR has independent PLL, so parallel tuning reduces total time
     // from N*latency (~500ms) to max(latency) (~100ms)
     std::vector<std::thread> tune_threads;
-    std::vector<bool> results(num_tuners, false);
+    std::vector<char> results(num_tuners, 0);  // char: see init_results
 
     for (int i = 0; i < num_tuners; i++) {
         tune_threads.emplace_back([i, &target_freqs, &devices, &results]() {

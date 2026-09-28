@@ -165,6 +165,7 @@ void discrete_scanner_thread() {
                 wideband_retune_rf(next_frequency, devices);
             } else {
                 // Coherent mode: set all tuners to same frequency
+                std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
                 for (const auto& device : devices) {
                     if (device && device->dev) {
                         rtlsdr_set_center_freq(device->dev, static_cast<uint32_t>(next_frequency));
@@ -496,8 +497,16 @@ int main(int argc, char* argv[]) {
         }
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    for (auto& device : devices) {
-        if (device && device->dev) rtlsdr_close(device->dev);
+    {
+        // A web/control command or a noise-source switch still in flight must
+        // not use a handle mid-close.
+        std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
+        for (auto& device : devices) {
+            if (device && device->dev) {
+                rtlsdr_close(device->dev);
+                device->dev = nullptr;
+            }
+        }
     }
 
     // --kerberos_sw: leave the antenna switches pointing at the antennas (not

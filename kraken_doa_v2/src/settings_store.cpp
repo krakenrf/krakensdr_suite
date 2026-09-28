@@ -1,4 +1,5 @@
 #include "settings_store.hpp"
+#include "utils/parse_num.hpp"
 #include "utils/json_escape.hpp"
 
 #include <map>
@@ -166,8 +167,9 @@ namespace {
     bool is_number(const string& s) {
         if (s.empty()) return false;
         char* end = nullptr;
-        strtod(s.c_str(), &end);
-        return end && *end == '\0';
+        const double v = strtod(s.c_str(), &end);
+        // strtod accepts "inf"/"nan", which would be written out as invalid JSON
+        return end && *end == '\0' && is_finite_value(v);
     }
 
     // Serialize the whole store as pretty JSON (schema order) and write it

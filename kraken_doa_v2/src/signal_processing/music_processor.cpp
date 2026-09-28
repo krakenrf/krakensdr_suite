@@ -1,4 +1,5 @@
 #include "signal_processing/music_processor.hpp"
+#include "utils/parse_num.hpp"
 #include "config.hpp"
 #include "globals.hpp"
 #include <iostream>
@@ -1191,8 +1192,7 @@ ULAOutputMode MUSICProcessor::getULAOutputMode() const {
 void MUSICProcessor::setArrayOffset(float degrees) {
     lock_guard<mutex> config_lock(config_mutex_);
     // Normalize to [0, 360)
-    while (degrees < 0.0f) degrees += 360.0f;
-    while (degrees >= 360.0f) degrees -= 360.0f;
+    degrees = wrap_degrees(degrees);
     if (abs(array_offset_deg_ - degrees) > 0.001f) {
         array_offset_deg_ = degrees;
         cout << "MUSIC array offset angle set to " << degrees << " degrees" << endl;

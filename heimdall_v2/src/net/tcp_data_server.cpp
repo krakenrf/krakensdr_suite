@@ -5,6 +5,7 @@
 #include <iostream>
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 
 extern std::atomic<bool> bias_tee_enabled;
 
@@ -231,15 +232,54 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
              << " got " << packet.size() << std::endl;
     }
     
-    // Send to all connected clients
+    // Send to all connected clients. The sockets are non-blocking and a packet
+    // (~164 KB at 5 channels) is larger than a socket send buffer usually
+    // holds, so a short write is normal back-pressure, not an error - over
+    // Ethernet the first packet alone typically goes out in pieces. Clients
+    // parse a byte stream, so a packet is never cut: its unsent tail waits in
+    // tx_buffer and is finished first on the next broadcast, and while a
+    // client is behind, NEW packets are dropped whole (a data gap, but the
+    // framing stays intact and memory is bounded to one tail per client).
+    static std::chrono::steady_clock::time_point last_drop_warn{};
+    static uint64_t dropped_since_warn = 0;
+    auto send_some = [](TcpClient& c, const uint8_t* data, size_t len) -> ssize_t {
+        ssize_t n = send(c.socket, data, len, MSG_NOSIGNAL);
+        if (n >= 0) return n;
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
+        std::cerr << "TCP Data: client disconnected (" << strerror(errno) << ")" << std::endl;
+        c.active = false;
+        return -1;
+    };
     for (auto& client : clients) {
-        if (client->active) {
-            ssize_t sent = send(client->socket, packet.data(), packet.size(), MSG_NOSIGNAL);
-            if (sent < 0 || static_cast<size_t>(sent) != packet.size()) {
-                std::cerr << "Failed to send complete packet to client" << std::endl;
-                client->active = false;
+        if (!client->active) continue;
+
+        // Finish the in-flight packet first.
+        if (!client->tx_buffer.empty()) {
+            ssize_t n = send_some(*client, reinterpret_cast<const uint8_t*>(client->tx_buffer.data()),
+                                  client->tx_buffer.size());
+            if (n < 0) continue;
+            client->tx_buffer.erase(0, static_cast<size_t>(n));
+            if (!client->tx_buffer.empty()) {
+                dropped_since_warn++;  // still behind: skip this packet whole
+                continue;
             }
         }
+
+        ssize_t n = send_some(*client, packet.data(), packet.size());
+        if (n < 0) continue;
+        if (n == 0) {
+            dropped_since_warn++;  // nothing of it went out: drop it whole
+        } else if (static_cast<size_t>(n) < packet.size()) {
+            client->tx_buffer.assign(reinterpret_cast<const char*>(packet.data()) + n,
+                                     packet.size() - static_cast<size_t>(n));
+        }
+    }
+    if (dropped_since_warn > 0 &&
+        std::chrono::steady_clock::now() - last_drop_warn > std::chrono::seconds(5)) {
+        last_drop_warn = std::chrono::steady_clock::now();
+        std::cerr << "TCP Data: slow client(s), dropped " << dropped_since_warn
+                  << " packet(s) since the last report" << std::endl;
+        dropped_since_warn = 0;
     }
 }
 

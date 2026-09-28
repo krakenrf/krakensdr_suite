@@ -633,10 +633,26 @@ void ContinuousScanner::buildBandPlan() {
         return;
     }
 
-    // Guard against degenerate edge clip: step would be ~0 and the band loop
-    // below would never advance (unbounded band_centers_ growth).
-    float edge_clip = std::max(current_edge_clip.load(), 0.1f);
-    float span = end_hz - start_hz;
+    // Guard against a degenerate edge clip (a ~0 step means endless bands).
+    // Written out rather than std::max, which passes NaN straight through.
+    float edge_clip = current_edge_clip.load();
+    if (!(edge_clip >= 0.1f)) edge_clip = 0.1f;
+    if (edge_clip > 1.0f) edge_clip = 1.0f;
+    const double span = static_cast<double>(end_hz) - start_hz;
+
+    // Step by the usable (edge-clipped) bandwidth so band edges overlap. The
+    // count is computed up front and each center derived from its index:
+    // accumulating `center += step` in float stops advancing at large
+    // frequencies, and a huge range must not allocate without bound.
+    constexpr int MAX_BANDS = 4096;
+    const double step = static_cast<double>(edge_clip) * BAND_WIDTH_HZ;
+    const double n_bands = (span <= BAND_WIDTH_HZ) ? 1.0
+                         : std::ceil((span - BAND_WIDTH_HZ) / step) + 1.0;
+    if (!(n_bands <= MAX_BANDS)) {
+        std::cerr << "ContinuousScanner: wideband range needs " << n_bands
+                  << " bands (max " << MAX_BANDS << "), not scanning" << std::endl;
+        return;
+    }
 
     std::lock_guard<std::mutex> lock(band_plan_mutex_);
     band_centers_.clear();
@@ -645,13 +661,8 @@ void ContinuousScanner::buildBandPlan() {
         // Whole range fits in one tuner band
         band_centers_.push_back((start_hz + end_hz) * 0.5f);
     } else {
-        // Step by the usable (edge-clipped) bandwidth so band edges overlap
-        float step   = edge_clip * BAND_WIDTH_HZ;
-        float center = start_hz + HALF_BAND_HZ;
-        while (true) {
-            band_centers_.push_back(center);
-            if (center + HALF_BAND_HZ >= end_hz) break;
-            center += step;
+        for (int i = 0; i < static_cast<int>(n_bands); i++) {
+            band_centers_.push_back(static_cast<float>(start_hz + HALF_BAND_HZ + i * step));
         }
     }
 

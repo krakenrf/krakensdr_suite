@@ -18,6 +18,7 @@
 //     refreshed when angle changes >0.1 deg or frequency >1000 Hz
 
 #include "signal_processing/beamformer.hpp"
+#include "utils/parse_num.hpp"
 #include "signal_processing/fft_processor.hpp"   // fftw_planner_mutex
 #include "globals.hpp"
 
@@ -95,8 +96,7 @@ bool Beamformer::isEnabled() const { return enabled_.load(std::memory_order_acqu
 
 void Beamformer::setSteeringAngle(float angle_deg) {
     // Normalize to [0, 360)
-    while (angle_deg < 0.0f) angle_deg += 360.0f;
-    while (angle_deg >= 360.0f) angle_deg -= 360.0f;
+    angle_deg = wrap_degrees(angle_deg);
 
     std::lock_guard<std::mutex> config_lock(config_mutex_);
     if (std::fabs(steering_angle_deg_ - angle_deg) > 0.1f) {

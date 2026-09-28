@@ -3,6 +3,7 @@
 // ============================================
 
 #include "networking/data_receiver.hpp"
+#include "utils/parse_num.hpp"
 #include "globals.hpp"
 #include "config.hpp"
 #include "signal_processing/fft_processor.hpp"
@@ -744,8 +745,7 @@ void DataReceiver::decimation_processor_thread() {
                         // doa_angle is reported in world frame (array offset already
                         // applied); the beamformer steers in array frame, so undo it.
                         float arr = static_cast<float>(doa_angle) - inst->music_processor->getArrayOffset();
-                        while (arr < 0.0f) arr += 360.0f;
-                        while (arr >= 360.0f) arr -= 360.0f;
+                        arr = wrap_degrees(arr);
                         steering_angle = arr;
                     }
 

@@ -137,26 +137,33 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
         std::lock_guard<std::mutex> lock(settings_mutex);
 
         stop_pipeline_threads();
-        close_active_devices(devices);
 
-        active_num_elements.store(new_n);
-        ok = open_active_devices(devices);
-        if (!ok) {
-            // Roll back to the previous count (open_active_devices cleaned up
-            // its partial handles). If even that fails, stay stopped rather
-            // than run half-open.
-            std::cerr << "Reconfiguration: failed to open " << new_n
-                      << " devices, rolling back to " << old_n << std::endl;
-            active_num_elements.store(old_n);
-            if (!open_active_devices(devices)) {
-                err = "failed to open devices for " + std::to_string(new_n) +
-                      " elements AND rollback to " + std::to_string(old_n) +
-                      " failed - check USB connections and restart";
-                reconfig_in_progress.store(false, std::memory_order_release);
-                return false;
+        // Every other handle user takes device_io_mutex, so nothing can touch
+        // a handle while it is closed or being reopened. Taken only AFTER the
+        // pipeline threads are joined (one may be waiting on it).
+        {
+            std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
+            close_active_devices(devices);
+
+            active_num_elements.store(new_n);
+            ok = open_active_devices(devices);
+            if (!ok) {
+                // Roll back to the previous count (open_active_devices cleaned up
+                // its partial handles). If even that fails, stay stopped rather
+                // than run half-open.
+                std::cerr << "Reconfiguration: failed to open " << new_n
+                          << " devices, rolling back to " << old_n << std::endl;
+                active_num_elements.store(old_n);
+                if (!open_active_devices(devices)) {
+                    err = "failed to open devices for " + std::to_string(new_n) +
+                          " elements AND rollback to " + std::to_string(old_n) +
+                          " failed - check USB connections and restart";
+                    reconfig_in_progress.store(false, std::memory_order_release);
+                    return false;
+                }
+                err = "failed to open " + std::to_string(new_n) +
+                      " devices (rolled back to " + std::to_string(old_n) + ")";
             }
-            err = "failed to open " + std::to_string(new_n) +
-                  " devices (rolled back to " + std::to_string(old_n) + ")";
         }
 
         // Rebuild the per-channel result state for the (possibly rolled-back)

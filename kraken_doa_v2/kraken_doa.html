@@ -1113,6 +1113,16 @@ function maxOffsetHz(bwMhz) {
   return (visible - bwMhz) * 500000;
 }
 
+// Center frequency of the FFT frame currently on screen (null until the first
+// frame). Tuning bars are positioned relative to THIS, not currentCenterFreq:
+// the plot's x axis comes from the displayed frame, while currentCenterFreq is
+// the intended center - held at the drag value for 500 ms after a pan, ahead of
+// the data after a retune, and off by the 1 kHz send rounding. Any difference
+// slid the bars against the spectrum (the residual jiggle); from the same
+// frame, a bar sits exactly where its VFO is in the displayed spectrum.
+let displayCenterFreq = null;
+function barCenterFreq() { return displayCenterFreq ?? currentCenterFreq; }
+
 // Deferred tuning-bar re-sync after a center-frequency pan. The bars' saved
 // pixel positions can only be converted back to frequencies once an FFT
 // frame AT THE NEW center frequency has updated the plot scale - the old
@@ -1128,20 +1138,23 @@ function scheduleScrollSync() {
   pendingScrollSyncTimeout = setTimeout(finishScrollSync, 1500);
 }
 
-// After a center-frequency change, re-derive every VFO's offset from its
-// saved (pre-pan) tuning-bar pixel position so each bar keeps its visual
-// position, clamp it and send it. Returns false when there is nothing saved.
+// Called when the post-pan tuning-bar lock is released. The bars were held at
+// their pre-pan screen positions, and a bar's screen position IS its offset
+// from the center frequency - so every VFO keeps the offset it already has
+// (its RF moves with the pan), exactly as after a typed retune. Deriving the
+// offsets back from the saved pixels through the plot scale instead made the
+// result depend on which frame last set that scale (a mid-drag frame inside
+// the match tolerance, or a wideband frame labelled while heimdall's tuners
+// were half retuned) and re-sent them into heimdall's retune window, so the
+// VFOs occasionally shifted. Only re-clamp, since the allowed range can have
+// changed (e.g. a bandwidth change under the lock), and send just those.
+// Returns false when no pan lock was held.
 function resyncOffsetsFromSavedBoxes() {
-  if (!scrollDragSavedBoxes || !fftPlot) return false;
-  scrollDragSavedBoxes.forEach(savedBox => {
-    const dec = decimatorInfo.find(d => d.id === savedBox.id);
-    if (dec) {
-      const savedCenterX = savedBox.x + savedBox.w / 2;
-      const savedFreq = fftPlot.posToVal(savedCenterX, 'x');
-      const newOffset = (savedFreq - currentCenterFreq) * 1000000;
-      const bw = bwo[dec.bandwidth_index ?? 0].bandwidth;
-      const maxOffset = maxOffsetHz(bw);
-      const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffset));
+  if (!scrollDragSavedBoxes) return false;
+  decimatorInfo.forEach(dec => {
+    const maxOffset = maxOffsetHz(bwo[dec.bandwidth_index ?? 0].bandwidth);
+    const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, dec.freq_offset_hz));
+    if (clampedOffset !== dec.freq_offset_hz) {
       dec.freq_offset_hz = clampedOffset;
       setDecimatorFreq(dec.id, clampedOffset / 1000);
     }
@@ -2752,10 +2765,9 @@ function drawBox() {
     return; // Don't draw tuning bars while scanning
   }
 
-  // IMPORTANT: Use currentCenterFreq for accurate tuning bar positioning
-  // In wideband mode, this is the actual center of the stitched spectrum
-  // In normal mode, this is the tuner center frequency
-  const center=currentCenterFreq;
+  // Center of the frame on screen (see barCenterFreq): the stitched center in
+  // wideband mode, the tuner center otherwise
+  const center=barCenterFreq();
 
   // Clear stored boxes
   c.boxes = [];
@@ -2948,7 +2960,7 @@ function drawBox() {
 
   // Also draw on waterfall overlay
   if (waterfall && waterfall.initialized) {
-    waterfall.drawOverlay(decimatorInfo, currentCenterFreq, activeDecimatorId);
+    waterfall.drawOverlay(decimatorInfo, barCenterFreq(), activeDecimatorId);
   }
 }
 
@@ -2981,7 +2993,7 @@ const wfSurface = {
   },
   hoverRedraw: (c, cursor) => {
     c.style.cursor = cursor;
-    waterfall.drawOverlay(decimatorInfo, currentCenterFreq, activeDecimatorId);
+    waterfall.drawOverlay(decimatorInfo, barCenterFreq(), activeDecimatorId);
   }
 };
 
@@ -2994,7 +3006,7 @@ function inRect(x, y, r) {
 function centerActiveBarAt(freqMhz) {
   const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
   if (!activeDec) return false;
-  const newOffsetHz = (freqMhz - currentCenterFreq) * 1000000;
+  const newOffsetHz = (freqMhz - barCenterFreq()) * 1000000;  // freqMhz is on the displayed axis
   const bw = bwo[activeDec.bandwidth_index ?? 0].bandwidth;
   const maxOffset = maxOffsetHz(bw);
   const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffsetHz));
@@ -3003,7 +3015,17 @@ function centerActiveBarAt(freqMhz) {
   return true;
 }
 
+// Browsers fire 'click' after ANY mousedown+mouseup on the same element, even
+// when the mouse moved in between - so the end of a pan or a bar drag also
+// produced a click, and pointerClick re-centered the active VFO on the
+// release point (the "D0 jumps to where I let go" flick). pointerUp arms this
+// after a real drag; pointerClick swallows that click. Cleared on every press
+// so a click the browser never delivers (released off the canvas) can't eat
+// a later genuine one.
+let suppressNextClick = false;
+
 function pointerDown(s, e) {
+  suppressNextClick = false;
   if(!s.active() || !decimatorInfo.length)return;
   const c=s.el();
   if(!c || !c.boxes)return;
@@ -3236,6 +3258,7 @@ function pointerUp(s, e) {
       // frame at the new frequency has updated the plot scale
       sendFreqChange(currentCenterFreq);
       scheduleScrollSync();
+      suppressNextClick = true;
     }
 
     e.preventDefault();
@@ -3245,6 +3268,7 @@ function pointerUp(s, e) {
   if(isDragging||isDraggingEdge) {
     isDragging=false;
     isDraggingEdge=false;
+    suppressNextClick = true;
     draggedEdge=null;
     dragStartBandwidth=null;
     dragStartOffset=null;
@@ -3263,6 +3287,7 @@ function pointerUp(s, e) {
 // needed for clicks pointerDown doesn't turn into a scroll drag - e.g. while
 // the scanner is running - so it stays.
 function pointerClick(s, e) {
+  if(suppressNextClick) { suppressNextClick = false; return; }  // tail of a drag
   if(!s.active()||isDragging||isDraggingEdge)return;
   const c=s.el();
   if(!c || !s.canMap())return;
@@ -4516,22 +4541,25 @@ function applyClip() {
   currentMagnitudes=fullMagnitudes.slice(edge,tp-edge);
 
   if(currentFrequencies.length>0&&currentMagnitudes.length>0) {
-    fftPlot.setData([currentFrequencies,currentMagnitudes]);
-    // Only redraw tuning bar if not in the middle of a user-initiated frequency change
-    // This prevents the tuning bar from jumping when old FFT data arrives after freq change
-    if (!freqUserChanging) {
-      drawBox();
-    }
+    // batch() commits the new x-scale synchronously. A bare setData only
+    // schedules the commit (microtask), so drawBox() below would map the
+    // tuning bars with the PREVIOUS frame's scale - one frame behind the
+    // spectrum while it pans.
+    fftPlot.batch(() => fftPlot.setData([currentFrequencies,currentMagnitudes]));
+    // Redraw the tuning bars with every frame: they are positioned from the
+    // displayed frame's own center (barCenterFreq), so a frame of old data
+    // arriving after a frequency change draws them where they are in THAT
+    // data. (They used to be frozen for 500 ms after a change, because they
+    // were positioned from the intended center; that freeze left the bars
+    // standing still while the spectrum moved, then snapping.)
+    drawBox();
 
     // Squelch status now received from backend via system_status messages
 
     // Update waterfall with new FFT data
     if (waterfall && waterfall.initialized) {
       waterfall.addLine(currentFrequencies, currentMagnitudes);
-      // Also skip waterfall overlay redraw during freq change
-      if (!freqUserChanging) {
-        waterfall.drawOverlay(decimatorInfo, currentCenterFreq, activeDecimatorId);
-      }
+      waterfall.drawOverlay(decimatorInfo, barCenterFreq(), activeDecimatorId);
     }
   }
 }
@@ -4657,25 +4685,26 @@ function removeDecimator(id) {
   send('REMOVE_DECIMATOR:' + id);
 }
 
-// Debounced decimator frequency update to prevent lag during rapid dragging
+// Debounced decimator frequency update to prevent lag during rapid dragging.
+// Pending updates are kept PER decimator (latest offset wins for each id) and
+// all flushed together: a single shared slot dropped every VFO but the last
+// when several were updated at once (a pan re-clamping all bars, a bandwidth
+// change), leaving those VFOs demodulating a different frequency than shown.
 let decimatorFreqDebounceTimer = null;
-let pendingFreqUpdate = null;
+const pendingFreqUpdates = new Map();  // id -> offset_khz
 
 function setDecimatorFreq(id, offset_khz) {
-  // Store the pending update
-  pendingFreqUpdate = { id, offset_khz };
+  pendingFreqUpdates.set(id, offset_khz);
 
   // Clear any existing timer
   if (decimatorFreqDebounceTimer) {
     clearTimeout(decimatorFreqDebounceTimer);
   }
 
-  // Set a new timer to send update after brief delay
+  // Set a new timer to send the updates after brief delay
   decimatorFreqDebounceTimer = setTimeout(() => {
-    if (pendingFreqUpdate) {
-      send('SET_DECIMATOR_FREQ:' + pendingFreqUpdate.id + ':' + pendingFreqUpdate.offset_khz);
-      pendingFreqUpdate = null;
-    }
+    pendingFreqUpdates.forEach((khz, decId) => send('SET_DECIMATOR_FREQ:' + decId + ':' + khz));
+    pendingFreqUpdates.clear();
     decimatorFreqDebounceTimer = null;
   }, 100); // 100ms debounce delay
 }
@@ -4713,7 +4742,7 @@ function setDecimatorBandwidthFromUI(id, bw_index) {
   // Redraw tuning bar on spectrum and waterfall
   drawBox();
   if (waterfall && waterfall.initialized) {
-    waterfall.drawOverlay(decimatorInfo, currentCenterFreq, activeDecimatorId);
+    waterfall.drawOverlay(decimatorInfo, barCenterFreq(), activeDecimatorId);
   }
 }
 
@@ -5057,7 +5086,7 @@ function initWaterfall(plot) {
         wfOverlay.hoveredHandle = null;
         wfOverlay.hoveredEdge = null;
         wfOverlay.hoveredBox = false;
-        if (waterfall) waterfall.drawOverlay(decimatorInfo, currentCenterFreq, activeDecimatorId);
+        if (waterfall) waterfall.drawOverlay(decimatorInfo, barCenterFreq(), activeDecimatorId);
       }
     });
     wfOverlay.addEventListener('click', handleWaterfallClick);
@@ -5690,6 +5719,7 @@ function connect() {
       
       fullFrequencies=freq;
       fullMagnitudes=mag;
+      displayCenterFreq=fm;
       applyClip();
 
       // Deferred tuning-bar re-sync: the plot scale now reflects this frame,

@@ -7,6 +7,7 @@
 #include "message_builders.hpp"
 #include "decimator_manager.hpp"
 #include "config.hpp"
+#include "utils/parse_num.hpp"
 #include <iostream>
 #include <algorithm>
 #include <cmath>
@@ -49,7 +50,7 @@ static float extractFloatValue(const string& json, const string& key, float defa
     size_t end = json.find_first_of(",}]", start);
     if (end == string::npos) return default_val;
     try {
-        return stof(json.substr(start, end - start));
+        return stof_finite(json.substr(start, end - start));
     } catch (...) {
         return default_val;
     }

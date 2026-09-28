@@ -691,7 +691,8 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
     // Bail if shutdown begins or a real coherence recovery preempts us (once armed
     // the recovery owns the noise/FFT state, so we must not fight it).
     auto preempted = []() {
-        return !global_running.load() || recovery_in_progress.load(std::memory_order_acquire);
+        return !global_running.load() || recovery_in_progress.load(std::memory_order_acquire) ||
+               reconfig_in_progress.load(std::memory_order_acquire);
     };
     auto sleep_slice = [&](milliseconds total) {
         const auto deadline = steady_clock::now() + total;

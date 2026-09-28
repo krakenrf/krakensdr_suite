@@ -18,8 +18,9 @@ struct TcpClient {
     bool active;
     std::string rx_buffer;  // partial-command accumulator (control server)
     std::string tx_buffer;  // pending output, flushed when the socket is writable
-                            // (control server). Never block a server thread on a
-                            // client that has stopped reading.
+                            // (control server; the data server keeps the unsent
+                            // tail of its in-flight packet here). Never block a
+                            // server thread on a client that has stopped reading.
 
     TcpClient(int s);
     ~TcpClient();
