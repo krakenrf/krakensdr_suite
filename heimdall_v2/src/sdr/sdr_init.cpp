@@ -625,6 +625,11 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
             phase_compensation->compensation_applied = false;
             phase_compensation->convergence_count = 0;
             phase_compensation->stable_nonzero_count = 0;
+            // Stop applying the per-bin equalizer: it was designed for the
+            // coherent tuning, and during the scan every tuner sits at a
+            // different frequency. (It stayed applied to the scan data.)
+            phase_compensation->per_bin_measured = false;
+            per_bin_cal.ready.store(false, std::memory_order_release);
 
             // If we interrupted active calibration, turn off bias tee
             if (old_state != PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION &&
@@ -665,10 +670,10 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
         // Re-enable phase calibration by resetting to wait for lag convergence state
         if (phase_compensation) {
             std::lock_guard<std::mutex> ph_lock(phase_compensation->state_mutex);
-            // Identity vector, counters reset; the per-bin equalizer is kept
-            // (historical behavior of this path).
-            reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION,
-                                     /*drop_per_bin_eq=*/false);
+            // Identity vector, counters reset, per-bin equalizer dropped: the
+            // re-convergence re-measures it (keeping per_bin_measured set used
+            // to skip that, leaving a filter from before the scan applied).
+            reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION);
         }
 
         // DO NOT reset lag compensation states when returning from wideband mode

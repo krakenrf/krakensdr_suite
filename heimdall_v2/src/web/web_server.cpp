@@ -342,17 +342,9 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                                 // cooldown override here - clobbering the recovery's phase
                                 // state and killing its noise source would wedge calibration.
                                 std::cout << "Frequency changed during coherence recovery: deferring to the full recal" << std::endl;
-                            } else if (new_freq > 0 && kerberos_manual_cal_only()) {
-                                // --kerberos: no automatic recal after a retune.
-                                // Keep the old compensation applied (approximately
-                                // valid nearby) and mark it STALE for the UIs.
-                                if (get_phase_compensation_state() == PhaseCompensatorState::CONVERGED) {
-                                    kerberos_cal_stale.store(true, std::memory_order_release);
-                                    std::cerr << "KerberosSDR: frequency changed - calibration is STALE. "
-                                                 "Disconnect antennas and press Recalibrate." << std::endl;
-                                }
                             } else if (new_freq > 0) {
                                 // Frequency changed - use cooldown approach
+                                // (--kerberos: marks the calibration STALE instead)
                                 begin_retune_cooldown("Frequency changed via web UI");
                             } else {
                                 // Gain-only change - immediate calibration

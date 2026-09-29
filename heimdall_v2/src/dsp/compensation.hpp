@@ -11,13 +11,13 @@ bool check_phase_convergence(const std::map<int, float>& current_phases,
                              const std::map<int, float>& current_amplitudes);
 std::optional<PhaseCompensatorState> get_phase_compensation_state();
 
-// Reset the phase machine for a fresh calibration pass: enter `state`, zero the
-// convergence counters, set the compensation vector to identity and (unless
-// drop_per_bin_eq is false) drop the per-bin equalizer so it is re-measured.
-// Gating policy (kerberos / recovery / scan checks), the noise source and FFT
-// stay with the caller. Caller holds phase_compensation->state_mutex and has
+// Reset the phase machine for a fresh calibration pass: enter `state`, end any
+// retune cooldown, zero the convergence counters, set the compensation vector
+// to identity and drop the per-bin equalizer so it is re-measured. Gating
+// policy (kerberos / recovery / scan checks), the noise source and FFT stay
+// with the caller. Caller holds phase_compensation->state_mutex and has
 // checked phase_compensation.
-void reset_phase_state_locked(PhaseCompensatorState state, bool drop_per_bin_eq = true);
+void reset_phase_state_locked(PhaseCompensatorState state);
 
 // Retune / gain / mixer-side / antenna-ring cooldown: noise source off, then
 // reset the phase machine into WAITING_FOR_STABILITY with the cooldown timer

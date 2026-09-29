@@ -428,17 +428,10 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                     // hardware is already retuned and the recovery recalibrates
                     // lag+phase at the new frequency; clobbering its state / killing
                     // the noise source here would wedge phase calibration.
-                    if (changed && kerberos_manual_cal_only()) {
-                        // --kerberos: no automatic recal after a retune. Keep the
-                        // old compensation applied and mark it STALE for the UIs.
-                        if (get_phase_compensation_state() == PhaseCompensatorState::CONVERGED) {
-                            kerberos_cal_stale.store(true, std::memory_order_release);
-                            std::cerr << "KerberosSDR: frequency changed - calibration is STALE. "
-                                         "Disconnect antennas and press Recalibrate." << std::endl;
-                        }
-                    } else if (changed && !recovery_in_progress.load(std::memory_order_acquire)) {
+                    if (changed && !recovery_in_progress.load(std::memory_order_acquire)) {
                         // Coherent mode: start the cooldown instead of an immediate
                         // calibration, so rapid frequency scrolling doesn't trigger one
+                        // (--kerberos: marks the calibration STALE instead)
                         begin_retune_cooldown("Frequency changed");
                     }
                     return "{\"status\":\"success\",\"frequency\":" + std::to_string(frequency) + "}";

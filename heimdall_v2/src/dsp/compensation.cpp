@@ -376,20 +376,22 @@ std::optional<PhaseCompensatorState> get_phase_compensation_state() {
     return phase_compensation->state;
 }
 
-void reset_phase_state_locked(PhaseCompensatorState state, bool drop_per_bin_eq) {
+void reset_phase_state_locked(PhaseCompensatorState state) {
     phase_compensation->state = state;
+    // Any reset ends a retune cooldown (begin_retune_cooldown re-arms it after
+    // resetting). A coherence recovery that interrupted one used to leave the
+    // flag set, so the status reported "cooldown" indefinitely.
+    phase_compensation->cooldown_active = false;
     phase_compensation->compensation_applied = false;
     phase_compensation->convergence_count = 0;
     phase_compensation->stable_nonzero_count = 0;
     phase_compensation->failed_convergence_attempts = 0;
     phase_compensation->checks_since_compensation = 0;
-    if (drop_per_bin_eq) {
-        // The per-bin equalizer must be re-measured; stop applying any stale
-        // FIR immediately. Clearing ready under state_mutex (the same lock the
-        // design uses to publish) makes the recal-vs-design race safe.
-        phase_compensation->per_bin_measured = false;
-        per_bin_cal.ready.store(false, std::memory_order_release);
-    }
+    // The per-bin equalizer must be re-measured; stop applying any stale FIR
+    // immediately. Clearing ready under state_mutex (the same lock the design
+    // uses to publish) makes the recal-vs-design race safe.
+    phase_compensation->per_bin_measured = false;
+    per_bin_cal.ready.store(false, std::memory_order_release);
     // Identity for every channel. The reference entry is never written (apply
     // and verify skip REF_CHANNEL), so this is equivalent to resetting only the
     // non-reference entries.
@@ -399,13 +401,28 @@ void reset_phase_state_locked(PhaseCompensatorState state, bool drop_per_bin_eq)
 }
 
 void begin_retune_cooldown(const char* what) {
+    // --kerberos: no automatic recalibration after a settings change (the
+    // noise couples into the connected antennas). Keep the old compensation
+    // applied - approximately valid nearby - and mark it STALE for the UIs.
+    // Owned here so EVERY caller (frequency, gain, mixer side, antenna ring)
+    // gets it; gain/side/ring used to run the cooldown, wiping the manual
+    // calibration and parking the machine in WAITING_FOR_STABILITY for good.
+    if (kerberos_manual_cal_only()) {
+        if (get_phase_compensation_state() == PhaseCompensatorState::CONVERGED) {
+            kerberos_cal_stale.store(true, std::memory_order_release);
+            std::cerr << "KerberosSDR: " << what << " - calibration is STALE. "
+                         "Disconnect antennas and press Recalibrate." << std::endl;
+        }
+        return;
+    }
+
     set_bias_tee_all_devices(false, devices);
 
     if (!phase_compensation) return;
     std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+    reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_STABILITY);
     phase_compensation->last_frequency_change = std::chrono::steady_clock::now();
     phase_compensation->cooldown_active = true;
-    reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_STABILITY);
     std::cout << what << ": entering " << phase_compensation->stability_delay_override_ms.load()
               << "ms cooldown (bias tee OFF)" << std::endl;
 }
@@ -460,7 +477,6 @@ void kerberos_enter_uncalibrated(const char* reason) {
     if (phase_compensation) {
         std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
         reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION);
-        phase_compensation->cooldown_active = false;
     }
 
     {
@@ -733,11 +749,42 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
         std::this_thread::sleep_for(milliseconds(30));
     }
 
-    // Decide BEFORE restoring (consistent view), but only if we gathered enough
-    // data and a recovery did not preempt us.
+    // Restore exactly what we changed - but only while the calibration we
+    // checked is still the live one. A retune cooldown, gain change, per-bin
+    // toggle or coherence recovery started during the window moves the phase
+    // machine off CONVERGED and owns the noise source and FFT from then on;
+    // restoring over it switched them off under it, stalling it or leaving it
+    // calibrating on the live antennas. state_mutex makes the check + restore
+    // atomic against a calibration starting in between (same state -> FFT ->
+    // device lock order as complete_phase_calibration_locked).
+    bool still_converged = false;
+    if (phase_compensation) {
+        std::lock_guard<std::mutex> sl(phase_compensation->state_mutex);
+        still_converged = phase_compensation->state == PhaseCompensatorState::CONVERGED &&
+                          !recovery_in_progress.load(std::memory_order_acquire);
+        if (still_converged) {
+            {
+                std::lock_guard<std::mutex> fl(fft_control.control_mutex);
+                if (!fft_was_override) fft_control.user_override = false;
+                if (!fft_was_enabled) {
+                    fft_control.fft_enabled   = false;
+                    fft_control.auto_disabled = true;
+                }
+            }
+            if (!noise_was_on) set_bias_tee_all_devices(false, devices);
+        }
+    }
+    if (!still_converged) {
+        // The snapshots may straddle the new calibration's start, and it is
+        // recalibrating anyway - no verdict.
+        std::cout << "Periodic calibration check: superseded by a calibration in progress" << std::endl;
+        return;
+    }
+
+    // Decide only if we gathered enough data.
     bool bad_lag = false, bad_phase = false;
     float worst_lag = 0.0f, worst_phase = 0.0f;
-    if (snapshots >= kMinSnapshots && !recovery_in_progress.load(std::memory_order_acquire)) {
+    if (snapshots >= kMinSnapshots) {
         for (int ch = 0; ch < NUM_DEVICES; ++ch) {
             if (ch == REF_CHANNEL) continue;
             const float avg_lag   = lag_abs_sum[ch]   / snapshots;
@@ -749,19 +796,6 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
         }
     }
     const bool bad = bad_lag || bad_phase;
-
-    // Restore exactly what we changed - unless a recovery has taken over the state.
-    if (!recovery_in_progress.load(std::memory_order_acquire)) {
-        {
-            std::lock_guard<std::mutex> fl(fft_control.control_mutex);
-            if (!fft_was_override) fft_control.user_override = false;
-            if (!fft_was_enabled) {
-                fft_control.fft_enabled   = false;
-                fft_control.auto_disabled = true;
-            }
-        }
-        if (!noise_was_on) set_bias_tee_all_devices(false, devices);
-    }
 
     if (snapshots < kMinSnapshots) {
         std::cout << "Periodic calibration check: skipped (only " << snapshots
@@ -1061,11 +1095,21 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
         std::map<int, float> current_phases;
         std::map<int, float> current_amplitudes;
         uint64_t current_sequence = 0;
+        // With FFT off the correlation thread still advances data_sequence
+        // (it drives the time-based states below, e.g. the retune cooldown)
+        // but produces no measurement: data_ready is false, lags keep their
+        // last values and phases are zeroed. Only a fresh reading may drive
+        // the lag servo or a measuring phase state - a stale lag held the
+        // servo's correction register on for good (e.g. FFT_DISABLE
+        // mid-calibration, the watchdog's 120 s abort), and zeroed phases
+        // read as a perfectly converged calibration.
+        bool fresh = false;
 
         {
             std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
             current_sequence = correlation_result.data_sequence;
             if (current_sequence > last_processed_sequence) {
+                fresh = correlation_result.data_ready;
                 current_lag = correlation_result.lags[channel];
                 current_phases = correlation_result.phases;
                 current_amplitudes = correlation_result.amplitudes;
@@ -1093,7 +1137,7 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                 // If FFT is enabled, continue with compensation processing for monitoring
             }
             
-            process_channel_lag_compensation(channel, *current_lag);
+            if (fresh) process_channel_lag_compensation(channel, *current_lag);
             
             if (channel == (REF_CHANNEL == 0 ? 1 : 0)) {
                 if (auto current_state = get_phase_compensation_state()) {
@@ -1148,17 +1192,17 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                             break;
                         }
                         case PhaseCompensatorState::MEASURING_INITIAL_PHASE:
-                            apply_phase_compensation_once(current_phases, current_amplitudes);
+                            if (fresh) apply_phase_compensation_once(current_phases, current_amplitudes);
                             break;
                         case PhaseCompensatorState::APPLYING_COMPENSATION:
                             // Increment 1: legacy pass-through. apply_phase_compensation_once
                             // now goes straight to VERIFYING_CONVERGENCE, so this state is no
                             // longer set. Funnel into the verify handler (not an empty flip)
                             // so a stray APPLYING value can never strand the state machine.
-                            check_phase_convergence(current_phases, current_amplitudes);
+                            if (fresh) check_phase_convergence(current_phases, current_amplitudes);
                             break;
                         case PhaseCompensatorState::VERIFYING_CONVERGENCE:
-                            check_phase_convergence(current_phases, current_amplitudes);
+                            if (fresh) check_phase_convergence(current_phases, current_amplitudes);
                             break;
                         case PhaseCompensatorState::MEASURING_PER_BIN: {
                             // Accumulate snapshots (correlation thread), then design the
