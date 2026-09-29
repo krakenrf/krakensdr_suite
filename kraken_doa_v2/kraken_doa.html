@@ -2409,6 +2409,23 @@ function setDoaConvention(v){
   sendUI('DOA_CONV',doaConvention);  // no-op send while applying a remote sync
 }
 
+// Discrete-scanner run state -> button, lock panel, tuning bar. Used by the
+// local Start/Stop button and by the backend's scanner_started/_stopped
+// broadcasts, which keep every open browser in step.
+function applyScannerRunning(running) {
+  scannerRunning = running;
+  if (!running) scannerState = 'IDLE';
+  else if (scannerState === 'IDLE') scannerState = 'SCANNING';
+  const btn = $id('scanner-start-btn');
+  if (btn) {
+    btn.textContent = running ? '⏹ Stop' : '▶ Start';
+    btn.className = 'btn ' + (running ? 'on' : 'off');
+  }
+  const lockInfo = $id('scanner-lock-info');
+  if (lockInfo && !running) lockInfo.style.display = 'none';
+  drawBox();
+}
+
 // Apply a settings change made in another browser session (relayed by the
 // backend as {"sync_cmd":"<command>"}). Reuses the normal UI handlers with
 // sends suppressed; value-compare and focus guards keep this idempotent and
@@ -2581,11 +2598,19 @@ function applySyncCmdInner(cmd) {
     const el = $id('log-path');
     if (idle(el) && el.value !== v) el.value = v;
   }
+  else if ((v = arg('EDGE_CLIP:')) !== null) {
+    // Also replayed on connect, so a new browser starts with the live clip
+    const c = parseFloat(v), el = $id('ecl');
+    if (el && document.activeElement !== el && c >= 0.1 && c <= 1 && c !== currentEdgeClip) {
+      el.value = c;
+      sec();  // updates the label and re-clips; its send is suppressed here
+    }
+  }
   else if ((v = arg('UI:')) !== null) {
     applyUiSetting(v);
   }
-  // Anything else (FREQ/GAIN/CHANNEL/AVG sync via the FFT header; decimator
-  // and scanner commands have their own JSON broadcasts) is ignored here.
+  // Anything else (FREQ/GAIN/CHANNEL/AVG sync via the FFT header; decimator,
+  // FM-source and scanner changes have their own JSON broadcasts) is ignored.
 }
 
 // Display preferences relayed via the backend (UI:<KEY>:<value>)
@@ -4541,7 +4566,7 @@ function sec() {
   const c=parseFloat($id('ecl').value);
   if(c>=0.1&&c<=1) {
     currentEdgeClip=c;
-    $id('cec').textContent='Current: '+(c*100).toFixed(0)+'%';
+    $id('cec').textContent=(c*100).toFixed(0)+'%';
     applyClip();
     send('EDGE_CLIP:'+c.toFixed(2));
   }
@@ -5317,10 +5342,23 @@ function connect() {
             updateManualSteeringStatus(msg.manual_steering);
           }
           else if(msg.fft_settings) {
-            // Update FFT settings UI from server
-            updateFFTSettingsUI(msg.fft_settings.fft_size, msg.fft_settings.decimation);
-            // Reset audio worklet to clear buffers after FFT settings change
-            resetAudioWorklet();
+            // Every browser receives this, including when a newly connected
+            // one merely asks for the current values - so only an actual
+            // change resets the audio (it used to cut out every open
+            // browser's audio whenever another browser connected).
+            const fs = msg.fft_settings;
+            const changed = fs.fft_size !== currentFFTSize || fs.decimation !== currentFFTDecimation;
+            updateFFTSettingsUI(fs.fft_size, fs.decimation);
+            if (changed) resetAudioWorklet();
+          }
+          else if(msg.scanner_started || msg.scanner_stopped) {
+            // Started/stopped from another browser (or stopped by the backend)
+            applyScannerRunning(!!msg.scanner_started);
+          }
+          else if(msg.fm_decimator) {
+            // FM audio source moved to another VFO (possibly by another browser)
+            const id = msg.fm_decimator.id;
+            updateDecimatorList(decimatorInfo.map(d => ({...d, is_fm_source: d.id === id})));
           }
           // Demod mode is now per-decimator - see msg.decimator_demod handler above
           else if(msg.continuous_scanner) {
@@ -5913,11 +5951,7 @@ function addTouchHandlers(el, down, move, up) {
     // If scanner is running, always allow stopping it (even if not in wideband mode)
     if (scannerRunning) {
       send('SCANNER_STOP');
-      scannerRunning = false;
-      scannerState = 'IDLE';
-      const btn = $id('scanner-start-btn');
-      btn.textContent = '▶ Start';
-      btn.className = 'btn off';
+      applyScannerRunning(false);
       return;
     }
 
@@ -5933,11 +5967,7 @@ function addTouchHandlers(el, down, move, up) {
     }
 
     send('SCANNER_START');
-    scannerRunning = true;
-    scannerState = 'SCANNING';
-    const btn = $id('scanner-start-btn');
-    btn.textContent = '⏹ Stop';
-    btn.className = 'btn on';
+    applyScannerRunning(true);
   }
 
   function continueScanner() {

@@ -14,7 +14,8 @@ public:
     static std::vector<std::string> get_connect_sync_messages();
 
     // Replay the persisted settings file through the normal command path. Call
-    // once at startup, after the decimators exist and the server is reachable.
+    // once at startup, after the decimators exist and the server is reachable,
+    // ON THE uWS LOOP THREAD (loop->defer) like every other dispatch.
     static void apply_persisted_settings();
 
 private:

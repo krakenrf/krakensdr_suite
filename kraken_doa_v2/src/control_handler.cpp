@@ -161,9 +161,9 @@ struct CommandRejected : std::runtime_error {
 // When a handler normalizes its value (clamp, wrap), it records the command
 // as actually applied; that - not the raw request - is persisted and echoed,
 // so e.g. AVG:5 is stored as AVG:1 and a browser's field snaps to the real
-// value. thread_local: the dispatcher runs on the uWS thread and on the
-// settings-replay thread.
-static thread_local std::optional<string> g_applied_cmd;
+// value. Every dispatch runs on the uWS loop thread (browser commands, the
+// deferred settings replay and the web mapper's deferred cloud settings).
+static std::optional<string> g_applied_cmd;
 static void set_applied(string_view prefix, double value, int decimals) {
     ostringstream os;
     os << prefix << fixed << setprecision(decimals) << value;
@@ -179,7 +179,9 @@ static void store_for_replay(string_view msg, size_t key_len) {
 // Which commands are remembered (and how) is defined by the schema in
 // settings_store.cpp; SettingsStore::record() simply ignores commands that
 // aren't in it. True while we are replaying the saved file ourselves, so the
-// record hooks don't re-save commands mid-restore.
+// record hooks don't re-save commands mid-restore. The replay runs on the uWS
+// loop thread (see data_receiver.cpp), so no browser command can interleave
+// with it - one arriving meanwhile is dispatched, and saved, after it.
 static std::atomic<bool> g_replaying_settings{false};
 
 // --- Decimator (VFO) setup persistence ---
@@ -1558,11 +1560,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         stringstream server_json;
         server_json << "{\"set_wideband_edge_clip\":{\"edge_clip\":" << edge_clip << "}}";
         send_control_command(server_json.str());
-
-        // Notify UI
-        stringstream json;
-        json << "{\"edge_clip\":{\"value\":" << edge_clip << "}}";
-        broadcast(json.str());
+        // Browsers pick up the change from the EDGE_CLIP sync_cmd echo.
     }
     // --- Local DoA recording ---
     else if (message.starts_with("LOG_START")) {

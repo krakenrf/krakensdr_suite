@@ -114,7 +114,15 @@ void DataReceiver::data_receiver_thread() {
         cout << "Connected to Heimdall data port" << endl;
 
         if (!settings_restored) {
-            ControlHandler::apply_persisted_settings();
+            // Replay on the uWS loop thread, where browser commands (and the
+            // web mapper's cloud settings) are dispatched. Replaying from this
+            // thread raced them: a browser change landing mid-replay could be
+            // overwritten by the saved value, and was never saved itself (the
+            // replay's no-save flag is global). defer() is uWS's only
+            // thread-safe call; the web server is normally listening long
+            // before heimdall's data port accepts us.
+            while (running && !loop) this_thread::sleep_for(milliseconds(100));
+            if (loop) loop->defer([] { ControlHandler::apply_persisted_settings(); });
             settings_restored = true;
         }
 
