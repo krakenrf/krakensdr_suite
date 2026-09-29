@@ -268,6 +268,16 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                         force_recalibration.store(true, std::memory_order_release);
                         std::cout << "Force recalibration requested via web UI" << std::endl;
                     }},
+                    {"RESET_LAG_COMPENSATION", []() {
+                        // "Reset lag" button. Re-measuring lag needs the noise source
+                        // on and the lag/phase machines running, and a new lag lock
+                        // needs a phase calibration after it - a bare
+                        // reset_lag_compensation_all_channels() does neither once
+                        // calibration has converged (FFT auto-off idles the machines).
+                        // That full sequence is the watchdog's recalibration.
+                        force_recalibration.store(true, std::memory_order_release);
+                        std::cout << "Lag reset requested via web UI (full recalibration)" << std::endl;
+                    }},
                     {"FWD_COMP_ENABLE", []() {
                         forward_comp.enabled.store(true, std::memory_order_release);
                         // Build the correction at the current center frequency so it
@@ -380,8 +390,8 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                     try {
                         int channel = std::stoi(std::string(channel_str));
                         if (channel >= 0 && channel < active_num_elements.load()) {
+                            // The RTL-TCP server streams rtl_tcp_channel directly
                             rtl_tcp_channel = channel;
-                            // Note: RTL-TCP server update would be handled by the calling code
                             std::cout << "RTL-TCP: Channel changed to " << channel << std::endl;
                         } else {
                             std::cerr << "RTL-TCP: Invalid channel " << channel << " (must be 0-" << (active_num_elements.load() - 1) << ")" << std::endl;

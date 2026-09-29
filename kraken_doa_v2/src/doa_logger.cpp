@@ -191,7 +191,12 @@ std::string doa_sanitize_filename(const std::string& name) {
     if (base.empty() || base == "." || base == "..") return "";
     if (base.find('/') != std::string::npos || base.find('\\') != std::string::npos) return "";
     if (base[0] == '.') return "";  // no hidden files
-    for (unsigned char c : base) if (c < 0x20) return "";
+    // Names reach browsers (the recordings list) and JSON; markup and quote
+    // characters in a name were an HTML-injection route into every client.
+    for (unsigned char c : base) {
+        if (c < 0x20 || c == 0x7f) return "";
+        if (std::strchr("\"'<>`&", c)) return "";
+    }
     return base;
 }
 

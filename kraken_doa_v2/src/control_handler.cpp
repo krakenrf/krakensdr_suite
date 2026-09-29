@@ -135,6 +135,19 @@ static bool is_replayed_command(string_view msg) {
     return false;
 }
 
+// The KrakenPro API key is a secret: every browser receives the sync_cmd
+// echo of each applied command and the replay on connect, and the page is
+// served to anyone who can reach it. So the key is never sent to browsers -
+// they only learn whether one is saved (WEB_MAPPER_KEY_SET:1/0). The real
+// key is still persisted and used by the web mapper.
+static string redact_for_sync(string_view msg) {
+    constexpr string_view KEY_CMD = "WEB_MAPPER_KEY:";
+    if (msg.starts_with(KEY_CMD)) {
+        return string("WEB_MAPPER_KEY_SET:") + (msg.size() > KEY_CMD.size() ? "1" : "0");
+    }
+    return string(msg);
+}
+
 static void store_for_replay(string_view msg, size_t key_len) {
     std::lock_guard<std::mutex> lock(sync_store_mutex);
     sync_replay_store[string(msg.substr(0, key_len))] = string(msg);
@@ -1588,16 +1601,18 @@ void ControlHandler::handle_websocket_message(string_view message) {
         handle_message_impl(message);
 
         // Echo the applied command to all browsers for settings sync
+        // (secrets redacted - see redact_for_sync)
         if (!is_query_command(message)) {
+            const string sync_msg = redact_for_sync(message);
             if (is_replayed_command(message)) {
-                store_for_replay(message, message.find(':'));
+                store_for_replay(sync_msg, sync_msg.find(':'));
             }
             // Persist remembered settings to disk (the schema decides which;
             // skipped while we are replaying the saved file ourselves).
             if (!g_replaying_settings.load()) {
                 SettingsStore::record(message);
             }
-            broadcast(make_sync_cmd_json(message));
+            broadcast(make_sync_cmd_json(sync_msg));
         }
     } catch (const exception& e) {
         cerr << "Ignoring malformed control message: '"

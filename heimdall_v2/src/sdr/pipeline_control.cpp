@@ -193,8 +193,8 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
 
     // The RTL-TCP source channel may now be out of range.
     if (rtl_tcp_channel.load() >= active_num_elements.load()) {
-        rtl_tcp_channel.store(0);
         if (rtl_tcp_server) rtl_tcp_server->set_source_channel(0);
+        else rtl_tcp_channel.store(0);
     }
 
     // Everything reopened: run the full startup-equivalent recalibration

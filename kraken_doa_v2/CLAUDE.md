@@ -235,8 +235,11 @@ Edit `include/config.hpp`:
   while its squelch is open
 - WS commands (persisted via settings_store, replayed to new browsers):
   `WEB_MAPPER:0|1`, `WEB_MAPPER_MODE:remote|local`, `WEB_MAPPER_KEY:<key>`,
-  `WEB_MAPPER_URL:wss://...`, `WEB_MAPPER_WS_PORT:<port>`.
-  Live state rides system_status as
+  `WEB_MAPPER_URL:wss://...`, `WEB_MAPPER_WS_PORT:<port>`. The key is
+  SECRET: it is persisted but never echoed or replayed to browsers -
+  `redact_for_sync()` (control_handler.cpp) turns it into
+  `WEB_MAPPER_KEY_SET:1|0`, and the UI field stays empty with a "saved"
+  placeholder. Live state rides system_status as
   `web_mapper:{enabled,mode,state,clients,records,error}`; the sidebar
   "🌐 Web Mapper" panel drives it all
 - Station identity/location are NOT web-mapper settings: the callsign and

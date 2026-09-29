@@ -1,4 +1,5 @@
 #include "scanner_manager.hpp"
+#include "utils/json_escape.hpp"
 #include "globals.hpp"
 #include "control_handler.hpp"
 #include "networking/websocket_server.hpp"
@@ -143,7 +144,7 @@ string ScannerManager::getConfigJson() const {
     lock_guard<mutex> lock(config_mutex_);
 
     stringstream json;
-    json << "{\"name\":\"" << config_.name << "\","
+    json << "{\"name\":\"" << json_escape(config_.name) << "\","
          << "\"version\":" << config_.version << ","
          << "\"squelch_db\":" << config_.squelch_db << ","
          << "\"dwell_time_ms\":" << config_.dwell_time_ms << ","
@@ -156,7 +157,7 @@ string ScannerManager::getConfigJson() const {
         if (i > 0) json << ",";
         json << "{\"freq_mhz\":" << freq.freq_mhz << ","
              << "\"bandwidth_khz\":" << freq.bandwidth_khz << ","
-             << "\"label\":\"" << freq.label << "\","
+             << "\"label\":\"" << json_escape(freq.label) << "\","
              << "\"enabled\":" << (freq.enabled ? "true" : "false") << "}";
     }
 
@@ -728,7 +729,7 @@ void ScannerManager::lockOnSignal(size_t freq_index, float signal_db) {
     stringstream ui_json;
     ui_json << "{\"scanner_signal_locked\":{\"freq_mhz\":" << freq.freq_mhz
             << ",\"signal_db\":" << signal_db
-            << ",\"label\":\"" << freq.label << "\"}}";
+            << ",\"label\":\"" << json_escape(freq.label) << "\"}}";
     WebSocketServer::broadcast_json_message(ui_json.str());
 }
 

@@ -2499,9 +2499,11 @@ function applySyncCmdInner(cmd) {
     if (el && el.value !== v) el.value = v;
     updateWebMapperModeFields(v);
   }
-  else if ((v = arg('WEB_MAPPER_KEY:')) !== null) {
+  else if ((v = arg('WEB_MAPPER_KEY_SET:')) !== null) {
+    // The backend never sends the key itself, only whether one is saved.
+    // The field stays empty; typing a new key replaces the saved one.
     const el = $id('wm-key');
-    if (idle(el) && el.value !== v) el.value = v;
+    if (el) el.placeholder = (v === '1') ? 'Key saved (hidden) - type to replace' : 'KrakenPro API key';
   }
   else if ((v = arg('WEB_MAPPER_URL:')) !== null) {
     const el = $id('wm-url');
@@ -5336,7 +5338,7 @@ function connect() {
                 '🔒 <strong>Locked Signal:</strong><br>' +
                 'Frequency: ' + msg.scanner_signal_locked.freq_mhz.toFixed(3) + ' MHz<br>' +
                 'Signal: ' + msg.scanner_signal_locked.signal_db.toFixed(1) + ' dB<br>' +
-                'Label: ' + (msg.scanner_signal_locked.label || 'N/A');
+                'Label: ' + escapeHtml(msg.scanner_signal_locked.label || 'N/A');
             }
           }
           else if(msg.scanner_signal_lost) {
@@ -5377,7 +5379,7 @@ function connect() {
                   '🔒 <strong>Locked Signal:</strong><br>' +
                   'Frequency: ' + sync.locked_freq_mhz.toFixed(3) + ' MHz<br>' +
                   'Signal: ' + sync.locked_signal_db.toFixed(1) + ' dB<br>' +
-                  'Label: ' + (sync.locked_label || 'N/A');
+                  'Label: ' + escapeHtml(sync.locked_label || 'N/A');
               } else {
                 lockInfo.style.display = 'none';
               }
@@ -6061,7 +6063,7 @@ function addTouchHandlers(el, down, move, up) {
       html += '<tr style="border-bottom:1px solid #444;' + rowStyle + '">';
       html += '<td style="padding:5px;text-align:center">' + f.freq_mhz.toFixed(3) + '</td>';
       html += '<td style="padding:5px;text-align:center">' + f.bandwidth_khz.toFixed(1) + '</td>';
-      html += '<td style="padding:5px">' + f.label + '</td>';
+      html += '<td style="padding:5px">' + escapeHtml(f.label) + '</td>';  // labels come from loaded files
       html += '<td style="padding:5px;text-align:center">';
       html += '<button onclick="toggleScannerFrequency(' + i + ')" style="margin:0 2px">' + (f.enabled ? 'Disable' : 'Enable') + '</button>';
       html += '<button onclick="removeScannerFrequency(' + i + ')" style="margin:0 2px">Remove</button>';
@@ -6158,8 +6160,11 @@ function addTouchHandlers(el, down, move, up) {
   let recFiles = [];        // [{name,size,mtime}] from LOG_LIST
   let recSelected = null;   // selected filename
 
+  // Escapes text for element content AND attribute values (quotes too: names
+  // are placed inside title="..." attributes)
   function escapeHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
   function formatBytes(b) {
     b = +b || 0;

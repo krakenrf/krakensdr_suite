@@ -660,11 +660,9 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                 int channel = std::stoi(channel_str);
                 
                 if (channel >= 0 && channel < active_num_elements.load()) {
-                    rtl_tcp_channel = channel;
-                    // Update the RTL-TCP server's source channel
-                    if (rtl_tcp_server_ref) {
-                        rtl_tcp_server_ref->set_source_channel(channel);
-                    }
+                    // The server streams rtl_tcp_channel; its setter logs the change
+                    if (rtl_tcp_server_ref) rtl_tcp_server_ref->set_source_channel(channel);
+                    else rtl_tcp_channel = channel;
                     return "{\"status\":\"success\",\"rtl_tcp_channel\":" + std::to_string(channel) + "}";
                 } else {
                     return "{\"status\":\"error\",\"message\":\"Channel out of range (0-" + std::to_string(active_num_elements.load() - 1) + ")\"}";

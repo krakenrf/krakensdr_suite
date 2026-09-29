@@ -14,11 +14,13 @@ set -u
 
 fail=0
 
-# Scan one commit range for secrets in changed settings/config files.
+# Scan the commits selected by the rev-list arguments ("$@", passed as
+# SEPARATE words - e.g. "$sha" --not --remotes) for secrets in changed
+# settings/config files. Returns nonzero if the range can't be resolved, so
+# the caller can fail closed instead of silently scanning nothing.
 scan_range() {
-    local range="$1"
     local commits
-    commits=$(git rev-list "$range" 2>/dev/null) || return 0
+    commits=$(git rev-list "$@" 2>/dev/null) || return 1
     local c f blob
     for c in $commits; do
         # Only files that can carry station config are inspected, so ordinary
@@ -49,6 +51,7 @@ scan_range() {
             fi
         done
     done
+    return 0
 }
 
 # stdin: <local_ref> <local_sha> <remote_ref> <remote_sha> per ref being pushed
@@ -57,9 +60,18 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     [ "$local_sha" = "$zero" ] && continue      # branch deletion: nothing outgoing
     if [ "$remote_sha" = "$zero" ]; then
         # New remote branch: scan commits not already on any remote.
-        scan_range "$local_sha --not --remotes"
+        scan_range "$local_sha" --not --remotes || scan_failed=1
     else
-        scan_range "$remote_sha..$local_sha"
+        # Update: scan what's new since the remote tip. If that tip isn't in
+        # this clone (e.g. a force-push over commits never fetched), fall
+        # back to everything not already on a remote.
+        scan_range "$remote_sha..$local_sha" ||
+            scan_range "$local_sha" --not --remotes || scan_failed=1
+    fi
+    if [ "${scan_failed:-0}" -ne 0 ]; then
+        echo "BLOCKED: could not list the outgoing commits for $local_ref - not scanned." >&2
+        fail=1
+        scan_failed=0
     fi
 done
 

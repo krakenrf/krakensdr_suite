@@ -303,15 +303,22 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                 option.value = i;
                 const serial = i < EXPECTED_SERIALS.length ? EXPECTED_SERIALS[i] : 'Unknown';
                 option.textContent = `Channel ${i} (Serial: ${serial})`;
-                if (i === 0) option.selected = true;  // Default to channel 0
                 select.appendChild(option);
             }
+            // Rebuilt on every element-count change: keep showing the channel
+            // actually being streamed (the server moves it to 0 only if it no
+            // longer exists; the next data frame confirms either way). Always
+            // resetting to 0 left the UI on Ch0 while the stream stayed on
+            // another channel, and processData never corrected it because the
+            // tracked value hadn't changed.
+            if (currentRtlTcpChannel >= activeElements) currentRtlTcpChannel = 0;
+            select.value = currentRtlTcpChannel;
 
             // Add change event listener
             select.addEventListener('change', handleRtlTcpChannelChange);
 
             // Update status display
-            updateRtlTcpStatus(0);
+            updateRtlTcpStatus(currentRtlTcpChannel);
         };
         
         const handleRtlTcpChannelChange = () => {
@@ -1567,7 +1574,16 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
         // Lag compensation reset handler
         $('reset-lag-btn').addEventListener('click', () => {
             if (ws?.readyState === 1) {
-                if (confirm('Reset lag compensation for all channels? This will restart lag calibration.')) {
+                // Runs the full noise-source recalibration (same as Force
+                // Recalibration), so KerberosSDR needs the antennas off first
+                const msg = (kerberosMode && !kerberosSw)
+                    ? 'Reset lag compensation (full recalibration):\n\n' +
+                      '1. DISCONNECT ALL ANTENNAS now (noise is coupled into the antenna path).\n' +
+                      '2. Calibration takes ~30-60 s with the noise source on.\n' +
+                      '3. Reconnect the antennas once the banner shows "calibrated".\n\n' +
+                      'Are the antennas disconnected?'
+                    : 'Reset lag compensation for all channels? This restarts lag and phase calibration (~30-60 s).';
+                if (confirm(msg)) {
                     ws.send('RESET_LAG_COMPENSATION');
                     log('Lag compensation reset requested');
                     calibrationActive = 1;

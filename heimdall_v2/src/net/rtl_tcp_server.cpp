@@ -9,8 +9,10 @@
 
 RtlTcpServer::BufferNode::BufferNode(const uint8_t* buf, size_t len) : data(buf, buf + len), next(nullptr) {}
 
-RtlTcpServer::RtlTcpServer(int channel) : server_socket(-1), client_socket(-1), 
-                                source_channel(channel), buffer_head(nullptr), buffer_tail(nullptr) {}
+RtlTcpServer::RtlTcpServer(int channel) : server_socket(-1), client_socket(-1),
+                                buffer_head(nullptr), buffer_tail(nullptr) {
+    rtl_tcp_channel.store(channel);
+}
 
 RtlTcpServer::~RtlTcpServer() {
     stop();
@@ -19,7 +21,7 @@ RtlTcpServer::~RtlTcpServer() {
 void RtlTcpServer::set_source_channel(int channel) {
     const int num_active = active_num_elements.load();
     if (channel >= 0 && channel < num_active) {
-        int old_channel = source_channel.exchange(channel);
+        int old_channel = rtl_tcp_channel.exchange(channel);
         if (old_channel != channel) {
             std::cout << "RTL-TCP: Changed source channel from " << old_channel
                  << " to " << channel << " (Serial: "
@@ -33,7 +35,7 @@ void RtlTcpServer::set_source_channel(int channel) {
 }
 
 int RtlTcpServer::get_source_channel() const {
-    return source_channel.load();
+    return rtl_tcp_channel.load();
 }
 
 bool RtlTcpServer::start() {
@@ -56,7 +58,7 @@ bool RtlTcpServer::start() {
     server_thread = std::thread(&RtlTcpServer::server_loop, this);
     
     std::cout << "RTL-TCP Server listening on port " << RTL_TCP_PORT 
-         << " (streaming channel " << source_channel.load() << ")" << std::endl;
+         << " (streaming channel " << rtl_tcp_channel.load() << ")" << std::endl;
     return true;
 }
 
@@ -98,7 +100,7 @@ void RtlTcpServer::send_dongle_info() {
 void RtlTcpServer::broadcast_data(const std::vector<ComplexBuffer>& channel_data) {
     if (client_socket < 0 || channel_data.empty()) return;
     
-    int current_source = source_channel.load();
+    int current_source = rtl_tcp_channel.load();
     if (current_source < 0 || static_cast<size_t>(current_source) >= channel_data.size()) {
         return;
     }
@@ -144,7 +146,7 @@ void RtlTcpServer::server_loop() {
         
         std::cout << "RTL-TCP: Client connected from " << inet_ntoa(client_addr.sin_addr) 
              << ":" << ntohs(client_addr.sin_port) 
-             << " (streaming channel " << source_channel.load() << ")" << std::endl;
+             << " (streaming channel " << rtl_tcp_channel.load() << ")" << std::endl;
         
         // Send dongle info immediately
         send_dongle_info();

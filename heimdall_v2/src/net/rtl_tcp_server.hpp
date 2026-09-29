@@ -12,7 +12,10 @@ private:
     int server_socket, client_socket;
     std::thread server_thread, worker_thread;
     std::atomic<bool> running{true};
-    std::atomic<int> source_channel{0};
+    // The streamed channel is the global rtl_tcp_channel (types.hpp): one
+    // store, so every path that selects a channel (web UI, control port,
+    // element-count change) reaches the stream. A private copy here was only
+    // updated by some of them - the web UI's picker never took effect.
     
     // Simple linked list buffer structure (like original rtl_tcp.c)
     struct BufferNode {

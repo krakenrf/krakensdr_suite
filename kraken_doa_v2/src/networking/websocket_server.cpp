@@ -1,4 +1,5 @@
 #include "networking/websocket_server.hpp"
+#include "utils/json_escape.hpp"
 #include "globals.hpp"
 #include "config.hpp"
 #include "control_handler.hpp"
@@ -141,7 +142,7 @@ void subscribe_and_sync(WS* ws) {
             const auto& freq = config.frequencies[locked_idx];
             json << ",\"locked_freq_mhz\":" << freq.freq_mhz
                  << ",\"locked_signal_db\":" << signal_db
-                 << ",\"locked_label\":\"" << freq.label << "\"";
+                 << ",\"locked_label\":\"" << json_escape(freq.label) << "\"";
         }
     }
     json << "}}";
