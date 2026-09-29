@@ -6,9 +6,12 @@
 #   * KrakenSDR DoA      (kraken_doa_v2/kraken_doa)  - FFT viewer / MUSIC DoA client
 #
 # IMPORTANT: KrakenSDR needs the krakenrf-specific librtlsdr fork
-# (https://github.com/krakenrf/librtlsdr), NOT the stock distro rtl-sdr /
-# librtlsdr packages. This script builds and installs that fork from source and
-# deliberately does NOT apt-install librtlsdr-dev / rtl-sdr.
+# (https://github.com/krakenrf/librtlsdr), NOT the stock distro librtlsdr.
+# This script builds that fork from source; heimdall links it STATICALLY, so
+# the distro rtl-sdr / librtlsdr0 packages - and everything that depends on
+# them (gqrx, gr-osmosdr, rtl_433, ...) - can stay installed alongside it.
+# The fork is also installed to /usr/local (library, headers, and rtl_* tools
+# linked statically against it) for other software that wants it.
 #
 # Also installs gpsd (the DoA client reads it via JSON on port 2947) and
 # generates a self-signed SSL certificate for the DoA client's HTTPS web UI
@@ -19,7 +22,8 @@
 #   JOBS=2 ./install.sh         # override parallel build jobs (default: by RAM, 1-3)
 #   CLEAN=1 ./install.sh        # force a clean rebuild of the apps
 #   SKIP_DEPS=1 ./install.sh    # skip apt install (still builds librtlsdr + apps)
-#   SKIP_RTLSDR=1 ./install.sh  # skip the librtlsdr fork build (already installed)
+#   SKIP_RTLSDR=1 ./install.sh  # skip the librtlsdr fork build/install (heimdall's
+#                               # make still builds the static library if missing)
 #
 set -euo pipefail
 
@@ -61,8 +65,9 @@ die()  { echo "${RED}${BOLD}Error:${RST} $*" >&2; exit 1; }
 [[ -d "$KRAKEN_DIR"   ]] || die "kraken_doa_v2/ not found next to this script ($KRAKEN_DIR)"
 
 # --- 1. system dependencies -------------------------------------------------
-# NOTE: librtlsdr-dev and rtl-sdr are intentionally ABSENT - we build the
-# krakenrf fork from source below instead. Notes on the rest:
+# NOTE: librtlsdr-dev and rtl-sdr are not needed - we build the krakenrf fork
+# from source below instead (installed distro copies are left alone). Notes on
+# the rest:
 #   libusb-1.0-0-dev/libusb-dev - required to build librtlsdr
 #   libopus-dev  - kraken links -lopus (missing from its `make deps`, added here)
 #   zlib1g-dev   - both link -lz
@@ -101,17 +106,12 @@ fi
 install_librtlsdr() {
     say "Installing KrakenSDR librtlsdr fork"
 
-    # Remove any distro RTL-SDR packages - they install a stock librtlsdr that
-    # would shadow the fork and break coherent operation.
-    if command -v apt-get >/dev/null 2>&1; then
-        local rtl_pkgs=()
-        mapfile -t rtl_pkgs < <(dpkg-query -W -f='${Package}\n' 2>/dev/null \
-            | grep -E '^(librtlsdr|rtl-sdr)' || true)
-        if ((${#rtl_pkgs[@]})); then
-            warn "Removing conflicting distro packages: ${rtl_pkgs[*]}"
-            sudo apt-get purge -y "${rtl_pkgs[@]}" || true
-        fi
-    fi
+    # Distro RTL-SDR packages are left installed. They used to be purged
+    # (taking gqrx, gr-osmosdr, etc. with them) because their stock
+    # librtlsdr.so.0 is found before /usr/local/lib by the loader and would
+    # shadow the fork. heimdall now links the fork statically and the rtl_*
+    # tools below are linked statically too, so nothing of ours can pick up
+    # the stock library.
 
     # Fetch (or update) the fork. librtlsdr/ is NOT tracked by this repo
     # (gitignored) - this script provides it. Three possible states:
@@ -130,10 +130,12 @@ install_librtlsdr() {
     fi
 
     # Build and install to /usr/local, with udev rules for non-root USB access.
+    # build/src/librtlsdr.a is what heimdall links (see heimdall_v2/Makefile).
     rm -rf "$LIBRTLSDR_DIR/build"
     mkdir -p "$LIBRTLSDR_DIR/build"
     pushd "$LIBRTLSDR_DIR/build" >/dev/null
-    cmake ../ -DINSTALL_UDEV_RULES=ON
+    cmake ../ -DCMAKE_BUILD_TYPE=Release -DINSTALL_UDEV_RULES=ON \
+        -DLINK_RTLTOOLS_AGAINST_STATIC_LIB=ON
     make -j"$JOBS"
     sudo make install
     sudo ldconfig
@@ -187,7 +189,7 @@ install_morfeus_udev_rule
 install_rtprio_limit
 
 # --- 3. build both applications ---------------------------------------------
-# (build AFTER librtlsdr so heimdall links against the freshly installed fork)
+# (build AFTER librtlsdr so heimdall links the freshly built fork's static library)
 build_app() {
     local name="$1" dir="$2" binary="$3"
     say "Building ${name}"

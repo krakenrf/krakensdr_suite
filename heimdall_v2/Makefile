@@ -26,10 +26,22 @@ UWS_EXISTS := $(shell test -d uWebSockets && echo yes || echo no)
 # Check if Eigen is installed
 EIGEN_EXISTS := $(shell pkg-config --exists eigen3 2>/dev/null && echo yes || echo no)
 
+# KrakenSDR librtlsdr fork, linked STATICALLY. heimdall needs the fork, and a
+# distro librtlsdr0 (pulled in by gqrx, gr-osmosdr, rtl_433, ...) sits earlier
+# in the loader's search path than /usr/local/lib, so a dynamically linked
+# heimdall would silently load the stock library instead. Linked in, the fork
+# can't be shadowed, and the distro packages can stay installed. Built from
+# ../librtlsdr (fetched by install.sh, or cloned here when missing).
+RTLSDR_DIR  = ../librtlsdr
+RTLSDR_REPO = https://github.com/krakenrf/librtlsdr
+RTLSDR_LIB  = $(RTLSDR_DIR)/build/src/librtlsdr.a
+LIBUSB_LIBS := $(shell pkg-config --libs libusb-1.0 2>/dev/null || echo -lusb-1.0)
+
 # C++20 required for uWebSockets
 CFLAGS = -Wall -Wextra -std=c++20 -D_GNU_SOURCE -DUWS_NO_ZLIB
 CFLAGS += -I. -Isrc -Isrc/core -Isrc/sdr -Isrc/dsp -Isrc/net -Isrc/web -Iexternal
-LDFLAGS = -lrtlsdr -lfftw3f -lpthread -lm -lz
+CFLAGS += -I$(RTLSDR_DIR)/include   # the fork's headers, never a system rtl-sdr.h
+LDFLAGS = $(RTLSDR_LIB) $(LIBUSB_LIBS) -lfftw3f -lpthread -lm -lz
 
 # Add Eigen include path
 ifeq ($(EIGEN_EXISTS),yes)
@@ -93,8 +105,9 @@ $(BUILD_DIR):
 # recompiles every dependent object.
 # check-uws is an order-only prerequisite here and on $(TARGET): under -j,
 # `all`'s prerequisites (check-deps and the target) otherwise build in
-# PARALLEL, and the link races the uWebSockets clone/build.
-$(BUILD_DIR)/%.o: src/%.cpp | $(BUILD_DIR) check-uws
+# PARALLEL, and the link races the uWebSockets clone/build. The fork's static
+# library is order-only here too: its headers must exist before compiling.
+$(BUILD_DIR)/%.o: src/%.cpp | $(BUILD_DIR) check-uws $(RTLSDR_LIB)
 	@echo "Compiling $<..."
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -MP -IuWebSockets/src -IuWebSockets/uSockets/src -c $< -o $@
@@ -104,7 +117,7 @@ $(BUILD_DIR)/%.o: src/%.cpp | $(BUILD_DIR) check-uws
 -include $(OBJECTS:.o=.d)
 
 # Build the target
-$(TARGET): $(OBJECTS) $(CONFIG_HEADER) | check-uws
+$(TARGET): $(OBJECTS) $(CONFIG_HEADER) $(RTLSDR_LIB) | check-uws
 	@echo "Linking $(TARGET) with uWebSockets and Eigen..."
 	@echo "Compiler: $(CC)"
 	@echo "Architecture: $(ARCH)"
@@ -115,6 +128,18 @@ $(TARGET): $(OBJECTS) $(CONFIG_HEADER) | check-uws
 	@echo "Build complete - Using eigenvalue decomposition for phase calibration!"
 	@echo "Modular architecture with $(words $(SOURCES)) source files"
 	@echo "Run with: ./$(TARGET)"
+
+# Build the fork's static library (only that target - install.sh builds and
+# installs the rtl_* tools). Clones the fork if ../librtlsdr is missing or is
+# the empty placeholder directory (git clone refuses a non-empty one).
+$(RTLSDR_LIB):
+	@if [ ! -f $(RTLSDR_DIR)/CMakeLists.txt ]; then \
+	    echo "KrakenSDR librtlsdr fork not found - cloning into $(RTLSDR_DIR)"; \
+	    git clone $(RTLSDR_REPO) $(RTLSDR_DIR); \
+	fi
+	cmake -S $(RTLSDR_DIR) -B $(RTLSDR_DIR)/build -DCMAKE_BUILD_TYPE=Release \
+	    -DLINK_RTLTOOLS_AGAINST_STATIC_LIB=ON -DINSTALL_UDEV_RULES=ON
+	$(MAKE) -C $(RTLSDR_DIR)/build rtlsdr_static
 
 # Install uWebSockets
 install-uws:
@@ -131,7 +156,8 @@ deps:
 	@echo "Installing system dependencies..."
 	sudo apt-get update
 	sudo apt-get install -y \
-	    librtlsdr-dev \
+	    cmake \
+	    libusb-1.0-0-dev \
 	    libfftw3-dev \
 	    libeigen3-dev \
 	    build-essential \
@@ -139,12 +165,14 @@ deps:
 	    pkg-config \
 	    libssl-dev \
 	    libcrypto++-dev
-	@echo "Dependencies installed (including Eigen3)"
+	@echo "Dependencies installed (including Eigen3). The librtlsdr fork is"
+	@echo "built from source and linked statically - no librtlsdr-dev needed."
 
 # For Fedora/RHEL
 deps-fedora:
 	sudo dnf install -y \
-	    rtl-sdr-devel \
+	    cmake \
+	    libusb1-devel \
 	    fftw3-devel \
 	    eigen3-devel \
 	    gcc-c++ \
@@ -155,7 +183,8 @@ deps-fedora:
 # For Arch Linux
 deps-arch:
 	sudo pacman -S \
-	    rtl-sdr \
+	    cmake \
+	    libusb \
 	    fftw \
 	    eigen \
 	    gcc \
@@ -197,11 +226,11 @@ status:
 	else \
 	    echo "✗ Not installed (run 'make install-uws')"; \
 	fi
-	@echo -n "RTL-SDR: "
-	@if pkg-config --exists librtlsdr 2>/dev/null; then \
-	    echo "✓ Installed"; \
+	@echo -n "RTL-SDR (KrakenSDR fork, static): "
+	@if [ -f $(RTLSDR_LIB) ]; then \
+	    echo "✓ Built ($(RTLSDR_LIB))"; \
 	else \
-	    echo "✗ Not installed (run 'make deps')"; \
+	    echo "✗ Not built (run 'make' or ../install.sh)"; \
 	fi
 	@echo -n "FFTW3: "
 	@if pkg-config --exists fftw3f 2>/dev/null; then \

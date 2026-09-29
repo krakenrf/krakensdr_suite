@@ -13,8 +13,18 @@ find_package(Threads REQUIRED)
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
 # Find other dependencies using pkg-config
-pkg_check_modules(RTLSDR REQUIRED librtlsdr)
+pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
 pkg_check_modules(FFTW3F REQUIRED fftw3f)
+
+# KrakenSDR librtlsdr fork, linked STATICALLY so a distro librtlsdr0 (earlier
+# in the loader's search path than /usr/local/lib) can never shadow it - see
+# the Makefile. Built by ../install.sh or by `make` in this directory.
+set(RTLSDR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../librtlsdr)
+set(RTLSDR_STATIC_LIB ${RTLSDR_DIR}/build/src/librtlsdr.a)
+if(NOT EXISTS "${RTLSDR_STATIC_LIB}")
+    message(FATAL_ERROR "KrakenSDR librtlsdr fork not built (${RTLSDR_STATIC_LIB}). "
+                        "Run ../install.sh, or `make ../librtlsdr/build/src/librtlsdr.a` in heimdall_v2.")
+endif()
 
 # Check for uWebSockets
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets")
@@ -85,7 +95,7 @@ target_include_directories(heimdall PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external
     ${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/src
     ${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/uSockets/src
-    ${RTLSDR_INCLUDE_DIRS}
+    ${RTLSDR_DIR}/include
     ${FFTW3F_INCLUDE_DIRS}
 )
 
@@ -102,7 +112,6 @@ target_compile_definitions(heimdall PRIVATE
 target_compile_options(heimdall PRIVATE
     -Wall
     -Wextra
-    ${RTLSDR_CFLAGS_OTHER}
     ${FFTW3F_CFLAGS_OTHER}
 )
 
@@ -120,7 +129,8 @@ file(GLOB USOCKETS_OBJS "${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/uSockets/*.o")
 
 # Link libraries
 target_link_libraries(heimdall
-    ${RTLSDR_LIBRARIES}
+    ${RTLSDR_STATIC_LIB}
+    ${LIBUSB_LIBRARIES}
     ${FFTW3F_LIBRARIES}
     ${USOCKETS_OBJS}
     Threads::Threads
@@ -133,7 +143,7 @@ target_link_libraries(heimdall
 
 # Link directories
 target_link_directories(heimdall PRIVATE
-    ${RTLSDR_LIBRARY_DIRS}
+    ${LIBUSB_LIBRARY_DIRS}
     ${FFTW3F_LIBRARY_DIRS}
 )
 
@@ -160,7 +170,7 @@ add_custom_target(status
     COMMAND ${CMAKE_COMMAND} -E echo "=== Build Status ==="
     COMMAND ${CMAKE_COMMAND} -E echo "Eigen3 found: ${EIGEN3_FOUND}"
     COMMAND ${CMAKE_COMMAND} -E echo "Eigen3 version: ${EIGEN3_VERSION}"
-    COMMAND ${CMAKE_COMMAND} -E echo "RTL-SDR found: ${RTLSDR_FOUND}"
+    COMMAND ${CMAKE_COMMAND} -E echo "RTL-SDR: KrakenSDR fork, static (${RTLSDR_STATIC_LIB})"
     COMMAND ${CMAKE_COMMAND} -E echo "FFTW3 found: ${FFTW3F_FOUND}"
     COMMENT "Checking build status..."
 )
@@ -170,7 +180,7 @@ message(STATUS "")
 message(STATUS "=== Heimdall Configuration ===")
 message(STATUS "C++ Standard: C++20")
 message(STATUS "Eigen3: ${EIGEN3_VERSION} (${EIGEN3_INCLUDE_DIR})")
-message(STATUS "RTL-SDR: ${RTLSDR_VERSION}")
+message(STATUS "RTL-SDR: KrakenSDR fork, static (${RTLSDR_STATIC_LIB})")
 message(STATUS "FFTW3: ${FFTW3F_VERSION}")
 message(STATUS "Architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 message(STATUS "Phase Calibration: Eigenvalue Decomposition")
