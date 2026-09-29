@@ -35,6 +35,8 @@
 #define CENTER_FREQ     100000000   // 100 MHz center frequency
 #define SAMPLE_RATE     2400000     // 2.4 MSPS sample rate
 #define GAIN            496         // 49.6 dB gain (value * 10)
+#define RTL_TUNER_MIN_HZ 24000000ULL    // R820T/R860 tuning range; every retune
+#define RTL_TUNER_MAX_HZ 1766000000ULL  // path checks it (rf_frequency_range())
 
 // ========================================================================
 // KRAKENSDR WIDEBAND (DOWNCONVERTER) VARIANT
@@ -212,7 +214,7 @@
     #warning "SAMPLE_RATE outside typical RTL-SDR range (225 kHz - 3.2 MHz)"
 #endif
 
-#if CENTER_FREQ < 24000000 || CENTER_FREQ > 1766000000
+#if CENTER_FREQ < RTL_TUNER_MIN_HZ || CENTER_FREQ > RTL_TUNER_MAX_HZ
     #warning "CENTER_FREQ outside RTL-SDR range (24 MHz - 1766 MHz)"
 #endif
 

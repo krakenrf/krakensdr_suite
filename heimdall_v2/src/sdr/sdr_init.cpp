@@ -425,14 +425,16 @@ bool wideband_retune_rf(uint64_t rf_hz, const std::vector<std::unique_ptr<SDRDev
     // Mixer side follows the frequency: keep the current side (it may be a
     // user preference, e.g. low for image dodging) as long as it can reach
     // the RF, otherwise auto-select.
+    // The side is committed only once the LO write succeeds, so a failed
+    // retune leaves side, LO and spectral-inversion correction consistent.
     if (!downconverter_rf_valid(rf_hz, downconverter.side.load())) {
         const MixerSide side = downconverter_auto_side(rf_hz);
-        downconverter.side.store(side);
+        if (!downconverter_set_side(side, rf_hz)) return false;
         std::cout << "Wideband: mixer side auto-selected " << mixer_side_name(side)
                   << " for RF " << rf_hz / 1e6 << " MHz" << std::endl;
+    } else if (!downconverter_apply_rf(rf_hz)) {
+        return false;
     }
-
-    if (!downconverter_apply_rf(rf_hz)) return false;
 
     // Antenna ring follows the frequency (outer < 1 GHz, center < 2.5 GHz,
     // inner above): throw the RF switches when crossing a boundary. The
@@ -448,7 +450,31 @@ bool wideband_retune_rf(uint64_t rf_hz, const std::vector<std::unique_ptr<SDRDev
     return true;
 }
 
+void rf_frequency_range(uint64_t& min_hz, uint64_t& max_hz) {
+    if (downconverter.enabled.load()) {
+        downconverter_rf_union_range(min_hz, max_hz);
+    } else {
+        min_hz = RTL_TUNER_MIN_HZ;
+        max_hz = RTL_TUNER_MAX_HZ;
+    }
+}
+
+bool rf_frequency_valid(uint64_t rf_hz) {
+    uint64_t min_hz, max_hz;
+    rf_frequency_range(min_hz, max_hz);
+    return rf_hz >= min_hz && rf_hz <= max_hz;
+}
+
 bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    if (frequency > 0 && !rf_frequency_valid(frequency)) {
+        uint64_t min_hz, max_hz;
+        rf_frequency_range(min_hz, max_hz);
+        std::cerr << "SDR: rejecting frequency " << frequency / 1e6 << " MHz (tunable range "
+                  << min_hz / 1e6 << " - " << max_hz / 1e6 << " MHz)" << std::endl;
+        frequency = 0;
+        if (gain == -999) return false;
+    }
+
     std::lock_guard<std::mutex> lock(settings_mutex);
     std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
 
@@ -733,7 +759,7 @@ bool set_tuner_frequency(int tuner_index, uint32_t frequency, const std::vector<
         return false;
     }
 
-    if (frequency < 24000000 || frequency > 1766000000) {
+    if (frequency < RTL_TUNER_MIN_HZ || frequency > RTL_TUNER_MAX_HZ) {
         std::cerr << "Wideband: Frequency out of range: " << frequency << std::endl;
         return false;
     }

@@ -65,6 +65,11 @@ static std::string build_state_message() {
         + ",\"antenna_bias_tee_mask\":"
         + std::to_string(antenna_bias_tee_mask.load(std::memory_order_relaxed));
 
+    // Tunable RF range for the frequency box (depends on --wideband).
+    uint64_t rf_min, rf_max;
+    rf_frequency_range(rf_min, rf_max);
+    s += ",\"rf_min_hz\":" + std::to_string(rf_min) + ",\"rf_max_hz\":" + std::to_string(rf_max);
+
     // KerberosSDR support mode: drives the warning banner + guarded recal button.
     s += ",\"kerberos_mode\":";
     s += kerberos_mode.load(std::memory_order_relaxed) ? "true" : "false";

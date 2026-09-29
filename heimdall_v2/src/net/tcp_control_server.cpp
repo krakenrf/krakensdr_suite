@@ -399,15 +399,16 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
             size_t end_pos = json_str.find_first_of(",}", freq_pos);
             if (end_pos != std::string::npos) {
                 std::string freq_str = json_str.substr(freq_pos, end_pos - freq_pos);
-                uint64_t frequency = static_cast<uint64_t>(std::stod(freq_str));
+                // Range-check the double before the cast: a negative or huge
+                // value would make the conversion undefined.
+                const double freq_d = std::stod(freq_str);
+                const uint64_t frequency = (freq_d > 0 && freq_d < 1e12) ? static_cast<uint64_t>(freq_d) : 0;
 
                 // Valid RF range: tuner limits normally; in the wideband
                 // variant the union of all three injection sides' spans -
                 // the retune auto-switches side (and antenna ring) as needed.
-                uint64_t rf_min = 24000000, rf_max = 1766000000;
-                if (downconverter.enabled.load()) {
-                    downconverter_rf_union_range(rf_min, rf_max);
-                }
+                uint64_t rf_min, rf_max;
+                rf_frequency_range(rf_min, rf_max);
 
                 if (frequency >= rf_min && frequency <= rf_max) {
                     // In wideband mode, SKIP update_sdr_settings (which sets all tuners to same freq)
@@ -828,7 +829,16 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                     while (std::getline(ss, token, ',')) {
                         token.erase(std::remove_if(token.begin(), token.end(), ::isspace), token.end());
                         if (!token.empty()) {
-                            frequencies.push_back(static_cast<uint64_t>(std::stoull(token)));
+                            // stoull wraps "-5" to a huge value, which the range check rejects
+                            const uint64_t f = std::stoull(token);
+                            if (!rf_frequency_valid(f)) {
+                                uint64_t rf_min, rf_max;
+                                rf_frequency_range(rf_min, rf_max);
+                                return "{\"status\":\"error\",\"message\":\"Frequency " + std::to_string(f) +
+                                       " out of range (" + std::to_string(rf_min / 1000000) + "-" +
+                                       std::to_string(rf_max / 1000000) + " MHz)\"}";
+                            }
+                            frequencies.push_back(f);
                         }
                     }
 

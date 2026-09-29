@@ -1033,6 +1033,10 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                     applyFwdCompState(st);
                     applyElementsState(st);
                     applyKerberosState(st);
+                    if (Number.isFinite(st.rf_min_hz) && Number.isFinite(st.rf_max_hz)) {
+                        $('freq-input').min = st.rf_min_hz / 1e6;
+                        $('freq-input').max = st.rf_max_hz / 1e6;
+                    }
                     if (Number.isFinite(st.antenna_bias_tee_mask) && Date.now() >= biasTeeHoldUntil)
                         applyBiasTeeMask(st.antenna_bias_tee_mask);
                 } catch (err) { console.error('Bad STATE message', err); }
@@ -1493,12 +1497,18 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
         [pending, userForce, biasPending] = [null, null, null];
         
         // Add frequency and gain control handlers
-        // Upper bound covers the KrakenSDR Wideband variant (low-side injection
-        // reaches 6668 MHz); the server rejects anything the current hardware
-        // mode can't actually tune.
+        // The bounds follow STATE.rf_min_hz/rf_max_hz (24-1766 MHz normally,
+        // up to 6668 MHz on the KrakenSDR Wideband variant); the server
+        // enforces the same range.
         const handleFreqChange = () => {
-            const newFreq = parseFloat($('freq-input').value);
-            if (!isNaN(newFreq) && newFreq >= 24 && newFreq <= 6668) {
+            const input = $('freq-input');
+            const newFreq = parseFloat(input.value);
+            const [lo, hi] = [parseFloat(input.min), parseFloat(input.max)];
+            if (!isNaN(newFreq) && (newFreq < lo || newFreq > hi)) {
+                alert(`Frequency must be between ${lo} and ${hi} MHz`);
+                return;
+            }
+            if (!isNaN(newFreq)) {
                 const freqHz = newFreq * 1e6;
                 if (ws?.readyState === 1) {
                     ws.send(`SDR_SETTINGS:{"frequency":${freqHz}}`);

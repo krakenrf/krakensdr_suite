@@ -53,6 +53,13 @@ void wideband_set_noise_path(bool noise_on, const std::vector<std::unique_ptr<SD
 // retune path (control/web/scanner). Returns false if the LO programming
 // failed or rf_hz is outside every side's reach.
 bool wideband_retune_rf(uint64_t rf_hz, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+// RF range the current hardware mode can tune: the tuner range normally,
+// the union of every mixer side's reach on the Wideband variant (the retune
+// auto-selects the side). Every retune entry point checks against this.
+void rf_frequency_range(uint64_t& min_hz, uint64_t& max_hz);
+bool rf_frequency_valid(uint64_t rf_hz);
+// Rejects (logs, ignores) a frequency outside rf_frequency_range(); the gain
+// part of the request still applies.
 bool update_sdr_settings(uint64_t frequency = 0, int gain = -999, const std::vector<std::unique_ptr<SDRDevice>>& devices = {});
 void handle_settings_change();
 

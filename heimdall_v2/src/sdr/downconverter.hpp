@@ -94,8 +94,8 @@ int wb_ring_for_rf(uint64_t rf_hz);
 // the HID write fails.
 bool downconverter_apply_rf(uint64_t rf_hz);
 
-// Switch injection side and reprogram the LO for rf_hz on the new side.
-// May flip the spectral-inversion correction; the caller is responsible for
+// Switch injection side and reprogram the LO for rf_hz on the new side. The
+// side only changes if the LO write succeeds (false = nothing changed). May flip the spectral-inversion correction; the caller is responsible for
 // triggering a phase recalibration (the LO distribution phases move).
 bool downconverter_set_side(MixerSide side, uint64_t rf_hz);
 

@@ -165,9 +165,10 @@ int wb_ring_for_rf(uint64_t rf_hz) {
     return 2;                                     // inner
 }
 
-bool downconverter_apply_rf(uint64_t rf_hz) {
-    const MixerSide side = downconverter.side.load();
-
+// Program the LO for rf_hz on `side`. The side is committed only after the LO
+// write succeeds: it drives the spectral-inversion correction, so a side that
+// changed without its LO would mirror the spectrum (and every DoA bearing).
+static bool program_lo(uint64_t rf_hz, MixerSide side) {
     if (!downconverter_rf_valid(rf_hz, side)) {
         uint64_t min_hz, max_hz;
         downconverter_rf_range(side, min_hz, max_hz);
@@ -190,6 +191,7 @@ bool downconverter_apply_rf(uint64_t rf_hz) {
     }
 
     downconverter.lo_hz.store(lo);
+    downconverter.side.store(side);
     std::cout << "Downconverter: RF " << rf_hz / 1e6 << " MHz -> LO " << lo / 1e6
               << " MHz (" << mixer_side_name(side) << " side, IF "
               << WB_VARIANT_IF_HZ / 1e6 << " MHz)" << std::endl;
@@ -206,8 +208,11 @@ bool downconverter_set_side(MixerSide side, uint64_t rf_hz) {
         return false;
     }
 
-    downconverter.side.store(side);
-    return downconverter_apply_rf(rf_hz);
+    return program_lo(rf_hz, side);
+}
+
+bool downconverter_apply_rf(uint64_t rf_hz) {
+    return program_lo(rf_hz, downconverter.side.load());
 }
 
 bool downconverter_set_current(int current) {

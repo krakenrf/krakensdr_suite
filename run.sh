@@ -18,7 +18,8 @@
 #
 # Usage:
 #   ./run.sh                    # split-screen; wait for convergence, then client
-#   ./run.sh stop               # stop everything (kill the tmux session)
+#   ./run.sh stop               # stop everything (the tmux session and any
+#                               # stale heimdall/kraken_doa left outside it)
 #   ./run.sh --wideband         # KrakenSDR Wideband variant (passes --wideband
 #                               # to both apps; WIDEBAND=1 ./run.sh also works)
 #   ./run.sh --kerberos         # KerberosSDR: manual calibration only - the
@@ -139,16 +140,29 @@ PY
 #   exit 0 (clean shutdown)            -> done, no restart
 #   SIGTERM/SIGINT/SIGHUP to the pane  -> the app shuts down cleanly, done
 #   any other exit (crash, init error) -> restart after RESTART_DELAY seconds
-# (bash runs a trap only after the foreground child returns, and the signal
-# reaches the child too - it is in the pane's process group - so the app
-# always gets its own clean shutdown first.)
+# The app runs as a background child that we `wait` on: bash defers a trap
+# until a FOREGROUND child returns, and closing a tmux pane/window (or the
+# server exiting) hangs up the pty, which SIGHUPs only this shell - the pane's
+# session leader - not the app. The trap therefore forwards the signal to the
+# app and keeps waiting through its clean shutdown. (Without job control the
+# child stays in the pane's foreground process group, so Ctrl+C and the
+# dashboard behave as before; `<&0` keeps stdin, which a background job would
+# otherwise get as /dev/null.)
 # ===========================================================================
 supervise() {  # supervise <name> <command...>
     local name="$1"; shift
-    local stopping=0 rc
-    trap 'stopping=1' TERM INT HUP
+    local stopping=0 rc child=
+    trap 'stopping=1; [[ -n "$child" ]] && kill -TERM "$child" 2>/dev/null' TERM INT HUP
     while :; do
-        "$@"; rc=$?
+        "$@" <&0 &
+        child=$!
+        # wait returns early (status > 128) when a trap fires; keep waiting
+        # until the app itself has exited
+        while :; do
+            wait "$child"; rc=$?
+            kill -0 "$child" 2>/dev/null || break
+        done
+        child=
         [[ "$stopping" == "1" || "$rc" == "0" ]] && return "$rc"
         warn "$name exited (status $rc) - restarting in ${RESTART_DELAY:-5}s (Ctrl+C to stay stopped)"
         sleep "${RESTART_DELAY:-5}"
@@ -212,6 +226,57 @@ stop_session() {
 }
 
 # ===========================================================================
+# Stale-process sweep: stop heimdall / kraken_doa and run.sh supervisors left
+# over from an earlier run that no tmux session owns any more (a tmux server
+# that died, an older run.sh whose supervisor ignored the pane closing, a
+# headless run that lost its terminal, an app started by hand). They hold the
+# dongles and ports, so a new stack would fail to start. Each is stopped via
+# its process group (supervisor + app + convergence probe): SIGTERM for the
+# apps' clean shutdown, SIGKILL for anything still alive after 10 s.
+# Processes of other users (e.g. started with sudo) can't be signalled - they
+# are reported instead.
+# ===========================================================================
+stop_stale() {
+    local uid my_pgid pids foreign pid pgid pgids="" alive
+    uid=$(id -u)
+    my_pgid=$(ps -o pgid= -p $$ | tr -d ' ')
+    pids=$( { pgrep -u "$uid" -x heimdall; pgrep -u "$uid" -x kraken_doa
+              pgrep -u "$uid" -f -- "$SELF __(supervise|client_pane)"; } 2>/dev/null | sort -un)
+    for pid in $pids; do
+        pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+        # our own process group is this run, never stale
+        [[ -z "$pgid" || "$pgid" == "$my_pgid" ]] && continue
+        [[ " $pgids " == *" $pgid "* ]] || pgids+=" $pgid"
+    done
+    pgids="${pgids# }"
+
+    foreign=$( { pgrep -x heimdall; pgrep -x kraken_doa; } 2>/dev/null |
+               while read -r pid; do
+                   [[ "$(ps -o uid= -p "$pid" | tr -d ' ')" != "$uid" ]] &&
+                       ps -o pid=,user=,comm= -p "$pid"
+               done)
+    [[ -n "$foreign" ]] && warn "Running as another user (stop with sudo kill):" &&
+        echo "$foreign" | sed 's/^ */     /'
+
+    [[ -z "$pgids" ]] && return 0
+    warn "Stopping stale processes from an earlier run:"
+    ps -o pid=,etime=,args= -g "${pgids// /,}" | sed 's/^ */     /'
+    for pgid in $pgids; do kill -TERM -- "-$pgid" 2>/dev/null; done
+    for _ in $(seq 1 50); do            # up to 10 s for the clean shutdown
+        alive=0
+        for pgid in $pgids; do pgrep -g "$pgid" >/dev/null && alive=1; done
+        [[ "$alive" == "0" ]] && break
+        sleep 0.2
+    done
+    if [[ "$alive" == "1" ]]; then
+        warn "Still running after 10s - force-killing."
+        for pgid in $pgids; do kill -KILL -- "-$pgid" 2>/dev/null; done
+        sleep 0.5
+    fi
+    ok "Stale processes stopped."
+}
+
+# ===========================================================================
 # `stop` subcommand: stop both apps cleanly and tear down the tmux session.
 # ===========================================================================
 if [[ "${1:-}" == "stop" ]]; then
@@ -221,6 +286,7 @@ if [[ "${1:-}" == "stop" ]]; then
     else
         warn "No running '$SESSION' session found."
     fi
+    stop_stale
     exit 0
 fi
 
@@ -228,6 +294,14 @@ fi
 [[ -x "$HEIMDALL_DIR/heimdall" ]] || die "heimdall not built. Run ${BOLD}${SCRIPT_DIR}/install.sh${RST} first."
 [[ -x "$KRAKEN_DIR/kraken_doa" ]] || die "kraken_doa not built. Run ${BOLD}${SCRIPT_DIR}/install.sh${RST} first."
 command -v python3 >/dev/null 2>&1 || die "python3 is required for convergence detection."
+
+# Clear out a previous stack before starting a new one: a live session is
+# stopped cleanly, then anything orphaned outside it (see stop_stale).
+if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$SESSION" 2>/dev/null; then
+    warn "A '$SESSION' session is already running - replacing it."
+    stop_session
+fi
+stop_stale
 
 # ===========================================================================
 # Headless fallback (NO_TMUX=1 or tmux missing): no dashboards; log to files.
@@ -300,11 +374,6 @@ fi
 # ===========================================================================
 # Split-screen mode (default): tmux with both native dashboards.
 # ===========================================================================
-if tmux has-session -t "$SESSION" 2>/dev/null; then
-    warn "A '$SESSION' session is already running - replacing it."
-    stop_session
-fi
-
 say "Launching split-screen stack (session '$SESSION')"
 
 # Top pane: Heimdall with its live dashboard (real pty -> TUI renders).
