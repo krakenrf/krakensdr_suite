@@ -13,12 +13,41 @@
 #include <cstring>
 #include <cctype>
 #include <iostream>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cerrno>
 
 using namespace std;
 
 namespace {
+
+// Replace `path` with `data` atomically AND durably: write a temp file
+// (checking every write), fsync it, rename it over the old file, then fsync
+// the directory so the rename itself survives a power cut. On any failure the
+// temp file is removed and the existing file is left untouched - a full disk
+// or a power cut can never leave the settings truncated or empty.
+bool write_file_atomic(const char* path, const std::string& data) {
+    const std::string tmp = std::string(path) + ".tmp";
+    int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return false;
+    size_t off = 0;
+    while (off < data.size()) {
+        ssize_t n = ::write(fd, data.data() + off, data.size() - off);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { ::close(fd); ::unlink(tmp.c_str()); return false; }
+        off += static_cast<size_t>(n);
+    }
+    if (::fsync(fd) != 0) { ::close(fd); ::unlink(tmp.c_str()); return false; }
+    if (::close(fd) != 0) { ::unlink(tmp.c_str()); return false; }
+    if (::rename(tmp.c_str(), path) != 0) { ::unlink(tmp.c_str()); return false; }
+    const std::string p(path);
+    const size_t slash = p.rfind('/');
+    const std::string dir = (slash == std::string::npos) ? "." : p.substr(0, slash ? slash : 1);
+    int dfd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY);
+    if (dfd >= 0) { ::fsync(dfd); ::close(dfd); }  // best effort
+    return true;
+}
     const char* SETTINGS_FILE = "doa_settings.json";
-    const char* SETTINGS_TMP  = "doa_settings.json.tmp";
 
     enum class VType { BOOL, NUMBER, STRING };
 
@@ -54,6 +83,8 @@ namespace {
         {"averaging_alpha",          "AVG:",                      VType::NUMBER, "0.150"},
         // MUSIC / DoA array
         {"topology",                 "TOPOLOGY:",                 VType::STRING, "UCA"},
+        // x,y,z;... in mm. Empty = none saved (the UCA default is used).
+        {"custom_positions",         "CUSTOM_POSITIONS:",         VType::STRING, ""},
         {"array_radius_mm",          "RADIUS:",                   VType::NUMBER, "50"},
         {"element_spacing_mm",       "SPACING:",                  VType::NUMBER, "30"},
         {"ula_mode",                 "ULA_MODE:",                 VType::STRING, "BOTH"},
@@ -173,7 +204,7 @@ namespace {
     }
 
     // Serialize the whole store as pretty JSON (schema order) and write it
-    // atomically (temp file + rename) so a crash can't leave it truncated.
+    // atomically and durably (write_file_atomic).
     void write_now() {
         lock_guard<mutex> wlk(g_write_mtx);
         string out = "{\n";
@@ -203,13 +234,9 @@ namespace {
         }
         out += "}\n";
 
-        ofstream f(SETTINGS_TMP, ios::trunc);
-        if (!f) { cerr << "SettingsStore: cannot write " << SETTINGS_TMP << endl; return; }
-        f << out;
-        f.flush();
-        f.close();
-        if (rename(SETTINGS_TMP, SETTINGS_FILE) != 0)
-            cerr << "SettingsStore: rename to " << SETTINGS_FILE << " failed" << endl;
+        if (!write_file_atomic(SETTINGS_FILE, out))
+            cerr << "SettingsStore: could not save " << SETTINGS_FILE << " (" << strerror(errno)
+                 << ") - previous settings kept" << endl;
     }
 }
 

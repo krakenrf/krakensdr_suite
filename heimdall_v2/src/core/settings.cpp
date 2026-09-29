@@ -7,8 +7,40 @@
 #include <string>
 #include <mutex>
 #include <iostream>
+#include <sstream>
+#include <cstring>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cerrno>
 
 namespace {
+
+// Replace `path` with `data` atomically AND durably: write a temp file
+// (checking every write), fsync it, rename it over the old file, then fsync
+// the directory so the rename itself survives a power cut. On any failure the
+// temp file is removed and the existing file is left untouched - a full disk
+// or a power cut can never leave the settings truncated or empty.
+bool write_file_atomic(const char* path, const std::string& data) {
+    const std::string tmp = std::string(path) + ".tmp";
+    int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return false;
+    size_t off = 0;
+    while (off < data.size()) {
+        ssize_t n = ::write(fd, data.data() + off, data.size() - off);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { ::close(fd); ::unlink(tmp.c_str()); return false; }
+        off += static_cast<size_t>(n);
+    }
+    if (::fsync(fd) != 0) { ::close(fd); ::unlink(tmp.c_str()); return false; }
+    if (::close(fd) != 0) { ::unlink(tmp.c_str()); return false; }
+    if (::rename(tmp.c_str(), path) != 0) { ::unlink(tmp.c_str()); return false; }
+    const std::string p(path);
+    const size_t slash = p.rfind('/');
+    const std::string dir = (slash == std::string::npos) ? "." : p.substr(0, slash ? slash : 1);
+    int dfd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY);
+    if (dfd >= 0) { ::fsync(dfd); ::close(dfd); }  // best effort
+    return true;
+}
 
 std::mutex g_settings_mutex;
 
@@ -120,11 +152,7 @@ void load() {
 void save() {
     std::lock_guard<std::mutex> lk(g_settings_mutex);
 
-    std::ofstream f(FILE_PATH, std::ios::trunc);
-    if (!f) {
-        std::cerr << "Settings: failed to write " << FILE_PATH << std::endl;
-        return;
-    }
+    std::ostringstream f;
     f << "# Heimdall runtime settings (auto-generated; edit values, keep keys)\n";
     f << "per_bin_eq=" << (per_bin_cal.enabled.load(std::memory_order_acquire) ? 1 : 0) << "\n";
     f << "periodic_recal_enabled=" << (periodic_recal_enabled.load(std::memory_order_acquire) ? 1 : 0) << "\n";
@@ -140,6 +168,12 @@ void save() {
         std::lock_guard<std::mutex> lk2(forward_comp.mutex);
         for (int i = 0; i < ForwardCompensation::N; ++i)
             f << "forward_comp_ch" << i << "=" << forward_comp.files[i] << "\n";
+    }
+    // Written atomically: truncating the live file in place meant a power cut
+    // mid-save silently reset the element count, bias tees and forward comp.
+    if (!write_file_atomic(FILE_PATH, f.str())) {
+        std::cerr << "Settings: failed to write " << FILE_PATH << " (" << std::strerror(errno)
+                  << ") - previous settings kept" << std::endl;
     }
 }
 

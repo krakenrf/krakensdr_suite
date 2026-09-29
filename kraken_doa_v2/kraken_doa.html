@@ -2434,6 +2434,19 @@ function applySyncCmdInner(cmd) {
   else if ((v = arg('TOPOLOGY:')) !== null) {
     if (v !== currentTopology) sto(v);
   }
+  else if ((v = arg('CUSTOM_POSITIONS:')) !== null) {
+    // Saved/remote custom element positions "x,y,z;x,y,z;..." (mm). Skipped
+    // while the user is editing one of the position boxes.
+    const editing = document.activeElement && /^c[xyz]\d+$/.test(document.activeElement.id || '');
+    if (v && !editing) {
+      v.split(';').forEach((el, i) => {
+        const [x, y, z] = el.split(',').map(parseFloat);
+        if ([x, y, z].every(Number.isFinite)) customPositions[i] = {x, y, z};
+      });
+      generateCustomPositionsTable();
+      updateCustomDiagram();
+    }
+  }
   else if ((v = arg('RADIUS:')) !== null) {
     const el = $id('arr');
     if (idle(el) && parseFloat(el.value) !== parseFloat(v)) {

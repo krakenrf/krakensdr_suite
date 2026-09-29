@@ -25,6 +25,8 @@
 #include <array>
 #include <cmath>
 #include <iomanip>
+#include <optional>
+#include <stdexcept>
 #include <map>
 #include <mutex>
 #include <vector>
@@ -120,7 +122,7 @@ static bool is_query_command(string_view msg) {
 // new clients continuously via the binary FFT header.
 static bool is_replayed_command(string_view msg) {
     static const char* prefixes[] = {
-        "TOPOLOGY:", "RADIUS:", "SPACING:", "ELEVATION_RESOLUTION:",
+        "TOPOLOGY:", "CUSTOM_POSITIONS:", "RADIUS:", "SPACING:", "ELEVATION_RESOLUTION:",
         "MUSIC_NUM_SNAPSHOTS:", "MUSIC_SNAPSHOT_LENGTH:",
         "MUSIC_FB_AVERAGING:", "MUSIC_COVARIANCE_ALPHA:", "EDGE_CLIP:",
         "MUSIC_SIGNAL_SOURCES:", "ULA_MODE:", "ARRAY_OFFSET:",
@@ -146,6 +148,26 @@ static string redact_for_sync(string_view msg) {
         return string("WEB_MAPPER_KEY_SET:") + (msg.size() > KEY_CMD.size() ? "1" : "0");
     }
     return string(msg);
+}
+
+// A command a handler refused (out of range, can't apply now). Thrown from
+// handle_message_impl so the dispatcher neither persists nor echoes it: a
+// rejected command used to be recorded to disk and broadcast anyway,
+// replacing the valid saved value (and showing it in every browser).
+struct CommandRejected : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+// When a handler normalizes its value (clamp, wrap), it records the command
+// as actually applied; that - not the raw request - is persisted and echoed,
+// so e.g. AVG:5 is stored as AVG:1 and a browser's field snaps to the real
+// value. thread_local: the dispatcher runs on the uWS thread and on the
+// settings-replay thread.
+static thread_local std::optional<string> g_applied_cmd;
+static void set_applied(string_view prefix, double value, int decimals) {
+    ostringstream os;
+    os << prefix << fixed << setprecision(decimals) << value;
+    g_applied_cmd = os.str();
 }
 
 static void store_for_replay(string_view msg, size_t key_len) {
@@ -360,6 +382,7 @@ void ControlHandler::handle_message_impl(string_view message) {
                 cout << "FREQ " << freq_hz / 1e6 << " MHz outside wideband range, clamped to "
                      << clamped / 1e6 << " MHz" << endl;
                 freq_hz = clamped;
+                set_applied("FREQ:", freq_hz / 1e6, 6);
             }
         }
 
@@ -444,13 +467,16 @@ void ControlHandler::handle_message_impl(string_view message) {
         else if (side_sv == "low") side = WB_SIDE_LOW;
         else if (side_sv == "below") side = WB_SIDE_BELOW;
         else {
-            cout << "MIXER_SIDE: invalid value '" << side_sv << "' (use high|low|below)" << endl;
-            return;
+            throw CommandRejected("use high|low|below");
         }
 
-        if (!wb_variant_enabled.load(std::memory_order_relaxed)) {
-            // Remembered/replayed setting outside wideband mode - keep the
-            // preference but touch no hardware.
+        // Outside wideband mode, or replaying the saved settings: keep the
+        // preference but touch no hardware. The replay runs MIXER_SIDE before
+        // FREQ, while the RF is still the 100 MHz default - validating here
+        // rejected e.g. a saved "below" (1353+ MHz) on every start. The FREQ
+        // replay that follows keeps the side if it reaches the saved RF and
+        // otherwise auto-selects, and sends it to heimdall either way.
+        if (!wb_variant_enabled.load(std::memory_order_relaxed) || g_replaying_settings.load()) {
             wb_variant_mixer_side = side;
             return;
         }
@@ -462,14 +488,10 @@ void ControlHandler::handle_message_impl(string_view message) {
         int ch = active_channel.load(std::memory_order_relaxed);
         uint64_t rf = static_cast<uint64_t>(llround(ChannelManager::get_frequency(ch)));
         if (!wb_side_valid(side, rf)) {
-            cout << "MIXER_SIDE: " << wb_mixer_side_name(side)
-                 << " side cannot reach current RF " << rf / 1e6 << " MHz - ignored" << endl;
-            // Undo the central persistence hook for this rejected command and
-            // snap any stale browser UI back to the real state
-            SettingsStore::record(string("MIXER_SIDE:") +
-                wb_mixer_side_name(wb_variant_mixer_side.load(std::memory_order_relaxed)));
+            // Snap any stale browser UI back to the real state
             broadcast(build_wb_variant_json());
-            return;
+            throw CommandRejected(string(wb_mixer_side_name(side)) + " side cannot reach current RF " +
+                                  to_string(rf / 1000000) + " MHz");
         }
 
         wb_variant_mixer_side = side;
@@ -490,8 +512,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         // by all mixers (one LO), so no recalibration is needed on change.
         int current = static_cast<int>(parse_float(message, 11));
         if (current < 0 || current > 7) {
-            cout << "LO_CURRENT: invalid value '" << message.substr(11) << "' (use 0-7)" << endl;
-            return;
+            throw CommandRejected("use 0-7");
         }
 
         if (!wb_variant_enabled.load(std::memory_order_relaxed)) {
@@ -567,6 +588,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         // [0, 1] the running average diverges.
         float alpha = std::clamp(parse_float(message, 4), 0.0f, 1.0f);
         averaging_alpha = alpha;
+        set_applied("AVG:", alpha, 3);
 
         // In wideband mode, reset ALL channel FFTs and the wideband stitched buffer
         // Otherwise, only reset the active channel
@@ -795,6 +817,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         float angle = parse_float(message, 15);
         angle = wrap_degrees(angle);
         manual_steering_angle.store(angle, std::memory_order_relaxed);
+        set_applied("STEERING_ANGLE:", angle, 2);
 
         stringstream json;
         json << "{\"manual_steering\":{\"enabled\":" << (manual_steering_enabled.load() ? "true" : "false")
@@ -851,7 +874,10 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("CUSTOM_POSITIONS:")) {
         // Format: CUSTOM_POSITIONS:x0,y0,z0;x1,y1,z1;x2,y2,z2;x3,y3,z3;x4,y4,z4
+        // Persisted: TOPOLOGY:CUSTOM alone came back after a restart with the
+        // default positions (wrong bearings until the table was re-edited).
         string positions_str = string(message.substr(17));
+        if (positions_str.empty()) return;  // none saved: keep the defaults
         std::array<ElementPosition, DOA_NUM_ELEMENTS> positions;
 
         // Parse positions
@@ -880,9 +906,12 @@ void ControlHandler::handle_message_impl(string_view message) {
             elem_idx++;
         }
 
+        // Applying positions from the UI switches to CUSTOM; the startup
+        // replay only restores them - the saved TOPOLOGY decides the mode.
+        const bool switch_topology = !g_replaying_settings.load();
         forEachMusicProcessor([&](auto* mp) {
             mp->setCustomPositions(positions);
-            mp->setArrayTopology(ArrayTopology::CUSTOM);
+            if (switch_topology) mp->setArrayTopology(ArrayTopology::CUSTOM);
         });
 
         // Check if 3D array
@@ -905,10 +934,12 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("ELEVATION_RESOLUTION:")) {
         float resolution = std::clamp(parse_float(message, 21), 0.5f, 5.0f);
         forEachMusicProcessor([&](auto* mp) { mp->setElevationResolution(resolution); });
+        set_applied("ELEVATION_RESOLUTION:", resolution, 2);
         cout << "Elevation resolution set to " << resolution << " degrees for all processors" << endl;
     }
     else if (message.starts_with("MUSIC_SNAPSHOT_LENGTH:")) {
         int snapshot_length = std::clamp(parse_int(message, 22), 64, 2048);
+        set_applied("MUSIC_SNAPSHOT_LENGTH:", snapshot_length, 0);
 
         forEachMusicProcessor([&](auto* mp) {
             MUSICConfig config = mp->getConfig();
@@ -921,6 +952,7 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("MUSIC_NUM_SNAPSHOTS:")) {
         int num_snapshots = std::clamp(parse_int(message, 20), 8, 128);
+        set_applied("MUSIC_NUM_SNAPSHOTS:", num_snapshots, 0);
 
         forEachMusicProcessor([&](auto* mp) {
             MUSICConfig config = mp->getConfig();
@@ -946,6 +978,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         // Temporal covariance smoothing: alpha = new-frame weight, 1.0 = off
         float alpha = std::clamp(parse_float(message, 23), 0.05f, 1.0f);
         forEachMusicProcessor([&](auto* mp) { mp->setCovarianceAveragingAlpha(alpha); });
+        set_applied("MUSIC_COVARIANCE_ALPHA:", alpha, 2);
         cout << "MUSIC covariance averaging alpha set to " << alpha << " for all processors" << endl;
 
         stringstream json;
@@ -991,8 +1024,9 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("ARRAY_OFFSET:")) {
         // Array orientation offset added to the reported DoA (degrees).
-        float offset = parse_float(message, 13);
+        float offset = wrap_degrees(parse_float(message, 13));  // MUSIC wraps it the same way
         forEachMusicProcessor([&](auto* mp) { mp->setArrayOffset(offset); });
+        set_applied("ARRAY_OFFSET:", offset, 2);
         cout << "MUSIC array offset angle set to " << offset << " degrees for all processors" << endl;
 
         stringstream json;
@@ -1054,8 +1088,7 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("WEB_MAPPER_URL:")) {
         string url = string(message.substr(15));
         if (url.rfind("wss://", 0) != 0) {
-            cout << "WEB_MAPPER_URL: must start with wss:// - ignored" << endl;
-            return;
+            throw CommandRejected("must start with wss://");
         }
         web_mapper.setServerUrl(url);
         cout << "Web mapper server URL set to '" << url << "'" << endl;
@@ -1063,8 +1096,7 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("WEB_MAPPER_WS_PORT:")) {
         int port = parse_int(message, 19);
         if (port < 1 || port > 65535) {
-            cout << "WEB_MAPPER_WS_PORT: invalid port " << port << " - ignored" << endl;
-            return;
+            throw CommandRejected("port must be 1-65535");
         }
         web_mapper.setLocalWsPort(port);
         cout << "Web mapper local WS port set to " << port << endl;
@@ -1516,6 +1548,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         // scanner a zero step (infinite band plan) and stitch_wideband_fft
         // zero usable bins.
         float edge_clip = std::clamp(parse_float(message, 10), 0.1f, 1.0f);
+        set_applied("EDGE_CLIP:", edge_clip, 2);
 
         float old_clip = current_edge_clip.exchange(edge_clip);
 
@@ -1598,22 +1631,28 @@ void ControlHandler::handle_websocket_message(string_view message) {
             return;
         }
 
+        g_applied_cmd.reset();
         handle_message_impl(message);
+        // The command as applied (see set_applied); the raw request otherwise
+        const string applied = g_applied_cmd ? *g_applied_cmd : string(message);
 
         // Echo the applied command to all browsers for settings sync
         // (secrets redacted - see redact_for_sync)
         if (!is_query_command(message)) {
-            const string sync_msg = redact_for_sync(message);
+            const string sync_msg = redact_for_sync(applied);
             if (is_replayed_command(message)) {
                 store_for_replay(sync_msg, sync_msg.find(':'));
             }
             // Persist remembered settings to disk (the schema decides which;
             // skipped while we are replaying the saved file ourselves).
             if (!g_replaying_settings.load()) {
-                SettingsStore::record(message);
+                SettingsStore::record(applied);
             }
             broadcast(make_sync_cmd_json(sync_msg));
         }
+    } catch (const CommandRejected& e) {
+        cout << "Rejected control message: '" << string(message.substr(0, 100))
+             << "' (" << e.what() << ")" << endl;
     } catch (const exception& e) {
         cerr << "Ignoring malformed control message: '"
              << string(message.substr(0, 100)) << "' (" << e.what() << ")" << endl;
