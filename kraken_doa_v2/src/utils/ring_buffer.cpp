@@ -43,6 +43,11 @@ void AudioRingBuffer::read(float* output, size_t count) {
 
     total_reads.fetch_add(1);
 
+    // A pending clear() drops everything written so far (consumer side only)
+    if (flush_requested.exchange(false, std::memory_order_acq_rel)) {
+        read_pos.store(write_pos.load(std::memory_order_acquire), std::memory_order_release);
+    }
+
     size_t current_write = write_pos.load(std::memory_order_acquire);
     size_t current_read = read_pos.load(std::memory_order_acquire);
 

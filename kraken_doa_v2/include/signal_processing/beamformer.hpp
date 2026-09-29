@@ -13,6 +13,7 @@
 // Array geometry is synced from the MUSIC processor (topology, radius,
 // spacing, frequency). Radius/spacing are in millimeters.
 
+#include <array>
 #include <atomic>
 #include <complex>
 #include <cstdint>
@@ -71,6 +72,8 @@ public:
     float getArrayRadius() const;
     void setElementSpacing(float spacing_mm);
     float getElementSpacing() const;
+    // CUSTOM topology element positions (mm), synced from the MUSIC processor
+    void setCustomPositions(const std::array<ElementPosition, DOA_NUM_ELEMENTS>& positions);
     void setFrequency(float freq_hz);
     float getFrequency() const;
     void setSampleRate(float rate_hz);
@@ -112,6 +115,12 @@ private:
 
     // Geometry / steering
     void computeElementPositions();
+    // UCA and CUSTOM place elements in the plane: phase = 2*pi*(x*cos + y*sin).
+    // ULA (and CUSTOM before its positions arrive) uses x*sin along a line.
+    bool usesPlanarProjection() const {
+        return topology_ == ArrayTopology::UCA ||
+               (topology_ == ArrayTopology::CUSTOM && custom_positions_valid_);
+    }
     void updateSteeringVector();
 
     // Algorithms (fill output; leave empty on failure)
@@ -156,6 +165,8 @@ private:
     ArrayTopology topology_ = ArrayTopology::UCA;
     float array_radius_mm_ = 50.0f;
     float element_spacing_mm_ = 30.0f;
+    std::array<ElementPosition, DOA_NUM_ELEMENTS> custom_positions_{};
+    bool custom_positions_valid_ = false;
     float frequency_hz_ = 100e6f;
     float steering_angle_deg_ = 0.0f;
     std::atomic<bool> enabled_{false};

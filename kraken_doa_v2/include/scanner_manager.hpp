@@ -92,6 +92,9 @@ private:
     // Threading
     std::atomic<bool> running_;
     std::atomic<bool> transition_in_progress_{false};  // Lock/resume worker active
+    // Lock/resume workers check this before every server command, so a
+    // stop() mid-sequence can't be undone by the rest of the sequence
+    bool still_running() const { return running_.load(std::memory_order_acquire); }
     mutable std::mutex config_mutex_;  // Mutable for const getConfig functions
     std::mutex fft_mutex_;
 

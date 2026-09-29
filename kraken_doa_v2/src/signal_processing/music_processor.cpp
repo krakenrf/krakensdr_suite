@@ -849,6 +849,10 @@ void MUSICProcessor::setFrequencyWithOffset(float base_freq_hz, float offset_hz)
         covariance_avg_valid_ = false;  // retune invalidates the temporal average
         resetAutoSourceTracking();
         updateSteeringVectors();
+        // A 3D custom array also keeps an azimuth x elevation set computed at
+        // the wavelength: without this a retune left 3D bearings and
+        // elevations computed for the old frequency.
+        if (current_topology == ArrayTopology::CUSTOM && is_3d_array_) updateSteeringVectors2D();
         
         // Log the change with details
         cout << "MUSIC steering vectors updated:" << endl;
@@ -877,6 +881,10 @@ void MUSICProcessor::setFrequency(float freq_hz) {
         covariance_avg_valid_ = false;  // retune invalidates the temporal average
         resetAutoSourceTracking();
         updateSteeringVectors();
+        // A 3D custom array also keeps an azimuth x elevation set computed at
+        // the wavelength: without this a retune left 3D bearings and
+        // elevations computed for the old frequency.
+        if (current_topology == ArrayTopology::CUSTOM && is_3d_array_) updateSteeringVectors2D();
         cout << "MUSIC frequency set to " << (freq_hz/1e6) << " MHz (no offset)" << endl;
     }
 }

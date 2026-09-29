@@ -201,12 +201,15 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
             for (size_t s = 0; s < expected_samples; s++) {
                 const auto& sample = channel_data[ch][s];
                 
-                // Convert float (-1 to +1) back to uint8 (0-255, 128=zero)
-                // Using round() for more accurate conversion
+                // Convert float (-1 to +1) back to uint8 with the exact inverse
+                // of every decoder (heimdall's iq_lut, the DoA client, the GR
+                // source: (u - 127.5) / 127.5), so a code round-trips unchanged.
+                // (x*127 + 128 mapped zero to 128 = +0.5 LSB: an identical DC
+                // term on every channel, and merged codes 127/128.)
                 uint8_t i_val = static_cast<uint8_t>(clamp(
-                    roundf(sample.real() * 127.0f + 128.0f), 0.0f, 255.0f));
+                    roundf(sample.real() * 127.5f + 127.5f), 0.0f, 255.0f));
                 uint8_t q_val = static_cast<uint8_t>(clamp(
-                    roundf(sample.imag() * 127.0f + 128.0f), 0.0f, 255.0f));
+                    roundf(sample.imag() * 127.5f + 127.5f), 0.0f, 255.0f));
                 
                 packet.push_back(i_val);
                 packet.push_back(q_val);

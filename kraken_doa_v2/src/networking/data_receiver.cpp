@@ -755,6 +755,10 @@ void DataReceiver::decimation_processor_thread() {
                     inst->beamformer->setArrayTopology(inst->music_processor->getArrayTopology());
                     inst->beamformer->setArrayRadius(inst->music_processor->getArrayRadius());
                     inst->beamformer->setElementSpacing(inst->music_processor->getElementSpacing());
+                    if (inst->music_processor->getArrayTopology() == ArrayTopology::CUSTOM &&
+                        inst->music_processor->hasValidCustomPositions()) {
+                        inst->beamformer->setCustomPositions(inst->music_processor->getCustomPositions());
+                    }
                     inst->beamformer->setFrequency(inst->music_processor->getEffectiveFrequency());
 
                     if (inst->beamformer->process(result.decimated_data, result.beamformed_samples)) {

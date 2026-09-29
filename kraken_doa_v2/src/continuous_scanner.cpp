@@ -860,7 +860,11 @@ void ContinuousScanner::scannerThread() {
                     if (available.empty()) {
                         std::cerr << "ContinuousScanner: No decimator available" << std::endl;
                     } else {
-                        int num_to_tune = std::min((int)signals.size(), (int)available.size());
+                        // At most one VFO per tracking slot (as when dwelling): a
+                        // 4th+ VFO was retuned with no slot to track it, then never
+                        // zeroed on retune/stop and missing from the status.
+                        int num_to_tune = std::min({(int)signals.size(), (int)available.size(),
+                                                    MAX_TRACKED_SIGNALS});
                         for (int i = 0; i < num_to_tune; i++) {
                             tuneTo(available[i], signals[i].first, signals[i].second, i);
                         }

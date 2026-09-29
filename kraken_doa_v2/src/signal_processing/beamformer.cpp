@@ -114,6 +114,7 @@ void Beamformer::setArrayTopology(ArrayTopology topology) {
     if (topology_ != topology) {
         topology_ = topology;
         steering_vector_valid_ = false;
+        fdds_last_angle_ = -1000.0f;  // FD-DAS table is geometry-dependent too
         computeElementPositions();
     }
 }
@@ -125,6 +126,7 @@ void Beamformer::setArrayRadius(float radius_mm) {
     if (std::fabs(array_radius_mm_ - radius_mm) > 0.1f) {
         array_radius_mm_ = radius_mm;
         steering_vector_valid_ = false;
+        fdds_last_angle_ = -1000.0f;
         computeElementPositions();
     }
 }
@@ -136,11 +138,28 @@ void Beamformer::setElementSpacing(float spacing_mm) {
     if (std::fabs(element_spacing_mm_ - spacing_mm) > 0.1f) {
         element_spacing_mm_ = spacing_mm;
         steering_vector_valid_ = false;
+        fdds_last_angle_ = -1000.0f;
         computeElementPositions();
     }
 }
 
 float Beamformer::getElementSpacing() const { return element_spacing_mm_; }
+
+void Beamformer::setCustomPositions(const std::array<ElementPosition, DOA_NUM_ELEMENTS>& positions) {
+    std::lock_guard<std::mutex> config_lock(config_mutex_);
+    bool changed = !custom_positions_valid_;
+    for (int k = 0; k < DOA_NUM_ELEMENTS && !changed; k++) {
+        changed = positions[k].x_mm != custom_positions_[k].x_mm ||
+                  positions[k].y_mm != custom_positions_[k].y_mm;
+    }
+    if (changed) {
+        custom_positions_ = positions;
+        custom_positions_valid_ = true;
+        steering_vector_valid_ = false;
+        fdds_last_angle_ = -1000.0f;
+        computeElementPositions();
+    }
+}
 
 void Beamformer::setFrequency(float freq_hz) {
     std::lock_guard<std::mutex> config_lock(config_mutex_);
@@ -251,7 +270,16 @@ void Beamformer::computeElementPositions() {
     // 2*pi*(x*cos + y*sin)
     const double wavelength_m = SPEED_OF_LIGHT / static_cast<double>(frequency_hz_);
 
-    if (topology_ == ArrayTopology::UCA) {
+    if (topology_ == ArrayTopology::CUSTOM && custom_positions_valid_) {
+        // User positions taken literally (in the azimuth plane), exactly as
+        // MUSIC steers them - so the combine points where MUSIC found the
+        // bearing. (CUSTOM used to fall into the ULA branch: an incoherent
+        // combine, worse SNR than a single channel.)
+        for (int k = 0; k < num_elements_; k++) {
+            element_x_[k] = (static_cast<double>(custom_positions_[k].x_mm) * 0.001) / wavelength_m;
+            element_y_[k] = (static_cast<double>(custom_positions_[k].y_mm) * 0.001) / wavelength_m;
+        }
+    } else if (topology_ == ArrayTopology::UCA) {
         const double radius_wl =
             (static_cast<double>(array_radius_mm_) * 0.001) / wavelength_m;
         // Array elements are wired clockwise (ANT0 on +x) - mirror the angle
@@ -262,7 +290,7 @@ void Beamformer::computeElementPositions() {
             element_y_[k] = radius_wl * std::sin(angle);
         }
     } else {
-        // ULA (and CUSTOM fallback): elements centered on the origin along x
+        // ULA (and CUSTOM before positions arrive): centered on the origin along x
         const double spacing_wl =
             (static_cast<double>(element_spacing_mm_) * 0.001) / wavelength_m;
         const double center = (num_elements_ - 1) / 2.0;
@@ -280,7 +308,7 @@ void Beamformer::updateSteeringVector() {
 
     const double theta = static_cast<double>(steering_angle_deg_) * DEG_TO_RAD;
 
-    if (topology_ == ArrayTopology::UCA) {
+    if (usesPlanarProjection()) {
         const double cos_t = std::cos(theta);
         const double sin_t = std::sin(theta);
         for (int k = 0; k < num_elements_; k++) {
@@ -630,7 +658,7 @@ void Beamformer::updateFDDASSteeringPhases() {
     for (int k = 0; k < num_elements_; k++) {
         // Geometric delay toward the steering direction. Positions are in
         // wavelengths at fc: tau_k = (x*cos + y*sin) / fc seconds.
-        const double proj_wl = (topology_ == ArrayTopology::UCA)
+        const double proj_wl = usesPlanarProjection()
                                    ? (element_x_[k] * cos_t + element_y_[k] * sin_t)
                                    : (element_x_[k] * sin_t);
         const double tau = proj_wl / fc;

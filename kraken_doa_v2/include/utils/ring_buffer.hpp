@@ -16,6 +16,8 @@ protected:
     std::atomic<size_t> total_reads{0};
     std::atomic<size_t> overruns{0};
     std::atomic<size_t> underruns{0};
+    // Set by clear(); the consumer applies it (see clear()).
+    std::atomic<bool> flush_requested{false};
     
 public:
     RingBufferBase(size_t size);
@@ -77,8 +79,14 @@ void RingBufferBase<T>::reset_stats() {
     underruns = 0;
 }
 
+// Discard everything buffered. Safe from ANY thread: it only raises a flag,
+// and the consumer applies it at its next read by moving read_pos up to
+// write_pos. The ring is single-producer/single-consumer - each position has
+// exactly one writer. Storing both positions from a third thread (the old
+// clear) could land between a read's loads and its read_pos store, leaving
+// read_pos ahead of write_pos: ~64K stale samples then looked available
+// (seconds of old audio replayed) and the writer saw a full ring.
 template<typename T>
 void RingBufferBase<T>::clear() {
-    write_pos.store(0, std::memory_order_release);
-    read_pos.store(0, std::memory_order_release);
+    flush_requested.store(true, std::memory_order_release);
 }

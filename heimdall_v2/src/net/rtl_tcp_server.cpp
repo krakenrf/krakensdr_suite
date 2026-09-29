@@ -6,6 +6,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cstring>  // For memcpy
+#include <cmath>    // lroundf
 
 RtlTcpServer::BufferNode::BufferNode(const uint8_t* buf, size_t len) : data(buf, buf + len), next(nullptr) {}
 
@@ -117,9 +118,10 @@ void RtlTcpServer::broadcast_data(const std::vector<ComplexBuffer>& channel_data
     constexpr float scale_factor = 80.0f;
     
     for (const auto& sample : samples) {
-        // Clamp and convert to uint8 (0-255, 127.5 = zero)
-        int i_val = static_cast<int>(sample.real() * scale_factor + 127.5f);
-        int q_val = static_cast<int>(sample.imag() * scale_factor + 127.5f);
+        // Clamp and convert to uint8 (0-255, 127.5 = zero). Rounded: the int
+        // cast truncated, a -0.5 LSB DC bias on the stream.
+        int i_val = static_cast<int>(lroundf(sample.real() * scale_factor + 127.5f));
+        int q_val = static_cast<int>(lroundf(sample.imag() * scale_factor + 127.5f));
         
         rtl_tcp_data.push_back(static_cast<uint8_t>(clamp(i_val, 0, 255)));
         rtl_tcp_data.push_back(static_cast<uint8_t>(clamp(q_val, 0, 255)));

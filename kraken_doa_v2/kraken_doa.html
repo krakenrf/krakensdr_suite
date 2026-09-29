@@ -4275,7 +4275,9 @@ function onCustomPositionInput() {
 function presetUCA() {
   const r=50;
   for(let i=0;i<activeNumElements;i++){
-    const angle=2*Math.PI/activeNumElements*i;
+    // Clockwise like the real arrays and UCA mode (UCA_ANGLE_SIGN); the
+    // counter-clockwise ring here mirrored every bearing about ANT0
+    const angle=UCA_ANGLE_SIGN*2*Math.PI/activeNumElements*i;
     if($id('cx'+i)){
       $id('cx'+i).value=(r*Math.cos(angle)).toFixed(1);
       $id('cy'+i).value=(r*Math.sin(angle)).toFixed(1);

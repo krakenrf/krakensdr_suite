@@ -33,53 +33,106 @@ ScannerManager::~ScannerManager() {
 // JSON PARSING HELPERS
 // ============================================================================
 
+// Minimal JSON helpers for scanner config files. String contents are always
+// skipped with their escapes honored, so a label containing quotes, ']' or
+// '}' (e.g. "Tower [N]") no longer truncates the frequency list or the label.
+
+// Position just past the closing quote of the string starting at `q` (a '"').
+static size_t skipJsonString(const string& s, size_t q) {
+    for (size_t i = q + 1; i < s.size(); i++) {
+        if (s[i] == '\\') { i++; continue; }
+        if (s[i] == '"') return i + 1;
+    }
+    return string::npos;
+}
+
+// Index of the ']' / '}' closing the bracket at `open`, or npos.
+static size_t findJsonClose(const string& s, size_t open) {
+    int depth = 0;
+    for (size_t i = open; i < s.size(); i++) {
+        const char c = s[i];
+        if (c == '"') {
+            i = skipJsonString(s, i);
+            if (i == string::npos) return string::npos;
+            i--;  // loop increment
+        } else if (c == '[' || c == '{') {
+            depth++;
+        } else if (c == ']' || c == '}') {
+            if (--depth == 0) return i;
+        }
+    }
+    return string::npos;
+}
+
+// Start of the value for "key" (whitespace around ':' allowed), or npos.
+static size_t findJsonValue(const string& json, const string& key) {
+    const string needle = "\"" + key + "\"";
+    for (size_t p = json.find(needle); p != string::npos; p = json.find(needle, p + 1)) {
+        size_t v = json.find_first_not_of(" \t\r\n", p + needle.size());
+        if (v == string::npos || json[v] != ':') continue;
+        v = json.find_first_not_of(" \t\r\n", v + 1);
+        if (v != string::npos) return v;
+    }
+    return string::npos;
+}
+
 static string extractStringValue(const string& json, const string& key) {
-    string search = "\"" + key + "\":\"";
-    size_t start = json.find(search);
-    if (start == string::npos) return "";
-    start += search.length();
-    size_t end = json.find("\"", start);
-    if (end == string::npos) return "";
-    return json.substr(start, end - start);
+    size_t v = findJsonValue(json, key);
+    if (v == string::npos || json[v] != '"') return "";
+    string out;
+    for (size_t i = v + 1; i < json.size(); i++) {
+        char c = json[i];
+        if (c == '"') return out;
+        if (c == '\\' && i + 1 < json.size()) {
+            c = json[++i];
+            switch (c) {
+                case 'n': out += '\n'; break;
+                case 't': out += '\t'; break;
+                case 'r': out += '\r'; break;
+                case 'b': out += '\b'; break;
+                case 'f': out += '\f'; break;
+                case 'u':  // \uXXXX: keep ASCII, drop the rest
+                    if (i + 4 < json.size()) {
+                        const unsigned long cp = strtoul(json.substr(i + 1, 4).c_str(), nullptr, 16);
+                        if (cp >= 0x20 && cp < 0x7f) out += static_cast<char>(cp);
+                        i += 4;
+                    }
+                    break;
+                default: out += c;  // \" \\ \/
+            }
+            continue;
+        }
+        out += c;
+    }
+    return out;  // unterminated: best effort
 }
 
 static float extractFloatValue(const string& json, const string& key, float default_val) {
-    string search = "\"" + key + "\":";
-    size_t start = json.find(search);
-    if (start == string::npos) return default_val;
-    start += search.length();
-    size_t end = json.find_first_of(",}]", start);
-    if (end == string::npos) return default_val;
+    size_t v = findJsonValue(json, key);
+    if (v == string::npos) return default_val;
+    size_t end = json.find_first_of(",}] \t\r\n", v);
     try {
-        return stof_finite(json.substr(start, end - start));
+        return stof_finite(json.substr(v, end == string::npos ? string::npos : end - v));
     } catch (...) {
         return default_val;
     }
 }
 
 static int extractIntValue(const string& json, const string& key, int default_val) {
-    string search = "\"" + key + "\":";
-    size_t start = json.find(search);
-    if (start == string::npos) return default_val;
-    start += search.length();
-    size_t end = json.find_first_of(",}]", start);
-    if (end == string::npos) return default_val;
+    size_t v = findJsonValue(json, key);
+    if (v == string::npos) return default_val;
+    size_t end = json.find_first_of(",}] \t\r\n", v);
     try {
-        return stoi(json.substr(start, end - start));
+        return stoi(json.substr(v, end == string::npos ? string::npos : end - v));
     } catch (...) {
         return default_val;
     }
 }
 
 static bool extractBoolValue(const string& json, const string& key, bool default_val) {
-    string search = "\"" + key + "\":";
-    size_t start = json.find(search);
-    if (start == string::npos) return default_val;
-    start += search.length();
-    size_t end = json.find_first_of(",}]", start);
-    if (end == string::npos) return default_val;
-    string val = json.substr(start, end - start);
-    return (val == "true" || val == "1");
+    size_t v = findJsonValue(json, key);
+    if (v == string::npos) return default_val;
+    return json.compare(v, 4, "true") == 0 || json.compare(v, 1, "1") == 0;
 }
 
 // ============================================================================
@@ -102,17 +155,21 @@ bool ScannerManager::loadConfig(const std::string& json_str) {
 
         // Parse frequencies array
         config_.frequencies.clear();
-        size_t freq_array_start = json_str.find("\"frequencies\":[");
-        if (freq_array_start != string::npos) {
-            freq_array_start += 15; // Skip "frequencies":[
-            size_t freq_array_end = json_str.find("]", freq_array_start);
+        size_t freq_array_start = findJsonValue(json_str, "frequencies");
+        if (freq_array_start != string::npos && json_str[freq_array_start] == '[') {
+            size_t freq_array_end = findJsonClose(json_str, freq_array_start);
             if (freq_array_end != string::npos) {
-                string freq_array = json_str.substr(freq_array_start, freq_array_end - freq_array_start);
+                string freq_array = json_str.substr(freq_array_start + 1, freq_array_end - freq_array_start - 1);
 
-                // Parse each frequency object
+                // Parse each frequency object (brackets inside labels skipped)
                 size_t pos = 0;
-                while ((pos = freq_array.find("{", pos)) != string::npos) {
-                    size_t obj_end = freq_array.find("}", pos);
+                while ((pos = freq_array.find_first_of("{\"", pos)) != string::npos) {
+                    if (freq_array[pos] == '"') {  // a stray string between objects
+                        pos = skipJsonString(freq_array, pos);
+                        if (pos == string::npos) break;
+                        continue;
+                    }
+                    size_t obj_end = findJsonClose(freq_array, pos);
                     if (obj_end == string::npos) break;
 
                     string freq_obj = freq_array.substr(pos, obj_end - pos + 1);
@@ -365,12 +422,21 @@ bool ScannerManager::stop() {
         return false;
     }
 
+    // Stop the lock/resume worker FIRST: it checks running_ before every
+    // server command (see still_running) and exits within one of its short
+    // sleeps. Stopping the server scanner while a resume was mid-sequence
+    // let it send configure/start_scanner afterwards - heimdall kept hopping
+    // while the client reported the scanner stopped.
+    running_ = false;
+    for (int i = 0; i < 100 && transition_in_progress_.load(std::memory_order_acquire); i++) {
+        this_thread::sleep_for(chrono::milliseconds(10));
+    }
+
     // Send stop command to server
     stringstream stop_json;
     stop_json << "{\"stop_scanner\":true}";
     ControlHandler::send_control_command(stop_json.str());
 
-    running_ = false;
     status_.state = ScannerState::IDLE;
 
     // Restore FM demodulator state if it was enabled before scanning
@@ -622,6 +688,7 @@ void ScannerManager::lockOnSignal(size_t freq_index, float signal_db) {
     cout << "SIGNAL DETECTED: " << freq.label << " at " << freq.freq_mhz
          << " MHz (" << signal_db << " dB)" << endl;
 
+    if (!still_running()) return;
     // Stop server-side scanner
     stringstream stop_json;
     stop_json << "{\"stop_scanner\":true}";
@@ -629,6 +696,7 @@ void ScannerManager::lockOnSignal(size_t freq_index, float signal_db) {
 
     // Small delay to let server process stop command
     this_thread::sleep_for(chrono::milliseconds(50));
+    if (!still_running()) return;
 
     // Switch to coherent mode (disable wideband)
     // CRITICAL: Update CLIENT-side flag immediately so message_builders switches to per-channel FFT
@@ -645,6 +713,7 @@ void ScannerManager::lockOnSignal(size_t freq_index, float signal_db) {
     WebSocketServer::broadcast_json_message(wb_update.str());
 
     this_thread::sleep_for(chrono::milliseconds(100));
+    if (!still_running()) return;
 
     // Tune all tuners to the exact detected frequency
     uint32_t freq_hz = static_cast<uint32_t>(freq.freq_mhz * 1e6f);
@@ -660,10 +729,14 @@ void ScannerManager::lockOnSignal(size_t freq_index, float signal_db) {
     // CRITICAL: Set offset tuning bar to 0 since signal is now centered in coherent mode
     // In wideband mode, decimators had offsets to select different parts of the spectrum
     // In coherent mode, all tuners are on the same frequency, so offset should be 0
+    // Through DecimatorManager, not the raw decimator: the manager's
+    // frequency_offset_hz is what the pipeline passes to the decimator and
+    // what MUSIC's wavelength, the DoA logger and the web mapper use - setting
+    // only the decimator left the old wideband offset in effect.
     auto all_decimators = decimator_manager.getAllDecimators();
     for (const auto& dec : all_decimators) {
         if (dec && !dec->being_deleted.load(std::memory_order_relaxed)) {
-            dec->decimator->setFrequencyOffset(0.0f);
+            decimator_manager.setFrequencyOffset(dec->id, 0.0f);
         }
     }
     cout << "Offset tuning bar centered (all decimator offsets set to 0)" << endl;
@@ -695,13 +768,13 @@ void ScannerManager::lockOnSignal(size_t freq_index, float signal_db) {
          << " (target: " << freq.bandwidth_khz << " kHz)" << endl;
 
     // NOW send updated decimator info to browser with correct offset AND bandwidth
-    WebSocketServer::broadcast_json_message(
-        MessageBuilders::build_decimator_info_message(/*force_zero_offset=*/true));
+    WebSocketServer::broadcast_json_message(MessageBuilders::build_decimator_info_message());
     cout << "Decimator info broadcast to browser (offset=0, bandwidth=" << best_bandwidth_index << ")" << endl;
 
     // Give server time to switch mode, tune, and send first coherent FFT packet
     // This ensures the display will show the centered spectrum when we declare lock complete
     this_thread::sleep_for(chrono::milliseconds(300));
+    if (!still_running()) return;
 
     // CRITICAL: Reset FFT averaging to clear stale wideband data
     // The per-channel FFT buffers have data from wideband mode (different frequencies)
@@ -734,7 +807,7 @@ void ScannerManager::lockOnSignal(size_t freq_index, float signal_db) {
 }
 
 void ScannerManager::resumeScanning() {
-    if (status_.state != ScannerState::LOCKED) return;
+    if (!still_running() || status_.state != ScannerState::LOCKED) return;
 
     // Runs on a transition worker thread (see startResumeTransition); copy
     // shared config under config_mutex_ before the multi-step sequence.
@@ -789,6 +862,7 @@ void ScannerManager::resumeScanning() {
 
     // Wait for server to process wideband mode change and reset phase calibration
     this_thread::sleep_for(chrono::milliseconds(200));
+    if (!still_running()) return;
 
     // Re-send scanner configuration to ensure server has correct frequency list
     // This is important because server state may have been corrupted during lock/unlock
@@ -809,6 +883,7 @@ void ScannerManager::resumeScanning() {
     ControlHandler::send_control_command(config_json.str());
 
     this_thread::sleep_for(chrono::milliseconds(100));
+    if (!still_running()) return;
 
     // Restart server-side scanner
     stringstream start_json;

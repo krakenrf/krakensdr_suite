@@ -694,7 +694,7 @@ string MessageBuilders::build_beamformed_fft_message(int decimator_id) {
     return msg.to_string();
 }
 
-string MessageBuilders::build_decimator_info_message(bool force_zero_offset) {
+string MessageBuilders::build_decimator_info_message() {
     auto info_list = decimator_manager.getDecimatorInfoList();
 
     // In wideband mode, convert offsets to be relative to wideband center for UI
@@ -718,9 +718,7 @@ string MessageBuilders::build_decimator_info_message(bool force_zero_offset) {
         // Convert offset to wideband-center-relative for UI
         float ui_offset_hz = info.frequency_offset_hz;
 
-        if (force_zero_offset) {
-            ui_offset_hz = 0.0f;
-        } else if (wideband) {
+        if (wideband) {
             // Get this decimator's tuner channel
             auto decimator_inst = decimator_manager.getDecimator(info.id);
             if (decimator_inst) {
