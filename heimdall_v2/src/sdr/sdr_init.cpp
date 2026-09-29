@@ -123,6 +123,28 @@ std::vector<DeviceMapping> enumerate_devices_by_serial() {
     return mappings;
 }
 
+// Fix the R820T IF VGA (see R820T_IF_VGA_* in config.h). if_mode 10000 + index
+// writes that VGA step and switches the RTL2832's AGC loop off
+// (rtlsdr_vga_control in the fork); later gain calls keep it. Call after every
+// gain-mode / gain change - an auto-gain switch would otherwise keep the manual
+// index. Non-R820T tuners return -1 (no IF VGA to fix).
+static int set_fixed_if_vga(rtlsdr_dev_t* dev, bool auto_gain) {
+    return rtlsdr_set_tuner_if_mode(dev, 10000 + (auto_gain ? R820T_IF_VGA_AUTO_IDX
+                                                            : R820T_IF_VGA_MANUAL_IDX));
+}
+
+bool set_if_vga_all(int index, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    if (index < 0 || index > 15) return false;
+    std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
+    bool ok = true;
+    for (const auto& d : devices) {
+        if (d && d->dev && rtlsdr_set_tuner_if_mode(d->dev, 10000 + index) < 0) ok = false;
+    }
+    std::cout << "IF VGA set to index " << index << " (" << (-12.0 + 3.5 * index)
+              << " dB) on all open tuners" << (ok ? "" : " - some FAILED") << std::endl;
+    return ok;
+}
+
 bool init_rtlsdr_device(SDRDevice* sdr) {
     std::cout << "Initializing Channel " << sdr->index << " using RTL-SDR device " << sdr->device_id 
          << " (Serial: " << sdr->serial_number << ")" << std::endl;
@@ -169,6 +191,7 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
     if (gain_now >= 0) {
         check(rtlsdr_set_tuner_gain(sdr->dev, gain_now), "setting the gain", false);
     }
+    check(set_fixed_if_vga(sdr->dev, gain_now < 0), "fixing the IF VGA gain", false);
     // -2 = already at this value (a freshly opened handle starts at 0)
     if (const int rc = rtlsdr_set_freq_correction(sdr->dev, 0); rc != -2)
         check(rc, "clearing the frequency correction", false);
@@ -544,6 +567,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
                     if (rtlsdr_set_tuner_gain_mode(devices[i]->dev, 1) < 0 ||
                         rtlsdr_set_tuner_gain(devices[i]->dev, gain) < 0) success = false;
                 }
+                if (gain != -999 && set_fixed_if_vga(devices[i]->dev, gain == -1) < 0) success = false;
 
                 results[i] = success;
             });

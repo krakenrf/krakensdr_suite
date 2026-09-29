@@ -60,6 +60,10 @@ void rf_frequency_range(uint64_t& min_hz, uint64_t& max_hz);
 bool rf_frequency_valid(uint64_t rf_hz);
 // Rejects (logs, ignores) a frequency outside rf_frequency_range(); the gain
 // part of the request still applies.
+// Set the R820T IF VGA to a fixed step (0-15, gain = -12 dB + 3.5 dB * index)
+// on every open tuner, RTL2832 AGC loop off. Diagnostic/tuning aid (control
+// port set_if_vga); the next gain change re-applies the configured step.
+bool set_if_vga_all(int index, const std::vector<std::unique_ptr<SDRDevice>>& devices);
 bool update_sdr_settings(uint64_t frequency = 0, int gain = -999, const std::vector<std::unique_ptr<SDRDevice>>& devices = {});
 void handle_settings_change();
 

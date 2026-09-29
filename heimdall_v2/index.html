@@ -35,7 +35,6 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
         .s4{background:#cce5ff;color:#004085}
         .s5{background:#e2d9f3;color:#42297a}
         .l1{color:var(--red)}.l0{color:var(--green);font-weight:bold}.l-1{color:var(--blue)}
-        .k-warn{color:var(--red);font-weight:bold}
         .plots{display:flex;flex-wrap:wrap;gap:15px;justify-content:center}
         .plot{background:var(--card);padding:10px;border-radius:5px;box-shadow:var(--shadow)}
         .plot-title{text-align:center;font-weight:bold;margin-bottom:10px;color:var(--text)}
@@ -233,7 +232,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
     <div class="card">
         <h3>🎯 Compensation Status</h3>
         <div id="comp-status" class="comp-inactive"><strong>Status:</strong> <span id="comp-txt">Waiting...</span></div>
-        <table><colgroup><col style="width:6%"><col style="width:10%"><col style="width:14%"><col style="width:8%"><col style="width:10%"><col style="width:10%"><col style="width:20%"><col style="width:22%"></colgroup><thead><tr><th>Ch</th><th>Lag</th><th>State</th><th>Count</th><th title="Live measured phase vs the reference channel (degrees)">Phase</th><th title="Live measured gain vs the reference channel (dB). Like Phase, it reflects channel mismatch only while the noise source is on; measurement is clamped at &#177;6 dB">Amp</th><th title="Calibration correction currently applied to this channel (gain dB / phase deg). Normally within &#177;2 dB; red means it is larger than that">Correction</th><th>Status</th></tr></thead><tbody id="tbody"></tbody></table>
+        <table><colgroup><col style="width:6%"><col style="width:10%"><col style="width:14%"><col style="width:8%"><col style="width:10%"><col style="width:10%"><col style="width:20%"><col style="width:22%"></colgroup><thead><tr><th>Ch</th><th>Lag</th><th>State</th><th>Count</th><th title="Live measured phase vs the reference channel (degrees)">Phase</th><th title="Live measured gain vs the reference channel (dB), smoothed. Informational only: calibration does not correct gain. Like Phase, it reflects channel mismatch only while the noise source is on; measurement is clamped at &#177;6 dB">Amp</th><th title="Phase correction currently applied to this channel (degrees). Calibration is phase-only: channel gain is measured (Amp) but not corrected">Correction</th><th>Status</th></tr></thead><tbody id="tbody"></tbody></table>
         <div style="text-align:center;margin-top:15px;">
             <button id="reset-lag-btn" style="padding:8px 20px;background:#dc3545;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:14px;">
                 🔄 Reset Lag Compensation
@@ -691,6 +690,9 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             }, pData, $('phase-plot'));
         };
         
+        // Smoothed Amp column: single-snapshot gain readings jitter (by about
+        // +/-1 dB while the IF VGA was on the tuner AGC; ~0.1 dB with it fixed).
+        const ampSmooth = {};
         const updateTable = (lags, phases, amps, comp, cData, active) => {
             const [sd, st] = [$('comp-status'), $('comp-txt')];
             if (active) {
@@ -723,14 +725,17 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                 sEl.className = 's' + cd.state_code;
                 cEl.textContent = cd.zero_lag_count;
                 pEl.textContent = phase.toFixed(1);
-                // Channel gain vs the reference, from the correction factor
-                const ampDb = -20 * Math.log10(Math.max(amps[ch] || 1, 1e-6));
+                // Channel gain vs the reference, from the eigen factor. Exactly 1
+                // means "no live measurement" (FFT off): show it and restart the
+                // average; otherwise an EWMA over ~7 updates.
+                const rawDb = -20 * Math.log10(Math.max(amps[ch] || 1, 1e-6));
+                const ampDb = (amps[ch] === 1 || ampSmooth[ch] === undefined)
+                    ? rawDb : ampSmooth[ch] + 0.15 * (rawDb - ampSmooth[ch]);
+                ampSmooth[ch] = amps[ch] === 1 ? undefined : ampDb;
                 aEl.textContent = (ampDb >= 0 ? '+' : '') + ampDb.toFixed(1);
-                const [kDb, kDeg] = comp[ch] || [0, 0];
-                kEl.textContent = `${kDb >= 0 ? '+' : ''}${kDb.toFixed(1)} dB / ${kDeg.toFixed(1)}°`;
-                // A healthy calibration corrects well under 2 dB; more usually
-                // means it latched a transient (or a real hardware fault)
-                kEl.className = Math.abs(kDb) > 2 ? 'k-warn' : '';
+                // Phase-only calibration: the applied gain is always 0 dB
+                const kDeg = (comp[ch] || [0, 0])[1];
+                kEl.textContent = `${kDeg.toFixed(1)}°`;
 
                 if (ps >= 10) {
                     stEl.textContent = '✅ CALIBRATED';

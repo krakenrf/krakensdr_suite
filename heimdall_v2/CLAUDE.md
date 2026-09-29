@@ -338,46 +338,72 @@ landing point dice on a loaded machine (landing = lag −
 ppm×2.4×(duration + timing jitter) − slip). The register-only servo has
 none of these failure modes.
 
-### Phase + Amplitude Compensation
+### Phase Compensation (phase-only)
 
 Uses eigenvalue decomposition of the spatial correlation matrix. The dominant
 eigenvector of the noise-source data is proportional to the per-channel complex
-gains, so ONE complex correction per channel (`g_ref/g_ch`) equalizes both
-phase AND amplitude — tuner gain mismatch is corrected together with phase.
+gains; its phase gives each channel's correction, a UNIT phasor per channel.
+Gain is measured (for display) but deliberately not corrected - see below.
 
 1. **WAITING_FOR_LAG_COMPLETION**: Wait for all channels to reach lag convergence
-2. **MEASURING_INITIAL_PHASE**: Collect stable phase+amplitude measurements (apply
-   gate fires on a phase mismatch > `nonzero_threshold_degrees` OR a gain
-   mismatch > `amplitude_tolerance_db`)
-3. **APPLYING_COMPENSATION**: Compute compensation vector (averaged circular-mean
-   phasor × mean amplitude), apply to all future samples
+2. **MEASURING_INITIAL_PHASE**: Collect stable phase measurements (apply gate
+   fires on a phase mismatch > `nonzero_threshold_degrees`; readings are ignored
+   until `NOISE_SETTLE_MS` after noise-on)
+3. **APPLYING_COMPENSATION**: Average `required_stable_readings` (3) snapshots as
+   unit phasors (circular mean), apply to all future samples
 4. **VERIFYING_CONVERGENCE**: Measured on the compensated stream; requires phases
-   within ±1° AND residual gain within `amplitude_tolerance_db` (±0.5 dB). A
-   failing residual (e.g. from the per-pass ±6 dB measurement clamp) triggers the
-   retry pass, which multiplies the remainder into the vector.
+   within ±1°. A failing check triggers the retry pass, which multiplies the
+   remaining phase into the vector.
 5. **CONVERGED**: Phase drift within threshold (±1°)
 
-**Application**: One complex multiply per sample by
-`phase_compensation->compensation_vector[channel]` (magnitude = gain correction,
-argument = phase correction) in `samples_to_complex_with_compensation()`. Each
-element (`AtomicComplex`, core/atomic_complex.hpp) packs real+imag into ONE
-64-bit atomic, so the hot loop can never read a torn vector mid-calibration.
+**Why phase-only**: introduced 2026-09-29 while the IF VGA was under the RTL2832
+AGC, when each dongle's gain hunted by up to ~2.5 dB between 16k-sample
+snapshots and the former gain correction (averaged from 3 snapshots) locked in
+up to ~1.6 dB of error, making the match worse. With the VGA now fixed (below)
+the gains are stable to ~0.1 dB, but the noise source clips at that VGA step,
+which biases a gain estimate. Re-tested 2026-09-30 with the VGA fixed: the noise-source gain estimate is not
+trustworthy - it shifts by 0.7-1.0 dB between VGA step 8 (ADC clipping) and
+step 0, and disagrees with the receiver noise-floor ratio by up to 2.4 dB (the
+noise source compresses the tuner front end, so it measures saturation levels,
+not small-signal gain). Gain correction stays off.
+The `NOISE_SETTLE_MS` gate still keeps the USB-ring backlog and noise-source
+turn-on out of the estimate.
 
-**Noise-on transient / IF gain (decided - do not pin the IF VGA)**: the
-librtlsdr fork leaves the R820T IF VGA under the RTL2832 AGC even in manual
-gain mode, so noise-on ramps every channel ~10 dB down over ~1 s at a
-per-dongle rate. The settle gates in `apply_phase_compensation_once()`
-(`NOISE_SETTLE_MS`, `AMP_SETTLE_DB` / `AMP_SETTLE_MAX_MS` in types.hpp) keep
-that ramp out of the averaged estimate. Pinning the VGA was tested and
-rejected (2026-09-29): no transient, but it clipped the noise source 6-11% and
-cut the antenna level ~16 dB.
+**IF VGA fixed, as stock osmocom librtlsdr (decided 2026-09-30)**: the fork
+leaves the R820T IF VGA under the RTL2832 AGC even in manual gain mode
+(`r82xx_set_if_mode()` with if_mode 0 sets VGA register 0x0c bit 4 and
+`rtlsdr_vga_control()` enables the demod AGC loop). `set_fixed_if_vga()`
+(sdr_init.cpp) re-fixes it after every gain setup - device open and each
+`update_sdr_settings()` gain change - via `rtlsdr_set_tuner_if_mode(10000 +
+index)`: `R820T_IF_VGA_MANUAL_IDX` 8 (16.3 dB) / `R820T_IF_VGA_AUTO_IDX` 11
+(26.5 dB) in config.h. Measured on hardware:
+- gain stable to ~0.1 dB between snapshots; no noise-on ramp
+- the noise source clips ~11-14% of samples at step 8 regardless of RF gain
+  (it compresses the tuner front end, so lowering the RF gain doesn't help);
+  simulated phase bias from that clipping is <= ~0.26° - accepted
+- strong antenna signals clip at 49.6 dB RF gain, clean at ~42 dB
+- switching the VGA to a low step only while the noise source is on was
+  tested and REJECTED: the VGA step itself shifts each dongle's phase by a
+  different amount (~1° at step 1, up to ~8° at step 0, vs step 8), so
+  calibration and operation must run at the same step
+- `set_if_vga` control command `{"command":"set_if_vga","index":0-15}` fixes
+  the step on all open tuners at runtime (`set_if_vga_all()`), for tuning /
+  diagnostics; not persisted, the next gain change re-applies the configured step
+
+**Application**: One complex multiply per sample by
+`phase_compensation->compensation_vector[channel]` (unit magnitude; the S2P
+forward compensation, when enabled, is folded into the same scalar and may
+carry gain) in `samples_to_complex_with_compensation()`. Each element
+(`AtomicComplex`, core/atomic_complex.hpp) packs real+imag into ONE 64-bit
+atomic, so the hot loop can never read a torn vector mid-calibration.
 
 **Visibility**: the control-port status JSON (port 8092, 2 Hz) reports the live
-applied vector per channel as `"channel_comp":[{"amp_db":..,"phase_deg":..},..]`.
-The web UI channel table shows the same applied vector in its **Correction**
-column (red beyond ±2 dB) next to the live measured **Phase** / **Amp** (gain vs
-the reference); both ride the 8070 binary correlation message after the phases
-array (`build_correlation_message` in correlation.cpp ↔ `processData` in index.html).
+applied vector per channel as `"channel_comp":[{"amp_db":..,"phase_deg":..},..]`
+(`amp_db` is always 0). The web UI channel table shows the applied phase in
+its **Correction** column next to the live measured **Phase** / **Amp** (gain vs
+the reference, EWMA-smoothed against single-snapshot jitter); both ride the
+8070 binary correlation message after the phases array
+(`build_correlation_message` in correlation.cpp ↔ `processData` in index.html).
 
 ### Coherence-Loss Detection and Recovery
 

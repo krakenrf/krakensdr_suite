@@ -410,27 +410,47 @@ disconnected for a calibration to be valid. Start heimdall with `--kerberos`
    tapering exponentially into the freeze/lock endgame
 3. CONVERGED: lag locked within ±0.02 samples (median)
 
-**Phase + Amplitude Compensation** (eigenvalue-based):
+**Phase Compensation** (eigenvalue-based, PHASE-ONLY):
 1. WAITING_FOR_LAG_COMPLETION: Wait for all channels to converge lag
-2. MEASURING_INITIAL_PHASE: Collect stable phase+amplitude measurements
-3. APPLYING_COMPENSATION: Compute eigenvalue-based compensation vector (Eigen3)
-4. VERIFYING_CONVERGENCE: Check phase stability (±1°) AND residual gain (±0.5 dB)
+2. MEASURING_INITIAL_PHASE: Collect stable phase measurements
+3. APPLYING_COMPENSATION: Average 3 snapshots' phases into a unit-phasor correction
+4. VERIFYING_CONVERGENCE: Check phase stability (±1°)
 5. CONVERGED: Phase drift within ±1°
 
-The dominant eigenvector of the noise-source data is proportional to the
-per-channel complex gains, so the single complex correction per channel
-(`g_ref/g_ch`) equalizes amplitude (tuner gain mismatch) together with phase.
-Applied per sample in the conversion hot loop; the live vector is reported in
-the control-port status JSON as `channel_comp` (amp_db / phase_deg per channel).
+The dominant eigenvector of the noise-source data gives each channel's phase
+(and gain) relative to the reference; the correction is a unit phasor per
+channel, applied per sample in the conversion hot loop and reported in the
+control-port status JSON as `channel_comp` (`amp_db` is always 0).
 
-**Noise-on transient and the IF gain (decided - do not pin the IF VGA)**: the
-krakenrf librtlsdr fork leaves the R820T IF VGA under the RTL2832 AGC even in
-manual gain mode, so switching the noise source on ramps every channel ~10 dB
-down over ~1 s at a per-dongle rate. Phase calibration handles this with two
-settle gates (`NOISE_SETTLE_MS`, `AMP_SETTLE_*` in heimdall's types.hpp). Pinning
-the VGA was tested and REJECTED (2026-09-29): it removes the transient but
-clipped the noise source by 6-11% and cut the antenna signal level by ~16 dB.
-Keep the VGA on the AGC and rely on the settle gates.
+**Gain is measured but NOT corrected**: introduced (2026-09-29) while the IF
+VGA was under the RTL2832 AGC, when each dongle's gain hunted by up to ~2.5 dB
+between snapshots and a gain correction averaged from 3 snapshots locked in up
+to ~1.6 dB of error. With the VGA now fixed the gains are stable to ~0.1 dB,
+but the noise source clips at that VGA step (which biases a gain estimate).
+Re-tested 2026-09-30 with the VGA fixed: the noise-source gain estimate is not
+trustworthy - it shifts by 0.7-1.0 dB between VGA step 8 (ADC clipping) and
+step 0, and disagrees with the receiver noise-floor ratio by up to 2.4 dB (the
+noise source compresses the tuner front end, so it measures saturation levels,
+not small-signal gain). Gain correction stays off.
+
+**IF VGA fixed, like stock osmocom librtlsdr (decided 2026-09-30)**: the
+krakenrf fork leaves the R820T IF VGA under the RTL2832 AGC even in manual
+gain mode (`r82xx_set_if_mode`, if_mode 0). heimdall overrides that after
+every gain setup with `rtlsdr_set_tuner_if_mode(10000 + index)` (fixed step,
+RTL2832 AGC loop off): step 8 (16.3 dB) with manual gain, 11 (26.5 dB) with
+tuner AGC - `R820T_IF_VGA_*` in heimdall's config.h. Measured effects:
+- gain stable to ~0.1 dB between snapshots, no ~10 dB noise-on ramp
+- the noise source clips ~11-14% of samples at step 8 at ANY RF gain (it also
+  compresses the tuner front end, so the RF gain doesn't lower it); simulated
+  phase bias from that is <= ~0.26° - accepted
+- strong antenna signals clip at 49.6 dB RF gain (clean at ~42 dB): lower the
+  RF gain at strong-signal sites
+- switching the VGA down only while the noise source is on was REJECTED:
+  the VGA step itself shifts each dongle's phase differently (~1° at step 1,
+  up to ~8° at step 0, vs step 8), so calibration and operation must use the
+  same step
+- runtime tuning aid: control port `{"command":"set_if_vga","index":0-15}`
+  (not persisted; the next gain change re-applies the configured step)
 
 **Why Eigenvalue Decomposition**:
 - More robust than correlation peak phase

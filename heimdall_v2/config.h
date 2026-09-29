@@ -35,6 +35,21 @@
 #define CENTER_FREQ     100000000   // 100 MHz center frequency
 #define SAMPLE_RATE     2400000     // 2.4 MSPS sample rate
 #define GAIN            496         // 49.6 dB gain (value * 10)
+// R820T IF VGA, FIXED as stock osmocom librtlsdr does (VGA gain = -12 dB +
+// 3.5 dB * index): index 8 = 16.3 dB with manual gain, 11 = 26.5 dB with tuner
+// AGC. The krakenrf librtlsdr fork otherwise leaves the VGA under the RTL2832's
+// AGC loop even in manual gain mode, so each dongle's gain hunted (up to
+// ~2.5 dB between snapshots) and ramped ~10 dB when the noise source came on.
+// The SAME step is used for calibration and operation on purpose: changing the
+// VGA step shifts each dongle's phase differently (measured 2026-09-30: ~1 deg
+// at step 1, up to ~8 deg at step 0 vs step 8), so switching it down while the
+// noise source is on (to stop it clipping) was rejected. At this step the noise
+// source clips ~13% of samples, costing <= ~0.26 deg of phase (simulated). The
+// RF gain does not reduce the noise-source level (it also compresses the tuner
+// front end); strong antenna signals may need a lower RF gain (e.g. 42 dB).
+// Runtime override for tuning: control port {"command":"set_if_vga","index":N}.
+#define R820T_IF_VGA_MANUAL_IDX 8
+#define R820T_IF_VGA_AUTO_IDX   11
 #define RTL_TUNER_MIN_HZ 24000000ULL    // R820T/R860 tuning range; every retune
 #define RTL_TUNER_MAX_HZ 1766000000ULL  // path checks it (rf_frequency_range())
 

@@ -561,6 +561,30 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
     // Wideband variant: LO synthesizer output drive current (0-7). The LO is
     // shared by all mixers, so a drive change is common-mode across channels
     // and does not invalidate the phase calibration - no recal is triggered.
+    // Diagnostic: fix the R820T IF VGA step on all tuners,
+    // {"command":"set_if_vga","index":0-15}. Not persisted; the next gain
+    // change re-applies the configured step (R820T_IF_VGA_* in config.h).
+    if (json_str.find("\"set_if_vga\"") != std::string::npos) {
+        size_t pos = json_str.find("\"index\":");
+        if (pos == std::string::npos) {
+            return "{\"status\":\"error\",\"message\":\"Missing index field (0-15)\"}";
+        }
+        pos += 8;
+        int index;
+        try {
+            index = std::stoi(json_str.substr(pos, json_str.find_first_of(",}", pos) - pos));
+        } catch (...) {
+            return "{\"status\":\"error\",\"message\":\"Invalid index value\"}";
+        }
+        if (index < 0 || index > 15) {
+            return "{\"status\":\"error\",\"message\":\"index must be 0-15\"}";
+        }
+        if (!set_if_vga_all(index, devices)) {
+            return "{\"status\":\"error\",\"message\":\"Failed to set the IF VGA on some tuners\"}";
+        }
+        return "{\"status\":\"success\",\"if_vga_index\":" + std::to_string(index) + "}";
+    }
+
     if (json_str.find("\"set_lo_current\"") != std::string::npos) {
         if (!downconverter.enabled.load()) {
             return "{\"status\":\"error\",\"message\":\"Not in wideband variant mode (start with --wideband)\"}";

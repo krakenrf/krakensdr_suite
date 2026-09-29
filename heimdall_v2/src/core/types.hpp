@@ -129,19 +129,6 @@ struct PhaseCompensationData {
     // averaging keeps a 3-snapshot estimate clean). required_convergence_readings 5->4.
     int required_convergence_readings = 4, required_stable_readings = 3, max_convergence_attempts = 3, max_checks_before_recompensate = 10;
     float convergence_threshold_degrees = 1.0f, nonzero_threshold_degrees = 1.0f;
-    // Amplitude counterpart of the two phase thresholds above: a channel counts
-    // as mismatched (apply gate) or unconverged (verify) when its gain error
-    // exceeds this many dB. Verification measures the already-compensated
-    // stream, so a residual left by the per-pass ±6 dB measurement clamp fails
-    // the check and the retry pass multiplies the remainder into the vector.
-    // 2.0 dB, NOT tighter: a strong external signal present during the cal
-    // (e.g. a broadcast carrier at the tuned frequency) contaminates the
-    // noise-source measurement and legitimately wobbles the amplitude estimate
-    // by ~1-2 dB - a tighter tolerance chases that wobble through the whole
-    // retry budget with the noise source engaged, stretching every retune
-    // calibration by tens of seconds. Clamp-truncation residuals (the case
-    // this check exists for) are >= 2 dB and still trigger the retry.
-    float amplitude_tolerance_db = 2.0f;
 
     // Noise-source settle gate. noise_on_ns is the steady_clock nanosecond stamp of when
     // the noise source (bias tee) was last ENGAGED for calibration - set in
@@ -155,28 +142,16 @@ struct PhaseCompensationData {
     // startup calibration is never gated. Atomic so the bias-tee path can stamp it
     // without taking state_mutex.
     std::atomic<long long> noise_on_ns{0};
-    // The binding transient is the tuner IF AGC, not USB transit (~30-50 ms): the
-    // krakenrf librtlsdr fork leaves the R820T VGA under the RTL2832 AGC even in
-    // manual gain mode, so noise-on ramps every channel ~10 dB down at a per-dongle
-    // rate over ~1 s. For the first few hundred ms the channel mismatch exceeds the
-    // +/-6 dB amplitude-measurement clamp (reads as a steady, wrong value), so this
-    // floor must cover that part; the AMP_SETTLE_* gate below catches the tail.
-    // Pinning the VGA instead was tested and rejected (2026-09-29): no transient,
-    // but the noise source clipped 6-11% and the antenna level dropped ~16 dB.
+    // Covers the pre-noise samples in the USB ring (~30-50 ms) plus the noise diode /
+    // front-end settling. (With the IF VGA on the RTL2832 AGC - the librtlsdr
+    // fork's default, now overridden, see R820T_IF_VGA_* in config.h - noise-on
+    // also ramped every channel ~10 dB over ~1 s; 1000 ms was sized for that.)
     static constexpr int NOISE_SETTLE_MS = 1000;
-    // AGC settle gate (apply_phase_compensation_once): until AMP_SETTLE_MAX_MS after
-    // noise-on, a snapshot whose amplitude on any channel is more than AMP_SETTLE_DB
-    // off the current streak's running mean restarts the averaging streak, so the
-    // applied average is only ever built from a settled AGC. Past the bound the gate
-    // is off, so a noisy measurement can never stall the machine.
-    static constexpr float AMP_SETTLE_DB = 0.5f;
-    static constexpr int AMP_SETTLE_MAX_MS = 5000;
 
-    // Increment 4: snapshot accumulators for the averaged first apply (circular-mean
-    // phasor + mean amplitude over the post-settle window). Reset whenever a fresh
-    // streak begins (stable_nonzero_count == 0), so any external count reset restarts.
+    // Increment 4: snapshot accumulator for the averaged first apply (circular-mean
+    // phasor over the post-settle window). Reset whenever a fresh streak begins
+    // (stable_nonzero_count == 0), so any external count reset restarts.
     std::array<Complex, NUM_DEVICES> phase_accum{};
-    std::array<float, NUM_DEVICES> amp_accum{};
     int phase_accum_count = 0;
 
     // Mutex only for state changes, NOT for compensation vector reads

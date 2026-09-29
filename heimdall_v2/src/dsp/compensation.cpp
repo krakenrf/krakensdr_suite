@@ -158,8 +158,7 @@ static bool design_per_bin_equalizers() {
     return true;
 }
 
-void apply_phase_compensation_once(const std::map<int, float>& measured_phases,
-                                   const std::map<int, float>& measured_amplitudes) {
+void apply_phase_compensation_once(const std::map<int, float>& measured_phases) {
     if (!phase_compensation) return;
 
     // Skip phase compensation in wideband scan mode
@@ -170,7 +169,7 @@ void apply_phase_compensation_once(const std::map<int, float>& measured_phases,
 
     // Noise-source settle gate. Ignore readings (and restart the accumulation streak)
     // until NOISE_SETTLE_MS after the noise source was engaged, so the pre-noise samples
-    // in the USB ring and the tuner AGC turn-on ramp cannot bias the calibration.
+    // in the USB ring and the noise-source turn-on transient cannot bias the calibration.
     // Anchored to NOISE-ON (noise_on_ns): a retune just switched the noise on so the gate
     // waits; startup / post-recovery has the noise already settled so the gate is already
     // open and adds no wait. Stamped once per noise-on, so it opens after at most
@@ -184,60 +183,43 @@ void apply_phase_compensation_once(const std::map<int, float>& measured_phases,
         return;
     }
 
-    // A channel counts as mismatched when its PHASE or its GAIN is off. A
-    // phase-only gate would skip a pure amplitude mismatch (phases aligned,
-    // gains differing) - never applying and leaving the noise source engaged.
+    // PHASE-ONLY calibration: the correction is a unit phasor per channel, no
+    // gain. Introduced while the IF VGA was under the RTL2832 AGC, when a
+    // dongle's gain hunted by up to ~2.5 dB between snapshots and a gain
+    // correction averaged from a few snapshots locked in up to ~1.6 dB of error
+    // (measured 2026-09-29). With the VGA now fixed (config.h) the gains are
+    // stable to ~0.1 dB, but the noise source clips ~13% of samples at that
+    // step and compresses the tuner front end, so it measures saturation levels,
+    // not small-signal gain: re-tested 2026-09-30, its gain estimate moved
+    // 0.7-1.0 dB between VGA steps 8 and 0 and disagreed with the receiver
+    // noise-floor ratio by up to 2.4 dB. Gain correction therefore stays off.
+    // Gain is still measured and shown (web "Amp" column).
     bool has_nonzero_phase = std::any_of(measured_phases.begin(), measured_phases.end(),
         [](const auto& pair) {
             return pair.first != REF_CHANNEL && std::abs(pair.second) > phase_compensation->nonzero_threshold_degrees;
         });
-    bool has_nonzero_amplitude = std::any_of(measured_amplitudes.begin(), measured_amplitudes.end(),
-        [](const auto& pair) {
-            if (pair.first == REF_CHANNEL) return false;
-            const float amp_db = 20.0f * std::log10(std::max(pair.second, 1e-6f));
-            return std::abs(amp_db) > phase_compensation->amplitude_tolerance_db;
-        });
 
-    if (!has_nonzero_phase && !has_nonzero_amplitude) {
+    if (!has_nonzero_phase) {
         phase_compensation->stable_nonzero_count = 0;
         return;
     }
 
     // Increment 4: snapshot averaging. The eigen solve is single-shot per set; instead
     // of waiting N readings then applying only the LATEST (noisy) one, average the last
-    // N independent post-settle snapshots in the complex domain - unit phasor for a
-    // circular-mean phase plus mean amplitude - and apply the average. ~sqrt(N) cleaner
-    // first estimate -> VERIFYING passes first try (no apply->verify retry tail), which
-    // is what makes the reduced required_stable_readings safe. Tied to
-    // stable_nonzero_count: a fresh streak (count == 0, e.g. just reset by the settle
-    // gate, a zero reading, or handle_settings_change) restarts the average.
-    //
-    // AGC settle: soon after noise-on, a snapshot that disagrees with the streak's
-    // running mean amplitude (the AGC ramp tail) restarts the streak with itself as
-    // the first reading - see PhaseCompensationData::AMP_SETTLE_DB.
-    if (phase_compensation->stable_nonzero_count > 0 && phase_compensation->phase_accum_count > 0 &&
-        since_noise_on_ns < static_cast<long long>(PhaseCompensationData::AMP_SETTLE_MAX_MS) * 1000000LL) {
-        for (const auto& [channel, amplitude] : measured_amplitudes) {
-            if (channel == REF_CHANNEL || channel < 0 || channel >= NUM_DEVICES) continue;
-            const float mean = phase_compensation->amp_accum[channel] / phase_compensation->phase_accum_count;
-            if (mean > 0.0f && amplitude > 0.0f &&
-                std::abs(20.0f * std::log10(amplitude / mean)) > PhaseCompensationData::AMP_SETTLE_DB) {
-                phase_compensation->stable_nonzero_count = 0;
-                break;
-            }
-        }
-    }
+    // N independent post-settle snapshots as unit phasors (circular-mean phase) and
+    // apply the average. ~sqrt(N) cleaner first estimate -> VERIFYING passes first try
+    // (no apply->verify retry tail), which is what makes the reduced
+    // required_stable_readings safe. Tied to stable_nonzero_count: a fresh streak
+    // (count == 0, e.g. just reset by the settle gate, a zero reading, or
+    // handle_settings_change) restarts the average.
     if (phase_compensation->stable_nonzero_count == 0) {
         phase_compensation->phase_accum.fill(Complex(0.0f, 0.0f));
-        phase_compensation->amp_accum.fill(0.0f);
         phase_compensation->phase_accum_count = 0;
     }
     for (const auto& [channel, phase] : measured_phases) {
         if (channel == REF_CHANNEL || channel < 0 || channel >= NUM_DEVICES) continue;
         const float phase_radians = phase * static_cast<float>(M_PI) / 180.0f;
-        const float amplitude = measured_amplitudes.count(channel) ? measured_amplitudes.at(channel) : 1.0f;
         phase_compensation->phase_accum[channel] += Complex(std::cos(-phase_radians), std::sin(-phase_radians));
-        phase_compensation->amp_accum[channel] += amplitude;
     }
     phase_compensation->phase_accum_count++;
     phase_compensation->stable_nonzero_count++;
@@ -245,27 +227,23 @@ void apply_phase_compensation_once(const std::map<int, float>& measured_phases,
     if (phase_compensation->stable_nonzero_count < phase_compensation->required_stable_readings) return;
 
     const int n = std::max(1, phase_compensation->phase_accum_count);
-    std::cout << "Phase+Amplitude: Applying compensation (avg of " << n << " snapshots) [";
+    std::cout << "Phase: Applying compensation (avg of " << n << " snapshots) [";
     bool first = true;
     for (const auto& kv : measured_phases) {
         const int channel = kv.first;
         if (channel == REF_CHANNEL || channel < 0 || channel >= NUM_DEVICES) continue;
 
-        // Circular-mean direction (renormalized) * mean amplitude over the window.
+        // Circular-mean direction over the window, renormalized to a unit phasor.
         Complex dir = phase_compensation->phase_accum[channel];
         const float mag = std::abs(dir);
         dir = (mag > 1e-6f) ? dir / mag : Complex(1.0f, 0.0f);
-        const float amplitude = phase_compensation->amp_accum[channel] / static_cast<float>(n);
 
-        // Lock-free atomic store (cold path). comp = amplitude * exp(-j*phase):
-        // equal amplitude AND aligned phase across channels.
-        phase_compensation->compensation_vector.store(channel, dir * amplitude);
+        // Lock-free atomic store (cold path). comp = exp(-j*phase): phase only.
+        phase_compensation->compensation_vector.store(channel, dir);
 
         if (!first) std::cout << ", ";
         const float meas_deg = -std::arg(dir) * 180.0f / static_cast<float>(M_PI);
         std::cout << "Ch" << channel << ":" << meas_deg << "°";
-        const float amp_db = 20.0f * std::log10(std::max(amplitude, 1e-6f));
-        if (std::abs(amp_db) > 0.1f) std::cout << "(" << amp_db << "dB)";
         first = false;
     }
     std::cout << "]" << std::endl;
@@ -280,8 +258,7 @@ void apply_phase_compensation_once(const std::map<int, float>& measured_phases,
     phase_compensation->checks_since_compensation = 0;
 }
 
-bool check_phase_convergence(const std::map<int, float>& current_phases,
-                             const std::map<int, float>& current_amplitudes) {
+bool check_phase_convergence(const std::map<int, float>& current_phases) {
     if (!phase_compensation) return false;
 
     // Skip phase compensation in wideband scan mode
@@ -301,25 +278,8 @@ bool check_phase_convergence(const std::map<int, float>& current_phases,
             return abs_phase <= phase_compensation->convergence_threshold_degrees;
         });
 
-    // Amplitude must converge too. VERIFYING measures the already-compensated
-    // stream, so a residual gain error (e.g. a first apply truncated by the
-    // per-pass ±6 dB measurement clamp) shows up here as |amp| != 0 dB. Failing
-    // the check routes into the retry below, which multiplies the residual into
-    // the vector - so successive passes reach corrections beyond the clamp.
-    float max_amp_error_db = 0.0f;
-    for (const auto& [channel, amplitude] : current_amplitudes) {
-        if (channel == REF_CHANNEL) continue;
-        const float amp_db = std::abs(20.0f * std::log10(std::max(amplitude, 1e-6f)));
-        max_amp_error_db = std::max(max_amp_error_db, amp_db);
-    }
-    if (max_amp_error_db > phase_compensation->amplitude_tolerance_db) {
-        if (all_converged) {
-            std::cout << "Phase+Amplitude: phases converged but amplitude residual "
-                      << max_amp_error_db << " dB exceeds "
-                      << phase_compensation->amplitude_tolerance_db << " dB" << std::endl;
-        }
-        all_converged = false;
-    }
+    // Phase only: gain is not corrected (see apply_phase_compensation_once), so
+    // there is no gain residual to converge.
 
     if (all_converged) {
         phase_compensation->convergence_count++;
@@ -335,20 +295,13 @@ bool check_phase_convergence(const std::map<int, float>& current_phases,
             phase_compensation->failed_convergence_attempts++;
             
             if (phase_compensation->failed_convergence_attempts < phase_compensation->max_convergence_attempts) {
-                std::cout << "Phase+Amplitude: Applying additional compensation" << std::endl;
+                std::cout << "Phase: Applying additional compensation" << std::endl;
 
                 for (const auto& [channel, phase] : current_phases) {
                     if (channel != REF_CHANNEL) {
                         float phase_radians = phase * M_PI / 180.0f;
-
-                        // Get amplitude correction factor (default 1.0 if not available)
-                        float amplitude = 1.0f;
-                        if (current_amplitudes.count(channel)) {
-                            amplitude = current_amplitudes.at(channel);
-                        }
-
-                        Complex additional_comp(amplitude * std::cos(-phase_radians),
-                                                amplitude * std::sin(-phase_radians));
+                        // Unit phasor: phase-only, like the first apply
+                        Complex additional_comp(std::cos(-phase_radians), std::sin(-phase_radians));
                         // Read-modify-write for atomic compensation vector
                         auto current = phase_compensation->compensation_vector.load(channel);
                         phase_compensation->compensation_vector.store(channel, current * additional_comp);
@@ -1099,7 +1052,6 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
     while (global_running && pipeline_running.load(std::memory_order_acquire)) {
         std::optional<float> current_lag;
         std::map<int, float> current_phases;
-        std::map<int, float> current_amplitudes;
         uint64_t current_sequence = 0;
         // With FFT off the correlation thread still advances data_sequence
         // (it drives the time-based states below, e.g. the retune cooldown)
@@ -1118,7 +1070,6 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                 fresh = correlation_result.data_ready;
                 current_lag = correlation_result.lags[channel];
                 current_phases = correlation_result.phases;
-                current_amplitudes = correlation_result.amplitudes;
                 last_processed_sequence = current_sequence;
             }
         }
@@ -1198,17 +1149,17 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                             break;
                         }
                         case PhaseCompensatorState::MEASURING_INITIAL_PHASE:
-                            if (fresh) apply_phase_compensation_once(current_phases, current_amplitudes);
+                            if (fresh) apply_phase_compensation_once(current_phases);
                             break;
                         case PhaseCompensatorState::APPLYING_COMPENSATION:
                             // Increment 1: legacy pass-through. apply_phase_compensation_once
                             // now goes straight to VERIFYING_CONVERGENCE, so this state is no
                             // longer set. Funnel into the verify handler (not an empty flip)
                             // so a stray APPLYING value can never strand the state machine.
-                            if (fresh) check_phase_convergence(current_phases, current_amplitudes);
+                            if (fresh) check_phase_convergence(current_phases);
                             break;
                         case PhaseCompensatorState::VERIFYING_CONVERGENCE:
-                            if (fresh) check_phase_convergence(current_phases, current_amplitudes);
+                            if (fresh) check_phase_convergence(current_phases);
                             break;
                         case PhaseCompensatorState::MEASURING_PER_BIN: {
                             // Accumulate snapshots (correlation thread), then design the

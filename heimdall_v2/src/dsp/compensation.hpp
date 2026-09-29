@@ -4,11 +4,10 @@
 #include <map>
 #include <optional>
 
-// Phase and amplitude compensation functions
-void apply_phase_compensation_once(const std::map<int, float>& measured_phases,
-                                   const std::map<int, float>& measured_amplitudes);
-bool check_phase_convergence(const std::map<int, float>& current_phases,
-                             const std::map<int, float>& current_amplitudes);
+// Phase compensation functions. Phase-only: gain is measured (for display) but
+// not corrected - see apply_phase_compensation_once.
+void apply_phase_compensation_once(const std::map<int, float>& measured_phases);
+bool check_phase_convergence(const std::map<int, float>& current_phases);
 std::optional<PhaseCompensatorState> get_phase_compensation_state();
 
 // Reset the phase machine for a fresh calibration pass: enter `state`, end any
