@@ -56,12 +56,15 @@ DATA_PORT=8091                          # Heimdall TCP data port (carries phase_
 WIDEBAND="${WIDEBAND:-0}"
 KERBEROS="${KERBEROS:-0}"
 KERBEROS_SW="${KERBEROS_SW:-0}"
-while [[ "${1:-}" == "--wideband" || "${1:-}" == "-w" ||
-         "${1:-}" == "--kerberos" || "${1:-}" == "--kerberos_sw" ]]; do
+# Only LEADING flags are parsed: the internal entrypoints (__supervise,
+# __client_pane) carry the app's own argv after them, which must not be eaten.
+# Whatever is left is validated below, once die() exists.
+while (( $# )); do
     case "$1" in
-        --wideband|-w)  WIDEBAND=1 ;;
-        --kerberos)     KERBEROS=1 ;;
-        --kerberos_sw)  KERBEROS_SW=1 ;;
+        --wideband|-w)                WIDEBAND=1 ;;
+        --kerberos)                   KERBEROS=1 ;;
+        --kerberos_sw|--kerberos-sw)  KERBEROS_SW=1 ;;
+        *) break ;;
     esac
     shift
 done
@@ -87,6 +90,16 @@ say()  { echo "${CYN}${BOLD}==>${RST} ${BOLD}$*${RST}"; }
 ok()   { echo "${GRN}   ✓ $*${RST}"; }
 warn() { echo "${YEL}   ! $*${RST}"; }
 die()  { echo "${RED}${BOLD}Error:${RST} $*" >&2; exit 1; }
+usage() { sed -n '/^# Usage:/,/^# *NO_TMUX/s/^# \{0,1\}//p' "$SELF"; }
+
+# Reject anything unrecognised. A mistyped flag used to be ignored silently,
+# so e.g. a misspelled --kerberos_sw started a switchless KerberosSDR in
+# automatic calibration - calibrating against the live antennas.
+case "${1:-}" in
+    ""|stop|__supervise|__client_pane) ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "${RED}${BOLD}Error:${RST} unknown option '$1'" >&2; usage >&2; exit 2 ;;
+esac
 
 # ===========================================================================
 # Convergence probe: poll Heimdall's data port until phase_state == CONVERGED.
@@ -94,12 +107,23 @@ die()  { echo "${RED}${BOLD}Error:${RST} $*" >&2; exit 1; }
 #   magic(4) 'MCHQ' | num_channels(4) | num_samples(4) | phase_state(4) | ...
 # CONVERGED == 4 (PhaseCompensatorState enum). Each fresh connection starts on a
 # packet boundary, so reading the first 16 bytes yields a valid header.
-# Exit 0 = converged, 1 = timed out.  arg1 = timeout seconds (0 = forever).
+# Exit 0 = converged, 1 = timed out, 2 = the watched process exited.
+# arg1 = timeout seconds (0 = forever); arg2 = pid whose exit means Heimdall
+# is gone for good (0 = don't watch) - otherwise the wait would poll a dead
+# port until the timeout, or forever with WAIT_TIMEOUT=0.
 # ===========================================================================
 wait_for_convergence() {
-    python3 - "$1" "$DATA_PORT" <<'PY'
-import socket, struct, sys, time
-timeout = float(sys.argv[1]); port = int(sys.argv[2])
+    python3 - "$1" "$DATA_PORT" "${2:-0}" <<'PY'
+import os, socket, struct, sys, time
+timeout = float(sys.argv[1]); port = int(sys.argv[2]); watch = int(sys.argv[3])
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass
+    return True
 MAGIC = 0x4D434851; CONVERGED = 4
 NAMES = {0:"WAIT-LAG",1:"MEASURING",2:"APPLYING",3:"VERIFYING",
          4:"CONVERGED",5:"COOLDOWN",6:"PER-BIN"}
@@ -108,6 +132,8 @@ while True:
     el = int(time.time() - start)
     if timeout > 0 and (time.time() - start) > timeout:
         sys.stderr.write("\n"); sys.exit(1)
+    if watch > 0 and not alive(watch):
+        sys.stderr.write("\n"); sys.exit(2)
     try:
         s = socket.create_connection(("127.0.0.1", port), timeout=5)
         buf = b""
@@ -188,14 +214,25 @@ if [[ "${1:-}" == "__client_pane" ]]; then
     else
         echo "${BOLD}Waiting for Heimdall phase convergence"\
 "$([[ "$WAIT_TIMEOUT" -eq 0 ]] && echo " (no timeout)" || echo " (timeout ${WAIT_TIMEOUT}s)")...${RST}"
-        if wait_for_convergence "$WAIT_TIMEOUT"; then
+        wait_for_convergence "$WAIT_TIMEOUT" "${HEIMDALL_PID:-0}"
+        case $? in
+        0)
             ok "Phase converged - DF output is valid. Starting client..."
             sleep 1
-        else
+            ;;
+        2)
+            # The top pane's supervisor ended: heimdall exited cleanly or was
+            # stopped, and will not come back on its own.
+            warn "Heimdall has stopped (see the top pane) - not starting the client."
+            warn "Start the stack again with: $SELF"
+            exit 1
+            ;;
+        *)
             warn "No convergence within ${WAIT_TIMEOUT}s. Starting client anyway"
             warn "(DoA output stays invalid until Heimdall converges - watch the top pane)."
             sleep 3
-        fi
+            ;;
+        esac
     fi
     cd "$KRAKEN_DIR" || die "cannot cd to $KRAKEN_DIR"
     supervise "KrakenSDR DoA client" ./kraken_doa $WB_FLAG
@@ -344,11 +381,20 @@ run_headless() {
         sleep 2
     else
         say "Waiting for phase convergence$([[ "$WAIT_TIMEOUT" -eq 0 ]] && echo " (no timeout)" || echo " (timeout ${WAIT_TIMEOUT}s)")..."
-        if ! wait_for_convergence "$WAIT_TIMEOUT"; then
+        wait_for_convergence "$WAIT_TIMEOUT" "$hpid"
+        case $? in
+        0) ;;
+        2)
+            warn "Heimdall exited during startup. Last log lines:"
+            tail -n 15 "$hlog" | sed 's/^/     /'
+            die "Heimdall failed to start (see ${hlog#$SCRIPT_DIR/})."
+            ;;
+        *)
             warn "No convergence in time. Last Heimdall log lines:"
             tail -n 15 "$hlog" | sed 's/^/     /'
             die "Timed out (check antennas/noise source, or raise WAIT_TIMEOUT)."
-        fi
+            ;;
+        esac
         ok "Phase converged - DF output is valid."
     fi
 
@@ -378,8 +424,8 @@ say "Launching split-screen stack (session '$SESSION')"
 
 # Top pane: Heimdall with its live dashboard (real pty -> TUI renders).
 # Supervised: restarted if it crashes (see supervise).
-tmux new-session -d -s "$SESSION" -n krakensdr -c "$HEIMDALL_DIR" \
-    "exec '$SELF' __supervise Heimdall ./heimdall $WB_FLAG $KB_FLAG"
+HEIMDALL_PID=$(tmux new-session -d -P -F '#{pane_pid}' -s "$SESSION" -n krakensdr -c "$HEIMDALL_DIR" \
+    "exec '$SELF' __supervise Heimdall ./heimdall $WB_FLAG $KB_FLAG")
 
 # Keep dead panes visible so a crash leaves its message on screen for diagnosis.
 # (remain-on-exit is a WINDOW option -> set with -w; do it before anything can exit.)
@@ -387,10 +433,10 @@ tmux set-option -w -t "$SESSION:krakensdr" remain-on-exit on
 tmux set-option -t "$SESSION" mouse on
 
 # Bottom pane: wait-for-convergence, then the client. Re-invokes this script's
-# internal entrypoint; WAIT_TIMEOUT and the variant flags are passed through
-# explicitly as env vars.
+# internal entrypoint; WAIT_TIMEOUT, the variant flags and the heimdall pane's
+# supervisor pid (its exit ends the wait) are passed through as env vars.
 tmux split-window -v -t "$SESSION:krakensdr" -c "$KRAKEN_DIR" \
-    "exec env WAIT_TIMEOUT='$WAIT_TIMEOUT' WIDEBAND='$WIDEBAND' KERBEROS='$KERBEROS' KERBEROS_SW='$KERBEROS_SW' '$SELF' __client_pane"
+    "exec env WAIT_TIMEOUT='$WAIT_TIMEOUT' HEIMDALL_PID='$HEIMDALL_PID' WIDEBAND='$WIDEBAND' KERBEROS='$KERBEROS' KERBEROS_SW='$KERBEROS_SW' '$SELF' __client_pane"
 
 tmux select-pane -t "$SESSION:krakensdr.0"
 
