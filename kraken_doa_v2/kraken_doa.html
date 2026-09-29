@@ -5646,7 +5646,11 @@ function connect() {
         return;
       }
 
-      if(e.data.byteLength<28)return;
+      // Header: type (read above) + 7 x uint32/float32 = 32 bytes. The checks
+      // below used 28 (type not counted), so a frame 4 bytes short passed and
+      // the last read ran off the end of the buffer.
+      const FFT_HDR=32;
+      if(e.data.byteLength<FFT_HDR)return;
       const nc=v.getUint32(o,true);o+=4;
       const df=v.getUint32(o,true);o+=4;
       const fm=v.getFloat32(o,true);o+=4;
@@ -5744,7 +5748,7 @@ function connect() {
 
       if(isCompressedWideband || isCompressedSingleChannel) {
         // Compressed format: frequencies (float32) + min_envelope (uint8) + max_envelope (uint8)
-        const es=28+(ds*4)+(ds*2);  // Header + freqs + 2 uint8 arrays
+        const es=FFT_HDR+(ds*4)+(ds*2);  // Header + freqs + 2 uint8 arrays
         if(e.data.byteLength<es)return;
 
         // Read frequencies (float32)
@@ -5764,7 +5768,7 @@ function connect() {
         }
       } else {
         // Legacy uncompressed format: all float32
-        const es=28+(ds*3*4);
+        const es=FFT_HDR+(ds*3*4);
         if(e.data.byteLength<es)return;
 
         for(let i=0;i<ds;i++){freq.push(v.getFloat32(o,true));o+=4;}

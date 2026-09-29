@@ -20,7 +20,8 @@ namespace fwdcomp {
 constexpr const char* CAL_DIR = "s2p_calibration";
 
 // Parse a 2-port (or 1-port) Touchstone file into a frequency-sorted table of
-// (frequency_Hz, S21). For a 1-port file S11 is used instead, with a logged
+// (frequency_Hz, S21). The port count comes from the extension (.s2p / .s1p,
+// as Touchstone v1 defines it). For a 1-port file S11 is used instead, with a logged
 // warning - reflection is not the through response, but we accept it rather
 // than fail. Handles the RI / MA / DB data formats and the HZ/KHZ/MHZ/GHZ
 // frequency units from the option line. Returns true and fills `out` on

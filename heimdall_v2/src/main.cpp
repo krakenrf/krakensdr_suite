@@ -133,8 +133,9 @@ void discrete_scanner_thread() {
         uint32_t settling_time = discrete_scanner.settling_time_ms.load();
         uint32_t current_index = discrete_scanner.current_group_index.load();
 
-        // Get next frequency
-        uint64_t next_frequency = discrete_scanner.get_frequency(current_index);
+        // Get next frequency (index wrapped into the current list)
+        uint64_t next_frequency = discrete_scanner.get_frequency(current_index, &current_index);
+        if (next_frequency == 0) continue;  // list cleared meantime: re-checked above
 
         // STEP 1: Set retuning flag BEFORE changing frequency
         // This tells client to discard incoming data during settling
@@ -194,8 +195,9 @@ void discrete_scanner_thread() {
             std::this_thread::sleep_for(std::chrono::milliseconds(remaining_dwell));
         }
 
-        // Move to next frequency group (wrap around)
-        uint32_t next_index = (current_index + 1) % num_groups;
+        // Move to next frequency group (wrap around; get_frequency re-wraps
+        // if the list was replaced during the dwell)
+        uint32_t next_index = (current_index + 1) % std::max<size_t>(discrete_scanner.get_num_groups(), 1);
         discrete_scanner.current_group_index = next_index;
     }
 

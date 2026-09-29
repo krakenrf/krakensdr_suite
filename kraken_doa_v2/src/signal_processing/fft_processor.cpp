@@ -915,7 +915,7 @@ bool FFTProcessor::check_squelch_beamformed(const BeamformedFFTData& bf, float s
         return false;  // No valid beamformed data, squelch closed
     }
 
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(bf.mutex));
+    std::lock_guard<std::mutex> lock(bf.mutex);
 
     if (bf.averaged.empty()) {
         return false;  // No data, squelch closed

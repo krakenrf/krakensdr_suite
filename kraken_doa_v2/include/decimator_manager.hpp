@@ -106,6 +106,7 @@ public:
     // milliseconds. Surfaced live on the status dashboard (replaces the old
     // periodic "PERFORMANCE WARNING: parallel decimation..." log line).
     double getLastProcessMs() const { return last_process_ms_.load(std::memory_order_relaxed); }
+    void setLastProcessMs(double ms) { last_process_ms_.store(ms, std::memory_order_relaxed); }
 
     // Set which decimator feeds the FM demodulator
     void setFMDecimatorId(int id) { fm_decimator_id = id; }

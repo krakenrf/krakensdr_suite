@@ -60,14 +60,21 @@ bool valid_basename(const std::string& filename, std::string& err) {
     return true;
 }
 
+// Port count from a Touchstone v1 extension (case-insensitive): 1 for .s1p,
+// 2 for .s2p, 0 otherwise. The extension is what defines the port count.
+int touchstone_ports(const std::string& filename) {
+    const std::string e = upper(std::filesystem::path(filename).extension().string());
+    return e == ".S2P" ? 2 : e == ".S1P" ? 1 : 0;
+}
+
 // True if the filename ends in .s2p or .s1p (case-insensitive).
 bool has_touchstone_ext(const std::string& filename) {
-    const std::string e = upper(std::filesystem::path(filename).extension().string());
-    return e == ".S2P" || e == ".S1P";
+    return touchstone_ports(filename) != 0;
 }
 
 // Parse a Touchstone stream (shared by the file and uploaded-content paths).
-bool parse_stream(std::istream& f,
+// `ports` (1 or 2) comes from the file extension.
+bool parse_stream(std::istream& f, int ports,
                   std::vector<std::pair<double, std::complex<double>>>& out,
                   std::string& err) {
     out.clear();
@@ -104,18 +111,25 @@ bool parse_stream(std::istream& f,
 
     if (nums.empty()) { err = "no data points (not a Touchstone file)"; return false; }
 
-    // Determine columns-per-frequency from the token count. 2-port Touchstone
-    // is 9 values/point (freq + 4 S-params * 2); 1-port is 3 (freq + S11 * 2).
-    // Prefer 2-port (use S21); fall back to 1-port (use S11) with a warning.
+    // Columns per frequency come from the port count (the extension), not a
+    // guess from the token count: a 1-port file whose point count was a
+    // multiple of 3 has a multiple of 9 tokens and was misread as 2-port.
+    // 2-port is 9 values/point (freq + 4 S-params * 2), using S21; 1-port is
+    // 3 (freq + S11 * 2), using S11 with a warning.
     int stride, s_off;
-    if (nums.size() % 9 == 0) {
+    if (ports == 2) {
         stride = 9; s_off = 3;   // S21 = columns 3,4 (0-based: f S11r S11i S21r S21i ...)
-    } else if (nums.size() % 3 == 0) {
+    } else if (ports == 1) {
         stride = 3; s_off = 1;   // S11 = columns 1,2
-        std::cerr << "Forward comp: file looks like a 1-port (.s1p); using S11 "
+        std::cerr << "Forward comp: 1-port (.s1p) file; using S11 "
                      "(reflection). S2P/S21 is recommended for through cal." << std::endl;
     } else {
-        err = "unexpected column count (not a 1- or 2-port Touchstone)";
+        err = "filename must end in .s2p or .s1p";
+        return false;
+    }
+    if (nums.size() % static_cast<size_t>(stride) != 0) {
+        err = "value count does not match a " + std::to_string(ports) +
+              "-port Touchstone (" + std::to_string(stride) + " values per frequency)";
         return false;
     }
 
@@ -147,7 +161,7 @@ bool parse_touchstone(const std::string& path,
                       std::string& err) {
     std::ifstream f(path);
     if (!f) { err = "cannot open " + path; return false; }
-    return parse_stream(f, out, err);
+    return parse_stream(f, touchstone_ports(path), out, err);
 }
 
 bool set_channel_file(int ch, const std::string& filename, std::string& err) {
@@ -234,7 +248,7 @@ bool save_uploaded_file(const std::string& filename,
     {
         std::istringstream ss(content);
         std::vector<std::pair<double, std::complex<double>>> tbl;
-        if (!parse_stream(ss, tbl, err)) return false;
+        if (!parse_stream(ss, touchstone_ports(filename), tbl, err)) return false;
     }
 
     std::error_code ec;

@@ -315,7 +315,13 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
         }).ws<PerSocketData>("/*", {
         .compression = uWS::DISABLED,
         .maxPayloadLength = 16 * 1024 * 1024,
-        .idleTimeout = 0,
+        // A client that vanishes without closing (a phone leaving Wi-Fi) is
+        // otherwise kept until the kernel gives up on TCP (~15 min), with
+        // broadcasts piling up as backpressure. After 30 s with nothing from
+        // the client uWS pings it (sendPingsAutomatically, the default) and
+        // closes it if no pong follows; browsers answer pings on their own,
+        // so live tabs - even idle, backgrounded ones - are never dropped.
+        .idleTimeout = 30,
         .maxBackpressure = 2 * 1024 * 1024,  // 2MB - close slow clients to prevent OOM
         
         .open = [](auto* ws) {

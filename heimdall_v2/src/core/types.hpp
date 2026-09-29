@@ -325,12 +325,17 @@ struct DiscreteScannerConfig {
         return frequency_groups.size();
     }
 
-    uint64_t get_frequency(size_t index) const {
+    // Frequency of group `index`, wrapped into the CURRENT list: configuring a
+    // shorter list can replace it while the scan thread (or a status query)
+    // still holds an index into the old one - the old CENTER_FREQ fallback
+    // then tuned the array to 100 MHz for a whole dwell. `wrapped` receives
+    // the index actually used. Returns 0 for an empty list.
+    uint64_t get_frequency(uint32_t index, uint32_t* wrapped = nullptr) const {
         std::lock_guard<std::mutex> lock(config_mutex);
-        if (index < frequency_groups.size()) {
-            return frequency_groups[index];
-        }
-        return CENTER_FREQ;
+        if (frequency_groups.empty()) return 0;
+        index %= static_cast<uint32_t>(frequency_groups.size());
+        if (wrapped) *wrapped = index;
+        return frequency_groups[index];
     }
 
     // Thread-safe setters

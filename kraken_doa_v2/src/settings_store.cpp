@@ -155,42 +155,6 @@ bool write_file_atomic(const char* path, const std::string& data) {
         return nullptr;
     }
 
-    // Locate the value for a flat-object key. Returns the unescaped string for a
-    // quoted value, or the raw token for a bare number/bool. false if absent.
-    bool json_find(const string& json, const string& key, string& out) {
-        string needle = "\"" + key + "\"";
-        size_t p = json.find(needle);
-        if (p == string::npos) return false;
-        p = json.find(':', p + needle.size());
-        if (p == string::npos) return false;
-        p++;
-        while (p < json.size() && isspace((unsigned char)json[p])) p++;
-        if (p >= json.size()) return false;
-        if (json[p] == '"') {
-            p++;
-            string s;
-            while (p < json.size() && json[p] != '"') {
-                if (json[p] == '\\' && p + 1 < json.size()) {
-                    char c = json[p + 1];
-                    switch (c) {
-                        case 'n': s += '\n'; break;
-                        case 't': s += '\t'; break;
-                        case 'r': s += '\r'; break;
-                        default:  s += c;    break;  // ", \\, / and anything else
-                    }
-                    p += 2;
-                } else { s += json[p++]; }
-            }
-            out = s;
-            return true;
-        }
-        size_t e = p;
-        while (e < json.size() && json[e] != ',' && json[e] != '}' &&
-               !isspace((unsigned char)json[e])) e++;
-        out = json.substr(p, e - p);
-        return true;
-    }
-
     string bool_suffix(string_view token) {
         return (token == "true" || token == "1") ? "1" : "0";
     }

@@ -139,34 +139,56 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
              << " - expected " << sdr->serial_number << ", got " << actual_serial << std::endl;
     }
     
-    rtlsdr_set_dithering(sdr->dev, 0);
-    rtlsdr_set_sample_rate(sdr->dev, SAMPLE_RATE);
+    // Return codes: a dongle left on the wrong sample rate or frequency breaks
+    // coherence with no error anywhere else, so those (and the buffer reset
+    // the async stream starts from) fail the init - the caller then closes
+    // every handle it opened. The rest only warn: a gain, dithering or
+    // bias-tee miss is visible, and calibration absorbs a gain mismatch.
+    bool ok = true;
+    auto check = [&](int rc, const char* what, bool fatal) {
+        if (rc >= 0) return;
+        std::cerr << "Channel " << sdr->index << " (Serial " << sdr->serial_number << "): "
+                  << what << " failed (" << rc << ")" << (fatal ? "" : " - continuing") << std::endl;
+        if (fatal) ok = false;
+    };
+
+    check(rtlsdr_set_dithering(sdr->dev, 0), "disabling dithering", false);
+    check(rtlsdr_set_sample_rate(sdr->dev, SAMPLE_RATE), "setting the sample rate", true);
     // Wideband variant: every tuner is parked at the IF for good - the RF is
     // reached by programming the downconverter LO (current_frequency stays the
     // user-facing RF). Normal variant: tuners follow the RF directly.
     // Uses the RUNTIME frequency/gain (not the compile-time defaults): at
     // startup they are equal, and a runtime element-count reconfiguration
     // reopens devices at whatever the user had tuned.
-    rtlsdr_set_center_freq(sdr->dev, downconverter.enabled.load()
-                                         ? static_cast<uint32_t>(WB_VARIANT_IF_HZ)
-                                         : static_cast<uint32_t>(current_frequency.load()));
+    check(rtlsdr_set_center_freq(sdr->dev, downconverter.enabled.load()
+                                               ? static_cast<uint32_t>(WB_VARIANT_IF_HZ)
+                                               : static_cast<uint32_t>(current_frequency.load())),
+          "setting the center frequency", true);
     const int gain_now = current_gain.load();
-    rtlsdr_set_tuner_gain_mode(sdr->dev, gain_now < 0 ? 0 : 1);
+    check(rtlsdr_set_tuner_gain_mode(sdr->dev, gain_now < 0 ? 0 : 1), "setting the gain mode", false);
     if (gain_now >= 0) {
-        rtlsdr_set_tuner_gain(sdr->dev, gain_now);
+        check(rtlsdr_set_tuner_gain(sdr->dev, gain_now), "setting the gain", false);
     }
-    rtlsdr_set_freq_correction(sdr->dev, 0);
-    
+    // -2 = already at this value (a freshly opened handle starts at 0)
+    if (const int rc = rtlsdr_set_freq_correction(sdr->dev, 0); rc != -2)
+        check(rc, "clearing the frequency correction", false);
+
 #if ENABLE_BIAS_TEE
     // --kerberos: the noise source couples straight into the antenna path, so
     // it must stay off until an explicit manual calibration.
-    if (!kerberos_manual_cal_only()) rtlsdr_set_bias_tee(sdr->dev, 1);
+    if (!kerberos_manual_cal_only()) check(rtlsdr_set_bias_tee(sdr->dev, 1), "enabling the noise source", false);
 #endif
 
 #if USB_RESET_ON_INIT
-    rtlsdr_reset_buffer(sdr->dev);
+    check(rtlsdr_reset_buffer(sdr->dev), "resetting the USB buffer", true);
 #endif
-    
+
+    if (!ok) {
+        std::cerr << "Failed to initialize Channel " << sdr->index << " (Serial: "
+                  << sdr->serial_number << ")" << std::endl;
+        return false;
+    }
+
     sdr->init_success = true;
     std::cout << "Successfully initialized Channel " << sdr->index << " (Serial: " << sdr->serial_number << ")" << std::endl;
     return true;

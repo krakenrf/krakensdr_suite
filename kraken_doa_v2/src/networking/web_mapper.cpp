@@ -71,43 +71,6 @@ string fmt_fixed(double v, int decimals) {
     return buf;
 }
 
-// --- Minimal flat-JSON field extraction (same approach as settings_store) ---
-// Locates "key": <value> in a flat object; returns the unescaped string for a
-// quoted value or the raw token for a bare number/bool. false if absent.
-bool json_find(const string& json, const string& key, string& out) {
-    string needle = "\"" + key + "\"";
-    size_t p = json.find(needle);
-    if (p == string::npos) return false;
-    p = json.find(':', p + needle.size());
-    if (p == string::npos) return false;
-    p++;
-    while (p < json.size() && isspace((unsigned char)json[p])) p++;
-    if (p >= json.size()) return false;
-    if (json[p] == '"') {
-        p++;
-        string s;
-        while (p < json.size() && json[p] != '"') {
-            if (json[p] == '\\' && p + 1 < json.size()) {
-                char c = json[p + 1];
-                switch (c) {
-                    case 'n': s += '\n'; break;
-                    case 't': s += '\t'; break;
-                    case 'r': s += '\r'; break;
-                    default:  s += c;    break;  // ", \\, / and anything else
-                }
-                p += 2;
-            } else { s += json[p++]; }
-        }
-        out = s;
-        return true;
-    }
-    size_t e = p;
-    while (e < json.size() && json[e] != ',' && json[e] != '}' &&
-           !isspace((unsigned char)json[e])) e++;
-    out = json.substr(p, e - p);
-    return true;
-}
-
 string b64_encode(const unsigned char* data, size_t len) {
     string out;
     out.resize(4 * ((len + 2) / 3) + 1);
@@ -964,6 +927,7 @@ void WebMapper::workerThread() {
     int64_t next_ping = 0;
     int64_t next_reconnect = 0;
     int64_t reconnect_ms = 1000;
+    int64_t connected_at = 0;
     int64_t last_err_log = 0;
     string last_settings_payload;
     string mode, key, url;
@@ -1012,7 +976,7 @@ void WebMapper::workerThread() {
                     // data - surface that as a warning on the connected state.
                     set_status("connected",
                                key.empty() ? "KrakenPro key is not set" : "");
-                    reconnect_ms = 1000;
+                    connected_at = now;  // backoff resets once this stays up
                     last_settings_payload.clear();  // force a settings push
                     next_settings = now;
                     next_ping = now + 10000;
@@ -1031,9 +995,19 @@ void WebMapper::workerThread() {
             if (cloud.isOpen()) {
                 vector<string> messages;
                 if (!cloud.pump(messages)) {
-                    cerr << "[WebMapper] cloud connection lost; reconnecting" << endl;
+                    // A server that accepts and then drops us (e.g. closing on
+                    // a rejected key) used to reset the backoff on every
+                    // connect: a reconnect + log line every second, forever.
+                    // Only a connection that stayed up resets it, and drops
+                    // share the connect-failure log throttle.
+                    if (now - connected_at > 30000) reconnect_ms = 1000;
+                    if (now - last_err_log > 30000) {
+                        cerr << "[WebMapper] cloud connection lost; reconnecting" << endl;
+                        last_err_log = now;
+                    }
                     set_status("connecting");
                     next_reconnect = now + reconnect_ms;
+                    reconnect_ms = min<int64_t>(reconnect_ms * 2, 15000);
                 } else {
                     slept = true;  // pump blocked up to the 100 ms socket timeout
                     for (const string& m : messages) handle_cloud_message(m);

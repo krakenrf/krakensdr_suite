@@ -713,6 +713,9 @@ void DataReceiver::decimation_processor_thread() {
             vector<DecimatorManager::ProcessResult> results;
             results.reserve(active_decimators.size());
 
+            // Timed for the dashboard's "decimate" figure: the whole pass up
+            // to the barrier (every VFO's decimation + MUSIC task).
+            const auto pass_start = steady_clock::now();
             if (active_decimators.size() == 1) {
                 // Common case: run inline instead of spawning an OS thread per packet
                 results.push_back(run_pipeline(active_decimators[0]));
@@ -728,6 +731,8 @@ void DataReceiver::decimation_processor_thread() {
                     results.push_back(future.get());
                 }
             }
+            decimator_manager.setLastProcessMs(
+                duration<double, std::milli>(steady_clock::now() - pass_start).count());
 
             // Beamforming: steer each active decimator's coherent combine by its
             // OWN MUSIC DoA, and produce a per-decimator beamformed FFT slice.

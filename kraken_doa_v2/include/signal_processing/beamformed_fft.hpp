@@ -13,7 +13,7 @@
 #include <vector>
 
 struct BeamformedFFTData {
-    std::mutex mutex;                       // Guards magnitudes / averaged
+    mutable std::mutex mutex;               // Guards magnitudes / averaged (mutable: readers hold const refs)
     std::vector<float> magnitudes;          // Raw dB (display order, DC-centered)
     std::vector<float> averaged;            // EWMA dB
     std::atomic<float> center_freq_hz{0.0f};
