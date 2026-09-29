@@ -337,7 +337,24 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                     if (auto gain = extract_value("\"gain\":")) {
                         new_gain = (*gain < 0) ? -1 : static_cast<int>(std::min(*gain, 100.0) * 10);
                     }
-                
+
+                    // Wideband scan: the tuners are spread around the center, so a
+                    // retune re-spreads them (as the control port's set_frequency
+                    // does). update_sdr_settings would tune every tuner to the
+                    // same frequency and collapse the scan. A gain change still
+                    // goes through update_sdr_settings below.
+                    if (new_freq > 0 && operating_mode.load() == OperatingMode::WIDEBAND_SCAN) {
+                        if (rf_frequency_valid(new_freq)) {
+                            std::lock_guard<std::mutex> lock(settings_mutex);
+                            current_frequency = new_freq;
+                            setup_wideband_frequencies(new_freq, devices);
+                        } else {
+                            std::cerr << "Web: rejecting wideband scan center " << new_freq / 1e6
+                                      << " MHz (outside the tunable range)" << std::endl;
+                        }
+                        new_freq = 0;
+                    }
+
                     if (new_freq > 0 || new_gain != -999) {
                         if (update_sdr_settings(new_freq, new_gain, devices)) {
                             if (new_freq > 0 && recovery_in_progress.load(std::memory_order_acquire)) {

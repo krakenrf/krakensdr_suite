@@ -416,6 +416,12 @@ void begin_retune_cooldown(const char* what) {
         return;
     }
 
+    // Wideband scan has no lag/phase calibration (the tuners sit on different
+    // frequencies), and leaving the scan recalibrates from scratch. A cooldown
+    // started here would expire into handle_settings_change() and switch the
+    // noise source on for a calibration that can't run until the scan ends.
+    if (operating_mode.load() == OperatingMode::WIDEBAND_SCAN) return;
+
     set_bias_tee_all_devices(false, devices);
 
     if (!phase_compensation) return;

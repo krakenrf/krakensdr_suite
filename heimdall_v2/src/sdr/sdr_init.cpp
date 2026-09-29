@@ -553,6 +553,11 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
 }
 
 void handle_settings_change() {
+    // Wideband scan: no phase calibration exists to redo (the phase stages
+    // skip scan mode), so switching the noise source on here would leave it
+    // injected across the whole scan. Leaving the scan recalibrates anyway.
+    if (operating_mode.load() == OperatingMode::WIDEBAND_SCAN) return;
+
     // --kerberos: a settings change may not trigger the noise-source phase
     // recal (antennas are connected). Keep the current compensation applied -
     // approximately valid for small changes - and mark it STALE so both UIs

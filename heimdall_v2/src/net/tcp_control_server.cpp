@@ -415,6 +415,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                     // and ONLY call setup_wideband_frequencies (which sets each tuner to its spread freq)
                     // This prevents a race condition where packets briefly show all tuners at same frequency
                     if (operating_mode.load() == OperatingMode::WIDEBAND_SCAN) {
+                        std::lock_guard<std::mutex> lock(settings_mutex);
                         // Update base frequency tracking
                         current_frequency = frequency;
                         // Directly set spread frequencies - no cooldown needed in wideband mode
