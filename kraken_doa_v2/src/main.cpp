@@ -147,7 +147,7 @@ void initialize_persistent_buffer() {
     persistent_data_buffer.resize(16 * 1024 * 1024 / sizeof(std::complex<float>));
 }
 
-// SIGINT/SIGTERM → clear `running`; worker loops poll it (the data receiver's
+// SIGINT/SIGTERM/SIGHUP → clear `running`; worker loops poll it (the data receiver's
 // recv has a 500 ms timeout for exactly this) and main's joins then complete
 static void handle_shutdown_signal(int) {
     running.store(false);
@@ -202,6 +202,9 @@ int main(int argc, char* argv[]) {
     // hard-killing the process
     signal(SIGINT, handle_shutdown_signal);
     signal(SIGTERM, handle_shutdown_signal);
+    // tmux kill-session (run.sh stop / systemd stop) and a closed terminal
+    // send SIGHUP; without a handler it killed the process mid-write
+    signal(SIGHUP, handle_shutdown_signal);
 
     // FIX: Increase malloc arena count to reduce contention with many threads
     // With 2 decimators × 5 channels = 10 threads, default arenas (8) cause lock contention

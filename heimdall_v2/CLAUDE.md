@@ -177,7 +177,7 @@ All runtime configuration is in `config.h` at the project root:
 - `RT_PRIO_USB_READER`, `RT_PRIO_SAMPLE_DRAIN`: SCHED_RR realtime priorities (best-effort). The conversion worker deliberately runs at normal priority.
 - `ENABLE_COHERENCE_MONITOR`: low-rate streaming coherence backstop (default **0/OFF**). A differential cross-correlation heuristic; needs ≥3 elements and on-hardware threshold tuning before enabling (a false positive triggers a disruptive ~30–60 s recalibration). The application-level detectors (L1 overflow / pool exhaustion / stuck device) are always on and cover the high-CPU-load case.
 
-**Realtime scheduling (optional):** the USB readers and sample drain use SCHED_RR if the process is granted it. Without privilege they run at normal priority (safe default). To enable: add `<user> - rtprio 30` to `/etc/security/limits.conf` (or grant `CAP_SYS_NICE`).
+**Realtime scheduling (optional):** the USB readers and sample drain use SCHED_RR if the process is granted it. Without privilege they run at normal priority (safe default). To enable: add `<user> - rtprio 30` to `/etc/security/limits.conf` (or grant `CAP_SYS_NICE`). limits.conf only covers PAM logins: the boot service (`install-pi-service.sh`) sets `LimitRTPRIO=30` in its unit instead.
 
 **KrakenSDR Wideband (downconverter) variant (`--wideband` / `-w`):**
 - Hardware variant with per-tuner mixers driven by ONE shared LO: an on-board

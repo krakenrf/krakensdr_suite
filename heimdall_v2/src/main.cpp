@@ -85,16 +85,15 @@ std::unique_ptr<TcpDataServer> tcp_data_server;
 std::unique_ptr<TcpControlServer> tcp_control_server;
 std::unique_ptr<RtlTcpServer> rtl_tcp_server;
 
-// Signal handler
+// Signal handler: only async-signal-safe work - record the signal and clear
+// the (lock-free) running flag. main() polls the flag, logs, and runs the
+// orderly shutdown. (Closing the uWS timer / waking the loop here was unsafe:
+// it frees memory and touches epoll state the web thread may be using, and
+// main never needed the loop to exit - it _Exits after releasing the dongles.)
+static volatile std::sig_atomic_t shutdown_signal = 0;
 void signal_handler(int sig) {
-    std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
+    shutdown_signal = sig;
     global_running = false;
-
-    if (broadcast_timer) us_timer_close(static_cast<struct us_timer_t*>(broadcast_timer));
-    if (loop) us_wakeup_loop(static_cast<struct us_loop_t*>(loop));
-
-    // ConcurrentQueue will automatically unblock waiting threads when they timeout
-    // No need to manually notify condition variables
 }
 
 // TCP Status broadcaster
@@ -356,6 +355,10 @@ int main(int argc, char* argv[]) {
     
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+    // SIGHUP too: tmux kill-session (run.sh stop, the systemd unit's stop)
+    // and a closed terminal deliver it - without a handler it killed heimdall
+    // outright, skipping the dongle release and the KerberosSDR GPIO restore.
+    signal(SIGHUP, signal_handler);
 
     // Live status dashboard. Take over the terminal BEFORE the (slow) device
     // init below so its progress shows on the loading screen; a background
@@ -475,7 +478,8 @@ int main(int argc, char* argv[]) {
     // shutdown logs so they print normally on the restored screen.
     dash.stop();
 
-    std::cout << "\nShutting down..." << std::endl;
+    if (shutdown_signal) std::cout << "\nReceived signal " << shutdown_signal << ", shutting down..." << std::endl;
+    else std::cout << "\nShutting down..." << std::endl;
     global_running = false;  // signal every worker loop to stop
 
     // Bulletproof shutdown: DO NOT join the worker threads. The uWebSockets

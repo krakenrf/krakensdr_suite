@@ -21,8 +21,6 @@
 // Global web server state
 std::thread web_thread;
 void* global_app = nullptr;
-void* loop = nullptr;
-void* broadcast_timer = nullptr;
 
 // Global references for timer callback (set by main.cpp)
 static CorrelationResult* global_correlation_result = nullptr;
@@ -32,8 +30,6 @@ static FFTProcessingControl* global_fft_control = nullptr;
 extern "C" {
     struct us_timer_t* us_create_timer(struct us_loop_t* loop, int fallthrough, unsigned int ext_size);
     void us_timer_set(struct us_timer_t* timer, void (*cb)(struct us_timer_t* t), int ms, int repeat_ms);
-    void us_timer_close(struct us_timer_t* timer);
-    void us_wakeup_loop(struct us_loop_t* loop);
 }
 
 // Minimal JSON string escaper (filenames may contain spaces; quotes/backslashes
@@ -469,10 +465,8 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
             std::cout << "Web server listening on http://localhost:" << WEB_PORT << " (uWebSockets)" << std::endl;
             
             auto* uws_loop = uWS::Loop::get();
-            loop = uws_loop;
             struct us_loop_t* native_loop = (struct us_loop_t*)uws_loop;
             auto* timer = us_create_timer(native_loop, 0, 0);
-            broadcast_timer = timer;
             
             us_timer_set(timer, [](struct us_timer_t* /*timer*/) {
                 if (global_app && global_correlation_result && global_fft_control) {

@@ -127,6 +127,13 @@ Environment=PYTHONUNBUFFERED=1
 ExecStartPre=/usr/local/bin/kraken-wait-usb
 ExecStart=$RUN_SH $VARIANT_FLAGS
 ExecStop=$RUN_SH stop
+# Realtime-priority limit for heimdall's SCHED_RR USB reader / sample-drain
+# threads (RT_PRIO_* in heimdall_v2/config.h, <= 30). install.sh's
+# limits.conf entry only applies to PAM logins, not to systemd services, so
+# without this they silently ran at normal priority in the boot service.
+LimitRTPRIO=30
+# Covers the tmux server itself; the apps inside it are restarted by run.sh's
+# supervisor if they crash (a dead pane never ended the unit's main process).
 Restart=on-failure
 RestartSec=15
 TimeoutStartSec=120

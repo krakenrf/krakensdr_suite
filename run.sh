@@ -132,7 +132,38 @@ PY
 }
 
 # ===========================================================================
-# Internal entrypoint run inside the tmux BOTTOM pane: wait, then exec client.
+# Supervisor: run an app in the FOREGROUND of its pane (so its dashboard keeps
+# the terminal) and restart it if it dies. A crash leaves only a dead pane
+# otherwise - and with tmux as the systemd unit's main process, the unit's
+# Restart=on-failure never sees it, so an unattended Pi stayed down.
+#   exit 0 (clean shutdown)            -> done, no restart
+#   SIGTERM/SIGINT/SIGHUP to the pane  -> the app shuts down cleanly, done
+#   any other exit (crash, init error) -> restart after RESTART_DELAY seconds
+# (bash runs a trap only after the foreground child returns, and the signal
+# reaches the child too - it is in the pane's process group - so the app
+# always gets its own clean shutdown first.)
+# ===========================================================================
+supervise() {  # supervise <name> <command...>
+    local name="$1"; shift
+    local stopping=0 rc
+    trap 'stopping=1' TERM INT HUP
+    while :; do
+        "$@"; rc=$?
+        [[ "$stopping" == "1" || "$rc" == "0" ]] && return "$rc"
+        warn "$name exited (status $rc) - restarting in ${RESTART_DELAY:-5}s (Ctrl+C to stay stopped)"
+        sleep "${RESTART_DELAY:-5}"
+        [[ "$stopping" == "1" ]] && return "$rc"
+    done
+}
+
+if [[ "${1:-}" == "__supervise" ]]; then
+    shift
+    supervise "$@"
+    exit $?
+fi
+
+# ===========================================================================
+# Internal entrypoint run inside the tmux BOTTOM pane: wait, then run client.
 # ===========================================================================
 if [[ "${1:-}" == "__client_pane" ]]; then
     if [[ "$KB_MANUAL" == "1" ]]; then
@@ -153,15 +184,39 @@ if [[ "${1:-}" == "__client_pane" ]]; then
         fi
     fi
     cd "$KRAKEN_DIR" || die "cannot cd to $KRAKEN_DIR"
-    exec ./kraken_doa $WB_FLAG
+    supervise "KrakenSDR DoA client" ./kraken_doa $WB_FLAG
+    exit $?
 fi
 
 # ===========================================================================
-# `stop` subcommand: tear down the tmux session (and thus both apps).
+# Graceful session stop: SIGTERM every pane's process group (the supervisor
+# and its app), wait for the apps' clean shutdown - heimdall releases the
+# dongles and restores the KerberosSDR switch GPIOs - then remove the session.
+# Killing the session outright gave the apps no time to finish, so a relaunch
+# could race the old heimdall for the USB devices.
+# ===========================================================================
+stop_session() {
+    local pids pid alive
+    pids=$(tmux list-panes -s -t "$SESSION" -F '#{pane_pid}' 2>/dev/null)
+    for pid in $pids; do
+        kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+    done
+    for _ in $(seq 1 50); do            # up to 10 s
+        alive=0
+        for pid in $pids; do kill -0 "$pid" 2>/dev/null && alive=1; done
+        [[ "$alive" == "0" ]] && break
+        sleep 0.2
+    done
+    [[ "$alive" == "1" ]] && warn "Apps still running after 10s - forcing the session closed."
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+}
+
+# ===========================================================================
+# `stop` subcommand: stop both apps cleanly and tear down the tmux session.
 # ===========================================================================
 if [[ "${1:-}" == "stop" ]]; then
     if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$SESSION" 2>/dev/null; then
-        tmux kill-session -t "$SESSION"
+        stop_session
         ok "Stopped tmux session '$SESSION'."
     else
         warn "No running '$SESSION' session found."
@@ -247,13 +302,15 @@ fi
 # ===========================================================================
 if tmux has-session -t "$SESSION" 2>/dev/null; then
     warn "A '$SESSION' session is already running - replacing it."
-    tmux kill-session -t "$SESSION"
+    stop_session
 fi
 
 say "Launching split-screen stack (session '$SESSION')"
 
 # Top pane: Heimdall with its live dashboard (real pty -> TUI renders).
-tmux new-session -d -s "$SESSION" -n krakensdr -c "$HEIMDALL_DIR" "exec ./heimdall $WB_FLAG $KB_FLAG"
+# Supervised: restarted if it crashes (see supervise).
+tmux new-session -d -s "$SESSION" -n krakensdr -c "$HEIMDALL_DIR" \
+    "exec '$SELF' __supervise Heimdall ./heimdall $WB_FLAG $KB_FLAG"
 
 # Keep dead panes visible so a crash leaves its message on screen for diagnosis.
 # (remain-on-exit is a WINDOW option -> set with -w; do it before anything can exit.)

@@ -11,13 +11,9 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
 // Global web server state - use void* to avoid uWS header dependencies
 extern std::thread web_thread;
 extern void* global_app;
-extern void* loop;
-extern void* broadcast_timer;
 
 // uWebSockets C interface for timer
 extern "C" {
     struct us_timer_t* us_create_timer(struct us_loop_t* loop, int fallthrough, unsigned int ext_size);
     void us_timer_set(struct us_timer_t* timer, void (*cb)(struct us_timer_t* t), int ms, int repeat_ms);
-    void us_timer_close(struct us_timer_t* timer);
-    void us_wakeup_loop(struct us_loop_t* loop);
 }
