@@ -161,6 +161,8 @@ struct PhaseCompensationData {
     // rate over ~1 s. For the first few hundred ms the channel mismatch exceeds the
     // +/-6 dB amplitude-measurement clamp (reads as a steady, wrong value), so this
     // floor must cover that part; the AMP_SETTLE_* gate below catches the tail.
+    // Pinning the VGA instead was tested and rejected (2026-09-29): no transient,
+    // but the noise source clipped 6-11% and the antenna level dropped ~16 dB.
     static constexpr int NOISE_SETTLE_MS = 1000;
     // AGC settle gate (apply_phase_compensation_once): until AMP_SETTLE_MAX_MS after
     // noise-on, a snapshot whose amplitude on any channel is more than AMP_SETTLE_DB

@@ -76,6 +76,15 @@ WebSocket Server (port 8080, HTTPS)
 - `web_server_main`: uWebSockets event loop (HTTP/WebSocket)
 - Status monitoring thread: Periodic statistics printing
 
+**Control commands run on ONE thread - the uWS loop:** every
+`ControlHandler::handle_websocket_message()` call (browser messages, the
+persisted-settings replay, web-mapper cloud settings) is dispatched on the
+uWebSockets loop thread. The replay is deferred there by the data receiver on
+its first heimdall connection (`loop->defer`); replaying from the receiver
+thread raced browser commands (a change mid-replay could be overwritten or go
+unsaved). From any other thread, use `loop->defer` - never call the dispatcher
+directly.
+
 **Thread Count:**
 - Base workers: 8 threads
 - Per-channel FFT: 8 threads (one per channel)
@@ -93,7 +102,10 @@ WebSocket Server (port 8080, HTTPS)
 
 **Networking** (`src/networking/`):
 - `tcp_client.cpp`: Connects to Heimdall server (ports 8091, 8092)
-- `websocket_server.cpp`: Browser UI communication (port 8080, HTTPS)
+- `websocket_server.cpp`: Browser UI communication (port 8080, HTTPS).
+  `idleTimeout = 30`: a client silent for 30 s is pinged and closed if it
+  doesn't pong (browsers pong automatically), so a phone that drops off Wi-Fi
+  is gone in ~30 s instead of lingering until TCP gives up (~15 min)
 - `data_receiver.cpp`: Packet reception, IQ conversion, decimation coordination
 - `binary_message.cpp`: Wire protocol encoding/decoding
 
@@ -103,6 +115,10 @@ WebSocket Server (port 8080, HTTPS)
 - `ring_buffer.cpp`: Lock-free circular buffers for FFT/audio
 - `system_stats.cpp`: CPU/memory usage tracking
 - `thread_pool.hpp`: Generic thread pool (used by SharedDecimator)
+- `include/utils/json_escape.hpp`: `json_escape()` for every hand-built JSON
+  emitter, and `json_find()` - the one flat-object reader (settings file,
+  web-mapper cloud messages) - which decodes every JSON escape including
+  `\uXXXX` (to UTF-8, surrogate pairs too), so values round-trip
 
 **Managers** (`src/`):
 - `channel_manager.cpp`: Channel state (frequency, gain, tuner mappings)
@@ -369,9 +385,16 @@ mallopt(M_ARENA_MAX, 32);  // In main.cpp for 23-28 threads
 
 ### Adding WebSocket Commands
 
-1. **Handler:** Add to `control_handler.cpp` in the `if/else if` chain
-2. **Message Builder:** Add function in `message_builders.cpp`
-3. **Test:** Send from browser console: `ws.send(JSON.stringify({command: "your_cmd"}))`
+1. **Handler:** Add to `control_handler.cpp` in the `if/else if` chain.
+   Commands are plain text `PREFIX:value`. Throw `CommandRejected` for an
+   invalid value (it is then neither persisted nor echoed to browsers); call
+   `set_applied()` when the handler clamps/normalizes, so the applied value -
+   not the raw request - is what gets saved and synced
+2. **Persistence / sync:** add the prefix to the schema in `settings_store.cpp`
+   to remember it, and to `is_replayed_command()` to replay it to newly
+   connecting browsers
+3. **Message Builder:** Add function in `message_builders.cpp` if it needs one
+4. **Test:** Send from browser console: `ws.send("YOUR_CMD:value")`
 
 ### Performance Profiling
 
@@ -587,7 +610,7 @@ make deps  # Ubuntu/Debian
 - Connects to Heimdall server ports 8091 (data) and 8092 (control)
 
 **Heimdall Server** (in `../heimdall_v2/`):
-- **8080**: Web interface (HTTP + WebSocket)
+- **8070**: Web interface (HTTP + WebSocket)
 - **8091**: TCP data server (multi-channel IQ streaming)
 - **8092**: TCP control server (JSON commands)
 - **1234**: RTL-TCP server (rtl_tcp compatible)

@@ -32,10 +32,13 @@ make distclean    # Remove everything including uWebSockets
 git clone --recursive https://github.com/uNetworking/uWebSockets
 cd uWebSockets/uSockets && WITH_SSL=0 make && cd ../..
 
+# The librtlsdr fork's static library must exist first (../install.sh builds
+# it, or: make ../librtlsdr/build/src/librtlsdr.a)
+
 # Then build
 mkdir build && cd build
 cmake ..
-make -j$(nproc)
+make -j3          # never more than 3 jobs on the Pi
 ./heimdall
 ```
 
@@ -232,8 +235,8 @@ All runtime configuration is in `config.h` at the project root:
   `set_wideband_mode` is refused while the variant is active.
 - Missing moRFeus is fatal at startup in this mode; non-root access needs the
   hidraw udev rule (install.sh installs `99-morfeus.rules`). GPIO switching
-  needs the librtlsdr fork with `rtlsdr_set_bias_tee_gpio` (the vendored
-  `librtlsdr/` source tree at the repo root, installed to /usr/local).
+  needs the librtlsdr fork with `rtlsdr_set_bias_tee_gpio` (the `librtlsdr/`
+  source tree at the repo root, linked statically - see *Dependencies*).
 
 ## Data Flow
 
@@ -356,7 +359,18 @@ phase AND amplitude — tuner gain mismatch is corrected together with phase.
 
 **Application**: One complex multiply per sample by
 `phase_compensation->compensation_vector[channel]` (magnitude = gain correction,
-argument = phase correction) in `samples_to_complex_with_compensation()`.
+argument = phase correction) in `samples_to_complex_with_compensation()`. Each
+element (`AtomicComplex`, core/atomic_complex.hpp) packs real+imag into ONE
+64-bit atomic, so the hot loop can never read a torn vector mid-calibration.
+
+**Noise-on transient / IF gain (decided - do not pin the IF VGA)**: the
+librtlsdr fork leaves the R820T IF VGA under the RTL2832 AGC even in manual
+gain mode, so noise-on ramps every channel ~10 dB down over ~1 s at a
+per-dongle rate. The settle gates in `apply_phase_compensation_once()`
+(`NOISE_SETTLE_MS`, `AMP_SETTLE_DB` / `AMP_SETTLE_MAX_MS` in types.hpp) keep
+that ramp out of the averaged estimate. Pinning the VGA was tested and
+rejected (2026-09-29): no transient, but it clipped the noise source 6-11% and
+cut the antenna level ~16 dB.
 
 **Visibility**: the control-port status JSON (port 8092, 2 Hz) reports the live
 applied vector per channel as `"channel_comp":[{"amp_db":..,"phase_deg":..},..]`.
@@ -378,7 +392,7 @@ array (`build_correlation_message` in correlation.cpp ↔ `processData` in index
 - Re-engages the noise source, resets lag to MEASURING + flushes L1/L2/L2-raw, resets phase to WAITING_FOR_LAG_COMPLETION (identity vector, per-bin dropped), re-enables FFT — i.e. a full startup-equivalent recalibration (the only recovery robust to an arbitrary full-packet slip).
 - `recovery_in_progress` spans the whole async recal (cleared in `complete_phase_calibration_locked`), and is surfaced in the control-port status (`coherence_events`, `recovering`).
 - Debounce: an event that fires **during** a recovery is peeked (not consumed) and acted on once the current recovery completes; a recovery that never converges is aborted after 120 s with the noise source switched off and FFT disabled so it can't latch a no-noise-source calibration.
-- Flush-only (no recal) in wideband scan or while the coherent discrete scanner is active (a recal can't converge while hopping). The retune/gain cooldown handlers (web_server.cpp, tcp_control_server.cpp) and `handle_settings_change` skip their phase-only override while `recovery_in_progress` so they don't clobber the recovery.
+- Flush-only (no recal) in wideband scan or while the coherent discrete scanner is active (a recal can't converge while hopping). Likewise `begin_retune_cooldown()` and `handle_settings_change()` are no-ops in wideband scan (the phase stages skip scan mode, so a recal would leave the noise source on across the scan; leaving the scan recalibrates anyway), and a scan-mode retune from the web UI (`SDR_SETTINGS`) or control port (`set_frequency`) re-spreads the tuners via `setup_wideband_frequencies()` instead of tuning them all to one frequency. The retune/gain cooldown handlers (web_server.cpp, tcp_control_server.cpp) and `handle_settings_change` skip their phase-only override while `recovery_in_progress` so they don't clobber the recovery.
 
 ### KerberosSDR Mode (--kerberos / --kerberos_sw)
 
@@ -475,8 +489,19 @@ The time-critical L1 drain (`sample_processor`) is separated from the heavy IQ c
 
 ## Dependencies
 
+**KrakenSDR librtlsdr fork** (github.com/krakenrf/librtlsdr), linked
+STATICALLY from `../librtlsdr/build/src/librtlsdr.a` with the fork's own
+headers (`-I../librtlsdr/include`). A distro `librtlsdr0` sits earlier in the
+loader's search path than `/usr/local/lib`, so a dynamic link could silently
+load the stock library; linked in, it can't (`ldd heimdall` shows no
+librtlsdr). `make` clones/builds the static library if it's missing; do NOT
+install `librtlsdr-dev` (distro rtl-sdr packages may stay installed).
+`init_rtlsdr_device()` fails a channel whose sample rate, center frequency or
+USB buffer reset can't be set (a silently mistuned dongle breaks coherence);
+other setup calls only warn.
+
 **System Libraries:**
-- `librtlsdr-dev`: RTL-SDR hardware access
+- `libusb-1.0-0-dev`, `cmake`: build and link the librtlsdr fork
 - `libfftw3-dev`: Fast Fourier Transform (single-precision `fftw3f`)
 - `libeigen3-dev`: Eigenvalue decomposition for phase calibration
 - `libssl-dev`, `libcrypto++-dev`: SSL/TLS for uWebSockets (optional)

@@ -66,10 +66,11 @@ make distclean    # Remove everything including uWebSockets
 make status       # Check dependencies and module status
 make debug        # Show build configuration
 
-# CMake alternative
+# CMake alternative (needs ../librtlsdr/build/src/librtlsdr.a - built by
+# install.sh or by `make` above; CMake stops with a message if it's missing)
 mkdir build && cd build
 cmake ..
-make -j$(nproc)
+make -j3          # never more than 3 jobs on the Pi (see kraken_doa_v2/CLAUDE.md)
 ./heimdall
 ```
 
@@ -93,6 +94,33 @@ make status       # Check dependencies and build status
 make debug        # Build with debug symbols
 make debug-arm    # ARM build with NEON debug output
 ```
+
+## Running the Stack (install.sh / run.sh)
+
+- `./install.sh` installs apt dependencies, builds the librtlsdr fork (see
+  *Dependencies*) and both apps. It does NOT remove distro RTL-SDR packages -
+  heimdall links the fork statically, so gqrx, gr-osmosdr, rtl_433 etc. can
+  stay installed on the stock library.
+- `./run.sh [--wideband|-w] [--kerberos] [--kerberos_sw|--kerberos-sw]` starts
+  both apps in a tmux split (`NO_TMUX=1` = headless, logs in `logs/`);
+  `./run.sh stop` stops everything. Unknown arguments are an error (a
+  mistyped flag used to be ignored silently); `-h` prints usage.
+- Each app runs under a supervisor (`run.sh __supervise`) that restarts it
+  after a crash. Ctrl+C, `run.sh stop`, `systemctl stop` and closing the tmux
+  pane/window all stop it cleanly: the supervisor runs the app as a
+  background child it `wait`s on and forwards the signal, because a pane close
+  SIGHUPs only the supervisor (the pane's session leader), never the app.
+- Starting AND `stop` sweep stale processes first: any heimdall / kraken_doa /
+  run.sh supervisor outside the current session (a dead tmux server, an old
+  run, a headless run) gets SIGTERM per process group (clean shutdown,
+  dongles released), SIGKILL after 10 s. Processes of other users are only
+  reported.
+- The convergence wait before the client starts watches heimdall's process:
+  headless mode aborts with heimdall's log tail if it dies; in tmux mode the
+  client pane gives up if the heimdall pane's supervisor exits (a crash is
+  restarted by the supervisor, so the wait continues through it).
+- Boot service (`install-pi-service.sh`): `Type=forking`, `ExecStop=run.sh
+  stop`, `LimitRTPRIO=30` (realtime USB threads), `Restart=on-failure`.
 
 ## Architecture
 
@@ -395,6 +423,15 @@ per-channel complex gains, so the single complex correction per channel
 Applied per sample in the conversion hot loop; the live vector is reported in
 the control-port status JSON as `channel_comp` (amp_db / phase_deg per channel).
 
+**Noise-on transient and the IF gain (decided - do not pin the IF VGA)**: the
+krakenrf librtlsdr fork leaves the R820T IF VGA under the RTL2832 AGC even in
+manual gain mode, so switching the noise source on ramps every channel ~10 dB
+down over ~1 s at a per-dongle rate. Phase calibration handles this with two
+settle gates (`NOISE_SETTLE_MS`, `AMP_SETTLE_*` in heimdall's types.hpp). Pinning
+the VGA was tested and REJECTED (2026-09-29): it removes the transient but
+clipped the noise source by 6-11% and cut the antenna signal level by ~16 dB.
+Keep the VGA on the AGC and rely on the settle gates.
+
 **Why Eigenvalue Decomposition**:
 - More robust than correlation peak phase
 - Handles multi-path and interference better
@@ -512,8 +549,23 @@ for (size_t i = 0; i < num_samples; i++) {
 
 ### Heimdall Server
 
+**KrakenSDR librtlsdr fork** ([krakenrf/librtlsdr](https://github.com/krakenrf/librtlsdr)),
+linked STATICALLY from `librtlsdr/build/src/librtlsdr.a` (gitignored source
+tree at the repo root):
+- Why static: a distro `librtlsdr0` lives earlier in the loader's search path
+  (`/usr/lib/aarch64-linux-gnu`) than `/usr/local/lib`, so a dynamically
+  linked heimdall would silently load the stock library and lose the fork's
+  features (register-only sample-clock servo, GPIO bias-tee control). `ldd
+  heimdall` shows no librtlsdr.
+- heimdall's `make` clones/builds just the static library when it's missing;
+  `install.sh` builds the fork and installs it to `/usr/local` (library,
+  headers, udev rules) with its `rtl_*` tools linked statically too
+  (`-DLINK_RTLTOOLS_AGAINST_STATIC_LIB=ON`)
+- Do NOT install `librtlsdr-dev` for heimdall (distro `librtlsdr0` /
+  `rtl-sdr` packages may stay installed for other software)
+
 **Required System Libraries**:
-- `librtlsdr-dev`: RTL-SDR hardware access
+- `libusb-1.0-0-dev`, `cmake`: build and link the librtlsdr fork
 - `libfftw3-dev`: Fast Fourier Transform (single-precision `fftw3f`)
 - `libeigen3-dev`: Eigenvalue decomposition for phase calibration
 - `libssl-dev`: SSL/TLS for uWebSockets
