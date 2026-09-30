@@ -709,10 +709,16 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
             per_bin_cal.ready.store(false, std::memory_order_release);
 
             // If we interrupted active calibration, turn off bias tee
-            if (old_state != PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION &&
-                old_state != PhaseCompensatorState::CONVERGED) {
-                std::cout << "Wideband: Interrupted phase calibration (was in state "
-                         << static_cast<int>(old_state) << "), disabling bias tee" << std::endl;
+            // The scan never uses the noise source, and nothing turns it off
+            // later (the phase stages, recovery and the periodic monitor all
+            // stand down in scan mode). Switch it off whenever it is on -
+            // including WAITING_FOR_LAG_COMPLETION (startup lag calibration,
+            // coherence recovery, element-count recal) and a CONVERGED machine
+            // mid periodic-check, which used to leave it injected for the whole
+            // scan.
+            if (bias_tee_enabled.load()) {
+                std::cout << "Wideband: noise source on at scan entry (phase state "
+                          << static_cast<int>(old_state) << ") - switching it off" << std::endl;
                 set_bias_tee_all_devices(false, devices);
             }
         }

@@ -815,9 +815,15 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
     }
 
     // Reset lag compensation
+    // Same as the web "Reset lag" button: re-measuring lag needs the noise
+    // source on and the machines running, and a new lag lock needs a phase
+    // calibration after it. A bare reset_lag_compensation_all_channels() did
+    // neither once calibrated (FFT auto-off idles the machines): the sub-sample
+    // trim just vanished, and mid-VERIFYING it could latch a false CONVERGED.
     if (json_str.find("\"reset_lag_compensation\"") != std::string::npos) {
-        reset_lag_compensation_all_channels();
-        return "{\"status\":\"success\",\"message\":\"Lag compensation reset for all channels\"}";
+        force_recalibration.store(true, std::memory_order_release);
+        std::cout << "Lag reset requested via control port (full recalibration)" << std::endl;
+        return "{\"status\":\"success\",\"message\":\"Full recalibration (lag + phase) started\"}";
     }
 
     // Configure discrete scanner

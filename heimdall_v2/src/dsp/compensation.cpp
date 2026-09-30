@@ -731,6 +731,11 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
                 }
             }
             if (!noise_was_on) set_bias_tee_all_devices(false, devices);
+        } else if (!noise_was_on && operating_mode.load() == OperatingMode::WIDEBAND_SCAN) {
+            // Superseded by wideband-scan entry, which owns nothing that needs
+            // the noise source: undo our own noise-on (scan entry may have run
+            // between the monitor's scan-mode check and our switch-on).
+            set_bias_tee_all_devices(false, devices);
         }
     }
     if (!still_converged) {
@@ -1044,10 +1049,39 @@ bool process_channel_lag_compensation(int channel, float lag) {
     return false;
 }
 
+static constexpr int SERVO_STALE_MS = 1000;
+
+// A servo left mid-flight with no fresh readings - the FFT switched off by the
+// user, the watchdog's 120 s abort, KerberosSDR's uncalibrated state or
+// wideband-scan entry - kept its sample-clock correction register set for
+// good: a skew of up to ~357 ppm that walks the channel away from the others
+// until L1 overflows (coherence loss). Zero the register and hand the channel
+// back to MEASURING, which re-engages the servo cleanly when readings return.
+// (A converged channel always has counts 0, so only SERVOING can be stale.)
+static void park_stale_servo(int channel) {
+    auto device_it = std::find_if(devices.begin(), devices.end(),
+        [channel](const auto& dev) { return dev && dev->index == channel; });
+    if (device_it == devices.end()) return;
+    auto& device = *device_it;
+    std::lock_guard<std::mutex> lock(device->compensation_mutex);
+    auto& comp = device->compensation;
+    if (comp.state != LagCompensatorState::SERVOING || comp.servo_counts == 0) return;
+    {
+        std::lock_guard<std::recursive_mutex> io(device_io_mutex);
+        if (device->dev) rtlsdr_set_sample_freq_correction_f(device->dev, 0.0f);
+    }
+    std::cerr << "Channel " << channel << ": lag servo had no fresh readings for "
+              << SERVO_STALE_MS << " ms (FFT off) - correction register zeroed ("
+              << comp.servo_counts << " counts), back to MEASURING" << std::endl;
+    comp.servo_counts = 0;
+    comp.state = LagCompensatorState::MEASURING;
+}
+
 void channel_lag_compensation_processor(int channel, CorrelationResult& correlation_result) {
     std::cout << "Starting lag compensation for channel " << channel << std::endl;
 
     uint64_t last_processed_sequence = 0;
+    auto last_fresh = std::chrono::steady_clock::now();
 
     while (global_running && pipeline_running.load(std::memory_order_acquire)) {
         std::optional<float> current_lag;
@@ -1062,6 +1096,11 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
         // mid-calibration, the watchdog's 120 s abort), and zeroed phases
         // read as a perfectly converged calibration.
         bool fresh = false;
+        // Phases are only a calibration measurement once every channel's lag
+        // is converged: before that the correlation thread publishes zeros
+        // (with data_ready set), which read as a perfectly converged
+        // calibration if a lag reset lands mid-VERIFYING.
+        bool lag_all_converged = true;
 
         {
             std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
@@ -1070,7 +1109,21 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                 fresh = correlation_result.data_ready;
                 current_lag = correlation_result.lags[channel];
                 current_phases = correlation_result.phases;
+                for (const auto& [ch, st] : correlation_result.channel_states) {
+                    if (ch != REF_CHANNEL && st != LagCompensatorState::CONVERGED) lag_all_converged = false;
+                }
                 last_processed_sequence = current_sequence;
+            }
+        }
+        const bool phase_reading = fresh && lag_all_converged;
+
+        if (current_lag) {
+            const auto now = std::chrono::steady_clock::now();
+            if (fresh) {
+                last_fresh = now;
+            } else if (now - last_fresh > std::chrono::milliseconds(SERVO_STALE_MS)) {
+                park_stale_servo(channel);
+                last_fresh = now;  // don't re-check every tick
             }
         }
         
@@ -1149,17 +1202,17 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                             break;
                         }
                         case PhaseCompensatorState::MEASURING_INITIAL_PHASE:
-                            if (fresh) apply_phase_compensation_once(current_phases);
+                            if (phase_reading) apply_phase_compensation_once(current_phases);
                             break;
                         case PhaseCompensatorState::APPLYING_COMPENSATION:
                             // Increment 1: legacy pass-through. apply_phase_compensation_once
                             // now goes straight to VERIFYING_CONVERGENCE, so this state is no
                             // longer set. Funnel into the verify handler (not an empty flip)
                             // so a stray APPLYING value can never strand the state machine.
-                            if (fresh) check_phase_convergence(current_phases);
+                            if (phase_reading) check_phase_convergence(current_phases);
                             break;
                         case PhaseCompensatorState::VERIFYING_CONVERGENCE:
-                            if (fresh) check_phase_convergence(current_phases);
+                            if (phase_reading) check_phase_convergence(current_phases);
                             break;
                         case PhaseCompensatorState::MEASURING_PER_BIN: {
                             // Accumulate snapshots (correlation thread), then design the
