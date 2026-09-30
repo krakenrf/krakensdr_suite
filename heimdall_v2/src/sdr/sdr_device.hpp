@@ -16,6 +16,9 @@ struct SDRDevice {
     static constexpr size_t MAX_BUFFER_SIZE = BUFFER_SIZE;
     std::thread async_thread;
     std::atomic<bool> running{true}, init_success{false};
+    // Set by the USB reader thread once it is past rtlsdr_read_async (or never
+    // entered it). stop_pipeline_threads() re-sends the cancel until it is set.
+    std::atomic<bool> async_exited{true};
     std::atomic<size_t> l1_buffer_size{0}; // Track size atomically
     // steady_clock ns at which this device's most recent USB packet was
     // enqueued in L1 (or dropped) - stamped at the END of the callback. clear_l1_buffer() flushes at a

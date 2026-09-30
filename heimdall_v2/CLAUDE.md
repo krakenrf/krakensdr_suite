@@ -346,9 +346,10 @@ gains; its phase gives each channel's correction, a UNIT phasor per channel.
 Gain is measured (for display) but deliberately not corrected - see below.
 
 1. **WAITING_FOR_LAG_COMPLETION**: Wait for all channels to reach lag convergence
-2. **MEASURING_INITIAL_PHASE**: Collect stable phase measurements (apply gate
-   fires on a phase mismatch > `nonzero_threshold_degrees`; readings are ignored
-   until `NOISE_SETTLE_MS` after noise-on)
+2. **MEASURING_INITIAL_PHASE**: Collect phase measurements (readings are ignored
+   until `NOISE_SETTLE_MS` after noise-on; only sets whose phases came from the
+   eigen solve count - `CorrelationResult::phases_measured` - so placeholder
+   zeros published outside the measuring states never read as a calibration)
 3. **APPLYING_COMPENSATION**: Average `required_stable_readings` (3) snapshots as
    unit phasors (circular mean), apply to all future samples
 4. **VERIFYING_CONVERGENCE**: Measured on the compensated stream; requires phases

@@ -208,8 +208,9 @@ ParabolicPeak gaussian_interpolation(const std::complex<float>* data, int peak_i
 }
 
 // Calculate phase and amplitude calibration using eigenvalue decomposition
-// Returns phases (in degrees) and amplitudes (linear scale) for each channel
-void calculate_phase_amplitude_calibration_eigen(
+// Returns phases (in degrees) and amplitudes (linear scale) for each channel.
+// Returns false (phases left at the 0 / 1.0 defaults) if nothing was measured.
+bool calculate_phase_amplitude_calibration_eigen(
     const std::vector<ComplexBuffer>& complex_set,
     std::map<int, float>& phases,
     std::map<int, float>& amplitudes) {
@@ -227,7 +228,7 @@ void calculate_phase_amplitude_calibration_eigen(
 
     // Need at least 2 channels for meaningful eigen decomposition
     if (num_channels < 2 || complex_set.empty()) {
-        return;
+        return false;
     }
 
     // Determine the number of samples to use (use minimum across all channels)
@@ -237,7 +238,7 @@ void calculate_phase_amplitude_calibration_eigen(
     }
 
     if (num_samples == 0) {
-        return;
+        return false;
     }
 
     // Create spatial correlation matrix Rxx = X * X^H
@@ -263,7 +264,7 @@ void calculate_phase_amplitude_calibration_eigen(
     
     if (eigensolver.info() != Eigen::Success) {
         std::cerr << "Eigenvalue decomposition failed!" << std::endl;
-        return;
+        return false;
     }
     
     // Get eigenvalues and eigenvectors
@@ -324,6 +325,7 @@ void calculate_phase_amplitude_calibration_eigen(
                      << " Phase=" << phases[ch] << "°" << std::endl;
         }
     }
+    return true;
 }
 
 void process_correlations(CorrelationResult& correlation_result, FFTProcessingControl& fft_control) {
@@ -551,6 +553,10 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
     // Phase and amplitude calculation logic
     std::map<int, float> current_phases;
     std::map<int, float> current_amplitudes;
+    // True only when this set's phases came from the eigen solve. The other
+    // branches publish placeholders (zeros, or the previous values), which
+    // must never be taken as a calibration measurement.
+    bool phases_measured = false;
 
     // Check if we're in post-calibration monitoring mode
     bool post_calibration_monitoring = false;
@@ -569,7 +575,7 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
 
         if (user_wants_monitoring) {
             // User explicitly enabled FFT for monitoring - calculate phases and amplitudes
-            calculate_phase_amplitude_calibration_eigen(complex_set, current_phases, current_amplitudes);
+            phases_measured = calculate_phase_amplitude_calibration_eigen(complex_set, current_phases, current_amplitudes);
             static int monitor_calc_count = 0;
             if (++monitor_calc_count % 20 == 1) {
                 std::cout << "Post-calibration monitoring #" << monitor_calc_count << " - ";
@@ -615,7 +621,7 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
                 phase_state == PhaseCompensatorState::VERIFYING_CONVERGENCE ||
                 phase_state == PhaseCompensatorState::APPLYING_COMPENSATION) {
 
-                calculate_phase_amplitude_calibration_eigen(complex_set, current_phases, current_amplitudes);
+                phases_measured = calculate_phase_amplitude_calibration_eigen(complex_set, current_phases, current_amplitudes);
 
                 // Debug output when we calculate new phases during calibration
                 static int phase_calc_count = 0;
@@ -661,6 +667,7 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
         correlation_result.lags = current_lags;
         correlation_result.phases = current_phases;
         correlation_result.amplitudes = current_amplitudes;
+        correlation_result.phases_measured = phases_measured;
         // Swap (O(1)) the staged traces in - unless this set's channel count no
         // longer matches the result arrays: a set dequeued just before an
         // element-count reconfiguration resized them is stale, so its traces

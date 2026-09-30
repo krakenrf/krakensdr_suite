@@ -11,6 +11,7 @@
 #include "../net/tcp_data_server.hpp"
 #include "../net/rtl_tcp_server.hpp"
 #include <rtl-sdr.h>
+#include <chrono>
 #include <cstdio>
 #include <iostream>
 #include <mutex>
@@ -45,6 +46,7 @@ void start_pipeline_threads() {
         SDRDevice* dev_ptr = devices[i].get();
         if (!dev_ptr || !dev_ptr->dev) continue;
         dev_ptr->running = true;
+        dev_ptr->async_exited.store(false, std::memory_order_release);
         const int device_index = i;
         dev_ptr->async_thread = std::thread([dev_ptr, device_index]() {
             char tname[16];
@@ -53,7 +55,11 @@ void start_pipeline_threads() {
             std::cout << "Starting async read for channel " << device_index
                  << " (Serial: " << dev_ptr->serial_number
                  << ", Physical device: " << dev_ptr->device_id << ")" << std::endl;
-            rtlsdr_read_async(dev_ptr->dev, rtlsdr_callback, dev_ptr, RTL_USB_BUF_COUNT, NUM_SAMPLES * 2);
+            // A stop that lands before this point must not start streaming.
+            if (dev_ptr->running) {
+                rtlsdr_read_async(dev_ptr->dev, rtlsdr_callback, dev_ptr, RTL_USB_BUF_COUNT, NUM_SAMPLES * 2);
+            }
+            dev_ptr->async_exited.store(true, std::memory_order_release);
         });
     }
 
@@ -76,11 +82,29 @@ void stop_pipeline_threads() {
 
     // Cancel the async reads first: stops USB streaming and returns each
     // reader thread out of rtlsdr_read_async so the joins below terminate.
+    // rtlsdr_cancel_async only acts on a RUNNING stream, so a cancel that
+    // lands while a reader is still starting up (thread created, not yet in
+    // rtlsdr_read_async) is lost and the join would hang forever. Keep
+    // re-sending it until every reader thread reports it has exited.
     for (auto& device : devices) {
-        if (device) {
-            device->running = false;
+        if (device) device->running = false;
+    }
+    const auto cancel_start = std::chrono::steady_clock::now();
+    bool warned = false;
+    for (;;) {
+        bool all_exited = true;
+        for (auto& device : devices) {
+            if (!device || !device->async_thread.joinable() ||
+                device->async_exited.load(std::memory_order_acquire)) continue;
+            all_exited = false;
             if (device->dev) rtlsdr_cancel_async(device->dev);
         }
+        if (all_exited) break;
+        if (!warned && std::chrono::steady_clock::now() - cancel_start > std::chrono::seconds(2)) {
+            std::cerr << "Pipeline stop: a USB reader has not exited after 2 s - still cancelling" << std::endl;
+            warned = true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     for (auto& device : devices) {
         if (device && device->async_thread.joinable()) device->async_thread.join();
@@ -108,7 +132,11 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
         return false;
     }
     const int old_n = active_num_elements.load();
-    if (new_n == old_n) return true;
+    // Pipeline down = an earlier reconfiguration failed AND its rollback
+    // failed: every handle is closed. Any count, including the current one,
+    // is then a retry that must reopen the devices, not a no-op.
+    const bool pipeline_down = !pipeline_running.load(std::memory_order_acquire);
+    if (new_n == old_n && !pipeline_down) return true;
 
     if (recovery_in_progress.load(std::memory_order_acquire)) {
         err = "recalibration in progress - retry once it completes";
@@ -126,8 +154,13 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
         return false;
     }
 
-    std::cerr << "Reconfiguring from " << old_n << " to " << new_n
-              << " elements: stopping pipeline, reopening devices, full recalibration follows" << std::endl;
+    if (pipeline_down) {
+        std::cerr << "Reconfiguring: devices are closed after a failed reconfiguration - reopening "
+                  << new_n << " elements, full recalibration follows" << std::endl;
+    } else {
+        std::cerr << "Reconfiguring from " << old_n << " to " << new_n
+                  << " elements: stopping pipeline, reopening devices, full recalibration follows" << std::endl;
+    }
 
     bool ok;
     {
@@ -147,6 +180,13 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
 
             active_num_elements.store(new_n);
             ok = open_active_devices(devices);
+            if (!ok && new_n == old_n) {
+                // A retry of the current count: nothing different to roll back to.
+                err = "failed to open devices for " + std::to_string(new_n) +
+                      " elements - check USB connections and retry";
+                reconfig_in_progress.store(false, std::memory_order_release);
+                return false;
+            }
             if (!ok) {
                 // Roll back to the previous count (open_active_devices cleaned up
                 // its partial handles). If even that fails, stay stopped rather
@@ -157,7 +197,8 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
                 if (!open_active_devices(devices)) {
                     err = "failed to open devices for " + std::to_string(new_n) +
                           " elements AND rollback to " + std::to_string(old_n) +
-                          " failed - check USB connections and restart";
+                          " failed - check USB connections, then select an element count "
+                          "again to retry (or restart)";
                     reconfig_in_progress.store(false, std::memory_order_release);
                     return false;
                 }

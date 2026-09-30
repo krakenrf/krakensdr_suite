@@ -128,7 +128,7 @@ struct PhaseCompensationData {
     // (10->5->3; the settle gate guarantees they are post-noise and the complex-domain
     // averaging keeps a 3-snapshot estimate clean). required_convergence_readings 5->4.
     int required_convergence_readings = 4, required_stable_readings = 3, max_convergence_attempts = 3, max_checks_before_recompensate = 10;
-    float convergence_threshold_degrees = 1.0f, nonzero_threshold_degrees = 1.0f;
+    float convergence_threshold_degrees = 1.0f;
 
     // Noise-source settle gate. noise_on_ns is the steady_clock nanosecond stamp of when
     // the noise source (bias tee) was last ENGAGED for calibration - set in
@@ -272,6 +272,8 @@ struct CorrelationResult {
     std::map<int, int> channel_zero_counts;
     mutable std::mutex data_mutex;  // mutable allows locking in const functions
     bool data_ready = false, compensation_active = false, phase_compensation_active = false, phase_compensation_complete = false;
+    // phases/amplitudes of the latest set are an eigen measurement (not placeholders)
+    bool phases_measured = false;
     uint64_t data_sequence = 0;
     PhaseCompensatorState phase_state = PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION;
 

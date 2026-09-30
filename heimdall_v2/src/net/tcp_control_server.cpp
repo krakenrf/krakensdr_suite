@@ -378,7 +378,9 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         if (n < 2 || n > max_n) {
             return "{\"status\":\"error\",\"message\":\"num_elements must be 2-" + std::to_string(max_n) + "\"}";
         }
-        if (n == active_num_elements.load()) {
+        // (Unless the pipeline is down after a failed reconfiguration: then
+        // the same count is a retry that reopens the devices.)
+        if (n == active_num_elements.load() && pipeline_running.load(std::memory_order_acquire)) {
             return "{\"status\":\"success\",\"num_elements\":" + std::to_string(n) + ",\"message\":\"already active\"}";
         }
         std::thread([n]() {

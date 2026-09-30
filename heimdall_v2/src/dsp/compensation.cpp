@@ -194,15 +194,11 @@ void apply_phase_compensation_once(const std::map<int, float>& measured_phases) 
     // 0.7-1.0 dB between VGA steps 8 and 0 and disagreed with the receiver
     // noise-floor ratio by up to 2.4 dB. Gain correction therefore stays off.
     // Gain is still measured and shown (web "Amp" column).
-    bool has_nonzero_phase = std::any_of(measured_phases.begin(), measured_phases.end(),
-        [](const auto& pair) {
-            return pair.first != REF_CHANNEL && std::abs(pair.second) > phase_compensation->nonzero_threshold_degrees;
-        });
-
-    if (!has_nonzero_phase) {
-        phase_compensation->stable_nonzero_count = 0;
-        return;
-    }
+    //
+    // Every reading counts, including one where all phases are already within
+    // +-1 deg. A former "some phase > 1 deg" gate (it kept placeholder zeros
+    // out, now done by phases_measured in the caller) wedged the machine with
+    // the noise source on whenever the array was already nearly in phase.
 
     // Increment 4: snapshot averaging. The eigen solve is single-shot per set; instead
     // of waiting N readings then applying only the LATEST (noisy) one, average the last
@@ -1101,6 +1097,10 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
         // (with data_ready set), which read as a perfectly converged
         // calibration if a lag reset lands mid-VERIFYING.
         bool lag_all_converged = true;
+        // ...and only if the correlation thread actually measured them: a set
+        // computed while the phase machine was still in WAITING_FOR_LAG (or
+        // any other non-measuring state) carries placeholder phases.
+        bool phases_measured = false;
 
         {
             std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
@@ -1109,13 +1109,14 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                 fresh = correlation_result.data_ready;
                 current_lag = correlation_result.lags[channel];
                 current_phases = correlation_result.phases;
+                phases_measured = correlation_result.phases_measured;
                 for (const auto& [ch, st] : correlation_result.channel_states) {
                     if (ch != REF_CHANNEL && st != LagCompensatorState::CONVERGED) lag_all_converged = false;
                 }
                 last_processed_sequence = current_sequence;
             }
         }
-        const bool phase_reading = fresh && lag_all_converged;
+        const bool phase_reading = fresh && lag_all_converged && phases_measured;
 
         if (current_lag) {
             const auto now = std::chrono::steady_clock::now();
