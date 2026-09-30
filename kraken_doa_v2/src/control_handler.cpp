@@ -126,6 +126,10 @@ static bool is_replayed_command(string_view msg) {
         "MUSIC_NUM_SNAPSHOTS:", "MUSIC_SNAPSHOT_LENGTH:",
         "MUSIC_FB_AVERAGING:", "MUSIC_COVARIANCE_ALPHA:", "EDGE_CLIP:",
         "MUSIC_SIGNAL_SOURCES:", "ULA_MODE:", "ARRAY_OFFSET:",
+        // Beamforming settings (on/off itself rides system_status; the mode
+        // only does while beamforming is on)
+        "BEAMFORMING_MODE:", "MANUAL_STEERING:", "STEERING_ANGLE:",
+        "MVDR_DIAGONAL_LOADING:",
         "STATION_ID:", "LOCATION_SOURCE:", "STATIC_LOCATION:",
         "LOG_INTERVAL:", "LOG_FORMAT:",
         "WEB_MAPPER:", "WEB_MAPPER_MODE:", "WEB_MAPPER_KEY:",
@@ -791,6 +795,10 @@ void ControlHandler::handle_message_impl(string_view message) {
         }
 
         decimator_manager.setBeamformingModeAll(new_mode);
+        // Save/sync/replay the canonical name ("mvdr", "FD-DAS" or an
+        // unknown value that fell back to DAS would otherwise be stored raw,
+        // matching no option in the browsers' mode selector)
+        g_applied_cmd = "BEAMFORMING_MODE:" + mode_name;
 
         stringstream json;
         json << "{\"beamforming_mode\":{\"mode\":\"" << mode_name << "\"}}";
@@ -1010,10 +1018,11 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("MUSIC_SIGNAL_SOURCES:")) {
         // Expected number of signal sources (signal-subspace dimension).
         // 0 = automatic per-frame estimation (eigenvalue-dominance threshold).
-        // Clamp to the live element count (MUSIC re-clamps to M-1 at compute
-        // time if the count changes afterwards).
-        int sources = std::clamp(parse_int(message, 21), 0,
-                                 active_num_elements.load(std::memory_order_relaxed) - 1);
+        // Bounded by the compile-time ceiling only: MUSIC limits it to the
+        // live count (M-1) per frame. Clamping to the live count here lost
+        // the saved value at startup, when the settings replay runs before
+        // the real element count has arrived from heimdall (default 5).
+        int sources = std::clamp(parse_int(message, 21), 0, DOA_NUM_ELEMENTS - 1);
         bool auto_mode = (sources == 0);
         forEachMusicProcessor([&](auto* mp) {
             mp->setAutoNumSources(auto_mode);
@@ -1480,6 +1489,12 @@ void ControlHandler::handle_message_impl(string_view message) {
                 new_decimation = power;
 
                 FFTProcessor::set_decimation(new_decimation);
+                // Save it too: only FFT_SIZE was recorded, so a restart
+                // replayed the new size followed by the OLD decimation - a
+                // combination the user never had. (Skipped while replaying:
+                // the saved FFT_DECIMATION follows and is authoritative.)
+                if (!g_replaying_settings.load())
+                    SettingsStore::record("FFT_DECIMATION:" + to_string(new_decimation));
                 cout << "Auto-adjusted downsampling to " << new_decimation
                      << " (output points: " << (FFTProcessor::get_current_size() / new_decimation) << ")" << endl;
             }

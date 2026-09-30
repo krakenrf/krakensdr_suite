@@ -162,6 +162,7 @@ void MUSICProcessor::syncElementCount() {
     // array).
     steering_vectors_valid = false;
     steering_vectors_2d_valid_ = false;
+    if (custom_positions_valid_) detect3DArray();
     if (current_topology == ArrayTopology::CUSTOM && is_3d_array_) {
         updateSteeringVectors2D();
     } else {
@@ -1186,8 +1187,13 @@ int MUSICProcessor::getNumAngles() const {
 
 void MUSICProcessor::setNumSignalSources(int n) {
     lock_guard<mutex> config_lock(config_mutex_);
-    // Keep at least one source and at least one noise-subspace dimension.
-    int clamped = max(1, min(n, num_elements_ - 1));
+    // Store the REQUESTED count, bounded only by the compile-time ceiling;
+    // estimateNumSources() limits it to the live count (M - 1) per frame.
+    // Clamping to num_elements_ here lost the setting whenever it was applied
+    // before the real count was known: the startup replay runs while
+    // num_elements_ is still the pre-connect default (5), so a saved 6 on an
+    // 8-element array became 4 for good.
+    int clamped = max(1, min(n, DOA_NUM_ELEMENTS - 1));
     if (num_signal_sources_ != clamped) {
         num_signal_sources_ = clamped;
         cout << "MUSIC expected signal sources set to " << clamped << endl;
@@ -1298,15 +1304,7 @@ void MUSICProcessor::setCustomPositions(const std::array<ElementPosition, DOA_NU
 
     custom_positions_ = positions;
     custom_positions_valid_ = true;
-
-    // Check if any Z coordinate is non-zero (3D array)
-    is_3d_array_ = false;
-    for (int i = 0; i < num_elements_; i++) {
-        if (std::abs(custom_positions_[i].z_mm) > 0.01f) {
-            is_3d_array_ = true;
-            break;
-        }
-    }
+    detect3DArray();
 
     // Invalidate steering vectors to force regeneration
     steering_vectors_valid = false;
@@ -1322,6 +1320,22 @@ void MUSICProcessor::setCustomPositions(const std::array<ElementPosition, DOA_NU
     }
 
     cout << "Custom element positions set (" << (is_3d_array_ ? "3D array" : "2D array") << ")" << endl;
+}
+
+// Caller holds config_mutex_. 3D = any ACTIVE element has a non-zero Z.
+// Re-run whenever the element count changes (syncElementCount): positions are
+// usually restored at startup while num_elements_ is still the pre-connect
+// default, so an array whose height differences are in elements 5-7 was
+// otherwise classified 2D for good.
+void MUSICProcessor::detect3DArray() {
+    is_3d_array_ = false;
+    if (!custom_positions_valid_) return;
+    for (int i = 0; i < num_elements_; i++) {
+        if (std::abs(custom_positions_[i].z_mm) > 0.01f) {
+            is_3d_array_ = true;
+            break;
+        }
+    }
 }
 
 std::array<ElementPosition, DOA_NUM_ELEMENTS> MUSICProcessor::getCustomPositions() const {

@@ -97,6 +97,8 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"snapshot_length",          "MUSIC_SNAPSHOT_LENGTH:",    VType::NUMBER, "256"},
         // Signal-subspace dimension; 0 = automatic (eigenvalue threshold)
         {"signal_sources",           "MUSIC_SIGNAL_SOURCES:",     VType::NUMBER, "1"},
+        // 3D (custom, non-planar) arrays: degrees per elevation step
+        {"elevation_resolution",     "ELEVATION_RESOLUTION:",     VType::NUMBER, "1.00"},
         // Beamforming / diversity
         {"beamforming",              "BEAMFORMING:",              VType::BOOL,   "0"},
         {"beamforming_mode",         "BEAMFORMING_MODE:",         VType::STRING, "DAS"},

@@ -23,9 +23,11 @@ namespace settings {
 // Settings file path (relative to the working directory, like index.html).
 constexpr const char* FILE_PATH = "heimdall_settings.conf";
 
-// Element count loaded from the settings file (0 = not present). main()
-// resolves the startup count as: -n flag > this > expected_serials.size().
-// Not written back by save() directly - save() persists active_num_elements.
+// The user's chosen element count: loaded from the settings file (0 = never
+// chosen) and updated when the count is changed at runtime (web UI / control
+// port). main() resolves the startup count as: -n flag > --kerberos (4) >
+// this > devices detected. save() writes THIS, not active_num_elements, so a
+// count given by -n / --kerberos only lasts for that run.
 extern std::atomic<int> persisted_num_elements;
 
 // Read the settings file (if present) and apply known keys to the globals.

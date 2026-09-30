@@ -232,6 +232,11 @@ Edit `heimdall_v2/config.h`:
 - Exception: `--kerberos` pins the default to 4 (KerberosSDR is 4-channel
   hardware; persisted value and USB auto-detection are ignored so simulating
   on a 5-dongle KrakenSDR still runs 4). Only an explicit `-n` overrides
+- Only a runtime choice (web UI / `NUM_ELEMENTS:` / `set_num_elements`) is
+  saved; a count from `-n` or `--kerberos` lasts for that run only
+  (`settings::persisted_num_elements` is what `save()` writes)
+- Per-port antenna bias tees survive count changes: the saved mask keeps the
+  bits of channels that aren't open and re-applies them when they reopen
 - Changeable at runtime via the web UI "Array Elements" card, WS command
   `NUM_ELEMENTS:<n>`, or control-port `{"command":"set_num_elements","num_elements":N}`:
   the pipeline threads stop, ALL device handles close and the first N reopen
@@ -263,7 +268,10 @@ Edit `kraken_doa_v2/include/config.hpp`:
 **MUSIC DoA**:
 - `DOA_NUM_ELEMENTS`: Compile-time ceiling on antenna elements (8). MUSIC,
   the beamformer and the UI adapt at runtime to the streamed channel count,
-  reinitializing per-element state on a mid-stream change
+  reinitializing per-element state on a mid-stream change. Settings that
+  depend on the count are stored as requested and limited per frame (signal
+  sources: min(requested, elements-1)) or re-derived on a count change (3D
+  custom array), since the startup replay runs before the real count is known
 - `DOA_BLOCK_SIZE`: Samples per processing block (default 256)
 - `DOA_ANGULAR_RESOLUTION`: Degrees per step (default 1)
 - **UCA element ordering**: the array is expected to be wired **CLOCKWISE**

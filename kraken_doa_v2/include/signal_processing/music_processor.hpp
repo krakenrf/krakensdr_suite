@@ -436,6 +436,7 @@ private:
     // changed, resizes all per-element state and regenerates steering vectors.
     // Caller must hold config_mutex_.
     void syncElementCount();
+    void detect3DArray();  // caller holds config_mutex_
 
     // Private methods - Optimized accumulation (read-only input)
     void addToAccumulatorOptimized(const SharedDecimator::MultiChannelDecimated& decimated_data);

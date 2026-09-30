@@ -252,7 +252,11 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
         force_recalibration.store(true, std::memory_order_release);
     }
 
-    if (ok) settings::save();  // remember the new element count across restarts
+    if (ok) {
+        // An explicit user choice: remember it across restarts.
+        settings::persisted_num_elements.store(new_n, std::memory_order_release);
+        settings::save();
+    }
 
     reconfig_in_progress.store(false, std::memory_order_release);
     return ok;

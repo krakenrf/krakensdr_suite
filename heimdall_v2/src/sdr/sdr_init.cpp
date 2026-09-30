@@ -429,7 +429,12 @@ void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SD
     // devices holds one slot per EXPECTED serial (8 by default); only the
     // first active_num_elements are open.
     const int nch = std::min(active_num_elements.load(), static_cast<int>(devices.size()));
-    mask &= (nch >= 32) ? ~0u : ((1u << nch) - 1);
+    // Only the OPEN channels take the new value; the others keep their stored
+    // bit. Trimming the mask to the open channels lost the removed channels'
+    // setting for good on a count shrink (or on any web-UI change made while
+    // fewer channels were open - the UI only shows the open ones).
+    const uint32_t open_bits = (nch >= 32) ? ~0u : ((1u << nch) - 1);
+    mask = (mask & open_bits) | (antenna_bias_tee_mask.load(std::memory_order_acquire) & ~open_bits);
 
     if (downconverter.enabled.load()) {
         // On the Wideband board GPIO1-6 of the channel-0 chip drive the RF

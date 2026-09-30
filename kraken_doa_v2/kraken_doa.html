@@ -2464,6 +2464,28 @@ function applySyncCmdInner(cmd) {
       updateCustomDiagram();
     }
   }
+  else if ((v = arg('BEAMFORMING_MODE:')) !== null) {
+    const el = $id('bf-mode');
+    if (idle(el) && el.value !== v && Array.from(el.options).some(o => o.value === v)) {
+      el.value = v;
+      updateBeamformingModeUI(v);
+    }
+  }
+  else if ((v = arg('MANUAL_STEERING:')) !== null) {
+    updateManualSteeringStatus({enabled: v === '1'});
+  }
+  else if ((v = arg('STEERING_ANGLE:')) !== null) {
+    const a = parseFloat(v);
+    const editing = ['manual-steer-slider', 'manual-steer-input'].includes(document.activeElement && document.activeElement.id);
+    if (Number.isFinite(a) && !editing) updateManualSteeringStatus({angle: a});
+  }
+  else if ((v = arg('MVDR_DIAGONAL_LOADING:')) !== null) {
+    const el = $id('mvdr-loading'), a = parseFloat(v);
+    if (idle(el) && Number.isFinite(a)) {
+      el.value = Math.round(a * 100);
+      $id('mvdr-loading-val').textContent = Math.round(a * 100) + '%';
+    }
+  }
   else if ((v = arg('RADIUS:')) !== null) {
     const el = $id('arr');
     if (idle(el) && parseFloat(el.value) !== parseFloat(v)) {
@@ -2489,8 +2511,10 @@ function applySyncCmdInner(cmd) {
     if (idle(el) && el.value != v) { el.value = v; updateMusicSnapshotLength(v); }
   }
   else if ((v = arg('MUSIC_SIGNAL_SOURCES:')) !== null) {
+    // (updateMusicSignalSources adds the option first if the current list
+    // doesn't have it - e.g. a saved 6 while the array is still 5 elements)
     const el = $id('music-signal-sources');
-    if (idle(el) && el.value != v) { el.value = v; updateMusicSignalSources(v); }
+    if (idle(el) && el.value != v) updateMusicSignalSources(v);
   }
   else if ((v = arg('ULA_MODE:')) !== null) {
     const el = $id('ula-mode');
@@ -4029,6 +4053,9 @@ function onActiveElementsChanged(newCount) {
 
   // Update dynamic text elements
   updateElementCountText();
+
+  // Signal-source choices follow the element count
+  updateSourceOptions();
 }
 
 function updateSNRDisplaysHTML() {
@@ -4082,6 +4109,13 @@ function sar() {
   drawUCADiagram();
   updateSpacingFactor();
 
+  // Applying a remote change (applyingRemote - e.g. sto() re-running for a
+  // TOPOLOGY:UCA sync or the connect replay): preview only. The debounced
+  // send fires AFTER applySyncCmd has cleared applyingRemote, so it escaped
+  // the suppression and every open browser echoed its own, possibly stale,
+  // radius back. The browser that made the change sends its own.
+  if (applyingRemote) return;
+
   if (radiusSendTimeout) clearTimeout(radiusSendTimeout);
   radiusSendTimeout = setTimeout(() => {
     radiusSendTimeout = null;
@@ -4103,6 +4137,8 @@ function ses() {
 
   drawULADiagram();
   updateSpacingFactor();
+
+  if (applyingRemote) return;  // remote change: preview only (see sar)
 
   if (spacingSendTimeout) clearTimeout(spacingSendTimeout);
   spacingSendTimeout = setTimeout(() => {
@@ -4397,10 +4433,28 @@ function updateMusicSnapshotLength(val) {
   send('MUSIC_SNAPSHOT_LENGTH:' + val);
 }
 
+// Signal-source selector: Auto + 1..(elements-1) for the live element count.
+// A saved value above that (restored before the array's real size is known,
+// or kept from a larger array) stays selectable and is marked with what MUSIC
+// actually uses - the backend applies min(requested, elements-1) per frame.
+const MAX_SIGNAL_SOURCES = 7;  // DOA_NUM_ELEMENTS (8) - 1
+function updateSourceOptions(selected) {
+  const sel = $id('music-signal-sources');
+  if (!sel) return;
+  const cur = (selected !== undefined) ? selected : (parseInt(sel.value) || 0);
+  const usable = Math.max(1, activeNumElements - 1);
+  const top = Math.max(usable, cur);
+  let html = '<option value="0">Auto</option>';
+  for (let n = 1; n <= top; n++)
+    html += '<option value="' + n + '">' + n + (n > usable ? ' (uses ' + usable + ')' : '') + '</option>';
+  sel.innerHTML = html;
+  sel.value = String(cur);
+}
+
 function updateMusicSignalSources(val) {
   // Expected number of emitters (1..elements-1), or 0 = Auto (eigenvalue estimate).
-  let n = Math.max(0, Math.min(4, parseInt(val) || 0));
-  $id('music-signal-sources').value = n;
+  let n = Math.max(0, Math.min(MAX_SIGNAL_SOURCES, parseInt(val) || 0));
+  updateSourceOptions(n);
   const est = $id('est-sources-val');
   if (est) est.style.display = (n === 0) ? '' : 'none';
   send('MUSIC_SIGNAL_SOURCES:' + n);
@@ -4740,6 +4794,9 @@ let decimatorFreqDebounceTimer = null;
 const pendingFreqUpdates = new Map();  // id -> offset_khz
 
 function setDecimatorFreq(id, offset_khz) {
+  // Debounced like sar(): a call made while applying a remote change must
+  // not queue a send that fires after the suppression has ended.
+  if (applyingRemote) return;
   pendingFreqUpdates.set(id, offset_khz);
 
   // Clear any existing timer
@@ -4797,9 +4854,11 @@ function refreshDecimatorPanelItem(id) {
   const dec = decimatorInfo.find(d => d.id === id);
   if (!dec) return;
 
-  // Update actual frequency input
+  // Update actual frequency input - unless the user is typing in it (a
+  // refresh from another browser's tuning, a pan or the center frequency
+  // used to replace the half-typed value)
   const actualFreqEl = $id('dec-actual-freq-' + id);
-  if (actualFreqEl) {
+  if (actualFreqEl && document.activeElement !== actualFreqEl) {
     const actualFreqMhz = currentCenterFreq + (dec.freq_offset_hz / 1000000);
     actualFreqEl.value = actualFreqMhz.toFixed(6);
   }
@@ -4849,9 +4908,17 @@ function requestDecimatorInfo() {
 }
 
 // Handle direct frequency input from user
-function handleActualFreqInput(decimatorId, inputValue) {
+function handleActualFreqInput(decimatorId, inputValue, focusValue) {
   const dec = decimatorInfo.find(d => d.id === decimatorId);
   if (!dec) return;
+
+  // Left without editing: send nothing. The box skipped refreshes while it
+  // had focus, so its text can be stale (another browser retuned the VFO
+  // meanwhile) - sending it would undo that change. Show the live value.
+  if (focusValue !== undefined && inputValue === focusValue) {
+    refreshDecimatorPanelItem(decimatorId);
+    return;
+  }
 
   // Parse the input value
   const inputFreqMhz = parseFloat(inputValue);
@@ -4989,7 +5056,8 @@ function updateDecimatorList(info) {
         <input type="text" id="dec-actual-freq-${dec.id}" value="${actualFreqMhz.toFixed(4)}"
                style="width:85px;font-family:monospace"
                onkeydown="if(event.key==='Enter'){event.target.blur()}"
-               onblur="handleActualFreqInput(${dec.id}, this.value)">
+               onfocus="this.dataset.orig=this.value"
+               onblur="handleActualFreqInput(${dec.id}, this.value, this.dataset.orig)">
         <span>MHz</span>
       </div>
       <div class="dec-row">

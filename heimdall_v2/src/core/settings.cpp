@@ -158,7 +158,12 @@ void save() {
     f << "periodic_recal_enabled=" << (periodic_recal_enabled.load(std::memory_order_acquire) ? 1 : 0) << "\n";
     f << "periodic_recal_minutes=" << periodic_recal_minutes.load(std::memory_order_acquire) << "\n";
     f << "antenna_bias_tee_mask=" << antenna_bias_tee_mask.load(std::memory_order_acquire) << "\n";
-    f << "num_elements=" << active_num_elements.load(std::memory_order_acquire) << "\n";
+    // The user's saved CHOICE, not the live count: a count from -n or
+    // --kerberos only applies to this run and must not replace it the first
+    // time some other setting is saved. reconfigure_num_elements() updates
+    // persisted_num_elements when the user picks a count. 0 = never chosen.
+    if (const int n = persisted_num_elements.load(std::memory_order_acquire); n >= 2)
+        f << "num_elements=" << n << "\n";
     f << "forward_comp_enabled=" << (forward_comp.enabled.load(std::memory_order_acquire) ? 1 : 0) << "\n";
     f << "forward_comp_amplitude=" << (forward_comp.correct_amplitude.load(std::memory_order_acquire) ? 1 : 0) << "\n";
     {
