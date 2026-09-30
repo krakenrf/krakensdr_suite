@@ -31,6 +31,7 @@ public:
     bool start();
     void stop();
     void broadcast_status();
+    std::string build_status_json(bool as_reply);
     void set_rtl_tcp_server(RtlTcpServer* server) { rtl_tcp_server_ref = server; }
 
     // Live connected-client count for the status dashboard.

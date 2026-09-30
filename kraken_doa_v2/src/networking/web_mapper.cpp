@@ -988,6 +988,36 @@ void WebMapper::workerThread() {
         status_error_ = err;
     };
 
+    // A dropped cloud connection - whether the read pump or a WRITE noticed
+    // it - goes through here once per connection. sendText() closes the sink
+    // on a failed write, and that path used to skip the backoff: the next
+    // pass saw a closed sink with next_reconnect already in the past and
+    // reconnected at once, with no log line - a server that accepted and
+    // then failed every write got a reconnect storm.
+    bool cloud_up = false;
+    auto on_cloud_drop = [&](int64_t now, const char* why) {
+        if (!cloud_up) return;
+        cloud_up = false;
+        cloud.close();
+        // A server that accepts and then drops us (e.g. closing on a rejected
+        // key) used to reset the backoff on every connect: a reconnect + log
+        // line every second, forever. Only a connection that stayed up
+        // resets it, and drops share the connect-failure log throttle.
+        if (now - connected_at > 30000) reconnect_ms = 1000;
+        if (now - last_err_log > 30000) {
+            cerr << "[WebMapper] cloud connection lost (" << why << "); reconnecting" << endl;
+            last_err_log = now;
+        }
+        set_status("connecting");
+        next_reconnect = now + reconnect_ms;
+        reconnect_ms = min<int64_t>(reconnect_ms * 2, 15000);
+    };
+    auto cloud_send = [&](int64_t now, const string& text) {
+        if (cloud.sendText(text)) return true;
+        on_cloud_drop(now, "send failed");
+        return false;
+    };
+
     while (running_.load(memory_order_relaxed)) {
         int64_t now = now_ms();
 
@@ -995,6 +1025,7 @@ void WebMapper::workerThread() {
         if (gen != seen_gen) {
             seen_gen = gen;
             cloud.close();
+            cloud_up = false;
             local.close();
             {
                 lock_guard<mutex> lk(cfg_mtx_);
@@ -1027,6 +1058,7 @@ void WebMapper::workerThread() {
                     set_status("connected",
                                key.empty() ? "KrakenPro key is not set" : "");
                     connected_at = now;  // backoff resets once this stays up
+                    cloud_up = true;
                     last_settings_payload.clear();  // force a settings push
                     next_settings = now;
                     next_ping = now + 10000;
@@ -1045,19 +1077,7 @@ void WebMapper::workerThread() {
             if (cloud.isOpen()) {
                 vector<string> messages;
                 if (!cloud.pump(messages)) {
-                    // A server that accepts and then drops us (e.g. closing on
-                    // a rejected key) used to reset the backoff on every
-                    // connect: a reconnect + log line every second, forever.
-                    // Only a connection that stayed up resets it, and drops
-                    // share the connect-failure log throttle.
-                    if (now - connected_at > 30000) reconnect_ms = 1000;
-                    if (now - last_err_log > 30000) {
-                        cerr << "[WebMapper] cloud connection lost; reconnecting" << endl;
-                        last_err_log = now;
-                    }
-                    set_status("connecting");
-                    next_reconnect = now + reconnect_ms;
-                    reconnect_ms = min<int64_t>(reconnect_ms * 2, 15000);
+                    on_cloud_drop(now, "read");
                 } else {
                     slept = true;  // pump blocked up to the 100 ms socket timeout
                     for (const string& m : messages) handle_cloud_message(m);
@@ -1070,14 +1090,15 @@ void WebMapper::workerThread() {
                         string payload = build_settings_payload(key);
                         if (payload != last_settings_payload) {
                             last_settings_payload = payload;
-                            cloud.sendText("{\"apikey\":\"" + json_escape(key) +
-                                           "\",\"type\":\"settings\",\"data\":" + payload + "}");
+                            cloud_send(now, "{\"apikey\":\"" + json_escape(key) +
+                                            "\",\"type\":\"settings\",\"data\":" + payload + "}");
                             next_ping = now + 10000;
                         }
                     }
                     if (now >= next_ping) {
                         next_ping = now + 10000;
-                        cloud.sendText("{\"apikey\":\"" + json_escape(key) + "\",\"type\":\"ping\"}");
+                        if (cloud.isOpen())
+                            cloud_send(now, "{\"apikey\":\"" + json_escape(key) + "\",\"type\":\"ping\"}");
                     }
                 }
             }
@@ -1132,8 +1153,9 @@ void WebMapper::workerThread() {
                     string record = build_doapost_json(rec, sl, sources);
                     bool sent = false;
                     if (mode == "remote") {
-                        sent = cloud.sendText("{\"apikey\":\"" + json_escape(key) +
-                                              "\",\"data\":" + record + "}");
+                        if (!cloud.isOpen()) break;  // dropped on an earlier record
+                        sent = cloud_send(now, "{\"apikey\":\"" + json_escape(key) +
+                                               "\",\"data\":" + record + "}");
                     } else {
                         sent = local.broadcast(record) > 0;
                     }

@@ -8,6 +8,7 @@
 #include <iostream>
 #include <sstream>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <thread>
 
@@ -86,6 +87,28 @@ bool TcpControlServer::start() {
     return true;
 }
 
+namespace {
+// A frequency in Hz from a JSON number: finite, and within the tuners' RF
+// range (rf_frequency_valid). The wideband-scan base frequency used to go
+// straight through static_cast<uint32_t>(stod(..)) - undefined for negative
+// or huge values, and never range-checked.
+bool parse_rf_frequency(const std::string& s, uint64_t& out) {
+    const double d = std::stod(s);
+    if (!std::isfinite(d) || d <= 0 || d >= 1e12) return false;
+    out = static_cast<uint64_t>(d);
+    return rf_frequency_valid(out);
+}
+
+std::string rf_range_error(const std::string& given) {
+    uint64_t rf_min, rf_max;
+    rf_frequency_range(rf_min, rf_max);
+    std::string g;
+    for (char c : given) if (std::isdigit(static_cast<unsigned char>(c)) || c == '.' || c == '-' || c == 'e') g += c;
+    return "{\"status\":\"error\",\"message\":\"Frequency " + g.substr(0, 24) + " out of range (" +
+           std::to_string(rf_min / 1000000) + "-" + std::to_string(rf_max / 1000000) + " MHz)\"}";
+}
+}  // namespace
+
 void TcpControlServer::stop() {
     running = false;
     if (server_socket >= 0) {
@@ -97,18 +120,15 @@ void TcpControlServer::stop() {
     }
 }
 
-void TcpControlServer::broadcast_status() {
-    std::lock_guard<std::mutex> lock(clients_mutex);
-    
-    // Remove inactive clients
-    clients.erase(std::remove_if(clients.begin(), clients.end(),
-        [](const auto& client) { return !client->active; }), clients.end());
-    
-    if (clients.empty()) return;
-    
+// The status object: broadcast at 2 Hz (as_reply = false) and returned by
+// {"command":"get_status"} (as_reply = true, which adds "status":"success"
+// like every other command reply - clients tell replies from broadcasts by
+// that field). No trailing newline.
+std::string TcpControlServer::build_status_json(bool as_reply) {
     // Build status JSON including RTL-TCP channel info and wideband mode
     std::stringstream status_json;
     status_json << "{"
+               << (as_reply ? "\"status\":\"success\"," : "")
                << "\"settings\":{"
                << "\"center_freq\":" << current_frequency.load() << ","
                << "\"gain\":" << (current_gain.load() == -1 ? -1 : current_gain.load() / 10.0f) << ","
@@ -187,10 +207,21 @@ void TcpControlServer::broadcast_status() {
     status_json << ",\"coherence_events\":" << coherence_event_count.load()
                << ",\"recovering\":" << (recovery_in_progress.load() ? "true" : "false");
 
-    status_json << "}\n";
-    
-    std::string status_str = status_json.str();
-    
+    status_json << "}";
+    return status_json.str();
+}
+
+void TcpControlServer::broadcast_status() {
+    std::lock_guard<std::mutex> lock(clients_mutex);
+
+    // Remove inactive clients
+    clients.erase(std::remove_if(clients.begin(), clients.end(),
+        [](const auto& client) { return !client->active; }), clients.end());
+
+    if (clients.empty()) return;
+
+    const std::string status_str = build_status_json(false) + "\n";
+
     // Send to all connected clients. Queued, never blocking: this runs on the
     // status broadcaster thread while holding clients_mutex, so a blocking
     // send() here would freeze the control loop (no accepts, no commands) and
@@ -355,6 +386,13 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
     if (reconfig_in_progress.load(std::memory_order_acquire) &&
         json_str.find("\"get_status\"") == std::string::npos) {
         return "{\"status\":\"error\",\"message\":\"Element-count reconfiguration in progress - retry shortly\"}";
+    }
+
+    // Current status on demand (same object the 2 Hz broadcast carries).
+    // Documented in the READMEs/CLAUDE.md but used to fall through to
+    // "Unknown command".
+    if (json_str.find("\"get_status\"") != std::string::npos) {
+        return build_status_json(true);
     }
 
     // Runtime element-count change: {"command":"set_num_elements","num_elements":N}
@@ -641,9 +679,14 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
             size_t end_pos = json_str.find_first_of(",}", gain_pos);
             if (end_pos != std::string::npos) {
                 std::string gain_str = json_str.substr(gain_pos, end_pos - gain_pos);
-                float gain_db = std::stof(gain_str);
-
-                int gain = (gain_db < 0) ? -1 : static_cast<int>(gain_db * 10);
+                const double gain_db = std::stod(gain_str);
+                if (!std::isfinite(gain_db) || gain_db > 1000.0) {
+                    return "{\"status\":\"error\",\"message\":\"Gain out of range (0-50 dB or auto)\"}";
+                }
+                // Round, don't truncate: 49.6 * 10 is 495.99.. in binary, so
+                // the cast stored 495 (49.5 dB) instead of the tuner's 496.
+                // Negative = auto.
+                int gain = (gain_db < 0) ? -1 : static_cast<int>(std::lround(gain_db * 10.0));
 
                 if (gain == -1 || (gain >= 0 && gain <= 500)) {
                     bool changed = update_sdr_settings(0, gain, devices);
@@ -661,7 +704,9 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                             begin_retune_cooldown("Gain changed");
                         }
                     }
-                    return "{\"status\":\"success\",\"gain\":" + std::to_string(gain_db) + "}";
+                    std::ostringstream applied;
+                    applied << (gain < 0 ? -1.0 : gain / 10.0);
+                    return "{\"status\":\"success\",\"gain\":" + applied.str() + "}";
                 } else {
                     return "{\"status\":\"error\",\"message\":\"Gain out of range (0-50 dB or auto)\"}";
                 }
@@ -705,22 +750,25 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                 enable_str.erase(std::remove_if(enable_str.begin(), enable_str.end(), ::isspace), enable_str.end());
                 bool enable = (enable_str.find("true") != std::string::npos);
 
+                // Validate the optional base_frequency BEFORE switching mode,
+                // so a bad value is refused without entering the scan.
+                bool have_base = false;
+                uint64_t base_freq = 0;
+                if (size_t freq_pos = json_str.find("\"base_frequency\":"); enable && freq_pos != std::string::npos) {
+                    freq_pos += 17; // Skip "base_frequency":
+                    const std::string freq_str = json_str.substr(freq_pos, json_str.find_first_of(",}", freq_pos) - freq_pos);
+                    if (!parse_rf_frequency(freq_str, base_freq)) return rf_range_error(freq_str);
+                    have_base = true;
+                }
+
                 bool changed = set_wideband_mode(enable, devices);
 
                 // CRITICAL FIX: Always apply base_frequency if provided, even if mode didn't change
                 // This is essential for the discrete scanner which needs to retune while already in wideband mode
                 if (enable && operating_mode.load() == OperatingMode::WIDEBAND_SCAN) {
-                    // Look for optional base_frequency parameter
-                    size_t freq_pos = json_str.find("\"base_frequency\":");
-                    if (freq_pos != std::string::npos) {
-                        freq_pos += 17; // Skip "base_frequency":
-                        size_t freq_end = json_str.find_first_of(",}", freq_pos);
-                        if (freq_end != std::string::npos) {
-                            std::string freq_str = json_str.substr(freq_pos, freq_end - freq_pos);
-                            uint32_t base_freq = static_cast<uint32_t>(std::stod(freq_str));
-                            setup_wideband_frequencies(base_freq, devices);
-                            std::cout << "Wideband: Applied base_frequency " << base_freq/1e6 << " MHz (mode was already enabled)" << std::endl;
-                        }
+                    if (have_base) {
+                        setup_wideband_frequencies(base_freq, devices);
+                        std::cout << "Wideband: Applied base_frequency " << base_freq/1e6 << " MHz" << std::endl;
                     } else if (changed) {
                         // Only use current frequency as default if mode just changed
                         setup_wideband_frequencies(current_frequency.load(), devices);
@@ -745,7 +793,10 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
             size_t end_pos = json_str.find_first_of(",}", freq_pos);
             if (end_pos != std::string::npos) {
                 std::string freq_str = json_str.substr(freq_pos, end_pos - freq_pos);
-                uint32_t base_freq = static_cast<uint32_t>(std::stod(freq_str));
+                uint64_t base_freq = 0;
+                if (!parse_rf_frequency(freq_str, base_freq)) {
+                    return rf_range_error(freq_str);
+                }
 
                 if (operating_mode.load() != OperatingMode::WIDEBAND_SCAN) {
                     return "{\"status\":\"error\",\"message\":\"Not in wideband scan mode\"}";
@@ -767,6 +818,10 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
             if (end_pos != std::string::npos) {
                 std::string clip_str = json_str.substr(clip_pos, end_pos - clip_pos);
                 float edge_clip = std::stof(clip_str);
+                // NaN passes both clamps below (every comparison is false)
+                if (!std::isfinite(edge_clip)) {
+                    return "{\"status\":\"error\",\"message\":\"Invalid edge_clip value\"}";
+                }
 
                 // Clamp to valid range
                 if (edge_clip < 0.1f) edge_clip = 0.1f;
@@ -840,7 +895,14 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
             size_t dwell_end = json_str.find_first_of(",}", dwell_pos);
             if (dwell_end != std::string::npos) {
                 std::string dwell_str = json_str.substr(dwell_pos, dwell_end - dwell_pos);
-                uint32_t dwell_time = static_cast<uint32_t>(std::stoul(dwell_str));
+                // stoul wraps "-5" to ~4e9 (and the uint32 cast truncated
+                // larger values) - parse signed and bound it instead.
+                const long long dwell_ll = std::stoll(dwell_str);
+                constexpr long long MAX_DWELL_TIME_MS = 3600000;  // 1 hour
+                if (dwell_ll < 0 || dwell_ll > MAX_DWELL_TIME_MS) {
+                    return "{\"status\":\"error\",\"message\":\"dwell_time_ms must be 0-3600000\"}";
+                }
+                uint32_t dwell_time = static_cast<uint32_t>(dwell_ll);
 
                 // Enforce minimum dwell time of 500ms (settling time + processing overhead)
                 constexpr uint32_t MIN_DWELL_TIME_MS = 500;
