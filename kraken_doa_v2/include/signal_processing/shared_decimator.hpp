@@ -87,6 +87,14 @@ private:
         // is dropped and the stream stays continuous across blocks.
         std::vector<std::complex<float>> carry;
 
+        // Back to a clean start: mixer phase 1, no carry, empty filter history
+        void resetRuntime() {
+            mixer_phase = std::complex<float>(1.0f, 0.0f);
+            carry.clear();
+            for (auto s : stages) {
+                if (s) firdecim_cccf_reset(s);
+            }
+        }
         void destroyStages() {
             for (auto s : stages) {
                 if (s) firdecim_cccf_destroy(s);
@@ -97,6 +105,13 @@ private:
         ~ChannelDecimState() { destroyStages(); }
     };
     std::vector<std::unique_ptr<ChannelDecimState>> channel_states_;
+    // Channel count of the previous decimateMultiChannel block. Coherent
+    // processing needs every channel's mixer phase, carry and filter history
+    // to be identical; a channel that sat out some blocks (element count
+    // 5 -> 4 -> 5, or newly added) would otherwise resume with a stale or
+    // fresh state and a fixed phase error vs the others. Only touched by the
+    // (sequential) decimateMultiChannel caller.
+    size_t last_num_channels_ = 0;
 
     // Current settings
     std::atomic<float> current_freq_offset_hz{0.0f};

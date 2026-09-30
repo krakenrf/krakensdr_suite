@@ -238,11 +238,6 @@ SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
         return result;
     }
 
-    if (fabs(freq_offset_hz) < 1.0f && fabs(current_freq_offset_hz.load()) > 1.0f) {
-        freq_offset_hz = current_freq_offset_hz.load();
-        result.freq_offset_hz = freq_offset_hz;
-    }
-
     // Per-channel persistent mixer/filter state (see ensureChannelState)
     ChannelDecimState* st = ensureChannelState(channel_id, decimation_factor, freq_offset_hz);
     if (!st) {
@@ -395,12 +390,15 @@ SharedDecimator::MultiChannelDecimated SharedDecimator::decimateMultiChannel(
         return result;
     }
 
-    if (fabs(freq_offset_hz) < 1.0f && fabs(current_freq_offset_hz.load()) > 1.0f) {
-        freq_offset_hz = current_freq_offset_hz.load();
-        result.freq_offset_hz = freq_offset_hz;
-    }
-
+    // The offset is exactly the caller's, for every channel of the block. (A
+    // fallback to the live current_freq_offset_hz when this was ~0 - re-read
+    // again inside each channel task - let channels of one block mix at
+    // different offsets when a VFO moved off 0 Hz mid-block.)
     result.num_channels = min(num_channels, static_cast<size_t>(num_channels_initialized));
+    if (result.num_channels != last_num_channels_) {
+        for (size_t ch = 0; ch < channel_states_.size(); ch++) channel_states_[ch]->resetRuntime();
+        last_num_channels_ = result.num_channels;
+    }
     result.channels.resize(result.num_channels);  // Pre-allocate exact size for parallel writes
 
     // Find minimum number of samples across channels

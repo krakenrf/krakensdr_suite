@@ -551,17 +551,20 @@ void DataReceiver::decimation_processor_thread() {
                             }
                         }
 
-                        // STAGE 1: Decimation
+                        // STAGE 1: Decimation. The offset is read ONCE per block
+                        // (the control thread may move the VFO meanwhile), so
+                        // every channel mixes - and is labelled - with the same one.
+                        const float block_offset_hz = inst->frequency_offset_hz;
                         result.decimated_data = inst->decimator->decimateMultiChannel(
                             channel_ptrs, channel_lens, input_channels,
                             inst->decimator->getDecimationFactor(),
-                            inst->frequency_offset_hz
+                            block_offset_hz
                         );
 
                         // Restore user-facing offset sign
-                        result.decimated_data.freq_offset_hz = inst->frequency_offset_hz;
+                        result.decimated_data.freq_offset_hz = block_offset_hz;
                         for (auto& channel_data_out : result.decimated_data.channels) {
-                            channel_data_out.freq_offset_hz = inst->frequency_offset_hz;
+                            channel_data_out.freq_offset_hz = block_offset_hz;
                         }
 
                         // STAGE 2: MUSIC (immediately after decimation, no barrier)

@@ -211,6 +211,18 @@ bool MUSICProcessor::processDecimatedIQ(const SharedDecimator::MultiChannelDecim
         return false;
     }
 
+    // Only ever build a frame from contiguous samples (see MAX_INPUT_GAP):
+    // leftover pre-gap samples used to fill up to ~97% of the first frame
+    // after a retune or a squelch opening (at narrow bandwidths).
+    const auto now = std::chrono::steady_clock::now();
+    if (last_input_time_ != std::chrono::steady_clock::time_point{} &&
+        (now - last_input_time_ > MAX_INPUT_GAP ||
+         decimated_data.output_rate_hz != last_input_rate_hz_)) {
+        clearAccumulatorLocked();
+    }
+    last_input_time_ = now;
+    last_input_rate_hz_ = decimated_data.output_rate_hz;
+
     // Copy into the accumulator (input is only read)
     addToAccumulatorOptimized(decimated_data);
     
@@ -662,17 +674,17 @@ void MUSICProcessor::computeMUSICSpectrumOptimized() {
 
 
 void MUSICProcessor::resetAccumulator() {
+    // config_mutex_ too: snapshot_mgr_ is used by the processing pass under it
+    lock_guard<mutex> config_lock(config_mutex_);
+    clearAccumulatorLocked();
+}
+
+void MUSICProcessor::clearAccumulatorLocked() {
     lock_guard<mutex> lock(accumulator_.buffer_mutex);
-    
     accumulator_.write_index = 0;
     accumulator_.samples_available = 0;
-    accumulator_.total_samples = 0;
-    accumulator_.global_sample_index = 0;
-    
     snapshot_mgr_.snapshots.clear();
     snapshot_mgr_.snapshots_ready = false;
-    
-    cout << "MUSIC accumulator reset" << endl;
 }
 
 size_t MUSICProcessor::getTotalSamplesProcessed() const {
@@ -847,6 +859,7 @@ void MUSICProcessor::setFrequencyWithOffset(float base_freq_hz, float offset_hz)
         float old_freq = current_frequency;
         current_frequency = effective_freq;
         covariance_avg_valid_ = false;  // retune invalidates the temporal average
+        clearAccumulatorLocked();       // ...and the not-yet-processed samples
         resetAutoSourceTracking();
         updateSteeringVectors();
         // A 3D custom array also keeps an azimuth x elevation set computed at
@@ -879,6 +892,7 @@ void MUSICProcessor::setFrequency(float freq_hz) {
     if (abs(current_frequency - freq_hz) > 1.0f) {  // 1 Hz tolerance
         current_frequency = freq_hz;
         covariance_avg_valid_ = false;  // retune invalidates the temporal average
+        clearAccumulatorLocked();       // ...and the not-yet-processed samples
         resetAutoSourceTracking();
         updateSteeringVectors();
         // A 3D custom array also keeps an azimuth x elevation set computed at

@@ -80,8 +80,13 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
     // and kept in a SEPARATE vector so it survives the identity resets the
     // closed-loop vector undergoes on every recalibration / retune. Off by
     // default; gated like the per-bin EQ (enabled relaxed, then ready acquire).
+    // NOT applied while the noise source is on: the noise is injected inside
+    // the KrakenSDR, after the external chain, so the calibration must measure
+    // the internal path alone. Applied during calibration, the closed-loop
+    // vector measured it too and cancelled its phase (only |fwd| survived).
     if (forward_comp.enabled.load(std::memory_order_relaxed) &&
-        forward_comp.ready.load(std::memory_order_acquire)) {
+        forward_comp.ready.load(std::memory_order_acquire) &&
+        !bias_tee_enabled.load(std::memory_order_relaxed)) {
         comp *= forward_comp.vector.load(channel);
     }
 

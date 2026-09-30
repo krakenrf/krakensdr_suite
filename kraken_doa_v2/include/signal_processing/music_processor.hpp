@@ -210,6 +210,17 @@ public:
     ProcessingStats getStats() const;
 
 private:
+    // Drop everything accumulated so far (samples + pending snapshots) so the
+    // next frame is built only from contiguous new samples. Caller holds
+    // config_mutex_ (takes accumulator_.buffer_mutex itself).
+    void clearAccumulatorLocked();
+    // Input continuity tracking for processDecimatedIQ: a gap longer than
+    // MAX_INPUT_GAP (MUSIC skipped while the squelch is closed, calibrating or
+    // retuning; dropped packets) or a sample-rate change (bandwidth switch)
+    // clears the accumulator, so a frame never mixes pre- and post-gap data.
+    static constexpr std::chrono::milliseconds MAX_INPUT_GAP{200};
+    std::chrono::steady_clock::time_point last_input_time_{};
+    float last_input_rate_hz_ = 0.0f;
     // Configuration
     MUSICConfig config_;
 

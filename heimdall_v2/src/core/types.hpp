@@ -237,7 +237,9 @@ struct PerBinCalibration {
 // as the closed-loop phase vector in samples_to_complex_with_compensation(), so
 // it costs one complex multiply per chunk (zero per-sample cost) and is kept in
 // a SEPARATE vector so it survives the identity resets the closed-loop vector
-// undergoes on every recalibration / retune.
+// undergoes on every recalibration / retune. It is skipped while the noise
+// source is on (bias_tee_enabled), so the noise calibration measures only the
+// internal path and cannot cancel it.
 //
 // OFF by default. The hot path checks `enabled` (relaxed) then `ready` (acquire)
 // exactly like PerBinCalibration; when off nothing here runs. The tables/files

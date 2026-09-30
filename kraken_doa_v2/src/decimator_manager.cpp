@@ -125,11 +125,23 @@ int DecimatorManager::addDecimator() {
                 instance->music_processor->setArrayOffset(reference->music_processor->getArrayOffset());
                 instance->music_processor->setFBAveragingEnabled(reference->music_processor->isFBAveragingEnabled());
                 instance->music_processor->setCovarianceAveragingAlpha(reference->music_processor->getCovarianceAveragingAlpha());
+                // Custom element positions, snapshot config and elevation grid
+                // too: they are array-wide settings, and the settings replay
+                // (CUSTOM_POSITIONS / MUSIC_NUM_SNAPSHOTS / ... before
+                // DECIMATORS:) only reaches the VFOs that exist at that moment -
+                // VFOs added afterwards came up with the default 50 mm UCA
+                // positions under CUSTOM topology (wrong bearings).
+                instance->music_processor->setConfig(reference->music_processor->getConfig());
+                instance->music_processor->setElevationResolution(reference->music_processor->getElevationResolution());
+                if (reference->music_processor->hasValidCustomPositions()) {
+                    instance->music_processor->setCustomPositions(reference->music_processor->getCustomPositions());
+                }
 
-                // Also copy frequency if set
-                auto freq = reference->music_processor->getEffectiveFrequency();
-                if (freq > 0) {
-                    instance->music_processor->setFrequency(static_cast<uint32_t>(freq));
+                // Frequency: the tuner RF at THIS VFO's offset (0 Hz), not the
+                // reference VFO's effective frequency (RF + its offset)
+                const float rf = ChannelManager::get_frequency(active_channel.load(std::memory_order_relaxed));
+                if (rf > 0) {
+                    instance->music_processor->setFrequency(rf);
                 }
             }
         }
