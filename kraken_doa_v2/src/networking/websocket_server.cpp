@@ -238,17 +238,11 @@ string WebSocketServer::load_html_content() {
     
     stringstream buffer;
     buffer << file.rdbuf();
-    string html = buffer.str();
-
-    // Inject the API auth token (empty when auth is disabled) so the page can
-    // authenticate on connect. Only template substitution in the client.
-    const string placeholder = "{{AUTH_TOKEN}}";
-    const string& token = auth_token();
-    for (size_t pos = html.find(placeholder); pos != string::npos;
-         pos = html.find(placeholder, pos + token.size())) {
-        html.replace(pos, placeholder.size(), token);
-    }
-    return html;
+    // The API token is deliberately NOT injected: the page is served to
+    // anyone who can reach the port, so embedding it handed the token to any
+    // LAN client. The user enters it in the browser once (see askForToken in
+    // kraken_doa.html).
+    return buffer.str();
 }
 
 void WebSocketServer::verify_ssl_certificates() {
@@ -296,7 +290,13 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
         .get("/recordings/*", [](auto* res, auto* req) {
             // Download a recording from the fixed doa_recordings/ folder. Only a
             // sanitized base filename is honored, so no other device files are
-            // reachable.
+            // reachable. With a token configured the request must carry it
+            // (the page sends X-Kraken-Token): recordings hold bearings and
+            // the station location.
+            if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
+                res->writeStatus("401 Unauthorized")->end("Access token required");
+                return;
+            }
             std::string url(req->getUrl());
             const std::string prefix = "/recordings/";
             std::string raw = (url.size() > prefix.size()) ? url.substr(prefix.size()) : "";

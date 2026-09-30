@@ -2,6 +2,7 @@
 
 #include "globals.hpp"
 #include "config.hpp"
+#include "utils/log_sanitize.hpp"
 #include "channel_manager.hpp"
 #include "decimator_manager.hpp"
 #include "scanner_manager.hpp"
@@ -80,7 +81,9 @@ bool contains_ci(const string& hay, const char* needle) {
     return h.find(needle) != string::npos;
 }
 
-void push_line(const string& line) {
+void push_line(const string& raw) {
+    // The TUI's own capture bypasses main's SanitizingBuf - clean it here.
+    const string line = sanitize_for_terminal(raw);
     bool warn = contains_ci(line, "error") || contains_ci(line, "warn") ||
                 contains_ci(line, "fail");
     lock_guard<mutex> lk(g_log_mtx);

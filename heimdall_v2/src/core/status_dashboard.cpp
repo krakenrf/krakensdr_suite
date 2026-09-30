@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 #include "core/config.hpp"
+#include "core/log_sanitize.hpp"
 #include "sdr/sdr_device.hpp"
 #include "sdr/sdr_pipeline.hpp"
 #include "sdr/downconverter.hpp"
@@ -77,7 +78,9 @@ bool contains_ci(const string& hay, const char* needle) {
     return h.find(needle) != string::npos;
 }
 
-void push_line(const string& line) {
+void push_line(const string& raw) {
+    // The TUI's own capture bypasses main's SanitizingBuf - clean it here.
+    const string line = sanitize_for_terminal(raw);
     bool warn = contains_ci(line, "error") || contains_ci(line, "warn") ||
                 contains_ci(line, "fail") || contains_ci(line, "lost");
     lock_guard<mutex> lk(g_log_mtx);

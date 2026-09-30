@@ -1,5 +1,6 @@
 #include "globals.hpp"
 #include "config.hpp"
+#include "utils/log_sanitize.hpp"
 #include "signal_processing/fft_processor.hpp"
 #include "signal_processing/fm_demodulator.hpp"
 #include "signal_processing/beamformer.hpp"
@@ -194,6 +195,11 @@ int main(int argc, char* argv[]) {
         } null_buf;
         cout.rdbuf(&null_buf);
     }
+    // Everything logged from here on is terminal-safe: log lines carry
+    // client-chosen strings (see utils/log_sanitize.hpp).
+    static SanitizingBuf san_out(cout.rdbuf(), 0), san_err(cerr.rdbuf(), 1);
+    cout.rdbuf(&san_out);
+    cerr.rdbuf(&san_err);
 
     // Store in global for use by other modules (MUSIC processor, beamformer, UI)
     active_num_elements.store(num_elements);

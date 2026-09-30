@@ -651,6 +651,16 @@ that runs for years accumulates an errors-only log that cannot grow unbounded
 from routine output. Set `HEIMDALL_VERBOSE_LOG=1` / `KRAKEN_DOA_VERBOSE_LOG=1`
 to restore full output to files for debugging.
 
+All cout/cerr output is made terminal-safe (`SanitizingBuf` installed in
+each `main()`, and the TUI's log capture): log lines carry client-chosen
+strings (WebSocket commands and close reasons, filenames, settings values),
+so C0/C1 control characters (ESC, `\r`, BEL, ...), DEL and invalid UTF-8 are
+replaced with `?` - an escape sequence can't recolor/rewrite the terminal,
+TUI or a `tail`ed log file. Valid UTF-8 passes through. The apps' own log
+lines must therefore not contain escape codes (the dashboards write theirs
+straight to the terminal fd). Header: `heimdall_v2/src/core/log_sanitize.hpp`
+= `kraken_doa_v2/include/utils/log_sanitize.hpp` (keep them identical).
+
 Everything that indicates a fault goes to stderr and therefore still reaches
 the log: coherence loss + recovery progress, periodic-calibration DRIFT,
 locked-channel lag drift, device/GPIO/downconverter failures, client
@@ -713,7 +723,8 @@ automatically:
 - **Pre-push hook** (`.githooks/pre-push`): backstop that scans outgoing
   commits and blocks the push if a key / real coordinates / a tracked
   `doa_settings.json` or `api_token` slipped through (bypass:
-  `git push --no-verify`).
+  `git push --no-verify`). Root commits and merge commits (including a
+  secret added while resolving a merge) are scanned too.
 - Filters and hooks are per-clone git config, so `install.sh` registers them
   (`filter.kraken-secrets.*`, `core.hooksPath .githooks`). A clone that never
   ran install.sh silently skips both — run it once after cloning.

@@ -58,8 +58,14 @@ authentication is required and you may skip this step entirely.
 If no token is configured, sending `AUTH:<anything>` is a harmless no-op.
 
 > The token is configured server-side via the `KRAKEN_API_TOKEN` environment
-> variable or an `api_token` file next to the binary. Use an alphanumeric
-> token. The browser receives it automatically (injected into the served page).
+> variable or an `api_token` file next to the binary. Use a long random
+> alphanumeric token. It is NOT embedded in the served page (anyone who can
+> reach port 8080 could read it there): the browser UI asks the user for it
+> once when the server sends `auth_required` and remembers it in that
+> browser's localStorage.
+>
+> With a token configured, `GET /recordings/<file>` also requires it, in an
+> `X-Kraken-Token: <token>` request header (401 otherwise).
 
 ### 2b. Stream subscription (`SUBSCRIBE:`)
 

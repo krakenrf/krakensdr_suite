@@ -24,10 +24,13 @@ scan_range() {
     local c f blob
     for c in $commits; do
         # Only files that can carry station config are inspected, so ordinary
-        # source/doc changes can never false-positive.
-        for f in $(git diff-tree --no-commit-id --name-only -r "$c" -- \
-                       '*config.json' '*doa_settings.json' '*settings*.json' \
-                       '*api_token'); do
+        # source/doc changes can never false-positive. --root: a root commit
+        # (first commit of a new history) has no parent to diff against and
+        # listed nothing without it. -m: a merge commit listed nothing either,
+        # so a secret added while resolving a merge slipped through; -m diffs
+        # it against each parent (sort -u drops the duplicates). NUL-separated
+        # so a path with spaces stays one path.
+        while IFS= read -r -d '' f; do
             case "$f" in
                 *doa_settings.json|*api_token)
                     echo "BLOCKED: $f is committed in ${c:0:9} - this file holds" >&2
@@ -49,7 +52,9 @@ scan_range() {
                 echo "BLOCKED: real static_location found in $f at commit ${c:0:9}." >&2
                 fail=1
             fi
-        done
+        done < <(git diff-tree --root -m --no-commit-id --name-only -r -z "$c" -- \
+                     '*config.json' '*doa_settings.json' '*settings*.json' \
+                     '*api_token' | sort -zu)
     done
     return 0
 }

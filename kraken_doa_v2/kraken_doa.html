@@ -5173,6 +5173,29 @@ function syncWaterfallSize(plot) {
   waterfall.overlay.style.height = containerHeight + 'px';
 }
 
+// API access token - only when the server has one configured (api_token file
+// or KRAKEN_API_TOKEN). The server no longer embeds it in this page (anyone
+// who could load the page got it), so the user enters it once when the server
+// asks ({"auth_required":true}) and this browser remembers it. A rejected
+// token ({"auth_error":...}, then a 1008 close) is forgotten and asked for
+// again on the reconnect.
+const TOKEN_KEY = 'kraken_api_token';
+let authDeclined = false, authFailed = false;
+function storedToken() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
+function storeToken(t) { try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+function showLocked(text) {
+  const connEl = $id('status-connection');
+  if (connEl) { connEl.textContent = text; connEl.style.background = '#e65100'; connEl.style.color = '#fff'; }
+}
+function askForToken() {
+  if (authDeclined) { showLocked('Locked - reload to enter the access token'); return; }
+  const t = (prompt((authFailed ? 'Wrong access token. ' : '') +
+                    'This KrakenSDR requires an access token (the api_token file on the device):') || '').trim();
+  if (!t) { authDeclined = true; showLocked('Locked - reload to enter the access token'); return; }
+  storeToken(t);
+  try { ws.send('AUTH:' + t); } catch (e) {}
+}
+
 function connect() {
   const proto=location.protocol==='https:'?'wss:':'ws:';
   const url=proto+'//'+(location.hostname||'localhost')+':'+(location.port||'8080')+'/ws';
@@ -5188,11 +5211,11 @@ function connect() {
   setTimeout(()=>{if(attempt===ws&&attempt.readyState===WebSocket.CONNECTING)attempt.close();},6000);
 
   ws.onopen=()=>{
-    // API auth: the server substitutes the token below when serving the page.
-    // Empty (no token configured) => fail-open, send nothing. Must be the
-    // first message so the server authenticates before any command/stream.
-    const AUTH_TOKEN = "{{AUTH_TOKEN}}";
-    if (AUTH_TOKEN) { try { ws.send("AUTH:" + AUTH_TOKEN); } catch (e) {} }
+    // API auth: send a remembered token first, so the server authenticates
+    // before any command/stream. Without one, nothing is sent: a server with
+    // no token configured needs none, and one that has will ask (onmessage).
+    const token = storedToken();
+    if (token) { try { ws.send("AUTH:" + token); } catch (e) {} }
 
     const connEl = $id('status-connection');
     if (connEl) {
@@ -5232,6 +5255,17 @@ function connect() {
       if(typeof e.data === 'string') {
         try {
           const msg = JSON.parse(e.data);
+
+          // API auth (see askForToken)
+          if (msg.auth_required) {
+            if (!storedToken()) askForToken();
+            return;
+          }
+          if (msg.auth_error) {
+            storeToken('');
+            authFailed = true;
+            return;
+          }
 
           // Handle decimator info
           if(msg.decimator_info) {
@@ -6339,7 +6373,9 @@ function addTouchHandlers(el, down, move, up) {
     const label = btn ? btn.innerHTML : null;
     if (btn) { btn.disabled = true; btn.innerHTML = '&#8987; Downloading…'; }
     try {
-      const resp = await fetch('recordings/' + encodeURIComponent(name), { cache: 'no-store' });
+      const token = storedToken();
+      const resp = await fetch('recordings/' + encodeURIComponent(name),
+                               { cache: 'no-store', headers: token ? { 'X-Kraken-Token': token } : {} });
       if (!resp.ok) { alert('Download failed (HTTP ' + resp.status + ')'); return; }
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);

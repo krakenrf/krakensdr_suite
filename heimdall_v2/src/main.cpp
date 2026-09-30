@@ -1,6 +1,7 @@
 #include "core/types.hpp"
 #include "core/config.hpp"
 #include "core/logging.hpp"
+#include "core/log_sanitize.hpp"
 #include "core/settings.hpp"
 #include "core/forward_comp.hpp"
 #include "core/utils.hpp"
@@ -310,6 +311,11 @@ int main(int argc, char* argv[]) {
         } null_buf;
         std::cout.rdbuf(&null_buf);
     }
+    // Everything logged from here on is terminal-safe: log lines carry
+    // client-chosen strings (see core/log_sanitize.hpp).
+    static SanitizingBuf san_out(std::cout.rdbuf(), 0), san_err(std::cerr.rdbuf(), 1);
+    std::cout.rdbuf(&san_out);
+    std::cerr.rdbuf(&san_err);
 
     // Load persisted runtime settings (e.g. per-bin EQ toggle, web-UI element
     // count) before any calibration starts, so a remembered "on" builds the
