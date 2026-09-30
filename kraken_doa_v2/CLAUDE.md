@@ -258,6 +258,14 @@ Edit `include/config.hpp`:
   placeholder. Live state rides system_status as
   `web_mapper:{enabled,mode,state,clients,records,error}`; the sidebar
   "🌐 Web Mapper" panel drives it all
+- The cloud connection VERIFIES the server certificate (system CA store +
+  hostname; map.krakenrf.com serves a valid `*.krakenrf.com` cert). The
+  legacy middleware didn't, which let anyone on the network path pose as
+  the map server and collect the API key. `KRAKEN_WEB_MAPPER_INSECURE=1`
+  (environment) turns verification off for a self-hosted server with a
+  self-signed certificate. A cloud settings push can NOT change the server
+  URL (`mapping_server_url` is ignored) - that stays a local, web-UI-only
+  decision. Reassembled cloud messages are capped at 1 MB
 - Station identity/location are NOT web-mapper settings: the callsign and
   the resolved lat/lon/heading come from StationInfo (the "Station
   Information" panel), exactly like DOA_value.html

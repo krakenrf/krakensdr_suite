@@ -22,6 +22,7 @@
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 #include <openssl/ssl.h>
+#include <openssl/x509v3.h>
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -34,6 +35,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -84,6 +86,9 @@ string b64_encode(const unsigned char* data, size_t len) {
 // ---------------------------------------------------------------------------
 
 constexpr size_t WS_MAX_FRAME = 4 * 1024 * 1024;
+// A whole (possibly fragmented) cloud message. Real ones are small settings
+// JSON; without a cap, endless continuation frames grew frag_ forever.
+constexpr size_t WS_MAX_MESSAGE = 1024 * 1024;
 
 // Encode one FIN text/binary/control frame. Client->server frames are masked.
 string ws_encode(uint8_t opcode, const string& payload, bool mask) {
@@ -214,17 +219,46 @@ public:
 
         ctx_ = SSL_CTX_new(TLS_client_method());
         if (!ctx_) { ::close(fd); err = "SSL_CTX_new failed"; return false; }
-        // The mapping server historically runs a cert the legacy stack never
-        // verified (rejectUnauthorized:false); keep that behavior.
-        SSL_CTX_set_verify(ctx_, SSL_VERIFY_NONE, nullptr);
+        // Verify the server certificate (system CA store + hostname). The
+        // legacy middleware didn't (rejectUnauthorized:false), which let
+        // anyone on the network path impersonate the map server and collect
+        // the KrakenPro API key sent in every record. map.krakenrf.com serves
+        // a valid *.krakenrf.com certificate (checked 2026-09-30).
+        // KRAKEN_WEB_MAPPER_INSECURE=1 restores the old behavior, for a
+        // self-hosted server with a self-signed certificate.
+        const char* insecure_env = std::getenv("KRAKEN_WEB_MAPPER_INSECURE");
+        const bool insecure = insecure_env && string(insecure_env) == "1";
+        if (insecure) {
+            SSL_CTX_set_verify(ctx_, SSL_VERIFY_NONE, nullptr);
+        } else {
+            if (SSL_CTX_set_default_verify_paths(ctx_) != 1) {
+                cleanupSsl(); ::close(fd); err = "cannot load the system CA certificates"; return false;
+            }
+            SSL_CTX_set_verify(ctx_, SSL_VERIFY_PEER, nullptr);
+        }
         ssl_ = SSL_new(ctx_);
         if (!ssl_) { cleanupSsl(); ::close(fd); err = "SSL_new failed"; return false; }
         SSL_set_fd(ssl_, fd);
-        SSL_set_tlsext_host_name(ssl_, host.c_str());
+        // An IP-literal host is matched against the certificate's IP entries
+        // (and gets no SNI); a name against its DNS names.
+        X509_VERIFY_PARAM* vp = SSL_get0_param(ssl_);
+        const bool ip_host = X509_VERIFY_PARAM_set1_ip_asc(vp, host.c_str()) == 1;
+        if (!ip_host) {
+            SSL_set_tlsext_host_name(ssl_, host.c_str());
+            if (!insecure) {
+                X509_VERIFY_PARAM_set_hostflags(vp, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+                if (SSL_set1_host(ssl_, host.c_str()) != 1) {
+                    cleanupSsl(); ::close(fd); err = "bad host name " + host; return false;
+                }
+            }
+        }
         if (SSL_connect(ssl_) != 1) {
+            const long vr = SSL_get_verify_result(ssl_);
+            err = (vr != X509_V_OK)
+                ? "certificate of " + host + " rejected: " + X509_verify_cert_error_string(vr)
+                : "TLS handshake with " + host + " failed";
             cleanupSsl();
             ::close(fd);
-            err = "TLS handshake with " + host + " failed";
             return false;
         }
         fd_ = fd;
@@ -308,14 +342,16 @@ public:
 
         WsFrame f;
         bool bad = false;
-        while (ws_decode(rxbuf_, f, bad)) {
+        while (!bad && ws_decode(rxbuf_, f, bad)) {
             switch (f.opcode) {
                 case 0x0:  // continuation
+                    if (frag_.size() + f.payload.size() > WS_MAX_MESSAGE) { bad = true; break; }
                     frag_ += f.payload;
                     if (f.fin) { messages.push_back(std::move(frag_)); frag_.clear(); }
                     break;
                 case 0x1:  // text
                 case 0x2:  // binary (not expected; treat alike)
+                    if (f.payload.size() > WS_MAX_MESSAGE) { bad = true; break; }
                     if (f.fin) messages.push_back(std::move(f.payload));
                     else frag_ = std::move(f.payload);
                     break;
@@ -737,8 +773,10 @@ void apply_cloud_settings_on_loop(map<string, string> s) {
     // Station identity / web-mapper config pushed back by the cloud.
     if (has("station_id")) cmd("STATION_ID:" + s["station_id"]);
     if (has("krakenpro_key")) cmd("WEB_MAPPER_KEY:" + s["krakenpro_key"]);
-    if (has("mapping_server_url") && !s["mapping_server_url"].empty())
-        cmd("WEB_MAPPER_URL:" + s["mapping_server_url"]);
+    // mapping_server_url is deliberately NOT applied: it would let whatever
+    // answered on the current URL move the station - and its API key - to a
+    // server of its choosing for good (the URL is persisted). Changing the
+    // server stays a local decision (web UI).
     if (has("latitude") || has("longitude") || has("heading")) {
         double lat, lon, hd;
         station_info.getStatic(lat, lon, hd);
@@ -841,7 +879,7 @@ void handle_cloud_message(const string& text) {
     if (!json_find(text, "settings", inner)) return;  // stringified JSON payload
 
     static const char* KEYS[] = {
-        "station_id", "krakenpro_key", "mapping_server_url",
+        "station_id", "krakenpro_key",
         "latitude", "longitude", "heading",
         "center_freq", "uniform_gain", "ant_arrangement", "ant_spacing_meters",
         "array_offset", "expected_num_of_sources", "active_vfos",

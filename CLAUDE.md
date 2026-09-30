@@ -287,7 +287,10 @@ Edit `kraken_doa_v2/include/config.hpp`:
   is respected: squelch off = always transmit, squelch on = only while open
 - Callsign + location come from the existing Station Information panel; cloud-
   pushed settings (remote retune from the map) are applied through the normal
-  control-command path. See `kraken_doa_v2/CLAUDE.md` for details
+  control-command path, except the server URL, which only the local web UI
+  can change. The cloud server's TLS certificate is verified
+  (`KRAKEN_WEB_MAPPER_INSECURE=1` disables that for a self-signed self-hosted
+  server). See `kraken_doa_v2/CLAUDE.md` for details
 
 ### KrakenSDR Wideband (Downconverter) Variant
 
