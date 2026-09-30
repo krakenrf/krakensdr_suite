@@ -5373,11 +5373,11 @@ function connect() {
             // Update scanner state to LOCKED - this shows the tuning bar
             scannerState = 'LOCKED';
 
-            // Reset active decimator offset to 0 (center on new frequency)
+            // The server has already zeroed the VFO offsets for the lock
+            // (scanner_manager); mirror it locally only. Sending
+            // SET_DECIMATOR_FREQ here made EVERY open browser issue its own
+            // command, and each one saved the scan state as the VFO setup.
             if(activeDecimatorId >= 0) {
-              setDecimatorFreq(activeDecimatorId, 0);
-
-              // Update local decimatorInfo to immediately reflect the change
               const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
               if(activeDec) {
                 activeDec.freq_offset_hz = 0;

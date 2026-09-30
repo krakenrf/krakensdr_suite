@@ -25,6 +25,11 @@ constexpr int FFT_SIZE = 16384;
 // active_num_elements, synced from the 8091 packet header.
 constexpr int MAX_CHANNELS = 8;
 constexpr float SAMPLE_RATE = 2.4e6f; // 2.4 MSPS
+// R820T tuning range (standard hardware). Must match heimdall's
+// RTL_TUNER_MIN_HZ / RTL_TUNER_MAX_HZ (heimdall_v2/config.h); FREQ outside it
+// is rejected. The Wideband variant uses wb_variant_rf_union_range instead.
+constexpr uint64_t RTL_TUNER_MIN_HZ = 24000000ULL;
+constexpr uint64_t RTL_TUNER_MAX_HZ = 1766000000ULL;
 constexpr int DECIMATION_FACTOR = 10;
 // IMPORTANT: If browser uses different rate, change this to match!
 // Common rates: 44100 (CD quality), 48000 (professional), 96000 (high-end)

@@ -209,11 +209,15 @@ static string build_decimator_snapshot() {
     return ss.str();
 }
 
-// Call after any command that mutates the VFO set. Scanner-driven offset
-// moves bypass the control handler entirely, so transient scan state is
-// never captured.
+// Call after any command that mutates the VFO set. Skipped while either
+// scanner runs: the scanners move VFOs themselves, and any snapshot taken then
+// would capture their transient state.
 static void record_decimator_snapshot() {
     if (g_replaying_settings.load()) return;
+    // While a scanner runs, the live VFO set is the scan's (offsets, FM source,
+    // bandwidths it moved) - saving it made the scan state the user's setup
+    // after a restart. Edits made during a scan are therefore not persisted.
+    if (scanner_manager.isRunning() || continuous_scanner.isRunning()) return;
     SettingsStore::record("DECIMATORS:" + build_decimator_snapshot());
 }
 
@@ -372,6 +376,10 @@ static std::string build_log_list_json() {
 void ControlHandler::handle_message_impl(string_view message) {
     if (message.starts_with("FREQ:")) {
         double freq_mhz = parse_double(message, 5);
+        // Reject before the integer conversion: a negative value wrapped to
+        // ~1.8e19 Hz, which was set into MUSIC and persisted (heimdall refused
+        // it, but the saved value came back on every start).
+        if (!(freq_mhz > 0.0) || freq_mhz > 100000.0) throw CommandRejected("frequency out of range");
         uint64_t freq_hz = static_cast<uint64_t>(llround(freq_mhz * 1e6));
 
         // Wideband variant: keep the request inside the union RF span (the
@@ -386,6 +394,9 @@ void ControlHandler::handle_message_impl(string_view message) {
                 freq_hz = clamped;
                 set_applied("FREQ:", freq_hz / 1e6, 6);
             }
+        } else if (freq_hz < RTL_TUNER_MIN_HZ || freq_hz > RTL_TUNER_MAX_HZ) {
+            // Standard hardware: heimdall only tunes the R820T range
+            throw CommandRejected("outside the tuner range (24-1766 MHz)");
         }
 
         // If wideband mode is active, disable it first to turn off bias-tee/noise source
@@ -1068,16 +1079,18 @@ void ControlHandler::handle_message_impl(string_view message) {
         string payload = string(message.substr(16));
         size_t c1 = payload.find(',');
         size_t c2 = (c1 == string::npos) ? string::npos : payload.find(',', c1 + 1);
-        if (c1 != string::npos && c2 != string::npos) {
-            double lat = stod_finite(payload.substr(0, c1));
-            double lon = stod_finite(payload.substr(c1 + 1, c2 - c1 - 1));
-            double heading = stod_finite(payload.substr(c2 + 1));
-            station_info.setStatic(lat, lon, heading);
-            cout << "Static location set to " << lat << ", " << lon
-                 << ", heading " << heading << endl;
-        } else {
-            cout << "STATIC_LOCATION: malformed payload '" << payload << "'" << endl;
+        // A malformed or out-of-range value is rejected (not saved or echoed):
+        // it used to overwrite the saved station location.
+        if (c1 == string::npos || c2 == string::npos) throw CommandRejected("malformed location");
+        double lat = stod_finite(payload.substr(0, c1));
+        double lon = stod_finite(payload.substr(c1 + 1, c2 - c1 - 1));
+        double heading = stod_finite(payload.substr(c2 + 1));
+        if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) {
+            throw CommandRejected("latitude/longitude out of range");
         }
+        station_info.setStatic(lat, lon, heading);
+        cout << "Static location set to " << lat << ", " << lon
+             << ", heading " << heading << endl;
     }
     // --- Web mapper output (built-in replacement for web_mapper_middleware) ---
     // Applied commands are echoed as {"sync_cmd":...}, replayed to new clients
@@ -1232,19 +1245,17 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("SET_FM_DECIMATOR:")) {
         // Set which decimator feeds the FM demodulator
         int id = parse_int(message, 17);
+        // Unknown id: reject (it used to select a nonexistent source - dead
+        // audio - and save the snapshot with FM source 0)
+        auto decimator_inst = decimator_manager.getDecimator(id);
+        if (!decimator_inst) throw CommandRejected("no such decimator");
         decimator_manager.setFMDecimatorId(id);
 
         // Apply the decimator's demod mode to the FM demodulator
-        auto decimator_inst = decimator_manager.getDecimator(id);
-        if (decimator_inst) {
-            fm_demod.setDemodulatorMode(decimator_inst->demod_mode);
-
-            cout << "FM demodulator now using decimator " << id
-                 << " (offset=" << (decimator_inst->frequency_offset_hz / 1000.0f) << " kHz"
-                 << ", mode=" << DecimatorManager::demodModeToString(decimator_inst->demod_mode) << ")" << endl;
-        } else {
-            cout << "FM demodulator now using decimator " << id << endl;
-        }
+        fm_demod.setDemodulatorMode(decimator_inst->demod_mode);
+        cout << "FM demodulator now using decimator " << id
+             << " (offset=" << (decimator_inst->frequency_offset_hz / 1000.0f) << " kHz"
+             << ", mode=" << DecimatorManager::demodModeToString(decimator_inst->demod_mode) << ")" << endl;
 
         // Clear audio buffer immediately for instant FM source switching
         fm_demod.reset_audio_buffer();
@@ -1287,9 +1298,10 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("DECIMATORS:")) {
         // Persisted-settings replay: rebuild the whole VFO setup in one shot.
-        if (apply_decimator_snapshot(string(message.substr(11)))) {
-            handle_message_impl("GET_DECIMATOR_INFO");  // push restored state to browsers
+        if (!apply_decimator_snapshot(string(message.substr(11)))) {
+            throw CommandRejected("malformed decimator snapshot");  // keep the saved one
         }
+        handle_message_impl("GET_DECIMATOR_INFO");  // push restored state to browsers
     }
     else if (message.starts_with("WIDEBAND_MODE:")) {
         bool enable = parse_bool(message.substr(14));
@@ -1443,6 +1455,11 @@ void ControlHandler::handle_message_impl(string_view message) {
     // FFT Settings
     else if (message.starts_with("FFT_SIZE:")) {
         int new_size = parse_int(message, 9);
+        // Same rule FFTProcessor::resize enforces - but it only logs and
+        // ignores, so the invalid value was still saved and echoed
+        if (new_size < 1024 || new_size > 65536 || (new_size & (new_size - 1)) != 0) {
+            throw CommandRejected("FFT size must be a power of 2 in 1024-65536");
+        }
         int old_size = FFTProcessor::get_current_size();
 
         // Resize FFT
@@ -1481,6 +1498,9 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("FFT_DECIMATION:")) {
         int new_decimation = parse_int(message, 15);
+        if (new_decimation < 1 || new_decimation > 64) {   // FFTProcessor::set_decimation's rule
+            throw CommandRejected("FFT decimation must be 1-64");
+        }
         int old_decimation = FFTProcessor::get_current_decimation();
 
         // Set decimation

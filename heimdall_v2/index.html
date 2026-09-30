@@ -693,6 +693,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
         // Smoothed Amp column: single-snapshot gain readings jitter (by about
         // +/-1 dB while the IF VGA was on the tuner AGC; ~0.1 dB with it fixed).
         const ampSmooth = {};
+        const PHASE_CONVERGED = 4;  // PhaseCompensatorState::CONVERGED (types.hpp)
         const updateTable = (lags, phases, amps, comp, cData, active) => {
             const [sd, st] = [$('comp-status'), $('comp-txt')];
             if (active) {
@@ -710,8 +711,12 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                 if (ch === RC) continue;
                 const [lag, phase] = [lags[ch] || 0, phases[ch] || 0];
                 const cd = cData[ch] || { state_code: 0, zero_lag_count: 0, converged: 0 };
+                // Low byte = the server's raw PhaseCompensatorState (0-6):
+                // 4 = CONVERGED; 1/2/3/5/6 = phase calibration steps / retune
+                // cooldown / per-bin (1 is also sent as "lag active" before lag
+                // converges, so "Phase..." also needs this channel's lag done).
                 const [si, ps] = [cd.status_info || 0, (cd.status_info || 0) & 0xFF];
-                const chComp = ps >= 10;
+                const chComp = ps === PHASE_CONVERGED;
                 phaseComp = phaseComp || chComp;
                 if (!chComp) allComp = 0;
                 if (cd.converged) anyConv = 1;
@@ -737,10 +742,10 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                 const kDeg = (comp[ch] || [0, 0])[1];
                 kEl.textContent = `${kDeg.toFixed(1)}°`;
 
-                if (ps >= 10) {
+                if (chComp) {
                     stEl.textContent = '✅ CALIBRATED';
                     Object.assign(stEl.style, { color: '#28a745', fontWeight: 'bold' });
-                } else if (ps >= 5) {
+                } else if (cd.converged && [1, 2, 3, 5, 6].includes(ps)) {
                     stEl.textContent = '🔄 Phase...';
                     stEl.style.color = '#007bff';
                 } else if (cd.converged) {
@@ -1166,8 +1171,8 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                 if (ch !== refCh) {
                     cData[ch] = { state_code: sc, zero_lag_count: zlc, converged: conv === 1, status_info: si };
                     
-                    // Check if phase compensation is complete (status_info >= 10)
-                    if ((si & 0xFF) >= 10) {
+                    // Phase compensation complete: low byte = CONVERGED (4)
+                    if ((si & 0xFF) === PHASE_CONVERGED) {
                         anyCalibrationComplete = true;
                     }
                     
