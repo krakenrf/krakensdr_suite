@@ -17,6 +17,11 @@ struct SDRDevice {
     std::thread async_thread;
     std::atomic<bool> running{true}, init_success{false};
     std::atomic<size_t> l1_buffer_size{0}; // Track size atomically
+    // steady_clock ns at which this device's most recent USB packet was
+    // enqueued in L1 (or dropped) - stamped at the END of the callback. clear_l1_buffer() flushes at a
+    // moment when every device has delivered the same packet round, so a flush
+    // can't land between two devices' copies of one packet (a one-packet slip).
+    std::atomic<int64_t> last_arrival_ns{0};
     ChannelCompensation compensation;
     mutable std::mutex compensation_mutex;
 

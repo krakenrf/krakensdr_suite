@@ -1,6 +1,7 @@
 #include "sdr_init.hpp"
 #include "downconverter.hpp"
 #include "kerberos_gpio.hpp"
+#include "sdr_pipeline.hpp"   // signal_coherence_lost
 #include "../core/config.hpp"
 #include "../dsp/compensation.hpp"
 #include "../core/logging.hpp"
@@ -523,79 +524,103 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
     std::lock_guard<std::mutex> lock(settings_mutex);
     std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
 
-    bool changed = false;
-    uint64_t prev_frequency = current_frequency.load();
-    if (frequency > 0 && (frequency > prev_frequency ? frequency - prev_frequency
-                                                     : prev_frequency - frequency) > 1000) changed = true;
-    if (gain != -999 && gain != current_gain.load()) changed = true;
+    const uint64_t prev_frequency = current_frequency.load();
+    const int prev_gain = current_gain.load();
+
+    // The settings already in place: no-op - no hardware write (a PLL rewrite
+    // can move a tuner's phase) and no recalibration. Any REAL change is
+    // applied AND reported as changed: the old 1 kHz dead band retuned every
+    // tuner (or, on the Wideband variant, switched antenna ring at a boundary)
+    // without triggering the recalibration.
+    if (frequency == prev_frequency) frequency = 0;
+    if (gain == prev_gain) gain = -999;
+    if (frequency == 0 && gain == -999) return false;
 
     std::cout << "SDR: Updating settings - ";
     if (frequency > 0) std::cout << "Freq: " << frequency/1e6 << " MHz ";
     if (gain == -1) std::cout << "Gain: AUTO mode";
     else if (gain >= 0) std::cout << "Gain: " << gain/10.0 << " dB";
-    if (changed) std::cout << " (CHANGED - will do phase-only recalibration)";
     std::cout << std::endl;
 
     // Wideband variant: a frequency change is an LO reprogram; the tuners stay
     // parked at the IF (no per-device retune, no PLL resettle). Gain changes
-    // still go to the tuners via the parallel loop below.
+    // still go to the tuners below.
     const bool wb_variant = downconverter.enabled.load();
-    bool lo_ok = true;
-    if (wb_variant && frequency > 0) {
-        lo_ok = wideband_retune_rf(frequency, devices);
-        if (!lo_ok) changed = false;  // nothing retuned - don't trigger a recal
+    if (wb_variant && frequency > 0 && !wideband_retune_rf(frequency, devices)) {
+        std::cerr << "SDR: LO retune to " << frequency / 1e6 << " MHz failed - frequency unchanged" << std::endl;
+        frequency = 0;
+        if (gain == -999) return false;
     }
+    const bool tune_tuners = !wb_variant && frequency > 0;
 
-    // Update all devices in parallel - each RTL-SDR has independent PLL settling time
-    // Parallel execution reduces total time from N*latency to max(latency)
-    std::vector<std::thread> update_threads;
-    std::vector<char> results(devices.size(), 1);  // char: see init_results
-
-    for (size_t i = 0; i < devices.size(); i++) {
-        if (devices[i] && devices[i]->dev) {
-            update_threads.emplace_back([i, frequency, gain, wb_variant, &devices, &results]() {
-                bool success = true;
-
-                if (!wb_variant && frequency > 0 &&
-                    rtlsdr_set_center_freq(devices[i]->dev, static_cast<uint32_t>(frequency)) < 0) {
-                    success = false;
-                }
-
-                if (gain == -1) {
-                    if (rtlsdr_set_tuner_gain_mode(devices[i]->dev, 0) < 0) success = false;
-                } else if (gain >= 0) {
-                    if (rtlsdr_set_tuner_gain_mode(devices[i]->dev, 1) < 0 ||
-                        rtlsdr_set_tuner_gain(devices[i]->dev, gain) < 0) success = false;
-                }
-                if (gain != -999 && set_fixed_if_vga(devices[i]->dev, gain == -1) < 0) success = false;
-
-                results[i] = success;
+    // Apply to every open tuner in parallel - each RTL-SDR has independent PLL
+    // settling time, so this costs max(latency) rather than N*latency. Records
+    // frequency and gain success per device (char, not vector<bool>: packed
+    // bits would make the threads' writes race).
+    auto apply_all = [&](uint64_t f, int g, std::vector<char>& f_ok, std::vector<char>& g_ok) {
+        f_ok.assign(devices.size(), 1);
+        g_ok.assign(devices.size(), 1);
+        std::vector<std::thread> threads;
+        for (size_t i = 0; i < devices.size(); i++) {
+            if (!devices[i] || !devices[i]->dev) continue;
+            threads.emplace_back([i, f, g, &devices, &f_ok, &g_ok]() {
+                rtlsdr_dev_t* dev = devices[i]->dev;
+                if (f > 0 && rtlsdr_set_center_freq(dev, static_cast<uint32_t>(f)) < 0) f_ok[i] = 0;
+                if (g == -999) return;
+                bool ok = (g == -1) ? rtlsdr_set_tuner_gain_mode(dev, 0) >= 0
+                                    : rtlsdr_set_tuner_gain_mode(dev, 1) >= 0 && rtlsdr_set_tuner_gain(dev, g) >= 0;
+                if (set_fixed_if_vga(dev, g == -1) < 0) ok = false;
+                g_ok[i] = ok;
             });
         }
-    }
+        for (auto& t : threads) t.join();
+    };
+    auto failed_channels = [&](const std::vector<char>& f_ok, const std::vector<char>& g_ok) {
+        std::string list;
+        for (size_t i = 0; i < devices.size(); i++) {
+            if (devices[i] && devices[i]->dev && (!f_ok[i] || !g_ok[i])) {
+                list += (list.empty() ? "" : ", ") + std::to_string(devices[i]->index);
+            }
+        }
+        return list;
+    };
 
-    // Wait for all updates to complete
-    for (auto& thread : update_threads) {
-        thread.join();
-    }
+    std::vector<char> f_ok, g_ok;
+    apply_all(tune_tuners ? frequency : 0, gain, f_ok, g_ok);
 
-    bool all_success = std::all_of(results.begin(), results.end(), [](bool r) { return r; }) && lo_ok;
-
-    if (all_success) {
+    // A partial failure used to be silent: the other tuners sat at the new
+    // settings while the state (and the 8091 packets) reported the old ones,
+    // and calibration then ran on the split array. Put every tuner back on the
+    // previous settings instead, so the array stays coherent, and still report
+    // a change so the caller recalibrates (the PLLs were rewritten).
+    const std::string failed = failed_channels(f_ok, g_ok);
+    if (!failed.empty()) {
+        std::cerr << "SDR: settings change failed on channel(s) " << failed
+                  << " - restoring the previous settings on every tuner" << std::endl;
+        std::vector<char> rf_ok, rg_ok;
+        apply_all(tune_tuners ? prev_frequency : 0, gain != -999 ? prev_gain : -999, rf_ok, rg_ok);
+        const std::string still = failed_channels(rf_ok, rg_ok);
+        if (!still.empty()) {
+            std::cerr << "SDR: restoring the previous settings also failed on channel(s) " << still
+                      << " - tuners inconsistent, forcing a coherence recovery" << std::endl;
+            signal_coherence_lost("retune rollback failed");
+        }
+        // The Wideband LO part (if any) did succeed - only the tuners were restored
+        if (wb_variant && frequency > 0) current_frequency = frequency;
+    } else {
         if (frequency > 0) current_frequency = frequency;
-        if (gain >= -1) current_gain = gain;
+        if (gain != -999) current_gain = gain;
     }
 
     // Re-interpolate the S2P forward correction at the new center frequency so
-    // the differential insertion phase tracks retunes (web UI, control port,
-    // scanner hops). Cheap (a handful of interpolations + atomic stores) and
-    // only when forward compensation is actually enabled.
-    if (all_success && frequency > 0 &&
+    // the differential insertion phase tracks retunes. Cheap (a handful of
+    // interpolations + atomic stores) and only when forward comp is enabled.
+    if (current_frequency.load() != prev_frequency &&
         forward_comp.enabled.load(std::memory_order_relaxed)) {
-        fwdcomp::recompute(static_cast<double>(frequency));
+        fwdcomp::recompute(static_cast<double>(current_frequency.load()));
     }
 
-    return changed;
+    return true;
 }
 
 void handle_settings_change() {
@@ -744,10 +769,18 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
             std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
             for (const auto& device : devices) {
                 if (device && device->dev) {
-                    rtlsdr_set_center_freq(device->dev, coherent_freq);
+                    if (rtlsdr_set_center_freq(device->dev, coherent_freq) < 0) {
+                        std::cerr << "Wideband: channel " << device->index << " failed to return to "
+                                  << coherent_freq / 1e6 << " MHz" << std::endl;
+                    }
                     wideband_config.set_tuner_frequency(device->index, coherent_freq);
                 }
             }
+        }
+        // The scan may have moved the center: the S2P forward correction must
+        // follow it (it is frequency dependent)
+        if (forward_comp.enabled.load(std::memory_order_relaxed)) {
+            fwdcomp::recompute(static_cast<double>(current_frequency.load()));
         }
 
         // Re-enable phase calibration by resetting to wait for lag convergence state

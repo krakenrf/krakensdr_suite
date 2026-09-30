@@ -14,6 +14,16 @@ void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
     auto* sdr = static_cast<SDRDevice*>(ctx);
     if (!sdr->running || !global_running) return;
 
+    // Stamp AFTER the packet is in L1 (or dropped): clear_l1_buffer's quiet
+    // point must mean "every device's latest round is already enqueued".
+    // Stamped at callback entry, the flush could fire while the last device
+    // was still copying its buffer, which then landed after the flush - that
+    // device kept a packet the others lost (a one-packet slip).
+    auto stamp = [sdr]() {
+        sdr->last_arrival_ns.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_release);
+    };
+
     // L1 full => the sample drain fell behind on THIS device. The old behaviour
     // dropped the oldest buffer for this one device, shifting it a full packet
     // relative to the others and SILENTLY destroying coherence. Instead, drop
@@ -23,6 +33,7 @@ void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
     // visible one.
     if (sdr->l1_buffer_size.load(std::memory_order_relaxed) >= SDRDevice::MAX_BUFFER_SIZE) {
         signal_coherence_lost("L1 overflow: sample drain fell behind");
+        stamp();
         return;
     }
 
@@ -32,6 +43,7 @@ void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
     SampleBuffer buffer;
     if (!sdr->sample_pool.try_acquire(buffer)) {
         signal_coherence_lost("sample pool exhausted in RTL callback");
+        stamp();
         return;
     }
 
@@ -40,4 +52,5 @@ void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
     buffer.assign(buf, buf + len);
     sdr->l1_buffer.enqueue(std::move(buffer));
     sdr->l1_buffer_size.fetch_add(1, std::memory_order_relaxed);
+    stamp();
 }

@@ -727,7 +727,8 @@ float MUSICProcessor::interpolatePeakAngle(Eigen::Index max_idx, double max_val)
         }
     }
 
-    float angle = (static_cast<float>(max_idx) + static_cast<float>(delta)) * angular_resolution_;
+    float angle = (static_cast<float>(max_idx) + static_cast<float>(delta)) * angular_resolution_ +
+                  offset_residual_deg_;
     if (angle >= 360.0f) angle -= 360.0f;
     if (angle < 0.0f) angle += 360.0f;
     return angle;
@@ -1249,9 +1250,15 @@ void MUSICProcessor::applyOutputTransforms() {
     // --- Array orientation offset ---
     // Rotate the spectrum so reported angle = array angle + offset (mod 360):
     // rotated(i) = raw(i - shift). Done after masking so the kept ULA lobe and
-    // its mask rotate together with the physical array.
+    // its mask rotate together with the physical array. The rotation is by
+    // whole grid bins; the remaining fraction is added to the interpolated
+    // peak (interpolatePeakAngle) - it used to be dropped, biasing every
+    // bearing by up to half a bin (0.5 deg) against the offset the beamformer
+    // applies in full.
+    offset_residual_deg_ = 0.0f;
     if (array_offset_deg_ != 0.0f) {
         int shift = static_cast<int>(lround(array_offset_deg_ / angular_resolution_));
+        offset_residual_deg_ = array_offset_deg_ - static_cast<float>(shift) * angular_resolution_;
         shift = ((shift % num_angles_) + num_angles_) % num_angles_;
         if (shift != 0) {
             Eigen::VectorXd rotated(num_angles_);

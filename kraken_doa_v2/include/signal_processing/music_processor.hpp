@@ -259,6 +259,9 @@ private:
 
     // Array orientation offset in degrees (rotates the reported spectrum/peak)
     float array_offset_deg_ = 0.0f;
+    // Sub-grid part of the offset that the whole-bin spectrum rotation can't
+    // represent (|x| <= resolution/2); added back to the interpolated peak.
+    float offset_residual_deg_ = 0.0f;
 
     // Forward-backward averaging (applied only when topology == ULA)
     bool fb_averaging_enabled_ = false;

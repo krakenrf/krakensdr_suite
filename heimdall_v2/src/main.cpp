@@ -2,6 +2,7 @@
 #include "core/config.hpp"
 #include "core/logging.hpp"
 #include "core/settings.hpp"
+#include "core/forward_comp.hpp"
 #include "core/utils.hpp"
 #include "sdr/sdr_init.hpp"
 #include "sdr/sdr_pipeline.hpp"
@@ -154,7 +155,7 @@ void discrete_scanner_thread() {
 
         {
             std::lock_guard<std::mutex> lock(settings_mutex);
-            current_frequency = next_frequency;
+            bool hop_ok = true;
 
             // If wideband mode is enabled, update wideband tuner spread around this center
             if (wideband_config.enabled.load()) {
@@ -162,14 +163,30 @@ void discrete_scanner_thread() {
             } else if (downconverter.enabled.load()) {
                 // Wideband variant: tuners stay at the IF, hop the LO instead
                 // (auto-switches mixer side / antenna ring if the hop needs it)
-                wideband_retune_rf(next_frequency, devices);
+                hop_ok = wideband_retune_rf(next_frequency, devices);
+                if (!hop_ok) std::cerr << "Scanner: LO hop to " << next_frequency / 1e6
+                                       << " MHz failed - still on " << current_frequency.load() / 1e6 << " MHz" << std::endl;
             } else {
-                // Coherent mode: set all tuners to same frequency
+                // Coherent mode: set all tuners to same frequency. A tuner that
+                // didn't take it (it used to be ignored) gets one retry; one
+                // still off frequency is logged - the array is split until the
+                // next hop.
                 std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
                 for (const auto& device : devices) {
-                    if (device && device->dev) {
-                        rtlsdr_set_center_freq(device->dev, static_cast<uint32_t>(next_frequency));
+                    if (!device || !device->dev) continue;
+                    if (rtlsdr_set_center_freq(device->dev, static_cast<uint32_t>(next_frequency)) < 0 &&
+                        rtlsdr_set_center_freq(device->dev, static_cast<uint32_t>(next_frequency)) < 0) {
+                        std::cerr << "Scanner: channel " << device->index << " failed to tune to "
+                                  << next_frequency / 1e6 << " MHz" << std::endl;
                     }
+                }
+            }
+            if (hop_ok) {
+                current_frequency = next_frequency;
+                // The S2P forward correction is frequency dependent: follow the
+                // hop (it stayed at the pre-scan frequency's value)
+                if (forward_comp.enabled.load(std::memory_order_relaxed)) {
+                    fwdcomp::recompute(static_cast<double>(next_frequency));
                 }
             }
         }

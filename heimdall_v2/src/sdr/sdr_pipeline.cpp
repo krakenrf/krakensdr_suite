@@ -49,14 +49,63 @@ static void recycle_raw_set(std::vector<SampleBuffer>& set) {
     l2_raw_buffer_pool.release(std::move(set));
 }
 
-// Bumped whenever the L1 path is flushed (coherence recovery, lag reset, scanner
-// retune). The drain stamps this before it begins assembling an aligned set and
-// re-checks it after: if a flush landed mid-assembly, the set straddles the
-// flush (some channels pre-flush, some post-flush => a full-packet temporal
-// desync) and is discarded instead of poisoning the lag servo with one garbage
-// reading. File-local: only clear_l1_buffer() bumps it and only sample_processor
-// reads it.
-static std::atomic<uint32_t> flush_generation{0};
+// ---- L1 flush protocol ----
+// Coherence needs the N-th L1 buffer of every device to be the same instant, so
+// a flush (coherence recovery, lag reset, scanner retune) must drop exactly the
+// same packets on every device. Two ways it used to slip a channel by a whole
+// packet:
+//  - the flush emptied the queues one by one while the USB callbacks kept
+//    delivering: a packet round arriving mid-flush (the devices' copies land
+//    up to ~ms apart) was dropped on some devices and kept on others;
+//  - the drain, a second consumer of the same queues, discarded a set that
+//    straddled the flush, including post-flush packets on the devices it
+//    collected after the flush.
+// So the drain - the only L1 consumer - performs every flush itself:
+// clear_l1_buffer() files a request and waits; the drain drops its partial set
+// and empties all queues at a quiet point (every device has delivered the same
+// round and the next is still ~half a period away).
+static std::atomic<uint32_t> flush_requests{0};    // bumped by clear_l1_buffer()
+static std::atomic<uint32_t> flush_completed{0};   // last request the drain served
+static std::atomic<bool> drain_active{false};
+static std::atomic<std::thread::id> drain_thread_id{};
+
+static int64_t steady_now_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// Empty every device's L1 (buffers back to their pools). With wait_quiet, first
+// wait - at most two packet periods - for a point where the active devices'
+// latest packets all belong to the same round and the next round isn't due for
+// another half period, so no round can straddle the flush. (If the devices'
+// arrival skew ever exceeds half a period there is no such point: flush anyway
+// after the timeout, as before.)
+static void flush_l1_now(int num_elements, bool wait_quiet) {
+    if (wait_quiet && num_elements > 0) {
+        const int64_t period = static_cast<int64_t>(1e9 * NUM_SAMPLES / SAMPLE_RATE);
+        const int64_t deadline = steady_now_ns() + 2 * period;
+        while (steady_now_ns() < deadline) {
+            int64_t lo = INT64_MAX, hi = 0;
+            for (int i = 0; i < num_elements && i < static_cast<int>(devices.size()); i++) {
+                if (!devices[i] || !devices[i]->dev) continue;
+                const int64_t t = devices[i]->last_arrival_ns.load(std::memory_order_acquire);
+                lo = std::min(lo, t); hi = std::max(hi, t);
+            }
+            if (hi == 0 || (hi - lo < period / 2 && steady_now_ns() - hi < period / 2)) break;
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+    }
+    for (const auto& device : devices) {
+        if (!device) continue;
+        SampleBuffer discard;
+        while (device->l1_buffer.try_dequeue(discard)) {
+            device->l1_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+            device->sample_pool.release(std::move(discard));  // Return to pool
+        }
+        // No store(0) - see clear_l2_raw_buffer(); a phantom here is fatal
+        // (callback would see l1 size == SIZE_MAX and drop every packet).
+    }
+}
 
 void samples_to_complex_with_compensation(const uint8_t* samples, int count, int channel,
                                           ComplexBuffer& out) {
@@ -229,6 +278,27 @@ void sample_processor(const std::vector<std::unique_ptr<SDRDevice>>& devices) {
 
     static bool first_run = true;
 
+    // Serve flush requests from here on (see flush_l1_now); stop on every exit
+    drain_thread_id.store(std::this_thread::get_id());
+    drain_active.store(true, std::memory_order_release);
+    struct DrainActiveGuard { ~DrainActiveGuard() { drain_active.store(false, std::memory_order_release); } } drain_guard;
+
+    // Release only the slots actually filled: recycling an unfilled
+    // (moved-from, zero-capacity) slot used to plant empty buffers in the pools.
+    auto recycle_partial = [](std::vector<SampleBuffer>& set, int filled) {
+        set.resize(static_cast<size_t>(std::max(filled, 0)));
+        recycle_raw_set(set);
+    };
+    // A pending clear_l1_buffer() request: drop the partial set (its buffers
+    // are pre-flush) and flush every queue at a quiet point.
+    auto serve_flush = [](int n) {
+        const uint32_t req = flush_requests.load(std::memory_order_acquire);
+        if (req == flush_completed.load(std::memory_order_relaxed)) return false;
+        flush_l1_now(n, true);
+        flush_completed.store(req, std::memory_order_release);
+        return true;
+    };
+
     while (global_running && pipeline_running.load(std::memory_order_acquire)) {
         // Re-read per pass: the thread is restarted by a reconfiguration, but a
         // stale count here would index closed channels for a whole run.
@@ -237,14 +307,11 @@ void sample_processor(const std::vector<std::unique_ptr<SDRDevice>>& devices) {
 
         // Outer vector recycled from the pool; inner buffers are filled by the
         // L1 dequeues below (each owned by its device's sample_pool).
+        serve_flush(num_elements);
+
         auto raw_set = l2_raw_buffer_pool.acquire();
         raw_set.resize(num_elements);
-
-        // Stamp the flush generation BEFORE collecting. If an L1 flush (recovery,
-        // lag reset, scanner retune) lands while we are mid-collection, the set
-        // will mix pre-flush and post-flush blocks (a full-packet desync); we
-        // detect that after Phase 1 and discard the set.
-        const uint32_t gen_at_start = flush_generation.load(std::memory_order_acquire);
+        bool flushed_mid_set = false;
 
         // -------- Phase 1: Collect in device order (only active elements) --------
         for (int i = 0; i < num_elements; i++) {
@@ -258,17 +325,33 @@ void sample_processor(const std::vector<std::unique_ptr<SDRDevice>>& devices) {
             int timeouts = 0;
             while (!device->l1_buffer.wait_dequeue_timed(raw_set[i], std::chrono::milliseconds(100))) {
                 if (!global_running || !pipeline_running.load(std::memory_order_acquire)) {
-                    recycle_raw_set(raw_set);
+                    recycle_partial(raw_set, i);
                     return;
+                }
+                if (flush_requests.load(std::memory_order_acquire) !=
+                    flush_completed.load(std::memory_order_relaxed)) {
+                    break;  // served below, with the partial set dropped
                 }
                 if (++timeouts >= STUCK_DEVICE_MAX_TIMEOUTS) {
                     signal_coherence_lost("sample drain: a device stalled (no data)");
                     timeouts = 0;  // re-alert periodically if it stays stuck
                 }
             }
+            if (flush_requests.load(std::memory_order_acquire) !=
+                flush_completed.load(std::memory_order_relaxed)) {
+                // slot i holds a dequeued buffer unless the wait above broke out
+                // empty-handed; either way everything collected is pre-flush
+                const bool got = !raw_set[i].empty();
+                if (got) device->l1_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+                recycle_partial(raw_set, got ? i + 1 : i);
+                serve_flush(num_elements);
+                flushed_mid_set = true;
+                break;
+            }
 
             if (!global_running || !pipeline_running.load(std::memory_order_acquire)) {
-                recycle_raw_set(raw_set);
+                device->l1_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+                recycle_partial(raw_set, i + 1);
                 return;
             }
             device->l1_buffer_size.fetch_sub(1, std::memory_order_relaxed);
@@ -293,12 +376,7 @@ void sample_processor(const std::vector<std::unique_ptr<SDRDevice>>& devices) {
                  << num_elements << " active channels" << std::endl;
         }
 
-        // Discard a set that straddled an L1 flush (would feed the lag servo one
-        // full-packet-desynced reading right after a recovery/retune flush).
-        if (flush_generation.load(std::memory_order_acquire) != gen_at_start) {
-            recycle_raw_set(raw_set);
-            continue;
-        }
+        if (flushed_mid_set) continue;  // partial set already dropped with the flush
 
         // -------- Phase 2: Hand the aligned raw set to the conversion worker -----
         // If the worker has fallen behind, drop the OLDEST whole aligned set.
@@ -418,49 +496,19 @@ void clear_l2_raw_buffer() {
 void clear_l1_buffer() {
     std::cout << "Clearing L1 buffers for all devices..." << std::endl;
     clear_l2_raw_buffer();  // L2-raw holds data drained from L1; flush it too
-    for (const auto& device : devices) {
-        if (device) {
-            // Drain the queue and return buffers to pool
-            SampleBuffer discard;
-            while (device->l1_buffer.try_dequeue(discard)) {
-                device->l1_buffer_size.fetch_sub(1, std::memory_order_relaxed);
-                device->sample_pool.release(std::move(discard));  // Return to pool
-            }
-            // No store(0) - see clear_l2_raw_buffer(); a phantom here is fatal
-            // (callback would see l1 size == SIZE_MAX and drop every packet).
+    // The drain performs the flush (see flush_l1_now); wait for it. Flush
+    // directly when there is no drain (pipeline stopped) or it doesn't answer.
+    if (drain_active.load(std::memory_order_acquire) &&
+        drain_thread_id.load() != std::this_thread::get_id()) {
+        const uint32_t req = flush_requests.fetch_add(1, std::memory_order_acq_rel) + 1;
+        for (int waited_ms = 0; waited_ms < 500; waited_ms++) {
+            if (static_cast<int32_t>(flush_completed.load(std::memory_order_acquire) - req) >= 0) return;
+            if (!drain_active.load(std::memory_order_acquire)) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
+        std::cerr << "L1 flush: sample drain did not respond - flushing directly" << std::endl;
     }
-    // A full L1 flush re-aligns the device streams; tell the drain so it discards
-    // any set it is mid-assembling (which would straddle this flush).
-    flush_generation.fetch_add(1, std::memory_order_release);
-}
-
-void clear_l1_buffer(int channel) {
-    if (channel < 0 || channel >= NUM_DEVICES) {
-        std::cerr << "ERROR: Invalid channel " << channel << " in clear_l1_buffer" << std::endl;
-        return;
-    }
-
-    // Find the device with the matching channel index
-    auto device_it = std::find_if(devices.begin(), devices.end(),
-        [channel](const auto& dev) { return dev && dev->index == channel; });
-
-    if (device_it == devices.end()) {
-        std::cerr << "ERROR: No device found for channel " << channel << std::endl;
-        return;
-    }
-
-    std::cout << "Clearing L1 buffer for channel " << channel
-         << " (Serial: " << (*device_it)->serial_number << ")" << std::endl;
-
-    // Drain the queue and return buffers to pool
-    SampleBuffer discard;
-    while ((*device_it)->l1_buffer.try_dequeue(discard)) {
-        (*device_it)->l1_buffer_size.fetch_sub(1, std::memory_order_relaxed);
-        (*device_it)->sample_pool.release(std::move(discard));  // Return to pool
-    }
-    // No store(0): matched fetch_add/fetch_sub keeps the count correct without
-    // the underflow race (see clear_l2_raw_buffer).
+    flush_l1_now(active_num_elements.load(), true);
 }
 
 void clear_l2_buffer() {

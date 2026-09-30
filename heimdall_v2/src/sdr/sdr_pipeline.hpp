@@ -41,8 +41,11 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
                        RtlTcpServer* rtl_tcp_server = nullptr);
 
 // Buffer management
+// Flush every device's L1 at a packet-round boundary, performed by the sample
+// drain (the only L1 consumer) so all devices drop exactly the same packets.
+// Blocks until done (<= ~2 packet periods). A per-device flush is deliberately
+// not offered: it would desync that channel by design.
 void clear_l1_buffer();
-void clear_l1_buffer(int channel);
 void clear_l2_buffer();
 void clear_l2_raw_buffer();
 
