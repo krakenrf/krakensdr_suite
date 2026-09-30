@@ -14,6 +14,7 @@
 #include <functional>
 #include <string>
 #include <algorithm>
+#include <cctype>
 #include <thread>
 #include <optional>
 #include <cmath>
@@ -42,6 +43,34 @@ static std::string json_escape(const std::string& s) {
         else if (static_cast<unsigned char>(c) >= 0x20) o += c;
     }
     return o;
+}
+
+// Same-origin guard for the state-changing endpoints (the WebSocket upgrade and
+// the POST routes). Browsers attach an Origin header to every cross-site
+// WebSocket handshake and POST, so without this any web page the operator
+// visits could drive heimdall - retune, change the element count, switch the
+// noise source (with --kerberos: a noise calibration against live antennas),
+// upload/delete calibration files. A request WITHOUT Origin is not a browser
+// cross-site request (curl, scripts, test tools) and is allowed; "null"
+// (sandboxed / file:// pages) is refused.
+static bool origin_allowed(uWS::HttpRequest* req) {
+    const std::string_view origin = req->getHeader("origin");
+    if (origin.empty()) return true;
+    const size_t scheme_end = origin.find("://");
+    if (scheme_end == std::string_view::npos) return false;
+    const std::string_view origin_host = origin.substr(scheme_end + 3);
+    const std::string_view host = req->getHeader("host");
+    return !host.empty() && origin_host.size() == host.size() &&
+           std::equal(origin_host.begin(), origin_host.end(), host.begin(), [](char a, char b) {
+               return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+           });
+}
+
+template <typename Res>
+static void refuse_cross_origin(Res* res, uWS::HttpRequest* req) {
+    std::cerr << "Web: refused cross-origin request (Origin: " << json_escape(std::string(req->getHeader("origin")))
+              << ", Host: " << json_escape(std::string(req->getHeader("host"))) << ")" << std::endl;
+    res->writeStatus("403 Forbidden")->end("cross-origin request refused");
 }
 
 // Periodic-recal + forward-comp state pushed to the UI as a TEXT frame (the
@@ -124,6 +153,7 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
         body += "]}";
         res->writeHeader("Content-Type", "application/json")->end(body);
     }).post("/s2p_upload", [](auto* res, auto* req) {
+        if (!origin_allowed(req)) { refuse_cross_origin(res, req); return; }
         // Browser uploads one .s2p file: target filename in the ?name= query
         // (URL-decoded), the raw file as the request body. The body streams in,
         // so we accumulate it and act on the final chunk. (req is only valid
@@ -160,6 +190,7 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                        ->writeHeader("Content-Type", "application/json")->end(out);
         });
     }).post("/s2p_delete", [](auto* res, auto* req) {
+        if (!origin_allowed(req)) { refuse_cross_origin(res, req); return; }
         // Delete a calibration file (?name=). Synchronous - no body to read.
         std::string fname(req->getQuery("name"));
         std::string err;
@@ -193,6 +224,16 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
         .compression = uWS::DISABLED,
         .maxPayloadLength = 16 * 1024,
         .idleTimeout = 120,
+
+        // Refuse cross-site WebSocket hijacking (see origin_allowed)
+        .upgrade = [](auto* res, auto* req, auto* context) {
+            if (!origin_allowed(req)) { refuse_cross_origin(res, req); return; }
+            res->template upgrade<PerSocketData>(PerSocketData{},
+                req->getHeader("sec-websocket-key"),
+                req->getHeader("sec-websocket-protocol"),
+                req->getHeader("sec-websocket-extensions"),
+                context);
+        },
         
         .open = [](auto* ws) {
             ws->subscribe("broadcast");

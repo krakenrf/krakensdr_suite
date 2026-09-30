@@ -3958,6 +3958,9 @@ function updateManualSteeringStatus(data) {
 }
 
 function sto(t) {
+  // Only known topologies: the name is rendered into the page, and it can
+  // arrive from another browser via sync_cmd (the server whitelists too)
+  if (!['UCA', 'ULA', 'CUSTOM', 'WIDEBAND'].includes(t)) t = 'UCA';
   // WIDEBAND is only offered on the Wideband hardware variant
   if (t==='WIDEBAND' && !wbVariant.enabled) t='UCA';
 
@@ -4676,7 +4679,7 @@ function createDoaDisplay(decimatorId) {
 
   doaDiv.innerHTML = `
     <h4 style="color:${color}">D${decimatorId} - <span id="fo-${decimatorId}">0</span> kHz</h4>
-    <div class="ti" id="tpi-${decimatorId}">${currentTopology}</div>
+    <div class="ti" id="tpi-${decimatorId}"></div>
     <div class="doa-content-row">
       <div class="dp">
         <canvas id="dcan-${decimatorId}" width="250" height="250"></canvas>
@@ -4692,6 +4695,7 @@ function createDoaDisplay(decimatorId) {
   `;
 
   container.appendChild(doaDiv);
+  $id(`tpi-${decimatorId}`).textContent = currentTopology;  // text, never HTML
   doaPlots[decimatorId] = new PolarPlot(`dcan-${decimatorId}`);
   doaPlots[decimatorId].setConvention(doaConvention);  // match current display setting
   elevationPlots[decimatorId] = new ElevationPlot(`elcan-${decimatorId}`);

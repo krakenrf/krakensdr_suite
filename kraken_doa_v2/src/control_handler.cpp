@@ -842,6 +842,14 @@ void ControlHandler::handle_message_impl(string_view message) {
         string topology_str = string(message.substr(9));
         ArrayTopology new_topology;
 
+        // Whitelist: the value is echoed to every browser, replayed to new
+        // ones and persisted - and the page renders the topology name. An
+        // arbitrary string here was a stored XSS.
+        if (topology_str != "UCA" && topology_str != "ULA" &&
+            topology_str != "CUSTOM" && topology_str != "WIDEBAND") {
+            throw CommandRejected("unknown topology");
+        }
+
         // WIDEBAND: the KrakenSDR Wideband array - UCA math with the radius
         // auto-set from the antenna ring the tuned frequency selects
         // (WB_RING_RADIUS_MM). Only meaningful with --wideband; otherwise
@@ -850,6 +858,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (wb_topo && !wb_variant_enabled.load(std::memory_order_relaxed)) {
             cout << "TOPOLOGY: WIDEBAND requires --wideband mode - using UCA" << endl;
             wb_topo = false;
+            g_applied_cmd = "TOPOLOGY:UCA";  // persist/echo what actually applies
         }
         wb_topology_active = wb_topo;
 
