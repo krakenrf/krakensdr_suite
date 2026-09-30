@@ -77,3 +77,46 @@ const float* iq_lut() {
     }();
     return lut.data();
 }
+
+// Length of the valid UTF-8 sequence starting at s[i], or 0 if it is invalid.
+static size_t utf8_seq_len(std::string_view s, size_t i) {
+    const auto b = [&](size_t k) { return static_cast<unsigned char>(s[k]); };
+    const unsigned char c = b(i);
+    if (c < 0x80) return 1;
+    size_t n; unsigned char lo = 0x80, hi = 0xBF;
+    if (c >= 0xC2 && c <= 0xDF) n = 2;
+    else if (c >= 0xE0 && c <= 0xEF) {
+        n = 3;
+        if (c == 0xE0) lo = 0xA0;        // overlong
+        else if (c == 0xED) hi = 0x9F;   // UTF-16 surrogates
+    } else if (c >= 0xF0 && c <= 0xF4) {
+        n = 4;
+        if (c == 0xF0) lo = 0x90;        // overlong
+        else if (c == 0xF4) hi = 0x8F;   // > U+10FFFF
+    } else return 0;
+    if (i + n > s.size()) return 0;
+    if (b(i + 1) < lo || b(i + 1) > hi) return 0;
+    for (size_t k = 2; k < n; k++)
+        if (b(i + k) < 0x80 || b(i + k) > 0xBF) return 0;
+    return n;
+}
+
+bool utf8_valid(std::string_view s) {
+    for (size_t i = 0; i < s.size();) {
+        const size_t n = utf8_seq_len(s, i);
+        if (n == 0) return false;
+        i += n;
+    }
+    return true;
+}
+
+std::string utf8_sanitize(std::string_view s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size();) {
+        const size_t n = utf8_seq_len(s, i);
+        if (n == 0) { out += "\xEF\xBF\xBD"; i++; }
+        else { out.append(s.substr(i, n)); i += n; }
+    }
+    return out;
+}

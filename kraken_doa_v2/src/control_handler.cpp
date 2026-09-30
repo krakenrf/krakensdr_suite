@@ -1652,6 +1652,14 @@ void ControlHandler::handle_websocket_message(string_view message) {
         if (message.starts_with("UI:")) {
             size_t value_sep = message.find(':', 3);
             if (value_sep == string_view::npos) return;
+            // Only the display settings the page knows (the UI: entries of
+            // the settings schema), with short values: every distinct key was
+            // stored for replay, so a client inventing keys grew the store -
+            // and every new browser's connect sync - without bound.
+            if (!SettingsStore::is_known(message))
+                throw CommandRejected("unknown UI setting");
+            if (message.size() - value_sep - 1 > 64)
+                throw CommandRejected("UI value too long");
             store_for_replay(message, value_sep);
             if (!g_replaying_settings.load()) SettingsStore::record(message);
             broadcast(make_sync_cmd_json(message));

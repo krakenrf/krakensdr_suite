@@ -6,6 +6,7 @@
 #include "../dsp/compensation.hpp" // get_phase_compensation_state (kerberos stale check)
 #include "../core/config.hpp"
 #include "../core/logging.hpp"
+#include "../core/utils.hpp"
 #include "../core/settings.hpp"
 #include "../core/forward_comp.hpp"
 #include "App.h"  // uWebSockets main header
@@ -34,8 +35,11 @@ extern "C" {
 }
 
 // Minimal JSON string escaper (filenames may contain spaces; quotes/backslashes
-// are escaped, control chars dropped). Enough for the small strings we emit.
-static std::string json_escape(const std::string& s) {
+// are escaped, control chars dropped, invalid UTF-8 replaced with U+FFFD - a
+// browser closes a WebSocket on invalid UTF-8 in a TEXT frame). Enough for
+// the small strings we emit.
+static std::string json_escape(const std::string& in) {
+    const std::string s = utf8_sanitize(in);
     std::string o;
     o.reserve(s.size() + 2);
     for (char c : s) {

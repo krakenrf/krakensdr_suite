@@ -25,6 +25,9 @@ namespace SettingsStore {
     // no-op for commands that aren't in the schema.
     void record(std::string_view command);
 
+    // True if the command's prefix is a remembered setting in the schema.
+    bool is_known(std::string_view command);
+
     // Reset every setting to its hardcoded default, write the file immediately,
     // and return the default commands so the caller can apply them live.
     std::vector<std::string> reset_to_defaults();

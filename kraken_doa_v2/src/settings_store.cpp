@@ -262,6 +262,10 @@ void record(string_view command) {
     g_dirty.store(true, memory_order_relaxed);
 }
 
+bool is_known(string_view command) {
+    return find_by_prefix(command) != nullptr;
+}
+
 vector<string> reset_to_defaults() {
     {
         lock_guard<mutex> lk(g_mtx);

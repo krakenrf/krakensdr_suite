@@ -437,21 +437,29 @@ public:
         pfds.push_back({listen_fd_, POLLIN, 0});
         for (auto& c : clients_) pfds.push_back({c.fd, POLLIN, 0});
         int n = poll(pfds.data(), pfds.size(), timeout_ms);
-        if (n <= 0) return;
-
-        if (pfds[0].revents & POLLIN) {
+        const auto now = std::chrono::steady_clock::now();
+        if (n > 0 && (pfds[0].revents & POLLIN)) {
             for (;;) {
                 int cfd = accept(listen_fd_, nullptr, nullptr);
                 if (cfd < 0) break;
+                if (clients_.size() >= MAX_CLIENTS) {  // refuse: close at once
+                    ::close(cfd);
+                    continue;
+                }
                 fcntl(cfd, F_SETFL, fcntl(cfd, F_GETFL, 0) | O_NONBLOCK);
                 int one = 1;
                 setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-                clients_.push_back(Client{cfd, false, {}});
+                clients_.push_back(Client{cfd, false, {}, now});
             }
         }
         for (size_t i = 0; i < clients_.size(); i++) {
-            if (i + 1 < pfds.size() && (pfds[i + 1].revents & (POLLIN | POLLERR | POLLHUP)))
+            if (n > 0 && i + 1 < pfds.size() && (pfds[i + 1].revents & (POLLIN | POLLERR | POLLHUP)))
                 service(clients_[i]);
+            // A connection that never completes the WS handshake would
+            // otherwise hold a client slot (and up to 64 KB) for good.
+            if (clients_[i].fd >= 0 && !clients_[i].open &&
+                now - clients_[i].accepted > HANDSHAKE_TIMEOUT)
+                drop(clients_[i]);
         }
         clients_.erase(remove_if(clients_.begin(), clients_.end(),
                                  [](const Client& c) { return c.fd < 0; }),
@@ -486,7 +494,11 @@ private:
         int fd = -1;
         bool open = false;   // WS handshake completed
         string rxbuf;
+        std::chrono::steady_clock::time_point accepted;
     };
+    // LAN map clients are a handful of browsers / the Android app.
+    static constexpr size_t MAX_CLIENTS = 16;
+    static constexpr std::chrono::seconds HANDSHAKE_TIMEOUT{10};
 
     void drop(Client& c) {
         if (c.fd >= 0) ::close(c.fd);

@@ -69,6 +69,8 @@ const string& auth_token() {
 
 inline bool auth_required() { return !auth_token().empty(); }
 
+constexpr int MAX_WS_CLIENTS = 32;
+
 // Length-aware constant-time compare (avoid leaking the token via timing).
 bool token_matches(string_view provided) {
     const string& expected = auth_token();
@@ -314,7 +316,11 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                ->end(html_content);
         }).ws<PerSocketData>("/*", {
         .compression = uWS::DISABLED,
-        .maxPayloadLength = 16 * 1024 * 1024,
+        // The largest real message is a scanner config (SCANNER_LOAD_CONFIG,
+        // ~100 bytes per channel). uWS buffers a whole message before the
+        // AUTH gate sees it, so this also bounds what an unauthenticated
+        // client can make us hold (it was 16 MB per connection).
+        .maxPayloadLength = 1024 * 1024,
         // A client that vanishes without closing (a phone leaving Wi-Fi) is
         // otherwise kept until the kernel gives up on TCP (~15 min), with
         // broadcasts piling up as backpressure. After 30 s with nothing from
@@ -326,6 +332,13 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
         
         .open = [](auto* ws) {
             int count = ++ws_client_count;  // live count consumed by the status dashboard
+            // Each browser gets every FFT/DoA/audio broadcast (up to 2 MB of
+            // backpressure) - cap the count so a LAN host can't open hundreds.
+            if (count > MAX_WS_CLIENTS) {
+                std::cerr << "[WS] Refusing client: " << MAX_WS_CLIENTS << " already connected" << std::endl;
+                ws->end(1013, "too many clients");  // "try again later"; .close decrements
+                return;
+            }
             std::cout << "[WS] Client CONNECTED! Total clients: " << count << std::endl;
 
             if (auth_required()) {

@@ -7,6 +7,14 @@
 #include <chrono>
 #include <cstring>
 
+namespace {
+// Each client costs a send of every packet (~164 KB at 5 channels, ~40 per
+// second) plus up to one packet tail buffered while it is behind. The DoA
+// client and a GNU Radio source or two are the expected consumers; cap the
+// rest so a LAN host opening connections can't exhaust memory or CPU.
+constexpr size_t MAX_DATA_CLIENTS = 8;
+}
+
 extern std::atomic<bool> bias_tee_enabled;
 
 TcpDataServer::TcpDataServer() : server_socket(-1) {}
@@ -301,10 +309,18 @@ void TcpDataServer::accept_loop() {
             int client_socket = accept(server_socket, (sockaddr*)&client_addr, &addr_len);
             
             if (client_socket >= 0) {
+                std::lock_guard<std::mutex> lock(clients_mutex);
+                clients.erase(std::remove_if(clients.begin(), clients.end(),
+                    [](const auto& client) { return !client->active; }), clients.end());
+                if (clients.size() >= MAX_DATA_CLIENTS) {
+                    std::cerr << "TCP Data: refusing connection from " << inet_ntoa(client_addr.sin_addr)
+                              << " (" << clients.size() << " clients connected)" << std::endl;
+                    close(client_socket);
+                    continue;
+                }
                 // Set non-blocking mode
                 set_socket_nonblocking(client_socket);
-                
-                std::lock_guard<std::mutex> lock(clients_mutex);
+
                 clients.push_back(std::make_unique<TcpClient>(client_socket));
                 std::cout << "TCP Data: FFT Viewer connected from " << inet_ntoa(client_addr.sin_addr) 
                      << ":" << ntohs(client_addr.sin_port) << std::endl;

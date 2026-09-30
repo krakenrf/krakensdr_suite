@@ -3,6 +3,8 @@
 #include <vector>
 #include <cstdint>
 #include <algorithm>
+#include <string>
+#include <string_view>
 
 // Endian utilities
 void append_big_endian(std::vector<uint8_t>& vec, uint32_t value);
@@ -31,3 +33,10 @@ using milliseconds = std::chrono::milliseconds;
 
 // IQ conversion lookup table
 const float* iq_lut();
+
+// UTF-8. Browsers close a WebSocket that receives a TEXT frame with invalid
+// UTF-8, so every client-supplied string that is echoed back out must be
+// valid. utf8_valid: strict (no overlongs, surrogates or > U+10FFFF).
+// utf8_sanitize: replaces each invalid byte with U+FFFD.
+bool utf8_valid(std::string_view s);
+std::string utf8_sanitize(std::string_view s);

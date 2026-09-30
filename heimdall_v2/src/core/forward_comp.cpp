@@ -1,5 +1,6 @@
 #include "forward_comp.hpp"
 #include "config.hpp"
+#include "utils.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -49,8 +50,18 @@ std::string upper(std::string s) {
 
 // A bare filename safe to resolve inside CAL_DIR: non-empty, no path separators
 // and no ".." (defends against traversal / absolute paths from the web layer).
+// Also valid UTF-8 without control characters: the name is saved and echoed
+// in every web STATE message, and one invalid byte there makes every browser
+// drop its WebSocket - for good, since the setting persists across restarts.
 bool valid_basename(const std::string& filename, std::string& err) {
     if (filename.empty()) { err = "empty filename"; return false; }
+    if (filename.size() > 255) { err = "filename too long"; return false; }
+    if (!utf8_valid(filename) ||
+        std::any_of(filename.begin(), filename.end(),
+                    [](char c) { return static_cast<unsigned char>(c) < 0x20 || c == 0x7f; })) {
+        err = "invalid filename";
+        return false;
+    }
     if (filename.find('/')  != std::string::npos ||
         filename.find('\\') != std::string::npos ||
         filename.find("..") != std::string::npos) {
