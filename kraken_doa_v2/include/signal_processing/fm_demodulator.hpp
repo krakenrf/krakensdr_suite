@@ -68,8 +68,9 @@ private:
     // Filter recreation tracking
     std::atomic<bool> need_filter_recreation{false};
 
-    // FM demodulation state (for optimized manual demod)
-    float prev_phase{0.0f};
+    // FM discriminator state: the previous (AGC'd) sample. Zero after a
+    // reset, so the first output is 0 (atan2(0, 0)).
+    std::complex<float> prev_sample{0.0f, 0.0f};
 
     // Pre-allocated work buffers (avoid heap alloc per call in process_decimated_samples)
     std::vector<float> work_demod_audio_;
@@ -118,20 +119,4 @@ private:
     void recreateFilters();
     void setupAudioProcessing(float input_rate);
 
-    // OPTIMIZATION: Fast atan2 approximation (13.8x faster than std::atan2)
-    // Error < 0.005 radians (~0.3 degrees) - suitable for FM demodulation
-    inline float fast_atan2(float y, float x) const {
-        float abs_y = std::abs(y) + 1e-10f; // Prevent division by zero
-        float r, angle;
-
-        if (x >= 0) {
-            r = (x - abs_y) / (x + abs_y);
-            angle = 0.7853981634f - 0.7853981634f * r; // π/4
-        } else {
-            r = (x + abs_y) / (abs_y - x);
-            angle = 2.356194490f - 0.7853981634f * r; // 3π/4
-        }
-
-        return y < 0 ? -angle : angle;
-    }
 };
