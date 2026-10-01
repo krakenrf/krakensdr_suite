@@ -33,6 +33,10 @@ void start_pipeline_threads();
 // L1 / L2-raw / L2 so no stale sets survive into the next configuration.
 void stop_pipeline_threads();
 
+// Save an explicit element-count choice (web UI / control port) without
+// reconfiguring - for a count that is already the live one.
+void remember_num_elements(int n);
+
 // Runtime element-count change: stop the pipeline, close every device handle,
 // reopen the first `new_n`, restart the pipeline and arm a full
 // recalibration (via the coherence-recovery path). On an open failure it

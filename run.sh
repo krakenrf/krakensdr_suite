@@ -383,7 +383,12 @@ run_headless() {
     else
         say "Waiting for phase convergence$([[ "$WAIT_TIMEOUT" -eq 0 ]] && echo " (no timeout)" || echo " (timeout ${WAIT_TIMEOUT}s)")..."
         wait_for_convergence "$WAIT_TIMEOUT" "$hpid"
-        case $? in
+        local wrc=$?
+        # Ctrl+C / TERM during the wait: the trap's cleanup already stopped
+        # everything - a requested stop, not a timeout (this used to fall into
+        # the "Timed out" branch below and exit 1).
+        [[ "$stopping" == "1" ]] && return 0
+        case $wrc in
         0) ;;
         2)
             warn "Heimdall exited during startup. Last log lines:"
@@ -399,6 +404,9 @@ run_headless() {
         ok "Phase converged - DF output is valid."
     fi
 
+    # A stop during the steps above (e.g. the --kerberos sleep) must not go on
+    # to start the client after cleanup has run - it would be left orphaned.
+    [[ "$stopping" == "1" ]] && return 0
     say "Starting KrakenSDR DoA client (headless; log: ${klog#$SCRIPT_DIR/})"
     ( cd "$KRAKEN_DIR" && KRAKEN_DOA_NO_TUI=1 exec ./kraken_doa $WB_FLAG ) >"$klog" 2>&1 &
     kpid=$!

@@ -41,17 +41,22 @@ std::string get_device_serial(int device_index) {
 }
 
 int count_expected_devices_present() {
+    // How many of the expected serials are attached CONSECUTIVELY from the
+    // first: N elements open serials 0..N-1, so with 1000-1003 and 1005
+    // attached (1004 dead) only 4 can run - a plain count said 5 and the open
+    // then failed on 1004.
     const int device_count = rtlsdr_get_device_count();
-    int found = 0;
+    std::vector<std::string> attached;
     for (int i = 0; i < device_count; i++) {
         const std::string serial = get_device_serial(i);
-        if (!serial.empty() &&
-            std::find(expected_serials.begin(), expected_serials.end(), serial) !=
-                expected_serials.end()) {
-            found++;
-        }
+        if (!serial.empty()) attached.push_back(serial);
     }
-    return found;
+    int leading = 0;
+    for (const auto& want : expected_serials) {
+        if (std::find(attached.begin(), attached.end(), want) == attached.end()) break;
+        leading++;
+    }
+    return leading;
 }
 
 std::vector<DeviceMapping> enumerate_devices_by_serial() {

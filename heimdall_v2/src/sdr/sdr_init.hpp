@@ -14,6 +14,8 @@ std::vector<DeviceMapping> enumerate_devices_by_serial();
 // pick the startup element count when neither -n nor a persisted setting says
 // otherwise (the default serial list covers the full 8-channel ceiling, but a
 // KrakenSDR only has 5 dongles and a KerberosSDR 4).
+// Counts the expected serials attached consecutively from the first (the ones
+// an N-element open needs), so a gap ends the count.
 int count_expected_devices_present();
 
 // Device initialization functions

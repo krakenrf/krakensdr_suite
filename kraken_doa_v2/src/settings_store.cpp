@@ -255,6 +255,12 @@ void record(string_view command) {
     const Setting* s = find_by_prefix(command);
     if (!s) return;  // not a remembered setting
     string suffix(command.substr(strlen(s->prefix)));
+    // A NUMBER setting with a non-numeric value would be written out as 0
+    // (write_now) - keep the previous value instead.
+    if (s->type == VType::NUMBER && !is_number(suffix)) {
+        cerr << "SettingsStore: not saving non-numeric " << s->key << " '" << suffix << "'" << endl;
+        return;
+    }
     {
         lock_guard<mutex> lk(g_mtx);
         auto it = g_store.find(s->key);

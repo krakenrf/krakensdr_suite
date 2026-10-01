@@ -376,11 +376,15 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
 
                     // Bounds only keep the integer casts defined; the tuners
                     // clamp gain to their own table.
+                    // Rounded, not truncated: the UI's 64.1 MHz arrives as
+                    // 64099999.99999999 and became 64,099,999 Hz, so the next
+                    // exact retune to 64.1 MHz counted as a change (full retune +
+                    // recal); 49.6 dB * 10 truncated to 495.
                     if (auto freq = extract_value("\"frequency\":"); freq && *freq > 0 && *freq < 1e12) {
-                        new_freq = static_cast<uint64_t>(*freq);
+                        new_freq = static_cast<uint64_t>(std::llround(*freq));
                     }
                     if (auto gain = extract_value("\"gain\":")) {
-                        new_gain = (*gain < 0) ? -1 : static_cast<int>(std::min(*gain, 100.0) * 10);
+                        new_gain = (*gain < 0) ? -1 : static_cast<int>(std::lround(std::min(*gain, 100.0) * 10));
                     }
 
                     // Wideband scan: the tuners are spread around the center, so a

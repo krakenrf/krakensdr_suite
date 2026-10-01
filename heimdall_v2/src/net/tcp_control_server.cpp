@@ -95,7 +95,7 @@ namespace {
 bool parse_rf_frequency(const std::string& s, uint64_t& out) {
     const double d = std::stod(s);
     if (!std::isfinite(d) || d <= 0 || d >= 1e12) return false;
-    out = static_cast<uint64_t>(d);
+    out = static_cast<uint64_t>(std::llround(d));
     return rf_frequency_valid(out);
 }
 
@@ -419,6 +419,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         // (Unless the pipeline is down after a failed reconfiguration: then
         // the same count is a retry that reopens the devices.)
         if (n == active_num_elements.load() && pipeline_running.load(std::memory_order_acquire)) {
+            remember_num_elements(n);  // still an explicit choice: save it
             return "{\"status\":\"success\",\"num_elements\":" + std::to_string(n) + ",\"message\":\"already active\"}";
         }
         std::thread([n]() {
@@ -442,7 +443,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                 // Range-check the double before the cast: a negative or huge
                 // value would make the conversion undefined.
                 const double freq_d = std::stod(freq_str);
-                const uint64_t frequency = (freq_d > 0 && freq_d < 1e12) ? static_cast<uint64_t>(freq_d) : 0;
+                const uint64_t frequency = (freq_d > 0 && freq_d < 1e12) ? static_cast<uint64_t>(std::llround(freq_d)) : 0;  // rounded, not truncated
 
                 // Valid RF range: tuner limits normally; in the wideband
                 // variant the union of all three injection sides' spans -

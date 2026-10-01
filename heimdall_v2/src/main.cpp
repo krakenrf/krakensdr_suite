@@ -339,8 +339,19 @@ int main(int argc, char* argv[]) {
     }
     if (num_elements == 0) {
         const int persisted = settings::persisted_num_elements.load(std::memory_order_acquire);
-        if (persisted >= 2 && persisted <= max_elements) {
+        // The saved choice is used only if its dongles are attached: one
+        // that died or was unplugged made every start fail ("not found on
+        // USB") - the supervisor / systemd restart-looped and the web UI that
+        // could change the setting never came up. Fall back to what's attached
+        // for this run; the saved choice stays for when the dongle returns.
+        const int present = (persisted >= 2 && persisted <= max_elements) ? count_expected_devices_present() : 0;
+        if (persisted >= 2 && persisted <= max_elements && present >= persisted) {
             num_elements = persisted;
+        } else if (persisted >= 2 && persisted <= max_elements && present >= 2) {
+            num_elements = present;
+            std::cerr << "Saved element count " << persisted << " but only " << present
+                      << " expected dongles attached - starting with " << present
+                      << " (the saved choice is kept)" << std::endl;
         } else {
             const int present = count_expected_devices_present();
             num_elements = std::clamp(present, 2, max_elements);

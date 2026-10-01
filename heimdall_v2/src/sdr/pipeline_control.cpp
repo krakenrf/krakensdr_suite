@@ -125,6 +125,16 @@ void stop_pipeline_threads() {
     clear_l2_buffer();
 }
 
+void remember_num_elements(int n) {
+    // Save an explicit element-count choice even when it is already the live
+    // count: started with -n 4 against a saved 5, picking 4 used to leave 5
+    // saved (both the web path and the control port's "already active").
+    if (settings::persisted_num_elements.load(std::memory_order_acquire) != n) {
+        settings::persisted_num_elements.store(n, std::memory_order_release);
+        settings::save();
+    }
+}
+
 bool reconfigure_num_elements(int new_n, std::string& err) {
     const int max_n = static_cast<int>(expected_serials.size());
     if (new_n < 2 || new_n > max_n) {
@@ -136,7 +146,10 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
     // failed: every handle is closed. Any count, including the current one,
     // is then a retry that must reopen the devices, not a no-op.
     const bool pipeline_down = !pipeline_running.load(std::memory_order_acquire);
-    if (new_n == old_n && !pipeline_down) return true;
+    if (new_n == old_n && !pipeline_down) {
+        remember_num_elements(new_n);  // nothing to reopen, but an explicit choice
+        return true;
+    }
 
     if (recovery_in_progress.load(std::memory_order_acquire)) {
         err = "recalibration in progress - retry once it completes";

@@ -42,14 +42,37 @@ extern std::atomic<float> current_edge_clip;
 static bool parse_bool(string_view sv) {
     return sv == "1" || sv == "true";
 }
+// Strict: the WHOLE value must be the number (trailing whitespace allowed).
+// stof/stod/stoi stop at the first bad character, so "GAIN:40x" applied 40
+// while the raw "40x" was saved - and the settings writer, unable to read it
+// back as a number, stored 0 (the next start came up at 0 dB). A throw here is
+// the existing "ignore the malformed command" path (not applied, saved or echoed).
+static void require_whole(const string& s, size_t used) {
+    while (used < s.size() && isspace(static_cast<unsigned char>(s[used]))) used++;
+    if (used != s.size()) throw std::invalid_argument("not a number: " + s);
+}
 static float parse_float(string_view msg, size_t offset) {
-    return stof_finite(string(msg.substr(offset)));
+    const string s(msg.substr(offset));
+    size_t used = 0;
+    const float v = std::stof(s, &used);
+    require_whole(s, used);
+    if (!is_finite_value(v)) throw std::invalid_argument("non-finite number: " + s);
+    return v;
 }
 static double parse_double(string_view msg, size_t offset) {
-    return stod_finite(string(msg.substr(offset)));
+    const string s(msg.substr(offset));
+    size_t used = 0;
+    const double v = std::stod(s, &used);
+    require_whole(s, used);
+    if (!is_finite_value(v)) throw std::invalid_argument("non-finite number: " + s);
+    return v;
 }
 static int parse_int(string_view msg, size_t offset) {
-    return stoi(string(msg.substr(offset)));
+    const string s(msg.substr(offset));
+    size_t used = 0;
+    const int v = std::stoi(s, &used);
+    require_whole(s, used);
+    return v;
 }
 
 // --- Decimator iteration helpers ---
@@ -578,6 +601,12 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("GAIN:")) {
         float gain_db = parse_float(message, 5);
+        // heimdall refuses > 50 dB (the R820T tops out at 49.6), but the
+        // request used to be saved and replayed on every start regardless.
+        // Negative = tuner AGC (heimdall's convention), saved as -1.
+        if (gain_db > 50.0f) throw CommandRejected("gain must be 0-50 dB (or negative for auto)");
+        gain_db = (gain_db < 0.0f) ? -1.0f : std::round(gain_db * 10.0f) / 10.0f;
+        set_applied("GAIN:", gain_db, 1);
         int ch = active_channel.load(std::memory_order_relaxed);
         ChannelManager::set_gain(gain_db, ch);
 
@@ -587,7 +616,13 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("CHANNEL:")) {
         int new_channel = parse_int(message, 8);
-        if (new_channel >= 0 && new_channel < MAX_CHANNELS) {
+        // Out of range used to be ignored but still saved and echoed. Checked
+        // against the compile-time ceiling, not the live count: the startup
+        // replay runs before heimdall's element count is known.
+        if (new_channel < 0 || new_channel >= MAX_CHANNELS) {
+            throw CommandRejected("no such channel");
+        }
+        {
             active_channel = new_channel;
             cout << "Active channel changed to: " << new_channel << " (Display & FM)" << endl;
 
@@ -810,8 +845,9 @@ void ControlHandler::handle_message_impl(string_view message) {
         cout << "Beamforming mode set to " << mode_name << " (all decimators)" << endl;
     }
     else if (message.starts_with("MVDR_DIAGONAL_LOADING:")) {
-        float alpha = parse_float(message, 22);
+        float alpha = std::clamp(parse_float(message, 22), 0.01f, 1.0f);  // the beamformer's own clamp
         decimator_manager.setMVDRDiagonalLoadingAll(alpha);
+        set_applied("MVDR_DIAGONAL_LOADING:", alpha, 3);
 
         stringstream json;
         json << "{\"mvdr_config\":{\"diagonal_loading\":" << alpha << "}}";
@@ -826,8 +862,9 @@ void ControlHandler::handle_message_impl(string_view message) {
         broadcast(json.str());
     }
     else if (message.starts_with("MANUAL_STEERING:")) {
-        int enable = parse_int(message, 16);
+        int enable = parse_int(message, 16) != 0 ? 1 : 0;   // saved as a BOOL: 0/1 only
         manual_steering_enabled.store(enable != 0, std::memory_order_relaxed);
+        set_applied("MANUAL_STEERING:", enable, 0);
 
         stringstream json;
         json << "{\"manual_steering\":{\"enabled\":" << (enable ? "true" : "false")
@@ -1026,6 +1063,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         // the saved value at startup, when the settings replay runs before
         // the real element count has arrived from heimdall (default 5).
         int sources = std::clamp(parse_int(message, 21), 0, DOA_NUM_ELEMENTS - 1);
+        set_applied("MUSIC_SIGNAL_SOURCES:", sources, 0);
         bool auto_mode = (sources == 0);
         forEachMusicProcessor([&](auto* mp) {
             mp->setAutoNumSources(auto_mode);
@@ -1047,7 +1085,8 @@ void ControlHandler::handle_message_impl(string_view message) {
         ULAOutputMode mode;
         if (mode_str == "FORWARD") mode = ULAOutputMode::FORWARD;
         else if (mode_str == "BACKWARD") mode = ULAOutputMode::BACKWARD;
-        else { mode = ULAOutputMode::BOTH; mode_str = "BOTH"; }
+        else if (mode_str == "BOTH") mode = ULAOutputMode::BOTH;
+        else throw CommandRejected("ULA_MODE must be FORWARD, BACKWARD or BOTH");
 
         forEachMusicProcessor([&](auto* mp) { mp->setULAOutputMode(mode); });
         cout << "MUSIC ULA output mode set to " << mode_str << " for all processors" << endl;
@@ -1081,7 +1120,8 @@ void ControlHandler::handle_message_impl(string_view message) {
         LocationSource ls;
         if (src == "static") ls = LocationSource::STATIC;
         else if (src == "gps") ls = LocationSource::GPS;
-        else ls = LocationSource::MOBILE;  // "mobile" or anything unrecognized
+        else if (src == "mobile") ls = LocationSource::MOBILE;
+        else throw CommandRejected("location source must be static, gps or mobile");
         station_info.setSource(ls);
         cout << "Location source set to '" << src << "'" << endl;
     }
@@ -1114,6 +1154,7 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("WEB_MAPPER_MODE:")) {
         string mode = string(message.substr(16));
+        if (mode != "remote" && mode != "local") throw CommandRejected("mode must be remote or local");
         web_mapper.setMode(mode);
         cout << "Web mapper mode set to '" << web_mapper.getMode() << "'" << endl;
     }
@@ -1622,12 +1663,14 @@ void ControlHandler::handle_message_impl(string_view message) {
         broadcast(build_log_list_json());  // final size reflected
     }
     else if (message.starts_with("LOG_INTERVAL:")) {
-        double sec = parse_float(message, 13);  // "LOG_INTERVAL:" == 13 chars
+        double sec = std::clamp(static_cast<double>(parse_float(message, 13)), 0.001, 60.0);  // the logger's clamp
         doa_logger.setIntervalSeconds(sec);
+        set_applied("LOG_INTERVAL:", sec, 3);
         cout << "DoA log interval set to " << sec << " s" << endl;
     }
     else if (message.starts_with("LOG_FORMAT:")) {
         string fmt = string(message.substr(11));  // "csv" | "sqlite"
+        if (fmt != "csv" && fmt != "sqlite") throw CommandRejected("format must be csv or sqlite");
         doa_logger.setFormatString(fmt);
         cout << "DoA log format set to " << fmt << endl;
     }
