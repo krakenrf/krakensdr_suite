@@ -8,7 +8,6 @@
 #include <cmath>
 #include <algorithm>
 #include <iostream>
-#include <numeric>
 #include <array>
 #include <chrono>
 #include <Eigen/Dense>
@@ -716,6 +715,9 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
 #endif
 }
 
+// Lag indices go out as int16 (-CORRELATION_SIZE/2 .. CORRELATION_SIZE/2 - 1)
+static_assert(CORRELATION_SIZE / 2 <= 32768, "correlation lag indices must fit int16 (NUM_SAMPLES <= 32768)");
+
 std::string build_correlation_message(const CorrelationResult& correlation_result,
                                     const FFTProcessingControl& fft_control) {
     std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
@@ -858,9 +860,14 @@ std::string build_correlation_message(const CorrelationResult& correlation_resul
             message.insert(message.end(), reinterpret_cast<const uint8_t*>(&decimated_size), 
                           reinterpret_cast<const uint8_t*>(&decimated_size) + sizeof(uint32_t));
             
+            // decimated_size points spread evenly over the lag axis
+            // (-CORRELATION_SIZE/2 .. +CORRELATION_SIZE/2). It used to fill
+            // -16384, -16383, ... and THEN multiply each by 327, overflowing
+            // int16 into a garbage x-axis whenever the FFT was off.
             std::vector<int16_t> dummy_indices(decimated_size);
-            std::iota(dummy_indices.begin(), dummy_indices.end(), -CORRELATION_SIZE/2);
-            for (auto& idx : dummy_indices) idx *= (CORRELATION_SIZE/decimated_size);
+            for (uint32_t k = 0; k < decimated_size; k++)
+                dummy_indices[k] = static_cast<int16_t>(-CORRELATION_SIZE / 2 +
+                                                        static_cast<int>(k * (CORRELATION_SIZE / decimated_size)));
             
             message.insert(message.end(), reinterpret_cast<const uint8_t*>(dummy_indices.data()), 
                           reinterpret_cast<const uint8_t*>(dummy_indices.data()) + dummy_indices.size() * sizeof(int16_t));

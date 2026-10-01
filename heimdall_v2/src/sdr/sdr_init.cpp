@@ -98,29 +98,24 @@ std::vector<DeviceMapping> enumerate_devices_by_serial() {
         std::cout << std::endl;
     }
     
-    // Check for missing devices
+    // Mapping summary (informational). The default serial list covers the
+    // 8-channel ceiling, so serials beyond the array's size are normally
+    // absent (a stock KrakenSDR has 5): that is not an error, and the old
+    // stderr "ERROR: Not all expected devices found!" filled the errors-only
+    // log on every start. Whether the channels actually being opened are
+    // present is decided - and reported - by the caller.
     std::cout << "\nDevice mapping summary:" << std::endl;
-    bool all_found = true;
+    const int active = active_num_elements.load();
     for (const auto& mapping : mappings) {
         std::cout << "Channel " << mapping.channel_index << " (Serial " << mapping.serial << "): ";
         if (mapping.found) {
             std::cout << "✓ Found as device " << mapping.physical_device_id << std::endl;
         } else {
-            std::cout << "✗ NOT FOUND" << std::endl;
-            all_found = false;
+            std::cout << (mapping.channel_index < active ? "✗ NOT FOUND (needed)" : "- not attached (not needed)")
+                      << std::endl;
         }
     }
-    
-    if (!all_found) {
-        std::cerr << "\nERROR: Not all expected devices found!" << std::endl;
-        std::cerr << "Expected serials: ";
-        for (size_t i = 0; i < expected_serials.size(); i++) {
-            if (i > 0) std::cerr << ", ";
-            std::cerr << expected_serials[i];
-        }
-        std::cerr << std::endl;
-    }
-    
+
     return mappings;
 }
 
@@ -255,16 +250,17 @@ bool open_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
     auto mappings = enumerate_devices_by_serial();
 
     // Check if we have all required devices (only check the ones we need)
-    bool all_devices_found = true;
+    std::string missing;
     for (int i = 0; i < num_to_open; i++) {
-        if (!mappings[i].found) {
-            all_devices_found = false;
-            break;
-        }
+        if (!mappings[i].found)
+            missing += (missing.empty() ? "" : ", ") + std::string("channel ") + std::to_string(i) +
+                       " (serial " + mappings[i].serial + ")";
     }
 
-    if (!all_devices_found) {
-        std::cerr << "ERROR: Not all required devices found. Cannot proceed." << std::endl;
+    if (!missing.empty()) {
+        std::cerr << "ERROR: " << num_to_open << " elements need serials " << expected_serials[0]
+                  << ".." << expected_serials[num_to_open - 1] << ", but " << missing
+                  << " not found on USB. Cannot proceed." << std::endl;
         return false;
     }
 
