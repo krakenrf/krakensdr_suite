@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 
 #include "../core/types.hpp"
 #include <map>
@@ -27,6 +28,11 @@ void begin_retune_cooldown(const char* what);
 
 // Lag compensation functions
 bool process_channel_lag_compensation(int channel, float lag);
+
+// A recalibration requested while the discrete scanner was hopping (retune,
+// gain, start_scanner interrupting one): run by the lag driver once the scan
+// stops - a calibration can't converge across hops.
+extern std::atomic<bool> scanner_cal_deferred;
 void reset_lag_compensation_all_channels();
 
 // Coherence recovery: full flush + recalibration triggered after a detected

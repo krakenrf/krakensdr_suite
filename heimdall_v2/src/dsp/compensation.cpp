@@ -349,6 +349,8 @@ void reset_phase_state_locked(PhaseCompensatorState state) {
     }
 }
 
+std::atomic<bool> scanner_cal_deferred{false};
+
 void begin_retune_cooldown(const char* what) {
     // --kerberos: no automatic recalibration after a settings change (the
     // noise couples into the connected antennas). Keep the old compensation
@@ -371,10 +373,28 @@ void begin_retune_cooldown(const char* what) {
     // noise source on for a calibration that can't run until the scan ends.
     if (operating_mode.load() == OperatingMode::WIDEBAND_SCAN) return;
 
-    set_bias_tee_all_devices(false, devices);
+    // Discrete scanner hopping: a calibration can't converge across hops, and
+    // the cooldown's expiry used to switch the noise source on into the
+    // scanned data. Keep the current calibration applied and recalibrate once
+    // the scan stops (the lag driver watches scanner_cal_deferred).
+    if (discrete_scanner.enabled.load()) {
+        scanner_cal_deferred.store(true, std::memory_order_release);
+        std::cout << what << " during a discrete scan - recalibration deferred until the scan stops" << std::endl;
+        return;
+    }
 
     if (!phase_compensation) return;
     std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+    // Re-checked under the lock: callers test recovery_in_progress first, but
+    // a recovery starting in between would otherwise have its noise source
+    // switched off and its phase machine parked in WAITING_FOR_STABILITY,
+    // where handle_settings_change() then refused every tick until the 120 s
+    // abort. The recovery recalibrates at the new settings anyway.
+    if (recovery_in_progress.load(std::memory_order_acquire)) {
+        std::cout << what << " during coherence recovery - covered by the full recal" << std::endl;
+        return;
+    }
+    set_bias_tee_all_devices(false, devices);  // state -> device_io: documented lock order
     reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_STABILITY);
     phase_compensation->last_frequency_change = std::chrono::steady_clock::now();
     phase_compensation->cooldown_active = true;
@@ -390,7 +410,16 @@ void reset_lag_compensation_all_channels() {
             std::lock_guard<std::mutex> lock(device->compensation_mutex);
 
             // Reset the state machine (MEASURING re-engages the servo, which
-            // zeroes the correction register and its own counters on entry)
+            // zeroes the correction register and its own counters on entry -
+            // but only when a FRESH reading reaches it). Zero a live servo
+            // correction here too: a parked machine (FFT off: kerberos idle,
+            // 120 s abort) never gets that reading, and the channel kept up to
+            // ~357 ppm of sample-clock skew until its L1 overflowed.
+            if (device->compensation.servo_counts != 0) {
+                std::lock_guard<std::recursive_mutex> io(device_io_mutex);
+                if (device->dev) rtlsdr_set_sample_freq_correction_f(device->dev, 0.0f);
+                device->compensation.servo_counts = 0;
+            }
             device->compensation.state = LagCompensatorState::MEASURING;
             device->compensation.zero_lag_count = 0;
             device->compensation.lag_compensation_locked = false;
@@ -663,7 +692,8 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
     // the recovery owns the noise/FFT state, so we must not fight it).
     auto preempted = []() {
         return !global_running.load() || recovery_in_progress.load(std::memory_order_acquire) ||
-               reconfig_in_progress.load(std::memory_order_acquire);
+               reconfig_in_progress.load(std::memory_order_acquire) ||
+               discrete_scanner.enabled.load();  // a scan started mid-check
     };
     auto sleep_slice = [&](milliseconds total) {
         const auto deadline = steady_clock::now() + total;
@@ -838,7 +868,28 @@ bool process_channel_lag_compensation(int channel, float lag) {
     std::lock_guard<std::mutex> lock(device->compensation_mutex);
     auto& comp = device->compensation;
     auto now = std::chrono::steady_clock::now();
-    
+
+    // Lag ACQUISITION (MEASURING / SERVOING) only runs on the noise source.
+    // Parked states - kerberos uncalibrated idle, the watchdog's 120 s abort, a
+    // calibration stood down for a discrete scan - rely on FFT off to idle the
+    // machines; turning the FFT on (web UI checkbox) used to let the servo
+    // acquire on the live antenna signal and the phase stages then latch a
+    // "calibration" against it. A servo caught with the noise off is parked
+    // (register zeroed) so it can't hold a clock skew.
+    if (comp.state != LagCompensatorState::CONVERGED && !bias_tee_enabled.load(std::memory_order_acquire)) {
+        if (comp.state == LagCompensatorState::SERVOING && comp.servo_counts != 0) {
+            {
+                std::lock_guard<std::recursive_mutex> io(device_io_mutex);
+                if (device->dev) rtlsdr_set_sample_freq_correction_f(device->dev, 0.0f);
+            }
+            comp.servo_counts = 0;
+            comp.state = LagCompensatorState::MEASURING;
+            std::cerr << "Channel " << channel << ": noise source off mid-acquisition - "
+                         "lag servo parked (register zeroed)" << std::endl;
+        }
+        return false;
+    }
+
     switch (comp.state) {
         case LagCompensatorState::SERVOING: {
             // Closed-loop proportional servo (see types.hpp): the correction
@@ -1116,7 +1167,11 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                 last_processed_sequence = current_sequence;
             }
         }
-        const bool phase_reading = fresh && lag_all_converged && phases_measured;
+        // ...and only while the noise source is on: the phase stages must never
+        // calibrate on antenna signals (see the lag gate in
+        // process_channel_lag_compensation for the parked states this covers).
+        const bool phase_reading = fresh && lag_all_converged && phases_measured &&
+                                   bias_tee_enabled.load(std::memory_order_acquire);
 
         if (current_lag) {
             const auto now = std::chrono::steady_clock::now();
@@ -1128,6 +1183,24 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
             }
         }
         
+        // A recalibration deferred because the discrete scanner was hopping
+        // (begin_retune_cooldown / handle_settings_change / start_scanner):
+        // run it once the scan stops, at the frequency it stopped on. Checked
+        // here, before the CONVERGED + FFT-off skip below - that is the normal
+        // idle state, and the deferred recal never ran from inside it. A
+        // coherence recovery stood down by start_scanner is still in progress:
+        // give it its noise source back so it resumes (begin_retune_cooldown
+        // would defer to it, and it would sit until the 120 s abort).
+        if (channel == (REF_CHANNEL == 0 ? 1 : 0) && !discrete_scanner.enabled.load() &&
+            scanner_cal_deferred.exchange(false, std::memory_order_acq_rel)) {
+            if (recovery_in_progress.load(std::memory_order_acquire)) {
+                if (!bias_tee_enabled.load()) set_bias_tee_all_devices(true, devices);
+                std::cout << "Discrete scan stopped: resuming the stood-down coherence recovery" << std::endl;
+            } else {
+                begin_retune_cooldown("Discrete scan stopped");
+            }
+        }
+
         if (current_lag) {
             // Skip ALL compensation processing if calibration is complete AND FFT is disabled
             if (auto current_state = get_phase_compensation_state();
@@ -1170,7 +1243,9 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                                         now - phase_compensation->last_frequency_change).count();
 
                                     int delay_ms = phase_compensation->stability_delay_override_ms.load();
-                                    if (elapsed >= delay_ms) {
+                                    // Never start a calibration while the discrete
+                                    // scanner hops - wait for it to stop.
+                                    if (elapsed >= delay_ms && !discrete_scanner.enabled.load()) {
                                         std::cout << "Frequency stable for " << delay_ms << "ms, starting calibration..." << std::endl;
                                         phase_compensation->cooldown_active = false;
                                         should_start_calibration = true;

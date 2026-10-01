@@ -963,6 +963,22 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
             return "{\"status\":\"error\",\"message\":\"Scanner not configured. Use configure_scanner first.\"}";
         }
 
+        // A calibration in flight (noise source on, phase machine not
+        // CONVERGED: startup, recovery, retune recal) can't converge across
+        // hops and would inject the noise into the scanned data. Stand it down
+        // and recalibrate once the scan stops. Under state_mutex so one can't
+        // start in between. (A periodic check in flight - CONVERGED - stands
+        // itself down; a pending cooldown waits for the scan to stop.)
+        if (phase_compensation && !kerberos_manual_cal_only()) {
+            std::lock_guard<std::mutex> sl(phase_compensation->state_mutex);
+            if (phase_compensation->state != PhaseCompensatorState::CONVERGED &&
+                bias_tee_enabled.load(std::memory_order_acquire)) {
+                set_bias_tee_all_devices(false, devices);
+                scanner_cal_deferred.store(true, std::memory_order_release);
+                std::cerr << "Scanner: calibration in progress - stood down until the scan stops" << std::endl;
+            }
+            discrete_scanner.enabled = true;   // under the lock: no calibration starts after the check
+        }
         discrete_scanner.enabled = true;
         discrete_scanner.current_group_index = 0;
         discrete_scanner.frequency_change_counter = 0;

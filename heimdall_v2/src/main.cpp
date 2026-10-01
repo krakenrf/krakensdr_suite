@@ -540,6 +540,10 @@ int main(int argc, char* argv[]) {
         // A web/control command or a noise-source switch still in flight must
         // not use a handle mid-close.
         std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
+        // Switch the noise source off first: the fork's rtlsdr_close keeps the
+        // bias-tee state, so stopping mid-calibration left the KrakenSDR noise
+        // source powered for whatever software used the dongles next.
+        if (bias_tee_enabled.load()) set_bias_tee_all_devices(false, devices);
         for (auto& device : devices) {
             if (device && device->dev) {
                 rtlsdr_close(device->dev);

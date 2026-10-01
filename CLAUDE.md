@@ -381,6 +381,9 @@ disconnected for a calibration to be valid. Start heimdall with `--kerberos`
   flushes and drops back to UNCALIBRATED
   (`kerberos_enter_uncalibrated()` / `kerberos_manual_cal_only()` in
   `heimdall_v2/src/dsp/compensation.cpp` + `core/config.hpp`)
+- Leaving the tuner-spread wideband scan never runs the automatic recal here:
+  a manual calibration from before the scan is put back (STALE if the
+  frequency moved meanwhile), otherwise the state stays UNCALIBRATED
 - **Manual calibration**: the heimdall web UI's "Force Recalibration Now"
   button (confirm dialog: disconnect all antennas first) is the ONLY trigger
   that runs the noise-source calibration - it flows through

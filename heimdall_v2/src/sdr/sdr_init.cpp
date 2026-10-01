@@ -334,6 +334,11 @@ void close_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
 
 void wideband_set_noise_path(bool noise_on, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
     if (!downconverter.enabled.load()) return;
+    // Every GPIO write here is a USB read-modify-write on the channel-0 handle.
+    // Most callers already hold the (recursive) device lock; control-port
+    // set_array did not, so it could interleave with a noise toggle into a
+    // mixed switch pattern, or use the handle while a reconfiguration closed it.
+    std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
 
     // Unlike the standard KrakenSDR, whose directional-coupler network keeps
     // the noise source permanently coupled into every channel (GPIO0 merely
@@ -630,6 +635,15 @@ void handle_settings_change() {
     // injected across the whole scan. Leaving the scan recalibrates anyway.
     if (operating_mode.load() == OperatingMode::WIDEBAND_SCAN) return;
 
+    // Discrete scanner hopping: a calibration can't converge across hops and
+    // would inject the noise source into the scanned data - recalibrate once
+    // the scan stops (begin_retune_cooldown has the same rule).
+    if (discrete_scanner.enabled.load() && !kerberos_manual_cal_only()) {
+        scanner_cal_deferred.store(true, std::memory_order_release);
+        std::cout << "System: settings changed during a discrete scan - recalibration deferred" << std::endl;
+        return;
+    }
+
     // --kerberos: a settings change may not trigger the noise-source phase
     // recal (antennas are connected). Keep the current compensation applied -
     // approximately valid for small changes - and mark it STALE so both UIs
@@ -694,6 +708,14 @@ void handle_settings_change() {
 }
 
 // Wideband mode functions
+// The calibration in force when the wideband scan started (guarded by
+// settings_mutex, held by set_wideband_mode). Only --kerberos needs it: leaving
+// the scan may not run the automatic noise-source recal there, so a manual
+// calibration is put back instead of being thrown away.
+static bool wb_entry_converged = false;
+static bool wb_entry_per_bin = false;
+static uint64_t wb_entry_freq = 0;
+
 bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
     // The tuner-spread scan needs to retune individual tuners, but the
     // Wideband (downconverter) variant requires every tuner parked at the IF -
@@ -724,6 +746,9 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
         if (phase_compensation) {
             std::lock_guard<std::mutex> ph_lock(phase_compensation->state_mutex);
             PhaseCompensatorState old_state = phase_compensation->state;
+            wb_entry_converged = (old_state == PhaseCompensatorState::CONVERGED);
+            wb_entry_per_bin = per_bin_cal.ready.load(std::memory_order_acquire);
+            wb_entry_freq = current_frequency.load();
             phase_compensation->state = PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION;
             phase_compensation->compensation_applied = false;
             phase_compensation->convergence_count = 0;
@@ -766,13 +791,16 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
 
         // Restore all tuners to the same frequency
         uint32_t coherent_freq = static_cast<uint32_t>(current_frequency.load());
+        bool tuners_ok = true;
         {
             std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
             for (const auto& device : devices) {
                 if (device && device->dev) {
-                    if (rtlsdr_set_center_freq(device->dev, coherent_freq) < 0) {
+                    if (rtlsdr_set_center_freq(device->dev, coherent_freq) < 0 &&
+                        rtlsdr_set_center_freq(device->dev, coherent_freq) < 0) {
                         std::cerr << "Wideband: channel " << device->index << " failed to return to "
                                   << coherent_freq / 1e6 << " MHz" << std::endl;
+                        tuners_ok = false;
                     }
                     wideband_config.set_tuner_frequency(device->index, coherent_freq);
                 }
@@ -782,6 +810,39 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
         // follow it (it is frequency dependent)
         if (forward_comp.enabled.load(std::memory_order_relaxed)) {
             fwdcomp::recompute(static_cast<double>(current_frequency.load()));
+        }
+
+        // A tuner still at its scan frequency shares no band with the others:
+        // the phase recal below could never converge. Hand it to the coherence
+        // watchdog (flush + full recal, or uncalibrated idle with --kerberos),
+        // which re-tunes nothing but at least won't latch a calibration.
+        if (!tuners_ok) signal_coherence_lost("wideband scan exit: a tuner failed to return");
+
+        // --kerberos (manual calibration only): never switch the noise source on
+        // here - the antennas are connected. Put back the calibration from
+        // before the scan (marked STALE if the frequency moved or the per-bin
+        // equalizer was dropped), or return to the uncalibrated idle state.
+        // This used to fall through to the automatic recal below.
+        if (kerberos_manual_cal_only()) {
+            if (wb_entry_converged && phase_compensation) {
+                {
+                    std::lock_guard<std::mutex> ph_lock(phase_compensation->state_mutex);
+                    phase_compensation->state = PhaseCompensatorState::CONVERGED;
+                    phase_compensation->compensation_applied = true;
+                }
+                if (current_frequency.load() != wb_entry_freq || wb_entry_per_bin) {
+                    kerberos_cal_stale.store(true, std::memory_order_release);
+                    std::cerr << "KerberosSDR: wideband scan ended - calibration restored but STALE "
+                                 "(frequency or per-bin EQ changed). Disconnect antennas and press "
+                                 "Recalibrate." << std::endl;
+                } else {
+                    std::cout << "KerberosSDR: wideband scan ended - manual calibration restored" << std::endl;
+                }
+            } else {
+                kerberos_enter_uncalibrated("wideband scan ended");
+            }
+            std::cout << "Wideband: Returned to coherent mode (no automatic calibration: --kerberos)" << std::endl;
+            return true;
         }
 
         // Re-enable phase calibration by resetting to wait for lag convergence state
