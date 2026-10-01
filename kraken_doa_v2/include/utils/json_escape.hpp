@@ -68,26 +68,10 @@ inline int json_hex4(const std::string& json, size_t p) {
     return v;
 }
 
-// The reverse of json_escape for the flat objects we read (the settings file,
-// web-mapper cloud messages): locates "key": <value> and returns the decoded
-// string for a quoted value - every JSON escape, \uXXXX as UTF-8 including
-// surrogate pairs - or the raw token for a bare number/bool. false if absent.
-inline bool json_find(const std::string& json, const std::string& key, std::string& out) {
-    const std::string needle = "\"" + key + "\"";
-    size_t p = json.find(needle);
-    if (p == std::string::npos) return false;
-    p = json.find(':', p + needle.size());
-    if (p == std::string::npos) return false;
-    p++;
-    while (p < json.size() && std::isspace(static_cast<unsigned char>(json[p]))) p++;
-    if (p >= json.size()) return false;
-    if (json[p] != '"') {
-        size_t e = p;
-        while (e < json.size() && json[e] != ',' && json[e] != '}' &&
-               !std::isspace(static_cast<unsigned char>(json[e]))) e++;
-        out = json.substr(p, e - p);
-        return true;
-    }
+// Decode the JSON string whose opening quote is at json[p]: every escape,
+// \uXXXX as UTF-8 including surrogate pairs. Returns the position just past
+// the closing quote (json.size() if unterminated).
+inline size_t json_read_string(const std::string& json, size_t p, std::string& out) {
     p++;
     std::string s;
     while (p < json.size() && json[p] != '"') {
@@ -124,5 +108,44 @@ inline bool json_find(const std::string& json, const std::string& key, std::stri
         }
     }
     out = s;
-    return true;
+    return p < json.size() ? p + 1 : p;
+}
+
+// The reverse of json_escape for the flat objects we read (the settings file,
+// web-mapper cloud messages): locates "key": <value> and returns the decoded
+// string for a quoted value or the raw token for a bare number/bool. false if
+// absent. Only a KEY of the top-level object matches: the scan walks string
+// tokens, so a string VALUE that happens to equal the key name (a station ID
+// of "latitude", say) - or the key text inside another string or a nested
+// object - is skipped. (A plain text search returned the token after the
+// first such occurrence instead.)
+inline bool json_find(const std::string& json, const std::string& key, std::string& out) {
+    int depth = 0;
+    size_t p = 0;
+    while (p < json.size()) {
+        const char c = json[p];
+        if (c == '"') {
+            std::string tok;
+            p = json_read_string(json, p, tok);
+            size_t q = p;
+            while (q < json.size() && std::isspace(static_cast<unsigned char>(json[q]))) q++;
+            if (depth != 1 || q >= json.size() || json[q] != ':' || tok != key) continue;
+            q++;  // the value
+            while (q < json.size() && std::isspace(static_cast<unsigned char>(json[q]))) q++;
+            if (q >= json.size()) return false;
+            if (json[q] == '"') {
+                json_read_string(json, q, out);
+                return true;
+            }
+            size_t e = q;
+            while (e < json.size() && json[e] != ',' && json[e] != '}' &&
+                   !std::isspace(static_cast<unsigned char>(json[e]))) e++;
+            out = json.substr(q, e - q);
+            return true;
+        }
+        if (c == '{' || c == '[') depth++;
+        else if (c == '}' || c == ']') depth--;
+        p++;
+    }
+    return false;
 }

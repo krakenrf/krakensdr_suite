@@ -118,7 +118,9 @@ directly.
 - `include/utils/json_escape.hpp`: `json_escape()` for every hand-built JSON
   emitter, and `json_find()` - the one flat-object reader (settings file,
   web-mapper cloud messages) - which decodes every JSON escape including
-  `\uXXXX` (to UTF-8, surrogate pairs too), so values round-trip
+  `\uXXXX` (to UTF-8, surrogate pairs too), so values round-trip. It matches
+  only KEYS of the top-level object (a string value equal to the key name,
+  key text inside another string, or a nested object's key is skipped)
 
 **Managers** (`src/`):
 - `channel_manager.cpp`: Channel state (frequency, gain, tuner mappings)

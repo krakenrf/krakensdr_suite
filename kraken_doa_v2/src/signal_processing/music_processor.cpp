@@ -766,8 +766,17 @@ std::pair<float, float> MUSICProcessor::getPeakAngleWithConfidence() const {
 
     float angle_degrees = interpolatePeakAngle(max_idx, max_val);
 
-    // Calculate confidence as peak-to-average ratio (normalized)
-    double mean_val = pseudospectrum.mean();
+    // Calculate confidence as peak-to-average ratio (normalized). The mean
+    // covers only bins still in play: ULA forward/backward truncation zeroes
+    // half the circle (applyOutputTransforms), which halved a plain mean and
+    // doubled the ratio - an inflated confidence. MUSIC values are always
+    // > 0, so the zeroed bins are exactly the masked ones.
+    double sum_val = 0.0;
+    int n_live = 0;
+    for (Eigen::Index i = 0; i < pseudospectrum.size(); i++) {
+        if (pseudospectrum(i) > 0.0) { sum_val += pseudospectrum(i); n_live++; }
+    }
+    double mean_val = n_live > 0 ? sum_val / n_live : 0.0;
     float confidence = 0.0f;
 
     if (mean_val > 0) {
@@ -1364,7 +1373,9 @@ void MUSICProcessor::setElevationResolution(float resolution_degrees) {
 
     if (abs(elevation_resolution_ - resolution_degrees) > 0.01f) {
         elevation_resolution_ = resolution_degrees;
-        num_elevation_angles_ = static_cast<int>(180.0f / resolution_degrees + 0.5f) + 1;  // -90 to +90
+        // -90 .. +90: floor, not round - rounding up put the top step past
+        // +90 deg for resolutions that don't divide 180 (1.9 deg -> +90.5)
+        num_elevation_angles_ = static_cast<int>(std::floor(180.0f / resolution_degrees + 1e-4f)) + 1;
 
         // Resize elevation spectrum
         elevation_pseudospectrum_.resize(num_elevation_angles_);

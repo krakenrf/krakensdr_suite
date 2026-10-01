@@ -419,11 +419,14 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
             if (!global_running || !pipeline_running.load(std::memory_order_acquire)) return;
             continue;  // timeout: nothing to convert yet
         }
+        // Matched with the drain's fetch_add on EVERY dequeue - including the
+        // stop path below, which used to return first and leave a phantom +1
+        // in the depth counter after each pipeline stop (element-count change).
+        l2_raw_buffer_size.fetch_sub(1, std::memory_order_relaxed);
         if (!global_running || !pipeline_running.load(std::memory_order_acquire)) {
             recycle_raw_set(raw_set);
             return;
         }
-        l2_raw_buffer_size.fetch_sub(1, std::memory_order_relaxed);
 
         // -------- Convert (in place into the pooled set) --------
         // Channel count comes from the SET, not a captured constant: the drain

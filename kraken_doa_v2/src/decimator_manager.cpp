@@ -108,7 +108,7 @@ int DecimatorManager::addDecimator() {
         const auto& reference = decimators[0];
         if (reference) {
             // Copy bandwidth setting
-            instance->bandwidth_index = reference->bandwidth_index;
+            instance->bandwidth_index = reference->bandwidth_index.load();
             instance->decimator->setBandwidthIndex(reference->bandwidth_index);
 
             // DO NOT copy frequency offset - new decimators start at 0 Hz (center)

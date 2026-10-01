@@ -21,12 +21,16 @@ public:
         // and the beamformed-FFT slice it produces for the UI overlay/squelch.
         std::unique_ptr<Beamformer> beamformer;
         BeamformedFFTData beamformed_fft;
-        float frequency_offset_hz;
-        int bandwidth_index;
-        bool enabled;
+        // Tuning fields are written on the uWS loop (VFO commands, scanner)
+        // while the decimation pass / FM path / status builders read them on
+        // other threads - atomic, like the squelch fields below (they were
+        // plain fields: a data race, i.e. undefined behaviour).
+        std::atomic<float> frequency_offset_hz;
+        std::atomic<int> bandwidth_index;
+        std::atomic<bool> enabled;
         std::atomic<bool> being_deleted{false};
-        int wideband_tuner_channel;  // Which tuner channel to use in wideband mode (0-4)
-        DemodulatorMode demod_mode;  // Per-decimator demodulator mode
+        std::atomic<int> wideband_tuner_channel;  // Which tuner channel to use in wideband mode (0-4)
+        std::atomic<DemodulatorMode> demod_mode;  // Per-decimator demodulator mode
 
         // Per-decimator squelch settings
         // Default squelch level is 15dB above normalized noise floor (0dB)

@@ -419,6 +419,16 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
+    // Wideband variant: pick the antenna ring for the STARTUP frequency before
+    // the devices open - device init throws the RF path switches for
+    // downconverter.array_select, which otherwise stayed at its default (outer)
+    // until a later retune crossed a ring boundary: a startup RF >= 1 GHz
+    // calibrated and ran on the wrong ring. (Retunes keep it in step via
+    // wideband_retune_rf.)
+    if (downconverter.enabled.load()) {
+        downconverter.array_select.store(wb_ring_for_rf(current_frequency.load()));
+    }
+
     if (!init_all_rtlsdr_devices(devices)) {
         std::cerr << "Device initialization failed" << std::endl;
         return 1;

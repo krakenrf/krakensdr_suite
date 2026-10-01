@@ -101,6 +101,7 @@ private:
     // Scan state
     std::atomic<int>  state_{IDLE};
     std::atomic<bool> running_{false};
+    std::mutex lifecycle_mutex_;   // serializes start() / stop()
 
     // Signals detected in the current band
     std::vector<std::pair<float, float>> detected_signals_;  // (freq_hz, power_db)

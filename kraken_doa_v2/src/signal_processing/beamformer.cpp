@@ -359,26 +359,10 @@ void Beamformer::delayAndSum(const SharedDecimator::MultiChannelDecimated& input
         return;
     }
 
-    // Diagnostic mode: manual steering at ~0 deg performs a plain
-    // unweighted coherent sum (no phase alignment)
-    const bool plain_sum =
-        manual_steering_enabled.load(std::memory_order_relaxed) &&
-        std::fabs(manual_steering_angle.load(std::memory_order_relaxed)) < 0.1f;
-
+    // (A manual steering angle of ~0 deg used to switch to an undocumented
+    // plain unweighted sum - no phase alignment - although 0 deg is a real
+    // bearing. Every angle now steers.)
     output.resize(n);
-
-    if (plain_sum) {
-        for (size_t i = 0; i < n; i++) {
-            double acc_re = 0.0, acc_im = 0.0;
-            for (int k = 0; k < num_elements_; k++) {
-                acc_re += static_cast<double>(ch[k][i].real());
-                acc_im += static_cast<double>(ch[k][i].imag());
-            }
-            output[i] = std::complex<float>(static_cast<float>(acc_re),
-                                            static_cast<float>(acc_im));
-        }
-        return;
-    }
 
     // out[i] = sum_k conj(w_k) * s_k[i]  - aligns each channel's phase to
     // the steering direction. Accumulate in double for precision.

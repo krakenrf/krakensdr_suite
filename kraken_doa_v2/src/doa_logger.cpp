@@ -361,6 +361,19 @@ bool DoaLogger::openSink(Format fmt, const std::string& path) {
     if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path(), ec);
 
     if (fmt == Format::CSV) {
+        // Appending CSV text to an existing SQLite recording of the same name
+        // corrupts it (the reverse is refused by SQLite itself: "file is not a
+        // database"). Check the 16-byte SQLite header first.
+        if (std::FILE* probe = std::fopen(path.c_str(), "rb")) {
+            char hdr[16] = {};
+            const size_t got = std::fread(hdr, 1, sizeof(hdr), probe);
+            std::fclose(probe);
+            if (got == sizeof(hdr) && std::memcmp(hdr, "SQLite format 3", sizeof(hdr)) == 0) {
+                setError("'" + p.filename().string() + "' is an SQLite recording - pick another "
+                         "name, or the SQLite format, to add to it");
+                return false;
+            }
+        }
         csv_file_ = std::fopen(path.c_str(), "a");
         if (!csv_file_) {
             setError("Cannot open CSV file for append: " + path);

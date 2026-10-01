@@ -34,6 +34,12 @@ ContinuousScanner::~ContinuousScanner() {
 // ============================================================================
 
 bool ContinuousScanner::start() {
+    // start/stop are serialized: each was a check-then-act on running_, so two
+    // concurrent stops (a browser command vs. shutdown) could both pass and
+    // both join() the scanner thread (UB), and two starts could both spawn
+    // one (std::terminate on the second thread assignment). The scanner
+    // thread never calls start/stop, so stop() may join it under the lock.
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
     if (running_.load()) {
         return false;
     }
@@ -97,11 +103,10 @@ bool ContinuousScanner::start() {
 }
 
 bool ContinuousScanner::stop() {
-    if (!running_.load()) {
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
+    if (!running_.exchange(false)) {
         return false;
     }
-
-    running_.store(false);
     state_.store(IDLE);
 
     if (scanner_thread_.joinable()) {

@@ -656,15 +656,18 @@ void ControlHandler::handle_message_impl(string_view message) {
         DemodulatorMode new_mode;
         int suggested_bandwidth_index = -1;  // -1 means don't change
 
+        // Looked up by decimation factor (2.4 MS/s / factor), not by table
+        // position: the hard-coded NBFM index 20 was 16 kHz, not the 12 kHz
+        // intended.
         if (mode_str == "NBFM" || mode_str == "nbfm") {
             new_mode = DemodulatorMode::NBFM;
-            suggested_bandwidth_index = 20;  // 12 kHz - appropriate for NBFM
+            suggested_bandwidth_index = find_bandwidth_index(200);  // 12 kHz
         } else if (mode_str == "AM" || mode_str == "am") {
             new_mode = DemodulatorMode::AM;
-            suggested_bandwidth_index = 14;  // 60 kHz - appropriate for AM
+            suggested_bandwidth_index = find_bandwidth_index(40);   // 60 kHz
         } else {
             new_mode = DemodulatorMode::WBFM;  // Default to WBFM
-            suggested_bandwidth_index = 7;    // 240 kHz - appropriate for WBFM
+            suggested_bandwidth_index = find_bandwidth_index(10);   // 240 kHz
         }
 
         fm_demod.setDemodulatorMode(new_mode);

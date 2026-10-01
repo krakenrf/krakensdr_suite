@@ -2218,9 +2218,20 @@ class AudioEngine {
     this.node=null;
     this.volume=0.5;
     this.init=false;
+    this.initPromise=null;
   }
-  async initialize() {
-    if(this.init)return true;
+  // Callers share one in-flight start-up: init only turns true after the
+  // worklet loads (an await), so a second call meanwhile (a keydown right after
+  // the starting click, say) used to build a second AudioContext and leak the
+  // first - browsers cap how many may exist.
+  initialize() {
+    if(this.init)return Promise.resolve(true);
+    if(!this.initPromise){
+      this.initPromise=this.startup().finally(()=>{this.initPromise=null;});
+    }
+    return this.initPromise;
+  }
+  async startup() {
     try {
       // The decoder always produces 48 kHz PCM. Pinning the context to 48 kHz
       // makes the browser resample to the device rate internally - without it
@@ -5983,6 +5994,43 @@ function addTouchHandlers(el, down, move, up) {
   // SCANNER FUNCTIONS
   // ============================================================================
 
+  // Check a loaded scanner file and return a normalized copy (numbers as
+  // numbers, documented defaults filled in); throws a message naming the
+  // problem. It used to be sent as-is: a non-numeric freq_mhz broke the list
+  // render (toFixed), out-of-range frequencies went straight to the scanner,
+  // and missing fields silently became the server's defaults (100 MHz).
+  function validateScannerConfig(c) {
+    if (!c || typeof c !== 'object' || Array.isArray(c)) throw 'the file is not a JSON object';
+    if (!Array.isArray(c.frequencies)) throw 'missing a "frequencies" list';
+    if (c.frequencies.length > 1000) throw 'too many frequencies (' + c.frequencies.length + ', max 1000)';
+    const num = (v, def, lo, hi, what) => {
+      if (v === undefined || v === null) return def;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < lo || n > hi) throw what + ' must be a number from ' + lo + ' to ' + hi;
+      return n;
+    };
+    const frequencies = c.frequencies.map((f, i) => {
+      const where = 'frequency #' + (i + 1);
+      if (!f || typeof f !== 'object' || Array.isArray(f)) throw where + ' is not an object';
+      if (f.freq_mhz === undefined) throw where + ' has no freq_mhz';
+      return {
+        freq_mhz: num(f.freq_mhz, 0, FREQ_MIN, FREQ_MAX, where + ': freq_mhz'),
+        bandwidth_khz: num(f.bandwidth_khz, 12.5, 0.1, 2400, where + ': bandwidth_khz'),
+        label: f.label === undefined || f.label === null ? '' : String(f.label).slice(0, 64),
+        enabled: f.enabled === undefined ? true : !!f.enabled,
+      };
+    });
+    return {
+      name: c.name === undefined ? 'Scanner' : String(c.name).slice(0, 64),
+      version: Math.round(num(c.version, 1, 0, 1e6, 'version')),
+      squelch_db: num(c.squelch_db, 20, -50, 100, 'squelch_db'),
+      dwell_time_ms: Math.max(500, Math.round(num(c.dwell_time_ms, 500, 0, 3600000, 'dwell_time_ms'))),
+      hysteresis_db: num(c.hysteresis_db, 5, 0, 50, 'hysteresis_db'),
+      lock_timeout_ms: Math.round(num(c.lock_timeout_ms, 200, 0, 3600000, 'lock_timeout_ms')),
+      frequencies,
+    };
+  }
+
   function loadScannerFile() {
     const input = document.createElement('input');
     input.type = 'file';
@@ -5994,8 +6042,14 @@ function addTouchHandlers(el, down, move, up) {
       scannerFileName = file.name;
       const reader = new FileReader();
       reader.onload = (event) => {
+        let config;
         try {
-          const config = JSON.parse(event.target.result);
+          config = validateScannerConfig(JSON.parse(event.target.result));
+        } catch (err) {
+          alert('Invalid scanner configuration file: ' + (err instanceof SyntaxError ? 'not valid JSON' : err));
+          return;
+        }
+        try {
           scannerConfig = config;
 
           // Send to server

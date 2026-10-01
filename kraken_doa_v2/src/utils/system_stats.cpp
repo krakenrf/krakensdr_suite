@@ -3,7 +3,9 @@
 #include <iomanip>
 #include <fstream>
 #include <sstream>
+#include <chrono>
 #include <cstring>
+#include <mutex>
 
 using namespace std;
 using namespace chrono;
@@ -20,10 +22,25 @@ static float read_cpu_temp() {
     return -1.0f;
 }
 
-// Read CPU usage from /proc/stat (delta between calls)
+// Read CPU usage from /proc/stat (delta since the previous sample).
+// Two threads ask for it - the 500 ms status broadcast (uWS loop) and the TUI
+// dashboard - and the previous totals were plain statics: a data race, and
+// each caller's "since my last call" window was cut short by the other's.
+// Now one mutex-guarded sample at most every 400 ms, shared by both.
 static float read_cpu_usage() {
+    static std::mutex mtx;
+    static std::chrono::steady_clock::time_point last_sample{};
+    static float cached = 0.0f;
     static long long prev_total = 0;
     static long long prev_idle = 0;
+
+    std::lock_guard<std::mutex> lock(mtx);
+    const auto now = std::chrono::steady_clock::now();
+    if (last_sample.time_since_epoch().count() != 0 &&
+        now - last_sample < std::chrono::milliseconds(400)) {
+        return cached;
+    }
+    last_sample = now;
 
     ifstream f("/proc/stat");
     if (!f.is_open()) return 0.0f;
@@ -47,8 +64,9 @@ static float read_cpu_usage() {
     prev_total = total;
     prev_idle = idle_total;
 
-    if (total_delta <= 0) return 0.0f;
-    return 100.0f * (1.0f - static_cast<float>(idle_delta) / static_cast<float>(total_delta));
+    if (total_delta <= 0) return cached;
+    cached = 100.0f * (1.0f - static_cast<float>(idle_delta) / static_cast<float>(total_delta));
+    return cached;
 }
 
 // Read RAM usage from /proc/meminfo
