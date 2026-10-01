@@ -105,6 +105,7 @@ FMDemodulatorRobust::~FMDemodulatorRobust() {
     if (deemphasis) iirfilt_rrrf_destroy(deemphasis);
     if (dc_blocker) iirfilt_rrrf_destroy(dc_blocker);
     if (audio_resampler) resamp_rrrf_destroy(audio_resampler);
+    if (audio_msresampler) msresamp_rrrf_destroy(audio_msresampler);
 }
 
 void FMDemodulatorRobust::setInputSampleRate(float rate_hz) {
@@ -152,6 +153,7 @@ void FMDemodulatorRobust::recreateFilters() {
     if (deemphasis) iirfilt_rrrf_destroy(deemphasis);
     if (dc_blocker) iirfilt_rrrf_destroy(dc_blocker);
     if (audio_resampler) resamp_rrrf_destroy(audio_resampler);
+    if (audio_msresampler) { msresamp_rrrf_destroy(audio_msresampler); audio_msresampler = nullptr; }
 
     float current_input_rate = input_sample_rate.load();
     DemodulatorMode mode = current_mode.load();
@@ -243,6 +245,21 @@ void FMDemodulatorRobust::recreateFilters() {
 
     std::cout << "Created audio resampler: " << (current_input_rate/1000.0f) << "kHz -> 48.0kHz exactly"
              << " (ratio=" << ratio << ", cutoff=" << cutoff_freq << ", filter_len=" << filter_len << ")" << std::endl;
+
+    // Downsampling to 48 kHz (VFO wider than 48 kHz) goes through a multi-stage
+    // resampler instead: the single-stage one above (13-sample semi-length)
+    // can't realize a cutoff at ratio*0.4 of a fast input - measured at 2.4 MHz
+    // in: a 60 kHz tone only -2.7 dB down, 100 kHz -7.8 dB, so stereo
+    // subcarrier, RDS and the discriminator's rising noise folded into the
+    // audio as hiss; and it muffled the WBFM passband at the default 240 kHz
+    // (15 kHz -2.8 dB, 20 kHz -6.9 dB). msresamp: 0 dB to 15 kHz, 60 kHz
+    // -69 dB, ~71 ms CPU per audio second at 2.4 MHz in (8 ms at 240 kHz).
+    if (ratio < 1.0f) {
+        audio_msresampler = msresamp_rrrf_create(ratio, 60.0f);
+        if (!audio_msresampler) {
+            std::cerr << "Multi-stage audio resampler creation failed - using the single-stage one" << std::endl;
+        }
+    }
 
 
     // De-emphasis filter (75µs time constant for FM broadcast)
@@ -422,7 +439,17 @@ void FMDemodulatorRobust::process_decimated_samples(
 
     // Use resampler to get exactly 48kHz - no decimation path
     size_t total_resampled = 0;
-    for (const float& audio_sample : work_demod_audio_) {
+    if (audio_msresampler) {
+        // Downsampling: block call, output count <= ceil(n * ratio) + stage slack
+        const size_t n = work_demod_audio_.size();
+        work_processed_audio_.resize(static_cast<size_t>(n * resampling_ratio.load()) + 64);
+        unsigned int written = 0;
+        msresamp_rrrf_execute(audio_msresampler, work_demod_audio_.data(), static_cast<unsigned int>(n),
+                              work_processed_audio_.data(), &written);
+        work_processed_audio_.resize(written);
+        total_resampled = written;
+    }
+    else for (const float& audio_sample : work_demod_audio_) {
         unsigned int num_written;
         // resamp_rrrf_execute writes up to ceil(ratio)+1 samples per input.
         // Worst case is the 1 kHz bandwidth option: 48000/1000 ≈ 48 → 49 writes.
@@ -581,6 +608,9 @@ void FMDemodulatorRobust::reset_audio_buffer() {
     // Reset resampler state
     if (audio_resampler) {
         resamp_rrrf_reset(audio_resampler);
+    }
+    if (audio_msresampler) {
+        msresamp_rrrf_reset(audio_msresampler);
     }
 
     // Force buffer refill before audio resumes

@@ -186,6 +186,7 @@ public:
         // Beamformed combined stream for this decimator (DAS/MVDR/etc).
         std::vector<std::complex<float>> beamformed_samples;
         bool have_beamformed = false;
+        bool beamformer_ran = false;   // beamformer invoked for this block (output may be empty while FD-DAS buffers)
     };
 
     // Get decimator info for UI

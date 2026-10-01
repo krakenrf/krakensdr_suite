@@ -776,7 +776,9 @@ void DataReceiver::decimation_processor_thread() {
                         inst->beamformer->setCustomPositions(inst->music_processor->getCustomPositions());
                     }
                     inst->beamformer->setFrequency(inst->music_processor->getEffectiveFrequency());
+                    inst->beamformer->setSampleRate(result.decimated_data.output_rate_hz);
 
+                    result.beamformer_ran = true;
                     if (inst->beamformer->process(result.decimated_data, result.beamformed_samples)) {
                         result.have_beamformed = true;
 
@@ -812,9 +814,17 @@ void DataReceiver::decimation_processor_thread() {
                         fm_item.output_rate_hz = result.decimated_data.output_rate_hz;
                         fm_item.timestamp = steady_clock::now();
 
-                        // Use this decimator's beamformed data if available, otherwise single channel
-                        if (result.have_beamformed && !result.beamformed_samples.empty()) {
-                            fm_item.decimated_samples = std::move(result.beamformed_samples);
+                        // Beamformer running for this decimator: its output only.
+                        // FD-DAS emits in 128-sample hops after a 256-sample fill,
+                        // so a short block (narrow bandwidths) often yields
+                        // nothing; falling back to the raw channel for those
+                        // blocks interleaved current raw audio with the delayed
+                        // beamformed stream (~1.36x real-time input, scrambled,
+                        // clicks at every switch). Otherwise: the single channel.
+                        if (result.beamformer_ran) {
+                            if (result.have_beamformed && !result.beamformed_samples.empty()) {
+                                fm_item.decimated_samples = std::move(result.beamformed_samples);
+                            }
                         } else {
                             int channel_idx = wideband_enabled ? 0 : current_active;
                             if (channel_idx < static_cast<int>(result.decimated_data.channels.size()) &&

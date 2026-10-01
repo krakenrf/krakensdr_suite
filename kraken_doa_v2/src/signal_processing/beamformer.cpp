@@ -173,9 +173,18 @@ void Beamformer::setFrequency(float freq_hz) {
 float Beamformer::getFrequency() const { return frequency_hz_; }
 
 void Beamformer::setSampleRate(float rate_hz) {
+    // Called every block with the decimator's output rate (it used to be
+    // never called: FD-DAS's per-bin phase table always assumed 240 kHz). A
+    // real change - relative threshold, rates go down to 1 kHz - also drops
+    // the FD-DAS history/overlap so blocks of two rates are never spliced,
+    // and forces the phase table to rebuild for the new bin spacing.
     std::lock_guard<std::mutex> config_lock(config_mutex_);
-    if (std::fabs(sample_rate_hz_ - rate_hz) > 100.0f) {
+    if (rate_hz > 0.0f && std::fabs(sample_rate_hz_ - rate_hz) > 0.001f * rate_hz) {
         sample_rate_hz_ = rate_hz;
+        std::lock_guard<std::mutex> lock(fdds_mutex_);
+        fdds_history_.assign(num_elements_, {});
+        fdds_overlap_.assign(FDDAS_HOP, std::complex<float>(0.0f, 0.0f));
+        fdds_last_angle_ = -1000.0f;
     }
 }
 

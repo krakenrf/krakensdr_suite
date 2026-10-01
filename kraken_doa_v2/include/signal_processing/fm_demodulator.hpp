@@ -63,6 +63,9 @@ private:
     
     // Resampling support
     resamp_rrrf audio_resampler = nullptr;  // Real-to-real resampler for audio
+    // Downsampling (input > 48 kHz): multi-stage half-band + arbitrary
+    // resampler, used instead of audio_resampler (see recreateFilters)
+    msresamp_rrrf audio_msresampler = nullptr;
     std::atomic<float> resampling_ratio{1.0f};
     
     // Filter recreation tracking
