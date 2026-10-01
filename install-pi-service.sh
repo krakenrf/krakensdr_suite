@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# install-service.sh - Run the KrakenSDR suite automatically at boot.
+# install-pi-service.sh - Run the KrakenSDR suite automatically at boot.
 #
 #   * systemd starts run.sh at boot (detached tmux session, no attach)
 #   * desktop boot: a single desktop autostart opens ONE terminal viewing it
@@ -13,12 +13,12 @@
 # Safe to re-run; every step is idempotent.
 #
 # Usage:
-#   ./install-service.sh
-#   VARIANT_FLAGS=--wideband ./install-service.sh
-#   VARIANT_FLAGS=--kerberos_sw KRAKEN_TUNERS=4 ./install-service.sh
-#   APP_DIR=/opt/krakensdr_suite ./install-service.sh
-#   BOOT_MODE=console ./install-service.sh   # auto|desktop|console|keep
-#   ./install-service.sh --uninstall
+#   ./install-pi-service.sh
+#   VARIANT_FLAGS=--wideband ./install-pi-service.sh
+#   VARIANT_FLAGS=--kerberos_sw KRAKEN_TUNERS=4 ./install-pi-service.sh
+#   APP_DIR=/opt/krakensdr_suite ./install-pi-service.sh
+#   BOOT_MODE=console ./install-pi-service.sh   # auto|desktop|console|keep
+#   ./install-pi-service.sh --uninstall
 #
 set -euo pipefail
 
@@ -33,6 +33,17 @@ RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
 APP_DIR="${APP_DIR:-$RUN_HOME/krakensdr_suite}"
 RUN_SH="$APP_DIR/run.sh"
 SVC=/etc/systemd/system/krakensdr.service
+
+# A value for a systemd unit line, double-quoted: an APP_DIR with a space
+# split ExecStart into two words. '%' is a unit specifier and '$' an env
+# reference inside Exec lines, so both are escaped too.
+sd_quote() {
+    local s="${1//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//%/%%}"
+    s="${s//\$/\$\$}"
+    printf '"%s"' "$s"
+}
 
 say()  { echo -e "\033[36;1m==>\033[0m \033[1m$*\033[0m"; }
 ok()   { echo -e "\033[32m   ok  $*\033[0m"; }
@@ -56,7 +67,10 @@ strip_console_attach() {
 if [[ "${1:-}" == "--uninstall" ]]; then
     sudo systemctl disable --now krakensdr.service 2>/dev/null || true
     sudo rm -f "$SVC" /usr/local/bin/kraken-term /usr/local/bin/kraken-wait-usb
-    sudo rm -rf /etc/systemd/system/NetworkManager-wait-online.service.d
+    # Only OUR drop-in: the directory may hold other packages' or the admin's
+    # overrides, which an rm -rf of it used to delete too.
+    sudo rm -f /etc/systemd/system/NetworkManager-wait-online.service.d/timeout.conf
+    sudo rmdir --ignore-fail-on-non-empty /etc/systemd/system/NetworkManager-wait-online.service.d 2>/dev/null || true
     rm -f "$RUN_HOME/.config/autostart/kraken-term.desktop"
     sed -i '/kraken-term/d' "$RUN_HOME/.config/labwc/autostart" 2>/dev/null || true
     sed -i '/kraken-term/d' "$RUN_HOME/.config/wayfire.ini" 2>/dev/null || true
@@ -116,8 +130,8 @@ Type=forking
 GuessMainPID=yes
 User=$RUN_USER
 Group=$RUN_USER
-WorkingDirectory=$APP_DIR
-Environment=HOME=$RUN_HOME
+WorkingDirectory=${APP_DIR//%/%%}
+Environment=$(sd_quote "HOME=$RUN_HOME")
 Environment=TMUX_TMPDIR=/tmp
 Environment=TMUX_SESSION=$SESSION
 Environment=NO_ATTACH=1
@@ -125,8 +139,8 @@ Environment=WAIT_TIMEOUT=$WAIT_TIMEOUT
 Environment=KRAKEN_TUNERS=$KRAKEN_TUNERS
 Environment=PYTHONUNBUFFERED=1
 ExecStartPre=/usr/local/bin/kraken-wait-usb
-ExecStart=$RUN_SH $VARIANT_FLAGS
-ExecStop=$RUN_SH stop
+ExecStart=$(sd_quote "$RUN_SH") $VARIANT_FLAGS
+ExecStop=$(sd_quote "$RUN_SH") stop
 # Realtime-priority limit for heimdall's SCHED_RR USB reader / sample-drain
 # threads (RT_PRIO_* in heimdall_v2/config.h, <= 30). install.sh's
 # limits.conf entry only applies to PAM logins, not to systemd services, so
@@ -310,6 +324,6 @@ cat <<EOF
   While the service is running, use systemctl / kraken-term rather than
   running run.sh by hand.
 
-  Remove with:  ./install-service.sh --uninstall
+  Remove with:  ./install-pi-service.sh --uninstall
 
 EOF

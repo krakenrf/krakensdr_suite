@@ -119,6 +119,13 @@ make debug-arm    # ARM build with NEON debug output
   headless mode aborts with heimdall's log tail if it dies; in tmux mode the
   client pane gives up if the heimdall pane's supervisor exits (a crash is
   restarted by the supervisor, so the wait continues through it).
+- Headless mode has no supervisor: when heimdall ends on its own, run.sh
+  exits with heimdall's status (1 = startup failure, 128+N = killed by signal
+  N, e.g. 139 for a crash); a stop it was asked for (Ctrl+C / TERM) exits 0.
+- Testing a COPY of run.sh still stops the live stack: before starting it
+  replaces any tmux session named `$TMUX_SESSION` (default `krakensdr`) and
+  sweeps stale heimdall/kraken_doa processes - give the copy its own
+  `TMUX_SESSION` and stub `stop_stale`.
 - Boot service (`install-pi-service.sh`): `Type=forking`, `ExecStop=run.sh
   stop`, `LimitRTPRIO=30` (realtime USB threads), `Restart=on-failure`.
 

@@ -25,7 +25,10 @@
 #   SKIP_RTLSDR=1 ./install.sh  # skip the librtlsdr fork build/install (heimdall's
 #                               # make still builds the static library if missing)
 #
-set -euo pipefail
+# -E (errtrace): without it bash does not run the ERR trap inside functions or
+# subshells - and nearly every step lives in one (install_librtlsdr,
+# build_app, ...), so a failure there aborted with no message at all.
+set -Eeuo pipefail
 
 # On any failure, say exactly where we died - with `set -e` a mid-script abort
 # otherwise looks like steps were silently skipped.

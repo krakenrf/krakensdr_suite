@@ -348,9 +348,10 @@ run_headless() {
     # NOTE: hpid/kpid are intentionally NOT 'local' - the EXIT-trap cleanup runs
     # after this function returns (e.g. when Heimdall dies) and must still see
     # them to kill the client. As locals they would be out of scope by then.
-    hpid=""; kpid=""
+    hpid=""; kpid=""; stopping=0
     mkdir -p "$LOG_DIR"
     cleanup() {
+        stopping=1  # a requested stop: heimdall ending now is not a crash
         trap - INT TERM EXIT; echo
         say "Shutting down..."
         [[ -n "$kpid" ]] && kill "$kpid" 2>/dev/null || true
@@ -408,13 +409,26 @@ run_headless() {
     echo "-------------------------------------------------------------------------------"
     tail -n 0 -F --pid="$hpid" "$hlog" "$klog" &
     wait "$!" 2>/dev/null || true
-    warn "Heimdall process ended; shutting down."
+    # Heimdall ended. Pass its status on (it exits 0 after a clean signal
+    # shutdown, 1 on a startup failure, 128+N when killed by signal N): this
+    # used to return 0 even after a crash, so a container restart policy or
+    # a CI check could not tell. A stop WE requested (Ctrl+C / TERM -> cleanup,
+    # which already reaped it) counts as success.
+    local hrc=0
+    wait "$hpid" 2>/dev/null || hrc=$?
+    if [[ "$stopping" == "1" || "$hrc" -eq 0 ]]; then
+        warn "Heimdall process ended; shutting down."
+        return 0
+    fi
+    warn "Heimdall exited with status $hrc; shutting down. Last log lines:"
+    tail -n 15 "$hlog" | sed 's/^/     /'
+    return "$hrc"
 }
 
 if [[ "${NO_TMUX:-0}" == "1" ]] || ! command -v tmux >/dev/null 2>&1; then
     [[ "${NO_TMUX:-0}" == "1" ]] || warn "tmux not found - falling back to headless mode (no dashboards)."
     run_headless
-    exit 0
+    exit $?
 fi
 
 # ===========================================================================
