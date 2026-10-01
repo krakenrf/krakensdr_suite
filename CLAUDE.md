@@ -288,7 +288,12 @@ Edit `kraken_doa_v2/include/config.hpp`:
 
 **Bandwidth Options**:
 - `BANDWIDTH_OPTIONS`: Integer decimation factors with no resampling
-- Supports 2.4 MHz down to 12 kHz bandwidth
+- Supports 2.4 MHz down to 1 kHz bandwidth (the narrow end - 10 kHz to 1 kHz -
+  is for weak CW beacons, wildlife tags, fox hunts). MUSIC accumulates across
+  blocks (a 1 kHz block is ~7 samples) and caps a frame at ~1 s of samples
+  (min 4 snapshots), so narrow bandwidths still give ~1 bearing/s; the
+  beamformed FFT collects short blocks until it has 64 samples. The web UI
+  draws a VFO at least 8 px wide so a 1 kHz bar stays visible/grabbable
 
 **Web Mapper output (built-in)**:
 - The DoA client streams legacy "doapost" records to the KrakenSDR web mapper

@@ -195,8 +195,11 @@ void MUSICProcessor::endTiming() {
 }
 
 bool MUSICProcessor::processDecimatedIQ(const SharedDecimator::MultiChannelDecimated& decimated_data) {
-    // Quick check without locks first
-    if (!processing_enabled || decimated_data.min_samples < 16) {
+    // Quick check without locks first. Any non-empty block is accumulated:
+    // frames are built from the accumulator, not from single blocks, and at
+    // the narrowest bandwidths a block is tiny (16384 / 2400 = ~7 samples at
+    // 1 kHz). A former 16-sample minimum meant MUSIC never ran at 2 kHz / 1 kHz.
+    if (!processing_enabled || decimated_data.min_samples == 0) {
         return false;
     }
 
@@ -323,10 +326,28 @@ void MUSICProcessor::addToAccumulatorOptimized(const SharedDecimator::MultiChann
 
 bool MUSICProcessor::extractSnapshotsOptimized() {
     lock_guard<mutex> lock(accumulator_.buffer_mutex);
-    
-    size_t samples_needed = config_.min_snapshots * config_.snapshot_length;
-    if (config_.overlap_samples > 0 && config_.min_snapshots > 1) {
-        samples_needed -= (config_.min_snapshots - 1) * config_.overlap_samples;
+
+    size_t step_size = (config_.snapshot_length > config_.overlap_samples) ?
+                      (config_.snapshot_length - config_.overlap_samples) : config_.snapshot_length;
+
+    // Snapshots per frame. At narrow bandwidths the configured minimum
+    // (default 16 x 256 with 64 overlap = 3136 samples) takes seconds to
+    // collect - 1.6 s at 2 kHz, 3.1 s at 1 kHz - so bearings would crawl. Cap
+    // the frame at MAX_FRAME_SECONDS of samples, but never below
+    // MIN_NARROW_SNAPSHOTS (4 x 256 = 832 samples, still >= 100x the element
+    // count for the covariance). Wider bandwidths are unaffected.
+    size_t min_snaps = config_.min_snapshots;
+    if (last_input_rate_hz_ > 0.0f && config_.snapshot_length > 0) {
+        const double window = static_cast<double>(last_input_rate_hz_) * MAX_FRAME_SECONDS;
+        size_t fit = (window > config_.snapshot_length)
+            ? static_cast<size_t>((window - config_.snapshot_length) / step_size) + 1 : 1;
+        fit = max(fit, MIN_NARROW_SNAPSHOTS);
+        min_snaps = min(min_snaps, fit);
+    }
+
+    size_t samples_needed = min_snaps * config_.snapshot_length;
+    if (config_.overlap_samples > 0 && min_snaps > 1) {
+        samples_needed -= (min_snaps - 1) * config_.overlap_samples;
     }
     
     if (accumulator_.samples_available < samples_needed) {
@@ -335,9 +356,7 @@ bool MUSICProcessor::extractSnapshotsOptimized() {
     
     snapshot_mgr_.snapshots.clear();
     snapshot_mgr_.snapshots.reserve(config_.num_snapshots);
-    
-    size_t step_size = (config_.snapshot_length > config_.overlap_samples) ? 
-                      (config_.snapshot_length - config_.overlap_samples) : config_.snapshot_length;
+
     size_t start_offset = 0;
     
     // Pre-check if working matrix needs resizing (do once, not in loop)
@@ -357,7 +376,7 @@ bool MUSICProcessor::extractSnapshotsOptimized() {
         start_offset += step_size;
     }
     
-    snapshot_mgr_.snapshots_ready = (snapshot_mgr_.snapshots.size() >= config_.min_snapshots);
+    snapshot_mgr_.snapshots_ready = (snapshot_mgr_.snapshots.size() >= min_snaps);
     
     if (snapshot_mgr_.snapshots_ready && snapshot_mgr_.snapshots.size() > 0) {
         size_t consumed_samples = step_size * (snapshot_mgr_.snapshots.size() - 1) + config_.snapshot_length;

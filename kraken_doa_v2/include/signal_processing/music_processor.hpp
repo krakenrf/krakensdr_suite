@@ -219,6 +219,10 @@ private:
     // retuning; dropped packets) or a sample-rate change (bandwidth switch)
     // clears the accumulator, so a frame never mixes pre- and post-gap data.
     static constexpr std::chrono::milliseconds MAX_INPUT_GAP{200};
+    // Narrow-bandwidth frame cap (extractSnapshotsOptimized): a frame never
+    // waits for more than this much signal, nor uses fewer snapshots than this
+    static constexpr double MAX_FRAME_SECONDS = 1.0;
+    static constexpr size_t MIN_NARROW_SNAPSHOTS = 4;
     std::chrono::steady_clock::time_point last_input_time_{};
     float last_input_rate_hz_ = 0.0f;
     // Configuration

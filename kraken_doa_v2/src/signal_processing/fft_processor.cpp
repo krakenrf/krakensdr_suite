@@ -952,11 +952,29 @@ void FFTProcessor::process_beamformed_fft(BeamformedFFTData& out,
     // Use a fixed FFT size for beamformed data (1024 is good for decimated data)
     constexpr int BEAMFORMED_FFT_SIZE = 1024;
 
-    // Minimum samples needed - reduced to support narrow bandwidths (NBFM at 12 kHz = ~82 samples)
-    // Zero-padding handles smaller sample counts, just with lower frequency resolution
-    constexpr size_t MIN_SAMPLES = 32;
-    if (num_samples < MIN_SAMPLES || !iq_data) {
-        return;
+    // Minimum samples per FFT. A block shorter than that (bandwidths of 8 kHz
+    // and below: 16384 / 300 = ~55 samples per block at 8 kHz, ~7 at 1 kHz) is
+    // collected in out.pending until there are enough - this used to skip
+    // those blocks, so at <= 4 kHz the beamformed FFT never ran and its
+    // squelch never updated. Zero-padding covers the rest of the 1024 points.
+    constexpr size_t MIN_SAMPLES = 64;
+    if (!iq_data || num_samples == 0) return;
+    std::vector<std::complex<float>> gathered;
+    if (num_samples < MIN_SAMPLES) {
+        std::lock_guard<std::mutex> pl(out.mutex);
+        if (out.pending_rate_hz != sample_rate_hz || out.pending_center_hz != center_freq_hz) {
+            out.pending.clear();  // retune / bandwidth change: never mix the two
+            out.pending_rate_hz = sample_rate_hz;
+            out.pending_center_hz = center_freq_hz;
+        }
+        out.pending.insert(out.pending.end(), iq_data, iq_data + num_samples);
+        if (out.pending.size() < MIN_SAMPLES) return;
+        gathered.swap(out.pending);
+        iq_data = gathered.data();
+        num_samples = gathered.size();
+    } else {
+        std::lock_guard<std::mutex> pl(out.mutex);
+        out.pending.clear();
     }
 
     // Use a static context for beamformed FFT (thread-safe via mutex)

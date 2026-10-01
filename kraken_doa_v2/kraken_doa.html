@@ -1099,10 +1099,11 @@ const bwo=[
   {decimation:1200,bandwidth:0.002,name:"2 kHz"},
   {decimation:2400,bandwidth:0.001,name:"1 kHz"}
 ];
-// Minimum bandwidth index to prevent stack overflow with high decimation VLAs
-// Index 21 = 12 kHz (decimation 200), safe for stack-allocated arrays
-const MIN_BW_INDEX = 21;
-const MIN_BW_MHZ = bwo[MIN_BW_INDEX].bandwidth; // 0.012 MHz
+// Narrowest selectable bandwidth: the whole table, down to 1 kHz (decimation
+// 2400) - narrow channels for weak CW beacons / wildlife tags / fox hunts.
+// MUSIC accumulates across blocks and shortens its frames at these rates.
+const MIN_BW_INDEX = bwo.length - 1;
+const MIN_BW_MHZ = bwo[MIN_BW_INDEX].bandwidth; // 0.001 MHz
 
 // Max tuning-bar offset from center (Hz) for a bar of bwMhz width: half the
 // visible (edge-clipped, wideband-aware) span minus half the bar width.
@@ -2695,7 +2696,6 @@ function toggleSection(header) {
 
 function findNearestBw(mhz) {
   let min=Infinity,idx=Math.min(currentBandwidth, MIN_BW_INDEX);
-  // Only search within valid range to prevent stack overflow with high decimation
   for(let i=0;i<=MIN_BW_INDEX;i++) {
     const d=Math.abs(bwo[i].bandwidth-mhz);
     if(d<min){min=d;idx=i;}
@@ -2901,8 +2901,16 @@ function drawBox() {
     pxMin = Math.max(0, Math.min(w, pxMin));
     pxMax = Math.max(0, Math.min(w, pxMax));
 
-    const bx = Math.min(pxMin, pxMax);
-    const bw2 = Math.abs(pxMax - pxMin);
+    let bx = Math.min(pxMin, pxMax);
+    let bw2 = Math.abs(pxMax - pxMin);
+    // A narrow VFO (down to 1 kHz) is under a pixel wide on the full span:
+    // draw and hit-test it at least MIN_BOX_PX wide around its centre so it
+    // stays visible and grabbable (zoomed in, it is drawn at its true width).
+    const MIN_BOX_PX = 8;
+    if (bw2 < MIN_BOX_PX) {
+      bx = (pxMin + pxMax) / 2 - MIN_BOX_PX / 2;
+      bw2 = MIN_BOX_PX;
+    }
 
     // Middle grab handle dimensions
     const handleHeight = 24;
@@ -4824,7 +4832,7 @@ function setDecimatorFreq(id, offset_khz) {
 }
 
 function setDecimatorBandwidth(id, bw_index) {
-  // Clamp to valid range to prevent stack overflow with high decimation VLAs
+  // Clamp to the selectable range
   bw_index = Math.max(0, Math.min(parseInt(bw_index), MIN_BW_INDEX));
   send('SET_DECIMATOR_BW:' + id + ':' + bw_index);
 }
