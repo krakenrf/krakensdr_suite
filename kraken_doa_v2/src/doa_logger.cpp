@@ -66,6 +66,7 @@ std::vector<DoaRecord> capture_doa_records() {
     for (const auto& dec : all_decimators) {
         if (!dec || !dec->music_processor || dec->being_deleted.load()) continue;
         if (!dec->music_processor->isEnabled()) continue;
+        if (dec->music_processor->isResultStale()) continue;  // bearing from before a retune / VFO move
 
         auto [bearing, confidence] = dec->music_processor->getPeakAngleWithConfidence();
         if (bearing < 0) continue;

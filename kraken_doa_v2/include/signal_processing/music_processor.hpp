@@ -95,6 +95,12 @@ public:
     // is published. Used by the DoA logger to dedup: the same frame is never logged
     // twice, and sub-frame logging intervals collapse to the real data rate.
     int64_t getResultStampMs() const { return result_stamp_ms_.load(std::memory_order_relaxed); }
+    // True from a frequency change (centre retune or VFO move) until the next
+    // published frame: the pseudospectrum still holds the OLD frequency's
+    // bearing. Publishers of records (web mapper, DOA_value page, recorder)
+    // skip it - they used to send the old bearing labelled with the new
+    // frequency for the ~4 s retune hold.
+    bool isResultStale() const { return result_stale_.load(std::memory_order_relaxed); }
 
     void setArrayTopology(ArrayTopology topology);
     ArrayTopology getArrayTopology() const;
@@ -243,6 +249,7 @@ private:
     // Stamp (system_clock ms) of the most recently published pseudospectrum.
     // See getResultStampMs().
     std::atomic<int64_t> result_stamp_ms_{0};
+    std::atomic<bool> result_stale_{false};   // see isResultStale()
 
     // Serializes the processing path against config setters (which resize
     // steering_vectors/pseudospectrum) and against result getters reading

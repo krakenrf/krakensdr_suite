@@ -7,6 +7,7 @@
 #include "../core/config.hpp"
 #include "../core/logging.hpp"
 #include "../core/utils.hpp"
+#include "../core/host_check.hpp"
 #include "../core/settings.hpp"
 #include "../core/forward_comp.hpp"
 #include "App.h"  // uWebSockets main header
@@ -58,6 +59,10 @@ static std::string json_escape(const std::string& in) {
 // cross-site request (curl, scripts, test tools) and is allowed; "null"
 // (sandboxed / file:// pages) is refused.
 static bool origin_allowed(uWS::HttpRequest* req) {
+    // DNS rebinding passes the Origin == Host test below (the attacker's own
+    // name is both), so the Host must also be a name this device is reached
+    // by (core/host_check.hpp; KRAKEN_ALLOWED_HOSTS adds names).
+    if (!host_allowed(req->getHeader("host"))) return false;
     const std::string_view origin = req->getHeader("origin");
     if (origin.empty()) return true;
     const size_t scheme_end = origin.find("://");
@@ -72,7 +77,7 @@ static bool origin_allowed(uWS::HttpRequest* req) {
 
 template <typename Res>
 static void refuse_cross_origin(Res* res, uWS::HttpRequest* req) {
-    std::cerr << "Web: refused cross-origin request (Origin: " << json_escape(std::string(req->getHeader("origin")))
+    std::cerr << "Web: refused cross-origin / unknown-host request (set KRAKEN_ALLOWED_HOSTS to allow a name) (Origin: " << json_escape(std::string(req->getHeader("origin")))
               << ", Host: " << json_escape(std::string(req->getHeader("host"))) << ")" << std::endl;
     res->writeStatus("403 Forbidden")->end("cross-origin request refused");
 }

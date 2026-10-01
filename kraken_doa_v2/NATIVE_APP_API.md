@@ -57,6 +57,17 @@ authentication is required and you may skip this step entirely.
 
 If no token is configured, sending `AUTH:<anything>` is a harmless no-op.
 
+With a token configured: send `AUTH:` within **10 s** of connecting (the
+socket is closed otherwise); at most 8 connections may be waiting to
+authenticate at once (`1013` otherwise); and an IP that sends 5 wrong tokens
+within 60 s is refused (`1008 too many failed attempts`) for the rest of that
+window.
+
+Every connection must address the device by an IP, `localhost`, its hostname
+(`<host>`, `<host>.local`, ...) or a name in `KRAKEN_ALLOWED_HOSTS`, and a
+browser connection's `Origin` must match its `Host` - otherwise the upgrade is
+answered `403`.
+
 > The token is configured server-side via the `KRAKEN_API_TOKEN` environment
 > variable or an `api_token` file next to the binary. Use a long random
 > alphanumeric token. It is NOT embedded in the served page (anyone who can

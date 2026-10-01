@@ -241,6 +241,7 @@ bool MUSICProcessor::processDecimatedIQ(const SharedDecimator::MultiChannelDecim
     // eigenvalue-squelch gate suppressed is computed but NOT published, so it
     // is not stamped - downstream consumers keep holding the last open frame.
     if (processed && frame_published_) {
+        result_stale_.store(false, std::memory_order_relaxed);
         result_stamp_ms_.store(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count(),
@@ -890,6 +891,7 @@ void MUSICProcessor::setFrequencyWithOffset(float base_freq_hz, float offset_hz)
         current_frequency = effective_freq;
         covariance_avg_valid_ = false;  // retune invalidates the temporal average
         clearAccumulatorLocked();       // ...and the not-yet-processed samples
+        result_stale_.store(true, std::memory_order_relaxed);  // the last bearing is for the old frequency
         resetAutoSourceTracking();
         updateSteeringVectors();
         // A 3D custom array also keeps an azimuth x elevation set computed at
@@ -923,6 +925,7 @@ void MUSICProcessor::setFrequency(float freq_hz) {
         current_frequency = freq_hz;
         covariance_avg_valid_ = false;  // retune invalidates the temporal average
         clearAccumulatorLocked();       // ...and the not-yet-processed samples
+        result_stale_.store(true, std::memory_order_relaxed);  // the last bearing is for the old frequency
         resetAutoSourceTracking();
         updateSteeringVectors();
         // A 3D custom array also keeps an azimuth x elevation set computed at

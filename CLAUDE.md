@@ -721,6 +721,24 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
 - Ring buffers: Lock-free for FFT data
 - Malloc arenas: Increased to 32 for multi-threaded performance (`mallopt(M_ARENA_MAX, 32)`)
 
+## Network Access Checks
+
+- **Host allow-list (DNS rebinding):** heimdall's WebSocket/POST routes and the
+  client's WebSocket upgrade, `/recordings` and 8081 page only answer requests
+  addressed by an IP literal, `localhost`, this machine's hostname (bare or
+  `.local`/`.lan`/`.home`/`.localdomain`/`.home.arpa`), or a name listed in
+  `KRAKEN_ALLOWED_HOSTS` (comma-separated, both apps - set it when reaching
+  the Pi through a reverse proxy or a custom DNS name). Header:
+  `heimdall_v2/src/core/host_check.hpp` = `kraken_doa_v2/include/utils/host_check.hpp`
+- **Same-origin:** both apps refuse a browser request whose `Origin` doesn't
+  match its `Host` (cross-site WebSocket hijacking); requests without `Origin`
+  (native apps, curl) only need the host check
+- **API token (client, optional):** unauthenticated sockets get 10 s to send
+  `AUTH:`, at most 8 may wait at once, and an IP with 5 wrong tokens in 60 s
+  is refused for the rest of that window
+- **8081 `DOA_value.html`** stays token-free (the Android app can't send one)
+  but has no CORS header, so other web pages can't read it
+
 ## Port Reference
 
 **Heimdall Server**:

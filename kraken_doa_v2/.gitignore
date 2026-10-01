@@ -28,3 +28,6 @@ doa_log_*.csv
 *.bak
 *.swp
 *~
+
+# API access token (KRAKEN_API_TOKEN alternative) - a secret, never commit
+api_token

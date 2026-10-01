@@ -1,5 +1,6 @@
 #include "networking/websocket_server.hpp"
 #include "utils/json_escape.hpp"
+#include "utils/host_check.hpp"
 #include "globals.hpp"
 #include "config.hpp"
 #include "control_handler.hpp"
@@ -17,6 +18,7 @@
 #include <sstream>
 #include <cmath>
 #include <chrono>
+#include <unordered_map>
 #include <iomanip>
 #include <cstdlib>
 #include <iterator>
@@ -69,7 +71,85 @@ const string& auth_token() {
 
 inline bool auth_required() { return !auth_token().empty(); }
 
+// Same-origin + DNS-rebinding guard for the WebSocket upgrade, /recordings and
+// the 8081 page. Browsers send Origin on every cross-site WebSocket handshake:
+// without this, any web page the operator opened could drive the client when
+// no API token is configured (the default). The Host must be a name this
+// device is reached by (utils/host_check.hpp; KRAKEN_ALLOWED_HOSTS adds names),
+// which also defeats DNS rebinding. A request with no Origin is not a browser
+// cross-site request (native app, curl) and only needs the Host check.
+bool request_allowed(uWS::HttpRequest* req) {
+    const string_view host = req->getHeader("host");
+    if (!host_allowed(host)) return false;
+    const string_view origin = req->getHeader("origin");
+    if (origin.empty()) return true;
+    const size_t scheme_end = origin.find("://");
+    if (scheme_end == string_view::npos) return false;
+    const string_view origin_host = origin.substr(scheme_end + 3);
+    return !host.empty() && origin_host.size() == host.size() &&
+           std::equal(origin_host.begin(), origin_host.end(), host.begin(), [](char a, char b) {
+               return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+           });
+}
+
+template <typename Res>
+void refuse_request(Res* res, uWS::HttpRequest* req) {
+    std::cerr << "[WS] Refused cross-origin / unknown-host request (Host: "
+              << req->getHeader("host") << ", Origin: " << req->getHeader("origin")
+              << ") - set KRAKEN_ALLOWED_HOSTS to allow a name" << std::endl;
+    res->writeStatus("403 Forbidden")->end("request refused");
+}
+
 constexpr int MAX_WS_CLIENTS = 32;
+
+// --- Unauthenticated-connection limits (only with an API token configured) ---
+// A socket that never sends AUTH: used to hold one of the 32 slots for good
+// (browsers' automatic pongs satisfy idleTimeout), so 32 of them locked every
+// browser out, and token guessing was unthrottled (one guess per connection,
+// unlimited reconnects). All of this runs on the uWS loop thread only.
+using ClientWS = uWS::WebSocket<true, true, PerSocketData>;
+constexpr int MAX_PENDING_AUTH = 8;              // unauthenticated sockets at once
+constexpr int64_t AUTH_DEADLINE_MS = 10000;      // ...each closed after this
+constexpr int AUTH_MAX_FAILURES = 5;             // wrong tokens per IP...
+constexpr int64_t AUTH_FAILURE_WINDOW_MS = 60000;  // ...per window, then refused
+std::unordered_map<ClientWS*, int64_t> g_pending_auth;           // socket -> opened (steady ms)
+std::unordered_map<std::string, std::pair<int, int64_t>> g_auth_failures;  // ip -> (count, window start)
+
+int64_t steady_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+bool auth_ip_blocked(const std::string& ip) {
+    auto it = g_auth_failures.find(ip);
+    if (it == g_auth_failures.end()) return false;
+    if (steady_ms() - it->second.second > AUTH_FAILURE_WINDOW_MS) { g_auth_failures.erase(it); return false; }
+    return it->second.first >= AUTH_MAX_FAILURES;
+}
+void note_auth_failure(const std::string& ip) {
+    const int64_t now = steady_ms();
+    if (g_auth_failures.size() > 256) {                      // bound the table
+        for (auto it = g_auth_failures.begin(); it != g_auth_failures.end();)
+            it = (now - it->second.second > AUTH_FAILURE_WINDOW_MS) ? g_auth_failures.erase(it) : std::next(it);
+    }
+    auto& e = g_auth_failures[ip];
+    if (e.first == 0 || now - e.second > AUTH_FAILURE_WINDOW_MS) e = {0, now};
+    e.first++;
+    if (e.first == AUTH_MAX_FAILURES)
+        std::cerr << "[WS] " << ip << ": " << AUTH_MAX_FAILURES << " wrong API tokens - refusing it for up to "
+                  << AUTH_FAILURE_WINDOW_MS / 1000 << " s" << std::endl;
+}
+// Called from the 500 ms status timer: close sockets past the auth deadline.
+void sweep_pending_auth() {
+    if (g_pending_auth.empty()) return;
+    const int64_t now = steady_ms();
+    std::vector<ClientWS*> late;
+    for (const auto& [ws, opened] : g_pending_auth)
+        if (now - opened > AUTH_DEADLINE_MS) late.push_back(ws);
+    for (ClientWS* ws : late) {
+        g_pending_auth.erase(ws);       // before end(): .close erases too
+        ws->end(1008, "authentication timeout");
+    }
+}
 
 // Length-aware constant-time compare (avoid leaking the token via timing).
 bool token_matches(string_view provided) {
@@ -288,6 +368,7 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                ->end(js_content);
         })
         .get("/recordings/*", [](auto* res, auto* req) {
+            if (!request_allowed(req)) { refuse_request(res, req); return; }
             // Download a recording from the fixed doa_recordings/ folder. Only a
             // sanitized base filename is honored, so no other device files are
             // reachable. With a token configured the request must carry it
@@ -329,6 +410,15 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
         // so live tabs - even idle, backgrounded ones - are never dropped.
         .idleTimeout = 30,
         .maxBackpressure = 2 * 1024 * 1024,  // 2MB - close slow clients to prevent OOM
+
+        .upgrade = [](auto* res, auto* req, auto* context) {
+            if (!request_allowed(req)) { refuse_request(res, req); return; }
+            res->template upgrade<PerSocketData>(PerSocketData{},
+                req->getHeader("sec-websocket-key"),
+                req->getHeader("sec-websocket-protocol"),
+                req->getHeader("sec-websocket-extensions"),
+                context);
+        },
         
         .open = [](auto* ws) {
             int count = ++ws_client_count;  // live count consumed by the status dashboard
@@ -342,6 +432,16 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
             std::cout << "[WS] Client CONNECTED! Total clients: " << count << std::endl;
 
             if (auth_required()) {
+                const std::string ip(ws->getRemoteAddressAsText());
+                if (auth_ip_blocked(ip)) {
+                    ws->end(1008, "too many failed attempts");
+                    return;
+                }
+                if (static_cast<int>(g_pending_auth.size()) >= MAX_PENDING_AUTH) {
+                    ws->end(1013, "too many unauthenticated connections");
+                    return;
+                }
+                g_pending_auth[ws] = steady_ms();
                 // Hold off subscribing/syncing until AUTH:<token> arrives.
                 ws->getUserData()->authed = false;
                 ws->send("{\"auth_required\":true}", uWS::TEXT);
@@ -358,11 +458,18 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
             // --- Authentication gate (no-op when no token is configured) ---
             if (message.starts_with("AUTH:")) {
                 if (!auth_required() || ud->authed) return;  // harmless no-op
+                g_pending_auth.erase(ws);
+                const std::string ip(ws->getRemoteAddressAsText());
+                if (auth_ip_blocked(ip)) {
+                    ws->end(1008, "too many failed attempts");
+                    return;
+                }
                 if (token_matches(message.substr(5))) {
                     ud->authed = true;
                     std::cout << "[WS] Client authenticated" << std::endl;
                     subscribe_and_sync(ws);
                 } else {
+                    note_auth_failure(ip);
                     ws->send("{\"auth_error\":\"invalid token\"}", uWS::TEXT);
                     ws->end(1008, "unauthorized");  // policy-violation close
                 }
@@ -385,7 +492,8 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
             ControlHandler::handle_websocket_message(message);
         },
         
-        .close = [](auto* /*ws*/, int code, string_view reason) {
+        .close = [](auto* ws, int code, string_view reason) {
+            g_pending_auth.erase(ws);
             int remaining = --ws_client_count;  // keep the live dashboard count in sync
             if (remaining < 0) { ws_client_count.store(0); remaining = 0; }
             std::cout << "[WS] Client DISCONNECTED! Code=" << code
@@ -460,6 +568,7 @@ void WebSocketServer::web_server_main() {
                 // System status timer - broadcasts every 500ms
                 struct us_timer_t* status_timer = us_create_timer(native_loop, 0, 0);
                 us_timer_set(status_timer, [](struct us_timer_t* /*timer*/) {
+                    sweep_pending_auth();
                     if (global_ssl_app) {
                         auto status_message = MessageBuilders::build_system_status_message();
                         global_ssl_app->publish(TOPIC_CTL, status_message, uWS::TEXT, false);
@@ -511,7 +620,16 @@ void WebSocketServer::doa_http_server_thread() {
     // Runs on a separate thread with its own event loop
     try {
         uWS::App()
-            .get("/DOA_value.html", [](auto* res, auto* /*req*/) {
+            .get("/DOA_value.html", [](auto* res, auto* req) {
+                // Open to native clients (the Android app can't send the API
+                // token), but only under a name this device is reached by (DNS
+                // rebinding) and with no CORS header: Access-Control-Allow-
+                // Origin: * let any web page in a LAN browser read the bearings
+                // and the station location.
+                if (!host_allowed(req->getHeader("host"))) {
+                    res->writeStatus("403 Forbidden")->end("request refused");
+                    return;
+                }
                 // Last fully-computed payload, served verbatim while a retune
                 // calibration is in progress. Confined to this thread's event
                 // loop (the only place this handler runs), so no lock needed.
@@ -529,8 +647,7 @@ void WebSocketServer::doa_http_server_thread() {
                     // Freeze: serve the last good bearings unchanged.
                     res->writeHeader("Content-Type", "text/html; charset=utf-8")
                        ->writeHeader("Cache-Control", "no-cache, no-store, must-revalidate")
-                       ->writeHeader("Access-Control-Allow-Origin", "*")
-                       ->end(last_good_message);
+                           ->end(last_good_message);
                     return;
                 }
 
@@ -547,7 +664,6 @@ void WebSocketServer::doa_http_server_thread() {
 
                 res->writeHeader("Content-Type", "text/html; charset=utf-8")
                    ->writeHeader("Cache-Control", "no-cache, no-store, must-revalidate")
-                   ->writeHeader("Access-Control-Allow-Origin", "*")
                    ->end(message);
             })
             .get("/*", [](auto* res, auto* /*req*/) {

@@ -6,13 +6,42 @@
 #include <string>
 #include <string_view>
 
+// Length of the valid UTF-8 sequence starting at s[i] (2-4), or 0 if invalid
+// (overlongs, surrogates and > U+10FFFF rejected).
+inline size_t json_utf8_len(std::string_view s, size_t i) {
+    const auto b = [&](size_t k) { return static_cast<unsigned char>(s[k]); };
+    const unsigned char c = b(i);
+    size_t n; unsigned char lo = 0x80, hi = 0xBF;
+    if (c >= 0xC2 && c <= 0xDF) n = 2;
+    else if (c >= 0xE0 && c <= 0xEF) { n = 3; if (c == 0xE0) lo = 0xA0; else if (c == 0xED) hi = 0x9F; }
+    else if (c >= 0xF0 && c <= 0xF4) { n = 4; if (c == 0xF0) lo = 0x90; else if (c == 0xF4) hi = 0x8F; }
+    else return 0;
+    if (i + n > s.size() || b(i + 1) < lo || b(i + 1) > hi) return 0;
+    for (size_t k = 2; k < n; k++)
+        if (b(i + k) < 0x80 || b(i + k) > 0xBF) return 0;
+    return n;
+}
+
 // Escape a string for embedding inside a JSON string literal: quotes,
 // backslashes and every control character below 0x20 (short forms where JSON
 // has them, \u00XX otherwise). Shared by every hand-built JSON emitter.
+// Invalid UTF-8 becomes \ufffd: these strings go to browsers as WebSocket
+// TEXT frames, and a browser drops the connection on one invalid byte - a
+// station ID pushed by the cloud, a hand-edited settings value or a recording
+// filename made outside the app used to disconnect every browser on every
+// (re)connect.
 inline std::string json_escape(std::string_view s) {
     std::string out;
     out.reserve(s.size() + 8);
-    for (char c : s) {
+    for (size_t i = 0; i < s.size(); i++) {
+        const char c = s[i];
+        if (static_cast<unsigned char>(c) >= 0x80) {
+            const size_t n = json_utf8_len(s, i);
+            if (n == 0) { out += "\\ufffd"; continue; }
+            out.append(s.substr(i, n));
+            i += n - 1;
+            continue;
+        }
         switch (c) {
             case '"':  out += "\\\""; break;
             case '\\': out += "\\\\"; break;
