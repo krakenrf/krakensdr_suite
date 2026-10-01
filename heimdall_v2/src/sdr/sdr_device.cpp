@@ -20,6 +20,9 @@ void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
     // was still copying its buffer, which then landed after the flush - that
     // device kept a packet the others lost (a one-packet slip).
     auto stamp = [sdr]() {
+        // prev before last: the flush re-reads last to detect a torn pair
+        sdr->prev_arrival_ns.store(sdr->last_arrival_ns.load(std::memory_order_relaxed),
+                                   std::memory_order_relaxed);
         sdr->last_arrival_ns.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_release);
     };

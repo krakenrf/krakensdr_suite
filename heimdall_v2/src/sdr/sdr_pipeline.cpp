@@ -8,6 +8,7 @@
 #include "../net/rtl_tcp_server.hpp"   // Need full definition to call methods
 #include <iostream>
 #include <algorithm>
+#include <mutex>
 
 // Global L2 buffer
 moodycamel::BlockingConcurrentQueue<std::vector<ComplexBuffer>> l2_buffer;
@@ -69,30 +70,64 @@ static std::atomic<uint32_t> flush_completed{0};   // last request the drain ser
 static std::atomic<bool> drain_active{false};
 static std::atomic<std::thread::id> drain_thread_id{};
 
+// Downstream flush epoch. Every flush (clear_l1_buffer / clear_l2_buffer)
+// bumps it under l2_flush_mutex while emptying L2-raw and L2. The conversion
+// worker notes the epoch BEFORE it dequeues a raw set and only broadcasts /
+// pushes the converted set if no flush happened meanwhile (the L2 push is
+// checked under the same mutex). Without it the set the worker was holding
+// across a flush - and one the drain finished just after the L2-raw clear -
+// reached L2 after the flush: pre-retune / pre-recovery data measured by the
+// fresh calibration.
+static std::mutex l2_flush_mutex;
+static std::atomic<uint32_t> l2_flush_epoch{0};
+
 static int64_t steady_now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
 // Empty every device's L1 (buffers back to their pools). With wait_quiet, first
-// wait - at most two packet periods - for a point where the active devices'
+// wait - at most four packet periods - for a point where the active devices'
 // latest packets all belong to the same round and the next round isn't due for
-// another half period, so no round can straddle the flush. (If the devices'
-// arrival skew ever exceeds half a period there is no such point: flush anyway
-// after the timeout, as before.)
+// another half period, so no round can straddle the flush:
+//  - every device's latest arrival within half a period of the others and of now
+//  - every device's last gap about one period (0.5-1.5): a reader thread that
+//    stalled delivers its backlog late and then in a burst, so its latest
+//    packet can be an OLDER round arriving next to the others' newer one -
+//    flushed then, it keeps one packet fewer (a one-packet slip)
+// If there is no such point (arrival skew above half a period, a reader stuck
+// in catch-up) flush anyway after the timeout, as before, with a warning.
 static void flush_l1_now(int num_elements, bool wait_quiet) {
     if (wait_quiet && num_elements > 0) {
         const int64_t period = static_cast<int64_t>(1e9 * NUM_SAMPLES / SAMPLE_RATE);
-        const int64_t deadline = steady_now_ns() + 2 * period;
-        while (steady_now_ns() < deadline) {
+        const int64_t deadline = steady_now_ns() + 4 * period;
+        bool quiet = false;
+        while (!quiet && steady_now_ns() < deadline) {
             int64_t lo = INT64_MAX, hi = 0;
+            bool steady = true;
             for (int i = 0; i < num_elements && i < static_cast<int>(devices.size()); i++) {
                 if (!devices[i] || !devices[i]->dev) continue;
-                const int64_t t = devices[i]->last_arrival_ns.load(std::memory_order_acquire);
+                const auto& d = devices[i];
+                int64_t t, prev;
+                do {  // prev/last are two stores: re-read until the pair is consistent
+                    t = d->last_arrival_ns.load(std::memory_order_acquire);
+                    prev = d->prev_arrival_ns.load(std::memory_order_acquire);
+                } while (d->last_arrival_ns.load(std::memory_order_acquire) != t);
                 lo = std::min(lo, t); hi = std::max(hi, t);
+                const int64_t gap = t - prev;
+                if (prev != 0 && (gap < period / 2 || gap > period + period / 2)) steady = false;
             }
-            if (hi == 0 || (hi - lo < period / 2 && steady_now_ns() - hi < period / 2)) break;
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
+            quiet = hi == 0 || (steady && hi - lo < period / 2 && steady_now_ns() - hi < period / 2);
+            if (!quiet) std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+        if (!quiet) {
+            static int64_t last_warn_ns = 0;  // flush callers are serialized by the drain
+            const int64_t now = steady_now_ns();
+            if (now - last_warn_ns > 10'000'000'000LL) {
+                last_warn_ns = now;
+                std::cerr << "L1 flush: no quiet point between USB packet rounds (uneven delivery) - "
+                             "flushing anyway, a channel may slip by a packet" << std::endl;
+            }
         }
     }
     for (const auto& device : devices) {
@@ -107,8 +142,40 @@ static void flush_l1_now(int num_elements, bool wait_quiet) {
     }
 }
 
+// One read of everything the conversion applies set-wide (see SetConversionState).
+static void snapshot_conversion_state(SetConversionState& st, int num_elements) {
+    // Forward (feed-forward) S2P compensation: removes the differential through-
+    // response (S21) of the per-channel RF chain (cable / filter / LNA) that
+    // sits in FRONT of the KrakenSDR, OUTSIDE the noise-source calibration loop.
+    // It is folded into the SAME per-chunk scalar as the closed-loop phase vector
+    // (zero per-sample cost) and kept in a SEPARATE vector so it survives the
+    // identity resets the closed-loop vector undergoes on every recalibration /
+    // retune. Off by default; gated like the per-bin EQ (enabled relaxed, then
+    // ready acquire).
+    // NOT applied while the noise source is on: the noise is injected inside
+    // the KrakenSDR, after the external chain, so the calibration must measure
+    // the internal path alone. Applied during calibration, the closed-loop
+    // vector measured it too and cancelled its phase (only |fwd| survived).
+    const bool fwd = forward_comp.enabled.load(std::memory_order_relaxed) &&
+                     forward_comp.ready.load(std::memory_order_acquire) &&
+                     !bias_tee_enabled.load(std::memory_order_relaxed);
+    for (int ch = 0; ch < num_elements && ch < NUM_DEVICES; ch++) {
+        // Lock-free atomic load - no mutex
+        st.comp[ch] = phase_compensation->compensation_vector.load(ch);
+        if (fwd) st.comp[ch] *= forward_comp.vector.load(ch);
+    }
+    // Wideband variant, high-side injection (LO = IF + RF): the mixer hands us
+    // the conjugated baseband - mirrored spectrum, negated steering phases.
+    // Un-mirror it at the source by negating Q, so our own correlation/phase
+    // cal, the TCP broadcast and the DoA client all see the signal upright
+    // with the true RF phase relationships.
+    st.spectral_inversion = downconverter.spectral_inversion_active();
+    st.eq_active = per_bin_cal.enabled.load(std::memory_order_relaxed) &&
+                   per_bin_cal.ready.load(std::memory_order_acquire);
+}
+
 void samples_to_complex_with_compensation(const uint8_t* samples, int count, int channel,
-                                          ComplexBuffer& out) {
+                                          const SetConversionState& st, ComplexBuffer& out) {
     // Validate channel index
     if (channel < 0 || channel >= NUM_DEVICES) {
         std::cerr << "ERROR: Invalid channel " << channel
@@ -117,27 +184,7 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
         return;
     }
 
-    // OPTIMIZED: Lock-free atomic load - no mutex!
-    // This is the hot path (called millions of times/sec)
-    Complex comp = phase_compensation->compensation_vector.load(channel);
-
-    // Forward (feed-forward) S2P compensation: removes the differential through-
-    // response (S21) of the per-channel RF chain (cable / filter / LNA) that
-    // sits in FRONT of the KrakenSDR, OUTSIDE the noise-source calibration loop.
-    // It is folded into the SAME per-chunk scalar as the closed-loop phase vector
-    // (one extra atomic load + complex multiply per CHUNK, zero per-sample cost)
-    // and kept in a SEPARATE vector so it survives the identity resets the
-    // closed-loop vector undergoes on every recalibration / retune. Off by
-    // default; gated like the per-bin EQ (enabled relaxed, then ready acquire).
-    // NOT applied while the noise source is on: the noise is injected inside
-    // the KrakenSDR, after the external chain, so the calibration must measure
-    // the internal path alone. Applied during calibration, the closed-loop
-    // vector measured it too and cancelled its phase (only |fwd| survived).
-    if (forward_comp.enabled.load(std::memory_order_relaxed) &&
-        forward_comp.ready.load(std::memory_order_acquire) &&
-        !bias_tee_enabled.load(std::memory_order_relaxed)) {
-        comp *= forward_comp.vector.load(channel);
-    }
+    const Complex comp = st.comp[channel];  // phase vector x forward comp (per set)
 
     static thread_local ComplexBuffer tmp;
     tmp.resize(count);
@@ -149,13 +196,9 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
     const float cr = comp.real();
     const float ci = comp.imag();
 
-    // Wideband variant, high-side injection (LO = IF + RF): the mixer hands us
-    // the conjugated baseband - mirrored spectrum, negated steering phases.
-    // Un-mirror it at the source by negating Q, so our own correlation/phase
-    // cal, the TCP broadcast and the DoA client all see the signal upright
-    // with the true RF phase relationships. One multiply per sample, folded
+    // High-side spectral inversion: negate Q. One multiply per sample, folded
     // into the auto-vectorized loop.
-    const float qs = downconverter.spectral_inversion_active() ? -1.0f : 1.0f;
+    const float qs = st.spectral_inversion ? -1.0f : 1.0f;
 
     for (int i = 0; i < count; ++i) {
         const float I = lut[p[0]];
@@ -179,8 +222,7 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
     // buffer's capacity is reused. When the per-bin EQ stage follows, the lag
     // FIR writes to a thread-local intermediate and the EQ writes into `out`.
     auto& dev = devices[channel];
-    const bool eq_active = per_bin_cal.enabled.load(std::memory_order_relaxed) &&
-                           per_bin_cal.ready.load(std::memory_order_acquire);
+    const bool eq_active = st.eq_active;
     static thread_local ComplexBuffer fir_tmp;
     ComplexBuffer& fir_out = eq_active ? fir_tmp : out;
     fir_out.resize(count);
@@ -413,7 +455,11 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
     // converted-output rate dips - USB keep-up is unaffected (that is the drain).
     set_thread_realtime("convert", 0);
 
+    SetConversionState conv_state;
     while (global_running && pipeline_running.load(std::memory_order_acquire)) {
+        // Read BEFORE the dequeue: a set dequeued before a flush must carry
+        // the pre-flush epoch (see l2_flush_epoch)
+        const uint32_t epoch = l2_flush_epoch.load(std::memory_order_acquire);
         std::vector<SampleBuffer> raw_set;
         if (!l2_raw_buffer.wait_dequeue_timed(raw_set, std::chrono::milliseconds(100))) {
             if (!global_running || !pipeline_running.load(std::memory_order_acquire)) return;
@@ -435,12 +481,20 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
 
         auto complex_samples = l2_buffer_pool.acquire();
         complex_samples.resize(num_elements);
+        snapshot_conversion_state(conv_state, num_elements);
         for (int i = 0; i < num_elements; ++i) {
             auto& sb = raw_set[i];
             // sb.size() is bytes of interleaved IQ; divide by 2 for complex count
             samples_to_complex_with_compensation(
                 sb.data(), static_cast<int>(sb.size()) / 2, devices[i]->index,
-                complex_samples[i]);
+                conv_state, complex_samples[i]);
+        }
+
+        // Flushed while converting: the set is pre-flush data, drop it
+        if (l2_flush_epoch.load(std::memory_order_acquire) != epoch) {
+            l2_buffer_pool.release(std::move(complex_samples));
+            recycle_raw_set(raw_set);
+            continue;
         }
 
         // -------- Broadcast / handoff (every set, in order) --------
@@ -448,15 +502,24 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
         if (rtl_tcp_server)  rtl_tcp_server->broadcast_data(complex_samples);
 
         // -------- Push to L2 (drop oldest if full - coherence-safe) --------
-        if (l2_buffer_size.load(std::memory_order_relaxed) >= BUFFER_SIZE) {
-            std::vector<ComplexBuffer> discard;
-            if (l2_buffer.try_dequeue(discard)) {
-                l2_buffer_size.fetch_sub(1, std::memory_order_relaxed);
-                l2_buffer_pool.release(std::move(discard));
+        // Epoch re-checked under the flush mutex, so a flush can't land
+        // between the check and the push
+        {
+            std::lock_guard<std::mutex> flush_lock(l2_flush_mutex);
+            if (l2_flush_epoch.load(std::memory_order_relaxed) != epoch) {
+                l2_buffer_pool.release(std::move(complex_samples));
+            } else {
+                if (l2_buffer_size.load(std::memory_order_relaxed) >= BUFFER_SIZE) {
+                    std::vector<ComplexBuffer> discard;
+                    if (l2_buffer.try_dequeue(discard)) {
+                        l2_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+                        l2_buffer_pool.release(std::move(discard));
+                    }
+                }
+                l2_buffer.enqueue(std::move(complex_samples));
+                l2_buffer_size.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        l2_buffer.enqueue(std::move(complex_samples));
-        l2_buffer_size.fetch_add(1, std::memory_order_relaxed);
 
         // -------- Recycle the raw set (inner buffers -> per-device pools) --------
         recycle_raw_set(raw_set);
@@ -496,31 +559,44 @@ void clear_l2_raw_buffer() {
     // "L1 full" check so every packet is dropped.
 }
 
-void clear_l1_buffer() {
-    std::cout << "Clearing L1 buffers for all devices..." << std::endl;
-    clear_l2_raw_buffer();  // L2-raw holds data drained from L1; flush it too
-    // The drain performs the flush (see flush_l1_now); wait for it. Flush
-    // directly when there is no drain (pipeline stopped) or it doesn't answer.
-    if (drain_active.load(std::memory_order_acquire) &&
-        drain_thread_id.load() != std::this_thread::get_id()) {
-        const uint32_t req = flush_requests.fetch_add(1, std::memory_order_acq_rel) + 1;
-        for (int waited_ms = 0; waited_ms < 500; waited_ms++) {
-            if (static_cast<int32_t>(flush_completed.load(std::memory_order_acquire) - req) >= 0) return;
-            if (!drain_active.load(std::memory_order_acquire)) break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        std::cerr << "L1 flush: sample drain did not respond - flushing directly" << std::endl;
-    }
-    flush_l1_now(active_num_elements.load(), true);
-}
-
-void clear_l2_buffer() {
-    std::cout << "Clearing entire L2 buffer..." << std::endl;
-    clear_l2_raw_buffer();  // flush the upstream staging too, so it can't refill L2
+// Everything downstream of L1: bump the flush epoch, empty L2-raw and L2.
+static void flush_downstream() {
+    std::lock_guard<std::mutex> flush_lock(l2_flush_mutex);
+    l2_flush_epoch.fetch_add(1, std::memory_order_acq_rel);
+    clear_l2_raw_buffer();
     std::vector<ComplexBuffer> discard;
     while (l2_buffer.try_dequeue(discard)) {
         l2_buffer_size.fetch_sub(1, std::memory_order_relaxed);
         l2_buffer_pool.release(std::move(discard));  // Return to pool
     }
     // No store(0): see clear_l2_raw_buffer (avoids the size_t underflow race).
+}
+
+void clear_l1_buffer() {
+    std::cout << "Clearing L1 buffers for all devices..." << std::endl;
+    // The drain performs the flush (see flush_l1_now); wait for it. Flush
+    // directly when there is no drain (pipeline stopped) or it doesn't answer.
+    bool served = false;
+    if (drain_active.load(std::memory_order_acquire) &&
+        drain_thread_id.load() != std::this_thread::get_id()) {
+        const uint32_t req = flush_requests.fetch_add(1, std::memory_order_acq_rel) + 1;
+        for (int waited_ms = 0; waited_ms < 500 && !served; waited_ms++) {
+            if (static_cast<int32_t>(flush_completed.load(std::memory_order_acquire) - req) >= 0) {
+                served = true;
+                break;
+            }
+            if (!drain_active.load(std::memory_order_acquire)) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        if (!served) std::cerr << "L1 flush: sample drain did not respond - flushing directly" << std::endl;
+    }
+    if (!served) flush_l1_now(active_num_elements.load(), true);
+    // AFTER the L1 flush: a set the drain completed before serving it went
+    // into L2-raw, and anything already downstream is older still
+    flush_downstream();
+}
+
+void clear_l2_buffer() {
+    std::cout << "Clearing entire L2 buffer..." << std::endl;
+    flush_downstream();  // L2-raw too, so it can't refill L2
 }

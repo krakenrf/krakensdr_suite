@@ -26,11 +26,21 @@ extern std::atomic<size_t> l2_raw_buffer_size;
 extern BufferPool<std::vector<SampleBuffer>> l2_raw_buffer_pool;
 extern std::atomic<size_t> l2_raw_cap;  // C5: runtime L2-raw depth cap (tighter during calibration)
 
+// Settings the conversion reads ONCE per aligned set (conversion_worker), so
+// every channel of a set is converted the same way: read per channel, a set
+// straddling a change (noise on/off, per-bin EQ, spectral inversion) came out
+// with e.g. a 16-sample EQ delay or a conjugation on only some channels.
+struct SetConversionState {
+    Complex comp[NUM_DEVICES];  // closed-loop phase vector x forward S2P comp
+    bool spectral_inversion = false;
+    bool eq_active = false;
+};
+
 // Sample conversion and processing
 // Writes `count` compensated samples into `out` (resized in place, so a pooled
 // buffer's capacity is reused).
 void samples_to_complex_with_compensation(const uint8_t* samples, int count, int channel,
-                                          ComplexBuffer& out);
+                                          const SetConversionState& st, ComplexBuffer& out);
 
 // L1 -> L2-raw drain (cheap, time-critical, realtime priority).
 void sample_processor(const std::vector<std::unique_ptr<SDRDevice>>& devices);

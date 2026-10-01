@@ -207,8 +207,12 @@ void FFTProcessor::resize(int new_fft_size) {
     // fftwf_execute() might be running concurrently, and destroying the plan/buffers
     // while it's executing causes heap corruption ("double free or corruption").
 
-    // Step 1: Signal that resize is starting - new FFT work should not start
-    fft_resize_in_progress.store(true, std::memory_order_release);
+    // Step 1: Signal that resize is starting - new FFT work should not start.
+    // seq_cst on both sides of this handshake (flag store -> counter load here,
+    // counter increment -> flag load in the worker): with release/acquire the
+    // store may be reordered after the load (x86 store buffer), so the resize
+    // and a starting worker can each miss the other.
+    fft_resize_in_progress.store(true, std::memory_order_seq_cst);
 
     // Step 2: Wait for all active FFT workers to finish
     {
@@ -218,7 +222,7 @@ void FFTProcessor::resize(int new_fft_size) {
         auto wait_start = std::chrono::steady_clock::now();
         constexpr auto MAX_WAIT = std::chrono::milliseconds(500);  // 500ms timeout
 
-        while (fft_workers_active.load(std::memory_order_acquire) > 0) {
+        while (fft_workers_active.load(std::memory_order_seq_cst) > 0) {
             auto status = fft_resize_complete.wait_for(resize_lock, std::chrono::milliseconds(10));
 
             // Check timeout
@@ -278,7 +282,7 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
 
     // Increment active worker count before doing any real work
     // This must happen AFTER the resize check to avoid being counted during resize
-    fft_workers_active.fetch_add(1, std::memory_order_acq_rel);
+    fft_workers_active.fetch_add(1, std::memory_order_seq_cst);  // see resize()
 
     // RAII guard to ensure we always decrement the counter and signal completion
     // even if we return early or an exception occurs
@@ -294,7 +298,7 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
 
     // Double-check resize flag after incrementing counter (race prevention)
     // If resize started between our check and increment, exit now
-    if (fft_resize_in_progress.load(std::memory_order_acquire)) {
+    if (fft_resize_in_progress.load(std::memory_order_seq_cst)) {
         return;  // Guard will decrement counter
     }
 
@@ -363,6 +367,14 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
 
     // Now lock the shared magnitude arrays for storage
     std::lock_guard<std::mutex> mag_lock(fft_mutex);
+
+    // resize() reinitializes the channel contexts first and the magnitude
+    // arrays after: a frame computed in between (or past the drain timeout)
+    // would write fft_size bins into the old, smaller arrays. Drop it.
+    if (fft_magnitudes[channel].size() != static_cast<size_t>(fft_size) ||
+        fft_averaged[channel].size() != static_cast<size_t>(fft_size)) {
+        return;
+    }
 
     // EXPONENTIAL MOVING AVERAGE (EMA) with generation-based reset
     // Formula: fft_averaged = alpha * new_value + (1-alpha) * old_value

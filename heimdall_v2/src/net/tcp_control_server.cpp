@@ -513,25 +513,29 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
 
         std::string side_json = std::string("\"side\":\"") + mixer_side_name(side) + "\"";
 
-        const uint64_t rf = current_frequency.load();
-
-        if (side == downconverter.side.load()) {
-            return "{\"status\":\"success\"," + side_json +
-                   ",\"lo_hz\":" + std::to_string(downconverter.lo_hz.load()) + "}";
-        }
-
-        if (!downconverter_rf_valid(rf, side)) {
-            uint64_t min_hz, max_hz;
-            downconverter_rf_range(side, min_hz, max_hz);
-            return "{\"status\":\"error\",\"message\":\"" +
-                   std::string(mixer_side_name(side)) + " side cannot reach RF " +
-                   std::to_string(rf / 1000000) + " MHz (covers " +
-                   std::to_string(min_hz / 1000000) + "-" + std::to_string(max_hz / 1000000) +
-                   " MHz)\"}";
-        }
-
+        // RF read, checks and LO programming all under settings_mutex (every
+        // retune path holds it): read before the lock, a retune landing in
+        // between left the LO programmed for the previous frequency.
+        uint64_t rf;
         {
             std::lock_guard<std::mutex> lock(settings_mutex);
+            rf = current_frequency.load();
+
+            if (side == downconverter.side.load()) {
+                return "{\"status\":\"success\"," + side_json +
+                       ",\"lo_hz\":" + std::to_string(downconverter.lo_hz.load()) + "}";
+            }
+
+            if (!downconverter_rf_valid(rf, side)) {
+                uint64_t min_hz, max_hz;
+                downconverter_rf_range(side, min_hz, max_hz);
+                return "{\"status\":\"error\",\"message\":\"" +
+                       std::string(mixer_side_name(side)) + " side cannot reach RF " +
+                       std::to_string(rf / 1000000) + " MHz (covers " +
+                       std::to_string(min_hz / 1000000) + "-" + std::to_string(max_hz / 1000000) +
+                       " MHz)\"}";
+            }
+
             if (!downconverter_set_side(side, rf)) {
                 return "{\"status\":\"error\",\"message\":\"Failed to program downconverter LO\"}";
             }

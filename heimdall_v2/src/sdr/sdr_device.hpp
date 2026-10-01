@@ -24,7 +24,12 @@ struct SDRDevice {
     // enqueued in L1 (or dropped) - stamped at the END of the callback. clear_l1_buffer() flushes at a
     // moment when every device has delivered the same packet round, so a flush
     // can't land between two devices' copies of one packet (a one-packet slip).
+    // prev_arrival_ns is the stamp before it: the flush also requires each
+    // device's last gap to be about one packet period, since a reader thread
+    // catching up after a stall delivers an OLD round late, which the
+    // last-arrival times alone can't tell from the current one.
     std::atomic<int64_t> last_arrival_ns{0};
+    std::atomic<int64_t> prev_arrival_ns{0};
     ChannelCompensation compensation;
     mutable std::mutex compensation_mutex;
 
