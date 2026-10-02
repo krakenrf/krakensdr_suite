@@ -75,6 +75,11 @@ std::atomic<bool> periodic_recal_enabled{PERIODIC_RECAL_DEFAULT_ENABLED != 0};
 std::atomic<int> periodic_recal_minutes{PERIODIC_RECAL_DEFAULT_MINUTES};
 std::atomic<uint32_t> periodic_recal_lag_fail_count{0};
 std::atomic<uint32_t> periodic_recal_phase_fail_count{0};
+std::atomic<bool> calibration_check_requested{false};
+std::atomic<int> last_cal_check_result{0};
+std::atomic<bool> cal_check_running{false};
+std::atomic<float> last_cal_check_lag{0.0f};
+std::atomic<float> last_cal_check_phase{0.0f};
 WidebandConfig wideband_config;
 DiscreteScannerConfig discrete_scanner;
 

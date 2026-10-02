@@ -105,6 +105,17 @@ static std::string build_state_message() {
         // --ext_noise: CH0's bias tee powers the add-on array's noise source
         + ",\"external_noise\":"
         + (external_noise_mode.load(std::memory_order_relaxed) ? "true" : "false");
+    {
+        // Last calibration check (periodic or Check Calibration)
+        static const char* const results[] = {"none", "ok", "drifted", "no_verdict"};
+        const int r = std::clamp(last_cal_check_result.load(std::memory_order_relaxed), 0, 3);
+        char nums[64];
+        std::snprintf(nums, sizeof(nums), ",\"lag\":%.3f,\"phase\":%.2f",
+                      last_cal_check_lag.load(std::memory_order_relaxed),
+                      last_cal_check_phase.load(std::memory_order_relaxed));
+        s += std::string(",\"cal_check\":{\"result\":\"") + results[r] + "\"" + nums +
+             ",\"running\":" + ((cal_check_running.load() || calibration_check_requested.load()) ? "true" : "false") + "}";
+    }
 
     // Tunable RF range for the frequency box (depends on --wideband).
     uint64_t rf_min, rf_max;
@@ -287,10 +298,10 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                     {"BIAS_TEE_ENABLE", []() {
                         // --kerberos: noise on + FFT on would run the lag/phase
                         // machines against the CONNECTED antennas and latch a
-                        // "calibration" - only Force Recalibration (with its
+                        // "calibration" - only Full Recalibration (with its
                         // disconnect-antennas confirm) may energize it
                         if (kerberos_manual_cal_only()) {
-                            std::cerr << "KerberosSDR: noise source switch refused - use Force Recalibration "
+                            std::cerr << "KerberosSDR: noise source switch refused - use Full Recalibration "
                                          "(antennas disconnected)" << std::endl;
                             return;
                         }
@@ -327,6 +338,12 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                         settings::save();  // remember across restarts
                         std::cout << "Periodic calibration check: Disabled" << std::endl;
                     }},
+                    {"CHECK_CAL", []() {
+                        // "Check Calibration": the periodic monitor runs its
+                        // non-destructive check now (recalibrates only if drifted)
+                        calibration_check_requested.store(true, std::memory_order_release);
+                        std::cout << "Calibration check requested via web UI" << std::endl;
+                    }},
                     {"FORCE_RECAL", []() {
                         // Routed through the coherence watchdog so all recalibration
                         // stays serialized on one thread (see coherence_watchdog).
@@ -334,7 +351,8 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                         std::cout << "Force recalibration requested via web UI" << std::endl;
                     }},
                     {"RESET_LAG_COMPENSATION", []() {
-                        // "Reset lag" button. Re-measuring lag needs the noise source
+                        // Legacy command (the old "Reset Lag Compensation" button, kept for
+                        // scripts). Re-measuring lag needs the noise source
                         // on and the lag/phase machines running, and a new lag lock
                         // needs a phase calibration after it - a bare
                         // reset_lag_compensation_all_channels() does neither once

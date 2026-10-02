@@ -103,16 +103,15 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
         <div class="control-group" id="recal-control-group">
             <h4>🔄 Periodic Calibration Check</h4>
             <label class="chk"><input type="checkbox" id="recal-chk" autocomplete="off">Enable periodic check</label>
-            <div class="sdr-control-item" style="margin-top:8px">
-                <label>Every (minutes):</label>
+            <!-- centered like the checkbox above (a flex row ignores text-align) -->
+            <div class="sdr-control-item" style="margin-top:8px;justify-content:center">
+                <label style="min-width:0">Every (minutes):</label>
                 <input type="number" id="recal-min-input" value="5" min="1" max="1440" step="1" style="width:80px">
                 <button id="recal-min-btn">Set</button>
             </div>
-            <div style="margin-top:8px">
-                <button id="force-recal-btn">Force Recalibration Now</button>
-            </div>
-            <div class="info" style="margin-top:8px">Recalibrations triggered &mdash; bad lag: <b id="recal-lag-fails">0</b> &nbsp;|&nbsp; bad phase: <b id="recal-phase-fails">0</b></div>
-            <div class="info">Briefly pulses the noise source to verify lag/phase coherence; recalibrates if drifted</div>
+            <div class="info" style="margin:8px 0 6px">Recalibrations triggered &mdash; bad lag: <b id="recal-lag-fails">0</b> &nbsp;|&nbsp; bad phase: <b id="recal-phase-fails">0</b></div>
+            <!-- wrapped: one long line stretched the whole group -->
+            <div class="info" style="max-width:380px;margin:0 auto">Briefly pulses the noise source to verify lag/phase coherence; recalibrates if drifted. Run it any time with <b>Check Calibration</b> (Compensation Status)</div>
         </div>
 
         <div class="control-group" id="sdr-control-group">
@@ -234,10 +233,15 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
         <div id="comp-status" class="comp-inactive"><strong>Status:</strong> <span id="comp-txt">Waiting...</span></div>
         <table><colgroup><col style="width:6%"><col style="width:10%"><col style="width:14%"><col style="width:8%"><col style="width:10%"><col style="width:10%"><col style="width:20%"><col style="width:22%"></colgroup><thead><tr><th>Ch</th><th>Lag</th><th>State</th><th>Count</th><th title="Live measured phase vs the reference channel (degrees)">Phase</th><th title="Live measured gain vs the reference channel (dB), smoothed. Informational only: calibration does not correct gain. Like Phase, it reflects channel mismatch only while the noise source is on; measurement is clamped at &#177;6 dB">Amp</th><th title="Phase correction currently applied to this channel (degrees). Calibration is phase-only: channel gain is measured (Amp) but not corrected">Correction</th><th>Status</th></tr></thead><tbody id="tbody"></tbody></table>
         <div style="text-align:center;margin-top:15px;">
-            <button id="reset-lag-btn" style="padding:8px 20px;background:#dc3545;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:14px;">
-                🔄 Reset Lag Compensation
+            <button id="check-cal-btn" style="padding:8px 20px;background:#28a745;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:14px;margin:0 6px;">
+                ✔ Check Calibration
             </button>
-            <div class="info" style="margin-top:8px;">Unlocks and resets lag compensation for all channels (use if drift is detected)</div>
+            <button id="full-recal-btn" style="padding:8px 20px;background:#dc3545;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:14px;margin:0 6px;">
+                🔄 Full Recalibration
+            </button>
+            <div class="info" style="margin-top:8px;"><b>Check Calibration</b>: briefly pulses the noise source, measures the residual lag/phase and recalibrates only if they drifted (a few seconds).
+                <b>Full Recalibration</b>: rebuilds lag and phase compensation from scratch (~30-60 s, DoA invalid meanwhile).</div>
+            <div class="info" id="cal-check-result" style="margin-top:4px;">Last check: none yet</div>
         </div>
     </div>
     
@@ -1021,6 +1025,16 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                 Number.isFinite(st.periodic_recal_minutes) && st.periodic_recal_minutes > 0)
                 min.value = st.periodic_recal_minutes;
             if (Number.isFinite(st.recal_lag_fails)) $('recal-lag-fails').textContent = st.recal_lag_fails;
+            if (st.cal_check && typeof st.cal_check.result === 'string') {
+                const c = st.cal_check, el = $('cal-check-result');
+                const worst = ` (worst |lag| ${Number(c.lag).toFixed(3)} samples, |phase| ${Number(c.phase).toFixed(2)}°)`;
+                el.textContent = c.running ? 'Last check: running...'
+                    : c.result === 'ok' ? 'Last check: OK' + worst
+                    : c.result === 'drifted' ? 'Last check: DRIFTED - recalibrating' + worst
+                    : c.result === 'no_verdict' ? 'Last check: no result (calibration in progress, scanning, busy, or not available)'
+                    : 'Last check: none yet';
+                el.style.color = c.running ? '' : c.result === 'ok' ? '#28a745' : c.result === 'drifted' ? '#dc3545' : '';
+            }
             if (Number.isFinite(st.recal_phase_fails)) $('recal-phase-fails').textContent = st.recal_phase_fails;
         };
 
@@ -1047,12 +1061,12 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                 bg = '#333013'; border = '#a89b2c'; color = '#f0e68c';
             } else if (cal === 'stale') {
                 text = '⚠️ KerberosSDR: calibration is STALE (settings changed since calibrating). ' +
-                       'DoA output is unreliable - disconnect ALL antennas, press "Force Recalibration Now", ' +
+                       'DoA output is unreliable - disconnect ALL antennas, press "Full Recalibration", ' +
                        'then reconnect the antennas.';
                 bg = '#3a2a10'; border = '#b3822c'; color = '#ffd9a0';
             } else {
                 text = '🚨 KerberosSDR: UNCALIBRATED - DoA output is invalid. Disconnect ALL antennas, ' +
-                       'press "Force Recalibration Now", then reconnect the antennas once calibrated.';
+                       'press "Full Recalibration", then reconnect the antennas once calibrated.';
                 bg = '#3a1515'; border = '#b33'; color = '#ffb3b3';
             }
             banner.textContent = text;
@@ -1070,9 +1084,9 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             if (bc) {
                 if (manualOnly) bc.disabled = true;
                 else if (controlsEnabled) bc.disabled = false;
-                bc.title = manualOnly ? 'KerberosSDR: use Force Recalibration (antennas disconnected)' : '';
+                bc.title = manualOnly ? 'KerberosSDR: use Full Recalibration (antennas disconnected)' : '';
             }
-            ['recal-chk', 'recal-min-input', 'recal-min-btn'].forEach(id => {
+            ['recal-chk', 'recal-min-input', 'recal-min-btn', 'check-cal-btn'].forEach(id => {
                 const el = $(id);
                 if (el) {
                     el.disabled = manualOnly;
@@ -1621,7 +1635,8 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
         };
         $('recal-min-btn').addEventListener('click', sendRecalPeriod);
         $('recal-min-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendRecalPeriod(); });
-        $('force-recal-btn').addEventListener('click', () => {
+        // "Full Recalibration": lag + phase from scratch via the watchdog
+        $('full-recal-btn').addEventListener('click', () => {
             if (ws?.readyState === 1) {
                 // KerberosSDR has no noise-source RF switch: the calibration
                 // noise couples into the antenna path, so a calibration with
@@ -1633,29 +1648,24 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                              '3. Reconnect the antennas once the banner shows "calibrated".\n\n' +
                              'Are the antennas disconnected?')) {
                     return;
+                } else if (!(kerberosMode && !kerberosSw) &&
+                           !confirm('Full recalibration: rebuild lag and phase compensation from scratch?\n\n' +
+                                    'Takes ~30-60 s; DoA output is invalid until it finishes. ' +
+                                    '(Check Calibration verifies first and only recalibrates if needed.)')) {
+                    return;
                 }
                 ws.send('FORCE_RECAL');
-                log('Force recalibration requested');
+                log('Full recalibration requested');
+                lockForRecal();  // Disable controls during recalibration
             }
         });
 
-        // Lag compensation reset handler
-        $('reset-lag-btn').addEventListener('click', () => {
+        // "Check Calibration": the periodic check, now (recalibrates only if drifted)
+        $('check-cal-btn').addEventListener('click', () => {
             if (ws?.readyState === 1) {
-                // Runs the full noise-source recalibration (same as Force
-                // Recalibration), so KerberosSDR needs the antennas off first
-                const msg = (kerberosMode && !kerberosSw)
-                    ? 'Reset lag compensation (full recalibration):\n\n' +
-                      '1. DISCONNECT ALL ANTENNAS now (noise is coupled into the antenna path).\n' +
-                      '2. Calibration takes ~30-60 s with the noise source on.\n' +
-                      '3. Reconnect the antennas once the banner shows "calibrated".\n\n' +
-                      'Are the antennas disconnected?'
-                    : 'Reset lag compensation for all channels? This restarts lag and phase calibration (~30-60 s).';
-                if (confirm(msg)) {
-                    ws.send('RESET_LAG_COMPENSATION');
-                    log('Lag compensation reset requested');
-                    lockForRecal();  // Disable controls during recalibration
-                }
+                ws.send('CHECK_CAL');
+                log('Calibration check requested');
+                $('cal-check-result').textContent = 'Last check: running...';
             }
         });
 

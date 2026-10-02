@@ -222,7 +222,7 @@ if [[ "${1:-}" == "__client_pane" ]]; then
     if [[ "$KB_MANUAL" == "1" ]]; then
         warn "KerberosSDR manual-calibration mode: starting the client immediately."
         warn "DoA output is INVALID until you calibrate: disconnect all antennas,"
-        warn "then press 'Force Recalibration Now' in the heimdall web UI (:8070)."
+        warn "then press 'Full Recalibration' in the heimdall web UI (:8070)."
         sleep 2
     else
         echo "${BOLD}Waiting for Heimdall phase convergence"\
@@ -414,7 +414,7 @@ run_headless() {
     if [[ "$KB_MANUAL" == "1" ]]; then
         warn "KerberosSDR manual-calibration mode: skipping the convergence wait."
         warn "DoA output is INVALID until you calibrate: disconnect all antennas,"
-        warn "then press 'Force Recalibration Now' in the heimdall web UI (:8070)."
+        warn "then press 'Full Recalibration' in the heimdall web UI (:8070)."
         sleep 2
     else
         say "Waiting for phase convergence$([[ "$WAIT_TIMEOUT" -eq 0 ]] && echo " (no timeout)" || echo " (timeout ${WAIT_TIMEOUT}s)")..."

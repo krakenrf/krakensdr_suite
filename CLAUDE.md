@@ -432,7 +432,7 @@ disconnected for a calibration to be valid. Start heimdall with `--kerberos`
 - Leaving the tuner-spread wideband scan never runs the automatic recal here:
   a manual calibration from before the scan is put back (STALE if the
   frequency moved meanwhile), otherwise the state stays UNCALIBRATED
-- **Manual calibration**: the heimdall web UI's "Force Recalibration Now"
+- **Manual calibration**: the heimdall web UI's "Full Recalibration"
   button (confirm dialog: disconnect all antennas first) is the ONLY trigger
   that runs the noise-source calibration (the noise-source checkbox is locked
   and `BIAS_TEE_ENABLE` refused in this mode - noise + FFT on would calibrate

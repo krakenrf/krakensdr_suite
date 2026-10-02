@@ -416,6 +416,18 @@ extern std::atomic<int> periodic_recal_minutes;
 // finds both bad bumps both). Session counters, surfaced to the web UI.
 extern std::atomic<uint32_t> periodic_recal_lag_fail_count;
 extern std::atomic<uint32_t> periodic_recal_phase_fail_count;
+// On-demand calibration check ("Check Calibration" button / CHECK_CAL /
+// check_calibration): the periodic monitor runs the same non-destructive check
+// at its next tick - recalibrating only if lag/phase drifted - even with the
+// periodic check disabled. Never in plain --kerberos (it pulses the noise).
+extern std::atomic<bool> calibration_check_requested;
+// Last check result (periodic or on demand), for the UI: 0 = none yet,
+// 1 = OK, 2 = drifted (recalibration requested), 3 = no verdict (busy,
+// superseded, or not possible right now); running = a check in progress.
+extern std::atomic<int> last_cal_check_result;
+extern std::atomic<bool> cal_check_running;
+extern std::atomic<float> last_cal_check_lag;    // worst |lag| (samples)
+extern std::atomic<float> last_cal_check_phase;  // worst |phase| (degrees)
 
 // Forward declarations for commonly shared globals (defined in main.cpp)
 struct SDRDevice;

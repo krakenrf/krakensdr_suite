@@ -439,7 +439,7 @@ disconnected. With `--kerberos`, every automatic noise-on path is suppressed
   `kerberos_cal_stale` (STALE) instead of entering the cooldown recal
   (web_server.cpp SDR_SETTINGS, tcp_control_server.cpp set_frequency,
   handle_settings_change); the periodic monitor never checks
-- The ONLY calibration trigger is FORCE_RECAL (web UI button, confirm
+- The ONLY calibration trigger is FORCE_RECAL (web UI "Full Recalibration" button, confirm
   dialog): the watchdog calls `recover_coherence(manual=true)`, which runs
   the normal full noise-source recalibration; convergence clears the stale
   flag in `complete_phase_calibration_locked()`
@@ -476,6 +476,19 @@ and cleared, GPIO1 never written from the mask). Everything else - calibration
 state machines, `bias_tee_enabled` semantics, the 8091 noise flag - is
 unchanged. Exclusive with `--wideband` and `--kerberos(_sw)` (refused at
 startup).
+
+### Calibration Buttons (web UI, Compensation Status card)
+
+- **Check Calibration** (`CHECK_CAL`; control port `check_calibration`): the
+  periodic monitor runs its non-destructive check at the next tick - briefly
+  pulses the noise source, measures the residual lag/phase on the compensated
+  stream, and sets `force_recalibration` only if out of tolerance. Works with
+  the periodic check disabled; not in plain `--kerberos` (it pulses the noise).
+  Result in the web STATE `cal_check` (`ok` / `drifted` / `no_verdict`, worst
+  lag + phase), shown under the buttons
+- **Full Recalibration** (`FORCE_RECAL`): the watchdog's full lag + phase
+  recalibration from scratch (confirm dialog; KerberosSDR: disconnect antennas).
+  `RESET_LAG_COMPENSATION` / `reset_lag_compensation` remain as aliases
 
 ### Pipeline Decoupling (L1 → L2-raw → L2)
 

@@ -825,6 +825,7 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
         // The snapshots may straddle the new calibration's start, and it is
         // recalibrating anyway - no verdict.
         std::cout << "Periodic calibration check: superseded by a calibration in progress" << std::endl;
+        last_cal_check_result = 3;
         return;
     }
 
@@ -847,8 +848,12 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
     if (snapshots < kMinSnapshots) {
         std::cout << "Periodic calibration check: skipped (only " << snapshots
                   << " snapshots; system busy)" << std::endl;
+        last_cal_check_result = 3;
         return;
     }
+    last_cal_check_lag = worst_lag;
+    last_cal_check_phase = worst_phase;
+    last_cal_check_result = bad ? 2 : 1;
 
     if (bad) {
         if (bad_lag)   periodic_recal_lag_fail_count.fetch_add(1, std::memory_order_relaxed);
@@ -876,10 +881,22 @@ void periodic_calibration_monitor(CorrelationResult& correlation_result) {
         std::this_thread::sleep_for(milliseconds(500));
         if (!global_running) break;
 
+        // An on-demand check (Check Calibration button): runs even with the
+        // periodic check disabled, under the same conditions
+        const bool manual = calibration_check_requested.exchange(false, std::memory_order_acq_rel);
+
         // --kerberos: the check would energize the noise source with antennas
         // connected - never run it, regardless of the enable setting.
-        if (!periodic_recal_enabled.load(std::memory_order_relaxed) ||
-            kerberos_manual_cal_only()) {
+        if (kerberos_manual_cal_only()) {
+            if (manual) {
+                std::cerr << "Calibration check: not available in KerberosSDR manual mode "
+                             "(use Full Recalibration with the antennas disconnected)" << std::endl;
+                last_cal_check_result = 3;
+            }
+            last_check = steady_clock::now();
+            continue;
+        }
+        if (!manual && !periodic_recal_enabled.load(std::memory_order_relaxed)) {
             last_check = steady_clock::now();  // hold the timer while disabled
             continue;
         }
@@ -898,14 +915,21 @@ void periodic_calibration_monitor(CorrelationResult& correlation_result) {
             st && *st == PhaseCompensatorState::CONVERGED;
 
         if (!checkable) {
+            if (manual) {
+                std::cout << "Calibration check: not now - calibration in progress, scanning or not yet calibrated" << std::endl;
+                last_cal_check_result = 3;
+            }
             last_check = steady_clock::now();
             continue;
         }
 
         const int period_min = std::max(1, periodic_recal_minutes.load(std::memory_order_relaxed));
-        if (steady_clock::now() - last_check >= minutes(period_min)) {
-            std::cout << "Periodic calibration check: starting (every " << period_min << " min)" << std::endl;
+        if (manual || steady_clock::now() - last_check >= minutes(period_min)) {
+            if (manual) std::cout << "Calibration check: starting (requested)" << std::endl;
+            else std::cout << "Periodic calibration check: starting (every " << period_min << " min)" << std::endl;
+            cal_check_running = true;
             run_calibration_check(correlation_result);
+            cal_check_running = false;
             last_check = steady_clock::now();
         }
     }

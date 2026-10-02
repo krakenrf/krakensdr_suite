@@ -894,8 +894,19 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         return response.str();
     }
 
+    // On-demand calibration check (the web UI's "Check Calibration"): the
+    // periodic monitor measures the residual lag/phase at its next tick and
+    // recalibrates only if drifted. Result in the web STATE (cal_check).
+    if (json_str.find("\"check_calibration\"") != std::string::npos) {
+        if (kerberos_manual_cal_only()) {
+            return "{\"status\":\"error\",\"message\":\"not available in KerberosSDR manual mode\"}";
+        }
+        calibration_check_requested.store(true, std::memory_order_release);
+        return "{\"status\":\"success\",\"message\":\"calibration check requested\"}";
+    }
+
     // Reset lag compensation
-    // Same as the web "Reset lag" button: re-measuring lag needs the noise
+    // Same as the web "Full Recalibration" button: re-measuring lag needs the noise
     // source on and the machines running, and a new lag lock needs a phase
     // calibration after it. A bare reset_lag_compensation_all_channels() did
     // neither once calibrated (FFT auto-off idles the machines): the sub-sample
