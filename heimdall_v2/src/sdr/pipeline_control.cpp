@@ -33,6 +33,9 @@ std::vector<std::thread> compensation_threads;
 }  // namespace
 
 void start_pipeline_threads() {
+    // Shutting down (release_hardware is waiting for the reconfiguration that
+    // got here): starting readers now would hand them handles about to close.
+    if (!global_running.load()) return;
     pipeline_running.store(true, std::memory_order_release);
     const int num_elements = std::min(active_num_elements.load(),
                                       static_cast<int>(devices.size()));
@@ -97,6 +100,8 @@ void stop_pipeline_threads() {
             if (!device || !device->async_thread.joinable() ||
                 device->async_exited.load(std::memory_order_acquire)) continue;
             all_exited = false;
+            // device_io_mutex: shutdown (release_hardware) may close handles
+            std::lock_guard<std::recursive_mutex> io(device_io_mutex);
             if (device->dev) rtlsdr_cancel_async(device->dev);
         }
         if (all_exited) break;
@@ -133,6 +138,30 @@ void remember_num_elements(int n) {
         settings::persisted_num_elements.store(n, std::memory_order_release);
         settings::save();
     }
+}
+
+bool reconfigure_num_elements_precheck(int new_n, std::string& err) {
+    const int max_n = static_cast<int>(expected_serials.size());
+    if (new_n < 2 || new_n > max_n) {
+        err = "num_elements must be between 2 and " + std::to_string(max_n);
+        return false;
+    }
+    const bool pipeline_down = !pipeline_running.load(std::memory_order_acquire);
+    if (new_n == active_num_elements.load() && !pipeline_down) return true;  // no-op (saved)
+    if (recovery_in_progress.load(std::memory_order_acquire)) {
+        err = "recalibration in progress - retry once it completes";
+        return false;
+    }
+    if (discrete_scanner.enabled.load() ||
+        operating_mode.load() == OperatingMode::WIDEBAND_SCAN) {
+        err = "disable the scanner / wideband scan first";
+        return false;
+    }
+    if (reconfig_in_progress.load(std::memory_order_acquire)) {
+        err = "a reconfiguration is already in progress";
+        return false;
+    }
+    return true;
 }
 
 bool reconfigure_num_elements(int new_n, std::string& err) {

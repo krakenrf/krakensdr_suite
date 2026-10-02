@@ -15,6 +15,7 @@
 #include "station_info.hpp"
 #include "signal_processing/music_processor.hpp"
 #include "utils/json_escape.hpp"
+#include "utils/host_check.hpp"
 #include "utils/parse_num.hpp"
 
 #include <openssl/evp.h>
@@ -25,6 +26,7 @@
 #include <openssl/x509v3.h>
 
 #include <arpa/inet.h>
+#include <cstring>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -558,6 +560,22 @@ private:
             // Extract Sec-WebSocket-Key (case-insensitive header match).
             string lower = c.rxbuf.substr(0, hdr_end);
             for (char& ch : lower) ch = (char)tolower((unsigned char)ch);
+            // Host allow-list (utils/host_check.hpp), as on 8080/8081: a page
+            // re-pointing its own DNS name at this device (DNS rebinding)
+            // can't read the bearings + station location. No Origin rule:
+            // this local mode exists for mapper pages served from elsewhere.
+            if (size_t hp = lower.find("\r\nhost:"); hp != string::npos) {
+                size_t hs = hp + strlen("\r\nhost:");
+                size_t he = c.rxbuf.find("\r\n", hs);
+                string host = c.rxbuf.substr(hs, he - hs);
+                host.erase(0, host.find_first_not_of(" \t"));
+                host.erase(host.find_last_not_of(" \t") + 1);
+                if (!host_allowed(host)) {
+                    send_all(c.fd, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    drop(c);
+                    return;
+                }
+            }
             size_t kp = lower.find("sec-websocket-key:");
             if (kp == string::npos) { drop(c); return; }
             size_t vs = kp + strlen("sec-websocket-key:");
@@ -766,7 +784,48 @@ int closest_bandwidth_index(double hz) {
 // execute - so sync echo, persistence and heimdall forwarding all behave
 // exactly as if a browser had sent each command. Reads decimator state fresh
 // between steps, so VFO reconciliation has no async races.
-void apply_cloud_settings_on_loop(map<string, string> s) {
+void apply_cloud_settings_on_loop(map<string, string> s, const string& apikey) {
+    // Apply only what differs from this receiver's own current report. The
+    // cloud pushes back whole settings objects, and re-applying our own
+    // (lossy, legacy-schema) values turned auto signal sources off, dropped
+    // the WIDEBAND topology to UCA, overwrote the static location with a GPS
+    // fix, re-rounded the radius and forced every VFO's squelch on.
+    const string ours = build_settings_payload(apikey);
+    // Location: our report carries the LIVE fix (GPS / phone), which moves
+    // between our push and its echo - so on a non-static station an echoed
+    // fix would land in the static location. Only a static station takes a
+    // pushed location (and then compares it like everything else).
+    if (station_info.resolve().source != LocationSource::STATIC) {
+        s.erase("latitude"); s.erase("longitude"); s.erase("heading");
+    }
+    // VFO slots beyond the current count: our report fills them with
+    // placeholders, so a cloud value that happens to equal one (e.g. 12.5 kHz
+    // for a VFO it is adding) must not be filtered out
+    const size_t vfos_now = decimator_manager.getDecimatorInfoList().size();
+    auto beyond_current_vfos = [&](const string& k) {
+        for (const char* p : {"vfo_freq_", "vfo_bw_", "vfo_squelch_"}) {
+            if (k.rfind(p, 0) == 0) {
+                try { return stoul(k.substr(strlen(p))) >= vfos_now; } catch (...) { return false; }
+            }
+        }
+        return false;
+    };
+    auto unchanged = [&](const string& k, const string& theirs) {
+        if (beyond_current_vfos(k)) return false;
+        string mine;
+        if (!json_find(ours, k, mine)) return false;
+        if (mine == theirs) return true;
+        try {
+            const double a = stod_finite(mine), b = stod_finite(theirs);
+            return fabs(a - b) <= 1e-9 * max(1.0, fabs(a));
+        } catch (const exception&) {
+            return false;
+        }
+    };
+    for (auto it = s.begin(); it != s.end();)
+        it = unchanged(it->first, it->second) ? s.erase(it) : next(it);
+    if (s.empty()) return;
+
     auto has = [&](const char* k) { return s.count(k) != 0; };
     auto cmd = [](const string& c) { ControlHandler::handle_websocket_message(c); };
 
@@ -872,7 +931,7 @@ void apply_cloud_settings_on_loop(map<string, string> s) {
 }
 
 // Parse a cloud "settings" push and defer its application to the uWS loop.
-void handle_cloud_message(const string& text) {
+void handle_cloud_message(const string& text, const string& apikey) {
     string fn;
     if (!json_find(text, "function", fn) || fn != "settings") return;
     string inner;
@@ -897,8 +956,8 @@ void handle_cloud_message(const string& text) {
     if (s.empty()) return;
 
     if (!loop) return;  // web server not up yet
-    loop->defer([s = std::move(s)]() mutable {
-        apply_cloud_settings_on_loop(std::move(s));
+    loop->defer([s = std::move(s), apikey]() mutable {
+        apply_cloud_settings_on_loop(std::move(s), apikey);
     });
 }
 
@@ -1080,7 +1139,7 @@ void WebMapper::workerThread() {
                     on_cloud_drop(now, "read");
                 } else {
                     slept = true;  // pump blocked up to the 100 ms socket timeout
-                    for (const string& m : messages) handle_cloud_message(m);
+                    for (const string& m : messages) handle_cloud_message(m, key);
 
                     // Push settings promptly when receiver state changes
                     // (hash-guarded => silent at steady state); every 10 s

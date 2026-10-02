@@ -456,8 +456,9 @@ SharedDecimator::MultiChannelDecimated SharedDecimator::decimateMultiChannel(
     }
 
     // Log performance statistics periodically
-    static size_t stats_counter = 0;
-    if (++stats_counter % 1000 == 0) {
+    // Shared by every VFO's decimator, which run concurrently: atomic
+    static std::atomic<size_t> stats_counter{0};
+    if ((stats_counter.fetch_add(1, std::memory_order_relaxed) + 1) % 1000 == 0) {
         cout << "SharedDecimator performance (hybrid parallel): "
              << "Blocks: " << getBlocksProcessed() << ", "
              << "Samples: " << getSamplesProcessed() << endl;

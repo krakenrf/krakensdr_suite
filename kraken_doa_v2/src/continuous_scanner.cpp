@@ -59,6 +59,21 @@ bool ContinuousScanner::start() {
         peak_memory_.clear();
     }
 
+    bool start_with_retune = false;
+    if (wideband_scan_enabled_.load()) {
+        buildBandPlan();
+        std::lock_guard<std::mutex> lock(band_plan_mutex_);
+        if (num_bands_ > 0) {
+            current_band_index_ = 0;
+            start_with_retune = true;
+        } else {
+            // No valid plan for the requested range (logged by buildBandPlan)
+            WebSocketServer::broadcast_json_message(
+                "{\"continuous_scanner\":{\"state\":\"stopped\",\"error\":\"wideband scan range is not tunable\"}}");
+            return false;
+        }
+    }
+
     if (wideband_scan_enabled_.load()) {
         // Faster server settling while the scanner drives retunes
         std::string cmd = "{\"set_stability_delay\":{\"delay_ms\":" +
@@ -68,16 +83,7 @@ bool ContinuousScanner::start() {
                   << 500 << "ms" << std::endl;
     }
 
-    bool start_with_retune = false;
-    if (wideband_scan_enabled_.load()) {
-        buildBandPlan();
-        std::lock_guard<std::mutex> lock(band_plan_mutex_);
-        if (num_bands_ > 0) {
-            current_band_index_ = 0;
-            start_with_retune = true;
-        }
-    }
-
+    fm_source_before_ = decimator_manager.getFMDecimatorId();
     running_.store(true);
     if (start_with_retune) {
         initiateRetune(0);
@@ -137,6 +143,12 @@ bool ContinuousScanner::stop() {
         std::lock_guard<std::mutex> lock(band_plan_mutex_);
         current_band_index_ = 0;
     }
+
+    // Give the audio back to the VFO the user had (the scan moved it)
+    if (fm_source_before_ >= 0 && decimator_manager.getFMDecimatorId() != fm_source_before_) {
+        ControlHandler::switch_fm_source(fm_source_before_);
+    }
+    fm_source_before_ = -1;
 
     std::string cmd = "{\"set_stability_delay\":{\"delay_ms\":" +
                       std::to_string(3000) + "}}";
@@ -265,6 +277,12 @@ bool ContinuousScanner::isCalibrationActive() {
     // Additionally require a continuous noise-quiet window
     // (ScannerManager::NOISE_QUIET_MS) so short calibration bursts between
     // polls (every 100ms here) don't slip through unnoticed.
+    // KerberosSDR manual mode (header bit 8): heimdall never calibrates on
+    // its own and parks UNCALIBRATED with the phase state low, so that test
+    // held the scan forever - only a manual calibration (noise on) counts.
+    if (server_kerberos_mode.load(std::memory_order_relaxed)) {
+        return scanner_manager.isNoiseRecentlyActive();
+    }
     return scanner_manager.isNoiseRecentlyActive() ||
            scanner_manager.getPhaseState() <= 3;
 }
@@ -569,7 +587,9 @@ void ContinuousScanner::tuneTo(int decimator_id, float freq_hz, float signal_db,
         for (int i = 0; i < MAX_TRACKED_SIGNALS; i++) {
             if (tracked_signals_[i].active) {
                 if (decimator_manager.getFMDecimatorId() != tracked_signals_[i].decimator_id) {
-                    decimator_manager.setFMDecimatorId(tracked_signals_[i].decimator_id);
+                    // with that VFO's demod mode (setFMDecimatorId alone decoded
+                    // e.g. an NBFM VFO as WBFM, and the UI kept the old source)
+                    ControlHandler::switch_fm_source(tracked_signals_[i].decimator_id);
                 }
                 break;
             }
@@ -597,7 +617,7 @@ void ContinuousScanner::updateFMToSignal() {
     for (auto& sig : tracked_signals_) {
         if (sig.active) {
             if (decimator_manager.getFMDecimatorId() != sig.decimator_id) {
-                decimator_manager.setFMDecimatorId(sig.decimator_id);
+                ControlHandler::switch_fm_source(sig.decimator_id);
             }
             return;
         }
@@ -632,9 +652,31 @@ void ContinuousScanner::buildBandPlan() {
     float start_hz = wideband_start_hz_.load();
     float end_hz   = wideband_end_hz_.load();
 
+    // Every refusal below empties the plan: returning with the old one kept
+    // made start() silently scan the PREVIOUS range
+    auto refuse = [this]() {
+        std::lock_guard<std::mutex> lock(band_plan_mutex_);
+        band_centers_.clear();
+        current_band_index_ = 0;
+        num_bands_ = 0;
+    };
+
     if (start_hz <= 0.0f || end_hz <= start_hz) {
         std::cerr << "ContinuousScanner: Invalid wideband range for band plan"
                   << std::endl;
+        refuse();
+        return;
+    }
+
+    // The bands are plain retunes: the range must be tunable (R820T range, or
+    // the Wideband variant's RF span) or heimdall refuses every hop
+    uint64_t rf_min = RTL_TUNER_MIN_HZ, rf_max = RTL_TUNER_MAX_HZ;
+    if (wb_variant_enabled.load(std::memory_order_relaxed)) wb_variant_rf_union_range(rf_min, rf_max);
+    if (start_hz < static_cast<float>(rf_min) || end_hz > static_cast<float>(rf_max)) {
+        std::cerr << "ContinuousScanner: wideband range " << start_hz * 1e-6f << " - "
+                  << end_hz * 1e-6f << " MHz is outside the tunable "
+                  << rf_min / 1e6 << " - " << rf_max / 1e6 << " MHz, not scanning" << std::endl;
+        refuse();
         return;
     }
 
@@ -652,10 +694,11 @@ void ContinuousScanner::buildBandPlan() {
     constexpr int MAX_BANDS = 4096;
     const double step = static_cast<double>(edge_clip) * BAND_WIDTH_HZ;
     const double n_bands = (span <= BAND_WIDTH_HZ) ? 1.0
-                         : std::ceil((span - BAND_WIDTH_HZ) / step) + 1.0;
+                         : std::ceil((span - BAND_WIDTH_HZ) / step - 1e-6) + 1.0;  // float round-off mustn't add a band
     if (!(n_bands <= MAX_BANDS)) {
         std::cerr << "ContinuousScanner: wideband range needs " << n_bands
                   << " bands (max " << MAX_BANDS << "), not scanning" << std::endl;
+        refuse();
         return;
     }
 
@@ -666,8 +709,13 @@ void ContinuousScanner::buildBandPlan() {
         // Whole range fits in one tuner band
         band_centers_.push_back((start_hz + end_hz) * 0.5f);
     } else {
+        // The last step can overshoot the range (up to a step past it): clamp
+        // the centres inside, so the final band ends at end_hz and its centre
+        // stays tunable (end_hz <= the RF limit, checked above)
+        const double last_center = static_cast<double>(end_hz) - HALF_BAND_HZ;
         for (int i = 0; i < static_cast<int>(n_bands); i++) {
-            band_centers_.push_back(static_cast<float>(start_hz + HALF_BAND_HZ + i * step));
+            band_centers_.push_back(static_cast<float>(
+                std::min(static_cast<double>(start_hz) + HALF_BAND_HZ + i * step, last_center)));
         }
     }
 
@@ -720,7 +768,9 @@ void ContinuousScanner::initiateRetune(int band_index) {
     // Command the Heimdall server to retune the hardware
     {
         std::stringstream ss;
-        ss << "{\"set_frequency\":{\"frequency\":" << (unsigned int)target_freq << "}}";
+        // uint64: the Wideband variant's bands reach 6668 MHz, past uint32
+        ss << "{\"set_frequency\":{\"frequency\":"
+           << static_cast<uint64_t>(llround(static_cast<double>(target_freq))) << "}}";
         ControlHandler::send_control_command(ss.str());
     }
 
@@ -1038,7 +1088,14 @@ void ContinuousScanner::scannerThread() {
                                              "APPLYING", "VERIFYING", "CONVERGED"};
                 const char* phase_name = (phase <= 5) ? phase_names[phase] : "UNKNOWN";
 
-                if (!calibration_started_) {
+                if (!calibration_started_ && server_kerberos_mode.load(std::memory_order_relaxed)) {
+                    // KerberosSDR manual mode: a retune only marks the
+                    // calibration stale, none will start - go straight to
+                    // the settle (it used to sit out the 60 s timeout per band)
+                    calibration_started_ = true;
+                    calibration_done_ = true;
+                    calibration_done_time_ = now;
+                } else if (!calibration_started_) {
                     if (noise || phase <= 3) {
                         calibration_started_ = true;
                         std::cout << "ContinuousScanner: Calibration started (phase=" << phase_name

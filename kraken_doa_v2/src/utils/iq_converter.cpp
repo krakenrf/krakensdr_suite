@@ -50,3 +50,43 @@ void IQConverter::convert_uint8_to_complex_float(
         }
     }
 }
+
+void IQConverter::convert_uint8_to_complex_float_tracked_dc(
+    const uint8_t* input,
+    std::complex<float>* output,
+    size_t num_samples,
+    float& dc_i,
+    float& dc_q,
+    bool& seeded,
+    float k
+) {
+    if (!input || !output || num_samples == 0) {
+        return;
+    }
+
+    float sum_i = 0.0f;
+    float sum_q = 0.0f;
+    for (size_t i = 0; i < num_samples; i++) {
+        sum_i += float(input[i*2]);
+        sum_q += float(input[i*2+1]);
+    }
+    const float mean_i = sum_i / float(num_samples);
+    const float mean_q = sum_q / float(num_samples);
+    if (!seeded) {  // first packet seeds the estimate
+        dc_i = mean_i;
+        dc_q = mean_q;
+        seeded = true;
+    } else {
+        dc_i += k * (mean_i - dc_i);
+        dc_q += k * (mean_q - dc_q);
+    }
+
+    const float scl = 1.0f / 127.5f;
+    const float di = dc_i, dq = dc_q;
+    for (size_t i = 0; i < num_samples; i++) {
+        output[i] = {
+            (float(input[i*2]) - di) * scl,
+            (float(input[i*2+1]) - dq) * scl
+        };
+    }
+}

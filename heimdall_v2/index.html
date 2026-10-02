@@ -471,6 +471,20 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             }
         };
         
+        // A Set / reset that should start a recalibration locks the controls
+        // until it completes. They used to unlock only when the FFT auto-
+        // switched off after a calibration, so a Set that runs none (same
+        // value, refused, KerberosSDR marking the calibration stale) left
+        // them greyed out for good. The table updates below now unlock them:
+        // after the calibration if one was seen, else after 4 s.
+        let setLock = null, lastAllComp = 0;
+        let noiseLocked = false;  // plain --kerberos: the backend refuses noise-on
+        const lockForRecal = () => {
+            setLock = { at: Date.now(), wasEnabled: controlsEnabled, preAllComp: lastAllComp, sawRecal: false };
+            calibrationActive = 1;
+            updateControls(false);
+        };
+
         const updateControls = (enabled) => {
             controlsEnabled = enabled;
             const [fftGroup, biasGroup, perBinGroup] = [$('fft-control-group'), $('bias-control-group'), $('perbin-control-group')];
@@ -481,7 +495,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                 biasGroup.classList.remove('disabled');
                 perBinGroup.classList.remove('disabled');
                 fftChk.disabled = false;
-                biasChk.disabled = false;
+                biasChk.disabled = noiseLocked;
                 perBinChk.disabled = false;
             } else {
                 fftGroup.classList.add('disabled');
@@ -760,6 +774,22 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                 }
             }
             
+            lastAllComp = allComp;
+            if (setLock && !controlsEnabled) {
+                if (active || (setLock.preAllComp && !allComp)) setLock.sawRecal = true;
+                const age = Date.now() - setLock.at;
+                if (setLock.sawRecal ? (allComp && !active) : (age > 4000 && setLock.wasEnabled)) {
+                    updateControls(true);
+                    log(setLock.sawRecal ? 'Controls enabled - recalibration complete'
+                                         : 'Controls enabled - no recalibration was needed');
+                    setLock = null;
+                } else if (!setLock.sawRecal && age > 4000) {
+                    setLock = null;  // locked before the Set too: the normal paths decide
+                }
+            } else if (setLock && controlsEnabled) {
+                setLock = null;  // unlocked by another path
+            }
+
             // Phase tracking is ONLY controlled by user FFT checkbox after calibration
             // During calibration, it follows the compensation activity
             if (allComp && !calibrationActive) {
@@ -1026,6 +1056,13 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             // with antennas connected - the backend never runs them; grey out
             // the controls so the UI doesn't suggest otherwise.
             const manualOnly = kerberosMode && !kerberosSw;
+            noiseLocked = manualOnly;
+            const bc = $('bias-chk');
+            if (bc) {
+                if (manualOnly) bc.disabled = true;
+                else if (controlsEnabled) bc.disabled = false;
+                bc.title = manualOnly ? 'KerberosSDR: use Force Recalibration (antennas disconnected)' : '';
+            }
             ['recal-chk', 'recal-min-input', 'recal-min-btn'].forEach(id => {
                 const el = $(id);
                 if (el) {
@@ -1524,8 +1561,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                     ws.send(`SDR_SETTINGS:{"frequency":${freqHz}}`);
                     log(`Frequency change requested: ${newFreq} MHz - will trigger recalibration`);
                     // Reset calibration tracking since we're triggering a recalibration
-                    calibrationActive = 1;
-                    updateControls(false);  // Disable controls during recalibration
+                    lockForRecal();  // Disable controls during recalibration
                 }
             }
         };
@@ -1549,8 +1585,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                     }
                 }
                 // Reset calibration tracking since we're triggering a recalibration
-                calibrationActive = 1;
-                updateControls(false);  // Disable controls during recalibration
+                lockForRecal();  // Disable controls during recalibration
             }
         };
         
@@ -1606,8 +1641,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                 if (confirm(msg)) {
                     ws.send('RESET_LAG_COMPENSATION');
                     log('Lag compensation reset requested');
-                    calibrationActive = 1;
-                    updateControls(false);  // Disable controls during recalibration
+                    lockForRecal();  // Disable controls during recalibration
                 }
             }
         });

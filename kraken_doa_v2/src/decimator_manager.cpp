@@ -68,6 +68,12 @@ void DecimatorManager::cleanup() {
 }
 
 int DecimatorManager::addDecimator() {
+    // Read BEFORE decimator_mutex: ChannelManager::update_channel_info holds
+    // channel_info_mutex while it walks the decimators (decimator_mutex), so
+    // taking them in the other order here could deadlock the uWS loop and the
+    // data receiver (a FREQ replay followed by DECIMATORS:, or ADD_DECIMATOR
+    // during a retune)
+    const float tuner_rf = ChannelManager::get_frequency(active_channel.load(std::memory_order_relaxed));
     std::lock_guard<std::mutex> lock(decimator_mutex);
 
     if (decimators.size() >= MAX_DECIMATORS) {
@@ -134,14 +140,14 @@ int DecimatorManager::addDecimator() {
                 instance->music_processor->setConfig(reference->music_processor->getConfig());
                 instance->music_processor->setElevationResolution(reference->music_processor->getElevationResolution());
                 if (reference->music_processor->hasValidCustomPositions()) {
-                    instance->music_processor->setCustomPositions(reference->music_processor->getCustomPositions());
+                    instance->music_processor->setCustomPositions(reference->music_processor->getCustomPositions(),
+                                                                  reference->music_processor->getCustomPositionsCount());
                 }
 
                 // Frequency: the tuner RF at THIS VFO's offset (0 Hz), not the
                 // reference VFO's effective frequency (RF + its offset)
-                const float rf = ChannelManager::get_frequency(active_channel.load(std::memory_order_relaxed));
-                if (rf > 0) {
-                    instance->music_processor->setFrequency(rf);
+                if (tuner_rf > 0) {
+                    instance->music_processor->setFrequency(tuner_rf);
                 }
             }
         }

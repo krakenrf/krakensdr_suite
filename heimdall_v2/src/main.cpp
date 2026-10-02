@@ -37,6 +37,7 @@ std::atomic<bool> bias_tee_enabled{true};
 std::atomic<uint32_t> antenna_bias_tee_mask{0};
 std::atomic<int> rtl_tcp_channel{0};
 std::atomic<bool> global_running{true};
+std::atomic<bool> fatal_exit{false};
 std::atomic<OperatingMode> operating_mode{OperatingMode::COHERENT};
 std::atomic<int> active_num_elements{NUM_DEVICES};  // Resolved in main(): -n flag > persisted setting > devices detected on USB
 
@@ -106,9 +107,23 @@ void tcp_status_broadcaster() {
         if (tcp_control_server) {
             tcp_control_server->broadcast_status();
         }
+        settings::save_tuning_if_due();  // the last user tuning, once it has settled
 
         std::this_thread::sleep_for(std::chrono::milliseconds(500)); // 2 Hz status updates
     }
+}
+
+// Sleep up to `ms`, in short slices: false as soon as the scan is stopped,
+// reconfigured or restarted (run_generation moved) or heimdall is exiting.
+static bool scanner_wait(uint32_t ms, uint32_t generation) {
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    while (std::chrono::steady_clock::now() < end) {
+        if (!global_running || !discrete_scanner.enabled.load() ||
+            discrete_scanner.run_generation.load() != generation) return false;
+        std::this_thread::sleep_for(std::min<std::chrono::steady_clock::duration>(
+            std::chrono::milliseconds(20), end - std::chrono::steady_clock::now()));
+    }
+    return true;
 }
 
 // Discrete scanner thread - handles server-side frequency switching
@@ -131,6 +146,7 @@ void discrete_scanner_thread() {
             continue;
         }
 
+        const uint32_t generation = discrete_scanner.run_generation.load();
         uint32_t dwell_time = discrete_scanner.dwell_time_ms.load();
         uint32_t settling_time = discrete_scanner.settling_time_ms.load();
         uint32_t current_index = discrete_scanner.current_group_index.load();
@@ -154,12 +170,19 @@ void discrete_scanner_thread() {
         std::cout << "Scanner: Tuning to group " << current_index << ": "
                   << (next_frequency / 1e6) << " MHz (settling " << settling_time << "ms)" << std::endl;
 
+        bool hop_cancelled = false;
+        // Read before settings_mutex (state_mutex is never taken under it here)
+        const bool cal_converged = get_phase_compensation_state() == PhaseCompensatorState::CONVERGED;
         {
             std::lock_guard<std::mutex> lock(settings_mutex);
             bool hop_ok = true;
-
-            // If wideband mode is enabled, update wideband tuner spread around this center
-            if (wideband_config.enabled.load()) {
+            // Stopped / restarted during the flushes above (e.g. a signal lock
+            // that already set its own frequency): don't retune over it
+            if (!discrete_scanner.enabled.load() || discrete_scanner.run_generation.load() != generation) {
+                hop_cancelled = true;
+                hop_ok = false;
+            } else if (wideband_config.enabled.load()) {
+                // Wideband scan: update the tuner spread around this center
                 setup_wideband_frequencies(next_frequency, devices);
             } else if (downconverter.enabled.load()) {
                 // Wideband variant: tuners stay at the IF, hop the LO instead
@@ -183,6 +206,18 @@ void discrete_scanner_thread() {
                 }
             }
             if (hop_ok) {
+                // The calibration belongs to the frequency it was made at: a
+                // scan stopped elsewhere must not keep it as if valid.
+                // Automatic mode recalibrates when the scan stops (the lag
+                // driver watches scanner_cal_deferred); --kerberos marks it
+                // STALE for the UIs, as a retune does.
+                if (next_frequency != current_frequency.load()) {
+                    if (!kerberos_manual_cal_only()) {
+                        scanner_cal_deferred.store(true, std::memory_order_release);
+                    } else if (cal_converged) {
+                        kerberos_cal_stale.store(true, std::memory_order_release);
+                    }
+                }
                 current_frequency = next_frequency;
                 // The S2P forward correction is frequency dependent: follow the
                 // hop (it stayed at the pre-scan frequency's value)
@@ -192,11 +227,17 @@ void discrete_scanner_thread() {
             }
         }
 
+        if (hop_cancelled) {
+            if (!discrete_scanner.enabled.load())
+                discrete_scanner.retuning_in_progress.store(false, std::memory_order_release);
+            continue;
+        }
+
         // Increment frequency change counter (this signals the client that frequency changed)
         discrete_scanner.frequency_change_counter.fetch_add(1, std::memory_order_release);
 
-        // STEP 3: Wait for tuners to settle (RTL-SDR produces noise during retuning)
-        std::this_thread::sleep_for(std::chrono::milliseconds(settling_time));
+        // STEP 3: Wait for tuners to settle (RTL-SDR produces noise during retuning).
+        const bool settled = scanner_wait(settling_time, generation);
 
         // STEP 4: Flush buffers AGAIN after settling to remove noisy settling data
         // The tuners produce garbage during the settling period
@@ -204,22 +245,107 @@ void discrete_scanner_thread() {
         clear_l2_buffer();
 
         // STEP 5: Clear retuning flag - tuners are now stable with clean data
-        // Client will reset FFT and start accepting clean data
+        // Client will reset FFT and start accepting clean data. A settle cut
+        // short by a reconfigure/restart leaves it set (the tuners are still
+        // settling and the next hop follows at once) and skips the dwell;
+        // only a stop clears it here.
+        if (!settled) {
+            if (!discrete_scanner.enabled.load())
+                discrete_scanner.retuning_in_progress.store(false, std::memory_order_release);
+            continue;
+        }
         discrete_scanner.retuning_in_progress.store(false, std::memory_order_release);
 
         // Dwell on this frequency (subtract settling time from total dwell)
         uint32_t remaining_dwell = (dwell_time > settling_time) ? (dwell_time - settling_time) : 0;
-        if (remaining_dwell > 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(remaining_dwell));
+        if (!scanner_wait(remaining_dwell, generation)) {
+            continue;  // stopped / reconfigured / restarted: the new state sets the index
         }
 
         // Move to next frequency group (wrap around; get_frequency re-wraps
-        // if the list was replaced during the dwell)
+        // if the list was replaced during the dwell). Only for this run:
+        // configure/start bump the generation BEFORE resetting the index, so
+        // either this check sees the new run or its reset lands after us.
         uint32_t next_index = (current_index + 1) % std::max<size_t>(discrete_scanner.get_num_groups(), 1);
-        discrete_scanner.current_group_index = next_index;
+        {
+            // Check + store under config_mutex, which configure/start hold
+            // while bumping the generation and resetting the index
+            std::lock_guard<std::mutex> cl(discrete_scanner.config_mutex);
+            if (discrete_scanner.run_generation.load() == generation)
+                discrete_scanner.current_group_index = next_index;
+        }
     }
 
     std::cout << "Discrete scanner thread exiting" << std::endl;
+}
+
+// Hardware release for shutdown and late startup failures: cancel the async
+// reads first (stops USB streaming and returns each reader thread out of
+// rtlsdr_read_async), let any in-flight libusb completion callback drain, then
+// close the dongles so they are clean for the next run. The workers only touch
+// device QUEUES, never the librtlsdr handle, so closing here can't race them.
+static void release_hardware() {
+    // An element-count reconfiguration holds settings_mutex from closing the
+    // handles until its new USB readers are running: wait for it, or this
+    // closed handles a just-started reader was entering rtlsdr_read_async with
+    // (use after free at exit). Bounded - a stuck holder must not hang the
+    // exit - and never released: the process is about to _Exit, and a
+    // reconfiguration starting after this must not reopen anything.
+    const auto lock_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!settings_mutex.try_lock()) {
+        if (std::chrono::steady_clock::now() > lock_deadline) {
+            std::cerr << "Shutdown: settings lock still held after 5 s - releasing the devices anyway" << std::endl;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    // Cancel, then wait (bounded) until every USB reader has left
+    // rtlsdr_read_async, re-sending the cancel like stop_pipeline_threads: a
+    // cancel is a no-op on a stream that hasn't started yet, so a reader just
+    // starting up would otherwise enter read_async on a handle closed below.
+    // Under device_io_mutex: after the 5 s timeout above a reconfiguration
+    // may still be opening/closing handles.
+    auto cancel_running = [](bool first) {
+        std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
+        bool all_exited = true;
+        for (auto& device : devices) {
+            if (!device) continue;
+            if (first) device->running = false;
+            if (!device->async_thread.joinable() || device->async_exited.load(std::memory_order_acquire)) continue;
+            all_exited = false;
+            if (device->dev) rtlsdr_cancel_async(device->dev);
+        }
+        return all_exited;
+    };
+    bool exited = cancel_running(true);
+    const auto exit_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!exited && std::chrono::steady_clock::now() < exit_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        exited = cancel_running(false);
+    }
+    if (!exited) std::cerr << "Shutdown: a USB reader did not exit within 2 s" << std::endl;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));  // in-flight completions
+    {
+        // A web/control command or a noise-source switch still in flight must
+        // not use a handle mid-close.
+        std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
+        // Switch the noise source off first: the fork's rtlsdr_close keeps the
+        // bias-tee state, so stopping mid-calibration left the KrakenSDR noise
+        // source powered for whatever software used the dongles next.
+        // Unconditionally: opening the devices powers it without setting
+        // bias_tee_enabled (e.g. a stop during an element-count change).
+        set_bias_tee_all_devices(false, devices);
+        for (auto& device : devices) {
+            if (device && device->dev) {
+                rtlsdr_close(device->dev);
+                device->dev = nullptr;
+            }
+        }
+    }
+
+    // --kerberos_sw: leave the antenna switches pointing at the antennas (not
+    // the noise source) and release the GPIO lines for the next run.
+    kerberos_gpio_cleanup();
 }
 
 int main(int argc, char* argv[]) {
@@ -227,13 +353,16 @@ int main(int argc, char* argv[]) {
     int num_elements_cli = 0;  // 0 = not given on the command line
 
     for (int i = 1; i < argc; i++) {
-        if ((strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--num-elements") == 0) && i + 1 < argc) {
-            num_elements_cli = atoi(argv[++i]);
-            if (num_elements_cli < 2 || num_elements_cli > NUM_DEVICES) {
+        const bool has_value = i + 1 < argc;
+        if ((strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--num-elements") == 0) && has_value) {
+            char* end = nullptr;
+            const long n = strtol(argv[++i], &end, 10);
+            if (end == argv[i] || *end != '\0' || n < 2 || n > NUM_DEVICES) {
                 std::cerr << "Error: -n must be between 2 and " << NUM_DEVICES << std::endl;
                 return 1;
             }
-        } else if (strcmp(argv[i], "--serials") == 0 && i + 1 < argc) {
+            num_elements_cli = static_cast<int>(n);
+        } else if (strcmp(argv[i], "--serials") == 0 && has_value) {
             // Comma-separated USB serials, channel order. Replaces the default
             // KrakenSDR list so any set of dongles can form the array.
             expected_serials.clear();
@@ -255,7 +384,7 @@ int main(int argc, char* argv[]) {
             downconverter.enabled = true;
         } else if (strcmp(argv[i], "--kerberos") == 0) {
             kerberos_mode = true;
-        } else if (strcmp(argv[i], "--kerberos_sw") == 0) {
+        } else if (strcmp(argv[i], "--kerberos_sw") == 0 || strcmp(argv[i], "--kerberos-sw") == 0) {
             kerberos_mode = true;
             kerberos_sw_mode = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -277,6 +406,13 @@ int main(int argc, char* argv[]) {
                       << "                          like --kerberos but calibration is automatic again\n"
                       << "  -h, --help              Show this help message\n";
             return 0;
+        } else {
+            // Refuse anything else: a misspelt flag used to be ignored, so e.g.
+            // a typo of --kerberos_sw started auto-calibration as a KrakenSDR
+            // with the KerberosSDR's antennas connected.
+            std::cerr << "Error: unknown or incomplete option '" << argv[i]
+                      << "' (see " << argv[0] << " --help)" << std::endl;
+            return 1;
         }
     }
 
@@ -321,6 +457,24 @@ int main(int argc, char* argv[]) {
     // count) before any calibration starts, so a remembered "on" builds the
     // equalizer on the very first calibration.
     settings::load();
+
+    // The last user tuning (settings::note_tuning), so a restart - e.g. the
+    // supervisor after a crash - comes back where the array was, not at the
+    // compiled-in CENTER_FREQ while the DoA client keeps running
+    if (const uint64_t f = settings::persisted_frequency.load(); f > 0) {
+        if (rf_frequency_valid(f)) {
+            current_frequency = f;
+            std::cout << "Settings: center frequency " << f / 1e6 << " MHz" << std::endl;
+            // settings::load() built the forward correction at CENTER_FREQ
+            if (forward_comp.enabled.load(std::memory_order_relaxed)) fwdcomp::recompute(static_cast<double>(f));
+        } else {
+            std::cerr << "Settings: saved center frequency " << f / 1e6
+                      << " MHz is outside the tunable range - using the default" << std::endl;
+        }
+    }
+    if (const int g = settings::persisted_gain.load(); g == -1 || (g >= 0 && g <= 500)) {
+        current_gain = g;
+    }
 
     // Resolve the startup element count: explicit -n wins, then the web-UI
     // choice persisted in the settings file, then however many of the expected
@@ -370,7 +524,7 @@ int main(int argc, char* argv[]) {
          << "MODULAR: Split into core, sdr, dsp, net, and web modules\n"
          << "Active Elements: " << num_elements << " (of " << max_elements << " configured), Reference: " << REF_CHANNEL
          << ", Samples: " << NUM_SAMPLES << "\n"
-         << "Frequency: " << std::fixed << std::setprecision(1) << CENTER_FREQ/1e6
+         << "Frequency: " << std::fixed << std::setprecision(1) << current_frequency.load()/1e6
          << " MHz, Sample Rate: " << SAMPLE_RATE/1e6 << " MSPS\n"
          << (downconverter.enabled.load()
                  ? std::string("Mode: KrakenSDR WIDEBAND variant (tuners at ") +
@@ -424,6 +578,19 @@ int main(int argc, char* argv[]) {
         });
     }
 
+    // Startup failure once devices / server threads exist: release the
+    // hardware and _Exit(1) like the normal shutdown. A plain return ran the
+    // global destructors, and RtlTcpServer's joins a thread blocked in
+    // accept() - so a busy 8091/8092 hung heimdall instead of exiting 1 (the
+    // supervisor never restarted it), with the dongles left open.
+    auto fail_startup = [&dash]() {
+        dash.stop();
+        release_hardware();
+        std::cout.flush();
+        std::cerr.flush();
+        _Exit(1);
+    };
+
     std::string html_content;
     if (!load_html_file(html_content)) {
         std::cerr << "Failed to load index.html" << std::endl;
@@ -442,7 +609,7 @@ int main(int argc, char* argv[]) {
 
     if (!init_all_rtlsdr_devices(devices)) {
         std::cerr << "Device initialization failed" << std::endl;
-        return 1;
+        fail_startup();
     }
 
     // KrakenSDR Wideband variant: the tuners were just parked at the IF; bring
@@ -453,7 +620,7 @@ int main(int argc, char* argv[]) {
         if (!downconverter_init(current_frequency.load())) {
             std::cerr << "Downconverter initialization failed - is the moRFeus connected"
                          " (and /dev/hidraw* accessible)?" << std::endl;
-            return 1;
+            fail_startup();
         }
     }
     
@@ -461,10 +628,15 @@ int main(int argc, char* argv[]) {
     initialize_correlation_result(correlation_result);
     
     // Start RTL-TCP server with default channel 0
-    rtl_tcp_server = std::make_unique<RtlTcpServer>(0);
-    if (!rtl_tcp_server->start()) {
-        std::cerr << "Failed to start RTL-TCP server on port " << RTL_TCP_PORT << std::endl;
-        return 1;
+    // Built locally and published only once started: the dashboard thread
+    // already reads the global
+    if (auto rtl = std::make_unique<RtlTcpServer>(0); rtl->start()) {
+        rtl_tcp_server = std::move(rtl);
+    } else {
+        // An optional tap: a stock rtl_tcp on a spare dongle (the default
+        // port 1234) must not keep the array from starting - that made the
+        // supervisor restart-loop. Run without it.
+        std::cerr << "RTL-TCP: port " << RTL_TCP_PORT << " is busy - running without the RTL-TCP tap" << std::endl;
     }
     
     // Start TCP servers
@@ -473,12 +645,12 @@ int main(int argc, char* argv[]) {
     
     if (!tcp_data_server->start()) {
         std::cerr << "Failed to start TCP data server on port " << TCP_DATA_PORT << std::endl;
-        return 1;
+        fail_startup();
     }
     
     if (!tcp_control_server->start()) {
         std::cerr << "Failed to start TCP control server on port " << TCP_CONTROL_PORT << std::endl;
-        return 1;
+        fail_startup();
     }
     
     // Set up RTL-TCP server reference in control server
@@ -534,42 +706,11 @@ int main(int argc, char* argv[]) {
     // ANY join here risks hanging shutdown (which it did). Instead we release
     // just the RTL-SDR hardware and _Exit; the OS reclaims the threads, the
     // listening sockets (TCP ports) and all remaining handles on exit.
-    //
-    // Hardware release: cancel the async reads first (stops USB streaming and
-    // returns each reader thread out of rtlsdr_read_async), let any in-flight
-    // libusb completion callback drain, then close the dongles so they are
-    // clean for the next run. The workers only touch device QUEUES, never the
-    // librtlsdr handle, so closing here can't race them.
-    for (auto& device : devices) {
-        if (device) {
-            device->running = false;
-            if (device->dev) rtlsdr_cancel_async(device->dev);
-        }
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    {
-        // A web/control command or a noise-source switch still in flight must
-        // not use a handle mid-close.
-        std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
-        // Switch the noise source off first: the fork's rtlsdr_close keeps the
-        // bias-tee state, so stopping mid-calibration left the KrakenSDR noise
-        // source powered for whatever software used the dongles next.
-        if (bias_tee_enabled.load()) set_bias_tee_all_devices(false, devices);
-        for (auto& device : devices) {
-            if (device && device->dev) {
-                rtlsdr_close(device->dev);
-                device->dev = nullptr;
-            }
-        }
-    }
-
-    // --kerberos_sw: leave the antenna switches pointing at the antennas (not
-    // the noise source) and release the GPIO lines for the next run.
-    kerberos_gpio_cleanup();
+    release_hardware();
 
     // _Exit skips static/global destructors that the still-live worker threads
     // could otherwise race against during teardown.
     std::cout << "Heimdall shutdown complete." << std::endl;
     std::cout.flush();
-    _Exit(0);
+    _Exit(fatal_exit.load() ? 1 : 0);
 }

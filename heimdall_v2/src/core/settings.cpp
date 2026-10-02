@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cerrno>
+#include <chrono>
 
 namespace {
 
@@ -61,6 +62,31 @@ bool parse_bool(const std::string& v) {
 namespace settings {
 
 std::atomic<int> persisted_num_elements{0};
+std::atomic<uint64_t> persisted_frequency{0};
+std::atomic<int> persisted_gain{-999};
+
+namespace {
+std::atomic<bool> tuning_dirty{false};
+std::atomic<long long> tuning_changed_ms{0};
+long long steady_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+}  // namespace
+
+void note_tuning(uint64_t frequency_hz, int gain) {
+    if (frequency_hz > 0) persisted_frequency.store(frequency_hz, std::memory_order_release);
+    if (gain != -999) persisted_gain.store(gain, std::memory_order_release);
+    tuning_changed_ms.store(steady_ms(), std::memory_order_release);
+    tuning_dirty.store(true, std::memory_order_release);
+}
+
+void save_tuning_if_due() {
+    if (!tuning_dirty.load(std::memory_order_acquire)) return;
+    if (steady_ms() - tuning_changed_ms.load(std::memory_order_acquire) < TUNING_SAVE_DELAY_MS) return;
+    tuning_dirty.store(false, std::memory_order_release);
+    save();
+}
 
 void load() {
     std::lock_guard<std::mutex> lk(g_settings_mutex);
@@ -73,13 +99,26 @@ void load() {
 
     std::string line;
     while (std::getline(f, line)) {
-        const auto hash = line.find('#');
-        if (hash != std::string::npos) line.erase(hash);  // strip comments
+        // Whole-line comments only: save() never writes a trailing comment,
+        // and stripping from any '#' cut a forward-comp filename containing
+        // one, so that channel's correction was lost on the next start
+        const auto first = line.find_first_not_of(" \t");
+        if (first == std::string::npos || line[first] == '#') continue;
         const auto eq = line.find('=');
         if (eq == std::string::npos) continue;
         const std::string key = trim(line.substr(0, eq));
-        const std::string val = trim(line.substr(eq + 1));
+        std::string val = trim(line.substr(eq + 1));
         if (key.empty()) continue;
+        // A hand-written trailing comment (whitespace + '#') is still dropped,
+        // except on the filename keys, where '#' can be part of the value
+        if (key.rfind("forward_comp_ch", 0) != 0) {
+            for (size_t i = 1; i < val.size(); i++) {
+                if (val[i] == '#' && (val[i - 1] == ' ' || val[i - 1] == '\t')) {
+                    val = trim(val.substr(0, i));
+                    break;
+                }
+            }
+        }
 
         if (key == "per_bin_eq") {
             const bool on = parse_bool(val);
@@ -96,6 +135,19 @@ void load() {
                 std::cout << "Settings: periodic_recal_minutes = " << m << std::endl;
             } catch (...) {
                 std::cerr << "Settings: invalid periodic_recal_minutes '" << val << "'" << std::endl;
+            }
+        } else if (key == "center_freq") {
+            // Validated against the RF range in main() (needs --wideband parsed)
+            try {
+                persisted_frequency.store(std::stoull(val), std::memory_order_release);
+            } catch (...) {
+                std::cerr << "Settings: invalid center_freq '" << val << "'" << std::endl;
+            }
+        } else if (key == "gain") {
+            try {
+                persisted_gain.store(std::stoi(val), std::memory_order_release);
+            } catch (...) {
+                std::cerr << "Settings: invalid gain '" << val << "'" << std::endl;
             }
         } else if (key == "num_elements") {
             try {
@@ -164,6 +216,12 @@ void save() {
     // persisted_num_elements when the user picks a count. 0 = never chosen.
     if (const int n = persisted_num_elements.load(std::memory_order_acquire); n >= 2)
         f << "num_elements=" << n << "\n";
+    // The last USER tuning (note_tuning), not current_frequency: a discrete
+    // scan's hop must not become the startup frequency
+    if (const uint64_t fr = persisted_frequency.load(std::memory_order_acquire); fr > 0)
+        f << "center_freq=" << fr << "\n";
+    if (const int g = persisted_gain.load(std::memory_order_acquire); g != -999)
+        f << "gain=" << g << "\n";
     f << "forward_comp_enabled=" << (forward_comp.enabled.load(std::memory_order_acquire) ? 1 : 0) << "\n";
     f << "forward_comp_amplitude=" << (forward_comp.correct_amplitude.load(std::memory_order_acquire) ? 1 : 0) << "\n";
     {

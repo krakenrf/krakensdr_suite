@@ -36,6 +36,11 @@ private:
     void add_to_buffer(const uint8_t* data, size_t len);
     void clear_buffers();
     void send_dongle_info();
+    // Drain the client's 5-byte rtl_tcp commands. false = the client closed.
+    bool read_client_commands();
+    uint32_t ignored_cmds_logged = 0;  // command types already logged this connection
+    uint8_t cmd_carry[5] = {};         // partial command carried to the next read
+    size_t cmd_carry_len = 0;
     
 public:
     RtlTcpServer(int channel = 0);

@@ -3,6 +3,7 @@
 #include "../sdr/sdr_init.hpp"
 #include "../sdr/pipeline_control.hpp"
 #include "../sdr/downconverter.hpp"
+#include "../sdr/sdr_pipeline.hpp"
 #include "../dsp/compensation.hpp"
 #include "../core/config.hpp"
 #include <iostream>
@@ -344,6 +345,21 @@ void TcpControlServer::handle_client_data(TcpClient* client) {
             // Garbage before any object: drop up to the next newline
             size_t nl = client->rx_buffer.find('\n', start);
             if (nl == std::string::npos) break;  // wait for more data
+            // ...but an HTTP request is a web page (fetch/form POST to this
+            // port): its header lines would be dropped and a JSON body run as
+            // a command - a cross-protocol attack around 8070's origin and
+            // host checks. Real clients send only JSON: hang up.
+            if (client->rx_buffer.substr(start, nl - start).find("HTTP/") != std::string::npos) {
+                static auto last_log = std::chrono::steady_clock::time_point{};
+                const auto now = std::chrono::steady_clock::now();
+                if (now - last_log > std::chrono::seconds(10)) {  // a page may retry in a loop
+                    last_log = now;
+                    std::cerr << "Control port: HTTP request refused (web pages may not send commands)" << std::endl;
+                }
+                client->rx_buffer.clear();
+                client->active = false;
+                return;
+            }
             start = nl + 1;
             continue;
         }
@@ -422,6 +438,9 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
             remember_num_elements(n);  // still an explicit choice: save it
             return "{\"status\":\"success\",\"num_elements\":" + std::to_string(n) + ",\"message\":\"already active\"}";
         }
+        if (std::string err; !reconfigure_num_elements_precheck(n, err)) {
+            return "{\"status\":\"error\",\"message\":\"" + err + "\"}";
+        }
         std::thread([n]() {
             std::string err;
             if (!reconfigure_num_elements(n, err)) {
@@ -471,7 +490,9 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                     // hardware is already retuned and the recovery recalibrates
                     // lag+phase at the new frequency; clobbering its state / killing
                     // the noise source here would wedge phase calibration.
-                    if (changed && !recovery_in_progress.load(std::memory_order_acquire)) {
+                    // (begin_retune_cooldown restarts a running recovery's phase
+                    // measurement instead - see recovery_settings_changed)
+                    if (changed) {
                         // Coherent mode: start the cooldown instead of an immediate
                         // calibration, so rapid frequency scrolling doesn't trigger one
                         // (--kerberos: marks the calibration STALE instead)
@@ -549,9 +570,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         // phase calibration is invalid. Run the same cooldown -> phase-recal
         // flow a frequency change uses (skip during a coherence recovery,
         // which will recalibrate at the current settings anyway).
-        if (!recovery_in_progress.load(std::memory_order_acquire)) {
-            begin_retune_cooldown("Mixer side changed");
-        }
+        begin_retune_cooldown("Mixer side changed");  // (restarts a running recovery's phase stage)
 
         return "{\"status\":\"success\"," + side_json +
                ",\"frequency\":" + std::to_string(rf) +
@@ -596,9 +615,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         // existing phase calibration is invalid. Run the same cooldown ->
         // phase-recal flow a frequency change uses (skip during a coherence
         // recovery, which recalibrates at current settings anyway).
-        if (!recovery_in_progress.load(std::memory_order_acquire)) {
-            begin_retune_cooldown("Array changed");
-        }
+        begin_retune_cooldown("Array changed");  // (restarts a running recovery's phase stage)
 
         return "{\"status\":\"success\",\"array\":" + std::to_string(array) + "}";
     }
@@ -699,11 +716,8 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                         // In wideband mode, skip cooldown - phase calibration is disabled anyway
                         if (operating_mode.load() == OperatingMode::WIDEBAND_SCAN) {
                             std::cout << "Wideband gain changed to " << gain_db << " dB" << std::endl;
-                        } else if (recovery_in_progress.load(std::memory_order_acquire)) {
-                            // A coherence recovery is recalibrating; don't clobber its
-                            // state or kill its noise source (it covers the new gain).
-                            std::cout << "Gain changed during coherence recovery: deferring to the full recal" << std::endl;
                         } else {
+                            // (during a recovery this restarts its phase stage instead)
                             // Coherent mode: start the cooldown instead of an immediate
                             // calibration, so rapid gain adjustments don't trigger one
                             begin_retune_cooldown("Gain changed");
@@ -782,6 +796,9 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
 
                 if (changed) {
                     return "{\"status\":\"success\",\"wideband_enabled\":" + std::string(enable ? "true" : "false") + "}";
+                } else if (enable != (operating_mode.load() == OperatingMode::WIDEBAND_SCAN)) {
+                    // Not already there: refused (Wideband variant, scanner, ...)
+                    return "{\"status\":\"error\",\"message\":\"Wideband scan mode change refused\"}";
                 } else {
                     return "{\"status\":\"success\",\"message\":\"Already in requested mode\"}";
                 }
@@ -946,10 +963,18 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                         return "{\"status\":\"error\",\"message\":\"No valid frequencies provided\"}";
                     }
 
-                    // Configure the scanner
+                    // Configure the scanner: list + dwell installed BEFORE the
+                    // generation bump, so a scan thread that sees the new
+                    // generation also sees the new list; then the bump and the
+                    // index reset together (see the scan thread's index
+                    // advance): restart at group 0 now
                     discrete_scanner.set_frequency_groups(frequencies);
                     discrete_scanner.dwell_time_ms = dwell_time;
-                    discrete_scanner.current_group_index = 0;
+                    {
+                        std::lock_guard<std::mutex> cl(discrete_scanner.config_mutex);
+                        discrete_scanner.run_generation.fetch_add(1);
+                        discrete_scanner.current_group_index = 0;
+                    }
 
                     std::cout << "Scanner configured: " << frequencies.size() << " groups, "
                              << dwell_time << " ms dwell" << std::endl;
@@ -968,6 +993,16 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
             return "{\"status\":\"error\",\"message\":\"Scanner not configured. Use configure_scanner first.\"}";
         }
 
+        // New run: generation first (ends a previous run's dwell; see the
+        // scan thread's index advance), then the index - both before enabled,
+        // which the scan thread acts on
+        {
+            std::lock_guard<std::mutex> cl(discrete_scanner.config_mutex);
+            discrete_scanner.run_generation.fetch_add(1);
+            discrete_scanner.current_group_index = 0;
+        }
+        discrete_scanner.frequency_change_counter = 0;
+
         // A calibration in flight (noise source on, phase machine not
         // CONVERGED: startup, recovery, retune recal) can't converge across
         // hops and would inject the noise into the scanned data. Stand it down
@@ -981,12 +1016,11 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                 set_bias_tee_all_devices(false, devices);
                 scanner_cal_deferred.store(true, std::memory_order_release);
                 std::cerr << "Scanner: calibration in progress - stood down until the scan stops" << std::endl;
+                l2_raw_cap.store(L2_RAW_MAX, std::memory_order_relaxed);  // no calibration during the scan
             }
             discrete_scanner.enabled = true;   // under the lock: no calibration starts after the check
         }
         discrete_scanner.enabled = true;
-        discrete_scanner.current_group_index = 0;
-        discrete_scanner.frequency_change_counter = 0;
 
         std::cout << "Scanner started with " << discrete_scanner.get_num_groups() << " frequency groups" << std::endl;
         return "{\"status\":\"success\",\"message\":\"Scanner started\"}";
@@ -995,6 +1029,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
     // Stop discrete scanner
     if (json_str.find("\"stop_scanner\"") != std::string::npos) {
         discrete_scanner.enabled = false;
+        discrete_scanner.run_generation.fetch_add(1);  // wake the scan thread out of its dwell
         std::cout << "Scanner stopped" << std::endl;
         return "{\"status\":\"success\",\"message\":\"Scanner stopped\"}";
     }

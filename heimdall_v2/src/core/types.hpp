@@ -296,6 +296,11 @@ struct DiscreteScannerConfig {
     std::atomic<uint32_t> frequency_change_counter{0};  // Increments each frequency change
     std::atomic<bool> retuning_in_progress{false};  // True during tuner settling time
     std::atomic<uint32_t> settling_time_ms{150};  // Tuner settling time in ms (default 150ms)
+    // Bumped by configure / start / stop: the scan thread's settle and dwell
+    // waits end early when it changes, and a dwell cut short doesn't advance
+    // the group index (a stop + start used to wait out the old dwell - up to
+    // an hour - and then resume one group past where the new run began).
+    std::atomic<uint32_t> run_generation{0};
     mutable std::mutex config_mutex;  // Protects frequency_groups vector (mutable for const functions)
 
     DiscreteScannerConfig() = default;
@@ -374,6 +379,9 @@ extern std::atomic<bool> bias_tee_enabled;
 extern std::atomic<uint32_t> antenna_bias_tee_mask;
 extern std::atomic<int> rtl_tcp_channel;
 extern std::atomic<bool> global_running;
+// Set with global_running = false by a fatal error after startup (e.g. the web
+// port is taken): the shutdown path then exits 1, so supervisors see a failure.
+extern std::atomic<bool> fatal_exit;
 extern std::atomic<OperatingMode> operating_mode;
 extern std::atomic<int> active_num_elements;  // Set via -n flag at startup (2 to NUM_DEVICES)
 

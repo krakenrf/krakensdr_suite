@@ -577,7 +577,7 @@ h3 {color:#7cb3f0;margin:0 0 10px 0;font-size:15px;border-bottom:1px solid #333;
           <span class="cv" id="cec">80%</span>
         </div>
         <div class="ctrl-row">
-          <label>DOA Angles:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Unit Circle: 0&deg;=East (right), counter-clockwise — 0&deg; is the ANT0 direction (array elements run clockwise from ANT0). Compass: 0&deg;=North (top), clockwise, with N/E/S/W markers.</span></span></label>
+          <label>DOA Angles:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Unit Circle: 0&deg; at the top = the ANT0 direction, increasing counter-clockwise (90&deg; left, 180&deg; bottom, 270&deg; right; array elements run clockwise from ANT0). Compass: 0&deg;=North (top), clockwise, with N/E/S/W markers - point ANT0 north for true bearings.</span></span></label>
           <select id="doa-convention" onchange="setDoaConvention(this.value)" style="flex:1">
             <option value="unit">Unit Circle</option>
             <option value="compass" selected>Compass (N/E/S/W)</option>
@@ -1060,7 +1060,7 @@ let ws,fftPlot,audioEngine,activeChannel=0,currentAveraging=85,
     lastFreqSendTime=0,freqSendThrottleMs=50,
     doaPlots={},widebandEnabled=false,fbAveragingEnabled=false,
     scannerConfig=null,scannerRunning=false,scannerFileName='scanner.json',scannerState='IDLE',showScannerSquelch=false,
-    channelBeforeWideband=0,  // Save channel when wideband enabled via button
+    channelBeforeWideband=null,  // channel saved when THIS browser enabled wideband (null = didn't)
     activeNumElements=5,  // Synced from server (set via -n flag on heimdall)
     // Continuous scanner state
     contScannerRunning=false,contScannerState='IDLE',contScannerTrackedSignals=[],
@@ -1109,9 +1109,26 @@ const MIN_BW_MHZ = bwo[MIN_BW_INDEX].bandwidth; // 0.001 MHz
 // visible (edge-clipped, wideband-aware) span minus half the bar width.
 // Single source of truth - this formula was previously copy-pasted ~12 times
 // and several copies had drifted (fixed 2.4 MHz span, no edge clip).
+// Stitched wideband-scan span in MHz, for the status text
+function widebandCoverageMhz() {
+  return (activeNumElements * 2.4 * currentEdgeClip).toFixed(1);
+}
+// Re-show it after the edge clip or tuner count changed mid-scan
+function refreshWidebandCoverage() {
+  if (!widebandEnabled) return;
+  updatePlotTitle();
+  const wbs = $id('wbs');
+  if (wbs) wbs.textContent = 'Status: Enabled (~' + widebandCoverageMhz() + ' MHz coverage)';
+}
+
 function maxOffsetHz(bwMhz) {
-  const visible = (widebandEnabled ? 9.6 : 2.4) * currentEdgeClip;
-  return (visible - bwMhz) * 500000;
+  // Wideband: the stitched spectrum is every open tuner's edge-clipped
+  // 2.4 MHz side by side (FFTProcessor::stitch_wideband_fft). The old fixed
+  // 9.6 MHz assumed 5 tuners at 0.8 clip and then clipped it again - too
+  // narrow on 5 tuners, past the edge on a 4-tuner KerberosSDR.
+  const tuners = widebandEnabled ? activeNumElements : 1;
+  const visible = tuners * 2.4 * currentEdgeClip;
+  return Math.max(0, (visible - bwMhz) * 500000);
 }
 
 // Center frequency of the FFT frame currently on screen (null until the first
@@ -1895,9 +1912,11 @@ class PolarPlot {
   }
 
   // Screen position for a MUSIC azimuth (deg) at the given pixel radius.
-  // Array is mounted with ANT0 = North (+x, az 0) and ANT1 to its left (CCW, so
-  // +y/az 90 = West). We render North up / East right, so az 0 -> top, az 90 ->
-  // left, az 180 -> bottom, az 270 -> right (screen y is inverted).
+  // MUSIC azimuth is measured counter-clockwise from ANT0 (+x, az 0), so
+  // +y/az 90 is to ANT0's left (the elements themselves are wired clockwise -
+  // uca_angle_sign handles that in the steering vectors). We render the ANT0
+  // direction up, so az 0 -> top, az 90 -> left, az 180 -> bottom, az 270 ->
+  // right (screen y is inverted).
   azPos(azimuthDeg, radiusPx) {
     const t = azimuthDeg * Math.PI / 180;
     return [this.cx - radiusPx * Math.sin(t), this.cy - radiusPx * Math.cos(t)];
@@ -2357,6 +2376,7 @@ audioEngine=new AudioEngine();
 // Opus Decoder
 let opusDecoder = null;
 let opusDecoderReady = false;
+let opusRetryAt = 0;  // Date.now() before which a failed init isn't retried
 
 // Initialize Opus decoder
 async function initOpusDecoder() {
@@ -2384,6 +2404,11 @@ async function initOpusDecoder() {
     return true;
   } catch(e) {
     console.error('Failed to initialize Opus decoder:', e);
+    // Drop the half-made decoder so the audio path retries (in 5 s): left
+    // non-null, it never retried and audio stayed dead for the session
+    try { if(opusDecoder && opusDecoder.free) opusDecoder.free(); } catch(_) {}
+    opusDecoder = null;
+    opusRetryAt = Date.now() + 5000;
     return false;
   }
 }
@@ -3402,7 +3427,7 @@ function sac() {
 
 function updatePlotTitle() {
   if(widebandEnabled) {
-    $id('fpt').textContent='Wideband Scan (~'+(activeNumElements*2.4).toFixed(1)+' MHz coverage, all '+activeNumElements+' tuners)';
+    $id('fpt').textContent='Wideband Scan (~'+widebandCoverageMhz()+' MHz coverage, all '+activeNumElements+' tuners)';
   } else {
     // Get demod mode from FM source decimator
     const fmDec = decimatorInfo.find(d => d.is_fm_source);
@@ -3759,7 +3784,7 @@ function twb() {
   const b=$id('wbt');
   b.textContent=widebandEnabled?'Disable':'Enable';
   b.className='btn '+(widebandEnabled?'on':'off');
-  $id('wbs').textContent='Status: '+(widebandEnabled?'Enabled (~9.6 MHz coverage)':'Disabled');
+  $id('wbs').textContent='Status: '+(widebandEnabled?'Enabled (~'+widebandCoverageMhz()+' MHz coverage)':'Disabled');
 
   if(widebandEnabled) {
     // Save current channel before entering wideband mode
@@ -3781,10 +3806,15 @@ function twb() {
     send('WIDEBAND_MODE:false');
 
     // Restore channel from before wideband was enabled (via button only)
-    // This ensures user returns to their previous channel, not wherever tuning bar was
-    activeChannel = channelBeforeWideband;
-    $id('chs').value = activeChannel;
-    send('CHANNEL:' + activeChannel);
+    // This ensures user returns to their previous channel, not wherever tuning bar was.
+    // Only if THIS browser enabled it: another browser's Disable used to send
+    // its stale default CHANNEL:0 and move every browser to channel 0.
+    if (channelBeforeWideband !== null) {
+      activeChannel = channelBeforeWideband;
+      $id('chs').value = activeChannel;
+      send('CHANNEL:' + activeChannel);
+      channelBeforeWideband = null;
+    }
 
     // Reset tuning bar to center when exiting wideband mode
     if(activeDecimatorId >= 0) {
@@ -4054,6 +4084,7 @@ function sto(t) {
 function onActiveElementsChanged(newCount) {
   if (newCount === activeNumElements) return;
   activeNumElements = newCount;
+  refreshWidebandCoverage();
 
   // Update channel selector to only show available channels
   updateChannelSelector();
@@ -4533,9 +4564,11 @@ function drawUCADiagram(containerId, radiusOverride) {
   // Draw center point
   svg += `<circle cx="${centerX}" cy="${centerY}" r="3" fill="#fff"/>`;
 
-  // Draw radius arrow pointing to CH4 (upper-right)
-  // CH4 angle: 90 + 4*72 = 378° = 18° (in display coords with negated Y)
-  const ch4Angle = (90 + 4 * 360 / numElements) * Math.PI / 180;
+  // Draw radius arrow pointing at CH1 - one step clockwise from CH0 at the
+  // top, i.e. upper-right - with the same angle rule as the elements below
+  // (the old fixed "CH4" formula went counter-clockwise and only matched N=5)
+  const arrowDeg = 90 + UCA_ANGLE_SIGN * 360 / numElements;
+  const ch4Angle = arrowDeg * Math.PI / 180;
   const ch4X = centerX + arrayRadius * Math.cos(ch4Angle);
   const ch4Y = centerY - arrayRadius * Math.sin(ch4Angle);
 
@@ -4550,7 +4583,7 @@ function drawUCADiagram(containerId, radiusOverride) {
   const perpOffset = 7;  // Offset perpendicular to arrow (above arrow)
   const textX = centerX + textDist * Math.cos(ch4Angle) + perpOffset * Math.cos(ch4Angle + Math.PI/2);
   const textY = centerY - textDist * Math.sin(ch4Angle) - perpOffset * Math.sin(ch4Angle + Math.PI/2);
-  const textRotation = -18;  // Rotate to match CH4 direction (18° from horizontal)
+  const textRotation = -arrowDeg;  // along the arrow (SVG rotates clockwise)
   svg += `<text x="${textX}" y="${textY}" fill="#fff" font-size="10" font-weight="bold" font-family="sans-serif" transform="rotate(${textRotation} ${textX} ${textY})" text-anchor="start">${radiusValue} mm</text>`;
 
   // Draw antenna elements
@@ -4644,6 +4677,7 @@ function sec() {
     currentEdgeClip=c;
     $id('cec').textContent=(c*100).toFixed(0)+'%';
     applyClip();
+    refreshWidebandCoverage();
     send('EDGE_CLIP:'+c.toFixed(2));
   }
 }
@@ -4652,8 +4686,11 @@ function applyClip() {
   if(!fullFrequencies.length||!fullMagnitudes.length||!fftPlot)return;
   const tp=fullFrequencies.length;
 
-  // Apply edge clipping in both normal and wideband modes
-  const pts=Math.floor(tp*currentEdgeClip);
+  // Edge clipping in normal mode only: the wideband spectrum arrives already
+  // stitched from each tuner's edge-clipped centre (FFTProcessor::
+  // stitch_wideband_fft), and clipping it again showed only N x 2.4 x clip^2
+  // MHz - VFO limits and the coverage text use the full stitched span
+  const pts=widebandEnabled?tp:Math.floor(tp*currentEdgeClip);
   const edge=Math.floor((tp-pts)/2);
   currentFrequencies=fullFrequencies.slice(edge,tp-edge);
   currentMagnitudes=fullMagnitudes.slice(edge,tp-edge);
@@ -5285,7 +5322,10 @@ function askForToken() {
 
 function connect() {
   const proto=location.protocol==='https:'?'wss:':'ws:';
-  const url=proto+'//'+(location.hostname||'localhost')+':'+(location.port||'8080')+'/ws';
+  // location.host keeps whatever port the page came from - an empty port is
+  // the scheme default (a reverse proxy on 443), not 8080. Only a page with
+  // no host (opened as a file) falls back to the local client.
+  const url=proto+'//'+(location.host||'localhost:8080')+'/ws';
   const connEl=$id('status-connection');
   if(connEl){connEl.textContent='Connecting…';connEl.style.background='#e65100';connEl.style.color='#fff';}
   ws=new WebSocket(url);
@@ -5476,6 +5516,10 @@ function connect() {
             updateFFTSettingsUI(fs.fft_size, fs.decimation);
             if (changed) resetAudioWorklet();
           }
+          else if(msg.scanner_config_loaded === false) {
+            // The backend refused the config (e.g. a frequency outside the tuner range)
+            alert('The scanner configuration was refused by the receiver (a frequency or bandwidth is out of range).');
+          }
           else if(msg.scanner_started || msg.scanner_stopped) {
             // Started/stopped from another browser (or stopped by the backend)
             applyScannerRunning(!!msg.scanner_started);
@@ -5588,7 +5632,7 @@ function connect() {
           // Check if decoder is ready
           if(!opusDecoderReady) {
             // Try to initialize if we haven't started yet
-            if(!opusDecoder && !window.opusInitializing) {
+            if(!opusDecoder && !window.opusInitializing && Date.now() >= opusRetryAt) {
               window.opusInitializing = true;
               console.warn('Audio packet arrived before Opus decoder ready, initializing now...');
               console.warn('Check browser Network tab to see if opus-decoder.min.js loaded (should be ~87KB)');
@@ -5802,7 +5846,7 @@ function connect() {
           const b=$id('wbt');
           b.textContent='Disable';
           b.className='btn on';
-          $id('wbs').textContent='Status: Enabled (~9.6 MHz coverage)';
+          $id('wbs').textContent='Status: Enabled (~'+widebandCoverageMhz()+' MHz coverage)';
           $id('dot').disabled=true;
           updatePlotTitle();
         }
@@ -5815,6 +5859,7 @@ function connect() {
           b.className='btn off';
           $id('wbs').textContent='Status: Disabled';
           $id('dot').disabled=false;
+          channelBeforeWideband = null;  // ended elsewhere: this browser's saved channel is stale
           updatePlotTitle();
         }
 
@@ -6128,8 +6173,8 @@ function addTouchHandlers(el, down, move, up) {
     }
 
     // Starting the scanner requires config and wideband mode
-    if (!scannerConfig || scannerConfig.frequencies.length === 0) {
-      alert('Please load or create a scanner configuration with at least one frequency.');
+    if (!scannerConfig || !scannerConfig.frequencies.some(f => f.enabled !== false)) {
+      alert('Please load or create a scanner configuration with at least one enabled frequency.');
       return;
     }
 
@@ -6194,22 +6239,23 @@ function addTouchHandlers(el, down, move, up) {
     const freq = prompt('Enter frequency in MHz (e.g., 100.5):', '100.0');
     if (!freq) return;
 
-    const freqMhz = parseFloat(freq);
-    if (isNaN(freqMhz) || freqMhz <= 0) {
-      alert('Invalid frequency');
+    // Same limits as a loaded scanner file (validateScannerConfig)
+    const freqMhz = Number(freq);
+    if (!Number.isFinite(freqMhz) || freqMhz < FREQ_MIN || freqMhz > FREQ_MAX) {
+      alert('Invalid frequency - must be ' + FREQ_MIN + ' to ' + FREQ_MAX + ' MHz');
       return;
     }
 
     const bw = prompt('Enter bandwidth in kHz (e.g., 25):', '25');
     if (!bw) return;
 
-    const bwKhz = parseFloat(bw);
-    if (isNaN(bwKhz) || bwKhz <= 0) {
-      alert('Invalid bandwidth');
+    const bwKhz = Number(bw);
+    if (!Number.isFinite(bwKhz) || bwKhz < 0.1 || bwKhz > 2400) {
+      alert('Invalid bandwidth - must be 0.1 to 2400 kHz');
       return;
     }
 
-    const label = prompt('Enter label (optional):', freqMhz.toFixed(3) + ' MHz') || freqMhz.toFixed(3) + ' MHz';
+    const label = String(prompt('Enter label (optional):', freqMhz.toFixed(3) + ' MHz') || freqMhz.toFixed(3) + ' MHz').slice(0, 64);
 
     scannerConfig.frequencies.push({
       freq_mhz: freqMhz,
@@ -6912,7 +6958,8 @@ function addTouchHandlers(el, down, move, up) {
   }
 
   function updateContScanDwell(value) {
-    const dwell = Math.max(500, Math.min(30000, parseInt(value)));
+    // A cleared field gave NaN (sent as CONTINUOUS_SCANNER_DWELL:NaN)
+    const dwell = Math.max(500, Math.min(30000, parseInt(value) || 2000));
     $id('cont-scan-dwell').value = dwell;
     send('CONTINUOUS_SCANNER_DWELL:' + dwell);
   }
@@ -6956,7 +7003,9 @@ function addTouchHandlers(el, down, move, up) {
         const startBtn = $id('cont-scanner-start-btn');
         startBtn.textContent = '▶ Start';
         startBtn.className = 'btn off';
-        $id('cont-scan-status').textContent = 'IDLE';
+        // A refused start says why (e.g. an untunable wideband range)
+        $id('cont-scan-status').textContent = data.error ? 'IDLE - ' + data.error : 'IDLE';
+        $id('cont-scan-status').style.color = data.error ? '#ff7043' : '#888';
         $id('cont-scan-tracked').textContent = 'None';
         return;
       } else {
@@ -6965,20 +7014,20 @@ function addTouchHandlers(el, down, move, up) {
     }
 
     // Update running status from full status message
+    // Both ways: after a reload/reconnect only this periodic status says the
+    // scanner runs - the button used to stay "Start", and clicking it stopped it
     if (data.running !== undefined) {
       contScannerRunning = data.running;
-      if (!data.running) {
-        const startBtn = $id('cont-scanner-start-btn');
-        startBtn.textContent = '▶ Start';
-        startBtn.className = 'btn off';
-      }
+      const startBtn = $id('cont-scanner-start-btn');
+      startBtn.textContent = data.running ? '◼ Stop' : '▶ Start';
+      startBtn.className = data.running ? 'btn on' : 'btn off';
     }
 
     // Update status display
     const statusEl = $id('cont-scan-status');
     if (statusEl && data.state) {
-      statusEl.textContent = data.state;
-      if (data.state === 'SCANNING') {
+      statusEl.textContent = data.state === 'started' ? 'SCANNING' : data.state;
+      if (data.state === 'SCANNING' || data.state === 'started') {
         statusEl.style.color = '#ffa726';
       } else if (data.state === 'DWELLING') {
         statusEl.style.color = '#4caf50';

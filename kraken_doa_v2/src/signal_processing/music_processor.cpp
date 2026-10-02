@@ -32,7 +32,7 @@ MUSICProcessor::MUSICProcessor() : current_topology(ArrayTopology::UCA), pseudos
         pseudospectrum.setZero();
         
         // Initialize accumulator with power-of-2 buffer
-        size_t requested_size = config_.snapshot_length * config_.num_snapshots * 3;
+        size_t requested_size = accumulatorSamplesFor(config_);
         accumulator_.resize(requested_size, num_elements_);
         accumulator_.total_samples = 0;
         accumulator_.global_sample_index = 0;
@@ -91,9 +91,14 @@ void MUSICProcessor::setConfig(const MUSICConfig& config) {
         lock_guard<mutex> lock(accumulator_.buffer_mutex);
         
         config_ = config;
+        if (config_.snapshot_length > 0 &&
+            config_.snapshot_length * config_.num_snapshots > MAX_FRAME_SAMPLES) {
+            config_.num_snapshots = max<size_t>(1, MAX_FRAME_SAMPLES / config_.snapshot_length);
+            config_.min_snapshots = min(config_.min_snapshots, config_.num_snapshots);
+        }
         
         // Use power-of-2 buffer size for fast circular indexing
-        size_t requested_size = config_.snapshot_length * config_.num_snapshots * 3;
+        size_t requested_size = accumulatorSamplesFor(config_);
         accumulator_.resize(requested_size, num_elements_);
         
         accumulator_.total_samples = 0;
@@ -119,6 +124,14 @@ void MUSICProcessor::setConfig(const MUSICConfig& config) {
     }
 }
 
+// Accumulator capacity: one frame plus one full-rate input block. MUSIC runs
+// right after each block is added (same thread), so a frame never waits on more;
+// 3 frames of complex<double> per element (rounded up to a power of two) was
+// most of the per-VFO memory at large snapshot settings.
+size_t MUSICProcessor::accumulatorSamplesFor(const MUSICConfig& cfg) {
+    return cfg.snapshot_length * cfg.num_snapshots + static_cast<size_t>(FFT_SIZE);
+}
+
 MUSICConfig MUSICProcessor::getConfig() const {
     lock_guard<mutex> config_lock(config_mutex_);
     return config_;
@@ -139,7 +152,7 @@ void MUSICProcessor::syncElementCount() {
         num_elements_ = target;
 
         // Accumulated samples/snapshots have the old channel count - drop them
-        size_t requested_size = config_.snapshot_length * config_.num_snapshots * 3;
+        size_t requested_size = accumulatorSamplesFor(config_);
         accumulator_.resize(requested_size, num_elements_);
         accumulator_.total_samples = 0;
         accumulator_.global_sample_index = 0;
@@ -158,11 +171,15 @@ void MUSICProcessor::syncElementCount() {
 
     // Steering vectors are per-element; regenerate for the new count. Custom
     // positions keep their ceiling-sized storage - the first num_elements_
-    // entries are used (re-send CUSTOM_POSITIONS if they described the old
-    // array).
+    // entries are used. Elements the user never placed (the count grew past
+    // the CUSTOM_POSITIONS sent) get the UI's default instead of the origin,
+    // where they made every bearing wrong while the table looked plausible.
     steering_vectors_valid = false;
     steering_vectors_2d_valid_ = false;
-    if (custom_positions_valid_) detect3DArray();
+    if (custom_positions_valid_) {
+        fillDefaultCustomPositions();
+        detect3DArray();
+    }
     if (current_topology == ArrayTopology::CUSTOM && is_3d_array_) {
         updateSteeringVectors2D();
     } else {
@@ -219,13 +236,17 @@ bool MUSICProcessor::processDecimatedIQ(const SharedDecimator::MultiChannelDecim
     // leftover pre-gap samples used to fill up to ~97% of the first frame
     // after a retune or a squelch opening (at narrow bandwidths).
     const auto now = std::chrono::steady_clock::now();
+    // A VFO offset change is a discontinuity too: samples mixed down at two
+    // offsets must never share a frame.
     if (last_input_time_ != std::chrono::steady_clock::time_point{} &&
         (now - last_input_time_ > MAX_INPUT_GAP ||
-         decimated_data.output_rate_hz != last_input_rate_hz_)) {
+         decimated_data.output_rate_hz != last_input_rate_hz_ ||
+         std::abs(decimated_data.freq_offset_hz - last_input_offset_hz_) > 0.5f)) {
         clearAccumulatorLocked();
     }
     last_input_time_ = now;
     last_input_rate_hz_ = decimated_data.output_rate_hz;
+    last_input_offset_hz_ = decimated_data.freq_offset_hz;
 
     // Copy into the accumulator (input is only read)
     addToAccumulatorOptimized(decimated_data);
@@ -328,27 +349,44 @@ void MUSICProcessor::addToAccumulatorOptimized(const SharedDecimator::MultiChann
 bool MUSICProcessor::extractSnapshotsOptimized() {
     lock_guard<mutex> lock(accumulator_.buffer_mutex);
 
-    size_t step_size = (config_.snapshot_length > config_.overlap_samples) ?
-                      (config_.snapshot_length - config_.overlap_samples) : config_.snapshot_length;
+    // Effective snapshot length. At narrow bandwidths even MIN_NARROW_SNAPSHOTS
+    // configured-length snapshots can exceed the frame cap (4 x 2048 at 1 kHz
+    // = 6.6 s per bearing): shorten them so MIN_NARROW_SNAPSHOTS fit in
+    // MAX_FRAME_SECONDS (>= 64 samples). The covariance averages over samples,
+    // so the snapshot length is only the framing unit. Overlap scales along.
+    size_t snap_len = config_.snapshot_length;
+    size_t overlap = config_.overlap_samples;
+    if (last_input_rate_hz_ > 0.0f && snap_len > 0) {
+        const double window = static_cast<double>(last_input_rate_hz_) * MAX_FRAME_SECONDS;
+        const size_t fit_len = max<size_t>(64, static_cast<size_t>(window / MIN_NARROW_SNAPSHOTS));
+        if (fit_len < snap_len) {
+            overlap = overlap * fit_len / snap_len;
+            snap_len = fit_len;
+        }
+    }
+    eff_snapshot_len_ = snap_len;
+
+    size_t step_size = (snap_len > overlap) ? (snap_len - overlap) : snap_len;
 
     // Snapshots per frame. At narrow bandwidths the configured minimum
     // (default 16 x 256 with 64 overlap = 3136 samples) takes seconds to
     // collect - 1.6 s at 2 kHz, 3.1 s at 1 kHz - so bearings would crawl. Cap
     // the frame at MAX_FRAME_SECONDS of samples, but never below
-    // MIN_NARROW_SNAPSHOTS (4 x 256 = 832 samples, still >= 100x the element
-    // count for the covariance). Wider bandwidths are unaffected.
+    // MIN_NARROW_SNAPSHOTS (with the length above, >= 4 x 64 samples, still
+    // far more than the element count for the covariance). Wider bandwidths
+    // are unaffected.
     size_t min_snaps = config_.min_snapshots;
-    if (last_input_rate_hz_ > 0.0f && config_.snapshot_length > 0) {
+    if (last_input_rate_hz_ > 0.0f && snap_len > 0) {
         const double window = static_cast<double>(last_input_rate_hz_) * MAX_FRAME_SECONDS;
-        size_t fit = (window > config_.snapshot_length)
-            ? static_cast<size_t>((window - config_.snapshot_length) / step_size) + 1 : 1;
+        size_t fit = (window > snap_len)
+            ? static_cast<size_t>((window - snap_len) / step_size) + 1 : 1;
         fit = max(fit, MIN_NARROW_SNAPSHOTS);
         min_snaps = min(min_snaps, fit);
     }
 
-    size_t samples_needed = min_snaps * config_.snapshot_length;
-    if (config_.overlap_samples > 0 && min_snaps > 1) {
-        samples_needed -= (min_snaps - 1) * config_.overlap_samples;
+    size_t samples_needed = min_snaps * snap_len;
+    if (overlap > 0 && min_snaps > 1) {
+        samples_needed -= (min_snaps - 1) * overlap;
     }
     
     if (accumulator_.samples_available < samples_needed) {
@@ -362,12 +400,12 @@ bool MUSICProcessor::extractSnapshotsOptimized() {
     
     // Pre-check if working matrix needs resizing (do once, not in loop)
     if (snapshot_working_matrix_.rows() != num_elements_ || 
-        snapshot_working_matrix_.cols() != static_cast<Eigen::Index>(config_.snapshot_length)) {
-        snapshot_working_matrix_.resize(num_elements_, config_.snapshot_length);
+        snapshot_working_matrix_.cols() != static_cast<Eigen::Index>(snap_len)) {
+        snapshot_working_matrix_.resize(num_elements_, snap_len);
     }
     
     for (size_t snap = 0; snap < config_.num_snapshots; snap++) {
-        if (start_offset + config_.snapshot_length > accumulator_.samples_available) {
+        if (start_offset + snap_len > accumulator_.samples_available) {
             break;
         }
         
@@ -380,7 +418,7 @@ bool MUSICProcessor::extractSnapshotsOptimized() {
     snapshot_mgr_.snapshots_ready = (snapshot_mgr_.snapshots.size() >= min_snaps);
     
     if (snapshot_mgr_.snapshots_ready && snapshot_mgr_.snapshots.size() > 0) {
-        size_t consumed_samples = step_size * (snapshot_mgr_.snapshots.size() - 1) + config_.snapshot_length;
+        size_t consumed_samples = step_size * (snapshot_mgr_.snapshots.size() - 1) + snap_len;
         consumed_samples = min(consumed_samples, accumulator_.samples_available);
         accumulator_.samples_available -= consumed_samples;
     }
@@ -399,17 +437,17 @@ void MUSICProcessor::getSnapshotWindowOptimized(size_t start_offset, MatrixXcd& 
     size_t start_idx = (oldest_sample_idx + start_offset) & mask;
     
     // Check if we can do a contiguous copy
-    size_t contiguous_samples = min(config_.snapshot_length, 
+    size_t contiguous_samples = min(eff_snapshot_len_, 
                                    accumulator_.buffer_size - start_idx);
     
-    if (contiguous_samples == config_.snapshot_length) {
+    if (contiguous_samples == eff_snapshot_len_) {
         // Fast path: All data is contiguous, copy entire block at once
         for (int ch = 0; ch < num_elements_; ch++) {
-            output.row(ch) = accumulator_.buffer.block(ch, start_idx, 1, config_.snapshot_length);
+            output.row(ch) = accumulator_.buffer.block(ch, start_idx, 1, eff_snapshot_len_);
         }
     } else {
         // Slow path: Data wraps around, need two copies
-        size_t wrap_samples = config_.snapshot_length - contiguous_samples;
+        size_t wrap_samples = eff_snapshot_len_ - contiguous_samples;
         
         for (int ch = 0; ch < num_elements_; ch++) {
             // Copy first part (from start_idx to end of buffer)
@@ -440,7 +478,7 @@ bool MUSICProcessor::processSnapshotCollectionOptimized() {
     
     // Calculate total samples needed and validate all snapshots
     size_t total_samples = 0;
-    size_t expected_snapshot_length = config_.snapshot_length;
+    size_t expected_snapshot_length = eff_snapshot_len_;  // see extractSnapshotsOptimized
     
     for (const auto& snapshot : snapshot_mgr_.snapshots) {
         if (snapshot.rows() != num_elements_) {
@@ -709,6 +747,7 @@ void MUSICProcessor::clearAccumulatorLocked() {
 }
 
 size_t MUSICProcessor::getTotalSamplesProcessed() const {
+    lock_guard<mutex> lock(accumulator_.buffer_mutex);
     return accumulator_.global_sample_index;
 }
 
@@ -753,6 +792,11 @@ float MUSICProcessor::interpolatePeakAngle(Eigen::Index max_idx, double max_val)
     if (angle >= 360.0f) angle -= 360.0f;
     if (angle < 0.0f) angle += 360.0f;
     return angle;
+}
+
+float MUSICProcessor::getSpectrumArrayOffset() const {
+    lock_guard<mutex> config_lock(config_mutex_);
+    return spectrum_offset_deg_;
 }
 
 float MUSICProcessor::getPeakAngle() const {
@@ -851,6 +895,7 @@ void MUSICProcessor::setArrayTopology(ArrayTopology topology) {
 
 
 ArrayTopology MUSICProcessor::getArrayTopology() const {
+    lock_guard<mutex> config_lock(config_mutex_);
     return current_topology;
 }
 
@@ -863,8 +908,9 @@ void MUSICProcessor::setArrayRadius(float radius_mm) {
     }
 }
 
-float MUSICProcessor::getArrayRadius() const { 
-    return array_radius_mm; 
+float MUSICProcessor::getArrayRadius() const {
+    lock_guard<mutex> config_lock(config_mutex_);
+    return array_radius_mm;
 }
 
 void MUSICProcessor::setElementSpacing(float spacing_mm) {
@@ -877,6 +923,7 @@ void MUSICProcessor::setElementSpacing(float spacing_mm) {
 }
 
 float MUSICProcessor::getElementSpacing() const {
+    lock_guard<mutex> config_lock(config_mutex_);
     return element_spacing_mm;
 }
 
@@ -947,6 +994,7 @@ void MUSICProcessor::setFBAveragingEnabled(bool enabled) {
 }
 
 bool MUSICProcessor::isFBAveragingEnabled() const {
+    lock_guard<mutex> config_lock(config_mutex_);
     return fb_averaging_enabled_;
 }
 
@@ -964,6 +1012,7 @@ void MUSICProcessor::setCovarianceAveragingAlpha(float alpha) {
 }
 
 float MUSICProcessor::getCovarianceAveragingAlpha() const {
+    lock_guard<mutex> config_lock(config_mutex_);
     return covariance_alpha_;
 }
 
@@ -982,6 +1031,7 @@ void MUSICProcessor::setAutoNumSources(bool enabled) {
 }
 
 bool MUSICProcessor::isAutoNumSources() const {
+    lock_guard<mutex> config_lock(config_mutex_);
     return auto_num_sources_;
 }
 
@@ -1074,8 +1124,9 @@ bool MUSICProcessor::isEnabled() const {
     return processing_enabled; 
 }
 
-size_t MUSICProcessor::getBlocksProcessed() const { 
-    return stats_.blocks_processed; 
+size_t MUSICProcessor::getBlocksProcessed() const {
+    lock_guard<mutex> lock(stats_mutex_);
+    return stats_.blocks_processed;
 }
 
 void MUSICProcessor::updateSteeringVectors() {
@@ -1209,10 +1260,12 @@ void MUSICProcessor::storeEigenvalueRatio(float ratio) {
 }
 
 float MUSICProcessor::getAngularResolution() const {
+    lock_guard<mutex> config_lock(config_mutex_);
     return angular_resolution_;
 }
 
 int MUSICProcessor::getNumAngles() const {
+    lock_guard<mutex> config_lock(config_mutex_);
     return num_angles_;
 }
 
@@ -1232,6 +1285,7 @@ void MUSICProcessor::setNumSignalSources(int n) {
 }
 
 int MUSICProcessor::getNumSignalSources() const {
+    lock_guard<mutex> config_lock(config_mutex_);
     return num_signal_sources_;
 }
 
@@ -1246,6 +1300,7 @@ void MUSICProcessor::setULAOutputMode(ULAOutputMode mode) {
 }
 
 ULAOutputMode MUSICProcessor::getULAOutputMode() const {
+    lock_guard<mutex> config_lock(config_mutex_);
     return ula_output_mode_;
 }
 
@@ -1260,6 +1315,7 @@ void MUSICProcessor::setArrayOffset(float degrees) {
 }
 
 float MUSICProcessor::getArrayOffset() const {
+    lock_guard<mutex> config_lock(config_mutex_);
     return array_offset_deg_;
 }
 
@@ -1293,6 +1349,7 @@ void MUSICProcessor::applyOutputTransforms() {
     // bearing by up to half a bin (0.5 deg) against the offset the beamformer
     // applies in full.
     offset_residual_deg_ = 0.0f;
+    spectrum_offset_deg_ = array_offset_deg_;  // what this spectrum's angles include
     if (array_offset_deg_ != 0.0f) {
         int shift = static_cast<int>(lround(array_offset_deg_ / angular_resolution_));
         offset_residual_deg_ = array_offset_deg_ - static_cast<float>(shift) * angular_resolution_;
@@ -1313,27 +1370,35 @@ void MUSICProcessor::applyOutputTransforms() {
 // ============================================================================
 
 void MUSICProcessor::initializeCustomPositionsToUCA() {
-    // Initialize custom positions to match default 50mm radius UCA
+    custom_positions_given_ = 0;  // all defaults
+    fillDefaultCustomPositions();
+    custom_positions_valid_ = true;
+    is_3d_array_ = false;
+}
+
+// Default for every element the user didn't place: the same 50 mm UCA over the
+// live element count that the web UI's positions table shows for those rows
+void MUSICProcessor::fillDefaultCustomPositions() {
     const float radius_mm = 50.0f;
     const int M = num_elements_;
 
     // Array elements are wired clockwise (ANT0 on +x) - mirror the angle
     const double dir = uca_angle_sign();
-    for (int elem = 0; elem < M; elem++) {
+    for (int elem = custom_positions_given_; elem < M; elem++) {
         double angle = dir * 2.0 * M_PI / M * elem;
         custom_positions_[elem].x_mm = static_cast<float>(radius_mm * cos(angle));
         custom_positions_[elem].y_mm = static_cast<float>(radius_mm * sin(angle));
         custom_positions_[elem].z_mm = 0.0f;
     }
-
-    custom_positions_valid_ = true;
-    is_3d_array_ = false;
 }
 
-void MUSICProcessor::setCustomPositions(const std::array<ElementPosition, DOA_NUM_ELEMENTS>& positions) {
+void MUSICProcessor::setCustomPositions(const std::array<ElementPosition, DOA_NUM_ELEMENTS>& positions,
+                                        int count) {
     lock_guard<mutex> config_lock(config_mutex_);
 
     custom_positions_ = positions;
+    custom_positions_given_ = std::clamp(count, 0, static_cast<int>(DOA_NUM_ELEMENTS));
+    fillDefaultCustomPositions();
     custom_positions_valid_ = true;
     detect3DArray();
 
@@ -1369,6 +1434,11 @@ void MUSICProcessor::detect3DArray() {
     }
 }
 
+int MUSICProcessor::getCustomPositionsCount() const {
+    lock_guard<mutex> config_lock(config_mutex_);
+    return custom_positions_given_;
+}
+
 std::array<ElementPosition, DOA_NUM_ELEMENTS> MUSICProcessor::getCustomPositions() const {
     lock_guard<mutex> config_lock(config_mutex_);
     return custom_positions_;
@@ -1383,7 +1453,9 @@ std::pair<int, int> MUSICProcessor::getPeakAzimuthElevation() const {
     lock_guard<mutex> config_lock(config_mutex_);
     // Convert peak indices to degrees (wrap azimuth after rounding)
     int az_deg = static_cast<int>(peak_azimuth_ * angular_resolution_ + 0.5f) % 360;
-    int el_deg = static_cast<int>(peak_elevation_ * elevation_resolution_ - 90.0f + 0.5f);
+    // lround, not (int)(x + 0.5): that truncates toward zero, so every
+    // negative elevation came out 1 degree too high (-10.0 -> -9)
+    int el_deg = static_cast<int>(std::lround(peak_elevation_ * elevation_resolution_ - 90.0f));
     return {az_deg, el_deg};
 }
 

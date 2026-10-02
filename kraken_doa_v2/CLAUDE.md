@@ -88,7 +88,9 @@ directly.
 **Thread Count:**
 - Base workers: 8 threads
 - Per-channel FFT: 8 threads (one per channel)
-- Decimator async: 2+ threads (per SharedDecimator)
+- VFO pipelines: with 2+ VFOs, the first runs on the receiver thread and the
+  rest on a persistent 3-thread pool (`std::async` used to create an OS thread
+  per VFO per packet)
 - ThreadPools: 10 threads (2 decimators × 5 channels each)
 - **Total: ~23-28 threads on 4 cores** (intentional oversubscription for throughput)
 
@@ -295,6 +297,13 @@ for (size_t i = 0; i < num_samples; i++) {
 
 **NEVER replace this with arm_neon.h intrinsics!** See `OPTIMIZATION_SUMMARY.md` for benchmarks.
 
+**DC correction** (`convert_uint8_to_complex_float_tracked_dc`, used by the
+data receiver): each channel's DC offset is an EMA of packet means (k = 0.05
+per ~7 ms packet, corner ~1 Hz), subtracted from every sample. Subtracting
+each packet's OWN mean was a ~150 Hz-wide notch at the centre (it removed a CW
+beacon or AM carrier parked there). The seed is a flag, not NaN: `-Ofast`
+assumes no NaNs.
+
 ### 2. Decimation Architecture
 
 **Thread-Local Decimators:**
@@ -337,6 +346,15 @@ float phase = std::atan2f(q, i);  // Hardware accelerated on ARM
 
 **Liquid-DSP Resampling:** Multi-stage decimation for 48kHz audio output
 
+**AM loops are set in seconds** (`recreateFilters`, re-run on every rate or
+mode change): RF AGC tau 50 ms, envelope AGC tau 0.5 s, DC blocker 30 Hz.
+Fixed per-sample constants put their corners at kHz at wide VFOs and stripped
+the AM audio's lows.
+
+**FM only (DoA and beamforming off):** only the FM source VFO runs, decimating
+only the listened-to channel (squelch reads the main FFT, not decimated data),
+and the receiver converts only that channel.
+
 ### 5. MUSIC Algorithm
 
 **Eigenvalue Decomposition:** Eigen library with SelfAdjointEigenSolver
@@ -349,6 +367,17 @@ float phase = std::atan2f(q, i);  // Hardware accelerated on ARM
 - Overlap processing for temporal smoothing
 
 **Performance:** 256 snapshots, 5 channels → 8-12ms total
+
+**Frame size cap:** `snapshot_length x num_snapshots` <= `MAX_FRAME_SAMPLES`
+(65536). Every MUSIC buffer is complex<double> and scales with it - the old
+2048 x 128 maximum was ~200 MB per VFO. `setConfig` lowers num_snapshots to
+fit; the MUSIC_SNAPSHOT_LENGTH handler echoes the lowered count
+(MUSIC_NUM_SNAPSHOTS) so browsers and the settings file follow.
+
+**Input continuity:** the accumulator is cleared on a gap > 200 ms, a sample
+rate change or a VFO offset change, and the data receiver retunes MUSIC from
+the offset each block was decimated with (not the VFO's live one), so a frame
+never mixes samples mixed down at two offsets.
 
 ### 6. Memory Management
 

@@ -107,43 +107,58 @@ void Beamformer::setSteeringAngle(float angle_deg) {
     }
 }
 
-float Beamformer::getSteeringAngle() const { return steering_angle_deg_; }
+float Beamformer::getSteeringAngle() const {
+    std::lock_guard<std::mutex> config_lock(config_mutex_);
+    return steering_angle_deg_;
+}
 
 void Beamformer::setArrayTopology(ArrayTopology topology) {
     std::lock_guard<std::mutex> config_lock(config_mutex_);
     if (topology_ != topology) {
         topology_ = topology;
         steering_vector_valid_ = false;
+        mvdr_weights_valid_ = false;  // built from the steering vector
         fdds_last_angle_ = -1000.0f;  // FD-DAS table is geometry-dependent too
         computeElementPositions();
     }
 }
 
-ArrayTopology Beamformer::getArrayTopology() const { return topology_; }
+ArrayTopology Beamformer::getArrayTopology() const {
+    std::lock_guard<std::mutex> config_lock(config_mutex_);
+    return topology_;
+}
 
 void Beamformer::setArrayRadius(float radius_mm) {
     std::lock_guard<std::mutex> config_lock(config_mutex_);
     if (std::fabs(array_radius_mm_ - radius_mm) > 0.1f) {
         array_radius_mm_ = radius_mm;
         steering_vector_valid_ = false;
+        mvdr_weights_valid_ = false;
         fdds_last_angle_ = -1000.0f;
         computeElementPositions();
     }
 }
 
-float Beamformer::getArrayRadius() const { return array_radius_mm_; }
+float Beamformer::getArrayRadius() const {
+    std::lock_guard<std::mutex> config_lock(config_mutex_);
+    return array_radius_mm_;
+}
 
 void Beamformer::setElementSpacing(float spacing_mm) {
     std::lock_guard<std::mutex> config_lock(config_mutex_);
     if (std::fabs(element_spacing_mm_ - spacing_mm) > 0.1f) {
         element_spacing_mm_ = spacing_mm;
         steering_vector_valid_ = false;
+        mvdr_weights_valid_ = false;
         fdds_last_angle_ = -1000.0f;
         computeElementPositions();
     }
 }
 
-float Beamformer::getElementSpacing() const { return element_spacing_mm_; }
+float Beamformer::getElementSpacing() const {
+    std::lock_guard<std::mutex> config_lock(config_mutex_);
+    return element_spacing_mm_;
+}
 
 void Beamformer::setCustomPositions(const std::array<ElementPosition, DOA_NUM_ELEMENTS>& positions) {
     std::lock_guard<std::mutex> config_lock(config_mutex_);
@@ -156,6 +171,7 @@ void Beamformer::setCustomPositions(const std::array<ElementPosition, DOA_NUM_EL
         custom_positions_ = positions;
         custom_positions_valid_ = true;
         steering_vector_valid_ = false;
+        mvdr_weights_valid_ = false;
         fdds_last_angle_ = -1000.0f;
         computeElementPositions();
     }
@@ -167,10 +183,26 @@ void Beamformer::setFrequency(float freq_hz) {
         frequency_hz_ = freq_hz;
         steering_vector_valid_ = false;
         computeElementPositions();
+        // A retune: the MVDR covariance (and snapshots accumulating toward the
+        // next one) describe the old frequency - fall back to an identity
+        // covariance (= DAS weights) until a fresh one completes; and the
+        // FD-DAS history would splice old-frequency samples into the first
+        // new frame, its per-bin phase table is per frequency too
+        covariance_accum_.setZero();
+        snapshot_count_ = 0;
+        if (covariance_.rows() == num_elements_) covariance_.setIdentity();
+        mvdr_weights_valid_ = false;
+        std::lock_guard<std::mutex> lock(fdds_mutex_);
+        fdds_history_.assign(num_elements_, {});
+        fdds_overlap_.assign(FDDAS_HOP, std::complex<float>(0.0f, 0.0f));
+        fdds_last_angle_ = -1000.0f;
     }
 }
 
-float Beamformer::getFrequency() const { return frequency_hz_; }
+float Beamformer::getFrequency() const {
+    std::lock_guard<std::mutex> config_lock(config_mutex_);
+    return frequency_hz_;
+}
 
 void Beamformer::setSampleRate(float rate_hz) {
     // Called every block with the decimator's output rate (it used to be
@@ -601,10 +633,11 @@ void Beamformer::initFreqDomainDAS() {
         }
     }
 
-    // Hann window (sums to unity at 50% overlap)
+    // PERIODIC Hann window: sums to exactly unity at 50% overlap (the
+    // symmetric form, /(N-1), left a ~0.6% ripple at fs/hop in the output)
     fdds_window_.resize(FDDAS_FFT_SIZE);
     for (int i = 0; i < FDDAS_FFT_SIZE; i++) {
-        fdds_window_[i] = 0.5f * (1.0f - std::cos(TWO_PI * i / (FDDAS_FFT_SIZE - 1)));
+        fdds_window_[i] = 0.5f * (1.0f - std::cos(TWO_PI * i / FDDAS_FFT_SIZE));
     }
 
     fdds_steering_.assign(num_elements_,

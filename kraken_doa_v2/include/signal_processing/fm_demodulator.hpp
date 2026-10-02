@@ -52,14 +52,14 @@ private:
     std::atomic<DemodulatorMode> current_mode{DemodulatorMode::WBFM};
 
     // DC removal for NBFM/AM (simple IIR high-pass, faster than WBFM DC blocker)
-    float nbfm_dc_alpha{0.995f};  // Faster DC removal for NBFM
+    float nbfm_dc_alpha{0.995f};  // NBFM DC removal (10 Hz corner, set per rate in recreateFilters)
     float nbfm_dc_state{0.0f};    // DC filter state
 
     // AM demodulation state
-    float am_dc_alpha{0.99f};     // DC removal for AM (fast settling for bursty signals)
+    float am_dc_alpha{0.99f};     // DC removal for AM (30 Hz corner, set per rate in recreateFilters)
     float am_dc_state{0.0f};      // AM DC filter state
     float am_agc_gain{1.0f};      // AM AGC gain
-    float am_agc_alpha{0.05f};    // AM AGC attack/decay rate (fast for bursty signals)
+    float am_agc_alpha{0.05f};    // AM envelope AGC rate (tau 0.5 s, set per rate in recreateFilters)
     
     // Resampling support
     resamp_rrrf audio_resampler = nullptr;  // Real-to-real resampler for audio
@@ -67,6 +67,10 @@ private:
     // resampler, used instead of audio_resampler (see recreateFilters)
     msresamp_rrrf audio_msresampler = nullptr;
     std::atomic<float> resampling_ratio{1.0f};
+    // The ratio the current resampler was BUILT with (recreateFilters, under
+    // process_mutex). Output buffers are sized from this: resampling_ratio
+    // changes as soon as the rate does, before the resampler is rebuilt.
+    float built_ratio_ = 1.0f;
     
     // Filter recreation tracking
     std::atomic<bool> need_filter_recreation{false};

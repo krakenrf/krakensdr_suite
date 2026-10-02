@@ -158,13 +158,27 @@ void FMDemodulatorRobust::recreateFilters() {
     float current_input_rate = input_sample_rate.load();
     DemodulatorMode mode = current_mode.load();
 
+    // NBFM DC removal: a 10 Hz corner at any rate (the fixed 0.995 per sample
+    // was ~10 Hz at 12 kHz but ~190 Hz at a 240 kHz VFO, 0.8 Hz at 1 kHz)
+    nbfm_dc_alpha = std::exp(-2.0f * static_cast<float>(M_PI) * 10.0f / std::max(current_input_rate, 1000.0f));
+
     // Initialize RF AGC with mode-dependent settings
     rf_agc = agc_crcf_create();
     if (mode == DemodulatorMode::AM) {
-        // AM: Fast AGC for bursty signals
-        agc_crcf_set_bandwidth(rf_agc, 0.1f);   // Fast AGC response for bursty AM
+        // AM: the loops' time constants are set in SECONDS and converted to
+        // per-sample values for this rate. Fixed per-sample constants (AGC
+        // bandwidth 0.1, envelope AGC 0.05, DC 0.99) put their corners at
+        // ~3.8 kHz / 1.9 kHz / 380 Hz at a 240 kHz VFO: the AGCs followed -
+        // and so removed - the modulation itself, and AM audio lost its lows.
+        //  - RF AGC: tau 50 ms (~3 Hz), still quick on a bursty signal
+        //  - envelope AGC: tau 0.5 s, level normalization only
+        //  - DC blocker: 30 Hz corner
+        const float fs = std::max(current_input_rate, 1000.0f);
+        agc_crcf_set_bandwidth(rf_agc, std::min(0.1f, 1.0f / (0.05f * fs)));
         agc_crcf_set_gain(rf_agc, 1.0f);
         agc_crcf_set_scale(rf_agc, 0.7f);       // Slightly higher scale for AM
+        am_agc_alpha = std::min(0.05f, 1.0f / (0.5f * fs));
+        am_dc_alpha = std::exp(-2.0f * static_cast<float>(M_PI) * 30.0f / fs);
     } else {
         // FM: Slower AGC to avoid modulation artifacts
         agc_crcf_set_bandwidth(rf_agc, 0.005f); // Slower AGC response
@@ -195,6 +209,7 @@ void FMDemodulatorRobust::recreateFilters() {
     
     // ALWAYS use audio resampler to guarantee exactly 48kHz output
     float ratio = resampling_ratio.load();
+    built_ratio_ = ratio;
     
     // Design resampler parameters
     unsigned int filter_len = 13;      // Good filter length
@@ -442,7 +457,7 @@ void FMDemodulatorRobust::process_decimated_samples(
     if (audio_msresampler) {
         // Downsampling: block call, output count <= ceil(n * ratio) + stage slack
         const size_t n = work_demod_audio_.size();
-        work_processed_audio_.resize(static_cast<size_t>(n * resampling_ratio.load()) + 64);
+        work_processed_audio_.resize(static_cast<size_t>(n * built_ratio_) + 64);
         unsigned int written = 0;
         msresamp_rrrf_execute(audio_msresampler, work_demod_audio_.data(), static_cast<unsigned int>(n),
                               work_processed_audio_.data(), &written);

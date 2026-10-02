@@ -163,7 +163,7 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
     //   bit 9 (0x200) = calibration STALE (settings changed since calibrating)
     // --kerberos_sw is intentionally NOT flagged: calibration is automatic
     // there, so the client should behave exactly as with a KrakenSDR.
-    auto phase_state = get_phase_compensation_state();
+    auto phase_state = get_phase_compensation_state_nonblocking();
     uint32_t phase_state_value = phase_state ? static_cast<uint32_t>(*phase_state) : 0;
     if (kerberos_manual_cal_only()) {
         phase_state_value |= 0x100u;

@@ -325,6 +325,14 @@ std::optional<PhaseCompensatorState> get_phase_compensation_state() {
     return phase_compensation->state;
 }
 
+std::optional<PhaseCompensatorState> get_phase_compensation_state_nonblocking() {
+    static std::atomic<int> last{static_cast<int>(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION)};
+    if (!phase_compensation) return std::nullopt;
+    std::unique_lock<std::mutex> lock(phase_compensation->state_mutex, std::try_to_lock);
+    if (lock.owns_lock()) last.store(static_cast<int>(phase_compensation->state), std::memory_order_relaxed);
+    return static_cast<PhaseCompensatorState>(last.load(std::memory_order_relaxed));
+}
+
 void reset_phase_state_locked(PhaseCompensatorState state) {
     phase_compensation->state = state;
     // Any reset ends a retune cooldown (begin_retune_cooldown re-arms it after
@@ -351,6 +359,29 @@ void reset_phase_state_locked(PhaseCompensatorState state) {
 
 std::atomic<bool> scanner_cal_deferred{false};
 
+void recovery_settings_changed_locked(const char* what) {
+    if (!recovery_in_progress.load(std::memory_order_acquire)) return;
+    const auto st = phase_compensation->state;
+    if (st == PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION ||
+        st == PhaseCompensatorState::CONVERGED) {
+        std::cout << what << " during coherence recovery - covered by the full recal" << std::endl;
+        return;
+    }
+    reset_phase_state_locked(PhaseCompensatorState::MEASURING_INITIAL_PHASE);
+    phase_compensation->noise_on_ns.store(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count(),
+        std::memory_order_relaxed);
+    clear_l2_buffer();  // state -> l2 flush: same order as check_phase_convergence
+    std::cerr << what << " during recalibration - phase measurement restarted at the new settings" << std::endl;
+}
+
+void recovery_settings_changed(const char* what) {
+    if (!phase_compensation || !recovery_in_progress.load(std::memory_order_acquire)) return;
+    std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+    recovery_settings_changed_locked(what);
+}
+
 void begin_retune_cooldown(const char* what) {
     // --kerberos: no automatic recalibration after a settings change (the
     // noise couples into the connected antennas). Keep the old compensation
@@ -364,6 +395,7 @@ void begin_retune_cooldown(const char* what) {
             std::cerr << "KerberosSDR: " << what << " - calibration is STALE. "
                          "Disconnect antennas and press Recalibrate." << std::endl;
         }
+        recovery_settings_changed(what);  // a manual recal running: restart its phase stage
         return;
     }
 
@@ -391,7 +423,7 @@ void begin_retune_cooldown(const char* what) {
     // where handle_settings_change() then refused every tick until the 120 s
     // abort. The recovery recalibrates at the new settings anyway.
     if (recovery_in_progress.load(std::memory_order_acquire)) {
-        std::cout << what << " during coherence recovery - covered by the full recal" << std::endl;
+        recovery_settings_changed_locked(what);
         return;
     }
     set_bias_tee_all_devices(false, devices);  // state -> device_io: documented lock order
@@ -449,6 +481,10 @@ const char* kerberos_calibration_state() {
 // recalibration re-enables everything through recover_coherence(true).
 void kerberos_enter_uncalibrated(const char* reason) {
     set_bias_tee_all_devices(false, devices);
+    // Parked, not calibrating: the steady-state L2-raw cushion (C5). The boot
+    // value is the tight calibration cap, which otherwise stayed for the whole
+    // uncalibrated run.
+    l2_raw_cap.store(L2_RAW_MAX, std::memory_order_relaxed);
 
     reset_lag_compensation_all_channels();  // lag -> MEASURING + L1/L2 flush
     for (const auto& device : devices) {
@@ -483,7 +519,16 @@ void kerberos_enter_uncalibrated(const char* reason) {
 // full-packet slip (phase compensation cannot represent it, and a locked lag
 // state will not re-measure on its own). Runs only on the watchdog thread.
 void recover_coherence(bool manual) {
-    recovery_in_progress.store(true, std::memory_order_release);
+    // Under state_mutex: begin_retune_cooldown / the periodic check's restore
+    // test the flag under it and then switch the noise source off - set
+    // outside it, one could pass the test just before the recovery started and
+    // turn its noise off, stalling it until the 120 s abort
+    if (phase_compensation) {
+        std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+        recovery_in_progress.store(true, std::memory_order_release);
+    } else {
+        recovery_in_progress.store(true, std::memory_order_release);
+    }
     const uint32_t n = coherence_event_count.load(std::memory_order_relaxed);
     std::cerr << "Coherence recovery #" << n << ": full flush + recalibration starting..." << std::endl;
 
@@ -510,6 +555,9 @@ void recover_coherence(bool manual) {
                discrete_scanner.enabled.load();
     };
     if (needs_flush_only()) {
+        // No calibration will run: the noise source must not stay on through
+        // the scan (a device reopen just before switches it on)
+        if (bias_tee_enabled.load()) set_bias_tee_all_devices(false, devices);
         clear_l1_buffer();
         clear_l2_buffer();
         std::cerr << "Coherence recovery: wideband/scanner active - buffers flushed, no recalibration" << std::endl;
@@ -553,6 +601,7 @@ void recover_coherence(bool manual) {
     // the state those transitions establish anyway.
     if (needs_flush_only()) {
         set_bias_tee_all_devices(false, devices);
+        l2_raw_cap.store(L2_RAW_MAX, std::memory_order_relaxed);  // no calibration running
         std::cerr << "Coherence recovery: wideband/scanner started mid-recovery, abandoning recal" << std::endl;
         recovery_in_progress.store(false, std::memory_order_release);
         return;
@@ -622,6 +671,10 @@ void coherence_watchdog() {
                 fft_control.user_override = false;
             }
             recovery_in_progress.store(false, std::memory_order_release);
+            // No calibration is running now: back to the steady-state L2-raw
+            // cushion (C5) - the tight calibration cap stayed until the next
+            // successful convergence
+            l2_raw_cap.store(L2_RAW_MAX, std::memory_order_relaxed);
             recovering = false;  // allow a fresh recovery below
         }
 
@@ -719,7 +772,11 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
         if (!st || *st != PhaseCompensatorState::CONVERGED) break;  // state changed under us
         {
             std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
-            if (correlation_result.data_sequence > last_seq) {
+            // Only sets whose phases came from the eigen solve: placeholder
+            // sets (zeros / previous values, published before the FFT
+            // override took effect) counted as perfect readings and diluted
+            // a real drift below the threshold
+            if (correlation_result.data_sequence > last_seq && correlation_result.phases_measured) {
                 last_seq = correlation_result.data_sequence;
                 for (int ch = 0; ch < NUM_DEVICES; ++ch) {
                     if (ch == REF_CHANNEL) continue;
@@ -1024,7 +1081,12 @@ bool process_channel_lag_compensation(int channel, float lag) {
                         comp.med_at_freeze = med;
                         comp.kick_pending = true;
                     }
-                    rtlsdr_set_sample_freq_correction_f(device->dev, apply * kRegStep);
+                    {
+                        // device_io_mutex (innermost): shutdown/reconfiguration
+                        // close handles under it
+                        std::lock_guard<std::recursive_mutex> io(device_io_mutex);
+                        if (device->dev) rtlsdr_set_sample_freq_correction_f(device->dev, apply * kRegStep);
+                    }
                     comp.servo_counts = apply;
                     comp.updates_since_write = 0;
                     comp.zero_lag_count = 0;  // the write glitches the lag; restart lock counting
@@ -1060,8 +1122,9 @@ bool process_channel_lag_compensation(int channel, float lag) {
             // interrupted run or external reset it may hold a stale
             // correction, which the servo would otherwise see as unfixable
             // clock drift (it assumes counts=0).
-            if (device->dev) {
-                rtlsdr_set_sample_freq_correction_f(device->dev, 0.0f);
+            {
+                std::lock_guard<std::recursive_mutex> io(device_io_mutex);
+                if (device->dev) rtlsdr_set_sample_freq_correction_f(device->dev, 0.0f);
             }
             comp.state = LagCompensatorState::SERVOING;
             comp.servo_update_count = 0;
@@ -1070,6 +1133,13 @@ bool process_channel_lag_compensation(int channel, float lag) {
             comp.servo_last_act_reading = 0;
             comp.servo_reading_count = 0;
             comp.zero_lag_count = 0;
+            // A kick observation pending from the previous run would compare
+            // this run's first frozen median with that run's freeze point and
+            // skew kick_estimate (the learned value itself - a property of
+            // the dongle - is kept)
+            comp.kick_pending = false;
+            comp.med_at_freeze = 0.0f;
+            comp.updates_since_write = 0;
             std::cout << "Channel " << channel << " servo engaged (lag=" << lag << ")" << std::endl;
             break;
             
@@ -1259,9 +1329,15 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                             break;
                         }
                         case PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION: {
-                            bool all_lag_converged = std::all_of(correlation_result.channel_states.begin(),
-                                correlation_result.channel_states.end(),
-                                [](const auto& pair) { return pair.second == LagCompensatorState::CONVERGED; });
+                            // Under data_mutex: the correlation thread writes these
+                            // entries and a reconfiguration clears the map
+                            bool all_lag_converged;
+                            {
+                                std::lock_guard<std::mutex> rl(correlation_result.data_mutex);
+                                all_lag_converged = std::all_of(correlation_result.channel_states.begin(),
+                                    correlation_result.channel_states.end(),
+                                    [](const auto& pair) { return pair.second == LagCompensatorState::CONVERGED; });
+                            }
 
                             if (all_lag_converged && phase_compensation) {
                                 std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);

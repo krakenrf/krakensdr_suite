@@ -21,4 +21,21 @@ public:
         size_t num_samples,
         bool dc_correction = true
     );
+
+    // DC correction with a slowly tracked offset: each packet's mean only
+    // nudges `dc_i` / `dc_q` (caller-owned, per channel; `seeded` false = the
+    // first packet's mean seeds them - a flag, since -Ofast assumes no NaNs)
+    // by `k`. Subtracting each packet's OWN mean (above) was a notch about one
+    // packet rate wide (~150 Hz at 16384 samples / 2.4 MSPS) that removed a CW
+    // beacon or AM carrier parked near the centre; k = 0.05 per ~7 ms packet
+    // puts the corner near 1 Hz while still following the RTL DC offset.
+    static void convert_uint8_to_complex_float_tracked_dc(
+        const uint8_t* input,
+        std::complex<float>* output,
+        size_t num_samples,
+        float& dc_i,
+        float& dc_q,
+        bool& seeded,
+        float k = 0.05f
+    );
 };

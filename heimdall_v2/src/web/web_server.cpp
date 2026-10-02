@@ -252,7 +252,7 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
             ws->send(build_state_message(), uWS::TEXT);
         },
         
-        .message = [&](auto* /*ws*/, std::string_view message, uWS::OpCode) {
+        .message = [&](auto* ws, std::string_view message, uWS::OpCode) {
             // While an element-count reconfiguration owns the devices, every
             // command is refused: most handlers below touch device handles that
             // are being closed/reopened on another thread.
@@ -281,7 +281,18 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                         fft_control.auto_disabled = false;
                         std::cout << "FFT: Disabled" << std::endl;
                     }},
-                    {"BIAS_TEE_ENABLE", []() { set_bias_tee_all_devices(true, devices); }},
+                    {"BIAS_TEE_ENABLE", []() {
+                        // --kerberos: noise on + FFT on would run the lag/phase
+                        // machines against the CONNECTED antennas and latch a
+                        // "calibration" - only Force Recalibration (with its
+                        // disconnect-antennas confirm) may energize it
+                        if (kerberos_manual_cal_only()) {
+                            std::cerr << "KerberosSDR: noise source switch refused - use Force Recalibration "
+                                         "(antennas disconnected)" << std::endl;
+                            return;
+                        }
+                        set_bias_tee_all_devices(true, devices);
+                    }},
                     {"BIAS_TEE_DISABLE", []() { set_bias_tee_all_devices(false, devices); }},
                     {"PER_BIN_ENABLE", []() {
                         per_bin_cal.enabled.store(true, std::memory_order_release);
@@ -417,7 +428,7 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                                 // recalibrate lag+phase at the new frequency. Do NOT run the
                                 // cooldown override here - clobbering the recovery's phase
                                 // state and killing its noise source would wedge calibration.
-                                std::cout << "Frequency changed during coherence recovery: deferring to the full recal" << std::endl;
+                                recovery_settings_changed("Frequency change (web UI)");
                             } else if (new_freq > 0) {
                                 // Frequency changed - use cooldown approach
                                 // (--kerberos: marks the calibration STALE instead)
@@ -438,6 +449,13 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                     auto n_str = message.substr(13);
                     try {
                         const int n = std::stoi(std::string(n_str));
+                        if (std::string err; !reconfigure_num_elements_precheck(n, err)) {
+                            // Refused up front: log it and resend STATE so the
+                            // selector snaps back to the live count
+                            std::cerr << "Element-count change to " << n << " refused: " << err << std::endl;
+                            ws->send(build_state_message(), uWS::TEXT);
+                            return;
+                        }
                         std::thread([n]() {
                             std::string err;
                             if (!reconfigure_num_elements(n, err)) {
@@ -556,6 +574,7 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
         } else {
             std::cerr << "FATAL: cannot listen on web port " << WEB_PORT
                       << " - is another heimdall instance already running?" << std::endl;
+            fatal_exit = true;       // exit status 1, not a clean stop
             global_running = false;  // trigger the normal clean shutdown in main()
         }
     });

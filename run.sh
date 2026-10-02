@@ -246,9 +246,13 @@ fi
 # Killing the session outright gave the apps no time to finish, so a relaunch
 # could race the old heimdall for the USB devices.
 # ===========================================================================
+# Only the panes run.sh started (supervisor / client pane): a shell the user
+# opened in the session (Ctrl-b c) ignores SIGTERM, which held this for the
+# full 10 s. `keep` leaves the session itself open (see inside_session).
 stop_session() {
     local pids pid alive
-    pids=$(tmux list-panes -s -t "$SESSION" -F '#{pane_pid}' 2>/dev/null)
+    pids=$(tmux list-panes -s -t "$SESSION" -F '#{pane_pid} #{pane_start_command}' 2>/dev/null |
+           awk '/__supervise|__client_pane/ {print $1}')
     for pid in $pids; do
         kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
     done
@@ -258,8 +262,15 @@ stop_session() {
         [[ "$alive" == "0" ]] && break
         sleep 0.2
     done
-    [[ "$alive" == "1" ]] && warn "Apps still running after 10s - forcing the session closed."
-    tmux kill-session -t "$SESSION" 2>/dev/null || true
+    [[ "${alive:-0}" == "1" ]] && warn "Apps still running after 10s - forcing the session closed."
+    [[ "${1:-}" == "keep" ]] || tmux kill-session -t "$SESSION" 2>/dev/null || true
+}
+
+# True when this script runs inside the session it manages (e.g. a shell the
+# user opened there): closing that session closes our own pane, and the
+# SIGHUP killed run.sh before it got any further.
+inside_session() {
+    [[ -n "${TMUX:-}" ]] && [[ "$(tmux display-message -p '#S' 2>/dev/null)" == "$SESSION" ]]
 }
 
 # ===========================================================================
@@ -297,7 +308,8 @@ stop_stale() {
 
     [[ -z "$pgids" ]] && return 0
     warn "Stopping stale processes from an earlier run:"
-    ps -o pid=,etime=,args= -g "${pgids// /,}" | sed 's/^ */     /'
+    # pgrep -g selects by process GROUP (ps -g means session id)
+    ps -o pid=,etime=,args= -p "$(pgrep -d, -g "${pgids// /,}")" 2>/dev/null | sed 's/^ */     /'
     for pgid in $pgids; do kill -TERM -- "-$pgid" 2>/dev/null; done
     for _ in $(seq 1 50); do            # up to 10 s for the clean shutdown
         alive=0
@@ -318,6 +330,14 @@ stop_stale() {
 # ===========================================================================
 if [[ "${1:-}" == "stop" ]]; then
     if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$SESSION" 2>/dev/null; then
+        if inside_session; then
+            # Everything else first: closing the session ends this shell too
+            stop_session keep
+            stop_stale
+            ok "Stopped the stack - closing tmux session '$SESSION' (this window too)."
+            tmux kill-session -t "$SESSION" 2>/dev/null
+            exit 0
+        fi
         stop_session
         ok "Stopped tmux session '$SESSION'."
     else
@@ -335,6 +355,9 @@ command -v python3 >/dev/null 2>&1 || die "python3 is required for convergence d
 # Clear out a previous stack before starting a new one: a live session is
 # stopped cleanly, then anything orphaned outside it (see stop_stale).
 if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$SESSION" 2>/dev/null; then
+    # Replacing the session from inside it would close this very shell
+    # mid-start (the old stack stopped, the new one never started)
+    inside_session && die "run.sh is running inside the '$SESSION' tmux session it would replace - detach (Ctrl-b d) or use another terminal, then run it again."
     warn "A '$SESSION' session is already running - replacing it."
     stop_session
 fi

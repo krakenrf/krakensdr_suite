@@ -38,6 +38,19 @@ ScannerManager::~ScannerManager() {
 // '}' (e.g. "Tower [N]") no longer truncates the frequency list or the label.
 
 // Position just past the closing quote of the string starting at `q` (a '"').
+// Scanner frequencies are float MHz; Hz goes out as uint64 (the Wideband
+// variant reaches 6668 MHz - a uint32 cast wrapped anything past 4294 MHz).
+static uint64_t mhz_to_hz(float mhz) {
+    return static_cast<uint64_t>(llround(static_cast<double>(mhz) * 1e6));
+}
+
+// RF the array can tune to: the R820T range, or the Wideband variant's span
+static bool scanner_rf_valid(uint64_t hz) {
+    uint64_t min_hz = RTL_TUNER_MIN_HZ, max_hz = RTL_TUNER_MAX_HZ;
+    if (wb_variant_enabled.load(std::memory_order_relaxed)) wb_variant_rf_union_range(min_hz, max_hz);
+    return hz >= min_hz && hz <= max_hz;
+}
+
 static size_t skipJsonString(const string& s, size_t q) {
     for (size_t i = q + 1; i < s.size(); i++) {
         if (s[i] == '\\') { i++; continue; }
@@ -141,20 +154,21 @@ static bool extractBoolValue(const string& json, const string& key, bool default
 
 bool ScannerManager::loadConfig(const std::string& json_str) {
     try {
-        lock_guard<mutex> lock(config_mutex_);
+        // Parsed into a copy and committed only when every entry is valid: a
+        // refused load keeps the previous (possibly running) configuration
+        ScannerConfig cfg;
+        cfg.name = extractStringValue(json_str, "name");
+        if (cfg.name.empty()) cfg.name = "Scanner";
 
-        config_.name = extractStringValue(json_str, "name");
-        if (config_.name.empty()) config_.name = "Scanner";
-
-        config_.version = extractIntValue(json_str, "version", 1);
+        cfg.version = extractIntValue(json_str, "version", 1);
         // Default squelch is 20dB above normalized noise floor (0dB)
-        config_.squelch_db = extractFloatValue(json_str, "squelch_db", 20.0f);
-        config_.dwell_time_ms = extractIntValue(json_str, "dwell_time_ms", 200);
-        config_.hysteresis_db = extractFloatValue(json_str, "hysteresis_db", 5.0f);
-        config_.lock_timeout_ms = extractIntValue(json_str, "lock_timeout_ms", 200);
+        cfg.squelch_db = extractFloatValue(json_str, "squelch_db", 20.0f);
+        cfg.dwell_time_ms = extractIntValue(json_str, "dwell_time_ms", 200);
+        cfg.hysteresis_db = extractFloatValue(json_str, "hysteresis_db", 5.0f);
+        cfg.lock_timeout_ms = extractIntValue(json_str, "lock_timeout_ms", 200);
 
         // Parse frequencies array
-        config_.frequencies.clear();
+        cfg.frequencies.clear();
         size_t freq_array_start = findJsonValue(json_str, "frequencies");
         if (freq_array_start != string::npos && json_str[freq_array_start] == '[') {
             size_t freq_array_end = findJsonClose(json_str, freq_array_start);
@@ -180,12 +194,25 @@ bool ScannerManager::loadConfig(const std::string& json_str) {
                     freq.label = extractStringValue(freq_obj, "label");
                     freq.enabled = extractBoolValue(freq_obj, "enabled", true);
 
-                    config_.frequencies.push_back(freq);
+                    // The UI's add prompt and file loads only checked > 0:
+                    // refuse an entry the array can't tune to (or a bandwidth
+                    // wider than the stream) rather than send it to heimdall
+                    if (!std::isfinite(freq.freq_mhz) || !scanner_rf_valid(mhz_to_hz(freq.freq_mhz)) ||
+                        !std::isfinite(freq.bandwidth_khz) || freq.bandwidth_khz <= 0.0f ||
+                        freq.bandwidth_khz > SAMPLE_RATE / 1e3f) {
+                        cerr << "Scanner config: entry '" << freq.label << "' (" << freq.freq_mhz
+                             << " MHz, " << freq.bandwidth_khz << " kHz) out of range - config refused" << endl;
+                        return false;
+                    }
+
+                    cfg.frequencies.push_back(freq);
                     pos = obj_end + 1;
                 }
             }
         }
 
+        lock_guard<mutex> lock(config_mutex_);
+        config_ = std::move(cfg);
         status_.config_loaded = true;
         cout << "Scanner config loaded: " << config_.name << " with "
              << config_.frequencies.size() << " frequencies" << endl;
@@ -237,9 +264,9 @@ bool ScannerManager::setDwellTime(int dwell_ms) {
     // If scanner is running, update the server-side dwell time immediately
     if (running_.load()) {
         // Build frequency list in Hz (need to reconfigure with new dwell time)
-        vector<uint32_t> freq_list_hz;
+        vector<uint64_t> freq_list_hz;
         for (const auto& group : groups_) {
-            freq_list_hz.push_back(static_cast<uint32_t>(group.center_freq_mhz * 1e6f));
+            freq_list_hz.push_back(mhz_to_hz(group.center_freq_mhz));
         }
 
         // Send updated configuration to Heimdall
@@ -366,9 +393,9 @@ bool ScannerManager::start() {
     // ========================================================================
 
     // Build frequency list in Hz
-    vector<uint32_t> freq_list_hz;
+    vector<uint64_t> freq_list_hz;
     for (const auto& group : groups_) {
-        freq_list_hz.push_back(static_cast<uint32_t>(group.center_freq_mhz * 1e6f));
+        freq_list_hz.push_back(mhz_to_hz(group.center_freq_mhz));
     }
 
     // Send configuration to Heimdall
@@ -699,8 +726,10 @@ void ScannerManager::lockOnSignal(size_t freq_index, float signal_db) {
     if (!still_running()) return;
 
     // Switch to coherent mode (disable wideband)
-    // CRITICAL: Update CLIENT-side flag immediately so message_builders switches to per-channel FFT
-    wideband_mode_enabled = false;
+    // CRITICAL: Update CLIENT-side flag immediately so message_builders switches to per-channel FFT.
+    // Through the shared helper: it also brings back the DoA that wideband
+    // mode parked - the lock exists to take bearings, and DoA used to stay off.
+    ControlHandler::apply_wideband_mode_state(false);
 
     // Send command to server
     stringstream coherent_json;
@@ -716,7 +745,7 @@ void ScannerManager::lockOnSignal(size_t freq_index, float signal_db) {
     if (!still_running()) return;
 
     // Tune all tuners to the exact detected frequency
-    uint32_t freq_hz = static_cast<uint32_t>(freq.freq_mhz * 1e6f);
+    const uint64_t freq_hz = mhz_to_hz(freq.freq_mhz);
     stringstream freq_json;
     freq_json << "{\"set_frequency\":{\"frequency\":" << freq_hz << "}}";
     ControlHandler::send_control_command(freq_json.str());
@@ -789,7 +818,9 @@ void ScannerManager::lockOnSignal(size_t freq_index, float signal_db) {
     // Note: Heimdall doesn't have a command for this yet, it's enabled by default
     // Phase calibration will start automatically in coherent mode
 
-    // Update scanner state
+    // Update scanner state (re-checked: a stop() since the last check has
+    // already set IDLE, which a late LOCKED would overwrite - stale state)
+    if (!still_running()) return;
     status_.state = ScannerState::LOCKED;
     status_.locked_freq_index = freq_index;
     status_.locked_signal_db = signal_db;
@@ -842,7 +873,7 @@ void ScannerManager::resumeScanning() {
 
     // Update client-side flag BEFORE sending command to server
     // This ensures message_builders switches to wideband FFT mode
-    wideband_mode_enabled = true;
+    ControlHandler::apply_wideband_mode_state(true);  // parks DoA again for the scan
 
     // Enable wideband mode on server - this will:
     // 1. Set operating_mode to WIDEBAND_SCAN
@@ -851,7 +882,7 @@ void ScannerManager::resumeScanning() {
     // 4. Turn off bias tee if calibration was interrupted
     stringstream wideband_json;
     wideband_json << "{\"set_wideband_mode\":{\"enable\":true,\"base_frequency\":"
-                  << static_cast<uint32_t>(groups_snapshot[0].center_freq_mhz * 1e6f) << "}}";
+                  << mhz_to_hz(groups_snapshot[0].center_freq_mhz) << "}}";
     cout << "Sending wideband enable command to server" << endl;
     ControlHandler::send_control_command(wideband_json.str());
 
@@ -866,9 +897,9 @@ void ScannerManager::resumeScanning() {
 
     // Re-send scanner configuration to ensure server has correct frequency list
     // This is important because server state may have been corrupted during lock/unlock
-    vector<uint32_t> freq_list_hz;
+    vector<uint64_t> freq_list_hz;
     for (const auto& group : groups_snapshot) {
-        freq_list_hz.push_back(static_cast<uint32_t>(group.center_freq_mhz * 1e6f));
+        freq_list_hz.push_back(mhz_to_hz(group.center_freq_mhz));
     }
 
     stringstream config_json;
@@ -893,6 +924,7 @@ void ScannerManager::resumeScanning() {
 
     // Update state - use SETTLING state to prevent immediate signal detection
     // This gives time for the server to switch frequencies and new FFT data to arrive
+    if (!still_running()) return;  // stopped meanwhile: keep stop()'s IDLE
     status_.state = ScannerState::SCANNING;
     status_.locked_freq_index = 0;
     status_.locked_signal_db = -999.0f;

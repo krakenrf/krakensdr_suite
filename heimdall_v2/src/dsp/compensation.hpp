@@ -10,6 +10,10 @@
 void apply_phase_compensation_once(const std::map<int, float>& measured_phases);
 bool check_phase_convergence(const std::map<int, float>& current_phases);
 std::optional<PhaseCompensatorState> get_phase_compensation_state();
+// Hot-path variant for the 8091 broadcast (every packet, conversion worker):
+// try_lock, else the last value read. Paths that hold state_mutex across USB
+// I/O (a retune cooldown, start_scanner) used to stall the conversion worker.
+std::optional<PhaseCompensatorState> get_phase_compensation_state_nonblocking();
 
 // Reset the phase machine for a fresh calibration pass: enter `state`, end any
 // retune cooldown, zero the convergence counters, set the compensation vector
@@ -24,6 +28,15 @@ void reset_phase_state_locked(PhaseCompensatorState state);
 // restarted. The phase-driver lag thread starts the phase-only recal
 // (handle_settings_change) once the stability delay elapses. `what` prefixes
 // the log line. The caller applies its own gating first.
+// A frequency / gain / mixer-side / ring change while a coherence recovery
+// (or manual recalibration) is running: the recovery recalibrates at the new
+// settings, but a phase measurement already past lag convergence was taken on
+// the OLD settings and could finish verification on pre-retune data and latch
+// it as CONVERGED. Restart it at MEASURING_INITIAL_PHASE with the settle gate
+// re-armed and the pre-retune sets flushed. No-op without a recovery.
+void recovery_settings_changed(const char* what);
+void recovery_settings_changed_locked(const char* what);  // state_mutex held
+
 void begin_retune_cooldown(const char* what);
 
 // Lag compensation functions

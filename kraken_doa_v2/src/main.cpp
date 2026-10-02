@@ -162,11 +162,13 @@ int main(int argc, char* argv[]) {
 
     for (int i = 1; i < argc; i++) {
         if ((strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--num-elements") == 0) && i + 1 < argc) {
-            num_elements = atoi(argv[++i]);
-            if (num_elements < 2 || num_elements > DOA_NUM_ELEMENTS) {
+            char* end = nullptr;
+            const long n = strtol(argv[++i], &end, 10);
+            if (end == argv[i] || *end != '\0' || n < 2 || n > DOA_NUM_ELEMENTS) {
                 cerr << "Error: -n must be between 2 and " << DOA_NUM_ELEMENTS << endl;
                 return 1;
             }
+            num_elements = static_cast<int>(n);
         } else if (strcmp(argv[i], "-w") == 0 || strcmp(argv[i], "--wideband") == 0) {
             wb_variant_enabled = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -179,6 +181,12 @@ int main(int argc, char* argv[]) {
                  << "                          (IF " << WB_VARIANT_IF_HZ / 1e6 << " MHz; start heimdall with --wideband too)\n"
                  << "  -h, --help              Show this help message\n";
             return 0;
+        } else {
+            // A misspelt flag used to be ignored silently (e.g. a typo of
+            // --wideband ran the standard UI against a Wideband heimdall)
+            cerr << "Error: unknown or incomplete option '" << argv[i]
+                 << "' (see " << argv[0] << " --help)" << endl;
+            return 1;
         }
     }
 

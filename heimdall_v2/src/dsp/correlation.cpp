@@ -244,9 +244,10 @@ bool calculate_phase_amplitude_calibration_eigen(
     // where X is the [num_channels x num_samples] matrix of IQ samples
     Eigen::MatrixXcf Rxx = Eigen::MatrixXcf::Zero(num_channels, num_channels);
 
-    // Build the correlation matrix
+    // Build the correlation matrix - lower triangle only: Rxx is Hermitian
+    // and SelfAdjointEigenSolver reads just that half
     for (int i = 0; i < num_channels; i++) {
-        for (int j = 0; j < num_channels; j++) {
+        for (int j = 0; j <= i; j++) {
             std::complex<float> sum(0.0f, 0.0f);
             
             // Calculate dot product: sum(x_i * conj(x_j))
@@ -266,9 +267,7 @@ bool calculate_phase_amplitude_calibration_eigen(
         return false;
     }
     
-    // Get eigenvalues and eigenvectors
     // Note: SelfAdjointEigenSolver returns eigenvalues in ascending order
-    auto eigenvalues = eigensolver.eigenvalues();
     auto eigenvectors = eigensolver.eigenvectors();
 
     // The largest eigenvalue is the last one (they're sorted in ascending order)
@@ -276,12 +275,6 @@ bool calculate_phase_amplitude_calibration_eigen(
 
     // Get the dominant eigenvector (corresponds to largest eigenvalue)
     Eigen::VectorXcf dominant_eigenvector = eigenvectors.col(max_idx);
-
-    std::cout << "Eigenvalues (sorted ascending): ";
-    for (int i = 0; i < num_channels; i++) {
-        std::cout << eigenvalues(i) << " ";
-    }
-    std::cout << "\nUsing eigenvector " << max_idx << " with eigenvalue " << eigenvalues(max_idx) << std::endl;
 
     // Calculate IQ differences (phase calibration factors)
     // iq_diffs = 1 / dominant_eigenvector
@@ -315,14 +308,6 @@ bool calculate_phase_amplitude_calibration_eigen(
         // to avoid numerical instability from extreme values
         amplitude = std::max(0.5f, std::min(2.0f, amplitude));
         amplitudes[ch] = amplitude;
-
-        // Debug output for verification
-        if (ch != REF_CHANNEL) {
-            std::cout << "Ch" << ch << ": eigenvec=" << dominant_eigenvector(ch)
-                     << " iq_diff=" << iq_diffs(ch)
-                     << " Amp=" << 20*std::log10(amplitude) << "dB"
-                     << " Phase=" << phases[ch] << "°" << std::endl;
-        }
     }
     return true;
 }
@@ -913,6 +898,9 @@ void correlation_processor(CorrelationResult& correlation_result, FFTProcessingC
                 std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
                 correlation_result.data_ready = false;
                 correlation_result.data_sequence++;
+                // The zeroed phases below are placeholders, not a measurement
+                // (the periodic check counts only phases_measured sets)
+                correlation_result.phases_measured = false;
                 
                 // Clear phase data when FFT is disabled
                 for (auto& [channel, phase] : correlation_result.phases) {

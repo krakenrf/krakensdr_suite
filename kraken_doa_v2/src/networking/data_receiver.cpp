@@ -3,6 +3,7 @@
 // ============================================
 
 #include "networking/data_receiver.hpp"
+#include "utils/thread_pool.hpp"
 #include "utils/parse_num.hpp"
 #include "globals.hpp"
 #include "config.hpp"
@@ -122,6 +123,10 @@ void DataReceiver::data_receiver_thread() {
             // thread-safe call; the web server is normally listening long
             // before heimdall's data port accepts us.
             while (running && !loop) this_thread::sleep_for(milliseconds(100));
+            // A previous client instance (crash + supervisor restart) may have
+            // left heimdall's discrete scan hopping: only this client drives
+            // it, and its scanner starts stopped - make heimdall agree
+            ControlHandler::send_control_command("{\"stop_scanner\":true}");
             if (loop) loop->defer([] { ControlHandler::apply_persisted_settings(); });
             settings_restored = true;
         }
@@ -360,10 +365,11 @@ void DataReceiver::data_receiver_thread() {
                         num_channels_to_convert++;
                     }
                 }
-                // Convert DOA channels if DoA, FM, or beamforming needs them
-                // (FM uses decimators which process all channels, beamforming
-                // needs all active elements for coherent combining)
-                else if (need_doa || need_beamforming || (need_fm && static_cast<int>(channels) >= current_elements)) {
+                // Convert all elements if DoA or beamforming needs them
+                // (beamforming needs all active elements for coherent
+                // combining). FM alone decimates only the listened-to channel,
+                // which is marked below.
+                else if (need_doa || need_beamforming) {
                     for (int ch = 0; ch < min(current_elements, static_cast<int>(channels)); ch++) {
                         if (!channels_to_convert[ch]) {
                             channels_to_convert[ch] = true;
@@ -400,17 +406,21 @@ void DataReceiver::data_receiver_thread() {
                         }
                     }
 
-                    // Convert all channels in one optimized pass
+                    // Convert all channels in one optimized pass. DC correction
+                    // (removes the RTL centre spike) tracks each channel's offset
+                    // across packets - see convert_uint8_to_complex_float_tracked_dc.
+                    // Only this receiver thread converts, so plain state is fine.
+                    static float dc_i[MAX_CHANNELS], dc_q[MAX_CHANNELS];
+                    static bool dc_seeded[MAX_CHANNELS] = {};
                     for (int ch = 0; ch < MAX_CHANNELS; ch++) {
                         if (channels_to_convert[ch]) {
                             const uint8_t* channel_iq_bytes = buffer.data() + offset + header_size + ch * samples * 2;
 
-                            // Use optimized NEON conversion (processes 16 samples at once)
-                            IQConverter::convert_uint8_to_complex_float(
+                            IQConverter::convert_uint8_to_complex_float_tracked_dc(
                                 channel_iq_bytes,
                                 raw_packet.channel_iq_data[ch].data(),
                                 samples,
-                                true  // Enable DC correction to remove center spike
+                                dc_i[ch], dc_q[ch], dc_seeded[ch]
                             );
                         }
                     }
@@ -504,17 +514,35 @@ void DataReceiver::decimation_processor_thread() {
         if ((music_needs_processing || fm_needs_processing || beamforming_needs_processing) && decimator_manager.getDecimatorCount() > 0) {
             // OPTIMIZED PIPELINE: Process decimation + MUSIC in single async tasks
             // This eliminates the synchronization barrier between decimation and MUSIC stages
+            // FM only (no MUSIC, no beamforming): the FM audio is the one
+            // consumer of decimated data - squelch reads the main FFT - so run
+            // just the FM source VFO, on just the listened-to channel. Every VFO
+            // used to decimate every element for nothing.
+            const bool fm_only = !music_needs_processing && !beamforming_needs_processing;
+            const int fm_source_id = decimator_manager.getFMDecimatorId();
             vector<shared_ptr<DecimatorManager::DecimatorInstance>> active_decimators;
             for (auto& inst : decimator_manager.getAllDecimators()) {
                 // Skip disabled or being-deleted decimators
                 if (!inst || !inst->enabled || inst->being_deleted.load(std::memory_order_relaxed)) continue;
+                if (fm_only && inst->id != fm_source_id) {
+                    // Not decimated in this mode, but keep its FFT-method
+                    // squelch indicator live (it reads the main FFT only)
+                    if (inst->squelch_enabled.load(std::memory_order_relaxed) &&
+                        static_cast<SquelchMethod>(inst->squelch_method.load(std::memory_order_relaxed)) == SquelchMethod::FFT) {
+                        inst->squelch_open.store(FFTProcessor::check_squelch_in_range(
+                            current_active, inst->squelch_level.load(std::memory_order_relaxed),
+                            inst->frequency_offset_hz, inst->decimator->getBandwidthMhz() * 1e6f),
+                            std::memory_order_relaxed);
+                    }
+                    continue;
+                }
                 active_decimators.push_back(std::move(inst));
             }
 
             // Pipelined task per decimator: decimation → MUSIC (no intermediate barrier)
             // In wideband mode, each decimator gets data from its specific tuner
             auto run_pipeline =
-                [&raw_packet, fm_id = decimator_manager.getFMDecimatorId(), wideband_enabled, packet_elements](
+                [&raw_packet, fm_id = fm_source_id, wideband_enabled, packet_elements, fm_only, current_active](
                     const shared_ptr<DecimatorManager::DecimatorInstance>& inst) -> DecimatorManager::ProcessResult {
 
                     DecimatorManager::ProcessResult result;
@@ -539,6 +567,12 @@ void DataReceiver::decimation_processor_thread() {
                             if (tuner_ch >= 0 && tuner_ch < static_cast<int>(raw_packet.channel_iq_data.size())) {
                                 channel_ptrs[0] = raw_packet.channel_iq_data[tuner_ch].data();
                                 channel_lens[0] = raw_packet.channel_iq_data[tuner_ch].size();
+                            }
+                            input_channels = 1;
+                        } else if (fm_only) {
+                            if (current_active < static_cast<int>(raw_packet.channel_iq_data.size())) {
+                                channel_ptrs[0] = raw_packet.channel_iq_data[current_active].data();
+                                channel_lens[0] = raw_packet.channel_iq_data[current_active].size();
                             }
                             input_channels = 1;
                         } else {
@@ -624,9 +658,12 @@ void DataReceiver::decimation_processor_thread() {
                             !inst->being_deleted.load(std::memory_order_relaxed)) {
 
                             // Ensure MUSIC processor has correct frequency (fixes startup sync issue)
-                            // Check reference channel (0) tuner frequency + decimator offset
+                            // Check reference channel (0) tuner frequency + the offset THIS
+                            // block was decimated with - not the VFO's live offset: a block
+                            // decimated just before a VFO move carries the old one, and
+                            // retuning MUSIC to the new offset let it into the new frame
                             float expected_freq = static_cast<float>(tuner_frequencies[0].load(std::memory_order_relaxed))
-                                                + inst->frequency_offset_hz;
+                                                + result.decimated_data.freq_offset_hz;
                             float current_music_freq = inst->music_processor->getEffectiveFrequency();
                             if (std::abs(current_music_freq - expected_freq) > 1000.0f) {
                                 inst->music_processor->setFrequency(expected_freq);
@@ -723,13 +760,21 @@ void DataReceiver::decimation_processor_thread() {
                 // Common case: run inline instead of spawning an OS thread per packet
                 results.push_back(run_pipeline(active_decimators[0]));
             } else {
-                // One async task per decimator, then a single barrier at the end
+                // Every VFO but the first on a persistent pool, the first
+                // inline here, then one barrier. std::async(launch::async)
+                // created and joined an OS thread per VFO per packet (~146
+                // packets/s). Pool tasks only wait on their decimator's own
+                // channel pool, never on this one, so a queued VFO can't
+                // deadlock it.
+                static ThreadPool vfo_pool(3);
                 vector<future<DecimatorManager::ProcessResult>> pipeline_futures;
-                pipeline_futures.reserve(active_decimators.size());
-                for (const auto& inst : active_decimators) {
-                    pipeline_futures.push_back(async(launch::async,
+                pipeline_futures.reserve(active_decimators.size() - 1);
+                for (size_t i = 1; i < active_decimators.size(); i++) {
+                    const auto inst = active_decimators[i];
+                    pipeline_futures.push_back(vfo_pool.submit(
                         [&run_pipeline, inst]() { return run_pipeline(inst); }));
                 }
+                results.push_back(run_pipeline(active_decimators[0]));
                 for (auto& future : pipeline_futures) {
                     results.push_back(future.get());
                 }
@@ -760,7 +805,9 @@ void DataReceiver::decimation_processor_thread() {
                     } else if (doa_angle >= 0 && confidence > 0.001f) {
                         // doa_angle is reported in world frame (array offset already
                         // applied); the beamformer steers in array frame, so undo it.
-                        float arr = static_cast<float>(doa_angle) - inst->music_processor->getArrayOffset();
+                        // the offset the bearing was computed with: a frozen
+                        // DoA keeps the old one while the setting may change
+                        float arr = static_cast<float>(doa_angle) - inst->music_processor->getSpectrumArrayOffset();
                         arr = wrap_degrees(arr);
                         steering_angle = arr;
                     }
@@ -826,7 +873,8 @@ void DataReceiver::decimation_processor_thread() {
                                 fm_item.decimated_samples = std::move(result.beamformed_samples);
                             }
                         } else {
-                            int channel_idx = wideband_enabled ? 0 : current_active;
+                            // Single-channel blocks (wideband, FM only) carry it at 0
+                            int channel_idx = (wideband_enabled || fm_only) ? 0 : current_active;
                             if (channel_idx < static_cast<int>(result.decimated_data.channels.size()) &&
                                 !result.decimated_data.channels[channel_idx].samples.empty()) {
                                 fm_item.decimated_samples = result.decimated_data.channels[channel_idx].samples;

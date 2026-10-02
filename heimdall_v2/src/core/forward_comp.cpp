@@ -62,6 +62,11 @@ bool valid_basename(const std::string& filename, std::string& err) {
         err = "invalid filename";
         return false;
     }
+    // The settings file trims values, so such a name wouldn't survive a restart
+    if (filename.front() == ' ' || filename.back() == ' ') {
+        err = "filename can't start or end with a space";
+        return false;
+    }
     if (filename.find('/')  != std::string::npos ||
         filename.find('\\') != std::string::npos ||
         filename.find("..") != std::string::npos) {

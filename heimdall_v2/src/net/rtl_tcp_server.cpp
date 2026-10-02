@@ -53,6 +53,7 @@ bool RtlTcpServer::start() {
     
     if (bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0 || listen(server_socket, 1) < 0) {
         close(server_socket);
+        server_socket = -1;  // stop() (the destructor) must not close the number again
         return false;
     }
     
@@ -66,6 +67,7 @@ bool RtlTcpServer::start() {
 void RtlTcpServer::stop() {
     running = false;
     if (server_socket >= 0) {
+        shutdown(server_socket, SHUT_RDWR);  // wakes the accept(); close() alone doesn't
         close(server_socket);
         server_socket = -1;
     }
@@ -87,11 +89,13 @@ void RtlTcpServer::send_dongle_info() {
     uint8_t rtl_tcp_header[12];
     memcpy(rtl_tcp_header, "RTL0", 4);  // Magic
     
-    // Tuner type as uint32_t big-endian (1 = E4000)
-    uint32_t tuner_type = htonl(1);
+    // Tuner type as uint32_t big-endian: 5 = R820T (RTLSDR_TUNER_R820T), what
+    // the KrakenSDR actually has - it used to claim an E4000 (1), whose gain
+    // table clients then offered
+    uint32_t tuner_type = htonl(5);
     memcpy(rtl_tcp_header + 4, &tuner_type, 4);
     
-    // Tuner gain count as uint32_t big-endian
+    // Tuner gain count as uint32_t big-endian (the R820T's 29 steps)
     uint32_t gain_count = htonl(29);
     memcpy(rtl_tcp_header + 8, &gain_count, 4);
     
@@ -146,6 +150,19 @@ void RtlTcpServer::server_loop() {
             continue;
         }
         
+        // Keepalive: a client that vanished without a FIN (powered off, Wi-Fi
+        // dropped) held the single slot until the kernel gave up on the
+        // send - 15-30 min. Now it's found within ~25 s.
+        {
+            int on = 1, idle = 10, intvl = 5, cnt = 3;
+            setsockopt(client_socket, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
+            setsockopt(client_socket, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+            setsockopt(client_socket, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+            setsockopt(client_socket, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+        }
+        ignored_cmds_logged = 0;
+        cmd_carry_len = 0;
+
         std::cout << "RTL-TCP: Client connected from " << inet_ntoa(client_addr.sin_addr) 
              << ":" << ntohs(client_addr.sin_port) 
              << " (streaming channel " << rtl_tcp_channel.load() << ")" << std::endl;
@@ -169,11 +186,55 @@ void RtlTcpServer::server_loop() {
     }
 }
 
+// rtl_tcp clients send 5-byte commands (1 byte id + uint32 BE value). This
+// port is a read-only tap of ONE channel of a coherent array: frequency, gain
+// and sample rate belong to heimdall (web UI / control port), and SDR#/GQRX
+// send their own on connect - applying them would retune the whole DF array
+// and force a recalibration. So they're read (a client's close is noticed
+// here, instead of only by a failed send) and logged once per type.
+bool RtlTcpServer::read_client_commands() {
+    // Bounded: a client flooding commands mustn't starve its own stream
+    for (int reads = 0; reads < 8; reads++) {
+        uint8_t buf[5 + 510];  // carry-over + a whole number of commands
+        std::memcpy(buf, cmd_carry, cmd_carry_len);
+        const ssize_t n = recv(client_socket, buf + cmd_carry_len, 510, MSG_DONTWAIT);
+        if (n == 0) return false;  // orderly close
+        if (n < 0) return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;
+        const size_t total = cmd_carry_len + static_cast<size_t>(n);
+        const size_t whole = total - total % 5;
+        // A command split across reads is completed by the next one
+        cmd_carry_len = total - whole;
+        std::memcpy(cmd_carry, buf + whole, cmd_carry_len);
+        for (size_t i = 0; i < whole; i += 5) {
+            const uint8_t cmd = buf[i];
+            const uint32_t val = (uint32_t(buf[i + 1]) << 24) | (uint32_t(buf[i + 2]) << 16) |
+                                 (uint32_t(buf[i + 3]) << 8) | buf[i + 4];
+            if (cmd >= 32 || (ignored_cmds_logged & (1u << cmd))) continue;
+            ignored_cmds_logged |= 1u << cmd;
+            const char* what = cmd == 1 ? "set frequency" : cmd == 2 ? "set sample rate"
+                             : cmd == 3 ? "set gain mode" : cmd == 4 ? "set gain"
+                             : cmd == 5 ? "set frequency correction" : "command";
+            std::cout << "RTL-TCP: client " << what << " (" << int(cmd) << ", value " << val
+                      << ") ignored - this port only streams; tune the array from the web UI" << std::endl;
+            if (cmd == 2 && val != static_cast<uint32_t>(SAMPLE_RATE)) {
+                std::cerr << "RTL-TCP: client asked for " << val << " S/s, the stream is "
+                          << static_cast<uint32_t>(SAMPLE_RATE) << " S/s - set the client to match" << std::endl;
+            }
+        }
+    }
+    return true;  // still connected; the rest is read on the next call
+}
+
 void RtlTcpServer::worker_loop() {
     fd_set writefds;
     timeval tv;
     
     while (running && client_socket >= 0) {
+        if (!read_client_commands()) {
+            std::cout << "RTL-TCP: client closed the connection" << std::endl;
+            return;
+        }
+
         BufferNode* current_buffer = nullptr;
         
         // Wait for data (like original rtl_tcp.c)
@@ -200,6 +261,7 @@ void RtlTcpServer::worker_loop() {
         // Send data
         size_t bytes_left = current_buffer->data.size();
         size_t index = 0;
+        auto last_progress = std::chrono::steady_clock::now();
         
         while (bytes_left > 0 && running && client_socket >= 0) {
             // Use select to check if socket is ready for writing
@@ -222,8 +284,16 @@ void RtlTcpServer::worker_loop() {
                 
                 bytes_left -= bytes_sent;
                 index += bytes_sent;
+                last_progress = std::chrono::steady_clock::now();
             } else if (r == 0) {
-                // Timeout - continue trying (don't disconnect immediately like original)
+                // Timeout - keep trying a while (don't disconnect immediately
+                // like the original), but a client that hasn't read anything
+                // for 10 s is gone or wedged: free the single slot
+                if (std::chrono::steady_clock::now() - last_progress > std::chrono::seconds(10)) {
+                    std::cout << "RTL-TCP: client stopped reading for 10 s, disconnecting" << std::endl;
+                    delete current_buffer;
+                    return;
+                }
                 continue;
             } else {
                 // Error

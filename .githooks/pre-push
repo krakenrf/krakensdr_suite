@@ -31,6 +31,9 @@ scan_range() {
         # it against each parent (sort -u drops the duplicates). NUL-separated
         # so a path with spaces stays one path.
         while IFS= read -r -d '' f; do
+            # A path the commit DELETES is listed too: nothing to leak, and
+            # blocking it rejected the very commit that untracks a secret file
+            git cat-file -e "$c:$f" 2>/dev/null || continue
             case "$f" in
                 *doa_settings.json|*api_token)
                     echo "BLOCKED: $f is committed in ${c:0:9} - this file holds" >&2

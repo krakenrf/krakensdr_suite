@@ -44,3 +44,8 @@ void remember_num_elements(int n);
 // request is invalid, the system is busy (recovery / scanner / wideband scan
 // active), or the devices could not be reopened.
 bool reconfigure_num_elements(int new_n, std::string& err);
+// The refusals reconfigure_num_elements() applies before touching anything
+// (range, recovery / scan / reconfiguration in progress), for callers that
+// answer before starting it on a worker thread - they used to report
+// "started" for a change that was then refused. true = it would proceed.
+bool reconfigure_num_elements_precheck(int new_n, std::string& err);

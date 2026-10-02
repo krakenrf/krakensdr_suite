@@ -104,7 +104,17 @@ make debug-arm    # ARM build with NEON debug output
 - `./run.sh [--wideband|-w] [--kerberos] [--kerberos_sw|--kerberos-sw]` starts
   both apps in a tmux split (`NO_TMUX=1` = headless, logs in `logs/`);
   `./run.sh stop` stops everything. Unknown arguments are an error (a
-  mistyped flag used to be ignored silently); `-h` prints usage.
+  mistyped flag used to be ignored silently); `-h` prints usage. heimdall
+  and kraken_doa themselves also exit 1 on an unknown or incomplete option
+  (heimdall accepts `--kerberos-sw` as well as `--kerberos_sw`).
+- A heimdall startup failure after the dongles open (busy 8091/8092, device
+  init, downconverter) releases the hardware and `_Exit(1)`s like the normal
+  shutdown. A busy 1234 is NOT fatal: heimdall runs without the optional
+  RTL-TCP tap (a stock rtl_tcp on a spare dongle uses that port) - a plain `return` ran global destructors that joined the
+  RTL-TCP thread blocked in `accept()` and hung. A web port that can't be
+  bound also ends with status 1. The shutdown waits (<= 5 s) for an
+  element-count change holding `settings_mutex`, so it can't close handles a
+  just-started reader is using.
 - Each app runs under a supervisor (`run.sh __supervise`) that restarts it
   after a crash. Ctrl+C, `run.sh stop`, `systemctl stop` and closing the tmux
   pane/window all stop it cleanly: the supervisor runs the app as a
@@ -126,6 +136,14 @@ make debug-arm    # ARM build with NEON debug output
   replaces any tmux session named `$TMUX_SESSION` (default `krakensdr`) and
   sweeps stale heimdall/kraken_doa processes - give the copy its own
   `TMUX_SESSION` and stub `stop_stale`.
+- `run.sh` from INSIDE its own tmux session (e.g. a window opened there):
+  starting refuses (replacing the session would close that shell mid-start);
+  `stop` stops the apps and sweeps stale processes, then closes the session
+  (and that window) last. Only panes run.sh started are signalled
+- heimdall saves the last USER tuning (frequency, gain) in
+  `heimdall_settings.conf` once it has been stable for 10 s and restores it
+  before the dongles open, so a crash restart comes back where the array was
+  (scanner hops are not saved)
 - Boot service (`install-pi-service.sh`): `Type=forking`, `ExecStop=run.sh
   stop`, `LimitRTPRIO=30` (realtime USB threads), `Restart=on-failure`.
 
@@ -281,6 +299,9 @@ Edit `kraken_doa_v2/include/config.hpp`:
   custom array), since the startup replay runs before the real count is known
 - `DOA_BLOCK_SIZE`: Samples per processing block (default 256)
 - `DOA_ANGULAR_RESOLUTION`: Degrees per step (default 1)
+- **CUSTOM topology**: positions beyond the count given in CUSTOM_POSITIONS
+  (e.g. after the element count grows) get the UI table's default - a 50 mm
+  UCA over the live count - instead of the origin
 - **UCA element ordering**: the array is expected to be wired **CLOCKWISE**
   (ANT0 on +x, ANT1 clockwise from it). `uca_angle_sign()` in
   `kraken_doa_v2/include/globals.hpp` returns -1 and is the single choke
@@ -295,6 +316,22 @@ Edit `kraken_doa_v2/include/config.hpp`:
   beamformed FFT collects short blocks until it has 64 samples. The web UI
   draws a VFO at least 8 px wide so a 1 kHz bar stays visible/grabbable
 
+**Scanners**:
+- The discrete (server-side hop) and continuous scanners are mutually
+  exclusive: starting one while the other runs is refused and the browser's
+  button reset
+- Discrete scanner: config entries outside the tunable range (R820T, or the
+  Wideband variant's span) are refused - the whole load, the previous config
+  stays; frequencies go to heimdall as uint64 Hz. heimdall's settle and dwell
+  waits end on stop / reconfigure / start (`run_generation`), so a 1 h dwell
+  no longer blocks them, and a cut-short dwell doesn't advance the group
+- Continuous wideband scan: a range that isn't tunable (or needs > 4096 bands)
+  empties the band plan and start() refuses with an error shown in the panel;
+  on a manual-calibration KerberosSDR it doesn't wait for automatic
+  calibrations (none run) - only a manual one (noise on) pauses it
+- Locking onto a signal turns DoA back on (`apply_wideband_mode_state`, the
+  single place wideband-scan mode parks/restores DoA; idempotent)
+
 **Web Mapper output (built-in)**:
 - The DoA client streams legacy "doapost" records to the KrakenSDR web mapper
   directly (`kraken_doa_v2/src/networking/web_mapper.cpp`) — the old Node.js
@@ -308,7 +345,10 @@ Edit `kraken_doa_v2/include/config.hpp`:
 - Callsign + location come from the existing Station Information panel; cloud-
   pushed settings (remote retune from the map) are applied through the normal
   control-command path, except the server URL, which only the local web UI
-  can change. The cloud server's TLS certificate is verified
+  can change. Only values that differ from what the receiver itself reports
+  are applied - the cloud echoes whole settings objects, and re-applying our
+  own legacy-schema values was lossy (auto sources off, WIDEBAND topology to
+  UCA, GPS fix over the static location, squelch forced on). The cloud server's TLS certificate is verified
   (`KRAKEN_WEB_MAPPER_INSECURE=1` disables that for a self-signed self-hosted
   server). See `kraken_doa_v2/CLAUDE.md` for details
 
@@ -345,7 +385,10 @@ with `--wideband` (`-w`) on BOTH apps, or `./run.sh --wideband` for the stack.
 - Client DoA topology "WIDEBAND" (client-only, `TOPOLOGY:WIDEBAND`): UCA
   math with the array radius auto-set from the active ring - outer 127.5 mm,
   center 51 mm, inner 20.4 mm (`WB_RING_RADIUS_MM`, client config.hpp).
-  RADIUS: commands are ignored while it is active
+  RADIUS: commands are ignored while it is active. The ring follows the RF of
+  the data stream (`ControlHandler::follow_wideband_ring`, from the FREQ
+  handler AND the receiver), so retunes made by heimdall's UI or the
+  continuous scanner move the radius too
 - The noise source needs RF path switching on this hardware: GPIO0 only
   powers it; GPIO1-6 of the channel-0 chip drive the on-board RF switches
   that route noise vs. the selected antenna ring into the mixers
@@ -391,7 +434,9 @@ disconnected for a calibration to be valid. Start heimdall with `--kerberos`
   frequency moved meanwhile), otherwise the state stays UNCALIBRATED
 - **Manual calibration**: the heimdall web UI's "Force Recalibration Now"
   button (confirm dialog: disconnect all antennas first) is the ONLY trigger
-  that runs the noise-source calibration - it flows through
+  that runs the noise-source calibration (the noise-source checkbox is locked
+  and `BIAS_TEE_ENABLE` refused in this mode - noise + FFT on would calibrate
+  against the connected antennas) - it flows through
   `recover_coherence(manual=true)` on the watchdog thread
 - **State surfaces**: 8092 status JSON gains `kerberos_mode`, `kerberos_sw`,
   `calibration_state` (`uncalibrated`/`calibrating`/`calibrated`/`stale`);
@@ -736,6 +781,12 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
 - **API token (client, optional):** unauthenticated sockets get 10 s to send
   `AUTH:`, at most 8 may wait at once, and an IP with 5 wrong tokens in 60 s
   is refused for the rest of that window
+- **Control port 8092** has no auth (LAN tools / the DoA client) but hangs up
+  on any HTTP request: a web page's fetch/form POST to it would otherwise have
+  its headers skipped and a JSON body run as a command
+- **Local web-mapper port 8021** (opt-in) checks the Host allow-list but no
+  Origin: it exists for mapper pages served from elsewhere, so anything on the
+  LAN can read it by design
 - **8081 `DOA_value.html`** stays token-free (the Android app can't send one)
   but has no CORS header, so other web pages can't read it
 
@@ -745,7 +796,11 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
 - **8070**: Web interface (HTTP + WebSocket)
 - **8091**: TCP data server (multi-channel IQ streaming)
 - **8092**: TCP control server (JSON commands)
-- **1234**: RTL-TCP server (rtl_tcp compatible, selectable channel)
+- **1234**: RTL-TCP server (rtl_tcp compatible, selectable channel). A
+  read-only tap: client tuning commands (frequency, gain, sample rate) are
+  read and logged as ignored, since applying them would retune the whole DF
+  array. Reports an R820T; TCP keepalive plus a 10 s send-stall limit free the
+  single slot from a vanished client
 
 **DoA Client**:
 - **8080**: Web interface (HTTPS + WebSocket)

@@ -27,10 +27,19 @@ public:
     
     // Configuration
     void setConfig(const MUSICConfig& config);
+    // Cap on snapshot_length x num_snapshots (samples per frame). Every buffer
+    // scales with it in complex<double> - at the old 2048 x 128 maximum about
+    // 200 MB per VFO - while an <=8-element covariance gains nothing from
+    // 262k-sample frames. setConfig enforces it (num_snapshots gives way).
+    static constexpr size_t MAX_FRAME_SAMPLES = 65536;
+    static size_t accumulatorSamplesFor(const MUSICConfig& cfg);
+    // The array offset the CURRENT (published) spectrum was rotated by - not
+    // the live setting, which can change while the DoA is frozen (squelch)
+    float getSpectrumArrayOffset() const;
     MUSICConfig getConfig() const;
     
     void setFrequencyWithOffset(float base_freq_hz, float offset_hz);
-    float getEffectiveFrequency() const { return current_frequency; }
+    float getEffectiveFrequency() const { std::lock_guard<std::mutex> l(config_mutex_); return current_frequency; }
 
     // Process pre-decimated complex IQ data with optimized accumulation.
     // The data is only READ (copied into the internal accumulator), so the
@@ -175,19 +184,24 @@ public:
 
     // Custom array positions (for CUSTOM topology). The array is sized to the
     // DOA_NUM_ELEMENTS ceiling; the first getNumElements() entries are used.
-    void setCustomPositions(const std::array<ElementPosition, DOA_NUM_ELEMENTS>& positions);
+    // count = how many leading entries were actually given; elements beyond it
+    // (e.g. after the element count grows) get the UI's default - a 50 mm UCA
+    // over the live element count - instead of sitting at the origin
+    void setCustomPositions(const std::array<ElementPosition, DOA_NUM_ELEMENTS>& positions,
+                            int count = DOA_NUM_ELEMENTS);
     std::array<ElementPosition, DOA_NUM_ELEMENTS> getCustomPositions() const;
-    bool hasValidCustomPositions() const { return custom_positions_valid_; }
+    int getCustomPositionsCount() const;
+    bool hasValidCustomPositions() const { std::lock_guard<std::mutex> l(config_mutex_); return custom_positions_valid_; }
 
     // Runtime element count M currently in use (follows the global
     // active_num_elements, itself synced from the server's packet header).
     int getNumElements() const { return num_elements_; }
 
     // 2D MUSIC support (elevation estimation for 3D arrays)
-    bool is3DArray() const { return is_3d_array_; }
+    bool is3DArray() const { std::lock_guard<std::mutex> l(config_mutex_); return is_3d_array_; }
     Eigen::VectorXd getElevationPseudospectrum() const;
     std::pair<int, int> getPeakAzimuthElevation() const;  // Returns (azimuth_deg, elevation_deg)
-    int getNumElevationAngles() const { return num_elevation_angles_; }
+    int getNumElevationAngles() const { std::lock_guard<std::mutex> l(config_mutex_); return num_elevation_angles_; }
 
     // Elevation resolution control (0.5 to 5.0 degrees)
     void setElevationResolution(float resolution_degrees);
@@ -231,6 +245,9 @@ private:
     static constexpr size_t MIN_NARROW_SNAPSHOTS = 4;
     std::chrono::steady_clock::time_point last_input_time_{};
     float last_input_rate_hz_ = 0.0f;
+    float last_input_offset_hz_ = 0.0f;  // VFO offset the previous block was decimated with
+    size_t eff_snapshot_len_ = 256;      // snapshot length of the current frame (<= configured)
+    float spectrum_offset_deg_ = 0.0f;   // array offset baked into the current pseudospectrum
     // Configuration
     MUSICConfig config_;
 
@@ -306,6 +323,7 @@ private:
     // Custom element positions (for CUSTOM topology)
     std::array<ElementPosition, DOA_NUM_ELEMENTS> custom_positions_;
     bool custom_positions_valid_ = false;
+    int custom_positions_given_ = 0;  // leading entries set by the user (rest = defaults)
 
     // 2D MUSIC support (elevation estimation for 3D arrays)
     bool is_3d_array_ = false;                 // True when any Z coordinate != 0
@@ -331,7 +349,7 @@ private:
         size_t samples_available = 0;                // Available samples for processing
         size_t buffer_size_mask = 0;                 // Mask for fast modulo (size - 1)
         size_t buffer_size = 0;                      // Actual buffer size (power of 2)
-        std::mutex buffer_mutex;                     // Thread safety
+        mutable std::mutex buffer_mutex;             // Thread safety (mutable: const getters lock it)
         size_t total_samples = 0;                    // Total processed samples
         size_t global_sample_index = 0;              // Global sample counter
         
@@ -503,4 +521,5 @@ private:
     void computeMUSICSpectrum2D();            // Compute 2D pseudospectrum
     void marginalizeSpectrums(const Eigen::VectorXd& spectrum_2d);  // Marginalize to 1D spectrums
     void initializeCustomPositionsToUCA();    // Initialize custom positions to UCA equivalent
+    void fillDefaultCustomPositions();        // defaults for entries [given, num_elements_)
 };

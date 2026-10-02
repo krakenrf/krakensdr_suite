@@ -111,6 +111,7 @@ private:
     // Signals locked onto decimators
     TrackedSignal tracked_signals_[MAX_TRACKED_SIGNALS];
     int num_tracked_ = 0;
+    int fm_source_before_ = -1;  // FM source VFO when the scan started (restored on stop)
     mutable std::mutex tracked_mutex_;
 
     // Snapshot of the active channel's averaged FFT (noise floor subtracted)

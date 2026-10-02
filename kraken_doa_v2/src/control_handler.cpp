@@ -84,6 +84,28 @@ static void forEachMusicProcessor(Fn&& fn) {
     }
 }
 
+// Current MUSIC frame settings (shared by every VFO; the first one answers)
+static int current_music_snapshot_length() {
+    int v = 256;
+    for (const auto& d : decimator_manager.getAllDecimators()) {
+        if (d && d->music_processor && !d->being_deleted.load(std::memory_order_relaxed)) {
+            v = static_cast<int>(d->music_processor->getConfig().snapshot_length);
+            break;
+        }
+    }
+    return v;
+}
+static int current_music_num_snapshots() {
+    int v = 32;
+    for (const auto& d : decimator_manager.getAllDecimators()) {
+        if (d && d->music_processor && !d->being_deleted.load(std::memory_order_relaxed)) {
+            v = static_cast<int>(d->music_processor->getConfig().num_snapshots);
+            break;
+        }
+    }
+    return v;
+}
+
 // --- Broadcast helpers ---
 static void broadcast(const string& json) {
     WebSocketServer::broadcast_json_message(json);
@@ -344,6 +366,90 @@ static void setAllDoaEnabled(bool enable) {
     broadcast_doa_state(enable);
 }
 
+bool ControlHandler::switch_fm_source(int id) {
+    auto decimator_inst = decimator_manager.getDecimator(id);
+    if (!decimator_inst) return false;
+    decimator_manager.setFMDecimatorId(id);
+
+    // Apply the decimator's demod mode to the FM demodulator
+    fm_demod.setDemodulatorMode(decimator_inst->demod_mode);
+    cout << "FM demodulator now using decimator " << id
+         << " (offset=" << (decimator_inst->frequency_offset_hz / 1000.0f) << " kHz"
+         << ", mode=" << DecimatorManager::demodModeToString(decimator_inst->demod_mode) << ")" << endl;
+
+    // Clear audio buffer immediately for instant FM source switching
+    fm_demod.reset_audio_buffer();
+
+    stringstream json;
+    json << "{\"fm_decimator\":{\"id\":" << id << "}}";
+    broadcast(json.str());
+    return true;
+}
+
+bool ControlHandler::follow_wideband_ring(uint64_t rf_hz, bool from_stream) {
+    if (!wb_variant_enabled.load(std::memory_order_relaxed) || rf_hz == 0) return false;
+    static std::atomic<uint64_t> commanded_rf{0};
+    static std::atomic<int64_t> commanded_ms{0};
+    const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (!from_stream) {
+        commanded_rf = rf_hz;
+        commanded_ms = now_ms;
+    } else {
+        // Packets still at the pre-retune RF would flip the ring straight back
+        const uint64_t cmd = commanded_rf.load();
+        const uint64_t diff = rf_hz > cmd ? rf_hz - cmd : cmd - rf_hz;
+        if (now_ms - commanded_ms.load() < 3000 && diff > 2000) return false;
+        // The header RF is a float (64-256 Hz steps here): next to a ring
+        // boundary it can't say which side heimdall (exact uint64) chose
+        for (const uint64_t b : {static_cast<uint64_t>(WB_RING_CENTER_MIN_HZ), static_cast<uint64_t>(WB_RING_INNER_MIN_HZ)}) {
+            if ((rf_hz > b ? rf_hz - b : b - rf_hz) < 2000) return false;
+        }
+    }
+    const int ring = wb_ring_for_rf(rf_hz);
+    int old = wb_variant_array.load(std::memory_order_relaxed);
+    // CAS: the FREQ handler (uWS loop) and the data receiver can both see the
+    // same crossing - only one applies it
+    if (ring == old || !wb_variant_array.compare_exchange_strong(old, ring)) return false;
+    cout << "Antenna ring auto-selected: " << WB_RING_NAMES[ring]
+         << " for " << rf_hz / 1e6 << " MHz" << endl;
+    if (wb_topology_active.load(std::memory_order_relaxed)) {
+        const float r = WB_RING_RADIUS_MM[ring];
+        forEachMusicProcessor([&](auto* mp) { mp->setArrayRadius(r); });
+        cout << "Wideband topology: array radius set to " << r
+             << " mm (" << WB_RING_NAMES[ring] << " ring)" << endl;
+    }
+    broadcast(build_wb_variant_json());
+    return true;
+}
+
+// Guards the wideband-mode / parked-DoA pair (apply_wideband_mode_state and
+// the DOA: handler's wideband branch; the scanner's worker thread calls the former)
+static std::mutex wideband_state_mutex;
+
+bool ControlHandler::apply_wideband_mode_state(bool enable) {
+    std::lock_guard<std::mutex> lock(wideband_state_mutex);
+    if (wideband_mode_enabled.exchange(enable) == enable) return false;
+    if (enable) {
+        // Saved only on the transition: a repeated WIDEBAND_MODE:1 used to
+        // overwrite the saved state with the already-parked "off", so DoA
+        // never came back when wideband mode ended
+        doa_enabled_before_wideband = doa_enabled.load(std::memory_order_relaxed);
+        if (doa_enabled.load(std::memory_order_relaxed)) {
+            doa_enabled = false;
+            setAllDoaEnabled(false);
+            cout << "DoA processing disabled for wideband mode (will restore when disabled)" << endl;
+        }
+    } else if (doa_enabled_before_wideband.exchange(false)) {
+        if (!doa_enabled.load(std::memory_order_relaxed)) {
+            doa_enabled = true;
+            setAllDoaEnabled(true);
+            cout << "DoA processing re-enabled (restored previous state)" << endl;
+        }
+    }
+    return true;
+}
+
 // Handle legacy FREQ_OFFSET[_n] for a decimator by POSITION. Decimator IDs
 // are smallest-available, not positional, so after a remove/re-add the n-th
 // decimator's ID need not equal n - resolve the position to an actual ID.
@@ -427,20 +533,19 @@ void ControlHandler::handle_message_impl(string_view message) {
         }
 
         // If wideband mode is active, disable it first to turn off bias-tee/noise source
+        // A manual retune ends a discrete scan: heimdall would keep hopping
+        // over it (and the client scanner is only fed in wideband mode)
+        if (scanner_manager.isRunning() && !g_replaying_settings.load()) {
+            cout << "Manual retune: stopping the discrete scanner" << endl;
+            scanner_manager.stop();
+        }
         if (wideband_mode_enabled.load(std::memory_order_relaxed)) {
             cout << "Disabling wideband mode before manual frequency retune (prevents bias-tee staying active)" << endl;
 
-            wideband_mode_enabled = false;
+            ControlHandler::apply_wideband_mode_state(false);  // restores DoA if it was on
 
             send_control_command("{\"set_wideband_mode\":{\"enable\":false}}");
             broadcast("{\"wideband_mode\":{\"enabled\":false}}");
-
-            // Restore DoA state if it was enabled before wideband
-            if (doa_enabled_before_wideband.load(std::memory_order_relaxed)) {
-                doa_enabled = true;
-                setAllDoaEnabled(true);
-                cout << "DoA processing re-enabled (restored previous state)" << endl;
-            }
         }
 
         ChannelManager::set_frequency(static_cast<float>(freq_hz), active_channel.load(std::memory_order_relaxed));
@@ -470,22 +575,9 @@ void ControlHandler::handle_message_impl(string_view message) {
                 changed = true;
             }
 
-            int ring = wb_ring_for_rf(freq_hz);
-            if (ring != wb_variant_array.load(std::memory_order_relaxed)) {
-                wb_variant_array = ring;
-                cout << "Antenna ring auto-selected: " << WB_RING_NAMES[ring]
-                     << " for " << freq_hz / 1e6 << " MHz" << endl;
-                changed = true;
-
-                if (wb_topology_active.load(std::memory_order_relaxed)) {
-                    const float r = WB_RING_RADIUS_MM[ring];
-                    forEachMusicProcessor([&](auto* mp) { mp->setArrayRadius(r); });
-                    cout << "Wideband topology: array radius set to " << r
-                         << " mm (" << WB_RING_NAMES[ring] << " ring)" << endl;
-                }
-            }
-
-            if (changed) broadcast(build_wb_variant_json());
+            // (broadcasts the variant state itself when the ring moved)
+            if (!ControlHandler::follow_wideband_ring(freq_hz) && changed)
+                broadcast(build_wb_variant_json());
 
             // Re-assert the side on every retune: heimdall no-ops when it
             // already matches, and converges back if the two ends drifted
@@ -574,7 +666,12 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("WIDEBAND_FREQ:")) {
         // Change frequency while staying in wideband mode (no cooldown needed)
         float freq_mhz = parse_float(message, 14);
-        uint32_t freq_hz = static_cast<uint32_t>(freq_mhz * 1e6);
+        // Wideband (tuner-spread) scan exists only on standard hardware, so
+        // the R820T range applies; checked before the integer conversion
+        if (!(freq_mhz * 1e6 >= RTL_TUNER_MIN_HZ && freq_mhz * 1e6 <= RTL_TUNER_MAX_HZ)) {
+            throw CommandRejected("outside the tuner range (24-1766 MHz)");
+        }
+        const uint64_t freq_hz = static_cast<uint64_t>(llround(freq_mhz * 1e6));
 
         ChannelManager::set_frequency(freq_hz, active_channel.load(std::memory_order_relaxed));
 
@@ -780,6 +877,18 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("DOA:")) {
         bool enable = parse_bool(message.substr(4));
 
+        // Wideband scan mode has DoA parked (MUSIC can't run on spread
+        // tuners): the choice applies when the mode ends. An explicit DOA:0
+        // here used to be a no-op, and leaving wideband switched DoA back on.
+        {
+            std::lock_guard<std::mutex> lock(wideband_state_mutex);
+            if (wideband_mode_enabled.load(std::memory_order_relaxed)) {
+                doa_enabled_before_wideband = enable;
+                cout << "DoA " << (enable ? "on" : "off") << " after wideband mode ends" << endl;
+                return;
+            }
+        }
+
         if (enable != doa_enabled.load(std::memory_order_relaxed)) {
             doa_enabled = enable;
             setAllDoaEnabled(enable);
@@ -894,6 +1003,9 @@ void ControlHandler::handle_message_impl(string_view message) {
             return;
         }
         float radius_mm = parse_float(message, 7);
+        // Same range as the UI field: RADIUS:0 made every UCA steering vector
+        // identical (flat spectrum, random bearings) and was saved + replayed
+        if (!(radius_mm >= 10.0f && radius_mm <= 10000.0f)) throw CommandRejected("radius must be 10-10000 mm");
         forEachMusicProcessor([&](auto* mp) { mp->setArrayRadius(radius_mm); });
         cout << "DoA array radius set to " << radius_mm << " mm for all decimators" << endl;
     }
@@ -939,6 +1051,7 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("SPACING:")) {
         float spacing_mm = parse_float(message, 8);
+        if (!(spacing_mm >= 5.0f && spacing_mm <= 10000.0f)) throw CommandRejected("spacing must be 5-10000 mm");
         forEachMusicProcessor([&](auto* mp) { mp->setElementSpacing(spacing_mm); });
         cout << "DoA element spacing set to " << spacing_mm << " mm for all decimators" << endl;
     }
@@ -980,7 +1093,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         // replay only restores them - the saved TOPOLOGY decides the mode.
         const bool switch_topology = !g_replaying_settings.load();
         forEachMusicProcessor([&](auto* mp) {
-            mp->setCustomPositions(positions);
+            mp->setCustomPositions(positions, elem_idx);
             if (switch_topology) mp->setArrayTopology(ArrayTopology::CUSTOM);
         });
 
@@ -1010,6 +1123,10 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("MUSIC_SNAPSHOT_LENGTH:")) {
         int snapshot_length = std::clamp(parse_int(message, 22), 64, 2048);
         set_applied("MUSIC_SNAPSHOT_LENGTH:", snapshot_length, 0);
+        // A longer snapshot can push the frame past MAX_FRAME_SAMPLES; the
+        // processors then lower the snapshot count - tell the browsers
+        const int snaps_fit = static_cast<int>(MUSICProcessor::MAX_FRAME_SAMPLES) / snapshot_length;
+        const int snaps_before = current_music_num_snapshots();  // setConfig lowers it below
 
         forEachMusicProcessor([&](auto* mp) {
             MUSICConfig config = mp->getConfig();
@@ -1019,9 +1136,19 @@ void ControlHandler::handle_message_impl(string_view message) {
         });
 
         cout << "MUSIC snapshot length set to " << snapshot_length << " samples for all processors" << endl;
+        if (snaps_before > snaps_fit) {
+            // Through the full path (echoed + saved), keeping this command's
+            // own applied value, which the nested dispatch would overwrite
+            const auto outer_applied = g_applied_cmd;
+            ControlHandler::handle_websocket_message("MUSIC_NUM_SNAPSHOTS:" + to_string(snaps_fit));
+            g_applied_cmd = outer_applied;
+        }
     }
     else if (message.starts_with("MUSIC_NUM_SNAPSHOTS:")) {
-        int num_snapshots = std::clamp(parse_int(message, 20), 8, 128);
+        // At most MAX_FRAME_SAMPLES per frame with the current snapshot length
+        const int max_snaps = std::max(8, std::min(128, static_cast<int>(MUSICProcessor::MAX_FRAME_SAMPLES) /
+                                                         std::max(1, current_music_snapshot_length())));
+        int num_snapshots = std::clamp(parse_int(message, 20), 8, max_snaps);
         set_applied("MUSIC_NUM_SNAPSHOTS:", num_snapshots, 0);
 
         forEachMusicProcessor([&](auto* mp) {
@@ -1300,22 +1427,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         int id = parse_int(message, 17);
         // Unknown id: reject (it used to select a nonexistent source - dead
         // audio - and save the snapshot with FM source 0)
-        auto decimator_inst = decimator_manager.getDecimator(id);
-        if (!decimator_inst) throw CommandRejected("no such decimator");
-        decimator_manager.setFMDecimatorId(id);
-
-        // Apply the decimator's demod mode to the FM demodulator
-        fm_demod.setDemodulatorMode(decimator_inst->demod_mode);
-        cout << "FM demodulator now using decimator " << id
-             << " (offset=" << (decimator_inst->frequency_offset_hz / 1000.0f) << " kHz"
-             << ", mode=" << DecimatorManager::demodModeToString(decimator_inst->demod_mode) << ")" << endl;
-
-        // Clear audio buffer immediately for instant FM source switching
-        fm_demod.reset_audio_buffer();
-
-        stringstream json;
-        json << "{\"fm_decimator\":{\"id\":" << id << "}}";
-        broadcast(json.str());
+        if (!ControlHandler::switch_fm_source(id)) throw CommandRejected("no such decimator");
         record_decimator_snapshot();
     }
     else if (message.starts_with("SET_DECIMATOR_DEMOD:")) {
@@ -1358,23 +1470,20 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("WIDEBAND_MODE:")) {
         bool enable = parse_bool(message.substr(14));
-        wideband_mode_enabled = enable;
-
-        // Handle DoA state when toggling wideband mode
-        if (enable) {
-            doa_enabled_before_wideband = doa_enabled.load(std::memory_order_relaxed);
-            if (doa_enabled.load(std::memory_order_relaxed)) {
-                doa_enabled = false;
-                setAllDoaEnabled(false);
-                cout << "DoA processing disabled for wideband mode (will restore when disabled)" << endl;
-            }
-        } else {
-            if (doa_enabled_before_wideband.load(std::memory_order_relaxed)) {
-                doa_enabled = true;
-                setAllDoaEnabled(true);
-                cout << "DoA processing re-enabled (restored previous state)" << endl;
-            }
+        // The Wideband (downconverter) variant parks every tuner at the IF:
+        // heimdall refuses tuner-spread mode, and accepting it here parked DoA
+        // and switched the display to stitching, out of sync with heimdall
+        if (enable && wb_variant_enabled.load(std::memory_order_relaxed)) {
+            broadcast("{\"wideband_mode\":{\"enabled\":false}}");
+            throw CommandRejected("tuner-spread wideband scan is unavailable on the Wideband variant");
         }
+        // Leaving wideband mode ends a discrete scan (it needs wideband mode;
+        // heimdall would otherwise keep hopping in coherent mode)
+        if (!enable && scanner_manager.isRunning()) {
+            cout << "Wideband mode off: stopping the discrete scanner" << endl;
+            scanner_manager.stop();
+        }
+        ControlHandler::apply_wideband_mode_state(enable);  // parks / restores DoA
 
         stringstream json;
         json << "{\"set_wideband_mode\":{\"enable\":" << (enable ? "true" : "false") << "}}";
@@ -1388,7 +1497,10 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("WIDEBAND_BASE_FREQ:")) {
         float freq_mhz = parse_float(message, 19);
-        uint32_t base_freq_hz = static_cast<uint32_t>(freq_mhz * 1e6);
+        if (!(freq_mhz * 1e6 >= RTL_TUNER_MIN_HZ && freq_mhz * 1e6 <= RTL_TUNER_MAX_HZ)) {
+            throw CommandRejected("outside the tuner range (24-1766 MHz)");
+        }
+        const uint64_t base_freq_hz = static_cast<uint64_t>(llround(freq_mhz * 1e6));
 
         // Send command to Heimdall server
         stringstream json;
@@ -1416,9 +1528,18 @@ void ControlHandler::handle_message_impl(string_view message) {
         broadcast(response.str());
     }
     else if (message.starts_with("SCANNER_START")) {
-        // Start discrete scanner
+        // Start discrete scanner. Not alongside the continuous scanner: both
+        // retune the array and drive the VFOs, and fought over them.
+        if (continuous_scanner.isRunning()) {
+            broadcast("{\"scanner_stopped\":true}");  // resets the browser's Start button
+            throw CommandRejected("stop the continuous scanner first");
+        }
         if (!scanner_manager.start()) {
-            cerr << "Failed to start discrete scanner" << endl;
+            // The browser switched its button to "running" already: tell
+            // every browser the REAL state (start also fails when a scan is
+            // already running - "stopped" then would be wrong)
+            broadcast(scanner_manager.isRunning() ? "{\"scanner_started\":true}" : "{\"scanner_stopped\":true}");
+            throw CommandRejected("discrete scanner did not start (no config / no enabled frequency / wideband mode off)");
         }
     }
     else if (message.starts_with("SCANNER_STOP")) {
@@ -1437,6 +1558,10 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     // Continuous Scanner Commands
     else if (message.starts_with("CONTINUOUS_SCANNER_START")) {
+        if (scanner_manager.isRunning()) {
+            broadcast("{\"continuous_scanner\":{\"state\":\"stopped\",\"error\":\"stop the discrete scanner first\"}}");
+            throw CommandRejected("stop the discrete scanner first");
+        }
         continuous_scanner.start();
     }
     else if (message.starts_with("CONTINUOUS_SCANNER_STOP")) {

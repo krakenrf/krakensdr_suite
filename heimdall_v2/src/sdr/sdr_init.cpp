@@ -4,6 +4,7 @@
 #include "sdr_pipeline.hpp"   // signal_coherence_lost
 #include "../core/config.hpp"
 #include "../dsp/compensation.hpp"
+#include "../core/settings.hpp"
 #include "../core/logging.hpp"
 #include "../core/forward_comp.hpp"
 #include <rtl-sdr.h>
@@ -300,6 +301,11 @@ bool open_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
     if (all_success && !kerberos_manual_cal_only()) {
         wideband_set_noise_path(true, devices);
         kerberos_gpio_set_noise_path(true);
+        // The flag must match the hardware: after a REopen (element-count
+        // change) it could still say off while the noise was physically on,
+        // and anything deciding from it (shutdown, a flush-only recovery)
+        // left the noise source powered
+        bias_tee_enabled = true;
     }
 #endif
 
@@ -423,8 +429,11 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
             std::memory_order_relaxed);
     }
 #else
+    // No GPIO control in this build, but the calibration stages gate on this
+    // flag (noise "on" = measuring): track the requested state, or every
+    // recalibration after startup stalled until the 120 s abort
     std::cout << "Bias Tee: Control disabled in config" << std::endl;
-    bias_tee_enabled = false;
+    bias_tee_enabled = enable;
 #endif
 }
 
@@ -621,6 +630,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
     } else {
         if (frequency > 0) current_frequency = frequency;
         if (gain != -999) current_gain = gain;
+        settings::note_tuning(frequency > 0 ? current_frequency.load() : 0, gain);  // saved once stable
     }
 
     // Re-interpolate the S2P forward correction at the new center frequency so
@@ -659,6 +669,7 @@ void handle_settings_change() {
             std::cerr << "KerberosSDR: settings changed - calibration is STALE. "
                          "Disconnect antennas and press Recalibrate." << std::endl;
         }
+        recovery_settings_changed("Settings change");  // a manual recal running
         return;
     }
 
@@ -669,7 +680,7 @@ void handle_settings_change() {
     // The in-flight full recovery already recalibrates lag+phase at the current
     // frequency, so the settings change is covered.
     if (recovery_in_progress.load(std::memory_order_acquire)) {
-        std::cout << "System: Settings change during coherence recovery - deferring to the full recal" << std::endl;
+        recovery_settings_changed("Settings change");
         return;
     }
 
@@ -742,6 +753,10 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
     if (enable) {
         // Entering wideband mode
         operating_mode = OperatingMode::WIDEBAND_SCAN;
+        // No calibration runs during the scan: the steady-state L2-raw cushion
+        // (C5) - one interrupted here kept the tight calibration cap for the
+        // whole scan (more whole-set drops / 8091 gaps)
+        l2_raw_cap.store(L2_RAW_MAX, std::memory_order_relaxed);
         wideband_config.enabled = true;
 
         // Reset phase calibration state to prevent eigenvalue calculations during wideband

@@ -117,7 +117,13 @@ static void flush_l1_now(int num_elements, bool wait_quiet) {
                 const int64_t gap = t - prev;
                 if (prev != 0 && (gap < period / 2 || gap > period + period / 2)) steady = false;
             }
-            quiet = hi == 0 || (steady && hi - lo < period / 2 && steady_now_ns() - hi < period / 2);
+            // No device delivered for two periods: the stream is stopped
+            // (readers joined / not started yet) - nothing can straddle.
+            // Two, not one: a round up to 1.5 periods late is normal jitter
+            // (see `steady`), and flushing as it lands would slip a channel.
+            const bool stopped = hi != 0 && steady_now_ns() - hi > 2 * period;
+            quiet = hi == 0 || stopped ||
+                    (steady && hi - lo < period / 2 && steady_now_ns() - hi < period / 2);
             if (!quiet) std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
         if (!quiet) {
@@ -490,25 +496,22 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
                 conv_state, complex_samples[i]);
         }
 
-        // Flushed while converting: the set is pre-flush data, drop it
-        if (l2_flush_epoch.load(std::memory_order_acquire) != epoch) {
-            l2_buffer_pool.release(std::move(complex_samples));
-            recycle_raw_set(raw_set);
-            continue;
-        }
-
-        // -------- Broadcast / handoff (every set, in order) --------
-        if (tcp_data_server) tcp_data_server->broadcast_data(complex_samples);
-        if (rtl_tcp_server)  rtl_tcp_server->broadcast_data(complex_samples);
-
-        // -------- Push to L2 (drop oldest if full - coherence-safe) --------
-        // Epoch re-checked under the flush mutex, so a flush can't land
-        // between the check and the push
+        // -------- Broadcast + push to L2, unless flushed meanwhile --------
+        // Under the flush mutex with the epoch re-checked, so a flush can't
+        // land between the check and the handoff: a set converted across a
+        // flush goes neither to the TCP taps nor to L2 (calibration). Safe to
+        // broadcast under it: the data server reads the phase state with a
+        // try_lock (get_phase_compensation_state_nonblocking), and its
+        // clients_mutex / the RTL-TCP buffer lock never wait on a flush.
         {
             std::lock_guard<std::mutex> flush_lock(l2_flush_mutex);
             if (l2_flush_epoch.load(std::memory_order_relaxed) != epoch) {
                 l2_buffer_pool.release(std::move(complex_samples));
             } else {
+                if (tcp_data_server) tcp_data_server->broadcast_data(complex_samples);
+                if (rtl_tcp_server)  rtl_tcp_server->broadcast_data(complex_samples);
+
+                // Drop oldest if full - coherence-safe
                 if (l2_buffer_size.load(std::memory_order_relaxed) >= BUFFER_SIZE) {
                     std::vector<ComplexBuffer> discard;
                     if (l2_buffer.try_dequeue(discard)) {
@@ -562,7 +565,6 @@ void clear_l2_raw_buffer() {
 // Everything downstream of L1: bump the flush epoch, empty L2-raw and L2.
 static void flush_downstream() {
     std::lock_guard<std::mutex> flush_lock(l2_flush_mutex);
-    l2_flush_epoch.fetch_add(1, std::memory_order_acq_rel);
     clear_l2_raw_buffer();
     std::vector<ComplexBuffer> discard;
     while (l2_buffer.try_dequeue(discard)) {
@@ -570,6 +572,9 @@ static void flush_downstream() {
         l2_buffer_pool.release(std::move(discard));  // Return to pool
     }
     // No store(0): see clear_l2_raw_buffer (avoids the size_t underflow race).
+    // Epoch AFTER the clears: bumped first, a worker could read the new epoch
+    // and still dequeue a stale set the clear hadn't reached yet
+    l2_flush_epoch.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void clear_l1_buffer() {
