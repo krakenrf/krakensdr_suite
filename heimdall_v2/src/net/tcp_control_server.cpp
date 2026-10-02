@@ -143,6 +143,7 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
                << "\"wideband_enabled\":" << (wideband_config.enabled.load() ? "true" : "false");
 
     // KerberosSDR support mode: manual-calibration workflow state for client UIs.
+    status_json << ",\"external_noise\":" << (external_noise_mode.load() ? "true" : "false");
     if (kerberos_mode.load()) {
         status_json << ",\"kerberos_mode\":true"
                     << ",\"kerberos_sw\":" << (kerberos_sw_mode.load() ? "true" : "false")

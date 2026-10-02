@@ -63,6 +63,9 @@ std::atomic<bool> kerberos_sw_mode{false};
 // Calibration completed at some frequency, but settings changed since (only
 // meaningful in kerberos mode; cleared when a calibration converges).
 std::atomic<bool> kerberos_cal_stale{false};
+// --ext_noise: add-on array whose noise source is powered from the CH0 bias
+// tee (see core/config.hpp)
+std::atomic<bool> external_noise_mode{false};
 
 std::atomic<bool> coherence_lost{false};
 std::atomic<bool> recovery_in_progress{false};
@@ -387,6 +390,8 @@ int main(int argc, char* argv[]) {
         } else if (strcmp(argv[i], "--kerberos_sw") == 0 || strcmp(argv[i], "--kerberos-sw") == 0) {
             kerberos_mode = true;
             kerberos_sw_mode = true;
+        } else if (strcmp(argv[i], "--ext_noise") == 0 || strcmp(argv[i], "--ext-noise") == 0) {
+            external_noise_mode = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             std::cout << "Usage: " << argv[0] << " [options]\n"
                       << "Options:\n"
@@ -404,6 +409,10 @@ int main(int argc, char* argv[]) {
                       << "                          web UI. No automatic recalibration ever runs\n"
                       << "  --kerberos_sw           KerberosSDR with CKOVAL antenna switches on Pi GPIOs:\n"
                       << "                          like --kerberos but calibration is automatic again\n"
+                      << "  --ext_noise             KrakenSDR + add-on antenna array with its own noise\n"
+                      << "                          source, powered from the CH0 bias tee: calibration\n"
+                      << "                          switches that bias tee; the internal noise source\n"
+                      << "                          stays off\n"
                       << "  -h, --help              Show this help message\n";
             return 0;
         } else {
@@ -414,6 +423,14 @@ int main(int argc, char* argv[]) {
                       << "' (see " << argv[0] << " --help)" << std::endl;
             return 1;
         }
+    }
+
+    // --ext_noise is its own hardware: the Wideband board uses GPIO1-6 of the
+    // channel-0 chip for its RF switches (GPIO1 is the CH0 bias tee here), and
+    // a KerberosSDR has a different noise path altogether
+    if (external_noise_mode.load() && (downconverter.enabled.load() || kerberos_mode.load())) {
+        std::cerr << "Error: --ext_noise cannot be combined with --wideband or --kerberos(_sw)" << std::endl;
+        return 1;
     }
 
     // --kerberos_sw needs the CKOVAL switch GPIOs before any calibration can
@@ -537,6 +554,9 @@ int main(int argc, char* argv[]) {
                             ? "CKOVAL antenna switches - automatic calibration)\n"
                             : "MANUAL calibration only - disconnect antennas, then Recalibrate)\n")
                  : std::string())
+         << (external_noise_mode.load()
+                 ? "Mode: EXTERNAL noise source (add-on array, powered from the CH0 bias tee)\n"
+                 : "")
          << "Web Server: http://localhost:" << WEB_PORT << " (uWebSockets)\n"
          << "RTL-TCP Port: " << RTL_TCP_PORT << " (Selectable channel via web UI)\n"
          << "TCP Data Port: " << TCP_DATA_PORT << " (Multi-channel IQ streaming)\n"

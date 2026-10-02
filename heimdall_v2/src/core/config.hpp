@@ -32,6 +32,14 @@ extern std::atomic<bool> kerberos_mode;
 extern std::atomic<bool> kerberos_sw_mode;
 extern std::atomic<bool> kerberos_cal_stale;
 
+// --ext_noise: a standard KrakenSDR with an add-on antenna array that has its
+// own noise source, powered from the CH0 antenna bias tee (GPIO1 of the
+// channel-0 chip). Every noise-source switch (set_bias_tee_all_devices and the
+// startup open) drives that bias tee instead of the KrakenSDR's internal noise
+// source, which stays OFF; CH0's bias tee is then reserved (not a per-port
+// antenna bias tee). Calibration is otherwise unchanged. Defined in main.cpp.
+extern std::atomic<bool> external_noise_mode;
+
 // True when calibration may ONLY be triggered manually: plain --kerberos has
 // no way to isolate the noise source from the antennas, so every automatic
 // noise-on path must be suppressed. --kerberos_sw restores automatic

@@ -273,6 +273,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
         let biasOn = 1, biasPending = null, biasTO = null, calibrationActive = 1, controlsEnabled = 0;
         let perBinOn = 0, perBinPending = null, perBinTO = null;
         let biasTeeMask = 0, biasTeeHoldUntil = 0;  // antenna bias tees (bit N = channel N)
+        let extNoise = false;  // --ext_noise: CH0's bias tee powers the external noise source
         let currentFreq = 100.0, currentGain = 49.6;
         let lastServerGain = 49.6;  // Track last known server gain to avoid unnecessary updates
         let initialStateReceived = false;  // Track if we've received initial state from server
@@ -629,7 +630,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             biasTeeMask = mask;
             for (let ch = 0; ch < activeElements; ch++) {
                 const cb = $(`biastee-chk-${ch}`);
-                if (cb) cb.checked = ((mask >> ch) & 1) === 1;
+                if (cb) cb.checked = ((mask >> ch) & 1) === 1 && !(extNoise && ch === 0);
             }
         };
 
@@ -659,8 +660,16 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                 cb.id = `biastee-chk-${ch}`;
                 cb.checked = ((biasTeeMask >> ch) & 1) === 1;
                 cb.addEventListener('change', handleBiasTeeChk);
+                // --ext_noise: CH0's bias tee is the add-on array's noise
+                // source, switched by calibration only (the backend refuses it)
+                const reserved = extNoise && ch === 0;
+                if (reserved) {
+                    cb.checked = false;
+                    cb.disabled = true;
+                    label.title = 'Powers the external noise source (--ext_noise) - switched by calibration';
+                }
                 label.appendChild(cb);
-                label.appendChild(document.createTextNode(`Ch ${ch}`));
+                label.appendChild(document.createTextNode(reserved ? 'Ch 0 (noise)' : `Ch ${ch}`));
                 cont.appendChild(label);
             }
         };
@@ -1083,6 +1092,10 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                     if (Number.isFinite(st.rf_min_hz) && Number.isFinite(st.rf_max_hz)) {
                         $('freq-input').min = st.rf_min_hz / 1e6;
                         $('freq-input').max = st.rf_max_hz / 1e6;
+                    }
+                    if (typeof st.external_noise === 'boolean' && st.external_noise !== extNoise) {
+                        extNoise = st.external_noise;
+                        initBiasTees();  // relabel / lock the CH0 box
                     }
                     if (Number.isFinite(st.antenna_bias_tee_mask) && Date.now() >= biasTeeHoldUntil)
                         applyBiasTeeMask(st.antenna_bias_tee_mask);

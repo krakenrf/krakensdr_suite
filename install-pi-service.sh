@@ -16,6 +16,7 @@
 #   ./install-pi-service.sh
 #   VARIANT_FLAGS=--wideband ./install-pi-service.sh
 #   VARIANT_FLAGS=--kerberos_sw KRAKEN_TUNERS=4 ./install-pi-service.sh
+#   VARIANT_FLAGS=--ext_noise ./install-pi-service.sh   # add-on array noise source
 #   APP_DIR=/opt/krakensdr_suite ./install-pi-service.sh
 #   BOOT_MODE=console ./install-pi-service.sh   # auto|desktop|console|keep
 #   ./install-pi-service.sh --uninstall

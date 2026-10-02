@@ -463,6 +463,20 @@ disconnected. With `--kerberos`, every automatic noise-on path is suppressed
   releases the lines. The 8091 kerberos header bit is NOT set in _sw mode
   (clients treat it as a normal KrakenSDR)
 
+### External Noise Source Array (--ext_noise)
+
+Standard KrakenSDR + an add-on antenna array whose noise source is powered from
+the CH0 antenna bias tee. `external_noise_mode` (core/config.hpp, set by
+`--ext_noise` / `--ext-noise`): `set_bias_tee_all_devices()` holds the internal
+noise source (GPIO0, every chip) OFF and switches GPIO1 of the channel-0 chip
+(`set_external_noise_power`) instead; `init_rtlsdr_device()` forces GPIO0 off
+and `open_active_devices()` powers the external source for the startup
+calibration. `apply_antenna_bias_tees()` treats CH0 as reserved (bit 0 refused
+and cleared, GPIO1 never written from the mask). Everything else - calibration
+state machines, `bias_tee_enabled` semantics, the 8091 noise flag - is
+unchanged. Exclusive with `--wideband` and `--kerberos(_sw)` (refused at
+startup).
+
 ### Pipeline Decoupling (L1 → L2-raw → L2)
 
 The time-critical L1 drain (`sample_processor`) is separated from the heavy IQ conversion / compensation / TCP serialization (`conversion_worker`) by the `l2_raw_buffer` staging queue, so USB keep-up is independent of DSP load. Overflow drops whole aligned sets at L2-raw (coherence-safe), latency-bounded by `L2_RAW_MAX`. Per-device `sample_pool` is sized `MAX_BUFFER_SIZE + L2_RAW_MAX + 4` to cover both in-flight stages. The per-channel FIR state (`frac_tail`/`eq_tail`) stays correct because the worker processes sets in order on one thread.

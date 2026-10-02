@@ -29,6 +29,9 @@
 // under state_mutex), but never take either while holding it.
 std::recursive_mutex device_io_mutex;
 
+// --ext_noise: power the add-on array's noise source (CH0 bias tee); below
+static bool set_external_noise_power(bool on, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+
 // Forward declarations for functions defined elsewhere
 extern void clear_l2_buffer();
 extern std::atomic<size_t> l2_raw_cap;  // C5: runtime L2-raw depth cap (defined in sdr_pipeline.cpp)
@@ -201,7 +204,13 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
 #if ENABLE_BIAS_TEE
     // --kerberos: the noise source couples straight into the antenna path, so
     // it must stay off until an explicit manual calibration.
-    if (!kerberos_manual_cal_only()) check(rtlsdr_set_bias_tee(sdr->dev, 1), "enabling the noise source", false);
+    // --ext_noise: the internal noise source stays off (forced: the fork keeps
+    // the GPIO state across close/open); the add-on array's source is powered
+    // from the CH0 bias tee once channel 0 is open (open_active_devices).
+    if (external_noise_mode.load(std::memory_order_relaxed))
+        check(rtlsdr_set_bias_tee(sdr->dev, 0), "disabling the internal noise source", false);
+    else if (!kerberos_manual_cal_only())
+        check(rtlsdr_set_bias_tee(sdr->dev, 1), "enabling the noise source", false);
 #endif
 
 #if USB_RESET_ON_INIT
@@ -301,6 +310,10 @@ bool open_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
     if (all_success && !kerberos_manual_cal_only()) {
         wideband_set_noise_path(true, devices);
         kerberos_gpio_set_noise_path(true);
+        if (external_noise_mode.load(std::memory_order_relaxed)) {
+            std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
+            set_external_noise_power(true, devices);
+        }
         // The flag must match the hardware: after a REopen (element-count
         // change) it could still say off while the noise was physically on,
         // and anything deciding from it (shutdown, a flush-only recovery)
@@ -397,17 +410,38 @@ void wideband_set_noise_path(bool noise_on, const std::vector<std::unique_ptr<SD
               << std::endl;
 }
 
+// --ext_noise: the add-on array's noise source hangs off the CH0 antenna bias
+// tee - GPIO1 of the channel-0 chip (the same GPIO apply_antenna_bias_tees
+// drives for channel 0). Caller holds device_io_mutex (recursive).
+static bool set_external_noise_power(bool on, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    for (const auto& device : devices) {
+        if (device && device->index == 0 && device->dev) {
+            const bool ok = rtlsdr_set_bias_tee_gpio(device->dev, 1, on ? 1 : 0) == 0;
+            std::cout << "External noise source (CH0 bias tee): " << (ok ? (on ? "ON" : "OFF") : "FAILED") << std::endl;
+            if (!ok) std::cerr << "External noise source: CH0 bias tee GPIO write failed" << std::endl;
+            return ok;
+        }
+    }
+    std::cerr << "External noise source: channel 0 device unavailable" << std::endl;
+    return false;
+}
+
 void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
 #if ENABLE_BIAS_TEE
     std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
-    std::cout << "Bias Tee: " << (enable ? "Enabling" : "Disabling") << " on all devices..." << std::endl;
+    // --ext_noise: the KrakenSDR's own noise source (GPIO0) stays OFF - the
+    // add-on array's noise source, on the CH0 bias tee, is switched instead
+    const bool ext = external_noise_mode.load(std::memory_order_relaxed);
+    const bool internal_on = enable && !ext;
+    std::cout << "Bias Tee: " << (internal_on ? "Enabling" : "Disabling") << " on all devices..." << std::endl;
     for (const auto& device : devices) {
         if (device && device->dev) {
-            bool success = (rtlsdr_set_bias_tee(device->dev, enable ? 1 : 0) == 0);
+            bool success = (rtlsdr_set_bias_tee(device->dev, internal_on ? 1 : 0) == 0);
             std::cout << "Bias Tee: Ch" << device->index << " (Serial " << device->serial_number << ") "
-                 << (success ? (enable ? "ON" : "OFF") : "FAILED") << std::endl;
+                 << (success ? (internal_on ? "ON" : "OFF") : "FAILED") << std::endl;
         }
     }
+    if (ext) set_external_noise_power(enable, devices);
     // Wideband variant: GPIO0 only powers the noise source; the RF switches
     // must also be thrown or the tuners keep looking at the antennas.
     wideband_set_noise_path(enable, devices);
@@ -451,6 +485,14 @@ void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SD
     const uint32_t open_bits = (nch >= 32) ? ~0u : ((1u << nch) - 1);
     mask = (mask & open_bits) | (antenna_bias_tee_mask.load(std::memory_order_acquire) & ~open_bits);
 
+    // --ext_noise: the CH0 bias tee powers the add-on array's noise source and
+    // is switched by calibration only - not a per-port antenna bias tee
+    const bool ext = external_noise_mode.load(std::memory_order_relaxed);
+    if (ext && (mask & 1u)) {
+        std::cerr << "Bias tees: CH0 is reserved for the external noise source (--ext_noise) - ignored" << std::endl;
+        mask &= ~1u;
+    }
+
     if (downconverter.enabled.load()) {
         // On the Wideband board GPIO1-6 of the channel-0 chip drive the RF
         // path switches (see wideband_set_noise_path); there are no per-port
@@ -474,14 +516,16 @@ void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SD
     }
 
     bool ok = true;
-    for (int ch = 0; ch < nch && ch + 1 <= 7; ch++) {
+    for (int ch = ext ? 1 : 0; ch < nch && ch + 1 <= 7; ch++) {
         if (rtlsdr_set_bias_tee_gpio(ctrl, ch + 1, (mask >> ch) & 1) != 0) ok = false;
     }
     antenna_bias_tee_mask.store(mask, std::memory_order_release);
 
     std::cout << "Bias tees:";
-    for (int ch = 0; ch < nch; ch++)
+    for (int ch = 0; ch < nch; ch++) {
+        if (ext && ch == 0) { std::cout << " Ch0=noise"; continue; }
         std::cout << " Ch" << ch << "=" << (((mask >> ch) & 1) ? "ON" : "off");
+    }
     std::cout << std::endl;
     if (!ok) std::cerr << "Bias tees: some GPIO writes FAILED" << std::endl;
 }

@@ -29,6 +29,10 @@
 #   ./run.sh --kerberos_sw      # KerberosSDR with CKOVAL antenna switches:
 #                               # automatic calibration, normal convergence
 #                               # wait. KERBEROS_SW=1 ./run.sh also works
+#   ./run.sh --ext_noise        # KrakenSDR + add-on antenna array with its own
+#                               # noise source on the CH0 bias tee (heimdall
+#                               # switches that instead of the internal noise
+#                               # source). EXT_NOISE=1 ./run.sh also works
 #   WAIT_TIMEOUT=600 ./run.sh   # allow up to 600s for convergence (default 300)
 #   WAIT_TIMEOUT=0 ./run.sh     # wait forever for convergence
 #   NO_TMUX=1 ./run.sh          # headless: no dashboards, log to files instead
@@ -51,11 +55,14 @@ DATA_PORT=8091                          # Heimdall TCP data port (carries phase_
 #   --kerberos       KerberosSDR, manual calibration (heimdall only; the
 #                    client auto-detects the mode from the data stream)
 #   --kerberos_sw    KerberosSDR with CKOVAL antenna switches (heimdall only)
-# Matching env vars (WIDEBAND=1 / KERBEROS=1 / KERBEROS_SW=1) also work and
+#   --ext_noise      add-on array with its own noise source, powered from the
+#                    CH0 bias tee (heimdall only; not with --wideband/--kerberos)
+# Matching env vars (WIDEBAND=1 / KERBEROS=1 / KERBEROS_SW=1 / EXT_NOISE=1) also work and
 # are how the flags survive into the tmux client pane re-invocation.
 WIDEBAND="${WIDEBAND:-0}"
 KERBEROS="${KERBEROS:-0}"
 KERBEROS_SW="${KERBEROS_SW:-0}"
+EXT_NOISE="${EXT_NOISE:-0}"
 # Only LEADING flags are parsed: the internal entrypoints (__supervise,
 # __client_pane) carry the app's own argv after them, which must not be eaten.
 # Whatever is left is validated below, once die() exists.
@@ -64,6 +71,7 @@ while (( $# )); do
         --wideband|-w)                WIDEBAND=1 ;;
         --kerberos)                   KERBEROS=1 ;;
         --kerberos_sw|--kerberos-sw)  KERBEROS_SW=1 ;;
+        --ext_noise|--ext-noise)      EXT_NOISE=1 ;;
         *) break ;;
     esac
     shift
@@ -74,6 +82,8 @@ WB_FLAG=""
 KB_FLAG=""
 [[ "$KERBEROS" == "1" ]] && KB_FLAG="--kerberos"
 [[ "$KERBEROS_SW" == "1" ]] && KB_FLAG="--kerberos_sw"
+EN_FLAG=""
+[[ "$EXT_NOISE" == "1" ]] && EN_FLAG="--ext_noise"
 # Manual-calibration mode: heimdall never converges on its own (the user must
 # recalibrate from its web UI), so waiting for convergence would just burn the
 # whole timeout - start the client immediately instead.
@@ -100,6 +110,9 @@ case "${1:-}" in
     -h|--help) usage; exit 0 ;;
     *) echo "${RED}${BOLD}Error:${RST} unknown option '$1'" >&2; usage >&2; exit 2 ;;
 esac
+# heimdall refuses this combination too - fail here, before anything is stopped
+[[ "$EXT_NOISE" == "1" && ( "$WIDEBAND" == "1" || -n "$KB_FLAG" ) ]] &&
+    die "--ext_noise cannot be combined with --wideband or --kerberos(_sw)"
 
 # ===========================================================================
 # Convergence probe: poll Heimdall's data port until phase_state == CONVERGED.
@@ -394,7 +407,7 @@ run_headless() {
     trap cleanup INT TERM EXIT
 
     say "Starting Heimdall server (headless; log: ${hlog#$SCRIPT_DIR/})"
-    ( cd "$HEIMDALL_DIR" && HEIMDALL_NO_TUI=1 exec ./heimdall $WB_FLAG $KB_FLAG ) >"$hlog" 2>&1 &
+    ( cd "$HEIMDALL_DIR" && HEIMDALL_NO_TUI=1 exec ./heimdall $WB_FLAG $KB_FLAG $EN_FLAG ) >"$hlog" 2>&1 &
     hpid=$!
     echo "     Web UI: http://localhost:8070"
 
@@ -470,7 +483,7 @@ say "Launching split-screen stack (session '$SESSION')"
 # Top pane: Heimdall with its live dashboard (real pty -> TUI renders).
 # Supervised: restarted if it crashes (see supervise).
 HEIMDALL_PID=$(tmux new-session -d -P -F '#{pane_pid}' -s "$SESSION" -n krakensdr -c "$HEIMDALL_DIR" \
-    "exec '$SELF' __supervise Heimdall ./heimdall $WB_FLAG $KB_FLAG")
+    "exec '$SELF' __supervise Heimdall ./heimdall $WB_FLAG $KB_FLAG $EN_FLAG")
 
 # Keep dead panes visible so a crash leaves its message on screen for diagnosis.
 # (remain-on-exit is a WINDOW option -> set with -w; do it before anything can exit.)

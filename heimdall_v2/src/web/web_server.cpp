@@ -101,7 +101,10 @@ static std::string build_state_message() {
         + ",\"recal_phase_fails\":"
         + std::to_string(periodic_recal_phase_fail_count.load(std::memory_order_relaxed))
         + ",\"antenna_bias_tee_mask\":"
-        + std::to_string(antenna_bias_tee_mask.load(std::memory_order_relaxed));
+        + std::to_string(antenna_bias_tee_mask.load(std::memory_order_relaxed))
+        // --ext_noise: CH0's bias tee powers the add-on array's noise source
+        + ",\"external_noise\":"
+        + (external_noise_mode.load(std::memory_order_relaxed) ? "true" : "false");
 
     // Tunable RF range for the frequency box (depends on --wideband).
     uint64_t rf_min, rf_max;

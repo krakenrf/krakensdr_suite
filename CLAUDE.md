@@ -101,7 +101,7 @@ make debug-arm    # ARM build with NEON debug output
   *Dependencies*) and both apps. It does NOT remove distro RTL-SDR packages -
   heimdall links the fork statically, so gqrx, gr-osmosdr, rtl_433 etc. can
   stay installed on the stock library.
-- `./run.sh [--wideband|-w] [--kerberos] [--kerberos_sw|--kerberos-sw]` starts
+- `./run.sh [--wideband|-w] [--kerberos] [--kerberos_sw|--kerberos-sw] [--ext_noise|--ext-noise]` starts
   both apps in a tmux split (`NO_TMUX=1` = headless, logs in `logs/`);
   `./run.sh stop` stops everything. Unknown arguments are an error (a
   mistyped flag used to be ignored silently); `-h` prints usage. heimdall
@@ -468,6 +468,28 @@ disconnected for a calibration to be valid. Start heimdall with `--kerberos`
   and starts the client immediately (heimdall never converges on its own
   there); `--kerberos_sw` keeps the normal wait. run.sh's convergence probe
   masks the phase-state low byte (high bits = kerberos flags)
+
+### External Noise Source Array (--ext_noise)
+
+A standard KrakenSDR plus an add-on antenna array with its OWN noise source,
+powered from the KrakenSDR's CH0 antenna bias tee. Start heimdall with
+`--ext_noise` (alias `--ext-noise`), or `./run.sh --ext_noise` / `EXT_NOISE=1`
+(boot service: `VARIANT_FLAGS=--ext_noise`). The DoA client needs no flag.
+
+- The only behavioural change: every noise-source switch drives the CH0 bias
+  tee (GPIO1 of the channel-0 chip, the same GPIO as the CH0 per-port antenna
+  bias tee) instead of the KrakenSDR's internal noise source (GPIO0), which is
+  held OFF - forced off at device open too, since the librtlsdr fork keeps GPIO
+  state across close/open. One choke point: `set_bias_tee_all_devices()` +
+  the startup open in `open_active_devices()` (heimdall `sdr_init.cpp`), so
+  calibration, recovery, retune recal, the periodic check and shutdown all
+  follow automatically; `bias_tee_enabled` keeps meaning "noise source on"
+- CH0's bias tee is reserved: `ANT_BIAS_MASK` bit 0 is refused (and cleared),
+  the heimdall UI greys out the "Ch 0 (noise)" box; channels 1+ work as usual
+- Reported as `external_noise` in the 8092 status JSON and the web STATE
+- Refused together with `--wideband` (GPIO1-6 drive that board's RF switches)
+  and `--kerberos`/`--kerberos_sw` (different noise path) - heimdall and
+  run.sh both reject the combination
 
 ## Key Algorithms
 
