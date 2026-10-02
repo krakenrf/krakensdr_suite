@@ -1,0 +1,91 @@
+# KrakenSDR suite in Docker - see DOCKER.md.
+#
+#   docker compose up -d --build     build (first time: ~15 min on a Pi 5) and start
+#   docker compose logs -f           errors-only logs of both apps
+#   docker compose down              stop
+#
+# Settings go in a .env file next to this one (see DOCKER.md), e.g.
+#   VARIANT_FLAGS=--ext_noise
+#
+# restart: unless-stopped + an enabled Docker service = starts at boot.
+name: krakensdr
+
+x-common: &common
+  image: krakensdr:local
+  # Every port both apps use (8070 8080 8081 8091 8092 1234 8021) is on the
+  # host directly, gpsd is reachable on localhost:2947, and the hostname
+  # matches the host's (the web UIs' Host allow-list accepts it)
+  network_mode: host
+  restart: unless-stopped
+  init: true
+  # dockerd runs with an unlimited core size, which containers inherit: a
+  # crashing heimdall wrote a ~280 MB core file into docker-data/ per crash
+  # (natively the login shell's limit is 0)
+  ulimits:
+    core: 0
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
+
+services:
+  heimdall:
+    <<: *common
+    build:
+      context: .
+      args:
+        JOBS: ${JOBS:-3}
+    command: heimdall
+    environment:
+      VARIANT_FLAGS: ${VARIANT_FLAGS:-}
+      KRAKEN_TUNERS: ${KRAKEN_TUNERS:-5}
+      KRAKEN_ALLOWED_HOSTS: ${KRAKEN_ALLOWED_HOSTS:-}
+      HEIMDALL_VERBOSE_LOG: ${HEIMDALL_VERBOSE_LOG:-}
+    volumes:
+      - ${KRAKEN_DATA_DIR:-./docker-data}:/data
+      - /etc/localtime:/etc/localtime:ro
+      # USB passthrough: the whole bus, bind-mounted rather than listed as
+      # devices, so dongles that re-enumerate (USB reset at startup, a
+      # replugged KrakenSDR) show up without recreating the container.
+      # The cgroup rule allows every USB device node (char major 189).
+      - /dev/bus/usb:/dev/bus/usb
+      - /run/udev:/run/udev:ro
+    device_cgroup_rules:
+      - 'c 189:* rmw'
+    # SCHED_RR 30 for the USB reader / sample-drain threads (RT_PRIO_* in
+    # heimdall_v2/config.h) - the container equivalent of the boot service's
+    # LimitRTPRIO=30
+    ulimits:
+      core: 0
+      rtprio: 30
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "krakensdr-entrypoint", "health-heimdall"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+
+  kraken_doa:
+    <<: *common
+    # same image as heimdall (built by its service); never pulled
+    pull_policy: never
+    command: kraken_doa
+    depends_on:
+      - heimdall
+    environment:
+      VARIANT_FLAGS: ${VARIANT_FLAGS:-}
+      WAIT_TIMEOUT: ${WAIT_TIMEOUT:-300}
+      KRAKEN_ALLOWED_HOSTS: ${KRAKEN_ALLOWED_HOSTS:-}
+      KRAKEN_API_TOKEN: ${KRAKEN_API_TOKEN:-}
+      KRAKEN_GPSD_HOST: ${KRAKEN_GPSD_HOST:-}
+      KRAKEN_GPSD_PORT: ${KRAKEN_GPSD_PORT:-}
+      KRAKEN_WEB_MAPPER_INSECURE: ${KRAKEN_WEB_MAPPER_INSECURE:-}
+      KRAKEN_DOA_VERBOSE_LOG: ${KRAKEN_DOA_VERBOSE_LOG:-}
+    volumes:
+      - ${KRAKEN_DATA_DIR:-./docker-data}:/data
+      - /etc/localtime:/etc/localtime:ro
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "krakensdr-entrypoint", "health-kraken_doa"]
+      interval: 30s
+      timeout: 10s
+      start_period: 360s

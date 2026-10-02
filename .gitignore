@@ -6,3 +6,7 @@ kraken_doa_v2/fft_wisdom.dat
 librtlsdr/
 # CMake build tree of the GNU Radio OOT module (machine-specific artifacts)
 gr-krakensdr_v2/build/
+# Docker: runtime state (settings incl. API key + station location, TLS key,
+# recordings) and the compose .env (may hold KRAKEN_API_TOKEN)
+docker-data/
+.env

@@ -147,6 +147,28 @@ make debug-arm    # ARM build with NEON debug output
 - Boot service (`install-pi-service.sh`): `Type=forking`, `ExecStop=run.sh
   stop`, `LimitRTPRIO=30` (realtime USB threads), `Restart=on-failure`.
 
+## Docker (DOCKER.md)
+
+- `Dockerfile` (one image: both apps, librtlsdr fork + uWebSockets cloned at
+  pinned commits, runtime packages derived from `ldd`) + `docker-compose.yml`
+  (two containers, `heimdall` and `kraken_doa`, `network_mode: host`,
+  `restart: unless-stopped` = autostart at boot) + `docker/entrypoint.sh`
+- USB passthrough: `/dev/bus/usb` bind-mounted + `device_cgroup_rules: c
+  189:* rmw` (follows re-enumeration after heimdall's USB reset / a replug,
+  unlike `devices:`); `ulimits: rtprio: 30` for the SCHED_RR threads
+- Each app runs with cwd `/data/<app>` (= `docker-data/<app>` on the host),
+  web files symlinked in - every runtime file path in both apps is
+  cwd-relative, so a new persisted file lands in the volume automatically; a
+  new STATIC file the apps serve must be added to the Dockerfile COPY, the
+  entrypoint's `link_files` and the `.dockerignore` allow-list
+- `.dockerignore` is an allow-list: secrets (`doa_settings.json`, `api_token`,
+  `server.key`) can't reach the image. `docker-data/` and `.env` are gitignored
+- heimdall's entrypoint waits for `KRAKEN_TUNERS` dongles (boot enumeration);
+  kraken_doa's waits for CONVERGED from the 8091 header (not in KerberosSDR
+  manual mode); empty compose variables are unset (apps treat "" as set)
+- `--wideband` / `--kerberos_sw` need `privileged: true` (hidraw, gpiochip,
+  `/proc/device-tree` is masked otherwise) via `compose.override.yaml`
+
 ## Architecture
 
 ### Heimdall Server (heimdall_v2/)

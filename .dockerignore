@@ -1,0 +1,19 @@
+# Allow-list: only what the image build needs. Everything else stays out of
+# the build context - in particular the station secrets (doa_settings.json
+# holds the KrakenPro API key and the station location, api_token,
+# server.key) and the 1.4 GB local uWebSockets clones (the Dockerfile fetches
+# a pinned copy). librtlsdr is cloned at a pinned commit by the Dockerfile too.
+*
+!docker/
+!heimdall_v2/Makefile
+!heimdall_v2/config.h
+!heimdall_v2/index.html
+!heimdall_v2/src/
+!heimdall_v2/external/
+!kraken_doa_v2/Makefile
+!kraken_doa_v2/include/
+!kraken_doa_v2/src/
+!kraken_doa_v2/kraken_doa.html
+!kraken_doa_v2/array_calculator.html
+!kraken_doa_v2/opus-decoder.js
+!kraken_doa_v2/opus-decoder.min.js
