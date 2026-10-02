@@ -85,9 +85,12 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"topology",                 "TOPOLOGY:",                 VType::STRING, "UCA"},
         // x,y,z;... in mm. Empty = none saved (the UCA default is used).
         {"custom_positions",         "CUSTOM_POSITIONS:",         VType::STRING, ""},
+        // Patch / 3D topology layout "shape,elements,size_mm,height_mm" (UI state)
+        {"array_layout",             "ARRAY_LAYOUT:",             VType::STRING, ""},
         {"array_radius_mm",          "RADIUS:",                   VType::NUMBER, "50"},
         {"element_spacing_mm",       "SPACING:",                  VType::NUMBER, "30"},
         {"ula_mode",                 "ULA_MODE:",                 VType::STRING, "BOTH"},
+        {"custom_mode",              "CUSTOM_MODE:",              VType::STRING, "BOTH"},
         {"array_offset_deg",         "ARRAY_OFFSET:",             VType::NUMBER, "0"},
         // Forward-backward averaging (applied only while topology is ULA)
         {"fb_averaging",             "MUSIC_FB_AVERAGING:",       VType::BOOL,   "0"},

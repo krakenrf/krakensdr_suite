@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Antenna Array Calculator</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* Matches the DoA client's dark theme; no external resources (works offline on a Pi hotspot) */
+:root {
+  --bg:#1a1a2e; --panel:#16213e; --border:#0f3460; --text:#e0e0e0; --muted:#8a93a8;
+  --accent:#7cb3f0; --blue:#1976d2; --ok:#4caf50; --okbg:rgba(76,175,80,0.14);
+  --warn:#ffb74d; --warnbg:rgba(255,183,77,0.13); --bad:#ef5350; --badbg:rgba(239,83,80,0.14);
+  --up:#ffb74d;
+}
+* { box-sizing:border-box }
+body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 Arial, Helvetica, sans-serif }
+header { background:var(--panel); border-bottom:1px solid var(--border); padding:10px 18px; display:flex; align-items:center; gap:14px; flex-wrap:wrap }
+header h1 { font-size:18px; margin:0; font-weight:bold }
+header .sub { color:var(--muted); font-size:12px }
+main { max-width:1180px; margin:0 auto; padding:16px }
+.bar { display:flex; flex-wrap:wrap; gap:14px 22px; align-items:flex-end; background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:12px 14px; margin-bottom:14px }
+.field { display:flex; flex-direction:column; gap:4px }
+.field label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em }
+input[type=number], select { background:var(--bg); border:1px solid var(--border); color:var(--text); padding:6px 8px; border-radius:4px; font-size:14px; width:110px }
+input[type=number]:focus, select:focus { outline:1px solid var(--blue) }
+.seg { display:inline-flex; border:1px solid var(--border); border-radius:4px; overflow:hidden }
+.seg button { background:var(--bg); color:var(--muted); border:0; padding:7px 14px; font-size:13px; cursor:pointer; border-right:1px solid var(--border) }
+.seg button:last-child { border-right:0 }
+.seg button.sel { background:#1565c0; color:#fff }
+.seg button:disabled { opacity:0.4; cursor:not-allowed }
+.btn { background:#0f3460; color:var(--text); border:1px solid #1a4a7a; padding:7px 12px; border-radius:4px; cursor:pointer; font-size:13px }
+.btn:hover { background:#1a4a7a }
+.btn.primary { background:#1565c0; border-color:#1976d2; color:#fff }
+.btn:disabled { opacity:0.45; cursor:not-allowed }
+.grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px }
+@media (max-width:900px) { .grid { grid-template-columns:minmax(0,1fr) } }
+.card { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:14px; min-width:0 }
+.card h2 { font-size:15px; margin:0 0 4px }
+.card .hint { color:var(--muted); font-size:12px; margin:0 0 10px }
+table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums }
+th, td { padding:5px 8px; text-align:right; border-bottom:1px solid var(--border); white-space:nowrap }
+th { color:var(--muted); font-weight:normal; font-size:12px; text-align:right }
+th:first-child, td:first-child { text-align:left }
+tbody tr { cursor:default }
+tr.ok td { background:var(--okbg) }
+tr.warn td { background:var(--warnbg) }
+tr.bad td { background:var(--badbg) }
+tr.pick { cursor:pointer }
+tr.pick:hover td { outline:1px solid var(--blue); outline-offset:-1px }
+tr.cur td { box-shadow:inset 3px 0 0 var(--accent) }
+.tablewrap { overflow-x:auto }
+.status { display:flex; flex-wrap:wrap; gap:10px; margin:8px 0 12px }
+.pill { border-radius:999px; padding:4px 11px; font-size:12px; border:1px solid var(--border); background:var(--bg) }
+.pill.ok { border-color:var(--ok); color:#a5d6a7 }
+.pill.warn { border-color:var(--warn); color:var(--warn) }
+.pill.bad { border-color:var(--bad); color:#ef9a9a }
+.kv { display:grid; grid-template-columns:auto auto; gap:2px 14px; font-size:13px; margin:0 0 10px }
+.kv span:nth-child(odd) { color:var(--muted) }
+.views { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; margin-top:10px }
+.view { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:6px }
+.view .vt { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em; margin:2px 4px 4px }
+.view svg { display:block; width:100%; height:auto; touch-action:none }
+.views.single { grid-template-columns:1fr }
+.views.single .view svg { max-width:440px; margin:0 auto }
+.views.single .view.wide svg { max-width:620px }
+.chart svg { display:block; width:100%; height:auto }
+.chart.drag-f svg { touch-action:none; cursor:ew-resize; user-select:none }
+.row { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:10px }
+.note { color:var(--muted); font-size:12px; margin-top:8px }
+.msg { font-size:12px; margin-left:6px }
+details { margin-top:14px }
+summary { cursor:pointer; color:var(--accent) }
+.hide { display:none !important }
+</style>
+</head>
+<body>
+<header>
+  <h1>📐 Antenna Array Calculator</h1>
+  <span class="sub">Size a KrakenSDR antenna array for a frequency, check the frequency range of an existing array, and get the element coordinates.</span>
+</header>
+<main>
+  <div class="bar">
+    <div class="field">
+      <label>Array type</label>
+      <div class="seg" id="mode-seg">
+        <button data-mode="uca" class="sel">Circular (UCA)</button>
+        <button data-mode="ula">Linear (ULA)</button>
+        <button data-mode="3d">Patch / 3D</button>
+      </div>
+    </div>
+    <div class="field">
+      <label for="n">Elements</label>
+      <select id="n"></select>
+    </div>
+    <div class="field">
+      <label for="f">Frequency (MHz)</label>
+      <input type="number" id="f" max="7000" step="0.1" value="433">
+    </div>
+    <div class="field">
+      <label for="unit">Units</label>
+      <select id="unit"><option value="cm">cm</option><option value="mm">mm</option></select>
+    </div>
+    <div class="field hide" id="shape-field">
+      <label for="shape">Layout</label>
+      <select id="shape" style="width:250px">
+        <optgroup label="Flat patch arrays">
+          <option value="p-centre">Square + centre</option>
+          <option value="p-diamond">Diamond + centre</option>
+          <option value="p-grid">Grid</option>
+          <option value="p-tri">Two offset rows (triangular)</option>
+          <option value="p-L">L-shape</option>
+          <option value="p-ring">Ring</option>
+        </optgroup>
+        <optgroup label="3D arrays">
+          <option value="mast">Ring + centre mast</option>
+          <option value="stagger">Staggered ring (alternating heights)</option>
+          <option value="stack">Stacked rings</option>
+        </optgroup>
+      </select>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- A: frequency -> size -->
+    <section class="card">
+      <h2 id="a-title">Array size for this frequency</h2>
+      <p class="hint" id="a-hint"></p>
+      <div class="tablewrap"><table id="a-table"></table></div>
+      <div class="chart" id="a-chart"></div>
+      <p class="note">Click a row to use that size for <b>Your array</b>. Spacing multiplier = element spacing in wavelengths; keep it at 0.5 or less to avoid ambiguous bearings. Larger arrays resolve better; a resolution of 0 &ndash; 25&deg; is considered acceptable for direction finding.</p>
+    </section>
+
+    <!-- B: your array -> frequency range -->
+    <section class="card">
+      <h2>Your array</h2>
+      <p class="hint" id="b-hint"></p>
+      <div class="row" id="size-inputs">
+        <div class="field"><label for="size" id="size-label">Radius</label><input type="number" id="size" min="0.1" step="0.1"></div>
+        <div class="field hide" id="height-field"><label for="height" id="height-label">Height</label><input type="number" id="height" min="0" step="0.1"></div>
+      </div>
+      <div class="status" id="b-status"></div>
+      <div class="kv" id="b-kv"></div>
+      <div class="tablewrap"><table id="b-table"></table></div>
+      <div class="chart" id="b-chart"></div>
+    </section>
+  </div>
+
+  <!-- C: coordinates + drawings -->
+  <section class="card" style="margin-top:14px">
+    <h2>Element coordinates</h2>
+    <p class="hint" id="c-hint"></p>
+    <div class="tablewrap"><table id="c-table"></table></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" id="copy-csv">Copy as CSV</button>
+      <button class="btn" id="copy-custom">Copy as Custom positions (mm)</button>
+      <button class="btn primary" id="apply">Use this array in the DoA receiver</button>
+      <span class="msg" id="apply-msg"></span>
+    </div>
+    <div class="views" id="views"></div>
+    <p class="note" id="c-note"></p>
+  </section>
+
+  <details>
+    <summary>How the numbers are calculated</summary>
+    <div class="note" style="font-size:13px">
+      <p>Wavelength &lambda; = c / f. The <b>spacing multiplier</b> is the distance between neighbouring elements in wavelengths. Above 0.5 the array becomes ambiguous (grating lobes / phase wrapping), so 0.5 gives the largest &mdash; best resolving &mdash; array for a frequency, and an array of fixed size works from low frequencies up to the frequency where its spacing reaches 0.5&lambda;.</p>
+      <p><b>Circular:</b> spacing = 2&middot;r&middot;sin(&pi;/N). <b>Linear:</b> spacing = length / (N&minus;1). <b>Patch / 3D:</b> the layout is scaled so its largest nearest-neighbour distance equals the spacing multiplier &times; &lambda; (for a flat ring or line this is the same rule).</p>
+      <p><b>Patch arrays</b> are flat boards of patch antennas standing upright and facing the horizon (forward). They give azimuth and elevation (from the panel's width and height), but every element is in one vertical plane, so a bearing and its front/back mirror look the same &mdash; set the receiver's <b>Direction</b> to Forward only (applying the array from here does that). A patch is roughly &lambda; / (2&radic;&epsilon;<sub>r</sub>) across (&asymp; 0.48 &lambda; on air, &asymp; 0.24 &lambda; on FR4, less on ceramic), so the spacing must leave room for the patches themselves.</p>
+      <p><b>Est. resolution</b> is the rule of thumb from the KrakenSDR array calculator spreadsheet: degrees(1.22 / D) / 10, with D the horizontal aperture in wavelengths (ring diameter / array length). For 3D arrays the elevation figure uses the vertical extent instead. It is an estimate of MUSIC's super-resolution, e.g. 10&deg; means the source is somewhere within a 10&deg; arc.</p>
+      <p>Coordinates use the receiver's convention: <b>X</b> = forward (the direction ANT0 points), <b>Y</b> = left, <b>Z</b> = up; circular elements are numbered <b>clockwise</b> seen from above, like the KrakenSDR arrays. A linear array's 0&deg; is broadside (perpendicular to the line) and it cannot tell front from back.</p>
+    </div>
+  </details>
+</main>
+
+<script>
+'use strict';
+const C_MPS = 299792458;
+const MULTS = [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1];
+const RES_OK = 25;                 // degrees - spreadsheet's "acceptable" threshold
+const TUNER_MHZ = [24, 1766];      // standard KrakenSDR (R820T) tuning range
+const UCA_SIGN = -1;               // clockwise, like the receiver (uca_angle_sign)
+
+const $ = id => document.getElementById(id);
+const deg = r => r * 180 / Math.PI;
+const lambdaM = fMHz => C_MPS / (fMHz * 1e6);
+// Spreadsheet rule of thumb: DEGREES(1.22 / aperture_in_wavelengths) / 10
+const estRes = apWl => apWl > 0 ? deg(1.22 / apWl) / 10 : Infinity;
+
+// ---------------------------------------------------------------- state ----
+const q = new URLSearchParams(location.search);
+const SHAPES = ['p-centre', 'p-diamond', 'p-grid', 'p-tri', 'p-L', 'p-ring', 'mast', 'stagger', 'stack'];
+let fDrag = null;                                 // frequency-marker drag in progress (see controls)
+const S = {
+  mode: ['uca', 'ula', '3d'].includes((q.get('topo') || '').toLowerCase()) ? q.get('topo').toLowerCase()
+        : ['CUSTOM', 'PATCH3D'].includes((q.get('topo') || '').toUpperCase()) ? '3d' : 'uca',
+  n: clampInt(q.get('n'), 2, 8, 5),
+  rxN: q.has('n') ? clampInt(q.get('n'), 2, 8, 5) : null,   // the receiver's live element count
+  f: clampNum(q.get('f'), 1, 7000, 433),
+  unit: 'cm',
+  shape: SHAPES.includes(q.get('shape')) ? q.get('shape') : 'p-centre',   // the receiver's Patch / 3D layout
+  // physical sizes in metres
+  ucaR: clampNum(q.get('r'), 1, 100000, 0) / 1000 || null,     // r=mm from the receiver
+  ulaL: q.has('s') ? clampNum(q.get('s'), 1, 100000, 30) / 1000 * (clampInt(q.get('n'), 2, 8, 5) - 1) : null,
+  r3: null, h3: null,
+  pS: null,                   // patch layout size: radius (ring layouts) or element spacing
+};
+if (SHAPES.includes(q.get('shape')) && clampNum(q.get('ls'), 1, 100000, 0) > 0) {   // ls/lh = mm
+  if (S.shape.startsWith('p-')) S.pS = clampNum(q.get('ls'), 1, 100000, 0) / 1000;
+  else { S.r3 = clampNum(q.get('ls'), 1, 100000, 0) / 1000; S.h3 = clampNum(q.get('lh'), 0, 100000, 0) / 1000; }
+}
+const isPatch = () => S.mode === '3d' && S.shape.startsWith('p-');
+const patchRing = () => ['p-centre', 'p-diamond', 'p-ring'].includes(S.shape);
+function clampInt(v, lo, hi, d) { const x = parseInt(v, 10); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; }
+function clampNum(v, lo, hi, d) { const x = parseFloat(v); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; }
+try { const u = localStorage.getItem('arraycalc.unit'); if (u === 'mm' || u === 'cm') S.unit = u; } catch (e) {}
+
+const unitScale = () => S.unit === 'mm' ? 1000 : 100;     // metres -> display unit
+const fmtLen = (m, d) => (m * unitScale()).toFixed(d ?? (S.unit === 'mm' ? 1 : 2));
+
+// ------------------------------------------------------------- geometry ----
+// Element positions in metres, receiver frame (x forward, y left, z up).
+function ucaPositions(n, r) {
+  return Array.from({ length: n }, (_, i) => {
+    const a = UCA_SIGN * 2 * Math.PI * i / n;
+    return { x: r * Math.cos(a), y: r * Math.sin(a), z: 0 };
+  });
+}
+function ulaPositions(n, L) {        // along the array line from ANT0, like the spreadsheet / MUSIC
+  const d = n > 1 ? L / (n - 1) : 0;
+  return Array.from({ length: n }, (_, i) => ({ x: i * d, y: 0, z: 0 }));
+}
+// '' when the layout works with n elements, else why not
+function shapeProblem(shape, n) {
+  if (shape === 'p-grid') return [4, 6, 8].includes(n) ? '' : 'A grid needs 4, 6 or 8 elements (2 × 2, 2 × 3 or 2 × 4)';
+  const min = { mast: 4, stagger: 3, stack: 6, 'p-centre': 4, 'p-diamond': 4, 'p-tri': 3, 'p-L': 3, 'p-ring': 3 }[shape];
+  return n >= min ? '' : `${shapeLabel(shape, n)} needs at least ${min} elements`;
+}
+
+// Flat patch layouts in the horizontal plane (x forward, y left), centred on
+// the array, size s = ring radius or element spacing. Numbered clockwise seen
+// from above (front row left to right, back row right to left).
+function patchFlat(shape, n, s) {
+  const ring = (m, r, rot) => Array.from({ length: m }, (_, i) => {
+    const a = UCA_SIGN * 2 * Math.PI * (i + rot) / m;
+    return { x: r * Math.cos(a), y: r * Math.sin(a) };
+  });
+  if (shape === 'p-centre') return [...ring(n - 1, s, 0.5), { x: 0, y: 0 }];   // flat side forward
+  if (shape === 'p-diamond') return [...ring(n - 1, s, 0), { x: 0, y: 0 }];    // corner (ANT0) forward
+  if (shape === 'p-ring') return ring(n, s, 0);
+  if (shape === 'p-grid' || shape === 'p-tri') {
+    const front = Math.ceil(n / 2), back = n - front;
+    const rowGap = shape === 'p-tri' ? s * Math.sqrt(3) / 2 : s;   // triangular: all neighbours at s
+    const shift = shape === 'p-tri' && front === back ? s / 2 : 0;  // equal rows: offset half a step
+    const row = (m, du) => Array.from({ length: m }, (_, i) => (i - (m - 1) / 2) * s + du);  // u = right
+    return [...row(front, -shift / 2).map(u => ({ x: rowGap / 2, y: -u })),
+            ...row(back, shift / 2).reverse().map(u => ({ x: -rowGap / 2, y: -u }))];
+  }
+  // L-shape: corner at the front left, one arm along the front, one down the left side.
+  // From the back end of the left arm up to the corner, then right along the front.
+  const a = Math.ceil((n - 1) / 2), b = Math.floor((n - 1) / 2), pts = [];
+  for (let j = b; j >= 1; j--) pts.push({ u: 0, v: -j * s });
+  pts.push({ u: 0, v: 0 });
+  for (let i = 1; i <= a; i++) pts.push({ u: i * s, v: 0 });
+  return pts.map(p => ({ x: p.v + b * s / 2, y: -(p.u - a * s / 2) }));
+}
+// Patch arrays are upright panels facing the horizon (+x): the layout's
+// forward edge becomes the top edge (seen from behind the panel - the
+// receiver's view - it looks like the layout drawn with 'forward' up)
+function positionsPatch(shape, n, s) {
+  const flat = patchFlat(shape, n, s);
+  const zmin = Math.min(...flat.map(p => p.x));
+  return flat.map(p => ({ x: 0, y: p.y, z: p.x - zmin }));
+}
+const patchSizeFor = spacing => spacing / (maxNearest(positionsPatch(S.shape, S.n, 1)) || 1);
+function positions3d(shape, n, r, h) {
+  if (shape === 'mast') {                       // ring of n-1 + centre element at height h
+    const ring = ucaPositions(n - 1, r);
+    return [...ring, { x: 0, y: 0, z: h }];
+  }
+  if (shape === 'stagger') {                    // one ring, every other element raised
+    return ucaPositions(n, r).map((p, i) => ({ ...p, z: (i % 2) ? h : 0 }));
+  }
+  const nA = Math.ceil(n / 2), nB = n - nA;     // stacked: lower ring, upper ring rotated half a step
+  const lower = ucaPositions(nA, r);
+  const upper = Array.from({ length: nB }, (_, j) => {
+    const a = UCA_SIGN * 2 * Math.PI * (j + 0.5) / nB;
+    return { x: r * Math.cos(a), y: r * Math.sin(a), z: h };
+  });
+  return [...lower, ...upper];
+}
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+function maxNearest(ps) {            // largest nearest-neighbour distance
+  let worst = 0;
+  ps.forEach((p, i) => {
+    let best = Infinity;
+    ps.forEach((o, j) => { if (i !== j) best = Math.min(best, dist(p, o)); });
+    worst = Math.max(worst, best);
+  });
+  return worst;
+}
+function horizAperture(ps) {
+  let m = 0;
+  for (const a of ps) for (const b of ps) m = Math.max(m, Math.hypot(a.x - b.x, a.y - b.y));
+  return m;
+}
+function vertAperture(ps) {
+  const zs = ps.map(p => p.z); return Math.max(...zs) - Math.min(...zs);
+}
+
+// Geometry of the current mode for a "size" s (radius / length / 3D radius) and 3D height ratio
+function geom(s, hRatio) {
+  if (S.mode === 'uca') {
+    const ps = ucaPositions(S.n, s);
+    return { ps, spacing: 2 * s * Math.sin(Math.PI / S.n), apH: 2 * s, apV: 0 };
+  }
+  if (S.mode === 'ula') {
+    const ps = ulaPositions(S.n, s);
+    return { ps, spacing: s / (S.n - 1), apH: s, apV: 0 };
+  }
+  const ps = isPatch() ? positionsPatch(S.shape, S.n, s) : positions3d(S.shape, S.n, s, s * hRatio);
+  return { ps, spacing: maxNearest(ps), apH: horizAperture(ps), apV: vertAperture(ps) };
+}
+// Size for a target neighbour spacing (geometry is linear in the size)
+function sizeForSpacing(spacing, hRatio) {
+  const unit = geom(1, hRatio);
+  return unit.spacing > 0 ? spacing / unit.spacing : 0;
+}
+
+// ------------------------------------------------------------- defaults ----
+function ensureSizes() {
+  const lam = lambdaM(S.f);
+  if (!S.ucaR) S.ucaR = lam * 0.5 / (2 * Math.sin(Math.PI / Math.max(3, S.n)));
+  if (!S.ulaL) S.ulaL = lam * 0.5 * (S.n - 1);
+  if (!S.r3) { S.r3 = lam * 0.25; S.h3 = S.r3; }
+  if (!S.pS && isPatch()) S.pS = patchSizeFor(lam * 0.5);
+}
+const curSize = () => S.mode === 'uca' ? S.ucaR : S.mode === 'ula' ? S.ulaL : isPatch() ? S.pS : S.r3;
+const hRatio = () => (S.r3 > 0 ? S.h3 / S.r3 : 1);
+function setCurSize(m) { if (S.mode === 'uca') S.ucaR = m; else if (S.mode === 'ula') S.ulaL = m; else if (isPatch()) S.pS = m; else { const k = hRatio(); S.r3 = m; S.h3 = m * k; } }
+
+// ---------------------------------------------------------------- chart ----
+function lineChart(el, pts, opt) {
+  // pts: [{x, y}], opt: {xLabel, yLabel, marker:{x,label}, band:[ylo,yhi]}
+  const W = 520, H = 230, L = 52, R = 14, T = 12, B = 40;
+  const good = pts.filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+  if (good.length < 2) { el.innerHTML = ''; return; }
+  let x0 = Math.min(...good.map(p => p.x)), x1 = Math.max(...good.map(p => p.x));
+  if (opt.marker && Number.isFinite(opt.marker.x)) { x0 = Math.min(x0, opt.marker.x); x1 = Math.max(x1, opt.marker.x); }
+  const ymax = Math.min(90, Math.max(...good.map(p => p.y), RES_OK) * 1.08);
+  const pad = (x1 - x0) * 0.04 || 1; x0 -= pad; x1 += pad;
+  if (opt.xRange) [x0, x1] = opt.xRange;          // held still while the marker is dragged
+  el._xmap = { x0, x1, L, R, W, T, B, H };
+  const sx = x => L + (x - x0) / (x1 - x0) * (W - L - R);
+  const sy = y => T + (1 - Math.min(y, ymax) / ymax) * (H - T - B);
+  const ticks = (a, b, n) => { const step = niceStep((b - a) / n); const out = []; for (let v = Math.ceil(a / step) * step; v <= b + 1e-9; v += step) out.push(+v.toFixed(10)); return out; };
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${opt.yLabel} versus ${opt.xLabel}">`;
+  // acceptable band
+  s += `<rect x="${L}" y="${sy(RES_OK)}" width="${W - L - R}" height="${sy(0) - sy(RES_OK)}" fill="rgba(76,175,80,0.10)"/>`;
+  s += `<text x="${W - R - 4}" y="${sy(RES_OK) + 13}" fill="#81c784" font-size="10" text-anchor="end">acceptable (&le; ${RES_OK}&deg;)</text>`;
+  for (const v of ticks(0, ymax, 5)) {
+    s += `<line x1="${L}" x2="${W - R}" y1="${sy(v)}" y2="${sy(v)}" stroke="#0f3460"/>`;
+    s += `<text x="${L - 6}" y="${sy(v) + 4}" fill="#8a93a8" font-size="10" text-anchor="end">${fmtTick(v)}</text>`;
+  }
+  for (const v of ticks(x0, x1, 6)) {
+    s += `<line x1="${sx(v)}" x2="${sx(v)}" y1="${T}" y2="${H - B}" stroke="#0f3460" stroke-dasharray="2,3"/>`;
+    s += `<text x="${sx(v)}" y="${H - B + 14}" fill="#8a93a8" font-size="10" text-anchor="middle">${fmtTick(v)}</text>`;
+  }
+  s += `<line x1="${L}" x2="${L}" y1="${T}" y2="${H - B}" stroke="#3a4a6a"/><line x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}" stroke="#3a4a6a"/>`;
+  const sorted = [...good].sort((a, b) => a.x - b.x);
+  s += `<polyline fill="none" stroke="#7cb3f0" stroke-width="2" points="${sorted.map(p => `${sx(p.x)},${sy(p.y)}`).join(' ')}"/>`;
+  for (const p of sorted) s += `<circle cx="${sx(p.x)}" cy="${sy(p.y)}" r="3.2" fill="${p.y <= RES_OK ? '#4caf50' : '#ffb74d'}"/>`;
+  if (opt.marker && Number.isFinite(opt.marker.x)) {
+    const mx = sx(opt.marker.x), right = mx > W - R - 70;   // label flips left near the right edge
+    s += `<line x1="${mx}" x2="${mx}" y1="${T}" y2="${H - B}" stroke="#ffb74d" stroke-width="1.5"/>`;
+    if (opt.marker.drag) s += `<path d="M${mx - 6},${H - B} l6,-8 l6,8 z" fill="#ffb74d"/>`;
+    s += `<text x="${mx + (right ? -4 : 4)}" y="${T + 11}" fill="#ffb74d" font-size="10" text-anchor="${right ? 'end' : 'start'}">${opt.marker.label}</text>`;
+  }
+  s += `<text x="${(L + W - R) / 2}" y="${H - 6}" fill="#c0c8d8" font-size="11" text-anchor="middle">${opt.xLabel}</text>`;
+  s += `<text transform="translate(13 ${(T + H - B) / 2}) rotate(-90)" fill="#c0c8d8" font-size="11" text-anchor="middle">${opt.yLabel}</text>`;
+  el.innerHTML = s + '</svg>';
+}
+function niceStep(raw) {
+  const p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p;
+}
+function fmtTick(v) { return Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 10 ? (+v.toFixed(1)).toString() : (+v.toFixed(2)).toString(); }
+
+// ------------------------------------------------------------- drawings ----
+const EL = '#7cb3f0', UP = '#ffb74d';
+function svgFrame(W, H, inner) { return `<svg viewBox="0 0 ${W} ${H}">${inner}</svg>`; }
+function arrowDefs(id) {
+  return `<defs><marker id="${id}" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#c0c8d8"/></marker></defs>`;
+}
+function scaleBar(px, W, H, metres) {
+  // a round length that is ~1/4 of the drawing
+  const target = metres / 4, step = niceStep(target * unitScale()) / unitScale();
+  const len = step * px;
+  return `<line x1="14" x2="${14 + len}" y1="${H - 12}" y2="${H - 12}" stroke="#c0c8d8" stroke-width="2"/>` +
+         `<text x="${14 + len / 2}" y="${H - 17}" fill="#c0c8d8" font-size="10" text-anchor="middle">${fmtLen(step, 0)} ${S.unit}</text>`;
+}
+function elementDot(cx, cy, i, raised, label, patch) {
+  const c = raised ? UP : EL;
+  return (patch ? `<rect x="${cx - 13}" y="${cy - 13}" width="26" height="26" rx="3" fill="${c}" fill-opacity="0.16" stroke="${c}" stroke-width="2"/>`
+                : `<circle cx="${cx}" cy="${cy}" r="13" fill="${c}" fill-opacity="0.16" stroke="${c}" stroke-width="2"/>`) +
+         `<text x="${cx}" y="${cy + 3}" fill="${c}" font-size="8.5" font-weight="bold" text-anchor="middle">${label ?? 'ANT' + i}</text>`;
+}
+
+// Top view: forward (+x) up, left (+y) left - same orientation as the receiver's polar plot.
+// opt.patch: square patches on a board outline; opt.circles: dashed rings + radius;
+// opt.upLabel: the arrow text (an upright panel's view from behind uses 'Up')
+function topView(ps, isULA, opt = {}) {
+  const W = 300, H = 300, m = 40;
+  let ext = 0;
+  for (const p of ps) ext = Math.max(ext, Math.abs(p.x), Math.abs(p.y));
+  if (isULA) {                                    // line drawn horizontally, ANT0 on the left
+    const W = 420, H = 170;
+    const L = ps[ps.length - 1].x || 1e-6;
+    const px = (W - 2 * m) / L, cy = 96;
+    let s = arrowDefs('fa1');
+    s += `<line x1="${m - 14}" x2="${W - m + 14}" y1="${cy}" y2="${cy}" stroke="#0f3460" stroke-dasharray="4,3"/>`;
+    s += `<line x1="${W / 2}" x2="${W / 2}" y1="${cy - 20}" y2="${34}" stroke="#c0c8d8" stroke-width="1.5" marker-end="url(#fa1)"/>`;
+    s += `<text x="${W / 2}" y="22" fill="#c0c8d8" font-size="11" text-anchor="middle">0&deg; (broadside)</text>`;
+    ps.forEach((p, i) => { s += elementDot(m + p.x * px, cy, i, false); });
+    if (ps.length > 1) {
+      const d = ps[1].x;
+      s += `<text x="${m + d * px / 2}" y="${cy + 32}" fill="#c0c8d8" font-size="10" text-anchor="middle">${fmtLen(d)} ${S.unit}</text>`;
+    }
+    s += scaleBar(px, W, H, L);
+    return svgFrame(W, H, s);
+  }
+  ext = ext || 1e-6;
+  const px = (W / 2 - (opt.patch ? 62 : m)) / ext, cx = W / 2, cy = H / 2;   // patches: room for the board
+  const X = p => cx - p.y * px, Y = p => cy - p.x * px;     // y left, x up
+  let s = arrowDefs('fa2');
+  const radii = [...new Set(ps.map(p => Math.hypot(p.x, p.y).toFixed(6)))].map(Number).filter(r => r > 1e-9);
+  const circles = opt.circles !== false;
+  if (opt.patch) {                                // the board: element extent + a patch margin
+    const xs = ps.map(X), ys = ps.map(Y), mg = 22;
+    s += `<rect x="${Math.min(...xs) - mg}" y="${Math.min(...ys) - mg}" width="${Math.max(...xs) - Math.min(...xs) + 2 * mg}" height="${Math.max(...ys) - Math.min(...ys) + 2 * mg}" rx="4" fill="#2e7d32" fill-opacity="0.07" stroke="#2e7d32" stroke-opacity="0.5"/>`;
+  }
+  if (circles) for (const r of radii) s += `<circle cx="${cx}" cy="${cy}" r="${r * px}" fill="none" stroke="#0f3460" stroke-dasharray="4,3"/>`;
+  if (opt.patch) {                                // arrow in the corner, clear of the board
+    s += `<line x1="${W - 16}" x2="${W - 16}" y1="${34}" y2="${8}" stroke="#c0c8d8" stroke-width="1.5" marker-end="url(#fa2)"/>`;
+    s += `<text x="${W - 24}" y="24" fill="#c0c8d8" font-size="11" text-anchor="end">${opt.upLabel || 'Forward'}</text>`;
+  } else {
+    s += `<line x1="${cx}" x2="${cx}" y1="${cy}" y2="${14}" stroke="#3a4a6a" stroke-width="1"/>`;
+    s += `<line x1="${cx + 70}" x2="${cx + 70}" y1="${44}" y2="${14}" stroke="#c0c8d8" stroke-width="1.5" marker-end="url(#fa2)"/>`;
+    s += `<text x="${cx + 76}" y="34" fill="#c0c8d8" font-size="11">${opt.upLabel || 'Forward'}</text>`;
+  }
+  s += `<circle cx="${cx}" cy="${cy}" r="2" fill="#c0c8d8"/>`;
+  ps.forEach((p, i) => { s += elementDot(X(p), Y(p), i, !opt.patch && p.z > 1e-9, undefined, opt.patch); });
+  if (circles && radii.length) {
+    const r = radii[0], a = -Math.PI / 4;
+    const r0 = ps.some(p => Math.hypot(p.x, p.y) < 1e-9) ? 14 : 0;   // clear a centre element
+    s += `<line x1="${cx + Math.cos(a) * r0}" y1="${cy + Math.sin(a) * r0}" x2="${cx + Math.cos(a) * (r * px - 14)}" y2="${cy + Math.sin(a) * (r * px - 14)}" stroke="#c0c8d8" stroke-width="1.2"/>`;
+    s += `<text x="${cx + Math.cos(a) * r * px * 0.45 + 6}" y="${cy + Math.sin(a) * r * px * 0.45 - 4}" fill="#c0c8d8" font-size="10">r ${fmtLen(r)} ${S.unit}</text>`;
+  }
+  s += scaleBar(px, W, H, ext * 2);
+  return svgFrame(W, H, s);
+}
+
+// Side view (3D): looking from the right side, forward to the right, up = up
+function sideView(ps) {
+  const W = 300, H = 220, m = 36;
+  const xs = ps.map(p => p.x), zs = ps.map(p => p.z);
+  const ext = Math.max(...xs.map(Math.abs), 1e-6), zmax = Math.max(...zs, 1e-6);
+  const px = Math.min((W / 2 - m) / ext, (H - 2 * m - 10) / zmax);
+  const cx = W / 2, gy = H - m;
+  const X = p => cx + p.x * px, Y = p => gy - p.z * px;
+  let s = arrowDefs('fa3');
+  s += `<line x1="14" x2="${W - 14}" y1="${gy}" y2="${gy}" stroke="#3a4a6a"/>`;
+  s += `<line x1="${W - 70}" x2="${W - 20}" y1="${18}" y2="${18}" stroke="#c0c8d8" stroke-width="1.5" marker-end="url(#fa3)"/>`;
+  s += `<text x="${W - 72}" y="22" fill="#c0c8d8" font-size="11" text-anchor="end">Forward</text>`;
+  const order = ps.map((p, i) => [p, i]).sort((a, b) => a[0].y - b[0].y);  // far side first
+  for (const [p, i] of order) s += elementDot(X(p), Y(p), i, p.z > 1e-9);
+  if (zmax > 1e-6) {
+    s += `<line x1="${W - 22}" x2="${W - 22}" y1="${gy}" y2="${gy - zmax * px}" stroke="${UP}" stroke-width="1.2"/>`;
+    s += `<text x="${W - 26}" y="${gy - zmax * px / 2}" fill="${UP}" font-size="10" text-anchor="end">h ${fmtLen(zmax)} ${S.unit}</text>`;
+  }
+  return svgFrame(W, H, s);
+}
+
+// Rotatable 3D view (drag to rotate)
+const view3d = { yaw: -0.6, pitch: 0.45 };
+function perspectiveView(ps) {
+  const W = 300, H = 260, patch = isPatch();
+  const c0 = { x: 0, y: 0, z: patch ? (Math.max(...ps.map(p => p.z)) + Math.min(...ps.map(p => p.z))) / 2 : 0 };
+  // patch board: element extent + a patch margin, in world coordinates
+  let board = null;
+  if (patch) {
+    const mg = 0.3 * maxNearest(ps);
+    const us = ps.map(p => -p.y), vs = ps.map(p => p.z);
+    const u0 = Math.min(...us) - mg, u1 = Math.max(...us) + mg, v0 = Math.min(...vs) - mg, v1 = Math.max(...vs) + mg;
+    const pt = (u, v) => ({ x: 0, y: -u, z: v });
+    board = { v0, corners: [pt(u0, v0), pt(u1, v0), pt(u1, v1), pt(u0, v1)] };
+  }
+  const ext = Math.max(...[...ps, ...(board ? board.corners : [])].map(p => Math.hypot(p.x - c0.x, p.y - c0.y, p.z - c0.z)), 1e-6);
+  const k = (Math.min(W, H) / 2 - 30) / (ext * (patch ? 1.1 : 1.4));   // room for the forward arrow past ANT0 / the board
+  const cy = Math.cos(view3d.yaw), sy = Math.sin(view3d.yaw), cp = Math.cos(view3d.pitch), sp = Math.sin(view3d.pitch);
+  // world: x forward, y left, z up. Rotate by yaw about z, then view from
+  // behind and above: screen right = -y', depth = x' (farther = higher on screen)
+  const proj = q => {
+    const p = { x: q.x - c0.x, y: q.y - c0.y, z: q.z - c0.z };
+    const xr = p.x * cy - p.y * sy, yr = p.x * sy + p.y * cy;
+    return { X: W / 2 - yr * k, Y: H / 2 + (patch ? 0 : 20) - (p.z * cp + xr * sp) * k, d: xr * cp - p.z * sp };
+  };
+  let s = '';
+  // ground ring(s) at z=0 and the vertical mast lines
+  const ringR = patch ? 0 : Math.max(...ps.filter(p => Math.abs(p.z) < 1e-9).map(p => Math.hypot(p.x, p.y)), 0);
+  let arrowFrom = ringR + 16 / k, arrowZ = c0.z;
+  if (board) {
+    s += `<polygon points="${board.corners.map(proj).map(q => `${q.X},${q.Y}`).join(' ')}" fill="#2e7d32" fill-opacity="0.12" stroke="#2e7d32" stroke-opacity="0.6"/>`;
+    arrowFrom = 4 / k; arrowZ = board.v0;       // out of the panel's bottom edge, clear of the patches
+  } else if (ringR > 0) {
+    const pts = [];
+    for (let a = 0; a <= 64; a++) { const t = a / 64 * 2 * Math.PI; const q2 = proj({ x: ringR * Math.cos(t), y: ringR * Math.sin(t), z: 0 }); pts.push(`${q2.X},${q2.Y}`); }
+    s += `<polyline points="${pts.join(' ')}" fill="none" stroke="#0f3460" stroke-dasharray="4,3"/>`;
+  }
+  const o = proj({ x: arrowFrom, y: 0, z: arrowZ }), fw = proj({ x: Math.max(ext * (patch ? 1.1 : 1.4), arrowFrom + ext * 0.35), y: 0, z: arrowZ });  // starts outside ANT0 / the board
+  s += arrowDefs('fa4') + `<line x1="${o.X}" y1="${o.Y}" x2="${fw.X}" y2="${fw.Y}" stroke="#c0c8d8" stroke-width="1.4" marker-end="url(#fa4)"/>`;
+  s += `<text x="${fw.X + 4}" y="${fw.Y - 4}" fill="#c0c8d8" font-size="10">Forward</text>`;
+  for (const p of ps) if (!patch && p.z > 1e-9) {
+    const a = proj(p), b = proj({ ...p, z: 0 });
+    s += `<line x1="${a.X}" y1="${a.Y}" x2="${b.X}" y2="${b.Y}" stroke="${UP}" stroke-opacity="0.5" stroke-dasharray="3,3"/>`;
+  }
+  const order = ps.map((p, i) => [proj(p), i, p]).sort((a, b) => b[0].d - a[0].d);
+  for (const [pp, i, p] of order) s += elementDot(pp.X, pp.Y, i, !patch && p.z > 1e-9, undefined, patch);
+  s += `<text x="8" y="${H - 8}" fill="#8a93a8" font-size="10">drag to rotate</text>`;
+  return svgFrame(W, H, s);
+}
+
+// --------------------------------------------------------------- render ----
+function rowClass(mult, res) { return mult > 0.5 ? 'bad' : res <= RES_OK ? 'ok' : 'warn'; }
+function sizeName() { return S.mode === 'ula' ? 'Length' : isPatch() && !patchRing() ? 'Spacing' : 'Radius'; }
+
+function render() {
+  ensureSizes();
+  const lam = lambdaM(S.f), u = S.unit, n = S.n, hr = hRatio();
+  const problem = S.mode === '3d' ? shapeProblem(S.shape, n) : '';
+  const patch = isPatch();
+  const spacingIsSize = sizeName() === 'Spacing';
+
+  // --- mode-specific labels
+  for (const o of $('shape').options) o.textContent = shapeLabel(o.value, n);
+  $('shape-field').classList.toggle('hide', S.mode !== '3d');
+  $('height-field').classList.toggle('hide', S.mode !== '3d' || patch);
+  $('size-label').textContent = `${sizeName()} (${u})`;
+  $('height-label').textContent = `Height (${u})`;
+  const sizeTitle = spacingIsSize ? 'element spacing' : S.mode === 'ula' ? 'length' : 'radius';
+  $('a-title').textContent = `${patch ? 'Patch array' : 'Array'} ${sizeTitle} for ${S.f} MHz (λ = ${fmtLen(lam)} ${u})`;
+  $('a-hint').textContent = S.mode === 'uca' ? `${n} elements on a circle, spacing = 2·r·sin(π/${n}).`
+    : S.mode === 'ula' ? `${n} elements in a line, spacing = length / ${n - 1}.`
+    : patch ? `${shapeLabel()}, upright panel facing the horizon; spacing = the largest nearest-neighbour distance. The patches must fit: about 0.48 λ across on air, 0.24 λ on FR4.`
+    : `${shapeLabel()} - keeps the current height/radius ratio (${hr.toFixed(2)}); spacing = the largest nearest-neighbour distance.`;
+  $('b-hint').textContent = S.mode === 'ula' ? 'Enter the total length (ANT0 to the last element) of an existing or planned array.'
+    : S.mode === 'uca' ? 'Enter the radius (centre to each element) of an existing or planned array.'
+    : patch ? (spacingIsSize ? 'Enter the centre-to-centre spacing of neighbouring patches.' : 'Enter the radius (centre of the array to the centre of each outer patch).')
+    : 'Enter the ring radius and the height of the raised element(s).';
+
+  // keep inputs in sync (unless being edited)
+  setIfIdle($('size'), fmtLen(curSize()));
+  if (S.mode === '3d' && !patch) setIfIdle($('height'), fmtLen(S.h3));
+
+  if (problem) {
+    ['a-table', 'b-table', 'c-table'].forEach(id => $(id).innerHTML = '');
+    ['a-chart', 'b-chart', 'views', 'b-kv'].forEach(id => $(id).innerHTML = '');
+    $('b-status').innerHTML = `<span class="pill bad">${problem}</span>`;
+    $('c-note').textContent = '';
+    updateApply(null);
+    return;
+  }
+
+  // --- A: frequency -> size
+  const is3d = S.mode === '3d', elev = is3d, hCol = is3d && !patch;
+  let a = `<thead><tr><th>Spacing ×λ</th><th>Spacing (${u})</th>${spacingIsSize ? '' : `<th>${sizeName()} (${u})</th>`}${hCol ? `<th>Height (${u})</th>` : ''}<th>Est. resolution</th>${elev ? '<th>Elevation</th>' : ''}</tr></thead><tbody>`;
+  const aPts = [];
+  for (const m of MULTS) {
+    const spacing = m * lam, s = sizeForSpacing(spacing, hr), g = geom(s, hr);
+    const res = estRes(g.apH / lam), resV = estRes(g.apV / lam);
+    aPts.push({ x: s * unitScale(), y: res });
+    const cur = Math.abs(s - curSize()) / s < 1e-3 ? ' cur' : '';
+    a += `<tr class="pick ${rowClass(m, res)}${cur}" data-size="${s}"><td>${m.toFixed(2)}</td><td>${fmtLen(spacing)}</td>${spacingIsSize ? '' : `<td>${fmtLen(s)}</td>`}${hCol ? `<td>${fmtLen(s * hr)}</td>` : ''}<td>${fmtRes(res)}</td>${elev ? `<td>${fmtRes(resV)}</td>` : ''}</tr>`;
+  }
+  $('a-table').innerHTML = a + '</tbody>';
+  lineChart($('a-chart'), aPts, { xLabel: `${spacingIsSize ? 'Element spacing' : 'Array ' + sizeTitle} (${u})`, yLabel: 'Est. resolution (°)' });
+
+  // --- B: your array -> status + frequency range
+  const g = geom(curSize(), hr);
+  const multAtF = g.spacing / lam, resAtF = estRes(g.apH / lam), resVAtF = estRes(g.apV / lam);
+  const fMax = C_MPS * 0.5 / g.spacing / 1e6;                       // spacing reaches 0.5 λ
+  const fRes = (C_MPS / 1e6) * 1.22 / ((RES_OK * 10) * Math.PI / 180) / g.apH; // resolution reaches 25°
+  const pills = [];
+  pills.push(multAtF > 0.5
+    ? `<span class="pill bad">Ambiguous at ${S.f} MHz: spacing ${multAtF.toFixed(2)} λ (&gt; 0.5)</span>`
+    : `<span class="pill ok">Unambiguous at ${S.f} MHz (spacing ${multAtF.toFixed(2)} λ)</span>`);
+  pills.push(resAtF <= RES_OK ? `<span class="pill ok">Est. resolution ${fmtRes(resAtF)}</span>` : `<span class="pill warn">Est. resolution ${fmtRes(resAtF)} (&gt; ${RES_OK}°)</span>`);
+  if (S.f < TUNER_MHZ[0] || S.f > TUNER_MHZ[1]) pills.push(`<span class="pill warn">${S.f} MHz is outside the standard KrakenSDR range (${TUNER_MHZ[0]}–${TUNER_MHZ[1]} MHz)</span>`);
+  $('b-status').innerHTML = pills.join('');
+  const kv = [
+    ['Element spacing', `${fmtLen(g.spacing)} ${u}`],
+    ['Highest usable frequency (0.5 λ)', `${fmtMHz(fMax)} MHz`],
+    [`Lowest frequency with ≤ ${RES_OK}° resolution`, `${fmtMHz(fRes)} MHz`],
+    ['Horizontal aperture', `${fmtLen(g.apH)} ${u}`],
+  ];
+  if (elev) kv.push(['Vertical aperture', `${fmtLen(g.apV)} ${u}`], [`Est. elevation resolution at ${S.f} MHz`, fmtRes(resVAtF)]);
+  $('b-kv').innerHTML = kv.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join('');
+  let b = `<thead><tr><th>Spacing ×λ</th><th>Frequency (MHz)</th><th>Est. resolution</th>${elev ? '<th>Elevation</th>' : ''}</tr></thead><tbody>`;
+  const bPts = [];
+  for (const m of MULTS) {
+    const fm = C_MPS * m / g.spacing / 1e6, lm = lambdaM(fm);
+    const res = estRes(g.apH / lm), resV = estRes(g.apV / lm);
+    bPts.push({ x: fm, y: res });
+    b += `<tr class="${rowClass(m, res)}"><td>${m.toFixed(2)}</td><td>${fmtMHz(fm)}</td><td>${fmtRes(res)}</td>${elev ? `<td>${fmtRes(resV)}</td>` : ''}</tr>`;
+  }
+  $('b-table').innerHTML = b + '</tbody>';
+  lineChart($('b-chart'), bPts, { xLabel: 'Frequency (MHz)', yLabel: 'Est. resolution (°)',
+                                  marker: { x: S.f, label: `${S.f} MHz`, drag: true }, xRange: fDrag && fDrag.range });
+
+  // --- C: coordinates + drawings
+  const ps = g.ps;
+  $('c-hint').textContent = S.mode === 'ula'
+    ? 'Positions along the array from ANT0. 0° (forward) is broadside to the line.'
+    : patch ? 'The panel stands upright facing forward (+X): Y = left, Z = up (X = 0). Patches are numbered clockwise seen from behind the panel.'
+    : 'X = forward (ANT0 direction), Y = left, Z = up. Elements are numbered clockwise seen from above.';
+  let c = `<thead><tr><th></th>${ps.map((_, i) => `<th>ANT${i}</th>`).join('')}</tr></thead><tbody>`;
+  const axes = S.mode === 'ula' ? [['Position', 'x']] : patch ? [['Y', 'y'], ['Z', 'z']]
+    : is3d ? [['X', 'x'], ['Y', 'y'], ['Z', 'z']] : [['X', 'x'], ['Y', 'y']];
+  for (const [name, k] of axes) c += `<tr><td>${name} (${u})</td>${ps.map(p => `<td>${fmtLen(Math.abs(p[k]) < 1e-12 ? 0 : p[k])}</td>`).join('')}</tr>`;
+  $('c-table').innerHTML = c + '</tbody>';
+  let v;
+  if (patch) {
+    // an upright panel seen from behind looks like the flat layout's top view, 'forward' becoming 'up'
+    const flat = patchFlat(S.shape, n, curSize()).map(p => ({ ...p, z: 0 }));
+    v = `<div class="view"><div class="vt">Panel seen from behind</div>${topView(flat, false, { patch: true, circles: patchRing(), upLabel: 'Up' })}</div>`;
+    v += `<div class="view" id="v3d-wrap"><div class="vt">3D view</div><div id="v3d">${perspectiveView(ps)}</div></div>`;
+  } else v = `<div class="view${S.mode === 'ula' ? ' wide' : ''}"><div class="vt">Top view</div>${topView(ps, S.mode === 'ula')}</div>`;
+  if (is3d && !patch) {
+    v += `<div class="view"><div class="vt">Side view</div>${sideView(ps)}</div>`;
+    v += `<div class="view" id="v3d-wrap"><div class="vt">3D view</div><div id="v3d">${perspectiveView(ps)}</div></div>`;
+  }
+  $('views').innerHTML = v;
+  $('views').classList.toggle('single', !is3d);
+  if (is3d) bindRotate(ps);
+  $('c-note').textContent = patch ? 'An upright panel gives azimuth and elevation, but cannot tell front from back (all patches are in one vertical plane). "Use this array" sets the receiver\'s Patch / 3D topology with Direction: Forward only, which keeps the front half-plane.'
+    : is3d ? 'Orange elements are raised. 3D arrays use the receiver\'s Patch / 3D topology and also give an elevation estimate.'
+    : S.mode === 'ula' ? 'A linear array is mirror-ambiguous: use the receiver\'s Direction setting to keep one half-plane.'
+    : 'ANT0 points in the forward direction of the array.';
+  $('copy-custom').classList.toggle('hide', S.mode === 'ula');
+  updateApply(g);
+}
+const POLY = { 3: 'Triangle', 4: 'Square', 5: 'Pentagon', 6: 'Hexagon', 7: 'Heptagon' };
+function shapeLabel(shape = S.shape, n = S.n) {
+  const poly = POLY[n - 1] || 'Ring';
+  return {
+    'p-centre': n - 1 === 4 ? 'Square + centre' : `${poly} + centre, side forward`,
+    'p-diamond': n - 1 === 4 ? 'Diamond + centre (corner forward)' : `${poly} + centre, corner forward`,
+    'p-grid': n === 4 ? 'Grid 2 × 2' : n === 6 ? 'Grid 2 × 3' : n === 8 ? 'Grid 2 × 4' : 'Grid (4, 6 or 8 patches)',
+    'p-tri': 'Two offset rows (triangular)', 'p-L': 'L-shape', 'p-ring': 'Ring',
+    mast: 'Ring + centre mast', stagger: 'Staggered ring (alternating heights)', stack: 'Stacked rings',
+  }[shape];
+}
+function fmtRes(r) { return Number.isFinite(r) ? r.toFixed(1) + '°' : '–'; }
+function fmtMHz(f) { return f >= 100 ? f.toFixed(1) : f.toFixed(2); }
+function setIfIdle(el, val) { if (document.activeElement !== el) el.value = val; }
+
+// ----------------------------------------------------------- 3D rotate ----
+function bindRotate(ps) {
+  const wrap = $('v3d');
+  let drag = null;
+  wrap.onpointerdown = e => { drag = { x: e.clientX, y: e.clientY, yaw: view3d.yaw, pitch: view3d.pitch }; wrap.setPointerCapture(e.pointerId); };
+  wrap.onpointermove = e => {
+    if (!drag) return;
+    view3d.yaw = drag.yaw + (e.clientX - drag.x) * 0.01;
+    view3d.pitch = Math.max(-0.2, Math.min(1.45, drag.pitch + (e.clientY - drag.y) * 0.01));
+    wrap.innerHTML = perspectiveView(ps);
+  };
+  wrap.onpointerup = wrap.onpointercancel = () => { drag = null; };
+}
+
+// ------------------------------------------------------- export / apply ----
+function positionsMm() { return geom(curSize(), hRatio()).ps.map(p => ({ x: +(p.x * 1000).toFixed(1), y: +(p.y * 1000).toFixed(1), z: +(p.z * 1000).toFixed(1) })); }
+async function copyText(t, what) {
+  try { await navigator.clipboard.writeText(t); flash(`${what} copied`); }
+  catch (e) { window.prompt(`Copy the ${what}:`, t); }
+}
+function flash(t, bad) { const m = $('apply-msg'); m.textContent = t; m.style.color = bad ? '#ef9a9a' : '#81c784'; clearTimeout(flash.t); flash.t = setTimeout(() => m.textContent = '', 4000); }
+function updateApply(g) {
+  const btn = $('apply');
+  const opener = (() => { try { return window.opener && !window.opener.closed && typeof window.opener.applyArrayFromCalculator === 'function' ? window.opener : null; } catch (e) { return null; } })();
+  let why = '';
+  if (!g) why = 'Pick a valid layout first';
+  else if (!opener) why = 'Open this calculator from the DoA receiver page (MUSIC DoA → Array Calculator) to apply it';
+  else if (S.rxN !== null && S.n !== S.rxN) why = `The receiver runs ${S.rxN} elements - set Elements to ${S.rxN} to apply`;
+  else if (S.mode === 'uca' && S.n < 3) why = 'A circular array needs at least 3 elements';
+  btn.disabled = !!why;
+  btn.title = why || (S.mode === 'uca' ? 'Sets the receiver to UCA with this radius'
+                    : S.mode === 'ula' ? 'Sets the receiver to ULA with this element spacing'
+                    : isPatch() ? 'Sets the receiver to the Patch / 3D topology with this layout and Direction: Forward only'
+                    : 'Sets the receiver to the Patch / 3D topology with this layout');
+}
+
+$('copy-csv').onclick = () => {
+  const g = geom(curSize(), hRatio()), k = unitScale();
+  const lines = [`antenna,x_${S.unit},y_${S.unit},z_${S.unit}`].concat(g.ps.map((p, i) => `ANT${i},${(p.x * k).toFixed(2)},${(p.y * k).toFixed(2)},${(p.z * k).toFixed(2)}`));
+  copyText(lines.join('\n'), 'CSV');
+};
+$('copy-custom').onclick = () => copyText(positionsMm().map(p => `${p.x},${p.y},${p.z}`).join(';'), 'positions (x,y,z mm per element)');
+$('apply').onclick = () => {
+  let cfg;
+  if (S.mode === 'uca') cfg = { topology: 'UCA', radius_mm: +(S.ucaR * 1000).toFixed(1), n: S.n };
+  else if (S.mode === 'ula') cfg = { topology: 'ULA', spacing_mm: +(S.ulaL / (S.n - 1) * 1000).toFixed(1), n: S.n };
+  // the receiver's Patch / 3D topology (same layouts; it sets Direction:
+  // Forward only for a patch panel - front/back ambiguous - and Both for 3D)
+  else cfg = { topology: 'PATCH3D', shape: S.shape, size_mm: +(curSize() * 1000).toFixed(1),
+               height_mm: isPatch() ? 0 : +(S.h3 * 1000).toFixed(1), n: S.n };
+  try {
+    const r = window.opener.applyArrayFromCalculator(cfg);
+    if (r === true) flash('Applied to the DoA receiver');
+    else flash(typeof r === 'string' ? r : 'The receiver page refused the array', true);
+  } catch (e) { flash('Could not reach the receiver page', true); }
+};
+
+// ------------------------------------------------------------- controls ----
+for (let i = 2; i <= 8; i++) $('n').insertAdjacentHTML('beforeend', `<option value="${i}">${i}</option>`);
+$('n').value = S.n; $('f').value = $('f').defaultValue = S.f; $('unit').value = S.unit; $('shape').value = S.shape;
+// patch layouts keep their element spacing when the layout or count changes
+function keepPatchSpacing(change) {
+  const d = isPatch() && S.pS ? geom(S.pS, 1).spacing : null;
+  change();
+  if (d && isPatch()) S.pS = patchSizeFor(d);
+  render();
+}
+document.querySelectorAll('#mode-seg button').forEach(b => {
+  b.classList.toggle('sel', b.dataset.mode === S.mode);
+  b.onclick = () => { S.mode = b.dataset.mode; document.querySelectorAll('#mode-seg button').forEach(x => x.classList.toggle('sel', x === b)); render(); };
+});
+$('n').onchange = () => keepPatchSpacing(() => {
+  const old = S.n; S.n = +$('n').value;
+  // a ULA keeps its element spacing when elements are added/removed
+  if (S.ulaL && old > 1) S.ulaL = S.ulaL / (old - 1) * (S.n - 1);
+});
+// No min attribute: the step base is then the value attribute, which follows
+// every edit, so the arrows move exactly 0.1 MHz from whatever was typed
+// (with min="1" they snapped 433.92 to 434.0). The range is checked here.
+function setFreq(v) {
+  v = Math.round(v * 1e6) / 1e6;
+  if (!(v >= 1 && v <= 7000)) return false;
+  S.f = v; $('f').value = v; $('f').defaultValue = v; render(); return true;
+}
+$('f').oninput = () => { const v = parseFloat($('f').value); if (v >= 1 && v <= 7000) { S.f = v; $('f').defaultValue = $('f').value; render(); } };
+$('f').onchange = () => { if (!(S.f === parseFloat($('f').value))) $('f').value = S.f; };   // put back a rejected entry
+
+// Drag the frequency marker on the "Your array" chart (or press anywhere in
+// the plot to move it there). The x axis is frozen for the drag - it would
+// otherwise rescale under the pointer as the marker moves past the data.
+function chartFreqAt(e) {
+  const el = $('b-chart'), m = el._xmap, svg = el.querySelector('svg');
+  if (!m || !svg) return NaN;
+  const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) / r.width * m.W;
+  const x = m.x0 + (px - m.L) / (m.W - m.L - m.R) * (m.x1 - m.x0);
+  return Math.min(Math.max(x, Math.max(m.x0, 1)), Math.min(m.x1, 7000));
+}
+function dragStep(m) { return Math.max(0.1, niceStep((m.x1 - m.x0) / 1000)); }   // ~0.5 px resolution, >= 0.1 MHz
+$('b-chart').classList.add('drag-f');
+$('b-chart').addEventListener('pointerdown', e => {
+  const m = $('b-chart')._xmap, f = chartFreqAt(e);
+  if (!m || !Number.isFinite(f) || e.button !== 0) return;
+  fDrag = { range: [m.x0, m.x1], id: e.pointerId };
+  $('b-chart').setPointerCapture(e.pointerId);
+  e.preventDefault();
+  const st = dragStep(m); setFreq(Math.round(f / st) * st);
+});
+$('b-chart').addEventListener('pointermove', e => {
+  if (!fDrag || e.pointerId !== fDrag.id) return;
+  const f = chartFreqAt(e), st = dragStep($('b-chart')._xmap);
+  if (Number.isFinite(f)) setFreq(Math.round(f / st) * st);
+});
+const endFDrag = e => { if (fDrag && e.pointerId === fDrag.id) { fDrag = null; render(); } };
+$('b-chart').addEventListener('pointerup', endFDrag);
+$('b-chart').addEventListener('pointercancel', endFDrag);
+$('unit').onchange = () => { S.unit = $('unit').value; try { localStorage.setItem('arraycalc.unit', S.unit); } catch (e) {} render(); };
+$('shape').onchange = () => keepPatchSpacing(() => { S.shape = $('shape').value; });
+$('size').oninput = () => { const v = parseFloat($('size').value); if (v > 0) { setCurSize(v / unitScale()); render(); } };
+$('height').oninput = () => { const v = parseFloat($('height').value); if (v >= 0) { S.h3 = v / unitScale(); render(); } };
+$('a-table').onclick = e => {
+  const tr = e.target.closest('tr[data-size]');
+  if (tr) { setCurSize(+tr.dataset.size); render(); }
+};
+render();
+</script>
+</body>
+</html>

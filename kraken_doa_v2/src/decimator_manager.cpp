@@ -128,6 +128,7 @@ int DecimatorManager::addDecimator() {
                 instance->music_processor->setNumSignalSources(reference->music_processor->getNumSignalSources());
                 instance->music_processor->setAutoNumSources(reference->music_processor->isAutoNumSources());
                 instance->music_processor->setULAOutputMode(reference->music_processor->getULAOutputMode());
+                instance->music_processor->setCustomOutputMode(reference->music_processor->getCustomOutputMode());
                 instance->music_processor->setArrayOffset(reference->music_processor->getArrayOffset());
                 instance->music_processor->setFBAveragingEnabled(reference->music_processor->isFBAveragingEnabled());
                 instance->music_processor->setCovarianceAveragingAlpha(reference->music_processor->getCovarianceAveragingAlpha());

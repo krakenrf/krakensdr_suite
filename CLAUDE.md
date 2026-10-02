@@ -302,6 +302,10 @@ Edit `kraken_doa_v2/include/config.hpp`:
 - **CUSTOM topology**: positions beyond the count given in CUSTOM_POSITIONS
   (e.g. after the element count grows) get the UI table's default - a 50 mm
   UCA over the live count - instead of the origin
+- **Patch / 3D topology** (`TOPOLOGY:PATCH3D`, runs as CUSTOM): common
+  upright patch-panel and 3D layouts picked from a list (same geometry as the
+  array calculator); layout persisted as `ARRAY_LAYOUT:`. Custom arrays have a
+  front/back **Direction** (`CUSTOM_MODE:`) - Forward only for patch panels
 - **UCA element ordering**: the array is expected to be wired **CLOCKWISE**
   (ANT0 on +x, ANT1 clockwise from it). `uca_angle_sign()` in
   `kraken_doa_v2/include/globals.hpp` returns -1 and is the single choke
@@ -331,6 +335,13 @@ Edit `kraken_doa_v2/include/config.hpp`:
   calibrations (none run) - only a manual one (noise on) pauses it
 - Locking onto a signal turns DoA back on (`apply_wideband_mode_state`, the
   single place wideband-scan mode parks/restores DoA; idempotent)
+
+**Antenna array calculator**: `kraken_doa_v2/array_calculator.html`
+(served at `/array_calculator.html`, opened from the MUSIC DoA box) sizes
+UCA / ULA / flat patch / 3D arrays for a frequency (port of the krakensdr_docs Excel
+sheet), shows the usable frequency range of an existing array, draws
+top/side/3D views with coordinates, and can push the result into the
+receiver. See `kraken_doa_v2/CLAUDE.md`
 
 **Web Mapper output (built-in)**:
 - The DoA client streams legacy "doapost" records to the KrakenSDR web mapper

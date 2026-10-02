@@ -167,10 +167,10 @@ static bool is_query_command(string_view msg) {
 // new clients continuously via the binary FFT header.
 static bool is_replayed_command(string_view msg) {
     static const char* prefixes[] = {
-        "TOPOLOGY:", "CUSTOM_POSITIONS:", "RADIUS:", "SPACING:", "ELEVATION_RESOLUTION:",
+        "TOPOLOGY:", "CUSTOM_POSITIONS:", "ARRAY_LAYOUT:", "RADIUS:", "SPACING:", "ELEVATION_RESOLUTION:",
         "MUSIC_NUM_SNAPSHOTS:", "MUSIC_SNAPSHOT_LENGTH:",
         "MUSIC_FB_AVERAGING:", "MUSIC_COVARIANCE_ALPHA:", "EDGE_CLIP:",
-        "MUSIC_SIGNAL_SOURCES:", "ULA_MODE:", "ARRAY_OFFSET:",
+        "MUSIC_SIGNAL_SOURCES:", "ULA_MODE:", "CUSTOM_MODE:", "ARRAY_OFFSET:",
         // Beamforming settings (on/off itself rides system_status; the mode
         // only does while beamforming is on)
         "BEAMFORMING_MODE:", "MANUAL_STEERING:", "STEERING_ANGLE:",
@@ -1016,8 +1016,8 @@ void ControlHandler::handle_message_impl(string_view message) {
         // Whitelist: the value is echoed to every browser, replayed to new
         // ones and persisted - and the page renders the topology name. An
         // arbitrary string here was a stored XSS.
-        if (topology_str != "UCA" && topology_str != "ULA" &&
-            topology_str != "CUSTOM" && topology_str != "WIDEBAND") {
+        if (topology_str != "UCA" && topology_str != "ULA" && topology_str != "CUSTOM" &&
+            topology_str != "PATCH3D" && topology_str != "WIDEBAND") {
             throw CommandRejected("unknown topology");
         }
 
@@ -1033,8 +1033,10 @@ void ControlHandler::handle_message_impl(string_view message) {
         }
         wb_topology_active = wb_topo;
 
+        // PATCH3D: patch-panel / 3D layouts picked from a list in the UI - the
+        // positions arrive as CUSTOM_POSITIONS, the layout as ARRAY_LAYOUT
         if (topology_str == "ULA") new_topology = ArrayTopology::ULA;
-        else if (topology_str == "CUSTOM") new_topology = ArrayTopology::CUSTOM;
+        else if (topology_str == "CUSTOM" || topology_str == "PATCH3D") new_topology = ArrayTopology::CUSTOM;
         else new_topology = ArrayTopology::UCA;  // UCA and WIDEBAND
 
         forEachMusicProcessor([&](auto* mp) { mp->setArrayTopology(new_topology); });
@@ -1113,6 +1115,31 @@ void ControlHandler::handle_message_impl(string_view message) {
         json << "{\"custom_positions\":{\"set\":true,\"num_elements\":" << elem_idx
              << ",\"is_3d\":" << (is_3d ? "true" : "false") << "}}";
         broadcast(json.str());
+    }
+    else if (message.starts_with("ARRAY_LAYOUT:")) {
+        // The Patch / 3D topology's layout: "<shape>,<elements>,<size_mm>,<height_mm>".
+        // UI state only (persisted + replayed so every browser shows the same
+        // layout); the positions it generates come as CUSTOM_POSITIONS.
+        // Whitelisted: the shape is rendered into the page.
+        static const char* shapes[] = { "p-centre", "p-diamond", "p-grid", "p-tri", "p-L", "p-ring",
+                                        "mast", "stagger", "stack" };
+        const string v(message.substr(13));
+        if (v.empty()) return;  // none saved
+        stringstream ss(v);
+        string shape, f[3];
+        getline(ss, shape, ',');
+        for (auto& x : f) getline(ss, x, ',');
+        if (std::find(std::begin(shapes), std::end(shapes), shape) == std::end(shapes))
+            throw CommandRejected("unknown array layout");
+        int n = 0; float size = 0, height = 0;
+        try { n = std::stoi(f[0]); size = stof_finite(f[1]); height = stof_finite(f[2]); }
+        catch (...) { throw CommandRejected("ARRAY_LAYOUT must be shape,elements,size_mm,height_mm"); }
+        if (n < 2 || n > DOA_NUM_ELEMENTS || !(size >= 1.0f && size <= 100000.0f) || !(height >= 0.0f && height <= 100000.0f))
+            throw CommandRejected("array layout out of range");
+        ostringstream os;
+        os << "ARRAY_LAYOUT:" << shape << ',' << n << ',' << std::fixed << std::setprecision(1) << size << ',' << height;
+        g_applied_cmd = os.str();
+        cout << "Array layout: " << *g_applied_cmd << endl;
     }
     else if (message.starts_with("ELEVATION_RESOLUTION:")) {
         float resolution = std::clamp(parse_float(message, 21), 0.5f, 5.0f);
@@ -1221,6 +1248,19 @@ void ControlHandler::handle_message_impl(string_view message) {
         stringstream json;
         json << "{\"ula_mode\":{\"mode\":\"" << mode_str << "\"}}";
         broadcast(json.str());
+    }
+    else if (message.starts_with("CUSTOM_MODE:")) {
+        // CUSTOM-array forward/backward output truncation: FORWARD | BACKWARD | BOTH
+        // (an upright patch panel is front/back ambiguous like a ULA)
+        string mode_str = string(message.substr(12));
+        ULAOutputMode mode;
+        if (mode_str == "FORWARD") mode = ULAOutputMode::FORWARD;
+        else if (mode_str == "BACKWARD") mode = ULAOutputMode::BACKWARD;
+        else if (mode_str == "BOTH") mode = ULAOutputMode::BOTH;
+        else throw CommandRejected("CUSTOM_MODE must be FORWARD, BACKWARD or BOTH");
+
+        forEachMusicProcessor([&](auto* mp) { mp->setCustomOutputMode(mode); });
+        cout << "MUSIC custom-array output mode set to " << mode_str << " for all processors" << endl;
     }
     else if (message.starts_with("ARRAY_OFFSET:")) {
         // Array orientation offset added to the reported DoA (degrees).

@@ -367,6 +367,20 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                ->writeHeader("Cache-Control", "no-cache")  // Disable cache during debugging
                ->end(js_content);
         })
+        .get("/array_calculator.html", [](auto* res, auto* /*req*/) {
+            // Antenna array calculator (opened from the MUSIC DoA panel):
+            // a static page, read from disk on each request like the main UI
+            ifstream file("array_calculator.html", ios::binary);
+            if (!file.is_open()) {
+                res->writeStatus("404 Not Found")->end("array_calculator.html not found");
+                return;
+            }
+            stringstream buffer;
+            buffer << file.rdbuf();
+            res->writeHeader("Content-Type", "text/html; charset=utf-8")
+               ->writeHeader("Cache-Control", "no-cache")
+               ->end(buffer.str());
+        })
         .get("/recordings/*", [](auto* res, auto* req) {
             if (!request_allowed(req)) { refuse_request(res, req); return; }
             // Download a recording from the fixed doa_recordings/ folder. Only a

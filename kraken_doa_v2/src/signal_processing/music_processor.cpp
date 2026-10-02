@@ -1304,6 +1304,36 @@ ULAOutputMode MUSICProcessor::getULAOutputMode() const {
     return ula_output_mode_;
 }
 
+void MUSICProcessor::setCustomOutputMode(ULAOutputMode mode) {
+    lock_guard<mutex> config_lock(config_mutex_);
+    if (custom_output_mode_ != mode) {
+        custom_output_mode_ = mode;
+        const char* name = (mode == ULAOutputMode::FORWARD)  ? "FORWARD" :
+                           (mode == ULAOutputMode::BACKWARD) ? "BACKWARD" : "BOTH";
+        cout << "MUSIC custom-array output mode set to " << name << endl;
+    }
+}
+
+ULAOutputMode MUSICProcessor::getCustomOutputMode() const {
+    lock_guard<mutex> config_lock(config_mutex_);
+    return custom_output_mode_;
+}
+
+ULAOutputMode MUSICProcessor::activeOutputMode() const {
+    // Caller holds config_mutex_
+    if (current_topology == ArrayTopology::ULA) return ula_output_mode_;
+    if (current_topology == ArrayTopology::CUSTOM) return custom_output_mode_;
+    return ULAOutputMode::BOTH;
+}
+
+// Forward = within +/-90deg of 0deg, i.e. angles in [0,90] U [270,360);
+// backward = (90,270). Angles are in the array frame (before the offset).
+static bool keepHalfPlane(ULAOutputMode mode, float angle) {
+    if (mode == ULAOutputMode::BOTH) return true;
+    bool forward = (angle <= 90.0f) || (angle >= 270.0f);
+    return (mode == ULAOutputMode::FORWARD) ? forward : !forward;
+}
+
 void MUSICProcessor::setArrayOffset(float degrees) {
     lock_guard<mutex> config_lock(config_mutex_);
     // Normalize to [0, 360)
@@ -1326,17 +1356,15 @@ void MUSICProcessor::applyOutputTransforms() {
         return;
     }
 
-    // --- ULA forward/backward truncation ---
+    // --- Forward/backward truncation (ULA, CUSTOM) ---
     // A ULA's response is mirror-symmetric about its axis (the 90deg-270deg
-    // line): s(theta) == s(180 - theta). Zeroing one half-plane resolves the
-    // front/back ambiguity. Forward = within +/-90deg of 0deg, i.e. angles in
-    // [0,90] U [270,360); backward = (90,270).
-    if (current_topology == ArrayTopology::ULA && ula_output_mode_ != ULAOutputMode::BOTH) {
+    // line): s(theta) == s(180 - theta); so is a custom array whose elements
+    // all share one x (an upright panel facing forward). Zeroing one
+    // half-plane resolves the front/back ambiguity.
+    const ULAOutputMode half = activeOutputMode();
+    if (half != ULAOutputMode::BOTH) {
         for (int i = 0; i < num_angles_; i++) {
-            float angle = i * angular_resolution_;  // 0..360
-            bool forward = (angle <= 90.0f) || (angle >= 270.0f);
-            bool keep = (ula_output_mode_ == ULAOutputMode::FORWARD) ? forward : !forward;
-            if (!keep) pseudospectrum(i) = 0.0;
+            if (!keepHalfPlane(half, i * angular_resolution_)) pseudospectrum(i) = 0.0;
         }
     }
 
@@ -1658,6 +1686,17 @@ void MUSICProcessor::computeMUSICSpectrum2D() {
     // Apply threshold and inversion
     const double threshold = 1e-15;
     spectrum_2d = spectrum_2d.cwiseMax(threshold).cwiseInverse();
+
+    // Half-plane truncation BEFORE the 2D peak search: the 1D mask in
+    // applyOutputTransforms() comes after the peak/elevation are picked, so
+    // an upright panel's mirror (rear) peak could still win here
+    const ULAOutputMode half = custom_output_mode_;
+    if (half != ULAOutputMode::BOTH) {
+        for (int az_idx = 0; az_idx < num_angles_; az_idx++) {
+            if (keepHalfPlane(half, az_idx * angular_resolution_)) continue;
+            spectrum_2d.segment(az_idx * num_elevation_angles_, num_elevation_angles_).setZero();
+        }
+    }
 
     // Find 2D peak
     Eigen::Index max_idx;

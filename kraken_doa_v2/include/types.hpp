@@ -16,6 +16,8 @@ enum class ArrayTopology {
 // ULA Forward/Backward Output Mode
 // A uniform linear array has an inherent front/back (mirror) ambiguity about
 // its axis: the response at angle theta equals the response at (180 - theta).
+// (Also used for CUSTOM arrays whose elements all lie in one vertical plane
+// facing forward, e.g. an upright patch panel - same mirror symmetry.)
 // This selects which half-plane of the pseudospectrum is reported, resolving
 // the ambiguity by truncating the spectrum to one side.
 enum class ULAOutputMode {

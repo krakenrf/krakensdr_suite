@@ -59,6 +59,9 @@ h3 {color:#7cb3f0;margin:0 0 10px 0;font-size:15px;border-bottom:1px solid #333;
 .btn.tb {padding:3px 10px;font-size:12px}
 .btn.tb.sel {background:#1565c0;border-color:#1976d2}
 .btn.tb:not(.sel) {background:#1a1a2e;color:#888}
+/* topology: 4-5 buttons don't fit beside the label - full row under it */
+#topo-group {flex:1 1 100%;flex-wrap:wrap}
+#topo-group .btn.tb {flex:1 1 auto;white-space:nowrap;padding:3px 6px}
 .tp {border:1px solid #0f3460;border-radius:3px;padding:8px;margin:8px 0;background:#16213e;font-size:13px}
 .array-diagram {width:100%;margin:8px 0;display:flex;justify-content:center}
 .array-diagram svg {background:#0a0a15;border-radius:4px}
@@ -358,11 +361,12 @@ h3 {color:#7cb3f0;margin:0 0 10px 0;font-size:15px;border-bottom:1px solid #333;
         </div>
         <div class="ctrl-row">
           <label>Topology:</label>
-          <div class="tb-group">
+          <div class="tb-group" id="topo-group">
             <button id="ucb" class="btn tb sel" onclick="sto('UCA')">UCA</button>
             <button id="ulb" class="btn tb" onclick="sto('ULA')">ULA</button>
-            <button id="cub" class="btn tb" onclick="sto('CUSTOM')">Custom</button>
+            <button id="l3b" class="btn tb" onclick="sto('PATCH3D')" title="Patch-antenna panels and 3D arrays from a list of common layouts (the layouts of the Array Calculator)">Patch/3D</button>
             <button id="wbb" class="btn tb" onclick="sto('WIDEBAND')" style="display:none" title="KrakenSDR Wideband array: circular array whose radius follows the antenna ring selected by the tuned frequency">Wideband</button>
+            <button id="cub" class="btn tb" onclick="sto('CUSTOM')">Custom</button>
           </div>
         </div>
         <div class="tp" id="ucp">
@@ -410,6 +414,58 @@ h3 {color:#7cb3f0;margin:0 0 10px 0;font-size:15px;border-bottom:1px solid #333;
             <button class="btn sm" onclick="presetULA()">ULA</button>
           </div>
           <div class="bi info" id="custom-3d-info" style="display:none;color:#ff9800;">3D array detected - elevation spectrum enabled</div>
+          <div class="ctrl-row" style="margin-top:6px;">
+            <label>Direction:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">An array whose elements all stand in one vertical plane facing forward (e.g. an upright patch panel) can't tell front from back. Truncate the output to one half-plane to resolve the mirror ambiguity. Leave on Both for arrays that see all around.</span></span></label>
+            <select id="custom-mode" onchange="setCustomMode(this.value)" style="flex:1">
+              <option value="BOTH">Both (all around)</option>
+              <option value="FORWARD">Forward only</option>
+              <option value="BACKWARD">Backward only</option>
+            </select>
+          </div>
+        </div>
+        <div class="tp hide" id="l3p">
+          <div class="array-diagram" id="layout-diagram"></div>
+          <div class="ctrl-row">
+            <label>Layout:</label>
+            <select id="layout-shape" onchange="onLayoutShape(this.value)" style="flex:1;min-width:0">
+              <optgroup label="Patch panel (upright, facing forward)">
+                <option value="p-centre">Square + centre</option>
+                <option value="p-diamond">Diamond + centre</option>
+                <option value="p-grid">Grid</option>
+                <option value="p-tri">Two offset rows</option>
+                <option value="p-L">L-shape</option>
+                <option value="p-ring">Ring</option>
+              </optgroup>
+              <optgroup label="3D array">
+                <option value="mast">Ring + centre mast</option>
+                <option value="stagger">Staggered ring</option>
+                <option value="stack">Stacked rings</option>
+              </optgroup>
+            </select>
+          </div>
+          <div class="ctrl-row">
+            <label id="layout-size-label">Radius:</label>
+            <input type="number" id="layout-size" min="5" step="1" style="width:60px" oninput="onLayoutSize()" onchange="onLayoutSize()">
+            <span style="font-size:10px">mm</span>
+          </div>
+          <div class="ctrl-row" id="layout-height-row">
+            <label>Height:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Height of the raised element(s) above the ring.</span></span></label>
+            <input type="number" id="layout-height" min="0" step="1" style="width:60px" oninput="onLayoutSize()" onchange="onLayoutSize()">
+            <span style="font-size:10px">mm</span>
+          </div>
+          <div id="layout-info" style="font-size:10px;color:#888;margin-top:4px;"></div>
+          <div class="bi info hide" id="layout-warn" style="color:#ff9800;"></div>
+          <div class="ctrl-row" style="margin-top:6px;">
+            <label>Direction:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">A patch panel can't tell front from back: keep Forward only (set automatically when a patch layout is picked). 3D arrays see all around: Both.</span></span></label>
+            <select id="layout-mode" onchange="setCustomMode(this.value)" style="flex:1">
+              <option value="BOTH">Both (all around)</option>
+              <option value="FORWARD">Forward only</option>
+              <option value="BACKWARD">Backward only</option>
+            </select>
+          </div>
+        </div>
+        <div class="ctrl-row">
+          <button class="btn" onclick="openArrayCalculator()" style="flex:1" title="Size an array for a frequency, check an array's frequency range and get element coordinates (circular, linear and 3D)">📐 Array Calculator</button>
         </div>
         <div class="sec">
           <div class="ctrl-row">
@@ -2557,6 +2613,18 @@ function applySyncCmdInner(cmd) {
     const el = $id('ula-mode');
     if (idle(el) && el.value !== v) { el.value = v; setUlaMode(v); }
   }
+  else if ((v = arg('ARRAY_LAYOUT:')) !== null) {
+    // Patch / 3D layout "shape,elements,size_mm,height_mm" - display only
+    const [shape, n, size, height] = v.split(',');
+    if (LAYOUT_SHAPES.includes(shape) && parseFloat(size) > 0) {
+      arrayLayout = { shape, n: parseInt(n) || 0, size: parseFloat(size), height: parseFloat(height) || 0 };
+      refreshLayoutPanel();
+    }
+  }
+  else if ((v = arg('CUSTOM_MODE:')) !== null) {
+    const el = $id('custom-mode');
+    if (idle(el) && el.value !== v) { el.value = v; setCustomMode(v); }
+  }
   else if ((v = arg('ARRAY_OFFSET:')) !== null) {
     const el = $id('music-array-offset');
     if (idle(el) && parseFloat(el.value) !== parseFloat(v)) { el.value = parseFloat(v); updateArrayOffset(v); }
@@ -4033,7 +4101,7 @@ function updateManualSteeringStatus(data) {
 function sto(t) {
   // Only known topologies: the name is rendered into the page, and it can
   // arrive from another browser via sync_cmd (the server whitelists too)
-  if (!['UCA', 'ULA', 'CUSTOM', 'WIDEBAND'].includes(t)) t = 'UCA';
+  if (!['UCA', 'ULA', 'CUSTOM', 'PATCH3D', 'WIDEBAND'].includes(t)) t = 'UCA';
   // WIDEBAND is only offered on the Wideband hardware variant
   if (t==='WIDEBAND' && !wbVariant.enabled) t='UCA';
 
@@ -4043,17 +4111,24 @@ function sto(t) {
   u.className='btn tb'+(t==='UCA'?' sel':'');
   l.className='btn tb'+(t==='ULA'?' sel':'');
   c.className='btn tb'+(t==='CUSTOM'?' sel':'');
+  $id('l3b').className='btn tb'+(t==='PATCH3D'?' sel':'');
   if(w) w.className='btn tb'+(t==='WIDEBAND'?' sel':'');
 
   $id('ucp').classList.toggle('hide',t!=='UCA');
   $id('ulp').classList.toggle('hide',t!=='ULA');
   $id('cup').classList.toggle('hide',t!=='CUSTOM');
+  $id('l3p').classList.toggle('hide',t!=='PATCH3D');
   const wbp=$id('wbp'); if(wbp) wbp.classList.toggle('hide',t!=='WIDEBAND');
 
   send('TOPOLOGY:'+t);
 
   if(t==='CUSTOM') {
     drawCustomDiagram();
+  }
+  if(t==='PATCH3D') {
+    // A click applies the layout (positions + its direction); a remote/replayed
+    // selection only shows it - the positions arrive as CUSTOM_POSITIONS
+    if (applyingRemote) refreshLayoutPanel(); else applyLayout(true);
   }
   if(t==='UCA') {
     // Re-send the user radius: the backend may hold the Wideband topology's
@@ -4071,7 +4146,7 @@ function sto(t) {
   });
 
   // Update all topology display texts
-  const topoNames={UCA:'Uniform Circular Array',ULA:'Uniform Linear Array',CUSTOM:'Custom Array',WIDEBAND:'Wideband Array (auto ring)'};
+  const topoNames={UCA:'Uniform Circular Array',ULA:'Uniform Linear Array',CUSTOM:'Custom Array',PATCH3D:'Patch / 3D Array',WIDEBAND:'Wideband Array (auto ring)'};
   Object.keys(doaPlots).forEach(id => {
     const tpiEl = $id(`tpi-${id}`);
     if(tpiEl) {
@@ -4106,6 +4181,10 @@ function onActiveElementsChanged(newCount) {
 
   // Signal-source choices follow the element count
   updateSourceOptions();
+
+  // Patch / 3D: layout names/validity follow the count (positions are NOT
+  // regenerated: the physical array didn't change - the panel warns instead)
+  refreshLayoutPanel();
 }
 
 function updateSNRDisplaysHTML() {
@@ -4265,6 +4344,20 @@ function updateSpacingFactor() {
     ulaEl.innerHTML = buildSpacingInfo(
       ulaFactor, '', (numElements - 1) * spacingM, wavelength);
   }
+
+  // Patch / 3D: spacing = the largest nearest-neighbour distance (as in the
+  // array calculator), resolution from the horizontal aperture
+  const layEl = $id('layout-info');
+  if (layEl && arrayLayout.size > 0 && !layoutProblem(arrayLayout.shape, numElements)) {
+    const ps = layoutPositions(arrayLayout.shape, numElements, arrayLayout.size, arrayLayout.height);
+    const dM = layoutSpacing(ps) / 1000;
+    let apH = 0, zs = ps.map(p => p.z);
+    for (const a of ps) for (const b of ps) apH = Math.max(apH, Math.hypot(a.x - b.x, a.y - b.y));
+    const apV = (Math.max(...zs) - Math.min(...zs)) / 1000;
+    let html = buildSpacingInfo(dM / wavelength, ` (${(dM*1000).toFixed(1)}mm)`, apH / 1000, wavelength);
+    if (apV > 0) html += `<br>Est. elevation resolution: ~${Math.min(90, (wavelength / apV) * (180 / Math.PI) / 10).toFixed(1)}°`;
+    layEl.innerHTML = html;
+  } else if (layEl) layEl.innerHTML = '';
 }
 
 // UCA element ordering: antenna rings are wired CLOCKWISE (ANT0 on +x, ANT1
@@ -4384,6 +4477,237 @@ function onCustomPositionInput() {
       applyCustomPositions();
     }
   }, 500);
+}
+
+// ---- Patch / 3D topology ----
+// Common patch-panel and 3D layouts, the same as the array calculator's
+// "Patch / 3D" tab (array_calculator.html - keep the geometry identical). The
+// receiver runs them as CUSTOM positions (TOPOLOGY:PATCH3D = CUSTOM); the
+// layout itself is UI state, ARRAY_LAYOUT:shape,elements,size_mm,height_mm.
+// Patch panels stand upright facing forward (+x): x = 0, numbered clockwise
+// seen from behind. Sizes in mm: ring radius, or element spacing (grid,
+// offset rows, L-shape).
+const LAYOUT_SHAPES = ['p-centre', 'p-diamond', 'p-grid', 'p-tri', 'p-L', 'p-ring', 'mast', 'stagger', 'stack'];
+const LAYOUT_POLY = { 3: 'Triangle', 4: 'Square', 5: 'Pentagon', 6: 'Hexagon', 7: 'Heptagon' };
+let arrayLayout = { shape: 'p-centre', n: 0, size: 0, height: 0 };  // n = element count it was applied for
+const layoutIsPatch = shape => shape.startsWith('p-');
+const layoutSizeIsSpacing = shape => ['p-grid', 'p-tri', 'p-L'].includes(shape);
+function layoutLabel(shape, n) {
+  const poly = LAYOUT_POLY[n - 1] || 'Ring';
+  return {
+    'p-centre': n - 1 === 4 ? 'Square + centre' : `${poly} + centre, side fwd`,
+    'p-diamond': n - 1 === 4 ? 'Diamond + centre' : `${poly} + centre, corner fwd`,
+    'p-grid': n === 4 ? 'Grid 2 × 2' : n === 6 ? 'Grid 2 × 3' : n === 8 ? 'Grid 2 × 4' : 'Grid (4, 6, 8)',
+    'p-tri': 'Two offset rows', 'p-L': 'L-shape', 'p-ring': 'Ring',
+    mast: 'Ring + centre mast', stagger: 'Staggered ring', stack: 'Stacked rings',
+  }[shape];
+}
+// '' when the layout works with n elements, else why not
+function layoutProblem(shape, n) {
+  if (shape === 'p-grid') return [4, 6, 8].includes(n) ? '' : 'A grid needs 4, 6 or 8 elements';
+  const min = { mast: 4, stagger: 3, stack: 6, 'p-centre': 4, 'p-diamond': 4, 'p-tri': 3, 'p-L': 3, 'p-ring': 3 }[shape];
+  return n >= min ? '' : `${layoutLabel(shape, n)} needs at least ${min} elements`;
+}
+function layoutRing(m, r, rot) {
+  return Array.from({ length: m }, (_, i) => {
+    const a = UCA_ANGLE_SIGN * 2 * Math.PI * (i + rot) / m;
+    return { x: r * Math.cos(a), y: r * Math.sin(a) };
+  });
+}
+// Flat patch layout in the plane of the panel ('x' = up the panel, y left)
+function layoutPatchFlat(shape, n, s) {
+  if (shape === 'p-centre') return [...layoutRing(n - 1, s, 0.5), { x: 0, y: 0 }];
+  if (shape === 'p-diamond') return [...layoutRing(n - 1, s, 0), { x: 0, y: 0 }];
+  if (shape === 'p-ring') return layoutRing(n, s, 0);
+  if (shape === 'p-grid' || shape === 'p-tri') {
+    const front = Math.ceil(n / 2), back = n - front;
+    const rowGap = shape === 'p-tri' ? s * Math.sqrt(3) / 2 : s;
+    const shift = shape === 'p-tri' && front === back ? s / 2 : 0;
+    const row = (m, du) => Array.from({ length: m }, (_, i) => (i - (m - 1) / 2) * s + du);
+    return [...row(front, -shift / 2).map(u => ({ x: rowGap / 2, y: -u })),
+            ...row(back, shift / 2).reverse().map(u => ({ x: -rowGap / 2, y: -u }))];
+  }
+  const a = Math.ceil((n - 1) / 2), b = Math.floor((n - 1) / 2), pts = [];   // L-shape
+  for (let j = b; j >= 1; j--) pts.push({ u: 0, v: -j * s });
+  pts.push({ u: 0, v: 0 });
+  for (let i = 1; i <= a; i++) pts.push({ u: i * s, v: 0 });
+  return pts.map(p => ({ x: p.v + b * s / 2, y: -(p.u - a * s / 2) }));
+}
+function layoutPositions(shape, n, s, h) {
+  if (layoutIsPatch(shape)) {               // upright panel: the flat layout's 'forward' is up
+    const flat = layoutPatchFlat(shape, n, s), zmin = Math.min(...flat.map(p => p.x));
+    return flat.map(p => ({ x: 0, y: p.y, z: p.x - zmin }));
+  }
+  const ring = (m, rot, z) => layoutRing(m, s, rot).map(p => ({ ...p, z }));
+  if (shape === 'mast') return [...ring(n - 1, 0, 0), { x: 0, y: 0, z: h }];
+  if (shape === 'stagger') return ring(n, 0, 0).map((p, i) => ({ ...p, z: (i % 2) ? h : 0 }));
+  const nA = Math.ceil(n / 2);              // stacked: upper ring rotated half a step
+  return [...ring(nA, 0, 0), ...ring(n - nA, 0.5, h)];
+}
+function layoutSpacing(ps) {                // largest nearest-neighbour distance
+  let worst = 0;
+  ps.forEach((p, i) => {
+    let best = Infinity;
+    ps.forEach((o, j) => { if (i !== j) best = Math.min(best, Math.hypot(p.x - o.x, p.y - o.y, p.z - o.z)); });
+    worst = Math.max(worst, best);
+  });
+  return worst;
+}
+// Size giving a nearest-neighbour spacing d (mm); 3D keeps the height/radius ratio
+function layoutSizeFor(shape, n, d, hRatio) {
+  return d / (layoutSpacing(layoutPositions(shape, n, 1, hRatio)) || 1);
+}
+function layoutDefaults() {
+  if (arrayLayout.size > 0) return;
+  const lamMm = 299792458 / (Math.max(1, currentCenterFreq) * 1e6) * 1000;
+  const n = activeNumElements, shape = layoutProblem(arrayLayout.shape, n) ? (n >= 4 ? 'p-centre' : 'p-ring') : arrayLayout.shape;
+  arrayLayout = { shape, n: 0, size: +layoutSizeFor(shape, n, 0.45 * lamMm, 1).toFixed(1), height: 0 };
+  if (!layoutIsPatch(shape)) arrayLayout.height = arrayLayout.size;
+}
+
+// Show the layout (no commands sent)
+function refreshLayoutPanel() {
+  const n = activeNumElements, L = arrayLayout;
+  const sel = $id('layout-shape');
+  if (!sel) return;
+  for (const o of sel.options) { o.textContent = layoutLabel(o.value, n); o.disabled = !!layoutProblem(o.value, n); }
+  sel.value = L.shape;
+  $id('layout-size-label').textContent = layoutSizeIsSpacing(L.shape) ? 'Spacing:' : 'Radius:';
+  $id('layout-height-row').classList.toggle('hide', layoutIsPatch(L.shape));
+  const idle = el => document.activeElement !== el;
+  if (L.size > 0 && idle($id('layout-size'))) $id('layout-size').value = L.size;
+  if (idle($id('layout-height'))) $id('layout-height').value = L.height;
+  const warn = $id('layout-warn'), prob = layoutProblem(L.shape, n);
+  let w = '';
+  if (prob) w = prob + ' - the receiver runs ' + n + '. Pick another layout.';
+  else if (L.n && L.n !== n) w = `Positions were set for ${L.n} elements, the receiver now runs ${n}. <button class="btn sm" onclick="applyLayout(false)">Re-apply for ${n}</button>`;
+  warn.innerHTML = w;
+  warn.classList.toggle('hide', !w);
+  drawLayoutDiagram();
+  updateSpacingFactor();
+}
+
+// Generate the positions for the live element count and send them
+// (CUSTOM_POSITIONS + ARRAY_LAYOUT); withDirection also sets the layout's
+// natural Direction (patch panel: Forward only, 3D: Both).
+function applyLayout(withDirection) {
+  layoutDefaults();
+  const n = activeNumElements, L = arrayLayout;
+  if (!layoutProblem(L.shape, n) && L.size > 0) {
+    const ps = layoutPositions(L.shape, n, L.size, L.height);
+    ps.forEach((p, i) => { customPositions[i] = { x: +p.x.toFixed(1), y: +p.y.toFixed(1), z: +p.z.toFixed(1) }; });
+    generateCustomPositionsTable();   // the Custom table follows
+    applyCustomPositions();
+    L.n = n;
+    send(`ARRAY_LAYOUT:${L.shape},${n},${L.size},${L.height}`);
+    if (withDirection) setCustomMode(layoutIsPatch(L.shape) ? 'FORWARD' : 'BOTH');
+  }
+  refreshLayoutPanel();
+}
+function onLayoutShape(shape) {
+  if (!LAYOUT_SHAPES.includes(shape)) return;
+  const L = arrayLayout, n = activeNumElements;
+  // keep the element spacing (and a 3D height/radius ratio) across layouts
+  let d = 0;
+  if (L.size > 0 && !layoutProblem(L.shape, n)) d = layoutSpacing(layoutPositions(L.shape, n, L.size, L.height));
+  const ratio = !layoutIsPatch(L.shape) && L.size > 0 ? L.height / L.size : 1;
+  L.shape = shape;
+  if (d > 0) {
+    L.size = +layoutSizeFor(shape, n, d, ratio).toFixed(1);
+    L.height = layoutIsPatch(shape) ? 0 : +(L.size * ratio).toFixed(1);
+  } else { L.size = 0; layoutDefaults(); }
+  applyLayout(true);
+}
+let layoutSendTimeout = null;
+function onLayoutSize() {
+  const s = parseFloat($id('layout-size').value), h = parseFloat($id('layout-height').value);
+  if (!(s >= 5 && s <= 10000)) return;   // mid-edit / out of range: wait
+  arrayLayout.size = s;
+  if (!layoutIsPatch(arrayLayout.shape)) arrayLayout.height = (h >= 0 && h <= 10000) ? h : 0;
+  drawLayoutDiagram();
+  clearTimeout(layoutSendTimeout);
+  layoutSendTimeout = setTimeout(() => applyLayout(false), 500);
+}
+
+// Patch panel: seen from behind (up = up, left = left); 3D: top view
+// (forward up, raised elements orange)
+function drawLayoutDiagram() {
+  const box = $id('layout-diagram');
+  if (!box) return;
+  const L = arrayLayout, n = activeNumElements;
+  if (!(L.size > 0) || layoutProblem(L.shape, n)) { box.innerHTML = ''; return; }
+  const ps = layoutPositions(L.shape, n, L.size, L.height), patch = layoutIsPatch(L.shape);
+  const W = 160, c = W / 2;
+  const u = p => -p.y, v = p => patch ? p.z : p.x;           // screen right, screen up
+  const us = ps.map(u), vs = ps.map(v);
+  const cu = (Math.max(...us) + Math.min(...us)) / 2, cv = (Math.max(...vs) + Math.min(...vs)) / 2;
+  const ext = Math.max(...us.map(a => Math.abs(a - cu)), ...vs.map(a => Math.abs(a - cv)), 1e-6);
+  const k = 52 / ext;
+  let svg = `<svg width="${W}" height="${W}" viewBox="0 0 ${W} ${W}">`;
+  if (patch) svg += `<rect x="${c - ext * k - 16}" y="${c - ext * k - 16}" width="${2 * ext * k + 32}" height="${2 * ext * k + 32}" rx="3" fill="#2e7d32" fill-opacity="0.08" stroke="#2e7d32" stroke-opacity="0.5"/>`;
+  svg += `<text x="${W - 4}" y="11" fill="#666" font-size="9" text-anchor="end">${patch ? 'seen from behind' : 'top view'}</text>`;
+  svg += `<text x="4" y="11" fill="#888" font-size="9">${patch ? '↑ up' : '↑ fwd'}</text>`;
+  ps.forEach((p, i) => {
+    const x = c + (u(p) - cu) * k, y = c - (v(p) - cv) * k, col = !patch && p.z > 0.01 ? '#ff9800' : '#7cb3f0';
+    svg += patch ? `<rect x="${x - 10}" y="${y - 10}" width="20" height="20" rx="2" fill="${col}" fill-opacity="0.2" stroke="${col}" stroke-width="2"/>`
+                 : `<circle cx="${x}" cy="${y}" r="10" fill="${col}" fill-opacity="0.2" stroke="${col}" stroke-width="2"/>`;
+    svg += `<text x="${x}" y="${y + 3.5}" fill="${col}" font-size="9" font-weight="bold" text-anchor="middle">${i}</text>`;
+  });
+  box.innerHTML = svg + '</svg>';
+}
+
+// ---- Antenna array calculator (array_calculator.html) ----
+// Opened with the live settings; its "Use this array" button calls back into
+// applyArrayFromCalculator() through window.opener (same origin).
+function openArrayCalculator() {
+  const p = new URLSearchParams({
+    n: activeNumElements,
+    f: (+currentCenterFreq).toFixed(3),
+    topo: currentTopology === 'WIDEBAND' ? 'UCA' : currentTopology,
+    r: $id('arr') ? $id('arr').value : '',
+    s: $id('els') ? $id('els').value : '',
+  });
+  if (arrayLayout.size > 0) {                 // the Patch / 3D layout (shape, size, height mm)
+    p.set('shape', arrayLayout.shape); p.set('ls', arrayLayout.size); p.set('lh', arrayLayout.height);
+  }
+  window.open('/array_calculator.html?' + p.toString(), 'krakenArrayCalculator');
+}
+// cfg: {topology:'UCA', radius_mm} | {topology:'ULA', spacing_mm} |
+// {topology:'PATCH3D', shape, size_mm, height_mm} |
+// {topology:'CUSTOM', positions_mm:[{x,y,z}]} plus n (element count).
+// Returns true, or a string saying why it was refused.
+function applyArrayFromCalculator(cfg) {
+  if (!cfg || cfg.n !== activeNumElements) return `The receiver runs ${activeNumElements} elements`;
+  if (cfg.topology === 'UCA' && cfg.radius_mm >= 10 && cfg.radius_mm <= 10000) {
+    $id('arr').value = cfg.radius_mm;
+    sto('UCA');  // also sends the radius (sar)
+    return true;
+  }
+  if (cfg.topology === 'ULA' && cfg.spacing_mm >= 5 && cfg.spacing_mm <= 10000) {
+    $id('els').value = cfg.spacing_mm;
+    sto('ULA');
+    ses();
+    return true;
+  }
+  if (cfg.topology === 'PATCH3D' && LAYOUT_SHAPES.includes(cfg.shape)) {
+    if (layoutProblem(cfg.shape, activeNumElements)) return layoutProblem(cfg.shape, activeNumElements);
+    if (!(cfg.size_mm >= 5 && cfg.size_mm <= 10000) || !(cfg.height_mm >= 0 && cfg.height_mm <= 10000))
+      return 'Size out of range for the receiver (5-10000 mm)';
+    arrayLayout = { shape: cfg.shape, n: 0, size: +(+cfg.size_mm).toFixed(1), height: layoutIsPatch(cfg.shape) ? 0 : +(+cfg.height_mm).toFixed(1) };
+    if (currentTopology === 'PATCH3D') applyLayout(true); else sto('PATCH3D');   // sto applies it
+    return true;
+  }
+  if (cfg.topology === 'CUSTOM' && Array.isArray(cfg.positions_mm) && cfg.positions_mm.length === activeNumElements &&
+      cfg.positions_mm.every(p => [p.x, p.y, p.z].every(Number.isFinite))) {
+    cfg.positions_mm.forEach((p, i) => { customPositions[i] = { x: p.x, y: p.y, z: p.z }; });
+    sto('CUSTOM');
+    generateCustomPositionsTable();  // inputs show the new positions
+    applyCustomPositions();
+    // an upright patch panel needs Forward only; the 3D layouts see all around
+    if (cfg.direction === 'FORWARD' || cfg.direction === 'BOTH') setCustomMode(cfg.direction);
+    return true;
+  }
+  return 'Size out of range for the receiver (radius 10-10000 mm, spacing 5-10000 mm)';
 }
 
 function presetUCA() {
@@ -4514,6 +4838,13 @@ function setUlaMode(val) {
   if (val !== 'FORWARD' && val !== 'BACKWARD') val = 'BOTH';
   $id('ula-mode').value = val;
   send('ULA_MODE:' + val);
+}
+
+function setCustomMode(val) {
+  if (val !== 'FORWARD' && val !== 'BACKWARD') val = 'BOTH';
+  $id('custom-mode').value = val;
+  $id('layout-mode').value = val;   // the Patch / 3D panel shows the same setting
+  send('CUSTOM_MODE:' + val);
 }
 
 function updateArrayOffset(val) {

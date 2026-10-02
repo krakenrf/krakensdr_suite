@@ -137,6 +137,11 @@ public:
     // ambiguity by truncating the pseudospectrum to one half-plane).
     void setULAOutputMode(ULAOutputMode mode);
     ULAOutputMode getULAOutputMode() const;
+    // Same half-plane truncation for the CUSTOM topology (an upright patch
+    // panel can't tell front from back either). Separate from the ULA setting
+    // so a ULA's choice doesn't cut half off a 360-degree custom array.
+    void setCustomOutputMode(ULAOutputMode mode);
+    ULAOutputMode getCustomOutputMode() const;
 
     // Array orientation offset (degrees). Added to the reported DoA so the
     // pseudospectrum/peak align with the physical array mounting / true north.
@@ -284,6 +289,10 @@ private:
 
     // ULA front/back output handling (applied only when topology == ULA)
     ULAOutputMode ula_output_mode_ = ULAOutputMode::BOTH;
+    // CUSTOM front/back output handling (applied only when topology == CUSTOM)
+    ULAOutputMode custom_output_mode_ = ULAOutputMode::BOTH;
+    // The half-plane mode in force for the current topology (BOTH = no truncation)
+    ULAOutputMode activeOutputMode() const;
 
     // Array orientation offset in degrees (rotates the reported spectrum/peak)
     float array_offset_deg_ = 0.0f;
