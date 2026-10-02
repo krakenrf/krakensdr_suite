@@ -1321,7 +1321,8 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                 if (auto current_state = get_phase_compensation_state()) {
                     switch (*current_state) {
                         case PhaseCompensatorState::WAITING_FOR_STABILITY: {
-                            // Frequency stability cooldown - wait 3 seconds before starting calibration
+                            // Frequency stability cooldown (debounce) - wait STABILITY_DELAY_MS
+                            // (or the runtime override) before starting calibration
                             if (phase_compensation) {
                                 bool should_start_calibration = false;
                                 {

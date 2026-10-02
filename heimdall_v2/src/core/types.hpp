@@ -143,10 +143,14 @@ struct PhaseCompensationData {
     // without taking state_mutex.
     std::atomic<long long> noise_on_ns{0};
     // Covers the pre-noise samples in the USB ring (~30-50 ms) plus the noise diode /
-    // front-end settling. (With the IF VGA on the RTL2832 AGC - the librtlsdr
-    // fork's default, now overridden, see R820T_IF_VGA_* in config.h - noise-on
-    // also ramped every channel ~10 dB over ~1 s; 1000 ms was sized for that.)
-    static constexpr int NOISE_SETTLE_MS = 1000;
+    // front-end settling. 1000 ms was sized for the ~10 dB / ~1 s noise-on ramp of
+    // the IF VGA on the RTL2832 AGC (now overridden, see R820T_IF_VGA_* in config.h).
+    // Measured 2026-10-02 with the VGA fixed (8091 stream, 4 retunes): the noise
+    // reaches the stream in the first packet after the flag flips, at full power
+    // (no ramp), and the inter-channel phases sit within 0.1-0.4 deg of their final
+    // value from the first 3 packets (~20 ms) - the per-packet scatter, against the
+    // 1 deg convergence threshold. 250 ms keeps >5x margin over the USB ring.
+    static constexpr int NOISE_SETTLE_MS = 250;
 
     // Increment 4: snapshot accumulator for the averaged first apply (circular-mean
     // phasor over the post-settle window). Reset whenever a fresh streak begins
@@ -166,7 +170,16 @@ struct PhaseCompensationData {
     // Frequency stability cooldown for drag-to-scroll feature
     std::chrono::steady_clock::time_point last_frequency_change;
     std::atomic<bool> cooldown_active{false};
-    static constexpr int STABILITY_DELAY_MS = 3000;         // Default 3s cooldown
+    // Retune cooldown = DEBOUNCE: every retune restarts it, so a drag / wheel
+    // scroll (the DoA UI sends FREQ at most every 50 ms) calibrates once, at
+    // the end, and slow tuning doesn't flash the noise source into the
+    // spectrum between steps. Kept at 3 s by choice: nothing physical needs it
+    // (measured 2026-10-02 with the noise source on during the cooldown, the
+    // tuner phases are within 0.2-0.4 deg of final from the first 50 ms after
+    // 1 / 30 / 400 MHz steps); 500 ms recalibrates in ~1.0 s instead of ~3.5 s
+    // with the same Check Calibration residual. The continuous scanner sets
+    // 500 ms while it runs (set_stability_delay).
+    static constexpr int STABILITY_DELAY_MS = 3000;
     std::atomic<int> stability_delay_override_ms{STABILITY_DELAY_MS};  // Runtime-configurable
 
     PhaseCompensationData() : last_frequency_change(std::chrono::steady_clock::now()) {}

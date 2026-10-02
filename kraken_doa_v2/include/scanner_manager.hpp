@@ -52,7 +52,11 @@ public:
     // data is trusted again. The server pulses it during calibration /
     // verification; packets arrive at 50-80/s but consumers poll far less
     // often, so the per-packet timestamp above catches bursts between polls.
-    static constexpr long NOISE_QUIET_MS = 750;
+    // The packet flag itself is exact (heimdall's 8091 flag and the samples
+    // line up to within one packet - measured 2026-10-02); the margin covers
+    // the decimators' filter memory (<= ~25 ms at 1 kHz) and the 100 ms
+    // pollers. Was 750 ms.
+    static constexpr long NOISE_QUIET_MS = 250;
 
     // Milliseconds since the last packet that reported the noise source
     // active (effectively "forever" if it was never seen).

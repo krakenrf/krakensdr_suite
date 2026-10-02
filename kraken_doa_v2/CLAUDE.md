@@ -423,6 +423,23 @@ and the receiver converts only that channel.
 fit; the MUSIC_SNAPSHOT_LENGTH handler echoes the lowered count
 (MUSIC_NUM_SNAPSHOTS) so browsers and the settings file follow.
 
+**Retune / calibration gate:** DoA processing is skipped while heimdall
+calibrates: the per-packet noise flag plus `NOISE_QUIET_MS` (250 ms - the
+decimators' filter memory, <= ~25 ms) and, after a retune, a hold of at least
+`RETUNE_DOA_MIN_HOLD_MS` (500 ms) that lasts while heimdall reports
+WAITING_FOR_STABILITY (its post-retune cooldown: compensation reset, noise
+off). Was a fixed 4 s hold + 750 ms. First new bearing ~4 s after a retune
+with heimdall's 3 s cooldown (~1.6 s with 500 ms).
+
+**Calibration bursts in the UI:** the receiver pushes `{"cal_live":{phase_state,
+noise_source}}` the moment a packet's phase state or noise flag changes (the
+500 ms system_status was too slow for a ~0.4 s retune burst) and restarts the
+spectrum EMA on every noise switch. The page's calibration badge follows
+cal_live; the waterfall marks noise-on rows with an orange strip in the left
+margin, and auto-range holds through a burst (+1 s) - ranging a noise frame
+(no antenna signals) collapsed the colour scale, which turned the waterfall red
+for up to 500 ms past the burst, over rows that already showed the antennas.
+
 **Input continuity:** the accumulator is cleared on a gap > 200 ms, a sample
 rate change or a VFO offset change, and the data receiver retunes MUSIC from
 the offset each block was decimated with (not the VFO's live one), so a frame

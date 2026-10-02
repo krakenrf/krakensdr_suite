@@ -21,6 +21,7 @@
 #include "channel_manager.hpp"
 #include "scanner_manager.hpp"
 #include "control_handler.hpp"
+#include "networking/websocket_server.hpp"
 #include "utils/endian_utils.hpp"
 #include <iostream>
 #include <thread>
@@ -61,21 +62,29 @@ moodycamel::ConcurrentQueue<DecimatedFMWorkItem> fm_decimated_queue;
 mutex fm_decimated_mutex;
 condition_variable fm_decimated_available;
 
-// steady_clock ms of the last completed server retune. For RETUNE_DOA_HOLD_MS
-// after it, ALL DoA processing is skipped: the tuner data is settling (and
-// heimdall's post-retune cooldown has the noise source still OFF, so
-// doa_is_calibrating() alone cannot cover this window). 0 = never retuned.
+// steady_clock ms of the last completed server retune. 0 = never retuned.
+// ALL DoA processing is skipped for RETUNE_DOA_MIN_HOLD_MS after it, and then
+// for as long as heimdall reports its post-retune cooldown
+// (WAITING_FOR_STABILITY: the compensation is reset to identity and the noise
+// source is still OFF, so doa_is_calibrating() can't see it). The calibration
+// that follows has the noise source on (doa_is_calibrating). The minimum covers
+// the ~20 ms between the new frequency appearing in the packet header and the
+// cooldown state. Was a fixed 4 s, sized for heimdall's former 3 s cooldown.
 static std::atomic<int64_t> g_last_retune_complete_ms{0};
-static constexpr int64_t RETUNE_DOA_HOLD_MS = 4000;
+static constexpr int64_t RETUNE_DOA_MIN_HOLD_MS = 500;
+static constexpr uint32_t PHASE_STATE_WAITING_FOR_STABILITY = 5;  // heimdall PhaseCompensatorState
 
 static inline int64_t steady_now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
+// Called per packet right after updatePhaseCalibrationStatus(), so the state
+// is THIS packet's
 static inline bool doa_retune_hold_active() {
+    if (scanner_manager.getPhaseState() == PHASE_STATE_WAITING_FOR_STABILITY) return true;
     const int64_t t = g_last_retune_complete_ms.load(std::memory_order_relaxed);
-    return t != 0 && (steady_now_ms() - t) < RETUNE_DOA_HOLD_MS;
+    return t != 0 && (steady_now_ms() - t) < RETUNE_DOA_MIN_HOLD_MS;
 }
 
 
@@ -198,8 +207,10 @@ void DataReceiver::data_receiver_thread() {
                 // Track phase calibration state changes for logging
                 static uint32_t last_phase_state = 0;
                 if (phase_comp_state != last_phase_state) {
-                    const char* state_names[] = {"WAITING_LAG", "MEASURING", "WAITING_STABILITY", "APPLYING", "VERIFYING", "CONVERGED"};
-                    const char* state_name = (phase_comp_state < 6) ? state_names[phase_comp_state] : "UNKNOWN";
+                    // heimdall PhaseCompensatorState order
+                    const char* state_names[] = {"WAITING_LAG", "MEASURING", "APPLYING", "VERIFYING",
+                                                 "CONVERGED", "WAITING_STABILITY", "MEASURING_PER_BIN"};
+                    const char* state_name = (phase_comp_state < 7) ? state_names[phase_comp_state] : "UNKNOWN";
                     cout << "Phase calibration: " << state_name << endl;
                     last_phase_state = phase_comp_state;
                 }
@@ -254,9 +265,8 @@ void DataReceiver::data_receiver_thread() {
                 // Update frequency change counter tracking. Also arms the DoA
                 // retune hold: the retuning_in_progress pulse can fall entirely
                 // between packets (a tuner reprogram takes ~10-50 ms), but the
-                // counter bump is always visible - and the ~3 s post-retune
-                // cooldown that follows streams settling data with the noise
-                // source OFF, which doa_is_calibrating() alone cannot cover.
+                // counter bump is always visible (the post-retune cooldown
+                // after it is held on heimdall's phase state).
                 if (!first_packet && frequency_change_counter != last_frequency_change_counter) {
                     cout << "Server frequency change detected! Counter: " << last_frequency_change_counter
                          << " → " << frequency_change_counter
@@ -306,9 +316,8 @@ void DataReceiver::data_receiver_thread() {
                 // packet - unlike retuning_in_progress (a pulse that can fall
                 // entirely between packets) or frequency_change_counter (only
                 // bumped by scanner group changes), both of which proved
-                // unreliable for plain retunes. Covers heimdall's ~3 s
-                // post-retune cooldown, which streams settling data with the
-                // noise source OFF (so doa_is_calibrating() can't see it).
+                // unreliable for plain retunes. The hold then follows
+                // heimdall's post-retune cooldown state (doa_retune_hold_active).
                 {
                     static float last_ref_freq_hz = 0.0f;
                     const float ref_freq_hz = ch_freq_hz[0];
@@ -317,7 +326,7 @@ void DataReceiver::data_receiver_thread() {
                         g_last_retune_complete_ms.store(steady_now_ms(), std::memory_order_relaxed);
                         cout << "[DoA] Reference frequency changed ("
                              << last_ref_freq_hz / 1e6f << " -> " << ref_freq_hz / 1e6f
-                             << " MHz) - holding DoA for " << RETUNE_DOA_HOLD_MS << " ms" << endl;
+                             << " MHz) - holding DoA until heimdall recalibrates" << endl;
                     }
                     if (ref_freq_hz != 0.0f) last_ref_freq_hz = ref_freq_hz;
                 }
@@ -480,6 +489,40 @@ void DataReceiver::decimation_processor_thread() {
         // This allows scanner to avoid checking for signal loss during calibration
         scanner_manager.updatePhaseCalibrationStatus(raw_packet.phase_compensation_state,
                                                     raw_packet.noise_source_active);
+
+        // Push calibration-state / noise-flag changes to the browsers at once
+        // (the system_status broadcast is every 500 ms - the "(Noise On)"
+        // badge lagged a ~0.4 s retune calibration by up to half a second).
+        {
+            static uint32_t last_cal = 0xFFFFFFFFu;
+            const uint32_t cal = (raw_packet.phase_compensation_state << 1) | (raw_packet.noise_source_active ? 1u : 0u);
+            if (cal != last_cal) {
+                last_cal = cal;
+                WebSocketServer::broadcast_json_message(
+                    "{\"cal_live\":{\"phase_state\":" + to_string(raw_packet.phase_compensation_state) +
+                    ",\"noise_source\":" + (raw_packet.noise_source_active ? "true" : "false") + "}}");
+            }
+        }
+
+        // Noise source switched on/off: restart the spectrum averaging so the
+        // display jumps to the new state. The EMA works in dB, so a strong
+        // antenna signal took ~3 frames (~150 ms) to sink into the noise-source
+        // spectrum and the noise ~2 to clear - a third of a ~0.4 s retune
+        // calibration burst showed the signal "with the noise on". The flag
+        // trails the samples by 0-2 packets, so this packet is already the
+        // new state. Queued items from before the switch are dropped: they
+        // would consume the reset (see the retune reset above).
+        {
+            static bool last_noise = false;
+            const bool noise = raw_packet.noise_source_active != 0;
+            if (noise != last_noise) {
+                last_noise = noise;
+                fft_reset_generation.fetch_add(1, std::memory_order_release);
+                FFTWorkItem stale_item;
+                while (fft_work_queue.try_dequeue(stale_item)) {
+                }
+            }
+        }
 
 
         int current_active = static_cast<int>(active_channel.load(std::memory_order_relaxed));

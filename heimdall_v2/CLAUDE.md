@@ -358,6 +358,22 @@ Gain is measured (for display) but deliberately not corrected - see below.
    remaining phase into the vector.
 5. **CONVERGED**: Phase drift within threshold (±1°)
 
+**Retune recalibration timing** (re-measured 2026-10-02, 8091 stream): a
+retune/gain/side/ring change runs the `STABILITY_DELAY_MS` (3000 ms) cooldown
+with the noise OFF -> noise on -> `NOISE_SETTLE_MS` (250 ms, was 1000) gate ->
+3 snapshots -> verify: ~3.5 s total (was 4.3 s). The cooldown is a DEBOUNCE
+kept at 3 s by choice (each retune restarts it, so a drag calibrates once at
+the end and slow tuning doesn't flash the noise source between steps) -
+nothing physical needs it: with the noise source on during the cooldown, the
+tuner phases sit within 0.2-0.4° of final from the first 50 ms after 1 / 30 /
+400 MHz steps, and a 500 ms cooldown recalibrates in ~1.0 s with the same
+Check Calibration residual (0.25° vs 0.20° - the check's rounding). The noise
+reaches the stream in the first packet after the flag flips, at full power,
+and the phases settle within ~20 ms. Runtime override: control port
+`set_stability_delay` (100-10000 ms; the continuous scanner uses 500 while it
+runs). The DoA client holds DoA on heimdall's WAITING_FOR_STABILITY state (min
+500 ms) and the noise flag (+250 ms) instead of a fixed 4 s.
+
 **Why phase-only**: introduced 2026-09-29 while the IF VGA was under the RTL2832
 AGC, when each dongle's gain hunted by up to ~2.5 dB between 16k-sample
 snapshots and the former gain correction (averaged from 3 snapshots) locked in

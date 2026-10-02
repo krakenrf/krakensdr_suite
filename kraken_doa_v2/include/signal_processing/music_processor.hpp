@@ -203,7 +203,13 @@ public:
     int getNumElements() const { return num_elements_; }
 
     // 2D MUSIC support (elevation estimation for 3D arrays)
-    bool is3DArray() const { std::lock_guard<std::mutex> l(config_mutex_); return is_3d_array_; }
+    // True while the azimuth x elevation search is in use: CUSTOM topology with
+    // z spread. is_3d_array_ alone describes the saved custom positions and
+    // stayed true after switching to UCA/ULA (the UI kept its elevation plot).
+    bool is3DArray() const {
+        std::lock_guard<std::mutex> l(config_mutex_);
+        return current_topology == ArrayTopology::CUSTOM && is_3d_array_;
+    }
     Eigen::VectorXd getElevationPseudospectrum() const;
     std::pair<int, int> getPeakAzimuthElevation() const;  // Returns (azimuth_deg, elevation_deg)
     int getNumElevationAngles() const { std::lock_guard<std::mutex> l(config_mutex_); return num_elevation_angles_; }

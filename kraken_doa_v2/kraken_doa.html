@@ -1460,7 +1460,9 @@ class WaterfallDisplay {
   }
 
   // Add new FFT line to waterfall (scrolls existing data down)
-  addLine(frequencies, magnitudes) {
+  // noiseOn: the noise source is on (calibration burst) - the row gets an
+  // orange marker in the left margin
+  addLine(frequencies, magnitudes, noiseOn) {
     if (!this.initialized || !this.imageData || frequencies.length < 2) return;
 
     this.lastFrequencies = frequencies;
@@ -1523,6 +1525,12 @@ class WaterfallDisplay {
       data[offset + 1] = g;
       data[offset + 2] = b;
       data[offset + 3] = 255;
+    }
+    if (noiseOn && this.plotLeft >= 4) {
+      for (let px = Math.max(0, this.plotLeft - 8); px < this.plotLeft - 2; px++) {
+        const o = px * 4;
+        data[o] = 255; data[o + 1] = 152; data[o + 2] = 0; data[o + 3] = 255;
+      }
     }
     for (let line = 1; line < linesToScroll; line++) {
       data.copyWithin(line * rowSize, 0, rowSize);
@@ -1746,6 +1754,9 @@ function updateWaterfallRange() {
 // Auto-range state
 let autoRangeEnabled = true;
 let autoRangeInterval = null;
+// Noise source state (updateCalIndicator: cal_live + system_status) for the
+// waterfall's calibration-burst marker and the auto-range hold
+let noiseLive = false, noiseOffAt = 0;
 
 // Toggle continuous auto-range
 function toggleAutoRange(enabled) {
@@ -1768,6 +1779,11 @@ function toggleAutoRange(enabled) {
 // Auto-range: find min/max from current FFT data to maximize dynamic range
 function autoRangeWaterfall() {
   if (!autoRangeEnabled) return;
+  // Hold the colour range through a calibration burst (+1 s): a frame with the
+  // noise source on has no antenna signals, so ranging on it collapsed the
+  // scale - the waterfall went red for up to 500 ms (the tick) past the burst,
+  // over rows that already showed the antennas again.
+  if (noiseLive || Date.now() - noiseOffAt < 1000) return;
 
   // Get current FFT data from the plot
   if (!fftPlot || !fftPlot.data || fftPlot.data.length < 2) return;
@@ -4125,6 +4141,11 @@ function sto(t) {
   if(t==='CUSTOM') {
     drawCustomDiagram();
   }
+  // Elevation plots belong to the custom (3D) topologies; the next DoA frame
+  // says so too, but DoA may be off or squelched
+  if(t!=='CUSTOM' && t!=='PATCH3D') {
+    Object.keys(elevationPlots).forEach(id => { const el=$id(`el-container-${id}`); if(el) el.style.display='none'; });
+  }
   if(t==='PATCH3D') {
     // A click applies the layout (positions + its direction); a remote/replayed
     // selection only shows it - the positions arrive as CUSTOM_POSITIONS
@@ -5044,7 +5065,7 @@ function applyClip() {
 
     // Update waterfall with new FFT data
     if (waterfall && waterfall.initialized) {
-      waterfall.addLine(currentFrequencies, currentMagnitudes);
+      waterfall.addLine(currentFrequencies, currentMagnitudes, noiseLive);
       waterfall.drawOverlay(decimatorInfo, barCenterFreq(), activeDecimatorId);
     }
   }
@@ -5811,6 +5832,10 @@ function connect() {
           else if(msg.beamforming) {
             // Update beamforming UI state from server
             updateBeamformingStatus(msg.beamforming);
+          }
+          else if(msg.cal_live) {
+            updateCalIndicator(msg.cal_live.phase_state, msg.cal_live.noise_source, lastStatusWideband,
+                               msg.cal_live.phase_state === 5);
           }
           else if(msg.system_status) {
             // Update system status bar (calibration state, etc.)
@@ -7006,6 +7031,61 @@ function addTouchHandlers(el, down, move, up) {
     if (cooldownEndTime !== null) cooldownEndTime = Date.now() + 3000;
   }
 
+
+// Calibration badge + top-bar colour. Called from the 500 ms system_status and
+// from cal_live, which the backend pushes the moment a packet's phase state or
+// noise flag changes - the 500 ms cadence alone left "(Noise On)" showing for
+// up to half a second after a ~0.4 s retune calibration ended (the spectrum
+// already showed the antennas again).
+let lastStatusWideband = false;
+function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
+  if (noiseLive && !noiseOn) noiseOffAt = Date.now();
+  noiseLive = !!noiseOn;
+  const status = { phase_state: phaseState, noise_source: noiseOn, wideband: wideband, cooldown_active: cooldownActive };
+  const calEl = $id('status-calibration');
+  const topBar = document.querySelector('.top-bar');
+  if (calEl) {
+    // Phase states: 0=WAITING_FOR_LAG, 1=MEASURING, 2=APPLYING, 3=VERIFYING, 4=CONVERGED, 5=WAITING_FOR_STABILITY (Cooldown)
+    const phaseStateNames = {'0': 'Waiting', '1': 'Measuring', '2': 'Applying', '3': 'Verifying', '4': 'Converged', '5': 'Cooldown'};
+    const phaseStateColors = {'0': '#555', '1': '#ff9800', '2': '#2196f3', '3': '#9c27b0', '4': '#4caf50', '5': '#ff5722'};
+
+    const stateIdx = (status.phase_state !== undefined ? status.phase_state : 0).toString();
+    const stateName = phaseStateNames[stateIdx] || 'Unknown';
+    const stateColor = phaseStateColors[stateIdx] || '#555';
+
+    if (status.wideband) {
+      calEl.textContent = 'Disabled';
+      calEl.style.background = '#333';
+      calEl.style.color = '#888';
+    } else {
+      calEl.textContent = stateName + (status.noise_source ? ' (Noise On)' : '');
+      calEl.style.background = stateColor;
+      calEl.style.color = '#fff';
+    }
+
+    // Update top bar background color based on calibration state
+    if (topBar) {
+      topBar.classList.remove('cal-uncalibrated', 'cal-measuring', 'cal-calibrated', 'cal-cooldown');
+      if (status.wideband) {
+        // Wideband mode - no calibration state coloring
+      } else if (status.phase_state === 4) {
+        // Converged - green
+        topBar.classList.add('cal-calibrated');
+      } else if (status.phase_state === 5 || status.cooldown_active) {
+        // Cooldown - orange
+        topBar.classList.add('cal-cooldown');
+      } else if (status.phase_state === 1 || status.phase_state === 2 || status.phase_state === 3) {
+        // Measuring/Applying/Verifying - yellow/amber
+        topBar.classList.add('cal-measuring');
+      } else {
+        // Waiting or unknown - red (uncalibrated)
+        topBar.classList.add('cal-uncalibrated');
+      }
+    }
+  }
+
+}
+
   function updateSystemStatus(status) {
     // KerberosSDR manual-calibration warnings (heimdall --kerberos). The
     // server never recalibrates automatically there: warn when uncalibrated
@@ -7081,48 +7161,9 @@ function addTouchHandlers(el, down, move, up) {
       }
     }
 
-    // Update calibration indicator
-    const calEl = $id('status-calibration');
-    const topBar = document.querySelector('.top-bar');
-    if (calEl) {
-      // Phase states: 0=WAITING_FOR_LAG, 1=MEASURING, 2=APPLYING, 3=VERIFYING, 4=CONVERGED, 5=WAITING_FOR_STABILITY (Cooldown)
-      const phaseStateNames = {'0': 'Waiting', '1': 'Measuring', '2': 'Applying', '3': 'Verifying', '4': 'Converged', '5': 'Cooldown'};
-      const phaseStateColors = {'0': '#555', '1': '#ff9800', '2': '#2196f3', '3': '#9c27b0', '4': '#4caf50', '5': '#ff5722'};
-
-      const stateIdx = (status.phase_state !== undefined ? status.phase_state : 0).toString();
-      const stateName = phaseStateNames[stateIdx] || 'Unknown';
-      const stateColor = phaseStateColors[stateIdx] || '#555';
-
-      if (status.wideband) {
-        calEl.textContent = 'Disabled';
-        calEl.style.background = '#333';
-        calEl.style.color = '#888';
-      } else {
-        calEl.textContent = stateName + (status.noise_source ? ' (Noise On)' : '');
-        calEl.style.background = stateColor;
-        calEl.style.color = '#fff';
-      }
-
-      // Update top bar background color based on calibration state
-      if (topBar) {
-        topBar.classList.remove('cal-uncalibrated', 'cal-measuring', 'cal-calibrated', 'cal-cooldown');
-        if (status.wideband) {
-          // Wideband mode - no calibration state coloring
-        } else if (status.phase_state === 4) {
-          // Converged - green
-          topBar.classList.add('cal-calibrated');
-        } else if (status.phase_state === 5 || status.cooldown_active) {
-          // Cooldown - orange
-          topBar.classList.add('cal-cooldown');
-        } else if (status.phase_state === 1 || status.phase_state === 2 || status.phase_state === 3) {
-          // Measuring/Applying/Verifying - yellow/amber
-          topBar.classList.add('cal-measuring');
-        } else {
-          // Waiting or unknown - red (uncalibrated)
-          topBar.classList.add('cal-uncalibrated');
-        }
-      }
-    }
+    // Update calibration indicator (also pushed on every change: cal_live)
+    lastStatusWideband = !!status.wideband;
+    updateCalIndicator(status.phase_state, status.noise_source, status.wideband, status.cooldown_active);
 
     // Update cooldown indicator (state 5 = WAITING_FOR_STABILITY).
     // The backend only reports that the cooldown is active (phase_state 5),
