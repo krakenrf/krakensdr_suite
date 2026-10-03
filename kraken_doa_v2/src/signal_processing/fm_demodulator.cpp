@@ -41,6 +41,9 @@ FMDemodulatorRobust::FMDemodulatorRobust() : audio_ring_buffer(AUDIO_RING_BUFFER
 }
 
 void FMDemodulatorRobust::setDemodulatorMode(DemodulatorMode mode) {
+    // DIGITAL: the audio is the digital decoder's; this path keeps running
+    // (as NBFM) because its output length is what clocks the audio stream
+    if (mode == DemodulatorMode::DIGITAL) mode = DemodulatorMode::NBFM;
     if (mode != current_mode.load()) {
         current_mode = mode;
         need_filter_recreation = true;

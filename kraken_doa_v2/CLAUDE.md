@@ -275,6 +275,139 @@ Edit `include/config.hpp`:
   element count. The receiver passes its layout as URL params `shape`, `ls`
   (size mm), `lh` (height mm)
 
+**Digital voice/data decoders (`src/digital/`, one per VFO):**
+- `DigitalDecoder` (digital_decoder.hpp) hangs off a `DecimatorInstance`
+  (`digital`, created on first use, `digital_mode` mirrors the mode). The
+  decimation pass pushes the VFO's decimated samples (the beamformer output
+  when beamforming ran for it, else the listened-to channel - the same stream
+  FM audio gets) with `push()`; a worker thread ("digital-dec") per decoder
+  does all DSP, so the pipeline never waits. Queue capped at 1 s (oldest
+  dropped, `dropped` in the status). In FM/digital-only mode (DoA and
+  beamforming off) only the FM source and the VFOs with a decoder are
+  decimated, on one channel (`fm_only` in data_receiver.cpp)
+- Front end (`Engine`, digital_decoder.cpp): AFC mixer -> 48 kHz (FM
+  discriminator, 12.5 kHz channel filter) for the 4FSK/GMSK receivers and
+  72 kHz (RRC 0.35, 4 samples/symbol) for TETRA. A VFO retune (> 100 Hz) or a
+  mode change resets everything (`reset_pending_` is consumed by the worker)
+- Receivers (`dig_protocols.hpp`) are sync-driven - nothing is reported
+  unless its own FEC/CRC passed, which is what AUTO detection counts
+  (majority of valid frames in a 4 s window):
+  - `Fsk4Receiver` (dig_fsk.cpp): P25 on an integrate-and-dump filtered
+    discriminator, DMR on RRC 0.2; normalized sync correlation per sample,
+    the sync's own +-3 symbols give timing, level and centre (= carrier
+    offset), no symbol-timing loop. DMR voice bursts B..F (no sync) are
+    decoded at positions extrapolated from the last sync. DMR data sync =
+    voice sync with every symbol negated (`^ 0xAAAA...`, NOT `~`)
+  - `P25Proto` (dig_p25.cpp): NID BCH(63,16) by table search, TSBK (rate 1/2
+    trellis + CRC), LDU1/LDU2 (Hamming(10,6) + RS(24,12)/(24,16)), HDU
+    (Golay(18,6) + RS(36,20)), TDULC (Golay(24,12) + RS(24,12)), PDU header.
+    IDEN_UP tables turn channel numbers into MHz
+  - `DmrProto` (dig_dmr.cpp): CACH TACT (timeslot), slot type Golay(20,8)
+    (max 2 corrections - a third of random words are within 3), BPTC(196,96)
+    voice LC header / terminator (RS(12,9)), CSBK, PI and data headers, EMB
+    QR(16,7) + embedded LC, GPS and talker alias LCs. Control-channel chatter
+    (Aloha, broadcasts, acks) only with the verbose option
+  - `DstarReceiver` (dig_dstar.cpp): RF header (scrambler, 24-column
+    interleaver, K=3 Viterbi, CRC-16/X.25), slow data (text message, GPS /
+    DPRS, header copy), end pattern
+  - `NxdnReceiver` (dig_nxdn.cpp): NXDN96 (4800 Bd, 10 sps) and NXDN48
+    (2400 Bd, 20 sps) searched at once, each on its own RRC 0.2 filter;
+    10-symbol FSW (0.88 threshold), whole-frame descrambler (negates
+    symbols), LICH (8 bits on the first bit of 8 symbols, second bits 1,
+    even parity of bits 7..4), SACCH (5x12 interleave, puncture every 6th
+    from 5, K=5 G 0x19/0x17, CRC-6 0x27) and FACCH1 (9x16, every 4th from 1,
+    CRC-12 0x80F). A SACCH counts only when it follows the previous good one
+    exactly one frame later (CRC-6 alone passes 1 random word in 64);
+    FACCH1 counts alone. Layer 3: VCALL (unit/TG, cipher), TX_REL, DCALL.
+    Voice: 4 (or 2) AMBE+2 frames per frame -> mbelib (nW..nZ). The
+    trunking control channel (RCCH/CAC) is not decoded
+  - `Mpt1327Receiver` (dig_mpt1327.cpp): MPT1327 / MPT1343 analogue
+    trunking signalling, 1200 bit/s FFSK (1 = 1200 Hz, 0 = 1800 Hz) on the
+    FM discriminator. Two sliding one-bit (40-sample) tone correlators; each
+    tone is normalized by its own running level (radio pre-emphasis makes
+    1800 Hz louder - without it the sync never correlated). Sync = 4
+    preamble bits + SYNC 0xC4D7 (control) / SYNT 0x3B28 (traffic), hard
+    match <= 2 bit errors. The SYNC is the CHECK FIELD of the control
+    channel system codeword (CCSC = 0, SYS 15 bits, CCS, 0xAAAA), so the
+    CCSC starts 44 bits before the pattern; the address codeword (message)
+    follows it. Codewords: 48 bits + BCH(63,48) g 0xE815 with the last check
+    bit inverted + even parity; single-bit errors corrected. Messages: GTC
+    grants (type < 256), Aloha variants, ACK*, AHOY*, status, CLEAR, MOVE,
+    BCAST (SYSDEF), data headers; idents shown prefix-ident. Validated on
+    a live NZ control channel (SYS 0x42E1, ~96 % of slots); GTC field
+    positions follow sdrtrunk and have not been seen live yet
+  - `TetraReceiver` (dig_tetra.cpp): differential detection, 4th-power
+    frequency estimate, slot sync from the training sequences (both spectral
+    orientations tried), BSCH (MCC/MNC/colour code -> scrambling code), BNCH
+    SYSINFO, AACH (Reed-Muller), SCH/F and SCH/HD MAC-RESOURCE with the
+    MM/CMCE PDU type of clear signalling
+- FEC/CRC library: `dig_fec.cpp` (small block codes are decoded by
+  exhaustive nearest-codeword search; RS over GF(64) is Berlekamp-Massey;
+  generic soft Viterbi)
+- Report (`dig_report.hpp`): per-protocol "facts" table (key, value, age)
+  and an event log (400 entries, identical texts de-duplicated per window).
+  `MessageBuilders::build_digital_message()` pushes `{"digital":[...]}` on
+  TOPIC_CTL at 4 Hz (only while a decoder is on), with only the events since
+  the previous push; `DIGITAL_HISTORY:id` replies with the whole log,
+  `DIGITAL_CLEAR:id` empties it
+- WS commands: `DIGITAL_MODE:id:mode`, `DIGITAL_OPT:id:verbose|invert|
+  dmr_slot|p25_nac:value`. Both persisted as two extra fields of the
+  `DECIMATORS:` snapshot entry (`mode,v/slot/nac/inv`; older 7-field entries
+  still load)
+- Bandwidth: 4FSK/GMSK need a VFO of >= 12 kHz, TETRA and AUTO >= 24 kHz
+  (the panel warns and offers "Set 24 kHz")
+- Offline test harness: `tools/digi_test.cpp` (not part of the build; reads
+  rtl_sdr u8, IQ WAV or DSDcc discriminator files):
+  `g++ -std=c++20 -O2 -Iinclude tools/digi_test.cpp src/digital/*.cpp -lliquid`
+- Validated on live P25 (VFO on a trunked control channel + its voice
+  channel) and DMR Tier III here, and on recordings for TETRA, D-STAR, DMR
+  and P25. CPU: ~4.5 % of a Pi 5 core per decoder in AUTO
+
+**Digital voice (`dig_vocoder.cpp`, Demod "Digital"):**
+- `DemodulatorMode::DIGITAL`: the FM thread still runs the FM demodulator
+  (as NBFM - `setDemodulatorMode` maps it) only because its output length
+  clocks the audio stream; for a DIGITAL Audio Src VFO the samples are then
+  replaced by `DigitalDecoder::pull_voice()` (silence when there is none) and
+  squelch is skipped. `pull_voice` also marks the voice "wanted" for 0.5 s -
+  receivers run their vocoders only then (`RxContext::voice_wanted`).
+  `SET_DECIMATOR_DEMOD:id:DIGITAL` switches the VFO's decoder to AUTO if off
+- Voice FIFO (digital_decoder.cpp): 8 kHz vocoder output -> slow AGC (tanh
+  limited) -> 6x interpolation -> 48 kHz FIFO; playback starts at 250 ms
+  buffered (frames arrive in bursts, a P25 LDU = 180 ms) or once the input
+  stops for 300 ms (a call's tail), re-prefills after an underrun
+- P25: `ImbeDecoder`, a port of mbelib's IMBE 7200x4400 (ISC; tables in
+  `mbe_tables.hpp` with the notice) - Golay/Hamming + PN, parameter decoding,
+  mbelib's synthesis with a per-instance RNG (mbelib uses rand()). Verified
+  against libmbe on the same frames: correlation 0.9987 with the same random
+  sequence (`-DDIG_IMBE_TEST_RAND` switches the RNG for that test). The 9
+  frames of an LDU sit at status-free dibit offsets 56,128,220,...,768 and
+  are deinterleaved with DSD's iW..iZ (ISC). Muted when the HDU/LDU2 ALGID
+  isn't 0x80 or the LC "protected" bit is set
+- DMR / D-STAR / NXDN: `MbeLib` dlopens `$KRAKEN_MBELIB` / libmbe.so.1 at first use
+  (`KRAKEN_MBELIB=none` disables it)
+  (no AMBE code shipped or linked); `AmbeStream` keeps a per-stream state in
+  3 x 4 KB blocks (mbe_parms is ~1.2 KB). DMR: 3 AMBE+2 frames per voice
+  burst (frame 2 straddles the sync/EMB), rW..rZ tables, one slot played at a
+  time (options slot, else the first to talk until quiet for 1 s), muted on
+  the EMB/LC privacy bit; a burst with no clean frame is not played (false
+  syncs). D-STAR: 21 AMBE frames per superframe (frame 0 is before the data
+  sync), dW/dX tables, stops at the end pattern
+- TETRA: `TetraCodec` runs the ETSI programs as `cdecoder /dev/stdin
+  /dev/stdout | sdecoder ...` (posix_spawn, non-blocking pipes, 690-word
+  test-frame blocks of descrambled type-4 soft bits). Full-slot traffic
+  (AACH usage marker >= 4, training sequence 1) of one timeslot; after 400 ms
+  without traffic, erasure blocks flush the pipes' stdio buffers. Muted for
+  60 s after any encrypted MAC-RESOURCE. ~0.5 s extra latency (pipe buffers)
+- Status JSON: `voice:{listening,state}` and `codecs:{IMBE,AMBE,AMBE_ok,
+  ACELP,ACELP_ok}`; the panel shows them with a "🔊 Listen" button (Audio
+  Src + Digital + audio on)
+- Docker: the entrypoint exports `KRAKEN_MBELIB` / `KRAKEN_TETRA_CODEC_DIR`
+  when `/data/codecs` holds libmbe.so.1 / cdecoder + sdecoder
+- Tested: offline (regression incl. voice), through the real Opus audio
+  stream with a fake heimdall replaying recordings of all four, and live:
+  DMR Tier III traffic-channel speech here; P25 calls here are AES-256 and
+  are correctly muted
+
 **Web Mapper output (built-in, replaces web_mapper_middleware):**
 - `src/networking/web_mapper.cpp` streams one legacy "doapost" record per VFO
   to the KrakenSDR web mapper — the record is built from the SAME capture

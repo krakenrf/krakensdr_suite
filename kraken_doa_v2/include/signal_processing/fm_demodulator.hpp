@@ -14,7 +14,9 @@
 enum class DemodulatorMode {
     WBFM,   // Wideband FM (broadcast FM, 75kHz deviation)
     NBFM,   // Narrowband FM (voice comms, ~5kHz deviation)
-    AM      // Amplitude Modulation (envelope detection)
+    AM,     // Amplitude Modulation (envelope detection)
+    DIGITAL // Decoded digital voice from the VFO's digital decoder (the FM
+            // path runs as NBFM only to clock the audio; its output is replaced)
 };
 
 class FMDemodulatorRobust {

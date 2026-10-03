@@ -365,6 +365,24 @@ sheet), shows the usable frequency range of an existing array, draws
 top/side/3D views with coordinates, and can push the result into the
 receiver. See `kraken_doa_v2/CLAUDE.md`
 
+**Digital voice/data decoders (per VFO)**: `kraken_doa_v2/src/digital/`
+- Each decimator (VFO) can run a digital decoder: P25 Phase 1, DMR, TETRA
+  (downlink), D-STAR, NXDN (48 and 96) and MPT1327 (analogue trunking
+  signalling), or AUTO (all at once; the protocol whose frames pass FEC/CRC
+  wins). Sidebar "🔐 Digital Decoder" panel; WS
+  `DIGITAL_MODE:id:OFF|AUTO|P25|DMR|TETRA|DSTAR|NXDN|MPT1327`, `DIGITAL_OPT:id:key:value`;
+  persisted in the VFO snapshot. See `kraken_doa_v2/CLAUDE.md` for the design
+- Voice: Demod "Digital" (or the panel's Listen button) on the Audio Src VFO
+  plays the decoded voice. P25 IMBE is built in (port of mbelib, ISC); DMR /
+  D-STAR / NXDN AMBE use a user-installed mbelib (dlopen, `KRAKEN_MBELIB`), TETRA
+  ACELP the user-built ETSI codec programs (`tetra-cdecoder` /
+  `tetra-sdecoder` on PATH or `KRAKEN_TETRA_CODEC_DIR`) - neither is shipped
+  (licensing); README "Digital voice codecs" has the install steps. Docker:
+  files in `docker-data/codecs/` are picked up by the entrypoint. Encrypted
+  calls are muted
+- Fed from the VFO's decimated stream (beamformer output when beamforming
+  runs), so DoA, beamforming and decoding can run on the same signal
+
 **Web Mapper output (built-in)**:
 - The DoA client streams legacy "doapost" records to the KrakenSDR web mapper
   directly (`kraken_doa_v2/src/networking/web_mapper.cpp`) — the old Node.js

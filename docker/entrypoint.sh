@@ -25,6 +25,8 @@
 #   USB_WAIT        seconds to wait for them (default 45, then start anyway)
 #   WAIT_TIMEOUT    seconds kraken_doa waits for convergence before starting
 #                   anyway (default 300; 0 = forever)
+#   /data/codecs    optional self-built digital voice codecs: libmbe.so.1
+#                   (DMR / D-STAR), cdecoder + sdecoder (TETRA) - see README
 set -euo pipefail
 
 APP=/opt/krakensdr
@@ -139,6 +141,14 @@ run_kraken_doa() {
     link_files "$DATA/kraken_doa" "$APP/kraken_doa_v2" \
         kraken_doa.html array_calculator.html opus-decoder.js opus-decoder.min.js
     cd "$DATA/kraken_doa"
+    # self-installed digital voice codecs (README "Digital voice codecs"):
+    # libmbe.so.1 and the ETSI TETRA cdecoder / sdecoder in /data/codecs
+    if [[ -z ${KRAKEN_MBELIB:-} && -e $DATA/codecs/libmbe.so.1 ]]; then
+        export KRAKEN_MBELIB=$DATA/codecs/libmbe.so.1
+    fi
+    if [[ -z ${KRAKEN_TETRA_CODEC_DIR:-} && -x $DATA/codecs/cdecoder && -x $DATA/codecs/sdecoder ]]; then
+        export KRAKEN_TETRA_CODEC_DIR=$DATA/codecs
+    fi
     ensure_cert
     wait_converged
     export KRAKEN_DOA_NO_TUI=1

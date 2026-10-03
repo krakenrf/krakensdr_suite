@@ -579,6 +579,14 @@ void WebSocketServer::web_server_main() {
                     }
                 }, 200, 200);
 
+                // Digital decoder status (VFOs with a decoder on) - 4 Hz
+                struct us_timer_t* digital_timer = us_create_timer(native_loop, 0, 0);
+                us_timer_set(digital_timer, [](struct us_timer_t* /*timer*/) {
+                    if (!global_ssl_app || !decimator_manager.anyDigitalActive()) return;
+                    auto msg = MessageBuilders::build_digital_message();
+                    if (!msg.empty()) global_ssl_app->publish(TOPIC_CTL, msg, uWS::TEXT, false);
+                }, 250, 250);
+
                 // System status timer - broadcasts every 500ms
                 struct us_timer_t* status_timer = us_create_timer(native_loop, 0, 0);
                 us_timer_set(status_timer, [](struct us_timer_t* /*timer*/) {

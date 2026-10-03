@@ -554,20 +554,26 @@ void DataReceiver::decimation_processor_thread() {
 
         // Process through all decimators in DecimatorManager (with parallelization)
         // Run decimators if DoA (MUSIC), FM, or beamforming needs processing
-        if ((music_needs_processing || fm_needs_processing || beamforming_needs_processing) && decimator_manager.getDecimatorCount() > 0) {
+        // Digital voice/data decoders consume their VFO's decimated stream
+        const bool digital_needs_processing = decimator_manager.anyDigitalActive();
+        if ((music_needs_processing || fm_needs_processing || beamforming_needs_processing || digital_needs_processing) &&
+            decimator_manager.getDecimatorCount() > 0) {
             // OPTIMIZED PIPELINE: Process decimation + MUSIC in single async tasks
             // This eliminates the synchronization barrier between decimation and MUSIC stages
-            // FM only (no MUSIC, no beamforming): the FM audio is the one
-            // consumer of decimated data - squelch reads the main FFT - so run
-            // just the FM source VFO, on just the listened-to channel. Every VFO
-            // used to decimate every element for nothing.
+            // FM / digital only (no MUSIC, no beamforming): the FM audio and the
+            // digital decoders are the only consumers of decimated data -
+            // squelch reads the main FFT - so run just the FM source VFO and
+            // the VFOs with a digital decoder, on just the listened-to channel.
+            // Every VFO used to decimate every element for nothing.
             const bool fm_only = !music_needs_processing && !beamforming_needs_processing;
             const int fm_source_id = decimator_manager.getFMDecimatorId();
             vector<shared_ptr<DecimatorManager::DecimatorInstance>> active_decimators;
             for (auto& inst : decimator_manager.getAllDecimators()) {
                 // Skip disabled or being-deleted decimators
                 if (!inst || !inst->enabled || inst->being_deleted.load(std::memory_order_relaxed)) continue;
-                if (fm_only && inst->id != fm_source_id) {
+                const bool single_wanted = (fm_needs_processing && inst->id == fm_source_id) ||
+                                           inst->digital_mode.load(std::memory_order_relaxed) != 0;
+                if (fm_only && !single_wanted) {
                     // Not decimated in this mode, but keep its FFT-method
                     // squelch indicator live (it reads the main FFT only)
                     if (inst->squelch_enabled.load(std::memory_order_relaxed) &&
@@ -889,6 +895,35 @@ void DataReceiver::decimation_processor_thread() {
                 }
             }
 
+            // Digital decoders: fed the same stream as the FM audio would be -
+            // the beamformer output when beamforming ran for this VFO (empty
+            // while FD-DAS fills: skip, never mix in raw blocks), else the
+            // listened-to channel. Before the FM queueing, which moves the
+            // beamformed samples out.
+            if (digital_needs_processing) {
+                for (auto& result : results) {
+                    const auto& inst = result.instance;
+                    if (!inst || inst->digital_mode.load(std::memory_order_relaxed) == 0) continue;
+                    if (result.decimated_data.channels.empty() || result.decimated_data.min_samples == 0) continue;
+                    auto dd = inst->getDigital();
+                    if (!dd) continue;
+                    const vector<complex<float>>* src = nullptr;
+                    if (result.beamformer_ran) {
+                        if (result.have_beamformed) src = &result.beamformed_samples;
+                    } else {
+                        int idx = (wideband_enabled || fm_only) ? 0 : current_active;
+                        if (idx < static_cast<int>(result.decimated_data.channels.size()))
+                            src = &result.decimated_data.channels[idx].samples;
+                    }
+                    if (!src || src->empty()) continue;
+                    int tuner = wideband_enabled ? inst->wideband_tuner_channel.load(std::memory_order_relaxed) : 0;
+                    if (tuner < 0 || tuner >= MAX_CHANNELS) tuner = 0;
+                    double rf = static_cast<double>(tuner_frequencies[tuner].load(std::memory_order_relaxed)) +
+                                result.decimated_data.freq_offset_hz;
+                    dd->push(src->data(), src->size(), result.decimated_data.output_rate_hz, rf);
+                }
+            }
+
             // Now queue FM data (after MUSIC is done to avoid data race)
             // If beamforming produced output, use that instead of single-channel data
             for (auto& result : results) {
@@ -1138,6 +1173,23 @@ void DataReceiver::fm_processor_thread() {
         }
 
         fm_demod.process_decimated_samples(std::move(work_item.decimated_samples), audio_samples);
+
+        // Digital demod: the FM output only sets how many samples this block
+        // is worth; the audio itself is the VFO's decoded digital voice
+        // (silence when there is none). Squelch doesn't apply - the decoder
+        // only produces audio for valid voice frames.
+        if (!audio_samples.empty()) {
+            auto src_dec = decimator_manager.getDecimator(decimator_manager.getFMDecimatorId());
+            if (src_dec && src_dec->demod_mode.load(std::memory_order_relaxed) == DemodulatorMode::DIGITAL) {
+                auto dd = src_dec->getDigital();
+                if (dd) dd->pull_voice(audio_samples.data(), audio_samples.size());
+                else std::fill(audio_samples.begin(), audio_samples.end(), 0.0f);
+                fm_demod.add_audio_samples(audio_samples);
+                global_stats.increment_operations(thread_idx);
+                global_stats.print_stats_if_time(thread_idx);
+                continue;
+            }
+        }
 
         if (!audio_samples.empty()) {
             // Check squelch for the FM source decimator - if enabled and closed, output silence

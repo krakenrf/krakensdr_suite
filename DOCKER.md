@@ -179,6 +179,8 @@ docker-data/kraken_doa/api_token              web UI API token (if used)
 docker-data/kraken_doa/server.crt/.key        TLS certificate (self-signed, made on first start)
 docker-data/kraken_doa/fft_wisdom.dat         FFTW plans (made on first start)
 docker-data/kraken_doa/doa_recordings/        DoA recordings
+docker-data/codecs/                           optional self-built voice codecs (libmbe.so.1,
+                                              cdecoder, sdecoder - README "Digital voice codecs")
 ```
 
 The containers run as root, so these files belong to root. Read them freely;

@@ -10,6 +10,7 @@
 #include "signal_processing/fm_demodulator.hpp"
 #include "signal_processing/beamformer.hpp"
 #include "signal_processing/beamformed_fft.hpp"
+#include "digital/digital_decoder.hpp"
 
 class DecimatorManager {
 public:
@@ -52,6 +53,18 @@ public:
         std::atomic<float> auto_eigen_freq{0.0f};   // VFO freq the floor was learned at
         std::atomic<int64_t> auto_eigen_reset_ms{0}; // steady_clock ms of the last reset
 
+        // Digital voice/data decoder (P25 / DMR / TETRA / D-STAR, see
+        // digital/digital_decoder.hpp). Created on first use and kept while
+        // the VFO lives (its worker thread idles when the mode is OFF). Set on
+        // the uWS loop, read by the pipeline: guarded by digital_mu.
+        mutable std::mutex digital_mu;
+        std::shared_ptr<dig::DigitalDecoder> digital;
+        std::atomic<int> digital_mode{0};   // dig::Mode, mirrors digital->mode()
+        std::shared_ptr<dig::DigitalDecoder> getDigital() const {
+            std::lock_guard<std::mutex> lk(digital_mu);
+            return digital;
+        }
+
         DecimatorInstance(int _id)
             : id(_id)
             , decimator(std::make_unique<SharedDecimator>())
@@ -74,6 +87,8 @@ private:
     std::atomic<int> next_id{0};
     std::atomic<int> fm_decimator_id{0}; // Which decimator feeds the FM demodulator
     std::atomic<double> last_process_ms_{0.0}; // Duration of the last decimation pass (see getLastProcessMs)
+    std::atomic<int> digital_active_{0};      // VFOs with a digital decoder on
+    void recountDigital();
     static constexpr int MAX_DECIMATORS = 16;
 
     // Beamforming config shared by every decimator's beamformer. Stored here so
@@ -128,6 +143,10 @@ public:
     bool setBandwidthIndex(int id, int index);
     bool setEnabled(int id, bool enabled);
     bool setDemodMode(int id, DemodulatorMode mode);
+    // Digital decoder of a VFO: mode OFF/AUTO/P25/DMR/TETRA/DSTAR and options
+    bool setDigitalMode(int id, dig::Mode mode);
+    bool setDigitalOptions(int id, const dig::Options& opts);
+    bool anyDigitalActive() const { return digital_active_.load(std::memory_order_relaxed) > 0; }
 
     // Squelch settings
     bool setSquelchEnabled(int id, bool enabled);
@@ -203,6 +222,8 @@ public:
         bool squelch_open;
         int squelch_method;            // 0 = FFT, 1 = EIGENVALUE
         float squelch_eigen_threshold;
+        int digital_mode;              // dig::Mode
+        dig::Options digital_opts;
     };
 
     std::vector<DecimatorInfo> getDecimatorInfoList() const;

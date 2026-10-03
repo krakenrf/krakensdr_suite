@@ -253,7 +253,10 @@ static string build_decimator_snapshot() {
         ss << d.frequency_offset_hz << "," << d.bandwidth_index << ","
            << DecimatorManager::demodModeToString(d.demod_mode) << ","
            << (d.squelch_enabled ? 1 : 0) << "," << d.squelch_level << ","
-           << d.squelch_method << "," << d.squelch_eigen_threshold;
+           << d.squelch_method << "," << d.squelch_eigen_threshold << ","
+           << dig::mode_name(static_cast<dig::Mode>(d.digital_mode)) << ","
+           << (d.digital_opts.verbose ? 1 : 0) << "/" << d.digital_opts.dmr_slot << "/"
+           << d.digital_opts.p25_nac << "/" << (d.digital_opts.invert ? 1 : 0);
     }
     return ss.str();
 }
@@ -281,6 +284,7 @@ static bool apply_decimator_snapshot(const string& snap) {
     struct Vfo {
         float offset_hz; int bw_index; DemodulatorMode demod;
         bool sq_en; float sq_db; int sq_method; float sq_eigen;
+        dig::Mode digital = dig::Mode::OFF; dig::Options dopts;
     };
     int fm_index;
     vector<Vfo> vfos;
@@ -293,11 +297,24 @@ static bool apply_decimator_snapshot(const string& snap) {
             array<string, 7> f;
             for (auto& tok : f)
                 if (!getline(es, tok, ',')) return false;
-            vfos.push_back({stof_finite(f[0]),
-                            std::clamp(stoi(f[1]), 0, NUM_BANDWIDTH_OPTIONS - 1),
-                            DecimatorManager::stringToDemodMode(f[2]),
-                            f[3] == "1", stof_finite(f[4]),
-                            std::clamp(stoi(f[5]), 0, 2), stof_finite(f[6])});
+            Vfo v{stof_finite(f[0]),
+                  std::clamp(stoi(f[1]), 0, NUM_BANDWIDTH_OPTIONS - 1),
+                  DecimatorManager::stringToDemodMode(f[2]),
+                  f[3] == "1", stof_finite(f[4]),
+                  std::clamp(stoi(f[5]), 0, 2), stof_finite(f[6]), dig::Mode::OFF, dig::Options{}};
+            // optional (newer files): digital decoder mode, options v/s/nac/inv
+            string tok;
+            if (getline(es, tok, ',')) v.digital = dig::mode_from_string(tok);
+            if (getline(es, tok, ',')) {
+                int a = 0, b = 0, c = -1, d = 0;
+                if (sscanf(tok.c_str(), "%d/%d/%d/%d", &a, &b, &c, &d) >= 3) {
+                    v.dopts.verbose = a != 0;
+                    v.dopts.dmr_slot = std::clamp(b, 0, 2);
+                    v.dopts.p25_nac = (c >= 0 && c <= 0xFFF) ? c : -1;
+                    v.dopts.invert = d != 0;
+                }
+            }
+            vfos.push_back(v);
         }
     } catch (const exception&) {
         return false;
@@ -325,6 +342,8 @@ static bool apply_decimator_snapshot(const string& snap) {
         decimator_manager.setSquelchLevel(id, v.sq_db);
         decimator_manager.setSquelchMethod(id, v.sq_method);
         decimator_manager.setSquelchEigenThreshold(id, v.sq_eigen);
+        if (v.digital != dig::Mode::OFF) decimator_manager.setDigitalOptions(id, v.dopts);
+        decimator_manager.setDigitalMode(id, v.digital);
     }
 
     if (fm_index < 0 || static_cast<size_t>(fm_index) >= n) fm_index = 0;
@@ -1481,6 +1500,15 @@ void ControlHandler::handle_message_impl(string_view message) {
             DemodulatorMode new_mode = DecimatorManager::stringToDemodMode(mode_str);
 
             if (decimator_manager.setDemodMode(id, new_mode)) {
+                // Digital voice needs the VFO's decoder: switch it on (auto
+                // detect) if it is off
+                if (new_mode == DemodulatorMode::DIGITAL) {
+                    auto inst = decimator_manager.getDecimator(id);
+                    if (inst && inst->digital_mode.load() == static_cast<int>(dig::Mode::OFF)) {
+                        decimator_manager.setDigitalMode(id, dig::Mode::AUTO);
+                        broadcast(MessageBuilders::build_decimator_info_message());
+                    }
+                }
                 // If this is the FM source decimator, apply the mode to the FM demodulator immediately
                 if (decimator_manager.getFMDecimatorId() == id) {
                     fm_demod.setDemodulatorMode(new_mode);
@@ -1496,6 +1524,66 @@ void ControlHandler::handle_message_impl(string_view message) {
                 record_decimator_snapshot();
             }
         }
+    }
+    else if (message.starts_with("DIGITAL_MODE:")) {
+        // Format: DIGITAL_MODE:id:OFF|AUTO|P25|DMR|TETRA|DSTAR - the VFO's
+        // digital voice/data decoder (persisted in the VFO snapshot)
+        string params = string(message.substr(13));
+        size_t colon_pos = params.find(':');
+        if (colon_pos == string::npos) throw CommandRejected("format: DIGITAL_MODE:id:mode");
+        int id = stoi(params.substr(0, colon_pos));
+        string mode_str = params.substr(colon_pos + 1);
+        dig::Mode mode = dig::mode_from_string(mode_str);
+        if (mode == dig::Mode::OFF && mode_str != "OFF") throw CommandRejected("unknown digital mode");
+        if (!decimator_manager.setDigitalMode(id, mode)) throw CommandRejected("no such decimator");
+        cout << "Decimator " << id << " digital decoder: " << dig::mode_name(mode) << endl;
+        broadcast(MessageBuilders::build_decimator_info_message());
+        record_decimator_snapshot();
+    }
+    else if (message.starts_with("DIGITAL_OPT:")) {
+        // Format: DIGITAL_OPT:id:key:value - verbose 0|1, dmr_slot 0|1|2,
+        // p25_nac <hex>|any, invert 0|1
+        string params = string(message.substr(12));
+        size_t c1 = params.find(':');
+        size_t c2 = c1 == string::npos ? string::npos : params.find(':', c1 + 1);
+        if (c2 == string::npos) throw CommandRejected("format: DIGITAL_OPT:id:key:value");
+        int id = stoi(params.substr(0, c1));
+        string key = params.substr(c1 + 1, c2 - c1 - 1), val = params.substr(c2 + 1);
+        auto inst = decimator_manager.getDecimator(id);
+        if (!inst) throw CommandRejected("no such decimator");
+        auto dd = inst->getDigital();
+        dig::Options o = dd ? dd->options() : dig::Options();
+        if (key == "verbose") o.verbose = val == "1";
+        else if (key == "invert") o.invert = val == "1";
+        else if (key == "dmr_slot") o.dmr_slot = std::clamp(stoi(val), 0, 2);
+        else if (key == "p25_nac") {
+            if (val.empty() || val == "any" || val == "-1") o.p25_nac = -1;
+            else {
+                size_t used = 0;
+                long v = stol(val, &used, 16);
+                if (used != val.size() || v < 0 || v > 0xFFF) throw CommandRejected("NAC must be 000-FFF (hex)");
+                o.p25_nac = static_cast<int>(v);
+            }
+        } else {
+            throw CommandRejected("unknown digital option");
+        }
+        decimator_manager.setDigitalOptions(id, o);
+        broadcast(MessageBuilders::build_decimator_info_message());
+        record_decimator_snapshot();
+    }
+    else if (message.starts_with("DIGITAL_HISTORY:")) {
+        // A page opening the decoder panel asks for the whole event log
+        int id = parse_int(message, 16);
+        broadcast(MessageBuilders::build_digital_message(id, true));
+    }
+    else if (message.starts_with("DIGITAL_CLEAR:")) {
+        int id = parse_int(message, 14);
+        auto inst = decimator_manager.getDecimator(id);
+        auto dd = inst ? inst->getDigital() : nullptr;
+        if (!dd) throw CommandRejected("no decoder on that decimator");
+        dd->report().clear_all();
+        dd->report().event(dig::Mode::AUTO, "Log cleared", 0.0);
+        broadcast(MessageBuilders::build_digital_message(id, true));
     }
     else if (message.starts_with("GET_DECIMATOR_INFO")) {
         // Send current decimator configuration to UI

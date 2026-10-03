@@ -213,6 +213,7 @@ bool DecimatorManager::removeDecimator(int id) {
     // Destruction (possibly deferred to the last holder) happens outside the
     // lock; SharedDecimator/MUSICProcessor clean up in their destructors.
     removed.reset();
+    recountDigital();
     std::cout << "Removed decimator with ID " << id << std::endl;
     return true;
 }
@@ -311,6 +312,36 @@ bool DecimatorManager::setDemodMode(int id, DemodulatorMode mode) {
         return true;
     }
     return false;
+}
+
+void DecimatorManager::recountDigital() {
+    std::lock_guard<std::mutex> lock(decimator_mutex);
+    int n = 0;
+    for (const auto& inst : decimators)
+        if (inst->digital_mode.load(std::memory_order_relaxed) != 0) n++;
+    digital_active_.store(n, std::memory_order_relaxed);
+}
+
+bool DecimatorManager::setDigitalMode(int id, dig::Mode mode) {
+    auto inst = getDecimator(id);
+    if (!inst) return false;
+    {
+        std::lock_guard<std::mutex> lk(inst->digital_mu);
+        if (!inst->digital && mode != dig::Mode::OFF) inst->digital = std::make_shared<dig::DigitalDecoder>();
+        if (inst->digital) inst->digital->set_mode(mode);
+        inst->digital_mode.store(static_cast<int>(mode), std::memory_order_relaxed);
+    }
+    recountDigital();
+    return true;
+}
+
+bool DecimatorManager::setDigitalOptions(int id, const dig::Options& opts) {
+    auto inst = getDecimator(id);
+    if (!inst) return false;
+    std::lock_guard<std::mutex> lk(inst->digital_mu);
+    if (!inst->digital) inst->digital = std::make_shared<dig::DigitalDecoder>();
+    inst->digital->set_options(opts);
+    return true;
 }
 
 bool DecimatorManager::setSquelchEnabled(int id, bool enabled) {
@@ -478,6 +509,7 @@ std::string DecimatorManager::demodModeToString(DemodulatorMode mode) {
         case DemodulatorMode::WBFM: return "WBFM";
         case DemodulatorMode::NBFM: return "NBFM";
         case DemodulatorMode::AM:   return "AM";
+        case DemodulatorMode::DIGITAL: return "DIGITAL";
         default: return "WBFM";
     }
 }
@@ -485,6 +517,7 @@ std::string DecimatorManager::demodModeToString(DemodulatorMode mode) {
 DemodulatorMode DecimatorManager::stringToDemodMode(const std::string& str) {
     if (str == "NBFM" || str == "nbfm") return DemodulatorMode::NBFM;
     if (str == "AM" || str == "am") return DemodulatorMode::AM;
+    if (str == "DIGITAL" || str == "digital") return DemodulatorMode::DIGITAL;
     return DemodulatorMode::WBFM;  // Default
 }
 
@@ -508,6 +541,9 @@ std::vector<DecimatorManager::DecimatorInfo> DecimatorManager::getDecimatorInfoL
         info.squelch_open = inst->squelch_open.load(std::memory_order_relaxed);
         info.squelch_method = inst->squelch_method.load(std::memory_order_relaxed);
         info.squelch_eigen_threshold = inst->squelch_eigen_threshold.load(std::memory_order_relaxed);
+        info.digital_mode = inst->digital_mode.load(std::memory_order_relaxed);
+        auto dd = inst->getDigital();
+        info.digital_opts = dd ? dd->options() : dig::Options();
 
         info_list.push_back(info);
     }

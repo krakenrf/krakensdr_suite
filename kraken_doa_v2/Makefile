@@ -3,7 +3,7 @@ CXX = g++
 CXXFLAGS = -std=c++20 -Ofast -Wall -Wextra -pthread
 INCLUDES = -Iinclude -IuWebSockets/src -IuWebSockets/uSockets/src -I/usr/include/eigen3
 LDFLAGS = -L/usr/local/lib
-LIBS = -lfftw3f -lliquid -lopus -lssl -lcrypto -lz -lsqlite3
+LIBS = -lfftw3f -lliquid -lopus -lssl -lcrypto -lz -lsqlite3 -ldl
 
 # Detect ARM architecture for NEON optimizations
 ARCH := $(shell uname -m)
@@ -51,6 +51,19 @@ NETWORKING_SRCS = \
 	$(SRCDIR)/networking/web_mapper.cpp \
 	$(SRCDIR)/networking/websocket_server.cpp
 
+DIGITAL_SRCS = \
+	$(SRCDIR)/digital/dig_fec.cpp \
+	$(SRCDIR)/digital/dig_report.cpp \
+	$(SRCDIR)/digital/dig_fsk.cpp \
+	$(SRCDIR)/digital/dig_p25.cpp \
+	$(SRCDIR)/digital/dig_dmr.cpp \
+	$(SRCDIR)/digital/dig_dstar.cpp \
+	$(SRCDIR)/digital/dig_nxdn.cpp \
+	$(SRCDIR)/digital/dig_mpt1327.cpp \
+	$(SRCDIR)/digital/dig_tetra.cpp \
+	$(SRCDIR)/digital/dig_vocoder.cpp \
+	$(SRCDIR)/digital/digital_decoder.cpp
+
 UTILS_SRCS = \
 	$(SRCDIR)/utils/ring_buffer.cpp \
 	$(SRCDIR)/utils/raw_data_buffer.cpp \
@@ -70,7 +83,7 @@ APP_SRCS = \
 	$(SRCDIR)/scanner_manager.cpp \
 	$(SRCDIR)/continuous_scanner.cpp
 
-ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(UTILS_SRCS) $(APP_SRCS)
+ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_SRCS) $(APP_SRCS)
 
 # Object files
 OBJS = $(ALL_SRCS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
@@ -79,8 +92,8 @@ OBJS = $(ALL_SRCS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
 DEPS = $(ALL_SRCS:$(SRCDIR)/%.cpp=$(DEPDIR)/%.d)
 
 # Create object and dependency directories
-OBJDIRS = $(OBJDIR) $(OBJDIR)/signal_processing $(OBJDIR)/networking $(OBJDIR)/utils
-DEPDIRS = $(DEPDIR) $(DEPDIR)/signal_processing $(DEPDIR)/networking $(DEPDIR)/utils
+OBJDIRS = $(OBJDIR) $(OBJDIR)/signal_processing $(OBJDIR)/networking $(OBJDIR)/digital $(OBJDIR)/utils
+DEPDIRS = $(DEPDIR) $(DEPDIR)/signal_processing $(DEPDIR)/networking $(DEPDIR)/digital $(DEPDIR)/utils
 
 .PHONY: all clean distclean install deps check-uws debug help print-% run status
 

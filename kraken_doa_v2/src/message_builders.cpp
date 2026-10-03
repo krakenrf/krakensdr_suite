@@ -20,6 +20,8 @@
 #include <chrono>
 #include <cstdio>
 #include <string>
+#include <map>
+#include <mutex>
 
 using namespace std;
 using namespace std::chrono;
@@ -746,9 +748,47 @@ string MessageBuilders::build_decimator_info_message() {
              << ",\"squelch_open\":" << (info.squelch_open ? "true" : "false")
              << ",\"squelch_method\":\"" << (info.squelch_method == 2 ? "EIGEN_AUTO" : (info.squelch_method == 1 ? "EIGEN" : "FFT")) << "\""
              << ",\"squelch_eigen_threshold\":" << info.squelch_eigen_threshold
+             << ",\"digital_mode\":\"" << dig::mode_name(static_cast<dig::Mode>(info.digital_mode)) << "\""
+             << ",\"digital_opts\":{\"verbose\":" << (info.digital_opts.verbose ? "true" : "false")
+             << ",\"dmr_slot\":" << info.digital_opts.dmr_slot
+             << ",\"p25_nac\":" << info.digital_opts.p25_nac
+             << ",\"invert\":" << (info.digital_opts.invert ? "true" : "false") << "}"
              << "}";
     }
     json << "]}";
 
+    return json.str();
+}
+
+// Digital decoder status of every VFO with a decoder on (or one VFO's full
+// history). Each push carries only the events logged since the previous push
+// for that VFO; a page that opens the panel asks for the history
+// (DIGITAL_HISTORY:id), and pages de-duplicate events by sequence number.
+string MessageBuilders::build_digital_message(int only_id, bool history) {
+    static std::mutex mu;
+    // VFO id -> (decoder, last event seq pushed); the decoder pointer resets
+    // the count when a VFO id is reused by a new decoder
+    static std::map<int, std::pair<const void*, uint64_t>> sent;
+    std::lock_guard<std::mutex> lk(mu);
+    stringstream json;
+    json << "{\"digital\":[";
+    bool first = true;
+    for (const auto& inst : decimator_manager.getAllDecimators()) {
+        if (!inst) continue;
+        if (only_id >= 0 && inst->id != only_id) continue;
+        auto dd = inst->getDigital();
+        if (!dd) continue;
+        if (only_id < 0 && dd->mode() == dig::Mode::OFF) continue;
+        auto& st = sent[inst->id];
+        if (st.first != dd.get()) st = {dd.get(), 0};
+        uint64_t after = history ? 0 : st.second;
+        if (!first) json << ",";
+        first = false;
+        json << "{\"id\":" << inst->id << ",\"history\":" << (history ? "true" : "false") << ","
+             << dd->status_json(after, history ? 400 : 100).substr(1);
+        if (!history) st.second = dd->last_event_seq();
+    }
+    json << "]}";
+    if (first) return "";
     return json.str();
 }
