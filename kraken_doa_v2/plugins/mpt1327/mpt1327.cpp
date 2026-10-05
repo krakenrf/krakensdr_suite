@@ -14,8 +14,8 @@
 // even parity bit; single-bit errors are corrected. Voice is analogue NBFM on
 // the traffic channels the control channel assigns.
 
-#include "digital/dig_protocols.hpp"
-#include "digital/dig_fec.hpp"
+#include "mpt1327.hpp"
+#include "dig_fec.hpp"
 
 #include <array>
 #include <cmath>

@@ -2,15 +2,18 @@
 
 // Digital voice/data decoder attached to ONE decimator (VFO).
 //
-// The decimation pipeline pushes this VFO's decimated samples (the listened-
-// to channel, or the beamformer output when beamforming runs) with push();
-// a worker thread resamples them to the demodulators' rates and runs the
-// protocol receivers (see dig_protocols.hpp). Mode AUTO runs every receiver
-// and reports the protocol whose frames pass FEC/CRC checks.
+// Every decoder is a plugin (plugins/<id>/, dig_plugin.hpp) - the protocols
+// that ship with the suite (P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG,
+// APRS) as well as ones written by hand or by the AI Signal Lab. The
+// decimation pipeline pushes this VFO's decimated samples (the listened-to
+// channel, or the beamformer output when beamforming runs) with push(); a
+// worker thread mixes them (AFC), resamples them to each plugin's rate and
+// streams them to the plugin processes. Mode AUTO runs every plugin that
+// declares auto_detect and reports the one whose frames pass their checks.
 //
-// Voice is not synthesized (DMR/D-STAR AMBE, P25 IMBE and TETRA ACELP are
-// not decoded); the decoders report the channel's signalling: identities,
-// talkgroups/callsigns, call activity, encryption, network/cell parameters.
+// The plugins report facts and events (Report) and decoded voice, which is
+// played through the voice FIFO here when the VFO is the audio source in
+// Digital demod mode.
 
 #include <atomic>
 #include <complex>
@@ -26,17 +29,21 @@
 
 namespace dig {
 
-class Engine;   // demodulators + receivers (digital_decoder.cpp)
+class Engine;   // plugin processes + front end (digital_decoder.cpp)
 
 class DigitalDecoder {
 public:
+    // threaded = false: offline tests - process() runs synchronously and
+    // waits for slow plugins instead of dropping samples
     explicit DigitalDecoder(bool threaded = true);
     ~DigitalDecoder();
     DigitalDecoder(const DigitalDecoder&) = delete;
     DigitalDecoder& operator=(const DigitalDecoder&) = delete;
 
-    void set_mode(Mode m);
+    // plugin = the plugin id for Mode::PLUGIN (plugins/<id>/)
+    void set_mode(Mode m, const std::string& plugin = "");
     Mode mode() const { return mode_.load(std::memory_order_relaxed); }
+    std::string plugin_id() const;
     void set_options(const Options& o);
     Options options() const;
 
@@ -45,23 +52,19 @@ public:
     void push(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz);
     // Synchronous processing (offline tests; threaded = false)
     void process(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz);
-    // Test hook: FM-discriminator samples (Hz) at 48 kHz straight into the
-    // FSK receivers (P25 / DMR / D-STAR)
-    void process_discriminator(const float* hz, size_t n);
+    // Offline tests: wait until the plugins have processed all input
+    void drain(int timeout_ms = 30000);
 
-    // {"mode":..,"detected":..,"state":..,"info":[..],"events":[..],...}
+    // {"mode":..,"detected":..,"state":..,"info":{..},"events":[..],...}
     // events: those with seq > events_after (at most max_events)
     std::string status_json(uint64_t events_after, size_t max_events) const;
     uint64_t last_event_seq() const { return report_.last_seq(); }
     Report& report() { return report_; }
 
-    // Recommended VFO rates (decimated sample rate, Hz)
-    static float min_rate_for(Mode m);
-
     // --- Decoded voice (Digital demod mode) ---
     // Audio thread: fill out[0..n) with 48 kHz voice (zeros where there is
     // none). Also marks the voice as wanted for the next ~0.5 s, which is
-    // what makes the receivers run their vocoders.
+    // what makes the plugins run their vocoders.
     void pull_voice(float* out, size_t n);
     // Decoder side (Engine): 8 kHz voice in
     void push_voice(const float* x8k, size_t n);
@@ -70,9 +73,10 @@ public:
 
 private:
     std::atomic<Mode> mode_{Mode::OFF};
-    std::atomic<bool> reset_pending_{false};   // set_mode -> worker resets the engine
+    std::atomic<bool> reset_pending_{false};   // set_mode -> worker reconfigures + resets
     mutable std::mutex opt_mu_;
     Options opts_;
+    std::string plugin_id_;            // Mode::PLUGIN (opt_mu_)
     Report report_;
     std::unique_ptr<Engine> engine_;   // only touched by the worker (or process())
 

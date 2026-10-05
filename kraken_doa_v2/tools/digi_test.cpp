@@ -1,9 +1,16 @@
-// Offline test harness for the digital decoders (not part of kraken_doa).
+// Offline test harness for the Digital Decoder (not part of kraken_doa): runs
+// the decoder plugins exactly as a VFO does (out of process, through the
+// same resampling), synchronously. Run from kraken_doa_v2 (plugins/), or set
+// KRAKEN_PLUGIN_DIR.
 //   digi_test MODE FORMAT FILE [--fs HZ] [--offset HZ] [--vfo-rate HZ] [--conj] [--verbose] [--seconds S]
-// MODE: AUTO P25 DMR TETRA DSTAR
+//                              [--opt plugin.key=value] [--voice out.wav]
+// MODE: AUTO, PLUGIN:<id>, or an old protocol name (P25 DMR TETRA DSTAR NXDN MPT1327)
 // FORMAT: u8 (rtl_sdr interleaved uint8 IQ, --fs required), wav (PCM IQ, 16/24 bit),
-//         dis (S16LE discriminator samples at 48 kHz, DSDcc test files), cf32
+//         dis (S16LE discriminator samples at 48 kHz, DSDcc test files - FM
+//         modulated again for the plugins), cf32
+// Build: g++ -std=c++20 -O2 -Iinclude tools/digi_test.cpp src/digital/*.cpp -lliquid
 #include "digital/digital_decoder.hpp"
+#include "digital/dig_plugin.hpp"
 #include <liquid/liquid.h>
 #include <cmath>
 #include <complex>
@@ -62,10 +69,19 @@ int main(int argc, char** argv) {
         else if (a == "--verbose") opt.verbose = true;
         else if (a == "--seconds") seconds = atof(argv[++i]);
         else if (a == "--voice") voice_out = argv[++i];
+        else if (a == "--opt") {
+            std::string kv = argv[++i];
+            size_t eq = kv.find('=');
+            opt.plugin[kv.substr(0, eq)] = eq == std::string::npos ? "" : kv.substr(eq + 1);
+        }
     }
+    dig::PluginRegistry::instance().scan();
     dig::DigitalDecoder dec(false);
     dec.set_options(opt);
-    dec.set_mode(dig::mode_from_string(mode));
+    dig::Mode m;
+    std::string plugin;
+    if (!dig::parse_mode_string(mode, &m, &plugin)) { fprintf(stderr, "unknown mode %s\n", mode.c_str()); return 2; }
+    dec.set_mode(m, plugin);
     uint64_t seq = 0;
     // the audio thread's role: pull 48 kHz voice in step with the input
     std::vector<float> voice;
@@ -107,9 +123,16 @@ int main(int argc, char** argv) {
         float k = 1500.0f / (sd > 0 ? sd : 1);
         std::vector<float> hz(s.size());
         for (size_t i = 0; i < s.size(); i++) hz[i] = float(s[i] - m) * k * (conj ? -1 : 1);
-        for (size_t i = 0; i < hz.size() && i < seconds * 48000; i += 960) {
-            dec.process_discriminator(hz.data() + i, std::min<size_t>(960, hz.size() - i));
-            pull(0.02);
+        // FM-modulate it again: the plugins take complex baseband
+        std::vector<cf> x(hz.size());
+        double ph = 0;
+        for (size_t i = 0; i < hz.size(); i++) {
+            ph = std::remainder(ph + 2 * M_PI * hz[i] / 48000.0, 2 * M_PI);
+            x[i] = std::polar(1.0f, float(ph));
+        }
+        for (size_t i = 0; i < x.size() && i < seconds * 48000; i += 480) {
+            dec.process(x.data() + i, std::min<size_t>(480, x.size() - i), 48000, 100e6);
+            pull(0.01);
             flush_events();
         }
     } else {
@@ -147,6 +170,9 @@ int main(int argc, char** argv) {
             flush_events();
         }
     }
+    dec.drain();
+    pull(0.5);
+    flush_events();
     if (!voice_out.empty()) {
         FILE* w = fopen(voice_out.c_str(), "wb");
         uint32_t n = voice.size(), rate = 48000, br = rate * 2, sz = 36 + n * 2;

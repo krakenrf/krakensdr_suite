@@ -144,7 +144,8 @@ public:
     bool setEnabled(int id, bool enabled);
     bool setDemodMode(int id, DemodulatorMode mode);
     // Digital decoder of a VFO: mode OFF/AUTO/P25/DMR/TETRA/DSTAR and options
-    bool setDigitalMode(int id, dig::Mode mode);
+    // plugin = plugin id for dig::Mode::PLUGIN
+    bool setDigitalMode(int id, dig::Mode mode, const std::string& plugin = "");
     bool setDigitalOptions(int id, const dig::Options& opts);
     bool anyDigitalActive() const { return digital_active_.load(std::memory_order_relaxed) > 0; }
 
@@ -224,6 +225,7 @@ public:
         float squelch_eigen_threshold;
         int digital_mode;              // dig::Mode
         dig::Options digital_opts;
+        std::string digital_plugin;    // plugin id (Mode::PLUGIN)
     };
 
     std::vector<DecimatorInfo> getDecimatorInfoList() const;

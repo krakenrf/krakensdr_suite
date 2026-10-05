@@ -3,7 +3,7 @@ CXX = g++
 CXXFLAGS = -std=c++20 -Ofast -Wall -Wextra -pthread
 INCLUDES = -Iinclude -IuWebSockets/src -IuWebSockets/uSockets/src -I/usr/include/eigen3
 LDFLAGS = -L/usr/local/lib
-LIBS = -lfftw3f -lliquid -lopus -lssl -lcrypto -lz -lsqlite3 -ldl
+LIBS = -lfftw3f -lliquid -lopus -lssl -lcrypto -lz -lsqlite3
 
 # Detect ARM architecture for NEON optimizations
 ARCH := $(shell uname -m)
@@ -51,17 +51,10 @@ NETWORKING_SRCS = \
 	$(SRCDIR)/networking/web_mapper.cpp \
 	$(SRCDIR)/networking/websocket_server.cpp
 
+# the decoders themselves are plugins (plugins/, built by the plugins target)
 DIGITAL_SRCS = \
-	$(SRCDIR)/digital/dig_fec.cpp \
 	$(SRCDIR)/digital/dig_report.cpp \
-	$(SRCDIR)/digital/dig_fsk.cpp \
-	$(SRCDIR)/digital/dig_p25.cpp \
-	$(SRCDIR)/digital/dig_dmr.cpp \
-	$(SRCDIR)/digital/dig_dstar.cpp \
-	$(SRCDIR)/digital/dig_nxdn.cpp \
-	$(SRCDIR)/digital/dig_mpt1327.cpp \
-	$(SRCDIR)/digital/dig_tetra.cpp \
-	$(SRCDIR)/digital/dig_vocoder.cpp \
+	$(SRCDIR)/digital/dig_plugin.cpp \
 	$(SRCDIR)/digital/digital_decoder.cpp
 
 UTILS_SRCS = \
@@ -81,7 +74,8 @@ APP_SRCS = \
 	$(SRCDIR)/message_builders.cpp \
 	$(SRCDIR)/decimator_manager.cpp \
 	$(SRCDIR)/scanner_manager.cpp \
-	$(SRCDIR)/continuous_scanner.cpp
+	$(SRCDIR)/continuous_scanner.cpp \
+	$(SRCDIR)/ai_manager.cpp
 
 ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_SRCS) $(APP_SRCS)
 
@@ -95,10 +89,19 @@ DEPS = $(ALL_SRCS:$(SRCDIR)/%.cpp=$(DEPDIR)/%.d)
 OBJDIRS = $(OBJDIR) $(OBJDIR)/signal_processing $(OBJDIR)/networking $(OBJDIR)/digital $(OBJDIR)/utils
 DEPDIRS = $(DEPDIR) $(DEPDIR)/signal_processing $(DEPDIR)/networking $(DEPDIR)/digital $(DEPDIR)/utils
 
-.PHONY: all clean distclean install deps check-uws debug help print-% run status
+.PHONY: all clean distclean install deps check-uws debug help print-% run status plugins
 
 # Default target
-all: check-uws $(OBJDIRS) $(DEPDIRS) $(TARGET)
+all: check-uws $(OBJDIRS) $(DEPDIRS) $(TARGET) plugins
+
+# Decoder plugins (plugins/<id>/decoder.cpp -> plugins/<id>/build/decoder,
+# see plugins/SDK.md). Separate executables: kraken_doa doesn't link them, so
+# a plugin that doesn't compile only warns (-k builds the others).
+plugins:
+	@if [ -f plugins/Makefile ]; then \
+		$(MAKE) --no-print-directory -k -C plugins || \
+		echo "WARNING: a decoder plugin failed to build (see above) - kraken_doa itself is fine"; \
+	fi
 
 # Check and install uWebSockets locally
 check-uws:
@@ -146,6 +149,7 @@ endif
 # Clean build artifacts
 clean:
 	rm -rf $(OBJDIR) $(DEPDIR) $(TARGET)
+	@if [ -f plugins/Makefile ]; then $(MAKE) --no-print-directory -C plugins clean; fi
 	@echo "Build artifacts cleaned"
 
 # Complete clean including uWebSockets

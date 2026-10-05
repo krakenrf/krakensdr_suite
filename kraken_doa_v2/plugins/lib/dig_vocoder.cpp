@@ -6,8 +6,8 @@
 // C++, a per-instance random generator instead of rand() (several decoders
 // run on their own threads), float output scaled to +-1.
 
-#include "digital/dig_vocoder.hpp"
-#include "digital/mbe_tables.hpp"
+#include "dig_vocoder.hpp"
+#include "mbe_tables.hpp"
 
 #include <dlfcn.h>
 #include <cmath>

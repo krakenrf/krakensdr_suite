@@ -7,9 +7,9 @@
 // punctured - and four AMBE+2 voice frames (played through a user-installed
 // mbelib, like DMR). The trunking control channel's CAC is not decoded.
 
-#include "digital/dig_protocols.hpp"
-#include "digital/dig_fec.hpp"
-#include "digital/mbe_tables.hpp"
+#include "nxdn.hpp"
+#include "dig_fec.hpp"
+#include "mbe_tables.hpp"
 
 #include <algorithm>
 #include <cmath>

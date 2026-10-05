@@ -275,42 +275,71 @@ Edit `include/config.hpp`:
   element count. The receiver passes its layout as URL params `shape`, `ls`
   (size mm), `lh` (height mm)
 
-**Digital voice/data decoders (`src/digital/`, one per VFO):**
+**Digital voice/data decoders (one per VFO): engine `src/digital/`, decoders `plugins/`:**
+- EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below);
+  kraken_doa contains no protocol code. Shipped: p25, dmr, tetra, dstar,
+  nxdn, mpt1327, pocsag, aprs
+- Which plugins run in Auto detect is the USER's choice: the "Auto detect"
+  tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by
+  default. WS `PLUGIN_AUTO:id:0|1` -> `PluginRegistry::set_auto()` (bumps the
+  registry generation, so decoders in AUTO rebuild their plugin set) and
+  records the setting `AUTO_DETECT_OFF:id,id` (settings_store schema, before
+  DECIMATORS; replayed through `set_auto_off()`); the plugin list's `auto`
+  field is that state. `kp::Info::auto_detect` is deprecated and ignored
 - `DigitalDecoder` (digital_decoder.hpp) hangs off a `DecimatorInstance`
   (`digital`, created on first use, `digital_mode` mirrors the mode). The
   decimation pass pushes the VFO's decimated samples (the beamformer output
   when beamforming ran for it, else the listened-to channel - the same stream
   FM audio gets) with `push()`; a worker thread ("digital-dec") per decoder
-  does all DSP, so the pipeline never waits. Queue capped at 1 s (oldest
-  dropped, `dropped` in the status). In FM/digital-only mode (DoA and
-  beamforming off) only the FM source and the VFOs with a decoder are
+  drives the plugin processes, so the pipeline never waits. Queue capped at
+  1 s (oldest dropped, `dropped` in the status). In FM/digital-only mode (DoA
+  and beamforming off) only the FM source and the VFOs with a decoder are
   decimated, on one channel (`fm_only` in data_receiver.cpp)
-- Front end (`Engine`, digital_decoder.cpp): AFC mixer -> 48 kHz (FM
-  discriminator, 12.5 kHz channel filter) for the 4FSK/GMSK receivers and
-  72 kHz (RRC 0.35, 4 samples/symbol) for TETRA. A VFO retune (> 100 Hz) or a
-  mode change resets everything (`reset_pending_` is consumed by the worker)
-- Receivers (`dig_protocols.hpp`) are sync-driven - nothing is reported
-  unless its own FEC/CRC passed, which is what AUTO detection counts
-  (majority of valid frames in a 4 s window):
-  - `Fsk4Receiver` (dig_fsk.cpp): P25 on an integrate-and-dump filtered
+- Modes (`dig::Mode`): OFF, AUTO, PLUGIN (+ plugin id). Wire / snapshot form
+  `OFF`, `AUTO`, `PLUGIN:<id>`; `parse_mode_string()` maps the old protocol
+  names (P25, DMR, TETRA, DSTAR, D-STAR, NXDN, MPT1327) to their plugins, so
+  saved settings and old clients keep working
+- `Engine` (digital_decoder.cpp): AFC mixer at the VFO rate -> one msresamp
+  per distinct plugin `sample_rate` (shared by the plugins at that rate) ->
+  each plugin process (`Runner`). AUTO runs one Runner per built plugin the
+  user left in Auto detect (rebuilt when the registry generation changes);
+  detection = majority of `valid()` frames in a 4 s window. Only the "lead"
+  plugin (the fixed one, or the detected one) gets VOICE_WANTED and has its
+  audio / voice state / carrier offset used. AFC: plugin offset reports are
+  averaged and applied at most every 300 ms, ignoring reports from the 300 ms
+  after a correction (the pipe latency made an every-report integrator run
+  away - TETRA drifted -5 kHz). A VFO retune (> 100 Hz) or mode change resets
+  everything (RESET to the plugins; `reset_pending_` is consumed by the
+  worker)
+- The protocol receivers live in the plugins (`plugins/<id>/<id>.cpp`), on
+  the shared library `plugins/lib/` (libkrakendig.a): `dig_common` (the
+  RxContext / Report / Options interface they were written against, mapped
+  onto `kp::Host` by `dig::Bridge`; `FmFrontEnd` = 48 kHz Kaiser 6.5 kHz +
+  discriminator in Hz; `RrcFrontEnd`), `dig_fec` (block codes by nearest
+  codeword, RS GF(64) Berlekamp-Massey, soft Viterbi, CRCs), `dig_fsk4`
+  (P25/DMR 4FSK sync receiver -> `Fsk4Sink`), `dig_vocoder` (IMBE, mbelib
+  AMBE, TETRA ACELP), `mbe_tables.hpp`. Each receiver is sync-driven -
+  nothing is reported unless its own FEC/CRC passed:
+  - `Fsk4Receiver` (lib/dig_fsk4.cpp): P25 on an integrate-and-dump filtered
     discriminator, DMR on RRC 0.2; normalized sync correlation per sample,
     the sync's own +-3 symbols give timing, level and centre (= carrier
     offset), no symbol-timing loop. DMR voice bursts B..F (no sync) are
     decoded at positions extrapolated from the last sync. DMR data sync =
-    voice sync with every symbol negated (`^ 0xAAAA...`, NOT `~`)
-  - `P25Proto` (dig_p25.cpp): NID BCH(63,16) by table search, TSBK (rate 1/2
+    voice sync with every symbol negated (`^ 0xAAAA...`, NOT `~`). The p25
+    plugin enables only P25, the dmr plugin only DMR
+  - `P25Proto` (plugins/p25): NID BCH(63,16) by table search, TSBK (rate 1/2
     trellis + CRC), LDU1/LDU2 (Hamming(10,6) + RS(24,12)/(24,16)), HDU
     (Golay(18,6) + RS(36,20)), TDULC (Golay(24,12) + RS(24,12)), PDU header.
-    IDEN_UP tables turn channel numbers into MHz
-  - `DmrProto` (dig_dmr.cpp): CACH TACT (timeslot), slot type Golay(20,8)
+    IDEN_UP tables turn channel numbers into MHz. Option `nac`
+  - `DmrProto` (plugins/dmr): CACH TACT (timeslot), slot type Golay(20,8)
     (max 2 corrections - a third of random words are within 3), BPTC(196,96)
     voice LC header / terminator (RS(12,9)), CSBK, PI and data headers, EMB
     QR(16,7) + embedded LC, GPS and talker alias LCs. Control-channel chatter
-    (Aloha, broadcasts, acks) only with the verbose option
-  - `DstarReceiver` (dig_dstar.cpp): RF header (scrambler, 24-column
+    (Aloha, broadcasts, acks) only with the verbose option. Option `slot`
+  - `DstarReceiver` (plugins/dstar): RF header (scrambler, 24-column
     interleaver, K=3 Viterbi, CRC-16/X.25), slow data (text message, GPS /
     DPRS, header copy), end pattern
-  - `NxdnReceiver` (dig_nxdn.cpp): NXDN96 (4800 Bd, 10 sps) and NXDN48
+  - `NxdnReceiver` (plugins/nxdn): NXDN96 (4800 Bd, 10 sps) and NXDN48
     (2400 Bd, 20 sps) searched at once, each on its own RRC 0.2 filter;
     10-symbol FSW (0.88 threshold), whole-frame descrambler (negates
     symbols), LICH (8 bits on the first bit of 8 symbols, second bits 1,
@@ -318,10 +347,10 @@ Edit `include/config.hpp`:
     from 5, K=5 G 0x19/0x17, CRC-6 0x27) and FACCH1 (9x16, every 4th from 1,
     CRC-12 0x80F). A SACCH counts only when it follows the previous good one
     exactly one frame later (CRC-6 alone passes 1 random word in 64);
-    FACCH1 counts alone. Layer 3: VCALL (unit/TG, cipher), TX_REL, DCALL.
-    Voice: 4 (or 2) AMBE+2 frames per frame -> mbelib (nW..nZ). The
-    trunking control channel (RCCH/CAC) is not decoded
-  - `Mpt1327Receiver` (dig_mpt1327.cpp): MPT1327 / MPT1343 analogue
+    FACCH1 counts alone. Layer 3: VCALL (unit/TG, cipher), TX_REL, DCALL,
+    trunking CAC (site / service info, grants). Voice: 4 (or 2) AMBE+2
+    frames per frame -> mbelib (nW..nZ)
+  - `Mpt1327Receiver` (plugins/mpt1327): MPT1327 / MPT1343 analogue
     trunking signalling, 1200 bit/s FFSK (1 = 1200 Hz, 0 = 1800 Hz) on the
     FM discriminator. Two sliding one-bit (40-sample) tone correlators; each
     tone is normalized by its own running level (radio pre-emphasis makes
@@ -336,45 +365,88 @@ Edit `include/config.hpp`:
     BCAST (SYSDEF), data headers; idents shown prefix-ident. Validated on
     a live NZ control channel (SYS 0x42E1, ~96 % of slots); GTC field
     positions follow sdrtrunk and have not been seen live yet
-  - `TetraReceiver` (dig_tetra.cpp): differential detection, 4th-power
-    frequency estimate, slot sync from the training sequences (both spectral
-    orientations tried), BSCH (MCC/MNC/colour code -> scrambling code), BNCH
-    SYSINFO, AACH (Reed-Muller), SCH/F and SCH/HD MAC-RESOURCE with the
-    MM/CMCE PDU type of clear signalling
-- FEC/CRC library: `dig_fec.cpp` (small block codes are decoded by
-  exhaustive nearest-codeword search; RS over GF(64) is Berlekamp-Massey;
-  generic soft Viterbi)
-- Report (`dig_report.hpp`): per-protocol "facts" table (key, value, age)
-  and an event log (400 entries, identical texts de-duplicated per window).
+  - `TetraReceiver` (plugins/tetra, 72 kHz RRC 0.35 input): differential
+    detection, 4th-power frequency estimate, slot sync from the training
+    sequences (both spectral orientations tried), BSCH (MCC/MNC/colour code
+    -> scrambling code), BNCH SYSINFO, AACH (Reed-Muller), SCH/F and SCH/HD
+    MAC-RESOURCE with the MM/CMCE PDU type of clear signalling
+- Report (`dig_report.hpp`): facts table per plugin id (key, value, age),
+  event log (400 entries, identical texts de-duplicated per window; events
+  carry `src` = plugin id and `p` = its name, "" = the decoder itself).
   `MessageBuilders::build_digital_message()` pushes `{"digital":[...]}` on
   TOPIC_CTL at 4 Hz (only while a decoder is on), with only the events since
   the previous push; `DIGITAL_HISTORY:id` replies with the whole log,
-  `DIGITAL_CLEAR:id` empties it
-- WS commands: `DIGITAL_MODE:id:mode`, `DIGITAL_OPT:id:verbose|invert|
-  dmr_slot|p25_nac:value`. Both persisted as two extra fields of the
-  `DECIMATORS:` snapshot entry (`mode,v/slot/nac/inv`; older 7-field entries
-  still load)
-- Bandwidth: 4FSK/GMSK need a VFO of >= 12 kHz, TETRA and AUTO >= 24 kHz
-  (the panel warns and offers "Set 24 kHz")
-- Offline test harness: `tools/digi_test.cpp` (not part of the build; reads
-  rtl_sdr u8, IQ WAV or DSDcc discriminator files):
-  `g++ -std=c++20 -O2 -Iinclude tools/digi_test.cpp src/digital/*.cpp -lliquid`
+  `DIGITAL_CLEAR:id` empties it. Status: `mode`, `detected` (plugin id),
+  `detected_name`, `frames` {id: [4 s, total]}, `plugins` [{id, name, state
+  running|starting|missing|not built|crashed|error, error, dropped, log}],
+  `info` {id: facts}, `voice`, `opts`
+- Options (`dig::Options`): verbose, invert (host side: conj before the
+  mixer) + `plugin` {"<id>.<key>": value} - the plugins' declared options,
+  sent to the plugin as OPTION key=value ("" = back to its default).
+  `DIGITAL_OPT:id:verbose|invert|<id>.<key>:value` (old keys dmr_slot /
+  p25_nac map to dmr.slot / p25.nac). Persisted as the snapshot field
+  `v=1&i=0&dmr.slot=1` (values percent-encoded; the old `v/slot/nac/inv` form
+  still loads). The panel shows a plugin's options while it is selected, or
+  in AUTO once AUTO detected it
+- UI (kraken_doa.html, "Digital decoders" block): any number of VFOs decode
+  at once. Each VFO card (Decimators box, `updateDecimatorList`) has a
+  "Digital decoder" tick (`digToggle`: DIGITAL_MODE AUTO or the mode picked
+  while off, remembered per VFO in localStorage) and a mode list
+  (`digSetModeFor`: picking a decoder also switches it on) plus a state line
+  (`digRenderCards`, also run at the end of updateDecimatorList, which
+  rebuilds the cards). Each decoding VFO gets a tab in the bottom panel
+  (`infoRenderDecoder`: mode, Listen, the plugin's options - in AUTO those of
+  the detected plugin -, verbose, invert, bandwidth / plugin problems, status,
+  facts, filterable event log, plugin stderr). The sidebar "🔐 Digital
+  Decoders" box shows the plugin list (`aiRenderPlugins` -> `#ai-plugins`:
+  Auto detect tick, "Use on D<n>" = `digTargetVfo()` - the VFO whose decoder
+  tab is open, else the Audio Src VFO -, Export / Import, Rebuild; collapsed
+  by default - `digTogglePlugins`, open state in localStorage
+  `kraken_dig_plugins_open`; the header shows the count and a ⚠ count of
+  plugins with an error / stale / unbuilt) and the
+  voice codecs (`digOnCodecs`): IMBE / AMBE
+  (mbelib) / ACELP (ETSI TETRA) installed or not, with the README's install
+  steps for a missing one. Source: `plugins/lib/build/codecs` (lib/tools/
+  codecs.cpp, built by plugins/Makefile) - the SAME MbeLib / TetraCodec
+  detection the plugins use, run by kraken_doa with its environment
+  (KRAKEN_MBELIB, KRAKEN_TETRA_CODEC_DIR, PATH) via
+  `dig::codec_status_message()` on a worker thread, on AI_STATE (page
+  connect) and `PLUGIN_CODECS` ("↻ Check again") -> `{"codecs":{checked,
+  imbe_ok, imbe, ambe_ok, ambe, acelp_ok, acelp}}`. Running plugins dlopen
+  mbelib once, so a newly installed codec needs the decoder switched off and
+  on
+  `DIGITAL_HISTORY:id` is asked once per VFO / mode. Demod "Digital" keeps the
+  VFO's bandwidth (widened only below the decoder's need - it used to force
+  NBFM's 16 kHz, too narrow for TETRA / AUTO)
+- Bandwidth: each plugin's `min_vfo_rate` (12 kHz for the 4FSK ones, 24 kHz
+  for TETRA; AUTO = the largest of the ticked set) - the panel warns and
+  offers the narrowest wide-enough option
+- CPU (Pi 5, 24 kHz VFO): one plugin ~3% of a core, AUTO ~11% with the six
+  protocol plugins and ~15% with all nine shipped/user plugins ticked (each
+  process has its own front end; was ~4.5% in-process) - unticking unused
+  decoders saves it
+- Offline test harness: `tools/digi_test.cpp` (runs the plugins like a VFO,
+  synchronously: waits for slow plugins instead of dropping, SYNC-drains at
+  the end; .dis files are FM-modulated again; `--opt dmr.slot=1`; run from
+  kraken_doa_v2): `g++ -std=c++20 -O2 -Iinclude tools/digi_test.cpp
+  src/digital/*.cpp -lliquid`
 - Validated on live P25 (VFO on a trunked control channel + its voice
-  channel) and DMR Tier III here, and on recordings for TETRA, D-STAR, DMR
-  and P25. CPU: ~4.5 % of a Pi 5 core per decoder in AUTO
+  channel) and DMR Tier III here, and on recordings for TETRA, D-STAR, DMR,
+  NXDN, MPT1327 and P25 (regression of 33 checks incl. voice passes through
+  the plugins)
 
-**Digital voice (`dig_vocoder.cpp`, Demod "Digital"):**
+**Digital voice (`plugins/lib/dig_vocoder.cpp`, Demod "Digital"):**
 - `DemodulatorMode::DIGITAL`: the FM thread still runs the FM demodulator
   (as NBFM - `setDemodulatorMode` maps it) only because its output length
   clocks the audio stream; for a DIGITAL Audio Src VFO the samples are then
   replaced by `DigitalDecoder::pull_voice()` (silence when there is none) and
   squelch is skipped. `pull_voice` also marks the voice "wanted" for 0.5 s -
-  receivers run their vocoders only then (`RxContext::voice_wanted`).
+  the lead plugin gets VOICE_WANTED and runs its vocoder only then.
   `SET_DECIMATOR_DEMOD:id:DIGITAL` switches the VFO's decoder to AUTO if off
-- Voice FIFO (digital_decoder.cpp): 8 kHz vocoder output -> slow AGC (tanh
-  limited) -> 6x interpolation -> 48 kHz FIFO; playback starts at 250 ms
-  buffered (frames arrive in bursts, a P25 LDU = 180 ms) or once the input
-  stops for 300 ms (a call's tail), re-prefills after an underrun
+- Voice FIFO (digital_decoder.cpp): 8 kHz plugin audio (AUDIO messages) ->
+  slow AGC (tanh limited) -> 6x interpolation -> 48 kHz FIFO; playback starts
+  at 250 ms buffered (frames arrive in bursts, a P25 LDU = 180 ms) or once
+  the input stops for 300 ms (a call's tail), re-prefills after an underrun
 - P25: `ImbeDecoder`, a port of mbelib's IMBE 7200x4400 (ISC; tables in
   `mbe_tables.hpp` with the notice) - Golay/Hamming + PN, parameter decoding,
   mbelib's synthesis with a per-instance RNG (mbelib uses rand()). Verified
@@ -384,11 +456,11 @@ Edit `include/config.hpp`:
   are deinterleaved with DSD's iW..iZ (ISC). Muted when the HDU/LDU2 ALGID
   isn't 0x80 or the LC "protected" bit is set
 - DMR / D-STAR / NXDN: `MbeLib` dlopens `$KRAKEN_MBELIB` / libmbe.so.1 at first use
-  (`KRAKEN_MBELIB=none` disables it)
+  (`KRAKEN_MBELIB=none` disables it) - inside the plugin process
   (no AMBE code shipped or linked); `AmbeStream` keeps a per-stream state in
   3 x 4 KB blocks (mbe_parms is ~1.2 KB). DMR: 3 AMBE+2 frames per voice
   burst (frame 2 straddles the sync/EMB), rW..rZ tables, one slot played at a
-  time (options slot, else the first to talk until quiet for 1 s), muted on
+  time (option slot, else the first to talk until quiet for 1 s), muted on
   the EMB/LC privacy bit; a burst with no clean frame is not played (false
   syncs). D-STAR: 21 AMBE frames per superframe (frame 0 is before the data
   sync), dW/dX tables, stops at the end pattern
@@ -398,15 +470,146 @@ Edit `include/config.hpp`:
   (AACH usage marker >= 4, training sequence 1) of one timeslot; after 400 ms
   without traffic, erasure blocks flush the pipes' stdio buffers. Muted for
   60 s after any encrypted MAC-RESOURCE. ~0.5 s extra latency (pipe buffers)
-- Status JSON: `voice:{listening,state}` and `codecs:{IMBE,AMBE,AMBE_ok,
-  ACELP,ACELP_ok}`; the panel shows them with a "🔊 Listen" button (Audio
-  Src + Digital + audio on)
+- Codec availability: the sidebar box (above), and each voice plugin sets a "Voice codec" fact (e.g.
+  "AMBE+2: libmbe.so.1 (mbelib 1.3.0)" / "not installed"), and its voice
+  state says "... codec not installed" while someone listens
 - Docker: the entrypoint exports `KRAKEN_MBELIB` / `KRAKEN_TETRA_CODEC_DIR`
-  when `/data/codecs` holds libmbe.so.1 / cdecoder + sdecoder
+  when `/data/codecs` holds libmbe.so.1 / cdecoder + sdecoder (inherited by
+  the plugin processes)
 - Tested: offline (regression incl. voice), through the real Opus audio
   stream with a fake heimdall replaying recordings of all four, and live:
   DMR Tier III traffic-channel speech here; P25 calls here are AES-256 and
-  are correctly muted
+  are correctly muted (all before the move into plugins; the regression
+  re-verified it after)
+
+**Decoder plugins (`plugins/`, `src/digital/dig_plugin.cpp`):**
+- A plugin is a folder `plugins/<id>/` (`[a-z0-9_-]{1,32}`, not `sdk` /
+  `lib`): decoder.cpp with `KRAKEN_PLUGIN(Class, {.id, .name, .description,
+  .version, .sample_rate, .min_vfo_rate, .author, .auto_detect, .options})`
+  (fields in that order; `.auto_detect` is ignored), optional extra .cpp/.hpp, README.md. API
+  `plugins/sdk/kraken_plugin.hpp` (`kp::Decoder::process(const kp::cf*, n)`
+  gets the VFO's complex baseband at `sample_rate`; `kp::Host`: fact / event /
+  valid / audio (8 kHz) / voice_state / freq_error / verbose / voice_wanted /
+  time / log; `kp::Option` key/label/default/choices "v=Label|..."/help),
+  helpers `plugins/sdk/kraken_dsp.hpp`, the shared library `plugins/lib/`,
+  guide `plugins/SDK.md` (written for LLMs too)
+- `plugins/Makefile` builds `lib/build/libkrakendig.a`, then links each
+  plugin's sources + `sdk/plugin_host.cpp` + the library into its OWN
+  executable `plugins/<id>/build/decoder` (linked as decoder.tmp, then
+  renamed: a running copy keeps its inode). The top Makefile's `plugins`
+  target runs it with -k and only warns on failure; CMake has an ALL target
+- `decoder --info` (JSON incl. `options` and `options_tsv` - the
+  tab-separated copy kraken_doa's flat JSON reader parses; read by
+  `PluginRegistry::scan()` at startup, on `PLUGINS_RESCAN` (worker thread,
+  `scan_async`) and after builds; `generation()` bumps when the list
+  changes), `--serve` (live), `--file REC [--offset HZ] [--opt k=v]
+  [--verbose] [--audio out.wav]` (offline test: same resampling / 10 ms
+  blocks as live, cf32 / cu8 / cs16 / 16+24-bit IQ WAV, prints events +
+  "VALID FRAMES: N")
+- Live (`Runner` in digital_decoder.cpp): the process is started on the
+  decoder thread (`PluginProcess`, posix_spawn, non-blocking pipes), SAMPLES
+  in 16k chunks (dropped, counted, when > 1 s behind; offline: blocking
+  `flush_blocking`), replies polled after every block. Protocol: 8-byte
+  header (type, len) + payload, types in kraken_plugin.hpp `kp::wire`
+  (SYNC / SYNC_DONE drain the offline tests). The plugin's fd 1 is pointed
+  at stderr (protocol on a dup), so a stray printf can't corrupt it; its
+  stderr tail (30 lines) is in the status JSON (`plugins[].log`) and the
+  panel's "Plugin output". Stopping a decoder closes every plugin's stdin
+  first, then reaps them (parallel exit - AUTO has 6)
+- Crash / malformed message -> event with the signal and last stderr line,
+  restart after 2, 4 .. 30 s; missing / unbuilt plugin -> retried every 5 s
+  (a snapshot may name a plugin this receiver lacks: accepted on replay,
+  refused interactively). The exe's mtime is checked every 2 s: a rebuild
+  restarts the decoder ("Rebuilt plugin loaded")
+
+**AI Signal Lab (`src/ai_manager.cpp`, `ai/`):**
+- Sidebar box "🤖 AI Signal Lab" + the "🤖 AI" tab of the panel under the
+  waterfall. `AiManager` runs ONE job at a time: `python3 ai/kraken_ai.py
+  investigate|create|ask|test` or `make -C plugins PLUGIN=id` (build /
+  import), posix_spawn in its own process group (Stop = killpg TERM, KILL
+  after 3 s); a reader THREAD reads its output - the uWS loop only starts /
+  stops jobs. The bridge prints one JSON event per line
+  (`{"ev":"status|text|tool|tool_result|report|usage|error|done|exit",...}`,
+  checked by a strict JSON validator before being relayed); AiManager relays
+  each as `{"ai_event":{seq,kind,t,e}}`, keeps the last 300 (replayed in
+  `ai_state.log`) and tracks the current session from the `done` events.
+  After create / build / import: registry rescan (reader thread) + `{"plugins"}`
+- Gate: `ai/ai_config.json` `"enabled": true`, written only by `python3
+  ai/kraken_ai.py setup` on the Pi (checks the CLI login, asks for
+  confirmation). Read on every command, so no restart is needed;
+  `KRAKEN_AI_CONFIG` overrides the path (both sides). Build / import from the
+  web UI need it too (they compile native code); export doesn't
+- Sessions = saved investigations (`ai/sessions/<YYYYmmdd-HHMMSS>-<kHz>/`):
+  capture.cf32/.json, plots, analysis.md, session.json (incl. the Claude
+  session id - create / ask `--resume` it), `chat.json` (the conversation:
+  [{role user|assistant, kind investigate|ask|create, text, t}], appended by
+  the bridge; seeded from session.json for sessions older than it) and
+  `activity.jsonl` (every event of the agent, <= 4 MB). `AI_SESSIONS` ->
+  `{"ai_sessions":[{id,freq_hz,signal_name,created,state,plugin_id,...}]}`
+  (newest first; also sent on AI_STATE and after every job),
+  `AI_SESSION_GET:id` -> `{"ai_session":{...,chat,activity}}` (chat.json and
+  each activity line embedded only if they pass the JSON validator - the
+  agent can edit files in its session folder; fallback: a chat built from
+  session.json), `AI_SESSION_SELECT:id` (the current session: Ask / Create
+  use it), `AI_SESSION_DELETE:id` (`kraken_ai.py delete`: the folder + the
+  Claude transcript ~/.claude/projects/*/<uuid>.jsonl). All file work on
+  detached worker threads, results broadcast
+- UI: "AI" badges at the top of the spectrum above every session's
+  frequency (`aiDrawMarkers` at the end of `drawBox()`, groups within 2 kHz,
+  clicking one opens it - `handleDown` checks `aiMarkerHit` first), the
+  History list in the sidebar box, and the bottom panel's AI tab (session
+  list, chat bubbles rendered with the escaping Markdown renderer, agent
+  activity, follow-up input). The AI's output is shown ONLY in that tab: the
+  sidebar box has the controls and a one-line status (`#ai-status`: bridge
+  status messages, errors, done + "⤢ Show"). A new investigation has no
+  session until its `done` event, so the tab shows it as the job view
+  (`aiViewId === AI_JOB`, list entry "⏳ Investigating…" / "Last job": live
+  text + activity from `aiLog`, or the error) and switches to the session the
+  `done` names; the user's own Investigate / Create opens the tab; a job
+  started elsewhere (another browser) moves the AI tab's view to it but
+  never switches the panel to the AI tab. Bottom panel: `#info-panel` in the spectrum
+  panel under the waterfall controls, resizable (top edge), open state +
+  height kept in localStorage; opening/closing fires a window resize so the
+  waterfall refits. Tabs (`infoTab` = `dec:<vfo>` | `ai`): one per VFO with a
+  decoder on, then AI
+- WS commands (all excluded from sync_cmd echo - `is_query_command`): `AI_STATE`
+  (-> ai_state with log + plugins + sessions), `AI_TEST`, `AI_CANCEL`,
+  `AI_INVESTIGATE:vfo:freq_hz:seconds[:instructions]` (freq 0 = the VFO's,
+  must lie in the current span; capture rate = VFO rate clamped 12.5-600 kHz,
+  2-60 s), `AI_CREATE:id[:instructions]` (existing plugin = improve it),
+  `AI_ASK:question`, the AI_SESSION* commands above, `PLUGINS_LIST`,
+  `PLUGINS_RESCAN`, `PLUGIN_BUILD:id`, `PLUGIN_EXPORT:id` (worker thread ->
+  `plugin_export` bundle, <= 1 MB - the WS backpressure limit is 2 MB),
+  `PLUGIN_IMPORT:{bundle}` (-> `plugin_import` `{id,error}`; "exists" makes
+  the page ask, then resend with `"replace":true`). Bundle =
+  `{"kraken_plugin":1,"id":..,"files":{"name":"content"}}`, flat names,
+  .cpp/.hpp/.h/.md/.txt/.json only (a plugin using `plugins/lib/` needs the
+  suite's library on the other receiver - it ships with it). Errors ->
+  `{"ai_error":{cmd,error}}`
+- `ai/kraken_ai.py`: Claude runs as `claude -p --output-format stream-json
+  --verbose --permission-mode dontAsk --safe-mode` (no user hooks / MCP /
+  CLAUDE.md), cwd = session dir, tools allowed: Read of the session /
+  plugins / ai/*.py, Glob, Grep, WebSearch, WebFetch, Edit in the session (+
+  `plugins/<id>/` for create), `Bash(python3 ai/sigtool.py:*)`,
+  `Bash(python3 <session>/*)` (a `:*` prefix rule only matches whole words -
+  the wildcard is needed for paths), and for create `Bash(make -C plugins
+  PLUGIN=<id>:*)` + `Bash(plugins/<id>/build/decoder:*)` (absolute paths;
+  `//abs` in Read/Edit rules). Compound commands outside these are refused.
+  Backend "command" (`setup --backend command --command "..."`) pipes the
+  prompt to any CLI, unrestricted. `--capture-file REC.cf32` investigates a
+  recording
+- `ai/sigtool.py` (numpy only): `capture` (8091 channel 0, exact centre from
+  8092 get_status, packets with the noise source on / retuning are cut out,
+  then mix + fast-convolution channelizer to 2.4 MHz / integer), `analyze`
+  (bursts, in-passband spectrum stats, envelope, x^2/x^4 lines, FM
+  discriminator histogram / transition lines / audio tones, PNG plots via a
+  built-in rasterizer + 5x7 font), `spectrogram`, `extract`, `demod`,
+  `tones`, `symbols` (per-segment best-phase sampling, k-means levels, eye
+  ratio, repeated 24/32/48-bit words = sync candidates, frame period)
+- Verified: live investigations (162.4 / 454.6 MHz) by the user; investigate
+  + create on a synthetic APRS recording produced the `aprs` plugin (5/5
+  frames, 0.5% CPU, quiet on noise) in ~5 min; the UI (panel, history,
+  markers, options) against a mock server in headless Firefox
 
 **Web Mapper output (built-in, replaces web_mapper_middleware):**
 - `src/networking/web_mapper.cpp` streams one legacy "doapost" record per VFO
@@ -620,6 +823,17 @@ mallopt(M_ARENA_MAX, 32);  // In main.cpp for 23-28 threads
 2. **No rebuild needed** (loaded at runtime by `websocket_server.cpp`)
 3. **Protocol:** Match message format in `message_builders.cpp`
 4. **Testing:** Refresh browser (hard reload: Ctrl+Shift+R)
+
+**Sidebar width (desktop):** the handle on the sidebar's right edge
+(`#sidebar-resizer`, `initSidebarResize()`) drags it between 230 px and
+min(720 px, 60% of the window); double-click = default. The sidebar keeps
+its 290 px layout and is scaled with CSS `zoom` (`--sb-zoom` = width / 290),
+so text, buttons and inputs grow with it. Width kept in localStorage
+(`kraken_sidebar_w`), re-clamped on window resizes, then a window `resize`
+refits the spectrum / waterfall. Mobile drawer: zoom 1, no handle. Anything
+inside the sidebar positioned with `position:fixed` from
+`getBoundingClientRect()` must divide by the zoom (see the help tips'
+`place()`)
 
 ### Adding WebSocket Commands
 

@@ -322,13 +322,13 @@ void DecimatorManager::recountDigital() {
     digital_active_.store(n, std::memory_order_relaxed);
 }
 
-bool DecimatorManager::setDigitalMode(int id, dig::Mode mode) {
+bool DecimatorManager::setDigitalMode(int id, dig::Mode mode, const std::string& plugin) {
     auto inst = getDecimator(id);
     if (!inst) return false;
     {
         std::lock_guard<std::mutex> lk(inst->digital_mu);
         if (!inst->digital && mode != dig::Mode::OFF) inst->digital = std::make_shared<dig::DigitalDecoder>();
-        if (inst->digital) inst->digital->set_mode(mode);
+        if (inst->digital) inst->digital->set_mode(mode, plugin);
         inst->digital_mode.store(static_cast<int>(mode), std::memory_order_relaxed);
     }
     recountDigital();
@@ -544,6 +544,7 @@ std::vector<DecimatorManager::DecimatorInfo> DecimatorManager::getDecimatorInfoL
         info.digital_mode = inst->digital_mode.load(std::memory_order_relaxed);
         auto dd = inst->getDigital();
         info.digital_opts = dd ? dd->options() : dig::Options();
+        info.digital_plugin = dd ? dd->plugin_id() : std::string();
 
         info_list.push_back(info);
     }

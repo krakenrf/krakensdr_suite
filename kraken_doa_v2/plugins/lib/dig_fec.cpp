@@ -1,4 +1,4 @@
-#include "digital/dig_fec.hpp"
+#include "dig_fec.hpp"
 
 #include <algorithm>
 #include <array>

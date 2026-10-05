@@ -365,13 +365,24 @@ sheet), shows the usable frequency range of an existing array, draws
 top/side/3D views with coordinates, and can push the result into the
 receiver. See `kraken_doa_v2/CLAUDE.md`
 
-**Digital voice/data decoders (per VFO)**: `kraken_doa_v2/src/digital/`
-- Each decimator (VFO) can run a digital decoder: P25 Phase 1, DMR, TETRA
-  (downlink), D-STAR, NXDN (48 and 96) and MPT1327 (analogue trunking
-  signalling), or AUTO (all at once; the protocol whose frames pass FEC/CRC
-  wins). Sidebar "🔐 Digital Decoder" panel; WS
-  `DIGITAL_MODE:id:OFF|AUTO|P25|DMR|TETRA|DSTAR|NXDN|MPT1327`, `DIGITAL_OPT:id:key:value`;
-  persisted in the VFO snapshot. See `kraken_doa_v2/CLAUDE.md` for the design
+**Digital voice/data decoders (per VFO)**: engine `kraken_doa_v2/src/digital/`,
+decoders `kraken_doa_v2/plugins/`
+- EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below):
+  p25, dmr, tetra (downlink), dstar, nxdn (48 and 96), mpt1327 (analogue
+  trunking signalling), pocsag and aprs. Each decimator (VFO) runs one
+  plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
+  sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
+  `AUTO_DETECT_OFF:` - at once; the one whose frames pass FEC/CRC wins). Any
+  number of VFOs decode at once: a "Digital decoder" tick + mode list on each
+  VFO card (Decimators box), one tab per decoding VFO in the panel under the
+  waterfall (its settings + data); the sidebar "🔐 Digital Decoders" box shows
+  which voice codecs are installed (+ install steps for missing ones, from
+  `plugins/lib/build/codecs` - the plugins' own detection) and the plugin list
+  (Auto detect ticks, Use on, Export / Import, Rebuild); WS
+  `DIGITAL_MODE:id:OFF|AUTO|PLUGIN:<id>` (old names P25/DMR/... still map),
+  `DIGITAL_OPT:id:verbose|invert|<plugin>.<key>:value` (plugin-declared
+  options, e.g. `dmr.slot`, `p25.nac`); persisted in the VFO snapshot. See
+  `kraken_doa_v2/CLAUDE.md` for the design
 - Voice: Demod "Digital" (or the panel's Listen button) on the Audio Src VFO
   plays the decoded voice. P25 IMBE is built in (port of mbelib, ISC); DMR /
   D-STAR / NXDN AMBE use a user-installed mbelib (dlopen, `KRAKEN_MBELIB`), TETRA
@@ -402,6 +413,36 @@ receiver. See `kraken_doa_v2/CLAUDE.md`
   UCA, GPS fix over the static location, squelch forced on). The cloud server's TLS certificate is verified
   (`KRAKEN_WEB_MAPPER_INSECURE=1` disables that for a self-signed self-hosted
   server). See `kraken_doa_v2/CLAUDE.md` for details
+
+**Decoder plugins + AI Signal Lab** (details: `kraken_doa_v2/CLAUDE.md`):
+- A plugin = a source folder `kraken_doa_v2/plugins/<id>/` (decoder.cpp +
+  extras, API `plugins/sdk/kraken_plugin.hpp`, guide `plugins/SDK.md`), linked
+  with `plugins/sdk/plugin_host.cpp` into its OWN executable
+  `plugins/<id>/build/decoder` (kraken_doa_v2's `make` builds them; a plugin
+  that fails to compile only warns). The Digital Decoder runs it as a child
+  process per VFO (`Mode::PLUGIN`, wire form `PLUGIN:<id>`): complex baseband
+  over stdin, facts/events/valid/audio back over stdout (binary protocol in
+  kraken_plugin.hpp). A crash is reported and restarted with a back-off; a
+  rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
+  tetra, dstar, nxdn, mpt1327, pocsag, aprs (the last written by the AI
+  Signal Lab)
+- Same executable tests offline: `decoder --file x.cf32 [--offset HZ]`
+- The shipped protocol plugins are thin wrappers around `plugins/lib/`
+  (libkrakendig.a: FEC, 4FSK sync, vocoders, front ends) - kraken_doa itself
+  contains no protocol code
+- AI Signal Lab (sidebar box, `src/ai_manager.cpp`): runs `ai/kraken_ai.py`
+  (Claude Code `claude -p`, restricted tools, or any LLM CLI) to investigate a
+  VFO's signal (`ai/sigtool.py` captures from heimdall 8091 + measures it) and
+  to write/build/test plugins. Every investigation is kept (ai/sessions/<id>/
+  incl. chat.json) - "AI" badges in the spectrum + a History list open it in
+  the "🤖 AI" tab under the waterfall (chat, agent steps, follow-ups, delete).
+  The AI's output (answers, live progress, agent steps) is shown ONLY there;
+  the sidebar box has the controls + a one-line job status
+  OFF unless enabled on the Pi with
+  `python3 ai/kraken_ai.py setup` (`ai/ai_config.json`, gitignored; the web UI
+  can't enable it - it runs an agent and native code). Native install only
+- Plugins move between receivers as folders (copy + `make`) or as an
+  Export/Import `.krakenplugin.json` bundle (import needs the lab enabled)
 
 ### KrakenSDR Wideband (Downconverter) Variant
 

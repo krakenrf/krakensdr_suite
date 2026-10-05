@@ -11,4 +11,5 @@ public:
     static std::string load_html_content();
     static void verify_ssl_certificates();
     static void broadcast_json_message(const std::string& json);
+    static bool auth_enabled();   // an API token is configured
 };

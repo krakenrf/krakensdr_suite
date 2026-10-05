@@ -2,9 +2,9 @@
 // and encryption sync, TDULC, TSDU trunking signalling blocks and the PDU
 // header. Voice (IMBE) frames are counted, not synthesized.
 
-#include "digital/dig_protocols.hpp"
-#include "digital/dig_fec.hpp"
-#include "digital/mbe_tables.hpp"
+#include "p25.hpp"
+#include "dig_fec.hpp"
+#include "mbe_tables.hpp"
 
 #include <cstdio>
 #include <sstream>

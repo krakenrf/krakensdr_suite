@@ -149,6 +149,8 @@ run_kraken_doa() {
     if [[ -z ${KRAKEN_TETRA_CODEC_DIR:-} && -x $DATA/codecs/cdecoder && -x $DATA/codecs/sdecoder ]]; then
         export KRAKEN_TETRA_CODEC_DIR=$DATA/codecs
     fi
+    # decoder plugins built into the image (kraken_doa_v2/plugins/<id>/)
+    export KRAKEN_PLUGIN_DIR=${KRAKEN_PLUGIN_DIR:-$APP/kraken_doa_v2/plugins}
     ensure_cert
     wait_converged
     export KRAKEN_DOA_NO_TUI=1

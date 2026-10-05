@@ -19,6 +19,8 @@
 #include "channel_manager.hpp"
 #include "settings_store.hpp"
 #include "doa_logger.hpp"
+#include "ai_manager.hpp"
+#include "digital/dig_plugin.hpp"
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -263,6 +265,19 @@ int main(int argc, char* argv[]) {
     // receiver once it connects (decimators exist, server reachable).
     SettingsStore::load();
     SettingsStore::start();
+
+    // Decoder plugins (plugins/<id>/build/decoder) - before the settings
+    // replay, which may select one on a VFO - and the AI Signal Lab
+    dig::PluginRegistry::instance().scan();
+    {
+        auto pl = dig::PluginRegistry::instance().list();
+        if (!pl.empty()) {
+            cout << "Decoder plugins:";
+            for (const auto& p : pl) cout << " " << p.id << (p.built ? "" : " (" + p.error + ")");
+            cout << endl;
+        }
+    }
+    AiManager::instance().init();
 
     // Web mapper output worker (idle until enabled; config arrives with the
     // settings replay / from the web UI sidebar).

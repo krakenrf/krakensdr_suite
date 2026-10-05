@@ -9,8 +9,8 @@
 // signalling, the MM / CMCE PDU types (call setup, SDS...). Speech (ACELP)
 // is not decoded; air-interface-encrypted signalling shows only its address.
 
-#include "digital/dig_protocols.hpp"
-#include "digital/dig_fec.hpp"
+#include "tetra.hpp"
+#include "dig_fec.hpp"
 
 #include <algorithm>
 #include <cmath>

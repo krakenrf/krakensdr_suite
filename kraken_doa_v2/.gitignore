@@ -31,3 +31,12 @@ doa_log_*.csv
 
 # API access token (KRAKEN_API_TOKEN alternative) - a secret, never commit
 api_token
+
+# Decoder plugin builds (the sources in plugins/<id>/ are the plugin)
+plugins/*/build/
+plugins/sdk/build/
+# AI Signal Lab: per-receiver config and session data (captures, analyses)
+ai/ai_config.json
+ai/ai_config.json.tmp
+ai/sessions/
+ai/__pycache__/

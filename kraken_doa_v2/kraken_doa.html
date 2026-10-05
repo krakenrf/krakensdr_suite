@@ -19,14 +19,26 @@ h3 {color:#7cb3f0;margin:0 0 10px 0;font-size:15px;border-bottom:1px solid #333;
 .app-container {display:flex;height:100vh;width:100%}
 
 /* Left sidebar */
-.sidebar {width:290px;min-width:290px;background:#16213e;border-right:1px solid #0f3460;overflow-y:auto;overflow-x:hidden;padding:10px;display:flex;flex-direction:column}
+.sidebar {width:290px;min-width:290px;background:#16213e;border-right:1px solid #0f3460;overflow-y:auto;overflow-x:hidden;padding:8px 5px;display:flex;flex-direction:column}
 .sidebar::-webkit-scrollbar {width:8px}
+/* Draggable sidebar width (desktop, initSidebarResize): the sidebar keeps its
+   290 px layout and is zoomed to the dragged width, so text, buttons and
+   inputs scale with it */
+.sidebar {zoom:var(--sb-zoom,1)}
+.sidebar-resizer {flex:0 0 5px;width:5px;cursor:col-resize;background:transparent;touch-action:none;transition:background 0.15s}
+.sidebar-resizer:hover,.sidebar-resizer.dragging {background:#1a4a7a}
+body.sb-resizing {cursor:col-resize;user-select:none}
 .sidebar::-webkit-scrollbar-track {background:#1a1a2e}
 .sidebar::-webkit-scrollbar-thumb {background:#0f3460;border-radius:4px}
 .sidebar::-webkit-scrollbar-thumb:hover {background:#1a4a7a}
+/* Firefox has no ::-webkit-scrollbar: a thin dark one instead of the wide
+   light default (Chromium would drop its 8 px styling for these, hence @supports) */
+@supports not selector(::-webkit-scrollbar) {
+  .sidebar,.doa-panel,.doa-content {scrollbar-width:thin;scrollbar-color:#0f3460 #1a1a2e}
+}
 
 /* Sidebar sections */
-.sb-section {background:#1a1a2e;border:1px solid #0f3460;border-radius:4px;padding:10px;margin-bottom:10px}
+.sb-section {background:#1a1a2e;border:1px solid #0f3460;border-radius:4px;padding:8px 7px;margin-bottom:8px}
 .sb-section.collapsed .sb-content {display:none}
 .sb-header {display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none}
 .sb-header h3 {margin:0;border:none;padding:0}
@@ -64,6 +76,108 @@ h3 {color:#7cb3f0;margin:0 0 10px 0;font-size:15px;border-bottom:1px solid #333;
 .dig-log div {white-space:pre-wrap;word-break:break-word;border-bottom:1px solid #1b2238}
 .dig-log .t {color:#6f87a6}
 .dig-log .p {color:#4fc3f7}
+/* AI Signal Lab */
+.ai-result {font-size:12px;line-height:1.45;color:#d6dde8;margin:6px 0;word-break:break-word}
+.ai-result h1,.ai-result h2,.ai-result h3,.ai-result h4 {color:#4fc3f7;font-size:13px;margin:8px 0 3px}
+.ai-result h1 {font-size:14px}
+.ai-result p {margin:4px 0}
+.ai-result ul,.ai-result ol {margin:3px 0 3px 16px;padding:0}
+.ai-result code {background:#10101e;border:1px solid #22304a;border-radius:2px;padding:0 3px;font-size:11px}
+.ai-result pre {background:#10101e;border:1px solid #22304a;border-radius:3px;padding:4px;overflow-x:auto;font-size:10.5px;margin:4px 0}
+.ai-result pre code {border:0;padding:0;background:none}
+.ai-result table {border-collapse:collapse;font-size:11px;margin:4px 0}
+.ai-result td,.ai-result th {border:1px solid #22304a;padding:2px 4px;text-align:left;vertical-align:top}
+.ai-result a {color:#7cb3f0}
+.ai-status {font-size:12px;color:#9fb0c8;margin:4px 0;word-break:break-word}
+.ai-status:empty {display:none}
+.ai-status .ok {color:#81c784}
+.ai-status .btn {margin-left:4px}
+.ai-log .tool {color:#ce93d8}
+.ai-log .res {color:#6f87a6}
+.ai-log .err {color:#ef9a9a}
+.ai-log .st {color:#ffcc80}
+.ai-log .txt {color:#c8d2e0}
+.dig-plug-head {justify-content:space-between;margin-top:10px;border-top:1px solid #22304a;padding-top:6px;cursor:pointer;user-select:none}
+.dig-plug-head:hover > span:first-child {color:#b0c4de !important}
+.dig-plug-caret {display:inline-block;width:10px;font-size:9px;transition:transform 0.15s}
+.dig-plug-head.open .dig-plug-caret {transform:rotate(90deg)}
+.ai-plugin {border:1px solid #22304a;border-radius:3px;padding:4px 6px;margin:4px 0;font-size:12px}
+.ai-plugin .nm {color:#e0e0e0;font-weight:bold}
+.ai-plugin .ai-auto {font-size:11px;color:#8aa8c7;display:flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;min-width:0}
+.ai-plugin .ds {color:#8aa8c7;font-size:11px;margin:2px 0}
+.ai-plugin .bt {display:flex;gap:4px;flex-wrap:wrap;margin-top:3px}
+/* Bottom panel under the waterfall (Decoder | AI tabs) */
+.info-panel {flex-shrink:0;display:flex;flex-direction:column;border-top:1px solid #0f3460;background:#141428;height:280px;min-height:120px}
+.info-panel.flash {animation:infoflash 1.2s ease-out}
+@keyframes infoflash {0% {box-shadow:inset 0 0 0 2px #ce93d8} 100% {box-shadow:inset 0 0 0 2px transparent}}
+.info-resize {height:5px;cursor:ns-resize;background:#0f3460;flex-shrink:0;touch-action:none}
+.info-resize:hover {background:#1976d2}
+.info-tabs {display:flex;align-items:center;gap:4px;padding:3px 8px;background:#16213e;border-bottom:1px solid #0f3460;flex-shrink:0}
+.info-tab {background:#1a1a2e;color:#999;border:1px solid #0f3460;border-radius:3px;padding:3px 10px;font-size:12px;cursor:pointer}
+.info-tab.sel {background:#1565c0;color:#fff;border-color:#1976d2}
+.info-sub {flex:1;min-width:0;font-size:12px;color:#8aa8c7;margin-left:8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.info-close {background:none;border:none;color:#888;cursor:pointer;font-size:14px;padding:0 4px}
+.info-body {flex:1;display:flex;gap:8px;padding:6px 8px;overflow:hidden;min-height:0}
+.info-col {display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.info-col > .scroll {flex:1;overflow-y:auto;min-height:0;scrollbar-color:#2a3858 #141428;scrollbar-width:thin}
+.info-caption {font-size:11px;color:#888;margin-bottom:4px;flex-shrink:0}
+.info-row {display:flex;gap:4px;margin:4px 0 0 0;flex-shrink:0}
+.info-row:first-child {margin:0 0 4px 0}
+.info-row input[type="text"] {flex:1;min-width:0;background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:4px 6px;border-radius:3px;font-size:12px}
+.info-tab-list {display:flex;gap:4px;flex-wrap:nowrap;overflow-x:auto;min-width:0;max-width:70%}
+.info-tab {white-space:nowrap}
+.info-dec-cols {flex:1;display:flex;gap:8px;min-height:0;overflow:hidden}
+#info-dec-top {flex-shrink:0}
+.info-dec-settings {display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:12px;color:#aab}
+.info-dec-settings label {display:flex;align-items:center;gap:4px;white-space:nowrap}
+.info-dec-settings select,.info-dec-settings input[type="text"] {background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:2px 4px;border-radius:3px;font-size:12px}
+.info-dec-settings .v {color:#8aa8c7;font-size:11px}
+.dig-codec {border:1px solid #22304a;border-radius:3px;padding:4px 6px;margin-bottom:4px;font-size:12px}
+.dig-codec .h {display:flex;align-items:center;gap:6px}
+.dig-codec .h b {color:#e0e0e0}
+.dig-codec .i {width:12px;text-align:center}
+.dig-codec.ok .i {color:#81c784}
+.dig-codec.missing {border-color:#5a4520}
+.dig-codec.missing .i {color:#ffb74d}
+.dig-codec .u {margin-left:auto;color:#6f87a6;font-size:11px;text-align:right}
+.dig-codec .s {color:#8aa8c7;font-size:11px;margin:2px 0 0 18px;word-break:break-word}
+.dig-codec details {margin:4px 0 0 18px}
+.dig-codec summary {font-size:11px;color:#7cb3f0;cursor:pointer}
+.dig-codec pre {background:#10101e;border:1px solid #22304a;border-radius:3px;padding:4px;font-size:10px;overflow-x:auto;white-space:pre;margin:4px 0}
+.dec-dig-state {font-size:11px;color:#8aa8c7;min-height:0}
+.dec-dig-state:empty {display:none}
+.info-dec-facts {width:38%;flex-shrink:0}
+.info-dec-log {flex:1}
+#info-dec-log {max-height:none;font-size:11px}
+.ai-hist {width:230px;flex-shrink:0}
+.ai-chat {flex:1}
+.ai-hist-item {padding:4px 6px;border:1px solid #22304a;border-radius:3px;margin-bottom:4px;cursor:pointer;font-size:12px;display:flex;gap:6px;align-items:flex-start}
+.ai-hist-item:hover {border-color:#1a4a7a}
+.ai-hist-item.sel {border-color:#1976d2;background:#132a4a}
+.ai-hist-item .f {color:#e0e0e0;font-family:monospace}
+.ai-hist-item .n {color:#8aa8c7;font-size:11px;word-break:break-word}
+.ai-hist-item .del {background:none;border:none;color:#888;cursor:pointer;font-size:12px;padding:0 2px}
+.ai-hist-item .del:hover {color:#ef9a9a}
+.ai-history {max-height:170px;overflow-y:auto}
+.ai-msg {margin:5px 0;padding:6px 9px;border-radius:7px;max-width:94%;font-size:12px;line-height:1.45;word-break:break-word}
+.ai-msg.user {background:#1b4f8f;color:#fff;margin-left:auto;white-space:pre-wrap;width:fit-content}
+.ai-msg.assistant {background:#1f2740;border:1px solid #2a3858;color:#d6dde8}
+.ai-msg .meta {font-size:10px;color:#9fb3cc;margin-bottom:2px;white-space:normal}
+.ai-msg h2,.ai-msg h3,.ai-msg h4 {color:#4fc3f7;font-size:13px;margin:8px 0 3px}
+.ai-msg p {margin:4px 0}
+.ai-msg ul,.ai-msg ol {margin:3px 0 3px 18px;padding:0}
+.ai-msg code {background:#10101e;border:1px solid #22304a;border-radius:2px;padding:0 3px;font-size:11px}
+.ai-msg pre {background:#10101e;border:1px solid #22304a;border-radius:3px;padding:4px;overflow-x:auto;font-size:10.5px}
+.ai-msg pre code {border:0;padding:0}
+.ai-msg table {border-collapse:collapse;font-size:11px;margin:4px 0}
+.ai-msg td,.ai-msg th {border:1px solid #22304a;padding:2px 4px;text-align:left}
+.ai-msg a {color:#7cb3f0}
+.ai-acts summary {font-size:11px;color:#888;cursor:pointer;margin-top:4px}
+@media (max-width:768px) {
+  .info-body {flex-direction:column}
+  .info-dec-facts,.ai-hist {width:auto;max-height:35%}
+}
+#ai-instr {background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;border-radius:3px;font-size:12px;padding:4px;box-sizing:border-box;resize:vertical}
 .slider {flex:1;height:5px;-webkit-appearance:none;background:#0f3460;outline:none;border-radius:2px;max-width:120px}
 .slider::-webkit-slider-thumb {-webkit-appearance:none;width:14px;height:14px;background:#1976d2;cursor:pointer;border-radius:50%}
 .slider::-moz-range-thumb {width:14px;height:14px;background:#1976d2;cursor:pointer;border-radius:50%;border:none}
@@ -194,24 +308,24 @@ h3 {color:#7cb3f0;margin:0 0 10px 0;font-size:15px;border-bottom:1px solid #333;
 .wf-controls input[type="range"] {width:60px}
 
 /* DoA panel */
-.doa-panel {width:350px;min-width:310px;max-width:430px;background:#1a1a2e;border:1px solid #0f3460;border-radius:4px;overflow-y:auto;display:flex;flex-direction:column}
+.doa-panel {width:280px;min-width:280px;max-width:430px;background:#1a1a2e;border:1px solid #0f3460;border-radius:4px;overflow-y:auto;display:flex;flex-direction:column}
 .doa-header {background:#16213e;padding:6px 10px;border-bottom:1px solid #0f3460}
 .doa-header .title {font-size:14px;color:#7cb3f0;font-weight:bold}
-.doa-content {flex:1;overflow-y:auto;padding:10px}
-#doa-displays {display:flex;flex-direction:column;gap:10px}
+.doa-content {flex:1;overflow-y:auto;padding:6px}
+#doa-displays {display:flex;flex-direction:column;gap:6px}
 
 /* Individual DoA display */
-.doa-display {background:#16213e;border:1px solid #0f3460;border-radius:4px;padding:10px}
+.doa-display {background:#16213e;border:1px solid #0f3460;border-radius:4px;padding:8px 6px}
 .doa-display h4 {margin:0 0 5px 0;font-size:13px;text-align:center}
 .doa-display .doa-content-row {display:flex;justify-content:center}
-.doa-display .dp {width:250px;height:250px;flex-shrink:0}
-.doa-display canvas {width:100%;height:100%}
+.doa-display .dp {width:100%;max-width:250px;aspect-ratio:1/1}
+.doa-display canvas {display:block;width:100%;height:100%}
 .doa-display .di {font-size:13px;text-align:center;margin-top:8px;color:#888}
 .doa-display .peak {color:#ef5350;font-weight:bold}
 .doa-display .ti {background:#0d3c61;padding:4px 8px;border-radius:3px;margin:5px 0;text-align:center;font-size:12px;color:#64b5f6}
 
 /* Decimator list in sidebar */
-#decimator-list .dec-item {background:#16213e;border:1px solid #0f3460;border-radius:3px;padding:8px;margin:5px 0}
+#decimator-list .dec-item {background:#16213e;border:1px solid #0f3460;border-radius:3px;padding:7px 6px;margin:5px 0}
 #decimator-list .dec-header {display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
 #decimator-list .dec-header h4 {margin:0;font-size:13px}
 #decimator-list .dec-row {margin:4px 0;font-size:12px;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
@@ -228,8 +342,8 @@ h3 {color:#7cb3f0;margin:0 0 10px 0;font-size:15px;border-bottom:1px solid #333;
 
 /* Responsive */
 @media(max-width:1200px) {
-  .doa-panel {width:280px;min-width:250px}
-  .doa-display .dp {width:200px;height:200px}
+  .doa-panel {width:230px;min-width:230px}
+  .doa-display .dp {max-width:200px}
 }
 @media(max-width:900px) {
   .spectrum-doa-container {flex-direction:column}
@@ -251,6 +365,8 @@ h3 {color:#7cb3f0;margin:0 0 10px 0;font-size:15px;border-bottom:1px solid #333;
   /* Settings sidebar becomes a slide-in drawer */
   .sidebar {position:fixed;top:0;left:0;bottom:0;height:100vh;height:100dvh;z-index:1000;width:min(85vw,320px);min-width:0;transform:translateX(-105%);transition:transform 0.25s ease;box-shadow:4px 0 20px rgba(0,0,0,0.6)}
   body.sidebar-open .sidebar {transform:translateX(0)}
+  .sidebar {zoom:1}
+  .sidebar-resizer {display:none}
   .sidebar-backdrop {display:block}
   body.sidebar-open .sidebar-backdrop {opacity:1;pointer-events:auto}
   .menu-btn {display:flex}
@@ -363,71 +479,83 @@ h3 {color:#7cb3f0;margin:0 0 10px 0;font-size:15px;border-bottom:1px solid #333;
     <!-- Digital voice/data decoder (one per VFO) -->
     <div class="sb-section" id="sb-digital">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🔐 Digital Decoder<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Decodes the digital signalling of the signal in a VFO: <b>P25</b> Phase 1, <b>DMR</b>, <b>TETRA</b>, <b>D-STAR</b>, <b>NXDN</b> and <b>MPT1327</b> (analogue trunking signalling). <b>Auto detect</b> tries all six and reports the one whose frames pass their error checks. Shown: network / site identities, talkgroups, radio IDs and callsigns, call activity, encryption, control-channel messages. Voice plays with Demod "Digital" (or Listen): P25 built in, the others with codecs you install (README). Centre the VFO on the carrier; the decoder corrects small offsets itself.</span></span></h3>
+        <h3>🔐 Digital Decoders<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The voice codecs the digital decoders can use, and the installed decoder plugins. <b>Auto detect</b> on a plugin = it runs when a VFO's decoder is on Auto detect (untick the ones you never need: each costs CPU). Plugins are plain source folders (plugins/&lt;id&gt;/): Export / Import them, or copy the folder to another KrakenSDR and run make. To decode a VFO, tick <b>Digital decoder</b> on it in the Decimators box and pick <b>Auto detect</b> or a decoder; any number of VFOs can decode at once, each with its own tab in the panel under the waterfall. Voice plays with Demod "Digital" (or Listen in the VFO's tab). The AMBE and TETRA codecs are not shipped (licensing): you build them yourself, for personal use - whether that is allowed where you live is your responsibility.</span></span></h3>
         <span class="sb-toggle">▼</span>
       </div>
       <div class="sb-content">
+        <div id="dig-codecs-box"><div class="dig-help">Checking the voice codecs…</div></div>
+        <div class="ctrl-row" style="justify-content:space-between;margin-bottom:0">
+          <span class="dig-help" style="margin:0">Switch a decoder off and on after installing a codec.</span>
+          <button class="btn sm" type="button" onclick="send('PLUGIN_CODECS')" title="Look for the codecs again (after installing one)">↻ Check again</button>
+        </div>
+        <div class="ctrl-row dig-plug-head" onclick="digTogglePlugins()" title="Show / hide the decoder plugins">
+          <span style="font-size:12px;color:#888;min-width:0"><span id="dig-plug-caret" class="dig-plug-caret">▶</span> Decoder plugins <span id="dig-plug-count"></span></span>
+          <span style="display:flex;gap:4px">
+            <button class="btn sm" type="button" onclick="event.stopPropagation(); $id('ai-import-file').click()" title="Import a plugin exported from another KrakenSDR (.krakenplugin.json)">Import…</button>
+            <button class="btn sm" type="button" onclick="event.stopPropagation(); send('PLUGINS_RESCAN')" title="Re-read the plugins folder">↻</button>
+          </span>
+        </div>
+        <input type="file" id="ai-import-file" accept=".json" style="display:none" onchange="aiImportFile(this)">
+        <!-- collapsed by default (open state kept in localStorage) -->
+        <div id="dig-plug-body" style="display:none">
+          <div id="ai-plugins"><div class="dig-help">No plugins yet.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Signal Lab: identify a signal and write decoder plugins with an LLM -->
+    <div class="sb-section" id="sb-ai">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>🤖 AI Signal Lab<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Points an AI coding agent (Claude Code, or another LLM CLI) at the signal in a VFO. <b>Investigate</b> captures it, measures it (spectrum, bursts, modulation, symbol rate, sync words) and asks the AI what it is. <b>Create Decoder</b> then has the AI write, build and test a decoder plugin for it, which appears in the Digital Decoders box and the VFOs' decoder lists. <b>Custom Instructions</b> add your own hints. The AI's answers, the conversation and its steps show in the 🤖 AI tab under the waterfall. Uses your LLM account; enable it on the Pi with <code>python3 ai/kraken_ai.py setup</code>.</span></span></h3>
+        <span class="sb-toggle">▼</span>
+      </div>
+      <div class="sb-content">
+        <div class="ctrl-row" style="justify-content:space-between">
+          <span class="cv" style="margin-left:0;flex:1;min-width:0"><span id="ai-dot" style="color:#777">&#9679;</span> <span id="ai-conn">Checking…</span></span>
+          <button class="btn sm" type="button" id="ai-test-btn" onclick="aiTest()" title="Send a one-line request to the LLM">Test</button>
+        </div>
+        <div id="ai-setup" class="dig-help" style="display:none"></div>
+        <div id="ai-token-warn" class="dig-warn" style="display:none">No API token is set: anyone who can open this page can start the AI agent (and build code) on this receiver. See README → API token.</div>
         <div class="ctrl-row">
-          <label>VFO:</label>
-          <select id="dig-vfo" onchange="digSelectVfo(parseInt(this.value))" style="width:70px"></select>
-          <span class="cv"><span id="dig-dot" style="color:#777">&#9679;</span> <span id="dig-state">Off</span></span>
+          <label style="min-width:30px">VFO:</label>
+          <select id="ai-vfo" onchange="aiVfoChanged()" style="width:64px"></select>
+          <input type="text" id="ai-freq" style="width:92px;font-family:monospace" title="Frequency to investigate, MHz (default: the VFO's). Must lie in the receiver's current span." placeholder="MHz">
+          <span style="font-size:12px;color:#888">MHz</span>
         </div>
         <div class="ctrl-row">
-          <label>Mode:</label>
-          <select id="dig-mode" onchange="digSetMode(this.value)" style="flex:1">
-            <option value="OFF">Off</option>
-            <option value="AUTO">Auto detect</option>
-            <option value="P25">P25 Phase 1</option>
-            <option value="DMR">DMR</option>
-            <option value="TETRA">TETRA</option>
-            <option value="DSTAR">D-STAR</option>
-            <option value="NXDN">NXDN</option>
-            <option value="MPT1327">MPT1327</option>
+          <label style="min-width:30px">Capture:</label>
+          <select id="ai-secs" style="width:70px">
+            <option value="5">5 s</option><option value="10" selected>10 s</option><option value="20">20 s</option>
+            <option value="30">30 s</option><option value="60">60 s</option>
           </select>
+          <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">How much of the signal to record for the analysis (at the VFO's bandwidth). Use a longer capture for signals that are only on now and then; the AI can also make further captures itself.</span></span>
         </div>
-        <div class="ctrl-row" id="dig-voice-row" style="display:none">
-          <button class="btn sm" type="button" id="dig-listen" onclick="digListen()" title="Play this VFO's decoded digital voice: makes it the audio source with the Digital demodulator">🔊 Listen</button>
-          <span id="dig-voice" style="font-size:11px;color:#8aa8c7;flex:1;min-width:0"></span>
+        <button class="btn primary" type="button" id="ai-investigate" onclick="aiInvestigate()" style="width:100%;margin:2px 0">🔍 Investigate this signal with AI</button>
+        <div class="ctrl-row" style="gap:4px;margin:4px 0">
+          <button class="btn" type="button" id="ai-create" onclick="aiCreate()" disabled style="flex:1" title="Have the AI write, build and test a decoder plugin for the investigated signal">🛠 Create Decoder</button>
+          <button class="btn" type="button" id="ai-instr-btn" onclick="aiToggleInstr()" style="flex:1" title="Your own hints for the AI">✍ Custom Instructions</button>
         </div>
-        <div id="dig-bw-warn" class="dig-warn" style="display:none">
-          <span id="dig-bw-text"></span>
-          <button class="btn sm" type="button" onclick="digFixBandwidth()">Set 24 kHz</button>
+        <div id="ai-instr-box" style="display:none">
+          <textarea id="ai-instr" rows="5" style="width:100%" oninput="aiSaveInstr()"
+            placeholder="Anything that helps the AI: what you know about the signal, links to specifications, what the decoder should show (e.g. &quot;list the unit IDs as facts&quot;), what to ignore..."></textarea>
+          <div class="dig-help">Sent with Create Decoder and the next investigation. Kept in this browser.</div>
         </div>
-        <div id="dig-mode-help" class="dig-help"></div>
-        <div id="dig-settings" style="display:none">
-          <div class="ctrl-row" id="dig-row-dmr">
-            <label>DMR slot:</label>
-            <select id="dig-dmr-slot" onchange="digSetOpt('dmr_slot', this.value)" style="width:90px">
-              <option value="0">Both</option><option value="1">Slot 1</option><option value="2">Slot 2</option>
-            </select>
-          </div>
-          <div class="ctrl-row" id="dig-row-p25">
-            <label>P25 NAC:</label>
-            <input type="text" id="dig-p25-nac" placeholder="any" maxlength="3" style="width:60px;font-family:monospace"
-                   onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="digSetOpt('p25_nac', this.value.trim() || 'any')">
-            <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Only decode P25 frames with this Network Access Code (3 hex digits). Empty = any.</span></span>
-          </div>
-          <div class="ctrl-row">
-            <label style="display:flex;align-items:center;gap:4px;min-width:0"><input type="checkbox" id="dig-verbose" onchange="digSetOpt('verbose', this.checked ? 1 : 0)"> Log all messages</label>
-            <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Also log the messages a control channel repeats constantly (system broadcasts, Aloha / acknowledgement CSBKs, GPS sentences). Off: those only update the table.</span></span>
-          </div>
-          <div class="dig-help" id="dig-codecs"></div>
-          <div class="ctrl-row">
-            <label style="display:flex;align-items:center;gap:4px;min-width:0"><input type="checkbox" id="dig-invert" onchange="digSetOpt('invert', this.checked ? 1 : 0)"> Invert spectrum</label>
-            <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">For a source whose spectrum is mirrored (I/Q swapped). Not needed with the KrakenSDR.</span></span>
-          </div>
+        <div class="ctrl-row" id="ai-plugin-row" style="display:none">
+          <label style="min-width:56px">Plugin id:</label>
+          <input type="text" id="ai-plugin-id" maxlength="32" style="flex:1;min-width:0;font-family:monospace" title="Folder name of the plugin: a-z 0-9 _ -">
         </div>
-        <div id="dig-status" class="dig-status" style="display:none">
-          <div><span>Detected</span><b id="dig-detected">-</b></div>
-          <div><span>Carrier offset</span><span id="dig-offset">-</span></div>
-          <div><span>Valid frames (4 s)</span><span id="dig-frames">-</span></div>
+        <div class="ctrl-row" id="ai-job-row" style="display:none">
+          <span id="ai-job" style="flex:1;font-size:12px;color:#ffcc80;min-width:0"></span>
+          <button class="btn sm off" type="button" onclick="aiCancel()">■ Stop</button>
         </div>
-        <table id="dig-info" class="dig-info"></table>
-        <div class="ctrl-row" id="dig-log-hdr" style="display:none;justify-content:space-between;margin-bottom:2px">
-          <span style="font-size:12px;color:#888">Events</span>
-          <button class="btn sm" type="button" onclick="digClear()">Clear</button>
+        <!-- status only: the AI's answers, the conversation and the agent's
+             steps are in the AI tab of the panel under the waterfall -->
+        <div id="ai-status" class="ai-status"></div>
+        <div class="ctrl-row" style="justify-content:space-between;margin-top:10px;border-top:1px solid #22304a;padding-top:6px">
+          <span style="font-size:12px;color:#888">History</span>
+          <button class="btn sm" type="button" onclick="infoPanelOpen('ai')" title="Show the conversations in the large panel under the waterfall">⤢ Chat</button>
         </div>
-        <div id="dig-log" class="dig-log" style="display:none"></div>
+        <div id="ai-history" class="ai-history"></div>
       </div>
     </div>
 
@@ -1036,6 +1164,9 @@ h3 {color:#7cb3f0;margin:0 0 10px 0;font-size:15px;border-bottom:1px solid #333;
     </div>
   </div>
 
+  <!-- Drag to resize the sidebar (desktop); double-click = default width -->
+  <div class="sidebar-resizer" id="sidebar-resizer" title="Drag to resize the sidebar (double-click: default width)"></div>
+
   <!-- Backdrop for mobile sidebar drawer (tap to close) -->
   <div class="sidebar-backdrop" onclick="toggleSidebar(false)"></div>
 
@@ -1170,6 +1301,54 @@ h3 {color:#7cb3f0;margin:0 0 10px 0;font-size:15px;border-bottom:1px solid #333;
               <input type="checkbox" id="wf-autorange" checked onchange="toggleAutoRange(this.checked);sendUI('WF_AUTO',this.checked?1:0)">
               <span style="font-size:11px">Auto</span>
             </label>
+          </div>
+          <span style="margin-left:auto;display:flex;gap:4px">
+            <button class="btn sm" type="button" onclick="infoPanelOpen('dec')" title="Digital decoders: one tab per decoding VFO">🔐 Decoders</button>
+            <button class="btn sm" type="button" onclick="infoPanelOpen('ai')" title="AI Signal Lab: investigated signals and their chats">🤖 AI</button>
+          </span>
+        </div>
+        <!-- Bottom panel: more room for the digital decoder's data and the
+             AI Signal Lab's conversations (tabs) -->
+        <div id="info-panel" class="info-panel" style="display:none">
+          <div class="info-resize" id="info-resize" title="Drag to resize"></div>
+          <div class="info-tabs">
+            <span id="info-tab-list" class="info-tab-list"></span>
+            <span class="info-sub" id="info-sub"></span>
+            <button type="button" class="info-close" onclick="infoPanelClose()" title="Close">✕</button>
+          </div>
+          <div class="info-body" id="info-body-dec" style="flex-direction:column">
+            <div id="info-dec-top"></div>
+            <div class="info-dec-cols" id="info-dec-cols">
+              <div class="info-col info-dec-facts">
+                <div class="dig-status" id="info-dec-status"></div>
+                <div class="scroll"><table class="dig-info" id="info-dec-facts"></table>
+                  <details id="info-dec-plugin-log" style="display:none;margin-top:4px">
+                    <summary style="font-size:11px;color:#888;cursor:pointer">Plugin output (stderr)</summary>
+                    <div class="dig-log"></div>
+                  </details>
+                </div>
+              </div>
+              <div class="info-col info-dec-log">
+                <div class="info-row">
+                  <input type="text" id="info-dec-filter" placeholder="Filter events…" oninput="infoRenderDecoder(true)">
+                  <button class="btn sm" type="button" onclick="digClearFor(infoDecVfo)">Clear</button>
+                </div>
+                <div class="scroll dig-log" id="info-dec-log"></div>
+              </div>
+            </div>
+          </div>
+          <div class="info-body" id="info-body-ai" style="display:none">
+            <div class="info-col ai-hist">
+              <div class="info-caption">Investigated signals</div>
+              <div class="scroll" id="info-ai-hist"></div>
+            </div>
+            <div class="info-col ai-chat">
+              <div class="scroll" id="info-ai-chat"></div>
+              <div class="info-row">
+                <input type="text" id="info-ai-ask" placeholder="Ask about this signal…" onkeydown="if(event.key==='Enter'){aiAskFrom('info-ai-ask')}">
+                <button class="btn sm primary" type="button" onclick="aiAskFrom('info-ai-ask')">Send</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -3234,6 +3413,9 @@ function drawBox() {
     });
   }
 
+  // AI Signal Lab: an "AI" badge above every investigated frequency
+  aiDrawMarkers(ctx, w);
+
   // Also draw on waterfall overlay
   if (waterfall && waterfall.initialized) {
     waterfall.drawOverlay(decimatorInfo, barCenterFreq(), activeDecimatorId);
@@ -3577,10 +3759,10 @@ function pointerClick(s, e) {
   if(centerActiveBarAt(s.xToMhz(x))) drawBox();
 }
 
-function handleDown(e) { pointerDown(fftSurface, e); }
-function handleMove(e) { pointerMove(fftSurface, e); }
+function handleDown(e) { if (aiMarkerHit(e)) return; pointerDown(fftSurface, e); }
+function handleMove(e) { pointerMove(fftSurface, e); if (!isDragging && !isDraggingEdge && !isScrollDragging) aiMarkerHover(e); }
 function handleUp(e) { pointerUp(fftSurface, e); }
-function handleClick(e) { pointerClick(fftSurface, e); }
+function handleClick(e) { if (aiMarkerConsumed) return; pointerClick(fftSurface, e); }
 function handleWaterfallDown(e) { pointerDown(wfSurface, e); }
 function handleWaterfallMove(e) { pointerMove(wfSurface, e); }
 function handleWaterfallUp(e) { pointerUp(wfSurface, e); }
@@ -5390,6 +5572,15 @@ function setDecimatorDemodMode(id, mode) {
     freqUserChangeTimeout = null;
   }
 
+  // Digital voice: keep the VFO's bandwidth, widened only if its decoder
+  // needs more (TETRA / Auto detect need 24 kHz - the NBFM 16 kHz below
+  // starved them)
+  if (mode === 'DIGITAL') {
+    const need = digMinRateK(dec && dec.digital_mode && dec.digital_mode !== 'OFF' ? dec.digital_mode : 'AUTO') || 24;
+    const have = dec ? ((bwo[dec.bandwidth_index] || {}).bandwidth ?? dec.bandwidth_mhz) * 1000 : 0;
+    if (have + 1e-6 < need) digFixBandwidthFor(id);
+    return;
+  }
   // Automatically set appropriate bandwidth for the mode
   // WBFM: 240 kHz (index 7), NBFM/AM: 16 kHz (index 20)
   const bwIndex = (mode === 'WBFM') ? 7 : 20;
@@ -5497,6 +5688,7 @@ function updateDecimatorList(info) {
 
   if (sameStructure && listDiv.children.length === info.length) {
     info.forEach(dec => refreshDecimatorPanelItem(dec.id));
+    digRenderCards();
     return;
   }
 
@@ -5575,6 +5767,17 @@ function updateDecimatorList(info) {
         </label>
       </div>
       <div class="dec-row" style="border-top:1px solid #444;padding-top:6px;margin-top:4px">
+        <label style="display:flex;align-items:center;gap:4px" title="Decode the digital signal in this VFO (P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS, ... - any decoder plugin). Several VFOs can decode at once; each gets a tab in the panel under the waterfall.">
+          <input type="checkbox" id="dec-dig-en-${dec.id}" onchange="digToggle(${dec.id}, this.checked)">
+          <span>Digital decoder</span>
+        </label>
+        <button class="btn sm" type="button" id="dec-dig-open-${dec.id}" style="margin-left:auto;display:none" onclick="infoPanelOpen('dec:${dec.id}')" title="Show this VFO's decoder (data and settings) in the panel under the waterfall">⤢</button>
+      </div>
+      <div class="dec-row">
+        <select id="dec-dig-mode-${dec.id}" onchange="digSetModeFor(${dec.id}, this.value)" style="flex:1" title="Auto detect, or one decoder. Picking one switches the decoder on."></select>
+      </div>
+      <div class="dec-row dec-dig-state" id="dec-dig-state-${dec.id}"></div>
+      <div class="dec-row" style="border-top:1px solid #444;padding-top:6px;margin-top:4px">
         <label style="display:flex;align-items:center;gap:4px">
           <input type="checkbox" id="dec-squelch-enable-${dec.id}" ${squelchEnabled ? 'checked' : ''}
                  onchange="toggleDecimatorSquelch(${dec.id}, this.checked)">
@@ -5609,6 +5812,7 @@ function updateDecimatorList(info) {
 
     listDiv.appendChild(decDiv);
   });
+  digRenderCards();
 
   // Redraw tuning bar overlay with updated offsets
   drawBox();
@@ -5797,6 +6001,9 @@ function connect() {
     // Request decimator info on connection (includes per-decimator bandwidth and demod mode)
     setTimeout(() => requestDecimatorInfo(), 500);
 
+    // AI Signal Lab state + decoder plugin list
+    setTimeout(() => send('AI_STATE'), 800);
+
     // Request FFT settings on connection
     setTimeout(() => requestFFTSettings(), 600);
 
@@ -5841,6 +6048,15 @@ function connect() {
           else if(msg.digital) {
             digOnMessage(msg.digital);
           }
+          else if(msg.plugins) { digOnPlugins(msg.plugins); }
+          else if(msg.codecs) { digOnCodecs(msg.codecs); }
+          else if(msg.ai_state) { aiOnState(msg.ai_state); }
+          else if(msg.ai_event) { aiOnEvent(msg.ai_event); }
+          else if(msg.ai_error) { aiOnError(msg.ai_error); }
+          else if(msg.ai_sessions) { aiOnSessions(msg.ai_sessions); }
+          else if(msg.ai_session) { aiOnSession(msg.ai_session); }
+          else if(msg.plugin_export) { aiOnExport(msg.plugin_export); }
+          else if(msg.plugin_import) { aiOnImport(msg.plugin_import); }
           else if(msg.decimator_added) {
             requestDecimatorInfo(); // Refresh the list
             resetAudioWorklet(); // Reset audio worklet to clear buffers
@@ -5878,7 +6094,7 @@ function connect() {
               dec.bandwidth_index = msg.decimator_bandwidth.bandwidth_index;
               refreshDecimatorPanelItem(msg.decimator_bandwidth.id);
               drawBox();
-              digRenderControls();
+              digRenderAll();
             }
           }
           else if(msg.demod_mode) {
@@ -6431,6 +6647,59 @@ window.addEventListener('resize',()=>{
   }
 });
 
+// --- Draggable sidebar width (desktop) ---
+// The sidebar is laid out at SB_BASE_W and zoomed (--sb-zoom) to the dragged
+// width, so everything in it scales together. Kept in localStorage; a window
+// resize event after a change refits the spectrum / waterfall.
+const SB_BASE_W = 290, SB_MIN_W = 230;
+let sbWidth = SB_BASE_W, sbWanted = SB_BASE_W;   // applied / the user's choice
+function sbMaxW() { return Math.max(SB_BASE_W, Math.min(720, Math.round(window.innerWidth * 0.6))); }
+function sbApply(w) {
+  const nw = Math.round(Math.min(sbMaxW(), Math.max(SB_MIN_W, w)));
+  if (nw === sbWidth && document.documentElement.style.getPropertyValue('--sb-zoom')) return false;
+  sbWidth = nw;
+  document.documentElement.style.setProperty('--sb-zoom', (sbWidth / SB_BASE_W).toFixed(4));
+  return true;
+}
+function sbSave() { sbWanted = sbWidth; try { localStorage.setItem('kraken_sidebar_w', String(sbWidth)); } catch (e) {} }
+function initSidebarResize() {
+  const h = document.getElementById('sidebar-resizer');
+  let saved = SB_BASE_W;
+  try { saved = parseInt(localStorage.getItem('kraken_sidebar_w'), 10) || SB_BASE_W; } catch (e) {}
+  sbWanted = saved;
+  sbApply(saved);
+  if (!h) return;
+  let startX = 0, startW = 0, raf = 0;
+  const refit = () => { raf = 0; window.dispatchEvent(new Event('resize')); };
+  h.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    startX = e.clientX; startW = sbWidth;
+    h.setPointerCapture(e.pointerId);
+    h.classList.add('dragging'); document.body.classList.add('sb-resizing');
+    e.preventDefault();
+  });
+  h.addEventListener('pointermove', e => {
+    if (!h.hasPointerCapture(e.pointerId)) return;
+    if (sbApply(startW + e.clientX - startX) && !raf) raf = requestAnimationFrame(refit);
+  });
+  const end = e => {
+    if (!h.hasPointerCapture(e.pointerId)) return;
+    h.releasePointerCapture(e.pointerId);
+    h.classList.remove('dragging'); document.body.classList.remove('sb-resizing');
+    sbSave(); refit();
+  };
+  h.addEventListener('pointerup', end);
+  h.addEventListener('pointercancel', end);
+  h.addEventListener('dblclick', () => { const ch = sbApply(SB_BASE_W); sbSave(); if (ch) refit(); });
+  // The window size sets the maximum: re-clamp the user's width (a narrow
+  // window shrinks it, a wider one gives it back) and refit once more, since
+  // the spectrum's own resize handler ran before this one
+  window.addEventListener('resize', () => {
+    if (!h.classList.contains('dragging') && sbApply(sbWanted) && !raf) raf = requestAnimationFrame(refit);
+  });
+}
+initSidebarResize();
+
 // --- Mobile sidebar drawer ---
 function toggleSidebar(open) {
   const b = document.body;
@@ -6803,132 +7072,162 @@ function addTouchHandlers(el, down, move, up) {
     send('STATIC_LOCATION:' + lat + ',' + lon + ',' + hd);
   }
 
-  // --- Digital decoder panel (one decoder per VFO) ---
-  // The backend pushes {"digital":[...]} at 4 Hz for every VFO with a
-  // decoder on, carrying only the events logged since its previous push;
-  // opening a VFO here asks for its whole log (DIGITAL_HISTORY). Events are
-  // kept per VFO and de-duplicated by sequence number.
-  let digVfo = null;            // selected VFO id
-  const digStatus = {};         // id -> last status object
-  const digEvents = {};         // id -> [{s,t,p,m}], oldest first
+  // --- Digital decoders (one per VFO, any number at once) ---
+  // Every decoder is a plugin ({"plugins":[...]}). Each VFO card in the
+  // Decimators box has a "Digital decoder" tick + a mode list (Auto detect or
+  // a plugin); the decoded data and the decoder's settings live in that VFO's
+  // tab of the panel under the waterfall ("🔐 D<n>"); the sidebar "Digital
+  // Decoders" box only lists the running ones. The backend pushes
+  // {"digital":[...]} at 4 Hz for every VFO with a decoder on, carrying only
+  // the events logged since its previous push; a VFO's whole log is asked for
+  // (DIGITAL_HISTORY) when its decoder is first seen. Events are kept per VFO
+  // and de-duplicated by sequence number.
+  const digStatus = {};         // VFO id -> last status object
+  const digEvents = {};         // VFO id -> [{s,t,src,p,m}], oldest first
+  const digHistoryAsked = {};   // VFO id -> mode the history was asked for
   const DIG_MAX_EVENTS = 400;
-  const DIG_MIN_RATE_KHZ = {OFF: 0, AUTO: 24, TETRA: 24, P25: 12, DMR: 12, DSTAR: 12, NXDN: 12, MPT1327: 12};
-  const DIG_HELP = {
-    OFF: '',
-    AUTO: 'Tries P25, DMR, TETRA, D-STAR, NXDN and MPT1327 at once and locks onto the protocol whose frames pass their error checks. Needs a VFO bandwidth of at least 24 kHz (TETRA is 25 kHz wide).',
-    P25: 'P25 Phase 1 (C4FM / CQPSK, 12.5 kHz). Control channels: system, site, neighbours and channel grants. Voice channels: talkgroup, unit ID, encryption. Bandwidth 12–24 kHz.',
-    DMR: 'DMR Tier II / III (12.5 kHz, 2 timeslots). Colour code, talkgroups and radio IDs per slot, CSBK control messages, privacy flags. Bandwidth 12–24 kHz.',
-    TETRA: 'TETRA downlink (base station, 25 kHz). Network (MCC / MNC), colour code, location area, carrier, services, timeslot usage, call set-up and addresses. Bandwidth 24 kHz or more.',
-    DSTAR: 'D-STAR digital voice (6.25 kHz). Callsigns from the radio header (MY / UR / RPT1 / RPT2), the slow-data text message and GPS / DPRS. Bandwidth 12 kHz.',
-    NXDN: 'NXDN (Kenwood NEXEDGE / Icom IDAS), both NXDN48 (6.25 kHz) and NXDN96 (12.5 kHz). RAN, talkgroup and unit IDs, call start / end, encryption. Trunking control channels: system / site, control channel, voice and data channel grants. Bandwidth 12 kHz.',
-    MPT1327: 'MPT1327 analogue trunking (1200 bit/s FFSK signalling on NBFM). Control channel: system identity, neighbour sites, access mode, channel grants (unit / group idents as prefix-ident), acknowledgements, clear-downs. Voice is analogue FM on the granted traffic channel: listen there with NBFM. Bandwidth 12 kHz.'
-  };
+  let digPlugins = [];          // {"plugins":[...]} (dig_plugin.cpp list_json)
+  let infoDecVfo = null;        // VFO whose decoder tab is shown
+  // mode picked while a VFO's decoder is off (used when it is ticked on)
+  const digWanted = (() => { try { return JSON.parse(localStorage.getItem('kraken_dig_wanted') || '{}'); } catch (e) { return {}; } })();
 
   function digEsc(t) {
-    return String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    return String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
+  function digPlugin(id) { return digPlugins.find(p => p.id === id) || null; }
+  function digModePlugin(mode) { return (mode && mode.startsWith('PLUGIN:')) ? mode.slice(7) : ''; }
+  function digName(id) { const p = digPlugin(id); return p ? p.name : (id || ''); }
+  function digModeLabel(mode) {
+    if (!mode || mode === 'OFF') return 'Off';
+    if (mode === 'AUTO') return 'Auto detect';
+    return digName(digModePlugin(mode));
+  }
+  function digAutoPlugins() { return digPlugins.filter(p => p.built && p.auto); }
+  // VFO bandwidth (kHz) the mode needs
+  function digMinRateK(mode) {
+    if (mode === 'AUTO') return Math.max(0, ...digAutoPlugins().map(p => p.min_vfo_rate || 0)) / 1000;
+    const p = digPlugin(digModePlugin(mode));
+    return p ? (p.min_vfo_rate || 12500) / 1000 : 0;
+  }
+  // the plugin whose settings are shown: the selected one, or in Auto detect
+  // the one it locked onto (DMR slot / P25 NAC only appear once DMR / P25 is
+  // actually received)
+  function digOptionsPlugin(mode, st) {
+    if (mode === 'AUTO') return st && st.detected ? digPlugin(st.detected) : null;
+    return digPlugin(digModePlugin(mode));
+  }
+  function digDec(id) { return decimatorInfo.find(x => x.id === id) || null; }
+  function digModeOf(id) { const d = digDec(id); return d && d.digital_mode ? d.digital_mode : 'OFF'; }
+  function digActiveIds() { return decimatorInfo.filter(d => d.digital_mode && d.digital_mode !== 'OFF').map(d => d.id); }
 
-  // decimator_info arrived: refresh the VFO selector and the controls
-  function digOnDecimatorInfo(info) {
-    const sel = $id('dig-vfo');
+  // <option>s: Auto detect + the built plugins (+ one this receiver lacks)
+  function digModeOptions(cur) {
+    const built = digPlugins.filter(p => p.built).sort((a, b) => a.name.localeCompare(b.name));
+    let html = '<option value="AUTO">Auto detect</option>';
+    if (built.length)
+      html += '<optgroup label="Decoders">' + built.map(p =>
+        `<option value="PLUGIN:${digEsc(p.id)}" title="${digEsc(p.description || '')}">${digEsc(p.name)}</option>`).join('') + '</optgroup>';
+    if (cur && cur.startsWith('PLUGIN:') && !built.some(p => 'PLUGIN:' + p.id === cur))
+      html += `<option value="${digEsc(cur)}">${digEsc(cur.slice(7))} (not installed)</option>`;
+    return html;
+  }
+  function digFillSelect(sel, cur) {
     if (!sel) return;
-    if (digVfo === null || !info.some(d => d.id === digVfo)) {
-      const on = info.find(d => d.digital_mode && d.digital_mode !== 'OFF');
-      const fm = info.find(d => d.is_fm_source);
-      digVfo = (on || fm || info[0] || {}).id ?? null;
-      if (digVfo !== null) digRequestHistory();
+    const html = digModeOptions(cur);
+    if (sel.dataset.html !== html) { sel.dataset.html = html; sel.innerHTML = html; }
+    if (document.activeElement !== sel) sel.value = cur;
+  }
+
+  // state line of a VFO's decoder: [colour, text]
+  function digStateOf(id) {
+    const mode = digModeOf(id);
+    const st = digStatus[id];
+    if (mode === 'OFF') return ['#777', 'Off'];
+    const bad = (st && st.plugins || []).filter(p => p.state && p.state !== 'running' && p.state !== 'starting');
+    if (mode !== 'AUTO' && bad.length) return ['#ef5350', 'Decoder ' + bad[0].state];
+    if (st && st.state === 'receiving') return ['#4caf50', 'Receiving ' + (st.detected_name || digName(st.detected))];
+    return ['#ffb74d', mode === 'AUTO' ? 'Searching…' : 'No ' + digModeLabel(mode) + ' signal'];
+  }
+
+  function digOnPlugins(list) {
+    digPlugins = list || [];
+    digRenderAll();
+    aiRenderPlugins();
+    aiQueueRender();   // Create / Improve label depends on the list
+  }
+
+  // decimator_info arrived (after updateDecimatorList built the cards)
+  function digOnDecimatorInfo(info) {
+    for (const d of info) {
+      const mode = d.digital_mode || 'OFF';
+      if (mode !== 'OFF' && digHistoryAsked[d.id] !== mode) {
+        digHistoryAsked[d.id] = mode;
+        send('DIGITAL_HISTORY:' + d.id);
+      }
+      if (mode === 'OFF') { delete digHistoryAsked[d.id]; delete digStatus[d.id]; }
     }
-    const opts = info.map(d => `<option value="${d.id}"${d.id === digVfo ? ' selected' : ''}>D${d.id}${d.digital_mode && d.digital_mode !== 'OFF' ? ' •' : ''}</option>`).join('');
-    if (sel.innerHTML !== opts) sel.innerHTML = opts;
-    digRenderControls();
+    // the shown tab's VFO went away / switched off: show another one
+    const act = digActiveIds();
+    if (infoDecVfo !== null && !act.includes(infoDecVfo)) infoDecVfo = act.length ? act[0] : null;
+    digRenderAll();
+    aiOnDecimatorInfo(info);
   }
 
-  function digSelectVfo(id) {
-    digVfo = id;
-    digRequestHistory();
-    digRenderControls();
-    digRender();
-  }
-
-  function digRequestHistory() {
-    const d = decimatorInfo.find(x => x.id === digVfo);
-    if (d && d.digital_mode && d.digital_mode !== 'OFF') send('DIGITAL_HISTORY:' + digVfo);
-  }
-
-  function digSetMode(mode) {
-    if (digVfo === null) return;
-    send('DIGITAL_MODE:' + digVfo + ':' + mode);
-    const d = decimatorInfo.find(x => x.id === digVfo);
+  // Tick on a VFO card: decoder on (with the mode picked in its list) / off
+  function digToggle(id, on) {
+    const mode = on ? (digWanted[id] || 'AUTO') : 'OFF';
+    send('DIGITAL_MODE:' + id + ':' + mode);
+    const d = digDec(id);
     if (d) d.digital_mode = mode;
-    if (mode === 'OFF') { delete digStatus[digVfo]; }
-    digRenderControls();
-    digRender();
+    if (on) { infoDecVfo = id; infoPanelOpen('dec:' + id); }
+    else delete digStatus[id];
+    digRenderAll();
   }
 
-  function digSetOpt(key, val) {
-    if (digVfo === null) return;
-    send('DIGITAL_OPT:' + digVfo + ':' + key + ':' + val);
+  // Mode list (card or tab): picking a decoder also switches it on
+  function digSetModeFor(id, mode) {
+    digWanted[id] = mode;
+    try { localStorage.setItem('kraken_dig_wanted', JSON.stringify(digWanted)); } catch (e) {}
+    const d = digDec(id);
+    if (!d) return;
+    const was = d.digital_mode && d.digital_mode !== 'OFF';
+    send('DIGITAL_MODE:' + id + ':' + mode);
+    d.digital_mode = mode;
+    if (!was) { infoDecVfo = id; infoPanelOpen('dec:' + id); }
+    digRenderAll();
   }
+
+  function digSetOptFor(id, key, val) { send('DIGITAL_OPT:' + id + ':' + key + ':' + val); }
 
   // Make this VFO the audio source with the Digital demodulator (and audio on)
-  function digListen() {
-    const d = decimatorInfo.find(x => x.id === digVfo);
+  function digListenFor(id) {
+    const d = digDec(id);
     if (!d) return;
     if (!d.is_fm_source) setFMDecimator(d.id);
     if (d.demod_mode !== 'DIGITAL') setDecimatorDemodMode(d.id, 'DIGITAL');
     if (!fmEnabled) tfm();
-    setTimeout(digRender, 300);
+    setTimeout(digRenderAll, 300);
   }
 
-  function digClear() {
-    if (digVfo === null) return;
-    digEvents[digVfo] = [];
-    send('DIGITAL_CLEAR:' + digVfo);
-    digRender();
+  function digClearFor(id) {
+    if (id === null || id === undefined) return;
+    digEvents[id] = [];
+    send('DIGITAL_CLEAR:' + id);
+    digRenderAll();
   }
 
   // the narrowest bandwidth option at or above the mode's minimum
-  function digFixBandwidth() {
-    const d = decimatorInfo.find(x => x.id === digVfo);
+  function digFixBandwidthFor(id) {
+    const d = digDec(id);
     if (!d) return;
-    const need = (DIG_MIN_RATE_KHZ[d.digital_mode] || 24) / 1000;
+    const need = (digMinRateK(d.digital_mode) || 24) / 1000;
     let idx = -1;
     bwo.forEach((b, i) => { if (b.bandwidth >= need - 1e-9 && (idx < 0 || b.bandwidth < bwo[idx].bandwidth)) idx = i; });
     if (idx >= 0) setDecimatorBandwidthFromUI(d.id, idx);
-    digRenderControls();
+    digRenderAll();
   }
 
-  function digRenderControls() {
-    const d = decimatorInfo.find(x => x.id === digVfo);
-    const mode = d && d.digital_mode ? d.digital_mode : 'OFF';
-    const msel = $id('dig-mode');
-    if (msel && document.activeElement !== msel) msel.value = mode;
-    const o = (d && d.digital_opts) || {};
-    const slot = $id('dig-dmr-slot');
-    if (slot && document.activeElement !== slot) slot.value = String(o.dmr_slot || 0);
-    const nac = $id('dig-p25-nac');
-    if (nac && document.activeElement !== nac)
-      nac.value = (o.p25_nac === undefined || o.p25_nac < 0) ? '' : o.p25_nac.toString(16).toUpperCase().padStart(3, '0');
-    const vb = $id('dig-verbose'); if (vb) vb.checked = !!o.verbose;
-    const inv = $id('dig-invert'); if (inv) inv.checked = !!o.invert;
-    const on = mode !== 'OFF';
-    $id('dig-settings').style.display = on ? '' : 'none';
-    $id('dig-row-dmr').style.display = (mode === 'DMR' || mode === 'AUTO') ? '' : 'none';
-    $id('dig-row-p25').style.display = (mode === 'P25' || mode === 'AUTO') ? '' : 'none';
-    $id('dig-mode-help').textContent = DIG_HELP[mode] || '';
-    // bandwidth check against the VFO's decimated rate
-    const warn = $id('dig-bw-warn');
-    const needK = DIG_MIN_RATE_KHZ[mode] || 0;
-    const haveK = d ? ((bwo[d.bandwidth_index] || {}).bandwidth ?? d.bandwidth_mhz) * 1000 : 0;
-    if (on && d && haveK + 1e-6 < needK) {
-      $id('dig-bw-text').textContent = `VFO bandwidth ${haveK.toFixed(0)} kHz is too narrow for ${mode === 'AUTO' ? 'auto detect' : mode} (needs ${needK} kHz).`;
-      warn.style.display = '';
-    } else {
-      warn.style.display = 'none';
-    }
-  }
-
-  // {"digital":[{id, history, mode, detected, state, offset_hz, frames, info, events, seq}, ...]}
+  // {"digital":[{id, history, mode, detected, detected_name, state, offset_hz, frames, plugins, info, events, seq}, ...]}
   function digOnMessage(list) {
     for (const st of list) {
       digStatus[st.id] = st;
@@ -6941,72 +7240,1022 @@ function addTouchHandlers(el, down, move, up) {
       if (ev.length > DIG_MAX_EVENTS) ev = ev.slice(ev.length - DIG_MAX_EVENTS);
       digEvents[st.id] = ev;
     }
-    digRender();
+    digRenderAll();
   }
 
-  function digRender() {
-    const st = digStatus[digVfo];
-    const d = decimatorInfo.find(x => x.id === digVfo);
-    const mode = d && d.digital_mode ? d.digital_mode : 'OFF';
-    const dot = $id('dig-dot'), stx = $id('dig-state');
-    const on = mode !== 'OFF';
-    if (!on) {
-      dot.style.color = '#777'; stx.textContent = 'Off';
-    } else if (st && st.state === 'receiving') {
-      dot.style.color = '#4caf50'; stx.textContent = 'Receiving ' + (st.detected === 'DSTAR' ? 'D-STAR' : st.detected);
-    } else {
-      dot.style.color = '#ffb74d'; stx.textContent = mode === 'AUTO' ? 'Searching…' : 'No ' + (mode === 'DSTAR' ? 'D-STAR' : mode) + ' signal';
-    }
-    $id('dig-status').style.display = on ? '' : 'none';
-    $id('dig-log-hdr').style.display = on ? 'flex' : 'none';
-    $id('dig-log').style.display = on ? '' : 'none';
-    // voice: listening state + codec availability
-    const listening = d && d.is_fm_source && d.demod_mode === 'DIGITAL' && fmEnabled;
-    $id('dig-voice-row').style.display = on ? 'flex' : 'none';
-    const lb = $id('dig-listen');
-    lb.textContent = listening ? '🔊 Listening' : '🔊 Listen';
-    lb.className = 'btn sm' + (listening ? ' primary' : '');
-    const vs = st && st.voice && st.voice.state;
-    const analogue = st && st.detected === 'MPT1327';
-    $id('dig-voice').textContent = analogue ? 'MPT1327 voice is analogue: tune a VFO to the granted channel with NBFM'
-      : (listening ? (vs || 'no voice call') : 'Voice not played (Listen to hear it)');
-    if (st && st.codecs) {
-      const c = st.codecs;
-      $id('dig-codecs').innerHTML = 'Voice codecs: IMBE (P25) built in · AMBE / AMBE+2 (D-STAR, DMR, NXDN): ' +
-        (c.AMBE_ok ? '<span style="color:#81c784">installed</span>' : '<span style="color:#ffb74d">not installed</span>') +
-        ' · ACELP (TETRA): ' + (c.ACELP_ok ? '<span style="color:#81c784">installed</span>' : '<span style="color:#ffb74d">not installed</span>') +
-        (c.AMBE_ok && c.ACELP_ok ? '' : ' — see the README, "Digital voice codecs"');
-    }
-    const tbl = $id('dig-info');
-    if (!on || !st) { tbl.innerHTML = ''; $id('dig-log').innerHTML = ''; return; }
-    $id('dig-detected').textContent = st.detected ? (st.detected === 'DSTAR' ? 'D-STAR' : st.detected) : '-';
-    $id('dig-offset').textContent = st.detected ? ((st.offset_hz > 0 ? '+' : '') + st.offset_hz + ' Hz') : '-';
-    const fr = st.frames || {};
-    const parts = Object.keys(fr).filter(k => fr[k][0] > 0).map(k => `${k === 'DSTAR' ? 'D-STAR' : k} ${fr[k][0]}`);
-    $id('dig-frames').textContent = parts.length ? parts.join(', ') : '0';
-    // facts: detected protocol first, then any other protocol with facts
+  function digEventsHtml(ev) {
+    return ev.slice().reverse().map(e => {
+      const t = new Date(e.t).toLocaleTimeString([], {hour12: false});
+      const p = e.p ? `<span class="p">${digEsc(e.p)}</span> ` : '';
+      return `<div><span class="t">${t}</span> ${p}${digEsc(e.m)}</div>`;
+    }).join('');
+  }
+
+  function digFactsHtml(st) {
     const info = st.info || {};
     const order = Object.keys(info).sort((a, b) => (b === st.detected) - (a === st.detected));
     let rows = '';
     for (const p of order) {
-      if (order.length > 1) rows += `<tr><td colspan="2" style="color:#4fc3f7;padding-top:4px">${p === 'DSTAR' ? 'D-STAR' : p}</td></tr>`;
+      if (order.length > 1) rows += `<tr><td colspan="2" style="color:#4fc3f7;padding-top:4px">${digEsc(digName(p))}</td></tr>`;
       for (const [k, v, age] of info[p])
         rows += `<tr class="${age > 30 ? 'stale' : ''}" title="updated ${age} s ago"><td>${digEsc(k)}</td><td>${digEsc(v)}</td></tr>`;
     }
-    if (tbl.innerHTML !== rows) tbl.innerHTML = rows;
-    // event log, newest first
-    const log = $id('dig-log');
-    const ev = digEvents[digVfo] || [];
-    const key = ev.length ? ev[ev.length - 1].s + ':' + ev.length : '0';
-    if (log.dataset.key !== key) {
-      log.dataset.key = key;
-      log.innerHTML = ev.slice().reverse().map(e => {
-        const t = new Date(e.t).toLocaleTimeString([], {hour12: false});
-        const p = e.p === 'AUTO' ? '' : `<span class="p">${e.p === 'DSTAR' ? 'D-STAR' : e.p}</span> `;
-        return `<div><span class="t">${t}</span> ${p}${digEsc(e.m)}</div>`;
-      }).join('');
+    return rows;
+  }
+
+  function digRenderAll() {
+    digRenderCards();
+    infoRenderTabs();
+    infoRenderDecoder();
+  }
+
+  // The tick, mode list and state line on each VFO card (Decimators box)
+  function digRenderCards() {
+    for (const d of decimatorInfo) {
+      const en = $id('dec-dig-en-' + d.id);
+      if (!en) continue;
+      const mode = d.digital_mode || 'OFF';
+      const on = mode !== 'OFF';
+      en.checked = on;
+      digFillSelect($id('dec-dig-mode-' + d.id), on ? mode : (digWanted[d.id] || 'AUTO'));
+      const [col, txt] = digStateOf(d.id);
+      const stEl = $id('dec-dig-state-' + d.id);
+      if (stEl) {
+        const html = on ? `<span style="color:${col}">&#9679;</span> ${digEsc(txt)}` : '';
+        if (stEl.innerHTML !== html) stEl.innerHTML = html;
+      }
+      const open = $id('dec-dig-open-' + d.id);
+      if (open) open.style.display = on ? '' : 'none';
     }
   }
+
+  // Sidebar "Digital Decoders" box: the voice codecs the decoders can use,
+  // as the plugins find them ({"codecs":{...}}, plugins/lib/tools/codecs.cpp)
+  // and how to install the missing ones (same steps as the README)
+  const DIG_CODECS = [
+    {key: 'imbe', name: 'IMBE', used: 'P25'},
+    {key: 'ambe', name: 'AMBE / AMBE+2 (mbelib)', used: 'DMR, D-STAR, NXDN',
+     install: `sudo apt-get install -y git cmake build-essential
+git clone https://github.com/szechyjs/mbelib.git
+cd mbelib && mkdir build && cd build
+cmake .. -DDISABLE_TEST=ON
+make -j3
+sudo make install
+sudo ldconfig`},
+    {key: 'acelp', name: 'ACELP (ETSI TETRA codec)', used: 'TETRA',
+     install: `sudo apt-get install -y git build-essential unzip patch wget
+git clone https://github.com/osmocom/osmo-tetra.git
+cd osmo-tetra/etsi_codec-patches
+wget -O etsi_tetra_codec.zip https://www.etsi.org/deliver/etsi_en/300300_300399/30039502/01.03.01_60/en_30039502v010301p0.zip
+md5sum etsi_tetra_codec.zip     # must be a8115fe68ef8f8cc466f4192572a1e3e
+sh ./download_and_patch.sh
+cd ../codec/c-code
+make
+sudo install -m 755 cdecoder /usr/local/bin/tetra-cdecoder
+sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
+  ];
+  function digOnCodecs(c) {
+    const el = $id('dig-codecs-box');
+    if (!el) return;
+    let html;
+    if (!c || !c.checked) {
+      html = `<div class="dig-warn" style="display:block">${digEsc((c && c.error) || 'The codec check failed.')}</div>`;
+    } else {
+      html = DIG_CODECS.map(k => {
+        const ok = !!c[k.key + '_ok'];
+        const st = String(c[k.key] || '').replace(/\s*\(see README[^)]*\)/, '');
+        return `<div class="dig-codec ${ok ? 'ok' : 'missing'}">` +
+          `<div class="h"><span class="i">${ok ? '✔' : '✗'}</span><b>${digEsc(k.name)}</b><span class="u">${digEsc(k.used)}</span></div>` +
+          `<div class="s">${ok ? digEsc(st) : 'Not installed' + (st && st !== 'not installed' ? ' — ' + digEsc(st) : '')}</div>` +
+          (!ok && k.install ? `<details><summary>How to install</summary><pre>${digEsc(k.install)}</pre>` +
+            '<div class="dig-help">Then switch the decoders off and on, or restart the KrakenSDR software. Docker: README, "Digital voice codecs".</div></details>' : '') +
+          '</div>';
+      }).join('');
+    }
+    if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+  }
+
+
+  // --- AI Signal Lab (ai_manager.cpp drives ai/kraken_ai.py) ---
+  // ai_state: config + current job + current session (analysis); ai_event:
+  // one event of the running job ({seq, kind, t, e:{ev, ...}}). The page keeps
+  // the job's events (the server replays them in ai_state.log on connect).
+  let aiState = null;
+  let aiLog = [];
+  let aiLastSeq = 0;
+  let aiErrorText = '';
+  let aiTestText = '';
+  let aiPendingExport = null;
+  let aiPendingImport = null;
+  let aiFreqEdited = false;
+  let aiTick = null;
+  let aiRenderQueued = false;
+
+  function aiQueueRender() {
+    if (aiRenderQueued) return;
+    aiRenderQueued = true;
+    requestAnimationFrame(() => { aiRenderQueued = false; aiRender(); });
+  }
+
+  function aiOnState(st) {
+    // a job that just started: the AI tab follows it (a new investigation
+    // has no session until it is done - the AI_JOB view shows it meanwhile)
+    if (st.busy && (!aiState || !aiState.busy) && st.job) {
+      if (st.job.kind === 'investigate') aiViewId = AI_JOB;
+      else if (['ask', 'create'].includes(st.job.kind) && st.session && st.session.id) aiViewId = st.session.id;
+    }
+    aiState = st;
+    if (st.log) {
+      aiLog = st.log.slice();
+      aiLastSeq = st.seq || 0;
+    }
+    if (st.busy && !aiTick) aiTick = setInterval(aiQueueRender, 1000);
+    if (!st.busy && aiTick) { clearInterval(aiTick); aiTick = null; }
+    aiQueueRender();
+  }
+
+  function aiOnEvent(x) {
+    if (x.seq <= aiLastSeq && x.e.ev !== 'start') return;
+    if (x.e.ev === 'start') aiLog = [];
+    aiLastSeq = x.seq;
+    aiLog.push(x);
+    if (aiLog.length > 300) aiLog = aiLog.slice(aiLog.length - 300);
+    const e = x.e;
+    if (e.ev === 'done' && e.kind === 'test')
+      aiTestText = e.ok ? ' · ✔ connected' : ' · ✗ no answer';
+    if (e.ev === 'done' && e.kind === 'investigate' && e.ok) {
+      const pid = $id('ai-plugin-id');
+      if (pid) pid.value = e.plugin_id || aiSlug(e.signal_name);
+    }
+    // the job view becomes the session the job created
+    if (e.ev === 'done' && e.session && aiViewId === AI_JOB) {
+      aiViewId = e.session;
+      send('AI_SESSION_GET:' + e.session);
+    }
+    aiQueueRender();
+  }
+
+  function aiOnError(x) {
+    if (x.error === 'exists') return;
+    aiErrorText = x.error;
+    aiQueueRender();
+  }
+
+  function aiSlug(name) {
+    return String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 32);
+  }
+
+  function aiElapsed(ms) {
+    const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s';
+  }
+
+  // absolute paths in tool calls -> relative to kraken_doa_v2 / the session
+  function aiShort(t) {
+    return String(t || '').replace(/(\/[\w.\-]+)+\/(?=(ai|plugins)\/)/g, '')
+      .replace(/ai\/sessions\/[\w.\-]+\//g, '');
+  }
+
+  // Minimal, safe Markdown: everything is escaped first, then a few
+  // constructs are turned into tags (headings, lists, code, bold, tables,
+  // http(s) links)
+  function aiMd(src) {
+    const lines = String(src || '').replace(/\r/g, '').split('\n');
+    const inline = t => digEsc(t)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    let out = '', list = null, para = [], table = [], code = null;
+    const flushPara = () => { if (para.length) { out += '<p>' + para.map(inline).join(' ') + '</p>'; para = []; } };
+    const flushList = () => { if (list) { out += `</${list}>`; list = null; } };
+    const flushTable = () => {
+      if (!table.length) return;
+      const rows = table.filter(r => !/^\s*\|?[\s:|-]+$/.test(r));
+      out += '<table>' + rows.map((r, i) => '<tr>' + r.trim().replace(/^\||\|$/g, '').split('|')
+        .map(c => (i ? '<td>' : '<th>') + inline(c.trim()) + (i ? '</td>' : '</th>')).join('') + '</tr>').join('') + '</table>';
+      table = [];
+    };
+    for (const raw of lines) {
+      if (/^\s*```/.test(raw)) {
+        if (code) { out += '<pre><code>' + digEsc(code.join('\n')) + '</code></pre>'; code = null; }
+        else { flushPara(); flushList(); flushTable(); code = []; }
+        continue;
+      }
+      if (code) { code.push(raw); continue; }
+      const line = raw.replace(/\s+$/, '');
+      if (/^(SIGNAL_NAME|SUGGESTED_PLUGIN_ID|PLUGIN_READY|PLUGIN_FAILED):/.test(line.trim())) continue;
+      let m;
+      if (/^\s*\|/.test(line)) { flushPara(); flushList(); table.push(line); continue; }
+      flushTable();
+      if ((m = line.match(/^(#{1,4})\s+(.*)$/))) {
+        flushPara(); flushList();
+        const n = Math.min(4, m[1].length + 1);
+        out += `<h${n}>${inline(m[2])}</h${n}>`;
+      } else if ((m = line.match(/^\s*[-*•]\s+(.*)$/))) {
+        flushPara();
+        if (list !== 'ul') { flushList(); out += '<ul>'; list = 'ul'; }
+        out += '<li>' + inline(m[1]) + '</li>';
+      } else if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))) {
+        flushPara();
+        if (list !== 'ol') { flushList(); out += '<ol>'; list = 'ol'; }
+        out += '<li>' + inline(m[1]) + '</li>';
+      } else if (!line.trim()) {
+        flushPara(); flushList();
+      } else if (list && /^\s{2,}/.test(raw)) {
+        out = out.replace(/<\/li>$/, ' ' + inline(line.trim()) + '</li>');
+      } else {
+        flushList();
+        para.push(line.trim());
+      }
+    }
+    if (code) out += '<pre><code>' + digEsc(code.join('\n')) + '</code></pre>';
+    flushPara(); flushList(); flushTable();
+    return out;
+  }
+
+  function aiLogLine(x) {
+    const e = x.e, t = new Date(x.t).toLocaleTimeString([], {hour12: false});
+    switch (e.ev) {
+      case 'start': return `<div class="st">${t} ▶ ${digEsc(e.label)}</div>`;
+      case 'status': return `<div class="st">${t} ⏳ ${digEsc(e.msg || e.state)}</div>`;
+      case 'text': return `<div class="txt">${digEsc(e.text)}</div>`;
+      case 'tool': return `<div class="tool">🔧 ${digEsc(e.name)}: ${digEsc(aiShort(e.detail))}</div>`;
+      case 'tool_result': return `<div class="res">↳ ${e.ok ? '' : '✗ '}${digEsc(aiShort(e.detail).slice(0, 400))}</div>`;
+      case 'report': return `<div class="res">${digEsc(e.text)}</div>`;
+      case 'usage': return `<div class="st">${t} agent: ${e.turns ?? '?'} turns, ${e.duration_s ?? '?'} s` +
+        (e.cost_usd != null ? `, $${Number(e.cost_usd).toFixed(2)} (API-equivalent)` : '') +
+        (e.denied ? `, ${e.denied} tool call(s) refused` : '') + '</div>';
+      case 'error': return `<div class="err">${t} ✗ ${digEsc(e.msg)}</div>`;
+      case 'done': return `<div class="st">${t} ${e.ok ? '✔' : '✗'} ${digEsc(e.kind)} finished</div>`;
+      case 'exit': return e.code ? `<div class="err">${t} exited with status ${e.code}</div>` : '';
+      default: return '';
+    }
+  }
+
+  function aiRender() {
+    const st = aiState;
+    if (!st) return;
+    const dot = $id('ai-dot'), conn = $id('ai-conn'), setup = $id('ai-setup');
+    if (!st.enabled) {
+      dot.style.color = '#777';
+      conn.textContent = 'Not enabled on this receiver';
+      setup.style.display = '';
+      setup.innerHTML = 'To use it, run <code>python3 ai/kraken_ai.py setup</code> on the Pi (in the kraken_doa_v2 folder). ' +
+        (st.backend === 'claude' && !st.cli
+          ? 'It needs Claude Code: <code>curl -fsSL https://claude.ai/install.sh | bash</code>, then run <code>claude</code> once to log in.'
+          : (st.cli ? 'Found: ' + digEsc(st.version || st.cli) + '.' : '')) + ' See the README, "AI Signal Lab".';
+    } else {
+      dot.style.color = st.busy ? '#ffb74d' : '#4caf50';
+      conn.textContent = (st.backend === 'claude'
+        ? 'Claude Code ' + String(st.version || '').replace(/\s*\(Claude Code\)/, '')
+        : 'LLM command: ' + (st.cli || '?')) + (st.model ? ' · ' + st.model : '') + aiTestText;
+      setup.style.display = 'none';
+    }
+    $id('ai-token-warn').style.display = (st.enabled && !st.token) ? '' : 'none';
+    const busy = !!st.busy;
+    const sess = st.session || {};
+    const has = !!sess.analysis;
+    $id('ai-investigate').disabled = !st.enabled || busy;
+    $id('ai-test-btn').disabled = !st.enabled || busy;
+    $id('ai-plugin-row').style.display = has ? 'flex' : 'none';
+    const pid = $id('ai-plugin-id');
+    if (has && !pid.value && document.activeElement !== pid)
+      pid.value = sess.plugin_id || sess.suggested_plugin_id || aiSlug(sess.signal_name);
+    const exists = digPlugins.some(p => p.id === pid.value.trim());
+    const cb = $id('ai-create');
+    cb.disabled = !st.enabled || busy || !has;
+    cb.textContent = exists ? '🛠 Improve Decoder' : '🛠 Create Decoder';
+    $id('ai-job-row').style.display = busy ? 'flex' : 'none';
+    if (busy) $id('ai-job').textContent = (st.job.label || st.job.kind) + ' · ' + aiElapsed(st.job.started);
+    const ib = $id('ai-instr-btn');
+    ib.className = 'btn' + (($id('ai-instr').value || '').trim() ? ' primary' : '');
+
+    // status line - the AI's text itself only goes to the panel's AI tab
+    let html = '';
+    const panelBtn = '<button class="btn sm" type="button" onclick="aiShowJob()">⤢ Show</button>';
+    if (aiErrorText) html += `<div class="dig-warn">${digEsc(aiErrorText)}</div>`;
+    const done = [...aiLog].reverse().find(x => x.e.ev === 'done');
+    const lastErr = [...aiLog].reverse().find(x => x.e.ev === 'error');
+    if (busy) {
+      const ls = [...aiLog].reverse().find(x => x.e.ev === 'status');
+      html += `<div>⏳ ${digEsc(ls ? (ls.e.msg || ls.e.state) : 'working')}…${st.job.kind !== 'test' ? panelBtn : ''}</div>`;
+    } else if (lastErr && (!done || !done.e.ok)) {
+      html += `<div class="dig-warn">${digEsc(lastErr.e.msg)}${panelBtn}</div>`;
+    } else if (done && done.e.kind === 'create') {
+      const e = done.e;
+      html += e.ok
+        ? `<div class="ok">✔ Plugin <b>${digEsc(e.plugin_id)}</b> is built ` +
+          `<button class="btn sm" type="button" onclick="aiUsePlugin('${digEsc(e.plugin_id)}')">Use on VFO</button>${panelBtn}</div>`
+        : `<div class="dig-warn">Plugin not ready${e.build && e.build !== 'built' ? ': ' + digEsc(e.build) : ''}${panelBtn}</div>`;
+    } else if (done && done.e.kind === 'ask') {
+      html += `<div class="ok">✔ Answered${panelBtn}</div>`;
+    } else if (done && done.e.kind === 'investigate') {
+      html += `<div class="ok">✔ ${digEsc(done.e.signal_name || 'Investigation finished')}${panelBtn}</div>`;
+    }
+    const res = $id('ai-status');
+    if (res.dataset.html !== html) { res.dataset.html = html; res.innerHTML = html; }
+    aiRenderHistory();
+    infoRenderAi();
+    aiRenderPlugins();
+  }
+
+  function aiOnDecimatorInfo(info) {
+    const sel = $id('ai-vfo');
+    if (!sel) return;
+    const cur = sel.value === '' ? (infoDecVfo ?? (info[0] || {}).id) : parseInt(sel.value);
+    const opts = info.map(d => `<option value="${d.id}"${d.id === cur ? ' selected' : ''}>D${d.id}</option>`).join('');
+    if (sel.innerHTML !== opts) sel.innerHTML = opts;
+    if (!info.some(d => d.id === cur) && info.length) sel.value = info[0].id;
+    aiFillFreq();
+    aiRenderPlugins();
+  }
+
+  function aiFillFreq() {
+    const f = $id('ai-freq');
+    if (!f || aiFreqEdited || document.activeElement === f) return;
+    const d = decimatorInfo.find(x => x.id === parseInt($id('ai-vfo').value));
+    if (d && typeof currentCenterFreq === 'number' && currentCenterFreq > 0)
+      f.value = (currentCenterFreq + (d.freq_offset_hz || 0) / 1e6).toFixed(5);
+  }
+
+  function aiVfoChanged() {
+    aiFreqEdited = false;
+    aiFillFreq();
+  }
+
+  function aiTest() {
+    aiErrorText = '';
+    aiTestText = ' · testing…';
+    send('AI_TEST');
+    aiQueueRender();
+  }
+
+  function aiInvestigate() {
+    aiErrorText = '';
+    const vfo = parseInt($id('ai-vfo').value);
+    if (!isFinite(vfo)) return;
+    // 0 = the VFO's own frequency (the server knows it exactly); a typed one
+    // is sent as is
+    const f = parseFloat($id('ai-freq').value);
+    const hz = (aiFreqEdited && isFinite(f) && f > 0) ? Math.round(f * 1e6) : 0;
+    const instr = ($id('ai-instr').value || '').trim();
+    $id('ai-plugin-id').value = '';
+    send(`AI_INVESTIGATE:${vfo}:${hz}:${$id('ai-secs').value}` + (instr ? ':' + instr : ''));
+    aiViewId = AI_JOB;
+    infoPanelOpen('ai');
+  }
+
+  function aiCreate() {
+    aiErrorText = '';
+    const id = ($id('ai-plugin-id').value || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(id) || id === 'sdk') {
+      alert('Plugin id: 1-32 characters a-z 0-9 _ - (e.g. "pocsag")');
+      return;
+    }
+    const exists = digPlugins.some(p => p.id === id);
+    if (!confirm((exists ? `Improve plugin "${id}"` : `Create plugin "${id}"`) + ' with the AI?\n\n' +
+        `The agent writes, builds and tests C++ code in plugins/${id}/ on this receiver. ` +
+        'This can take 10-30 minutes and uses your LLM account.')) return;
+    const instr = ($id('ai-instr').value || '').trim();
+    send('AI_CREATE:' + id + (instr ? ':' + instr : ''));
+    const cur = aiState && aiState.session && aiState.session.id;
+    if (cur) aiOpenSession(cur); else infoPanelOpen('ai');
+  }
+
+  function aiCancel() { send('AI_CANCEL'); }
+
+  function aiToggleInstr() {
+    const b = $id('ai-instr-box');
+    b.style.display = b.style.display === 'none' ? '' : 'none';
+    if (b.style.display === '') $id('ai-instr').focus();
+  }
+
+  function aiSaveInstr() {
+    try { localStorage.setItem('kraken_ai_instructions', $id('ai-instr').value); } catch (e) {}
+    aiQueueRender();
+  }
+
+  function aiUsePlugin(id) {
+    let vfo = parseInt($id('ai-vfo').value);
+    if (!isFinite(vfo)) vfo = infoDecVfo;
+    if (vfo === null || !isFinite(vfo)) return;
+    digSetModeFor(vfo, 'PLUGIN:' + id);
+    infoDecVfo = vfo;
+    infoPanelOpen('dec:' + vfo);
+  }
+
+
+  function aiRenderPlugins() {
+    const el = $id('ai-plugins');
+    if (!el) return;
+    let html;
+    if (!digPlugins.length) {
+      html = '<div class="dig-help">No plugins yet. Investigate a signal and press Create Decoder, or import one.</div>';
+    } else {
+      const canBuild = aiState && aiState.enabled && !aiState.busy;
+      const vfo = digTargetVfo();
+      html = digPlugins.map(p => `<div class="ai-plugin">
+          <div style="display:flex;align-items:baseline;gap:6px">
+            <span style="flex:1;min-width:0"><span class="nm">${digEsc(p.name)}</span> <span style="color:#6f87a6">${digEsc(p.id)}${p.version ? ' v' + digEsc(p.version) : ''}</span></span>
+            <label class="ai-auto" title="Run this decoder when a VFO's Digital Decoder is on Auto detect. Untick decoders you never need: each one costs CPU on every VFO in Auto detect.">
+              <input type="checkbox" ${p.auto ? 'checked' : ''} onchange="send('PLUGIN_AUTO:${p.id}:' + (this.checked ? 1 : 0))"> Auto detect</label>
+          </div>
+          <div class="ds">${digEsc(p.description || '')}</div>
+          ${p.error ? `<div class="ds" style="color:#ffb74d">${digEsc(p.error)}</div>` : ''}
+          ${p.stale ? '<div class="ds" style="color:#ffb74d">The source changed since the last build: Rebuild</div>' : ''}
+          <div class="bt">
+            ${p.built && vfo !== null ? `<button class="btn sm" type="button" onclick="digUsePlugin('${p.id}')" title="Decode D${vfo} with this plugin">Use on D${vfo}</button>` : ''}
+            <button class="btn sm" type="button" onclick="aiExport('${p.id}')" title="Download the plugin's source as one file, to import on another KrakenSDR">Export</button>
+            <button class="btn sm" type="button" onclick="send('PLUGIN_BUILD:${p.id}')" ${canBuild ? '' : 'disabled'}
+              title="${canBuild ? 'Compile the plugin again' : 'Needs the AI Signal Lab enabled on the Pi (or run make in kraken_doa_v2)'}">Rebuild</button>
+          </div></div>`).join('');
+    }
+    if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+    // the collapsed header still tells: how many, and whether one has a problem
+    const bad = digPlugins.filter(p => p.error || p.stale || !p.built).length;
+    const cnt = $id('dig-plug-count');
+    const ch = digPlugins.length ? `(${digPlugins.length})` +
+      (bad ? ` <span style="color:#ffb74d" title="${bad} plugin(s) need attention - open the list">⚠ ${bad}</span>` : '') : '';
+    if (cnt && cnt.innerHTML !== ch) cnt.innerHTML = ch;
+  }
+
+  // "Decoder plugins" list (Digital Decoders box): collapsed by default,
+  // open state kept in this browser
+  function digTogglePlugins(open) {
+    const body = $id('dig-plug-body');
+    if (!body) return;
+    if (open === undefined) open = body.style.display === 'none';
+    try { localStorage.setItem('kraken_dig_plugins_open', open ? '1' : '0'); } catch (e) {}
+    body.style.display = open ? '' : 'none';
+    document.querySelector('.dig-plug-head').classList.toggle('open', open);
+  }
+  (function () {
+    let open = false;
+    try { open = localStorage.getItem('kraken_dig_plugins_open') === '1'; } catch (e) {}
+    if (open) {
+      const body = document.getElementById('dig-plug-body');
+      if (body) { body.style.display = ''; document.querySelector('.dig-plug-head').classList.add('open'); }
+    }
+  })();
+
+  function digTargetVfo() {
+    const ids = (decimatorInfo || []).map(d => d.id);
+    if (infoTab && infoTab.startsWith('dec:') && $id('info-panel').style.display !== 'none') {
+      const v = parseInt(infoTab.slice(4));
+      if (ids.includes(v)) return v;
+    }
+    const src = (decimatorInfo || []).find(d => d.is_fm_source);
+    if (src) return src.id;
+    return ids.length ? ids[0] : null;
+  }
+
+  function digUsePlugin(id) {
+    const vfo = digTargetVfo();
+    if (vfo === null) return;
+    digSetModeFor(vfo, 'PLUGIN:' + id);
+    infoDecVfo = vfo;
+    infoPanelOpen('dec:' + vfo);
+  }
+
+  function aiExport(id) {
+    aiPendingExport = id;
+    send('PLUGIN_EXPORT:' + id);
+  }
+
+  function aiOnExport(x) {
+    if (x.id !== aiPendingExport) return;   // another page asked
+    aiPendingExport = null;
+    const blob = new Blob([JSON.stringify(x.bundle, null, 1)], {type: 'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = x.id + '.krakenplugin.json';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
+  function aiImportFile(input) {
+    const f = input.files && input.files[0];
+    input.value = '';
+    if (!f) return;
+    if (f.size > 1.5e6) { alert('That file is too large for a plugin bundle.'); return; }
+    const r = new FileReader();
+    r.onload = () => {
+      let b;
+      try { b = JSON.parse(r.result); } catch (e) { alert('Not a plugin bundle (JSON expected).'); return; }
+      if (!b || b.kraken_plugin !== 1 || !b.id || !b.files) { alert('Not a KrakenSDR plugin bundle.'); return; }
+      if (!confirm(`Import plugin "${b.id}" (${Object.keys(b.files).length} files) and compile it on this receiver?\n\n` +
+                   'A plugin is native code that runs here: only import plugins from people you trust.')) return;
+      aiPendingImport = b;
+      send('PLUGIN_IMPORT:' + JSON.stringify(b));
+    };
+    r.readAsText(f);
+  }
+
+  function aiOnImport(x) {
+    const b = aiPendingImport;
+    if (!b || x.id !== b.id) return;
+    aiPendingImport = null;
+    if (x.error === 'exists') {
+      if (confirm(`A plugin "${b.id}" already exists here. Replace its source files with the imported ones?`)) {
+        b.replace = true;
+        aiPendingImport = b;
+        send('PLUGIN_IMPORT:' + JSON.stringify(b));
+      }
+    } else if (x.error) {
+      alert('Import failed: ' + x.error);
+    }
+  }
+
+  try {
+    const saved = localStorage.getItem('kraken_ai_instructions');
+    if (saved) setTimeout(() => { const t = $id('ai-instr'); if (t && !t.value) t.value = saved; }, 0);
+  } catch (e) {}
+  setTimeout(() => {
+    const f = $id('ai-freq');
+    if (f) f.addEventListener('input', () => { aiFreqEdited = f.value.trim() !== ''; });
+  }, 0);
+  setInterval(aiFillFreq, 2000);   // follows retunes / VFO moves until the user types one
+
+  // --- Saved investigations (ai/sessions/<id>/) -------------------------------
+  // {"ai_sessions":[{id,freq_hz,signal_name,created,state,plugin_id,...}]}
+  // newest first; {"ai_session":{id,...,chat:[{role,kind,text,t}],activity:[..]}}
+  // for one. A session is the analysis of one signal plus its conversation;
+  // it is marked in the spectrum ("AI" badge above its frequency) and listed in
+  // the sidebar and the bottom panel's AI tab.
+  let aiSessions = [];
+  const aiSessionCache = {};   // id -> ai_session
+  const AI_JOB = '#job';       // aiViewId of the running / last job (no session yet)
+  let aiViewId = null;         // session shown in the bottom panel (or AI_JOB)
+  let aiMarkerRects = [];      // spectrum badges [{x,y,w,h,ids}]
+  let aiMarkerConsumed = false;
+
+  function aiOnSessions(list) {
+    aiSessions = list || [];
+    for (const id of Object.keys(aiSessionCache))
+      if (!aiSessions.some(s => s.id === id)) delete aiSessionCache[id];
+    if (aiViewId && aiViewId !== AI_JOB && !aiSessions.some(s => s.id === aiViewId)) aiViewId = null;
+    aiRenderHistory();
+    infoRenderAi();
+    drawBox();   // markers
+  }
+
+  function aiOnSession(s) {
+    if (!s || !s.id) return;
+    aiSessionCache[s.id] = s;
+    if (s.id === aiViewId) infoRenderAi(true);
+  }
+
+  // Show a session in the bottom panel (and make it the current one, so
+  // follow-up questions and Create Decoder apply to it)
+  function aiOpenSession(id) {
+    aiViewId = id;
+    send('AI_SESSION_GET:' + id);
+    if (aiState && aiState.enabled && !aiState.busy && (!aiState.session || aiState.session.id !== id))
+      send('AI_SESSION_SELECT:' + id);
+    infoPanelOpen('ai');
+    aiRenderHistory();
+    infoRenderAi(true);
+    // the panel opens under the waterfall, away from the click: bring it into
+    // view and flash it
+    const p = $id('info-panel');
+    if (p) {
+      p.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+      p.classList.remove('flash');
+      void p.offsetWidth;
+      p.classList.add('flash');
+    }
+  }
+
+  // The running (or last) job in the panel's AI tab
+  function aiShowJob() {
+    const st = aiState || {};
+    const kind = st.busy ? (st.job || {}).kind : (([...aiLog].reverse().find(x => x.e.ev === 'done') || {}).e || {}).kind;
+    const done = [...aiLog].reverse().find(x => x.e.ev === 'done');
+    if (!st.busy && done && done.e.session) { aiOpenSession(done.e.session); return; }
+    if (st.busy && kind !== 'investigate' && st.session && st.session.id) { aiOpenSession(st.session.id); return; }
+    aiViewId = AI_JOB;
+    infoPanelOpen('ai');
+    infoRenderAi(true);
+    const p = $id('info-panel');
+    if (p) p.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+  }
+
+  function aiDeleteSession(id, ev) {
+    if (ev) ev.stopPropagation();
+    const s = aiSessions.find(x => x.id === id);
+    const what = s ? `${(s.freq_hz / 1e6).toFixed(5)} MHz${s.signal_name ? ' (' + s.signal_name + ')' : ''}` : id;
+    if (!confirm(`Delete the saved AI analysis and chat of ${what}?\n\nIts captures, plots and conversation are removed from the receiver.`)) return;
+    send('AI_SESSION_DELETE:' + id);
+  }
+
+  function aiSessionLabel(s) {
+    const f = (s.freq_hz / 1e6).toFixed(5) + ' MHz';
+    const when = (s.created || '').replace(/:\d\d$/, '');
+    return {f, name: s.signal_name || (s.state === 'investigating' ? 'investigating…' : 'unidentified'), when};
+  }
+
+  function aiHistoryHtml(compact) {
+    if (!aiSessions.length) return '<div class="dig-help">No signals investigated yet.</div>';
+    return aiSessions.map(s => {
+      const l = aiSessionLabel(s);
+      const sel = s.id === aiViewId ? ' sel' : '';
+      const plug = s.plugin_id ? ` · plugin <code>${digEsc(s.plugin_id)}</code>` : '';
+      return `<div class="ai-hist-item${sel}" onclick="aiOpenSession('${digEsc(s.id)}')" title="Show the analysis and chat">` +
+        `<div style="min-width:0;flex:1"><div class="f">${digEsc(l.f)}</div><div class="n">${digEsc(l.name)}</div>` +
+        (compact ? '' : `<div class="n">${digEsc(l.when)}${plug}</div>`) + '</div>' +
+        `<button type="button" class="del" onclick="aiDeleteSession('${digEsc(s.id)}', event)" title="Delete this analysis and its chat">✕</button></div>`;
+    }).join('');
+  }
+
+  function aiRenderHistory() {
+    const el = $id('ai-history');
+    if (el) {
+      const html = aiHistoryHtml(true);
+      if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+    }
+  }
+
+  // --- Spectrum markers ---------------------------------------------------
+  // Called at the end of drawBox(): an "AI" badge at the top of the spectrum
+  // above every investigated frequency in view (several within 2 kHz share one)
+  function aiDrawMarkers(ctx, w) {
+    aiMarkerRects = [];
+    if (!fftPlot || !currentFrequencies.length || !aiSessions.length) return;
+    const lo = currentFrequencies[0], hi = currentFrequencies[currentFrequencies.length - 1];
+    const groups = [];
+    for (const s of aiSessions) {
+      const f = s.freq_hz / 1e6;
+      if (!(f >= lo && f <= hi)) continue;
+      const g = groups.find(x => Math.abs(x.f - f) < 0.002);
+      if (g) g.ids.push(s.id);
+      else groups.push({f, ids: [s.id], name: s.signal_name});
+    }
+    ctx.save();
+    ctx.font = 'bold 11px sans-serif';
+    for (const g of groups) {
+      const x = fftPlot.valToPos(g.f, 'x');
+      if (x == null || isNaN(x) || x < 0 || x > w) continue;
+      const label = g.ids.length > 1 ? `AI ×${g.ids.length}` : 'AI';
+      const bw = ctx.measureText(label).width + 12, bh = 16, y = 2;
+      const bx = Math.min(Math.max(0, x - bw / 2), w - bw);
+      const sel = g.ids.includes(aiViewId);
+      ctx.fillStyle = sel ? '#ce93d8' : 'rgba(171,71,188,0.9)';
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(bx, y, bw, bh, 3); else ctx.rect(bx, y, bw, bh);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, bx + 6, y + 12);
+      // a thin tick down to the signal
+      ctx.strokeStyle = 'rgba(206,147,216,0.7)';
+      ctx.beginPath();
+      ctx.moveTo(x, y + bh);
+      ctx.lineTo(x, y + bh + 6);
+      ctx.stroke();
+      aiMarkerRects.push({x: bx, y, w: bw, h: bh + 6, ids: g.ids, name: g.name});
+    }
+    ctx.restore();
+  }
+
+  // the badge under a point of the spectrum overlay (a generous target)
+  function aiMarkerAt(x, y) {
+    return aiMarkerRects.find(k => x >= k.x - 6 && x <= k.x + k.w + 6 && y >= k.y - 4 && y <= k.y + k.h + 6) || null;
+  }
+
+  // hovering a badge: hand cursor + the signal's name as a tooltip
+  function aiMarkerHover(e) {
+    const c = $id('fo');
+    if (!c) return false;
+    const r = c.getBoundingClientRect();
+    const m = aiMarkerRects.length ? aiMarkerAt(e.clientX - r.left, e.clientY - r.top) : null;
+    const tip = m ? `${m.name || 'AI analysis'}${m.ids.length > 1 ? ` (+${m.ids.length - 1} more)` : ''} — click to open the chat` : '';
+    if (c.title !== tip) c.title = tip;
+    if (m) c.style.cursor = 'pointer';
+    return !!m;
+  }
+
+  // mousedown on the spectrum: a badge opens its analysis instead of tuning
+  function aiMarkerHit(e) {
+    const c = $id('fo');
+    if (!c || !aiMarkerRects.length) return false;
+    const r = c.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    const m = aiMarkerAt(x, y);
+    if (!m) return false;
+    aiMarkerConsumed = true;
+    setTimeout(() => { aiMarkerConsumed = false; }, 400);
+    // newest of the group (the list is newest first)
+    aiOpenSession(m.ids[0]);
+    return true;
+  }
+
+  // --- Bottom panel (under the waterfall): one tab per VFO decoder + AI ----
+  // infoTab: 'dec:<vfo id>' or 'ai'. 'dec' alone = the shown / first decoder.
+  let infoTab = 'ai';
+  function infoPanelOpen(tab) {
+    const p = $id('info-panel');
+    if (!p) return;
+    tab = tab || infoTab;
+    if (tab === 'dec' || tab.startsWith('dec:')) {
+      const act = digActiveIds();
+      let id = tab.startsWith('dec:') ? parseInt(tab.slice(4)) : infoDecVfo;
+      if (!act.includes(id)) id = act.length ? act[0] : null;
+      infoDecVfo = id;
+      tab = 'dec:' + (id ?? '');
+    }
+    infoTab = tab;
+    const was = p.style.display !== 'none';
+    p.style.display = 'flex';
+    $id('info-body-dec').style.display = infoTab.startsWith('dec:') ? 'flex' : 'none';
+    $id('info-body-ai').style.display = infoTab === 'ai' ? 'flex' : 'none';
+    if (infoTab === 'ai' && !aiViewId && aiState && aiState.busy && (aiState.job || {}).kind === 'investigate') aiViewId = AI_JOB;
+    if (infoTab === 'ai' && !aiViewId) {
+      const cur = aiState && aiState.session && aiState.session.id;
+      const pick = cur || (aiSessions[0] && aiSessions[0].id);
+      if (pick) { aiViewId = pick; send('AI_SESSION_GET:' + pick); }
+    }
+    try { localStorage.setItem('kraken_info_panel', JSON.stringify({open: true, tab: infoTab})); } catch (e) {}
+    if (!was) setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+    infoRenderTabs();
+    infoRenderDecoder(true);
+    infoRenderAi(true);
+  }
+
+  function infoPanelClose() {
+    const p = $id('info-panel');
+    if (!p) return;
+    p.style.display = 'none';
+    try { localStorage.setItem('kraken_info_panel', JSON.stringify({open: false, tab: infoTab})); } catch (e) {}
+    aiRenderPlugins();
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+  }
+
+  function infoOpen(tab) {
+    const p = $id('info-panel');
+    if (!p || p.style.display === 'none') return false;
+    return tab === 'dec' ? infoTab.startsWith('dec:') : infoTab === tab;
+  }
+
+  // tab buttons: one per VFO with a decoder on, then AI
+  function infoRenderTabs() {
+    aiRenderPlugins();   // its "Use on D<n>" follows the open decoder tab
+    const el = $id('info-tab-list');
+    if (!el) return;
+    const act = digActiveIds();
+    let html = act.map(id => {
+      const st = digStatus[id];
+      const [col] = digStateOf(id);
+      const what = st && st.detected ? (st.detected_name || digName(st.detected)) : digModeLabel(digModeOf(id));
+      const sel = infoTab === 'dec:' + id ? ' sel' : '';
+      return `<button type="button" class="info-tab${sel}" onclick="infoPanelOpen('dec:${id}')" title="D${id}'s digital decoder">` +
+             `<span style="color:${col}">&#9679;</span> D${id} · ${digEsc(what)}</button>`;
+    }).join('');
+    if (!act.length) {
+      const sel = infoTab.startsWith('dec:') ? ' sel' : '';
+      html = `<button type="button" class="info-tab${sel}" onclick="infoPanelOpen('dec')">🔐 Decoders</button>`;
+    }
+    html += `<button type="button" class="info-tab${infoTab === 'ai' ? ' sel' : ''}" onclick="infoPanelOpen('ai')">🤖 AI</button>`;
+    if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+  }
+
+  // A VFO decoder's tab: its settings (mode, Listen, the plugin's options,
+  // verbose, invert), problems, status, every plugin's facts and the whole
+  // (filterable) event log
+  function infoRenderDecoder(force) {
+    if (!infoOpen('dec')) return;
+    const id = infoDecVfo;
+    const d = id === null ? null : digDec(id);
+    const mode = d ? (d.digital_mode || 'OFF') : 'OFF';
+    const st = id === null ? null : digStatus[id];
+    const body = $id('info-body-dec');
+    body.classList.toggle('empty', id === null);
+    if (id === null) {
+      $id('info-sub').textContent = '';
+      const t = '<div class="dig-help" style="padding:8px">No VFO is decoding. Tick <b>Digital decoder</b> on a VFO in the Decimators box (sidebar) - each decoding VFO gets its own tab here.</div>';
+      if ($id('info-dec-top').innerHTML !== t) $id('info-dec-top').innerHTML = t;
+      $id('info-dec-cols').style.display = 'none';
+      return;
+    }
+    $id('info-dec-cols').style.display = 'flex';
+    const [col, txt] = digStateOf(id);
+    $id('info-sub').textContent = `D${id} · ${(currentCenterFreq + (d ? d.freq_offset_hz : 0) / 1e6).toFixed(4)} MHz · ${txt}`;
+
+    // settings row (rebuilt only when something changed and nothing in it has focus)
+    const o = (d && d.digital_opts) || {};
+    const listening = d && d.is_fm_source && d.demod_mode === 'DIGITAL' && fmEnabled;
+    const p = digOptionsPlugin(mode, st);
+    const vals = o.plugin || {};
+    let opts = '';
+    if (p && p.options) for (const op of p.options) {
+      const key = p.id + '.' + op.key;
+      const v = vals[key] !== undefined ? vals[key] : op.default;
+      const tip = op.help ? ` title="${digEsc(op.help)}"` : '';
+      if (op.choices && op.choices.length)
+        opts += `<label${tip}>${digEsc(op.label || op.key)}: <select data-key="${digEsc(key)}" onchange="digSetOptFor(${id}, this.dataset.key, this.value)">` +
+                op.choices.map(c => `<option value="${digEsc(c[0])}"${c[0] === v ? ' selected' : ''}>${digEsc(c[1])}</option>`).join('') + '</select></label>';
+      else
+        opts += `<label${tip}>${digEsc(op.label || op.key)}: <input type="text" data-key="${digEsc(key)}" value="${digEsc(v)}" placeholder="${digEsc(op.default || 'default')}" style="width:70px"` +
+                ` onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="digSetOptFor(${id}, this.dataset.key, this.value.trim())"></label>`;
+    }
+    const help = mode === 'AUTO'
+      ? (digAutoPlugins().length ? 'Auto detect: ' + digAutoPlugins().map(x => x.name).join(', ') : 'No decoders are ticked for Auto detect (sidebar plugin list).')
+      : ((digPlugin(digModePlugin(mode)) || {}).description || '');
+    // bandwidth check against the VFO's decimated rate
+    const needK = digMinRateK(mode);
+    const haveK = d ? ((bwo[d.bandwidth_index] || {}).bandwidth ?? d.bandwidth_mhz) * 1000 : 0;
+    let warn = '';
+    if (d && haveK + 1e-6 < needK) {
+      let fix = -1;
+      bwo.forEach((b, i) => { if (b.bandwidth >= needK / 1000 - 1e-9 && (fix < 0 || b.bandwidth < bwo[fix].bandwidth)) fix = i; });
+      warn += `<div class="dig-warn"><span>VFO bandwidth ${haveK.toFixed(0)} kHz is too narrow for ${digEsc(digModeLabel(mode))} (needs ${needK} kHz).</span>` +
+              `<button class="btn sm" type="button" onclick="digFixBandwidthFor(${id})">${fix >= 0 ? 'Set ' + +(bwo[fix].bandwidth * 1000).toFixed(1) + ' kHz' : 'Widen'}</button></div>`;
+    }
+    const bad = (st && st.plugins || []).filter(x => x.state && x.state !== 'running' && x.state !== 'starting');
+    if (bad.length) warn += `<div class="dig-warn" style="display:block">${bad.map(x => digEsc(x.error || (x.name + ': ' + x.state))).join('<br>')}</div>`;
+    const vs = st && st.voice && st.voice.state;
+    const voice = st && st.detected === 'mpt1327' ? 'MPT1327 voice is analogue: tune a VFO to the granted channel with NBFM'
+      : (listening ? (vs || 'no voice call') : 'voice not played');
+    const top =
+      `<div class="info-dec-settings">` +
+        `<label>Mode: <select id="info-dec-mode" onchange="digSetModeFor(${id}, this.value)">${digModeOptions(mode)}</select></label>` +
+        `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="Play this VFO's decoded digital voice: makes it the audio source with the Digital demodulator">${listening ? '🔊 Listening' : '🔊 Listen'}</button>` +
+        `<span class="v">${digEsc(voice)}</span>` +
+        opts +
+        `<label title="Also log the messages a control channel repeats constantly (system broadcasts, Aloha / acknowledgement CSBKs, GPS sentences)"><input type="checkbox" ${o.verbose ? 'checked' : ''} onchange="digSetOptFor(${id}, 'verbose', this.checked ? 1 : 0)"> Log all</label>` +
+        `<label title="For a source whose spectrum is mirrored (I/Q swapped). Not needed with the KrakenSDR."><input type="checkbox" ${o.invert ? 'checked' : ''} onchange="digSetOptFor(${id}, 'invert', this.checked ? 1 : 0)"> Invert</label>` +
+      `</div>` +
+      (help ? `<div class="dig-help" style="margin:2px 0 0 0">${digEsc(help)}</div>` : '') + warn;
+    const topEl = $id('info-dec-top');
+    if (force || (topEl.dataset.html !== top && !topEl.contains(document.activeElement))) {
+      topEl.dataset.html = top;
+      topEl.innerHTML = top;
+      const ms = $id('info-dec-mode');
+      if (ms) ms.value = mode;
+    }
+
+    const stat = $id('info-dec-status');
+    let sh = '';
+    if (st) {
+      const fr = st.frames || {};
+      const frames = Object.keys(fr).map(k => `${digName(k)} ${fr[k][0]} (total ${fr[k][1]})`).join(', ') || '0';
+      sh = `<div><span>State</span><span style="color:${col}">${digEsc(txt)}</span></div>` +
+           `<div><span>Carrier offset</span><span>${st.detected ? (st.offset_hz > 0 ? '+' : '') + st.offset_hz + ' Hz' : '-'}</span></div>` +
+           `<div><span>Valid frames (4 s)</span><span>${digEsc(frames)}</span></div>`;
+    }
+    if (stat.innerHTML !== sh) stat.innerHTML = sh;
+    const facts = st ? digFactsHtml(st) : '';
+    const ft = $id('info-dec-facts');
+    if (ft.innerHTML !== facts) ft.innerHTML = facts;
+    // a plugin's own stderr (debug output, the reason it crashed)
+    const withLog = (st && st.plugins || []).find(x => x.log && x.log.length && (mode !== 'AUTO' || x.state !== 'running' || x.id === st.detected));
+    const pl = $id('info-dec-plugin-log');
+    pl.style.display = withLog ? '' : 'none';
+    if (withLog) {
+      const t = withLog.log.map(digEsc).join('<br>');
+      const box = pl.querySelector('.dig-log');
+      if (box.innerHTML !== t) box.innerHTML = t;
+    }
+    const log = $id('info-dec-log');
+    const q = ($id('info-dec-filter').value || '').trim().toLowerCase();
+    const ev = digEvents[id] || [];
+    const key = (ev.length ? ev[ev.length - 1].s + ':' + ev.length : '0') + '|' + q + '|' + id;
+    if (force || log.dataset.key !== key) {
+      log.dataset.key = key;
+      const shown = q ? ev.filter(e => (e.m + ' ' + (e.p || '')).toLowerCase().includes(q)) : ev;
+      log.innerHTML = shown.length ? digEventsHtml(shown) : '<div class="dig-help">No events yet.</div>';
+    }
+  }
+
+  // AI tab: saved investigations + the selected one's conversation
+  function infoRenderAi(force) {
+    if (!infoOpen('ai')) return;
+    const hist = $id('info-ai-hist');
+    const busy = !!(aiState && aiState.busy);
+    const jobKind = busy ? (aiState.job || {}).kind : '';
+    const newInv = busy && jobKind === 'investigate';
+    const hh = (newInv || aiViewId === AI_JOB
+      ? `<div class="ai-hist-item${aiViewId === AI_JOB ? ' sel' : ''}" onclick="aiShowJob()" title="The AI's current job">` +
+        `<div style="min-width:0;flex:1"><div class="f">${newInv ? '⏳ Investigating…' : 'Last job'}</div>` +
+        `<div class="n">${digEsc(newInv ? aiState.job.label || '' : '')}</div></div></div>` : '') + aiHistoryHtml(false);
+    if (hist.dataset.html !== hh) { hist.dataset.html = hh; hist.innerHTML = hh; }
+    const chat = $id('info-ai-chat');
+    const s = aiViewId ? aiSessionCache[aiViewId] : null;
+    const meta = aiSessions.find(x => x.id === aiViewId);
+    const live = busy && (aiViewId === AI_JOB ? newInv
+      : !newInv && jobKind !== 'test' && aiState.session && aiState.session.id === aiViewId);
+    let html = '';
+    if (aiViewId === AI_JOB) {
+      $id('info-sub').textContent = busy ? (aiState.job.label || jobKind) : 'last job';
+      const err = [...aiLog].reverse().find(x => x.e.ev === 'error');
+      if (live) {
+        const ls = [...aiLog].reverse().find(x => x.e.ev === 'status');
+        const lt = [...aiLog].reverse().find(x => x.e.ev === 'text');
+        html += `<div class="ai-msg assistant"><div class="meta">AI · working ${digEsc(aiElapsed(aiState.job.started))}</div>` +
+                `<div class="dig-help">⏳ ${digEsc(ls ? (ls.e.msg || ls.e.state) : 'working')}…</div>` +
+                (lt ? `<div style="opacity:.85">${aiMd(lt.e.text)}</div>` : '') + '</div>';
+      } else if (err) {
+        html += `<div class="dig-warn">${digEsc(err.e.msg)}</div>`;
+      } else if (!aiLog.length) {
+        html += '<div class="dig-help">No job yet.</div>';
+      }
+      if (aiLog.length)
+        html += `<details class="ai-acts" open><summary>Agent activity (${aiLog.length})</summary>` +
+                `<div class="dig-log ai-log" style="max-height:320px">${aiLog.map(aiLogLine).join('')}</div></details>`;
+    } else if (!aiViewId) {
+      html = '<div class="dig-help">Investigate a signal (sidebar → 🤖 AI Signal Lab) or pick one from the list.</div>';
+      $id('info-sub').textContent = '';
+    } else {
+      const l = meta ? aiSessionLabel(meta) : {f: '', name: '', when: ''};
+      $id('info-sub').textContent = `${l.f} · ${l.name}${meta && meta.plugin_id ? ' · plugin ' + meta.plugin_id : ''}`;
+      if (!s) html += '<div class="dig-help">Loading…</div>';
+      for (const m of (s && s.chat) || []) {
+        const t = m.t ? new Date(m.t).toLocaleString([], {hour12: false}) : '';
+        const what = {investigate: 'investigation', ask: 'question', create: 'decoder'}[m.kind] || '';
+        if (m.role === 'user')
+          html += `<div class="ai-msg user"><div class="meta">You · ${digEsc(what)} · ${digEsc(t)}</div>${digEsc(m.text)}</div>`;
+        else
+          html += `<div class="ai-msg assistant"><div class="meta">AI · ${digEsc(t)}</div>${aiMd(m.text)}</div>`;
+      }
+      if (live) {
+        const ls = [...aiLog].reverse().find(x => x.e.ev === 'status');
+        const lt = [...aiLog].reverse().find(x => x.e.ev === 'text');
+        html += `<div class="ai-msg assistant"><div class="meta">AI · working ${digEsc(aiElapsed(aiState.job.started))}</div>` +
+                `<div class="dig-help">⏳ ${digEsc(ls ? (ls.e.msg || ls.e.state) : 'working')}…</div>` +
+                (lt ? `<div style="opacity:.85">${aiMd(lt.e.text)}</div>` : '') + '</div>';
+      }
+      // the agent's steps: live, or saved with the session
+      const acts = live ? aiLog : ((s && s.activity) || []).map(e => ({t: e.t || 0, e}));
+      if (acts.length)
+        html += `<details class="ai-acts"${live ? ' open' : ''}><summary>Agent activity (${acts.length})</summary>` +
+                `<div class="dig-log ai-log" style="max-height:220px">${acts.map(aiLogLine).join('')}</div></details>`;
+    }
+    if (force || chat.dataset.html !== html) {
+      const atBottom = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 30;
+      chat.dataset.html = html;
+      chat.innerHTML = html;
+      if (atBottom || force) chat.scrollTop = chat.scrollHeight;
+    }
+    const can = aiState && aiState.enabled && !aiState.busy && !!aiViewId && aiViewId !== AI_JOB;
+    $id('info-ai-ask').disabled = !can;
+    $id('info-ai-ask').placeholder = !aiState || !aiState.enabled ? 'The AI Signal Lab is not enabled on this receiver'
+      : aiState.busy ? 'The AI is working…' : aiViewId && aiViewId !== AI_JOB ? 'Ask about this signal…' : 'Pick an investigation first';
+  }
+
+  // follow-up question from an input (sidebar or bottom panel) about the
+  // viewed / current session
+  function aiAskFrom(inputId) {
+    const el = $id(inputId);
+    const q = (el.value || '').trim();
+    if (!q) return;
+    aiErrorText = '';
+    const cur = aiState && aiState.session && aiState.session.id;
+    if (aiViewId && aiViewId !== cur) send('AI_SESSION_SELECT:' + aiViewId);
+    else if (!aiViewId && cur) aiViewId = cur;
+    el.value = '';
+    send('AI_ASK:' + q);
+    infoPanelOpen('ai');
+  }
+
+  // panel height: drag the top edge (remembered in this browser)
+  (function () {
+    let startY = 0, startH = 0, dragging = false;
+    const panel = () => $id('info-panel');
+    function down(y) {
+      const p = panel();
+      if (!p) return;
+      dragging = true;
+      startY = y;
+      startH = p.getBoundingClientRect().height;
+    }
+    function move(y) {
+      if (!dragging) return;
+      const p = panel();
+      const h = Math.max(120, Math.min(window.innerHeight * 0.75, startH + (startY - y)));
+      p.style.height = h + 'px';
+    }
+    function up() {
+      if (!dragging) return;
+      dragging = false;
+      try { localStorage.setItem('kraken_info_panel_h', String(Math.round(panel().getBoundingClientRect().height))); } catch (e) {}
+      window.dispatchEvent(new Event('resize'));
+    }
+    setTimeout(() => {
+      const h = $id('info-resize');
+      if (!h) return;
+      h.addEventListener('mousedown', e => { down(e.clientY); e.preventDefault(); });
+      window.addEventListener('mousemove', e => move(e.clientY));
+      window.addEventListener('mouseup', up);
+      h.addEventListener('touchstart', e => { down(e.touches[0].clientY); e.preventDefault(); }, {passive: false});
+      window.addEventListener('touchmove', e => { if (dragging) move(e.touches[0].clientY); }, {passive: true});
+      window.addEventListener('touchend', up);
+      try {
+        const sh = parseInt(localStorage.getItem('kraken_info_panel_h'));
+        if (sh >= 120) $id('info-panel').style.height = sh + 'px';
+        const st = JSON.parse(localStorage.getItem('kraken_info_panel') || 'null');
+        if (st && st.open) infoPanelOpen(st.tab);
+      } catch (e) {}
+    }, 0);
+  })();
 
   // --- Web Mapper controls ---
   function setWebMapperEnable(en) { send('WEB_MAPPER:' + (en ? '1' : '0')); }
@@ -7826,7 +9075,9 @@ function initHelpTips(){
     if(left<m) left=m;
     if(top+tr.height>vh-m) top=ir.top-tr.height-6;   // flip above if no room below
     if(top<m) top=m;
-    tip.style.left=left+'px'; tip.style.top=top+'px';
+    // Inside the zoomed sidebar a fixed tip's left/top are zoomed too
+    const sb=h.closest('.sidebar'), z=sb ? (parseFloat(getComputedStyle(sb).zoom)||1) : 1;
+    tip.style.left=(left/z)+'px'; tip.style.top=(top/z)+'px';
   }
   function show(h){ if(shown&&shown!==h) hide(shown); h.classList.add('tip-open'); place(h); shown=h; }
   function hide(h){ if(!h) return; h.classList.remove('tip-open'); if(shown===h) shown=null; }

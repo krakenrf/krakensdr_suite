@@ -17,3 +17,6 @@
 !kraken_doa_v2/array_calculator.html
 !kraken_doa_v2/opus-decoder.js
 !kraken_doa_v2/opus-decoder.min.js
+!kraken_doa_v2/plugins/
+kraken_doa_v2/plugins/*/build/
+kraken_doa_v2/plugins/sdk/build/

@@ -9,8 +9,8 @@
 // a P25 frame is at most 180 ms and a DMR burst 30 ms, far less than the
 // symbol clock drift of a radio would matter over.
 
-#include "digital/dig_protocols.hpp"
-#include "digital/dig_fec.hpp"
+#include "dig_fsk4.hpp"
+#include "dig_fec.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,13 +21,6 @@ static constexpr int SPS = 10;
 static constexpr int SYNC_SYMS = 24;
 static constexpr float SYNC_THRESHOLD = 0.80f;
 static constexpr int64_t KEEP_SAMPLES = 16000;   // P25 frame (8640) + margin
-
-void SampleBuf::trim_before(int64_t abs) {
-    if (abs <= base_) return;
-    size_t n = static_cast<size_t>(std::min<int64_t>(abs - base_, static_cast<int64_t>(buf_.size())));
-    buf_.erase(buf_.begin(), buf_.begin() + static_cast<long>(n));
-    base_ += static_cast<int64_t>(n);
-}
 
 // 48-bit sync word (24 dibits, MSB first) -> +-3 symbol values
 static std::vector<float> sync_symbols(uint64_t word) {
@@ -58,7 +51,7 @@ static constexpr uint64_t DMR_MS_VOICE = 0x7F7D5DD57DFDULL;
 static constexpr uint64_t DMR_TS1_VOICE = 0x5D577F7757FFULL;
 static constexpr uint64_t DMR_TS2_VOICE = 0x7DFFD5F55D5FULL;
 
-Fsk4Receiver::Fsk4Receiver(RxContext& c) : ctx_(c), p25_(c), dmr_(c) {
+Fsk4Receiver::Fsk4Receiver(Fsk4Sink& sink, bool p25, bool dmr) : sink_(sink), en_p25_(p25), en_dmr_(dmr) {
     pats_p25_.push_back({normalized(sync_symbols(P25_SYNC)), Mode::P25, 0});
     const uint64_t dmr_words[4] = {DMR_BS_VOICE, DMR_MS_VOICE, DMR_TS1_VOICE, DMR_TS2_VOICE};
     for (int i = 0; i < 4; i++) pats_dmr_.push_back({normalized(sync_symbols(dmr_words[i])), Mode::DMR, i});
@@ -93,8 +86,7 @@ void Fsk4Receiver::reset() {
     pk_dmr_ = Peak();
     jobs_.clear();
     dmr_expect_ = -1;
-    p25_.reset();
-    dmr_.reset();
+    sink_.reset();
 }
 
 void Fsk4Receiver::correlate(SampleBuf& b, std::vector<Pattern>& pats, Peak& pk, Mode proto) {
@@ -137,11 +129,11 @@ void Fsk4Receiver::correlate(SampleBuf& b, std::vector<Pattern>& pats, Peak& pk,
 void Fsk4Receiver::on_sync(Mode proto, int pat, int64_t sync_end, float sign) {
     SampleBuf& b = proto == Mode::P25 ? bp_ : bd_;
     uint64_t word = P25_SYNC;
-    DmrProto::SyncType st = DmrProto::NONE;
+    DmrSync st = DmrSync::NONE;
     if (proto == Mode::DMR) {
         static const uint64_t words[4] = {DMR_BS_VOICE, DMR_MS_VOICE, DMR_TS1_VOICE, DMR_TS2_VOICE};
-        static const DmrProto::SyncType v[4] = {DmrProto::BS_VOICE, DmrProto::MS_VOICE, DmrProto::TS1_VOICE, DmrProto::TS2_VOICE};
-        static const DmrProto::SyncType d[4] = {DmrProto::BS_DATA, DmrProto::MS_DATA, DmrProto::TS1_DATA, DmrProto::TS2_DATA};
+        static const DmrSync v[4] = {DmrSync::BS_VOICE, DmrSync::MS_VOICE, DmrSync::TS1_VOICE, DmrSync::TS2_VOICE};
+        static const DmrSync d[4] = {DmrSync::BS_DATA, DmrSync::MS_DATA, DmrSync::TS1_DATA, DmrSync::TS2_DATA};
         // a negative correlation is the complementary (data) sync; DMR
         // polarity is taken as normal (heimdall delivers upright spectra)
         word = sign > 0 ? words[pat] : (words[pat] ^ 0xAAAAAAAAAAAAULL);   // +3 <-> -3
@@ -168,7 +160,7 @@ void Fsk4Receiver::on_sync(Mode proto, int pat, int64_t sync_end, float sign) {
     src.scale = scale;
     src.center = center;
     if (proto == Mode::P25) {
-        jobs_.push_back({Mode::P25, src, P25Proto::FRAME_DIBITS - SYNC_SYMS, DmrProto::NONE});
+        jobs_.push_back({Mode::P25, src, P25_FRAME_DIBITS - SYNC_SYMS, DmrSync::NONE});
     } else {
         // a real sync replaces an extrapolated burst at the same place
         if (dmr_expect_ >= 0 && std::llabs(sync_end - dmr_expect_) < SPS * 3) dmr_expect_ = -1;
@@ -183,10 +175,10 @@ void Fsk4Receiver::run_jobs() {
         int64_t need = it->src.sync_end + static_cast<int64_t>(it->need_k) * SPS;
         if (need >= b.end()) { ++it; continue; }
         if (it->proto == Mode::P25) {
-            p25_.decode(it->src);
+            sink_.p25_frame(it->src);
         } else {
             int period = 144;
-            if (dmr_.decode(it->src, it->sync, &period)) {
+            if (sink_.dmr_burst(it->src, it->sync, &period)) {
                 dmr_last_src_ = it->src;
                 dmr_period_ = period;
                 dmr_expect_ = it->src.sync_end + static_cast<int64_t>(period) * SPS;
@@ -201,7 +193,7 @@ void Fsk4Receiver::run_jobs() {
         SymSrc s = dmr_last_src_;
         s.sync_end = dmr_expect_;
         int period = dmr_period_;
-        bool ok = bd_.has(s.sync_end - 90 * SPS) && dmr_.decode(s, DmrProto::NONE, &period);
+        bool ok = bd_.has(s.sync_end - 90 * SPS) && sink_.dmr_burst(s, DmrSync::NONE, &period);
         dmr_expect_ += static_cast<int64_t>(dmr_period_) * SPS;
         if (!ok && --dmr_expect_left_ <= 0) dmr_expect_ = -1;
     }

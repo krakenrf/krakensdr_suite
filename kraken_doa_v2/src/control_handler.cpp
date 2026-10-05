@@ -17,6 +17,8 @@
 #include "networking/web_mapper.hpp"
 #include "networking/websocket_server.hpp"
 #include "utils/json_escape.hpp"
+#include "ai_manager.hpp"
+#include "digital/dig_plugin.hpp"
 #include "utils/parse_num.hpp"
 #include <string>
 #include <sstream>
@@ -31,6 +33,7 @@
 #include <mutex>
 #include <vector>
 #include <atomic>
+#include <thread>
 
 using namespace std;
 
@@ -111,6 +114,131 @@ static void broadcast(const string& json) {
     WebSocketServer::broadcast_json_message(json);
 }
 
+// --- AI Signal Lab + decoder plugins ---
+//   AI_STATE                       -> {"ai_state":{...,"log":[...]}}
+//   AI_TEST | AI_CANCEL
+//   AI_INVESTIGATE:vfo:freq_hz:seconds[:instructions]   (freq_hz 0 = the VFO's)
+//   AI_CREATE:plugin_id[:instructions]                   (also improves an existing one)
+//   AI_ASK:question                                      (about the current session)
+//   AI_SESSIONS                    -> {"ai_sessions":[...]} (saved investigations)
+//   AI_SESSION_GET:id              -> {"ai_session":{...,chat,activity}}
+//   AI_SESSION_SELECT:id | AI_SESSION_DELETE:id
+//   PLUGINS_LIST | PLUGINS_RESCAN  -> {"plugins":[...]}
+//   PLUGIN_BUILD:id | PLUGIN_EXPORT:id (-> {"plugin_export":{...}})
+//   PLUGIN_CODECS                  -> {"codecs":{...}} (installed voice codecs)
+//   PLUGIN_AUTO:id:0|1             take part in "Auto detect" (persisted as
+//                                  AUTO_DETECT_OFF:, -> {"plugins":[...]})
+//   PLUGIN_IMPORT:{bundle}         (-> {"plugin_import":{"id":..,"error":..}})
+static void ai_error(const string& cmd, const string& err) {
+    broadcast("{\"ai_error\":{\"cmd\":\"" + json_escape(cmd) + "\",\"error\":\"" + json_escape(err) + "\"}}");
+}
+
+static void handle_ai_command(string_view message) {
+    auto& ai = AiManager::instance();
+    auto rest = [&](size_t n) { return string(message.substr(n)); };
+    string err;
+    string cmd = string(message.substr(0, message.find(':')));
+    if (message == "AI_STATE") {
+        broadcast(ai.state_json(true));
+        broadcast(AiManager::plugins_message());
+        AiManager::sessions_async();
+        std::thread([] { broadcast(dig::codec_status_message()); }).detach();
+        return;
+    } else if (message == "PLUGIN_CODECS") {
+        // which voice codecs the decoders find (runs a tool: worker thread)
+        std::thread([] { broadcast(dig::codec_status_message()); }).detach();
+        return;
+    } else if (message == "AI_SESSIONS") {
+        AiManager::sessions_async();
+        return;
+    } else if (message.starts_with("AI_SESSION_GET:")) {
+        AiManager::session_async(rest(15));
+        return;
+    } else if (message.starts_with("AI_SESSION_SELECT:")) {
+        err = ai.select_session(rest(18));
+    } else if (message.starts_with("AI_SESSION_DELETE:")) {
+        err = ai.delete_session(rest(18));
+    } else if (message == "AI_TEST") {
+        err = ai.test();
+    } else if (message == "AI_CANCEL") {
+        ai.cancel();
+    } else if (message.starts_with("AI_INVESTIGATE:")) {
+        string p = rest(15);
+        size_t c1 = p.find(':'), c2 = c1 == string::npos ? c1 : p.find(':', c1 + 1);
+        if (c2 == string::npos) {
+            err = "format: AI_INVESTIGATE:vfo:freq_hz:seconds[:instructions]";
+        } else {
+            size_t c3 = p.find(':', c2 + 1);
+            try {
+                int vfo = stoi(p.substr(0, c1));
+                double f = stod(p.substr(c1 + 1, c2 - c1 - 1));
+                double secs = stod(p.substr(c2 + 1, c3 == string::npos ? string::npos : c3 - c2 - 1));
+                string instr = c3 == string::npos ? "" : p.substr(c3 + 1);
+                if (instr.size() > 4000) instr.resize(4000);
+                err = ai.investigate(vfo, std::isfinite(f) ? f : 0, std::isfinite(secs) ? secs : 10, instr);
+            } catch (const exception&) {
+                err = "bad number in AI_INVESTIGATE";
+            }
+        }
+    } else if (message.starts_with("AI_CREATE:")) {
+        string p = rest(10);
+        size_t c = p.find(':');
+        string instr = c == string::npos ? "" : p.substr(c + 1);
+        if (instr.size() > 8000) instr.resize(8000);
+        err = ai.create(p.substr(0, c), instr);
+    } else if (message.starts_with("AI_ASK:")) {
+        string q = rest(7);
+        if (q.size() > 4000) q.resize(4000);
+        err = q.empty() ? "empty question" : ai.ask(q);
+    } else if (message == "PLUGINS_LIST") {
+        broadcast(AiManager::plugins_message());
+        return;
+    } else if (message == "PLUGINS_RESCAN") {
+        // runs every plugin's --info: on a worker thread, not this (uWS) one
+        dig::PluginRegistry::instance().scan_async([] { broadcast(AiManager::plugins_message()); });
+        return;
+    } else if (message.starts_with("PLUGIN_AUTO:")) {
+        // not gated on the AI lab: it only chooses which decoders run
+        string p = rest(12);
+        size_t c = p.rfind(':');
+        string id = c == string::npos ? "" : p.substr(0, c), v = c == string::npos ? "" : p.substr(c + 1);
+        if (!dig::PluginRegistry::valid_id(id) || (v != "0" && v != "1")) {
+            err = "format: PLUGIN_AUTO:id:0|1";
+        } else {
+            auto& reg = dig::PluginRegistry::instance();
+            if (reg.set_auto(id, v == "1")) {
+                cout << "Auto detect: " << id << (v == "1" ? " on" : " off") << endl;
+                SettingsStore::record("AUTO_DETECT_OFF:" + reg.auto_off_list());   // never replayed itself
+            }
+            broadcast(AiManager::plugins_message());
+            return;
+        }
+    } else if (message.starts_with("PLUGIN_BUILD:")) {
+        err = ai.build_plugin(rest(13));
+    } else if (message.starts_with("PLUGIN_EXPORT:")) {
+        // reads the plugin's files: on a worker thread, not this (uWS) one
+        std::thread([id = rest(14)] {
+            string bundle;
+            string e = AiManager::instance().export_plugin(id, &bundle);
+            if (e.empty()) broadcast("{\"plugin_export\":{\"id\":\"" + json_escape(id) + "\",\"bundle\":" + bundle + "}}");
+            else ai_error("PLUGIN_EXPORT", e);
+        }).detach();
+        return;
+    } else if (message.starts_with("PLUGIN_IMPORT:")) {
+        string j = rest(14), id;
+        json_find(j, "id", id);
+        err = ai.import_plugin(j);
+        broadcast("{\"plugin_import\":{\"id\":\"" + json_escape(id) + "\",\"error\":\"" + json_escape(err) + "\"}}");
+        return;
+    } else {
+        err = "unknown command";
+    }
+    if (!err.empty()) {
+        cout << "AI Signal Lab: " << cmd << " refused (" << err << ")" << endl;
+        ai_error(cmd, err);
+    }
+}
+
 // --- Multi-browser settings sync ---
 // Every state-changing command a browser sends is echoed to ALL connected
 // browsers as {"sync_cmd":"<command>"} so their UIs stay in sync. The latest
@@ -158,7 +286,9 @@ static bool is_query_command(string_view msg) {
            msg.starts_with("SCANNER_GET_") ||
            msg == "CONTINUOUS_SCANNER_STATUS" ||
            msg.starts_with("LOG_LIST") ||      // recordings listing query
-           msg.starts_with("LOG_DELETE:");     // delete acks via its own list broadcast
+           msg.starts_with("LOG_DELETE:") ||   // delete acks via its own list broadcast
+           msg.starts_with("AI_") ||           // AI Signal Lab: results come as ai_event / ai_state
+           msg.starts_with("PLUGIN");          // plugins: own broadcasts (an import is up to 1 MB)
 }
 
 // Commands whose latest value is replayed to newly connecting clients.
@@ -254,9 +384,8 @@ static string build_decimator_snapshot() {
            << DecimatorManager::demodModeToString(d.demod_mode) << ","
            << (d.squelch_enabled ? 1 : 0) << "," << d.squelch_level << ","
            << d.squelch_method << "," << d.squelch_eigen_threshold << ","
-           << dig::mode_name(static_cast<dig::Mode>(d.digital_mode)) << ","
-           << (d.digital_opts.verbose ? 1 : 0) << "/" << d.digital_opts.dmr_slot << "/"
-           << d.digital_opts.p25_nac << "/" << (d.digital_opts.invert ? 1 : 0);
+           << dig::mode_string(static_cast<dig::Mode>(d.digital_mode), d.digital_plugin) << ","
+           << dig::options_to_string(d.digital_opts);
     }
     return ss.str();
 }
@@ -285,6 +414,7 @@ static bool apply_decimator_snapshot(const string& snap) {
         float offset_hz; int bw_index; DemodulatorMode demod;
         bool sq_en; float sq_db; int sq_method; float sq_eigen;
         dig::Mode digital = dig::Mode::OFF; dig::Options dopts;
+        std::string plugin;
     };
     int fm_index;
     vector<Vfo> vfos;
@@ -301,19 +431,13 @@ static bool apply_decimator_snapshot(const string& snap) {
                   std::clamp(stoi(f[1]), 0, NUM_BANDWIDTH_OPTIONS - 1),
                   DecimatorManager::stringToDemodMode(f[2]),
                   f[3] == "1", stof_finite(f[4]),
-                  std::clamp(stoi(f[5]), 0, 2), stof_finite(f[6]), dig::Mode::OFF, dig::Options{}};
-            // optional (newer files): digital decoder mode, options v/s/nac/inv
+                  std::clamp(stoi(f[5]), 0, 2), stof_finite(f[6]), dig::Mode::OFF, dig::Options{}, ""};
+            // optional (newer files): digital decoder mode ("AUTO", "PLUGIN:dmr",
+            // or an old protocol name) and its options ("v=1&i=0&dmr.slot=1",
+            // or the old "verbose/slot/nac/invert")
             string tok;
-            if (getline(es, tok, ',')) v.digital = dig::mode_from_string(tok);
-            if (getline(es, tok, ',')) {
-                int a = 0, b = 0, c = -1, d = 0;
-                if (sscanf(tok.c_str(), "%d/%d/%d/%d", &a, &b, &c, &d) >= 3) {
-                    v.dopts.verbose = a != 0;
-                    v.dopts.dmr_slot = std::clamp(b, 0, 2);
-                    v.dopts.p25_nac = (c >= 0 && c <= 0xFFF) ? c : -1;
-                    v.dopts.invert = d != 0;
-                }
-            }
+            if (getline(es, tok, ',') && !dig::parse_mode_string(tok, &v.digital, &v.plugin)) v.digital = dig::Mode::OFF;
+            if (getline(es, tok, ',')) v.dopts = dig::options_from_string(tok);
             vfos.push_back(v);
         }
     } catch (const exception&) {
@@ -343,7 +467,7 @@ static bool apply_decimator_snapshot(const string& snap) {
         decimator_manager.setSquelchMethod(id, v.sq_method);
         decimator_manager.setSquelchEigenThreshold(id, v.sq_eigen);
         if (v.digital != dig::Mode::OFF) decimator_manager.setDigitalOptions(id, v.dopts);
-        decimator_manager.setDigitalMode(id, v.digital);
+        decimator_manager.setDigitalMode(id, v.digital, v.plugin);
     }
 
     if (fm_index < 0 || static_cast<size_t>(fm_index) >= n) fm_index = 0;
@@ -1526,23 +1650,30 @@ void ControlHandler::handle_message_impl(string_view message) {
         }
     }
     else if (message.starts_with("DIGITAL_MODE:")) {
-        // Format: DIGITAL_MODE:id:OFF|AUTO|P25|DMR|TETRA|DSTAR - the VFO's
-        // digital voice/data decoder (persisted in the VFO snapshot)
+        // Format: DIGITAL_MODE:id:OFF|AUTO|P25|DMR|TETRA|DSTAR|NXDN|MPT1327|
+        // PLUGIN:<plugin id> - the VFO's digital voice/data decoder
+        // (persisted in the VFO snapshot)
         string params = string(message.substr(13));
         size_t colon_pos = params.find(':');
         if (colon_pos == string::npos) throw CommandRejected("format: DIGITAL_MODE:id:mode");
         int id = stoi(params.substr(0, colon_pos));
         string mode_str = params.substr(colon_pos + 1);
-        dig::Mode mode = dig::mode_from_string(mode_str);
-        if (mode == dig::Mode::OFF && mode_str != "OFF") throw CommandRejected("unknown digital mode");
-        if (!decimator_manager.setDigitalMode(id, mode)) throw CommandRejected("no such decimator");
-        cout << "Decimator " << id << " digital decoder: " << dig::mode_name(mode) << endl;
+        dig::Mode mode;
+        string plugin;
+        if (!dig::parse_mode_string(mode_str, &mode, &plugin)) throw CommandRejected("unknown digital mode");
+        if (mode == dig::Mode::PLUGIN && !g_replaying_settings.load()) {
+            dig::PluginInfo pi;
+            if (!dig::PluginRegistry::instance().get(plugin, &pi)) throw CommandRejected("no such plugin");
+        }
+        if (!decimator_manager.setDigitalMode(id, mode, plugin)) throw CommandRejected("no such decimator");
+        cout << "Decimator " << id << " digital decoder: " << dig::mode_string(mode, plugin) << endl;
         broadcast(MessageBuilders::build_decimator_info_message());
         record_decimator_snapshot();
     }
     else if (message.starts_with("DIGITAL_OPT:")) {
-        // Format: DIGITAL_OPT:id:key:value - verbose 0|1, dmr_slot 0|1|2,
-        // p25_nac <hex>|any, invert 0|1
+        // Format: DIGITAL_OPT:id:key:value - verbose 0|1, invert 0|1, or a
+        // plugin's own option "<plugin id>.<key>" (value "" = its default;
+        // the plugin checks the value). Old keys: dmr_slot, p25_nac
         string params = string(message.substr(12));
         size_t c1 = params.find(':');
         size_t c2 = c1 == string::npos ? string::npos : params.find(':', c1 + 1);
@@ -1553,23 +1684,32 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (!inst) throw CommandRejected("no such decimator");
         auto dd = inst->getDigital();
         dig::Options o = dd ? dd->options() : dig::Options();
+        if (key == "dmr_slot") key = "dmr.slot";
+        if (key == "p25_nac") {
+            key = "p25.nac";
+            if (val == "any" || val == "-1") val.clear();
+        }
         if (key == "verbose") o.verbose = val == "1";
         else if (key == "invert") o.invert = val == "1";
-        else if (key == "dmr_slot") o.dmr_slot = std::clamp(stoi(val), 0, 2);
-        else if (key == "p25_nac") {
-            if (val.empty() || val == "any" || val == "-1") o.p25_nac = -1;
-            else {
-                size_t used = 0;
-                long v = stol(val, &used, 16);
-                if (used != val.size() || v < 0 || v > 0xFFF) throw CommandRejected("NAC must be 000-FFF (hex)");
-                o.p25_nac = static_cast<int>(v);
-            }
+        else if (dig::valid_option_key(key)) {
+            if (val.size() > 100) throw CommandRejected("option value too long");
+            for (unsigned char c : val)
+                if (c < 0x20 || c == 0x7F) throw CommandRejected("control character in option value");
+            if (val.empty()) o.plugin.erase(key);
+            else o.plugin[key] = val;
         } else {
             throw CommandRejected("unknown digital option");
         }
         decimator_manager.setDigitalOptions(id, o);
         broadcast(MessageBuilders::build_decimator_info_message());
         record_decimator_snapshot();
+    }
+    else if (message.starts_with("AUTO_DETECT_OFF:")) {
+        // Persisted-settings replay of the plugins excluded from Auto detect
+        // (the sidebar changes them one at a time with PLUGIN_AUTO:)
+        dig::PluginRegistry::instance().set_auto_off(string(message.substr(16)));
+        g_applied_cmd = "AUTO_DETECT_OFF:" + dig::PluginRegistry::instance().auto_off_list();
+        broadcast(AiManager::plugins_message());
     }
     else if (message.starts_with("DIGITAL_HISTORY:")) {
         // A page opening the decoder panel asks for the whole event log
@@ -1582,8 +1722,13 @@ void ControlHandler::handle_message_impl(string_view message) {
         auto dd = inst ? inst->getDigital() : nullptr;
         if (!dd) throw CommandRejected("no decoder on that decimator");
         dd->report().clear_all();
-        dd->report().event(dig::Mode::AUTO, "Log cleared", 0.0);
+        dd->report().event("", "Log cleared", 0.0);
         broadcast(MessageBuilders::build_digital_message(id, true));
+    }
+    // --- AI Signal Lab + decoder plugins (ai_manager.hpp). Errors go back
+    // as {"ai_error":...} so the panel can show them ---
+    else if (message.starts_with("AI_") || message.starts_with("PLUGIN")) {
+        handle_ai_command(message);
     }
     else if (message.starts_with("GET_DECIMATOR_INFO")) {
         // Send current decimator configuration to UI

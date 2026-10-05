@@ -121,6 +121,9 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // control_handler.cpp; the default is the single startup VFO and must
         // match DecimatorInstance's constructor defaults + DEFAULT_BANDWIDTH_INDEX
         {"decimators",               "DECIMATORS:",               VType::STRING, "0|0.00,7,WBFM,0,15.00,0,2.00"},
+        // Decoder plugins the user excluded from the Digital Decoder's "Auto
+        // detect" ("id,id"; empty = every plugin takes part)
+        {"auto_detect_off",          "AUTO_DETECT_OFF:",          VType::STRING, ""},
         // Station
         {"station_id",               "STATION_ID:",               VType::STRING, "KrakenSDR"},
         {"location_source",          "LOCATION_SOURCE:",          VType::STRING, "gps"},

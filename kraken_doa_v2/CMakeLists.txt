@@ -165,7 +165,6 @@ target_link_libraries(${PROJECT_NAME}
     Eigen3::Eigen
     z
     sqlite3
-    ${CMAKE_DL_LIBS}
 )
 
 # Compiler definitions
@@ -207,4 +206,11 @@ add_custom_target(install-uws
     COMMAND git clone --recursive https://github.com/uNetworking/uWebSockets /tmp/uWebSockets || true
     COMMAND cd /tmp/uWebSockets && make && sudo make install
     COMMENT "Installing uWebSockets manually"
+)
+# Decoder plugins (plugins/<id>/ -> plugins/<id>/build/decoder, see
+# plugins/SDK.md): separate executables built by their own Makefile, in the
+# source tree where kraken_doa (run from this directory) finds them
+add_custom_target(plugins ALL
+    COMMAND make -C ${CMAKE_CURRENT_SOURCE_DIR}/plugins
+    COMMENT "Building decoder plugins"
 )

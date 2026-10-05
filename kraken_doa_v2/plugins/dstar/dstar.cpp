@@ -3,9 +3,9 @@
 // data channel of the voice frames - text message, GPS / DPRS, header copy.
 // Voice (AMBE 2400) is not synthesized.
 
-#include "digital/dig_protocols.hpp"
-#include "digital/dig_fec.hpp"
-#include "digital/mbe_tables.hpp"
+#include "dstar.hpp"
+#include "dig_fec.hpp"
+#include "mbe_tables.hpp"
 
 #include <array>
 #include <algorithm>

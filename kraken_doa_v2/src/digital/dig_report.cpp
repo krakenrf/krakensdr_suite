@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <sstream>
 
 #include "utils/json_escape.hpp"
@@ -16,46 +18,134 @@ int64_t now_ms() {
 const char* mode_name(Mode m) {
     switch (m) {
         case Mode::AUTO: return "AUTO";
-        case Mode::P25: return "P25";
-        case Mode::DMR: return "DMR";
-        case Mode::TETRA: return "TETRA";
-        case Mode::DSTAR: return "DSTAR";
-        case Mode::NXDN: return "NXDN";
-        case Mode::MPT1327: return "MPT1327";
+        case Mode::PLUGIN: return "PLUGIN";
         default: return "OFF";
     }
 }
 
-Mode mode_from_string(const std::string& s) {
-    if (s == "AUTO") return Mode::AUTO;
-    if (s == "P25") return Mode::P25;
-    if (s == "DMR") return Mode::DMR;
-    if (s == "TETRA") return Mode::TETRA;
-    if (s == "DSTAR" || s == "D-STAR") return Mode::DSTAR;
-    if (s == "NXDN") return Mode::NXDN;
-    if (s == "MPT1327") return Mode::MPT1327;
-    return Mode::OFF;
+bool valid_plugin_id(const std::string& id) {
+    if (id.empty() || id.size() > 32 || id == "sdk" || id == "lib") return false;
+    for (char c : id)
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-')) return false;
+    return true;
 }
 
-void Report::set(Mode proto, const std::string& key, const std::string& value) {
+std::string mode_string(Mode m, const std::string& plugin_id) {
+    if (m == Mode::PLUGIN) return "PLUGIN:" + plugin_id;
+    return mode_name(m);
+}
+
+bool parse_mode_string(const std::string& s, Mode* m, std::string* plugin_id) {
+    plugin_id->clear();
+    if (s == "OFF") { *m = Mode::OFF; return true; }
+    if (s == "AUTO") { *m = Mode::AUTO; return true; }
+    std::string id;
+    if (s.rfind("PLUGIN:", 0) == 0) {
+        id = s.substr(7);
+    } else {
+        // the decoders that used to be built in (settings saved before they
+        // became plugins, and the old wire names)
+        static const std::pair<const char*, const char*> legacy[] = {
+            {"P25", "p25"}, {"DMR", "dmr"}, {"TETRA", "tetra"}, {"DSTAR", "dstar"},
+            {"D-STAR", "dstar"}, {"NXDN", "nxdn"}, {"MPT1327", "mpt1327"}};
+        for (const auto& l : legacy)
+            if (s == l.first) id = l.second;
+        if (id.empty()) return false;
+    }
+    if (!valid_plugin_id(id)) return false;
+    *m = Mode::PLUGIN;
+    *plugin_id = id;
+    return true;
+}
+
+bool valid_option_key(const std::string& k) {
+    size_t dot = k.find('.');
+    if (dot == std::string::npos || !valid_plugin_id(k.substr(0, dot))) return false;
+    std::string o = k.substr(dot + 1);
+    if (o.empty() || o.size() > 32) return false;
+    for (char c : o)
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
+    return true;
+}
+
+namespace {
+std::string pct_encode(const std::string& s) {
+    std::string o;
+    for (unsigned char c : s) {
+        if (std::isalnum(c) || c == '.' || c == '_' || c == '-') o += static_cast<char>(c);
+        else { char b[4]; snprintf(b, sizeof b, "%%%02X", c); o += b; }
+    }
+    return o;
+}
+std::string pct_decode(const std::string& s) {
+    std::string o;
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == '%' && i + 2 < s.size()) {
+            o += static_cast<char>(strtol(s.substr(i + 1, 2).c_str(), nullptr, 16));
+            i += 2;
+        } else {
+            o += s[i];
+        }
+    }
+    return o;
+}
+}  // namespace
+
+std::string options_to_string(const Options& o) {
+    std::string s = std::string("v=") + (o.verbose ? "1" : "0") + "&i=" + (o.invert ? "1" : "0");
+    for (const auto& kv : o.plugin) s += "&" + kv.first + "=" + pct_encode(kv.second);
+    return s;
+}
+
+Options options_from_string(const std::string& s) {
+    Options o;
+    if (s.find('=') == std::string::npos) {
+        // old form: verbose/dmr_slot/p25_nac/invert
+        int a = 0, b = 0, c = -1, d = 0;
+        if (sscanf(s.c_str(), "%d/%d/%d/%d", &a, &b, &c, &d) >= 3) {
+            o.verbose = a != 0;
+            o.invert = d != 0;
+            if (b >= 1 && b <= 2) o.plugin["dmr.slot"] = std::to_string(b);
+            if (c >= 0 && c <= 0xFFF) {
+                char h[8];
+                snprintf(h, sizeof h, "%03X", c);
+                o.plugin["p25.nac"] = h;
+            }
+        }
+        return o;
+    }
+    std::stringstream ss(s);
+    std::string kv;
+    while (std::getline(ss, kv, '&')) {
+        size_t eq = kv.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = kv.substr(0, eq), v = pct_decode(kv.substr(eq + 1));
+        if (k == "v") o.verbose = v == "1";
+        else if (k == "i") o.invert = v == "1";
+        else if (valid_option_key(k) && v.size() <= 100) o.plugin[k] = v;
+    }
+    return o;
+}
+
+void Report::set(const std::string& plugin, const std::string& key, const std::string& value) {
     std::lock_guard<std::mutex> lk(mu_);
-    auto& v = facts_[proto];
+    auto& v = facts_[plugin];
     int64_t t = now_ms();
     for (auto& f : v) {
         if (f.key == key) { f.value = value; f.updated_ms = t; return; }
     }
-    v.push_back({key, value, t});
+    if (v.size() < 64) v.push_back({key, value, t});
 }
 
-void Report::erase(Mode proto, const std::string& key) {
+void Report::erase(const std::string& plugin, const std::string& key) {
     std::lock_guard<std::mutex> lk(mu_);
-    auto& v = facts_[proto];
+    auto& v = facts_[plugin];
     v.erase(std::remove_if(v.begin(), v.end(), [&](const Fact& f) { return f.key == key; }), v.end());
 }
 
-void Report::clear(Mode proto) {
+void Report::clear(const std::string& plugin) {
     std::lock_guard<std::mutex> lk(mu_);
-    facts_.erase(proto);
+    facts_.erase(plugin);
 }
 
 void Report::clear_all() {
@@ -64,10 +154,15 @@ void Report::clear_all() {
     recent_.clear();
 }
 
-void Report::event(Mode proto, const std::string& text, double dedup_s) {
+void Report::set_label(const std::string& plugin, const std::string& name) {
+    std::lock_guard<std::mutex> lk(mu_);
+    labels_[plugin] = name;
+}
+
+void Report::event(const std::string& plugin, const std::string& text, double dedup_s) {
     std::lock_guard<std::mutex> lk(mu_);
     int64_t t = now_ms();
-    std::string key = std::string(mode_name(proto)) + "|" + text;
+    std::string key = plugin + "|" + text;
     auto it = recent_.find(key);
     if (it != recent_.end() && t - it->second < static_cast<int64_t>(dedup_s * 1000)) return;
     recent_[key] = t;
@@ -76,26 +171,29 @@ void Report::event(Mode proto, const std::string& text, double dedup_s) {
         for (auto r = recent_.begin(); r != recent_.end();)
             r = (t - r->second > 60000) ? recent_.erase(r) : std::next(r);
     }
-    events_.push_back({++seq_, t, proto, text});
+    events_.push_back({++seq_, t, plugin, text});
     while (events_.size() > MAX_EVENTS) events_.pop_front();
 }
 
-std::string Report::info_json(Mode proto) const {
+std::string Report::info_json() const {
     std::lock_guard<std::mutex> lk(mu_);
     std::ostringstream o;
-    o << "[";
-    auto it = facts_.find(proto);
-    if (it != facts_.end()) {
-        int64_t t = now_ms();
+    o << "{";
+    int64_t t = now_ms();
+    bool fp = true;
+    for (const auto& p : facts_) {
+        if (p.second.empty()) continue;
+        o << (fp ? "" : ",") << "\"" << json_escape(p.first) << "\":[";
+        fp = false;
         bool first = true;
-        for (const auto& f : it->second) {
-            if (!first) o << ",";
-            first = false;
-            o << "[\"" << json_escape(f.key) << "\",\"" << json_escape(f.value) << "\","
+        for (const auto& f : p.second) {
+            o << (first ? "" : ",") << "[\"" << json_escape(f.key) << "\",\"" << json_escape(f.value) << "\","
               << (t - f.updated_ms) / 1000 << "]";
+            first = false;
         }
+        o << "]";
     }
-    o << "]";
+    o << "}";
     return o.str();
 }
 
@@ -111,8 +209,10 @@ std::string Report::events_json(uint64_t after, size_t max) const {
         const auto& e = events_[i];
         if (!first) o << ",";
         first = false;
-        o << "{\"s\":" << e.seq << ",\"t\":" << e.time_ms << ",\"p\":\"" << mode_name(e.proto)
-          << "\",\"m\":\"" << json_escape(e.text) << "\"}";
+        auto l = labels_.find(e.source);
+        const std::string& label = l != labels_.end() ? l->second : e.source;
+        o << "{\"s\":" << e.seq << ",\"t\":" << e.time_ms << ",\"src\":\"" << json_escape(e.source) << "\",\"p\":\""
+          << json_escape(label) << "\",\"m\":\"" << json_escape(e.text) << "\"}";
     }
     o << "]";
     return o.str();

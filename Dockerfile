@@ -60,7 +60,8 @@ RUN ln -s /src/uws-heimdall heimdall_v2/uWebSockets \
 
 # Runtime packages = whatever owns the shared libraries the binaries load, so
 # the runtime stage follows the Debian release without a hand-kept list
-RUN for b in heimdall_v2/heimdall kraken_doa_v2/kraken_doa librtlsdr/build/src/rtl_test; do ldd "$b"; done \
+RUN for b in heimdall_v2/heimdall kraken_doa_v2/kraken_doa librtlsdr/build/src/rtl_test \
+             kraken_doa_v2/plugins/*/build/decoder; do ldd "$b"; done \
         | awk '/=> \// {print $3}' | sort -u | xargs realpath | xargs dpkg -S \
         | cut -d: -f1 | sort -u > /src/runtime-packages \
     && cat /src/runtime-packages
@@ -82,6 +83,9 @@ COPY --from=build /src/kraken_doa_v2/kraken_doa \
                   /src/kraken_doa_v2/array_calculator.html \
                   /src/kraken_doa_v2/opus-decoder.js \
                   /src/kraken_doa_v2/opus-decoder.min.js kraken_doa_v2/
+# decoder plugins (built ones: plugins/<id>/build/decoder); kraken_doa finds
+# them through KRAKEN_PLUGIN_DIR (entrypoint)
+COPY --from=build /src/kraken_doa_v2/plugins/ kraken_doa_v2/plugins/
 COPY --from=build /src/librtlsdr/build/src/rtl_test /src/librtlsdr/build/src/rtl_eeprom /usr/local/bin/
 COPY docker/entrypoint.sh /usr/local/bin/krakensdr-entrypoint
 RUN chmod 755 /usr/local/bin/krakensdr-entrypoint

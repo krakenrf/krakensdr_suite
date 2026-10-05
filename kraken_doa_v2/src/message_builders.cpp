@@ -748,11 +748,15 @@ string MessageBuilders::build_decimator_info_message() {
              << ",\"squelch_open\":" << (info.squelch_open ? "true" : "false")
              << ",\"squelch_method\":\"" << (info.squelch_method == 2 ? "EIGEN_AUTO" : (info.squelch_method == 1 ? "EIGEN" : "FFT")) << "\""
              << ",\"squelch_eigen_threshold\":" << info.squelch_eigen_threshold
-             << ",\"digital_mode\":\"" << dig::mode_name(static_cast<dig::Mode>(info.digital_mode)) << "\""
+             << ",\"digital_mode\":\"" << json_escape(dig::mode_string(static_cast<dig::Mode>(info.digital_mode), info.digital_plugin)) << "\""
              << ",\"digital_opts\":{\"verbose\":" << (info.digital_opts.verbose ? "true" : "false")
-             << ",\"dmr_slot\":" << info.digital_opts.dmr_slot
-             << ",\"p25_nac\":" << info.digital_opts.p25_nac
-             << ",\"invert\":" << (info.digital_opts.invert ? "true" : "false") << "}"
+             << ",\"invert\":" << (info.digital_opts.invert ? "true" : "false") << ",\"plugin\":{";
+        bool fo = true;
+        for (const auto& kv : info.digital_opts.plugin) {
+            json << (fo ? "" : ",") << "\"" << json_escape(kv.first) << "\":\"" << json_escape(kv.second) << "\"";
+            fo = false;
+        }
+        json << "}}"
              << "}";
     }
     json << "]}";

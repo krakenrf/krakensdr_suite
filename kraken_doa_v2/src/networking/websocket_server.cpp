@@ -622,6 +622,8 @@ void WebSocketServer::web_server_main() {
     }
 }
 
+bool WebSocketServer::auth_enabled() { return auth_required(); }
+
 void WebSocketServer::broadcast_json_message(const string& json) {
     if (!global_ssl_app || !loop) return;
 
