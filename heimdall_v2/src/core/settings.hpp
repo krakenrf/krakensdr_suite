@@ -14,6 +14,9 @@
 //   - center_freq / gain     : the last user tuning (Hz / tenths of dB, -1 = auto),
 //                              restored before the dongles open - a crash restart
 //                              used to come back at the compiled-in 100 MHz
+//   - operating_mode         : coherent / wideband / independent, re-entered once
+//                              the devices are open (restore_operating_mode)
+//   - tuner_freq<N> / tuner_gain<N> : independent mode's per-tuner tuning
 //
 // load() is called once at startup (before calibration begins) and applies the
 // saved values to the global state; save() is called whenever a persisted
@@ -44,6 +47,15 @@ extern std::atomic<int> persisted_gain;
 constexpr long long TUNING_SAVE_DELAY_MS = 10000;
 void note_tuning(uint64_t frequency_hz, int gain);
 void save_tuning_if_due();
+
+// The operating mode (0 coherent, 1 wideband, 2 independent) and independent
+// mode's per-tuner tuning (Hz / tenths of dB; 0 / -999 = none). note_mode()
+// takes them from the live state and saves with the same debounce as
+// note_tuning; load() only fills these, main() re-enters the mode.
+extern std::atomic<int> persisted_mode;
+extern std::atomic<uint32_t> persisted_tuner_freq[8];
+extern std::atomic<int> persisted_tuner_gain[8];
+void note_mode();
 
 // Read the settings file (if present) and apply known keys to the globals.
 void load();

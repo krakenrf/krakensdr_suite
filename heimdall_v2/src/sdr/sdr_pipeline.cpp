@@ -165,7 +165,10 @@ static void snapshot_conversion_state(SetConversionState& st, int num_elements) 
     const bool fwd = forward_comp.enabled.load(std::memory_order_relaxed) &&
                      forward_comp.ready.load(std::memory_order_acquire) &&
                      !bias_tee_enabled.load(std::memory_order_relaxed);
+    // Independent mode: every tuner is its own receiver - no array correction
+    const bool independent = operating_mode.load(std::memory_order_relaxed) == OperatingMode::INDEPENDENT;
     for (int ch = 0; ch < num_elements && ch < NUM_DEVICES; ch++) {
+        if (independent) { st.comp[ch] = Complex(1.0f, 0.0f); continue; }
         // Lock-free atomic load - no mutex
         st.comp[ch] = phase_compensation->compensation_vector.load(ch);
         if (fwd) st.comp[ch] *= forward_comp.vector.load(ch);

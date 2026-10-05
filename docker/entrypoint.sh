@@ -119,6 +119,11 @@ wait_converged() {
                 log "KerberosSDR manual-calibration mode - not waiting (calibrate from heimdall's web UI)"
                 return
             fi
+            # bits 10 / 11: wideband scan / independent mode - no calibration runs
+            if (( w >> 10 & 3 )); then
+                log "heimdall is in wideband / independent mode - no calibration to wait for"
+                return
+            fi
             (( (w & 0xFF) == 4 )) && { log "heimdall converged"; return; }
             [[ $last != state ]] && log "heimdall is calibrating..." && last=state
         else

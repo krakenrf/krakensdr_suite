@@ -161,8 +161,8 @@ static bool design_per_bin_equalizers() {
 void apply_phase_compensation_once(const std::map<int, float>& measured_phases) {
     if (!phase_compensation) return;
 
-    // Skip phase compensation in wideband scan mode
-    if (operating_mode.load() == OperatingMode::WIDEBAND_SCAN) return;
+    // Skip phase compensation outside coherent mode (wideband scan / independent)
+    if (operating_mode.load() != OperatingMode::COHERENT) return;
 
     std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
     if (phase_compensation->compensation_applied) return;
@@ -257,8 +257,8 @@ void apply_phase_compensation_once(const std::map<int, float>& measured_phases) 
 bool check_phase_convergence(const std::map<int, float>& current_phases) {
     if (!phase_compensation) return false;
 
-    // Skip phase compensation in wideband scan mode
-    if (operating_mode.load() == OperatingMode::WIDEBAND_SCAN) {
+    // Skip phase compensation outside coherent mode (wideband scan / independent)
+    if (operating_mode.load() != OperatingMode::COHERENT) {
         return false;
     }
 
@@ -403,7 +403,7 @@ void begin_retune_cooldown(const char* what) {
     // frequencies), and leaving the scan recalibrates from scratch. A cooldown
     // started here would expire into handle_settings_change() and switch the
     // noise source on for a calibration that can't run until the scan ends.
-    if (operating_mode.load() == OperatingMode::WIDEBAND_SCAN) return;
+    if (operating_mode.load() != OperatingMode::COHERENT) return;
 
     // Discrete scanner hopping: a calibration can't converge across hops, and
     // the cooldown's expiry used to switch the noise source on into the
@@ -551,7 +551,7 @@ void recover_coherence(bool manual) {
     // stuck on across the scan. In both, flushing restarts positional alignment,
     // which is all that is meaningful.
     auto needs_flush_only = []() {
-        return operating_mode.load() == OperatingMode::WIDEBAND_SCAN ||
+        return operating_mode.load() != OperatingMode::COHERENT ||
                discrete_scanner.enabled.load();
     };
     if (needs_flush_only()) {
@@ -655,7 +655,7 @@ void coherence_watchdog() {
         if (recovering &&
             std::chrono::duration_cast<std::chrono::seconds>(now - recovery_started).count() > 120) {
             std::cerr << "Coherence watchdog: recovery exceeded 120s, aborting (noise source off)" << std::endl;
-            if (operating_mode.load() != OperatingMode::WIDEBAND_SCAN) {
+            if (operating_mode.load() == OperatingMode::COHERENT) {
                 set_bias_tee_all_devices(false, devices);
                 // Also stop the calibration pipeline. recover_coherence turned the
                 // noise source on AND FFT on; turning only the noise source off
@@ -814,7 +814,7 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
                 }
             }
             if (!noise_was_on) set_bias_tee_all_devices(false, devices);
-        } else if (!noise_was_on && operating_mode.load() == OperatingMode::WIDEBAND_SCAN) {
+        } else if (!noise_was_on && operating_mode.load() != OperatingMode::COHERENT) {
             // Superseded by wideband-scan entry, which owns nothing that needs
             // the noise source: undo our own noise-on (scan entry may have run
             // between the monitor's scan-mode check and our switch-on).
@@ -937,8 +937,8 @@ void periodic_calibration_monitor(CorrelationResult& correlation_result) {
 }
 
 bool process_channel_lag_compensation(int channel, float lag) {
-    // Skip lag compensation in wideband scan mode
-    if (operating_mode.load() == OperatingMode::WIDEBAND_SCAN) return false;
+    // Skip lag compensation outside coherent mode (wideband scan / independent)
+    if (operating_mode.load() != OperatingMode::COHERENT) return false;
 
     auto device_it = std::find_if(devices.begin(), devices.end(),
         [channel](const auto& dev) { return dev && dev->index == channel; });

@@ -2,7 +2,8 @@
 """KrakenSDR signal tool - capture and measure a signal (numpy only).
 
 Used by the AI Signal Lab (ai/kraken_ai.py) and handy on its own. Captures
-come from heimdall's data port (8091, channel 0) and are channelized around
+come from heimdall's data port (8091, channel 0 - in wideband / independent
+mode the tuner whose band holds the frequency) and are channelized around
 the requested frequency; everything else works on the resulting
 complex-float32 files (.cf32 + .json sidecar with the sample rate and RF).
 
@@ -472,11 +473,25 @@ def capture(args):
     except (OSError, RuntimeError) as e:
         if center is None:
             sys.exit(f"error: cannot read heimdall status ({e}); pass --center HZ")
+    ch = args.channel
     if st is not None:
         if st.get("operating_mode", "coherent") != "coherent":
-            sys.exit("error: heimdall is in the wideband scan mode (tuners spread) - stop the scan first")
-        if center is None:
+            # wideband scan / independent tuners: every tuner has its own
+            # frequency - record the one whose band holds the signal
+            tf = st.get("tuner_frequencies") or []
+            if not tf:
+                sys.exit("error: heimdall reports no per-tuner frequencies in "
+                         f"{st.get('operating_mode')} mode")
+            if ch is None:
+                ch = min(range(len(tf)), key=lambda i: abs(float(tf[i]) - args.freq))
+            if ch >= len(tf):
+                sys.exit(f"error: no tuner {ch} (heimdall has {len(tf)})")
+            if center is None:
+                center = float(tf[ch])
+        elif center is None:
             center = float(st["settings"]["center_freq"])
+    if ch is None:
+        ch = 0
     fs = HEIMDALL_FS
     offset = args.freq - center
     if abs(offset) > fs / 2 - args.rate / 2:
@@ -506,7 +521,9 @@ def capture(args):
             recv_exact(s, memoryview(chinfo))
             data = bytearray(nch * ns * 2)
             recv_exact(s, memoryview(data))
-            pf, gain = struct.unpack("<ff", chinfo[:8])
+            if ch >= nch:
+                sys.exit(f"error: no channel {ch} in the stream ({nch} channels)")
+            pf, gain = struct.unpack("<ff", chinfo[8 * ch: 8 * ch + 8])
             if abs(pf - center) > 1000:
                 if args.center is None:
                     sys.exit(f"error: the receiver retuned during the capture ({pf / 1e6:.4f} MHz)")
@@ -517,7 +534,7 @@ def capture(args):
                 in_gap = True
                 continue
             in_gap = False
-            raw += data[: ns * 2]          # channel 0
+            raw += data[ch * ns * 2: (ch + 1) * ns * 2]
     finally:
         s.close()
     b = np.frombuffer(bytes(raw[: want * 2]), dtype=np.uint8).astype(np.float32)
@@ -527,7 +544,8 @@ def capture(args):
     y = channelize(x, fs, decim, bw)
     meta = {"rf_hz": args.freq, "center_hz": center, "offset_hz": offset, "rate": rate_out, "bandwidth_hz": bw,
             "gain_db": gain, "captured_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "source": "heimdall 8091 channel 0", "calibration_gaps": gaps, "skipped_packets": skipped}
+            "source": f"heimdall 8091 channel {ch}", "channel": ch, "calibration_gaps": gaps,
+            "skipped_packets": skipped}
     save(args.output, y, rate_out, meta)
     print(f"captured {len(y) / rate_out:.2f} s at {rate_out:g} Hz (bw {bw:g} Hz) around "
           f"{args.freq / 1e6:.6f} MHz -> {args.output}" + (f"  [{gaps} calibration gap(s) cut out]" if gaps else ""))
@@ -891,6 +909,8 @@ def main():
     c.add_argument("--seconds", type=float, default=10)
     c.add_argument("--host", default=os.environ.get("KRAKEN_HEIMDALL_HOST", "127.0.0.1"))
     c.add_argument("--center", type=float, default=None, help="receiver centre, Hz (default: ask heimdall)")
+    c.add_argument("--channel", type=int, default=None,
+                   help="tuner / channel to record (default 0; in wideband / independent mode the tuner whose band holds --freq)")
     c.add_argument("-o", "--output", required=True)
     for name in ("analyze", "spectrogram", "extract", "demod", "symbols"):
         p = sub.add_parser(name)

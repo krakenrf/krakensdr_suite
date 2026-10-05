@@ -8,6 +8,7 @@
 #include <complex>
 #include <memory>
 #include <chrono>
+#include <cmath>
 #include <fftw3.h>
 #include "App.h"
 #include "types.hpp"
@@ -59,9 +60,28 @@ extern std::atomic<int> ws_client_count;
 // Beamformed FFT data is now per-decimator (DecimatorInstance::beamformed_fft);
 // each decimator runs its own beamformer steered to its own DoA.
 
-// Wideband scan mode
+// Operating mode (top-bar Mode selector, OPERATING_MODE:): coherent (both
+// false), wideband scan (tuners spread, stitched spectrum) or independent
+// (every tuner its own receiver, one spectrum per tuner). Outside coherent
+// DoA / beamforming are parked and each VFO decimates its own tuner
+// (DecimatorInstance::tuner_channel).
 extern std::atomic<bool> wideband_mode_enabled;
-extern std::atomic<bool> doa_enabled_before_wideband;  // Store DoA state before wideband
+extern std::atomic<bool> independent_mode_enabled;
+inline bool multi_tuner_mode() {
+    return wideband_mode_enabled.load(std::memory_order_relaxed) ||
+           independent_mode_enabled.load(std::memory_order_relaxed);
+}
+// 0 coherent, 1 wideband, 2 independent
+inline int operating_mode_index() {
+    return wideband_mode_enabled.load(std::memory_order_relaxed) ? 1
+         : independent_mode_enabled.load(std::memory_order_relaxed) ? 2 : 0;
+}
+extern std::atomic<bool> doa_enabled_before_wideband;  // DoA state before leaving coherent mode
+// Independent mode: each tuner's requested frequency (Hz, 0 = none) and gain
+// (dB, -1 = auto, -999 = none) - persisted as TUNERS:, re-sent to heimdall on
+// entering the mode
+extern std::atomic<double> indep_tuner_freq_hz[8];
+extern std::atomic<float> indep_tuner_gain_db[8];
 extern std::atomic<bool> fm_enabled_before_scanner;     // Store FM state before discrete scanner
 extern std::atomic<uint32_t> fft_reset_generation;      // Generation counter for FFT reset (scanner retune)
 extern std::atomic<uint32_t> wideband_last_reset_gen;   // Track wideband FFT reset generation
@@ -70,6 +90,15 @@ extern std::atomic<bool> fft_data_valid;                // False after reset unt
 // wideband (downconverter) variant this carries the true RF, which reaches
 // ~6.7 GHz on low-side injection - past uint32's ~4.3 GHz cap.
 extern std::array<std::atomic<uint64_t>, MAX_CHANNELS> tuner_frequencies;
+// Independent mode: tuner ch's frequency in Hz - the client's own request
+// when the stream agrees with it (the header's float32 is only ~64 Hz exact
+// near 1 GHz), else the header's value
+inline uint64_t exact_tuner_hz(int ch) {
+    if (ch < 0 || ch >= MAX_CHANNELS) return 0;
+    const double hdr = static_cast<double>(tuner_frequencies[ch].load(std::memory_order_relaxed));
+    const double req = indep_tuner_freq_hz[ch].load(std::memory_order_relaxed);
+    return static_cast<uint64_t>(std::llround((req > 0 && std::abs(req - hdr) < 500.0) ? req : hdr));
+}
 
 // KrakenSDR Wideband (downconverter) variant - distinct from the wideband
 // SCAN mode above (tuner spread), which is unavailable in this variant.

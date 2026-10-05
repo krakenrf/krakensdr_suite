@@ -533,7 +533,13 @@ std::string AiManager::investigate(int vfo_id, double freq_hz, double seconds, c
     for (const auto& d : list)
         if (d.id == vfo_id) vfo = &d;
     if (!vfo) return "no such VFO";
-    const double center = ChannelManager::get_frequency(0);
+    // Wideband / independent mode: the VFO's offset is relative to its own
+    // tuner (sigtool capture records the tuner whose band holds the signal)
+    int tuner = 0;
+    if (multi_tuner_mode())
+        if (auto inst = decimator_manager.getDecimator(vfo_id)) tuner = inst->tuner_channel.load();
+    const double center = multi_tuner_mode() ? static_cast<double>(exact_tuner_hz(tuner))
+                                             : ChannelManager::get_frequency(0);
     const double vfo_freq = center + vfo->frequency_offset_hz;
     if (freq_hz <= 0) freq_hz = vfo_freq;
     if (std::fabs(freq_hz - center) > SAMPLE_RATE / 2 - 5000)
@@ -547,6 +553,8 @@ std::string AiManager::investigate(int vfo_id, double freq_hz, double seconds, c
         << ",\"vfo_offset_hz\":" << vfo->frequency_offset_hz << ",\"vfo_rate_hz\":" << rate
         << ",\"demod\":\"" << DecimatorManager::demodModeToString(vfo->demod_mode) << "\""
         << ",\"center_freq_hz\":" << static_cast<long long>(center)
+        << ",\"operating_mode\":\"" << (wideband_mode_enabled.load() ? "wideband" : independent_mode_enabled.load() ? "independent" : "coherent") << "\""
+        << ",\"tuner\":" << tuner
         << ",\"num_elements\":" << active_num_elements.load()
         << ",\"squelch_db\":" << vfo->squelch_level;
     if (auto inst = decimator_manager.getDecimator(vfo_id)) {

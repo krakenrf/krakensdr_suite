@@ -139,7 +139,7 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
                << "\"num_channels\":" << active_num_elements.load() << ","
                << "\"max_elements\":" << expected_serials.size() << ","
                << "\"reconfiguring\":" << (reconfig_in_progress.load(std::memory_order_acquire) ? "true" : "false") << ","
-               << "\"operating_mode\":\"" << (operating_mode.load() == OperatingMode::WIDEBAND_SCAN ? "wideband" : "coherent") << "\","
+               << "\"operating_mode\":\"" << operating_mode_name(operating_mode.load()) << "\","
                << "\"wideband_enabled\":" << (wideband_config.enabled.load() ? "true" : "false");
 
     // KerberosSDR support mode: manual-calibration workflow state for client UIs.
@@ -163,13 +163,23 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
                     << "}";
     }
 
-    // Add per-tuner frequencies if in wideband mode
+    // Add per-tuner frequencies outside coherent mode (wideband scan /
+    // independent), and independent mode's per-tuner gains (dB, -1 = auto)
     int num_active = active_num_elements.load();
-    if (wideband_config.enabled.load()) {
+    if (operating_mode.load() != OperatingMode::COHERENT) {
         status_json << ",\"tuner_frequencies\":[";
         for (int i = 0; i < num_active; i++) {
             if (i > 0) status_json << ",";
             status_json << wideband_config.get_tuner_frequency(i);
+        }
+        status_json << "]";
+    }
+    if (operating_mode.load() == OperatingMode::INDEPENDENT) {
+        status_json << ",\"tuner_gains\":[";
+        for (int i = 0; i < num_active; i++) {
+            const int g = wideband_config.get_tuner_gain(i);
+            if (i > 0) status_json << ",";
+            status_json << (g == -1 ? -1.0f : g / 10.0f);
         }
         status_json << "]";
     }
@@ -410,6 +420,62 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
     // "Unknown command".
     if (json_str.find("\"get_status\"") != std::string::npos) {
         return build_status_json(true);
+    }
+
+    // A number field "key":<n> (false if absent / not a finite number)
+    auto num_field = [&](const char* key, double& out) {
+        const std::string k = std::string("\"") + key + "\":";
+        size_t p = json_str.find(k);
+        if (p == std::string::npos) return false;
+        p += k.size();
+        const std::string v = json_str.substr(p, json_str.find_first_of(",}", p) - p);
+        try { out = std::stod(v); } catch (...) { return false; }
+        return std::isfinite(out);
+    };
+
+    // Operating mode: {"command":"set_operating_mode","mode":"coherent|wideband|independent"}
+    // wideband spreads the tuners around the current frequency; independent
+    // keeps them where they are (then set_independent_tuner per tuner);
+    // coherent retunes all to the current frequency and recalibrates.
+    if (json_str.find("\"set_operating_mode\"") != std::string::npos) {
+        OperatingMode target;
+        if (json_str.find("\"mode\":\"independent\"") != std::string::npos) target = OperatingMode::INDEPENDENT;
+        else if (json_str.find("\"mode\":\"wideband\"") != std::string::npos) target = OperatingMode::WIDEBAND_SCAN;
+        else if (json_str.find("\"mode\":\"coherent\"") != std::string::npos) target = OperatingMode::COHERENT;
+        else return "{\"status\":\"error\",\"message\":\"mode must be coherent, wideband or independent\"}";
+        if (target != OperatingMode::COHERENT && discrete_scanner.enabled.load())
+            return "{\"status\":\"error\",\"message\":\"stop the scanner first\"}";
+        const bool changed = set_operating_mode(target, devices);
+        if (changed && target == OperatingMode::WIDEBAND_SCAN)
+            setup_wideband_frequencies(current_frequency.load(), devices);
+        if (!changed && operating_mode.load() != target)
+            return "{\"status\":\"error\",\"message\":\"" + std::string(operating_mode_name(target)) +
+                   " mode refused (not available on this hardware)\"}";
+        return "{\"status\":\"success\",\"operating_mode\":\"" +
+               std::string(operating_mode_name(operating_mode.load())) + "\"}";
+    }
+
+    // Independent mode, one tuner:
+    // {"command":"set_independent_tuner","channel":N[,"frequency":Hz][,"gain":dB (-1 = auto)]}
+    if (json_str.find("\"set_independent_tuner\"") != std::string::npos) {
+        double ch_d, f_d = 0, g_d = 0;
+        if (!num_field("channel", ch_d) || ch_d < 0 || ch_d >= NUM_DEVICES)
+            return "{\"status\":\"error\",\"message\":\"channel required\"}";
+        const bool have_f = num_field("frequency", f_d), have_g = num_field("gain", g_d);
+        if (!have_f && !have_g) return "{\"status\":\"error\",\"message\":\"frequency and/or gain required\"}";
+        const uint64_t f = (have_f && f_d > 0 && f_d < 1e12) ? static_cast<uint64_t>(std::llround(f_d)) : 0;
+        if (have_f && f == 0) return "{\"status\":\"error\",\"message\":\"bad frequency\"}";
+        // dB like set_gain (negative = auto), rounded: 49.6 * 10 is 495.99..
+        const int g = !have_g ? -999 : (g_d < 0 ? -1 : static_cast<int>(std::lround(g_d * 10.0)));
+        std::string err;
+        if (!set_independent_tuner(static_cast<int>(ch_d), f, g, devices, &err))
+            return "{\"status\":\"error\",\"message\":\"" + err + "\"}";
+        const int ch = static_cast<int>(ch_d);
+        const int tg = wideband_config.get_tuner_gain(ch);
+        std::ostringstream o;
+        o << "{\"status\":\"success\",\"channel\":" << ch << ",\"frequency\":" << wideband_config.get_tuner_frequency(ch)
+          << ",\"gain\":" << (tg == -1 ? -1.0 : tg / 10.0) << "}";
+        return o.str();
     }
 
     // Runtime element-count change: {"command":"set_num_elements","num_elements":N}
@@ -715,8 +781,8 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                     bool changed = update_sdr_settings(0, gain, devices);
                     if (changed) {
                         // In wideband mode, skip cooldown - phase calibration is disabled anyway
-                        if (operating_mode.load() == OperatingMode::WIDEBAND_SCAN) {
-                            std::cout << "Wideband gain changed to " << gain_db << " dB" << std::endl;
+                        if (operating_mode.load() != OperatingMode::COHERENT) {
+                            std::cout << operating_mode_name(operating_mode.load()) << " gain changed to " << gain_db << " dB" << std::endl;
                         } else {
                             // (during a recovery this restarts its phase stage instead)
                             // Coherent mode: start the cooldown instead of an immediate
@@ -1001,6 +1067,9 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
 
     // Start discrete scanner
     if (json_str.find("\"start_scanner\"") != std::string::npos) {
+        if (operating_mode.load() == OperatingMode::INDEPENDENT) {
+            return "{\"status\":\"error\",\"message\":\"The scanner is not available in independent mode\"}";
+        }
         if (discrete_scanner.get_num_groups() == 0) {
             return "{\"status\":\"error\",\"message\":\"Scanner not configured. Use configure_scanner first.\"}";
         }

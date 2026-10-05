@@ -698,6 +698,11 @@ int main(int argc, char* argv[]) {
         kerberos_enter_uncalibrated("startup");
     }
 
+    // The saved wideband / independent mode (and independent mode's per-tuner
+    // tuning): a restart - e.g. the supervisor after a crash - comes back in
+    // it instead of starting a calibration the user switched away from
+    restore_operating_mode(devices);
+
     // Device-touching threads (USB readers, drain, conversion, per-channel lag
     // compensation) are managed by pipeline_control so the runtime element-count
     // reconfiguration can stop and restart them without a process restart.

@@ -104,7 +104,8 @@ static std::string build_state_message() {
         + std::to_string(antenna_bias_tee_mask.load(std::memory_order_relaxed))
         // --ext_noise: CH0's bias tee powers the add-on array's noise source
         + ",\"external_noise\":"
-        + (external_noise_mode.load(std::memory_order_relaxed) ? "true" : "false");
+        + (external_noise_mode.load(std::memory_order_relaxed) ? "true" : "false")
+        + ",\"operating_mode\":\"" + operating_mode_name(operating_mode.load(std::memory_order_relaxed)) + "\"";
     {
         // Last calibration check (periodic or Check Calibration)
         static const char* const results[] = {"none", "ok", "drifted", "no_verdict"};
@@ -303,6 +304,13 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                         if (kerberos_manual_cal_only()) {
                             std::cerr << "KerberosSDR: noise source switch refused - use Full Recalibration "
                                          "(antennas disconnected)" << std::endl;
+                            return;
+                        }
+                        // Wideband scan / independent: no calibration runs, the
+                        // noise would only be injected into the receivers' data
+                        if (operating_mode.load() != OperatingMode::COHERENT) {
+                            std::cerr << "Noise source switch refused in " << operating_mode_name(operating_mode.load())
+                                      << " mode" << std::endl;
                             return;
                         }
                         set_bias_tee_all_devices(true, devices);

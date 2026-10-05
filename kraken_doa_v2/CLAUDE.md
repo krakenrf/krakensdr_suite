@@ -226,6 +226,90 @@ Edit `include/config.hpp`:
   Wideband boards and the standard arrays are both treated as CLOCKWISE, so
   `uca_angle_sign()` is variant-independent
 
+**Operating modes (top-bar Mode selector):**
+- `OPERATING_MODE:coherent|wideband|independent` (control_handler.cpp,
+  persisted after FREQ/GAIN/DECIMATORS; `WIDEBAND_MODE:` is the old form):
+  refused except coherent on the downconverter variant; stops the discrete
+  scanner outside wideband and the continuous one outside coherent; sends
+  heimdall `set_operating_mode`; entering independent re-sends the saved
+  per-tuner tuning. `apply_operating_mode_state(mode)` is the one place the
+  flags (`wideband_mode_enabled`, `independent_mode_enabled`,
+  `multi_tuner_mode()`) change: leaving coherent parks DoA
+  (`doa_enabled_before_wideband`), returning restores it; DOA:/BEAMFORMING:
+  outside coherent only update what is restored. It broadcasts
+  `{"operating_mode":{"mode","tuners":[{f,g}]}}` (also sent on connect).
+  The coherent `active_channel` (CH selector) is saved on leaving coherent
+  and put back on return (the FM source VFO moves it to its tuner meanwhile).
+  The handler saves the mode itself (`SettingsStore::record`): OPERATING_MODE
+  is in `is_query_command` (no sync_cmd echo), which also skips the generic
+  save - it was never remembered, so each cold start the replayed default
+  switched heimdall (which had restored independent) back to coherent
+- Page: only the `operating_mode` message switches the mode at once; the FFT
+  frame format and system_status flags are hints (`opHint`) that must disagree
+  for 1.5 s - stale frames around a change used to tear the panes down and
+  rebuild them per message. Pane resizes are debounced (120 ms) and skipped
+  when the grid size is unchanged; canvas sizes are only re-assigned when they
+  change; `WaterfallDisplay.resize` keeps the picture; the grid reserves its
+  scrollbar gutter (`scrollbar-gutter: stable both-edges`); the top bar's
+  hw-stats has a fixed width so it can't re-wrap the bar
+- `TUNER_FREQ:ch:mhz` / `TUNER_GAIN:ch:db` (independent only) -> heimdall
+  `set_independent_tuner`; stored in `indep_tuner_freq_hz` / `indep_tuner_gain_db`
+  and persisted as the composite `TUNERS:f/g,...`. `exact_tuner_hz(ch)` =
+  the requested frequency when the header's float agrees (~64 Hz resolution)
+- `note_server_mode()`: the data receiver reads heimdall's mode from the
+  phase-state flags (0x400 / 0x800, once seen) and adopts a mismatch that
+  outlasts the client's own change by 3 s (heimdall restored its saved mode)
+- Multi-tuner gates (`multi_tuner_mode()`): every channel converted and
+  FFT'd, MUSIC/beamforming off, each VFO decimates `tuner_channel`, FFT squelch
+  reads that tuner, digital RF label = `exact_tuner_hz(tuner) + offset`
+- Squelch outside coherent: always the FFT method on the VFO's own tuner
+  (pipeline, fm_only indicator and the audio gate) - the eigenvalue methods
+  need MUSIC, which doesn't run, so their state froze (and the audio with it);
+  no beamformed-FFT squelch either (a saved "beamforming on" read a stale
+  overlay). The saved method is kept and applies again in coherent. The page
+  offers only "FFT Peak" there (`sqEffMethod`; the VFO cards rebuild on a mode
+  change - `decListMode` is part of updateDecimatorList's structure check)
+- VFO tuner: `SET_DECIMATOR_FREQ:id:khz[:tuner]` (independent: the offset is
+  relative to that tuner; the echo carries `tuner`), `decimator_info[].tuner`,
+  DECIMATORS snapshot field 10
+- Selected VFO (`activeDecimatorId`, all modes): `selectDecimator(id)` -
+  clicking its card in the Decimators box (pointerdown anywhere on it) or
+  grabbing its tuning bar (main display or pane); the card gets an outline in
+  the VFO's colour (`.dec-item.sel`, `decHighlightSelected`, re-applied after
+  every list update; a removed VFO hands the selection to the first). A click
+  on empty spectrum places this VFO, and only its edges resize
+- FFT message type 6 (independent): `u32 6, u32 nch, f32 avg_alpha, f32
+  sample_rate, f32 bin_step`, per tuner `u32 center_hz, f32 gain_db, u32 ds,
+  u8 min[ds], u8 max[ds]` (bin i at center - sr/2 + i*step)
+- UI (kraken_doa.html, "OPERATING MODE" block): `setOpMode` / `applyOpModeUI`
+  (body classes `mode-*`; `.coh-only`, `.wb-only`, `.indep-only` elements),
+  `#indep-grid` panes (`panesBuild`; flex rows sized by `panesLayout`: up to
+  3 per row - 5 tuners = 3 + 2, 4 = 2 x 2 -, the last row centered, >= 360 px
+  wide / 230 px tall; each head has a digit frequency selector like the top
+  bar's - click top/bottom half or mouse wheel, `paneFreqSelectorInit`, own
+  `.pfd` class since the top bar queries `.freq-digit` page-wide - plus a gain
+  slider; canvas spectrum `paneDrawSpec`, a
+  `WaterfallDisplay` each, overlay `paneDrawOverlay` with VFO bars + AI
+  badges - tuning bars in the main display's style: a grab handle centred in the spectrum AND the waterfall section, edge handles; `paneHit` = handle > active VFO's edges > body, the edges drag the bandwidth (snapped like `drawBox`, tooltip), bars are clipped to the plot area and a clipped side has no edge; an FFT squelch is drawn like `drawBox`'s - dashed yellow line at the level inside the bar, on the spectrum, labelled - and is draggable (all modes: `squelchHitMain` / `paneHit` kind 'squelch' within 5 px of the line, highest priority, ns-resize cursor; `squelchSetFromDrag` moves the card slider, sends DEC_SQUELCH_LEVEL at most every 80 ms + the final level, 0-80 dB); pointer handling `paneDown/Move/Up`: a VFO bar drags the VFO, empty spectrum pans the tuner like the main display - throttled TUNER_FREQ every 50 ms, final value on release, the drawn spectrum follows the data, not the drag - and a click without moving places the selected VFO); the top bar's frequency
+  digits and gain (`.not-indep`) are hidden in independent mode - each pane
+  has its own (`selTuner` = the highlighted pane; `sendFreqChange` / `sgn`
+  still route to TUNER_FREQ / TUNER_GAIN for it), `vfoCenterMhz(dec)` for VFO absolute
+  frequencies, per-pane waterfall auto-range (`computeAutoRange`)
+- Zoom (kraken_doa.html "SPECTRUM ZOOM" block): `{level 1..16, off}` per
+  display - `mainZoom` (coherent / wideband) or each pane's `p.zoom`;
+  `zoomSlice()` cuts the visible part out of the data BEFORE it reaches the
+  plot / waterfall (`applyClip`, `indepOnFrame`), so spectrum, tuning bars and
+  waterfall share it. Mouse wheel = x1.25 around the cursor (`zoomWheel`; on
+  #fp / #wf-container, or a pane's overlay - which selects it); the Zoom
+  slider (wf-controls bar, log2 x 25) shows / sets the main or the selected
+  pane's zoom (`zoomSyncSlider`)
+- Split: `#fp-split` drags the main spectrum height (`kraken_fp_h`,
+  localStorage; window resize refits uPlot); each pane's `.tpane-split` sets
+  the grid's `--spec-frac` (shared by every pane, `kraken_pane_split`);
+  double-click = default. Pane digits are 22 px (1.5x)
+- `ai/sigtool.py capture` picks the tuner whose band holds `--freq` (status
+  `tuner_frequencies`) outside coherent; `--channel N` forces one
+
 **Patch / 3D topology (`TOPOLOGY:PATCH3D`):**
 - UI topology button for the calculator's "Patch / 3D" layouts (upright patch
   panels: square/diamond + centre, grid, offset rows, L-shape, ring; 3D: ring +

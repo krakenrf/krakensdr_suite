@@ -67,6 +67,9 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
     <!-- KerberosSDR manual-calibration banner (hidden unless --kerberos) -->
     <div id="kerberos-banner" style="display:none;margin:8px 0;padding:10px 14px;border-radius:6px;
          font-weight:bold;border:1px solid #b33;background:#3a1515;color:#ffb3b3;"></div>
+    <!-- Wideband scan / independent mode banner (STATE.operating_mode) -->
+    <div id="mode-banner" style="display:none;margin:8px 0;padding:10px 14px;border-radius:6px;
+         font-weight:bold;border:1px solid #2c5aa8;background:#13233a;color:#a8c8f0;"></div>
     <div class="card"><strong>Config:</strong> <span id="config-info">Loading...</span></div>
     
     <div id="status" class="card status">Status: <span id="txt">Connecting...</span><div id="stats"></div></div>
@@ -1095,6 +1098,19 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             });
         };
 
+        // --- Operating mode (STATE.operating_mode): no calibration outside coherent ---
+        const applyModeState = st => {
+            if (typeof st.operating_mode !== 'string') return;
+            const b = $('mode-banner');
+            const m = st.operating_mode;
+            if (m === 'coherent') { b.style.display = 'none'; return; }
+            b.textContent = (m === 'independent'
+                ? '🔀 Independent mode: every tuner is its own receiver (own frequency and gain). '
+                : '📻 Wideband scan mode: the tuners are spread side by side. ') +
+                'No calibration runs and the noise source stays off. Switch back to Coherent in the DoA receiver\'s top bar.';
+            b.style.display = 'block';
+        };
+
         const handleTextMessage = msg => {
             if (msg.startsWith('STATE:')) {
                 try {
@@ -1103,6 +1119,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                     applyFwdCompState(st);
                     applyElementsState(st);
                     applyKerberosState(st);
+                    applyModeState(st);
                     if (Number.isFinite(st.rf_min_hz) && Number.isFinite(st.rf_max_hz)) {
                         $('freq-input').min = st.rf_min_hz / 1e6;
                         $('freq-input').max = st.rf_max_hz / 1e6;

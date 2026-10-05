@@ -26,6 +26,20 @@ public:
     // Returns whether the mode changed. Sends nothing to heimdall.
     static bool apply_wideband_mode_state(bool enable);
 
+    // The general form: 0 coherent, 1 wideband scan, 2 independent tuners.
+    // Leaving coherent parks DoA, returning restores it; broadcasts
+    // {"operating_mode":...} on a change. Sends nothing to heimdall.
+    // Thread-safe; returns whether the mode changed. ("wideband off" via
+    // apply_wideband_mode_state(false) only leaves the wideband scan.)
+    static bool apply_operating_mode_state(int mode);
+    static std::string build_operating_mode_json();
+
+    // Data receiver: heimdall's mode from the packet header (bits 10/11 of
+    // the phase-state field). A mismatch that outlasts a client-initiated
+    // change is adopted (heimdall restored its saved mode after a restart,
+    // or another control client switched it). Thread-safe.
+    static void note_server_mode(int mode);
+
     // Wideband variant: the antenna ring follows the RF (heimdall throws the
     // switches on every retune, from any source). Updates the ring state and,
     // with the WIDEBAND topology, every VFO's array radius; broadcasts the

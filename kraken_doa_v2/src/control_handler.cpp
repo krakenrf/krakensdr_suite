@@ -269,7 +269,10 @@ static bool is_query_command(string_view msg) {
            msg.starts_with("LOG_LIST") ||      // recordings listing query
            msg.starts_with("LOG_DELETE:") ||   // delete acks via its own list broadcast
            msg.starts_with("AI_") ||           // AI Signal Lab: results come as ai_event / ai_state
-           msg.starts_with("PLUGIN");          // plugins: own broadcasts (an import is up to 1 MB)
+           msg.starts_with("PLUGIN") ||        // plugins: own broadcasts
+           // operating mode / independent tuners: {"operating_mode":...} broadcasts
+           msg.starts_with("OPERATING_MODE:") || msg.starts_with("WIDEBAND_MODE:") ||
+           msg.starts_with("TUNER_") || msg.starts_with("TUNERS:");
 }
 
 // Commands whose latest value is replayed to newly connecting clients.
@@ -366,7 +369,9 @@ static string build_decimator_snapshot() {
            << (d.squelch_enabled ? 1 : 0) << "," << d.squelch_level << ","
            << d.squelch_method << "," << d.squelch_eigen_threshold << ","
            << dig::mode_string(static_cast<dig::Mode>(d.digital_mode), d.digital_plugin) << ","
-           << dig::options_to_string(d.digital_opts);
+           << dig::options_to_string(d.digital_opts) << ",";
+        auto inst = decimator_manager.getDecimator(d.id);
+        ss << (inst ? inst->tuner_channel.load() : 0);
     }
     return ss.str();
 }
@@ -396,6 +401,7 @@ static bool apply_decimator_snapshot(const string& snap) {
         bool sq_en; float sq_db; int sq_method; float sq_eigen;
         dig::Mode digital = dig::Mode::OFF; dig::Options dopts;
         std::string plugin;
+        int tuner = 0;
     };
     int fm_index;
     vector<Vfo> vfos;
@@ -419,6 +425,8 @@ static bool apply_decimator_snapshot(const string& snap) {
             string tok;
             if (getline(es, tok, ',') && !dig::parse_mode_string(tok, &v.digital, &v.plugin)) v.digital = dig::Mode::OFF;
             if (getline(es, tok, ',')) v.dopts = dig::options_from_string(tok);
+            // optional (newer files): the VFO's tuner (wideband / independent mode)
+            if (getline(es, tok, ',') && !tok.empty()) v.tuner = std::clamp(stoi(tok), 0, MAX_CHANNELS - 1);
             vfos.push_back(v);
         }
     } catch (const exception&) {
@@ -447,6 +455,7 @@ static bool apply_decimator_snapshot(const string& snap) {
         decimator_manager.setSquelchLevel(id, v.sq_db);
         decimator_manager.setSquelchMethod(id, v.sq_method);
         decimator_manager.setSquelchEigenThreshold(id, v.sq_eigen);
+        if (auto inst = decimator_manager.getDecimator(id)) inst->tuner_channel = v.tuner;
         if (v.digital != dig::Mode::OFF) decimator_manager.setDigitalOptions(id, v.dopts);
         decimator_manager.setDigitalMode(id, v.digital, v.plugin);
     }
@@ -469,6 +478,8 @@ vector<string> ControlHandler::get_connect_sync_messages() {
     // Wideband (downconverter) variant state - tells the browser whether to
     // show the mixing-side controls and which RF range to allow
     out.push_back(build_wb_variant_json());
+    // Operating mode + independent mode's per-tuner tuning
+    out.push_back(build_operating_mode_json());
     std::lock_guard<std::mutex> lock(sync_store_mutex);
     for (const auto& [key, cmd] : sync_replay_store) {
         out.push_back(make_sync_cmd_json(cmd));
@@ -551,27 +562,128 @@ bool ControlHandler::follow_wideband_ring(uint64_t rf_hz, bool from_stream) {
 // the DOA: handler's wideband branch; the scanner's worker thread calls the former)
 static std::mutex wideband_state_mutex;
 
-bool ControlHandler::apply_wideband_mode_state(bool enable) {
-    std::lock_guard<std::mutex> lock(wideband_state_mutex);
-    if (wideband_mode_enabled.exchange(enable) == enable) return false;
-    if (enable) {
-        // Saved only on the transition: a repeated WIDEBAND_MODE:1 used to
-        // overwrite the saved state with the already-parked "off", so DoA
-        // never came back when wideband mode ended
-        doa_enabled_before_wideband = doa_enabled.load(std::memory_order_relaxed);
-        if (doa_enabled.load(std::memory_order_relaxed)) {
-            doa_enabled = false;
-            setAllDoaEnabled(false);
-            cout << "DoA processing disabled for wideband mode (will restore when disabled)" << endl;
-        }
-    } else if (doa_enabled_before_wideband.exchange(false)) {
-        if (!doa_enabled.load(std::memory_order_relaxed)) {
-            doa_enabled = true;
-            setAllDoaEnabled(true);
-            cout << "DoA processing re-enabled (restored previous state)" << endl;
+static const char* mode_name(int m) { return m == 1 ? "wideband" : m == 2 ? "independent" : "coherent"; }
+
+// When the client last changed the mode itself (steady ms): heimdall's packets
+// keep reporting the old mode for a moment, which must not be "adopted" back
+static std::atomic<long long> g_mode_change_ms{0};
+static long long steady_ms_now() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+string ControlHandler::build_operating_mode_json() {
+    ostringstream o;
+    o << "{\"operating_mode\":{\"mode\":\"" << mode_name(operating_mode_index()) << "\",\"tuners\":[";
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (i) o << ",";
+        o << "{\"f\":" << static_cast<long long>(llround(indep_tuner_freq_hz[i].load()))
+          << ",\"g\":" << indep_tuner_gain_db[i].load() << "}";
+    }
+    o << "]}}";
+    return o.str();
+}
+
+bool ControlHandler::apply_operating_mode_state(int mode) {
+    bool changed;
+    {
+        std::lock_guard<std::mutex> lock(wideband_state_mutex);
+        g_mode_change_ms.store(steady_ms_now(), std::memory_order_relaxed);
+        const int cur = operating_mode_index();
+        changed = cur != mode;
+        // The coherent CH selection: in wideband / independent mode the FM
+        // source VFO moves active_channel to its tuner; coming back puts the
+        // user's channel back
+        static int channel_before = -1;
+        if (changed) {
+            if (cur == 0) channel_before = active_channel.load();
+            if (mode == 0 && channel_before >= 0) {
+                if (active_channel.exchange(channel_before) != channel_before) {
+                    fm_demod.reset_audio_buffer();
+                    cout << "Channel " << channel_before << " restored (coherent mode)" << endl;
+                }
+                channel_before = -1;
+            }
+            if (cur == 0) {
+                // Saved only on the transition: a repeated WIDEBAND_MODE:1 used to
+                // overwrite the saved state with the already-parked "off", so DoA
+                // never came back when wideband mode ended
+                doa_enabled_before_wideband = doa_enabled.load(std::memory_order_relaxed);
+                if (doa_enabled.load(std::memory_order_relaxed)) {
+                    doa_enabled = false;
+                    setAllDoaEnabled(false);
+                    cout << "DoA processing disabled for " << mode_name(mode) << " mode (restored in coherent mode)" << endl;
+                }
+            }
+            wideband_mode_enabled = (mode == 1);
+            independent_mode_enabled = (mode == 2);
+            if (mode == 0 && doa_enabled_before_wideband.exchange(false)) {
+                if (!doa_enabled.load(std::memory_order_relaxed)) {
+                    doa_enabled = true;
+                    setAllDoaEnabled(true);
+                    cout << "DoA processing re-enabled (restored previous state)" << endl;
+                }
+            }
+            cout << "Operating mode: " << mode_name(cur) << " -> " << mode_name(mode) << endl;
         }
     }
-    return true;
+    if (changed) broadcast(build_operating_mode_json());
+    return changed;
+}
+
+bool ControlHandler::apply_wideband_mode_state(bool enable) {
+    if (enable) return apply_operating_mode_state(1);
+    if (!wideband_mode_enabled.load()) {   // "wideband off" doesn't end independent mode
+        g_mode_change_ms.store(steady_ms_now(), std::memory_order_relaxed);
+        return false;
+    }
+    return apply_operating_mode_state(0);
+}
+
+// --- Independent mode: per-tuner tuning (TUNER_FREQ / TUNER_GAIN / TUNERS) ---
+// Persisted as ONE composite TUNERS:f/g,f/g,... (Hz / dB, 0 / -999 = none)
+static string tuners_string() {
+    ostringstream o;
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (i) o << ",";
+        o << static_cast<long long>(llround(indep_tuner_freq_hz[i].load())) << "/" << indep_tuner_gain_db[i].load();
+    }
+    return o.str();
+}
+
+// One tuner to heimdall (only in independent mode; 0 / -999 = leave as is)
+static void send_independent_tuner(int ch) {
+    const double f = indep_tuner_freq_hz[ch].load();
+    const float g = indep_tuner_gain_db[ch].load();
+    if (f <= 0 && g == -999.0f) return;
+    ostringstream o;
+    o << "{\"set_independent_tuner\":{\"channel\":" << ch;
+    if (f > 0) o << ",\"frequency\":" << static_cast<long long>(llround(f));
+    if (g != -999.0f) o << ",\"gain\":" << g;
+    o << "}}";
+    ControlHandler::send_control_command(o.str());
+}
+
+void ControlHandler::note_server_mode(int mode) {
+    static std::atomic<bool> pending{false};
+    if (mode == operating_mode_index()) return;
+    // A change the client made itself is still on its way through heimdall
+    if (steady_ms_now() - g_mode_change_ms.load(std::memory_order_relaxed) < 3000) return;
+    if (!loop || pending.exchange(true)) return;
+    loop->defer([mode] {
+        pending = false;
+        if (mode == operating_mode_index() ||
+            steady_ms_now() - g_mode_change_ms.load(std::memory_order_relaxed) < 3000) return;
+        cout << "heimdall is in " << mode_name(mode) << " mode - following it" << endl;
+        if (mode == 2) {
+            // what the tuners actually run (the header's float frequency)
+            for (int i = 0; i < min(num_channels.load(), MAX_CHANNELS); i++)
+                indep_tuner_freq_hz[i] = static_cast<double>(tuner_frequencies[i].load());
+        }
+        if (mode != 1 && scanner_manager.isRunning()) scanner_manager.stop();
+        apply_operating_mode_state(mode);
+        SettingsStore::record(string("OPERATING_MODE:") + mode_name(mode));
+    });
 }
 
 // Handle legacy FREQ_OFFSET[_n] for a decimator by POSITION. Decimator IDs
@@ -670,6 +782,13 @@ void ControlHandler::handle_message_impl(string_view message) {
 
             send_control_command("{\"set_wideband_mode\":{\"enable\":false}}");
             broadcast("{\"wideband_mode\":{\"enabled\":false}}");
+        }
+        // Independent mode: a common frequency puts EVERY tuner there (heimdall's
+        // set_frequency does the same); the mode stays
+        if (independent_mode_enabled.load(std::memory_order_relaxed)) {
+            for (int i = 0; i < MAX_CHANNELS; i++) indep_tuner_freq_hz[i] = static_cast<double>(freq_hz);
+            if (!g_replaying_settings.load()) SettingsStore::record("TUNERS:" + tuners_string());
+            broadcast(build_operating_mode_json());
         }
 
         ChannelManager::set_frequency(static_cast<float>(freq_hz), active_channel.load(std::memory_order_relaxed));
@@ -863,9 +982,9 @@ void ControlHandler::handle_message_impl(string_view message) {
         averaging_alpha = alpha;
         set_applied("AVG:", alpha, 3);
 
-        // In wideband mode, reset ALL channel FFTs and the wideband stitched buffer
-        // Otherwise, only reset the active channel
-        bool is_wideband = wideband_mode_enabled.load(std::memory_order_relaxed);
+        // In wideband / independent mode, reset ALL channel FFTs (and the
+        // wideband stitched buffer). Otherwise, only reset the active channel
+        bool is_wideband = multi_tuner_mode();
 
         lock_guard<mutex> lock(fft_mutex);
         int channels = num_channels.load(std::memory_order_relaxed);
@@ -1006,9 +1125,9 @@ void ControlHandler::handle_message_impl(string_view message) {
         // here used to be a no-op, and leaving wideband switched DoA back on.
         {
             std::lock_guard<std::mutex> lock(wideband_state_mutex);
-            if (wideband_mode_enabled.load(std::memory_order_relaxed)) {
+            if (multi_tuner_mode()) {
                 doa_enabled_before_wideband = enable;
-                cout << "DoA " << (enable ? "on" : "off") << " after wideband mode ends" << endl;
+                cout << "DoA " << (enable ? "on" : "off") << " once back in coherent mode" << endl;
                 return;
             }
         }
@@ -1031,7 +1150,11 @@ void ControlHandler::handle_message_impl(string_view message) {
                      << active_num_elements.load(std::memory_order_relaxed)
                      << " channels on every decimator" << endl;
 
-                if (!doa_enabled.load(std::memory_order_relaxed)) {
+                if (multi_tuner_mode()) {
+                    // DoA is parked (no coherent array): steering resumes with it
+                    std::lock_guard<std::mutex> lock(wideband_state_mutex);
+                    doa_enabled_before_wideband = true;
+                } else if (!doa_enabled.load(std::memory_order_relaxed)) {
                     doa_enabled = true;
                     setAllDoaEnabled(true);
                     cout << "DoA auto-enabled for beamforming steering" << endl;
@@ -1493,13 +1616,30 @@ void ControlHandler::handle_message_impl(string_view message) {
         }
     }
     else if (message.starts_with("SET_DECIMATOR_FREQ:")) {
-        // Format: SET_DECIMATOR_FREQ:id:offset_khz
+        // Format: SET_DECIMATOR_FREQ:id:offset_khz[:tuner]. Independent mode:
+        // the offset is relative to the VFO's tuner, and `tuner` moves the VFO
+        // to another tuner's pane.
         string params = string(message.substr(19));
         size_t colon_pos = params.find(':');
         if (colon_pos != string::npos) {
             int id = stoi(params.substr(0, colon_pos));
-            float offset_khz = stof_finite(params.substr(colon_pos + 1));
+            string rest_s = params.substr(colon_pos + 1);
+            int tuner = -1;
+            if (size_t c2 = rest_s.find(':'); c2 != string::npos) {
+                tuner = stoi(rest_s.substr(c2 + 1));
+                rest_s = rest_s.substr(0, c2);
+                if (tuner < 0 || tuner >= MAX_CHANNELS) throw CommandRejected("no such tuner");
+            }
+            float offset_khz = stof_finite(rest_s);
             float offset_hz = offset_khz * 1000.0f;
+            if (tuner >= 0 && independent_mode_enabled.load()) {
+                auto inst = decimator_manager.getDecimator(id);
+                if (inst && inst->tuner_channel.exchange(tuner) != tuner) {
+                    cout << "Decimator " << id << " -> tuner " << tuner << endl;
+                    if (decimator_manager.getFMDecimatorId() == id) active_channel = tuner;
+                    // (a digital decoder resets itself: its VFO's RF jumped)
+                }
+            }
 
             // The UI works in wideband-center-relative coordinates. In wideband
             // mode offset_hz is rewritten below to be relative to the selected
@@ -1544,7 +1684,7 @@ void ControlHandler::handle_message_impl(string_view message) {
                     // Store which tuner this decimator should use
                     auto decimator_inst = decimator_manager.getDecimator(id);
                     if (decimator_inst) {
-                        decimator_inst->wideband_tuner_channel = best_channel;
+                        decimator_inst->tuner_channel = best_channel;
                         cout << "Decimator " << id << " → Tuner " << best_channel
                              << " (freq=" << (ChannelManager::get_frequency(best_channel) / 1e6f) << " MHz)"
                              << ", offset=" << (offset_hz / 1000.0f) << " kHz" << endl;
@@ -1562,7 +1702,16 @@ void ControlHandler::handle_message_impl(string_view message) {
                 cout << "Decimator " << id << " frequency offset set to " << (offset_hz / 1000.0f) << " kHz" << endl;
 
                 stringstream json;
-                json << "{\"decimator_freq_offset\":{\"id\":" << id << ",\"offset_hz\":" << ui_offset_hz << "}}";
+                json << "{\"decimator_freq_offset\":{\"id\":" << id << ",\"offset_hz\":" << ui_offset_hz;
+                if (auto inst = decimator_manager.getDecimator(id)) json << ",\"tuner\":" << inst->tuner_channel.load();
+                json << "}}";
+                broadcast(json.str());
+                record_decimator_snapshot();
+            } else if (tuner >= 0) {
+                // same offset, other tuner: still tell the pages + save
+                stringstream json;
+                json << "{\"decimator_freq_offset\":{\"id\":" << id << ",\"offset_hz\":" << ui_offset_hz
+                     << ",\"tuner\":" << tuner << "}}";
                 broadcast(json.str());
                 record_decimator_snapshot();
             }
@@ -1723,31 +1872,104 @@ void ControlHandler::handle_message_impl(string_view message) {
         handle_message_impl("GET_DECIMATOR_INFO");  // push restored state to browsers
     }
     else if (message.starts_with("WIDEBAND_MODE:")) {
+        // Old form of OPERATING_MODE (older pages / scripts): off only leaves
+        // the wideband scan
         bool enable = parse_bool(message.substr(14));
+        if (!enable && !wideband_mode_enabled.load()) return;
+        const char* cmd = enable ? "OPERATING_MODE:wideband" : "OPERATING_MODE:coherent";
+        handle_message_impl(cmd);
+        if (!g_replaying_settings.load()) SettingsStore::record(cmd);
+    }
+    else if (message.starts_with("OPERATING_MODE:")) {
+        // Top-bar Mode selector: coherent | wideband | independent
+        string m(message.substr(15));
+        for (auto& c : m) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        const int mode = m == "coherent" ? 0 : m == "wideband" ? 1 : m == "independent" ? 2 : -1;
+        if (mode < 0) throw CommandRejected("mode must be coherent, wideband or independent");
         // The Wideband (downconverter) variant parks every tuner at the IF:
-        // heimdall refuses tuner-spread mode, and accepting it here parked DoA
-        // and switched the display to stitching, out of sync with heimdall
-        if (enable && wb_variant_enabled.load(std::memory_order_relaxed)) {
-            broadcast("{\"wideband_mode\":{\"enabled\":false}}");
-            throw CommandRejected("tuner-spread wideband scan is unavailable on the Wideband variant");
+        // heimdall refuses both non-coherent modes
+        if (mode != 0 && wb_variant_enabled.load(std::memory_order_relaxed)) {
+            broadcast(build_operating_mode_json());
+            throw CommandRejected("only coherent mode exists on the KrakenSDR Wideband variant");
         }
-        // Leaving wideband mode ends a discrete scan (it needs wideband mode;
-        // heimdall would otherwise keep hopping in coherent mode)
-        if (!enable && scanner_manager.isRunning()) {
-            cout << "Wideband mode off: stopping the discrete scanner" << endl;
+        // The discrete scanner needs wideband mode; the continuous one coherent
+        if (mode != 1 && scanner_manager.isRunning()) {
+            cout << "Leaving wideband mode: stopping the discrete scanner" << endl;
             scanner_manager.stop();
         }
-        ControlHandler::apply_wideband_mode_state(enable);  // parks / restores DoA
-
-        stringstream json;
-        json << "{\"set_wideband_mode\":{\"enable\":" << (enable ? "true" : "false") << "}}";
-        send_control_command(json.str());
-
-        cout << "Wideband scan mode " << (enable ? "enabled" : "disabled") << endl;
-
-        stringstream response;
-        response << "{\"wideband_mode\":{\"enabled\":" << (enable ? "true" : "false") << "}}";
-        broadcast(response.str());
+        if (mode != 0 && continuous_scanner.isRunning()) {
+            cout << "Leaving coherent mode: stopping the continuous scanner" << endl;
+            continuous_scanner.stop();
+        }
+        const bool was_coherent = operating_mode_index() == 0;
+        ControlHandler::apply_operating_mode_state(mode);   // parks / restores DoA, tells browsers
+        send_control_command(string("{\"set_operating_mode\":{\"mode\":\"") + mode_name(mode) + "\"}}");
+        // Saved here: OPERATING_MODE is not echoed to browsers (is_query_command,
+        // they get the operating_mode message), and that path is also what saves
+        // a command - the mode was never remembered, so every cold start put
+        // heimdall (which restored it) back to the saved default
+        if (!g_replaying_settings.load()) SettingsStore::record(string("OPERATING_MODE:") + mode_name(mode));
+        // Entering independent from coherent: tuners without a saved tuning
+        // start where the array was (so the saved set is complete)
+        if (mode == 2 && was_coherent) {
+            const double f0 = static_cast<double>(tuner_frequencies[0].load());
+            for (int ch = 0; ch < MAX_CHANNELS; ch++)
+                if (indep_tuner_freq_hz[ch].load() <= 0 && f0 > 0) indep_tuner_freq_hz[ch] = f0;
+            if (!g_replaying_settings.load()) SettingsStore::record("TUNERS:" + tuners_string());
+        }
+        // Independent: the tuners come back where the user left them
+        if (mode == 2)
+            for (int ch = 0; ch < min(active_num_elements.load(), MAX_CHANNELS); ch++) send_independent_tuner(ch);
+        broadcast(build_operating_mode_json());   // also when unchanged (a refused page resyncs)
+        cout << "Operating mode " << mode_name(mode) << endl;
+    }
+    else if (message.starts_with("TUNER_FREQ:") || message.starts_with("TUNER_GAIN:")) {
+        // Independent mode, one tuner: TUNER_FREQ:ch:mhz | TUNER_GAIN:ch:db (negative = auto)
+        const bool is_freq = message[6] == 'F';
+        string p(message.substr(11));
+        size_t c = p.find(':');
+        if (c == string::npos) throw CommandRejected("format: TUNER_FREQ:ch:mhz / TUNER_GAIN:ch:db");
+        const int ch = parse_int(p.substr(0, c), 0);
+        const double v = parse_double(p.substr(c + 1), 0);
+        if (!independent_mode_enabled.load()) throw CommandRejected("only in independent mode");
+        if (ch < 0 || ch >= min(active_num_elements.load(), MAX_CHANNELS)) throw CommandRejected("no such tuner");
+        if (is_freq) {
+            if (!(v * 1e6 >= RTL_TUNER_MIN_HZ && v * 1e6 <= RTL_TUNER_MAX_HZ))
+                throw CommandRejected("outside the tuner range (24-1766 MHz)");
+            const double hz = static_cast<double>(llround(v * 1e6));
+            indep_tuner_freq_hz[ch] = hz;
+            ChannelManager::set_frequency(static_cast<float>(hz), ch);
+            send_control_command("{\"set_independent_tuner\":{\"channel\":" + to_string(ch) +
+                                 ",\"frequency\":" + to_string(static_cast<long long>(hz)) + "}}");
+        } else {
+            if (v > 50.0f) throw CommandRejected("gain must be 0-50 dB (or negative for auto)");
+            const float g = v < 0.0 ? -1.0f : static_cast<float>(std::round(v * 10.0) / 10.0);
+            indep_tuner_gain_db[ch] = g;
+            ostringstream o;
+            o << "{\"set_independent_tuner\":{\"channel\":" << ch << ",\"gain\":" << g << "}}";
+            send_control_command(o.str());
+        }
+        SettingsStore::record("TUNERS:" + tuners_string());
+        broadcast(build_operating_mode_json());
+    }
+    else if (message.starts_with("TUNERS:")) {
+        // Persisted independent-mode tuning (replay): f/g,f/g,... Applied to
+        // heimdall when independent mode is (or becomes) active
+        stringstream list{string(message.substr(7))};
+        string tok;
+        for (int i = 0; i < MAX_CHANNELS && getline(list, tok, ','); i++) {
+            size_t sl = tok.find('/');
+            if (sl == string::npos) continue;
+            try {
+                const double f = stod(tok.substr(0, sl));
+                const float g = stof(tok.substr(sl + 1));
+                indep_tuner_freq_hz[i] = (f >= RTL_TUNER_MIN_HZ && f <= RTL_TUNER_MAX_HZ) ? f : 0.0;
+                indep_tuner_gain_db[i] = (g == -999.0f || g == -1.0f || (g >= 0.0f && g <= 50.0f)) ? g : -999.0f;
+            } catch (const exception&) {}
+        }
+        if (independent_mode_enabled.load())
+            for (int ch = 0; ch < min(active_num_elements.load(), MAX_CHANNELS); ch++) send_independent_tuner(ch);
+        broadcast(build_operating_mode_json());
     }
     else if (message.starts_with("WIDEBAND_BASE_FREQ:")) {
         float freq_mhz = parse_float(message, 19);
@@ -1815,6 +2037,10 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (scanner_manager.isRunning()) {
             broadcast("{\"continuous_scanner\":{\"state\":\"stopped\",\"error\":\"stop the discrete scanner first\"}}");
             throw CommandRejected("stop the discrete scanner first");
+        }
+        if (multi_tuner_mode()) {
+            broadcast("{\"continuous_scanner\":{\"state\":\"stopped\",\"error\":\"the continuous scanner needs coherent mode\"}}");
+            throw CommandRejected("the continuous scanner needs coherent mode");
         }
         continuous_scanner.start();
     }

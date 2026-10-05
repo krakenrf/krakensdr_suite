@@ -83,6 +83,38 @@ string MessageBuilders::build_fft_message() {
         active_channel = 0;
     }
 
+    // Independent mode: one spectrum per tuner, all in one message (type 6):
+    //   u32 6, u32 nch, f32 avg_alpha, f32 sample_rate_hz, f32 bin_step_hz,
+    //   per tuner: u32 center_hz, f32 gain_db, u32 ds, u8 min[ds], u8 max[ds]
+    // Bin i sits at center - sample_rate/2 + i*bin_step (decimate_fft_compressed)
+    if (independent_mode_enabled.load()) {
+        BinaryMessage im;
+        im.add_value(uint32_t(6));
+        const int nch = min(channels, MAX_CHANNELS);
+        const int dec = max(1, current_fft_decimation.load());
+        im.add_value(static_cast<uint32_t>(nch));
+        im.add_value(averaging_alpha.load());
+        im.add_value(static_cast<float>(SAMPLE_RATE));
+        im.add_value(static_cast<float>(SAMPLE_RATE * dec / max(1, current_fft_size.load())));
+        static std::vector<float> norm;
+        for (int ch = 0; ch < nch; ch++) {
+            im.add_value(static_cast<uint32_t>(exact_tuner_hz(ch)));
+            im.add_value(ChannelManager::get_gain(ch));
+            if (ch >= static_cast<int>(fft_averaged.size()) || fft_averaged[ch].empty()) {
+                im.add_value(uint32_t(0));
+                continue;
+            }
+            norm = fft_averaged[ch];
+            normalize_to_noise_floor(norm);
+            CompressedDecimatedFFT c = FFTProcessor::decimate_fft_compressed(
+                norm, exact_tuner_hz(ch) / 1e6f, dec);
+            im.add_value(static_cast<uint32_t>(c.min_envelope.size()));
+            im.add_vector(c.min_envelope);
+            im.add_vector(c.max_envelope);
+        }
+        return im.to_string();
+    }
+
     // Handle wideband mode
     if (wideband_active) {
         lock_guard<mutex> wb_lock(wideband_fft_mutex);
@@ -423,6 +455,7 @@ string MessageBuilders::build_system_status_message() {
     stringstream json;
     json << "{\"system_status\":{";
     json << "\"wideband\":" << (wideband_mode_enabled.load() ? "true" : "false");
+    json << ",\"independent\":" << (independent_mode_enabled.load() ? "true" : "false");
     json << ",\"phase_state\":" << phase_state;
     json << ",\"noise_source\":" << (scanner_manager.isNoiseSourceActive() ? "true" : "false");
     json << ",\"active_elements\":" << active_num_elements.load();
@@ -724,7 +757,7 @@ string MessageBuilders::build_decimator_info_message() {
             // Get this decimator's tuner channel
             auto decimator_inst = decimator_manager.getDecimator(info.id);
             if (decimator_inst) {
-                int tuner_ch = decimator_inst->wideband_tuner_channel;
+                int tuner_ch = decimator_inst->tuner_channel;
                 float tuner_freq_hz = ChannelManager::get_frequency(tuner_ch);
 
                 // Convert: tuner_relative → absolute → wideband_center_relative
@@ -736,8 +769,13 @@ string MessageBuilders::build_decimator_info_message() {
         if (!first) json << ",";
         first = false;
 
+        // The VFO's tuner (wideband / independent mode); in independent mode
+        // freq_offset_hz is relative to that tuner's frequency
+        int vfo_tuner = 0;
+        if (auto di = decimator_manager.getDecimator(info.id)) vfo_tuner = di->tuner_channel.load();
         json << "{\"id\":" << info.id
              << ",\"freq_offset_hz\":" << ui_offset_hz  // Send UI-friendly offset
+             << ",\"tuner\":" << vfo_tuner
              << ",\"bandwidth_index\":" << info.bandwidth_index
              << ",\"bandwidth_mhz\":" << info.bandwidth_mhz
              << ",\"enabled\":" << (info.enabled ? "true" : "false")

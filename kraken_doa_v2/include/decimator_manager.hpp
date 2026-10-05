@@ -30,7 +30,7 @@ public:
         std::atomic<int> bandwidth_index;
         std::atomic<bool> enabled;
         std::atomic<bool> being_deleted{false};
-        std::atomic<int> wideband_tuner_channel;  // Which tuner channel to use in wideband mode (0-4)
+        std::atomic<int> tuner_channel;  // Tuner this VFO decimates in wideband / independent mode
         std::atomic<DemodulatorMode> demod_mode;  // Per-decimator demodulator mode
 
         // Per-decimator squelch settings
@@ -73,7 +73,7 @@ public:
             , frequency_offset_hz(0.0f)
             , bandwidth_index(DEFAULT_BANDWIDTH_INDEX)
             , enabled(true)
-            , wideband_tuner_channel(0)
+            , tuner_channel(0)
             , demod_mode(DemodulatorMode::WBFM) {}
     };
 

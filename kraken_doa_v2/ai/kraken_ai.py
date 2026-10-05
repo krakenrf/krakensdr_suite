@@ -163,8 +163,9 @@ def session_save(sdir, s):
 
 def sigtool_help():
     return """python3 {t} capture --freq HZ [--rate HZ] [--bw HZ] [--seconds S] -o FILE.cf32
-      new capture from the receiver (channel 0, 2.4 MHz span around the current centre;
-      the rate becomes 2.4 MHz / integer). Use a longer capture for intermittent signals.
+      new capture from the receiver (channel 0, 2.4 MHz span around the current centre -
+      in wideband / independent mode the tuner whose band holds HZ; the context's
+      "tuner" / "center_freq_hz" say which; the rate becomes 2.4 MHz / integer). Use a longer capture for intermittent signals.
 python3 {t} analyze FILE.cf32 [--start S] [--seconds S]      report + PNG plots (Read them)
 python3 {t} spectrogram FILE.cf32 -o OUT.png [--start S] [--seconds S] [--fft N]
 python3 {t} extract FILE.cf32 --offset HZ [--rate HZ] [--bw HZ] -o OUT.cf32   re-centre / narrow

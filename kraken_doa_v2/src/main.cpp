@@ -58,7 +58,11 @@ atomic<int> ws_client_count{0};  // live browser WebSocket client count (dashboa
 
 // Wideband scan mode
 atomic<bool> wideband_mode_enabled{false};
-atomic<bool> doa_enabled_before_wideband{false};  // Store DoA state before wideband
+atomic<bool> independent_mode_enabled{false};
+atomic<bool> doa_enabled_before_wideband{false};  // DoA state before leaving coherent mode
+atomic<double> indep_tuner_freq_hz[8] = {};
+atomic<float> indep_tuner_gain_db[8] = {-999.0f, -999.0f, -999.0f, -999.0f, -999.0f, -999.0f, -999.0f, -999.0f};
+static_assert(MAX_CHANNELS <= 8, "indep_tuner_* hold 8 tuners");
 atomic<bool> fm_enabled_before_scanner{false};     // Store FM state before discrete scanner
 atomic<uint32_t> fft_reset_generation{0};          // Generation counter for FFT reset (scanner retune)
 atomic<uint32_t> wideband_last_reset_gen{0};       // Track wideband FFT reset generation

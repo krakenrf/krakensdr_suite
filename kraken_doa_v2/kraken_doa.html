@@ -219,7 +219,8 @@ body.sb-resizing {cursor:col-resize;user-select:none}
 .top-bar .tb-slider {width:80px;height:5px;-webkit-appearance:none;background:#0f3460;outline:none;border-radius:2px}
 .top-bar .tb-slider::-webkit-slider-thumb {-webkit-appearance:none;width:14px;height:14px;background:#1976d2;cursor:pointer;border-radius:50%}
 .top-bar .tb-vol {font-size:13px;color:#7cb3f0;min-width:32px}
-.top-bar .hw-stats {margin-left:auto;font-size:12px;color:#8aa8c7;white-space:nowrap;font-family:'Consolas','Monaco','Courier New',monospace;padding:0 8px}
+.top-bar .hw-stats {margin-left:auto;font-size:12px;color:#8aa8c7;white-space:nowrap;font-family:'Consolas','Monaco','Courier New',monospace;padding:0 8px;
+  min-width:31ch;text-align:right}  /* fixed width: changing digits must not re-wrap the bar */
 .top-bar .status-badges {display:flex;gap:6px}
 .top-bar .status-badge {font-size:14px;padding:5px 12px;border-radius:4px;background:#2d4059;color:#fff;font-weight:500;text-align:center;white-space:nowrap}
 .top-bar .gain-group {gap:8px}
@@ -287,6 +288,48 @@ body.sb-resizing {cursor:col-resize;user-select:none}
   font-weight:normal;
 }
 
+/* Operating mode (top-bar Mode selector, applyOpModeUI) */
+body.mode-wideband .coh-only, body.mode-independent .coh-only {display:none !important}
+body:not(.mode-wideband) .wb-only {display:none !important}
+body:not(.mode-independent) .indep-only {display:none !important}
+body.mode-independent .not-indep {display:none !important}
+body.mode-wideband .doa-panel, body.mode-independent .doa-panel {display:none !important}
+body.mode-independent #fp, body.mode-independent #wf-container, body.mode-independent #fp-split {display:none !important}
+#indep-grid {display:none}
+/* rows of up to 3 panes (5 tuners = 3 + 2), the last row centered; pane
+   size set by panesLayout() through --pane-w / --pane-h */
+body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:center;align-content:flex-start;
+  flex:1;min-height:0;overflow-y:auto;scrollbar-gutter:stable both-edges;gap:6px;padding:6px}
+.tpane {display:flex;flex-direction:column;background:#141428;border:1px solid #0f3460;border-radius:3px;min-width:0;min-height:0;overflow:hidden;
+  flex:0 0 auto;width:var(--pane-w,100%);height:var(--pane-h,230px);box-sizing:border-box}
+/* pane frequency selector: click the top / bottom half of a digit or use the
+   mouse wheel (like the top-bar selector; own class - the top bar's code
+   queries .freq-digit page-wide) */
+.pfreq {display:inline-flex;align-items:center;background:#0a0a15;border:1px solid #0f3460;border-radius:3px;padding:0 4px;user-select:none;font-family:monospace}
+.pfd {font-size:22px;width:15px;text-align:center;color:#4fc3f7;cursor:ns-resize;line-height:30px}
+.pfd.lead {color:#2c4a63}
+.pfd:hover {color:#81d4fa}
+.pfd.hover-top {background:linear-gradient(to bottom,rgba(79,195,247,0.28) 50%,transparent 50%)}
+.pfd.hover-bottom {background:linear-gradient(to top,rgba(79,195,247,0.28) 50%,transparent 50%)}
+.pfd-sep {color:#4fc3f7;font-size:21px;width:7px;text-align:center}
+.tpane.sel {border-color:#4fc3f7;box-shadow:inset 0 0 0 1px #4fc3f7}
+.tpane-head {display:flex;align-items:center;gap:6px;padding:3px 6px;background:#16213e;font-size:12px;color:#9fb0c8;flex-wrap:wrap;flex-shrink:0}
+.tpane-name {font-weight:bold;color:#7cb3f0;cursor:pointer;min-width:20px}
+.tpane-gain {width:70px}
+.tpane-vfos {margin-left:auto;font-weight:bold;white-space:nowrap}
+.tpane-body {position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+.tpane-spec {height:calc(var(--spec-frac, 0.42) * 100%);min-height:40px;display:block;width:100%;flex-shrink:0}
+/* spectrum / waterfall split: the main display (#fp-split) and every pane
+   (.tpane-split, all panes share --spec-frac) */
+.hsplit {height:6px;flex-shrink:0;cursor:row-resize;background:#0f3460;touch-action:none;position:relative;z-index:12}
+.hsplit:hover, .hsplit.dragging {background:#1a6aa8}
+.tpane-split {position:absolute;left:0;right:0;height:7px;margin-top:-3px;top:calc(var(--spec-frac, 0.42) * 100%);
+  cursor:row-resize;z-index:7;touch-action:none}
+.tpane-split:hover, .tpane-split.dragging {background:rgba(26,106,168,0.7)}
+.tpane-wf {position:relative;flex:1;min-height:30px;background:#000;overflow:hidden}
+.tpane-wf canvas {position:absolute;left:0;top:0}
+.tpane-ov {position:absolute;left:0;top:0;width:100%;height:100%;z-index:5;touch-action:pan-y;cursor:default}
+
 /* Spectrum and DoA area */
 .spectrum-doa-container {flex:1;display:flex;overflow:hidden;padding:10px;gap:10px}
 
@@ -324,7 +367,9 @@ body.sb-resizing {cursor:col-resize;user-select:none}
 .doa-display .ti {background:#0d3c61;padding:4px 8px;border-radius:3px;margin:5px 0;text-align:center;font-size:12px;color:#64b5f6}
 
 /* Decimator list in sidebar */
-#decimator-list .dec-item {background:#16213e;border:1px solid #0f3460;border-radius:3px;padding:7px 6px;margin:5px 0}
+#decimator-list .dec-item {background:#16213e;border:1px solid #0f3460;border-radius:3px;padding:7px 6px;margin:5px 0;cursor:pointer}
+/* the selected VFO (selectDecimator): the one a click in the spectrum places */
+#decimator-list .dec-item.sel {outline:2px solid var(--dec-col, #4fc3f7);outline-offset:-1px;box-shadow:0 0 8px var(--dec-col, #4fc3f7)}
 #decimator-list .dec-header {display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
 #decimator-list .dec-header h4 {margin:0;font-size:13px}
 #decimator-list .dec-row {margin:4px 0;font-size:12px;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
@@ -557,7 +602,7 @@ body.sb-resizing {cursor:col-resize;user-select:none}
     </div>
 
     <!-- DoA Settings -->
-    <div class="sb-section">
+    <div class="sb-section coh-only">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>🎯 MUSIC DoA</h3>
         <span class="sb-toggle">▼</span>
@@ -713,7 +758,7 @@ body.sb-resizing {cursor:col-resize;user-select:none}
     </div>
 
     <!-- Beamforming/Diversity -->
-    <div class="sb-section">
+    <div class="sb-section coh-only">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>📡 Beamforming/Diversity<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip"><span id="bf-info">Coherently combines all <span id="bf-num-elements">5</span> antenna channels steered to DoA angle for ~7dB SNR improvement.</span></span></span></h3>
         <span class="sb-toggle">▼</span>
@@ -808,21 +853,6 @@ body.sb-resizing {cursor:col-resize;user-select:none}
     </div>
 
     <!-- Wideband Mode -->
-    <div class="sb-section">
-      <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📻 Wideband Mode</h3>
-        <span class="sb-toggle">▼</span>
-      </div>
-      <div class="sb-content">
-        <div class="ctrl-row">
-          <label>Enable:</label>
-          <button id="wbt" class="btn off" onclick="twb()">OFF</button>
-          <span class="cv" id="wbs">Disabled</span>
-        </div>
-        <div class="bi">⚠️ Uses all <span id="wideband-num-tuners">5</span> tuners. DoA disabled. Drag spectrum to tune.</div>
-      </div>
-    </div>
-
     <!-- Display Controls -->
     <div class="sb-section">
       <div class="sb-header" onclick="toggleSection(this)">
@@ -841,7 +871,7 @@ body.sb-resizing {cursor:col-resize;user-select:none}
           <button class="btn sm" onclick="sec()">Set</button>
           <span class="cv" id="cec">80%</span>
         </div>
-        <div class="ctrl-row">
+        <div class="ctrl-row coh-only">
           <label>DOA Angles:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Unit Circle: 0&deg; at the top = the ANT0 direction, increasing counter-clockwise (90&deg; left, 180&deg; bottom, 270&deg; right; array elements run clockwise from ANT0). Compass: 0&deg;=North (top), clockwise, with N/E/S/W markers - point ANT0 north for true bearings.</span></span></label>
           <select id="doa-convention" onchange="setDoaConvention(this.value)" style="flex:1">
             <option value="unit">Unit Circle</option>
@@ -889,7 +919,7 @@ body.sb-resizing {cursor:col-resize;user-select:none}
     </div>
 
     <!-- Discrete Scanner -->
-    <div class="sb-section">
+    <div class="sb-section wb-only">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>📻 Scanner<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Requires wideband mode.</span></span></h3>
         <span class="sb-toggle">▼</span>
@@ -938,7 +968,7 @@ body.sb-resizing {cursor:col-resize;user-select:none}
     </div>
 
     <!-- Continuous Scanner -->
-    <div class="sb-section">
+    <div class="sb-section coh-only">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>🔍 Continuous Scanner<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Scans for active signals within the current bandwidth, dwelling on each one in turn.</span></span></h3>
         <span class="sb-toggle">▼</span>
@@ -1036,7 +1066,7 @@ body.sb-resizing {cursor:col-resize;user-select:none}
     </div>
 
     <!-- Web Mapper -->
-    <div class="sb-section">
+    <div class="sb-section coh-only">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>🌐 Web Mapper<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Streams DoA bearings to the KrakenSDR web mapper (built in — no separate middleware needed). <b>KrakenPro Cloud</b> relays to map.krakenrf.com and needs your KrakenPro API key; <b>Local Network</b> broadcasts the records to LAN map clients over WebSocket. Each VFO's squelch is respected: with squelch off its bearings always transmit; with squelch on, only while the squelch is open. Callsign &amp; location come from the Station Information panel above.</span></span></h3>
         <span class="sb-toggle">▼</span>
@@ -1100,7 +1130,7 @@ body.sb-resizing {cursor:col-resize;user-select:none}
     </div>
 
     <!-- Local Recording -->
-    <div class="sb-section">
+    <div class="sb-section coh-only">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>📝 Local Recording<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Logs DoA lobe values to a file <b>on this device's disk</b> (the KrakenPi), not your browser. <b>Legacy CSV</b> matches DOA_value.html line-for-line; <b>SQLite</b> is a compact, app-readable database for plotting on a map. The interval applies to both formats; below the actual DoA data rate it logs at the data rate, and duplicate frames are never written.</span></span></h3>
         <span class="sb-toggle">▼</span>
@@ -1177,8 +1207,9 @@ body.sb-resizing {cursor:col-resize;user-select:none}
     <div class="top-bar">
       <!-- Hamburger (mobile only) -->
       <button class="menu-btn" onclick="toggleSidebar()" title="Settings">☰</button>
-      <!-- Center Frequency (SDR#-style) - FIRST -->
-      <div class="tb-group">
+      <!-- Center Frequency (SDR#-style) - FIRST. Hidden in independent mode
+           (every tuner pane has its own frequency digits and gain) -->
+      <div class="tb-group not-indep" id="tb-freq">
         <div class="freq-selector" id="freq-selector">
           <div class="freq-digit" data-pos="8"><span class="hover-upper"></span><span class="hover-lower"></span>0</div>
           <div class="freq-digit" data-pos="7"><span class="hover-upper"></span><span class="hover-lower"></span>0</div>
@@ -1216,16 +1247,27 @@ body.sb-resizing {cursor:col-resize;user-select:none}
         </select>
         <span class="tb-label" id="wbv-readout" style="margin-left:6px" title="Downconverter LO and fixed IF">LO --</span>
       </div>
-      <div class="tb-sep"></div>
+      <div class="tb-sep not-indep"></div>
+      <!-- Operating mode: Coherent (DoA array) / Wideband (tuners side by side,
+           one stitched spectrum) / Independent (every tuner its own receiver) -->
+      <div class="tb-group" id="tb-mode">
+        <span class="tb-label">Mode:</span>
+        <select id="opmode" onchange="setOpMode(this.value)" title="Coherent: the tuners work as one phase-calibrated array (DoA, beamforming). Wideband: the tuners sit side by side for one wide stitched spectrum (no DoA). Independent: every tuner is its own receiver with its own frequency and gain, one spectrum + waterfall each (no DoA).">
+          <option value="coherent">Coherent</option>
+          <option value="wideband">Wideband</option>
+          <option value="independent">Independent</option>
+        </select>
+      </div>
+      <div class="tb-sep not-indep"></div>
       <!-- Gain -->
-      <div class="tb-group gain-group" id="tb-gain">
+      <div class="tb-group gain-group not-indep" id="tb-gain">
         <span class="tb-label">Gain:</span>
         <input type="range" id="gn-slider" class="gain-slider" min="0" max="29" value="29" oninput="updateGainDisplay(this.value);sgn()">
         <span class="gain-value" id="gn-value">49.6 dB</span>
       </div>
-      <div class="tb-sep"></div>
+      <div class="tb-sep coh-only"></div>
       <!-- FFT Channel -->
-      <div class="tb-group" id="tb-ch">
+      <div class="tb-group coh-only" id="tb-ch">
         <span class="tb-label">CH:</span>
         <select id="chs" onchange="sac()">
           <option value="0">0</option>
@@ -1265,13 +1307,17 @@ body.sb-resizing {cursor:col-resize;user-select:none}
         </div>
         <div class="spectrum-content">
           <div id="fp"></div>
+          <div id="fp-split" class="hsplit" title="Drag to change the spectrum / waterfall split (double-click: default)"></div>
           <div id="wf-container">
             <canvas id="wf-canvas"></canvas>
             <canvas id="wf-overlay"></canvas>
           </div>
+          <!-- Independent mode: one spectrum + waterfall per tuner -->
+          <div id="indep-grid"></div>
         </div>
         <div class="wf-controls" id="wf-controls-bar">
           <label>FFT Y:<input type="range" id="fft-ymax" min="10" max="100" value="60" step="10" oninput="updateFFTYAxis(this.value);sendUI('FFT_Y',this.value)" style="width:50px"><span id="fft-ymax-val">60</span></label>
+          <label title="Spectrum zoom - or use the mouse wheel on the spectrum (in independent mode: the selected pane)">Zoom:<input type="range" id="zoom-sl" min="0" max="100" value="0" oninput="zoomFromSlider(this.value)" style="width:70px"><span id="zoom-val" style="min-width:34px">1.0x</span></label>
           <span style="color:#555">|</span>
           <label>Speed: <input type="range" id="wf-speed" min="1" max="10" value="5" oninput="updateWaterfallSpeed(this.value);sendUI('WF_SPEED',this.value)"></label>
           <label>Color:
@@ -1382,6 +1428,15 @@ let ws,fftPlot,audioEngine,activeChannel=0,currentAveraging=85,
     contScannerRunning=false,contScannerState='IDLE',contScannerTrackedSignals=[],
     showContScannerSquelch=false,contScannerSquelchDb=15,
     contScanWidebandEnabled=false,contScanStartMhz=88,contScanEndMhz=108;
+
+// Operating mode + independent-mode tuner panes (see OPERATING MODE below).
+// Up here: functions defined above that block use them during page load.
+let opMode = 'coherent';
+let decListMode = null;      // opMode the VFO cards were built for
+let indepTuners = [];        // [{f: Hz, g: dB}] requested per tuner (0 / -999 = none)
+let selTuner = 0;            // pane the top-bar frequency digits + gain edit
+const panes = [];            // one per tuner, see panesBuild
+let paneDrag = null;         // {p, id, grab, pointerId} while dragging a VFO bar
 
 const bwo=[
   {decimation:1,bandwidth:2.4,name:"2.4 MHz (No decimation)"},
@@ -1705,6 +1760,7 @@ class WaterfallDisplay {
     this.overlay.height = height;
 
     // Create image data buffer for efficient pixel manipulation
+    const old = this.imageData;
     this.imageData = this.ctx.createImageData(width, height);
 
     // Fill with black
@@ -1714,6 +1770,18 @@ class WaterfallDisplay {
       data[i + 1] = 0; // G
       data[i + 2] = 0; // B
       data[i + 3] = 255; // A
+    }
+    // Keep the history across a resize (newest rows at the top), stretched
+    // to the new width - a resize used to wipe the waterfall
+    if (old && old.width > 0 && old.height > 0) {
+      const rows = Math.min(old.height, height), ow = old.width, od = old.data;
+      for (let y = 0; y < rows; y++) {
+        const so = y * ow * 4, dO = y * width * 4;
+        for (let x = 0; x < width; x++) {
+          const sx = Math.min(ow - 1, Math.floor(x * ow / width)) * 4, dx = dO + x * 4;
+          data[dx] = od[so + sx]; data[dx + 1] = od[so + sx + 1]; data[dx + 2] = od[so + sx + 2];
+        }
+      }
     }
     this.ctx.putImageData(this.imageData, 0, 0);
     this.initialized = true;
@@ -1978,10 +2046,12 @@ let waterfall = null;
 // Waterfall control functions
 function updateWaterfallSpeed(value) {
   if (waterfall) waterfall.setSpeed(parseInt(value));
+  panes.forEach(p => p.wf.setSpeed(parseInt(value)));
 }
 
 function updateWaterfallColormap(value) {
   if (waterfall) waterfall.setColormap(value);
+  panes.forEach(p => p.wf.setColormap(value));
 }
 
 let fftYMax = 60;  // Current FFT Y-axis max value
@@ -1992,6 +2062,7 @@ function updateFFTYAxis(value) {
   if (fftPlot) {
     fftPlot.setScale('y', {min: 0, max: fftYMax});
   }
+  panes.forEach(paneDrawSpec);
 }
 
 function updateWaterfallRange() {
@@ -2009,6 +2080,8 @@ function updateWaterfallRange() {
   if (minLabel) minLabel.textContent = safeMin + ' dB';
   if (maxLabel) maxLabel.textContent = safeMax + ' dB';
   if (waterfall) waterfall.setRange(safeMin, safeMax);
+  // tuner panes: the sliders apply while auto-range is off (each pane ranges itself otherwise)
+  if (!autoRangeEnabled) panes.forEach(p => p.wf.setRange(safeMin, safeMax));
 }
 
 // Auto-range state
@@ -2036,21 +2109,10 @@ function toggleAutoRange(enabled) {
   }
 }
 
-// Auto-range: find min/max from current FFT data to maximize dynamic range
-function autoRangeWaterfall() {
-  if (!autoRangeEnabled) return;
-  // Hold the colour range through a calibration burst (+1 s): a frame with the
-  // noise source on has no antenna signals, so ranging on it collapsed the
-  // scale - the waterfall went red for up to 500 ms (the tick) past the burst,
-  // over rows that already showed the antennas again.
-  if (noiseLive || Date.now() - noiseOffAt < 1000) return;
-
-  // Get current FFT data from the plot
-  if (!fftPlot || !fftPlot.data || fftPlot.data.length < 2) return;
-
-  const magnitudes = fftPlot.data[1]; // Y-axis data (dB values)
-  if (!magnitudes || magnitudes.length === 0) return;
-
+// Waterfall colour range from a spectrum: below the noise floor .. above the
+// peaks (percentiles), at least 30 dB, 5 dB steps. [min, max] or null.
+function computeAutoRange(magnitudes) {
+  if (!magnitudes || magnitudes.length === 0) return null;
   // Find actual min/max in the data (skip nulls/undefineds)
   // Also compute median for noise floor estimation
   let validValues = [];
@@ -2061,7 +2123,7 @@ function autoRangeWaterfall() {
     }
   }
 
-  if (validValues.length === 0) return;
+  if (validValues.length === 0) return null;
 
   // Sort for percentile calculations
   validValues.sort((a, b) => a - b);
@@ -2108,6 +2170,29 @@ function autoRangeWaterfall() {
     newMax = newMin + 30;
     if (newMax > 80) { newMax = 80; newMin = 50; }
   }
+
+  return [newMin, newMax];
+}
+
+// Auto-range: find min/max from current FFT data to maximize dynamic range
+function autoRangeWaterfall() {
+  if (!autoRangeEnabled) return;
+  // Hold the colour range through a calibration burst (+1 s): a frame with the
+  // noise source on has no antenna signals, so ranging on it collapsed the
+  // scale - the waterfall went red for up to 500 ms (the tick) past the burst,
+  // over rows that already showed the antennas again.
+  if (noiseLive || Date.now() - noiseOffAt < 1000) return;
+  if (opMode === 'independent') return;   // the tuner panes range themselves (paneAutoRange)
+
+  // Get current FFT data from the plot
+  if (!fftPlot || !fftPlot.data || fftPlot.data.length < 2) return;
+
+  const magnitudes = fftPlot.data[1]; // Y-axis data (dB values)
+  if (!magnitudes || magnitudes.length === 0) return;
+
+  const r = computeAutoRange(magnitudes);
+  if (!r) return;
+  const [newMin, newMax] = r;
 
   // Update sliders and apply
   $id('wf-min').value = newMin;
@@ -2185,7 +2270,7 @@ function fmtEigen(t) {
 function updateDecimatorSquelchRows(decId) {
   const dec = decimatorInfo.find(d => d.id === decId);
   const enabled = dec ? !!dec.squelch_enabled : false;
-  const m = dec ? dec.squelch_method : 'FFT';
+  const m = sqEffMethod(dec);
   const methodRow = $id('dec-squelch-method-row-' + decId);
   const fftRow = $id('dec-squelch-controls-' + decId);
   const eigRow = $id('dec-squelch-eigen-controls-' + decId);
@@ -2977,7 +3062,12 @@ function applySyncCmdInner(cmd) {
   else if ((v = arg('DEC_SQUELCH_METHOD:')) !== null) {
     const [decId, method] = v.split(':');
     const el = $id('dec-squelch-method-' + decId);
-    if (el && el.value !== method) {
+    if (opMode !== 'coherent') {
+      // only FFT is offered here: remember the method for coherent mode
+      const d = decimatorInfo.find(x => x.id === parseInt(decId));
+      if (d) d.squelch_method = method;
+      updateDecimatorSquelchRows(parseInt(decId));
+    } else if (el && el.value !== method) {
       el.value = method;
       setDecimatorSquelchMethod(parseInt(decId), method);
     }
@@ -3354,6 +3444,7 @@ function drawBox() {
     c.style.cursor = 'default';
   }
 
+  if (c.hoveredSquelch != null || squelchDrag) c.style.cursor = 'ns-resize';
   if(isDragging)c.style.cursor='grabbing';
 
   // Draw center lines for decimators
@@ -3378,7 +3469,7 @@ function drawBox() {
       if (!dec.squelch_enabled) return;
       // The dB line only means something for the FFT-peak method; an
       // eigenvalue threshold has no y-position on the spectrum.
-      if (dec.squelch_method === 'EIGEN' || dec.squelch_method === 'EIGEN_AUTO') return;
+      if (sqEffMethod(dec) !== 'FFT') return;
 
       const squelchLevel = dec.squelch_level !== undefined ? dec.squelch_level : 15;  // Same default as the panel (was -70, drawn off-scale)
       const squelchY = fftPlot.valToPos(squelchLevel, 'y');
@@ -3394,7 +3485,8 @@ function drawBox() {
 
       ctx.strokeStyle = '#ffff00'; // Yellow
       ctx.setLineDash([8, 4]); // Dashed line
-      ctx.lineWidth = 2;
+      // thicker while hovered / dragged (it can be dragged up and down)
+      ctx.lineWidth = (c.hoveredSquelch === dec.id || (squelchDrag && squelchDrag.id === dec.id)) ? 3 : 2;
       ctx.beginPath();
       ctx.moveTo(startX, squelchY);
       ctx.lineTo(endX, squelchY);
@@ -3419,6 +3511,50 @@ function drawBox() {
   }
 }
 
+
+// ---- Squelch line dragging (main spectrum + independent-mode panes) -------
+// The FFT squelch level is drawn as a dashed line inside the VFO's bar; it
+// can be grabbed (+-5 px) and dragged up / down. Same range as the card's
+// slider (0-80 dB, 1 dB steps); updates are sent at most every 80 ms, the
+// final level on release.
+let squelchDrag = null;   // {id, sent, last} while dragging a squelch line
+// The squelch method in effect: the eigenvalue methods need MUSIC, which only
+// runs in coherent mode - in wideband / independent mode every VFO squelches
+// on its FFT (the backend does the same; the saved method comes back in coherent)
+function sqEffMethod(d) {
+  const m = d ? d.squelch_method : 'FFT';
+  return opMode === 'coherent' && (m === 'EIGEN' || m === 'EIGEN_AUTO') ? m : 'FFT';
+}
+function squelchIsFft(d) {
+  return d && d.squelch_enabled && sqEffMethod(d) === 'FFT';
+}
+function squelchSetFromDrag(id, level, final) {
+  const d = decimatorInfo.find(z => z.id === id);
+  if (!d) return;
+  level = Math.max(0, Math.min(80, Math.round(level)));
+  d.squelch_level = level;
+  const sl = $id('dec-squelch-level-' + id), lb = $id('dec-squelch-val-' + id);
+  if (sl) sl.value = level;
+  if (lb) lb.textContent = level + ' dB';
+  const now = Date.now();
+  if (final || now - (squelchDrag ? squelchDrag.last : 0) >= 80) {
+    if (!squelchDrag || squelchDrag.sent !== level) send('DEC_SQUELCH_LEVEL:' + id + ':' + level);
+    if (squelchDrag) { squelchDrag.sent = level; squelchDrag.last = now; }
+  }
+  if (opMode === 'independent') paneDrawAllOverlays(); else drawBox();
+}
+// main spectrum: the VFO whose squelch line is at (x, y) on the 'fo' overlay
+function squelchHitMain(c, x, y) {
+  if (!fftPlot || !c || !c.boxes) return null;
+  for (const d of decimatorInfo) {
+    if (!squelchIsFft(d)) continue;
+    const box = c.boxes.find(b => b.id === d.id);
+    if (!box || x < box.x || x > box.x + box.w) continue;
+    const sy = fftPlot.valToPos(d.squelch_level !== undefined ? d.squelch_level : 15, 'y');
+    if (Math.abs(y - sy) <= 5) return d;
+  }
+  return null;
+}
 
 // Tuning-bar pointer interaction. The FFT overlay ('fo') and the waterfall
 // overlay share one implementation; a "surface" supplies only what differs
@@ -3496,9 +3632,20 @@ function pointerDown(s, e) {
     scrollDragSavedBoxes = null;
   }
 
+  // PRIORITY 0: a squelch line (spectrum only) - drag its level
+  if (s === fftSurface) {
+    const sq = squelchHitMain(c, x, y);
+    if (sq) {
+      squelchDrag = {id: sq.id, sent: sq.squelch_level, last: 0};
+      c.style.cursor = 'ns-resize';
+      e.preventDefault();
+      return;
+    }
+  }
+
   if(!scrollDragLock) {
     const beginBarDrag = (box) => {
-      activeDecimatorId = box.id;
+      selectDecimator(box.id, false);
       isDragging = true;
       dragStartX = x;
       dragStartOffset = box.offset_hz;
@@ -3570,6 +3717,12 @@ function pointerMove(s, e) {
   const r=c.getBoundingClientRect();
   const x=e.clientX-r.left,y=e.clientY-r.top;
   if(!s.canMap())return;
+
+  if (squelchDrag) {
+    if (s === fftSurface) squelchSetFromDrag(squelchDrag.id, fftPlot.posToVal(y, 'y'));
+    e.preventDefault();
+    return;
+  }
 
   // Handle scroll drag for center frequency
   if (isScrollDragging) {
@@ -3655,6 +3808,14 @@ function pointerMove(s, e) {
     c.hoveredBox = false;
     c.hoveredEdge = null;
     c.hoveredHandle = null;
+    const sqh = s === fftSurface ? squelchHitMain(c, x, y) : null;
+    const sqPrev = c.hoveredSquelch ?? null;
+    c.hoveredSquelch = sqh ? sqh.id : null;
+    if (sqh) {
+      s.hoverRedraw(c, 'ns-resize');
+      return;
+    }
+    if (sqPrev !== null) s.hoverRedraw(c, 'default');
 
     // PRIORITY 1: Check middle handle hover (any decimator)
     const handleBox = c.boxes.find(box => box.handleMiddle && inRect(x, y, box.handleMiddle));
@@ -3688,6 +3849,14 @@ function pointerMove(s, e) {
 }
 
 function pointerUp(s, e) {
+  if (squelchDrag) {
+    const d = decimatorInfo.find(z => z.id === squelchDrag.id);
+    if (d) squelchSetFromDrag(d.id, d.squelch_level, true);
+    squelchDrag = null;
+    const c = s.el();
+    if (c) c.style.cursor = 'default';
+    return;
+  }
   // Handle scroll drag release - send final frequency to server
   if (isScrollDragging) {
     isScrollDragging = false;
@@ -3773,6 +3942,11 @@ function sac() {
 }
 
 function updatePlotTitle() {
+  if (opMode === 'independent') {
+    $id('fpt').textContent = 'Independent tuners (' + Math.max(1, panes.length || activeNumElements) +
+      ') - each pane has its own frequency and gain; drag a pane to tune it, drag a VFO bar, or click to place the selected VFO';
+    return;
+  }
   if(widebandEnabled) {
     $id('fpt').textContent='Wideband Scan (~'+widebandCoverageMhz()+' MHz coverage, all '+activeNumElements+' tuners)';
   } else {
@@ -3845,11 +4019,9 @@ function applyWbVariant(wb) {
     if (wb.rf_max_hz) FREQ_MAX = wb.rf_max_hz / 1e6;
     // The tuner-spread wideband scan needs per-tuner retuning; the
     // downconverter variant parks all tuners at the IF - hide those controls.
-    const wbScan = $id('wbt');
-    if (wbScan) {
-      const panel = wbScan.closest('.sb-section');
-      (panel || wbScan).style.display = 'none';
-    }
+    // Wideband / Independent need per-tuner retuning; the downconverter
+    // variant parks every tuner at the IF - only Coherent exists there
+    document.querySelectorAll('#opmode option').forEach(o => { o.disabled = o.value !== 'coherent'; });
     const csWb = $id('cont-scan-wideband-enable');
     if (csWb) {
       const sec = csWb.closest('.sec');
@@ -3858,11 +4030,7 @@ function applyWbVariant(wb) {
   } else {
     FREQ_MIN = 24; FREQ_MAX = 1766;
     // Restore the tuner-spread scan controls (e.g. backend restarted without --wideband)
-    const wbScan = $id('wbt');
-    if (wbScan) {
-      const panel = wbScan.closest('.sb-section');
-      (panel || wbScan).style.display = '';
-    }
+    document.querySelectorAll('#opmode option').forEach(o => { o.disabled = false; });
     const csWb = $id('cont-scan-wideband-enable');
     if (csWb) {
       const sec = csWb.closest('.sec');
@@ -4058,6 +4226,11 @@ function initFreqSelector() {
 
 // Helper function to send frequency change - uses WIDEBAND_FREQ in wideband mode
 function sendFreqChange(freqMhz) {
+  if (opMode === 'independent') {
+    // the top-bar digits tune the selected tuner pane
+    paneSendFreq(selTuner, freqMhz);
+    return;
+  }
   if (widebandEnabled) {
     send('WIDEBAND_FREQ:' + freqMhz.toFixed(3));
   } else {
@@ -4102,6 +4275,11 @@ function sgn() {
   if (gainUserChangeTimeout) clearTimeout(gainUserChangeTimeout);
   gainUserChangeTimeout = setTimeout(() => { gainUserChanging = false; }, 3000);
 
+  if (opMode === 'independent') {
+    // the top-bar gain sets the selected tuner pane
+    paneSendGain(selTuner, gainDb);
+    return;
+  }
   send('GAIN:' + gainDb);
   restartCooldownCountdown();
 }
@@ -4126,56 +4304,9 @@ function tdo() {
   send('DOA:'+(doaEnabled?'1':'0'));
 }
 
-function twb() {
-  widebandEnabled=!widebandEnabled;
-  const b=$id('wbt');
-  b.textContent=widebandEnabled?'Disable':'Enable';
-  b.className='btn '+(widebandEnabled?'on':'off');
-  $id('wbs').textContent='Status: '+(widebandEnabled?'Enabled (~'+widebandCoverageMhz()+' MHz coverage)':'Disabled');
-
-  if(widebandEnabled) {
-    // Save current channel before entering wideband mode
-    channelBeforeWideband = activeChannel;
-
-    // Disable DoA button (server will handle disabling DoA processing)
-    $id('dot').disabled=true;
-    send('WIDEBAND_MODE:true');
-
-    // BUGFIX: Request fresh decimator info to get wideband-center-relative offsets
-    // Don't send offset updates here - server will keep existing tuner-relative offsets
-    // and convert them to wideband-center-relative when sending decimator info
-    setTimeout(() => {
-      requestDecimatorInfo();
-    }, 200); // Give server time to process mode change and update FFT
-  } else {
-    // Re-enable DoA button (server will handle restoring DoA state)
-    $id('dot').disabled=false;
-    send('WIDEBAND_MODE:false');
-
-    // Restore channel from before wideband was enabled (via button only)
-    // This ensures user returns to their previous channel, not wherever tuning bar was.
-    // Only if THIS browser enabled it: another browser's Disable used to send
-    // its stale default CHANNEL:0 and move every browser to channel 0.
-    if (channelBeforeWideband !== null) {
-      activeChannel = channelBeforeWideband;
-      $id('chs').value = activeChannel;
-      send('CHANNEL:' + activeChannel);
-      channelBeforeWideband = null;
-    }
-
-    // Reset tuning bar to center when exiting wideband mode
-    if(activeDecimatorId >= 0) {
-      setDecimatorFreq(activeDecimatorId, 0);
-    }
-
-    // Request fresh decimator info to get normal-mode offsets
-    // This ensures UI state stays in sync with server after mode transitions
-    setTimeout(() => {
-      requestDecimatorInfo();
-    }, 200);
-  }
-  updatePlotTitle();
-}
+// Old sidebar toggle (kept for anything still calling it): the top-bar Mode
+// selector is the control now
+function twb() { setOpMode(opMode === 'wideband' ? 'coherent' : 'wideband'); }
 
 // Beamforming control
 let beamformingEnabled = false;
@@ -5309,6 +5440,9 @@ function applyClip() {
   const edge=Math.floor((tp-pts)/2);
   currentFrequencies=fullFrequencies.slice(edge,tp-edge);
   currentMagnitudes=fullMagnitudes.slice(edge,tp-edge);
+  // mouse-wheel / slider zoom: the visible part only (spectrum, tuning bars
+  // and waterfall all follow it)
+  [currentFrequencies, currentMagnitudes] = zoomSlice(mainZoom, currentFrequencies, currentMagnitudes, displayCenterFreq ?? currentCenterFreq);
 
   if(currentFrequencies.length>0&&currentMagnitudes.length>0) {
     // batch() commits the new x-scale synchronously. A bare setData only
@@ -5435,6 +5569,26 @@ function removeDoaDisplay(decimatorId) {
   delete elevationPlots[decimatorId];
 }
 
+// The selected VFO: placed / moved by a click in the spectrum, its edges
+// resize. Chosen by clicking its card in the sidebar or grabbing its tuning
+// bar; the card gets an outline in the VFO's colour.
+function selectDecimator(id, redraw = true) {
+  if (!decimatorInfo.some(d => d.id === id)) return;
+  activeDecimatorId = id;
+  decHighlightSelected();
+  if (redraw) {
+    drawBox();
+    if (typeof paneDrawAllOverlays === 'function') paneDrawAllOverlays();
+  }
+}
+function decHighlightSelected() {
+  // a removed VFO can't stay selected
+  if (decimatorInfo.length && !decimatorInfo.some(d => d.id === activeDecimatorId))
+    activeDecimatorId = decimatorInfo[0].id;
+  document.querySelectorAll('#decimator-list .dec-item').forEach(el =>
+    el.classList.toggle('sel', el.id === 'dec-item-' + activeDecimatorId));
+}
+
 function getDecimatorColor(id) {
   const colors = ['#4169e1', '#ff8c00', '#32cd32', '#ff1493', '#ffd700', '#00ced1', '#9370db', '#ff6347'];
   return colors[id % colors.length];
@@ -5530,7 +5684,7 @@ function refreshDecimatorPanelItem(id) {
   // used to replace the half-typed value)
   const actualFreqEl = $id('dec-actual-freq-' + id);
   if (actualFreqEl && document.activeElement !== actualFreqEl) {
-    const actualFreqMhz = currentCenterFreq + (dec.freq_offset_hz / 1000000);
+    const actualFreqMhz = vfoCenterMhz(dec) + (dec.freq_offset_hz / 1000000);
     actualFreqEl.value = actualFreqMhz.toFixed(6);
   }
 
@@ -5607,11 +5761,15 @@ function handleActualFreqInput(decimatorId, inputValue, focusValue) {
     // Invalid input - restore the original value
     const actualFreqEl = $id('dec-actual-freq-' + decimatorId);
     if (actualFreqEl) {
-      const actualFreqMhz = currentCenterFreq + (dec.freq_offset_hz / 1000000);
+      const actualFreqMhz = vfoCenterMhz(dec) + (dec.freq_offset_hz / 1000000);
       actualFreqEl.value = actualFreqMhz.toFixed(6);
     }
     return;
   }
+
+  // Independent mode: the VFO goes to the tuner whose span holds the
+  // frequency (its own first), offset relative to that tuner
+  if (opMode === 'independent') { paneTuneVfoTo(dec, inputFreqMhz); return; }
 
   // Calculate the desired offset in Hz
   const desiredOffsetHz = (inputFreqMhz - currentCenterFreq) * 1000000;
@@ -5631,7 +5789,7 @@ function handleActualFreqInput(decimatorId, inputValue, focusValue) {
   dec.freq_offset_hz = clampedOffsetHz;
 
   // Calculate the actual frequency after clamping
-  const actualFreqMhz = currentCenterFreq + (clampedOffsetHz / 1000000);
+  const actualFreqMhz = vfoCenterMhz(dec) + (clampedOffsetHz / 1000000);
 
   // Update the input field to show the clamped value
   const actualFreqEl = $id('dec-actual-freq-' + decimatorId);
@@ -5663,7 +5821,7 @@ function updateDecimatorList(info) {
   // focus mid-typing and aborted slider drags. Rebuild only when the set of
   // decimators or a control-affecting field actually changed.
   const prev = decimatorInfo;
-  const sameStructure = prev.length === info.length && info.every((d, i) =>
+  const sameStructure = decListMode === opMode && prev.length === info.length && info.every((d, i) =>
     prev[i] && prev[i].id === d.id &&
     !!prev[i].is_fm_source === !!d.is_fm_source &&
     prev[i].demod_mode === d.demod_mode &&
@@ -5671,6 +5829,7 @@ function updateDecimatorList(info) {
     (prev[i].squelch_method || 'FFT') === (d.squelch_method || 'FFT'));
 
   decimatorInfo = info;
+  decListMode = opMode;   // the cards depend on it (squelch methods offered)
 
   // Drop beamformed overlays for decimators that no longer exist
   if (window.beamformedFFTs) {
@@ -5686,6 +5845,7 @@ function updateDecimatorList(info) {
   if (sameStructure && listDiv.children.length === info.length) {
     info.forEach(dec => refreshDecimatorPanelItem(dec.id));
     digRenderCards();
+    decHighlightSelected();
     return;
   }
 
@@ -5710,20 +5870,23 @@ function updateDecimatorList(info) {
   info.forEach(dec => {
     const decDiv = document.createElement('div');
     decDiv.className = 'dec-item';
+    decDiv.id = 'dec-item-' + dec.id;
+    decDiv.style.setProperty('--dec-col', getDecimatorColor(dec.id));
+    // clicking anywhere on the card selects the VFO (its controls still work)
+    decDiv.addEventListener('pointerdown', () => selectDecimator(dec.id));
 
     const fmChecked = dec.is_fm_source ? 'checked' : '';
     const bgColor = getDecimatorColor(dec.id);
 
     // Calculate actual frequency for display
-    const actualFreqMhz = currentCenterFreq + (dec.freq_offset_hz / 1000000);
+    const actualFreqMhz = vfoCenterMhz(dec) + (dec.freq_offset_hz / 1000000);
 
     // Get squelch settings for this decimator (with defaults)
     // Default squelch level is 15dB above noise floor (noise normalized to 0dB)
     const squelchEnabled = dec.squelch_enabled || false;
     const squelchLevel = dec.squelch_level !== undefined ? dec.squelch_level : 15;
     const squelchOpen = dec.squelch_open || false;
-    const sqMethod = (dec.squelch_method === 'EIGEN' || dec.squelch_method === 'EIGEN_AUTO')
-        ? dec.squelch_method : 'FFT';
+    const sqMethod = sqEffMethod(dec);   // FFT outside coherent mode
     const eigenThr = dec.squelch_eigen_threshold !== undefined ? dec.squelch_eigen_threshold : 2.0;
     const eigenSliderVal = eigenThresholdToSlider(eigenThr);
     const isEigenMode = sqMethod !== 'FFT';
@@ -5741,6 +5904,13 @@ function updateDecimatorList(info) {
                onfocus="this.dataset.orig=this.value"
                onblur="handleActualFreqInput(${dec.id}, this.value, this.dataset.orig)">
         <span>MHz</span>
+      </div>
+      <div class="dec-row indep-only">
+        <label>Tuner:</label>
+        <select id="dec-tuner-${dec.id}" onchange="setDecimatorTuner(${dec.id}, this.value)" style="flex:1"
+                title="Independent mode: the tuner (pane) this VFO receives from">
+          ${Array.from({length: Math.max(1, activeNumElements)}, (_, t) => `<option value="${t}" ${t === (dec.tuner || 0) ? 'selected' : ''}>T${t}</option>`).join('')}
+        </select>
       </div>
       <div class="dec-row">
         <label>BW:</label>
@@ -5783,10 +5953,11 @@ function updateDecimatorList(info) {
         <span id="dec-squelch-status-${dec.id}" style="margin-left:auto;font-size:10px;color:${squelchOpen ? '#4caf50' : '#ff6b6b'}">${squelchEnabled ? (squelchOpen ? 'OPEN' : 'CLOSED') : ''}</span>
       </div>
       <div class="dec-row" style="display:${squelchEnabled ? 'flex' : 'none'}" id="dec-squelch-method-row-${dec.id}">
-        <select id="dec-squelch-method-${dec.id}" onchange="setDecimatorSquelchMethod(${dec.id}, this.value)" style="flex:1">
+        <select id="dec-squelch-method-${dec.id}" onchange="setDecimatorSquelchMethod(${dec.id}, this.value)" style="flex:1"
+                ${opMode === 'coherent' ? '' : 'title="The eigenvalue squelch methods need Coherent mode (MUSIC DoA)"'}>
           <option value="FFT" ${sqMethod === 'FFT' ? 'selected' : ''}>FFT Peak (dB)</option>
-          <option value="EIGEN" ${sqMethod === 'EIGEN' ? 'selected' : ''}>Eigenvalue (λ₁/λ̄)</option>
-          <option value="EIGEN_AUTO" ${sqMethod === 'EIGEN_AUTO' ? 'selected' : ''}>Auto Eigenvalue</option>
+          ${opMode === 'coherent' ? `<option value="EIGEN" ${sqMethod === 'EIGEN' ? 'selected' : ''}>Eigenvalue (λ₁/λ̄)</option>
+          <option value="EIGEN_AUTO" ${sqMethod === 'EIGEN_AUTO' ? 'selected' : ''}>Auto Eigenvalue</option>` : ''}
         </select>
         <span id="dec-eigen-ratio-${dec.id}" title="current λ ratio ↑ 5s peak hold"
               style="width:78px;text-align:right;font-size:10px;color:#888">${isEigenMode ? 'λ --' : ''}</span>
@@ -5810,6 +5981,7 @@ function updateDecimatorList(info) {
     listDiv.appendChild(decDiv);
   });
   digRenderCards();
+  decHighlightSelected();
 
   // Redraw tuning bar overlay with updated offsets
   drawBox();
@@ -6072,11 +6244,15 @@ function connect() {
               }
             }
           }
+          else if(msg.operating_mode) { opOnMessage(msg.operating_mode); }
           else if(msg.decimator_freq_offset) {
             // Continuous scanner (or server) moved a tuning bar
             const dec = decimatorInfo.find(d => d.id === msg.decimator_freq_offset.id);
             if (dec) {
-              dec.freq_offset_hz = msg.decimator_freq_offset.offset_hz;
+              // a drag on a tuner pane keeps its local position until released
+              if (!(paneDrag && paneDrag.id === dec.id)) dec.freq_offset_hz = msg.decimator_freq_offset.offset_hz;
+              if (Number.isInteger(msg.decimator_freq_offset.tuner)) dec.tuner = msg.decimator_freq_offset.tuner;
+              paneDrawAllOverlays();
               refreshDecimatorPanelItem(msg.decimator_freq_offset.id);
               drawBox();
             }
@@ -6280,6 +6456,7 @@ function connect() {
       let o=0;
       if(e.data.byteLength<4)return;
       const mt=v.getUint32(o,true);o+=4;
+      if(mt===6) { indepOnFrame(v, e.data); return; }
       
       if(mt===1) {
         if(e.data.byteLength<16)return; // Minimum: 4 fields (msgType, sampleCount, sampleRate, opusSize)
@@ -6498,30 +6675,12 @@ function connect() {
       const isCompressedSingleChannel = (ac >= 128 && ac < 254);  // 0x80-0xFD
       const realChannel = isCompressedSingleChannel ? (ac & 0x7F) : ac;
 
-      // Check if wideband mode is active
+      // The frame format tells the mode too (the operating_mode message is
+      // authoritative; this catches a page that missed it)
       if(isCompressedWideband || isWideband) {
-        if(!widebandEnabled) {
-          widebandEnabled=true;
-          const b=$id('wbt');
-          b.textContent='Disable';
-          b.className='btn on';
-          $id('wbs').textContent='Status: Enabled (~'+widebandCoverageMhz()+' MHz coverage)';
-          $id('dot').disabled=true;
-          updatePlotTitle();
-        }
+        opHint('wideband');
       } else {
-        // Single-channel mode - check if we need to disable wideband mode
-        if(widebandEnabled) {
-          widebandEnabled=false;
-          const b=$id('wbt');
-          b.textContent='Enable';
-          b.className='btn off';
-          $id('wbs').textContent='Status: Disabled';
-          $id('dot').disabled=false;
-          channelBeforeWideband = null;  // ended elsewhere: this browser's saved channel is stale
-          updatePlotTitle();
-        }
-
+        opHint('coherent');
         if(realChannel!==activeChannel) {
           activeChannel=realChannel;
           $id('chs').value=activeChannel;
@@ -6632,6 +6791,7 @@ document.addEventListener('click',handleUserInteraction);
 document.addEventListener('keydown',handleUserInteraction);
 
 window.addEventListener('resize',()=>{
+  if (opMode === 'independent') panesResizeSoon();
   if(fftPlot) {
     const fp = $id('fp');
     const spectrumPanel = fp.closest('.spectrum-panel');
@@ -6641,6 +6801,889 @@ window.addEventListener('resize',()=>{
     // syncWaterfallSize is called via setSize hook in createPlot()
   }
 });
+
+
+// ============================================================================
+// OPERATING MODE (top-bar Mode selector) + INDEPENDENT MODE TUNER PANES
+// ----------------------------------------------------------------------------
+// coherent    - the tuners are one phase-calibrated array (DoA, beamforming)
+// wideband    - tuners side by side, one stitched spectrum (no DoA)
+// independent - every tuner its own receiver (own frequency + gain), one
+//               spectrum + waterfall pane each (#indep-grid), VFOs placed on
+//               any pane (DecimatorInstance::tuner_channel = dec.tuner)
+// The backend's {"operating_mode":{mode,tuners}} is authoritative; FFT frame
+// formats and system_status flags re-sync a page that missed it. Body classes
+// mode-* drive what is shown (.coh-only / .wb-only / .indep-only).
+// ============================================================================
+// (state declared with the globals at the top: opMode, indepTuners, selTuner,
+// panes, paneDrag)
+
+function setOpMode(m) {
+  if (m === opMode) return;
+  const prev = opMode;
+  if (m === 'wideband') channelBeforeWideband = activeChannel;
+  send('OPERATING_MODE:' + m);
+  applyOpModeUI(m);
+  if (prev === 'wideband' && m === 'coherent') {
+    // back where this browser was before the scan (only if it started it)
+    if (channelBeforeWideband !== null) {
+      activeChannel = channelBeforeWideband;
+      $id('chs').value = activeChannel;
+      send('CHANNEL:' + activeChannel);
+      channelBeforeWideband = null;
+    }
+    if (activeDecimatorId >= 0) setDecimatorFreq(activeDecimatorId, 0);
+  }
+  setTimeout(requestDecimatorInfo, 300);   // offsets are mode-relative
+}
+
+function applyOpModeUI(m) {
+  if (m !== 'wideband' && m !== 'independent') m = 'coherent';
+  const changed = m !== opMode;
+  opMode = m;
+  widebandEnabled = (m === 'wideband');
+  const b = document.body;
+  b.classList.toggle('mode-coherent', m === 'coherent');
+  b.classList.toggle('mode-wideband', m === 'wideband');
+  b.classList.toggle('mode-independent', m === 'independent');
+  const sel = $id('opmode');
+  if (sel && sel.value !== m) sel.value = m;
+  const dot = $id('dot');
+  if (dot) dot.disabled = m !== 'coherent';
+  if (!changed) return;
+  if (m === 'independent') panesBuild(); else panesTeardown();
+  zoomSyncSlider();
+  updatePlotTitle();
+  if (decimatorInfo && decimatorInfo.length) updateDecimatorList(decimatorInfo.slice());
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+}
+
+// Secondary mode evidence (the FFT frame format, system_status flags): only
+// switch once it has disagreed with the current mode for 1.5 s. A stale frame
+// or status in flight around a change - or the backend and heimdall briefly
+// disagreeing at startup - used to tear the panes down and rebuild them on
+// every message (flicker). The operating_mode message switches at once.
+let opHintMode = null, opHintSince = 0;
+function opHint(m) {
+  if (m === opMode) { opHintMode = null; return; }
+  const now = Date.now();
+  if (opHintMode !== m) { opHintMode = m; opHintSince = now; return; }
+  if (now - opHintSince >= 1500 && now - opMsgAt >= 1500) { opHintMode = null; applyOpModeUI(m); }
+}
+let opMsgAt = 0;
+
+function opOnMessage(x) {
+  opMsgAt = Date.now();
+  opHintMode = null;
+  if (Array.isArray(x.tuners)) indepTuners = x.tuners;
+  applyOpModeUI(x.mode);
+  panesSyncHeads();
+}
+
+// MHz a VFO's offset is relative to: its tuner in independent mode
+function vfoCenterMhz(d) {
+  if (opMode === 'independent' && d) {
+    const t = d.tuner || 0;
+    const p = panes[t];
+    if (p && p.freqMhz > 0) return p.freqMhz;
+    const r = indepTuners[t];
+    if (r && r.f > 0) return r.f / 1e6;
+  }
+  return currentCenterFreq;
+}
+
+// ---- panes ------------------------------------------------------------------
+function panesBuild(n) {
+  const grid = $id('indep-grid');
+  if (!grid) return;
+  n = Math.max(1, n || activeNumElements || 1);
+  if (panes.length === n && grid.children.length === n) return;
+  panesTeardown();
+  if (selTuner >= n) selTuner = 0;
+  for (let ch = 0; ch < n; ch++) {
+    const el = document.createElement('div');
+    el.className = 'tpane' + (ch === selTuner ? ' sel' : '');
+    el.id = 'tpane-' + ch;
+    el.innerHTML = `<div class="tpane-head">
+        <span class="tpane-name" onclick="paneSelect(${ch})" title="Tuner ${ch}">T${ch}</span>
+        <span class="pfreq" id="tpane-f-${ch}" title="Tuner ${ch} frequency: click the top / bottom half of a digit, or use the mouse wheel on it">${
+          [8, 7, 6, 's', 5, 4, 3, 's', 2, 1, 0].map(d => d === 's' ? '<span class="pfd-sep">.</span>'
+            : `<span class="pfd" data-pos="${d}">0</span>`).join('')}</span><span>MHz</span>
+        <input type="range" class="tpane-gain" id="tpane-g-${ch}" min="0" max="${GAIN_VALUES.length - 1}"
+               title="Tuner ${ch} gain" oninput="paneGainInput(${ch}, this.value)">
+        <span id="tpane-gv-${ch}" style="min-width:44px"></span>
+        <span class="tpane-vfos" id="tpane-v-${ch}"></span>
+      </div>
+      <div class="tpane-body">
+        <canvas class="tpane-spec" id="tpane-s-${ch}"></canvas>
+        <div class="tpane-wf" id="tpane-w-${ch}"><canvas id="tpane-wc-${ch}"></canvas><canvas id="tpane-wo-${ch}"></canvas></div>
+        <canvas class="tpane-ov" id="tpane-ov-${ch}"></canvas>
+        <div class="tpane-split" id="tpane-sp-${ch}" title="Drag to change the spectrum / waterfall split of every pane (double-click: default)"></div>
+      </div>`;
+    grid.appendChild(el);
+    const p = {ch, el, wf: new WaterfallDisplay('tpane-wc-' + ch, 'tpane-wo-' + ch),
+               freqs: [], mags: [], freqMhz: 0, gainDb: 0, sr: 2.4e6, sw: 0, sh: 0, oh: 0, dpr: 1,
+               L: 34, bars: [], ai: [], holdF: 0, holdG: 0, zoom: {level: 1, off: 0}};
+    p.wf.setSpeed(parseInt(($id('wf-speed') || {}).value) || 5);
+    p.wf.setColormap(($id('wf-colormap') || {}).value || 'sdryoussef');
+    if (!autoRangeEnabled) p.wf.setRange(parseFloat($id('wf-min').value), parseFloat($id('wf-max').value));
+    paneFreqSelectorInit(p);
+    splitDragInit($id('tpane-sp-' + ch), true);
+    const ov = $id('tpane-ov-' + ch);
+    ov.addEventListener('wheel', e => {
+      e.preventDefault();
+      paneSelect(p.ch);
+      const s = paneSpan(p);
+      if (s) zoomWheel(p.zoom, e.deltaY < 0, paneFreqAt(p, paneXY(e).x), s, p.freqMhz);
+      zoomSyncSlider();
+    }, {passive: false});
+    ov.addEventListener('pointerdown', e => paneDown(p, e));
+    ov.addEventListener('pointermove', e => paneMove(p, e));
+    ov.addEventListener('pointerup', e => paneUp(p, e));
+    ov.addEventListener('pointercancel', e => paneUp(p, e));
+    ov.addEventListener('pointerleave', () => { if (p.hover) { p.hover = null; paneDrawOverlay(p); } });
+    panes.push(p);
+  }
+  panesResize();
+  panesSyncHeads();
+  zoomSyncSlider();
+}
+
+function panesTeardown() {
+  panes.length = 0;
+  panesLastGrid = '';
+  paneDrag = null;
+  const g = $id('indep-grid');
+  if (g) g.innerHTML = '';
+}
+
+// Resizes are debounced and only run when the grid's size really changed:
+// every resize re-lays out the panes, so any element whose size jitters
+// (text widths, a scrollbar coming and going) must not shake them
+let panesResizeTimer = null, panesLastGrid = '';
+function panesResizeSoon() {
+  clearTimeout(panesResizeTimer);
+  panesResizeTimer = setTimeout(() => {
+    const g = $id('indep-grid');
+    const key = g ? g.clientWidth + 'x' + g.clientHeight : '';
+    if (key === panesLastGrid && panes.every(p => p.sw > 0)) return;
+    panesLastGrid = key;
+    panesResize();
+  }, 120);
+}
+try {
+  new ResizeObserver(() => { if (opMode === 'independent') panesResizeSoon(); }).observe($id('indep-grid'));
+} catch (e) {}
+
+// Pane size: rows of up to 3 (4 tuners = 2 x 2, 5 = 3 + 2, 7-8 = 4 per row),
+// fewer columns when a pane would get narrower than 360 px; the rows share
+// the height (at least 230 px each - the grid scrolls past that)
+function panesLayout() {
+  const g = $id('indep-grid');
+  const n = panes.length;
+  if (!g || !n) return;
+  const cs = getComputedStyle(g), gap = 6;
+  // clientWidth excludes the (stable) scrollbar gutter; 1 px spare so rounding
+  // never makes the panes overflow by a fraction
+  const W = g.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 1;
+  const H = g.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 1;
+  const wanted = n <= 3 ? n : n === 4 ? 2 : n <= 6 ? 3 : 4;
+  const cols = Math.max(1, Math.min(wanted, Math.floor((W + gap) / (360 + gap))));
+  const rows = Math.ceil(n / cols);
+  const pw = Math.floor((W - gap * (cols - 1)) / cols) + 'px';
+  const ph = Math.max(230, Math.floor((H - gap * (rows - 1)) / rows)) + 'px';
+  if (g.style.getPropertyValue('--pane-w') !== pw) g.style.setProperty('--pane-w', pw);
+  if (g.style.getPropertyValue('--pane-h') !== ph) g.style.setProperty('--pane-h', ph);
+}
+
+// ---- pane frequency selector (digits like the top bar's) ----
+function paneShowFreq(p, mhz) {
+  const el = $id('tpane-f-' + p.ch);
+  if (!el) return;
+  const khz = Math.round(Math.max(24, Math.min(1766, mhz)) * 1000);
+  let lead = true;
+  el.querySelectorAll('.pfd').forEach(d => {
+    const pos = parseInt(d.dataset.pos), v = Math.floor(khz / Math.pow(10, pos)) % 10;
+    if (d.textContent !== String(v)) d.textContent = v;
+    if (v || pos <= 3) lead = false;   // dim the leading zeros only
+    d.classList.toggle('lead', lead);
+  });
+}
+function paneDigitsMhz(p) {
+  let khz = 0;
+  $id('tpane-f-' + p.ch).querySelectorAll('.pfd').forEach(d => { khz += (parseInt(d.textContent) || 0) * Math.pow(10, parseInt(d.dataset.pos)); });
+  return khz / 1000;
+}
+function paneFreqSelectorInit(p) {
+  const el = $id('tpane-f-' + p.ch);
+  const half = (e, d) => { const r = d.getBoundingClientRect(); return e.clientY - r.top < r.height / 2; };
+  const step = (d, up) => {
+    paneSelect(p.ch);
+    const mhz = Math.max(24, Math.min(1766, paneDigitsMhz(p) + (up ? 1 : -1) * Math.pow(10, parseInt(d.dataset.pos)) / 1000));
+    p.holdF = Date.now() + 1500;
+    paneShowFreq(p, mhz);
+    // wheel spins fire fast: send the latest value at most every 100 ms
+    p.pendingMhz = mhz;
+    if (!p.freqTimer) p.freqTimer = setTimeout(() => { p.freqTimer = null; paneSendFreq(p.ch, p.pendingMhz); }, 100);
+  };
+  el.addEventListener('mousemove', e => {
+    const d = e.target.closest('.pfd');
+    el.querySelectorAll('.pfd').forEach(x => { if (x !== d) x.classList.remove('hover-top', 'hover-bottom'); });
+    if (d) { const t = half(e, d); d.classList.toggle('hover-top', t); d.classList.toggle('hover-bottom', !t); }
+  });
+  el.addEventListener('mouseleave', () => el.querySelectorAll('.pfd').forEach(x => x.classList.remove('hover-top', 'hover-bottom')));
+  el.addEventListener('click', e => { const d = e.target.closest('.pfd'); if (d) step(d, half(e, d)); });
+  el.addEventListener('wheel', e => {
+    const d = e.target.closest('.pfd');
+    if (!d) return;
+    e.preventDefault();
+    step(d, e.deltaY < 0);
+  }, {passive: false});
+}
+
+function panesResize() {
+  panesLayout();
+  for (const p of panes) {
+    const spec = $id('tpane-s-' + p.ch), wfw = $id('tpane-w-' + p.ch), ov = $id('tpane-ov-' + p.ch);
+    if (!spec || !wfw || !ov) continue;
+    p.dpr = window.devicePixelRatio || 1;
+    p.sw = spec.clientWidth; p.sh = spec.clientHeight;
+    const sw = Math.max(1, Math.round(p.sw * p.dpr)), sh = Math.max(1, Math.round(p.sh * p.dpr));
+    if (spec.width !== sw) spec.width = sw;      // (assigning clears the canvas)
+    if (spec.height !== sh) spec.height = sh;
+    if (wfw.clientWidth > 0 && wfw.clientHeight > 0)
+      p.wf.resize(wfw.clientWidth, wfw.clientHeight, p.L, Math.max(10, wfw.clientWidth - p.L - 4));
+    p.oh = ov.clientHeight;
+    const ow = Math.max(1, Math.round(ov.clientWidth * p.dpr)), oh = Math.max(1, Math.round(p.oh * p.dpr));
+    if (ov.width !== ow) ov.width = ow;
+    if (ov.height !== oh) ov.height = oh;
+    paneDrawSpec(p);
+    paneDrawOverlay(p);
+  }
+}
+
+// One FFT message (type 6) with every tuner's spectrum, see
+// MessageBuilders::build_fft_message
+function indepOnFrame(v, buf) {
+  if (buf.byteLength < 20) return;
+  let o = 4;
+  const n = v.getUint32(o, true); o += 4;
+  const aa = v.getFloat32(o, true); o += 4;
+  const sr = v.getFloat32(o, true); o += 4;
+  const step = v.getFloat32(o, true); o += 4;
+  if (n < 1 || n > 8) return;
+  opHint('independent');
+  if (opMode !== 'independent') return;   // not (yet) confirmed - see opHint
+  if (panes.length !== n) panesBuild(n);
+  for (let ch = 0; ch < n; ch++) {
+    if (o + 12 > buf.byteLength) return;
+    const fHz = v.getUint32(o, true); o += 4;
+    const g = v.getFloat32(o, true); o += 4;
+    const ds = v.getUint32(o, true); o += 4;
+    if (ds > 20000 || o + 2 * ds > buf.byteLength) return;
+    const maxU8 = new Uint8Array(buf, o + ds, ds);   // [min envelope][max envelope]
+    o += 2 * ds;
+    const p = panes[ch];
+    if (!p) continue;
+    p.freqMhz = fHz / 1e6; p.gainDb = g; p.sr = sr;
+    if (ds < 2) continue;
+    // the middle currentEdgeClip of the band (like the coherent display)
+    const keep = Math.max(2, Math.floor(ds * currentEdgeClip)), edge = Math.floor((ds - keep) / 2);
+    const f0 = p.freqMhz - sr / 2e6, st = step / 1e6;
+    const freqs = new Array(keep), mags = new Array(keep);
+    for (let i = 0; i < keep; i++) {
+      freqs[i] = f0 + (i + edge) * st;
+      mags[i] = maxU8[i + edge] * (120 / 255);
+    }
+    [p.freqs, p.mags] = zoomSlice(p.zoom, freqs, mags, p.freqMhz);
+    p.wf.addLine(p.freqs, p.mags, noiseLive);
+    paneDrawSpec(p);
+    paneDrawOverlay(p);
+  }
+  // the top bar shows the selected tuner
+  const sp = panes[selTuner];
+  if (sp && sp.freqMhz > 0) {
+    if (Date.now() > sp.holdF) updateFreqDisplay(sp.freqMhz);
+    if (!gainUserChanging && Date.now() > sp.holdG) {
+      const gi = gainIndexOf(sp.gainDb), gs = $id('gn-slider');
+      if (gs && document.activeElement !== gs && parseInt(gs.value) !== gi) { gs.value = gi; updateGainDisplay(gi); }
+    }
+  }
+  if (!avgUserChanging && aa >= 0 && aa <= 1) {
+    const avPct = Math.round((1 - aa) * 100), asl = $id('asl');
+    if (asl && document.activeElement !== asl && parseInt(asl.value) !== avPct) {
+      asl.value = avPct; $id('av').textContent = avPct + '%'; currentAveraging = avPct;
+    }
+  }
+  panesSyncHeads();
+}
+
+function gainIndexOf(db) {
+  let gi = 0, best = Infinity;
+  for (let i = 0; i < GAIN_VALUES.length; i++) {
+    const d = Math.abs(GAIN_VALUES[i] - db);
+    if (d < best) { best = d; gi = i; }
+  }
+  return gi;
+}
+
+function panesSyncHeads() {
+  const now = Date.now();
+  for (const p of panes) {
+    if (now > p.holdF && p.freqMhz > 0) paneShowFreq(p, p.freqMhz);
+    const gs = $id('tpane-g-' + p.ch), gv = $id('tpane-gv-' + p.ch);
+    const gi = gainIndexOf(p.gainDb);
+    if (gs && document.activeElement !== gs && now > p.holdG && parseInt(gs.value) !== gi) gs.value = gi;
+    const shown = GAIN_VALUES[gs ? parseInt(gs.value) : gi];
+    const gt = shown === -1 ? 'Auto' : shown.toFixed(1) + ' dB';
+    if (gv && gv.textContent !== gt) gv.textContent = gt;
+    const vl = $id('tpane-v-' + p.ch);
+    if (vl) {
+      const h = (decimatorInfo || []).filter(d => (d.tuner || 0) === p.ch)
+        .map(d => `<span style="color:${getDecimatorColor(d.id)}">D${d.id}</span>`).join(' ');
+      if (vl.innerHTML !== h) vl.innerHTML = h;
+    }
+    p.el.classList.toggle('sel', p.ch === selTuner);
+  }
+}
+
+function paneSelect(ch) {
+  if (selTuner === ch) return;
+  selTuner = ch;
+  zoomSyncSlider();
+  panesSyncHeads();
+  const p = panes[ch];
+  if (p && p.freqMhz > 0) updateFreqDisplay(p.freqMhz, true);
+  if (p) { const gi = gainIndexOf(p.gainDb), gs = $id('gn-slider'); if (gs) { gs.value = gi; updateGainDisplay(gi); } }
+}
+
+// shift: move the drawn spectrum at once (the next frames confirm it). Not
+// while panning - the frames still at the old frequency would make it jump
+// back and forth; like the main display it then follows the data.
+function paneSendFreq(ch, mhz, shift = true) {
+  const p = panes[ch];
+  if (!isFinite(mhz) || mhz < 24 || mhz > 1766) { panesSyncHeads(); return; }
+  send('TUNER_FREQ:' + ch + ':' + mhz.toFixed(6));
+  if (p) {
+    p.holdF = Date.now() + 1500;
+    if (shift) {
+      const d = mhz - p.freqMhz;
+      p.freqMhz = mhz;
+      if (d) p.freqs = p.freqs.map(f => f + d);
+      paneDrawSpec(p); paneDrawOverlay(p);
+    }
+    paneShowFreq(p, mhz);
+  }
+  if (ch === selTuner) updateFreqDisplay(mhz, true);
+  decimatorInfo.forEach(dd => { if ((dd.tuner || 0) === ch) refreshDecimatorPanelItem(dd.id); });
+}
+
+let paneGainTimer = null;
+function paneGainInput(ch, idx) {
+  const db = GAIN_VALUES[parseInt(idx)];
+  const p = panes[ch];
+  if (p) { p.holdG = Date.now() + 1500; p.gainDb = db; }
+  panesSyncHeads();
+  clearTimeout(paneGainTimer);
+  paneGainTimer = setTimeout(() => paneSendGain(ch, db), 120);
+}
+
+function paneSendGain(ch, db) {
+  send('TUNER_GAIN:' + ch + ':' + db);
+  const p = panes[ch];
+  if (p) { p.holdG = Date.now() + 1500; p.gainDb = db; }
+  panesSyncHeads();
+}
+
+// ---- drawing ------------------------------------------------------------------
+function paneSpan(p) { return p.freqs.length > 1 ? [p.freqs[0], p.freqs[p.freqs.length - 1]] : null; }
+function paneX(p, mhz) {
+  const s = paneSpan(p), W = Math.max(10, p.sw - p.L - 4);
+  return s ? p.L + (mhz - s[0]) / (s[1] - s[0]) * W : p.L;
+}
+function paneFreqAt(p, x) {
+  const s = paneSpan(p), W = Math.max(10, p.sw - p.L - 4);
+  return s ? s[0] + (x - p.L) / W * (s[1] - s[0]) : p.freqMhz;
+}
+
+function paneDrawSpec(p) {
+  const c = $id('tpane-s-' + p.ch);
+  if (!c || !p.sw || !p.sh) return;
+  const ctx = c.getContext('2d');
+  ctx.setTransform(p.dpr, 0, 0, p.dpr, 0, 0);
+  const w = p.sw, h = p.sh, L = p.L, R = w - 4, top = 4, bot = h - 14;
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, w, h);
+  const ymax = fftYMax || 60;
+  ctx.font = '10px sans-serif';
+  ctx.lineWidth = 1;
+  const dbStep = ymax > 60 ? 20 : 10;
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let db = 0; db <= ymax; db += dbStep) {
+    const y = Math.round(bot - db / ymax * (bot - top)) + 0.5;
+    ctx.strokeStyle = '#26263c';
+    ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(R, y); ctx.stroke();
+    ctx.fillStyle = '#6f7a8c'; ctx.fillText(String(db), L - 4, y);
+  }
+  const span = paneSpan(p);
+  if (!span) return;
+  const [f0, f1] = span;
+  // frequency grid: about one label per 90 px
+  const steps = [0.005, 0.01, 0.02, 0.025, 0.05, 0.1, 0.2, 0.25, 0.5, 1];
+  const want = (f1 - f0) / Math.max(1, (R - L) / 90);
+  const fs = steps.find(x => x >= want) || 1;
+  const dec = fs < 0.01 ? 3 : fs < 0.1 ? 2 : fs < 1 ? 1 : 0;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let f = Math.ceil(f0 / fs) * fs; f <= f1 + 1e-9; f += fs) {
+    const x = Math.round(paneX(p, f)) + 0.5;
+    if (x > R - 12) break;   // a label there would be cut off
+    ctx.strokeStyle = '#26263c';
+    ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bot); ctx.stroke();
+    ctx.fillStyle = '#6f7a8c'; ctx.fillText(f.toFixed(dec), x, bot + 2);
+  }
+  // trace (max envelope): filled + line
+  const m = p.mags, n = m.length, W = R - L;
+  const yOf = v => bot - Math.max(0, Math.min(1, v / ymax)) * (bot - top);
+  ctx.beginPath();
+  ctx.moveTo(L, bot);
+  for (let i = 0; i < n; i++) ctx.lineTo(L + i / (n - 1) * W, yOf(m[i]));
+  ctx.lineTo(R, bot);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(79,195,247,0.16)';
+  ctx.fill();
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const x = L + i / (n - 1) * W, y = yOf(m[i]);
+    if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+  }
+  ctx.strokeStyle = '#4fc3f7';
+  ctx.stroke();
+}
+
+function paneDrawAllOverlays() { panes.forEach(paneDrawOverlay); }
+
+// VFO bars of the VFOs on this tuner (across spectrum + waterfall) and the
+// AI Signal Lab badges of investigated frequencies in view
+function paneDrawOverlay(p) {
+  const c = $id('tpane-ov-' + p.ch);
+  if (!c || !p.sw) return;
+  const ctx = c.getContext('2d');
+  ctx.setTransform(p.dpr, 0, 0, p.dpr, 0, 0);
+  const H = p.oh || (c.height / p.dpr);
+  ctx.clearRect(0, 0, c.width / p.dpr, H);
+  p.bars = []; p.ai = [];
+  const span = paneSpan(p);
+  if (!span) return;
+  // Tuning bars in the main display's style (drawBox / WaterfallDisplay.
+  // drawOverlay): translucent body, a grab handle centred in the spectrum
+  // section AND in the waterfall section, edge handles (the active VFO's edges
+  // drag its bandwidth), label at the top
+  const sections = [[0, p.sh], [p.sh, H - p.sh]].filter(([, sh]) => sh >= 30);
+  const HANDLE_H = 24, HANDLE_COLOR = '#c8c0a8';
+  for (const d of (decimatorInfo || [])) {
+    if ((d.tuner || 0) !== p.ch) continue;
+    const cm = p.freqMhz + (d.freq_offset_hz || 0) / 1e6;
+    const bw = (bwo[d.bandwidth_index ?? 0] || {}).bandwidth || d.bandwidth_mhz || 0.1;
+    let x0 = paneX(p, cm - bw / 2), x1 = paneX(p, cm + bw / 2);
+    // clipped to the plot area (zoomed in, a VFO can be partly or wholly
+    // outside it - a clipped side has no edge to grab)
+    const L = p.L, R = p.sw - 4;
+    if (x1 < L || x0 > R) continue;
+    const clipL = x0 < L, clipR = x1 > R;
+    x0 = Math.max(L, x0); x1 = Math.min(R, x1);
+    if (x1 - x0 < 8) { const xc = (x0 + x1) / 2; x0 = xc - 4; x1 = xc + 4; }   // MIN_BOX_PX
+    const w = x1 - x0;
+    const col = getDecimatorColor(d.id), active = d.id === activeDecimatorId;
+    const hv = p.hover && p.hover.id === d.id ? p.hover.kind : null;
+    ctx.fillStyle = col + (active ? '4d' : '33');
+    ctx.fillRect(x0, 0, w, H);
+    if (active && hv === 'body') { ctx.fillStyle = col + '66'; ctx.fillRect(x0, 0, w, H); }
+    ctx.strokeStyle = col;
+    ctx.lineWidth = active ? 3 : 2;
+    ctx.strokeRect(x0, 0, w, H);
+    const handles = [];
+    for (const [y0, sh] of sections) {
+      const hy = Math.floor(y0 + (sh - HANDLE_H) / 2);
+      ctx.fillStyle = HANDLE_COLOR + (hv === 'handle' ? 'dd' : '88');
+      ctx.fillRect(x0, hy, w, HANDLE_H);
+      ctx.strokeStyle = HANDLE_COLOR + 'cc';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x0, hy, w, HANDLE_H);
+      ctx.fillStyle = col;
+      const big = active && hv === 'edge';
+      ctx.fillRect(x0 - (big ? 3 : 2), y0 + sh / 2 - (big ? 20 : 15), big ? 6 : 4, big ? 40 : 30);
+      ctx.fillRect(x1 - (big ? 3 : 2), y0 + sh / 2 - (big ? 20 : 15), big ? 6 : 4, big ? 40 : 30);
+      handles.push({y0: hy, y1: hy + HANDLE_H});
+    }
+    ctx.fillStyle = col;
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText('D' + d.id, x0 + 5, 14);
+    p.bars.push({id: d.id, x0, x1, handles, offset_hz: d.freq_offset_hz || 0, bw, clipL, clipR});
+    // FFT squelch: dashed yellow line at the level inside the bar, on the
+    // spectrum (as drawBox does; an eigenvalue threshold has no dB position)
+    if (squelchIsFft(d)) {
+      const lvl = d.squelch_level !== undefined ? d.squelch_level : 15;
+      const top = 4, bot = p.sh - 14, ymax = fftYMax || 60;
+      const sy = bot - lvl / ymax * (bot - top);
+      if (sy >= top && sy <= bot) {
+        p.bars[p.bars.length - 1].sqY = sy;   // grabbable (paneHit)
+        ctx.strokeStyle = '#ffff00';
+        ctx.setLineDash([8, 4]);
+        ctx.lineWidth = (hv === 'squelch' || (squelchDrag && squelchDrag.id === d.id)) ? 3 : 2;
+        ctx.beginPath(); ctx.moveTo(x0, sy); ctx.lineTo(x1, sy); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#ffff00';
+        ctx.font = '10px monospace';
+        const t = lvl + ' dB';
+        ctx.fillText(t, x1 - ctx.measureText(t).width - 3, sy - 4);
+      }
+    }
+  }
+  ctx.font = 'bold 9px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const s of (typeof aiSessions !== 'undefined' ? aiSessions : [])) {
+    const f = s.freq_hz / 1e6;
+    if (f < span[0] || f > span[1]) continue;
+    const x = paneX(p, f);
+    ctx.fillStyle = '#6a1b9a';
+    ctx.fillRect(x - 9, 2, 18, 11);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('AI', x, 8);
+    p.ai.push({x0: x - 9, x1: x + 9, y0: 2, y1: 13, id: s.id});
+  }
+}
+
+// ---- interaction: click selects the pane; a VFO bar drags; elsewhere the
+// active VFO jumps to the click (and onto this tuner) -------------------------
+function paneXY(e) {
+  const r = e.currentTarget.getBoundingClientRect();
+  return {x: e.clientX - r.left, y: e.clientY - r.top};
+}
+// What's under (x, y) on pane p, in the main display's priority order: any
+// VFO's grab handle, the ACTIVE VFO's edges (bandwidth), any VFO's body
+function paneHit(p, x, y) {
+  const sq = p.bars.find(b => b.sqY !== undefined && x >= b.x0 && x <= b.x1 && Math.abs(y - b.sqY) <= 5);
+  if (sq) return {bar: sq, kind: 'squelch'};
+  const h = p.bars.find(b => x >= b.x0 && x <= b.x1 && b.handles.some(hd => y >= hd.y0 && y <= hd.y1));
+  if (h) return {bar: h, kind: 'handle'};
+  const a = p.bars.find(b => b.id === activeDecimatorId);
+  if (a) {
+    if (!a.clipL && Math.abs(x - a.x0) <= 5) return {bar: a, kind: 'edge', edge: 'left'};
+    if (!a.clipR && Math.abs(x - a.x1) <= 5) return {bar: a, kind: 'edge', edge: 'right'};
+  }
+  const b = p.bars.find(b => x >= b.x0 && x <= b.x1);
+  return b ? {bar: b, kind: 'body'} : null;
+}
+
+function paneDown(p, e) {
+  if (e.button !== 0) return;
+  const {x, y} = paneXY(e);
+  paneSelect(p.ch);
+  const ai = p.ai.find(b => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1);
+  if (ai) { aiOpenSession(ai.id); return; }
+  if (!paneSpan(p)) return;
+  const ht = paneHit(p, x, y);
+  if (ht && ht.kind === 'squelch') {
+    const d = (decimatorInfo || []).find(z => z.id === ht.bar.id);
+    squelchDrag = {id: ht.bar.id, sent: d ? d.squelch_level : null, last: 0};
+    paneDrag = {p, squelch: ht.bar.id, pointerId: e.pointerId};
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+    e.preventDefault();
+    return;
+  }
+  if (ht && ht.kind === 'edge') {
+    // bandwidth: the edge moves, the centre stays (like the main display)
+    const s = paneSpan(p), W = Math.max(10, p.sw - p.L - 4);
+    paneDrag = {p, id: ht.bar.id, edge: ht.edge, x0: x, bw0: ht.bar.bw, mhzPerPx: (s[1] - s[0]) / W, pointerId: e.pointerId};
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+    e.preventDefault();
+    return;
+  }
+  const hit = ht ? ht.bar : null;
+  if (!hit) {
+    // Empty spectrum: drag = pan this tuner (like the main display); a click
+    // without moving puts the selected VFO there (on release)
+    const s = paneSpan(p), W = Math.max(10, p.sw - p.L - 4);
+    paneDrag = {p, pan: true, x0: x, f0: p.freqMhz, mhzPerPx: s ? (s[1] - s[0]) / W : 0, moved: false,
+                lastSend: 0, pending: null, pointerId: e.pointerId};
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+    e.currentTarget.style.cursor = 'grabbing';
+    e.preventDefault();
+    return;
+  }
+  const id = hit.id;
+  const d = (decimatorInfo || []).find(z => z.id === id);
+  if (!d) return;
+  if (activeDecimatorId !== id) selectDecimator(id);
+  const cur = (d.tuner || 0) === p.ch ? p.freqMhz + (d.freq_offset_hz || 0) / 1e6 : null;
+  paneDrag = {p, id, grab: hit && cur !== null ? paneFreqAt(p, x) - cur : 0, pointerId: e.pointerId};
+  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+  paneMoveVfo(p, d, paneFreqAt(p, x) - paneDrag.grab);
+  e.preventDefault();
+}
+function paneMove(p, e) {
+  const {x} = paneXY(e);
+  if (!paneDrag || paneDrag.p !== p) {
+    const ht = paneHit(p, x, paneXY(e).y);
+    const hv = ht ? {id: ht.bar.id, kind: ht.kind} : null;
+    if (JSON.stringify(hv) !== JSON.stringify(p.hover || null)) { p.hover = hv; paneDrawOverlay(p); }
+    e.currentTarget.style.cursor = !ht ? 'default' : ht.kind === 'edge' ? 'ew-resize' : ht.kind === 'squelch' ? 'ns-resize' : 'grab';
+    return;
+  }
+  if (paneDrag.squelch !== undefined) {
+    const top = 4, bot = p.sh - 14, ymax = fftYMax || 60;
+    squelchSetFromDrag(paneDrag.squelch, (bot - paneXY(e).y) / (bot - top) * ymax);
+    return;
+  }
+  if (paneDrag.edge) {
+    const df = (x - paneDrag.x0) * paneDrag.mhzPerPx;
+    let dbw = paneDrag.edge === 'left' ? paneDrag.bw0 - df * 2 : paneDrag.bw0 + df * 2;
+    dbw = Math.max(MIN_BW_MHZ, Math.min(2.4, dbw));
+    const idx = Math.min(findNearestBw(dbw), MIN_BW_INDEX);
+    showBwTooltip(e, bwo[idx].bandwidth);
+    const d = (decimatorInfo || []).find(z => z.id === paneDrag.id);
+    if (d && idx !== d.bandwidth_index) {
+      setDecimatorBandwidth(d.id, idx);
+      d.bandwidth_index = idx;
+      d.bandwidth_mhz = bwo[idx].bandwidth;
+      paneDrawAllOverlays();
+      refreshDecimatorPanelItem(d.id);
+    }
+    return;
+  }
+  if (paneDrag.pan) {
+    const dx = x - paneDrag.x0;
+    if (Math.abs(dx) > 5) paneDrag.moved = true;
+    if (!paneDrag.moved) return;
+    // drag right = lower frequency (the spectrum follows the mouse)
+    const f = Math.max(24, Math.min(1766, paneDrag.f0 - dx * paneDrag.mhzPerPx));
+    paneDrag.pending = Math.round(f * 1e6) / 1e6;
+    paneShowFreq(p, paneDrag.pending);
+    p.holdF = Date.now() + 1500;
+    const now = Date.now();
+    if (now - paneDrag.lastSend >= 50) {   // throttle retunes like the main display
+      paneDrag.lastSend = now;
+      paneSendFreq(p.ch, paneDrag.pending, false);
+      paneDrag.sent = paneDrag.pending;
+    }
+    return;
+  }
+  const d = (decimatorInfo || []).find(z => z.id === paneDrag.id);
+  if (d) paneMoveVfo(p, d, paneFreqAt(p, x) - paneDrag.grab);
+}
+function paneUp(p, e) {
+  if (!paneDrag) return;
+  try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) {}
+  const dr = paneDrag;
+  paneDrag = null;
+  e.currentTarget.style.cursor = 'default';
+  if (dr.edge) { hideBwTooltip(); return; }
+  if (dr.squelch !== undefined) {
+    const d = (decimatorInfo || []).find(z => z.id === dr.squelch);
+    if (d) squelchSetFromDrag(d.id, d.squelch_level, true);
+    squelchDrag = null;
+    paneDrawAllOverlays();
+    return;
+  }
+  if (!dr.pan || dr.p !== p) return;
+  if (dr.moved) {
+    // the final position always reaches heimdall (the throttle may have skipped it)
+    if (dr.pending !== null && dr.pending !== dr.sent) paneSendFreq(p.ch, dr.pending, false);
+    return;
+  }
+  // a click: the selected VFO goes there (and onto this tuner)
+  const d = (decimatorInfo || []).find(z => z.id === activeDecimatorId);
+  if (d && paneSpan(p)) paneMoveVfo(p, d, paneFreqAt(p, paneXY(e).x));
+}
+
+// Put VFO d at mhz on pane p (clamped into the visible band)
+function paneMoveVfo(p, d, mhz) {
+  const bw = d.bandwidth_mhz || (bwo[d.bandwidth_index || 0] || {}).bandwidth || 0.1;
+  const half = Math.max(0, (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2);
+  const off = Math.max(-half, Math.min(half, mhz - p.freqMhz));
+  const moved = (d.tuner || 0) !== p.ch;
+  d.freq_offset_hz = off * 1e6;
+  d.tuner = p.ch;
+  if (moved) {
+    pendingFreqUpdates.delete(d.id);   // a queued move on the old tuner must not land after this
+    send('SET_DECIMATOR_FREQ:' + d.id + ':' + (off * 1000).toFixed(3) + ':' + p.ch);
+    const ts = $id('dec-tuner-' + d.id);
+    if (ts) ts.value = p.ch;
+  } else {
+    setDecimatorFreq(d.id, off * 1000);
+  }
+  paneDrawAllOverlays();
+  refreshDecimatorPanelItem(d.id);
+  panesSyncHeads();
+}
+
+// VFO card frequency typed in independent mode: the tuner whose band holds it
+// (the VFO's own first), else clamped into its own
+function paneTuneVfoTo(d, mhz) {
+  const order = [d.tuner || 0, ...panes.map(p => p.ch).filter(c => c !== (d.tuner || 0))];
+  const bw = d.bandwidth_mhz || 0.1;
+  for (const ch of order) {
+    const p = panes[ch];
+    if (!p || !(p.freqMhz > 0)) continue;
+    const half = (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2;
+    if (Math.abs(mhz - p.freqMhz) <= half) { paneMoveVfo(p, d, mhz); return; }
+  }
+  const p = panes[d.tuner || 0];
+  if (p) paneMoveVfo(p, d, mhz);
+}
+
+function setDecimatorTuner(id, ch) {
+  ch = parseInt(ch);
+  const d = (decimatorInfo || []).find(z => z.id === id), p = panes[ch];
+  if (!d || !p) return;
+  paneMoveVfo(p, d, p.freqMhz + (d.freq_offset_hz || 0) / 1e6);
+}
+
+// per-pane waterfall auto-range (each tuner sees a different band)
+setInterval(() => {
+  if (opMode !== 'independent' || !autoRangeEnabled) return;
+  if (noiseLive || Date.now() - noiseOffAt < 1000) return;
+  for (const p of panes) {
+    const r = computeAutoRange(p.mags);
+    if (r) p.wf.setRange(r[0], r[1]);
+  }
+}, 500);
+
+
+// ============================================================================
+// SPECTRUM ZOOM (mouse wheel / Zoom slider) + SPECTRUM/WATERFALL SPLIT
+// ----------------------------------------------------------------------------
+// Zoom = {level 1..16, off = window centre - frame centre in MHz}. The data is
+// sliced (zoomSlice) before it reaches the plot and the waterfall, so the
+// spectrum, tuning bars and waterfall share the zoomed range. Coherent /
+// wideband: mainZoom (the main display); independent: each pane's own, the
+// slider shows / sets the selected pane's.
+// ============================================================================
+const ZOOM_MAX = 16;
+const mainZoom = {level: 1, off: 0};
+function zoomTarget() {
+  if (opMode === 'independent') { const p = panes[selTuner]; return p ? {z: p.zoom, center: p.freqMhz} : null; }
+  return {z: mainZoom, center: displayCenterFreq ?? currentCenterFreq};
+}
+function zoomSlice(z, freqs, mags, centerMhz) {
+  const n = freqs.length;
+  if (!z || z.level <= 1.0001 || n < 32) return [freqs, mags];
+  const f0 = freqs[0], f1 = freqs[n - 1], span = f1 - f0;
+  const w = span / z.level;
+  let c = centerMhz + z.off;
+  c = Math.max(f0 + w / 2, Math.min(f1 - w / 2, c));
+  z.off = c - centerMhz;   // keep it inside the band
+  let i0 = Math.max(0, Math.floor((c - w / 2 - f0) / span * (n - 1)));
+  let i1 = Math.min(n - 1, Math.ceil((c + w / 2 - f0) / span * (n - 1)));
+  if (i1 - i0 < 16) { i1 = Math.min(n - 1, i0 + 16); i0 = Math.max(0, i1 - 16); }
+  return [freqs.slice(i0, i1 + 1), mags.slice(i0, i1 + 1)];
+}
+// One wheel notch: x1.25 in / out, keeping the frequency under the cursor in place
+function zoomWheel(z, zoomIn, cursorMhz, visible, centerMhz) {
+  const old = z.level;
+  const lvl = Math.max(1, Math.min(ZOOM_MAX, zoomIn ? old * 1.25 : old / 1.25));
+  if (lvl === old) return;
+  const [v0, v1] = visible, w = v1 - v0, t = w > 0 ? (cursorMhz - v0) / w : 0.5;
+  const w2 = w * old / lvl;
+  z.level = lvl < 1.01 ? 1 : lvl;
+  z.off = z.level === 1 ? 0 : (cursorMhz - t * w2 + w2 / 2) - centerMhz;
+}
+function zoomSyncSlider() {
+  const t = zoomTarget(), sl = $id('zoom-sl'), lv = $id('zoom-val');
+  if (!t || !sl) return;
+  const v = Math.round(Math.log2(t.z.level) * 25);
+  if (document.activeElement !== sl && parseInt(sl.value) !== v) sl.value = v;
+  if (lv) lv.textContent = t.z.level.toFixed(1) + 'x';
+}
+function zoomFromSlider(v) {
+  const t = zoomTarget();
+  if (!t) return;
+  t.z.level = Math.max(1, Math.min(ZOOM_MAX, Math.pow(2, parseInt(v) / 25)));
+  if (t.z.level < 1.01) { t.z.level = 1; t.z.off = 0; }
+  $id('zoom-val').textContent = t.z.level.toFixed(1) + 'x';
+  if (opMode !== 'independent') applyClip();
+}
+// main display: wheel on the spectrum or the waterfall (the containers - the
+// spectrum's overlay canvas only exists once the plot is built). The x
+// position maps through uPlot's plot area, which the waterfall lines up with.
+['fp', 'wf-container'].forEach(id => {
+  const el = $id(id);
+  if (!el) return;
+  el.addEventListener('wheel', e => {
+    if (!fftPlot || !fftPlot.over || currentFrequencies.length < 2 || opMode === 'independent') return;
+    e.preventDefault();
+    const r = fftPlot.over.getBoundingClientRect();
+    const v0 = currentFrequencies[0], v1 = currentFrequencies[currentFrequencies.length - 1];
+    const m = v0 + (e.clientX - r.left) / Math.max(1, r.width) * (v1 - v0);
+    zoomWheel(mainZoom, e.deltaY < 0, Math.max(v0, Math.min(v1, m)), [v0, v1], displayCenterFreq ?? currentCenterFreq);
+    zoomSyncSlider();
+    applyClip();
+  }, {passive: false});
+});
+
+// ---- split: main display (#fp height, px) / panes (--spec-frac, shared) ----
+const FP_DEFAULT_H = 280, PANE_SPLIT_DEFAULT = 0.42;
+function fpApplyHeight(h) {
+  const fp = $id('fp'), sc = fp && fp.parentElement;
+  if (!fp || !sc) return;
+  if (h == null) { fp.style.height = ''; return; }
+  const max = Math.max(80, sc.clientHeight - 80);
+  fp.style.height = Math.round(Math.max(80, Math.min(max, h))) + 'px';
+}
+function paneSplitApply(f) {
+  const g = $id('indep-grid');
+  if (g) g.style.setProperty('--spec-frac', String(Math.max(0.15, Math.min(0.85, f))));
+}
+function splitDragInit(el, pane) {
+  if (!el) return;
+  let drag = null;
+  el.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    const box = (pane ? el.parentElement : $id('fp').parentElement).getBoundingClientRect();
+    drag = {box, id: e.pointerId};
+    el.setPointerCapture(e.pointerId);
+    el.classList.add('dragging');
+  });
+  el.addEventListener('pointermove', e => {
+    if (!drag) return;
+    if (pane) {
+      paneSplitApply((e.clientY - drag.box.top) / drag.box.height);
+      panesResizeNow();
+    } else {
+      fpApplyHeight(e.clientY - drag.box.top);
+      window.dispatchEvent(new Event('resize'));
+    }
+  });
+  const end = () => {
+    if (!drag) return;
+    drag = null;
+    el.classList.remove('dragging');
+    try {
+      if (pane) localStorage.setItem('kraken_pane_split', getComputedStyle($id('indep-grid')).getPropertyValue('--spec-frac').trim());
+      else localStorage.setItem('kraken_fp_h', String(parseInt($id('fp').style.height) || FP_DEFAULT_H));
+    } catch (err) {}
+  };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+  el.addEventListener('dblclick', () => {
+    if (pane) { paneSplitApply(PANE_SPLIT_DEFAULT); panesResizeNow(); try { localStorage.removeItem('kraken_pane_split'); } catch (err) {} }
+    else { fpApplyHeight(null); window.dispatchEvent(new Event('resize')); try { localStorage.removeItem('kraken_fp_h'); } catch (err) {} }
+  });
+}
+let panesResizeRaf = 0;
+function panesResizeNow() {
+  if (panesResizeRaf) return;
+  panesResizeRaf = requestAnimationFrame(() => { panesResizeRaf = 0; panesLastGrid = ''; panesResize(); });
+}
+splitDragInit($id('fp-split'), false);
+try {
+  const h = parseInt(localStorage.getItem('kraken_fp_h'));
+  if (h > 0) fpApplyHeight(h);
+  const f = parseFloat(localStorage.getItem('kraken_pane_split'));
+  if (f > 0) paneSplitApply(f);
+} catch (e) {}
 
 // --- Draggable sidebar width (desktop) ---
 // The sidebar is laid out at SB_BASE_W and zoomed (--sb-zoom) to the dragged
@@ -7565,8 +8608,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const f = $id('ai-freq');
     if (!f || aiFreqEdited || document.activeElement === f) return;
     const d = decimatorInfo.find(x => x.id === parseInt($id('ai-vfo').value));
-    if (d && typeof currentCenterFreq === 'number' && currentCenterFreq > 0)
-      f.value = (currentCenterFreq + (d.freq_offset_hz || 0) / 1e6).toFixed(5);
+    if (d && vfoCenterMhz(d) > 0)
+      f.value = (vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6).toFixed(5);
   }
 
   function aiVfoChanged() {
@@ -7951,7 +8994,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
     $id('info-dec-cols').style.display = 'flex';
     const [col, txt] = digStateOf(id);
-    $id('info-sub').textContent = `D${id} · ${(currentCenterFreq + (d ? d.freq_offset_hz : 0) / 1e6).toFixed(4)} MHz · ${txt}`;
+    $id('info-sub').textContent = `D${id} · ${((d ? vfoCenterMhz(d) : currentCenterFreq) + (d ? d.freq_offset_hz : 0) / 1e6).toFixed(4)} MHz · ${txt}`;
 
     // settings row (rebuilt only when something changed and nothing in it has focus)
     const o = (d && d.digital_opts) || {};
@@ -8613,6 +9656,10 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
         modeEl.textContent = 'Wideband';
         modeEl.style.background = '#e65100';
         modeEl.style.color = '#fff';
+      } else if (status.independent) {
+        modeEl.textContent = 'Independent';
+        modeEl.style.background = '#6a1b9a';
+        modeEl.style.color = '#fff';
       } else {
         modeEl.textContent = 'Coherent';
         modeEl.style.background = '#1565c0';
@@ -8621,8 +9668,12 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     }
 
     // Update calibration indicator (also pushed on every change: cal_live)
-    lastStatusWideband = !!status.wideband;
-    updateCalIndicator(status.phase_state, status.noise_source, status.wideband, status.cooldown_active);
+    lastStatusWideband = !!(status.wideband || status.independent);
+    updateCalIndicator(status.phase_state, status.noise_source, lastStatusWideband, status.cooldown_active);
+    if (typeof status.independent === 'boolean') {
+      const m = status.independent ? 'independent' : status.wideband ? 'wideband' : 'coherent';
+      opHint(m);
+    }
 
     // Update cooldown indicator (state 5 = WAITING_FOR_STABILITY).
     // The backend only reports that the cooldown is active (phase_state 5),
@@ -8652,8 +9703,8 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
       // States 0-3 and 5 are all "not converged" states
       const isCalibrating = status.phase_state === 5 || status.cooldown_active ||
         (status.phase_state !== undefined && status.phase_state >= 0 && status.phase_state < 4);
-      doaPanel.style.opacity = isCalibrating && !status.wideband ? '0.5' : '1';
-      doaPanel.style.pointerEvents = isCalibrating && !status.wideband ? 'none' : 'auto';
+      doaPanel.style.opacity = isCalibrating && !lastStatusWideband ? '0.5' : '1';
+      doaPanel.style.pointerEvents = isCalibrating && !lastStatusWideband ? 'none' : 'auto';
     }
 
     // Update scanner indicator
@@ -8688,7 +9739,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
         // visible long enough to read the level to squelch against.
         if (sq.eigen_ratio !== undefined) {
           const d = decimatorInfo.find(x => x.id === sq.id);
-          const eigenMode = d && (d.squelch_method === 'EIGEN' || d.squelch_method === 'EIGEN_AUTO');
+          const eigenMode = d && sqEffMethod(d) !== 'FFT';
           const ratioEl = $id('dec-eigen-ratio-' + sq.id);
           if (ratioEl && eigenMode && d.squelch_enabled) {
             // Effective threshold: backend-reported (covers auto mode), falling
@@ -8702,7 +9753,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
           }
           // Auto mode: show the learned threshold
           const autoEl = $id('dec-squelch-auto-val-' + sq.id);
-          if (autoEl && d && d.squelch_method === 'EIGEN_AUTO') {
+          if (autoEl && d && sqEffMethod(d) === 'EIGEN_AUTO') {
             autoEl.textContent = (sq.eigen_thr !== undefined && sq.eigen_thr > 0)
                 ? fmtEigen(sq.eigen_thr) : 'learning…';
           }

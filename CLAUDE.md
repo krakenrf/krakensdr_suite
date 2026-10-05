@@ -125,6 +125,10 @@ make debug-arm    # ARM build with NEON debug output
   run, a headless run) gets SIGTERM per process group (clean shutdown,
   dongles released), SIGKILL after 10 s. Processes of other users are only
   reported.
+- The convergence wait before the client starts ends at once when heimdall
+  runs in wideband scan / independent mode (8091 phase-state bits 0x400 /
+  0x800, probe exit 3): no calibration runs there - it used to hold the client
+  back for the whole timeout, and headless mode then gave up on the stack
 - The convergence wait before the client starts watches heimdall's process:
   headless mode aborts with heimdall's log tail if it dies; in tmux mode the
   client pane gives up if the heimdall pane's supervisor exits (a crash is
@@ -165,7 +169,8 @@ make debug-arm    # ARM build with NEON debug output
   `server.key`) can't reach the image. `docker-data/` and `.env` are gitignored
 - heimdall's entrypoint waits for `KRAKEN_TUNERS` dongles (boot enumeration);
   kraken_doa's waits for CONVERGED from the 8091 header (not in KerberosSDR
-  manual mode); empty compose variables are unset (apps treat "" as set)
+  manual mode, nor in wideband / independent mode - header bits 0x400 /
+  0x800 - where no calibration runs); empty compose variables are unset (apps treat "" as set)
 - `--wideband` / `--kerberos_sw` need `privileged: true` (hidraw, gpiochip,
   `/proc/device-tree` is masked otherwise) via `compose.override.yaml`
 
@@ -444,6 +449,32 @@ decoders `kraken_doa_v2/plugins/`
 - Plugins move between receivers as folders only: copy `plugins/<id>/`, run
   `make`, press ↻ (no web-UI export / import / rebuild - removed on purpose:
   compiling code sent from a web page was a recipe for issues)
+
+### Operating Modes (top-bar Mode selector: Coherent / Wideband / Independent)
+
+- **Coherent**: the array (DoA, beamforming, calibration). **Wideband**: the
+  tuner-spread scan (one stitched spectrum, discrete scanner). **Independent**:
+  every tuner its own receiver - own frequency + gain, one spectrum +
+  waterfall pane per tuner, VFOs on any tuner, no calibration
+- Client: `OPERATING_MODE:coherent|wideband|independent` (persisted; the old
+  `WIDEBAND_MODE:` maps to it), `TUNER_FREQ:ch:mhz` / `TUNER_GAIN:ch:db` (+
+  composite `TUNERS:` persisted), `SET_DECIMATOR_FREQ:id:khz:tuner` (VFO onto a
+  tuner, `DecimatorInstance::tuner_channel`, saved in the DECIMATORS snapshot).
+  Outside coherent DoA/beamforming are parked (`apply_operating_mode_state`),
+  each VFO decimates (and squelches on) its own tuner, the FFT runs on every
+  tuner. Independent mode streams FFT message type 6 (every tuner's spectrum)
+- heimdall: `set_operating_mode`, `set_independent_tuner`; identity
+  compensation in independent mode; mode + per-tuner tuning persisted in
+  heimdall_settings.conf and restored at startup; 8091 phase-state flags
+  0x400 / 0x800 - the client follows heimdall's mode from them
+  (`ControlHandler::note_server_mode`, after a 3 s grace for its own changes)
+- The DoA panel and DoA/coherent sidebar sections (MUSIC DoA, Beamforming,
+  Web Mapper, Local Recording, continuous scanner, CH selector) are hidden
+  outside coherent; the discrete scanner section only shows in wideband
+- AI Signal Lab captures (`sigtool.py capture`) record the tuner whose band
+  holds the signal outside coherent mode
+- Only coherent exists on the downconverter variant. See heimdall_v2/CLAUDE.md
+  *Operating Modes* and kraken_doa_v2/CLAUDE.md *Operating modes*
 
 ### KrakenSDR Wideband (Downconverter) Variant
 

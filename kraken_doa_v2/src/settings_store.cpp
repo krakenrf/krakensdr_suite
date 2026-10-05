@@ -124,6 +124,12 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // Decoder plugins the user excluded from the Digital Decoder's "Auto
         // detect" ("id,id"; empty = every plugin takes part)
         {"auto_detect_off",          "AUTO_DETECT_OFF:",          VType::STRING, ""},
+        // Independent mode's per-tuner tuning "f/g,f/g,..." (Hz / dB, 0 / -999 =
+        // none) and the operating mode (top-bar Mode selector). After FREQ /
+        // GAIN and the VFOs (their tuners); TUNERS before the mode, which
+        // re-sends it to heimdall when independent mode is entered
+        {"independent_tuners",       "TUNERS:",                   VType::STRING, ""},
+        {"operating_mode",           "OPERATING_MODE:",           VType::STRING, "coherent"},
         // Station
         {"station_id",               "STATION_ID:",               VType::STRING, "KrakenSDR"},
         {"location_source",          "LOCATION_SOURCE:",          VType::STRING, "gps"},

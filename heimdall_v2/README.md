@@ -259,7 +259,9 @@ echo '{"command":"set_frequency","frequency":433000000}' | nc localhost 8092
 | `set_gain` | `gain` (dB, `-1`=auto) | Set gain on all channels |
 | `set_rtl_tcp_channel` | `channel` | Choose RTL-TCP source channel |
 | `set_stability_delay` | `delay_ms` | Override retune cooldown |
-| `set_wideband_mode` | `enable`, `base_frequency?` | Enter/leave wideband scan mode |
+| `set_operating_mode` | `mode` (`coherent`/`wideband`/`independent`) | Switch the operating mode (wideband spreads the tuners around the current frequency; coherent retunes all and recalibrates) |
+| `set_independent_tuner` | `channel`, `frequency?` (Hz), `gain?` (dB, `-1`=auto) | Independent mode: tune one tuner / set its gain |
+| `set_wideband_mode` | `enable`, `base_frequency?` | Enter/leave wideband scan mode (older form of `set_operating_mode`) |
 | `set_wideband_frequencies` | `base_frequency` | Per-tuner spacing in wideband |
 | `set_wideband_edge_clip` | `edge_clip` (0.1–1.0) | Usable bandwidth fraction/tuner |
 | `get_wideband_status` | — | Query wideband coverage/frequencies |
@@ -282,7 +284,10 @@ then IQ bytes...
 
 Total = `32 + num_channels·8 + num_channels·num_samples·2` bytes. `phase_state`
 mirrors the phase compensator enum so clients know when the stream is fully
-calibrated; in wideband mode each channel carries its own frequency.
+calibrated; its high bits are flags (consumers mask the low byte): 0x100
+KerberosSDR manual calibration, 0x200 calibration stale, 0x400 wideband scan
+mode, 0x800 independent mode. In wideband / independent mode each channel
+carries its own frequency, in independent mode also its own gain.
 
 ### RTL-TCP (port 1234)
 

@@ -115,7 +115,9 @@ docker compose down           # stop and remove the containers
 1. heimdall waits until the KrakenSDR's 5 dongles are on the USB bus (at most
    45 s), opens them and calibrates.
 2. kraken_doa waits for heimdall's phase calibration to converge (at most
-   300 s, then it starts anyway), then starts its web UI.
+   300 s, then it starts anyway), then starts its web UI. In Wideband or
+   Independent mode (the DoA page's Mode selector) no calibration runs, so it
+   starts straight away.
 
 The logs show errors only, as in `run.sh`'s headless mode. The apps' live
 terminal dashboards aren't available in Docker. For full log output, put
@@ -244,8 +246,8 @@ services:
   - For heimdall it waits for the dongles first.
   - For kraken_doa it creates the TLS certificate if needed, then waits for
     convergence by reading the phase state from the 8091 packet header, like
-    `run.sh`. It doesn't wait in KerberosSDR manual mode, which it detects
-    from the header flag.
+    `run.sh`. It doesn't wait in KerberosSDR manual mode, or in Wideband /
+    Independent mode, which it detects from the header flags.
   - Empty variables from compose are removed, because the apps treat an
     empty variable as set.
   - The decoder plugins in `kraken_doa_v2/plugins/` (all the decoders: P25,

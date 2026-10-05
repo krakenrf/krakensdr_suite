@@ -187,6 +187,15 @@ void DataReceiver::data_receiver_thread() {
                 // every downstream phase-state comparison keeps working.
                 server_kerberos_mode.store((phase_comp_state & 0x100u) != 0, std::memory_order_relaxed);
                 server_cal_stale.store((phase_comp_state & 0x200u) != 0, std::memory_order_relaxed);
+                // Bits 10 / 11: heimdall's operating mode (wideband scan /
+                // independent). Only acted on once this heimdall has shown it
+                // sends them (an older one never sets either bit)
+                {
+                    static bool mode_bits_seen = false;
+                    const int hmode = (phase_comp_state & 0x800u) ? 2 : (phase_comp_state & 0x400u) ? 1 : 0;
+                    if (hmode) mode_bits_seen = true;
+                    if (mode_bits_seen) ControlHandler::note_server_mode(hmode);
+                }
                 phase_comp_state &= 0xFFu;
                 uint32_t frequency_change_counter = EndianUtils::read_be32(buffer.data(), offset + 20);
                 uint32_t current_group_index = EndianUtils::read_be32(buffer.data(), offset + 24);
@@ -231,7 +240,7 @@ void DataReceiver::data_receiver_thread() {
 
                     // In WIDEBAND mode: Skip FFT reset - signals stay visible during drag-to-tune
                     // In COHERENT mode: Reset FFT averaging for fresh phase calibration data
-                    bool is_wideband_mode = wideband_mode_enabled.load(std::memory_order_relaxed);
+                    bool is_wideband_mode = multi_tuner_mode();   // wideband or independent
 
                     if (!is_wideband_mode) {
                         // Coherent mode: reset FFT averaging to start fresh
@@ -359,7 +368,8 @@ void DataReceiver::data_receiver_thread() {
                 int current_active = active_channel.load(std::memory_order_relaxed);
                 bool need_doa = (static_cast<int>(channels) >= current_elements && doa_enabled.load(std::memory_order_relaxed));
                 bool need_fm = (fm_enabled.load(std::memory_order_relaxed) && current_active < static_cast<int>(channels));
-                bool is_wideband = wideband_mode_enabled.load(std::memory_order_relaxed);
+                // Wideband / independent: every tuner is converted (one FFT each)
+                bool is_wideband = multi_tuner_mode();
                 bool need_beamforming = (static_cast<int>(channels) >= current_elements && beamforming_enabled.load(std::memory_order_relaxed));
 
                 // OPTIMIZATION #4: Use stack-allocated array instead of heap vector (eliminates allocation)
@@ -535,8 +545,9 @@ void DataReceiver::decimation_processor_thread() {
 
         bool fm_needs_processing = fm_enabled.load(std::memory_order_relaxed) &&
                                   static_cast<int>(raw_packet.num_channels) > current_active;
-        // MUSIC requires coherent channels, so disable in wideband mode
-        bool wideband_enabled = wideband_mode_enabled.load(std::memory_order_relaxed);
+        // MUSIC requires coherent channels: off in wideband and independent
+        // mode, where each VFO decimates only its own tuner (tuner_channel)
+        bool wideband_enabled = multi_tuner_mode();
         bool music_needs_processing = !wideband_enabled &&
                                       packet_elements >= 2 &&
                                       static_cast<int>(raw_packet.num_channels) >= active_num_elements.load(std::memory_order_relaxed) &&
@@ -576,10 +587,14 @@ void DataReceiver::decimation_processor_thread() {
                 if (fm_only && !single_wanted) {
                     // Not decimated in this mode, but keep its FFT-method
                     // squelch indicator live (it reads the main FFT only)
+                    // (outside coherent mode every method runs as FFT - the
+                    // eigenvalue ones need MUSIC, which doesn't run there)
                     if (inst->squelch_enabled.load(std::memory_order_relaxed) &&
-                        static_cast<SquelchMethod>(inst->squelch_method.load(std::memory_order_relaxed)) == SquelchMethod::FFT) {
+                        (wideband_enabled ||
+                         static_cast<SquelchMethod>(inst->squelch_method.load(std::memory_order_relaxed)) == SquelchMethod::FFT)) {
                         inst->squelch_open.store(FFTProcessor::check_squelch_in_range(
-                            current_active, inst->squelch_level.load(std::memory_order_relaxed),
+                            wideband_enabled ? inst->tuner_channel.load(std::memory_order_relaxed) : current_active,
+                            inst->squelch_level.load(std::memory_order_relaxed),
                             inst->frequency_offset_hz, inst->decimator->getBandwidthMhz() * 1e6f),
                             std::memory_order_relaxed);
                     }
@@ -612,7 +627,7 @@ void DataReceiver::decimation_processor_thread() {
                         size_t input_channels;
 
                         if (wideband_enabled) {
-                            int tuner_ch = inst->wideband_tuner_channel;
+                            int tuner_ch = inst->tuner_channel;
                             if (tuner_ch >= 0 && tuner_ch < static_cast<int>(raw_packet.channel_iq_data.size())) {
                                 channel_ptrs[0] = raw_packet.channel_iq_data[tuner_ch].data();
                                 channel_lens[0] = raw_packet.channel_iq_data[tuner_ch].size();
@@ -657,11 +672,15 @@ void DataReceiver::decimation_processor_thread() {
                         // to run to provide DoA steering angle. Squelch only applies to audio output.
                         // IMPORTANT: When eigenvalue squelch is enabled, ALWAYS run MUSIC to compute ratio.
                         bool squelch_allows_music = true;
-                        bool bf_active = beamforming_enabled.load(std::memory_order_relaxed);
+                        // Wideband / independent: no beamformer and no MUSIC run,
+                        // so the FFT squelch on this VFO's own tuner is the only one
+                        // (an eigenvalue method would freeze its last state - and
+                        // the audio with it; the saved method returns in coherent)
+                        bool bf_active = beamforming_enabled.load(std::memory_order_relaxed) && !wideband_enabled;
                         // Squelch method is per decimator (each has its own MUSIC
                         // processor, so an eigenvalue squelch is naturally local too)
-                        SquelchMethod current_squelch_method = static_cast<SquelchMethod>(
-                            inst->squelch_method.load(std::memory_order_relaxed));
+                        SquelchMethod current_squelch_method = wideband_enabled ? SquelchMethod::FFT
+                            : static_cast<SquelchMethod>(inst->squelch_method.load(std::memory_order_relaxed));
                         bool use_eigenvalue_squelch = (current_squelch_method == SquelchMethod::EIGENVALUE ||
                                                        current_squelch_method == SquelchMethod::EIGENVALUE_AUTO);
 
@@ -669,7 +688,8 @@ void DataReceiver::decimation_processor_thread() {
                             // FFT-based squelch: Only apply squelch to MUSIC when beamforming is OFF
                             // When beamforming is ON, MUSIC must run to provide steering
                             float squelch_level = inst->squelch_level.load(std::memory_order_relaxed);
-                            int check_channel = active_channel.load(std::memory_order_relaxed);
+                            int check_channel = wideband_enabled ? inst->tuner_channel.load(std::memory_order_relaxed)
+                                                                 : active_channel.load(std::memory_order_relaxed);
                             float offset_hz = inst->frequency_offset_hz;
                             float bw_hz = inst->decimator->getBandwidthMhz() * 1e6f;
                             squelch_allows_music = FFTProcessor::check_squelch_in_range(
@@ -916,10 +936,9 @@ void DataReceiver::decimation_processor_thread() {
                             src = &result.decimated_data.channels[idx].samples;
                     }
                     if (!src || src->empty()) continue;
-                    int tuner = wideband_enabled ? inst->wideband_tuner_channel.load(std::memory_order_relaxed) : 0;
+                    int tuner = wideband_enabled ? inst->tuner_channel.load(std::memory_order_relaxed) : 0;
                     if (tuner < 0 || tuner >= MAX_CHANNELS) tuner = 0;
-                    double rf = static_cast<double>(tuner_frequencies[tuner].load(std::memory_order_relaxed)) +
-                                result.decimated_data.freq_offset_hz;
+                    double rf = static_cast<double>(exact_tuner_hz(tuner)) + result.decimated_data.freq_offset_hz;
                     dd->push(src->data(), src->size(), result.decimated_data.output_rate_hz, rf);
                 }
             }
@@ -972,9 +991,9 @@ void DataReceiver::decimation_processor_thread() {
         }
 
         // FFT Processing
-        // In wideband mode, process FFT for all channels (for stitching)
-        // In normal mode, only process FFT for active channel
-        bool is_wideband = wideband_mode_enabled.load(std::memory_order_relaxed);
+        // Wideband / independent mode: FFT for all channels (stitched, or one
+        // spectrum per tuner). Coherent: only the active channel
+        bool is_wideband = multi_tuner_mode();
 
         if (is_wideband) {
             // Wideband mode: Process FFT for all channels
@@ -1199,8 +1218,10 @@ void DataReceiver::fm_processor_thread() {
             if (fm_decimator && fm_decimator->squelch_enabled.load(std::memory_order_relaxed)) {
                 float squelch_level = fm_decimator->squelch_level.load(std::memory_order_relaxed);
 
-                // Check squelch method (per decimator)
-                SquelchMethod audio_squelch_method = static_cast<SquelchMethod>(
+                // Check squelch method (per decimator). Wideband / independent:
+                // always FFT on the VFO's own tuner (no MUSIC, no beamformer)
+                const bool multi = multi_tuner_mode();
+                SquelchMethod audio_squelch_method = multi ? SquelchMethod::FFT : static_cast<SquelchMethod>(
                     fm_decimator->squelch_method.load(std::memory_order_relaxed));
 
                 if (audio_squelch_method == SquelchMethod::EIGENVALUE ||
@@ -1210,7 +1231,7 @@ void DataReceiver::fm_processor_thread() {
                     // freezes the DoA publish), so audio simply follows it -
                     // audio and DoA can never disagree about open/closed.
                     squelch_allows_audio = fm_decimator->squelch_open.load(std::memory_order_relaxed);
-                } else if (beamforming_enabled.load(std::memory_order_relaxed) &&
+                } else if (!multi && beamforming_enabled.load(std::memory_order_relaxed) &&
                            fm_decimator->beamformed_fft.valid.load(std::memory_order_acquire)) {
                     // FFT-based squelch with beamforming: use the FM decimator's
                     // beamformed signal for better SNR
@@ -1218,7 +1239,8 @@ void DataReceiver::fm_processor_thread() {
                         fm_decimator->beamformed_fft, squelch_level);
                 } else {
                     // FFT-based squelch: fall back to single-channel squelch
-                    int check_channel = active_channel.load(std::memory_order_relaxed);
+                    int check_channel = multi ? fm_decimator->tuner_channel.load(std::memory_order_relaxed)
+                                              : active_channel.load(std::memory_order_relaxed);
                     float offset_hz = fm_decimator->frequency_offset_hz;
                     float bw_hz = fm_decimator->decimator->getBandwidthMhz() * 1e6f;
                     squelch_allows_audio = FFTProcessor::check_squelch_in_range(

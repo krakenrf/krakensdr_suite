@@ -479,7 +479,7 @@ void render() {
           << col::DIM << "  elems " << col::RST << nelem << "/" << expected_serials.size()
           << col::DIM << "  ref ch" << col::RST << REF_CHANNEL
           << col::DIM << "  mode " << col::RST
-          << (mode == OperatingMode::WIDEBAND_SCAN ? "WIDEBAND" : "COHERENT")
+          << (mode == OperatingMode::WIDEBAND_SCAN ? "WIDEBAND" : mode == OperatingMode::INDEPENDENT ? "INDEPENDENT" : "COHERENT")
           << col::DIM << "  bias " << col::RST << onoff(bias_tee_enabled.load());
         add(o.str());
 
@@ -586,6 +586,15 @@ void render() {
           << col::DIM << "  edge-clip " << col::RST << f2(wideband_config.edge_clip.load());
         for (int i = 0; i < nshow; i++)
             o << col::DIM << "  t" << i << " " << col::RST << f1(wideband_config.get_tuner_frequency(i) / 1e6);
+        add(o.str());
+    } else if (operating_mode.load() == OperatingMode::INDEPENDENT) {
+        ostringstream o;
+        o << label("INDEPENDENT");
+        for (int i = 0; i < nshow; i++) {
+            const int g = wideband_config.get_tuner_gain(i);
+            o << col::DIM << "  t" << i << " " << col::RST << f1(wideband_config.get_tuner_frequency(i) / 1e6)
+              << col::DIM << "/" << col::RST << (g == -1 ? string("AGC") : f1(g / 10.0));
+        }
         add(o.str());
     }
 

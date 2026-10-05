@@ -294,11 +294,25 @@ struct CorrelationResult {
     void initialize();  // Domain-specific initialization moved to correlation module
 };
 
-// Wideband scan mode
+// Operating mode. Outside COHERENT no calibration runs (noise source off,
+// lag/phase machines parked) and every tuner may sit at its own frequency:
+//   WIDEBAND_SCAN - tuners spread side by side around one centre (stitched
+//                   spectrum, setup_wideband_frequencies)
+//   INDEPENDENT   - every tuner is its own receiver: own frequency and gain
+//                   (set_independent_tuner), no compensation applied
 enum class OperatingMode {
     COHERENT = 0,       // Normal phase-coherent operation
-    WIDEBAND_SCAN = 1   // Wideband scan mode (no phase calibration)
+    WIDEBAND_SCAN = 1,  // Wideband scan mode (no phase calibration)
+    INDEPENDENT = 2     // Non-coherent independent tuners
 };
+
+inline const char* operating_mode_name(OperatingMode m) {
+    switch (m) {
+        case OperatingMode::WIDEBAND_SCAN: return "wideband";
+        case OperatingMode::INDEPENDENT: return "independent";
+        default: return "coherent";
+    }
+}
 
 // Discrete scanner configuration and state
 struct DiscreteScannerConfig {
@@ -352,9 +366,13 @@ struct DiscreteScannerConfig {
     }
 };
 
-// Per-tuner frequency configuration for wideband mode
+// Per-tuner frequency configuration for wideband mode (and the per-tuner
+// frequency + gain of independent mode). `enabled` = WIDEBAND_SCAN only.
 struct WidebandConfig {
     std::array<std::atomic<uint32_t>, NUM_DEVICES> tuner_frequencies;
+    // Independent mode: each tuner's gain (tenths of dB, -1 = AGC). Outside
+    // it every tuner runs current_gain.
+    std::array<std::atomic<int>, NUM_DEVICES> tuner_gains;
     std::atomic<bool> enabled{false};
     std::atomic<float> edge_clip{0.8f};  // Edge clip for tuner spacing (0.0-1.0)
 
@@ -362,7 +380,13 @@ struct WidebandConfig {
         // Initialize all tuner frequencies to CENTER_FREQ
         for (size_t i = 0; i < NUM_DEVICES; i++) {
             tuner_frequencies[i] = CENTER_FREQ;
+            tuner_gains[i] = GAIN;
         }
+    }
+
+    int get_tuner_gain(int tuner) const {
+        if (tuner >= 0 && tuner < NUM_DEVICES) return tuner_gains[tuner].load();
+        return GAIN;
     }
 
     void set_tuner_frequency(int tuner, uint32_t freq) {

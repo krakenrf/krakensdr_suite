@@ -120,7 +120,11 @@ esac
 #   magic(4) 'MCHQ' | num_channels(4) | num_samples(4) | phase_state(4) | ...
 # CONVERGED == 4 (PhaseCompensatorState enum). Each fresh connection starts on a
 # packet boundary, so reading the first 16 bytes yields a valid header.
-# Exit 0 = converged, 1 = timed out, 2 = the watched process exited.
+# Exit 0 = converged, 1 = timed out, 2 = the watched process exited,
+# 3 = heimdall runs in wideband scan / independent mode (phase-state bits
+# 0x400 / 0x800): no calibration runs there, so there is nothing to wait for
+# (waiting used to hold the client back until the timeout - and headless mode
+# then gave up on the whole stack).
 # arg1 = timeout seconds (0 = forever); arg2 = pid whose exit means Heimdall
 # is gone for good (0 = don't watch) - otherwise the wait would poll a dead
 # port until the timeout, or forever with WAIT_TIMEOUT=0.
@@ -158,7 +162,11 @@ while True:
         s.close()
         if len(buf) >= 16:
             magic, ch, samp, phase = struct.unpack(">IIII", buf[:16])
-            phase &= 0xFF  # high bits carry KerberosSDR flags; low byte is the state
+            if magic == MAGIC and phase & 0xC00:
+                sys.stderr.write("\r   Heimdall is in %s mode - no calibration to wait for\n"
+                                 % ("independent" if phase & 0x800 else "wideband scan"))
+                sys.exit(3)
+            phase &= 0xFF  # high bits carry mode / KerberosSDR flags; low byte is the state
             if magic == MAGIC:
                 sys.stderr.write("\r   [%3ds] Heimdall phase: %-10s" % (el, NAMES.get(phase, str(phase))))
                 sys.stderr.flush()
@@ -232,6 +240,9 @@ if [[ "${1:-}" == "__client_pane" ]]; then
         0)
             ok "Phase converged - DF output is valid. Starting client..."
             sleep 1
+            ;;
+        3)
+            ok "Starting client..."
             ;;
         2)
             # The top pane's supervisor ended: heimdall exited cleanly or was
@@ -425,7 +436,8 @@ run_headless() {
         # the "Timed out" branch below and exit 1).
         [[ "$stopping" == "1" ]] && return 0
         case $wrc in
-        0) ;;
+        0) ok "Phase converged - DF output is valid." ;;
+        3) ok "No calibration in this mode - starting the client." ;;
         2)
             warn "Heimdall exited during startup. Last log lines:"
             tail -n 15 "$hlog" | sed 's/^/     /'
@@ -437,7 +449,6 @@ run_headless() {
             die "Timed out (check antennas/noise source, or raise WAIT_TIMEOUT)."
             ;;
         esac
-        ok "Phase converged - DF output is valid."
     fi
 
     # A stop during the steps above (e.g. the --kerberos sleep) must not go on

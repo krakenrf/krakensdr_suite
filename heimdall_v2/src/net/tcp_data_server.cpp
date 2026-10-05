@@ -107,8 +107,11 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
     // Get gain from global state (same for all channels)
     float gain_db = (current_gain.load() == -1) ? -1.0f : (current_gain.load() / 10.0f);
 
-    // Check if we're in wideband mode - use per-tuner frequencies if so
-    bool is_wideband = wideband_config.enabled.load();
+    // Outside coherent mode (wideband scan / independent) every tuner reports
+    // its own frequency; independent mode also its own gain
+    const OperatingMode mode = operating_mode.load();
+    const bool is_wideband = mode != OperatingMode::COHERENT;
+    const bool independent = mode == OperatingMode::INDEPENDENT;
 
     if (first_broadcast) {
         std::cout << "TCP Data Format: " << num_channels << " channels, "
@@ -161,6 +164,8 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
     // wire layout (consumers must mask the low byte for the state enum):
     //   bit 8 (0x100) = kerberos MANUAL-calibration mode active
     //   bit 9 (0x200) = calibration STALE (settings changed since calibrating)
+    //   bit 10 (0x400) = wideband scan mode (tuners spread, no calibration)
+    //   bit 11 (0x800) = independent mode (every tuner its own receiver)
     // --kerberos_sw is intentionally NOT flagged: calibration is automatic
     // there, so the client should behave exactly as with a KrakenSDR.
     auto phase_state = get_phase_compensation_state_nonblocking();
@@ -169,6 +174,8 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
         phase_state_value |= 0x100u;
         if (kerberos_cal_stale.load(std::memory_order_relaxed)) phase_state_value |= 0x200u;
     }
+    if (mode == OperatingMode::WIDEBAND_SCAN) phase_state_value |= 0x400u;
+    if (independent) phase_state_value |= 0x800u;
     uint32_t noise_source_active = bias_tee_enabled.load() ? 1 : 0;
 
     append_big_endian(packet, phase_state_value);
@@ -197,8 +204,13 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
 
         packet.insert(packet.end(), reinterpret_cast<const uint8_t*>(&ch_frequency_hz),
                       reinterpret_cast<const uint8_t*>(&ch_frequency_hz) + sizeof(float));
-        packet.insert(packet.end(), reinterpret_cast<const uint8_t*>(&gain_db),
-                      reinterpret_cast<const uint8_t*>(&gain_db) + sizeof(float));
+        float ch_gain_db = gain_db;
+        if (independent) {
+            const int g = wideband_config.get_tuner_gain(ch);
+            ch_gain_db = (g == -1) ? -1.0f : g / 10.0f;
+        }
+        packet.insert(packet.end(), reinterpret_cast<const uint8_t*>(&ch_gain_db),
+                      reinterpret_cast<const uint8_t*>(&ch_gain_db) + sizeof(float));
     }
     
     // Convert complex samples back to interleaved uint8 IQ

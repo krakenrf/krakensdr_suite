@@ -2,6 +2,16 @@ KrakenSDR V2 software. The new V2 software moves away from Python and implements
 
 We are now able to have a real time spectrum and audio demodulation at the same time that the MUSIC DoA is run.
 
+The **Mode** selector in the top bar of the KrakenSDR DOA page picks how the receiver's tuners are used:
+
+- **Coherent** (default): all tuners work as one phase-calibrated antenna array - MUSIC DoA, beamforming, the web mapper and DoA logging.
+- **Wideband**: the tuners sit side by side for one wide stitched spectrum (about 5 x 1.9 MHz on a KrakenSDR); the discrete scanner runs in this mode. No DoA.
+- **Independent**: every tuner is its own receiver with its own frequency and gain - the page shows one spectrum + waterfall per tuner in a grid. Each pane has its own frequency digits (click the top / bottom half of a digit, or use the mouse wheel on it) and gain slider - the top bar's frequency and gain are hidden in this mode, and put VFOs (demodulation, digital decoders, the AI Signal Lab) on any pane: drag a pane's spectrum to tune that tuner (like the main display), drag a VFO bar to move it, click a pane to move the selected VFO there, or pick the tuner on the VFO's card. No DoA, and no calibration runs (the noise source stays off).
+
+In every mode the spectrum zooms with the mouse wheel (or the Zoom slider under the waterfall, up to 16x; in Independent mode the pane under the cursor / the selected pane), and the bar between the spectrum and the waterfall can be dragged to change the split (in Independent mode it moves every pane at once; double-click for the default).
+
+The DoA panel and the DoA / coherent-only sidebar sections are hidden outside Coherent mode. The mode and Independent mode's per-tuner tuning are remembered across restarts. Switching back to Coherent retunes every tuner to the common frequency and runs a phase recalibration. (The KrakenSDR Wideband hardware variant only has Coherent mode: its tuners are fixed at the IF.)
+
 Any number of VFOs can decode digital radio signals at once - P25 Phase 1, DMR, TETRA, D-STAR, NXDN, MPT1327 (analogue trunking control channels), POCSAG pagers and APRS - with automatic mode detection: tick "Digital decoder" on a VFO in the Decimators box and pick "Auto detect" or a decoder. Each decoding VFO gets its own tab (settings, decoded data, full event log) in the panel under the waterfall ("🔐 Decoders" button, or ⤢ on the VFO); the sidebar "Digital Decoders" box lists the installed voice codecs and decoder plugins. It shows network/site identities, talkgroups, radio IDs, callsigns, messages and call activity, and can play the voice (P25 built in; DMR, D-STAR, NXDN and TETRA with codecs you install yourself - see "Digital voice codecs" below). Every decoder is a plugin, so new ones can be added.
 
 New decoders can be added as plugins, and the **AI Signal Lab** (sidebar "🤖 AI Signal Lab") can write them for you: it points an LLM coding agent (Claude Code, or another LLM CLI) at the signal in a VFO, tells you what the signal is, and on request writes, builds and tests a decoder plugin for it - see "AI Signal Lab and decoder plugins" below.

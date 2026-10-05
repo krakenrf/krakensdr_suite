@@ -476,7 +476,8 @@ void render() {
           << col::DIM << "  gain " << col::RST << (gain_db < 0 ? string("auto") : f1(gain_db) + "dB")
           << col::DIM << "  sr " << col::RST << f2(SAMPLE_RATE / 1e6f) << "M"
           << col::DIM << "  elems " << col::RST << active_num_elements.load() << "/" << DOA_NUM_ELEMENTS
-          << col::DIM << "  wideband " << col::RST << onoff(wideband_mode_enabled.load());
+          << col::DIM << "  mode " << col::RST
+          << (wideband_mode_enabled.load() ? "wideband" : independent_mode_enabled.load() ? "independent" : "coherent");
         add(o.str());
     }
     {

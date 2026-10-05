@@ -73,10 +73,23 @@ bool set_if_vga_all(int index, const std::vector<std::unique_ptr<SDRDevice>>& de
 bool update_sdr_settings(uint64_t frequency = 0, int gain = -999, const std::vector<std::unique_ptr<SDRDevice>>& devices = {});
 void handle_settings_change();
 
-// Wideband scan (tuner spread) mode functions - unavailable in the
-// downconverter variant, which needs every tuner parked at the IF
+// Operating mode (COHERENT / WIDEBAND_SCAN / INDEPENDENT, see types.hpp).
+// Leaving COHERENT parks the calibration (noise off, FFT off); returning to it
+// retunes every tuner to current_frequency on the common gain and runs the
+// phase recalibration. WIDEBAND_SCAN: the caller then spreads the tuners
+// (setup_wideband_frequencies). Non-coherent modes are unavailable in the
+// downconverter variant, which needs every tuner parked at the IF. Returns
+// false if nothing changed / refused.
+bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+// enable -> WIDEBAND_SCAN; !enable -> COHERENT, only when in WIDEBAND_SCAN
 bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>>& devices);
-bool set_tuner_frequency(int tuner_index, uint32_t frequency, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+// Independent mode: one tuner's frequency (Hz, 0 = keep) and/or gain (tenths
+// of dB, -1 = AGC, -999 = keep). false + *err on failure.
+bool set_independent_tuner(int tuner_index, uint64_t frequency, int gain,
+                           const std::vector<std::unique_ptr<SDRDevice>>& devices, std::string* err);
+// Startup: re-enter the saved operating mode (settings::persisted_mode) and
+// independent mode's per-tuner tuning, once the devices are open
+void restore_operating_mode(const std::vector<std::unique_ptr<SDRDevice>>& devices);
 void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::unique_ptr<SDRDevice>>& devices);
 
 // Serializes librtlsdr handle operations (see sdr_init.cpp). Innermost lock.
