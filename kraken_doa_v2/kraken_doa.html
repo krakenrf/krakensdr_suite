@@ -105,7 +105,6 @@ body.sb-resizing {cursor:col-resize;user-select:none}
 .ai-plugin .nm {color:#e0e0e0;font-weight:bold}
 .ai-plugin .ai-auto {font-size:11px;color:#8aa8c7;display:flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;min-width:0}
 .ai-plugin .ds {color:#8aa8c7;font-size:11px;margin:2px 0}
-.ai-plugin .bt {display:flex;gap:4px;flex-wrap:wrap;margin-top:3px}
 /* Bottom panel under the waterfall (Decoder | AI tabs) */
 .info-panel {flex-shrink:0;display:flex;flex-direction:column;border-top:1px solid #0f3460;background:#141428;height:280px;min-height:120px}
 .info-panel.flash {animation:infoflash 1.2s ease-out}
@@ -479,7 +478,7 @@ body.sb-resizing {cursor:col-resize;user-select:none}
     <!-- Digital voice/data decoder (one per VFO) -->
     <div class="sb-section" id="sb-digital">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🔐 Digital Decoders<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The voice codecs the digital decoders can use, and the installed decoder plugins. <b>Auto detect</b> on a plugin = it runs when a VFO's decoder is on Auto detect (untick the ones you never need: each costs CPU). Plugins are plain source folders (plugins/&lt;id&gt;/): Export / Import them, or copy the folder to another KrakenSDR and run make. To decode a VFO, tick <b>Digital decoder</b> on it in the Decimators box and pick <b>Auto detect</b> or a decoder; any number of VFOs can decode at once, each with its own tab in the panel under the waterfall. Voice plays with Demod "Digital" (or Listen in the VFO's tab). The AMBE and TETRA codecs are not shipped (licensing): you build them yourself, for personal use - whether that is allowed where you live is your responsibility.</span></span></h3>
+        <h3>🔐 Digital Decoders<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The voice codecs the digital decoders can use, and the installed decoder plugins. <b>Auto detect</b> on a plugin = it runs when a VFO's decoder is on Auto detect (untick the ones you never need: each costs CPU). Plugins are plain source folders (plugins/&lt;id&gt;/): to add one, copy its folder into kraken_doa_v2/plugins/, run make in kraken_doa_v2 and press ↻. To decode a VFO, tick <b>Digital decoder</b> on it in the Decimators box and pick <b>Auto detect</b> or a decoder; any number of VFOs can decode at once, each with its own tab in the panel under the waterfall. Voice plays with Demod "Digital" (or Listen in the VFO's tab). The AMBE and TETRA codecs are not shipped (licensing): you build them yourself, for personal use - whether that is allowed where you live is your responsibility.</span></span></h3>
         <span class="sb-toggle">▼</span>
       </div>
       <div class="sb-content">
@@ -491,11 +490,9 @@ body.sb-resizing {cursor:col-resize;user-select:none}
         <div class="ctrl-row dig-plug-head" onclick="digTogglePlugins()" title="Show / hide the decoder plugins">
           <span style="font-size:12px;color:#888;min-width:0"><span id="dig-plug-caret" class="dig-plug-caret">▶</span> Decoder plugins <span id="dig-plug-count"></span></span>
           <span style="display:flex;gap:4px">
-            <button class="btn sm" type="button" onclick="event.stopPropagation(); $id('ai-import-file').click()" title="Import a plugin exported from another KrakenSDR (.krakenplugin.json)">Import…</button>
-            <button class="btn sm" type="button" onclick="event.stopPropagation(); send('PLUGINS_RESCAN')" title="Re-read the plugins folder">↻</button>
+            <button class="btn sm" type="button" onclick="event.stopPropagation(); send('PLUGINS_RESCAN')" title="Re-read the plugins folder (after copying a plugin in and running make)">↻</button>
           </span>
         </div>
-        <input type="file" id="ai-import-file" accept=".json" style="display:none" onchange="aiImportFile(this)">
         <!-- collapsed by default (open state kept in localStorage) -->
         <div id="dig-plug-body" style="display:none">
           <div id="ai-plugins"><div class="dig-help">No plugins yet.</div></div>
@@ -6055,8 +6052,6 @@ function connect() {
           else if(msg.ai_error) { aiOnError(msg.ai_error); }
           else if(msg.ai_sessions) { aiOnSessions(msg.ai_sessions); }
           else if(msg.ai_session) { aiOnSession(msg.ai_session); }
-          else if(msg.plugin_export) { aiOnExport(msg.plugin_export); }
-          else if(msg.plugin_import) { aiOnImport(msg.plugin_import); }
           else if(msg.decimator_added) {
             requestDecimatorInfo(); // Refresh the list
             resetAudioWorklet(); // Reset audio worklet to clear buffers
@@ -7345,8 +7340,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   let aiLastSeq = 0;
   let aiErrorText = '';
   let aiTestText = '';
-  let aiPendingExport = null;
-  let aiPendingImport = null;
   let aiFreqEdited = false;
   let aiTick = null;
   let aiRenderQueued = false;
@@ -7396,7 +7389,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
 
   function aiOnError(x) {
-    if (x.error === 'exists') return;
     aiErrorText = x.error;
     aiQueueRender();
   }
@@ -7567,7 +7559,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (sel.innerHTML !== opts) sel.innerHTML = opts;
     if (!info.some(d => d.id === cur) && info.length) sel.value = info[0].id;
     aiFillFreq();
-    aiRenderPlugins();
   }
 
   function aiFillFreq() {
@@ -7650,10 +7641,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (!el) return;
     let html;
     if (!digPlugins.length) {
-      html = '<div class="dig-help">No plugins yet. Investigate a signal and press Create Decoder, or import one.</div>';
+      html = '<div class="dig-help">No plugins yet. Investigate a signal and press Create Decoder, or copy a plugin folder into kraken_doa_v2/plugins/ and run make.</div>';
     } else {
-      const canBuild = aiState && aiState.enabled && !aiState.busy;
-      const vfo = digTargetVfo();
       html = digPlugins.map(p => `<div class="ai-plugin">
           <div style="display:flex;align-items:baseline;gap:6px">
             <span style="flex:1;min-width:0"><span class="nm">${digEsc(p.name)}</span> <span style="color:#6f87a6">${digEsc(p.id)}${p.version ? ' v' + digEsc(p.version) : ''}</span></span>
@@ -7662,13 +7651,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
           </div>
           <div class="ds">${digEsc(p.description || '')}</div>
           ${p.error ? `<div class="ds" style="color:#ffb74d">${digEsc(p.error)}</div>` : ''}
-          ${p.stale ? '<div class="ds" style="color:#ffb74d">The source changed since the last build: Rebuild</div>' : ''}
-          <div class="bt">
-            ${p.built && vfo !== null ? `<button class="btn sm" type="button" onclick="digUsePlugin('${p.id}')" title="Decode D${vfo} with this plugin">Use on D${vfo}</button>` : ''}
-            <button class="btn sm" type="button" onclick="aiExport('${p.id}')" title="Download the plugin's source as one file, to import on another KrakenSDR">Export</button>
-            <button class="btn sm" type="button" onclick="send('PLUGIN_BUILD:${p.id}')" ${canBuild ? '' : 'disabled'}
-              title="${canBuild ? 'Compile the plugin again' : 'Needs the AI Signal Lab enabled on the Pi (or run make in kraken_doa_v2)'}">Rebuild</button>
-          </div></div>`).join('');
+          ${p.stale ? '<div class="ds" style="color:#ffb74d">The source changed since the last build: run make in kraken_doa_v2</div>' : ''}
+          </div>`).join('');
     }
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
     // the collapsed header still tells: how many, and whether one has a problem
@@ -7697,75 +7681,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (body) { body.style.display = ''; document.querySelector('.dig-plug-head').classList.add('open'); }
     }
   })();
-
-  function digTargetVfo() {
-    const ids = (decimatorInfo || []).map(d => d.id);
-    if (infoTab && infoTab.startsWith('dec:') && $id('info-panel').style.display !== 'none') {
-      const v = parseInt(infoTab.slice(4));
-      if (ids.includes(v)) return v;
-    }
-    const src = (decimatorInfo || []).find(d => d.is_fm_source);
-    if (src) return src.id;
-    return ids.length ? ids[0] : null;
-  }
-
-  function digUsePlugin(id) {
-    const vfo = digTargetVfo();
-    if (vfo === null) return;
-    digSetModeFor(vfo, 'PLUGIN:' + id);
-    infoDecVfo = vfo;
-    infoPanelOpen('dec:' + vfo);
-  }
-
-  function aiExport(id) {
-    aiPendingExport = id;
-    send('PLUGIN_EXPORT:' + id);
-  }
-
-  function aiOnExport(x) {
-    if (x.id !== aiPendingExport) return;   // another page asked
-    aiPendingExport = null;
-    const blob = new Blob([JSON.stringify(x.bundle, null, 1)], {type: 'application/json'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = x.id + '.krakenplugin.json';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
-  }
-
-  function aiImportFile(input) {
-    const f = input.files && input.files[0];
-    input.value = '';
-    if (!f) return;
-    if (f.size > 1.5e6) { alert('That file is too large for a plugin bundle.'); return; }
-    const r = new FileReader();
-    r.onload = () => {
-      let b;
-      try { b = JSON.parse(r.result); } catch (e) { alert('Not a plugin bundle (JSON expected).'); return; }
-      if (!b || b.kraken_plugin !== 1 || !b.id || !b.files) { alert('Not a KrakenSDR plugin bundle.'); return; }
-      if (!confirm(`Import plugin "${b.id}" (${Object.keys(b.files).length} files) and compile it on this receiver?\n\n` +
-                   'A plugin is native code that runs here: only import plugins from people you trust.')) return;
-      aiPendingImport = b;
-      send('PLUGIN_IMPORT:' + JSON.stringify(b));
-    };
-    r.readAsText(f);
-  }
-
-  function aiOnImport(x) {
-    const b = aiPendingImport;
-    if (!b || x.id !== b.id) return;
-    aiPendingImport = null;
-    if (x.error === 'exists') {
-      if (confirm(`A plugin "${b.id}" already exists here. Replace its source files with the imported ones?`)) {
-        b.replace = true;
-        aiPendingImport = b;
-        send('PLUGIN_IMPORT:' + JSON.stringify(b));
-      }
-    } else if (x.error) {
-      alert('Import failed: ' + x.error);
-    }
-  }
 
   try {
     const saved = localStorage.getItem('kraken_ai_instructions');
@@ -7986,7 +7901,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (!p) return;
     p.style.display = 'none';
     try { localStorage.setItem('kraken_info_panel', JSON.stringify({open: false, tab: infoTab})); } catch (e) {}
-    aiRenderPlugins();
     setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
   }
 
@@ -7998,7 +7912,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
 
   // tab buttons: one per VFO with a decoder on, then AI
   function infoRenderTabs() {
-    aiRenderPlugins();   // its "Use on D<n>" follows the open decoder tab
     const el = $id('info-tab-list');
     if (!el) return;
     const act = digActiveIds();

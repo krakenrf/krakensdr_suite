@@ -193,15 +193,12 @@ a good decoder reports nothing there.
 
 ## Moving plugins between receivers
 
-A plugin is just its source folder. Either
-
-- copy `plugins/<id>/` (without `build/`) into the other receiver's
-  `kraken_doa_v2/plugins/` and run `make` there (or press ↻ in the Digital
-  Decoders box, then Rebuild), or
-- **Export** it in the Digital Decoders box (a single `.krakenplugin.json` file
-  with the sources) and **Import** it on the other receiver, which compiles
-  it. Importing from the web UI requires the AI Signal Lab to be enabled on
-  that Pi (a plugin is native code).
+A plugin is just its source folder: copy `plugins/<id>/` (without `build/`)
+into the other receiver's `kraken_doa_v2/plugins/`, run `make` in
+`kraken_doa_v2` (or `make -C plugins PLUGIN=<id>`), then press ↻ next to
+"Decoder plugins" in the web UI's Digital Decoders box (or restart). It
+builds against that receiver's `sdk/` and `lib/`, so both should run the same
+version of the suite.
 
 Plugins are selected per VFO and that choice is saved with the VFO settings
 (`PLUGIN:<id>`); a receiver without the plugin shows it as missing.

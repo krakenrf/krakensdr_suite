@@ -378,7 +378,7 @@ decoders `kraken_doa_v2/plugins/`
   waterfall (its settings + data); the sidebar "🔐 Digital Decoders" box shows
   which voice codecs are installed (+ install steps for missing ones, from
   `plugins/lib/build/codecs` - the plugins' own detection) and the plugin list
-  (Auto detect ticks, Use on, Export / Import, Rebuild); WS
+  (Auto detect ticks, ↻ re-scan); WS
   `DIGITAL_MODE:id:OFF|AUTO|PLUGIN:<id>` (old names P25/DMR/... still map),
   `DIGITAL_OPT:id:verbose|invert|<plugin>.<key>:value` (plugin-declared
   options, e.g. `dmr.slot`, `p25.nac`); persisted in the VFO snapshot. See
@@ -441,8 +441,9 @@ decoders `kraken_doa_v2/plugins/`
   OFF unless enabled on the Pi with
   `python3 ai/kraken_ai.py setup` (`ai/ai_config.json`, gitignored; the web UI
   can't enable it - it runs an agent and native code). Native install only
-- Plugins move between receivers as folders (copy + `make`) or as an
-  Export/Import `.krakenplugin.json` bundle (import needs the lab enabled)
+- Plugins move between receivers as folders only: copy `plugins/<id>/`, run
+  `make`, press ↻ (no web-UI export / import / rebuild - removed on purpose:
+  compiling code sent from a web page was a recipe for issues)
 
 ### KrakenSDR Wideband (Downconverter) Variant
 

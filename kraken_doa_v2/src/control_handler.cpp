@@ -124,11 +124,9 @@ static void broadcast(const string& json) {
 //   AI_SESSION_GET:id              -> {"ai_session":{...,chat,activity}}
 //   AI_SESSION_SELECT:id | AI_SESSION_DELETE:id
 //   PLUGINS_LIST | PLUGINS_RESCAN  -> {"plugins":[...]}
-//   PLUGIN_BUILD:id | PLUGIN_EXPORT:id (-> {"plugin_export":{...}})
 //   PLUGIN_CODECS                  -> {"codecs":{...}} (installed voice codecs)
 //   PLUGIN_AUTO:id:0|1             take part in "Auto detect" (persisted as
 //                                  AUTO_DETECT_OFF:, -> {"plugins":[...]})
-//   PLUGIN_IMPORT:{bundle}         (-> {"plugin_import":{"id":..,"error":..}})
 static void ai_error(const string& cmd, const string& err) {
     broadcast("{\"ai_error\":{\"cmd\":\"" + json_escape(cmd) + "\",\"error\":\"" + json_escape(err) + "\"}}");
 }
@@ -213,23 +211,6 @@ static void handle_ai_command(string_view message) {
             broadcast(AiManager::plugins_message());
             return;
         }
-    } else if (message.starts_with("PLUGIN_BUILD:")) {
-        err = ai.build_plugin(rest(13));
-    } else if (message.starts_with("PLUGIN_EXPORT:")) {
-        // reads the plugin's files: on a worker thread, not this (uWS) one
-        std::thread([id = rest(14)] {
-            string bundle;
-            string e = AiManager::instance().export_plugin(id, &bundle);
-            if (e.empty()) broadcast("{\"plugin_export\":{\"id\":\"" + json_escape(id) + "\",\"bundle\":" + bundle + "}}");
-            else ai_error("PLUGIN_EXPORT", e);
-        }).detach();
-        return;
-    } else if (message.starts_with("PLUGIN_IMPORT:")) {
-        string j = rest(14), id;
-        json_find(j, "id", id);
-        err = ai.import_plugin(j);
-        broadcast("{\"plugin_import\":{\"id\":\"" + json_escape(id) + "\",\"error\":\"" + json_escape(err) + "\"}}");
-        return;
     } else {
         err = "unknown command";
     }

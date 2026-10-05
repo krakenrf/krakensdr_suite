@@ -31,9 +31,6 @@ public:
     std::string create(const std::string& plugin_id, const std::string& instructions);
     std::string ask(const std::string& question);
     std::string test();
-    std::string build_plugin(const std::string& plugin_id);
-    std::string import_plugin(const std::string& bundle_json);   // {"kraken_plugin":1,"id":..,"files":{..}}
-    std::string export_plugin(const std::string& plugin_id, std::string* bundle_json);
     void cancel();
 
     bool enabled() const;          // ai/ai_config.json "enabled": true

@@ -139,18 +139,32 @@ Every decoder in a VFO's decoder list is a plugin: a folder of C++
 source in `kraken_doa_v2/plugins/<id>/`, which `./install.sh` / `make` builds.
 The suite ships P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG (pagers) and
 APRS (AX.25 1200 bit/s packet; written by the AI Signal Lab). "Auto detect"
-runs every decoder ticked "Auto detect" in the sidebar's plugin list (AI Signal
-Lab box) - all of them by default; untick the ones you never need, since each
+runs every decoder ticked "Auto detect" in the sidebar's plugin list (Digital
+Decoders box, "Decoder plugins") - all of them by default; untick the ones you never need, since each
 costs CPU on every VFO in Auto detect. A decoder's own settings - the DMR timeslot,
 the P25 NAC - appear in the panel while that decoder is selected, or once
 Auto detect has locked onto it. Plugins run as separate processes, so a
 faulty one cannot crash the receiver. To write one by hand, see
 [kraken_doa_v2/plugins/SDK.md](kraken_doa_v2/plugins/SDK.md).
 
-To move a plugin to another KrakenSDR, either copy its folder (without
-`build/`) into that receiver's `kraken_doa_v2/plugins/` and run `make` in
-`kraken_doa_v2`, or use **Export** in the Digital Decoders box (one
-`.krakenplugin.json` file) and **Import** it on the other receiver.
+To add a plugin, or move one to another KrakenSDR, copy its folder (without
+`build/`) into the receiver's `kraken_doa_v2/plugins/`, then build it and
+press ↻ next to "Decoder plugins" in the Digital Decoders box (or restart the
+software):
+
+```bash
+cd ~/krakensdr_suite/kraken_doa_v2      # wherever the suite is installed
+make -j3                                # builds kraken_doa + every plugin
+# or just the one plugin:
+make -C plugins PLUGIN=<id>
+```
+
+Run the same `make` after editing a plugin's source; decoders that are using
+it restart on the new build by themselves. The plugin compiles against the
+receiver's own `plugins/sdk/` and `plugins/lib/`, so the receiving KrakenSDR
+should run the same (or a newer) version of this software. A plugin is
+native code that runs on your receiver: only install plugins from people you
+trust.
 
 ### AI Signal Lab
 
@@ -186,8 +200,8 @@ To move a plugin to another KrakenSDR, either copy its folder (without
    (the sidebar only shows the job's status); ask follow-up questions there.
 4. **🛠 Create Decoder** has the agent write a plugin for it, build it and test
    it on the captures. This takes about 5-30 minutes. The plugin then shows up
-   in every VFO's decoder list and in the "Digital Decoders" box ("Use on VFO"
-   selects it on the AI box's VFO).
+   in every VFO's decoder list and in the "Digital Decoders" box; "Use on VFO"
+   next to the finished job selects it on the AI box's VFO.
    **✍ Custom Instructions** passes your own hints to the agent: specs or
    links, what to show, what to ignore. Pressing the button again on an
    existing plugin improves that plugin.

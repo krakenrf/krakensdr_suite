@@ -399,8 +399,9 @@ Edit `include/config.hpp`:
   the detected plugin -, verbose, invert, bandwidth / plugin problems, status,
   facts, filterable event log, plugin stderr). The sidebar "🔐 Digital
   Decoders" box shows the plugin list (`aiRenderPlugins` -> `#ai-plugins`:
-  Auto detect tick, "Use on D<n>" = `digTargetVfo()` - the VFO whose decoder
-  tab is open, else the Audio Src VFO -, Export / Import, Rebuild; collapsed
+  Auto detect tick, ↻ = `PLUGINS_RESCAN` after a manual copy + make; no
+  export / import / rebuild in the web UI - plugins move as folders + `make`;
+  a plugin is put on a VFO with the VFO card's decoder list; collapsed
   by default - `digTogglePlugins`, open state in localStorage
   `kraken_dig_plugins_open`; the header shows the count and a ⚠ count of
   plugins with an error / stale / unbuilt) and the
@@ -525,20 +526,18 @@ Edit `include/config.hpp`:
 **AI Signal Lab (`src/ai_manager.cpp`, `ai/`):**
 - Sidebar box "🤖 AI Signal Lab" + the "🤖 AI" tab of the panel under the
   waterfall. `AiManager` runs ONE job at a time: `python3 ai/kraken_ai.py
-  investigate|create|ask|test` or `make -C plugins PLUGIN=id` (build /
-  import), posix_spawn in its own process group (Stop = killpg TERM, KILL
+  investigate|create|ask|test`, posix_spawn in its own process group (Stop = killpg TERM, KILL
   after 3 s); a reader THREAD reads its output - the uWS loop only starts /
   stops jobs. The bridge prints one JSON event per line
   (`{"ev":"status|text|tool|tool_result|report|usage|error|done|exit",...}`,
   checked by a strict JSON validator before being relayed); AiManager relays
   each as `{"ai_event":{seq,kind,t,e}}`, keeps the last 300 (replayed in
   `ai_state.log`) and tracks the current session from the `done` events.
-  After create / build / import: registry rescan (reader thread) + `{"plugins"}`
+  After create: registry rescan (reader thread) + `{"plugins"}`
 - Gate: `ai/ai_config.json` `"enabled": true`, written only by `python3
   ai/kraken_ai.py setup` on the Pi (checks the CLI login, asks for
   confirmation). Read on every command, so no restart is needed;
-  `KRAKEN_AI_CONFIG` overrides the path (both sides). Build / import from the
-  web UI need it too (they compile native code); export doesn't
+  `KRAKEN_AI_CONFIG` overrides the path (both sides)
 - Sessions = saved investigations (`ai/sessions/<YYYYmmdd-HHMMSS>-<kHz>/`):
   capture.cf32/.json, plots, analysis.md, session.json (incl. the Claude
   session id - create / ask `--resume` it), `chat.json` (the conversation:
@@ -578,14 +577,10 @@ Edit `include/config.hpp`:
   must lie in the current span; capture rate = VFO rate clamped 12.5-600 kHz,
   2-60 s), `AI_CREATE:id[:instructions]` (existing plugin = improve it),
   `AI_ASK:question`, the AI_SESSION* commands above, `PLUGINS_LIST`,
-  `PLUGINS_RESCAN`, `PLUGIN_BUILD:id`, `PLUGIN_EXPORT:id` (worker thread ->
-  `plugin_export` bundle, <= 1 MB - the WS backpressure limit is 2 MB),
-  `PLUGIN_IMPORT:{bundle}` (-> `plugin_import` `{id,error}`; "exists" makes
-  the page ask, then resend with `"replace":true`). Bundle =
-  `{"kraken_plugin":1,"id":..,"files":{"name":"content"}}`, flat names,
-  .cpp/.hpp/.h/.md/.txt/.json only (a plugin using `plugins/lib/` needs the
-  suite's library on the other receiver - it ships with it). Errors ->
-  `{"ai_error":{cmd,error}}`
+  `PLUGINS_RESCAN` (`PLUGIN_AUTO` / `PLUGIN_CODECS`: see the digital
+  decoders section). Errors -> `{"ai_error":{cmd,error}}`. There is
+  deliberately no web-UI build / export / import: plugins are copied as
+  folders and built with `make` by the user
 - `ai/kraken_ai.py`: Claude runs as `claude -p --output-format stream-json
   --verbose --permission-mode dontAsk --safe-mode` (no user hooks / MCP /
   CLAUDE.md), cwd = session dir, tools allowed: Read of the session /

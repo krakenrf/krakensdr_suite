@@ -34,8 +34,6 @@ namespace {
 constexpr const char* BRIDGE = "ai/kraken_ai.py";
 constexpr const char* SESSIONS = "ai/sessions";
 constexpr size_t LOG_MAX = 300;
-constexpr size_t BUNDLE_FILE_MAX = 512 * 1024;
-constexpr size_t BUNDLE_TOTAL_MAX = 1024 * 1024;   // < the WebSocket backpressure limit
 
 int64_t wall_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -60,18 +58,6 @@ std::string config_path() {
 bool config_value(const std::string& key, std::string& out) {
     std::string j = read_file(config_path(), 65536);
     return !j.empty() && json_find(j, key, out);
-}
-
-// Files a plugin bundle may carry: plain names, source / docs only
-bool bundle_name_ok(const std::string& n) {
-    if (n.empty() || n.size() > 64 || n[0] == '.') return false;
-    for (char c : n)
-        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' || c == '.')) return false;
-    auto ends = [&](const char* x) {
-        size_t l = strlen(x);
-        return n.size() > l && n.compare(n.size() - l, l, x) == 0;
-    };
-    return ends(".cpp") || ends(".hpp") || ends(".h") || ends(".md") || ends(".txt") || ends(".json");
 }
 
 // Strict JSON syntax check (RFC 8259) - files the agent could have edited are
@@ -509,7 +495,7 @@ void AiManager::finished(const std::string& kind, int st) {
     }
     busy_ = false;
     std::cout << "AI Signal Lab: " << kind << " finished (" << code << ")" << std::endl;
-    if (kind == "create" || kind == "build" || kind == "import") {
+    if (kind == "create") {
         dig::PluginRegistry::instance().scan();   // this reader thread, not the uWS loop
         WebSocketServer::broadcast_json_message(plugins_message());
     }
@@ -639,101 +625,6 @@ std::string AiManager::ask(const std::string& question) {
 std::string AiManager::test() {
     if (!enabled()) return "the AI Signal Lab is not enabled on this receiver (run: python3 ai/kraken_ai.py setup)";
     return start_job("test", {"python3", BRIDGE, "test"}, "testing the LLM connection");
-}
-
-std::string AiManager::build_plugin(const std::string& plugin_id) {
-    if (!enabled()) return "building plugins from the web UI needs the AI Signal Lab enabled (python3 ai/kraken_ai.py setup)";
-    if (!dig::PluginRegistry::valid_id(plugin_id)) return "bad plugin id";
-    return start_job("build", {"make", "-C", dig::PluginRegistry::dir(), "PLUGIN=" + plugin_id}, "building plugin " + plugin_id);
-}
-
-std::string AiManager::export_plugin(const std::string& id, std::string* bundle) {
-    if (!dig::PluginRegistry::valid_id(id)) return "bad plugin id";
-    std::string pdir = dig::PluginRegistry::dir() + "/" + id;
-    std::ostringstream o;
-    o << "{\"kraken_plugin\":1,\"id\":\"" << json_escape(id) << "\",\"exported\":\"";
-    char stamp[32];
-    time_t t = time(nullptr);
-    strftime(stamp, sizeof stamp, "%Y-%m-%d %H:%M:%S", localtime(&t));
-    o << stamp << "\",\"files\":{";
-    DIR* d = opendir(pdir.c_str());
-    if (!d) return "no such plugin";
-    std::vector<std::string> names;
-    while (dirent* e = readdir(d))
-        if (bundle_name_ok(e->d_name)) names.push_back(e->d_name);
-    closedir(d);
-    std::sort(names.begin(), names.end());
-    size_t total = 0;
-    bool first = true;
-    for (const auto& n : names) {
-        std::string c = read_file(pdir + "/" + n, BUNDLE_FILE_MAX + 1);
-        if (c.size() > BUNDLE_FILE_MAX) continue;
-        total += c.size();
-        if (total > BUNDLE_TOTAL_MAX) return "plugin too large to export";
-        o << (first ? "" : ",") << "\"" << json_escape(n) << "\":\"" << json_escape(c) << "\"";
-        first = false;
-    }
-    o << "}}";
-    if (first) return "the plugin has no source files";
-    *bundle = o.str();
-    return "";
-}
-
-std::string AiManager::import_plugin(const std::string& j) {
-    if (!enabled()) return "importing plugins (native code) needs the AI Signal Lab enabled on the Pi "
-                           "(python3 ai/kraken_ai.py setup) - or copy the folder into plugins/ and run make";
-    if (busy_.load()) return "the AI Signal Lab is busy";
-    std::string v, id;
-    if (!json_find(j, "kraken_plugin", v) || v != "1") return "not a KrakenSDR plugin bundle";
-    if (!json_find(j, "id", id) || !dig::PluginRegistry::valid_id(id)) return "bad plugin id in the bundle";
-    bool replace = json_find(j, "replace", v) && v == "true";
-    // "files":{"name":"content",...} - walk the object's string pairs
-    size_t p = j.find("\"files\"");
-    if (p == std::string::npos) return "bundle has no files";
-    p = j.find('{', p);
-    if (p == std::string::npos) return "bundle has no files";
-    p++;
-    std::vector<std::pair<std::string, std::string>> files;
-    size_t total = 0;
-    for (;;) {
-        while (p < j.size() && (std::isspace(static_cast<unsigned char>(j[p])) || j[p] == ',')) p++;
-        if (p >= j.size()) return "malformed bundle";
-        if (j[p] == '}') break;
-        if (j[p] != '"') return "malformed bundle";
-        std::string name, content;
-        p = json_read_string(j, p, name);
-        while (p < j.size() && std::isspace(static_cast<unsigned char>(j[p]))) p++;
-        if (p >= j.size() || j[p] != ':') return "malformed bundle";
-        p++;
-        while (p < j.size() && std::isspace(static_cast<unsigned char>(j[p]))) p++;
-        if (p >= j.size() || j[p] != '"') return "malformed bundle";
-        p = json_read_string(j, p, content);
-        if (!bundle_name_ok(name)) return "file name not allowed in a plugin: " + name;
-        if (content.size() > BUNDLE_FILE_MAX) return "file too large: " + name;
-        total += content.size();
-        if (total > BUNDLE_TOTAL_MAX) return "bundle too large";
-        files.emplace_back(name, content);
-    }
-    bool has_main = false;
-    for (auto& f : files) has_main |= f.first == "decoder.cpp";
-    if (!has_main) return "the bundle has no decoder.cpp";
-    std::string base = dig::PluginRegistry::dir();
-    std::string pdir = base + "/" + id;
-    struct stat st{};
-    if (stat(pdir.c_str(), &st) == 0 && !replace) return "exists";   // the page asks before replacing
-    mkdir(base.c_str(), 0755);
-    mkdir(pdir.c_str(), 0755);
-    for (auto& f : files) {
-        std::string tmp = pdir + "/." + f.first + ".tmp";
-        {
-            std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
-            if (!o) return "cannot write " + pdir + "/" + f.first;
-            o << f.second;
-        }
-        if (rename(tmp.c_str(), (pdir + "/" + f.first).c_str()) != 0) return "cannot write " + f.first;
-    }
-    std::cout << "AI Signal Lab: imported plugin " << id << " (" << files.size() << " files)" << std::endl;
-    return start_job("import", {"make", "-C", base, "PLUGIN=" + id}, "building imported plugin " + id);
 }
 
 std::string AiManager::plugins_message() {
