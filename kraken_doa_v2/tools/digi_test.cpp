@@ -3,7 +3,7 @@
 // same resampling), synchronously. Run from kraken_doa_v2 (plugins/), or set
 // KRAKEN_PLUGIN_DIR.
 //   digi_test MODE FORMAT FILE [--fs HZ] [--offset HZ] [--vfo-rate HZ] [--conj] [--verbose] [--seconds S]
-//                              [--opt plugin.key=value] [--voice out.wav]
+//                              [--opt plugin.key=value] [--voice out.wav] [--station LAT,LON]
 // MODE: AUTO, PLUGIN:<id>, or an old protocol name (P25 DMR TETRA DSTAR NXDN MPT1327)
 // FORMAT: u8 (rtl_sdr interleaved uint8 IQ, --fs required), wav (PCM IQ, 16/24 bit),
 //         dis (S16LE discriminator samples at 48 kHz, DSDcc test files - FM
@@ -69,6 +69,10 @@ int main(int argc, char** argv) {
         else if (a == "--verbose") opt.verbose = true;
         else if (a == "--seconds") seconds = atof(argv[++i]);
         else if (a == "--voice") voice_out = argv[++i];
+        else if (a == "--station") {
+            double la = 0, lo = 0;
+            if (sscanf(argv[++i], "%lf,%lf", &la, &lo) == 2) dig::set_station_location(true, la, lo);
+        }
         else if (a == "--opt") {
             std::string kv = argv[++i];
             size_t eq = kv.find('=');
@@ -186,6 +190,9 @@ int main(int argc, char** argv) {
         fclose(w);
         fprintf(stderr, "voice: %.1f s written, %.1f s non-silent\n", n / 48000.0, nz / 48000.0);
     }
-    std::string s = dec.status_json(dec.last_event_seq(), 0);
+    std::string s = dec.status_json(dec.last_event_seq(), 0, true);
     std::cout << s << "\n";
+    std::string pts, keys;
+    dec.report().map_json(0, 0, pts, keys);
+    if (!pts.empty()) std::cout << "map: [" << pts << "]\n";
 }

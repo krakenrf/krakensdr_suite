@@ -20,6 +20,9 @@
 #include "settings_store.hpp"
 #include "doa_logger.hpp"
 #include "ai_manager.hpp"
+#include "incidents.hpp"
+#include "decoder_log.hpp"
+#include "rdf_mapper.hpp"
 #include "digital/dig_plugin.hpp"
 #include <iostream>
 #include <thread>
@@ -287,6 +290,16 @@ int main(int argc, char* argv[]) {
     // settings replay / from the web UI sidebar).
     web_mapper.start();
 
+    // Incident map: addresses in decoder text messages (POCSAG), looked up
+    // online (OpenStreetMap Nominatim) -> 🗺 Map
+    incidents::start();
+
+    // Decoder data log (off until enabled in the sidebar; settings replay)
+    declog::start();
+
+    // Mobile DF on the map: DoA lobes + the transmitter heat map (coherent mode)
+    rdfmap::start();
+
     // Ensure the recordings folder exists so the UI can list/download from it.
     cout << "DoA recordings folder: " << doa_recordings_dir() << endl;
 
@@ -395,6 +408,9 @@ int main(int argc, char* argv[]) {
 
     // Stop the web mapper worker (reads the same decimator/station state).
     web_mapper.stop();
+    incidents::save_now();
+    declog::stop();
+    rdfmap::stop();
 
     // Signal all condition variables for shutdown
     {

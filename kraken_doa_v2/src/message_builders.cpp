@@ -14,13 +14,18 @@
 #include "doa_logger.hpp"
 #include "utils/system_stats.hpp"
 #include "utils/json_escape.hpp"
+#include "utils/parse_num.hpp"
+#include "incidents.hpp"
 #include <algorithm>
+#include <atomic>
+#include <cmath>
 #include <iostream>
 #include <iomanip>
 #include <chrono>
 #include <cstdio>
 #include <string>
 #include <map>
+#include <set>
 #include <mutex>
 
 using namespace std;
@@ -788,7 +793,8 @@ string MessageBuilders::build_decimator_info_message() {
              << ",\"squelch_eigen_threshold\":" << info.squelch_eigen_threshold
              << ",\"digital_mode\":\"" << json_escape(dig::mode_string(static_cast<dig::Mode>(info.digital_mode), info.digital_plugin)) << "\""
              << ",\"digital_opts\":{\"verbose\":" << (info.digital_opts.verbose ? "true" : "false")
-             << ",\"invert\":" << (info.digital_opts.invert ? "true" : "false") << ",\"plugin\":{";
+             << ",\"invert\":" << (info.digital_opts.invert ? "true" : "false")
+             << ",\"map\":" << (info.digital_opts.map ? "true" : "false") << ",\"plugin\":{";
         bool fo = true;
         for (const auto& kv : info.digital_opts.plugin) {
             json << (fo ? "" : ",") << "\"" << json_escape(kv.first) << "\":\"" << json_escape(kv.second) << "\"";
@@ -811,7 +817,10 @@ string MessageBuilders::build_digital_message(int only_id, bool history) {
     // VFO id -> (decoder, last event seq pushed); the decoder pointer resets
     // the count when a VFO id is reused by a new decoder
     static std::map<int, std::pair<const void*, uint64_t>> sent;
+    static std::map<int, int64_t> tables_sent_ms;   // the plugins' tables: at most 1 Hz
     std::lock_guard<std::mutex> lk(mu);
+    const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count();
     stringstream json;
     json << "{\"digital\":[";
     bool first = true;
@@ -827,10 +836,84 @@ string MessageBuilders::build_digital_message(int only_id, bool history) {
         if (!first) json << ",";
         first = false;
         json << "{\"id\":" << inst->id << ",\"history\":" << (history ? "true" : "false") << ","
-             << dd->status_json(after, history ? 400 : 100).substr(1);
+             << [&] {
+                    // the plugins' tables, at most 1 Hz (incidents: build_incidents_message)
+                    int64_t& ts = tables_sent_ms[inst->id];
+                    const bool tables = history || now - ts >= 1000;
+                    if (tables) ts = now;
+                    return dd->status_json(after, history ? 400 : 100, tables);
+                }().substr(1);
         if (!history) st.second = dd->last_event_seq();
     }
-    json << "]}";
+    json << "],\"geo\":" << incidents::status_json() << "}";
     if (first) return "";
+    return json.str();
+}
+
+// The incident map's table + lookup status for the page's decoder tabs
+// ({"incidents":...}, incidents.cpp): on GET / clear, and from the 1 Hz map
+// timer when something changed (or every 15 s, for the "Seen" ages)
+string MessageBuilders::build_incidents_message(bool force) {
+    static std::mutex mu;
+    static uint64_t sent_seq = ~0ull;
+    static std::string sent_geo;
+    static int64_t sent_ms = 0;
+    std::lock_guard<std::mutex> lk(mu);
+    const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count();
+    const uint64_t seq = incidents::seq();
+    const std::string geo = incidents::status_json();
+    if (!force && seq == sent_seq && geo == sent_geo && now - sent_ms < 15000) return "";
+    sent_seq = seq;
+    sent_geo = geo;
+    sent_ms = now;
+    return incidents::message_json();
+}
+
+namespace {
+std::atomic<bool> map_full_requested{true};
+}
+
+void MessageBuilders::request_map_full() { map_full_requested.store(true); }
+
+string MessageBuilders::build_map_message() {
+    // VFO id -> (decoder, last map seq pushed); a new decoder starts over
+    static std::map<int, std::pair<const void*, uint64_t>> sent;
+    const bool full = map_full_requested.exchange(false);
+    StationLocation sl = station_info.resolve();
+    const bool have_station = !(sl.lat == 0.0 && sl.lon == 0.0) && is_finite_value(sl.lat) && is_finite_value(sl.lon);
+    dig::set_station_location(have_station, sl.lat, sl.lon);
+    std::string pts, keys;
+    std::map<int, std::pair<const void*, uint64_t>> now;
+    // incidents (incidents.cpp) of every plugin a decoder with Plot on map
+    // runs - also those received by a VFO that has gone since
+    static std::set<std::string> inc_plugins_sent;
+    static uint64_t inc_sent = 0;
+    std::set<std::string> inc_plugins;
+    for (const auto& inst : decimator_manager.getAllDecimators()) {
+        if (!inst) continue;
+        auto dd = inst->getDigital();
+        if (!dd || dd->mode() == dig::Mode::OFF || !dd->options().map) continue;
+        auto it = sent.find(inst->id);
+        uint64_t after = (!full && it != sent.end() && it->second.first == dd.get()) ? it->second.second : 0;
+        now[inst->id] = {dd.get(), dd->report().map_json(inst->id, after, pts, keys)};
+        const std::string ap = dd->active_plugin();
+        if (!ap.empty()) inc_plugins.insert(ap);
+    }
+    sent = std::move(now);
+    // a plugin newly shown: all its incidents (the seq alone would skip them)
+    const bool inc_full = full || inc_plugins != inc_plugins_sent;
+    inc_sent = incidents::map_json(inc_plugins, inc_full ? 0 : inc_sent, pts, keys);
+    inc_plugins_sent = std::move(inc_plugins);
+    stringstream json;
+    json << "{\"map\":{\"full\":" << (full ? "true" : "false") << ",\"station\":";
+    if (have_station) {
+        char b[64];
+        snprintf(b, sizeof b, "[%.6f,%.6f]", sl.lat, sl.lon);
+        json << b;
+    } else {
+        json << "null";
+    }
+    json << ",\"pts\":[" << pts << "],\"keys\":[" << keys << "]}}";
     return json.str();
 }

@@ -5,6 +5,8 @@
 #include "config.hpp"
 #include "control_handler.hpp"
 #include "message_builders.hpp"
+#include "decoder_log.hpp"
+#include "rdf_mapper.hpp"
 #include "scanner_manager.hpp"
 #include "decimator_manager.hpp"
 #include "channel_manager.hpp"
@@ -586,6 +588,31 @@ void WebSocketServer::web_server_main() {
                     auto msg = MessageBuilders::build_digital_message();
                     if (!msg.empty()) global_ssl_app->publish(TOPIC_CTL, msg, uWS::TEXT, false);
                 }, 250, 250);
+
+                // 🗺 Map: decoder map points + station location - 1 Hz
+                struct us_timer_t* map_timer = us_create_timer(native_loop, 0, 0);
+                us_timer_set(map_timer, [](struct us_timer_t* /*timer*/) {
+                    if (!global_ssl_app) return;
+                    global_ssl_app->publish(TOPIC_CTL, MessageBuilders::build_map_message(), uWS::TEXT, false);
+                    // incidents for the decoder tabs, when they changed
+                    const std::string inc = MessageBuilders::build_incidents_message();
+                    if (!inc.empty()) global_ssl_app->publish(TOPIC_CTL, inc, uWS::TEXT, false);
+                }, 1000, 1000);
+
+                // 🗺 Map, mobile DF: live lobes 2 Hz + changed heat maps
+                struct us_timer_t* rdf_timer = us_create_timer(native_loop, 0, 0);
+                us_timer_set(rdf_timer, [](struct us_timer_t* /*timer*/) {
+                    if (!global_ssl_app || global_ssl_app->numSubscribers(TOPIC_CTL) == 0) return;
+                    global_ssl_app->publish(TOPIC_CTL, rdfmap::status_message(), uWS::TEXT, false);
+                    for (const auto& m : rdfmap::grid_messages()) global_ssl_app->publish(TOPIC_CTL, m, uWS::TEXT, false);
+                }, 500, 500);
+
+                // 🗂 Decoder Logging status (disk space, sizes) - every 2 s
+                struct us_timer_t* declog_timer = us_create_timer(native_loop, 0, 0);
+                us_timer_set(declog_timer, [](struct us_timer_t* /*timer*/) {
+                    if (!global_ssl_app || global_ssl_app->numSubscribers(TOPIC_CTL) == 0) return;
+                    global_ssl_app->publish(TOPIC_CTL, declog::status_message(), uWS::TEXT, false);
+                }, 2000, 2000);
 
                 // System status timer - broadcasts every 500ms
                 struct us_timer_t* status_timer = us_create_timer(native_loop, 0, 0);

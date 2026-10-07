@@ -13,6 +13,9 @@
 #include "settings_store.hpp"
 #include "doa_logger.hpp"
 #include "message_builders.hpp"
+#include "incidents.hpp"
+#include "decoder_log.hpp"
+#include "rdf_mapper.hpp"
 #include "networking/data_receiver.hpp"
 #include "networking/web_mapper.hpp"
 #include "networking/websocket_server.hpp"
@@ -1801,7 +1804,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         record_decimator_snapshot();
     }
     else if (message.starts_with("DIGITAL_OPT:")) {
-        // Format: DIGITAL_OPT:id:key:value - verbose 0|1, invert 0|1, or a
+        // Format: DIGITAL_OPT:id:key:value - verbose 0|1, invert 0|1, map 0|1 (Plot on map), or a
         // plugin's own option "<plugin id>.<key>" (value "" = its default;
         // the plugin checks the value). Old keys: dmr_slot, p25_nac
         string params = string(message.substr(12));
@@ -1821,6 +1824,10 @@ void ControlHandler::handle_message_impl(string_view message) {
         }
         if (key == "verbose") o.verbose = val == "1";
         else if (key == "invert") o.invert = val == "1";
+        else if (key == "map") {
+            o.map = val == "1";
+            MessageBuilders::request_map_full();   // pages get the points back at once
+        }
         else if (dig::valid_option_key(key)) {
             if (val.size() > 100) throw CommandRejected("option value too long");
             for (unsigned char c : val)
@@ -1845,6 +1852,77 @@ void ControlHandler::handle_message_impl(string_view message) {
         // A page opening the decoder panel asks for the whole event log
         int id = parse_int(message, 16);
         broadcast(MessageBuilders::build_digital_message(id, true));
+    }
+    else if (message.starts_with("GEO_RADIUS_KM:")) {
+        // Incident map: addresses are looked up within this radius of the
+        // station (persisted)
+        int km = parse_int(message, 14);
+        if (km < 10 || km > 1000) throw CommandRejected("radius must be 10-1000 km");
+        incidents::set_radius_km(km);
+        cout << "Incident map: addresses within " << km << " km of the station" << endl;
+    }
+    else if (message.starts_with("DECODER_LOG:")) {
+        // Decoder data log (sidebar 🗂 Decoder Logging, decoder_log.cpp)
+        const bool on = parse_int(message, 12) != 0;
+        declog::set_enabled(on);
+        g_applied_cmd = string("DECODER_LOG:") + (on ? "1" : "0");
+        broadcast(declog::status_message());
+    }
+    else if (message.starts_with("DECODER_LOG_TYPES:")) {
+        if (!declog::set_types(string(message.substr(18)))) throw CommandRejected("unknown log type");
+        broadcast(declog::status_message());
+    }
+    else if (message.starts_with("DECODER_LOG_DAYS:")) {
+        const int d = parse_int(message, 17);
+        if (d < 0 || d > 3650) throw CommandRejected("days must be 0-3650");
+        declog::set_days(d);
+        broadcast(declog::status_message());
+    }
+    else if (message.starts_with("DECODER_LOG_POS_S:")) {
+        const int sec = parse_int(message, 18);
+        if (sec < 1 || sec > 3600) throw CommandRejected("position interval must be 1-3600 s");
+        declog::set_pos_interval(sec);
+        broadcast(declog::status_message());
+    }
+    else if (message.starts_with("DECODER_LOG_DIR:")) {
+        string err;
+        if (!declog::set_dir(string(message.substr(16)), &err)) {
+            broadcast("{\"declog_error\":\"" + json_escape(err) + "\"}");
+            throw CommandRejected(err);
+        }
+        broadcast(declog::status_message());
+    }
+    else if (message.starts_with("RDF:")) {
+        // Mobile DF heat map: collect bearings while driving (rdf_mapper.cpp)
+        const bool on = parse_int(message, 4) != 0;
+        rdfmap::set_enabled(on);
+        g_applied_cmd = string("RDF:") + (on ? "1" : "0");
+    }
+    else if (message.starts_with("RDF_RANGE_KM:")) {
+        double km = std::stod(string(message.substr(13)));
+        if (!rdfmap::set_range_km(km)) throw CommandRejected("range must be 1-50 km");
+    }
+    else if (message.starts_with("RDF_RESET:")) {
+        rdfmap::reset(parse_int(message, 10));
+    }
+    else if (message == "GET_RDF") {
+        rdfmap::request_full();   // a page opening the map: every VFO's heat map next push
+    }
+    else if (message == "GET_DECODER_LOG") {
+        broadcast(declog::status_message());   // a page opening the sidebar section
+    }
+    else if (message == "INCIDENTS_CLEAR") {
+        incidents::clear();
+        MessageBuilders::request_map_full();
+        broadcast(MessageBuilders::build_incidents_message(true));
+    }
+    else if (message == "GET_INCIDENTS") {
+        // a page connecting: the incidents for the decoder tabs
+        broadcast(MessageBuilders::build_incidents_message(true));
+    }
+    else if (message.starts_with("GET_MAP")) {
+        // A page opened the 🗺 Map: the next map push carries every point
+        MessageBuilders::request_map_full();
     }
     else if (message.starts_with("DIGITAL_CLEAR:")) {
         int id = parse_int(message, 14);

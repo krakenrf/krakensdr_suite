@@ -2,7 +2,7 @@
 
 Every decoder in the receiver's **Digital Decoder** (sidebar → 🔐 Digital
 Decoder → Mode) is a plugin - the protocols that ship with the suite (P25,
-DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS) as well as the ones you add.
+DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS, ADS-B) as well as the ones you add.
 Plugins are written by hand or by the **🤖 AI Signal Lab**, which has an LLM
 agent write, build and test one for a signal it investigated.
 
@@ -24,6 +24,7 @@ plugins/
 │                         TETRA ACELP), dig_common (front ends, the Bridge below)
 ├── p25/ dmr/ tetra/ dstar/ nxdn/ mpt1327/   the shipped protocol decoders
 ├── pocsag/ aprs/         more shipped decoders (APRS was written by the AI lab)
+├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
@@ -76,7 +77,12 @@ KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
                           .min_vfo_rate = 12500,          // VFO bandwidth needed
                           .author = "...",
                           .options = {{"slot", "Timeslot", "0", "0=Both|1=Slot 1|2=Slot 2",
-                                       "help text"}}})    // settings in the panel
+                                       "help text"}},     // settings in the panel
+                          .map = false,                   // true: sends map points (below)
+                          .manual_only = false,           // true: never runs in Auto detect
+                          .fixed_freq_hz = 0,             // > 0: the frequency the VFO is tuned to
+                          .voice = false,                 // true: decodes voice - the panel offers Listen
+                          .messages = false})             // true: sends text messages (host.message)
 ```
 
 The fields of `kp::Info` must be given **in this order** (C++20 designated
@@ -91,10 +97,19 @@ back to the default). They are saved per VFO.
 
 **Auto detect**: when a VFO's decoder is on "Auto detect", every plugin the
 user left ticked (sidebar plugin list, "Auto detect"; all are by default)
-runs side by side; the one whose `valid()` frames dominate is shown, and only
+runs side by side - except plugins that set `.manual_only = true` (they get
+no Auto detect tick at all; ADS-B) and plugins whose `min_vfo_rate` is more
+than twice the VFO's rate (they couldn't decode there); the one whose `valid()` frames dominate is shown, and only
 its voice / carrier offset is used. So a plugin must never call `valid()` on
 noise or on other protocols - it would steal the detection. (`Info::auto_detect`
 is deprecated and ignored; it is only kept so older plugins compile.)
+
+**Fixed frequency.** A decoder for one frequency (ADS-B: 1090 MHz) sets
+`.fixed_freq_hz`: picking it for a VFO sets the narrowest VFO bandwidth of at
+least `min_vfo_rate`, puts the VFO on its tuner's centre and tunes that tuner
+(in coherent mode the whole array) to the frequency. While the decoder is
+selected the VFO is drawn as a single line and can't be dragged; its
+frequency, bandwidth and tuner fields are locked.
 
 **Input.** `process()` gets the VFO's complex baseband, centred on the VFO
 frequency, already resampled to `Info::sample_rate`, in blocks of a few ms
@@ -117,6 +132,78 @@ VFO bandwidth the signal needs; the panel warns when the VFO is narrower.
 | `host.verbose()` | the panel's "Log all messages" option |
 | `host.time()` | seconds of input processed so far (sample clock) - use it for timeouts, not the wall clock |
 | `host.log(text)` | debug output (stderr) |
+| `host.map_point(p)` | a position on the web UI's 🗺 Map (`kp::MapPoint`, below) |
+| `host.map_remove(id)` | takes a point off the map |
+| `host.station(&lat, &lon)` | the receiver's location (sidebar → Station Information), false if it has none |
+| `host.table_columns(cols)` | headings of a live table in the panel (e.g. the aircraft ADS-B hears) |
+| `host.table_row(key, cells)` | adds / updates (same key) a table row; rows not updated for 10 min drop out |
+| `host.table_remove(key)` | removes a table row |
+| `host.message(from, text)` | a free-text message the decoder received (a pager text): kraken_doa looks for a street address in it and shows it as an incident (set `.messages = true`) |
+| `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the user ticked "Raw frames") |
+
+**Voice.** Set `.voice = true` if the decoder sends audio (`host.audio`):
+only then does its panel tab offer the Listen button.
+
+**Text messages → incidents.** A decoder of text messages (pagers...) can
+pass each one to `host.message(from, text)` and set `.messages = true`.
+kraken_doa finds a street address in the text and looks it up online
+(OpenStreetMap Nominatim) around the station; the result is an incident in
+the decoder's tab and, with "Plot on map", on the 🗺 Map. The plugin needs
+no map code (and must not use the network itself).
+
+**Decoder data log.** The user can log what every decoder reports to
+disk (sidebar → 🗂 Decoder Logging, one JSON Lines file per day): your
+events, text messages and map points are logged without any code in the
+plugin. Raw frames are the one thing to add: while `host.raw_wanted()` is
+true, pass each frame that passed its checks to `host.raw(text)` - one line,
+printable, compact (hex for binary frames, e.g. ADS-B `"8D4840D6... -14.8"`
+= the Mode S message + level in dB; APRS the TNC2 packet; POCSAG "RIC n
+F<f> <baud>" + the message codewords). Check `raw_wanted()` first: building
+the text costs CPU and it is usually off. The offline test prints raw frames
+with `--raw`. Map points are logged with their `info` lines (as a JSON
+object), so put every detail worth keeping there ("Squawk: 7700"). Start
+the event text of anything unusual or alarming with "⚠" (ADS-B:
+emergencies, squawk changes, extreme climbs) - the log, and anyone reading
+it, can pick those out.
+
+**Map points.** A decoder that learns positions (aircraft, APRS stations,
+vehicles...) puts them on the 🗺 Map in the right-hand pane:
+
+```cpp
+kp::MapPoint p;
+p.id = "4CA2B1";            // stable key: the same id again moves the marker
+p.lat = 53.42; p.lon = -6.27;
+p.label = "RYR12AB";        // text next to the marker ("" = the id)
+p.kind = "aircraft";        // aircraft | vehicle | ship | person | station | point
+p.heading = 123;            // degrees true (rotates the marker); NAN = unknown
+p.altitude_m = 11278;       // NAN = unknown (shown next to aircraft in ft)
+p.speed_kmh = 830;          // NAN = unknown
+p.info = "Callsign: RYR12AB\nSquawk: 1234";   // "Key: value" lines for the popup
+p.ttl_s = 60;               // removed after this long without an update
+host.map_point(p);
+```
+
+Send updates as often as you like (the browsers get them once a second);
+call `map_remove(id)` when you know a point is gone, the ttl covers the
+rest. Set `.map = true` in `KRAKEN_PLUGIN` so the panel offers "🗺 Plot on
+map" for the decoder from the start. Nothing reaches the map until the user
+ticks "Plot on map" in the decoder's tab (off by default, saved per VFO);
+the points are kept meanwhile. kraken_doa clears a decoder's points
+when the VFO is retuned or the decoder switched (your `reset()` runs then).
+The offline test prints the final map points; `--station LAT,LON` sets the
+receiver location there. The shared library's decoders (`lib/`, written
+against `dig::Report`) report positions with `Report::map()` and read the
+station with `Report::station()` - the DMR (GPS info LC) and D-STAR (GPS /
+DPRS slow data) plugins do; APRS calls `host.map_point` directly.
+
+**Tables.** A decoder that tracks many things at once (aircraft, stations,
+radios) can show them as a table above its facts: `table_columns()` once
+(the constructor), then `table_row(key, cells)` whenever an entry changes -
+at most every second or so per row; the page sorts by any column and adds a
+"Seen" column (time since the row's last update). Use the same key as the
+entry's map point: clicking the row then shows it on the map. kraken_doa
+empties the rows when the VFO is retuned or the decoder switched. The
+offline test prints the final table.
 
 ## Rules for a good decoder
 
@@ -166,7 +253,7 @@ linked as well.
 ```bash
 make -C plugins PLUGIN=mydec              # build one (or `make` in kraken_doa_v2 for all)
 plugins/mydec/build/decoder --info        # what kraken_doa reads
-plugins/mydec/build/decoder --file capture.cf32 [--offset HZ] [--verbose] [--audio out.wav]
+plugins/mydec/build/decoder --file capture.cf32 [--offset HZ] [--verbose] [--audio out.wav] [--station LAT,LON] [--raw]
 ```
 
 The offline test reads complex float32 (`.cf32`, rate from the `.json`
@@ -213,6 +300,10 @@ Hz) / `dig::RrcFrontEnd` give them their input. Your plugin can use any of it
 (`#include "dig_fec.hpp"` etc.).
 
 ## Example
+
+`plugins/adsb/`: ADS-B / Mode S on 1090 MHz at 2.4 MHz - pulse-position
+demodulation, CRC-24 with error repair, CPR position decoding, map points
+and the station location.
 
 `plugins/pocsag/decoder.cpp`: POCSAG pagers (2-FSK, 512/1200/2400 bit/s
 demodulated in parallel, BCH(31,21) correction with a parity check against

@@ -47,4 +47,5 @@ KRAKEN_PLUGIN(P25Plugin, {.id = "p25",
                           .min_vfo_rate = 12000,
                           .author = "KrakenSDR",
                           .options = {{"nac", "NAC", "", "",
-                                       "Only decode frames with this Network Access Code (3 hex digits). Empty = any."}}})
+                                       "Only decode frames with this Network Access Code (3 hex digits). Empty = any."}},
+                          .voice = true})

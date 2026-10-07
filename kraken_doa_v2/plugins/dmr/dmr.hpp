@@ -39,6 +39,8 @@ private:
         int64_t last_ms = 0;
         bool privacy = false;
         int ta_format = 0, ta_len = 0, ta_have = 0;   // talker alias assembly
+        uint32_t src = 0;            // radio ID of the current / last call (GPS reports are its)
+        std::string alias;           // its talker alias
         std::vector<uint8_t> ta_bits;
         std::unique_ptr<AmbeStream> ambe;            // voice codec state
         int64_t last_voice_ms = 0;
@@ -50,6 +52,7 @@ private:
     void full_lc(int slot, const uint8_t* lc96, const char* what);
     void csbk(int slot, const uint8_t* c);
     void talker_alias(int slot, int block, const uint8_t* lc);
+    void gps_point(int slot, double lat, double lon, const char* text);
     int voice_slot_ = -1;            // slot being played (auto mode)
     void voice_burst(int slot, const uint8_t* bits264);
     void call_update(int slot, const std::string& desc);

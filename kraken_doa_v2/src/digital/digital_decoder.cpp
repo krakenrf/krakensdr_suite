@@ -2,6 +2,7 @@
 #include "digital/dig_plugin.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -16,6 +17,7 @@
 #include <liquid/liquid.h>
 
 #include "utils/json_escape.hpp"
+#include "utils/parse_num.hpp"
 
 namespace dig {
 
@@ -35,9 +37,56 @@ constexpr int64_t AFC_PERIOD_MS = 300;
 constexpr int64_t AFC_SETTLE_MS = 300;
 
 // plugins/sdk/kraken_plugin.hpp kp::wire
-constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4, W_SYNC = 5, W_FACT = 16,
-                   W_EVENT = 17, W_VALID = 18, W_AUDIO = 19, W_VOICE_STATE = 20, W_FREQ_ERROR = 21,
-                   W_SYNC_DONE = 22;
+constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4, W_SYNC = 5, W_STATION = 6,
+                   W_FACT = 16, W_EVENT = 17, W_VALID = 18, W_AUDIO = 19, W_VOICE_STATE = 20, W_FREQ_ERROR = 21,
+                   W_SYNC_DONE = 22, W_MAP_POINT = 23, W_MAP_REMOVE = 24, W_TABLE_COLUMNS = 25, W_TABLE_ROW = 26,
+                   W_TABLE_REMOVE = 27, W_MESSAGE = 28, W_RAW = 29;
+
+std::mutex record_mu;
+RecordHandler record_handler;
+std::atomic<bool> raw_wanted{false};
+void deliver_record(DigitalDecoder* d, const LogRecord& r) {
+    RecordHandler h;
+    {
+        std::lock_guard<std::mutex> lk(record_mu);
+        h = record_handler;
+    }
+    if (h) h(d, r);
+}
+
+std::mutex message_mu;
+MessageHandler message_handler;
+void deliver_message(DigitalDecoder* d, const std::string& plugin, const std::string& from, const std::string& text,
+                     double rf_hz) {
+    MessageHandler h;
+    {
+        std::lock_guard<std::mutex> lk(message_mu);
+        h = message_handler;
+    }
+    if (h) h(d, plugin, from, text, rf_hz);
+}
+
+// '\0'-separated fields of a wire message
+std::vector<std::string> split0(const char* p, size_t len, size_t max_fields) {
+    std::vector<std::string> f;
+    size_t s = 0;
+    for (size_t i = 0; i <= len && f.size() < max_fields; i++)
+        if (i == len || p[i] == '\0') {
+            f.emplace_back(p + s, i - s);
+            s = i + 1;
+        }
+    return f;
+}
+
+// Auto detect leaves out the plugins that need a VFO more than this many
+// times wider than the one it runs on (ADS-B wants the whole 2.4 MHz: run on
+// a 12.5 kHz VFO it would only burn CPU on upsampled samples)
+constexpr double AUTO_MAX_RATE_SHORTFALL = 2.0;
+
+// Station location for the plugins (set_station_location); gen bumps on a change
+std::mutex station_mu;
+std::string station_text;          // "lat,lon" or "" (unknown)
+std::atomic<uint64_t> station_gen{1};
 
 int64_t mtime_ms(const std::string& path) {
     struct stat st{};
@@ -45,6 +94,33 @@ int64_t mtime_ms(const std::string& path) {
     return static_cast<int64_t>(st.st_mtim.tv_sec) * 1000 + st.st_mtim.tv_nsec / 1000000;
 }
 }  // namespace
+
+void set_record_handler(RecordHandler h) {
+    std::lock_guard<std::mutex> lk(record_mu);
+    record_handler = std::move(h);
+}
+
+void set_raw_wanted(bool on) { raw_wanted = on; }
+
+void set_message_handler(MessageHandler h) {
+    std::lock_guard<std::mutex> lk(message_mu);
+    message_handler = std::move(h);
+}
+
+void set_station_location(bool valid, double lat, double lon) {
+    std::string t;
+    // is_finite_value, not std::isfinite: kraken_doa builds with -Ofast
+    if (valid && is_finite_value(lat) && is_finite_value(lon) && std::fabs(lat) <= 90 && std::fabs(lon) <= 180) {
+        char b[64];
+        snprintf(b, sizeof b, "%.6f,%.6f", lat, lon);
+        t = b;
+    }
+    std::lock_guard<std::mutex> lk(station_mu);
+    if (t != station_text) {
+        station_text = t;
+        station_gen++;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // One plugin process of a decoder
@@ -57,7 +133,8 @@ struct Runner {
     int64_t retry_ms = 0, started_ms = 0;
     int crashes = 0;
     std::string note;                  // last problem logged (no repeats)
-    int verbose_sent = -1, voice_sent = -1;
+    int verbose_sent = -1, voice_sent = -1, raw_sent = -1;
+    uint64_t station_sent = 0;         // station_gen sent
     std::map<std::string, std::string> opts_sent;   // key (without the id prefix) -> value
     uint32_t sync_sent = 0, sync_done = 0;
     std::string state = "starting", error;
@@ -91,12 +168,16 @@ public:
             if (rf_hz_ != 0.0) {
                 reset_all();
                 report_.clear_all();
+                report_.map_clear();
+                report_.table_clear();
             }
             rf_hz_ = rf;
         }
         if (rate != in_rate_) {
             in_rate_ = rate;
-            rebuild_resamplers();
+            // Auto detect: the plugin set depends on the VFO's rate
+            if (mode_ == Mode::AUTO && auto_ids() != runner_ids()) rebuild_runners();
+            else rebuild_resamplers();
         }
         const int64_t t = now_ms();
         if (t - check_ms_ > CHECK_MS) {
@@ -106,12 +187,19 @@ public:
         // AFC mixer at the input rate
         mixed_.resize(n);
         const float w = -2.0f * static_cast<float>(M_PI) * afc_hz_ / in_rate_;
-        for (size_t i = 0; i < n; i++) {
-            std::complex<float> v = opts_.invert ? std::conj(x[i]) : x[i];
-            mixed_[i] = v * std::polar(1.0f, static_cast<float>(nco_phase_));
-            nco_phase_ += w;
+        if (w == 0.0f && nco_phase_ == 0.0) {
+            // no correction (yet, or the plugins report no offset - e.g. ADS-B
+            // at 2.4 MHz): a plain copy instead of a sin/cos per sample
+            if (opts_.invert) for (size_t i = 0; i < n; i++) mixed_[i] = std::conj(x[i]);
+            else std::copy(x, x + n, mixed_.begin());
+        } else {
+            for (size_t i = 0; i < n; i++) {
+                std::complex<float> v = opts_.invert ? std::conj(x[i]) : x[i];
+                mixed_[i] = v * std::polar(1.0f, static_cast<float>(nco_phase_));
+                nco_phase_ += w;
+            }
+            nco_phase_ = std::remainder(nco_phase_, 2.0 * M_PI);
         }
-        nco_phase_ = std::remainder(nco_phase_, 2.0 * M_PI);
         resample(n);
         for (size_t i = 0; i < runners_.size(); i++) {
             const Resampled* r = rate_buf(*runners_[i]);
@@ -169,6 +257,7 @@ public:
         std::vector<std::string> tail;
         uint64_t dropped = 0;
         double rate = 0, min_vfo_rate = 0;
+        bool map = false;
     };
     struct Status {
         std::string detected, detected_name;
@@ -178,6 +267,10 @@ public:
         std::map<std::string, std::pair<int, uint64_t>> frames;   // id -> (4 s window, total)
         std::vector<PluginStatus> plugins;
     };
+    std::string detected() const {
+        std::lock_guard<std::mutex> lk(st_mu_);
+        return detected_;
+    }
     Status status() const {
         std::lock_guard<std::mutex> lk(st_mu_);
         Status s;
@@ -260,9 +353,10 @@ private:
         if (mode_ == Mode::PLUGIN) {
             ids.push_back(plugin_);
         } else if (mode_ == Mode::AUTO) {
-            for (const auto& p : reg.list())
-                if (p.built && p.auto_detect) ids.push_back(p.id);
-            if (ids.empty()) report_.event("", "Auto detect: no auto-detect decoder plugins are built (run make)", 0.0);
+            ids = auto_ids();
+            bool any = false;
+            for (const auto& p : reg.list()) any |= p.built && p.auto_detect && !p.manual_only;
+            if (!any) report_.event("", "Auto detect: no auto-detect decoder plugins are built (run make)", 0.0);
         }
         for (const auto& id : ids) {
             auto r = std::make_unique<Runner>();
@@ -273,6 +367,23 @@ private:
         }
         rebuild_resamplers();
         publish_status();
+    }
+
+    // The plugins Auto detect runs on this VFO: the ticked ones, without the
+    // manual-only ones and those that need a much wider VFO (none until the
+    // VFO's rate is known)
+    std::vector<std::string> auto_ids() const {
+        std::vector<std::string> ids;
+        if (in_rate_ <= 0) return ids;
+        for (const auto& p : PluginRegistry::instance().list())
+            if (p.built && p.auto_detect && !p.manual_only && p.min_vfo_rate <= in_rate_ * AUTO_MAX_RATE_SHORTFALL)
+                ids.push_back(p.id);
+        return ids;
+    }
+    std::vector<std::string> runner_ids() const {
+        std::vector<std::string> ids;
+        for (const auto& r : runners_) ids.push_back(r->id);
+        return ids;
     }
 
     void destroy_resamplers() {
@@ -356,6 +467,7 @@ private:
             p.dropped = r->dropped;
             p.rate = r->known ? r->info.sample_rate : 0;
             p.min_vfo_rate = r->known ? r->info.min_vfo_rate : 12500;
+            p.map = r->known && r->info.map;
             v.push_back(std::move(p));
         }
         std::lock_guard<std::mutex> lk(st_mu_);
@@ -399,7 +511,9 @@ private:
             return problem(r, "error", pi.name + ": " + err, PLUGIN_RETRY_MS);
         }
         r.started_ms = t;
-        r.verbose_sent = r.voice_sent = -1;
+        if (pi.messages) deliver_message(owner_, r.id, "", "", 0);   // get the street data ready
+        r.verbose_sent = r.voice_sent = r.raw_sent = -1;
+        r.station_sent = 0;
         r.opts_sent.clear();
         r.sync_sent = r.sync_done = 0;
         r.state = "running";
@@ -418,6 +532,24 @@ private:
             std::string kv = std::string("verbose=") + (verbose ? "1" : "0");
             r.proc->send(W_OPTION, kv.data(), kv.size(), 0);
             r.verbose_sent = verbose;
+        }
+        // the receiver's location (kp::Host::station)
+        const uint64_t sg = station_gen.load();
+        if (sg != r.station_sent) {
+            std::string st;
+            {
+                std::lock_guard<std::mutex> lk(station_mu);
+                st = station_text;
+            }
+            r.proc->send(W_STATION, st.data(), st.size(), 0);
+            r.station_sent = sg;
+        }
+        // raw frames for the decoder data log
+        const int raw = raw_wanted.load() ? 1 : 0;
+        if (raw != r.raw_sent) {
+            std::string kv = std::string("log_raw=") + (raw ? "1" : "0");
+            r.proc->send(W_OPTION, kv.data(), kv.size(), 0);
+            r.raw_sent = raw;
         }
         // only the decoder whose voice is played runs its vocoder
         const int voice = (is_lead(r) && owner_->voice_wanted()) ? 1 : 0;
@@ -504,7 +636,14 @@ private:
                 float d;
                 memcpy(&d, p, 4);
                 std::string text(p + 4, std::min<size_t>(len - 4, 1000));
-                report_.event(r.id, text, std::isfinite(d) ? std::clamp<double>(d, 0.0, 3600.0) : 2.0);
+                if (report_.event(r.id, text, is_finite_value(d) ? std::clamp<double>(d, 0.0, 3600.0) : 2.0)) {
+                    LogRecord lr;
+                    lr.type = "event";
+                    lr.plugin = r.id;
+                    lr.text = text;
+                    lr.rf_hz = rf_hz_;
+                    deliver_record(owner_, lr);
+                }
                 break;
             }
             case W_VALID:
@@ -515,7 +654,7 @@ private:
                     std::vector<float> a(len / 4);
                     memcpy(a.data(), p, a.size() * 4);
                     for (float& v : a)
-                        if (!std::isfinite(v)) v = 0;
+                        if (!is_finite_value(v)) v = 0;
                     owner_->push_voice(a.data(), a.size());
                 }
                 break;
@@ -526,15 +665,100 @@ private:
                 if (is_lead(r) && len >= 4) {
                     float hz;
                     memcpy(&hz, p, 4);
-                    if (std::isfinite(hz)) on_freq_error(std::clamp(hz, -AFC_LIMIT_HZ, AFC_LIMIT_HZ));
+                    if (is_finite_value(hz)) on_freq_error(std::clamp(hz, -AFC_LIMIT_HZ, AFC_LIMIT_HZ));
                 }
                 break;
             case W_SYNC_DONE:
                 if (len >= 4) memcpy(&r.sync_done, p, 4);
                 break;
+            case W_MAP_POINT:
+                on_map_point(r.id, p, len);
+                break;
+            case W_MAP_REMOVE:
+                report_.map_remove(r.id, std::string(p, std::min<size_t>(len, 32)));
+                break;
+            case W_TABLE_COLUMNS: {
+                auto f = split0(p, len, 40);
+                for (auto& c : f) c.resize(std::min<size_t>(c.size(), 40));
+                report_.table_columns(r.id, std::move(f));
+                break;
+            }
+            case W_TABLE_ROW: {
+                auto f = split0(p, len, 41);
+                if (f.empty() || f[0].empty() || f[0].size() > 64) break;
+                std::string key = f[0];
+                f.erase(f.begin());
+                for (auto& c : f) c.resize(std::min<size_t>(c.size(), 200));
+                report_.table_row(r.id, key, std::move(f));
+                break;
+            }
+            case W_RAW: {
+                if (!raw_wanted.load() || len == 0) break;
+                LogRecord lr;
+                lr.type = "raw";
+                lr.plugin = r.id;
+                lr.text.assign(p, std::min<size_t>(len, 2000));
+                lr.rf_hz = rf_hz_;
+                deliver_record(owner_, lr);
+                break;
+            }
+            case W_TABLE_REMOVE:
+                report_.table_remove(r.id, std::string(p, std::min<size_t>(len, 64)));
+                break;
+            case W_MESSAGE: {
+                auto f = split0(p, len, 2);
+                if (f.size() == 2 && !f[1].empty()) {
+                    deliver_message(owner_, r.id, f[0].substr(0, 64), f[1].substr(0, 2000), rf_hz_);
+                    LogRecord lr;
+                    lr.type = "message";
+                    lr.plugin = r.id;
+                    lr.from = f[0].substr(0, 64);
+                    lr.text = f[1].substr(0, 2000);
+                    lr.rf_hz = rf_hz_;
+                    deliver_record(owner_, lr);
+                }
+                break;
+            }
             default:
                 break;
         }
+    }
+
+    // kp::wire::MAP_POINT: id, lat, lon, label, kind, heading, altitude_m,
+    // speed_kmh, ttl_s, info - '\0'-separated, numbers as text ("" = unknown)
+    void on_map_point(const std::string& plugin, const char* p, size_t len) {
+        std::vector<std::string> f = split0(p, len, 10);
+        if (f.size() < 3) return;
+        f.resize(10);
+        auto num = [](const std::string& t) {
+            if (t.empty()) return static_cast<double>(NAN);
+            char* e = nullptr;
+            double v = strtod(t.c_str(), &e);
+            return (e && *e == '\0' && is_finite_value(v)) ? v : static_cast<double>(NAN);
+        };
+        MapPoint m;
+        m.plugin = plugin;
+        m.id = f[0].substr(0, 32);
+        m.lat = num(f[1]);
+        m.lon = num(f[2]);
+        if (m.id.empty() || !is_finite_value(m.lat) || !is_finite_value(m.lon) || std::fabs(m.lat) > 90 ||
+            std::fabs(m.lon) > 180)
+            return;
+        m.label = f[3].substr(0, 64);
+        m.kind = f[4].empty() ? "point" : f[4].substr(0, 16);
+        m.heading = static_cast<float>(num(f[5]));
+        m.alt_m = static_cast<float>(num(f[6]));
+        m.speed_kmh = static_cast<float>(num(f[7]));
+        double ttl = num(f[8]);
+        m.ttl_s = is_finite_value(ttl) ? std::clamp(ttl, 10.0, 86400.0) : 300.0;
+        m.info = f[9].substr(0, 1000);
+        LogRecord lr;
+        lr.type = "position";
+        lr.plugin = plugin;
+        lr.point = &m;
+        lr.rf_hz = rf_hz_;
+        deliver_record(owner_, lr);
+        report_.map_set(std::move(m));
     }
 
     // --- detection / AFC ----------------------------------------------------
@@ -709,6 +933,8 @@ void DigitalDecoder::set_mode(Mode m, const std::string& plugin) {
         }
         q_cv_.notify_all();   // the worker reconfigures (starts / stops plugins) even without data
         report_.clear_all();
+        report_.map_clear();
+        report_.table_clear();
         set_voice_state("");
         if (m == Mode::PLUGIN) report_.event("", "Decoder set to " + plugin, 0.0);
         else if (m == Mode::AUTO) report_.event("", "Decoder on, detecting the mode automatically", 0.0);
@@ -779,7 +1005,14 @@ void DigitalDecoder::run() {
     }
 }
 
-std::string DigitalDecoder::status_json(uint64_t events_after, size_t max_events) const {
+std::string DigitalDecoder::active_plugin() const {
+    const Mode m = mode();
+    if (m == Mode::PLUGIN) return plugin_id();
+    if (m == Mode::AUTO) return engine_->detected();
+    return "";
+}
+
+std::string DigitalDecoder::status_json(uint64_t events_after, size_t max_events, bool tables) const {
     Engine::Status s = engine_->status();
     Mode m = mode();
     std::ostringstream o;
@@ -798,7 +1031,10 @@ std::string DigitalDecoder::status_json(uint64_t events_after, size_t max_events
         o << (first ? "" : ",") << "\"" << json_escape(f.first) << "\":[" << f.second.first << "," << f.second.second << "]";
         first = false;
     }
-    o << "},\"dropped\":" << dropped_.load() << ",\"plugins\":[";
+    bool map_capable = false;
+    for (const auto& p : s.plugins) map_capable |= p.map;
+    o << "},\"dropped\":" << dropped_.load() << ",\"map_capable\":" << (map_capable ? "true" : "false")
+      << ",\"map_points\":" << report_.map_size() << ",\"plugins\":[";
     for (size_t i = 0; i < s.plugins.size(); i++) {
         const auto& p = s.plugins[i];
         o << (i ? "," : "") << "{\"id\":\"" << json_escape(p.id) << "\",\"name\":\"" << json_escape(p.name)
@@ -816,6 +1052,7 @@ std::string DigitalDecoder::status_json(uint64_t events_after, size_t max_events
     }
     Options op = options();
     o << ",\"opts\":{\"verbose\":" << (op.verbose ? "true" : "false") << ",\"invert\":" << (op.invert ? "true" : "false")
+      << ",\"map\":" << (op.map ? "true" : "false")
       << ",\"plugin\":{";
     first = true;
     for (const auto& kv : op.plugin) {
@@ -823,6 +1060,10 @@ std::string DigitalDecoder::status_json(uint64_t events_after, size_t max_events
         first = false;
     }
     o << "}}";
+    // always when asked ({} = none): pages keep the last tables between pushes without them
+    if (tables) {
+        o << ",\"tables\":" << report_.tables_json();
+    }
     o << ",\"info\":" << report_.info_json() << ",\"events\":" << report_.events_json(events_after, max_events)
       << ",\"seq\":" << report_.last_seq() << "}";
     return o.str();

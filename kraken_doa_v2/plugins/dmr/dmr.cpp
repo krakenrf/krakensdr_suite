@@ -116,6 +116,7 @@ void DmrProto::full_lc(int slot, const uint8_t* lc, const char* what) {
         snprintf(b, sizeof b, "%.5f, %.5f", lat * 180.0 / 16777216.0, lon * 360.0 / 33554432.0);
         ctx_.report->set(Mode::DMR, slot_name(slot) + " GPS", b);
         if (slot_wanted(slot)) ctx_.report->event(Mode::DMR, slot_name(slot) + " GPS position " + b, 10.0);
+        gps_point(slot, lat * 180.0 / 16777216.0, lon * 360.0 / 33554432.0, b);
         return;
     } else if (flco >= 0x04 && flco <= 0x07 && fid == 0) {
         talker_alias(slot, flco - 4, lc);
@@ -134,9 +135,28 @@ void DmrProto::full_lc(int slot, const uint8_t* lc, const char* what) {
         const char* fn = fid_name(fid);
         d += fn ? std::string(" (") + fn + ")" : " (FID 0x" + hex(fid, 2) + ")";
     }
+    if (slots_[slot].src != src) slots_[slot].alias.clear();
+    slots_[slot].src = src;
     call_update(slot, d);
     ctx_.report->set(Mode::DMR, "Last talkgroup", flco == 0 ? std::to_string(dst) : "-");
     ctx_.report->set(Mode::DMR, "Last source", std::to_string(src));
+}
+
+// GPS info LC -> a map point for the radio that is talking on the slot
+void DmrProto::gps_point(int slot, double lat, double lon, const char* text) {
+    if (!(lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) || (lat == 0 && lon == 0)) return;
+    const Slot& s = slots_[slot];
+    kp::MapPoint p;
+    p.id = s.src ? std::to_string(s.src) : slot_name(slot);
+    p.lat = lat;
+    p.lon = lon;
+    p.label = !s.alias.empty() ? s.alias : (s.src ? "DMR " + std::to_string(s.src) : "DMR " + slot_name(slot));
+    p.kind = "person";
+    p.info = std::string(s.src ? "Radio ID: " + std::to_string(s.src) + "\n" : "") +
+             (s.alias.empty() ? "" : "Talker alias: " + s.alias + "\n") + "Slot: " + slot_name(slot) + "\n" +
+             (s.call.empty() ? "" : "Call: " + s.call + "\n") + "GPS: " + text;
+    p.ttl_s = 3600;
+    ctx_.report->map(Mode::DMR, p);
 }
 
 // Talker alias (FLCO 4 = header, 5..7 = blocks): the caller's name/alias
@@ -172,6 +192,7 @@ void DmrProto::talker_alias(int slot, int block, const uint8_t* lc) {
     while (!a.empty() && a.back() == ' ') a.pop_back();
     if (a.empty()) return;
     ctx_.report->set(Mode::DMR, slot_name(slot) + " talker alias", a);
+    sl.alias = a;
     if (slot_wanted(slot)) ctx_.report->event(Mode::DMR, slot_name(slot) + " talker alias: " + a, 30.0);
     sl.ta_have = 0;
 }

@@ -120,6 +120,20 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // renumbered 0..N-1 across restarts). Built and parsed in
         // control_handler.cpp; the default is the single startup VFO and must
         // match DecimatorInstance's constructor defaults + DEFAULT_BANDWIDTH_INDEX
+        // Incident map: addresses in decoder messages are looked up within
+        // this many km of the station
+        {"geo_radius_km",            "GEO_RADIUS_KM:",            VType::NUMBER, "300"},
+        // Decoder data log (sidebar 🗂 Decoder Logging): the folder first, so
+        // switching it on doesn't create the default folder
+        {"decoder_log_dir",          "DECODER_LOG_DIR:",          VType::STRING, "decoder_logs"},
+        {"decoder_log_types",        "DECODER_LOG_TYPES:",        VType::STRING, "event,message,position,incident"},
+        {"decoder_log_days",         "DECODER_LOG_DAYS:",         VType::NUMBER, "7"},
+        {"decoder_log_pos_s",        "DECODER_LOG_POS_S:",        VType::NUMBER, "10"},
+        {"decoder_log",              "DECODER_LOG:",              VType::BOOL,   "0"},
+        // Mobile DF heat map on the 🗺 Map: collect bearings while driving,
+        // half-width of the grid (km)
+        {"rdf_enabled",              "RDF:",                      VType::BOOL,   "1"},
+        {"rdf_range_km",             "RDF_RANGE_KM:",             VType::NUMBER, "10"},
         {"decimators",               "DECIMATORS:",               VType::STRING, "0|0.00,7,WBFM,0,15.00,0,2.00"},
         // Decoder plugins the user excluded from the Digital Decoder's "Auto
         // detect" ("id,id"; empty = every plugin takes part)

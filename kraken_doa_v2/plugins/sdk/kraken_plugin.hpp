@@ -26,9 +26,11 @@
 // resampled to Info::sample_rate) in blocks of a few ms. Everything a decoder
 // learns goes out through `host` (kp::Host): facts (a key/value table shown
 // in the sidebar), events (a timestamped log), valid() for every frame that
-// passed its checks (drives the "receiving" state), and optional 8 kHz audio.
+// passed its checks (drives the "receiving" state), optional 8 kHz audio, and
+// map points (positions) for the web UI's 🗺 Map.
 // See plugins/SDK.md for the full guide and kraken_dsp.hpp for DSP helpers.
 
+#include <cmath>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -51,6 +53,21 @@ struct Option {
     const char* help = "";
 };
 
+// A position for the web UI's map (Host::map_point). Sending the same id again
+// moves / updates the marker; it disappears after ttl_s without an update, or
+// on Host::map_remove(id).
+struct MapPoint {
+    std::string id;                 // stable key within this decoder (ICAO address, callsign...), <= 32 chars
+    double lat = NAN, lon = NAN;    // degrees, WGS84
+    std::string label;              // short text next to the marker ("" = the id)
+    std::string kind = "point";     // marker: "aircraft", "vehicle", "ship", "person", "station" or "point"
+    float heading = NAN;            // degrees true (rotates the marker), NAN = unknown
+    float altitude_m = NAN;         // NAN = unknown
+    float speed_kmh = NAN;          // NAN = unknown
+    std::string info;               // details shown when the marker is clicked, lines separated by '\n'
+    double ttl_s = 300;             // seconds without an update before it is removed (10 s .. 24 h)
+};
+
 struct Info {
     const char* id = "";            // directory name: [a-z0-9_-], <= 32 chars
     const char* name = "";          // shown in the mode list, e.g. "POCSAG"
@@ -65,6 +82,14 @@ struct Info {
     // plugins that set it still compile.
     bool auto_detect = false;
     std::vector<Option> options;    // settings shown in the panel
+    bool map = false;               // sends map points (Host::map_point): the panel offers "Plot on map"
+    bool manual_only = false;       // never runs in Auto detect (no Auto detect tick in the plugin list)
+    // > 0: picking the plugin for a VFO tunes the VFO (offset 0) and its tuner
+    // to this frequency with the narrowest bandwidth >= min_vfo_rate; the VFO
+    // is then drawn as a single line and can't be dragged (e.g. ADS-B 1090 MHz)
+    double fixed_freq_hz = 0;
+    bool voice = false;             // decodes voice (Host::audio): the panel offers "Listen"
+    bool messages = false;          // sends free-text messages (Host::message): addresses in them become incidents
 };
 
 class Host {
@@ -92,6 +117,30 @@ public:
     // Seconds of input processed so far (sample clock - deterministic in
     // offline tests, unlike the wall clock)
     virtual double time() const = 0;
+    // A position for the web UI's 🗺 Map (see MapPoint). Cheap to call often:
+    // updates are sent to the browsers about once a second.
+    virtual void map_point(const MapPoint& p) { (void)p; }
+    // Takes the point off the map (e.g. the aircraft is out of range)
+    virtual void map_remove(const std::string& id) { (void)id; }
+    // A free-text message the decoder received (a pager text...). kraken_doa
+    // looks for a street address in it (OpenStreetMap streets around the
+    // station) and puts the incident on the 🗺 Map. from = who sent / was
+    // paged ("RIC 1234567"). Set Info::messages.
+    virtual void message(const std::string& from, const std::string& text) { (void)from; (void)text; }
+    // A raw frame for the decoder data log (sidebar → Decoder Logging, "Raw
+    // frames"): one line of text - e.g. a Mode S message in hex, an APRS
+    // packet in TNC2 format. Only while raw_wanted() (it costs CPU / disk).
+    virtual bool raw_wanted() const { return false; }
+    virtual void raw(const std::string& data) { (void)data; }
+    // A live table in the panel (e.g. the aircraft ADS-B hears): the column
+    // headings once, then rows by key (the same key again = update). A row
+    // not updated for 10 minutes is dropped; table_remove() drops it now.
+    virtual void table_columns(const std::vector<std::string>& cols) { (void)cols; }
+    virtual void table_row(const std::string& key, const std::vector<std::string>& cells) { (void)key; (void)cells; }
+    virtual void table_remove(const std::string& key) { (void)key; }
+    // The receiver's location (sidebar → Station Information), if it has one:
+    // a reference for local position decoding, distances, range checks
+    virtual bool station(double* lat, double* lon) const { (void)lat; (void)lon; return false; }
     // Debug output (stderr; shown in the plugin's log tail). Do NOT print to
     // stdout: in live mode it carries the binary protocol (the host redirects
     // printf/std::cout to stderr anyway).
@@ -137,6 +186,7 @@ constexpr uint32_t OPTION = 2;         // "key=value"
 constexpr uint32_t RESET = 3;          // empty
 constexpr uint32_t VOICE_WANTED = 4;   // 1 byte, 0/1
 constexpr uint32_t SYNC = 5;           // uint32 id: answered with SYNC_DONE once everything before it is processed
+constexpr uint32_t STATION = 6;        // "lat,lon" (degrees) of the receiver, "" = unknown
 // plugin -> kraken_doa
 constexpr uint32_t FACT = 16;          // key '\0' value ("" value = remove)
 constexpr uint32_t EVENT = 17;         // float32 dedup_s, text
@@ -145,4 +195,14 @@ constexpr uint32_t AUDIO = 19;         // float32 samples, 8 kHz
 constexpr uint32_t VOICE_STATE = 20;   // text
 constexpr uint32_t FREQ_ERROR = 21;    // float32 Hz
 constexpr uint32_t SYNC_DONE = 22;     // uint32 id of the SYNC
+// fields separated by '\0': id, lat, lon, label, kind, heading, altitude_m,
+// speed_kmh, ttl_s, info (numbers as decimal text, "" = unknown)
+constexpr uint32_t MAP_POINT = 23;
+constexpr uint32_t MAP_REMOVE = 24;    // id
+constexpr uint32_t TABLE_COLUMNS = 25; // column headings, '\0'-separated
+constexpr uint32_t TABLE_ROW = 26;     // key '\0' cell '\0' cell ...
+constexpr uint32_t TABLE_REMOVE = 27;  // key
+constexpr uint32_t MESSAGE = 28;       // from '\0' text
+constexpr uint32_t RAW = 29;           // one raw frame (text) for the decoder data log
+// (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends)
 }  // namespace kp::wire

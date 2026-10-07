@@ -24,7 +24,12 @@ Facts: Last station, Last path, Last packet type, Last position, Last info,
 Frames, Stations heard. Events: one line per frame, e.g.
 `ZL1ABC-9>APRS,WIDE1-1,WIDE2-1  position -36.85200, 174.76117 [/>]: comment`.
 `host.freq_error` reports the discriminator DC (carrier offset) after a
-valid frame.
+valid frame. Map ("🗺 Plot on map" in the decoder tab): every station /
+object / item with a position, marker from its symbol (car, person, ship,
+aircraft, house / digipeater / weather station), course and speed from the
+`ccc/sss` extension, kept 1 h; a killed object is taken off.
+Raw frames (decoder data log, "Raw frames" ticked): each valid frame in
+TNC2 form, `SRC>DEST,PATH:info` (non-printable bytes escaped).
 
 ## Implementation
 19200 S/s complex input (16 samples/bit) -> 7 kHz FIR -> FM discriminator ->

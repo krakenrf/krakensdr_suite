@@ -6,6 +6,7 @@
 // loop when it builds the status JSON - everything is behind one mutex (a
 // few hundred updates per second at most).
 
+#include <cmath>
 #include <cstdint>
 #include <deque>
 #include <map>
@@ -31,6 +32,7 @@ bool valid_plugin_id(const std::string& id);   // [a-z0-9_-]{1,32}, not "sdk"
 struct Options {
     bool verbose = false;      // also log repeating broadcasts / idle chatter
     bool invert = false;       // spectrum inverted (I/Q swapped source)
+    bool map = false;          // plot the decoder's map points on the web UI's 🗺 Map (the decoder tab's "Plot on map")
     // the plugins' own options, "<plugin id>.<key>" -> value
     std::map<std::string, std::string> plugin;
 };
@@ -41,6 +43,20 @@ Options options_from_string(const std::string& s);
 bool valid_option_key(const std::string& k);   // "<plugin id>.<[a-z0-9_]{1,32}>"
 
 int64_t now_ms();
+
+// The receiver's location (Station Information), passed on to the plugins
+// (kp::Host::station). valid = false: unknown.
+void set_station_location(bool valid, double lat, double lon);
+
+// A position a plugin put on the map (kp::MapPoint)
+struct MapPoint {
+    std::string plugin, id, label, kind, info;
+    double lat = 0, lon = 0;
+    float heading = NAN, alt_m = NAN, speed_kmh = NAN;
+    double ttl_s = 300;
+    int64_t updated_ms = 0;
+    uint64_t seq = 0;
+};
 
 class Report {
 public:
@@ -58,7 +74,8 @@ public:
     void clear_all();
     // Log an event. A text identical to one logged by the same plugin within
     // dedup_s seconds is dropped (control channels repeat their broadcasts).
-    void event(const std::string& plugin, const std::string& text, double dedup_s = 2.0);
+    // returns false if it was a repeat (not logged)
+    bool event(const std::string& plugin, const std::string& text, double dedup_s = 2.0);
     // Display name of a plugin id (events carry it)
     void set_label(const std::string& plugin, const std::string& name);
 
@@ -67,6 +84,26 @@ public:
     // Events with seq > after (at most max), oldest first
     std::string events_json(uint64_t after, size_t max) const;
     uint64_t last_seq() const;
+
+    // --- Map points (🗺 Map) ---
+    void map_set(MapPoint p);   // same plugin + id = update
+    void map_remove(const std::string& plugin, const std::string& id);
+    void map_clear();
+    size_t map_size() const;
+    // For the map message: appends the points updated after seq `after` (all
+    // for 0) to pts and the key of every live point ("vfo|plugin|id") to
+    // keys, as comma-separated JSON items tagged with the VFO id. Drops
+    // expired points first. Returns the newest map seq.
+    uint64_t map_json(int vfo, uint64_t after, std::string& pts, std::string& keys);
+
+    // --- Tables (kp::Host::table_*: e.g. the aircraft ADS-B hears) ---
+    void table_columns(const std::string& plugin, std::vector<std::string> cols);
+    void table_row(const std::string& plugin, const std::string& key, std::vector<std::string> cells);
+    void table_remove(const std::string& plugin, const std::string& key);
+    void table_clear();   // the rows (VFO retuned / decoder switched); the headings stay
+    // {"<plugin>":{"cols":[..],"rows":[[key, age_s, cell, ...],...]}} - rows
+    // not updated for TABLE_ROW_TTL_MS left out
+    std::string tables_json() const;
 
 private:
     struct Fact { std::string key, value; int64_t updated_ms; };
@@ -77,6 +114,15 @@ private:
     std::map<std::string, int64_t> recent_;   // id|text -> last time (dedup)
     uint64_t seq_ = 0;
     static constexpr size_t MAX_EVENTS = 400;
+    std::map<std::string, MapPoint> map_;   // "plugin|id"
+    uint64_t map_seq_ = 0;
+    static constexpr size_t MAX_MAP_POINTS = 2000;
+    void map_expire(int64_t t);
+    struct TableRow { std::vector<std::string> cells; int64_t updated_ms; };
+    struct Table { std::vector<std::string> cols; std::map<std::string, TableRow> rows; };
+    std::map<std::string, Table> tables_;
+    static constexpr size_t MAX_TABLE_ROWS = 1000;
+    static constexpr int64_t TABLE_ROW_TTL_MS = 600000;
 };
 
 }  // namespace dig

@@ -362,7 +362,7 @@ Edit `include/config.hpp`:
 **Digital voice/data decoders (one per VFO): engine `src/digital/`, decoders `plugins/`:**
 - EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below);
   kraken_doa contains no protocol code. Shipped: p25, dmr, tetra, dstar,
-  nxdn, mpt1327, pocsag, aprs
+  nxdn, mpt1327, pocsag, aprs, adsb (see *ADS-B* below)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
   tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by
   default. WS `PLUGIN_AUTO:id:0|1` -> `PluginRegistry::set_auto()` (bumps the
@@ -386,15 +386,34 @@ Edit `include/config.hpp`:
 - `Engine` (digital_decoder.cpp): AFC mixer at the VFO rate -> one msresamp
   per distinct plugin `sample_rate` (shared by the plugins at that rate) ->
   each plugin process (`Runner`). AUTO runs one Runner per built plugin the
-  user left in Auto detect (rebuilt when the registry generation changes);
+  user left in Auto detect (rebuilt when the registry generation changes)
+  minus `manual_only` plugins (`kp::Info::manual_only`, ADS-B - the plugin
+  list shows no Auto detect tick for them, `digAutoPlugins()` leaves them
+  out) and those whose `min_vfo_rate` is more than 2x the VFO's rate
+  (`auto_ids()`, `AUTO_MAX_RATE_SHORTFALL`: ADS-B's 2.4 MHz upsampled from a
+  12.5 kHz VFO only burned CPU) - so AUTO starts its plugins with the first
+  block (rate known) and rebuilds when the VFO's rate changes the set;
   detection = majority of `valid()` frames in a 4 s window. Only the "lead"
   plugin (the fixed one, or the detected one) gets VOICE_WANTED and has its
   audio / voice state / carrier offset used. AFC: plugin offset reports are
   averaged and applied at most every 300 ms, ignoring reports from the 300 ms
   after a correction (the pipe latency made an every-report integrator run
-  away - TETRA drifted -5 kHz). A VFO retune (> 100 Hz) or mode change resets
-  everything (RESET to the plugins; `reset_pending_` is consumed by the
-  worker)
+  away - TETRA drifted -5 kHz). With no correction (yet) the mixer is a
+  plain copy (a sin/cos per sample cost ~5% of a core at 2.4 MHz). A VFO
+  retune (> 100 Hz) or mode change resets everything (RESET to the plugins,
+  facts + map points cleared; `reset_pending_` is consumed by the worker)
+- Station location for the plugins: `dig::set_station_location()` (called
+  by `build_map_message` every second from `station_info.resolve()`; 0,0 =
+  unknown) bumps a generation; each Runner sends wire STATION "lat,lon" (""
+  = unknown) when it changes and after a (re)start -> `kp::Host::station()`
+- Map points: wire MAP_POINT (id, lat, lon, label, kind, heading, altitude_m,
+  speed_kmh, ttl_s, info - '\0'-separated text, "" = unknown; validated in
+  `on_map_point`, ttl clamped 10 s..24 h) / MAP_REMOVE -> `Report::map_set /
+  map_remove` (key plugin|id, max 2000 per decoder, expired by ttl).
+  NaN marks unknown fields: test with `is_finite_value()`
+  (utils/parse_num.hpp), never `std::isfinite` - kraken_doa builds with
+  -Ofast, which folds it to true (a `"h":nan` broke the page's JSON.parse);
+  digi_test (-O2) doesn't show that
 - The protocol receivers live in the plugins (`plugins/<id>/<id>.cpp`), on
   the shared library `plugins/lib/` (libkrakendig.a): `dig_common` (the
   RxContext / Report / Options interface they were written against, mapped
@@ -463,9 +482,30 @@ Edit `include/config.hpp`:
   `DIGITAL_CLEAR:id` empties it. Status: `mode`, `detected` (plugin id),
   `detected_name`, `frames` {id: [4 s, total]}, `plugins` [{id, name, state
   running|starting|missing|not built|crashed|error, error, dropped, log}],
-  `info` {id: facts}, `voice`, `opts`
+  `info` {id: facts}, `voice`, `opts`, `map_capable` (a running plugin
+  declares `kp::Info::map`), `map_points`, `tables` (below; only in some
+  pushes)
+- Tables (`kp::Host::table_columns / table_row / table_remove`, wire 25-27):
+  one per plugin in `Report` (headings + rows by key, max 1000, a row not
+  updated for 10 min left out; `table_clear()` empties the rows on a retune /
+  mode change, headings stay). `status_json(.., tables)`:
+  `"tables":{"<id>":{"cols":[..],"rows":[[key, age_s, cells..]]}}` -
+  `build_digital_message` adds it at most once a second per VFO (+ every
+  history reply); the page keeps the last tables in between
+  (`digOnMessage`, same mode). UI `digTablesHtml(tab)` merges the plugin's
+  table of every VFO in the tab with leading "VFO" / "MHz" columns (row key
+  `vfo|plugin|key` = its map point) + the tab's incidents -> `#info-dec-table`
+  above the facts / log (`#info-body-dec.has-table`; the panel grows to
+  420 px the first time): header click sorts (numeric when both cells are
+  numbers, empty cells last; per plugin in localStorage
+  `kraken_dig_table_sort`), "Seen" column from the row age, a row whose
+  `vfo|plugin|key` is a map point is clickable (`digTableRowClick`: opens
+  the map, selects + centres the marker)
 - Options (`dig::Options`): verbose, invert (host side: conj before the
-  mixer) + `plugin` {"<id>.<key>": value} - the plugins' declared options,
+  mixer), map ("Plot on map", default OFF - the user ticks it in the
+  decoder tab; persisted as `&m=1`; `DIGITAL_OPT:id:map:0|1` also asks for
+  a full map push) + `plugin`
+  {"<id>.<key>": value} - the plugins' declared options,
   sent to the plugin as OPTION key=value ("" = back to its default).
   `DIGITAL_OPT:id:verbose|invert|<id>.<key>:value` (old keys dmr_slot /
   p25_nac map to dmr.slot / p25.nac). Persisted as the snapshot field
@@ -478,10 +518,35 @@ Edit `include/config.hpp`:
   while off, remembered per VFO in localStorage) and a mode list
   (`digSetModeFor`: picking a decoder also switches it on) plus a state line
   (`digRenderCards`, also run at the end of updateDecimatorList, which
-  rebuilds the cards). Each decoding VFO gets a tab in the bottom panel
-  (`infoRenderDecoder`: mode, Listen, the plugin's options - in AUTO those of
-  the detected plugin -, verbose, invert, bandwidth / plugin problems, status,
-  facts, filterable event log, plugin stderr). The sidebar "🔐 Digital
+  rebuilds the cards). The bottom panel has one tab per decoder MODE
+  (plugin), not per VFO: `infoTab` = `dig:<plugin>` | `ai`
+  (`infoPanelOpen('dec:<vfo>')` still works: the tab that VFO is in,
+  `digTabOfVfo`). A VFO is in tab P while it runs P fixed or Auto detect
+  locked onto P (`digVfoPlugin`, `digTabVfos`). There is NO Auto detect tab:
+  a VFO in AUTO appears in the tab of the decoder it detected (its mode list
+  there says Auto detect), and in none while it is still searching (its VFO
+  card shows "Searching…"). The tabs are ALWAYS all there (`digTabList`):
+  every built plugin (+ one this receiver lacks that still has events /
+  incidents here) - those a VFO runs first, then the rest, each group by name - selectable with no VFO running it and no
+  data yet; such an idle tab says so and offers "Start it on: D0 D1 ..."
+  (`digSetModeFor`). The panel follows a VFO whose mode is picked
+  (`digSetModeFor` / `digToggle` -> `infoPanelOpen('dec:<id>')`). A tab
+  (`infoRenderDecoder`) shows: a settings row per VFO in it
+  (`digVfoRowHtml`: coloured VFO + MHz + state, mode, Listen - only for
+  voice decoders, `kp::Info::voice` (p25 dmr dstar nxdn tetra; `digHasVoice`:
+  in AUTO the detected plugin, else any ticked one) -, the plugin's options -
+  in AUTO those of the detected plugin -, verbose, invert, Plot on map,
+  bandwidth / plugin problems), the incident row (messages plugins), the
+  tables (below), per VFO a status + facts block (`digFactsHtml(id, tab)`:
+  only that plugin's facts / frames), the first
+  plugin stderr, and ONE event log merged from every VFO (`digTabEvents`:
+  events whose `src` is the plugin - from VFOs in it, VFOs since switched
+  to another mode, and removed VFOs (`digArchive`, this page only, marked
+  "D3†") - plus the decoder's own lines (no src) of the VFOs in the tab since
+  their last "Decoder set to / on"; each line tagged with its VFO in the
+  VFO's colour). Clear (`digClearTab`) hides the tab's lines up to now
+  (`kraken_dig_cleared`) - the decoders keep their logs (another mode's tab
+  still needs them) The sidebar "🔐 Digital
   Decoders" box shows the plugin list (`aiRenderPlugins` -> `#ai-plugins`:
   Auto detect tick, ↻ = `PLUGINS_RESCAN` after a manual copy + make; no
   export / import / rebuild in the web UI - plugins move as folders + `make`;
@@ -519,6 +584,381 @@ Edit `include/config.hpp`:
   channel) and DMR Tier III here, and on recordings for TETRA, D-STAR, DMR,
   NXDN, MPT1327 and P25 (regression of 33 checks incl. voice passes through
   the plugins)
+
+**🗺 Map (right-hand pane) + decoder map points:**
+- Plugins report positions with `host.map_point(kp::MapPoint)` / `map_remove`
+  (kraken_plugin.hpp; `kp::Info::map = true` makes the decoder tab offer
+  "🗺 Plot on map" - also shown once a decoder has points; off until the
+  user ticks it). Stored per decoder in its `Report` (above), sent only
+  while ticked. Reporting today: adsb (aircraft), aprs (stations / objects /
+  items, marker from the APRS symbol, course / speed from `ccc/sss`, killed
+  objects removed, ttl 1 h), dmr (GPS info LC -> the talking radio: id =
+  radio ID from the slot's voice LC, label = talker alias), dstar (GPS
+  slow data: NMEA RMC / GGA with a valid checksum, DPRS with a valid
+  CRC-16/X.25 -> the MY callsign / DPRS callsign). The lib decoders use
+  `dig::Report::map()` / `station()` (dig_common.hpp)
+- `MessageBuilders::build_map_message()`, 1 Hz on TOPIC_CTL (websocket_server
+  map_timer, sent even when empty - it carries the station):
+  `{"map":{"full":bool,"station":[lat,lon]|null,"pts":[{v,p,i,la,lo,l,k,h,
+  a,s,x,age,ttl}],"keys":["vfo|plugin|id",...]}}` - pts = the points
+  updated since the previous push (per-VFO map seq, like the digital
+  events), keys = every live point of every decoder that is on with
+  "Plot on map" on: pages drop markers whose key is missing (removal,
+  expiry, Plot on map off, decoder off). `request_map_full()` (GET_MAP from
+  a page opening the map, DIGITAL_OPT map) makes the next push carry all
+- UI (kraken_doa.html, "🗺 MAP" block; state `mapState` etc. in the globals
+  block because `applyOpModeUI` -> `rpApply` can run before that block is
+  evaluated): own canvas slippy map, NO map library - the page must work
+  without internet (uPlot is inlined for the same reason). Web Mercator,
+  fractional zoom (tiles of the nearest integer zoom scaled), drag / wheel
+  / pinch / double-click, +/− ⌖ (station) ⤢ (fit all), Street (OSM
+  tile.openstreetmap.org) / Satellite (Esri World_Imagery + the
+  World_Boundaries_and_Places label layer), attribution shown. Tiles: cache
+  of 400 (LRU), a failed tile retried after 15 s doubling to 5 min, a missing
+  tile drawn from a loaded lower-zoom tile; underneath always a lat/lon
+  graticule, so with no internet the markers sit on a plain grid + an
+  "offline" notice (tile errors in the last minute and no tile loaded for
+  30 s). Station = yellow mast + range rings (step to suit the zoom).
+  Markers by `kind` (aircraft rotated by heading, vehicle, ship, station,
+  person, point) in the VFO's colour, label + altitude, greyed after 30 s
+  without an update; trails (client-side, last 15 min / 400 points);
+  click = popup (the plugin's "key: value" info lines + position, distance
+  / bearing from the station, age); status line = counts per VFO decoder
+- Right-hand pane: `.doa-panel#right-pane` holds the DoA displays and
+  `#map-pane`. `mapToggle()` (🗺 Map button under the waterfall, ✕, the
+  decoder tab's "Show map") / `rpShow('doa'|'map')` (header tabs, coherent
+  only) -> `rpApply()`: body classes `map-on` (pane shown in every mode)
+  and `rp-map` (map tab visible - always outside coherent); width
+  `--map-w` (42% default, `#rp-resizer` drag on its left edge, double-click
+  = default). The calibration greying applies to `.doa-content` only.
+  localStorage `kraken_map` {on, tab, w, layer, z, mx, my, trails}; first
+  open centres on the station (else the world) and fits the first markers
+- Tests: scratchpad mock-server test t_map (offline tiles forced by
+  pointing the layers at a closed port) and an end-to-end run of the real
+  kraken_doa (from a scratch dir - its own doa_settings.json) fed by a fake
+  heimdall streaming a synthetic 1090 MHz recording
+
+**Incident map (`src/incidents.cpp`, `geo_address.cpp`, `geo_http.cpp`):**
+- Plugins send free-text messages with `host.message(from, text)`
+  (`kp::Info::messages`; POCSAG: every alphanumeric page). Wire MESSAGE (28)
+  -> Engine -> `dig::set_message_handler()` (set by `incidents::start()`;
+  unset in digi_test: dropped) with the DigitalDecoder* (resolved to its VFO
+  through `decimator_manager`, so a removed VFO's messages are dropped)
+- Address finding (`geo::geocode`, no local street data - the user wants an
+  online lookup, NOT a downloaded OSM extract). Latin-script countries; text
+  folded to upper-case ASCII words (accents; ß -> SS, Æ -> AE, Œ -> OE;
+  apostrophes kept in the word for the search - Nominatim needs O'CONNELL -
+  but dropped from keys; , ; : ( ) recorded as breaks a name doesn't cross).
+  Candidate groups, those with a house number next to them first, <= 10
+  lookups per message:
+  1. name + type after (English ST/RD/AVE..., German / Dutch / Nordic /
+     Hungarian / Turkish words written separately: STRASSE, ALLEE, WEG,
+     GATE, GATAN, VEJ, UTCA, CADDESI...) + optional direction ("QUEEN ST W")
+  2. type before + name (RUE, AVENUE/AVENIDA, BOULEVARD, CALLE, VIA, PIAZZA,
+     RUA, PRACA, UL/ULICA, JL/JALAN... - `prefix_types()`; UL / OS are not
+     in OSM's names and are dropped from the key; a name without its prefix
+     type in OSM also matches)
+  3. one word with the type joined on (`COMPOUNDS`: -STRASSE/-STR/-STRAAT
+     -> ST, -WEG, -PLATZ, -ALLEE, -GRACHT, -LAAN, -GATAN, -VAGEN, -GADE,
+     -VEJ, -VEIEN, -KATU, -TIE, -UTCA...)
+  House number before or after the street ("NO" / "NR" before it skipped).
+  Name words: up to 4, never a stop word (English pager words + FEU,
+  INCENDIO, BRAND, POZAR...) or a word with digits except ordinals (5TH,
+  42ND). `name_word()`: SAINT -> ST, MOUNT -> MT, NORTH -> N (US "N MAIN
+  ST" = North Main Street), FIFTH -> 5TH. Each candidate is searched in Nominatim (`geo::Nominatim`,
+  nominatim.openstreetmap.org jsonv2 + addressdetails, viewbox = the radius
+  around the station, bounded) - a result counts only if its road's key
+  (`street_key`: ST/STREET, SAINT/ST, MOUNT/MT...) is the candidate's
+  (motorways / highways also without leading words). Choice: (1) the house
+  (house_number) in a place the text names (result suburb / town / city
+  key - also without CITY / CENTRAL / N / MITTE... - found in the rest of
+  the text, compared loosely: AE/OE/UE = A/O/U so ZUERICH = Zürich, no
+  spaces / apostrophes), (2) the junction with a cross street (closest pair
+  <= 1.5 km; "5TH AVE / E 42ND ST"), (3) a search with the 1-2 words after
+  the street ("17 ATKINSON AVE OTAHUHU"; Nominatim only answers when every
+  word matched), (4) the house nearest the station, (5) the street in a
+  named place, (6) the nearest. Key comparison (`same_street`): equal, or
+  equal loosely (umlauts as AE/OE/UE, spaces: "MH" = "M.H."), or OSM adds
+  a direction (O'Connell Street Lower, Queen Street West).
+  Confidence high / medium / low (several same-named streets, or the words
+  after the street found nothing). <= 8 lookups per message
+- Nominatim usage policy: User-Agent naming kraken_doa, >= 1.1 s between
+  requests (callers queue on the lock), answers cached 24 h (2000). Plain
+  OpenSSL HTTPS GET (`geo::https_get`, certificate verified). HTTP 429 /
+  502-504: no requests for 1 min doubling to 30 min; reported as offline,
+  so the messages wait (seen during testing: ~100 test lookups in a few
+  minutes got 429s)
+- `incidents.cpp`: worker thread + queue (300). No internet (no HTTP answer)
+  -> the message is retried every minute for 30 min; an error answer or
+  no address -> dropped. An incident = VFO + address key (street key +
+  number) per PLUGIN - the same address paged within 2 h on ANY VFO adds a
+  page to it and its (VFO, frequency) to `heard` (fire + ambulance pagers
+  paging one address = one incident; table "D0, D2" / "153.2750,
+  157.4500", popup "Received on"). `vfo` / `rf_hz` = the first / latest.
+  The message handler gets the VFO's RF (`MessageHandler(.., rf_hz)`). Kept 24 h, max 5000,
+  saved to incidents.tsv (cwd; reloaded at start; written <= every 10 s and
+  at shutdown via `incidents::save_now()`). A new incident logs "📍
+  Incident: ..." in the decoder's event log
+- Output: `incidents::map_json(plugins)` in `build_map_message` (plugin
+  "incidents", kind "incident" = red triangle in the UI, `v` = the VFO that
+  received it; shown while any decoder running that plugin -
+  `DigitalDecoder::active_plugin()`, the fixed or detected one - has Plot on
+  map on, so a removed VFO's incidents stay visible), and NOT per VFO:
+  `incidents::message_json()` -> `{"incidents":{seq, geo, cols:[VFO, MHz,
+  Paged, ...], rows:[[id, age, plugin, vfo, cells..]]}}`
+  (`MessageBuilders::build_incidents_message`: from the 1 Hz map timer when
+  `incidents::seq()` (bumped by new / updated / expired / clear) or the geo
+  status changed, else every 15 s; forced on `GET_INCIDENTS` (page connect)
+  and INCIDENTS_CLEAR). UI `incOnMessage` -> `incData`, rows shown in the
+  tab of their plugin (`digIncRows`); `incidents::status_json()` also rides
+  as `"geo"` next to `"digital"` (UI `geoStatus`)
+- Commands: `GEO_RADIUS_KM:<10-1000>` (persisted, schema before
+  DECIMATORS), `INCIDENTS_CLEAR`, `GET_INCIDENTS`. UI: `digIncidentsRow(plugin)`
+  in the tab of a messages plugin (`kp::Info::messages`; Plot on map shown
+  for its VFOs too). Test: scratchpad h/t_tabs.py (POCSAG on D0, a second
+  VFO joins, switches to DMR, is removed; incidents merged across VFOs) and
+  t_tabs_adsb.py (merged aircraft table)
+- Tests (scratchpad): `tools/geo_test.cpp` (`geo_test LAT LON KM "text"...`,
+  online) on NZ fire / ambulance style pages; end to end on a TEST build
+  with other ports (scratchpad/kbuild: config.hpp ports 18080/18081/18091/
+  18092 - the live stack keeps 8080/8091) fed synthetic POCSAG pages
+- Tested (tools/geo_test, scratchpad world.py: sample pages with a station
+  in each country): US (S Wacker Dr, N Michigan Ave, 350 5th Ave, the 5th
+  Ave / E 42nd St junction), Canada, UK, Ireland, Australia, South Africa,
+  NZ, France, Germany, Austria, Switzerland, Netherlands, Spain, Italy,
+  Portugal, Brazil, Sweden, Denmark, Norway, Finland, Poland, Hungary - the
+  right street everywhere, mostly the house itself
+- Not found: non-Latin scripts (Cyrillic, Greek, Arabic, CJK - not read),
+  route numbers (SH1, I-95, A1), landmarks, names OSM spells out where the
+  page abbreviates them (Jakarta's "Jl. MH Thamrin" is "Jalan Mohammad
+  Husni Thamrin"), streets Nominatim can't match (e.g. "SOUTHERN MOTORWAY"
+  - OSM: "Auckland Southern Motorway", found only with "Auckland")
+
+**Mobile direction finding (🗺 Map, coherent mode; `src/rdf_engine.cpp`, `src/rdf_mapper.cpp`):**
+- Live lobes: the sampler thread (rdf_mapper, 10 Hz) takes every NEW MUSIC
+  frame of every VFO with DoA (`getResultStampMs` changes; not
+  `isResultStale`), turns it to the north frame with the station heading
+  (compass bearing tau of array angle b: tau = heading - b; b unit circle
+  CCW from ANT0 = vehicle front) and publishes it as 720 x 0.5 deg u8 - the
+  pseudospectrum LINEAR, min..max, the MUSIC DoA plot's (PolarPlot) scale; a
+  dB scale drew a far fatter lobe than the plot - + the sub-bin peak in `{"rdf":{on, range_km, state, station
+  {lat, lon, hdg, spd, src}, vfos:[{id, mhz, lobe, peak, conf, held, frames,
+  gate_m, moved_m, records}]}}` (websocket_server rdf_timer, 2 Hz).
+  `held` = GPS course while slower than MIN_SPEED (drawn dashed)
+- Time alignment (the Android app pairs a frame with the latest fix): the
+  GPS track is kept 20 s (fix valid time = local receive time -
+  FIX_LATENCY_S 0.15 s); a frame is placed at its stamp - FRAME_LAG_S 0.3 s
+  and gets the interpolated position + heading (circular) + the turn rate
+  over +-0.5 s (`fix_at`)
+- Gating per frame (`state`): coherent mode + DoA on + a fix (< 3 s old) +
+  no noise-source calibration (`doa_is_calibrating`) + collecting on (RDF:)
+  + not a static location + GPS course: speed >= 2 m/s and turn rate <= 8
+  deg/s (compass: <= 30 deg/s). Frame bearing sigma = hypot(2 deg MUSIC /
+  site, heading: compass 4, GPS course 1.5 + 8 / speed)
+- `rdf::north_lobe` (rotate + interpolate + Gaussian blur + normalise) ->
+  `rdf::Gate` per VFO: frames are combined as the normalised GEOMETRIC mean
+  of their (5 % floored) probabilities - repeated views of one bearing
+  multiply (an arithmetic mean only widened the lobe and lost to the
+  Android app in the simulator) - and the window closes after R *
+  tan(3 deg) of travel, 15-60 m (R = distance to the estimate, 1 km before
+  one); a pause > 10 s drops the window, > 90 s without closing too.
+  Stopped = no records (no double counting)
+- `rdf::Grid`: cells in METRES (azimuthal equidistant around an origin,
+  n x n), cell bearing = planar angle in that frame + the meridian
+  convergence at the record (exact to << 0.1 deg over 50 km; the Android
+  app's grid is a lat/lon lattice). Each record adds alpha (0.5) * ln((1 -
+  eps) * p(bearing - delta) * BINS + eps) (log-likelihood ratio vs "no
+  information", eps 0.05 = multipath / outlier floor; p linear-interpolated
+  on 0.5 deg bins) per offset plane delta in {-8..8 step 2} deg; cells within
+  max(30 m, 1.5 cells) of the record get 0 (the bearing of a cell around the
+  receiver is undefined). Marginal M = log-sum-exp over delta with a N(0, 4
+  deg) prior: a systematic rotation of all bearings (array mounting,
+  compass) is integrated out instead of fitted + applied (the Android app's
+  CAL sweep) - the offset's posterior mean / sd is reported. Posterior read
+  scale s = min(1, 40 / (alpha * records)) (systematic errors don't average
+  out). `estimate()`: MAP cell + parabola per axis (the posterior mean of a
+  banana-shaped early posterior is far off), the main mode (8-connected
+  cells >= 1e-4 of the peak) -> covariance ellipse (+ a cell's variance),
+  50 / 95 % HPD radii, mode mass, `at_edge`
+- `rdf::Solver`: coarse grid 256 x 256 over +-range_km (default 10 -> 78 m
+  cells) with its origin at the first record; re-centred (rebuilt from all
+  records) when the vehicle gets > 0.7 range from it (on a confident
+  estimate, else on the vehicle). Fine grid 128 x 128 around a confident
+  coarse estimate (mode mass > 0.5, not at the edge, r95 < range / 3): half
+  = clamp(4 * r95, 250 m, range / 3), rebuilt from all records when the
+  estimate moves > 0.3 half or the wanted size changes > 1.6x, else updated
+  per record; the estimate comes from the fine grid while its mode isn't at
+  its edge. Max 4000 records (then the older half is thinned)
+- Engine thread (rdf_mapper): owns the solvers; a VFO retuned by more than
+  10 kHz starts over (its old session is parked by frequency); records are
+  saved to `rdf_session.bin` (cwd, gitignored; "KRDF1" + blocks of freq,
+  saved time, records with the lobe as u8 log probability over 20 nats) every
+  30 s and at shutdown, and a VFO on a frequency within 5 kHz of a saved
+  (< 24 h) session resumes it. Grid messages at most every 2 s per VFO:
+  `{"rdf_grid":{vfo, mhz, records, range_km, nats, coarse/fine:{n, cell_m,
+  nw, se, data (b64 u8, row 0 north, 255 * (1 + s (M - Mmax) / 12 nats))},
+  est:{lat, lon, r50, r95, a, b, ang, mass, edge, off, off_sd}, lines:[[lat,
+  lon, bearing, t]] (last 150 records)}}`; `GET_RDF` (page opening the map)
+  makes the next push carry every VFO
+- Right-hand pane tabs (coherent mode, map on): MUSIC DoA | 🗺 Map | ⊞ Both
+  (`mapState.tab` 'both' -> body class `rp-both`: the DoA displays on top -
+  side by side - and the map below, `#rp-vsplit` divider dragging
+  `mapState.dh` -> `--doa-h`, double-click = 42 %; `rpApplySplit`)
+- UI (kraken_doa.html "Mobile DF" block): "📡 DF" panel bottom-left of the
+  map (coherent only, hidden until the first `rdf` message): VFO select (All
+  / Dn), Lobe / Lines / Heat toggles (`mapState.rdf*`, localStorage),
+  Collect (RDF:), Range (RDF_RANGE_KM:), ◎ (centre on the estimate), Reset;
+  status per VFO (bearings, next in N m, TX +-r95, edge / mode-mass
+  warnings, measured offset when |off| >= 2 deg and > 2 sd after 20
+  records) and the reason frames aren't used (`RDF_STATE`). `rdfDraw` (in
+  `mapDrawNow` before the rings): heat canvases (`RDF_LUT` blue..red,
+  transparent below 8 %) stretched between nw / se, bearing lines (1.5x the
+  range, older fainter), estimate X + 2.45-sigma (95 %) ellipse (dashed at the
+  edge), lobes (radius 0.3 of the map, dashed when held) + the peak line,
+  the heading tick. Heat map: the selected VFO's, or in All the only VFO
+  that has one
+- Simulator (`tools/rdf_sim.cpp`, `g++ -std=c++20 -O2 -Iinclude
+  tools/rdf_sim.cpp src/rdf_engine.cpp`): Monte-Carlo drives (2.5 deg noise,
+  +-5 deg mounting offset, 25 % multipath stretches with a stronger
+  reflection, lagging GPS course, 0.4 s frame latency) vs a re-implementation
+  of the Android app's choices (dB-averaged 20 m windows, 3 deg blur, alpha
+  0.25, cap 25, nearest bin, best-offset sweep -6..6, latest fix). Env knobs
+  SIM_CLEAN, SIM_MP, SIM_ALPHA, SIM_ESS, SIM_GATE_MAX, SIM_RANGE0, SIM_NOMARG,
+  SIM_MAP. Result: equal or better accuracy, a 95 % region that holds the
+  transmitter (40/40 vs the Android-style 28/40 on 5-minute drives), the
+  mounting offset measured to ~0.5 deg (see the report in the commit / chat)
+- End-to-end test (scratchpad h/t_rdf.py + e2e5/fake_drive.py: fake gpsd on
+  12947 via `KRAKEN_GPSD_PORT` + a fake heimdall streaming a 5-element UCA
+  tone from a hidden transmitter along a driven loop): lobe within 0.2 deg
+  of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
+  Reset
+
+**Decoder data log (`src/decoder_log.cpp`, sidebar "🗂 Decoder Logging"):**
+- Sources: the engine's record handler (`dig::set_record_handler`,
+  `LogRecord{type, plugin, text, from, point, rf_hz}`, called on each
+  decoder's worker thread): "event" (a Report event that passed the
+  de-duplication), "message" (`kp::Host::message`), "position" (a map
+  point - logged at most once per vfo|plugin|id every `pos_s`, default
+  10 s; regardless of "Plot on map"), "raw" (`kp::Host::raw`, wire RAW 29);
+  plus "incident" from incidents.cpp (`declog::record_incident`, new
+  incidents only). The VFO id comes from `DigitalDecoder::vfo()` (set by
+  DecimatorManager when it creates the decoder - ids never change). NOT via
+  `decimator_manager` from the handler: it runs on the decoder's worker
+  thread, and holding the last reference to the VFO instance there would
+  destroy the decoder on its own thread (self-join)
+- Raw frames cost CPU, so plugins only build them while asked:
+  `dig::set_raw_wanted(enabled && raw ticked)` -> each Runner sends OPTION
+  `log_raw=0|1` (handled in plugin_host.cpp, not passed to the decoder) ->
+  `kp::Host::raw_wanted()`. ADS-B: Mode S hex + level dB; APRS: TNC2;
+  POCSAG: "RIC n Ff baud" + message codewords' 20 data bits
+- File: `<dir>/decoders-YYYY-MM-DD.jsonl` (LOCAL date), one JSON object per
+  line: `t` (local ISO 8601 with ms + UTC offset), `vfo`, `mhz` (VFO RF; not
+  on incidents), `dec` (plugin id), `type`, then per type: text / from+text
+  / id, label, kind, lat, lon, alt_m, kmh, hdg (finite only) + `info` (the
+  map popup's "Key: value" lines as an object - ADS-B: squawk, vertical
+  rate, IAS / TAS, category, emergency, signal) / data / address, lat, lon,
+  precision, confidence, text
+- SD card: records go to a string buffer (cap 32 MB, then counted as
+  dropped); the worker (1 s tick) appends it every `FLUSH_S` (5 s) with one
+  fwrite + fflush, keeping the file open. Below `MIN_FREE_MB` (100) free the
+  buffer is kept and an error shown instead of writing
+- Midnight (local date change seen by the worker): the rest of the buffer
+  goes to the finished day's file (records stamped up to the tick), it is
+  closed, then `compress_old()` gzips every finished uncompressed day on a
+  detached thread (zlib level 6 -> `.gz.part` -> rename, then unlink; also at
+  startup and on a folder change - a crash across midnight leaves one) and
+  `retention()` deletes days older than `days` (by the file name's date;
+  also every 10 min, on DECODER_LOG_DAYS and on a folder change). Only names
+  matching `decoders-YYYY-MM-DD.jsonl[.gz]` are ever touched
+- Commands (control_handler.cpp; persisted, schema after GEO_RADIUS_KM -
+  DIR first, DECODER_LOG last): `DECODER_LOG:0|1`,
+  `DECODER_LOG_TYPES:event,message,position,raw,incident` (any subset),
+  `DECODER_LOG_DAYS:0-3650`, `DECODER_LOG_POS_S:1-3600`,
+  `DECODER_LOG_DIR:path` (created if missing, write-tested; refused ->
+  `{"declog_error":"..."}` and the old folder stays; the same folder again
+  is a no-op, so the replay creates nothing while logging is off),
+  `GET_DECODER_LOG`. Status `{"declog":{enabled, types, days, pos_s,
+  flush_s, dir, dir_abs, free, total, today, today_bytes, per_day, files,
+  total_bytes, buffered, dropped, compressing, error, mounts:[{path, dev,
+  type, free, total}], mount}}` every 2 s (websocket_server, only with
+  subscribers) and after each command. `mounts` = /, /media/*, /mnt/*,
+  /run/media/*, /srv* (no pseudo / tmpfs) + always the folder's own mount
+  (`mount`); statvfs of the folder or its nearest existing parent
+- UI (kraken_doa.html, "Decoder Logging" block, `dlOnStatus` etc.): enable,
+  type ticks + positions interval, Keep days, drive list (picking one fills
+  the folder field with `<mount>/kraken_decoder_logs`, `/` = the default
+  `decoder_logs`; Apply sends it), status (free / total + used bar, today,
+  est. per day = today's bytes over the time logged today, all logs,
+  "disk lasts" assuming ~6x gzip), buffered / dropped / gzipping note
+- Test (scratchpad h/t_declog.py + e2e3): a TEST build (ports 1808x) fed
+  synthetic POCSAG, started with `TZ` set so local midnight came 2 min later:
+  5 s write steps, rotation + gzip at midnight with the boundary records on
+  the right side, retention (7-day-old kept, 8+ deleted, foreign files kept),
+  startup gzip of an unfinished old day, folder change / refusal, type and
+  on/off changes, no writes while off
+
+**Fixed-frequency decoders (`kp::Info::fixed_freq_hz`, ADS-B 1090 MHz):**
+- Done in the web UI (kraken_doa.html, `digApplyFixedTune`, from
+  `digSetModeFor` / `digToggle` - i.e. when a user picks the decoder, not on
+  a settings replay): narrowest bandwidth >= `min_vfo_rate`
+  (`setDecimatorBandwidthFromUI`), `SET_DECIMATOR_FREQ:id:0` (a queued drag
+  dropped first), then the tuner through the normal paths - `paneSendFreq`
+  (TUNER_FREQ, the VFO's tuner) in independent mode, `sendFreqChange`
+  (FREQ / WIDEBAND_FREQ) otherwise
+- `vfoLocked(d)` (the VFO's decoder is such a plugin): `drawLockedVfoLine`
+  draws one solid line + "D<n> <plugin name>" in drawBox, the waterfall
+  overlay (`drawLockedLines`) and the panes; the VFO gets NO entry in
+  `fo.boxes` / `waterfall.overlay.boxes` / `pane.bars`, so it can't be
+  grabbed, resized or squelch-dragged; `centerActiveBarAt` and the pane
+  click don't move it when selected; `digRenderCards` disables its Freq / BW
+  / Tuner fields. Picking another decoder unlocks it (bandwidth stays)
+- Test: scratchpad t_adsb_lock (coherent + independent)
+
+**ADS-B (`plugins/adsb/`):**
+- 2.4 MHz input (`min_vfo_rate` 2 MHz; picking the decoder sets the 2.4 MHz
+  "No decimation" bandwidth and tunes to 1090 MHz - above). Magnitude -> chips integrated
+  at 5 sub-sample timings (box-filter weights, 0.5 us = 1.2 samples - the
+  same slicer as dump1090's 2.4 MHz demodulator) -> amplitude gate on
+  preamble pulses 1-3 vs the gap (noise floor = lowest 512-sample mean,
+  smoothed) -> preamble score at the 5 timings (pulses >= 2x gaps, no gap
+  as strong as a pulse) -> the best 2 sliced -> CRC-24. DF17/18: 1-bit
+  repair (syndrome table) or 2 bits among the 8 least certain (CRC linear:
+  XOR of per-bit syndromes) - repaired / DF11 with an interrogator id /
+  address-parity replies (DF0/4/5/16/20/21, syndrome = address) only for
+  aircraft already heard cleanly; an aircraft counts (events, map,
+  valid()) from its 2nd message
+- `modes.cpp`: CRC, AC12 / AC13 altitude (25 ft and Gillham), squawk,
+  callsign, surface speed, CPR global (even/odd within 10 s airborne,
+  25 s surface - surface needs a reference) and local decoding (against
+  the aircraft's position < 60 s old), NL(). Position checks: within the
+  `range` option of the station (default 500 km) and <= ~Mach 2.5 from the
+  last position (4 consecutive failing global fixes replace it)
+- Unusual activity -> events starting with "⚠" (once per occurrence, with
+  position + altitude, so the decoder data log keeps them): emergency
+  (7500 / 7600 / 7700 or TC28 emergency state) and its end, a CHANGED
+  squawk, special squawks 7400 (lost link UAV) / 7777 (US interceptor) /
+  0000, categories A6 high performance / B2 lighter than air / B3
+  parachutist / B4 ultralight / B6 UAV / B7 space vehicle, |vertical rate|
+  >= 6000 ft/min (`VRATE_ALERT_FPM`, re-armed below 2/3 of it), >= 400 kt
+  below 10000 ft (`FAST_LOW_KT/FT`, ES altitude + velocity < 30 s old).
+  Plus "IDENT (SPI)" (no ⚠; ES surveillance status 3, or 2 replies with
+  flight status 4/5 within 10 s; at most every 2 min). A squawk from a
+  DF5/21 reply (parity-checked only - one bit error is another code) is
+  only taken when the next reply within 30 s repeats it; TC28's at once.
+  Test: scratchpad adsb/gen_unusual.py (one aircraft per case + an
+  ordinary one that must stay silent + a corrupted reply)
+- Output: the aircraft table (`TABLE_COLS`: every decoded field, a row per
+  aircraft updated at most 1/s, key = the map point id), summary facts,
+  events (new aircraft, callsign, first position, emergencies 7500/7600/7700
+  or the TC28 emergency state), map points (kind aircraft / vehicle for
+  C1-C2, heading = track, ttl 60 s), every message in verbose. Aircraft
+  forgotten 60 s after the last message; `reset()` drops them all
+- Validated on synthetic recordings (`--station` for the offline test):
+  the published "1090 MHz Riddle" messages decode to their documented
+  values (KLM1023; 40621D at 52.2572, 3.9194, 38000 ft; 485020 159 kt /
+  183 deg), 100% of messages at >= 15 dB SNR, ~67% at 12 dB, none from 20 s
+  of noise. CPU (Pi 5): plugin ~5% of a core, kraken_doa +~10% for
+  the 19 MB/s of samples it forwards. Not yet tried on live 1090 MHz
 
 **Digital voice (`plugins/lib/dig_vocoder.cpp`, Demod "Digital"):**
 - `DemodulatorMode::DIGITAL`: the FM thread still runs the FM demodulator
@@ -575,7 +1015,7 @@ Edit `include/config.hpp`:
   `plugins/sdk/kraken_plugin.hpp` (`kp::Decoder::process(const kp::cf*, n)`
   gets the VFO's complex baseband at `sample_rate`; `kp::Host`: fact / event /
   valid / audio (8 kHz) / voice_state / freq_error / verbose / voice_wanted /
-  time / log; `kp::Option` key/label/default/choices "v=Label|..."/help),
+  time / log, map_point / table_* / message / raw (data log); `kp::Option` key/label/default/choices "v=Label|..."/help),
   helpers `plugins/sdk/kraken_dsp.hpp`, the shared library `plugins/lib/`,
   guide `plugins/SDK.md` (written for LLMs too)
 - `plugins/Makefile` builds `lib/build/libkrakendig.a`, then links each

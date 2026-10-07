@@ -32,6 +32,11 @@ struct PluginInfo {
     double min_vfo_rate = 12500;
     int64_t mtime = 0;            // of exe (ms) - a rebuild restarts running decoders
     bool auto_detect = true;      // runs in "Auto detect" - the user's choice (set_auto)
+    bool map = false;             // sends map points (kp::Info::map)
+    bool manual_only = false;     // never in Auto detect (kp::Info::manual_only)
+    double fixed_freq_hz = 0;     // kp::Info::fixed_freq_hz (the web UI tunes the VFO there)
+    bool voice = false;           // decodes voice (kp::Info::voice): the panel offers Listen
+    bool messages = false;        // sends text messages (kp::Info::messages): incident addresses
     std::vector<PluginOption> options;
     bool built = false;           // exe exists and answered --info
     bool stale = false;           // a source file is newer than exe

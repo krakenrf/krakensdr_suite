@@ -114,7 +114,7 @@ body.sb-resizing {cursor:col-resize;user-select:none}
 .info-tabs {display:flex;align-items:center;gap:4px;padding:3px 8px;background:#16213e;border-bottom:1px solid #0f3460;flex-shrink:0}
 .info-tab {background:#1a1a2e;color:#999;border:1px solid #0f3460;border-radius:3px;padding:3px 10px;font-size:12px;cursor:pointer}
 .info-tab.sel {background:#1565c0;color:#fff;border-color:#1976d2}
-.info-sub {flex:1;min-width:0;font-size:12px;color:#8aa8c7;margin-left:8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.info-sub {flex:1;min-width:0}   /* spacer: pushes ✕ to the right */
 .info-close {background:none;border:none;color:#888;cursor:pointer;font-size:14px;padding:0 4px}
 .info-body {flex:1;display:flex;gap:8px;padding:6px 8px;overflow:hidden;min-height:0}
 .info-col {display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
@@ -126,11 +126,32 @@ body.sb-resizing {cursor:col-resize;user-select:none}
 .info-tab-list {display:flex;gap:4px;flex-wrap:nowrap;overflow-x:auto;min-width:0;max-width:70%}
 .info-tab {white-space:nowrap}
 .info-dec-cols {flex:1;display:flex;gap:8px;min-height:0;overflow:hidden}
+.dig-table-wrap {flex:1.4 1 0;min-height:60px;overflow:auto;border:1px solid #0f3460;border-radius:3px;background:#10101e;margin:4px 0;scrollbar-color:#2a3858 #141428;scrollbar-width:thin}
+#info-body-dec.has-table .info-dec-cols {flex:1 1 0}
+.dig-table {border-collapse:collapse;font-size:11px;white-space:nowrap;min-width:100%}
+.dig-table th {position:sticky;top:0;z-index:1;background:#16213e;color:#7cb3f0;text-align:left;padding:3px 7px;cursor:pointer;user-select:none;border-bottom:1px solid #0f3460;font-weight:normal}
+.dig-table th:hover {color:#fff}
+.dig-table td {padding:2px 7px;border-bottom:1px solid #1b2238;color:#cfd8e6;font-family:monospace}
+.dig-table tr:hover td {background:#1a2440}
+.dig-table tr.onmap {cursor:pointer}
+.dig-table tr.onmap td:first-child {color:#4fc3f7}
+.dig-table tr.sel td {background:#1a4a7a}
+.dig-table .cap {color:#7cb3f0;font-size:11px;padding:3px 7px}
+.dig-table-wrap > .cap {color:#7cb3f0;font-size:11px;padding:3px 7px;position:sticky;left:0}
+.dig-inc {display:flex;align-items:center;gap:5px;flex-wrap:wrap;width:100%}
+.dig-inc input {background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:2px 4px;border-radius:3px;font-size:12px}
 #info-dec-top {flex-shrink:0}
 .info-dec-settings {display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:12px;color:#aab}
 .info-dec-settings label {display:flex;align-items:center;gap:4px;white-space:nowrap}
 .info-dec-settings select,.info-dec-settings input[type="text"] {background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:2px 4px;border-radius:3px;font-size:12px}
 .info-dec-settings .v {color:#8aa8c7;font-size:11px}
+.dig-vfo-row {padding:3px 0;border-bottom:1px solid #1b2238}
+.dig-inc-row {padding:3px 0}
+.dig-vfo {border-left:3px solid #888;padding:1px 6px;background:#1a1a2e;border-radius:2px;color:#dde;font-family:monospace;white-space:nowrap}
+.dig-vfo-dot {display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle}
+.dig-vfo-tag {font-weight:bold}
+.dig-info tr.dig-vfo-head td {color:#cfd8e6;padding-top:5px;border-bottom:1px solid #2a3858;white-space:normal;width:auto}
+.info-tab.idle {opacity:0.75}
 .dig-codec {border:1px solid #22304a;border-radius:3px;padding:4px 6px;margin-bottom:4px;font-size:12px}
 .dig-codec .h {display:flex;align-items:center;gap:6px}
 .dig-codec .h b {color:#e0e0e0}
@@ -356,6 +377,61 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
 .doa-content {flex:1;overflow-y:auto;padding:6px}
 #doa-displays {display:flex;flex-direction:column;gap:6px}
 
+/* Right-hand pane tabs + 🗺 Map (mapToggle / rpShow) */
+.doa-header {display:flex;align-items:center;gap:12px}
+.doa-header .rp-tab {cursor:default}
+.doa-header .rp-close {margin-left:auto;display:none}
+#rp-tab-map, #rp-tab-both, .map-pane, .rp-resizer, .rp-vsplit {display:none}
+body.map-on #rp-tab-map, body.map-on #rp-tab-both, body.map-on .doa-header .rp-close {display:inline-block}
+body.map-on .doa-header .rp-tab {cursor:pointer;color:#6f87a6;font-weight:normal;padding-bottom:1px;border-bottom:2px solid transparent}
+body.map-on .doa-header .rp-tab.sel {color:#7cb3f0;font-weight:bold;border-bottom-color:#4fc3f7}
+body.map-on.mode-wideband .doa-panel, body.map-on.mode-independent .doa-panel {display:flex !important}
+body.rp-map .doa-content {display:none}
+body.rp-map .map-pane {display:block}
+body.rp-map .doa-panel {width:var(--map-w,42%);min-width:260px;max-width:none;overflow:hidden}
+body.rp-map .rp-resizer {display:block;flex:0 0 6px;margin:0 -8px;cursor:col-resize;touch-action:none;border-radius:3px;z-index:3}
+body.rp-map .rp-resizer:hover, body.rp-map .rp-resizer.dragging {background:#1a4a7a}
+/* Both: MUSIC DoA on top (plots side by side), the map below, a divider between */
+body.rp-both .doa-content {display:block;flex:0 0 var(--doa-h,42%);min-height:80px}
+body.rp-both #doa-displays {flex-direction:row;flex-wrap:wrap;justify-content:center}
+body.rp-both .rp-vsplit {display:block;flex:0 0 6px;cursor:row-resize;touch-action:none;background:#0f3460}
+body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4a7a}
+#map-btn.on {background:#1a4a7a;border-color:#4fc3f7;color:#fff}
+.map-pane {flex:1;position:relative;overflow:hidden;background:#1b2330;touch-action:none;user-select:none}
+#map-canvas {position:absolute;left:0;top:0;width:100%;height:100%;cursor:grab}
+#map-canvas.dragging {cursor:grabbing}
+#map-canvas.over {cursor:pointer}
+.map-ctl {position:absolute;display:flex;gap:4px;z-index:2}
+.map-ctl-tl {left:6px;top:6px}
+.map-ctl-tr {right:6px;top:6px;flex-direction:column}
+.map-btn, .map-seg button {background:rgba(22,33,62,.88);border:1px solid #2a4a7a;color:#cfe3ff;border-radius:3px;font-size:12px;min-width:26px;height:26px;padding:0 7px;cursor:pointer}
+.map-btn:hover, .map-seg button:hover {background:#1a4a7a}
+.map-btn.on, .map-seg button.on {background:#1a4a7a;border-color:#4fc3f7;color:#fff}
+.map-seg {display:flex}
+.map-seg button {border-radius:0}
+.map-seg button:first-child {border-radius:3px 0 0 3px}
+.map-seg button:last-child {border-radius:0 3px 3px 0}
+.map-df {position:absolute;left:6px;bottom:30px;z-index:3;background:rgba(16,24,44,.9);border:1px solid #2a4a7a;border-radius:4px;padding:4px;max-width:min(380px,calc(100% - 60px));font-size:11px;color:#cfe3ff}
+.map-df-h {display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.map-df select, .map-df input[type="number"] {background:#1a1a2e;border:1px solid #2a4a7a;color:#e0e0e0;border-radius:3px;font-size:11px;padding:2px 3px;height:24px}
+.map-df-body {margin-top:4px;line-height:1.45}
+.map-df-row {display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:3px}
+.map-df-row label {display:flex;align-items:center;gap:3px}
+.map-df.closed .map-df-body, .map-df.closed #map-df-vfo, .map-df.closed #map-df-lobe, .map-df.closed #map-df-lines, .map-df.closed #map-df-heat {display:none}
+#map-df-txt .w {color:#ffcc80}
+#map-df-txt .g {color:#a5d6a7}
+.map-status {position:absolute;left:6px;bottom:6px;max-width:70%;background:rgba(22,33,62,.85);color:#b8cbe6;font-size:11px;padding:3px 7px;border-radius:3px;z-index:2;pointer-events:none}
+.map-status:empty {display:none}
+.map-offline {position:absolute;left:50%;top:40px;transform:translateX(-50%);max-width:85%;background:rgba(120,70,0,.9);color:#ffe0b2;font-size:12px;padding:5px 10px;border-radius:4px;z-index:2;pointer-events:none;text-align:center}
+.map-attr {position:absolute;right:0;bottom:0;background:rgba(255,255,255,.7);color:#333;font-size:10px;padding:1px 5px;z-index:2;pointer-events:none}
+.map-pop {position:absolute;z-index:4;min-width:180px;max-width:280px;background:rgba(16,24,44,.96);border:1px solid #4fc3f7;border-radius:4px;color:#dbe8ff;font-size:12px;padding:6px 8px;box-shadow:0 2px 10px rgba(0,0,0,.5)}
+.map-pop .h {font-weight:bold;color:#fff;margin-bottom:3px;display:flex;gap:6px;align-items:baseline}
+.map-pop .h .x {margin-left:auto;cursor:pointer;color:#8aa;font-weight:normal}
+.map-pop .s {color:#8aa8c7;font-size:11px;margin-bottom:4px}
+.map-pop table {border-collapse:collapse;width:100%}
+.map-pop td {padding:1px 0;vertical-align:top}
+.map-pop td:first-child {color:#7f9cc0;padding-right:8px;white-space:nowrap}
+
 /* Individual DoA display */
 .doa-display {background:#16213e;border:1px solid #0f3460;border-radius:4px;padding:8px 6px}
 .doa-display h4 {margin:0 0 5px 0;font-size:13px;text-align:center}
@@ -392,6 +468,8 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
 @media(max-width:900px) {
   .spectrum-doa-container {flex-direction:column}
   .doa-panel {width:100%;max-width:none;max-height:350px}
+  body.rp-map .doa-panel {width:100%;height:60vh;max-height:none;flex:none}
+  body.rp-map .rp-resizer {display:none}
   #doa-displays {flex-direction:row;flex-wrap:wrap;justify-content:center}
   .doa-display {width:calc(50% - 10px);min-width:280px}
 }
@@ -453,7 +531,7 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
   #mobile-controls-slot .tb-vol {font-size:13px;color:#7cb3f0;min-width:38px}
   #mobile-controls-slot select {background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:6px;border-radius:3px;font-size:13px;min-height:32px}
   #mobile-display-slot .wf-controls {flex-direction:column;align-items:stretch;background:transparent;border-top:none;padding:0;gap:10px}
-  #mobile-display-slot .wf-controls > span {display:none}  /* the "|" separator */
+  #mobile-display-slot .wf-controls > span:not(.wf-panel-btns) {display:none}  /* the "|" separator */
   #mobile-display-slot .wf-controls input[type="range"] {flex:1;width:auto !important;min-width:0}
   #mobile-display-slot .wf-controls > div {flex-wrap:wrap;gap:8px}
   #mobile-display-slot .wf-controls > div > label {width:100%}
@@ -1176,6 +1254,55 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
       </div>
     </div>
 
+    <!-- Decoder Logging (decoder_log.cpp) - all modes -->
+    <div class="sb-section" id="declog-section">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>🗂 Decoder Logging<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Saves what the <b>digital decoders</b> report (every VFO with a decoder on) to files <b>on this device's disk</b>: one JSON Lines file per day (<code>decoders-YYYY-MM-DD.jsonl</code>). At midnight the day's file is closed and gzipped; days older than <b>Keep</b> are deleted (only these files - nothing else in the folder). To spare the SD card the records are collected in memory and written every few seconds; writing pauses when less than 100 MB is free. Raw frames (ADS-B, APRS, POCSAG) can be large - ADS-B near an airport is roughly 100-300 MB a day before gzip.</span></span></h3>
+        <span class="sb-toggle">▼</span>
+      </div>
+      <div class="sb-content">
+        <div class="ctrl-row">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
+            <input type="checkbox" id="dl-enable" onchange="dlSetEnabled(this.checked)"> Log decoder data to disk
+          </label>
+        </div>
+        <div style="font-size:12px;color:#7cb3f0;font-weight:bold;margin:6px 0 2px">What to log</div>
+        <div id="dl-types" style="font-size:12px;color:#c8d6e5;line-height:1.9">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Each decoder's event log lines (calls, talkgroups, new aircraft, ...)"><input type="checkbox" data-t="event" onchange="dlSetTypes()"> Events</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Text messages, e.g. POCSAG alphanumeric pages (sender + text)"><input type="checkbox" data-t="message" onchange="dlSetTypes()"> Text messages</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Positions the decoders put on the map (aircraft, APRS stations, DMR / D-STAR GPS)"><input type="checkbox" data-t="position" onchange="dlSetTypes()"> Positions, each object every
+            <input type="number" id="dl-pos-s" min="1" max="3600" value="10" style="width:52px" onclick="event.stopPropagation()" onchange="dlSetPosS()"> s</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Raw frames: ADS-B Mode S messages (hex + level), APRS packets (TNC2), POCSAG codewords"><input type="checkbox" data-t="raw" onchange="dlSetTypes()"> Raw frames <span style="color:#8aa8c7">(large)</span></label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Addresses found in pager messages (incident map)"><input type="checkbox" data-t="incident" onchange="dlSetTypes()"> Incidents</label>
+        </div>
+        <div class="ctrl-row" style="margin-top:6px">
+          <label>Keep:</label>
+          <input type="number" id="dl-days" min="0" max="3650" value="7" style="width:62px" onchange="dlSetDays()">
+          <span style="font-size:11px;color:#8aa8c7">days (0 = forever)</span>
+        </div>
+        <div style="font-size:12px;color:#7cb3f0;font-weight:bold;margin:8px 0 2px">Save to</div>
+        <div class="ctrl-row">
+          <select id="dl-drive" style="flex:1;min-width:0;max-width:none" onchange="dlPickDrive(this.value)" title="Drives on this device (free space)"></select>
+        </div>
+        <div class="ctrl-row" style="gap:6px">
+          <input type="text" id="dl-dir" style="flex:1;min-width:0" placeholder="decoder_logs" title="Folder on this device; a relative path is inside kraken_doa's folder. Created if missing." onkeydown="if(event.key==='Enter')dlApplyDir()">
+          <button class="btn sm" onclick="dlApplyDir()" title="Use this folder">Apply</button>
+        </div>
+        <div id="dl-dir-err" style="display:none;font-size:11px;color:#ff8a80;margin-top:2px"></div>
+        <div id="dl-status" style="font-size:12px;color:#8aa8c7;line-height:1.8;margin-top:6px">
+          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Status</span><span id="dl-state">&mdash;</span></div>
+          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">Folder</span><span id="dl-path" style="text-align:right;word-break:break-all">&mdash;</span></div>
+          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Disk free</span><span id="dl-free">&mdash;</span></div>
+          <div title="Disk used" style="height:6px;background:#1a1a2e;border:1px solid #0f3460;border-radius:3px;overflow:hidden;margin:2px 0 4px"><div id="dl-free-bar" style="height:100%;width:0;background:#3d7ab8"></div></div>
+          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Today</span><span id="dl-today">&mdash;</span></div>
+          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Est. per day</span><span id="dl-perday">&mdash;</span></div>
+          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">All logs</span><span id="dl-all">&mdash;</span></div>
+          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Disk lasts</span><span id="dl-lasts">&mdash;</span></div>
+        </div>
+        <div id="dl-note" style="font-size:11px;color:#6f87a6;margin-top:4px"></div>
+      </div>
+    </div>
+
     <!-- Settings Persistence / Reset -->
     <div class="sb-section">
       <div class="sb-content" style="padding-top:12px">
@@ -1345,8 +1472,9 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
               <span style="font-size:11px">Auto</span>
             </label>
           </div>
-          <span style="margin-left:auto;display:flex;gap:4px">
-            <button class="btn sm" type="button" onclick="infoPanelOpen('dec')" title="Digital decoders: one tab per decoding VFO">🔐 Decoders</button>
+          <span class="wf-panel-btns" style="margin-left:auto;display:flex;gap:4px">
+            <button class="btn sm" type="button" id="map-btn" onclick="mapToggle()" title="Street / satellite map in the right-hand pane: positions the decoders report (e.g. ADS-B aircraft)">🗺 Map</button>
+            <button class="btn sm" type="button" onclick="infoPanelOpen('dec')" title="Digital decoders: one tab per decoder mode">🔐 Decoders</button>
             <button class="btn sm" type="button" onclick="infoPanelOpen('ai')" title="AI Signal Lab: investigated signals and their chats">🤖 AI</button>
           </span>
         </div>
@@ -1356,14 +1484,16 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
           <div class="info-resize" id="info-resize" title="Drag to resize"></div>
           <div class="info-tabs">
             <span id="info-tab-list" class="info-tab-list"></span>
-            <span class="info-sub" id="info-sub"></span>
+            <span class="info-sub"></span>
             <button type="button" class="info-close" onclick="infoPanelClose()" title="Close">✕</button>
           </div>
           <div class="info-body" id="info-body-dec" style="flex-direction:column">
             <div id="info-dec-top"></div>
+            <!-- a plugin's live table (kp::Host::table_*, e.g. ADS-B aircraft) -->
+            <div class="dig-table-wrap" id="info-dec-table" style="display:none"></div>
             <div class="info-dec-cols" id="info-dec-cols">
               <div class="info-col info-dec-facts">
-                <div class="dig-status" id="info-dec-status"></div>
+                <div class="dig-status" id="info-dec-status" style="display:none"></div>
                 <div class="scroll"><table class="dig-info" id="info-dec-facts"></table>
                   <details id="info-dec-plugin-log" style="display:none;margin-top:4px">
                     <summary style="font-size:11px;color:#888;cursor:pointer">Plugin output (stderr)</summary>
@@ -1374,7 +1504,7 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
               <div class="info-col info-dec-log">
                 <div class="info-row">
                   <input type="text" id="info-dec-filter" placeholder="Filter events…" oninput="infoRenderDecoder(true)">
-                  <button class="btn sm" type="button" onclick="digClearFor(infoDecVfo)">Clear</button>
+                  <button class="btn sm" type="button" onclick="digClearTab(digTabShown)" title="Clear this tab's log (lines up to now)">Clear</button>
                 </div>
                 <div class="scroll dig-log" id="info-dec-log"></div>
               </div>
@@ -1396,15 +1526,57 @@ body.mode-independent #indep-grid {display:flex;flex-wrap:wrap;justify-content:c
         </div>
       </div>
 
-      <!-- DoA Panel -->
-      <div class="doa-panel">
+      <!-- Right-hand pane: MUSIC DoA (coherent mode) and the 🗺 Map (any
+           mode, when switched on - tabs in coherent mode) -->
+      <div class="rp-resizer" id="rp-resizer" title="Drag to resize the map (double-click: default width)"></div>
+      <div class="doa-panel" id="right-pane">
         <div class="doa-header">
-          <span class="title">MUSIC DoA</span>
+          <span class="title rp-tab coh-only" id="rp-tab-doa" onclick="rpShow('doa')">MUSIC DoA</span>
+          <span class="title rp-tab" id="rp-tab-map" onclick="rpShow('map')">🗺 Map</span>
+          <span class="title rp-tab coh-only" id="rp-tab-both" onclick="rpShow('both')" title="MUSIC DoA and the map at once">⊞ Both</span>
+          <button type="button" class="info-close rp-close" onclick="mapToggle(false)" title="Close the map">✕</button>
         </div>
         <div class="doa-content">
           <div id="doa-displays">
             <!-- DoA displays will be dynamically added here -->
           </div>
+        </div>
+        <div class="rp-vsplit" id="rp-vsplit" title="Drag to share the height between MUSIC DoA and the map (double-click: default)"></div>
+        <div id="map-pane" class="map-pane">
+          <canvas id="map-canvas"></canvas>
+          <div class="map-ctl map-ctl-tl">
+            <div class="map-seg" id="map-layers"></div>
+            <button type="button" class="map-btn" id="map-trails" onclick="mapSet('trails', !mapState.trails)" title="Show the tracks the markers left">Trails</button>
+          </div>
+          <div class="map-ctl map-ctl-tr">
+            <button type="button" class="map-btn" onclick="mapZoomBy(1)" title="Zoom in (mouse wheel / double-click)">+</button>
+            <button type="button" class="map-btn" onclick="mapZoomBy(-1)" title="Zoom out">−</button>
+            <button type="button" class="map-btn" onclick="mapCenterStation()" title="Centre on the station (Station Information)">⌖</button>
+            <button type="button" class="map-btn" onclick="mapFitAll()" title="Show every marker">⤢</button>
+          </div>
+          <!-- mobile DF (coherent mode): DoA lobes + transmitter heat map (rdf_mapper.cpp) -->
+          <div class="map-df coh-only" id="map-df" style="display:none">
+            <div class="map-df-h">
+              <button type="button" class="map-btn" id="map-df-tog" onclick="mapSet('rdfOpen', !mapState.rdfOpen)" title="Direction finding on the map: DoA lobes and, while driving, a heat map of where the transmitter is">📡 DF</button>
+              <select id="map-df-vfo" onchange="mapSet('rdfVfo', this.value)" title="Which VFO's DoA to show"></select>
+              <button type="button" class="map-btn" id="map-df-lobe" onclick="mapSet('rdfLobe', !mapState.rdfLobe)" title="The live DoA lobe around the station">Lobe</button>
+              <button type="button" class="map-btn" id="map-df-lines" onclick="mapSet('rdfLines', !mapState.rdfLines)" title="The bearings taken while driving">Lines</button>
+              <button type="button" class="map-btn" id="map-df-heat" onclick="mapSet('rdfHeat', !mapState.rdfHeat)" title="Where the transmitter probably is (one VFO at a time)">Heat</button>
+            </div>
+            <div class="map-df-body">
+              <div id="map-df-txt"></div>
+              <div class="map-df-row">
+                <label title="Collect bearings for the heat map while driving (needs GPS: Station Information)"><input type="checkbox" id="map-df-on" onchange="send('RDF:' + (this.checked ? 1 : 0))"> Collect</label>
+                <label title="Half-width of the heat map grid around where the drive started">Range <input type="number" id="map-df-range" min="1" max="50" step="1" style="width:44px" onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="rdfSetRange(this.value)"> km</label>
+                <button type="button" class="map-btn" onclick="rdfCentreEst()" title="Centre the map on the estimated transmitter">◎</button>
+                <button type="button" class="map-btn" onclick="rdfReset()" title="Forget the bearings collected (the shown VFO, or all)">Reset</button>
+              </div>
+            </div>
+          </div>
+          <div class="map-status" id="map-status"></div>
+          <div class="map-offline" id="map-offline" style="display:none">Map tiles can't be loaded (no internet connection?) - positions are still shown on a plain grid.</div>
+          <div class="map-attr" id="map-attr"></div>
+          <div class="map-pop" id="map-pop" style="display:none"></div>
         </div>
       </div>
     </div>
@@ -1437,6 +1609,23 @@ let indepTuners = [];        // [{f: Hz, g: dB}] requested per tuner (0 / -999 =
 let selTuner = 0;            // pane the top-bar frequency digits + gain edit
 const panes = [];            // one per tuner, see panesBuild
 let paneDrag = null;         // {p, id, grab, pointerId} while dragging a VFO bar
+
+// 🗺 Map state (see 🗺 MAP below). Up here: rpApply runs from applyOpModeUI,
+// which can run before the map section has been evaluated.
+const MAP_MIN_Z = 2, MAP_MAX_Z = 19, MAP_TILE_CACHE = 400, MAP_TRAIL_MAX = 400, MAP_TRAIL_S = 900;
+const mapState = (() => {
+  const d = {on: false, tab: 'map', w: 0, layer: 'street', z: 0, mx: 0.5, my: 0.5, trails: true,
+             rdfVfo: 'all', rdfLobe: true, rdfLines: true, rdfHeat: true, rdfOpen: true};
+  try { return Object.assign(d, JSON.parse(localStorage.getItem('kraken_map') || '{}')); } catch (e) { return d; }
+})();
+const mapPts = new Map();      // "vfo|plugin|id" -> point (server fields + rx time + trail)
+const mapTiles = new Map();    // url -> {img, st: 'loading'|'ok'|'err', retry, used}
+let mapStation = null;         // [lat, lon] or null
+let mapSel = null;             // key of the point whose popup is open
+let mapCv = null, mapCtx = null, mapW = 0, mapH = 0, mapDpr = 1, mapRaf = 0;
+let mapTileOk = 0, mapTileErrAt = 0, mapAutoFit = !mapState.z;
+let mapSaveT = 0, mapFlashT = 0, mapFlashMsg = '';
+if (!['street', 'satellite'].includes(mapState.layer)) mapState.layer = 'street';
 
 const bwo=[
   {decimation:1,bandwidth:2.4,name:"2.4 MHz (No decimation)"},
@@ -1868,6 +2057,17 @@ class WaterfallDisplay {
     this.ctx.putImageData(this.imageData, 0, 0);
   }
 
+  // VFOs locked by a fixed-frequency decoder (ADS-B): one line each
+  drawLockedLines(decimatorInfo, centerFreq) {
+    const minFreq = this.lastFrequencies[0], maxFreq = this.lastFrequencies[this.lastFrequencies.length - 1];
+    for (const dec of decimatorInfo || []) {
+      if (!vfoLocked(dec)) continue;
+      const f = centerFreq + dec.freq_offset_hz / 1e6;
+      const x = this.plotLeft + ((f - minFreq) / (maxFreq - minFreq)) * this.plotWidth;
+      if (x >= 0 && x <= this.width) drawLockedVfoLine(this.overlayCtx, x, this.height, dec, false);
+    }
+  }
+
   // Draw tuning bar overlay on waterfall (matches FFT spectrum tuning bars)
   drawOverlay(decimatorInfo, centerFreq, activeDecimatorId) {
     if (!this.initialized || !this.overlayCtx || !this.lastFrequencies.length) return;
@@ -1903,6 +2103,7 @@ class WaterfallDisplay {
         ctx.fillRect(box.x - 2, h/2 - 12, 4, 24);
         ctx.fillRect(box.x + box.w - 2, h/2 - 12, 4, 24);
       });
+      this.drawLockedLines(decimatorInfo, centerFreq);
       return;
     }
 
@@ -1923,7 +2124,9 @@ class WaterfallDisplay {
     // Store boxes for interaction
     this.overlay.boxes = [];
 
+    this.drawLockedLines(decimatorInfo, centerFreq);
     decimatorInfo.forEach((dec) => {
+      if (vfoLocked(dec)) return;   // drawn as a line above, not grabbable
       const color = typeof getDecimatorColor === 'function' ? getDecimatorColor(dec.id) : '#4169e1';
       const bwMhz = bwo[dec.bandwidth_index || 0].bandwidth;
       const selCenter = centerFreq + (dec.freq_offset_hz / 1000000);
@@ -3162,6 +3365,31 @@ function findNearestBw(mhz) {
   return idx;
 }
 
+// A locked VFO (its decoder has a fixed frequency - ADS-B, see vfoLocked):
+// one solid line at its centre with a label, nothing to grab. Used by the
+// spectrum, the waterfall and the independent-mode panes.
+function drawLockedVfoLine(ctx, x, h, d, label = true) {
+  const col = getDecimatorColor(d.id);
+  const xx = Math.round(x) + 0.5;
+  ctx.save();
+  ctx.setLineDash([]);
+  // dark halo: visible on any waterfall colour
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  ctx.lineWidth = (d.id === activeDecimatorId ? 2.5 : 1.5) + 3;
+  ctx.beginPath(); ctx.moveTo(xx, 0); ctx.lineTo(xx, h); ctx.stroke();
+  ctx.strokeStyle = col;
+  ctx.lineWidth = d.id === activeDecimatorId ? 2.5 : 1.5;
+  ctx.beginPath(); ctx.moveTo(xx, 0); ctx.lineTo(xx, h); ctx.stroke();
+  if (label) {
+    const p = digFixedPlugin(d.digital_mode);
+    ctx.fillStyle = col;
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText('D' + d.id + (p ? ' ' + p.name : ''), xx + 5, 14);
+  }
+  ctx.restore();
+}
+
 function drawBox() {
   if(!fftPlot||!currentFrequencies.length)return;
   const u=fftPlot,over=u.over,c=$id('fo');
@@ -3343,11 +3571,19 @@ function drawBox() {
       ctx.font = '12px monospace';
       ctx.fillText(`D${box.id}`, box.x + 5, 14);
     });
+    decimatorInfo.forEach(dec => {
+      if (vfoLocked(dec)) drawLockedVfoLine(ctx, u.valToPos(center + dec.freq_offset_hz / 1e6, 'x'), h, dec);
+    });
     return;  // Skip normal drawing
   }
 
   // Draw each decimator box
   decimatorInfo.forEach((dec, idx) => {
+    if (vfoLocked(dec)) {   // fixed-frequency decoder: a line, no box (not grabbable)
+      const x = u.valToPos(center + dec.freq_offset_hz / 1e6, 'x');
+      if (x >= 0 && x <= w) drawLockedVfoLine(ctx, x, h, dec);
+      return;
+    }
     const color = getDecimatorColor(dec.id);
     const bw = bwo[dec.bandwidth_index ?? 0].bandwidth;
     const selCenter = center + (dec.freq_offset_hz / 1000000); // Convert Hz to MHz
@@ -3449,6 +3685,7 @@ function drawBox() {
 
   // Draw center lines for decimators
   decimatorInfo.forEach((dec) => {
+    if (vfoLocked(dec)) return;   // already a solid line
     const color = getDecimatorColor(dec.id);
     const selCenter = center + (dec.freq_offset_hz / 1000000);
     const pxCenter = fftPlot.valToPos(selCenter, 'x');
@@ -3596,7 +3833,7 @@ function inRect(x, y, r) {
 // Returns false when there is no active decimator.
 function centerActiveBarAt(freqMhz) {
   const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
-  if (!activeDec) return false;
+  if (!activeDec || vfoLocked(activeDec)) return false;   // fixed-frequency decoder (ADS-B)
   const newOffsetHz = (freqMhz - barCenterFreq()) * 1000000;  // freqMhz is on the displayed axis
   const bw = bwo[activeDec.bandwidth_index ?? 0].bandwidth;
   const maxOffset = maxOffsetHz(bw);
@@ -6173,6 +6410,15 @@ function connect() {
     // AI Signal Lab state + decoder plugin list
     setTimeout(() => send('AI_STATE'), 800);
 
+    // incidents for the decoder tabs (then pushed when they change)
+    setTimeout(() => send('GET_INCIDENTS'), 820);
+
+    // 🗂 Decoder Logging settings + disk space (then every 2 s)
+    setTimeout(() => send('GET_DECODER_LOG'), 850);
+
+    // 🗺 Map open: every point at once instead of only the changing ones
+    if (mapState.on) setTimeout(() => { send('GET_MAP'); send('GET_RDF'); }, 900);
+
     // Request FFT settings on connection
     setTimeout(() => requestFFTSettings(), 600);
 
@@ -6215,10 +6461,17 @@ function connect() {
             updatePlotTitle();
           }
           else if(msg.digital) {
+            if (msg.geo) geoStatus = msg.geo;
             digOnMessage(msg.digital);
           }
+          else if(msg.map) { mapOnMessage(msg.map); }
+          else if(msg.incidents) { incOnMessage(msg.incidents); }
+          else if(msg.rdf) { rdfOnStatus(msg.rdf); }
+          else if(msg.rdf_grid) { rdfOnGrid(msg.rdf_grid); }
           else if(msg.plugins) { digOnPlugins(msg.plugins); }
           else if(msg.codecs) { digOnCodecs(msg.codecs); }
+          else if(msg.declog) { dlOnStatus(msg.declog); }
+          else if(msg.declog_error !== undefined) { dlOnError(msg.declog_error); }
           else if(msg.ai_state) { aiOnState(msg.ai_state); }
           else if(msg.ai_event) { aiOnEvent(msg.ai_event); }
           else if(msg.ai_error) { aiOnError(msg.ai_error); }
@@ -6852,6 +7105,7 @@ function applyOpModeUI(m) {
   if (dot) dot.disabled = m !== 'coherent';
   if (!changed) return;
   if (m === 'independent') panesBuild(); else panesTeardown();
+  if (typeof rpApply === 'function') rpApply();   // map tab: always shown outside coherent
   zoomSyncSlider();
   updatePlotTitle();
   if (decimatorInfo && decimatorInfo.length) updateDecimatorList(decimatorInfo.slice());
@@ -7283,6 +7537,11 @@ function paneDrawOverlay(p) {
   for (const d of (decimatorInfo || [])) {
     if ((d.tuner || 0) !== p.ch) continue;
     const cm = p.freqMhz + (d.freq_offset_hz || 0) / 1e6;
+    if (vfoLocked(d)) {   // fixed-frequency decoder (ADS-B): a line, no bar
+      const x = paneX(p, cm);
+      if (x >= p.L && x <= p.sw - 4) drawLockedVfoLine(ctx, x, H, d);
+      continue;
+    }
     const bw = (bwo[d.bandwidth_index ?? 0] || {}).bandwidth || d.bandwidth_mhz || 0.1;
     let x0 = paneX(p, cm - bw / 2), x1 = paneX(p, cm + bw / 2);
     // clipped to the plot area (zoomed in, a VFO can be partly or wholly
@@ -7494,7 +7753,7 @@ function paneUp(p, e) {
   }
   // a click: the selected VFO goes there (and onto this tuner)
   const d = (decimatorInfo || []).find(z => z.id === activeDecimatorId);
-  if (d && paneSpan(p)) paneMoveVfo(p, d, paneFreqAt(p, paneXY(e).x));
+  if (d && !vfoLocked(d) && paneSpan(p)) paneMoveVfo(p, d, paneFreqAt(p, paneXY(e).x));
 }
 
 // Put VFO d at mhz on pane p (clamped into the visible band)
@@ -8113,34 +8372,205 @@ function addTouchHandlers(el, down, move, up) {
   // --- Digital decoders (one per VFO, any number at once) ---
   // Every decoder is a plugin ({"plugins":[...]}). Each VFO card in the
   // Decimators box has a "Digital decoder" tick + a mode list (Auto detect or
-  // a plugin); the decoded data and the decoder's settings live in that VFO's
-  // tab of the panel under the waterfall ("🔐 D<n>"); the sidebar "Digital
-  // Decoders" box only lists the running ones. The backend pushes
-  // {"digital":[...]} at 4 Hz for every VFO with a decoder on, carrying only
-  // the events logged since its previous push; a VFO's whole log is asked for
-  // (DIGITAL_HISTORY) when its decoder is first seen. Events are kept per VFO
-  // and de-duplicated by sequence number.
+  // a plugin). The panel under the waterfall has one tab per decoder MODE
+  // (plugin) - persistent: it stays when its VFOs are retuned to another mode
+  // or removed (closable with ✕ once idle) - plus "Auto detect" while a VFO is
+  // searching. A tab shows every VFO running that mode: a settings row each,
+  // their status + facts, the plugin's tables merged with VFO / MHz columns,
+  // the incidents its messages produced, and one event log of all of them
+  // (events carry their plugin id, so a VFO switched from POCSAG to DMR keeps
+  // its POCSAG lines in the POCSAG tab). The backend pushes {"digital":[...]}
+  // at 4 Hz for every VFO with a decoder on, carrying only the events logged
+  // since its previous push; a VFO's whole log is asked for (DIGITAL_HISTORY)
+  // when its decoder is first seen. Events are kept per VFO and de-duplicated
+  // by sequence number; a removed VFO's go to digArchive.
   const digStatus = {};         // VFO id -> last status object
   const digEvents = {};         // VFO id -> [{s,t,src,p,m}], oldest first
   const digHistoryAsked = {};   // VFO id -> mode the history was asked for
   const DIG_MAX_EVENTS = 400;
   let digPlugins = [];          // {"plugins":[...]} (dig_plugin.cpp list_json)
-  let infoDecVfo = null;        // VFO whose decoder tab is shown
+  let digTabShown = null;       // decoder tab shown: plugin id
+  // removed VFOs' events, for their modes' tabs: [{vfo, mhz, ev}] (this page only)
+  let digArchive = [];
+  const DIG_ARCHIVE_MAX = 2000;
+  // the incidents (incidents.cpp, {"incidents":{...}}): every VFO's, each row
+  // [id, age, plugin, vfo, cells...] - shown in its plugin's tab
+  let incData = null;
+  const digVfoMhz = {};   // VFO id -> its last frequency (MHz text), for removed VFOs' events
   // mode picked while a VFO's decoder is off (used when it is ticked on)
   const digWanted = (() => { try { return JSON.parse(localStorage.getItem('kraken_dig_wanted') || '{}'); } catch (e) { return {}; } })();
+  // per tab the time its log was cleared (Clear hides older lines; the
+  // decoders keep them)
+  const digCleared = (() => { try { return JSON.parse(localStorage.getItem('kraken_dig_cleared') || '{}'); } catch (e) { return {}; } })();
+  function digSaveCleared() {
+    try { localStorage.setItem('kraken_dig_cleared', JSON.stringify(digCleared)); } catch (e) {}
+  }
 
   function digEsc(t) {
     return String(t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
   function digPlugin(id) { return digPlugins.find(p => p.id === id) || null; }
   function digModePlugin(mode) { return (mode && mode.startsWith('PLUGIN:')) ? mode.slice(7) : ''; }
-  function digName(id) { const p = digPlugin(id); return p ? p.name : (id || ''); }
+  function digName(id) { if (id === 'incidents') return 'Incidents'; const p = digPlugin(id); return p ? p.name : (id || ''); }
   function digModeLabel(mode) {
     if (!mode || mode === 'OFF') return 'Off';
     if (mode === 'AUTO') return 'Auto detect';
     return digName(digModePlugin(mode));
   }
-  function digAutoPlugins() { return digPlugins.filter(p => p.built && p.auto); }
+  function digAutoPlugins() { return digPlugins.filter(p => p.built && p.auto && !p.manual_only); }
+  // Does the decoder play voice (kp::Info::voice)? Only then the tab offers Listen
+  function digHasVoice(mode, st) {
+    if (mode === 'AUTO') {
+      if (st && st.detected) return !!(digPlugin(st.detected) || {}).voice;
+      return digAutoPlugins().some(p => p.voice);
+    }
+    return !!(digPlugin(digModePlugin(mode)) || {}).voice;
+  }
+
+  // Does the decoder send text messages (kp::Info::messages - POCSAG)? Their
+  // street addresses become incidents (kraken_doa incidents.cpp)
+  function digHasMessages(mode, st) {
+    if (mode === 'AUTO') return !!(st && st.detected && (digPlugin(st.detected) || {}).messages);
+    return !!(digPlugin(digModePlugin(mode)) || {}).messages;
+  }
+  // The incident row of a messages plugin's tab (POCSAG): the search radius
+  // around the station (GEO_RADIUS_KM, one for the receiver), the lookup
+  // state, Clear
+  let geoStatus = null;
+  function digIncRows(plugin) { return ((incData && incData.rows) || []).filter(r => r[2] === plugin); }
+  function digIncidentsRow(plugin) {
+    const g = geoStatus || {};
+    const n = digIncRows(plugin).length;
+    let s;
+    switch (g.state) {
+      case 'ready': s = `online lookup (OpenStreetMap): ${g.found || 0} found, ${g.not_found || 0} messages without an address`; break;
+      case 'offline': s = `address search unavailable (${g.error || 'no internet'}) - ${g.queued || 0} message(s) waiting, trying again every minute`; break;
+      case 'error': s = `address search: ${g.error}`; break;
+      case 'no_station': s = 'set the station location (sidebar → Station Information): addresses are looked up around it'; break;
+      default: s = 'addresses are looked up online (OpenStreetMap) as messages arrive';
+    }
+    if (g.queued && g.state !== 'offline') s += ` · ${g.queued} waiting`;
+    const r = g.radius_km || 300;
+    return `<div class="info-dec-settings dig-inc-row"><span class="dig-inc" title="Street addresses in the messages are looked up online in OpenStreetMap (Nominatim) within this distance of the station, and shown as incidents (table below; on the 🗺 Map while a VFO decoding them has Plot on map). Kept 24 h.">` +
+           `📍 Incidents${n ? ' (' + n + ')' : ''}: addresses within <input type="number" id="geo-radius" min="10" max="1000" step="10" value="${r}" style="width:58px"` +
+           ` onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="geoSetRadius(this.value)"> km of the station` +
+           ` <span class="v">${digEsc(s)}</span>` +
+           (n ? ` <button class="btn sm" type="button" onclick="if(confirm('Remove every incident?'))send('INCIDENTS_CLEAR')">Clear</button>` : '') +
+           `</span></div>`;
+  }
+  function geoSetRadius(v) {
+    const km = Math.round(parseFloat(v));
+    if (!(km >= 10 && km <= 1000)) { infoRenderDecoder(true); return; }
+    send('GEO_RADIUS_KM:' + km);
+    if (geoStatus) geoStatus.radius_km = km;
+  }
+  function incOnMessage(m) {
+    incData = m;
+    if (m.geo) geoStatus = m.geo;
+    infoRenderTabs();
+    infoRenderDecoder();
+  }
+
+  // --- Tables: the plugins' (kp::Host::table_*) of every VFO in the tab,
+  // merged, with VFO + MHz columns; and the tab's incidents. Sorted by a
+  // clicked column (per table, remembered); a row that is also a map point
+  // opens / centres it on the 🗺 Map
+  let digTableGrown = false;
+  const digTableSort = (() => { try { return JSON.parse(localStorage.getItem('kraken_dig_table_sort') || '{}'); } catch (e) { return {}; } })();
+  function digTableSortBy(p, c) {
+    const s = digTableSort[p] || {c: -1, d: 1};
+    digTableSort[p] = {c, d: s.c === c ? -s.d : 1};
+    try { localStorage.setItem('kraken_dig_table_sort', JSON.stringify(digTableSort)); } catch (e) {}
+    infoRenderDecoder(true);
+  }
+  // one table: name (sort key), caption, cols, rows [{k: map key, age, cells}]
+  function digTableHtml(name, caption, cols, rows) {
+    cols = cols.concat(['Seen']);
+    const isNum = v => /^[-+]?\d+(\.\d+)?$/.test(v);
+    // default: incidents newest first, a plugin's table by its first own column
+    const s = digTableSort[name] || (name === 'incidents' ? {c: 2, d: -1} : {c: 2, d: 1});
+    const val = (r, c) => String(c === cols.length - 1 ? r.age : (r.cells[c] ?? ''));
+    rows = rows.slice().sort((a, b) => {
+      const x = val(a, s.c), y = val(b, s.c);
+      if (!x !== !y) return x ? -1 : 1;   // empty cells last
+      const r = isNum(x) && isNum(y) ? parseFloat(x) - parseFloat(y) : x.localeCompare(y);
+      return r * s.d;
+    });
+    const head = cols.map((c, i) => `<th onclick="digTableSortBy('${digEsc(name)}', ${i})" title="Sort">${digEsc(c)}${s.c === i ? (s.d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('');
+    const body = rows.map(r => {
+      const cls = (mapPts.has(r.k) ? 'onmap' : '') + (r.k === mapSel ? ' sel' : '');
+      const cells = cols.map((c, i) => i === 0 && r.vfo !== undefined
+        ? `<td><span class="dig-vfo-dot" style="background:${getDecimatorColor(r.vfo)}"></span>${digEsc(r.cells[0] ?? '')}</td>`
+        : `<td>${digEsc(i === cols.length - 1 ? r.age + ' s' : (r.cells[i] ?? ''))}</td>`).join('');
+      return `<tr class="${cls}" data-k="${digEsc(r.k)}" onclick="digTableRowClick(this)"${cls.includes('onmap') ? ' title="Show on the map"' : ''}>${cells}</tr>`;
+    }).join('');
+    return `<div class="cap">${digEsc(caption)} · ${rows.length}</div>` +
+           `<table class="dig-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  }
+  function digTablesHtml(tab) {
+    let html = '';
+    // the plugin's own table(s), every VFO running it
+    const merged = {};   // table name -> {cols, rows}
+    for (const id of digTabVfos(tab)) {
+      const d = digDec(id), st = digStatus[id];
+      const t = st && st.tables && st.tables[tab];
+      if (!t || !((t.cols || []).length || (t.rows || []).length)) continue;
+      const m = merged[tab] || (merged[tab] = {cols: t.cols || [], rows: []});
+      const mhz = d ? ((vfoCenterMhz(d) + d.freq_offset_hz / 1e6).toFixed(4)) : '';
+      for (const r of t.rows || []) m.rows.push({k: id + '|' + tab + '|' + r[0], age: r[1], vfo: id, cells: ['D' + id, mhz].concat(r.slice(2))});
+    }
+    for (const [name, m] of Object.entries(merged))
+      html += digTableHtml(name + '#v', digName(name), ['VFO', 'MHz'].concat(m.cols), m.rows);
+    // incidents found in this plugin's messages (any VFO, also removed ones)
+    const inc = digIncRows(tab);
+    if (inc.length && incData)
+      html += digTableHtml('incidents', '📍 Incidents', incData.cols || [],
+                           inc.map(r => ({k: r[3] + '|incidents|' + r[0], age: r[1], vfo: r[3], cells: r.slice(4)})));
+    return html;
+  }
+  function digTableRowClick(tr) {
+    const k = tr.dataset.k, p = mapPts.get(k);
+    if (!p) return;
+    if (!mapState.on) mapToggle(true);
+    else rpShow('map');
+    mapSel = k;
+    mapAutoFit = false;
+    mapCenterOn(p.la, p.lo);
+    infoRenderDecoder(true);
+  }
+  // A decoder with a fixed frequency (kp::Info::fixed_freq_hz - ADS-B on
+  // 1090 MHz): picking it tunes the VFO there (digApplyFixedTune); the VFO is
+  // then "locked" - drawn as a single line at its centre, not draggable, its
+  // frequency / bandwidth / tuner fields disabled
+  function digFixedPlugin(mode) {
+    const p = digPlugin(digModePlugin(mode));
+    return p && p.fixed_freq_hz > 0 ? p : null;
+  }
+  function vfoLocked(d) { return !!(d && d.digital_mode && digFixedPlugin(d.digital_mode)); }
+  function digApplyFixedTune(id, mode) {
+    const p = digFixedPlugin(mode), d = digDec(id);
+    if (!p || !d) return;
+    const mhz = p.fixed_freq_hz / 1e6, need = (p.min_vfo_rate || 0) / 1e6;
+    // the narrowest bandwidth option the decoder can use (ADS-B: 2.4 MHz)
+    let bi = 0;
+    bwo.forEach((b, i) => { if (b.bandwidth >= need - 1e-9 && b.bandwidth < bwo[bi].bandwidth) bi = i; });
+    if (d.bandwidth_index !== bi) setDecimatorBandwidthFromUI(id, bi);
+    // the VFO on its tuner's centre (a queued drag must not land after this)...
+    pendingFreqUpdates.delete(id);
+    d.freq_offset_hz = 0;
+    send('SET_DECIMATOR_FREQ:' + id + ':0');
+    // ...and the tuner on the frequency: the VFO's own tuner in independent
+    // mode, the common / stitched centre frequency otherwise
+    if (opMode === 'independent') paneSendFreq(d.tuner || 0, mhz);
+    else if (Math.abs(currentCenterFreq - mhz) > 1e-6) {
+      updateFreqDisplay(mhz, true);
+      currentCenterFreq = mhz;
+      sendFreqChange(mhz);
+    }
+    refreshDecimatorPanelItem(id);
+    drawBox();
+    if (typeof paneDrawAllOverlays === 'function') paneDrawAllOverlays();
+  }
   // VFO bandwidth (kHz) the mode needs
   function digMinRateK(mode) {
     if (mode === 'AUTO') return Math.max(0, ...digAutoPlugins().map(p => p.min_vfo_rate || 0)) / 1000;
@@ -8189,9 +8619,43 @@ function addTouchHandlers(el, down, move, up) {
 
   function digOnPlugins(list) {
     digPlugins = list || [];
+    // the panel opened (page load) before the plugin list - now there are tabs
+    if (infoTab === 'dig:' && infoOpen('dec')) infoPanelOpen('dec');
     digRenderAll();
     aiRenderPlugins();
     aiQueueRender();   // Create / Improve label depends on the list
+  }
+
+  // the plugin a VFO's decoder shows data of: the fixed one, or in Auto detect
+  // the detected one ('' = searching / off)
+  function digVfoPlugin(id) {
+    const mode = digModeOf(id);
+    if (mode === 'AUTO') { const st = digStatus[id]; return (st && st.detected) || ''; }
+    return digModePlugin(mode);
+  }
+  // the tab a VFO's decoder belongs in
+  function digTabOfVfo(id) {
+    const mode = digModeOf(id);
+    if (mode === 'OFF') return null;
+    return digVfoPlugin(id) || null;   // Auto detect: the detected decoder's tab, none while searching
+  }
+  // the VFOs shown in a tab: running its plugin (fixed, or Auto detect that
+  // found it)
+  function digTabVfos(tab) {
+    return digActiveIds().filter(id => digVfoPlugin(id) === tab);
+  }
+  // the tabs, always all of them: every installed decoder (+ one this
+  // receiver lacks that still has data here) - those a VFO is running first,
+  // then the rest, each group by name
+  function digTabList() {
+    const ids = new Set(digPlugins.filter(p => p.built).map(p => p.id));
+    for (const id of digActiveIds()) { const p = digVfoPlugin(id); if (p) ids.add(p); }
+    for (const k of Object.keys(digEvents)) for (const e of digEvents[k]) if (e.src) ids.add(e.src);
+    for (const a of digArchive) for (const e of a.ev) ids.add(e.src);
+    for (const r of (incData && incData.rows) || []) ids.add(r[2]);
+    ids.delete('incidents');
+    const active = new Set(digActiveIds().map(digVfoPlugin).filter(Boolean));
+    return [...ids].sort((a, b) => (active.has(b) - active.has(a)) || digName(a).localeCompare(digName(b)));
   }
 
   // decimator_info arrived (after updateDecimatorList built the cards)
@@ -8204,9 +8668,19 @@ function addTouchHandlers(el, down, move, up) {
       }
       if (mode === 'OFF') { delete digHistoryAsked[d.id]; delete digStatus[d.id]; }
     }
-    // the shown tab's VFO went away / switched off: show another one
-    const act = digActiveIds();
-    if (infoDecVfo !== null && !act.includes(infoDecVfo)) infoDecVfo = act.length ? act[0] : null;
+    // removed VFOs: their events stay in their modes' tabs (digArchive)
+    for (const k of Object.keys(digEvents)) {
+      const id = +k;
+      if (info.some(d => d.id === id)) continue;
+      const ev = (digEvents[id] || []).filter(e => e.src);
+      if (ev.length) {
+        digArchive.push({vfo: id, mhz: digVfoMhz[id] || '', ev});
+        let n = digArchive.reduce((a, x) => a + x.ev.length, 0);
+        while (n > DIG_ARCHIVE_MAX && digArchive.length) n -= digArchive.shift().ev.length;
+      }
+      delete digEvents[id]; delete digStatus[id]; delete digHistoryAsked[id];
+    }
+    for (const d of info) digVfoMhz[d.id] = (vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6).toFixed(4);
     digRenderAll();
     aiOnDecimatorInfo(info);
   }
@@ -8217,7 +8691,8 @@ function addTouchHandlers(el, down, move, up) {
     send('DIGITAL_MODE:' + id + ':' + mode);
     const d = digDec(id);
     if (d) d.digital_mode = mode;
-    if (on) { infoDecVfo = id; infoPanelOpen('dec:' + id); }
+    if (on) digApplyFixedTune(id, mode);
+    if (on) infoPanelOpen('dec:' + id);
     else delete digStatus[id];
     digRenderAll();
   }
@@ -8228,10 +8703,12 @@ function addTouchHandlers(el, down, move, up) {
     try { localStorage.setItem('kraken_dig_wanted', JSON.stringify(digWanted)); } catch (e) {}
     const d = digDec(id);
     if (!d) return;
-    const was = d.digital_mode && d.digital_mode !== 'OFF';
     send('DIGITAL_MODE:' + id + ':' + mode);
     d.digital_mode = mode;
-    if (!was) { infoDecVfo = id; infoPanelOpen('dec:' + id); }
+    if (digStatus[id]) digStatus[id].detected = '';   // until the next status: not in the old mode's tab
+    digApplyFixedTune(id, mode);
+    // the panel follows the VFO to its new mode's tab
+    infoPanelOpen('dec:' + id);
     digRenderAll();
   }
 
@@ -8247,11 +8724,13 @@ function addTouchHandlers(el, down, move, up) {
     setTimeout(digRenderAll, 300);
   }
 
-  function digClearFor(id) {
-    if (id === null || id === undefined) return;
-    digEvents[id] = [];
-    send('DIGITAL_CLEAR:' + id);
-    digRenderAll();
+  // Clear in a tab: hides its log lines up to now (the decoders keep theirs -
+  // another mode's tab still shows its own)
+  function digClearTab(tab) {
+    if (!tab) return;
+    digCleared[tab] = Date.now();
+    digSaveCleared();
+    infoRenderDecoder(true);
   }
 
   // the narrowest bandwidth option at or above the mode's minimum
@@ -8268,6 +8747,8 @@ function addTouchHandlers(el, down, move, up) {
   // {"digital":[{id, history, mode, detected, detected_name, state, offset_hz, frames, plugins, info, events, seq}, ...]}
   function digOnMessage(list) {
     for (const st of list) {
+      // tables come at most once a second: keep the last ones in between
+      if (st.tables === undefined && digStatus[st.id] && digStatus[st.id].mode === st.mode) st.tables = digStatus[st.id].tables;
       digStatus[st.id] = st;
       let ev = digEvents[st.id] || [];
       if (st.history) ev = [];
@@ -8281,20 +8762,49 @@ function addTouchHandlers(el, down, move, up) {
     digRenderAll();
   }
 
-  function digEventsHtml(ev) {
+  // ev: [{t, m, p, vfo, mhz}] oldest first; newest shown first, each line
+  // with its VFO in the VFO's colour
+  function digEventsHtml(ev, showPlugin) {
     return ev.slice().reverse().map(e => {
       const t = new Date(e.t).toLocaleTimeString([], {hour12: false});
-      const p = e.p ? `<span class="p">${digEsc(e.p)}</span> ` : '';
-      return `<div><span class="t">${t}</span> ${p}${digEsc(e.m)}</div>`;
+      const v = `<span class="dig-vfo-tag" style="color:${getDecimatorColor(e.vfo)}" title="D${e.vfo}${e.mhz ? ' · ' + e.mhz + ' MHz' : ''}${e.gone ? ' (VFO removed)' : ''}">D${e.vfo}${e.gone ? '†' : ''}</span> `;
+      const p = showPlugin && e.p ? `<span class="p">${digEsc(e.p)}</span> ` : '';
+      return `<div><span class="t">${t}</span> ${v}${p}${digEsc(e.m)}</div>`;
     }).join('');
   }
+  // the tab's log: its plugin's events from every VFO (live, switched to
+  // another mode, removed), plus the decoders' own lines of the VFOs in it
+  function digTabEvents(tab) {
+    const inTab = new Set(digTabVfos(tab));
+    const out = [];
+    for (const k of Object.keys(digEvents)) {
+      const id = +k, mhz = digVfoMhz[id] || '', evs = digEvents[id] || [];
+      // the decoder's own lines (no plugin) since the VFO's last mode change
+      let since = 0;
+      for (const e of evs) if (!e.src && /^Decoder (set to|on)/.test(e.m)) since = e.t;
+      for (const e of evs)
+        if (e.src === tab || (!e.src && inTab.has(id) && e.t >= since))
+          out.push({t: e.t, m: e.m, p: e.p, vfo: id, mhz});
+    }
+    for (const a of digArchive)
+        for (const e of a.ev) if (e.src === tab) out.push({t: e.t, m: e.m, p: e.p, vfo: a.vfo, mhz: a.mhz, gone: true});
+    const since = digCleared[tab] || 0;
+    return out.filter(e => e.t > since).sort((a, b) => a.t - b.t);
+  }
 
-  function digFactsHtml(st) {
+  // a VFO's status + facts (tab = its plugin: only that plugin's facts)
+  function digFactsHtml(id, tab) {
+    const st = digStatus[id];
+    const d = digDec(id);
+    const [col, txt] = digStateOf(id);
+    let rows = `<tr class="dig-vfo-head"><td colspan="2"><span class="dig-vfo-dot" style="background:${getDecimatorColor(id)}"></span>D${id} · ${digVfoMhz[id] || ''} MHz <span style="color:${col}">● ${digEsc(txt)}</span></td></tr>`;
+    if (!st) return rows;
+    const fr = st.frames || {};
+    const frames = fr[tab] ? `${fr[tab][0]} (total ${fr[tab][1]})` : '0';
+    rows += `<tr><td>Carrier offset</td><td>${st.detected ? (st.offset_hz > 0 ? '+' : '') + st.offset_hz + ' Hz' : '-'}</td></tr>` +
+            `<tr><td>Valid frames (4 s)</td><td>${digEsc(frames)}</td></tr>`;
     const info = st.info || {};
-    const order = Object.keys(info).sort((a, b) => (b === st.detected) - (a === st.detected));
-    let rows = '';
-    for (const p of order) {
-      if (order.length > 1) rows += `<tr><td colspan="2" style="color:#4fc3f7;padding-top:4px">${digEsc(digName(p))}</td></tr>`;
+    for (const p of Object.keys(info).filter(p => p === tab)) {
       for (const [k, v, age] of info[p])
         rows += `<tr class="${age > 30 ? 'stale' : ''}" title="updated ${age} s ago"><td>${digEsc(k)}</td><td>${digEsc(v)}</td></tr>`;
     }
@@ -8324,6 +8834,12 @@ function addTouchHandlers(el, down, move, up) {
       }
       const open = $id('dec-dig-open-' + d.id);
       if (open) open.style.display = on ? '' : 'none';
+      // a fixed-frequency decoder (ADS-B) holds the VFO's tuning
+      const lock = vfoLocked(d), why = lock ? digModeLabel(d.digital_mode) + ' sets this VFO\'s frequency and bandwidth' : '';
+      for (const k of ['dec-actual-freq-', 'dec-bw-', 'dec-tuner-']) {
+        const el = $id(k + d.id);
+        if (el && el.disabled !== lock) { el.disabled = lock; el.title = why; }
+      }
     }
   }
 
@@ -8597,7 +9113,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function aiOnDecimatorInfo(info) {
     const sel = $id('ai-vfo');
     if (!sel) return;
-    const cur = sel.value === '' ? (infoDecVfo ?? (info[0] || {}).id) : parseInt(sel.value);
+    const cur = sel.value === '' ? (digTabVfos(digTabShown || '')[0] ?? (info[0] || {}).id) : parseInt(sel.value);
     const opts = info.map(d => `<option value="${d.id}"${d.id === cur ? ' selected' : ''}>D${d.id}</option>`).join('');
     if (sel.innerHTML !== opts) sel.innerHTML = opts;
     if (!info.some(d => d.id === cur) && info.length) sel.value = info[0].id;
@@ -8671,11 +9187,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
 
   function aiUsePlugin(id) {
     let vfo = parseInt($id('ai-vfo').value);
-    if (!isFinite(vfo)) vfo = infoDecVfo;
-    if (vfo === null || !isFinite(vfo)) return;
+    if (!isFinite(vfo)) vfo = digTabVfos(digTabShown || '')[0];
+    if (vfo === null || vfo === undefined || !isFinite(vfo)) return;
     digSetModeFor(vfo, 'PLUGIN:' + id);
-    infoDecVfo = vfo;
-    infoPanelOpen('dec:' + vfo);
+    infoPanelOpen('dig:' + id);
   }
 
 
@@ -8689,8 +9204,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       html = digPlugins.map(p => `<div class="ai-plugin">
           <div style="display:flex;align-items:baseline;gap:6px">
             <span style="flex:1;min-width:0"><span class="nm">${digEsc(p.name)}</span> <span style="color:#6f87a6">${digEsc(p.id)}${p.version ? ' v' + digEsc(p.version) : ''}</span></span>
-            <label class="ai-auto" title="Run this decoder when a VFO's Digital Decoder is on Auto detect. Untick decoders you never need: each one costs CPU on every VFO in Auto detect.">
-              <input type="checkbox" ${p.auto ? 'checked' : ''} onchange="send('PLUGIN_AUTO:${p.id}:' + (this.checked ? 1 : 0))"> Auto detect</label>
+            ${p.manual_only ? '' : `<label class="ai-auto" title="Run this decoder when a VFO's Digital Decoder is on Auto detect. Untick decoders you never need: each one costs CPU on every VFO in Auto detect.">
+              <input type="checkbox" ${p.auto ? 'checked' : ''} onchange="send('PLUGIN_AUTO:${p.id}:' + (this.checked ? 1 : 0))"> Auto detect</label>`}
           </div>
           <div class="ds">${digEsc(p.description || '')}</div>
           ${p.error ? `<div class="ds" style="color:#ffb74d">${digEsc(p.error)}</div>` : ''}
@@ -8907,24 +9422,33 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     return true;
   }
 
-  // --- Bottom panel (under the waterfall): one tab per VFO decoder + AI ----
-  // infoTab: 'dec:<vfo id>' or 'ai'. 'dec' alone = the shown / first decoder.
+  // --- Bottom panel (under the waterfall): one tab per decoder mode + AI ----
+  // infoTab: 'dig:<plugin id>' | 'ai'. Also accepted by
+  // infoPanelOpen: 'dec' (the shown / first decoder tab), 'dec:<vfo id>' (the
+  // tab that VFO's decoder is in)
   let infoTab = 'ai';
+  function digMhzOf(id) {
+    const d = digDec(id);
+    if (d) digVfoMhz[id] = (vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6).toFixed(4);
+    return digVfoMhz[id] || '';
+  }
   function infoPanelOpen(tab) {
     const p = $id('info-panel');
     if (!p) return;
     tab = tab || infoTab;
     if (tab === 'dec' || tab.startsWith('dec:')) {
-      const act = digActiveIds();
-      let id = tab.startsWith('dec:') ? parseInt(tab.slice(4)) : infoDecVfo;
-      if (!act.includes(id)) id = act.length ? act[0] : null;
-      infoDecVfo = id;
-      tab = 'dec:' + (id ?? '');
+      const list = digTabList();
+      let t = tab.startsWith('dec:') ? digTabOfVfo(parseInt(tab.slice(4))) : digTabShown;
+      if (!t || !list.includes(t))
+        t = list.includes(digTabShown) ? digTabShown : (list.find(x => digTabVfos(x).length) || list[0] || '');
+      tab = 'dig:' + t;
     }
+    if (tab === 'dig:@auto' || tab === 'dig:') tab = 'dec';   // the old Auto detect tab / none yet
+    if (tab.startsWith('dig:')) digTabShown = tab.slice(4) || null;
     infoTab = tab;
     const was = p.style.display !== 'none';
     p.style.display = 'flex';
-    $id('info-body-dec').style.display = infoTab.startsWith('dec:') ? 'flex' : 'none';
+    $id('info-body-dec').style.display = infoTab.startsWith('dig:') ? 'flex' : 'none';
     $id('info-body-ai').style.display = infoTab === 'ai' ? 'flex' : 'none';
     if (infoTab === 'ai' && !aiViewId && aiState && aiState.busy && (aiState.job || {}).kind === 'investigate') aiViewId = AI_JOB;
     if (infoTab === 'ai' && !aiViewId) {
@@ -8950,53 +9474,44 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function infoOpen(tab) {
     const p = $id('info-panel');
     if (!p || p.style.display === 'none') return false;
-    return tab === 'dec' ? infoTab.startsWith('dec:') : infoTab === tab;
+    return tab === 'dec' ? infoTab.startsWith('dig:') : infoTab === tab;
   }
 
-  // tab buttons: one per VFO with a decoder on, then AI
+  // a tab's state dot: green = a VFO receiving, orange = searching, grey = idle
+  function digTabState(tab) {
+    const ids = digTabVfos(tab);
+    if (!ids.length) return ['#666', 'no VFO runs it now'];
+    if (ids.some(id => (digStatus[id] || {}).state === 'receiving')) return ['#4caf50', 'receiving'];
+    return ['#ffb74d', 'searching'];
+  }
+  // tab buttons: one per decoder mode (+ Auto detect), then AI
   function infoRenderTabs() {
     const el = $id('info-tab-list');
     if (!el) return;
-    const act = digActiveIds();
-    let html = act.map(id => {
-      const st = digStatus[id];
-      const [col] = digStateOf(id);
-      const what = st && st.detected ? (st.detected_name || digName(st.detected)) : digModeLabel(digModeOf(id));
-      const sel = infoTab === 'dec:' + id ? ' sel' : '';
-      return `<button type="button" class="info-tab${sel}" onclick="infoPanelOpen('dec:${id}')" title="D${id}'s digital decoder">` +
-             `<span style="color:${col}">&#9679;</span> D${id} · ${digEsc(what)}</button>`;
+    const list = digTabList();
+    let html = list.map(t => {
+      const ids = digTabVfos(t);
+      const [col, what] = digTabState(t);
+      const name = digName(t);
+      const sel = infoTab === 'dig:' + t ? ' sel' : '';
+      const vfos = ids.length ? ' · ' + ids.map(i => 'D' + i).join(' ') : '';
+      return `<button type="button" class="info-tab${sel}${ids.length ? '' : ' idle'}" onclick="infoPanelOpen('dig:${digEsc(t)}')" title="${digEsc(name)}: ${what}">` +
+             `<span style="color:${col}">&#9679;</span> ${digEsc(name)}${vfos}</button>`;
     }).join('');
-    if (!act.length) {
-      const sel = infoTab.startsWith('dec:') ? ' sel' : '';
+    if (!list.length) {
+      const sel = infoTab.startsWith('dig:') ? ' sel' : '';
       html = `<button type="button" class="info-tab${sel}" onclick="infoPanelOpen('dec')">🔐 Decoders</button>`;
     }
     html += `<button type="button" class="info-tab${infoTab === 'ai' ? ' sel' : ''}" onclick="infoPanelOpen('ai')">🤖 AI</button>`;
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
   }
 
-  // A VFO decoder's tab: its settings (mode, Listen, the plugin's options,
-  // verbose, invert), problems, status, every plugin's facts and the whole
-  // (filterable) event log
-  function infoRenderDecoder(force) {
-    if (!infoOpen('dec')) return;
-    const id = infoDecVfo;
-    const d = id === null ? null : digDec(id);
+  // One VFO's settings row in a tab: VFO + state, mode, Listen, the plugin's
+  // options, Log all, Invert, Plot on map, bandwidth / plugin problems
+  function digVfoRowHtml(id, tab) {
+    const d = digDec(id);
     const mode = d ? (d.digital_mode || 'OFF') : 'OFF';
-    const st = id === null ? null : digStatus[id];
-    const body = $id('info-body-dec');
-    body.classList.toggle('empty', id === null);
-    if (id === null) {
-      $id('info-sub').textContent = '';
-      const t = '<div class="dig-help" style="padding:8px">No VFO is decoding. Tick <b>Digital decoder</b> on a VFO in the Decimators box (sidebar) - each decoding VFO gets its own tab here.</div>';
-      if ($id('info-dec-top').innerHTML !== t) $id('info-dec-top').innerHTML = t;
-      $id('info-dec-cols').style.display = 'none';
-      return;
-    }
-    $id('info-dec-cols').style.display = 'flex';
-    const [col, txt] = digStateOf(id);
-    $id('info-sub').textContent = `D${id} · ${((d ? vfoCenterMhz(d) : currentCenterFreq) + (d ? d.freq_offset_hz : 0) / 1e6).toFixed(4)} MHz · ${txt}`;
-
-    // settings row (rebuilt only when something changed and nothing in it has focus)
+    const st = digStatus[id];
     const o = (d && d.digital_opts) || {};
     const listening = d && d.is_fm_source && d.demod_mode === 'DIGITAL' && fmEnabled;
     const p = digOptionsPlugin(mode, st);
@@ -9013,72 +9528,119 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         opts += `<label${tip}>${digEsc(op.label || op.key)}: <input type="text" data-key="${digEsc(key)}" value="${digEsc(v)}" placeholder="${digEsc(op.default || 'default')}" style="width:70px"` +
                 ` onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="digSetOptFor(${id}, this.dataset.key, this.value.trim())"></label>`;
     }
-    const help = mode === 'AUTO'
-      ? (digAutoPlugins().length ? 'Auto detect: ' + digAutoPlugins().map(x => x.name).join(', ') : 'No decoders are ticked for Auto detect (sidebar plugin list).')
-      : ((digPlugin(digModePlugin(mode)) || {}).description || '');
-    // bandwidth check against the VFO's decimated rate
     const needK = digMinRateK(mode);
     const haveK = d ? ((bwo[d.bandwidth_index] || {}).bandwidth ?? d.bandwidth_mhz) * 1000 : 0;
     let warn = '';
     if (d && haveK + 1e-6 < needK) {
       let fix = -1;
       bwo.forEach((b, i) => { if (b.bandwidth >= needK / 1000 - 1e-9 && (fix < 0 || b.bandwidth < bwo[fix].bandwidth)) fix = i; });
-      warn += `<div class="dig-warn"><span>VFO bandwidth ${haveK.toFixed(0)} kHz is too narrow for ${digEsc(digModeLabel(mode))} (needs ${needK} kHz).</span>` +
+      warn += `<div class="dig-warn"><span>D${id}: VFO bandwidth ${haveK.toFixed(0)} kHz is too narrow for ${digEsc(digModeLabel(mode))} (needs ${needK} kHz).</span>` +
               `<button class="btn sm" type="button" onclick="digFixBandwidthFor(${id})">${fix >= 0 ? 'Set ' + +(bwo[fix].bandwidth * 1000).toFixed(1) + ' kHz' : 'Widen'}</button></div>`;
     }
     const bad = (st && st.plugins || []).filter(x => x.state && x.state !== 'running' && x.state !== 'starting');
-    if (bad.length) warn += `<div class="dig-warn" style="display:block">${bad.map(x => digEsc(x.error || (x.name + ': ' + x.state))).join('<br>')}</div>`;
+    if (bad.length) warn += `<div class="dig-warn" style="display:block">D${id}: ${bad.map(x => digEsc(x.error || (x.name + ': ' + x.state))).join('<br>')}</div>`;
     const vs = st && st.voice && st.voice.state;
+    const hasVoice = digHasVoice(mode, st);
+    const hasMessages = digHasMessages(mode, st);
     const voice = st && st.detected === 'mpt1327' ? 'MPT1327 voice is analogue: tune a VFO to the granted channel with NBFM'
-      : (listening ? (vs || 'no voice call') : 'voice not played');
-    const top =
-      `<div class="info-dec-settings">` +
-        `<label>Mode: <select id="info-dec-mode" onchange="digSetModeFor(${id}, this.value)">${digModeOptions(mode)}</select></label>` +
-        `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="Play this VFO's decoded digital voice: makes it the audio source with the Digital demodulator">${listening ? '🔊 Listening' : '🔊 Listen'}</button>` +
-        `<span class="v">${digEsc(voice)}</span>` +
+      : !hasVoice ? '' : (listening ? (vs || 'no voice call') : 'voice not played');
+    const [col, txt] = digStateOf(id);
+    return `<div class="info-dec-settings dig-vfo-row">` +
+        `<span class="dig-vfo" style="border-color:${getDecimatorColor(id)}" title="${digEsc(txt)}"><span style="color:${col}">●</span> D${id} · ${digMhzOf(id)} MHz</span>` +
+        `<label>Mode: <select class="dig-mode-sel" data-vfo="${id}" onchange="digSetModeFor(${id}, this.value)">${digModeOptions(mode)}</select></label>` +
+        (hasVoice ? `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="Play this VFO's decoded digital voice: makes it the audio source with the Digital demodulator">${listening ? '🔊 Listening' : '🔊 Listen'}</button>` : '') +
+        (voice ? `<span class="v">${digEsc(voice)}</span>` : '') +
         opts +
         `<label title="Also log the messages a control channel repeats constantly (system broadcasts, Aloha / acknowledgement CSBKs, GPS sentences)"><input type="checkbox" ${o.verbose ? 'checked' : ''} onchange="digSetOptFor(${id}, 'verbose', this.checked ? 1 : 0)"> Log all</label>` +
         `<label title="For a source whose spectrum is mirrored (I/Q swapped). Not needed with the KrakenSDR."><input type="checkbox" ${o.invert ? 'checked' : ''} onchange="digSetOptFor(${id}, 'invert', this.checked ? 1 : 0)"> Invert</label>` +
-      `</div>` +
-      (help ? `<div class="dig-help" style="margin:2px 0 0 0">${digEsc(help)}</div>` : '') + warn;
+        (st && (st.map_capable || st.map_points > 0 || hasMessages)
+          ? `<label title="Show this VFO's positions (e.g. aircraft) / incidents on the 🗺 Map in the right-hand pane"><input type="checkbox" ${o.map === true ? 'checked' : ''} onchange="digSetOptFor(${id}, 'map', this.checked ? 1 : 0); if (this.checked) mapToggle(true)"> 🗺 Plot on map${st.map_points ? ' (' + st.map_points + ')' : ''}</label>` +
+            (o.map === true && !mapState.on ? `<button class="btn sm" type="button" onclick="mapToggle(true)" title="Open the map in the right-hand pane">Show map</button>` : '')
+          : '') +
+      `</div>` + warn;
+  }
+
+  // A decoder mode's tab: a settings row per VFO running it, the incident
+  // row (messages plugins), merged tables, per-VFO status + facts, and the
+  // merged (filterable) event log
+  function infoRenderDecoder(force) {
+    if (!infoOpen('dec')) return;
+    const tab = infoTab.slice(4);
+    const body = $id('info-body-dec');
+    const empty = !tab;
+    body.classList.toggle('empty', empty);
+    if (empty) {
+      const t = '<div class="dig-help" style="padding:8px">No VFO is decoding. Tick <b>Digital decoder</b> on a VFO in the Decimators box (sidebar) - each decoder mode gets a tab here, showing every VFO that runs it.</div>';
+      if ($id('info-dec-top').innerHTML !== t) $id('info-dec-top').innerHTML = t;
+      $id('info-dec-cols').style.display = 'none';
+      $id('info-dec-table').style.display = 'none';
+      return;
+    }
+    $id('info-dec-cols').style.display = 'flex';
+    const ids = digTabVfos(tab);
+    const plugin = digPlugin(tab);
+    const name = digName(tab);
+
+    // settings rows (rebuilt only when something changed and nothing in them has focus)
+    const help = (plugin || {}).description || '';
+    // nobody runs it: start it on a VFO from here
+    const idle = ids.length ? '' : `<div class="info-dec-settings dig-vfo-row"><span class="v">No VFO decodes ${digEsc(name)} now.</span>` +
+      (decimatorInfo.length ? ' Start it on: ' + decimatorInfo.map(d =>
+        `<button class="btn sm" type="button" onclick="digSetModeFor(${d.id}, 'PLUGIN:${digEsc(tab)}')" title="D${d.id} ${digMhzOf(d.id)} MHz${d.digital_mode && d.digital_mode !== 'OFF' ? ' (now ' + digEsc(digModeLabel(d.digital_mode)) + ')' : ''}">` +
+        `<span class="dig-vfo-dot" style="background:${getDecimatorColor(d.id)}"></span>D${d.id}</button>`).join(' ') : '') + `</div>`;
+    const top = idle + ids.map(id => digVfoRowHtml(id, tab)).join('') +
+      (plugin && plugin.messages ? digIncidentsRow(tab) : '') +
+      (help ? `<div class="dig-help" style="margin:2px 0 0 0">${digEsc(help)}</div>` : '');
     const topEl = $id('info-dec-top');
     if (force || (topEl.dataset.html !== top && !topEl.contains(document.activeElement))) {
       topEl.dataset.html = top;
       topEl.innerHTML = top;
-      const ms = $id('info-dec-mode');
-      if (ms) ms.value = mode;
+      topEl.querySelectorAll('select.dig-mode-sel').forEach(sl => { sl.value = digModeOf(+sl.dataset.vfo); });
     }
-
-    const stat = $id('info-dec-status');
-    let sh = '';
-    if (st) {
-      const fr = st.frames || {};
-      const frames = Object.keys(fr).map(k => `${digName(k)} ${fr[k][0]} (total ${fr[k][1]})`).join(', ') || '0';
-      sh = `<div><span>State</span><span style="color:${col}">${digEsc(txt)}</span></div>` +
-           `<div><span>Carrier offset</span><span>${st.detected ? (st.offset_hz > 0 ? '+' : '') + st.offset_hz + ' Hz' : '-'}</span></div>` +
-           `<div><span>Valid frames (4 s)</span><span>${digEsc(frames)}</span></div>`;
+    $id('info-dec-status').innerHTML = '';
+    // tables (plugin tables of every VFO + incidents)
+    const tw = $id('info-dec-table');
+    const th = digTablesHtml(tab);
+    tw.style.display = th ? '' : 'none';
+    body.classList.toggle('has-table', !!th);
+    if (th && !digTableGrown) {
+      // first table: room for it in a short panel (the user's drag still rules)
+      digTableGrown = true;
+      const pnl = $id('info-panel');
+      if (pnl.getBoundingClientRect().height < 400 && window.innerHeight > 800) {
+        pnl.style.height = '420px';
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+      }
     }
-    if (stat.innerHTML !== sh) stat.innerHTML = sh;
-    const facts = st ? digFactsHtml(st) : '';
+    if (tw.dataset.html !== th) { tw.dataset.html = th; tw.innerHTML = th; }
+    // each VFO's status + facts
+    const facts = ids.map(id => digFactsHtml(id, tab)).join('');
     const ft = $id('info-dec-facts');
     if (ft.innerHTML !== facts) ft.innerHTML = facts;
     // a plugin's own stderr (debug output, the reason it crashed)
-    const withLog = (st && st.plugins || []).find(x => x.log && x.log.length && (mode !== 'AUTO' || x.state !== 'running' || x.id === st.detected));
+    let withLog = null, logVfo = null;
+    for (const id of ids) {
+      const st = digStatus[id], mode = digModeOf(id);
+      const x = (st && st.plugins || []).find(x => x.log && x.log.length && (mode !== 'AUTO' || x.state !== 'running' || x.id === st.detected));
+      if (x) { withLog = x; logVfo = id; break; }
+    }
     const pl = $id('info-dec-plugin-log');
     pl.style.display = withLog ? '' : 'none';
     if (withLog) {
+      pl.querySelector('summary').textContent = `Plugin output (stderr) · D${logVfo}`;
       const t = withLog.log.map(digEsc).join('<br>');
       const box = pl.querySelector('.dig-log');
       if (box.innerHTML !== t) box.innerHTML = t;
     }
+    // the merged log
     const log = $id('info-dec-log');
     const q = ($id('info-dec-filter').value || '').trim().toLowerCase();
-    const ev = digEvents[id] || [];
-    const key = (ev.length ? ev[ev.length - 1].s + ':' + ev.length : '0') + '|' + q + '|' + id;
+    const ev = digTabEvents(tab);
+    const key = ev.length + ':' + (ev.length ? ev[ev.length - 1].t + ev[ev.length - 1].m.length : 0) + '|' + q + '|' + tab + '|' + (digCleared[tab] || 0);
     if (force || log.dataset.key !== key) {
       log.dataset.key = key;
-      const shown = q ? ev.filter(e => (e.m + ' ' + (e.p || '')).toLowerCase().includes(q)) : ev;
-      log.innerHTML = shown.length ? digEventsHtml(shown) : '<div class="dig-help">No events yet.</div>';
+      const shown = q ? ev.filter(e => (e.m + ' ' + (e.p || '') + ' d' + e.vfo).toLowerCase().includes(q)) : ev;
+      log.innerHTML = shown.length ? digEventsHtml(shown, false) : '<div class="dig-help">No events yet.</div>';
     }
   }
 
@@ -9101,7 +9663,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       : !newInv && jobKind !== 'test' && aiState.session && aiState.session.id === aiViewId);
     let html = '';
     if (aiViewId === AI_JOB) {
-      $id('info-sub').textContent = busy ? (aiState.job.label || jobKind) : 'last job';
       const err = [...aiLog].reverse().find(x => x.e.ev === 'error');
       if (live) {
         const ls = [...aiLog].reverse().find(x => x.e.ev === 'status');
@@ -9119,10 +9680,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                 `<div class="dig-log ai-log" style="max-height:320px">${aiLog.map(aiLogLine).join('')}</div></details>`;
     } else if (!aiViewId) {
       html = '<div class="dig-help">Investigate a signal (sidebar → 🤖 AI Signal Lab) or pick one from the list.</div>';
-      $id('info-sub').textContent = '';
     } else {
-      const l = meta ? aiSessionLabel(meta) : {f: '', name: '', when: ''};
-      $id('info-sub').textContent = `${l.f} · ${l.name}${meta && meta.plugin_id ? ' · plugin ' + meta.plugin_id : ''}`;
       if (!s) html += '<div class="dig-help">Loading…</div>';
       for (const m of (s && s.chat) || []) {
         const t = m.t ? new Date(m.t).toLocaleString([], {hour12: false}) : '';
@@ -9274,6 +9832,108 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       md.value = wm.mode;
       updateWebMapperModeFields(wm.mode);
     }
+  }
+
+  // --- 🗂 Decoder Logging (decoder_log.cpp, {"declog":{...}} every 2 s) ---
+  let dlState = null;
+  function dlBytes(b) {
+    b = +b || 0;
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+    if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+    if (b < 1099511627776) return (b/1073741824).toFixed(2) + ' GB';
+    return (b/1099511627776).toFixed(2) + ' TB';
+  }
+  function dlSetEnabled(on) { send('DECODER_LOG:' + (on ? 1 : 0)); }
+  function dlSetTypes() {
+    const t = [...document.querySelectorAll('#dl-types input[data-t]')].filter(c => c.checked).map(c => c.dataset.t);
+    send('DECODER_LOG_TYPES:' + t.join(','));
+  }
+  function dlSetPosS() {
+    const el = $id('dl-pos-s');
+    const v = Math.max(1, Math.min(3600, Math.round(+el.value || 10)));
+    el.value = v;
+    send('DECODER_LOG_POS_S:' + v);
+  }
+  function dlSetDays() {
+    const el = $id('dl-days');
+    const v = Math.max(0, Math.min(3650, Math.round(+el.value || 0)));
+    el.value = v;
+    send('DECODER_LOG_DAYS:' + v);
+  }
+  // a drive picked from the list: a folder on it (the system disk = the default folder)
+  function dlPickDrive(mp) {
+    if (!mp) return;
+    const el = $id('dl-dir');
+    if (dlState && dlState.mount === mp) { el.value = dlState.dir; return; }
+    el.value = mp === '/' ? 'decoder_logs' : mp.replace(/\/+$/, '') + '/kraken_decoder_logs';
+    el.focus();
+    const e = $id('dl-dir-err');
+    e.style.display = ''; e.style.color = '#ffb74d';
+    e.textContent = 'Press Apply to save the logs here.';
+  }
+  function dlApplyDir() {
+    const v = ($id('dl-dir').value || '').trim();
+    if (!v) return;
+    $id('dl-dir-err').style.display = 'none';
+    send('DECODER_LOG_DIR:' + v);
+    $id('dl-dir').blur();
+  }
+  function dlOnError(err) {
+    const e = $id('dl-dir-err');
+    if (!e) return;
+    e.style.display = ''; e.style.color = '#ff8a80';
+    e.textContent = '⚠ ' + err;
+  }
+  function dlOnStatus(d) {
+    dlState = d;
+    const idle = (el) => el && document.activeElement !== el;
+    const en = $id('dl-enable');
+    if (idle(en)) en.checked = !!d.enabled;
+    const types = (d.types || '').split(',');
+    document.querySelectorAll('#dl-types input[data-t]').forEach(c => { if (idle(c)) c.checked = types.includes(c.dataset.t); });
+    if (idle($id('dl-days'))) $id('dl-days').value = d.days;
+    if (idle($id('dl-pos-s'))) $id('dl-pos-s').value = d.pos_s;
+    const dir = $id('dl-dir');
+    if (idle(dir) && $id('dl-dir-err').style.display === 'none') dir.value = d.dir;
+    // drive list: path - free of total
+    const sel = $id('dl-drive');
+    if (idle(sel)) {
+      const opts = (d.mounts || []).map(m =>
+        `<option value="${escapeHtml(m.path)}">${escapeHtml(m.path)}${m.path === '/' ? ' (system disk)' : m.type === 'tmpfs' ? ' (RAM - lost at reboot)' : ''} - ${dlBytes(m.free)} free of ${dlBytes(m.total)}</option>`).join('');
+      const html = opts || '<option value="">(no drives found)</option>';
+      if (sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html; }
+      if (d.mount) sel.value = d.mount;
+    }
+    let state;
+    if (d.error) state = `<span style="color:#ff8a80">⚠ ${escapeHtml(d.error)}</span>`;
+    else if (d.enabled) state = '<span style="color:#4caf50">&#9679;</span> Logging';
+    else state = '<span style="color:#777">&#9679;</span> Off';
+    $id('dl-state').innerHTML = state;
+    $id('dl-path').textContent = d.dir_abs || d.dir || '—';
+    $id('dl-free').textContent = d.total ? `${dlBytes(d.free)} of ${dlBytes(d.total)}` : 'unknown';
+    const used = d.total ? 1 - d.free / d.total : 0;
+    const bar = $id('dl-free-bar');
+    bar.style.width = (used * 100).toFixed(1) + '%';
+    bar.style.background = d.free < 1073741824 ? '#e53935' : used > 0.85 ? '#ffb74d' : '#3d7ab8';
+    bar.title = `${(used * 100).toFixed(0)}% used`;
+    $id('dl-today').textContent = `${dlBytes(d.today_bytes)} (${d.today})`;
+    $id('dl-perday').textContent = d.per_day ? '≈ ' + dlBytes(d.per_day) + ' (before gzip)' : (d.enabled ? 'measuring…' : '—');
+    $id('dl-all').textContent = `${d.files} file${d.files === 1 ? '' : 's'}, ${dlBytes(d.total_bytes)}`;
+    // gzip makes the finished days ~5-10x smaller; estimate with 1/6
+    let lasts = '—';
+    if (d.per_day > 0 && d.total) {
+      const kept = d.days > 0 ? d.per_day * (1 + d.days / 6) : 0;
+      if (d.days > 0 && kept < d.free) lasts = `fits (${d.days} days ≈ ${dlBytes(kept)})`;
+      else { const days = d.free / (d.per_day / 6); lasts = days > 3650 ? '> 10 years' : `≈ ${days < 2 ? days.toFixed(1) : Math.floor(days)} days`; }
+    }
+    $id('dl-lasts').textContent = lasts;
+    const extra = [];
+    if (d.buffered) extra.push(`${dlBytes(d.buffered)} waiting to be written`);
+    if (d.dropped) extra.push(`${d.dropped} records dropped (disk not writable)`);
+    if (d.compressing) extra.push(`gzipping ${d.compressing} file${d.compressing === 1 ? '' : 's'}…`);
+    extra.push(`Written every ${d.flush_s} s; a new file each day at midnight, older days gzipped.`);
+    $id('dl-note').textContent = extra.join(' · ');
   }
 
   // --- Local Recording controls ---
@@ -9534,6 +10194,919 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
 
 
+  // ============================================================================
+  // 🗺 MAP (right-hand pane)
+  // ============================================================================
+  // Street / satellite map of the positions the decoder plugins report
+  // (kp::Host::map_point - e.g. ADS-B aircraft). Drawn on a canvas here, no
+  // map library: the page works without internet (Pi hotspot use), and so
+  // does the map - tiles that can't be loaded leave a plain lat/lon grid
+  // with the markers on it. The backend pushes {"map":...} once a second
+  // (MessageBuilders::build_map_message): the station location, the points
+  // that changed and the keys of all live points; GET_MAP asks for all of
+  // them. Each decoder's "Plot on map" (decoder tab, DIGITAL_OPT map) decides
+  // whether its points are sent. Per-browser view settings in localStorage.
+  const MAP_LAYERS = {
+    street: {name: 'Street', max: 19, attr: '© OpenStreetMap contributors',
+             url: (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`},
+    satellite: {name: 'Satellite', max: 19, attr: 'Imagery © Esri, Maxar, Earthstar Geographics · labels © Esri',
+                url: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`,
+                labels: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/${z}/${y}/${x}`},
+  };
+  // (map state: see the globals block at the top of the script)
+
+  function mapSave() {
+    try { localStorage.setItem('kraken_map', JSON.stringify(mapState)); } catch (e) {}
+  }
+  function mapSet(k, v) { mapState[k] = v; mapSave(); mapUpdateControls(); mapDraw(); }
+
+  // --- pane: on/off, tabs, width -------------------------------------------
+  function mapToggle(on) {
+    mapState.on = on === undefined ? !mapState.on : !!on;
+    if (mapState.on) mapState.tab = 'map';
+    mapSave();
+    rpApply();
+    if (mapState.on) { send('GET_MAP'); send('GET_RDF'); }
+  }
+  function rpShow(tab) {
+    if (!mapState.on) return;
+    mapState.tab = tab;
+    mapSave();
+    rpApply();
+  }
+  // body classes: map-on (the pane shows in every mode, tabs in coherent),
+  // rp-map (the map tab is the one shown - outside coherent it always is)
+  function rpApply() {
+    const b = document.body;
+    const both = mapState.on && mapState.tab === 'both' && opMode === 'coherent';
+    const showMap = mapState.on && (mapState.tab === 'map' || both || opMode !== 'coherent');
+    const changed = b.classList.contains('map-on') !== mapState.on || b.classList.contains('rp-map') !== showMap ||
+                    b.classList.contains('rp-both') !== both;
+    b.classList.toggle('map-on', mapState.on);
+    b.classList.toggle('rp-map', showMap);
+    b.classList.toggle('rp-both', both);
+    $id('rp-tab-doa').classList.toggle('sel', !showMap);
+    $id('rp-tab-map').classList.toggle('sel', showMap && !both);
+    $id('rp-tab-both').classList.toggle('sel', both);
+    rpApplySplit();
+    const btn = $id('map-btn');
+    if (btn) btn.classList.toggle('on', mapState.on);
+    rpApplyWidth();
+    if (showMap) { mapInit(); mapResize(); }
+    if (changed) setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+  }
+  // Both: the DoA part's height (mapState.dh px, 0 = default 42 %)
+  function rpApplySplit() {
+    const pane = $id('right-pane');
+    const max = pane ? pane.clientHeight - 140 : 600;
+    const h = mapState.dh ? Math.max(80, Math.min(max, mapState.dh)) : 0;
+    document.documentElement.style.setProperty('--doa-h', h ? h + 'px' : '42%');
+  }
+  function initRpSplit() {
+    const h = $id('rp-vsplit');
+    if (!h) return;
+    let y0 = 0, h0 = 0;
+    h.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return;
+      y0 = e.clientY;
+      h0 = document.querySelector('#right-pane .doa-content').getBoundingClientRect().height;
+      h.setPointerCapture(e.pointerId);
+      h.classList.add('dragging');
+      e.preventDefault();
+    });
+    h.addEventListener('pointermove', e => {
+      if (!h.hasPointerCapture(e.pointerId)) return;
+      mapState.dh = Math.round(h0 + e.clientY - y0);
+      rpApplySplit();
+      mapResize();
+    });
+    const end = e => {
+      if (!h.hasPointerCapture(e.pointerId)) return;
+      h.releasePointerCapture(e.pointerId);
+      h.classList.remove('dragging');
+      mapSave();
+      mapResize();
+    };
+    h.addEventListener('pointerup', end);
+    h.addEventListener('pointercancel', end);
+    h.addEventListener('dblclick', () => { mapState.dh = 0; mapSave(); rpApplySplit(); mapResize(); });
+  }
+  function rpMaxW() {
+    const c = document.querySelector('.spectrum-doa-container');
+    return Math.max(260, (c ? c.clientWidth : window.innerWidth) - 420);
+  }
+  function rpApplyWidth() {
+    const w = mapState.w ? Math.min(rpMaxW(), Math.max(260, mapState.w)) : 0;
+    document.documentElement.style.setProperty('--map-w', w ? w + 'px' : '42%');
+  }
+  function initMapResize() {
+    const h = $id('rp-resizer');
+    if (!h) return;
+    let startX = 0, startW = 0, raf = 0;
+    const refit = () => { raf = 0; window.dispatchEvent(new Event('resize')); };
+    h.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return;
+      startX = e.clientX;
+      startW = $id('right-pane').getBoundingClientRect().width;
+      h.setPointerCapture(e.pointerId);
+      h.classList.add('dragging');
+      e.preventDefault();
+    });
+    h.addEventListener('pointermove', e => {
+      if (!h.hasPointerCapture(e.pointerId)) return;
+      mapState.w = Math.round(Math.min(rpMaxW(), Math.max(260, startW - (e.clientX - startX))));
+      rpApplyWidth();
+      if (!raf) raf = requestAnimationFrame(refit);
+    });
+    const end = e => {
+      if (!h.hasPointerCapture(e.pointerId)) return;
+      h.releasePointerCapture(e.pointerId);
+      h.classList.remove('dragging');
+      mapSave();
+      refit();
+    };
+    h.addEventListener('pointerup', end);
+    h.addEventListener('pointercancel', end);
+    h.addEventListener('dblclick', () => { mapState.w = 0; mapSave(); rpApplyWidth(); refit(); });
+    window.addEventListener('resize', () => { if (!h.classList.contains('dragging')) rpApplyWidth(); });
+  }
+
+  // --- projection (Web Mercator, x/y in 0..1) --------------------------------
+  function mapProj(lat, lon) {
+    const s = Math.sin(Math.max(-85.0511, Math.min(85.0511, lat)) * Math.PI / 180);
+    return [(lon + 180) / 360, 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)];
+  }
+  function mapUnproj(x, y) {
+    const n = Math.PI - 2 * Math.PI * y;
+    return [180 / Math.PI * Math.atan(Math.sinh(n)), x * 360 - 180];
+  }
+  function mapWorld() { return 256 * Math.pow(2, mapState.z); }
+  // screen position (CSS px) of normalized x/y, using the copy of the world
+  // nearest the view centre
+  function mapToScreen(nx, ny) {
+    const W = mapWorld();
+    let dx = nx - mapState.mx;
+    dx -= Math.round(dx);
+    return [mapW / 2 + dx * W, mapH / 2 + (ny - mapState.my) * W];
+  }
+  function mapLatLonToScreen(lat, lon) { const p = mapProj(lat, lon); return mapToScreen(p[0], p[1]); }
+  function mapClampView() {
+    mapState.z = Math.max(MAP_MIN_Z, Math.min(MAP_MAX_Z, mapState.z));
+    mapState.mx -= Math.floor(mapState.mx);
+    const half = mapH / 2 / mapWorld();
+    mapState.my = half >= 0.5 ? 0.5 : Math.max(half, Math.min(1 - half, mapState.my));
+  }
+  // zoom by dz keeping the screen point (px, py) still
+  function mapZoomAt(dz, px, py) {
+    const W0 = mapWorld();
+    const nx = mapState.mx + (px - mapW / 2) / W0, ny = mapState.my + (py - mapH / 2) / W0;
+    mapState.z = Math.max(MAP_MIN_Z, Math.min(MAP_MAX_Z, mapState.z + dz));
+    const W1 = mapWorld();
+    mapState.mx = nx - (px - mapW / 2) / W1;
+    mapState.my = ny - (py - mapH / 2) / W1;
+    mapAutoFit = false;
+    mapClampView();
+    mapSaveSoon();
+    mapDraw();
+  }
+  function mapZoomBy(dz) { mapZoomAt(dz, mapW / 2, mapH / 2); }
+  function mapSaveSoon() { clearTimeout(mapSaveT); mapSaveT = setTimeout(mapSave, 500); }
+  function mapCenterOn(lat, lon, z) {
+    const p = mapProj(lat, lon);
+    mapState.mx = p[0];
+    mapState.my = p[1];
+    if (z !== undefined) mapState.z = z;
+    mapClampView();
+    mapSave();
+    mapDraw();
+  }
+  function mapCenterStation() {
+    mapAutoFit = false;
+    if (mapStation) mapCenterOn(mapStation[0], mapStation[1], Math.max(mapState.z, 8));
+    else mapStatusFlash('No station location - set it in the sidebar (Station Information)');
+  }
+  // zoom / centre to show every marker (and the station)
+  function mapFitAll() {
+    const ll = [];
+    for (const p of mapPts.values()) ll.push([p.la, p.lo]);
+    if (mapStation) ll.push(mapStation);
+    if (!ll.length) { mapStatusFlash('Nothing on the map yet'); return; }
+    if (ll.length === 1) { mapCenterOn(ll[0][0], ll[0][1], Math.max(mapState.z, 9)); return; }
+    let x0 = 1, x1 = 0, y0 = 1, y1 = 0;
+    for (const [la, lo] of ll) {
+      const [x, y] = mapProj(la, lo);
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+    // margins: labels right of the markers, the zoom buttons, the status line
+    const span = Math.max((x1 - x0) / Math.max(1, mapW - 220), (y1 - y0) / Math.max(1, mapH - 130), 1e-9);
+    mapState.z = Math.max(MAP_MIN_Z, Math.min(13, Math.log2(1 / (span * 256))));
+    mapState.mx = (x0 + x1) / 2 + 35 / mapWorld();   // a little room for the labels
+    mapState.my = (y0 + y1) / 2;
+    mapClampView();
+    mapSave();
+    mapDraw();
+  }
+  function mapStatusFlash(m) {
+    mapFlashMsg = m;
+    clearTimeout(mapFlashT);
+    mapFlashT = setTimeout(() => { mapFlashMsg = ''; mapDraw(); }, 3000);
+    mapDraw();
+  }
+
+  // --- setup ------------------------------------------------------------------
+  function mapInit() {
+    if (mapCv) return;
+    mapCv = $id('map-canvas');
+    mapCtx = mapCv.getContext('2d');
+    const pane = $id('map-pane');
+    if (window.ResizeObserver) new ResizeObserver(() => mapResize()).observe(pane);
+    window.addEventListener('resize', mapResize);
+    // pan (one pointer) / pinch zoom (two)
+    const ptrs = new Map();
+    let pan = null, pinch = null, moved = false;
+    mapCv.addEventListener('pointerdown', e => {
+      mapCv.setPointerCapture(e.pointerId);
+      ptrs.set(e.pointerId, [e.offsetX, e.offsetY]);
+      moved = false;
+      if (ptrs.size === 1) pan = {x: e.offsetX, y: e.offsetY, mx: mapState.mx, my: mapState.my};
+      else if (ptrs.size === 2) {
+        const [a, b] = [...ptrs.values()];
+        pinch = {d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z: mapState.z};
+        pan = null;
+      }
+    });
+    mapCv.addEventListener('pointermove', e => {
+      if (!ptrs.has(e.pointerId)) {
+        const over = !!mapHit(e.offsetX, e.offsetY);
+        mapCv.classList.toggle('over', over);
+        return;
+      }
+      ptrs.set(e.pointerId, [e.offsetX, e.offsetY]);
+      if (pinch && ptrs.size === 2) {
+        const [a, b] = [...ptrs.values()];
+        const d = Math.hypot(a[0] - b[0], a[1] - b[1]) || 1;
+        mapZoomAt(pinch.z + Math.log2(d / pinch.d) - mapState.z, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+        moved = true;
+      } else if (pan) {
+        const dx = e.offsetX - pan.x, dy = e.offsetY - pan.y;
+        if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+        if (!moved) return;
+        mapCv.classList.add('dragging');
+        const W = mapWorld();
+        mapState.mx = pan.mx - dx / W;
+        mapState.my = pan.my - dy / W;
+        mapAutoFit = false;
+        mapClampView();
+        mapDraw();
+      }
+    });
+    const up = e => {
+      if (!ptrs.has(e.pointerId)) return;
+      ptrs.delete(e.pointerId);
+      mapCv.classList.remove('dragging');
+      if (ptrs.size < 2) pinch = null;
+      if (ptrs.size === 0) {
+        if (pan && !moved && e.type === 'pointerup') {
+          const k = mapHit(e.offsetX, e.offsetY);
+          mapSel = k;
+          mapDraw();
+        }
+        pan = null;
+        mapSaveSoon();
+      } else if (ptrs.size === 1) {
+        const [p] = [...ptrs.values()];
+        pan = {x: p[0], y: p[1], mx: mapState.mx, my: mapState.my};
+      }
+    };
+    mapCv.addEventListener('pointerup', up);
+    mapCv.addEventListener('pointercancel', up);
+    mapCv.addEventListener('wheel', e => {
+      e.preventDefault();
+      const dz = -e.deltaY / (e.deltaMode === 1 ? 6 : e.deltaMode === 2 ? 1 : 250);
+      mapZoomAt(Math.max(-1, Math.min(1, dz)), e.offsetX, e.offsetY);
+    }, {passive: false});
+    mapCv.addEventListener('dblclick', e => { e.preventDefault(); mapZoomAt(1, e.offsetX, e.offsetY); });
+    mapUpdateControls();
+  }
+
+  function mapUpdateControls() {
+    const seg = $id('map-layers');
+    if (seg) {
+      const html = Object.entries(MAP_LAYERS).map(([k, l]) =>
+        `<button type="button" class="${mapState.layer === k ? 'on' : ''}" onclick="mapSet('layer','${k}')">${l.name}</button>`).join('');
+      if (seg.dataset.html !== html) { seg.dataset.html = html; seg.innerHTML = html; }
+    }
+    const tr = $id('map-trails');
+    if (tr) tr.classList.toggle('on', !!mapState.trails);
+    const at = $id('map-attr');
+    if (at) at.textContent = MAP_LAYERS[mapState.layer].attr;
+    if (typeof rdfRenderPanel === 'function') rdfRenderPanel();
+  }
+
+  function mapResize() {
+    if (!mapCv || !document.body.classList.contains('rp-map')) return;
+    const r = $id('map-pane').getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+    if (w === mapW && h === mapH && dpr === mapDpr) return;
+    mapW = w; mapH = h; mapDpr = dpr;
+    mapCv.width = Math.round(w * dpr);
+    mapCv.height = Math.round(h * dpr);
+    if (!mapState.z) {
+      // first use: the station, else the whole world
+      mapState.z = mapStation ? 8 : MAP_MIN_Z;
+      if (mapStation) { const p = mapProj(mapStation[0], mapStation[1]); mapState.mx = p[0]; mapState.my = p[1]; }
+    }
+    mapClampView();
+    mapDrawNow();
+  }
+
+  // --- tiles --------------------------------------------------------------------
+  // A tile: cached image, retried with a back-off after an error (offline:
+  // nothing is hammered, and the map fills in once the connection is back)
+  function mapTile(url) {
+    let t = mapTiles.get(url);
+    const now = Date.now();
+    if (t) {
+      t.used = now;
+      if (t.st === 'err' && now >= t.retry) mapTileLoad(t, url);
+      return t;
+    }
+    t = {img: null, st: 'loading', retry: 0, used: now, fails: 0};
+    mapTiles.set(url, t);
+    mapTileLoad(t, url);
+    if (mapTiles.size > MAP_TILE_CACHE) {
+      // drop the least recently used quarter
+      const old = [...mapTiles.entries()].sort((a, b) => a[1].used - b[1].used).slice(0, MAP_TILE_CACHE / 4);
+      for (const [k] of old) mapTiles.delete(k);
+    }
+    return t;
+  }
+  function mapTileLoad(t, url) {
+    t.st = 'loading';
+    const img = new Image();
+    img.decoding = 'async';
+    img.onload = () => { t.st = 'ok'; t.img = img; t.fails = 0; mapTileOk = Date.now(); mapDraw(); };
+    img.onerror = () => {
+      t.st = 'err';
+      t.fails++;
+      t.retry = Date.now() + Math.min(300000, 15000 * Math.pow(2, t.fails - 1));
+      mapTileErrAt = Date.now();
+      mapDraw();
+    };
+    img.src = url;
+  }
+  // draws tile (tz, x, y) of a layer into the screen rect, or the matching
+  // part of an already loaded lower-zoom tile while it loads / can't load
+  function mapDrawTile(urlf, tz, x, y, sx, sy, size, fallback) {
+    const n = 1 << tz;
+    const xx = ((x % n) + n) % n;
+    const t = mapTile(urlf(tz, xx, y));
+    const c = mapCtx;
+    if (t.st === 'ok') { c.drawImage(t.img, sx, sy, size + 0.5, size + 0.5); return; }
+    if (!fallback) return;
+    for (let up = 1; up <= 6 && tz - up >= 0; up++) {
+      const pz = tz - up, f = 1 << up;
+      const px = Math.floor(xx / f), py = Math.floor(y / f);
+      const pt = mapTiles.get(urlf(pz, px, py));
+      if (pt && pt.st === 'ok') {
+        const sub = 256 / f;
+        c.drawImage(pt.img, (xx % f) * sub, (y % f) * sub, sub, sub, sx, sy, size + 0.5, size + 0.5);
+        pt.used = Date.now();
+        return;
+      }
+    }
+  }
+
+  // --- drawing ----------------------------------------------------------------
+  function mapDraw() {
+    if (!mapCv || mapRaf || !document.body.classList.contains('rp-map')) return;
+    mapRaf = requestAnimationFrame(() => { mapRaf = 0; mapDrawNow(); });
+  }
+
+  function mapGraticule(c) {
+    const [la0, lo0] = mapUnproj(mapState.mx - mapW / 2 / mapWorld(), mapState.my + mapH / 2 / mapWorld());
+    const [la1, lo1] = mapUnproj(mapState.mx + mapW / 2 / mapWorld(), mapState.my - mapH / 2 / mapWorld());
+    const span = Math.max(lo1 - lo0, 1e-6);
+    const steps = [30, 15, 10, 5, 2, 1, 0.5, 0.25, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001];
+    let st = steps[0];
+    for (const s of steps) if (span / s <= mapW / 110) st = s;
+    c.strokeStyle = 'rgba(120,150,190,0.22)';
+    c.fillStyle = 'rgba(150,175,210,0.55)';
+    c.lineWidth = 1;
+    c.font = '10px sans-serif';
+    const dec = st >= 1 ? 0 : st >= 0.1 ? 1 : st >= 0.01 ? 2 : 3;
+    c.beginPath();
+    for (let lo = Math.ceil(lo0 / st) * st; lo <= lo1; lo += st) {
+      const [x] = mapLatLonToScreen(0, lo);
+      c.moveTo(Math.round(x) + 0.5, 0); c.lineTo(Math.round(x) + 0.5, mapH);
+      c.fillText(lo.toFixed(dec) + '°', x + 3, mapH - 22);
+    }
+    for (let la = Math.ceil(Math.max(-85, la0) / st) * st; la <= Math.min(85, la1); la += st) {
+      const [, y] = mapLatLonToScreen(la, 0);
+      c.moveTo(0, Math.round(y) + 0.5); c.lineTo(mapW, Math.round(y) + 0.5);
+      c.fillText(la.toFixed(dec) + '°', 4, y - 3);
+    }
+    c.stroke();
+  }
+
+  // range rings around the station, at a round step that suits the zoom
+  function mapRings(c) {
+    if (!mapStation) return;
+    const [sx, sy] = mapLatLonToScreen(mapStation[0], mapStation[1]);
+    const kmPerPx = 40075 * Math.cos(mapStation[0] * Math.PI / 180) / mapWorld();
+    const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+    let st = steps[steps.length - 1];
+    for (const s of steps) if (s / kmPerPx >= 70) { st = s; break; }
+    // darker on the light street map, light on the satellite / plain grid
+    const light = mapState.layer === 'street' && Date.now() - mapTileOk < 120000;
+    c.strokeStyle = light ? 'rgba(13,71,161,0.45)' : 'rgba(79,195,247,0.4)';
+    c.fillStyle = light ? 'rgba(13,71,161,0.85)' : 'rgba(160,220,255,0.8)';
+    c.lineWidth = 1;
+    c.font = '10px sans-serif';
+    for (let i = 1; i <= 4; i++) {
+      const r = i * st / kmPerPx;
+      c.beginPath();
+      c.arc(sx, sy, r, 0, 2 * Math.PI);
+      c.stroke();
+      const d = i * st;
+      c.fillText(d >= 1 ? +d.toFixed(1) + ' km' : Math.round(d * 1000) + ' m', sx + r * 0.71 + 2, sy - r * 0.71 - 2);
+    }
+    // the station: antenna mast
+    c.save();
+    c.translate(sx, sy);
+    c.strokeStyle = '#000'; c.fillStyle = '#ffeb3b'; c.lineWidth = 1.5;
+    c.beginPath(); c.moveTo(0, -11); c.lineTo(6, 6); c.lineTo(-6, 6); c.closePath(); c.fill(); c.stroke();
+    c.restore();
+  }
+
+  function mapAircraftPath(c) {
+    c.beginPath();
+    c.moveTo(0, -10); c.lineTo(1.7, -6.5); c.lineTo(1.7, -2.5); c.lineTo(9, 2); c.lineTo(9, 3.8); c.lineTo(1.7, 1.6);
+    c.lineTo(1.3, 6.2); c.lineTo(3.8, 8.3); c.lineTo(3.8, 9.6); c.lineTo(0, 8.6);
+    c.lineTo(-3.8, 9.6); c.lineTo(-3.8, 8.3); c.lineTo(-1.3, 6.2); c.lineTo(-1.7, 1.6); c.lineTo(-9, 3.8);
+    c.lineTo(-9, 2); c.lineTo(-1.7, -2.5); c.lineTo(-1.7, -6.5); c.closePath();
+  }
+  function mapMarker(c, p, col, stale) {
+    c.save();
+    c.globalAlpha = stale ? 0.45 : 1;
+    c.fillStyle = col;
+    c.strokeStyle = 'rgba(0,0,0,0.85)';
+    c.lineWidth = 1.2;
+    const rot = Number.isFinite(p.h) ? p.h * Math.PI / 180 : 0;
+    if (p.k === 'aircraft') {
+      c.rotate(rot);
+      mapAircraftPath(c);
+      c.fill(); c.stroke();
+    } else if (p.k === 'vehicle') {
+      c.rotate(rot);
+      c.beginPath(); c.rect(-4.5, -6.5, 9, 13); c.fill(); c.stroke();
+      c.beginPath(); c.moveTo(-3, -4); c.lineTo(0, -8); c.lineTo(3, -4); c.closePath(); c.fill(); c.stroke();
+    } else if (p.k === 'ship') {
+      c.rotate(rot);
+      c.beginPath(); c.moveTo(0, -9); c.lineTo(5, -2); c.lineTo(5, 8); c.lineTo(-5, 8); c.lineTo(-5, -2); c.closePath(); c.fill(); c.stroke();
+    } else if (p.k === 'incident') {
+      // a red warning triangle, whatever the VFO's colour
+      c.fillStyle = '#e53935';
+      c.beginPath(); c.moveTo(0, -11); c.lineTo(10, 7); c.lineTo(-10, 7); c.closePath(); c.fill(); c.stroke();
+      c.fillStyle = '#fff'; c.font = 'bold 12px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText('!', 0, 1);
+    } else if (p.k === 'station') {
+      c.beginPath(); c.moveTo(0, -8); c.lineTo(7, 6); c.lineTo(-7, 6); c.closePath(); c.fill(); c.stroke();
+    } else {
+      c.beginPath(); c.arc(0, 0, p.k === 'person' ? 5 : 6, 0, 2 * Math.PI); c.fill(); c.stroke();
+    }
+    c.restore();
+  }
+  function mapAltText(p) {
+    if (!Number.isFinite(p.a)) return '';
+    if (p.k === 'aircraft') return p.a <= 0 ? 'GND' : Math.round(p.a / 0.3048 / 100) * 100 + ' ft';
+    return Math.round(p.a) + ' m';
+  }
+
+  function mapDrawNow() {
+    if (!mapCv || !document.body.classList.contains('rp-map')) return;
+    const c = mapCtx;
+    c.setTransform(mapDpr, 0, 0, mapDpr, 0, 0);
+    c.fillStyle = mapState.layer === 'satellite' ? '#141a22' : '#1b2330';
+    c.fillRect(0, 0, mapW, mapH);
+    mapGraticule(c);
+    // tiles at the nearest integer zoom, scaled to the fractional one
+    const L = MAP_LAYERS[mapState.layer];
+    const tz = Math.max(0, Math.min(L.max, Math.round(mapState.z)));
+    const size = 256 * Math.pow(2, mapState.z - tz);
+    const n = 1 << tz;
+    const left = mapState.mx * n - mapW / 2 / size, top = mapState.my * n - mapH / 2 / size;
+    const x0 = Math.floor(left), y0 = Math.max(0, Math.floor(top));
+    const x1 = Math.floor(left + mapW / size), y1 = Math.min(n - 1, Math.floor(top + mapH / size));
+    for (const [urlf, fb] of [[L.url, true], [L.labels, false]]) {
+      if (!urlf) continue;
+      for (let y = y0; y <= y1; y++)
+        for (let x = x0; x <= x1; x++)
+          mapDrawTile(urlf, tz, x, y, (x - left) * size, (y - top) * size, size, fb);
+    }
+    rdfDraw(c);
+    mapRings(c);
+    // trails, then markers + labels
+    const now = Date.now();
+    const vis = [];
+    for (const [k, p] of mapPts) {
+      const [x, y] = mapLatLonToScreen(p.la, p.lo);
+      p.sx = x; p.sy = y;
+      if (x < -60 || y < -40 || x > mapW + 60 || y > mapH + 40) continue;
+      vis.push([k, p]);
+    }
+    if (mapState.trails) {
+      c.lineWidth = 1.6;
+      for (const [, p] of mapPts) {
+        if (!p.trail || p.trail.length < 2) continue;
+        c.strokeStyle = getDecimatorColor(p.v);
+        c.globalAlpha = 0.55;
+        c.beginPath();
+        p.trail.forEach(([la, lo], i) => {
+          const [x, y] = mapLatLonToScreen(la, lo);
+          if (i) c.lineTo(x, y); else c.moveTo(x, y);
+        });
+        c.lineTo(p.sx, p.sy);
+        c.stroke();
+      }
+      c.globalAlpha = 1;
+    }
+    c.font = 'bold 11px sans-serif';
+    c.lineJoin = 'round';
+    for (const [k, p] of vis) {
+      const col = getDecimatorColor(p.v);
+      const stale = (now - p.rx) / 1000 > 30;
+      c.save();
+      c.translate(p.sx, p.sy);
+      if (k === mapSel) {
+        c.strokeStyle = '#fff'; c.lineWidth = 2;
+        c.beginPath(); c.arc(0, 0, 14, 0, 2 * Math.PI); c.stroke();
+      }
+      mapMarker(c, p, col, stale);
+      const lab = p.l || p.i, alt = mapAltText(p);
+      c.globalAlpha = stale ? 0.55 : 1;
+      c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineWidth = 3; c.fillStyle = '#fff';
+      c.strokeText(lab, 12, -1); c.fillText(lab, 12, -1);
+      if (alt) {
+        c.font = '10px sans-serif';
+        c.strokeText(alt, 12, 11); c.fillStyle = '#cfe3ff'; c.fillText(alt, 12, 11);
+        c.font = 'bold 11px sans-serif';
+      }
+      c.restore();
+    }
+    mapRenderPopup();
+    mapRenderStatus();
+  }
+
+  // the marker under a screen point (nearest within 14 px)
+  function mapHit(x, y) {
+    let best = null, bd = 14 * 14;
+    for (const [k, p] of mapPts) {
+      if (p.sx === undefined) continue;
+      const d = (p.sx - x) ** 2 + (p.sy - y) ** 2;
+      if (d < bd) { bd = d; best = k; }
+    }
+    return best;
+  }
+
+  function mapRenderPopup() {
+    const el = $id('map-pop');
+    const p = mapSel ? mapPts.get(mapSel) : null;
+    if (!p || p.sx === undefined || p.sx < 0 || p.sy < 0 || p.sx > mapW || p.sy > mapH) {
+      if (el.style.display !== 'none') el.style.display = 'none';
+      if (!p) mapSel = null;
+      return;
+    }
+    const age = Math.max(0, Math.round((Date.now() - p.rx) / 1000));
+    let rows = (p.x || '').split('\n').filter(Boolean).map(l => {
+      const i = l.indexOf(': ');
+      return i > 0 ? `<tr><td>${digEsc(l.slice(0, i))}</td><td>${digEsc(l.slice(i + 2))}</td></tr>` : `<tr><td colspan="2">${digEsc(l)}</td></tr>`;
+    }).join('');
+    rows += `<tr><td>Position</td><td>${p.la.toFixed(5)}, ${p.lo.toFixed(5)}</td></tr>`;
+    if (mapStation) {
+      const d = mapDistKm(mapStation[0], mapStation[1], p.la, p.lo), b = mapBearing(mapStation[0], mapStation[1], p.la, p.lo);
+      rows += `<tr><td>From station</td><td>${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${b.toFixed(0)}°</td></tr>`;
+    }
+    rows += `<tr><td>Updated</td><td>${age < 2 ? 'now' : age + ' s ago'}</td></tr>`;
+    const html = `<div class="h"><span style="color:${getDecimatorColor(p.v)}">●</span>${digEsc(p.l || p.i)}<span class="x" onclick="mapSel=null;mapDraw()">✕</span></div>` +
+                 `<div class="s">D${p.v} · ${digEsc(digName(p.p))}</div><table>${rows}</table>`;
+    if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+    el.style.display = 'block';
+    const w = el.offsetWidth, h = el.offsetHeight;
+    let x = p.sx + 16, y = p.sy - h / 2;
+    if (x + w > mapW - 4) x = p.sx - 16 - w;
+    x = Math.max(4, x);
+    y = Math.max(36, Math.min(mapH - h - 18, y));
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+  }
+
+  // --- 📡 Mobile DF on the map (coherent mode; rdf_mapper.cpp) ---------------
+  // {"rdf":{on, range_km, state, station:{lat,lon,hdg,spd,src}, vfos:[{id, mhz,
+  // lobe (b64, 720 x 0.5 deg, north frame, u8 = the pseudospectrum linear
+  // min..max - the MUSIC DoA plot's scale), peak, conf,
+  // held, frames, gate_m, moved_m, records}]}} at 2 Hz;
+  // {"rdf_grid":{vfo, mhz, records, range_km, nats, coarse/fine:{n, cell_m,
+  // nw, se, data (b64 u8, row 0 north: 255 = the peak, 0 = nats below)}, est:
+  // {lat, lon, r50, r95, a, b, ang, mass, edge, off, off_sd}, lines:[[lat, lon,
+  // bearing, t]]}} when a VFO's heat map changed
+  let rdfStatus = null;
+  const rdfGrids = {};   // vfo -> {m, coarse, fine (canvases)}
+  const rdfLobeCache = new Map();
+  function rdfB64(s) {
+    const b = atob(s), u = new Uint8Array(b.length);
+    for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
+    return u;
+  }
+  // heat colours: transparent below ~1 nat of the range, blue -> cyan ->
+  // green -> yellow -> red at the peak
+  const RDF_LUT = (() => {
+    const stops = [[0, 30, 60, 220], [0.3, 0, 200, 230], [0.55, 40, 220, 60], [0.78, 255, 230, 0], [1, 255, 30, 20]];
+    const lut = new Uint8ClampedArray(256 * 4);
+    for (let i = 0; i < 256; i++) {
+      const x = i / 255;
+      let k = 0;
+      while (k < stops.length - 2 && x > stops[k + 1][0]) k++;
+      const [x0, ...c0] = stops[k], [x1, ...c1] = stops[k + 1];
+      const f = Math.max(0, Math.min(1, (x - x0) / (x1 - x0)));
+      for (let j = 0; j < 3; j++) lut[i * 4 + j] = c0[j] + f * (c1[j] - c0[j]);
+      lut[i * 4 + 3] = x < 0.08 ? 0 : Math.round(255 * (0.25 + 0.55 * x));
+    }
+    return lut;
+  })();
+  function rdfHeatCanvas(g) {
+    if (!g || !g.data) return null;
+    const u = rdfB64(g.data), n = g.n;
+    if (u.length !== n * n) return null;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = n;
+    const cx = cv.getContext('2d'), im = cx.createImageData(n, n);
+    for (let i = 0; i < n * n; i++) im.data.set(RDF_LUT.subarray(u[i] * 4, u[i] * 4 + 4), i * 4);
+    cx.putImageData(im, 0, 0);
+    return {cv, g};
+  }
+  function rdfOnStatus(m) {
+    rdfStatus = m;
+    // grids of VFOs that are gone
+    for (const k of Object.keys(rdfGrids)) if (!(m.vfos || []).some(v => v.id === +k)) delete rdfGrids[k];
+    rdfRenderPanel();
+    if (mapCv && document.body.classList.contains('rp-map')) mapDraw();
+  }
+  function rdfOnGrid(g) {
+    rdfGrids[g.vfo] = {m: g, coarse: rdfHeatCanvas(g.coarse), fine: rdfHeatCanvas(g.fine)};
+    rdfRenderPanel();
+    if (mapCv && document.body.classList.contains('rp-map')) mapDraw();
+  }
+  function rdfVfos() { return (rdfStatus && rdfStatus.vfos) || []; }
+  function rdfSelIds() {
+    const ids = rdfVfos().map(v => v.id), sel = String(mapState.rdfVfo ?? 'all');
+    return sel === 'all' ? ids : ids.filter(i => String(i) === sel);
+  }
+  // the heat map shown: the selected VFO's, or in "All" the only one that has one
+  function rdfHeatVfo() {
+    const ids = rdfSelIds();
+    if (ids.length === 1) return ids[0];
+    const w = ids.filter(i => rdfGrids[i] && rdfGrids[i].m.records);
+    return w.length === 1 ? w[0] : null;
+  }
+  function rdfMpp(lat) { return 40075016.686 * Math.cos(lat * Math.PI / 180) / mapWorld(); }
+  function rdfDraw(c) {
+    if (opMode !== 'coherent' || !rdfStatus) return;
+    const ids = rdfSelIds();
+    // heat map (coarse, then the fine grid around the estimate)
+    const hv = rdfHeatVfo();
+    if (mapState.rdfHeat && hv !== null && rdfGrids[hv]) {
+      c.save();
+      c.imageSmoothingEnabled = true;
+      c.globalAlpha = 0.8;
+      for (const L of [rdfGrids[hv].coarse, rdfGrids[hv].fine]) {
+        if (!L) continue;
+        const [x0, y0] = mapLatLonToScreen(L.g.nw[0], L.g.nw[1]);
+        const [x1, y1] = mapLatLonToScreen(L.g.se[0], L.g.se[1]);
+        if (x1 < 0 || y1 < 0 || x0 > mapW || y0 > mapH) continue;
+        c.drawImage(L.cv, x0, y0, x1 - x0, y1 - y0);
+      }
+      c.restore();
+    }
+    // bearings taken while driving: lines from where they were taken, older fainter
+    if (mapState.rdfLines) {
+      c.save();
+      c.lineWidth = 1.2;
+      for (const id of ids) {
+        const G = rdfGrids[id];
+        if (!G || !G.m.lines || !G.m.lines.length) continue;
+        const lines = G.m.lines, len = (G.m.range_km || 10) * 1500;
+        c.strokeStyle = getDecimatorColor(id);
+        lines.forEach(([la, lo, b], i) => {
+          const [x, y] = mapLatLonToScreen(la, lo), px = len / rdfMpp(la), r = b * Math.PI / 180;
+          c.globalAlpha = 0.1 + 0.5 * (i + 1) / lines.length;
+          c.beginPath(); c.moveTo(x, y); c.lineTo(x + px * Math.sin(r), y - px * Math.cos(r)); c.stroke();
+        });
+      }
+      c.restore();
+    }
+    // estimates: cross + 95 % ellipse
+    for (const id of ids) {
+      const G = rdfGrids[id], e = G && G.m.est;
+      if (!e) continue;
+      const [x, y] = mapLatLonToScreen(e.lat, e.lon), mpp = rdfMpp(e.lat), col = getDecimatorColor(id);
+      c.save();
+      c.strokeStyle = '#000'; c.lineWidth = 4;
+      c.beginPath(); c.ellipse(x, y, Math.max(2, 2.45 * e.a / mpp), Math.max(2, 2.45 * e.b / mpp), (e.ang - 90) * Math.PI / 180, 0, 2 * Math.PI); c.stroke();
+      c.strokeStyle = col; c.lineWidth = 2;
+      if (e.edge) c.setLineDash([5, 4]);
+      c.stroke();
+      c.setLineDash([]);
+      c.lineWidth = 2.5;
+      for (const [w, s] of [[4, '#000'], [2, '#fff']]) {
+        c.strokeStyle = s; c.lineWidth = w;
+        c.beginPath(); c.moveTo(x - 8, y - 8); c.lineTo(x + 8, y + 8); c.moveTo(x + 8, y - 8); c.lineTo(x - 8, y + 8); c.stroke();
+      }
+      const lab = `D${id} TX ±${rdfDist(e.r95)}${e.edge ? ' (edge!)' : ''}`;
+      c.font = 'bold 11px sans-serif';
+      c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineWidth = 3; c.fillStyle = '#fff';
+      c.strokeText(lab, x + 11, y - 9); c.fillText(lab, x + 11, y - 9);
+      c.restore();
+    }
+    // live lobes around the station
+    const st = rdfStatus.station;
+    if (mapState.rdfLobe && st) {
+      const [sx, sy] = mapLatLonToScreen(st.lat, st.lon);
+      const R = 0.3 * Math.min(mapW, mapH);
+      for (const v of rdfVfos()) {
+        if (!ids.includes(v.id) || !v.lobe) continue;
+        let u = rdfLobeCache.get(v.lobe);
+        if (!u) { u = rdfB64(v.lobe); rdfLobeCache.clear(); rdfLobeCache.set(v.lobe, u); }
+        const col = getDecimatorColor(v.id);
+        c.save();
+        c.beginPath();
+        for (let k = 0; k <= u.length; k++) {
+          const r = R * u[k % u.length] / 255, a = (k % u.length) * 2 * Math.PI / u.length;
+          const x = sx + r * Math.sin(a), y = sy - r * Math.cos(a);
+          if (k) c.lineTo(x, y); else c.moveTo(x, y);
+        }
+        c.closePath();
+        c.globalAlpha = 0.18; c.fillStyle = col; c.fill();
+        c.globalAlpha = 1; c.strokeStyle = col; c.lineWidth = 1.8;
+        if (v.held) c.setLineDash([4, 3]);
+        c.stroke();
+        // the bearing (peak) to the edge of the map
+        if (v.peak !== null) {
+          const a = v.peak * Math.PI / 180, L = 2 * Math.max(mapW, mapH);
+          c.setLineDash([8, 5]); c.lineWidth = 2;
+          c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx + L * Math.sin(a), sy - L * Math.cos(a)); c.stroke();
+        }
+        c.restore();
+      }
+      // the vehicle's heading
+      if (st.hdg !== null && st.src !== 'static') {
+        const a = st.hdg * Math.PI / 180;
+        c.save();
+        c.strokeStyle = '#fff'; c.lineWidth = 3;
+        c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx + 26 * Math.sin(a), sy - 26 * Math.cos(a)); c.stroke();
+        c.restore();
+      }
+    }
+  }
+  function rdfDist(m) { return m >= 1000 ? (m / 1000).toFixed(m >= 10000 ? 0 : 1) + ' km' : Math.round(m) + ' m'; }
+  const RDF_STATE = {
+    no_fix: 'No GPS position - the map needs the station location (sidebar → Station Information, GPS)',
+    no_heading: 'No heading yet - drive a little so the GPS course is known (or fit a compass)',
+    slow: 'Stopped / slow: bearings are only collected above 7 km/h (the GPS course is unreliable below)',
+    turning: 'Turning: bearings paused (the heading lags in turns)',
+    static: 'Static location: the lobe is shown; drive with GPS (Station Information) to build a heat map',
+    calibrating: 'Calibrating: bearings paused',
+    doa_off: 'DoA is off (MUSIC DoA box)',
+    not_coherent: 'Direction finding needs the coherent mode',
+  };
+  function rdfRenderPanel() {
+    const box = $id('map-df');
+    if (!box) return;
+    box.style.display = rdfStatus ? '' : 'none';   // until the receiver reports (coherent mode)
+    box.classList.toggle('closed', !mapState.rdfOpen);
+    $id('map-df-tog').classList.toggle('on', !!mapState.rdfOpen);
+    for (const k of ['Lobe', 'Lines', 'Heat']) $id('map-df-' + k.toLowerCase()).classList.toggle('on', !!mapState['rdf' + k]);
+    const vs = rdfVfos();
+    const sel = $id('map-df-vfo');
+    const opts = `<option value="all">All VFOs</option>` + vs.map(v => `<option value="${v.id}">D${v.id} · ${(+v.mhz).toFixed(4)} MHz</option>`).join('');
+    if (sel.dataset.html !== opts) { sel.dataset.html = opts; sel.innerHTML = opts; }
+    if (document.activeElement !== sel) sel.value = vs.some(v => String(v.id) === String(mapState.rdfVfo)) ? String(mapState.rdfVfo) : 'all';
+    if (!rdfStatus) { $id('map-df-txt').textContent = 'Waiting for DoA data…'; return; }
+    const on = $id('map-df-on');
+    if (document.activeElement !== on) on.checked = !!rdfStatus.on;
+    const rg = $id('map-df-range');
+    if (document.activeElement !== rg) rg.value = rdfStatus.range_km;
+    let h = '';
+    if (!vs.length) h = '<span class="w">No VFO has DoA results (DoA on, coherent mode, a signal in the VFO).</span>';
+    else if (!rdfStatus.on) h = '<span class="w">Collecting is off - the lobes are shown, no heat map is built.</span>';
+    else if (RDF_STATE[rdfStatus.state]) h = `<span class="w">${digEsc(RDF_STATE[rdfStatus.state])}</span>`;
+    for (const id of rdfSelIds()) {
+      const v = vs.find(x => x.id === id), G = rdfGrids[id], e = G && G.m.est;
+      const n = G ? G.m.records : (v ? v.records : 0);
+      let line = `<b style="color:${getDecimatorColor(id)}">D${id}</b> ${n} bearing${n === 1 ? '' : 's'}`;
+      if (v && rdfStatus.on && rdfStatus.state === 'ok' && v.gate_m) line += ` · next in ${Math.max(0, Math.round(v.gate_m - v.moved_m))} m`;
+      if (e) {
+        line += ` · <span class="g">TX ±${rdfDist(e.r95)} (95 %)</span>`;
+        if (e.edge) line += ' <span class="w">at the grid edge - it may be outside: raise the range</span>';
+        else if (e.mass < 0.6) line += ` <span class="w">(${Math.round(100 * (1 - e.mass))} % elsewhere - drive around it)</span>`;
+        if (n >= 20 && Math.abs(e.off) >= 2 && Math.abs(e.off) > 2 * e.off_sd)
+          line += ` · bearings read ${Math.abs(e.off).toFixed(1)}° ${e.off > 0 ? 'anticlockwise' : 'clockwise'} of true (array mounting?)`;
+      } else if (n) line += ' · not enough geometry yet - keep driving';
+      h += (h ? '<br>' : '') + line;
+    }
+    const t = $id('map-df-txt');
+    if (t.innerHTML !== h) t.innerHTML = h;
+  }
+  function rdfSetRange(v) {
+    const km = Math.round(parseFloat(v));
+    if (km >= 1 && km <= 50) send('RDF_RANGE_KM:' + km);
+    else rdfRenderPanel();
+  }
+  function rdfReset() {
+    const ids = rdfSelIds(), all = ids.length !== 1;
+    if (!confirm(all ? 'Forget the bearings collected for every VFO?' : `Forget the bearings collected for D${ids[0]}?`)) return;
+    send('RDF_RESET:' + (all ? -1 : ids[0]));
+  }
+  function rdfCentreEst() {
+    const id = rdfHeatVfo() ?? rdfSelIds().find(i => rdfGrids[i] && rdfGrids[i].m.est);
+    const e = id !== undefined && id !== null && rdfGrids[id] && rdfGrids[id].m.est;
+    if (e) { mapAutoFit = false; mapCenterOn(e.lat, e.lon); }
+    else mapStatusFlash('No transmitter estimate yet');
+  }
+
+  function mapRenderStatus() {
+    const st = $id('map-status');
+    let msg = mapFlashMsg;
+    if (!msg) {
+      const by = {};
+      for (const p of mapPts.values()) {
+        const k = 'D' + p.v + ' ' + digName(p.p);
+        by[k] = (by[k] || 0) + 1;
+      }
+      const parts = Object.entries(by).map(([k, n]) => `${n} · ${k}`);
+      if (parts.length) msg = parts.join(' | ');
+      else if (opMode === 'coherent' && rdfVfos().length) msg = '';   // DF on the map: its panel says it all
+      else {
+        const plot = decimatorInfo.filter(d => d.digital_mode && d.digital_mode !== 'OFF');
+        msg = plot.length ? 'No positions yet from the running decoders' :
+          'No positions yet - set a VFO\'s digital decoder to one that reports positions, e.g. ADS-B (1090 MHz) on a 2.4 MHz VFO at 1090 MHz';
+      }
+    }
+    if (st.textContent !== msg) st.textContent = msg;
+    // offline: tiles failing and none loaded for a while
+    const off = mapTileErrAt && Date.now() - mapTileErrAt < 60000 && Date.now() - mapTileOk > 30000;
+    const ob = $id('map-offline');
+    if (ob.style.display !== (off ? 'block' : 'none')) ob.style.display = off ? 'block' : 'none';
+  }
+
+  function mapDistKm(la1, lo1, la2, lo2) {
+    const r = Math.PI / 180, dla = (la2 - la1) * r, dlo = (lo2 - lo1) * r;
+    const a = Math.sin(dla / 2) ** 2 + Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin(dlo / 2) ** 2;
+    return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+  function mapBearing(la1, lo1, la2, lo2) {
+    const r = Math.PI / 180;
+    const y = Math.sin((lo2 - lo1) * r) * Math.cos(la2 * r);
+    const x = Math.cos(la1 * r) * Math.sin(la2 * r) - Math.sin(la1 * r) * Math.cos(la2 * r) * Math.cos((lo2 - lo1) * r);
+    return (Math.atan2(y, x) / r + 360) % 360;
+  }
+
+  // {"map":{"full":bool,"station":[lat,lon]|null,"pts":[{v,p,i,la,lo,l,k,h,a,s,x,age,ttl}],"keys":[...]}}
+  function mapOnMessage(m) {
+    const now = Date.now();
+    const hadStation = !!mapStation;
+    mapStation = Array.isArray(m.station) ? m.station : null;
+    for (const q of m.pts || []) {
+      if (!Number.isFinite(q.la) || !Number.isFinite(q.lo)) continue;
+      const k = q.v + '|' + q.p + '|' + q.i;
+      const old = mapPts.get(k);
+      const trail = old ? old.trail : [];
+      if (old && (old.la !== q.la || old.lo !== q.lo)) {
+        trail.push([old.la, old.lo, old.rx]);
+        while (trail.length > MAP_TRAIL_MAX || (trail.length && now - trail[0][2] > MAP_TRAIL_S * 1000)) trail.shift();
+      }
+      mapPts.set(k, Object.assign(q, {rx: now - (q.age || 0) * 1000, trail}));
+    }
+    const live = new Set(m.keys || []);
+    for (const k of [...mapPts.keys()]) if (!live.has(k)) mapPts.delete(k);
+    if (mapSel && !mapPts.has(mapSel)) mapSel = null;
+    // first data and no saved view: show the station / the markers
+    if (mapAutoFit && mapCv && (mapPts.size || (mapStation && !hadStation))) {
+      mapAutoFit = false;
+      if (mapPts.size) mapFitAll(); else mapCenterStation();
+    }
+    mapDraw();
+    // the decoder tab's "Plot on map" count
+    if (typeof infoRenderDecoder === 'function') infoRenderDecoder();
+  }
+  // markers' age / staleness changes without new data
+  setInterval(() => { if (mapPts.size || mapSel) mapDraw(); }, 2000);
+
+  initMapResize();
+  initRpSplit();
+  rpApply();
+
 // Calibration badge + top-bar colour. Called from the 500 ms system_status and
 // from cal_live, which the backend pushes the moment a packet's phase state or
 // noise flag changes - the 500 ms cadence alone left "(Noise On)" showing for
@@ -9697,8 +11270,9 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
       }
     }
 
-    // Grey out DoA panel during cooldown + calibration (not converged)
-    const doaPanel = document.querySelector('.doa-panel');
+    // Grey out the DoA displays during cooldown + calibration (not converged) -
+    // not the whole right-hand pane, which also holds the map
+    const doaPanel = document.querySelector('.doa-panel .doa-content');
     if (doaPanel) {
       // States 0-3 and 5 are all "not converged" states
       const isCalibrating = status.phase_state === 5 || status.cooldown_active ||

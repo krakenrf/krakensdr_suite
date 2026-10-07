@@ -40,6 +40,9 @@ private:
     std::string msg_[4];
     std::string header_desc_;
     std::string gps_line_;
+    std::string my_;                 // MY callsign of the current / last transmission
+    std::string msg_text_;           // its slow-data text message
+    void gps_point(const std::string& line);
     std::unique_ptr<AmbeStream> ambe_;
     int64_t end_sync_end_ = -1;      // last end pattern (voice frames after it are noise)
     void voice_superframe(const SymSrc& s);

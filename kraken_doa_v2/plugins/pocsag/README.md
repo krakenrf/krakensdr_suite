@@ -14,7 +14,13 @@ needs no setting.
 - A message with a lost codeword is marked `[incomplete]` / `(message lost)`
 
 Facts: bit rate, polarity, deviation, last RIC, last message, message count.
+Every alphanumeric page also goes to kraken_doa as a text message
+(`host.message`): street addresses in it become incidents (the decoder
+tab's 📍 Incidents table, the 🗺 Map with Plot on map).
 Events: one line per message (`1200 bit/s RIC 1234567 F3 alpha: ...`).
+Raw frames (decoder data log, "Raw frames" ticked): `RIC 1234567 F3 1200
+63987 464D9 ...` - RIC, function, bit rate and the 20 data bits of each
+message codeword in hex.
 
 Use a VFO of 12.5 kHz or more on the paging channel.
 

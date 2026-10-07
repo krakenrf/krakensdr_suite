@@ -40,3 +40,12 @@ ai/ai_config.json
 ai/ai_config.json.tmp
 ai/sessions/
 ai/__pycache__/
+
+# incident map (incidents.cpp): incidents found in decoder messages, kept 24 h
+incidents.tsv
+incidents.tsv.tmp
+# decoder data log (sidebar 🗂 Decoder Logging), default folder
+decoder_logs/
+# mobile DF heat map session (rdf_mapper.cpp)
+rdf_session.bin
+rdf_session.bin.tmp

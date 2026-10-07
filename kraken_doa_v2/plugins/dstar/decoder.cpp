@@ -33,4 +33,6 @@ KRAKEN_PLUGIN(DstarPlugin, {.id = "dstar",
                    .version = "2.0",
                    .sample_rate = 48000,
                    .min_vfo_rate = 12000,
-                   .author = "KrakenSDR"})
+                   .author = "KrakenSDR",
+                   .map = true,
+                   .voice = true})

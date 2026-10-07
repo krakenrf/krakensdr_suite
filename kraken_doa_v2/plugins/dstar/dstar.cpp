@@ -11,10 +11,72 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 namespace dig {
 
 namespace {
+
+// "ddmm.mmmm" (deg_digits = 2) / "dddmm.mmmm" (3) + N/S/E/W -> degrees
+bool nmea_deg(const std::string& v, const std::string& h, int deg_digits, double* out) {
+    if (v.size() < static_cast<size_t>(deg_digits) + 2 || h.size() != 1) return false;
+    for (size_t i = 0; i < v.size(); i++)
+        if (!((v[i] >= '0' && v[i] <= '9') || (v[i] == '.' && i > static_cast<size_t>(deg_digits) + 1))) return false;
+    double d = atof(v.substr(0, deg_digits).c_str()), m = atof(v.substr(deg_digits).c_str());
+    if (m >= 60) return false;
+    d += m / 60.0;
+    if (h[0] == 'S' || h[0] == 'W') d = -d;
+    else if (h[0] != 'N' && h[0] != 'E') return false;
+    *out = d;
+    return true;
+}
+
+std::vector<std::string> split(const std::string& s, char c) {
+    std::vector<std::string> f;
+    size_t p = 0, q;
+    while ((q = s.find(c, p)) != std::string::npos) { f.push_back(s.substr(p, q - p)); p = q + 1; }
+    f.push_back(s.substr(p));
+    return f;
+}
+
+// A GPS slow-data line -> position. NMEA ($xxRMC / $xxGGA) only with a good
+// checksum, DPRS ($$CRCxxxx,CALL>...:!DDMM.mmN/DDDMM.mmW...) only with a good
+// CRC (the D-STAR header's CRC over the APRS text) - slow data has no FEC.
+// *call = the DPRS packet's source callsign.
+bool gps_position(const std::string& line, double* lat, double* lon, std::string* call) {
+    if (line.rfind("$$CRC", 0) == 0) {
+        if (line.size() < 12 || line[9] != ',') return false;
+        const std::string body = line.substr(10);
+        const unsigned want = static_cast<unsigned>(strtoul(line.substr(5, 4).c_str(), nullptr, 16));
+        auto crc = [](const std::string& b) {
+            return crc16_x25(reinterpret_cast<const uint8_t*>(b.data()), b.size());
+        };
+        if (crc(body) != want && crc(body + "\r") != want) return false;
+        size_t gt = body.find('>'), colon = body.find(':');
+        if (gt == std::string::npos || colon == std::string::npos || colon + 20 > body.size()) return false;
+        *call = body.substr(0, gt);
+        size_t p = colon + 1;
+        if (body[p] == '/' || body[p] == '@') p += 7;   // timestamp
+        if (body[p] != '!' && body[p] != '=' && body[p] != '/' && body[p] != '@') return false;
+        p++;
+        if (p + 19 > body.size()) return false;
+        return nmea_deg(body.substr(p, 7), body.substr(p + 7, 1), 2, lat) &&
+               nmea_deg(body.substr(p + 9, 8), body.substr(p + 17, 1), 3, lon);
+    }
+    if (line.size() < 10 || line[0] != '$') return false;
+    size_t star = line.rfind('*');
+    if (star == std::string::npos || star + 3 > line.size()) return false;
+    uint8_t x = 0;
+    for (size_t i = 1; i < star; i++) x ^= static_cast<uint8_t>(line[i]);
+    if (x != static_cast<uint8_t>(strtoul(line.substr(star + 1, 2).c_str(), nullptr, 16))) return false;
+    auto f = split(line.substr(0, star), ',');
+    const std::string type = f[0].size() >= 6 ? f[0].substr(3) : "";
+    if (type == "RMC" && f.size() >= 7 && f[2] == "A")
+        return nmea_deg(f[3], f[4], 2, lat) && nmea_deg(f[5], f[6], 3, lon);
+    if (type == "GGA" && f.size() >= 7 && !f[6].empty() && f[6] != "0")
+        return nmea_deg(f[2], f[3], 2, lat) && nmea_deg(f[4], f[5], 3, lon);
+    return false;
+}
 constexpr int SPS = 10;
 constexpr float THRESHOLD = 0.80f;
 constexpr int SUPERFRAME_BITS = 21 * 96;   // data sync repeats every 420 ms
@@ -66,6 +128,8 @@ void DstarReceiver::reset() {
     frame_sync_end_ = -1;
     for (auto& m : msg_) m.clear();
     header_desc_.clear();
+    my_.clear();
+    msg_text_.clear();
     end_sync_end_ = -1;
     if (ambe_) ambe_->reset();
 }
@@ -135,6 +199,27 @@ void DstarReceiver::correlate() {
     }
 }
 
+// GPS / DPRS slow data -> a map point for the calling station
+void DstarReceiver::gps_point(const std::string& line) {
+    double lat = 0, lon = 0;
+    std::string call;
+    if (!gps_position(line, &lat, &lon, &call)) return;
+    if (std::fabs(lat) > 90 || std::fabs(lon) > 180 || (lat == 0 && lon == 0)) return;
+    const std::string who = !my_.empty() ? my_ : call;
+    if (who.empty()) return;
+    kp::MapPoint p;
+    p.id = who;
+    p.lat = lat;
+    p.lon = lon;
+    p.label = who;
+    p.kind = "person";
+    p.info = "Callsign: " + who + (call.empty() || call == who ? "" : "\nDPRS callsign: " + call) +
+             (msg_text_.empty() ? "" : "\nMessage: " + msg_text_) + "\nSource: " +
+             (line.rfind("$$CRC", 0) == 0 ? "DPRS" : "GPS (NMEA)");
+    p.ttl_s = 3600;
+    ctx_.report->map(Mode::DSTAR, p);
+}
+
 void DstarReceiver::decode_header_bytes(const uint8_t* h, bool from_slow_data) {
     uint16_t crc = crc16_x25(h, 39);
     if (crc != (h[39] | (h[40] << 8))) return;
@@ -144,6 +229,8 @@ void DstarReceiver::decode_header_bytes(const uint8_t* h, bool from_slow_data) {
     if (!r1.empty() || !r2.empty()) d += " via " + r1 + (r2.empty() ? "" : " / " + r2);
     Report& r = *ctx_.report;
     r.set(Mode::DSTAR, "MY (caller)", my + (sfx.empty() ? "" : " /" + sfx));
+    if (my != my_) msg_text_.clear();
+    my_ = my;
     r.set(Mode::DSTAR, "UR (destination)", ur);
     r.set(Mode::DSTAR, "RPT1", r1);
     r.set(Mode::DSTAR, "RPT2", r2);
@@ -202,6 +289,7 @@ void DstarReceiver::slow_data_block(const uint8_t* b) {
             std::string m = printable(msg_[0] + msg_[1] + msg_[2] + msg_[3]);
             if (!m.empty()) {
                 r.set(Mode::DSTAR, "Message", m);
+                msg_text_ = m;
                 r.event(Mode::DSTAR, "Message: " + m, 60.0);
             }
             for (auto& x : msg_) x.clear();
@@ -216,6 +304,7 @@ void DstarReceiver::slow_data_block(const uint8_t* b) {
                     if (line.rfind("$GP", 0) == 0 || line.rfind("$$CRC", 0) == 0 || line.rfind("$GN", 0) == 0) {
                         r.set(Mode::DSTAR, line.rfind("$$CRC", 0) == 0 ? "DPRS" : "GPS", line.substr(0, 80));
                         if (ctx_.opts->verbose) r.event(Mode::DSTAR, "GPS: " + line.substr(0, 80), 10.0);
+                        gps_point(line);
                     }
                 }
                 gps.clear();

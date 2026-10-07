@@ -19,7 +19,9 @@
 #include "kraken_plugin.hpp"
 
 #include <array>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <set>
 #include <string>
@@ -208,6 +210,52 @@ private:
     long frames_ = 0;
     std::set<std::string> stations_;
 
+    // APRS symbol (code) -> map marker
+    static const char* marker(char code) {
+        switch (code) {
+            case '>': case 'k': case 'u': case 'v': case 'j': case '<': case 'b': case 'R': case 'U': case 'f': case 'a':
+                return "vehicle";
+            case '[': return "person";
+            case 's': case 'Y': case 'C': return "ship";
+            case '\'': case '^': case 'X': case 'g': return "aircraft";
+            case '-': case '#': case '&': case '_': case 'r': case 'y': case 'n': return "station";
+            default: return "point";
+        }
+    }
+
+    // A position report -> the 🗺 Map (an object / item under its own name;
+    // a killed object is taken off)
+    void map_point(const aprs::Frame& f) {
+        const bool obj = f.type.rfind("object", 0) == 0 || f.type.rfind("item", 0) == 0;
+        const std::string id = obj && !f.name.empty() ? kp::printable(f.name) : f.src;
+        if (f.type.find("killed") != std::string::npos) { host.map_remove(id); return; }
+        if (!(std::fabs(f.lat) <= 90 && std::fabs(f.lon) <= 180) || (f.lat == 0 && f.lon == 0)) return;
+        kp::MapPoint p;
+        p.id = id;
+        p.lat = f.lat;
+        p.lon = f.lon;
+        p.label = id;
+        p.kind = marker(f.sym_code);
+        // course / speed data extension "ccc/sss" (degrees, knots)
+        const std::string& c = f.comment;
+        if (c.size() >= 7 && c[3] == '/' && isdigit(static_cast<unsigned char>(c[0])) &&
+            isdigit(static_cast<unsigned char>(c[1])) && isdigit(static_cast<unsigned char>(c[2])) &&
+            isdigit(static_cast<unsigned char>(c[4])) && isdigit(static_cast<unsigned char>(c[5])) &&
+            isdigit(static_cast<unsigned char>(c[6]))) {
+            int crs = atoi(c.substr(0, 3).c_str()), spd = atoi(c.substr(4, 3).c_str());
+            if (crs >= 1 && crs <= 360) p.heading = static_cast<float>(crs % 360);
+            if (spd > 0) p.speed_kmh = spd * 1.852f;
+        }
+        char pos[48];
+        snprintf(pos, sizeof pos, "%.5f, %.5f", f.lat, f.lon);
+        p.info = std::string(obj ? "Object: " + id + "\nFrom: " : "Callsign: ") + f.src + "\nType: " + f.type +
+                 "\nPath: " + f.dst + (f.path.empty() ? "" : "," + f.path) +
+                 (f.sym_table > 32 && f.sym_code > 32 ? std::string("\nSymbol: ") + f.sym_table + f.sym_code : "") +
+                 (c.empty() ? "" : "\nComment: " + kp::printable(c.substr(0, 120)));
+        p.ttl_s = 3600;
+        host.map_point(p);
+    }
+
     void on_frame(const uint8_t* b, int len) {
         uint16_t c = crc_x25(b, len);
         double t = host.time();
@@ -246,6 +294,8 @@ private:
             text += ctlhex;
         }
         host.event(text, 1.0);
+        // the decoder data log: the packet in TNC2 monitor format
+        if (host.raw_wanted()) host.raw(head + ":" + kp::printable(f.info));
 
         host.fact("Last station", f.src);
         host.fact("Last path", f.dst + (f.path.empty() ? "" : "," + f.path));
@@ -254,6 +304,7 @@ private:
             host.fact("Last position", f.src + (f.name.empty() ? "" : " (" + kp::printable(f.name) + ")") + ": " + pos);
         }
         host.fact("Last info", kp::printable(f.info.substr(0, 200)));
+        if (f.has_pos) map_point(f);
         host.fact("Frames", std::to_string(frames_));
         host.fact("Stations heard", std::to_string(stations_.size()));
         host.freq_error(dc_);
@@ -268,4 +319,5 @@ KRAKEN_PLUGIN(Aprs, {.id = "aprs",
                      .version = "1.0",
                      .sample_rate = FS,
                      .min_vfo_rate = 16000,
-                     .author = "AI Signal Lab"})
+                     .author = "AI Signal Lab",
+                     .map = true})

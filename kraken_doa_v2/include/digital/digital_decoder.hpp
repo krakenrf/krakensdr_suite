@@ -19,6 +19,7 @@
 #include <complex>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -30,6 +31,33 @@
 namespace dig {
 
 class Engine;   // plugin processes + front end (digital_decoder.cpp)
+class DigitalDecoder;
+
+// Free-text messages the plugins send (kp::Host::message) go to this handler
+// - kraken_doa's incident map (incidents.cpp). Called on the decoder's worker
+// thread; text "" = a plugin that sends messages has started (time to get
+// the street data ready). Unset (offline tests): messages are dropped.
+// rf_hz = the VFO's frequency when the message arrived
+using MessageHandler = std::function<void(DigitalDecoder* dec, const std::string& plugin, const std::string& from,
+                                          const std::string& text, double rf_hz)>;
+void set_message_handler(MessageHandler h);
+
+// The decoder data log (kraken_doa decoder_log.cpp): what the plugins report,
+// as it arrives. type: "event" (a log line, after de-duplication), "message"
+// (kp::Host::message: text + from), "position" (a map point: point set),
+// "raw" (kp::Host::raw: text). rf_hz = the VFO's frequency. Called on the
+// decoder's worker thread; unset = nothing is recorded.
+struct LogRecord {
+    const char* type = "";
+    std::string plugin, text, from;
+    const MapPoint* point = nullptr;
+    double rf_hz = 0;
+};
+using RecordHandler = std::function<void(DigitalDecoder* dec, const LogRecord& r)>;
+void set_record_handler(RecordHandler h);
+// Raw frames wanted (the log's "Raw frames" type is on): passed to the
+// plugins as the OPTION log_raw=0|1 (kp::Host::raw_wanted)
+void set_raw_wanted(bool on);
 
 class DigitalDecoder {
 public:
@@ -41,9 +69,17 @@ public:
     DigitalDecoder& operator=(const DigitalDecoder&) = delete;
 
     // plugin = the plugin id for Mode::PLUGIN (plugins/<id>/)
+    // the VFO (DecimatorInstance id) this decoder belongs to, -1 = none;
+    // set once by DecimatorManager when it creates the decoder (ids never
+    // change) - lets the record handler name the VFO without the manager
+    void set_vfo(int id) { vfo_id_.store(id, std::memory_order_relaxed); }
+    int vfo() const { return vfo_id_.load(std::memory_order_relaxed); }
     void set_mode(Mode m, const std::string& plugin = "");
     Mode mode() const { return mode_.load(std::memory_order_relaxed); }
     std::string plugin_id() const;
+    // the plugin whose data this decoder shows: the fixed one, or in AUTO the
+    // detected one ("" = none yet / off)
+    std::string active_plugin() const;
     void set_options(const Options& o);
     Options options() const;
 
@@ -57,7 +93,9 @@ public:
 
     // {"mode":..,"detected":..,"state":..,"info":{..},"events":[..],...}
     // events: those with seq > events_after (at most max_events)
-    std::string status_json(uint64_t events_after, size_t max_events) const;
+    // tables: include the plugins' tables (kp::Host::table_*) - large, so
+    // the 4 Hz push sends them at most once a second
+    std::string status_json(uint64_t events_after, size_t max_events, bool tables = false) const;
     uint64_t last_event_seq() const { return report_.last_seq(); }
     Report& report() { return report_; }
 
@@ -72,6 +110,7 @@ public:
     bool voice_wanted() const;
 
 private:
+    std::atomic<int> vfo_id_{-1};
     std::atomic<Mode> mode_{Mode::OFF};
     std::atomic<bool> reset_pending_{false};   // set_mode -> worker reconfigures + resets
     mutable std::mutex opt_mu_;

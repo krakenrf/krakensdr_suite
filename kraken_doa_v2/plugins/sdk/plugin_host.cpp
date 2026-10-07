@@ -18,6 +18,8 @@
 //   --verbose        verbose option on;  --invert  conjugate (swap I/Q)
 //   --opt key=value  pass an option to the decoder (repeatable)
 //   --audio OUT.wav  write the decoded 8 kHz audio
+//   --station LAT,LON  the receiver's location (Host::station)
+//   --raw            raw frames on (Host::raw_wanted) and printed
 //   --quiet          only the summary
 
 #include "kraken_plugin.hpp"
@@ -29,6 +31,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -61,7 +64,10 @@ int print_info() {
     std::cout << "{\"api\":1,\"id\":\"" << jesc(i.id) << "\",\"name\":\"" << jesc(i.name)
               << "\",\"description\":\"" << jesc(i.description) << "\",\"version\":\"" << jesc(i.version)
               << "\",\"author\":\"" << jesc(i.author) << "\",\"sample_rate\":" << i.sample_rate
-              << ",\"min_vfo_rate\":" << i.min_vfo_rate;
+              << ",\"min_vfo_rate\":" << i.min_vfo_rate << ",\"map\":" << (i.map ? "true" : "false")
+              << ",\"manual_only\":" << (i.manual_only ? "true" : "false") << ",\"fixed_freq_hz\":" << std::fixed
+              << std::setprecision(0) << i.fixed_freq_hz << std::defaultfloat << std::setprecision(6)
+              << ",\"voice\":" << (i.voice ? "true" : "false") << ",\"messages\":" << (i.messages ? "true" : "false");
     // options twice: as JSON for people, and tab-separated for kraken_doa's
     // flat reader (key, label, default, choices, help per line)
     std::string tsv;
@@ -114,8 +120,64 @@ public:
     bool voice_wanted() const override { return voice_wanted_; }
     double time() const override { return samples_ / rate_; }
     void log(const std::string& t) override { std::cerr << t << std::endl; }
+    void map_point(const kp::MapPoint& m) override {
+        if (!std::isfinite(m.lat) || !std::isfinite(m.lon) || m.id.empty()) return;
+        auto num = [](double v, const char* f) {
+            if (!std::isfinite(v)) return std::string();
+            char b[32];
+            snprintf(b, sizeof b, f, v);
+            return std::string(b);
+        };
+        std::string p;
+        for (const std::string& f : {m.id.substr(0, 32), num(m.lat, "%.6f"), num(m.lon, "%.6f"), m.label.substr(0, 64),
+                                     m.kind.substr(0, 16), num(m.heading, "%.1f"), num(m.altitude_m, "%.0f"),
+                                     num(m.speed_kmh, "%.1f"), num(m.ttl_s, "%.0f"), m.info.substr(0, 1000)}) {
+            p += f;
+            p.push_back('\0');
+        }
+        p.pop_back();
+        send(kp::wire::MAP_POINT, p.data(), p.size());
+    }
+    void map_remove(const std::string& id) override { send(kp::wire::MAP_REMOVE, id.data(), std::min<size_t>(id.size(), 32)); }
+    void table_columns(const std::vector<std::string>& cols) override {
+        std::string p;
+        for (size_t i = 0; i < cols.size() && i < 40; i++) {
+            if (i) p.push_back('\0');
+            p += cols[i].substr(0, 40);
+        }
+        send(kp::wire::TABLE_COLUMNS, p.data(), p.size());
+    }
+    void table_row(const std::string& key, const std::vector<std::string>& cells) override {
+        std::string p = key.substr(0, 64);
+        for (size_t i = 0; i < cells.size() && i < 40; i++) {
+            p.push_back('\0');
+            p += cells[i].substr(0, 200);
+        }
+        send(kp::wire::TABLE_ROW, p.data(), p.size());
+    }
+    void table_remove(const std::string& key) override {
+        send(kp::wire::TABLE_REMOVE, key.data(), std::min<size_t>(key.size(), 64));
+    }
+    bool raw_wanted() const override { return raw_wanted_; }
+    void raw(const std::string& data) override {
+        if (raw_wanted_) send(kp::wire::RAW, data.data(), std::min<size_t>(data.size(), 2000));
+    }
+    void message(const std::string& from, const std::string& text) override {
+        std::string p = from.substr(0, 64);
+        p.push_back('\0');
+        p += text.substr(0, 2000);
+        send(kp::wire::MESSAGE, p.data(), p.size());
+    }
+    bool station(double* lat, double* lon) const override {
+        if (!have_station_) return false;
+        *lat = st_lat_;
+        *lon = st_lon_;
+        return true;
+    }
 
-    bool verbose_ = false, voice_wanted_ = false;
+    bool verbose_ = false, voice_wanted_ = false, raw_wanted_ = false;
+    bool have_station_ = false;
+    double st_lat_ = 0, st_lon_ = 0;
     double samples_ = 0;
     void sync_done(const void* id, size_t len) { send(kp::wire::SYNC_DONE, id, len); }
 
@@ -186,6 +248,7 @@ int serve() {
                     size_t eq = s.find('=');
                     std::string k = s.substr(0, eq), v = eq == std::string::npos ? "" : s.substr(eq + 1);
                     if (k == "verbose") host.verbose_ = v == "1";
+                    if (k == "log_raw") { host.raw_wanted_ = v == "1"; break; }   // host-side only
                     // "" = back to the declared default
                     if (v.empty())
                         for (const auto& o : info.options)
@@ -202,6 +265,15 @@ int serve() {
                 case kp::wire::SYNC:
                     host.sync_done(buf.data(), buf.size());
                     break;
+                case kp::wire::STATION: {
+                    std::string s(buf.begin(), buf.end());
+                    double la = 0, lo = 0;
+                    host.have_station_ = sscanf(s.c_str(), "%lf,%lf", &la, &lo) == 2 && std::isfinite(la) &&
+                                         std::isfinite(lo) && std::fabs(la) <= 90 && std::fabs(lo) <= 180;
+                    host.st_lat_ = la;
+                    host.st_lon_ = lo;
+                    break;
+                }
                 default:
                     break;
             }
@@ -250,6 +322,39 @@ public:
     void log(const std::string& t) override {
         if (!quiet_) fprintf(stderr, "[%9.3f s] log: %s\n", time(), t.c_str());
     }
+    void map_point(const kp::MapPoint& m) override {
+        if (!std::isfinite(m.lat) || !std::isfinite(m.lon) || m.id.empty()) return;
+        map_updates_++;
+        map_[m.id] = m;
+    }
+    void map_remove(const std::string& id) override { map_.erase(id); }
+    void table_columns(const std::vector<std::string>& cols) override { cols_ = cols; }
+    void table_row(const std::string& key, const std::vector<std::string>& cells) override { rows_[key] = cells; }
+    void table_remove(const std::string& key) override { rows_.erase(key); }
+    bool raw_wanted() const override { return raw_; }
+    void raw(const std::string& data) override {
+        raws_++;
+        if (raw_ && !quiet_) printf("[%9.3f s] (raw) %s\n", time(), data.c_str());
+    }
+    bool raw_ = false;
+    uint64_t raws_ = 0;
+    void message(const std::string& from, const std::string& text) override {
+        messages_++;
+        if (!quiet_) printf("[%9.3f s] (message) %s: %s\n", time(), from.c_str(), text.c_str());
+    }
+    uint64_t messages_ = 0;
+    std::vector<std::string> cols_;
+    std::map<std::string, std::vector<std::string>> rows_;
+    bool station(double* lat, double* lon) const override {
+        if (!have_station_) return false;
+        *lat = st_lat_;
+        *lon = st_lon_;
+        return true;
+    }
+    bool have_station_ = false;
+    double st_lat_ = 0, st_lon_ = 0;
+    uint64_t map_updates_ = 0;
+    std::map<std::string, kp::MapPoint> map_;
 
     double rate_;
     bool quiet_, verbose_ = false, want_audio_ = false;
@@ -380,7 +485,8 @@ void write_wav8k(const std::string& path, const std::vector<float>& a) {
 int test_file(int argc, char** argv) {
     std::string path, fmt, audio_path;
     double rate = 0, offset = 0, start = 0, seconds = 0;
-    bool quiet = false, verbose = false, invert = false;
+    bool quiet = false, verbose = false, invert = false, have_station = false, raw = false;
+    double st_lat = 0, st_lon = 0;
     std::vector<std::pair<std::string, std::string>> opts;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -398,6 +504,12 @@ int test_file(int argc, char** argv) {
         else if (a == "--quiet") quiet = true;
         else if (a == "--verbose") verbose = true;
         else if (a == "--invert") invert = true;
+        else if (a == "--raw") raw = true;
+        else if (a == "--station") {
+            std::string v = next();
+            if (sscanf(v.c_str(), "%lf,%lf", &st_lat, &st_lon) != 2) { fprintf(stderr, "--station needs LAT,LON\n"); return 2; }
+            have_station = true;
+        }
         else if (a == "--opt") {
             std::string kv = next();
             size_t eq = kv.find('=');
@@ -417,6 +529,10 @@ int test_file(int argc, char** argv) {
     TestHost host(info.sample_rate, quiet);
     host.verbose_ = verbose;
     host.want_audio_ = !audio_path.empty();
+    host.have_station_ = have_station;
+    host.raw_ = raw;
+    host.st_lat_ = st_lat;
+    host.st_lon_ = st_lon;
     auto dec = kp_plugin_create(host);
     for (const auto& o : info.options) dec->option(o.key, o.def);
     if (verbose) dec->option("verbose", "1");
@@ -461,6 +577,31 @@ int test_file(int argc, char** argv) {
         printf("facts:\n");
         for (auto& f : host.facts_) printf("  %-22s %s\n", f.first.c_str(), f.second.c_str());
     }
+    if (host.raws_) printf("raw frames: %llu\n", static_cast<unsigned long long>(host.raws_));
+    if (!host.rows_.empty()) {
+        printf("table: %zu rows\n", host.rows_.size());
+        std::string h = "  ";
+        for (const auto& c : host.cols_) h += c + " | ";
+        printf("%s\n", h.c_str());
+        size_t n = 0;
+        for (const auto& kv : host.rows_) {
+            if (++n > 30) { printf("  ...\n"); break; }
+            std::string r = "  ";
+            for (const auto& c : kv.second) r += c + " | ";
+            printf("%s\n", r.c_str());
+        }
+    }
+    if (host.map_updates_ || !host.map_.empty()) {
+        printf("map: %llu updates, %zu points\n", static_cast<unsigned long long>(host.map_updates_), host.map_.size());
+        for (const auto& kv : host.map_) {
+            const kp::MapPoint& m = kv.second;
+            printf("  %-10s %-10s %10.5f %11.5f", m.id.c_str(), m.label.c_str(), m.lat, m.lon);
+            if (std::isfinite(m.altitude_m)) printf("  %6.0f m", m.altitude_m);
+            if (std::isfinite(m.speed_kmh)) printf("  %5.0f km/h", m.speed_kmh);
+            if (std::isfinite(m.heading)) printf("  %5.1f deg", m.heading);
+            printf("  [%s]\n", m.kind.c_str());
+        }
+    }
     if (!audio_path.empty()) {
         write_wav8k(audio_path, host.audio_);
         printf("audio: %.2f s -> %s\n", host.audio_.size() / 8000.0, audio_path.c_str());
@@ -480,7 +621,7 @@ int main(int argc, char** argv) {
             "%s (%s) - KrakenSDR decoder plugin\n"
             "usage: %s --info | --serve | --file REC [--rate HZ] [--format cf32|cu8|cs16|wav]\n"
             "          [--offset HZ] [--start S] [--seconds S] [--verbose] [--invert]\n"
-            "          [--opt key=value] [--audio out.wav] [--quiet]\n",
+            "          [--opt key=value] [--audio out.wav] [--station LAT,LON] [--raw] [--quiet]\n",
             info.name, info.description, argv[0]);
     return 2;
 }

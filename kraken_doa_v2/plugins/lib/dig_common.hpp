@@ -43,6 +43,10 @@ public:
     void set(Mode, const std::string& key, const std::string& value) { host_.fact(key, value); }
     void erase(Mode, const std::string& key) { host_.fact(key, ""); }
     void event(Mode, const std::string& text, double dedup_s = 2.0) { host_.event(text, dedup_s); }
+    // A position for the web UI's map (kp::Host::map_point)
+    void map(Mode, const kp::MapPoint& p) { host_.map_point(p); }
+    // The receiver's location, if known (kp::Host::station)
+    bool station(double* lat, double* lon) const { return host_.station(lat, lon); }
 private:
     kp::Host& host_;
 };

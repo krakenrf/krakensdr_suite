@@ -49,4 +49,6 @@ KRAKEN_PLUGIN(DmrPlugin, {.id = "dmr",
                           .min_vfo_rate = 12000,
                           .author = "KrakenSDR",
                           .options = {{"slot", "Timeslot", "0", "0=Both|1=Slot 1|2=Slot 2",
-                                       "Only show and play this timeslot's calls."}}})
+                                       "Only show and play this timeslot's calls."}},
+                          .map = true,
+                          .voice = true})

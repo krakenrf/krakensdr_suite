@@ -33,4 +33,5 @@ KRAKEN_PLUGIN(NxdnPlugin, {.id = "nxdn",
                    .version = "2.0",
                    .sample_rate = 48000,
                    .min_vfo_rate = 12000,
-                   .author = "KrakenSDR"})
+                   .author = "KrakenSDR",
+                   .voice = true})

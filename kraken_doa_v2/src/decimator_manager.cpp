@@ -327,7 +327,10 @@ bool DecimatorManager::setDigitalMode(int id, dig::Mode mode, const std::string&
     if (!inst) return false;
     {
         std::lock_guard<std::mutex> lk(inst->digital_mu);
-        if (!inst->digital && mode != dig::Mode::OFF) inst->digital = std::make_shared<dig::DigitalDecoder>();
+        if (!inst->digital && mode != dig::Mode::OFF) {
+            inst->digital = std::make_shared<dig::DigitalDecoder>();
+            inst->digital->set_vfo(inst->id);
+        }
         if (inst->digital) inst->digital->set_mode(mode, plugin);
         inst->digital_mode.store(static_cast<int>(mode), std::memory_order_relaxed);
     }
@@ -339,7 +342,10 @@ bool DecimatorManager::setDigitalOptions(int id, const dig::Options& opts) {
     auto inst = getDecimator(id);
     if (!inst) return false;
     std::lock_guard<std::mutex> lk(inst->digital_mu);
-    if (!inst->digital) inst->digital = std::make_shared<dig::DigitalDecoder>();
+    if (!inst->digital) {
+        inst->digital = std::make_shared<dig::DigitalDecoder>();
+        inst->digital->set_vfo(inst->id);
+    }
     inst->digital->set_options(opts);
     return true;
 }

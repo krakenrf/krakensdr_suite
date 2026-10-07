@@ -36,4 +36,5 @@ KRAKEN_PLUGIN(TetraPlugin, {.id = "tetra",
                             .version = "2.0",
                             .sample_rate = 72000,
                             .min_vfo_rate = 24000,
-                            .author = "KrakenSDR"})
+                            .author = "KrakenSDR",
+                            .voice = true})

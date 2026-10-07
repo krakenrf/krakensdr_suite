@@ -374,12 +374,21 @@ receiver. See `kraken_doa_v2/CLAUDE.md`
 decoders `kraken_doa_v2/plugins/`
 - EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below):
   p25, dmr, tetra (downlink), dstar, nxdn (48 and 96), mpt1327 (analogue
-  trunking signalling), pocsag and aprs. Each decimator (VFO) runs one
+  trunking signalling), pocsag, aprs and adsb (1090 MHz; manual only -
+  picking it tunes the VFO + tuner to 1090 MHz at 2.4 MHz and draws the VFO
+  as a locked line, `kp::Info::fixed_freq_hz`). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
-  `AUTO_DETECT_OFF:` - at once; the one whose frames pass FEC/CRC wins). Any
+  `AUTO_DETECT_OFF:` - at once, minus `manual_only` plugins and those
+  needing a VFO > 2x wider; the
+  one whose frames pass FEC/CRC wins). Any
   number of VFOs decode at once: a "Digital decoder" tick + mode list on each
-  VFO card (Decimators box), one tab per decoding VFO in the panel under the
+  VFO card (Decimators box), one tab per decoder mode (plugin - all of them, always, also unused ones) in the
+  panel under the waterfall - every VFO running that mode in it: a settings
+  row each, merged tables / incidents with VFO + MHz columns, one merged
+  event log (a VFO switched to another mode or removed leaves its lines in
+  the old mode's tab); a VFO in Auto detect shows up in the tab of the
+  decoder it detected -
   waterfall (its settings + data); the sidebar "🔐 Digital Decoders" box shows
   which voice codecs are installed (+ install steps for missing ones, from
   `plugins/lib/build/codecs` - the plugins' own detection) and the plugin list
@@ -426,11 +435,12 @@ decoders `kraken_doa_v2/plugins/`
   `plugins/<id>/build/decoder` (kraken_doa_v2's `make` builds them; a plugin
   that fails to compile only warns). The Digital Decoder runs it as a child
   process per VFO (`Mode::PLUGIN`, wire form `PLUGIN:<id>`): complex baseband
-  over stdin, facts/events/valid/audio back over stdout (binary protocol in
-  kraken_plugin.hpp). A crash is reported and restarted with a back-off; a
+  over stdin, facts/events/valid/audio/map points back over stdout (binary
+  protocol in kraken_plugin.hpp; kraken_doa sends the station location). A
+  crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
-  tetra, dstar, nxdn, mpt1327, pocsag, aprs (the last written by the AI
-  Signal Lab)
+  tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
+  Signal Lab), adsb
 - Same executable tests offline: `decoder --file x.cf32 [--offset HZ]`
 - The shipped protocol plugins are thin wrappers around `plugins/lib/`
   (libkrakendig.a: FEC, 4FSK sync, vocoders, front ends) - kraken_doa itself
@@ -449,6 +459,54 @@ decoders `kraken_doa_v2/plugins/`
 - Plugins move between receivers as folders only: copy `plugins/<id>/`, run
   `make`, press ↻ (no web-UI export / import / rebuild - removed on purpose:
   compiling code sent from a web page was a recipe for issues)
+
+**🗺 Map (right-hand pane)** (details: `kraken_doa_v2/CLAUDE.md` *Map*):
+- Street (OpenStreetMap) / satellite (Esri World Imagery) map drawn by the
+  page itself (no map library, no CDN): without internet it keeps working on
+  a lat/lon grid with a notice. Opened with the 🗺 Map button under the
+  waterfall; a tab next to MUSIC DoA in coherent mode, the whole right pane
+  otherwise; resizable; view settings per browser (localStorage)
+- Shows the positions decoder plugins report (`kp::Host::map_point`: ADS-B
+  aircraft, APRS stations, DMR GPS, D-STAR GPS / DPRS) per VFO decoder whose
+  "🗺 Plot on map" is ticked in its decoder tab (off by default,
+  `DIGITAL_OPT:id:map:0|1`, saved with the VFO), plus the station and range
+  rings. kraken_doa pushes `{"map":...}` once a second (changed points + the
+  keys of all live ones); `GET_MAP` asks for everything
+- Incident map: text messages from plugins (`kp::Host::message`, POCSAG
+  pages) -> street address found in the text -> looked up ONLINE in
+  OpenStreetMap Nominatim (no downloaded map data) within `GEO_RADIUS_KM`
+  of the station (POCSAG tab, default 300, persisted) -> incidents (map
+  markers + the POCSAG tab's table; the same address on several VFOs = one
+  incident listing them; kept 24 h, incidents.tsv). Code:
+  `kraken_doa_v2/src/incidents.cpp`, `geo_address.cpp`, `geo_http.cpp`
+
+**🗂 Decoder Logging (sidebar, all modes)** (details: `kraken_doa_v2/CLAUDE.md`
+*Decoder data log*): what every VFO's decoder reports - events, text
+messages, positions (throttled per object), raw frames (`kp::Host::raw`,
+only while ticked: OPTION `log_raw`), incidents - to
+`<dir>/decoders-YYYY-MM-DD.jsonl` (local date). Buffered in memory, written
+every 5 s (SD card); at local midnight the day is closed + gzipped in the
+background; days older than the Keep setting (default 7, 0 = forever) are
+deleted - ONLY files named `decoders-YYYY-MM-DD.jsonl[.gz]`. Writing pauses
+below 100 MB free. Folder default `decoder_logs` (cwd-relative, so the
+Docker volume gets it); the box lists drives (/, /media, /mnt, /run/media,
+/srv + the folder's own) with free space. `DECODER_LOG*:` commands,
+persisted. Code: `kraken_doa_v2/src/decoder_log.cpp`
+- Position records carry the map popup's details as `info` (ADS-B: squawk,
+  vertical rate...); unusual things are events starting with "⚠" (ADS-B:
+  emergencies + their end, squawk changes, special squawks, UAV / balloon
+  / high-performance types, >= 6000 ft/min, >= 400 kt below 10000 ft)
+
+**📡 Mobile DF on the map (coherent mode)** (details: `kraken_doa_v2/CLAUDE.md`
+*Mobile direction finding*): each VFO's live DoA lobe (north frame, from
+the station heading) + bearing on the 🗺 Map, and while driving a heat map
+of the transmitter's position: `kraken_doa_v2/src/rdf_engine.cpp` (the
+algorithm - an improved version of the KrakenSDR Android app's grid; offline
+comparison `tools/rdf_sim.cpp`) + `src/rdf_mapper.cpp` (GPS track, MUSIC
+frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
+`RDF:0|1`, `RDF_RANGE_KM:1-50` (persisted), `RDF_RESET:<vfo|-1>`, `GET_RDF`;
+pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO. Right pane
+tab "⊞ Both" shows the MUSIC DoA plots and the map at once
 
 ### Operating Modes (top-bar Mode selector: Coherent / Wideband / Independent)
 

@@ -234,8 +234,21 @@ private:
             if (func_ == 0 && printable_ratio(a) >= 95 && a.size() > num.size() / 2 + 2) use_alpha = true;
             text = std::string(head) + (use_alpha ? " alpha: " + kp::printable(a) : " numeric: " + num);
             if (damaged_) text += " [incomplete]";
+            // text pages may hold an incident address (kraken_doa's incident map)
+            if (use_alpha) host_.message("RIC " + std::to_string(addr_), kp::printable(a));
         }
         host_.event(text, 10.0);
+        // the decoder data log: RIC, function, rate and the message
+        // codewords' 20 data bits in hex
+        if (host_.raw_wanted()) {
+            std::string r = "RIC " + std::to_string(addr_) + " F" + std::to_string(func_) + " " + std::to_string(baud_);
+            char hx[8];
+            for (uint32_t c : payload_) {
+                snprintf(hx, sizeof hx, " %05X", c & 0xFFFFF);
+                r += hx;
+            }
+            host_.raw(r);
+        }
         host_.fact("Last RIC", std::to_string(addr_));
         host_.fact("Last message", text.substr(text.find(':') + 2));
         messages_++;
@@ -277,4 +290,5 @@ KRAKEN_PLUGIN(Pocsag, {.id = "pocsag",
                        .version = "1.0",
                        .sample_rate = FS,
                        .min_vfo_rate = 12500,
-                       .author = "KrakenSDR example"})
+                       .author = "KrakenSDR example",
+                       .messages = true})
