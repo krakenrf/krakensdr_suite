@@ -82,7 +82,8 @@ KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
                           .manual_only = false,           // true: never runs in Auto detect
                           .fixed_freq_hz = 0,             // > 0: the frequency the VFO is tuned to
                           .voice = false,                 // true: decodes voice - the panel offers Listen
-                          .messages = false})             // true: sends text messages (host.message)
+                          .messages = false,              // true: sends text messages (host.message)
+                          .talkers = false})              // true: reports who transmits (host.talker)
 ```
 
 The fields of `kp::Info` must be given **in this order** (C++20 designated
@@ -140,6 +141,7 @@ VFO bandwidth the signal needs; the panel warns when the VFO is narrower.
 | `host.table_remove(key)` | removes a table row |
 | `host.message(from, text)` | a free-text message the decoder received (a pager text): kraken_doa looks for a street address in it and shows it as an incident (set `.messages = true`) |
 | `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the user ticked "Raw frames") |
+| `host.talker(t)` / `host.talker_end(at_s)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`): the DoA is split per radio (set `.talkers = true`, below) |
 
 **Voice.** Set `.voice = true` if the decoder sends audio (`host.audio`):
 only then does its panel tab offer the Listen button.
@@ -195,6 +197,36 @@ receiver location there. The shared library's decoders (`lib/`, written
 against `dig::Report`) report positions with `Report::map()` and read the
 station with `Report::station()` - the DMR (GPS info LC) and D-STAR (GPS /
 DPRS slow data) plugins do; APRS calls `host.map_point` directly.
+
+**Talkers → DoA per radio.** A decoder that knows WHO transmits (a P25
+unit ID from the link control, a DMR source ID...) reports it, and
+kraken_doa cuts the VFO's signal at those boundaries: each radio gets a
+bearing computed only from its own samples, its own history and its own
+heat map while driving, picked in the 🗺 Map's 📡 DF panel. Set
+`.talkers = true` and, for every frame of a transmission that passed its
+checks:
+
+```cpp
+kp::Talker t;
+t.id = "2010621";           // the radio, stable (<= 32 chars)
+t.label = "TG 3038";        // shown next to it
+t.start_s = call_start;     // host.time() where the transmission began (its first frame)
+t.end_s = frame_end;        // host.time() where this frame ENDS - not "now"
+host.talker(t);
+```
+
+and `host.talker_end(at_s)` when it ends (the terminator frame, or frames
+stopped coming - use a timeout on `host.time()`). A different id ends the
+previous talker where the new one starts. Give exact sample times: the
+frame boundaries in your receiver's own sample count, converted with
+`host.time()` at the receiver's sample 0 (`host.time()` during `process()`
+is the time of that block's first sample) - never the moment a frame was
+decoded, which comes a frame or more later. Only the samples between
+`start_s` and the latest `end_s` are used, with a 40 ms guard at both ends,
+so an early or late boundary costs a frame, while a wrong one mixes radios.
+The p25 plugin is the reference (`p25/p25.cpp`: `voice_frame`,
+`set_talker`, `tick`). The offline test prints the transmissions it would
+cut ("talkers:" in the summary).
 
 **Tables.** A decoder that tracks many things at once (aircraft, stations,
 radios) can show them as a table above its facts: `table_columns()` once

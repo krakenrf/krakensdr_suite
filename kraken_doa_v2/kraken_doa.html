@@ -417,9 +417,21 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-df-body {margin-top:4px;line-height:1.45}
 .map-df-row {display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:3px}
 .map-df-row label {display:flex;align-items:center;gap:3px}
-.map-df.closed .map-df-body, .map-df.closed #map-df-vfo, .map-df.closed #map-df-lobe, .map-df.closed #map-df-lines, .map-df.closed #map-df-heat {display:none}
+.map-df.closed .map-df-body, .map-df.closed #map-df-vfo, .map-df.closed #map-df-tid, .map-df.closed #map-df-lobe, .map-df.closed #map-df-lines, .map-df.closed #map-df-heat {display:none}
 #map-df-txt .w {color:#ffcc80}
 #map-df-txt .g {color:#a5d6a7}
+#map-df-tid {max-width:150px}
+.map-df-tl {margin-top:4px;max-height:150px;overflow-y:auto;border-top:1px solid #2a4a7a}
+.map-df-tl:empty {display:none}
+.map-df-tl table {border-collapse:collapse;width:100%}
+.map-df-tl th, .map-df-tl td {padding:1px 4px;text-align:left;white-space:nowrap}
+.map-df-tl th {color:#8fb0d8;font-weight:normal;position:sticky;top:0;background:#101a2e}
+.map-df-tl td.n {text-align:right;font-variant-numeric:tabular-nums}
+.map-df-tl tr.t {cursor:pointer}
+.map-df-tl tr.t:hover {background:#22345a}
+.map-df-tl tr.sel {background:#2a4a7a}
+.map-df-tl .air {color:#ff5a5a}
+.map-df-tl .dim {color:#8296b4}
 .map-status {position:absolute;left:6px;bottom:6px;max-width:70%;background:rgba(22,33,62,.85);color:#b8cbe6;font-size:11px;padding:3px 7px;border-radius:3px;z-index:2;pointer-events:none}
 .map-status:empty {display:none}
 .map-offline {position:absolute;left:50%;top:40px;transform:translateX(-50%);max-width:85%;background:rgba(120,70,0,.9);color:#ffe0b2;font-size:12px;padding:5px 10px;border-radius:4px;z-index:2;pointer-events:none;text-align:center}
@@ -1559,17 +1571,19 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <div class="map-df-h">
               <button type="button" class="map-btn" id="map-df-tog" onclick="mapSet('rdfOpen', !mapState.rdfOpen)" title="Direction finding on the map: DoA lobes and, while driving, a heat map of where the transmitter is">📡 DF</button>
               <select id="map-df-vfo" onchange="mapSet('rdfVfo', this.value)" title="Which VFO's DoA to show"></select>
+              <select id="map-df-tid" onchange="mapSet('rdfTid', this.value)" style="display:none" title="Which radio: a digital decoder that names who transmits (P25 unit ID) splits the VFO's signal - each radio's DoA comes only from its own transmissions"></select>
               <button type="button" class="map-btn" id="map-df-lobe" onclick="mapSet('rdfLobe', !mapState.rdfLobe)" title="The live DoA lobe around the station">Lobe</button>
               <button type="button" class="map-btn" id="map-df-lines" onclick="mapSet('rdfLines', !mapState.rdfLines)" title="The bearings taken while driving">Lines</button>
               <button type="button" class="map-btn" id="map-df-heat" onclick="mapSet('rdfHeat', !mapState.rdfHeat)" title="Where the transmitter probably is (one VFO at a time)">Heat</button>
             </div>
             <div class="map-df-body">
               <div id="map-df-txt"></div>
+              <div class="map-df-tl" id="map-df-tl" onclick="rdfPickTalker(event)"></div>
               <div class="map-df-row">
                 <label title="Collect bearings for the heat map while driving (needs GPS: Station Information)"><input type="checkbox" id="map-df-on" onchange="send('RDF:' + (this.checked ? 1 : 0))"> Collect</label>
                 <label title="Half-width of the heat map grid around where the drive started">Range <input type="number" id="map-df-range" min="1" max="50" step="1" style="width:44px" onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="rdfSetRange(this.value)"> km</label>
                 <button type="button" class="map-btn" onclick="rdfCentreEst()" title="Centre the map on the estimated transmitter">◎</button>
-                <button type="button" class="map-btn" onclick="rdfReset()" title="Forget the bearings collected (the shown VFO, or all)">Reset</button>
+                <button type="button" class="map-btn" onclick="rdfReset()" title="Forget the bearings collected (the shown VFO / radio, or all)">Reset</button>
               </div>
             </div>
           </div>
@@ -1615,7 +1629,7 @@ let paneDrag = null;         // {p, id, grab, pointerId} while dragging a VFO ba
 const MAP_MIN_Z = 2, MAP_MAX_Z = 19, MAP_TILE_CACHE = 400, MAP_TRAIL_MAX = 400, MAP_TRAIL_S = 900;
 const mapState = (() => {
   const d = {on: false, tab: 'map', w: 0, layer: 'street', z: 0, mx: 0.5, my: 0.5, trails: true,
-             rdfVfo: 'all', rdfLobe: true, rdfLines: true, rdfHeat: true, rdfOpen: true};
+             rdfVfo: 'all', rdfTid: '', rdfLobe: true, rdfLines: true, rdfHeat: true, rdfOpen: true};
   try { return Object.assign(d, JSON.parse(localStorage.getItem('kraken_map') || '{}')); } catch (e) { return d; }
 })();
 const mapPts = new Map();      // "vfo|plugin|id" -> point (server fields + rx time + trail)
@@ -10806,14 +10820,20 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // {"rdf":{on, range_km, state, station:{lat,lon,hdg,spd,src}, vfos:[{id, mhz,
   // lobe (b64, 720 x 0.5 deg, north frame, u8 = the pseudospectrum linear
   // min..max - the MUSIC DoA plot's scale), peak, conf,
-  // held, frames, gate_m, moved_m, records}]}} at 2 Hz;
-  // {"rdf_grid":{vfo, mhz, records, range_km, nats, coarse/fine:{n, cell_m,
-  // nw, se, data (b64 u8, row 0 north: 255 = the peak, 0 = nats below)}, est:
-  // {lat, lon, r50, r95, a, b, ang, mass, edge, off, off_sd}, lines:[[lat, lon,
-  // bearing, t]]}} when a VFO's heat map changed
+  // held, frames, gate_m, moved_m, records}], talkers:[{vfo, tid, label,
+  // active, tx, tframes, tx_frames, age, tx_age, doa, lobe, peak, conf, held,
+  // frames, gate_m, moved_m, records, hist:[[age, peak, doa, conf, frames]]}]}}
+  // at 2 Hz - talkers = the radios a VFO's digital decoder named (P25 unit
+  // IDs, talker_doa.cpp), each with the DoA of its own transmissions only;
+  // {"rdf_grid":{vfo, tid ("" = the VFO's whole signal), mhz, records,
+  // range_km, nats, coarse/fine:{n, cell_m, nw, se, data (b64 u8, row 0
+  // north: 255 = the peak, 0 = nats below)}, est: {lat, lon, r50, r95, a, b,
+  // ang, mass, edge, off, off_sd}, lines:[[lat, lon, bearing, t]]}} when a
+  // heat map changed
   let rdfStatus = null;
-  const rdfGrids = {};   // vfo -> {m, coarse, fine (canvases)}
+  const rdfGrids = {};   // "vfo|tid" ("vfo|" = the VFO) -> {m, coarse, fine (canvases)}
   const rdfLobeCache = new Map();
+  function rdfGk(vfo, tid) { return vfo + '|' + (tid || ''); }
   function rdfB64(s) {
     const b = atob(s), u = new Uint8Array(b.length);
     for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
@@ -10848,13 +10868,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
   function rdfOnStatus(m) {
     rdfStatus = m;
-    // grids of VFOs that are gone
-    for (const k of Object.keys(rdfGrids)) if (!(m.vfos || []).some(v => v.id === +k)) delete rdfGrids[k];
+    // grids of VFOs / talkers that are gone
+    const live = new Set([...(m.vfos || []).map(v => rdfGk(v.id, '')), ...(m.talkers || []).map(t => rdfGk(t.vfo, t.tid))]);
+    for (const k of Object.keys(rdfGrids)) if (!live.has(k)) delete rdfGrids[k];
     rdfRenderPanel();
     if (mapCv && document.body.classList.contains('rp-map')) mapDraw();
   }
   function rdfOnGrid(g) {
-    rdfGrids[g.vfo] = {m: g, coarse: rdfHeatCanvas(g.coarse), fine: rdfHeatCanvas(g.fine)};
+    rdfGrids[rdfGk(g.vfo, g.tid)] = {m: g, coarse: rdfHeatCanvas(g.coarse), fine: rdfHeatCanvas(g.fine)};
     rdfRenderPanel();
     if (mapCv && document.body.classList.contains('rp-map')) mapDraw();
   }
@@ -10863,24 +10884,75 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const ids = rdfVfos().map(v => v.id), sel = String(mapState.rdfVfo ?? 'all');
     return sel === 'all' ? ids : ids.filter(i => String(i) === sel);
   }
-  // the heat map shown: the selected VFO's, or in "All" the only one that has one
-  function rdfHeatVfo() {
+  // talkers of the selected VFO(s), newest first
+  function rdfTalkers() {
     const ids = rdfSelIds();
-    if (ids.length === 1) return ids[0];
-    const w = ids.filter(i => rdfGrids[i] && rdfGrids[i].m.records);
-    return w.length === 1 ? w[0] : null;
+    return ((rdfStatus && rdfStatus.talkers) || []).filter(t => ids.includes(t.vfo)).sort((a, b) => (a.age ?? 1e9) - (b.age ?? 1e9));
+  }
+  // the radio selection: '' = the VFOs' whole signal, '*' = every talker,
+  // 'vfo|tid' = one talker (a talker no longer listed falls back to '')
+  function rdfTidSel() {
+    const sel = String(mapState.rdfTid || '');
+    if (sel === '' || sel === '*') return rdfTalkers().length ? sel : '';
+    return rdfTalkers().some(t => rdfGk(t.vfo, t.tid) === sel) ? sel : '';
+  }
+  function rdfSelTalkers() {
+    const sel = rdfTidSel();
+    if (sel === '') return [];
+    return rdfTalkers().filter(t => sel === '*' || rdfGk(t.vfo, t.tid) === sel);
+  }
+  function rdfTalkerName(t) { return t.tid + (t.label ? ' · ' + t.label : ''); }
+  // a talker's colour: its VFO's when it is the one shown, else one of its own
+  function rdfTalkerColor(t) {
+    if (rdfTidSel() !== '*') return getDecimatorColor(t.vfo);
+    let h = 0;
+    for (const ch of t.tid) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return `hsl(${(h * 137) % 360},85%,62%)`;
+  }
+  // the heat map shown: one talker's, the selected VFO's, or in "All" the
+  // only VFO that has one (a grid key, or null)
+  function rdfHeatKey() {
+    const sel = rdfTidSel();
+    if (sel === '*') return null;
+    if (sel !== '') return sel;
+    const ids = rdfSelIds();
+    if (ids.length === 1) return rdfGk(ids[0], '');
+    const w = ids.filter(i => rdfGrids[rdfGk(i, '')] && rdfGrids[rdfGk(i, '')].m.records);
+    return w.length === 1 ? rdfGk(w[0], '') : null;
+  }
+  // the maps whose bearings / estimates are drawn: [{key, col, name}]
+  function rdfShownMaps() {
+    const sel = rdfTidSel();
+    if (sel === '') return rdfSelIds().map(id => ({key: rdfGk(id, ''), col: getDecimatorColor(id), name: 'D' + id, lines: true}));
+    return rdfSelTalkers().map(t => ({key: rdfGk(t.vfo, t.tid), col: rdfTalkerColor(t), name: t.tid, lines: sel !== '*'}));
   }
   function rdfMpp(lat) { return 40075016.686 * Math.cos(lat * Math.PI / 180) / mapWorld(); }
+  function rdfLobePath(c, lobe, sx, sy, R) {
+    let u = rdfLobeCache.get(lobe);
+    if (!u) { u = rdfB64(lobe); if (rdfLobeCache.size > 64) rdfLobeCache.clear(); rdfLobeCache.set(lobe, u); }
+    c.beginPath();
+    for (let k = 0; k <= u.length; k++) {
+      const r = R * u[k % u.length] / 255, a = (k % u.length) * 2 * Math.PI / u.length;
+      const x = sx + r * Math.sin(a), y = sy - r * Math.cos(a);
+      if (k) c.lineTo(x, y); else c.moveTo(x, y);
+    }
+    c.closePath();
+  }
+  function rdfMapLabel(c, txt, x, y) {
+    c.font = 'bold 11px sans-serif';
+    c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineWidth = 3; c.fillStyle = '#fff';
+    c.strokeText(txt, x, y); c.fillText(txt, x, y);
+  }
   function rdfDraw(c) {
     if (opMode !== 'coherent' || !rdfStatus) return;
-    const ids = rdfSelIds();
+    const maps = rdfShownMaps();
     // heat map (coarse, then the fine grid around the estimate)
-    const hv = rdfHeatVfo();
-    if (mapState.rdfHeat && hv !== null && rdfGrids[hv]) {
+    const hk = rdfHeatKey();
+    if (mapState.rdfHeat && hk !== null && rdfGrids[hk]) {
       c.save();
       c.imageSmoothingEnabled = true;
       c.globalAlpha = 0.8;
-      for (const L of [rdfGrids[hv].coarse, rdfGrids[hv].fine]) {
+      for (const L of [rdfGrids[hk].coarse, rdfGrids[hk].fine]) {
         if (!L) continue;
         const [x0, y0] = mapLatLonToScreen(L.g.nw[0], L.g.nw[1]);
         const [x1, y1] = mapLatLonToScreen(L.g.se[0], L.g.se[1]);
@@ -10893,11 +10965,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (mapState.rdfLines) {
       c.save();
       c.lineWidth = 1.2;
-      for (const id of ids) {
-        const G = rdfGrids[id];
-        if (!G || !G.m.lines || !G.m.lines.length) continue;
+      for (const mp of maps) {
+        const G = rdfGrids[mp.key];
+        if (!mp.lines || !G || !G.m.lines || !G.m.lines.length) continue;
         const lines = G.m.lines, len = (G.m.range_km || 10) * 1500;
-        c.strokeStyle = getDecimatorColor(id);
+        c.strokeStyle = mp.col;
         lines.forEach(([la, lo, b], i) => {
           const [x, y] = mapLatLonToScreen(la, lo), px = len / rdfMpp(la), r = b * Math.PI / 180;
           c.globalAlpha = 0.1 + 0.5 * (i + 1) / lines.length;
@@ -10907,10 +10979,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       c.restore();
     }
     // estimates: cross + 95 % ellipse
-    for (const id of ids) {
-      const G = rdfGrids[id], e = G && G.m.est;
+    for (const mp of maps) {
+      const G = rdfGrids[mp.key], e = G && G.m.est;
       if (!e) continue;
-      const [x, y] = mapLatLonToScreen(e.lat, e.lon), mpp = rdfMpp(e.lat), col = getDecimatorColor(id);
+      const [x, y] = mapLatLonToScreen(e.lat, e.lon), mpp = rdfMpp(e.lat), col = mp.col;
       c.save();
       c.strokeStyle = '#000'; c.lineWidth = 4;
       c.beginPath(); c.ellipse(x, y, Math.max(2, 2.45 * e.a / mpp), Math.max(2, 2.45 * e.b / mpp), (e.ang - 90) * Math.PI / 180, 0, 2 * Math.PI); c.stroke();
@@ -10923,39 +10995,47 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         c.strokeStyle = s; c.lineWidth = w;
         c.beginPath(); c.moveTo(x - 8, y - 8); c.lineTo(x + 8, y + 8); c.moveTo(x + 8, y - 8); c.lineTo(x - 8, y + 8); c.stroke();
       }
-      const lab = `D${id} TX ±${rdfDist(e.r95)}${e.edge ? ' (edge!)' : ''}`;
-      c.font = 'bold 11px sans-serif';
-      c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineWidth = 3; c.fillStyle = '#fff';
-      c.strokeText(lab, x + 11, y - 9); c.fillText(lab, x + 11, y - 9);
+      rdfMapLabel(c, `${mp.name} TX ±${rdfDist(e.r95)}${e.edge ? ' (edge!)' : ''}`, x + 11, y - 9);
       c.restore();
     }
-    // live lobes around the station
+    // lobes around the station: the VFOs' live ones, or the talkers' latest transmissions
     const st = rdfStatus.station;
     if (mapState.rdfLobe && st) {
       const [sx, sy] = mapLatLonToScreen(st.lat, st.lon);
-      const R = 0.3 * Math.min(mapW, mapH);
-      for (const v of rdfVfos()) {
-        if (!ids.includes(v.id) || !v.lobe) continue;
-        let u = rdfLobeCache.get(v.lobe);
-        if (!u) { u = rdfB64(v.lobe); rdfLobeCache.clear(); rdfLobeCache.set(v.lobe, u); }
-        const col = getDecimatorColor(v.id);
+      const R = 0.3 * Math.min(mapW, mapH), L = 2 * Math.max(mapW, mapH);
+      const lobes = [];
+      if (rdfTidSel() === '') {
+        const ids = rdfSelIds();
+        for (const v of rdfVfos()) if (ids.includes(v.id) && v.lobe) lobes.push({v, col: getDecimatorColor(v.id), dim: false, label: ''});
+      } else {
+        for (const t of rdfSelTalkers()) if (t.lobe) lobes.push({v: t, col: rdfTalkerColor(t), dim: !t.active, label: t.tid, t});
+      }
+      for (const {v, col, dim, label, t} of lobes) {
         c.save();
-        c.beginPath();
-        for (let k = 0; k <= u.length; k++) {
-          const r = R * u[k % u.length] / 255, a = (k % u.length) * 2 * Math.PI / u.length;
-          const x = sx + r * Math.sin(a), y = sy - r * Math.cos(a);
-          if (k) c.lineTo(x, y); else c.moveTo(x, y);
+        // a talker's earlier transmissions: faint bearing lines, older fainter
+        if (t && rdfTidSel() !== '*' && t.hist) {
+          c.strokeStyle = col; c.lineWidth = 1.2;
+          t.hist.forEach(([, pk], i) => {
+            if (pk === null) return;
+            const a = pk * Math.PI / 180;
+            c.globalAlpha = 0.12 + 0.35 * (i + 1) / t.hist.length;
+            c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx + L * Math.sin(a), sy - L * Math.cos(a)); c.stroke();
+          });
         }
-        c.closePath();
-        c.globalAlpha = 0.18; c.fillStyle = col; c.fill();
-        c.globalAlpha = 1; c.strokeStyle = col; c.lineWidth = 1.8;
-        if (v.held) c.setLineDash([4, 3]);
+        rdfLobePath(c, v.lobe, sx, sy, R);
+        c.globalAlpha = dim ? 0.08 : 0.18; c.fillStyle = col; c.fill();
+        c.globalAlpha = dim ? 0.55 : 1; c.strokeStyle = col; c.lineWidth = 1.8;
+        if (v.held || dim) c.setLineDash([4, 3]);
         c.stroke();
         // the bearing (peak) to the edge of the map
         if (v.peak !== null) {
-          const a = v.peak * Math.PI / 180, L = 2 * Math.max(mapW, mapH);
+          const a = v.peak * Math.PI / 180;
           c.setLineDash([8, 5]); c.lineWidth = 2;
           c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx + L * Math.sin(a), sy - L * Math.cos(a)); c.stroke();
+          if (label) {
+            c.setLineDash([]); c.globalAlpha = 1;
+            rdfMapLabel(c, label + (t && t.active ? ' ●' : ''), sx + 1.08 * R * Math.sin(a) + 4, sy - 1.08 * R * Math.cos(a));
+          }
         }
         c.restore();
       }
@@ -10970,6 +11050,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
   }
   function rdfDist(m) { return m >= 1000 ? (m / 1000).toFixed(m >= 10000 ? 0 : 1) + ' km' : Math.round(m) + ' m'; }
+  function rdfAge(s) {
+    if (s === null || s === undefined) return '';
+    return s < 60 ? Math.round(s) + ' s' : s < 3600 ? Math.round(s / 60) + ' min' : (s / 3600).toFixed(1) + ' h';
+  }
   const RDF_STATE = {
     no_fix: 'No GPS position - the map needs the station location (sidebar → Station Information, GPS)',
     no_heading: 'No heading yet - drive a little so the GPS course is known (or fit a compass)',
@@ -10980,6 +11064,26 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     doa_off: 'DoA is off (MUSIC DoA box)',
     not_coherent: 'Direction finding needs the coherent mode',
   };
+  // one map's heat-map status (records, next gate, estimate)
+  function rdfMapLine(name, col, key, live) {
+    const G = rdfGrids[key], e = G && G.m.est;
+    const n = G ? G.m.records : (live ? live.records : 0);
+    let line = `<b style="color:${col}">${digEsc(name)}</b> ${n} bearing${n === 1 ? '' : 's'}`;
+    if (live && rdfStatus.on && rdfStatus.state === 'ok' && live.gate_m) line += ` · next in ${Math.max(0, Math.round(live.gate_m - live.moved_m))} m`;
+    if (e) {
+      line += ` · <span class="g">TX ±${rdfDist(e.r95)} (95 %)</span>`;
+      if (e.edge) line += ' <span class="w">at the grid edge - it may be outside: raise the range</span>';
+      else if (e.mass < 0.6) line += ` <span class="w">(${Math.round(100 * (1 - e.mass))} % elsewhere - drive around it)</span>`;
+      if (n >= 20 && Math.abs(e.off) >= 2 && Math.abs(e.off) > 2 * e.off_sd)
+        line += ` · bearings read ${Math.abs(e.off).toFixed(1)}° ${e.off > 0 ? 'anticlockwise' : 'clockwise'} of true (array mounting?)`;
+    } else if (n) line += ' · not enough geometry yet - keep driving';
+    return line;
+  }
+  function rdfBearingTxt(t) {
+    if (t.lobe && t.peak !== null) return t.peak.toFixed(0) + '°';
+    if (t.doa !== null) return t.doa.toFixed(0) + '° arr';   // no heading: the DoA plot's angle
+    return '';
+  }
   function rdfRenderPanel() {
     const box = $id('map-df');
     if (!box) return;
@@ -10992,6 +11096,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const opts = `<option value="all">All VFOs</option>` + vs.map(v => `<option value="${v.id}">D${v.id} · ${(+v.mhz).toFixed(4)} MHz</option>`).join('');
     if (sel.dataset.html !== opts) { sel.dataset.html = opts; sel.innerHTML = opts; }
     if (document.activeElement !== sel) sel.value = vs.some(v => String(v.id) === String(mapState.rdfVfo)) ? String(mapState.rdfVfo) : 'all';
+    // radios (talkers) of the selected VFO(s)
+    const ts = rdfTalkers(), tsel = rdfTidSel(), multi = rdfSelIds().length > 1;
+    const tidSel = $id('map-df-tid');
+    tidSel.style.display = ts.length ? '' : 'none';
+    const topts = `<option value="">Whole signal</option><option value="*">Every radio (${ts.length})</option>` +
+      ts.map(t => `<option value="${digEsc(rdfGk(t.vfo, t.tid))}">${multi ? 'D' + t.vfo + ' ' : ''}${digEsc(rdfTalkerName(t))}</option>`).join('');
+    if (tidSel.dataset.html !== topts) { tidSel.dataset.html = topts; tidSel.innerHTML = topts; }
+    if (document.activeElement !== tidSel) tidSel.value = tsel;
     if (!rdfStatus) { $id('map-df-txt').textContent = 'Waiting for DoA data…'; return; }
     const on = $id('map-df-on');
     if (document.activeElement !== on) on.checked = !!rdfStatus.on;
@@ -11001,22 +11113,41 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (!vs.length) h = '<span class="w">No VFO has DoA results (DoA on, coherent mode, a signal in the VFO).</span>';
     else if (!rdfStatus.on) h = '<span class="w">Collecting is off - the lobes are shown, no heat map is built.</span>';
     else if (RDF_STATE[rdfStatus.state]) h = `<span class="w">${digEsc(RDF_STATE[rdfStatus.state])}</span>`;
-    for (const id of rdfSelIds()) {
-      const v = vs.find(x => x.id === id), G = rdfGrids[id], e = G && G.m.est;
-      const n = G ? G.m.records : (v ? v.records : 0);
-      let line = `<b style="color:${getDecimatorColor(id)}">D${id}</b> ${n} bearing${n === 1 ? '' : 's'}`;
-      if (v && rdfStatus.on && rdfStatus.state === 'ok' && v.gate_m) line += ` · next in ${Math.max(0, Math.round(v.gate_m - v.moved_m))} m`;
-      if (e) {
-        line += ` · <span class="g">TX ±${rdfDist(e.r95)} (95 %)</span>`;
-        if (e.edge) line += ' <span class="w">at the grid edge - it may be outside: raise the range</span>';
-        else if (e.mass < 0.6) line += ` <span class="w">(${Math.round(100 * (1 - e.mass))} % elsewhere - drive around it)</span>`;
-        if (n >= 20 && Math.abs(e.off) >= 2 && Math.abs(e.off) > 2 * e.off_sd)
-          line += ` · bearings read ${Math.abs(e.off).toFixed(1)}° ${e.off > 0 ? 'anticlockwise' : 'clockwise'} of true (array mounting?)`;
-      } else if (n) line += ' · not enough geometry yet - keep driving';
-      h += (h ? '<br>' : '') + line;
+    if (tsel === '') {
+      for (const id of rdfSelIds()) h += (h ? '<br>' : '') + rdfMapLine('D' + id, getDecimatorColor(id), rdfGk(id, ''), vs.find(x => x.id === id));
+    } else if (tsel !== '*') {
+      const t = rdfSelTalkers()[0];
+      if (t) {
+        let line = `<b style="color:${getDecimatorColor(t.vfo)}">${digEsc(t.tid)}</b>${t.label ? ' ' + digEsc(t.label) : ''} · ` +
+          (t.active ? '<span class="g">on air</span>' : `heard ${rdfAge(t.age)} ago`) + ` · ${t.tx} transmission${t.tx === 1 ? '' : 's'}`;
+        if (t.doa !== null) line += ` · latest: ${rdfBearingTxt(t)} (${t.tx_frames} frame${t.tx_frames === 1 ? '' : 's'}, ${Math.round(100 * t.conf)} %)`;
+        else line += ' · <span class="w">no DoA frames from it yet (needs DoA on and frames entirely inside its transmissions)</span>';
+        h += (h ? '<br>' : '') + line + '<br>' + rdfMapLine('Heat map', getDecimatorColor(t.vfo), tsel, t);
+      }
     }
-    const t = $id('map-df-txt');
-    if (t.innerHTML !== h) t.innerHTML = h;
+    const tx = $id('map-df-txt');
+    if (tx.innerHTML !== h) tx.innerHTML = h;
+    // the radio list: click = show that radio on the map (again = whole signal)
+    let tl = '';
+    if (ts.length) {
+      tl = '<table><tr><th></th>' + (multi ? '<th>VFO</th>' : '') + '<th>Radio</th><th>Talkgroup</th><th>Bearing</th><th>Heard</th><th>Tx</th></tr>';
+      for (const t of ts) {
+        const k = rdfGk(t.vfo, t.tid);
+        tl += `<tr class="t${k === tsel ? ' sel' : ''}" data-k="${digEsc(k)}" title="Show this radio's DoA on the map">` +
+          `<td class="air">${t.active ? '●' : ''}</td>` + (multi ? `<td>D${t.vfo}</td>` : '') +
+          `<td>${digEsc(t.tid)}</td><td class="dim">${digEsc(t.label || '')}</td>` +
+          `<td class="n">${rdfBearingTxt(t)}</td><td class="n dim">${t.active ? 'now' : rdfAge(t.age)}</td><td class="n">${t.tx}</td></tr>`;
+      }
+      tl += '</table>';
+    }
+    const tlb = $id('map-df-tl');
+    if (tlb.dataset.html !== tl) { tlb.dataset.html = tl; tlb.innerHTML = tl; }
+  }
+  function rdfPickTalker(ev) {
+    const tr = ev.target.closest('tr.t');
+    if (!tr) return;
+    mapSet('rdfTid', tr.dataset.k === rdfTidSel() ? '' : tr.dataset.k);
+    rdfRenderPanel();
   }
   function rdfSetRange(v) {
     const km = Math.round(parseFloat(v));
@@ -11024,13 +11155,21 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     else rdfRenderPanel();
   }
   function rdfReset() {
+    const tsel = rdfTidSel();
+    if (tsel !== '' && tsel !== '*') {
+      const t = rdfSelTalkers()[0];
+      if (!t || !confirm(`Forget the bearings collected for radio ${t.tid}?`)) return;
+      send('RDF_RESET:' + t.vfo + ':' + t.tid);
+      return;
+    }
     const ids = rdfSelIds(), all = ids.length !== 1;
-    if (!confirm(all ? 'Forget the bearings collected for every VFO?' : `Forget the bearings collected for D${ids[0]}?`)) return;
+    if (!confirm(all ? 'Forget the bearings collected for every VFO and radio?' : `Forget the bearings collected for D${ids[0]} and its radios?`)) return;
     send('RDF_RESET:' + (all ? -1 : ids[0]));
   }
   function rdfCentreEst() {
-    const id = rdfHeatVfo() ?? rdfSelIds().find(i => rdfGrids[i] && rdfGrids[i].m.est);
-    const e = id !== undefined && id !== null && rdfGrids[id] && rdfGrids[id].m.est;
+    const hk = rdfHeatKey();
+    const key = hk !== null && rdfGrids[hk] && rdfGrids[hk].m.est ? hk : (rdfShownMaps().find(m => rdfGrids[m.key] && rdfGrids[m.key].m.est) || {}).key;
+    const e = key && rdfGrids[key] && rdfGrids[key].m.est;
     if (e) { mapAutoFit = false; mapCenterOn(e.lat, e.lon); }
     else mapStatusFlash('No transmitter estimate yet');
   }

@@ -6,6 +6,8 @@
 #include <mutex>
 #include <memory>
 #include <chrono>
+#include <deque>
+#include <functional>
 #include <thread>
 #include <Eigen/Dense>
 #include <Eigen/Eigenvalues>
@@ -110,6 +112,25 @@ public:
     // skip it - they used to send the old bearing labelled with the new
     // frequency for the ~4 s retune hold.
     bool isResultStale() const { return result_stale_.load(std::memory_order_relaxed); }
+
+    // Talker DoA (talker_doa.hpp): called for every computed frame - published
+    // or not - with that frame's OWN trace-normalised covariance (before the
+    // temporal averaging, which would mix in earlier frames = other radios),
+    // the VFO stream samples [a, b) it was computed from
+    // (MultiChannelDecimated::stream_pos), the sample rate, the MUSIC
+    // frequency and the eigenvalue ratio. Runs on the processing thread under
+    // the processor's lock: copy and queue, nothing more. Empty = off.
+    using FrameTap = std::function<void(const Eigen::MatrixXcd& R, uint64_t a, uint64_t b, float rate_hz,
+                                        double freq_hz, float eig_ratio)>;
+    void setFrameTap(FrameTap tap);
+
+    // MUSIC on a given covariance with the current array setup (steering
+    // vectors, source count, half-plane, array offset): the talker DoA runs
+    // each radio's own frames through it. spec = a pseudospectrum like
+    // getPseudospectrum(); peak / conf like getPeakAngleWithConfidence().
+    // false: R doesn't fit the array (element count changed) or no steering
+    // vectors yet. Leaves the processor's own results alone.
+    bool spectrumFromCovariance(const Eigen::MatrixXcd& R, Eigen::VectorXd* spec, float* peak_deg, float* conf) const;
 
     void setArrayTopology(ArrayTopology topology);
     ArrayTopology getArrayTopology() const;
@@ -254,6 +275,15 @@ private:
     // waits for more than this much signal, nor uses fewer snapshots than this
     static constexpr double MAX_FRAME_SECONDS = 1.0;
     static constexpr size_t MIN_NARROW_SNAPSHOTS = 4;
+    // Talker DoA frame tap (see setFrameTap). acc_pos_ maps accumulator
+    // samples (global_sample_index) to VFO stream positions: accumulator
+    // sample g0 + i came from stream position pos + i.
+    FrameTap frame_tap_;
+    Eigen::MatrixXcd frame_R_;             // the frame's covariance before temporal averaging
+    uint64_t frame_a_ = 0, frame_b_ = 0;   // its stream samples [a, b)
+    struct PosSeg { size_t g0; uint64_t pos; size_t n; };
+    std::deque<PosSeg> acc_pos_;           // guarded by accumulator_.buffer_mutex
+    uint64_t streamPosOf(size_t g) const;  // caller holds accumulator_.buffer_mutex
     std::chrono::steady_clock::time_point last_input_time_{};
     float last_input_rate_hz_ = 0.0f;
     float last_input_offset_hz_ = 0.0f;  // VFO offset the previous block was decimated with
@@ -524,12 +554,20 @@ private:
     // degrees [0, 360). Falls back to the grid angle at a masked-bin edge
     // (ULA half-plane zeros). Caller must hold config_mutex_.
     float interpolatePeakAngle(Eigen::Index max_idx, double max_val) const;
+    // the same on any spectrum of num_angles_ bins (residual = sub-bin array offset)
+    float interpolatePeakAngleOf(const Eigen::VectorXd& spec, Eigen::Index max_idx, double max_val,
+                                 float residual) const;
+    // peak-to-mean confidence (0..1) of a spectrum, as getPeakAngleWithConfidence()
+    static float peakConfidenceOf(const Eigen::VectorXd& spec, double max_val);
 
     void updateSteeringVectors();
 
     // Apply ULA forward/backward truncation and array-offset rotation to the
     // final azimuth `pseudospectrum`. Caller must hold config_mutex_.
     void applyOutputTransforms();
+    // the same transforms on any spectrum; *residual = the sub-bin part of
+    // the offset (caller holds config_mutex_)
+    void applyOutputTransformsTo(Eigen::VectorXd& spec, float* residual) const;
 
     // 2D MUSIC private methods
     void updateSteeringVectors2D();           // Compute 2D steering vectors for 3D array

@@ -661,6 +661,8 @@ void DataReceiver::decimation_processor_thread() {
 
                         // Restore user-facing offset sign
                         result.decimated_data.freq_offset_hz = block_offset_hz;
+                        result.decimated_data.stream_pos =
+                            inst->stream_pos.fetch_add(result.decimated_data.min_samples, std::memory_order_relaxed);
                         for (auto& channel_data_out : result.decimated_data.channels) {
                             channel_data_out.freq_offset_hz = block_offset_hz;
                         }
@@ -939,7 +941,8 @@ void DataReceiver::decimation_processor_thread() {
                     int tuner = wideband_enabled ? inst->tuner_channel.load(std::memory_order_relaxed) : 0;
                     if (tuner < 0 || tuner >= MAX_CHANNELS) tuner = 0;
                     double rf = static_cast<double>(exact_tuner_hz(tuner)) + result.decimated_data.freq_offset_hz;
-                    dd->push(src->data(), src->size(), result.decimated_data.output_rate_hz, rf);
+                    dd->push(src->data(), src->size(), result.decimated_data.output_rate_hz, rf,
+                             result.decimated_data.stream_pos);
                 }
             }
 

@@ -67,7 +67,8 @@ int print_info() {
               << ",\"min_vfo_rate\":" << i.min_vfo_rate << ",\"map\":" << (i.map ? "true" : "false")
               << ",\"manual_only\":" << (i.manual_only ? "true" : "false") << ",\"fixed_freq_hz\":" << std::fixed
               << std::setprecision(0) << i.fixed_freq_hz << std::defaultfloat << std::setprecision(6)
-              << ",\"voice\":" << (i.voice ? "true" : "false") << ",\"messages\":" << (i.messages ? "true" : "false");
+              << ",\"voice\":" << (i.voice ? "true" : "false") << ",\"messages\":" << (i.messages ? "true" : "false")
+              << ",\"talkers\":" << (i.talkers ? "true" : "false");
     // options twice: as JSON for people, and tab-separated for kraken_doa's
     // flat reader (key, label, default, choices, help per line)
     std::string tsv;
@@ -168,6 +169,21 @@ public:
         p += text.substr(0, 2000);
         send(kp::wire::MESSAGE, p.data(), p.size());
     }
+    void talker(const kp::Talker& t) override {
+        if (t.id.empty()) return;
+        std::string p = t.id.substr(0, 32);
+        p.push_back('\0');
+        p += t.label.substr(0, 64);
+        p.push_back('\0');
+        p += secs(t.start_s);
+        p.push_back('\0');
+        p += secs(t.end_s);
+        send(kp::wire::TALKER, p.data(), p.size());
+    }
+    void talker_end(double at_s) override {
+        std::string p = secs(at_s);
+        send(kp::wire::TALKER_END, p.data(), p.size());
+    }
     bool station(double* lat, double* lon) const override {
         if (!have_station_) return false;
         *lat = st_lat_;
@@ -184,6 +200,13 @@ public:
 private:
     int fd_;
     double rate_;
+    // a Host::time() value for the wire; NAN = now
+    std::string secs(double t) const {
+        if (!std::isfinite(t)) t = time();
+        char b[32];
+        snprintf(b, sizeof b, "%.4f", t);
+        return b;
+    }
     void send(uint32_t type, const void* data, size_t len) {
         if (len > kp::wire::MAX_PAYLOAD) len = kp::wire::MAX_PAYLOAD;
         uint32_t hdr[2] = {type, static_cast<uint32_t>(len)};
@@ -343,6 +366,28 @@ public:
         if (!quiet_) printf("[%9.3f s] (message) %s: %s\n", time(), from.c_str(), text.c_str());
     }
     uint64_t messages_ = 0;
+    // talker spans as the live host cuts them: a new id ends the previous one
+    struct Span { std::string id, label; double start, end; bool open; };
+    std::vector<Span> spans_;
+    void talker(const kp::Talker& t) override {
+        if (t.id.empty()) return;
+        const double st = std::isfinite(t.start_s) ? t.start_s : time();
+        const double en = std::isfinite(t.end_s) ? t.end_s : time();
+        if (spans_.empty() || !spans_.back().open || spans_.back().id != t.id) {
+            if (!spans_.empty() && spans_.back().open) talker_end(st);
+            spans_.push_back({t.id, t.label, st, en, true});
+            if (!quiet_) printf("[%9.3f s] (talker) %s %s: from %.3f s\n", time(), t.id.c_str(), t.label.c_str(), st);
+        }
+        spans_.back().end = std::max(spans_.back().end, en);
+        if (!t.label.empty()) spans_.back().label = t.label;
+    }
+    void talker_end(double at_s) override {
+        if (spans_.empty() || !spans_.back().open) return;
+        Span& s = spans_.back();
+        s.open = false;
+        if (std::isfinite(at_s)) s.end = std::max(s.start, at_s);
+        if (!quiet_) printf("[%9.3f s] (talker) %s ended: %.3f .. %.3f s\n", time(), s.id.c_str(), s.start, s.end);
+    }
     std::vector<std::string> cols_;
     std::map<std::string, std::vector<std::string>> rows_;
     bool station(double* lat, double* lon) const override {
@@ -578,6 +623,12 @@ int test_file(int argc, char** argv) {
         for (auto& f : host.facts_) printf("  %-22s %s\n", f.first.c_str(), f.second.c_str());
     }
     if (host.raws_) printf("raw frames: %llu\n", static_cast<unsigned long long>(host.raws_));
+    if (!host.spans_.empty()) {
+        printf("talkers: %zu transmissions\n", host.spans_.size());
+        for (const auto& s : host.spans_)
+            printf("  %-10s %-24s %8.3f .. %8.3f s%s\n", s.id.c_str(), s.label.c_str(), s.start, s.end,
+                   s.open ? " (open)" : "");
+    }
     if (!host.rows_.empty()) {
         printf("table: %zu rows\n", host.rows_.size());
         std::string h = "  ";

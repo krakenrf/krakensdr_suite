@@ -40,7 +40,9 @@ constexpr int64_t AFC_SETTLE_MS = 300;
 constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4, W_SYNC = 5, W_STATION = 6,
                    W_FACT = 16, W_EVENT = 17, W_VALID = 18, W_AUDIO = 19, W_VOICE_STATE = 20, W_FREQ_ERROR = 21,
                    W_SYNC_DONE = 22, W_MAP_POINT = 23, W_MAP_REMOVE = 24, W_TABLE_COLUMNS = 25, W_TABLE_ROW = 26,
-                   W_TABLE_REMOVE = 27, W_MESSAGE = 28, W_RAW = 29;
+                   W_TABLE_REMOVE = 27, W_MESSAGE = 28, W_RAW = 29, W_TALKER = 30, W_TALKER_END = 31;
+// how far back a plugin's sample positions stay mappable to the VFO stream
+constexpr double POS_MAP_SECONDS = 60;
 
 std::mutex record_mu;
 RecordHandler record_handler;
@@ -140,6 +142,25 @@ struct Runner {
     std::string state = "starting", error;
     std::vector<std::string> tail;
     uint64_t dropped = 0;
+    // plugin input sample p0 + i = VFO stream position v0 + i * step (talker
+    // spans arrive in the plugin's Host::time(), counted from its start)
+    struct PosSeg { uint64_t p0, n; double v0, step; };
+    std::deque<PosSeg> pos_map;
+    uint64_t written = 0;              // samples this process was sent
+    std::string talker_id, talker_label;   // the open talker ("" = none)
+    uint64_t talker_start = 0, talker_end = 0;
+    // Host::time() seconds -> VFO stream position (false: not mappable)
+    bool vfo_pos(double t, double rate, uint64_t* out) const {
+        if (pos_map.empty() || !is_finite_value(t) || t < 0) return false;
+        const double p = t * rate;
+        if (p < static_cast<double>(pos_map.front().p0)) return false;
+        const PosSeg* g = &pos_map.back();
+        for (auto it = pos_map.rbegin(); it != pos_map.rend(); ++it)
+            if (static_cast<double>(it->p0) <= p) { g = &*it; break; }
+        const double off = std::min(p - static_cast<double>(g->p0), static_cast<double>(g->n));
+        *out = static_cast<uint64_t>(std::max(0.0, g->v0 + off * g->step));
+        return true;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -162,8 +183,10 @@ public:
         rebuild_runners();
     }
 
-    void process(const std::complex<float>* x, size_t n, float rate, double rf) {
+    void process(const std::complex<float>* x, size_t n, float rate, double rf, uint64_t pos) {
         if (rate <= 0 || n == 0) return;
+        if (pos == DigitalDecoder::NO_POS) pos = next_pos_;
+        next_pos_ = pos + n;
         if (std::fabs(rf - rf_hz_) > 100.0) {
             if (rf_hz_ != 0.0) {
                 reset_all();
@@ -203,7 +226,7 @@ public:
         resample(n);
         for (size_t i = 0; i < runners_.size(); i++) {
             const Resampled* r = rate_buf(*runners_[i]);
-            run(i, r ? r->out.data() : nullptr, r ? r->ny : 0);
+            run(i, r ? r->out.data() : nullptr, r ? r->ny : 0, pos, r ? in_rate_ / r->rate : 1.0);
         }
         housekeeping();
     }
@@ -211,8 +234,10 @@ public:
     // Everything back to a cold start (VFO retune, decoder switched off and
     // on): the plugins get a RESET, detection starts over
     void reset_all() {
-        for (auto& r : runners_)
+        for (auto& r : runners_) {
             if (r->proc && r->proc->running()) r->proc->send(W_RESET, nullptr, 0, 0);
+            close_talker(*r);   // the plugin forgets its call with the RESET
+        }
         std::lock_guard<std::mutex> lk(st_mu_);
         detected_.clear();
         valid_.clear();
@@ -302,6 +327,7 @@ private:
 
     float in_rate_ = 0;
     double rf_hz_ = 0;
+    uint64_t next_pos_ = 0;            // VFO stream position after the last block
     double nco_phase_ = 0;
     std::vector<std::complex<float>> mixed_;
     struct Resampled {
@@ -329,8 +355,10 @@ private:
     // all plugins get EOF at once and exit in parallel (a decoder in Auto
     // detect runs several; this can run on the uWS thread when a VFO is removed)
     void stop_all() {
-        for (auto& r : runners_)
+        for (auto& r : runners_) {
             if (r->proc) r->proc->request_stop();
+            close_talker(*r);
+        }
         for (auto& r : runners_)
             if (r->proc) r->proc->stop();
         runners_.clear();
@@ -444,6 +472,7 @@ private:
             if (m != 0 && m != r->info.mtime) {
                 r->proc->stop();
                 r->proc.reset();
+                close_talker(*r);
                 r->retry_ms = 0;
                 r->note = "rebuilt";
                 continue;
@@ -511,6 +540,9 @@ private:
             return problem(r, "error", pi.name + ": " + err, PLUGIN_RETRY_MS);
         }
         r.started_ms = t;
+        close_talker(r);
+        r.written = 0;
+        r.pos_map.clear();
         if (pi.messages) deliver_message(owner_, r.id, "", "", 0);   // get the street data ready
         r.verbose_sent = r.voice_sent = r.raw_sent = -1;
         r.station_sent = 0;
@@ -579,7 +611,9 @@ private:
         }
     }
 
-    void run(size_t idx, const std::complex<float>* y, unsigned int ny) {
+    // y = this block resampled to the plugin's rate; its sample j is VFO
+    // stream position pos + j * step
+    void run(size_t idx, const std::complex<float>* y, unsigned int ny, uint64_t pos, double step) {
         Runner& r = *runners_[idx];
         const int64_t t = now_ms();
         if (!r.proc) {
@@ -595,8 +629,16 @@ private:
         const size_t backlog = sync_io_ ? SIZE_MAX : static_cast<size_t>(r.info.sample_rate) * 8;   // 1 s
         for (size_t p = 0; p < ny; p += PLUGIN_CHUNK) {
             size_t k = std::min<size_t>(PLUGIN_CHUNK, ny - p);
-            if (!r.proc->send(W_SAMPLES, y + p, k * sizeof(std::complex<float>), backlog)) r.dropped += k;
+            if (!r.proc->send(W_SAMPLES, y + p, k * sizeof(std::complex<float>), backlog)) {
+                r.dropped += k;   // never reaches the plugin: its clock doesn't advance
+                continue;
+            }
+            r.pos_map.push_back({r.written, k, static_cast<double>(pos) + static_cast<double>(p) * step, step});
+            r.written += k;
         }
+        const uint64_t keep = static_cast<uint64_t>(r.info.sample_rate * POS_MAP_SECONDS);
+        while (r.pos_map.size() > 1 && r.pos_map.front().p0 + r.pos_map.front().n + keep < r.written)
+            r.pos_map.pop_front();
         auto handler = [this, idx](uint32_t type, const char* p, size_t len) { on_message(idx, type, p, len); };
         if (sync_io_) r.proc->flush_blocking(handler, 60000);
         else r.proc->poll(handler);
@@ -612,6 +654,7 @@ private:
             if (!r.tail.empty()) why += " - last output: " + r.tail.back();
             r.proc->stop();
             r.proc.reset();
+            close_talker(r);
             r.crashes++;
             int64_t delay = std::min<int64_t>(30000, 1000LL << std::min(r.crashes, 5));
             r.note.clear();
@@ -705,6 +748,17 @@ private:
             case W_TABLE_REMOVE:
                 report_.table_remove(r.id, std::string(p, std::min<size_t>(len, 64)));
                 break;
+            case W_TALKER:
+                on_talker(r, p, len);
+                break;
+            case W_TALKER_END: {
+                if (r.talker_id.empty()) break;
+                uint64_t at;
+                if (r.vfo_pos(strtod(std::string(p, std::min<size_t>(len, 32)).c_str(), nullptr), r.info.sample_rate, &at))
+                    r.talker_end = std::max(r.talker_start, at);
+                close_talker(r);
+                break;
+            }
             case W_MESSAGE: {
                 auto f = split0(p, len, 2);
                 if (f.size() == 2 && !f[1].empty()) {
@@ -759,6 +813,49 @@ private:
         lr.rf_hz = rf_hz_;
         deliver_record(owner_, lr);
         report_.map_set(std::move(m));
+    }
+
+    // --- talkers (kp::wire::TALKER: id, label, start_s, end_s) -------------------
+    void on_talker(Runner& r, const char* p, size_t len) {
+        auto f = split0(p, len, 4);
+        if (f.size() < 4 || f[0].empty()) return;
+        const std::string id = f[0].substr(0, 32);
+        uint64_t a, b;
+        if (!r.vfo_pos(strtod(f[3].c_str(), nullptr), r.info.sample_rate, &b)) return;
+        if (!r.vfo_pos(strtod(f[2].c_str(), nullptr), r.info.sample_rate, &a)) {
+            // began before the oldest mapped sample (a transmission > POS_MAP_SECONDS)
+            if (r.talker_id == id) a = r.talker_start;
+            else a = static_cast<uint64_t>(std::max(0.0, r.pos_map.front().v0));
+        }
+        if (!r.talker_id.empty() && r.talker_id != id) {
+            // another radio: the previous one ended where this one starts
+            r.talker_end = std::clamp(a, r.talker_start, r.talker_end);
+            close_talker(r);
+        }
+        if (r.talker_id.empty()) {
+            r.talker_id = id;
+            r.talker_start = a;
+            r.talker_end = a;
+        }
+        r.talker_label = f[1].substr(0, 64);
+        r.talker_end = std::max(r.talker_end, b);
+        send_talker(r, false);
+    }
+    void send_talker(const Runner& r, bool closed) {
+        TalkerSpan s;
+        s.plugin = r.id;
+        s.id = r.talker_id;
+        s.label = r.talker_label;
+        s.start = r.talker_start;
+        s.end = r.talker_end;
+        s.closed = closed;
+        s.rate = in_rate_;
+        owner_->deliver_talker(s);
+    }
+    void close_talker(Runner& r) {
+        if (r.talker_id.empty()) return;
+        send_talker(r, true);
+        r.talker_id.clear();
     }
 
     // --- detection / AFC ----------------------------------------------------
@@ -960,11 +1057,25 @@ Options DigitalDecoder::options() const {
     return opts_;
 }
 
-void DigitalDecoder::push(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz) {
+void DigitalDecoder::set_talker_handler(TalkerHandler h) {
+    std::lock_guard<std::mutex> lk(talker_mu_);
+    talker_handler_ = std::move(h);
+}
+
+void DigitalDecoder::deliver_talker(const TalkerSpan& s) {
+    TalkerHandler h;
+    {
+        std::lock_guard<std::mutex> lk(talker_mu_);
+        h = talker_handler_;
+    }
+    if (h) h(s);
+}
+
+void DigitalDecoder::push(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos) {
     if (mode() == Mode::OFF || n == 0) return;
     {
         std::lock_guard<std::mutex> lk(q_mu_);
-        queue_.push_back({std::vector<std::complex<float>>(x, x + n), rate_hz, rf_hz});
+        queue_.push_back({std::vector<std::complex<float>>(x, x + n), rate_hz, rf_hz, pos});
         queued_samples_ += n;
         // decoder fell behind (CPU starved): drop the oldest data
         while (queued_samples_ > static_cast<size_t>(rate_hz) * QUEUE_MAX_SECONDS && queue_.size() > 1) {
@@ -976,10 +1087,10 @@ void DigitalDecoder::push(const std::complex<float>* x, size_t n, float rate_hz,
     q_cv_.notify_one();
 }
 
-void DigitalDecoder::process(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz) {
+void DigitalDecoder::process(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos) {
     if (reset_pending_.exchange(false)) engine_->reset_all();
     engine_->configure(mode(), options(), plugin_id());
-    engine_->process(x, n, rate_hz, rf_hz);
+    engine_->process(x, n, rate_hz, rf_hz, pos);
 }
 
 void DigitalDecoder::drain(int timeout_ms) { engine_->drain(timeout_ms); }
@@ -1001,7 +1112,7 @@ void DigitalDecoder::run() {
         }
         if (reset_pending_.exchange(false)) engine_->reset_all();
         engine_->configure(mode(), options(), plugin_id());
-        if (have && mode() != Mode::OFF) engine_->process(b.x.data(), b.x.size(), b.rate, b.rf);
+        if (have && mode() != Mode::OFF) engine_->process(b.x.data(), b.x.size(), b.rate, b.rf, b.pos);
     }
 }
 

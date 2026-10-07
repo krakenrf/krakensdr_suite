@@ -81,7 +81,8 @@ APP_SRCS = \
 	$(SRCDIR)/incidents.cpp \
 	$(SRCDIR)/decoder_log.cpp \
 	$(SRCDIR)/rdf_engine.cpp \
-	$(SRCDIR)/rdf_mapper.cpp
+	$(SRCDIR)/rdf_mapper.cpp \
+	$(SRCDIR)/talker_doa.cpp
 
 ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_SRCS) $(APP_SRCS)
 

@@ -327,12 +327,11 @@ bool DecimatorManager::setDigitalMode(int id, dig::Mode mode, const std::string&
     if (!inst) return false;
     {
         std::lock_guard<std::mutex> lk(inst->digital_mu);
-        if (!inst->digital && mode != dig::Mode::OFF) {
-            inst->digital = std::make_shared<dig::DigitalDecoder>();
-            inst->digital->set_vfo(inst->id);
-        }
+        if (mode != dig::Mode::OFF) ensureDigital(*inst);
         if (inst->digital) inst->digital->set_mode(mode, plugin);
         inst->digital_mode.store(static_cast<int>(mode), std::memory_order_relaxed);
+        // DoA per talker while a decoder can report talkers
+        inst->talker_doa->set_active(mode != dig::Mode::OFF);
     }
     recountDigital();
     return true;
@@ -342,12 +341,19 @@ bool DecimatorManager::setDigitalOptions(int id, const dig::Options& opts) {
     auto inst = getDecimator(id);
     if (!inst) return false;
     std::lock_guard<std::mutex> lk(inst->digital_mu);
-    if (!inst->digital) {
-        inst->digital = std::make_shared<dig::DigitalDecoder>();
-        inst->digital->set_vfo(inst->id);
-    }
+    ensureDigital(*inst);
     inst->digital->set_options(opts);
     return true;
+}
+
+void DecimatorManager::ensureDigital(DecimatorInstance& inst) {
+    if (inst.digital) return;
+    inst.digital = std::make_shared<dig::DigitalDecoder>();
+    inst.digital->set_vfo(inst.id);
+    // who transmits when -> the per-talker DoA (holds the TalkerDoa, not the
+    // instance: the handler runs on the decoder's own thread)
+    auto td = inst.talker_doa;
+    inst.digital->set_talker_handler([td](const dig::TalkerSpan& s) { td->add_span(s); });
 }
 
 bool DecimatorManager::setSquelchEnabled(int id, bool enabled) {

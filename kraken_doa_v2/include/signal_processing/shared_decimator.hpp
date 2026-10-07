@@ -43,6 +43,11 @@ public:
         int decimation_used;
         float output_rate_hz;
         float freq_offset_hz;
+        // Position of sample 0 in the VFO's decimated stream (DecimatorInstance
+        // ::stream_pos, set by the pipeline): MUSIC frames and the digital
+        // decoder's talker spans are both counted in it, which is how a
+        // frame is matched to the radio that transmitted it (talker_doa.hpp)
+        uint64_t stream_pos = 0;
         
         MultiChannelDecimated() : num_channels(0), min_samples(0), decimation_used(1), 
                                   output_rate_hz(SAMPLE_RATE), freq_offset_hz(0.0f) {}

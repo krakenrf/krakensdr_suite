@@ -16,14 +16,25 @@ struct Sink : dig::Fsk4Sink {
 
 class P25Plugin : public kp::Decoder {
 public:
-    explicit P25Plugin(kp::Host& h) : Decoder(h), br_(h), sink_(br_.ctx), rx_(sink_, true, false) { facts(); }
+    explicit P25Plugin(kp::Host& h) : Decoder(h), br_(h), sink_(br_.ctx), rx_(sink_, true, false) {
+        // talkers: receiver sample indexes (48 kHz since its reset) -> Host::time()
+        br_.ctx.talker = [this](const std::string& id, const std::string& label, int64_t a, int64_t b) {
+            host.talker({id, label, t0_ + a / dig::FmFrontEnd::RATE, t0_ + b / dig::FmFrontEnd::RATE});
+        };
+        br_.ctx.talker_end = [this](int64_t at) { host.talker_end(t0_ + at / dig::FmFrontEnd::RATE); };
+        facts();
+    }
     void process(const kp::cf* x, size_t n) override {
         const auto& d = fe_.process(x, n);
         rx_.process(d.data(), d.size());
+        pos_ += static_cast<int64_t>(d.size());
+        sink_.p25.tick(pos_);
     }
     void reset() override {
         fe_.reset();
         rx_.reset();
+        t0_ = host.time();
+        pos_ = 0;
         facts();
     }
     void option(const std::string& k, const std::string& v) override { br_.option(k, v); }
@@ -32,6 +43,8 @@ private:
     Sink sink_;
     dig::Fsk4Receiver rx_;
     dig::FmFrontEnd fe_;
+    double t0_ = 0;       // Host::time() of the receiver's sample 0
+    int64_t pos_ = 0;     // receiver samples since then
     void facts() { host.fact("Voice codec", "IMBE (built in)"); }
 };
 
@@ -48,4 +61,5 @@ KRAKEN_PLUGIN(P25Plugin, {.id = "p25",
                           .author = "KrakenSDR",
                           .options = {{"nac", "NAC", "", "",
                                        "Only decode frames with this Network Access Code (3 hex digits). Empty = any."}},
-                          .voice = true})
+                          .voice = true,
+                          .talkers = true})

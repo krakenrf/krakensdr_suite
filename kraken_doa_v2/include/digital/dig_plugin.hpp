@@ -37,6 +37,7 @@ struct PluginInfo {
     double fixed_freq_hz = 0;     // kp::Info::fixed_freq_hz (the web UI tunes the VFO there)
     bool voice = false;           // decodes voice (kp::Info::voice): the panel offers Listen
     bool messages = false;        // sends text messages (kp::Info::messages): incident addresses
+    bool talkers = false;         // reports who transmits (kp::Info::talkers): DoA per talker
     std::vector<PluginOption> options;
     bool built = false;           // exe exists and answered --info
     bool stale = false;           // a source file is newer than exe

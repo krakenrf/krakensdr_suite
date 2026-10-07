@@ -64,6 +64,11 @@ struct RxContext {
     std::function<void(const std::string&)> voice_state;
     // true while someone listens - the receivers run their vocoders only then
     std::function<bool()> voice_wanted;
+    // Who transmits (kp::Host::talker / talker_end). Positions are the
+    // receiver's own input sample indexes since its last reset; the plugin
+    // maps them to Host::time(). Unset = not reported.
+    std::function<void(const std::string& id, const std::string& label, int64_t start, int64_t end)> talker;
+    std::function<void(int64_t at)> talker_end;
 };
 
 // RxContext + Report + Options wired to a kp::Host

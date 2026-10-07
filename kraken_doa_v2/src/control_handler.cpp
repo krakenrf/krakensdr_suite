@@ -1903,7 +1903,10 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (!rdfmap::set_range_km(km)) throw CommandRejected("range must be 1-50 km");
     }
     else if (message.starts_with("RDF_RESET:")) {
-        rdfmap::reset(parse_int(message, 10));
+        // RDF_RESET:<vfo|-1>[:<talker id>]
+        const string arg(message.substr(10));
+        const size_t c = arg.find(':');
+        rdfmap::reset(std::stoi(arg.substr(0, c)), c == string::npos ? "" : arg.substr(c + 1, 32));
     }
     else if (message == "GET_RDF") {
         rdfmap::request_full();   // a page opening the map: every VFO's heat map next push

@@ -794,7 +794,9 @@ Edit `include/config.hpp`:
   saved to `rdf_session.bin` (cwd, gitignored; "KRDF1" + blocks of freq,
   saved time, records with the lobe as u8 log probability over 20 nats) every
   30 s and at shutdown, and a VFO on a frequency within 5 kHz of a saved
-  (< 24 h) session resumes it. Grid messages at most every 2 s per VFO:
+  (< 24 h) session resumes it. Since the per-talker maps the file is
+  "KRDF2" (each block also carries the talker ID, "" = the VFO; "KRDF1" is
+  still read) and every map is keyed VFO + talker (`Key` in rdf_mapper.cpp) Grid messages at most every 2 s per VFO:
   `{"rdf_grid":{vfo, mhz, records, range_km, nats, coarse/fine:{n, cell_m,
   nw, se, data (b64 u8, row 0 north, 255 * (1 + s (M - Mmax) / 12 nats))},
   est:{lat, lon, r50, r95, a, b, ang, mass, edge, off, off_sd}, lines:[[lat,
@@ -832,6 +834,100 @@ Edit `include/config.hpp`:
   tone from a hidden transmitter along a driven loop): lobe within 0.2 deg
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
+
+**DoA per talker (P25 unit IDs; `src/talker_doa.cpp`, `plugins/p25/p25.cpp`, 🗺 Map 📡 DF panel):**
+- Goal: a VFO on a P25 voice channel carries many radios; the VFO's DoA
+  mixes them. The decoder names who transmits when, the VFO's signal is cut
+  at those boundaries and each radio's own samples go through MUSIC - one
+  bearing (+ history + mobile DF heat map) per unit ID, picked on the map
+- Plugin API (kraken_plugin.hpp): `kp::Talker {id, label, start_s, end_s}`,
+  `Host::talker(t)` (again per frame: end_s grows; a new id ends the
+  previous one where it starts) / `talker_end(at_s)`, `Info::talkers`
+  (`--info` "talkers", `PluginInfo::talkers`). Times are `Host::time()` =
+  plugin input samples / rate since the process started (WireHost: during
+  process() it is the block's FIRST sample). Wire TALKER 30 (id, label,
+  start, end as "%.4f" text) / TALKER_END 31. The offline test host cuts
+  spans like the live host and prints them ("talkers: N transmissions")
+- P25 (`P25Proto`): frame boundaries from the sync - frame dibit 0 is centred
+  23 symbols before `sync_end`, so `frame_a_ = sync_end - 23.5 sps`, length
+  HDU 396 / LDU 864 / TDU 72 / TDULC 216 dibits. A transmission = valid
+  HDU / LDU1 / LDU2 frames < 0.75 s apart (`gap()`); its talker = the LDU1 /
+  TDULC link control source (LCO 0x00 "TG n", 0x03 "unit call to n";
+  source 0 ignored). Reported on every valid voice frame (start = the
+  transmission's first frame, end = this frame's end), ended at the TDU /
+  TDULC start, at a new HDU, or by `tick()` (called after each block) when
+  frames stopped for gap(); a source change without a terminator ends the
+  old one at the end of its last LC frame. Positions are receiver samples
+  (48 kHz since its reset); decoder.cpp maps them with `t0_` = host.time()
+  at the reset (RxContext::talker / talker_end, dig_common.hpp). On
+  iq_143.0.u8 (-787.5 kHz): 2010621 0.134-0.314 s, 3250 0.912-2.255 s,
+  2010621 6.813- s - matching the decoded frames
+- Sample clock: `DecimatorInstance::stream_pos` counts the VFO's decimated
+  samples; run_pipeline stamps each block (`MultiChannelDecimated::
+  stream_pos`, fetch_add of min_samples) and passes it to MUSIC and to
+  `DigitalDecoder::push(.., pos)` (NO_POS = count locally, offline tests).
+  Each `Runner` keeps `pos_map` (plugin sample p0 + i = VFO position v0 + i
+  * in_rate / plugin_rate, per SENT chunk - dropped chunks never reach the
+  plugin's clock; 60 s kept) and turns TALKER times into VFO positions ->
+  `dig::TalkerSpan {plugin, id, label, start, end, closed, rate}` ->
+  `DigitalDecoder::set_talker_handler` (set by `DecimatorManager::
+  ensureDigital`, holds the TalkerDoa, never the instance). Open talkers are
+  closed by the host on RESET (retune / mode change), process restart /
+  crash / rebuild and stop
+- MUSIC: `acc_pos_` maps accumulator samples to stream positions, so
+  extractSnapshotsOptimized knows each frame's [a, b); the frame's OWN
+  trace-normalised covariance (before the temporal averaging, which would
+  mix in earlier frames) goes to `setFrameTap` for every computed frame -
+  published or not (eigen gate / publish hold), but none while MUSIC is
+  skipped (FFT squelch closed, calibration, retune hold).
+  `spectrumFromCovariance(R)` = MUSIC on a given R with the live steering
+  vectors (2D max-projection for 3D custom arrays), source count (auto: the
+  estimate without hysteresis), half-plane and array offset, own
+  eigensolver - the processor's results untouched
+- `tdoa::TalkerDoa` (one per VFO, `DecimatorInstance::talker_doa`, active
+  while its decoder is on - `setDigitalMode`; off = forget all): frames wait
+  (<= FRAME_WAIT_S 6 s - the unit ID comes ~0.5 s + queue after the call
+  start) until a span claims them: a frame lies GUARD_S (40 ms) inside one
+  talker's span and touches no other talker's span -> its covariance is
+  added (weighted by samples) to the talker's CURRENT transmission (one
+  span = one transmission; a new one pushes the previous bearing into
+  `hist`, max 20) and MUSIC is re-run on the sum (dirty ones each update,
+  all every 2 s so array setting changes follow); the frame alone is also
+  run through MUSIC and returned as a `TalkerFrame` (a mobile DF record).
+  Frames straddling a boundary / two radios / gaps are dropped. A MUSIC
+  frequency move > 10 kHz resets it. Talkers kept 30 min after last heard,
+  max 100. Lock order: the tap runs under the MUSIC lock and takes ours;
+  update() never calls MUSIC while holding ours
+- rdf_mapper: the sampler (10 Hz) calls `update()` + `snapshot()` per VFO
+  with DoA (coherent + DoA on) and feeds each TalkerFrame into the key
+  {vfo, tid}'s own gate -> its own solver (created with its first record or
+  a saved session; at most MAX_TALKER_MAPS 32 in memory - the stalest is
+  parked, ~3 MB of grids each). The status adds `talkers:[{vfo, tid, label,
+  active, tx, tframes, tx_frames, age, tx_age, doa (array frame, as the
+  DoA plot), lobe / peak (the latest transmission turned to north with the
+  heading at its last frame, cached once the 20 s track no longer reaches
+  it), conf, held, frames, gate_m, moved_m, records, hist:[[age, compass |
+  null, doa, conf, frames]]}]`; `rdf_grid` has `tid`. `RDF_RESET:<vfo>`
+  resets the VFO and its talkers, `RDF_RESET:<vfo>:<tid>` one talker
+- UI ("Mobile DF" block): `#map-df-tid` (shown when the selected VFO(s)
+  have talkers): Whole signal ('' - the VFO as before) / Every radio ('*':
+  every talker's latest lobe + bearing labelled with its ID, own colours
+  from the ID hash, dashed + faint when not on air, estimates) / one radio
+  ('vfo|tid': its lobe, earlier transmissions as faint bearing lines, its
+  heat map / lines / estimate, status line). `#map-df-tl` lists the
+  talkers (on air ●, ID, label, bearing - compass, or "arr" = the DoA
+  plot's angle when there is no heading -, last heard, transmissions);
+  clicking a row selects it (again = Whole signal). `mapState.rdfTid`
+  (localStorage); `rdfGrids` keyed "vfo|tid"
+- Test (scratchpad e2e/: gen_feed.py + fake_heimdall5.py + t_talk.py):
+  iq_143.0.u8's P25 channel (two radios) steered per talker onto a 5-element
+  UCA (2010621 -> 60 deg, 3250 -> 200 deg, gaps 300, rest of the band 0,
+  independent noise), streamed by a fake heimdall into the real kraken_doa
+  (scratch cwd, VFO -787.5 kHz 24 kHz P25, RADIUS 500): per-talker DoA 59.9
+  / 200.0 deg every transmission, while the VFO's own bearing jumps between
+  52 / 160 / 300. UI checked from file:// with a stub WebSocket replaying the
+  captured messages (headless Chromium can't reach servers in the agent
+  sandbox; map tiles failed fast = offline mode)
 
 **Decoder data log (`src/decoder_log.cpp`, sidebar "🗂 Decoder Logging"):**
 - Sources: the engine's record handler (`dig::set_record_handler`,
@@ -1015,7 +1111,8 @@ Edit `include/config.hpp`:
   `plugins/sdk/kraken_plugin.hpp` (`kp::Decoder::process(const kp::cf*, n)`
   gets the VFO's complex baseband at `sample_rate`; `kp::Host`: fact / event /
   valid / audio (8 kHz) / voice_state / freq_error / verbose / voice_wanted /
-  time / log, map_point / table_* / message / raw (data log); `kp::Option` key/label/default/choices "v=Label|..."/help),
+  time / log, map_point / table_* / message / raw (data log) / talker +
+  talker_end (DoA per radio, see *DoA per talker*); `kp::Option` key/label/default/choices "v=Label|..."/help),
   helpers `plugins/sdk/kraken_dsp.hpp`, the shared library `plugins/lib/`,
   guide `plugins/SDK.md` (written for LLMs too)
 - `plugins/Makefile` builds `lib/build/libkrakendig.a`, then links each

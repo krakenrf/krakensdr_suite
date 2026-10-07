@@ -18,9 +18,15 @@
 // Records are saved (rdf_session.bin, cwd) every 30 s and at shutdown and
 // picked up again by a VFO on the same frequency within SESSION_MAX_AGE_H.
 //
+// Talkers (talker_doa.hpp: a P25 unit ID...) are maps of their own: each one's
+// frames feed its own gate / solver (key VFO + talker ID; sessions saved per
+// frequency + talker), and the status lists every talker with the lobe of its
+// latest transmission. A talker's solver is created with its first record;
+// at most MAX_TALKER_MAPS are kept in memory (the stalest one is parked).
+//
 // Settings (persisted): RDF:0|1 (collect, default on), RDF_RANGE_KM:1-50
-// (half-width of the coarse grid, default 10). RDF_RESET:<vfo|-1>,
-// GET_RDF (the next grid push carries every VFO).
+// (half-width of the coarse grid, default 10). RDF_RESET:<vfo|-1>[:<talker>],
+// GET_RDF (the next grid push carries every VFO / talker).
 
 #include <cstdint>
 #include <string>
@@ -42,11 +48,13 @@ void stop();   // shutdown: saves the session
 
 void set_enabled(bool on);
 bool set_range_km(double km);
-void reset(int vfo);           // -1 = every VFO
+// -1 = every VFO and talker; a VFO = it and its talkers; vfo + tid = that talker
+void reset(int vfo, const std::string& tid = "");
 void request_full();
 
 // {"rdf":{...}}: station + every VFO's live lobe (north frame, 720 x 0.5 deg,
-// linear min..max like the MUSIC DoA plot) and gate state - 2 Hz
+// linear min..max like the MUSIC DoA plot) and gate state, + every talker's
+// (talkers:[{vfo, tid, label, active, tx, ...}]) - 2 Hz
 std::string status_message();
 // {"rdf_grid":{...}} per VFO whose map changed since the last call (at most
 // every 2 s each; every VFO after request_full())

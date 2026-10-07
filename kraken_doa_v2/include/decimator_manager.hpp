@@ -11,6 +11,7 @@
 #include "signal_processing/beamformer.hpp"
 #include "signal_processing/beamformed_fft.hpp"
 #include "digital/digital_decoder.hpp"
+#include "talker_doa.hpp"
 
 class DecimatorManager {
 public:
@@ -65,6 +66,13 @@ public:
             return digital;
         }
 
+        // Position of the next decimated sample in this VFO's stream
+        // (MultiChannelDecimated::stream_pos; the pipeline advances it)
+        std::atomic<uint64_t> stream_pos{0};
+        // DoA per talker (talker_doa.hpp): this VFO's MUSIC frames (frame tap)
+        // cut by its digital decoder's talker spans. Never replaced.
+        std::shared_ptr<tdoa::TalkerDoa> talker_doa;
+
         DecimatorInstance(int _id)
             : id(_id)
             , decimator(std::make_unique<SharedDecimator>())
@@ -74,7 +82,14 @@ public:
             , bandwidth_index(DEFAULT_BANDWIDTH_INDEX)
             , enabled(true)
             , tuner_channel(0)
-            , demod_mode(DemodulatorMode::WBFM) {}
+            , demod_mode(DemodulatorMode::WBFM) {
+            talker_doa = std::make_shared<tdoa::TalkerDoa>();
+            auto td = talker_doa;
+            music_processor->setFrameTap(
+                [td](const Eigen::MatrixXcd& R, uint64_t a, uint64_t b, float rate, double freq, float ratio) {
+                    if (td->active()) td->add_frame(R, a, b, rate, freq, ratio);
+                });
+        }
     };
 
 private:
@@ -89,6 +104,8 @@ private:
     std::atomic<double> last_process_ms_{0.0}; // Duration of the last decimation pass (see getLastProcessMs)
     std::atomic<int> digital_active_{0};      // VFOs with a digital decoder on
     void recountDigital();
+    // the VFO's decoder, created on first use (caller holds digital_mu)
+    static void ensureDigital(DecimatorInstance& inst);
     static constexpr int MAX_DECIMATORS = 16;
 
     // Beamforming config shared by every decimator's beamformer. Stored here so

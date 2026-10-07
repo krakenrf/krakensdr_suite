@@ -92,6 +92,54 @@ void P25Proto::reset() {
     last_nac_ = -1;
     call_desc_.clear();
     last_voice_ms_ = 0;
+    // the host resets its own talker state together with ours
+    call_start_ = -1;
+    talker_id_.clear();
+    talker_label_.clear();
+}
+
+// --- talkers (RxContext::talker) ----------------------------------------------
+// A transmission = voice frames (HDU, LDU1, LDU2) less than gap() apart; its
+// talker is the source unit ID of the LDU1 / TDULC link control. Reported
+// with the frame boundaries, so the host can cut exactly this radio's
+// samples out of the VFO's stream for the DoA.
+void P25Proto::begin_call_if_new() {
+    if (call_start_ >= 0 && frame_a_ - voice_end_ <= gap()) return;
+    end_talker(voice_end_);
+    call_start_ = frame_a_;
+    voice_end_ = frame_a_;
+}
+
+void P25Proto::voice_frame() {
+    begin_call_if_new();
+    voice_end_ = std::max(voice_end_, frame_b_);
+    if (!talker_id_.empty() && ctx_.talker) ctx_.talker(talker_id_, talker_label_, call_start_, voice_end_);
+}
+
+void P25Proto::set_talker(uint32_t src, const std::string& label) {
+    if (src == 0) return;   // no source given (some systems on talkgroup calls)
+    begin_call_if_new();
+    const std::string id = std::to_string(src);
+    if (!talker_id_.empty() && talker_id_ != id) {
+        // another radio without a terminator in between: the frames since the
+        // old talker was last named can't be told apart - leave them out
+        end_talker(lc_end_);
+        call_start_ = frame_a_;
+    }
+    talker_id_ = id;
+    talker_label_ = label;
+    lc_end_ = frame_b_;
+}
+
+void P25Proto::end_talker(int64_t at) {
+    if (!talker_id_.empty() && ctx_.talker_end) ctx_.talker_end(at);
+    talker_id_.clear();
+}
+
+void P25Proto::tick(int64_t now) {
+    if (call_start_ < 0 || now - voice_end_ <= gap()) return;
+    end_talker(voice_end_);
+    call_start_ = -1;
 }
 
 std::string P25Proto::chan_str(uint32_t ch) const {
@@ -127,6 +175,7 @@ void P25Proto::link_control(const uint8_t* lc, const char* where) {
         std::string d = "TG " + std::to_string(tg) + " <- " + std::to_string(src);
         if (enc) d += " [encrypted]";
         if (emerg) d += " [EMERGENCY]";
+        set_talker(src, "TG " + std::to_string(tg) + (emerg ? " EMERGENCY" : ""));
         voice_activity(d);
         ctx_.report->set(Mode::P25, "Last talkgroup", std::to_string(tg));
         ctx_.report->set(Mode::P25, "Last source", std::to_string(src));
@@ -136,6 +185,7 @@ void P25Proto::link_control(const uint8_t* lc, const char* where) {
         std::string d = "Unit " + std::to_string(src) + " -> unit " + std::to_string(dst);
         lc_encrypted_ = lc[2] & 0x40;
         if (lc[2] & 0x40) d += " [encrypted]";
+        set_talker(src, "unit call to " + std::to_string(dst));
         voice_activity(d);
     } else if (lco == 0x0F) {
         ctx_.report->event(Mode::P25, std::string("Call termination (") + where + ")", 2.0);
@@ -364,6 +414,21 @@ bool P25Proto::decode(const SymSrc& s) {
     if (!dn) return false;
     if (ctx_.opts->p25_nac >= 0 && nac != ctx_.opts->p25_nac) return false;
 
+    // this frame's samples (frame dibit 0 is centred 23 symbols before the
+    // sync end); lengths incl. status symbols
+    {
+        int dibits = 864;
+        switch (duid) {
+            case 0x0: dibits = 396; break;   // HDU
+            case 0x3: dibits = 72; break;    // TDU
+            case 0xF: dibits = 216; break;   // TDULC
+            default: break;
+        }
+        sps_ = s.sps;
+        frame_a_ = s.sync_end - static_cast<int64_t>(47 * s.sps / 2);
+        frame_b_ = frame_a_ + static_cast<int64_t>(dibits) * s.sps;
+    }
+
     Report& r = *ctx_.report;
     // The NID alone is weak evidence (random data that happens to correlate
     // with the sync - e.g. D-STAR's binary symbols - can land near a
@@ -425,6 +490,7 @@ bool P25Proto::decode(const SymSrc& s) {
                 }
             }
             if (valid) {
+                voice_frame();
                 voice_activity("");
                 r.set(Mode::P25, "Channel type", "Voice");
             }
@@ -451,6 +517,12 @@ bool P25Proto::decode(const SymSrc& s) {
                 if (alg != 0x80) d += " [" + alg_name(alg) + "]";
                 r.set(Mode::P25, "Encryption", alg == 0x80 ? "clear" : alg_name(alg) + ", key 0x" + hex(kid, 4));
                 r.event(Mode::P25, "Call header: " + d, 3.0);
+                // a new transmission starts here, its talker comes with the first LDU1
+                if (call_start_ >= 0) {
+                    end_talker(voice_end_);
+                    call_start_ = -1;
+                }
+                voice_frame();
                 voice_activity("");
             }
             break;
@@ -475,6 +547,10 @@ bool P25Proto::decode(const SymSrc& s) {
         }
         case 0x3:     // TDU
             if (!valid) break;
+            if (call_start_ >= 0) {
+                end_talker(std::max(voice_end_, frame_a_));
+                call_start_ = -1;
+            }
             alg_ = 0x80;
             lc_encrypted_ = false;
             imbe_.reset();

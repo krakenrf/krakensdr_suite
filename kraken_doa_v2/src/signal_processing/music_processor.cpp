@@ -339,11 +339,23 @@ void MUSICProcessor::addToAccumulatorOptimized(const SharedDecimator::MultiChann
         }
     }
     
+    // stream positions of these samples (talker DoA frame tap)
+    acc_pos_.push_back({accumulator_.global_sample_index, decimated_data.stream_pos, new_sample_count});
+
     // Update indices using bit masking
     accumulator_.write_index = (write_idx + new_sample_count) & mask;
     accumulator_.samples_available = min(accumulator_.samples_available + new_sample_count, accumulator_.buffer_size);
     accumulator_.total_samples += new_sample_count;
     accumulator_.global_sample_index += new_sample_count;
+
+    const size_t oldest = accumulator_.global_sample_index - accumulator_.samples_available;
+    while (acc_pos_.size() > 1 && acc_pos_.front().g0 + acc_pos_.front().n <= oldest) acc_pos_.pop_front();
+}
+
+uint64_t MUSICProcessor::streamPosOf(size_t g) const {
+    for (auto it = acc_pos_.rbegin(); it != acc_pos_.rend(); ++it)
+        if (it->g0 <= g) return it->pos + min(g - it->g0, it->n > 0 ? it->n - 1 : 0);
+    return acc_pos_.empty() ? 0 : acc_pos_.front().pos;
 }
 
 bool MUSICProcessor::extractSnapshotsOptimized() {
@@ -420,6 +432,10 @@ bool MUSICProcessor::extractSnapshotsOptimized() {
     if (snapshot_mgr_.snapshots_ready && snapshot_mgr_.snapshots.size() > 0) {
         size_t consumed_samples = step_size * (snapshot_mgr_.snapshots.size() - 1) + snap_len;
         consumed_samples = min(consumed_samples, accumulator_.samples_available);
+        // the frame's samples in the VFO stream (the oldest ones are consumed)
+        const size_t oldest = accumulator_.global_sample_index - accumulator_.samples_available;
+        frame_a_ = streamPosOf(oldest);
+        frame_b_ = streamPosOf(oldest + consumed_samples - 1) + 1;
         accumulator_.samples_available -= consumed_samples;
     }
     
@@ -554,6 +570,11 @@ bool MUSICProcessor::processSnapshotCollectionOptimized() {
     } else {
         computeMUSICSpectrumOptimized();
     }
+
+    if (frame_tap_ && frame_R_.rows() == num_elements_ && frame_b_ > frame_a_) {
+        frame_tap_(frame_R_, frame_a_, frame_b_, last_input_rate_hz_, static_cast<double>(current_frequency),
+                   eigenvalue_ratio_.load(std::memory_order_relaxed));
+    }
     
     // End timing measurement
     //endTiming();
@@ -608,6 +629,7 @@ void MUSICProcessor::computeCorrelationMatrixOptimized(const MatrixXcd& X) {
     if (trace_R > 1e-15) {
         correlation_matrix_ *= (1.0 / trace_R);
     }
+    if (frame_tap_) frame_R_ = correlation_matrix_;   // this frame alone (talker DoA)
 
     // Temporal smoothing across frames: R_avg = (1-a)*R_avg + a*R_frame.
     // Reduces bearing jitter on weak/continuous signals at the cost of
@@ -742,6 +764,7 @@ void MUSICProcessor::clearAccumulatorLocked() {
     lock_guard<mutex> lock(accumulator_.buffer_mutex);
     accumulator_.write_index = 0;
     accumulator_.samples_available = 0;
+    acc_pos_.clear();
     snapshot_mgr_.snapshots.clear();
     snapshot_mgr_.snapshots_ready = false;
 }
@@ -762,6 +785,11 @@ VectorXd MUSICProcessor::getPseudospectrum() const {
 }
 
 float MUSICProcessor::interpolatePeakAngle(Eigen::Index max_idx, double max_val) const {
+    return interpolatePeakAngleOf(pseudospectrum, max_idx, max_val, offset_residual_deg_);
+}
+
+float MUSICProcessor::interpolatePeakAngleOf(const Eigen::VectorXd& pseudospectrum, Eigen::Index max_idx,
+                                             double max_val, float residual) const {
     // 3-point parabolic (quadratic) vertex fit on the LOG pseudospectrum: the
     // MUSIC peak is far closer to quadratic in ln(P) than in P, so the log fit
     // recovers the vertex well below grid resolution. delta is the fractional
@@ -787,8 +815,7 @@ float MUSICProcessor::interpolatePeakAngle(Eigen::Index max_idx, double max_val)
         }
     }
 
-    float angle = (static_cast<float>(max_idx) + static_cast<float>(delta)) * angular_resolution_ +
-                  offset_residual_deg_;
+    float angle = (static_cast<float>(max_idx) + static_cast<float>(delta)) * angular_resolution_ + residual;
     if (angle >= 360.0f) angle -= 360.0f;
     if (angle < 0.0f) angle += 360.0f;
     return angle;
@@ -829,7 +856,10 @@ std::pair<float, float> MUSICProcessor::getPeakAngleWithConfidence() const {
     }
 
     float angle_degrees = interpolatePeakAngle(max_idx, max_val);
+    return {angle_degrees, peakConfidenceOf(pseudospectrum, max_val)};
+}
 
+float MUSICProcessor::peakConfidenceOf(const Eigen::VectorXd& pseudospectrum, double max_val) {
     // Calculate confidence as peak-to-average ratio (normalized). The mean
     // covers only bins still in play: ULA forward/backward truncation zeroes
     // half the circle (applyOutputTransforms), which halved a plain mean and
@@ -859,7 +889,7 @@ std::pair<float, float> MUSICProcessor::getPeakAngleWithConfidence() const {
         confidence = static_cast<float>(std::min(1.0, (ratio - 1.0) / 3.0));
     }
 
-    return {angle_degrees, confidence};
+    return confidence;
 }
 
 void MUSICProcessor::setArrayTopology(ArrayTopology topology) {
@@ -1355,6 +1385,13 @@ void MUSICProcessor::applyOutputTransforms() {
     if (static_cast<int>(pseudospectrum.size()) != num_angles_ || num_angles_ <= 0) {
         return;
     }
+    applyOutputTransformsTo(pseudospectrum, &offset_residual_deg_);
+    spectrum_offset_deg_ = array_offset_deg_;  // what this spectrum's angles include
+}
+
+void MUSICProcessor::applyOutputTransformsTo(Eigen::VectorXd& pseudospectrum, float* residual) const {
+    *residual = 0.0f;
+    if (static_cast<int>(pseudospectrum.size()) != num_angles_ || num_angles_ <= 0) return;
 
     // --- Forward/backward truncation (ULA, CUSTOM) ---
     // A ULA's response is mirror-symmetric about its axis (the 90deg-270deg
@@ -1376,11 +1413,9 @@ void MUSICProcessor::applyOutputTransforms() {
     // peak (interpolatePeakAngle) - it used to be dropped, biasing every
     // bearing by up to half a bin (0.5 deg) against the offset the beamformer
     // applies in full.
-    offset_residual_deg_ = 0.0f;
-    spectrum_offset_deg_ = array_offset_deg_;  // what this spectrum's angles include
     if (array_offset_deg_ != 0.0f) {
         int shift = static_cast<int>(lround(array_offset_deg_ / angular_resolution_));
-        offset_residual_deg_ = array_offset_deg_ - static_cast<float>(shift) * angular_resolution_;
+        *residual = array_offset_deg_ - static_cast<float>(shift) * angular_resolution_;
         shift = ((shift % num_angles_) + num_angles_) % num_angles_;
         if (shift != 0) {
             Eigen::VectorXd rotated(num_angles_);
@@ -1743,4 +1778,55 @@ void MUSICProcessor::marginalizeSpectrums(const Eigen::VectorXd& spectrum_2d) {
         }
         elevation_pseudospectrum_(el_idx) = best;
     }
+}
+
+// ============================================================================
+// Talker DoA support (talker_doa.hpp)
+// ============================================================================
+
+void MUSICProcessor::setFrameTap(FrameTap tap) {
+    lock_guard<mutex> config_lock(config_mutex_);
+    frame_tap_ = std::move(tap);
+    if (!frame_tap_) frame_R_.resize(0, 0);
+}
+
+bool MUSICProcessor::spectrumFromCovariance(const Eigen::MatrixXcd& R, Eigen::VectorXd* spec, float* peak_deg,
+                                            float* conf) const {
+    lock_guard<mutex> config_lock(config_mutex_);
+    const int M = num_elements_;
+    if (M < 2 || R.rows() != M || R.cols() != M || num_angles_ <= 0) return false;
+    const bool use_2d = current_topology == ArrayTopology::CUSTOM && is_3d_array_ && steering_vectors_2d_valid_ &&
+                        steering_vectors_2d_.rows() == M;
+    if (!use_2d && (!steering_vectors_valid || steering_vectors.rows() != M)) return false;
+
+    SelfAdjointEigenSolver<MatrixXcd> es(R);
+    if (es.info() != Success) return false;
+    // signal subspace as the live frames choose it (without their hysteresis)
+    const int k = auto_num_sources_ ? estimateNumSources(es.eigenvalues()) : num_signal_sources_;
+    const int signal_dimension = max(1, min(k, M - 1));
+    const auto E = es.eigenvectors().leftCols(M - signal_dimension);
+
+    VectorXd out;
+    if (use_2d) {
+        VectorXd s2 = (E.adjoint() * steering_vectors_2d_).colwise().squaredNorm();
+        s2 = s2.cwiseMax(1e-15).cwiseInverse();
+        if (custom_output_mode_ != ULAOutputMode::BOTH)
+            for (int az = 0; az < num_angles_; az++)
+                if (!keepHalfPlane(custom_output_mode_, az * angular_resolution_))
+                    s2.segment(az * num_elevation_angles_, num_elevation_angles_).setZero();
+        out.resize(num_angles_);
+        for (int az = 0; az < num_angles_; az++) out(az) = s2.segment(az * num_elevation_angles_, num_elevation_angles_).maxCoeff();
+    } else {
+        out = (E.adjoint() * steering_vectors).colwise().squaredNorm();
+        out = out.cwiseMax(1e-15).cwiseInverse();
+    }
+    float residual = 0.0f;
+    applyOutputTransformsTo(out, &residual);
+    Eigen::Index imax;
+    const double vmax = out.maxCoeff(&imax);
+    if (!(vmax > 0.0)) return false;
+    if (peak_deg) *peak_deg = interpolatePeakAngleOf(out, imax, vmax, residual);
+    if (conf) *conf = peakConfidenceOf(out, vmax);
+    if (spec) spec->swap(out);
+    return true;
 }

@@ -167,6 +167,7 @@ void PluginRegistry::scan() {
                     if (json_find(js, "manual_only", v)) pi.manual_only = v == "true";
                     if (json_find(js, "voice", v)) pi.voice = v == "true";
                     if (json_find(js, "messages", v)) pi.messages = v == "true";
+                    if (json_find(js, "talkers", v)) pi.talkers = v == "true";
                     if (json_find(js, "fixed_freq_hz", v)) pi.fixed_freq_hz = std::max(0.0, atof(v.c_str()));
                     // options: one per line, tab-separated key/label/default/choices/help
                     if (json_find(js, "options_tsv", v)) {
@@ -264,7 +265,7 @@ std::string PluginRegistry::list_json() const {
           << ",\"min_vfo_rate\":" << p.min_vfo_rate << ",\"auto\":" << (p.auto_detect ? "true" : "false")
           << ",\"map\":" << (p.map ? "true" : "false") << ",\"manual_only\":" << (p.manual_only ? "true" : "false")
           << ",\"fixed_freq_hz\":" << static_cast<long long>(p.fixed_freq_hz) << ",\"voice\":" << (p.voice ? "true" : "false")
-          << ",\"messages\":" << (p.messages ? "true" : "false")
+          << ",\"messages\":" << (p.messages ? "true" : "false") << ",\"talkers\":" << (p.talkers ? "true" : "false")
           << ",\"options\":[";
         for (size_t k = 0; k < p.options.size(); k++) {
             const auto& op = p.options[k];

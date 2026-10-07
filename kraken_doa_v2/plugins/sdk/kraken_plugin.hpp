@@ -68,6 +68,21 @@ struct MapPoint {
     double ttl_s = 300;             // seconds without an update before it is removed (10 s .. 24 h)
 };
 
+// Who is transmitting right now (Host::talker) - e.g. the P25 unit ID from
+// the link control. kraken_doa cuts the VFO's signal at these boundaries and
+// runs the DoA on each talker's own samples, so every radio gets its own
+// bearing (and its own heat map while driving) on the 🗺 Map.
+struct Talker {
+    std::string id;                 // unit / radio ID, stable per radio, <= 32 chars
+    std::string label;              // shown next to it ("TG 1201", talker alias...), <= 64 chars
+    // Host::time() where the transmission began (e.g. the call header) and
+    // up to where it is CONFIRMED (the end of the last frame that passed its
+    // checks). NAN = now. Only the samples in between are used, so report the
+    // frame boundaries - not the moment the frame was decoded, which is later.
+    double start_s = NAN;
+    double end_s = NAN;
+};
+
 struct Info {
     const char* id = "";            // directory name: [a-z0-9_-], <= 32 chars
     const char* name = "";          // shown in the mode list, e.g. "POCSAG"
@@ -90,6 +105,7 @@ struct Info {
     double fixed_freq_hz = 0;
     bool voice = false;             // decodes voice (Host::audio): the panel offers "Listen"
     bool messages = false;          // sends free-text messages (Host::message): addresses in them become incidents
+    bool talkers = false;           // reports who transmits (Host::talker): the DoA can be split per radio
 };
 
 class Host {
@@ -138,6 +154,14 @@ public:
     virtual void table_columns(const std::vector<std::string>& cols) { (void)cols; }
     virtual void table_row(const std::string& key, const std::vector<std::string>& cells) { (void)key; (void)cells; }
     virtual void table_remove(const std::string& key) { (void)key; }
+    // The talker of the transmission in progress (see Talker). Call it again
+    // with the same id as frames keep passing (end_s moves on); a different id
+    // ends the previous talker where the new one starts. Cheap - once per frame
+    // is fine. Set Info::talkers.
+    virtual void talker(const Talker& t) { (void)t; }
+    // The transmission ended at Host::time() at_s (NAN = now): e.g. on the
+    // terminator frame, or when frames stopped coming without one
+    virtual void talker_end(double at_s = NAN) { (void)at_s; }
     // The receiver's location (sidebar → Station Information), if it has one:
     // a reference for local position decoding, distances, range checks
     virtual bool station(double* lat, double* lon) const { (void)lat; (void)lon; return false; }
@@ -204,5 +228,8 @@ constexpr uint32_t TABLE_ROW = 26;     // key '\0' cell '\0' cell ...
 constexpr uint32_t TABLE_REMOVE = 27;  // key
 constexpr uint32_t MESSAGE = 28;       // from '\0' text
 constexpr uint32_t RAW = 29;           // one raw frame (text) for the decoder data log
+// id '\0' label '\0' start_s '\0' end_s: Host::time() seconds as decimal text
+constexpr uint32_t TALKER = 30;
+constexpr uint32_t TALKER_END = 31;    // at_s (decimal text)
 // (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends)
 }  // namespace kp::wire

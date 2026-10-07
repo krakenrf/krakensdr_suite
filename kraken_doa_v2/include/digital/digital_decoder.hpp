@@ -59,6 +59,19 @@ void set_record_handler(RecordHandler h);
 // plugins as the OPTION log_raw=0|1 (kp::Host::raw_wanted)
 void set_raw_wanted(bool on);
 
+// Who transmits, as a plugin reports it (kp::Host::talker): the samples
+// [start, end) of the VFO's decimated stream (DigitalDecoder::push pos - the
+// same count the MUSIC frames carry, SharedDecimator::MultiChannelDecimated
+// ::stream_pos) belong to radio `id`. Sent again as the transmission goes on
+// (end grows); closed = it ended at `end`. rate = the VFO's sample rate.
+struct TalkerSpan {
+    std::string plugin, id, label;
+    uint64_t start = 0, end = 0;
+    bool closed = false;
+    float rate = 0;
+};
+using TalkerHandler = std::function<void(const TalkerSpan&)>;
+
 class DigitalDecoder {
 public:
     // threaded = false: offline tests - process() runs synchronously and
@@ -85,9 +98,17 @@ public:
 
     // Decimation pipeline: queue a block (copied; never blocks). rf_hz = the
     // VFO's RF centre - a change of more than 100 Hz resets the decoders.
-    void push(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz);
+    // pos = the VFO stream position of x[0] (talker spans are reported in
+    // it); NO_POS = count the samples pushed here instead (offline tests)
+    static constexpr uint64_t NO_POS = ~0ull;
+    void push(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos = NO_POS);
     // Synchronous processing (offline tests; threaded = false)
-    void process(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz);
+    void process(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos = NO_POS);
+
+    // Talker spans (kp::Host::talker) of this decoder's plugins go to h -
+    // the VFO's per-talker DoA (talker_doa.hpp). Called on the worker thread.
+    void set_talker_handler(TalkerHandler h);
+    void deliver_talker(const TalkerSpan& s);
     // Offline tests: wait until the plugins have processed all input
     void drain(int timeout_ms = 30000);
 
@@ -129,8 +150,11 @@ private:
     std::string voice_state_;
     std::atomic<int64_t> voice_wanted_until_{0};
 
+    std::mutex talker_mu_;
+    TalkerHandler talker_handler_;
+
     // queue
-    struct Block { std::vector<std::complex<float>> x; float rate; double rf; };
+    struct Block { std::vector<std::complex<float>> x; float rate; double rf; uint64_t pos; };
     std::mutex q_mu_;
     std::condition_variable q_cv_;
     std::deque<Block> queue_;

@@ -504,9 +504,22 @@ of the transmitter's position: `kraken_doa_v2/src/rdf_engine.cpp` (the
 algorithm - an improved version of the KrakenSDR Android app's grid; offline
 comparison `tools/rdf_sim.cpp`) + `src/rdf_mapper.cpp` (GPS track, MUSIC
 frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
-`RDF:0|1`, `RDF_RANGE_KM:1-50` (persisted), `RDF_RESET:<vfo|-1>`, `GET_RDF`;
-pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO. Right pane
+`RDF:0|1`, `RDF_RANGE_KM:1-50` (persisted), `RDF_RESET:<vfo|-1>[:<talker>]`, `GET_RDF`;
+pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
+
+**📡 DoA per talker (P25 unit IDs)** (details: `kraken_doa_v2/CLAUDE.md` *DoA
+per talker*): a decoder plugin that knows who transmits reports it
+(`kp::Host::talker` / `talker_end`, `Info::talkers`; the p25 plugin from the
+LDU1 / TDULC link control source, with the frames' exact sample times). The
+VFO's decimated-stream position (`MultiChannelDecimated::stream_pos`) is the
+common clock: MUSIC frames (`MUSICProcessor::setFrameTap`: each frame's own
+covariance + its stream samples) that lie inside one talker's transmission
+are summed per transmission and run through MUSIC again
+(`spectrumFromCovariance`) - `kraken_doa_v2/src/talker_doa.cpp`. Every
+radio gets its bearing, history and its own mobile DF heat map (rdf_mapper
+keys VFO + talker, rdf_session.bin "KRDF2"); the 🗺 Map's 📡 DF panel picks
+Whole signal / Every radio / one radio and lists the talkers
 
 ### Operating Modes (top-bar Mode selector: Coherent / Wideband / Independent)
 
