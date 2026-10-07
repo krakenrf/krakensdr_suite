@@ -362,7 +362,7 @@ Edit `include/config.hpp`:
 **Digital voice/data decoders (one per VFO): engine `src/digital/`, decoders `plugins/`:**
 - EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below);
   kraken_doa contains no protocol code. Shipped: p25, dmr, tetra, dstar,
-  nxdn, mpt1327, pocsag, aprs, adsb (see *ADS-B* below)
+  nxdn, mpt1327, pocsag, aprs, adsb (see *ADS-B* below), ais (see *AIS*)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
   tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by
   default. WS `PLUGIN_AUTO:id:0|1` -> `PluginRegistry::set_auto()` (bumps the
@@ -835,7 +835,7 @@ Edit `include/config.hpp`:
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb}`, 🗺 Map 📡 DF panel):**
 - Goal: a VFO on a P25 / DMR / NXDN / D-STAR channel carries many radios; the VFO's DoA
   mixes them. The decoder names who transmits when, the VFO's signal is cut
   at those boundaries and each radio's own samples go through MUSIC - one
@@ -957,6 +957,45 @@ Edit `include/config.hpp`:
   plot's angle when there is no heading -, last heard, transmissions);
   clicking a row selects it (again = Whole signal). `mapState.rdfTid`
   (localStorage); `rdfGrids` keyed "vfo|tid"
+- Packets (ADS-B per aircraft; `kp::Talker::packet`, wire flags field "p",
+  times sent with 7 decimals): the plugin reports every accepted message
+  of a confirmed aircraft (`talker_packet` in plugins/adsb: start = the
+  first preamble pulse - mag_ index + timing phase / 5, mapped through
+  `abs0_` / `blk_abs_` to host.time() -, end = + (8 + bits) us; offline
+  check on a synthetic feed: start within 0.5 sample of the truth, sd
+  0.16). Engine: packet -> one closed TalkerSpan {packet} (vfo_pos rounds;
+  <= 50 ms). TalkerDoa: while packets come (`want_blocks_`, off after
+  PACKET_IDLE_MS 30 s without, ring freed) the pipeline calls
+  `add_block()` after processDecimatedIQ (same gate: no calibration /
+  retune hold / closed FFT squelch) -> per CHUNK (16) stream samples the
+  upper-triangle covariance into a ring of RING_S 1.5 s (5 ch at 2.4 MHz:
+  ~27 MB, ~8 % of a Pi 5 core); a packet = sum of the chunks entirely
+  inside it (>= 2), trace-normalised; waits PACKET_HOLD_MS 200 for an
+  overlapping packet of another talker (both dropped). Per aircraft
+  R = sum of packets weighted exp(-dt / PACKET_TAU_S 1.5 s) in stream
+  time, MUSIC at most every PACKET_RECOMPUTE_MS 1 s, `hist` every 10 s
+  (its bearing track), tx = packets, tx_frames = packets in the average;
+  forgotten after PACKET_TTL_MS 2 min; MAX_TALKERS 200. No mobile DF
+  records. rdf_mapper: `pk:true`, lobe turned with the heading at
+  `spec_ms`, no lobe 60 s after its last packet. UI: ✈ rows, "Every
+  aircraft", Δ pos column + selected-aircraft line = DF bearing minus the
+  bearing to its ADS-B map point (needs the decoder's Plot on map;
+  `rdfPosCheck`), "ADS-B check" = median / quartiles of that over the
+  aircraft heard < 30 s (`rdfPosSummary`) - a steady offset = array
+  mounting / heading error
+- Channel filtering (AIS): `kp::Talker::freq_hz` / `bw_hz` (packet's
+  centre in the plugin's band - the engine maps it to the VFO's: + afc_hz_,
+  mirrored with invert), `avg_s` (averaging; also TTL = max(2 min, 30
+  avg_s) and the lobe kept max(60 s, 15 avg_s)). Wire TALKER fields 7-9.
+  TalkerDoa keeps the raw samples while the VFO rate <= RAW_MAX_RATE (500
+  kHz; 5 antennas at 100 kHz ~ 6 MB for RING_S) and `packet_cov_raw`
+  mixes each antenna by -freq, Hamming-windowed-sinc low-pass (cut-off
+  bw / 2, ~3 fs / bw taps, run-in from the samples before the packet),
+  covariance over exactly the packet; overlapping packets are only dropped
+  when on the same channel. Above 500 kHz (ADS-B) the chunk ring as before
+  (freq ignored). PACKET_IDLE_MS 5 min; MAX_PACKET_S 0.25 (5 AIS slots).
+  Status `pl` = the talker's plugin (UI: ✈ / ⛴, "Every aircraft / ship",
+  "Position check")
 - Not split: TETRA (the plugin decodes the downlink - every bearing is the
   base station's), MPT1327 (analogue voice). On a repeater OUTPUT every ID's
   bearing is the repeater's. A DMR repeater INPUT with both slots busy
@@ -967,6 +1006,15 @@ Edit `include/config.hpp`:
   F1ZIL B (the repeater's reply) 149.982-150.543, F5LKW 154.553-; DMR MS
   dmr_1_48000: 3 calls of ID 1 matching the LC header / terminator bursts;
   dmr_it_8 (BS slot 2): "?" 0.257 s collapsed, 2222223 0.257-19.964 ch 2
+- Test 3 (scratchpad e2e3/: gen_air.py + t_air.py + cdp3.py): six
+  synthetic aircraft (DF17 ident / position / velocity + DF11, random
+  sample timing, some colliding) at compass 20..320 deg, 25-80 km, steered
+  from the bearing of their encoded position onto a 5-element UCA (120 mm,
+  1090 MHz, static station heading 0), 2.4 MHz VFO: every aircraft 0.0 deg
+  off its true bearing (~9 packets averaged), the VFO bearing jumping;
+  kraken_doa ~85-90 % of a core total. UI from captured messages: list,
+  Every aircraft, one aircraft, ADS-B check 0.0 / +3.0 deg (bearings
+  turned 3 deg)
 - Test 2 (scratchpad e2e2/: gen3.py + t3.py, three VFOs on one fake feed):
   D-STAR F1NSR 60 / F1ZIL B 200 / F5LKW 120 deg, DMR BS slot 2 2222223 60,
   DMR MS ID 1 200 - every transmission exact, VFO bearings jumping
@@ -1060,6 +1108,44 @@ Edit `include/config.hpp`:
   click don't move it when selected; `digRenderCards` disables its Freq / BW
   / Tuner fields. Picking another decoder unlocks it (bandwidth stays)
 - Test: scratchpad t_adsb_lock (coherent + independent)
+
+**AIS (`plugins/ais/`, ships):**
+- Input 100 kHz (`sample_rate` = `min_vfo_rate` = 100 kHz = the VFO's "100
+  kHz" bandwidth, 2.4 MHz / 24: no resampling), `fixed_freq_hz` 162.000
+  MHz, manual only: one VFO holds channel A (161.975, -25 kHz) and B
+  (162.025, +25 kHz). Per channel: mix, 49-tap 8 kHz low-pass decimated to
+  50 kHz, FM discriminator (clamped +-12 kHz), 21-tap 5.5 kHz low-pass ->
+  2 x 8 slicers (8 bit-timing phases at 5.21 samples/bit, linear
+  interpolation; threshold = the slicer's running mean over ~64 bits, or
+  the discriminator's mean over 48 bits centred on the bit - running sum
+  `cs` - which follows scanner-audio baseline wander) -> NRZI -> HDLC
+  (flag, destuffing, 7 ones = abort) -> CRC-16/X.25 -> payload bits (bytes
+  LSB first on air). A frame decoded by several slicers (same channel +
+  CRC, closing flag within 4 bits) is reported once
+- Messages (`ais_msg.hpp`): 1-3 (class A position, status, ROT, SOG, COG,
+  heading), 4 / 11 (base station), 5 (IMO, callsign, name, type, size,
+  draught, ETA, destination), 9 (SAR aircraft), 18 / 19 (class B), 21 (aid
+  to navigation), 24 A/B (class B static), 27 (long range). MMSI 970 / 972
+  / 974 (SART / MOB / EPIRB) and status 14 -> "⚠" events (every 10 min).
+  Outputs: map points (kind ship / station / point / aircraft / person,
+  heading = true heading else COG, ttl 30 min), table (MMSI, name,
+  callsign, type, class, status, SOG, COG, HDG, position, distance /
+  bearing, destination, length, channel, signal, messages), facts, raw =
+  NMEA !AIVDM (multi-sentence over 60 characters) + level. Vessels
+  forgotten after 30 min. Option `range` (km, default 500)
+- DoA: every frame -> `kp::Talker{packet, freq_hz = -25000 / +25000, bw_hz
+  16000, avg_s 20}`, span = training sequence (24 bits before the opening
+  flag) .. closing flag, through the channel's filter delays (`to_time`:
+  input index = 2 (t - 10.5) - 24); the spans land within 0.3 bit of the
+  truth on synthetic signals
+- Tested (scratchpad e2e4/): synthetic GMSK (ais_gen.py: real layouts,
+  NRZI, stuffing, BT 0.4, ships on both channels incl. simultaneous A / B
+  transmissions) - every frame without a same-channel collision decoded,
+  none from noise; real recordings (cu8 96 kHz two-channel ship162
+  ais_96k.bin, sigidwiki 48 kHz IQ, AIS-catcher example, freerange
+  rtl_fm discriminator files with aisdecoder NMEA, Long Beach / Helsinki
+  scanner audio): all aisdecoder messages + more, at least the numpy
+  probe's count on IQ (62 vs 70 on the 8-bit Long Beach audio)
 
 **ADS-B (`plugins/adsb/`):**
 - 2.4 MHz input (`min_vfo_rate` 2 MHz; picking the decoder sets the 2.4 MHz

@@ -85,6 +85,26 @@ struct Talker {
     // (DMR's two timeslots): each channel 0..7 has a talker of its own. Frames
     // that hold two talkers' signals are never used for either's DoA.
     int channel = 0;
+    // One short PACKET (an ADS-B / Mode S message) instead of a transmission
+    // in progress: kraken_doa computes the DoA from exactly the samples
+    // start_s .. end_s - so give them to the sample (Host::time() of the
+    // packet's first sample + its length) - and averages each talker's
+    // packets over the last seconds. One call per packet that passed its
+    // checks, no talker_end; channel is ignored. For moving talkers whose
+    // packets are far shorter than a MUSIC frame (many aircraft at once).
+    bool packet = false;
+    // Packets only, optional: where the packet is in the VFO's band - its
+    // centre in Hz from the frequency the plugin receives at 0 Hz, and its
+    // width. kraken_doa then filters exactly that channel out of every
+    // antenna before the DoA, so a packet on one channel isn't mixed with
+    // another talker on a neighbouring channel of the same VFO (AIS:
+    // 161.975 / 162.025 MHz in one 100 kHz VFO). NAN / 0 = the whole VFO.
+    double freq_hz = NAN;
+    double bw_hz = 0;
+    // Packets only: average each talker's packets over about this many
+    // seconds (0 = the host's 1.5 s, for fast movers sending often - ADS-B).
+    // Slow movers that send every few seconds want more (AIS: 20 s).
+    double avg_s = 0;
 };
 
 struct Info {
@@ -232,8 +252,10 @@ constexpr uint32_t TABLE_ROW = 26;     // key '\0' cell '\0' cell ...
 constexpr uint32_t TABLE_REMOVE = 27;  // key
 constexpr uint32_t MESSAGE = 28;       // from '\0' text
 constexpr uint32_t RAW = 29;           // one raw frame (text) for the decoder data log
-// id '\0' label '\0' start_s '\0' end_s ['\0' channel]: Host::time() seconds
-// as decimal text; no channel field = channel 0
+// id '\0' label '\0' start_s '\0' end_s ['\0' channel ['\0' flags ['\0'
+// freq_hz '\0' bw_hz '\0' avg_s]]]: Host::time() seconds as decimal text (7
+// decimals: a sample at 2.4 MHz is 0.4 us); no channel field = channel 0;
+// flags "p" = Talker::packet; freq_hz "" = NAN
 constexpr uint32_t TALKER = 30;
 constexpr uint32_t TALKER_END = 31;    // at_s ['\0' channel] (decimal text)
 // (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends)

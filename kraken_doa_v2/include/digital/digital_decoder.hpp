@@ -72,6 +72,10 @@ struct TalkerSpan {
     bool closed = false;
     float rate = 0;
     int channel = 0;
+    bool packet = false;   // one short packet (kp::Talker::packet): always closed
+    // packets: the channel inside the VFO (Hz from its centre, NAN = whole VFO)
+    // and how long to average the talker's packets (0 = default)
+    double freq_hz = NAN, bw_hz = 0, avg_s = 0;
 };
 using TalkerHandler = std::function<void(const TalkerSpan&)>;
 

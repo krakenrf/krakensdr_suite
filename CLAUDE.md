@@ -374,9 +374,11 @@ receiver. See `kraken_doa_v2/CLAUDE.md`
 decoders `kraken_doa_v2/plugins/`
 - EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below):
   p25, dmr, tetra (downlink), dstar, nxdn (48 and 96), mpt1327 (analogue
-  trunking signalling), pocsag, aprs and adsb (1090 MHz; manual only -
+  trunking signalling), pocsag, aprs, adsb (1090 MHz; manual only -
   picking it tunes the VFO + tuner to 1090 MHz at 2.4 MHz and draws the VFO
-  as a locked line, `kp::Info::fixed_freq_hz`). Each decimator (VFO) runs one
+  as a locked line, `kp::Info::fixed_freq_hz`) and ais (ships, both channels
+  161.975 / 162.025 MHz in one 100 kHz VFO on 162.000 MHz; manual only,
+  fixed frequency like adsb). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
   `AUTO_DETECT_OFF:` - at once, minus `manual_only` plugins and those
@@ -440,7 +442,7 @@ decoders `kraken_doa_v2/plugins/`
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab), adsb
+  Signal Lab), adsb, ais
 - Same executable tests offline: `decoder --file x.cf32 [--offset HZ]`
 - The shipped protocol plugins are thin wrappers around `plugins/lib/`
   (libkrakendig.a: FEC, 4FSK sync, vocoders, front ends) - kraken_doa itself
@@ -508,15 +510,23 @@ frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*): a decoder plugin that knows who
 transmits reports it (`kp::Host::talker` / `talker_end`, `Info::talkers`,
 with the frames' exact sample times; `kp::Talker::channel` for concurrent
 transmissions - DMR timeslots; id "?" = a busy channel whose radio isn't
 named yet). p25: LDU1 / TDULC link control source; dmr: full / embedded LC
 source per timeslot; nxdn: VCALL source; dstar: MY callsign of the RF
-header (or its slow-data copy). TETRA isn't split (downlink = the base
-station only). The
+header (or its slow-data copy); adsb: every accepted message as a
+`kp::Talker::packet` (exact samples) - the VFO keeps per-16-sample
+covariances for 1.5 s while packets come, each aircraft's lobe = its
+packets of the last ~2 s, compared on the map with the bearing of its
+ADS-B position (median = array / heading check); ais: every frame as a
+packet on its channel (`kp::Talker::freq_hz` / `bw_hz`, averaged over
+`avg_s` 20 s) - VFOs up to 500 kHz keep the raw samples instead and each
+packet's channel is filtered out of every antenna, so a ship on the other
+AIS channel at the same moment doesn't leak in. TETRA isn't split
+(downlink = the base station only). The
 VFO's decimated-stream position (`MultiChannelDecimated::stream_pos`) is the
 common clock: MUSIC frames (`MUSICProcessor::setFrameTap`: each frame's own
 covariance + its stream samples) that lie inside one talker's transmission

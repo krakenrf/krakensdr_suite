@@ -141,7 +141,7 @@ VFO bandwidth the signal needs; the panel warns when the VFO is narrower.
 | `host.table_remove(key)` | removes a table row |
 | `host.message(from, text)` | a free-text message the decoder received (a pager text): kraken_doa looks for a street address in it and shows it as an incident (set `.messages = true`) |
 | `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the user ticked "Raw frames") |
-| `host.talker(t)` / `host.talker_end(at_s, channel)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`, channel): the DoA is split per radio (set `.talkers = true`, below) |
+| `host.talker(t)` / `host.talker_end(at_s, channel)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`, channel, packet): the DoA is split per radio / aircraft (set `.talkers = true`, below) |
 
 **Voice.** Set `.voice = true` if the decoder sends audio (`host.audio`):
 only then does its panel tab offer the Listen button.
@@ -238,6 +238,23 @@ whose radio isn't known yet with `t.id = "?"` (the dmr plugin does until
 the LC names it): its samples then stay out of the other channel's talker,
 and the real id later takes over from the same start. A protocol with one
 transmission at a time needs neither.
+
+Short packets from many talkers at once (ADS-B / Mode S: 64-120 us per
+message, dozens of aircraft) don't fit that model - a MUSIC frame holds
+many of them. Report each packet that passed its checks with `t.packet =
+true`, `start_s` = the packet's FIRST SAMPLE and `end_s` = its end, to the
+sample (`host.time()` of the block + the packet's index in it / the rate):
+kraken_doa then computes the covariance from exactly those samples and
+averages each talker's packets over the last ~2 s (its lobe on the map).
+No `talker_end`. The adsb plugin is the reference (`talker_packet`); its
+start times are within half a sample of the true ones. Two optional packet
+fields: `t.freq_hz` / `t.bw_hz` = the packet's channel inside your band
+(Hz from what you receive at 0 Hz) - kraken_doa then filters that channel
+out of every antenna first, so talkers on neighbouring channels of the
+same VFO don't mix (the ais plugin: -25 / +25 kHz, 16 kHz wide); `t.avg_s`
+= how long to average a talker's packets (default 1.5 s for fast movers
+that send often; ais: 20 s). The offline test
+counts them ("talker packets:", each one with `--verbose`).
 
 **Tables.** A decoder that tracks many things at once (aircraft, stations,
 radios) can show them as a table above its facts: `table_columns()` once

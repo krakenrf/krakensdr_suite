@@ -107,6 +107,8 @@ struct Shared {
         // transmission (held = rotated with an old heading, not current)
         std::string label;
         bool active = false;
+        bool packet = false;               // a packet talker (aircraft, ship): no heat map
+        std::string plugin;                // the decoder that names it (adsb, ais...)
         int tx = 0, tframes = 0, tx_frames = 0;
         int64_t last_ms = 0, tx_end_ms = 0;
         float doa = -1;
@@ -384,19 +386,24 @@ void sampler() {
                     td_.frames = ts.gate.frames();
                     td_.gate = ts.gate.gate_m();
                     td_.moved = ts.gate.moved_m();
-                    // the latest transmission's lobe, north frame (heading at its last frame)
+                    // the latest transmission's lobe, north frame (heading at its last
+                    // frame); a packet talker's (aircraft) = its bearing of the last
+                    // packets, recomputed about once a second
                     TLobe& L = tlobes[tk];
-                    if (ti.spec.empty()) {
+                    const int64_t lt = ti.packet ? ti.spec_ms : ti.tx_end_ms;
+                    // a packet talker's lobe is kept 60 s / 15 averaging times after its last packet
+                    const int64_t keep_ms = std::max<int64_t>(60000, static_cast<int64_t>(15000 * ti.avg_s));
+                    if (ti.spec.empty() || (ti.packet && t - ti.last_ms > keep_ms)) {
                         L.t = -1;
                         L.lobe.clear();
-                    } else if (ti.tx_end_ms != L.t || L.lobe.empty()) {
+                    } else if (lt != L.t || L.lobe.empty()) {
                         Fix f;
                         double yaw;
-                        if (fix_for(ti.tx_end_ms, &f, &yaw)) {
-                            L.t = ti.tx_end_ms;
+                        if (fix_for(lt, &f, &yaw)) {
+                            L.t = lt;
                             L.lobe = display_lobe(ti.spec, ti.res, f.hdg, &L.peak);
-                            L.held = (!f.compass && !f.fixed && f.spd < MIN_SPEED_MPS) || ti.tx_end_ms < t - 20000;
-                            L.hist[ti.tx_end_ms] = L.peak;
+                            L.held = (!f.compass && !f.fixed && f.spd < MIN_SPEED_MPS) || lt < t - 20000;
+                            L.hist[lt] = L.peak;
                         }
                     }
                     td_.lobe = L.lobe;
@@ -456,6 +463,8 @@ void sampler() {
             if (d.talker) {
                 v.label = d.ti.label;
                 v.active = d.ti.active;
+                v.packet = d.ti.packet;
+                v.plugin = d.ti.plugin;
                 v.tx = d.ti.tx;
                 v.tframes = d.ti.frames;
                 v.tx_frames = d.ti.tx_frames;
@@ -825,7 +834,8 @@ std::string status_message() {
         o << (first ? "" : ",") << "{\"vfo\":" << k.vfo << ",\"tid\":\"" << json_escape(k.tid) << "\",\"label\":\""
           << json_escape(v.label) << "\",\"active\":" << (v.active ? "true" : "false") << ",\"tx\":" << v.tx
           << ",\"tframes\":" << v.tframes << ",\"tx_frames\":" << v.tx_frames << ",\"age\":" << age(v.last_ms)
-          << ",\"tx_age\":" << age(v.tx_end_ms) << ",\"doa\":" << (v.doa >= 0 ? num(v.doa, 1) : "null");
+          << ",\"tx_age\":" << age(v.tx_end_ms) << ",\"doa\":" << (v.doa >= 0 ? num(v.doa, 1) : "null")
+          << (v.packet ? ",\"pk\":true" : "") << ",\"pl\":\"" << json_escape(v.plugin) << "\"";
         common(v);
         o << ",\"hist\":[";
         for (size_t i = 0; i < v.hist.size(); i++) {

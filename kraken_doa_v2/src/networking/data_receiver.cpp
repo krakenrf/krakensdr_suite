@@ -772,6 +772,9 @@ void DataReceiver::decimation_processor_thread() {
                             }
 
                             inst->music_processor->processDecimatedIQ(result.decimated_data);
+                            // per-packet DoA (ADS-B): the stream the decoder's packets are cut from
+                            if (inst->talker_doa && inst->talker_doa->wants_blocks())
+                                inst->talker_doa->add_block(result.decimated_data);
 
                             // Update eigenvalue squelch state if enabled
                             if (use_eigenvalue_squelch && inst->squelch_enabled.load(std::memory_order_relaxed)) {

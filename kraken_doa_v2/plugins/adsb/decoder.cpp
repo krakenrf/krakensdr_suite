@@ -140,6 +140,7 @@ public:
     void reset() override {
         mag_.clear();
         pos_ = 0;
+        abs0_ = 0;
         noise_ = 0;
         ac_.clear();
         host.table_columns(TABLE_COLS);
@@ -159,6 +160,7 @@ public:
         for (size_t i = 0; i < n; i++) mag_[old + i] = std::sqrt(std::norm(x[i]));
         update_noise(mag_.data() + old, n);
         now_ = host.time();
+        blk_abs_ = abs0_ + old;   // x[0] (its time is now_)
 
         const float gate = 1.6f * noise_;
         const float* m = mag_.data();
@@ -178,6 +180,7 @@ public:
         // keep the tail a candidate still needs
         const size_t drop = std::min(j, mag_.size() > static_cast<size_t>(NEED) ? mag_.size() - NEED : 0);
         mag_.erase(mag_.begin(), mag_.begin() + static_cast<long>(drop));
+        abs0_ += drop;
         pos_ = j - drop;
 
         housekeeping();
@@ -188,6 +191,9 @@ private:
     std::vector<float> mag_;
     float conf_[112] = {};
     size_t pos_ = 0;
+    uint64_t abs0_ = 0;            // input sample index (since reset) of mag_[0]
+    uint64_t blk_abs_ = 0;         // ... of the current block's first sample
+    double cand_start_ = 0;        // the candidate being decoded: its first sample (fractional, mag_ index)
     float noise_ = 0;
     double now_ = 0;
     double range_km_ = 500;
@@ -250,6 +256,7 @@ private:
             uint8_t msg[14];
             int len = slice(p, cand[k].ph, msg, conf_);
             if (!len) continue;
+            cand_start_ = static_cast<double>(j) + cand[k].ph * (1.0 / NPHASE);
             float level = cand[k].hi / static_cast<float>(SPC);   // mean pulse amplitude
             if (handle(msg, len, level)) return len;
         }
@@ -320,6 +327,7 @@ private:
             if (!a) return false;
         }
         accept(*a, level);
+        if (a->confirmed) talker_packet(*a, len);
         if (df == 17 || df == 18) extended_squitter(*a, msg, df);
         else if (df == 4 || df == 20 || df == 0 || df == 16) reply_altitude(*a, msg, df);
         else if (df == 5 || df == 21) reply_identity(*a, msg);
@@ -363,6 +371,20 @@ private:
                     return true;
                 }
         return false;
+    }
+
+    // This message's samples belong to aircraft a (kp::Talker::packet): the
+    // DoA per aircraft. Preamble (8 us) + len bits of 1 us from the first
+    // preamble pulse.
+    void talker_packet(const Aircraft& a, int len) {
+        kp::Talker t;
+        t.id = id_of(a);
+        t.label = a.callsign;
+        if (std::isfinite(a.alt_baro) && !a.ground) t.label += (t.label.empty() ? "" : " · ") + fmt("%.0f ft", a.alt_baro);
+        t.start_s = now_ + (static_cast<double>(abs0_) + cand_start_ - static_cast<double>(blk_abs_)) / FS;
+        t.end_s = t.start_s + (8 + len) * 1e-6;
+        t.packet = true;
+        host.talker(t);
     }
 
     void accept(Aircraft& a, float level) {
@@ -829,4 +851,5 @@ KRAKEN_PLUGIN(Adsb, {.id = "adsb",
                                   "Repair extended squitters with one bad bit (only for aircraft already heard cleanly)"}},
                      .map = true,
                      .manual_only = true,
-                     .fixed_freq_hz = 1090e6})
+                     .fixed_freq_hz = 1090e6,
+                     .talkers = true})

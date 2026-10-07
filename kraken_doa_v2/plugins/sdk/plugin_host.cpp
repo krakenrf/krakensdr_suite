@@ -179,9 +179,19 @@ public:
         p += secs(t.start_s);
         p.push_back('\0');
         p += secs(t.end_s);
-        if (t.channel != 0) {
+        if (t.channel != 0 || t.packet) {
             p.push_back('\0');
             p += std::to_string(std::clamp(t.channel, 0, 7));
+        }
+        if (t.packet) {
+            p.push_back('\0');
+            p += "p";
+            p.push_back('\0');
+            p += std::isfinite(t.freq_hz) ? fmt_hz(t.freq_hz) : "";
+            p.push_back('\0');
+            p += fmt_hz(std::isfinite(t.bw_hz) ? std::max(0.0, t.bw_hz) : 0.0);
+            p.push_back('\0');
+            p += fmt_hz(std::isfinite(t.avg_s) ? std::max(0.0, t.avg_s) : 0.0);
         }
         send(kp::wire::TALKER, p.data(), p.size());
     }
@@ -209,11 +219,16 @@ public:
 private:
     int fd_;
     double rate_;
+    static std::string fmt_hz(double v) {
+        char b[40];
+        snprintf(b, sizeof b, "%.3f", v);
+        return b;
+    }
     // a Host::time() value for the wire; NAN = now
     std::string secs(double t) const {
         if (!std::isfinite(t)) t = time();
-        char b[32];
-        snprintf(b, sizeof b, "%.4f", t);
+        char b[40];
+        snprintf(b, sizeof b, "%.7f", t);
         return b;
     }
     void send(uint32_t type, const void* data, size_t len) {
@@ -383,10 +398,27 @@ public:
             if (it->open && it->channel == ch) return &*it;
         return nullptr;
     }
+    // packets (Talker::packet): counted per talker
+    struct Pk { std::string label; uint64_t n = 0; double first = 0, last = 0, len_us = 0; };
+    std::map<std::string, Pk> packets_;
+    uint64_t packets_total_ = 0;
     void talker(const kp::Talker& t) override {
         if (t.id.empty()) return;
         const double st = std::isfinite(t.start_s) ? t.start_s : time();
         const double en = std::isfinite(t.end_s) ? t.end_s : time();
+        if (t.packet) {
+            Pk& k = packets_[t.id];
+            if (!k.n) k.first = st;
+            k.n++;
+            k.last = st;
+            k.len_us += (en - st) * 1e6;
+            if (!t.label.empty()) k.label = t.label;
+            packets_total_++;
+            if (verbose_ && !quiet_)
+                printf("[%9.3f s] (packet) %s %.7f .. %.7f s%s\n", time(), t.id.c_str(), st, en,
+                       std::isfinite(t.freq_hz) ? (" at " + std::to_string(static_cast<long>(std::lround(t.freq_hz))) + " Hz").c_str() : "");
+            return;
+        }
         Span* s = open_span(t.channel);
         if (!s || s->id != t.id) {
             if (s) talker_end(st, t.channel);
@@ -646,6 +678,16 @@ int test_file(int argc, char** argv) {
         for (const auto& s : host.spans_)
             printf("  %-10s %-32s %8.3f .. %8.3f s%s%s\n", s.id.c_str(), s.label.c_str(), s.start, s.end,
                    s.channel ? (" ch " + std::to_string(s.channel)).c_str() : "", s.open ? " (open)" : "");
+    }
+    if (!host.packets_.empty()) {
+        printf("talker packets: %llu from %zu talkers\n", static_cast<unsigned long long>(host.packets_total_),
+               host.packets_.size());
+        std::vector<std::pair<std::string, TestHost::Pk>> v(host.packets_.begin(), host.packets_.end());
+        std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.second.n > b.second.n; });
+        for (size_t i = 0; i < v.size() && i < 40; i++)
+            printf("  %-10s %-24s %6llu packets  %8.3f .. %8.3f s  mean %.0f us\n", v[i].first.c_str(),
+                   v[i].second.label.c_str(), static_cast<unsigned long long>(v[i].second.n), v[i].second.first,
+                   v[i].second.last, v[i].second.len_us / static_cast<double>(v[i].second.n));
     }
     if (!host.rows_.empty()) {
         printf("table: %zu rows\n", host.rows_.size());

@@ -43,6 +43,8 @@ constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4,
                    W_TABLE_REMOVE = 27, W_MESSAGE = 28, W_RAW = 29, W_TALKER = 30, W_TALKER_END = 31;
 // how far back a plugin's sample positions stay mappable to the VFO stream
 constexpr double POS_MAP_SECONDS = 60;
+// a talker packet (kp::Talker::packet) longer than this is not one
+constexpr double MAX_PACKET_S = 0.25;   // ADS-B 120 us .. AIS 5 slots (133 ms)
 
 std::mutex record_mu;
 RecordHandler record_handler;
@@ -159,7 +161,7 @@ struct Runner {
         for (auto it = pos_map.rbegin(); it != pos_map.rend(); ++it)
             if (static_cast<double>(it->p0) <= p) { g = &*it; break; }
         const double off = std::min(p - static_cast<double>(g->p0), static_cast<double>(g->n));
-        *out = static_cast<uint64_t>(std::max(0.0, g->v0 + off * g->step));
+        *out = static_cast<uint64_t>(std::llround(std::max(0.0, g->v0 + off * g->step)));
         return true;
     }
 };
@@ -825,10 +827,41 @@ private:
         return static_cast<int>(std::clamp(strtol(v.c_str(), nullptr, 10), 0L, 7L));
     }
     void on_talker(Runner& r, const char* p, size_t len) {
-        auto f = split0(p, len, 5);
+        auto f = split0(p, len, 9);
         if (f.size() < 4 || f[0].empty()) return;
         const std::string id = f[0].substr(0, 32);
         const int ch = f.size() > 4 ? talker_channel(f[4]) : 0;
+        if (f.size() > 5 && f[5].find('p') != std::string::npos) {
+            // one packet: exactly these samples, nothing stays open
+            uint64_t a, b;
+            if (!r.vfo_pos(strtod(f[2].c_str(), nullptr), r.info.sample_rate, &a) ||
+                !r.vfo_pos(strtod(f[3].c_str(), nullptr), r.info.sample_rate, &b) || b <= a ||
+                static_cast<double>(b - a) > in_rate_ * MAX_PACKET_S)
+                return;
+            TalkerSpan s;
+            s.plugin = r.id;
+            s.id = id;
+            s.label = f[1].substr(0, 64);
+            s.start = a;
+            s.end = b;
+            s.closed = true;
+            s.rate = in_rate_;
+            s.packet = true;
+            if (f.size() > 8) {
+                // the plugin's frequency -> the VFO's: the AFC mixer moved the band
+                // down by afc_hz_, the invert option mirrored it first
+                if (!f[6].empty()) {
+                    const double pf = strtod(f[6].c_str(), nullptr);
+                    if (is_finite_value(pf)) s.freq_hz = opts_.invert ? -(pf + afc_hz_) : pf + afc_hz_;
+                }
+                s.bw_hz = std::clamp(strtod(f[7].c_str(), nullptr), 0.0, static_cast<double>(in_rate_));
+                s.avg_s = std::clamp(strtod(f[8].c_str(), nullptr), 0.0, 3600.0);
+                if (!is_finite_value(s.bw_hz)) s.bw_hz = 0;
+                if (!is_finite_value(s.avg_s)) s.avg_s = 0;
+            }
+            owner_->deliver_talker(s);
+            return;
+        }
         auto it = r.talkers.find(ch);
         uint64_t a, b;
         if (!r.vfo_pos(strtod(f[3].c_str(), nullptr), r.info.sample_rate, &b)) return;

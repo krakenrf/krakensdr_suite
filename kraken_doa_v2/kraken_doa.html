@@ -1571,7 +1571,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <div class="map-df-h">
               <button type="button" class="map-btn" id="map-df-tog" onclick="mapSet('rdfOpen', !mapState.rdfOpen)" title="Direction finding on the map: DoA lobes and, while driving, a heat map of where the transmitter is">📡 DF</button>
               <select id="map-df-vfo" onchange="mapSet('rdfVfo', this.value)" title="Which VFO's DoA to show"></select>
-              <select id="map-df-tid" onchange="mapSet('rdfTid', this.value)" style="display:none" title="Which radio: a digital decoder that names who transmits (P25 unit ID) splits the VFO's signal - each radio's DoA comes only from its own transmissions"></select>
+              <select id="map-df-tid" onchange="mapSet('rdfTid', this.value)" style="display:none" title="Which radio / aircraft / ship: a digital decoder that names who transmits (P25 / DMR / NXDN unit ID, D-STAR callsign, ADS-B aircraft, AIS ship) splits the VFO's signal - each one's DoA comes only from its own transmissions / packets"></select>
               <button type="button" class="map-btn" id="map-df-lobe" onclick="mapSet('rdfLobe', !mapState.rdfLobe)" title="The live DoA lobe around the station">Lobe</button>
               <button type="button" class="map-btn" id="map-df-lines" onclick="mapSet('rdfLines', !mapState.rdfLines)" title="The bearings taken while driving">Lines</button>
               <button type="button" class="map-btn" id="map-df-heat" onclick="mapSet('rdfHeat', !mapState.rdfHeat)" title="Where the transmitter probably is (one VFO at a time)">Heat</button>
@@ -11084,6 +11084,46 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (t.doa !== null) return t.doa.toFixed(0) + '° arr';   // no heading: the DoA plot's angle
     return '';
   }
+  // A packet talker (aircraft) that also reports its position on the map
+  // (its decoder's "Plot on map"): the bearing from the station to it, and
+  // the DF error = DF bearing - that (null if either is missing)
+  function rdfPosCheck(t) {
+    const st = rdfStatus && rdfStatus.station;
+    if (!t.pk || !st) return null;
+    const p = rdfMapPt(t);
+    if (!p) return null;
+    const brg = mapBearing(st.lat, st.lon, p.la, p.lo);
+    const err = t.lobe && t.peak !== null && t.age !== null && t.age < 30 ? ((t.peak - brg + 540) % 360) - 180 : null;
+    return {brg, err, km: mapDistKm(st.lat, st.lon, p.la, p.lo)};
+  }
+  // all aircraft heard lately with a DF bearing and a position: median error
+  function rdfPosSummary(ts) {
+    const e = ts.map(rdfPosCheck).filter(c => c && c.err !== null).map(c => c.err).sort((a, b) => a - b);
+    if (!e.length) return null;
+    const q = f => e[Math.min(e.length - 1, Math.floor(f * e.length))];
+    return {n: e.length, med: q(0.5), lo: q(0.25), hi: q(0.75)};
+  }
+  // what a talker is: from the decoder that names it (packet talkers)
+  function rdfKind(t) { return !t.pk ? 'radio' : t.pl === 'ais' ? 'ship' : t.pl === 'adsb' ? 'aircraft' : 'talker'; }
+  // the talker's map point (its decoder's "Plot on map"), or null
+  function rdfMapPt(t) {
+    const pre = t.vfo + '|', suf = '|' + t.tid;
+    for (const [k, q] of mapPts) if (k.startsWith(pre) && k.endsWith(suf) && k.split('|').length === 3) return q;
+    return null;
+  }
+  function rdfIcon(t) {
+    const p = t.pk ? rdfMapPt(t) : null;   // AIS base stations / aids to navigation aren't ships
+    if (p && p.k === 'station') return '📡 ';
+    if (p && p.k === 'point') return '⚓ ';
+    const k = rdfKind(t);
+    return k === 'ship' ? '⛴ ' : k === 'aircraft' ? '✈ ' : '';
+  }
+  function rdfKinds(ts) {   // one word for a list of talkers: the common kind, else 'talker'
+    const ks = new Set(ts.map(rdfKind));
+    return ks.size === 1 ? [...ks][0] : 'talker';
+  }
+  function rdfPlural(k) { return k === 'aircraft' ? 'aircraft' : k + 's'; }
+  function rdfSigned(x) { const r = Math.round(x * 10) / 10; return (r >= 0 ? '+' : '−') + Math.abs(r).toFixed(1) + '°'; }
   function rdfRenderPanel() {
     const box = $id('map-df');
     if (!box) return;
@@ -11100,7 +11140,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const ts = rdfTalkers(), tsel = rdfTidSel(), multi = rdfSelIds().length > 1;
     const tidSel = $id('map-df-tid');
     tidSel.style.display = ts.length ? '' : 'none';
-    const topts = `<option value="">Whole signal</option><option value="*">Every radio (${ts.length})</option>` +
+    const anyPk = ts.some(t => t.pk), kinds = rdfKinds(ts);
+    const topts = `<option value="">Whole signal</option><option value="*">Every ${kinds === 'aircraft' ? 'aircraft' : kinds} (${ts.length})</option>` +
       ts.map(t => `<option value="${digEsc(rdfGk(t.vfo, t.tid))}">${multi ? 'D' + t.vfo + ' ' : ''}${digEsc(rdfTalkerName(t))}</option>`).join('');
     if (tidSel.dataset.html !== topts) { tidSel.dataset.html = topts; tidSel.innerHTML = topts; }
     if (document.activeElement !== tidSel) tidSel.value = tsel;
@@ -11117,7 +11158,18 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       for (const id of rdfSelIds()) h += (h ? '<br>' : '') + rdfMapLine('D' + id, getDecimatorColor(id), rdfGk(id, ''), vs.find(x => x.id === id));
     } else if (tsel !== '*') {
       const t = rdfSelTalkers()[0];
-      if (t) {
+      if (t && t.pk) {
+        // an aircraft / ship: its packets, averaged over the last seconds
+        let line = `<b style="color:${getDecimatorColor(t.vfo)}">${rdfIcon(t)}${digEsc(t.tid)}</b>${t.label ? ' ' + digEsc(t.label) : ''} · ` +
+          (t.active ? '<span class="g">heard now</span>' : `heard ${rdfAge(t.age)} ago`) + ` · ${t.tx} packet${t.tx === 1 ? '' : 's'}`;
+        if (t.doa !== null) line += ` · bearing ${rdfBearingTxt(t)} (~${t.tx_frames} packet${t.tx_frames === 1 ? '' : 's'} averaged, ${Math.round(100 * t.conf)} %)`;
+        else line += ' · <span class="w">no DoA from its packets yet (needs DoA on)</span>';
+        const c = rdfPosCheck(t);
+        if (c) line += `<br>Reported position: ${c.brg.toFixed(1)}°, ${c.km.toFixed(1)} km` +
+          (c.err !== null ? ` · DF error <b>${rdfSigned(c.err)}</b>` : '');
+        else line += '<br><span style="color:#8296b4">Tick "🗺 Plot on map" in its decoder tab to compare with its reported position</span>';
+        h += (h ? '<br>' : '') + line;
+      } else if (t) {
         let line = `<b style="color:${getDecimatorColor(t.vfo)}">${digEsc(t.tid)}</b>${t.label ? ' ' + digEsc(t.label) : ''} · ` +
           (t.active ? '<span class="g">on air</span>' : `heard ${rdfAge(t.age)} ago`) + ` · ${t.tx} transmission${t.tx === 1 ? '' : 's'}`;
         if (t.doa !== null) line += ` · latest: ${rdfBearingTxt(t)} (${t.tx_frames} frame${t.tx_frames === 1 ? '' : 's'}, ${Math.round(100 * t.conf)} %)`;
@@ -11125,18 +11177,28 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         h += (h ? '<br>' : '') + line + '<br>' + rdfMapLine('Heat map', getDecimatorColor(t.vfo), tsel, t);
       }
     }
+    // aircraft: how far the DF bearings are off their reported positions (a
+    // check of the array / heading: a steady offset is mounting / heading)
+    const ps = anyPk ? rdfPosSummary(ts) : null;
+    if (ps) {
+      const pk = rdfKinds(ts.filter(t => t.pk));
+      h += (h ? '<br>' : '') + `Position check: DF error median <b>${rdfSigned(ps.med)}</b> (half within ${rdfSigned(ps.lo)} … ${rdfSigned(ps.hi)}) over ${ps.n} ${ps.n === 1 ? pk : rdfPlural(pk)}`;
+    }
     const tx = $id('map-df-txt');
     if (tx.innerHTML !== h) tx.innerHTML = h;
     // the radio list: click = show that radio on the map (again = whole signal)
     let tl = '';
     if (ts.length) {
-      tl = '<table><tr><th></th>' + (multi ? '<th>VFO</th>' : '') + '<th>Radio</th><th>Talkgroup</th><th>Bearing</th><th>Heard</th><th>Tx</th></tr>';
+      const head = {radio: ['Radio', 'Talkgroup', 'Tx'], aircraft: ['Aircraft', 'Callsign', 'Pkts'], ship: ['MMSI', 'Name', 'Pkts'], talker: ['ID', 'Info', 'Tx']}[kinds];
+      tl = '<table><tr><th></th>' + (multi ? '<th>VFO</th>' : '') + `<th>${head[0]}</th><th>${head[1]}</th><th>Bearing</th>` +
+        (anyPk ? '<th title="DF bearing minus the bearing to its reported position">Δ pos</th>' : '') + `<th>Heard</th><th>${head[2]}</th></tr>`;
       for (const t of ts) {
-        const k = rdfGk(t.vfo, t.tid);
-        tl += `<tr class="t${k === tsel ? ' sel' : ''}" data-k="${digEsc(k)}" title="Show this radio's DoA on the map">` +
+        const k = rdfGk(t.vfo, t.tid), c = anyPk ? rdfPosCheck(t) : null;
+        tl += `<tr class="t${k === tsel ? ' sel' : ''}" data-k="${digEsc(k)}" title="Show this ${rdfKind(t)}'s DoA on the map">` +
           `<td class="air">${t.active ? '●' : ''}</td>` + (multi ? `<td>D${t.vfo}</td>` : '') +
-          `<td>${digEsc(t.tid)}</td><td class="dim">${digEsc(t.label || '')}</td>` +
-          `<td class="n">${rdfBearingTxt(t)}</td><td class="n dim">${t.active ? 'now' : rdfAge(t.age)}</td><td class="n">${t.tx}</td></tr>`;
+          `<td>${rdfIcon(t)}${digEsc(t.tid)}</td><td class="dim">${digEsc(t.label || '')}</td>` +
+          `<td class="n">${rdfBearingTxt(t)}</td>` + (anyPk ? `<td class="n">${c && c.err !== null ? rdfSigned(c.err) : ''}</td>` : '') +
+          `<td class="n dim">${t.active ? 'now' : rdfAge(t.age)}</td><td class="n">${t.tx}</td></tr>`;
       }
       tl += '</table>';
     }
@@ -11158,7 +11220,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const tsel = rdfTidSel();
     if (tsel !== '' && tsel !== '*') {
       const t = rdfSelTalkers()[0];
-      if (!t || !confirm(`Forget the bearings collected for radio ${t.tid}?`)) return;
+      if (!t || !confirm(`Forget the bearings collected for ${rdfKind(t)} ${t.tid}?`)) return;
       send('RDF_RESET:' + t.vfo + ':' + t.tid);
       return;
     }
