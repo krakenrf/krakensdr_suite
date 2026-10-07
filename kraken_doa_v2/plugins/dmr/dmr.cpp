@@ -7,6 +7,7 @@
 #include "dig_fec.hpp"
 #include "mbe_tables.hpp"
 
+#include <algorithm>
 #include <cstdio>
 
 namespace dig {
@@ -74,10 +75,80 @@ const char* fid_name(int fid) {
 }  // namespace
 
 void DmrProto::reset() {
-    for (auto& s : slots_) s = Slot();
+    for (auto& s : slots_) s = Slot();   // the host resets its talkers together with ours
     voice_slot_ = -1;
     last_tc_ = -1;
     cc_ = -1;
+    ext_bs_ = true;
+    ext_slot_ = 0;
+}
+
+// --- talkers (RxContext::talker) ----------------------------------------------
+// A transmission on a slot = its confirmed bursts (voice LC header, voice
+// bursts B..F with a valid EMB, terminator) less than gap() apart; its talker
+// is the source ID of the full / embedded LC. Every slot is a talker channel
+// of its own (0 = MS-sourced / direct without a slot, 1, 2): two radios can
+// talk at once on the two timeslots - the host then uses neither.
+void DmrProto::talker_begin(int slot) {
+    Slot& sl = slots_[slot];
+    if (sl.call_start >= 0 && burst_a_ - sl.voice_end <= gap()) return;
+    talker_end(slot, sl.voice_end);
+    sl.call_start = burst_a_;
+    sl.voice_end = burst_a_;
+}
+
+void DmrProto::talker_burst(int slot) {
+    if (!talker_slot(slot)) return;
+    talker_begin(slot);
+    Slot& sl = slots_[slot];
+    sl.voice_end = std::max(sl.voice_end, burst_b_);
+    sl.tbs = burst_bs_;
+    if (!ctx_.talker) return;
+    if (sl.tid.empty()) {
+        // a timeslot in use, its radio not named yet: "?" keeps these samples
+        // out of the other slot's talker (slot 0 has no other slot)
+        if (slot != 0) {
+            ctx_.talker("?", "", sl.call_start, sl.voice_end, slot);
+            sl.treported = true;
+        }
+        return;
+    }
+    std::string label = sl.tcall;
+    if (!sl.alias.empty()) label += " · " + sl.alias;
+    if (slot) label += " · slot " + std::to_string(slot);
+    if (sl.tbs) label += " · via repeater";
+    ctx_.talker(sl.tid, label, sl.call_start, sl.voice_end, slot);
+    sl.treported = true;
+}
+
+void DmrProto::talker_set(int slot, uint32_t src, const std::string& call) {
+    if (src == 0 || !talker_slot(slot)) return;
+    talker_begin(slot);
+    Slot& sl = slots_[slot];
+    const std::string id = std::to_string(src);
+    if (!sl.tid.empty() && sl.tid != id) {
+        // another radio without a terminator in between: the bursts since the
+        // old one was last named can't be told apart - leave them out
+        talker_end(slot, sl.lc_end);
+        sl.call_start = burst_a_;
+        sl.voice_end = burst_a_;
+    }
+    sl.tid = id;
+    sl.tcall = call;
+    sl.lc_end = burst_b_;
+}
+
+void DmrProto::talker_end(int slot, int64_t at) {
+    Slot& sl = slots_[slot];
+    if (sl.treported && ctx_.talker_end) ctx_.talker_end(at, slot);
+    sl.treported = false;
+    sl.tid.clear();
+    sl.call_start = -1;
+}
+
+void DmrProto::tick(int64_t now) {
+    for (int i = 0; i < 3; i++)
+        if (slots_[i].call_start >= 0 && now - slots_[i].voice_end > gap()) talker_end(i, slots_[i].voice_end);
 }
 
 std::string DmrProto::slot_name(int slot) const {
@@ -137,6 +208,7 @@ void DmrProto::full_lc(int slot, const uint8_t* lc, const char* what) {
     }
     if (slots_[slot].src != src) slots_[slot].alias.clear();
     slots_[slot].src = src;
+    talker_set(slot, src, (flco == 0 ? "TG " : "unit call to ") + std::to_string(dst) + (so & 0x80 ? " EMERGENCY" : ""));
     call_update(slot, d);
     ctx_.report->set(Mode::DMR, "Last talkgroup", flco == 0 ? std::to_string(dst) : "-");
     ctx_.report->set(Mode::DMR, "Last source", std::to_string(src));
@@ -290,17 +362,24 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
         bits[2 * j] = d >> 1;
         bits[2 * j + 1] = d & 1;
     }
-    const bool bs = sync == BS_VOICE || sync == BS_DATA || sync == NONE;
+    // a burst extrapolated from the last sync (NONE) is of that burst's kind
+    const bool bs = sync == NONE ? ext_bs_ : (sync == BS_VOICE || sync == BS_DATA);
     const bool voice_sync = sync == BS_VOICE || sync == MS_VOICE || sync == TS1_VOICE || sync == TS2_VOICE;
     *period_syms = (sync == MS_VOICE || sync == MS_DATA || sync == TS1_VOICE || sync == TS1_DATA ||
                     sync == TS2_VOICE || sync == TS2_DATA) ? 288 : 144;
     Report& r = *ctx_.report;
     int64_t t = now_ms();
+    // this burst's samples (burst symbol 0 is centred 77 symbols before the sync end)
+    sps_ = s.sps;
+    burst_a_ = s.sync_end - static_cast<int64_t>(77 * s.sps + s.sps / 2);
+    burst_b_ = burst_a_ + static_cast<int64_t>(132) * s.sps;
+    burst_bs_ = bs;
 
     // timeslot
     int slot = 0;
     if (sync == TS1_VOICE || sync == TS1_DATA) slot = 1;
     else if (sync == TS2_VOICE || sync == TS2_DATA) slot = 2;
+    else if (sync == NONE && !bs) slot = ext_slot_;   // MS / direct: the slot of the burst it follows
     else if (bs) {
         uint8_t cach[24];
         for (int c = 0; c < 12; c++) {
@@ -324,6 +403,10 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
             slot = 0;
         }
         if (slot == 0 && sync == NONE) return false;
+    }
+    if (sync != NONE) {
+        ext_bs_ = bs;
+        ext_slot_ = slot;
     }
     Slot& sl = slots_[slot];
 
@@ -365,6 +448,7 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
         } else {
             sl.emb_state = 0;
         }
+        talker_burst(slot);
         sl.last_ms = t;
         call_update(slot, "");
         if (cc_ >= 0 && ctx_.valid) ctx_.valid(Mode::DMR);
@@ -401,8 +485,11 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
                 sl.privacy = (by[2] & 0x40) != 0;
                 if (sl.ambe) sl.ambe->reset();
                 full_lc(slot, by, "LC header");
+                talker_burst(slot);
             } else {
                 full_lc(slot, by, "terminator");
+                talker_burst(slot);
+                if (talker_slot(slot)) talker_end(slot, sl.voice_end);
                 if (!sl.call.empty() && slot_wanted(slot))
                     r.event(Mode::DMR, slot_name(slot) + " call ended: " + sl.call, 2.0);
                 sl.call.clear();

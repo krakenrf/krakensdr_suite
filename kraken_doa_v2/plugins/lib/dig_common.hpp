@@ -65,16 +65,17 @@ struct RxContext {
     // true while someone listens - the receivers run their vocoders only then
     std::function<bool()> voice_wanted;
     // Who transmits (kp::Host::talker / talker_end). Positions are the
-    // receiver's own input sample indexes since its last reset; the plugin
-    // maps them to Host::time(). Unset = not reported.
-    std::function<void(const std::string& id, const std::string& label, int64_t start, int64_t end)> talker;
-    std::function<void(int64_t at)> talker_end;
+    // receiver's own input sample indexes since its last reset (Bridge::
+    // talkers maps them to Host::time()); channel = kp::Talker::channel (DMR
+    // timeslot). Unset = not reported.
+    std::function<void(const std::string& id, const std::string& label, int64_t start, int64_t end, int channel)> talker;
+    std::function<void(int64_t at, int channel)> talker_end;
 };
 
 // RxContext + Report + Options wired to a kp::Host
 class Bridge {
 public:
-    explicit Bridge(kp::Host& h) : report(h) {
+    explicit Bridge(kp::Host& h) : report(h), host_(h) {
         ctx.report = &report;
         ctx.opts = &opts;
         ctx.valid = [&h](Mode) { h.valid(); };
@@ -85,9 +86,28 @@ public:
     }
     // "verbose" = 0|1, "slot" = 0|1|2 (DMR), "nac" = 3 hex digits or "" / "any" (P25)
     void option(const std::string& key, const std::string& value);
+    // Report the receiver's talkers (RxContext::talker) to the host; its
+    // sample indexes run at `rate` from the last restart_clock(). Call
+    // restart_clock() whenever the receiver resets (its index 0 = now).
+    void talkers(double rate) {
+        ctx.talker = [this, rate](const std::string& id, const std::string& label, int64_t a, int64_t b, int ch) {
+            kp::Talker t;
+            t.id = id;
+            t.label = label;
+            t.start_s = t0_ + static_cast<double>(a) / rate;
+            t.end_s = t0_ + static_cast<double>(b) / rate;
+            t.channel = ch;
+            host_.talker(t);
+        };
+        ctx.talker_end = [this, rate](int64_t at, int ch) { host_.talker_end(t0_ + static_cast<double>(at) / rate, ch); };
+    }
+    void restart_clock() { t0_ = host_.time(); }
     Report report;
     Options opts;
     RxContext ctx;
+private:
+    kp::Host& host_;
+    double t0_ = 0;            // Host::time() of the receiver's sample 0
 };
 
 // Sample history with absolute indexing (only the newest few hundred ms kept)

@@ -835,19 +835,57 @@ Edit `include/config.hpp`:
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
 
-**DoA per talker (P25 unit IDs; `src/talker_doa.cpp`, `plugins/p25/p25.cpp`, 🗺 Map 📡 DF panel):**
-- Goal: a VFO on a P25 voice channel carries many radios; the VFO's DoA
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar}`, 🗺 Map 📡 DF panel):**
+- Goal: a VFO on a P25 / DMR / NXDN / D-STAR channel carries many radios; the VFO's DoA
   mixes them. The decoder names who transmits when, the VFO's signal is cut
   at those boundaries and each radio's own samples go through MUSIC - one
   bearing (+ history + mobile DF heat map) per unit ID, picked on the map
-- Plugin API (kraken_plugin.hpp): `kp::Talker {id, label, start_s, end_s}`,
-  `Host::talker(t)` (again per frame: end_s grows; a new id ends the
-  previous one where it starts) / `talker_end(at_s)`, `Info::talkers`
+- Plugin API (kraken_plugin.hpp): `kp::Talker {id, label, start_s, end_s,
+  channel}`, `Host::talker(t)` (again per frame: end_s grows; a new id ends
+  the previous one ON ITS CHANNEL where it starts) / `talker_end(at_s,
+  channel)`, `Info::talkers`
   (`--info` "talkers", `PluginInfo::talkers`). Times are `Host::time()` =
   plugin input samples / rate since the process started (WireHost: during
   process() it is the block's FIRST sample). Wire TALKER 30 (id, label,
-  start, end as "%.4f" text) / TALKER_END 31. The offline test host cuts
-  spans like the live host and prints them ("talkers: N transmissions")
+  start, end as "%.4f" text [, channel - omitted for 0]) / TALKER_END 31
+  (at [, channel]). The offline test host cuts spans like the live host and
+  prints them ("talkers: N transmissions", "ch N")
+- Channels (DMR timeslots): `Runner::talkers` holds one open talker per
+  channel; `TalkerSpan::channel`. TalkerDoa commits a frame inside a
+  channel != 0 span only `CHANNEL_HOLD_MS` (1.5 s) after MUSIC computed it -
+  the other slot's radio may be reported later with a start backdated over
+  it. Id "?" (`tdoa::unnamed_talker`) = a busy channel whose radio isn't
+  known yet: its span blocks frames like any other (two ids -> dropped) but
+  creates no talker; frames only inside it wait. When the plugin learns the
+  id it reports it from the same start, so the host closes "?" at zero
+  length. Lib plugins: `dig::Bridge::talkers(rate)` sets RxContext::talker /
+  talker_end (receiver indexes + channel -> Host::time()), `restart_clock()`
+  in reset()
+- DMR (`DmrProto`, channel = slot 0 MS / direct without slot, 1, 2): burst
+  `burst_a_ = sync_end - 77.5 sps`, 132 symbols. A transmission = confirmed
+  bursts (voice LC header, voice B..F with a valid EMB, terminator) < 0.5 s
+  apart, talker = full / embedded LC source (FLCO 0 "TG n", 3 "unit call to
+  n"; label + talker alias, " · slot N", " · via repeater" for BS-sourced);
+  ended by the terminator or `tick()`. A busy slot 1/2 without an ID yet is
+  reported as "?". BS bursts whose slot the CACH didn't give are skipped.
+  Fixed with it: bursts extrapolated from a sync (sync NONE) took the slot
+  from the CACH even on MS-sourced / direct signals, which have none - a
+  random slot, so B..F (and the embedded LC) never decoded there; they now
+  take the kind + slot of the burst they follow (`ext_bs_`, `ext_slot_`)
+- NXDN (`NxdnReceiver`): frame `frame_a_ = sync_end - 9.5 sps`, 192
+  symbols. A transmission = valid frames with voice (LICH option != 0, not
+  UDCH) or a VCALL, < 0.5 s apart; talker = VCALL source (label "TG n" /
+  "unit call to n", " · via repeater" when the LICH says outbound); TX_REL
+  ends it (its frames included); `tick()` from process()
+- D-STAR (`DstarReceiver`, no FEC on voice frames): sync events in sample
+  order from correlate(): a data sync in the 420 ms cadence (<= 2 missed)
+  confirms everything up to it; the first sync of a transmission exactly
+  756 bits after a header frame sync starts it at that header (else late
+  entry from the sync); the end pattern confirms up to its start and ends
+  it; 2 missed syncs end it. Talker = MY callsign (padding squeezed: "F1ZIL
+  B"), label "/sfx to UR via RPT1", from the RF header with a good CRC
+  (matched by its sync position - the CRC job runs after the first data
+  sync may have been seen) or, on a late entry, the slow-data header copy
 - P25 (`P25Proto`): frame boundaries from the sync - frame dibit 0 is centred
   23 symbols before `sync_end`, so `frame_a_ = sync_end - 23.5 sps`, length
   HDU 396 / LDU 864 / TDU 72 / TDULC 216 dibits. A transmission = valid
@@ -919,6 +957,19 @@ Edit `include/config.hpp`:
   plot's angle when there is no heading -, last heard, transmissions);
   clicking a row selects it (again = Whole signal). `mapState.rdfTid`
   (localStorage); `rdfGrids` keyed "vfo|tid"
+- Not split: TETRA (the plugin decodes the downlink - every bearing is the
+  base station's), MPT1327 (analogue voice). On a repeater OUTPUT every ID's
+  bearing is the repeater's. A DMR repeater INPUT with both slots busy
+  can't be split (MS bursts carry no slot) - the two radios' LCs land on
+  slot 0, so their frames mostly touch both and are dropped
+- Offline (plugin `--file`, recordings from dsdcc / szechyjs dsd-samples
+  FM-modulated to cf32): dstar_f1zil_1 full (158 s): F1NSR 1.584-149.692 s,
+  F1ZIL B (the repeater's reply) 149.982-150.543, F5LKW 154.553-; DMR MS
+  dmr_1_48000: 3 calls of ID 1 matching the LC header / terminator bursts;
+  dmr_it_8 (BS slot 2): "?" 0.257 s collapsed, 2222223 0.257-19.964 ch 2
+- Test 2 (scratchpad e2e2/: gen3.py + t3.py, three VFOs on one fake feed):
+  D-STAR F1NSR 60 / F1ZIL B 200 / F5LKW 120 deg, DMR BS slot 2 2222223 60,
+  DMR MS ID 1 200 - every transmission exact, VFO bearings jumping
 - Test (scratchpad e2e/: gen_feed.py + fake_heimdall5.py + t_talk.py):
   iq_143.0.u8's P25 channel (two radios) steered per talker onto a 5-element
   UCA (2010621 -> 60 deg, 3250 -> 200 deg, gaps 300, rest of the band 0,

@@ -18,14 +18,21 @@ struct Sink : dig::Fsk4Sink {
 
 class DmrPlugin : public kp::Decoder {
 public:
-    explicit DmrPlugin(kp::Host& h) : Decoder(h), br_(h), sink_(br_.ctx), rx_(sink_, false, true) { facts(); }
+    explicit DmrPlugin(kp::Host& h) : Decoder(h), br_(h), sink_(br_.ctx), rx_(sink_, false, true) {
+        br_.talkers(dig::FmFrontEnd::RATE);
+        facts();
+    }
     void process(const kp::cf* x, size_t n) override {
         const auto& d = fe_.process(x, n);
         rx_.process(d.data(), d.size());
+        pos_ += static_cast<int64_t>(d.size());
+        sink_.dmr.tick(pos_);
     }
     void reset() override {
         fe_.reset();
         rx_.reset();
+        br_.restart_clock();
+        pos_ = 0;
         facts();
     }
     void option(const std::string& k, const std::string& v) override { br_.option(k, v); }
@@ -34,6 +41,7 @@ private:
     Sink sink_;
     dig::Fsk4Receiver rx_;
     dig::FmFrontEnd fe_;
+    int64_t pos_ = 0;     // receiver samples since its reset
     void facts() { host.fact("Voice codec", "AMBE+2: " + dig::MbeLib::instance().status()); }
 };
 
@@ -51,4 +59,5 @@ KRAKEN_PLUGIN(DmrPlugin, {.id = "dmr",
                           .options = {{"slot", "Timeslot", "0", "0=Both|1=Slot 1|2=Slot 2",
                                        "Only show and play this timeslot's calls."}},
                           .map = true,
-                          .voice = true})
+                          .voice = true,
+                          .talkers = true})

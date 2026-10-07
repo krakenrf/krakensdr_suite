@@ -81,6 +81,10 @@ struct Talker {
     // frame boundaries - not the moment the frame was decoded, which is later.
     double start_s = NAN;
     double end_s = NAN;
+    // For protocols that carry several transmissions on one frequency at once
+    // (DMR's two timeslots): each channel 0..7 has a talker of its own. Frames
+    // that hold two talkers' signals are never used for either's DoA.
+    int channel = 0;
 };
 
 struct Info {
@@ -156,12 +160,12 @@ public:
     virtual void table_remove(const std::string& key) { (void)key; }
     // The talker of the transmission in progress (see Talker). Call it again
     // with the same id as frames keep passing (end_s moves on); a different id
-    // ends the previous talker where the new one starts. Cheap - once per frame
-    // is fine. Set Info::talkers.
+    // on the same channel ends the previous talker where the new one starts.
+    // Cheap - once per frame is fine. Set Info::talkers.
     virtual void talker(const Talker& t) { (void)t; }
-    // The transmission ended at Host::time() at_s (NAN = now): e.g. on the
-    // terminator frame, or when frames stopped coming without one
-    virtual void talker_end(double at_s = NAN) { (void)at_s; }
+    // The channel's transmission ended at Host::time() at_s (NAN = now): e.g.
+    // on the terminator frame, or when frames stopped coming without one
+    virtual void talker_end(double at_s = NAN, int channel = 0) { (void)at_s; (void)channel; }
     // The receiver's location (sidebar → Station Information), if it has one:
     // a reference for local position decoding, distances, range checks
     virtual bool station(double* lat, double* lon) const { (void)lat; (void)lon; return false; }
@@ -228,8 +232,9 @@ constexpr uint32_t TABLE_ROW = 26;     // key '\0' cell '\0' cell ...
 constexpr uint32_t TABLE_REMOVE = 27;  // key
 constexpr uint32_t MESSAGE = 28;       // from '\0' text
 constexpr uint32_t RAW = 29;           // one raw frame (text) for the decoder data log
-// id '\0' label '\0' start_s '\0' end_s: Host::time() seconds as decimal text
+// id '\0' label '\0' start_s '\0' end_s ['\0' channel]: Host::time() seconds
+// as decimal text; no channel field = channel 0
 constexpr uint32_t TALKER = 30;
-constexpr uint32_t TALKER_END = 31;    // at_s (decimal text)
+constexpr uint32_t TALKER_END = 31;    // at_s ['\0' channel] (decimal text)
 // (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends)
 }  // namespace kp::wire

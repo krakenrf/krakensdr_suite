@@ -508,10 +508,15 @@ frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
 
-**📡 DoA per talker (P25 unit IDs)** (details: `kraken_doa_v2/CLAUDE.md` *DoA
-per talker*): a decoder plugin that knows who transmits reports it
-(`kp::Host::talker` / `talker_end`, `Info::talkers`; the p25 plugin from the
-LDU1 / TDULC link control source, with the frames' exact sample times). The
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns)** (details:
+`kraken_doa_v2/CLAUDE.md` *DoA per talker*): a decoder plugin that knows who
+transmits reports it (`kp::Host::talker` / `talker_end`, `Info::talkers`,
+with the frames' exact sample times; `kp::Talker::channel` for concurrent
+transmissions - DMR timeslots; id "?" = a busy channel whose radio isn't
+named yet). p25: LDU1 / TDULC link control source; dmr: full / embedded LC
+source per timeslot; nxdn: VCALL source; dstar: MY callsign of the RF
+header (or its slow-data copy). TETRA isn't split (downlink = the base
+station only). The
 VFO's decimated-stream position (`MultiChannelDecimated::stream_pos`) is the
 common clock: MUSIC frames (`MUSICProcessor::setFrameTap`: each frame's own
 covariance + its stream samples) that lie inside one talker's transmission

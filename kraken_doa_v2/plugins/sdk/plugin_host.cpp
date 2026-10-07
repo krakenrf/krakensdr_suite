@@ -25,6 +25,7 @@
 #include "kraken_plugin.hpp"
 #include "kraken_dsp.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -178,10 +179,18 @@ public:
         p += secs(t.start_s);
         p.push_back('\0');
         p += secs(t.end_s);
+        if (t.channel != 0) {
+            p.push_back('\0');
+            p += std::to_string(std::clamp(t.channel, 0, 7));
+        }
         send(kp::wire::TALKER, p.data(), p.size());
     }
-    void talker_end(double at_s) override {
+    void talker_end(double at_s, int channel) override {
         std::string p = secs(at_s);
+        if (channel != 0) {
+            p.push_back('\0');
+            p += std::to_string(std::clamp(channel, 0, 7));
+        }
         send(kp::wire::TALKER_END, p.data(), p.size());
     }
     bool station(double* lat, double* lon) const override {
@@ -366,27 +375,36 @@ public:
         if (!quiet_) printf("[%9.3f s] (message) %s: %s\n", time(), from.c_str(), text.c_str());
     }
     uint64_t messages_ = 0;
-    // talker spans as the live host cuts them: a new id ends the previous one
-    struct Span { std::string id, label; double start, end; bool open; };
+    // talker spans as the live host cuts them: a new id ends the channel's previous one
+    struct Span { std::string id, label; double start, end; bool open; int channel; };
     std::vector<Span> spans_;
+    Span* open_span(int ch) {
+        for (auto it = spans_.rbegin(); it != spans_.rend(); ++it)
+            if (it->open && it->channel == ch) return &*it;
+        return nullptr;
+    }
     void talker(const kp::Talker& t) override {
         if (t.id.empty()) return;
         const double st = std::isfinite(t.start_s) ? t.start_s : time();
         const double en = std::isfinite(t.end_s) ? t.end_s : time();
-        if (spans_.empty() || !spans_.back().open || spans_.back().id != t.id) {
-            if (!spans_.empty() && spans_.back().open) talker_end(st);
-            spans_.push_back({t.id, t.label, st, en, true});
-            if (!quiet_) printf("[%9.3f s] (talker) %s %s: from %.3f s\n", time(), t.id.c_str(), t.label.c_str(), st);
+        Span* s = open_span(t.channel);
+        if (!s || s->id != t.id) {
+            if (s) talker_end(st, t.channel);
+            spans_.push_back({t.id, t.label, st, en, true, t.channel});
+            s = &spans_.back();
+            if (!quiet_)
+                printf("[%9.3f s] (talker) %s %s: from %.3f s%s\n", time(), t.id.c_str(), t.label.c_str(), st,
+                       t.channel ? (" (channel " + std::to_string(t.channel) + ")").c_str() : "");
         }
-        spans_.back().end = std::max(spans_.back().end, en);
-        if (!t.label.empty()) spans_.back().label = t.label;
+        s->end = std::max(s->end, en);
+        if (!t.label.empty()) s->label = t.label;
     }
-    void talker_end(double at_s) override {
-        if (spans_.empty() || !spans_.back().open) return;
-        Span& s = spans_.back();
-        s.open = false;
-        if (std::isfinite(at_s)) s.end = std::max(s.start, at_s);
-        if (!quiet_) printf("[%9.3f s] (talker) %s ended: %.3f .. %.3f s\n", time(), s.id.c_str(), s.start, s.end);
+    void talker_end(double at_s, int channel) override {
+        Span* s = open_span(channel);
+        if (!s) return;
+        s->open = false;
+        if (std::isfinite(at_s)) s->end = std::max(s->start, at_s);
+        if (!quiet_) printf("[%9.3f s] (talker) %s ended: %.3f .. %.3f s\n", time(), s->id.c_str(), s->start, s->end);
     }
     std::vector<std::string> cols_;
     std::map<std::string, std::vector<std::string>> rows_;
@@ -626,8 +644,8 @@ int test_file(int argc, char** argv) {
     if (!host.spans_.empty()) {
         printf("talkers: %zu transmissions\n", host.spans_.size());
         for (const auto& s : host.spans_)
-            printf("  %-10s %-24s %8.3f .. %8.3f s%s\n", s.id.c_str(), s.label.c_str(), s.start, s.end,
-                   s.open ? " (open)" : "");
+            printf("  %-10s %-32s %8.3f .. %8.3f s%s%s\n", s.id.c_str(), s.label.c_str(), s.start, s.end,
+                   s.channel ? (" ch " + std::to_string(s.channel)).c_str() : "", s.open ? " (open)" : "");
     }
     if (!host.rows_.empty()) {
         printf("table: %zu rows\n", host.rows_.size());

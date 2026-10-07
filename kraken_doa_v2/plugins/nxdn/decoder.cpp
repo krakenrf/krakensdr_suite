@@ -7,7 +7,10 @@ namespace {
 
 class NxdnPlugin : public kp::Decoder {
 public:
-    explicit NxdnPlugin(kp::Host& h) : Decoder(h), br_(h), rx_(br_.ctx) { facts(); }
+    explicit NxdnPlugin(kp::Host& h) : Decoder(h), br_(h), rx_(br_.ctx) {
+        br_.talkers(dig::FmFrontEnd::RATE);
+        facts();
+    }
     void process(const kp::cf* x, size_t n) override {
         const auto& d = fe_.process(x, n);
         rx_.process(d.data(), d.size());
@@ -15,6 +18,7 @@ public:
     void reset() override {
         fe_.reset();
         rx_.reset();
+        br_.restart_clock();
         facts();
     }
     void option(const std::string& k, const std::string& v) override { br_.option(k, v); }
@@ -34,4 +38,5 @@ KRAKEN_PLUGIN(NxdnPlugin, {.id = "nxdn",
                    .sample_rate = 48000,
                    .min_vfo_rate = 12000,
                    .author = "KrakenSDR",
-                   .voice = true})
+                   .voice = true,
+                   .talkers = true})

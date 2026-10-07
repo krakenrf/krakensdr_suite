@@ -52,7 +52,25 @@ private:
     void decode_header(const SymSrc& s);
     void decode_superframe(const SymSrc& s);
     void slow_data_block(const uint8_t* b6);
-    void decode_header_bytes(const uint8_t* h41, bool from_slow_data);
+    // hdr_sync = the RF header's frame sync end, -1 = a header copy from the slow data
+    void decode_header_bytes(const uint8_t* h41, bool from_slow_data, int64_t hdr_sync = -1);
+    // the talker of the transmission in progress (RxContext::talker), in
+    // receiver sample indexes. Voice frames have no FEC: a stretch counts as
+    // confirmed once the next data sync arrives exactly in the superframe
+    // cadence (or the end pattern ends it)
+    int64_t call_start_ = -1;        // -1 = none
+    int64_t voice_end_ = 0;          // confirmed up to here
+    int64_t last_sync_ = -1;         // its last data sync (cadence reference)
+    int64_t tx_hdr_sync_ = -1;       // the RF header it began with (-1 = late entry)
+    int64_t hdr_cand_ = -1;          // the last header frame sync seen (CRC not checked yet)
+    int64_t hdr_ok_sync_ = -1;       // the last header whose CRC passed, and its talker
+    std::string hdr_id_, hdr_label_;
+    std::string talker_id_, talker_label_;   // "" = not known (yet)
+    void tx_sync(int64_t sync_end);
+    void tx_end_pattern(int64_t sync_end);
+    void tx_talker(const std::string& id, const std::string& label);
+    void tx_report();
+    void tx_end(int64_t at);
 };
 
 }  // namespace dig

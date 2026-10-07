@@ -113,7 +113,7 @@ void P25Proto::begin_call_if_new() {
 void P25Proto::voice_frame() {
     begin_call_if_new();
     voice_end_ = std::max(voice_end_, frame_b_);
-    if (!talker_id_.empty() && ctx_.talker) ctx_.talker(talker_id_, talker_label_, call_start_, voice_end_);
+    if (!talker_id_.empty() && ctx_.talker) ctx_.talker(talker_id_, talker_label_, call_start_, voice_end_, 0);
 }
 
 void P25Proto::set_talker(uint32_t src, const std::string& label) {
@@ -132,7 +132,7 @@ void P25Proto::set_talker(uint32_t src, const std::string& label) {
 }
 
 void P25Proto::end_talker(int64_t at) {
-    if (!talker_id_.empty() && ctx_.talker_end) ctx_.talker_end(at);
+    if (!talker_id_.empty() && ctx_.talker_end) ctx_.talker_end(at, 0);
     talker_id_.clear();
 }
 

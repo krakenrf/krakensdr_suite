@@ -64,11 +64,14 @@ void set_raw_wanted(bool on);
 // same count the MUSIC frames carry, SharedDecimator::MultiChannelDecimated
 // ::stream_pos) belong to radio `id`. Sent again as the transmission goes on
 // (end grows); closed = it ended at `end`. rate = the VFO's sample rate.
+// channel = kp::Talker::channel (DMR timeslot); id "?" = someone the plugin
+// can't name (yet) - its samples belong to no talker.
 struct TalkerSpan {
     std::string plugin, id, label;
     uint64_t start = 0, end = 0;
     bool closed = false;
     float rate = 0;
+    int channel = 0;
 };
 using TalkerHandler = std::function<void(const TalkerSpan&)>;
 

@@ -52,6 +52,21 @@ private:
     void layer3(const uint8_t* m, int nbits, const char* via);
     void cac_message(const uint8_t* m);
     void voice(const uint8_t* bits72x, int nframes);
+    // the talker of the transmission in progress (RxContext::talker), in
+    // receiver sample indexes
+    int64_t frame_a_ = 0, frame_b_ = 0;   // the frame being decoded: first / one past its last sample
+    bool frame_vcall_ = false, frame_rel_ = false;   // it carried a VCALL / TX_REL
+    bool frame_outbound_ = false;         // sent by a repeater (LICH direction)
+    int64_t call_start_ = -1;             // start of the transmission's first frame, -1 = none
+    int64_t voice_end_ = 0;               // end of its last valid voice / VCALL frame
+    int64_t lc_end_ = 0;                  // end of the last frame whose VCALL named the talker
+    std::string talker_id_, talker_label_;   // "" = not known (yet)
+    static constexpr int64_t GAP = 24000; // frames stopped this long (0.5 s): over
+    void begin_call_if_new();
+    void talker_frame();                  // a valid frame of the transmission
+    void set_talker(uint32_t src, const std::string& label);
+    void end_talker(int64_t at);
+    void tick(int64_t now);
 };
 
 }  // namespace dig

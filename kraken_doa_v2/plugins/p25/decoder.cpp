@@ -17,11 +17,7 @@ struct Sink : dig::Fsk4Sink {
 class P25Plugin : public kp::Decoder {
 public:
     explicit P25Plugin(kp::Host& h) : Decoder(h), br_(h), sink_(br_.ctx), rx_(sink_, true, false) {
-        // talkers: receiver sample indexes (48 kHz since its reset) -> Host::time()
-        br_.ctx.talker = [this](const std::string& id, const std::string& label, int64_t a, int64_t b) {
-            host.talker({id, label, t0_ + a / dig::FmFrontEnd::RATE, t0_ + b / dig::FmFrontEnd::RATE});
-        };
-        br_.ctx.talker_end = [this](int64_t at) { host.talker_end(t0_ + at / dig::FmFrontEnd::RATE); };
+        br_.talkers(dig::FmFrontEnd::RATE);
         facts();
     }
     void process(const kp::cf* x, size_t n) override {
@@ -33,7 +29,7 @@ public:
     void reset() override {
         fe_.reset();
         rx_.reset();
-        t0_ = host.time();
+        br_.restart_clock();
         pos_ = 0;
         facts();
     }
@@ -43,8 +39,7 @@ private:
     Sink sink_;
     dig::Fsk4Receiver rx_;
     dig::FmFrontEnd fe_;
-    double t0_ = 0;       // Host::time() of the receiver's sample 0
-    int64_t pos_ = 0;     // receiver samples since then
+    int64_t pos_ = 0;     // receiver samples since its reset
     void facts() { host.fact("Voice codec", "IMBE (built in)"); }
 };
 

@@ -131,6 +131,54 @@ void NxdnReceiver::reset() {
     call_.clear();
     cipher_ = 0;
     if (ambe_) ambe_->reset();
+    // the host resets its own talker state together with ours
+    call_start_ = -1;
+    talker_id_.clear();
+    talker_label_.clear();
+}
+
+// --- talkers (RxContext::talker) ----------------------------------------------
+// A transmission = valid voice / VCALL frames less than GAP apart; its talker
+// is the VCALL's source unit ID (SACCH superframe or FACCH1). Reported with
+// the frame boundaries, so the host can cut exactly this radio's samples out
+// of the VFO's stream for the DoA.
+void NxdnReceiver::begin_call_if_new() {
+    if (call_start_ >= 0 && frame_a_ - voice_end_ <= GAP) return;
+    end_talker(voice_end_);
+    call_start_ = frame_a_;
+    voice_end_ = frame_a_;
+}
+
+void NxdnReceiver::talker_frame() {
+    begin_call_if_new();
+    voice_end_ = std::max(voice_end_, frame_b_);
+    if (!talker_id_.empty() && ctx_.talker) ctx_.talker(talker_id_, talker_label_, call_start_, voice_end_, 0);
+}
+
+void NxdnReceiver::set_talker(uint32_t src, const std::string& label) {
+    if (src == 0) return;
+    begin_call_if_new();
+    const std::string id = std::to_string(src);
+    if (!talker_id_.empty() && talker_id_ != id) {
+        // another radio without a TX_REL in between: the frames since the old
+        // one was last named can't be told apart - leave them out
+        end_talker(lc_end_);
+        call_start_ = frame_a_;
+        voice_end_ = frame_a_;
+    }
+    talker_id_ = id;
+    talker_label_ = label;
+    lc_end_ = frame_b_;
+}
+
+void NxdnReceiver::end_talker(int64_t at) {
+    if (!talker_id_.empty() && ctx_.talker_end) ctx_.talker_end(at, 0);
+    talker_id_.clear();
+    call_start_ = -1;
+}
+
+void NxdnReceiver::tick(int64_t now) {
+    if (call_start_ >= 0 && now - voice_end_ > GAP) end_talker(voice_end_);
 }
 
 void NxdnReceiver::layer3(const uint8_t* m, int nbits, const char* via) {
@@ -156,9 +204,17 @@ void NxdnReceiver::layer3(const uint8_t* m, int nbits, const char* via) {
             r.set(Mode::NXDN, "Last talkgroup", group ? id_str(dst) : "-");
             r.set(Mode::NXDN, "Last source", id_str(src));
             r.set(Mode::NXDN, "Encryption", cipher ? cn[cipher] : "clear");
+            set_talker(src, (group ? "TG " : "unit call to ") + id_str(dst) + (frame_outbound_ ? " · via repeater" : ""));
+            frame_vcall_ = true;
             break;
         }
         case 0x08: {   // TX_REL
+            // the release frames are still this radio's
+            if (call_start_ >= 0) {
+                voice_end_ = std::max(voice_end_, frame_b_);
+                end_talker(voice_end_);
+            }
+            frame_rel_ = true;
             if (!call_.empty()) r.event(Mode::NXDN, "Call ended: " + call_, 2.0);
             call_.clear();
             cipher_ = 0;
@@ -343,6 +399,12 @@ void NxdnReceiver::decode_frame(const Branch& b, const SymSrc& s) {
     bool valid = locked || facch_ok[0] || facch_ok[1];
     if (!valid) return;
 
+    // this frame's samples (frame symbol 0 is centred FSW_SYMS - 1 symbols before the sync end)
+    frame_a_ = s.sync_end - static_cast<int64_t>((FSW_SYMS - 1) * b.sps + b.sps / 2);
+    frame_b_ = frame_a_ + static_cast<int64_t>(FRAME_SYMS) * b.sps;
+    frame_vcall_ = frame_rel_ = false;
+    frame_outbound_ = outbound;
+
     static const char* ct[4] = {"", "Trunked traffic (RTCH)", "Conventional (RDCH)", "Composite control/traffic (RTCH-C)"};
     r.set(Mode::NXDN, "Channel type", ct[rfct]);
     r.set(Mode::NXDN, "Variant", b.name);
@@ -371,6 +433,9 @@ void NxdnReceiver::decode_frame(const Branch& b, const SymSrc& s) {
         if (facch_ok[h]) layer3(fa[h].data(), 80, "FACCH1");
         else if (!facch_half[h]) voice(bits + 96 + 144 * h, 2);   // RTCH / RDCH / RTCH-C all carry voice
     }
+    // voice in a half (option != 0; not UDCH data) or the call's VCALL: part
+    // of the transmission. Idle frames between calls are not.
+    if (!frame_rel_ && usc != 1 && (option != 0 || frame_vcall_)) talker_frame();
     if (ctx_.valid) ctx_.valid(Mode::NXDN);
     if (ctx_.freq_error) ctx_.freq_error(Mode::NXDN, s.center);
 }
@@ -438,6 +503,7 @@ void NxdnReceiver::process(const float* d, size_t n) {
         decode_frame(br_[it->branch], it->src);
         it = jobs_.erase(it);
     }
+    tick(br_[0].buf.end());
     for (auto& b : br_) {
         int64_t keep = b.buf.end() - 3 * FRAME_SYMS * b.sps;
         for (const auto& j : jobs_) keep = std::min(keep, j.src.sync_end - 20 * b.sps);

@@ -58,8 +58,12 @@ void TalkerDoa::add_span(const dig::TalkerSpan& s) {
     for (auto it = spans_.rbegin(); it != spans_.rend(); ++it)
         if (it->id == s.id && it->plugin == s.plugin && it->start == s.start) { sp = &*it; break; }
     if (!sp) {
-        spans_.push_back({s.plugin, s.id, s.label, s.start, s.end, s.closed, next_seq_++, t});
+        spans_.push_back({s.plugin, s.id, s.label, s.start, s.end, s.closed, s.channel, next_seq_++, t});
         sp = &spans_.back();
+        if (unnamed_talker(s.id)) {
+            prune_locked(t);
+            return;
+        }
         Talker& tk = talkers_[s.id];
         if (tk.info.id.empty()) {
             tk.info.id = s.id;
@@ -72,6 +76,7 @@ void TalkerDoa::add_span(const dig::TalkerSpan& s) {
         sp->updated_ms = t;
         if (!s.label.empty()) sp->label = s.label;
     }
+    if (unnamed_talker(s.id)) return;
     Talker& tk = talkers_[s.id];
     tk.info.plugin = s.plugin;
     if (!s.label.empty()) tk.info.label = s.label;
@@ -125,6 +130,13 @@ void TalkerDoa::update(const MUSICProcessor& mp, std::vector<TalkerFrame>* out) 
                 if (extend) may_extend = true;
             }
             if (ids.size() > 1) continue;                  // two radios in one frame: unusable
+            const bool young = t - f.stamp_ms < static_cast<int64_t>(FRAME_WAIT_S * 1000);
+            if (inside && (unnamed_talker(inside->id) ||
+                           (inside->channel != 0 && t - f.stamp_ms < CHANNEL_HOLD_MS))) {
+                // its radio not named yet / another channel's radio may still be reported over it
+                if (young) keep.push_back(std::move(f));
+                continue;
+            }
             if (inside) {
                 const Span& s = *inside;
                 Talker& tk = talkers_[s.id];
@@ -159,7 +171,6 @@ void TalkerDoa::update(const MUSICProcessor& mp, std::vector<TalkerFrame>* out) 
                 continue;
             }
             // not decided yet: its talker may still be reported, or extended over it
-            const bool young = t - f.stamp_ms < static_cast<int64_t>(FRAME_WAIT_S * 1000);
             if ((ids.empty() && young) || (may_extend && young)) keep.push_back(std::move(f));
         }
         frames_.swap(keep);

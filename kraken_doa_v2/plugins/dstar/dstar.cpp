@@ -105,6 +105,15 @@ std::string callsign(const uint8_t* p, int n) {
     return s;
 }
 
+// "F1ZIL  B" (8-character field, module letter last) -> "F1ZIL B"
+std::string squeezed(const std::string& in) {
+    std::string s;
+    for (char c : in)
+        if (c != ' ' || (!s.empty() && s.back() != ' ')) s += c;
+    while (!s.empty() && s.back() == ' ') s.pop_back();
+    return s;
+}
+
 std::string printable(const std::string& in) {
     std::string s;
     for (char c : in) s += (c >= 32 && c < 127) ? c : ' ';
@@ -132,6 +141,75 @@ void DstarReceiver::reset() {
     msg_text_.clear();
     end_sync_end_ = -1;
     if (ambe_) ambe_->reset();
+    // the host resets its own talker state together with ours
+    call_start_ = last_sync_ = tx_hdr_sync_ = hdr_cand_ = hdr_ok_sync_ = -1;
+    talker_id_.clear();
+}
+
+// --- talkers (RxContext::talker) ----------------------------------------------
+// A transmission = data syncs in the 420 ms superframe cadence, from the RF
+// header right before the first one (or that first sync on a late entry) to
+// the end pattern; its talker = the MY callsign of the header (RF, or the
+// copy in the slow data). Sync events come in sample order from correlate();
+// the header's CRC is checked later (its job needs the 660 header bits), so
+// the talker may be named after the transmission began.
+void DstarReceiver::tx_sync(int64_t se) {
+    const int64_t sf = static_cast<int64_t>(SUPERFRAME_BITS) * SPS;
+    if (call_start_ >= 0) {
+        const int64_t dt = se - last_sync_;
+        if (dt > 0 && dt <= 2 * sf + 3 * SPS) {
+            const int64_t rem = dt % sf;
+            if (rem < 3 * SPS || sf - rem < 3 * SPS) {   // in the cadence: everything up to it is confirmed
+                voice_end_ = se;
+                last_sync_ = se;
+                tx_report();
+            }
+            return;   // else a false sync inside the transmission
+        }
+        tx_end(voice_end_);
+    }
+    // a new transmission. The header + voice frame 0 come before the first
+    // data sync (756 bits from the header's frame sync to it): that exact
+    // spacing confirms them.
+    last_sync_ = se;
+    if (hdr_cand_ >= 0 && std::llabs(se - hdr_cand_ - 756 * SPS) < 3 * SPS) {
+        tx_hdr_sync_ = hdr_cand_;
+        call_start_ = hdr_cand_ - 24 * SPS;
+        voice_end_ = se;
+        if (hdr_ok_sync_ == tx_hdr_sync_) tx_talker(hdr_id_, hdr_label_);
+    } else {
+        tx_hdr_sync_ = -1;
+        call_start_ = voice_end_ = se;   // late entry: from this sync on
+    }
+}
+
+void DstarReceiver::tx_end_pattern(int64_t se) {
+    if (call_start_ < 0) return;
+    // the voice frames up to the end pattern (32 bits ending at se) are the
+    // transmission's last
+    const int64_t end = se - 32 * SPS;
+    if (end > voice_end_ && end - last_sync_ <= static_cast<int64_t>(SUPERFRAME_BITS) * SPS + 3 * SPS) {
+        voice_end_ = end;
+        tx_report();
+    }
+    tx_end(voice_end_);
+}
+
+void DstarReceiver::tx_talker(const std::string& id, const std::string& label) {
+    if (id.empty() || call_start_ < 0) return;
+    talker_id_ = id;
+    talker_label_ = label;
+    tx_report();
+}
+
+void DstarReceiver::tx_report() {
+    if (!talker_id_.empty() && ctx_.talker) ctx_.talker(talker_id_, talker_label_, call_start_, voice_end_, 0);
+}
+
+void DstarReceiver::tx_end(int64_t at) {
+    if (!talker_id_.empty() && ctx_.talker_end) ctx_.talker_end(at, 0);
+    talker_id_.clear();
+    call_start_ = -1;
 }
 
 void DstarReceiver::correlate() {
@@ -177,10 +255,13 @@ void DstarReceiver::correlate() {
         src.scale = 0.5f * (hi - lo);   // negative = inverted signal
         if (std::fabs(src.scale) < 100.0f) return;
         if (pk_.which == 0) {
+            hdr_cand_ = pk_.idx;
             jobs_.push_back({0, src, 660 + 1});
         } else if (pk_.which == 1) {
+            tx_sync(pk_.idx);
             jobs_.push_back({1, src, 20 * 96});
         } else {
+            tx_end_pattern(pk_.idx);
             end_sync_end_ = pk_.idx;
             if (ctx_.voice_state) ctx_.voice_state("");
             if (!header_desc_.empty() || frame_sync_end_ >= 0) {
@@ -220,7 +301,7 @@ void DstarReceiver::gps_point(const std::string& line) {
     ctx_.report->map(Mode::DSTAR, p);
 }
 
-void DstarReceiver::decode_header_bytes(const uint8_t* h, bool from_slow_data) {
+void DstarReceiver::decode_header_bytes(const uint8_t* h, bool from_slow_data, int64_t hdr_sync) {
     uint16_t crc = crc16_x25(h, 39);
     if (crc != (h[39] | (h[40] << 8))) return;
     std::string my = callsign(h + 27, 8), sfx = callsign(h + 35, 4);
@@ -241,6 +322,20 @@ void DstarReceiver::decode_header_bytes(const uint8_t* h, bool from_slow_data) {
     if (h[0] & 0x08) flags += "urgent ";
     if (!flags.empty()) { flags.pop_back(); r.set(Mode::DSTAR, "Flags", flags); }
     r.set(Mode::DSTAR, "Current call", d);
+    // the talker: MY callsign (the suffix is the radio model / a note)
+    if (!my.empty() && my.find('?') == std::string::npos) {
+        const std::string id = squeezed(my);
+        std::string label = (sfx.empty() ? "" : "/" + sfx + " ") + "to " + squeezed(ur);
+        if (!r1.empty() || !r2.empty()) label += " via " + squeezed(r1.empty() ? r2 : r1);
+        if (!from_slow_data) {
+            hdr_ok_sync_ = hdr_sync;
+            hdr_id_ = id;
+            hdr_label_ = label;
+            if (call_start_ >= 0 && tx_hdr_sync_ == hdr_sync) tx_talker(id, label);
+        } else if (call_start_ >= 0 && talker_id_.empty()) {
+            tx_talker(id, label);   // late entry: the header copy in the slow data
+        }
+    }
     if (d != header_desc_) {
         header_desc_ = d;
         r.event(Mode::DSTAR, std::string(from_slow_data ? "Header (slow data): " : "Header: ") + d, 5.0);
@@ -276,7 +371,7 @@ void DstarReceiver::decode_header(const SymSrc& s) {
     uint8_t h[41] = {0};
     for (int i = 0; i < 328; i++)
         if (d[i]) h[i / 8] |= static_cast<uint8_t>(1 << (i % 8));
-    decode_header_bytes(h, false);
+    decode_header_bytes(h, false, s.sync_end);
     if (ctx_.freq_error) ctx_.freq_error(Mode::DSTAR, s.center);
 }
 
@@ -411,6 +506,9 @@ void DstarReceiver::process(const float* d, size_t n) {
         }
         it = jobs_.erase(it);
     }
+    // data syncs stopped (two missed in a row) without an end pattern: over
+    if (call_start_ >= 0 && b_.end() - last_sync_ > 2 * static_cast<int64_t>(SUPERFRAME_BITS) * SPS + 10 * SPS)
+        tx_end(voice_end_);
     int64_t keep = b_.end() - 30000;
     for (const auto& j : jobs_) keep = std::min(keep, j.src.sync_end - 2000);
     if (keep > b_.begin() + 4096) b_.trim_before(keep);

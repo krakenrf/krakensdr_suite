@@ -25,6 +25,12 @@
 // first LDU1, decoded ~0.5 s after the call header, plus the decoder's queue
 // and pipe), so frames wait up to FRAME_WAIT_S for a span to claim them.
 //
+// Several talker channels (DMR's two timeslots): a radio on one slot may be
+// reported after a frame of the other slot's radio was already inside its
+// span, so frames of channels other than 0 are committed only CHANNEL_HOLD_MS
+// after MUSIC computed them. A span with the id "?" (a slot in use, its radio
+// not named yet) holds no talker: frames touching it go to no one.
+//
 // Threads: add_frame on the decimation pipeline (under the MUSIC processor's
 // lock), add_span on the decoder's worker, update / snapshot on the rdf
 // sampler thread. update() never calls into the MUSIC processor while holding
@@ -53,6 +59,8 @@ constexpr int64_t ACTIVE_MS = 3000;               // an open span reported withi
 constexpr int64_t TALKER_TTL_MS = 30 * 60 * 1000; // a talker not heard for this long is forgotten
 constexpr size_t MAX_TALKERS = 100;
 constexpr size_t MAX_HIST = 20;                   // earlier transmissions kept per talker
+constexpr int64_t CHANNEL_HOLD_MS = 1500;         // channels != 0: a frame is committed this long after it was computed
+inline bool unnamed_talker(const std::string& id) { return id == "?"; }
 
 // One frame matched to a talker, MUSIC re-run on it alone (a mobile DF record)
 struct TalkerFrame {
@@ -115,6 +123,7 @@ private:
         std::string plugin, id, label;
         uint64_t start, end;
         bool closed;
+        int channel;
         uint64_t seq;              // transmission number (unique)
         int64_t updated_ms;
     };

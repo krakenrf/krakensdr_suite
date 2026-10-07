@@ -147,8 +147,9 @@ struct Runner {
     struct PosSeg { uint64_t p0, n; double v0, step; };
     std::deque<PosSeg> pos_map;
     uint64_t written = 0;              // samples this process was sent
-    std::string talker_id, talker_label;   // the open talker ("" = none)
-    uint64_t talker_start = 0, talker_end = 0;
+    // the open talker of each talker channel (kp::Talker::channel, DMR timeslot)
+    struct OpenTalker { std::string id, label; uint64_t start = 0, end = 0; };
+    std::map<int, OpenTalker> talkers;
     // Host::time() seconds -> VFO stream position (false: not mappable)
     bool vfo_pos(double t, double rate, uint64_t* out) const {
         if (pos_map.empty() || !is_finite_value(t) || t < 0) return false;
@@ -752,11 +753,14 @@ private:
                 on_talker(r, p, len);
                 break;
             case W_TALKER_END: {
-                if (r.talker_id.empty()) break;
+                auto f = split0(p, std::min<size_t>(len, 64), 2);
+                if (f.empty()) break;
+                auto it = r.talkers.find(f.size() > 1 ? talker_channel(f[1]) : 0);
+                if (it == r.talkers.end()) break;
                 uint64_t at;
-                if (r.vfo_pos(strtod(std::string(p, std::min<size_t>(len, 32)).c_str(), nullptr), r.info.sample_rate, &at))
-                    r.talker_end = std::max(r.talker_start, at);
-                close_talker(r);
+                if (r.vfo_pos(strtod(f[0].c_str(), nullptr), r.info.sample_rate, &at))
+                    it->second.end = std::max(it->second.start, at);
+                close_talker(r, it);
                 break;
             }
             case W_MESSAGE: {
@@ -815,47 +819,54 @@ private:
         report_.map_set(std::move(m));
     }
 
-    // --- talkers (kp::wire::TALKER: id, label, start_s, end_s) -------------------
+    // --- talkers (kp::wire::TALKER: id, label, start_s, end_s [, channel]) -------
+    using OpenTalker = Runner::OpenTalker;
+    static int talker_channel(const std::string& v) {
+        return static_cast<int>(std::clamp(strtol(v.c_str(), nullptr, 10), 0L, 7L));
+    }
     void on_talker(Runner& r, const char* p, size_t len) {
-        auto f = split0(p, len, 4);
+        auto f = split0(p, len, 5);
         if (f.size() < 4 || f[0].empty()) return;
         const std::string id = f[0].substr(0, 32);
+        const int ch = f.size() > 4 ? talker_channel(f[4]) : 0;
+        auto it = r.talkers.find(ch);
         uint64_t a, b;
         if (!r.vfo_pos(strtod(f[3].c_str(), nullptr), r.info.sample_rate, &b)) return;
         if (!r.vfo_pos(strtod(f[2].c_str(), nullptr), r.info.sample_rate, &a)) {
             // began before the oldest mapped sample (a transmission > POS_MAP_SECONDS)
-            if (r.talker_id == id) a = r.talker_start;
+            if (it != r.talkers.end() && it->second.id == id) a = it->second.start;
             else a = static_cast<uint64_t>(std::max(0.0, r.pos_map.front().v0));
         }
-        if (!r.talker_id.empty() && r.talker_id != id) {
-            // another radio: the previous one ended where this one starts
-            r.talker_end = std::clamp(a, r.talker_start, r.talker_end);
-            close_talker(r);
+        if (it != r.talkers.end() && it->second.id != id) {
+            // another radio on this channel: the previous one ended where this one starts
+            it->second.end = std::clamp(a, it->second.start, it->second.end);
+            close_talker(r, it);
+            it = r.talkers.end();
         }
-        if (r.talker_id.empty()) {
-            r.talker_id = id;
-            r.talker_start = a;
-            r.talker_end = a;
-        }
-        r.talker_label = f[1].substr(0, 64);
-        r.talker_end = std::max(r.talker_end, b);
-        send_talker(r, false);
+        if (it == r.talkers.end()) it = r.talkers.emplace(ch, Runner::OpenTalker{id, "", a, a}).first;
+        OpenTalker& t = it->second;
+        t.label = f[1].substr(0, 64);
+        t.end = std::max(t.end, b);
+        send_talker(r, ch, t, false);
     }
-    void send_talker(const Runner& r, bool closed) {
+    void send_talker(const Runner& r, int ch, const OpenTalker& t, bool closed) {
         TalkerSpan s;
+        s.channel = ch;
         s.plugin = r.id;
-        s.id = r.talker_id;
-        s.label = r.talker_label;
-        s.start = r.talker_start;
-        s.end = r.talker_end;
+        s.id = t.id;
+        s.label = t.label;
+        s.start = t.start;
+        s.end = t.end;
         s.closed = closed;
         s.rate = in_rate_;
         owner_->deliver_talker(s);
     }
-    void close_talker(Runner& r) {
-        if (r.talker_id.empty()) return;
-        send_talker(r, true);
-        r.talker_id.clear();
+    void close_talker(Runner& r, std::map<int, OpenTalker>::iterator it) {
+        send_talker(r, it->first, it->second, true);
+        r.talkers.erase(it);
+    }
+    void close_talker(Runner& r) {   // all of the plugin's
+        while (!r.talkers.empty()) close_talker(r, r.talkers.begin());
     }
 
     // --- detection / AFC ----------------------------------------------------

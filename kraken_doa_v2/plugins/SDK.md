@@ -141,7 +141,7 @@ VFO bandwidth the signal needs; the panel warns when the VFO is narrower.
 | `host.table_remove(key)` | removes a table row |
 | `host.message(from, text)` | a free-text message the decoder received (a pager text): kraken_doa looks for a street address in it and shows it as an incident (set `.messages = true`) |
 | `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the user ticked "Raw frames") |
-| `host.talker(t)` / `host.talker_end(at_s)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`): the DoA is split per radio (set `.talkers = true`, below) |
+| `host.talker(t)` / `host.talker_end(at_s, channel)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`, channel): the DoA is split per radio (set `.talkers = true`, below) |
 
 **Voice.** Set `.voice = true` if the decoder sends audio (`host.audio`):
 only then does its panel tab offer the Listen button.
@@ -225,8 +225,19 @@ decoded, which comes a frame or more later. Only the samples between
 `start_s` and the latest `end_s` are used, with a 40 ms guard at both ends,
 so an early or late boundary costs a frame, while a wrong one mixes radios.
 The p25 plugin is the reference (`p25/p25.cpp`: `voice_frame`,
-`set_talker`, `tick`). The offline test prints the transmissions it would
-cut ("talkers:" in the summary).
+`set_talker`, `tick`); nxdn, dstar and dmr do the same. Plugins built on
+`plugins/lib` get the time conversion from `dig::Bridge::talkers(rate)` +
+`restart_clock()` (call it in `reset()`). The offline test prints the
+transmissions it would cut ("talkers:" in the summary).
+
+Several transmissions at once on one frequency (DMR's two timeslots): give
+each its own `t.channel` (0..7) and end it with `host.talker_end(at_s,
+channel)`; a new id ends only its own channel's talker. Frames holding two
+channels' radios go to neither. On such a channel, report a transmission
+whose radio isn't known yet with `t.id = "?"` (the dmr plugin does until
+the LC names it): its samples then stay out of the other channel's talker,
+and the real id later takes over from the same start. A protocol with one
+transmission at a time needs neither.
 
 **Tables.** A decoder that tracks many things at once (aircraft, stations,
 radios) can show them as a table above its facts: `table_columns()` once
