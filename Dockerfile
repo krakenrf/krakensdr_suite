@@ -17,8 +17,8 @@ FROM debian:${DEBIAN_RELEASE}-slim AS build
 # Never more than 3: -j4 on a Pi takes every core and the Eigen-heavy
 # files need ~1 GB each (see kraken_doa_v2/CLAUDE.md)
 ARG JOBS=3
-# Pinned so a rebuild compiles what was tested (the Makefiles would clone
-# uWebSockets master; its submodule pins uSockets)
+# Pinned so a rebuild compiles what was tested - the same commit the
+# Makefiles pin (UWS_COMMIT; keep them equal). Its submodule pins uSockets
 ARG UWS_REPO=https://github.com/uNetworking/uWebSockets
 ARG UWS_COMMIT=fe7da4cb05622b8d004718ec3ca05101782eb1c2
 ARG LIBRTLSDR_REPO=https://github.com/krakenrf/librtlsdr

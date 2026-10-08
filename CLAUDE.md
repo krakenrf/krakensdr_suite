@@ -895,7 +895,8 @@ tree at the repo root):
 - `build-essential`, `git`, `pkg-config`: Build tools
 
 **Vendored Dependencies**:
-- `uWebSockets/`: HTTP/WebSocket server (auto-installed by Makefile)
+- `uWebSockets/`: HTTP/WebSocket server (auto-installed by Makefile, pinned -
+  see below)
 
 ### DoA Client
 
@@ -908,6 +909,19 @@ tree at the repo root):
 
 **Vendored Dependencies**:
 - `uWebSockets/`: WebSocket server (auto-installed by Makefile)
+
+**uWebSockets is PINNED** (`UWS_COMMIT` in both Makefiles = `UWS_COMMIT` in
+the Dockerfile, fe7da4cb, 2026-07-31; keep all three equal): uWebSockets
+master since ~Oct 2026 adds `src/HttpCache.h`, which `App.h` includes and
+which defines `uWS::time_ms()` in the header without `inline` - every
+object including App.h gets a copy and the link fails with "multiple
+definition of `uWS::time_ms()'" (seen on a fresh install). `check-uws`
+clones that commit (only the uSockets submodule - `--recursive` pulled
+hundreds of MB of fuzz corpora), and a Makefile-parse-time check switches
+an existing checkout on any other commit back to it, rebuilds uSockets and
+drops the objects built against the other headers (kraken: obj/ dep/;
+heimdall: build/<module>/), so re-running install.sh repairs such a
+machine. Override for testing: `make UWS_COMMIT=<sha>`
 
 ## Testing
 

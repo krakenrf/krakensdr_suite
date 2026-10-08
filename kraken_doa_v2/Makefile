@@ -27,6 +27,28 @@ endif
 
 # Check if uWebSockets exists locally
 UWS_EXISTS := $(shell test -d uWebSockets && echo yes || echo no)
+# uWebSockets is pinned to the commit both apps are tested with (the
+# Dockerfile pins the same one). Newer master adds HttpCache.h, which defines
+# uWS::time_ms() in a header without `inline` - every object that includes
+# App.h gets a copy and the link fails ("multiple definition of
+# uWS::time_ms()"). An existing checkout on another commit (cloned from
+# master before this pin) is switched here, before any rule runs, and the
+# objects built against its headers are dropped. Override: make UWS_COMMIT=...
+UWS_REPO ?= https://github.com/uNetworking/uWebSockets
+UWS_COMMIT ?= fe7da4cb05622b8d004718ec3ca05101782eb1c2
+UWS_HEAD := $(shell git -C uWebSockets rev-parse HEAD 2>/dev/null)
+ifneq ($(UWS_HEAD),)
+ifneq ($(UWS_HEAD),$(UWS_COMMIT))
+$(info uWebSockets is at $(UWS_HEAD) - switching to the tested $(UWS_COMMIT))
+UWS_SWITCH := $(shell (git -C uWebSockets checkout -q $(UWS_COMMIT) 2>/dev/null || \
+    (git -C uWebSockets fetch -q origin $(UWS_COMMIT) && git -C uWebSockets checkout -q $(UWS_COMMIT))) && \
+    git -C uWebSockets submodule update -q --init uSockets && \
+    rm -f uWebSockets/uSockets/*.o && rm -rf obj dep && echo ok)
+ifneq ($(UWS_SWITCH),ok)
+$(error could not switch uWebSockets to $(UWS_COMMIT) - delete the uWebSockets folder and run make again)
+endif
+endif
+endif
 
 # Directories
 SRCDIR = src
@@ -112,14 +134,18 @@ plugins:
 
 # Check and install uWebSockets locally
 check-uws:
-ifeq ($(UWS_EXISTS),no)
-	@echo "Installing uWebSockets locally..."
-	git clone --recursive https://github.com/uNetworking/uWebSockets
-	cd uWebSockets/uSockets && WITH_OPENSSL=1 make
-	@echo "uWebSockets installed in local directory!"
-else
-	@echo "uWebSockets found locally"
-endif
+	@if [ ! -d uWebSockets ]; then \
+		echo "Installing uWebSockets $(UWS_COMMIT) locally..."; \
+		git clone $(UWS_REPO) uWebSockets && \
+		git -C uWebSockets checkout -q $(UWS_COMMIT) && \
+		git -C uWebSockets submodule update -q --init uSockets || exit 1; \
+	fi
+	@if ! ls uWebSockets/uSockets/*.o >/dev/null 2>&1; then \
+		echo "Building uSockets..."; \
+		$(MAKE) -C uWebSockets/uSockets WITH_OPENSSL=1 || exit 1; \
+	else \
+		echo "uWebSockets found locally"; \
+	fi
 
 # Create directories
 $(OBJDIRS) $(DEPDIRS):

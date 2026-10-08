@@ -28,8 +28,12 @@ make distclean    # Remove everything including uWebSockets
 
 ### CMake Alternative
 ```bash
-# First install uWebSockets
-git clone --recursive https://github.com/uNetworking/uWebSockets
+# First install uWebSockets (`make check-uws` does exactly this): the PINNED
+# commit (UWS_COMMIT in the Makefile) - newer master defines uWS::time_ms() in
+# HttpCache.h without `inline`, which breaks the link
+git clone https://github.com/uNetworking/uWebSockets
+git -C uWebSockets checkout fe7da4cb05622b8d004718ec3ca05101782eb1c2
+git -C uWebSockets submodule update --init uSockets
 cd uWebSockets/uSockets && WITH_SSL=0 make && cd ../..
 
 # The librtlsdr fork's static library must exist first (../install.sh builds
