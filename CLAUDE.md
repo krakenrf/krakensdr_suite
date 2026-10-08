@@ -376,9 +376,11 @@ decoders `kraken_doa_v2/plugins/`
   p25, dmr, tetra (downlink), dstar, nxdn (48 and 96), mpt1327 (analogue
   trunking signalling), pocsag, aprs, adsb (1090 MHz; manual only -
   picking it tunes the VFO + tuner to 1090 MHz at 2.4 MHz and draws the VFO
-  as a locked line, `kp::Info::fixed_freq_hz`) and ais (ships, both channels
+  as a locked line, `kp::Info::fixed_freq_hz`), ais (ships, both channels
   161.975 / 162.025 MHz in one 100 kHz VFO on 162.000 MHz; manual only,
-  fixed frequency like adsb). Each decimator (VFO) runs one
+  fixed frequency like adsb) and radiosonde (weather balloons, 400-406 MHz:
+  RS41, DFM, M10 / M20, iMet-4 / -54, LMS6, MRZ side by side in one plugin;
+  weather facts, a sounding in the event log, balloon map points). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
   `AUTO_DETECT_OFF:` - at once, minus `manual_only` plugins and those
@@ -442,7 +444,7 @@ decoders `kraken_doa_v2/plugins/`
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab), adsb, ais
+  Signal Lab), adsb, ais, radiosonde
 - Same executable tests offline: `decoder --file x.cf32 [--offset HZ]`
 - The shipped protocol plugins are thin wrappers around `plugins/lib/`
   (libkrakendig.a: FEC, 4FSK sync, vocoders, front ends) - kraken_doa itself
@@ -474,6 +476,21 @@ decoders `kraken_doa_v2/plugins/`
   `DIGITAL_OPT:id:map:0|1`, saved with the VFO), plus the station and range
   rings. kraken_doa pushes `{"map":...}` once a second (changed points + the
   keys of all live ones); `GET_MAP` asks for everything
+- 📍 User markers: right-click (touch: long press) the map -> "📍 Add
+  Marker"; each has a name, notes and frequencies, shown in a panel at the
+  map's bottom right - clicking a frequency tunes the SELECTED VFO there
+  (moves it inside the band shown, else retunes the receiver / the VFO's own
+  tuner in independent mode). Kept on the backend for every browser:
+  `kraken_doa_v2/src/map_markers.cpp`, `map_markers.json` (cwd-relative,
+  gitignored - positions near the station); `MARKER_SET:{json}` /
+  `MARKER_DEL:id` / `GET_MARKERS` -> `{"markers":{"list":[...]}}` to all pages
+- 📡 Masts layer ("Masts" button, per browser): radio masts / towers /
+  antennas from OpenStreetMap, fetched BY THE BROWSER from the Overpass API
+  (overpass-api.de - not through kraken_doa): the 300 km region around the
+  station in ONE query (Overpass rations queries per connection), other
+  areas at zoom >= 11; kept a week in localStorage, drawn at any zoom;
+  coloured by use (communication:* tags), click = all their tags, "📍 Add as
+  marker". UI-only (kraken_doa.html "📡 OSM MASTS")
 - Incident map: text messages from plugins (`kp::Host::message`, POCSAG
   pages) -> street address found in the text -> looked up ONLINE in
   OpenStreetMap Nominatim (no downloaded map data) within `GEO_RADIUS_KM`

@@ -25,6 +25,8 @@ plugins/
 ├── p25/ dmr/ tetra/ dstar/ nxdn/ mpt1327/   the shipped protocol decoders
 ├── pocsag/ aprs/         more shipped decoders (APRS was written by the AI lab)
 ├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points
+├── radiosonde/           weather balloon sondes (RS41, DFM, M10/M20, iMet-4/-54, LMS6, MRZ):
+│                         several protocols side by side, Reed-Solomon, Viterbi, balloon map points
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
@@ -176,7 +178,7 @@ kp::MapPoint p;
 p.id = "4CA2B1";            // stable key: the same id again moves the marker
 p.lat = 53.42; p.lon = -6.27;
 p.label = "RYR12AB";        // text next to the marker ("" = the id)
-p.kind = "aircraft";        // aircraft | vehicle | ship | person | station | point
+p.kind = "aircraft";        // aircraft | vehicle | ship | person | station | balloon | point
 p.heading = 123;            // degrees true (rotates the marker); NAN = unknown
 p.altitude_m = 11278;       // NAN = unknown (shown next to aircraft in ft)
 p.speed_kmh = 830;          // NAN = unknown

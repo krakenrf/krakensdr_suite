@@ -21,6 +21,7 @@
 #include "doa_logger.hpp"
 #include "ai_manager.hpp"
 #include "incidents.hpp"
+#include "map_markers.hpp"
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
 #include "digital/dig_plugin.hpp"
@@ -293,6 +294,9 @@ int main(int argc, char* argv[]) {
     // Incident map: addresses in decoder text messages (POCSAG), looked up
     // online (OpenStreetMap Nominatim) -> 🗺 Map
     incidents::start();
+
+    // 🗺 Map markers the user placed (map_markers.json)
+    markers::load();
 
     // Decoder data log (off until enabled in the sidebar; settings replay)
     declog::start();

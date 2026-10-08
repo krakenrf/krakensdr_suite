@@ -44,6 +44,9 @@ ai/__pycache__/
 # incident map (incidents.cpp): incidents found in decoder messages, kept 24 h
 incidents.tsv
 incidents.tsv.tmp
+# 🗺 map markers the user placed (map_markers.cpp) - positions near the station
+map_markers.json
+map_markers.json.tmp
 # decoder data log (sidebar 🗂 Decoder Logging), default folder
 decoder_logs/
 # mobile DF heat map session (rdf_mapper.cpp)

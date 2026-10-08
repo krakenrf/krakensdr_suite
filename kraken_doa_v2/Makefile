@@ -101,6 +101,7 @@ APP_SRCS = \
 	$(SRCDIR)/geo_address.cpp \
 	$(SRCDIR)/geo_http.cpp \
 	$(SRCDIR)/incidents.cpp \
+	$(SRCDIR)/map_markers.cpp \
 	$(SRCDIR)/decoder_log.cpp \
 	$(SRCDIR)/rdf_engine.cpp \
 	$(SRCDIR)/rdf_mapper.cpp \

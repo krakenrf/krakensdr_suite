@@ -14,6 +14,7 @@
 #include "doa_logger.hpp"
 #include "message_builders.hpp"
 #include "incidents.hpp"
+#include "map_markers.hpp"
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
 #include "networking/data_receiver.hpp"
@@ -273,6 +274,7 @@ static bool is_query_command(string_view msg) {
            msg.starts_with("LOG_DELETE:") ||   // delete acks via its own list broadcast
            msg.starts_with("AI_") ||           // AI Signal Lab: results come as ai_event / ai_state
            msg.starts_with("PLUGIN") ||        // plugins: own broadcasts
+           msg.starts_with("MARKER_") ||       // 🗺 map markers: {"markers":...} broadcasts
            // operating mode / independent tuners: {"operating_mode":...} broadcasts
            msg.starts_with("OPERATING_MODE:") || msg.starts_with("WIDEBAND_MODE:") ||
            msg.starts_with("TUNER_") || msg.starts_with("TUNERS:");
@@ -1926,6 +1928,21 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("GET_MAP")) {
         // A page opened the 🗺 Map: the next map push carries every point
         MessageBuilders::request_map_full();
+    }
+    // 🗺 Map markers the user placed (map_markers.cpp): every change goes to
+    // every browser as the whole list
+    else if (message.starts_with("MARKER_SET:")) {
+        string id, err;
+        const bool ok = markers::set(string(message.substr(11)), &id, &err);
+        broadcast(markers::message_json(ok ? "" : err, id));
+        if (!ok) throw CommandRejected(err);
+    }
+    else if (message.starts_with("MARKER_DEL:")) {
+        markers::remove(string(message.substr(11)));
+        broadcast(markers::message_json());
+    }
+    else if (message == "GET_MARKERS") {
+        broadcast(markers::message_json());   // a page connecting
     }
     else if (message.starts_with("DIGITAL_CLEAR:")) {
         int id = parse_int(message, 14);

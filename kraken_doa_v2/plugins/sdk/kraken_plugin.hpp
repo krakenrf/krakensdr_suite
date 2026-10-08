@@ -60,7 +60,7 @@ struct MapPoint {
     std::string id;                 // stable key within this decoder (ICAO address, callsign...), <= 32 chars
     double lat = NAN, lon = NAN;    // degrees, WGS84
     std::string label;              // short text next to the marker ("" = the id)
-    std::string kind = "point";     // marker: "aircraft", "vehicle", "ship", "person", "station" or "point"
+    std::string kind = "point";     // marker: "aircraft", "vehicle", "ship", "person", "station", "balloon" or "point"
     float heading = NAN;            // degrees true (rotates the marker), NAN = unknown
     float altitude_m = NAN;         // NAN = unknown
     float speed_kmh = NAN;          // NAN = unknown

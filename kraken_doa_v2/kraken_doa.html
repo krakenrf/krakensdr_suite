@@ -443,6 +443,46 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-pop table {border-collapse:collapse;width:100%}
 .map-pop td {padding:1px 0;vertical-align:top}
 .map-pop td:first-child {color:#7f9cc0;padding-right:8px;white-space:nowrap}
+.map-pop {max-height:calc(100% - 60px);overflow-y:auto;box-sizing:border-box}
+.map-pop td {overflow-wrap:anywhere}
+.map-pop tr.raw td {font-size:11px;color:#9fb3cc}
+.map-pop tr.sep td {border-top:1px solid #2a4a7a;padding-top:3px}
+.map-pop .lnk {margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.map-pop a {color:#4fc3f7}
+/* 📡 OpenStreetMap masts layer: what the colours mean */
+.map-legend {position:absolute;left:6px;top:38px;z-index:2;pointer-events:none;background:rgba(16,24,44,.85);border-radius:3px;padding:2px 7px;font-size:10px;color:#cfe3ff;display:flex;gap:4px 9px;flex-wrap:wrap;max-width:calc(100% - 60px)}
+.map-legend i {display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:3px;border:1px solid rgba(0,0,0,.7);vertical-align:-1px}
+#map-canvas {-webkit-touch-callout:none}
+/* right-click (long-press) menu on the map + the user's markers (📍 MAP MARKERS) */
+.map-menu {position:absolute;z-index:6;min-width:160px;max-width:260px;background:rgba(16,24,44,.97);border:1px solid #4fc3f7;border-radius:4px;padding:3px 0;box-shadow:0 2px 10px rgba(0,0,0,.5);font-size:12px}
+.map-menu button {display:block;width:100%;text-align:left;background:none;border:0;color:#dbe8ff;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.map-menu button:hover {background:#1a4a7a}
+.map-menu .ll {color:#7f9cc0;font-size:10px;padding:4px 12px 2px;border-top:1px solid #2a4a7a;margin-top:3px;font-variant-numeric:tabular-nums}
+.map-mk {position:absolute;right:6px;bottom:20px;z-index:4;width:270px;max-width:calc(100% - 12px);max-height:calc(100% - 140px);min-height:60px;overflow-y:auto;background:rgba(16,24,44,.96);border:1px solid #e91e63;border-radius:4px;color:#dbe8ff;font-size:12px;padding:6px 8px;box-shadow:0 2px 10px rgba(0,0,0,.5);box-sizing:border-box}
+.map-mk .h {font-weight:bold;color:#fff;display:flex;gap:6px;align-items:baseline;margin-bottom:2px}
+.map-mk .h .n {overflow-wrap:anywhere}
+.map-mk .h .x {margin-left:auto;cursor:pointer;color:#8aa;font-weight:normal}
+.map-mk .s {color:#8aa8c7;font-size:11px;margin-bottom:5px;font-variant-numeric:tabular-nums}
+.map-mk .fq {display:flex;flex-direction:column;gap:3px;margin-bottom:5px}
+.map-mk .fq button {display:flex;gap:6px;align-items:baseline;text-align:left;background:#16213e;border:1px solid #2a4a7a;border-radius:3px;color:#cfe3ff;padding:4px 7px;font-size:12px;cursor:pointer}
+.map-mk .fq button:hover {background:#1a4a7a;border-color:#4fc3f7}
+.map-mk .fq b {color:#7cf0a0;font-variant-numeric:tabular-nums;white-space:nowrap}
+.map-mk .fq span {color:#b8cbe6;overflow-wrap:anywhere}
+.map-mk .none {color:#8296b4;font-style:italic;margin-bottom:5px}
+.map-mk .notes {white-space:pre-wrap;overflow-wrap:anywhere;background:#101a2e;border-radius:3px;padding:4px 6px;margin-bottom:5px;color:#dbe8ff}
+.map-mk .b {display:flex;gap:4px;flex-wrap:wrap}
+.map-mk .lbl {color:#7f9cc0;font-size:11px;margin:6px 0 2px}
+.map-mk input, .map-mk textarea {background:#1a1a2e;border:1px solid #2a4a7a;color:#e0e0e0;border-radius:3px;font-size:12px;padding:3px 5px;box-sizing:border-box;min-width:0}
+.map-mk textarea {width:100%;resize:vertical;font-family:inherit}
+.map-mk .row {display:flex;gap:4px;align-items:center}
+.map-mk .row input {flex:1}
+.map-mk .mk-fr {display:flex;gap:4px;margin-bottom:3px}
+.map-mk .mk-fr .mhz {width:88px;flex:none;font-variant-numeric:tabular-nums}
+.map-mk .mk-fr .lab {flex:1}
+.map-mk .err {color:#ff8a80;font-size:11px;margin-top:4px}
+.map-mk .err:empty {display:none}
+/* the 📡 DF panel (bottom left) makes room for an open marker panel */
+.map-pane.mk-open .map-df {max-width:max(170px, calc(100% - 292px))}
 
 /* Individual DoA display */
 .doa-display {background:#16213e;border:1px solid #0f3460;border-radius:4px;padding:8px 6px}
@@ -1559,7 +1599,9 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <div class="map-ctl map-ctl-tl">
             <div class="map-seg" id="map-layers"></div>
             <button type="button" class="map-btn" id="map-trails" onclick="mapSet('trails', !mapState.trails)" title="Show the tracks the markers left">Trails</button>
+            <button type="button" class="map-btn" id="map-masts" onclick="mapSet('masts', !mapState.masts)" title="Radio masts, towers and antennas mapped in OpenStreetMap, loaded online for the area shown (zoom in to see them). The colour says what OpenStreetMap lists them for; click one for everything it knows about it">Masts</button>
           </div>
+          <div class="map-legend" id="map-legend" style="display:none"></div>
           <div class="map-ctl map-ctl-tr">
             <button type="button" class="map-btn" onclick="mapZoomBy(1)" title="Zoom in (mouse wheel / double-click)">+</button>
             <button type="button" class="map-btn" onclick="mapZoomBy(-1)" title="Zoom out">−</button>
@@ -1591,6 +1633,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <div class="map-offline" id="map-offline" style="display:none">Map tiles can't be loaded (no internet connection?) - positions are still shown on a plain grid.</div>
           <div class="map-attr" id="map-attr"></div>
           <div class="map-pop" id="map-pop" style="display:none"></div>
+          <div class="map-mk" id="map-mk" style="display:none"></div>
+          <div class="map-menu" id="map-menu" style="display:none"></div>
         </div>
       </div>
     </div>
@@ -1626,9 +1670,12 @@ let paneDrag = null;         // {p, id, grab, pointerId} while dragging a VFO ba
 
 // 🗺 Map state (see 🗺 MAP below). Up here: rpApply runs from applyOpModeUI,
 // which can run before the map section has been evaluated.
-const MAP_MIN_Z = 2, MAP_MAX_Z = 19, MAP_TILE_CACHE = 400, MAP_TRAIL_MAX = 400, MAP_TRAIL_S = 900;
+// MAP_MAX_Z: past a layer's deepest tiles (its max, 19) those are scaled up
+const MAP_MIN_Z = 2, MAP_MAX_Z = 22, MAP_TILE_CACHE = 400, MAP_TRAIL_MAX = 400, MAP_TRAIL_S = 900;
+// a weather balloon's whole flight (ascent ~1.5 h, descent ~40 min, then on the ground)
+const MAP_TRAIL_BALLOON_MAX = 4000, MAP_TRAIL_BALLOON_S = 4 * 3600;
 const mapState = (() => {
-  const d = {on: false, tab: 'map', w: 0, layer: 'street', z: 0, mx: 0.5, my: 0.5, trails: true,
+  const d = {on: false, tab: 'map', w: 0, layer: 'street', z: 0, mx: 0.5, my: 0.5, trails: true, masts: false,
              rdfVfo: 'all', rdfTid: '', rdfLobe: true, rdfLines: true, rdfHeat: true, rdfOpen: true};
   try { return Object.assign(d, JSON.parse(localStorage.getItem('kraken_map') || '{}')); } catch (e) { return d; }
 })();
@@ -1640,6 +1687,18 @@ let mapCv = null, mapCtx = null, mapW = 0, mapH = 0, mapDpr = 1, mapRaf = 0;
 let mapTileOk = 0, mapTileErrAt = 0, mapAutoFit = !mapState.z;
 let mapSaveT = 0, mapFlashT = 0, mapFlashMsg = '';
 if (!['street', 'satellite'].includes(mapState.layer)) mapState.layer = 'street';
+// 📍 the user's markers (see 📍 MAP MARKERS): the backend's list, the one
+// shown in the panel, the one being edited, the one just added (edited once
+// the backend has it), where the right-click menu was opened
+let mkList = [], mkSel = null, mkEdit = null, mkWantEdit = null, mapMenuAt = null;
+// 📡 OpenStreetMap masts layer (see 📡 OSM MASTS): "n123" -> mast, the
+// zoom-12 cells loaded ("x,y" -> when), masts drawn in the view, the
+// loader's state, the region around the station (centre, half-width km -
+// halved while too dense for one query)
+const mastPts = new Map(), mastCells = new Map();
+let mastVis = 0, mastBusy = false, mastErr = '', mastRetryAt = 0, mastBackoff = 0, mastDense = null, mastDenseNow = false,
+    mastTimer = 0, mastViewKey = '', mastStartAt = 0, mastRegionC = null, mastRegionKm = 150, mastRegionFails = 0,
+    mastRestored = false, mastSaveT = 0;
 
 const bwo=[
   {decimation:1,bandwidth:2.4,name:"2.4 MHz (No decimation)"},
@@ -5679,7 +5738,11 @@ function sec() {
   }
 }
 
-function applyClip() {
+// newFrame: a frame from the receiver - only that adds a waterfall line. A
+// redraw of the last frame (zoom, zoom / edge-clip slider) must not: every
+// wheel notch pushed the frame into the waterfall again, so scrolling made
+// it run fast (also scrolling out at 1x, where nothing changed)
+function applyClip(newFrame = false) {
   if(!fullFrequencies.length||!fullMagnitudes.length||!fftPlot)return;
   const tp=fullFrequencies.length;
 
@@ -5711,9 +5774,11 @@ function applyClip() {
 
     // Squelch status now received from backend via system_status messages
 
-    // Update waterfall with new FFT data
+    // Update waterfall with new FFT data (a redraw: only its frequency
+    // mapping, for the VFO overlay and clicks, follows the new range)
     if (waterfall && waterfall.initialized) {
-      waterfall.addLine(currentFrequencies, currentMagnitudes, noiseLive);
+      if (newFrame) waterfall.addLine(currentFrequencies, currentMagnitudes, noiseLive);
+      else waterfall.lastFrequencies = currentFrequencies;
       waterfall.drawOverlay(decimatorInfo, barCenterFreq(), activeDecimatorId);
     }
   }
@@ -6432,6 +6497,8 @@ function connect() {
 
     // 🗺 Map open: every point at once instead of only the changing ones
     if (mapState.on) setTimeout(() => { send('GET_MAP'); send('GET_RDF'); }, 900);
+    // 📍 the user's map markers (then pushed when they change)
+    setTimeout(() => send('GET_MARKERS'), 880);
 
     // Request FFT settings on connection
     setTimeout(() => requestFFTSettings(), 600);
@@ -6479,6 +6546,7 @@ function connect() {
             digOnMessage(msg.digital);
           }
           else if(msg.map) { mapOnMessage(msg.map); }
+          else if(msg.markers) { mkOnMessage(msg.markers); }
           else if(msg.incidents) { incOnMessage(msg.incidents); }
           else if(msg.rdf) { rdfOnStatus(msg.rdf); }
           else if(msg.rdf_grid) { rdfOnGrid(msg.rdf_grid); }
@@ -7034,7 +7102,7 @@ function connect() {
       fullFrequencies=freq;
       fullMagnitudes=mag;
       displayCenterFreq=fm;
-      applyClip();
+      applyClip(true);
 
       // Deferred tuning-bar re-sync: the plot scale now reflects this frame,
       // so if it is at the panned-to frequency the sync can run accurately
@@ -7852,15 +7920,17 @@ function zoomSlice(z, freqs, mags, centerMhz) {
   if (i1 - i0 < 16) { i1 = Math.min(n - 1, i0 + 16); i0 = Math.max(0, i1 - 16); }
   return [freqs.slice(i0, i1 + 1), mags.slice(i0, i1 + 1)];
 }
-// One wheel notch: x1.25 in / out, keeping the frequency under the cursor in place
+// One wheel notch: x1.25 in / out, keeping the frequency under the cursor in
+// place; false = no change (already at 1x / ZOOM_MAX)
 function zoomWheel(z, zoomIn, cursorMhz, visible, centerMhz) {
   const old = z.level;
   const lvl = Math.max(1, Math.min(ZOOM_MAX, zoomIn ? old * 1.25 : old / 1.25));
-  if (lvl === old) return;
+  if (lvl === old) return false;
   const [v0, v1] = visible, w = v1 - v0, t = w > 0 ? (cursorMhz - v0) / w : 0.5;
   const w2 = w * old / lvl;
   z.level = lvl < 1.01 ? 1 : lvl;
   z.off = z.level === 1 ? 0 : (cursorMhz - t * w2 + w2 / 2) - centerMhz;
+  return true;
 }
 function zoomSyncSlider() {
   const t = zoomTarget(), sl = $id('zoom-sl'), lv = $id('zoom-val');
@@ -7889,7 +7959,7 @@ function zoomFromSlider(v) {
     const r = fftPlot.over.getBoundingClientRect();
     const v0 = currentFrequencies[0], v1 = currentFrequencies[currentFrequencies.length - 1];
     const m = v0 + (e.clientX - r.left) / Math.max(1, r.width) * (v1 - v0);
-    zoomWheel(mainZoom, e.deltaY < 0, Math.max(v0, Math.min(v1, m)), [v0, v1], displayCenterFreq ?? currentCenterFreq);
+    if (!zoomWheel(mainZoom, e.deltaY < 0, Math.max(v0, Math.min(v1, m)), [v0, v1], displayCenterFreq ?? currentCenterFreq)) return;
     zoomSyncSlider();
     applyClip();
   }, {passive: false});
@@ -10221,6 +10291,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // them. Each decoder's "Plot on map" (decoder tab, DIGITAL_OPT map) decides
   // whether its points are sent. Per-browser view settings in localStorage.
   const MAP_LAYERS = {
+    // max: the deepest tile zoom (beyond it, up to MAP_MAX_Z, its tiles are scaled up)
     street: {name: 'Street', max: 19, attr: '© OpenStreetMap contributors',
              url: (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`},
     satellite: {name: 'Satellite', max: 19, attr: 'Imagery © Esri, Maxar, Earthstar Geographics · labels © Esri',
@@ -10403,6 +10474,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function mapFitAll() {
     const ll = [];
     for (const p of mapPts.values()) ll.push([p.la, p.lo]);
+    for (const m of mkList) ll.push([m.lat, m.lon]);
     if (mapStation) ll.push(mapStation);
     if (!ll.length) { mapStatusFlash('Nothing on the map yet'); return; }
     if (ll.length === 1) { mapCenterOn(ll[0][0], ll[0][1], Math.max(mapState.z, 9)); return; }
@@ -10435,23 +10507,41 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const pane = $id('map-pane');
     if (window.ResizeObserver) new ResizeObserver(() => mapResize()).observe(pane);
     window.addEventListener('resize', mapResize);
-    // pan (one pointer) / pinch zoom (two)
+    // pan (one pointer) / pinch zoom (two); right-click or a long press
+    // (touch) opens the map menu (Add Marker)
     const ptrs = new Map();
-    let pan = null, pinch = null, moved = false;
+    let pan = null, pinch = null, moved = false, lpT = 0, lpFired = false;
+    const lpCancel = () => { clearTimeout(lpT); lpT = 0; };
     mapCv.addEventListener('pointerdown', e => {
+      if (e.button === 2) return;   // the right button: the menu (contextmenu)
       mapCv.setPointerCapture(e.pointerId);
       ptrs.set(e.pointerId, [e.offsetX, e.offsetY]);
       moved = false;
-      if (ptrs.size === 1) pan = {x: e.offsetX, y: e.offsetY, mx: mapState.mx, my: mapState.my};
-      else if (ptrs.size === 2) {
+      lpCancel();
+      lpFired = false;
+      if (ptrs.size === 1) {
+        pan = {x: e.offsetX, y: e.offsetY, mx: mapState.mx, my: mapState.my};
+        if (e.pointerType === 'touch') {
+          const x = e.offsetX, y = e.offsetY;
+          lpT = setTimeout(() => { lpT = 0; if (!moved) { lpFired = true; mapMenuOpen(x, y); } }, 600);
+        }
+      } else if (ptrs.size === 2) {
         const [a, b] = [...ptrs.values()];
         pinch = {d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z: mapState.z};
         pan = null;
       }
     });
+    // (Android Chrome sends its own contextmenu on a long press: the lift
+    // that follows is then no click either)
+    mapCv.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      lpCancel();
+      if (ptrs.size) lpFired = true;
+      mapMenuOpen(e.offsetX, e.offsetY);
+    });
     mapCv.addEventListener('pointermove', e => {
       if (!ptrs.has(e.pointerId)) {
-        const over = !!mapHit(e.offsetX, e.offsetY);
+        const over = !!(mkHit(e.offsetX, e.offsetY) || mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY));
         mapCv.classList.toggle('over', over);
         return;
       }
@@ -10463,8 +10553,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         moved = true;
       } else if (pan) {
         const dx = e.offsetX - pan.x, dy = e.offsetY - pan.y;
-        if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+        if (Math.abs(dx) + Math.abs(dy) > (e.pointerType === 'touch' ? 8 : 3)) moved = true;
         if (!moved) return;
+        lpCancel();
         mapCv.classList.add('dragging');
         const W = mapWorld();
         mapState.mx = pan.mx - dx / W;
@@ -10479,10 +10570,16 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       ptrs.delete(e.pointerId);
       mapCv.classList.remove('dragging');
       if (ptrs.size < 2) pinch = null;
+      lpCancel();
       if (ptrs.size === 0) {
-        if (pan && !moved && e.type === 'pointerup') {
-          const k = mapHit(e.offsetX, e.offsetY);
-          mapSel = k;
+        if (pan && !moved && !lpFired && e.type === 'pointerup') {
+          // a click: a marker of the user's (its panel), a decoder's point
+          // or an OpenStreetMap mast (popup), or nothing (closes both - an
+          // edit stays open)
+          const mk = mkHit(e.offsetX, e.offsetY);
+          mapSel = mk ? null : (mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY));
+          if (mk) mkSelect(mk);
+          else if (!mkEdit && mkSel) mkClose();
           mapDraw();
         }
         pan = null;
@@ -10496,10 +10593,18 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     mapCv.addEventListener('pointercancel', up);
     mapCv.addEventListener('wheel', e => {
       e.preventDefault();
+      mapMenuClose();
       const dz = -e.deltaY / (e.deltaMode === 1 ? 6 : e.deltaMode === 2 ? 1 : 250);
       mapZoomAt(Math.max(-1, Math.min(1, dz)), e.offsetX, e.offsetY);
     }, {passive: false});
     mapCv.addEventListener('dblclick', e => { e.preventDefault(); mapZoomAt(1, e.offsetX, e.offsetY); });
+    // the menu closes on a press anywhere else, Escape, or the page losing focus
+    document.addEventListener('pointerdown', e => {
+      const mn = $id('map-menu');
+      if (mn.style.display !== 'none' && !mn.contains(e.target)) mapMenuClose();
+    }, true);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') mapMenuClose(); });
+    window.addEventListener('blur', mapMenuClose);
     mapUpdateControls();
   }
 
@@ -10512,8 +10617,16 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
     const tr = $id('map-trails');
     if (tr) tr.classList.toggle('on', !!mapState.trails);
+    const ms = $id('map-masts');
+    if (ms) ms.classList.toggle('on', !!mapState.masts);
+    const lg = $id('map-legend');
+    if (lg) {
+      if (!lg.innerHTML) lg.innerHTML = Object.values(MAST_CATS).map(c => `<span><i style="background:${c.col}"></i>${c.name}</span>`).join('');
+      lg.style.display = mapState.masts ? 'flex' : 'none';
+    }
     const at = $id('map-attr');
-    if (at) at.textContent = MAP_LAYERS[mapState.layer].attr;
+    if (at) at.textContent = MAP_LAYERS[mapState.layer].attr +
+      (mapState.masts && mapState.layer !== 'street' ? ' · masts © OpenStreetMap contributors' : '');
     if (typeof rdfRenderPanel === 'function') rdfRenderPanel();
   }
 
@@ -10602,14 +10715,15 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const [la0, lo0] = mapUnproj(mapState.mx - mapW / 2 / mapWorld(), mapState.my + mapH / 2 / mapWorld());
     const [la1, lo1] = mapUnproj(mapState.mx + mapW / 2 / mapWorld(), mapState.my - mapH / 2 / mapWorld());
     const span = Math.max(lo1 - lo0, 1e-6);
-    const steps = [30, 15, 10, 5, 2, 1, 0.5, 0.25, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001];
+    const steps = [30, 15, 10, 5, 2, 1, 0.5, 0.25, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001,
+                   0.0005, 0.0002, 0.0001, 0.00005, 0.00002, 0.00001];
     let st = steps[0];
     for (const s of steps) if (span / s <= mapW / 110) st = s;
     c.strokeStyle = 'rgba(120,150,190,0.22)';
     c.fillStyle = 'rgba(150,175,210,0.55)';
     c.lineWidth = 1;
     c.font = '10px sans-serif';
-    const dec = st >= 1 ? 0 : st >= 0.1 ? 1 : st >= 0.01 ? 2 : 3;
+    const dec = (String(st).split('.')[1] || '').length;   // 0.25 -> 2, 0.00005 -> 5
     c.beginPath();
     for (let lo = Math.ceil(lo0 / st) * st; lo <= lo1; lo += st) {
       const [x] = mapLatLonToScreen(0, lo);
@@ -10629,7 +10743,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (!mapStation) return;
     const [sx, sy] = mapLatLonToScreen(mapStation[0], mapStation[1]);
     const kmPerPx = 40075 * Math.cos(mapStation[0] * Math.PI / 180) / mapWorld();
-    const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+    const steps = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
     let st = steps[steps.length - 1];
     for (const s of steps) if (s / kmPerPx >= 70) { st = s; break; }
     // darker on the light street map, light on the satellite / plain grid
@@ -10685,6 +10799,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       c.beginPath(); c.moveTo(0, -11); c.lineTo(10, 7); c.lineTo(-10, 7); c.closePath(); c.fill(); c.stroke();
       c.fillStyle = '#fff'; c.font = 'bold 12px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
       c.fillText('!', 0, 1);
+    } else if (p.k === 'balloon') {
+      // weather balloon: the envelope, its line, the sonde (upright)
+      c.beginPath(); c.ellipse(0, -7, 5.5, 6.5, 0, 0, 2 * Math.PI); c.fill(); c.stroke();
+      c.beginPath(); c.moveTo(0, -0.5); c.lineTo(0, 5); c.stroke();
+      c.beginPath(); c.rect(-2.5, 5, 5, 4); c.fill(); c.stroke();
     } else if (p.k === 'station') {
       c.beginPath(); c.moveTo(0, -8); c.lineTo(7, 6); c.lineTo(-7, 6); c.closePath(); c.fill(); c.stroke();
     } else {
@@ -10720,7 +10839,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
           mapDrawTile(urlf, tz, x, y, (x - left) * size, (y - top) * size, size, fb);
     }
     rdfDraw(c);
+    mastDraw(c);
     mapRings(c);
+    mkDraw(c);
     // trails, then markers + labels
     const now = Date.now();
     const vis = [];
@@ -10770,7 +10891,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       c.restore();
     }
     mapRenderPopup();
+    mkRender();
     mapRenderStatus();
+    if (mapState.masts) mastSchedule();
+    else mastViewKey = '';   // switched on again: load whatever is missing
   }
 
   // the marker under a screen point (nearest within 14 px)
@@ -10786,12 +10910,26 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
 
   function mapRenderPopup() {
     const el = $id('map-pop');
-    const p = mapSel ? mapPts.get(mapSel) : null;
+    const mast = mapSel && mapSel.startsWith('osm:') && mastShown() ? mastPts.get(mapSel.slice(4)) : null;
+    const p = mast || (mapSel ? mapPts.get(mapSel) : null);
     if (!p || p.sx === undefined || p.sx < 0 || p.sy < 0 || p.sx > mapW || p.sy > mapH) {
       if (el.style.display !== 'none') el.style.display = 'none';
       if (!p) mapSel = null;
       return;
     }
+    const html = mast ? mastPopupHtml(mast) : mapPointPopupHtml(p);
+    if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+    el.style.display = 'block';
+    const w = el.offsetWidth, h = el.offsetHeight;
+    let x = p.sx + 16, y = p.sy - h / 2;
+    if (x + w > mapW - 4) x = p.sx - 16 - w;
+    x = Math.max(4, x);
+    y = Math.max(36, Math.min(mapH - h - 18, y));
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+  }
+  // a decoder's point: the plugin's "key: value" lines + position, age
+  function mapPointPopupHtml(p) {
     const age = Math.max(0, Math.round((Date.now() - p.rx) / 1000));
     let rows = (p.x || '').split('\n').filter(Boolean).map(l => {
       const i = l.indexOf(': ');
@@ -10803,17 +10941,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       rows += `<tr><td>From station</td><td>${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${b.toFixed(0)}°</td></tr>`;
     }
     rows += `<tr><td>Updated</td><td>${age < 2 ? 'now' : age + ' s ago'}</td></tr>`;
-    const html = `<div class="h"><span style="color:${getDecimatorColor(p.v)}">●</span>${digEsc(p.l || p.i)}<span class="x" onclick="mapSel=null;mapDraw()">✕</span></div>` +
-                 `<div class="s">D${p.v} · ${digEsc(digName(p.p))}</div><table>${rows}</table>`;
-    if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
-    el.style.display = 'block';
-    const w = el.offsetWidth, h = el.offsetHeight;
-    let x = p.sx + 16, y = p.sy - h / 2;
-    if (x + w > mapW - 4) x = p.sx - 16 - w;
-    x = Math.max(4, x);
-    y = Math.max(36, Math.min(mapH - h - 18, y));
-    el.style.left = x + 'px';
-    el.style.top = y + 'px';
+    return `<div class="h"><span style="color:${getDecimatorColor(p.v)}">●</span>${digEsc(p.l || p.i)}<span class="x" onclick="mapSel=null;mapDraw()">✕</span></div>` +
+           `<div class="s">D${p.v} · ${digEsc(digName(p.p))}</div><table>${rows}</table>`;
   }
 
   // --- 📡 Mobile DF on the map (coherent mode; rdf_mapper.cpp) ---------------
@@ -11246,7 +11375,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         by[k] = (by[k] || 0) + 1;
       }
       const parts = Object.entries(by).map(([k, n]) => `${n} · ${k}`);
-      if (parts.length) msg = parts.join(' | ');
+      const ms = mastStatusText();
+      if (parts.length) msg = parts.join(' | ') + (ms ? ' | ' + ms : '');
+      else if (ms) msg = ms;
       else if (opMode === 'coherent' && rdfVfos().length) msg = '';   // DF on the map: its panel says it all
       else {
         const plot = decimatorInfo.filter(d => d.digital_mode && d.digital_mode !== 'OFF');
@@ -11285,13 +11416,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const trail = old ? old.trail : [];
       if (old && (old.la !== q.la || old.lo !== q.lo)) {
         trail.push([old.la, old.lo, old.rx]);
-        while (trail.length > MAP_TRAIL_MAX || (trail.length && now - trail[0][2] > MAP_TRAIL_S * 1000)) trail.shift();
+        const tmax = q.k === 'balloon' ? MAP_TRAIL_BALLOON_MAX : MAP_TRAIL_MAX, ts = q.k === 'balloon' ? MAP_TRAIL_BALLOON_S : MAP_TRAIL_S;
+        while (trail.length > tmax || (trail.length && now - trail[0][2] > ts * 1000)) trail.shift();
       }
       mapPts.set(k, Object.assign(q, {rx: now - (q.age || 0) * 1000, trail}));
     }
     const live = new Set(m.keys || []);
     for (const k of [...mapPts.keys()]) if (!live.has(k)) mapPts.delete(k);
-    if (mapSel && !mapPts.has(mapSel)) mapSel = null;
+    if (mapSel && !mapSel.startsWith('osm:') && !mapPts.has(mapSel)) mapSel = null;
     // first data and no saved view: show the station / the markers
     if (mapAutoFit && mapCv && (mapPts.size || (mapStation && !hadStation))) {
       mapAutoFit = false;
@@ -11301,8 +11433,634 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     // the decoder tab's "Plot on map" count
     if (typeof infoRenderDecoder === 'function') infoRenderDecoder();
   }
+  // --- 📍 MAP MARKERS: places the user pins on the map -------------------------
+  // Right-click (touch: long press) -> menu -> "Add Marker". A marker has a
+  // name, notes and frequencies, and is kept on the backend (map_markers.cpp,
+  // map_markers.json), so every browser shows the same ones: MARKER_SET:{json}
+  // / MARKER_DEL:id, each answered to every page with {"markers":{"list":[{id,
+  // lat, lon, name, notes, freqs:[{hz, label}], t}]}} (+ error, id when a
+  // MARKER_SET was refused). The selected marker's details show in a panel at
+  // the map's bottom right (#map-mk); clicking one of its frequencies tunes
+  // the selected VFO there (mkTune). State: see the globals block.
+  const MK_COL = '#e91e63';
+  function mkGet(id) { return (id && mkList.find(m => m.id === id)) || null; }
+  function mkOnMessage(m) {
+    mkList = Array.isArray(m.list) ? m.list : [];
+    if (m.error && m.id && (m.id === mkWantEdit || m.id === mkSel)) {
+      mapStatusFlash('Marker not saved: ' + m.error);
+      if (m.id === mkWantEdit) mkWantEdit = null;
+    }
+    // the marker this page just added: open it for editing
+    if (mkWantEdit && mkGet(mkWantEdit)) { mkSel = mkEdit = mkWantEdit; mkWantEdit = null; mkRender(true); }
+    if (mkSel && !mkGet(mkSel)) {
+      if (mkEdit) mapStatusFlash('That marker was deleted (from another browser?)');
+      mkSel = mkEdit = null;
+    }
+    mkRender();
+    mapDraw();
+  }
+  function mkOnline() {
+    if (ws && ws.readyState === 1) return true;
+    mapStatusFlash('Not connected to the receiver');
+    return false;
+  }
+  // 145500000 -> "145.500", 145512500 -> "145.5125"
+  function mkFmtMhz(hz) { return (hz / 1e6).toFixed(6).replace(/(\.\d{3}\d*?)0+$/, '$1'); }
+  function mapScreenToLatLon(x, y) {
+    const W = mapWorld();
+    const [la, lo] = mapUnproj(mapState.mx + (x - mapW / 2) / W, mapState.my + (y - mapH / 2) / W);
+    return [Math.max(-85.05, Math.min(85.05, la)), lo - 360 * Math.floor((lo + 180) / 360)];
+  }
+
+  // the right-click menu: Add Marker; on a marker also Edit / Delete
+  function mapMenuOpen(x, y) {
+    const el = $id('map-menu');
+    if (!el || !mapCv) return;
+    const [la, lo] = mapScreenToLatLon(x, y);
+    mapMenuAt = {la, lo};
+    let h = '<button type="button" onclick="mkAddAt()">📍 Add Marker</button>';
+    const mk = mkGet(mkHit(x, y));
+    if (mk) {
+      const n = digEsc(mk.name);
+      h += `<button type="button" onclick="mapMenuClose();mkSelect('${mk.id}',true)">✎ Edit “${n}”</button>` +
+           `<button type="button" onclick="mapMenuClose();mkDelete('${mk.id}')">🗑 Delete “${n}”</button>`;
+    }
+    el.innerHTML = h + `<div class="ll">${la.toFixed(5)}, ${lo.toFixed(5)}</div>`;
+    el.style.display = 'block';
+    el.style.left = Math.max(2, Math.min(mapW - el.offsetWidth - 2, x)) + 'px';
+    el.style.top = Math.max(2, Math.min(mapH - el.offsetHeight - 2, y)) + 'px';
+  }
+  function mapMenuClose() {
+    const el = $id('map-menu');
+    if (el && el.style.display !== 'none') el.style.display = 'none';
+  }
+
+  function mkAddAt() {
+    const at = mapMenuAt;
+    mapMenuClose();
+    if (at) mkCreate(at.la, at.lo);
+  }
+  // a new marker (name "Marker N" unless given), opened for editing once the
+  // backend's list has it (mkOnMessage)
+  function mkCreate(lat, lon, name, notes) {
+    if (!mkOnline() || !mkLeaveEdit()) return;
+    if (!name) {
+      let i = mkList.length + 1;
+      while (mkList.some(m => m.name === 'Marker ' + i)) i++;
+      name = 'Marker ' + i;
+    }
+    mkWantEdit = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    send('MARKER_SET:' + JSON.stringify({id: mkWantEdit, lat: +lat.toFixed(7), lon: +lon.toFixed(7),
+                                         name, notes: notes || '', freqs: []}));
+  }
+  function mkSelect(id, edit) {
+    if (!mkGet(id) || mkEdit === id) return;
+    if (!mkLeaveEdit()) return;
+    mkSel = id;
+    mkEdit = edit ? id : null;
+    mkRender();
+    mapDraw();
+  }
+  function mkClose() {
+    mkSel = mkEdit = null;
+    mkRender();
+    mapDraw();
+  }
+  function mkCancelEdit() {
+    mkEdit = null;
+    mkRender();
+  }
+  function mkCentre() {
+    const m = mkGet(mkSel);
+    if (m) { mapAutoFit = false; mapCenterOn(m.lat, m.lon); }
+  }
+  function mkDelete(id) {
+    const m = mkGet(id);
+    if (!m || !mkOnline() || !confirm(`Delete the marker "${m.name}"?`)) return;
+    if (mkSel === id) mkClose();
+    send('MARKER_DEL:' + id);
+  }
+
+  // Tune the selected VFO to a marker's frequency: inside the band shown it
+  // just moves there, else the receiver retunes (the selected VFO's own tuner
+  // in independent mode) with the VFO on the new centre
+  function mkTune(hz) {
+    const mhz = hz / 1e6;
+    const d = decimatorInfo.find(z => z.id === activeDecimatorId);
+    if (!d) { mapStatusFlash('No VFO to tune - add one in the sidebar'); return; }
+    if (vfoLocked(d)) { mapStatusFlash(`D${d.id} is locked to its decoder's frequency - select another VFO`); return; }
+    if (!(mhz >= FREQ_MIN && mhz <= FREQ_MAX)) {
+      mapStatusFlash(`${mkFmtMhz(hz)} MHz is outside the receiver's range (${FREQ_MIN}-${FREQ_MAX} MHz)`);
+      return;
+    }
+    if (!mkOnline()) return;
+    const bw = (bwo[d.bandwidth_index || 0] || bwo[0]).bandwidth;
+    if (opMode === 'independent') {
+      const own = d.tuner || 0;
+      const order = [own, ...panes.map(p => p.ch).filter(ch => ch !== own)];
+      const p = order.map(ch => panes[ch]).find(p => p && p.freqMhz > 0 &&
+        Math.abs(mhz - p.freqMhz) <= (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2);
+      if (p) paneMoveVfo(p, d, mhz);
+      else {
+        pendingFreqUpdates.delete(d.id);   // a queued move must not land after this
+        d.freq_offset_hz = 0;
+        send('SET_DECIMATOR_FREQ:' + d.id + ':0:' + own);
+        paneSendFreq(own, mhz);
+      }
+    } else {
+      let off = (mhz - currentCenterFreq) * 1e6;
+      if (Math.abs(off) > maxOffsetHz(bw)) {
+        // FREQ: is in whole kHz - the VFO takes the rest
+        const c = Math.round(mhz * 1000) / 1000;
+        off = (mhz - c) * 1e6;
+        freqUserChanging = true;   // a lagging FFT header must not pull the digits back
+        clearTimeout(freqUserChangeTimeout);
+        freqUserChangeTimeout = setTimeout(() => { freqUserChanging = false; }, 500);
+        updateFreqDisplay(c, true);
+        currentCenterFreq = c;
+        sendFreqChange(c);
+      }
+      pendingFreqUpdates.delete(d.id);
+      d.freq_offset_hz = off;
+      send('SET_DECIMATOR_FREQ:' + d.id + ':' + (off / 1000).toFixed(3));
+      decimatorInfo.forEach(z => refreshDecimatorPanelItem(z.id));
+      drawBox();
+    }
+    mapStatusFlash(`D${d.id} → ${mkFmtMhz(hz)} MHz`);
+  }
+
+  // --- drawing + hit test (pin: tip on the spot, round head 15 px above) ----
+  function mkDraw(c) {
+    c.lineJoin = 'round';
+    for (const m of mkList) {
+      const [x, y] = mapLatLonToScreen(m.lat, m.lon);
+      m.sx = x; m.sy = y;
+      if (x < -40 || y < -10 || x > mapW + 200 || y > mapH + 40) continue;
+      c.save();
+      c.translate(x, y);
+      if (m.id === mkSel) {
+        c.strokeStyle = '#fff'; c.lineWidth = 2;
+        c.beginPath(); c.arc(0, -15, 12, 0, 2 * Math.PI); c.stroke();
+      }
+      c.fillStyle = MK_COL;
+      c.strokeStyle = 'rgba(0,0,0,0.85)';
+      c.lineWidth = 1.2;
+      c.beginPath(); c.arc(0, -15, 7, 0.8 * Math.PI, 0.2 * Math.PI); c.lineTo(0, 0); c.closePath();
+      c.fill(); c.stroke();
+      c.fillStyle = '#fff';
+      c.beginPath(); c.arc(0, -15, 2.6, 0, 2 * Math.PI); c.fill();
+      // name, and the first frequency (+ how many more) under it
+      c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineWidth = 3;
+      c.font = 'bold 11px sans-serif';
+      c.strokeText(m.name, 11, -14); c.fillText(m.name, 11, -14);
+      const fq = m.freqs || [];
+      if (fq.length) {
+        const t = mkFmtMhz(fq[0].hz) + ' MHz' + (fq.length > 1 ? ` +${fq.length - 1}` : '');
+        c.font = '10px sans-serif';
+        c.fillStyle = '#ffd1e3';
+        c.strokeText(t, 11, -2); c.fillText(t, 11, -2);
+      }
+      c.restore();
+    }
+  }
+  // the marker whose pin head is under a screen point (within 11 px)
+  function mkHit(x, y) {
+    let best = null, bd = 11 * 11;
+    for (const m of mkList) {
+      if (m.sx === undefined) continue;
+      const d = (m.sx - x) ** 2 + (m.sy - 15 - y) ** 2;
+      if (d < bd) { bd = d; best = m.id; }
+    }
+    return best;
+  }
+
+  // --- the panel (bottom right): details, or the edit form -------------------
+  function mkRender(focus) {
+    const el = $id('map-mk');
+    if (!el) return;
+    const m = mkGet(mkSel);
+    $id('map-pane').classList.toggle('mk-open', !!m);
+    if (!m) {
+      if (el.style.display !== 'none') { el.style.display = 'none'; el.dataset.html = el.dataset.edit = ''; }
+      return;
+    }
+    if (el.style.display !== 'block') el.style.display = 'block';
+    if (mkEdit) {
+      if (el.dataset.edit !== m.id) mkBuildForm(el, m, focus);   // built once: the typing stays
+      return;
+    }
+    el.dataset.edit = '';
+    let sub = `${m.lat.toFixed(5)}, ${m.lon.toFixed(5)}`;
+    if (mapStation) {
+      const d = mapDistKm(mapStation[0], mapStation[1], m.lat, m.lon), b = mapBearing(mapStation[0], mapStation[1], m.lat, m.lon);
+      sub += ` · ${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${b.toFixed(0)}° from the station`;
+    }
+    const fq = (m.freqs || []).map(f => {
+      const t = mkFmtMhz(f.hz);
+      return `<button type="button" onclick="mkTune(${Number(f.hz)})" title="Tune the selected VFO to ${t} MHz">` +
+             `<b>${t} MHz</b>${f.label ? `<span>${digEsc(f.label)}</span>` : ''}</button>`;
+    }).join('');
+    const html = `<div class="h"><span>📍</span><span class="n">${digEsc(m.name)}</span><span class="x" onclick="mkClose()" title="Close">✕</span></div>` +
+      `<div class="s">${sub}</div>` +
+      (fq ? `<div class="fq">${fq}</div>` : '<div class="none">No frequencies yet - ✎ Edit to add some</div>') +
+      (m.notes ? `<div class="notes">${digEsc(m.notes)}</div>` : '') +
+      `<div class="b"><button type="button" class="map-btn" onclick="mkSelect('${m.id}',true)">✎ Edit</button>` +
+      `<button type="button" class="map-btn" onclick="mkCentre()" title="Centre the map on the marker">⌖ Centre</button>` +
+      `<button type="button" class="map-btn" onclick="mkDelete('${m.id}')">🗑 Delete</button></div>`;
+    if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+  }
+  function mkBuildForm(el, m, focus) {
+    el.dataset.edit = m.id;
+    el.dataset.html = '';
+    const enter = `onkeydown="if(event.key==='Enter')mkSave()"`;
+    el.innerHTML =
+      `<div class="h"><span>✎ Edit marker</span><span class="x" onclick="mkCancelEdit()" title="Cancel">✕</span></div>` +
+      `<div class="lbl">Name</div><div class="row"><input type="text" id="mk-name" maxlength="80" ${enter}></div>` +
+      `<div class="lbl">Position (latitude, longitude)</div>` +
+      `<div class="row"><input type="text" id="mk-lat" inputmode="decimal" ${enter}><input type="text" id="mk-lon" inputmode="decimal" ${enter}></div>` +
+      `<div class="lbl">Frequencies (MHz) - click one to tune the selected VFO</div><div id="mk-freqs"></div>` +
+      `<div class="b"><button type="button" class="map-btn" onclick="mkAddFreqRow()">+ Frequency</button>` +
+      `<button type="button" class="map-btn" onclick="mkAddVfoFreq()" title="Add the frequency the selected VFO is on">+ Selected VFO</button></div>` +
+      `<div class="lbl">Notes</div><textarea id="mk-notes" rows="4" maxlength="4000"></textarea>` +
+      `<div class="err" id="mk-err"></div>` +
+      `<div class="b" style="margin-top:6px"><button type="button" class="map-btn on" onclick="mkSave()">Save</button>` +
+      `<button type="button" class="map-btn" onclick="mkCancelEdit()">Cancel</button></div>`;
+    $id('mk-name').value = m.name;
+    $id('mk-lat').value = m.lat.toFixed(6);
+    $id('mk-lon').value = m.lon.toFixed(6);
+    $id('mk-notes').value = m.notes || '';
+    for (const f of m.freqs || []) mkAddFreqRow(mkFmtMhz(f.hz), f.label);
+    el.dataset.orig = JSON.stringify(mkFormRaw());
+    if (focus) { const n = $id('mk-name'); n.focus(); n.select(); }
+  }
+  function mkAddFreqRow(mhz, label) {
+    const box = $id('mk-freqs');
+    if (!box) return;
+    if (box.children.length >= 50) { mkErr('At most 50 frequencies per marker'); return; }
+    const r = document.createElement('div');
+    r.className = 'mk-fr';
+    r.innerHTML = '<input type="text" class="mhz" inputmode="decimal" placeholder="MHz">' +
+                  '<input type="text" class="lab" maxlength="80" placeholder="Label (optional)">' +
+                  '<button type="button" class="map-btn" title="Remove" onclick="this.parentNode.remove()">✕</button>';
+    r.querySelector('.mhz').value = mhz || '';
+    r.querySelector('.lab').value = label || '';
+    box.appendChild(r);
+    if (mhz === undefined) r.querySelector('.mhz').focus();
+  }
+  function mkAddVfoFreq() {
+    const d = decimatorInfo.find(z => z.id === activeDecimatorId);
+    if (!d) { mkErr('No VFO'); return; }
+    mkAddFreqRow(mkFmtMhz(Math.round((vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6) * 1e6)), '');
+  }
+  function mkErr(t) { const e = $id('mk-err'); if (e) e.textContent = t; }
+  // the form as typed (for the unsaved-changes check)
+  function mkFormRaw() {
+    const v = id => ($id(id) || {}).value || '';
+    return {name: v('mk-name'), lat: v('mk-lat'), lon: v('mk-lon'), notes: v('mk-notes'),
+            freqs: [...document.querySelectorAll('#mk-freqs .mk-fr')].map(r => [r.querySelector('.mhz').value, r.querySelector('.lab').value])};
+  }
+  // true = fine to drop the edit: nothing changed, or the user agreed
+  function mkLeaveEdit() {
+    const el = $id('map-mk');
+    if (!mkEdit || el.dataset.edit !== mkEdit || JSON.stringify(mkFormRaw()) === el.dataset.orig) return true;
+    return confirm('Discard the changes to this marker?');
+  }
+  function mkSave() {
+    const m = mkGet(mkEdit);
+    if (!m) { mkCancelEdit(); return; }
+    const f = mkFormRaw();
+    // "lat, lon" pasted into the latitude box works too
+    let la = f.lat.trim(), lo = f.lon.trim();
+    const pair = la.match(/^(-?[\d.]+)\s*[,;\s]\s*(-?[\d.]+)$/);
+    if (pair) [, la, lo] = pair;
+    const lat = Number(la), lon = Number(lo);
+    if (!la || !lo || !(Math.abs(lat) <= 85.05) || !(Math.abs(lon) <= 180)) {
+      mkErr('Position: latitude -85..85 and longitude -180..180, in decimal degrees');
+      return;
+    }
+    const freqs = [];
+    for (const [t0, lab] of f.freqs) {
+      const t = t0.trim().replace(/\s*mhz$/i, '').replace(',', '.');
+      if (!t && !lab.trim()) continue;
+      const mhz = Number(t);
+      if (!t || !(mhz > 0 && mhz < 100000)) { mkErr(`"${t0.trim()}" is not a frequency in MHz`); return; }
+      freqs.push({hz: Math.round(mhz * 1e6), label: lab.trim()});
+    }
+    if (new TextEncoder().encode(f.notes).length > 4000) { mkErr('The notes are too long (4000 bytes at most)'); return; }
+    if (!mkOnline()) return;
+    send('MARKER_SET:' + JSON.stringify({id: m.id, lat, lon, name: f.name.trim() || m.name, notes: f.notes, freqs}));
+    mkEdit = null;
+    mkRender();
+  }
+
+  // --- 📡 OSM MASTS: radio masts, towers and antennas from OpenStreetMap ------
+  // Optional layer (Masts button, mapState.masts - per browser like the
+  // other view settings). Loaded by the BROWSER from OpenStreetMap's Overpass
+  // API, like the map tiles (nothing goes through kraken_doa; overpass-api.de
+  // needs the Referer a browser sends) in zoom-12 cells, one query at a time:
+  //  1. the REGION around the station (MAST_REGION_KM each way; 5 s without
+  //     a station: around the view) in ONE query - overpass-api.de rations
+  //     queries per connection (often 2 at a time, 429 beyond), so loading
+  //     view by view got refused after the first few pans and only the area
+  //     loaded first showed. Too dense for one query (MAST_LIMIT): half the
+  //     size next time; re-centred when the station moves a third of it
+  //  2. elsewhere, the view's missing cells at zoom >= MAST_MIN_Z, 0.7 s
+  //     after the map stops moving (a query that hits MAST_LIMIT shows what
+  //     came and wants zoom + 1 there: mastDense)
+  // Loaded masts show at any zoom (dots when zoomed out) and are kept in
+  // localStorage for MAST_KEEP_DAYS, so a page reload asks nothing again.
+  // A busy server (429 / 5xx - it often answers 504 under load - / no answer
+  // / a query cut short) or no internet: retried after 15 s doubling to
+  // 5 min; after two failed region queries the (smaller) view goes first.
+  // Colour = what OSM lists it for (communication:* tags); click = every tag
+  // it has. State: see the globals block.
+  const MAST_Z = 12, MAST_MIN_Z = 11, MAST_LIMIT = 5000, MAST_MAX = 30000;
+  const MAST_REGION_KM = 150, MAST_KEEP_DAYS = 7, MAST_STORE = 'kraken_masts', MAST_STORE_MAX = 3500000;
+  const MAST_URL = 'https://overpass-api.de/api/interpreter';
+  const MAST_CATS = {
+    bc: {col: '#ffa726', name: 'Broadcast'},
+    mob: {col: '#4dd0e1', name: 'Mobile phone'},
+    mw: {col: '#ce93d8', name: 'Microwave'},
+    ham: {col: '#9ccc65', name: 'Amateur'},
+    other: {col: '#cfd8dc', name: 'Not stated'},
+  };
+  const MAST_TECH = {gsm: 'GSM', umts: 'UMTS', lte: 'LTE', nr: '5G', '2g': '2G', '3g': '3G', '4g': '4G', '5g': '5G'};
+  const MAST_SVC = {mobile_phone: 'Mobile phone', mobile: 'Mobile phone', television: 'TV broadcast',
+                    radio: 'Radio broadcast', broadcast: 'Broadcast', microwave: 'Microwave link',
+                    amateur_radio: 'Amateur radio', 'amateur_radio:repeater': 'Amateur repeater',
+                    bos: 'Emergency services', satellite: 'Satellite', military: 'Military',
+                    'gsm-r': 'GSM-R (railway)', paging: 'Paging', tetra: 'TETRA', dab: 'DAB'};
+  function mastShown() { return !!mapState.masts; }
+  function mastYes(v) { return v !== undefined && v !== 'no'; }
+  function mastCat(t) {
+    const c = k => mastYes(t['communication:' + k]);
+    if (c('television') || c('radio') || c('broadcast') || c('dab') || t['tower:type'] === 'broadcast') return 'bc';
+    if (['mobile_phone', 'mobile', ...Object.keys(MAST_TECH), ...Object.keys(MAST_TECH).map(k => k.toUpperCase())].some(c)) return 'mob';
+    if (c('microwave')) return 'mw';
+    if (c('amateur_radio') || c('amateur_radio:repeater')) return 'ham';
+    return 'other';
+  }
+  // "Mobile phone (LTE, UMTS), Microwave link" from the communication:* tags
+  function mastServices(t) {
+    const svc = [], tech = [];
+    for (const [k, v] of Object.entries(t)) {
+      if (!k.startsWith('communication:') || !mastYes(v)) continue;
+      const s = k.slice(14).toLowerCase();
+      if (MAST_TECH[s]) { if (!tech.includes(MAST_TECH[s])) tech.push(MAST_TECH[s]); continue; }
+      if (s.includes(':') && !MAST_SVC[s]) continue;   // details (ran_sharing, pota...)
+      const name = MAST_SVC[s] || s.replace(/_/g, ' ');
+      if (!svc.includes(name)) svc.push(name);
+    }
+    if (tech.length) {
+      const m = 'Mobile phone (' + tech.join(', ') + ')', i = svc.indexOf('Mobile phone');
+      if (i >= 0) svc[i] = m; else svc.push(m);
+    }
+    return svc.join(', ');
+  }
+  function mastKind(t) { return t.man_made === 'tower' ? 'Tower' : t.man_made === 'antenna' ? 'Antenna' : 'Mast'; }
+  function mastType(t) {
+    const con = t['tower:construction'];
+    return mastKind(t) + (con ? ' (' + con.replace(/_/g, ' ') + ')' : '');
+  }
+  function mastTitle(t) {
+    return t.name || (t.operator ? t.operator + ' ' + mastKind(t).toLowerCase() : 'Communication ' + mastKind(t).toLowerCase());
+  }
+  function mastHeight(t) { return /^\d+(\.\d+)?$/.test(t.height || '') ? t.height + ' m' : (t.height || ''); }
+  function mastOsmUrl(m) { return `https://www.openstreetmap.org/${m.type}/${m.id}`; }
+
+  function mastStatusText() {
+    if (!mapState.masts) return '';
+    if (mastBusy) return 'Loading masts from OpenStreetMap…';
+    if (mastErr) {
+      const s = Math.ceil((mastRetryAt - Date.now()) / 1000);
+      return mastErr + (s > 0 ? ` - trying again in ${s} s` : '');
+    }
+    const n = `${mastVis} mast${mastVis === 1 ? '' : 's'} (OpenStreetMap)`;
+    // zoomed out over areas not loaded yet (only those in view are asked for)
+    if (mapState.z < MAST_MIN_Z && (mapState.z < 8 || mastMissing(mastViewCells()))) return n + ' - zoom in to load other areas';
+    return mastDenseNow ? n + ' - too many to load all here, zoom in' : n;
+  }
+
+  // the zoom-12 cells of the region around the station (x0, x1, y0, y1), null
+  // while there is none to load: no station yet (5 s), or too dense
+  function mastRegionCells() {
+    if (mapStation && (!mastRegionC || mapDistKm(mapStation[0], mapStation[1], mastRegionC[0], mastRegionC[1]) > mastRegionKm / 3))
+      mastRegionC = [mapStation[0], mapStation[1]];
+    if (!mastRegionC && Date.now() - mastStartAt > 5000 && mapState.z >= 8) mastRegionC = mapUnproj(mapState.mx, mapState.my);
+    const c = mastRegionC;
+    if (!c || mastRegionKm < 20) return null;
+    const n = 1 << MAST_Z, dla = mastRegionKm / 111.32, dlo = mastRegionKm / (111.32 * Math.max(0.05, Math.cos(c[0] * Math.PI / 180)));
+    const [x0, y0] = mapProj(Math.min(85, c[0] + dla), c[1] - dlo), [x1, y1] = mapProj(Math.max(-85, c[0] - dla), c[1] + dlo);
+    return [Math.max(0, Math.floor(x0 * n)), Math.min(n - 1, Math.floor(x1 * n)),
+            Math.max(0, Math.floor(y0 * n)), Math.min(n - 1, Math.floor(y1 * n))];
+  }
+  // bounding box [a, b, c, d] of the cells in [x0, x1, y0, y1] not loaded yet, null = all are
+  function mastMissing([x0, x1, y0, y1]) {
+    let a = Infinity, b = -1, c = Infinity, d = -1;
+    for (let y = y0; y <= y1; y++)
+      for (let x = x0; x <= x1; x++)
+        if (!mastCells.has(x + ',' + y)) { a = Math.min(a, x); b = Math.max(b, x); c = Math.min(c, y); d = Math.max(d, y); }
+    return b < 0 ? null : [a, b, c, d];
+  }
+  // the zoom-12 cells of the view and one around it (main copy of the world only)
+  function mastViewCells() {
+    const n = 1 << MAST_Z, W = mapWorld();
+    return [Math.max(0, Math.floor((mapState.mx - mapW / 2 / W) * n) - 1), Math.min(n - 1, Math.floor((mapState.mx + mapW / 2 / W) * n) + 1),
+            Math.max(0, Math.floor((mapState.my - mapH / 2 / W) * n) - 1), Math.min(n - 1, Math.floor((mapState.my + mapH / 2 / W) * n) + 1)];
+  }
+  // after every draw: a view that changed loads 0.7 s after it stops moving.
+  // Redraws of the same view (the DF status at 2 Hz, the 1 Hz map push) must
+  // not restart the countdown - they did, and it never ran out
+  function mastSchedule(force) {
+    const key = [mapState.mx, mapState.my, mapState.z, mapW, mapH].join();
+    if (!force && key === mastViewKey) return;
+    mastViewKey = key;
+    clearTimeout(mastTimer);
+    mastTimer = setTimeout(() => { mastTimer = 0; mastLoad(); }, Math.max(700, mastRetryAt - Date.now()));
+  }
+  async function mastLoad() {
+    if (mastBusy) return;   // its end schedules again
+    if (!mastShown() || !mapCv || !document.body.classList.contains('rp-map')) { mastViewKey = ''; return; }
+    if (!mastStartAt) mastStartAt = Date.now();
+    const rc = mastRegionCells(), region = rc && mastMissing(rc);
+    const view = mapState.z >= MAST_MIN_Z ? mastMissing(mastViewCells()) : null, dn = mastDense;
+    const dense = !!view && !!dn && view[0] >= dn.a && view[1] <= dn.b && view[2] >= dn.c && view[3] <= dn.d && mapState.z < dn.z + 1;
+    if (dense !== mastDenseNow) { mastDenseNow = dense; mapDraw(); }
+    // the station's region first (no station yet: wait for the first map push)
+    if (!rc && !mapStation && Date.now() - mastStartAt <= 5000) { mastSchedule(true); return; }
+    const big = !!region && (mastRegionFails < 2 || !view || dense);
+    const box = big ? region : !dense && view;
+    if (!box) return;
+    if (Date.now() < mastRetryAt) { mastSchedule(true); return; }
+    const [a, b, c, d] = box, n = 1 << MAST_Z;
+    const bb = `(${mapUnproj(0, (d + 1) / n)[0].toFixed(5)},${(a / n * 360 - 180).toFixed(5)},` +
+               `${mapUnproj(0, c / n)[0].toFixed(5)},${((b + 1) / n * 360 - 180).toFixed(5)})`;
+    // a small maxsize (default 512 MiB) gets the query admitted more often when
+    // the server is loaded
+    const q = `[out:json][timeout:${big ? 60 : 25}][maxsize:67108864];(nwr["man_made"="mast"]["tower:type"!="lighting"]${bb};` +
+              `nwr["man_made"="tower"]["tower:type"="communication"]${bb};nwr["man_made"="antenna"]${bb};);` +
+              `out tags center qt ${MAST_LIMIT};`;
+    mastBusy = true;
+    mastErr = '';
+    mapDraw();
+    try {
+      const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), big ? 80000 : 45000);
+      const r = await fetch(MAST_URL, {method: 'POST', body: 'data=' + encodeURIComponent(q), signal: ctl.signal,
+                                       headers: {'Content-Type': 'application/x-www-form-urlencoded'}});
+      const j = r.status === 429 || r.status >= 500 ? null : r.ok ? await r.json() : undefined;
+      clearTimeout(to);
+      if (j === null) throw Object.assign(new Error('HTTP ' + r.status), {busy: true});
+      if (!j) throw new Error('HTTP ' + r.status);
+      // a query the server cut short (timeout / memory) answers 200 + a remark
+      if (/error/i.test(j.remark || '')) throw Object.assign(new Error('query cut short'), {busy: true});
+      const els = Array.isArray(j.elements) ? j.elements : [], now = Date.now();
+      if (mastPts.size + els.length > MAST_MAX) { mastPts.clear(); mastCells.clear(); }
+      for (const el of els)
+        mastAdd(el.type, el.id, el.center ? el.center.lat : el.lat, el.center ? el.center.lon : el.lon, el.tags);
+      if (els.length < MAST_LIMIT) for (let y = c; y <= d; y++) for (let x = a; x <= b; x++) mastCells.set(x + ',' + y, now);
+      else if (big) mastRegionKm /= 2;   // too dense for one query: a smaller region next
+      else mastDense = {a, b, c, d, z: mapState.z};
+      if (big) mastRegionFails = 0;
+      mastBackoff = 0;
+      mastRetryAt = 0;
+      mastSaveSoon();
+    } catch (e) {
+      if (big) mastRegionFails++;
+      mastBackoff = Math.min(300, mastBackoff ? mastBackoff * 2 : 15);
+      mastRetryAt = Date.now() + mastBackoff * 1000;
+      mastErr = e.busy || e.name === 'AbortError' ?
+                  `Masts: OpenStreetMap's Overpass server is busy (${e.busy ? e.message : 'no answer'})` :
+                e.message.startsWith('HTTP') ? `Masts: the Overpass server answered ${e.message}` :
+                'Masts can\'t be loaded (no internet connection?)';
+    }
+    mastBusy = false;
+    mastSchedule(true);   // the view may have moved meanwhile / the retry
+    mapDraw();
+  }
+  // third-party data: only well-formed elements (the key goes into onclick)
+  function mastAdd(type, id, la, lo, tags) {
+    if (!['node', 'way', 'relation'].includes(type) || !Number.isInteger(id) || !tags || typeof tags !== 'object' ||
+        !Number.isFinite(la) || !Number.isFinite(lo)) return;
+    const k = type[0] + id, [nx, ny] = mapProj(la, lo);
+    mastPts.set(k, {k, type, id, la, lo, nx, ny, tags, cat: mastCat(tags)});
+  }
+
+  // the cache in localStorage (this browser): the cells with when they were
+  // loaded + their masts; cells older than MAST_KEEP_DAYS (and their masts)
+  // are dropped when it is read. Bigger than MAST_STORE_MAX: not kept
+  function mastSaveSoon() { clearTimeout(mastSaveT); mastSaveT = setTimeout(mastSave, 2000); }
+  function mastSave() {
+    try {
+      const s = JSON.stringify({v: 1, cells: [...mastCells], masts: [...mastPts.values()].map(m => [m.type, m.id, m.la, m.lo, m.tags])});
+      if (s.length > MAST_STORE_MAX) localStorage.removeItem(MAST_STORE);
+      else localStorage.setItem(MAST_STORE, s);
+    } catch (e) {
+      try { localStorage.removeItem(MAST_STORE); } catch (e2) {}
+    }
+  }
+  function mastRestore() {
+    mastRestored = true;
+    try {
+      const d = JSON.parse(localStorage.getItem(MAST_STORE) || 'null');
+      if (!d || d.v !== 1 || !Array.isArray(d.cells) || !Array.isArray(d.masts)) return;
+      const old = Date.now() - MAST_KEEP_DAYS * 864e5, n = 1 << MAST_Z;
+      for (const [k, t] of d.cells) if (typeof k === 'string' && t > old) mastCells.set(k, t);
+      for (const [type, id, la, lo, tags] of d.masts) {
+        if (!Number.isFinite(la) || !Number.isFinite(lo)) continue;
+        const [nx, ny] = mapProj(la, lo);
+        if (mastCells.has(Math.floor(nx * n) + ',' + Math.floor(ny * n))) mastAdd(type, id, la, lo, tags);
+      }
+    } catch (e) {}
+  }
+
+  // a small lattice mast with radio waves (dots when zoomed out)
+  function mastIcon(c, x, y, col, small, sel) {
+    c.save();
+    c.translate(x, y);
+    if (sel) { c.strokeStyle = '#fff'; c.lineWidth = 2; c.beginPath(); c.arc(0, 0, 12, 0, 2 * Math.PI); c.stroke(); }
+    if (small) {
+      c.fillStyle = col; c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineWidth = 1;
+      c.beginPath(); c.arc(0, 0, 3.2, 0, 2 * Math.PI); c.fill(); c.stroke();
+    } else {
+      const shape = () => {
+        c.beginPath();
+        c.moveTo(-4, 7); c.lineTo(0, -4); c.lineTo(4, 7);
+        c.moveTo(-2.4, 2.6); c.lineTo(2.4, 2.6);
+        c.moveTo(5 * Math.cos(0.8 * Math.PI), -4 + 5 * Math.sin(0.8 * Math.PI)); c.arc(0, -4, 5, 0.8 * Math.PI, 1.2 * Math.PI);
+        c.moveTo(5 * Math.cos(-0.2 * Math.PI), -4 + 5 * Math.sin(-0.2 * Math.PI)); c.arc(0, -4, 5, -0.2 * Math.PI, 0.2 * Math.PI);
+      };
+      c.lineCap = 'round';
+      c.strokeStyle = 'rgba(0,0,0,0.75)'; c.lineWidth = 3.6; shape(); c.stroke();
+      c.strokeStyle = col; c.lineWidth = 1.7; shape(); c.stroke();
+      c.fillStyle = col; c.beginPath(); c.arc(0, -4, 1.7, 0, 2 * Math.PI); c.fill();
+    }
+    c.restore();
+  }
+  function mastDraw(c) {
+    mastVis = 0;
+    if (!mastShown()) return;
+    if (!mastRestored) mastRestore();
+    const small = mapState.z < 13, labels = mapState.z >= 15;
+    c.font = '10px sans-serif';
+    c.lineJoin = 'round';
+    for (const m of mastPts.values()) {
+      const [x, y] = mapToScreen(m.nx, m.ny);
+      m.sx = x; m.sy = y;
+      if (x < -20 || y < -20 || x > mapW + 20 || y > mapH + 20) continue;
+      mastVis++;
+      mastIcon(c, x, y, MAST_CATS[m.cat].col, small, mapSel === 'osm:' + m.k);
+      if (labels && m.tags.name) {
+        c.strokeStyle = 'rgba(0,0,0,0.75)'; c.lineWidth = 3; c.fillStyle = '#e8eef6';
+        c.strokeText(m.tags.name, x + 8, y + 4); c.fillText(m.tags.name, x + 8, y + 4);
+      }
+    }
+  }
+  // "osm:<key>" of the mast nearest a screen point (within 10 px)
+  function mastHit(x, y) {
+    if (!mastShown()) return null;
+    let best = null, bd = 10 * 10;
+    for (const m of mastPts.values()) {
+      if (m.sx === undefined) continue;
+      const d = (m.sx - x) ** 2 + (m.sy - y) ** 2;
+      if (d < bd) { bd = d; best = m.k; }
+    }
+    return best ? 'osm:' + best : null;
+  }
+
+  // popup: the readable part first, then every other tag OSM has for it
+  function mastPopupHtml(m) {
+    const t = m.tags, row = (k, v) => v ? `<tr><td>${k}</td><td>${digEsc(v)}</td></tr>` : '';
+    let rows = row('Type', mastType(t)) + row('Used for', mastServices(t) || 'not stated') +
+               row('Operator', t.operator) + row('Height', mastHeight(t)) +
+               `<tr><td>Position</td><td>${m.la.toFixed(5)}, ${m.lo.toFixed(5)}</td></tr>`;
+    if (mapStation) {
+      const d = mapDistKm(mapStation[0], mapStation[1], m.la, m.lo), b = mapBearing(mapStation[0], mapStation[1], m.la, m.lo);
+      rows += `<tr><td>From station</td><td>${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${b.toFixed(0)}°</td></tr>`;
+    }
+    const shown = new Set(['name', 'man_made', 'tower:type', 'tower:construction', 'operator', 'height']);
+    const raw = Object.entries(t).filter(([k, v]) => !shown.has(k) && !/^(alt_|old_|official_)?name:/.test(k) &&
+                                                     !(k.startsWith('communication:') && v === 'yes'));
+    raw.forEach(([k, v], i) => { rows += `<tr class="raw${i ? '' : ' sep'}"><td>${digEsc(k)}</td><td>${digEsc(v)}</td></tr>`; });
+    return `<div class="h"><span style="color:${MAST_CATS[m.cat].col}">●</span>${digEsc(mastTitle(t))}<span class="x" onclick="mapSel=null;mapDraw()">✕</span></div>` +
+           `<div class="s">OpenStreetMap · ${m.type} ${m.id}</div><table>${rows}</table>` +
+           `<div class="lnk"><button type="button" class="map-btn" onclick="mastToMarker('${m.k}')" title="Make it one of your markers, to add its frequencies and notes">📍 Add as marker</button>` +
+           `<a href="${mastOsmUrl(m)}" target="_blank" rel="noopener noreferrer">openstreetmap.org ↗</a></div>`;
+  }
+  // a marker of the user's on the mast, its OSM details as the notes
+  function mastToMarker(k) {
+    const m = mastPts.get(k);
+    if (!m) return;
+    const t = m.tags;
+    const notes = [mastType(t) + ' - from OpenStreetMap', mastServices(t) && 'Used for: ' + mastServices(t),
+                   t.operator && 'Operator: ' + t.operator, mastHeight(t) && 'Height: ' + mastHeight(t),
+                   mastOsmUrl(m)].filter(Boolean).join('\n');
+    mapSel = null;
+    mkCreate(m.la, m.lo, mastTitle(t), notes);
+    mapDraw();
+  }
+
   // markers' age / staleness changes without new data
-  setInterval(() => { if (mapPts.size || mapSel) mapDraw(); }, 2000);
+  setInterval(() => { if (mapPts.size || mapSel || (mapState.masts && (mastErr || mastBusy))) mapDraw(); }, 2000);
 
   initMapResize();
   initRpSplit();

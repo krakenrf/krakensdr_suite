@@ -303,6 +303,12 @@ Edit `include/config.hpp`:
   #fp / #wf-container, or a pane's overlay - which selects it); the Zoom
   slider (wf-controls bar, log2 x 25) shows / sets the main or the selected
   pane's zoom (`zoomSyncSlider`)
+- `applyClip(newFrame)`: ONLY a frame from the receiver (`applyClip(true)`)
+  adds a waterfall line; zoom / zoom slider / edge-clip slider redraw the
+  last frame without one (the waterfall just takes the new range for its
+  overlay + clicks), and a wheel notch that changes nothing (`zoomWheel`
+  returns false at 1x / 16x) redraws nothing. Every redraw used to push the
+  frame into the waterfall again: it ran 2.5-3.5x fast while zooming
 - Split: `#fp-split` drags the main spectrum height (`kraken_fp_h`,
   localStorage; window resize refits uPlot); each pane's `.tpane-split` sets
   the grid's `--spec-frac` (shared by every pane, `kraken_pane_split`);
@@ -362,7 +368,8 @@ Edit `include/config.hpp`:
 **Digital voice/data decoders (one per VFO): engine `src/digital/`, decoders `plugins/`:**
 - EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below);
   kraken_doa contains no protocol code. Shipped: p25, dmr, tetra, dstar,
-  nxdn, mpt1327, pocsag, aprs, adsb (see *ADS-B* below), ais (see *AIS*)
+  nxdn, mpt1327, pocsag, aprs, adsb (see *ADS-B* below), ais (see *AIS*),
+  radiosonde (see *Radiosonde*)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
   tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by
   default. WS `PLUGIN_AUTO:id:0|1` -> `PluginRegistry::set_auto()` (bumps the
@@ -610,7 +617,10 @@ Edit `include/config.hpp`:
   block because `applyOpModeUI` -> `rpApply` can run before that block is
   evaluated): own canvas slippy map, NO map library - the page must work
   without internet (uPlot is inlined for the same reason). Web Mercator,
-  fractional zoom (tiles of the nearest integer zoom scaled), drag / wheel
+  fractional zoom (tiles of the nearest integer zoom scaled) MAP_MIN_Z 2 -
+  MAP_MAX_Z 22: past a layer's deepest tiles (`max` 19) those are scaled up
+  (z22 ~3 cm/px, 8x); range rings down to 5 m, graticule to 0.00001 deg
+  (decimals from the step), drag / wheel
   / pinch / double-click, +/− ⌖ (station) ⤢ (fit all), Street (OSM
   tile.openstreetmap.org) / Satellite (Esri World_Imagery + the
   World_Boundaries_and_Places label layer), attribution shown. Tiles: cache
@@ -637,6 +647,117 @@ Edit `include/config.hpp`:
   pointing the layers at a closed port) and an end-to-end run of the real
   kraken_doa (from a scratch dir - its own doa_settings.json) fed by a fake
   heimdall streaming a synthetic 1090 MHz recording
+
+**📍 Map markers (user-placed; `src/map_markers.cpp`, UI "📍 MAP MARKERS" in kraken_doa.html):**
+- Right-click on `#map-canvas` (`contextmenu`; touch: a 600 ms long press
+  without moving, `lpT` in `mapInit` - a touch pan needs 8 px, a mouse 3 px)
+  -> `mapMenuOpen` (`#map-menu`, positioned in the pane): "📍 Add Marker"
+  first, on a marker's pin also Edit / Delete, the clicked lat/lon as a
+  footer. Closes on a press elsewhere (document capture listener), Escape,
+  wheel, window blur. The right mouse button no longer starts a pan
+- Backend = the single source of truth (shared by every browser): a list of
+  {id, lat, lon, name, notes, freqs:[{hz, label}], t}. `MARKER_SET:{json}`
+  creates / replaces (id = [A-Za-z0-9_-]{1,24}, chosen by the page),
+  `MARKER_DEL:id`, `GET_MARKERS` (page connect) - every one answered to ALL
+  pages with `markers::message_json()` = `{"markers":{"list":[...]}}`; a
+  refused MARKER_SET adds `error` + `id` (only the page that sent it - the id
+  is random - reports it). `MARKER_` is in `is_query_command` (no sync_cmd
+  echo). Parsed with `geo::json_parse` (geo_address.hpp). Limits: 500
+  markers, 50 frequencies (1 Hz..100 GHz, stored as integer Hz), name /
+  label 80 bytes, notes 4000 (cut on a UTF-8 boundary, control characters
+  dropped - notes keep \n / \t). `map_markers.json` (cwd-relative, so
+  Docker's volume gets it) is rewritten (tmp + rename) on every change and
+  read by `markers::load()` in main; not touched by RESET_SETTINGS
+- Page: state `mkList / mkSel / mkEdit / mkWantEdit / mapMenuAt` in the
+  globals block (mapDrawNow -> `mkDraw` / `mkRender` can run before the
+  section is evaluated). No optimistic updates: Add Marker sends MARKER_SET
+  and sets `mkWantEdit`; the list arriving with that id opens it in edit
+  mode (name focused). Pins (`MK_COL` pink, tip on the spot, head 15 px
+  above; `mkHit` tests the head, before decoder points) with the name + the
+  first frequency (+N). `#map-mk` panel (bottom right; `.map-pane.mk-open`
+  narrows the 📡 DF panel at the bottom left so they don't overlap): view =
+  position, distance / bearing from the station, frequency buttons, notes,
+  Edit / Centre / Delete; edit form built once (`dataset.edit`) so typing
+  survives list pushes, `mkLeaveEdit` asks before dropping unsaved changes
+  (`dataset.orig` vs `mkFormRaw`); "lat, lon" pasted in the latitude box
+  works. A click on the empty map closes the view (not an edit). ⤢ fits the
+  markers too
+- `mkTune(hz)` (a frequency button): the SELECTED VFO (`activeDecimatorId`);
+  refused for a locked VFO (fixed-frequency decoder) or outside
+  FREQ_MIN..FREQ_MAX. Coherent / wideband scan: inside `maxOffsetHz` the VFO
+  just moves; else `FREQ:` on whole kHz (`sendFreqChange`) with the VFO
+  offset taking the rest (145.5125 -> FREQ:145.513 + VFO -0.5 kHz).
+  Independent: a tuner whose band holds it (`paneMoveVfo`, own first), else
+  the VFO's own tuner retunes (`paneSendFreq`) with the VFO at 0
+- Tests (scratchpad): t_markers.py (backend commands, refusals, a second
+  browser, the file, reload after restart) and t_ui.py (headless Chromium
+  via CDP: right-click / long press / Escape, add + edit + save, escaping,
+  tune paths incl. independent mode with stubbed panes, delete) on a TEST
+  build with ports 18080/18081/18091/18092. On this Pi, run
+  `/usr/lib/chromium/chromium` directly (the /usr/bin wrapper adds a V8 flag
+  the renderer rejects) with `--no-proxy-server` (the system proxy lookup
+  hangs every network load)
+
+**📡 OpenStreetMap masts layer (UI only, kraken_doa.html "📡 OSM MASTS"):**
+- "Masts" button (`mapState.masts`, localStorage like the other view
+  settings) + a colour legend (`#map-legend`). The BROWSER fetches from
+  OpenStreetMap's Overpass API (`MAST_URL` overpass-api.de, CORS `*`), like
+  the tiles - kraken_doa is not involved. overpass-api.de answers 406
+  without a Referer (browsers send one: the page has no referrer policy -
+  keep it that way) and OFTEN 504 under load
+- Query: `nwr` man_made=mast (tower:type != lighting), man_made=tower +
+  tower:type=communication, man_made=antenna in the bbox; `out tags center
+  qt 5000`; `[timeout:25][maxsize:67108864]` (a small maxsize is admitted
+  more often than the 512 MiB default under load)
+- overpass-api.de RATIONS queries per connection (`/api/status`: "Rate
+  limit: 2", a slot blocked for a while after each query; 429 beyond) - the
+  first version loaded view by view, got 429 after a few pans and only ever
+  showed the area loaded first ("masts only within a radius of me"). Now,
+  in zoom-12 cells (`mastCells`: "x,y" -> load time), one query at a time:
+  1. the REGION: MAST_REGION_KM 150 each way around the station
+     (`mastRegionCells`; no station 5 s after the first try: around the
+     view, z >= 8) in ONE query ([timeout:60], abort 80 s; NZ test: 1301
+     masts in 8 s). 5000 answers = too dense: `mastRegionKm` halves (< 20
+     = no region). Re-centred when the station moves a third of it.
+     After 2 failed region queries the view goes first
+  2. elsewhere the view's missing cells (+1 around) at zoom >= MAST_MIN_Z
+     11, 0.7 s after the view stops changing ([timeout:25], abort 45 s; 5000
+     answers = shown, cells not marked, no new query of that bbox below zoom
+     + 1: `mastDense`)
+  `mastSchedule()` runs after every draw but restarts the countdown only
+  when the VIEW changed (`mastViewKey`; reset while the layer is off) -
+  redraws of the same view (DF status 2 Hz, map push 1 Hz) restarted it
+  forever. Errors: 429 / 5xx / no answer / 200 with an error `remark`
+  (query cut short - its cells are NOT marked) = busy; fetch rejected = no
+  internet; retry after 15 s doubling to 5 min (`mastRetryAt`, shown in the
+  status line). Memory cleared above MAST_MAX 30000 masts
+- Loaded masts are drawn at ANY zoom (dots below 13); status adds "zoom in
+  to load other areas" below zoom 11 when the view has cells not loaded.
+  localStorage `kraken_masts` {v:1, cells:[[key, t]], masts:[[type, id, lat,
+  lon, tags]]} (saved 2 s after a load, dropped if > 3.5 M chars; read on
+  the first draw): cells older than MAST_KEEP_DAYS 7 and their masts are
+  dropped, so a reload asks Overpass nothing (NZ region: 266 k chars)
+- Third-party data: elements kept only with type node / way / relation and
+  an integer id (key `n123` goes into onclick), every tag escaped
+  (`digEsc`). Category (`mastCat`, colour): broadcast (communication:
+  television / radio / broadcast / dab) > mobile (mobile_phone, gsm, umts,
+  lte, 2G-5G, nr) > microwave > amateur (amateur_radio[:repeater] - not
+  the POTA / SOTA award tags) > not stated
+- Drawn after the DF heat maps, before the station / markers: lattice
+  icon (z >= 13) or dot, names at z >= 15. Click (after user markers and
+  decoder points): popup in `#map-pop` (`mapSel` = "osm:<key>"; a map push
+  doesn't close it) - type + construction, "Used for" (`mastServices`:
+  "Mobile phone (LTE, UMTS)"), operator, height, position, distance /
+  bearing, every other tag; link to openstreetmap.org; "📍 Add as marker"
+  (`mastToMarker` -> `mkCreate`: name + OSM details as the notes, opens the
+  editor). Attribution adds "masts © OpenStreetMap contributors" on the
+  satellite layer
+- Tests (scratchpad): t_masts.py (popup, legend, 504 / timeout remark /
+  offline, malformed / injected elements) and t_masts2.py (region first,
+  any zoom, the localStorage cache incl. expiry, too-dense region, region
+  failures -> view first, off / on) - headless Chromium, real Overpass only
+  for the first region load, the rest stubbed via
+  `Page.addScriptToEvaluateOnNewDocument` (a fetch wrapper)
 
 **Incident map (`src/incidents.cpp`, `geo_address.cpp`, `geo_http.cpp`):**
 - Plugins send free-text messages with `host.message(from, text)`
@@ -1108,6 +1229,41 @@ Edit `include/config.hpp`:
   click don't move it when selected; `digRenderCards` disables its Freq / BW
   / Tuner fields. Picking another decoder unlocks it (bandwidth stays)
 - Test: scratchpad t_adsb_lock (coherent + independent)
+
+**Radiosonde (`plugins/radiosonde/`, weather balloons; README.md there):**
+- One plugin, eight families side by side (`sonde::Type` each, sonde.hpp):
+  rs41.cpp, dfm.cpp, m10.cpp (M10 + M20), imet4.cpp (AFSK), imet54.cpp,
+  lms6.cpp, mrz.cpp. 48 kHz in; two channel filters (+-7 kHz: the 2400-4800
+  Bd types; +-12 kHz: M10 / M20 9600 Bd, iMet-4 AFSK) -> FM discriminators
+  shared by all types. min_vfo_rate 24 kHz
+- fsk.cpp `FskRx`: symbol-long moving average (integrate & dump) on the
+  discriminator, NPH timing phases each on a FIXED search grid with its own
+  sync-word shift register (both polarities); a capture runs on its OWN
+  clock with a Gardner loop. (The first version moved the search grid with
+  the timing loop: running on the dead air after a frame it pulled every
+  phase to one instant and the next sync was missed - 94 of 118 RS41 frames.)
+  DC + deviation from the sync's 1s / 0s, soft symbols normalised to +-1.
+  Several phases catch one frame: types drop captures within ~0.3 frame of
+  a decoded one (`last_t0_`)
+- rs.cpp: generic GF(256) Reed-Solomon (BM / Chien / Forney; cw[i] = x^i):
+  RS41 (0x11D, fcr 0, prim 1, 24 roots), LMS6 CCSDS (0x187, 112, 11, 32).
+  LMS6: the known sync bytes 00 58 F3 3F B8 are prepended as perfect symbols
+  so `kp::viterbi_decode` starts in the right encoder state; LMS frames span
+  consecutive blocks (stream of RS data bytes, broken by a failed block / gap)
+- decoder.cpp keeps per sonde (type + serial) the last value of every field
+  (`Frame`, NAN = not in this frame) and publishes at most 1/s: facts (one
+  sonde: the latest), table row, map point kind "balloon" (ttl 3 h; the page
+  keeps balloon trails 4 h / 4000 points), events: new sonde, standard
+  pressure levels passed on the way up (pressure measured or ISA at the GPS
+  altitude, "(est.)"), burst (300 m below the maximum > 3 km, descending),
+  landed (30 s still after burst). Velocity for types without it from the
+  fix 3-10 s back (5+ satellites). freq_error = the frame's DC (AFC)
+- Validated against the radiosonde_auto_rx recordings + the rs1729 decoders
+  as reference (results in the README); `SONDE_DUMP=1 decoder --file ...`
+  prints every frame for such comparisons. The flight logic was tested with
+  a simulated 30 km flight (scratchpad harness including decoder.cpp)
+- Not supported: RS92 (needs ephemeris), 1680 MHz types, Meisei, MTS01.
+  rs1729/RS is GPL-3.0: used as documentation + test reference only
 
 **AIS (`plugins/ais/`, ships):**
 - Input 100 kHz (`sample_rate` = `min_vfo_rate` = 100 kHz = the VFO's "100
