@@ -419,6 +419,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 #map-canvas {position:absolute;left:0;top:0;width:100%;height:100%;cursor:grab}
 #map-canvas.dragging {cursor:grabbing}
 #map-canvas.over {cursor:pointer}
+#map-canvas.obj {cursor:move}
+#map-canvas.rot {cursor:grab}
 .map-ctl {position:absolute;display:flex;gap:4px;z-index:2}
 .map-ctl-tl {left:6px;top:6px}
 .map-ctl-tr {right:6px;top:6px;flex-direction:column}
@@ -471,9 +473,39 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-pop tr.sep td {border-top:1px solid #2a4a7a;padding-top:3px}
 .map-pop .lnk {margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .map-pop a {color:#4fc3f7}
+/* under the top-left buttons: the masts legend, then the viewshed panel */
+.map-tl {position:absolute;left:6px;top:38px;z-index:3;display:flex;flex-direction:column;gap:4px;align-items:flex-start;max-width:calc(100% - 60px);max-height:calc(60% - 30px);pointer-events:none}
 /* 📡 OpenStreetMap masts layer: what the colours mean */
-.map-legend {position:absolute;left:6px;top:38px;z-index:2;pointer-events:none;background:rgba(16,24,44,.85);border-radius:3px;padding:2px 7px;font-size:10px;color:#cfe3ff;display:flex;gap:4px 9px;flex-wrap:wrap;max-width:calc(100% - 60px)}
+.map-legend {pointer-events:none;background:rgba(16,24,44,.85);border-radius:3px;padding:2px 7px;font-size:10px;color:#cfe3ff;display:flex;gap:4px 9px;flex-wrap:wrap;flex:none}
 .map-legend i {display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:3px;border:1px solid rgba(0,0,0,.7);vertical-align:-1px}
+/* 👁 viewshed panel (👁 VIEWSHED) */
+.map-vs {position:relative;pointer-events:auto;background:rgba(16,24,44,.92);border:1px solid #2a4a7a;border-radius:4px;padding:4px 6px;font-size:11px;color:#cfe3ff;max-width:min(410px,100%);min-height:0;overflow-y:auto;box-sizing:border-box}
+.map-vs-h {display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding-right:16px}
+.map-vs-h .t {font-weight:bold;color:#fff}
+.map-vs-h .hint {color:#8296b4}
+.map-vs-h .x {position:absolute;right:4px;top:4px;cursor:pointer;color:#8aa;padding:0 3px}
+.map-vs.closed .map-vs-body, .map-vs.closed .hint {display:none}
+.map-vs select, .map-vs input[type="number"] {background:#1a1a2e;border:1px solid #2a4a7a;color:#e0e0e0;border-radius:3px;font-size:11px;padding:1px 3px;height:22px;box-sizing:border-box}
+.map-vs input[type="number"] {width:52px}
+.map-vs-row {display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px}
+.map-vs-row label, .vs-it label {display:flex;align-items:center;gap:3px;white-space:nowrap}
+#map-vs-list {margin-top:4px;border-top:1px solid #2a4a7a}
+.vs-it {padding:3px 0;border-bottom:1px solid #1d2c4a}
+.vs-it .l1, .vs-it .l2 {display:flex;gap:4px 6px;align-items:center}
+.vs-it .l2 {flex-wrap:wrap;padding-left:18px;margin-top:2px}
+.vs-it .sw {width:12px;height:12px;border-radius:2px;border:1.5px solid;box-sizing:border-box;cursor:pointer;flex:none}
+.vs-it .nm {font-weight:bold;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vs-it .st {color:#a5d6a7;flex:1;min-width:90px}
+.vs-it .st.w {color:#ffcc80}
+.vs-it .st.e {color:#ff8a80}
+.vs-it .st a {color:#4fc3f7;cursor:pointer;text-decoration:underline}
+.vs-it.off .nm, .vs-it.off .st {opacity:.5}
+.vs-it .map-btn {height:20px;min-width:20px;padding:0 4px;font-size:11px}
+.map-vs-hov {margin-top:4px;line-height:1.45;color:#dbe8ff}
+.map-vs-hov:empty {display:none}
+.map-vs-hov .no {color:#ffab91}
+.map-vs-note {margin-top:4px;color:#7f93b4;font-size:10px;line-height:1.35}
+.map-vs-note a {color:#4fc3f7}
 #map-canvas {-webkit-touch-callout:none}
 /* right-click (long-press) menu on the map + the user's markers (📍 MAP MARKERS) */
 .map-menu {position:absolute;z-index:6;min-width:160px;max-width:260px;background:rgba(16,24,44,.97);border:1px solid #4fc3f7;border-radius:4px;padding:3px 0;box-shadow:0 2px 10px rgba(0,0,0,.5);font-size:12px}
@@ -1649,8 +1681,12 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <div class="map-seg" id="map-layers"></div>
             <button type="button" class="map-btn" id="map-trails" onclick="mapSet('trails', !mapState.trails)" title="Show the tracks the markers left">Trails</button>
             <button type="button" class="map-btn" id="map-masts" onclick="mapSet('masts', !mapState.masts)" title="Radio masts, towers and antennas mapped in OpenStreetMap, loaded online for the area shown (zoom in to see them). The colour says what OpenStreetMap lists them for; click one for everything it knows about it">Masts</button>
+            <button type="button" class="map-btn" id="map-vs-btn" onclick="vsToggle()" title="Viewshed: the ground in line of sight of an antenna at the station or any place you pick (right-click the map, a marker or a mast), over the terrain, anywhere in the world (terrain loaded online)">Viewshed</button>
           </div>
-          <div class="map-legend" id="map-legend" style="display:none"></div>
+          <div class="map-tl">
+            <div class="map-legend" id="map-legend" style="display:none"></div>
+            <div class="map-vs" id="map-vs" style="display:none"></div>
+          </div>
           <div class="map-ctl map-ctl-tr">
             <button type="button" class="map-btn" onclick="mapZoomBy(1)" title="Zoom in (mouse wheel / double-click)">+</button>
             <button type="button" class="map-btn" onclick="mapZoomBy(-1)" title="Zoom out">−</button>
@@ -1725,7 +1761,8 @@ const MAP_MIN_Z = 2, MAP_MAX_Z = 22, MAP_TILE_CACHE = 400, MAP_TRAIL_MAX = 400, 
 const MAP_TRAIL_BALLOON_MAX = 4000, MAP_TRAIL_BALLOON_S = 4 * 3600;
 const mapState = (() => {
   const d = {on: false, tab: 'map', w: 0, layer: 'street', z: 0, mx: 0.5, my: 0.5, trails: true, masts: false,
-             rdfVfo: 'all', rdfTid: '', rdfLobe: true, rdfLines: true, rdfHeat: true, rdfOpen: true};
+             rdfVfo: 'all', rdfTid: '', rdfLobe: true, rdfLines: true, rdfHeat: true, rdfOpen: true,
+             vs: false, vsOpen: true};
   try { return Object.assign(d, JSON.parse(localStorage.getItem('kraken_map') || '{}')); } catch (e) { return d; }
 })();
 const mapPts = new Map();      // "vfo|plugin|id" -> point (server fields + rx time + trail)
@@ -1734,6 +1771,10 @@ let mapStation = null;         // [lat, lon] or null
 let mapSel = null;             // key of the point whose popup is open
 let mapCv = null, mapCtx = null, mapW = 0, mapH = 0, mapDpr = 1, mapRaf = 0;
 let mapTileOk = 0, mapTileErrAt = 0, mapAutoFit = !mapState.z;
+// 📡 the station / a viewshed point picked on the map (see 📡 STATION ON THE
+// MAP): selected, the drag in progress, the station's position + heading
+// while it is dragged and until the receiver reports it back
+let mapStSel = false, vsSel = null, mapObjDrag = null, mapStLocal = null;
 let mapSaveT = 0, mapFlashT = 0, mapFlashMsg = '';
 if (!['street', 'satellite'].includes(mapState.layer)) mapState.layer = 'street';
 // 📍 the user's markers (see 📍 MAP MARKERS): the backend's list, the one
@@ -1748,6 +1789,31 @@ const mastPts = new Map(), mastCells = new Map();
 let mastVis = 0, mastBusy = false, mastErr = '', mastRetryAt = 0, mastBackoff = 0, mastDense = null, mastDenseNow = false,
     mastTimer = 0, mastViewKey = '', mastStartAt = 0, mastRegionC = null, mastRegionKm = 150, mastRegionFails = 0,
     mastRestored = false, mastSaveT = 0;
+const VS_RMAX_KM = 1000;   // largest radius (see 👁 VIEWSHED)
+// 👁 viewsheds (see 👁 VIEWSHED): settings + the list (localStorage
+// kraken_vs; tgt = the target height per mode, h / r = the antenna height /
+// radius new ones get), the results by item id, the worker and its job
+const vsState = (() => {
+  const d = {tgt: {agl: 2, amsl: 3000}, amsl: false, k: 4 / 3, h: 10, r: 30, items: []};
+  try {
+    const s = JSON.parse(localStorage.getItem('kraken_vs') || '{}'), num = (v, lo, hi, def) => v >= lo && v <= hi ? +v : def;
+    if (s.tgt) d.tgt = {agl: num(s.tgt.agl, 0, 30000, 2), amsl: num(s.tgt.amsl, 0, 30000, 3000)};
+    d.amsl = !!s.amsl;
+    d.k = num(s.k, 1, 2, d.k);
+    d.h = num(s.h, 0, 5000, d.h);
+    d.r = num(s.r, 1, VS_RMAX_KM, d.r);
+    // rebuilt field by field: a damaged entry must not break the map
+    d.items = (Array.isArray(s.items) ? s.items : []).filter(i => i && /^[a-z0-9]{1,24}$/.test(i.id) &&
+      Math.abs(i.lat) <= 85.05 && Math.abs(i.lon) <= 180 && i.h >= 0 && i.h <= 5000 && i.r >= 1 && i.r <= VS_RMAX_KM).slice(0, 6)
+      .map(i => ({id: i.id, name: String(i.name || 'Point').slice(0, 60), lat: +i.lat, lon: +i.lon, h: +i.h, r: +i.r,
+                  col: /^#[0-9a-f]{6}$/i.test(i.col) ? i.col : '#00e676', on: i.on !== false, st: !!i.st,
+                  mk: /^[A-Za-z0-9_-]{1,24}$/.test(i.mk) ? i.mk : ''}));
+  } catch (e) {}
+  return d;
+})();
+const vsRes = new Map(), vsFail = new Map();
+let vsWorker = null, vsJob = null, vsSeq = 0, vsWorkerErr = '', vsHovAt = null, vsOff = null,
+    vsReady = false;   // set at the end of the section (rpApply can draw the map before it)
 
 const bwo=[
   {decimation:1,bandwidth:2.4,name:"2.4 MHz (No decimation)"},
@@ -10723,12 +10789,15 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       lpCancel();
       lpFired = false;
       if (ptrs.size === 1) {
-        pan = {x: e.offsetX, y: e.offsetY, mx: mapState.mx, my: mapState.my};
-        if (e.pointerType === 'touch') {
+        // a selected station / viewshed point (or the station's heading handle) is dragged, not the map
+        mapObjDrag = mapObjDragStart(e.offsetX, e.offsetY);
+        pan = mapObjDrag ? null : {x: e.offsetX, y: e.offsetY, mx: mapState.mx, my: mapState.my};
+        if (e.pointerType === 'touch' && !mapObjDrag) {
           const x = e.offsetX, y = e.offsetY;
           lpT = setTimeout(() => { lpT = 0; if (!moved) { lpFired = true; mapMenuOpen(x, y); } }, 600);
         }
       } else if (ptrs.size === 2) {
+        if (mapObjDrag) { const od = mapObjDrag; mapObjDrag = null; if (moved) mapObjDragEnd(od); }
         const [a, b] = [...ptrs.values()];
         pinch = {d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z: mapState.z};
         pan = null;
@@ -10744,11 +10813,22 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     });
     mapCv.addEventListener('pointermove', e => {
       if (!ptrs.has(e.pointerId)) {
-        const over = !!(mkHit(e.offsetX, e.offsetY) || mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY));
+        const grab = mapObjGrab(e.offsetX, e.offsetY);
+        const over = !grab && !!(mkHit(e.offsetX, e.offsetY) || mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY) ||
+                                 stHit(e.offsetX, e.offsetY) || vsHit(e.offsetX, e.offsetY));
         mapCv.classList.toggle('over', over);
+        mapCv.classList.toggle('obj', grab === 'obj');
+        mapCv.classList.toggle('rot', grab === 'rot');
+        vsHover(e.offsetX, e.offsetY);
         return;
       }
       ptrs.set(e.pointerId, [e.offsetX, e.offsetY]);
+      if (mapObjDrag && ptrs.size === 1) {
+        const od = mapObjDrag;
+        if (Math.abs(e.offsetX - od.x0) + Math.abs(e.offsetY - od.y0) > (e.pointerType === 'touch' ? 6 : 2)) moved = true;
+        if (moved) { mapCv.classList.add('dragging'); mapObjDragMove(e.offsetX, e.offsetY); }
+        return;
+      }
       if (pinch && ptrs.size === 2) {
         const [a, b] = [...ptrs.values()];
         const d = Math.hypot(a[0] - b[0], a[1] - b[1]) || 1;
@@ -10774,13 +10854,23 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       mapCv.classList.remove('dragging');
       if (ptrs.size < 2) pinch = null;
       lpCancel();
+      if (mapObjDrag && ptrs.size === 0) {   // (released without moving: it just stays selected)
+        const od = mapObjDrag;
+        mapObjDrag = null;
+        if (moved) mapObjDragEnd(od);
+        return;
+      }
       if (ptrs.size === 0) {
         if (pan && !moved && !lpFired && e.type === 'pointerup') {
           // a click: a marker of the user's (its panel), a decoder's point
           // or an OpenStreetMap mast (popup), or nothing (closes both - an
           // edit stays open)
           const mk = mkHit(e.offsetX, e.offsetY);
-          mapSel = mk ? null : (mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY));
+          vsHover(e.offsetX, e.offsetY);   // touch: a tap shows what is in sight there
+          // the station / a viewshed point: selected (then draggable), anything else: deselected
+          const st = !mk && stHit(e.offsetX, e.offsetY), vs = !mk && !st ? vsHit(e.offsetX, e.offsetY) : null;
+          mapSelectObj(st ? 'st' : vs);
+          mapSel = mk || st || vs ? null : (mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY));
           if (mk) mkSelect(mk);
           else if (!mkEdit && mkSel) mkClose();
           mapDraw();
@@ -10794,6 +10884,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     };
     mapCv.addEventListener('pointerup', up);
     mapCv.addEventListener('pointercancel', up);
+    mapCv.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') vsHover(null); });
     mapCv.addEventListener('wheel', e => {
       e.preventDefault();
       mapMenuClose();
@@ -10806,7 +10897,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const mn = $id('map-menu');
       if (mn.style.display !== 'none' && !mn.contains(e.target)) mapMenuClose();
     }, true);
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') mapMenuClose(); });
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      mapMenuClose();
+      if ((mapStSel || vsSel) && !mapObjDrag) { mapSelectObj(null); mapDraw(); }
+    });
     window.addEventListener('blur', mapMenuClose);
     mapUpdateControls();
   }
@@ -10822,6 +10917,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (tr) tr.classList.toggle('on', !!mapState.trails);
     const ms = $id('map-masts');
     if (ms) ms.classList.toggle('on', !!mapState.masts);
+    const vb = $id('map-vs-btn');
+    if (vb) vb.classList.toggle('on', !!mapState.vs);
+    vsRender();
     const lg = $id('map-legend');
     if (lg) {
       if (!lg.innerHTML) lg.innerHTML = Object.values(MAST_CATS).map(c => `<span><i style="background:${c.col}"></i>${c.name}</span>`).join('');
@@ -10829,7 +10927,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
     const at = $id('map-attr');
     if (at) at.textContent = MAP_LAYERS[mapState.layer].attr +
-      (mapState.masts && mapState.layer !== 'street' ? ' · masts © OpenStreetMap contributors' : '');
+      (mapState.masts && mapState.layer !== 'street' ? ' · masts © OpenStreetMap contributors' : '') +
+      (mapState.vs ? ' · terrain: Mapzen, SRTM, GMTED2010, ETOPO1 & others' : '');
     if (typeof rdfRenderPanel === 'function') rdfRenderPanel();
   }
 
@@ -10943,9 +11042,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
 
   // range rings around the station, at a round step that suits the zoom
   function mapRings(c) {
-    if (!mapStation) return;
-    const [sx, sy] = mapLatLonToScreen(mapStation[0], mapStation[1]);
-    const kmPerPx = 40075 * Math.cos(mapStation[0] * Math.PI / 180) / mapWorld();
+    const stp = mapStationPos();
+    if (!stp) return;
+    const [sx, sy] = mapLatLonToScreen(stp[0], stp[1]);
+    const kmPerPx = 40075 * Math.cos(stp[0] * Math.PI / 180) / mapWorld();
     const steps = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
     let st = steps[steps.length - 1];
     for (const s of steps) if (s / kmPerPx >= 70) { st = s; break; }
@@ -10963,12 +11063,162 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const d = i * st;
       c.fillText(d >= 1 ? +d.toFixed(1) + ' km' : Math.round(d * 1000) + ' m', sx + r * 0.71 + 2, sy - r * 0.71 - 2);
     }
-    // the station: antenna mast
+    // the station: antenna mast (selected: cyan in a ring + its heading line)
+    if (mapStSel) stDrawSelected(c, sx, sy);
     c.save();
     c.translate(sx, sy);
-    c.strokeStyle = '#000'; c.fillStyle = '#ffeb3b'; c.lineWidth = 1.5;
+    c.strokeStyle = '#000'; c.fillStyle = mapStSel ? '#4fc3f7' : '#ffeb3b'; c.lineWidth = 1.5;
     c.beginPath(); c.moveTo(0, -11); c.lineTo(6, 6); c.lineTo(-6, 6); c.closePath(); c.fill(); c.stroke();
     c.restore();
+  }
+
+  // --- 📡 STATION ON THE MAP: select, drag, heading; viewshed points too ------
+  // A click on the station's mast selects it (cyan, in a ring; click elsewhere
+  // or Esc: done); then it can be dragged, and a line from it shows its
+  // heading, turned by dragging the round handle at its end. Only with a
+  // static location (Station Information) - a GPS / phone position would be
+  // replaced by the next fix; the right-click menu's "Set station here"
+  // switches to static (asking first). The result goes out as the panel's
+  // STATIC_LOCATION:lat,lon,heading - on release for the position, every
+  // 300 ms while the heading turns (the DoA lobes turn with it; settings are
+  // saved ~1 s debounced) - and mapStLocal shows it until the receiver's map
+  // push has it. The station's viewsheds follow it (vsFollowStation: while
+  // dragging after a 0.4 s pause, then on release). A viewshed point (not
+  // the station's) is selected and dragged the same way (vsMoveItem).
+  const ST_HDG_PX = 70;
+  function mapStaticSource() { return (($id('location-source') || {}).value) === 'static'; }
+  function mapStationPos() { return mapStLocal ? [mapStLocal.lat, mapStLocal.lon] : mapStation; }
+  function mapStationHdg() {
+    if (mapStLocal) return mapStLocal.hdg;
+    const h = parseFloat(($id('static-heading') || {}).value);
+    return Number.isFinite(h) ? ((h % 360) + 360) % 360 : 0;
+  }
+  function stScreen() { const p = mapStationPos(); return p ? mapLatLonToScreen(p[0], p[1]) : null; }
+  function stHandle() {
+    const s = stScreen(), a = mapStationHdg() * Math.PI / 180;
+    return s ? [s[0] + ST_HDG_PX * Math.sin(a), s[1] - ST_HDG_PX * Math.cos(a)] : null;
+  }
+  function stHit(x, y) {   // the mast
+    const s = stScreen();
+    return !!s && Math.abs(x - s[0]) <= 11 && y - s[1] >= -15 && y - s[1] <= 9;
+  }
+  function stHdgHit(x, y) {   // the heading handle (selected, static)
+    if (!mapStSel || !mapStaticSource()) return false;
+    const h = stHandle();
+    return !!h && (x - h[0]) ** 2 + (y - h[1]) ** 2 <= 12 * 12;
+  }
+  function stDrawSelected(c, sx, sy) {
+    c.save();
+    c.beginPath(); c.arc(sx, sy - 2, 16, 0, 2 * Math.PI);
+    c.strokeStyle = 'rgba(0,0,0,0.75)'; c.lineWidth = 5; c.stroke();
+    c.strokeStyle = '#4fc3f7'; c.lineWidth = 2.5; c.stroke();
+    if (mapStaticSource()) {
+      const hd = mapStationHdg(), a = hd * Math.PI / 180, [hx, hy] = stHandle();
+      c.beginPath(); c.moveTo(sx + 16 * Math.sin(a), sy - 2 - 16 * Math.cos(a)); c.lineTo(hx, hy);
+      c.strokeStyle = 'rgba(0,0,0,0.75)'; c.lineWidth = 5; c.stroke();
+      c.strokeStyle = '#4fc3f7'; c.lineWidth = 2.5; c.stroke();
+      c.beginPath(); c.arc(hx, hy, 7, 0, 2 * Math.PI);
+      c.fillStyle = '#fff'; c.fill(); c.strokeStyle = '#0d47a1'; c.lineWidth = 2; c.stroke();
+      const t = `${+hd.toFixed(1)}°`, lx = hx + 16 * Math.sin(a), ly = hy - 16 * Math.cos(a);
+      c.font = 'bold 11px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
+      c.strokeStyle = 'rgba(0,0,0,0.85)'; c.lineWidth = 3; c.fillStyle = '#fff';
+      c.strokeText(t, lx, ly); c.fillText(t, lx, ly);
+    }
+    c.restore();
+  }
+  // 'st' | <viewshed item id> | null
+  function mapSelectObj(w) {
+    const st = w === 'st', vs = w && !st ? w : null;
+    if (st && !mapStSel) mapStatusFlash(mapStaticSource() ? 'Station selected: drag it to move it, drag the round handle to turn its heading (Esc: done)' :
+      `The station's position comes from ${(($id('location-source') || {}).value) === 'gps' ? 'the GPS' : 'the mobile app'} - right-click the map → "Set station here" to place it by hand`);
+    if (vs && vs !== vsSel) { const it = vsGet(vs); if (it) mapStatusFlash(`“${it.name}” selected: drag it to move its viewshed (Esc: done)`); }
+    mapStSel = st;
+    vsSel = vs;
+  }
+  // what a press at (x, y) would drag: 'rot' (the heading handle), 'obj' (the selected station / viewshed point) or ''
+  function mapObjGrab(x, y) {
+    if (mapStSel && mapStaticSource()) {
+      if (stHdgHit(x, y)) return 'rot';
+      if (stHit(x, y)) return 'obj';
+    }
+    if (vsSel && vsHit(x, y) === vsSel) return 'obj';
+    return '';
+  }
+  function mapObjDragStart(x, y) {
+    const k = mapObjGrab(x, y);
+    if (!k) return null;
+    if (vsSel) {
+      const it = vsGet(vsSel), [px, py] = mapLatLonToScreen(it.lat, it.lon);
+      return {kind: 'vs', id: it.id, x0: x, y0: y, dx: px - x, dy: py - y};
+    }
+    const s = stScreen();
+    return k === 'rot' ? {kind: 'hdg', x0: x, y0: y} : {kind: 'st', x0: x, y0: y, dx: s[0] - x, dy: s[1] - y};
+  }
+  function stLocalSet(lat, lon, hdg) {
+    const p = mapStationPos() || [0, 0];
+    mapStLocal = {lat: lat === null ? p[0] : lat, lon: lon === null ? p[1] : lon, hdg: hdg === null ? mapStationHdg() : hdg, t: Date.now()};
+  }
+  function mapObjDragMove(x, y) {
+    const d = mapObjDrag;
+    if (d.kind === 'hdg') {
+      const s = stScreen();
+      let h = Math.round((Math.atan2(x - s[0], s[1] - y) * 180 / Math.PI + 360) % 360 * 2) / 2;   // 0.5 deg steps
+      if (h >= 360) h = 0;
+      stLocalSet(null, null, h);
+      if (Date.now() - (d.sent || 0) > 300) { d.sent = Date.now(); stSend(); }
+    } else {
+      const [la, lo] = mapScreenToLatLon(x + d.dx, y + d.dy);
+      clearTimeout(d.t);
+      if (d.kind === 'st') {
+        stLocalSet(la, lo, null);
+        d.t = setTimeout(() => vsFollowStation(true), 400);   // paused: the station's viewsheds follow
+      } else {
+        d.lat = la; d.lon = lo;
+        d.t = setTimeout(() => vsMoveItem(d.id, d.lat, d.lon), 400);
+      }
+    }
+    mapDraw();
+  }
+  function mapObjDragEnd(d) {
+    clearTimeout(d.t);
+    mapCv.classList.remove('dragging');
+    if (d.kind === 'vs') { if (d.lat !== undefined) vsMoveItem(d.id, d.lat, d.lon); }
+    else {
+      stSend();
+      if (d.kind === 'st') vsFollowStation(true);
+    }
+    mapDraw();
+  }
+  // mapStLocal -> the receiver (STATIC_LOCATION, as the Station Information panel sends it)
+  function stSend() {
+    const l = mapStLocal;
+    if (!l || !mkOnline()) return;
+    const la = l.lat.toFixed(6), lo = l.lon.toFixed(6), hd = +l.hdg.toFixed(1);
+    for (const [id, v] of [['static-lat', la], ['static-lon', lo], ['static-heading', hd]]) {
+      const el = $id(id);
+      if (el) el.value = v;
+    }
+    send(`STATIC_LOCATION:${la},${lo},${hd}`);
+    l.t = Date.now();
+  }
+  // right-click menu: "Set station here" (a fixed location; the heading kept)
+  function mapSetStationAt() {
+    const at = mapMenuAt;
+    mapMenuClose();
+    if (!at || !mkOnline()) return;
+    const sel = $id('location-source');
+    if (sel && sel.value !== 'static') {
+      if (!confirm(`The station's position comes from ${sel.value === 'gps' ? 'the GPS' : 'the mobile app'} now. Use a fixed location here instead?`)) return;
+      sel.value = 'static';
+      setLocationSource('static');
+    }
+    stLocalSet(at.la, at.lo, mapStationHdg());
+    stSend();
+    mapSelectObj(null);
+    mapStSel = true;
+    mapStatusFlash('Station set here - drag it to adjust, drag the round handle to turn its heading (Esc: done)');
+    vsFollowStation(true);
+    mapDraw();
   }
 
   function mapAircraftPath(c) {
@@ -11041,6 +11291,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         for (let x = x0; x <= x1; x++)
           mapDrawTile(urlf, tz, x, y, (x - left) * size, (y - top) * size, size, fb);
     }
+    vsDraw(c);
     rdfDraw(c);
     mastDraw(c);
     mapRings(c);
@@ -11105,6 +11356,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
     mapRenderPopup();
     mkRender();
+    vsRender();
     mapRenderStatus();
     if (mapState.masts) mastSchedule();
     else mastViewKey = '';   // switched on again: load whatever is missing
@@ -11721,6 +11973,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const now = Date.now();
     const hadStation = !!mapStation;
     mapStation = Array.isArray(m.station) ? m.station : null;
+    const l = mapStLocal;
+    if (l && !mapObjDrag && (now - l.t > 6000 || (mapStation && Math.abs(mapStation[0] - l.lat) < 2e-6 && Math.abs(mapStation[1] - l.lon) < 2e-6)))
+      mapStLocal = null;
+    vsFollowStation(false);
     for (const q of m.pts || []) {
       if (!Number.isFinite(q.la) || !Number.isFinite(q.lo)) continue;
       const k = q.v + '|' + q.p + '|' + q.i;
@@ -11790,11 +12046,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (!el || !mapCv) return;
     const [la, lo] = mapScreenToLatLon(x, y);
     mapMenuAt = {la, lo};
-    let h = '<button type="button" onclick="mkAddAt()">📍 Add Marker</button>';
+    let h = '<button type="button" onclick="mkAddAt()">📍 Add Marker</button>' +
+            '<button type="button" onclick="vsAddAt()" title="Which ground is in line of sight of an antenna here">👁 Viewshed from here</button>' +
+            `<button type="button" onclick="mapSetStationAt()" title="Put the station (Station Information) here - a fixed location; its heading is kept">📡 Set station here${mapStaticSource() ? '' : ' (fixed location)'}</button>`;
     const mk = mkGet(mkHit(x, y));
     if (mk) {
       const n = digEsc(mk.name);
       h += `<button type="button" onclick="mapMenuClose();mkSelect('${mk.id}',true)">✎ Edit “${n}”</button>` +
+           `<button type="button" onclick="mapMenuClose();vsAddMarker('${mk.id}')">👁 Viewshed from “${n}”</button>` +
            `<button type="button" onclick="mapMenuClose();mkDelete('${mk.id}')">🗑 Delete “${n}”</button>`;
     }
     el.innerHTML = h + `<div class="ll">${la.toFixed(5)}, ${lo.toFixed(5)}</div>`;
@@ -11978,6 +12237,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       (m.notes ? `<div class="notes">${digEsc(m.notes)}</div>` : '') +
       `<div class="b"><button type="button" class="map-btn" onclick="mkSelect('${m.id}',true)">✎ Edit</button>` +
       `<button type="button" class="map-btn" onclick="mkCentre()" title="Centre the map on the marker">⌖ Centre</button>` +
+      `<button type="button" class="map-btn" onclick="vsAddMarker('${m.id}')" title="Which ground is in line of sight of an antenna at the marker">👁 Viewshed</button>` +
       `<button type="button" class="map-btn" onclick="mkDelete('${m.id}')">🗑 Delete</button></div>`;
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
   }
@@ -12356,6 +12616,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     return `<div class="h"><span style="color:${MAST_CATS[m.cat].col}">●</span>${digEsc(mastTitle(t))}<span class="x" onclick="mapSel=null;mapDraw()">✕</span></div>` +
            `<div class="s">OpenStreetMap · ${m.type} ${m.id}</div><table>${rows}</table>` +
            `<div class="lnk"><button type="button" class="map-btn" onclick="mastToMarker('${m.k}')" title="Make it one of your markers, to add its frequencies and notes">📍 Add as marker</button>` +
+           `<button type="button" class="map-btn" onclick="vsAddMast('${m.k}')" title="Which ground is in line of sight of an antenna at the top of this mast (its mapped height, else ${vsState.h} m)">👁 Viewshed</button>` +
            `<a href="${mastOsmUrl(m)}" target="_blank" rel="noopener noreferrer">openstreetmap.org ↗</a></div>`;
   }
   // a marker of the user's on the mast, its OSM details as the notes
@@ -12370,6 +12631,979 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     mkCreate(m.la, m.lo, mastTitle(t), notes);
     mapDraw();
   }
+
+  // --- 👁 VIEWSHED: line of sight over the terrain ---------------------------------
+  // Which ground an antenna at the station - or any place picked on the map
+  // (right-click "Viewshed from here", a marker, an OSM mast) - can see over
+  // the terrain, drawn over the map in its colour, anywhere in the world.
+  // Terrain: the AWS Terrain Tiles (Mapzen "terrarium" PNGs: SRTM, GMTED2010,
+  // ETOPO1 + national models such as NED / LINZ), fetched BY THE BROWSER like
+  // the map tiles (CORS *, kraken_doa is not involved), computed in a Web
+  // Worker (vsWorkerMain) so the page never stalls:
+  // - rings: zoom VS_ZFINE 14 around the antenna (~8 m cells at mid
+  //   latitudes, out to ~4 km), then each ring one zoom coarser out to about
+  //   twice the distance (each grid <= VS_NMAX cells a side): cells grow with
+  //   the distance, so every ring sees the terrain at about the same angle
+  //   (cell / distance 1/512 - 1/256). Each ray carries the steepest slope
+  //   it saw into the next ring, so a hill next to the antenna still blocks
+  //   at 300 km, and the antenna's ground height is the finest ring's. (One
+  //   grid for the whole radius - the first version - was ~400 m cells at
+  //   300 km: the hill near the antenna was averaged away and the antenna
+  //   stood on a 400 m average, which made far aircraft look in sight)
+  // - the sea counts as 0 m (the tiles carry the sea floor), and so does land
+  //   below sea level. Spikes where the tiles' sources meet (Auckland's coast
+  //   at zoom 11-12: +948 m next to -1819 m, 100-500 m pillars on flat
+  //   ground) are replaced by the median of the 24 cells around when they
+  //   stand out > 40 m, > 6 MADs + 40 m and > 1.5 cells' worth of height
+  //   from it: real summits and cliffs stand in rough ground (no pixel of
+  //   the Everest, Matterhorn, Mt Cook, El Capitan or Dolomites tiles is
+  //   touched), and at coarse zooms an island or a cone is no steeper than
+  //   that. Thicker bands (one at -36.12 deg north of the Coromandel, NZ, up
+  //   to 32767 m) go by their row / column - see despike()
+  // - rays along GREAT CIRCLES (the path a line of sight takes; straight
+  //   lines on the map were ~2 deg off at 1000 km), evenly spread in start
+  //   bearing, the terrain sampled bilinearly every 0.4 cell; each cell
+  //   takes the sample nearest its centre. Earth curvature with refraction
+  //   (effective radius k R). Radius up to VS_RMAX_KM (1000 km: aircraft at
+  //   10 km drop below the horizon at ~450 km, balloons at 30-35 km at
+  //   ~750-800 km). Kept per cell: the height a target
+  //   needs above the ground to be seen (u16: 0.1 m to 3 km, then 10 m) and
+  //   the ground height, so the target height (above ground / sea level)
+  //   repaints without recomputing
+  // Settings + the list per browser (localStorage kraken_vs); results are
+  // recomputed after a reload (tiles from the browser's cache).
+  const VS_ZFINE = 14, VS_ZSTEP = 1, VS_NMAX = 1025, VS_MAX = 6, VS_RE = 6371000, VS_NODATA = 65535;
+  const VS_COLS = ['#00e676', '#40c4ff', '#ff4081', '#ffd740', '#e040fb', '#ff6e40'];
+  const VS_TERRAIN_INFO = 'https://github.com/tilezen/joerd/blob/master/docs/attribution.md';
+
+  // ---- the worker (its own scope: only this function's text runs there) ----
+  function vsWorkerMain() {
+    const URL0 = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/';
+    // decoded tiles kept (256 KB each): a 1000 km viewshed takes ~190-250,
+    // so a moved point / a changed height reuses them (an LRU smaller than
+    // one job, read in the same order every time, never hit). Trimmed after
+    // each job, never below the tiles that job used
+    const RE = 6371000, CACHE_MAX = 256;
+    const tiles = new Map(), cancelled = new Set();
+    let chain = Promise.resolve();
+    self.onmessage = e => {
+      const m = e.data;
+      if (m.cancel) { cancelled.add(m.cancel); return; }
+      chain = chain.then(() => run(m)).catch(err => {
+        self.postMessage({job: m.job, error: cancelled.has(m.job) ? 'cancelled' : (err && err.message) || String(err)});
+      });
+    };
+
+    // PNG -> elevations (decoded here, not through a canvas: browsers that
+    // add noise to canvas reads against fingerprinting would add mountains)
+    async function decodePng(buf) {
+      const b = new Uint8Array(buf), dv = new DataView(buf);
+      const sig = [137, 80, 78, 71, 13, 10, 26, 10];
+      if (b.length < 33 || sig.some((v, i) => b[i] !== v)) throw new Error('a terrain tile is not a PNG');
+      let p = 8, w = 0, h = 0, depth = 0, ctype = -1, inter = 0, pal = null, tot = 0;
+      const idat = [];
+      while (p + 12 <= b.length) {
+        const len = dv.getUint32(p), type = String.fromCharCode(b[p + 4], b[p + 5], b[p + 6], b[p + 7]);
+        if (p + 12 + len > b.length) break;
+        const d = b.subarray(p + 8, p + 8 + len);
+        if (type === 'IHDR') { w = dv.getUint32(p + 8); h = dv.getUint32(p + 12); depth = b[p + 16]; ctype = b[p + 17]; inter = b[p + 20]; }
+        else if (type === 'PLTE') pal = d;
+        else if (type === 'IDAT') { idat.push(d); tot += len; }
+        else if (type === 'IEND') break;
+        p += 12 + len;
+      }
+      const bpp = {2: 3, 6: 4, 3: 1}[ctype];
+      if (w !== 256 || h !== 256 || depth !== 8 || inter || !bpp || (ctype === 3 && !pal))
+        throw new Error(`a terrain tile has an unexpected format (${w}x${h}, ${depth} bit, type ${ctype})`);
+      const zb = new Uint8Array(tot);
+      let o = 0;
+      for (const d of idat) { zb.set(d, o); o += d.length; }
+      const raw = new Uint8Array(await new Response(new Blob([zb]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer());
+      const stride = w * bpp;
+      if (raw.length < h * (stride + 1)) throw new Error('a terrain tile is truncated');
+      const px = new Uint8Array(h * stride);
+      for (let y = 0; y < h; y++) {
+        const f = raw[y * (stride + 1)], s = y * (stride + 1) + 1, r = y * stride;
+        for (let i = 0; i < stride; i++) {
+          const x = raw[s + i], a = i >= bpp ? px[r + i - bpp] : 0, u = y ? px[r - stride + i] : 0,
+                c = y && i >= bpp ? px[r - stride + i - bpp] : 0;
+          let v;
+          if (f === 0) v = x;
+          else if (f === 1) v = x + a;
+          else if (f === 2) v = x + u;
+          else if (f === 3) v = x + ((a + u) >> 1);
+          else if (f === 4) {
+            const q = a + u - c, pa = Math.abs(q - a), pb = Math.abs(q - u), pc = Math.abs(q - c);
+            v = x + (pa <= pb && pa <= pc ? a : pb <= pc ? u : c);
+          } else throw new Error('a terrain tile is corrupt');
+          px[r + i] = v;   // wraps mod 256
+        }
+      }
+      // terrarium: metres = R * 256 + G + B / 256 - 32768
+      const e = new Float32Array(w * h);
+      for (let i = 0; i < w * h; i++) {
+        const k = ctype === 3 ? px[i] * 3 : i * bpp, src = ctype === 3 ? pal : px;
+        e[i] = src[k] * 256 + src[k + 1] + src[k + 2] / 256 - 32768;
+      }
+      return e;
+    }
+
+    async function tile(z, x, y, job) {
+      const key = z + '/' + x + '/' + y;
+      let t = tiles.get(key);
+      if (t) { tiles.delete(key); tiles.set(key, t); return t; }
+      let err = null;
+      for (let a = 0; a < 2; a++) {
+        if (cancelled.has(job)) throw new Error('cancelled');
+        let r;
+        try { r = await fetch(URL0 + key + '.png', {cache: 'force-cache'}); }
+        catch (e) { err = new Error('terrain tiles can\'t be loaded (no internet connection?)'); }
+        if (r) {
+          if (r.ok) {
+            t = await decodePng(await r.arrayBuffer());
+            tiles.set(key, t);
+            return t;
+          }
+          err = new Error(`terrain tile ${key}: HTTP ${r.status}`);
+          if (r.status < 500 && r.status !== 429) break;
+        }
+        await new Promise(res => setTimeout(res, 1500));
+      }
+      throw err;
+    }
+    // the oldest tiles out down to CACHE_MAX, except those in keep (the job's)
+    function trim(keep) {
+      for (const key of tiles.keys()) {
+        if (tiles.size <= CACHE_MAX) break;
+        if (!keep.has(key)) tiles.delete(key);
+      }
+    }
+
+    // resampling spikes -> the median of the cells around (see above).
+    // d: the RAW terrain (sea floor < 0); the tests run on it clamped to sea
+    // level, except the ringing test. First, heights over 9000 m are
+    // impossible (a band of them, up to the format's 32767 m, runs through
+    // the sea north of the Coromandel, NZ, at zooms 8-13) -> the median of
+    // the valid cells around. Then a cell is a spike when it stands out from
+    // the 24 cells around (5x5) > 40 m, > 6 MADs + 40 m and > 1.5 cells'
+    // worth of height: at coarse zooms a whole island, headland or volcanic
+    // cone is 1-3 cells on flat ground, as spiky as an artefact by the other
+    // tests (zoom 8 around Auckland: 271 headlands / islets of 88-201 m were
+    // flattened). With cells <= 100 m the 5x5 test also takes, instead of
+    // that height, the resampling filter's overshoot the other way next to
+    // it (a raw neighbour below the median by half the cell's height: 62 m
+    // beside -117 m on a flat coast) - real sea floor isn't that steep
+    // there. Bands of bad rows / columns a few cells thick hide from the 5x5
+    // (its median is the band): a cell standing > max(500 m, 4 cells) and
+    // > 6 MADs + 40 m ABOVE the 12 cells of its column or its row (+-6) goes
+    // too - lower than that, real narrow ridges on flat ground were cut
+    // (Colorado: 240 m), and filling real gorges (pits) that way raised
+    // valleys by 200 m; the band's thinner edges are left to the next pass.
+    // The first pass tests every cell, the later ones only the cells a fix
+    // of the pass before can change (the 5x5 around it, +-6 along its row
+    // and column) - the same result, in mountains 3x faster
+    function despike(d, N, cellM) {
+      const nb = new Float32Array(24), dv = new Float32Array(24), minDev = Math.max(40, 1.5 * cellM), ring = cellM <= 100, P = 6,
+            big = Math.max(500, 4 * cellM);
+      const v0 = c => d[c] > 0 ? d[c] : 0;
+      // the median of a[0..n) (sorts a); the median absolute deviation from
+      // it (a sorted, b: scratch) only where a test gets that far
+      const median = (a, n) => {
+        const x = a.subarray(0, n).sort(), h = n >> 1;
+        return n & 1 ? x[h] : (x[h - 1] + x[h]) / 2;
+      };
+      const madOf = (a, b, n, med) => {
+        for (let t = 0; t < n; t++) b[t] = Math.abs(a[t] - med);
+        return median(b, n);
+      };
+      let total = 0;
+      const bad = [], put = [];
+      for (let c = 0; c < N * N; c++) if (d[c] > 9000) bad.push(c);
+      for (const c of bad) {   // (all medians from the data as it came)
+        const j = (c / N) | 0, i = c - j * N;
+        let q = 0;
+        for (let v = -2; v <= 2; v++) for (let u = -2; u <= 2; u++) {
+          const jj = Math.max(0, Math.min(N - 1, j + v)), ii = Math.max(0, Math.min(N - 1, i + u));
+          if (d[jj * N + ii] <= 9000) nb[q++] = v0(jj * N + ii);
+        }
+        put.push(q ? median(nb, q) : 0);
+      }
+      bad.forEach((c, k) => { d[c] = put[k]; });
+      total += bad.length;
+      // cell c (row j, column i): its replacement, or null
+      const test = (c, j, i) => {
+        const e = v0(c);
+        // cheap test first: away from the mean of the 8 neighbours
+        const m8 = (v0(c - N - 1) + v0(c - N) + v0(c - N + 1) + v0(c - 1) + v0(c + 1) + v0(c + N - 1) + v0(c + N) + v0(c + N + 1)) / 8;
+        if (e - m8 <= 25 && m8 - e <= 25) return null;
+        let q = 0;
+        for (let v = -2; v <= 2; v++) for (let u = -2; u <= 2; u++) if (u || v) nb[q++] = v0(c + v * N + u);
+        const med = median(nb, 24), dd = Math.abs(e - med);
+        if (dd > 40 && dd > 6 * madOf(nb, dv, 24, med) + 40) {
+          let ok = dd > minDev;
+          if (!ok && ring) {
+            let lo = Infinity, hi = -Infinity;
+            for (let v = -1; v <= 1; v++) for (let u = -1; u <= 1; u++) {
+              if (!u && !v) continue;
+              const r = d[c + v * N + u];
+              if (r < lo) lo = r;
+              if (r > hi) hi = r;
+            }
+            ok = e > med ? lo < med - dd / 2 : hi > med + dd / 2;
+          }
+          if (ok) return med;
+        }
+        if (j >= P && j < N - P && i >= P && i < N - P) {
+          for (let s = 0; s < 2; s++) {   // its column, then its row
+            const step = s ? 1 : N;
+            q = 0;
+            for (let v = -P; v <= P; v++) if (v) nb[q++] = v0(c + v * step);
+            const m = median(nb, q);
+            if (e - m > big && e - m > 6 * madOf(nb, dv, q, m) + 40) return m;
+          }
+        }
+        return null;
+      };
+      const seen = new Uint8Array(N * N);
+      let todo = null;
+      for (let pass = 0; pass < 8; pass++) {   // (until nothing changes: a band clears from its edges)
+        const fix = [];
+        if (!todo) {
+          for (let j = 2; j < N - 2; j++) for (let i = 2; i < N - 2; i++) {
+            const rep = test(j * N + i, j, i);
+            if (rep !== null) fix.push(j * N + i, rep);
+          }
+        } else {
+          for (const c of todo) {
+            const j = (c / N) | 0, rep = test(c, j, c - j * N);
+            if (rep !== null) fix.push(c, rep);
+          }
+        }
+        for (let t = 0; t < fix.length; t += 2) d[fix[t]] = fix[t + 1];
+        total += fix.length / 2;
+        if (!fix.length) break;
+        todo = [];
+        const add = (j, i) => {
+          if (j < 2 || j >= N - 2 || i < 2 || i >= N - 2) return;
+          const c = j * N + i;
+          if (seen[c] !== pass + 1) { seen[c] = pass + 1; todo.push(c); }
+        };
+        for (let t = 0; t < fix.length; t += 2) {
+          const j = (fix[t] / N) | 0, i = fix[t] - j * N;
+          for (let v = -2; v <= 2; v++) for (let u = -2; u <= 2; u++) add(j + v, i + u);
+          for (let v = 3; v <= P; v++) { add(j - v, i); add(j + v, i); add(j, i - v); add(j, i + v); }
+        }
+      }
+      return total;
+    }
+
+    function bilinear(d, N, x, y) {
+      const i = Math.max(0, Math.min(N - 2, Math.floor(x))), j = Math.max(0, Math.min(N - 2, Math.floor(y)));
+      const fx = Math.max(0, Math.min(1, x - i)), fy = Math.max(0, Math.min(1, y - j)), c = j * N + i;
+      return (d[c] * (1 - fx) + d[c + 1] * fx) * (1 - fy) + (d[c + N] * (1 - fx) + d[c + N + 1] * fx) * fy;
+    }
+
+    // a ring's grid: the tile pixels of zoom lv.z around the observer, big
+    // enough for its radius (+ the overlap past r1) at the poleward edge,
+    // where cells are smallest, and the tiles touching the ring (not those
+    // inside it), by great-circle distance to their edges
+    function ringGrid(m, lv, nx) {
+      const z = lv.z, n = 2 ** z, W = 256 * n, mppEq = 2 * Math.PI * RE / W;
+      const phi0 = m.lat * Math.PI / 180, lam0 = m.lon * Math.PI / 180, cell = mppEq * Math.cos(phi0);
+      const rExt = nx ? lv.r1 + 0.75 * cell * 2 ** (z - nx.z) : lv.r1;
+      const cellMin = mppEq * Math.cos(Math.min(1.5, Math.abs(phi0) + rExt / RE));
+      const R = Math.ceil(rExt / cellMin) + 2, N = 2 * R + 1;
+      const ox = (m.lon + 180) / 360 * W, oy = (0.5 - Math.atanh(Math.sin(phi0)) / (2 * Math.PI)) * W;
+      const gx0 = Math.floor(ox) - R, gy0 = Math.floor(oy) - R;
+      const dist = (px, py) => {
+        const lam = px / W * 2 * Math.PI - Math.PI, phi = Math.atan(Math.sinh(Math.PI - 2 * Math.PI * py / W));
+        const a = Math.sin((phi - phi0) / 2) ** 2 + Math.cos(phi0) * Math.cos(phi) * Math.sin((lam - lam0) / 2) ** 2;
+        return 2 * RE * Math.asin(Math.min(1, Math.sqrt(a)));
+      };
+      const lo = lv.r0 - 8 * cell, hi = rExt + 8 * cell, list = [];
+      for (let ty = Math.max(0, Math.floor(gy0 / 256)); ty <= Math.min(n - 1, Math.floor((gy0 + N - 1) / 256)); ty++)
+        for (let tx = Math.floor(gx0 / 256); tx <= Math.floor((gx0 + N - 1) / 256); tx++) {
+          const x0 = tx * 256, y0 = ty * 256;
+          let dmin = ox >= x0 && ox <= x0 + 256 && oy >= y0 && oy <= y0 + 256 ? 0 : Infinity, dmax = 0;
+          for (let t = 0; t <= 256; t += 8)
+            for (const [px, py] of [[x0 + t, y0], [x0 + t, y0 + 256], [x0, y0 + t], [x0 + 256, y0 + t]]) {
+              const d = dist(px, py);
+              if (d < dmin) dmin = d;
+              if (d > dmax) dmax = d;
+            }
+          if (dmax >= lo && dmin <= hi) list.push([tx, ty]);
+        }
+      return {z, n, W, mppEq, cell, cellMin, phi0, lam0, r0: lv.r0, r1: lv.r1, rExt, N, R, ox, oy, gx0, gy0, list};
+    }
+
+    // Sweep of one ring along GREAT CIRCLES - the path a line of sight
+    // takes. (A straight line on the map is a rhumb line: at 300 km its
+    // start bearing is ~0.7 deg off the great circle's to the same place, at
+    // 1000 km ~2 deg, and mid-way it runs up to ~15 km beside the true path.)
+    // nRays rays at even start bearings (the same in every ring), each walked
+    // from r0 - the finer ring covered the inside: hzIn carries the steepest
+    // slope it saw, by bearing - in steps of 0.4 of the ring's smallest cell
+    // (on the sphere: one rotation per step; -> cell coordinates by longitude
+    // and Mercator latitude), terrain bilinear; each cell takes the sample
+    // nearest its centre (`best`). Cells are assigned to rExt (past r1: the
+    // next, coarser ring's first cells overlap these - no gaps); the slope at
+    // r1 is returned for the next ring. need[c] = the height a target needs
+    // above the ground of cell c (encoded, see VS_NODATA / vsDec), ground[c]
+    // = metres. Rays are <= 0.8 cell apart at the ring's edge; a cell no
+    // sample landed in (rare) takes the mean of its neighbours
+    function sweep(dem, g, eye, curv, need, ground, hzIn, nRays) {
+      const N = g.N, B = N - 1, best = new Uint8Array(N * N).fill(255);
+      const enc = h => h <= 0 ? 0 : h < 3000 ? Math.round(h * 10) : Math.min(65534, 30000 + Math.round((h - 3000) / 10));
+      const dec = q => q < 30000 ? q / 10 : 3000 + (q - 30000) * 10;
+      const sp = Math.sin(g.phi0), cp = Math.cos(g.phi0), sl = Math.sin(g.lam0), cl = Math.cos(g.lam0);
+      const k2 = g.W / (2 * Math.PI), xo = g.ox - g.gx0 - 0.5, yo = g.oy - g.gy0 - 0.5, psi0 = Math.atanh(sp);
+      const ds = 0.4 * g.cellMin, cd = Math.cos(ds / RE), sd = Math.sin(ds / RE);
+      const hzAng = new Float64Array(nRays), hzS = new Float64Array(nRays);
+      // the slope carried in from the finer ring at bearing th (linear between its rays)
+      const carried = th => {
+        if (!hzIn) return -1e9;
+        const A = hzIn.ang, S = hzIn.s, n = A.length;
+        let lo = 0, hi = n;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (A[mid] < th) lo = mid + 1; else hi = mid; }
+        const i0 = (lo + n - 1) % n, i1 = lo % n;
+        const a0 = lo === 0 ? A[i0] - 2 * Math.PI : A[i0], a1 = lo === n ? A[i1] + 2 * Math.PI : A[i1];
+        return a1 > a0 ? S[i0] + (S[i1] - S[i0]) * (th - a0) / (a1 - a0) : Math.max(S[i0], S[i1]);
+      };
+      for (let k = 0; k < nRays; k++) {
+        const beta = 2 * Math.PI * k / nRays, cb = Math.cos(beta), sb = Math.sin(beta);
+        // start: the observer P, heading T = north cos(beta) + east sin(beta); p = the point at s, q = the heading there
+        const tx = -sp * cl * cb - sl * sb, ty = -sp * sl * cb + cl * sb, tz = cp * cb;
+        let s = g.r0 > 0 ? g.r0 : ds;
+        const ca = Math.cos(s / RE), sa = Math.sin(s / RE);
+        let px = cp * cl * ca + tx * sa, py = cp * sl * ca + ty * sa, pz = sp * ca + tz * sa;
+        let qx = tx * ca - cp * cl * sa, qy = ty * ca - cp * sl * sa, qz = tz * ca - sp * sa;
+        let smax = carried(beta), hz = null;
+        for (;; s += ds) {
+          if (s > g.r1 && hz === null) hz = smax;
+          if (s > g.rExt) break;
+          let dl = Math.atan2(py, px) - g.lam0;
+          if (dl > Math.PI) dl -= 2 * Math.PI; else if (dl < -Math.PI) dl += 2 * Math.PI;
+          const x = xo + dl * k2, y = yo - (Math.atanh(pz) - psi0) * k2;
+          if (!(x >= 0 && y >= 0 && x < B && y < B)) break;
+          const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0, i0 = y0 * N + x0;
+          const gr = (dem[i0] * (1 - fx) + dem[i0 + 1] * fx) * (1 - fy) + (dem[i0 + N] * (1 - fx) + dem[i0 + N + 1] * fx) * fy;
+          const e = gr - s * s * curv;
+          const ex = fx < 0.5 ? fx : 1 - fx, ey = fy < 0.5 ? fy : 1 - fy;   // to the nearest cell centre
+          const c = (fy < 0.5 ? y0 : y0 + 1) * N + (fx < 0.5 ? x0 : x0 + 1), q = Math.round((ex * ex + ey * ey) * 500);
+          if (q <= best[c]) { best[c] = q; need[c] = enc(smax * s + eye - e); ground[c] = Math.round(gr); }
+          const sv = (e - eye) / s;
+          if (sv > smax) smax = sv;
+          const nx = px * cd + qx * sd, ny = py * cd + qy * sd, nz = pz * cd + qz * sd;
+          qx = qx * cd - px * sd; qy = qy * cd - py * sd; qz = qz * cd - pz * sd;
+          px = nx; py = ny; pz = nz;
+        }
+        hzAng[k] = beta;
+        hzS[k] = hz === null ? smax : hz;
+      }
+      // a cell no sample landed in: >= 3 of its 4 neighbours have one (the
+      // ring's inside / outside are wide empty areas, a few staircase
+      // corners at its edges get filled - harmless)
+      for (let pass = 0; pass < 2; pass++) {
+        const fill = [];
+        for (let j = 1; j < B; j++) for (let i = 1; i < B; i++) {
+          const c = j * N + i;
+          if (need[c] !== 65535) continue;
+          let nv = 0, sn = 0, sg = 0;
+          for (const o of [c - 1, c + 1, c - N, c + N]) if (need[o] !== 65535) { nv++; sn += dec(need[o]); sg += ground[o]; }
+          if (nv >= 3) fill.push(c, sn / nv, sg / nv);
+        }
+        for (let t = 0; t < fill.length; t += 3) { need[fill[t]] = enc(fill[t + 1]); ground[fill[t]] = Math.round(fill[t + 2]); }
+        if (!fill.length) break;
+      }
+      if (g.r0 === 0) {   // the observer's own cell
+        const oc = Math.max(0, Math.min(B, Math.round(yo))) * N + Math.max(0, Math.min(B, Math.round(xo)));
+        need[oc] = 0;
+        ground[oc] = Math.round(bilinear(dem, N, xo, yo));
+      }
+      return {ang: hzAng, s: hzS};
+    }
+
+    // m: {job, lat, lon, h (m above ground), k, levels: [{z, r0, r1}] fine -> coarse (vsPlan)}
+    async function run(m) {
+      const keep = new Set();
+      try { await runJob(m, keep); } finally { trim(keep); }
+    }
+    // first the tiles not in memory (6 at a time; progress = those), then
+    // the rings - between them a break for a cancel to come in (a job whose
+    // tiles are all in memory never waits on anything else, so a dragged
+    // point's stale job would run to its end before the next one starts)
+    async function runJob(m, keep) {
+      const t0 = Date.now();
+      if (cancelled.has(m.job)) throw new Error('cancelled');
+      const rings = m.levels.map((lv, k) => ringGrid(m, lv, m.levels[k + 1]));
+      const nRays = 8 * Math.max(...rings.map(g => g.R));   // <= 0.8 cell apart at every ring's edge
+      const total = rings.reduce((a, g) => a + g.list.length, 0), curv = 1 / (2 * m.k * RE);
+      const tkey = (g, tx, ty) => g.z + '/' + (((tx % g.n) + g.n) % g.n) + '/' + ty;
+      const want = [];
+      for (const g of rings) for (const [tx, ty] of g.list) {
+        const key = tkey(g, tx, ty);
+        if (keep.has(key)) continue;
+        keep.add(key);
+        if (!tiles.has(key)) want.push(key);
+      }
+      let next = 0, done = 0, failed = false;
+      const load = async () => {
+        while (next < want.length && !failed) {
+          const [z, x, y] = want[next++].split('/').map(Number);
+          try { await tile(z, x, y, m.job); } catch (e) { failed = true; throw e; }
+          self.postMessage({job: m.job, prog: [++done, want.length]});
+        }
+      };
+      await Promise.all(Array.from({length: Math.min(6, want.length)}, load));
+      self.postMessage({job: m.job, prog: 'compute'});
+      const levels = [], transfer = [];
+      let hz = null, gnd = 0, eye = 0, spikes = 0;
+      for (const g of rings) {
+        await new Promise(res => setTimeout(res, 0));
+        if (cancelled.has(m.job)) throw new Error('cancelled');
+        const N = g.N, dem = new Float32Array(N * N);
+        for (const [tx, ty] of g.list) {
+          const t = await tile(g.z, ((tx % g.n) + g.n) % g.n, ty, m.job);   // (in memory: loaded above)
+          const x0 = Math.max(g.gx0, tx * 256), x1 = Math.min(g.gx0 + N, tx * 256 + 256);
+          for (let y = Math.max(g.gy0, ty * 256); y < Math.min(g.gy0 + N, ty * 256 + 256); y++) {
+            const src = (y - ty * 256) * 256 - tx * 256, dst = (y - g.gy0) * N - g.gx0;
+            for (let x = x0; x < x1; x++) dem[dst + x] = t[src + x];
+          }
+        }
+        spikes += despike(dem, N, g.cell);
+        for (let i = 0; i < dem.length; i++) if (!(dem[i] > 0)) dem[i] = 0;   // the sea (and below sea level)
+        const cx = g.ox - g.gx0 - 0.5, cy = g.oy - g.gy0 - 0.5;
+        if (!hz) { gnd = bilinear(dem, N, cx, cy); eye = gnd + m.h; }   // from the finest terrain
+        const need = new Uint16Array(N * N).fill(65535), ground = new Int16Array(N * N);
+        hz = sweep(dem, g, eye, curv, need, ground, hz, nRays);
+        const lv = {z: g.z, N, gx0: g.gx0, gy0: g.gy0, r0: g.r0, r1: g.r1, cell: g.cell, tiles: g.list.length,
+                    need: need.buffer, ground: ground.buffer};
+        if (m.debug) Object.assign(lv, {dem, cx, cy, rExt: g.rExt, W: g.W});   // offline tests
+        levels.push(lv);
+        transfer.push(need.buffer, ground.buffer);
+      }
+      cancelled.delete(m.job);
+      self.postMessage({job: m.job, levels, gnd, eye, mpp: rings[0].cell, tiles: total, loaded: want.length, spikes,
+                        ms: Date.now() - t0}, transfer);
+    }
+    self.vsTest = {decodePng, despike, sweep, run, ringGrid, tiles};   // offline tests (node)
+  }
+  // (end of vsWorkerMain)
+
+  // ---- page side ----
+  function vsEnc(h) { return h <= 0 ? 0 : h < 3000 ? Math.round(h * 10) : Math.min(65534, 30000 + Math.round((h - 3000) / 10)); }
+  function vsDec(q) { return q < 30000 ? q / 10 : 3000 + (q - 30000) * 10; }
+  function vsSave() { try { localStorage.setItem('kraken_vs', JSON.stringify(vsState)); } catch (e) {} }
+  function vsGet(id) { return vsState.items.find(i => i.id === id) || null; }
+  function vsKey(it) { return `${it.lat},${it.lon},${it.h},${it.r},${vsState.k}`; }
+  function vsTgt() { return vsState.amsl ? vsState.tgt.amsl : vsState.tgt.agl; }
+  // the rings (see above): [{z, r0, r1}] from the antenna out to rM, each
+  // as far as its grid stays within VS_NMAX cells a side (as run() sizes it:
+  // the radius in cells at the poleward edge + margins)
+  function vsPlan(lat, rM) {
+    const out = [], phi = Math.abs(lat) * Math.PI / 180;
+    let r0 = 0;
+    for (let z = VS_ZFINE; r0 < rM; z -= VS_ZSTEP) {
+      const mpp = 2 * Math.PI * VS_RE / (256 * 2 ** z);
+      let r = 0;
+      for (let i = 0; i < 4; i++) r = ((VS_NMAX - 1) / 2 - 4) * mpp * Math.cos(Math.min(1.5, phi + r / VS_RE)) / 1.02;
+      const r1 = z - VS_ZSTEP < 1 ? rM : Math.min(rM, r);
+      out.push({z, r0, r1});
+      r0 = r1;
+    }
+    return out;
+  }
+  function vsFmtM(m) { return m >= 10000 ? (m / 1000).toFixed(0) + ' km' : m >= 1000 ? (m / 1000).toFixed(1) + ' km' : Math.round(m) + ' m'; }
+
+  function vsWorkerStart() {
+    if (vsWorker) return true;
+    try {
+      vsWorker = new Worker(URL.createObjectURL(new Blob(['(' + vsWorkerMain.toString() + ')()'], {type: 'text/javascript'})));
+    } catch (e) {
+      vsWorkerErr = 'this browser can\'t run it (' + e.message + ')';
+      return false;
+    }
+    vsWorker.onmessage = e => vsOnWorker(e.data);
+    vsWorker.onerror = e => {
+      e.preventDefault();
+      vsWorker.terminate();
+      vsWorker = null;
+      if (vsJob) vsFail.set(vsJob.id, {key: vsJob.key, msg: 'failed: ' + (e.message || 'worker error')});
+      vsJob = null;
+      vsRender();
+    };
+    return true;
+  }
+  // the next shown item without an up-to-date result (one job at a time;
+  // also run from vsDraw, so after a reload the work starts with the map)
+  function vsPump() {
+    if (vsJob || !mapState.vs || vsWorkerErr) return;
+    const it = vsState.items.find(i => i.on && (vsRes.get(i.id) || {}).key !== vsKey(i) &&
+                                       (vsFail.get(i.id) || {}).key !== vsKey(i));
+    if (!it) return;
+    if (!vsWorkerStart()) { vsRender(); return; }
+    const rM = it.r * 1000;
+    vsJob = {job: ++vsSeq, id: it.id, key: vsKey(it), prog: null, lat: it.lat, lon: it.lon, h: it.h, r: it.r};
+    vsWorker.postMessage({job: vsJob.job, lat: it.lat, lon: it.lon, h: it.h, k: vsState.k, levels: vsPlan(it.lat, rM)});
+    vsRender();
+  }
+  // an item changed / went away while its job runs: stop it (the reply ends the job)
+  function vsCancel(id) {
+    if (vsJob && vsJob.id === id && vsWorker && !vsJob.cancel) { vsJob.cancel = true; vsWorker.postMessage({cancel: vsJob.job}); }
+  }
+  function vsOnWorker(m) {
+    if (!vsJob || m.job !== vsJob.job) return;
+    if (m.prog) { vsJob.prog = m.prog; vsRender(); return; }
+    const job = vsJob, it = vsGet(job.id);
+    vsJob = null;
+    if (m.error) {
+      if (it && m.error !== 'cancelled') vsFail.set(job.id, {key: job.key, msg: m.error});
+    } else if (it) {
+      const old = vsRes.get(job.id);
+      const levels = m.levels.map((l, i) => {
+        const o = old && old.levels[i];
+        return Object.assign({z: l.z, N: l.N, gx0: l.gx0, gy0: l.gy0, r0: l.r0, r1: l.r1, cell: l.cell,
+                              need: new Uint16Array(l.need), ground: new Int16Array(l.ground)},
+                             o && o.cv && o.N === l.N ? {cv: o.cv, cx: o.cx} : {});   // (canvases reused)
+      });
+      const res = {key: job.key, levels, gnd: m.gnd, eye: m.eye, mpp: m.mpp, ms: m.ms, spikes: m.spikes, tiles: m.tiles, loaded: m.loaded,
+                   lat: job.lat, lon: job.lon, h: job.h, r: job.r};
+      vsRes.set(job.id, res);
+      vsFail.delete(job.id);
+      if (it.on) vsPaint(it, res);
+    }
+    vsPump();
+    vsRender();
+    mapDraw();
+  }
+
+  // each ring as an image: the item's colour (opaque - vsDraw tints) where
+  // a target at the set height is in sight, clear elsewhere
+  function vsPaint(it, res) {
+    const c = parseInt(it.col.slice(1), 16);
+    const rgba = (0xff000000 | ((c & 0xff) << 16) | (c & 0xff00) | ((c >> 16) & 0xff)) >>> 0;   // ABGR (little endian)
+    const amsl = vsState.amsl, tgt = vsTgt(), tq = vsEnc(tgt);
+    let vis = 0, tot = 0;
+    for (const l of res.levels) {
+      const N = l.N;
+      if (!l.cv) {
+        l.cv = document.createElement('canvas');
+        l.cv.width = l.cv.height = N;
+        l.cx = l.cv.getContext('2d');
+      }
+      // (the ImageData only while painting: phones count)
+      const img = l.cx.createImageData(N, N), px = new Uint32Array(img.data.buffer), need = l.need, gr = l.ground;
+      let lv = 0, lt = 0;
+      for (let i = 0; i < N * N; i++) {
+        const q = need[i];
+        if (q === VS_NODATA) { px[i] = 0; continue; }
+        lt++;
+        const ok = amsl ? gr[i] + (q < 30000 ? q / 10 : 3000 + (q - 30000) * 10) <= tgt : q <= tq;
+        px[i] = ok ? rgba : 0;
+        if (ok) lv++;
+      }
+      l.cx.putImageData(img, 0, 0);
+      vis += lv * l.cell * l.cell;   // by area
+      tot += lt * l.cell * l.cell;
+    }
+    res.vis = tot ? vis / tot : 0;
+  }
+  function vsRepaint() {
+    for (const it of vsState.items) {
+      const res = vsRes.get(it.id);
+      if (!res) continue;
+      if (it.on) vsPaint(it, res);
+      else for (const l of res.levels) l.cv = l.cx = null;   // hidden: give the memory back
+    }
+    vsRender();
+    mapDraw();
+  }
+
+  // drawn over the tiles, under everything else
+  function vsDraw(c) {
+    if (!vsReady || !mapState.vs) return;
+    if (!vsJob) vsPump();
+    const W = mapWorld();
+    for (const it of vsState.items) {
+      if (!it.on) continue;
+      const res = vsRes.get(it.id);
+      if (res && res.levels[0].cv) {
+        // the rings coarse -> fine, opaque, onto one layer (their overlapping
+        // edges don't tint twice), then that layer tinted onto the map
+        if (!vsOff) vsOff = document.createElement('canvas');
+        if (vsOff.width !== mapCv.width || vsOff.height !== mapCv.height) { vsOff.width = mapCv.width; vsOff.height = mapCv.height; }
+        const o = vsOff.getContext('2d');
+        o.setTransform(1, 0, 0, 1, 0, 0);
+        o.clearRect(0, 0, vsOff.width, vsOff.height);
+        o.setTransform(mapDpr, 0, 0, mapDpr, 0, 0);
+        for (let k = res.levels.length - 1; k >= 0; k--) {
+          const l = res.levels[k];
+          if (!l.cv) continue;
+          const Wv = 256 * 2 ** l.z, sc = W / Wv, N = l.N;
+          const [mx, my] = mapToScreen((l.gx0 + N / 2) / Wv, (l.gy0 + N / 2) / Wv);
+          const left = mx - N / 2 * sc, top = my - N / 2 * sc;
+          // only the part in view (a huge scaled image is slow to draw)
+          const sx0 = Math.max(0, Math.floor(-left / sc)), sy0 = Math.max(0, Math.floor(-top / sc));
+          const sx1 = Math.min(N, Math.ceil((mapW - left) / sc)), sy1 = Math.min(N, Math.ceil((mapH - top) / sc));
+          if (sx1 <= sx0 || sy1 <= sy0) continue;
+          o.imageSmoothingEnabled = sc < 2;   // zoomed in: the cells, not a blur
+          o.drawImage(l.cv, sx0, sy0, sx1 - sx0, sy1 - sy0, left + sx0 * sc, top + sy0 * sc, (sx1 - sx0) * sc, (sy1 - sy0) * sc);
+        }
+        c.save();
+        c.setTransform(1, 0, 0, 1, 0, 0);
+        c.globalAlpha = 0.44;
+        c.drawImage(vsOff, 0, 0);
+        c.restore();
+      }
+      // the radius (dashed: the circle on the ground, which on the map
+      // stretches towards the pole) and the observer (being dragged: where it is now)
+      const od = mapObjDrag && mapObjDrag.kind === 'vs' && mapObjDrag.id === it.id && mapObjDrag.lat !== undefined ? mapObjDrag : null;
+      const g = od ? {lat: od.lat, lon: od.lon, r: it.r} : res && res.key === vsKey(it) ? res : it;
+      const [x, y] = mapLatLonToScreen(g.lat, g.lon);
+      c.save();
+      c.strokeStyle = it.col;
+      c.globalAlpha = 0.8;
+      c.lineWidth = 1.5;
+      c.setLineDash([6, 5]);
+      c.beginPath();
+      const p1 = g.lat * Math.PI / 180, d = g.r * 1000 / VS_RE;
+      for (let b = 0; b <= 360; b += 2) {
+        const br = b * Math.PI / 180, p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(br));
+        const dl = Math.atan2(Math.sin(br) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2));
+        const nx = mapProj(p2 * 180 / Math.PI, g.lon)[0] + dl / (2 * Math.PI), ny = mapProj(p2 * 180 / Math.PI, g.lon)[1];
+        const [sx, sy] = mapToScreen(nx, ny);
+        if (b) c.lineTo(sx, sy); else c.moveTo(sx, sy);
+      }
+      c.stroke();
+      c.setLineDash([]);
+      c.globalAlpha = 1;
+      if (!it.st) {
+        if (vsSel === it.id) {   // selected: draggable (📡 STATION ON THE MAP)
+          c.beginPath(); c.arc(x, y, 11, 0, 2 * Math.PI);
+          c.strokeStyle = 'rgba(0,0,0,0.75)'; c.lineWidth = 5; c.stroke();
+          c.strokeStyle = '#fff'; c.lineWidth = 2.5; c.stroke();
+        }
+        c.lineWidth = 1.5;
+        c.fillStyle = it.col;
+        c.strokeStyle = 'rgba(0,0,0,0.85)';
+        c.beginPath(); c.arc(x, y, 5, 0, 2 * Math.PI); c.fill(); c.stroke();
+        if (!it.mk) {
+          c.font = 'bold 11px sans-serif';
+          c.lineJoin = 'round';
+          c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineWidth = 3; c.fillStyle = '#fff';
+          c.strokeText(it.name, x + 8, y + 4); c.fillText(it.name, x + 8, y + 4);
+        }
+      }
+      c.restore();
+    }
+  }
+
+  // the shown viewshed point (not the station's) under a screen point (within 9 px)
+  function vsHit(x, y) {
+    if (!vsReady || !mapState.vs) return null;
+    let best = null, bd = 9 * 9;
+    for (const it of vsState.items) {
+      if (it.st || !it.on) continue;
+      const [px, py] = mapLatLonToScreen(it.lat, it.lon), d = (px - x) ** 2 + (py - y) ** 2;
+      if (d < bd) { bd = d; best = it.id; }
+    }
+    return best;
+  }
+  // a viewshed point dragged somewhere else (from a marker: no longer at it)
+  function vsMoveItem(id, lat, lon) {
+    const it = vsGet(id);
+    if (!it) return;
+    const key = vsKey(it);
+    it.lat = +lat.toFixed(6);
+    it.lon = +lon.toFixed(6);
+    it.mk = '';
+    if (vsKey(it) === key) return;
+    vsSave();
+    vsCancel(id);
+    vsPump();
+    vsRender();
+    mapDraw();
+  }
+  // the station's viewsheds follow the station: dragged on the map, "Set
+  // station here", the Station Information panel, another browser - and the
+  // GPS, there at most every 30 s (now: right away)
+  function vsFollowStation(now) {
+    const p = mapStationPos();
+    if (!vsReady || !p) return;
+    const gps = !mapStaticSource();
+    let moved = false;
+    for (const it of vsState.items) {
+      if (!it.st || mapDistKm(it.lat, it.lon, p[0], p[1]) <= 0.02) continue;
+      if (gps && !now && Date.now() - (it.ft || 0) < 30000) continue;
+      it.lat = +p[0].toFixed(6);
+      it.lon = +p[1].toFixed(6);
+      it.ft = Date.now();
+      vsCancel(it.id);
+      moved = true;
+    }
+    if (!moved) return;
+    vsSave();
+    vsPump();
+    vsRender();
+    mapDraw();
+  }
+
+  // ---- adding / changing ----
+  function vsAdd(lat, lon, name, opt) {
+    opt = opt || {};
+    if (vsState.items.length >= VS_MAX) { mapStatusFlash(`At most ${VS_MAX} viewsheds - remove one first`); return; }
+    const used = new Set(vsState.items.map(i => i.col));
+    const it = {id: 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: String(name).slice(0, 60),
+                lat: +lat.toFixed(6), lon: +lon.toFixed(6), h: opt.h !== undefined ? opt.h : vsState.h, r: vsState.r,
+                col: VS_COLS.find(c => !used.has(c)) || VS_COLS[0], on: true, st: !!opt.st, mk: opt.mk || ''};
+    vsState.items.push(it);
+    vsSave();
+    if (!mapState.vs || !mapState.vsOpen) { mapState.vs = mapState.vsOpen = true; mapSave(); mapUpdateControls(); }
+    vsPump();
+    vsRender();
+    mapDraw();
+  }
+  function vsAddStation() {
+    const p = mapStationPos();
+    if (!p) { mapStatusFlash('No station location - set it in the sidebar (Station Information) or right-click the map → "Set station here"'); return; }
+    vsAdd(p[0], p[1], 'Station', {st: true});
+  }
+  function vsAddAt() {
+    const at = mapMenuAt;
+    mapMenuClose();
+    if (!at) return;
+    let i = 1;
+    while (vsState.items.some(v => v.name === 'Point ' + i)) i++;
+    vsAdd(at.la, at.lo, 'Point ' + i);
+  }
+  function vsAddMarker(id) {
+    const m = mkGet(id);
+    if (m) vsAdd(m.lat, m.lon, m.name, {mk: m.id});
+  }
+  // from an OSM mast: the antenna at its mapped height (metres, or feet with ' / ft)
+  function vsAddMast(k) {
+    const m = mastPts.get(k);
+    if (!m) return;
+    const t = String(m.tags.height || '').trim(), v = parseFloat(t);
+    let h;
+    if (v > 0) h = Math.min(5000, Math.round(/(ft|')\s*$/i.test(t) ? v * 0.3048 : v));
+    mapSel = null;
+    vsAdd(m.la, m.lo, mastTitle(m.tags), {h});
+  }
+  function vsToggle() {
+    mapState.vs = !mapState.vs;
+    if (mapState.vs) {
+      mapState.vsOpen = true;
+      if (!vsState.items.length && mapStationPos()) vsAddStation();
+    }
+    mapSave();
+    mapUpdateControls();
+    if (mapState.vs) vsRepaint(); else mapDraw();
+    vsPump();
+  }
+  function vsRemove(id) {
+    if (vsSel === id) vsSel = null;
+    vsCancel(id);
+    vsState.items = vsState.items.filter(i => i.id !== id);
+    vsRes.delete(id);
+    vsFail.delete(id);
+    vsSave();
+    vsRender();
+    mapDraw();
+  }
+  function vsShow(id) {
+    const it = vsGet(id);
+    if (!it) return;
+    it.on = !it.on;
+    vsSave();
+    if (!it.on) { vsCancel(id); if (vsSel === id) vsSel = null; }
+    vsRepaint();
+    vsPump();
+  }
+  function vsSetItem(id, k, val) {
+    const it = vsGet(id);
+    if (!it) return;
+    const v = Number(val), ok = k === 'h' ? v >= 0 && v <= 5000 : v >= 1 && v <= VS_RMAX_KM;
+    if (!Number.isFinite(v) || !ok) { vsRender(true); return; }
+    const key = vsKey(it);
+    it[k] = vsState[k] = k === 'h' ? Math.round(v * 10) / 10 : Math.round(v);   // also the default for new ones
+    vsSave();
+    if (vsKey(it) !== key) vsCancel(id);
+    vsPump();
+    vsRender();
+    mapDraw();
+  }
+  function vsRetry(id) { vsFail.delete(id); vsPump(); }
+  function vsCentre(id) {
+    const it = vsGet(id);
+    if (!it) return;
+    // the whole circle in view
+    const px = it.r * 2000 / (2 * Math.PI * VS_RE * Math.cos(it.lat * Math.PI / 180)) * 256;
+    mapAutoFit = false;
+    mapCenterOn(it.lat, it.lon, Math.max(MAP_MIN_Z, Math.min(16, Math.log2(0.85 * Math.min(mapW, mapH) / px))));
+  }
+  function vsSetTgt(val) {
+    const v = Number(val);
+    if (Number.isFinite(v) && v >= 0 && v <= 30000) {
+      vsState.tgt[vsState.amsl ? 'amsl' : 'agl'] = Math.round(v * 10) / 10;
+      vsSave();
+    }
+    vsRepaint();
+    vsRender(true);
+  }
+  function vsSetRef(v) {
+    vsState.amsl = v === 'amsl';
+    vsSave();
+    vsRepaint();
+    vsRender(true);
+  }
+  function vsSetK(v) {
+    const k = Number(v);
+    if (!(k >= 1 && k <= 2)) return;
+    vsState.k = k;
+    vsSave();
+    if (vsJob) vsCancel(vsJob.id);
+    vsPump();
+    vsRender();
+  }
+
+  // ---- the panel ----
+  function vsPanelBuild(el) {
+    el.dataset.built = '1';
+    el.innerHTML =
+      `<div class="map-vs-h"><span class="t">👁 Viewshed</span>` +
+      `<button type="button" class="map-btn" id="map-vs-st" onclick="vsAddStation()" title="Line of sight from the station's antenna (its location: Station Information)">+ Station</button>` +
+      `<span class="hint">or right-click the map</span>` +
+      `<span class="x" id="map-vs-fold" onclick="mapSet('vsOpen', !mapState.vsOpen)" title="Fold / unfold"></span></div>` +
+      `<div class="map-vs-body"><div class="map-vs-row">` +
+      `<label title="How high the other antenna (a radio, vehicle, aircraft...) is: shown where an antenna at this height could see the observer's - and so, roughly, where a radio link has line of sight">` +
+      `Target <input type="number" id="map-vs-tgt" min="0" max="30000" step="1" onchange="vsSetTgt(this.value)" onkeydown="if(event.key==='Enter')this.blur()"> m</label>` +
+      `<select id="map-vs-ref" onchange="vsSetRef(this.value)" title="Target height above the ground there, or above sea level (e.g. aircraft at an altitude)">` +
+      `<option value="agl">above ground</option><option value="amsl">above sea level</option></select>` +
+      `<select id="map-vs-k" onchange="vsSetK(this.value)" title="Earth curvature and how much the air bends the path: radio waves bend more than light (k = effective Earth radius / real one)">` +
+      `<option value="1.3333333333333333">Radio (k = 4/3)</option><option value="1.1666666666666667">Light (k = 7/6)</option>` +
+      `<option value="1">No bending (k = 1)</option></select></div>` +
+      `<div id="map-vs-list"></div><div class="map-vs-hov" id="map-vs-hov"></div>` +
+      `<div class="map-vs-note">Line of sight over the terrain only: buildings and trees aren't in the data, the sea counts as 0 m. ` +
+      `Radio also reaches a little past it (diffraction). Point at the map for details; at a row's "% in sight" for its cell size. ` +
+      `Terrain: AWS Terrain Tiles (<a href="${VS_TERRAIN_INFO}" target="_blank" rel="noopener noreferrer">sources ↗</a>)</div></div>`;
+  }
+  function vsRowBuild(it) {
+    const r = document.createElement('div');
+    r.className = 'vs-it';
+    r.dataset.id = it.id;
+    r.innerHTML =
+      `<div class="l1"><span class="sw" title="Show / hide" onclick="vsShow('${it.id}')"></span><span class="nm"></span>` +
+      `<button type="button" class="map-btn" title="Show it on the map" onclick="vsCentre('${it.id}')">⌖</button>` +
+      `<button type="button" class="map-btn" title="Remove" onclick="vsRemove('${it.id}')">✕</button></div>` +
+      `<div class="l2"><label title="Antenna height above the ground">Antenna <input type="number" class="h" min="0" max="5000" step="1" onchange="vsSetItem('${it.id}','h',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> m</label>` +
+      `<label title="How far to look (radius)">Radius <input type="number" class="r" min="1" max="${VS_RMAX_KM}" step="1" onchange="vsSetItem('${it.id}','r',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> km</label>` +
+      `<span class="st"></span></div>`;
+    return r;
+  }
+  function vsSetVal(inp, v, force) {
+    if ((force || document.activeElement !== inp) && inp.value !== String(v)) inp.value = v;
+  }
+  // status of an item: [text (html), class]
+  function vsItemStatus(it) {
+    if (!it.on) return ['hidden', ''];
+    const res = vsRes.get(it.id), f = vsFail.get(it.id), key = vsKey(it);
+    if (vsJob && vsJob.id === it.id) {
+      const p = vsJob.prog;
+      return [Array.isArray(p) ? `loading terrain ${p[0]}/${p[1]}…` : p === 'compute' ? 'computing…' : 'starting…', 'w'];
+    }
+    if (f && f.key === key) return [`⚠ ${digEsc(f.msg)} · <a onclick="vsRetry('${it.id}')">retry</a>`, 'e'];
+    if (vsWorkerErr) return ['⚠ ' + digEsc(vsWorkerErr), 'e'];
+    if (!res || res.key !== key) return [res ? 'waiting to update…' : 'waiting…', 'w'];
+    return [`${Math.round(res.vis * 100)} % in sight`, ''];
+  }
+  function vsRender(force) {
+    const el = $id('map-vs');
+    if (!el || !vsReady) return;
+    const show = !!mapState.vs;
+    if (el.style.display !== (show ? 'block' : 'none')) el.style.display = show ? 'block' : 'none';
+    if (!show) return;
+    if (!el.dataset.built) vsPanelBuild(el);
+    el.classList.toggle('closed', !mapState.vsOpen);
+    const fold = $id('map-vs-fold'), ft = mapState.vsOpen ? '▾' : '▸';
+    if (fold.textContent !== ft) fold.textContent = ft;
+    vsSetVal($id('map-vs-tgt'), vsTgt(), force);
+    vsSetVal($id('map-vs-ref'), vsState.amsl ? 'amsl' : 'agl', force);
+    vsSetVal($id('map-vs-k'), String(vsState.k), force);
+    const stb = $id('map-vs-st');
+    const noSt = !mapStationPos() || vsState.items.length >= VS_MAX;
+    if (stb.disabled !== noSt) stb.disabled = noSt;
+    const box = $id('map-vs-list');
+    const ids = vsState.items.map(i => i.id);
+    for (const r of [...box.children]) if (!ids.includes(r.dataset.id)) r.remove();
+    vsState.items.forEach((it, i) => {
+      let r = [...box.children].find(x => x.dataset.id === it.id);
+      if (!r) r = vsRowBuild(it);
+      if (box.children[i] !== r) box.insertBefore(r, box.children[i] || null);
+      r.classList.toggle('off', !it.on);
+      const sw = r.querySelector('.sw'), bg = it.on ? it.col : 'transparent';
+      if (sw.dataset.bg !== bg) { sw.dataset.bg = bg; sw.style.background = bg; sw.style.borderColor = it.col; }
+      const nm = r.querySelector('.nm');
+      if (nm.textContent !== it.name) { nm.textContent = it.name; nm.title = `${it.name}: ${it.lat.toFixed(5)}, ${it.lon.toFixed(5)}`; }
+      vsSetVal(r.querySelector('.h'), it.h, force);
+      vsSetVal(r.querySelector('.r'), it.r, force);
+      const [txt, cls] = vsItemStatus(it), st = r.querySelector('.st');
+      const res = vsRes.get(it.id);
+      const lst = res && res.levels[res.levels.length - 1];
+      const tip = res && res.key === vsKey(it) ? `ground ${Math.round(res.gnd)} m + antenna ${it.h} m = ${Math.round(res.eye)} m above sea level · ` +
+        `terrain cells of ${Math.round(res.mpp)} m around the antenna` + (res.levels.length > 1 ? ` to ${Math.round(lst.cell)} m at ${it.r} km ` +
+        `(${res.levels.length} rings, zoom ${res.levels[0].z} to ${lst.z})` : ` (zoom ${lst.z})`) +
+        ` · ${res.tiles} tiles` + (res.loaded < res.tiles ? ` (${res.loaded} loaded, the rest in memory)` : '') + `, ${(res.ms / 1000).toFixed(1)} s` + (res.spikes ? ` · ${res.spikes} terrain spikes removed` : '') : '';
+      if (st.dataset.html !== txt) { st.dataset.html = txt; st.innerHTML = txt; }
+      st.className = 'st' + (cls ? ' ' + cls : '');
+      if (st.title !== tip) st.title = tip;
+    });
+    vsHoverRender();
+  }
+
+  // ---- under the pointer (tap on touch): in sight of which viewshed ----
+  function vsHover(x, y) {
+    vsHovAt = x === null ? null : [x, y];
+    vsHoverRender();
+  }
+  function vsHoverRender() {
+    const el = $id('map-vs-hov');
+    if (!el || !vsReady) return;
+    let html = '';
+    const shown = mapState.vs ? vsState.items.filter(i => i.on && vsRes.get(i.id)) : [];
+    if (vsHovAt && shown.length && mapCv) {
+      const [x, y] = vsHovAt, W = mapWorld();
+      const nx = mapState.mx + (x - mapW / 2) / W, ny = mapState.my + (y - mapH / 2) / W;
+      const [la, lo] = mapScreenToLatLon(x, y);
+      const tgt = vsTgt(), lines = [];
+      let gnd = null;
+      for (const it of shown) {
+        const res = vsRes.get(it.id);
+        let q = VS_NODATA, g = 0;
+        for (const l of res.levels) {   // finest first
+          const Wv = 256 * 2 ** l.z, N = l.N;
+          let px = nx * Wv - l.gx0;
+          px -= Math.round((px - N / 2) / Wv) * Wv;   // the copy of the world nearest the grid
+          const i = Math.floor(px), j = Math.floor(ny * Wv - l.gy0);
+          if (i < 0 || j < 0 || i >= N || j >= N || l.need[j * N + i] === VS_NODATA) continue;
+          q = l.need[j * N + i];
+          g = l.ground[j * N + i];
+          break;
+        }
+        if (q === VS_NODATA) continue;
+        const nd = vsDec(q);
+        if (gnd === null) gnd = g;
+        const d = mapDistKm(res.lat, res.lon, la, lo), b = mapBearing(res.lat, res.lon, la, lo);
+        const ok = vsState.amsl ? g + nd <= tgt : nd <= tgt;
+        const why = ok ? '<b>in sight</b>' : `<span class="no">hidden</span> - needs ${vsState.amsl ? vsFmtM(g + nd) + ' above sea level' : vsFmtM(nd) + ' above ground'}`;
+        lines.push(`<span style="color:${it.col}">■</span> ${digEsc(it.name)}: ${why} · ${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${b.toFixed(0)}°`);
+      }
+      if (lines.length) html = `Ground ${gnd} m here<br>` + lines.join('<br>');
+    }
+    if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+  }
+
+  vsReady = true;
 
   // markers' age / staleness changes without new data
   setInterval(() => { if (mapPts.size || mapSel || (mapState.masts && (mastErr || mastBusy))) mapDraw(); }, 2000);

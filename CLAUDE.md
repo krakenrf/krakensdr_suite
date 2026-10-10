@@ -482,6 +482,12 @@ decoders `kraken_doa_v2/plugins/`
   `DIGITAL_OPT:id:map:0|1`, saved with the VFO), plus the station and range
   rings. kraken_doa pushes `{"map":...}` once a second (changed points + the
   keys of all live ones); `GET_MAP` asks for everything
+- 📡 The station on the map: click the mast to select it (cyan, in a
+  ring), then drag it, and drag its heading line's handle to turn it
+  (static location only; right-click "📡 Set station here" switches to
+  static, asking first) - sent as the Station Information panel's
+  `STATIC_LOCATION:`; the station's viewsheds follow. Viewshed points are
+  selected + dragged the same way
 - 📍 User markers: right-click (touch: long press) the map -> "📍 Add
   Marker"; each has a name, notes and frequencies, shown in a panel at the
   map's bottom right - clicking a frequency tunes the SELECTED VFO there
@@ -497,6 +503,19 @@ decoders `kraken_doa_v2/plugins/`
   areas at zoom >= 11; kept a week in localStorage, drawn at any zoom;
   coloured by use (communication:* tags), click = all their tags, "📍 Add as
   marker". UI-only (kraken_doa.html "📡 OSM MASTS")
+- 👁 Viewshed ("Viewshed" button, right-click "Viewshed from here", markers,
+  masts): the ground in line of sight of an antenna there (height above
+  ground, radius up to 1000 km, target height above ground or sea level,
+  refraction k), anywhere in the world - AWS Terrain Tiles fetched BY THE
+  BROWSER, computed in a Web Worker: rays along GREAT CIRCLES in RINGS (~8
+  m cells around the antenna, coarser with distance; each ray carries its
+  horizon outwards - one coarse grid lost the hills next to the antenna), Earth
+  curvature, the tiles' artefacts removed (incl. a band of up-to-32 km
+  "terrain" in the sea north of the Coromandel), decoded tiles kept in
+  the worker (256: a moved point / new height loads only the tiles it
+  hasn't got), up to 6 at once in their own colours, per browser
+  (localStorage). UI-only (kraken_doa.html "👁
+  VIEWSHED")
 - Incident map: text messages from plugins (`kp::Host::message`, POCSAG
   pages) -> street address found in the text -> looked up ONLINE in
   OpenStreetMap Nominatim (no downloaded map data) within `GEO_RADIUS_KM`
