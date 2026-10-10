@@ -63,6 +63,15 @@ last one, is rejected.
   10000 ft. IDENT (the pilot's ident button, SPI) is logged too. A squawk
   read from a Mode S reply only counts when the next reply confirms it (a
   single bit error would otherwise look like a squawk change)
+- DoA per aircraft: every accepted message of a confirmed aircraft goes to
+  kraken_doa as a talker packet (`kp::Talker::packet`, its exact samples),
+  with the aircraft's position at that moment (`Talker::lat / lon / alt_m`:
+  the last position moved on with its ground speed, track and vertical
+  rate - airborne only, a position at most 3 s old, a velocity for anything
+  older than 0.1 s; GNSS altitude when sent, else barometric) - the ✈ array
+  calibration uses them as transmitters at known positions. On a synthetic
+  recording (20 aircraft, 20 s) the packet positions were within 2.4 m of
+  the truth (median; 95 % within 12 m)
 - Raw frames (decoder data log, "Raw frames" ticked): every message that
   passed its CRC as hex + its level in dB, `8D4840D6202CC371C32CE0576098
   -14.8` (the format dump1090's raw output uses, plus the level). Busy sky:

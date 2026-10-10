@@ -41,8 +41,10 @@ PLUGIN_DIR = os.path.abspath(os.environ.get("KRAKEN_PLUGIN_DIR") or os.path.join
 SESSIONS = os.path.join(AI_DIR, "sessions")
 CONFIG = os.environ.get("KRAKEN_AI_CONFIG") or os.path.join(AI_DIR, "ai_config.json")
 SIGTOOL = os.path.join(AI_DIR, "sigtool.py")
+MEMGUARD = os.path.join(AI_DIR, "memguard")
 BUILTIN = ("the decoder plugins listed above (every decoder is a plugin, including the protocols that "
-           "ship with the suite: P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS; Auto detect runs "
+           "ship with the suite: P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS, ADS-B, AIS, radiosondes, "
+           "DME / TACAN (dme) and ILS / VOR / marker beacons (ils); Auto detect runs "
            "the ones the user ticked, all by default)")
 ACTIVITY_MAX = 4 << 20   # activity.jsonl stops growing here
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
@@ -178,6 +180,17 @@ python3 {t} symbols FILE.cf32 --baud B [--levels 2|4] [--demod fm|am] [-o OUT.tx
 # ---------------------------------------------------------------------------
 # Backends
 # ---------------------------------------------------------------------------
+def agent_env():
+    """The agent's environment: memguard/ on PYTHONPATH, so every Python
+    process it starts (its own scripts, sigtool) imports memguard's
+    sitecustomize and gets a memory ceiling - a script that needs more than
+    the Pi has free fails with MemoryError instead of swapping the receiver
+    to a standstill (a 45 s capture froze the Pi twice)."""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = MEMGUARD + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    return env
+
+
 class Runner:
     """Runs one agent turn and turns its output into events. Returns
     (ok, final_text)."""
@@ -200,7 +213,7 @@ class Runner:
         emit("status", state="thinking", msg="running " + os.path.basename(argv[0]))
         try:
             p = subprocess.Popen(argv, cwd=self.sdir, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT, text=True, bufsize=1)
+                                 stderr=subprocess.STDOUT, text=True, bufsize=1, env=agent_env())
         except OSError as e:
             emit("error", msg=f"cannot run {argv[0]}: {e}")
             return False, ""
@@ -241,7 +254,7 @@ class Runner:
         argv += ["--allowedTools"] + allowed
         try:
             p = subprocess.Popen(argv, cwd=self.sdir, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, text=True, bufsize=1)
+                                 stderr=subprocess.PIPE, text=True, bufsize=1, env=agent_env())
         except OSError as e:
             emit("error", msg=f"cannot run claude: {e}")
             return False, ""
@@ -330,6 +343,12 @@ on a Raspberry Pi). You analyse radio signals the user points you at and write d
   to write a decoder, in the plugin directory you are given. Python 3 with numpy is available
   (no scipy/matplotlib). Run your own scripts as: python3 {sdir}/<script>.py
 - The Pi has 4 cores: never build with more than -j3; keep scripts efficient.
+- Memory is tight: the receiver needs most of the Pi's RAM, and every Python process you start
+  has a ceiling (what is free minus a reserve - often well under 1 GB): past it you get a
+  MemoryError (the Pi would otherwise swap and freeze). sigtool streams, so long captures are
+  fine; in your own scripts read long recordings in pieces (np.memmap(path, np.complex64,
+  mode="r") and slices, or np.fromfile with offset/count) and stay in float32 / complex64 - 60 s
+  at 480 kHz is 230 MB as complex64, and every float64 / complex128 copy doubles that.
 - Your text output is shown live in the receiver's web UI: keep progress notes short.
 - Be factual: state confidence and the measurements behind a conclusion; say "unknown" rather
   than guessing. Do not decode/describe the content of private communications beyond what is

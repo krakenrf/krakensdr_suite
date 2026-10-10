@@ -56,6 +56,11 @@ struct RxContext {
     const Options* opts = nullptr;
     // A frame of this protocol passed its FEC/CRC checks
     std::function<void(Mode)> valid;
+    // The same with the frame's samples: the receiver's input sample indexes
+    // since its last reset, [start, end) (Bridge::clock maps them to
+    // Host::time() -> kp::Host::valid(start, end), the Digital squelch). Use
+    // report_valid() below: it falls back to valid() when unset.
+    std::function<void(Mode, int64_t start, int64_t end)> valid_at;
     // Carrier offset measured by a receiver (Hz, + = above the VFO centre)
     std::function<void(Mode, float)> freq_error;
     // Decoded voice, 8 kHz mono (nominal +-1)
@@ -72,6 +77,12 @@ struct RxContext {
     std::function<void(int64_t at, int channel)> talker_end;
 };
 
+// A valid frame, with its samples when the host takes them
+inline void report_valid(const RxContext& c, Mode m, int64_t start, int64_t end) {
+    if (c.valid_at) c.valid_at(m, start, end);
+    else if (c.valid) c.valid(m);
+}
+
 // RxContext + Report + Options wired to a kp::Host
 class Bridge {
 public:
@@ -86,10 +97,19 @@ public:
     }
     // "verbose" = 0|1, "slot" = 0|1|2 (DMR), "nac" = 3 hex digits or "" / "any" (P25)
     void option(const std::string& key, const std::string& value);
-    // Report the receiver's talkers (RxContext::talker) to the host; its
-    // sample indexes run at `rate` from the last restart_clock(). Call
+    // The receiver's sample indexes run at `rate` from the last
+    // restart_clock(): valid frames are reported with their samples
+    // (RxContext::valid_at -> kp::Host::valid(start, end)). Call
     // restart_clock() whenever the receiver resets (its index 0 = now).
+    void clock(double rate) {
+        ctx.valid_at = [this, rate](Mode, int64_t a, int64_t b) {
+            host_.valid(t0_ + static_cast<double>(a) / rate, t0_ + static_cast<double>(b) / rate);
+        };
+    }
+    // Report the receiver's talkers (RxContext::talker) to the host too
+    // (implies clock(rate))
     void talkers(double rate) {
+        clock(rate);
         ctx.talker = [this, rate](const std::string& id, const std::string& label, int64_t a, int64_t b, int ch) {
             kp::Talker t;
             t.id = id;

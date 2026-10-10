@@ -70,7 +70,9 @@ public:
         for (auto& r : rx_) r.on_frame = [this](const FskFrame& f) { frame(f); };
         reset();
     }
-    void push(const float*, const float* wide, size_t n, double) override {
+    void push(const float*, const float* wide, size_t n, double t0) override {
+        rx_[0].clock(t0);
+        rx_[1].clock(t0);
         for (size_t i = 0; i < n; i++) {
             rx_[0].push(wide[i]);
             rx_[1].push(wide[i]);
@@ -104,6 +106,8 @@ void M10::frame(const FskFrame& f) {
     const int len = b[0];
     Frame o;
     o.dc_hz = f.dc_hz;
+    o.t_start = f.t_start;
+    o.t_end = f.t_end;
     if (b[1] == 0x20 && len >= 0x43 && len <= 0x45 + 20) {
         // M20: the check over the whole frame (newer firmware reuses the
         // block check's byte 0x16 for the pressure)

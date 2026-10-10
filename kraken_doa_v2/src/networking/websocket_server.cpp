@@ -7,6 +7,7 @@
 #include "message_builders.hpp"
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
+#include "array_cal.hpp"
 #include "scanner_manager.hpp"
 #include "decimator_manager.hpp"
 #include "channel_manager.hpp"
@@ -606,6 +607,13 @@ void WebSocketServer::web_server_main() {
                     global_ssl_app->publish(TOPIC_CTL, rdfmap::status_message(), uWS::TEXT, false);
                     for (const auto& m : rdfmap::grid_messages()) global_ssl_app->publish(TOPIC_CTL, m, uWS::TEXT, false);
                 }, 500, 500);
+
+                // ✈ Array calibration (packets collected, the latest fit) - every 2 s
+                struct us_timer_t* arraycal_timer = us_create_timer(native_loop, 0, 0);
+                us_timer_set(arraycal_timer, [](struct us_timer_t* /*timer*/) {
+                    if (!global_ssl_app || global_ssl_app->numSubscribers(TOPIC_CTL) == 0) return;
+                    global_ssl_app->publish(TOPIC_CTL, array_cal::status_message(), uWS::TEXT, false);
+                }, 2000, 2000);
 
                 // 🗂 Decoder Logging status (disk space, sizes) - every 2 s
                 struct us_timer_t* declog_timer = us_create_timer(native_loop, 0, 0);

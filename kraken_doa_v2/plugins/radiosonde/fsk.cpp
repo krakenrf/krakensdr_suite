@@ -6,6 +6,7 @@ namespace sonde {
 
 void FskRx::init(const FskConfig& c, double fs) {
     c_ = c;
+    fs_ = fs;
     sps_ = fs / c.baud;
     L_ = std::max(2, static_cast<int>(std::lround(sps_)));
     win_.assign(L_, 0.0f);
@@ -131,6 +132,8 @@ void FskRx::capture(Phase& p, float v) {
         f.dev_hz = std::fabs(p.dev);
         f.sync_err = p.sync_err;
         f.inverted = p.inv;
+        f.t_start = time_at(p.t0 - slen_ * sps_);
+        f.t_end = time_at(p.ct);
         on_frame(f);
     }
 }

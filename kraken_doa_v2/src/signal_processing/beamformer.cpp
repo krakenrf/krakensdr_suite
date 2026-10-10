@@ -18,6 +18,7 @@
 //     refreshed when angle changes >0.1 deg or frequency >1000 Hz
 
 #include "signal_processing/beamformer.hpp"
+#include "array_cal.hpp"
 #include "utils/parse_num.hpp"
 #include "signal_processing/fft_processor.hpp"   // fftw_planner_mutex
 #include "globals.hpp"
@@ -310,25 +311,36 @@ void Beamformer::computeElementPositions() {
     // Positions are stored in wavelengths so steering phases are simply
     // 2*pi*(x*cos + y*sin)
     const double wavelength_m = SPEED_OF_LIGHT / static_cast<double>(frequency_hz_);
+    element_tau_.assign(static_cast<size_t>(num_elements_), 0.0);
 
-    if (topology_ == ArrayTopology::CUSTOM && custom_positions_valid_) {
-        // User positions taken literally (in the azimuth plane), exactly as
-        // MUSIC steers them - so the combine points where MUSIC found the
-        // bearing. (CUSTOM used to fall into the ULA branch: an incoherent
-        // combine, worse SNR than a single channel.)
-        for (int k = 0; k < num_elements_; k++) {
-            element_x_[k] = (static_cast<double>(custom_positions_[k].x_mm) * 0.001) / wavelength_m;
-            element_y_[k] = (static_cast<double>(custom_positions_[k].y_mm) * 0.001) / wavelength_m;
+    if ((topology_ == ArrayTopology::CUSTOM && custom_positions_valid_) || topology_ == ArrayTopology::UCA) {
+        // in metres first: CUSTOM = the user positions taken literally (in
+        // the azimuth plane), exactly as MUSIC steers them - so the combine
+        // points where MUSIC found the bearing (CUSTOM used to fall into the
+        // ULA branch: an incoherent combine, worse SNR than a single
+        // channel); UCA wired clockwise (ANT0 on +x) - the angle mirrored
+        const int M = num_elements_;
+        std::vector<double> x(static_cast<size_t>(M)), y(static_cast<size_t>(M));
+        for (int k = 0; k < M; k++) {
+            if (topology_ == ArrayTopology::CUSTOM) {
+                x[k] = static_cast<double>(custom_positions_[k].x_mm) * 0.001;
+                y[k] = static_cast<double>(custom_positions_[k].y_mm) * 0.001;
+            } else {
+                const double angle = uca_angle_sign() * TWO_PI * k / M;   // 0, -72, -144, ...
+                x[k] = static_cast<double>(array_radius_mm_) * 0.001 * std::cos(angle);
+                y[k] = static_cast<double>(array_radius_mm_) * 0.001 * std::sin(angle);
+            }
         }
-    } else if (topology_ == ArrayTopology::UCA) {
-        const double radius_wl =
-            (static_cast<double>(array_radius_mm_) * 0.001) / wavelength_m;
-        // Array elements are wired clockwise (ANT0 on +x) - mirror the angle
-        const double dir = uca_angle_sign();
-        for (int k = 0; k < num_elements_; k++) {
-            const double angle = dir * TWO_PI * k / num_elements_; // 0, -72, -144, ...
-            element_x_[k] = radius_wl * std::cos(angle);
-            element_y_[k] = radius_wl * std::sin(angle);
+        // ✈ the array calibration (array_cal.hpp) - as MUSIC applies it
+        std::vector<double> dx(static_cast<size_t>(M)), dy(static_cast<size_t>(M));
+        if (array_cal::corrections(M, x.data(), y.data(), dx.data(), dy.data(), element_tau_.data()))
+            for (int k = 0; k < M; k++) {
+                x[k] += dx[k];
+                y[k] += dy[k];
+            }
+        for (int k = 0; k < M; k++) {
+            element_x_[k] = x[k] / wavelength_m;
+            element_y_[k] = y[k] / wavelength_m;
         }
     } else {
         // ULA (and CUSTOM before positions arrive): centered on the origin along x
@@ -353,7 +365,8 @@ void Beamformer::updateSteeringVector() {
         const double cos_t = std::cos(theta);
         const double sin_t = std::sin(theta);
         for (int k = 0; k < num_elements_; k++) {
-            const double phase = TWO_PI * (element_x_[k] * cos_t + element_y_[k] * sin_t);
+            const double phase = TWO_PI * (element_x_[k] * cos_t + element_y_[k] * sin_t) -
+                                 TWO_PI * static_cast<double>(frequency_hz_) * element_tau_[k];   // cable delay
             steering_vector_(k) = std::complex<double>(std::cos(phase), std::sin(phase));
         }
     } else {
@@ -687,7 +700,8 @@ void Beamformer::updateFDDASSteeringPhases() {
         const double proj_wl = usesPlanarProjection()
                                    ? (element_x_[k] * cos_t + element_y_[k] * sin_t)
                                    : (element_x_[k] * sin_t);
-        const double tau = proj_wl / fc;
+        // minus a calibrated element's cable delay (array_cal.hpp)
+        const double tau = proj_wl / fc - element_tau_[k];
 
         for (int b = 0; b < FDDAS_FFT_SIZE; b++) {
             // Complex baseband bin frequencies: [0..127] positive,
@@ -794,6 +808,13 @@ bool Beamformer::process(const SharedDecimator::MultiChannelDecimated& input,
     // Follow the server's live element count (heimdall can be reconfigured
     // at runtime); resizes all per-element state when it changed.
     syncElementCount();
+    // ✈ the array calibration in use changed: steer with the new geometry
+    if (cal_gen_ != array_cal::generation()) {
+        cal_gen_ = array_cal::generation();
+        steering_vector_valid_ = false;
+        mvdr_weights_valid_ = false;
+        fdds_last_angle_ = -1000.0f;
+    }
 
     switch (mode_) {
         case BeamformingMode::MVDR:

@@ -262,13 +262,12 @@ Edit `include/config.hpp`:
 - Multi-tuner gates (`multi_tuner_mode()`): every channel converted and
   FFT'd, MUSIC/beamforming off, each VFO decimates `tuner_channel`, FFT squelch
   reads that tuner, digital RF label = `exact_tuner_hz(tuner) + offset`
-- Squelch outside coherent: always the FFT method on the VFO's own tuner
-  (pipeline, fm_only indicator and the audio gate) - the eigenvalue methods
-  need MUSIC, which doesn't run, so their state froze (and the audio with it);
-  no beamformed-FFT squelch either (a saved "beamforming on" read a stale
-  overlay). The saved method is kept and applies again in coherent. The page
-  offers only "FFT Peak" there (`sqEffMethod`; the VFO cards rebuild on a mode
-  change - `decListMode` is part of updateDecimatorList's structure check)
+- Squelch outside coherent: the FFT method on the VFO's own tuner (pipeline,
+  fm_only indicator and the audio gate), no beamformed-FFT squelch (a saved
+  "beamforming on" read a stale overlay); the Digital squelch works in every
+  mode (it only needs the decoder - see *Digital squelch*). The VFO cards
+  rebuild on a mode change (`decListMode` is part of updateDecimatorList's
+  structure check)
 - VFO tuner: `SET_DECIMATOR_FREQ:id:khz[:tuner]` (independent: the offset is
   relative to that tuner; the echo carries `tuner`), `decimator_info[].tuner`,
   DECIMATORS snapshot field 10
@@ -369,7 +368,8 @@ Edit `include/config.hpp`:
 - EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below);
   kraken_doa contains no protocol code. Shipped: p25, dmr, tetra, dstar,
   nxdn, mpt1327, pocsag, aprs, adsb (see *ADS-B* below), ais (see *AIS*),
-  radiosonde (see *Radiosonde*)
+  radiosonde (see *Radiosonde*), dme and ils (see *DME / TACAN* and *ILS /
+  VOR / marker*)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
   tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by
   default. WS `PLUGIN_AUTO:id:0|1` -> `PluginRegistry::set_auto()` (bumps the
@@ -929,7 +929,10 @@ Edit `include/config.hpp`:
   `mapState.dh` -> `--doa-h`, double-click = 42 %; `rpApplySplit`)
 - UI (kraken_doa.html "Mobile DF" block): "📡 DF" panel bottom-left of the
   map (coherent only, hidden until the first `rdf` message): VFO select (All
-  / Dn), Lobe / Lines / Heat toggles (`mapState.rdf*`, localStorage),
+  / Dn), Lobe / Lines / Heat toggles (`mapState.rdf*`, localStorage;
+  Lobe = the lobe shapes, Lines = EVERY bearing line: the lobes' peak lines,
+  a talker's earlier bearings, the driving records' lines - the peak lines
+  used to come with Lobe, so Lines did nothing at a fixed station),
   Collect (RDF:), Range (RDF_RANGE_KM:), ◎ (centre on the estimate), Reset;
   status per VFO (bearings, next in N m, TX +-r95, edge / mode-mass
   warnings, measured offset when |off| >= 2 deg and > 2 sd after 20
@@ -956,7 +959,7 @@ Edit `include/config.hpp`:
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme}`, 🗺 Map 📡 DF panel):**
 - Goal: a VFO on a P25 / DMR / NXDN / D-STAR channel carries many radios; the VFO's DoA
   mixes them. The decoder names who transmits when, the VFO's signal is cut
   at those boundaries and each radio's own samples go through MUSIC - one
@@ -1037,7 +1040,7 @@ Edit `include/config.hpp`:
   extractSnapshotsOptimized knows each frame's [a, b); the frame's OWN
   trace-normalised covariance (before the temporal averaging, which would
   mix in earlier frames) goes to `setFrameTap` for every computed frame -
-  published or not (eigen gate / publish hold), but none while MUSIC is
+  published or not (publish hold), but none while MUSIC is
   skipped (FFT squelch closed, calibration, retune hold).
   `spectrumFromCovariance(R)` = MUSIC on a given R with the live steering
   vectors (2D max-projection for 3D custom arrays), source count (auto: the
@@ -1078,6 +1081,27 @@ Edit `include/config.hpp`:
   plot's angle when there is no heading -, last heard, transmissions);
   clicking a row selects it (again = Whole signal). `mapState.rdfTid`
   (localStorage); `rdfGrids` keyed "vfo|tid"
+- Order (`rdfTalkersListed`, list + dropdown): radios newest first;
+  packet talkers (aircraft / ships) NEAREST first by their reported
+  position (Dist column; needs the decoder's Plot on map), those without
+  one by name - newest first reshuffled a busy ADS-B list with every
+  packet. Aircraft are named by callsign (`rdfShortName` / `rdfAirParts`:
+  the ADS-B talker label is "CALLSIGN · 35000 ft"): the lobe label, the
+  list's first column (bold; ICAO second), the dropdown "CALLSIGN (ICAO)";
+  the ICAO until a callsign is known. A row is picked by press + release
+  (`rdfTlDown` / `rdfTlUp`, the row remembered at the press, <= 8 px
+  movement), not `click`: the list is rebuilt several times a second and a
+  click whose press and release hit different row elements was lost
+- On the map: the talker whose lobe is shown alone (`rdfTrackedPt()`: one
+  picked in the list / ID selector, with a map point - its decoder's Plot on
+  map) gets a 19 px ring in its lobe's colour; the point whose popup is open
+  (also a decoder-table row click, `digTableRowClick`) a white 14 px one -
+  both with a dark edge. A decoder point's popup (`mapPointPopupHtml`) has a
+  "📡 DoA" button in its header when the point is a talker of the DF status
+  (`rdfPopupTalker`: same VFO + id; coherent only): `rdfTrackBtn` picks it
+  (switches the panel's VFO select to its VFO unless All, opens the panel,
+  Lobe on), again = Whole signal; "DoA ✓" while picked. It acts on
+  pointerdown: the popup is rebuilt every second ("Updated N s ago")
 - Packets (ADS-B per aircraft; `kp::Talker::packet`, wire flags field "p",
   times sent with 7 decimals): the plugin reports every accepted message
   of a confirmed aircraft (`talker_packet` in plugins/adsb: start = the
@@ -1115,8 +1139,10 @@ Edit `include/config.hpp`:
   covariance over exactly the packet; overlapping packets are only dropped
   when on the same channel. Above 500 kHz (ADS-B) the chunk ring as before
   (freq ignored). PACKET_IDLE_MS 5 min; MAX_PACKET_S 0.25 (5 AIS slots).
-  Status `pl` = the talker's plugin (UI: ✈ / ⛴, "Every aircraft / ship",
-  "Position check")
+  Status `pl` = the talker's plugin (UI: ✈ / ⛴ / 📡 beacon for `dme` -
+  `rdfKind`; "Every aircraft / ship / beacon", "Position check"; beacons
+  have no reported position: no Dist / Δ pos columns, no Plot-on-map hint,
+  counted in pulse pairs)
 - Not split: TETRA (the plugin decodes the downlink - every bearing is the
   base station's), MPT1327 (analogue voice). On a repeater OUTPUT every ID's
   bearing is the repeater's. A DMR repeater INPUT with both slots busy
@@ -1148,6 +1174,115 @@ Edit `include/config.hpp`:
   52 / 160 / 300. UI checked from file:// with a stub WebSocket replaying the
   captured messages (headless Chromium can't reach servers in the agent
   sandbox; map tiles failed fast = offline mode)
+
+**✈ Array calibration from ADS-B aircraft (`src/array_cal.cpp`, sidebar "🧪 Experimental" -> "✈ Array Calibration", coherent) - EXPERIMENTAL, on the back burner:**
+- Status (2026-10-09): works on synthetic data; on the live array here (205 mm,
+  1090 MHz, aircraft at 0-9 deg elevation) each aircraft's response matched
+  the nominal array only ~0.56 (healthy ~0.95) - steady per aircraft but
+  different for aircraft in nearly the same direction (multipath / the
+  antennas at low elevation), so the 88 deg lookalike lobes of the 0.876
+  lambda ring often won. Wiring order and radius checked fine. Constant
+  per-element offsets helped only partly (main lobe right 43 -> 54 %,
+  leave-one-aircraft-out). Known open issues: `line_of_sight()` judges an
+  aircraft by its STRONGEST lobe, so aircraft whose lookalike lobe won are
+  left out although they have a lobe at the truth (should test "a strong
+  lobe within LOS_DEG of the truth"); Apply doesn't ask before using a
+  result with no cross-check / a worse one. Recording + scripts:
+  /home/krakenrf/acal_capture (cap8091 capture, analyze / models /
+  stability / loo .py)
+- What it fixes: what the noise source can't see - per-element cable delay
+  (element 0 = 0), per-element x / y position error and a rotation of the
+  whole array (mounting / station heading) - in PHYSICAL units, so it holds
+  at every frequency (the phase of a delay scales with f; copying 1090 MHz
+  phases elsewhere was worse than nothing in the simulation). At one
+  frequency an antenna's own phase looks exactly like a delay and is absorbed
+  into it (carried to other frequencies scaled, i.e. wrongly - small at lower
+  ones); what the model can't explain is reported per element ("Unexpl.")
+- Input: `kp::Talker::lat / lon / alt_m` on packets (wire TALKER fields
+  10-12, `TalkerSpan::lat...`): the adsb plugin's `packet_position` = the
+  aircraft's last position moved on with GS / track / vertical rate to the
+  packet's start time (airborne, fix <= `POS_AT_MAX_S` 3 s old, a velocity
+  beyond 0.1 s; GNSS altitude, else barometric). TalkerDoa commits a packet
+  -> `CalPacket {id, R, lat, lon, alt}` (only while collecting, `take_cal`)
+  -> the rdf sampler adds the station (static location, or GPS with a
+  compass, standing still - `cal_state`; height from a 3D GPS fix, else 0)
+  -> `array_cal::add()`: ECEF -> east / north / up = compass azimuth +
+  elevation; steering angle = heading - array offset - azimuth (rdf's
+  compass = heading - displayed angle); dominant eigenvector + eigenvalue
+  ratio of R. Gates: >= 5 km, <= 450 km, 2..60 deg elevation (below 2 deg:
+  ground / horizon traffic - live at Auckland Airport five taxiing aircraft
+  that sent airborne messages at -200 ft, bearing 246 deg, all read 161 deg
+  and bent the fit: 16 deg unexplained, check worse), ratio >= 10, one packet
+  per aircraft per 500 ms; 36 compass sectors of max 400 packets
+  (then a random one replaced). The array: `note_array()` with
+  `MUSICProcessor::nominalPositions()` (UCA / CUSTOM; ULA = not
+  calibratable) - other positions = a refit of the same packets, another
+  element count / array offset / static heading = start over (they are baked
+  into the packets)
+- Line of sight (`line_of_sight()`, before the fit): each aircraft's median
+  bearing error with the NOMINAL array at its own elevation; the consensus =
+  the offset aircraft in the most 10-deg DIRECTIONS agree with (+-25 deg; then
+  the most aircraft) - a reflection is consistent per place, so a busy
+  airport's aircraft would out-vote a few good ones by count; aircraft more
+  than `LOS_DEG` 25 off it are left out whole (`left_out` [{id ICAO, err,
+  n}], `aircraft_used`). Per-packet weights can't catch them: their packets
+  are consistently wrong
+- Fit (worker thread, every 20 s with new packets, ~1 s at the 14400-packet
+  cap on a Pi 5): MUSIC's model (`phases()` = k (x cos el cos th + y cos el
+  sin th + z sin el) - 2 pi f tau, c = 3e8 as MUSIC) against each packet's
+  eigenvector, per-packet common phase projected out; start = rotation
+  search in 2 deg steps + per-element circular-mean phase as a delay; Gauss-
+  Newton MAP (priors: rotation 30 deg, delay 2 ns, position 15 mm), Cauchy
+  reweighting (multipath / wrong packets). Cross-check: fitted on half the
+  aircraft, the other half's bearings (operational el = 0 steering, 1 deg
+  grid + parabola on the eigenvector, aircraft below 20 deg) before / after.
+  Warnings: < 6 of 12 30-deg sectors covered, > 15 deg unexplained, check
+  worse
+- In use: `apply()` saves `array_cal.json` (cwd - Docker volume; gitignored)
+  and bumps `generation()`; `corrections(n, x, y)` gives dx / dy (rotation
+  included when `rotation` is on) + tau, only while `enabled` and the
+  nominal positions match the calibrated ones within 0.5 mm. MUSIC
+  (`updateSteeringVectors` / `2D`: corrected positions + -2 pi f tau; the
+  processing pass rebuilds them when `generation()` changed;
+  `isCalibrationApplied()`) and the beamformer (`computeElementPositions`,
+  `element_tau_`, FD-DAS per bin) use it. Not touched by RESET_SETTINGS
+- Commands (`ARRAY_CAL` in `is_query_command`, broadcasts): `ARRAY_CAL_COLLECT:0|1`
+  (not remembered across restarts; 0 = a last fit), `ARRAY_CAL_RESET`,
+  `ARRAY_CAL_APPLY`, `ARRAY_CAL_USE:0|1`, `ARRAY_CAL_ROTATION:0|1`,
+  `ARRAY_CAL_REMOVE`, `GET_ARRAY_CAL`. Status `{"array_cal":{collecting,
+  state, samples, aircraft, last_s, rejected{near, far, low, high, weak},
+  sectors[36], cap, note, array{n, ok}, fitting, min_samples, fit{ok, error,
+  t, age_s, samples, aircraft, aircraft_used, left_out[], left_out_n, f_mhz, n, used, sectors, el, rot, tau_ps[],
+  dx_mm[], dy_mm[], resid[], resid_all, gain_db[], cv, before / after{n, med,
+  p90, wrong}, warn}, applied{...fit, enabled, rotation, match}}}` every 2 s
+- UI (the "🧪 Experimental" sidebar section `#exp-section` at the bottom,
+  just above Open Heimdall Server / Reset Settings - collapsed, coherent
+  only; its header carries the calibration badge `#acal-badge`, "in use" /
+  "collecting", so an active calibration shows while collapsed; block
+  `#acal-section`, `acal*` in kraken_doa.html): the
+  calibration in use (Use / Include the rotation / Remove, its check), Collect
+  / Reset, why packets aren't used (`ACAL_STATE`), a 36-sector coverage ring,
+  the latest result (check, rotation, per element delay - also as coax mm at
+  VF 0.66 -, x / y, unexplained, gain dB - shown only, gains aren't
+  corrected) + Apply. Boxes re-render only when their HTML changes (the
+  result's age has its own span): a re-render under the pointer swallowed
+  clicks
+- Tests (scratchpad acal/): `t_acal.cpp` (array_cal + MUSICProcessor on
+  synthetic packets from a 205 mm UCA with rotation 2.5 deg, 12-60 ps
+  delays, 2-4 mm position errors, 2-5 deg antenna phases: positions within
+  0.25 mm, delays = truth incl. the antenna phases, MUSIC 1090 MHz median
+  error 3.0 -> 0.09 deg, 433 MHz 2.9 -> 0.74 (0.35 without antenna
+  differences), save / load, rotation off, other radius = not used, refit /
+  start-over rules; `t_acal airport`: 5 good aircraft + 6 clustered at 246
+  deg reflected from 161 deg + 2 on the ground -> the 6 left out, the 2
+  skipped, positions within 0.25 mm); `adsb_sim.py` (Mode S generator: DF17 ident / CPR
+  position / velocity, PPM at 24 MHz integrated to 2.4, the same array
+  errors; `file` for `decoder --file`, `serve` = a fake heimdall on 8091):
+  plugin packet positions median 2.4 m off the truth; `t_e2e.py` against the
+  test build (ports 1808x, `KRAKEN_PLUGIN_DIR` = the real plugins): 30
+  aircraft, fit within 0.25 mm / 0.1 ps, live per-aircraft DF error (below
+  20 deg) 3.05 -> 0.22 deg, off again 3.44; `t_acal_ui.py` (headless
+  Chromium against it)
 
 **Decoder data log (`src/decoder_log.cpp`, sidebar "🗂 Decoder Logging"):**
 - Sources: the engine's record handler (`dig::set_record_handler`,
@@ -1213,6 +1348,68 @@ Edit `include/config.hpp`:
   startup gzip of an unfinished old day, folder change / refusal, type and
   on/off changes, no writes while off
 
+**Digital squelch (squelch method "Digital", with the VFO's decoder on):**
+- The squelch methods are FFT (0) and DIGITAL (3) - the eigenvalue methods
+  (1 / 2: λ ratio with a manual / self-learned threshold) were removed (too
+  hard to set up): saved snapshots and old `DEC_SQUELCH_METHOD:EIGEN*` map to
+  FFT, `DEC_SQUELCH_EIGEN:` is ignored, MUSIC's eigen gate is gone (only the
+  publish hold is left). `SquelchMethod` (types.hpp), snapshot field 6 =
+  the method, field 7 = "0" (was the threshold - the column stays)
+- In effect only while the VFO's digital decoder is on
+  (`DecimatorManager::effectiveSquelchMethod`; else FFT - the choice is kept
+  and comes back with the decoder), in EVERY operating mode (it needs no
+  MUSIC). Open = the active plugin (fixed, or the one Auto detect locked onto)
+  reported a valid frame within `DIGITAL_SQUELCH_HOLD_MS` 1.5 s
+  (`digitalSquelchOpen` -> `DigitalDecoder::frames_within`, the engine's
+  `last_valid_by_` per plugin) - the pipeline's squelch_open, the audio gate,
+  the web mapper
+- The DoA (coherent, `dig_doa` in the pipeline): MUSIC runs with its publish
+  held (`setPublishHold`) and `TalkerDoa::set_digital(true)` keeps the
+  stream (raw <= 500 kHz / chunk ring above, as for packets). Every
+  CONFIRMED piece goes in as the covariance of exactly its samples
+  (`dig_confirm`: only what wasn't taken yet - `dig_done_` - and is still in
+  the ring; >= 16 samples): valid frames with their samples (wire VALID with
+  a payload -> `TalkerSpan::signal`), talker transmissions (as they grow;
+  "?" too), packets (their own covariance, channel-filtered for AIS).
+  `TalkerDoa::update` (rdf sampler, 10 Hz) publishes at most every
+  `DIG_PUBLISH_MS` 200 ms: R of the samples confirmed since, averaged with
+  the previous like the processor's frames (`getCovarianceAveragingAlpha`)
+  -> `MUSICProcessor::publishFromCovariance` (pseudospectrum, peak, 3D
+  elevation, stamp - so the DoA plot, map lobe, logger, web mapper, mobile
+  DF and the beamformer's steering all see only confirmed samples). Nothing
+  confirmed = the published DoA stays at the last confirmed one
+- Plugin API: `kp::Host::valid(start_s, end_s)` (Host::time() of the frame's
+  first sample / its end; counts as a valid frame; default = valid()) ->
+  wire VALID payload "start\0end" (old hosts ignore it) -> `on_valid_span`
+  (vfo_pos mapping, <= `MAX_SIGNAL_SPAN_S` 3 s). Lib protocols:
+  `RxContext::valid_at` + `dig::report_valid(ctx, mode, a, b)` with receiver
+  sample indexes, `Bridge::clock(rate)` / `restart_clock()` (in
+  `talkers(rate)` too): p25 (frame_a_..frame_b_, a TSDU ends after its last
+  good TSBK), dmr (burst), nxdn (frame; the CAC path computes its own),
+  dstar (RF header; a superframe from the previous data sync), tetra (the
+  slot), mpt1327 (CCSC / SYNT + address codeword). Standalone: pocsag (a
+  synced batch with <= 2 bad codewords - replaces the old valid() per
+  address codeword), aprs + v23_telemetry (frame end - length at 1200 bit/s),
+  radiosonde (`FskRx::clock` per block -> `FskFrame::t_start / t_end`;
+  `Frame::t_start / t_end`; DFM / LMS6 from the FSK frame that completed the
+  position; iMet-4 from its UART bytes). The offline host prints "valid
+  frames with their samples: N, covering X s" (`--verbose`: each one)
+- UI: the VFO card's method list = "FFT Peak (dB)" + "Digital (decoded
+  frames)" only while the decoder is on (`sqEffMethod`, `digDecoderOn`;
+  the card rebuilds when the decoder goes on / off); Digital hides the dB
+  slider (and the spectrum's squelch line) and shows a one-line note
+- Tests (scratchpad acal/): `dig_sim.py` (POCSAG bursts from 60 deg every
+  4 s + an FM interferer in the gaps from 200 deg, 5-element UCA r 0.5 m at
+  145 MHz; `file` / `serve` = a fake heimdall) + `t_dig.py` against the
+  test build: no squelch 47 / 53 % pager / interferer bearings, Digital 100 %
+  pager, open 50 % of the time (expected 49 %), FFT at 5 dB 44 / 56 %,
+  Digital with the decoder off = FFT, EIGEN_AUTO -> FFT; `t_sq_ui.py`
+  (headless Chromium: methods offered, rows, OPEN / CLOSED following the
+  bursts, decoder off / on). Offline: pocsag batches within ~1 ms of the
+  true spans; radiosonde recordings unchanged frame counts (RS41 119, M10 /
+  M20 120, iMet-4 119, iMet-54 241, LMS6 120, noise 0). P25 / DMR / NXDN /
+  D-STAR / TETRA / MPT1327 spans: built, not tried on recordings (none here)
+
 **Fixed-frequency decoders (`kp::Info::fixed_freq_hz`, ADS-B 1090 MHz):**
 - Done in the web UI (kraken_doa.html, `digApplyFixedTune`, from
   `digSetModeFor` / `digToggle` - i.e. when a user picks the decoder, not on
@@ -1264,6 +1461,88 @@ Edit `include/config.hpp`:
   a simulated 30 km flight (scratchpad harness including decoder.cpp)
 - Not supported: RS92 (needs ephemeris), 1680 MHz types, Meisei, MTS01.
   rs1729/RS is GPL-3.0: used as documentation + test reference only
+
+**DME / TACAN (`plugins/dme/`, README.md there):**
+- 2.4 MHz input (`min_vfo_rate` 600 kHz, manual only, talkers). From
+  `Host::rf_hz()` every integer MHz of 962..1213 within +-0.8 MHz of the
+  VFO centre is a channel (no RF: the centre, unnamed). FFT channelizer:
+  4096 points, overlap-save (OVL 1024, hop 3072), per channel the bins
+  around its centre (raised cosine flat +-350 kHz, zero +-550 kHz) -> 2048
+  IFFT = 1.2 MHz, the block's shift phase undone (continuous carrier
+  phase). Channel sample K = input sample in0_ + 2K; `abs_in_` never resets
+  (Host::time()). FFTW_ESTIMATE: MEASURE planned for 32 s on the Pi
+- Pulses: noise = median magnitude (every 7th sample, ~50 ms, smoothed),
+  threshold `min_snr` (10 dB, peak power over median^2 / ln 2), local max
+  +-3 samples, half-amplitude width 2.4-5.6 us (SSR 0.8 us pulses fail),
+  leading edge at 50 % interpolated, rise 10-90 %, phase steps for the
+  carrier. Pairs: 12 / 30 / 36 us +-1, <= 4 dB apart, nearest spacing wins;
+  `role_of(mhz, kind)`: 12 us on 962-1024 / 1151-1213 = X replies, 30 us on
+  1025-1150 = Y replies, 12 / 36 us on 1025-1150 = X / Y interrogations of
+  channel mhz - 1024 (`nav::dme_by_reply` / `dme_by_interrogation`)
+- Ident: a reply pair with one 1/1350 s (+-5 us, refined while keyed)
+  earlier is "periodic"; per 10 ms tick key = >= 6 pairs and most periodic,
+  3-tick majority -> `nav::MorseDecoder` (unit 0.07-0.2 s, end gap 1.2 s);
+  reported when clean (no '?') with timing fit >= 0.6
+- TACAN: reference bursts = runs of >= 5 equally spaced 12 us pairs every
+  20-36 us (>= 9 = north) or >= 9 single pulses at 12 / 15 / 30 us (Y: 30 =
+  north, 15 = auxiliary; X pulses every 12 us: >= 18 = north) - the
+  sources disagree on the X spacing, both are taken; TACAN = 10+ north
+  bursts 1/15 s apart in 2 s. Reply pulses wait 0.1 s (`tpulses`), then
+  those outside bursts with a turn (north burst before and after, 1/15 s
+  +-5 %) go into a 5-term least-squares fit (c0, 15 Hz, 135 Hz; decays over
+  ~3 s): bearing = 90° + the 15 Hz maximum's phase (north burst = maximum
+  east, clockwise), refined by the 135 Hz candidate nearest it
+- Output: table row per channel AND pair kind (`row_key` mhz/kind:
+  replies and interrogations on one frequency are separate rows;
+  interrogations "about N aircraft" = clusters of pair levels > 2 dB
+  apart), facts for the busiest reply channel (+ "Channels heard",
+  "Interrogations"), events (heard, ident, TACAN, quiet), raw = idents.
+  `host.valid()` every 0.25 s with >= 3 pairs (the Digital squelch holds
+  1.5 s). DoA: clean pairs (no pulse between, none 15 us before / after),
+  >= 15 dB, token bucket `doa_rate` (100/s) -> Talker packet id = channel
+  ("40X"), label "IAA · 1001 MHz", start - 4 us .. second pulse + 8 us (>=
+  2 whole 16-sample chunks), freq_hz = the channel's offset, avg_s 10
+- CPU (Pi 5): 3.3 % of a core per channel (scratchpad bench); the offline
+  host's double sin/cos NCO doubles the figure it prints
+- Tests (scratchpad dme/): the live 40X recordings (90 s / 480 kHz in the
+  AI session, 20 s / 2.4 MHz), gen_dme.py synthetic A (18Y + 81X
+  interrogations + Y TACAN 237°), B (weak 18X + X TACAN 123.4°), C (SSR
+  on 1030 MHz), D (no RF), N (noise); end to end feed.py + t_dme_e2e.py
+  (beacon 69.4° vs whole VFO 198°), t_dme_sq.py (Digital squelch: VFO DoA
+  69-70°, open 20/20), t_dme_ui.py (decoder tab, DF panel)
+
+**ILS / VOR / marker (`plugins/ils/`, README.md there):**
+- 48 kHz (`min_vfo_rate` 48 kHz: the VOR subcarrier reaches +-10.4 kHz).
+  Every 0.5 s the last 1 s: one complex FFT (1 Hz bins); carrier = the
+  strongest bin within +-20 kHz >= 15 dB over the median (Hann power from
+  the unwindowed bins: 0.5 X[k] - 0.25 X[k-1] - 0.25 X[k+1]); a second
+  carrier 4-32 kHz away, not at +-9960 Hz, a line (30x what is 30 Hz
+  aside), >= 20 dB, carrying 90 / 150 Hz too = two-frequency ILS
+- `demod`: the carrier's bins +-bw (12 kHz; sep - 1.5 kHz next to a second
+  carrier) -> 24000-point IFFT -> envelope -> m = e / mean - 1 -> r2c FFT:
+  tone depth = 2 sqrt(sum |M|^2 over +-w bins) / N (30 / 90 / 150 / 400 /
+  1020 / 1300 / 3000 Hz, 9960 +-800). VOR: bins 9960 +-900 -> 2048 IFFT ->
+  instantaneous frequency (times between samples) -> DFT at 30 Hz = the
+  reference phase; radial = arg(R) - arg(M[30]) (the variable lags the
+  reference by the radial); circular 1 s blocks hold whole 30 Hz cycles,
+  so no filter delays; averaged as vectors (0.8 / 0.2)
+- Type (`judge`, three agreeing blocks): VOR (9960 Hz > 10 %, 30 Hz > 8 %,
+  FM 250-800 Hz), ILS (SDM 0.2-1.2, a tone > 8 %, no 30 Hz; LOC / GS by
+  the RF band, else SDM < / >= 0.6), marker (a keyed 400 / 1300 / 3000 Hz
+  tone > 30 %; within 0.5 MHz of 75 MHz when the RF is known - airband
+  voice has keyed-looking 400 Hz bursts), else "AM carrier". CPU (Pi 5):
+  0.7 % of a core
+- Keying: 10 ms Hann Goertzel ticks of the middle 0.5 s of each block
+  (contiguous with the 0.5 s hop); `Keyer`: 98th / 15th percentile of 30 s,
+  keyed when >= 6x apart (noise alone ~5x) and >= 2 %, hysteresis; the
+  1020 Hz Morse starts after a 1.2 s gap once keyed (else the first ident
+  is cut); markers' / glide slopes' keying never makes an ident. Facts
+  (1 s): navaid, frequency + pairing (`nav::` tables), carrier, ident,
+  modulation (per type), course / glide path (DDM, side, needle uA, fly
+  left / right / up / down, SDM), second carrier, radial (+ the station's
+  bearing; true with the `magvar` option), marker, audio (LOC / VOR only).
+  `valid(t0, t0 + 1)` per recognised block
+- Tests (scratchpad dme/gen_nav.py, t_vor.py): see the README
 
 **AIS (`plugins/ais/`, ships):**
 - Input 100 kHz (`sample_rate` = `min_vfo_rate` = 100 kHz = the VFO's "100
@@ -1405,7 +1684,11 @@ Edit `include/config.hpp`:
   gets the VFO's complex baseband at `sample_rate`; `kp::Host`: fact / event /
   valid / audio (8 kHz) / voice_state / freq_error / verbose / voice_wanted /
   time / log, map_point / table_* / message / raw (data log) / talker +
-  talker_end (DoA per radio, see *DoA per talker*); `kp::Option` key/label/default/choices "v=Label|..."/help),
+  talker_end (DoA per radio, see *DoA per talker*) / station / rf_hz +
+  rf_inverted (the RF at the input's 0 Hz: wire RF 7 "rf_hz,inv" = the
+  engine's `rf_hz_` + `afc_hz_` (mirrored with invert), sent by
+  `send_settings` when it moves > 10 Hz and after a (re)start; offline
+  `--rf HZ` or the sidecar's `rf_hz`); `kp::Option` key/label/default/choices "v=Label|..."/help),
   helpers `plugins/sdk/kraken_dsp.hpp`, the shared library `plugins/lib/`,
   guide `plugins/SDK.md` (written for LLMs too)
 - `plugins/Makefile` builds `lib/build/libkrakendig.a`, then links each
@@ -1480,7 +1763,16 @@ Edit `include/config.hpp`:
   text + activity from `aiLog`, or the error) and switches to the session the
   `done` names; the user's own Investigate / Create opens the tab; a job
   started elsewhere (another browser) moves the AI tab's view to it but
-  never switches the panel to the AI tab. Bottom panel: `#info-panel` in the spectrum
+  never switches the panel to the AI tab. The chat column (`#info-ai-chat`)
+  holds two lasting children: `.ai-msgs` (the bubbles; the running job's
+  "working N s" clock is a `.ai-el` span filled by `aiFillElapsed`, so the
+  1 s tick doesn't change the HTML) and `details.ai-acts` (agent activity)
+  whose `.ai-log` only APPENDS new lines (rebuilt only when the list's first
+  entry changes - the 300-line cap - or the view changes) and keeps its
+  scroll position, following the newest line while scrolled to the end;
+  its open state is set once per view (live = open, saved = collapsed) and
+  then left to the user. (It used to rebuild everything every second, which
+  threw a reader of the activity back to the top.) Bottom panel: `#info-panel` in the spectrum
   panel under the waterfall controls, resizable (top edge), open state +
   height kept in localStorage; opening/closing fires a window resize so the
   waterfall refits. Tabs (`infoTab` = `dec:<vfo>` | `ai`): one per VFO with a
@@ -1515,6 +1807,40 @@ Edit `include/config.hpp`:
   built-in rasterizer + 5x7 font), `spectrogram`, `extract`, `demod`,
   `tones`, `symbols` (per-segment best-phase sampling, k-means levels, eye
   ratio, repeated 24/32/48-bit words = sync candidates, frame period)
+- Memory (sigtool + `ai/memguard/`): the Pi has ~1 GB free with the stack
+  running, and a Python process that outgrows it swaps the receiver to a
+  standstill (two 45 / 50 s captures froze the Pi: capture held the whole
+  recording plus float64 / complex128 copies, ~140 MB per second). So:
+  - `capture` streams: a reader thread takes the 8091 packets off the
+    socket, the main thread converts / DC-removes (smoothed piece means,
+    ramped) / mixes (`mix(.., n0)`: blockwise, phase continuous) /
+    channelizes (`Channelizer`: the overlap-save filter fed a piece at a
+    time, same output as on the whole array) ~0.2 s at a time and appends
+    to `<out>.part`, renamed when done (removed on error / SIGTERM). ~70 MB
+    for any length (old: 481 MB for 3 s), keeps up with real time on a Pi
+    5; `--seconds` <= 600, refused when the file wouldn't fit on the disk
+  - analysis: cf32 inputs are `np.memmap`ped (page cache, not process
+    memory); `extract` streams like capture; `demod` works in pieces (the
+    demodulator, then a Channelizer to <= 2x the audio rate, a small
+    resample at the end - one FFT over a 45 s recording alone took ~580 MB);
+    `fm_disc`, levels and `bursts` run in blocks; `welch(.., fn=)` applies
+    the envelope / x^k / mean removal per segment; `analyze`'s modulation
+    statistics use at most `STATS_MAX` (2^22) samples of the signal (the
+    report says so). 45 s at 480 kHz: analyze 1290 -> 378 MB, demod ~1 GB ->
+    250 MB (both incl. 173 MB of the mapped file), symbols 9+ min -> 11 s (its
+    `np.interp` built a recording-long axis per call). The SSB demod was
+    also fixed (it took the real part 1.5 kHz off zero: a 1 kHz USB tone
+    came out at 500 Hz)
+  - ceiling: `memguard/kraken_memguard.py` `apply()` sets RLIMIT_DATA (heap
+    + anonymous mappings = every numpy array) to MemAvailable minus
+    max(400 MB, 10 % of RAM) (>= 256 MB; a tighter inherited limit is
+    kept; `KRAKEN_AI_MEM_LIMIT=0` = none), so too much = MemoryError
+    instead of a frozen Pi. sigtool applies it itself (MemoryError -> "work
+    on a part / extract to a lower rate"); `kraken_ai.py` starts the agent
+    with `memguard/` on PYTHONPATH (`agent_env()`), so its
+    `sitecustomize.py` applies it to every Python process the agent runs
+    (checked: the claude CLI passes PYTHONPATH to its Bash tool). The
+    agent's system prompt says how to work on long recordings
 - Verified: live investigations (162.4 / 454.6 MHz) by the user; investigate
   + create on a synthetic APRS recording produced the `aprs` plugin (5/5
   frames, 0.5% CPU, quiet on noise) in ~5 min; the UI (panel, history,

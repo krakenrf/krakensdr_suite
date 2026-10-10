@@ -586,12 +586,10 @@ void DataReceiver::decimation_processor_thread() {
                                            inst->digital_mode.load(std::memory_order_relaxed) != 0;
                 if (fm_only && !single_wanted) {
                     // Not decimated in this mode, but keep its FFT-method
-                    // squelch indicator live (it reads the main FFT only)
-                    // (outside coherent mode every method runs as FFT - the
-                    // eigenvalue ones need MUSIC, which doesn't run there)
+                    // squelch indicator live (it reads the main FFT only; a
+                    // VFO without a decoder can't be on the Digital squelch)
                     if (inst->squelch_enabled.load(std::memory_order_relaxed) &&
-                        (wideband_enabled ||
-                         static_cast<SquelchMethod>(inst->squelch_method.load(std::memory_order_relaxed)) == SquelchMethod::FFT)) {
+                        DecimatorManager::effectiveSquelchMethod(*inst) == SquelchMethod::FFT) {
                         inst->squelch_open.store(FFTProcessor::check_squelch_in_range(
                             wideband_enabled ? inst->tuner_channel.load(std::memory_order_relaxed) : current_active,
                             inst->squelch_level.load(std::memory_order_relaxed),
@@ -672,23 +670,22 @@ void DataReceiver::decimation_processor_thread() {
                         // SKIP MUSIC if per-decimator squelch is enabled but closed (FFT method only)
                         // IMPORTANT: When beamforming is enabled, NEVER squelch MUSIC - it needs
                         // to run to provide DoA steering angle. Squelch only applies to audio output.
-                        // IMPORTANT: When eigenvalue squelch is enabled, ALWAYS run MUSIC to compute ratio.
+                        // Digital squelch: MUSIC always runs (its frames are held back); the
+                        // VFO's DoA is published from the samples the decoder confirmed
+                        // (talker_doa.cpp) and the squelch follows the decoder's valid frames.
                         bool squelch_allows_music = true;
-                        // Wideband / independent: no beamformer and no MUSIC run,
-                        // so the FFT squelch on this VFO's own tuner is the only one
-                        // (an eigenvalue method would freeze its last state - and
-                        // the audio with it; the saved method returns in coherent)
                         bool bf_active = beamforming_enabled.load(std::memory_order_relaxed) && !wideband_enabled;
-                        // Squelch method is per decimator (each has its own MUSIC
-                        // processor, so an eigenvalue squelch is naturally local too)
-                        SquelchMethod current_squelch_method = wideband_enabled ? SquelchMethod::FFT
-                            : static_cast<SquelchMethod>(inst->squelch_method.load(std::memory_order_relaxed));
-                        bool use_eigenvalue_squelch = (current_squelch_method == SquelchMethod::EIGENVALUE ||
-                                                       current_squelch_method == SquelchMethod::EIGENVALUE_AUTO);
+                        const bool sq_on = inst->squelch_enabled.load(std::memory_order_relaxed);
+                        // Digital needs the VFO's decoder on (else FFT); outside coherent mode
+                        // (no MUSIC) it still gates the audio
+                        const bool sq_digital = DecimatorManager::effectiveSquelchMethod(*inst) == SquelchMethod::DIGITAL;
 
-                        if (inst->squelch_enabled.load(std::memory_order_relaxed) && !bf_active && !use_eigenvalue_squelch) {
+                        if (sq_on && sq_digital) {
+                            inst->squelch_open.store(DecimatorManager::digitalSquelchOpen(*inst), std::memory_order_relaxed);
+                        } else if (sq_on && !bf_active) {
                             // FFT-based squelch: Only apply squelch to MUSIC when beamforming is OFF
                             // When beamforming is ON, MUSIC must run to provide steering
+                            // (wideband / independent: the VFO's own tuner)
                             float squelch_level = inst->squelch_level.load(std::memory_order_relaxed);
                             int check_channel = wideband_enabled ? inst->tuner_channel.load(std::memory_order_relaxed)
                                                                  : active_channel.load(std::memory_order_relaxed);
@@ -698,19 +695,19 @@ void DataReceiver::decimation_processor_thread() {
                                 check_channel, squelch_level, offset_hz, bw_hz);
                             // Update squelch_open state for UI feedback
                             inst->squelch_open.store(squelch_allows_music, std::memory_order_relaxed);
-                        } else if (bf_active && !use_eigenvalue_squelch) {
+                        } else if (bf_active) {
                             // Beamforming active with FFT squelch: always allow MUSIC, update squelch
                             // state from THIS decimator's beamformed FFT (from the previous block).
-                            if (inst->squelch_enabled.load(std::memory_order_relaxed) &&
-                                inst->beamformed_fft.valid.load(std::memory_order_acquire)) {
+                            if (sq_on && inst->beamformed_fft.valid.load(std::memory_order_acquire)) {
                                 float squelch_level = inst->squelch_level.load(std::memory_order_relaxed);
                                 bool bf_squelch_open = FFTProcessor::check_squelch_beamformed(
                                     inst->beamformed_fft, squelch_level);
                                 inst->squelch_open.store(bf_squelch_open, std::memory_order_relaxed);
                             }
                         }
-                        // Note: When use_eigenvalue_squelch is true, squelch_allows_music stays true
-                        // so MUSIC always runs to compute eigenvalue ratio. Squelch state is updated after MUSIC.
+                        // the confirmed-samples DoA runs while the Digital squelch is in effect
+                        const bool dig_doa = sq_on && sq_digital && !wideband_enabled;
+                        if (inst->talker_doa) inst->talker_doa->set_digital(dig_doa && inst->talker_doa->active());
                         //
                         // HARD GATE during heimdall calibration (noise source on
                         // + settle hold): the injected noise is a strong coherent
@@ -740,81 +737,22 @@ void DataReceiver::decimation_processor_thread() {
                                 inst->music_processor->setFrequency(expected_freq);
                             }
 
-                            // Arm the eigenvalue-squelch publish gate: a closed
-                            // squelch freezes the published DoA at the last open
-                            // frame (mirrors the FFT method, which skips MUSIC
-                            // when closed). Armed in beamforming mode too - MUSIC
-                            // keeps computing (fresh ratio), publish freezes, and
-                            // steering simply holds the last open bearing.
-                            // Auto mode gates on the PREVIOUS frame's learned
-                            // threshold (one frame stale is negligible; 0 while
-                            // still learning = gate open).
+                            // Publish hold: the FFT method with beamforming (MUSIC must
+                            // keep running - it provides steering - but a closed squelch
+                            // still freezes the PUBLISHED DoA, using the beamformed squelch
+                            // state from the previous block), and the Digital squelch (the
+                            // published DoA comes from the confirmed samples instead)
                             {
-                                bool gate_armed = use_eigenvalue_squelch &&
-                                                  inst->squelch_enabled.load(std::memory_order_relaxed);
-                                float gate_thr = 0.0f;
-                                if (gate_armed) {
-                                    gate_thr = (current_squelch_method == SquelchMethod::EIGENVALUE_AUTO)
-                                        ? inst->auto_eigen_threshold.load(std::memory_order_relaxed)
-                                        : inst->squelch_eigen_threshold.load(std::memory_order_relaxed);
-                                }
-                                inst->music_processor->setSquelchGate(gate_armed, gate_thr);
-
-                                // FFT method with beamforming: MUSIC must keep
-                                // running (it provides steering), but a closed
-                                // squelch still freezes the PUBLISHED DoA - via
-                                // the external hold, using the beamformed squelch
-                                // state from the previous block.
-                                bool fft_bf_hold = !use_eigenvalue_squelch && bf_active &&
-                                                   inst->squelch_enabled.load(std::memory_order_relaxed) &&
+                                bool fft_bf_hold = !sq_digital && bf_active && sq_on &&
                                                    !inst->squelch_open.load(std::memory_order_relaxed);
-                                inst->music_processor->setPublishHold(fft_bf_hold);
+                                inst->music_processor->setPublishHold(fft_bf_hold || dig_doa);
                             }
 
                             inst->music_processor->processDecimatedIQ(result.decimated_data);
-                            // per-packet DoA (ADS-B): the stream the decoder's packets are cut from
+                            // per-packet DoA (ADS-B) / the Digital squelch: the stream the
+                            // decoder's packets and confirmed frames are cut from
                             if (inst->talker_doa && inst->talker_doa->wants_blocks())
                                 inst->talker_doa->add_block(result.decimated_data);
-
-                            // Update eigenvalue squelch state if enabled
-                            if (use_eigenvalue_squelch && inst->squelch_enabled.load(std::memory_order_relaxed)) {
-                                float eigen_ratio = inst->music_processor->getEigenvalueRatio();
-                                if (current_squelch_method == SquelchMethod::EIGENVALUE_AUTO) {
-                                    // Self-learned threshold; expected_freq is this
-                                    // VFO's tuner freq + offset, so a retune OR an
-                                    // offset drag resets the learning.
-                                    // Learning is allowed only while (a) the FFT
-                                    // shows NO clearly visible in-band signal
-                                    // (>= 12 dB over the normalized floor, DC bins
-                                    // excluded) - that's what disambiguates a
-                                    // continuous transmission (freeze learning,
-                                    // stay open) from a coherent elevated noise
-                                    // floor (learn it, stay closed) - and (b) the
-                                    // server isn't calibrating (noise-source data
-                                    // is not the environment and must never seed
-                                    // the floor).
-                                    int fft_ch = active_channel.load(std::memory_order_relaxed);
-                                    float auto_bw_hz = inst->decimator->getBandwidthMhz() * 1e6f;
-                                    // "No FFT data" (right after a retune reset)
-                                    // must read as UNKNOWN, never as "quiet" -
-                                    // learning blind is how a settling transient
-                                    // seeds a garbage floor.
-                                    float in_band_peak_db = FFTProcessor::get_range_peak_db(
-                                        fft_ch, inst->frequency_offset_hz, auto_bw_hz,
-                                        DecimatorManager::AUTO_EIGEN_FFT_DC_EXCLUDE_BINS);
-                                    bool fft_valid = in_band_peak_db > -900.0f;
-                                    bool fft_quiet = fft_valid &&
-                                        in_band_peak_db <= DecimatorManager::AUTO_EIGEN_FFT_SIGNAL_DB;
-                                    bool allow_learn = fft_quiet && !doa_is_calibrating();
-                                    DecimatorManager::updateAutoEigenThreshold(
-                                        *inst, eigen_ratio, expected_freq, allow_learn);
-                                }
-                                // Squelch state = the processor's hysteretic gate,
-                                // i.e. exactly the state that froze/published this
-                                // frame, so UI/audio always agree with the freeze.
-                                bool eigen_squelch_open = !inst->music_processor->isSquelchGateClosed();
-                                inst->squelch_open.store(eigen_squelch_open, std::memory_order_relaxed);
-                            }
                         }
 
                     } catch (const std::exception& e) {
@@ -1225,18 +1163,12 @@ void DataReceiver::fm_processor_thread() {
                 float squelch_level = fm_decimator->squelch_level.load(std::memory_order_relaxed);
 
                 // Check squelch method (per decimator). Wideband / independent:
-                // always FFT on the VFO's own tuner (no MUSIC, no beamformer)
+                // FFT on the VFO's own tuner (no beamformer there); Digital in
+                // every mode (it only needs the decoder)
                 const bool multi = multi_tuner_mode();
-                SquelchMethod audio_squelch_method = multi ? SquelchMethod::FFT : static_cast<SquelchMethod>(
-                    fm_decimator->squelch_method.load(std::memory_order_relaxed));
-
-                if (audio_squelch_method == SquelchMethod::EIGENVALUE ||
-                    audio_squelch_method == SquelchMethod::EIGENVALUE_AUTO) {
-                    // Eigenvalue-based squelch: the pipeline task maintains the
-                    // hysteretic gate state in squelch_open (same state that
-                    // freezes the DoA publish), so audio simply follows it -
-                    // audio and DoA can never disagree about open/closed.
-                    squelch_allows_audio = fm_decimator->squelch_open.load(std::memory_order_relaxed);
+                if (DecimatorManager::effectiveSquelchMethod(*fm_decimator) == SquelchMethod::DIGITAL) {
+                    // Digital: open while the VFO's decoder reports valid frames
+                    squelch_allows_audio = DecimatorManager::digitalSquelchOpen(*fm_decimator);
                 } else if (!multi && beamforming_enabled.load(std::memory_order_relaxed) &&
                            fm_decimator->beamformed_fft.valid.load(std::memory_order_acquire)) {
                     // FFT-based squelch with beamforming: use the FM decimator's

@@ -52,6 +52,7 @@ public:
     }
     void push(const float* narrow, const float*, size_t n, double t0) override {
         t_ = t0;
+        rx_.clock(t0);
         for (size_t i = 0; i < n; i++) rx_.push(narrow[i]);
     }
     void reset() override {
@@ -138,6 +139,8 @@ void Rs41::frame(const FskFrame& f) {
     Frame o;
     o.type = "RS41";
     o.dc_hz = f.dc_hz;
+    o.t_start = f.t_start;
+    o.t_end = f.t_end;
     bool any = false, have_pos = false;
     double ecef[3] = {0, 0, 0}, vel[3] = {0, 0, 0};
     int pos = 57;

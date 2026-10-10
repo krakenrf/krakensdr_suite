@@ -162,7 +162,9 @@ void Radiosonde::on_frame(sonde::Frame& f) {
                 f.type.c_str(), f.serial.c_str(), f.frame_no, f.t, f.tod, f.utc, f.lat, f.lon, f.alt, f.vh, f.heading, f.vv, f.temp, f.rh,
                 f.pressure, f.batt);
     }
-    host.valid();
+    // the frame's samples (Host::valid(start, end) - the Digital squelch)
+    if (std::isfinite(f.t_start) && std::isfinite(f.t_end) && f.t_end > f.t_start) host.valid(f.t_start, f.t_end);
+    else host.valid();
     if (std::isfinite(f.dc_hz)) host.freq_error(f.dc_hz);
     if (!f.raw.empty() && host.raw_wanted()) host.raw(f.type + " " + f.serial + " " + f.raw);
 

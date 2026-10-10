@@ -379,86 +379,25 @@ bool DecimatorManager::setSquelchLevel(int id, float level_db) {
 bool DecimatorManager::setSquelchMethod(int id, int method) {
     auto decimator = getDecimator(id);
     if (decimator) {
-        method = std::clamp(method, 0, 2);
+        method = method == static_cast<int>(SquelchMethod::DIGITAL) ? method : static_cast<int>(SquelchMethod::FFT);
         decimator->squelch_method.store(method, std::memory_order_relaxed);
-        // Entering auto mode always relearns from scratch
-        if (method == 2) {
-            decimator->auto_eigen_floor.store(0.0f, std::memory_order_relaxed);
-            decimator->auto_eigen_threshold.store(0.0f, std::memory_order_relaxed);
-            decimator->auto_eigen_reset_ms.store(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now().time_since_epoch()).count(),
-                std::memory_order_relaxed);
-        }
-        const char* name = (method == 2) ? "EIGENVALUE_AUTO" : (method == 1 ? "EIGENVALUE" : "FFT");
-        std::cout << "Decimator " << id << " squelch method set to " << name << std::endl;
+        std::cout << "Decimator " << id << " squelch method set to "
+                  << (method == static_cast<int>(SquelchMethod::DIGITAL) ? "DIGITAL" : "FFT") << std::endl;
         return true;
     }
     return false;
 }
 
-float DecimatorManager::updateAutoEigenThreshold(DecimatorInstance& inst, float ratio, float vfo_freq_hz,
-                                                 bool allow_learn) {
-    const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-
-    // VFO moved (tuner retune or offset drag): the RF environment changed, so
-    // the learned floor is stale - reset and relearn from scratch (after a
-    // settle delay: post-retune transients must not seed the floor).
-    float learned_at = inst.auto_eigen_freq.load(std::memory_order_relaxed);
-    if (std::fabs(vfo_freq_hz - learned_at) > 1.0f) {
-        inst.auto_eigen_floor.store(0.0f, std::memory_order_relaxed);
-        inst.auto_eigen_freq.store(vfo_freq_hz, std::memory_order_relaxed);
-        inst.auto_eigen_reset_ms.store(now_ms, std::memory_order_relaxed);
-    }
-    if (now_ms - inst.auto_eigen_reset_ms.load(std::memory_order_relaxed) < AUTO_EIGEN_SETTLE_MS) {
-        allow_learn = false;
-    }
-
-    float floor = inst.auto_eigen_floor.load(std::memory_order_relaxed);
-
-    // Floor learning is gated by the FFT signal check (allow_learn): while a
-    // visible in-band transmission is present the floor must not seed or
-    // drift up, or a continuous signal would teach itself as "noise" and lock
-    // the squelch shut. An unlearned floor (still 0, e.g. the VFO landed
-    // directly on a broadcast) keeps the threshold at 0 = squelch open, and
-    // the true idle floor is learned from the first quiet frames.
-    //
-    // On FFT-quiet frames the floor EMAs toward the CURRENT ratio regardless
-    // of the threshold: FFT-quiet IS the idle-frame classifier, so if a
-    // transient dip under-seeded the floor (retune settling), quiet frames at
-    // the true idle level (which can sit at λ 4-6 from coherent sub-floor
-    // content) pull it back up. Gating the rise on ratio<threshold instead
-    // would deadlock: idle frames above a too-low threshold read as "signal"
-    // and the floor could never recover.
-    if (floor <= 0.0f) {
-        if (allow_learn) floor = ratio;   // seed from a quiet frame
-    } else if (ratio < floor) {
-        floor = ratio;  // fast attack downward (always valid floor evidence)
-    } else if (allow_learn) {
-        floor += AUTO_EIGEN_FLOOR_ALPHA * (ratio - floor);
-    }
-
-    inst.auto_eigen_floor.store(floor, std::memory_order_relaxed);
-    const float thr = (floor > 0.0f)
-        ? std::max(floor * AUTO_EIGEN_MARGIN, AUTO_EIGEN_MIN_THRESHOLD)
-        : 0.0f;   // unlearned -> open
-    inst.auto_eigen_threshold.store(thr, std::memory_order_relaxed);
-    return thr;
+SquelchMethod DecimatorManager::effectiveSquelchMethod(const DecimatorInstance& inst) {
+    if (inst.squelch_method.load(std::memory_order_relaxed) == static_cast<int>(SquelchMethod::DIGITAL) &&
+        inst.digital_mode.load(std::memory_order_relaxed) != 0)
+        return SquelchMethod::DIGITAL;
+    return SquelchMethod::FFT;
 }
 
-bool DecimatorManager::setSquelchEigenThreshold(int id, float threshold) {
-    auto decimator = getDecimator(id);
-    if (decimator) {
-        // Eigenvalue ratios on strong signals reach 10^4-10^5, so the ceiling
-        // is generous; 1.0 (ratio of pure noise) is the floor.
-        threshold = std::clamp(threshold, 1.0f, 1000000.0f);
-        decimator->squelch_eigen_threshold.store(threshold, std::memory_order_relaxed);
-        std::cout << "Decimator " << id << " squelch eigenvalue threshold set to "
-                  << threshold << std::endl;
-        return true;
-    }
-    return false;
+bool DecimatorManager::digitalSquelchOpen(const DecimatorInstance& inst) {
+    auto dd = inst.getDigital();
+    return dd && dd->frames_within(DIGITAL_SQUELCH_HOLD_MS);
 }
 
 bool DecimatorManager::setSquelchOpen(int id, bool open) {
@@ -552,7 +491,6 @@ std::vector<DecimatorManager::DecimatorInfo> DecimatorManager::getDecimatorInfoL
         info.squelch_level = inst->squelch_level.load(std::memory_order_relaxed);
         info.squelch_open = inst->squelch_open.load(std::memory_order_relaxed);
         info.squelch_method = inst->squelch_method.load(std::memory_order_relaxed);
-        info.squelch_eigen_threshold = inst->squelch_eigen_threshold.load(std::memory_order_relaxed);
         info.digital_mode = inst->digital_mode.load(std::memory_order_relaxed);
         auto dd = inst->getDigital();
         info.digital_opts = dd ? dd->options() : dig::Options();

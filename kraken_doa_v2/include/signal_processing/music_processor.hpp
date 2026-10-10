@@ -75,32 +75,21 @@ public:
     float getEigenvalueRatioPeak() const;
     static constexpr int EIGEN_PEAK_HOLD_MS = 5000;
 
-    // Eigenvalue-squelch publish gate. The FFT squelch freezes the DoA output
-    // by skipping MUSIC entirely while closed; the eigenvalue squelch cannot
-    // do that (the ratio it thresholds IS computed by MUSIC), so instead the
-    // frame's ratio is always computed but the pseudospectrum/peak/stamp are
-    // NOT updated while the gate is closed - the published DoA freezes at the
-    // last open frame. The gate is hysteretic (opens at ratio >= threshold,
-    // closes below threshold * EIGEN_GATE_HYSTERESIS) so a ratio hovering at
-    // the threshold cannot alternate publish/freeze every frame.
-    // threshold <= 0 disarms (e.g. auto mode still learning).
-    // Lock-free; safe to call from the pipeline before each frame.
-    void setSquelchGate(bool enabled, float threshold);
-
-    // Hysteretic gate state of the most recently computed frame (true =
-    // squelch closed / frame suppressed). The pipeline reports this as the
-    // decimator's squelch_open so UI/audio agree with the freeze.
-    bool isSquelchGateClosed() const {
-        return gate_closed_state_.load(std::memory_order_relaxed);
-    }
-
-    // External publish hold, OR'd with the eigen gate: while set, frames are
-    // computed (ratio/steering inputs stay fresh) but never published. Used
-    // for the FFT-method + beamforming case, where MUSIC must keep running
-    // for steering but a closed squelch still has to freeze the displayed DoA.
+    // External publish hold: while set, frames are computed (ratio, frame
+    // tap stay fresh) but never published. Used for the FFT method with
+    // beamforming (MUSIC must keep running for the steering, a closed
+    // squelch still freezes the displayed DoA) and for the Digital squelch
+    // (the VFO's DoA comes from publishFromCovariance instead).
     void setPublishHold(bool hold) {
         publish_hold_.store(hold, std::memory_order_relaxed);
     }
+
+    // Digital squelch (talker_doa.cpp): MUSIC on a given covariance -
+    // the samples the VFO's decoder confirmed - PUBLISHED as this
+    // processor's result (pseudospectrum, peak, elevation for 3D arrays,
+    // stamp), with the current array setup like spectrumFromCovariance.
+    // false: R doesn't fit (element count changed) / no steering vectors.
+    bool publishFromCovariance(const Eigen::MatrixXcd& R);
 
     // Monotonic-per-frame stamp (system_clock ms) set whenever a NEW pseudospectrum
     // is published. Used by the DoA logger to dedup: the same frame is never logged
@@ -134,6 +123,14 @@ public:
 
     void setArrayTopology(ArrayTopology topology);
     ArrayTopology getArrayTopology() const;
+
+    // The element positions the steering is built from, BEFORE the array
+    // calibration (metres; x towards ANT0's angle 0, y 90 deg counter-
+    // clockwise, z up) - what array_cal.hpp fits against and matches. false:
+    // not calibratable (ULA, custom positions not set).
+    bool nominalPositions(std::vector<double>* x, std::vector<double>* y, std::vector<double>* z) const;
+    // the steering vectors carry the ✈ array calibration (array_cal::corrections)
+    bool isCalibrationApplied() const;
     
     void setArrayRadius(float radius_mm);
     float getArrayRadius() const;
@@ -459,42 +456,12 @@ private:
     // Store a freshly computed ratio and maintain the held peak
     void storeEigenvalueRatio(float ratio);
 
-    // Eigenvalue-squelch publish gate (see setSquelchGate)
-    std::atomic<bool> squelch_gate_enabled_{false};
-    std::atomic<float> squelch_gate_threshold_{0.0f};
-    std::atomic<bool> gate_closed_state_{false};
+    // Publish hold (see setPublishHold)
     std::atomic<bool> publish_hold_{false};
 
-    // Hysteresis: once open, close only below threshold * this factor (~1 dB)
-    static constexpr float EIGEN_GATE_HYSTERESIS = 0.8f;
-
     // Whether the current frame updated the published pseudospectrum (false
-    // when the squelch gate suppressed it). Written and read on the processing
-    // path under config_mutex_.
+    // while held). Written and read on the processing path under config_mutex_.
     bool frame_published_ = true;
-
-    // Evaluate the gate for this frame's just-stored ratio, with hysteresis,
-    // and remember the state. Called once per computed frame.
-    bool updateSquelchGate() {
-        if (!squelch_gate_enabled_.load(std::memory_order_relaxed)) {
-            gate_closed_state_.store(false, std::memory_order_relaxed);
-            return false;
-        }
-        const float thr = squelch_gate_threshold_.load(std::memory_order_relaxed);
-        if (thr <= 0.0f) {
-            gate_closed_state_.store(false, std::memory_order_relaxed);
-            return false;
-        }
-        const float ratio = eigenvalue_ratio_.load(std::memory_order_relaxed);
-        bool closed = gate_closed_state_.load(std::memory_order_relaxed);
-        if (closed) {
-            if (ratio >= thr) closed = false;                        // reopen at full threshold
-        } else {
-            if (ratio < thr * EIGEN_GATE_HYSTERESIS) closed = true;  // close ~1 dB below
-        }
-        gate_closed_state_.store(closed, std::memory_order_relaxed);
-        return closed;
-    }
 
     // Statistics and optimization
     mutable std::mutex stats_mutex_;
@@ -571,6 +538,9 @@ private:
 
     // 2D MUSIC private methods
     void updateSteeringVectors2D();           // Compute 2D steering vectors for 3D array
+    bool nominalPositionsLocked(double* x, double* y, double* z) const;   // caller holds config_mutex_
+    uint64_t cal_gen_ = 0;                    // array_cal::generation() the steering was built with
+    bool calibration_applied_ = false;
     void computeMUSICSpectrum2D();            // Compute 2D pseudospectrum
     void marginalizeSpectrums(const Eigen::VectorXd& spectrum_2d);  // Marginalize to 1D spectrums
     void initializeCustomPositionsToUCA();    // Initialize custom positions to UCA equivalent

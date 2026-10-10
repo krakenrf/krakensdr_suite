@@ -218,7 +218,7 @@ void TetraReceiver::bsch(const uint8_t* t) {
     r.set(Mode::TETRA, "Colour code", std::to_string(cc));
     static const char* lvl[4] = {"unknown", "low", "medium", "high"};
     r.set(Mode::TETRA, "Cell service level", lvl[bits_to_u32(t + 57, 2)]);
-    if (ctx_.valid) ctx_.valid(Mode::TETRA);
+    report_valid(ctx_, Mode::TETRA, slot_start_, slot_start_ + SLOT_SAMPLES);
 }
 
 void TetraReceiver::sysinfo(const uint8_t* t) {
@@ -366,7 +366,7 @@ void TetraReceiver::decode_slot(const uint8_t* bits, const float* soft) {
             tetra_scramble(bb, 30, scramb_);
             aach(bb);
             if (decode_block(soft + 282, 216, 124, 101, scramb_, t1)) {
-                if (ctx_.valid) ctx_.valid(Mode::TETRA);
+                report_valid(ctx_, Mode::TETRA, slot_start_, slot_start_ + SLOT_SAMPLES);
                 mac_pdus(t1.data(), 124, "BNCH/SCH-HD");
             }
         }
@@ -388,14 +388,14 @@ void TetraReceiver::decode_slot(const uint8_t* bits, const float* soft) {
         std::copy(soft + 14, soft + 230, blk.begin());
         std::copy(soft + 282, soft + 498, blk.begin() + 216);
         if (decode_block(blk.data(), 432, 268, 103, scramb_, t1)) {
-            if (ctx_.valid) ctx_.valid(Mode::TETRA);
+            report_valid(ctx_, Mode::TETRA, slot_start_, slot_start_ + SLOT_SAMPLES);
             mac_pdus(t1.data(), 268, "SCH/F");
         }
     } else {
         // two half slots (SCH/HD, BNCH, STCH)
         for (int h = 0; h < 2; h++) {
             if (decode_block(soft + (h ? 282 : 14), 216, 124, 101, scramb_, t1)) {
-                if (ctx_.valid) ctx_.valid(Mode::TETRA);
+                report_valid(ctx_, Mode::TETRA, slot_start_, slot_start_ + SLOT_SAMPLES);
                 mac_pdus(t1.data(), 124, "SCH/HD");
             }
         }

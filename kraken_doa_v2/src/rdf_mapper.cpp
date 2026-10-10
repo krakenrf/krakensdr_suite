@@ -1,9 +1,11 @@
 #include "rdf_mapper.hpp"
 
+#include "array_cal.hpp"
 #include "channel_manager.hpp"
 #include "decimator_manager.hpp"
 #include "doa_logger.hpp"
 #include "globals.hpp"
+#include "networking/gpsd_client.hpp"
 #include "rdf_engine.hpp"
 #include "signal_processing/music_processor.hpp"
 #include "station_info.hpp"
@@ -251,6 +253,23 @@ void sampler() {
 
         // why frames are (not) used now
         const bool coherent = !multi_tuner_mode();
+        // ✈ array calibration from aircraft (array_cal.hpp): needs the array
+        // standing still with a known heading (static location, or GPS with a
+        // compass) - the station height from a 3D GPS fix, else sea level
+        const bool cal_on = array_cal::collecting();
+        const char* cal_state = "ok";
+        double st_alt = 0;
+        if (!coherent) cal_state = "not_coherent";
+        else if (!doa_enabled.load()) cal_state = "doa_off";
+        else if (!has) cal_state = "no_station";
+        else if (!fixed && !sl.from_compass) cal_state = "no_heading";
+        else if (!fixed && sl.speed > 1.0) cal_state = "moving";
+        else if (doa_is_calibrating()) cal_state = "calibrating";
+        if (cal_on && sl.source == LocationSource::GPS) {
+            const GpsFix gf = gps_client.get();
+            if (gf.mode >= 3 && is_finite_value(gf.alt)) st_alt = gf.alt;
+        }
+        bool cal_noted = false;
         std::string state;
         if (!coherent) state = "not_coherent";
         else if (!doa_enabled.load()) state = "doa_off";
@@ -365,11 +384,32 @@ void sampler() {
                 d.moved = s.gate.moved_m();
                 disp.push_back(std::move(d));
 
+                // the array the steering uses (for the calibration: what it fits / matches)
+                if (!cal_noted) {
+                    cal_noted = true;
+                    std::vector<double> px, py, pz;
+                    if (mp.nominalPositions(&px, &py, &pz))
+                        array_cal::note_array(static_cast<int>(px.size()), px.data(), py.data(), pz.data());
+                    else {
+                        array_cal::note_array(0, nullptr, nullptr, nullptr);
+                        if (std::strcmp(cal_state, "ok") == 0) cal_state = "ula";
+                    }
+                }
+
                 // its talkers (talker_doa.hpp): each one's own frames feed its own heat map
                 auto& td = dec->talker_doa;
                 if (!td || !td->active()) continue;
                 std::vector<tdoa::TalkerFrame> tframes;
                 td->update(mp, &tframes);
+                // aircraft packets with their positions -> the array calibration
+                std::vector<tdoa::CalPacket> cps;
+                td->take_cal(&cps);
+                if (cal_on && std::strcmp(cal_state, "ok") == 0) {
+                    // steering angle = heading - array offset - compass bearing
+                    const double off = mp.getArrayOffset(), f_hz = mp.getEffectiveFrequency();
+                    for (const auto& c : cps)
+                        array_cal::add(c.R, c.id, c.lat, c.lon, c.alt_m, sl.lat, sl.lon, st_alt, sl.heading, fixed, off, f_hz);
+                }
                 for (const auto& f : tframes) {
                     if (static_cast<int>(f.spec.size()) < 8 || !(f.res > 0)) continue;
                     const Key tk{id, f.id};
@@ -429,6 +469,7 @@ void sampler() {
                 }
             }
         }
+        if (cal_on) array_cal::set_state(cal_state);
         // VFOs / talkers gone (or DoA off for them)
         for (auto it = vs.begin(); it != vs.end();) {
             if (!seen.count(it->first)) {

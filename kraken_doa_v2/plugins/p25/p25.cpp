@@ -454,6 +454,8 @@ bool P25Proto::decode(const SymSrc& s) {
             if (ok) {
                 valid = true;
                 r.set(Mode::P25, "Channel type", "Control channel (trunked)");
+                // the frame ends after its last good block (status symbols: 1 in 36 dibits)
+                frame_b_ = frame_a_ + static_cast<int64_t>((56 + 98 * ok) * 36 / 35 + 1) * sps_;
             }
             break;
         }
@@ -584,7 +586,7 @@ bool P25Proto::decode(const SymSrc& s) {
         r.set(Mode::P25, "NAC", "0x" + hex(nac, 3));
         r.set(Mode::P25, "Last frame", dn);
     }
-    if (valid && ctx_.valid) ctx_.valid(Mode::P25);
+    if (valid) report_valid(ctx_, Mode::P25, frame_a_, frame_b_);
     if (valid && ctx_.freq_error) ctx_.freq_error(Mode::P25, s.center);
     return valid;
 }

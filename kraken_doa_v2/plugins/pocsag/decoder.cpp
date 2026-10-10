@@ -82,7 +82,9 @@ public:
         end_message();
     }
 
-    void push(float disc_hz) {
+    // t = Host::time() of this sample (the batches are reported with their samples)
+    void push(float disc_hz, double t) {
+        t_ = t;
         float y = smooth_.push(disc_hz);
         if (!cr_.push(y)) return;
         // level tracking: deviation estimate from the symbol magnitudes
@@ -105,6 +107,7 @@ private:
     int nbits_ = 0, bad_ = 0;   // uncorrectable codewords in this batch
     uint32_t word_ = 0;
     int cw_index_ = 0;
+    double t_ = 0, batch_t0_ = 0;   // now; the batch's sync word began
 
     // message under assembly
     bool in_msg_ = false;
@@ -120,6 +123,7 @@ private:
             if (d <= 2 || di <= 2) {
                 inverted_ = di < d;
                 collecting_ = true;
+                batch_t0_ = t_ - 32.0 / baud_;
                 bad_ = 0;
                 nbits_ = 0;
                 word_ = 0;
@@ -142,6 +146,7 @@ private:
             if (__builtin_popcount(w ^ SYNC) <= 2 && bad_ < 12) {
                 cw_index_ = 0;
                 bad_ = 0;
+                batch_t0_ = t_ - 32.0 / baud_;
                 return;
             }
             collecting_ = false;
@@ -151,6 +156,9 @@ private:
         }
         handle_codeword(word_, cw_index_);
         cw_index_++;
+        // a batch (sync + 16 codewords) with nearly every codeword good: POCSAG,
+        // these samples (Host::valid(start, end) - the Digital squelch)
+        if (cw_index_ == 16 && bad_ <= 2) host_.valid(batch_t0_, t_);
     }
 
     void handle_codeword(uint32_t cw, int index) {
@@ -172,7 +180,6 @@ private:
             func_ = (cw >> 11) & 3;
             payload_.clear();
             damaged_ = false;
-            host_.valid();
         } else if (in_msg_) {
             payload_.push_back((cw >> 11) & 0xFFFFF);
             if (payload_.size() > 400) end_message();   // runaway
@@ -265,9 +272,11 @@ public:
         for (int b : {512, 1200, 2400}) chains_.emplace_back(b, host);
     }
     void process(const kp::cf* x, size_t n) override {
+        const double t0 = host.time();
         for (size_t i = 0; i < n; i++) {
             float f = fm_.push(lp_.push(x[i]));
-            for (auto& c : chains_) c.push(f);
+            const double t = t0 + static_cast<double>(i) / FS;
+            for (auto& c : chains_) c.push(f, t);
         }
     }
     void reset() override {

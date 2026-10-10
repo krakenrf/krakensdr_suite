@@ -57,6 +57,7 @@
 #include <Eigen/Dense>
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <deque>
 #include <map>
@@ -92,6 +93,9 @@ constexpr int64_t PACKET_HIST_MS = 10000;
 constexpr int64_t PACKET_TTL_MS = 2 * 60 * 1000;
 constexpr int64_t PACKET_IDLE_MS = 5 * 60 * 1000; // no packets for this long: stop keeping the stream
 constexpr double RAW_MAX_RATE = 500e3;            // up to this VFO rate the samples themselves are kept
+// Digital squelch (whole signal, confirmed samples only)
+constexpr int64_t DIG_PUBLISH_MS = 200;           // the VFO's DoA from the samples confirmed since, at most this often
+constexpr uint64_t DIG_MIN_SAMPLES = 16;          // a confirmed piece shorter than this is skipped
 inline bool unnamed_talker(const std::string& id) { return id == "?"; }
 
 // One frame matched to a talker, MUSIC re-run on it alone (a mobile DF record)
@@ -101,6 +105,14 @@ struct TalkerFrame {
     std::vector<float> spec;       // pseudospectrum, like MUSICProcessor::getPseudospectrum()
     double res = 1;                // degrees per bin
     float conf = 0;
+};
+
+// A packet whose talker said where it was (kp::Talker::lat / lon / alt_m):
+// handed to the array calibration (array_cal.hpp) while it collects
+struct CalPacket {
+    std::string id;
+    Eigen::MatrixXcd R;            // trace-normalised covariance of exactly its samples
+    double lat, lon, alt_m;
 };
 
 // A talker as the UI shows it (snapshot)
@@ -131,8 +143,18 @@ public:
 
     // MUSICProcessor::FrameTap
     void add_frame(const Eigen::MatrixXcd& R, uint64_t a, uint64_t b, float rate_hz, double freq_hz, float eig_ratio);
-    // DigitalDecoder talker handler
+    // DigitalDecoder talker handler (also confirmed frames: TalkerSpan::signal)
     void add_span(const dig::TalkerSpan& s);
+    // Digital squelch: on while the VFO's squelch is "Digital" (the pipeline,
+    // every block). The stream is kept (as for packets) and every piece the
+    // decoder CONFIRMED - valid frames with their samples, talkers'
+    // transmissions, packets - is accumulated as the covariance of exactly
+    // those samples; update() publishes MUSIC on it as the VFO's own DoA
+    // (MUSICProcessor::publishFromCovariance; the processor's own frames are
+    // held back meanwhile), averaged like its frames (the Averaging setting).
+    // Nothing before, between or after the frames gets in.
+    void set_digital(bool on);
+    bool digital() const { return dig_on_.load(std::memory_order_relaxed); }
     // Pipeline, after MUSIC (same gate: no calibration / retune hold), while
     // wants_blocks(): the stream packets are cut from
     bool wants_blocks() const { return want_blocks_.load(std::memory_order_relaxed); }
@@ -142,8 +164,12 @@ public:
 
     // Matches the waiting frames to talkers and re-runs MUSIC (mp) on what
     // changed; the frames matched since the last call go to *out
-    void update(const MUSICProcessor& mp, std::vector<TalkerFrame>* out);
+    // (and, with the Digital squelch, publishes the VFO's DoA on mp)
+    void update(MUSICProcessor& mp, std::vector<TalkerFrame>* out);
     std::vector<TalkerInfo> snapshot() const;
+    // the packets with a position committed since the last call (only while
+    // the array calibration collects)
+    void take_cal(std::vector<CalPacket>* out);
 
 private:
     std::atomic<bool> active_{false};
@@ -190,7 +216,9 @@ private:
         Eigen::MatrixXcd R;        // trace-normalised
         int64_t stamp_ms;
         bool bad = false;          // overlaps another talker's packet
+        double lat = NAN, lon = NAN, alt_m = NAN;   // where its talker was (NAN = unknown)
     };
+    std::vector<CalPacket> cal_;   // for take_cal
     std::deque<Packet> packets_;
     std::atomic<bool> want_blocks_{false};
     int64_t last_packet_ms_ = 0;
@@ -219,6 +247,17 @@ private:
     // (raw mode only; NAN = the whole VFO)
     bool packet_cov(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R) const;
     bool packet_cov_raw(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R) const;
+
+    // digital squelch
+    std::atomic<bool> dig_on_{false};
+    uint64_t dig_done_ = 0;        // stream position up to which confirmed samples were taken
+    Eigen::MatrixXcd dig_R_;       // sum of n * R of the pieces confirmed since the last publish
+    double dig_w_ = 0;
+    int64_t dig_pub_ms_ = 0;
+    Eigen::MatrixXcd dig_avg_;     // what was published (update() only)
+    void dig_confirm(uint64_t a, uint64_t b);              // a confirmed piece of the stream
+    void dig_add_locked(const Eigen::MatrixXcd& R, double n);
+    uint64_t ring_low() const;     // oldest stream position the ring still holds (ring_mu_ held)
 
     uint64_t next_seq_ = 1;
     double freq_ = 0;              // MUSIC frequency of the frames (0 = none yet)

@@ -33,19 +33,12 @@ struct ElementPosition {
     float z_mm = 0.0f;  // Z coordinate in mm (non-zero enables 2D MUSIC with elevation)
 };
 
-// Squelch Method Enumeration
+// Squelch method (per VFO), stored as an int: 0 = FFT, 3 = DIGITAL. 1 / 2
+// were the eigenvalue methods (removed - too hard to set up; saved values
+// and old commands map to FFT)
 enum class SquelchMethod {
-    FFT,             // Traditional FFT peak-based squelch
-    EIGENVALUE,      // Eigenvalue ratio from MUSIC covariance (λ1/mean(λ2..λN)), manual threshold
-    EIGENVALUE_AUTO  // Eigenvalue ratio with a self-learned threshold: tracks the
-                     // ratio's noise floor (fast attack down, slow drift up on
-                     // quiet frames), threshold = floor x margin. Learning is
-                     // FFT-gated: while a visible in-band FFT peak is present
-                     // the floor is frozen, so a continuous transmission never
-                     // teaches itself as noise (unlearned floor = threshold 0 =
-                     // open), while coherent sub-floor junk (idle λ of 4-6 on
-                     // some frequencies, no FFT peak) is learned and squelched.
-                     // Resets and relearns whenever the VFO frequency moves.
+    FFT = 0,      // the FFT peak in the VFO's band vs a level (dB)
+    DIGITAL = 3   // the VFO's digital decoder: open on valid frames, DoA from exactly their samples
 };
 
 // Per-Channel Information Structure

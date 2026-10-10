@@ -37,7 +37,7 @@ constexpr int64_t AFC_PERIOD_MS = 300;
 constexpr int64_t AFC_SETTLE_MS = 300;
 
 // plugins/sdk/kraken_plugin.hpp kp::wire
-constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4, W_SYNC = 5, W_STATION = 6,
+constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4, W_SYNC = 5, W_STATION = 6, W_RF = 7,
                    W_FACT = 16, W_EVENT = 17, W_VALID = 18, W_AUDIO = 19, W_VOICE_STATE = 20, W_FREQ_ERROR = 21,
                    W_SYNC_DONE = 22, W_MAP_POINT = 23, W_MAP_REMOVE = 24, W_TABLE_COLUMNS = 25, W_TABLE_ROW = 26,
                    W_TABLE_REMOVE = 27, W_MESSAGE = 28, W_RAW = 29, W_TALKER = 30, W_TALKER_END = 31;
@@ -45,6 +45,7 @@ constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4,
 constexpr double POS_MAP_SECONDS = 60;
 // a talker packet (kp::Talker::packet) longer than this is not one
 constexpr double MAX_PACKET_S = 0.25;   // ADS-B 120 us .. AIS 5 slots (133 ms)
+constexpr double MAX_SIGNAL_SPAN_S = 3.0;   // a valid frame's samples (Host::valid(start, end)): RS41 0.9 s, POCSAG batch at 512 bit/s 1.1 s
 
 std::mutex record_mu;
 RecordHandler record_handler;
@@ -139,6 +140,8 @@ struct Runner {
     std::string note;                  // last problem logged (no repeats)
     int verbose_sent = -1, voice_sent = -1, raw_sent = -1;
     uint64_t station_sent = 0;         // station_gen sent
+    double rf_sent = -1;               // kp::Host::rf_hz sent (0 = unknown, -1 = nothing yet)
+    int rf_inv_sent = -1;
     std::map<std::string, std::string> opts_sent;   // key (without the id prefix) -> value
     uint32_t sync_sent = 0, sync_done = 0;
     std::string state = "starting", error;
@@ -246,6 +249,7 @@ public:
         valid_.clear();
         totals_.clear();
         last_valid_ms_ = 0;
+        last_valid_by_.clear();
         afc_hz_ = 0;
         residual_hz_ = 0;
         afc_sum_ = 0;
@@ -352,6 +356,7 @@ private:
     int afc_n_ = 0;
     int64_t afc_changed_ms_ = 0;
     int64_t last_valid_ms_ = 0;
+    std::map<std::string, int64_t> last_valid_by_;   // plugin -> its last valid frame (the Digital squelch)
     std::vector<PluginStatus> status_plugins_;
 
     // --- runner set ---------------------------------------------------------
@@ -549,6 +554,8 @@ private:
         if (pi.messages) deliver_message(owner_, r.id, "", "", 0);   // get the street data ready
         r.verbose_sent = r.voice_sent = r.raw_sent = -1;
         r.station_sent = 0;
+        r.rf_sent = -1;
+        r.rf_inv_sent = -1;
         r.opts_sent.clear();
         r.sync_sent = r.sync_done = 0;
         r.state = "running";
@@ -578,6 +585,18 @@ private:
             }
             r.proc->send(W_STATION, st.data(), st.size(), 0);
             r.station_sent = sg;
+        }
+        // the RF of the plugin's 0 Hz (kp::Host::rf_hz): the VFO's frequency
+        // plus the AFC correction (the mixer moves afc_hz_ to 0 Hz; with
+        // invert the band is mirrored first). Resent when it moves > 10 Hz
+        const double rf0 = rf_hz_ > 0 ? (opts_.invert ? rf_hz_ - afc_hz_ : rf_hz_ + afc_hz_) : 0.0;
+        const int inv = opts_.invert ? 1 : 0;
+        if (std::fabs(rf0 - r.rf_sent) > 10.0 || inv != r.rf_inv_sent) {
+            char b[64] = "";
+            if (rf0 > 0) snprintf(b, sizeof b, "%.1f,%d", rf0, inv);
+            r.proc->send(W_RF, b, strlen(b), 0);
+            r.rf_sent = rf0;
+            r.rf_inv_sent = inv;
         }
         // raw frames for the decoder data log
         const int raw = raw_wanted.load() ? 1 : 0;
@@ -694,6 +713,7 @@ private:
             }
             case W_VALID:
                 on_valid(r.id);
+                if (len > 0) on_valid_span(r, p, len);
                 break;
             case W_AUDIO:
                 if (is_lead(r) && owner_->voice_wanted() && len >= 4) {
@@ -821,13 +841,14 @@ private:
         report_.map_set(std::move(m));
     }
 
-    // --- talkers (kp::wire::TALKER: id, label, start_s, end_s [, channel]) -------
+    // --- talkers (kp::wire::TALKER: id, label, start_s, end_s [, channel [, flags,
+    // freq, bw, avg [, lat, lon, alt]]]) ------------------------------------------
     using OpenTalker = Runner::OpenTalker;
     static int talker_channel(const std::string& v) {
         return static_cast<int>(std::clamp(strtol(v.c_str(), nullptr, 10), 0L, 7L));
     }
     void on_talker(Runner& r, const char* p, size_t len) {
-        auto f = split0(p, len, 9);
+        auto f = split0(p, len, 12);
         if (f.size() < 4 || f[0].empty()) return;
         const std::string id = f[0].substr(0, 32);
         const int ch = f.size() > 4 ? talker_channel(f[4]) : 0;
@@ -858,6 +879,17 @@ private:
                 s.avg_s = std::clamp(strtod(f[8].c_str(), nullptr), 0.0, 3600.0);
                 if (!is_finite_value(s.bw_hz)) s.bw_hz = 0;
                 if (!is_finite_value(s.avg_s)) s.avg_s = 0;
+            }
+            if (f.size() > 11) {
+                // where the talker was (the array calibration from aircraft)
+                const double la = strtod(f[9].c_str(), nullptr), lo = strtod(f[10].c_str(), nullptr),
+                             al = strtod(f[11].c_str(), nullptr);
+                if (is_finite_value(la) && is_finite_value(lo) && is_finite_value(al) && std::fabs(la) <= 90 &&
+                    std::fabs(lo) <= 180 && al > -1000 && al < 100000 && !(la == 0 && lo == 0)) {
+                    s.lat = la;
+                    s.lon = lo;
+                    s.alt_m = al;
+                }
             }
             owner_->deliver_talker(s);
             return;
@@ -909,7 +941,34 @@ private:
         valid_.emplace_back(t, id);
         totals_[id]++;
         last_valid_ms_ = t;
+        last_valid_by_[id] = t;
     }
+    // kp::Host::valid(start, end): the frame's samples -> the VFO's stream
+    // positions, as a signal span (the Digital squelch's DoA material)
+    void on_valid_span(Runner& r, const char* p, size_t len) {
+        auto f = split0(p, len, 2);
+        if (f.size() < 2) return;
+        uint64_t a, b;
+        if (!r.vfo_pos(strtod(f[0].c_str(), nullptr), r.info.sample_rate, &a) ||
+            !r.vfo_pos(strtod(f[1].c_str(), nullptr), r.info.sample_rate, &b) || b <= a ||
+            static_cast<double>(b - a) > in_rate_ * MAX_SIGNAL_SPAN_S)
+            return;
+        TalkerSpan s;
+        s.plugin = r.id;
+        s.signal = true;
+        s.start = a;
+        s.end = b;
+        s.closed = true;
+        s.rate = in_rate_;
+        owner_->deliver_talker(s);
+    }
+public:
+    int64_t last_valid_of(const std::string& id) const {
+        std::lock_guard<std::mutex> lk(st_mu_);
+        auto it = last_valid_by_.find(id);
+        return it == last_valid_by_.end() ? 0 : it->second;
+    }
+private:
 
     void on_freq_error(float hz) {
         std::lock_guard<std::mutex> lk(st_mu_);
@@ -1165,6 +1224,13 @@ std::string DigitalDecoder::active_plugin() const {
     if (m == Mode::PLUGIN) return plugin_id();
     if (m == Mode::AUTO) return engine_->detected();
     return "";
+}
+
+bool DigitalDecoder::frames_within(int64_t ms) const {
+    const std::string id = active_plugin();
+    if (id.empty()) return false;
+    const int64_t t = engine_->last_valid_of(id);
+    return t != 0 && now_ms() - t < ms;
 }
 
 std::string DigitalDecoder::status_json(uint64_t events_after, size_t max_events, bool tables) const {

@@ -17,6 +17,7 @@
 #include "map_markers.hpp"
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
+#include "array_cal.hpp"
 #include "networking/data_receiver.hpp"
 #include "networking/web_mapper.hpp"
 #include "networking/websocket_server.hpp"
@@ -275,6 +276,7 @@ static bool is_query_command(string_view msg) {
            msg.starts_with("AI_") ||           // AI Signal Lab: results come as ai_event / ai_state
            msg.starts_with("PLUGIN") ||        // plugins: own broadcasts
            msg.starts_with("MARKER_") ||       // 🗺 map markers: {"markers":...} broadcasts
+           msg.starts_with("ARRAY_CAL") ||     // ✈ array calibration: {"array_cal":...} broadcasts
            // operating mode / independent tuners: {"operating_mode":...} broadcasts
            msg.starts_with("OPERATING_MODE:") || msg.starts_with("WIDEBAND_MODE:") ||
            msg.starts_with("TUNER_") || msg.starts_with("TUNERS:");
@@ -372,7 +374,7 @@ static string build_decimator_snapshot() {
         ss << d.frequency_offset_hz << "," << d.bandwidth_index << ","
            << DecimatorManager::demodModeToString(d.demod_mode) << ","
            << (d.squelch_enabled ? 1 : 0) << "," << d.squelch_level << ","
-           << d.squelch_method << "," << d.squelch_eigen_threshold << ","
+           << d.squelch_method << ",0,"   // (was the eigenvalue threshold: the column stays for older files)
            << dig::mode_string(static_cast<dig::Mode>(d.digital_mode), d.digital_plugin) << ","
            << dig::options_to_string(d.digital_opts) << ",";
         auto inst = decimator_manager.getDecimator(d.id);
@@ -403,7 +405,7 @@ static bool apply_decimator_snapshot(const string& snap) {
 
     struct Vfo {
         float offset_hz; int bw_index; DemodulatorMode demod;
-        bool sq_en; float sq_db; int sq_method; float sq_eigen;
+        bool sq_en; float sq_db; int sq_method;
         dig::Mode digital = dig::Mode::OFF; dig::Options dopts;
         std::string plugin;
         int tuner = 0;
@@ -423,7 +425,10 @@ static bool apply_decimator_snapshot(const string& snap) {
                   std::clamp(stoi(f[1]), 0, NUM_BANDWIDTH_OPTIONS - 1),
                   DecimatorManager::stringToDemodMode(f[2]),
                   f[3] == "1", stof_finite(f[4]),
-                  std::clamp(stoi(f[5]), 0, 2), stof_finite(f[6]), dig::Mode::OFF, dig::Options{}, ""};
+                  // method: 3 = Digital; 1 / 2 (the removed eigenvalue methods) -> FFT.
+                  // f[6] was the eigenvalue threshold (ignored)
+                  stoi(f[5]) == static_cast<int>(SquelchMethod::DIGITAL) ? static_cast<int>(SquelchMethod::DIGITAL) : 0,
+                  dig::Mode::OFF, dig::Options{}, ""};
             // optional (newer files): digital decoder mode ("AUTO", "PLUGIN:dmr",
             // or an old protocol name) and its options ("v=1&i=0&dmr.slot=1",
             // or the old "verbose/slot/nac/invert")
@@ -459,7 +464,6 @@ static bool apply_decimator_snapshot(const string& snap) {
         decimator_manager.setSquelchEnabled(id, v.sq_en);
         decimator_manager.setSquelchLevel(id, v.sq_db);
         decimator_manager.setSquelchMethod(id, v.sq_method);
-        decimator_manager.setSquelchEigenThreshold(id, v.sq_eigen);
         if (auto inst = decimator_manager.getDecimator(id)) inst->tuner_channel = v.tuner;
         if (v.digital != dig::Mode::OFF) decimator_manager.setDigitalOptions(id, v.dopts);
         decimator_manager.setDigitalMode(id, v.digital, v.plugin);
@@ -1944,6 +1948,37 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message == "GET_MARKERS") {
         broadcast(markers::message_json());   // a page connecting
     }
+    // ✈ Array calibration from ADS-B aircraft (array_cal.hpp; array_cal.json, not
+    // the settings file). Collecting is not remembered across restarts (the
+    // packets aren't either)
+    else if (message.starts_with("ARRAY_CAL_COLLECT:")) {
+        array_cal::set_collect(message.substr(18) == "1");
+        broadcast(array_cal::status_message());
+    }
+    else if (message == "ARRAY_CAL_RESET") {
+        array_cal::reset_samples();
+        broadcast(array_cal::status_message());
+    }
+    else if (message == "ARRAY_CAL_APPLY") {
+        string err;
+        if (!array_cal::apply(&err)) throw CommandRejected(err);
+        broadcast(array_cal::status_message());
+    }
+    else if (message.starts_with("ARRAY_CAL_USE:")) {
+        array_cal::set_use(message.substr(14) == "1");
+        broadcast(array_cal::status_message());
+    }
+    else if (message.starts_with("ARRAY_CAL_ROTATION:")) {
+        array_cal::set_rotation(message.substr(19) == "1");
+        broadcast(array_cal::status_message());
+    }
+    else if (message == "ARRAY_CAL_REMOVE") {
+        array_cal::remove();
+        broadcast(array_cal::status_message());
+    }
+    else if (message == "GET_ARRAY_CAL") {
+        broadcast(array_cal::status_message());   // a page connecting
+    }
     else if (message.starts_with("DIGITAL_CLEAR:")) {
         int id = parse_int(message, 14);
         auto inst = decimator_manager.getDecimator(id);
@@ -2311,29 +2346,22 @@ void ControlHandler::handle_message_impl(string_view message) {
         }
     }
     else if (message.starts_with("DEC_SQUELCH_METHOD:")) {
-        // Format: DEC_SQUELCH_METHOD:id:FFT|EIGEN|EIGEN_AUTO
+        // Format: DEC_SQUELCH_METHOD:id:FFT|DIGITAL (the removed eigenvalue
+        // methods EIGEN / EIGEN_AUTO from an older page -> FFT). Digital only
+        // takes effect while the VFO's digital decoder is on
         string params = string(message.substr(19));
         size_t colon_pos = params.find(':');
         if (colon_pos != string::npos) {
             int id = stoi(params.substr(0, colon_pos));
             string method_str = params.substr(colon_pos + 1);
-            int method = 0;
-            if (method_str == "EIGEN_AUTO" || method_str == "AUTO" || method_str == "2") method = 2;
-            else if (method_str == "EIGEN" || method_str == "EIGENVALUE" || method_str == "1") method = 1;
+            int method = method_str == "DIGITAL" || method_str == "3" ? static_cast<int>(SquelchMethod::DIGITAL) : 0;
             if (decimator_manager.setSquelchMethod(id, method))
                 record_decimator_snapshot();
+            g_applied_cmd = string("DEC_SQUELCH_METHOD:") + to_string(id) + ":" + (method ? "DIGITAL" : "FFT");
         }
     }
     else if (message.starts_with("DEC_SQUELCH_EIGEN:")) {
-        // Format: DEC_SQUELCH_EIGEN:id:threshold (linear eigenvalue ratio)
-        string params = string(message.substr(18));
-        size_t colon_pos = params.find(':');
-        if (colon_pos != string::npos) {
-            int id = stoi(params.substr(0, colon_pos));
-            float threshold = stof_finite(params.substr(colon_pos + 1));
-            if (decimator_manager.setSquelchEigenThreshold(id, threshold))
-                record_decimator_snapshot();
-        }
+        // the eigenvalue squelch was removed: an older page's threshold is ignored
     }
     else if (message.starts_with("EDGE_CLIP:")) {
         // Set edge clip percentage for FFT display.

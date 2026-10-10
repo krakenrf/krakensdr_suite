@@ -129,6 +129,7 @@ VFO bandwidth the signal needs; the panel warns when the VFO is narrower.
 | `host.fact(key, value)` | a row of the panel's table (network IDs, last message, counters...). Same key = update; `""` removes it. Keys <= 64 chars, values <= 400 |
 | `host.event(text, dedup_s = 2)` | a line in the event log; identical texts within `dedup_s` s are dropped (use a large value for repeating broadcasts) |
 | `host.valid()` | one frame/message **passed its checks** (sync + CRC/FEC). Drives "Receiving ..." and the frame counter. Never call it for unverified data |
+| `host.valid(start_s, end_s)` | the same, with the frame's samples (`host.time()` of its first sample and of its end) - **prefer it**: the VFO's **Digital squelch** opens only on these frames and takes the DoA from exactly these samples (see below) |
 | `host.audio(pcm, n)` | decoded audio, 8 kHz mono float (+-1). Only played when the user listens (Demod "Digital"); skip the work when `!host.voice_wanted()` |
 | `host.voice_state(s)` | short call status shown next to the Listen button |
 | `host.freq_error(hz)` | measured carrier offset (+ = above the VFO centre): the host slowly re-centres the input. Optional |
@@ -138,6 +139,7 @@ VFO bandwidth the signal needs; the panel warns when the VFO is narrower.
 | `host.map_point(p)` | a position on the web UI's 🗺 Map (`kp::MapPoint`, below) |
 | `host.map_remove(id)` | takes a point off the map |
 | `host.station(&lat, &lon)` | the receiver's location (sidebar → Station Information), false if it has none |
+| `host.rf_hz()` / `host.rf_inverted()` | the radio frequency (Hz) at 0 Hz of your input - the VFO's centre plus the host's frequency correction - NAN when unknown (offline test without `--rf`); `rf_inverted()`: the input is mirrored (the "invert" option), +f is then `rf_hz() - f`. Name the channel you receive (`dme`: a DME channel from its reply frequency), or find the channels inside a wide VFO. A retune also calls `reset()` |
 | `host.table_columns(cols)` | headings of a live table in the panel (e.g. the aircraft ADS-B hears) |
 | `host.table_row(key, cells)` | adds / updates (same key) a table row; rows not updated for 10 min drop out |
 | `host.table_remove(key)` | removes a table row |
@@ -255,8 +257,34 @@ fields: `t.freq_hz` / `t.bw_hz` = the packet's channel inside your band
 out of every antenna first, so talkers on neighbouring channels of the
 same VFO don't mix (the ais plugin: -25 / +25 kHz, 16 kHz wide); `t.avg_s`
 = how long to average a talker's packets (default 1.5 s for fast movers
-that send often; ais: 20 s). The offline test
-counts them ("talker packets:", each one with `--verbose`).
+that send often; ais: 20 s). A talker that says where it is can also give
+its position AT THE PACKET'S TIME - `t.lat` / `t.lon` (WGS84) / `t.alt_m`
+(metres above sea level), NAN = unknown: kraken_doa's ✈ array calibration
+uses such packets as transmitters at known directions (the adsb plugin
+moves the last position on with the velocity: `packet_position`). Only
+give one that is good to some tens of metres. The offline test counts
+them ("talker packets:", "N with position"; each one with `--verbose`).
+
+**Valid frames with their samples → the Digital squelch.** A VFO's squelch
+can be set to "Digital" while its decoder runs: it opens only while the
+decoder reports valid frames (and 1.5 s after the last), and the VFO's DoA
+is computed from exactly the samples of those frames - nothing before,
+between or after them (noise, another signal, an interferer on the same
+channel) gets into the bearing. For that, report each valid frame WITH its
+samples: `host.valid(start_s, end_s)` instead of `host.valid()`, where
+`start_s` / `end_s` are `host.time()` of the frame's first sample and its
+end (the first sample of the block in `process()` is `host.time()`; add
+the frame's index in your input / `sample_rate`). A frame's span may also
+take in what proved it (the sync word, a preamble); keep it under 3 s.
+Talker spans and packets (`host.talker`) count as confirmed samples too.
+The shipped plugins: the lib protocols report through
+`RxContext::valid_at` (`dig::report_valid(ctx, mode, start, end)` with the
+receiver's own sample indexes; `Bridge::clock(rate)` + `restart_clock()`
+map them - `Bridge::talkers(rate)` includes it), pocsag reports each synced
+batch, aprs / v23_telemetry each frame from its length, radiosonde each
+frame from its FSK receiver (`FskRx::clock`). `decoder --file` counts
+them ("valid frames with their samples: N, covering X s"; each one with
+`--verbose`).
 
 **Tables.** A decoder that tracks many things at once (aircraft, stations,
 radios) can show them as a table above its facts: `table_columns()` once
@@ -315,8 +343,12 @@ linked as well.
 ```bash
 make -C plugins PLUGIN=mydec              # build one (or `make` in kraken_doa_v2 for all)
 plugins/mydec/build/decoder --info        # what kraken_doa reads
-plugins/mydec/build/decoder --file capture.cf32 [--offset HZ] [--verbose] [--audio out.wav] [--station LAT,LON] [--raw]
+plugins/mydec/build/decoder --file capture.cf32 [--offset HZ] [--verbose] [--audio out.wav] [--station LAT,LON] [--rf HZ] [--raw]
 ```
+
+`--rf HZ` is the RF at the recording's centre (`host.rf_hz()` = it +
+`--offset`); `ai/sigtool.py` captures carry it in their `.json` sidecar
+(`rf_hz`), which is used when `--rf` isn't given.
 
 The offline test reads complex float32 (`.cf32`, rate from the `.json`
 sidecar that `ai/sigtool.py` writes, or `--rate`), rtl_sdr `.cu8`, `.cs16`
@@ -366,6 +398,12 @@ Hz) / `dig::RrcFrontEnd` give them their input. Your plugin can use any of it
 `plugins/adsb/`: ADS-B / Mode S on 1090 MHz at 2.4 MHz - pulse-position
 demodulation, CRC-24 with error repair, CPR position decoding, map points
 and the station location.
+
+`plugins/dme/`: DME / TACAN beacons at 2.4 MHz - `host.rf_hz()` to find the
+1 MHz channels inside the VFO, an FFT channelizer, pulse / pair detection,
+Morse idents (`lib/navaid.hpp`), talker packets for a DoA per beacon.
+`plugins/ils/`: ILS / VOR / marker beacons - AM tone depths, the VOR radial
+from two 30 Hz phases, block-wise FFT processing.
 
 `plugins/pocsag/decoder.cpp`: POCSAG pagers (2-FSK, 512/1200/2400 bit/s
 demodulated in parallel, BCH(31,21) correction with a parity check against

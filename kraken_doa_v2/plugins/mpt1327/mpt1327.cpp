@@ -185,7 +185,7 @@ void Mpt1327Receiver::address(uint64_t info, bool control) {
 void Mpt1327Receiver::decode_slot(int64_t sync_end, int which) {
     Report& r = *ctx_.report;
     uint64_t ccsc = 0, addr = 0;
-    bool valid = false;
+    bool valid = false, addr_ok = false;
     if (which == 0) {
         // the CCSC ends with the SYNC: it starts 44 bits before the pattern
         if (!codeword(sync_end - 63 * SPB, &ccsc)) return;
@@ -204,11 +204,14 @@ void Mpt1327Receiver::decode_slot(int64_t sync_end, int which) {
         valid = true;
     }
     if (codeword(sync_end + SPB, &addr)) {
-        valid = true;
+        valid = addr_ok = true;
         if (which == 1) r.set(Mode::MPT1327, "Channel type", "Traffic channel (voice is analogue NBFM)");
         address(addr, which == 0);
     }
-    if (valid && ctx_.valid) ctx_.valid(Mode::MPT1327);
+    // the slot's samples: the CCSC (64 bits, ending with the SYNC) or preamble + SYNT, then the address codeword
+    if (valid)
+        report_valid(ctx_, Mode::MPT1327, sync_end - (which == 0 ? 64 : 20) * static_cast<int64_t>(SPB),
+                     sync_end + (addr_ok ? 65 : 1) * static_cast<int64_t>(SPB));
 }
 
 void Mpt1327Receiver::process(const float* d, size_t n) {

@@ -49,7 +49,8 @@ public:
         rx_.on_frame = [this](const FskFrame& f) { frame(f); };
         reset();
     }
-    void push(const float* narrow, const float*, size_t n, double) override {
+    void push(const float* narrow, const float*, size_t n, double t0) override {
+        rx_.clock(t0);
         for (size_t i = 0; i < n; i++) rx_.push(narrow[i]);
     }
     void reset() override {
@@ -67,6 +68,7 @@ public:
 
 private:
     void frame(const FskFrame& f);
+    double frm_ts_ = NAN, frm_te_ = NAN;   // the FSK frame being decoded: its time span
     // nibbles of one block (L codewords); false if a codeword has 2+ errors
     bool block(const float* soft, int L, uint8_t* nib);
     void conf(const uint8_t* nib);
@@ -121,6 +123,8 @@ bool Dfm::block(const float* soft, int L, uint8_t* nib) {
 }
 
 void Dfm::frame(const FskFrame& f) {
+    frm_ts_ = f.t_start;
+    frm_te_ = f.t_end;
     // Manchester: bit = second chip minus first ("01" = 1)
     float bits[FRAME_BITS];
     for (int i = 0; i < FRAME_BITS; i++) bits[i] = f.soft[2 * i + 1] - f.soft[2 * i];
@@ -243,6 +247,8 @@ void Dfm::emit(double dc) {
     Frame o;
     o.type = "DFM";
     o.dc_hz = static_cast<float>(dc);
+    o.t_start = frm_ts_;   // the FSK frame that completed the position
+    o.t_end = frm_te_;
     // type from the serial channel; DFM-17 also by its serial range
     std::string sub;
     double rf = 220e3;

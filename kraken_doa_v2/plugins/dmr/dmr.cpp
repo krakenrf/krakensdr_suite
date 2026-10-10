@@ -451,7 +451,7 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
         talker_burst(slot);
         sl.last_ms = t;
         call_update(slot, "");
-        if (cc_ >= 0 && ctx_.valid) ctx_.valid(Mode::DMR);
+        if (cc_ >= 0) report_valid(ctx_, Mode::DMR, burst_a_, burst_b_);
         if (ctx_.freq_error) ctx_.freq_error(Mode::DMR, s.center);
         return true;
     }
@@ -564,7 +564,7 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
         else r.set(Mode::DMR, "Source", slot ? "Direct mode (TDMA)" : "Mobile / direct mode");
         if (cc != cc_) { cc_ = cc; r.event(Mode::DMR, "Colour code " + std::to_string(cc), 30.0); }
         r.set(Mode::DMR, "Colour code", std::to_string(cc));
-        if (ctx_.valid) ctx_.valid(Mode::DMR);
+        report_valid(ctx_, Mode::DMR, burst_a_, burst_b_);
         if (ctx_.freq_error) ctx_.freq_error(Mode::DMR, s.center);
     }
     return ok;

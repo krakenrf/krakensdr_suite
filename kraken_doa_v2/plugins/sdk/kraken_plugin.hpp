@@ -105,6 +105,13 @@ struct Talker {
     // seconds (0 = the host's 1.5 s, for fast movers sending often - ADS-B).
     // Slow movers that send every few seconds want more (AIS: 20 s).
     double avg_s = 0;
+    // Packets only, optional: where the talker WAS when it sent this packet
+    // (WGS84 degrees, altitude in metres above mean sea level) - its last
+    // reported position moved on to the packet's time, NAN = unknown. With
+    // it kraken_doa can calibrate the antenna array against the known
+    // bearings (✈ array calibration from ADS-B aircraft). Only give a
+    // position that is accurate to some tens of metres at that moment.
+    double lat = NAN, lon = NAN, alt_m = NAN;
 };
 
 struct Info {
@@ -143,6 +150,13 @@ public:
     // "receiving" state and the frame counter - call it ONLY for frames you
     // are confident in, never for every sync candidate.
     virtual void valid() = 0;
+    // The same, also saying WHERE the frame was: Host::time() of its first
+    // sample and of its end (like Talker::start_s / end_s). Prefer it: the
+    // VFO's "Digital" squelch opens only on confirmed frames and takes the
+    // DoA from exactly these samples (nothing before, between or after the
+    // frames - noise, other signals). Counts as one valid frame. The default
+    // (an older host) just counts it.
+    virtual void valid(double start_s, double end_s) { (void)start_s; (void)end_s; valid(); }
     // Decoded audio, 8 kHz mono, nominal +-1. Only played while the user
     // listens to this VFO with Demod "Digital"; cheap to skip otherwise
     // (see voice_wanted()).
@@ -189,6 +203,16 @@ public:
     // The receiver's location (sidebar → Station Information), if it has one:
     // a reference for local position decoding, distances, range checks
     virtual bool station(double* lat, double* lon) const { (void)lat; (void)lon; return false; }
+    // The radio frequency (Hz) at 0 Hz of process()'s input: the VFO's centre
+    // plus the host's frequency correction. NAN = unknown (an older host, or
+    // an offline test of a file without --rf / an "rf_hz" sidecar). It can
+    // change between process() calls; a retune also calls reset(). Lets a
+    // decoder name the channel it receives (a DME channel from its reply
+    // frequency) or find the channels inside a wide VFO.
+    virtual double rf_hz() const { return NAN; }
+    // true: the input is mirrored (the decoder's "invert" option) - a signal
+    // at +f Hz in process()'s input is on rf_hz() - f
+    virtual bool rf_inverted() const { return false; }
     // Debug output (stderr; shown in the plugin's log tail). Do NOT print to
     // stdout: in live mode it carries the binary protocol (the host redirects
     // printf/std::cout to stderr anyway).
@@ -235,10 +259,11 @@ constexpr uint32_t RESET = 3;          // empty
 constexpr uint32_t VOICE_WANTED = 4;   // 1 byte, 0/1
 constexpr uint32_t SYNC = 5;           // uint32 id: answered with SYNC_DONE once everything before it is processed
 constexpr uint32_t STATION = 6;        // "lat,lon" (degrees) of the receiver, "" = unknown
+constexpr uint32_t RF = 7;             // "rf_hz[,1]": RF at the input's 0 Hz (",1" = mirrored), "" = unknown
 // plugin -> kraken_doa
 constexpr uint32_t FACT = 16;          // key '\0' value ("" value = remove)
 constexpr uint32_t EVENT = 17;         // float32 dedup_s, text
-constexpr uint32_t VALID = 18;         // empty
+constexpr uint32_t VALID = 18;         // empty, or start_s '\0' end_s (decimal text, Host::valid(start, end))
 constexpr uint32_t AUDIO = 19;         // float32 samples, 8 kHz
 constexpr uint32_t VOICE_STATE = 20;   // text
 constexpr uint32_t FREQ_ERROR = 21;    // float32 Hz
@@ -253,9 +278,10 @@ constexpr uint32_t TABLE_REMOVE = 27;  // key
 constexpr uint32_t MESSAGE = 28;       // from '\0' text
 constexpr uint32_t RAW = 29;           // one raw frame (text) for the decoder data log
 // id '\0' label '\0' start_s '\0' end_s ['\0' channel ['\0' flags ['\0'
-// freq_hz '\0' bw_hz '\0' avg_s]]]: Host::time() seconds as decimal text (7
-// decimals: a sample at 2.4 MHz is 0.4 us); no channel field = channel 0;
-// flags "p" = Talker::packet; freq_hz "" = NAN
+// freq_hz '\0' bw_hz '\0' avg_s ['\0' lat '\0' lon '\0' alt_m]]]]: Host::time()
+// seconds as decimal text (7 decimals: a sample at 2.4 MHz is 0.4 us); no
+// channel field = channel 0; flags "p" = Talker::packet; freq_hz "" = NAN;
+// the position fields only on packets that have one
 constexpr uint32_t TALKER = 30;
 constexpr uint32_t TALKER_END = 31;    // at_s ['\0' channel] (decimal text)
 // (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends)

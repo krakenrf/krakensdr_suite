@@ -39,7 +39,7 @@ plugins/sdk/build/
 ai/ai_config.json
 ai/ai_config.json.tmp
 ai/sessions/
-ai/__pycache__/
+ai/**/__pycache__/
 
 # incident map (incidents.cpp): incidents found in decoder messages, kept 24 h
 incidents.tsv
@@ -47,6 +47,9 @@ incidents.tsv.tmp
 # 🗺 map markers the user placed (map_markers.cpp) - positions near the station
 map_markers.json
 map_markers.json.tmp
+# ✈ the array calibration of THIS receiver (array_cal.cpp)
+array_cal.json
+array_cal.json.tmp
 # decoder data log (sidebar 🗂 Decoder Logging), default folder
 decoder_logs/
 # mobile DF heat map session (rdf_mapper.cpp)

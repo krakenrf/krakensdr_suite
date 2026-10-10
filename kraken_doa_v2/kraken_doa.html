@@ -40,6 +40,24 @@ body.sb-resizing {cursor:col-resize;user-select:none}
 /* Sidebar sections */
 .sb-section {background:#1a1a2e;border:1px solid #0f3460;border-radius:4px;padding:8px 7px;margin-bottom:8px}
 .sb-section.collapsed .sb-content {display:none}
+/* ✈ Array calibration (sidebar) */
+.exp-sub-h {font-size:13px;color:#7cb3f0;font-weight:bold;margin:2px 0 4px;display:flex;align-items:center;gap:4px}
+.acal-badge {font-size:10px;padding:1px 6px;border-radius:8px;margin-left:auto;margin-right:6px}
+.acal-badge:empty {display:none}
+.acal-badge.on {background:#1b5e20;color:#c8e6c9}
+.acal-badge.col {background:#0d47a1;color:#bbdefb}
+.acal-box {font-size:12px;color:#c8d6e5;line-height:1.6;background:#16213e;border:1px solid #0f3460;border-radius:3px;padding:6px;margin:4px 0 6px}
+.acal-box .w, #acal-state .w, #acal-fit .w {color:#ffb74d}
+.acal-box .g, #acal-fit .g {color:#81c784}
+.acal-st {font-size:12px;color:#8aa8c7;line-height:1.6}
+.acal-cov-row {display:flex;gap:8px;align-items:center;margin:4px 0}
+.acal-cov-row canvas {flex:none;width:104px;height:104px}
+#acal-cov-txt {font-size:11px;color:#8aa8c7;line-height:1.5}
+#acal-fit {font-size:12px;color:#c8d6e5;line-height:1.6}
+.acal-tb {border-collapse:collapse;width:100%;font-size:11px;margin:4px 0}
+.acal-tb th, .acal-tb td {padding:1px 3px;text-align:left;white-space:nowrap}
+.acal-tb th {color:#7cb3f0;font-weight:normal}
+.acal-tb td.n {text-align:right;font-variant-numeric:tabular-nums}
 .sb-header {display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none}
 .sb-header h3 {margin:0;border:none;padding:0}
 .sb-toggle {color:#666;font-size:12px}
@@ -439,6 +457,10 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-pop {position:absolute;z-index:4;min-width:180px;max-width:280px;background:rgba(16,24,44,.96);border:1px solid #4fc3f7;border-radius:4px;color:#dbe8ff;font-size:12px;padding:6px 8px;box-shadow:0 2px 10px rgba(0,0,0,.5)}
 .map-pop .h {font-weight:bold;color:#fff;margin-bottom:3px;display:flex;gap:6px;align-items:baseline}
 .map-pop .h .x {margin-left:auto;cursor:pointer;color:#8aa;font-weight:normal}
+.map-pop .h .trk {margin-left:auto;font-size:11px;font-weight:normal;padding:0 5px;border:1px solid #2a4a7a;border-radius:3px;background:#16213e;color:#cfe3ff;cursor:pointer;white-space:nowrap;user-select:none}
+.map-pop .h .trk:hover {background:#1a4a7a}
+.map-pop .h .trk.on {background:#1a4a7a;border-color:#4fc3f7;color:#fff}
+.map-pop .h .trk + .x {margin-left:6px}
 .map-pop .s {color:#8aa8c7;font-size:11px;margin-bottom:4px}
 .map-pop table {border-collapse:collapse;width:100%}
 .map-pop td {padding:1px 0;vertical-align:top}
@@ -647,87 +669,6 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <div id="decimator-list">
           <!-- Decimator controls will be dynamically added here -->
         </div>
-      </div>
-    </div>
-
-    <!-- Digital voice/data decoder (one per VFO) -->
-    <div class="sb-section" id="sb-digital">
-      <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🔐 Digital Decoders<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The voice codecs the digital decoders can use, and the installed decoder plugins. <b>Auto detect</b> on a plugin = it runs when a VFO's decoder is on Auto detect (untick the ones you never need: each costs CPU). Plugins are plain source folders (plugins/&lt;id&gt;/): to add one, copy its folder into kraken_doa_v2/plugins/, run make in kraken_doa_v2 and press ↻. To decode a VFO, tick <b>Digital decoder</b> on it in the Decimators box and pick <b>Auto detect</b> or a decoder; any number of VFOs can decode at once, each with its own tab in the panel under the waterfall. Voice plays with Demod "Digital" (or Listen in the VFO's tab). The AMBE and TETRA codecs are not shipped (licensing): you build them yourself, for personal use - whether that is allowed where you live is your responsibility.</span></span></h3>
-        <span class="sb-toggle">▼</span>
-      </div>
-      <div class="sb-content">
-        <div id="dig-codecs-box"><div class="dig-help">Checking the voice codecs…</div></div>
-        <div class="ctrl-row" style="justify-content:space-between;margin-bottom:0">
-          <span class="dig-help" style="margin:0">Switch a decoder off and on after installing a codec.</span>
-          <button class="btn sm" type="button" onclick="send('PLUGIN_CODECS')" title="Look for the codecs again (after installing one)">↻ Check again</button>
-        </div>
-        <div class="ctrl-row dig-plug-head" onclick="digTogglePlugins()" title="Show / hide the decoder plugins">
-          <span style="font-size:12px;color:#888;min-width:0"><span id="dig-plug-caret" class="dig-plug-caret">▶</span> Decoder plugins <span id="dig-plug-count"></span></span>
-          <span style="display:flex;gap:4px">
-            <button class="btn sm" type="button" onclick="event.stopPropagation(); send('PLUGINS_RESCAN')" title="Re-read the plugins folder (after copying a plugin in and running make)">↻</button>
-          </span>
-        </div>
-        <!-- collapsed by default (open state kept in localStorage) -->
-        <div id="dig-plug-body" style="display:none">
-          <div id="ai-plugins"><div class="dig-help">No plugins yet.</div></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- AI Signal Lab: identify a signal and write decoder plugins with an LLM -->
-    <div class="sb-section" id="sb-ai">
-      <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🤖 AI Signal Lab<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Points an AI coding agent (Claude Code, or another LLM CLI) at the signal in a VFO. <b>Investigate</b> captures it, measures it (spectrum, bursts, modulation, symbol rate, sync words) and asks the AI what it is. <b>Create Decoder</b> then has the AI write, build and test a decoder plugin for it, which appears in the Digital Decoders box and the VFOs' decoder lists. <b>Custom Instructions</b> add your own hints. The AI's answers, the conversation and its steps show in the 🤖 AI tab under the waterfall. Uses your LLM account; enable it on the Pi with <code>python3 ai/kraken_ai.py setup</code>.</span></span></h3>
-        <span class="sb-toggle">▼</span>
-      </div>
-      <div class="sb-content">
-        <div class="ctrl-row" style="justify-content:space-between">
-          <span class="cv" style="margin-left:0;flex:1;min-width:0"><span id="ai-dot" style="color:#777">&#9679;</span> <span id="ai-conn">Checking…</span></span>
-          <button class="btn sm" type="button" id="ai-test-btn" onclick="aiTest()" title="Send a one-line request to the LLM">Test</button>
-        </div>
-        <div id="ai-setup" class="dig-help" style="display:none"></div>
-        <div id="ai-token-warn" class="dig-warn" style="display:none">No API token is set: anyone who can open this page can start the AI agent (and build code) on this receiver. See README → API token.</div>
-        <div class="ctrl-row">
-          <label style="min-width:30px">VFO:</label>
-          <select id="ai-vfo" onchange="aiVfoChanged()" style="width:64px"></select>
-          <input type="text" id="ai-freq" style="width:92px;font-family:monospace" title="Frequency to investigate, MHz (default: the VFO's). Must lie in the receiver's current span." placeholder="MHz">
-          <span style="font-size:12px;color:#888">MHz</span>
-        </div>
-        <div class="ctrl-row">
-          <label style="min-width:30px">Capture:</label>
-          <select id="ai-secs" style="width:70px">
-            <option value="5">5 s</option><option value="10" selected>10 s</option><option value="20">20 s</option>
-            <option value="30">30 s</option><option value="60">60 s</option>
-          </select>
-          <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">How much of the signal to record for the analysis (at the VFO's bandwidth). Use a longer capture for signals that are only on now and then; the AI can also make further captures itself.</span></span>
-        </div>
-        <button class="btn primary" type="button" id="ai-investigate" onclick="aiInvestigate()" style="width:100%;margin:2px 0">🔍 Investigate this signal with AI</button>
-        <div class="ctrl-row" style="gap:4px;margin:4px 0">
-          <button class="btn" type="button" id="ai-create" onclick="aiCreate()" disabled style="flex:1" title="Have the AI write, build and test a decoder plugin for the investigated signal">🛠 Create Decoder</button>
-          <button class="btn" type="button" id="ai-instr-btn" onclick="aiToggleInstr()" style="flex:1" title="Your own hints for the AI">✍ Custom Instructions</button>
-        </div>
-        <div id="ai-instr-box" style="display:none">
-          <textarea id="ai-instr" rows="5" style="width:100%" oninput="aiSaveInstr()"
-            placeholder="Anything that helps the AI: what you know about the signal, links to specifications, what the decoder should show (e.g. &quot;list the unit IDs as facts&quot;), what to ignore..."></textarea>
-          <div class="dig-help">Sent with Create Decoder and the next investigation. Kept in this browser.</div>
-        </div>
-        <div class="ctrl-row" id="ai-plugin-row" style="display:none">
-          <label style="min-width:56px">Plugin id:</label>
-          <input type="text" id="ai-plugin-id" maxlength="32" style="flex:1;min-width:0;font-family:monospace" title="Folder name of the plugin: a-z 0-9 _ -">
-        </div>
-        <div class="ctrl-row" id="ai-job-row" style="display:none">
-          <span id="ai-job" style="flex:1;font-size:12px;color:#ffcc80;min-width:0"></span>
-          <button class="btn sm off" type="button" onclick="aiCancel()">■ Stop</button>
-        </div>
-        <!-- status only: the AI's answers, the conversation and the agent's
-             steps are in the AI tab of the panel under the waterfall -->
-        <div id="ai-status" class="ai-status"></div>
-        <div class="ctrl-row" style="justify-content:space-between;margin-top:10px;border-top:1px solid #22304a;padding-top:6px">
-          <span style="font-size:12px;color:#888">History</span>
-          <button class="btn sm" type="button" onclick="infoPanelOpen('ai')" title="Show the conversations in the large panel under the waterfall">⤢ Chat</button>
-        </div>
-        <div id="ai-history" class="ai-history"></div>
       </div>
     </div>
 
@@ -983,6 +924,160 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- Wideband Mode -->
+
+    <!-- Station Information -->
+    <div class="sb-section">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>📡 Station Information<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Callsign &amp; location are published to DOA_value.html and the API. <b>Mobile App</b> takes location from a phone app (pending — reports 0's for now); <b>Static</b> uses the values above; <b>KrakenPi GPS</b> uses the gpsd-connected receiver.</span></span></h3>
+        <span class="sb-toggle">▼</span>
+      </div>
+      <div class="sb-content">
+        <div class="ctrl-row">
+          <label>Callsign:</label>
+          <input type="text" id="station-id" value="KrakenSDR" maxlength="64" style="flex:1" onchange="setStationId()">
+        </div>
+        <div class="ctrl-row">
+          <label>Location:</label>
+          <select id="location-source" onchange="setLocationSource(this.value)" style="flex:1">
+            <option value="mobile">Mobile App</option>
+            <option value="static">Static</option>
+            <option value="gps" selected>KrakenPi GPS</option>
+          </select>
+        </div>
+        <div id="static-location-fields" style="display:none">
+          <div class="ctrl-row">
+            <label>Latitude:</label>
+            <input type="number" id="static-lat" value="0" step="any" style="width:115px" onchange="setStaticLocation()">
+          </div>
+          <div class="ctrl-row">
+            <label>Longitude:</label>
+            <input type="number" id="static-lon" value="0" step="any" style="width:115px" onchange="setStaticLocation()">
+          </div>
+          <div class="ctrl-row">
+            <label>Heading:</label>
+            <input type="number" id="static-heading" value="0" min="0" max="360" step="any" style="width:80px" onchange="setStaticLocation()">
+            <span style="font-size:10px">&deg;</span>
+          </div>
+          <div class="ctrl-row">
+            <button class="btn sm" onclick="getGpsForStatic()">📍 Get GPS Data</button>
+            <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Fills Latitude &amp; Longitude from the connected GPS (gpsd). Heading stays manual.</span></span>
+            <span id="get-gps-status" style="font-size:10px;color:#888"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GPS Status -->
+    <div class="sb-section">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>📍 GPS Status<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Location &amp; heading come from gpsd. A compass heading is used when the receiver provides one; otherwise heading is inferred from movement (course over ground). With no GPS, all values are 0.</span></span></h3>
+        <span class="sb-toggle">▼</span>
+      </div>
+      <div class="sb-content">
+        <div class="ctrl-row">
+          <label>Status:</label>
+          <span class="cv" id="gps-status-cv">
+            <span id="gps-dot" style="color:#777">&#9679;</span>
+            <span id="gps-status-text">No GPS</span>
+          </span>
+        </div>
+        <div id="gps-details" style="font-size:12px;color:#8aa8c7;line-height:1.8;margin-top:4px"></div>
+      </div>
+    </div>
+
+    <!-- Web Mapper -->
+    <div class="sb-section coh-only">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>🌐 Web Mapper<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Streams DoA bearings to the KrakenSDR web mapper (built in — no separate middleware needed). <b>KrakenPro Cloud</b> relays to map.krakenrf.com and needs your KrakenPro API key; <b>Local Network</b> broadcasts the records to LAN map clients over WebSocket. Each VFO's squelch is respected: with squelch off its bearings always transmit; with squelch on, only while the squelch is open. Callsign &amp; location come from the Station Information panel above.</span></span></h3>
+        <span class="sb-toggle">▼</span>
+      </div>
+      <div class="sb-content">
+        <div class="ctrl-row">
+          <label>Enable:</label>
+          <input type="checkbox" id="wm-enable" onchange="setWebMapperEnable(this.checked)">
+          <span class="cv" id="wm-state-cv">
+            <span id="wm-dot" style="color:#777">&#9679;</span>
+            <span id="wm-state-text">Disabled</span>
+          </span>
+        </div>
+        <div class="ctrl-row">
+          <label>Output:</label>
+          <select id="wm-mode" onchange="setWebMapperMode(this.value)" style="flex:1">
+            <option value="remote" selected>KrakenPro Cloud</option>
+            <option value="local">Local Network</option>
+          </select>
+        </div>
+        <div id="wm-remote-fields">
+          <div class="ctrl-row">
+            <label>Pro Key:</label>
+            <input type="password" id="wm-key" placeholder="KrakenPro API key" autocomplete="off" style="flex:1;min-width:0" onchange="setWebMapperKey()">
+            <button class="btn sm" type="button" title="Show/hide key" onclick="toggleWebMapperKeyVisible()">&#128065;</button>
+          </div>
+          <div class="ctrl-row">
+            <label>Server:</label>
+            <input type="text" id="wm-url" value="wss://map.krakenrf.com:2096" style="flex:1;min-width:0" onchange="setWebMapperUrl()">
+          </div>
+        </div>
+        <div id="wm-local-fields" style="display:none">
+          <div class="ctrl-row">
+            <label>WS Port:</label>
+            <input type="number" id="wm-ws-port" value="8021" min="1" max="65535" style="width:80px" onchange="setWebMapperWsPort()">
+            <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Local map clients connect to <b>ws://&lt;this device&gt;:&lt;port&gt;</b> and receive one JSON record per VFO bearing.</span></span>
+          </div>
+        </div>
+        <div id="wm-status" style="font-size:12px;color:#8aa8c7;line-height:1.8;margin-top:4px">
+          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Records sent</span><span id="wm-records">0</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Local Recording -->
+    <div class="sb-section coh-only">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>📝 Local Recording<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Logs DoA lobe values to a file <b>on this device's disk</b> (the KrakenPi), not your browser. <b>Legacy CSV</b> matches DOA_value.html line-for-line; <b>SQLite</b> is a compact, app-readable database for plotting on a map. The interval applies to both formats; below the actual DoA data rate it logs at the data rate, and duplicate frames are never written.</span></span></h3>
+        <span class="sb-toggle">▼</span>
+      </div>
+      <div class="sb-content">
+        <div class="ctrl-row">
+          <label>Format:</label>
+          <select id="log-format" onchange="setLogFormat(this.value)" style="flex:1">
+            <option value="sqlite" selected>SQLite Database</option>
+            <option value="csv">Legacy CSV</option>
+          </select>
+        </div>
+        <div class="ctrl-row">
+          <label>Record every:</label>
+          <input type="number" id="log-interval" value="1" min="0.001" max="60" step="0.001" style="width:78px" onchange="setLogInterval()">
+          <span style="font-size:11px;color:#8aa8c7">s (1ms&ndash;60s)</span>
+        </div>
+        <div class="ctrl-row">
+          <label>Filename:</label>
+          <input type="text" id="log-path" placeholder="(auto-named)" style="flex:1;min-width:0" onchange="setLogFile()">
+          <button class="btn sm" title="Auto-name from current date &amp; time" onclick="autoNameLog()">🕐</button>
+        </div>
+        <div class="ctrl-row">
+          <button id="log-toggle-btn" class="btn" style="flex:1" onclick="toggleLogging()">&#9679; Start Recording</button>
+        </div>
+        <div id="log-status" style="font-size:12px;color:#8aa8c7;line-height:1.8;margin-top:4px">
+          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Status</span><span id="log-state"><span style="color:#777">&#9679;</span> Stopped</span></div>
+          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">File</span><span id="log-file" style="text-align:right;word-break:break-all">&mdash;</span></div>
+          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Size</span><span id="log-size">&mdash;</span></div>
+          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Entries</span><span id="log-entries">0</span></div>
+        </div>
+        <div style="margin-top:10px;border-top:1px solid #0f3460;padding-top:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+            <span style="color:#7cb3f0;font-size:12px;font-weight:bold">Saved Recordings</span>
+            <button class="btn sm" title="Refresh list" onclick="refreshRecordings()">&#8635;</button>
+          </div>
+          <div id="rec-list" style="max-height:170px;overflow-y:auto;border:1px solid #0f3460;border-radius:4px;background:#1a1a2e"></div>
+          <div class="ctrl-row" style="margin-top:6px;gap:6px">
+            <button id="rec-download-btn" class="btn sm" style="flex:1" onclick="downloadSelected()">&#11015; Download</button>
+            <button class="btn sm" style="flex:1;background:#5a1f1f;border-color:#8b2525;color:#ffd9d9" onclick="deleteSelected()">&#128465; Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Display Controls -->
     <div class="sb-section">
       <div class="sb-header" onclick="toggleSection(this)">
@@ -1153,156 +1248,84 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       </div>
     </div>
 
-    <!-- Station Information -->
-    <div class="sb-section">
+    <!-- Digital voice/data decoder (one per VFO) -->
+    <div class="sb-section" id="sb-digital">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📡 Station Information<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Callsign &amp; location are published to DOA_value.html and the API. <b>Mobile App</b> takes location from a phone app (pending — reports 0's for now); <b>Static</b> uses the values above; <b>KrakenPi GPS</b> uses the gpsd-connected receiver.</span></span></h3>
+        <h3>🔐 Digital Decoders<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The voice codecs the digital decoders can use, and the installed decoder plugins. <b>Auto detect</b> on a plugin = it runs when a VFO's decoder is on Auto detect (untick the ones you never need: each costs CPU). Plugins are plain source folders (plugins/&lt;id&gt;/): to add one, copy its folder into kraken_doa_v2/plugins/, run make in kraken_doa_v2 and press ↻. To decode a VFO, tick <b>Digital decoder</b> on it in the Decimators box and pick <b>Auto detect</b> or a decoder; any number of VFOs can decode at once, each with its own tab in the panel under the waterfall. Voice plays with Demod "Digital" (or Listen in the VFO's tab). The AMBE and TETRA codecs are not shipped (licensing): you build them yourself, for personal use - whether that is allowed where you live is your responsibility.</span></span></h3>
         <span class="sb-toggle">▼</span>
       </div>
       <div class="sb-content">
-        <div class="ctrl-row">
-          <label>Callsign:</label>
-          <input type="text" id="station-id" value="KrakenSDR" maxlength="64" style="flex:1" onchange="setStationId()">
+        <div id="dig-codecs-box"><div class="dig-help">Checking the voice codecs…</div></div>
+        <div class="ctrl-row" style="justify-content:space-between;margin-bottom:0">
+          <span class="dig-help" style="margin:0">Switch a decoder off and on after installing a codec.</span>
+          <button class="btn sm" type="button" onclick="send('PLUGIN_CODECS')" title="Look for the codecs again (after installing one)">↻ Check again</button>
         </div>
-        <div class="ctrl-row">
-          <label>Location:</label>
-          <select id="location-source" onchange="setLocationSource(this.value)" style="flex:1">
-            <option value="mobile">Mobile App</option>
-            <option value="static">Static</option>
-            <option value="gps" selected>KrakenPi GPS</option>
-          </select>
-        </div>
-        <div id="static-location-fields" style="display:none">
-          <div class="ctrl-row">
-            <label>Latitude:</label>
-            <input type="number" id="static-lat" value="0" step="any" style="width:115px" onchange="setStaticLocation()">
-          </div>
-          <div class="ctrl-row">
-            <label>Longitude:</label>
-            <input type="number" id="static-lon" value="0" step="any" style="width:115px" onchange="setStaticLocation()">
-          </div>
-          <div class="ctrl-row">
-            <label>Heading:</label>
-            <input type="number" id="static-heading" value="0" min="0" max="360" step="any" style="width:80px" onchange="setStaticLocation()">
-            <span style="font-size:10px">&deg;</span>
-          </div>
-          <div class="ctrl-row">
-            <button class="btn sm" onclick="getGpsForStatic()">📍 Get GPS Data</button>
-            <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Fills Latitude &amp; Longitude from the connected GPS (gpsd). Heading stays manual.</span></span>
-            <span id="get-gps-status" style="font-size:10px;color:#888"></span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Web Mapper -->
-    <div class="sb-section coh-only">
-      <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🌐 Web Mapper<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Streams DoA bearings to the KrakenSDR web mapper (built in — no separate middleware needed). <b>KrakenPro Cloud</b> relays to map.krakenrf.com and needs your KrakenPro API key; <b>Local Network</b> broadcasts the records to LAN map clients over WebSocket. Each VFO's squelch is respected: with squelch off its bearings always transmit; with squelch on, only while the squelch is open. Callsign &amp; location come from the Station Information panel above.</span></span></h3>
-        <span class="sb-toggle">▼</span>
-      </div>
-      <div class="sb-content">
-        <div class="ctrl-row">
-          <label>Enable:</label>
-          <input type="checkbox" id="wm-enable" onchange="setWebMapperEnable(this.checked)">
-          <span class="cv" id="wm-state-cv">
-            <span id="wm-dot" style="color:#777">&#9679;</span>
-            <span id="wm-state-text">Disabled</span>
+        <div class="ctrl-row dig-plug-head" onclick="digTogglePlugins()" title="Show / hide the decoder plugins">
+          <span style="font-size:12px;color:#888;min-width:0"><span id="dig-plug-caret" class="dig-plug-caret">▶</span> Decoder plugins <span id="dig-plug-count"></span></span>
+          <span style="display:flex;gap:4px">
+            <button class="btn sm" type="button" onclick="event.stopPropagation(); send('PLUGINS_RESCAN')" title="Re-read the plugins folder (after copying a plugin in and running make)">↻</button>
           </span>
         </div>
-        <div class="ctrl-row">
-          <label>Output:</label>
-          <select id="wm-mode" onchange="setWebMapperMode(this.value)" style="flex:1">
-            <option value="remote" selected>KrakenPro Cloud</option>
-            <option value="local">Local Network</option>
-          </select>
-        </div>
-        <div id="wm-remote-fields">
-          <div class="ctrl-row">
-            <label>Pro Key:</label>
-            <input type="password" id="wm-key" placeholder="KrakenPro API key" autocomplete="off" style="flex:1;min-width:0" onchange="setWebMapperKey()">
-            <button class="btn sm" type="button" title="Show/hide key" onclick="toggleWebMapperKeyVisible()">&#128065;</button>
-          </div>
-          <div class="ctrl-row">
-            <label>Server:</label>
-            <input type="text" id="wm-url" value="wss://map.krakenrf.com:2096" style="flex:1;min-width:0" onchange="setWebMapperUrl()">
-          </div>
-        </div>
-        <div id="wm-local-fields" style="display:none">
-          <div class="ctrl-row">
-            <label>WS Port:</label>
-            <input type="number" id="wm-ws-port" value="8021" min="1" max="65535" style="width:80px" onchange="setWebMapperWsPort()">
-            <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Local map clients connect to <b>ws://&lt;this device&gt;:&lt;port&gt;</b> and receive one JSON record per VFO bearing.</span></span>
-          </div>
-        </div>
-        <div id="wm-status" style="font-size:12px;color:#8aa8c7;line-height:1.8;margin-top:4px">
-          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Records sent</span><span id="wm-records">0</span></div>
+        <!-- collapsed by default (open state kept in localStorage) -->
+        <div id="dig-plug-body" style="display:none">
+          <div id="ai-plugins"><div class="dig-help">No plugins yet.</div></div>
         </div>
       </div>
     </div>
 
-    <!-- GPS Status -->
-    <div class="sb-section">
+    <!-- AI Signal Lab: identify a signal and write decoder plugins with an LLM -->
+    <div class="sb-section" id="sb-ai">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📍 GPS Status<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Location &amp; heading come from gpsd. A compass heading is used when the receiver provides one; otherwise heading is inferred from movement (course over ground). With no GPS, all values are 0.</span></span></h3>
+        <h3>🤖 AI Signal Lab<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Points an AI coding agent (Claude Code, or another LLM CLI) at the signal in a VFO. <b>Investigate</b> captures it, measures it (spectrum, bursts, modulation, symbol rate, sync words) and asks the AI what it is. <b>Create Decoder</b> then has the AI write, build and test a decoder plugin for it, which appears in the Digital Decoders box and the VFOs' decoder lists. <b>Custom Instructions</b> add your own hints. The AI's answers, the conversation and its steps show in the 🤖 AI tab under the waterfall. Uses your LLM account; enable it on the Pi with <code>python3 ai/kraken_ai.py setup</code>.</span></span></h3>
         <span class="sb-toggle">▼</span>
       </div>
       <div class="sb-content">
-        <div class="ctrl-row">
-          <label>Status:</label>
-          <span class="cv" id="gps-status-cv">
-            <span id="gps-dot" style="color:#777">&#9679;</span>
-            <span id="gps-status-text">No GPS</span>
-          </span>
+        <div class="ctrl-row" style="justify-content:space-between">
+          <span class="cv" style="margin-left:0;flex:1;min-width:0"><span id="ai-dot" style="color:#777">&#9679;</span> <span id="ai-conn">Checking…</span></span>
+          <button class="btn sm" type="button" id="ai-test-btn" onclick="aiTest()" title="Send a one-line request to the LLM">Test</button>
         </div>
-        <div id="gps-details" style="font-size:12px;color:#8aa8c7;line-height:1.8;margin-top:4px"></div>
-      </div>
-    </div>
-
-    <!-- Local Recording -->
-    <div class="sb-section coh-only">
-      <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📝 Local Recording<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Logs DoA lobe values to a file <b>on this device's disk</b> (the KrakenPi), not your browser. <b>Legacy CSV</b> matches DOA_value.html line-for-line; <b>SQLite</b> is a compact, app-readable database for plotting on a map. The interval applies to both formats; below the actual DoA data rate it logs at the data rate, and duplicate frames are never written.</span></span></h3>
-        <span class="sb-toggle">▼</span>
-      </div>
-      <div class="sb-content">
+        <div id="ai-setup" class="dig-help" style="display:none"></div>
+        <div id="ai-token-warn" class="dig-warn" style="display:none">No API token is set: anyone who can open this page can start the AI agent (and build code) on this receiver. See README → API token.</div>
         <div class="ctrl-row">
-          <label>Format:</label>
-          <select id="log-format" onchange="setLogFormat(this.value)" style="flex:1">
-            <option value="sqlite" selected>SQLite Database</option>
-            <option value="csv">Legacy CSV</option>
+          <label style="min-width:30px">VFO:</label>
+          <select id="ai-vfo" onchange="aiVfoChanged()" style="width:64px"></select>
+          <input type="text" id="ai-freq" style="width:92px;font-family:monospace" title="Frequency to investigate, MHz (default: the VFO's). Must lie in the receiver's current span." placeholder="MHz">
+          <span style="font-size:12px;color:#888">MHz</span>
+        </div>
+        <div class="ctrl-row">
+          <label style="min-width:30px">Capture:</label>
+          <select id="ai-secs" style="width:70px">
+            <option value="5">5 s</option><option value="10" selected>10 s</option><option value="20">20 s</option>
+            <option value="30">30 s</option><option value="60">60 s</option>
           </select>
+          <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">How much of the signal to record for the analysis (at the VFO's bandwidth). Use a longer capture for signals that are only on now and then; the AI can also make further captures itself.</span></span>
         </div>
-        <div class="ctrl-row">
-          <label>Record every:</label>
-          <input type="number" id="log-interval" value="1" min="0.001" max="60" step="0.001" style="width:78px" onchange="setLogInterval()">
-          <span style="font-size:11px;color:#8aa8c7">s (1ms&ndash;60s)</span>
+        <button class="btn primary" type="button" id="ai-investigate" onclick="aiInvestigate()" style="width:100%;margin:2px 0">🔍 Investigate this signal with AI</button>
+        <div class="ctrl-row" style="gap:4px;margin:4px 0">
+          <button class="btn" type="button" id="ai-create" onclick="aiCreate()" disabled style="flex:1" title="Have the AI write, build and test a decoder plugin for the investigated signal">🛠 Create Decoder</button>
+          <button class="btn" type="button" id="ai-instr-btn" onclick="aiToggleInstr()" style="flex:1" title="Your own hints for the AI">✍ Custom Instructions</button>
         </div>
-        <div class="ctrl-row">
-          <label>Filename:</label>
-          <input type="text" id="log-path" placeholder="(auto-named)" style="flex:1;min-width:0" onchange="setLogFile()">
-          <button class="btn sm" title="Auto-name from current date &amp; time" onclick="autoNameLog()">🕐</button>
+        <div id="ai-instr-box" style="display:none">
+          <textarea id="ai-instr" rows="5" style="width:100%" oninput="aiSaveInstr()"
+            placeholder="Anything that helps the AI: what you know about the signal, links to specifications, what the decoder should show (e.g. &quot;list the unit IDs as facts&quot;), what to ignore..."></textarea>
+          <div class="dig-help">Sent with Create Decoder and the next investigation. Kept in this browser.</div>
         </div>
-        <div class="ctrl-row">
-          <button id="log-toggle-btn" class="btn" style="flex:1" onclick="toggleLogging()">&#9679; Start Recording</button>
+        <div class="ctrl-row" id="ai-plugin-row" style="display:none">
+          <label style="min-width:56px">Plugin id:</label>
+          <input type="text" id="ai-plugin-id" maxlength="32" style="flex:1;min-width:0;font-family:monospace" title="Folder name of the plugin: a-z 0-9 _ -">
         </div>
-        <div id="log-status" style="font-size:12px;color:#8aa8c7;line-height:1.8;margin-top:4px">
-          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Status</span><span id="log-state"><span style="color:#777">&#9679;</span> Stopped</span></div>
-          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">File</span><span id="log-file" style="text-align:right;word-break:break-all">&mdash;</span></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Size</span><span id="log-size">&mdash;</span></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Entries</span><span id="log-entries">0</span></div>
+        <div class="ctrl-row" id="ai-job-row" style="display:none">
+          <span id="ai-job" style="flex:1;font-size:12px;color:#ffcc80;min-width:0"></span>
+          <button class="btn sm off" type="button" onclick="aiCancel()">■ Stop</button>
         </div>
-        <div style="margin-top:10px;border-top:1px solid #0f3460;padding-top:8px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
-            <span style="color:#7cb3f0;font-size:12px;font-weight:bold">Saved Recordings</span>
-            <button class="btn sm" title="Refresh list" onclick="refreshRecordings()">&#8635;</button>
-          </div>
-          <div id="rec-list" style="max-height:170px;overflow-y:auto;border:1px solid #0f3460;border-radius:4px;background:#1a1a2e"></div>
-          <div class="ctrl-row" style="margin-top:6px;gap:6px">
-            <button id="rec-download-btn" class="btn sm" style="flex:1" onclick="downloadSelected()">&#11015; Download</button>
-            <button class="btn sm" style="flex:1;background:#5a1f1f;border-color:#8b2525;color:#ffd9d9" onclick="deleteSelected()">&#128465; Delete</button>
-          </div>
+        <!-- status only: the AI's answers, the conversation and the agent's
+             steps are in the AI tab of the panel under the waterfall -->
+        <div id="ai-status" class="ai-status"></div>
+        <div class="ctrl-row" style="justify-content:space-between;margin-top:10px;border-top:1px solid #22304a;padding-top:6px">
+          <span style="font-size:12px;color:#888">History</span>
+          <button class="btn sm" type="button" onclick="infoPanelOpen('ai')" title="Show the conversations in the large panel under the waterfall">⤢ Chat</button>
         </div>
+        <div id="ai-history" class="ai-history"></div>
       </div>
     </div>
 
@@ -1352,6 +1375,32 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Disk lasts</span><span id="dl-lasts">&mdash;</span></div>
         </div>
         <div id="dl-note" style="font-size:11px;color:#6f87a6;margin-top:4px"></div>
+      </div>
+    </div>
+
+    <!-- 🧪 Experimental: features still being developed (coherent mode for now - its only one is) -->
+    <div class="sb-section coh-only collapsed" id="exp-section">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>🧪 Experimental<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Features that are still being developed and tested: they may change, and may not work well at every site yet.</span></span></h3>
+        <span class="acal-badge" id="acal-badge" title="Array calibration"></span>
+        <span class="sb-toggle">▶</span>
+      </div>
+      <div class="sb-content">
+        <!-- ✈ Array calibration from ADS-B aircraft (array_cal.cpp) -->
+        <div id="acal-section">
+          <div class="exp-sub-h">✈ Array Calibration<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Uses <b>ADS-B aircraft</b> as transmitters at known positions to measure what the noise-source calibration can't see: <b>cable length differences</b> between the antennas, where each antenna <b>really stands</b>, and how the whole array is <b>turned</b> (mounting / heading).<br><br>Needs: a VFO with the <b>ADS-B decoder</b> (1090 MHz) and DoA on, the station location and heading (Station Information: a static location, or GPS with a compass), the array standing still. Press <b>Collect</b> and leave it running while aircraft come from many directions (tens of minutes at a busy site, longer elsewhere).<br><br>The result is checked on aircraft it wasn't fitted on. <b>Apply</b> uses it for MUSIC and beamforming on <b>every frequency</b>: delays and positions carry over. Differences between the antennas themselves (and multipath) don't - they show as "Unexpl.". The calibration belongs to this array setup: change the radius or elements and it is not used.</span></span></div>
+          <div class="acal-box" id="acal-use">No calibration in use.</div>
+          <div class="ctrl-row" style="gap:6px">
+            <button id="acal-collect" class="btn" style="flex:1" onclick="acalCollect()">▶ Collect aircraft</button>
+            <button class="btn sm" onclick="acalReset()" title="Forget the aircraft packets collected so far">Reset</button>
+          </div>
+          <div class="acal-st" id="acal-state"></div>
+          <div class="acal-cov-row" id="acal-cov-row" style="display:none">
+            <canvas id="acal-cov" width="208" height="208" title="Where the collected aircraft were (compass, north up): darker = more packets"></canvas>
+            <div id="acal-cov-txt"></div>
+          </div>
+          <div id="acal-fit"></div>
+        </div>
       </div>
     </div>
 
@@ -1614,13 +1663,13 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
               <button type="button" class="map-btn" id="map-df-tog" onclick="mapSet('rdfOpen', !mapState.rdfOpen)" title="Direction finding on the map: DoA lobes and, while driving, a heat map of where the transmitter is">📡 DF</button>
               <select id="map-df-vfo" onchange="mapSet('rdfVfo', this.value)" title="Which VFO's DoA to show"></select>
               <select id="map-df-tid" onchange="mapSet('rdfTid', this.value)" style="display:none" title="Which radio / aircraft / ship: a digital decoder that names who transmits (P25 / DMR / NXDN unit ID, D-STAR callsign, ADS-B aircraft, AIS ship) splits the VFO's signal - each one's DoA comes only from its own transmissions / packets"></select>
-              <button type="button" class="map-btn" id="map-df-lobe" onclick="mapSet('rdfLobe', !mapState.rdfLobe)" title="The live DoA lobe around the station">Lobe</button>
-              <button type="button" class="map-btn" id="map-df-lines" onclick="mapSet('rdfLines', !mapState.rdfLines)" title="The bearings taken while driving">Lines</button>
+              <button type="button" class="map-btn" id="map-df-lobe" onclick="mapSet('rdfLobe', !mapState.rdfLobe)" title="The live DoA lobes around the station">Lobe</button>
+              <button type="button" class="map-btn" id="map-df-lines" onclick="mapSet('rdfLines', !mapState.rdfLines)" title="Bearing lines: from each lobe's peak to the edge of the map (one radio / aircraft: also its earlier bearings), and the bearings taken while driving">Lines</button>
               <button type="button" class="map-btn" id="map-df-heat" onclick="mapSet('rdfHeat', !mapState.rdfHeat)" title="Where the transmitter probably is (one VFO at a time)">Heat</button>
             </div>
             <div class="map-df-body">
               <div id="map-df-txt"></div>
-              <div class="map-df-tl" id="map-df-tl" onclick="rdfPickTalker(event)"></div>
+              <div class="map-df-tl" id="map-df-tl" onpointerdown="rdfTlDown(event)" onpointerup="rdfTlUp(event)" onpointercancel="rdfTlPress = null"></div>
               <div class="map-df-row">
                 <label title="Collect bearings for the heat map while driving (needs GPS: Station Information)"><input type="checkbox" id="map-df-on" onchange="send('RDF:' + (this.checked ? 1 : 0))"> Collect</label>
                 <label title="Half-width of the heat map grid around where the drive started">Range <input type="number" id="map-df-range" min="1" max="50" step="1" style="width:44px" onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="rdfSetRange(this.value)"> km</label>
@@ -2527,52 +2576,27 @@ function updateDecimatorSquelchStatus(decId, isOpen) {
   }
 }
 
-// Per-decimator squelch method + eigenvalue threshold.
-// The eigen slider is LOG-scaled: slider 0..100 -> threshold 10^(v/20), i.e.
-// 1 .. 100000 (eigenvalue ratios on strong signals reach 1e4-1e5).
-function eigenSliderToThreshold(v) { return Math.pow(10, v / 20); }
-function eigenThresholdToSlider(t) {
-  const v = 20 * Math.log10(Math.max(1, parseFloat(t) || 1));
-  return Math.max(0, Math.min(100, Math.round(v)));
-}
-function fmtEigen(t) {
-  if (t >= 1000) return (t / 1000).toFixed(t >= 10000 ? 0 : 1) + 'k';
-  if (t >= 100) return Math.round(t).toString();
-  return t.toFixed(1);
-}
-
 // Show the method selector while squelch is enabled, and only the active
-// method's row (FFT dB slider / eigenvalue slider / auto-threshold readout).
+// method's row (FFT dB slider / the Digital squelch's note).
 function updateDecimatorSquelchRows(decId) {
   const dec = decimatorInfo.find(d => d.id === decId);
   const enabled = dec ? !!dec.squelch_enabled : false;
   const m = sqEffMethod(dec);
   const methodRow = $id('dec-squelch-method-row-' + decId);
   const fftRow = $id('dec-squelch-controls-' + decId);
-  const eigRow = $id('dec-squelch-eigen-controls-' + decId);
-  const autoRow = $id('dec-squelch-auto-controls-' + decId);
+  const digRow = $id('dec-squelch-dig-' + decId);
   if (methodRow) methodRow.style.display = enabled ? 'flex' : 'none';
-  if (fftRow) fftRow.style.display = (enabled && m !== 'EIGEN' && m !== 'EIGEN_AUTO') ? 'flex' : 'none';
-  if (eigRow) eigRow.style.display = (enabled && m === 'EIGEN') ? 'flex' : 'none';
-  if (autoRow) autoRow.style.display = (enabled && m === 'EIGEN_AUTO') ? 'flex' : 'none';
+  if (fftRow) fftRow.style.display = (enabled && m === 'FFT') ? 'flex' : 'none';
+  if (digRow) digRow.style.display = (enabled && m === 'DIGITAL') ? 'flex' : 'none';
 }
 
 function setDecimatorSquelchMethod(decId, method) {
-  if (method !== 'EIGEN' && method !== 'EIGEN_AUTO') method = 'FFT';
+  if (method !== 'DIGITAL') method = 'FFT';
   const dec = decimatorInfo.find(d => d.id === decId);
   if (dec) dec.squelch_method = method;
   send('DEC_SQUELCH_METHOD:' + decId + ':' + method);
   updateDecimatorSquelchRows(decId);
   drawBox();  // the FFT dB overlay line only applies to the FFT method
-}
-
-function updateDecimatorSquelchEigen(decId, sliderVal) {
-  const threshold = eigenSliderToThreshold(parseFloat(sliderVal) || 0);
-  const dec = decimatorInfo.find(d => d.id === decId);
-  if (dec) dec.squelch_eigen_threshold = threshold;
-  const label = $id('dec-squelch-eigen-val-' + decId);
-  if (label) label.textContent = fmtEigen(threshold);
-  send('DEC_SQUELCH_EIGEN:' + decId + ':' + threshold.toFixed(1));
 }
 
 // PolarPlot Class
@@ -3336,26 +3360,15 @@ function applySyncCmdInner(cmd) {
     }
   }
   else if ((v = arg('DEC_SQUELCH_METHOD:')) !== null) {
+    // another page picked a method: remember it (Digital is only offered -
+    // and in effect - while the VFO's decoder is on)
     const [decId, method] = v.split(':');
+    const d = decimatorInfo.find(x => x.id === parseInt(decId));
+    if (d) d.squelch_method = method === 'DIGITAL' ? 'DIGITAL' : 'FFT';
     const el = $id('dec-squelch-method-' + decId);
-    if (opMode !== 'coherent') {
-      // only FFT is offered here: remember the method for coherent mode
-      const d = decimatorInfo.find(x => x.id === parseInt(decId));
-      if (d) d.squelch_method = method;
-      updateDecimatorSquelchRows(parseInt(decId));
-    } else if (el && el.value !== method) {
-      el.value = method;
-      setDecimatorSquelchMethod(parseInt(decId), method);
-    }
-  }
-  else if ((v = arg('DEC_SQUELCH_EIGEN:')) !== null) {
-    const [decId, thr] = v.split(':');
-    const el = $id('dec-squelch-eigen-' + decId);
-    const sv = eigenThresholdToSlider(thr);
-    if (idle(el) && parseInt(el.value) !== sv) {
-      el.value = sv;
-      updateDecimatorSquelchEigen(parseInt(decId), sv);
-    }
+    if (el && d) el.value = sqEffMethod(d);
+    updateDecimatorSquelchRows(parseInt(decId));
+    drawBox();
   }
   else if ((v = arg('LOG_FORMAT:')) !== null) {
     const el = $id('log-format');
@@ -3777,8 +3790,8 @@ function drawBox() {
   if (fftPlot && c.boxes) {
     decimatorInfo.forEach((dec) => {
       if (!dec.squelch_enabled) return;
-      // The dB line only means something for the FFT-peak method; an
-      // eigenvalue threshold has no y-position on the spectrum.
+      // The dB line only means something for the FFT-peak method (the
+      // Digital squelch has no level).
       if (sqEffMethod(dec) !== 'FFT') return;
 
       const squelchLevel = dec.squelch_level !== undefined ? dec.squelch_level : 15;  // Same default as the panel (was -70, drawn off-scale)
@@ -3828,12 +3841,12 @@ function drawBox() {
 // slider (0-80 dB, 1 dB steps); updates are sent at most every 80 ms, the
 // final level on release.
 let squelchDrag = null;   // {id, sent, last} while dragging a squelch line
-// The squelch method in effect: the eigenvalue methods need MUSIC, which only
-// runs in coherent mode - in wideband / independent mode every VFO squelches
-// on its FFT (the backend does the same; the saved method comes back in coherent)
+// The squelch method in effect: Digital only while the VFO's digital decoder
+// is on (DecimatorManager::effectiveSquelchMethod does the same; the saved
+// method comes back when the decoder does) - in every mode
+function digDecoderOn(d) { return !!(d && d.digital_mode && d.digital_mode !== 'OFF'); }
 function sqEffMethod(d) {
-  const m = d ? d.squelch_method : 'FFT';
-  return opMode === 'coherent' && (m === 'EIGEN' || m === 'EIGEN_AUTO') ? m : 'FFT';
+  return d && d.squelch_method === 'DIGITAL' && digDecoderOn(d) ? 'DIGITAL' : 'FFT';
 }
 function squelchIsFft(d) {
   return d && d.squelch_enabled && sqEffMethod(d) === 'FFT';
@@ -6142,7 +6155,8 @@ function updateDecimatorList(info) {
     !!prev[i].is_fm_source === !!d.is_fm_source &&
     prev[i].demod_mode === d.demod_mode &&
     !!prev[i].squelch_enabled === !!d.squelch_enabled &&
-    (prev[i].squelch_method || 'FFT') === (d.squelch_method || 'FFT'));
+    (prev[i].squelch_method || 'FFT') === (d.squelch_method || 'FFT') &&
+    digDecoderOn(prev[i]) === digDecoderOn(d));
 
   decimatorInfo = info;
   decListMode = opMode;   // the cards depend on it (squelch methods offered)
@@ -6202,10 +6216,8 @@ function updateDecimatorList(info) {
     const squelchEnabled = dec.squelch_enabled || false;
     const squelchLevel = dec.squelch_level !== undefined ? dec.squelch_level : 15;
     const squelchOpen = dec.squelch_open || false;
-    const sqMethod = sqEffMethod(dec);   // FFT outside coherent mode
-    const eigenThr = dec.squelch_eigen_threshold !== undefined ? dec.squelch_eigen_threshold : 2.0;
-    const eigenSliderVal = eigenThresholdToSlider(eigenThr);
-    const isEigenMode = sqMethod !== 'FFT';
+    const sqMethod = sqEffMethod(dec);   // Digital only while the VFO's decoder is on
+    const digOn = digDecoderOn(dec);
 
     decDiv.innerHTML = `
       <div class="dec-header">
@@ -6270,27 +6282,18 @@ function updateDecimatorList(info) {
       </div>
       <div class="dec-row" style="display:${squelchEnabled ? 'flex' : 'none'}" id="dec-squelch-method-row-${dec.id}">
         <select id="dec-squelch-method-${dec.id}" onchange="setDecimatorSquelchMethod(${dec.id}, this.value)" style="flex:1"
-                ${opMode === 'coherent' ? '' : 'title="The eigenvalue squelch methods need Coherent mode (MUSIC DoA)"'}>
+                title="FFT Peak: opens on energy above the level in the VFO's band. Digital (with the VFO's digital decoder on): opens only on frames the decoder confirms, and the DoA comes from exactly their samples">
           <option value="FFT" ${sqMethod === 'FFT' ? 'selected' : ''}>FFT Peak (dB)</option>
-          ${opMode === 'coherent' ? `<option value="EIGEN" ${sqMethod === 'EIGEN' ? 'selected' : ''}>Eigenvalue (λ₁/λ̄)</option>
-          <option value="EIGEN_AUTO" ${sqMethod === 'EIGEN_AUTO' ? 'selected' : ''}>Auto Eigenvalue</option>` : ''}
+          ${digOn ? `<option value="DIGITAL" ${sqMethod === 'DIGITAL' ? 'selected' : ''}>Digital (decoded frames)</option>` : ''}
         </select>
-        <span id="dec-eigen-ratio-${dec.id}" title="current λ ratio ↑ 5s peak hold"
-              style="width:78px;text-align:right;font-size:10px;color:#888">${isEigenMode ? 'λ --' : ''}</span>
       </div>
       <div class="dec-row" style="display:${squelchEnabled && sqMethod === 'FFT' ? 'flex' : 'none'}" id="dec-squelch-controls-${dec.id}">
         <input type="range" id="dec-squelch-level-${dec.id}" min="0" max="80" value="${squelchLevel}"
                oninput="updateDecimatorSquelchLevel(${dec.id}, this.value)" style="flex:1">
         <span id="dec-squelch-val-${dec.id}" style="width:45px;text-align:right;font-size:10px">${squelchLevel} dB</span>
       </div>
-      <div class="dec-row" style="display:${squelchEnabled && sqMethod === 'EIGEN' ? 'flex' : 'none'}" id="dec-squelch-eigen-controls-${dec.id}">
-        <input type="range" id="dec-squelch-eigen-${dec.id}" min="0" max="100" step="1" value="${eigenSliderVal}"
-               oninput="updateDecimatorSquelchEigen(${dec.id}, this.value)" style="flex:1">
-        <span id="dec-squelch-eigen-val-${dec.id}" style="width:45px;text-align:right;font-size:10px">${fmtEigen(eigenThr)}</span>
-      </div>
-      <div class="dec-row" style="display:${squelchEnabled && sqMethod === 'EIGEN_AUTO' ? 'flex' : 'none'}" id="dec-squelch-auto-controls-${dec.id}">
-        <span style="font-size:10px;color:#888">Auto threshold (relearns on VFO move):</span>
-        <span id="dec-squelch-auto-val-${dec.id}" style="margin-left:auto;font-size:10px;color:#4fc3f7">--</span>
+      <div class="dec-row" style="display:${squelchEnabled && sqMethod === 'DIGITAL' ? 'flex' : 'none'}" id="dec-squelch-dig-${dec.id}">
+        <span style="font-size:10px;color:#888;line-height:1.35">Opens on frames the decoder confirms (stays open 1.5 s after the last); the DoA comes from exactly their samples</span>
       </div>
     `;
 
@@ -6494,6 +6497,8 @@ function connect() {
 
     // 🗂 Decoder Logging settings + disk space (then every 2 s)
     setTimeout(() => send('GET_DECODER_LOG'), 850);
+    // ✈ Array calibration (then every 2 s)
+    setTimeout(() => send('GET_ARRAY_CAL'), 900);
 
     // 🗺 Map open: every point at once instead of only the changing ones
     if (mapState.on) setTimeout(() => { send('GET_MAP'); send('GET_RDF'); }, 900);
@@ -6553,6 +6558,7 @@ function connect() {
           else if(msg.plugins) { digOnPlugins(msg.plugins); }
           else if(msg.codecs) { digOnCodecs(msg.codecs); }
           else if(msg.declog) { dlOnStatus(msg.declog); }
+          else if(msg.array_cal) { acalOnStatus(msg.array_cal); }
           else if(msg.declog_error !== undefined) { dlOnError(msg.declog_error); }
           else if(msg.ai_state) { aiOnState(msg.ai_state); }
           else if(msg.ai_event) { aiOnEvent(msg.ai_event); }
@@ -7662,7 +7668,7 @@ function paneDrawOverlay(p) {
     ctx.fillText('D' + d.id, x0 + 5, 14);
     p.bars.push({id: d.id, x0, x1, handles, offset_hz: d.freq_offset_hz || 0, bw, clipL, clipR});
     // FFT squelch: dashed yellow line at the level inside the bar, on the
-    // spectrum (as drawBox does; an eigenvalue threshold has no dB position)
+    // spectrum (as drawBox does; the Digital squelch has no level)
     if (squelchIsFft(d)) {
       const lvl = d.squelch_level !== undefined ? d.squelch_level : 15;
       const top = 4, bot = p.sh - 14, ymax = fftYMax || 60;
@@ -9728,6 +9734,23 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
   }
 
+  // the "AI · working" bubble of a running job; its clock is a span filled
+  // by aiFillElapsed, so the ticking time doesn't change the HTML
+  function aiWorkingHtml() {
+    const ls = [...aiLog].reverse().find(x => x.e.ev === 'status');
+    const lt = [...aiLog].reverse().find(x => x.e.ev === 'text');
+    return `<div class="ai-msg assistant"><div class="meta">AI · working <span class="ai-el" data-t="${+aiState.job.started || 0}"></span></div>` +
+           `<div class="dig-help">⏳ ${digEsc(ls ? (ls.e.msg || ls.e.state) : 'working')}…</div>` +
+           (lt ? `<div style="opacity:.85">${aiMd(lt.e.text)}</div>` : '') + '</div>';
+  }
+
+  function aiFillElapsed(el) {
+    for (const sp of el.querySelectorAll('.ai-el')) {
+      const t = aiElapsed(+sp.dataset.t);
+      if (sp.textContent !== t) sp.textContent = t;
+    }
+  }
+
   // AI tab: saved investigations + the selected one's conversation
   function infoRenderAi(force) {
     if (!infoOpen('ai')) return;
@@ -9745,23 +9768,17 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const meta = aiSessions.find(x => x.id === aiViewId);
     const live = busy && (aiViewId === AI_JOB ? newInv
       : !newInv && jobKind !== 'test' && aiState.session && aiState.session.id === aiViewId);
-    let html = '';
+    let html = '', acts = null, actsOpen = false, actsH = 220;
     if (aiViewId === AI_JOB) {
       const err = [...aiLog].reverse().find(x => x.e.ev === 'error');
       if (live) {
-        const ls = [...aiLog].reverse().find(x => x.e.ev === 'status');
-        const lt = [...aiLog].reverse().find(x => x.e.ev === 'text');
-        html += `<div class="ai-msg assistant"><div class="meta">AI · working ${digEsc(aiElapsed(aiState.job.started))}</div>` +
-                `<div class="dig-help">⏳ ${digEsc(ls ? (ls.e.msg || ls.e.state) : 'working')}…</div>` +
-                (lt ? `<div style="opacity:.85">${aiMd(lt.e.text)}</div>` : '') + '</div>';
+        html += aiWorkingHtml();
       } else if (err) {
         html += `<div class="dig-warn">${digEsc(err.e.msg)}</div>`;
       } else if (!aiLog.length) {
         html += '<div class="dig-help">No job yet.</div>';
       }
-      if (aiLog.length)
-        html += `<details class="ai-acts" open><summary>Agent activity (${aiLog.length})</summary>` +
-                `<div class="dig-log ai-log" style="max-height:320px">${aiLog.map(aiLogLine).join('')}</div></details>`;
+      if (aiLog.length) { acts = aiLog; actsOpen = true; actsH = 320; }
     } else if (!aiViewId) {
       html = '<div class="dig-help">Investigate a signal (sidebar → 🤖 AI Signal Lab) or pick one from the list.</div>';
     } else {
@@ -9774,25 +9791,56 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         else
           html += `<div class="ai-msg assistant"><div class="meta">AI · ${digEsc(t)}</div>${aiMd(m.text)}</div>`;
       }
-      if (live) {
-        const ls = [...aiLog].reverse().find(x => x.e.ev === 'status');
-        const lt = [...aiLog].reverse().find(x => x.e.ev === 'text');
-        html += `<div class="ai-msg assistant"><div class="meta">AI · working ${digEsc(aiElapsed(aiState.job.started))}</div>` +
-                `<div class="dig-help">⏳ ${digEsc(ls ? (ls.e.msg || ls.e.state) : 'working')}…</div>` +
-                (lt ? `<div style="opacity:.85">${aiMd(lt.e.text)}</div>` : '') + '</div>';
-      }
+      if (live) html += aiWorkingHtml();
       // the agent's steps: live, or saved with the session
-      const acts = live ? aiLog : ((s && s.activity) || []).map(e => ({t: e.t || 0, e}));
-      if (acts.length)
-        html += `<details class="ai-acts"${live ? ' open' : ''}><summary>Agent activity (${acts.length})</summary>` +
-                `<div class="dig-log ai-log" style="max-height:220px">${acts.map(aiLogLine).join('')}</div></details>`;
+      const a = live ? aiLog : ((s && s.activity) || []).map(e => ({t: e.t || 0, e}));
+      if (a.length) { acts = a; actsOpen = live; }
     }
-    if (force || chat.dataset.html !== html) {
-      const atBottom = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 30;
-      chat.dataset.html = html;
-      chat.innerHTML = html;
-      if (atBottom || force) chat.scrollTop = chat.scrollHeight;
+    // The messages and the agent's activity are separate boxes, and the
+    // activity only APPENDS new lines: its scroll position and open / closed
+    // state survive the updates. (Everything was rebuilt each second for the
+    // "working N s" clock, which threw a reader of the activity back to the
+    // top.) The activity follows the newest line while scrolled to the end.
+    let msgs = chat.querySelector(':scope > .ai-msgs'), det = chat.querySelector(':scope > details.ai-acts');
+    if (!msgs || !det) {
+      chat.innerHTML = '<div class="ai-msgs"></div><details class="ai-acts"><summary></summary><div class="dig-log ai-log"></div></details>';
+      msgs = chat.querySelector(':scope > .ai-msgs');
+      det = chat.querySelector(':scope > details.ai-acts');
     }
+    const atBottom = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 30;
+    const newView = chat.dataset.view !== String(aiViewId);
+    const wentLive = live && chat.dataset.live !== '1';
+    chat.dataset.view = String(aiViewId);
+    chat.dataset.live = live ? '1' : '';
+    if (force || newView || msgs.dataset.html !== html) { msgs.dataset.html = html; msgs.innerHTML = html; }
+    aiFillElapsed(msgs);
+    det.style.display = acts ? '' : 'none';
+    if (acts) {
+      // first lines of this view (a saved session's arrive after the view
+      // switched to it): its default open state, start at the newest line
+      const first = det.dataset.view !== String(aiViewId);
+      det.dataset.view = String(aiViewId);
+      if (first || wentLive) det.open = actsOpen;
+      det.querySelector('summary').textContent = `Agent activity (${acts.length})`;
+      const box = det.querySelector('.ai-log');
+      box.style.maxHeight = actsH + 'px';
+      const key = x => (x.seq ?? '') + ':' + x.t + ':' + x.e.ev;
+      const n = +box.dataset.n || 0;
+      const follow = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+      const top = box.scrollTop;
+      if (!force && !first && n && n <= acts.length && box.dataset.first === key(acts[0])) {
+        if (acts.length > n) box.insertAdjacentHTML('beforeend', acts.slice(n).map(aiLogLine).join(''));
+      } else {
+        box.innerHTML = acts.map(aiLogLine).join('');
+      }
+      box.dataset.n = acts.length;
+      box.dataset.first = key(acts[0]);
+      box.scrollTop = follow || first || force ? box.scrollHeight : top;
+    } else {
+      det.dataset.view = '';
+      det.querySelector('.ai-log').dataset.n = '';
+    }
+    if (atBottom || force) chat.scrollTop = chat.scrollHeight;
     const can = aiState && aiState.enabled && !aiState.busy && !!aiViewId && aiViewId !== AI_JOB;
     $id('info-ai-ask').disabled = !can;
     $id('info-ai-ask').placeholder = !aiState || !aiState.enabled ? 'The AI Signal Lab is not enabled on this receiver'
@@ -9916,6 +9964,161 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       md.value = wm.mode;
       updateWebMapperModeFields(wm.mode);
     }
+  }
+
+  // --- ✈ Array calibration (array_cal.cpp, {"array_cal":{...}} every 2 s) ---
+  let acal = null;
+  const ACAL_STATE = {
+    not_coherent: 'Needs the coherent mode',
+    doa_off: 'DoA is off (MUSIC DoA box)',
+    no_station: 'No station location (Station Information)',
+    no_heading: 'No fixed heading: a static location with its heading, or a GPS with a compass',
+    moving: 'The array is moving - calibrate it standing still',
+    calibrating: 'Paused while the noise-source calibration runs',
+    ula: 'A linear array (ULA) can\'t be calibrated this way - circular / custom arrays only',
+  };
+  const ACAL_VF = 0.66;   // the delays shown as coax length with this velocity factor
+  function acalCollect() { send('ARRAY_CAL_COLLECT:' + (acal && acal.collecting ? 0 : 1)); }
+  function acalReset() { if (!acal || !acal.samples || confirm('Forget the aircraft packets collected so far?')) send('ARRAY_CAL_RESET'); }
+  function acalApply() { send('ARRAY_CAL_APPLY'); }
+  function acalUse(on) { send('ARRAY_CAL_USE:' + (on ? 1 : 0)); }
+  function acalRot(on) { send('ARRAY_CAL_ROTATION:' + (on ? 1 : 0)); }
+  function acalRemove() {
+    if (confirm('Remove the array calibration? MUSIC and beamforming go back to the nominal array.')) send('ARRAY_CAL_REMOVE');
+  }
+  function acalSigned(v, d) { return (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(d); }
+  // bearing error median / 90 % (/ share more than 10° off)
+  function acalStat(s) {
+    if (!s) return '—';
+    return `${s.med.toFixed(1)}° / ${s.p90.toFixed(1)}°` + (s.wrong >= 0.005 ? ` <span class="w">(${(100 * s.wrong).toFixed(0)} % > 10°)</span>` : '');
+  }
+  function acalCheck(f) {
+    if (!f.cv || !f.before || !f.after) return '<span style="color:#8aa8c7">Check: needs more aircraft (half are kept back to test the result)</span>';
+    const better = f.after.med < f.before.med;
+    return `Bearing error on aircraft <b>not</b> used for the fit (below 20° elevation, median / 90 %):<br>` +
+      `&nbsp;&nbsp;uncalibrated ${acalStat(f.before)} → <b class="${better ? 'g' : 'w'}">calibrated ${acalStat(f.after)}</b> <span style="color:#6f87a6">(${f.after.n} packets)</span>`;
+  }
+  function acalTable(f) {
+    let h = '<table class="acal-tb"><tr><th></th><th title="Extra delay against ANT0: a longer cable, or an antenna\'s own phase">Delay</th>' +
+      `<th title="The delay as coax length (velocity factor ${ACAL_VF})">≈ coax</th><th title="Position error in mm: x towards ANT0's direction, y 90° anticlockwise of it">x, y mm</th>` +
+      '<th title="Phase the model can\'t explain (rms): antennas that differ, multipath. Large values = the corrections help less">Unexpl.</th>' +
+      '<th title="Signal level against the mean (dB) - shown only, not corrected">dB</th></tr>';
+    for (let i = 0; i < f.n; i++) {
+      const t = f.tau_ps[i], mm = t * 1e-12 * 299792458 * ACAL_VF * 1000;
+      h += `<tr><td>ANT${i}</td><td class="n">${i ? acalSigned(t, 0) + ' ps' : '—'}</td><td class="n">${i ? acalSigned(mm, 0) + ' mm' : ''}</td>` +
+        `<td class="n">${acalSigned(f.dx_mm[i], 1)}, ${acalSigned(f.dy_mm[i], 1)}</td>` +
+        `<td class="n">${f.resid[i] >= 15 ? '<span class="w">' + f.resid[i].toFixed(0) + '°</span>' : f.resid[i].toFixed(0) + '°'}</td>` +
+        `<td class="n">${acalSigned(f.gain_db[i], 1)}</td></tr>`;
+    }
+    return h + '</table>';
+  }
+  function acalSummary(f) {
+    const used = f.aircraft_used || f.aircraft;
+    return `${f.samples} packets from ${used} aircraft${f.left_out_n ? ` (+${f.left_out_n} left out)` : ''} (${f.sectors} of 12 directions, ${f.el[0].toFixed(0)}…${f.el[1].toFixed(0)}° elevation) at ${f.f_mhz.toFixed(1)} MHz · ` +
+      `array turned <b>${acalSigned(f.rot, 1)}°</b>`;
+  }
+  // aircraft left out of the fit: their bearing disagreed with their reported position
+  function acalLeftOut(f) {
+    if (!f.left_out || !f.left_out.length) return '';
+    const l = f.left_out.slice(0, 8).map(a => `${escapeHtml(a.id)} ${acalSigned(a.err, 0)}°`).join(', ');
+    return `<div style="color:#8aa8c7">Left out: ${f.left_out_n} aircraft whose bearing disagreed with their reported position by more than 25° - ` +
+      `a blocked or reflected signal (aircraft on the ground, low behind buildings or terrain): ${l}${f.left_out_n > 8 ? ', …' : ''}</div>`;
+  }
+  // where the collected aircraft were: 36 compass sectors, north up
+  function acalDrawCoverage(d) {
+    const cv = $id('acal-cov');
+    if (!cv) return;
+    const c = cv.getContext('2d'), W = cv.width, R = W / 2 - 14, r0 = R * 0.35, cx = W / 2, cy = W / 2;
+    c.clearRect(0, 0, W, W);
+    const cap = d.cap || 400;
+    (d.sectors || []).forEach((n, i) => {
+      const a0 = (i * 10 - 90) * Math.PI / 180, a1 = ((i + 1) * 10 - 90) * Math.PI / 180;
+      c.beginPath(); c.arc(cx, cy, R, a0, a1); c.arc(cx, cy, r0, a1, a0, true); c.closePath();
+      c.fillStyle = n ? `rgba(79,195,247,${0.15 + 0.85 * Math.min(1, n / cap)})` : 'rgba(255,255,255,0.04)';
+      c.fill();
+      c.strokeStyle = '#1a1a2e'; c.lineWidth = 1; c.stroke();
+    });
+    c.fillStyle = '#8fb0d8'; c.font = '20px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText('N', cx, 10); c.fillText('S', cx, W - 9); c.fillText('E', W - 8, cy); c.fillText('W', 9, cy);
+    c.fillStyle = '#ffeb3b'; c.beginPath(); c.arc(cx, cy, 4, 0, 2 * Math.PI); c.fill();
+  }
+  function acalOnStatus(d) {
+    acal = d;
+    const btn = $id('acal-collect');
+    btn.textContent = d.collecting ? '⏸ Stop collecting' : (d.samples ? '▶ Collect more' : '▶ Collect aircraft');
+    btn.classList.toggle('on', !!d.collecting);
+    const A = d.applied;
+    const inUse = A && A.enabled && A.match !== false;
+    const badge = $id('acal-badge');
+    badge.textContent = d.collecting ? 'collecting' : inUse ? 'in use' : '';
+    badge.className = 'acal-badge' + (d.collecting ? ' col' : inUse ? ' on' : '');
+    // the calibration in use
+    let u;
+    if (!A) {
+      u = 'No calibration in use - MUSIC and beamforming use the nominal array.';
+    } else {
+      const when = A.t ? new Date(A.t).toLocaleString() : '';
+      u = `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" ${A.enabled ? 'checked' : ''} onchange="acalUse(this.checked)"> <b>Use the calibration</b></label>` +
+        ` <span style="color:#6f87a6">from ${escapeHtml(when)}</span><br>` +
+        (A.enabled && A.match === false ? '<span class="w">⚠ Not used now: the array settings (elements, radius, positions) differ from the ones it was made for</span><br>' : '') +
+        `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer" title="The array turned ${acalSigned(A.rot, 1)}°: it includes any error of the station heading at calibration time - untick it if the heading source has changed since (or fix the Array Offset instead)"><input type="checkbox" ${A.rotation ? 'checked' : ''} onchange="acalRot(this.checked)"> Include the rotation (${acalSigned(A.rot, 1)}°)</label><br>` +
+        acalCheck(A) + '<br>' + acalSummary(A) +
+        `<div style="text-align:right;margin-top:2px"><button class="btn sm" onclick="acalRemove()">Remove</button></div>`;
+    }
+    const ub = $id('acal-use');
+    if (ub.dataset.html !== u) { ub.dataset.html = u; ub.innerHTML = u; }
+    // collecting
+    let st = '';
+    if (d.note) st += `<span class="w">${escapeHtml(d.note)}</span><br>`;
+    if (d.array && !d.array.ok) st += `<span class="w">${ACAL_STATE.ula}</span><br>`;
+    else if (d.collecting && d.state && d.state !== 'ok' && ACAL_STATE[d.state]) st += `<span class="w">⏸ ${escapeHtml(ACAL_STATE[d.state])}</span><br>`;
+    if (d.samples) {
+      st += `${d.collecting ? 'Collected' : 'Paused at'} <b>${d.samples}</b> packets from <b>${d.aircraft}</b> aircraft` +
+        (d.last_s !== null && d.collecting ? ` · last ${d.last_s < 60 ? d.last_s.toFixed(0) + ' s' : Math.round(d.last_s / 60) + ' min'} ago` : '');
+    } else if (d.collecting && (!d.state || d.state === 'ok')) {
+      st += 'Waiting for aircraft positions - needs a VFO with the ADS-B decoder at 1090 MHz and DoA on';
+    } else if (!d.collecting) {
+      st += '<span style="color:#6f87a6">Collect while aircraft fly around the station; the result is fitted and checked as packets come in.</span>';
+    }
+    const rj = d.rejected || {}, rjs = [];
+    if (rj.near) rjs.push(`${rj.near} nearer than 5 km`);
+    if (rj.low) rjs.push(`${rj.low} below 2° elevation (ground / horizon)`);
+    if (rj.high) rjs.push(`${rj.high} above 60° elevation`);
+    if (rj.weak) rjs.push(`${rj.weak} weak`);
+    if (rj.far) rjs.push(`${rj.far} beyond 450 km`);
+    if (rjs.length && (d.collecting || d.samples)) st += `<br><span style="color:#6f87a6">Skipped: ${rjs.join(', ')}</span>`;
+    const sb = $id('acal-state');
+    if (sb.dataset.html !== st) { sb.dataset.html = st; sb.innerHTML = st; }
+    // coverage
+    const show = d.samples > 0;
+    $id('acal-cov-row').style.display = show ? '' : 'none';
+    if (show) {
+      acalDrawCoverage(d);
+      const per = new Array(12).fill(0);
+      (d.sectors || []).forEach((n, i) => { per[Math.floor(i / 3)] += n; });
+      const covered = per.filter(n => n >= 10).length;
+      $id('acal-cov-txt').innerHTML = `Directions covered: <b>${covered}</b> of 12` +
+        (covered < 6 ? '<br><span class="w">More directions make the corrections hold all around</span>' : '');
+    }
+    // the latest fit
+    let fh = '';
+    const F = d.fit;
+    if (d.fitting) fh += '<span style="color:#6f87a6">Fitting…</span><br>';
+    if (F && F.ok) {
+      // (its age goes into its own span below: the HTML - with the Apply button - only changes with a new fit)
+      fh += `<div style="color:#7cb3f0;font-weight:bold;margin-top:6px">Latest result <span id="acal-fit-age" style="font-weight:normal;color:#6f87a6"></span></div>` +
+        acalCheck(F) + '<br>' + acalSummary(F) + acalLeftOut(F) + acalTable(F) +
+        (F.warn ? `<div class="w">⚠ ${escapeHtml(F.warn)}</div>` : '') +
+        `<div class="ctrl-row" style="margin:4px 0"><button class="btn" style="flex:1" onclick="acalApply()" title="Use this result for MUSIC and beamforming (saved; replaces the one in use)">✓ Apply this calibration</button></div>`;
+    } else if (F && F.error && d.samples >= d.min_samples) {
+      fh += `<span class="w">${escapeHtml(F.error)}</span>` + acalLeftOut(F);
+    } else if (d.samples) {
+      fh += `<span style="color:#6f87a6">The first result comes at ${d.min_samples} packets from 3 aircraft.</span>`;
+    }
+    const fb = $id('acal-fit');
+    if (fb.dataset.html !== fh) { fb.dataset.html = fh; fb.innerHTML = fh; }
+    const ag = $id('acal-fit-age');
+    if (ag && F) ag.textContent = `(${F.age_s < 60 ? F.age_s + ' s' : Math.round(F.age_s / 60) + ' min'} ago)`;
   }
 
   // --- 🗂 Decoder Logging (decoder_log.cpp, {"declog":{...}} every 2 s) ---
@@ -10869,14 +11072,24 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
     c.font = 'bold 11px sans-serif';
     c.lineJoin = 'round';
+    const trk = rdfTrackedPt();   // the aircraft / radio whose own DoA lobe is shown
     for (const [k, p] of vis) {
       const col = getDecimatorColor(p.v);
       const stale = (now - p.rx) / 1000 > 30;
       c.save();
       c.translate(p.sx, p.sy);
+      // rings (a dark edge so they show on any map): the DoA-tracked one in
+      // its lobe's colour, the one whose popup is open (or picked in a
+      // decoder table) white
+      if (trk && p === trk.p) {
+        c.beginPath(); c.arc(0, 0, 19, 0, 2 * Math.PI);
+        c.strokeStyle = 'rgba(0,0,0,0.75)'; c.lineWidth = 5; c.stroke();
+        c.strokeStyle = trk.col; c.lineWidth = 2.5; c.stroke();
+      }
       if (k === mapSel) {
-        c.strokeStyle = '#fff'; c.lineWidth = 2;
-        c.beginPath(); c.arc(0, 0, 14, 0, 2 * Math.PI); c.stroke();
+        c.beginPath(); c.arc(0, 0, 14, 0, 2 * Math.PI);
+        c.strokeStyle = 'rgba(0,0,0,0.75)'; c.lineWidth = 4; c.stroke();
+        c.strokeStyle = '#fff'; c.lineWidth = 2; c.stroke();
       }
       mapMarker(c, p, col, stale);
       const lab = p.l || p.i, alt = mapAltText(p);
@@ -10941,7 +11154,13 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       rows += `<tr><td>From station</td><td>${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${b.toFixed(0)}°</td></tr>`;
     }
     rows += `<tr><td>Updated</td><td>${age < 2 ? 'now' : age + ' s ago'}</td></tr>`;
-    return `<div class="h"><span style="color:${getDecimatorColor(p.v)}">●</span>${digEsc(p.l || p.i)}<span class="x" onclick="mapSel=null;mapDraw()">✕</span></div>` +
+    // an aircraft / ship / radio with a DoA of its own (📡 DF panel): track it.
+    // Acts on the press - the popup is rebuilt every second ("Updated"), and a
+    // click whose press and release hit different elements is lost
+    const tk = rdfPopupTalker(p);
+    const trk = tk ? `<span class="trk${tk.on ? ' on' : ''}" data-v="${p.v}" data-t="${digEsc(p.i)}" ` +
+      `onpointerdown="event.stopPropagation(); rdfTrackBtn(this)" title="${tk.on ? 'Its own DoA lobe is shown (📡 DF panel) - press to go back to the whole signal' : 'Show its own DoA lobe on the map (📡 DF panel: this ' + rdfKind(tk.t) + ' alone)'}">📡 ${tk.on ? 'DoA ✓' : 'DoA'}</span>` : '';
+    return `<div class="h"><span style="color:${getDecimatorColor(p.v)}">●</span>${digEsc(p.l || p.i)}${trk}<span class="x" onclick="mapSel=null;mapDraw()">✕</span></div>` +
            `<div class="s">D${p.v} · ${digEsc(digName(p.p))}</div><table>${rows}</table>`;
   }
 
@@ -10962,6 +11181,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   let rdfStatus = null;
   const rdfGrids = {};   // "vfo|tid" ("vfo|" = the VFO) -> {m, coarse, fine (canvases)}
   const rdfLobeCache = new Map();
+  let rdfTlPress = null;   // the talker row pressed (rdfTlDown)
   function rdfGk(vfo, tid) { return vfo + '|' + (tid || ''); }
   function rdfB64(s) {
     const b = atob(s), u = new Uint8Array(b.length);
@@ -11030,7 +11250,33 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (sel === '') return [];
     return rdfTalkers().filter(t => sel === '*' || rdfGk(t.vfo, t.tid) === sel);
   }
-  function rdfTalkerName(t) { return t.tid + (t.label ? ' · ' + t.label : ''); }
+  // an aircraft's label is "CALLSIGN · 35000 ft" (either part may be
+  // missing): {cs: the callsign or '', rest: the rest}
+  function rdfAirParts(t) {
+    const parts = t.label ? t.label.split(' · ') : [];
+    const cs = parts.length && !/^-?\d+ ft$/.test(parts[0]) ? parts.shift() : '';
+    return {cs, rest: parts.join(' · ')};
+  }
+  // the name a talker is shown by: an aircraft's callsign once known, else its ID
+  function rdfShortName(t) { return (rdfKind(t) === 'aircraft' && rdfAirParts(t).cs) || t.tid; }
+  function rdfTalkerName(t) {
+    if (rdfKind(t) === 'aircraft') { const cs = rdfAirParts(t).cs; return cs ? `${cs} (${t.tid})` : t.tid; }
+    return t.tid + (t.label ? ' · ' + t.label : '');
+  }
+  // the list's order: radios newest first (who talks now on top); aircraft /
+  // ships (many at once, a packet every moment - newest first reshuffled the
+  // list all the time) nearest first, those without a reported position by
+  // name. Returns [talker, rdfPosCheck] pairs
+  function rdfTalkersListed() {
+    const rows = rdfTalkers().map(t => [t, t.pk ? rdfPosCheck(t) : null]);
+    return rows.sort(([a, ca], [b, cb]) => {
+      if (!!a.pk !== !!b.pk) return a.pk ? 1 : -1;
+      if (!a.pk) return (a.age ?? 1e9) - (b.age ?? 1e9);
+      if (!ca !== !cb) return ca ? -1 : 1;
+      if (ca && ca.km !== cb.km) return ca.km - cb.km;
+      return rdfShortName(a).localeCompare(rdfShortName(b)) || a.tid.localeCompare(b.tid) || a.vfo - b.vfo;
+    });
+  }
   // a talker's colour: its VFO's when it is the one shown, else one of its own
   function rdfTalkerColor(t) {
     if (rdfTidSel() !== '*') return getDecimatorColor(t.vfo);
@@ -11053,7 +11299,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function rdfShownMaps() {
     const sel = rdfTidSel();
     if (sel === '') return rdfSelIds().map(id => ({key: rdfGk(id, ''), col: getDecimatorColor(id), name: 'D' + id, lines: true}));
-    return rdfSelTalkers().map(t => ({key: rdfGk(t.vfo, t.tid), col: rdfTalkerColor(t), name: t.tid, lines: sel !== '*'}));
+    return rdfSelTalkers().map(t => ({key: rdfGk(t.vfo, t.tid), col: rdfTalkerColor(t), name: rdfShortName(t), lines: sel !== '*'}));
   }
   function rdfMpp(lat) { return 40075016.686 * Math.cos(lat * Math.PI / 180) / mapWorld(); }
   function rdfLobePath(c, lobe, sx, sy, R) {
@@ -11127,9 +11373,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       rdfMapLabel(c, `${mp.name} TX ±${rdfDist(e.r95)}${e.edge ? ' (edge!)' : ''}`, x + 11, y - 9);
       c.restore();
     }
-    // lobes around the station: the VFOs' live ones, or the talkers' latest transmissions
+    // around the station - the VFOs' live DoA, or the talkers' latest
+    // transmissions: the lobes ("Lobe") and the bearing lines ("Lines": each
+    // peak to the edge of the map + a talker's earlier bearings, like the
+    // bearings taken while driving above). Lines used to be drawn with the
+    // lobes, so the Lines button seemed to do nothing at a fixed station
     const st = rdfStatus.station;
-    if (mapState.rdfLobe && st) {
+    const showLobe = !!mapState.rdfLobe, showLines = !!mapState.rdfLines;
+    if ((showLobe || showLines) && st) {
       const [sx, sy] = mapLatLonToScreen(st.lat, st.lon);
       const R = 0.3 * Math.min(mapW, mapH), L = 2 * Math.max(mapW, mapH);
       const lobes = [];
@@ -11137,12 +11388,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         const ids = rdfSelIds();
         for (const v of rdfVfos()) if (ids.includes(v.id) && v.lobe) lobes.push({v, col: getDecimatorColor(v.id), dim: false, label: ''});
       } else {
-        for (const t of rdfSelTalkers()) if (t.lobe) lobes.push({v: t, col: rdfTalkerColor(t), dim: !t.active, label: t.tid, t});
+        for (const t of rdfSelTalkers()) if (t.lobe) lobes.push({v: t, col: rdfTalkerColor(t), dim: !t.active, label: rdfShortName(t), t});
       }
       for (const {v, col, dim, label, t} of lobes) {
         c.save();
         // a talker's earlier transmissions: faint bearing lines, older fainter
-        if (t && rdfTidSel() !== '*' && t.hist) {
+        if (showLines && t && rdfTidSel() !== '*' && t.hist) {
           c.strokeStyle = col; c.lineWidth = 1.2;
           t.hist.forEach(([, pk], i) => {
             if (pk === null) return;
@@ -11151,16 +11402,21 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
             c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx + L * Math.sin(a), sy - L * Math.cos(a)); c.stroke();
           });
         }
-        rdfLobePath(c, v.lobe, sx, sy, R);
-        c.globalAlpha = dim ? 0.08 : 0.18; c.fillStyle = col; c.fill();
-        c.globalAlpha = dim ? 0.55 : 1; c.strokeStyle = col; c.lineWidth = 1.8;
-        if (v.held || dim) c.setLineDash([4, 3]);
-        c.stroke();
+        if (showLobe) {
+          rdfLobePath(c, v.lobe, sx, sy, R);
+          c.globalAlpha = dim ? 0.08 : 0.18; c.fillStyle = col; c.fill();
+          c.globalAlpha = dim ? 0.55 : 1; c.strokeStyle = col; c.lineWidth = 1.8;
+          if (v.held || dim) c.setLineDash([4, 3]);
+          c.stroke();
+        }
         // the bearing (peak) to the edge of the map
         if (v.peak !== null) {
           const a = v.peak * Math.PI / 180;
-          c.setLineDash([8, 5]); c.lineWidth = 2;
-          c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx + L * Math.sin(a), sy - L * Math.cos(a)); c.stroke();
+          if (showLines) {
+            c.globalAlpha = dim ? 0.55 : 1; c.strokeStyle = col;
+            c.setLineDash([8, 5]); c.lineWidth = 2;
+            c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx + L * Math.sin(a), sy - L * Math.cos(a)); c.stroke();
+          }
           if (label) {
             c.setLineDash([]); c.globalAlpha = 1;
             rdfMapLabel(c, label + (t && t.active ? ' ●' : ''), sx + 1.08 * R * Math.sin(a) + 4, sy - 1.08 * R * Math.cos(a));
@@ -11233,7 +11489,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     return {n: e.length, med: q(0.5), lo: q(0.25), hi: q(0.75)};
   }
   // what a talker is: from the decoder that names it (packet talkers)
-  function rdfKind(t) { return !t.pk ? 'radio' : t.pl === 'ais' ? 'ship' : t.pl === 'adsb' ? 'aircraft' : 'talker'; }
+  function rdfKind(t) {
+    return !t.pk ? 'radio' : t.pl === 'ais' ? 'ship' : t.pl === 'adsb' ? 'aircraft' : t.pl === 'dme' ? 'beacon' : 'talker';
+  }
   // the talker's map point (its decoder's "Plot on map"), or null
   function rdfMapPt(t) {
     const pre = t.vfo + '|', suf = '|' + t.tid;
@@ -11245,7 +11503,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (p && p.k === 'station') return '📡 ';
     if (p && p.k === 'point') return '⚓ ';
     const k = rdfKind(t);
-    return k === 'ship' ? '⛴ ' : k === 'aircraft' ? '✈ ' : '';
+    return k === 'ship' ? '⛴ ' : k === 'aircraft' ? '✈ ' : k === 'beacon' ? '📡 ' : '';
   }
   function rdfKinds(ts) {   // one word for a list of talkers: the common kind, else 'talker'
     const ks = new Set(ts.map(rdfKind));
@@ -11266,7 +11524,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (sel.dataset.html !== opts) { sel.dataset.html = opts; sel.innerHTML = opts; }
     if (document.activeElement !== sel) sel.value = vs.some(v => String(v.id) === String(mapState.rdfVfo)) ? String(mapState.rdfVfo) : 'all';
     // radios (talkers) of the selected VFO(s)
-    const ts = rdfTalkers(), tsel = rdfTidSel(), multi = rdfSelIds().length > 1;
+    const listed = rdfTalkersListed(), ts = listed.map(([t]) => t), tsel = rdfTidSel(), multi = rdfSelIds().length > 1;
     const tidSel = $id('map-df-tid');
     tidSel.style.display = ts.length ? '' : 'none';
     const anyPk = ts.some(t => t.pk), kinds = rdfKinds(ts);
@@ -11289,14 +11547,19 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const t = rdfSelTalkers()[0];
       if (t && t.pk) {
         // an aircraft / ship: its packets, averaged over the last seconds
-        let line = `<b style="color:${getDecimatorColor(t.vfo)}">${rdfIcon(t)}${digEsc(t.tid)}</b>${t.label ? ' ' + digEsc(t.label) : ''} · ` +
-          (t.active ? '<span class="g">heard now</span>' : `heard ${rdfAge(t.age)} ago`) + ` · ${t.tx} packet${t.tx === 1 ? '' : 's'}`;
-        if (t.doa !== null) line += ` · bearing ${rdfBearingTxt(t)} (~${t.tx_frames} packet${t.tx_frames === 1 ? '' : 's'} averaged, ${Math.round(100 * t.conf)} %)`;
-        else line += ' · <span class="w">no DoA from its packets yet (needs DoA on)</span>';
+        // aircraft: callsign first, then the ICAO address and the altitude
+        const ap = rdfKind(t) === 'aircraft' ? rdfAirParts(t) : null;
+        const sub = ap ? [ap.cs ? t.tid : '', ap.rest].filter(Boolean).join(' · ') : t.label || '';
+        // DME beacons: pulse pairs (no reported position)
+        const bcn = rdfKind(t) === 'beacon', unit = bcn ? 'pulse pair' : 'packet';
+        let line = `<b style="color:${getDecimatorColor(t.vfo)}">${rdfIcon(t)}${digEsc(rdfShortName(t))}</b>${sub ? ' ' + digEsc(sub) : ''} · ` +
+          (t.active ? '<span class="g">heard now</span>' : `heard ${rdfAge(t.age)} ago`) + ` · ${t.tx} ${unit}${t.tx === 1 ? '' : 's'}`;
+        if (t.doa !== null) line += ` · bearing ${rdfBearingTxt(t)} (~${t.tx_frames} ${unit}${t.tx_frames === 1 ? '' : 's'} averaged, ${Math.round(100 * t.conf)} %)`;
+        else line += ` · <span class="w">no DoA from its ${unit}s yet (needs DoA on)</span>`;
         const c = rdfPosCheck(t);
         if (c) line += `<br>Reported position: ${c.brg.toFixed(1)}°, ${c.km.toFixed(1)} km` +
           (c.err !== null ? ` · DF error <b>${rdfSigned(c.err)}</b>` : '');
-        else line += '<br><span style="color:#8296b4">Tick "🗺 Plot on map" in its decoder tab to compare with its reported position</span>';
+        else if (!bcn) line += '<br><span style="color:#8296b4">Tick "🗺 Plot on map" in its decoder tab to compare with its reported position</span>';
         h += (h ? '<br>' : '') + line;
       } else if (t) {
         let line = `<b style="color:${getDecimatorColor(t.vfo)}">${digEsc(t.tid)}</b>${t.label ? ' ' + digEsc(t.label) : ''} · ` +
@@ -11318,15 +11581,23 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     // the radio list: click = show that radio on the map (again = whole signal)
     let tl = '';
     if (ts.length) {
-      const head = {radio: ['Radio', 'Talkgroup', 'Tx'], aircraft: ['Aircraft', 'Callsign', 'Pkts'], ship: ['MMSI', 'Name', 'Pkts'], talker: ['ID', 'Info', 'Tx']}[kinds];
-      tl = '<table><tr><th></th>' + (multi ? '<th>VFO</th>' : '') + `<th>${head[0]}</th><th>${head[1]}</th><th>Bearing</th>` +
-        (anyPk ? '<th title="DF bearing minus the bearing to its reported position">Δ pos</th>' : '') + `<th>Heard</th><th>${head[2]}</th></tr>`;
-      for (const t of ts) {
-        const k = rdfGk(t.vfo, t.tid), c = anyPk ? rdfPosCheck(t) : null;
-        tl += `<tr class="t${k === tsel ? ' sel' : ''}" data-k="${digEsc(k)}" title="Show this ${rdfKind(t)}'s DoA on the map">` +
+      const air = kinds === 'aircraft';
+      const head = {radio: ['Radio', 'Talkgroup', 'Tx'], aircraft: ['Callsign', 'ICAO', 'Pkts'], ship: ['MMSI', 'Name', 'Pkts'],
+                    beacon: ['Channel', 'Ident · MHz', 'Pairs'], talker: ['ID', 'Info', 'Tx']}[kinds];
+      // position columns for talkers that report positions (not DME beacons)
+      const posCols = ts.some(t => t.pk && rdfKind(t) !== 'beacon');
+      tl = '<table><tr><th></th>' + (multi ? '<th>VFO</th>' : '') + `<th>${head[0]}</th><th>${head[1]}</th>` +
+        (posCols ? '<th title="Distance from the station to its reported position (the list is sorted by it)">Dist</th>' : '') + '<th>Bearing</th>' +
+        (posCols ? '<th title="DF bearing minus the bearing to its reported position">Δ pos</th>' : '') + `<th>Heard</th><th>${head[2]}</th></tr>`;
+      for (const [t, c] of listed) {
+        const k = rdfGk(t.vfo, t.tid), ap = air ? rdfAirParts(t) : null;
+        const tip = air ? `${rdfTalkerName(t)}${ap.rest ? ' · ' + ap.rest : ''} - show its DoA on the map` : `Show this ${rdfKind(t)}'s DoA on the map`;
+        tl += `<tr class="t${k === tsel ? ' sel' : ''}" data-k="${digEsc(k)}" title="${digEsc(tip)}">` +
           `<td class="air">${t.active ? '●' : ''}</td>` + (multi ? `<td>D${t.vfo}</td>` : '') +
-          `<td>${rdfIcon(t)}${digEsc(t.tid)}</td><td class="dim">${digEsc(t.label || '')}</td>` +
-          `<td class="n">${rdfBearingTxt(t)}</td>` + (anyPk ? `<td class="n">${c && c.err !== null ? rdfSigned(c.err) : ''}</td>` : '') +
+          (air ? `<td><b>${rdfIcon(t)}${digEsc(ap.cs)}</b></td><td class="dim">${digEsc(t.tid)}</td>`
+               : `<td>${rdfIcon(t)}${digEsc(t.tid)}</td><td class="dim">${digEsc(t.label || '')}</td>`) +
+          (posCols ? `<td class="n">${c ? (c.km < 10 ? c.km.toFixed(1) : Math.round(c.km)) + ' km' : ''}</td>` : '') +
+          `<td class="n">${rdfBearingTxt(t)}</td>` + (posCols ? `<td class="n">${c && c.err !== null ? rdfSigned(c.err) : ''}</td>` : '') +
           `<td class="n dim">${t.active ? 'now' : rdfAge(t.age)}</td><td class="n">${t.tx}</td></tr>`;
       }
       tl += '</table>';
@@ -11334,10 +11605,51 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const tlb = $id('map-df-tl');
     if (tlb.dataset.html !== tl) { tlb.dataset.html = tl; tlb.innerHTML = tl; }
   }
-  function rdfPickTalker(ev) {
-    const tr = ev.target.closest('tr.t');
-    if (!tr) return;
-    mapSet('rdfTid', tr.dataset.k === rdfTidSel() ? '' : tr.dataset.k);
+  // A row is picked by press + release. Not 'click': the list is rebuilt a
+  // few times a second (packets, ages), and a click whose press and release
+  // hit different (rebuilt) row elements never reached the row. The row is
+  // remembered at the press; a release within 8 px picks it (a touch
+  // scroll moves further or cancels the pointer)
+  // the talker whose own lobe is shown (one picked in the 📡 DF panel) and its
+  // map point (its decoder's Plot on map): {p, col} or null - ringed on the map
+  function rdfTrackedPt() {
+    if (opMode !== 'coherent' || !rdfStatus) return null;
+    const sel = rdfTidSel();
+    if (sel === '' || sel === '*') return null;
+    const t = rdfSelTalkers()[0];
+    const p = t && rdfMapPt(t);
+    return p ? {p, col: rdfTalkerColor(t)} : null;
+  }
+  // a map point that is a talker with a DoA of its own: {t, on: shown now} or null
+  function rdfPopupTalker(p) {
+    if (opMode !== 'coherent' || !rdfStatus) return null;
+    const t = (rdfStatus.talkers || []).find(x => x.vfo === p.v && x.tid === p.i);
+    return t ? {t, on: rdfTidSel() === rdfGk(t.vfo, t.tid)} : null;
+  }
+  // the popup's 📡 DoA button: show that talker's lobe alone (again = the whole signal)
+  function rdfTrackBtn(el) {
+    const vfo = +el.dataset.v, k = rdfGk(vfo, el.dataset.t);
+    if (rdfTidSel() === k) {
+      mapSet('rdfTid', '');
+    } else {
+      // the DF panel must show it: its VFO (or All), open, lobes on
+      const sv = String(mapState.rdfVfo ?? 'all');
+      if (sv !== 'all' && sv !== String(vfo)) mapState.rdfVfo = String(vfo);
+      mapState.rdfOpen = true;
+      mapState.rdfLobe = true;
+      mapSet('rdfTid', k);
+    }
+    rdfRenderPanel();
+  }
+  function rdfTlDown(ev) {
+    const tr = ev.button === 0 && ev.target.closest('tr.t');
+    rdfTlPress = tr ? {k: tr.dataset.k, x: ev.clientX, y: ev.clientY} : null;
+  }
+  function rdfTlUp(ev) {
+    const p = rdfTlPress;
+    rdfTlPress = null;
+    if (!p || Math.hypot(ev.clientX - p.x, ev.clientY - p.y) > 8) return;
+    mapSet('rdfTid', p.k === rdfTidSel() ? '' : p.k);
     rdfRenderPanel();
   }
   function rdfSetRange(v) {
@@ -11349,7 +11661,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const tsel = rdfTidSel();
     if (tsel !== '' && tsel !== '*') {
       const t = rdfSelTalkers()[0];
-      if (!t || !confirm(`Forget the bearings collected for ${rdfKind(t)} ${t.tid}?`)) return;
+      if (!t || !confirm(`Forget the bearings collected for ${rdfKind(t)} ${rdfTalkerName(t)}?`)) return;
       send('RDF_RESET:' + t.vfo + ':' + t.tid);
       return;
     }
@@ -12267,30 +12579,6 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
       let estSources = -1;  // auto source estimate (from the first decimator reporting one)
       status.decimator_squelch.forEach(sq => {
         updateDecimatorSquelchStatus(sq.id, sq.open);
-        // Live λ ratio readout on eigen-method decimator panels: instantaneous
-        // value plus the backend's 5 s peak hold, so sub-second bursts stay
-        // visible long enough to read the level to squelch against.
-        if (sq.eigen_ratio !== undefined) {
-          const d = decimatorInfo.find(x => x.id === sq.id);
-          const eigenMode = d && sqEffMethod(d) !== 'FFT';
-          const ratioEl = $id('dec-eigen-ratio-' + sq.id);
-          if (ratioEl && eigenMode && d.squelch_enabled) {
-            // Effective threshold: backend-reported (covers auto mode), falling
-            // back to the local manual value.
-            let thr = (sq.eigen_thr !== undefined && sq.eigen_thr > 0) ? sq.eigen_thr
-                    : (d.squelch_eigen_threshold !== undefined ? d.squelch_eigen_threshold : 2.0);
-            const pk = (sq.eigen_peak !== undefined && sq.eigen_peak > sq.eigen_ratio)
-                     ? ' ↑' + fmtEigen(sq.eigen_peak) : '';
-            ratioEl.textContent = 'λ ' + fmtEigen(sq.eigen_ratio) + pk;
-            ratioEl.style.color = sq.eigen_ratio >= thr ? '#4caf50' : '#ff6b6b';
-          }
-          // Auto mode: show the learned threshold
-          const autoEl = $id('dec-squelch-auto-val-' + sq.id);
-          if (autoEl && d && sqEffMethod(d) === 'EIGEN_AUTO') {
-            autoEl.textContent = (sq.eigen_thr !== undefined && sq.eigen_thr > 0)
-                ? fmtEigen(sq.eigen_thr) : 'learning…';
-          }
-        }
         if (estSources < 0 && sq.est_sources !== undefined && sq.est_sources >= 0) {
           estSources = sq.est_sources;
         }

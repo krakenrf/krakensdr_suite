@@ -43,7 +43,8 @@ public:
         rx_.on_frame = [this](const FskFrame& f) { frame(f); };
         reset();
     }
-    void push(const float* narrow, const float*, size_t n, double) override {
+    void push(const float* narrow, const float*, size_t n, double t0) override {
+        rx_.clock(t0);
         for (size_t i = 0; i < n; i++) rx_.push(narrow[i]);
     }
     void reset() override {
@@ -89,6 +90,8 @@ void Mrz::frame(const FskFrame& f) {
     o.type = "MRZ";
     o.subtype = "MRZ";
     o.dc_hz = f.dc_hz;
+    o.t_start = f.t_start;
+    o.t_end = f.t_end;
     o.serial = std::to_string(snc_) + "-" + std::to_string(snd_);
     const int h = b[4], mi = b[5], s = b[6];
     if (h < 24 && mi < 60 && s < 61) {

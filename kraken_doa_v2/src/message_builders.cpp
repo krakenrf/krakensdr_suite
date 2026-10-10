@@ -482,36 +482,18 @@ string MessageBuilders::build_system_status_message() {
         json << ",\"cal_state\":\"" << cal_state << "\"";
     }
 
-    // Include per-decimator squelch states with eigenvalue ratio
+    // Per-decimator squelch states (+ MUSIC's auto source estimate)
     json << ",\"decimator_squelch\":[";
     auto info_list = decimator_manager.getDecimatorInfoList();
     bool first = true;
     for (const auto& info : info_list) {
         if (!first) json << ",";
         first = false;
-        // Get eigenvalue ratio (instant + 5s peak hold), the effective eigen
-        // threshold, and auto source estimate from the MUSIC processor
-        float eigen_ratio = 1.0f;
-        float eigen_peak = 1.0f;
-        float eigen_thr = 0.0f;  // effective threshold in eigen modes (0 = n/a or unlearned)
         int est_sources = -1;    // -1 = auto mode off / no estimate
         auto decimator = decimator_manager.getDecimator(info.id);
-        if (decimator && decimator->music_processor) {
-            eigen_ratio = decimator->music_processor->getEigenvalueRatio();
-            eigen_peak = decimator->music_processor->getEigenvalueRatioPeak();
-            est_sources = decimator->music_processor->getEstimatedNumSources();
-            int method = decimator->squelch_method.load(std::memory_order_relaxed);
-            if (method == 2) {
-                eigen_thr = decimator->auto_eigen_threshold.load(std::memory_order_relaxed);
-            } else if (method == 1) {
-                eigen_thr = decimator->squelch_eigen_threshold.load(std::memory_order_relaxed);
-            }
-        }
+        if (decimator && decimator->music_processor) est_sources = decimator->music_processor->getEstimatedNumSources();
         json << "{\"id\":" << info.id
              << ",\"open\":" << (info.squelch_open ? "true" : "false")
-             << ",\"eigen_ratio\":" << eigen_ratio
-             << ",\"eigen_peak\":" << eigen_peak
-             << ",\"eigen_thr\":" << eigen_thr
              << ",\"est_sources\":" << est_sources << "}";
     }
     json << "]";
@@ -789,8 +771,7 @@ string MessageBuilders::build_decimator_info_message() {
              << ",\"squelch_enabled\":" << (info.squelch_enabled ? "true" : "false")
              << ",\"squelch_level\":" << info.squelch_level
              << ",\"squelch_open\":" << (info.squelch_open ? "true" : "false")
-             << ",\"squelch_method\":\"" << (info.squelch_method == 2 ? "EIGEN_AUTO" : (info.squelch_method == 1 ? "EIGEN" : "FFT")) << "\""
-             << ",\"squelch_eigen_threshold\":" << info.squelch_eigen_threshold
+             << ",\"squelch_method\":\"" << (info.squelch_method == static_cast<int>(SquelchMethod::DIGITAL) ? "DIGITAL" : "FFT") << "\""
              << ",\"digital_mode\":\"" << json_escape(dig::mode_string(static_cast<dig::Mode>(info.digital_mode), info.digital_plugin)) << "\""
              << ",\"digital_opts\":{\"verbose\":" << (info.digital_opts.verbose ? "true" : "false")
              << ",\"invert\":" << (info.digital_opts.invert ? "true" : "false")

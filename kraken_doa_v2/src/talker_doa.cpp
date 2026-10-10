@@ -1,5 +1,6 @@
 #include "talker_doa.hpp"
 
+#include "array_cal.hpp"
 #include "signal_processing/music_processor.hpp"
 #include "utils/parse_num.hpp"
 
@@ -49,7 +50,61 @@ void TalkerDoa::reset_locked() {
     spans_.clear();
     talkers_.clear();
     packets_.clear();
+    cal_.clear();
     freq_ = 0;
+    dig_done_ = 0;
+    dig_R_.resize(0, 0);
+    dig_w_ = 0;
+}
+
+// --- digital squelch -------------------------------------------------------------
+void TalkerDoa::set_digital(bool on) {
+    if (dig_on_.exchange(on) == on) return;
+    if (on) {
+        want_blocks_ = true;   // keep the stream: the confirmed pieces are cut from it
+    } else {
+        std::lock_guard<std::mutex> lk(mu_);
+        dig_done_ = 0;
+        dig_R_.resize(0, 0);
+        dig_w_ = 0;
+    }
+}
+
+uint64_t TalkerDoa::ring_low() const {
+    if (raw_mode_) return raw_lo_;
+    if (!ring_cap_ || ring_next_ == ~0ull) return 0;
+    const uint64_t newest = ring_next_ / CHUNK;
+    return newest >= ring_cap_ ? (newest - ring_cap_ + 1) * CHUNK : 0;
+}
+
+void TalkerDoa::dig_add_locked(const Eigen::MatrixXcd& R, double n) {
+    if (dig_R_.rows() != R.rows()) {
+        dig_R_ = Eigen::MatrixXcd::Zero(R.rows(), R.cols());
+        dig_w_ = 0;
+    }
+    dig_R_ += n * R;
+    dig_w_ += n;
+}
+
+// a piece of the stream the decoder confirmed: what wasn't taken yet and is
+// still held (a span is reported again as it grows; the decoder's latency is
+// well under RING_S)
+void TalkerDoa::dig_confirm(uint64_t a, uint64_t b) {
+    if (!digital() || b <= a) return;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        a = std::max(a, dig_done_);
+    }
+    {
+        std::lock_guard<std::mutex> lk(ring_mu_);
+        a = std::max(a, ring_low());
+    }
+    if (b <= a || b - a < DIG_MIN_SAMPLES) return;
+    Eigen::MatrixXcd R;
+    if (!packet_cov(a, b, NAN, 0, &R)) return;   // not held (calibration, a gap)
+    std::lock_guard<std::mutex> lk(mu_);
+    dig_done_ = std::max(dig_done_, b);
+    dig_add_locked(R, static_cast<double>(b - a));
 }
 
 // --- packets (kp::Talker::packet) -----------------------------------------------
@@ -257,7 +312,9 @@ void TalkerDoa::add_packet(const dig::TalkerSpan& s) {
     std::lock_guard<std::mutex> lk(mu_);
     last_packet_ms_ = t;
     if (!ok) return;
-    Packet p{s.plugin, s.id, s.label, s.start, s.end, s.rate, s.freq_hz, s.bw_hz, s.avg_s, std::move(R), t, false};
+    if (digital()) dig_add_locked(R, static_cast<double>(s.end - s.start));
+    Packet p{s.plugin, s.id, s.label, s.start, s.end, s.rate, s.freq_hz, s.bw_hz, s.avg_s, std::move(R), t, false,
+             s.lat, s.lon, s.alt_m};
     // overlapping another talker's packet on the same channel (both decoded
     // through each other): neither holds one talker's signal alone. Packets
     // come in stream order, so an overlapping one is among the latest.
@@ -273,6 +330,9 @@ void TalkerDoa::add_packet(const dig::TalkerSpan& s) {
 }
 
 void TalkerDoa::commit_packet_locked(Packet& p, int64_t now) {
+    // a packet from a known position: the array calibration's material
+    if (is_finite_value(p.lat) && array_cal::collecting() && cal_.size() < 4000)
+        cal_.push_back({p.id, p.R, p.lat, p.lon, p.alt_m});
     Talker& tk = talkers_[p.id];
     if (tk.info.id.empty()) {
         tk.info.id = p.id;
@@ -316,11 +376,17 @@ void TalkerDoa::add_frame(const Eigen::MatrixXcd& R, uint64_t a, uint64_t b, flo
 }
 
 void TalkerDoa::add_span(const dig::TalkerSpan& s) {
-    if (!active() || s.id.empty()) return;
+    if (!active()) return;
+    if (s.signal) {   // a confirmed frame: only the Digital squelch uses it
+        dig_confirm(s.start, s.end);
+        return;
+    }
+    if (s.id.empty()) return;
     if (s.packet) {
         add_packet(s);
         return;
     }
+    dig_confirm(s.start, s.end);   // a transmission (confirmed up to its end; "?" too)
     const int64_t t = now_ms();
     std::lock_guard<std::mutex> lk(mu_);
     Span* sp = nullptr;
@@ -370,7 +436,7 @@ void TalkerDoa::prune_locked(int64_t now) {
     }
 }
 
-void TalkerDoa::update(const MUSICProcessor& mp, std::vector<TalkerFrame>* out) {
+void TalkerDoa::update(MUSICProcessor& mp, std::vector<TalkerFrame>* out) {
     struct Job {
         std::string id, label;
         uint64_t seq;             // talker jobs: the transmission summed
@@ -388,7 +454,7 @@ void TalkerDoa::update(const MUSICProcessor& mp, std::vector<TalkerFrame>* out) 
             if (!packets_.front().bad) commit_packet_locked(packets_.front(), t);
             packets_.pop_front();
         }
-        idle = want_blocks_.load() && t - last_packet_ms_ > PACKET_IDLE_MS;
+        idle = want_blocks_.load() && !digital() && t - last_packet_ms_ > PACKET_IDLE_MS;
         // 1. waiting frames -> talkers
         std::deque<Frame> keep;
         for (auto& f : frames_) {
@@ -471,6 +537,29 @@ void TalkerDoa::update(const MUSICProcessor& mp, std::vector<TalkerFrame>* out) 
         want_blocks_ = false;
         free_ring();
     }
+
+    // Digital squelch: the VFO's DoA from the samples confirmed since the
+    // last publish, averaged like the processor's own frames
+    if (digital()) {
+        Eigen::MatrixXcd Rn;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            if (dig_w_ > 0 && t - dig_pub_ms_ >= DIG_PUBLISH_MS) {
+                Rn = dig_R_ / dig_w_;
+                dig_R_.setZero();
+                dig_w_ = 0;
+                dig_pub_ms_ = t;
+            }
+        }
+        if (Rn.size()) {
+            const float alpha = mp.getCovarianceAveragingAlpha();   // 1 = no averaging
+            if (dig_avg_.rows() != Rn.rows() || alpha >= 0.999f) dig_avg_ = Rn;
+            else dig_avg_ = (1.0f - alpha) * dig_avg_ + alpha * Rn;
+            mp.publishFromCovariance(dig_avg_);
+        }
+    } else if (dig_avg_.size()) {
+        dig_avg_.resize(0, 0);
+    }
     if (jobs.empty()) return;
 
     // 3. MUSIC (the processor's lock, not ours)
@@ -507,6 +596,12 @@ void TalkerDoa::update(const MUSICProcessor& mp, std::vector<TalkerFrame>* out) 
         in.doa = res[i].peak;
         in.conf = res[i].conf;
     }
+}
+
+void TalkerDoa::take_cal(std::vector<CalPacket>* out) {
+    out->clear();
+    std::lock_guard<std::mutex> lk(mu_);
+    out->swap(cal_);
 }
 
 std::vector<TalkerInfo> TalkerDoa::snapshot() const {

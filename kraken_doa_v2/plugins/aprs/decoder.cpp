@@ -170,7 +170,9 @@ public:
     }
 
     void process(const kp::cf* x, size_t n) override {
+        const double t0 = host.time();
         for (size_t i = 0; i < n; i++) {
+            now_ = t0 + static_cast<double>(i) / FS;   // a frame found below ended here
             float f = fm_.push(lp_.push(x[i]));
             dc_ += 0.0005f * (f - dc_);   // carrier offset (time constant ~0.1 s)
             float a = f - dc_;
@@ -195,6 +197,7 @@ public:
 private:
     kp::Fir<kp::cf> lp_;
     kp::FmDemod fm_;
+    double now_ = 0;   // Host::time() of the sample being processed
     float dc_ = 0;
     std::array<kp::cf, TABLEN> m_, s_;
     std::array<std::array<kp::cf, 2>, SPB> hist_{};
@@ -273,7 +276,10 @@ private:
         last_t_ = t;
         aprs::parse_info(f);
 
-        host.valid();
+        // the frame's samples: it ended now; len bytes (+ ~2 % bit stuffing) and
+        // the two flags at 1200 bit/s before that (Host::valid(start, end) - the
+        // Digital squelch)
+        host.valid(now_ - (len * 8 * 1.02 + 16) / 1200.0, now_);
         frames_++;
         stations_.insert(f.src);
 

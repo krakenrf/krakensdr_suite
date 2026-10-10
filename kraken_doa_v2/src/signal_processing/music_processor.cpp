@@ -1,4 +1,5 @@
 #include "signal_processing/music_processor.hpp"
+#include "array_cal.hpp"
 #include "utils/parse_num.hpp"
 #include "config.hpp"
 #include "globals.hpp"
@@ -227,6 +228,11 @@ bool MUSICProcessor::processDecimatedIQ(const SharedDecimator::MultiChannelDecim
     // Follow the server's live element count (heimdall can be reconfigured at
     // runtime); resizes all per-element state when it changed.
     syncElementCount();
+    // ✈ the array calibration in use changed (applied / switched / removed)
+    if (cal_gen_ != array_cal::generation()) {
+        if (current_topology == ArrayTopology::CUSTOM && is_3d_array_) updateSteeringVectors2D();
+        else updateSteeringVectors();
+    }
 
     if (decimated_data.num_channels < static_cast<size_t>(num_elements_)) {
         return false;
@@ -258,9 +264,9 @@ bool MUSICProcessor::processDecimatedIQ(const SharedDecimator::MultiChannelDecim
     }
 
     // Stamp each newly published frame so the DoA logger can dedup and pace
-    // itself to the real data rate (see getResultStampMs()). A frame the
-    // eigenvalue-squelch gate suppressed is computed but NOT published, so it
-    // is not stamped - downstream consumers keep holding the last open frame.
+    // itself to the real data rate (see getResultStampMs()). A held frame
+    // (setPublishHold) is computed but NOT published, so it is not stamped -
+    // downstream consumers keep holding the last published frame.
     if (processed && frame_published_) {
         result_stale_.store(false, std::memory_order_relaxed);
         result_stamp_ms_.store(
@@ -712,14 +718,10 @@ void MUSICProcessor::computeMUSICSpectrumOptimized() {
     int signal_dimension = resolveSignalDimension(M);
     int noise_dimension = M - signal_dimension;
 
-    // Eigenvalue-squelch gate (hysteretic) / external publish hold: while
-    // either is active, freeze the published output. The ratio (stored above)
-    // keeps updating - it is the squelch's own sensor - but the pseudospectrum
-    // stays at the last open frame, matching the FFT-method behavior where a
-    // closed squelch skips MUSIC entirely. Also skips the (relatively costly)
-    // noise-subspace projection.
-    const bool gate_closed = updateSquelchGate();
-    if (gate_closed || publish_hold_.load(std::memory_order_relaxed)) {
+    // Publish hold (FFT squelch closed with beamforming, Digital squelch):
+    // freeze the published output - the ratio (stored above) keeps updating.
+    // Also skips the (relatively costly) noise-subspace projection.
+    if (publish_hold_.load(std::memory_order_relaxed)) {
         frame_published_ = false;
         return;
     }
@@ -1159,6 +1161,46 @@ size_t MUSICProcessor::getBlocksProcessed() const {
     return stats_.blocks_processed;
 }
 
+bool MUSICProcessor::nominalPositionsLocked(double* x, double* y, double* z) const {
+    const int M = num_elements_;
+    if (current_topology == ArrayTopology::UCA) {
+        if (M < 3) return false;
+        // Array elements are wired clockwise (ANT0 on +x) - mirror the angle
+        const double r = array_radius_mm / 1000.0;
+        const double dir = uca_angle_sign();
+        for (int elem = 0; elem < M; elem++) {
+            const double elem_angle = dir * 2.0 * M_PI / M * elem;
+            x[elem] = r * cos(elem_angle);
+            y[elem] = r * sin(elem_angle);
+            z[elem] = 0.0;
+        }
+        return true;
+    }
+    if (current_topology == ArrayTopology::CUSTOM && custom_positions_valid_) {
+        for (int elem = 0; elem < M; elem++) {
+            x[elem] = custom_positions_[elem].x_mm / 1000.0;
+            y[elem] = custom_positions_[elem].y_mm / 1000.0;
+            z[elem] = custom_positions_[elem].z_mm / 1000.0;
+        }
+        return true;
+    }
+    return false;   // ULA (or custom positions not set)
+}
+
+bool MUSICProcessor::nominalPositions(std::vector<double>* x, std::vector<double>* y, std::vector<double>* z) const {
+    lock_guard<mutex> config_lock(config_mutex_);
+    const int M = num_elements_;
+    x->assign(M, 0.0);
+    y->assign(M, 0.0);
+    z->assign(M, 0.0);
+    return nominalPositionsLocked(x->data(), y->data(), z->data());
+}
+
+bool MUSICProcessor::isCalibrationApplied() const {
+    lock_guard<mutex> config_lock(config_mutex_);
+    return calibration_applied_;
+}
+
 void MUSICProcessor::updateSteeringVectors() {
     try {
         int M = num_elements_;
@@ -1171,53 +1213,52 @@ void MUSICProcessor::updateSteeringVectors() {
             return;
         }
 
-        // Generate element positions based on topology
-        vector<double> x_pos(M), y_pos(M);
+        // Element positions (metres) based on topology
+        vector<double> x_pos(M), y_pos(M), z_unused(M), tau(M, 0.0);
         double wavelength = 3e8 / current_frequency;  // meters
+        cal_gen_ = array_cal::generation();
 
-        if (current_topology == ArrayTopology::CUSTOM) {
-            // Use custom positions (XY only for 1D steering vectors)
-            if (!custom_positions_valid_) {
-                cout << "ERROR: Custom positions not set" << endl;
-                steering_vectors_valid = false;
-                return;
-            }
-
-            for (int elem = 0; elem < M; elem++) {
-                // Convert mm to wavelengths
-                x_pos[elem] = (custom_positions_[elem].x_mm / 1000.0) / wavelength;
-                y_pos[elem] = (custom_positions_[elem].y_mm / 1000.0) / wavelength;
-            }
-
-        } else if (current_topology == ArrayTopology::UCA) {
-            if (M < 3) {
-                cout << "ERROR: UCA requires at least 3 elements" << endl;
-                steering_vectors_valid = false;
-                return;
-            }
-
-            // Convert array radius from mm to wavelengths
-            double r = (array_radius_mm / 1000.0) / wavelength;  // radius in wavelengths
-
-            // Array elements are wired clockwise (ANT0 on +x) - mirror the angle
-            const double dir = uca_angle_sign();
-            for (int elem = 0; elem < M; elem++) {
-                double elem_angle = dir * 2.0 * M_PI / M * elem;
-                x_pos[elem] = r * cos(elem_angle);
-                y_pos[elem] = r * sin(elem_angle);
-            }
-
-        } else {
-            // ULA
-            double d = (element_spacing_mm / 1000.0) / wavelength;
-
+        if (current_topology == ArrayTopology::CUSTOM && !custom_positions_valid_) {
+            cout << "ERROR: Custom positions not set" << endl;
+            steering_vectors_valid = false;
+            return;
+        }
+        if (current_topology == ArrayTopology::UCA && M < 3) {
+            cout << "ERROR: UCA requires at least 3 elements" << endl;
+            steering_vectors_valid = false;
+            return;
+        }
+        if (current_topology == ArrayTopology::ULA) {
             // Element 0 at origin (leftmost), subsequent elements to the right
+            double d = element_spacing_mm / 1000.0;
             for (int elem = 0; elem < M; elem++) {
                 x_pos[elem] = elem * d;  // 0, d, 2d, 3d, 4d, ...
                 y_pos[elem] = 0.0;
             }
+        } else {
+            // UCA (wired clockwise, ANT0 on +x) / CUSTOM (XY only for 1D steering vectors)
+            nominalPositionsLocked(x_pos.data(), y_pos.data(), z_unused.data());
         }
-        
+
+        // ✈ Array calibration from aircraft (array_cal.hpp): the corrected
+        // geometry and each element's extra delay - physical units, so they
+        // hold at this frequency too
+        calibration_applied_ = false;
+        if (current_topology != ArrayTopology::ULA) {
+            vector<double> dx(M), dy(M);
+            if (array_cal::corrections(M, x_pos.data(), y_pos.data(), dx.data(), dy.data(), tau.data())) {
+                for (int elem = 0; elem < M; elem++) {
+                    x_pos[elem] += dx[elem];
+                    y_pos[elem] += dy[elem];
+                }
+                calibration_applied_ = true;
+            }
+        }
+        for (int elem = 0; elem < M; elem++) {   // to wavelengths
+            x_pos[elem] /= wavelength;
+            y_pos[elem] /= wavelength;
+        }
+
         // Vectorized steering vector computation
         for (int angle_idx = 0; angle_idx < num_angles_; angle_idx++) {
             double theta_rad = angle_idx * angular_resolution_ * M_PI / 180.0;
@@ -1229,8 +1270,10 @@ void MUSICProcessor::updateSteeringVectors() {
                     // ULA: phase depends only on x position (linear array)
                     phase = 2.0 * M_PI * x_pos[elem] * sin(theta_rad);
                 } else {
-                    // UCA and CUSTOM: phase depends on both x and y positions (2D array)
-                    phase = 2.0 * M_PI * (x_pos[elem] * cos(theta_rad) + y_pos[elem] * sin(theta_rad));
+                    // UCA and CUSTOM: phase depends on both x and y positions (2D array);
+                    // a calibrated element's cable delay lags it by 2 pi f tau
+                    phase = 2.0 * M_PI * (x_pos[elem] * cos(theta_rad) + y_pos[elem] * sin(theta_rad)) -
+                            2.0 * M_PI * current_frequency * tau[elem];
                 }
 
                 steering_vector(elem) = complex<double>(cos(phase), sin(phase));
@@ -1266,11 +1309,6 @@ float MUSICProcessor::getEigenvalueRatio() const {
 
 float MUSICProcessor::getEigenvalueRatioPeak() const {
     return eigenvalue_ratio_peak_.load(std::memory_order_relaxed);
-}
-
-void MUSICProcessor::setSquelchGate(bool enabled, float threshold) {
-    squelch_gate_enabled_.store(enabled, std::memory_order_relaxed);
-    squelch_gate_threshold_.store(threshold, std::memory_order_relaxed);
 }
 
 void MUSICProcessor::storeEigenvalueRatio(float ratio) {
@@ -1587,6 +1625,17 @@ void MUSICProcessor::updateSteeringVectors2D() {
         cout << "Computing 2D steering vectors: " << num_angles_ << " azimuth x "
              << num_elevation_angles_ << " elevation = " << total_angles << " total" << endl;
 
+        // positions (metres) + the array calibration's corrections and delays
+        vector<double> px(M), py(M), pz(M), dx(M, 0.0), dy(M, 0.0), tau(M, 0.0);
+        nominalPositionsLocked(px.data(), py.data(), pz.data());
+        cal_gen_ = array_cal::generation();
+        if (array_cal::corrections(M, px.data(), py.data(), dx.data(), dy.data(), tau.data())) {
+            for (int i = 0; i < M; i++) {
+                px[i] += dx[i];
+                py[i] += dy[i];
+            }
+        }
+
         for (int az_idx = 0; az_idx < num_angles_; az_idx++) {
             double theta_rad = az_idx * angular_resolution_ * M_PI / 180.0;
             double cos_theta = cos(theta_rad);
@@ -1602,16 +1651,14 @@ void MUSICProcessor::updateSteeringVectors2D() {
                 VectorXcd sv(M);
 
                 for (int elem = 0; elem < M; elem++) {
-                    // Convert mm to meters
-                    double x = custom_positions_[elem].x_mm / 1000.0;
-                    double y = custom_positions_[elem].y_mm / 1000.0;
-                    double z = custom_positions_[elem].z_mm / 1000.0;
+                    const double x = px[elem], y = py[elem], z = pz[elem];
 
                     // 3D steering vector phase
                     // s(θ,φ) = exp(j*k*(x*cos(θ)*cos(φ) + y*sin(θ)*cos(φ) + z*sin(φ)))
+                    // (- 2 pi f tau: a calibrated element's cable delay)
                     double phase = k * (x * cos_theta * cos_phi +
                                        y * sin_theta * cos_phi +
-                                       z * sin_phi);
+                                       z * sin_phi) - 2.0 * M_PI * current_frequency * tau[elem];
 
                     sv(elem) = complex<double>(cos(phase), sin(phase));
                 }
@@ -1699,10 +1746,9 @@ void MUSICProcessor::computeMUSICSpectrum2D() {
     int signal_dimension = resolveSignalDimension(M);
     int noise_dimension = M - signal_dimension;
 
-    // Eigenvalue-squelch gate / publish hold (see the 1D path): freeze
-    // azimuth+elevation spectra and the 2D peak while closed or held.
-    const bool gate_closed = updateSquelchGate();
-    if (gate_closed || publish_hold_.load(std::memory_order_relaxed)) {
+    // Publish hold (see the 1D path): freeze azimuth+elevation spectra and
+    // the 2D peak while held.
+    if (publish_hold_.load(std::memory_order_relaxed)) {
         frame_published_ = false;
         return;
     }
@@ -1788,6 +1834,44 @@ void MUSICProcessor::setFrameTap(FrameTap tap) {
     lock_guard<mutex> config_lock(config_mutex_);
     frame_tap_ = std::move(tap);
     if (!frame_tap_) frame_R_.resize(0, 0);
+}
+
+bool MUSICProcessor::publishFromCovariance(const Eigen::MatrixXcd& R) {
+    lock_guard<mutex> config_lock(config_mutex_);
+    const int M = num_elements_;
+    if (M < 2 || R.rows() != M || R.cols() != M || num_angles_ <= 0) return false;
+    const bool use_2d = current_topology == ArrayTopology::CUSTOM && is_3d_array_ && steering_vectors_2d_valid_ &&
+                        steering_vectors_2d_.rows() == M;
+    if (!use_2d && (!steering_vectors_valid || steering_vectors.rows() != M)) return false;
+    SelfAdjointEigenSolver<MatrixXcd> es(R);
+    if (es.info() != Success) return false;
+    // signal subspace as the live frames choose it (without their hysteresis)
+    const int k = auto_num_sources_ ? estimateNumSources(es.eigenvalues()) : num_signal_sources_;
+    const int signal_dimension = max(1, min(k, M - 1));
+    const auto E = es.eigenvectors().leftCols(M - signal_dimension);
+    if (use_2d) {
+        VectorXd s2 = (E.adjoint() * steering_vectors_2d_).colwise().squaredNorm();
+        s2 = s2.cwiseMax(1e-15).cwiseInverse();
+        if (custom_output_mode_ != ULAOutputMode::BOTH)
+            for (int az = 0; az < num_angles_; az++)
+                if (!keepHalfPlane(custom_output_mode_, az * angular_resolution_))
+                    s2.segment(az * num_elevation_angles_, num_elevation_angles_).setZero();
+        Eigen::Index max_idx;
+        s2.maxCoeff(&max_idx);
+        peak_azimuth_ = static_cast<int>(max_idx / num_elevation_angles_);
+        peak_elevation_ = static_cast<int>(max_idx % num_elevation_angles_);
+        marginalizeSpectrums(s2);
+        pseudospectrum = azimuth_pseudospectrum_;
+    } else {
+        pseudospectrum = (E.adjoint() * steering_vectors).colwise().squaredNorm();
+        pseudospectrum = pseudospectrum.cwiseMax(1e-15).cwiseInverse();
+    }
+    applyOutputTransforms();
+    result_stale_.store(false, std::memory_order_relaxed);
+    result_stamp_ms_.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::system_clock::now().time_since_epoch()).count(),
+                           std::memory_order_relaxed);
+    return true;
 }
 
 bool MUSICProcessor::spectrumFromCovariance(const Eigen::MatrixXcd& R, Eigen::VectorXd* spec, float* peak_deg,

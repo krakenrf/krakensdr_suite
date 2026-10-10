@@ -8,7 +8,10 @@ namespace {
 
 class TetraPlugin : public kp::Decoder {
 public:
-    explicit TetraPlugin(kp::Host& h) : Decoder(h), br_(h), rx_(br_.ctx), fe_(4, 6, 0.35f) { facts(); }
+    explicit TetraPlugin(kp::Host& h) : Decoder(h), br_(h), rx_(br_.ctx), fe_(4, 6, 0.35f) {
+        br_.clock(72000);   // valid slots with their samples (the receiver runs at the input rate)
+        facts();
+    }
     void process(const kp::cf* x, size_t n) override {
         const auto& y = fe_.process(x, n);
         rx_.process(y.data(), y.size());
@@ -16,6 +19,7 @@ public:
     void reset() override {
         fe_.reset();
         rx_.reset();
+        br_.restart_clock();
         facts();
     }
     void option(const std::string& k, const std::string& v) override { br_.option(k, v); }

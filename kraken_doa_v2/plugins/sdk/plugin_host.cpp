@@ -19,6 +19,8 @@
 //   --opt key=value  pass an option to the decoder (repeatable)
 //   --audio OUT.wav  write the decoded 8 kHz audio
 //   --station LAT,LON  the receiver's location (Host::station)
+//   --rf HZ          RF of the file's centre (Host::rf_hz; default: the
+//                    REC.json "rf_hz" of ai/sigtool.py captures)
 //   --raw            raw frames on (Host::raw_wanted) and printed
 //   --quiet          only the summary
 
@@ -108,6 +110,16 @@ public:
         send(kp::wire::EVENT, p.data(), p.size());
     }
     void valid() override { send(kp::wire::VALID, nullptr, 0); }
+    void valid(double start_s, double end_s) override {
+        if (!std::isfinite(start_s) || !std::isfinite(end_s) || end_s < start_s) {
+            valid();
+            return;
+        }
+        std::string p = secs(start_s);
+        p.push_back('\0');
+        p += secs(end_s);
+        send(kp::wire::VALID, p.data(), p.size());
+    }
     void audio(const float* pcm, size_t n) override {
         while (n > 0) {
             size_t k = std::min<size_t>(n, 8000);
@@ -192,6 +204,19 @@ public:
             p += fmt_hz(std::isfinite(t.bw_hz) ? std::max(0.0, t.bw_hz) : 0.0);
             p.push_back('\0');
             p += fmt_hz(std::isfinite(t.avg_s) ? std::max(0.0, t.avg_s) : 0.0);
+            if (std::isfinite(t.lat) && std::isfinite(t.lon) && std::isfinite(t.alt_m) && std::fabs(t.lat) <= 90 &&
+                std::fabs(t.lon) <= 180) {
+                char b[40];
+                snprintf(b, sizeof b, "%.7f", t.lat);
+                p.push_back('\0');
+                p += b;
+                snprintf(b, sizeof b, "%.7f", t.lon);
+                p.push_back('\0');
+                p += b;
+                snprintf(b, sizeof b, "%.1f", t.alt_m);
+                p.push_back('\0');
+                p += b;
+            }
         }
         send(kp::wire::TALKER, p.data(), p.size());
     }
@@ -209,10 +234,14 @@ public:
         *lon = st_lon_;
         return true;
     }
+    double rf_hz() const override { return rf_hz_; }
+    bool rf_inverted() const override { return rf_inv_; }
 
     bool verbose_ = false, voice_wanted_ = false, raw_wanted_ = false;
     bool have_station_ = false;
     double st_lat_ = 0, st_lon_ = 0;
+    double rf_hz_ = NAN;
+    bool rf_inv_ = false;
     double samples_ = 0;
     void sync_done(const void* id, size_t len) { send(kp::wire::SYNC_DONE, id, len); }
 
@@ -321,6 +350,15 @@ int serve() {
                     host.st_lon_ = lo;
                     break;
                 }
+                case kp::wire::RF: {
+                    std::string s(buf.begin(), buf.end());
+                    double f = NAN;
+                    int inv = 0;
+                    const int got = sscanf(s.c_str(), "%lf,%d", &f, &inv);
+                    host.rf_hz_ = got >= 1 && std::isfinite(f) && f > 0 ? f : NAN;
+                    host.rf_inv_ = got == 2 && inv != 0;
+                    break;
+                }
                 default:
                     break;
             }
@@ -356,6 +394,19 @@ public:
     void valid() override {
         valid_++;
         if (first_valid_ < 0) first_valid_ = time();
+    }
+    // valid frames with their samples (Host::valid(start, end)): counted, the
+    // time they cover, and each one with --verbose
+    uint64_t valid_spans_ = 0;
+    double valid_span_s_ = 0, valid_span_last_ = -1;
+    void valid(double start_s, double end_s) override {
+        valid();
+        if (!std::isfinite(start_s) || !std::isfinite(end_s) || end_s < start_s) return;
+        valid_spans_++;
+        // covered time without counting overlaps twice
+        valid_span_s_ += end_s - std::max(start_s, std::min(end_s, valid_span_last_));
+        valid_span_last_ = std::max(valid_span_last_, end_s);
+        if (verbose_ && !quiet_) printf("[%9.3f s] (valid) %.4f .. %.4f s\n", time(), start_s, end_s);
     }
     void audio(const float* pcm, size_t n) override { audio_.insert(audio_.end(), pcm, pcm + n); }
     void voice_state(const std::string& s) override {
@@ -399,7 +450,12 @@ public:
         return nullptr;
     }
     // packets (Talker::packet): counted per talker
-    struct Pk { std::string label; uint64_t n = 0; double first = 0, last = 0, len_us = 0; };
+    struct Pk {
+        std::string label;
+        uint64_t n = 0, npos = 0;   // packets, those with a position (Talker::lat / lon / alt_m)
+        double first = 0, last = 0, len_us = 0;
+        double lat = NAN, lon = NAN, alt = NAN;   // the latest position
+    };
     std::map<std::string, Pk> packets_;
     uint64_t packets_total_ = 0;
     void talker(const kp::Talker& t) override {
@@ -413,10 +469,21 @@ public:
             k.last = st;
             k.len_us += (en - st) * 1e6;
             if (!t.label.empty()) k.label = t.label;
+            const bool pos = std::isfinite(t.lat) && std::isfinite(t.lon) && std::isfinite(t.alt_m);
+            if (pos) {
+                k.npos++;
+                k.lat = t.lat;
+                k.lon = t.lon;
+                k.alt = t.alt_m;
+            }
             packets_total_++;
-            if (verbose_ && !quiet_)
-                printf("[%9.3f s] (packet) %s %.7f .. %.7f s%s\n", time(), t.id.c_str(), st, en,
-                       std::isfinite(t.freq_hz) ? (" at " + std::to_string(static_cast<long>(std::lround(t.freq_hz))) + " Hz").c_str() : "");
+            if (verbose_ && !quiet_) {
+                char where[96] = "";
+                if (pos) snprintf(where, sizeof where, " at %.5f, %.5f, %.0f m", t.lat, t.lon, t.alt_m);
+                printf("[%9.3f s] (packet) %s %.7f .. %.7f s%s%s\n", time(), t.id.c_str(), st, en,
+                       std::isfinite(t.freq_hz) ? (" at " + std::to_string(static_cast<long>(std::lround(t.freq_hz))) + " Hz").c_str() : "",
+                       where);
+            }
             return;
         }
         Span* s = open_span(t.channel);
@@ -448,6 +515,10 @@ public:
     }
     bool have_station_ = false;
     double st_lat_ = 0, st_lon_ = 0;
+    double rf_hz() const override { return rf_hz_; }
+    bool rf_inverted() const override { return rf_inv_; }
+    double rf_hz_ = NAN;
+    bool rf_inv_ = false;
     uint64_t map_updates_ = 0;
     std::map<std::string, kp::MapPoint> map_;
 
@@ -463,7 +534,9 @@ public:
     std::vector<float> audio_;
 };
 
-bool read_sidecar_rate(const std::string& path, double* rate) {
+// a number from the recording's JSON sidecar (ai/sigtool.py captures:
+// "rate", "rf_hz")
+bool read_sidecar(const std::string& path, const char* key, double* out) {
     std::ifstream f(path + ".json");
     if (!f) {
         // also accept capture.json next to capture.cf32
@@ -475,13 +548,14 @@ bool read_sidecar_rate(const std::string& path, double* rate) {
     std::stringstream ss;
     ss << f.rdbuf();
     std::string s = ss.str();
-    size_t p = s.find("\"rate\"");
+    size_t p = s.find("\"" + std::string(key) + "\"");
     if (p == std::string::npos) return false;
     p = s.find(':', p);
     if (p == std::string::npos) return false;
-    *rate = atof(s.c_str() + p + 1);
-    return *rate > 0;
+    *out = atof(s.c_str() + p + 1);
+    return *out > 0;
 }
+bool read_sidecar_rate(const std::string& path, double* rate) { return read_sidecar(path, "rate", rate); }
 
 // Loads the whole recording as complex float
 bool load_file(const std::string& path, std::string fmt, double* rate, double start, double seconds,
@@ -579,7 +653,7 @@ void write_wav8k(const std::string& path, const std::vector<float>& a) {
 
 int test_file(int argc, char** argv) {
     std::string path, fmt, audio_path;
-    double rate = 0, offset = 0, start = 0, seconds = 0;
+    double rate = 0, offset = 0, start = 0, seconds = 0, rf = NAN;
     bool quiet = false, verbose = false, invert = false, have_station = false, raw = false;
     double st_lat = 0, st_lon = 0;
     std::vector<std::pair<std::string, std::string>> opts;
@@ -593,6 +667,7 @@ int test_file(int argc, char** argv) {
         else if (a == "--rate") rate = atof(next().c_str());
         else if (a == "--format") fmt = next();
         else if (a == "--offset") offset = atof(next().c_str());
+        else if (a == "--rf") rf = atof(next().c_str());
         else if (a == "--start") start = atof(next().c_str());
         else if (a == "--seconds") seconds = atof(next().c_str());
         else if (a == "--audio") audio_path = next();
@@ -628,15 +703,23 @@ int test_file(int argc, char** argv) {
     host.raw_ = raw;
     host.st_lat_ = st_lat;
     host.st_lon_ = st_lon;
+    // RF of the file's centre (--rf, else the sidecar's "rf_hz"): the
+    // decoder's 0 Hz is --offset away from it (mirrored with --invert)
+    if (!std::isfinite(rf) && !read_sidecar(path, "rf_hz", &rf)) rf = NAN;
+    if (std::isfinite(rf) && rf > 0) {
+        host.rf_hz_ = invert ? rf - offset : rf + offset;
+        host.rf_inv_ = invert;
+    }
     auto dec = kp_plugin_create(host);
     for (const auto& o : info.options) dec->option(o.key, o.def);
     if (verbose) dec->option("verbose", "1");
     for (auto& o : opts) dec->option(o.first, o.second);
 
     if (!quiet)
-        printf("%s %s: %.2f s of %s at %.0f Hz -> %.0f Hz%s\n", info.name, info.version,
+        printf("%s %s: %.2f s of %s at %.0f Hz -> %.0f Hz%s%s\n", info.name, info.version,
                x.size() / rate, path.c_str(), rate, info.sample_rate,
-               offset != 0 ? (" (offset " + std::to_string(static_cast<long>(offset)) + " Hz)").c_str() : "");
+               offset != 0 ? (" (offset " + std::to_string(static_cast<long>(offset)) + " Hz)").c_str() : "",
+               std::isfinite(host.rf_hz_) ? (", RF " + std::to_string(host.rf_hz_ / 1e6).substr(0, 11) + " MHz").c_str() : "");
     // mix + resample to the plugin's rate, in 10 ms blocks like live
     kp::Nco nco(static_cast<float>(offset), static_cast<float>(rate));
     msresamp_crcf rs = msresamp_crcf_create(static_cast<float>(info.sample_rate / rate), 60.0f);
@@ -666,6 +749,9 @@ int test_file(int argc, char** argv) {
            host.time() > 0 ? 100.0 * cpu / host.time() : 0.0);
     printf("VALID FRAMES: %llu", static_cast<unsigned long long>(host.valid_));
     if (host.first_valid_ >= 0) printf(" (first at %.3f s)", host.first_valid_);
+    if (host.valid_spans_)
+        printf("\nvalid frames with their samples: %llu, covering %.2f s", static_cast<unsigned long long>(host.valid_spans_),
+               host.valid_span_s_);
     printf("\nevents: %llu\n", static_cast<unsigned long long>(host.events_));
     if (host.nferr_) printf("last frequency error: %.0f Hz\n", host.ferr_);
     if (!host.facts_.empty()) {
@@ -684,10 +770,16 @@ int test_file(int argc, char** argv) {
                host.packets_.size());
         std::vector<std::pair<std::string, TestHost::Pk>> v(host.packets_.begin(), host.packets_.end());
         std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.second.n > b.second.n; });
-        for (size_t i = 0; i < v.size() && i < 40; i++)
-            printf("  %-10s %-24s %6llu packets  %8.3f .. %8.3f s  mean %.0f us\n", v[i].first.c_str(),
-                   v[i].second.label.c_str(), static_cast<unsigned long long>(v[i].second.n), v[i].second.first,
-                   v[i].second.last, v[i].second.len_us / static_cast<double>(v[i].second.n));
+        for (size_t i = 0; i < v.size() && i < 40; i++) {
+            const TestHost::Pk& k = v[i].second;
+            char pos[128] = "";
+            if (k.npos)
+                snprintf(pos, sizeof pos, "  %llu with position, last %.5f, %.5f, %.0f m",
+                         static_cast<unsigned long long>(k.npos), k.lat, k.lon, k.alt);
+            printf("  %-10s %-24s %6llu packets  %8.3f .. %8.3f s  mean %.0f us%s\n", v[i].first.c_str(),
+                   k.label.c_str(), static_cast<unsigned long long>(k.n), k.first, k.last,
+                   k.len_us / static_cast<double>(k.n), pos);
+        }
     }
     if (!host.rows_.empty()) {
         printf("table: %zu rows\n", host.rows_.size());
@@ -732,7 +824,7 @@ int main(int argc, char** argv) {
             "%s (%s) - KrakenSDR decoder plugin\n"
             "usage: %s --info | --serve | --file REC [--rate HZ] [--format cf32|cu8|cs16|wav]\n"
             "          [--offset HZ] [--start S] [--seconds S] [--verbose] [--invert]\n"
-            "          [--opt key=value] [--audio out.wav] [--station LAT,LON] [--raw] [--quiet]\n",
+            "          [--opt key=value] [--audio out.wav] [--station LAT,LON] [--rf HZ] [--raw] [--quiet]\n",
             info.name, info.description, argv[0]);
     return 2;
 }

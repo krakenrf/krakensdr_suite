@@ -367,7 +367,8 @@ void NxdnReceiver::decode_frame(const Branch& b, const SymSrc& s) {
         }
         r.set(Mode::NXDN, "RAN", std::to_string(ran));
         cac_message(cac.data() + 8);
-        if (ctx_.valid) ctx_.valid(Mode::NXDN);
+        const int64_t fa = s.sync_end - static_cast<int64_t>((FSW_SYMS - 1) * b.sps + b.sps / 2);
+        report_valid(ctx_, Mode::NXDN, fa, fa + static_cast<int64_t>(FRAME_SYMS) * b.sps);
         if (ctx_.freq_error) ctx_.freq_error(Mode::NXDN, s.center);
         return;
     }
@@ -436,7 +437,7 @@ void NxdnReceiver::decode_frame(const Branch& b, const SymSrc& s) {
     // voice in a half (option != 0; not UDCH data) or the call's VCALL: part
     // of the transmission. Idle frames between calls are not.
     if (!frame_rel_ && usc != 1 && (option != 0 || frame_vcall_)) talker_frame();
-    if (ctx_.valid) ctx_.valid(Mode::NXDN);
+    report_valid(ctx_, Mode::NXDN, frame_a_, frame_b_);
     if (ctx_.freq_error) ctx_.freq_error(Mode::NXDN, s.center);
 }
 

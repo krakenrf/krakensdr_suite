@@ -48,7 +48,9 @@ public:
         ws_ = std::polar(1.0f, static_cast<float>(-2 * M_PI * 2200 / fs));
         reset();
     }
-    void push(const float*, const float* wide, size_t n, double) override {
+    void push(const float*, const float* wide, size_t n, double t0) override {
+        blk_t_ = t0;
+        blk_n_ = n_;
         for (size_t i = 0; i < n; i++) sample(wide[i]);
     }
     void reset() override {
@@ -72,6 +74,9 @@ private:
     void packet(const uint8_t* p, int len);
 
     double fs_, spb_;
+    double blk_t_ = 0;                // time of the block's first sample (push)
+    int64_t blk_n_ = 0;               // n_ at that sample
+    double now() const { return blk_t_ + static_cast<double>(n_ - blk_n_) / fs_; }
     int L_;
     std::vector<cfl> ring_m_, ring_s_;
     cfl sum_m_, sum_s_, pm_{1, 0}, ps_{1, 0}, wm_, ws_;
@@ -184,6 +189,10 @@ void Imet4::packet(const uint8_t* p, int len) {
             o.subtype = "iMet-4";
             o.serial = "iMet";
             o.dc_hz = dc_;
+    o.t_end = now();
+    o.t_start = o.t_end - (len + 4) * 10 / 1200.0;
+            o.t_end = now();
+            o.t_start = o.t_end - (len + 4) * 10 / 1200.0;
             if (want_raw) o.raw = hex(p, len);
             if (out) out(o);
         }
@@ -202,6 +211,8 @@ void Imet4::packet(const uint8_t* p, int len) {
     o.subtype = "iMet-4";
     o.serial = "iMet";
     o.dc_hz = dc_;
+    o.t_end = now();
+    o.t_start = o.t_end - (len + 4) * 10 / 1200.0;
     const float lat = f32le(p + 2), lon = f32le(p + 6);
     const double alt = u16le(p + 10) - 5000.0;
     o.sats = p[12];

@@ -23,16 +23,30 @@ import argparse
 import json
 import math
 import os
+import queue
+import shutil
+import signal
 import socket
 import struct
 import sys
+import threading
 import time
 import zlib
 
 import numpy as np
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "memguard"))
+import kraken_memguard  # noqa: E402
+
+# a job too big for the Pi's free memory fails with MemoryError instead of
+# swapping the receiver to a standstill (see memguard/kraken_memguard.py)
+kraken_memguard.apply()
+
 HEIMDALL_FS = 2.4e6
 MAGIC = 0x4D434851
+STATS_MAX = 1 << 22           # samples analyze's modulation statistics use at most
+MAX_CAPTURE_S = 600          # captures are streamed to disk; this only bounds the file
+DISK_RESERVE = 200 << 20     # bytes left free on the disk
 
 
 # ---------------------------------------------------------------------------
@@ -52,8 +66,12 @@ def load(path, start=0.0, seconds=0.0):
     elif path.endswith((".cu8", ".u8")):
         b = np.fromfile(path, dtype=np.uint8).astype(np.float32)
         x = ((b[0::2] - 127.5) + 1j * (b[1::2] - 127.5)) / 127.5
+    elif os.path.getsize(path) >= 8:
+        # mapped, not read: the recording itself takes no memory (the page
+        # cache holds what is being worked on, and can drop it again)
+        x = np.memmap(path, dtype=np.complex64, mode="r")
     else:
-        x = np.fromfile(path, dtype=np.complex64)
+        x = np.zeros(0, np.complex64)
     fs = float(meta.get("rate", 0))
     if fs <= 0:
         sys.exit("error: sample rate unknown (no .json sidecar)")
@@ -64,9 +82,13 @@ def load(path, start=0.0, seconds=0.0):
 
 def save(path, x, fs, meta):
     np.asarray(x, dtype=np.complex64).tofile(path)
+    save_meta(path, len(x), fs, meta)
+
+
+def save_meta(path, n, fs, meta):
     m = dict(meta)
     m["rate"] = fs
-    m["samples"] = int(len(x))
+    m["samples"] = int(n)
     m["format"] = "cf32"
     with open(os.path.splitext(path)[0] + ".json", "w") as f:
         json.dump(m, f, indent=1)
@@ -109,52 +131,112 @@ def write_wav(path, a, fs):
 # ---------------------------------------------------------------------------
 # DSP
 # ---------------------------------------------------------------------------
-def channelize(x, fs, decim, bw):
+class Channelizer:
     """Low-pass to +-bw/2 and decimate by an integer factor (fast-convolution
     filter: overlap-save in the frequency domain, decimation by picking the
-    centre bins)."""
-    decim = int(decim)
-    if decim <= 1 and bw >= fs:
+    centre bins) - fed a piece at a time, so a long recording never has to
+    be in memory: push() returns the output so far, finish() the rest. The
+    output is the same as filtering the whole recording at once."""
+
+    def __init__(self, fs, decim, bw):
+        self.decim = decim = int(decim)
+        self.bypass = decim <= 1 and bw >= fs
+        M = 4096
+        self.N = N = M * decim
+        self.V = V = N // 4 // decim * decim          # overlap (multiple of decim)
+        self.hop = N - V
+        f = np.fft.fftfreq(N, 1 / fs)
+        fo = fs / decim
+        edge = min(bw / 2, 0.48 * fo)
+        trans = max(0.05 * fo, 4 * fs / N)
+        H = np.clip((edge + trans / 2 - np.abs(f)) / trans, 0, 1)
+        H = 0.5 - 0.5 * np.cos(np.pi * H)    # raised-cosine edge
+        self.keep = np.concatenate([np.arange(0, M // 2), np.arange(N - M // 2, N)])
+        self.Hk = (H[self.keep] / decim).astype(np.complex64)
+        self.buf = np.zeros(V, np.complex64)  # the run-in: V zeros, then the input
+        self.n_in = self.n_out = 0
+
+    def _blocks(self, buf, limit=None):
+        out, p = [], 0
+        while len(buf) - p >= self.N and (limit is None or limit > 0):
+            y = np.fft.ifft(np.fft.fft(buf[p:p + self.N])[self.keep] * self.Hk)
+            y = y[self.V // self.decim:]
+            out.append(y)
+            p += self.hop
+            if limit is not None:
+                limit -= len(y)
+        return (np.concatenate(out).astype(np.complex64) if out else np.zeros(0, np.complex64)), p
+
+    def push(self, x):
+        x = np.asarray(x, dtype=np.complex64)
+        if self.bypass:
+            return x
+        self.n_in += len(x)
+        buf = np.concatenate([self.buf, x])
+        y, p = self._blocks(buf)
+        self.buf = buf[p:]
+        self.n_out += len(y)
+        return y
+
+    def finish(self):
+        if self.bypass:
+            return np.zeros(0, np.complex64)
+        want = self.n_in // self.decim - self.n_out
+        if want <= 0:
+            return np.zeros(0, np.complex64)
+        y, _ = self._blocks(np.concatenate([self.buf, np.zeros(self.N, np.complex64)]), want)
+        self.n_out += min(len(y), want)
+        return y[:want]
+
+
+def channelize(x, fs, decim, bw):
+    """Channelizer on a whole array."""
+    c = Channelizer(fs, decim, bw)
+    if c.bypass:
         return x
-    M = 4096
-    N = M * decim
-    V = N // 4 // decim * decim          # overlap (multiple of decim)
-    hop = N - V
-    f = np.fft.fftfreq(N, 1 / fs)
-    fo = fs / decim
-    edge = min(bw / 2, 0.48 * fo)
-    trans = max(0.05 * fo, 4 * fs / N)
-    H = np.clip((edge + trans / 2 - np.abs(f)) / trans, 0, 1)
-    H = 0.5 - 0.5 * np.cos(np.pi * H)    # raised-cosine edge
-    keep = np.concatenate([np.arange(0, M // 2), np.arange(N - M // 2, N)])
-    Hk = H[keep]
-    xp = np.concatenate([np.zeros(V, x.dtype), x, np.zeros(N, x.dtype)])
-    out = []
-    for p in range(0, len(x) + V, hop):
-        blk = xp[p:p + N]
-        if len(blk) < N:
-            blk = np.concatenate([blk, np.zeros(N - len(blk), x.dtype)])
-        y = np.fft.ifft(np.fft.fft(blk)[keep] * Hk) / decim
-        out.append(y[V // decim:])
-    y = np.concatenate(out)[: len(x) // decim]
-    return y.astype(np.complex64)
+    return np.concatenate([c.push(x), c.finish()])
 
 
-def mix(x, fs, hz, phase0=0.0):
-    n = np.arange(len(x), dtype=np.float64)
-    return (x * np.exp(-2j * np.pi * hz / fs * n + 1j * phase0)).astype(np.complex64)
+def mix(x, fs, hz, phase0=0.0, n0=0):
+    """x shifted down by hz: x[n] * exp(-j 2 pi hz/fs (n0 + n) + j phase0).
+    n0 = the first sample's index in a stream (a continuous phase over
+    pieces). In blocks: no recording-long float64 temporaries."""
+    out = np.empty(len(x), np.complex64)
+    step = hz / fs
+    B = 1 << 18
+    for p in range(0, len(x), B):
+        n = np.arange(n0 + p, n0 + min(p + B, len(x)), dtype=np.float64)
+        ph = -2 * np.pi * np.mod(n * step, 1.0) + phase0
+        out[p:p + B] = x[p:p + B] * np.exp(1j * ph).astype(np.complex64)
+    return out
 
 
 def fm_disc(x, fs):
-    d = np.angle(x[1:] * np.conj(x[:-1])) * fs / (2 * np.pi)
-    return np.concatenate([d[:1], d]).astype(np.float32)
+    """Instantaneous frequency (Hz), float32, in blocks (no recording-long
+    complex temporaries)."""
+    n = len(x)
+    d = np.empty(n, np.float32)
+    if n < 2:
+        d[:] = 0
+        return d
+    B = 1 << 20
+    k = np.float32(fs / (2 * np.pi))
+    for p in range(1, n, B):
+        q = min(n, p + B)
+        d[p:q] = np.angle(x[p:q] * np.conj(x[p - 1:q - 1])) * k
+    d[0] = d[1]
+    return d
+
+
+def blocks(x, B=1 << 20):
+    for p in range(0, len(x), B):
+        yield x[p:p + B]
 
 
 def lowpass_real(a, fs, cutoff):
     n = len(a)
-    A = np.fft.rfft(a)
-    f = np.fft.rfftfreq(n, 1 / fs)
-    A[f > cutoff] = 0
+    A = np.fft.rfft(np.asarray(a, dtype=np.float32))      # single precision: half the memory
+    A[int(cutoff * n / fs) + 1:] = 0                       # bins above the cut-off
     return np.fft.irfft(A, n).astype(np.float32)
 
 
@@ -163,14 +245,17 @@ def resample_real(a, fs, fo):
         return a
     n = len(a)
     m = int(round(n * fo / fs))
-    A = np.fft.rfft(a)
-    B = np.zeros(m // 2 + 1, complex)
+    A = np.fft.rfft(np.asarray(a, dtype=np.float32))
+    B = np.zeros(m // 2 + 1, A.dtype)
     k = min(len(A), len(B))
     B[:k] = A[:k]
     return (np.fft.irfft(B, m) * m / n).astype(np.float32)
 
 
-def welch(x, fs, nfft=4096, mask=None):
+def welch(x, fs, nfft=4096, mask=None, fn=None):
+    """Averaged power spectrum. fn: applied to each segment first (e.g. the
+    envelope of a segment instead of the whole recording's - no full-length
+    temporaries). Real x gives the two-sided (mirrored) spectrum."""
     nfft = int(min(nfft, 2 ** int(math.log2(max(len(x), 64)))))
     w = np.hanning(nfft).astype(np.float32)
     hop = nfft // 2
@@ -179,10 +264,11 @@ def welch(x, fs, nfft=4096, mask=None):
     for p in range(0, len(x) - nfft + 1, hop):
         if mask is not None and not mask[p:p + nfft].mean() > 0.9:
             continue
-        acc += np.abs(np.fft.fft(x[p:p + nfft] * w)) ** 2
+        seg = x[p:p + nfft] if fn is None else fn(x[p:p + nfft])
+        acc += np.abs(np.fft.fft(seg * w)) ** 2
         k += 1
     if k == 0:
-        return welch(x, fs, nfft) if mask is not None else (np.fft.fftshift(np.fft.fftfreq(nfft, 1 / fs)), np.full(nfft, -200.0), 0)
+        return welch(x, fs, nfft, fn=fn) if mask is not None else (np.fft.fftshift(np.fft.fftfreq(nfft, 1 / fs)), np.full(nfft, -200.0), 0)
     psd = np.fft.fftshift(acc / k) / (np.sum(w ** 2) * fs)
     f = np.fft.fftshift(np.fft.fftfreq(nfft, 1 / fs))
     return f, 10 * np.log10(psd + 1e-20), k
@@ -500,54 +586,125 @@ def capture(args):
     decim = max(1, int(round(fs / args.rate)))
     rate_out = fs / decim
     bw = args.bw if args.bw else 0.8 * rate_out
+    if not 0 < args.seconds <= MAX_CAPTURE_S:
+        sys.exit(f"error: --seconds must be between 0 and {MAX_CAPTURE_S:g}")
     want = int(args.seconds * fs)
-    s = socket.create_connection((host, 8091), timeout=5)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
-    hdr = bytearray(32)
-    raw = bytearray()
-    skipped = gaps = 0
-    in_gap = False
-    gain = None
-    t_end = time.time() + args.seconds + 10
-    try:
-        while len(raw) < want * 2:
-            if time.time() > t_end:
-                sys.exit("error: capture timed out (heimdall calibrating / not streaming?)")
-            recv_exact(s, memoryview(hdr))
-            magic, nch, ns, phase, noise, fchg, grp, retune = struct.unpack(">8I", hdr)
-            if magic != MAGIC:
-                raise RuntimeError("bad packet magic (wrong port?)")
-            chinfo = bytearray(8 * nch)
-            recv_exact(s, memoryview(chinfo))
-            data = bytearray(nch * ns * 2)
-            recv_exact(s, memoryview(data))
-            if ch >= nch:
-                sys.exit(f"error: no channel {ch} in the stream ({nch} channels)")
-            pf, gain = struct.unpack("<ff", chinfo[8 * ch: 8 * ch + 8])
-            if abs(pf - center) > 1000:
-                if args.center is None:
-                    sys.exit(f"error: the receiver retuned during the capture ({pf / 1e6:.4f} MHz)")
-            if noise or retune:
-                skipped += 1
-                if not in_gap and raw:
-                    gaps += 1
-                in_gap = True
-                continue
+    out_bytes = int(want / decim) * 8
+    free = shutil.disk_usage(os.path.dirname(os.path.abspath(args.output))).free
+    if out_bytes + DISK_RESERVE > free:
+        sys.exit(f"error: the capture needs {out_bytes / 1e6:.0f} MB on disk, only {free / 1e6:.0f} MB are free "
+                 "(less --seconds or a lower --rate)")
+
+    # A reader thread takes the packets off the socket (the stream must be
+    # read in real time), the main thread processes ~0.2 s at a time and
+    # appends the result to the file: memory stays small however long the
+    # capture is (it used to hold the whole recording, then several
+    # double-precision copies of it - ~140 MB per second, and a 45 s
+    # capture froze a 4 GB Pi).
+    q = queue.Queue()
+    info = {"gain": None, "skipped": 0, "gaps": 0}
+    stop = threading.Event()
+
+    def reader():
+        s = None
+        try:
+            s = socket.create_connection((host, 8091), timeout=5)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
+            hdr = bytearray(32)
+            got = 0
             in_gap = False
-            raw += data[ch * ns * 2: (ch + 1) * ns * 2]
+            t_end = time.time() + args.seconds + 10
+            while got < want and not stop.is_set():
+                if time.time() > t_end:
+                    raise RuntimeError("capture timed out (heimdall calibrating / not streaming?)")
+                recv_exact(s, memoryview(hdr))
+                magic, nch, ns, phase, noise, fchg, grp, retune = struct.unpack(">8I", hdr)
+                if magic != MAGIC:
+                    raise RuntimeError("bad packet magic (wrong port?)")
+                chinfo = bytearray(8 * nch)
+                recv_exact(s, memoryview(chinfo))
+                data = bytearray(nch * ns * 2)
+                recv_exact(s, memoryview(data))
+                if ch >= nch:
+                    raise RuntimeError(f"no channel {ch} in the stream ({nch} channels)")
+                pf, info["gain"] = struct.unpack("<ff", chinfo[8 * ch: 8 * ch + 8])
+                if abs(pf - center) > 1000 and args.center is None:
+                    raise RuntimeError(f"the receiver retuned during the capture ({pf / 1e6:.4f} MHz)")
+                if noise or retune:
+                    info["skipped"] += 1
+                    if not in_gap and got:
+                        info["gaps"] += 1
+                    in_gap = True
+                    continue
+                in_gap = False
+                take = min(ns, want - got)
+                q.put(bytes(data[ch * ns * 2: ch * ns * 2 + take * 2]))
+                got += take
+            q.put(None)
+        except Exception as e:      # handed to the main thread
+            q.put(e)
+        finally:
+            if s is not None:
+                s.close()
+
+    th = threading.Thread(target=reader, daemon=True)
+    th.start()
+    chan = Channelizer(fs, decim, bw)
+    part = args.output + ".part"
+    n_in = n_out = 0
+    dc = None
+    CHUNK = 1 << 19                 # samples processed at a time (~0.22 s)
+    pend, pend_n = [], 0
+    try:
+        with open(part, "wb") as fo:
+            done = False
+            while not done:
+                item = q.get()
+                if isinstance(item, Exception):
+                    sys.exit(f"error: {item}")
+                if item is None:
+                    done = True
+                else:
+                    pend.append(item)
+                    pend_n += len(item) // 2
+                if pend_n < CHUNK and not done:
+                    continue
+                if pend_n:
+                    b = np.frombuffer(b"".join(pend), dtype=np.uint8).astype(np.float32)
+                    pend, pend_n = [], 0
+                    x = np.empty(len(b) // 2, np.complex64)
+                    x.real = b[0::2]
+                    x.imag = b[1::2]
+                    del b
+                    x -= 127.5 + 127.5j
+                    x /= 127.5
+                    # DC: each piece's mean smoothed (~1 s) and ramped across
+                    # the piece, so the correction has no steps
+                    m = complex(x.mean())
+                    prev = m if dc is None else dc
+                    dc = m if dc is None else dc + 0.2 * (m - dc)
+                    x -= np.linspace(prev, dc, len(x), dtype=np.complex64)
+                    y = chan.push(mix(x, fs, offset, n0=n_in))
+                    n_in += len(x)
+                    y.tofile(fo)
+                    n_out += len(y)
+                if done:
+                    y = chan.finish()
+                    y.tofile(fo)
+                    n_out += len(y)
+        stop.set()
+        meta = {"rf_hz": args.freq, "center_hz": center, "offset_hz": offset, "rate": rate_out, "bandwidth_hz": bw,
+                "gain_db": info["gain"], "captured_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "source": f"heimdall 8091 channel {ch}", "channel": ch, "calibration_gaps": info["gaps"],
+                "skipped_packets": info["skipped"]}
+        save_meta(args.output, n_out, rate_out, meta)
+        os.replace(part, args.output)
     finally:
-        s.close()
-    b = np.frombuffer(bytes(raw[: want * 2]), dtype=np.uint8).astype(np.float32)
-    x = ((b[0::2] - 127.5) + 1j * (b[1::2] - 127.5)) / 127.5
-    x = x - x.mean()
-    x = mix(x.astype(np.complex64), fs, offset)
-    y = channelize(x, fs, decim, bw)
-    meta = {"rf_hz": args.freq, "center_hz": center, "offset_hz": offset, "rate": rate_out, "bandwidth_hz": bw,
-            "gain_db": gain, "captured_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "source": f"heimdall 8091 channel {ch}", "channel": ch, "calibration_gaps": gaps,
-            "skipped_packets": skipped}
-    save(args.output, y, rate_out, meta)
-    print(f"captured {len(y) / rate_out:.2f} s at {rate_out:g} Hz (bw {bw:g} Hz) around "
+        stop.set()
+        if os.path.exists(part):
+            os.unlink(part)
+    gaps = info["gaps"]
+    print(f"captured {n_out / rate_out:.2f} s at {rate_out:g} Hz (bw {bw:g} Hz) around "
           f"{args.freq / 1e6:.6f} MHz -> {args.output}" + (f"  [{gaps} calibration gap(s) cut out]" if gaps else ""))
 
 
@@ -559,7 +716,8 @@ def bursts(x, fs, block_s=0.002):
     nb = len(x) // blk
     if nb < 4:
         return None
-    p = (np.abs(x[: nb * blk]) ** 2).reshape(nb, blk).mean(1)
+    step = max(1, (1 << 20) // blk) * blk
+    p = np.concatenate([(np.abs(c) ** 2).reshape(-1, blk).mean(1) for c in blocks(x[: nb * blk], step)])
     pdb = 10 * np.log10(p + 1e-20)
     floor = np.percentile(pdb, 10)
     top = np.percentile(pdb, 99)
@@ -586,8 +744,10 @@ def analyze(args):
     P(f"RF {rf / 1e6:.6f} MHz" if rf else "RF unknown")
     P(f"sample rate {fs:g} Hz, {dur:.2f} s, capture bandwidth {meta.get('bandwidth_hz', fs):g} Hz, "
       f"gain {meta.get('gain_db', '?')} dB")
-    rms = np.sqrt(np.mean(np.abs(x) ** 2)) + 1e-12
-    P(f"level: {20 * np.log10(rms):.1f} dBFS rms, peak {20 * np.log10(np.abs(x).max() + 1e-12):.1f} dBFS")
+    pw = sum(float(np.sum(np.abs(c) ** 2)) for c in blocks(x))
+    rms = math.sqrt(pw / max(len(x), 1)) + 1e-12
+    peak = max((float(np.abs(c).max()) for c in blocks(x)), default=0.0)
+    P(f"level: {20 * np.log10(rms):.1f} dBFS rms, peak {20 * np.log10(peak + 1e-12):.1f} dBFS")
 
     # --- activity / bursts
     b = bursts(x, fs)
@@ -648,7 +808,25 @@ def analyze(args):
         P("narrow spectral lines (carriers / pilots): " +
           ", ".join(f"{fr:+.0f} Hz ({pr:.0f} dB)" for fr, pr, _ in lines))
 
-    xs = x[on_mask] if on_mask is not None and on_mask.sum() > fs * 0.05 else x
+    # the signal's samples (the bursts, when it is bursty) for the
+    # modulation statistics - at most STATS_MAX of them, so the memory they
+    # need doesn't grow with the length of the capture
+    if on_mask is not None and on_mask.sum() > fs * 0.05:
+        blk = max(1, int(fs * b["block_s"]))
+        parts, got = [], 0
+        for st, du in b["bursts"]:
+            a0 = int(round(st / b["block_s"])) * blk
+            a1 = min(a0 + int(round(du / b["block_s"])) * blk, a0 + STATS_MAX - got)
+            parts.append(np.asarray(x[a0:a1]))
+            got += a1 - a0
+            if got >= STATS_MAX:
+                break
+        xs = np.concatenate(parts)
+    else:
+        xs = np.asarray(x[:STATS_MAX])
+    if len(xs) < (on_mask.sum() if on_mask is not None and on_mask.sum() > fs * 0.05 else len(x)):
+        P("")
+        P(f"(the modulation statistics below use the first {len(xs) / fs:.1f} s of signal)")
     # --- envelope
     env = np.abs(xs)
     cv = float(env.std() / (env.mean() + 1e-12))
@@ -657,21 +835,22 @@ def analyze(args):
     P(f"amplitude variation (std/mean) {cv:.3f}  -> " +
       ("near-constant envelope: FM / FSK / GMSK / CPM / PM" if cv < 0.2 else
        "moderate: filtered PSK/QAM, or FSK at low SNR" if cv < 0.45 else "strong: AM / OOK / SSB / noise-like"))
-    e2 = (env ** 2 - (env ** 2).mean()).astype(np.float32)
-    fe, dbe, _ = welch(e2.astype(np.complex64), fs, 8192)
+    m2 = float(np.mean(env * env))
+    fe, dbe, _ = welch(env, fs, 8192, fn=lambda seg: seg * seg - m2)
+    del env
     lines_e = spectral_lines(fe, dbe, 20, fs / 2, 10)
     if lines_e:
         P("envelope spectral lines (AM rate / PSK symbol rate): " +
           ", ".join(f"{fr:.1f} Hz ({pr:.0f} dB)" for fr, pr, _ in lines_e[:5]))
     for k, name in ((2, "BPSK-like (x^2)"), (4, "QPSK-like (x^4)")):
-        xk = (xs / (np.abs(xs) + 1e-9)) ** k
-        fk, dbk, _ = welch(xk.astype(np.complex64), fs, 8192)
+        fk, dbk, _ = welch(xs, fs, 8192, fn=lambda seg: (seg / (np.abs(seg) + 1e-9)) ** k)
         lk = spectral_lines(fk, dbk, -fs / 2, fs / 2, 15, 1)
         if lk:
             P(f"{name}: line at {lk[0][0]:+.1f} Hz ({lk[0][1]:.0f} dB) -> carrier offset {lk[0][0] / k:+.1f} Hz")
 
     # --- FM discriminator
     d = fm_disc(xs, fs)
+    del xs
     occ = (f_hi - f_lo) if lin.sum() > 0 else fs / 2
     dl = lowpass_real(d, fs, min(fs / 2 * 0.95, max(1500.0, occ * 0.6)))
     p1, p99 = np.percentile(dl, [1, 99])
@@ -683,15 +862,15 @@ def analyze(args):
         P(f"histogram peaks ({len(pk_l)}): " + ", ".join(f"{c:+.0f} Hz ({100 * r:.0f}%)" for c, r in pk_l[:8]) +
           ("  -> looks like %d-level FSK" % len(pk_l) if 2 <= len(pk_l) <= 4 and cv < 0.45 else ""))
     # transition-rate line: symbol rate of FSK
-    sl = np.sign(dl - np.median(dl))
-    tr = np.abs(np.diff(sl)).astype(np.float32)
-    ft, dbt, _ = welch(tr.astype(np.complex64), fs, 16384)
+    tr = np.abs(np.diff(np.sign(dl - np.median(dl)))).astype(np.float32)
+    ft, dbt, _ = welch(tr, fs, 16384)
+    del tr
     lt = spectral_lines(ft, dbt, 30, fs / 2 * 0.9, 6, 5)
     if lt:
         P("symbol-rate candidates (lines in the discriminator transition spectrum): " +
           ", ".join(f"{fr:.1f} Hz ({pr:.0f} dB)" for fr, pr, _ in lt))
-    da = d - d.mean()
-    fa, dba, _ = welch(da.astype(np.complex64), fs, 16384)
+    dm = float(d.mean())
+    fa, dba, _ = welch(d, fs, 16384, fn=lambda seg: seg - dm)
     la = spectral_lines(fa, dba, 20, min(fs / 2, 6000), 12, 8)
     if la:
         P("audio-band tones after FM demod: " + ", ".join(f"{fr:.1f} Hz ({pr:.0f} dB)" for fr, pr, _ in la))
@@ -738,30 +917,70 @@ def cmd_extract(args):
     x, fs, meta = load(args.input, args.start, args.seconds)
     decim = max(1, int(round(fs / args.rate))) if args.rate else 1
     bw = args.bw or 0.8 * fs / decim
-    y = channelize(mix(x, fs, args.offset), fs, decim, bw)
     m = dict(meta)
     if m.get("rf_hz"):
         m["rf_hz"] = m["rf_hz"] + args.offset
     m["bandwidth_hz"] = bw
-    save(args.output, y, fs / decim, m)
-    print(f"wrote {args.output}: {len(y) / (fs / decim):.2f} s at {fs / decim:g} Hz, bw {bw:g} Hz")
+    # a piece at a time, straight to the file (any length of recording)
+    chan = Channelizer(fs, decim, bw)
+    part = args.output + ".part"
+    n = 0
+    try:
+        with open(part, "wb") as fo:
+            P = 1 << 19
+            for p in range(0, len(x), P):
+                y = chan.push(mix(x[p:p + P], fs, args.offset, n0=p))
+                y.tofile(fo)
+                n += len(y)
+            y = chan.finish()
+            y.tofile(fo)
+            n += len(y)
+        save_meta(args.output, n, fs / decim, m)
+        os.replace(part, args.output)
+    finally:
+        if os.path.exists(part):
+            os.unlink(part)
+    print(f"wrote {args.output}: {n / (fs / decim):.2f} s at {fs / decim:g} Hz, bw {bw:g} Hz")
 
 
 def cmd_demod(args):
     x, fs, meta = load(args.input, args.start, args.seconds)
-    if args.mode == "fm":
-        a = fm_disc(x, fs) / max(args.deviation, 1.0)
-    elif args.mode == "am":
-        e = np.abs(x)
-        a = (e - e.mean()) / (e.std() * 4 + 1e-9)
-    else:
-        sh = 1500.0 if args.mode == "usb" else -1500.0
-        y = channelize(mix(x, fs, sh), fs, 1, 2700)
-        a = np.real(y) * (1 if args.mode == "usb" else 1)
-        a = a / (np.percentile(np.abs(a), 99.5) + 1e-9) * 0.7
     out_fs = min(48000.0, fs)
-    a = lowpass_real(a, fs, min(out_fs / 2 * 0.9, 8000))
-    a = resample_real(a, fs, out_fs)
+    decim = max(1, int(fs // out_fs))
+    fs1 = fs / decim
+    cut = min(out_fs / 2 * 0.9, 8000)
+    P = 1 << 19
+    # in pieces: demodulate, then low-pass + decimate with a streamed
+    # Channelizer, so no step needs the whole recording at the input rate
+    # (a single FFT over 45 s at 480 kHz alone took ~580 MB)
+    if args.mode in ("usb", "lsb"):
+        # the sideband is moved to +-1500 Hz around 0, filtered to 2.7 kHz,
+        # moved back (to 0..3 kHz / -3..0 kHz) and the real part taken
+        sh = 1500.0 if args.mode == "usb" else -1500.0
+        chan = Channelizer(fs, decim, 2700)
+        y = np.concatenate([chan.push(mix(x[p:p + P], fs, sh, n0=p)) for p in range(0, len(x), P)] + [chan.finish()])
+        a = np.real(mix(y, fs1, -sh)).astype(np.float32)
+        a = a / (np.percentile(np.abs(a), 99.5) + 1e-9) * 0.7
+    else:
+        if args.mode == "am":
+            n = max(len(x), 1)
+            s1 = sum(float(np.sum(np.abs(c), dtype=np.float64)) for c in blocks(x))
+            s2 = sum(float(np.sum(np.abs(c).astype(np.float64) ** 2)) for c in blocks(x))
+            mean = s1 / n
+            scale = math.sqrt(max(s2 / n - mean * mean, 0.0)) * 4 + 1e-9
+        chan = Channelizer(fs, decim, 2 * cut)
+        out = []
+        for p in range(0, len(x), P):
+            if args.mode == "fm":
+                q = max(0, p - 1)
+                d = fm_disc(x[q:p + P], fs)[p - q:] / max(args.deviation, 1.0)
+            else:
+                d = (np.abs(x[p:p + P]) - mean) / scale
+            out.append(chan.push(d.astype(np.complex64)).real)
+        out.append(chan.finish().real)
+        a = np.concatenate(out).astype(np.float32)
+    if abs(fs1 - out_fs) > 1e-6:
+        a = resample_real(a, fs1, out_fs)
     write_wav(args.output, a, out_fs)
     print(f"wrote {args.output}: {len(a) / out_fs:.2f} s of {args.mode.upper()} audio at {out_fs:g} Hz")
 
@@ -774,7 +993,7 @@ def cmd_tones(args):
         x, fs, _ = load(args.input)
         a = fm_disc(x, fs)
     a = a - a.mean()
-    f, db, _ = welch(a.astype(np.complex64), fs, 32768 if len(a) > 65536 else 4096)
+    f, db, _ = welch(a, fs, 32768 if len(a) > 65536 else 4096)
     sel = (f >= 0) & (f <= min(fs / 2, 8000))
     lines = spectral_lines(f[sel], db[sel], 20, 8000, 8, 15)
     print(f"resolution {f[1] - f[0]:.2f} Hz")
@@ -824,15 +1043,21 @@ def cmd_symbols(args):
     else:
         y = np.abs(x)
     n = max(1, int(round(sps)))
-    y = np.convolve(y, np.ones(n) / n, "same").astype(np.float32)   # integrate over a symbol
+    y = np.convolve(y, np.full(n, 1 / n, np.float32), "same")   # integrate over a symbol (float32)
     # sample per segment at the phase with the best cluster separation
     seg = int(200 * sps)
     t_all, v_all = [], []
+
+    def at(t):                      # y at fractional sample times (linear)
+        i = np.minimum(t.astype(np.int64), len(y) - 2)
+        fr = np.minimum(t - i, 1.0).astype(np.float32)
+        return y[i] * (1 - fr) + y[i + 1] * fr
+
     for p0 in range(0, len(y) - seg + 1, seg):
         best = None
         for ph in np.linspace(0, sps, 16, endpoint=False):
             t = p0 + ph + np.arange(int((seg - ph) / sps)) * sps
-            v = np.interp(t, np.arange(len(y)), y)
+            v = at(t)
             c, lab = kmeans1d(v, args.levels, 8)
             within = np.mean((v - c[lab]) ** 2)
             score = np.var(v) / (within + 1e-9)
@@ -940,8 +1165,17 @@ def main():
     t = sub.add_parser("tones")
     t.add_argument("input")
     a = ap.parse_args()
-    {"capture": capture, "analyze": analyze, "spectrogram": cmd_spectrogram, "extract": cmd_extract,
-     "demod": cmd_demod, "tones": cmd_tones, "symbols": cmd_symbols}[a.cmd](a)
+    # Stop (SIGTERM from the AI Signal Lab) unwinds normally, so a capture /
+    # extract in progress removes its unfinished .part file
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    try:
+        {"capture": capture, "analyze": analyze, "spectrogram": cmd_spectrogram, "extract": cmd_extract,
+         "demod": cmd_demod, "tones": cmd_tones, "symbols": cmd_symbols}[a.cmd](a)
+    except MemoryError:
+        lim = kraken_memguard.limit_mb()
+        sys.exit("error: not enough free memory for this" + (f" (this process may use {lim} MB - the receiver "
+                 "needs the rest)" if lim else "") + ": work on a part of the recording (--start / --seconds), "
+                 "or extract it to a lower --rate first")
 
 
 if __name__ == "__main__":

@@ -78,7 +78,9 @@ public:
         rx_[0].on_frame = [this](const FskFrame& f) { block(f, false); };
         rx_[1].on_frame = [this](const FskFrame& f) { block(f, true); };
     }
-    void push(const float* narrow, const float*, size_t n, double) override {
+    void push(const float* narrow, const float*, size_t n, double t0) override {
+        rx_[0].clock(t0);
+        rx_[1].clock(t0);
         for (size_t i = 0; i < n; i++) {
             rx_[0].push(narrow[i]);
             rx_[1].push(narrow[i]);
@@ -96,6 +98,7 @@ private:
     void frame(const uint8_t* fr, bool x, float dc);
 
     double fs_;
+    double blk_ts_ = NAN, blk_te_ = NAN;   // the FSK block the frame's last bytes came in (its time span)
     FskRx rx_[2];
     ReedSolomon rs_;
     std::vector<float> pre_;
@@ -107,6 +110,8 @@ private:
 void Lms6::block(const FskFrame& f, bool x) {
     const int nbytes = x ? LMSX_BYTES : LMS6_BYTES;
     if (std::fabs(f.t0 - last_t0_[x]) < 0.3 * fs_) return;    // decoded already (another timing phase)
+    blk_ts_ = f.t_start;   // the frames completed by this block: its time span
+    blk_te_ = f.t_end;
     // soft input for the Viterbi: > 0 = "0"; the second chip of a pair is inverted
     const int nbits = (5 + nbytes) * 8;
     std::vector<float> soft(2 * nbits);
@@ -165,6 +170,8 @@ void Lms6::frame(const uint8_t* fr, bool x, float dc) {
     o.type = "LMS6";
     o.subtype = x ? "LMSX-403" : fr[3] == 0x05 ? "LMS6-403-2" : "LMS6-403";
     o.dc_hz = dc;
+    o.t_start = blk_ts_;
+    o.t_end = blk_te_;
     o.serial = std::to_string(u32be(fr + 4) & 0xFFFFFF);
     o.frame_no = u16be(fr + 8);
     // GPS time of week (no week number): time of day, UTC

@@ -48,6 +48,7 @@ constexpr int NCHIP = 16 + 2 * 112;            // preamble + longest message
 constexpr int NEED = static_cast<int>(NCHIP * 1.2) + 8;   // samples a candidate needs
 constexpr double AIRCRAFT_TIMEOUT_S = 60;      // forgotten after this long unheard
 constexpr double POS_TIMEOUT_S = 60;           // map marker kept this long after the last position
+constexpr double POS_AT_MAX_S = 3;             // a packet's position (Talker::lat): moved on from at most this old a fix
 // the panel's aircraft table (kp::Host::table_*), one row per aircraft
 const std::vector<std::string> TABLE_COLS = {"ICAO", "Callsign", "Category", "Squawk", "Altitude ft", "GNSS alt ft",
                                              "V/S ft/min", "GS kt", "Track °", "Heading °", "IAS kt", "TAS kt",
@@ -384,7 +385,33 @@ private:
         t.start_s = now_ + (static_cast<double>(abs0_) + cand_start_ - static_cast<double>(blk_abs_)) / FS;
         t.end_s = t.start_s + (8 + len) * 1e-6;
         t.packet = true;
+        packet_position(a, t.start_s, &t);
         host.talker(t);
+    }
+
+    // Where the aircraft was at time ts (its last position moved on with its
+    // velocity) - for the array calibration against ADS-B bearings
+    // (kp::Talker::lat / lon / alt_m). Airborne only (taxiing aircraft sit in
+    // the ground clutter and reflections), a position at most POS_AT_MAX_S
+    // old, a velocity for anything older than 0.1 s.
+    void packet_position(const Aircraft& a, double ts, kp::Talker* t) const {
+        if (a.ground || !std::isfinite(a.lat) || !std::isfinite(a.lon)) return;
+        const double dt = ts - a.pos_t;
+        if (dt < -0.05 || dt > POS_AT_MAX_S) return;
+        float alt_ft = a.alt_geom;
+        if (!std::isfinite(alt_ft)) alt_ft = now_ - a.alt_t < 30 ? a.alt_baro : NAN;
+        if (!std::isfinite(alt_ft)) return;
+        double lat = a.lat, lon = a.lon, alt_m = alt_ft * 0.3048;
+        if (dt > 0.1) {
+            if (!std::isfinite(a.gs) || !std::isfinite(a.track) || now_ - a.vel_t > 30) return;
+            const double d = a.gs * 0.514444 * dt, tr = a.track * M_PI / 180;
+            lat += d * std::cos(tr) / 111320.0;
+            lon += d * std::sin(tr) / (111320.0 * std::max(0.01, std::cos(a.lat * M_PI / 180)));
+            if (std::isfinite(a.vrate)) alt_m += a.vrate * 0.3048 / 60 * dt;
+        }
+        t->lat = lat;
+        t->lon = lon;
+        t->alt_m = alt_m;
     }
 
     void accept(Aircraft& a, float level) {

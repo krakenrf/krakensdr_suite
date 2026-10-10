@@ -42,6 +42,7 @@ struct Frame {
     std::vector<std::pair<std::string, std::string>> extra;   // more "key: value" for the popup / facts
     float dc_hz = NAN;                // carrier offset measured on the frame (AFC)
     double t = 0;                     // input time (s) of the frame
+    double t_start = NAN, t_end = NAN; // input time (s) of its first sample / end, NAN = not known (Host::valid(start, end))
     std::string raw;                  // the frame in hex (decoder data log)
 };
 

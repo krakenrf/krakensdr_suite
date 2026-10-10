@@ -40,6 +40,7 @@ struct FskFrame {
     float dev_hz = 0;                 // deviation (half the distance between the levels)
     int sync_err = 0;                 // symbol errors in the sync
     bool inverted = false;            // matched the inverted sync
+    double t_start = 0, t_end = 0;    // input time (s, clock()) of the sync's first sample / the frame's end
 };
 
 class FskRx {
@@ -50,6 +51,9 @@ public:
     void reset();
     // one discriminator sample (Hz)
     void push(float x);
+    // the input time (s) of the next sample pushed - at the start of every
+    // block: frames get their time span (FskFrame::t_start / t_end)
+    void clock(double t) { clk_idx_ = n_; clk_t_ = t; }
     std::function<void(const FskFrame&)> on_frame;
     double sps() const { return sps_; }
 
@@ -84,6 +88,9 @@ private:
     std::vector<float> ma_;           // moving average output ring (for interpolation)
     int mlen_ = 0;
     int64_t n_ = 0;                   // samples pushed
+    int64_t clk_idx_ = 0;             // clock(): sample index clk_idx_ is at time clk_t_
+    double clk_t_ = 0, fs_ = 48000;
+    double time_at(double idx) const { return clk_t_ + (idx - static_cast<double>(clk_idx_)) / fs_; }
     uint64_t sync_ = 0, mask_ = 0;
     int slen_ = 0;
     std::vector<Phase> ph_;

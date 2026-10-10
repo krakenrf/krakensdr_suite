@@ -380,7 +380,13 @@ decoders `kraken_doa_v2/plugins/`
   161.975 / 162.025 MHz in one 100 kHz VFO on 162.000 MHz; manual only,
   fixed frequency like adsb) and radiosonde (weather balloons, 400-406 MHz:
   RS41, DFM, M10 / M20, iMet-4 / -54, LMS6, MRZ side by side in one plugin;
-  weather facts, a sounding in the event log, balloon map points). Each decimator (VFO) runs one
+  weather facts, a sounding in the event log, balloon map points), dme
+  (DME / TACAN beacons, 962-1213 MHz: every 1 MHz channel inside the VFO -
+  a 2.4 MHz VFO covers up to three - with its Morse ident, VOR / ILS
+  pairing, pulse data, exact frequency, TACAN bearing, aircraft
+  interrogations; a DoA per beacon; manual only) and ils (ILS localizer /
+  glide slope DDM, VOR radial, marker beacons, 1020 Hz idents; 48 kHz).
+  Plugins learn the VFO's RF from `kp::Host::rf_hz()` (wire RF, 7). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
   `AUTO_DETECT_OFF:` - at once, minus `manual_only` plugins and those
@@ -444,8 +450,8 @@ decoders `kraken_doa_v2/plugins/`
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab), adsb, ais, radiosonde
-- Same executable tests offline: `decoder --file x.cf32 [--offset HZ]`
+  Signal Lab), adsb, ais, radiosonde, dme, ils
+- Same executable tests offline: `decoder --file x.cf32 [--offset HZ] [--rf HZ]`
 - The shipped protocol plugins are thin wrappers around `plugins/lib/`
   (libkrakendig.a: FEC, 4FSK sync, vocoders, front ends) - kraken_doa itself
   contains no protocol code
@@ -527,7 +533,7 @@ frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*): a decoder plugin that knows who
 transmits reports it (`kp::Host::talker` / `talker_end`, `Info::talkers`,
 with the frames' exact sample times; `kp::Talker::channel` for concurrent
@@ -542,7 +548,9 @@ ADS-B position (median = array / heading check); ais: every frame as a
 packet on its channel (`kp::Talker::freq_hz` / `bw_hz`, averaged over
 `avg_s` 20 s) - VFOs up to 500 kHz keep the raw samples instead and each
 packet's channel is filtered out of every antenna, so a ship on the other
-AIS channel at the same moment doesn't leak in. TETRA isn't split
+AIS channel at the same moment doesn't leak in; dme: clean reply pulse
+pairs of each beacon (up to 100/s, 10 s average; a 📡 beacon in the DF
+panel). TETRA isn't split
 (downlink = the base station only). The
 VFO's decimated-stream position (`MultiChannelDecimated::stream_pos`) is the
 common clock: MUSIC frames (`MUSICProcessor::setFrameTap`: each frame's own
@@ -552,6 +560,33 @@ are summed per transmission and run through MUSIC again
 radio gets its bearing, history and its own mobile DF heat map (rdf_mapper
 keys VFO + talker, rdf_session.bin "KRDF2"); the 🗺 Map's 📡 DF panel picks
 Whole signal / Every radio / one radio and lists the talkers
+
+**🔇 Digital squelch (per VFO, with its digital decoder on)** (details:
+`kraken_doa_v2/CLAUDE.md` *Digital squelch*): squelch methods are FFT Peak
+and Digital (the eigenvalue methods were removed - saved values map to
+FFT). Digital opens while the decoder reports valid frames (+1.5 s) and the
+VFO's DoA is published from exactly the confirmed samples
+(`TalkerDoa::set_digital` -> `MUSICProcessor::publishFromCovariance`; MUSIC's
+own frames held) - interference / noise between the frames never reaches
+the bearing. Plugins report frames with their samples via
+`kp::Host::valid(start_s, end_s)` (all shipped decoders do; the lib ones via
+`RxContext::valid_at` / `dig::report_valid`); talker spans and packets count
+too
+
+**✈ Array calibration from ADS-B aircraft (coherent mode)** (details:
+`kraken_doa_v2/CLAUDE.md` *Array calibration*): `kraken_doa_v2/src/array_cal.cpp`.
+Aircraft packets with the position the adsb plugin gives them
+(`kp::Talker::lat / lon / alt_m`, moved on to the packet's time) are
+transmitters at known directions; a fit finds each element's cable delay and
+position error and the array's rotation - physical units, so MUSIC and the
+beamformer use them on every frequency (`array_cal::corrections()` in their
+steering). Cross-checked on aircraft left out of the fit; applied by the user
+(sidebar "🧪 Experimental" -> "✈ Array Calibration", `ARRAY_CAL_*`), saved in
+`array_cal.json` (cwd), used only while the array settings match. Needs a
+static location (or GPS + compass) and the array standing still.
+EXPERIMENTAL / on the back burner: on the live array the aircraft's
+responses were too distorted (multipath / low elevation) for a good fit -
+see the client CLAUDE.md
 
 ### Operating Modes (top-bar Mode selector: Coherent / Wideband / Independent)
 

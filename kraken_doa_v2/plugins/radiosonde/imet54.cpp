@@ -57,7 +57,8 @@ public:
         rx_.init(c, fs);
         rx_.on_frame = [this](const FskFrame& f) { frame(f); };
     }
-    void push(const float* narrow, const float*, size_t n, double) override {
+    void push(const float* narrow, const float*, size_t n, double t0) override {
+        rx_.clock(t0);
         for (size_t i = 0; i < n; i++) rx_.push(narrow[i]);
     }
     void reset() override {
@@ -115,6 +116,8 @@ void Imet54::frame(const FskFrame& f) {
     Frame o;
     o.type = "iMet-54";
     o.dc_hz = f.dc_hz;
+    o.t_start = f.t_start;
+    o.t_end = f.t_end;
     o.serial = std::to_string(u32be(b));
     o.tod = (tv / 10000000) * 3600 + (tv / 100000 % 100) * 60 + (tv % 100000) / 1000.0;
     if (!(lat == 0 && lon == 0)) { o.lat = lat; o.lon = lon; o.alt = alt; }

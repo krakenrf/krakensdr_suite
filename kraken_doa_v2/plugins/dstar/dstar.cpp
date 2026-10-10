@@ -340,7 +340,11 @@ void DstarReceiver::decode_header_bytes(const uint8_t* h, bool from_slow_data, i
         header_desc_ = d;
         r.event(Mode::DSTAR, std::string(from_slow_data ? "Header (slow data): " : "Header: ") + d, 5.0);
     }
-    if (ctx_.valid) ctx_.valid(Mode::DSTAR);
+    if (from_slow_data) {
+        if (ctx_.valid) ctx_.valid(Mode::DSTAR);   // inside voice frames: their superframe is reported
+    } else {
+        report_valid(ctx_, Mode::DSTAR, hdr_sync - 24 * SPS, hdr_sync + 661 * SPS);
+    }
 }
 
 void DstarReceiver::decode_header(const SymSrc& s) {
@@ -495,7 +499,8 @@ void DstarReceiver::process(const float* d, size_t n) {
                 int64_t sf = static_cast<int64_t>(SUPERFRAME_BITS) * SPS;
                 int64_t rem = dt % sf;
                 if (dt > 0 && (rem < 3 * SPS || sf - rem < 3 * SPS)) {
-                    if (ctx_.valid) ctx_.valid(Mode::DSTAR);
+                    // everything since the previous data sync is D-STAR (at most 2 superframes back)
+                    report_valid(ctx_, Mode::DSTAR, std::max(frame_sync_end_, it->src.sync_end - 2 * sf), it->src.sync_end);
                     if (ctx_.freq_error) ctx_.freq_error(Mode::DSTAR, it->src.center);
                     ctx_.report->set(Mode::DSTAR, "Voice", "receiving");
                 }

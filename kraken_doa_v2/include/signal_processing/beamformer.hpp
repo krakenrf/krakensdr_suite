@@ -176,9 +176,11 @@ private:
     Eigen::VectorXcd steering_vector_;
     bool steering_vector_valid_ = false;
 
-    // Element positions in wavelengths
+    // Element positions in wavelengths (+ the ✈ array calibration's corrections)
     std::vector<double> element_x_;
     std::vector<double> element_y_;
+    std::vector<double> element_tau_;    // each element's calibrated cable delay (s), array_cal.hpp
+    uint64_t cal_gen_ = 0;               // array_cal::generation() the steering was built with
 
     // --- MVDR state ---
     float mvdr_diagonal_loading_ = 0.5f;

@@ -24,6 +24,7 @@
 #include "map_markers.hpp"
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
+#include "array_cal.hpp"
 #include "digital/dig_plugin.hpp"
 #include <iostream>
 #include <thread>
@@ -304,6 +305,9 @@ int main(int argc, char* argv[]) {
     // Mobile DF on the map: DoA lobes + the transmitter heat map (coherent mode)
     rdfmap::start();
 
+    // ✈ Array calibration from ADS-B aircraft (array_cal.json + the fit worker)
+    array_cal::start();
+
     // Ensure the recordings folder exists so the UI can list/download from it.
     cout << "DoA recordings folder: " << doa_recordings_dir() << endl;
 
@@ -415,6 +419,7 @@ int main(int argc, char* argv[]) {
     incidents::save_now();
     declog::stop();
     rdfmap::stop();
+    array_cal::stop();
 
     // Signal all condition variables for shutdown
     {

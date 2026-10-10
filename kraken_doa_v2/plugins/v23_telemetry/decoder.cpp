@@ -303,7 +303,9 @@ public:
     }
 
     void process(const kp::cf* x, size_t n) override {
+        const double t0 = host.time();
         for (size_t i = 0; i < n; i++) {
+            now_ = t0 + static_cast<double>(i) / FS;   // a frame found below ended here
             float f = fm_.push(lp_.push(x[i]));
             dc_ += 0.0005f * (f - dc_);
             float a = f - dc_;
@@ -336,6 +338,7 @@ public:
 private:
     kp::Fir<kp::cf> lp_;
     kp::FmDemod fm_;
+    double now_ = 0;   // Host::time() of the sample being processed
     float dc_ = 0, absdev_ = 0;
     kp::cf pm_, ps_, wm_, ws_;
     std::array<std::array<kp::cf, 2>, SPB> hist_{};
@@ -388,7 +391,7 @@ private:
 
     void candidate(const Deframer& d) {
         std::vector<uint8_t> p(d.frame(), d.frame() + d.frame_len());
-        double t = host.time();
+        double t = now_;   // the frame ended here
         if (p == last_ && t - last_t_ < 0.3) return;   // already reported
         if (pending_ && p == pend_) {
             if (d.parity() < pend_par_) pend_par_ = d.parity();   // prefer a parity-checked format
@@ -413,7 +416,11 @@ private:
         last_ = pend_;
         last_t_ = pend_t_;
         const int len = static_cast<int>(pend_.size());
-        host.valid();
+        // the frame's samples: it ended at pend_t_; len characters of start +
+        // 8 data (+ parity) + stop bit(s) at 1200 bit/s before that
+        // (Host::valid(start, end) - the Digital squelch)
+        const int bits = 10 + (pend_par_ != NONE ? 1 : 0) + (pend_gap_ >= 1 ? 1 : 0);
+        host.valid(pend_t_ - len * bits / 1200.0, pend_t_);
         frames_++;
         if (pend_fixed_) repaired_++;
         last_par_ = pend_par_;

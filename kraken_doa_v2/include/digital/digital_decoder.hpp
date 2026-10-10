@@ -76,6 +76,12 @@ struct TalkerSpan {
     // packets: the channel inside the VFO (Hz from its centre, NAN = whole VFO)
     // and how long to average the talker's packets (0 = default)
     double freq_hz = NAN, bw_hz = 0, avg_s = 0;
+    // packets: where the talker was when it sent it (kp::Talker::lat / lon /
+    // alt_m; NAN = unknown) - the array calibration from aircraft
+    double lat = NAN, lon = NAN, alt_m = NAN;
+    // a confirmed frame (kp::Host::valid(start, end)), not a talker: these
+    // samples hold the decoded signal - the Digital squelch. id is "".
+    bool signal = false;
 };
 using TalkerHandler = std::function<void(const TalkerSpan&)>;
 
@@ -100,6 +106,9 @@ public:
     // the plugin whose data this decoder shows: the fixed one, or in AUTO the
     // detected one ("" = none yet / off)
     std::string active_plugin() const;
+    // The Digital squelch's live state: the active plugin (fixed, or what
+    // Auto detect locked onto) reported a valid frame within the last ms
+    bool frames_within(int64_t ms) const;
     void set_options(const Options& o);
     Options options() const;
 
