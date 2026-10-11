@@ -8,8 +8,14 @@
 namespace ism {
 
 namespace {
-constexpr double BIN_HZ = FS / FrontEnd::NFFT;
-inline int signed_bin(int k) { return k < FrontEnd::NFFT / 2 ? k : k - FrontEnd::NFFT; }
+constexpr double BIN_HZ = FS / 64;   // 3.75 kHz at every input rate
+
+// the input ring: a power of 2 >= 1.6 s (a package of MAX_LEN + margins)
+int64_t ring_size(double fs) {
+    int64_t n = 1;
+    while (static_cast<double>(n) < 1.6 * fs) n <<= 1;
+    return n;
+}
 
 // runs of a two-state signal: (state, length); short runs merged away
 struct Run {
@@ -81,14 +87,42 @@ std::vector<Pulse> to_pulses(const std::vector<Run>& r) {
 }
 }  // namespace
 
-FrontEnd::FrontEnd() : ring_(RING), trace_(getenv("ISM_TRACE") != nullptr) {
-    fin_ = fftwf_alloc_complex(NFFT);
-    fout_ = fftwf_alloc_complex(NFFT);
-    plan_ = fftwf_plan_dft_1d(NFFT, fin_, fout_, FFTW_FORWARD, FFTW_ESTIMATE);
+FrontEnd::FrontEnd(int decim)
+    : D_(std::max(1, decim)), fs_in_(FS * D_), nfft_(64 * D_), hop_(32 * D_), max_pkgs_(D_ == 1 ? 4 : 8),
+      ring_n_(ring_size(fs_in_)), ring_(static_cast<size_t>(ring_n_)), trace_(getenv("ISM_TRACE") != nullptr) {
+    fin_ = fftwf_alloc_complex(static_cast<size_t>(nfft_));
+    fout_ = fftwf_alloc_complex(static_cast<size_t>(nfft_));
+    plan_ = fftwf_plan_dft_1d(nfft_, fin_, fout_, FFTW_FORWARD, FFTW_ESTIMATE);
+    win_.resize(static_cast<size_t>(nfft_));
+    P_.resize(win_.size());
+    P1_.resize(win_.size());
+    P2_.resize(win_.size());
+    N_.resize(win_.size());
+    rr_.resize(win_.size());
+    tmp_.resize(win_.size());
+    segs_.resize(win_.size());
+    taken_.resize(win_.size());
     win_pow_ = 0;
-    for (int i = 0; i < NFFT; i++) {
-        win_[i] = static_cast<float>(0.5 - 0.5 * std::cos(2 * M_PI * i / NFFT));
-        win_pow_ += win_[i] * win_[i];
+    for (int i = 0; i < nfft_; i++) {
+        win_[static_cast<size_t>(i)] = static_cast<float>(0.5 - 0.5 * std::cos(2 * M_PI * i / nfft_));
+        win_pow_ += win_[static_cast<size_t>(i)] * win_[static_cast<size_t>(i)];
+    }
+    if (D_ > 1) {
+        // Blackman windowed sinc, unity gain at 0 Hz
+        dec_h_.resize(DEC_TAPS);
+        double sum = 0;
+        for (int i = 0; i < DEC_TAPS; i++) {
+            const double x = i - (DEC_TAPS - 1) / 2.0, fn = DEC_CUT_HZ / fs_in_;
+            const double s = x == 0 ? 2 * fn : std::sin(2 * M_PI * fn * x) / (M_PI * x);
+            const double w = 0.42 - 0.5 * std::cos(2 * M_PI * i / (DEC_TAPS - 1)) + 0.08 * std::cos(4 * M_PI * i / (DEC_TAPS - 1));
+            dec_h_[static_cast<size_t>(i)] = static_cast<float>(s * w);
+            sum += s * w;
+        }
+        dec_h2_ = 0;
+        for (auto& v : dec_h_) {
+            v = static_cast<float>(v / sum);
+            dec_h2_ += static_cast<double>(v) * v;
+        }
     }
     reset();
 }
@@ -106,99 +140,152 @@ void FrontEnd::reset() {
     noise_init_ = false;
     init_frames_ = 0;
     pkgs_.clear();
-    pkgs_.reserve(MAX_PKGS);
-    std::fill(std::begin(N_), std::end(N_), 0.0f);
-    std::fill(std::begin(P1_), std::end(P1_), 0.0f);
-    std::fill(std::begin(P2_), std::end(P2_), 0.0f);
+    pkgs_.reserve(static_cast<size_t>(max_pkgs_));
+    std::fill(N_.begin(), N_.end(), 0.0f);
+    std::fill(P1_.begin(), P1_.end(), 0.0f);
+    std::fill(P2_.begin(), P2_.end(), 0.0f);
+    std::vector<cf>().swap(seg_);
 }
 
 void FrontEnd::set_threshold_db(double db) {
     thr_on_ = std::pow(10.0, db / 10);
     thr_cont_ = std::pow(10.0, (db - 2.0) / 10);
+    thr_cont_f_ = static_cast<float>(thr_cont_);
+    if (static_cast<double>(thr_cont_f_) > thr_cont_) thr_cont_f_ = std::nextafter(thr_cont_f_, 0.0f);
+}
+
+// the median noise floor of `count` bins from signed bin lo
+double FrontEnd::median_floor(int lo, int count) const {
+    std::vector<float> t;
+    t.reserve(static_cast<size_t>(count));
+    for (int sb = lo; sb < lo + count; sb++) t.push_back(N_[ix(sb)]);
+    std::nth_element(t.begin(), t.begin() + count / 2, t.end());
+    return t[static_cast<size_t>(count / 2)];
 }
 
 double FrontEnd::noise_floor_db() const {
-    float t[NFFT];
-    std::copy(std::begin(N_), std::end(N_), t);
-    std::nth_element(t, t + NFFT / 2, t + NFFT);
-    return 10 * std::log10(std::max(1e-20f, t[NFFT / 2] / win_pow_));
+    const float m = static_cast<float>(median_floor(-nfft_ / 2, nfft_));
+    return 10 * std::log10(std::max(1e-20f, m / win_pow_));
 }
 
 void FrontEnd::push(const cf* x, size_t n, std::vector<Burst>* out) {
-    for (size_t i = 0; i < n; i++) {
-        ring_[static_cast<size_t>(abs_ & (RING - 1))] = x[i];
-        abs_++;
-        if (++hop_fill_ == HOP) {
+    size_t i = 0;
+    while (i < n) {
+        // up to the next hop or the ring's end, in one copy
+        const size_t at0 = static_cast<size_t>(abs_ & (ring_n_ - 1));
+        const size_t k = std::min({n - i, static_cast<size_t>(hop_ - hop_fill_), static_cast<size_t>(ring_n_) - at0});
+        std::copy(x + i, x + i + k, ring_.begin() + static_cast<long>(at0));
+        i += k;
+        abs_ += static_cast<int64_t>(k);
+        hop_fill_ += static_cast<int>(k);
+        if (hop_fill_ == hop_) {
             hop_fill_ = 0;
-            if (abs_ >= NFFT) frame(out);
+            if (abs_ >= nfft_) frame(out);
         }
     }
 }
 
 void FrontEnd::frame(std::vector<Burst>* out) {
-    const int64_t fs = abs_ - NFFT;
-    for (int i = 0; i < NFFT; i++) {
-        const cf v = at(fs + i) * win_[i];
-        fin_[i][0] = v.real();
-        fin_[i][1] = v.imag();
+    const int n = nfft_;
+    const int64_t fs = abs_ - n;
+    const size_t r0 = static_cast<size_t>(fs & (ring_n_ - 1));
+    // The per-bin loops below are plain loops over __restrict pointers (no
+    // aliasing check needed): the vectoriser takes them at -O3 - this
+    // plugin's CXXFLAGS (2.4 MHz: 6.8 -> ~4 % of a core); the results are
+    // the same as -O2's (element-wise, no reordering)
+    if (r0 + static_cast<size_t>(n) <= ring_.size()) {   // contiguous (nearly always)
+        const float* __restrict w = win_.data();
+        float* __restrict fi = &fin_[0][0];
+        const float* __restrict q = reinterpret_cast<const float*>(ring_.data() + r0);
+        for (int i = 0; i < n; i++) {
+            fi[2 * i] = q[2 * i] * w[i];
+            fi[2 * i + 1] = q[2 * i + 1] * w[i];
+        }
+    } else {
+        for (int i = 0; i < n; i++) {
+            const cf v = at(fs + i) * win_[static_cast<size_t>(i)];
+            fin_[i][0] = v.real();
+            fin_[i][1] = v.imag();
+        }
     }
     fftwf_execute(plan_);
-    for (int k = 0; k < NFFT; k++) P_[k] = fout_[k][0] * fout_[k][0] + fout_[k][1] * fout_[k][1];
+    const float* rr = rr_.data();
+    {   // (the buffers are only accessed through these pointers in here)
+        float* __restrict P = P_.data();
+        const float* __restrict P2 = P2_.data();
+        float* __restrict N = N_.data();
+        float* __restrict r = rr_.data();
+        const float* __restrict fo = &fout_[0][0];
+        // power in frequency order (FFT bin k = signed bin k, or k - n above n / 2)
+        const int h = n / 2;
+        for (int j = 0; j < h; j++) {
+            const int k = j + h;
+            P[j] = fo[2 * k] * fo[2 * k] + fo[2 * k + 1] * fo[2 * k + 1];
+        }
+        for (int k = 0; k < h; k++) P[k + h] = fo[2 * k] * fo[2 * k] + fo[2 * k + 1] * fo[2 * k + 1];
 
-    if (!noise_init_) {
-        // the first frames: every bin starts at the median bin (a burst
-        // occupies a few bins, so the median is noise)
-        float t[NFFT];
-        std::copy(std::begin(P_), std::end(P_), t);
-        std::nth_element(t, t + NFFT / 2, t + NFFT);
-        const float mean = std::max(1e-20f, t[NFFT / 2] / 0.6931f);
-        for (int k = 0; k < NFFT; k++) N_[k] = init_frames_ == 0 ? mean : 0.7f * N_[k] + 0.3f * mean;
-        if (++init_frames_ >= 8) noise_init_ = true;
-    }
+        if (!noise_init_) {
+            // the first frames: every bin starts at the median bin (a burst
+            // occupies a few bins, so the median is noise)
+            std::copy(P, P + n, tmp_.begin());
+            std::nth_element(tmp_.begin(), tmp_.begin() + n / 2, tmp_.end());
+            const float mean = std::max(1e-20f, tmp_[static_cast<size_t>(n / 2)] / 0.6931f);
+            for (int k = 0; k < n; k++) N[k] = init_frames_ == 0 ? mean : 0.7f * N[k] + 0.3f * mean;
+            if (++init_frames_ >= 8) noise_init_ = true;
+        }
 
-    // the statistic per bin: 3 adjacent bins of this frame and of the one
-    // before the previous (64 samples apart, not overlapping) - 6 bins' worth
-    // of noise keeps the tail thin enough for a 10 dB threshold over 64 bins x
-    // 7500 frames/s. rr[j]: bins in frequency order (j = signed bin + 32)
-    float rr[NFFT];
-    for (int j = 0; j < NFFT; j++) {
-        const int k = (j - NFFT / 2) & (NFFT - 1);
-        const int a = (k + NFFT - 1) & (NFFT - 1), c = (k + 1) & (NFFT - 1);
-        rr[j] = (P_[a] + P_[k] + P_[c] + P2_[a] + P2_[k] + P2_[c]) / (2 * (N_[a] + N_[k] + N_[c]));
+        // the statistic per bin: 3 adjacent bins of this frame and of the one
+        // before the previous (64 D samples apart, not overlapping) - 6 bins'
+        // worth of noise keeps the tail thin enough for a 10 dB threshold over
+        // 64 bins x 7500 frames/s. Neighbours wrap around the band's edges
+        auto stat = [&](int a, int k, int c) {
+            return (P[a] + P[k] + P[c] + P2[a] + P2[k] + P2[c]) / (2 * (N[a] + N[k] + N[c]));
+        };
+        r[0] = stat(n - 1, 0, 1);
+        for (int k = 1; k < n - 1; k++)
+            r[k] = (P[k - 1] + P[k] + P[k + 1] + P2[k - 1] + P2[k] + P2[k + 1]) / (2 * (N[k - 1] + N[k] + N[k + 1]));
+        r[n - 1] = stat(n - 2, n - 1, 0);
     }
-    std::copy(std::begin(P1_), std::end(P1_), P2_);
-    std::copy(std::begin(P_), std::end(P_), P1_);
+    P2_.swap(P1_);   // P2 = the frame before
+    std::copy(P_.begin(), P_.end(), P1_.begin());
 
     // the noise floor follows each bin's power while it holds no signal; a
     // bin that stays high (a carrier that never stops) is absorbed in ~10 s
-    if (noise_init_)
-        for (int k = 0; k < NFFT; k++) {
-            if (P_[k] < 4 * N_[k]) N_[k] += 0.005f * (P_[k] - N_[k]);
-            else N_[k] *= 1.0001f;
-            N_[k] = std::max(N_[k], 1e-20f);
+    if (noise_init_) {
+        const float* __restrict P = P_.data();
+        float* __restrict N = N_.data();
+        for (int k = 0; k < n; k++) {   // (branch-free)
+            const float up = N[k] + 0.005f * (P[k] - N[k]), dn = N[k] * 1.0001f;
+            N[k] = std::max(P[k] < 4 * N[k] ? up : dn, 1e-20f);
         }
+    }
+    float* P = P_.data();
+    float* N = N_.data();
 
     const int64_t fe = abs_;
-    const int64_t gap_end = static_cast<int64_t>(GAP_END_S * FS), max_len = static_cast<int64_t>(MAX_LEN_S * FS);
-    const int64_t learn = static_cast<int64_t>(LEARN_S * FS), together = static_cast<int64_t>(TOGETHER_S * FS);
+    const int64_t gap_end = static_cast<int64_t>(GAP_END_S * fs_in_), max_len = static_cast<int64_t>(MAX_LEN_S * fs_in_);
+    const int64_t learn = static_cast<int64_t>(LEARN_S * fs_in_), together = static_cast<int64_t>(TOGETHER_S * fs_in_);
 
     // the active parts of the band: runs of bins over the continuation
     // threshold (a one-bin gap bridged), in signed bins
-    struct Seg { int lo, hi; float peak; };
-    Seg segs[NFFT];
+    Seg* segs = segs_.data();
     int nseg = 0;
-    for (int j = 0; j < NFFT;) {
+    // most frames have nothing over the threshold: no scan (thr_cont_f_ = the
+    // largest float <= thr_cont_, the same test for a float)
+    int above = 0;
+    for (int k = 0; k < n; k++) above |= rr[k] > thr_cont_f_;
+    for (int j = 0; j < n && above;) {
         if (rr[j] <= thr_cont_) {
             j++;
             continue;
         }
         int e = j;
         float pk = rr[j];
-        while (e + 1 < NFFT && (rr[e + 1] > thr_cont_ || (e + 2 < NFFT && rr[e + 2] > thr_cont_))) {
+        while (e + 1 < n && (rr[e + 1] > thr_cont_ || (e + 2 < n && rr[e + 2] > thr_cont_))) {
             e++;
             pk = std::max(pk, rr[e]);
         }
-        segs[nseg++] = {j - NFFT / 2, e - NFFT / 2, pk};
+        segs[nseg++] = {j - n / 2, e - n / 2, pk};
         j = e + 1;
     }
     if (trace_ && nseg)
@@ -219,14 +306,15 @@ void FrontEnd::frame(std::vector<Burst>* out) {
             p->lo = std::min(p->lo, s.lo);
             p->hi = std::max(p->hi, s.hi);
         }
-        for (int sb = std::max(-NFFT / 2, s.lo - 1); sb <= std::min(NFFT / 2 - 1, s.hi + 1); sb++) {
-            const int k = sb & (NFFT - 1);
-            const float d = P_[k] - N_[k];
+        for (int sb = std::max(-n / 2, s.lo - 1); sb <= std::min(n / 2 - 1, s.hi + 1); sb++) {
+            const size_t k = ix(sb);
+            const float d = P[k] - N[k];
             if (d > 0) p->acc[k] += d;
         }
     };
     // 1. segments in an open package's region
-    bool taken[NFFT] = {};
+    char* taken = taken_.data();
+    std::fill(taken_.begin(), taken_.end(), 0);
     float strongest = 0;   // the strongest segment of an open package in this frame
     for (int i = 0; i < nseg; i++) {
         const Seg& s = segs[i];
@@ -260,14 +348,14 @@ void FrontEnd::frame(std::vector<Burst>* out) {
                 p = &q;
                 break;
             }
-        if (!p && s.peak > thr_on_ && s.peak >= 0.01f * strongest && static_cast<int>(pkgs_.size()) < MAX_PKGS) {
+        if (!p && s.peak > thr_on_ && s.peak >= 0.01f * strongest && static_cast<int>(pkgs_.size()) < max_pkgs_) {
             pkgs_.emplace_back();
             p = &pkgs_.back();
             p->a = fs;
             p->first = fe;
             p->lo = s.lo;
             p->hi = s.hi;
-            std::fill(std::begin(p->acc), std::end(p->acc), 0.0f);
+            p->acc.assign(static_cast<size_t>(n), 0.0f);
         }
         if (p) take(p, s);
     }
@@ -289,7 +377,7 @@ void FrontEnd::frame(std::vector<Burst>* out) {
                 p.last = std::max(p.last, r.last);
                 p.lo = std::min(p.lo, r.lo);
                 p.hi = std::max(p.hi, r.hi);
-                for (int k = 0; k < NFFT; k++) p.acc[k] += r.acc[k];
+                for (size_t k = 0; k < p.acc.size(); k++) p.acc[k] += r.acc[k];
                 pkgs_.erase(pkgs_.begin() + static_cast<long>(j));
             } else {
                 j++;
@@ -300,34 +388,88 @@ void FrontEnd::frame(std::vector<Burst>* out) {
 }
 
 void FrontEnd::finish(const Pkg& p, std::vector<Burst>* out) {
-    if (p.last - p.a < static_cast<int64_t>(0.0008 * FS)) return;   // a click
+    if (p.last - p.a < static_cast<int64_t>(0.0008 * fs_in_)) return;   // a click
     // the signal's bins: >= 8 % of the package's peak within its region; the
     // burst is centred on the middle of them (between the two FSK tones)
-    const int r0 = std::max(-NFFT / 2, p.lo - MARGIN_BINS), r1 = std::min(NFFT / 2 - 1, p.hi + MARGIN_BINS);
+    const int r0 = std::max(-nfft_ / 2, p.lo - MARGIN_BINS), r1 = std::min(nfft_ / 2 - 1, p.hi + MARGIN_BINS);
     float peak = 0;
-    for (int sb = r0; sb <= r1; sb++) peak = std::max(peak, p.acc[sb & (NFFT - 1)]);
+    for (int sb = r0; sb <= r1; sb++) peak = std::max(peak, p.acc[ix(sb)]);
     if (!(peak > 0)) return;
     int lo = r1, hi = r0;
     for (int sb = r0; sb <= r1; sb++) {
-        if (p.acc[sb & (NFFT - 1)] < 0.08f * peak) continue;
+        if (p.acc[ix(sb)] < 0.08f * peak) continue;
         lo = std::min(lo, sb);
         hi = std::max(hi, sb);
     }
     const double fc = (lo + hi) / 2.0 * BIN_HZ;
     const double bw = (hi - lo + 1) * BIN_HZ;
-    const int64_t m = static_cast<int64_t>(MARGIN_S * FS);
+    const int64_t m = static_cast<int64_t>(MARGIN_S * fs_in_);
     int64_t a = p.a - m, b = p.last + m;
-    a = std::max<int64_t>({a, 0, abs_ - RING + 1});
+    a = std::max<int64_t>({a, 0, abs_ - ring_n_ + 1});
     b = std::min(b, abs_);
     if (b <= a) return;
     Burst bu;
-    demod(a, b, fc, bw, &bu);
+    if (D_ == 1) {
+        seg_f_ = 0;
+        seg_noise_ = static_cast<double>(median_floor(-nfft_ / 2, nfft_)) / win_pow_;
+        demod(a, b, fc, bw, &bu);
+    } else {
+        // to FS around the package's centre; the noise: the floor of the 64
+        // bins (240 kHz) around it - the band isn't flat over 2.4 MHz
+        const int64_t a2 = (a + D_ - 1) / D_, b2 = b / D_;
+        if (b2 <= a2) return;
+        const int c = static_cast<int>(std::lround(fc / BIN_HZ));
+        seg_noise_ =
+            static_cast<double>(median_floor(std::clamp(c - 32, -nfft_ / 2, nfft_ / 2 - 64), 64)) / win_pow_ * dec_h2_;
+        constexpr int64_t PAD = 96;   // > the demodulator's filters' half length (161 / 2)
+        make_segment(a2 - PAD, b2 + PAD, fc);
+        demod(a2, b2, 0.0, bw, &bu);
+    }
     if (bu.ook.empty() && bu.fsk.empty()) return;
     out->push_back(std::move(bu));
 }
 
-// the samples a..b mixed down by f0 and low-pass filtered (Hamming windowed
-// sinc, cut-off fcut, taps ~ k fs / fcut); y[i] = input sample a + i
+// D > 1: FS samples s0..s1 of the input mixed down by f (Hz) - seg_[j] =
+// sample s0 + j = input sample (s0 + j) D, low-pass DEC_CUT_HZ (Blackman,
+// DEC_TAPS). The input is mixed a block at a time, then filtered at every
+// D-th sample only
+void FrontEnd::make_segment(int64_t s0, int64_t s1, double f) {
+    const int L = static_cast<int>(dec_h_.size()), H = L / 2;
+    seg0_ = s0;
+    seg_f_ = f;
+    seg_.assign(static_cast<size_t>(std::max<int64_t>(0, s1 - s0)), cf{});
+    const double w0 = -2 * M_PI * f / fs_in_;
+    const std::complex<double> rot(std::cos(w0), std::sin(w0));
+    constexpr int64_t BLK = 2048;   // outputs per mixed block
+    std::vector<cf> xm;
+    for (int64_t j0 = s0; j0 < s1; j0 += BLK) {
+        const int64_t j1 = std::min(s1, j0 + BLK);
+        const int64_t i0 = j0 * D_ - H, i1 = (j1 - 1) * D_ + H + 1;   // the input samples they need
+        xm.resize(static_cast<size_t>(i1 - i0));
+        const double ph0 = std::remainder(w0 * static_cast<double>(i0), 2 * M_PI);
+        std::complex<double> ph(std::cos(ph0), std::sin(ph0));
+        for (size_t k = 0; k < xm.size(); k++) {
+            const int64_t s = i0 + static_cast<int64_t>(k);
+            const cf v = s >= 0 && s > abs_ - ring_n_ && s < abs_ ? at(s) : cf{};   // outside the ring: silence
+            xm[k] = v * cf(static_cast<float>(ph.real()), static_cast<float>(ph.imag()));
+            ph *= rot;
+            if ((k & 1023) == 1023) ph /= std::abs(ph);
+        }
+        const float* h = dec_h_.data();
+        for (int64_t j = j0; j < j1; j++) {
+            const cf* q = xm.data() + (j * D_ - H - i0);
+            float re = 0, im = 0;
+            for (int t = 0; t < L; t++) {
+                re += q[t].real() * h[t];
+                im += q[t].imag() * h[t];
+            }
+            seg_[static_cast<size_t>(j - s0)] = cf(re, im);
+        }
+    }
+}
+
+// the samples a..b (FS) mixed down by f0 and low-pass filtered (Hamming
+// windowed sinc, cut-off fcut, taps ~ k fs / fcut); y[i] = sample a + i
 void FrontEnd::filter(int64_t a, int64_t b, double f0, double fcut, double k, std::vector<cf>* y, double* h2) const {
     int L = static_cast<int>(std::lround(k * FS / fcut)) | 1;
     L = std::clamp(L, 15, 161);
@@ -352,8 +494,7 @@ void FrontEnd::filter(int64_t a, int64_t b, double f0, double fcut, double k, st
     const double ph0 = std::remainder(w0 * static_cast<double>(a - half), 2 * M_PI);
     std::complex<double> ph(std::cos(ph0), std::sin(ph0));
     for (size_t j = 0; j < xm.size(); j++) {
-        const int64_t s = a - half + static_cast<int64_t>(j);
-        const cf v = s >= 0 && s > abs_ - RING && s < abs_ ? at(s) : cf{};   // outside the ring: silence
+        const cf v = src(a - half + static_cast<int64_t>(j));   // outside the ring / segment: silence
         xm[j] = v * cf(static_cast<float>(ph.real()), static_cast<float>(ph.imag()));
         ph *= rot;
         if ((j & 1023) == 1023) ph /= std::abs(ph);
@@ -392,12 +533,7 @@ std::vector<float> discriminator(const std::vector<cf>& y) {
 }
 }  // namespace
 
-double FrontEnd::sigma(double h2) const {
-    float t[NFFT];
-    std::copy(std::begin(N_), std::end(N_), t);
-    std::nth_element(t, t + NFFT / 2, t + NFFT);
-    return std::sqrt(std::max(1e-30, static_cast<double>(t[NFFT / 2]) / win_pow_ * h2));
-}
+double FrontEnd::sigma(double h2) const { return std::sqrt(std::max(1e-30, seg_noise_ * h2)); }
 
 // Two passes: a wide one finds the carrier / the two FSK tones; the second
 // is centred on them (exactly between the tones) with a filter just wide
@@ -439,7 +575,8 @@ void FrontEnd::demod(int64_t a, int64_t b, double fc, double bw, Burst* out) con
     // two tones whose middle lies in the occupied band (a noisy
     // discriminator near the band edge can suggest one far outside)
     const bool fsk = n1 && n2 && sep > 4000 && std::min(n1, n2) > 0.08 * fv.size() &&
-                     std::fabs((c1 + c2) / 2) <= bw / 2 + 10e3 && std::fabs(fc + (c1 + c2) / 2) < FS / 2 - 5e3;
+                     std::fabs((c1 + c2) / 2) <= bw / 2 + 10e3 && std::fabs(fc + (c1 + c2) / 2) < FS / 2 - 5e3 &&
+                     std::fabs(seg_f_ + fc + (c1 + c2) / 2) < fs_in_ / 2 - 5e3;
     // pass 2: centred between the tones, or on the carrier (the median
     // frequency while on - within the occupied band)
     const double med = srt[srt.size() / 2];
@@ -451,7 +588,7 @@ void FrontEnd::demod(int64_t a, int64_t b, double fc, double bw, Burst* out) con
     sig = sigma(h2);
     out->a = a;
     out->b = b;
-    out->fc = f0;
+    out->fc = seg_f_ + f0;   // in the whole input band
     out->bw = fsk ? std::max(bw, sep + 20e3) : bw;
     out->fsk_sep = fsk ? sep : 0;
     out->snr_db = 20 * std::log10(std::max(1e-12, hi / sig));

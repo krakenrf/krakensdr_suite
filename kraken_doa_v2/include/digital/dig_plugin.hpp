@@ -35,6 +35,7 @@ struct PluginInfo {
     bool map = false;             // sends map points (kp::Info::map)
     bool manual_only = false;     // never in Auto detect (kp::Info::manual_only)
     double fixed_freq_hz = 0;     // kp::Info::fixed_freq_hz (the web UI tunes the VFO there)
+    bool lock_vfo = false;        // kp::Info::lock_vfo (the web UI locks the VFO on its tuner's centre)
     bool voice = false;           // decodes voice (kp::Info::voice): the panel offers Listen
     bool messages = false;        // sends text messages (kp::Info::messages): incident addresses
     bool talkers = false;         // reports who transmits (kp::Info::talkers): DoA per talker

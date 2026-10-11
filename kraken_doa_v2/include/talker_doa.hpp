@@ -40,7 +40,13 @@
 // first mixed to that channel and low-pass filtered, so a ship on the other
 // channel at the same moment doesn't leak in. Above it (ADS-B at 2.4 MHz) it
 // keeps the covariance of each CHUNK-sample piece instead (the whole band): a
-// packet's = the sum over the chunks entirely inside it. Trace-normalised;
+// packet's = the sum over the chunks entirely inside it - unless a packet
+// named a channel <= WIDE_CHAN_MAX_BW (ISM devices in 2.4 MHz, ism_wide):
+// then the samples are kept as 16-bit for WIDE_RING_S and each packet's
+// channel is filtered out of every antenna like below RAW_MAX_RATE, the
+// filter evaluated at <= WIDE_MAX_OUT points spread over the packet (a 0.24 s
+// packet at 2.4 MHz has 576k samples, its ~30 kHz channel ~7k independent
+// ones - the filter at every sample would cost ~1 G multiply-adds). Trace-normalised;
 // packets that overlap another talker's packet ON THE SAME CHANNEL are dropped.
 // A packet talker's covariance is an exponentially weighted sum of its
 // packets (time constant: the plugin's avg_s, else PACKET_TAU_S; stream
@@ -93,6 +99,11 @@ constexpr int64_t PACKET_HIST_MS = 10000;
 constexpr int64_t PACKET_TTL_MS = 2 * 60 * 1000;
 constexpr int64_t PACKET_IDLE_MS = 5 * 60 * 1000; // no packets for this long: stop keeping the stream
 constexpr double RAW_MAX_RATE = 500e3;            // up to this VFO rate the samples themselves are kept
+constexpr double WIDE_CHAN_MAX_BW = 250e3;        // above it: packets naming a channel this narrow keep them as 16-bit
+constexpr double WIDE_RING_S = 1.0;               // ... for this long (2.4 MHz, 5 antennas: 48 MB)
+constexpr float WIDE_SCALE = 8192.0f;             // 16-bit sample = value x WIDE_SCALE (+-4 full scale)
+constexpr uint64_t WIDE_MAX_OUT = 1024;           // channel-filtered points per packet (spread over it)
+constexpr uint64_t WIDE_MAX_PLAIN = 16384;        // samples per piece without a channel (digital squelch)
 // Digital squelch (whole signal, confirmed samples only)
 constexpr int64_t DIG_PUBLISH_MS = 200;           // the VFO's DoA from the samples confirmed since, at most this often
 constexpr uint64_t DIG_MIN_SAMPLES = 16;          // a confirmed piece shorter than this is skipped
@@ -242,11 +253,17 @@ private:
     std::vector<std::complex<float>> raw_;
     size_t raw_cap_ = 0;
     uint64_t raw_lo_ = 0, raw_hi_ = 0;
+    // above RAW_MAX_RATE once a packet named a channel <= WIDE_CHAN_MAX_BW:
+    // raw mode with the samples in wide_raw_ (16-bit, same layout as raw_)
+    std::atomic<bool> want_wide_{false};
+    bool wide_ = false;
+    std::vector<std::complex<int16_t>> wide_raw_;
     void free_ring();
     // false: not all of [a, b) is held. freq / bw: the channel to filter out
     // (raw mode only; NAN = the whole VFO)
     bool packet_cov(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R) const;
     bool packet_cov_raw(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R) const;
+    bool packet_cov_wide(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R) const;
 
     // digital squelch
     std::atomic<bool> dig_on_{false};

@@ -13,6 +13,12 @@ are decoded (the last ~10 kHz at each edge are attenuated by the VFO's
 filter). Cheap transmitters are often 50-100 kHz off their nominal
 frequency - the MHz column shows each device's own.
 
+**The whole 2.4 MHz at once: "ISM devices, full band (2.4 MHz)"**
+(`ism_wide`, below). Picking it puts the VFO on the tuner's centre with
+the full bandwidth - drawn as a single line that can't be moved or resized,
+like ADS-B - and decodes every device in the 2.4 MHz the tuner receives:
+tune the receiver to the band (433.920 MHz covers 432.72-435.12 MHz).
+
 ## Supported devices
 
 69 protocol decoders, ~140 model names (rtl_433's naming and field names,
@@ -130,7 +136,43 @@ EV1527, Nexus, Prologue...) only when nothing stronger decoded it.
 events, raw frames, talker packets.
 
 CPU (Pi 5): ~1.3 % of a core while the band is quiet (the detector), ~7 %
-with bursts back to back.
+with bursts back to back. Built with `-O3` (`CXXFLAGS` in this folder): the
+detector's per-bin loops vectorise; the output is the same as -O2's.
+
+## The whole 2.4 MHz: `ism_wide`
+
+`plugins/ism_wide/` is this decoder on a 2.4 MHz input: its `USES` file
+compiles every source here except `decoder.cpp` into it, and its own
+`decoder.cpp` declares the plugin (`.sample_rate` 2.4 MHz, `.lock_vfo` -
+the VFO stays on the tuner's centre, see `plugins/SDK.md`). The decoder
+class is `ism_decoder.hpp` (`IsmDecoder(host, decim)`); only the front end
+differs - `FrontEnd(10)`:
+
+- detection: a 640-point FFT every 320 samples - the same 3.75 kHz bins and
+  133 µs hop as at 240 kHz, so the detector behaves the same - up to 8
+  packages (devices) at once;
+- a finished package is mixed down by its centre and decimated to 240 kHz
+  (Blackman low-pass, 321 taps, flat to ~88 kHz, -74 dB from 128 kHz,
+  evaluated at every 10th sample only), then demodulated exactly as above;
+  its noise level comes from the 64 bins around it (the 2.4 MHz isn't flat);
+- burst positions stay in 240 kHz samples, so every protocol is unchanged;
+  `Burst::fc` is the offset in the whole band (the device's MHz, its DoA
+  channel).
+
+kraken_doa filters each device's channel out of the 2.4 MHz for its DoA as
+it does at 240 kHz (it keeps the stream as 16-bit samples for that: 48 MB
+with 5 antennas). Without that, devices transmitting at the same time got
+each other's bearings.
+
+CPU (Pi 5): the detector ~4 % of a core; the plugin 14-17 % in a busy
+synthetic scene (7 devices, bursts ~40 % of the time, the 19 MB/s of
+samples it receives included). Memory: 32 MB (the 1.75 s input ring).
+
+Tests: 7 devices placed across a 2.4 MHz recording (-950 to +900 kHz, six
+of them starting within 150 ms of each other) - every transmission decoded
+at its frequency, as at 240 kHz; end to end through kraken_doa (5-element
+UCA, a bearing per device) every device's bearing exact, every transmission
+in its history.
 
 ## Test results
 
@@ -155,6 +197,8 @@ transmission in its history right.
 ```bash
 make -C plugins PLUGIN=ism
 plugins/ism/build/decoder --file rec.cu8 --rate 250000 --raw [--verbose]
+make -C plugins PLUGIN=ism_wide
+plugins/ism_wide/build/decoder --file rec_2400k.cu8 --rate 2400000 --rf 433920000 --raw
 ISM_DUMP=1 plugins/ism/build/decoder --file ...    # every burst's pulse trains (µs) to stderr
 ISM_TRACE=1 plugins/ism/build/decoder --file ...   # the detector's active bins per frame
 ISM_ROWS=prologue plugins/ism/build/decoder ...    # a protocol's rows (those that call dbg_rows)

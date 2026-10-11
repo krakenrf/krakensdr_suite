@@ -6,6 +6,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <sstream>
 #include <thread>
 
@@ -132,19 +133,29 @@ void PluginRegistry::scan() {
             pi.exe = pdir + "/build/decoder";
             const bool has_src = access((pdir + "/decoder.cpp").c_str(), R_OK) == 0;
             if (!has_src && !is_exe(pi.exe)) continue;
-            // newest source file
+            // newest source file - its own, and those of the plugins its USES
+            // file names (their sources are compiled in, except their decoder.cpp)
             int64_t src_mtime = 0;
-            if (DIR* sd = opendir(pdir.c_str())) {
+            auto newest = [&](const std::string& d, bool shared) {
+                DIR* sd = opendir(d.c_str());
+                if (!sd) return;
                 while (dirent* f = readdir(sd)) {
                     std::string n = f->d_name;
                     auto ends = [&](const char* x) {
                         size_t l = strlen(x);
                         return n.size() > l && n.compare(n.size() - l, l, x) == 0;
                     };
+                    if (shared && n == "decoder.cpp") continue;
                     if (ends(".cpp") || ends(".hpp") || ends(".h"))
-                        src_mtime = std::max(src_mtime, file_mtime_ms(pdir + "/" + n));
+                        src_mtime = std::max(src_mtime, file_mtime_ms(d + "/" + n));
                 }
                 closedir(sd);
+            };
+            newest(pdir, false);
+            if (std::ifstream uses{pdir + "/USES"}) {
+                std::string u;
+                while (uses >> u)
+                    if (valid_id(u) && u != id) newest(base + "/" + u, true);
             }
             if (!is_exe(pi.exe)) {
                 pi.error = "not built (run make in kraken_doa_v2)";
@@ -169,6 +180,7 @@ void PluginRegistry::scan() {
                     if (json_find(js, "messages", v)) pi.messages = v == "true";
                     if (json_find(js, "talkers", v)) pi.talkers = v == "true";
                     if (json_find(js, "fixed_freq_hz", v)) pi.fixed_freq_hz = std::max(0.0, atof(v.c_str()));
+                    if (json_find(js, "lock_vfo", v)) pi.lock_vfo = v == "true";
                     // options: one per line, tab-separated key/label/default/choices/help
                     if (json_find(js, "options_tsv", v)) {
                         std::stringstream ls(v);
@@ -264,7 +276,8 @@ std::string PluginRegistry::list_json() const {
           << "\",\"author\":\"" << json_escape(p.author) << "\",\"sample_rate\":" << p.sample_rate
           << ",\"min_vfo_rate\":" << p.min_vfo_rate << ",\"auto\":" << (p.auto_detect ? "true" : "false")
           << ",\"map\":" << (p.map ? "true" : "false") << ",\"manual_only\":" << (p.manual_only ? "true" : "false")
-          << ",\"fixed_freq_hz\":" << static_cast<long long>(p.fixed_freq_hz) << ",\"voice\":" << (p.voice ? "true" : "false")
+          << ",\"fixed_freq_hz\":" << static_cast<long long>(p.fixed_freq_hz) << ",\"lock_vfo\":" << (p.lock_vfo ? "true" : "false")
+          << ",\"voice\":" << (p.voice ? "true" : "false")
           << ",\"messages\":" << (p.messages ? "true" : "false") << ",\"talkers\":" << (p.talkers ? "true" : "false")
           << ",\"options\":[";
         for (size_t k = 0; k < p.options.size(); k++) {

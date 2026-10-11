@@ -42,6 +42,7 @@ void TalkerDoa::reset() {
         reset_locked();
     }
     want_blocks_ = false;
+    want_wide_ = false;
     free_ring();
 }
 
@@ -113,9 +114,11 @@ void TalkerDoa::free_ring() {
     std::vector<std::complex<float>>().swap(ring_);
     std::vector<uint64_t>().swap(ring_tag_);
     std::vector<std::complex<float>>().swap(raw_);
+    std::vector<std::complex<int16_t>>().swap(wide_raw_);
     raw_cap_ = 0;
     raw_lo_ = raw_hi_ = 0;
     raw_mode_ = false;
+    wide_ = false;
     ring_cap_ = 0;
     ring_m_ = ring_tri_ = 0;
     ring_rate_ = 0;
@@ -138,11 +141,13 @@ void TalkerDoa::add_block(const SharedDecimator::MultiChannelDecimated& d) {
     std::lock_guard<std::mutex> lk(ring_mu_);
     if (rate <= RAW_MAX_RATE) {
         // keep the samples themselves
-        if (!raw_mode_ || m != ring_m_ || rate != ring_rate_ || raw_cap_ == 0) {
+        if (!raw_mode_ || wide_ || m != ring_m_ || rate != ring_rate_ || raw_cap_ == 0) {
             std::vector<std::complex<float>>().swap(ring_);
             std::vector<uint64_t>().swap(ring_tag_);
+            std::vector<std::complex<int16_t>>().swap(wide_raw_);
             ring_cap_ = 0;
             raw_mode_ = true;
+            wide_ = false;
             ring_m_ = m;
             ring_rate_ = rate;
             raw_cap_ = static_cast<size_t>(std::ceil(RING_S * rate)) + 1;
@@ -158,10 +163,42 @@ void TalkerDoa::add_block(const SharedDecimator::MultiChannelDecimated& d) {
         if (raw_hi_ - raw_lo_ > raw_cap_) raw_lo_ = raw_hi_ - raw_cap_;
         return;
     }
+    if (want_wide_.load(std::memory_order_relaxed)) {
+        // narrow channels in a wide VFO (ISM devices in 2.4 MHz): the samples
+        // themselves too, 16-bit, for WIDE_RING_S
+        if (!raw_mode_ || !wide_ || m != ring_m_ || rate != ring_rate_ || raw_cap_ == 0) {
+            std::vector<std::complex<float>>().swap(ring_);
+            std::vector<uint64_t>().swap(ring_tag_);
+            std::vector<std::complex<float>>().swap(raw_);
+            ring_cap_ = 0;
+            raw_mode_ = true;
+            wide_ = true;
+            ring_m_ = m;
+            ring_rate_ = rate;
+            raw_cap_ = static_cast<size_t>(std::ceil(WIDE_RING_S * rate)) + 1;
+            wide_raw_.assign(raw_cap_ * static_cast<size_t>(m), {});
+            raw_lo_ = raw_hi_ = d.stream_pos;
+        }
+        if (d.stream_pos != raw_hi_) raw_lo_ = raw_hi_ = d.stream_pos;   // a gap: start over
+        auto s16 = [](float v) {
+            return static_cast<int16_t>(std::clamp(v * WIDE_SCALE, -32767.0f, 32767.0f));
+        };
+        size_t slot = static_cast<size_t>(d.stream_pos % raw_cap_);
+        for (size_t i = 0; i < n; i++) {
+            std::complex<int16_t>* q = wide_raw_.data() + slot * static_cast<size_t>(m);
+            for (int k = 0; k < m; k++) q[k] = {s16(ch[k][i].real()), s16(ch[k][i].imag())};
+            if (++slot == raw_cap_) slot = 0;
+        }
+        raw_hi_ = d.stream_pos + n;
+        if (raw_hi_ - raw_lo_ > raw_cap_) raw_lo_ = raw_hi_ - raw_cap_;
+        return;
+    }
     if (raw_mode_) {
         std::vector<std::complex<float>>().swap(raw_);
+        std::vector<std::complex<int16_t>>().swap(wide_raw_);
         raw_cap_ = 0;
         raw_mode_ = false;
+        wide_ = false;
         ring_cap_ = 0;
     }
     if (m != ring_m_ || rate != ring_rate_ || ring_cap_ == 0) {
@@ -213,7 +250,7 @@ void TalkerDoa::add_block(const SharedDecimator::MultiChannelDecimated& d) {
 
 bool TalkerDoa::packet_cov(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R) const {
     std::lock_guard<std::mutex> lk(ring_mu_);
-    if (raw_mode_) return packet_cov_raw(a, b, freq, bw, R);
+    if (raw_mode_) return wide_ ? packet_cov_wide(a, b, freq, bw, R) : packet_cov_raw(a, b, freq, bw, R);
     if (!ring_cap_) return false;
     const uint64_t c0 = (a + CHUNK - 1) / CHUNK, c1 = b / CHUNK;   // chunks entirely inside
     if (c1 < c0 + MIN_PACKET_CHUNKS || c1 - c0 >= ring_cap_) return false;
@@ -304,8 +341,70 @@ bool TalkerDoa::packet_cov_raw(uint64_t a, uint64_t b, double freq, double bw, E
     return true;
 }
 
+// Wide raw mode (ring_mu_ held): 16-bit samples of a VFO above RAW_MAX_RATE.
+// With a channel: the low-pass of packet_cov_raw shifted to freq (complex
+// taps h[t] e^(-i w t)) - the same as mixing every antenna down first, up to
+// a phase common to all antennas, which the covariance doesn't see -
+// evaluated at <= WIDE_MAX_OUT points spread evenly over the packet, at most
+// one per rate / (3 bw) samples. Without one: <= WIDE_MAX_PLAIN samples
+// spread over it (the covariance of the whole band, as the chunk ring)
+bool TalkerDoa::packet_cov_wide(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R) const {
+    const int m = ring_m_;
+    if (!raw_cap_ || m < 2 || b <= a) return false;
+    const double rate = ring_rate_;
+    const bool filt = is_finite_value(freq) && bw > 0 && bw < rate;
+    std::vector<std::complex<float>> g(1, {1, 0});
+    if (filt) {
+        const int L = std::clamp(2 * static_cast<int>(std::ceil(3.0 * rate / bw)) + 1, 15, 401);
+        std::vector<double> h(static_cast<size_t>(L));
+        const double fc = bw / 2 / rate, w = -2 * M_PI * freq / rate;
+        double sum = 0;
+        for (int i = 0; i < L; i++) {
+            const double x = i - (L - 1) / 2.0;
+            const double sinc = x == 0 ? 2 * fc : std::sin(2 * M_PI * fc * x) / (M_PI * x);
+            h[static_cast<size_t>(i)] = sinc * (0.54 - 0.46 * std::cos(2 * M_PI * i / (L - 1)));
+            sum += h[static_cast<size_t>(i)];
+        }
+        g.resize(static_cast<size_t>(L));
+        for (int i = 0; i < L; i++)
+            g[static_cast<size_t>(i)] = std::polar(static_cast<float>(h[static_cast<size_t>(i)] / sum),
+                                                   static_cast<float>(std::remainder(w * i, 2 * M_PI)));
+    }
+    const int L = static_cast<int>(g.size());
+    const uint64_t half = static_cast<uint64_t>(L / 2);
+    if (a < raw_lo_ + half || b + half > raw_hi_) return false;
+    const uint64_t n = b - a;
+    const uint64_t step = filt ? std::max<uint64_t>(1, static_cast<uint64_t>(rate / (3 * bw))) : 1;
+    const uint64_t n_out = std::max<uint64_t>(1, std::min((n + step - 1) / step, filt ? WIDE_MAX_OUT : WIDE_MAX_PLAIN));
+    const double spacing = static_cast<double>(n) / static_cast<double>(n_out);
+    Eigen::MatrixXcd acc = Eigen::MatrixXcd::Zero(m, m);
+    std::complex<float> y[8];
+    for (uint64_t o = 0; o < n_out; o++) {
+        const uint64_t c = a + static_cast<uint64_t>((static_cast<double>(o) + 0.5) * spacing);
+        size_t slot = static_cast<size_t>((c - half) % raw_cap_);
+        for (int k = 0; k < m; k++) y[k] = {};
+        for (int t = 0; t < L; t++) {
+            const std::complex<int16_t>* q = wide_raw_.data() + slot * static_cast<size_t>(m);
+            const std::complex<float> gt = g[static_cast<size_t>(t)];
+            for (int k = 0; k < m; k++) y[k] += gt * std::complex<float>(q[k].real(), q[k].imag());
+            if (++slot == raw_cap_) slot = 0;
+        }
+        for (int r = 0; r < m; r++)
+            for (int k = r; k < m; k++) acc(r, k) += std::complex<double>(y[r] * std::conj(y[k]));
+    }
+    double tr = 0;
+    for (int r = 0; r < m; r++) {
+        tr += acc(r, r).real();
+        for (int k = r + 1; k < m; k++) acc(k, r) = std::conj(acc(r, k));
+    }
+    if (!(tr > 1e-30)) return false;
+    *R = acc / tr;
+    return true;
+}
+
 void TalkerDoa::add_packet(const dig::TalkerSpan& s) {
     want_blocks_ = true;   // the stream is kept from now on (this first packet may come too early)
+    if (is_finite_value(s.freq_hz) && s.bw_hz > 0 && s.bw_hz <= WIDE_CHAN_MAX_BW) want_wide_ = true;
     Eigen::MatrixXcd R;
     const bool ok = packet_cov(s.start, s.end, s.freq_hz, s.bw_hz, &R);
     const int64_t t = now_ms();
@@ -535,6 +634,7 @@ void TalkerDoa::update(MUSICProcessor& mp, std::vector<TalkerFrame>* out) {
     }
     if (idle) {   // no packets for a while: stop keeping the stream
         want_blocks_ = false;
+        want_wide_ = false;
         free_ring();
     }
 

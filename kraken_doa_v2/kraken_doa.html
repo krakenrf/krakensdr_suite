@@ -8697,10 +8697,12 @@ function addTouchHandlers(el, down, move, up) {
   // A decoder with a fixed frequency (kp::Info::fixed_freq_hz - ADS-B on
   // 1090 MHz): picking it tunes the VFO there (digApplyFixedTune); the VFO is
   // then "locked" - drawn as a single line at its centre, not draggable, its
-  // frequency / bandwidth / tuner fields disabled
+  // frequency / bandwidth / tuner fields disabled. kp::Info::lock_vfo
+  // (ism_wide, the whole 2.4 MHz): the same lock on the tuner's centre, the
+  // tuner left where it is
   function digFixedPlugin(mode) {
     const p = digPlugin(digModePlugin(mode));
-    return p && p.fixed_freq_hz > 0 ? p : null;
+    return p && (p.fixed_freq_hz > 0 || p.lock_vfo) ? p : null;
   }
   function vfoLocked(d) { return !!(d && d.digital_mode && digFixedPlugin(d.digital_mode)); }
   function digApplyFixedTune(id, mode) {
@@ -8716,12 +8718,15 @@ function addTouchHandlers(el, down, move, up) {
     d.freq_offset_hz = 0;
     send('SET_DECIMATOR_FREQ:' + id + ':0');
     // ...and the tuner on the frequency: the VFO's own tuner in independent
-    // mode, the common / stitched centre frequency otherwise
-    if (opMode === 'independent') paneSendFreq(d.tuner || 0, mhz);
-    else if (Math.abs(currentCenterFreq - mhz) > 1e-6) {
-      updateFreqDisplay(mhz, true);
-      currentCenterFreq = mhz;
-      sendFreqChange(mhz);
+    // mode, the common / stitched centre frequency otherwise (lock_vfo: no
+    // frequency - the tuner stays where the user put it)
+    if (p.fixed_freq_hz > 0) {
+      if (opMode === 'independent') paneSendFreq(d.tuner || 0, mhz);
+      else if (Math.abs(currentCenterFreq - mhz) > 1e-6) {
+        updateFreqDisplay(mhz, true);
+        currentCenterFreq = mhz;
+        sendFreqChange(mhz);
+      }
     }
     refreshDecimatorPanelItem(id);
     drawBox();
@@ -8990,8 +8995,11 @@ function addTouchHandlers(el, down, move, up) {
       }
       const open = $id('dec-dig-open-' + d.id);
       if (open) open.style.display = on ? '' : 'none';
-      // a fixed-frequency decoder (ADS-B) holds the VFO's tuning
-      const lock = vfoLocked(d), why = lock ? digModeLabel(d.digital_mode) + ' sets this VFO\'s frequency and bandwidth' : '';
+      // a fixed-frequency decoder (ADS-B) / one of the whole band (ism_wide)
+      // holds the VFO's tuning
+      const lock = vfoLocked(d), lp = lock ? digFixedPlugin(d.digital_mode) : null;
+      const why = !lock ? '' : lp.fixed_freq_hz > 0 ? digModeLabel(d.digital_mode) + ' sets this VFO\'s frequency and bandwidth'
+        : digModeLabel(d.digital_mode) + ' keeps this VFO on its tuner\'s centre with the full bandwidth - tune the receiver instead';
       for (const k of ['dec-actual-freq-', 'dec-bw-', 'dec-tuner-']) {
         const el = $id(k + d.id);
         if (el && el.disabled !== lock) { el.disabled = lock; el.title = why; }
@@ -11744,7 +11752,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // what a talker is: from the decoder that names it (packet talkers)
   function rdfKind(t) {
     return !t.pk ? 'radio' : t.pl === 'ais' ? 'ship' : t.pl === 'adsb' ? 'aircraft' : t.pl === 'dme' ? 'beacon' :
-      t.pl === 'ism' ? 'device' : 'talker';
+      t.pl === 'ism' || t.pl === 'ism_wide' ? 'device' : 'talker';
   }
   // the talker's map point (its decoder's "Plot on map"), or null
   function rdfMapPt(t) {
@@ -12123,7 +12131,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const mhz = hz / 1e6;
     const d = decimatorInfo.find(z => z.id === activeDecimatorId);
     if (!d) { mapStatusFlash('No VFO to tune - add one in the sidebar'); return; }
-    if (vfoLocked(d)) { mapStatusFlash(`D${d.id} is locked to its decoder's frequency - select another VFO`); return; }
+    // locked on its tuner's centre (lock_vfo, ism_wide): the tuner moves
+    const centreOnly = vfoLocked(d);
+    if (centreOnly && digFixedPlugin(d.digital_mode).fixed_freq_hz > 0) {
+      mapStatusFlash(`D${d.id} is locked to its decoder's frequency - select another VFO`);
+      return;
+    }
     if (!(mhz >= FREQ_MIN && mhz <= FREQ_MAX)) {
       mapStatusFlash(`${mkFmtMhz(hz)} MHz is outside the receiver's range (${FREQ_MIN}-${FREQ_MAX} MHz)`);
       return;
@@ -12133,7 +12146,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (opMode === 'independent') {
       const own = d.tuner || 0;
       const order = [own, ...panes.map(p => p.ch).filter(ch => ch !== own)];
-      const p = order.map(ch => panes[ch]).find(p => p && p.freqMhz > 0 &&
+      const p = centreOnly ? null : order.map(ch => panes[ch]).find(p => p && p.freqMhz > 0 &&
         Math.abs(mhz - p.freqMhz) <= (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2);
       if (p) paneMoveVfo(p, d, mhz);
       else {
@@ -12144,10 +12157,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       }
     } else {
       let off = (mhz - currentCenterFreq) * 1e6;
-      if (Math.abs(off) > maxOffsetHz(bw)) {
-        // FREQ: is in whole kHz - the VFO takes the rest
+      if (centreOnly || Math.abs(off) > maxOffsetHz(bw)) {
+        // FREQ: is in whole kHz - the VFO takes the rest (not a locked one)
         const c = Math.round(mhz * 1000) / 1000;
-        off = (mhz - c) * 1e6;
+        off = centreOnly ? 0 : (mhz - c) * 1e6;
         freqUserChanging = true;   // a lagging FFT header must not pull the digits back
         clearTimeout(freqUserChangeTimeout);
         freqUserChangeTimeout = setTimeout(() => { freqUserChanging = false; }, 500);

@@ -369,7 +369,7 @@ Edit `include/config.hpp`:
   kraken_doa contains no protocol code. Shipped: p25, dmr, tetra, dstar,
   nxdn, mpt1327, pocsag, aprs, adsb (see *ADS-B* below), ais (see *AIS*),
   radiosonde (see *Radiosonde*), dme and ils (see *DME / TACAN* and *ILS /
-  VOR / marker*), ism (see *ISM devices*)
+  VOR / marker*), ism and ism_wide (see *ISM devices*)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
   tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by
   default. WS `PLUGIN_AUTO:id:0|1` -> `PluginRegistry::set_auto()` (bumps the
@@ -1167,7 +1167,7 @@ Edit `include/config.hpp`:
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,ism_wide}`, 🗺 Map 📡 DF panel):**
 - Goal: a VFO on a P25 / DMR / NXDN / D-STAR channel carries many radios; the VFO's DoA
   mixes them. The decoder names who transmits when, the VFO's signal is cut
   at those boundaries and each radio's own samples go through MUSIC - one
@@ -1345,10 +1345,24 @@ Edit `include/config.hpp`:
   mixes each antenna by -freq, Hamming-windowed-sinc low-pass (cut-off
   bw / 2, ~3 fs / bw taps, run-in from the samples before the packet),
   covariance over exactly the packet; overlapping packets are only dropped
-  when on the same channel. Above 500 kHz (ADS-B) the chunk ring as before
-  (freq ignored). PACKET_IDLE_MS 5 min; MAX_PACKET_S 0.25 (5 AIS slots).
+  when on the same channel. Above 500 kHz the chunk ring as before (ADS-B,
+  DME; freq ignored) - unless a packet named a channel <= WIDE_CHAN_MAX_BW
+  250 kHz (ism_wide's devices in 2.4 MHz): `want_wide_` then keeps the
+  samples themselves as 16-bit (`wide_raw_`, x WIDE_SCALE 8192, WIDE_RING_S
+  1 s: 48 MB at 2.4 MHz with 5 antennas) and `packet_cov_wide` applies the
+  same channel filter as complex taps h[t] e^(-iwt) (mixing first differs
+  only by a phase common to all antennas) at <= WIDE_MAX_OUT 1024 points
+  spread over the packet, at most one per fs / (3 bw) - the filter at all
+  576k samples of a 0.24 s packet was ~1 G multiply-adds; ~2 M now; without
+  a channel (digital squelch) <= 16384 samples spread over the piece. The
+  16-bit ring costs less per sample than the chunk ring (3.6 vs 7.8 % of a
+  Pi 5 core, scratchpad bench/ring_bench). Why (scratchpad e2e/ab.sh, 7
+  devices across the 2.4 MHz, transmissions overlapping): filtered 7/7
+  bearings exact in every run, whole band 5-6/7 (Schrader read the
+  LaCrosse's 90 deg, a fob 96 deg) at the same kraken_doa CPU (~130 %).
+  PACKET_IDLE_MS 5 min; MAX_PACKET_S 0.25 (5 AIS slots).
   Status `pl` = the talker's plugin (UI: ✈ / ⛴ / 📡 beacon for `dme` / 📟
-  device for `ism` - `rdfKind`; "Every aircraft / ship / beacon / device",
+  device for `ism` / `ism_wide` - `rdfKind`; "Every aircraft / ship / beacon / device",
   "Position check"; beacons and devices have no reported position: no Dist
   / Δ pos columns, no Plot-on-map hint; beacons counted in pulse pairs,
   devices in transmissions and listed newest first)
@@ -1634,7 +1648,17 @@ Edit `include/config.hpp`:
   grabbed, resized or squelch-dragged; `centerActiveBarAt` and the pane
   click don't move it when selected; `digRenderCards` disables its Freq / BW
   / Tuner fields. Picking another decoder unlocks it (bandwidth stays)
-- Test: scratchpad t_adsb_lock (coherent + independent)
+- `kp::Info::lock_vfo` (ism_wide; `--info` "lock_vfo", `PluginInfo::lock_vfo`,
+  the plugin list's `lock_vfo`): the same lock with no frequency - the
+  bandwidth + `SET_DECIMATOR_FREQ:id:0`, the tuner left alone
+  (`digFixedPlugin` returns such plugins too, `digApplyFixedTune` skips the
+  retune). Fields' tooltip: "... keeps this VFO on its tuner's centre with
+  the full bandwidth - tune the receiver instead". `mkTune` (📍 marker
+  frequency) on such a VFO retunes the tuner (FREQ: whole kHz, VFO stays at
+  0) where a fixed-frequency one refuses
+- Test: scratchpad t_adsb_lock (coherent + independent); e2e/t_ui_wide.py
+  (lock_vfo: fields + reason, the commands a pick sends - no FREQ, ADS-B as
+  the control sends FREQ:1090.000 -, the marker paths, DF devices)
 
 **Radiosonde (`plugins/radiosonde/`, weather balloons; README.md there):**
 - One plugin, eight families side by side (`sonde::Type` each, sonde.hpp):
@@ -1812,8 +1836,35 @@ Edit `include/config.hpp`:
   carrier / FSK centre, `bw_hz` = occupied + 10 kHz (25-160 kHz), `avg_s` =
   option `doa_avg` (1 = each transmission alone, 60, 600). Options `units`
   (si / us), `unknown`. Devices forgotten after 1 h
-- UI: `rdfKind` 'device' for `pl` 'ism' (📟, "Device / Reading / Tx", no
+- UI: `rdfKind` 'device' for `pl` 'ism' / 'ism_wide' (📟, "Device / Reading / Tx", no
   position columns, newest first in the DF list)
+- Built with `-O3` (`plugins/ism/CXXFLAGS`): the front end's per-bin loops
+  (`__restrict` pointers) vectorise - GCC's -O2 cost model takes no loop
+  that needs an epilogue; the output is identical (checked on all 1125
+  recordings against the -O2 build, scratchpad scripts/cmp_bin.py)
+- **ism_wide** (`plugins/ism_wide/`: decoder.cpp + `USES` = ism, so every
+  ism source but `ism/decoder.cpp` is compiled in; the decoder class is
+  `ism/ism_decoder.hpp`, `IsmDecoder(host, decim)`): the whole 2.4 MHz
+  (`sample_rate` = `min_vfo_rate` = 2.4 MHz), `lock_vfo` (the VFO on the
+  tuner's centre, a line - see *Fixed-frequency decoders*). `FrontEnd(10)`:
+  640-point FFT every 320 samples (the same 3.75 kHz bins and 133 us hop,
+  so the detector behaves as at 240 kHz), per-bin arrays in frequency order,
+  `max_pkgs_` 8, ring 2^22 (1.75 s, 32 MB). A finished package is mixed
+  down by its centre and decimated to 240 kHz (`make_segment`: Blackman
+  321 taps, cut-off 108 kHz - flat to ~88 kHz, -74 dB from 128 kHz;
+  computed at every 10th input sample only) and demodulated exactly like the
+  narrow plugin; its noise = the median floor of the 64 bins around it x
+  sum(h^2) (the RTL's 2.4 MHz isn't flat). Positions stay in 240 kHz units,
+  `Burst::fc` is the offset in the whole band (talker `freq_hz`, device
+  MHz). CPU (Pi 5): detector ~4 % of a core (bench/fe_bench; 9.1 % before
+  the frequency-order arrays and -O3), the plugin 14-17 % live in a dense
+  scene (7 devices, bursts ~40 % of the time; the 19 MB/s pipe included)
+- ism_wide tests (scratchpad e2e/): gen_wide.py scene_w1.json -> a 20 s
+  2.4 MHz cu8 (7 devices at -950..+900 kHz, six starting within 150 ms):
+  every transmission of the 6 known devices decoded at its frequency, the
+  LaCrosse recording as the same unknown code as at 240 kHz; end to end
+  (`run_e2e.sh scene_w1.json 70 --plugin ism_wide --bw 0`): every device's
+  bearing exact, every transmission in its history
 - Tests: rtl_433_tests (1125 recordings, rate / RF from the file name,
   padded with 0.4 s of noise - a burst ends after 30 ms of quiet): 960 of the
   1030 with expected output decode fully; 3 wrong fields, all an HCS200
@@ -1984,7 +2035,11 @@ Edit `include/config.hpp`:
   plugin's sources + `sdk/plugin_host.cpp` + the library into its OWN
   executable `plugins/<id>/build/decoder` (linked as decoder.tmp, then
   renamed: a running copy keeps its inode). The top Makefile's `plugins`
-  target runs it with -k and only warns on failure; CMake has an ALL target
+  target runs it with -k and only warns on failure; CMake has an ALL target.
+  Optional files in a plugin folder: `USES` (ids of plugins whose sources -
+  all but their decoder.cpp - are compiled in, their folder on the include
+  path; `PluginRegistry::scan` counts them for `stale` too) and `CXXFLAGS`
+  (extra compiler flags, last on the command line)
 - `decoder --info` (JSON incl. `options` and `options_tsv` - the
   tab-separated copy kraken_doa's flat JSON reader parses; read by
   `PluginRegistry::scan()` at startup, on `PLUGINS_RESCAN` (worker thread,

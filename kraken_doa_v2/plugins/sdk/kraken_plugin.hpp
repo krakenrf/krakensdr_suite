@@ -137,6 +137,11 @@ struct Info {
     bool voice = false;             // decodes voice (Host::audio): the panel offers "Listen"
     bool messages = false;          // sends free-text messages (Host::message): addresses in them become incidents
     bool talkers = false;           // reports who transmits (Host::talker): the DoA can be split per radio
+    // true: like fixed_freq_hz, but the tuner stays where the user put it -
+    // picking the plugin puts the VFO on its tuner's centre (offset 0) with
+    // the narrowest bandwidth >= min_vfo_rate, drawn as a single line that
+    // can't be dragged or resized (a decoder of the whole band: ism_wide)
+    bool lock_vfo = false;
 };
 
 class Host {

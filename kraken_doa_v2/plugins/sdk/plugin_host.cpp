@@ -71,7 +71,7 @@ int print_info() {
               << ",\"manual_only\":" << (i.manual_only ? "true" : "false") << ",\"fixed_freq_hz\":" << std::fixed
               << std::setprecision(0) << i.fixed_freq_hz << std::defaultfloat << std::setprecision(6)
               << ",\"voice\":" << (i.voice ? "true" : "false") << ",\"messages\":" << (i.messages ? "true" : "false")
-              << ",\"talkers\":" << (i.talkers ? "true" : "false");
+              << ",\"talkers\":" << (i.talkers ? "true" : "false") << ",\"lock_vfo\":" << (i.lock_vfo ? "true" : "false");
     // options twice: as JSON for people, and tab-separated for kraken_doa's
     // flat reader (key, label, default, choices, help per line)
     std::string tsv;
