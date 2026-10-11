@@ -44,9 +44,14 @@ ai/**/__pycache__/
 # incident map (incidents.cpp): incidents found in decoder messages, kept 24 h
 incidents.tsv
 incidents.tsv.tmp
-# 🗺 map markers the user placed (map_markers.cpp) - positions near the station
+# 📻 saved frequencies + map markers (saved_freqs.cpp) - positions near the station
+saved_frequencies.json
+saved_frequencies.json.tmp
+saved_frequencies.json.bad
+# the map markers before they became saved-frequency locations (migrated once)
 map_markers.json
 map_markers.json.tmp
+map_markers.json.migrated
 # ✈ the array calibration of THIS receiver (array_cal.cpp)
 array_cal.json
 array_cal.json.tmp

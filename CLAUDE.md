@@ -575,6 +575,31 @@ decoders `kraken_doa_v2/plugins/`
   `make`, press ↻ (no web-UI export / import / rebuild - removed on purpose:
   compiling code sent from a web page was a recipe for issues)
 
+**📻 Saved frequencies (sidebar) + 📍 map markers** (details:
+`kraken_doa_v2/CLAUDE.md` *Saved frequencies*): `kraken_doa_v2/src/saved_freqs.cpp`
+- One backend list (every browser): categories (user-made; Airband,
+  Broadcast, Business band, Amateur, Marine, Emergency services to start),
+  locations (= the 🗺 map markers) and frequencies - name + frequency
+  required; category, location, demod, bandwidth, digital decoder, tone /
+  code, notes optional. Several frequencies at one place share one location,
+  so its marker lists them all (the editor snaps a new location within 15 m
+  of a marker onto it)
+- Sidebar "📻 Saved Frequencies": search, grouped by category (fold, 👁 =
+  marks on the spectrum), ⚙ Categories (add / rename / recolour / delete),
+  + Add / ☆ Save on a VFO card (filled in from that VFO), editor dialog
+  (location: a marker, typed, picked on the map or the station's). A click
+  on an entry tunes the SELECTED VFO: its decoder, demod and bandwidth (when
+  set), then the frequency (retuning the receiver if outside the band)
+- Spectrum: tags with the names at the top of the main spectrum and the
+  independent-mode panes; click = tune
+- WS `SF_SET:{json}` (+ newcat / newloc made in the same step), `SF_DEL:id`,
+  `SF_LOC_SET` / `SF_LOC_DEL` (a location's frequencies stay, unplaced),
+  `SF_CAT_SET` / `SF_CAT_DEL` (uncategorises), `GET_SF` ->
+  `{"savedfreq":{cats,locs,freqs}}` to all pages. File
+  `saved_frequencies.json` (cwd-relative, gitignored); the old
+  `map_markers.json` (MARKER_* commands, removed) is migrated once on the
+  first start and renamed `.migrated`
+
 **🗺 Map (right-hand pane)** (details: `kraken_doa_v2/CLAUDE.md` *Map*):
 - Street (OpenStreetMap) / satellite (Esri World Imagery) map drawn by the
   page itself (no map library, no CDN): without internet it keeps working on
@@ -593,14 +618,14 @@ decoders `kraken_doa_v2/plugins/`
   static, asking first) - sent as the Station Information panel's
   `STATIC_LOCATION:`; the station's viewsheds follow. Viewshed points are
   selected + dragged the same way
-- 📍 User markers: right-click (touch: long press) the map -> "📍 Add
-  Marker"; each has a name, notes and frequencies, shown in a panel at the
-  map's bottom right - clicking a frequency tunes the SELECTED VFO there
+- 📍 User markers = the LOCATIONS of the saved frequencies (see *📻 Saved
+  frequencies* below - one feature): right-click (touch: long press) the
+  map -> "📍 Add Marker" (name, position, notes) or "📻 Save a frequency
+  here"; a marker's panel at the map's bottom right lists EVERY saved
+  frequency at that location - clicking one tunes the SELECTED VFO there
   (moves it inside the band shown, else retunes the receiver / the VFO's own
-  tuner in independent mode). Kept on the backend for every browser:
-  `kraken_doa_v2/src/map_markers.cpp`, `map_markers.json` (cwd-relative,
-  gitignored - positions near the station); `MARKER_SET:{json}` /
-  `MARKER_DEL:id` / `GET_MARKERS` -> `{"markers":{"list":[...]}}` to all pages
+  tuner in independent mode), "+ Frequency" adds one. Pins take their
+  frequencies' category colour when they share one
 - 📡 Masts layer ("Masts" button, per browser): radio masts / towers /
   antennas from OpenStreetMap, fetched BY THE BROWSER from the Overpass API
   (overpass-api.de - not through kraken_doa): the 300 km region around the

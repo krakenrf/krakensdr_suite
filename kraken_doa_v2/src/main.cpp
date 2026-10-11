@@ -22,7 +22,7 @@
 #include "doa_logger.hpp"
 #include "ai_manager.hpp"
 #include "incidents.hpp"
-#include "map_markers.hpp"
+#include "saved_freqs.hpp"
 #include "voice2text.hpp"
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
@@ -298,8 +298,8 @@ int main(int argc, char* argv[]) {
     // online (OpenStreetMap Nominatim) -> 🗺 Map
     incidents::start();
 
-    // 🗺 Map markers the user placed (map_markers.json)
-    markers::load();
+    // 📻 Saved frequencies + the map markers (saved_frequencies.json)
+    savedfreq::load();
 
     // The receivers' own noise floors (noise_floors.json) - the spectrum's 0 dB
     // while a signal fills the band

@@ -671,7 +671,12 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-mk .fq button {display:flex;gap:6px;align-items:baseline;text-align:left;background:#16213e;border:1px solid #2a4a7a;border-radius:3px;color:#cfe3ff;padding:4px 7px;font-size:12px;cursor:pointer}
 .map-mk .fq button:hover {background:#1a4a7a;border-color:#4fc3f7}
 .map-mk .fq b {color:#7cf0a0;font-variant-numeric:tabular-nums;white-space:nowrap}
-.map-mk .fq span {color:#b8cbe6;overflow-wrap:anywhere}
+.map-mk .fq span {color:#b8cbe6;overflow-wrap:anywhere;min-width:0}
+.map-mk .fq .fr {display:flex;gap:3px}
+.map-mk .fq .fr > button:first-child {flex:1;min-width:0}
+.map-mk .fq .fr .ed {flex:none;padding:4px 7px;align-items:center}
+.map-mk .fq i {width:8px;height:8px;border-radius:50%;flex:none;align-self:center}
+.map-mk .fq em {display:block;font-style:normal;color:#8aa8c7;font-size:10px}
 .map-mk .none {color:#8296b4;font-style:italic;margin-bottom:5px}
 .map-mk .notes {white-space:pre-wrap;overflow-wrap:anywhere;background:#101a2e;border-radius:3px;padding:4px 6px;margin-bottom:5px;color:#dbe8ff}
 .map-mk .b {display:flex;gap:4px;flex-wrap:wrap}
@@ -687,6 +692,66 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-mk .err:empty {display:none}
 /* the 📡 DF panel (bottom left) makes room for an open marker panel */
 .map-pane.mk-open .map-df {max-width:max(170px, calc(100% - 292px))}
+/* the map waiting for a click (the saved-frequency editor's "Pick on map") */
+.map-pick {position:absolute;left:50%;top:44px;transform:translateX(-50%);z-index:7;max-width:calc(100% - 20px);box-sizing:border-box;background:rgba(16,24,44,.96);border:1px solid #ffd54f;border-radius:4px;color:#fff;font-size:12px;padding:6px 10px;display:flex;gap:8px;align-items:center;box-shadow:0 2px 10px rgba(0,0,0,.5)}
+.map-pane.picking #map-canvas {cursor:crosshair}
+
+/* 📻 Saved frequencies: sidebar list, categories, editor dialog, toast */
+.sf-count {margin-left:auto;margin-right:6px;font-size:11px;color:#7f9cc0}
+.sf-bar {display:flex;gap:5px;margin-bottom:6px}
+.sf-bar input {flex:1;min-width:0;background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:4px 6px;border-radius:3px;font-size:12px}
+.sf-opts {display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:12px;color:#c8d6e5;margin-bottom:4px}
+.sf-opts label {display:flex;align-items:center;gap:5px;cursor:pointer}
+.sf-list {max-height:440px;overflow-y:auto}
+.sf-empty {font-size:12px;color:#8296b4;padding:4px 2px;line-height:1.45}
+.sf-gh {display:flex;align-items:center;gap:6px;padding:5px 2px 4px;cursor:pointer;font-size:12px;color:#cfe3ff;border-bottom:1px solid #0f3460;user-select:none}
+.sf-gh .caret {width:10px;color:#7f9cc0;font-size:10px}
+.sf-gh .dot {width:10px;height:10px;border-radius:50%;flex:none}
+.sf-gh .n {flex:1;font-weight:bold;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sf-gh .c {color:#7f9cc0;font-size:11px}
+.sf-gh .eye {cursor:pointer;font-size:12px;padding:0 3px}
+.sf-gh .eye.off {opacity:.3;filter:grayscale(1)}
+.sf-row {display:flex;align-items:stretch;gap:6px;padding:4px 2px 4px 0;cursor:pointer;border-bottom:1px solid rgba(15,52,96,.5)}
+.sf-row:hover {background:#16213e}
+.sf-row .bar {width:3px;border-radius:2px;flex:none}
+.sf-row .main {flex:1;min-width:0}
+.sf-row .l1 {display:flex;gap:6px;align-items:baseline;font-size:12px}
+.sf-row .nm {flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e0e0e0}
+.sf-row .mhz {font-family:monospace;color:#7cf0a0;white-space:nowrap}
+.sf-row .l2 {font-size:10px;color:#8aa8c7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sf-row .act {display:flex;gap:1px;align-items:center}
+.sf-row .act button {background:none;border:1px solid transparent;color:#9fb7d6;cursor:pointer;font-size:12px;padding:1px 4px;border-radius:3px}
+.sf-row .act button:hover {border-color:#4fc3f7;color:#fff}
+/* a VFO is on this frequency (sfMarkActive) */
+.sf-row.on {background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px var(--vfo, #4fc3f7)}
+.sf-row.on .nm {color:#fff;font-weight:bold}
+.sf-cats {background:#101a2e;border:1px solid #0f3460;border-radius:3px;padding:6px;margin:4px 0 6px}
+.sf-cat-row {display:flex;gap:4px;align-items:center;margin-bottom:4px;font-size:12px}
+.sf-cat-row:last-child {margin-bottom:0}
+.sf-cat-row input[type=text] {flex:1;min-width:0;background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:3px 5px;border-radius:3px;font-size:12px}
+.sf-cat-row input[type=color] {width:26px;height:22px;padding:0;border:1px solid #0f3460;background:none;cursor:pointer;flex:none}
+.sf-cat-row .n {color:#7f9cc0;font-size:11px;min-width:22px;text-align:right}
+.sf-dlg-bg {position:fixed;inset:0;z-index:2050;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:12px;box-sizing:border-box}
+.sf-dlg {width:420px;max-width:100%;max-height:100%;overflow-y:auto;background:#121a30;border:1px solid #4fc3f7;border-radius:6px;box-shadow:0 6px 30px rgba(0,0,0,.6);color:#dbe8ff;font-size:12px;padding:10px 12px;box-sizing:border-box}
+.sf-dlg-h {display:flex;align-items:center;font-weight:bold;font-size:14px;margin-bottom:4px}
+.sf-dlg-h .x {margin-left:auto;cursor:pointer;color:#8aa;font-weight:normal;padding:0 4px}
+.sf-dlg .lbl {color:#7f9cc0;font-size:11px;margin:7px 0 2px}
+.sf-dlg .lbl b {color:#ff8a80;font-weight:normal}
+.sf-dlg .row {display:flex;gap:5px;align-items:center}
+.sf-dlg input, .sf-dlg select, .sf-dlg textarea {background:#1a1a2e;border:1px solid #2a4a7a;color:#e0e0e0;border-radius:3px;font-size:12px;padding:4px 6px;box-sizing:border-box;min-width:0}
+.sf-dlg .row > input, .sf-dlg .row > select {flex:1}
+.sf-dlg select {width:100%}
+.sf-dlg textarea {width:100%;resize:vertical;font-family:inherit}
+.sf-dlg .grid2 {display:grid;grid-template-columns:1fr 1fr;gap:0 8px}
+.sf-dlg .sub {background:#0f1a30;border:1px solid #1d3a62;border-radius:4px;padding:2px 6px 6px;margin-top:4px}
+.sf-dlg .info {color:#8aa8c7;font-size:11px;margin-top:3px}
+.sf-dlg .err {color:#ff8a80;font-size:12px;margin-top:8px}
+.sf-dlg .err:empty {display:none}
+.sf-dlg .b {display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center}
+.sf-dlg .b .sp {flex:1}
+.sf-toast {position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2100;max-width:90vw;box-sizing:border-box;background:rgba(16,24,44,.97);border:1px solid #4fc3f7;color:#fff;border-radius:4px;padding:7px 14px;font-size:12px;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,.6);transition:opacity .3s;opacity:0}
+.sf-toast.show {opacity:1}
+.sf-toast.err {border-color:#ff8a80}
 
 /* Individual DoA display */
 .doa-display {background:#16213e;border:1px solid #0f3460;border-radius:4px;padding:8px 6px}
@@ -851,6 +916,27 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <div id="decimator-list">
           <!-- Decimator controls will be dynamically added here -->
         </div>
+      </div>
+    </div>
+
+    <!-- 📻 Saved frequencies (saved_freqs.cpp) + the map markers - all modes -->
+    <div class="sb-section" id="sf-section">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>📻 Saved Frequencies<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Your list of frequencies, kept on the receiver (every browser sees the same list). <b>Click one to tune</b> the selected VFO to it (also its demod, bandwidth and decoder, when the entry has them); the receiver retunes when it is outside the band shown. Each needs a name and a frequency; a category, a location, demod, bandwidth, decoder, tone / code and notes are optional. Group them in categories (⚙ Categories: add your own, rename, recolour). A frequency with a <b>location</b> appears on the 🗺 map: the marker there lists every frequency saved at that place. Saved frequencies are marked on the spectrum (👁 on a category hides its marks); click a mark to tune. ☆ Save on a VFO card saves that VFO's frequency.</span></span></h3>
+        <span class="sf-count" id="sf-count"></span>
+        <span class="sb-toggle">▼</span>
+      </div>
+      <div class="sb-content">
+        <div class="sf-bar">
+          <input type="search" id="sf-search" placeholder="Search name, MHz, notes…" oninput="sfRenderList()" title="Words in the name, frequency, category, location, tone or notes">
+          <button type="button" class="btn sm primary" onclick="sfNew()" title="Save a frequency (filled in from the selected VFO)">+ Add</button>
+        </div>
+        <div class="sf-opts">
+          <label title="Mark the saved frequencies on the spectrum"><input type="checkbox" id="sf-spec" onchange="sfSetSpectrum(this.checked)"> Show on spectrum</label>
+          <button type="button" class="btn sm" id="sf-cats-btn" onclick="sfToggleCats()" title="Add, rename, recolour or delete categories">⚙ Categories</button>
+        </div>
+        <div id="sf-cats" class="sf-cats" style="display:none"></div>
+        <div id="sf-list" class="sf-list"></div>
       </div>
     </div>
 
@@ -1961,11 +2047,80 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <div class="map-pop" id="map-pop" style="display:none"></div>
           <div class="map-mk" id="map-mk" style="display:none"></div>
           <div class="map-menu" id="map-menu" style="display:none"></div>
+          <div class="map-pick" id="map-pick" style="display:none"></div>
         </div>
       </div>
     </div>
   </div>
 </div>
+
+<!-- 📻 Saved frequency editor (see 📻 SAVED FREQUENCIES) -->
+<div class="sf-dlg-bg" id="sf-dlg-bg" style="display:none" onpointerdown="if(event.target===this)sfDlgCancel()">
+  <div class="sf-dlg" id="sf-dlg" role="dialog" aria-modal="true" aria-labelledby="sf-dlg-title">
+    <div class="sf-dlg-h"><span id="sf-dlg-title">📻 Save frequency</span><span class="x" onclick="sfDlgCancel()" title="Cancel (Esc)">✕</span></div>
+    <div class="lbl">Name <b>*</b></div>
+    <input type="text" id="sf-f-name" maxlength="80" style="width:100%" placeholder="e.g. Auckland Tower">
+    <div class="lbl">Frequency <b>*</b> (MHz - or add kHz / GHz)</div>
+    <div class="row">
+      <input type="text" id="sf-f-mhz" inputmode="decimal" placeholder="118.700">
+      <button type="button" class="btn sm" onclick="sfDlgFromVfo()" title="The selected VFO's frequency, demod, bandwidth and decoder">⟵ Selected VFO</button>
+    </div>
+    <div class="lbl">Category</div>
+    <select id="sf-f-cat" onchange="sfDlgSync(true)"></select>
+    <input type="text" id="sf-f-newcat" maxlength="40" placeholder="Name of the new category" style="width:100%;margin-top:4px;display:none">
+    <div class="lbl">Location (a marker on the 🗺 map)</div>
+    <select id="sf-f-loc" onchange="sfDlgSync(true)"></select>
+    <div class="info" id="sf-f-locinfo" style="display:none"></div>
+    <div class="sub" id="sf-f-newloc" style="display:none">
+      <div class="lbl">Location name (blank = the frequency's name)</div>
+      <input type="text" id="sf-f-locname" maxlength="80" style="width:100%" placeholder="e.g. Mt Eden repeater site">
+      <div class="lbl">Position (latitude, longitude)</div>
+      <div class="row">
+        <input type="text" id="sf-f-lat" inputmode="decimal" placeholder="latitude">
+        <input type="text" id="sf-f-lon" inputmode="decimal" placeholder="longitude">
+      </div>
+      <div class="b" style="margin-top:5px">
+        <button type="button" class="btn sm" onclick="sfPickStart()" title="Close this for a moment and click the place on the map (or an existing marker)">🗺 Pick on map</button>
+        <button type="button" class="btn sm" onclick="sfDlgStation()" title="The station's position (Station Information)">📡 Station</button>
+      </div>
+    </div>
+    <div class="grid2">
+      <div>
+        <div class="lbl">Demod</div>
+        <select id="sf-f-mode">
+          <option value="">Keep the VFO's</option>
+          <option value="WBFM">WBFM</option>
+          <option value="NBFM">NBFM</option>
+          <option value="AM">AM</option>
+          <option value="DIGITAL">Digital</option>
+        </select>
+      </div>
+      <div>
+        <div class="lbl">Bandwidth</div>
+        <select id="sf-f-bw"></select>
+      </div>
+      <div>
+        <div class="lbl">Digital decoder</div>
+        <select id="sf-f-dec"></select>
+      </div>
+      <div>
+        <div class="lbl">Tone / code</div>
+        <input type="text" id="sf-f-tone" maxlength="40" style="width:100%" placeholder="CTCSS 110.9, NAC 293…" title="CTCSS / DCS tone, P25 NAC, DMR colour code, ... (shown in the list)">
+      </div>
+    </div>
+    <div class="lbl">Notes</div>
+    <textarea id="sf-f-notes" rows="3" maxlength="2000"></textarea>
+    <div class="err" id="sf-err"></div>
+    <div class="b">
+      <button type="button" class="btn primary" id="sf-save" onclick="sfDlgSave()">Save</button>
+      <button type="button" class="btn" onclick="sfDlgTune()" title="Tune the selected VFO to what is entered here (without saving)">Tune</button>
+      <button type="button" class="btn" onclick="sfDlgCancel()">Cancel</button>
+      <span class="sp"></span>
+      <button type="button" class="btn" id="sf-del" onclick="sfDlgDelete()" style="background:#7f1d1d">🗑 Delete</button>
+    </div>
+  </div>
+</div>
+<div class="sf-toast" id="sf-toast"></div>
 
 <script>
 // Globals
@@ -2018,10 +2173,25 @@ let mapTileOk = 0, mapTileErrAt = 0, mapAutoFit = !mapState.z;
 let mapStSel = false, vsSel = null, mapObjDrag = null, mapStLocal = null;
 let mapSaveT = 0, mapFlashT = 0, mapFlashMsg = '';
 if (!['street', 'satellite'].includes(mapState.layer)) mapState.layer = 'street';
-// 📍 the user's markers (see 📍 MAP MARKERS): the backend's list, the one
-// shown in the panel, the one being edited, the one just added (edited once
-// the backend has it), where the right-click menu was opened
-let mkList = [], mkSel = null, mkEdit = null, mkWantEdit = null, mapMenuAt = null;
+// 📻 saved frequencies + 📍 map markers (see 📻 SAVED FREQUENCIES / 📍 MAP
+// MARKERS): the backend's lists (categories, locations = the map markers,
+// frequencies); the marker shown in the map panel, the one being edited, the
+// one just added (edited once the backend has it), where the right-click menu
+// was opened; per browser: spectrum marks on, collapsed / hidden categories
+// (localStorage kraken_sf); the spectrum marks' click targets
+let sfCats = [], sfLocs = [], sfFreqs = [];
+let mkSel = null, mkEdit = null, mkWantEdit = null, mapMenuAt = null;
+const sfUi = (() => {
+  const d = {spec: true, col: {}, hide: {}};
+  try {
+    const s = JSON.parse(localStorage.getItem('kraken_sf') || '{}');
+    if (typeof s.spec === 'boolean') d.spec = s.spec;
+    if (s.col && typeof s.col === 'object') d.col = s.col;
+    if (s.hide && typeof s.hide === 'object') d.hide = s.hide;
+  } catch (e) {}
+  return d;
+})();
+let sfSpecRects = [], sfMarkerConsumed = false;
 // 🗣 Voice to Text (see 🗣 VOICE TO TEXT): the backend's status, the
 // transcripts (oldest first), how many came while the Voice tab wasn't shown
 // (infoRenderTabs reads these - it can run before that section is evaluated)
@@ -4177,6 +4347,9 @@ function drawBox() {
     });
   }
 
+  // 📻 Saved frequencies: tags at the top + faint lines (sfDrawSpectrum)
+  sfDrawSpectrum(ctx, w, h);
+
   // AI Signal Lab: an "AI" badge above every investigated frequency
   aiDrawMarkers(ctx, w);
 
@@ -4600,10 +4773,10 @@ function pointerClick(s, e) {
   if(centerActiveBarAt(s.xToMhz(x))) drawBox();
 }
 
-function handleDown(e) { if (aiMarkerHit(e)) return; pointerDown(fftSurface, e); }
-function handleMove(e) { pointerMove(fftSurface, e); if (!isDragging && !isDraggingEdge && !isScrollDragging) aiMarkerHover(e); }
+function handleDown(e) { if (aiMarkerHit(e) || sfMarkerHit(e)) return; pointerDown(fftSurface, e); }
+function handleMove(e) { pointerMove(fftSurface, e); if (!isDragging && !isDraggingEdge && !isScrollDragging && !aiMarkerHover(e)) sfMarkerHover(e); }
 function handleUp(e) { pointerUp(fftSurface, e); }
-function handleClick(e) { if (aiMarkerConsumed) return; pointerClick(fftSurface, e); }
+function handleClick(e) { if (aiMarkerConsumed || sfMarkerConsumed) return; pointerClick(fftSurface, e); }
 function handleWaterfallDown(e) { pointerDown(wfSurface, e); }
 function handleWaterfallMove(e) { pointerMove(wfSurface, e); }
 function handleWaterfallUp(e) { pointerUp(wfSurface, e); }
@@ -6575,7 +6748,10 @@ function updateDecimatorList(info) {
     decDiv.innerHTML = `
       <div class="dec-header">
         <h4 style="color:${bgColor}">D${dec.id}</h4>
-        <button onclick="removeDecimator(${dec.id})" class="btn sm" style="background:#b71c1c">✕</button>
+        <span style="display:flex;gap:4px">
+          <button onclick="sfNewFromVfo(${dec.id})" class="btn sm" title="Save this VFO's frequency (📻 Saved Frequencies)">☆ Save</button>
+          <button onclick="removeDecimator(${dec.id})" class="btn sm" style="background:#b71c1c">✕</button>
+        </span>
       </div>
       <div class="dec-row">
         <label>Freq:</label>
@@ -6865,8 +7041,8 @@ function connect() {
 
     // 🗺 Map open: every point at once instead of only the changing ones
     if (mapState.on) setTimeout(() => { send('GET_MAP'); send('GET_RDF'); }, 900);
-    // 📍 the user's map markers (then pushed when they change)
-    setTimeout(() => send('GET_MARKERS'), 880);
+    // 📻 saved frequencies + map markers (then pushed when they change)
+    setTimeout(() => send('GET_SF'), 880);
 
     // Request FFT settings on connection
     setTimeout(() => requestFFTSettings(), 600);
@@ -6914,7 +7090,7 @@ function connect() {
             digOnMessage(msg.digital);
           }
           else if(msg.map) { mapOnMessage(msg.map); }
-          else if(msg.markers) { mkOnMessage(msg.markers); }
+          else if(msg.savedfreq) { sfOnMessage(msg.savedfreq); }
           else if(msg.incidents) { incOnMessage(msg.incidents); }
           else if(msg.rdf) { rdfOnStatus(msg.rdf, false); }
           else if(msg.rdf_part) { rdfOnStatus(msg.rdf_part, true); }
@@ -7979,7 +8155,7 @@ function paneDrawOverlay(p) {
   ctx.setTransform(p.dpr, 0, 0, p.dpr, 0, 0);
   const H = p.oh || (c.height / p.dpr);
   ctx.clearRect(0, 0, c.width / p.dpr, H);
-  p.bars = []; p.ai = [];
+  p.bars = []; p.ai = []; p.sf = [];
   const span = paneSpan(p);
   if (!span) return;
   // Tuning bars in the main display's style (drawBox / WaterfallDisplay.
@@ -8065,6 +8241,8 @@ function paneDrawOverlay(p) {
     ctx.fillText('AI', x, 8);
     p.ai.push({x0: x - 9, x1: x + 9, y0: 2, y1: 13, id: s.id});
   }
+  // 📻 saved frequencies: tags under the AI badges (sfPaneTags)
+  p.sf = sfPaneTags(ctx, p, span);
 }
 
 // ---- interaction: click selects the pane; a VFO bar drags; elsewhere the
@@ -8095,6 +8273,8 @@ function paneDown(p, e) {
   paneSelect(p.ch);
   const ai = p.ai.find(b => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1);
   if (ai) { aiOpenSession(ai.id); return; }
+  const sft = sfSpecAt(p.sf || [], x, y, 2);   // a saved frequency's tag: tune there
+  if (sft) { sfTune(sft.fs[0].id, {tuner: p.ch}); return; }
   if (!paneSpan(p)) return;
   const ht = paneHit(p, x, y);
   if (ht && ht.kind === 'squelch') {
@@ -8142,6 +8322,10 @@ function paneMove(p, e) {
     const hv = ht ? {id: ht.bar.id, kind: ht.kind} : null;
     if (JSON.stringify(hv) !== JSON.stringify(p.hover || null)) { p.hover = hv; paneDrawOverlay(p); }
     e.currentTarget.style.cursor = !ht ? 'default' : ht.kind === 'edge' ? 'ew-resize' : ht.kind === 'squelch' ? 'ns-resize' : 'grab';
+    // a saved frequency's tag: what it is + a hand
+    const sft = sfSpecAt(p.sf || [], x, paneXY(e).y, 2), tip = sft ? sfTagTip(sft) : '';
+    if (e.currentTarget.title !== tip) e.currentTarget.title = tip;
+    if (sft) e.currentTarget.style.cursor = 'pointer';
     return;
   }
   if (paneDrag.squelch !== undefined) {
@@ -11765,7 +11949,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function mapFitAll() {
     const ll = [];
     for (const p of mapPts.values()) ll.push([p.la, p.lo]);
-    for (const m of mkList) ll.push([m.lat, m.lon]);
+    for (const m of sfLocs) ll.push([m.lat, m.lon]);
     if (mapStation) ll.push(mapStation);
     if (!ll.length) { mapStatusFlash('Nothing on the map yet'); return; }
     if (ll.length === 1) { mapCenterOn(ll[0][0], ll[0][1], Math.max(mapState.z, 9)); return; }
@@ -11883,7 +12067,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         return;
       }
       if (ptrs.size === 0) {
-        if (pan && !moved && !lpFired && e.type === 'pointerup') {
+        if (pan && !moved && !lpFired && e.type === 'pointerup' && sfPicking) {
+          // the saved-frequency editor's Pick on map: a marker, or the spot
+          const mk = mkHit(e.offsetX, e.offsetY);
+          sfPickEnd(mk ? {loc: mk} : {ll: mapScreenToLatLon(e.offsetX, e.offsetY)});
+        } else if (pan && !moved && !lpFired && e.type === 'pointerup') {
           // a click: a marker of the user's (its panel), a decoder's point
           // or an OpenStreetMap mast (popup), or nothing (closes both - an
           // edit stays open)
@@ -13472,31 +13660,18 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (typeof infoRenderDecoder === 'function') infoRenderDecoder();
   }
   // --- 📍 MAP MARKERS: places the user pins on the map -------------------------
-  // Right-click (touch: long press) -> menu -> "Add Marker". A marker has a
-  // name, notes and frequencies, and is kept on the backend (map_markers.cpp,
-  // map_markers.json), so every browser shows the same ones: MARKER_SET:{json}
-  // / MARKER_DEL:id, each answered to every page with {"markers":{"list":[{id,
-  // lat, lon, name, notes, freqs:[{hz, label}], t}]}} (+ error, id when a
-  // MARKER_SET was refused). The selected marker's details show in a panel at
-  // the map's bottom right (#map-mk); clicking one of its frequencies tunes
-  // the selected VFO there (mkTune). State: see the globals block.
+  // A marker is a LOCATION of the saved frequencies (see 📻 SAVED FREQUENCIES:
+  // one feature, one backend list - saved_freqs.cpp). Right-click (touch: long
+  // press) -> menu -> "Add Marker" (a location; name, position, notes) or
+  // "Save a frequency here" (the editor, with a new location there). The
+  // marker's panel at the map's bottom right (#map-mk) lists every saved
+  // frequency at that location - a click tunes the selected VFO there
+  // (sfTune), ✎ edits it, "+ Frequency" adds one -, the notes, and Edit
+  // (name / position / notes) / Centre / Viewshed / Delete. SF_LOC_SET:{json}
+  // / SF_LOC_DEL:id; the list comes back to every page as {"savedfreq":...}
+  // (sfOnMessage). State: see the globals block.
   const MK_COL = '#e91e63';
-  function mkGet(id) { return (id && mkList.find(m => m.id === id)) || null; }
-  function mkOnMessage(m) {
-    mkList = Array.isArray(m.list) ? m.list : [];
-    if (m.error && m.id && (m.id === mkWantEdit || m.id === mkSel)) {
-      mapStatusFlash('Marker not saved: ' + m.error);
-      if (m.id === mkWantEdit) mkWantEdit = null;
-    }
-    // the marker this page just added: open it for editing
-    if (mkWantEdit && mkGet(mkWantEdit)) { mkSel = mkEdit = mkWantEdit; mkWantEdit = null; mkRender(true); }
-    if (mkSel && !mkGet(mkSel)) {
-      if (mkEdit) mapStatusFlash('That marker was deleted (from another browser?)');
-      mkSel = mkEdit = null;
-    }
-    mkRender();
-    mapDraw();
-  }
+  function mkGet(id) { return (id && sfLocs.find(m => m.id === id)) || null; }
   function mkOnline() {
     if (ws && ws.readyState === 1) return true;
     mapStatusFlash('Not connected to the receiver');
@@ -13510,20 +13685,23 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     return [Math.max(-85.05, Math.min(85.05, la)), lo - 360 * Math.floor((lo + 180) / 360)];
   }
 
-  // the right-click menu: Add Marker; on a marker also Edit / Delete
+  // the right-click menu: Add Marker / Save a frequency here; on a marker also
+  // add a frequency to it, Edit / Delete
   function mapMenuOpen(x, y) {
     const el = $id('map-menu');
     if (!el || !mapCv) return;
     const [la, lo] = mapScreenToLatLon(x, y);
     mapMenuAt = {la, lo};
     let h = '<button type="button" onclick="mkAddAt()">📍 Add Marker</button>' +
+            '<button type="button" onclick="mapMenuClose();sfNew({lat:mapMenuAt.la,lon:mapMenuAt.lo})" title="Save a frequency transmitted from here (a new marker)">📻 Save a frequency here</button>' +
             (plMenuOn() ? `<button type="button" onclick="vsAddAt('tx')" title="${vsAddTip('here')}">${vsAddLabel('here')}</button>` : '') +
             plMenuItem() +
             `<button type="button" onclick="mapSetStationAt()" title="Put the station (Station Information) here - a fixed location; its heading is kept">📡 Set station here${mapStaticSource() ? '' : ' (fixed location)'}</button>`;
     const mk = mkGet(mkHit(x, y));
     if (mk) {
       const n = digEsc(mk.name);
-      h += `<button type="button" onclick="mapMenuClose();mkSelect('${mk.id}',true)">✎ Edit “${n}”</button>` +
+      h += `<button type="button" onclick="mapMenuClose();sfNew({loc:'${mk.id}'})">📻 Add a frequency to “${n}”</button>` +
+           `<button type="button" onclick="mapMenuClose();mkSelect('${mk.id}',true)">✎ Edit “${n}”</button>` +
            (plMenuOn() ? `<button type="button" onclick="mapMenuClose();vsAddMarker('${mk.id}','tx')" title="${vsAddTip('at the marker')}">${vsAddLabel(`at “${n}”`)}</button>` : '') +
            (plMenuOn() && plPickSite() ? `<button type="button" onclick="mapMenuClose();plLinkMarker('${mk.id}')" title="${plLinkTip('at the marker')}">${plLinkLabel(`“${n}”`)}</button>` : '') +
            `<button type="button" onclick="mapMenuClose();mkDelete('${mk.id}')">🗑 Delete “${n}”</button>`;
@@ -13544,17 +13722,17 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (at) mkCreate(at.la, at.lo);
   }
   // a new marker (name "Marker N" unless given), opened for editing once the
-  // backend's list has it (mkOnMessage)
+  // backend's list has it (sfOnMessage)
   function mkCreate(lat, lon, name, notes) {
     if (!mkOnline() || !mkLeaveEdit()) return;
     if (!name) {
-      let i = mkList.length + 1;
-      while (mkList.some(m => m.name === 'Marker ' + i)) i++;
+      let i = sfLocs.length + 1;
+      while (sfLocs.some(m => m.name === 'Marker ' + i)) i++;
       name = 'Marker ' + i;
     }
-    mkWantEdit = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    send('MARKER_SET:' + JSON.stringify({id: mkWantEdit, lat: +lat.toFixed(7), lon: +lon.toFixed(7),
-                                         name, notes: notes || '', freqs: []}));
+    mkWantEdit = sfNewId();
+    send('SF_LOC_SET:' + JSON.stringify({id: mkWantEdit, lat: +lat.toFixed(7), lon: +lon.toFixed(7),
+                                         name, notes: notes || ''}));
   }
   function mkSelect(id, edit) {
     if (!mkGet(id) || mkEdit === id) return;
@@ -13577,91 +13755,44 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const m = mkGet(mkSel);
     if (m) { mapAutoFit = false; mapCenterOn(m.lat, m.lon); }
   }
+  // the marker goes; its saved frequencies stay in the list, without a location
   function mkDelete(id) {
     const m = mkGet(id);
-    if (!m || !mkOnline() || !confirm(`Delete the marker "${m.name}"?`)) return;
+    if (!m || !mkOnline()) return;
+    const n = sfFreqsAt(id).length;
+    if (!confirm(`Delete the marker "${m.name}"?` +
+                 (n ? `\n\nIts ${n} saved frequenc${n === 1 ? 'y stays' : 'ies stay'} in the list, without a location.` : ''))) return;
     if (mkSel === id) mkClose();
-    send('MARKER_DEL:' + id);
-  }
-
-  // Tune the selected VFO to a marker's frequency: inside the band shown it
-  // just moves there, else the receiver retunes (the selected VFO's own tuner
-  // in independent mode) with the VFO on the new centre
-  function mkTune(hz) {
-    const mhz = hz / 1e6;
-    const d = decimatorInfo.find(z => z.id === activeDecimatorId);
-    if (!d) { mapStatusFlash('No VFO to tune - add one in the sidebar'); return; }
-    // locked on its tuner's centre (lock_vfo: ism, cells, dtv): the tuner moves
-    const centreOnly = vfoLocked(d);
-    if (centreOnly && digFixedPlugin(d.digital_mode).fixed_freq_hz > 0) {
-      mapStatusFlash(`D${d.id} is locked to its decoder's frequency - select another VFO`);
-      return;
-    }
-    if (!(mhz >= FREQ_MIN && mhz <= FREQ_MAX)) {
-      mapStatusFlash(`${mkFmtMhz(hz)} MHz is outside the receiver's range (${FREQ_MIN}-${FREQ_MAX} MHz)`);
-      return;
-    }
-    if (!mkOnline()) return;
-    const bw = (bwo[d.bandwidth_index || 0] || bwo[0]).bandwidth;
-    if (opMode === 'independent') {
-      const own = d.tuner || 0;
-      const order = [own, ...panes.map(p => p.ch).filter(ch => ch !== own)];
-      const p = centreOnly ? null : order.map(ch => panes[ch]).find(p => p && p.freqMhz > 0 &&
-        Math.abs(mhz - p.freqMhz) <= (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2);
-      if (p) paneMoveVfo(p, d, mhz);
-      else {
-        pendingFreqUpdates.delete(d.id);   // a queued move must not land after this
-        d.freq_offset_hz = 0;
-        send('SET_DECIMATOR_FREQ:' + d.id + ':0:' + own);
-        paneSendFreq(own, mhz);
-      }
-    } else {
-      let off = (mhz - currentCenterFreq) * 1e6;
-      if (centreOnly || Math.abs(off) > maxOffsetHz(bw)) {
-        // FREQ: is in whole kHz - the VFO takes the rest (not a locked one)
-        const c = Math.round(mhz * 1000) / 1000;
-        off = centreOnly ? 0 : (mhz - c) * 1e6;
-        freqUserChanging = true;   // a lagging FFT header must not pull the digits back
-        clearTimeout(freqUserChangeTimeout);
-        freqUserChangeTimeout = setTimeout(() => { freqUserChanging = false; }, 500);
-        updateFreqDisplay(c, true);
-        currentCenterFreq = c;
-        sendFreqChange(c);
-      }
-      pendingFreqUpdates.delete(d.id);
-      d.freq_offset_hz = off;
-      send('SET_DECIMATOR_FREQ:' + d.id + ':' + (off / 1000).toFixed(3));
-      decimatorInfo.forEach(z => refreshDecimatorPanelItem(z.id));
-      drawBox();
-    }
-    mapStatusFlash(`D${d.id} → ${mkFmtMhz(hz)} MHz`);
+    send('SF_LOC_DEL:' + id);
   }
 
   // --- drawing + hit test (pin: tip on the spot, round head 15 px above) ----
+  // The pin takes the colour of its frequencies' category when they all share
+  // one; the label shows the name and the lowest frequency (+ how many more)
   function mkDraw(c) {
     c.lineJoin = 'round';
-    for (const m of mkList) {
+    for (const m of sfLocs) {
       const [x, y] = mapLatLonToScreen(m.lat, m.lon);
       m.sx = x; m.sy = y;
       if (x < -40 || y < -10 || x > mapW + 200 || y > mapH + 40) continue;
+      const fq = sfFreqsAt(m.id), cats = new Set(fq.map(f => f.cat));
+      const cat = cats.size === 1 ? sfCat([...cats][0]) : null;
       c.save();
       c.translate(x, y);
       if (m.id === mkSel) {
         c.strokeStyle = '#fff'; c.lineWidth = 2;
         c.beginPath(); c.arc(0, -15, 12, 0, 2 * Math.PI); c.stroke();
       }
-      c.fillStyle = MK_COL;
+      c.fillStyle = cat ? cat.col : MK_COL;
       c.strokeStyle = 'rgba(0,0,0,0.85)';
       c.lineWidth = 1.2;
       c.beginPath(); c.arc(0, -15, 7, 0.8 * Math.PI, 0.2 * Math.PI); c.lineTo(0, 0); c.closePath();
       c.fill(); c.stroke();
       c.fillStyle = '#fff';
       c.beginPath(); c.arc(0, -15, 2.6, 0, 2 * Math.PI); c.fill();
-      // name, and the first frequency (+ how many more) under it
       c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineWidth = 3;
       c.font = 'bold 11px sans-serif';
       c.strokeText(m.name, 11, -14); c.fillText(m.name, 11, -14);
-      const fq = m.freqs || [];
       if (fq.length) {
         const t = mkFmtMhz(fq[0].hz) + ' MHz' + (fq.length > 1 ? ` +${fq.length - 1}` : '');
         c.font = '10px sans-serif';
@@ -13674,7 +13805,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // the marker whose pin head is under a screen point (within 11 px)
   function mkHit(x, y) {
     let best = null, bd = 11 * 11;
-    for (const m of mkList) {
+    for (const m of sfLocs) {
       if (m.sx === undefined) continue;
       const d = (m.sx - x) ** 2 + (m.sy - 15 - y) ** 2;
       if (d < bd) { bd = d; best = m.id; }
@@ -13682,7 +13813,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     return best;
   }
 
-  // --- the panel (bottom right): details, or the edit form -------------------
+  // --- the panel (bottom right): details + frequencies, or the edit form ------
   function mkRender(focus) {
     const el = $id('map-mk');
     if (!el) return;
@@ -13703,16 +13834,18 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const d = mapDistKm(mapStation[0], mapStation[1], m.lat, m.lon), b = mapBearing(mapStation[0], mapStation[1], m.lat, m.lon);
       sub += ` · ${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${b.toFixed(0)}° from the station`;
     }
-    const fq = (m.freqs || []).map(f => {
-      const t = mkFmtMhz(f.hz);
-      return `<button type="button" onclick="mkTune(${Number(f.hz)})" title="Tune the selected VFO to ${t} MHz">` +
-             `<b>${t} MHz</b>${f.label ? `<span>${digEsc(f.label)}</span>` : ''}</button>`;
+    const fq = sfFreqsAt(m.id).map(f => {
+      const t = mkFmtMhz(f.hz), meta = sfMeta(f, false);
+      return `<div class="fr"><button type="button" onclick="sfTune('${f.id}')" title="Tune the selected VFO to ${digEsc(f.name)} (${t} MHz)">` +
+             `<i style="background:${sfCol(f)}"></i><b>${t}</b><span>${digEsc(f.name)}${meta ? `<em>${digEsc(meta)}</em>` : ''}</span></button>` +
+             `<button type="button" class="ed" onclick="sfEdit('${f.id}')" title="Edit this saved frequency">✎</button></div>`;
     }).join('');
     const html = `<div class="h"><span>📍</span><span class="n">${digEsc(m.name)}</span><span class="x" onclick="mkClose()" title="Close">✕</span></div>` +
       `<div class="s">${sub}</div>` +
-      (fq ? `<div class="fq">${fq}</div>` : '<div class="none">No frequencies yet - ✎ Edit to add some</div>') +
+      (fq ? `<div class="fq">${fq}</div>` : '<div class="none">No saved frequencies here yet - + Frequency adds one</div>') +
       (m.notes ? `<div class="notes">${digEsc(m.notes)}</div>` : '') +
-      `<div class="b"><button type="button" class="map-btn" onclick="mkSelect('${m.id}',true)">✎ Edit</button>` +
+      `<div class="b"><button type="button" class="map-btn" onclick="sfNew({loc:'${m.id}'})" title="Save a frequency transmitted from here">+ Frequency</button>` +
+      `<button type="button" class="map-btn" onclick="mkSelect('${m.id}',true)" title="Name, position and notes of the marker">✎ Edit</button>` +
       `<button type="button" class="map-btn" onclick="mkCentre()" title="Centre the map on the marker">⌖ Centre</button>` +
       (plMenuOn() ? `<button type="button" class="map-btn" onclick="vsAddMarker('${m.id}')" title="${vsAddTip('at the marker')}">${vsAddShort()}</button>` : '') +
       (plMenuOn() && plPickSite() ? `<button type="button" class="map-btn" onclick="plLinkMarker('${m.id}')" title="${plLinkTip('at the marker')}">${plLinkShort()}</button>` : '') +
@@ -13728,10 +13861,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<div class="lbl">Name</div><div class="row"><input type="text" id="mk-name" maxlength="80" ${enter}></div>` +
       `<div class="lbl">Position (latitude, longitude)</div>` +
       `<div class="row"><input type="text" id="mk-lat" inputmode="decimal" ${enter}><input type="text" id="mk-lon" inputmode="decimal" ${enter}></div>` +
-      `<div class="lbl">Frequencies (MHz) - click one to tune the selected VFO</div><div id="mk-freqs"></div>` +
-      `<div class="b"><button type="button" class="map-btn" onclick="mkAddFreqRow()">+ Frequency</button>` +
-      `<button type="button" class="map-btn" onclick="mkAddVfoFreq()" title="Add the frequency the selected VFO is on">+ Selected VFO</button></div>` +
       `<div class="lbl">Notes</div><textarea id="mk-notes" rows="4" maxlength="4000"></textarea>` +
+      `<div class="lbl">The frequencies saved here are listed in the marker's panel (+ Frequency there adds one).</div>` +
       `<div class="err" id="mk-err"></div>` +
       `<div class="b" style="margin-top:6px"><button type="button" class="map-btn on" onclick="mkSave()">Save</button>` +
       `<button type="button" class="map-btn" onclick="mkCancelEdit()">Cancel</button></div>`;
@@ -13739,35 +13870,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     $id('mk-lat').value = m.lat.toFixed(6);
     $id('mk-lon').value = m.lon.toFixed(6);
     $id('mk-notes').value = m.notes || '';
-    for (const f of m.freqs || []) mkAddFreqRow(mkFmtMhz(f.hz), f.label);
     el.dataset.orig = JSON.stringify(mkFormRaw());
     if (focus) { const n = $id('mk-name'); n.focus(); n.select(); }
-  }
-  function mkAddFreqRow(mhz, label) {
-    const box = $id('mk-freqs');
-    if (!box) return;
-    if (box.children.length >= 50) { mkErr('At most 50 frequencies per marker'); return; }
-    const r = document.createElement('div');
-    r.className = 'mk-fr';
-    r.innerHTML = '<input type="text" class="mhz" inputmode="decimal" placeholder="MHz">' +
-                  '<input type="text" class="lab" maxlength="80" placeholder="Label (optional)">' +
-                  '<button type="button" class="map-btn" title="Remove" onclick="this.parentNode.remove()">✕</button>';
-    r.querySelector('.mhz').value = mhz || '';
-    r.querySelector('.lab').value = label || '';
-    box.appendChild(r);
-    if (mhz === undefined) r.querySelector('.mhz').focus();
-  }
-  function mkAddVfoFreq() {
-    const d = decimatorInfo.find(z => z.id === activeDecimatorId);
-    if (!d) { mkErr('No VFO'); return; }
-    mkAddFreqRow(mkFmtMhz(Math.round((vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6) * 1e6)), '');
   }
   function mkErr(t) { const e = $id('mk-err'); if (e) e.textContent = t; }
   // the form as typed (for the unsaved-changes check)
   function mkFormRaw() {
     const v = id => ($id(id) || {}).value || '';
-    return {name: v('mk-name'), lat: v('mk-lat'), lon: v('mk-lon'), notes: v('mk-notes'),
-            freqs: [...document.querySelectorAll('#mk-freqs .mk-fr')].map(r => [r.querySelector('.mhz').value, r.querySelector('.lab').value])};
+    return {name: v('mk-name'), lat: v('mk-lat'), lon: v('mk-lon'), notes: v('mk-notes')};
   }
   // true = fine to drop the edit: nothing changed, or the user agreed
   function mkLeaveEdit() {
@@ -13779,29 +13889,746 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const m = mkGet(mkEdit);
     if (!m) { mkCancelEdit(); return; }
     const f = mkFormRaw();
-    // "lat, lon" pasted into the latitude box works too
-    let la = f.lat.trim(), lo = f.lon.trim();
-    const pair = la.match(/^(-?[\d.]+)\s*[,;\s]\s*(-?[\d.]+)$/);
-    if (pair) [, la, lo] = pair;
-    const lat = Number(la), lon = Number(lo);
-    if (!la || !lo || !(Math.abs(lat) <= 85.05) || !(Math.abs(lon) <= 180)) {
+    const ll = sfParseLatLon(f.lat, f.lon);
+    if (!ll) {
       mkErr('Position: latitude -85..85 and longitude -180..180, in decimal degrees');
       return;
     }
-    const freqs = [];
-    for (const [t0, lab] of f.freqs) {
-      const t = t0.trim().replace(/\s*mhz$/i, '').replace(',', '.');
-      if (!t && !lab.trim()) continue;
-      const mhz = Number(t);
-      if (!t || !(mhz > 0 && mhz < 100000)) { mkErr(`"${t0.trim()}" is not a frequency in MHz`); return; }
-      freqs.push({hz: Math.round(mhz * 1e6), label: lab.trim()});
-    }
     if (new TextEncoder().encode(f.notes).length > 4000) { mkErr('The notes are too long (4000 bytes at most)'); return; }
     if (!mkOnline()) return;
-    send('MARKER_SET:' + JSON.stringify({id: m.id, lat, lon, name: f.name.trim() || m.name, notes: f.notes, freqs}));
+    send('SF_LOC_SET:' + JSON.stringify({id: m.id, lat: ll[0], lon: ll[1], name: f.name.trim() || m.name, notes: f.notes}));
     mkEdit = null;
     mkRender();
   }
+
+  // --- 📻 SAVED FREQUENCIES: the user's frequency list (+ the map markers) -----
+  // One feature with 📍 MAP MARKERS above: the backend (saved_freqs.cpp,
+  // saved_frequencies.json) keeps categories, locations (= the map markers)
+  // and frequencies, and answers every change to every page with the whole
+  // list: {"savedfreq":{cats:[{id,name,col}], locs:[{id,name,lat,lon,notes,t}],
+  // freqs:[{id,name,hz,cat,loc,mode,bw,dec,tone,notes,t}]}} (+ error, id when
+  // a command was refused - only the page that sent it reacts: ids are
+  // random). Commands: SF_SET:{json} (a frequency, + the newcat / newloc it
+  // refers to, made in the same step), SF_DEL:id, SF_CAT_SET:{json},
+  // SF_CAT_DEL:id, SF_LOC_SET / SF_LOC_DEL (markers), GET_SF (page connect).
+  // No optimistic updates: everything is drawn from the backend's list.
+  //  - sidebar (#sf-list): grouped by category (in their order, then the
+  //    uncategorised), sorted by frequency, filtered by the search words; a
+  //    click tunes (sfTune), ✎ edits, 🗺 shows the location on the map; rows
+  //    a VFO is on are outlined in its colour (sfMarkActive). Categories:
+  //    collapse (▼) and hide on the spectrum (👁) per browser (sfUi);
+  //    ⚙ Categories adds / renames / recolours / deletes
+  //  - editor (#sf-dlg): name + frequency required; category (or a new one),
+  //    location (an existing marker, a new one typed / picked on the map /
+  //    the station's; a new one within SF_SNAP_M of a marker = that marker,
+  //    so frequencies at one place share it), demod / bandwidth / decoder
+  //    (empty = keep the VFO's), tone / code, notes
+  //  - spectrum: tags at the top of the main spectrum (sfDrawSpectrum, from
+  //    drawBox) and the independent-mode panes (sfPaneTags); a click tunes
+  const SF_PALETTE = ['#4fc3f7', '#ffb74d', '#81c784', '#ba68c8', '#4db6ac', '#e57373', '#f06292', '#fff176',
+                      '#a1887f', '#90caf9', '#aed581', '#ff8a65', '#ce93d8', '#80cbc4'];
+  const SF_MODES = {WBFM: 'WBFM', NBFM: 'NBFM', AM: 'AM', DIGITAL: 'Digital'};
+  const SF_SNAP_M = 15;
+  let sfDlg = null;            // the editor: {id, isNew, pending (id sent, awaiting the list), orig, snapped}
+  let sfPicking = false;       // the editor waits for a click on the map
+  let sfCatsOpen = false, sfCatPending = null, sfToastT = 0;
+
+  function sfSaveUi() { try { localStorage.setItem('kraken_sf', JSON.stringify(sfUi)); } catch (e) {} }
+  function sfGet(id) { return (id && sfFreqs.find(f => f.id === id)) || null; }
+  function sfCat(id) { return (id && sfCats.find(c => c.id === id)) || null; }
+  function sfLoc(id) { return (id && sfLocs.find(l => l.id === id)) || null; }
+  function sfCol(f) { const c = sfCat(f.cat); return c ? c.col : '#90a4ae'; }
+  function sfNewId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+  function sfFreqsAt(locId) { return sfFreqs.filter(f => f.loc === locId).sort((a, b) => a.hz - b.hz); }
+  function sfFmtBw(hz) { return hz >= 1e6 ? +(hz / 1e6).toFixed(3) + ' MHz' : +(hz / 1e3).toFixed(3) + ' kHz'; }
+  function sfDecName(dec) {
+    if (!dec) return '';
+    if (dec === 'OFF') return 'decoder off';
+    if (dec === 'AUTO') return 'Auto detect';
+    return digName(digModePlugin(dec));
+  }
+  // how it is received + where: "AM · 10 kHz · P25 · NAC 293 · 📍 Airport"
+  function sfMeta(f, withLoc) {
+    const l = withLoc && sfLoc(f.loc);
+    return [f.mode && SF_MODES[f.mode], f.bw > 0 && sfFmtBw(f.bw), f.dec && sfDecName(f.dec), f.tone,
+            l && '📍 ' + l.name].filter(Boolean).join(' · ');
+  }
+  function sfTip(f) {
+    const c = sfCat(f.cat);
+    return [`${f.name} - ${mkFmtMhz(f.hz)} MHz${c ? ' (' + c.name + ')' : ''}`, sfMeta(f, true), f.notes,
+            'Click to tune the selected VFO'].filter(Boolean).join('\n');
+  }
+  // the bandwidth option nearest to hz (index into bwo)
+  function sfBwIndex(hz) {
+    let bi = 0;
+    bwo.forEach((b, i) => { if (Math.abs(b.bandwidth * 1e6 - hz) < Math.abs(bwo[bi].bandwidth * 1e6 - hz)) bi = i; });
+    return bi;
+  }
+  // "118.7", "118,7 MHz", "7150 kHz", "1.09 GHz", "455000 Hz" -> Hz (0 = not a frequency)
+  function sfParseHz(t) {
+    const m = String(t).trim().replace(',', '.').match(/^(\d+(?:\.\d*)?|\.\d+)\s*(hz|khz|mhz|ghz|k|m|g)?$/i);
+    if (!m) return 0;
+    const hz = Math.round(parseFloat(m[1]) * {h: 1, k: 1e3, m: 1e6, g: 1e9}[(m[2] || 'm')[0].toLowerCase()]);
+    return hz >= 1 && hz <= 1e11 ? hz : 0;
+  }
+  // decimal degrees; "lat, lon" pasted into the latitude box works too
+  function sfParseLatLon(la, lo) {
+    la = String(la).trim(); lo = String(lo).trim();
+    const pair = la.match(/^(-?[\d.]+)\s*[,;\s]\s*(-?[\d.]+)$/);
+    if (pair) [, la, lo] = pair;
+    const lat = Number(la), lon = Number(lo);
+    if (!la || !lo || !(Math.abs(lat) <= 85.05) || !(Math.abs(lon) <= 180)) return null;
+    return [+lat.toFixed(7), +lon.toFixed(7)];
+  }
+  // a short message at the bottom of the window (tuning, saving)
+  function sfFlash(msg, err) {
+    const el = $id('sf-toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.toggle('err', !!err);
+    el.classList.add('show');
+    clearTimeout(sfToastT);
+    sfToastT = setTimeout(() => el.classList.remove('show'), err ? 4500 : 2500);
+  }
+
+  // --- the backend's list ------------------------------------------------------
+  function sfOnMessage(m) {
+    sfCats = Array.isArray(m.cats) ? m.cats : [];
+    sfLocs = Array.isArray(m.locs) ? m.locs : [];
+    sfFreqs = Array.isArray(m.freqs) ? m.freqs : [];
+    // the marker panel: an add / edit refused, the marker this page just
+    // added (open it for editing), the shown one deleted
+    if (m.error && m.id && (m.id === mkWantEdit || m.id === mkSel)) {
+      mapStatusFlash('Marker not saved: ' + m.error);
+      if (m.id === mkWantEdit) mkWantEdit = null;
+    }
+    if (mkWantEdit && mkGet(mkWantEdit)) { mkSel = mkEdit = mkWantEdit; mkWantEdit = null; mkRender(true); }
+    if (mkSel && !mkGet(mkSel)) {
+      if (mkEdit) mapStatusFlash('That marker was deleted (from another browser?)');
+      mkSel = mkEdit = null;
+    }
+    // the editor waiting for its save
+    if (sfDlg && sfDlg.pending) {
+      if (m.error && m.id === sfDlg.pending) {
+        sfDlg.pending = null;
+        sfDlgBusy(false);
+        sfDlgErr('Not saved: ' + m.error);
+      } else if (!m.error && sfGet(sfDlg.pending)) {
+        const f = sfGet(sfDlg.pending), snapped = sfDlg.snapped;
+        sfDlgClose();
+        sfFlash(`Saved “${f.name}”` + (snapped ? ` at the marker “${snapped}” (the same place)` : ''));
+      }
+    }
+    if (sfDlg && !sfDlg.pending) {
+      // another browser changed the lists meanwhile: keep what is picked
+      sfDlgFillSelects($id('sf-f-cat').value, $id('sf-f-loc').value, $id('sf-f-dec').value);
+      sfDlgSync();
+    }
+    if (m.error && m.id && m.id === sfCatPending) sfFlash('Category not saved: ' + m.error, true);
+    if (m.id === sfCatPending) sfCatPending = null;
+    sfRenderList();
+    sfRenderCats();
+    mkRender();
+    mapDraw();
+    drawBox();
+    paneDrawAllOverlays();
+  }
+
+  // --- sidebar list ------------------------------------------------------------
+  function sfMatch(f, words) {
+    if (!words.length) return true;
+    const l = sfLoc(f.loc), c = sfCat(f.cat);
+    const hay = [f.name, mkFmtMhz(f.hz), f.tone, f.notes, l && l.name, c && c.name, f.mode && SF_MODES[f.mode],
+                 f.dec && sfDecName(f.dec)].filter(Boolean).join('\n').toLowerCase();
+    return words.every(w => hay.includes(w));
+  }
+  function sfRenderList() {
+    const el = $id('sf-list');
+    if (!el) return;
+    const cnt = $id('sf-count');
+    if (cnt) cnt.textContent = sfFreqs.length ? String(sfFreqs.length) : '';
+    const q = (($id('sf-search') || {}).value || '').trim().toLowerCase();
+    const words = q ? q.split(/\s+/) : [];
+    // the categories in their order, then the frequencies without one ('')
+    const groups = sfCats.map(c => ({key: c.id, name: c.name, col: c.col, rows: []}));
+    const unc = {key: '', name: 'Uncategorised', col: '#90a4ae', rows: []};
+    for (const f of sfFreqs) {
+      if (!sfMatch(f, words)) continue;
+      (groups.find(g => g.key === f.cat) || unc).rows.push(f);
+    }
+    groups.push(unc);
+    let h = '';
+    for (const g of groups) {
+      if (!g.rows.length) continue;   // empty categories: in ⚙ Categories and the editor
+      g.rows.sort((a, b) => a.hz - b.hz);
+      const col = !words.length && sfUi.col[g.key], hid = sfUi.hide[g.key];
+      h += `<div class="sf-gh" onclick="sfToggleGroup('${g.key}')" title="Show / fold this category">` +
+           `<span class="caret">${col ? '▶' : '▼'}</span><span class="dot" style="background:${g.col}"></span>` +
+           `<span class="n">${digEsc(g.name)}</span><span class="c">${g.rows.length}</span>` +
+           `<span class="eye${hid ? ' off' : ''}" onclick="event.stopPropagation();sfToggleHidden('${g.key}')" ` +
+           `title="${hid ? 'Not marked on the spectrum - click to mark them' : 'Marked on the spectrum - click to hide the marks'}">👁</span></div>`;
+      if (col) continue;
+      for (const f of g.rows) {
+        const meta = sfMeta(f, true);
+        h += `<div class="sf-row" data-id="${f.id}" data-hz="${f.hz}" onclick="sfTune('${f.id}')" title="${digEsc(sfTip(f))}">` +
+             `<span class="bar" style="background:${g.col}"></span><div class="main">` +
+             `<div class="l1"><span class="nm">${digEsc(f.name)}</span><span class="mhz">${mkFmtMhz(f.hz)}</span></div>` +
+             (meta ? `<div class="l2">${digEsc(meta)}</div>` : '') + '</div><span class="act">' +
+             (f.loc ? `<button type="button" onclick="event.stopPropagation();sfShowOnMap('${f.id}')" title="Show its location on the map">🗺</button>` : '') +
+             `<button type="button" onclick="event.stopPropagation();sfEdit('${f.id}')" title="Edit">✎</button></span></div>`;
+      }
+    }
+    if (!h) h = sfFreqs.length ? '<div class="sf-empty">Nothing matches the search.</div>'
+      : '<div class="sf-empty">No saved frequencies yet. <b>+ Add</b> saves the selected VFO\'s frequency (☆ Save on a VFO card does too); right-click the 🗺 map to save one at a place.</div>';
+    if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; sfMarkActive(true); }
+  }
+  // outline the rows a VFO is on (within 500 Hz) in that VFO's colour
+  function sfMarkActive(force) {
+    const rows = document.querySelectorAll('#sf-list .sf-row');
+    if (!rows.length) return;
+    const on = (decimatorInfo || []).map(d => ({hz: (vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6) * 1e6,
+                                                col: getDecimatorColor(d.id)}));
+    rows.forEach(r => {
+      const hz = +r.dataset.hz, v = on.find(o => Math.abs(o.hz - hz) <= 500);
+      if (!force && !!v === r.classList.contains('on') && (!v || r.style.getPropertyValue('--vfo') === v.col)) return;
+      r.classList.toggle('on', !!v);
+      if (v) r.style.setProperty('--vfo', v.col);
+    });
+  }
+  setInterval(() => { const s = $id('sf-section'); if (s && !s.classList.contains('collapsed')) sfMarkActive(); }, 1000);
+  function sfToggleGroup(key) {
+    if (sfUi.col[key]) delete sfUi.col[key]; else sfUi.col[key] = 1;
+    sfSaveUi();
+    sfRenderList();
+  }
+  function sfToggleHidden(key) {
+    if (sfUi.hide[key]) delete sfUi.hide[key]; else sfUi.hide[key] = 1;
+    sfSaveUi();
+    sfRenderList();
+    drawBox();
+    paneDrawAllOverlays();
+  }
+  function sfSetSpectrum(on) {
+    sfUi.spec = !!on;
+    sfSaveUi();
+    drawBox();
+    paneDrawAllOverlays();
+  }
+  function sfShowOnMap(id) {
+    const f = sfGet(id), l = f && sfLoc(f.loc);
+    if (!l) return;
+    if (mobileLayoutMQ.matches) toggleSidebar(false);
+    if (!mapState.on) mapToggle(true); else rpShow('map');
+    mapAutoFit = false;
+    mkSelect(l.id);
+    mapCenterOn(l.lat, l.lon, Math.max(mapState.z, 12));
+  }
+
+  // --- ⚙ Categories --------------------------------------------------------------
+  function sfToggleCats() {
+    sfCatsOpen = !sfCatsOpen;
+    $id('sf-cats').style.display = sfCatsOpen ? 'block' : 'none';
+    $id('sf-cats-btn').classList.toggle('on', sfCatsOpen);
+    sfRenderCats();
+  }
+  function sfRenderCats() {
+    const el = $id('sf-cats');
+    // not while typing in it (refreshed when the focus leaves)
+    if (!el || !sfCatsOpen || el.contains(document.activeElement)) return;
+    const n = id => sfFreqs.filter(f => f.cat === id).length;
+    let h = sfCats.map(c =>
+      `<div class="sf-cat-row"><input type="color" value="${c.col.toLowerCase()}" onchange="sfCatEdit('${c.id}','col',this.value)" title="Colour (list, spectrum, map markers)">` +
+      `<input type="text" value="${digEsc(c.name)}" maxlength="40" onchange="sfCatEdit('${c.id}','name',this.value)" onkeydown="if(event.key==='Enter')this.blur()" title="Rename">` +
+      `<span class="n" title="Saved frequencies in it">${n(c.id)}</span>` +
+      `<button type="button" class="btn sm" onclick="sfCatDel('${c.id}')" title="Delete the category (its frequencies stay, uncategorised)">✕</button></div>`).join('');
+    h += `<div class="sf-cat-row"><input type="text" id="sf-cat-new" maxlength="40" placeholder="New category, e.g. Weather" onkeydown="if(event.key==='Enter')sfCatAdd()">` +
+         `<button type="button" class="btn sm" onclick="sfCatAdd()">+ Add</button></div>`;
+    if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
+  }
+  $id('sf-cats').addEventListener('focusout', () => setTimeout(sfRenderCats, 0));
+  function sfCatNameTaken(name, id) {
+    const n = name.toLowerCase();
+    return sfCats.some(c => c.id !== id && c.name.toLowerCase() === n);
+  }
+  function sfNextCol() {
+    return SF_PALETTE.find(p => !sfCats.some(c => c.col.toLowerCase() === p)) || SF_PALETTE[sfCats.length % SF_PALETTE.length];
+  }
+  function sfCatEdit(id, key, val) {
+    const c = sfCat(id);
+    if (!c) return;
+    const n = {id: c.id, name: c.name, col: c.col};
+    n[key] = String(val).trim();
+    if (!n.name || (key === 'name' && sfCatNameTaken(n.name, id))) {
+      if (n.name) sfFlash(`There is already a category "${n.name}"`, true);
+      $id('sf-cats').dataset.html = '';
+      setTimeout(sfRenderCats, 0);
+      return;
+    }
+    if (!(ws && ws.readyState === 1)) { sfFlash('Not connected to the receiver', true); return; }
+    sfCatPending = id;
+    send('SF_CAT_SET:' + JSON.stringify(n));
+  }
+  function sfCatAdd() {
+    const inp = $id('sf-cat-new'), name = inp ? inp.value.trim() : '';
+    if (!name) return;
+    if (sfCatNameTaken(name, null)) { sfFlash(`There is already a category "${name}"`, true); return; }
+    if (!(ws && ws.readyState === 1)) { sfFlash('Not connected to the receiver', true); return; }
+    sfCatPending = sfNewId();
+    send('SF_CAT_SET:' + JSON.stringify({id: sfCatPending, name, col: sfNextCol()}));
+    inp.value = '';
+  }
+  function sfCatDel(id) {
+    const c = sfCat(id);
+    if (!c) return;
+    const n = sfFreqs.filter(f => f.cat === id).length;
+    if (!confirm(`Delete the category "${c.name}"?` +
+                 (n ? `\n\nIts ${n} frequenc${n === 1 ? 'y stays' : 'ies stay'} in the list, uncategorised.` : ''))) return;
+    send('SF_CAT_DEL:' + id);
+  }
+
+  // --- the editor ------------------------------------------------------------------
+  // the selected VFO (or VFO id) as editor values; null without one
+  function sfVfoValues(id) {
+    const d = decimatorInfo.find(z => z.id === (id ?? activeDecimatorId));
+    if (!d) return null;
+    return {hz: Math.round((vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6) * 1e4) * 100,   // 100 Hz steps
+            mode: d.demod_mode || '', bw: Math.round(((bwo[d.bandwidth_index ?? 0] || bwo[0]).bandwidth) * 1e6),
+            dec: d.digital_mode && d.digital_mode !== 'OFF' ? d.digital_mode : ''};
+  }
+  // + Add / ☆ Save / map: a new entry, filled in from the selected VFO (pre.vfo
+  // = that VFO); pre.loc = at that marker, pre.lat / lon = a new location there
+  function sfNew(pre = {}) {
+    const v = sfVfoValues(pre.vfo) || {hz: Math.round((opMode === 'independent' && panes[selTuner] ? panes[selTuner].freqMhz : currentCenterFreq) * 1e4) * 100};
+    const f = Object.assign({id: sfNewId(), name: '', cat: '', loc: pre.loc || '', tone: '', notes: ''}, v);
+    sfDlgOpen(f, true, pre.lat !== undefined ? {lat: pre.lat, lon: pre.lon} : null);
+  }
+  function sfNewFromVfo(id) { sfNew({vfo: id}); }
+  function sfEdit(id) {
+    const f = sfGet(id);
+    if (f) sfDlgOpen(f, false);
+  }
+  function sfDlgOpen(f, isNew, newLoc) {
+    if (sfDlg && !sfDlgLeave()) return;
+    if (sfPicking) sfPickEnd(null, true);
+    sfDlg = {id: f.id, isNew, pending: null, snapped: null};
+    $id('sf-dlg-title').textContent = isNew ? '📻 Save frequency' : '📻 Edit saved frequency';
+    $id('sf-f-name').value = f.name || '';
+    $id('sf-f-mhz').value = f.hz ? mkFmtMhz(f.hz) : '';
+    sfDlgFillSelects(f.cat || '', newLoc ? '+new' : (f.loc || ''), f.dec || '');
+    $id('sf-f-mode').value = f.mode || '';
+    $id('sf-f-bw').value = f.bw > 0 ? String(Math.round(bwo[sfBwIndex(f.bw)].bandwidth * 1e6)) : '';
+    $id('sf-f-tone').value = f.tone || '';
+    $id('sf-f-notes').value = f.notes || '';
+    $id('sf-f-newcat').value = '';
+    $id('sf-f-locname').value = '';
+    $id('sf-f-lat').value = newLoc ? newLoc.lat.toFixed(6) : '';
+    $id('sf-f-lon').value = newLoc ? newLoc.lon.toFixed(6) : '';
+    $id('sf-del').style.display = isNew ? 'none' : '';
+    sfDlgErr('');
+    sfDlgBusy(false);
+    sfDlgSync();
+    $id('sf-dlg-bg').style.display = 'flex';
+    sfDlg.orig = JSON.stringify(sfDlgRaw());
+    const n = $id('sf-f-name');
+    n.focus();
+    if (!isNew) n.select();
+  }
+  function sfDlgFillSelects(cat, loc, dec) {
+    const cs = $id('sf-f-cat');
+    cs.innerHTML = '<option value="">— None —</option>' +
+      sfCats.map(c => `<option value="${c.id}">${digEsc(c.name)}</option>`).join('') + '<option value="+new">+ New category…</option>';
+    cs.value = cat === '+new' || sfCat(cat) ? cat : '';
+    const ls = $id('sf-f-loc');
+    ls.innerHTML = '<option value="">— None —</option>' +
+      [...sfLocs].sort((a, b) => a.name.localeCompare(b.name)).map(l => `<option value="${l.id}">📍 ${digEsc(l.name)}</option>`).join('') +
+      '<option value="+new">+ New location…</option>';
+    ls.value = loc === '+new' || sfLoc(loc) ? loc : '';
+    const bs = $id('sf-f-bw'), bv = bs.value;
+    if (!bs.options.length)
+      bs.innerHTML = '<option value="">Keep the VFO\'s</option>' +
+        bwo.slice(0, MIN_BW_INDEX + 1).map(b => `<option value="${Math.round(b.bandwidth * 1e6)}">${b.name.replace(/ \(.*\)$/, '')}</option>`).join('');
+    bs.value = bv;
+    const ds = $id('sf-f-dec');
+    let h = '<option value="">Keep the VFO\'s</option><option value="OFF">Off</option><option value="AUTO">Auto detect</option>' +
+      [...digPlugins].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))
+        .map(p => `<option value="PLUGIN:${digEsc(p.id)}">${digEsc(p.name || p.id)}</option>`).join('');
+    if (dec.startsWith('PLUGIN:') && !digPlugin(digModePlugin(dec)))
+      h += `<option value="${digEsc(dec)}">${digEsc(digModePlugin(dec))} (not on this receiver)</option>`;
+    ds.innerHTML = h;
+    ds.value = dec;
+  }
+  // show the fields the category / location choice needs
+  function sfDlgSync(focus) {
+    if (!sfDlg) return;
+    const cat = $id('sf-f-cat').value, loc = $id('sf-f-loc').value;
+    $id('sf-f-newcat').style.display = cat === '+new' ? '' : 'none';
+    $id('sf-f-newloc').style.display = loc === '+new' ? '' : 'none';
+    if (focus && cat === '+new' && document.activeElement === $id('sf-f-cat')) $id('sf-f-newcat').focus();
+    const l = sfLoc(loc), info = $id('sf-f-locinfo');
+    if (l) {
+      let t = `${l.lat.toFixed(5)}, ${l.lon.toFixed(5)}`;
+      const st = mapStationPos();
+      if (st) {
+        const d = mapDistKm(st[0], st[1], l.lat, l.lon);
+        t += ` · ${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${mapBearing(st[0], st[1], l.lat, l.lon).toFixed(0)}° from the station`;
+      }
+      const n = sfFreqsAt(l.id).filter(f => f.id !== sfDlg.id).length;
+      if (n) t += ` · ${n} other frequenc${n === 1 ? 'y' : 'ies'} saved there`;
+      info.textContent = t;
+      info.style.display = '';
+    } else info.style.display = 'none';
+  }
+  function sfDlgRaw() {
+    const ids = ['name', 'mhz', 'cat', 'newcat', 'loc', 'locname', 'lat', 'lon', 'mode', 'bw', 'dec', 'tone', 'notes'];
+    return ids.map(k => $id('sf-f-' + k).value);
+  }
+  function sfDlgErr(t) { $id('sf-err').textContent = t; }
+  function sfDlgBusy(b) {
+    const s = $id('sf-save');
+    s.disabled = b;
+    s.textContent = b ? 'Saving…' : 'Save';
+  }
+  function sfDlgClose() {
+    if (sfPicking) sfPickEnd(null, true);
+    sfDlg = null;
+    $id('sf-dlg-bg').style.display = 'none';
+  }
+  // true = fine to drop the editor: nothing changed, or the user agreed
+  function sfDlgLeave() {
+    if (!sfDlg || sfDlg.pending || JSON.stringify(sfDlgRaw()) === sfDlg.orig) return true;
+    return confirm('Discard the changes to this saved frequency?');
+  }
+  function sfDlgCancel() { if (sfDlgLeave()) sfDlgClose(); }
+  function sfDlgFromVfo() {
+    const v = sfVfoValues();
+    if (!v) { sfDlgErr('No VFO - add one in the Decimators box'); return; }
+    $id('sf-f-mhz').value = mkFmtMhz(v.hz);
+    $id('sf-f-mode').value = v.mode;
+    $id('sf-f-bw').value = String(v.bw);
+    $id('sf-f-dec').value = v.dec;
+    sfDlgErr('');
+  }
+  function sfDlgStation() {
+    const st = mapStationPos();
+    if (!st) { sfDlgErr('No station location - set it in Station Information'); return; }
+    $id('sf-f-lat').value = st[0].toFixed(6);
+    $id('sf-f-lon').value = st[1].toFixed(6);
+    sfDlgErr('');
+  }
+  // the form as an entry (+ newcat / newloc) for SF_SET, or an error text
+  function sfDlgEntry() {
+    const v = k => $id('sf-f-' + k).value;
+    const name = v('name').trim();
+    if (!name) return 'Give it a name';
+    const hz = sfParseHz(v('mhz'));
+    if (!hz) return `"${v('mhz').trim()}" is not a frequency (MHz, or with kHz / GHz)`;
+    const e = {id: sfDlg.id, name, hz, cat: v('cat'), loc: v('loc'), mode: v('mode'), bw: +v('bw') || 0,
+               dec: v('dec'), tone: v('tone').trim(), notes: v('notes')};
+    if (e.cat === '+new') {
+      const cn = v('newcat').trim();
+      if (!cn) return 'Name the new category';
+      const ex = sfCats.find(c => c.name.toLowerCase() === cn.toLowerCase());
+      if (ex) e.cat = ex.id;
+      else { e.cat = sfNewId(); e.newcat = {id: e.cat, name: cn, col: sfNextCol()}; }
+    }
+    sfDlg.snapped = null;
+    if (e.loc === '+new') {
+      const ll = sfParseLatLon(v('lat'), v('lon'));
+      if (!ll) return 'Location: latitude -85..85 and longitude -180..180 in decimal degrees - or 🗺 Pick on map';
+      // a marker at (nearly) the same place: the frequency joins it
+      let near = null, nd = SF_SNAP_M;
+      for (const l of sfLocs) {
+        const d = mapDistKm(l.lat, l.lon, ll[0], ll[1]) * 1000;
+        if (d <= nd) { nd = d; near = l; }
+      }
+      if (near) { e.loc = near.id; sfDlg.snapped = near.name; }
+      else { e.loc = sfNewId(); e.newloc = {id: e.loc, name: v('locname').trim() || name, lat: ll[0], lon: ll[1], notes: ''}; }
+    }
+    if (new TextEncoder().encode(e.notes).length > 2000) return 'The notes are too long (2000 bytes at most)';
+    return e;
+  }
+  function sfDlgSave() {
+    if (!sfDlg || sfDlg.pending) return;
+    const e = sfDlgEntry();
+    if (typeof e === 'string') { sfDlgErr(e); return; }
+    if (!(ws && ws.readyState === 1)) { sfDlgErr('Not connected to the receiver'); return; }
+    sfDlgErr('');
+    sfDlg.pending = e.id;
+    sfDlgBusy(true);
+    send('SF_SET:' + JSON.stringify(e));
+  }
+  function sfDlgTune() {
+    if (!sfDlg) return;
+    const v = k => $id('sf-f-' + k).value;
+    const hz = sfParseHz(v('mhz'));
+    if (!hz) { sfDlgErr(`"${v('mhz').trim()}" is not a frequency (MHz, or with kHz / GHz)`); return; }
+    sfDlgErr('');
+    sfTune({id: '', name: v('name').trim() || mkFmtMhz(hz) + ' MHz', hz, mode: v('mode'), bw: +v('bw') || 0, dec: v('dec')});
+  }
+  function sfDlgDelete() {
+    const f = sfDlg && sfGet(sfDlg.id);
+    if (!f || !confirm(`Delete the saved frequency "${f.name}" (${mkFmtMhz(f.hz)} MHz)?`)) return;
+    send('SF_DEL:' + f.id);
+    sfDlgClose();
+  }
+  // Enter in a field saves; Escape (anywhere - see below) cancels
+  $id('sf-dlg').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); sfDlgSave(); }
+  });
+
+  // 🗺 Pick on map: the editor steps aside until the map is clicked (a marker
+  // = that location, elsewhere = a new one there); Esc / Cancel = back
+  function sfPickStart() {
+    if (!sfDlg) return;
+    sfPicking = true;
+    $id('sf-dlg-bg').style.display = 'none';
+    if (mobileLayoutMQ.matches) toggleSidebar(false);
+    if (!mapState.on) mapToggle(true); else rpShow('map');
+    const n = $id('sf-f-name').value.trim();
+    const el = $id('map-pick');
+    el.innerHTML = `<span>🗺 Click the map where ${n ? '“' + digEsc(n) + '”' : 'it'} is transmitted from (or a marker)</span>` +
+                   '<button type="button" class="map-btn" onclick="sfPickEnd(null)">Cancel</button>';
+    el.style.display = 'flex';
+    $id('map-pane').classList.add('picking');
+  }
+  // r: {loc: id} or {ll: [lat, lon]} or null (cancelled); quiet = the editor is closing
+  function sfPickEnd(r, quiet) {
+    if (!sfPicking) return;
+    sfPicking = false;
+    $id('map-pick').style.display = 'none';
+    $id('map-pane').classList.remove('picking');
+    if (!sfDlg || quiet) return;
+    if (r && r.loc) $id('sf-f-loc').value = r.loc;
+    else if (r && r.ll) {
+      $id('sf-f-loc').value = '+new';
+      $id('sf-f-lat').value = r.ll[0].toFixed(6);
+      $id('sf-f-lon').value = r.ll[1].toFixed(6);
+    }
+    sfDlgSync();
+    $id('sf-dlg-bg').style.display = 'flex';
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (sfPicking) sfPickEnd(null);
+    else if (sfDlg && $id('sf-dlg-bg').style.display !== 'none') { e.preventDefault(); sfDlgCancel(); }
+  });
+
+  // --- tuning ------------------------------------------------------------------------
+  // A saved frequency (id or entry) on the selected VFO: its decoder first
+  // (picking a fixed-frequency one - ADS-B - tunes by itself; another unlocks
+  // a VFO such a decoder held; a lock_vfo one - ism - keeps the VFO on its
+  // tuner's centre), then the demod (which sets its usual bandwidth), the
+  // bandwidth, then the frequency (sfTuneHz). Nothing is changed when the
+  // frequency can't be reached. opts.tuner = the pane clicked (independent
+  // mode)
+  function sfTune(x, opts = {}) {
+    const f = typeof x === 'string' ? sfGet(x) : x;
+    if (!f) return;
+    const d = decimatorInfo.find(z => z.id === activeDecimatorId);
+    const fp = f.dec && digFixedPlugin(f.dec), fixed = !!(fp && fp.fixed_freq_hz > 0);
+    const err = !(ws && ws.readyState === 1) ? 'Not connected to the receiver'
+      : !fixed && !(f.hz / 1e6 >= FREQ_MIN && f.hz / 1e6 <= FREQ_MAX) ? `${mkFmtMhz(f.hz)} MHz is outside the receiver's range (${FREQ_MIN}-${FREQ_MAX} MHz)`
+      : d && sfFixedLock(d) && !f.dec ? `D${d.id} is locked to its decoder's frequency - select another VFO`
+      : '';
+    if (err) { sfFlash(err, true); return; }
+    if (d && f.dec && f.dec !== (d.digital_mode || 'OFF')) {
+      if (f.dec === 'OFF') digToggle(d.id, false);
+      else digSetModeFor(d.id, f.dec);
+    }
+    if (d && fixed) { sfFlash(`D${d.id} → ${f.name} (${sfDecName(f.dec)})`); return; }
+    // (not on a VFO its decoder holds - ism needs its whole 2.4 MHz)
+    if (d && !vfoLocked(d)) {
+      if (f.mode && f.mode !== d.demod_mode) setDecimatorDemodMode(d.id, f.mode);
+      if (f.bw > 0) { const i = sfBwIndex(f.bw); if (i !== d.bandwidth_index) setDecimatorBandwidthFromUI(d.id, i); }
+    }
+    const e2 = sfTuneHz(f.hz, opts);
+    sfFlash(e2 || `${d ? 'D' + d.id + ' → ' : 'Tuned to '}${f.name} · ${mkFmtMhz(f.hz)} MHz`, !!e2);
+  }
+  // the VFO's decoder holds it on a fixed frequency (ADS-B, AIS) - unlike a
+  // lock_vfo decoder (ism), which only keeps it on its tuner's centre
+  function sfFixedLock(d) {
+    const p = vfoLocked(d) && digFixedPlugin(d.digital_mode);
+    return !!(p && p.fixed_freq_hz > 0);
+  }
+  // The selected VFO to hz: inside the band shown it just moves there, else
+  // the receiver retunes (the VFO's own tuner in independent mode) with the
+  // VFO on the new centre - a VFO locked on its tuner's centre (lock_vfo)
+  // always stays there and the tuner moves. No VFO: the receiver's centre
+  // (the clicked / selected tuner in independent mode). Returns an error
+  // text or ''
+  function sfTuneHz(hz, opts = {}) {
+    const mhz = hz / 1e6;
+    if (!(mhz >= FREQ_MIN && mhz <= FREQ_MAX)) return `${mkFmtMhz(hz)} MHz is outside the receiver's range (${FREQ_MIN}-${FREQ_MAX} MHz)`;
+    if (!(ws && ws.readyState === 1)) return 'Not connected to the receiver';
+    const d = decimatorInfo.find(z => z.id === activeDecimatorId);
+    if (!d) {
+      if (opMode === 'independent') paneSendFreq(opts.tuner ?? selTuner, mhz);
+      else sfRetuneCentre(mhz);
+      return '';
+    }
+    if (sfFixedLock(d)) return `D${d.id} is locked to its decoder's frequency - select another VFO`;
+    const centreOnly = vfoLocked(d);
+    const bw = (bwo[d.bandwidth_index || 0] || bwo[0]).bandwidth;
+    if (opMode === 'independent') {
+      const own = d.tuner || 0;
+      const first = opts.tuner ?? own;
+      const order = [first, own, ...panes.map(p => p.ch)].filter((ch, i, a) => a.indexOf(ch) === i);
+      const p = centreOnly ? null : order.map(ch => panes[ch]).find(p => p && p.freqMhz > 0 &&
+        Math.abs(mhz - p.freqMhz) <= (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2);
+      if (p) paneMoveVfo(p, d, mhz);
+      else {
+        pendingFreqUpdates.delete(d.id);   // a queued move must not land after this
+        d.freq_offset_hz = 0;
+        send('SET_DECIMATOR_FREQ:' + d.id + ':0:' + own);
+        paneSendFreq(own, mhz);
+      }
+    } else {
+      let off = (mhz - currentCenterFreq) * 1e6;
+      if (centreOnly || Math.abs(off) > maxOffsetHz(bw)) {
+        // FREQ: is in whole kHz - the VFO takes the rest (not a locked one)
+        const c = sfRetuneCentre(mhz);
+        off = centreOnly ? 0 : (mhz - c) * 1e6;
+      }
+      pendingFreqUpdates.delete(d.id);
+      d.freq_offset_hz = off;
+      send('SET_DECIMATOR_FREQ:' + d.id + ':' + (off / 1000).toFixed(3));
+      decimatorInfo.forEach(z => refreshDecimatorPanelItem(z.id));
+      drawBox();
+    }
+    return '';
+  }
+  // the centre frequency to mhz, on whole kHz; returns the centre set
+  function sfRetuneCentre(mhz) {
+    const c = Math.round(mhz * 1000) / 1000;
+    freqUserChanging = true;   // a lagging FFT header must not pull the digits back
+    clearTimeout(freqUserChangeTimeout);
+    freqUserChangeTimeout = setTimeout(() => { freqUserChanging = false; }, 500);
+    updateFreqDisplay(c, true);
+    currentCenterFreq = c;
+    sendFreqChange(c);
+    return c;
+  }
+
+  // --- on the spectrum -----------------------------------------------------------
+  // The saved frequencies between lo and hi MHz that are marked (not in a
+  // hidden category), lowest first
+  function sfInView(lo, hi) {
+    if (!sfUi.spec || !sfFreqs.length) return [];
+    return sfFreqs.filter(f => !sfUi.hide[f.cat || ''] && f.hz / 1e6 >= lo && f.hz / 1e6 <= hi).sort((a, b) => a.hz - b.hz);
+  }
+  // Tags: entries within 3 px share one ("Name +2"); each goes into the first
+  // of `rows` rows (rowH apart from y0) where it doesn't overlap the tag
+  // before it, else it gets no label (a triangle at the top). xmin..xmax = the
+  // plot's x range
+  function sfLayoutTags(ctx, items, xOf, xmin, xmax, y0, rowH, rows) {
+    const groups = [];
+    for (const f of items) {
+      const x = xOf(f.hz / 1e6);
+      if (x == null || isNaN(x) || x < xmin - 2 || x > xmax + 2) continue;
+      const g = groups[groups.length - 1];
+      if (g && x - g.x < 3) g.fs.push(f);
+      else groups.push({x, fs: [f]});
+    }
+    const ends = new Array(rows).fill(-Infinity);
+    for (const g of groups) {
+      const f = g.fs[0];
+      let t = f.name.length > 22 ? f.name.slice(0, 21) + '…' : f.name;
+      if (g.fs.length > 1) t += ` +${g.fs.length - 1}`;
+      const tw = ctx.measureText(t).width + 8;
+      const x0 = Math.min(Math.max(xmin, g.x - tw / 2), xmax - tw);
+      g.row = ends.findIndex(e => x0 >= e + 3);
+      if (g.row >= 0) ends[g.row] = x0 + tw;
+      Object.assign(g, {label: t, x0, x1: x0 + tw, col: sfCol(f), y: y0 + Math.max(0, g.row) * rowH});
+    }
+    return groups;
+  }
+  // dark text on light category colours
+  function sfInk(col) {
+    const n = parseInt(col.slice(1), 16);
+    return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) > 150 ? '#0b1020' : '#fff';
+  }
+  // one tag (or triangle) + a faint dotted line down to yEnd; sets g.hit
+  function sfDrawTag(ctx, g, yEnd, th) {
+    const x = Math.round(g.x) + 0.5;
+    ctx.strokeStyle = hexToRgba(g.col, 0.4);
+    ctx.setLineDash([2, 3]);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, g.row >= 0 ? g.y + th : 7); ctx.lineTo(x, yEnd); ctx.stroke();
+    ctx.setLineDash([]);
+    if (g.row < 0) {
+      ctx.fillStyle = g.col;
+      ctx.beginPath(); ctx.moveTo(x - 4, 0); ctx.lineTo(x + 4, 0); ctx.lineTo(x, 7); ctx.closePath(); ctx.fill();
+      g.hit = {x0: x - 6, x1: x + 6, y0: 0, y1: 10};
+      return;
+    }
+    ctx.fillStyle = hexToRgba(g.col, 0.9);
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(g.x0, g.y, g.x1 - g.x0, th, 3); else ctx.rect(g.x0, g.y, g.x1 - g.x0, th);
+    ctx.fill();
+    ctx.fillStyle = sfInk(g.col);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(g.label, g.x0 + 4, g.y + th / 2 + 0.5);
+    g.hit = {x0: g.x0, x1: g.x1, y0: g.y, y1: g.y + th};
+  }
+  function sfTagTip(g) {
+    return g.fs.map(f => `${f.name} - ${mkFmtMhz(f.hz)} MHz` + (sfMeta(f, true) ? ` (${sfMeta(f, true)})` : '')).join('\n') +
+           '\nClick to tune the selected VFO' + (g.fs.length > 1 ? ' to the first' : '');
+  }
+  // the main spectrum (end of drawBox): tags below the VFO labels (3 rows, 2
+  // on a short spectrum), lines to the bottom
+  function sfDrawSpectrum(ctx, w, h) {
+    sfSpecRects = [];
+    if (!fftPlot || !currentFrequencies.length) return;
+    const items = sfInView(currentFrequencies[0], currentFrequencies[currentFrequencies.length - 1]);
+    if (!items.length) return;
+    ctx.save();
+    ctx.font = '10px sans-serif';
+    const tags = sfLayoutTags(ctx, items, f => fftPlot.valToPos(f, 'x'), 0, w, 18, 15, h < 200 ? 2 : 3);
+    for (const g of tags) sfDrawTag(ctx, g, h, 13);
+    ctx.restore();
+    sfSpecRects = tags;
+  }
+  function sfSpecAt(rects, x, y, pad) {
+    return rects.find(g => g.hit && x >= g.hit.x0 - pad && x <= g.hit.x1 + pad && y >= g.hit.y0 - pad && y <= g.hit.y1 + pad) || null;
+  }
+  // hovering a tag: hand cursor + what it is as a tooltip
+  function sfMarkerHover(e) {
+    const c = $id('fo');
+    if (!c) return false;
+    const r = c.getBoundingClientRect();
+    const g = sfSpecRects.length ? sfSpecAt(sfSpecRects, e.clientX - r.left, e.clientY - r.top, 3) : null;
+    const tip = g ? sfTagTip(g) : '';
+    if (c.title !== tip) c.title = tip;
+    if (g) c.style.cursor = 'pointer';
+    return !!g;
+  }
+  // press on the spectrum: a tag tunes instead of placing the VFO
+  function sfMarkerHit(e) {
+    const c = $id('fo');
+    if (!c || !sfSpecRects.length) return false;
+    const r = c.getBoundingClientRect();
+    const g = sfSpecAt(sfSpecRects, e.clientX - r.left, e.clientY - r.top, 3);
+    if (!g) return false;
+    sfMarkerConsumed = true;
+    setTimeout(() => { sfMarkerConsumed = false; }, 400);
+    sfTune(g.fs[0].id);
+    return true;
+  }
+  // an independent-mode pane (paneDrawOverlay): smaller tags under the AI
+  // badges, lines through the spectrum part; the targets for paneDown / paneMove
+  function sfPaneTags(ctx, p, span) {
+    const items = sfInView(span[0], span[1]);
+    if (!items.length) return [];
+    ctx.save();
+    ctx.font = '9px sans-serif';
+    const tags = sfLayoutTags(ctx, items, f => paneX(p, f), p.L, p.sw - 4, 16, 13, 2);
+    for (const g of tags) sfDrawTag(ctx, g, p.sh, 11);
+    ctx.restore();
+    return tags;
+  }
+  $id('sf-spec').checked = sfUi.spec;
+  sfRenderList();
 
   // --- 📡 OSM MASTS: radio masts, towers and antennas from OpenStreetMap ------
   // Optional layer (Masts button, mapState.masts - per browser like the

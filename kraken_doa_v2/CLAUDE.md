@@ -747,55 +747,143 @@ Edit `include/config.hpp`:
   dragged, Esc, a panel edit followed), t_vs_touch.py (tap select, touch
   drag, touch heading)
 
-**📍 Map markers (user-placed; `src/map_markers.cpp`, UI "📍 MAP MARKERS" in kraken_doa.html):**
-- Right-click on `#map-canvas` (`contextmenu`; touch: a 600 ms long press
-  without moving, `lpT` in `mapInit` - a touch pan needs 8 px, a mouse 3 px)
-  -> `mapMenuOpen` (`#map-menu`, positioned in the pane): "📍 Add Marker"
-  first, on a marker's pin also Edit / Delete, the clicked lat/lon as a
-  footer. Closes on a press elsewhere (document capture listener), Escape,
-  wheel, window blur. The right mouse button no longer starts a pan
-- Backend = the single source of truth (shared by every browser): a list of
-  {id, lat, lon, name, notes, freqs:[{hz, label}], t}. `MARKER_SET:{json}`
-  creates / replaces (id = [A-Za-z0-9_-]{1,24}, chosen by the page),
-  `MARKER_DEL:id`, `GET_MARKERS` (page connect) - every one answered to ALL
-  pages with `markers::message_json()` = `{"markers":{"list":[...]}}`; a
-  refused MARKER_SET adds `error` + `id` (only the page that sent it - the id
-  is random - reports it). `MARKER_` is in `is_query_command` (no sync_cmd
-  echo). Parsed with `geo::json_parse` (geo_address.hpp). Limits: 500
-  markers, 50 frequencies (1 Hz..100 GHz, stored as integer Hz), name /
-  label 80 bytes, notes 4000 (cut on a UTF-8 boundary, control characters
-  dropped - notes keep \n / \t). `map_markers.json` (cwd-relative, so
-  Docker's volume gets it) is rewritten (tmp + rename) on every change and
-  read by `markers::load()` in main; not touched by RESET_SETTINGS
-- Page: state `mkList / mkSel / mkEdit / mkWantEdit / mapMenuAt` in the
-  globals block (mapDrawNow -> `mkDraw` / `mkRender` can run before the
-  section is evaluated). No optimistic updates: Add Marker sends MARKER_SET
-  and sets `mkWantEdit`; the list arriving with that id opens it in edit
-  mode (name focused). Pins (`MK_COL` pink, tip on the spot, head 15 px
-  above; `mkHit` tests the head, before decoder points) with the name + the
-  first frequency (+N). `#map-mk` panel (bottom right; `.map-pane.mk-open`
-  narrows the 📡 DF panel at the bottom left so they don't overlap): view =
-  position, distance / bearing from the station, frequency buttons, notes,
-  Edit / Centre / Delete; edit form built once (`dataset.edit`) so typing
-  survives list pushes, `mkLeaveEdit` asks before dropping unsaved changes
-  (`dataset.orig` vs `mkFormRaw`); "lat, lon" pasted in the latitude box
-  works. A click on the empty map closes the view (not an edit). ⤢ fits the
-  markers too
-- `mkTune(hz)` (a frequency button): the SELECTED VFO (`activeDecimatorId`);
-  refused for a locked VFO (fixed-frequency decoder) or outside
-  FREQ_MIN..FREQ_MAX. Coherent / wideband scan: inside `maxOffsetHz` the VFO
-  just moves; else `FREQ:` on whole kHz (`sendFreqChange`) with the VFO
-  offset taking the rest (145.5125 -> FREQ:145.513 + VFO -0.5 kHz).
-  Independent: a tuner whose band holds it (`paneMoveVfo`, own first), else
-  the VFO's own tuner retunes (`paneSendFreq`) with the VFO at 0
-- Tests (scratchpad): t_markers.py (backend commands, refusals, a second
-  browser, the file, reload after restart) and t_ui.py (headless Chromium
-  via CDP: right-click / long press / Escape, add + edit + save, escaping,
-  tune paths incl. independent mode with stubbed panes, delete) on a TEST
-  build with ports 18080/18081/18091/18092. On this Pi, run
-  `/usr/lib/chromium/chromium` directly (the /usr/bin wrapper adds a V8 flag
-  the renderer rejects) with `--no-proxy-server` (the system proxy lookup
-  hangs every network load)
+**📻 Saved frequencies + 📍 map markers (one feature; `src/saved_freqs.cpp`, UI "📍 MAP MARKERS" + "📻 SAVED FREQUENCIES" in kraken_doa.html):**
+- Model: CATEGORIES {id, name, col #rrggbb}, LOCATIONS {id, name, lat, lon,
+  notes, t} = the map markers, FREQUENCIES {id, name, hz, cat, loc, mode
+  ""|WBFM|NBFM|AM|DIGITAL, bw Hz (0 = the VFO's), dec ""|OFF|AUTO|PLUGIN:<id>,
+  tone, notes, t}; only name + hz are required, cat / loc are ids or "". A
+  frequency with a location is listed in that marker's panel - several
+  frequencies at one place share ONE location (the editor snaps a new
+  location within `SF_SNAP_M` 15 m of an existing marker onto it); a marker
+  without frequencies is a plain marker (Add Marker, OSM mast -> marker)
+- Backend = the single source of truth (every browser):
+  `SF_SET:{json}` (a frequency; may carry `newcat` / `newloc` - the category /
+  location the editor made in the same step: validated and committed
+  together on a copy of the state, so a refusal changes nothing),
+  `SF_DEL:id`, `SF_LOC_SET:{id,name,lat,lon,notes}`, `SF_LOC_DEL:id` (its
+  frequencies stay, `loc` cleared), `SF_CAT_SET:{id,name,col}` (names unique,
+  case-insensitive; a bad colour = #90a4ae), `SF_CAT_DEL:id` (its
+  frequencies: `cat` cleared), `GET_SF` (page connect). Every one answered
+  to ALL pages with `savedfreq::message_json()` = `{"savedfreq":{cats, locs,
+  freqs}}`; a refusal adds `error` + `id` (ids are random, chosen by the
+  page: only the sender reacts). `SF_` is in `is_query_command` (no sync_cmd
+  echo). Ids [A-Za-z0-9_-]{1,24}; text cut on a UTF-8 boundary, control
+  characters dropped, trimmed (notes keep \n / \t). Limits: 2000
+  frequencies (1 Hz..100 GHz, integer Hz), 500 locations, 64 categories,
+  names 80 bytes (categories 40), tone 40, notes 2000 / 4000 (location), and
+  the whole list <= `MAX_TOTAL` 1 MB as JSON (one broadcast - the WebSocket
+  server closes a client beyond 2 MB of backpressure; 2000 plain entries are
+  ~260 KB)
+- File `saved_frequencies.json` (cwd-relative = the Docker volume; gitignored -
+  positions near the station) `{"version":2,"categories","locations",
+  "frequencies"}`, rewritten (tmp + rename) on every change, read by
+  `savedfreq::load()` in main; entries are rebuilt one by one (a damaged one
+  is skipped, a dangling cat / loc cleared); an unreadable file is renamed
+  `.bad` and the list starts empty (not overwritten). No file yet: the
+  default categories (Airband, Broadcast, Business band, Amateur, Marine,
+  Emergency services - ids airband, broadcast, business, amateur, marine,
+  emergency) and, once, the old `map_markers.json` (MARKER_* era: a location
+  per marker, a frequency per marker frequency named by its label, else the
+  marker's name), then renamed `map_markers.json.migrated`. Not touched by
+  RESET_SETTINGS
+- Page state (globals block - mapDrawNow / drawBox can run before the
+  sections are evaluated): `sfCats / sfLocs / sfFreqs`, `mkSel / mkEdit /
+  mkWantEdit / mapMenuAt`, `sfUi` (localStorage `kraken_sf` {spec, col: {cat:
+  1} folded groups, hide: {cat: 1} groups without spectrum marks; '' = the
+  uncategorised}), `sfSpecRects`. `sfOnMessage` replaces the lists and
+  redraws everything (list, categories, marker panel, map, drawBox, panes).
+  No optimistic updates
+- Sidebar "📻 Saved Frequencies" (`#sf-section`, right after Decimators, all
+  modes; header count `#sf-count`): search (words in name, MHz, tone, notes,
+  location, category, demod, decoder), + Add, "Show on spectrum", ⚙
+  Categories (`#sf-cats`: colour picker, rename, count, ✕, + Add; not
+  re-rendered while it has the focus - refreshed on focusout).
+  `sfRenderList`: groups in category order then "Uncategorised" (empty
+  categories left out), rows by frequency: colour bar, name, MHz, a meta line
+  (`sfMeta`: demod · bandwidth · decoder · tone · 📍 location), 🗺 (location
+  on the map: `sfShowOnMap`) and ✎; a row click = `sfTune`. `sfMarkActive`
+  (1 s, while the section is open) outlines rows a VFO is within 500 Hz of,
+  in the VFO's colour. ☆ Save on each VFO card = `sfNewFromVfo`
+- Editor (`#sf-dlg`, a modal - also opened from the map): name*, frequency*
+  (`sfParseHz`: MHz, or kHz / GHz / Hz suffix, comma decimal), ⟵ Selected
+  VFO, category (or "+ New category…" -> `newcat`, colour = the first unused
+  `SF_PALETTE` entry; an existing name = that one), location (a marker, or
+  "+ New location…": name - blank = the frequency's -, lat / lon - "lat, lon"
+  pasted in the latitude box works -, 🗺 Pick on map, 📡 Station), demod /
+  bandwidth / decoder ("Keep the VFO's" = ""), tone / code, notes. New
+  entries are filled from the selected VFO (frequency on 100 Hz, demod,
+  bandwidth, decoder when on). Save sends SF_SET and waits for the list
+  (`sfDlg.pending`): an error with its id is shown in the dialog, else it
+  closes + a toast (`sfFlash`, `#sf-toast`). Tune (the form, unsaved),
+  Delete, Cancel; Escape (document level - once) / ✕ / the backdrop ask
+  before dropping changes (`sfDlgLeave`). Other pages' changes refresh its
+  lists keeping the picks. Pick on map (`sfPickStart` / `sfPickEnd`): the
+  dialog steps aside, the map opens with a banner (`#map-pick`,
+  `.map-pane.picking` crosshair), the next click (mapInit's pointerup, before
+  the usual click handling) = a marker -> that location, elsewhere -> a new
+  one there; Esc / Cancel = back
+- Tuning `sfTune(id | entry, {tuner})`: checks first (connected, in
+  FREQ_MIN..FREQ_MAX unless the decoder is a fixed-frequency one, a VFO
+  held on a FIXED frequency - `sfFixedLock`: ADS-B, AIS - needs the entry to
+  have a decoder) - nothing changes when refused; then on the SELECTED VFO:
+  the decoder (`digSetModeFor`, OFF = `digToggle`; a fixed-frequency plugin
+  tunes by itself and ends there; a `lock_vfo` one - ism - puts the VFO on
+  its tuner's centre), the demod (`setDecimatorDemodMode`, which sets that
+  mode's usual bandwidth) and the bandwidth (`sfBwIndex`: nearest option) -
+  both skipped on a locked VFO -, then `sfTuneHz` (was mkTune): a VFO
+  locked on its tuner's centre (`lock_vfo`) stays at offset 0 and the tuner
+  retunes (FREQ: whole kHz; independent: its own tuner); otherwise
+  coherent / wideband scan - inside `maxOffsetHz` the VFO just
+  moves, else `FREQ:` on whole kHz (`sfRetuneCentre` / `sendFreqChange`) with
+  the VFO offset taking the rest (145.5125 -> FREQ:145.513 + VFO -0.5 kHz);
+  independent - the clicked pane / the VFO's own tuner / any tuner whose band
+  holds it (`paneMoveVfo`), else the VFO's own tuner retunes
+  (`paneSendFreq`) with the VFO at 0. No VFO at all: the receiver's centre
+  (independent: the clicked / selected tuner). A toast says what happened
+- Spectrum: `sfDrawSpectrum` (drawBox, before the AI badges) - tags in the
+  category colour from y 18 (under the VFO labels) in up to 3 rows (2 below
+  200 px), entries within 3 px share one ("Name +2"), names over 22 chars
+  cut; no room = a triangle at the top; a faint dotted line down to the
+  bottom (`sfLayoutTags` / `sfDrawTag`). `handleDown` -> `sfMarkerHit` (after
+  `aiMarkerHit`) tunes instead of placing the VFO (`sfMarkerConsumed` eats
+  the click), `handleMove` -> `sfMarkerHover` (tooltip + hand). Independent
+  panes: `sfPaneTags` from `paneDrawOverlay` (9 px, 2 rows, lines through
+  the spectrum part), `p.sf` hit-tested in `paneDown` (tunes with
+  `{tuner: p.ch}`) and `paneMove` (title + hand). Hidden categories (👁)
+  and "Show on spectrum" off draw nothing; the waterfall gets no marks
+- Map (📍 MAP MARKERS): right-click on `#map-canvas` (`contextmenu`; touch:
+  a 600 ms long press without moving, `lpT` in `mapInit` - a touch pan needs
+  8 px, a mouse 3 px) -> `mapMenuOpen` (`#map-menu`): "📍 Add Marker", "📻
+  Save a frequency here" (editor with a new location there), Viewshed, Set
+  station; on a marker's pin also "📻 Add a frequency to …", Edit, Viewshed,
+  Delete; the clicked lat/lon as a footer. Closes on a press elsewhere,
+  Escape, wheel, window blur. Pins (`mkDraw`: tip on the spot, head 15 px
+  above, `mkHit` tests the head, before decoder points) in the category
+  colour when all the location's frequencies share one, else `MK_COL` pink;
+  label = name + lowest frequency (+N). `#map-mk` panel (`.map-pane.mk-open`
+  narrows the 📡 DF panel): position, distance / bearing from the station,
+  every frequency at the location (`sfFreqsAt`, by frequency: a button that
+  tunes + ✎), notes, + Frequency / ✎ Edit (name, position, notes - built
+  once, `mkLeaveEdit` asks before dropping changes) / Centre / Viewshed /
+  Delete (confirm says the frequencies stay). Add Marker sends SF_LOC_SET and
+  sets `mkWantEdit`; the list arriving with that id opens its edit form. A
+  click on the empty map closes the view (not an edit); ⤢ fits the markers
+- Tests (job scratch, not in the repo): `t_sf.cpp` (saved_freqs.cpp offline:
+  migration, newcat / newloc in one step, every refusal leaves the state
+  unchanged, text cleaning, UTF-8 cuts, location / category delete, reload =
+  same list, 2000 limit, damaged file kept as .bad), `t_sf_ws.py` (the
+  commands over the WebSocket of a TEST build - ports 28080/28081/28091/28092
+  as 1808x were taken -, two pages get every broadcast, refusals, restart
+  keeps the list), `t_sf_ui.py` (headless Chromium via CDP + a synthetic FFT
+  frame fed to `ws.onmessage`: editor save / refusal / snapping / new
+  category, list + search + fold, row / spectrum tag / marker panel tuning,
+  retune outside the band, out of range, pane tags, pick on map incl. a
+  marker, categories, edit / delete, Escape, marker add / delete). Chromium:
+  `/usr/lib/chromium/chromium` directly with `--no-proxy-server` AND
+  `--password-store=basic` - without it (Chromium 147 here) every page
+  navigation stalls forever before its cookie lookup, waiting on the desktop
+  keyring (fetch() from a data: page still works, which makes it look like a
+  network problem); when other builds load the Pi, use long CDP timeouts
 
 **📡 OpenStreetMap masts layer (UI only, kraken_doa.html "📡 OSM MASTS"):**
 - "Masts" button (`mapState.masts`, localStorage like the other view
@@ -3259,9 +3347,10 @@ Edit `include/config.hpp`:
   bandwidth + `SET_DECIMATOR_FREQ:id:0`, the tuner left alone
   (`digFixedPlugin` returns such plugins too, `digApplyFixedTune` skips the
   retune). Fields' tooltip: "... keeps this VFO on its tuner's centre with
-  the full bandwidth - tune the receiver instead". `mkTune` (📍 marker
-  frequency) on such a VFO retunes the tuner (FREQ: whole kHz, VFO stays at
-  0) where a fixed-frequency one refuses
+  the full bandwidth - tune the receiver instead". `sfTuneHz` (a saved
+  frequency - sidebar, spectrum tag, 📍 marker) on such a VFO retunes the
+  tuner (FREQ: whole kHz, VFO stays at 0) where a fixed-frequency one
+  refuses
 - Test: scratchpad t_adsb_lock (coherent + independent); e2e/t_ui_wide.py
   (lock_vfo: fields + reason, the commands a pick sends - no FREQ, ADS-B as
   the control sends FREQ:1090.000 -, the marker paths, DF devices);

@@ -15,7 +15,7 @@
 #include "doa_logger.hpp"
 #include "message_builders.hpp"
 #include "incidents.hpp"
-#include "map_markers.hpp"
+#include "saved_freqs.hpp"
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
 #include "array_cal.hpp"
@@ -277,7 +277,7 @@ static bool is_query_command(string_view msg) {
            msg.starts_with("LOG_DELETE:") ||   // delete acks via its own list broadcast
            msg.starts_with("AI_") ||           // AI Signal Lab: results come as ai_event / ai_state
            msg.starts_with("PLUGIN") ||        // plugins: own broadcasts
-           msg.starts_with("MARKER_") ||       // 🗺 map markers: {"markers":...} broadcasts
+           msg.starts_with("SF_") ||           // 📻 saved frequencies + map markers: {"savedfreq":...} broadcasts
            msg.starts_with("ARRAY_CAL") ||     // ✈ array calibration: {"array_cal":...} broadcasts
            // 🗣 Voice to Text actions: {"voice2text":...} / decimator_info broadcasts
            msg.starts_with("VOICE2TEXT_VFO:") || msg.starts_with("VOICE2TEXT_DOWNLOAD:") ||
@@ -2047,20 +2047,33 @@ void ControlHandler::handle_message_impl(string_view message) {
         // A page opened the 🗺 Map: the next map push carries every point
         MessageBuilders::request_map_full();
     }
-    // 🗺 Map markers the user placed (map_markers.cpp): every change goes to
-    // every browser as the whole list
-    else if (message.starts_with("MARKER_SET:")) {
+    // 📻 Saved frequencies + the map markers (their locations; saved_freqs.cpp):
+    // every change goes to every browser as the whole list
+    else if (message.starts_with("SF_SET:") || message.starts_with("SF_LOC_SET:") ||
+             message.starts_with("SF_CAT_SET:")) {
+        const size_t colon = message.find(':');
+        const string json(message.substr(colon + 1));
         string id, err;
-        const bool ok = markers::set(string(message.substr(11)), &id, &err);
-        broadcast(markers::message_json(ok ? "" : err, id));
+        const bool ok = message.starts_with("SF_SET:")       ? savedfreq::set_freq(json, &id, &err)
+                        : message.starts_with("SF_LOC_SET:") ? savedfreq::set_location(json, &id, &err)
+                                                             : savedfreq::set_category(json, &id, &err);
+        broadcast(savedfreq::message_json(ok ? "" : err, id));
         if (!ok) throw CommandRejected(err);
     }
-    else if (message.starts_with("MARKER_DEL:")) {
-        markers::remove(string(message.substr(11)));
-        broadcast(markers::message_json());
+    else if (message.starts_with("SF_DEL:")) {
+        savedfreq::remove_freq(string(message.substr(7)));
+        broadcast(savedfreq::message_json());
     }
-    else if (message == "GET_MARKERS") {
-        broadcast(markers::message_json());   // a page connecting
+    else if (message.starts_with("SF_LOC_DEL:")) {
+        savedfreq::remove_location(string(message.substr(11)));
+        broadcast(savedfreq::message_json());
+    }
+    else if (message.starts_with("SF_CAT_DEL:")) {
+        savedfreq::remove_category(string(message.substr(11)));
+        broadcast(savedfreq::message_json());
+    }
+    else if (message == "GET_SF") {
+        broadcast(savedfreq::message_json());   // a page connecting
     }
     // ✈ Array calibration from ADS-B aircraft (array_cal.hpp; array_cal.json, not
     // the settings file). Collecting is not remembered across restarts (the
