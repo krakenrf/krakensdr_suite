@@ -1791,14 +1791,18 @@ let mastVis = 0, mastBusy = false, mastErr = '', mastRetryAt = 0, mastBackoff = 
     mastRestored = false, mastSaveT = 0;
 const VS_RMAX_KM = 1000;   // largest radius (see 👁 VIEWSHED)
 // 👁 viewsheds (see 👁 VIEWSHED): settings + the list (localStorage
-// kraken_vs; tgt = the target height per mode, h / r = the antenna height /
-// radius new ones get), the results by item id, the worker and its job
+// kraken_vs; tgt = the target height - one value, above ground or above
+// sea level as `amsl` says (switching keeps the number) -, h / r = the
+// antenna height / radius new ones get), the results by item id, the worker
+// and its job
 const vsState = (() => {
-  const d = {tgt: {agl: 2, amsl: 3000}, amsl: false, k: 4 / 3, h: 10, r: 30, items: []};
+  const d = {tgt: 2, amsl: false, k: 4 / 3, h: 10, r: 30, items: []};
   try {
     const s = JSON.parse(localStorage.getItem('kraken_vs') || '{}'), num = (v, lo, hi, def) => v >= lo && v <= hi ? +v : def;
-    if (s.tgt) d.tgt = {agl: num(s.tgt.agl, 0, 30000, 2), amsl: num(s.tgt.amsl, 0, 30000, 3000)};
     d.amsl = !!s.amsl;
+    // (saved before as one per reference {agl, amsl}: the one that was shown)
+    const t = s.tgt && typeof s.tgt === 'object' ? s.tgt[d.amsl ? 'amsl' : 'agl'] : s.tgt;
+    if (typeof t === 'number') d.tgt = num(t, 0, 30000, d.tgt);
     d.k = num(s.k, 1, 2, d.k);
     d.h = num(s.h, 0, 5000, d.h);
     d.r = num(s.r, 1, VS_RMAX_KM, d.r);
@@ -12760,7 +12764,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         catch (e) { err = new Error('terrain tiles can\'t be loaded (no internet connection?)'); }
         if (r) {
           if (r.ok) {
-            t = await decodePng(await r.arrayBuffer());
+            t = {e: await decodePng(await r.arrayBuffer()), fix: null, nb: 0};
             tiles.set(key, t);
             return t;
           }
@@ -12777,6 +12781,58 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         if (tiles.size <= CACHE_MAX) break;
         if (!keep.has(key)) tiles.delete(key);
       }
+    }
+
+    // A tile's clean-up (despike) runs on the tile + PAD pixels of its 8
+    // neighbours - those in memory; where one isn't, the tile mirrored at
+    // that edge - with the tile's own cell size. PAD 16: on 133 cached
+    // tiles with all neighbours, incl. the Coromandel band, the same cells
+    // as despiking the 3x3 mosaic at once (8 left a band's edge - 220-340 m
+    // in the sea - that clears from the side over several passes). Kept as
+    // the cells it changed (t.fix) + which neighbours it had (t.nb, bit
+    // (v+1)*3 + u+1).
+    // So the terrain doesn't depend on where the observer is, and a moved
+    // point cleans only its new tiles and those that gained a neighbour
+    // (a 0.6 km move at 1000 km: 5 of ~190; 3 km: ~45) - it used to clean
+    // every ring's whole grid on every job. (The grids also held zeros
+    // inside each ring's hole, next to real terrain.)
+    const PAD = 16, BW = 256 + 2 * PAD, blk = new Float32Array(BW * BW);
+    function nbMask(z, x, y, has) {
+      const n = 2 ** z;
+      let m = 0;
+      for (let v = -1; v <= 1; v++) for (let u = -1; u <= 1; u++)
+        if ((u || v) && y + v >= 0 && y + v < n && has(z + '/' + (((x + u) % n + n) % n) + '/' + (y + v))) m |= 1 << ((v + 1) * 3 + u + 1);
+      return m;
+    }
+    function clean(z, x, y, t) {
+      const n = 2 ** z, e = t.e;
+      for (let v = -1; v <= 1; v++) for (let u = -1; u <= 1; u++) {
+        const nt = !(u || v) ? t : y + v >= 0 && y + v < n ? tiles.get(z + '/' + (((x + u) % n + n) % n) + '/' + (y + v)) : null;
+        const r0 = v < 0 ? 0 : v ? PAD + 256 : PAD, r1 = v < 0 ? PAD : v ? BW : PAD + 256;
+        const c0 = u < 0 ? 0 : u ? PAD + 256 : PAD, c1 = u < 0 ? PAD : u ? BW : PAD + 256;
+        for (let r = r0; r < r1; r++) {
+          const ty = r - PAD, row = r * BW;
+          if (nt) {
+            const src = (ty - v * 256) * 256 - PAD - u * 256;
+            for (let c = c0; c < c1; c++) blk[row + c] = nt.e[src + c];
+          } else {
+            const my = ty < 0 ? -ty : ty > 255 ? 510 - ty : ty;
+            for (let c = c0; c < c1; c++) {
+              const tx = c - PAD;
+              blk[row + c] = e[my * 256 + (tx < 0 ? -tx : tx > 255 ? 510 - tx : tx)];
+            }
+          }
+        }
+      }
+      const phi = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 0.5) / n)));
+      despike(blk, BW, 2 * Math.PI * RE / (256 * n) * Math.cos(phi));
+      const fi = [], fv = [];
+      for (let r = 0; r < 256; r++) for (let c = 0; c < 256; c++) {
+        const a = blk[(r + PAD) * BW + c + PAD];
+        if (a !== e[r * 256 + c]) { fi.push(r * 256 + c); fv.push(a); }
+      }
+      t.fix = {i: Int32Array.from(fi), v: Float32Array.from(fv)};
+      t.nb = nbMask(z, x, y, k => tiles.has(k));
     }
 
     // resampling spikes -> the median of the cells around (see above).
@@ -12943,8 +12999,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     // nRays rays at even start bearings (the same in every ring), each walked
     // from r0 - the finer ring covered the inside: hzIn carries the steepest
     // slope it saw, by bearing - in steps of 0.4 of the ring's smallest cell
-    // (on the sphere: one rotation per step; -> cell coordinates by longitude
-    // and Mercator latitude), terrain bilinear; each cell takes the sample
+    // (on the sphere: a rotation; -> cell coordinates by longitude and
+    // Mercator latitude - exactly every K = 8 steps, linear between: a great
+    // circle bends on the Mercator grid by at most 1 / radian, so over 8
+    // steps (<= 3.2 cells) it leaves the line by < 3.2^2 / 8 / (W / 2 pi)
+    // cells - 0.001 at zoom 5; that saves 7 of 8 atan2 + atanh, the bulk of
+    // the sweep's time), terrain bilinear; each cell takes the sample
     // nearest its centre (`best`). Cells are assigned to rExt (past r1: the
     // next, coarser ring's first cells overlap these - no gaps); the slope at
     // r1 is returned for the next ring. need[c] = the height a target needs
@@ -12958,6 +13018,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const sp = Math.sin(g.phi0), cp = Math.cos(g.phi0), sl = Math.sin(g.lam0), cl = Math.cos(g.lam0);
       const k2 = g.W / (2 * Math.PI), xo = g.ox - g.gx0 - 0.5, yo = g.oy - g.gy0 - 0.5, psi0 = Math.atanh(sp);
       const ds = 0.4 * g.cellMin, cd = Math.cos(ds / RE), sd = Math.sin(ds / RE);
+      const K = 8, cK = Math.cos(K * ds / RE), sK = Math.sin(K * ds / RE);
+      // cell coordinates of a point on the sphere (longitude wrapped around the observer's)
+      const gx = (px, py) => {
+        let dl = Math.atan2(py, px) - g.lam0;
+        if (dl > Math.PI) dl -= 2 * Math.PI; else if (dl < -Math.PI) dl += 2 * Math.PI;
+        return xo + dl * k2;
+      };
+      const gy = pz => yo - (Math.atanh(pz) - psi0) * k2;
       const hzAng = new Float64Array(nRays), hzS = new Float64Array(nRays);
       // the slope carried in from the finer ring at bearing th (linear between its rays)
       const carried = th => {
@@ -12977,25 +13045,38 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         const ca = Math.cos(s / RE), sa = Math.sin(s / RE);
         let px = cp * cl * ca + tx * sa, py = cp * sl * ca + ty * sa, pz = sp * ca + tz * sa;
         let qx = tx * ca - cp * cl * sa, qy = ty * ca - cp * sl * sa, qz = tz * ca - sp * sa;
-        let smax = carried(beta), hz = null;
-        for (;; s += ds) {
-          if (s > g.r1 && hz === null) hz = smax;
-          if (s > g.rExt) break;
-          let dl = Math.atan2(py, px) - g.lam0;
-          if (dl > Math.PI) dl -= 2 * Math.PI; else if (dl < -Math.PI) dl += 2 * Math.PI;
-          const x = xo + dl * k2, y = yo - (Math.atanh(pz) - psi0) * k2;
-          if (!(x >= 0 && y >= 0 && x < B && y < B)) break;
-          const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0, i0 = y0 * N + x0;
-          const gr = (dem[i0] * (1 - fx) + dem[i0 + 1] * fx) * (1 - fy) + (dem[i0 + N] * (1 - fx) + dem[i0 + N + 1] * fx) * fy;
-          const e = gr - s * s * curv;
-          const ex = fx < 0.5 ? fx : 1 - fx, ey = fy < 0.5 ? fy : 1 - fy;   // to the nearest cell centre
-          const c = (fy < 0.5 ? y0 : y0 + 1) * N + (fx < 0.5 ? x0 : x0 + 1), q = Math.round((ex * ex + ey * ey) * 500);
-          if (q <= best[c]) { best[c] = q; need[c] = enc(smax * s + eye - e); ground[c] = Math.round(gr); }
-          const sv = (e - eye) / s;
-          if (sv > smax) smax = sv;
-          const nx = px * cd + qx * sd, ny = py * cd + qy * sd, nz = pz * cd + qz * sd;
-          qx = qx * cd - px * sd; qy = qy * cd - py * sd; qz = qz * cd - pz * sd;
-          px = nx; py = ny; pz = nz;
+        let smax = carried(beta), hz = null, xa = gx(px, py), ya = gy(pz);
+        walk: for (;;) {
+          // the point K steps on (n, its heading m), exactly; the steps
+          // between on the line to it - or, where that jumps (across the
+          // longitude wrap, a pole), each one exactly from p, q
+          const nx = px * cK + qx * sK, ny = py * cK + qy * sK, nz = pz * cK + qz * sK;
+          const mx = qx * cK - px * sK, my = qy * cK - py * sK, mz = qz * cK - pz * sK;
+          const xb = gx(nx, ny), yb = gy(nz), lin = Math.abs(xb - xa) <= K && Math.abs(yb - ya) <= K;
+          const dx = (xb - xa) / K, dy = (yb - ya) / K;
+          for (let i = 0; i < K; i++, s += ds) {
+            if (s > g.r1 && hz === null) hz = smax;
+            if (s > g.rExt) break walk;
+            let x, y;
+            if (lin) { x = xa + dx * i; y = ya + dy * i; }
+            else {
+              x = gx(px, py); y = gy(pz);
+              const ux = px * cd + qx * sd, uy = py * cd + qy * sd, uz = pz * cd + qz * sd;
+              qx = qx * cd - px * sd; qy = qy * cd - py * sd; qz = qz * cd - pz * sd;
+              px = ux; py = uy; pz = uz;
+            }
+            if (!(x >= 0 && y >= 0 && x < B && y < B)) break walk;
+            const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0, i0 = y0 * N + x0;
+            const gr = (dem[i0] * (1 - fx) + dem[i0 + 1] * fx) * (1 - fy) + (dem[i0 + N] * (1 - fx) + dem[i0 + N + 1] * fx) * fy;
+            const e = gr - s * s * curv;
+            const ex = fx < 0.5 ? fx : 1 - fx, ey = fy < 0.5 ? fy : 1 - fy;   // to the nearest cell centre
+            const c = (fy < 0.5 ? y0 : y0 + 1) * N + (fx < 0.5 ? x0 : x0 + 1), q = Math.round((ex * ex + ey * ey) * 500);
+            if (q <= best[c]) { best[c] = q; need[c] = enc(smax * s + eye - e); ground[c] = Math.round(gr); }
+            const sv = (e - eye) / s;
+            if (sv > smax) smax = sv;
+          }
+          px = nx; py = ny; pz = nz; qx = mx; qy = my; qz = mz;
+          xa = xb; ya = yb;
         }
         hzAng[k] = beta;
         hzS[k] = hz === null ? smax : hz;
@@ -13041,10 +13122,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const tkey = (g, tx, ty) => g.z + '/' + (((tx % g.n) + g.n) % g.n) + '/' + ty;
       const want = [];
       for (const g of rings) for (const [tx, ty] of g.list) {
-        const key = tkey(g, tx, ty);
+        const key = tkey(g, tx, ty), t = tiles.get(key);
         if (keep.has(key)) continue;
         keep.add(key);
-        if (!tiles.has(key)) want.push(key);
+        if (!t) want.push(key);
+        else { tiles.delete(key); tiles.set(key, t); }   // (most recently used last: trim() goes oldest first)
       }
       let next = 0, done = 0, failed = false;
       const load = async () => {
@@ -13056,21 +13138,40 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       };
       await Promise.all(Array.from({length: Math.min(6, want.length)}, load));
       self.postMessage({job: m.job, prog: 'compute'});
+      // the clean-up of the tiles without one that had every neighbour of this job
+      let cleaned = 0, tb = Date.now();
+      for (const key of keep) {
+        const t = tiles.get(key), [z, x, y] = key.split('/').map(Number);
+        if (t.fix && !(nbMask(z, x, y, k => keep.has(k)) & ~t.nb)) continue;
+        if (Date.now() - tb > 100) {   // (a break for a cancel)
+          await new Promise(res => setTimeout(res, 0));
+          if (cancelled.has(m.job)) throw new Error('cancelled');
+          tb = Date.now();
+        }
+        clean(z, x, y, t);
+        cleaned++;
+      }
       const levels = [], transfer = [];
       let hz = null, gnd = 0, eye = 0, spikes = 0;
+      for (const key of keep) spikes += tiles.get(key).fix.i.length;
       for (const g of rings) {
         await new Promise(res => setTimeout(res, 0));
         if (cancelled.has(m.job)) throw new Error('cancelled');
         const N = g.N, dem = new Float32Array(N * N);
         for (const [tx, ty] of g.list) {
-          const t = await tile(g.z, ((tx % g.n) + g.n) % g.n, ty, m.job);   // (in memory: loaded above)
+          const t = tiles.get(tkey(g, tx, ty)), e = t.e;   // (in memory: loaded above)
           const x0 = Math.max(g.gx0, tx * 256), x1 = Math.min(g.gx0 + N, tx * 256 + 256);
-          for (let y = Math.max(g.gy0, ty * 256); y < Math.min(g.gy0 + N, ty * 256 + 256); y++) {
+          const y0 = Math.max(g.gy0, ty * 256), y1 = Math.min(g.gy0 + N, ty * 256 + 256);
+          for (let y = y0; y < y1; y++) {
             const src = (y - ty * 256) * 256 - tx * 256, dst = (y - g.gy0) * N - g.gx0;
-            for (let x = x0; x < x1; x++) dem[dst + x] = t[src + x];
+            for (let x = x0; x < x1; x++) dem[dst + x] = e[src + x];
+          }
+          const {i: fi, v: fv} = t.fix;
+          for (let f = 0; f < fi.length; f++) {
+            const x = tx * 256 + (fi[f] & 255), y = ty * 256 + (fi[f] >> 8);
+            if (x >= x0 && x < x1 && y >= y0 && y < y1) dem[(y - g.gy0) * N + x - g.gx0] = fv[f];
           }
         }
-        spikes += despike(dem, N, g.cell);
         for (let i = 0; i < dem.length; i++) if (!(dem[i] > 0)) dem[i] = 0;   // the sea (and below sea level)
         const cx = g.ox - g.gx0 - 0.5, cy = g.oy - g.gy0 - 0.5;
         if (!hz) { gnd = bilinear(dem, N, cx, cy); eye = gnd + m.h; }   // from the finest terrain
@@ -13083,10 +13184,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         transfer.push(need.buffer, ground.buffer);
       }
       cancelled.delete(m.job);
-      self.postMessage({job: m.job, levels, gnd, eye, mpp: rings[0].cell, tiles: total, loaded: want.length, spikes,
+      self.postMessage({job: m.job, levels, gnd, eye, mpp: rings[0].cell, tiles: total, loaded: want.length, cleaned, spikes,
                         ms: Date.now() - t0}, transfer);
     }
-    self.vsTest = {decodePng, despike, sweep, run, ringGrid, tiles};   // offline tests (node)
+    self.vsTest = {decodePng, despike, sweep, run, ringGrid, tiles, clean, PAD};   // offline tests (node)
   }
   // (end of vsWorkerMain)
 
@@ -13096,7 +13197,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function vsSave() { try { localStorage.setItem('kraken_vs', JSON.stringify(vsState)); } catch (e) {} }
   function vsGet(id) { return vsState.items.find(i => i.id === id) || null; }
   function vsKey(it) { return `${it.lat},${it.lon},${it.h},${it.r},${vsState.k}`; }
-  function vsTgt() { return vsState.amsl ? vsState.tgt.amsl : vsState.tgt.agl; }
+  function vsTgt() { return vsState.tgt; }
   // the rings (see above): [{z, r0, r1}] from the antenna out to rM, each
   // as far as its grid stays within VS_NMAX cells a side (as run() sizes it:
   // the radius in cells at the poleward edge + margins)
@@ -13445,7 +13546,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function vsSetTgt(val) {
     const v = Number(val);
     if (Number.isFinite(v) && v >= 0 && v <= 30000) {
-      vsState.tgt[vsState.amsl ? 'amsl' : 'agl'] = Math.round(v * 10) / 10;
+      vsState.tgt = Math.round(v * 10) / 10;
       vsSave();
     }
     vsRepaint();

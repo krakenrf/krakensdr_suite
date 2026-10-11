@@ -812,18 +812,20 @@ Edit `include/config.hpp`:
   scope runs there; `self.vsTest` exposes its functions to node tests):
   one job at a time. A job first loads the tiles it doesn't hold in memory
   (6 at a time; the progress counts only those - "loading terrain k/n",
-  then "computing"), then computes ring by ring. Decoded tiles stay in
-  memory (`CACHE_MAX` 256 = 64 MB, Float32; trimmed oldest-first after
-  each job, never the tiles that job used): a moved point or a changed
-  height / k loads only the tiles it hasn't got (a 3 km move at 1000 km:
-  16-21 of ~200). It was an LRU of 80 - smaller than one 300 / 1000 km
+  then "computing"), then cleans the tiles that need it (below), then
+  computes ring by ring. Decoded tiles stay in memory (`CACHE_MAX` 256 =
+  64 MB, Float32, each with its clean-up's fixes; a job marks its tiles
+  used, and after it the least recently used go first, never the tiles
+  that job used): a moved point or a
+  changed height / k loads only the tiles it hasn't got (a 3 km move at
+  1000 km: 16-21 of ~200). It was an LRU of 80 - smaller than one 300 / 1000 km
   job (150-200 tiles) read in the same order every time, so it never hit
   and every update decoded everything again (~2.3 s at 1000 km; the
   download itself was always the browser's HTTP cache). `{cancel: job}`
   stops one while loading (between tiles) or between rings: a
-  `setTimeout(0)` before each ring lets the message in - with every tile
-  in memory nothing else waits, so a dragged point's stale job would run
-  to its end
+  `setTimeout(0)` before each ring (and every 0.1 s of cleaning) lets the
+  message in - with every tile in memory nothing else waits, so a dragged
+  point's stale job would run to its end
 - RINGS (`vsPlan`, the job's `levels: [{z, r0, r1}]`): zoom `VS_ZFINE` 14
   around the antenna (~8 m cells at 37 deg, to ~3.8 km), each next ring one
   zoom coarser (`VS_ZSTEP` 1) out to about twice the distance, each grid
@@ -850,13 +852,16 @@ Edit `include/config.hpp`:
   33 m, none
 - Cost: 30 km = 90 tiles, 7.6 MB (Denver 8.7), 300 km = 171 tiles, 15 MB,
   1000 km = 194 tiles, 16.8 MB; the first download ~6-15 s. Compute (Pi 5,
-  node, tiles in memory) at Auckland 2.1 / 4.1 / 5.1 s for 30 / 300 / 1000
-  km - the sweep 1.6 / 2.8 / 3.5 s of it (great circles: an atan2 + atanh
-  per step - ~1.5-2 s more than the straight rays were), the clean-up the
-  rest; in mountains the clean-up takes longer (1000 km: Dolomites 8.0 s,
-  4.3 of it clean-up). A point moved 3 km at 1000 km: 16-21 new tiles,
-  4.8-8.6 s at 5 places (before the tile memory and the faster clean-up
-  9-28 s: every tile decoded again, every clean-up pass a full scan)
+  node, Auckland) for 30 / 300 / 1000 km: the first time (tiles decoded +
+  cleaned) 2.2 / 4.9 / 5.9 s, again (same place, new height / k) 1.1 /
+  1.8 / 2.1 s - the sweep 0.9 / 1.5 / 1.8 s of it. Mountains clean longer
+  the first time (Dolomites 1000 km: 9.6 s, 5.9 of it the clean-up of 189
+  tiles; again 2.2 s). A point moved at 1000 km (5 places, downloads
+  cached): 3 km 2.3-2.5 s, 0.5 km 1.9-2.2 s. History: 9-28 s before the
+  tile memory and the faster passes (every tile decoded again, every pass
+  a full scan), then 4.8-8.6 s, then ~5-11 s -> 2-2.5 s with the
+  interpolated sweep + per-tile clean-up (t_cmp.mjs; the first run in
+  mountains ~5-10 % slower than cleaning the grids: whole tiles + edges)
 - Terrain clean-up (`despike(raw, N, cellM)`, then <= 0 m -> 0 - the tiles
   hold the sea FLOOR; land below sea level also becomes 0, Dead Sea /
   Caspian basins are wrong). The tiles have resampling artefacts where
@@ -879,13 +884,28 @@ Edit `include/config.hpp`:
   Capitan, Dolomites, Dead Sea is touched; what goes is the band, coast
   artefacts (982-1314 m "peaks" around Auckland, max real ~700 m) and
   seams. Tiny islets / sea stacks of 1-3 cells at fine zooms can go too.
-  Speed (results unchanged, checked cell for cell against the previous
-  code at 5 places x 1000 km): the passes after the first test only the
+  Run PER TILE (`clean(z, x, y, t)`): the tile + `PAD` 16 pixels of its 8
+  neighbours (those in memory; a missing one = the tile mirrored at that
+  edge), the tile's own latitude for the cell size; kept as the cells it
+  changed (`t.fix` {i, v}) and the neighbours it had (`t.nb`, bit (v+1)*3
+  + u+1). A job cleans a tile only when it has no fixes yet or a neighbour
+  that is in this job wasn't there then (`nbMask`): a 0.6 km move at 1000
+  km cleans ~5 tiles, 3 km ~45 (16 new + those next to them), the same
+  place again none. The rings are put together from raw tiles + fixes.
+  Checked (t_worker 7): 133 cached tiles with all neighbours, incl. the
+  Coromandel band, give exactly the cells of despiking their 3x3 mosaic at
+  once (PAD 8 left 220-340 m of a band's edge in the sea: a band clears
+  from the side over several passes); with a neighbour missing, the cells
+  > 2 PAD from that edge are unchanged; at 5 places x 1000 km the terrain
+  the rays use is identical to cleaning each ring's grid (what it did
+  before: every job, every grid - and the grids held zeros inside each
+  ring's hole, so cells next to it were "fixed" too: the most of the
+  Dolomites' 120 / Colorado's 324 spikes, all in cells no ray reads).
+  Faster passes (same result): the passes after the first test only the
   cells a fix of the pass before can reach (the 5x5 around it, +-6 along
   its row and column) - each pass was a full scan, and in mountains a
   few cells keep changing for 5-7 passes (Dolomites 1000 km: 12.4 s ->
-  4.3 s); the MAD is only worked out when the test gets that far. The
-  first pass stays (~1.2 s Auckland, ~4 s Dolomites at 1000 km)
+  4.3 s); the MAD is only worked out when the test gets that far
 - Sweep of one ring along GREAT CIRCLES (the path a line of sight takes).
   The first versions stepped straight lines on the map (R2) = rhumb lines:
   at 300 km their start bearing is ~0.7 deg off the great circle's to the
@@ -894,9 +914,15 @@ Edit `include/config.hpp`:
   along the rhumb line, 11762 m along the great circle). `nRays` rays at
   even start bearings (<= 0.8 cell apart at the ring's edge), each walked
   from r0 in steps of 0.4 of the ring's smallest cell: the position on the
-  sphere is one rotation per step (p, q unit vectors; no drift over 3000
-  steps), -> cell coordinates by atan2 longitude (wrapped around the
-  observer's - the antimeridian) and atanh Mercator latitude; terrain
+  sphere by rotation (p, q unit vectors; no drift over 3000 steps), -> cell
+  coordinates by atan2 longitude (wrapped around the observer's - the
+  antimeridian) and atanh Mercator latitude - exactly every K = 8 steps,
+  linear between (a great circle bends on the Mercator grid by <= 1 /
+  radian, so over 8 steps, <= 3.2 cells, it leaves the line by < 0.001
+  cell at zoom 5; a jump - the longitude wrap, a pole - falls back to
+  every step exactly). The two transcendentals were most of the sweep:
+  3.5 -> 1.8 s at 1000 km; vs every step exact, 0.014 % of the cells'
+  `need` moved > 1 m and none changed in sight at 2 m - 10 km; terrain
   bilinear; each cell takes the sample nearest its centre (`best`, u8 of
   the squared offset); a cell no sample landed in (>= 3 of 4 neighbours
   have one) takes their mean. Distance = the exact great-circle distance.
@@ -907,8 +933,11 @@ Edit `include/config.hpp`:
   `ground` (i16 m, the ray's interpolated ground) - so the target height,
   above ground (`need <= t`) or above sea level (`ground + need <= t`,
   aircraft), repaints at once (`vsPaint`) without recomputing
-- Page: `vsState` (globals block; localStorage `kraken_vs`: tgt {agl 2,
-  amsl 3000}, amsl, k, h / r = what new ones get (the last used), items
+- Page: `vsState` (globals block; localStorage `kraken_vs`: tgt = ONE
+  target height (default 2 m) that `amsl` reads as above ground or above
+  sea level - switching keeps the number (it was a value per reference, so
+  the box jumped to another number; an old {agl, amsl} pair loads as the
+  one that was shown), amsl, k, h / r = what new ones get (the last used), items
   [{id, name, lat, lon, h, r, col, on, st = the station, mk = from a
   marker}] - rebuilt field by field on load, a damaged entry is dropped),
   `vsRes` (results by item, key = lat, lon, h, r, k; `levels` = the rings,
@@ -953,9 +982,14 @@ Edit `include/config.hpp`:
   HTTP 404 / garbage tile / cancel; tiles in memory (same place again: 0
   fetches, same result; a 2 km move loads 13 of 154; a cancel while
   computing stops the job after the ring it is in; trimmed to CACHE_MAX
-  keeping the last job's tiles). t_equiv.mjs <old copy of the page>: old
-  vs new worker on real terrain - every cell's terrain, need and ground
-  equal - and the time again / after a move. ref_rays.py (great circles; z10 past
+  keeping the last job's tiles; least recently used dropped first - 30 km
+  jobs A, B, C, A, D: A still all in memory); per-tile clean-up = the 3x3
+  mosaic's (above). t_pole.mjs: 84 N / 83 S at 1000 km - ~0.1 % of the
+  sweep's 8-step chunks fall back to exact steps (past a pole), no odd
+  values. t_cmp.mjs <old copy of the page>: old vs new worker on real
+  terrain at 5 places (terrain / need differences, in-sight flips at 2 m
+  - 10 km) and the time first / again / after moves (t_equiv.mjs: the
+  same, for changes that must be exact). ref_rays.py (great circles; z10 past
   400 km) + dump_run.mjs + compare.py: at the user's station, 8 bearings x
   11 distances to 995 km, mean error 1 / 6 / 22 / 107 m (0-30 / 30-120 /
   120-400 / 400-1000 km; out there 14-93 km are needed and a 3.9 km cell

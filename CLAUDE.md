@@ -511,9 +511,11 @@ decoders `kraken_doa_v2/plugins/`
   m cells around the antenna, coarser with distance; each ray carries its
   horizon outwards - one coarse grid lost the hills next to the antenna), Earth
   curvature, the tiles' artefacts removed (incl. a band of up-to-32 km
-  "terrain" in the sea north of the Coromandel), decoded tiles kept in
-  the worker (256: a moved point / new height loads only the tiles it
-  hasn't got), up to 6 at once in their own colours, per browser
+  "terrain" in the sea north of the Coromandel - cleaned per tile with
+  its neighbours' edges, so it doesn't depend on the observer), decoded +
+  cleaned tiles kept in the worker (256: a moved point / new height loads
+  and cleans only the tiles it hasn't got - ~2 s per update at 1000 km on
+  a Pi 5), up to 6 at once in their own colours, per browser
   (localStorage). UI-only (kraken_doa.html "👁
   VIEWSHED")
 - Incident map: text messages from plugins (`kp::Host::message`, POCSAG
