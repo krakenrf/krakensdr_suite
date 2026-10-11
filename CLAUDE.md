@@ -518,18 +518,20 @@ decoders `kraken_doa_v2/plugins/`
   a Pi 5), up to 6 at once in their own colours, per browser
   (localStorage). UI-only (kraken_doa.html "👁
   VIEWSHED")
-- 📶 Path loss ("Path loss" button, right-click "Path loss to / from here",
-  markers, masts): how much signal gets over the terrain, also WITHOUT line
-  of sight. A LINK (two draggable ends, the far one above ground or sea
-  level): the great-circle terrain profile through ITU-R P.1812-6 (delta-
-  Bullington diffraction + troposcatter, median, no ducting), NTIA's ITM /
-  Longley-Rice (a JS port of the public-domain C++), free space and
-  Okumura-Hata, drawn as a profile + link budget in a strip at the bottom of
-  the map; COVERAGE: "Signal on the viewsheds" makes each viewshed compute
-  P.1812 to every cell on its own rays (`plSweep`: the whole profile per
-  ray via convex hulls, O(log n) per cell, EXACTLY P.1812 on the sampled
-  profile) and paint the margin over the need. Channel: ITU-R P.2108
-  clutter at the ends (3.1 terrestrial, 3.3 air-to-ground by elevation),
+- 📶 Path loss ("Path loss" button - the viewshed OR path loss, the buttons
+  switch each other off; right-click "📶 TX here" / "📶 RX here", markers,
+  masts): how much signal gets from a TX to an RX over the terrain, also
+  WITHOUT line of sight; either end can be in the air (height above sea
+  level). COVERAGE around the TX (radius, RX height): P.1812 to every cell
+  on viewshed-style rays (`plSweep` on the viewshed worker, idle in this
+  mode: the whole profile per ray via convex hulls, O(log n) per cell,
+  EXACTLY P.1812 on the sampled profile), painted as the margin over the
+  need. LINK TX -> RX: the great-circle terrain profile through ITU-R
+  P.1812-6 (delta-Bullington diffraction + troposcatter, median, no
+  ducting), NTIA's ITM / Longley-Rice (a JS port of the public-domain C++),
+  free space and Okumura-Hata, drawn as a profile + link budget in a strip
+  at the bottom of the map. Channel: ITU-R P.2108 clutter at the ends (3.1
+  both on the ground, 3.3 air-to-ground at the ground end by elevation),
   P.1546 location variability + Rician / Rayleigh fading -> the margin a
   reliability needs. Validated against NTIA's ITM cases + C++, the ITU-R SG3
   P.1812 logs and P.2108's table: `kraken_doa_v2/tools/pathloss_validate.mjs`.

@@ -1002,11 +1002,16 @@ Edit `include/config.hpp`:
   a 30 km balloon in sight to ~590-700 km)
 
 **📶 Path loss (UI only, kraken_doa.html "📶 PATH LOSS"; the engine lives in the viewshed worker):**
-- How much signal gets over the terrain, also WITHOUT line of sight, for a
-  LINK between two points and as COVERAGE on the viewsheds. The user's
-  reference (github.com/mariohm1311/DroneRanger, no licence: ideas only)
-  has free space + a line-of-sight check only; the NLOS physics comes from
-  the ITU-R Recommendations and NTIA's ITM
+- How much signal gets from a transmitter (TX) to a receiver (RX) over the
+  terrain, also WITHOUT line of sight: COVERAGE around the TX and the LINK
+  TX -> RX. A map MODE of its own: the viewshed OR path loss (the buttons
+  switch each other off - the user's call: a viewshed from the station next
+  to a path loss TX elsewhere made no sense; the first version painted the
+  signal onto the viewsheds). Either end can be in the air (its height above
+  sea level: aircraft, balloons, drones - the aircraft is often the TX for a
+  KrakenSDR). The user's reference (github.com/mariohm1311/DroneRanger, no
+  licence: ideas only) has free space + a line-of-sight check only; the NLOS
+  physics comes from the ITU-R Recommendations and NTIA's ITM
 - Engine (vsWorkerMain; `self.vsTest` exports it for node):
   - ITM / Longley-Rice: `itmP2P(pfl, htx, hrx, {climate, N0, f, pol, eps,
     sigma, mdvar, time, loc, sit})` = NTIA ITM 1.3 (C++, = ITM 1.2.2),
@@ -1040,7 +1045,8 @@ Edit `include/config.hpp`:
     within 2e-6 dB. Used below its 0.5 GHz floor too
   - `hataLoss(f MHz, d km, hb, hm, env)`: Okumura-Hata / COST-231 (medium
     city, 'large', 'suburban', 'open') - a comparison row only
-- LINK (`runLink`, message `m.link`): the great circle A -> B (slerp)
+- LINK (`runLink`, message `m.link`: a = the TX, b = the RX, each {lat,
+  lon, h, amsl}): the great circle A -> B (slerp)
   sampled every cell of the finest zoom <= 14 that keeps it to `PL_NMAX`
   4000 points (30 km: z14 8 m; 300 km: ~z11; 1000 km: ~z9), bilinear on the
   job's tiles cleaned as a viewshed's (missing neighbours mirrored), the ends
@@ -1048,16 +1054,21 @@ Edit `include/config.hpp`:
   coverage, so the two agree), ITM median (mdvar 12, 50 / 50 / 50) and at the
   reliability (mobile mode 2: time = location = rel, situation 50), free
   space (slant), Hata (the higher end = base; the lower end's clutter type
-  -> its environment); clutter: B above sea level (an aircraft) -> 3.3 at A
-  by the direct ray's elevation (hm from A's type: 8 suburban / 15 urban /
-  25 dense, none for water / open), else 3.1 at both ends. Also the
+  -> its environment); clutter: one end above sea level (in the air) -> 3.3
+  at the OTHER end by the direct ray's elevation there (hm from its type: 8
+  suburban / 15 urban / 25 dense, none for water / open), both on the
+  ground -> 3.1 at both, both in the air -> none (checked: the same path
+  both ways round = the same P.1812 loss, the clutter moved). Also the
   elevation at each end, the least first-Fresnel clearance and where, the
   Bullington edge (dbp km, hbp m incl. the Earth bulge) and the profile
   (Float32 d km, h m) for the chart. Its OWN worker instance (`plWorker`,
   the same code: a link must not wait behind a coverage job; one job at a
   time, a newer link cancels the running one)
-- COVERAGE (`runSignal` + `plSweep`, `m.sig` = {f, tgt, amsl, pol, N0,
-  envTx, envRx, hmTx}): every ring's terrain at once (~4 MB each, 10 rings
+- COVERAGE (`runSignal` + `plSweep`: a viewshed job with `m.sig` = {f, tgt
+  (the receivers' height), amsl, pol, N0, envTx, envRx, hmTx, hmRx}; the
+  TX's `m.h` above its ground, or above sea level with `m.amsl`; run on the
+  VIEWSHED worker - idle in this mode, and its terrain tiles are reused):
+  every ring's terrain at once (~4 MB each, 10 rings
   at 1000 km), the rays of sweep() but RAY-MAJOR through all the rings, each
   ring from where the previous ended to its rExt (the coarser ring's cells
   there stay empty, under the finer ones). Each ray carries the upper
@@ -1074,16 +1085,18 @@ Edit `include/config.hpp`:
   foreground): hull candidates alone were up to 10 dB off. The profile =
   every 2nd sample (0.8 cell; the terrain is no finer). Two passes: 1 finds
   each cell's sample (nearest its centre, as sweep), 2 evaluates P.1812
-  once per cell + the clutter (3.1 fixed per job; 3.3 per cell by
-  elevation). Per ring `loss` (u16, 0.1 dB; 65535 = the target under the
-  ground) + `need` / `ground` as sweep's, so a signal result also serves
-  the line of sight. Spherical-Earth constants hoisted (`seConst`), one
+  once per cell + the clutter (both on the ground: 3.1, fixed per job; the
+  RX in the air: 3.3 at the TX by the elevation there; the TX in the air:
+  3.3 at the RX). Per ring `loss` (u16, 0.1 dB; 65535 = the receiver under
+  the ground) + `need` / `ground` as sweep's (in sight or not picks the
+  fading). Spherical-Earth constants hoisted (`seConst`), one
   polarization, one ground when omega is 0 / 1. Progress `['sig', %]`
-  (row: "signal N %…"), a break for a cancel every 0.25 s
+  (status: "signal N %…"), a break for a cancel every 0.25 s
   Checked (tools/pathloss_validate.mjs; scratch t_cov.mjs): the loss at
   every recorded ray sample = `p1812P2P(flag4)` on that ray's profile prefix
   within 1e-11 dB (Auckland, Zermatt, the Coromandel coast, a synthetic
-  coast; targets above ground / sea level, clutter, both polarizations); a
+  coast; receivers above ground / sea level, a TX in the air, clutter, both
+  polarizations); a
   link to a cell's centre vs the cell: median 0.04-0.1 dB, p90 0.3-1.3 dB -
   single cells up to ~16 dB apart at shores / ridges (the coverage's outer
   rings use coarser terrain: 30 m at 15 km). Time (node on the Pi 5, tiles
@@ -1093,13 +1106,18 @@ Edit `include/config.hpp`:
   field): f MHz, ptx W, gt / gr dBi, lt / lr dB, bw kHz, nf, snr (->
   sensitivity = -174 + 10 log BW + NF + SNR), model (p1812 | itm | fs |
   hata; the coverage is always P.1812), pol, N0 (301: troposcatter + ITM),
-  climate + ground (ITM, `PL_GROUNDS`), envA / envB (P.2108 types,
+  climate + ground (ITM, `PL_GROUNDS`), envTx / envRx (P.2108 types,
   `PL_ENVS`), fade (auto = Rician K in sight / Rayleigh beyond | rician |
   rayleigh | none), K dB, rel %, sigL (null = P.1546-6 (12): K + 1.3 log f,
-  K 0.5 open, 1.0 an antenna up near the clutter, 1.2 one in it), sig (the
-  coverage), open / set / prof (folds), a / b {lat, lon, h, amsl (b only),
-  name, st (follows the station), mk}. Worker-relevant fields -> `plKey()`
-  (a new job when it changes); the rest only repaints
+  K 0.5 open / an RX in the air, 1.0 an antenna up near the clutter, 1.2
+  one in it), txh / rxh + txAmsl / rxAmsl (the ends' antenna heights - the
+  RX height is also the coverage's receivers'; into the air < 200 m becomes
+  3000, back on the ground > 1000 m the usual 10 / 2), cov + r km (the
+  coverage), open / set / prof (folds), tx / rx {lat, lon, name, st
+  (follows the station), mk}. What each setting redoes: `PL_REDO` (L the
+  link - `plKey()`, C the coverage - `plCovKey()`; the rest repaints:
+  `plRepaint`). `vsState.k` (the viewshed's refraction) is shared: the
+  panel has its own selector, `vsSetK` calls `plKChanged`
 - Reliability: `plOutage(m, sigma, kind, K)` = integral of phi(z)
   F_fade(10^((sigma z - m) / 10)) over +-6 sigma (121-point trapezoid; the
   Rician power CDF by Simpson over the envelope pdf with I0e - A&S 9.8.1 /
@@ -1108,43 +1126,73 @@ Edit `include/config.hpp`:
   (Rayleigh 90 % = 9.773 dB, lognormal 1.2816 / 2.3263 sigma) and Monte
   Carlo (Rayleigh / Rician 6 dB with sigma ~4 dB: 10.03 +- 0.02 % outage at
   the 90 % margin)
-- UI: panel `#map-pl` (.map-vs styles, under the viewshed's in .map-tl:
-  Freq + Tx always shown, the rest folded under "Antennas, receiver, model,
-  channel"; "Signal on the viewsheds" + legend; the link in one line),
-  strip `#map-plk` at the bottom of the map (`.map-pane.pl-open` lifts the
-  DF panel, the marker panel and the status line): the ends' heights (B
-  above ground / sea level), the path, the four models (a row click = the
-  budget's model), clutter, received (dBm, µV), margin + reliability, ITM at
-  the reliability, terrain zoom / tiles / ms; the profile canvas (terrain +
-  the Earth bulge over the chord, direct ray, F1 + 0.6 F1, Bullington's
-  construction, sea blue; under the pointer: distance / ground / clearance,
-  and a dot on the map). On the map (`plDraw`, after the rings, before the
-  markers): the great circle coloured by the margin over the need
-  (`PL_BANDS`; dashed while computing), A / B dots (none for A at the
-  station: its mast selects the station), the edge ▲. Ends are selected and
-  dragged like viewshed points (`mapSelectObj('pl:a' | 'pl:b')`, drag kind
-  'pl', a 0.15 s pause recomputes); the station end follows the station
-  (`plFollowStation` from vsFollowStation). Right-click menu "📶 Path loss
-  to / from here" (`plAt`; the first far end starts at the station),
-  marker "📶 Path loss to …", 📶 buttons in the marker panel and mast popup
-- Coverage on the viewsheds: `vsKey` adds `plSigMsg()` while the signal is
-  on (frequency / polarization / N0 / clutter / target height / reference
-  -> a new job); `vsResOk` lets a signal result serve the line of sight;
-  `vsPaint` paints `PL_BANDS` by the margin over the need (in sight: the
-  Rician need, else Rayleigh; the -10..0 dB band at half alpha; layer alpha
-  0.55); the row says "% covered"; the hover line adds dBm, the margin and
-  the loss; power / gains / receiver / fading / reliability only repaint
+- MODE: `mapState.pl` (the panel + everything on the map). `plToggle` on
+  turns the viewshed off (`mapState.vs`, its running job cancelled) and,
+  the first time, puts the TX at the station; `vsToggle` / `vsAdd` (also
+  right-click "Viewshed from here") call `plModeOff` (the coverage job
+  cancelled; TX / RX / results kept for the way back); "📶 TX / RX here"
+  switches back (`plEnsureOn`). Both on from an older saved view -> path
+  loss off. The viewshed code only has hooks: `vsOnWorker` hands the
+  coverage job's replies to `plOnCov` (the same worker, job ids from
+  `vsSeq`), its onerror fails `plCovJob`, `vsHover` calls
+  `plHoverRender`, `vsFollowStation` calls `plFollowStation`, `vsSetK`
+  calls `plKChanged`
+- The ends: right-click "📶 TX here" / "📶 RX here" (`plAt`), markers
+  ("📶 TX / RX at …", 📶 TX / RX buttons in the marker panel), OSM masts
+  (📶 TX / RX in the popup: the antenna at the mast's height), the 📡
+  button of a TX / RX row (`plStationAs`: the station - was it the other
+  end, they swap). Placing one end while the other is missing puts that at
+  the station ("TX here" -> would the station hear it?). Selected + dragged
+  like viewshed points (`mapSelectObj('pl:tx' | 'pl:rx')`, drag kind 'pl':
+  the link recomputes after a 0.15 s pause, the coverage only on release -
+  `plCovPump` skips while an end is dragged); an end at the station (st)
+  follows it (`plFollowStation`; the TX with a GPS source at most every 30
+  s), and has no dot of its own - a TX / RX tag beside the mast, which
+  selects the station. ⇄ (`plSwap`) trades the places with what belongs to
+  them (antenna heights + reference, gains, cables, clutter; the power and
+  the receiver stay); ✕ (`plRemoveRx`) removes the RX - the coverage stays
+- COVERAGE page side: `plCovPump` (key `plCovKey()`: TX place + height +
+  reference, radius, k, f, pol, N0, clutter, the RX height + reference) ->
+  `plCovJob` on `vsWorker` -> `plOnCov` -> `plCov` {levels with need /
+  ground / loss + canvases, gnd, eye, ms, lat, lon, r, vis} -> `plCovPaint`
+  (`PL_BANDS` by the margin over the need - in sight: the Rician need,
+  else Rayleigh; the -10..0 dB band at half alpha; % covered by area) ->
+  `plDrawCov` (rings coarse -> fine onto `plOff`, alpha 0.55, under the
+  link; the radius dashed in the TX colour). Under the pointer
+  (`plCovAt` / `plHoverRender`, in the panel): received dBm, the margin
+  for the reliability, the loss, in sight or not, distance + bearing from
+  the TX, the ground
+- UI: panel `#map-pl` (.map-vs styles, in .map-tl where the viewshed's is:
+  Freq + TX power, a TX row and an RX row (tag, name, antenna height, above
+  ground / sea level, 📡), the rest folded under "Antennas, receiver, model,
+  channel" (incl. the refraction); "Coverage around the TX" + radius +
+  status, legend, the pointer's readout; the link in one line), strip
+  `#map-plk` at the bottom of the map (`.map-pane.pl-open` lifts the DF
+  panel, the marker panel and the status line): TX → RX, the path, the four
+  models (a row click = the budget's model), clutter (which end, air-to-
+  ground), received (dBm, µV), margin + reliability, ITM at the
+  reliability, the heights above sea level, terrain zoom / tiles / ms; the
+  profile canvas (terrain + the Earth bulge over the chord, direct ray, F1
+  + 0.6 F1, Bullington's construction, sea blue, TX / RX in their colours;
+  under the pointer: distance / ground / clearance, and a dot on the map).
+  On the map (`plDraw`, after the rings, before the markers): the coverage,
+  the great circle coloured by the margin over the need (`PL_BANDS`;
+  dashed while computing), the TX (orange) / RX (blue) badges, the edge ▲
 - Tests: committed `tools/pathloss_validate.mjs` (node 20, from
   kraken_doa_v2: 1-3 the references, cloned from GitHub into --refs; 4-5
   synthetic terrain served as generated terrarium PNGs through fetch -
   offline, the whole decode / clean path; 6 `--net` real terrain).
   Scratch (job 26b3d7af): t_itm_rand.mjs (vs the compiled NTIA C++),
-  t_cov.mjs, t_link.mjs, and t_pl_ui.py - 33 checks in headless Chromium on
+  t_cov.mjs, t_link.mjs, and t_pl_ui.py - 41 checks in headless Chromium on
   the page served statically (no receiver; the station set from the test):
-  panel + fold, menu, link, strip, chart + hover, budget arithmetic,
-  reliability closed forms, model rows, frequency, an aircraft end,
-  coverage + legend + hover, a repaint-only power change, a target-height
-  recompute, select + drag B, Esc, reload, damaged localStorage, no
+  viewshed <-> path loss switching (panels, kept results), the TX at the
+  station on first use, coverage around the TX + status + legend + the
+  pointer's readout, menu TX / RX here, link, strip, chart + hover, budget
+  arithmetic, reliability closed forms, model rows, the TX moved (coverage
+  follows), a repaint-only power change, an RX-height recompute, an
+  airborne RX / TX (clutter at the other end; the coverage from 2000 m), ⇄,
+  select + drag the RX (link only), Esc, 📡 station as RX, ✕, right-click
+  Viewshed / RX switching modes, reload, damaged localStorage, no
   exceptions
 
 **Incident map (`src/incidents.cpp`, `geo_address.cpp`, `geo_http.cpp`):**

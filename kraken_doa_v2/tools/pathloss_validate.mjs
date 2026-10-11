@@ -146,10 +146,12 @@ if (!noRefs) {
 }
 
 // ---- 4 + 6: the coverage sweep vs the exact P.1812 on its own profiles ----
-async function sweepVsExact(name, lat, lon, h, R, sig) {
-  const m = {lat, lon, h, k: 4 / 3, levels: vsPlan(lat, R * 1000), sig, debug: {rays: [5, 811, 2003, 3333, 4099]}};
+// (txAmsl: the transmitter's h is above sea level - in the air)
+async function sweepVsExact(name, lat, lon, h, R, sig, txAmsl) {
+  const m = {lat, lon, h, amsl: !!txAmsl, k: 4 / 3, levels: vsPlan(lat, R * 1000), sig, debug: {rays: [5, 811, 2003, 3333, 4099]}};
   const t0 = Date.now(), res = await runMsg(m);
   if (res.error) { check(false, `${name}: ${res.error}`); return null; }
+  if (txAmsl) h = res.eye - res.gnd;   // (the TX above its ground, as the exact model takes it)
   const ae = 4 / 3 * 6371, errIn = [], errOut = [];
   let nan = 0, n0 = 0;
   for (const r of res.sig.rays) {
@@ -163,9 +165,12 @@ async function sweepVsExact(name, lat, lon, h, R, sig) {
       const hr = sig.amsl ? sig.tgt - r.g[j] : sig.tgt;
       if (hr < 0.5) continue;   // (the sweep lifts a target below 0.5 m to 0.5 m)
       const ex = T.p1812P2P(Float64Array.from(d), Float64Array.from(hh), null, h, hr, sig.f / 1000, ae, r.sea[j], sig.N0, sig.pol, true);
+      // clutter: both on the ground 3.1; the RX up: 3.3 at the TX; the TX up: 3.3 at the RX (by the elevation at that end)
       let cl = 0;
-      if (sig.amsl) { if (sig.hmTx > 0) cl = T.p2108Aero(sig.f / 1000, Math.max(0, Math.atan((hh[hh.length - 1] + hr - res.eye) / (d[d.length - 1] * 1000) - d[d.length - 1] * 1000 / (2 * ae * 1000)) * 180 / Math.PI), 50, Math.max(1, h), sig.hmTx); }
-      else cl = T.p2108Terminal(sig.f / 1000, h, sig.envTx) + T.p2108Terminal(sig.f / 1000, Math.max(0.5, sig.tgt), sig.envRx);
+      const sm = d[d.length - 1] * 1000, hrs = hh[hh.length - 1] + hr, el = (from, to) => Math.max(0, Math.atan((to - from) / sm - sm / (2 * ae * 1000)) * 180 / Math.PI);
+      if (sig.amsl && !txAmsl) { if (sig.hmTx > 0) cl = T.p2108Aero(sig.f / 1000, el(res.eye, hrs), 50, Math.max(1, h), sig.hmTx); }
+      else if (txAmsl && !sig.amsl) { if (sig.hmRx > 0) cl = T.p2108Aero(sig.f / 1000, el(hrs, res.eye), 50, Math.max(1, hr), sig.hmRx); }
+      else if (!sig.amsl) cl = T.p2108Terminal(sig.f / 1000, h, sig.envTx) + T.p2108Terminal(sig.f / 1000, Math.max(0.5, sig.tgt), sig.envRx);
       const e = Math.abs(r.L[j] - (ex.Lb + cl));
       if (!Number.isFinite(r.L[j])) nan++;
       (ex.bull.los ? errIn : errOut).push(e);
@@ -187,6 +192,8 @@ const sig0 = {f: 446, tgt: 2, amsl: false, pol: 1, N0: 301, envTx: 0, envRx: 0, 
 const cov = await sweepVsExact('4 synthetic coast 25 km, 446 MHz, 2 m target', -36.88, 174.62, 10, 25, sig0);
 await sweepVsExact('4 synthetic, 146 MHz, horizontal, clutter suburban / urban', -36.88, 174.62, 8, 12, {f: 146, tgt: 1.5, amsl: false, pol: 0, N0: 320, envTx: 3, envRx: 4, hmTx: 0});
 await sweepVsExact('4 synthetic, aircraft at 1500 m above sea level, P.2108 3.3', -36.88, 174.62, 10, 25, {f: 1090, tgt: 1500, amsl: true, pol: 1, N0: 301, envTx: 3, envRx: 0, hmTx: 8});
+await sweepVsExact('4 synthetic, a drone TX at 900 m above sea level, receivers 1.5 m in suburbs (3.3 at them)', -36.88, 174.62, 900, 15,
+                   {f: 2400, tgt: 1.5, amsl: false, pol: 1, N0: 301, envTx: 0, envRx: 3, hmTx: 0, hmRx: 8}, true);
 
 // ---- 5: links ----
 if (cov) {
@@ -218,7 +225,12 @@ else {
 const air = await runMsg({link: {a: {lat: -36.88, lon: 174.62, h: 3}, b: {lat: -36.70, lon: 174.95, h: 8000, amsl: true}, f: 1090, k: 4 / 3, pol: 1, N0: 301,
                                  climate: 5, eps: 15, sigma: 0.005, envA: 3, envB: 3, hmA: 8, rel: 90}});
 check(!air.error && air.link.clut.aero && air.link.clut.b === 0 && air.link.clut.a > 0 && air.link.p1812.los,
-      `5 aircraft at 8000 m: in sight, air-to-ground clutter at the ground end only (${air.error || air.link.clut.a.toFixed(1) + ' dB at ' + air.link.elevA.toFixed(1) + ' deg'})`);
+      `5 RX aircraft at 8000 m: in sight, air-to-ground clutter at the ground end only (${air.error || air.link.clut.a.toFixed(1) + ' dB at ' + air.link.elevA.toFixed(1) + ' deg'})`);
+// the same path the other way round: the aircraft transmits - the same loss (reciprocal), the clutter at the RX
+const air2 = await runMsg({link: {a: {lat: -36.70, lon: 174.95, h: 8000, amsl: true}, b: {lat: -36.88, lon: 174.62, h: 3, amsl: false}, f: 1090, k: 4 / 3, pol: 1, N0: 301,
+                                  climate: 5, eps: 15, sigma: 0.005, envA: 3, envB: 3, hmA: 8, hmB: 8, rel: 90}});
+check(!air2.error && air2.link.clut.a === 0 && Math.abs(air2.link.clut.b - air.link.clut.a) < 1e-9 && Math.abs(air2.link.p1812.Lb - air.link.p1812.Lb) < 0.5,
+      `5 TX aircraft at 8000 m, the other way: clutter at the RX ${air2.error || air2.link.clut.b.toFixed(1)} dB, P.1812 ${air2.error ? '' : air2.link.p1812.Lb.toFixed(2) + ' vs ' + air.link.p1812.Lb.toFixed(2)} dB`);
 console.log(`(${synthServed} synthetic tiles served)`);
 
 if (net) {

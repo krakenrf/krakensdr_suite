@@ -508,6 +508,14 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-vs-note a {color:#4fc3f7}
 /* 📶 path loss panel (📶 PATH LOSS): the .map-vs styles + these */
 .map-pl .pl-l {color:#8fb0d8;min-width:56px}
+.map-pl .pl-end .nm {font-weight:bold;color:#fff;min-width:60px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.map-pl .pl-end .map-btn {height:22px;min-width:22px;padding:0 3px;font-size:11px}
+.pl-tag {display:inline-block;color:#000;font-weight:bold;font-size:10px;border-radius:3px;padding:0 4px;line-height:15px;border:1px solid rgba(0,0,0,.6)}
+.map-pl .pl-cst .g {color:#a5d6a7}
+.map-pl .pl-cst a {color:#4fc3f7;cursor:pointer;text-decoration:underline}
+.map-pl .pl-hov {margin-top:4px;line-height:1.45;color:#dbe8ff}
+.map-pl .pl-hov:empty {display:none}
+.map-pl .pl-hov .no {color:#ffab91}
 .map-pl .pl-note, .map-pl .pl-dbm {color:#8296b4}
 .map-pl .pl-note b {color:#dbe8ff}
 .map-pl .pl-set-h {margin-top:5px;color:#8fb0d8;cursor:pointer;user-select:none}
@@ -1730,7 +1738,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <button type="button" class="map-btn" id="map-trails" onclick="mapSet('trails', !mapState.trails)" title="Show the tracks the markers left">Trails</button>
             <button type="button" class="map-btn" id="map-masts" onclick="mapSet('masts', !mapState.masts)" title="Radio masts, towers and antennas mapped in OpenStreetMap, loaded online for the area shown (zoom in to see them). The colour says what OpenStreetMap lists them for; click one for everything it knows about it">Masts</button>
             <button type="button" class="map-btn" id="map-vs-btn" onclick="vsToggle()" title="Viewshed: the ground in line of sight of an antenna at the station or any place you pick (right-click the map, a marker or a mast), over the terrain, anywhere in the world (terrain loaded online)">Viewshed</button>
-            <button type="button" class="map-btn" id="map-pl-btn" onclick="plToggle()" title="Path loss: how much signal gets from one place to another over the terrain, also without line of sight (ITU-R P.1812, Longley-Rice), with the link budget, clutter and fading - for a link (right-click the map: Path loss to here) or as coverage on the viewsheds">Path loss</button>
+            <button type="button" class="map-btn" id="map-pl-btn" onclick="plToggle()" title="Path loss: how much signal gets from a transmitter (TX) to a receiver (RX) over the terrain, also without line of sight (ITU-R P.1812, Longley-Rice), with the link budget, clutter and fading - the coverage around the TX and the link to the RX (right-click the map: TX here / RX here). Instead of the viewshed">Path loss</button>
           </div>
           <div class="map-tl">
             <div class="map-legend" id="map-legend" style="display:none"></div>
@@ -1870,32 +1878,38 @@ const vsState = (() => {
 const vsRes = new Map(), vsFail = new Map();
 let vsWorker = null, vsJob = null, vsSeq = 0, vsWorkerErr = '', vsHovAt = null, vsOff = null,
     vsReady = false;   // set at the end of the section (rpApply can draw the map before it)
-// 📶 path loss (see 📶 PATH LOSS): the radio + channel settings, the link's
-// two ends (localStorage kraken_pl; rebuilt field by field), the link worker,
-// its job and result, the selected end ('a' | 'b'), the profile under the pointer
+// 📶 path loss (see 📶 PATH LOSS): the radio + channel settings, the TX and
+// RX (their places: tx / rx; their antenna heights: txh / rxh, above sea level
+// with txAmsl / rxAmsl), the coverage around the TX (cov, radius r km)
+// (localStorage kraken_pl; rebuilt field by field); the link worker, its job
+// and result; the coverage job (on the viewshed worker) and result; the
+// selected end ('tx' | 'rx'), the profile's pointer
 const plState = (() => {
   const d = {f: 146, ptx: 5, gt: 2.15, gr: 2.15, lt: 1, lr: 1, bw: 12.5, nf: 6, snr: 10, model: 'p1812', pol: 1, N0: 301,
-             climate: 5, ground: 'avg', envA: 3, envB: 3, fade: 'auto', K: 6, rel: 90, sigL: null, sig: false, open: true,
-             set: false, prof: true, a: null, b: null};
+             climate: 5, ground: 'avg', envTx: 3, envRx: 3, fade: 'auto', K: 6, rel: 90, sigL: null,
+             txh: 10, txAmsl: false, rxh: 2, rxAmsl: false, cov: true, r: 30, open: true, set: false, prof: true, tx: null, rx: null};
   try {
     const s = JSON.parse(localStorage.getItem('kraken_pl') || '{}'), num = (v, lo, hi, def) => typeof v === 'number' && v >= lo && v <= hi ? v : def;
     for (const [k, lo, hi] of [['f', 20, 20000], ['ptx', 1e-6, 1e7], ['gt', -30, 60], ['gr', -30, 60], ['lt', 0, 60], ['lr', 0, 60],
-                               ['bw', 0.01, 1e5], ['nf', 0, 40], ['snr', -40, 80], ['N0', 250, 400], ['climate', 1, 7], ['envA', 0, 5],
-                               ['envB', 0, 5], ['K', -20, 40], ['rel', 1, 99.99], ['pol', 0, 1]]) d[k] = num(s[k], lo, hi, d[k]);
+                               ['bw', 0.01, 1e5], ['nf', 0, 40], ['snr', -40, 80], ['N0', 250, 400], ['climate', 1, 7], ['envTx', 0, 5],
+                               ['envRx', 0, 5], ['K', -20, 40], ['rel', 1, 99.99], ['pol', 0, 1], ['r', 1, VS_RMAX_KM]]) d[k] = num(s[k], lo, hi, d[k]);
+    for (const k of ['txAmsl', 'rxAmsl']) if (typeof s[k] === 'boolean') d[k] = s[k];
+    d.txh = num(s.txh, 0, d.txAmsl ? 30000 : 5000, d.txh);
+    d.rxh = num(s.rxh, 0, d.rxAmsl ? 30000 : 5000, d.rxh);
     if (s.sigL !== null && s.sigL !== undefined) d.sigL = num(s.sigL, 0, 30, null);
     if (['p1812', 'itm', 'fs', 'hata'].includes(s.model)) d.model = s.model;
     if (['avg', 'poor', 'good', 'fresh', 'sea'].includes(s.ground)) d.ground = s.ground;
     if (['auto', 'none', 'rayleigh', 'rician'].includes(s.fade)) d.fade = s.fade;
-    for (const k of ['sig', 'open', 'set', 'prof']) if (typeof s[k] === 'boolean') d[k] = s[k];
-    const end = (e, amsl) => e && Math.abs(e.lat) <= 85.05 && Math.abs(e.lon) <= 180 && e.h >= 0 && e.h <= (amsl && e.amsl ? 30000 : 5000) ?
-      {lat: +e.lat, lon: +e.lon, h: +e.h, amsl: !!(amsl && e.amsl), name: String(e.name || 'Point').slice(0, 60), st: !!e.st,
-       mk: /^[A-Za-z0-9_-]{1,24}$/.test(e.mk) ? e.mk : ''} : null;
-    d.a = end(s.a, false);
-    d.b = end(s.b, true);
+    for (const k of ['cov', 'open', 'set', 'prof']) if (typeof s[k] === 'boolean') d[k] = s[k];
+    const end = e => e && Math.abs(e.lat) <= 85.05 && Math.abs(e.lon) <= 180 ?
+      {lat: +e.lat, lon: +e.lon, name: String(e.name || 'Point').slice(0, 60), st: !!e.st, mk: /^[A-Za-z0-9_-]{1,24}$/.test(e.mk) ? e.mk : ''} : null;
+    d.tx = end(s.tx);
+    d.rx = end(s.rx);
   } catch (e) {}
   return d;
 })();
-let plWorker = null, plJob = null, plSeq = 0, plRes = null, plFail = '', plSel = null, plHov = null, plReady = false;
+let plWorker = null, plJob = null, plSeq = 0, plRes = null, plFail = '', plSel = null, plHov = null, plReady = false,
+    plCovJob = null, plCov = null, plCovFail = null, plOff = null;
 
 const bwo=[
   {decimation:1,bandwidth:2.4,name:"2.4 MHz (No decimation)"},
@@ -11218,7 +11232,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (st && !mapStSel) mapStatusFlash(mapStaticSource() ? 'Station selected: drag it to move it, drag the round handle to turn its heading (Esc: done)' :
       `The station's position comes from ${(($id('location-source') || {}).value) === 'gps' ? 'the GPS' : 'the mobile app'} - right-click the map → "Set station here" to place it by hand`);
     if (vs && vs !== vsSel) { const it = vsGet(vs); if (it) mapStatusFlash(`“${it.name}” selected: drag it to move its viewshed (Esc: done)`); }
-    if (pl && pl !== plSel) mapStatusFlash(`Link end ${pl.toUpperCase()} selected: drag it to move it (Esc: done)`);
+    if (pl && pl !== plSel) mapStatusFlash(`${pl.toUpperCase()} selected: drag it to move it (Esc: done)`);
     mapStSel = st;
     vsSel = vs;
     plSel = pl;
@@ -12146,15 +12160,16 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     mapMenuAt = {la, lo};
     let h = '<button type="button" onclick="mkAddAt()">📍 Add Marker</button>' +
             '<button type="button" onclick="vsAddAt()" title="Which ground is in line of sight of an antenna here">👁 Viewshed from here</button>' +
-            `<button type="button" onclick="plAt('b')" title="The signal from ${plState.a ? 'the link\'s A end' : 'the station'} to here, over the terrain (also without line of sight)">📶 Path loss to here</button>` +
-            '<button type="button" onclick="plAt(\'a\')" title="Start the link (its transmitter end) here">📶 Path loss from here</button>' +
+            '<button type="button" onclick="plAt(\'tx\')" title="Path loss: the transmitter here - its coverage, and the link to the receiver (the station when there is none yet)">📶 TX here</button>' +
+            '<button type="button" onclick="plAt(\'rx\')" title="Path loss: the receiver here - the link from the transmitter (the station when there is none yet), over the terrain">📶 RX here</button>' +
             `<button type="button" onclick="mapSetStationAt()" title="Put the station (Station Information) here - a fixed location; its heading is kept">📡 Set station here${mapStaticSource() ? '' : ' (fixed location)'}</button>`;
     const mk = mkGet(mkHit(x, y));
     if (mk) {
       const n = digEsc(mk.name);
       h += `<button type="button" onclick="mapMenuClose();mkSelect('${mk.id}',true)">✎ Edit “${n}”</button>` +
            `<button type="button" onclick="mapMenuClose();vsAddMarker('${mk.id}')">👁 Viewshed from “${n}”</button>` +
-           `<button type="button" onclick="mapMenuClose();plToMarker('${mk.id}')">📶 Path loss to “${n}”</button>` +
+           `<button type="button" onclick="mapMenuClose();plToMarker('${mk.id}','tx')">📶 TX at “${n}”</button>` +
+           `<button type="button" onclick="mapMenuClose();plToMarker('${mk.id}','rx')">📶 RX at “${n}”</button>` +
            `<button type="button" onclick="mapMenuClose();mkDelete('${mk.id}')">🗑 Delete “${n}”</button>`;
     }
     el.innerHTML = h + `<div class="ll">${la.toFixed(5)}, ${lo.toFixed(5)}</div>`;
@@ -12339,7 +12354,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<div class="b"><button type="button" class="map-btn" onclick="mkSelect('${m.id}',true)">✎ Edit</button>` +
       `<button type="button" class="map-btn" onclick="mkCentre()" title="Centre the map on the marker">⌖ Centre</button>` +
       `<button type="button" class="map-btn" onclick="vsAddMarker('${m.id}')" title="Which ground is in line of sight of an antenna at the marker">👁 Viewshed</button>` +
-      `<button type="button" class="map-btn" onclick="plToMarker('${m.id}')" title="The signal between the station (or the link's A end) and the marker, over the terrain">📶 Path loss</button>` +
+      `<button type="button" class="map-btn" onclick="plToMarker('${m.id}','tx')" title="Path loss: the transmitter at the marker (its coverage, and the link to the receiver)">📶 TX</button>` +
+      `<button type="button" class="map-btn" onclick="plToMarker('${m.id}','rx')" title="Path loss: the receiver at the marker (the link from the transmitter)">📶 RX</button>` +
       `<button type="button" class="map-btn" onclick="mkDelete('${m.id}')">🗑 Delete</button></div>`;
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
   }
@@ -12719,7 +12735,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
            `<div class="s">OpenStreetMap · ${m.type} ${m.id}</div><table>${rows}</table>` +
            `<div class="lnk"><button type="button" class="map-btn" onclick="mastToMarker('${m.k}')" title="Make it one of your markers, to add its frequencies and notes">📍 Add as marker</button>` +
            `<button type="button" class="map-btn" onclick="vsAddMast('${m.k}')" title="Which ground is in line of sight of an antenna at the top of this mast (its mapped height, else ${vsState.h} m)">👁 Viewshed</button>` +
-           `<button type="button" class="map-btn" onclick="plToMast('${m.k}')" title="The signal between the station (or the link's A end) and an antenna at the top of this mast">📶 Path loss</button>` +
+           `<button type="button" class="map-btn" onclick="plToMast('${m.k}','tx')" title="Path loss: a transmitter at the top of this mast (its mapped height) - its coverage, and the link to the receiver">📶 TX</button>` +
+           `<button type="button" class="map-btn" onclick="plToMast('${m.k}','rx')" title="Path loss: a receiver at the top of this mast (its mapped height)">📶 RX</button>` +
            `<a href="${mastOsmUrl(m)}" target="_blank" rel="noopener noreferrer">openstreetmap.org ↗</a></div>`;
   }
   // a marker of the user's on the mast, its OSM details as the notes
@@ -13294,10 +13311,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                         ms: Date.now() - t0}, transfer);
     }
     // ---- 📶 a link between two points: the terrain profile + every model ----
-    // m.link = {a: {lat, lon, h m above ground}, b: {lat, lon, h, amsl (h above
-    // sea level: an aircraft)}, f MHz, k, pol 0 h / 1 v, N0, climate (ITM
-    // 1-7), eps / sigma (ITM ground), envA / envB (P.2108 types), hmA (median
-    // clutter height around A, P.2108 3.3), rel (% for ITM's own variability)}.
+    // m.link = {a: the transmitter, b: the receiver - each {lat, lon, h m
+    // above its ground, or above sea level with amsl (in the air)}, f MHz, k,
+    // pol 0 h / 1 v, N0, climate (ITM 1-7), eps / sigma (ITM ground), envA /
+    // envB (P.2108 types), hmA / hmB (median clutter height around an end,
+    // P.2108 3.3), rel (% for ITM's own variability)}.
     // The profile follows the great circle, sampled every terrain cell of the
     // finest zoom (<= 14) that keeps it to PL_NMAX points (30 km: zoom 14, 8
     // m; 300 km: zoom 11, ~60 m; 1000 km: zoom 9, ~250 m), bilinear on the
@@ -13382,9 +13400,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       }
       const gA = bil(14, ends[0][0], ends[0][1], true), gB = bil(14, ends[1][0], ends[1][1], true);
       h[0] = gA; h[n] = gB;
-      const hts = gA + L.a.h, hrs = L.b.amsl ? L.b.h : gB + L.b.h;
-      if (hrs < gB) throw new Error('the far end is below the ground there (' + Math.round(gB) + ' m)');
-      const htg = Math.max(0.5, L.a.h), hrg = Math.max(0.5, hrs - gB), fG = L.f / 1000, ae = L.k * RE / 1000, omega = sea / Math.max(1, n - 1);
+      const hts = L.a.amsl ? L.a.h : gA + L.a.h, hrs = L.b.amsl ? L.b.h : gB + L.b.h;
+      if (hts < gA) throw new Error('the transmitter is below the ground there (' + Math.round(gA) + ' m)');
+      if (hrs < gB) throw new Error('the receiver is below the ground there (' + Math.round(gB) + ' m)');
+      const htg = Math.max(0.5, hts - gA), hrg = Math.max(0.5, hrs - gB), fG = L.f / 1000, ae = L.k * RE / 1000, omega = sea / Math.max(1, n - 1);
       const pol = L.pol ? 1 : 0;
       const p = p1812P2P(d, h, null, htg, hrg, fG, ae, omega, L.N0, pol, true);
       const pfl = new Float64Array(n + 3);
@@ -13403,10 +13422,13 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         const c = (ray - (h[i] + bulge)) / Math.sqrt(lam * x * (dm - x) / dm);
         if (c < clr) { clr = c; clrAt = x; }
       }
-      // the clutter at the ends (P.2108): an aircraft at B: 3.3 at A, by elevation; else 3.1 at both
-      let clA = 0, clB = 0, aero = !!L.b.amsl;
-      if (aero) { if (L.hmA > 0) clA = p2108Aero(fG, Math.max(0, elevA), 50, Math.max(1, htg), L.hmA); }
-      else { clA = p2108Terminal(fG, htg, L.envA); clB = p2108Terminal(fG, hrg, L.envB); }
+      // the clutter at the ends (P.2108): one end in the air: 3.3 at the other
+      // by the elevation there; both on the ground: 3.1 at both; both up: none
+      let clA = 0, clB = 0;
+      const aAir = !!L.a.amsl, bAir = !!L.b.amsl, aero = aAir || bAir;
+      if (bAir && !aAir) { if (L.hmA > 0) clA = p2108Aero(fG, Math.max(0, elevA), 50, Math.max(1, htg), L.hmA); }
+      else if (aAir && !bAir) { if (L.hmB > 0) clB = p2108Aero(fG, Math.max(0, elevB), 50, Math.max(1, hrg), L.hmB); }
+      else if (!aero) { clA = p2108Terminal(fG, htg, L.envA); clB = p2108Terminal(fG, hrg, L.envB); }
       const hb = Math.max(htg, hrg), hmo = Math.min(htg, hrg);
       const env = [, 'open', 'open', 'suburban', 'urban', 'large'][htg >= hrg ? L.envB : L.envA] || 'open';
       const hata = {L: hataLoss(L.f, D / 1000, hb, hmo, env), env,
@@ -13419,15 +13441,17 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                 trans: p.sh.trans, los: p.bull.los, nu: p.bull.nu, dbp: p.bull.dbp, hbp: p.bull.hbp, dlt: p.sh.dlt, dlr: p.sh.dlr,
                 tt: p.sh.tt, tr: p.sh.tr},
         itm: itm.err ? {err: itm.err} : {A: itm.A, Arel: itmR.err ? null : itmR.A, mode: itm.mode, warn: itm.warn, dhz: itm.dhz, th: itm.th, dh: itm.dh},
-        fs, hata, clut: {a: clA, b: clB, aero}, elevA, elevB, clr, clrAt, ms: Date.now() - t0, loaded: load.length, tiles: want.size}},
+        fs, hata, clut: {a: clA, b: clB, aero, airA: aAir, airB: bAir}, elevA, elevB, clr, clrAt, ms: Date.now() - t0, loaded: load.length, tiles: want.size}},
         [df.buffer, hf.buffer]);
     }
 
-    // ---- 📶 a viewshed with the signal (coverage): m.sig = {f MHz, tgt m,
-    // amsl (tgt above sea level: an aircraft), pol 0 h / 1 v, N0, envTx /
-    // envRx (P.2108 clutter types 0 none .. 5), hmTx (median clutter height
-    // around the site for P.2108 3.3 when the target flies)} - every ring's
-    // terrain at once (the rays run through all of them), then plSweep
+    // ---- 📶 coverage: the signal from a transmitter at (lat, lon), m.h m above
+    // its ground (or above sea level with m.amsl: in the air), to every cell:
+    // m.sig = {f MHz, tgt m (the receivers' height), amsl (tgt above sea
+    // level: aircraft), pol 0 h / 1 v, N0, envTx / envRx (P.2108 clutter types
+    // 0 none .. 5), hmTx / hmRx (median clutter height around the ground end
+    // for P.2108 3.3 when the other end flies)} - every ring's terrain at once
+    // (the rays run through all of them), then plSweep
     async function runSignal(m, rings, ringDem, nRays, curv, st) {
       const dems = [];
       for (const g of rings) {
@@ -13435,7 +13459,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         if (cancelled.has(m.job)) throw new Error('cancelled');
         dems.push(ringDem(g));
       }
-      const g0 = rings[0], gnd = bilinear(dems[0], g0.N, g0.ox - g0.gx0 - 0.5, g0.oy - g0.gy0 - 0.5), eye = gnd + m.h;
+      const g0 = rings[0], gnd = bilinear(dems[0], g0.N, g0.ox - g0.gx0 - 0.5, g0.oy - g0.gy0 - 0.5), eye = m.amsl ? m.h : gnd + m.h;
+      if (eye < gnd) throw new Error(`the transmitter is below the ground there (${Math.round(gnd)} m)`);
       const outs = rings.map(g => ({need: new Uint16Array(g.N * g.N).fill(65535), ground: new Int16Array(g.N * g.N),
                                     loss: new Uint16Array(g.N * g.N).fill(65535), best: new Uint8Array(g.N * g.N).fill(255)}));
       const info = await plSweep(m, rings, dems, gnd, eye, curv, nRays, outs);
@@ -13480,10 +13505,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const sp = Math.sin(phi0), cp = Math.cos(phi0), sl = Math.sin(lam0), cl = Math.cos(lam0), psi0 = Math.atanh(sp);
       const enc = h => h <= 0 ? 0 : h < 3000 ? Math.round(h * 10) : Math.min(65534, 30000 + Math.round((h - 3000) / 10));
       const dec = q => q < 30000 ? q / 10 : 3000 + (q - 30000) * 10;
-      // the clutter at the ends (dB): fixed for a terrestrial target; with an
-      // aircraft P.2108 3.3 at the site, by elevation, per cell
-      const clutFix = S.amsl ? 0 : p2108Terminal(f, m.h, S.envTx) + p2108Terminal(f, Math.max(0.5, S.tgt), S.envRx);
-      const aero = S.amsl && S.hmTx > 0;
+      // the clutter at the ends (dB): both on the ground: P.2108 3.1, fixed;
+      // one in the air: 3.3 at the other (ground) end by the elevation of the
+      // ray there, per cell; both in the air: none
+      const hTx = eye - gnd, txAir = !!m.amsl, rxAir = !!S.amsl;
+      const clutFix = txAir || rxAir ? 0 : p2108Terminal(f, hTx, S.envTx) + p2108Terminal(f, Math.max(0.5, S.tgt), S.envRx);
+      const aeroTx = rxAir && !txAir && S.hmTx > 0, aeroRx = txAir && !rxAir && S.hmRx > 0, aero = aeroTx || aeroRx;
       let cap = 16;
       for (const g of rings) cap += Math.ceil(g.rExt / (0.4 * g.cellMin)) + 2;
       const cx = new Float64Array(cap), cy = new Float64Array(cap), fx = new Float64Array(cap), fy = new Float64Array(cap);
@@ -13624,7 +13651,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         const Lbs = p1812Tropo(sk, 1e3 * sk / aeK + tt + tr, f, 50, S.N0);
         const Lb = Math.max(Lbfs, -5 * Math.log10(10 ** (-0.2 * Lbs) + 10 ** (-0.2 * (Lbfs + Ld))));
         let cl = clutFix;
-        if (aero) cl = p2108Aero(f, Math.max(0, Math.atan(sig) * 180 / Math.PI), 50, Math.max(1, m.h), S.hmTx);   // (elevation at the site)
+        if (aeroTx) cl = p2108Aero(f, Math.max(0, Math.atan(sig) * 180 / Math.PI), 50, Math.max(1, hTx), S.hmTx);   // (elevation at the TX)
+        else if (aeroRx) cl = p2108Aero(f, Math.max(0, Math.atan(-sig - 2 * s * curv) * 180 / Math.PI), 50, Math.max(1, hr), S.hmRx);   // (at the receiver)
         return Lb + cl;
       };
       // adds a profile point (s, gr; e = curved-frame height) to the hulls + sums
@@ -13748,7 +13776,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
           o.need[oc] = 0;
           o.ground[oc] = Math.round(gnd);
           const d = Math.max(1, g.cell / 2), hr = S.amsl ? Math.max(0.5, S.tgt - gnd) : Math.max(0.5, S.tgt);
-          o.loss[oc] = Math.round(10 * (92.4 + 20 * Math.log10(f) + 10 * Math.log10((d / 1000) ** 2 + ((m.h - hr) / 1000) ** 2) + clutFix));
+          o.loss[oc] = Math.round(10 * (92.4 + 20 * Math.log10(f) + 10 * Math.log10((d / 1000) ** 2 + ((hTx - hr) / 1000) ** 2) + clutFix));
         }
       });
       return {lossCalls, losCalls, losScan, clutFix, aero, rays: recs ? [...recs.values()] : undefined};
@@ -14350,18 +14378,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function vsDec(q) { return q < 30000 ? q / 10 : 3000 + (q - 30000) * 10; }
   function vsSave() { try { localStorage.setItem('kraken_vs', JSON.stringify(vsState)); } catch (e) {} }
   function vsGet(id) { return vsState.items.find(i => i.id === id) || null; }
-  // what an item's result depends on: its place, antenna, radius, the
-  // refraction - and with the signal on (📶 PATH LOSS) what the loss does,
-  // the target height too. A signal result also serves the line of sight
-  function vsKey(it) {
-    const g = `${it.lat},${it.lon},${it.h},${it.r},${vsState.k}`, s = plSigMsg();
-    return s ? g + '|' + JSON.stringify(s) : g;
-  }
-  function vsResOk(it, res) {
-    if (!res) return false;
-    const k = vsKey(it);
-    return res.key === k || (!plState.sig && res.key.split('|')[0] === k);
-  }
+  function vsKey(it) { return `${it.lat},${it.lon},${it.h},${it.r},${vsState.k}`; }
   function vsTgt() { return vsState.tgt; }
   // the rings (see above): [{z, r0, r1}] from the antenna out to rM, each
   // as far as its grid stays within VS_NMAX cells a side (as run() sizes it:
@@ -14396,6 +14413,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       vsWorker = null;
       if (vsJob) vsFail.set(vsJob.id, {key: vsJob.key, msg: 'failed: ' + (e.message || 'worker error')});
       vsJob = null;
+      if (plCovJob) { plCovFail = {key: plCovJob.key, msg: 'failed: ' + (e.message || 'worker error')}; plCovJob = null; plRender(); }
       vsRender();
     };
     return true;
@@ -14404,13 +14422,13 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // also run from vsDraw, so after a reload the work starts with the map)
   function vsPump() {
     if (vsJob || !mapState.vs || vsWorkerErr) return;
-    const it = vsState.items.find(i => i.on && !vsResOk(i, vsRes.get(i.id)) &&
+    const it = vsState.items.find(i => i.on && (vsRes.get(i.id) || {}).key !== vsKey(i) &&
                                        (vsFail.get(i.id) || {}).key !== vsKey(i));
     if (!it) return;
     if (!vsWorkerStart()) { vsRender(); return; }
     const rM = it.r * 1000;
     vsJob = {job: ++vsSeq, id: it.id, key: vsKey(it), prog: null, lat: it.lat, lon: it.lon, h: it.h, r: it.r};
-    vsWorker.postMessage({job: vsJob.job, lat: it.lat, lon: it.lon, h: it.h, k: vsState.k, levels: vsPlan(it.lat, rM), sig: plSigMsg()});
+    vsWorker.postMessage({job: vsJob.job, lat: it.lat, lon: it.lon, h: it.h, k: vsState.k, levels: vsPlan(it.lat, rM)});
     vsRender();
   }
   // an item changed / went away while its job runs: stop it (the reply ends the job)
@@ -14418,6 +14436,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (vsJob && vsJob.id === id && vsWorker && !vsJob.cancel) { vsJob.cancel = true; vsWorker.postMessage({cancel: vsJob.job}); }
   }
   function vsOnWorker(m) {
+    if (plCovJob && m.job === plCovJob.job) { plOnCov(m); return; }   // (📶 path loss coverage: same worker)
     if (!vsJob || m.job !== vsJob.job) return;
     if (m.prog) { vsJob.prog = m.prog; vsRender(); return; }
     const job = vsJob, it = vsGet(job.id);
@@ -14429,11 +14448,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const levels = m.levels.map((l, i) => {
         const o = old && old.levels[i];
         return Object.assign({z: l.z, N: l.N, gx0: l.gx0, gy0: l.gy0, r0: l.r0, r1: l.r1, cell: l.cell,
-                              need: new Uint16Array(l.need), ground: new Int16Array(l.ground), loss: l.loss ? new Uint16Array(l.loss) : null},
+                              need: new Uint16Array(l.need), ground: new Int16Array(l.ground)},
                              o && o.cv && o.N === l.N ? {cv: o.cv, cx: o.cx} : {});   // (canvases reused)
       });
       const res = {key: job.key, levels, gnd: m.gnd, eye: m.eye, mpp: m.mpp, ms: m.ms, spikes: m.spikes, tiles: m.tiles, loaded: m.loaded,
-                   lat: job.lat, lon: job.lon, h: job.h, r: job.r, sig: m.sig || null};
+                   lat: job.lat, lon: job.lon, h: job.h, r: job.r};
       vsRes.set(job.id, res);
       vsFail.delete(job.id);
       if (it.on) vsPaint(it, res);
@@ -14444,15 +14463,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
 
   // each ring as an image: the item's colour (opaque - vsDraw tints) where
-  // a target at the set height is in sight, clear elsewhere. With the signal
-  // (📶 PATH LOSS): the margin over what the receiver needs, by band
+  // a target at the set height is in sight, clear elsewhere
   function vsPaint(it, res) {
-    const abgr = (col, a) => { const c = parseInt(col.slice(1), 16); return ((a << 24) | ((c & 0xff) << 16) | (c & 0xff00) | ((c >> 16) & 0xff)) >>> 0; };
-    const rgba = abgr(it.col, 255);   // ABGR (little endian)
+    const c = parseInt(it.col.slice(1), 16);
+    const rgba = (0xff000000 | ((c & 0xff) << 16) | (c & 0xff00) | ((c >> 16) & 0xff)) >>> 0;   // ABGR (little endian)
     const amsl = vsState.amsl, tgt = vsTgt(), tq = vsEnc(tgt);
-    // (short of the need: half as strong, so the map still shows through)
-    const sig = plState.sig && res.levels[0].loss, F = sig ? plCellFns() : null, bands = PL_BANDS.map(([t, c]) => [t, abgr(c, t < 0 ? 128 : 255)]);
-    res.sigPaint = !!sig;
     let vis = 0, tot = 0;
     for (const l of res.levels) {
       const N = l.N;
@@ -14462,23 +14477,13 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         l.cx = l.cv.getContext('2d');
       }
       // (the ImageData only while painting: phones count)
-      const img = l.cx.createImageData(N, N), px = new Uint32Array(img.data.buffer), need = l.need, gr = l.ground, loss = l.loss;
+      const img = l.cx.createImageData(N, N), px = new Uint32Array(img.data.buffer), need = l.need, gr = l.ground;
       let lv = 0, lt = 0;
       for (let i = 0; i < N * N; i++) {
         const q = need[i];
         if (q === VS_NODATA) { px[i] = 0; continue; }
         lt++;
         const ok = amsl ? gr[i] + (q < 30000 ? q / 10 : 3000 + (q - 30000) * 10) <= tgt : q <= tq;
-        if (sig) {   // received = base - loss; over the need in / out of sight
-          const L = loss[i];
-          if (L === 65535) { px[i] = 0; continue; }   // (the target under the ground)
-          const ex = F.base - L / 10 - F.sens - (ok ? F.nIn : F.nOut);
-          let c = 0;
-          for (let b = 0; b < bands.length; b++) if (ex >= bands[b][0]) { c = bands[b][1]; break; }
-          px[i] = c;
-          if (ex >= 0) lv++;
-          continue;
-        }
         px[i] = ok ? rgba : 0;
         if (ok) lv++;
       }
@@ -14531,14 +14536,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         }
         c.save();
         c.setTransform(1, 0, 0, 1, 0, 0);
-        c.globalAlpha = res.sigPaint ? 0.55 : 0.44;
+        c.globalAlpha = 0.44;
         c.drawImage(vsOff, 0, 0);
         c.restore();
       }
       // the radius (dashed: the circle on the ground, which on the map
       // stretches towards the pole) and the observer (being dragged: where it is now)
       const od = mapObjDrag && mapObjDrag.kind === 'vs' && mapObjDrag.id === it.id && mapObjDrag.lat !== undefined ? mapObjDrag : null;
-      const g = od ? {lat: od.lat, lon: od.lon, r: it.r} : vsResOk(it, res) ? res : it;
+      const g = od ? {lat: od.lat, lon: od.lon, r: it.r} : res && res.key === vsKey(it) ? res : it;
       const [x, y] = mapLatLonToScreen(g.lat, g.lon);
       c.save();
       c.strokeStyle = it.col;
@@ -14610,7 +14615,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function vsFollowStation(now) {
     const p = mapStationPos();
     if (!vsReady || !p) return;
-    if (plReady) plFollowStation();   // (a link from the station too)
+    if (plReady) plFollowStation(now);   // (📶 a path loss end at the station too)
     const gps = !mapStaticSource();
     let moved = false;
     for (const it of vsState.items) {
@@ -14639,7 +14644,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                 col: VS_COLS.find(c => !used.has(c)) || VS_COLS[0], on: true, st: !!opt.st, mk: opt.mk || ''};
     vsState.items.push(it);
     vsSave();
-    if (!mapState.vs || !mapState.vsOpen) { mapState.vs = mapState.vsOpen = true; mapSave(); mapUpdateControls(); }
+    if (!mapState.vs || !mapState.vsOpen) { mapState.vs = mapState.vsOpen = true; plModeOff(); mapSave(); mapUpdateControls(); }
     vsPump();
     vsRender();
     mapDraw();
@@ -14674,6 +14679,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function vsToggle() {
     mapState.vs = !mapState.vs;
     if (mapState.vs) {
+      plModeOff();   // (the viewshed OR 📶 path loss)
       mapState.vsOpen = true;
       if (!vsState.items.length && mapStationPos()) vsAddStation();
     }
@@ -14729,16 +14735,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       vsState.tgt = Math.round(v * 10) / 10;
       vsSave();
     }
-    if (plState.sig) plCovChanged(); else vsRepaint();   // (the signal depends on the target height: recomputed)
+    vsRepaint();
     vsRender(true);
-    plRender();
   }
   function vsSetRef(v) {
     vsState.amsl = v === 'amsl';
     vsSave();
-    if (plState.sig) plCovChanged(); else vsRepaint();
+    vsRepaint();
     vsRender(true);
-    plRender();
   }
   function vsSetK(v) {
     const k = Number(v);
@@ -14748,8 +14752,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (vsJob) vsCancel(vsJob.id);
     vsPump();
     vsRender();
-    plPump();   // (a link uses the refraction too)
-    plRender();
+    plKChanged();   // (📶 path loss uses the refraction too)
   }
 
   // ---- the panel ----
@@ -14795,12 +14798,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const res = vsRes.get(it.id), f = vsFail.get(it.id), key = vsKey(it);
     if (vsJob && vsJob.id === it.id) {
       const p = vsJob.prog;
-      return [Array.isArray(p) ? (p[0] === 'sig' ? `signal ${p[1]} %…` : `loading terrain ${p[0]}/${p[1]}…`) : p === 'compute' ? 'computing…' : 'starting…', 'w'];
+      return [Array.isArray(p) ? `loading terrain ${p[0]}/${p[1]}…` : p === 'compute' ? 'computing…' : 'starting…', 'w'];
     }
     if (f && f.key === key) return [`⚠ ${digEsc(f.msg)} · <a onclick="vsRetry('${it.id}')">retry</a>`, 'e'];
     if (vsWorkerErr) return ['⚠ ' + digEsc(vsWorkerErr), 'e'];
-    if (!vsResOk(it, res)) return [res ? 'waiting to update…' : 'waiting…', 'w'];
-    return res.sigPaint ? [`${Math.round(res.vis * 100)} % covered`, ''] : [`${Math.round(res.vis * 100)} % in sight`, ''];
+    if (!res || res.key !== key) return [res ? 'waiting to update…' : 'waiting…', 'w'];
+    return [`${Math.round(res.vis * 100)} % in sight`, ''];
   }
   function vsRender(force) {
     const el = $id('map-vs');
@@ -14835,7 +14838,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const [txt, cls] = vsItemStatus(it), st = r.querySelector('.st');
       const res = vsRes.get(it.id);
       const lst = res && res.levels[res.levels.length - 1];
-      const tip = vsResOk(it, res) ? `ground ${Math.round(res.gnd)} m + antenna ${it.h} m = ${Math.round(res.eye)} m above sea level · ` +
+      const tip = res && res.key === vsKey(it) ? `ground ${Math.round(res.gnd)} m + antenna ${it.h} m = ${Math.round(res.eye)} m above sea level · ` +
         `terrain cells of ${Math.round(res.mpp)} m around the antenna` + (res.levels.length > 1 ? ` to ${Math.round(lst.cell)} m at ${it.r} km ` +
         `(${res.levels.length} rings, zoom ${res.levels[0].z} to ${lst.z})` : ` (zoom ${lst.z})`) +
         ` · ${res.tiles} tiles` + (res.loaded < res.tiles ? ` (${res.loaded} loaded, the rest in memory)` : '') + `, ${(res.ms / 1000).toFixed(1)} s` + (res.spikes ? ` · ${res.spikes} terrain spikes removed` : '') : '';
@@ -14850,6 +14853,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function vsHover(x, y) {
     vsHovAt = x === null ? null : [x, y];
     vsHoverRender();
+    if (plReady) plHoverRender();   // (📶 path loss: the coverage under the pointer)
   }
   function vsHoverRender() {
     const el = $id('map-vs-hov');
@@ -14860,11 +14864,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const [x, y] = vsHovAt, W = mapWorld();
       const nx = mapState.mx + (x - mapW / 2) / W, ny = mapState.my + (y - mapH / 2) / W;
       const [la, lo] = mapScreenToLatLon(x, y);
-      const tgt = vsTgt(), lines = [], F = plState.sig ? plCellFns() : null;
+      const tgt = vsTgt(), lines = [];
       let gnd = null;
       for (const it of shown) {
         const res = vsRes.get(it.id);
-        let q = VS_NODATA, g = 0, ls = 65535;
+        let q = VS_NODATA, g = 0;
         for (const l of res.levels) {   // finest first
           const Wv = 256 * 2 ** l.z, N = l.N;
           let px = nx * Wv - l.gx0;
@@ -14873,7 +14877,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
           if (i < 0 || j < 0 || i >= N || j >= N || l.need[j * N + i] === VS_NODATA) continue;
           q = l.need[j * N + i];
           g = l.ground[j * N + i];
-          if (l.loss) ls = l.loss[j * N + i];
           break;
         }
         if (q === VS_NODATA) continue;
@@ -14882,13 +14885,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         const d = mapDistKm(res.lat, res.lon, la, lo), b = mapBearing(res.lat, res.lon, la, lo);
         const ok = vsState.amsl ? g + nd <= tgt : nd <= tgt;
         const why = ok ? '<b>in sight</b>' : `<span class="no">hidden</span> - needs ${vsState.amsl ? vsFmtM(g + nd) + ' above sea level' : vsFmtM(nd) + ' above ground'}`;
-        // the signal (📶 PATH LOSS): received median, the margin over the need at the reliability
-        let sg = '';
-        if (F && res.sigPaint && ls !== 65535) {
-          const prx = F.base - ls / 10, ex = prx - F.sens - (ok ? F.nIn : F.nOut);
-          sg = ` · <b style="color:${plCol(ex) || '#ff8a80'}">${prx.toFixed(1)} dBm</b> (${ex >= 0 ? '+' : ''}${ex.toFixed(1)} dB for ${plState.rel} %, loss ${(ls / 10).toFixed(1)} dB)`;
-        }
-        lines.push(`<span style="color:${it.col}">■</span> ${digEsc(it.name)}: ${why}${sg} · ${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${b.toFixed(0)}°`);
+        lines.push(`<span style="color:${it.col}">■</span> ${digEsc(it.name)}: ${why} · ${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${b.toFixed(0)}°`);
       }
       if (lines.length) html = `Ground ${gnd} m here<br>` + lines.join('<br>');
     }
@@ -14898,25 +14895,28 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   vsReady = true;
 
   // --- 📶 PATH LOSS: link budget, terrain path loss (NLOS), channel models ---------
-  // How much signal gets from one place to another, over the terrain - also
-  // where there is no line of sight. Two uses:
-  // - a LINK between two points (right-click "Path loss to / from here", a
+  // How much signal gets from a transmitter (TX) to a receiver (RX) over the
+  // terrain - also where there is no line of sight. The "Path loss" mode (the
+  // map's button; the viewshed OR this, not both: the viewshed is the line of
+  // sight from its own sites, path loss works around the TX):
+  // - COVERAGE around the TX: ITU-R P.1812 + clutter to every cell for an RX
+  //   at the RX height (the viewshed worker's rings and rays: runSignal /
+  //   plSweep; it is idle meanwhile and keeps its terrain tiles), coloured
+  //   by the margin over what the receiver needs at the chosen reliability
+  // - the LINK from the TX to the RX (right-click "TX here" / "RX here", a
   //   marker, a mast; the ends are dragged like viewshed points): the
-  //   great-circle terrain profile (computed in a worker of its own:
-  //   runLink in vsWorkerMain) through ITU-R P.1812 (terrain diffraction by
-  //   delta-Bullington + troposcatter), NTIA's ITM / Longley-Rice, free
-  //   space and Okumura-Hata, drawn as a profile (Earth bulge, line of
-  //   sight, first Fresnel zone, Bullington's equivalent edge) with the
-  //   budget at the bottom of the map
-  // - COVERAGE: the viewsheds show the signal instead of the line of sight
-  //   ("Signal on the viewsheds"): P.1812 + clutter to every cell (plSweep),
-  //   coloured by the margin over what the receiver needs at the chosen
-  //   reliability
-  // Channel model: P.2108 clutter around each antenna (terrestrial 3.1; with
-  // an aircraft at the far end, 3.3 by elevation angle), location
-  // variability (lognormal, P.1546's sigma_L) and fast fading (Rician in
-  // line of sight, Rayleigh beyond, or as chosen) combined into the margin
-  // a reliability needs. Median losses: 50 % of the time (no ducting)
+  //   great-circle terrain profile (a worker of its own: runLink) through
+  //   ITU-R P.1812 (terrain diffraction by delta-Bullington + troposcatter),
+  //   NTIA's ITM / Longley-Rice, free space and Okumura-Hata, drawn as a
+  //   profile (Earth bulge, line of sight, first Fresnel zone, Bullington's
+  //   equivalent edge) with the budget at the bottom of the map
+  // Either end can be in the air (its height above sea level: aircraft,
+  // balloons, drones). Channel model: P.2108 clutter around each antenna
+  // (both on the ground: 3.1; one in the air: 3.3 at the other by its
+  // elevation angle), location variability (lognormal, P.1546's sigma_L) and
+  // fast fading (Rician in line of sight, Rayleigh beyond, or as chosen)
+  // combined into the margin a reliability needs. Median losses: 50 % of
+  // the time (no ducting)
   const PL_ENVS = ['none', 'water / sea', 'open / rural', 'suburban', 'urban / trees / forest', 'dense urban'];
   const PL_ENV_HM = [0, 0, 0, 8, 15, 25];   // median clutter height for P.2108 3.3 (low / mid / high rise)
   const PL_GROUNDS = {avg: ['average ground', 15, 0.005], poor: ['poor ground (dry)', 4, 0.001], good: ['good ground (wet)', 25, 0.02],
@@ -14926,6 +14926,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   const PL_MODELS = {p1812: 'ITU-R P.1812 (terrain)', itm: 'Longley-Rice / ITM (terrain)', fs: 'Free space', hata: 'Okumura-Hata / COST-231'};
   // the margin over the need (dB) -> colour (coverage + the link's line)
   const PL_BANDS = [[30, '#1a9850'], [20, '#66bd63'], [10, '#a6d96a'], [5, '#fee08b'], [0, '#fdae61'], [-10, '#d73027']];
+  const PL_COL = {tx: '#ff7043', rx: '#4fc3f7'};   // the ends on the map / in the profile
+  const PL_NAME = {tx: 'TX', rx: 'RX'};
   function plSave() { try { localStorage.setItem('kraken_pl', JSON.stringify(plState)); } catch (e) {} }
   function plCol(x) { for (const [t, c] of PL_BANDS) if (x >= t) return c; return null; }
 
@@ -14936,10 +14938,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // P_rx (dBm) for a basic transmission loss incl. clutter
   function plPrx(L) { return plPtxDbm() + plState.gt - plState.lt + plState.gr - plState.lr - L; }
   // location variability: P.1546-6 (12): sigma_L = K + 1.3 log10(f MHz), K =
-  // 0.5 rural / open, 1.0 an antenna up near the clutter, 1.2 one down in it
-  function plSigmaL(env, h) {
+  // 0.5 rural / open (and an RX in the air), 1.0 an antenna up near the
+  // clutter, 1.2 one down in it
+  function plSigmaL() {
     if (plState.sigL !== null) return plState.sigL;
-    const K = env <= 2 ? 0.5 : h >= [0, 10, 10, 10, 15, 20][env] ? 1.0 : 1.2;
+    const env = plState.envRx, K = plState.rxAmsl || env <= 2 ? 0.5 : plState.rxh >= [0, 10, 10, 10, 15, 20][env] ? 1.0 : 1.2;
     return K + 1.3 * Math.log10(plState.f);
   }
   // fast fading in line of sight / beyond: [kind, K linear]
@@ -15006,17 +15009,19 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     plNeedCache.set(key, hi);
     return hi;
   }
+  // the margins the reliability needs in sight / beyond
+  function plNeeds() { const sg = plSigmaL(); return {sg, nIn: plNeed(plState.rel, sg, ...plFading(true)), nOut: plNeed(plState.rel, sg, ...plFading(false))}; }
 
-  // ---- the worker (the viewshed worker's code, its own instance: a link is
-  // quick and must not wait behind a coverage job) ----
+  // ---- the link worker (the viewshed worker's code, its own instance: a link
+  // is quick and must not wait behind a coverage job) ----
   function plGround() { return PL_GROUNDS[plState.ground]; }
   function plLinkMsg() {
-    const a = plState.a, b = plState.b, g = plGround();
-    return {a: {lat: a.lat, lon: a.lon, h: a.h}, b: {lat: b.lat, lon: b.lon, h: b.h, amsl: b.amsl}, f: plState.f, k: vsState.k,
-            pol: plState.pol, N0: plState.N0, climate: plState.climate, eps: g[1], sigma: g[2], envA: plState.envA, envB: plState.envB,
-            hmA: PL_ENV_HM[plState.envA], rel: plState.rel};
+    const t = plState.tx, r = plState.rx, g = plGround(), s = plState;
+    return {a: {lat: t.lat, lon: t.lon, h: s.txh, amsl: s.txAmsl}, b: {lat: r.lat, lon: r.lon, h: s.rxh, amsl: s.rxAmsl}, f: s.f, k: vsState.k,
+            pol: s.pol, N0: s.N0, climate: s.climate, eps: g[1], sigma: g[2], envA: s.envTx, envB: s.envRx,
+            hmA: PL_ENV_HM[s.envTx], hmB: PL_ENV_HM[s.envRx], rel: s.rel};
   }
-  function plKey() { return plState.a && plState.b ? JSON.stringify(plLinkMsg()) : ''; }
+  function plKey() { return plState.tx && plState.rx ? JSON.stringify(plLinkMsg()) : ''; }
   function plWorkerStart() {
     if (plWorker) return true;
     try {
@@ -15036,7 +15041,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // one job at a time; a newer link cancels the running one
   function plPump() {
     const key = plKey();
-    if (!key || (plRes && plRes.key === key) || !mapState.on) return;
+    if (!key || (plRes && plRes.key === key) || !mapState.on || !mapState.pl) return;
     if (plJob) {
       if (plJob.key !== key && !plJob.cancel) { plJob.cancel = true; plWorker.postMessage({cancel: plJob.job}); }
       return;
@@ -15059,28 +15064,172 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     mapDraw();
   }
 
-  // ---- the link: setting the ends ----
-  function plEnsureOn() {
-    if (!plState.open) plState.open = true;
-    plState.prof = true;
-    if (!mapState.pl) { mapState.pl = true; mapSave(); mapUpdateControls(); }
+  // ---- the coverage around the TX (on the viewshed worker: runSignal) ----
+  function plCovMsg() {
+    const s = plState, t = s.tx;
+    return {lat: t.lat, lon: t.lon, h: s.txh, amsl: s.txAmsl, k: vsState.k, r: s.r,
+            sig: {f: s.f, tgt: s.rxh, amsl: s.rxAmsl, pol: s.pol, N0: s.N0, envTx: s.envTx, envRx: s.envRx, hmTx: PL_ENV_HM[s.envTx], hmRx: PL_ENV_HM[s.envRx]}};
   }
-  // end 'a' (the transmitter / station side) or 'b' at a place
+  function plCovKey() { return plState.tx && plState.cov ? JSON.stringify(plCovMsg()) : ''; }
+  // (not while an end is being dragged: a coverage takes seconds - it starts on release)
+  function plCovPump() {
+    const key = plCovKey();
+    if (!key || !mapState.on || !mapState.pl || (plCov && plCov.key === key) || (mapObjDrag && mapObjDrag.kind === 'pl')) return;
+    if (plCovJob) {
+      if (plCovJob.key !== key && !plCovJob.cancel && vsWorker) { plCovJob.cancel = true; vsWorker.postMessage({cancel: plCovJob.job}); }
+      return;
+    }
+    if (plCovFail && plCovFail.key === key) return;
+    if (!vsWorkerStart()) { plCovFail = {key, msg: vsWorkerErr}; plRender(); return; }
+    const m = plCovMsg();
+    plCovJob = {job: ++vsSeq, key, prog: null, lat: m.lat, lon: m.lon, r: m.r};
+    vsWorker.postMessage({job: plCovJob.job, lat: m.lat, lon: m.lon, h: m.h, amsl: m.amsl, k: m.k, levels: vsPlan(m.lat, m.r * 1000), sig: m.sig});
+    plRender();
+  }
+  function plCovCancel() {
+    if (plCovJob && !plCovJob.cancel && vsWorker) { plCovJob.cancel = true; vsWorker.postMessage({cancel: plCovJob.job}); }
+  }
+  function plOnCov(m) {
+    if (m.prog) { plCovJob.prog = m.prog; plRender(); return; }
+    const job = plCovJob;
+    plCovJob = null;
+    if (m.error) { if (m.error !== 'cancelled') plCovFail = {key: job.key, msg: m.error}; }
+    else {
+      const old = plCov;
+      plCov = {key: job.key, gnd: m.gnd, eye: m.eye, ms: m.ms, tiles: m.tiles, loaded: m.loaded, lat: job.lat, lon: job.lon, r: job.r,
+               levels: m.levels.map((l, i) => {
+                 const o = old && old.levels[i];
+                 return Object.assign({z: l.z, N: l.N, gx0: l.gx0, gy0: l.gy0, cell: l.cell, need: new Uint16Array(l.need),
+                                       ground: new Int16Array(l.ground), loss: new Uint16Array(l.loss)},
+                                      o && o.cv && o.N === l.N ? {cv: o.cv, cx: o.cx} : {});   // (canvases reused)
+               })};
+      plCovFail = null;
+      plCovPaint();
+    }
+    plCovPump();
+    vsPump();   // (a viewshed queued meanwhile)
+    plRender();
+    mapDraw();
+  }
+  // in sight of the TX at cell i of a ring (the receiver at its height)
+  function plCovInSight(l, i) {
+    const q = l.need[i];
+    return plState.rxAmsl ? l.ground[i] + vsDec(q) <= plState.rxh : q <= vsEnc(plState.rxh);
+  }
+  // each ring as an image: the margin over the need, by band (short of it:
+  // half as strong, so the map shows through); % covered by area
+  function plCovPaint() {
+    const r = plCov;
+    if (!r) return;
+    const abgr = (col, a) => { const c = parseInt(col.slice(1), 16); return ((a << 24) | ((c & 0xff) << 16) | (c & 0xff00) | ((c >> 16) & 0xff)) >>> 0; };
+    const bands = PL_BANDS.map(([t, c]) => [t, abgr(c, t < 0 ? 128 : 255)]), base = plPrx(0) - plSens(), nd = plNeeds();
+    let vis = 0, tot = 0;
+    for (const l of r.levels) {
+      const N = l.N;
+      if (!l.cv) { l.cv = document.createElement('canvas'); l.cv.width = l.cv.height = N; l.cx = l.cv.getContext('2d'); }
+      const img = l.cx.createImageData(N, N), px = new Uint32Array(img.data.buffer), need = l.need, loss = l.loss;
+      let lv = 0, lt = 0;
+      for (let i = 0; i < N * N; i++) {
+        if (need[i] === VS_NODATA || loss[i] === 65535) { px[i] = 0; continue; }   // (no data / the receiver under the ground)
+        lt++;
+        const ex = base - loss[i] / 10 - (plCovInSight(l, i) ? nd.nIn : nd.nOut);
+        let c = 0;
+        for (let b = 0; b < bands.length; b++) if (ex >= bands[b][0]) { c = bands[b][1]; break; }
+        px[i] = c;
+        if (ex >= 0) lv++;
+      }
+      l.cx.putImageData(img, 0, 0);
+      vis += lv * l.cell * l.cell;
+      tot += lt * l.cell * l.cell;
+    }
+    r.vis = tot ? vis / tot : 0;
+  }
+  // the budget / reliability changed: the coverage repaints (no new job)
+  function plRepaint() { if (plCov) plCovPaint(); plRender(); mapDraw(); }
+  // under the pointer: the coverage's cell (finest ring with data) -> {L, g, ins, d, b}
+  function plCovAt(x, y) {
+    const r = plCov;
+    if (!r || !mapCv) return null;
+    const W = mapWorld(), nx = mapState.mx + (x - mapW / 2) / W, ny = mapState.my + (y - mapH / 2) / W;
+    for (const l of r.levels) {
+      const Wv = 256 * 2 ** l.z, N = l.N;
+      let px = nx * Wv - l.gx0;
+      px -= Math.round((px - N / 2) / Wv) * Wv;
+      const i = Math.floor(px), j = Math.floor(ny * Wv - l.gy0);
+      if (i < 0 || j < 0 || i >= N || j >= N || l.need[j * N + i] === VS_NODATA) continue;
+      const [la, lo] = mapScreenToLatLon(x, y);
+      return {L: l.loss[j * N + i], g: l.ground[j * N + i], ins: plCovInSight(l, j * N + i), d: mapDistKm(r.lat, r.lon, la, lo), b: mapBearing(r.lat, r.lon, la, lo)};
+    }
+    return null;
+  }
+  function plHoverRender() {
+    const el = document.querySelector('#map-pl .pl-hov');
+    if (!el || !plReady) return;
+    let html = '';
+    const c = mapState.pl && vsHovAt ? plCovAt(vsHovAt[0], vsHovAt[1]) : null;
+    if (c) {
+      const where = `${c.d < 10 ? c.d.toFixed(1) : c.d.toFixed(0)} km, ${c.b.toFixed(0)}° from the TX · ground ${c.g} m`;
+      if (c.L === 65535) html = `Here: the receiver would be under the ground · ${where}`;
+      else {
+        const prx = plPrx(c.L / 10), nd = plNeeds(), ex = prx - plSens() - (c.ins ? nd.nIn : nd.nOut);
+        html = `Here: <b style="color:${plCol(ex) || '#ff8a80'}">${prx.toFixed(1)} dBm</b> (${ex >= 0 ? '+' : ''}${ex.toFixed(1)} dB for ${plState.rel} %) · ` +
+               `loss ${(c.L / 10).toFixed(1)} dB, ${c.ins ? 'in sight' : '<span class="no">beyond the line of sight</span>'} · ${where}`;
+      }
+    }
+    if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+  }
+
+  // ---- the mode: path loss OR the viewshed ----
+  function plToggle() {
+    if (mapState.pl) { plModeOff(); mapSave(); mapUpdateControls(); mapDraw(); return; }
+    mapState.pl = true;
+    plState.open = true;
+    if (mapState.vs) {   // (the viewshed OR path loss)
+      mapState.vs = false;
+      if (vsJob) vsCancel(vsJob.id);
+    }
+    if (!plState.tx) {   // first use: the station transmits (move it: right-click → TX here)
+      const p = mapStationPos();
+      if (p) plState.tx = {lat: +p[0].toFixed(6), lon: +p[1].toFixed(6), name: 'Station', st: true, mk: ''};
+      else mapStatusFlash('Right-click the map → "📶 TX here" to place the transmitter');
+    }
+    mapSave();
+    plSave();
+    mapUpdateControls();
+    plPump();
+    plCovPump();
+    mapDraw();
+  }
+  // (the viewshed turned on: path loss off - its results stay for later)
+  function plModeOff() {
+    if (!mapState.pl) return;
+    mapState.pl = false;
+    plCovCancel();
+    if (plSel) plSel = null;
+    if (plReady) plRender();
+  }
+  function plEnsureOn() {
+    plState.open = true;
+    plState.prof = true;
+    if (!mapState.pl) plToggle();
+  }
+
+  // ---- the ends ----
+  // the TX or the RX at a place; opt {st (the station: follows it), mk
+  // (from a marker), h (its antenna height above the ground)}. The other end
+  // missing: the station (a transmitter here -> does the station hear it?)
   function plSetEnd(w, lat, lon, name, opt) {
     opt = opt || {};
-    const old = plState[w];
-    plState[w] = {lat: +lat.toFixed(6), lon: +lon.toFixed(6), name: String(name || 'Point').slice(0, 60), st: !!opt.st, mk: opt.mk || '',
-                  h: opt.h !== undefined ? opt.h : old ? old.h : w === 'a' ? vsState.h : vsTgt(),
-                  amsl: w === 'b' ? (opt.amsl !== undefined ? opt.amsl : old ? old.amsl : vsState.amsl) : false};
-    if (w === 'b' && !plState.b.amsl && plState.b.h > 5000) plState.b.h = 2;
-    if (w === 'b' && !plState.a) {   // the far end first: the near one is the station
-      const p = mapStationPos();
-      if (p) plState.a = {lat: +p[0].toFixed(6), lon: +p[1].toFixed(6), name: 'Station', st: true, mk: '', h: vsState.h, amsl: false};
-      else mapStatusFlash('Now the other end: right-click → "📶 Path loss from here" (no station location to start from)');
-    }
+    const o = w === 'tx' ? 'rx' : 'tx';
+    plState[w] = {lat: +lat.toFixed(6), lon: +lon.toFixed(6), name: String(name || 'Point').slice(0, 60), st: !!opt.st, mk: opt.mk || ''};
+    if (opt.h !== undefined) { plState[w + 'h'] = opt.h; plState[w + 'Amsl'] = false; }
+    const p = mapStationPos();
+    if (!plState[o] && p && !opt.st && mapDistKm(lat, lon, p[0], p[1]) > 0.05)
+      plState[o] = {lat: +p[0].toFixed(6), lon: +p[1].toFixed(6), name: 'Station', st: true, mk: ''};
     plEnsureOn();
     plSave();
     plPump();
+    plCovPump();
     plRender();
     mapDraw();
   }
@@ -15089,44 +15238,52 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     mapMenuClose();
     if (!at) return;
     let i = 1;
-    while ([plState.a, plState.b].some(e => e && e.name === 'Point ' + i) || vsState.items.some(v => v.name === 'Point ' + i)) i++;
+    while ([plState.tx, plState.rx].some(e => e && e.name === 'Point ' + i) || vsState.items.some(v => v.name === 'Point ' + i)) i++;
     plSetEnd(w, at.la, at.lo, 'Point ' + i);
   }
-  function plFromStation() {
-    const p = mapStationPos();
+  // the station as the TX / the RX (was it the other end: the ends swap)
+  function plStationAs(w) {
+    const p = mapStationPos(), o = w === 'tx' ? 'rx' : 'tx';
     if (!p) { mapStatusFlash('No station location - set it in the sidebar (Station Information) or right-click the map → "Set station here"'); return; }
-    plSetEnd('a', p[0], p[1], 'Station', {st: true});
+    if (plState[o] && plState[o].st) { plSwap(); return; }
+    plSetEnd(w, p[0], p[1], 'Station', {st: true});
   }
   function plToMarker(id, w) {
     const m = mkGet(id);
-    if (m) plSetEnd(w || 'b', m.lat, m.lon, m.name, {mk: m.id});
+    if (m) plSetEnd(w, m.lat, m.lon, m.name, {mk: m.id});
   }
-  // an OSM mast: the far end (or w), its antenna at the mast's mapped height
+  // an OSM mast as the TX / RX, its antenna at the mast's mapped height
   function plToMast(k, w) {
     const m = mastPts.get(k);
     if (!m) return;
     const t = String(m.tags.height || '').trim(), v = parseFloat(t);
     mapSel = null;
-    plSetEnd(w || 'b', m.la, m.lo, mastTitle(m.tags), v > 0 ? {h: Math.min(5000, Math.round(/(ft|')\s*$/i.test(t) ? v * 0.3048 : v)), amsl: false} : {});
+    plSetEnd(w, m.la, m.lo, mastTitle(m.tags), v > 0 ? {h: Math.min(5000, Math.round(/(ft|')\s*$/i.test(t) ? v * 0.3048 : v))} : {});
   }
-  function plRemove() {
-    plState.a = plState.b = null;
+  // removes the RX (the link; the coverage stays)
+  function plRemoveRx() {
+    plState.rx = null;
     plRes = null;
     if (plJob && !plJob.cancel) { plJob.cancel = true; plWorker.postMessage({cancel: plJob.job}); }
-    if (plSel) plSel = null;
+    if (plSel === 'rx') plSel = null;
     plSave();
     plRender();
     mapDraw();
   }
+  // the ends trade places - with what belongs to the places: antenna
+  // heights, gains, cables, clutter (the power and the receiver stay)
   function plSwap() {
-    if (!plState.a || !plState.b) return;
-    const a = plState.a, b = plState.b;
-    plState.a = Object.assign({}, b, {amsl: false, h: b.amsl ? 10 : b.h});
-    plState.b = Object.assign({}, a, {st: false, amsl: false});
-    if (b.amsl) mapStatusFlash('The aircraft end can only be the far one: its height is now 10 m above the ground');
+    const s = plState;
+    [s.tx, s.rx] = [s.rx, s.tx];
+    [s.txh, s.rxh] = [s.rxh, s.txh];
+    [s.txAmsl, s.rxAmsl] = [s.rxAmsl, s.txAmsl];
+    [s.gt, s.gr] = [s.gr, s.gt];
+    [s.lt, s.lr] = [s.lr, s.lt];
+    [s.envTx, s.envRx] = [s.envRx, s.envTx];
     plSave();
     plPump();
-    plRender();
+    plCovPump();
+    plRender(true);
     mapDraw();
   }
   // an end dragged somewhere else (from the station / a marker: no longer it)
@@ -15139,145 +15296,150 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     e.mk = '';
     plSave();
     plPump();
+    plCovPump();
     plRender();
     mapDraw();
   }
-  // the station end follows the station (as the station's viewsheds do)
-  function plFollowStation() {
-    const p = mapStationPos(), a = plState.a;
-    if (!plReady || !p || !a || !a.st || mapDistKm(a.lat, a.lon, p[0], p[1]) <= 0.002) return;
-    a.lat = +p[0].toFixed(6);
-    a.lon = +p[1].toFixed(6);
+  // an end at the station follows it (with a GPS / phone source the
+  // coverage at most every 30 s, as the viewsheds)
+  function plFollowStation(now) {
+    const p = mapStationPos();
+    if (!plReady || !p) return;
+    let moved = false;
+    for (const w of ['tx', 'rx']) {
+      const e = plState[w];
+      if (!e || !e.st || mapDistKm(e.lat, e.lon, p[0], p[1]) <= 0.002) continue;
+      if (w === 'tx' && plState.cov && !mapStaticSource() && !now && Date.now() - (e.ft || 0) < 30000) continue;
+      e.lat = +p[0].toFixed(6);
+      e.lon = +p[1].toFixed(6);
+      e.ft = Date.now();
+      moved = true;
+    }
+    if (!moved) return;
     plSave();
     plPump();
+    plCovPump();
     plRender();
     mapDraw();
   }
 
   // ---- the link's result -> the numbers ----
-  // {L (the chosen model's loss incl. clutter), Lm, clut, model, Prx, snr, margin, los, need, rel}
+  // {L (the chosen model's loss incl. clutter), Lm, clut, Prx, snr, margin, los, need, rel, sigma, kind, K}
   function plBudget(r) {
     if (!r) return null;
     const mdl = plState.model;
-    let Lm = mdl === 'itm' ? (r.itm.err ? null : r.itm.A) : mdl === 'fs' ? r.fs : mdl === 'hata' ? r.hata.L : r.p1812.Lb;
+    const Lm = mdl === 'itm' ? (r.itm.err ? null : r.itm.A) : mdl === 'fs' ? r.fs : mdl === 'hata' ? r.hata.L : r.p1812.Lb;
     if (Lm === null) return {err: 'ITM: ' + plItmErr(r.itm.err)};
     const clut = mdl === 'hata' ? 0 : r.clut.a + r.clut.b;   // (Hata's environments are its own clutter)
     const L = Lm + clut, Prx = plPrx(L), los = mdl === 'fs' ? true : r.p1812.los;
-    const sigma = plSigmaL(r.clut.aero ? 2 : plState.envB, r.hrs - r.gB), [kind, K] = plFading(los);
+    const sigma = plSigmaL(), [kind, K] = plFading(los);
     const margin = Prx - plSens(), need = plNeed(plState.rel, sigma, kind, K);
     return {L, Lm, clut, Prx, snr: Prx - plNoise(), margin, los, need, sigma, kind, K, rel: 100 * (1 - plOutage(margin, sigma, kind, K))};
   }
   function plItmErr(e) {
-    return {1000: 'transmitter height out of range (0.5-3000 m)', 1001: 'receiver height out of range (0.5-3000 m)', 1009: 'frequency out of range (20 MHz - 20 GHz)',
-            1013: 'ground impedance', 1016: 'effective Earth radius', 1021: 'surface refractivity too small', 1022: 'surface refractivity too large'}[e] || 'error ' + e;
+    return {1000: 'TX height out of its range (0.5-3000 m above ground)', 1001: 'RX height out of its range (0.5-3000 m above ground)',
+            1009: 'frequency out of range (20 MHz - 20 GHz)', 1013: 'ground impedance', 1016: 'effective Earth radius',
+            1021: 'surface refractivity too small', 1022: 'surface refractivity too large'}[e] || 'error ' + e;
   }
   const plF = (v, d) => v === null || v === undefined || !Number.isFinite(v) ? '–' : v.toFixed(d === undefined ? 1 : d);
   const plSgn = (v, d) => (v >= 0 ? '+' : '') + plF(v, d);
 
-  // ---- the panel (under the viewshed's) ----
-  function plToggle() {
-    mapState.pl = !mapState.pl;
-    if (mapState.pl) plState.open = true;
-    mapSave();
-    plSave();
-    mapUpdateControls();
-    mapDraw();
-  }
+  // ---- the panel (where the viewshed's is: one of them at a time) ----
+  // what each setting changes: the link (L), the coverage (C) - a new job; the rest repaints
+  const PL_REDO = {f: 'LC', pol: 'LC', N0: 'LC', envTx: 'LC', envRx: 'LC', climate: 'L', ground: 'L', rel: 'L', txh: 'LC', rxh: 'LC',
+                   txAmsl: 'LC', rxAmsl: 'LC', r: 'C', cov: 'C'};
   function plSet(k, v) {
     const n = Number(v), lim = {f: [20, 20000], ptx: [1e-6, 1e7], gt: [-30, 60], gr: [-30, 60], lt: [0, 60], lr: [0, 60], bw: [0.01, 1e5],
-                                nf: [0, 40], snr: [-40, 80], N0: [250, 400], K: [-20, 40], rel: [1, 99.99]}[k];
-    if (lim) { if (!(Number.isFinite(n) && n >= lim[0] && n <= lim[1])) { plRender(true); return; } plState[k] = n; }
+                                nf: [0, 40], snr: [-40, 80], N0: [250, 400], K: [-20, 40], rel: [1, 99.99], r: [1, VS_RMAX_KM],
+                                txh: [0, plState.txAmsl ? 30000 : 5000], rxh: [0, plState.rxAmsl ? 30000 : 5000]}[k];
+    if (lim) { if (!(Number.isFinite(n) && n >= lim[0] && n <= lim[1])) { plRender(true); return; } plState[k] = k === 'r' ? Math.round(n) : n; }
     else if (k === 'sigL') { if (v === '' || v === null) plState.sigL = null; else if (Number.isFinite(n) && n >= 0 && n <= 30) plState.sigL = n; else { plRender(true); return; } }
-    else if (['envA', 'envB', 'climate', 'pol'].includes(k)) plState[k] = n;
+    else if (['envTx', 'envRx', 'climate', 'pol'].includes(k)) plState[k] = n;
+    else if (k === 'txAmsl' || k === 'rxAmsl') {   // (into the air: an aircraft's height; back on the ground: a usual mast)
+      plState[k] = v === 'amsl' || v === true;
+      const h = k[0] === 't' ? 'txh' : 'rxh';
+      if (!plState[k] && plState[h] > 1000) plState[h] = h === 'txh' ? 10 : 2;
+      else if (plState[k] && plState[h] < 200) plState[h] = 3000;
+    }
+    else if (k === 'cov') plState.cov = !!v;
     else plState[k] = v;
     plSave();
-    // what the worker computes with -> new results; the rest repaints
-    if (['f', 'pol', 'N0', 'climate', 'ground', 'envA', 'envB', 'rel'].includes(k)) plPump();
-    if (plState.sig && ['f', 'pol', 'N0', 'envA', 'envB'].includes(k)) plCovChanged();
-    else if (plState.sig) vsRepaint();
+    const redo = PL_REDO[k] || '';
+    if (redo.includes('L')) plPump();
+    if (redo.includes('C')) plCovPump();
+    else plRepaint();
     plRender(true);
     mapDraw();
   }
-  // the end's antenna height (and for B: above ground / sea level)
-  function plSetEndH(w, v) {
-    const e = plState[w], n = Number(v);
-    if (!e || !Number.isFinite(n) || n < 0 || n > (e.amsl ? 30000 : 5000)) { plRender(true); return; }
-    e.h = Math.round(n * 10) / 10;
-    plSave(); plPump(); plRender(true);
-  }
-  function plSetEndRef(v) {
-    const e = plState.b;
-    if (!e) return;
-    e.amsl = v === 'amsl';
-    if (!e.amsl && e.h > 5000) e.h = 2;
-    plSave(); plPump(); plRender(true);
-  }
-  // the coverage: the viewsheds compute the signal
-  function plSetSig(on) {
-    plState.sig = !!on;
-    plSave();
-    if (plState.sig && (!mapState.vs || !vsState.items.length)) {
-      if (!mapState.vs) vsToggle();
-      if (!vsState.items.length) vsAddStation();
-    }
-    plCovChanged();
-    plRender(true);
-  }
-  function plCovChanged() {
-    if (!vsReady) return;
-    if (vsJob) vsCancel(vsJob.id);
-    vsRepaint();
-    vsPump();
-  }
+  // the refraction (k, the viewshed's setting) changed
+  function plKChanged() { plPump(); plCovPump(); plRender(true); }
   function plPanelBuild(el) {
     el.dataset.built = '1';
     const num = (k, w, step, tip) => `<input type="number" data-k="${k}" style="width:${w}px" step="${step}" title="${tip}" onchange="plSet('${k}',this.value)" onkeydown="if(event.key==='Enter')this.blur()">`;
     const sel = (k, opts, tip) => `<select data-k="${k}" title="${tip}" onchange="plSet('${k}',this.value)">${opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>`;
+    const ref = (k, tip) => `<select data-k="${k}" title="${tip}" onchange="plSet('${k}',this.value)"><option value="agl">above ground</option><option value="amsl">above sea level</option></select>`;
     const envs = PL_ENVS.map((t, i) => [i, t]);
+    const end = w => `<div class="map-vs-row pl-end"><span class="pl-tag" style="background:${PL_COL[w]}">${PL_NAME[w]}</span><span class="nm pl-${w}-nm"></span>` +
+      `<label title="${w === 'tx' ? 'The transmitter' : 'The receiver'}'s antenna height (the coverage: every receiver at this height)">${num(w + 'h', 52, '1', 'Antenna height (m)')} m</label>` +
+      ref(w + 'Amsl', `Above the ground there, or above sea level (${w === 'tx' ? 'a transmitter in the air' : 'a receiver in the air'}: aircraft, balloon, drone)`) +
+      `<button type="button" class="map-btn" onclick="plStationAs('${w}')" title="Put the ${PL_NAME[w]} at the station (Station Information)">📡</button></div>`;
     el.innerHTML =
       `<div class="map-vs-h"><span class="t">📶 Path loss</span>` +
-      `<button type="button" class="map-btn" onclick="plFromStation()" title="Start a link at the station (its location: Station Information); then right-click the far end → Path loss to here">Link from station</button>` +
-      `<span class="hint">or right-click the map</span>` +
+      `<span class="hint">right-click the map: 📶 TX here / RX here</span>` +
       `<span class="x" id="map-pl-fold" onclick="plState.open=!plState.open;plSave();plRender()" title="Fold / unfold"></span></div>` +
       `<div class="map-vs-body">` +
       `<div class="map-vs-row"><label title="Frequency">Freq ${num('f', 70, 'any', 'Frequency (MHz)')} MHz</label>` +
-      `<label title="Transmitter power (W)">Tx ${num('ptx', 56, 'any', 'Transmitter power at the antenna connector (W)')} W</label><span class="pl-dbm"></span></div>` +
+      `<label title="Transmitter power (W)">TX power ${num('ptx', 56, 'any', 'Transmitter power at the antenna connector (W)')} W</label><span class="pl-dbm"></span></div>` +
+      end('tx') + end('rx') +
       `<div class="pl-set-h" onclick="plState.set=!plState.set;plSave();plRender()"><span class="pl-set-f"></span> Antennas, receiver, model, channel</div>` +
       `<div class="pl-set">` +
-      `<div class="map-vs-row"><span class="pl-l">Antennas</span><label>Tx ${num('gt', 48, '0.1', 'Transmit antenna gain (dBi)')} dBi</label>` +
-      `<label>Rx ${num('gr', 48, '0.1', 'Receive antenna gain (dBi)')} dBi</label></div>` +
-      `<div class="map-vs-row"><span class="pl-l">Cables</span><label>Tx ${num('lt', 44, '0.1', 'Feed line + connector loss at the transmitter (dB)')} dB</label>` +
-      `<label>Rx ${num('lr', 44, '0.1', 'Feed line + connector loss at the receiver (dB)')} dB</label></div>` +
+      `<div class="map-vs-row"><span class="pl-l">Antennas</span><label>TX ${num('gt', 48, '0.1', 'Transmit antenna gain (dBi)')} dBi</label>` +
+      `<label>RX ${num('gr', 48, '0.1', 'Receive antenna gain (dBi)')} dBi</label></div>` +
+      `<div class="map-vs-row"><span class="pl-l">Cables</span><label>TX ${num('lt', 44, '0.1', 'Feed line + connector loss at the transmitter (dB)')} dB</label>` +
+      `<label>RX ${num('lr', 44, '0.1', 'Feed line + connector loss at the receiver (dB)')} dB</label></div>` +
       `<div class="map-vs-row"><span class="pl-l">Receiver</span><label title="Bandwidth (noise)">${num('bw', 56, 'any', 'Receiver bandwidth (kHz): the noise it lets in')} kHz</label>` +
       `<label>NF ${num('nf', 40, '0.5', 'Receiver noise figure (dB); an RTL-SDR ~4-6 dB, more with long cables before the LNA')} dB</label>` +
       `<label>needs SNR ${num('snr', 40, '0.5', 'The signal-to-noise ratio the receiver needs (dB): ~10-12 for NBFM voice, 5-8 for digital voice, 0-3 for robust data / DF')} dB</label></div>` +
       `<div class="map-vs-row pl-sens"></div>` +
-      `<div class="map-vs-row"><span class="pl-l">Model</span>${sel('model', Object.entries(PL_MODELS), 'The propagation model for the link (the coverage on the viewsheds is always ITU-R P.1812)')}` +
+      `<div class="map-vs-row"><span class="pl-l">Model</span>${sel('model', Object.entries(PL_MODELS), 'The propagation model for the link (the coverage is always ITU-R P.1812)')}` +
       `${sel('pol', [[1, 'vertical'], [0, 'horizontal']], 'Polarization')}</div>` +
       `<div class="map-vs-row pl-itm"><span class="pl-l">ITM</span>${sel('climate', PL_CLIMATES.slice(1).map((t, i) => [i + 1, t]), 'Radio climate (Longley-Rice)')}` +
       `${sel('ground', Object.entries(PL_GROUNDS).map(([k, v]) => [k, v[0]]), 'Ground constants (Longley-Rice)')}</div>` +
       `<div class="map-vs-row"><label title="Surface refractivity N0 (N-units): 301 = average; it sets troposcatter beyond the horizon">N0 ${num('N0', 48, '1', 'Sea-level surface refractivity (N-units): 301 average, ~280 dry / inland, ~340-360 humid coasts / tropics')}</label>` +
-      `<span class="pl-note">Earth bulge: the viewshed's refraction (k)</span></div>` +
-      `<div class="map-vs-row"><span class="pl-l">Clutter</span><label title="The surroundings of the transmitter end (A, the station / viewshed site)">Tx ${sel('envA', envs, 'Clutter around the transmitter end (ITU-R P.2108): adds loss when its antenna is below the clutter height (10 m open / suburban, 15 m urban / forest, 20 m dense urban)')}</label>` +
-      `<label title="The surroundings of the far end / the target">Rx ${sel('envB', envs, 'Clutter around the receiver end / the coverage target (ITU-R P.2108)')}</label></div>` +
+      `<select id="map-pl-k" onchange="vsSetK(this.value)" title="Earth curvature and how much the air bends the path (k = effective Earth radius / real one) - shared with the viewshed">` +
+      `<option value="1.3333333333333333">Radio (k = 4/3)</option><option value="1.1666666666666667">Light (k = 7/6)</option><option value="1">No bending (k = 1)</option></select></div>` +
+      `<div class="map-vs-row"><span class="pl-l">Clutter</span><label title="The surroundings of the transmitter">TX ${sel('envTx', envs, 'Clutter around the transmitter (ITU-R P.2108): adds loss when its antenna is below the clutter height (10 m open / suburban, 15 m urban / forest, 20 m dense urban)')}</label>` +
+      `<label title="The surroundings of the receiver(s)">RX ${sel('envRx', envs, 'Clutter around the receiver(s) - also the coverage\'s (ITU-R P.2108)')}</label></div>` +
       `<div class="map-vs-row"><span class="pl-l">Fading</span>${sel('fade', [['auto', 'auto: Rician in sight, Rayleigh beyond'], ['rician', 'Rician'], ['rayleigh', 'Rayleigh'], ['none', 'none (fixed)']], 'Fast (multipath) fading around the local mean: Rician with a direct path (K = direct / scattered power), Rayleigh without one; none for a fixed link between masts')}` +
       `<label class="pl-k">K ${num('K', 40, '1', 'Rician K-factor (dB): ~3-10 for mobiles with a direct path, more for clear rooftop links')} dB</label></div>` +
       `<div class="map-vs-row"><label title="How often the signal must be good enough">Reliability ${num('rel', 48, '1', 'The share of times / places the signal must reach what the receiver needs (%)')} %</label>` +
       `<label title="Location variability (lognormal shadowing)">σ<sub>L</sub> <input type="text" data-k="sigL" style="width:40px" title="Location variability (dB, lognormal shadowing over the area); empty = automatic (ITU-R P.1546: 0.5 + 1.3 log f in the open, 1.2 + 1.3 log f in clutter)" onchange="plSet('sigL',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> dB</label></div>` +
       `<div class="map-vs-row pl-req"></div>` +
       `</div>` +
-      `<div class="map-vs-row pl-cov"><label title="Colour the viewsheds by the signal from their antenna (ITU-R P.1812 + clutter) instead of the line of sight; the target height is the viewshed's"><input type="checkbox" id="map-pl-sig" onchange="plSetSig(this.checked)"> Signal on the viewsheds</label></div>` +
-      `<div class="pl-leg"></div>` +
+      `<div class="map-vs-row pl-cov"><label title="The signal from the TX to every place around it, for a receiver at the RX height (ITU-R P.1812 + clutter)"><input type="checkbox" id="map-pl-cov" onchange="plSet('cov',this.checked)"> Coverage around the TX</label>` +
+      `<label title="How far to work it out">radius ${num('r', 48, '1', 'Radius (km) - bigger takes longer: ~30 km a few seconds, 300 km about half a minute')} km</label><span class="pl-cst"></span></div>` +
+      `<div class="pl-leg"></div><div class="pl-hov"></div>` +
       `<div id="map-pl-link"></div>` +
       `<div class="map-vs-note">Median path loss (50 % of the time) over the bare terrain (AWS Terrain Tiles; buildings and trees only through the clutter setting). ` +
       `ITU-R P.1812 = delta-Bullington diffraction + troposcatter; ITM = NTIA's Longley-Rice (public domain, ported); P.2108 clutter; P.1546 location variability.</div></div>`;
   }
-  // the coverage legend: the margin over the need, as received dBm at that need
+  // the coverage legend: the margin over the need
   function plLegendHtml() {
-    const s = plSens(), los = plNeed(plState.rel, plSigmaL(plState.envB, vsTgt()), ...plFading(true)), nl = plNeed(plState.rel, plSigmaL(plState.envB, vsTgt()), ...plFading(false));
-    return `<div class="pl-leg-h">Margin over the need for ${plF(plState.rel, 0)} %: <span title="received ${plF(s + los)} dBm in sight, ${plF(s + nl)} dBm beyond">` +
-           `${plF(s + nl)} dBm (beyond the horizon)</span></div><div class="pl-leg-b">` +
-           PL_BANDS.map(([t, c], i) => `<span><i style="background:${c}"></i>${i ? (t >= 0 ? '+' : '') + t + '…' + (PL_BANDS[i - 1][0] >= 0 ? '+' : '') + PL_BANDS[i - 1][0] : '≥ +' + t} dB</span>`).join('') + '</div>';
+    const s = plSens(), nd = plNeeds();
+    return `<div class="pl-leg-h">Margin over the need for ${plF(plState.rel, 0)} % (received ${plF(s + nd.nIn)} dBm in sight, ${plF(s + nd.nOut)} dBm beyond):</div><div class="pl-leg-b">` +
+           PL_BANDS.map(([t, c], i) => `<span><i style="background:${c}${t < 0 ? '80' : ''}"></i>${i ? (t >= 0 ? '+' : '') + t + '…' + (PL_BANDS[i - 1][0] >= 0 ? '+' : '') + PL_BANDS[i - 1][0] : '≥ +' + t} dB</span>`).join('') + '</div>';
+  }
+  function plCovStatus() {
+    if (!plState.cov) return ['', ''];
+    if (!plState.tx) return ['place the TX first', 'w'];
+    const key = plCovKey();
+    if (plCovJob) {
+      const p = plCovJob.prog;
+      return [Array.isArray(p) ? (p[0] === 'sig' ? `signal ${p[1]} %…` : `loading terrain ${p[0]}/${p[1]}…`) : p === 'compute' ? 'computing…' : 'starting…', 'w'];
+    }
+    if (plCovFail && plCovFail.key === key) return [`⚠ ${digEsc(plCovFail.msg)} · <a onclick="plCovFail=null;plCovPump()">retry</a>`, 'e'];
+    if (!plCov || plCov.key !== key) return [plCov ? 'waiting to update…' : 'waiting…', 'w'];
+    return [`${Math.round(plCov.vis * 100)} % covered · ${(plCov.ms / 1000).toFixed(1)} s`, 'g'];
   }
   function plRender(force) {
     const el = $id('map-pl');
@@ -15295,45 +15457,50 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const sf = el.querySelector('.pl-set-f'), st = plState.set ? '▾' : '▸';
     if (sf.textContent !== st) sf.textContent = st;
     for (const inp of el.querySelectorAll('[data-k]')) {
-      const k = inp.dataset.k, v = k === 'sigL' ? (plState.sigL === null ? '' : plState.sigL) : plState[k];
+      const k = inp.dataset.k;
+      const v = k === 'sigL' ? (plState.sigL === null ? '' : plState.sigL) : k === 'txAmsl' || k === 'rxAmsl' ? (plState[k] ? 'amsl' : 'agl') : plState[k];
       vsSetVal(inp, v, force);
     }
+    vsSetVal($id('map-pl-k'), String(vsState.k), force);
     const set = (sel, html) => { const e = el.querySelector(sel); if (e && e.dataset.html !== html) { e.dataset.html = html; e.innerHTML = html; } };
     set('.pl-dbm', `= ${plF(plPtxDbm())} dBm`);
+    for (const w of ['tx', 'rx']) {
+      const e = plState[w];
+      set(`.pl-${w}-nm`, e ? digEsc(e.name) : `<span class="pl-note">right-click → ${PL_NAME[w]} here</span>`);
+    }
     set('.pl-sens', `<span class="pl-note">noise ${plF(plNoise())} dBm → needs <b>${plF(plSens())} dBm</b> (median, before fading)</span>`);
-    const sg = plSigmaL(plState.envB, plState.b ? plState.b.h : vsTgt());
-    set('.pl-req', `<span class="pl-note">σ<sub>L</sub> ${plF(sg)} dB · a ${plF(plState.rel, plState.rel % 1 ? 1 : 0)} % reliability needs a median margin of ` +
-                   `<b>${plSgn(plNeed(plState.rel, sg, ...plFading(true)))} dB</b> in sight, <b>${plSgn(plNeed(plState.rel, sg, ...plFading(false)))} dB</b> beyond</span>`);
+    const nd = plNeeds();
+    set('.pl-req', `<span class="pl-note">σ<sub>L</sub> ${plF(nd.sg)} dB · a ${plF(plState.rel, plState.rel % 1 ? 1 : 0)} % reliability needs a median margin of ` +
+                   `<b>${plSgn(nd.nIn)} dB</b> in sight, <b>${plSgn(nd.nOut)} dB</b> beyond</span>`);
     el.querySelector('.pl-k').style.display = plState.fade === 'auto' || plState.fade === 'rician' ? '' : 'none';
-    const cb = $id('map-pl-sig');
-    if (cb.checked !== plState.sig) cb.checked = plState.sig;
-    set('.pl-leg', plState.sig ? plLegendHtml() : '');
+    const cb = $id('map-pl-cov');
+    if (cb.checked !== plState.cov) cb.checked = plState.cov;
+    const [ct, cc] = plCovStatus();
+    set('.pl-cst', ct ? `<span class="${cc}">${ct}</span>` : '');
+    set('.pl-leg', plState.cov && plCov ? plLegendHtml() : '');
     // the link, one line (details in the strip)
     let lk = '';
-    if (plState.a || plState.b) {
-      const a = plState.a, b = plState.b, r = plRes && plRes.key === plKey() ? plRes : null, bu = plBudget(r);
-      lk = `<div class="pl-lk"><span class="pl-l">Link</span><span class="nm">${digEsc(a ? a.name : '?')} → ${digEsc(b ? b.name : '?')}</span>`;
-      if (!a || !b) lk += `<span class="pl-note">right-click the map → "📶 Path loss ${a ? 'to' : 'from'} here"</span>`;
-      else if (plJob) lk += `<span class="w">${Array.isArray(plJob.prog) ? `loading terrain ${plJob.prog[0]}/${plJob.prog[1]}…` : 'computing…'}</span>`;
+    if (plState.tx && plState.rx) {
+      const r = plRes && plRes.key === plKey() ? plRes : null, bu = plBudget(r);
+      lk = `<div class="pl-lk"><span class="pl-l">Link TX → RX</span>`;
+      if (plJob) lk += `<span class="w">${Array.isArray(plJob.prog) ? `loading terrain ${plJob.prog[0]}/${plJob.prog[1]}…` : 'computing…'}</span>`;
       else if (plFail && plFail.key === plKey()) lk += `<span class="e">⚠ ${digEsc(plFail.msg)}</span>`;
       else if (bu && bu.err) lk += `<span class="e">⚠ ${digEsc(bu.err)}</span>`;
-      else if (bu) {
-        const ex = bu.margin - bu.need;
-        lk += `<span style="color:${plCol(ex) || '#ff8a80'}">${plF(bu.Prx)} dBm · ${plF(bu.rel, bu.rel > 99 ? 1 : 0)} %</span>`;
-      }
+      else if (bu) lk += `<span style="color:${plCol(bu.margin - bu.need) || '#ff8a80'}">${plF(bu.Prx)} dBm · ${plF(bu.rel, bu.rel > 99 ? 1 : 0)} %</span>`;
       lk += `<button type="button" class="map-btn" onclick="plState.prof=!plState.prof;plSave();plRender()" title="Show / hide the link's profile and budget">${plState.prof ? 'Hide' : 'Show'}</button></div>`;
     }
     set('#map-pl-link', lk);
+    plHoverRender();
   }
 
   // ---- the strip at the bottom of the map: profile + every model + the budget ----
   function plRenderStrip() {
     const el = $id('map-plk');
     if (!el || !plReady) return;
-    const on = !!(mapState.pl && plState.prof && plState.a && plState.b);
+    const on = !!(mapState.pl && plState.prof && plState.tx && plState.rx);
     if (el.style.display !== (on ? 'flex' : 'none')) el.style.display = on ? 'flex' : 'none';
     const pane = $id('map-pane');
-    if (pane && pane.classList.contains('pl-open') !== on) { pane.classList.toggle('pl-open', on); }
+    if (pane && pane.classList.contains('pl-open') !== on) pane.classList.toggle('pl-open', on);
     if (!on) return;
     if (!el.dataset.built) {
       el.dataset.built = '1';
@@ -15342,22 +15509,20 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       cv.addEventListener('pointermove', e => { plHov = e.offsetX; plDrawProfile(); mapDraw(); });
       cv.addEventListener('pointerleave', () => { plHov = null; plDrawProfile(); mapDraw(); });
     }
-    const a = plState.a, b = plState.b, r = plRes && plRes.key === plKey() ? plRes : null, bu = plBudget(r);
+    const a = plState.tx, b = plState.rx, r = plRes && plRes.key === plKey() ? plRes : null, bu = plBudget(r);
     const D = mapDistKm(a.lat, a.lon, b.lat, b.lon), brg = mapBearing(a.lat, a.lon, b.lat, b.lon);
-    let h = `<div class="plk-h"><b>📶 ${digEsc(a.name)} → ${digEsc(b.name)}</b> <span class="pl-note">${D < 10 ? D.toFixed(2) : D.toFixed(1)} km · ${brg.toFixed(1)}°</span>` +
-            `<span class="plk-b"><button type="button" class="map-btn" onclick="plSwap()" title="Swap the ends">⇄</button>` +
+    const tag = w => `<span class="pl-tag" style="background:${PL_COL[w]}">${PL_NAME[w]}</span>`;
+    let h = `<div class="plk-h"><b>📶 ${tag('tx')} ${digEsc(a.name)} → ${tag('rx')} ${digEsc(b.name)}</b> <span class="pl-note">${D < 10 ? D.toFixed(2) : D.toFixed(1)} km · ${brg.toFixed(1)}°</span>` +
+            `<span class="plk-b"><button type="button" class="map-btn" onclick="plSwap()" title="Swap TX and RX (with their antenna heights, gains, cables and clutter)">⇄</button>` +
             `<button type="button" class="map-btn" onclick="plFit()" title="Show the whole link">⌖</button>` +
-            `<button type="button" class="map-btn" onclick="plRemove()" title="Remove the link">✕</button></span></div>`;
-    h += `<div class="plk-ends">A <input type="number" class="pl-ha" min="0" max="5000" step="1" onchange="plSetEndH('a',this.value)" onkeydown="if(event.key==='Enter')this.blur()" title="A's antenna height above the ground"> m` +
-         ` · B <input type="number" class="pl-hb" min="0" max="30000" step="1" onchange="plSetEndH('b',this.value)" onkeydown="if(event.key==='Enter')this.blur()" title="B's antenna height">` +
-         `<select class="pl-rb" onchange="plSetEndRef(this.value)" title="B's height above the ground, or above sea level (an aircraft: P.2108's air-to-ground clutter at A instead)"><option value="agl">m above ground</option><option value="amsl">m above sea level</option></select></div>`;
+            `<button type="button" class="map-btn" onclick="plRemoveRx()" title="Remove the RX (the link; the coverage around the TX stays)">✕</button></span></div>`;
     if (plJob) h += `<div class="w">${Array.isArray(plJob.prog) ? `loading terrain ${plJob.prog[0]}/${plJob.prog[1]}…` : 'computing…'}</div>`;
     else if (plFail && plFail.key === plKey()) h += `<div class="e">⚠ ${digEsc(plFail.msg)} · <a onclick="plFail='';plPump()">retry</a></div>`;
     if (r) {
       const p = r.p1812, mdl = plState.model;
       const path = p.los ? (r.clr >= 0.6 ? `line of sight, ${plF(r.clr, 2)} of the first Fresnel zone clear` : `line of sight, but the Fresnel zone is ${r.clr >= 0 ? 'partly' : 'mostly'} blocked (${plF(r.clr, 2)} F1 at ${plF(r.clrAt / 1000)} km)`)
                          : `beyond the horizon - Bullington edge at ${plF(p.dbp)} km (ν ${plF(p.nu, 2)})${p.Lbs < p.Lbd ? ', troposcatter dominates' : ''}`;
-      const it = r.itm.err ? `<span class="e" title="${digEsc(plItmErr(r.itm.err))}">error</span>` : `${plF(r.itm.A)}<span class="pl-note"> ${['', 'line of sight', 'diffraction', 'troposcatter'][r.itm.mode]}</span>`;
+      const it = r.itm.err ? `<span class="e" title="${digEsc(plItmErr(r.itm.err))}">⚠ ${digEsc(plItmErr(r.itm.err))}</span>` : `${plF(r.itm.A)}<span class="pl-note"> ${['', 'line of sight', 'diffraction', 'troposcatter'][r.itm.mode]}</span>`;
       const row = (k, label, v, tip) => `<tr class="${mdl === k ? 'sel' : ''}" title="${tip}" onclick="plSet('model','${k}')"><td>${label}</td><td>${v}</td></tr>`;
       h += `<div class="plk-path">${path}</div><table class="plk-m">` +
            row('p1812', 'ITU-R P.1812', `${plF(p.Lb)}<span class="pl-note"> free space ${plF(p.Lbfs)} + diffraction ${plF(p.Ld)}</span>`, 'Delta-Bullington terrain diffraction + troposcatter (median)') +
@@ -15367,26 +15532,26 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                'Okumura-Hata / COST-231: empirical, no terrain - for comparison. Valid for 150-2000 MHz, 1-20 km, the higher antenna 30-200 m, the lower 1-10 m') +
            `</table>`;
       if (bu && !bu.err) {
-        const ex = bu.margin - bu.need;
+        const ex = bu.margin - bu.need, c = r.clut;
+        const cl = c.airA && c.airB ? 'none (both in the air)' : c.aero ? (c.airB ? `TX ${plF(c.a)} dB (air-to-ground, ${plF(Math.max(0, r.elevA), 1)}° up)` : `RX ${plF(c.b)} dB (air-to-ground, ${plF(Math.max(0, r.elevB), 1)}° up)`)
+                                            : `TX ${plF(c.a)} · RX ${plF(c.b)} dB`;
         h += `<table class="plk-b2">` +
-             `<tr><td>Clutter</td><td>${r.clut.aero ? `A ${plF(r.clut.a)} dB (air-to-ground, ${plF(Math.max(0, r.elevA), 1)}° up)` : `A ${plF(r.clut.a)} · B ${plF(r.clut.b)} dB`}${plState.model === 'hata' ? ' <span class="pl-note">(not added to Hata)</span>' : ''}</td></tr>` +
+             `<tr><td>Clutter</td><td>${cl}${plState.model === 'hata' ? ' <span class="pl-note">(not added to Hata)</span>' : ''}</td></tr>` +
              `<tr><td>Received</td><td><b>${plF(bu.Prx)} dBm</b> <span class="pl-note">median · SNR ${plF(bu.snr)} dB · ${plF(Math.sqrt(50 * 10 ** (bu.Prx / 10) / 1000) * 1e6, bu.Prx > -100 ? 2 : 3)} µV</span></td></tr>` +
              `<tr><td>Margin</td><td><b style="color:${plCol(ex) || '#ff8a80'}">${plSgn(bu.margin)} dB</b> over ${plF(plSens())} dBm · ${plF(bu.need)} needed for ${plF(plState.rel, 0)} % ` +
              `(σ<sub>L</sub> ${plF(bu.sigma)}, ${bu.kind === 'rician' ? `Rician K ${plF(plState.K, 0)} dB` : bu.kind}) → <b>${plF(bu.rel, bu.rel > 99 ? 2 : 0)} %</b></td></tr>` +
              (r.itm.Arel ? `<tr><td title="Longley-Rice with its own time + location variability (mobile mode, 50 % confidence)">ITM ${plF(plState.rel, 0)} %</td><td>${plF(r.itm.Arel)} dB <span class="pl-note">(its own variability)</span></td></tr>` : '') +
              `</table>`;
       } else if (bu && bu.err) h += `<div class="e">⚠ ${digEsc(bu.err)}</div>`;
-      h += `<div class="pl-note">terrain zoom ${r.z} (${plF(r.xi, 0)} m steps), ${r.tiles} tiles${r.loaded ? ` (${r.loaded} loaded)` : ''}, ${r.ms} ms · ground ${Math.round(r.gA)} / ${Math.round(r.gB)} m${r.sea > 0.01 ? ` · ${Math.round(r.sea * 100)} % sea` : ''}</div>`;
+      h += `<div class="pl-note">TX ${Math.round(r.hts)} m / RX ${Math.round(r.hrs)} m above sea level (ground ${Math.round(r.gA)} / ${Math.round(r.gB)} m)${r.sea > 0.01 ? ` · ${Math.round(r.sea * 100)} % sea` : ''} · ` +
+           `terrain zoom ${r.z} (${plF(r.xi, 0)} m steps), ${r.tiles} tiles${r.loaded ? ` (${r.loaded} loaded)` : ''}, ${r.ms} ms</div>`;
     }
     const t = el.querySelector('.plk-t');
     if (t.dataset.html !== h) { t.dataset.html = h; t.innerHTML = h; }
-    vsSetVal(t.querySelector('.pl-ha'), a.h);
-    vsSetVal(t.querySelector('.pl-hb'), b.h);
-    vsSetVal(t.querySelector('.pl-rb'), b.amsl ? 'amsl' : 'agl');
     plDrawProfile();
   }
   function plFit() {
-    const a = plState.a, b = plState.b;
+    const a = plState.tx, b = plState.rx;
     if (!a || !b) return;
     const [ax, ay] = mapProj(a.lat, a.lon), [bx0, by] = mapProj(b.lat, b.lon), bx = ax + (bx0 - ax - Math.round(bx0 - ax));
     const span = Math.max(Math.abs(bx - ax), Math.abs(by - ay), 1e-9), z = Math.log2(0.7 * Math.min(mapW, mapH - 180) / (256 * span));
@@ -15478,12 +15643,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
     // the antennas
     c.lineWidth = 2;
-    for (const [x, g, top, col, nm] of [[0, r.gA, r.hts, '#ffd600', 'A'], [Dm, r.gB, r.hrs, '#4fc3f7', 'B']]) {
-      c.strokeStyle = col;
+    for (const [x, g, top, w] of [[0, r.gA, r.hts, 'tx'], [Dm, r.gB, r.hrs, 'rx']]) {
+      c.strokeStyle = PL_COL[w];
       c.beginPath(); c.moveTo(X(x), Y(g + bulge(x))); c.lineTo(X(x), Y(top)); c.stroke();
-      c.fillStyle = col;
+      c.fillStyle = PL_COL[w];
       c.textAlign = x ? 'right' : 'left';
-      c.fillText(nm, X(x) + (x ? -4 : 4), Y(top) + 3);
+      c.fillText(PL_NAME[w], X(x) + (x ? -4 : 4), Y(top) + 3);
     }
     // under the pointer
     let hh = '';
@@ -15498,7 +15663,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (hov.dataset.html !== hh) { hov.dataset.html = hh; hov.innerHTML = hh; }
   }
 
-  // ---- on the map: the great circle, its ends (selectable / draggable), the edge ----
+  // ---- on the map: the coverage, the great circle, its ends (selectable / draggable), the edge ----
   function plGc(a, b, t) {
     const D2R = Math.PI / 180, la1 = a.lat * D2R, lo1 = a.lon * D2R, la2 = b.lat * D2R, lo2 = b.lon * D2R;
     const A = [Math.cos(la1) * Math.cos(lo1), Math.cos(la1) * Math.sin(lo1), Math.sin(la1)], B = [Math.cos(la2) * Math.cos(lo2), Math.cos(la2) * Math.sin(lo2), Math.sin(la2)];
@@ -15513,10 +15678,55 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const e = plState[w];
     return od ? {lat: od.lat, lon: od.lon} : e;
   }
+  // the coverage's rings coarse -> fine, opaque, onto one layer, then tinted
+  // onto the map (as vsDraw); its radius dashed around the TX
+  function plDrawCov(c) {
+    const r = plCov;
+    if (!r || !plState.cov || !r.levels[0].cv) return;
+    const W = mapWorld();
+    if (!plOff) plOff = document.createElement('canvas');
+    if (plOff.width !== mapCv.width || plOff.height !== mapCv.height) { plOff.width = mapCv.width; plOff.height = mapCv.height; }
+    const o = plOff.getContext('2d');
+    o.setTransform(1, 0, 0, 1, 0, 0);
+    o.clearRect(0, 0, plOff.width, plOff.height);
+    o.setTransform(mapDpr, 0, 0, mapDpr, 0, 0);
+    for (let k = r.levels.length - 1; k >= 0; k--) {
+      const l = r.levels[k], Wv = 256 * 2 ** l.z, sc = W / Wv, N = l.N;
+      const [mx, my] = mapToScreen((l.gx0 + N / 2) / Wv, (l.gy0 + N / 2) / Wv);
+      const left = mx - N / 2 * sc, top = my - N / 2 * sc;
+      const sx0 = Math.max(0, Math.floor(-left / sc)), sy0 = Math.max(0, Math.floor(-top / sc));
+      const sx1 = Math.min(N, Math.ceil((mapW - left) / sc)), sy1 = Math.min(N, Math.ceil((mapH - top) / sc));
+      if (sx1 <= sx0 || sy1 <= sy0) continue;
+      o.imageSmoothingEnabled = sc < 2;
+      o.drawImage(l.cv, sx0, sy0, sx1 - sx0, sy1 - sy0, left + sx0 * sc, top + sy0 * sc, (sx1 - sx0) * sc, (sy1 - sy0) * sc);
+    }
+    c.save();
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.globalAlpha = 0.55;
+    c.drawImage(plOff, 0, 0);
+    c.restore();
+    c.save();
+    c.strokeStyle = PL_COL.tx;
+    c.globalAlpha = 0.8;
+    c.lineWidth = 1.5;
+    c.setLineDash([6, 5]);
+    c.beginPath();
+    const p1 = r.lat * Math.PI / 180, d = r.r * 1000 / VS_RE;
+    for (let b = 0; b <= 360; b += 2) {
+      const br = b * Math.PI / 180, p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(br));
+      const dl = Math.atan2(Math.sin(br) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2));
+      const [sx, sy] = mapToScreen(mapProj(p2 * 180 / Math.PI, r.lon)[0] + dl / (2 * Math.PI), mapProj(p2 * 180 / Math.PI, r.lon)[1]);
+      if (b) c.lineTo(sx, sy); else c.moveTo(sx, sy);
+    }
+    c.stroke();
+    c.restore();
+  }
   function plDraw(c) {
     if (!plReady || !mapState.pl) return;
-    if (!plJob) plPump();   // (after a reload the link is worked out with the map)
-    const a = plEndPos('a'), b = plEndPos('b');
+    if (!plJob) plPump();   // (after a reload worked out with the map)
+    if (!plCovJob) plCovPump();
+    plDrawCov(c);
+    const a = plEndPos('tx'), b = plEndPos('rx');
     const r = plRes && plRes.key === plKey() ? plRes : null, bu = plBudget(r);
     if (a && b) {
       const col = bu && !bu.err ? plCol(bu.margin - bu.need) || '#ff5252' : '#b0bec5';
@@ -15548,55 +15758,52 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       }
       c.restore();
     }
-    for (const [w, e, col] of [['a', a, '#ffd600'], ['b', b, '#4fc3f7']]) {
-      if (!e || (w === 'a' && plState.a.st && mapStationPos())) continue;   // (at the station: its mast marks it)
-      const [x, y] = mapLatLonToScreen(e.lat, e.lon);
+    // the ends: a TX / RX badge; at the station only a tag beside its mast (the mast selects the station)
+    for (const w of ['tx', 'rx']) {
+      const e = w === 'tx' ? a : b;
+      if (!e) continue;
+      const [x, y] = mapLatLonToScreen(e.lat, e.lon), atSt = plState[w].st && mapStationPos();
       c.save();
+      c.font = 'bold 10px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      if (atSt) {
+        const tx = x + (w === 'tx' ? -20 : 20), ty = y - 18;
+        c.fillStyle = PL_COL[w]; c.strokeStyle = 'rgba(0,0,0,0.85)'; c.lineWidth = 1.2;
+        c.beginPath(); c.roundRect ? c.roundRect(tx - 11, ty - 7, 22, 14, 4) : c.rect(tx - 11, ty - 7, 22, 14); c.fill(); c.stroke();
+        c.fillStyle = '#000'; c.fillText(PL_NAME[w], tx, ty + 0.5);
+        c.restore();
+        continue;
+      }
       if (plSel === w) {
-        c.beginPath(); c.arc(x, y, 12, 0, 2 * Math.PI);
+        c.beginPath(); c.arc(x, y, 14, 0, 2 * Math.PI);
         c.strokeStyle = 'rgba(0,0,0,0.75)'; c.lineWidth = 5; c.stroke();
         c.strokeStyle = '#fff'; c.lineWidth = 2.5; c.stroke();
       }
-      c.fillStyle = col; c.strokeStyle = 'rgba(0,0,0,0.85)'; c.lineWidth = 1.5;
-      c.beginPath(); c.arc(x, y, 7, 0, 2 * Math.PI); c.fill(); c.stroke();
-      c.fillStyle = '#000'; c.font = 'bold 10px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
-      c.fillText(w.toUpperCase(), x, y + 0.5);
+      c.fillStyle = PL_COL[w]; c.strokeStyle = 'rgba(0,0,0,0.85)'; c.lineWidth = 1.5;
+      c.beginPath(); c.arc(x, y, 9, 0, 2 * Math.PI); c.fill(); c.stroke();
+      c.fillStyle = '#000';
+      c.fillText(PL_NAME[w], x, y + 0.5);
       if (!plState[w].mk) {   // (a marker shows its own name)
         c.font = 'bold 11px sans-serif'; c.textAlign = 'left'; c.lineJoin = 'round';
         c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineWidth = 3; c.fillStyle = '#fff';
-        c.strokeText(plState[w].name, x + 10, y); c.fillText(plState[w].name, x + 10, y);
+        c.strokeText(plState[w].name, x + 12, y); c.fillText(plState[w].name, x + 12, y);
       }
       c.restore();
     }
   }
-  // the link end under a screen point (within 10 px): 'a' | 'b' | null
+  // the link end under a screen point (within 11 px): 'tx' | 'rx' | null
   function plHit(x, y) {
     if (!plReady || !mapState.pl) return null;
-    let best = null, bd = 10 * 10;
-    for (const w of ['b', 'a']) {
+    let best = null, bd = 11 * 11;
+    for (const w of ['rx', 'tx']) {
       const e = plState[w];
-      if (!e || (w === 'a' && e.st && mapStationPos())) continue;   // (the station's own: select the station)
+      if (!e || (e.st && mapStationPos())) continue;   // (the station's own: select the station)
       const [px, py] = mapLatLonToScreen(e.lat, e.lon), d = (px - x) ** 2 + (py - y) ** 2;
       if (d < bd) { bd = d; best = w; }
     }
     return best;
   }
 
-  // ---- coverage: the viewsheds' signal (vsPaint / vsHoverRender use these) ----
-  // the job's m.sig (null = line of sight only)
-  function plSigMsg() {
-    if (!plState.sig) return null;
-    return {f: plState.f, tgt: vsTgt(), amsl: vsState.amsl, pol: plState.pol, N0: plState.N0, envTx: plState.envA, envRx: plState.envB,
-            hmTx: PL_ENV_HM[plState.envA]};
-  }
-  // per cell: [margin over the need (dB), Prx dBm] for a loss (u16, 0.1 dB) in or out of sight
-  function plCellFns() {
-    const sg = plSigmaL(vsState.amsl ? 2 : plState.envB, vsState.amsl ? 1e9 : vsTgt());
-    const base = plPtxDbm() + plState.gt - plState.lt + plState.gr - plState.lr, sens = plSens();
-    const nIn = plNeed(plState.rel, sg, ...plFading(true)), nOut = plNeed(plState.rel, sg, ...plFading(false));
-    return {base, sens, nIn, nOut};
-  }
-
+  if (mapState.vs && mapState.pl) mapState.pl = false;   // (one of them: older saved views had both)
   plReady = true;
 
   // markers' age / staleness changes without new data
