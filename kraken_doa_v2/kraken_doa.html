@@ -506,6 +506,54 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-vs-hov .no {color:#ffab91}
 .map-vs-note {margin-top:4px;color:#7f93b4;font-size:10px;line-height:1.35}
 .map-vs-note a {color:#4fc3f7}
+/* 📶 path loss panel (📶 PATH LOSS): the .map-vs styles + these */
+.map-pl .pl-l {color:#8fb0d8;min-width:56px}
+.map-pl .pl-note, .map-pl .pl-dbm {color:#8296b4}
+.map-pl .pl-note b {color:#dbe8ff}
+.map-pl .pl-set-h {margin-top:5px;color:#8fb0d8;cursor:pointer;user-select:none}
+.map-pl .pl-set-h:hover {color:#fff}
+.map-pl.set-closed .pl-set {display:none}
+.map-pl:not(.m-itm) .pl-itm {display:none}
+.map-pl input[type="text"] {background:#1a1a2e;border:1px solid #2a4a7a;color:#e0e0e0;border-radius:3px;font-size:11px;padding:1px 3px;height:22px;box-sizing:border-box}
+.map-pl .pl-cov {border-top:1px solid #2a4a7a;padding-top:4px;margin-top:5px}
+.map-pl .w {color:#ffcc80}
+.map-pl .e {color:#ff8a80}
+.pl-leg:empty {display:none}
+.pl-leg-h {color:#8fb0d8;margin-top:3px}
+.pl-leg-b {display:flex;flex-wrap:wrap;gap:2px 8px;margin-top:2px}
+.pl-leg-b i {display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:3px;vertical-align:-1px;border:1px solid rgba(0,0,0,.6)}
+.pl-lk {display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px;border-top:1px solid #2a4a7a;padding-top:4px}
+.pl-lk .nm {font-weight:bold;color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px}
+.pl-lk .map-btn {height:20px;padding:0 5px;font-size:11px;margin-left:auto}
+/* the link at the bottom of the map: numbers left, profile right */
+.map-plk {position:absolute;left:6px;right:6px;bottom:20px;height:232px;z-index:4;display:flex;gap:8px;background:rgba(16,24,44,.95);border:1px solid #2a4a7a;border-radius:4px;padding:5px 7px;font-size:11px;color:#cfe3ff;box-sizing:border-box}
+.plk-t {flex:0 1 410px;min-width:220px;overflow-y:auto}
+.plk-c {flex:1 1 260px;min-width:150px;display:flex;flex-direction:column}
+.plk-c canvas {flex:1;width:100%;min-height:0;cursor:crosshair;display:block}
+.plk-hov {height:14px;color:#dbe8ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.plk-h {display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+.plk-h b {color:#fff}
+.plk-b {margin-left:auto;display:flex;gap:3px}
+.plk-b .map-btn {height:20px;min-width:20px;padding:0 4px;font-size:11px}
+.plk-ends {margin:3px 0}
+.plk-ends input, .plk-ends select {background:#1a1a2e;border:1px solid #2a4a7a;color:#e0e0e0;border-radius:3px;font-size:11px;padding:1px 3px;height:22px;box-sizing:border-box}
+.plk-ends input {width:58px}
+.plk-path {margin:2px 0 3px;color:#dbe8ff}
+.plk-m, .plk-b2 {border-collapse:collapse;width:100%;margin-bottom:3px}
+.plk-m td, .plk-b2 td {padding:1px 6px 1px 0;vertical-align:top}
+.plk-m td:first-child, .plk-b2 td:first-child {color:#8fb0d8;white-space:nowrap;width:1%}
+.plk-m tr {cursor:pointer}
+.plk-m tr:hover td {background:#1a2a48}
+.plk-m tr.sel td {background:#22345a}
+.plk-m tr.sel td:first-child::before {content:'▶ ';color:#4fc3f7}
+.map-plk .pl-note {color:#8296b4}
+.map-plk .w {color:#ffcc80}
+.map-plk .e {color:#ff8a80}
+.map-plk a {color:#4fc3f7;cursor:pointer;text-decoration:underline}
+.map-pane.pl-open .map-df {bottom:260px}
+.map-pane.pl-open .map-mk {bottom:260px;max-height:calc(100% - 380px)}
+.map-pane.pl-open .map-status {bottom:256px}
+.map-pane.pl-open .map-tl {max-height:calc(100% - 310px)}
 #map-canvas {-webkit-touch-callout:none}
 /* right-click (long-press) menu on the map + the user's markers (📍 MAP MARKERS) */
 .map-menu {position:absolute;z-index:6;min-width:160px;max-width:260px;background:rgba(16,24,44,.97);border:1px solid #4fc3f7;border-radius:4px;padding:3px 0;box-shadow:0 2px 10px rgba(0,0,0,.5);font-size:12px}
@@ -1682,10 +1730,12 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <button type="button" class="map-btn" id="map-trails" onclick="mapSet('trails', !mapState.trails)" title="Show the tracks the markers left">Trails</button>
             <button type="button" class="map-btn" id="map-masts" onclick="mapSet('masts', !mapState.masts)" title="Radio masts, towers and antennas mapped in OpenStreetMap, loaded online for the area shown (zoom in to see them). The colour says what OpenStreetMap lists them for; click one for everything it knows about it">Masts</button>
             <button type="button" class="map-btn" id="map-vs-btn" onclick="vsToggle()" title="Viewshed: the ground in line of sight of an antenna at the station or any place you pick (right-click the map, a marker or a mast), over the terrain, anywhere in the world (terrain loaded online)">Viewshed</button>
+            <button type="button" class="map-btn" id="map-pl-btn" onclick="plToggle()" title="Path loss: how much signal gets from one place to another over the terrain, also without line of sight (ITU-R P.1812, Longley-Rice), with the link budget, clutter and fading - for a link (right-click the map: Path loss to here) or as coverage on the viewsheds">Path loss</button>
           </div>
           <div class="map-tl">
             <div class="map-legend" id="map-legend" style="display:none"></div>
             <div class="map-vs" id="map-vs" style="display:none"></div>
+            <div class="map-vs map-pl" id="map-pl" style="display:none"></div>
           </div>
           <div class="map-ctl map-ctl-tr">
             <button type="button" class="map-btn" onclick="mapZoomBy(1)" title="Zoom in (mouse wheel / double-click)">+</button>
@@ -1714,6 +1764,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
               </div>
             </div>
           </div>
+          <!-- 📶 the path loss link: terrain profile + the models + the budget -->
+          <div class="map-plk" id="map-plk" style="display:none"></div>
           <div class="map-status" id="map-status"></div>
           <div class="map-offline" id="map-offline" style="display:none">Map tiles can't be loaded (no internet connection?) - positions are still shown on a plain grid.</div>
           <div class="map-attr" id="map-attr"></div>
@@ -1762,7 +1814,7 @@ const MAP_TRAIL_BALLOON_MAX = 4000, MAP_TRAIL_BALLOON_S = 4 * 3600;
 const mapState = (() => {
   const d = {on: false, tab: 'map', w: 0, layer: 'street', z: 0, mx: 0.5, my: 0.5, trails: true, masts: false,
              rdfVfo: 'all', rdfTid: '', rdfLobe: true, rdfLines: true, rdfHeat: true, rdfOpen: true,
-             vs: false, vsOpen: true};
+             vs: false, vsOpen: true, pl: false};
   try { return Object.assign(d, JSON.parse(localStorage.getItem('kraken_map') || '{}')); } catch (e) { return d; }
 })();
 const mapPts = new Map();      // "vfo|plugin|id" -> point (server fields + rx time + trail)
@@ -1818,6 +1870,32 @@ const vsState = (() => {
 const vsRes = new Map(), vsFail = new Map();
 let vsWorker = null, vsJob = null, vsSeq = 0, vsWorkerErr = '', vsHovAt = null, vsOff = null,
     vsReady = false;   // set at the end of the section (rpApply can draw the map before it)
+// 📶 path loss (see 📶 PATH LOSS): the radio + channel settings, the link's
+// two ends (localStorage kraken_pl; rebuilt field by field), the link worker,
+// its job and result, the selected end ('a' | 'b'), the profile under the pointer
+const plState = (() => {
+  const d = {f: 146, ptx: 5, gt: 2.15, gr: 2.15, lt: 1, lr: 1, bw: 12.5, nf: 6, snr: 10, model: 'p1812', pol: 1, N0: 301,
+             climate: 5, ground: 'avg', envA: 3, envB: 3, fade: 'auto', K: 6, rel: 90, sigL: null, sig: false, open: true,
+             set: false, prof: true, a: null, b: null};
+  try {
+    const s = JSON.parse(localStorage.getItem('kraken_pl') || '{}'), num = (v, lo, hi, def) => typeof v === 'number' && v >= lo && v <= hi ? v : def;
+    for (const [k, lo, hi] of [['f', 20, 20000], ['ptx', 1e-6, 1e7], ['gt', -30, 60], ['gr', -30, 60], ['lt', 0, 60], ['lr', 0, 60],
+                               ['bw', 0.01, 1e5], ['nf', 0, 40], ['snr', -40, 80], ['N0', 250, 400], ['climate', 1, 7], ['envA', 0, 5],
+                               ['envB', 0, 5], ['K', -20, 40], ['rel', 1, 99.99], ['pol', 0, 1]]) d[k] = num(s[k], lo, hi, d[k]);
+    if (s.sigL !== null && s.sigL !== undefined) d.sigL = num(s.sigL, 0, 30, null);
+    if (['p1812', 'itm', 'fs', 'hata'].includes(s.model)) d.model = s.model;
+    if (['avg', 'poor', 'good', 'fresh', 'sea'].includes(s.ground)) d.ground = s.ground;
+    if (['auto', 'none', 'rayleigh', 'rician'].includes(s.fade)) d.fade = s.fade;
+    for (const k of ['sig', 'open', 'set', 'prof']) if (typeof s[k] === 'boolean') d[k] = s[k];
+    const end = (e, amsl) => e && Math.abs(e.lat) <= 85.05 && Math.abs(e.lon) <= 180 && e.h >= 0 && e.h <= (amsl && e.amsl ? 30000 : 5000) ?
+      {lat: +e.lat, lon: +e.lon, h: +e.h, amsl: !!(amsl && e.amsl), name: String(e.name || 'Point').slice(0, 60), st: !!e.st,
+       mk: /^[A-Za-z0-9_-]{1,24}$/.test(e.mk) ? e.mk : ''} : null;
+    d.a = end(s.a, false);
+    d.b = end(s.b, true);
+  } catch (e) {}
+  return d;
+})();
+let plWorker = null, plJob = null, plSeq = 0, plRes = null, plFail = '', plSel = null, plHov = null, plReady = false;
 
 const bwo=[
   {decimation:1,bandwidth:2.4,name:"2.4 MHz (No decimation)"},
@@ -10819,7 +10897,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (!ptrs.has(e.pointerId)) {
         const grab = mapObjGrab(e.offsetX, e.offsetY);
         const over = !grab && !!(mkHit(e.offsetX, e.offsetY) || mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY) ||
-                                 stHit(e.offsetX, e.offsetY) || vsHit(e.offsetX, e.offsetY));
+                                 stHit(e.offsetX, e.offsetY) || vsHit(e.offsetX, e.offsetY) || plHit(e.offsetX, e.offsetY));
         mapCv.classList.toggle('over', over);
         mapCv.classList.toggle('obj', grab === 'obj');
         mapCv.classList.toggle('rot', grab === 'rot');
@@ -10871,10 +10949,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
           // edit stays open)
           const mk = mkHit(e.offsetX, e.offsetY);
           vsHover(e.offsetX, e.offsetY);   // touch: a tap shows what is in sight there
-          // the station / a viewshed point: selected (then draggable), anything else: deselected
-          const st = !mk && stHit(e.offsetX, e.offsetY), vs = !mk && !st ? vsHit(e.offsetX, e.offsetY) : null;
-          mapSelectObj(st ? 'st' : vs);
-          mapSel = mk || st || vs ? null : (mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY));
+          // the station / a viewshed point / a link end: selected (then draggable), anything else: deselected
+          const pl = !mk ? plHit(e.offsetX, e.offsetY) : null;
+          const st = !mk && !pl && stHit(e.offsetX, e.offsetY), vs = !mk && !st && !pl ? vsHit(e.offsetX, e.offsetY) : null;
+          mapSelectObj(st ? 'st' : pl ? 'pl:' + pl : vs);
+          mapSel = mk || st || vs || pl ? null : (mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY));
           if (mk) mkSelect(mk);
           else if (!mkEdit && mkSel) mkClose();
           mapDraw();
@@ -10904,7 +10983,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     document.addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
       mapMenuClose();
-      if ((mapStSel || vsSel) && !mapObjDrag) { mapSelectObj(null); mapDraw(); }
+      if ((mapStSel || vsSel || plSel) && !mapObjDrag) { mapSelectObj(null); mapDraw(); }
     });
     window.addEventListener('blur', mapMenuClose);
     mapUpdateControls();
@@ -10924,6 +11003,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const vb = $id('map-vs-btn');
     if (vb) vb.classList.toggle('on', !!mapState.vs);
     vsRender();
+    const pb = $id('map-pl-btn');
+    if (pb) pb.classList.toggle('on', !!mapState.pl);
+    if (typeof plRender === 'function') plRender();
     const lg = $id('map-legend');
     if (lg) {
       if (!lg.innerHTML) lg.innerHTML = Object.values(MAST_CATS).map(c => `<span><i style="background:${c.col}"></i>${c.name}</span>`).join('');
@@ -10932,7 +11014,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const at = $id('map-attr');
     if (at) at.textContent = MAP_LAYERS[mapState.layer].attr +
       (mapState.masts && mapState.layer !== 'street' ? ' · masts © OpenStreetMap contributors' : '') +
-      (mapState.vs ? ' · terrain: Mapzen, SRTM, GMTED2010, ETOPO1 & others' : '');
+      (mapState.vs || mapState.pl ? ' · terrain: Mapzen, SRTM, GMTED2010, ETOPO1 & others' : '');
     if (typeof rdfRenderPanel === 'function') rdfRenderPanel();
   }
 
@@ -11130,22 +11212,25 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
     c.restore();
   }
-  // 'st' | <viewshed item id> | null
+  // 'st' | <viewshed item id> | 'pl:a' / 'pl:b' (a link end) | null
   function mapSelectObj(w) {
-    const st = w === 'st', vs = w && !st ? w : null;
+    const st = w === 'st', pl = w && w.startsWith('pl:') ? w.slice(3) : null, vs = w && !st && !pl ? w : null;
     if (st && !mapStSel) mapStatusFlash(mapStaticSource() ? 'Station selected: drag it to move it, drag the round handle to turn its heading (Esc: done)' :
       `The station's position comes from ${(($id('location-source') || {}).value) === 'gps' ? 'the GPS' : 'the mobile app'} - right-click the map → "Set station here" to place it by hand`);
     if (vs && vs !== vsSel) { const it = vsGet(vs); if (it) mapStatusFlash(`“${it.name}” selected: drag it to move its viewshed (Esc: done)`); }
+    if (pl && pl !== plSel) mapStatusFlash(`Link end ${pl.toUpperCase()} selected: drag it to move it (Esc: done)`);
     mapStSel = st;
     vsSel = vs;
+    plSel = pl;
   }
-  // what a press at (x, y) would drag: 'rot' (the heading handle), 'obj' (the selected station / viewshed point) or ''
+  // what a press at (x, y) would drag: 'rot' (the heading handle), 'obj' (the selected station / viewshed point / link end) or ''
   function mapObjGrab(x, y) {
     if (mapStSel && mapStaticSource()) {
       if (stHdgHit(x, y)) return 'rot';
       if (stHit(x, y)) return 'obj';
     }
     if (vsSel && vsHit(x, y) === vsSel) return 'obj';
+    if (plSel && plHit(x, y) === plSel) return 'obj';
     return '';
   }
   function mapObjDragStart(x, y) {
@@ -11154,6 +11239,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (vsSel) {
       const it = vsGet(vsSel), [px, py] = mapLatLonToScreen(it.lat, it.lon);
       return {kind: 'vs', id: it.id, x0: x, y0: y, dx: px - x, dy: py - y};
+    }
+    if (plSel) {
+      const e = plState[plSel], [px, py] = mapLatLonToScreen(e.lat, e.lon);
+      return {kind: 'pl', end: plSel, x0: x, y0: y, dx: px - x, dy: py - y};
     }
     const s = stScreen();
     return k === 'rot' ? {kind: 'hdg', x0: x, y0: y} : {kind: 'st', x0: x, y0: y, dx: s[0] - x, dy: s[1] - y};
@@ -11176,6 +11265,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (d.kind === 'st') {
         stLocalSet(la, lo, null);
         d.t = setTimeout(() => vsFollowStation(true), 400);   // paused: the station's viewsheds follow
+      } else if (d.kind === 'pl') {
+        d.lat = la; d.lon = lo;
+        d.t = setTimeout(() => plMoveEnd(d.end, d.lat, d.lon), 150);   // (a link is quick)
       } else {
         d.lat = la; d.lon = lo;
         d.t = setTimeout(() => vsMoveItem(d.id, d.lat, d.lon), 400);
@@ -11187,6 +11279,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     clearTimeout(d.t);
     mapCv.classList.remove('dragging');
     if (d.kind === 'vs') { if (d.lat !== undefined) vsMoveItem(d.id, d.lat, d.lon); }
+    else if (d.kind === 'pl') { if (d.lat !== undefined) plMoveEnd(d.end, d.lat, d.lon); }
     else {
       stSend();
       if (d.kind === 'st') vsFollowStation(true);
@@ -11299,6 +11392,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     rdfDraw(c);
     mastDraw(c);
     mapRings(c);
+    plDraw(c);
     mkDraw(c);
     // trails, then markers + labels
     const now = Date.now();
@@ -12052,12 +12146,15 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     mapMenuAt = {la, lo};
     let h = '<button type="button" onclick="mkAddAt()">📍 Add Marker</button>' +
             '<button type="button" onclick="vsAddAt()" title="Which ground is in line of sight of an antenna here">👁 Viewshed from here</button>' +
+            `<button type="button" onclick="plAt('b')" title="The signal from ${plState.a ? 'the link\'s A end' : 'the station'} to here, over the terrain (also without line of sight)">📶 Path loss to here</button>` +
+            '<button type="button" onclick="plAt(\'a\')" title="Start the link (its transmitter end) here">📶 Path loss from here</button>' +
             `<button type="button" onclick="mapSetStationAt()" title="Put the station (Station Information) here - a fixed location; its heading is kept">📡 Set station here${mapStaticSource() ? '' : ' (fixed location)'}</button>`;
     const mk = mkGet(mkHit(x, y));
     if (mk) {
       const n = digEsc(mk.name);
       h += `<button type="button" onclick="mapMenuClose();mkSelect('${mk.id}',true)">✎ Edit “${n}”</button>` +
            `<button type="button" onclick="mapMenuClose();vsAddMarker('${mk.id}')">👁 Viewshed from “${n}”</button>` +
+           `<button type="button" onclick="mapMenuClose();plToMarker('${mk.id}')">📶 Path loss to “${n}”</button>` +
            `<button type="button" onclick="mapMenuClose();mkDelete('${mk.id}')">🗑 Delete “${n}”</button>`;
     }
     el.innerHTML = h + `<div class="ll">${la.toFixed(5)}, ${lo.toFixed(5)}</div>`;
@@ -12242,6 +12339,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<div class="b"><button type="button" class="map-btn" onclick="mkSelect('${m.id}',true)">✎ Edit</button>` +
       `<button type="button" class="map-btn" onclick="mkCentre()" title="Centre the map on the marker">⌖ Centre</button>` +
       `<button type="button" class="map-btn" onclick="vsAddMarker('${m.id}')" title="Which ground is in line of sight of an antenna at the marker">👁 Viewshed</button>` +
+      `<button type="button" class="map-btn" onclick="plToMarker('${m.id}')" title="The signal between the station (or the link's A end) and the marker, over the terrain">📶 Path loss</button>` +
       `<button type="button" class="map-btn" onclick="mkDelete('${m.id}')">🗑 Delete</button></div>`;
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
   }
@@ -12621,6 +12719,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
            `<div class="s">OpenStreetMap · ${m.type} ${m.id}</div><table>${rows}</table>` +
            `<div class="lnk"><button type="button" class="map-btn" onclick="mastToMarker('${m.k}')" title="Make it one of your markers, to add its frequencies and notes">📍 Add as marker</button>` +
            `<button type="button" class="map-btn" onclick="vsAddMast('${m.k}')" title="Which ground is in line of sight of an antenna at the top of this mast (its mapped height, else ${vsState.h} m)">👁 Viewshed</button>` +
+           `<button type="button" class="map-btn" onclick="plToMast('${m.k}')" title="The signal between the station (or the link's A end) and an antenna at the top of this mast">📶 Path loss</button>` +
            `<a href="${mastOsmUrl(m)}" target="_blank" rel="noopener noreferrer">openstreetmap.org ↗</a></div>`;
   }
   // a marker of the user's on the mast, its OSM details as the notes
@@ -13104,10 +13203,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       return {ang: hzAng, s: hzS};
     }
 
-    // m: {job, lat, lon, h (m above ground), k, levels: [{z, r0, r1}] fine -> coarse (vsPlan)}
+    // m: {job, lat, lon, h (m above ground), k, levels: [{z, r0, r1}] fine -> coarse (vsPlan)[, sig]}
+    // or a link (m.link, see runLink)
     async function run(m) {
       const keep = new Set();
-      try { await runJob(m, keep); } finally { trim(keep); }
+      try { await (m.link ? runLink(m, keep) : runJob(m, keep)); } finally { trim(keep); }
     }
     // first the tiles not in memory (6 at a time; progress = those), then
     // the rings - between them a break for a cancel to come in (a job whose
@@ -13154,9 +13254,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const levels = [], transfer = [];
       let hz = null, gnd = 0, eye = 0, spikes = 0;
       for (const key of keep) spikes += tiles.get(key).fix.i.length;
-      for (const g of rings) {
-        await new Promise(res => setTimeout(res, 0));
-        if (cancelled.has(m.job)) throw new Error('cancelled');
+      // a ring's terrain: the raw tiles + their clean-up's fixes, the sea (and below sea level) 0
+      const ringDem = g => {
         const N = g.N, dem = new Float32Array(N * N);
         for (const [tx, ty] of g.list) {
           const t = tiles.get(tkey(g, tx, ty)), e = t.e;   // (in memory: loaded above)
@@ -13172,7 +13271,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
             if (x >= x0 && x < x1 && y >= y0 && y < y1) dem[(y - g.gy0) * N + x - g.gx0] = fv[f];
           }
         }
-        for (let i = 0; i < dem.length; i++) if (!(dem[i] > 0)) dem[i] = 0;   // the sea (and below sea level)
+        for (let i = 0; i < dem.length; i++) if (!(dem[i] > 0)) dem[i] = 0;
+        return dem;
+      };
+      if (m.sig) return runSignal(m, rings, ringDem, nRays, curv, {t0, total, loaded: want.length, cleaned, spikes});
+      for (const g of rings) {
+        await new Promise(res => setTimeout(res, 0));
+        if (cancelled.has(m.job)) throw new Error('cancelled');
+        const N = g.N, dem = ringDem(g);
         const cx = g.ox - g.gx0 - 0.5, cy = g.oy - g.gy0 - 0.5;
         if (!hz) { gnd = bilinear(dem, N, cx, cy); eye = gnd + m.h; }   // from the finest terrain
         const need = new Uint16Array(N * N).fill(65535), ground = new Int16Array(N * N);
@@ -13187,7 +13293,1055 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       self.postMessage({job: m.job, levels, gnd, eye, mpp: rings[0].cell, tiles: total, loaded: want.length, cleaned, spikes,
                         ms: Date.now() - t0}, transfer);
     }
-    self.vsTest = {decodePng, despike, sweep, run, ringGrid, tiles, clean, PAD};   // offline tests (node)
+    // ---- 📶 a link between two points: the terrain profile + every model ----
+    // m.link = {a: {lat, lon, h m above ground}, b: {lat, lon, h, amsl (h above
+    // sea level: an aircraft)}, f MHz, k, pol 0 h / 1 v, N0, climate (ITM
+    // 1-7), eps / sigma (ITM ground), envA / envB (P.2108 types), hmA (median
+    // clutter height around A, P.2108 3.3), rel (% for ITM's own variability)}.
+    // The profile follows the great circle, sampled every terrain cell of the
+    // finest zoom (<= 14) that keeps it to PL_NMAX points (30 km: zoom 14, 8
+    // m; 300 km: zoom 11, ~60 m; 1000 km: zoom 9, ~250 m), bilinear on the
+    // cleaned tiles; the antennas stand on zoom-14 ground like a viewshed's
+    const PL_NMAX = 4000;
+    async function runLink(m, keep) {
+      const t0 = Date.now(), L = m.link, D2R = Math.PI / 180;
+      const la1 = L.a.lat * D2R, lo1 = L.a.lon * D2R, la2 = L.b.lat * D2R, lo2 = L.b.lon * D2R;
+      const A = [Math.cos(la1) * Math.cos(lo1), Math.cos(la1) * Math.sin(lo1), Math.sin(la1)];
+      const B = [Math.cos(la2) * Math.cos(lo2), Math.cos(la2) * Math.sin(lo2), Math.sin(la2)];
+      const om = Math.acos(Math.max(-1, Math.min(1, A[0] * B[0] + A[1] * B[1] + A[2] * B[2]))), D = om * RE;
+      if (D < 20) throw new Error('the two ends are too close together');
+      const so = Math.sin(om);
+      const at = t => {   // the point a fraction t along -> [lat, lon] degrees
+        const wa = Math.sin((1 - t) * om) / so, wb = Math.sin(t * om) / so;
+        const x = wa * A[0] + wb * B[0], y = wa * A[1] + wb * B[1], z = wa * A[2] + wb * B[2];
+        return [Math.atan2(z, Math.hypot(x, y)) / D2R, Math.atan2(y, x) / D2R];
+      };
+      const latMax = Math.min(85, Math.max(Math.abs(L.a.lat), Math.abs(L.b.lat), Math.abs(at(0.5)[0])));
+      let z = 14;
+      for (; z > 3; z--) if (D / (2 * Math.PI * RE * Math.cos(latMax * D2R) / (256 * 2 ** z)) <= PL_NMAX) break;
+      const n = Math.max(8, Math.ceil(D / (2 * Math.PI * RE * Math.cos(latMax * D2R) / (256 * 2 ** z)))), xi = D / n;
+      // global pixel position (pixel centres at k + 0.5) of a point at zoom zz
+      const pix = (lat, lon, zz) => {
+        const W = 256 * 2 ** zz;
+        return [(lon + 180) / 360 * W - 0.5, (0.5 - Math.atanh(Math.sin(lat * D2R)) / (2 * Math.PI)) * W - 0.5];
+      };
+      const pts = [];
+      for (let i = 0; i <= n; i++) pts.push(pix(...at(i / n), z));
+      const ends = [pix(L.a.lat, L.a.lon, 14), pix(L.b.lat, L.b.lon, 14)];
+      // the tiles: the 2 x 2 pixels each sample reads
+      const want = new Map();
+      const need = (zz, x, y) => {
+        const nn = 2 ** zz, x0 = Math.floor(x), y0 = Math.max(0, Math.min(256 * nn - 2, Math.floor(y)));
+        for (const px of [x0, x0 + 1]) for (const py of [y0, y0 + 1]) {
+          const tx = ((Math.floor(px / 256) % nn) + nn) % nn, ty = Math.floor(py / 256);
+          want.set(zz + '/' + tx + '/' + ty, [zz, tx, ty]);
+        }
+      };
+      for (const [x, y] of pts) need(z, x, y);
+      for (const [x, y] of ends) need(14, x, y);
+      const load = [];
+      for (const [key, t] of want) {
+        keep.add(key);
+        if (tiles.has(key)) { const v = tiles.get(key); tiles.delete(key); tiles.set(key, v); } else load.push(t);
+      }
+      let next = 0, done = 0, failed = false;
+      const loader = async () => {
+        while (next < load.length && !failed) {
+          const [zz, x, y] = load[next++];
+          try { await tile(zz, x, y, m.job); } catch (e) { failed = true; throw e; }
+          self.postMessage({job: m.job, prog: [++done, load.length]});
+        }
+      };
+      await Promise.all(Array.from({length: Math.min(6, load.length)}, loader));
+      if (cancelled.has(m.job)) throw new Error('cancelled');
+      // cleaned as for the viewsheds (with the neighbours this job has)
+      const cleanT = new Map();
+      for (const key of want.keys()) {
+        const t = tiles.get(key), [zz, x, y] = key.split('/').map(Number);
+        if (!t.fix || nbMask(zz, x, y, k => keep.has(k)) & ~t.nb) clean(zz, x, y, t);
+        const e = t.e.slice();
+        for (let f = 0; f < t.fix.i.length; f++) e[t.fix.i[f]] = t.fix.v[f];
+        cleanT.set(key, e);
+      }
+      const px = (zz, x, y) => {   // raw height of a global pixel (sea floor < 0)
+        const nn = 2 ** zz, tx = ((Math.floor(x / 256) % nn) + nn) % nn;
+        y = Math.max(0, Math.min(256 * nn - 1, y));
+        return cleanT.get(zz + '/' + tx + '/' + Math.floor(y / 256))[(y & 255) * 256 + (((x % 256) + 256) % 256)];
+      };
+      const bil = (zz, x, y, clamp) => {
+        const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0, v = (a, b) => { const h = px(zz, a, b); return clamp && !(h > 0) ? 0 : h; };
+        return (v(x0, y0) * (1 - fx) + v(x0 + 1, y0) * fx) * (1 - fy) + (v(x0, y0 + 1) * (1 - fx) + v(x0 + 1, y0 + 1) * fx) * fy;
+      };
+      const d = new Float64Array(n + 1), h = new Float64Array(n + 1);
+      let sea = 0;
+      for (let i = 0; i <= n; i++) {
+        const [x, y] = pts[i], raw = bil(z, x, y, false);
+        d[i] = i * xi / 1000;
+        h[i] = raw > 0 ? raw : 0;
+        if (i && i < n && !(raw > 0)) sea++;
+      }
+      const gA = bil(14, ends[0][0], ends[0][1], true), gB = bil(14, ends[1][0], ends[1][1], true);
+      h[0] = gA; h[n] = gB;
+      const hts = gA + L.a.h, hrs = L.b.amsl ? L.b.h : gB + L.b.h;
+      if (hrs < gB) throw new Error('the far end is below the ground there (' + Math.round(gB) + ' m)');
+      const htg = Math.max(0.5, L.a.h), hrg = Math.max(0.5, hrs - gB), fG = L.f / 1000, ae = L.k * RE / 1000, omega = sea / Math.max(1, n - 1);
+      const pol = L.pol ? 1 : 0;
+      const p = p1812P2P(d, h, null, htg, hrg, fG, ae, omega, L.N0, pol, true);
+      const pfl = new Float64Array(n + 3);
+      pfl[0] = n; pfl[1] = xi;
+      pfl.set(h, 2);
+      const io = {climate: L.climate, N0: L.N0, f: L.f, pol, eps: L.eps, sigma: L.sigma};
+      const itm = itmP2P(pfl, htg, hrg, Object.assign({mdvar: 12, time: 50, loc: 50, sit: 50}, io));
+      const itmR = itmP2P(pfl, htg, hrg, Object.assign({mdvar: 2, time: L.rel, loc: L.rel, sit: 50}, io));
+      // geometry: the elevation of the direct ray at each end (effective Earth),
+      // the least clearance of the first Fresnel zone and where
+      const dm = D, slope = (hrs - hts) / dm, lam = 299.792458 / L.f;
+      const elevA = Math.atan(slope - dm / (2 * ae * 1000)) * 180 / Math.PI, elevB = Math.atan(-slope - dm / (2 * ae * 1000)) * 180 / Math.PI;
+      let clr = Infinity, clrAt = 0;
+      for (let i = 1; i < n; i++) {
+        const x = i * xi, bulge = x * (dm - x) / (2 * ae * 1000), ray = hts + slope * x;
+        const c = (ray - (h[i] + bulge)) / Math.sqrt(lam * x * (dm - x) / dm);
+        if (c < clr) { clr = c; clrAt = x; }
+      }
+      // the clutter at the ends (P.2108): an aircraft at B: 3.3 at A, by elevation; else 3.1 at both
+      let clA = 0, clB = 0, aero = !!L.b.amsl;
+      if (aero) { if (L.hmA > 0) clA = p2108Aero(fG, Math.max(0, elevA), 50, Math.max(1, htg), L.hmA); }
+      else { clA = p2108Terminal(fG, htg, L.envA); clB = p2108Terminal(fG, hrg, L.envB); }
+      const hb = Math.max(htg, hrg), hmo = Math.min(htg, hrg);
+      const env = [, 'open', 'open', 'suburban', 'urban', 'large'][htg >= hrg ? L.envB : L.envA] || 'open';
+      const hata = {L: hataLoss(L.f, D / 1000, hb, hmo, env), env,
+                    ok: L.f >= 150 && L.f <= 2000 && D >= 1000 && D <= 20000 && hb >= 30 && hb <= 200 && hmo >= 1 && hmo <= 10};
+      const fs = 32.45 + 20 * Math.log10(L.f) + 10 * Math.log10((D / 1000) ** 2 + ((hts - hrs) / 1000) ** 2);
+      cancelled.delete(m.job);
+      const df = Float32Array.from(d), hf = Float32Array.from(h);
+      self.postMessage({job: m.job, link: {d: df, h: hf, z, n, xi, sea: omega, gA, gB, hts, hrs, htg, hrg, D, ae,
+        p1812: {Lb: p.Lb, Lbfs: p.Lbfs, Ld: p.Ld, Lbulla: p.Lbulla, Lbulls: p.Lbulls, Ldsph: p.Ldsph, Lbs: p.Lbs, Lbd: p.Lbd,
+                trans: p.sh.trans, los: p.bull.los, nu: p.bull.nu, dbp: p.bull.dbp, hbp: p.bull.hbp, dlt: p.sh.dlt, dlr: p.sh.dlr,
+                tt: p.sh.tt, tr: p.sh.tr},
+        itm: itm.err ? {err: itm.err} : {A: itm.A, Arel: itmR.err ? null : itmR.A, mode: itm.mode, warn: itm.warn, dhz: itm.dhz, th: itm.th, dh: itm.dh},
+        fs, hata, clut: {a: clA, b: clB, aero}, elevA, elevB, clr, clrAt, ms: Date.now() - t0, loaded: load.length, tiles: want.size}},
+        [df.buffer, hf.buffer]);
+    }
+
+    // ---- 📶 a viewshed with the signal (coverage): m.sig = {f MHz, tgt m,
+    // amsl (tgt above sea level: an aircraft), pol 0 h / 1 v, N0, envTx /
+    // envRx (P.2108 clutter types 0 none .. 5), hmTx (median clutter height
+    // around the site for P.2108 3.3 when the target flies)} - every ring's
+    // terrain at once (the rays run through all of them), then plSweep
+    async function runSignal(m, rings, ringDem, nRays, curv, st) {
+      const dems = [];
+      for (const g of rings) {
+        await new Promise(res => setTimeout(res, 0));
+        if (cancelled.has(m.job)) throw new Error('cancelled');
+        dems.push(ringDem(g));
+      }
+      const g0 = rings[0], gnd = bilinear(dems[0], g0.N, g0.ox - g0.gx0 - 0.5, g0.oy - g0.gy0 - 0.5), eye = gnd + m.h;
+      const outs = rings.map(g => ({need: new Uint16Array(g.N * g.N).fill(65535), ground: new Int16Array(g.N * g.N),
+                                    loss: new Uint16Array(g.N * g.N).fill(65535), best: new Uint8Array(g.N * g.N).fill(255)}));
+      const info = await plSweep(m, rings, dems, gnd, eye, curv, nRays, outs);
+      const levels = [], transfer = [];
+      rings.forEach((g, k) => {
+        const o = outs[k], lv = {z: g.z, N: g.N, gx0: g.gx0, gy0: g.gy0, r0: g.r0, r1: g.r1, cell: g.cell, tiles: g.list.length,
+                                 need: o.need.buffer, ground: o.ground.buffer, loss: o.loss.buffer};
+        if (m.debug) Object.assign(lv, {dem: dems[k], rExt: g.rExt, W: g.W});
+        levels.push(lv);
+        transfer.push(o.need.buffer, o.ground.buffer, o.loss.buffer);
+      });
+      cancelled.delete(m.job);
+      self.postMessage({job: m.job, levels, gnd, eye, mpp: rings[0].cell, tiles: st.total, loaded: st.loaded, cleaned: st.cleaned,
+                        spikes: st.spikes, ms: Date.now() - st.t0, sig: info}, transfer);
+    }
+
+    // The signal sweep: P.1812's median loss (+ P.2108 clutter) to every
+    // cell, along the same great-circle rays as sweep() but each ray through
+    // ALL the rings in turn (fine -> coarse, its profile continuing from one
+    // ring's grid into the next): delta-Bullington needs more of the path
+    // than the steepest slope - the receiver's own horizon, the smooth Earth
+    // fitted to the path, how much of it is sea. Each ray carries
+    // - the upper convex hull of its profile in the curved-Earth frame (e = h
+    //   - s^2 / 2 ae, where rays are straight): the receiver's horizon is the
+    //   tangent from it (binary search), the Tx horizon a running maximum
+    // - the upper hull of the plain heights: P.1812's obstruction correction
+    //   of the smooth-Earth heights (eq 89-90: the highest point above the
+    //   line between the antennas, the tangent from the receiver)
+    // - running sums: the least-squares smooth Earth (eq 85-86), the sea
+    // so a cell costs O(log n) instead of O(n). It is P.1812 (p = 50 %) on
+    // the sampled profile, except: the smooth-Earth Bullington by Attachment
+    // 4 (its closed form), and in line of sight the point of least Fresnel
+    // clearance searched from the likely hull vertices (the highest above
+    // the direct ray, both horizons) by hill-climbing, not over every point.
+    // Two passes: the first only finds each cell's sample (the one nearest
+    // its centre, as sweep()), the second evaluates the loss once per cell.
+    // Rings are walked to rExt (their cells there are drawn over the next
+    // ring's), the next ring takes over from there.
+    async function plSweep(m, rings, dems, gnd, eye, curv, nRays, outs) {
+      const S = m.sig, f = S.f / 1000, lam = 0.2998 / f, ae = 1 / (2 * curv), aeK = ae / 1000, pol = S.pol ? 1 : 0;
+      const phi0 = m.lat * Math.PI / 180, lam0 = m.lon * Math.PI / 180;
+      const sp = Math.sin(phi0), cp = Math.cos(phi0), sl = Math.sin(lam0), cl = Math.cos(lam0), psi0 = Math.atanh(sp);
+      const enc = h => h <= 0 ? 0 : h < 3000 ? Math.round(h * 10) : Math.min(65534, 30000 + Math.round((h - 3000) / 10));
+      const dec = q => q < 30000 ? q / 10 : 3000 + (q - 30000) * 10;
+      // the clutter at the ends (dB): fixed for a terrestrial target; with an
+      // aircraft P.2108 3.3 at the site, by elevation, per cell
+      const clutFix = S.amsl ? 0 : p2108Terminal(f, m.h, S.envTx) + p2108Terminal(f, Math.max(0.5, S.tgt), S.envRx);
+      const aero = S.amsl && S.hmTx > 0;
+      let cap = 16;
+      for (const g of rings) cap += Math.ceil(g.rExt / (0.4 * g.cellMin)) + 2;
+      const cx = new Float64Array(cap), cy = new Float64Array(cap), fx = new Float64Array(cap), fy = new Float64Array(cap);
+      // the whole profile too (curved frame), with the highest point of each
+      // block of 32 / 1024 samples: the line-of-sight search below
+      const px_ = new Float64Array(cap), pe_ = new Float64Array(cap), b1 = new Float64Array((cap >> 5) + 2), b2 = new Float64Array((cap >> 10) + 2);
+      let nc = 0, nf = 0, tmax = -Infinity, fmax = -Infinity, v1 = 0, v2 = 0, ps = 0, ph = gnd, nPts = 0, nSea = 0;
+      let lossCalls = 0, losCalls = 0, losScan = 0;
+      // first-term spherical-Earth diffraction (p1812SeFtIn, the same
+      // arithmetic) with the constants of an Earth radius adft worked out
+      // once: [K, X / km, Y / m, G floor] for land (22, 0.003) and sea (80, 5)
+      // [K, X / km, Y / m, G floor] x [land (22, 0.003), sea (80, 5)] into c
+      // (K = kc (adft f)^-1/3: kc per ground, the rest per radius)
+      const kc = [[22, 0.003], [80, 5]].map(([er_, sg_]) => {
+        const s2 = (18 * sg_ / f) ** 2;
+        return 0.036 * Math.pow((er_ - 1) ** 2 + s2, -1 / 4) * (pol ? Math.sqrt(er_ * er_ + s2) : 1);
+      });
+      const cf = Math.cbrt(f);
+      const seConst = (adft, c) => {
+        const ca = Math.cbrt(adft), a3 = 1 / (ca * cf), xk = 21.88 * cf / (ca * ca), yk = 0.9575 * cf * cf / ca;
+        for (let j = 0; j < 2; j++) {
+          const K = kc[j] * a3, K2 = K * K, bd = (1 + 1.6 * K2 + 0.67 * K2 * K2) / (1 + 4.5 * K2 + 1.53 * K2 * K2);
+          c[4 * j] = K; c[4 * j + 1] = xk * bd; c[4 * j + 2] = bd * yk * bd; c[4 * j + 3] = 2 + 20 * Math.log10(K);
+        }
+        return c;
+      };
+      const seAe = seConst(aeK, new Float64Array(8)), seTmp = new Float64Array(8);
+      const seG = (cY, gMin, h) => {
+        const B = cY * h, g = B > 2 ? 17.6 * Math.sqrt(B - 1.1) - 5 * Math.log10(B - 1.1) - 8 : 20 * Math.log10(B + 0.1 * B * B * B);
+        return g > gMin ? g : gMin;
+      };
+      const ftOne = (c, j, d, hte, hre) => {
+        const X = c[4 * j + 1] * d, Fx = X >= 1.6 ? 11 + 10 * Math.log10(X) - 17.6 * X : -20 * Math.log10(X) - 5.6488 * Math.pow(X, 1.425);
+        return -Fx - seG(c[4 * j + 2], c[4 * j + 3], hte) - seG(c[4 * j + 2], c[4 * j + 3], hre);
+      };
+      const ft = (c, d, hte, hre, omega) => omega <= 0 ? ftOne(c, 0, d, hte, hre) : omega >= 1 ? ftOne(c, 1, d, hte, hre) :
+        omega * ftOne(c, 1, d, hte, hre) + (1 - omega) * ftOne(c, 0, d, hte, hre);
+      // = p1812Se (4.3.2), one polarization
+      const seLoss = (d, hte, hre, omega) => {
+        const dlos = Math.sqrt(2 * aeK) * (Math.sqrt(0.001 * hte) + Math.sqrt(0.001 * hre));
+        if (d >= dlos) return ft(seAe, d, hte, hre, omega);
+        const c = (hte - hre) / (hte + hre), mm = 250 * d * d / (aeK * (hte + hre));
+        const b = 2 * Math.sqrt((mm + 1) / (3 * mm)) * Math.cos(Math.PI / 3 + Math.acos(1.5 * c * Math.sqrt(3 * mm / (mm + 1) ** 3)) / 3);
+        const d1 = d / 2 * (1 + b), d2 = d - d1;
+        const hse = ((hte - 500 * d1 * d1 / aeK) * d2 + (hre - 500 * d2 * d2 / aeK) * d1) / d, hreq = 17.456 * Math.sqrt(d1 * d2 * lam / d);
+        if (hse > hreq) return 0;
+        const L = ft(seConst(500 * (d / (Math.sqrt(hte) + Math.sqrt(hre))) ** 2, seTmp), d, hte, hre, omega);
+        return (1 - hse / hreq) * Math.max(0, L);
+      };
+      // an upper bound of nu over the profile samples a..b (inclusive) whose
+      // highest point (curved frame) is top, for the direct ray eye + sig x to s
+      const nuBound = (a, b, top, sig, s, k2) => {
+        const xa = px_[a], xb = px_[b], H = top - eye - sig * (sig > 0 ? xa : xb);   // (over the lowest point of the ray there)
+        if (H >= 0) return H * Math.sqrt(k2 / Math.min(xa * (s - xa), xb * (s - xb)));
+        const xm = Math.min(xb, Math.max(xa, s / 2));
+        return H * Math.sqrt(k2 / (xm * (s - xm)));
+      };
+      // the loss to the receiver on the ground gr (m amsl) at s: the profile
+      // so far holds everything between (the hulls, sums); -> dB, or -1 = the
+      // target is under the ground
+      const lossAt = (s, gr) => {
+        let hr = S.amsl ? S.tgt - gr : S.tgt;
+        if (hr < 0) return -1;
+        if (hr < 0.5) hr = 0.5;
+        lossCalls++;
+        const hrs = gr + hr, er = hrs - s * s * curv, sk = s / 1000, sig = (er - eye) / s;
+        const Lbfs = 92.4 + 20 * Math.log10(f) + 10 * Math.log10(sk * sk + ((eye - hrs) / 1000) ** 2);
+        let Lbull = 0, tt, tr, trans = false;
+        if (nc) {
+          let nu = -Infinity;
+          if (tmax < sig) {   // line of sight: the least Fresnel clearance, exactly
+            losCalls++;
+            // nu of a point = its height over the direct ray x the Fresnel
+            // weight sqrt(2 s / (lam x (s - x))). Not always a hull vertex:
+            // the weight grows towards the ends (a 2 m receiver's own
+            // foreground often decides). Start from the vertex highest over
+            // the ray, then branch and bound over the blocks: a block's
+            // highest point + the ends of its span bound its nu; J(nu) = 0
+            // below -0.78, so a clear path rules out whole blocks at once
+            const k2 = 2 * s / lam;
+            let lo = 0, hi = nc - 1;
+            while (lo < hi) { const mid = (lo + hi) >> 1; if (cy[mid + 1] - sig * cx[mid + 1] >= cy[mid] - sig * cx[mid]) lo = mid + 1; else hi = mid; }
+            nu = Math.max(-0.78, (cy[lo] - eye - sig * cx[lo]) * Math.sqrt(k2 / (cx[lo] * (s - cx[lo]))));
+            const n = nPts;
+            for (let B = 0; B * 1024 < n; B++) {
+              const a2 = B * 1024, e2 = Math.min(n, a2 + 1024) - 1;
+              if (nuBound(a2, e2, b2[B], sig, s, k2) <= nu) continue;
+              for (let b = a2 >> 5; b * 32 <= e2; b++) {
+                const a1 = b * 32, e1 = Math.min(n, a1 + 32) - 1;
+                if (nuBound(a1, e1, b1[b], sig, s, k2) <= nu) continue;
+                losScan++;
+                for (let i = a1; i <= e1; i++) {
+                  const x = px_[i], v = (pe_[i] - eye - sig * x) * Math.sqrt(k2 / (x * (s - x)));
+                  if (v > nu) nu = v;
+                }
+              }
+            }
+            tt = 1000 * Math.atan(sig);
+            tr = 1000 * Math.atan((eye - hrs) / s - s * curv);
+          } else {   // beyond: Bullington's equivalent knife edge
+            trans = true;
+            let lo = 0, hi = nc - 1;
+            while (lo < hi) { const mid = (lo + hi) >> 1; if ((cy[mid + 1] - er) * (s - cx[mid]) >= (cy[mid] - er) * (s - cx[mid + 1])) lo = mid + 1; else hi = mid; }
+            const rmax = (cy[lo] - er) / (s - cx[lo]);
+            let xb = (er - eye + rmax * s) / (tmax + rmax);
+            xb = Math.min(s * (1 - 1e-9), Math.max(s * 1e-9, xb));
+            nu = (tmax * xb - sig * xb) * Math.sqrt(2 * s / (lam * xb * (s - xb)));
+            tt = 1000 * Math.atan(tmax);
+            tr = 1000 * Math.atan(rmax - 2 * s * curv);
+          }
+          const Luc = ituJ(nu);
+          Lbull = Luc + (1 - Math.exp(-Luc / 6)) * (10 + 0.02 * sk);
+        } else {
+          tt = 1000 * Math.atan(sig);
+          tr = 1000 * Math.atan((eye - hrs) / s - s * curv);
+        }
+        // the smooth Earth (eq 85-91), its antenna heights above it
+        const dd = s - ps, w1 = v1 + dd * (gr + ph), w2 = v2 + dd * (gr * (2 * s + ps) + ph * (s + 2 * ps));
+        const hst = (2 * w1 * s - w2) / (s * s), hsr = (w2 - w1 * s) / (s * s);
+        let hstp = hst, hsrp = hsr;
+        if (nf) {
+          const sg = (hrs - eye) / s;
+          let lo = 0, hi = nf - 1;
+          while (lo < hi) { const mid = (lo + hi) >> 1; if (fy[mid + 1] - sg * fx[mid + 1] >= fy[mid] - sg * fx[mid]) lo = mid + 1; else hi = mid; }
+          const hobs = fy[lo] - sg * fx[lo] - eye;
+          if (hobs > 0) {
+            lo = 0; hi = nf - 1;
+            while (lo < hi) { const mid = (lo + hi) >> 1; if ((fy[mid + 1] - hrs) * (s - fx[mid]) >= (fy[mid] - hrs) * (s - fx[mid + 1])) lo = mid + 1; else hi = mid; }
+            const aot = fmax - sg, aor = (fy[lo] - hrs) / (s - fx[lo]) + sg;
+            hstp = hst - hobs * aot / (aot + aor);
+            hsrp = hsr - hobs * aor / (aot + aor);
+          }
+        }
+        const hte = eye - (hstp >= gnd ? gnd : hstp), hre = hrs - (hsrp > gr ? gr : hsrp);
+        const omega = nPts ? nSea / nPts : (gr <= 0 ? 1 : 0);
+        const Ldsph = seLoss(sk, hte, hre, omega), Lbulls = p1812BullSmooth(sk, hte, hre, aeK, f);
+        const Ld = Lbull + Math.max(Ldsph - Lbulls, 0);
+        const Lbs = p1812Tropo(sk, 1e3 * sk / aeK + tt + tr, f, 50, S.N0);
+        const Lb = Math.max(Lbfs, -5 * Math.log10(10 ** (-0.2 * Lbs) + 10 ** (-0.2 * (Lbfs + Ld))));
+        let cl = clutFix;
+        if (aero) cl = p2108Aero(f, Math.max(0, Math.atan(sig) * 180 / Math.PI), 50, Math.max(1, m.h), S.hmTx);   // (elevation at the site)
+        return Lb + cl;
+      };
+      // adds a profile point (s, gr; e = curved-frame height) to the hulls + sums
+      const addPt = (s, gr, e) => {
+        while (nc >= 2 && (cy[nc - 1] - cy[nc - 2]) * (s - cx[nc - 2]) <= (e - cy[nc - 2]) * (cx[nc - 1] - cx[nc - 2])) nc--;
+        cx[nc] = s; cy[nc] = e; nc++;
+        while (nf >= 2 && (fy[nf - 1] - fy[nf - 2]) * (s - fx[nf - 2]) <= (gr - fy[nf - 2]) * (fx[nf - 1] - fx[nf - 2])) nf--;
+        fx[nf] = s; fy[nf] = gr; nf++;
+        const t = (e - eye) / s, u = (gr - eye) / s;
+        if (t > tmax) tmax = t;
+        if (u > fmax) fmax = u;
+        const dd = s - ps;
+        v1 += dd * (gr + ph);
+        v2 += dd * (gr * (2 * s + ps) + ph * (s + 2 * ps));
+        ps = s; ph = gr;
+        px_[nPts] = s; pe_[nPts] = e;
+        const i1 = nPts >> 5, i2 = nPts >> 10;
+        if (!(nPts & 31) || e > b1[i1]) b1[i1] = e;
+        if (!(nPts & 1023) || e > b2[i2]) b2[i2] = e;
+        nPts++;
+        if (gr <= 0) nSea++;
+      };
+      // one ray (bearing beta) through every ring; pass 0: best[] only
+      const recs = m.debug && m.debug.rays ? new Map(m.debug.rays.map(k => [k, {k, s: [], g: [], L: [], sea: [], add: []}])) : null;
+      let rec = null;
+      const ray = (beta, pass) => {
+        const cb = Math.cos(beta), sb = Math.sin(beta);
+        const tx = -sp * cl * cb - sl * sb, ty = -sp * sl * cb + cl * sb, tz = cp * cb;
+        let s = 0.4 * rings[0].cellMin, cnt = 0;
+        for (let r = 0; r < rings.length; r++) {
+          const g = rings[r], N = g.N, B = N - 1, dem = dems[r], o = outs[r], best = o.best;
+          const k2 = g.W / (2 * Math.PI), xo = g.ox - g.gx0 - 0.5, yo = g.oy - g.gy0 - 0.5;
+          const ds = 0.4 * g.cellMin, cd = Math.cos(ds / RE), sd = Math.sin(ds / RE), K = 8, cK = Math.cos(K * ds / RE), sK = Math.sin(K * ds / RE);
+          const gx = (px, py) => {
+            let dl = Math.atan2(py, px) - lam0;
+            if (dl > Math.PI) dl -= 2 * Math.PI; else if (dl < -Math.PI) dl += 2 * Math.PI;
+            return xo + dl * k2;
+          };
+          const gy = pz => yo - (Math.atanh(pz) - psi0) * k2;
+          const ca = Math.cos(s / RE), sa = Math.sin(s / RE);
+          let px = cp * cl * ca + tx * sa, py = cp * sl * ca + ty * sa, pz = sp * ca + tz * sa;
+          let qx = tx * ca - cp * cl * sa, qy = ty * ca - cp * sl * sa, qz = tz * ca - sp * sa;
+          let xa = gx(px, py), ya = gy(pz);
+          walk: for (;;) {
+            const nx = px * cK + qx * sK, ny = py * cK + qy * sK, nz = pz * cK + qz * sK;
+            const mx = qx * cK - px * sK, my = qy * cK - py * sK, mz = qz * cK - pz * sK;
+            const xb = gx(nx, ny), yb = gy(nz), lin = Math.abs(xb - xa) <= K && Math.abs(yb - ya) <= K;
+            const dx = (xb - xa) / K, dy = (yb - ya) / K;
+            for (let i = 0; i < K; i++, s += ds) {
+              if (s > g.rExt) break walk;
+              let x, y;
+              if (lin) { x = xa + dx * i; y = ya + dy * i; }
+              else {
+                x = gx(px, py); y = gy(pz);
+                const ux = px * cd + qx * sd, uy = py * cd + qy * sd, uz = pz * cd + qz * sd;
+                qx = qx * cd - px * sd; qy = qy * cd - py * sd; qz = qz * cd - pz * sd;
+                px = ux; py = uy; pz = uz;
+              }
+              if (!(x >= 0 && y >= 0 && x < B && y < B)) break walk;
+              const x0 = Math.floor(x), y0 = Math.floor(y), fx_ = x - x0, fy_ = y - y0, i0 = y0 * N + x0;
+              const ex = fx_ < 0.5 ? fx_ : 1 - fx_, ey = fy_ < 0.5 ? fy_ : 1 - fy_;
+              const c = (fy_ < 0.5 ? y0 : y0 + 1) * N + (fx_ < 0.5 ? x0 : x0 + 1), q = Math.round((ex * ex + ey * ey) * 500);
+              if (pass === 0) { if (q < best[c]) best[c] = q; continue; }
+              // the cell's own sample: its loss; every 2nd sample (0.8 cell
+              // apart - the terrain is no finer than a cell): the profile
+              const win = q === best[c], add = !(cnt++ & 1);
+              if (!win && !add && !rec) continue;
+              const gr = (dem[i0] * (1 - fx_) + dem[i0 + 1] * fx_) * (1 - fy_) + (dem[i0 + N] * (1 - fx_) + dem[i0 + N + 1] * fx_) * fy_;
+              const e = gr - s * s * curv;
+              if (rec) { rec.s.push(s); rec.g.push(gr); rec.L.push(lossAt(s, gr)); rec.sea.push(nPts ? nSea / nPts : 0); rec.add.push(add); }   // (offline tests)
+              if (win) {
+                o.need[c] = enc(tmax * s + eye - e);
+                o.ground[c] = Math.round(gr);
+                const L = lossAt(s, gr);
+                o.loss[c] = L < 0 ? 65535 : Math.min(65534, Math.round(L * 10));
+              }
+              if (add) addPt(s, gr, e);
+            }
+            px = nx; py = ny; pz = nz; qx = mx; qy = my; qz = mz;
+            xa = xb; ya = yb;
+          }
+        }
+      };
+      let tb = Date.now();
+      for (let pass = 0; pass < 2; pass++)
+        for (let k = 0; k < nRays; k++) {
+          if (pass) { nc = nf = 0; tmax = fmax = -Infinity; v1 = v2 = 0; ps = 0; ph = gnd; nPts = nSea = 0; }
+          rec = pass && recs ? recs.get(k) || null : null;
+          ray(2 * Math.PI * k / nRays, pass);
+          if (Date.now() - tb > 250) {   // (a break for a cancel)
+            self.postMessage({job: m.job, prog: ['sig', Math.round((pass + k / nRays) * 50)]});
+            await new Promise(res => setTimeout(res, 0));
+            if (cancelled.has(m.job)) throw new Error('cancelled');
+            tb = Date.now();
+          }
+        }
+      // cells no sample landed in (>= 3 of 4 neighbours have one), as sweep();
+      // the observer's own cell
+      rings.forEach((g, r) => {
+        const N = g.N, B = N - 1, o = outs[r];
+        for (let pass = 0; pass < 2; pass++) {
+          const fill = [];
+          for (let j = 1; j < B; j++) for (let i = 1; i < B; i++) {
+            const c = j * N + i;
+            if (o.need[c] !== 65535) continue;
+            let nv = 0, sn = 0, sg = 0, sl_ = 0, nl = 0;
+            for (const n of [c - 1, c + 1, c - N, c + N]) if (o.need[n] !== 65535) {
+              nv++; sn += dec(o.need[n]); sg += o.ground[n];
+              if (o.loss[n] !== 65535) { sl_ += o.loss[n]; nl++; }
+            }
+            if (nv >= 3) fill.push(c, sn / nv, sg / nv, nl ? sl_ / nl : 65535);
+          }
+          for (let t = 0; t < fill.length; t += 4) {
+            o.need[fill[t]] = enc(fill[t + 1]); o.ground[fill[t]] = Math.round(fill[t + 2]); o.loss[fill[t]] = Math.round(fill[t + 3]);
+          }
+          if (!fill.length) break;
+        }
+        if (g.r0 === 0) {
+          const xo = g.ox - g.gx0 - 0.5, yo = g.oy - g.gy0 - 0.5;
+          const oc = Math.max(0, Math.min(B, Math.round(yo))) * N + Math.max(0, Math.min(B, Math.round(xo)));
+          o.need[oc] = 0;
+          o.ground[oc] = Math.round(gnd);
+          const d = Math.max(1, g.cell / 2), hr = S.amsl ? Math.max(0.5, S.tgt - gnd) : Math.max(0.5, S.tgt);
+          o.loss[oc] = Math.round(10 * (92.4 + 20 * Math.log10(f) + 10 * Math.log10((d / 1000) ** 2 + ((m.h - hr) / 1000) ** 2) + clutFix));
+        }
+      });
+      return {lossCalls, losCalls, losScan, clutFix, aero, rays: recs ? [...recs.values()] : undefined};
+    }
+
+    // ---- 📶 ITM: the Longley-Rice Irregular Terrain Model, point to point ----
+    // A JavaScript port of NTIA/ITS's ITM 1.3 (C++, functionally ITM 1.2.2;
+    // https://github.com/NTIA/itm), developed by NTIA employees and not
+    // subject to copyright in the US; NTIA grants the right to distribute
+    // derivative works and asks for its creation to be acknowledged.
+    // Changes (2026-10): translated to JavaScript (complex numbers as [re,
+    // im]), the area mode left out, results returned as an object. Same
+    // structure and names as the C++ (FindHorizons -> itmHorizons...), so a
+    // line can be checked against it. pfl = [np, spacing m, z_0 .. z_np].
+    const ITM_A0 = 6370e3, ITM_A9000 = 9000e3, ITM_THIRD = 1 / 3;
+    const cAbs = z => Math.hypot(z[0], z[1]);
+    const cDiv = (a, b) => { const d = b[0] * b[0] + b[1] * b[1]; return [(a[0] * b[0] + a[1] * b[1]) / d, (a[1] * b[0] - a[0] * b[1]) / d]; };
+    const cMul = (a, b) => [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]];
+    const cSqrt = z => {   // principal branch, as std::sqrt
+      const r = cAbs(z), re = Math.sqrt((r + z[0]) / 2), im = Math.sqrt(Math.max(0, (r - z[0]) / 2));
+      return [re, z[1] < 0 ? -im : im];
+    };
+    const fdim = (x, y) => x > y ? x - y : 0;
+    function itmFresnel(v2) { return v2 < 5.76 ? 6.02 + 9.11 * Math.sqrt(v2) - 1.27 * v2 : 12.953 + 10 * Math.log10(v2); }
+    function itmSigmaH(dh) { return 0.78 * dh * Math.exp(-0.5 * Math.pow(dh, 0.25)); }
+    function itmRough(d, dh) { return dh * (1 - 0.8 * Math.exp(-d / 50e3)); }
+    function itmFreeSpace(d, f) { return 32.45 + 20 * Math.log10(f) + 20 * Math.log10(d / 1000); }
+    function itmQinv(q) {
+      let x = q > 0.5 ? 1 - q : q;
+      const T = Math.sqrt(-2 * Math.log(x)), z = ((0.010328 * T + 0.802853) * T + 2.515516) / (((0.001308 * T + 0.189269) * T + 1.432788) * T + 1);
+      return q > 0.5 ? -(T - z) : T - z;
+    }
+    function itmHorizons(pfl, ae, h, th, dhz) {
+      const np = pfl[0] | 0, xi = pfl[1], d = pfl[0] * pfl[1];
+      const zt = pfl[2] + h[0], zr = pfl[np + 2] + h[1];
+      th[0] = (zr - zt) / d - d / (2 * ae);
+      th[1] = -(zr - zt) / d - d / (2 * ae);
+      dhz[0] = dhz[1] = d;
+      let dt = 0, dr = d;
+      for (let i = 1; i < np; i++) {
+        dt += xi; dr -= xi;
+        const a = (pfl[i + 2] - zt) / dt - dt / (2 * ae), b = -(zr - pfl[i + 2]) / dr - dr / (2 * ae);
+        if (a > th[0]) { th[0] = a; dhz[0] = dt; }
+        if (b > th[1]) { th[1] = b; dhz[1] = dr; }
+      }
+    }
+    function itmLsq(pfl, d0, d1) {   // -> [fit_y1, fit_y2]
+      const np = pfl[0] | 0;
+      let is = Math.trunc(fdim(d0 / pfl[1], 0)), ie = np - Math.trunc(fdim(np, d1 / pfl[1]));
+      if (ie <= is) { is = Math.trunc(fdim(is, 1)); ie = np - Math.trunc(fdim(np, ie + 1)); }
+      const xl = ie - is;
+      let mid = -0.5 * xl;
+      const midEnd = ie + mid;
+      let sy = 0.5 * (pfl[is + 2] + pfl[ie + 2]), ssy = 0.5 * (pfl[is + 2] - pfl[ie + 2]) * mid;
+      for (let i = 2; i <= xl; i++) { is++; mid++; sy += pfl[is + 2]; ssy += pfl[is + 2] * mid; }
+      sy /= xl;
+      ssy = ssy * 12 / ((xl * xl + 2) * xl);
+      return [sy - ssy * midEnd, sy + ssy * (np - midEnd)];
+    }
+    function itmDeltaH(pfl, d0, d1) {
+      const np = pfl[0] | 0;
+      let xs = d0 / pfl[1], xe = d1 / pfl[1];
+      if (xe - xs < 2) return 0;
+      let p10 = Math.trunc(0.1 * (xe - xs + 8));
+      p10 = Math.min(Math.max(4, p10), 25);
+      const n = 10 * p10 - 5, p90 = n - p10, nps = n - 1, s = new Float64Array(n + 2);
+      s[0] = nps; s[1] = 1;
+      xe = (xe - xs) / nps;
+      let i = Math.trunc(xs);
+      xs -= Math.fround(i + 1);
+      for (let j = 0; j < n; j++) {
+        while (xs > 0 && i + 1 < np) { xs--; i++; }
+        s[j + 2] = pfl[i + 3] + (pfl[i + 3] - pfl[i + 2]) * xs;
+        xs += xe;
+      }
+      let [y1, y2] = itmLsq(s, 0, nps);
+      y2 = (y2 - y1) / nps;
+      const diffs = new Float64Array(n);
+      for (let j = 0; j < n; j++) { diffs[j] = s[j + 2] - y1; y1 += y2; }
+      diffs.sort();   // ascending: the k-th largest is [n - k]
+      const q10 = diffs[n - p10], q90 = diffs[n - 1 - p90];
+      return (q10 - q90) / (1 - 0.8 * Math.exp(-(d1 - d0) / 50e3));
+    }
+    function itmQuickPfl(pfl, ge, h) {
+      const d = pfl[0] * pfl[1], np = pfl[0] | 0, ae = 1 / ge, th = [0, 0], dhz = [0, 0], he = [0, 0];
+      itmHorizons(pfl, ae, h, th, dhz);
+      const ds = Math.min(15 * h[0], 0.1 * dhz[0]), de = d - Math.min(15 * h[1], 0.1 * dhz[1]);
+      const dh = itmDeltaH(pfl, ds, de);
+      if (dhz[0] + dhz[1] > 1.5 * d) {
+        const [ft, fr] = itmLsq(pfl, ds, de);
+        he[0] = h[0] + fdim(pfl[2], ft);
+        he[1] = h[1] + fdim(pfl[np + 2], fr);
+        for (let i = 0; i < 2; i++) dhz[i] = Math.sqrt(2 * he[i] * ae) * Math.exp(-0.07 * Math.sqrt(dh / Math.max(he[i], 5)));
+        const ch = dhz[0] + dhz[1];
+        if (ch <= d) {
+          const q = (d / ch) ** 2;
+          for (let i = 0; i < 2; i++) {
+            he[i] *= q;
+            dhz[i] = Math.sqrt(2 * he[i] * ae) * Math.exp(-0.07 * Math.sqrt(dh / Math.max(he[i], 5)));
+          }
+        }
+        for (let i = 0; i < 2; i++) {
+          const q = Math.sqrt(2 * he[i] * ae);
+          th[i] = (0.65 * dh * (q / dhz[i] - 1) - 2 * he[i]) / q;
+        }
+      } else {
+        he[0] = h[0] + fdim(pfl[2], itmLsq(pfl, ds, 0.9 * dhz[0])[0]);
+        he[1] = h[1] + fdim(pfl[np + 2], itmLsq(pfl, d - 0.9 * dhz[1], de)[1]);
+      }
+      return {th, dhz, he, dh, d};
+    }
+    function itmKnife(d, f, ae, thLos, dhz) {
+      const dML = dhz[0] + dhz[1], thN = d / ae - thLos, dN = d - dML;
+      const v1 = 0.0795775 * (f / 47.7) * thN * thN * dhz[0] * dN / (dN + dhz[0]);
+      const v2 = 0.0795775 * (f / 47.7) * thN * thN * dhz[1] * dN / (dN + dhz[1]);
+      return itmFresnel(v1) + itmFresnel(v2);
+    }
+    function itmHeightF(x, K) {
+      let r;
+      if (x < 200) {
+        const w = -Math.log(K);
+        if (K < 1e-5 || x * w * w * w > 5495) { r = -117; if (x > 1) r += 17.372 * Math.log(x); }
+        else r = 2.5e-5 * x * x / K - 8.686 * w - 15;
+      } else {
+        r = 0.05751 * x - 4.343 * Math.log(x);
+        if (x < 2000) { const w = 0.0134 * x * Math.exp(-0.005 * x); r = (1 - w) * r + w * (17.372 * Math.log(x) - 117); }
+      }
+      return r;
+    }
+    function itmSmooth(d, f, ae, thLos, dhz, he, Zg) {
+      const thN = d / ae - thLos, dML = dhz[0] + dhz[1];
+      const a = [(d - dML) / (d / ae - thLos), 0.5 * dhz[0] * dhz[0] / he[0], 0.5 * dhz[1] * dhz[1] / he[1]];
+      const dk = [a[0] * thN / 1000, dhz[0] / 1000, dhz[1] / 1000], C0 = [], K = [], B0 = [], x = [];
+      for (let i = 0; i < 3; i++) {
+        C0[i] = Math.pow((4 / 3) * ITM_A0 / a[i], ITM_THIRD);
+        K[i] = 0.017778 * C0[i] * Math.pow(f, -ITM_THIRD) / cAbs(Zg);
+        B0[i] = 1.607 - K[i];
+      }
+      x[1] = B0[1] * C0[1] ** 2 * Math.pow(f, ITM_THIRD) * dk[1];
+      x[2] = B0[2] * C0[2] ** 2 * Math.pow(f, ITM_THIRD) * dk[2];
+      x[0] = B0[0] * C0[0] ** 2 * Math.pow(f, ITM_THIRD) * dk[0] + x[1] + x[2];
+      const G = 0.05751 * x[0] - 10 * Math.log10(x[0]);
+      return G - itmHeightF(x[1], K[1]) - itmHeightF(x[2], K[2]) - 20;
+    }
+    function itmDiffraction(d, dhz, he, Zg, ae, dh, h, thLos, dsML, f) {   // (point-to-point mode)
+      const Ak = itmKnife(d, f, ae, thLos, dhz), Ase = itmSmooth(d, f, ae, thLos, dhz, he, Zg);
+      const Afo = Math.min(15, 5 * Math.log10(1 + 1e-5 * h[0] * h[1] * f * itmSigmaH(itmRough(dsML, dh))));
+      const dhd = itmRough(d, dh);
+      let q = h[0] * h[1];
+      const qk = he[0] * he[1] - q;
+      q += 10;
+      const t1 = Math.sqrt(1 + qk / q), dML = dhz[0] + dhz[1];
+      q = (t1 + (-thLos * ae + dML) / d) * Math.min(dhd * f / 47.7, 6283.2);
+      const w = 25.1 / (25.1 + Math.sqrt(q));
+      return w * Ase + (1 - w) * Ak + Afo;
+    }
+    function itmLos(d, he, Zg, dh, Md, Ad0, dsML, f) {
+      const sh = itmSigmaH(itmRough(d, dh)), wn = f / 47.7;
+      const sp = (he[0] + he[1]) / Math.sqrt(d * d + (he[0] + he[1]) ** 2);
+      let Re = cDiv([sp - Zg[0], -Zg[1]], [sp + Zg[0], Zg[1]]);
+      const e = Math.exp(-Math.min(10, wn * sh * sp));
+      Re = [Re[0] * e, Re[1] * e];
+      const q = Re[0] * Re[0] + Re[1] * Re[1];
+      if (q < 0.25 || q < sp) { const s = Math.sqrt(sp / q); Re = [Re[0] * s, Re[1] * s]; }
+      let dphi = wn * 2 * he[0] * he[1] / d;
+      if (dphi > Math.PI / 2) dphi = Math.PI - (Math.PI / 2) ** 2 / dphi;
+      const rr = [Math.cos(dphi) + Re[0], -Math.sin(dphi) + Re[1]];
+      const At = -10 * Math.log10(rr[0] * rr[0] + rr[1] * rr[1]), Ad = Md * d + Ad0;
+      const w = 1 / (1 + f * dh / Math.max(10e3, dsML));
+      return w * At + (1 - w) * Ad;
+    }
+    function itmF(td) {
+      const i = td <= 10e3 ? 0 : td <= 70e3 ? 1 : 2;
+      return [133.4, 104.6, 71.8][i] + [0.332e-3, 0.212e-3, 0.157e-3][i] * td + [-10, -2.5, 5][i] * Math.log10(td);
+    }
+    function itmH0Curve(j, r) {
+      return 10 * Math.log10(1 + [25, 80, 177, 395, 705][j] * Math.pow(1 / r, 4) + [24, 45, 68, 80, 105][j] * Math.pow(1 / r, 2));
+    }
+    function itmH0(r, es) {
+      es = Math.min(Math.max(es, 1), 5);
+      const i = Math.trunc(es), q = es - i;
+      let v = itmH0Curve(i - 1, r);
+      if (q !== 0) v = (1 - q) * v + q * itmH0Curve(i, r);
+      return v;
+    }
+    function itmTropo(d, th, dhz, he, ae, Ns, f, thLos, h0) {   // h0: {v} carried between the two calls
+      const wn = f / 47.7;
+      let H0;
+      if (h0.v > 15) H0 = h0.v;
+      else {
+        let ad = dhz[0] - dhz[1], rr = he[1] / he[0];
+        if (ad < 0) { ad = -ad; rr = 1 / rr; }
+        const theta = th[0] + th[1] + d / ae, r1 = 2 * wn * theta * he[0], r2 = 2 * wn * theta * he[1];
+        if (r1 < 0.2 && r2 < 0.2) return 1001;
+        let s = (d - ad) / (d + ad);
+        const q = Math.min(Math.max(0.1, rr / s), 10);
+        s = Math.max(0.1, s);
+        const h0m = (d - ad) * (d + ad) * theta * 0.25 / d;
+        const es = (h0m / 1.7556e3) * (1 + (0.031 - Ns * 2.32e-3 + Ns * Ns * 5.67e-6) * Math.exp(-Math.pow(Math.min(1.7, h0m / 8e3), 6)));
+        const H00 = (itmH0(r1, es) + itmH0(r2, es)) / 2;
+        H0 = Math.max(0, H00 + Math.min(H00, 6 * (0.6 - Math.log10(Math.max(es, 1))) * Math.log10(s) * Math.log10(q)));
+        if (es < 1) H0 = es * H0 + (1 - es) * 10 * Math.log10(((1 + Math.SQRT2 / r1) * (1 + Math.SQRT2 / r2)) ** 2 * (r1 + r2) / (r1 + r2 + 2 * Math.SQRT2));
+        if (H0 > 15 && h0.v >= 0) H0 = h0.v;
+      }
+      h0.v = H0;
+      const t = d / ae - thLos;
+      return itmF(t * d) + 10 * Math.log10(wn * 47.7 * t ** 4) - 0.1 * (Ns - 301) * Math.exp(-t * d / 40e3) + H0;
+    }
+    // -> {A: A_ref dB, mode 1 LOS / 2 diffraction / 3 troposcatter, warn, err}
+    function itmLongleyRice(th, f, Zg, dhz, he, ge, Ns, dh, h, d) {
+      const ae = 1 / ge, dhs = [Math.sqrt(2 * he[0] * ae), Math.sqrt(2 * he[1] * ae)];
+      const dsML = dhs[0] + dhs[1], dML = dhz[0] + dhz[1], thLos = -Math.max(th[0] + th[1], -dML / ae);
+      let warn = 0;
+      if (Math.abs(th[0]) > 200e-3) warn |= 0x80;
+      if (Math.abs(th[1]) > 200e-3) warn |= 0x100;
+      if (dhz[0] < 0.1 * dhs[0]) warn |= 0x200;
+      if (dhz[1] < 0.1 * dhs[1]) warn |= 0x400;
+      if (dhz[0] > 3 * dhs[0]) warn |= 0x800;
+      if (dhz[1] > 3 * dhs[1]) warn |= 0x1000;
+      if (Ns < 150) return {err: 1021};
+      if (Ns > 400) return {err: 1022};
+      if (Ns < 250) warn |= 0x4000;
+      if (ae < 4000000 || ae > 13333333) return {err: 1016};
+      if (Zg[0] <= Math.abs(Zg[1])) return {err: 1013};
+      const c3 = Math.pow(ae * ae / f, ITM_THIRD);
+      const d3 = Math.max(dsML, dML + 5 * c3), d4 = d3 + 10 * c3;
+      const A3 = itmDiffraction(d3, dhz, he, Zg, ae, dh, h, thLos, dsML, f);
+      const A4 = itmDiffraction(d4, dhz, he, Zg, ae, dh, h, thLos, dsML, f);
+      const Md = (A4 - A3) / (d4 - d3), Ad0 = A3 - Md * d3;
+      if (d < Math.abs(he[0] - he[1]) / 200e-3) warn |= 0x20;
+      if (d < 1e3) warn |= 0x40;
+      if (d > 1000e3) warn |= 0x8;
+      if (d > 2000e3) warn |= 0x10;
+      let A, mode;
+      if (d < dsML) {
+        const AsML = dsML * Md + Ad0;
+        let d0 = 0.04 * f * he[0] * he[1], d1;
+        if (Ad0 >= 0) { d0 = Math.min(d0, 0.5 * dML); d1 = d0 + 0.25 * (dML - d0); }
+        else d1 = Math.max(-Ad0 / Md, 0.25 * dML);
+        const A1 = itmLos(d1, he, Zg, dh, Md, Ad0, dsML, f);
+        let flag = false, k1 = 0, k2 = 0;
+        if (d0 < d1) {
+          const A0 = itmLos(d0, he, Zg, dh, Md, Ad0, dsML, f), q = Math.log(dsML / d0);
+          k2 = Math.max(0, ((dsML - d0) * (A1 - A0) - (d1 - d0) * (AsML - A0)) / ((dsML - d0) * Math.log(d1 / d0) - (d1 - d0) * q));
+          flag = Ad0 > 0 || k2 > 0;
+          if (flag) {
+            k1 = (AsML - A0 - k2 * q) / (dsML - d0);
+            if (k1 < 0) { k1 = 0; k2 = fdim(AsML, A0) / q; if (k2 === 0) k1 = Md; }
+          }
+        }
+        if (!flag) { k1 = fdim(AsML, A1) / (dsML - d1); k2 = 0; if (k1 === 0) k1 = Md; }
+        const Ao = AsML - k1 * dsML - k2 * Math.log(dsML);
+        A = Ao + k1 * d + k2 * Math.log(d);
+        mode = 1;
+      } else {
+        const d5 = dML + 200e3, d6 = dML + 400e3, h0 = {v: -1};
+        const A6 = itmTropo(d6, th, dhz, he, ae, Ns, f, thLos, h0), A5 = itmTropo(d5, th, dhz, he, ae, Ns, f, thLos, h0);
+        let Ms, As0, dx;
+        if (A5 < 1000) {
+          Ms = (A6 - A5) / 200e3;
+          dx = Math.max(Math.max(dsML, dML + 1.088 * c3 * Math.log(f)), (A5 - Ad0 - Ms * d5) / (Md - Ms));
+          As0 = (Md - Ms) * dx + Ad0;
+        } else { Ms = Md; As0 = Ad0; dx = 10e6; }
+        if (d > dx) { A = Ms * d + As0; mode = 3; }
+        else { A = Md * d + Ad0; mode = 2; }
+      }
+      return {A: Math.max(A, 0), mode, warn, err: 0};
+    }
+    function itmCurve(c1, c2, x1, x2, x3, de) {
+      return (c1 + c2 / (1 + ((de - x2) / x3) ** 2)) * (de / x1) ** 2 / (1 + (de / x1) ** 2);
+    }
+    const ITM_VAR = {
+      all: [[-9.67, -0.62, 1.26, -9.21, -0.62, -0.39, 3.15], [12.7, 9.19, 15.5, 9.05, 9.19, 2.86, 857.9],
+            [144.9e3, 228.9e3, 262.6e3, 84.1e3, 228.9e3, 141.7e3, 2222e3], [190.3e3, 205.2e3, 185.2e3, 101.1e3, 205.2e3, 315.9e3, 164.8e3],
+            [133.8e3, 143.6e3, 99.8e3, 98.6e3, 143.6e3, 167.4e3, 116.3e3]],
+      bsm1: [2.13, 2.66, 6.11, 1.98, 2.68, 6.86, 8.51], bsm2: [159.5, 7.67, 6.65, 13.11, 7.16, 10.38, 169.8],
+      xsm1: [762.2e3, 100.4e3, 138.2e3, 139.1e3, 93.7e3, 187.8e3, 609.8e3], xsm2: [123.6e3, 172.5e3, 242.2e3, 132.7e3, 186.8e3, 169.6e3, 119.9e3],
+      xsm3: [94.5e3, 136.4e3, 178.6e3, 193.5e3, 133.5e3, 108.9e3, 106.6e3],
+      bsp1: [2.11, 6.87, 10.08, 3.68, 4.75, 8.58, 8.43], bsp2: [102.3, 15.53, 9.60, 159.3, 8.12, 13.97, 8.19],
+      xsp1: [636.9e3, 138.7e3, 165.3e3, 464.4e3, 93.2e3, 216.0e3, 136.2e3], xsp2: [134.8e3, 143.7e3, 225.7e3, 93.1e3, 135.9e3, 152.0e3, 188.5e3],
+      xsp3: [95.6e3, 98.6e3, 129.7e3, 94.2e3, 113.4e3, 122.7e3, 122.9e3],
+      CD: [1.224, 0.801, 1.380, 1.000, 1.224, 1.518, 1.518], zD: [1.282, 2.161, 1.282, 20.0, 1.282, 1.282, 1.282],
+      bfm1: [1.0, 1.0, 1.0, 1.0, 0.92, 1.0, 1.0], bfm2: [0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0], bfm3: [0.0, 0.0, 0.0, 0.0, 1.77, 0.0, 0.0],
+      bfp1: [1.0, 0.93, 1.0, 0.93, 0.93, 1.0, 1.0], bfp2: [0.0, 0.31, 0.0, 0.19, 0.31, 0.0, 0.0], bfp3: [0.0, 2.00, 0.0, 1.79, 2.00, 0.0, 0.0]
+    };
+    // A_ref -> the loss at the time / location / situation percentages (TLS)
+    function itmVariability(time, loc, sit, he, dh, f, d, Aref, climate, mdvar) {
+      const V = ITM_VAR, c = climate - 1, wn = f / 47.7;
+      let zT = itmQinv(time / 100), zL = itmQinv(loc / 100), warn = 0;
+      const zS = itmQinv(sit / 100);
+      const dex = Math.sqrt(2 * ITM_A9000 * he[0]) + Math.sqrt(2 * ITM_A9000 * he[1]) + Math.pow(575.7e12 / wn, ITM_THIRD);
+      const de = d < dex ? 130e3 * d / dex : 130e3 + d - dex;
+      let md = mdvar;
+      const p20 = md >= 20;
+      if (p20) md -= 20;
+      const sS = p20 ? 0 : 5 + 3 * Math.exp(-de / 100e3);
+      const p10 = md >= 10;
+      if (p10) md -= 10;
+      const Vmed = itmCurve(V.all[0][c], V.all[1][c], V.all[2][c], V.all[3][c], V.all[4][c], de);
+      if (md === 0) { zT = zS; zL = zS; } else if (md === 1) zL = zS; else if (md === 2) zL = zT;
+      if (Math.abs(zT) > 3.1 || Math.abs(zL) > 3.1 || Math.abs(zS) > 3.1) warn |= 0x2000;
+      let sL = 0;
+      if (!p10) { const dhd = itmRough(d, dh); sL = 10 * wn * dhd / (wn * dhd + 13); }
+      const YL = sL * zL, q = Math.log(0.133 * wn);
+      const gm = V.bfm1[c] + V.bfm2[c] / ((V.bfm3[c] * q) ** 2 + 1), gp = V.bfp1[c] + V.bfp2[c] / ((V.bfp3[c] * q) ** 2 + 1);
+      const sTm = itmCurve(V.bsm1[c], V.bsm2[c], V.xsm1[c], V.xsm2[c], V.xsm3[c], de) * gm;
+      const sTp = itmCurve(V.bsp1[c], V.bsp2[c], V.xsp1[c], V.xsp2[c], V.xsp3[c], de) * gp;
+      const sTD = V.CD[c] * sTp, tgtd = (sTp - sTD) * V.zD[c];
+      const sT = zT < 0 ? sTm : zT <= V.zD[c] ? sTp : sTD + tgtd / zT, YT = sT * zT;
+      const YSt = sS * sS + YT * YT / (7.8 + zS * zS) + YL * YL / (24 + zS * zS);
+      let YR, YS;
+      if (md === 0) { YR = 0; YS = Math.sqrt(sT * sT + sL * sL + YSt) * zS; }
+      else if (md === 1) { YR = YT; YS = Math.sqrt(sL * sL + YSt) * zS; }
+      else if (md === 2) { YR = Math.sqrt(sT * sT + sL * sL) * zT; YS = Math.sqrt(YSt) * zS; }
+      else { YR = YT + YL; YS = Math.sqrt(YSt) * zS; }
+      let r = Aref - Vmed - YR - YS;
+      if (r < 0) r = r * (29 - r) / (29 - 10 * r);
+      return {A: r, warn};
+    }
+    // ITM_P2P_TLS_Ex: o = {climate 1-7, N0, f MHz, pol 0 h / 1 v, eps, sigma S/m, mdvar, time, loc, sit (%)}
+    // -> {err} or {A (basic transmission loss dB), Aref, Afs, mode, warn, th, dhz, he, dh, Ns, d}
+    function itmP2P(pfl, htx, hrx, o) {
+      let warn = 0;
+      if (htx < 1 || htx > 1000) warn |= 0x1;
+      if (htx < 0.5 || htx > 3000) return {err: 1000};
+      if (hrx < 1 || hrx > 1000) warn |= 0x2;
+      if (hrx < 0.5 || hrx > 3000) return {err: 1001};
+      if (!(o.climate >= 1 && o.climate <= 7)) return {err: 1002};
+      if (o.N0 < 250 || o.N0 > 400) return {err: 1008};
+      if (o.f < 40 || o.f > 10000) warn |= 0x4;
+      if (o.f < 20 || o.f > 20000) return {err: 1009};
+      if (o.pol !== 0 && o.pol !== 1) return {err: 1010};
+      if (o.eps < 1) return {err: 1011};
+      if (o.sigma <= 0) return {err: 1012};
+      const mv = o.mdvar;
+      if (mv < 0 || (mv > 3 && mv < 10) || (mv > 13 && mv < 20) || (mv > 23 && mv < 30) || mv > 33) return {err: 1014};
+      if (o.sit <= 0 || o.sit >= 100) return {err: 1005};
+      if (o.time <= 0 || o.time >= 100) return {err: 1003};
+      if (o.loc <= 0 || o.loc >= 100) return {err: 1004};
+      const np = pfl[0] | 0, p10 = Math.trunc(0.1 * np);
+      let hs = 0;
+      for (let i = p10; i <= np - p10; i++) hs += pfl[i + 2];
+      hs /= np - 2 * p10 + 1;
+      // InitializePointToPoint
+      const Ns = hs === 0 ? o.N0 : o.N0 * Math.exp(-hs / 9460), ge = 157e-9 * (1 - 0.04665 * Math.exp(Ns / 179.3));
+      const epr = [o.eps, 18000 * o.sigma / o.f];
+      let Zg = cSqrt([epr[0] - 1, epr[1]]);
+      if (o.pol === 1) Zg = cDiv(Zg, epr);
+      const h = [htx, hrx], q = itmQuickPfl(pfl, ge, h);
+      const lr = itmLongleyRice(q.th, o.f, Zg, q.dhz, q.he, ge, Ns, q.dh, h, q.d);
+      if (lr.err) return {err: lr.err};
+      const Afs = itmFreeSpace(q.d, o.f), v = itmVariability(o.time, o.loc, o.sit, q.he, q.dh, o.f, q.d, lr.A, o.climate, mv);
+      return {A: v.A + Afs, Aref: lr.A, Afs, mode: lr.mode, warn: warn | lr.warn | v.warn, th: q.th, dhz: q.dhz, he: q.he, dh: q.dh, Ns, d: q.d, err: 0};
+    }
+
+    // ---- 📶 ITU-R P.1812-6: terrain diffraction (delta-Bullington) + troposcatter ----
+    // The ITU's point-to-area method for terrestrial services (30 MHz - 6
+    // GHz), at its median: 50 % of the time (so no ducting / layer
+    // reflection - those matter only for small time percentages) and 50 % of
+    // locations (the location variability is added on the page). Units as
+    // the Recommendation: d km, heights m, f GHz, ae km. Checked against the
+    // intermediate values of the ITU-R SG3 validation logs (Py1812).
+    // Lb = max(Lbfs, -5 log10(10^-0.2 Lbs + 10^-0.2 (Lbfs + Ld))): free space
+    // + delta-Bullington diffraction (Bullington over the actual profile,
+    // corrected by the spherical-Earth diffraction of a smooth Earth fitted
+    // to it), power-summed with troposcatter
+    function ituJ(nu) { return nu > -0.78 ? 6.9 + 20 * Math.log10(Math.sqrt((nu - 0.1) ** 2 + 1) + nu - 0.1) : 0; }
+    // Bullington (4.3.1) over profile d / g (n points, Tx = 0): -> {L, nu,
+    // los, dbp km + hbp m (the equivalent knife edge, heights incl. the
+    // Earth bulge over the chord; los: the point of least clearance)}
+    function p1812Bull(d, g, hts, hrs, ap, f) {
+      const n = d.length, Ce = 1 / ap, lam = 0.2998 / f, dt = d[n - 1] - d[0];
+      let Stim = -Infinity;
+      for (let i = 1; i < n - 1; i++) {
+        const s = (g[i] + 500 * Ce * d[i] * (dt - d[i]) - hts) / d[i];
+        if (s > Stim) Stim = s;
+      }
+      const Str = (hrs - hts) / dt;
+      let nu = -Infinity, dbp = dt / 2, hbp = 0, los;
+      if (Stim < Str) {
+        los = true;
+        for (let i = 1; i < n - 1; i++) {
+          const hb = g[i] + 500 * Ce * d[i] * (dt - d[i]);
+          const v = (hb - (hts * (dt - d[i]) + hrs * d[i]) / dt) * Math.sqrt(0.002 * dt / (lam * d[i] * (dt - d[i])));
+          if (v > nu) { nu = v; dbp = d[i]; hbp = hb; }
+        }
+      } else {
+        los = false;
+        let Srim = -Infinity;
+        for (let i = 1; i < n - 1; i++) {
+          const s = (g[i] + 500 * Ce * d[i] * (dt - d[i]) - hrs) / (dt - d[i]);
+          if (s > Srim) Srim = s;
+        }
+        dbp = (hrs - hts + Srim * dt) / (Stim + Srim);
+        hbp = hts + Stim * dbp;
+        nu = (hbp - (hts * (dt - dbp) + hrs * dbp) / dt) * Math.sqrt(0.002 * dt / (lam * dbp * (dt - dbp)));
+      }
+      const Luc = ituJ(nu);
+      return {L: Luc + (1 - Math.exp(-Luc / 6)) * (10 + 0.02 * dt), nu, los, dbp, hbp};
+    }
+    // the same over a smooth Earth, without a profile (Attachment 4 to Annex 1)
+    function p1812BullSmooth(dt, hte, hre, ap, f) {
+      const Ce = 1 / ap, lam = 0.2998 / f, dlos = Math.sqrt(2 * ap) * (Math.sqrt(0.001 * hte) + Math.sqrt(0.001 * hre));
+      let nu;
+      if (dt < dlos) {
+        const c = (hte - hre) / (hte + hre), m = 250 * dt * dt / (ap * (hte + hre));
+        const b = 2 * Math.sqrt((m + 1) / (3 * m)) * Math.cos(Math.PI / 3 + Math.acos(1.5 * c * Math.sqrt(3 * m / (m + 1) ** 3)) / 3);
+        const d1 = dt / 2 * (1 + b), d2 = dt - d1;
+        const hse = ((hte - 500 * d1 * d1 / ap) * d2 + (hre - 500 * d2 * d2 / ap) * d1) / dt;
+        nu = -hse * Math.sqrt(0.002 * dt / (lam * d1 * (dt - d1)));
+      } else {
+        const Stm = 500 * Ce * dt - 2 * Math.sqrt(500 * Ce * hte), Srm = 500 * Ce * dt - 2 * Math.sqrt(500 * Ce * hre);
+        const ds = (hre - hte + Srm * dt) / (Stm + Srm);
+        nu = (hte + Stm * ds - (hte * (dt - ds) + hre * ds) / dt) * Math.sqrt(0.002 * dt / (lam * ds * (dt - ds)));
+      }
+      const Lus = ituJ(nu);
+      return Lus + (1 - Math.exp(-Lus / 6)) * (10 + 0.02 * dt);
+    }
+    // first-term spherical-Earth diffraction (4.3.3), land / sea mixed by
+    // omega -> [horizontal, vertical]
+    function p1812SeFtIn(epsr, sigma, d, hte, hre, adft, f, out) {
+      const k0 = 0.036 * Math.pow(adft * f, -1 / 3) * Math.pow((epsr - 1) ** 2 + (18 * sigma / f) ** 2, -1 / 4);
+      for (let p = 0; p < 2; p++) {
+        const K = p ? k0 * Math.sqrt(epsr * epsr + (18 * sigma / f) ** 2) : k0, K2 = K * K;
+        const bd = (1 + 1.6 * K2 + 0.67 * K2 * K2) / (1 + 4.5 * K2 + 1.53 * K2 * K2);
+        const X = 21.88 * bd * Math.pow(f / (adft * adft), 1 / 3) * d;
+        const Fx = X >= 1.6 ? 11 + 10 * Math.log10(X) - 17.6 * X : -20 * Math.log10(X) - 5.6488 * Math.pow(X, 1.425);
+        const y = 0.9575 * bd * Math.pow(f * f / adft, 1 / 3), G = h => {
+          const B = bd * y * h, g = B > 2 ? 17.6 * Math.sqrt(B - 1.1) - 5 * Math.log10(B - 1.1) - 8 : 20 * Math.log10(B + 0.1 * B * B * B);
+          return Math.max(g, 2 + 20 * Math.log10(K));
+        };
+        out[p] = -Fx - G(hte) - G(hre);
+      }
+      return out;
+    }
+    function p1812SeFt(d, hte, hre, adft, f, omega) {
+      const L = p1812SeFtIn(22, 0.003, d, hte, hre, adft, f, [0, 0]), S = p1812SeFtIn(80, 5, d, hte, hre, adft, f, [0, 0]);
+      return [omega * S[0] + (1 - omega) * L[0], omega * S[1] + (1 - omega) * L[1]];
+    }
+    // spherical-Earth diffraction (4.3.2) -> [H, V]
+    function p1812Se(d, hte, hre, ap, f, omega) {
+      const lam = 0.2998 / f, dlos = Math.sqrt(2 * ap) * (Math.sqrt(0.001 * hte) + Math.sqrt(0.001 * hre));
+      if (d >= dlos) return p1812SeFt(d, hte, hre, ap, f, omega);
+      const c = (hte - hre) / (hte + hre), m = 250 * d * d / (ap * (hte + hre));
+      const b = 2 * Math.sqrt((m + 1) / (3 * m)) * Math.cos(Math.PI / 3 + Math.acos(1.5 * c * Math.sqrt(3 * m / (m + 1) ** 3)) / 3);
+      const d1 = d / 2 * (1 + b), d2 = d - d1;
+      const hse = ((hte - 500 * d1 * d1 / ap) * d2 + (hre - 500 * d2 * d2 / ap) * d1) / d, hreq = 17.456 * Math.sqrt(d1 * d2 * lam / d);
+      if (hse > hreq) return [0, 0];
+      const aem = 500 * (d / (Math.sqrt(hte) + Math.sqrt(hre))) ** 2, L = p1812SeFt(d, hte, hre, aem, f, omega);
+      return [(1 - hse / hreq) * Math.max(0, L[0]), (1 - hse / hreq) * Math.max(0, L[1])];
+    }
+    // smooth-Earth heights + horizons (Attachment 1, sections 4-5): the
+    // effective heights for the diffraction model (hstd / hsrd), horizon
+    // angles (mrad) / distances (km), angular distance, LOS or not
+    function p1812Heights(d, h, htg, hrg, ae, f) {
+      const n = d.length, dt = d[n - 1], hts = h[0] + htg, hrs = h[n - 1] + hrg;
+      let v1 = 0, v2 = 0;
+      for (let i = 1; i < n; i++) {
+        const dd = d[i] - d[i - 1];
+        v1 += dd * (h[i] + h[i - 1]);
+        v2 += dd * (h[i] * (2 * d[i] + d[i - 1]) + h[i - 1] * (d[i] + 2 * d[i - 1]));
+      }
+      const hst = (2 * v1 * dt - v2) / (dt * dt), hsr = (v2 - v1 * dt) / (dt * dt);
+      let hobs = -Infinity, aot = -Infinity, aor = -Infinity;
+      for (let i = 1; i < n - 1; i++) {
+        const H = h[i] - (hts * (dt - d[i]) + hrs * d[i]) / dt;
+        if (H > hobs) hobs = H;
+        if (H / d[i] > aot) aot = H / d[i];
+        if (H / (dt - d[i]) > aor) aor = H / (dt - d[i]);
+      }
+      const hstp = hobs <= 0 ? hst : hst - hobs * aot / (aot + aor), hsrp = hobs <= 0 ? hsr : hsr - hobs * aor / (aot + aor);
+      const hstd = hstp >= h[0] ? h[0] : hstp, hsrd = hsrp > h[n - 1] ? h[n - 1] : hsrp;
+      let tmax = -Infinity, lt = 1;
+      for (let i = 1; i < n - 1; i++) {
+        const t = 1000 * Math.atan((h[i] - hts) / (1000 * d[i]) - d[i] / (2 * ae));
+        if (t > tmax) { tmax = t; lt = i; }
+      }
+      const ttd = 1000 * Math.atan((hrs - hts) / (1000 * dt) - dt / (2 * ae)), trd = 1000 * Math.atan((hts - hrs) / (1000 * dt) - dt / (2 * ae));
+      const trans = tmax > ttd, tt = Math.max(tmax, ttd);
+      let tr, dlt, dlr;
+      if (trans) {
+        dlt = d[lt];
+        let lr = 1;
+        tr = -Infinity;
+        for (let i = 1; i < n - 1; i++) {
+          const t = 1000 * Math.atan((h[i] - hrs) / (1000 * (dt - d[i])) - (dt - d[i]) / (2 * ae));
+          if (t >= tr) { tr = t; lr = i; }
+        }
+        dlr = dt - d[lr];
+      } else {
+        tr = trd;
+        const lam = 0.2998 / f;
+        let nm = -Infinity, k = 1;
+        for (let i = 1; i < n - 1; i++) {
+          const v = (h[i] + 500 / ae * d[i] * (dt - d[i]) - (hts * (dt - d[i]) + hrs * d[i]) / dt) * Math.sqrt(0.002 * dt / (lam * d[i] * (dt - d[i])));
+          if (v >= nm) { nm = v; k = i; }
+        }
+        dlt = d[k];
+        dlr = dt - dlt;
+      }
+      return {hst, hsr, hstd, hsrd, tt, tr, theta: 1e3 * dt / ae + tt + tr, dlt, dlr, trans};
+    }
+    function p1812Tropo(dt, theta, f, p, N0) {
+      const Lf = 25 * Math.log10(f) - 2.5 * Math.log10(f / 2) ** 2;
+      return 190.1 + Lf + 20 * Math.log10(dt) + 0.573 * theta - 0.15 * N0 - 10.125 * Math.pow(Math.log10(50 / p), 0.7);
+    }
+    // the whole median basic transmission loss: d km (d[0] = 0), h m amsl,
+    // R clutter heights m (or null), htg / hrg m above ground, f GHz, ae km,
+    // omega = sea fraction, N0 N-units, pol 0 horizontal / 1 vertical
+    // (flag4: the smooth-Earth Bullington by Attachment 4, as the coverage sweep)
+    function p1812P2P(d, h, R, htg, hrg, f, ae, omega, N0, pol, flag4) {
+      const n = d.length, dt = d[n - 1], hts = h[0] + htg, hrs = h[n - 1] + hrg;
+      let g = h;
+      if (R) { g = Float64Array.from(h, (v, i) => i && i < n - 1 ? v + R[i] : v); }
+      const sh = p1812Heights(d, h, htg, hrg, ae, f);
+      const Lbfs = 92.4 + 20 * Math.log10(f) + 10 * Math.log10(dt * dt + ((hts - hrs) / 1000) ** 2);
+      const bull = p1812Bull(d, g, hts, hrs, ae, f), hte = hts - sh.hstd, hre = hrs - sh.hsrd;
+      const Lbulls = flag4 ? p1812BullSmooth(dt, hte, hre, ae, f) : p1812Bull(d, new Float64Array(n), hte, hre, ae, f).L;
+      const Ldsph = p1812Se(dt, hte, hre, ae, f, omega);
+      const Ld = bull.L + Math.max(Ldsph[pol] - Lbulls, 0), Lbd = Lbfs + Ld, Lbs = p1812Tropo(dt, sh.theta, f, 50, N0);
+      const Lbc = -5 * Math.log10(10 ** (-0.2 * Lbs) + 10 ** (-0.2 * Lbd));
+      return {Lb: Math.max(Lbfs, Lbc), Lbfs, Ld, Lbulla: bull.L, Lbulls, Ldsph: Ldsph[pol], Lbs, Lbd, Lbc, bull, sh, hte, hre};
+    }
+
+    // ---- 📶 clutter around a terminal: ITU-R P.2108 ----
+    // §3.1 (terrestrial, 30 MHz - 3 GHz): an antenna below the clutter
+    // height R of its environment (1 water / sea, 2 open / rural: height
+    // gain; 3 suburban, 4 urban / trees / forest, 5 dense urban: diffraction
+    // over the clutter, street width 27 m). Median loss, dB
+    const P2108_R = [0, 10, 10, 10, 15, 20];
+    function p2108Terminal(fGHz, h, type) {
+      const R = P2108_R[type] || 10;
+      if (!type || h >= R) return 0;
+      const hdif = R - h;
+      if (type <= 2) return -(21.8 + 6.2 * Math.log10(fGHz)) * Math.log10(Math.max(h, 0.1) / R);
+      return ituJ(0.342 * Math.sqrt(fGHz) * Math.sqrt(hdif * Math.atan(hdif / 27) * 180 / Math.PI)) - 6.03;
+    }
+    // §3.3 (Earth-space / aeronautical, 0.5 - 100 GHz; used below 0.5 GHz
+    // too, flagged): the clutter loss of a ground terminal at h m in clutter
+    // of median height hm, seen at elevation theta deg, not exceeded at p %
+    // of locations
+    function erfinv(x) {   // (Giles 2010, single precision - |error| < 4e-7 on the result's scale used here)
+      let w = -Math.log((1 - x) * (1 + x)), p;
+      if (w < 5) {
+        w -= 2.5;
+        p = 2.81022636e-08; p = 3.43273939e-07 + p * w; p = -3.5233877e-06 + p * w; p = -4.39150654e-06 + p * w; p = 0.00021858087 + p * w;
+        p = -0.00125372503 + p * w; p = -0.00417768164 + p * w; p = 0.246640727 + p * w; p = 1.50140941 + p * w;
+      } else {
+        w = Math.sqrt(w) - 3;
+        p = -0.000200214257; p = 0.000100950558 + p * w; p = 0.00134934322 + p * w; p = -0.00367342844 + p * w; p = 0.00573950773 + p * w;
+        p = -0.0076224613 + p * w; p = 0.00943887047 + p * w; p = 1.00167406 + p * w; p = 2.83297682 + p * w;
+      }
+      return p * x;
+    }
+    function p2108Aero(fGHz, theta, p, h, hm) {
+      const lo = hm <= 8, mid = hm > 8 && hm <= 20;
+      const [ak, bk, ck, aC, bC, aV, bV] = lo ? [4.9, 6.7, 2.6, 0.19, 0, 1.4, 74] : mid ? [-2.6, 6.6, 2.0, 0.42, -6.7, 0.15, 97] : [2.4, 7.0, 1.0, 0.19, -2.7, 0.15, 98];
+      const [akp, bkp, aCp, b1, b2, b3, b4, cCp, aVp, bVp] = lo ? [6.0, 0.07, 0.15, 5.4, -0.3, 3.2, 0.07, -27, 1.6, -17] :
+        mid ? [3.6, 0.05, 0.17, 13, -0.2, 3.7, 0.05, -41, 1, -21] : [5.0, 0.003, 0.17, 32.6, 0.012, -23.9, -0.07, -41, 1, -18];
+      const Vmax = Math.min(aV * h + bV, 100), Ce = aC * h + bC, k = ((h + ak) / bk) ** ck;
+      const pLoS = Math.max(0, Vmax * (1 - Math.exp(-k * (theta + Ce) / 90)) / (1 - Math.exp(-k * (90 + Ce) / 90)));
+      const Vp = Math.min(aVp * h + bVp, 0) * fGHz ** -0.55 + 100, Cep = (fGHz * 1e9) ** aCp + b1 * Math.exp(b2 * h) + b3 * Math.exp(b4 * h) + cCp;
+      const kp = akp * Math.exp(bkp * h);
+      const pF = pLoS * Math.max(0, Vp * (1 - Math.exp(-kp * (theta + Cep) / 90)) / (1 - Math.exp(-kp * (90 + Cep) / 90))) / 100;
+      if (p > pLoS) {
+        const pp = (p - pLoS) / (100 - pLoS), L = Math.log(1 + (90 - theta) / 90);
+        const mu = 8.54 + 17.57 * L + fGHz ** 0.63, sg = 0.056 + 6.32 * L + fGHz ** 0.19;
+        return Math.max(mu + sg * Math.SQRT2 * erfinv(2 * pp - 1), 6);
+      }
+      if (p <= pF) return -3.542 * Math.exp(-155.1 * p / pF) - 1.06 * Math.exp(-6.342 * p / pF);
+      return 6 * (p - pF) / (pLoS - pF);
+    }
+    // ---- 📶 Okumura-Hata / COST-231 Hata (empirical, no terrain; for comparison) ----
+    // f MHz (150-1500 Hata, 1500-2000 COST-231), d km (1-20), base hb m
+    // (30-200), mobile hm m (1-10); env 'urban' | 'large' (large city) |
+    // 'suburban' | 'open'
+    function hataLoss(f, d, hb, hm, env) {
+      const lf = Math.log10(f), large = env === 'large';
+      const a = large ? (f < 300 ? 8.29 * Math.log10(1.54 * hm) ** 2 - 1.1 : 3.2 * Math.log10(11.75 * hm) ** 2 - 4.97)
+                      : (1.1 * lf - 0.7) * hm - (1.56 * lf - 0.8);
+      const lhb = Math.log10(Math.max(hb, 1)), ld = Math.log10(Math.max(d, 0.01));
+      let L;
+      if (f <= 1500) L = 69.55 + 26.16 * lf - 13.82 * lhb - a + (44.9 - 6.55 * lhb) * ld;
+      else L = 46.3 + 33.9 * lf - 13.82 * lhb - a + (44.9 - 6.55 * lhb) * ld + (large ? 3 : 0);
+      if (env === 'suburban') L -= 2 * Math.log10(f / 28) ** 2 + 5.4;
+      else if (env === 'open') L -= 4.78 * lf * lf - 18.33 * lf + 40.94;
+      return L;
+    }
+
+    self.vsTest = {decodePng, despike, sweep, run, ringGrid, tiles, clean, PAD,   // offline tests (node)
+                   itmP2P, itmVariability, itmQinv,
+                   p1812P2P, p1812Bull, p1812BullSmooth, p1812Se, p1812Heights, p1812Tropo, ituJ,
+                   p2108Terminal, p2108Aero, hataLoss, erfinv};
   }
   // (end of vsWorkerMain)
 
@@ -13196,7 +14350,18 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function vsDec(q) { return q < 30000 ? q / 10 : 3000 + (q - 30000) * 10; }
   function vsSave() { try { localStorage.setItem('kraken_vs', JSON.stringify(vsState)); } catch (e) {} }
   function vsGet(id) { return vsState.items.find(i => i.id === id) || null; }
-  function vsKey(it) { return `${it.lat},${it.lon},${it.h},${it.r},${vsState.k}`; }
+  // what an item's result depends on: its place, antenna, radius, the
+  // refraction - and with the signal on (📶 PATH LOSS) what the loss does,
+  // the target height too. A signal result also serves the line of sight
+  function vsKey(it) {
+    const g = `${it.lat},${it.lon},${it.h},${it.r},${vsState.k}`, s = plSigMsg();
+    return s ? g + '|' + JSON.stringify(s) : g;
+  }
+  function vsResOk(it, res) {
+    if (!res) return false;
+    const k = vsKey(it);
+    return res.key === k || (!plState.sig && res.key.split('|')[0] === k);
+  }
   function vsTgt() { return vsState.tgt; }
   // the rings (see above): [{z, r0, r1}] from the antenna out to rM, each
   // as far as its grid stays within VS_NMAX cells a side (as run() sizes it:
@@ -13239,13 +14404,13 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // also run from vsDraw, so after a reload the work starts with the map)
   function vsPump() {
     if (vsJob || !mapState.vs || vsWorkerErr) return;
-    const it = vsState.items.find(i => i.on && (vsRes.get(i.id) || {}).key !== vsKey(i) &&
+    const it = vsState.items.find(i => i.on && !vsResOk(i, vsRes.get(i.id)) &&
                                        (vsFail.get(i.id) || {}).key !== vsKey(i));
     if (!it) return;
     if (!vsWorkerStart()) { vsRender(); return; }
     const rM = it.r * 1000;
     vsJob = {job: ++vsSeq, id: it.id, key: vsKey(it), prog: null, lat: it.lat, lon: it.lon, h: it.h, r: it.r};
-    vsWorker.postMessage({job: vsJob.job, lat: it.lat, lon: it.lon, h: it.h, k: vsState.k, levels: vsPlan(it.lat, rM)});
+    vsWorker.postMessage({job: vsJob.job, lat: it.lat, lon: it.lon, h: it.h, k: vsState.k, levels: vsPlan(it.lat, rM), sig: plSigMsg()});
     vsRender();
   }
   // an item changed / went away while its job runs: stop it (the reply ends the job)
@@ -13264,11 +14429,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const levels = m.levels.map((l, i) => {
         const o = old && old.levels[i];
         return Object.assign({z: l.z, N: l.N, gx0: l.gx0, gy0: l.gy0, r0: l.r0, r1: l.r1, cell: l.cell,
-                              need: new Uint16Array(l.need), ground: new Int16Array(l.ground)},
+                              need: new Uint16Array(l.need), ground: new Int16Array(l.ground), loss: l.loss ? new Uint16Array(l.loss) : null},
                              o && o.cv && o.N === l.N ? {cv: o.cv, cx: o.cx} : {});   // (canvases reused)
       });
       const res = {key: job.key, levels, gnd: m.gnd, eye: m.eye, mpp: m.mpp, ms: m.ms, spikes: m.spikes, tiles: m.tiles, loaded: m.loaded,
-                   lat: job.lat, lon: job.lon, h: job.h, r: job.r};
+                   lat: job.lat, lon: job.lon, h: job.h, r: job.r, sig: m.sig || null};
       vsRes.set(job.id, res);
       vsFail.delete(job.id);
       if (it.on) vsPaint(it, res);
@@ -13279,11 +14444,15 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
 
   // each ring as an image: the item's colour (opaque - vsDraw tints) where
-  // a target at the set height is in sight, clear elsewhere
+  // a target at the set height is in sight, clear elsewhere. With the signal
+  // (📶 PATH LOSS): the margin over what the receiver needs, by band
   function vsPaint(it, res) {
-    const c = parseInt(it.col.slice(1), 16);
-    const rgba = (0xff000000 | ((c & 0xff) << 16) | (c & 0xff00) | ((c >> 16) & 0xff)) >>> 0;   // ABGR (little endian)
+    const abgr = (col, a) => { const c = parseInt(col.slice(1), 16); return ((a << 24) | ((c & 0xff) << 16) | (c & 0xff00) | ((c >> 16) & 0xff)) >>> 0; };
+    const rgba = abgr(it.col, 255);   // ABGR (little endian)
     const amsl = vsState.amsl, tgt = vsTgt(), tq = vsEnc(tgt);
+    // (short of the need: half as strong, so the map still shows through)
+    const sig = plState.sig && res.levels[0].loss, F = sig ? plCellFns() : null, bands = PL_BANDS.map(([t, c]) => [t, abgr(c, t < 0 ? 128 : 255)]);
+    res.sigPaint = !!sig;
     let vis = 0, tot = 0;
     for (const l of res.levels) {
       const N = l.N;
@@ -13293,13 +14462,23 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         l.cx = l.cv.getContext('2d');
       }
       // (the ImageData only while painting: phones count)
-      const img = l.cx.createImageData(N, N), px = new Uint32Array(img.data.buffer), need = l.need, gr = l.ground;
+      const img = l.cx.createImageData(N, N), px = new Uint32Array(img.data.buffer), need = l.need, gr = l.ground, loss = l.loss;
       let lv = 0, lt = 0;
       for (let i = 0; i < N * N; i++) {
         const q = need[i];
         if (q === VS_NODATA) { px[i] = 0; continue; }
         lt++;
         const ok = amsl ? gr[i] + (q < 30000 ? q / 10 : 3000 + (q - 30000) * 10) <= tgt : q <= tq;
+        if (sig) {   // received = base - loss; over the need in / out of sight
+          const L = loss[i];
+          if (L === 65535) { px[i] = 0; continue; }   // (the target under the ground)
+          const ex = F.base - L / 10 - F.sens - (ok ? F.nIn : F.nOut);
+          let c = 0;
+          for (let b = 0; b < bands.length; b++) if (ex >= bands[b][0]) { c = bands[b][1]; break; }
+          px[i] = c;
+          if (ex >= 0) lv++;
+          continue;
+        }
         px[i] = ok ? rgba : 0;
         if (ok) lv++;
       }
@@ -13352,14 +14531,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         }
         c.save();
         c.setTransform(1, 0, 0, 1, 0, 0);
-        c.globalAlpha = 0.44;
+        c.globalAlpha = res.sigPaint ? 0.55 : 0.44;
         c.drawImage(vsOff, 0, 0);
         c.restore();
       }
       // the radius (dashed: the circle on the ground, which on the map
       // stretches towards the pole) and the observer (being dragged: where it is now)
       const od = mapObjDrag && mapObjDrag.kind === 'vs' && mapObjDrag.id === it.id && mapObjDrag.lat !== undefined ? mapObjDrag : null;
-      const g = od ? {lat: od.lat, lon: od.lon, r: it.r} : res && res.key === vsKey(it) ? res : it;
+      const g = od ? {lat: od.lat, lon: od.lon, r: it.r} : vsResOk(it, res) ? res : it;
       const [x, y] = mapLatLonToScreen(g.lat, g.lon);
       c.save();
       c.strokeStyle = it.col;
@@ -13431,6 +14610,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function vsFollowStation(now) {
     const p = mapStationPos();
     if (!vsReady || !p) return;
+    if (plReady) plFollowStation();   // (a link from the station too)
     const gps = !mapStaticSource();
     let moved = false;
     for (const it of vsState.items) {
@@ -13549,14 +14729,16 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       vsState.tgt = Math.round(v * 10) / 10;
       vsSave();
     }
-    vsRepaint();
+    if (plState.sig) plCovChanged(); else vsRepaint();   // (the signal depends on the target height: recomputed)
     vsRender(true);
+    plRender();
   }
   function vsSetRef(v) {
     vsState.amsl = v === 'amsl';
     vsSave();
-    vsRepaint();
+    if (plState.sig) plCovChanged(); else vsRepaint();
     vsRender(true);
+    plRender();
   }
   function vsSetK(v) {
     const k = Number(v);
@@ -13566,6 +14748,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (vsJob) vsCancel(vsJob.id);
     vsPump();
     vsRender();
+    plPump();   // (a link uses the refraction too)
+    plRender();
   }
 
   // ---- the panel ----
@@ -13611,12 +14795,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const res = vsRes.get(it.id), f = vsFail.get(it.id), key = vsKey(it);
     if (vsJob && vsJob.id === it.id) {
       const p = vsJob.prog;
-      return [Array.isArray(p) ? `loading terrain ${p[0]}/${p[1]}…` : p === 'compute' ? 'computing…' : 'starting…', 'w'];
+      return [Array.isArray(p) ? (p[0] === 'sig' ? `signal ${p[1]} %…` : `loading terrain ${p[0]}/${p[1]}…`) : p === 'compute' ? 'computing…' : 'starting…', 'w'];
     }
     if (f && f.key === key) return [`⚠ ${digEsc(f.msg)} · <a onclick="vsRetry('${it.id}')">retry</a>`, 'e'];
     if (vsWorkerErr) return ['⚠ ' + digEsc(vsWorkerErr), 'e'];
-    if (!res || res.key !== key) return [res ? 'waiting to update…' : 'waiting…', 'w'];
-    return [`${Math.round(res.vis * 100)} % in sight`, ''];
+    if (!vsResOk(it, res)) return [res ? 'waiting to update…' : 'waiting…', 'w'];
+    return res.sigPaint ? [`${Math.round(res.vis * 100)} % covered`, ''] : [`${Math.round(res.vis * 100)} % in sight`, ''];
   }
   function vsRender(force) {
     const el = $id('map-vs');
@@ -13651,7 +14835,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const [txt, cls] = vsItemStatus(it), st = r.querySelector('.st');
       const res = vsRes.get(it.id);
       const lst = res && res.levels[res.levels.length - 1];
-      const tip = res && res.key === vsKey(it) ? `ground ${Math.round(res.gnd)} m + antenna ${it.h} m = ${Math.round(res.eye)} m above sea level · ` +
+      const tip = vsResOk(it, res) ? `ground ${Math.round(res.gnd)} m + antenna ${it.h} m = ${Math.round(res.eye)} m above sea level · ` +
         `terrain cells of ${Math.round(res.mpp)} m around the antenna` + (res.levels.length > 1 ? ` to ${Math.round(lst.cell)} m at ${it.r} km ` +
         `(${res.levels.length} rings, zoom ${res.levels[0].z} to ${lst.z})` : ` (zoom ${lst.z})`) +
         ` · ${res.tiles} tiles` + (res.loaded < res.tiles ? ` (${res.loaded} loaded, the rest in memory)` : '') + `, ${(res.ms / 1000).toFixed(1)} s` + (res.spikes ? ` · ${res.spikes} terrain spikes removed` : '') : '';
@@ -13676,11 +14860,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const [x, y] = vsHovAt, W = mapWorld();
       const nx = mapState.mx + (x - mapW / 2) / W, ny = mapState.my + (y - mapH / 2) / W;
       const [la, lo] = mapScreenToLatLon(x, y);
-      const tgt = vsTgt(), lines = [];
+      const tgt = vsTgt(), lines = [], F = plState.sig ? plCellFns() : null;
       let gnd = null;
       for (const it of shown) {
         const res = vsRes.get(it.id);
-        let q = VS_NODATA, g = 0;
+        let q = VS_NODATA, g = 0, ls = 65535;
         for (const l of res.levels) {   // finest first
           const Wv = 256 * 2 ** l.z, N = l.N;
           let px = nx * Wv - l.gx0;
@@ -13689,6 +14873,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
           if (i < 0 || j < 0 || i >= N || j >= N || l.need[j * N + i] === VS_NODATA) continue;
           q = l.need[j * N + i];
           g = l.ground[j * N + i];
+          if (l.loss) ls = l.loss[j * N + i];
           break;
         }
         if (q === VS_NODATA) continue;
@@ -13697,7 +14882,13 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         const d = mapDistKm(res.lat, res.lon, la, lo), b = mapBearing(res.lat, res.lon, la, lo);
         const ok = vsState.amsl ? g + nd <= tgt : nd <= tgt;
         const why = ok ? '<b>in sight</b>' : `<span class="no">hidden</span> - needs ${vsState.amsl ? vsFmtM(g + nd) + ' above sea level' : vsFmtM(nd) + ' above ground'}`;
-        lines.push(`<span style="color:${it.col}">■</span> ${digEsc(it.name)}: ${why} · ${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${b.toFixed(0)}°`);
+        // the signal (📶 PATH LOSS): received median, the margin over the need at the reliability
+        let sg = '';
+        if (F && res.sigPaint && ls !== 65535) {
+          const prx = F.base - ls / 10, ex = prx - F.sens - (ok ? F.nIn : F.nOut);
+          sg = ` · <b style="color:${plCol(ex) || '#ff8a80'}">${prx.toFixed(1)} dBm</b> (${ex >= 0 ? '+' : ''}${ex.toFixed(1)} dB for ${plState.rel} %, loss ${(ls / 10).toFixed(1)} dB)`;
+        }
+        lines.push(`<span style="color:${it.col}">■</span> ${digEsc(it.name)}: ${why}${sg} · ${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${b.toFixed(0)}°`);
       }
       if (lines.length) html = `Ground ${gnd} m here<br>` + lines.join('<br>');
     }
@@ -13705,6 +14896,708 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
 
   vsReady = true;
+
+  // --- 📶 PATH LOSS: link budget, terrain path loss (NLOS), channel models ---------
+  // How much signal gets from one place to another, over the terrain - also
+  // where there is no line of sight. Two uses:
+  // - a LINK between two points (right-click "Path loss to / from here", a
+  //   marker, a mast; the ends are dragged like viewshed points): the
+  //   great-circle terrain profile (computed in a worker of its own:
+  //   runLink in vsWorkerMain) through ITU-R P.1812 (terrain diffraction by
+  //   delta-Bullington + troposcatter), NTIA's ITM / Longley-Rice, free
+  //   space and Okumura-Hata, drawn as a profile (Earth bulge, line of
+  //   sight, first Fresnel zone, Bullington's equivalent edge) with the
+  //   budget at the bottom of the map
+  // - COVERAGE: the viewsheds show the signal instead of the line of sight
+  //   ("Signal on the viewsheds"): P.1812 + clutter to every cell (plSweep),
+  //   coloured by the margin over what the receiver needs at the chosen
+  //   reliability
+  // Channel model: P.2108 clutter around each antenna (terrestrial 3.1; with
+  // an aircraft at the far end, 3.3 by elevation angle), location
+  // variability (lognormal, P.1546's sigma_L) and fast fading (Rician in
+  // line of sight, Rayleigh beyond, or as chosen) combined into the margin
+  // a reliability needs. Median losses: 50 % of the time (no ducting)
+  const PL_ENVS = ['none', 'water / sea', 'open / rural', 'suburban', 'urban / trees / forest', 'dense urban'];
+  const PL_ENV_HM = [0, 0, 0, 8, 15, 25];   // median clutter height for P.2108 3.3 (low / mid / high rise)
+  const PL_GROUNDS = {avg: ['average ground', 15, 0.005], poor: ['poor ground (dry)', 4, 0.001], good: ['good ground (wet)', 25, 0.02],
+                      fresh: ['fresh water', 81, 0.01], sea: ['sea water', 81, 5]};
+  const PL_CLIMATES = ['', 'equatorial', 'continental subtropical', 'maritime subtropical', 'desert', 'continental temperate',
+                       'maritime temperate, over land', 'maritime temperate, over sea'];
+  const PL_MODELS = {p1812: 'ITU-R P.1812 (terrain)', itm: 'Longley-Rice / ITM (terrain)', fs: 'Free space', hata: 'Okumura-Hata / COST-231'};
+  // the margin over the need (dB) -> colour (coverage + the link's line)
+  const PL_BANDS = [[30, '#1a9850'], [20, '#66bd63'], [10, '#a6d96a'], [5, '#fee08b'], [0, '#fdae61'], [-10, '#d73027']];
+  function plSave() { try { localStorage.setItem('kraken_pl', JSON.stringify(plState)); } catch (e) {} }
+  function plCol(x) { for (const [t, c] of PL_BANDS) if (x >= t) return c; return null; }
+
+  // ---- the budget ----
+  function plPtxDbm() { return 10 * Math.log10(plState.ptx * 1000); }
+  function plNoise() { return -174 + 10 * Math.log10(plState.bw * 1000) + plState.nf; }
+  function plSens() { return plNoise() + plState.snr; }
+  // P_rx (dBm) for a basic transmission loss incl. clutter
+  function plPrx(L) { return plPtxDbm() + plState.gt - plState.lt + plState.gr - plState.lr - L; }
+  // location variability: P.1546-6 (12): sigma_L = K + 1.3 log10(f MHz), K =
+  // 0.5 rural / open, 1.0 an antenna up near the clutter, 1.2 one down in it
+  function plSigmaL(env, h) {
+    if (plState.sigL !== null) return plState.sigL;
+    const K = env <= 2 ? 0.5 : h >= [0, 10, 10, 10, 15, 20][env] ? 1.0 : 1.2;
+    return K + 1.3 * Math.log10(plState.f);
+  }
+  // fast fading in line of sight / beyond: [kind, K linear]
+  function plFading(los) {
+    const f = plState.fade;
+    if (f === 'none') return ['none', 0];
+    if (f === 'rayleigh' || (f === 'auto' && !los)) return ['rayleigh', 0];
+    return ['rician', 10 ** (plState.K / 10)];
+  }
+  // I0(z) e^-z (Abramowitz & Stegun 9.8.1 / 9.8.2, |error| < 2e-7)
+  function plI0e(z) {
+    if (z < 3.75) {
+      const t = (z / 3.75) ** 2;
+      return (1 + t * (3.5156229 + t * (3.0899424 + t * (1.2067492 + t * (0.2659732 + t * (0.0360768 + t * 0.0045813)))))) * Math.exp(-z);
+    }
+    const t = 3.75 / z;
+    return (0.39894228 + t * (0.01328592 + t * (0.00225319 + t * (-0.00157565 + t * (0.00916281 + t * (-0.02057706 + t * (0.02635537 +
+            t * (-0.01647633 + t * 0.00392377)))))))) / Math.sqrt(z);
+  }
+  // P(power < x * its mean) for the fading kind: Rayleigh = exponential;
+  // Rician K = 1 - Q1(sqrt 2K, sqrt(2 (K+1) x)), the envelope pdf integrated (Simpson)
+  function plFadeCdf(kind, K, x) {
+    if (kind === 'none') return x >= 1 ? 1 : 0;
+    if (kind === 'rayleigh') return 1 - Math.exp(-x);
+    const a = Math.sqrt(2 * K), b = Math.sqrt(2 * (K + 1) * x);
+    if (b > a + 12) return 1;
+    const n = 64, h = b / n;
+    let s = 0;
+    for (let i = 0; i <= n; i++) {
+      const t = i * h, v = t * Math.exp(-0.5 * (t - a) ** 2) * plI0e(a * t);
+      s += v * (i === 0 || i === n ? 1 : i & 1 ? 4 : 2);
+    }
+    return Math.min(1, s * h / 3);
+  }
+  // P(the received power falls short of the need) at a median margin m (dB):
+  // lognormal location variability sigma (dB) around the median, then fast
+  // fading around that local mean (integrated over the normal, +-6 sigma)
+  function plPhi(z) {   // the standard normal CDF (erfc of Numerical Recipes' erfcc, |error| < 1.2e-7)
+    const x = Math.abs(z) / Math.SQRT2, t = 1 / (1 + 0.5 * x);
+    const r = t * Math.exp(-x * x - 1.26551223 + t * (1.00002368 + t * (0.37409196 + t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 +
+              t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
+    return z >= 0 ? 1 - r / 2 : r / 2;
+  }
+  function plOutage(m, sigma, kind, K) {
+    if (kind === 'rician' && K >= 1000) kind = 'none';   // (K >= 30 dB: a steady signal)
+    if (!(sigma > 0)) return plFadeCdf(kind, K, 10 ** (-m / 10));
+    if (kind === 'none') return plPhi(-m / sigma);   // (the normal alone, exactly)
+    let s = 0;
+    const n = 120;
+    for (let i = 0; i <= n; i++) {
+      const z = -6 + 12 * i / n, w = Math.exp(-z * z / 2) * (i === 0 || i === n ? 0.5 : 1);
+      s += w * plFadeCdf(kind, K, 10 ** ((sigma * z - m) / 10));
+    }
+    return Math.min(1, s * 12 / n / Math.sqrt(2 * Math.PI));
+  }
+  // the median margin a reliability (%) needs (bisection; cached)
+  const plNeedCache = new Map();
+  function plNeed(rel, sigma, kind, K) {
+    const key = `${rel},${sigma.toFixed(3)},${kind},${K.toFixed(4)}`;
+    if (plNeedCache.has(key)) return plNeedCache.get(key);
+    let lo = -40, hi = 80;
+    for (let i = 0; i < 30; i++) { const mid = (lo + hi) / 2; if (1 - plOutage(mid, sigma, kind, K) >= rel / 100) hi = mid; else lo = mid; }
+    if (plNeedCache.size > 200) plNeedCache.clear();
+    plNeedCache.set(key, hi);
+    return hi;
+  }
+
+  // ---- the worker (the viewshed worker's code, its own instance: a link is
+  // quick and must not wait behind a coverage job) ----
+  function plGround() { return PL_GROUNDS[plState.ground]; }
+  function plLinkMsg() {
+    const a = plState.a, b = plState.b, g = plGround();
+    return {a: {lat: a.lat, lon: a.lon, h: a.h}, b: {lat: b.lat, lon: b.lon, h: b.h, amsl: b.amsl}, f: plState.f, k: vsState.k,
+            pol: plState.pol, N0: plState.N0, climate: plState.climate, eps: g[1], sigma: g[2], envA: plState.envA, envB: plState.envB,
+            hmA: PL_ENV_HM[plState.envA], rel: plState.rel};
+  }
+  function plKey() { return plState.a && plState.b ? JSON.stringify(plLinkMsg()) : ''; }
+  function plWorkerStart() {
+    if (plWorker) return true;
+    try {
+      plWorker = new Worker(URL.createObjectURL(new Blob(['(' + vsWorkerMain.toString() + ')()'], {type: 'text/javascript'})));
+    } catch (e) { plFail = {key: plKey(), msg: 'this browser can\'t run it (' + e.message + ')'}; return false; }
+    plWorker.onmessage = e => plOnWorker(e.data);
+    plWorker.onerror = e => {
+      e.preventDefault();
+      plWorker.terminate();
+      plWorker = null;
+      plFail = {key: plJob ? plJob.key : plKey(), msg: 'failed: ' + (e.message || 'worker error')};
+      plJob = null;
+      plRender();
+    };
+    return true;
+  }
+  // one job at a time; a newer link cancels the running one
+  function plPump() {
+    const key = plKey();
+    if (!key || (plRes && plRes.key === key) || !mapState.on) return;
+    if (plJob) {
+      if (plJob.key !== key && !plJob.cancel) { plJob.cancel = true; plWorker.postMessage({cancel: plJob.job}); }
+      return;
+    }
+    if (plFail && plFail.key === key) return;
+    if (!plWorkerStart()) { plRender(); return; }
+    plJob = {job: ++plSeq, key, prog: null};
+    plWorker.postMessage({job: plJob.job, link: plLinkMsg()});
+    plRender();
+  }
+  function plOnWorker(m) {
+    if (!plJob || m.job !== plJob.job) return;
+    if (m.prog) { plJob.prog = m.prog; plRender(); return; }
+    const job = plJob;
+    plJob = null;
+    if (m.error) { if (m.error !== 'cancelled') plFail = {key: job.key, msg: m.error}; }
+    else { plRes = Object.assign({key: job.key}, m.link); plFail = ''; }
+    plPump();
+    plRender();
+    mapDraw();
+  }
+
+  // ---- the link: setting the ends ----
+  function plEnsureOn() {
+    if (!plState.open) plState.open = true;
+    plState.prof = true;
+    if (!mapState.pl) { mapState.pl = true; mapSave(); mapUpdateControls(); }
+  }
+  // end 'a' (the transmitter / station side) or 'b' at a place
+  function plSetEnd(w, lat, lon, name, opt) {
+    opt = opt || {};
+    const old = plState[w];
+    plState[w] = {lat: +lat.toFixed(6), lon: +lon.toFixed(6), name: String(name || 'Point').slice(0, 60), st: !!opt.st, mk: opt.mk || '',
+                  h: opt.h !== undefined ? opt.h : old ? old.h : w === 'a' ? vsState.h : vsTgt(),
+                  amsl: w === 'b' ? (opt.amsl !== undefined ? opt.amsl : old ? old.amsl : vsState.amsl) : false};
+    if (w === 'b' && !plState.b.amsl && plState.b.h > 5000) plState.b.h = 2;
+    if (w === 'b' && !plState.a) {   // the far end first: the near one is the station
+      const p = mapStationPos();
+      if (p) plState.a = {lat: +p[0].toFixed(6), lon: +p[1].toFixed(6), name: 'Station', st: true, mk: '', h: vsState.h, amsl: false};
+      else mapStatusFlash('Now the other end: right-click → "📶 Path loss from here" (no station location to start from)');
+    }
+    plEnsureOn();
+    plSave();
+    plPump();
+    plRender();
+    mapDraw();
+  }
+  function plAt(w) {
+    const at = mapMenuAt;
+    mapMenuClose();
+    if (!at) return;
+    let i = 1;
+    while ([plState.a, plState.b].some(e => e && e.name === 'Point ' + i) || vsState.items.some(v => v.name === 'Point ' + i)) i++;
+    plSetEnd(w, at.la, at.lo, 'Point ' + i);
+  }
+  function plFromStation() {
+    const p = mapStationPos();
+    if (!p) { mapStatusFlash('No station location - set it in the sidebar (Station Information) or right-click the map → "Set station here"'); return; }
+    plSetEnd('a', p[0], p[1], 'Station', {st: true});
+  }
+  function plToMarker(id, w) {
+    const m = mkGet(id);
+    if (m) plSetEnd(w || 'b', m.lat, m.lon, m.name, {mk: m.id});
+  }
+  // an OSM mast: the far end (or w), its antenna at the mast's mapped height
+  function plToMast(k, w) {
+    const m = mastPts.get(k);
+    if (!m) return;
+    const t = String(m.tags.height || '').trim(), v = parseFloat(t);
+    mapSel = null;
+    plSetEnd(w || 'b', m.la, m.lo, mastTitle(m.tags), v > 0 ? {h: Math.min(5000, Math.round(/(ft|')\s*$/i.test(t) ? v * 0.3048 : v)), amsl: false} : {});
+  }
+  function plRemove() {
+    plState.a = plState.b = null;
+    plRes = null;
+    if (plJob && !plJob.cancel) { plJob.cancel = true; plWorker.postMessage({cancel: plJob.job}); }
+    if (plSel) plSel = null;
+    plSave();
+    plRender();
+    mapDraw();
+  }
+  function plSwap() {
+    if (!plState.a || !plState.b) return;
+    const a = plState.a, b = plState.b;
+    plState.a = Object.assign({}, b, {amsl: false, h: b.amsl ? 10 : b.h});
+    plState.b = Object.assign({}, a, {st: false, amsl: false});
+    if (b.amsl) mapStatusFlash('The aircraft end can only be the far one: its height is now 10 m above the ground');
+    plSave();
+    plPump();
+    plRender();
+    mapDraw();
+  }
+  // an end dragged somewhere else (from the station / a marker: no longer it)
+  function plMoveEnd(w, lat, lon) {
+    const e = plState[w];
+    if (!e) return;
+    e.lat = +lat.toFixed(6);
+    e.lon = +lon.toFixed(6);
+    e.st = false;
+    e.mk = '';
+    plSave();
+    plPump();
+    plRender();
+    mapDraw();
+  }
+  // the station end follows the station (as the station's viewsheds do)
+  function plFollowStation() {
+    const p = mapStationPos(), a = plState.a;
+    if (!plReady || !p || !a || !a.st || mapDistKm(a.lat, a.lon, p[0], p[1]) <= 0.002) return;
+    a.lat = +p[0].toFixed(6);
+    a.lon = +p[1].toFixed(6);
+    plSave();
+    plPump();
+    plRender();
+    mapDraw();
+  }
+
+  // ---- the link's result -> the numbers ----
+  // {L (the chosen model's loss incl. clutter), Lm, clut, model, Prx, snr, margin, los, need, rel}
+  function plBudget(r) {
+    if (!r) return null;
+    const mdl = plState.model;
+    let Lm = mdl === 'itm' ? (r.itm.err ? null : r.itm.A) : mdl === 'fs' ? r.fs : mdl === 'hata' ? r.hata.L : r.p1812.Lb;
+    if (Lm === null) return {err: 'ITM: ' + plItmErr(r.itm.err)};
+    const clut = mdl === 'hata' ? 0 : r.clut.a + r.clut.b;   // (Hata's environments are its own clutter)
+    const L = Lm + clut, Prx = plPrx(L), los = mdl === 'fs' ? true : r.p1812.los;
+    const sigma = plSigmaL(r.clut.aero ? 2 : plState.envB, r.hrs - r.gB), [kind, K] = plFading(los);
+    const margin = Prx - plSens(), need = plNeed(plState.rel, sigma, kind, K);
+    return {L, Lm, clut, Prx, snr: Prx - plNoise(), margin, los, need, sigma, kind, K, rel: 100 * (1 - plOutage(margin, sigma, kind, K))};
+  }
+  function plItmErr(e) {
+    return {1000: 'transmitter height out of range (0.5-3000 m)', 1001: 'receiver height out of range (0.5-3000 m)', 1009: 'frequency out of range (20 MHz - 20 GHz)',
+            1013: 'ground impedance', 1016: 'effective Earth radius', 1021: 'surface refractivity too small', 1022: 'surface refractivity too large'}[e] || 'error ' + e;
+  }
+  const plF = (v, d) => v === null || v === undefined || !Number.isFinite(v) ? '–' : v.toFixed(d === undefined ? 1 : d);
+  const plSgn = (v, d) => (v >= 0 ? '+' : '') + plF(v, d);
+
+  // ---- the panel (under the viewshed's) ----
+  function plToggle() {
+    mapState.pl = !mapState.pl;
+    if (mapState.pl) plState.open = true;
+    mapSave();
+    plSave();
+    mapUpdateControls();
+    mapDraw();
+  }
+  function plSet(k, v) {
+    const n = Number(v), lim = {f: [20, 20000], ptx: [1e-6, 1e7], gt: [-30, 60], gr: [-30, 60], lt: [0, 60], lr: [0, 60], bw: [0.01, 1e5],
+                                nf: [0, 40], snr: [-40, 80], N0: [250, 400], K: [-20, 40], rel: [1, 99.99]}[k];
+    if (lim) { if (!(Number.isFinite(n) && n >= lim[0] && n <= lim[1])) { plRender(true); return; } plState[k] = n; }
+    else if (k === 'sigL') { if (v === '' || v === null) plState.sigL = null; else if (Number.isFinite(n) && n >= 0 && n <= 30) plState.sigL = n; else { plRender(true); return; } }
+    else if (['envA', 'envB', 'climate', 'pol'].includes(k)) plState[k] = n;
+    else plState[k] = v;
+    plSave();
+    // what the worker computes with -> new results; the rest repaints
+    if (['f', 'pol', 'N0', 'climate', 'ground', 'envA', 'envB', 'rel'].includes(k)) plPump();
+    if (plState.sig && ['f', 'pol', 'N0', 'envA', 'envB'].includes(k)) plCovChanged();
+    else if (plState.sig) vsRepaint();
+    plRender(true);
+    mapDraw();
+  }
+  // the end's antenna height (and for B: above ground / sea level)
+  function plSetEndH(w, v) {
+    const e = plState[w], n = Number(v);
+    if (!e || !Number.isFinite(n) || n < 0 || n > (e.amsl ? 30000 : 5000)) { plRender(true); return; }
+    e.h = Math.round(n * 10) / 10;
+    plSave(); plPump(); plRender(true);
+  }
+  function plSetEndRef(v) {
+    const e = plState.b;
+    if (!e) return;
+    e.amsl = v === 'amsl';
+    if (!e.amsl && e.h > 5000) e.h = 2;
+    plSave(); plPump(); plRender(true);
+  }
+  // the coverage: the viewsheds compute the signal
+  function plSetSig(on) {
+    plState.sig = !!on;
+    plSave();
+    if (plState.sig && (!mapState.vs || !vsState.items.length)) {
+      if (!mapState.vs) vsToggle();
+      if (!vsState.items.length) vsAddStation();
+    }
+    plCovChanged();
+    plRender(true);
+  }
+  function plCovChanged() {
+    if (!vsReady) return;
+    if (vsJob) vsCancel(vsJob.id);
+    vsRepaint();
+    vsPump();
+  }
+  function plPanelBuild(el) {
+    el.dataset.built = '1';
+    const num = (k, w, step, tip) => `<input type="number" data-k="${k}" style="width:${w}px" step="${step}" title="${tip}" onchange="plSet('${k}',this.value)" onkeydown="if(event.key==='Enter')this.blur()">`;
+    const sel = (k, opts, tip) => `<select data-k="${k}" title="${tip}" onchange="plSet('${k}',this.value)">${opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>`;
+    const envs = PL_ENVS.map((t, i) => [i, t]);
+    el.innerHTML =
+      `<div class="map-vs-h"><span class="t">📶 Path loss</span>` +
+      `<button type="button" class="map-btn" onclick="plFromStation()" title="Start a link at the station (its location: Station Information); then right-click the far end → Path loss to here">Link from station</button>` +
+      `<span class="hint">or right-click the map</span>` +
+      `<span class="x" id="map-pl-fold" onclick="plState.open=!plState.open;plSave();plRender()" title="Fold / unfold"></span></div>` +
+      `<div class="map-vs-body">` +
+      `<div class="map-vs-row"><label title="Frequency">Freq ${num('f', 70, 'any', 'Frequency (MHz)')} MHz</label>` +
+      `<label title="Transmitter power (W)">Tx ${num('ptx', 56, 'any', 'Transmitter power at the antenna connector (W)')} W</label><span class="pl-dbm"></span></div>` +
+      `<div class="pl-set-h" onclick="plState.set=!plState.set;plSave();plRender()"><span class="pl-set-f"></span> Antennas, receiver, model, channel</div>` +
+      `<div class="pl-set">` +
+      `<div class="map-vs-row"><span class="pl-l">Antennas</span><label>Tx ${num('gt', 48, '0.1', 'Transmit antenna gain (dBi)')} dBi</label>` +
+      `<label>Rx ${num('gr', 48, '0.1', 'Receive antenna gain (dBi)')} dBi</label></div>` +
+      `<div class="map-vs-row"><span class="pl-l">Cables</span><label>Tx ${num('lt', 44, '0.1', 'Feed line + connector loss at the transmitter (dB)')} dB</label>` +
+      `<label>Rx ${num('lr', 44, '0.1', 'Feed line + connector loss at the receiver (dB)')} dB</label></div>` +
+      `<div class="map-vs-row"><span class="pl-l">Receiver</span><label title="Bandwidth (noise)">${num('bw', 56, 'any', 'Receiver bandwidth (kHz): the noise it lets in')} kHz</label>` +
+      `<label>NF ${num('nf', 40, '0.5', 'Receiver noise figure (dB); an RTL-SDR ~4-6 dB, more with long cables before the LNA')} dB</label>` +
+      `<label>needs SNR ${num('snr', 40, '0.5', 'The signal-to-noise ratio the receiver needs (dB): ~10-12 for NBFM voice, 5-8 for digital voice, 0-3 for robust data / DF')} dB</label></div>` +
+      `<div class="map-vs-row pl-sens"></div>` +
+      `<div class="map-vs-row"><span class="pl-l">Model</span>${sel('model', Object.entries(PL_MODELS), 'The propagation model for the link (the coverage on the viewsheds is always ITU-R P.1812)')}` +
+      `${sel('pol', [[1, 'vertical'], [0, 'horizontal']], 'Polarization')}</div>` +
+      `<div class="map-vs-row pl-itm"><span class="pl-l">ITM</span>${sel('climate', PL_CLIMATES.slice(1).map((t, i) => [i + 1, t]), 'Radio climate (Longley-Rice)')}` +
+      `${sel('ground', Object.entries(PL_GROUNDS).map(([k, v]) => [k, v[0]]), 'Ground constants (Longley-Rice)')}</div>` +
+      `<div class="map-vs-row"><label title="Surface refractivity N0 (N-units): 301 = average; it sets troposcatter beyond the horizon">N0 ${num('N0', 48, '1', 'Sea-level surface refractivity (N-units): 301 average, ~280 dry / inland, ~340-360 humid coasts / tropics')}</label>` +
+      `<span class="pl-note">Earth bulge: the viewshed's refraction (k)</span></div>` +
+      `<div class="map-vs-row"><span class="pl-l">Clutter</span><label title="The surroundings of the transmitter end (A, the station / viewshed site)">Tx ${sel('envA', envs, 'Clutter around the transmitter end (ITU-R P.2108): adds loss when its antenna is below the clutter height (10 m open / suburban, 15 m urban / forest, 20 m dense urban)')}</label>` +
+      `<label title="The surroundings of the far end / the target">Rx ${sel('envB', envs, 'Clutter around the receiver end / the coverage target (ITU-R P.2108)')}</label></div>` +
+      `<div class="map-vs-row"><span class="pl-l">Fading</span>${sel('fade', [['auto', 'auto: Rician in sight, Rayleigh beyond'], ['rician', 'Rician'], ['rayleigh', 'Rayleigh'], ['none', 'none (fixed)']], 'Fast (multipath) fading around the local mean: Rician with a direct path (K = direct / scattered power), Rayleigh without one; none for a fixed link between masts')}` +
+      `<label class="pl-k">K ${num('K', 40, '1', 'Rician K-factor (dB): ~3-10 for mobiles with a direct path, more for clear rooftop links')} dB</label></div>` +
+      `<div class="map-vs-row"><label title="How often the signal must be good enough">Reliability ${num('rel', 48, '1', 'The share of times / places the signal must reach what the receiver needs (%)')} %</label>` +
+      `<label title="Location variability (lognormal shadowing)">σ<sub>L</sub> <input type="text" data-k="sigL" style="width:40px" title="Location variability (dB, lognormal shadowing over the area); empty = automatic (ITU-R P.1546: 0.5 + 1.3 log f in the open, 1.2 + 1.3 log f in clutter)" onchange="plSet('sigL',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> dB</label></div>` +
+      `<div class="map-vs-row pl-req"></div>` +
+      `</div>` +
+      `<div class="map-vs-row pl-cov"><label title="Colour the viewsheds by the signal from their antenna (ITU-R P.1812 + clutter) instead of the line of sight; the target height is the viewshed's"><input type="checkbox" id="map-pl-sig" onchange="plSetSig(this.checked)"> Signal on the viewsheds</label></div>` +
+      `<div class="pl-leg"></div>` +
+      `<div id="map-pl-link"></div>` +
+      `<div class="map-vs-note">Median path loss (50 % of the time) over the bare terrain (AWS Terrain Tiles; buildings and trees only through the clutter setting). ` +
+      `ITU-R P.1812 = delta-Bullington diffraction + troposcatter; ITM = NTIA's Longley-Rice (public domain, ported); P.2108 clutter; P.1546 location variability.</div></div>`;
+  }
+  // the coverage legend: the margin over the need, as received dBm at that need
+  function plLegendHtml() {
+    const s = plSens(), los = plNeed(plState.rel, plSigmaL(plState.envB, vsTgt()), ...plFading(true)), nl = plNeed(plState.rel, plSigmaL(plState.envB, vsTgt()), ...plFading(false));
+    return `<div class="pl-leg-h">Margin over the need for ${plF(plState.rel, 0)} %: <span title="received ${plF(s + los)} dBm in sight, ${plF(s + nl)} dBm beyond">` +
+           `${plF(s + nl)} dBm (beyond the horizon)</span></div><div class="pl-leg-b">` +
+           PL_BANDS.map(([t, c], i) => `<span><i style="background:${c}"></i>${i ? (t >= 0 ? '+' : '') + t + '…' + (PL_BANDS[i - 1][0] >= 0 ? '+' : '') + PL_BANDS[i - 1][0] : '≥ +' + t} dB</span>`).join('') + '</div>';
+  }
+  function plRender(force) {
+    const el = $id('map-pl');
+    if (!el || !plReady) return;
+    const show = !!mapState.pl;
+    if (el.style.display !== (show ? 'block' : 'none')) el.style.display = show ? 'block' : 'none';
+    plRenderStrip();
+    if (!show) return;
+    if (!el.dataset.built) plPanelBuild(el);
+    el.classList.toggle('closed', !plState.open);
+    el.classList.toggle('set-closed', !plState.set);
+    el.classList.toggle('m-itm', plState.model === 'itm');
+    const ft = plState.open ? '▾' : '▸', fold = $id('map-pl-fold');
+    if (fold.textContent !== ft) fold.textContent = ft;
+    const sf = el.querySelector('.pl-set-f'), st = plState.set ? '▾' : '▸';
+    if (sf.textContent !== st) sf.textContent = st;
+    for (const inp of el.querySelectorAll('[data-k]')) {
+      const k = inp.dataset.k, v = k === 'sigL' ? (plState.sigL === null ? '' : plState.sigL) : plState[k];
+      vsSetVal(inp, v, force);
+    }
+    const set = (sel, html) => { const e = el.querySelector(sel); if (e && e.dataset.html !== html) { e.dataset.html = html; e.innerHTML = html; } };
+    set('.pl-dbm', `= ${plF(plPtxDbm())} dBm`);
+    set('.pl-sens', `<span class="pl-note">noise ${plF(plNoise())} dBm → needs <b>${plF(plSens())} dBm</b> (median, before fading)</span>`);
+    const sg = plSigmaL(plState.envB, plState.b ? plState.b.h : vsTgt());
+    set('.pl-req', `<span class="pl-note">σ<sub>L</sub> ${plF(sg)} dB · a ${plF(plState.rel, plState.rel % 1 ? 1 : 0)} % reliability needs a median margin of ` +
+                   `<b>${plSgn(plNeed(plState.rel, sg, ...plFading(true)))} dB</b> in sight, <b>${plSgn(plNeed(plState.rel, sg, ...plFading(false)))} dB</b> beyond</span>`);
+    el.querySelector('.pl-k').style.display = plState.fade === 'auto' || plState.fade === 'rician' ? '' : 'none';
+    const cb = $id('map-pl-sig');
+    if (cb.checked !== plState.sig) cb.checked = plState.sig;
+    set('.pl-leg', plState.sig ? plLegendHtml() : '');
+    // the link, one line (details in the strip)
+    let lk = '';
+    if (plState.a || plState.b) {
+      const a = plState.a, b = plState.b, r = plRes && plRes.key === plKey() ? plRes : null, bu = plBudget(r);
+      lk = `<div class="pl-lk"><span class="pl-l">Link</span><span class="nm">${digEsc(a ? a.name : '?')} → ${digEsc(b ? b.name : '?')}</span>`;
+      if (!a || !b) lk += `<span class="pl-note">right-click the map → "📶 Path loss ${a ? 'to' : 'from'} here"</span>`;
+      else if (plJob) lk += `<span class="w">${Array.isArray(plJob.prog) ? `loading terrain ${plJob.prog[0]}/${plJob.prog[1]}…` : 'computing…'}</span>`;
+      else if (plFail && plFail.key === plKey()) lk += `<span class="e">⚠ ${digEsc(plFail.msg)}</span>`;
+      else if (bu && bu.err) lk += `<span class="e">⚠ ${digEsc(bu.err)}</span>`;
+      else if (bu) {
+        const ex = bu.margin - bu.need;
+        lk += `<span style="color:${plCol(ex) || '#ff8a80'}">${plF(bu.Prx)} dBm · ${plF(bu.rel, bu.rel > 99 ? 1 : 0)} %</span>`;
+      }
+      lk += `<button type="button" class="map-btn" onclick="plState.prof=!plState.prof;plSave();plRender()" title="Show / hide the link's profile and budget">${plState.prof ? 'Hide' : 'Show'}</button></div>`;
+    }
+    set('#map-pl-link', lk);
+  }
+
+  // ---- the strip at the bottom of the map: profile + every model + the budget ----
+  function plRenderStrip() {
+    const el = $id('map-plk');
+    if (!el || !plReady) return;
+    const on = !!(mapState.pl && plState.prof && plState.a && plState.b);
+    if (el.style.display !== (on ? 'flex' : 'none')) el.style.display = on ? 'flex' : 'none';
+    const pane = $id('map-pane');
+    if (pane && pane.classList.contains('pl-open') !== on) { pane.classList.toggle('pl-open', on); }
+    if (!on) return;
+    if (!el.dataset.built) {
+      el.dataset.built = '1';
+      el.innerHTML = `<div class="plk-t"></div><div class="plk-c"><canvas id="map-plk-cv"></canvas><div class="plk-hov"></div></div>`;
+      const cv = $id('map-plk-cv');
+      cv.addEventListener('pointermove', e => { plHov = e.offsetX; plDrawProfile(); mapDraw(); });
+      cv.addEventListener('pointerleave', () => { plHov = null; plDrawProfile(); mapDraw(); });
+    }
+    const a = plState.a, b = plState.b, r = plRes && plRes.key === plKey() ? plRes : null, bu = plBudget(r);
+    const D = mapDistKm(a.lat, a.lon, b.lat, b.lon), brg = mapBearing(a.lat, a.lon, b.lat, b.lon);
+    let h = `<div class="plk-h"><b>📶 ${digEsc(a.name)} → ${digEsc(b.name)}</b> <span class="pl-note">${D < 10 ? D.toFixed(2) : D.toFixed(1)} km · ${brg.toFixed(1)}°</span>` +
+            `<span class="plk-b"><button type="button" class="map-btn" onclick="plSwap()" title="Swap the ends">⇄</button>` +
+            `<button type="button" class="map-btn" onclick="plFit()" title="Show the whole link">⌖</button>` +
+            `<button type="button" class="map-btn" onclick="plRemove()" title="Remove the link">✕</button></span></div>`;
+    h += `<div class="plk-ends">A <input type="number" class="pl-ha" min="0" max="5000" step="1" onchange="plSetEndH('a',this.value)" onkeydown="if(event.key==='Enter')this.blur()" title="A's antenna height above the ground"> m` +
+         ` · B <input type="number" class="pl-hb" min="0" max="30000" step="1" onchange="plSetEndH('b',this.value)" onkeydown="if(event.key==='Enter')this.blur()" title="B's antenna height">` +
+         `<select class="pl-rb" onchange="plSetEndRef(this.value)" title="B's height above the ground, or above sea level (an aircraft: P.2108's air-to-ground clutter at A instead)"><option value="agl">m above ground</option><option value="amsl">m above sea level</option></select></div>`;
+    if (plJob) h += `<div class="w">${Array.isArray(plJob.prog) ? `loading terrain ${plJob.prog[0]}/${plJob.prog[1]}…` : 'computing…'}</div>`;
+    else if (plFail && plFail.key === plKey()) h += `<div class="e">⚠ ${digEsc(plFail.msg)} · <a onclick="plFail='';plPump()">retry</a></div>`;
+    if (r) {
+      const p = r.p1812, mdl = plState.model;
+      const path = p.los ? (r.clr >= 0.6 ? `line of sight, ${plF(r.clr, 2)} of the first Fresnel zone clear` : `line of sight, but the Fresnel zone is ${r.clr >= 0 ? 'partly' : 'mostly'} blocked (${plF(r.clr, 2)} F1 at ${plF(r.clrAt / 1000)} km)`)
+                         : `beyond the horizon - Bullington edge at ${plF(p.dbp)} km (ν ${plF(p.nu, 2)})${p.Lbs < p.Lbd ? ', troposcatter dominates' : ''}`;
+      const it = r.itm.err ? `<span class="e" title="${digEsc(plItmErr(r.itm.err))}">error</span>` : `${plF(r.itm.A)}<span class="pl-note"> ${['', 'line of sight', 'diffraction', 'troposcatter'][r.itm.mode]}</span>`;
+      const row = (k, label, v, tip) => `<tr class="${mdl === k ? 'sel' : ''}" title="${tip}" onclick="plSet('model','${k}')"><td>${label}</td><td>${v}</td></tr>`;
+      h += `<div class="plk-path">${path}</div><table class="plk-m">` +
+           row('p1812', 'ITU-R P.1812', `${plF(p.Lb)}<span class="pl-note"> free space ${plF(p.Lbfs)} + diffraction ${plF(p.Ld)}</span>`, 'Delta-Bullington terrain diffraction + troposcatter (median)') +
+           row('itm', 'Longley-Rice', it, 'NTIA ITM 1.2.2, point to point, median (50 % time / location / situation)') +
+           row('fs', 'Free space', plF(r.fs), 'No terrain, no ground: the least possible loss') +
+           row('hata', 'Hata', `${plF(r.hata.L)}<span class="pl-note"> ${r.hata.env}${r.hata.ok ? '' : ' ⚠ outside its range'}</span>`,
+               'Okumura-Hata / COST-231: empirical, no terrain - for comparison. Valid for 150-2000 MHz, 1-20 km, the higher antenna 30-200 m, the lower 1-10 m') +
+           `</table>`;
+      if (bu && !bu.err) {
+        const ex = bu.margin - bu.need;
+        h += `<table class="plk-b2">` +
+             `<tr><td>Clutter</td><td>${r.clut.aero ? `A ${plF(r.clut.a)} dB (air-to-ground, ${plF(Math.max(0, r.elevA), 1)}° up)` : `A ${plF(r.clut.a)} · B ${plF(r.clut.b)} dB`}${plState.model === 'hata' ? ' <span class="pl-note">(not added to Hata)</span>' : ''}</td></tr>` +
+             `<tr><td>Received</td><td><b>${plF(bu.Prx)} dBm</b> <span class="pl-note">median · SNR ${plF(bu.snr)} dB · ${plF(Math.sqrt(50 * 10 ** (bu.Prx / 10) / 1000) * 1e6, bu.Prx > -100 ? 2 : 3)} µV</span></td></tr>` +
+             `<tr><td>Margin</td><td><b style="color:${plCol(ex) || '#ff8a80'}">${plSgn(bu.margin)} dB</b> over ${plF(plSens())} dBm · ${plF(bu.need)} needed for ${plF(plState.rel, 0)} % ` +
+             `(σ<sub>L</sub> ${plF(bu.sigma)}, ${bu.kind === 'rician' ? `Rician K ${plF(plState.K, 0)} dB` : bu.kind}) → <b>${plF(bu.rel, bu.rel > 99 ? 2 : 0)} %</b></td></tr>` +
+             (r.itm.Arel ? `<tr><td title="Longley-Rice with its own time + location variability (mobile mode, 50 % confidence)">ITM ${plF(plState.rel, 0)} %</td><td>${plF(r.itm.Arel)} dB <span class="pl-note">(its own variability)</span></td></tr>` : '') +
+             `</table>`;
+      } else if (bu && bu.err) h += `<div class="e">⚠ ${digEsc(bu.err)}</div>`;
+      h += `<div class="pl-note">terrain zoom ${r.z} (${plF(r.xi, 0)} m steps), ${r.tiles} tiles${r.loaded ? ` (${r.loaded} loaded)` : ''}, ${r.ms} ms · ground ${Math.round(r.gA)} / ${Math.round(r.gB)} m${r.sea > 0.01 ? ` · ${Math.round(r.sea * 100)} % sea` : ''}</div>`;
+    }
+    const t = el.querySelector('.plk-t');
+    if (t.dataset.html !== h) { t.dataset.html = h; t.innerHTML = h; }
+    vsSetVal(t.querySelector('.pl-ha'), a.h);
+    vsSetVal(t.querySelector('.pl-hb'), b.h);
+    vsSetVal(t.querySelector('.pl-rb'), b.amsl ? 'amsl' : 'agl');
+    plDrawProfile();
+  }
+  function plFit() {
+    const a = plState.a, b = plState.b;
+    if (!a || !b) return;
+    const [ax, ay] = mapProj(a.lat, a.lon), [bx0, by] = mapProj(b.lat, b.lon), bx = ax + (bx0 - ax - Math.round(bx0 - ax));
+    const span = Math.max(Math.abs(bx - ax), Math.abs(by - ay), 1e-9), z = Math.log2(0.7 * Math.min(mapW, mapH - 180) / (256 * span));
+    const [la, lo] = mapUnproj((ax + bx) / 2, (ay + by) / 2);
+    mapAutoFit = false;
+    mapCenterOn(la, lo, Math.max(MAP_MIN_Z, Math.min(16, z)));
+  }
+  // terrain (with the Earth bulge over the chord), the direct ray, its first
+  // Fresnel zone, the equivalent edge, the pointer's spot
+  function plDrawProfile() {
+    const cv = $id('map-plk-cv');
+    if (!cv) return;
+    const r = plRes && plRes.key === plKey() ? plRes : null, dpr = window.devicePixelRatio || 1;
+    const W = Math.max(50, cv.clientWidth), H = Math.max(40, cv.clientHeight);
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    const c = cv.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, W, H);
+    const hov = cv.parentNode.querySelector('.plk-hov');
+    if (!r) { if (hov.innerHTML) hov.innerHTML = ''; return; }
+    const n = r.n, Dm = r.D, aem = r.ae * 1000, lam = 299.792458 / plState.f;
+    const bulge = x => x * (Dm - x) / (2 * aem), ray = x => r.hts + (r.hrs - r.hts) * x / Dm, f1 = x => Math.sqrt(lam * x * (Dm - x) / Dm);
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i <= n; i++) { const x = r.d[i] * 1000, y = r.h[i] + bulge(x); if (y < lo) lo = y; if (y > hi) hi = y; }
+    for (let i = 0; i <= 40; i++) { const x = Dm * i / 40, y = ray(x); lo = Math.min(lo, y - f1(x)); hi = Math.max(hi, y + f1(x)); }
+    hi = Math.max(hi, r.hts, r.hrs);
+    const pad = (hi - lo) * 0.08 + 2, L = 34, R = 8, T = 6, B = 16;
+    lo -= pad; hi += pad;
+    const X = x => L + (W - L - R) * x / Dm, Y = y => T + (H - T - B) * (1 - (y - lo) / (hi - lo));
+    // axes
+    c.font = '10px sans-serif';
+    c.fillStyle = '#7f93b4';
+    c.strokeStyle = 'rgba(120,150,190,0.25)';
+    c.lineWidth = 1;
+    const ystep = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000].find(s => (hi - lo) / s <= 4) || 10000;
+    c.textAlign = 'right';
+    for (let y = Math.ceil(lo / ystep) * ystep; y <= hi; y += ystep) {
+      c.beginPath(); c.moveTo(L, Math.round(Y(y)) + 0.5); c.lineTo(W - R, Math.round(Y(y)) + 0.5); c.stroke();
+      c.fillText(y + ' m', L - 3, Y(y) + 3);
+    }
+    const dk = Dm / 1000, xstep = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500].find(s => dk / s <= Math.max(2, (W - L) / 70)) || 1000;
+    c.textAlign = 'center';
+    for (let x = 0; x <= dk + 1e-9; x += xstep) c.fillText((xstep < 1 ? x.toFixed(1) : Math.round(x)) + (x ? '' : ' km'), X(x * 1000), H - 4);
+    // terrain: per pixel column the highest sample (sea blue)
+    const cols = Math.max(2, Math.round(W - L - R));
+    c.beginPath();
+    c.moveTo(X(0), Y(lo));
+    const sea = [];
+    for (let k = 0; k <= cols; k++) {
+      const i0 = Math.floor(k / cols * n), i1 = Math.max(i0, Math.min(n, Math.floor((k + 1) / cols * n)));
+      let y = -Infinity, s = true;
+      for (let i = i0; i <= i1; i++) { const v = r.h[i] + bulge(r.d[i] * 1000); if (v > y) y = v; if (r.h[i] > 0) s = false; }
+      c.lineTo(L + k, Y(y));
+      sea.push(s);
+    }
+    c.lineTo(X(Dm), Y(lo));
+    c.closePath();
+    c.fillStyle = '#5d4a36';
+    c.fill();
+    c.strokeStyle = '#a1887f';
+    c.lineWidth = 1.2;
+    c.stroke();
+    c.fillStyle = 'rgba(64,140,230,0.85)';
+    sea.forEach((s, k) => { if (s) { const v = Y(bulge(Dm * k / cols)); c.fillRect(L + k, v - 1, 1, 3); } });
+    // the first Fresnel zone around the direct ray, 0.6 of it
+    for (const [fr, col, dash] of [[1, 'rgba(79,195,247,0.55)', [4, 3]], [0.6, 'rgba(79,195,247,0.3)', [2, 3]]]) {
+      c.setLineDash(dash);
+      c.strokeStyle = col;
+      c.lineWidth = 1;
+      for (const sg of [1, -1]) {
+        c.beginPath();
+        for (let i = 0; i <= 80; i++) { const x = Dm * i / 80, y = ray(x) + sg * fr * f1(x); if (i) c.lineTo(X(x), Y(y)); else c.moveTo(X(x), Y(y)); }
+        c.stroke();
+      }
+    }
+    c.setLineDash([]);
+    const p = r.p1812, losCol = p.los ? (r.clr >= 0.6 ? '#7cf0a0' : '#ffd54f') : '#ff8a80';
+    c.strokeStyle = losCol;
+    c.lineWidth = 1.6;
+    c.beginPath(); c.moveTo(X(0), Y(r.hts)); c.lineTo(X(Dm), Y(r.hrs)); c.stroke();
+    if (!p.los && p.dbp > 0 && p.dbp * 1000 < Dm) {   // Bullington: both horizons meet at the equivalent edge
+      const xb = p.dbp * 1000;
+      c.strokeStyle = '#ffb74d';
+      c.setLineDash([5, 3]);
+      c.beginPath(); c.moveTo(X(0), Y(r.hts)); c.lineTo(X(xb), Y(p.hbp)); c.lineTo(X(Dm), Y(r.hrs)); c.stroke();
+      c.setLineDash([]);
+      c.fillStyle = '#ffb74d';
+      c.beginPath(); c.moveTo(X(xb), Y(p.hbp) - 1); c.lineTo(X(xb) - 5, Y(p.hbp) - 9); c.lineTo(X(xb) + 5, Y(p.hbp) - 9); c.closePath(); c.fill();
+    }
+    // the antennas
+    c.lineWidth = 2;
+    for (const [x, g, top, col, nm] of [[0, r.gA, r.hts, '#ffd600', 'A'], [Dm, r.gB, r.hrs, '#4fc3f7', 'B']]) {
+      c.strokeStyle = col;
+      c.beginPath(); c.moveTo(X(x), Y(g + bulge(x))); c.lineTo(X(x), Y(top)); c.stroke();
+      c.fillStyle = col;
+      c.textAlign = x ? 'right' : 'left';
+      c.fillText(nm, X(x) + (x ? -4 : 4), Y(top) + 3);
+    }
+    // under the pointer
+    let hh = '';
+    if (plHov !== null && plHov >= L && plHov <= W - R) {
+      const x = (plHov - L) / (W - L - R) * Dm, i = Math.max(0, Math.min(n, Math.round(x / Dm * n))), g = r.h[i], y = g + bulge(x);
+      const cl = ray(x) - y, fr = f1(x);
+      c.strokeStyle = 'rgba(255,255,255,0.6)';
+      c.lineWidth = 1;
+      c.beginPath(); c.moveTo(plHov + 0.5, T); c.lineTo(plHov + 0.5, H - B); c.stroke();
+      hh = `${plF(x / 1000, 2)} km · ground ${Math.round(g)} m · ray ${cl >= 0 ? plF(cl, 0) + ' m above' : plF(-cl, 0) + ' m below'} it (${plF(cl / fr, 2)} F1)`;
+    }
+    if (hov.dataset.html !== hh) { hov.dataset.html = hh; hov.innerHTML = hh; }
+  }
+
+  // ---- on the map: the great circle, its ends (selectable / draggable), the edge ----
+  function plGc(a, b, t) {
+    const D2R = Math.PI / 180, la1 = a.lat * D2R, lo1 = a.lon * D2R, la2 = b.lat * D2R, lo2 = b.lon * D2R;
+    const A = [Math.cos(la1) * Math.cos(lo1), Math.cos(la1) * Math.sin(lo1), Math.sin(la1)], B = [Math.cos(la2) * Math.cos(lo2), Math.cos(la2) * Math.sin(lo2), Math.sin(la2)];
+    const om = Math.acos(Math.max(-1, Math.min(1, A[0] * B[0] + A[1] * B[1] + A[2] * B[2])));
+    if (om < 1e-12) return [a.lat, a.lon];
+    const wa = Math.sin((1 - t) * om) / Math.sin(om), wb = Math.sin(t * om) / Math.sin(om);
+    const x = wa * A[0] + wb * B[0], y = wa * A[1] + wb * B[1], z = wa * A[2] + wb * B[2];
+    return [Math.atan2(z, Math.hypot(x, y)) / D2R, Math.atan2(y, x) / D2R];
+  }
+  function plEndPos(w) {   // (being dragged: where it is now)
+    const od = mapObjDrag && mapObjDrag.kind === 'pl' && mapObjDrag.end === w && mapObjDrag.lat !== undefined ? mapObjDrag : null;
+    const e = plState[w];
+    return od ? {lat: od.lat, lon: od.lon} : e;
+  }
+  function plDraw(c) {
+    if (!plReady || !mapState.pl) return;
+    if (!plJob) plPump();   // (after a reload the link is worked out with the map)
+    const a = plEndPos('a'), b = plEndPos('b');
+    const r = plRes && plRes.key === plKey() ? plRes : null, bu = plBudget(r);
+    if (a && b) {
+      const col = bu && !bu.err ? plCol(bu.margin - bu.need) || '#ff5252' : '#b0bec5';
+      const pts = [];
+      let prev = null;
+      for (let i = 0; i <= 64; i++) {
+        const [la, lo] = plGc(a, b, i / 64);
+        let [x, y] = mapLatLonToScreen(la, lo);
+        if (prev && Math.abs(x - prev[0]) > mapWorld() / 2) x += Math.sign(prev[0] - x) * mapWorld();   // (across the antimeridian)
+        pts.push(prev = [x, y]);
+      }
+      c.save();
+      c.lineJoin = 'round';
+      for (const [w, s] of [[5, 'rgba(0,0,0,0.65)'], [2.5, col]]) {
+        c.lineWidth = w; c.strokeStyle = s;
+        if (!r) c.setLineDash([7, 5]);
+        c.beginPath(); pts.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y)); c.stroke();
+      }
+      c.setLineDash([]);
+      if (r && !r.p1812.los && r.p1812.dbp > 0) {   // the equivalent edge
+        const [la, lo] = plGc(a, b, r.p1812.dbp * 1000 / r.D), [x, y] = mapLatLonToScreen(la, lo);
+        c.fillStyle = '#ffb74d'; c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineWidth = 1.2;
+        c.beginPath(); c.moveTo(x, y - 7); c.lineTo(x - 6, y + 4); c.lineTo(x + 6, y + 4); c.closePath(); c.fill(); c.stroke();
+      }
+      if (r && plHov !== null) {   // the profile's pointer
+        const cv = $id('map-plk-cv'), t = cv ? Math.max(0, Math.min(1, (plHov - 34) / (cv.clientWidth - 42))) : 0, [la, lo] = plGc(a, b, t), [x, y] = mapLatLonToScreen(la, lo);
+        c.fillStyle = '#fff'; c.strokeStyle = '#000'; c.lineWidth = 1.5;
+        c.beginPath(); c.arc(x, y, 4.5, 0, 2 * Math.PI); c.fill(); c.stroke();
+      }
+      c.restore();
+    }
+    for (const [w, e, col] of [['a', a, '#ffd600'], ['b', b, '#4fc3f7']]) {
+      if (!e || (w === 'a' && plState.a.st && mapStationPos())) continue;   // (at the station: its mast marks it)
+      const [x, y] = mapLatLonToScreen(e.lat, e.lon);
+      c.save();
+      if (plSel === w) {
+        c.beginPath(); c.arc(x, y, 12, 0, 2 * Math.PI);
+        c.strokeStyle = 'rgba(0,0,0,0.75)'; c.lineWidth = 5; c.stroke();
+        c.strokeStyle = '#fff'; c.lineWidth = 2.5; c.stroke();
+      }
+      c.fillStyle = col; c.strokeStyle = 'rgba(0,0,0,0.85)'; c.lineWidth = 1.5;
+      c.beginPath(); c.arc(x, y, 7, 0, 2 * Math.PI); c.fill(); c.stroke();
+      c.fillStyle = '#000'; c.font = 'bold 10px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText(w.toUpperCase(), x, y + 0.5);
+      if (!plState[w].mk) {   // (a marker shows its own name)
+        c.font = 'bold 11px sans-serif'; c.textAlign = 'left'; c.lineJoin = 'round';
+        c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineWidth = 3; c.fillStyle = '#fff';
+        c.strokeText(plState[w].name, x + 10, y); c.fillText(plState[w].name, x + 10, y);
+      }
+      c.restore();
+    }
+  }
+  // the link end under a screen point (within 10 px): 'a' | 'b' | null
+  function plHit(x, y) {
+    if (!plReady || !mapState.pl) return null;
+    let best = null, bd = 10 * 10;
+    for (const w of ['b', 'a']) {
+      const e = plState[w];
+      if (!e || (w === 'a' && e.st && mapStationPos())) continue;   // (the station's own: select the station)
+      const [px, py] = mapLatLonToScreen(e.lat, e.lon), d = (px - x) ** 2 + (py - y) ** 2;
+      if (d < bd) { bd = d; best = w; }
+    }
+    return best;
+  }
+
+  // ---- coverage: the viewsheds' signal (vsPaint / vsHoverRender use these) ----
+  // the job's m.sig (null = line of sight only)
+  function plSigMsg() {
+    if (!plState.sig) return null;
+    return {f: plState.f, tgt: vsTgt(), amsl: vsState.amsl, pol: plState.pol, N0: plState.N0, envTx: plState.envA, envRx: plState.envB,
+            hmTx: PL_ENV_HM[plState.envA]};
+  }
+  // per cell: [margin over the need (dB), Prx dBm] for a loss (u16, 0.1 dB) in or out of sight
+  function plCellFns() {
+    const sg = plSigmaL(vsState.amsl ? 2 : plState.envB, vsState.amsl ? 1e9 : vsTgt());
+    const base = plPtxDbm() + plState.gt - plState.lt + plState.gr - plState.lr, sens = plSens();
+    const nIn = plNeed(plState.rel, sg, ...plFading(true)), nOut = plNeed(plState.rel, sg, ...plFading(false));
+    return {base, sens, nIn, nOut};
+  }
+
+  plReady = true;
 
   // markers' age / staleness changes without new data
   setInterval(() => { if (mapPts.size || mapSel || (mapState.masts && (mastErr || mastBusy))) mapDraw(); }, 2000);

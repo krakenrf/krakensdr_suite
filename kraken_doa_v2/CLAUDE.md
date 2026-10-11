@@ -1001,6 +1001,152 @@ Edit `include/config.hpp`:
   seams in the screenshot), 1001 km refused, 1000 km (10 rings, 194 tiles;
   a 30 km balloon in sight to ~590-700 km)
 
+**📶 Path loss (UI only, kraken_doa.html "📶 PATH LOSS"; the engine lives in the viewshed worker):**
+- How much signal gets over the terrain, also WITHOUT line of sight, for a
+  LINK between two points and as COVERAGE on the viewsheds. The user's
+  reference (github.com/mariohm1311/DroneRanger, no licence: ideas only)
+  has free space + a line-of-sight check only; the NLOS physics comes from
+  the ITU-R Recommendations and NTIA's ITM
+- Engine (vsWorkerMain; `self.vsTest` exports it for node):
+  - ITM / Longley-Rice: `itmP2P(pfl, htx, hrx, {climate, N0, f, pol, eps,
+    sigma, mdvar, time, loc, sit})` = NTIA ITM 1.3 (C++, = ITM 1.2.2),
+    point-to-point mode, ported function by function (FindHorizons ->
+    itmHorizons, ...; the area mode left out). NTIA's notice is in the code
+    (not copyrighted in the US; derivative works allowed with a note of the
+    changes + an acknowledgement). Checked: NTIA's 5 published cases
+    (p2p.csv / pfls.csv: LOS, diffraction, troposcatter) to their 0.01 dB,
+    and 3000 random profiles / parameters against the compiled NTIA C++:
+    worst relative difference 4.5e-10, the same mode and warning bits
+  - ITU-R P.1812-6: `p1812P2P(d km, h m, R clutter m|null, htg, hrg, f GHz,
+    ae km, omega sea fraction, N0, pol 0 h / 1 v, flag4)` - Bullington
+    (`p1812Bull`, 4.3.1), the smooth-path Bullington of Attachment 4
+    (`p1812BullSmooth`, flag4), spherical Earth (`p1812Se` 4.3.2, first term
+    `p1812SeFtIn` 4.3.3 land / sea mixed by omega), smooth-Earth heights +
+    horizons (`p1812Heights`, eq 85-95 with the obstruction correction 89-91),
+    troposcatter (`p1812Tropo`), at p = 50 %: Lb = max(Lbfs, -5 log(10^-0.2
+    Lbs + 10^-0.2 (Lbfs + Ld))). No ducting / layer reflection (they matter
+    only for small time percentages), no location variability (the page's).
+    Checked against the 63 ITU-R SG3 validation logs in Py1812's tests:
+    every intermediate (Lbfs, Bullington, spherical, Ld50, Ldb, horizon
+    angles / distances, hstd / hsrd, Lbs, Lb) within 5e-8 dB. NB Py1812's
+    dl_p logs Lbulla / Lbulls / Ldsph of its LAST run, the beta0 radius 3 x
+    6371 km - not the median one
+  - ITU-R P.2108: `p2108Terminal(fGHz, h, type)` (3.1, 30 MHz - 3 GHz: 1
+    water / 2 open: height gain; 3 suburban / 4 urban, trees / 5 dense urban:
+    diffraction over the clutter, street 27 m; R 10 / 10 / 10 / 15 / 20 m)
+    and `p2108Aero(fGHz, theta deg, p %, h, hm)` (3.3 of P.2108-2:
+    Earth-space / aeronautical clutter by elevation; erfinv = Giles' single
+    precision). Checked: the 282,800 rows of Py2108's validation table
+    within 2e-6 dB. Used below its 0.5 GHz floor too
+  - `hataLoss(f MHz, d km, hb, hm, env)`: Okumura-Hata / COST-231 (medium
+    city, 'large', 'suburban', 'open') - a comparison row only
+- LINK (`runLink`, message `m.link`): the great circle A -> B (slerp)
+  sampled every cell of the finest zoom <= 14 that keeps it to `PL_NMAX`
+  4000 points (30 km: z14 8 m; 300 km: ~z11; 1000 km: ~z9), bilinear on the
+  job's tiles cleaned as a viewshed's (missing neighbours mirrored), the ends
+  on zoom-14 ground; sea = raw height <= 0. P.1812 with flag4 (as the
+  coverage, so the two agree), ITM median (mdvar 12, 50 / 50 / 50) and at the
+  reliability (mobile mode 2: time = location = rel, situation 50), free
+  space (slant), Hata (the higher end = base; the lower end's clutter type
+  -> its environment); clutter: B above sea level (an aircraft) -> 3.3 at A
+  by the direct ray's elevation (hm from A's type: 8 suburban / 15 urban /
+  25 dense, none for water / open), else 3.1 at both ends. Also the
+  elevation at each end, the least first-Fresnel clearance and where, the
+  Bullington edge (dbp km, hbp m incl. the Earth bulge) and the profile
+  (Float32 d km, h m) for the chart. Its OWN worker instance (`plWorker`,
+  the same code: a link must not wait behind a coverage job; one job at a
+  time, a newer link cancels the running one)
+- COVERAGE (`runSignal` + `plSweep`, `m.sig` = {f, tgt, amsl, pol, N0,
+  envTx, envRx, hmTx}): every ring's terrain at once (~4 MB each, 10 rings
+  at 1000 km), the rays of sweep() but RAY-MAJOR through all the rings, each
+  ring from where the previous ended to its rExt (the coarser ring's cells
+  there stay empty, under the finer ones). Each ray carries the upper
+  convex hull of its profile in the curved-Earth frame (e = h - s^2 / 2 ae,
+  where rays are straight): the receiver's horizon is the tangent from it
+  (binary search) -> Bullington's S_rim (P.1812's slopes differ from these
+  by +-s / 2 ae: the same argmax); the hull of the plain heights for the
+  obstruction correction (hobs = a support query, alpha_obr a tangent,
+  alpha_obt a running max); running sums v1 / v2 (eq 85-86) and the sea
+  count (omega). Line of sight: nu_max over the profile EXACTLY, by branch
+  and bound over blocks of 32 / 1024 samples (their highest point bounds
+  nu; J = 0 below -0.78, so clear paths rule out whole blocks) - the point
+  of least clearance is often not a hull vertex (a 2 m receiver's own
+  foreground): hull candidates alone were up to 10 dB off. The profile =
+  every 2nd sample (0.8 cell; the terrain is no finer). Two passes: 1 finds
+  each cell's sample (nearest its centre, as sweep), 2 evaluates P.1812
+  once per cell + the clutter (3.1 fixed per job; 3.3 per cell by
+  elevation). Per ring `loss` (u16, 0.1 dB; 65535 = the target under the
+  ground) + `need` / `ground` as sweep's, so a signal result also serves
+  the line of sight. Spherical-Earth constants hoisted (`seConst`), one
+  polarization, one ground when omega is 0 / 1. Progress `['sig', %]`
+  (row: "signal N %…"), a break for a cancel every 0.25 s
+  Checked (tools/pathloss_validate.mjs; scratch t_cov.mjs): the loss at
+  every recorded ray sample = `p1812P2P(flag4)` on that ray's profile prefix
+  within 1e-11 dB (Auckland, Zermatt, the Coromandel coast, a synthetic
+  coast; targets above ground / sea level, clutter, both polarizations); a
+  link to a cell's centre vs the cell: median 0.04-0.1 dB, p90 0.3-1.3 dB -
+  single cells up to ~16 dB apart at shores / ridges (the coverage's outer
+  rings use coarser terrain: 30 m at 15 km). Time (node on the Pi 5, tiles
+  in memory): 30 km ~6 s, 300 km ~11 s (2.5 / 4.4 M cells; the viewshed
+  1-2 s); in the browser on the Pi it took ~17-21 s for 30 km
+- Page: `plState` (globals block; localStorage `kraken_pl`, rebuilt field by
+  field): f MHz, ptx W, gt / gr dBi, lt / lr dB, bw kHz, nf, snr (->
+  sensitivity = -174 + 10 log BW + NF + SNR), model (p1812 | itm | fs |
+  hata; the coverage is always P.1812), pol, N0 (301: troposcatter + ITM),
+  climate + ground (ITM, `PL_GROUNDS`), envA / envB (P.2108 types,
+  `PL_ENVS`), fade (auto = Rician K in sight / Rayleigh beyond | rician |
+  rayleigh | none), K dB, rel %, sigL (null = P.1546-6 (12): K + 1.3 log f,
+  K 0.5 open, 1.0 an antenna up near the clutter, 1.2 one in it), sig (the
+  coverage), open / set / prof (folds), a / b {lat, lon, h, amsl (b only),
+  name, st (follows the station), mk}. Worker-relevant fields -> `plKey()`
+  (a new job when it changes); the rest only repaints
+- Reliability: `plOutage(m, sigma, kind, K)` = integral of phi(z)
+  F_fade(10^((sigma z - m) / 10)) over +-6 sigma (121-point trapezoid; the
+  Rician power CDF by Simpson over the envelope pdf with I0e - A&S 9.8.1 /
+  9.8.2; 'none' = Phi(-m / sigma) exactly; K >= 30 dB = none) ->
+  `plNeed(rel, sigma, kind, K)` (bisection, cached). Checked: closed forms
+  (Rayleigh 90 % = 9.773 dB, lognormal 1.2816 / 2.3263 sigma) and Monte
+  Carlo (Rayleigh / Rician 6 dB with sigma ~4 dB: 10.03 +- 0.02 % outage at
+  the 90 % margin)
+- UI: panel `#map-pl` (.map-vs styles, under the viewshed's in .map-tl:
+  Freq + Tx always shown, the rest folded under "Antennas, receiver, model,
+  channel"; "Signal on the viewsheds" + legend; the link in one line),
+  strip `#map-plk` at the bottom of the map (`.map-pane.pl-open` lifts the
+  DF panel, the marker panel and the status line): the ends' heights (B
+  above ground / sea level), the path, the four models (a row click = the
+  budget's model), clutter, received (dBm, µV), margin + reliability, ITM at
+  the reliability, terrain zoom / tiles / ms; the profile canvas (terrain +
+  the Earth bulge over the chord, direct ray, F1 + 0.6 F1, Bullington's
+  construction, sea blue; under the pointer: distance / ground / clearance,
+  and a dot on the map). On the map (`plDraw`, after the rings, before the
+  markers): the great circle coloured by the margin over the need
+  (`PL_BANDS`; dashed while computing), A / B dots (none for A at the
+  station: its mast selects the station), the edge ▲. Ends are selected and
+  dragged like viewshed points (`mapSelectObj('pl:a' | 'pl:b')`, drag kind
+  'pl', a 0.15 s pause recomputes); the station end follows the station
+  (`plFollowStation` from vsFollowStation). Right-click menu "📶 Path loss
+  to / from here" (`plAt`; the first far end starts at the station),
+  marker "📶 Path loss to …", 📶 buttons in the marker panel and mast popup
+- Coverage on the viewsheds: `vsKey` adds `plSigMsg()` while the signal is
+  on (frequency / polarization / N0 / clutter / target height / reference
+  -> a new job); `vsResOk` lets a signal result serve the line of sight;
+  `vsPaint` paints `PL_BANDS` by the margin over the need (in sight: the
+  Rician need, else Rayleigh; the -10..0 dB band at half alpha; layer alpha
+  0.55); the row says "% covered"; the hover line adds dBm, the margin and
+  the loss; power / gains / receiver / fading / reliability only repaint
+- Tests: committed `tools/pathloss_validate.mjs` (node 20, from
+  kraken_doa_v2: 1-3 the references, cloned from GitHub into --refs; 4-5
+  synthetic terrain served as generated terrarium PNGs through fetch -
+  offline, the whole decode / clean path; 6 `--net` real terrain).
+  Scratch (job 26b3d7af): t_itm_rand.mjs (vs the compiled NTIA C++),
+  t_cov.mjs, t_link.mjs, and t_pl_ui.py - 33 checks in headless Chromium on
+  the page served statically (no receiver; the station set from the test):
+  panel + fold, menu, link, strip, chart + hover, budget arithmetic,
+  reliability closed forms, model rows, frequency, an aircraft end,
+  coverage + legend + hover, a repaint-only power change, a target-height
+  recompute, select + drag B, Esc, reload, damaged localStorage, no
+  exceptions
+
 **Incident map (`src/incidents.cpp`, `geo_address.cpp`, `geo_http.cpp`):**
 - Plugins send free-text messages with `host.message(from, text)`
   (`kp::Info::messages`; POCSAG: every alphanumeric page). Wire MESSAGE (28)
