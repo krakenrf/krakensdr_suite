@@ -14,7 +14,7 @@
 //   beyond and in line of sight, sea + land, above ground / above sea level
 //   targets; Longley-Rice (its distance-based steps = NTIA's ITM on evenly
 //   spaced profiles, the sweep = them, vs NTIA's ITM resampled); free
-//   space; Hata
+//   space
 // 5 a link vs the coverage at the same cells; sanity checks (flat sea =
 //   plane-Earth loss, free space <= P.1812, clutter)
 // 6 (--net) 4 on real terrain (AWS Terrain Tiles) at Auckland
@@ -227,8 +227,7 @@ function itmRay(P, h0, h1, o) {
 }
 
 // ---- 4 + 6: the coverage sweep vs the exact model on its own profiles ----
-// (sig.model: p1812 (default), itm, fs, hata; txAmsl: the transmitter's h is above sea level - in the air)
-const HATA_ENV = [, 'open', 'open', 'suburban', 'urban', 'large'];
+// (sig.model: p1812 (default), itm, fs; txAmsl: the transmitter's h is above sea level - in the air)
 async function sweepVsExact(name, lat, lon, h, R, sig, txAmsl) {
   const m = {lat, lon, h, amsl: !!txAmsl, k: 4 / 3, levels: vsPlan(lat, R * 1000), sig, debug: {rays: [5, 811, 2003, 3333, 4099]}};
   const t0 = Date.now(), res = await runMsg(m);
@@ -251,7 +250,6 @@ async function sweepVsExact(name, lat, lon, h, R, sig, txAmsl) {
       let ex;
       if (model === 'p1812') ex = T.p1812P2P(Float64Array.from(d), Float64Array.from(hh), null, h, hr, sig.f / 1000, ae, r.sea[j], sig.N0, sig.pol, true);
       else if (model === 'fs') ex = {Lb: 32.45 + 20 * Math.log10(sig.f) + 10 * Math.log10((sm / 1000) ** 2 + ((res.eye - hrs) / 1000) ** 2), bull: {los: true}};
-      else if (model === 'hata') ex = {Lb: T.hataLoss(sig.f, sm / 1000, Math.max(htg, hr), Math.min(htg, hr), HATA_ENV[htg >= hr ? sig.envRx : sig.envTx] || 'open'), bull: {los: true}};
       else {
         const o = {N0: sig.N0, f: sig.f, pol: sig.pol, eps: sig.eps, sigma: sig.sigma, climate: sig.climate, mdvar: 12, time: 50, loc: 50, sit: 50};
         const P = d.map((x, i) => [x * 1000, hh[i]]), A = itmRay(P, htg, hr, o);
@@ -271,11 +269,10 @@ async function sweepVsExact(name, lat, lon, h, R, sig, txAmsl) {
           if (!ev.err) vsEven.push(Math.abs(ev.A - A));
         }
       }
-      // clutter: both on the ground 3.1; the RX up: 3.3 at the TX; the TX up: 3.3 at the RX (by the elevation at that end); none with Hata
+      // clutter: both on the ground 3.1; the RX up: 3.3 at the TX; the TX up: 3.3 at the RX (by the elevation at that end)
       let cl = 0;
       const el = (from, to) => Math.max(0, Math.atan((to - from) / sm - sm / (2 * ae * 1000)) * 180 / Math.PI);
-      if (model === 'hata') cl = 0;
-      else if (sig.amsl && !txAmsl) { if (sig.hmTx > 0) cl = T.p2108Aero(sig.f / 1000, el(res.eye, hrs), 50, Math.max(1, h), sig.hmTx); }
+      if (sig.amsl && !txAmsl) { if (sig.hmTx > 0) cl = T.p2108Aero(sig.f / 1000, el(res.eye, hrs), 50, Math.max(1, h), sig.hmTx); }
       else if (txAmsl && !sig.amsl) { if (sig.hmRx > 0) cl = T.p2108Aero(sig.f / 1000, el(hrs, res.eye), 50, Math.max(1, hr), sig.hmRx); }
       else if (!sig.amsl) cl = T.p2108Terminal(sig.f / 1000, h, sig.envTx) + T.p2108Terminal(sig.f / 1000, Math.max(0.5, sig.tgt), sig.envRx);
       const e = Math.abs(r.L[j] - (ex.Lb + cl));
@@ -288,7 +285,7 @@ async function sweepVsExact(name, lat, lon, h, R, sig, txAmsl) {
     const loss = new Uint16Array(l.loss), need = new Uint16Array(l.need);
     for (let i = 0; i < loss.length; i++) if (need[i] !== 65535) { cells++; if (loss[i] === 0) badCells++; }
   }
-  const worst = Math.max(pct(errIn, 100), pct(errOut, 100)), MN = {p1812: 'P.1812', itm: 'Longley-Rice', fs: 'free space', hata: 'Hata'}[model];
+  const worst = Math.max(pct(errIn, 100), pct(errOut, 100)), MN = {p1812: 'P.1812', itm: 'Longley-Rice', fs: 'free space'}[model];
   check(worst < 1e-6 && !nan && cells > 1e5 && !badCells && errIn.length + errOut.length > 300,
         `${name}: sweep = exact ${MN} on ` + (model === 'p1812' ? `${errIn.length} line-of-sight + ${errOut.length} beyond-horizon samples` : `${errIn.length} samples`) +
         ` (worst ${worst.toExponential(1)} dB)${n0 ? `, ${n0} under the ground skipped` : ''}${nOut ? `, ${nOut} outside the model's range` : ''}; ${cells} cells, ${((Date.now() - t0) / 1000).toFixed(1)} s`);
@@ -308,7 +305,6 @@ const covItm = await sweepVsExact('4 synthetic coast 15 km, Longley-Rice, 446 MH
 await sweepVsExact('4 synthetic, Longley-Rice, horizontal, sea water, aircraft at 1500 m above sea level (3.3)', -36.88, 174.62, 10, 10,
                    {f: 1090, tgt: 1500, amsl: true, pol: 0, N0: 320, envTx: 3, envRx: 0, hmTx: 8, model: 'itm', climate: 7, eps: 81, sigma: 5});
 await sweepVsExact('4 synthetic, free space + clutter suburban / urban', -36.88, 174.62, 8, 12, {f: 146, tgt: 1.5, amsl: false, pol: 1, N0: 301, envTx: 3, envRx: 4, hmTx: 0, model: 'fs'});
-await sweepVsExact('4 synthetic, Hata (the lower end\'s environment)', -36.88, 174.62, 40, 12, {f: 146, tgt: 1.5, amsl: false, pol: 1, N0: 301, envTx: 3, envRx: 4, hmTx: 0, model: 'hata'});
 
 // ---- 5: links ----
 // a link from the site to cells' centres vs the cells (same model, other sampling); pick(link) -> its loss

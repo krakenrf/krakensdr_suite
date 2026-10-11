@@ -1051,8 +1051,11 @@ Edit `include/config.hpp`:
     Earth-space / aeronautical clutter by elevation; erfinv = Giles' single
     precision). Checked: the 282,800 rows of Py2108's validation table
     within 2e-6 dB. Used below its 0.5 GHz floor too
-  - `hataLoss(f MHz, d km, hb, hm, env)`: Okumura-Hata / COST-231 (medium
-    city, 'large', 'suburban', 'open') - a comparison row only
+  - Okumura-Hata / COST-231 was a model too (map + link row) and was
+    DROPPED (the user's call, 2026-10-12): no terrain - concentric circles
+    on the map -, valid only for 150-2000 MHz, 1-20 km, a 30-200 m base, so
+    most KrakenSDR paths (handheld to handheld, < 1 km) were outside it. A
+    saved 'hata' falls back to P.1812
 - LINK (`runLink`, message `m.link`: a = the TX, b = the RX, each {lat,
   lon, h, amsl}): the great circle A -> B (slerp)
   sampled every cell of the finest zoom <= 14 that keeps it to `PL_NMAX`
@@ -1061,8 +1064,7 @@ Edit `include/config.hpp`:
   on zoom-14 ground; sea = raw height <= 0. P.1812 with flag4 (as the
   coverage, so the two agree), ITM median (mdvar 12, 50 / 50 / 50) and at the
   reliability (mobile mode 2: time = location = rel, situation 50), free
-  space (slant), Hata (the higher end = base; the lower end's clutter type
-  -> its environment); clutter: one end above sea level (in the air) -> 3.3
+  space (slant); clutter: one end above sea level (in the air) -> 3.3
   at the OTHER end by the direct ray's elevation there (hm from its type: 8
   suburban / 15 urban / 25 dense, none for water / open), both on the
   ground -> 3.1 at both, both in the air -> none (checked: the same path
@@ -1119,10 +1121,9 @@ Edit `include/config.hpp`:
 - THE MODEL of the coverage = the page's choice (`m.sig.model`; the user
   expected the map to follow it - it was P.1812 only at first): p1812 (all
   of the above); fs = free space (32.45 + 20 log f + 20 log of the slant
-  distance, as the link's) + the clutter; hata = `hataLoss` (higher /
-  lower end, the lower end's clutter type as its environment, no P.2108 -
-  as the link's budget); itm = Longley-Rice per cell (`itmCell`) + the
-  clutter. fs / hata skip the terrain work (~3.5 s for 12 km in node).
+  distance, as the link's) + the clutter; itm = Longley-Rice per cell
+  (`itmCell`) + the clutter - the picker says "much slower"
+  (`PL_MODEL_OPTS`). fs skips the terrain work (~3.5 s for 12 km in node).
   Loss 65534 = outside the model's range (ITM: an antenna > 3000 m above
   its ground) - transparent, the hover says so
 - ITM PER CELL (`itmCell`, model 'itm'): ITM 1.2.2 point to point on the
@@ -1158,8 +1159,10 @@ Edit `include/config.hpp`:
   quickselect (slower: terrain residuals come in rising / falling runs)
 - Page: `plState` (globals block; localStorage `kraken_pl`, rebuilt field by
   field): f MHz, ptx W, gt / gr dBi, lt / lr dB, bw kHz, nf, snr (->
-  sensitivity = -174 + 10 log BW + NF + SNR), model (p1812 | itm | fs |
-  hata - the map's and the link's budget; the strip lists all four), pol, N0 (301:
+  sensitivity = -174 + 10 log BW + NF + SNR), model (p1812 | itm | fs -
+  the map's and the link's budget; the strip lists all three), polT /
+  polR + angT / angR (the TX / RX antennas' polarization, see below; an
+  old single `pol` 0 / 1 becomes both antennas' h / v), N0 (301:
   troposcatter + ITM), climate + ground (ITM, `PL_GROUNDS`), envTx / envRx
   (P.2108 types, `PL_ENVS`: the transmitter's / receiver's surroundings,
   whichever end that is), fade (auto = Rician K in sight / Rayleigh beyond |
@@ -1168,12 +1171,34 @@ Edit `include/config.hpp`:
   1.0 an antenna up near the clutter, 1.2 one in it - of the RECEIVER: the
   site when it is RX, else the target, `plSiteSigma`), set / prof (folds),
   link {site (a viewshed item id), lat, lon, name, mk}. What each setting
-  redoes (`PL_REDO`): S = the sites' signal jobs (f, pol, N0, clutter,
-  model; climate + ground only with ITM - they are in `plSigMsg`, so in
-  `vsKey`: a job runs only where the key changed), L = the link; everything else
-  only repaints from the losses kept (`vsRepaint` -> `plPaintSig`). The
-  viewshed's target height / reference and refraction are shared (`vsSetTgt`
-  / `vsSetRef` call `vsSigChanged`, `vsSetK` `plKChanged`)
+  redoes (`PL_REDO`): S = the sites' signal jobs (f, the TX antenna's
+  polarization - the models' h / v -, N0, clutter, model; climate + ground
+  only with ITM - they are in `plSigMsg`, so in `vsKey`: a job runs only
+  where the key changed), L = the link; everything else (the RX antenna's
+  polarization too) only repaints from the losses kept (`vsRepaint` ->
+  `plPaintSig`). The viewshed's target height / reference and refraction
+  are shared (`vsSetTgt` / `vsSetRef` call `vsSigChanged`, `vsSetK`
+  `plKChanged`)
+- POLARIZATION (`plPolLoss(los)`, `plWavePol`): each antenna 'v' / 'h' /
+  'c' (circular) / 'a' (linear at angT / angR degrees from horizontal). The
+  mismatch relative to matched antennas (the models are for those): the
+  share co of the power the RX antenna takes - two linear cos^2 of the
+  angle between, linear / circular 1/2, circular / circular 1 (the same
+  hand assumed) - with depolarization x = 10^(-XPD/10): co (1 - x) + (1 -
+  co) x, over (1 - x). XPD (`PL_XPD`) 20 dB with a direct path (antennas'
+  own cross-polar rejection), 8 dB without (diffraction / scattering mix
+  them; mobile radio measures ~5-10 dB): crossed antennas lose ~20 / ~7
+  dB, linear to circular ~3 / 2.3 dB. In sight or not: the cell's (the
+  paint, the hover) or the link's P.1812 line of sight (free space: in
+  sight). The propagation models' own polarization (P.1812 / ITM take h or
+  v) = the TX antenna's (a slanted one: the nearer, 45° horizontal;
+  circular: vertical). Shown under the model ("matched" / "mismatch x dB
+  in sight, y dB beyond"), in the hover ("+ polarization x dB") and as a
+  budget row in the strip
+- LABELS (signal mode, `vsRender`): a site row's "Antenna" -> "TX antenna"
+  / "RX antenna" by its role; "Target" -> the other end's ("RX antenna" for
+  TX sites, "TX antenna" for RX sites, "TX / RX antenna" when the shown
+  sites have both); line of sight mode: "Antenna" / "Target"
 - Reliability: `plOutage(m, sigma, kind, K)` = integral of phi(z)
   F_fade(10^((sigma z - m) / 10)) over +-6 sigma (121-point trapezoid; the
   Rician power CDF by Simpson over the envelope pdf with I0e - A&S 9.8.1 /
@@ -1226,21 +1251,27 @@ Edit `include/config.hpp`:
   removes it too). `runLink` on its own worker (`plWorker`, see LINK above)
 - UI: the signal block `#map-vs-sig` in the viewshed panel (class
   `vs-sig`: shown only by `.map-vs.sig`; `vs-los` the reverse): Freq + TX
-  power, Model + polarization (and ITM's climate / ground when it is
-  Longley-Rice) - not folded: it is the map's model -, the rest folded
+  power, Model (and ITM's climate / ground when it is Longley-Rice), the
+  TX / RX antennas' Polarization (+ an angle field for 'custom', + the
+  mismatch) - not folded: they change the map -, the rest folded
   under "Antennas, receiver, channel" (gains, cables, receiver, N0,
   clutter TX / RX, fading + K, sigma_L), "Wanted reliability", the legend
   (`plLegendHtml`, naming the model); a TX / RX tag per site row (click: the
   role); `#map-vs-link` (the link in one line + Show / Hide). `plRenderSig`
   runs from `vsRender`; `plRender` = `vsRender`. Strip `#map-plk` at the
   bottom of the map (`.map-pane.pl-open` lifts the DF panel, the marker
-  panel and the status line): TX → RX, the path, the four models (a row
-  click = the budget's model), clutter (which end, air-to-ground),
-  received (dBm, µV), margin + reliability, ITM at the reliability, the
-  heights above sea level, terrain zoom / tiles / ms; the profile canvas
-  (terrain + the Earth bulge over the chord, direct ray, F1 + 0.6 F1,
-  Bullington's construction, sea blue, TX / RX in their colours; under the
-  pointer: distance / ground / clearance, and a dot on the map). On the map
+  panel and the status line): TX → RX, the path, the three models (a row
+  click = the budget's and the map's model), clutter (which end,
+  air-to-ground), polarization (the mismatch, TX → RX), received (dBm,
+  µV), margin + reliability, ITM at the reliability, the heights above sea
+  level, terrain zoom / tiles / ms; the profile canvas (terrain + the
+  Earth bulge over the chord, direct ray, F1 + 0.6 F1, Bullington's
+  construction, sea blue, TX / RX in their colours; under the pointer:
+  distance / ground / clearance, and a dot on the map). The chart's F1
+  radius is clamped at >= 0: Dm * i / n rounds a hair past Dm at some
+  lengths, the sqrt went NaN and took the whole y scale with it (the
+  user's "the profile sometimes doesn't draw after a move" - reproduced
+  by t_drag.py, real mouse drags, deterministic per position). On the map
   (`plDraw`, signal mode only, after the rings, before the markers): a
   TX / RX tag beside each shown site, the link's great circle coloured by
   its reliability band (dashed while computing), the place's TX / RX badge,
@@ -1251,7 +1282,12 @@ Edit `include/config.hpp`:
   offline, the whole decode / clean path; 6 `--net` real terrain).
   Scratch (job 26b3d7af): t_itm_rand.mjs (vs the compiled NTIA C++),
   t_cov.mjs, t_link.mjs, t_need.py (signal vs line of sight `need`: 0
-  cells differ), and t_uni_ui.py - 57 checks in headless Chromium on the
+  cells differ), t_drag.py (real mouse drags of the link's place, random
+  speeds / pauses: the profile drawn for the current link whenever the
+  worker is idle - 2 of 40 blank before the F1 clamp, 0 of 80 after), and
+  t_uni_ui.py - 73 checks (incl. polarization: RX-only a repaint, TX h / v
+  a job, 60° = cos^2 30°, circular 3 / 2.3 dB, the link's budget row; the
+  TX / RX antenna labels; an old `pol` / a saved 'hata' migrating) in headless Chromium on the
   page served statically WITH a UTF-8 charset (no receiver; the station set
   from the test): no Path loss button, line of sight as before, signal
   (job, status, legend, roles), the composite (line pixels, coverage out of

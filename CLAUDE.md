@@ -531,15 +531,21 @@ decoders `kraken_doa_v2/plugins/`
   (the whole profile per ray via convex hulls, O(log n) per cell, EXACTLY
   P.1812 on the sampled profile), Longley-Rice (`itmCell`: NTIA's ITM on
   the ray's own points, incremental horizons / fits, delta h per cell -
-  ~6x P.1812's time), free space or Hata (no terrain). LINK (right-click "📶 Link", markers, masts): a site <-> a
+  ~6x P.1812's time: labelled "much slower"), or free space (no terrain);
+  Okumura-Hata was dropped (the user's call: no terrain, valid only for
+  1-20 km / a 30-200 m base). LINK (right-click "📶 Link", markers, masts): a site <-> a
   place, the great-circle terrain profile through ITU-R
   P.1812-6 (delta-Bullington diffraction + troposcatter, median, no
-  ducting), NTIA's ITM / Longley-Rice (a JS port of the public-domain C++),
-  free space and Okumura-Hata, drawn as a profile + link budget in a strip
+  ducting), NTIA's ITM / Longley-Rice (a JS port of the public-domain C++)
+  and free space, drawn as a profile + link budget in a strip
   at the bottom of the map. Channel: ITU-R P.2108 clutter at the ends (3.1
   both on the ground, 3.3 air-to-ground at the ground end by elevation),
+  the TX / RX antennas' polarization (vertical / horizontal / circular /
+  a custom angle: mismatch cos^2 or 3 dB, capped by depolarization - XPD
+  20 dB in sight, 8 dB beyond; the models' own h / v = the TX antenna's),
   P.1546 location variability + Rician / Rayleigh fading -> the margin a
-  reliability needs. Validated against NTIA's ITM cases + C++, the ITU-R SG3
+  reliability needs. In signal mode the panel labels each site's antenna
+  and the target "TX antenna" / "RX antenna" by the roles. Validated against NTIA's ITM cases + C++, the ITU-R SG3
   P.1812 logs and P.2108's table, the coverage per model against the same
   models on its own ray profiles: `kraken_doa_v2/tools/pathloss_validate.mjs`.
   UI-only (kraken_doa.html "📶 PATH LOSS"; the engine lives in the viewshed

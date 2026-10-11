@@ -1876,16 +1876,20 @@ let vsWorker = null, vsJob = null, vsSeq = 0, vsWorkerErr = '', vsHovAt = null, 
 // viewshed's signal mode, the link (a viewshed site's id + the far place;
 // localStorage kraken_pl; rebuilt field by field); the link worker, its job
 // and result; the selected far end ('far'), the profile's pointer
+// (the antennas' polarization polT / polR: 'v' | 'h' | 'c' circular | 'a' linear at
+// angT / angR degrees from horizontal - the propagation models' own h / v follows the TX's)
 const plState = (() => {
-  const d = {f: 146, ptx: 5, gt: 2.15, gr: 2.15, lt: 1, lr: 1, bw: 12.5, nf: 6, snr: 10, model: 'p1812', pol: 1, N0: 301,
-             climate: 5, ground: 'avg', envTx: 3, envRx: 3, fade: 'auto', K: 6, rel: 90, sigL: null, set: false, prof: true, link: null};
+  const d = {f: 146, ptx: 5, gt: 2.15, gr: 2.15, lt: 1, lr: 1, bw: 12.5, nf: 6, snr: 10, model: 'p1812', polT: 'v', polR: 'v', angT: 45, angR: 45,
+             N0: 301, climate: 5, ground: 'avg', envTx: 3, envRx: 3, fade: 'auto', K: 6, rel: 90, sigL: null, set: false, prof: true, link: null};
   try {
     const s = JSON.parse(localStorage.getItem('kraken_pl') || '{}'), num = (v, lo, hi, def) => typeof v === 'number' && v >= lo && v <= hi ? v : def;
     for (const [k, lo, hi] of [['f', 20, 20000], ['ptx', 1e-6, 1e7], ['gt', -30, 60], ['gr', -30, 60], ['lt', 0, 60], ['lr', 0, 60],
                                ['bw', 0.01, 1e5], ['nf', 0, 40], ['snr', -40, 80], ['N0', 250, 400], ['climate', 1, 7], ['envTx', 0, 5],
-                               ['envRx', 0, 5], ['K', -20, 40], ['rel', 1, 99.99], ['pol', 0, 1]]) d[k] = num(s[k], lo, hi, d[k]);
+                               ['envRx', 0, 5], ['K', -20, 40], ['rel', 1, 99.99], ['angT', 0, 180], ['angR', 0, 180]]) d[k] = num(s[k], lo, hi, d[k]);
     if (s.sigL !== null && s.sigL !== undefined) d.sigL = num(s.sigL, 0, 30, null);
-    if (['p1812', 'itm', 'fs', 'hata'].includes(s.model)) d.model = s.model;
+    if (s.pol === 0 || s.pol === 1) d.polT = d.polR = s.pol ? 'v' : 'h';   // (one polarization for both, before)
+    for (const k of ['polT', 'polR']) if (['v', 'h', 'c', 'a'].includes(s[k])) d[k] = s[k];
+    if (['p1812', 'itm', 'fs'].includes(s.model)) d.model = s.model;   // (Okumura-Hata was dropped: -> P.1812)
     if (['avg', 'poor', 'good', 'fresh', 'sea'].includes(s.ground)) d.ground = s.ground;
     if (['auto', 'none', 'rayleigh', 'rician'].includes(s.fade)) d.fade = s.fade;
     for (const k of ['set', 'prof']) if (typeof s[k] === 'boolean') d[k] = s[k];
@@ -13409,11 +13413,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (bAir && !aAir) { if (L.hmA > 0) clA = p2108Aero(fG, Math.max(0, elevA), 50, Math.max(1, htg), L.hmA); }
       else if (aAir && !bAir) { if (L.hmB > 0) clB = p2108Aero(fG, Math.max(0, elevB), 50, Math.max(1, hrg), L.hmB); }
       else if (!aero) { clA = p2108Terminal(fG, htg, L.envA); clB = p2108Terminal(fG, hrg, L.envB); }
-      const hb = Math.max(htg, hrg), hmo = Math.min(htg, hrg);
-      const env = [, 'open', 'open', 'suburban', 'urban', 'large'][htg >= hrg ? L.envB : L.envA] || 'open';
-      const hata = {L: hataLoss(L.f, D / 1000, hb, hmo, env), env,
-                    ok: L.f >= 150 && L.f <= 2000 && D >= 1000 && D <= 20000 && hb >= 30 && hb <= 200 && hmo >= 1 && hmo <= 10};
-      const fs = 32.45 + 20 * Math.log10(L.f) + 10 * Math.log10((D / 1000) ** 2 + ((hts - hrs) / 1000) ** 2);
+      const fs =32.45 + 20 * Math.log10(L.f) + 10 * Math.log10((D / 1000) ** 2 + ((hts - hrs) / 1000) ** 2);
       cancelled.delete(m.job);
       const df = Float32Array.from(d), hf = Float32Array.from(h);
       self.postMessage({job: m.job, link: {d: df, h: hf, z, n, xi, sea: omega, gA, gB, hts, hrs, htg, hrg, D, ae,
@@ -13421,7 +13421,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                 trans: p.sh.trans, los: p.bull.los, nu: p.bull.nu, dbp: p.bull.dbp, hbp: p.bull.hbp, dlt: p.sh.dlt, dlr: p.sh.dlr,
                 tt: p.sh.tt, tr: p.sh.tr},
         itm: itm.err ? {err: itm.err} : {A: itm.A, Arel: itmR.err ? null : itmR.A, mode: itm.mode, warn: itm.warn, dhz: itm.dhz, th: itm.th, dh: itm.dh},
-        fs, hata, clut: {a: clA, b: clB, aero, airA: aAir, airB: bAir}, elevA, elevB, clr, clrAt, ms: Date.now() - t0, loaded: load.length, tiles: want.size}},
+        fs, clut: {a: clA, b: clB, aero, airA: aAir, airB: bAir}, elevA, elevB, clr, clrAt, ms: Date.now() - t0, loaded: load.length, tiles: want.size}},
         [df.buffer, hf.buffer]);
     }
 
@@ -13510,11 +13510,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const clutFix = txAir || rxAir ? 0 : p2108Terminal(f, hTx, S.envTx) + p2108Terminal(f, Math.max(0.5, S.tgt), S.envRx);
       const aeroTx = rxAir && !txAir && S.hmTx > 0, aeroRx = txAir && !rxAir && S.hmRx > 0, aero = aeroTx || aeroRx;
       // the model (S.model): p1812 (default); fs = free space + the clutter;
-      // hata = Okumura-Hata (no terrain - its environments are its clutter,
-      // the lower end's); itm = Longley-Rice per cell (itmCell) + the clutter -
-      // as the link's budget (runLink, plBudget)
-      const model = S.model === 'itm' || S.model === 'fs' || S.model === 'hata' ? S.model : 'p1812';
-      const htg = Math.max(0.5, hTx), HATA_ENV = [, 'open', 'open', 'suburban', 'urban', 'large'];
+      // itm = Longley-Rice per cell (itmCell) + the clutter - as the link's
+      // budget (runLink, plBudget)
+      const model = S.model === 'itm' || S.model === 'fs' ? S.model : 'p1812';
+      const htg = Math.max(0.5, hTx);
       let cap = 16;
       for (const g of rings) cap += Math.ceil(g.rExt / (0.4 * g.cellMin)) + 2;
       const cx = new Float64Array(cap), cy = new Float64Array(cap), fx = new Float64Array(cap), fy = new Float64Array(cap);
@@ -13694,7 +13693,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         let cl = clutFix;
         if (aeroTx) cl = p2108Aero(f, Math.max(0, Math.atan(sig) * 180 / Math.PI), 50, Math.max(1, hTx), S.hmTx);   // (elevation at the TX)
         else if (aeroRx) cl = p2108Aero(f, Math.max(0, Math.atan(-sig - 2 * s * curv) * 180 / Math.PI), 50, Math.max(1, hr), S.hmRx);   // (at the receiver)
-        if (model === 'hata') return hataLoss(S.f, sk, Math.max(htg, hr), Math.min(htg, hr), HATA_ENV[htg >= hr ? S.envRx : S.envTx] || 'open');
         if (model === 'fs') return 32.45 + 20 * Math.log10(S.f) + 10 * Math.log10(sk * sk + ((eye - hrs) / 1000) ** 2) + cl;
         if (model === 'itm') { const A = itmCell(s, gr, hr); return A < 0 ? -2 : A + cl; }
         const Lbfs = 92.4 + 20 * Math.log10(f) + 10 * Math.log10(sk * sk + ((eye - hrs) / 1000) ** 2);
@@ -14534,27 +14532,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (p <= pF) return -3.542 * Math.exp(-155.1 * p / pF) - 1.06 * Math.exp(-6.342 * p / pF);
       return 6 * (p - pF) / (pLoS - pF);
     }
-    // ---- 📶 Okumura-Hata / COST-231 Hata (empirical, no terrain; for comparison) ----
-    // f MHz (150-1500 Hata, 1500-2000 COST-231), d km (1-20), base hb m
-    // (30-200), mobile hm m (1-10); env 'urban' | 'large' (large city) |
-    // 'suburban' | 'open'
-    function hataLoss(f, d, hb, hm, env) {
-      const lf = Math.log10(f), large = env === 'large';
-      const a = large ? (f < 300 ? 8.29 * Math.log10(1.54 * hm) ** 2 - 1.1 : 3.2 * Math.log10(11.75 * hm) ** 2 - 4.97)
-                      : (1.1 * lf - 0.7) * hm - (1.56 * lf - 0.8);
-      const lhb = Math.log10(Math.max(hb, 1)), ld = Math.log10(Math.max(d, 0.01));
-      let L;
-      if (f <= 1500) L = 69.55 + 26.16 * lf - 13.82 * lhb - a + (44.9 - 6.55 * lhb) * ld;
-      else L = 46.3 + 33.9 * lf - 13.82 * lhb - a + (44.9 - 6.55 * lhb) * ld + (large ? 3 : 0);
-      if (env === 'suburban') L -= 2 * Math.log10(f / 28) ** 2 + 5.4;
-      else if (env === 'open') L -= 4.78 * lf * lf - 18.33 * lf + 40.94;
-      return L;
-    }
 
     self.vsTest = {decodePng, despike, sweep, run, ringGrid, tiles, clean, PAD,   // offline tests (node)
                    itmP2P, itmVariability, itmQinv, itmLongleyRice, itmFreeSpace, itmZg, itmQuickRest,
                    p1812P2P, p1812Bull, p1812BullSmooth, p1812Se, p1812Heights, p1812Tropo, ituJ,
-                   p2108Terminal, p2108Aero, hataLoss, erfinv};
+                   p2108Terminal, p2108Aero, erfinv};
   }
   // (end of vsWorkerMain)
 
@@ -14998,7 +14980,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<button type="button" data-m="sig" onclick="vsSetMode('sig')" title="How often (%) the signal between each site and a receiver / transmitter at the target height is good enough - also beyond the line of sight (ITU-R P.1812 path loss, the link budget, clutter, fading)">📶 Signal</button></div></div>` +
       `<div class="map-vs-row">` +
       `<label title="How high the other antenna (a radio, vehicle, aircraft...) is: shown where an antenna at this height could see the observer's - and so, roughly, where a radio link has line of sight">` +
-      `Target <input type="number" id="map-vs-tgt" min="0" max="30000" step="1" onchange="vsSetTgt(this.value)" onkeydown="if(event.key==='Enter')this.blur()"> m</label>` +
+      `<span id="map-vs-tgt-l">Target</span> <input type="number" id="map-vs-tgt" min="0" max="30000" step="1" onchange="vsSetTgt(this.value)" onkeydown="if(event.key==='Enter')this.blur()"> m</label>` +
       `<select id="map-vs-ref" onchange="vsSetRef(this.value)" title="Target height above the ground there, or above sea level (e.g. aircraft at an altitude)">` +
       `<option value="agl">above ground</option><option value="amsl">above sea level</option></select>` +
       `<select id="map-vs-k" onchange="vsSetK(this.value)" title="Earth curvature and how much the air bends the path: radio waves bend more than light (k = effective Earth radius / real one)">` +
@@ -15022,7 +15004,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<span class="role pl-tag vs-sig" onclick="vsSetRole('${it.id}')" title="The signal mode: this site transmits (TX) - its coverage for receivers at the target height - or receives (RX) - where a transmitter at the target height is heard. Click: switch"></span>` +
       `<button type="button" class="map-btn" title="Show it on the map" onclick="vsCentre('${it.id}')">⌖</button>` +
       `<button type="button" class="map-btn" title="Remove" onclick="vsRemove('${it.id}')">✕</button></div>` +
-      `<div class="l2"><label title="Antenna height above the ground">Antenna <input type="number" class="h" min="0" max="5000" step="1" onchange="vsSetItem('${it.id}','h',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> m</label>` +
+      `<div class="l2"><label title="Antenna height above the ground"><span class="al">Antenna</span> <input type="number" class="h" min="0" max="5000" step="1" onchange="vsSetItem('${it.id}','h',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> m</label>` +
       `<label title="How far to look (radius)">Radius <input type="number" class="r" min="1" max="${VS_RMAX_KM}" step="1" onchange="vsSetItem('${it.id}','r',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> km</label>` +
       `<span class="st"></span></div>`;
     return r;
@@ -15057,6 +15039,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const fold = $id('map-vs-fold'), ft = mapState.vsOpen ? '▾' : '▸';
     if (fold.textContent !== ft) fold.textContent = ft;
     vsSetVal($id('map-vs-tgt'), vsTgt(), force);
+    // 📶 the target is the other end: the RX antenna of TX sites, the TX antenna of RX sites
+    const roles = new Set(vsState.items.filter(i => i.on).map(i => i.role)), tl = $id('map-vs-tgt-l');
+    const tt = vsState.mode !== 'sig' || !roles.size ? 'Target' : roles.size > 1 ? 'TX / RX antenna' : roles.has('tx') ? 'RX antenna' : 'TX antenna';
+    if (tl.textContent !== tt) tl.textContent = tt;
     vsSetVal($id('map-vs-ref'), vsState.amsl ? 'amsl' : 'agl', force);
     vsSetVal($id('map-vs-k'), String(vsState.k), force);
     const stb = $id('map-vs-st');
@@ -15074,6 +15060,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (sw.dataset.bg !== bg) { sw.dataset.bg = bg; sw.style.background = bg; sw.style.borderColor = it.col; }
       const nm = r.querySelector('.nm');
       if (nm.textContent !== it.name) { nm.textContent = it.name; nm.title = `${it.name}: ${it.lat.toFixed(5)}, ${it.lon.toFixed(5)}`; }
+      const al = r.querySelector('.al'), at = vsState.mode === 'sig' ? (it.role === 'rx' ? 'RX antenna' : 'TX antenna') : 'Antenna';   // (📶 the site's role)
+      if (al.textContent !== at) al.textContent = at;
       const ro = r.querySelector('.role'), rt = it.role === 'rx' ? 'RX' : 'TX';
       if (ro.textContent !== rt) { ro.textContent = rt; ro.style.background = PL_COL[it.role]; }
       vsSetVal(r.querySelector('.h'), it.h, force);
@@ -15146,19 +15134,21 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // sight. A site transmits (TX: its coverage) or receives (RX: where a
   // transmitter is heard - the station by default); path loss is reciprocal,
   // the role only says which end's antenna, cable and clutter are which.
-  // - per site: ITU-R P.1812 (delta-Bullington terrain diffraction +
-  //   troposcatter) + P.2108 clutter to every cell (runSignal / plSweep in
-  //   the viewshed worker), the budget -> the margin -> the reliability:
-  //   location variability (lognormal, P.1546's sigma_L) + fast fading
-  //   (Rician in line of sight, Rayleigh beyond, or as chosen); every shown
-  //   site at once, the best per place (plDrawSig), the edge of the line of
-  //   sight as a faint white line, below the wanted reliability faint
+  // - per site: the chosen model (ITU-R P.1812: delta-Bullington terrain
+  //   diffraction + troposcatter; Longley-Rice; free space) + P.2108
+  //   clutter to every cell (runSignal / plSweep in the viewshed worker),
+  //   the budget (incl. the antennas' polarization mismatch) -> the margin
+  //   -> the reliability: location variability (lognormal, P.1546's
+  //   sigma_L) + fast fading (Rician in line of sight, Rayleigh beyond, or
+  //   as chosen); every shown site at once, the best per place
+  //   (plDrawSig), the edge of the line of sight as a faint white line,
+  //   below the wanted reliability faint
   // - a LINK between a site and a place (right-click "📶 Link", a marker, a
   //   mast; the place is dragged like a viewshed point): the great-circle
   //   terrain profile (a worker of its own: runLink) through P.1812, NTIA's
-  //   ITM / Longley-Rice, free space and Okumura-Hata, drawn as a profile
-  //   (Earth bulge, line of sight, first Fresnel zone, Bullington's edge)
-  //   with the budget at the bottom of the map
+  //   ITM / Longley-Rice and free space, drawn as a profile (Earth bulge,
+  //   line of sight, first Fresnel zone, Bullington's edge) with the budget
+  //   at the bottom of the map
   // Median losses: 50 % of the time (no ducting)
   const PL_ENVS = ['none', 'water / sea', 'open / rural', 'suburban', 'urban / trees / forest', 'dense urban'];
   const PL_ENV_HM = [0, 0, 0, 8, 15, 25];   // median clutter height for P.2108 3.3 (low / mid / high rise)
@@ -15166,7 +15156,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                       fresh: ['fresh water', 81, 0.01], sea: ['sea water', 81, 5]};
   const PL_CLIMATES = ['', 'equatorial', 'continental subtropical', 'maritime subtropical', 'desert', 'continental temperate',
                        'maritime temperate, over land', 'maritime temperate, over sea'];
-  const PL_MODELS = {p1812: 'ITU-R P.1812 (terrain)', itm: 'Longley-Rice / ITM (terrain)', fs: 'Free space', hata: 'Okumura-Hata / COST-231'};
+  const PL_MODELS = {p1812: 'ITU-R P.1812 (terrain)', itm: 'Longley-Rice / ITM (terrain)', fs: 'Free space'};
+  const PL_MODEL_OPTS = Object.entries(PL_MODELS).map(([k, v]) => [k, k === 'itm' ? v + ' - much slower' : v]);   // (the picker)
+  const PL_POLS = [['v', 'vertical'], ['h', 'horizontal'], ['c', 'circular'], ['a', 'custom angle']];
   // the reliability (0..1) -> colour; below 25 % nothing
   const PL_BANDS = [[0.99, '#1a9850'], [0.95, '#66bd63'], [0.90, '#a6d96a'], [0.75, '#fee08b'], [0.50, '#fdae61'], [0.25, '#d73027']];
   const PL_COL = {tx: '#ff7043', rx: '#4fc3f7'};   // TX / RX tags
@@ -15180,6 +15172,32 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function plSens() { return plNoise() + plState.snr; }
   // P_rx (dBm) for a basic transmission loss incl. clutter (gains: TX + RX, whichever end is which)
   function plPrx(L) { return plPtxDbm() + plState.gt - plState.lt + plState.gr - plState.lr - L; }
+  // ---- the antennas' polarization ----
+  // a linear antenna's angle (degrees from horizontal)
+  function plPolAng(k, a) { return k === 'h' ? 0 : k === 'v' ? 90 : a; }
+  function plPolName(k, a) { return k === 'a' ? `${plF(a, a % 1 ? 1 : 0)}°` : PL_POLS.find(p => p[0] === k)[1]; }
+  // the propagation models' polarization (P.1812 / ITM know horizontal or
+  // vertical): the TX antenna's - a slanted one the nearer, circular vertical
+  function plWavePol() {
+    const k = plState.polT;
+    return k === 'h' ? 0 : k === 'a' ? (Math.abs(Math.sin(plState.angT * Math.PI / 180)) >= Math.SQRT1_2 ? 1 : 0) : 1;
+  }
+  // the mismatch loss (dB) between the TX and RX antennas, relative to
+  // matched ones (the models are for those): the share of the power the RX
+  // antenna takes from the TX antenna's wave - two linear: cos^2 of the
+  // angle between; linear / circular: 1/2; two circular: 1 (the same hand) -
+  // with depolarization: co (1 - x) + (1 - co) x, x = 10^(-XPD / 10). XPD
+  // (cross-polar discrimination): 20 dB with a direct path (the antennas'
+  // own), 8 dB without (diffraction and scattering mix the two - mobile
+  // radio measures ~5-10 dB), so crossed antennas lose ~20 / ~7 dB, not
+  // everything
+  const PL_XPD = {los: 20, nlos: 8};
+  function plPolLoss(los) {
+    const s = plState, cT = s.polT === 'c', cR = s.polR === 'c';
+    const co = cT && cR ? 1 : cT || cR ? 0.5 : Math.cos((plPolAng(s.polT, s.angT) - plPolAng(s.polR, s.angR)) * Math.PI / 180) ** 2;
+    const x = 10 ** (-(los ? PL_XPD.los : PL_XPD.nlos) / 10);
+    return Math.max(0, -10 * Math.log10((co * (1 - x) + (1 - co) * x) / (1 - x)));
+  }
   // location variability: P.1546-6 (12): sigma_L = K + 1.3 log10(f MHz), K =
   // 0.5 rural / open (and a receiver in the air), 1.0 an antenna up near the
   // clutter, 1.2 one down in it - the receiver's (rxH m above ground)
@@ -15281,7 +15299,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // (the worker's "Tx" end is always the site)
   function plSigMsg(it) {
     const s = plState, se = it.role === 'rx' ? s.envRx : s.envTx, te = it.role === 'rx' ? s.envTx : s.envRx;
-    const m = {f: s.f, tgt: vsTgt(), amsl: vsState.amsl, pol: s.pol, N0: s.N0, envTx: se, envRx: te, hmTx: PL_ENV_HM[se], hmRx: PL_ENV_HM[te], model: s.model};
+    const m = {f: s.f, tgt: vsTgt(), amsl: vsState.amsl, pol: plWavePol(), N0: s.N0, envTx: se, envRx: te, hmTx: PL_ENV_HM[se], hmRx: PL_ENV_HM[te], model: s.model};
     if (s.model === 'itm') { const g = plGround(); Object.assign(m, {climate: s.climate, eps: g[1], sigma: g[2]}); }   // (only ITM's: the others' keys stay)
     return m;
   }
@@ -15289,6 +15307,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // G = in sight (255) or not; % covered (>= the wanted reliability) by area
   function plPaintSig(it, res) {
     const sg = plSiteSigma(it), lin = plRelLut(sg, true), lout = plRelLut(sg, false), base = plPrx(0) - plSens();
+    const pIn = plPolLoss(true), pOut = plPolLoss(false);   // (the antennas' polarization mismatch)
     const amsl = vsState.amsl, tgt = vsTgt(), tq = vsEnc(tgt), want = plState.rel / 100;
     let vis = 0, tot = 0;
     for (const l of res.levels) {
@@ -15301,7 +15320,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         if (q === VS_NODATA || loss[i] >= 65534) { px[i] = 0; continue; }   // (no data / outside the model's range / the target under the ground)
         lt++;
         const ins = amsl ? gr[i] + (q < 30000 ? q / 10 : 3000 + (q - 30000) * 10) <= tgt : q <= tq;
-        const rel = plRelAt(ins ? lin : lout, base - loss[i] / 10);
+        const rel = ins ? plRelAt(lin, base - pIn - loss[i] / 10) : plRelAt(lout, base - pOut - loss[i] / 10);
         if (rel >= want) lv++;
         px[i] = (0xff000000 | (ins ? 0xff00 : 0) | (1 + Math.round(rel * 254))) >>> 0;   // (ABGR, little endian)
       }
@@ -15399,9 +15418,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function plHoverSig(it, ls, ins) {
     if (ls === 65535) return 'the target would be under the ground · ';
     if (ls === 65534) return 'outside the model\'s range (Longley-Rice: antennas 0.5-3000 m above the ground) · ';
-    const prx = plPrx(ls / 10), sg = plSiteSigma(it), rel = plRelAt(plRelLut(sg, ins), prx - plSens()), col = plRelCol(rel) || '#ff8a80';
+    const pl = plPolLoss(ins), prx = plPrx(ls / 10) - pl, sg = plSiteSigma(it), rel = plRelAt(plRelLut(sg, ins), prx - plSens()), col = plRelCol(rel) || '#ff8a80';
     return `<span class="pl-tag" style="background:${PL_COL[it.role]}">${PL_NAME[it.role]}</span> <b style="color:${col}">${plF(rel * 100, rel > 0.99 ? 1 : 0)} %</b> · ` +
-           `${plF(prx)} dBm · loss ${plF(ls / 10)} dB · `;
+           `${plF(prx)} dBm · loss ${plF(ls / 10)} dB${pl >= 0.05 ? ` + polarization ${plF(pl)} dB` : ''} · `;
   }
 
   // ---- the link worker (the viewshed worker's code, its own instance: a link
@@ -15419,7 +15438,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function plLinkMsg() {
     const e = plEnds(), g = plGround(), s = plState;
     return {a: {lat: e.tx.lat, lon: e.tx.lon, h: e.tx.h, amsl: e.tx.amsl}, b: {lat: e.rx.lat, lon: e.rx.lon, h: e.rx.h, amsl: e.rx.amsl}, f: s.f,
-            k: vsState.k, pol: s.pol, N0: s.N0, climate: s.climate, eps: g[1], sigma: g[2], envA: s.envTx, envB: s.envRx,
+            k: vsState.k, pol: plWavePol(), N0: s.N0, climate: s.climate, eps: g[1], sigma: g[2], envA: s.envTx, envB: s.envRx,
             hmA: PL_ENV_HM[s.envTx], hmB: PL_ENV_HM[s.envRx], rel: s.rel};
   }
   function plKey() { return plLinkOn() ? JSON.stringify(plLinkMsg()) : ''; }
@@ -15544,17 +15563,17 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
 
   // ---- the link's result -> the numbers ----
-  // {L (the chosen model's loss incl. clutter), Lm, clut, Prx, snr, margin, los, need, rel, sigma, kind, K}
+  // {L (the chosen model's loss incl. clutter), Lm, clut, pol (the polarization mismatch), Prx, snr, margin, los, need, rel, sigma, kind, K}
   function plBudget(r) {
     if (!r) return null;
     const mdl = plState.model;
-    const Lm = mdl === 'itm' ? (r.itm.err ? null : r.itm.A) : mdl === 'fs' ? r.fs : mdl === 'hata' ? r.hata.L : r.p1812.Lb;
+    const Lm = mdl === 'itm' ? (r.itm.err ? null : r.itm.A) : mdl === 'fs' ? r.fs : r.p1812.Lb;
     if (Lm === null) return {err: 'ITM: ' + plItmErr(r.itm.err)};
-    const clut = mdl === 'hata' ? 0 : r.clut.a + r.clut.b;   // (Hata's environments are its own clutter)
-    const L = Lm + clut, Prx = plPrx(L), los = mdl === 'fs' ? true : r.p1812.los;
+    const clut = r.clut.a + r.clut.b, los = mdl === 'fs' ? true : r.p1812.los, pol = plPolLoss(los);
+    const L = Lm + clut, Prx = plPrx(L) - pol;
     const e = plEnds(), sigma = e ? (e.rx.site ? plSigmaL(e.rx.h, false) : plSigmaL(vsTgt(), vsState.amsl)) : plSigmaL(2, false), [kind, K] = plFading(los);
     const margin = Prx - plSens(), need = plNeed(plState.rel, sigma, kind, K);
-    return {L, Lm, clut, Prx, snr: Prx - plNoise(), margin, los, need, sigma, kind, K, rel: 100 * (1 - plOutage(margin, sigma, kind, K))};
+    return {L, Lm, clut, pol, Prx, snr: Prx - plNoise(), margin, los, need, sigma, kind, K, rel: 100 * (1 - plOutage(margin, sigma, kind, K))};
   }
   function plItmErr(e) {
     return {1000: 'TX height out of its range (0.5-3000 m above ground)', 1001: 'RX height out of its range (0.5-3000 m above ground)',
@@ -15567,13 +15586,15 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // ---- the signal mode's settings (in the viewshed panel: #map-vs-sig) ----
   // what each setting redoes: S the coverage (a new viewshed job), L the
   // link; the rest repaints (the reliability from the stored loss)
-  const PL_REDO = {f: 'SL', pol: 'SL', N0: 'SL', envTx: 'SL', envRx: 'SL', model: 'S', climate: 'SL', ground: 'SL', rel: 'L'};   // (S only where plSigMsg changes)
+  // (the TX antenna's polarization: the models' horizontal / vertical, so S + L - a job only where that changed)
+  const PL_REDO = {f: 'SL', polT: 'SL', angT: 'SL', N0: 'SL', envTx: 'SL', envRx: 'SL', model: 'S', climate: 'SL', ground: 'SL', rel: 'L'};   // (S only where plSigMsg changes)
   function plSet(k, v) {
     const n = Number(v), lim = {f: [20, 20000], ptx: [1e-6, 1e7], gt: [-30, 60], gr: [-30, 60], lt: [0, 60], lr: [0, 60], bw: [0.01, 1e5],
-                                nf: [0, 40], snr: [-40, 80], N0: [250, 400], K: [-20, 40], rel: [1, 99.99]}[k];
+                                nf: [0, 40], snr: [-40, 80], N0: [250, 400], K: [-20, 40], rel: [1, 99.99], angT: [0, 180], angR: [0, 180]}[k];
     if (lim) { if (!(Number.isFinite(n) && n >= lim[0] && n <= lim[1])) { plRender(true); return; } plState[k] = n; }
     else if (k === 'sigL') { if (v === '' || v === null) plState.sigL = null; else if (Number.isFinite(n) && n >= 0 && n <= 30) plState.sigL = n; else { plRender(true); return; } }
-    else if (['envTx', 'envRx', 'climate', 'pol'].includes(k)) plState[k] = n;
+    else if (['envTx', 'envRx', 'climate'].includes(k)) plState[k] = n;
+    else if (k === 'polT' || k === 'polR') { if (!PL_POLS.some(p => p[0] === v)) { plRender(true); return; } plState[k] = v; }
     else plState[k] = v;
     plSave();
     const redo = PL_REDO[k] || '';
@@ -15591,8 +15612,13 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     el.innerHTML =
       `<div class="map-vs-row"><label title="Frequency">Freq ${num('f', 70, 'any', 'Frequency (MHz)')} MHz</label>` +
       `<label title="Transmitter power (W)">TX power ${num('ptx', 56, 'any', 'Transmitter power at the antenna connector (W)')} W</label><span class="pl-dbm"></span></div>` +
-      `<div class="map-vs-row"><span class="pl-l">Model</span>${sel('model', Object.entries(PL_MODELS), 'The propagation model for the map and the link\'s budget (the link\'s strip lists all four): P.1812 and Longley-Rice follow the terrain, free space and Hata don\'t. Longley-Rice takes the longest to work out')}` +
-      `${sel('pol', [[1, 'vertical'], [0, 'horizontal']], 'Polarization')}</div>` +
+      `<div class="map-vs-row"><span class="pl-l">Model</span>${sel('model', PL_MODEL_OPTS, 'The propagation model for the map and the link\'s budget (the link\'s strip lists all three): P.1812 and Longley-Rice follow the terrain, free space doesn\'t. Longley-Rice takes several times as long as P.1812 to work out the map')}</div>` +
+      `<div class="map-vs-row pl-pol"><span class="pl-l" title="The antennas' polarization: a mismatch costs signal (two linear antennas: cos² of the angle between them; linear to circular 3 dB), less where the path mixes the polarizations (beyond the line of sight)">Polarization</span>` +
+      `<label title="The transmitting antenna's polarization (also the propagation models' horizontal / vertical; circular counts as vertical)">TX ${sel('polT', PL_POLS, 'TX antenna polarization')}` +
+      `<span class="pl-ang" data-for="polT">${num('angT', 44, '1', 'The TX antenna\'s angle from horizontal (degrees: 0 horizontal, 90 vertical)')}°</span></label>` +
+      `<label title="The receiving antenna's polarization">RX ${sel('polR', PL_POLS, 'RX antenna polarization')}` +
+      `<span class="pl-ang" data-for="polR">${num('angR', 44, '1', 'The RX antenna\'s angle from horizontal (degrees: 0 horizontal, 90 vertical)')}°</span></label>` +
+      `<span class="pl-pm pl-note"></span></div>` +
       `<div class="map-vs-row pl-itm"><span class="pl-l">ITM</span>${sel('climate', PL_CLIMATES.slice(1).map((t, i) => [i + 1, t]), 'Radio climate (Longley-Rice)')}` +
       `${sel('ground', Object.entries(PL_GROUNDS).map(([k, v]) => [k, v[0]]), 'Ground constants (Longley-Rice)')}</div>` +
       `<div class="pl-set-h" onclick="plState.set=!plState.set;plSave();plRender()"><span class="pl-set-f"></span> Antennas, receiver, channel</div>` +
@@ -15638,6 +15664,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     set(el, '.pl-dbm', `= ${plF(plPtxDbm())} dBm`);
     set(el, '.pl-sens', `<span class="pl-note">noise ${plF(plNoise())} dBm → the receiver needs <b>${plF(plSens())} dBm</b> (median, before fading)</span>`);
     el.querySelector('.pl-k').style.display = plState.fade === 'auto' || plState.fade === 'rician' ? '' : 'none';
+    for (const a of el.querySelectorAll('.pl-ang')) { const d = plState[a.dataset.for] === 'a' ? '' : 'none'; if (a.style.display !== d) a.style.display = d; }
+    const pIn = plPolLoss(true), pOut = plPolLoss(false);
+    set(el, '.pl-pm', pIn < 0.05 ? 'matched' : `mismatch <b>${plF(pIn)} dB</b> in sight, ${plF(pOut)} dB beyond`);
     set(el, '.pl-leg', plLegendHtml());
     // the link, one line (the details in the strip)
     const lk = $id('map-vs-link'), e = plEnds();
@@ -15688,17 +15717,17 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const row = (k, label, v, tip) => `<tr class="${mdl === k ? 'sel' : ''}" title="${tip}" onclick="plSet('model','${k}')"><td>${label}</td><td>${v}</td></tr>`;
       h += `<div class="plk-path">${path}</div><table class="plk-m">` +
            row('p1812', 'ITU-R P.1812', `${plF(p.Lb)}<span class="pl-note"> free space ${plF(p.Lbfs)} + diffraction ${plF(p.Ld)}</span>`, 'Delta-Bullington terrain diffraction + troposcatter (median). Click a row: the model for the budget and the map') +
-           row('itm', 'Longley-Rice', it, 'NTIA ITM 1.2.2, point to point, median (50 % time / location / situation)') +
+           row('itm', 'Longley-Rice', it, 'NTIA ITM 1.2.2, point to point, median (50 % time / location / situation). As the map\'s model it is much slower than P.1812') +
            row('fs', 'Free space', plF(r.fs), 'No terrain, no ground: the least possible loss') +
-           row('hata', 'Hata', `${plF(r.hata.L)}<span class="pl-note"> ${r.hata.env}${r.hata.ok ? '' : ' ⚠ outside its range'}</span>`,
-               'Okumura-Hata / COST-231: empirical, no terrain - for comparison. Valid for 150-2000 MHz, 1-20 km, the higher antenna 30-200 m, the lower 1-10 m') +
            `</table>`;
       if (bu && !bu.err) {
-        const c = r.clut, ex = bu.rel / 100;
+        const c = r.clut, ex = bu.rel / 100, s = plState;
         const cl = c.airA && c.airB ? 'none (both in the air)' : c.aero ? (c.airB ? `TX ${plF(c.a)} dB (air-to-ground, ${plF(Math.max(0, r.elevA), 1)}° up)` : `RX ${plF(c.b)} dB (air-to-ground, ${plF(Math.max(0, r.elevB), 1)}° up)`)
                                             : `TX ${plF(c.a)} · RX ${plF(c.b)} dB`;
         h += `<table class="plk-b2">` +
-             `<tr><td>Clutter</td><td>${cl}${plState.model === 'hata' ? ' <span class="pl-note">(not added to Hata)</span>' : ''}</td></tr>` +
+             `<tr><td>Clutter</td><td>${cl}</td></tr>` +
+             `<tr><td>Polarization</td><td>${bu.pol >= 0.05 ? `${plF(bu.pol)} dB` : 'matched'} <span class="pl-note">TX ${plPolName(s.polT, s.angT)} → RX ${plPolName(s.polR, s.angR)}` +
+             `${bu.pol >= 0.05 ? ` (${bu.los ? 'a direct path: little depolarization' : 'no direct path: the path mixes the polarizations'})` : ''}</span></td></tr>` +
              `<tr><td>Received</td><td><b>${plF(bu.Prx)} dBm</b> <span class="pl-note">median · SNR ${plF(bu.snr)} dB · ${plF(Math.sqrt(50 * 10 ** (bu.Prx / 10) / 1000) * 1e6, bu.Prx > -100 ? 2 : 3)} µV</span></td></tr>` +
              `<tr><td>Reliability</td><td><b style="color:${plRelCol(ex) || '#ff8a80'}">${plF(bu.rel, bu.rel > 99 ? 2 : 0)} %</b> <span class="pl-note">margin ${plSgn(bu.margin)} dB over ${plF(plSens())} dBm ` +
              `(σ<sub>L</sub> ${plF(bu.sigma)}, ${bu.kind === 'rician' ? `Rician K ${plF(plState.K, 0)} dB` : bu.kind}); ${plF(bu.need)} dB needed for ${plF(plState.rel, 0)} %</span></td></tr>` +
@@ -15736,7 +15765,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const hov = cv.parentNode.querySelector('.plk-hov');
     if (!r) { if (hov.innerHTML) hov.innerHTML = ''; return; }
     const n = r.n, Dm = r.D, aem = r.ae * 1000, lam = 299.792458 / plState.f;
-    const bulge = x => x * (Dm - x) / (2 * aem), ray = x => r.hts + (r.hrs - r.hts) * x / Dm, f1 = x => Math.sqrt(lam * x * (Dm - x) / Dm);
+    // (f1: >= 0 - Dm * i / n can round a hair past Dm, and one NaN took the whole chart's scale with it)
+    const bulge = x => x * (Dm - x) / (2 * aem), ray = x => r.hts + (r.hrs - r.hts) * x / Dm, f1 = x => Math.sqrt(Math.max(0, lam * x * (Dm - x) / Dm));
     let lo = Infinity, hi = -Infinity;
     for (let i = 0; i <= n; i++) { const x = r.d[i] * 1000, y = r.h[i] + bulge(x); if (y < lo) lo = y; if (y > hi) hi = y; }
     for (let i = 0; i <= 40; i++) { const x = Dm * i / 40, y = ray(x); lo = Math.min(lo, y - f1(x)); hi = Math.max(hi, y + f1(x)); }
