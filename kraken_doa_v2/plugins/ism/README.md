@@ -6,18 +6,12 @@ pressure sensors (TPMS), key fobs and remotes, alarm sensors and energy
 meters, and gives **every device its own DoA**.
 
 Pick "ISM devices (433 MHz etc.)" in a VFO card's Digital decoder list (it
-is not in Auto detect: it needs a wide VFO). Use a **240 kHz** VFO (the
-default bandwidth; the plugin runs at 240 kHz, so this needs no resampling)
-centred on the band, e.g. 433.920 MHz: devices within +-120 kHz of the VFO
-are decoded (the last ~10 kHz at each edge are attenuated by the VFO's
-filter). Cheap transmitters are often 50-100 kHz off their nominal
-frequency - the MHz column shows each device's own.
-
-**The whole 2.4 MHz at once: "ISM devices, full band (2.4 MHz)"**
-(`ism_wide`, below). Picking it puts the VFO on the tuner's centre with
-the full bandwidth - drawn as a single line that can't be moved or resized,
-like ADS-B - and decodes every device in the 2.4 MHz the tuner receives:
-tune the receiver to the band (433.920 MHz covers 432.72-435.12 MHz).
+is not in Auto detect) and tune the receiver to the band, e.g. 433.920 MHz.
+The plugin decodes the **whole 2.4 MHz** the tuner receives (433.920 MHz
+covers 432.72-435.12 MHz): picking it puts the VFO on the tuner's centre
+with the 2.4 MHz bandwidth, drawn as a single line that can't be moved or
+resized (like ADS-B; `.lock_vfo`). Cheap transmitters are often 50-100 kHz
+off their nominal frequency - the MHz column shows each device's own.
 
 ## Supported devices
 
@@ -97,12 +91,13 @@ and wake-up bursts are not devices). Option "Unknown signals" turns this off.
 
 ## How it works
 
-`frontend.cpp` - detection: a 64-point FFT every 32 samples (3.75 kHz bins)
-with a noise floor per bin. A bin is active when it and its neighbours, in
-this frame and the one 64 samples earlier, hold the threshold over their
-floor (6 bins' worth of noise: no false bursts in 20 s of white noise at
-8 dB). Active bins are assigned to **packages by frequency** - up to four at
-once, so two devices transmitting at the same moment on different
+`frontend.cpp` - detection: a 640-point FFT every 320 samples of the 2.4 MHz
+(3.75 kHz bins, a frame every 133 µs) with a noise floor per bin. A bin is
+active when it and its neighbours, in this frame and the one 640 samples
+earlier, hold the threshold over their floor (6 bins' worth of noise: no
+false bursts in 20 s of white noise at 8 dB). Active bins are assigned to
+**packages by frequency** - up to eight at once, so two devices
+transmitting at the same moment on different
 frequencies become two bursts, each demodulated (and its DoA filtered) on its
 own. A package's frequency region grows during its first 50 ms (that is how
 the second tone of a wide FSK transmitter joins it); a strong signal
@@ -110,15 +105,23 @@ elsewhere later starts its own package, unless it is > 20 dB under an active
 one (the splatter of strong OOK keying). A package ends after 30 ms of quiet
 (1.2 s at most - a held key fob is cut into pieces).
 
-Demodulation, from a 2 s ring, in two passes: a wide filter finds the
+A finished package is mixed down by its centre and decimated to 240 kHz
+(Blackman low-pass, 321 taps, flat to ~88 kHz, -74 dB from 128 kHz,
+evaluated at every 10th sample only); its noise level comes from the 64
+bins around it (the RTL's 2.4 MHz isn't flat). From here on everything works
+at 240 kHz - burst positions are 240 kHz samples, so the protocols don't
+know about the 2.4 MHz; `Burst::fc` is the offset in the whole band (the
+device's MHz, its DoA channel).
+
+Demodulation of that piece, in two passes: a wide filter finds the
 carrier or the two FSK tones (2-means of the discriminator), then a filter
 centred on them gives the OOK envelope (sliced at half the signal level,
 hysteresis, >= 3x the noise; glitches < 18 µs, dropouts < 40 µs and spikes
 < 22 µs merged away) and the FSK pulse train (higher tone = pulse): the
 discriminator sliced between the tracked tones, or - for tones >= 50 kHz
 apart, the +-60 kHz deviation of the HopeRF-style 868 / 915 MHz devices -
-the two tones' own filtered levels compared, which a tone near the band
-edge (attenuated by the VFO filter) doesn't upset.
+the two tones' own filtered levels compared, which a tone near the edge of
+the piece (attenuated by its filter) doesn't upset.
 
 `bits.cpp` - the slicers, taking the usual device parameters (short / long
 width, gap limit, reset limit, sync, tolerance) with rtl_433's semantics:
@@ -135,56 +138,38 @@ EV1527, Nexus, Prologue...) only when nothing stronger decoded it.
 `generic.cpp`: the unknown-signal analysis. `decoder.cpp`: devices, table,
 events, raw frames, talker packets.
 
-CPU (Pi 5): ~1.3 % of a core while the band is quiet (the detector), ~7 %
-with bursts back to back. Built with `-O3` (`CXXFLAGS` in this folder): the
-detector's per-bin loops vectorise; the output is the same as -O2's.
+For each device's DoA kraken_doa filters the device's channel out of the
+2.4 MHz of every antenna (it keeps the stream as 16-bit samples for that:
+48 MB with 5 antennas) - with the whole band, devices transmitting at the
+same time got each other's bearings.
 
-## The whole 2.4 MHz: `ism_wide`
-
-`plugins/ism_wide/` is this decoder on a 2.4 MHz input: its `USES` file
-compiles every source here except `decoder.cpp` into it, and its own
-`decoder.cpp` declares the plugin (`.sample_rate` 2.4 MHz, `.lock_vfo` -
-the VFO stays on the tuner's centre, see `plugins/SDK.md`). The decoder
-class is `ism_decoder.hpp` (`IsmDecoder(host, decim)`); only the front end
-differs - `FrontEnd(10)`:
-
-- detection: a 640-point FFT every 320 samples - the same 3.75 kHz bins and
-  133 µs hop as at 240 kHz, so the detector behaves the same - up to 8
-  packages (devices) at once;
-- a finished package is mixed down by its centre and decimated to 240 kHz
-  (Blackman low-pass, 321 taps, flat to ~88 kHz, -74 dB from 128 kHz,
-  evaluated at every 10th sample only), then demodulated exactly as above;
-  its noise level comes from the 64 bins around it (the 2.4 MHz isn't flat);
-- burst positions stay in 240 kHz samples, so every protocol is unchanged;
-  `Burst::fc` is the offset in the whole band (the device's MHz, its DoA
-  channel).
-
-kraken_doa filters each device's channel out of the 2.4 MHz for its DoA as
-it does at 240 kHz (it keeps the stream as 16-bit samples for that: 48 MB
-with 5 antennas). Without that, devices transmitting at the same time got
-each other's bearings.
-
-CPU (Pi 5): the detector ~4 % of a core; the plugin 14-17 % in a busy
-synthetic scene (7 devices, bursts ~40 % of the time, the 19 MB/s of
-samples it receives included). Memory: 32 MB (the 1.75 s input ring).
-
-Tests: 7 devices placed across a 2.4 MHz recording (-950 to +900 kHz, six
-of them starting within 150 ms of each other) - every transmission decoded
-at its frequency, as at 240 kHz; end to end through kraken_doa (5-element
-UCA, a bearing per device) every device's bearing exact, every transmission
-in its history.
+CPU (Pi 5): the detector ~4 % of a core; the plugin ~7 % with a few devices
+and 14-17 % in a busy synthetic scene (7 devices, bursts ~40 % of the time;
+the 19 MB/s of samples it receives included). Memory: 32 MB (the 1.75 s
+input ring). Built with `-O3` (`CXXFLAGS` in this folder): the detector's
+per-bin loops vectorise; the output is the same as -O2's. (The plugin first
+ran at 240 kHz - +-120 kHz around a VFO; the whole band does everything that
+did at about the same CPU, and the 240 kHz version was removed.)
 
 ## Test results
 
-On the rtl_433_tests recordings (1125 files; 250 kHz to 1 MHz, resampled to
-240 kHz by the offline host, padded with 0.4 s of noise): **960 of the 1030
-recordings with an expected output decode completely** (every device, id
-and field), with 3 wrong fields - all from an HCS200 whose carrier sits
-beyond +120 kHz and is folded back by the offline 250 -> 240 kHz resampler.
+On the rtl_433_tests recordings (1125 files at 250 kHz to 1 MHz), each
+turned into what a 2.4 MHz receiver would record - resampled, the rest of
+the band filled with noise at the recording's own noise level (plain
+upsampling leaves it empty, and the detector's noise floors then start near
+zero: 853 decoded that way) - and padded with 0.4 s of noise: **954 of the
+1030 recordings with an expected output decode completely** (every device,
+id and field), no wrong fields. The 240 kHz version of the plugin decoded
+960 with 3 wrong fields on the same files at 240 kHz; the difference is 5
+recordings whose carrier sits at the very edge (+-120..125 kHz) of a 250 kHz
+recording (an artefact of the conversion; the 240 kHz decoder only got 3 of
+them, with wrong fields, by folding the edge back), 2 with a signal from the
+first sample (the noise floors start from the whole band's median - only the
+first moments after the decoder starts are affected) and 1 at 14 dB; it
+missed 2 that the full band decodes.
 Not decoded: models that aren't implemented (some LaCrosse, Rubicson pool /
 meat thermometers, Alecto, Owl), ThermoPro TX2 (reported as Prologue - the
-same bits), signals at the very edge (+-120..125 kHz) of 250 kHz recordings,
-and rtl_433's own false positives in a few expected files.
+same bits), and rtl_433's own false positives in a few expected files.
 
 End to end (a fake heimdall streaming a 5-element UCA scene into kraken_doa;
 EV1527 / PT2262 fobs, an EV1527 PIR, Toyota and Schrader TPMS, an Acurite
@@ -196,9 +181,7 @@ transmission in its history right.
 
 ```bash
 make -C plugins PLUGIN=ism
-plugins/ism/build/decoder --file rec.cu8 --rate 250000 --raw [--verbose]
-make -C plugins PLUGIN=ism_wide
-plugins/ism_wide/build/decoder --file rec_2400k.cu8 --rate 2400000 --rf 433920000 --raw
+plugins/ism/build/decoder --file rec_2400k.cu8 --rate 2400000 --rf 433920000 --raw [--verbose]
 ISM_DUMP=1 plugins/ism/build/decoder --file ...    # every burst's pulse trains (µs) to stderr
 ISM_TRACE=1 plugins/ism/build/decoder --file ...   # the detector's active bins per frame
 ISM_ROWS=prologue plugins/ism/build/decoder ...    # a protocol's rows (those that call dbg_rows)

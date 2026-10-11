@@ -6,7 +6,6 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <sstream>
 #include <thread>
 
@@ -133,29 +132,19 @@ void PluginRegistry::scan() {
             pi.exe = pdir + "/build/decoder";
             const bool has_src = access((pdir + "/decoder.cpp").c_str(), R_OK) == 0;
             if (!has_src && !is_exe(pi.exe)) continue;
-            // newest source file - its own, and those of the plugins its USES
-            // file names (their sources are compiled in, except their decoder.cpp)
+            // newest source file
             int64_t src_mtime = 0;
-            auto newest = [&](const std::string& d, bool shared) {
-                DIR* sd = opendir(d.c_str());
-                if (!sd) return;
+            if (DIR* sd = opendir(pdir.c_str())) {
                 while (dirent* f = readdir(sd)) {
                     std::string n = f->d_name;
                     auto ends = [&](const char* x) {
                         size_t l = strlen(x);
                         return n.size() > l && n.compare(n.size() - l, l, x) == 0;
                     };
-                    if (shared && n == "decoder.cpp") continue;
                     if (ends(".cpp") || ends(".hpp") || ends(".h"))
-                        src_mtime = std::max(src_mtime, file_mtime_ms(d + "/" + n));
+                        src_mtime = std::max(src_mtime, file_mtime_ms(pdir + "/" + n));
                 }
                 closedir(sd);
-            };
-            newest(pdir, false);
-            if (std::ifstream uses{pdir + "/USES"}) {
-                std::string u;
-                while (uses >> u)
-                    if (valid_id(u) && u != id) newest(base + "/" + u, true);
             }
             if (!is_exe(pi.exe)) {
                 pi.error = "not built (run make in kraken_doa_v2)";

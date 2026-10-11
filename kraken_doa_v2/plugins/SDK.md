@@ -27,16 +27,12 @@ plugins/
 ├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points
 ├── radiosonde/           weather balloon sondes (RS41, DFM, M10/M20, iMet-4/-54, LMS6, MRZ):
 │                         several protocols side by side, Reed-Solomon, Viterbi, balloon map points
-├── ism/                  ISM band devices (433 MHz etc.): a burst detector + OOK / FSK demodulator,
-│                         slicers and 69 small protocol decoders; a talker packet per device
-├── ism_wide/             the same decoders on the whole 2.4 MHz (USES: ism) - an example of
-│                         shared sources and of .lock_vfo
+├── ism/                  ISM band devices (433 MHz etc.) in the whole 2.4 MHz: a burst detector,
+│                         each burst decimated to 240 kHz, OOK / FSK demodulator, slicers and 69
+│                         small protocol decoders; a talker packet per device; .lock_vfo
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
-    ├── USES              optional: ids of other plugins whose sources are compiled in
-    │                     (all their .cpp files except decoder.cpp; their folder is on
-    │                     the include path) - two plugins sharing one decoder
     ├── CXXFLAGS          optional: extra compiler flags for this plugin (e.g. -O3)
     ├── README.md         what it decodes, sources/specs used, test results
     └── build/decoder     the executable (generated, not part of the plugin)
@@ -124,7 +120,7 @@ selected the VFO is drawn as a single line and can't be dragged; its
 frequency, bandwidth and tuner fields are locked.
 
 **Locked VFO, any frequency.** A decoder of the whole band the tuner
-receives (ism_wide: every ISM device in the 2.4 MHz) sets `.lock_vfo = true`
+receives (ism: every ISM device in the 2.4 MHz) sets `.lock_vfo = true`
 instead: picking it does the same - narrowest bandwidth >= `min_vfo_rate`,
 VFO on its tuner's centre, a single line, fields locked - but leaves the
 tuner where it is; the user tunes the receiver to the band (a 📍 map
@@ -272,7 +268,7 @@ fields: `t.freq_hz` / `t.bw_hz` = the packet's channel inside your band
 (Hz from what you receive at 0 Hz) - kraken_doa then filters that channel
 out of every antenna first, so talkers on neighbouring channels of the
 same VFO don't mix (the ais plugin: -25 / +25 kHz, 16 kHz wide; on a VFO
-wider than 500 kHz only channels <= 250 kHz wide - ism_wide's devices -
+wider than 500 kHz only channels <= 250 kHz wide - the ism plugin's devices -
 are filtered, kraken_doa then keeps the stream as 16-bit samples for 1 s:
 48 MB at 2.4 MHz with 5 antennas; wider ones use the whole band); `t.avg_s`
 = how long to average a talker's packets (default 1.5 s for fast movers
@@ -418,8 +414,9 @@ Hz) / `dig::RrcFrontEnd` give them their input. Your plugin can use any of it
 demodulation, CRC-24 with error repair, CPR position decoding, map points
 and the station location.
 
-`plugins/ism/`: licence-free band devices at 240 kHz - bursts found by a
-short FFT per frequency (several devices at once), demodulated OOK / FSK,
+`plugins/ism/`: licence-free band devices in the whole 2.4 MHz (`.lock_vfo`)
+- bursts found by a short FFT per frequency (several devices at once), each
+mixed down and decimated to 240 kHz, demodulated OOK / FSK,
 sliced (PWM / PPM / PCM / Manchester) and handed to many small protocol
 decoders registered with `ISM_PROTOCOL`; each transmission is a talker packet
 at the device's own frequency (`t.freq_hz` / `t.bw_hz`) - a DoA per device.

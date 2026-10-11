@@ -386,13 +386,12 @@ decoders `kraken_doa_v2/plugins/`
   pairing, pulse data, exact frequency, TACAN bearing, aircraft
   interrogations; a DoA per beacon; manual only), ils (ILS localizer /
   glide slope DDM, VOR radial, marker beacons, 1020 Hz idents; 48 kHz) and
-  ism (licence-free 315 / 345 / 433 / 868 / 915 MHz devices at 240 kHz:
-  weather stations, TPMS, key fobs / remotes, alarm sensors, energy
-  meters - 69 OOK / FSK protocol decoders, unknown repeating codes too; a
-  device table and a DoA per device; manual only) and ism_wide (the same
-  decoders on the whole 2.4 MHz - `kp::Info::lock_vfo`: picking it puts the
-  VFO on its tuner's centre at 2.4 MHz, drawn as a locked line, the tuner
-  left where the user put it; sources shared through `plugins/ism_wide/USES`).
+  ism (licence-free 315 / 345 / 433 / 868 / 915 MHz devices anywhere in
+  the 2.4 MHz the tuner receives: weather stations, TPMS, key fobs /
+  remotes, alarm sensors, energy meters - 69 OOK / FSK protocol decoders,
+  unknown repeating codes too; a device table and a DoA per device; manual
+  only; `kp::Info::lock_vfo`: picking it puts the VFO on its tuner's centre
+  at 2.4 MHz, drawn as a locked line, the tuner left where the user put it).
   Plugins learn the VFO's RF from `kp::Host::rf_hz()` (wire RF, 7). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
@@ -457,9 +456,8 @@ decoders `kraken_doa_v2/plugins/`
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, ism_wide. A plugin
-  folder may also hold `USES` (other plugins' sources compiled in) and
-  `CXXFLAGS` (extra compiler flags)
+  Signal Lab), adsb, ais, radiosonde, dme, ils, ism. A plugin folder may
+  also hold `CXXFLAGS` (extra compiler flags)
 - Same executable tests offline: `decoder --file x.cf32 [--offset HZ] [--rf HZ]`
 - The shipped protocol plugins are thin wrappers around `plugins/lib/`
   (libkrakendig.a: FEC, 4FSK sync, vocoders, front ends) - kraken_doa itself
@@ -582,10 +580,10 @@ panel); ism: every decoded transmission of a device (model + id; the
 latest <= 0.24 s of its rows) as a packet at the burst's own carrier /
 FSK centre and occupied bandwidth, averaged per the plugin's "DoA per
 device" option (each transmission alone by default - one bearing per
-transmission in its history; a 📟 device in the DF panel, newest first);
-ism_wide the same in a 2.4 MHz VFO - kraken_doa then keeps the stream as
-16-bit samples (1 s, 48 MB with 5 antennas) so each device's channel is
-still filtered out (the whole band mixed overlapping devices' bearings).
+transmission in its history; a 📟 device in the DF panel, newest first) -
+its VFO is 2.4 MHz wide, so kraken_doa keeps the stream as 16-bit samples
+(1 s, 48 MB with 5 antennas) to filter each device's channel out (the whole
+band mixed overlapping devices' bearings).
 TETRA isn't split
 (downlink = the base station only). The
 VFO's decimated-stream position (`MultiChannelDecimated::stream_pos`) is the

@@ -2,7 +2,8 @@
 
 // Front end: finds bursts in the band and demodulates each one.
 //
-// Input: FS (240 kHz, the ism plugin) or D x FS (ism_wide: 2.4 MHz, D = 10).
+// Input: D x FS - the plugin: 2.4 MHz, D = 10 (with D = 1 a 240 kHz input is
+// demodulated straight from the ring, without the segment below).
 // Detection: an FFT of 64 D points (3.75 kHz bins either way, Hann) every
 // 32 D samples; per bin a noise floor (mean of the bin's power while it holds
 // no signal). A bin is active when it and its two neighbours, in this frame

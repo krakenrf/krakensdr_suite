@@ -8698,7 +8698,7 @@ function addTouchHandlers(el, down, move, up) {
   // 1090 MHz): picking it tunes the VFO there (digApplyFixedTune); the VFO is
   // then "locked" - drawn as a single line at its centre, not draggable, its
   // frequency / bandwidth / tuner fields disabled. kp::Info::lock_vfo
-  // (ism_wide, the whole 2.4 MHz): the same lock on the tuner's centre, the
+  // (ism, the whole 2.4 MHz): the same lock on the tuner's centre, the
   // tuner left where it is
   function digFixedPlugin(mode) {
     const p = digPlugin(digModePlugin(mode));
@@ -8995,7 +8995,7 @@ function addTouchHandlers(el, down, move, up) {
       }
       const open = $id('dec-dig-open-' + d.id);
       if (open) open.style.display = on ? '' : 'none';
-      // a fixed-frequency decoder (ADS-B) / one of the whole band (ism_wide)
+      // a fixed-frequency decoder (ADS-B) / one of the whole band (ism)
       // holds the VFO's tuning
       const lock = vfoLocked(d), lp = lock ? digFixedPlugin(d.digital_mode) : null;
       const why = !lock ? '' : lp.fixed_freq_hz > 0 ? digModeLabel(d.digital_mode) + ' sets this VFO\'s frequency and bandwidth'
@@ -11752,7 +11752,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // what a talker is: from the decoder that names it (packet talkers)
   function rdfKind(t) {
     return !t.pk ? 'radio' : t.pl === 'ais' ? 'ship' : t.pl === 'adsb' ? 'aircraft' : t.pl === 'dme' ? 'beacon' :
-      t.pl === 'ism' || t.pl === 'ism_wide' ? 'device' : 'talker';
+      t.pl === 'ism' ? 'device' : 'talker';
   }
   // the talker's map point (its decoder's "Plot on map"), or null
   function rdfMapPt(t) {
@@ -12131,7 +12131,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const mhz = hz / 1e6;
     const d = decimatorInfo.find(z => z.id === activeDecimatorId);
     if (!d) { mapStatusFlash('No VFO to tune - add one in the sidebar'); return; }
-    // locked on its tuner's centre (lock_vfo, ism_wide): the tuner moves
+    // locked on its tuner's centre (lock_vfo, ism): the tuner moves
     const centreOnly = vfoLocked(d);
     if (centreOnly && digFixedPlugin(d.digital_mode).fixed_freq_hz > 0) {
       mapStatusFlash(`D${d.id} is locked to its decoder's frequency - select another VFO`);

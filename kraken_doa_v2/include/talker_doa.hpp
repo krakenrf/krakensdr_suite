@@ -41,7 +41,7 @@
 // channel at the same moment doesn't leak in. Above it (ADS-B at 2.4 MHz) it
 // keeps the covariance of each CHUNK-sample piece instead (the whole band): a
 // packet's = the sum over the chunks entirely inside it - unless a packet
-// named a channel <= WIDE_CHAN_MAX_BW (ISM devices in 2.4 MHz, ism_wide):
+// named a channel <= WIDE_CHAN_MAX_BW (the ism plugin's devices in 2.4 MHz):
 // then the samples are kept as 16-bit for WIDE_RING_S and each packet's
 // channel is filtered out of every antenna like below RAW_MAX_RATE, the
 // filter evaluated at <= WIDE_MAX_OUT points spread over the packet (a 0.24 s

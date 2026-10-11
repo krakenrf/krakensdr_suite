@@ -140,7 +140,7 @@ struct Info {
     // true: like fixed_freq_hz, but the tuner stays where the user put it -
     // picking the plugin puts the VFO on its tuner's centre (offset 0) with
     // the narrowest bandwidth >= min_vfo_rate, drawn as a single line that
-    // can't be dragged or resized (a decoder of the whole band: ism_wide)
+    // can't be dragged or resized (a decoder of the whole band: ism)
     bool lock_vfo = false;
 };
 
