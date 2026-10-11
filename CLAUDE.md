@@ -384,8 +384,12 @@ decoders `kraken_doa_v2/plugins/`
   (DME / TACAN beacons, 962-1213 MHz: every 1 MHz channel inside the VFO -
   a 2.4 MHz VFO covers up to three - with its Morse ident, VOR / ILS
   pairing, pulse data, exact frequency, TACAN bearing, aircraft
-  interrogations; a DoA per beacon; manual only) and ils (ILS localizer /
-  glide slope DDM, VOR radial, marker beacons, 1020 Hz idents; 48 kHz).
+  interrogations; a DoA per beacon; manual only), ils (ILS localizer /
+  glide slope DDM, VOR radial, marker beacons, 1020 Hz idents; 48 kHz) and
+  ism (licence-free 315 / 345 / 433 / 868 / 915 MHz devices at 240 kHz:
+  weather stations, TPMS, key fobs / remotes, alarm sensors, energy
+  meters - 69 OOK / FSK protocol decoders, unknown repeating codes too; a
+  device table and a DoA per device; manual only).
   Plugins learn the VFO's RF from `kp::Host::rf_hz()` (wire RF, 7). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
@@ -450,7 +454,7 @@ decoders `kraken_doa_v2/plugins/`
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab), adsb, ais, radiosonde, dme, ils
+  Signal Lab), adsb, ais, radiosonde, dme, ils, ism
 - Same executable tests offline: `decoder --file x.cf32 [--offset HZ] [--rf HZ]`
 - The shipped protocol plugins are thin wrappers around `plugins/lib/`
   (libkrakendig.a: FEC, 4FSK sync, vocoders, front ends) - kraken_doa itself
@@ -552,7 +556,7 @@ frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*): a decoder plugin that knows who
 transmits reports it (`kp::Host::talker` / `talker_end`, `Info::talkers`,
 with the frames' exact sample times; `kp::Talker::channel` for concurrent
@@ -569,7 +573,12 @@ packet on its channel (`kp::Talker::freq_hz` / `bw_hz`, averaged over
 packet's channel is filtered out of every antenna, so a ship on the other
 AIS channel at the same moment doesn't leak in; dme: clean reply pulse
 pairs of each beacon (up to 100/s, 10 s average; a 📡 beacon in the DF
-panel). TETRA isn't split
+panel); ism: every decoded transmission of a device (model + id; the
+latest <= 0.24 s of its rows) as a packet at the burst's own carrier /
+FSK centre and occupied bandwidth, averaged per the plugin's "DoA per
+device" option (each transmission alone by default - one bearing per
+transmission in its history; a 📟 device in the DF panel, newest first).
+TETRA isn't split
 (downlink = the base station only). The
 VFO's decimated-stream position (`MultiChannelDecimated::stream_pos`) is the
 common clock: MUSIC frames (`MUSICProcessor::setFrameTap`: each frame's own

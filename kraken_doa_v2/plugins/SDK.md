@@ -27,6 +27,8 @@ plugins/
 ├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points
 ├── radiosonde/           weather balloon sondes (RS41, DFM, M10/M20, iMet-4/-54, LMS6, MRZ):
 │                         several protocols side by side, Reed-Solomon, Viterbi, balloon map points
+├── ism/                  ISM band devices (433 MHz etc.): a burst detector + OOK / FSK demodulator,
+│                         slicers and 69 small protocol decoders; a talker packet per device
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
@@ -398,6 +400,12 @@ Hz) / `dig::RrcFrontEnd` give them their input. Your plugin can use any of it
 `plugins/adsb/`: ADS-B / Mode S on 1090 MHz at 2.4 MHz - pulse-position
 demodulation, CRC-24 with error repair, CPR position decoding, map points
 and the station location.
+
+`plugins/ism/`: licence-free band devices at 240 kHz - bursts found by a
+short FFT per frequency (several devices at once), demodulated OOK / FSK,
+sliced (PWM / PPM / PCM / Manchester) and handed to many small protocol
+decoders registered with `ISM_PROTOCOL`; each transmission is a talker packet
+at the device's own frequency (`t.freq_hz` / `t.bw_hz`) - a DoA per device.
 
 `plugins/dme/`: DME / TACAN beacons at 2.4 MHz - `host.rf_hz()` to find the
 1 MHz channels inside the VFO, an FFT channelizer, pulse / pair detection,

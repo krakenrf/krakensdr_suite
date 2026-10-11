@@ -369,7 +369,7 @@ Edit `include/config.hpp`:
   kraken_doa contains no protocol code. Shipped: p25, dmr, tetra, dstar,
   nxdn, mpt1327, pocsag, aprs, adsb (see *ADS-B* below), ais (see *AIS*),
   radiosonde (see *Radiosonde*), dme and ils (see *DME / TACAN* and *ILS /
-  VOR / marker*)
+  VOR / marker*), ism (see *ISM devices*)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
   tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by
   default. WS `PLUGIN_AUTO:id:0|1` -> `PluginRegistry::set_auto()` (bumps the
@@ -1167,7 +1167,7 @@ Edit `include/config.hpp`:
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism}`, 🗺 Map 📡 DF panel):**
 - Goal: a VFO on a P25 / DMR / NXDN / D-STAR channel carries many radios; the VFO's DoA
   mixes them. The decoder names who transmits when, the VFO's signal is cut
   at those boundaries and each radio's own samples go through MUSIC - one
@@ -1347,10 +1347,11 @@ Edit `include/config.hpp`:
   covariance over exactly the packet; overlapping packets are only dropped
   when on the same channel. Above 500 kHz (ADS-B) the chunk ring as before
   (freq ignored). PACKET_IDLE_MS 5 min; MAX_PACKET_S 0.25 (5 AIS slots).
-  Status `pl` = the talker's plugin (UI: ✈ / ⛴ / 📡 beacon for `dme` -
-  `rdfKind`; "Every aircraft / ship / beacon", "Position check"; beacons
-  have no reported position: no Dist / Δ pos columns, no Plot-on-map hint,
-  counted in pulse pairs)
+  Status `pl` = the talker's plugin (UI: ✈ / ⛴ / 📡 beacon for `dme` / 📟
+  device for `ism` - `rdfKind`; "Every aircraft / ship / beacon / device",
+  "Position check"; beacons and devices have no reported position: no Dist
+  / Δ pos columns, no Plot-on-map hint; beacons counted in pulse pairs,
+  devices in transmissions and listed newest first)
 - Not split: TETRA (the plugin decodes the downlink - every bearing is the
   base station's), MPT1327 (analogue voice). On a repeater OUTPUT every ID's
   bearing is the repeater's. A DMR repeater INPUT with both slots busy
@@ -1751,6 +1752,86 @@ Edit `include/config.hpp`:
   bearing; true with the `magvar` option), marker, audio (LOC / VOR only).
   `valid(t0, t0 + 1)` per recognised block
 - Tests (scratchpad dme/gen_nav.py, t_vor.py): see the README
+
+**ISM devices (`plugins/ism/`, 315 / 345 / 433 / 868 / 915 MHz; README.md there):**
+- 240 kHz input (`sample_rate` = the VFO's "240 kHz" = 2.4 MHz / 10, no
+  resampling; `min_vfo_rate` 200 kHz), manual only, talkers. Weather
+  stations, TPMS, key fobs / remotes, alarm sensors, energy meters: 69
+  protocol decoders (~140 model names, rtl_433's naming and JSON keys).
+  Protocol notes from rtl_433's documentation (GPL-2.0, documentation +
+  rtl_433_tests recordings as test data only); own implementation
+- `frontend.cpp`: 64-point FFT every 32 samples (3.75 kHz bins), noise floor
+  per bin (gated mean, a constant carrier absorbed in ~10 s); a bin is active
+  when it + its neighbours in this frame and the one 64 samples back hold the
+  threshold (option `sens`, 10 dB; 0 false bursts in 20 s of noise at 8 dB).
+  Active runs of bins go to PACKAGES by frequency (`MAX_PKGS` 4 at once):
+  within `MARGIN_BINS` 6 of a package's region = that package; a package's
+  region grows during its first `LEARN_S` 50 ms (strong segments only - the
+  second tone of a wide FSK burst; CurrentCost sends 33 ms of one tone
+  first); later a strong segment elsewhere (>= -20 dB of the strongest
+  active one: not splatter) starts its own package = another device
+  transmitting at the same time on another frequency (demodulated and its
+  DoA filtered on its own - two overlapping fobs got each other's bearing
+  before). Packages ending within 2 ms are merged (one transmitter's
+  tones). A package ends after `GAP_END_S` 30 ms of quiet or `MAX_LEN_S`
+  1.2 s (a Prologue sends 7 copies in 0.95 s; a held fob is cut)
+- Demodulation from a 2 s ring, two passes: a wide filter finds the carrier
+  or the two FSK tones (2-means of the discriminator; the middle must lie in
+  the occupied band - near the band edge a noisy discriminator suggested
+  -140 kHz), then a filter centred on them: OOK = envelope > half the
+  signal level (hysteresis, >= 3x the noise), runs < 18 us merged, dropouts
+  < 40 us next to a 2x longer pulse and spikes < 22 us merged; FSK (higher
+  tone = pulse) = the discriminator sliced between tracked tones, or for
+  tones >= 50 kHz apart (HopeRF-style +-60 kHz: Bresser, IT+, WH24...) the
+  two tones' own filtered levels compared - a tone near the band edge,
+  attenuated by the VFO filter, broke the discriminator; a carrier dip < 20
+  us keeps the tone (Renault)
+- `bits.cpp`: slicers with rtl_433's r_device parameters and semantics
+  (PWM, PPM - also its empty rows -, PCM NRZ / RZ with its preamble-based bit
+  width and the gap_limit / long cap on trailing zeros, Manchester zero-bit
+  - its prepended 0 -, DMC, PIWM); rows carry their sample span (the DoA) and
+  their message (`Rows::split()`: rows between gaps > reset_limit = one
+  rtl_433 decoder call - one burst can hold several). CRC-8 / -8le / -16 /
+  -16lsb, LFSR digests, sums, parity
+- Protocols `p_*.cpp`, `ISM_PROTOCOL(name, strength, fn)`: STRONG (CRC /
+  digest >= 8 bits) and MEDIUM (checksum / parity + structure) run on every
+  burst, WEAK (repeat-only: EV1527 / PT2262, Nexus, Prologue, TX141-Bv2...)
+  only when nothing stronger decoded it. One message per device (model + id)
+  and burst. `generic.cpp`: a burst nothing decoded, sliced by its own timing
+  (PWM / PPM / NRZ) - a row >= 12 bits sent twice = an "Unknown" device with
+  the code as its id (valid frame); else a clean long row = a signal class
+  (modulation, coding, bit rate, frequency), shown only when heard again
+  within 10 min (one-off fragments / collisions / wake-ups are not devices)
+- `decoder.cpp`: device table (Model, ID, Type, Ch, Reading, Battery, MHz,
+  SNR, Msgs; key = the talker id), events (new device, button / state /
+  alarm, low battery, verbose: every message), raw = the message as one JSON
+  line (rtl_433 keys + `mic`) + MHz + SNR, `valid(start, end)`. DoA: one
+  `kp::Talker::packet` per message, id "model id" (<= 32), span = the latest
+  0.24 s of its rows (the whole burst when one device decoded from it -
+  kraken_doa takes <= 0.25 s and keeps 1.5 s), `freq_hz` = the burst's
+  carrier / FSK centre, `bw_hz` = occupied + 10 kHz (25-160 kHz), `avg_s` =
+  option `doa_avg` (1 = each transmission alone, 60, 600). Options `units`
+  (si / us), `unknown`. Devices forgotten after 1 h
+- UI: `rdfKind` 'device' for `pl` 'ism' (📟, "Device / Reading / Tx", no
+  position columns, newest first in the DF list)
+- Tests: rtl_433_tests (1125 recordings, rate / RF from the file name,
+  padded with 0.4 s of noise - a burst ends after 30 ms of quiet): 960 of the
+  1030 with expected output decode fully; 3 wrong fields, all an HCS200
+  alias of a carrier beyond +120 kHz folded in by the offline 250 -> 240
+  kHz resampler; the misses are models not done (other LaCrosse, Rubicson pool
+  / meat, ThermoPro TX2 = Prologue bit for bit, TX31UIT), rtl_433's own false
+  positives (GS558 on EV1527 fobs) and carriers at +-120..125 kHz of 250 kHz
+  recordings. Scratchpad: scripts/run_tests.py, one.py (`ISM_DUMP=1`: every
+  burst's pulse trains; `ISM_TRACE=1`: the detector; `ISM_ROWS=<name>`: a
+  protocol's rows). CPU (Pi 5): 1.3 % of a core idle, ~7 % with bursts back
+  to back
+- End to end (scratchpad e2e/: fake_heimdall_ism.py streams a 5-element UCA
+  scene, 433.92 MHz, r 290 mm, into a test kraken_doa on ports 39080 /
+  39091; t_ism.py): synthetic EV1527 / PT2262 fobs + real recordings (EV1527
+  PIR, Toyota TPMS, Acurite tower, Schrader TPMS, a 71-bit PPM unknown) at
+  5 bearings / frequencies, some transmissions overlapping in time: every
+  device 0.0 deg off, every transmission in its history right; the unknown
+  device too
 
 **AIS (`plugins/ais/`, ships):**
 - Input 100 kHz (`sample_rate` = `min_vfo_rate` = 100 kHz = the VFO's "100
