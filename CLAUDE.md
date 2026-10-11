@@ -518,15 +518,19 @@ decoders `kraken_doa_v2/plugins/`
   a Pi 5), up to 6 at once in their own colours, per browser
   (localStorage). UI-only (kraken_doa.html "👁
   VIEWSHED")
-- 📶 Path loss ("Path loss" button - the viewshed OR path loss, the buttons
-  switch each other off; right-click "📶 TX here" / "📶 RX here", markers,
-  masts): how much signal gets from a TX to an RX over the terrain, also
-  WITHOUT line of sight; either end can be in the air (height above sea
-  level). COVERAGE around the TX (radius, RX height): P.1812 to every cell
-  on viewshed-style rays (`plSweep` on the viewshed worker, idle in this
-  mode: the whole profile per ray via convex hulls, O(log n) per cell,
-  EXACTLY P.1812 on the sampled profile), painted as the margin over the
-  need. LINK TX -> RX: the great-circle terrain profile through ITU-R
+- 📶 Path loss = the viewshed's "📶 Signal" mode (its panel switches 👁 Line
+  of sight | 📶 Signal - one feature, no separate button): how often (%)
+  the signal between each viewshed site and a radio at the target height
+  is good enough, also WITHOUT line of sight - coloured by that
+  reliability, every shown site at once (the best per place), the edge of
+  the line of sight a faint white line; line of sight mode is the plain
+  viewshed (both show the identical line of sight). Each site is a TX or an
+  RX (the station RX by default): which end's clutter / variability is
+  which. The target can be in the air (above sea level). Per site: P.1812
+  to every cell on the viewshed's rays (`plSweep`: the whole profile per
+  ray via convex hulls, O(log n) per cell, EXACTLY P.1812 on the sampled
+  profile). LINK (right-click "📶 Link", markers, masts): a site <-> a
+  place, the great-circle terrain profile through ITU-R
   P.1812-6 (delta-Bullington diffraction + troposcatter, median, no
   ducting), NTIA's ITM / Longley-Rice (a JS port of the public-domain C++),
   free space and Okumura-Hata, drawn as a profile + link budget in a strip
