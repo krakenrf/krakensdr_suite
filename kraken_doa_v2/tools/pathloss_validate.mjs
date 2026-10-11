@@ -9,9 +9,12 @@
 //   (github.com/eeveetza/Py1812, tests/: Bullington, spherical Earth,
 //   smooth-Earth heights, horizons, troposcatter, Lb)
 // 3 ITU-R P.2108 3.3 vs its validation table (github.com/eeveetza/Py2108)
-// 4 the coverage sweep vs the exact P.1812 on the same ray profiles, on
-//   synthetic terrain (generated terrarium tiles - no network): beyond and
-//   in line of sight, sea + land, above ground / above sea level targets
+// 4 the coverage sweep vs the exact model on the same ray profiles, on
+//   synthetic terrain (generated terrarium tiles - no network): P.1812
+//   beyond and in line of sight, sea + land, above ground / above sea level
+//   targets; Longley-Rice (its distance-based steps = NTIA's ITM on evenly
+//   spaced profiles, the sweep = them, vs NTIA's ITM resampled); free
+//   space; Hata
 // 5 a link vs the coverage at the same cells; sanity checks (flat sea =
 //   plane-Earth loss, free space <= P.1812, clutter)
 // 6 (--net) 4 on real terrain (AWS Terrain Tiles) at Auckland
@@ -145,18 +148,98 @@ if (!noRefs) {
   }
 }
 
-// ---- 4 + 6: the coverage sweep vs the exact P.1812 on its own profiles ----
-// (txAmsl: the transmitter's h is above sea level - in the air)
+// ---- the coverage's Longley-Rice, straight from its definition: NTIA's ITM
+// 1.2.2 point to point on the points P ([[s m, z m], ...], TX at s = 0 ..
+// RX) whatever their spacing - its steps in profile indices taken in
+// distance (the mean height of the middle 80 % of the points, the horizons,
+// delta h resampled by distance, trapezoid-weighted fits); LongleyRice /
+// Variability are the worker's (checked in 1). Plain loops, no prefix sums,
+// envelopes or hulls (the sweep's way of getting the same numbers)
+function itmRay(P, h0, h1, o) {
+  const np = P.length - 1, s = P.map(p => p[0]), z = P.map(p => p[1]), d = s[np];
+  const p10 = Math.trunc(0.1 * np);
+  let hs = 0;
+  for (let i = p10; i <= np - p10; i++) hs += z[i];
+  hs /= np - 2 * p10 + 1;
+  const Ns = hs === 0 ? o.N0 : o.N0 * Math.exp(-hs / 9460), ge = 157e-9 * (1 - 0.04665 * Math.exp(Ns / 179.3)), ae = 1 / ge;
+  const zt = z[0] + h0, zr = z[np] + h1, th = [(zr - zt) / d - d / (2 * ae), -(zr - zt) / d - d / (2 * ae)], dhz = [d, d];
+  for (let i = 1; i < np; i++) {
+    const a = (z[i] - zt) / s[i] - s[i] / (2 * ae), b = -(zr - z[i]) / (d - s[i]) - (d - s[i]) / (2 * ae);
+    if (a > th[0]) { th[0] = a; dhz[0] = s[i]; }
+    if (b > th[1]) { th[1] = b; dhz[1] = d - s[i]; }
+  }
+  const last = x => { let k = 0; while (k < np && s[k + 1] <= x) k++; return k; };   // the last point at or before x
+  const seg = x => Math.min(last(x), np - 1);
+  const fidx = x => { const k = seg(x); return k + (x - s[k]) / (s[k + 1] - s[k]); };
+  const zAt = x => { const k = seg(x); return z[k] + (z[k + 1] - z[k]) * (x - s[k]) / (s[k + 1] - s[k]); };
+  const deltaH = (d0, d1) => {
+    const xs = fidx(d0), xe = fidx(d1);
+    if (xe - xs < 2) return 0;
+    const q10 = Math.min(Math.max(4, Math.trunc(0.1 * (xe - xs + 8))), 25), n = 10 * q10 - 5, nps = n - 1, v = [];
+    for (let j = 0; j < n; j++) v.push(zAt(d0 + j * (d1 - d0) / nps));
+    let W = 0, mx = 0, mz = 0, xx = 0, xz = 0;   // least squares over j, trapezoid weights
+    v.forEach((y, j) => { const w = j === 0 || j === nps ? 0.5 : 1; W += w; mx += w * j; mz += w * y; xx += w * j * j; xz += w * j * y; });
+    mx /= W; mz /= W;
+    const b = (xz / W - mx * mz) / (xx / W - mx * mx), r = v.map((y, j) => y - (mz + b * (j - mx))).sort((p, q) => p - q);
+    return (r[n - q10] - r[q10 - 1]) / (1 - 0.8 * Math.exp(-(d1 - d0) / 50e3));
+  };
+  const lsq = (d0, d1) => {
+    let is = d0 <= 0 ? 0 : last(d0), ie = d1 >= d ? np : last(d1);
+    if (ie < np && s[ie] < d1) ie++;
+    if (ie <= is) { is = Math.max(is - 1, 0); ie = Math.min(ie + 1, np); }
+    let W = 0, S1 = 0, S2 = 0, Z = 0, ZS = 0;
+    for (let i = is; i < ie; i++) {
+      const h2 = (s[i + 1] - s[i]) / 2;
+      W += 2 * h2; S1 += h2 * (s[i] + s[i + 1]); S2 += h2 * (s[i] ** 2 + s[i + 1] ** 2); Z += h2 * (z[i] + z[i + 1]); ZS += h2 * (z[i] * s[i] + z[i + 1] * s[i + 1]);
+    }
+    const ms = S1 / W, mz = Z / W, b = (ZS / W - ms * mz) / (S2 / W - ms * ms);
+    return [mz - b * ms, mz + b * (d - ms)];
+  };
+  const h = [h0, h1], q = T.itmQuickRest(th, dhz, h, d, ae, z[0], z[np], deltaH, lsq);
+  const lr = T.itmLongleyRice(q.th, o.f, T.itmZg(o.eps, o.sigma, o.f, o.pol), q.dhz, q.he, ge, Ns, q.dh, h, d);
+  if (lr.err) return null;
+  return T.itmVariability(o.time, o.loc, o.sit, q.he, q.dh, o.f, d, lr.A, o.climate, o.mdvar).A + T.itmFreeSpace(d, o.f);
+}
+// it is NTIA's ITM on an evenly spaced profile
+{
+  let seed = 11, worst = 0, n = 0;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const cases = [];
+  for (let t = 0; t < 300; t++) {
+    const np = 2 + Math.floor(rnd() ** 2 * 1500), xi = 5 + rnd() * 200, pfl = new Float64Array(np + 3);
+    pfl[0] = np; pfl[1] = xi;
+    let hh = rnd() * 400 - 50;
+    for (let i = 0; i <= np; i++) { hh += (rnd() - 0.5) * 30 + 8 * Math.sin(i / 37); pfl[i + 2] = Math.max(0, hh) * (rnd() < 0.02 ? 1.5 : 1); }
+    cases.push([pfl, 0.5 + rnd() ** 2 * 300, 0.5 + rnd() ** 2 * 300,
+                {climate: 1 + Math.floor(rnd() * 7), N0: 260 + rnd() * 100, f: 30 + rnd() ** 2 * 5000, pol: rnd() < 0.5 ? 0 : 1, eps: 4 + rnd() * 70,
+                 sigma: 0.001 + rnd() * 5, mdvar: [0, 1, 2, 3, 12][Math.floor(rnd() * 5)], time: 1 + rnd() * 98, loc: 1 + rnd() * 98, sit: 1 + rnd() * 98}]);
+  }
+  for (const [pfl, h0, h1, o] of cases) {
+    const ref = T.itmP2P(pfl, h0, h1, o);
+    if (ref.err) continue;
+    const P = [];
+    for (let i = 0; i <= pfl[0]; i++) P.push([i * pfl[1], pfl[i + 2]]);
+    const A = itmRay(P, h0, h1, o);
+    worst = Math.max(worst, A === null ? Infinity : Math.abs(A - ref.A));
+    n++;
+  }
+  check(worst < 1e-6 && n > 250, `4 Longley-Rice on uneven points = NTIA's ITM on ${n} random evenly spaced profiles (worst ${worst.toExponential(1)} dB)`);
+}
+
+// ---- 4 + 6: the coverage sweep vs the exact model on its own profiles ----
+// (sig.model: p1812 (default), itm, fs, hata; txAmsl: the transmitter's h is above sea level - in the air)
+const HATA_ENV = [, 'open', 'open', 'suburban', 'urban', 'large'];
 async function sweepVsExact(name, lat, lon, h, R, sig, txAmsl) {
   const m = {lat, lon, h, amsl: !!txAmsl, k: 4 / 3, levels: vsPlan(lat, R * 1000), sig, debug: {rays: [5, 811, 2003, 3333, 4099]}};
   const t0 = Date.now(), res = await runMsg(m);
   if (res.error) { check(false, `${name}: ${res.error}`); return null; }
   if (txAmsl) h = res.eye - res.gnd;   // (the TX above its ground, as the exact model takes it)
-  const ae = 4 / 3 * 6371, errIn = [], errOut = [];
-  let nan = 0, n0 = 0;
+  const ae = 4 / 3 * 6371, errIn = [], errOut = [], model = sig.model || 'p1812', vsEven = [];
+  let nan = 0, n0 = 0, nOut = 0;
   for (const r of res.sig.rays) {
     const n = r.s.length;
     for (let j = 1; j < n; j += Math.max(1, Math.floor(n / 120))) {
+      if (r.L[j] === -2) { nOut++; continue; }   // (outside the model's range)
       if (r.L[j] < 0) { n0++; continue; }   // (the target under the ground)
       const d = [0], hh = [res.gnd];
       for (let i = 0; i < j; i++) if (r.add[i]) { d.push(r.s[i] / 1000); hh.push(r.g[i]); }
@@ -164,11 +247,35 @@ async function sweepVsExact(name, lat, lon, h, R, sig, txAmsl) {
       if (d.length < 3) continue;
       const hr = sig.amsl ? sig.tgt - r.g[j] : sig.tgt;
       if (hr < 0.5) continue;   // (the sweep lifts a target below 0.5 m to 0.5 m)
-      const ex = T.p1812P2P(Float64Array.from(d), Float64Array.from(hh), null, h, hr, sig.f / 1000, ae, r.sea[j], sig.N0, sig.pol, true);
-      // clutter: both on the ground 3.1; the RX up: 3.3 at the TX; the TX up: 3.3 at the RX (by the elevation at that end)
+      const sm = d[d.length - 1] * 1000, hrs = hh[hh.length - 1] + hr, htg = Math.max(0.5, h);
+      let ex;
+      if (model === 'p1812') ex = T.p1812P2P(Float64Array.from(d), Float64Array.from(hh), null, h, hr, sig.f / 1000, ae, r.sea[j], sig.N0, sig.pol, true);
+      else if (model === 'fs') ex = {Lb: 32.45 + 20 * Math.log10(sig.f) + 10 * Math.log10((sm / 1000) ** 2 + ((res.eye - hrs) / 1000) ** 2), bull: {los: true}};
+      else if (model === 'hata') ex = {Lb: T.hataLoss(sig.f, sm / 1000, Math.max(htg, hr), Math.min(htg, hr), HATA_ENV[htg >= hr ? sig.envRx : sig.envTx] || 'open'), bull: {los: true}};
+      else {
+        const o = {N0: sig.N0, f: sig.f, pol: sig.pol, eps: sig.eps, sigma: sig.sigma, climate: sig.climate, mdvar: 12, time: 50, loc: 50, sit: 50};
+        const P = d.map((x, i) => [x * 1000, hh[i]]), A = itmRay(P, htg, hr, o);
+        if (A === null) { nOut++; continue; }
+        ex = {Lb: A, bull: {los: true}};
+        // the same path evenly resampled (10 m) through NTIA's ITM: how much the uneven points change it
+        if (vsEven.length < 150 && sm > 2000) {
+          const ne = Math.ceil(sm / 10), pfl = new Float64Array(ne + 3);
+          pfl[0] = ne; pfl[1] = sm / ne;
+          let k = 0;
+          for (let i = 0; i <= ne; i++) {
+            const x = i * sm / ne;
+            while (k < P.length - 2 && P[k + 1][0] < x) k++;
+            pfl[i + 2] = P[k][1] + (P[k + 1][1] - P[k][1]) * (x - P[k][0]) / (P[k + 1][0] - P[k][0]);
+          }
+          const ev = T.itmP2P(pfl, htg, hr, o);
+          if (!ev.err) vsEven.push(Math.abs(ev.A - A));
+        }
+      }
+      // clutter: both on the ground 3.1; the RX up: 3.3 at the TX; the TX up: 3.3 at the RX (by the elevation at that end); none with Hata
       let cl = 0;
-      const sm = d[d.length - 1] * 1000, hrs = hh[hh.length - 1] + hr, el = (from, to) => Math.max(0, Math.atan((to - from) / sm - sm / (2 * ae * 1000)) * 180 / Math.PI);
-      if (sig.amsl && !txAmsl) { if (sig.hmTx > 0) cl = T.p2108Aero(sig.f / 1000, el(res.eye, hrs), 50, Math.max(1, h), sig.hmTx); }
+      const el = (from, to) => Math.max(0, Math.atan((to - from) / sm - sm / (2 * ae * 1000)) * 180 / Math.PI);
+      if (model === 'hata') cl = 0;
+      else if (sig.amsl && !txAmsl) { if (sig.hmTx > 0) cl = T.p2108Aero(sig.f / 1000, el(res.eye, hrs), 50, Math.max(1, h), sig.hmTx); }
       else if (txAmsl && !sig.amsl) { if (sig.hmRx > 0) cl = T.p2108Aero(sig.f / 1000, el(hrs, res.eye), 50, Math.max(1, hr), sig.hmRx); }
       else if (!sig.amsl) cl = T.p2108Terminal(sig.f / 1000, h, sig.envTx) + T.p2108Terminal(sig.f / 1000, Math.max(0.5, sig.tgt), sig.envRx);
       const e = Math.abs(r.L[j] - (ex.Lb + cl));
@@ -181,10 +288,12 @@ async function sweepVsExact(name, lat, lon, h, R, sig, txAmsl) {
     const loss = new Uint16Array(l.loss), need = new Uint16Array(l.need);
     for (let i = 0; i < loss.length; i++) if (need[i] !== 65535) { cells++; if (loss[i] === 0) badCells++; }
   }
-  const worst = Math.max(pct(errIn, 100), pct(errOut, 100));
-  check(worst < 1e-6 && !nan && cells > 1e5 && !badCells,
-        `${name}: sweep = exact P.1812 on ${errIn.length} line-of-sight + ${errOut.length} beyond-horizon samples (worst ${worst.toExponential(1)} dB)` +
-        `${n0 ? `, ${n0} under the ground skipped` : ''}; ${cells} cells, ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  const worst = Math.max(pct(errIn, 100), pct(errOut, 100)), MN = {p1812: 'P.1812', itm: 'Longley-Rice', fs: 'free space', hata: 'Hata'}[model];
+  check(worst < 1e-6 && !nan && cells > 1e5 && !badCells && errIn.length + errOut.length > 300,
+        `${name}: sweep = exact ${MN} on ` + (model === 'p1812' ? `${errIn.length} line-of-sight + ${errOut.length} beyond-horizon samples` : `${errIn.length} samples`) +
+        ` (worst ${worst.toExponential(1)} dB)${n0 ? `, ${n0} under the ground skipped` : ''}${nOut ? `, ${nOut} outside the model's range` : ''}; ${cells} cells, ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  if (vsEven.length) check(pct(vsEven, 50) < 0.5, `${name}: Longley-Rice on the ray's own points vs NTIA's ITM on them resampled every 10 m: |diff| median ` +
+                           `${pct(vsEven, 50).toFixed(2)}, p90 ${pct(vsEven, 90).toFixed(2)}, max ${pct(vsEven, 100).toFixed(2)} dB (${vsEven.length} paths)`);
   return res;
 }
 globalThis.fetch = synthFetch;
@@ -194,24 +303,35 @@ await sweepVsExact('4 synthetic, 146 MHz, horizontal, clutter suburban / urban',
 await sweepVsExact('4 synthetic, aircraft at 1500 m above sea level, P.2108 3.3', -36.88, 174.62, 10, 25, {f: 1090, tgt: 1500, amsl: true, pol: 1, N0: 301, envTx: 3, envRx: 0, hmTx: 8});
 await sweepVsExact('4 synthetic, a drone TX at 900 m above sea level, receivers 1.5 m in suburbs (3.3 at them)', -36.88, 174.62, 900, 15,
                    {f: 2400, tgt: 1.5, amsl: false, pol: 1, N0: 301, envTx: 0, envRx: 3, hmTx: 0, hmRx: 8}, true);
+const sigItm = {f: 446, tgt: 2, amsl: false, pol: 1, N0: 301, envTx: 0, envRx: 0, hmTx: 0, model: 'itm', climate: 5, eps: 15, sigma: 0.005};
+const covItm = await sweepVsExact('4 synthetic coast 15 km, Longley-Rice, 446 MHz', -36.88, 174.62, 10, 15, sigItm);
+await sweepVsExact('4 synthetic, Longley-Rice, horizontal, sea water, aircraft at 1500 m above sea level (3.3)', -36.88, 174.62, 10, 10,
+                   {f: 1090, tgt: 1500, amsl: true, pol: 0, N0: 320, envTx: 3, envRx: 0, hmTx: 8, model: 'itm', climate: 7, eps: 81, sigma: 5});
+await sweepVsExact('4 synthetic, free space + clutter suburban / urban', -36.88, 174.62, 8, 12, {f: 146, tgt: 1.5, amsl: false, pol: 1, N0: 301, envTx: 3, envRx: 4, hmTx: 0, model: 'fs'});
+await sweepVsExact('4 synthetic, Hata (the lower end\'s environment)', -36.88, 174.62, 40, 12, {f: 146, tgt: 1.5, amsl: false, pol: 1, N0: 301, envTx: 3, envRx: 4, hmTx: 0, model: 'hata'});
 
 // ---- 5: links ----
-if (cov) {
+// a link from the site to cells' centres vs the cells (same model, other sampling); pick(link) -> its loss
+async function linkVsCells(cov, sig, pick, label, lim) {
   const D2R = Math.PI / 180, diffs = [];
   let seed = 3;
   const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
   for (let t = 0; t < 30; t++) {
     const k = Math.floor(rnd() * cov.levels.length), l = cov.levels[k], N = l.N, loss = new Uint16Array(l.loss);
     let i, j;
-    for (let tries = 0; tries < 2000; tries++) { i = Math.floor(rnd() * N); j = Math.floor(rnd() * N); if (loss[j * N + i] !== 65535) break; }
+    for (let tries = 0; tries < 2000; tries++) { i = Math.floor(rnd() * N); j = Math.floor(rnd() * N); if (loss[j * N + i] < 65534) break; }
     const W = 256 * 2 ** l.z, la = Math.atan(Math.sinh(Math.PI - 2 * Math.PI * (l.gy0 + j + 0.5) / W)) / D2R, lo = (l.gx0 + i + 0.5) / W * 360 - 180;
-    const r = await runMsg({link: {a: {lat: -36.88, lon: 174.62, h: 10}, b: {lat: la, lon: lo, h: 2, amsl: false}, f: 446, k: 4 / 3, pol: 1, N0: 301,
-                                   climate: 5, eps: 15, sigma: 0.005, envA: 0, envB: 0, hmA: 0, rel: 90}});
+    const r = await runMsg({link: {a: {lat: -36.88, lon: 174.62, h: 10}, b: {lat: la, lon: lo, h: sig.tgt, amsl: false}, f: sig.f, k: 4 / 3, pol: sig.pol, N0: sig.N0,
+                                   climate: sig.climate || 5, eps: sig.eps || 15, sigma: sig.sigma || 0.005, envA: 0, envB: 0, hmA: 0, rel: 90}});
     if (r.error) { check(false, 'link: ' + r.error); continue; }
-    diffs.push(Math.abs(loss[j * N + i] / 10 - r.link.p1812.Lb));
+    const v = pick(r.link);
+    if (v !== null) diffs.push(Math.abs(loss[j * N + i] / 10 - v));
   }
-  check(pct(diffs, 50) < 1.5, `5 a link to a coverage cell's centre vs the cell (same model, other sampling): |diff| median ${pct(diffs, 50).toFixed(2)}, p90 ${pct(diffs, 90).toFixed(2)} dB`);
+  check(pct(diffs, 50) < lim, `5 ${label}: a link to a coverage cell's centre vs the cell (same model, other sampling): |diff| median ` +
+        `${pct(diffs, 50).toFixed(2)}, p90 ${pct(diffs, 90).toFixed(2)} dB (${diffs.length})`);
 }
+if (cov) await linkVsCells(cov, sig0, L => L.p1812.Lb, 'P.1812', 1.5);
+if (covItm) await linkVsCells(covItm, sigItm, L => L.itm.err ? null : L.itm.A, 'Longley-Rice', 2);
 const sea = await runMsg({link: {a: {lat: -36.95, lon: 174.40, h: 10}, b: {lat: -36.95, lon: 174.288, h: 10, amsl: false}, f: 146, k: 4 / 3, pol: 1, N0: 301,
                                  climate: 7, eps: 80, sigma: 5, envA: 0, envB: 0, hmA: 0, rel: 90}});
 if (sea.error) check(false, 'sea link: ' + sea.error);

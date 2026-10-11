@@ -13458,7 +13458,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         for (let c = 0; c < N * N; c++) {
           if (o.need[c] === 65535 || had[c] !== 65535) continue;
           let s = 0, n = 0;
-          for (const q of [c - 1, c + 1, c - N, c + N]) if (q >= 0 && q < N * N && had[q] !== 65535 && loss[q] !== 65535) { s += loss[q]; n++; }
+          for (const q of [c - 1, c + 1, c - N, c + N]) if (q >= 0 && q < N * N && had[q] !== 65535 && loss[q] < 65534) { s += loss[q]; n++; }
           if (n) loss[c] = Math.round(s / n);
         }
       }
@@ -13509,6 +13509,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const hTx = eye - gnd, txAir = !!m.amsl, rxAir = !!S.amsl;
       const clutFix = txAir || rxAir ? 0 : p2108Terminal(f, hTx, S.envTx) + p2108Terminal(f, Math.max(0.5, S.tgt), S.envRx);
       const aeroTx = rxAir && !txAir && S.hmTx > 0, aeroRx = txAir && !rxAir && S.hmRx > 0, aero = aeroTx || aeroRx;
+      // the model (S.model): p1812 (default); fs = free space + the clutter;
+      // hata = Okumura-Hata (no terrain - its environments are its clutter,
+      // the lower end's); itm = Longley-Rice per cell (itmCell) + the clutter -
+      // as the link's budget (runLink, plBudget)
+      const model = S.model === 'itm' || S.model === 'fs' || S.model === 'hata' ? S.model : 'p1812';
+      const htg = Math.max(0.5, hTx), HATA_ENV = [, 'open', 'open', 'suburban', 'urban', 'large'];
       let cap = 16;
       for (const g of rings) cap += Math.ceil(g.rExt / (0.4 * g.cellMin)) + 2;
       const cx = new Float64Array(cap), cy = new Float64Array(cap), fx = new Float64Array(cap), fy = new Float64Array(cap);
@@ -13517,6 +13523,116 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const px_ = new Float64Array(cap), pe_ = new Float64Array(cap), b1 = new Float64Array((cap >> 5) + 2), b2 = new Float64Array((cap >> 10) + 2);
       let nc = 0, nf = 0, tmax = -Infinity, fmax = -Infinity, v1 = 0, v2 = 0, ps = 0, ph = gnd, nPts = 0, nSea = 0;
       let lossCalls = 0, losCalls = 0, losScan = 0;
+      // ---- Longley-Rice per cell (model 'itm'): ITM 1.2.2 point to point on
+      // the ray's own points - the site, the points added so far, the cell.
+      // Their spacing grows ring by ring, so ITM's steps in profile indices
+      // are taken in distance, each reducing to NTIA's on an evenly spaced
+      // profile (checked in tools/pathloss_validate.mjs): the mean height of
+      // the middle 80 % of the points (-> Ns, ITM's own Earth radius), the
+      // horizons, delta h resampled by distance, least-squares fits with
+      // trapezoid weights. Kept per ray: prefix sums (the mean, the fits:
+      // O(1) per cell); the TX horizon as the upper envelope of the lines
+      // (z - zt) / s - c s in the curvature c = 1 / 2 ae (exact for each
+      // cell's own c); the RX horizon by the hull of (s, z - cRef s^2) and a
+      // climb along it in the cell's c (cRef: the site's Ns - they differ
+      // only on near ties, by ~1e-5 rad); delta h per cell (<= 245 points,
+      // quickselect); then LongleyRice + the median variability
+      const itm = model === 'itm', ic = itm ? cap : 1;
+      const iZg = itm ? itmZg(S.eps, S.sigma, S.f, pol) : null, iZt = gnd + htg;
+      const cRef = 157e-9 * (1 - 0.04665 * Math.exp(S.N0 * Math.exp(-gnd / 9460) / 179.3)) / 2;
+      const ig_ = new Float64Array(ic), iG = new Float64Array(ic + 1), iQ1 = new Float64Array(ic + 1), iQs = new Float64Array(ic + 1),
+            iQs2 = new Float64Array(ic + 1), iQz = new Float64Array(ic + 1), iQzs = new Float64Array(ic + 1);
+      const eS = new Float64Array(ic), eA = new Float64Array(ic), hx = new Float64Array(ic), hy = new Float64Array(ic), hz = new Float64Array(ic);
+      const iV = new Float64Array(250), iW = new Float64Array(250);   // (delta h: the resampled points [n - 1, 1, z...], scratch)
+      // runs of evenly spaced points (a ring's): from point index rI (into
+      // px_) at rS, every rD m - delta h finds its points' neighbours by
+      // arithmetic instead of a search
+      const rI = new Int32Array(64), rS = new Float64Array(64), rD = new Float64Array(64), rV = new Float64Array(64);   // (rV = 1 / rD)
+      let ne = 0, nh = 0, nr = 0, iD = 0, iGr = 0;   // (the envelope's / hull's / runs' sizes; the cell's distance + ground)
+      // point k of the cell's profile: 0 the site, 1..nPts the added ones, nPts + 1 the cell
+      const iPos = k => k <= 0 ? 0 : k <= nPts ? px_[k - 1] : iD;
+      const iZ = k => k <= 0 ? gnd : k <= nPts ? ig_[k - 1] : iGr;
+      const iFind = x => {   // the last point at or before x (0..nPts)
+        let lo = 0, hi = nPts;
+        while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (px_[mid - 1] <= x) lo = mid; else hi = mid - 1; }
+        return lo;
+      };
+      // point k + 1 (s, z) added (px_[k] = s already)
+      const itmAdd = (k, s, z) => {
+        const s0 = k ? px_[k - 1] : 0, z0 = k ? ig_[k - 1] : gnd, dd = s - s0, h2 = dd / 2;
+        if (!k) { nr = 1; rI[0] = 0; rS[0] = s; rD[0] = 0; }
+        else if (!rD[nr - 1]) { rD[nr - 1] = dd; rV[nr - 1] = 1 / dd; }
+        else if (Math.abs(dd - rD[nr - 1]) > 1e-6 * dd && nr < 64) { rI[nr] = k - 1; rS[nr] = s0; rD[nr] = dd; rV[nr] = 1 / dd; nr++; }
+        ig_[k] = z;
+        iG[k + 1] = iG[k] + z;
+        iQ1[k + 1] = iQ1[k] + dd;
+        iQs[k + 1] = iQs[k] + h2 * (s0 + s);
+        iQs2[k + 1] = iQs2[k] + h2 * (s0 * s0 + s * s);
+        iQz[k + 1] = iQz[k] + h2 * (z0 + z);
+        iQzs[k + 1] = iQzs[k] + h2 * (z0 * s0 + z * s);
+        // the lines A - s c: s grows, so the newest is the best for the smallest c
+        const A = (z - iZt) / s;
+        while (ne >= 2 && (A - eA[ne - 2]) * (eS[ne - 1] - eS[ne - 2]) >= (eA[ne - 1] - eA[ne - 2]) * (s - eS[ne - 2])) ne--;
+        eS[ne] = s; eA[ne] = A; ne++;
+        const Y = z - cRef * s * s;
+        while (nh >= 2 && (hy[nh - 1] - hy[nh - 2]) * (s - hx[nh - 2]) <= (Y - hy[nh - 2]) * (hx[nh - 1] - hx[nh - 2])) nh--;
+        hx[nh] = s; hy[nh] = Y; hz[nh] = z; nh++;
+      };
+      // LinearLeastSquaresFit over the points d0..d1 (the last at or before
+      // d0 to the first at or after d1; trapezoid weights) -> [z at 0, z at d]
+      const iLsq = (d0, d1) => {
+        const np = nPts + 1;
+        let is = d0 <= 0 ? 0 : iFind(d0), ie = d1 >= iD ? np : iFind(d1);
+        if (ie < np && iPos(ie) < d1) ie++;
+        if (ie <= is) { is = Math.max(is - 1, 0); ie = Math.min(ie + 1, np); }
+        const k1 = Math.min(ie, nPts);
+        let W = iQ1[k1] - iQ1[is], Ss = iQs[k1] - iQs[is], Ss2 = iQs2[k1] - iQs2[is], Sz = iQz[k1] - iQz[is], Szs = iQzs[k1] - iQzs[is];
+        if (ie === np) {   // (the last interval, to the cell)
+          const s0 = iPos(nPts), z0 = iZ(nPts), dd = iD - s0, h2 = dd / 2;
+          W += dd; Ss += h2 * (s0 + iD); Ss2 += h2 * (s0 * s0 + iD * iD); Sz += h2 * (z0 + iGr); Szs += h2 * (z0 * s0 + iGr * iD);
+        }
+        const ms = Ss / W, mz = Sz / W, b = (Szs / W - ms * mz) / (Ss2 / W - ms * ms);
+        return [mz - b * ms, mz + b * (iD - ms)];
+      };
+      // ComputeDeltaH over d0..d1: n points (by its count of profile steps
+      // there) resampled by distance - per cell, about half of ITM's time
+      // (reusing a ray's last one while the window moved < 2 % halved it but
+      // put single cells up to ~5 dB off)
+      const iDh = (d0, d1) => {
+        const np = nPts + 1, fi = x => { const k = Math.min(iFind(x), np - 1), a = iPos(k); return k + (x - a) / (iPos(k + 1) - a); };
+        const xs = fi(d0), xe = fi(d1);
+        if (xe - xs < 2) return 0;
+        const p10 = Math.min(Math.max(4, Math.trunc(0.1 * (xe - xs + 8))), 25), n = 10 * p10 - 5;
+        return itmDhRay(px_, ig_, nPts, gnd, iD, iGr, rI, rS, rD, rV, nr, d0, d1, p10, n, iV, iW);
+      };
+      // the median loss (dB) to a receiver h1 m above the ground gr at d, or -1 (outside ITM's range)
+      const itmCell = (d, gr, h1) => {
+        if (htg > 3000 || h1 > 3000) return -1;
+        iD = d; iGr = gr;
+        const np = nPts + 1, p10 = Math.trunc(0.1 * np), lo = Math.max(p10, 1), hi = Math.min(np - p10, nPts);
+        const hs = ((p10 === 0 ? gnd + gr : 0) + (hi >= lo ? iG[hi] - iG[lo - 1] : 0)) / (np - 2 * p10 + 1);
+        const Ns = hs === 0 ? S.N0 : S.N0 * Math.exp(-hs / 9460), ge = 157e-9 * (1 - 0.04665 * Math.exp(Ns / 179.3)), c = ge / 2;
+        const zr = gr + h1, th = [(zr - iZt) / d - d * c, -(zr - iZt) / d - d * c], dhz = [d, d];
+        if (ne) {
+          let a = 0, b = ne - 1;
+          while (a < b) { const mid = (a + b) >> 1; if (eA[mid + 1] - eS[mid + 1] * c > eA[mid] - eS[mid] * c) a = mid + 1; else b = mid; }
+          const v = eA[a] - eS[a] * c;
+          if (v > th[0]) { th[0] = v; dhz[0] = eS[a]; }
+        }
+        if (nh) {
+          const W = zr - cRef * d * d, val = k => (hz[k] - zr) / (d - hx[k]) - c * (d - hx[k]);
+          let j = 0, b = nh - 1;
+          while (j < b) { const mid = (j + b) >> 1; if ((hy[mid + 1] - W) * (d - hx[mid]) >= (hy[mid] - W) * (d - hx[mid + 1])) j = mid + 1; else b = mid; }
+          let v = val(j);
+          for (let w; j > 0 && (w = val(j - 1)) > v; j--) v = w;
+          for (let w; j < nh - 1 && (w = val(j + 1)) > v; j++) v = w;
+          if (v > th[1]) { th[1] = v; dhz[1] = d - hx[j]; }
+        }
+        const h = [htg, h1], q = itmQuickRest(th, dhz, h, d, 1 / ge, gnd, gr, iDh, iLsq);
+        const lr = itmLongleyRice(q.th, S.f, iZg, q.dhz, q.he, ge, Ns, q.dh, h, d);
+        if (lr.err) return -1;
+        return itmVariability(50, 50, 50, q.he, q.dh, S.f, d, lr.A, S.climate, 12).A + itmFreeSpace(d, S.f);
+      };
       // first-term spherical-Earth diffraction (p1812SeFtIn, the same
       // arithmetic) with the constants of an Earth radius adft worked out
       // once: [K, X / km, Y / m, G floor] for land (22, 0.003) and sea (80, 5)
@@ -13568,13 +13684,19 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       };
       // the loss to the receiver on the ground gr (m amsl) at s: the profile
       // so far holds everything between (the hulls, sums); -> dB, or -1 = the
-      // target is under the ground
+      // target is under the ground, -2 = outside the model's range
       const lossAt = (s, gr) => {
         let hr = S.amsl ? S.tgt - gr : S.tgt;
         if (hr < 0) return -1;
         if (hr < 0.5) hr = 0.5;
         lossCalls++;
         const hrs = gr + hr, er = hrs - s * s * curv, sk = s / 1000, sig = (er - eye) / s;
+        let cl = clutFix;
+        if (aeroTx) cl = p2108Aero(f, Math.max(0, Math.atan(sig) * 180 / Math.PI), 50, Math.max(1, hTx), S.hmTx);   // (elevation at the TX)
+        else if (aeroRx) cl = p2108Aero(f, Math.max(0, Math.atan(-sig - 2 * s * curv) * 180 / Math.PI), 50, Math.max(1, hr), S.hmRx);   // (at the receiver)
+        if (model === 'hata') return hataLoss(S.f, sk, Math.max(htg, hr), Math.min(htg, hr), HATA_ENV[htg >= hr ? S.envRx : S.envTx] || 'open');
+        if (model === 'fs') return 32.45 + 20 * Math.log10(S.f) + 10 * Math.log10(sk * sk + ((eye - hrs) / 1000) ** 2) + cl;
+        if (model === 'itm') { const A = itmCell(s, gr, hr); return A < 0 ? -2 : A + cl; }
         const Lbfs = 92.4 + 20 * Math.log10(f) + 10 * Math.log10(sk * sk + ((eye - hrs) / 1000) ** 2);
         let Lbull = 0, tt, tr, trans = false;
         if (nc) {
@@ -13648,9 +13770,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         const Ld = Lbull + Math.max(Ldsph - Lbulls, 0);
         const Lbs = p1812Tropo(sk, 1e3 * sk / aeK + tt + tr, f, 50, S.N0);
         const Lb = Math.max(Lbfs, -5 * Math.log10(10 ** (-0.2 * Lbs) + 10 ** (-0.2 * (Lbfs + Ld))));
-        let cl = clutFix;
-        if (aeroTx) cl = p2108Aero(f, Math.max(0, Math.atan(sig) * 180 / Math.PI), 50, Math.max(1, hTx), S.hmTx);   // (elevation at the TX)
-        else if (aeroRx) cl = p2108Aero(f, Math.max(0, Math.atan(-sig - 2 * s * curv) * 180 / Math.PI), 50, Math.max(1, hr), S.hmRx);   // (at the receiver)
         return Lb + cl;
       };
       // adds a profile point (s, gr; e = curved-frame height) to the hulls + sums
@@ -13667,6 +13786,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         v2 += dd * (gr * (2 * s + ps) + ph * (s + 2 * ps));
         ps = s; ph = gr;
         px_[nPts] = s; pe_[nPts] = e;
+        if (itm) itmAdd(nPts, s, gr);
         const i1 = nPts >> 5, i2 = nPts >> 10;
         if (!(nPts & 31) || e > b1[i1]) b1[i1] = e;
         if (!(nPts & 1023) || e > b2[i2]) b2[i2] = e;
@@ -13725,7 +13845,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                 o.need[c] = enc(tmax * s + eye - e);
                 o.ground[c] = Math.round(gr);
                 const L = lossAt(s, gr);
-                o.loss[c] = L < 0 ? 65535 : Math.min(65534, Math.round(L * 10));
+                o.loss[c] = L === -2 ? 65534 : L < 0 ? 65535 : Math.min(65533, Math.round(L * 10));   // (65534 outside the model's range, 65535 under the ground)
               }
               if (add) addPt(s, gr, e);
             }
@@ -13737,7 +13857,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       let tb = Date.now();
       for (let pass = 0; pass < 2; pass++)
         for (let k = 0; k < nRays; k++) {
-          if (pass) { nc = nf = 0; tmax = fmax = -Infinity; v1 = v2 = 0; ps = 0; ph = gnd; nPts = nSea = 0; }
+          if (pass) { nc = nf = ne = nh = 0; tmax = fmax = -Infinity; v1 = v2 = 0; ps = 0; ph = gnd; nPts = nSea = 0; }
           rec = pass && recs ? recs.get(k) || null : null;
           ray(2 * Math.PI * k / nRays, pass);
           if (Date.now() - tb > 250) {   // (a break for a cancel)
@@ -13759,7 +13879,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
             let nv = 0, sn = 0, sg = 0, sl_ = 0, nl = 0;
             for (const n of [c - 1, c + 1, c - N, c + N]) if (o.need[n] !== 65535) {
               nv++; sn += dec(o.need[n]); sg += o.ground[n];
-              if (o.loss[n] !== 65535) { sl_ += o.loss[n]; nl++; }
+              if (o.loss[n] < 65534) { sl_ += o.loss[n]; nl++; }
             }
             if (nv >= 3) fill.push(c, sn / nv, sg / nv, nl ? sl_ / nl : 65535);
           }
@@ -13840,7 +13960,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (xe - xs < 2) return 0;
       let p10 = Math.trunc(0.1 * (xe - xs + 8));
       p10 = Math.min(Math.max(4, p10), 25);
-      const n = 10 * p10 - 5, p90 = n - p10, nps = n - 1, s = new Float64Array(n + 2);
+      const n = 10 * p10 - 5, nps = n - 1, s = new Float64Array(n + 2);
       s[0] = nps; s[1] = 1;
       xe = (xe - xs) / nps;
       let i = Math.trunc(xs);
@@ -13850,23 +13970,86 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         s[j + 2] = pfl[i + 3] + (pfl[i + 3] - pfl[i + 2]) * xs;
         xs += xe;
       }
+      return itmDhFit(s, n, p10, d1 - d0, new Float64Array(n));
+    }
+    // the rest of ComputeDeltaH on the n points resampled into s ([n - 1, 1,
+    // z...]): the interdecile range of their residuals from a straight line
+    // (w: scratch of n; also the coverage's, plSweep)
+    function itmDhFit(s, n, p10, span, w) {
+      const nps = n - 1;
       let [y1, y2] = itmLsq(s, 0, nps);
       y2 = (y2 - y1) / nps;
-      const diffs = new Float64Array(n);
-      for (let j = 0; j < n; j++) { diffs[j] = s[j + 2] - y1; y1 += y2; }
-      diffs.sort();   // ascending: the k-th largest is [n - k]
-      const q10 = diffs[n - p10], q90 = diffs[n - 1 - p90];
-      return (q10 - q90) / (1 - 0.8 * Math.exp(-(d1 - d0) / 50e3));
+      for (let j = 0; j < n; j++) { w[j] = s[j + 2] - y1; y1 += y2; }
+      const q10 = itmSelect(w, 0, n - 1, n - p10), q90 = itmSelect(w, 0, n - p10 - 1, p10 - 1);   // (the p10-th largest / smallest)
+      return (q10 - q90) / (1 - 0.8 * Math.exp(-span / 50e3));
+    }
+    // the k-th smallest of a[lo..hi] (0-based; Hoare quickselect, the
+    // median of three as the pivot - residuals of terrain are smooth runs;
+    // in place: afterwards everything left of k is <= a[k])
+    function itmSelect(a, lo, hi, k) {
+      while (hi > lo) {
+        const x = a[lo], y = a[(lo + hi) >> 1], z = a[hi];
+        const p = x < y ? (y < z ? y : x < z ? z : x) : (x < z ? x : y < z ? z : y);
+        let i = lo, j = hi;
+        while (i <= j) {
+          while (a[i] < p) i++;
+          while (a[j] > p) j--;
+          if (i <= j) { const t = a[i]; a[i] = a[j]; a[j] = t; i++; j--; }
+        }
+        if (k <= j) hi = j; else if (k >= i) lo = i; else return a[k];
+      }
+      return a[k];
+    }
+    // the coverage's ComputeDeltaH (plSweep, model 'itm'): the n points at
+    // d0 + j (d1 - d0) / (n - 1) of the profile [the site (0, z0), (px[i],
+    // zg[i]) for i < m, the cell (d, zd)], linear between its points - each
+    // one's neighbours from the runs of even spacing (from point rI[q] at
+    // rS[q], every rD[q] m; nr runs), corrected for rounding / a run's ends
+    // (a window holds thousands of points far out: no search) - then as
+    // itmDhFit. v: n + 2, w: n scratch
+    function itmDhRay(px, zg, m, z0, d, zd, rI, rS, rD, rV, nr, d0, d1, p10, n, v, w) {
+      const nps = n - 1, step = (d1 - d0) / nps;
+      let q = 0;
+      for (let j = 0; j < n; j++) {
+        const x = d0 + j * step;
+        while (q + 1 < nr && rS[q + 1] <= x) q++;
+        const D = rD[q];
+        if (m > 1 && D > 0 && x >= rS[q]) {   // inside run q: x / D (rV = 1 / D) gives the point and the fraction - no division
+          const u = (x - rS[q]) * rV[q], k = Math.floor(u), a = rI[q] + k + 1;
+          // (off by one only at a point itself, from rounding: the same height there)
+          if (a <= (q + 1 < nr ? rI[q + 1] : m - 1)) { const za = zg[a - 1]; v[j + 2] = za + (zg[a] - za) * (u - k); continue; }
+        }
+        let a = 0;   // (else: the first point at or after x, then linear between it and the one before)
+        if (m > 0) {
+          if (x < rS[q]) a = rI[q];
+          else { a = D > 0 ? rI[q] + Math.floor((x - rS[q]) / D) + 1 : rI[q] + 1; if (a > m) a = m; }
+          while (a > 0 && px[a - 1] >= x) a--;
+          while (a < m && px[a] < x) a++;
+        }
+        let sa = 0, za = z0, sb = d, zb = zd;
+        if (a > 0) { sa = px[a - 1]; za = zg[a - 1]; }
+        if (a < m) { sb = px[a]; zb = zg[a]; }
+        v[j + 2] = za + (zb - za) * (x - sa) / (sb - sa);
+      }
+      v[0] = nps; v[1] = 1;
+      return itmDhFit(v, n, p10, d1 - d0, w);
     }
     function itmQuickPfl(pfl, ge, h) {
-      const d = pfl[0] * pfl[1], np = pfl[0] | 0, ae = 1 / ge, th = [0, 0], dhz = [0, 0], he = [0, 0];
+      const d = pfl[0] * pfl[1], np = pfl[0] | 0, ae = 1 / ge, th = [0, 0], dhz = [0, 0];
       itmHorizons(pfl, ae, h, th, dhz);
+      return itmQuickRest(th, dhz, h, d, ae, pfl[2], pfl[np + 2], (a, b) => itmDeltaH(pfl, a, b), (a, b) => itmLsq(pfl, a, b));
+    }
+    // QuickPfl after the horizons: delta h and the effective heights (g0 / gn:
+    // the ground at the two ends; deltaH (d0, d1), lsq (d0, d1) -> [z at 0, z
+    // at d] on the profile) - also the coverage's, plSweep
+    function itmQuickRest(th, dhz, h, d, ae, g0, gn, deltaH, lsq) {
+      const he = [0, 0];
       const ds = Math.min(15 * h[0], 0.1 * dhz[0]), de = d - Math.min(15 * h[1], 0.1 * dhz[1]);
-      const dh = itmDeltaH(pfl, ds, de);
+      const dh = deltaH(ds, de);
       if (dhz[0] + dhz[1] > 1.5 * d) {
-        const [ft, fr] = itmLsq(pfl, ds, de);
-        he[0] = h[0] + fdim(pfl[2], ft);
-        he[1] = h[1] + fdim(pfl[np + 2], fr);
+        const [ft, fr] = lsq(ds, de);
+        he[0] = h[0] + fdim(g0, ft);
+        he[1] = h[1] + fdim(gn, fr);
         for (let i = 0; i < 2; i++) dhz[i] = Math.sqrt(2 * he[i] * ae) * Math.exp(-0.07 * Math.sqrt(dh / Math.max(he[i], 5)));
         const ch = dhz[0] + dhz[1];
         if (ch <= d) {
@@ -13881,8 +14064,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
           th[i] = (0.65 * dh * (q / dhz[i] - 1) - 2 * he[i]) / q;
         }
       } else {
-        he[0] = h[0] + fdim(pfl[2], itmLsq(pfl, ds, 0.9 * dhz[0])[0]);
-        he[1] = h[1] + fdim(pfl[np + 2], itmLsq(pfl, d - 0.9 * dhz[1], de)[1]);
+        he[0] = h[0] + fdim(g0, lsq(ds, 0.9 * dhz[0])[0]);
+        he[1] = h[1] + fdim(gn, lsq(d - 0.9 * dhz[1], de)[1]);
       }
       return {th, dhz, he, dh, d};
     }
@@ -14094,6 +14277,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (r < 0) r = r * (29 - r) / (29 - 10 * r);
       return {A: r, warn};
     }
+    // the ground's surface impedance (InitializePointToPoint)
+    function itmZg(eps, sigma, f, pol) {
+      const epr = [eps, 18000 * sigma / f];
+      const Zg = cSqrt([epr[0] - 1, epr[1]]);
+      return pol === 1 ? cDiv(Zg, epr) : Zg;
+    }
     // ITM_P2P_TLS_Ex: o = {climate 1-7, N0, f MHz, pol 0 h / 1 v, eps, sigma S/m, mdvar, time, loc, sit (%)}
     // -> {err} or {A (basic transmission loss dB), Aref, Afs, mode, warn, th, dhz, he, dh, Ns, d}
     function itmP2P(pfl, htx, hrx, o) {
@@ -14120,9 +14309,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       hs /= np - 2 * p10 + 1;
       // InitializePointToPoint
       const Ns = hs === 0 ? o.N0 : o.N0 * Math.exp(-hs / 9460), ge = 157e-9 * (1 - 0.04665 * Math.exp(Ns / 179.3));
-      const epr = [o.eps, 18000 * o.sigma / o.f];
-      let Zg = cSqrt([epr[0] - 1, epr[1]]);
-      if (o.pol === 1) Zg = cDiv(Zg, epr);
+      const Zg = itmZg(o.eps, o.sigma, o.f, o.pol);
       const h = [htx, hrx], q = itmQuickPfl(pfl, ge, h);
       const lr = itmLongleyRice(q.th, o.f, Zg, q.dhz, q.he, ge, Ns, q.dh, h, q.d);
       if (lr.err) return {err: lr.err};
@@ -14365,7 +14552,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
 
     self.vsTest = {decodePng, despike, sweep, run, ringGrid, tiles, clean, PAD,   // offline tests (node)
-                   itmP2P, itmVariability, itmQinv,
+                   itmP2P, itmVariability, itmQinv, itmLongleyRice, itmFreeSpace, itmZg, itmQuickRest,
                    p1812P2P, p1812Bull, p1812BullSmooth, p1812Se, p1812Heights, p1812Tropo, ituJ,
                    p2108Terminal, p2108Aero, hataLoss, erfinv};
   }
@@ -14819,7 +15006,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<option value="1">No bending (k = 1)</option></select></div>` +
       `<div class="map-pl vs-sig" id="map-vs-sig"></div>` +
       `<div id="map-vs-list"></div><div class="map-vs-hov" id="map-vs-hov"></div><div id="map-vs-link" class="map-pl vs-sig"></div>` +
-      `<div class="map-vs-note vs-sig">Signal: the median path loss (ITU-R P.1812: diffraction over the terrain + troposcatter, 50 % of the time) + clutter (ITU-R P.2108), ` +
+      `<div class="map-vs-note vs-sig">Signal: the median path loss by the chosen model (50 % of the time; ITU-R P.1812: diffraction over the terrain + troposcatter, Longley-Rice: NTIA's ITM, both per place along its terrain profile) + clutter (ITU-R P.2108), ` +
       `with shadowing (P.1546) and fading, as how often the receiver gets what it needs; the faint white line is the edge of the line of sight. ` +
       `Right-click the map → "📶 Link" for the profile and budget between a site and a place. Bare terrain: buildings and trees only through the clutter setting.</div>` +
       `<div class="map-vs-note vs-los">Line of sight over the terrain only: buildings and trees aren't in the data, the sea counts as 0 m. ` +
@@ -15094,7 +15281,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // (the worker's "Tx" end is always the site)
   function plSigMsg(it) {
     const s = plState, se = it.role === 'rx' ? s.envRx : s.envTx, te = it.role === 'rx' ? s.envTx : s.envRx;
-    return {f: s.f, tgt: vsTgt(), amsl: vsState.amsl, pol: s.pol, N0: s.N0, envTx: se, envRx: te, hmTx: PL_ENV_HM[se], hmRx: PL_ENV_HM[te]};
+    const m = {f: s.f, tgt: vsTgt(), amsl: vsState.amsl, pol: s.pol, N0: s.N0, envTx: se, envRx: te, hmTx: PL_ENV_HM[se], hmRx: PL_ENV_HM[te], model: s.model};
+    if (s.model === 'itm') { const g = plGround(); Object.assign(m, {climate: s.climate, eps: g[1], sigma: g[2]}); }   // (only ITM's: the others' keys stay)
+    return m;
   }
   // each ring as an image for the composite: R = 1 + the reliability x 254,
   // G = in sight (255) or not; % covered (>= the wanted reliability) by area
@@ -15109,7 +15298,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       let lv = 0, lt = 0;
       for (let i = 0; i < N * N; i++) {
         const q = need[i];
-        if (q === VS_NODATA || loss[i] === 65535) { px[i] = 0; continue; }   // (no data / the target under the ground)
+        if (q === VS_NODATA || loss[i] >= 65534) { px[i] = 0; continue; }   // (no data / outside the model's range / the target under the ground)
         lt++;
         const ins = amsl ? gr[i] + (q < 30000 ? q / 10 : 3000 + (q - 30000) * 10) <= tgt : q <= tq;
         const rel = plRelAt(ins ? lin : lout, base - loss[i] / 10);
@@ -15209,6 +15398,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // the hover line of a site (vsHoverRender): reliability, received level, loss
   function plHoverSig(it, ls, ins) {
     if (ls === 65535) return 'the target would be under the ground · ';
+    if (ls === 65534) return 'outside the model\'s range (Longley-Rice: antennas 0.5-3000 m above the ground) · ';
     const prx = plPrx(ls / 10), sg = plSiteSigma(it), rel = plRelAt(plRelLut(sg, ins), prx - plSens()), col = plRelCol(rel) || '#ff8a80';
     return `<span class="pl-tag" style="background:${PL_COL[it.role]}">${PL_NAME[it.role]}</span> <b style="color:${col}">${plF(rel * 100, rel > 0.99 ? 1 : 0)} %</b> · ` +
            `${plF(prx)} dBm · loss ${plF(ls / 10)} dB · `;
@@ -15377,7 +15567,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // ---- the signal mode's settings (in the viewshed panel: #map-vs-sig) ----
   // what each setting redoes: S the coverage (a new viewshed job), L the
   // link; the rest repaints (the reliability from the stored loss)
-  const PL_REDO = {f: 'SL', pol: 'SL', N0: 'SL', envTx: 'SL', envRx: 'SL', climate: 'L', ground: 'L', rel: 'L'};
+  const PL_REDO = {f: 'SL', pol: 'SL', N0: 'SL', envTx: 'SL', envRx: 'SL', model: 'S', climate: 'SL', ground: 'SL', rel: 'L'};   // (S only where plSigMsg changes)
   function plSet(k, v) {
     const n = Number(v), lim = {f: [20, 20000], ptx: [1e-6, 1e7], gt: [-30, 60], gr: [-30, 60], lt: [0, 60], lr: [0, 60], bw: [0.01, 1e5],
                                 nf: [0, 40], snr: [-40, 80], N0: [250, 400], K: [-20, 40], rel: [1, 99.99]}[k];
@@ -15401,7 +15591,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     el.innerHTML =
       `<div class="map-vs-row"><label title="Frequency">Freq ${num('f', 70, 'any', 'Frequency (MHz)')} MHz</label>` +
       `<label title="Transmitter power (W)">TX power ${num('ptx', 56, 'any', 'Transmitter power at the antenna connector (W)')} W</label><span class="pl-dbm"></span></div>` +
-      `<div class="pl-set-h" onclick="plState.set=!plState.set;plSave();plRender()"><span class="pl-set-f"></span> Antennas, receiver, model, channel</div>` +
+      `<div class="map-vs-row"><span class="pl-l">Model</span>${sel('model', Object.entries(PL_MODELS), 'The propagation model for the map and the link\'s budget (the link\'s strip lists all four): P.1812 and Longley-Rice follow the terrain, free space and Hata don\'t. Longley-Rice takes the longest to work out')}` +
+      `${sel('pol', [[1, 'vertical'], [0, 'horizontal']], 'Polarization')}</div>` +
+      `<div class="map-vs-row pl-itm"><span class="pl-l">ITM</span>${sel('climate', PL_CLIMATES.slice(1).map((t, i) => [i + 1, t]), 'Radio climate (Longley-Rice)')}` +
+      `${sel('ground', Object.entries(PL_GROUNDS).map(([k, v]) => [k, v[0]]), 'Ground constants (Longley-Rice)')}</div>` +
+      `<div class="pl-set-h" onclick="plState.set=!plState.set;plSave();plRender()"><span class="pl-set-f"></span> Antennas, receiver, channel</div>` +
       `<div class="pl-set">` +
       `<div class="map-vs-row"><span class="pl-l">Antennas</span><label>TX ${num('gt', 48, '0.1', 'Transmit antenna gain (dBi)')} dBi</label>` +
       `<label>RX ${num('gr', 48, '0.1', 'Receive antenna gain (dBi)')} dBi</label></div>` +
@@ -15411,10 +15605,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<label>NF ${num('nf', 40, '0.5', 'Receiver noise figure (dB); an RTL-SDR ~4-6 dB, more with long cables before the LNA')} dB</label>` +
       `<label>needs SNR ${num('snr', 40, '0.5', 'The signal-to-noise ratio the receiver needs (dB): ~10-12 for NBFM voice, 5-8 for digital voice, 0-3 for robust data / DF')} dB</label></div>` +
       `<div class="map-vs-row pl-sens"></div>` +
-      `<div class="map-vs-row"><span class="pl-l">Link model</span>${sel('model', Object.entries(PL_MODELS), 'The propagation model for the link (the coverage is always ITU-R P.1812)')}` +
-      `${sel('pol', [[1, 'vertical'], [0, 'horizontal']], 'Polarization')}</div>` +
-      `<div class="map-vs-row pl-itm"><span class="pl-l">ITM</span>${sel('climate', PL_CLIMATES.slice(1).map((t, i) => [i + 1, t]), 'Radio climate (Longley-Rice)')}` +
-      `${sel('ground', Object.entries(PL_GROUNDS).map(([k, v]) => [k, v[0]]), 'Ground constants (Longley-Rice)')}</div>` +
       `<div class="map-vs-row"><label title="Surface refractivity N0 (N-units): 301 = average; it sets troposcatter beyond the horizon">N0 ${num('N0', 48, '1', 'Sea-level surface refractivity (N-units): 301 average, ~280 dry / inland, ~340-360 humid coasts / tropics')}</label></div>` +
       `<div class="map-vs-row"><span class="pl-l">Clutter</span><label title="The surroundings of the transmitter (a TX site, or the target when the site receives)">TX ${sel('envTx', envs, 'Clutter around the transmitter (ITU-R P.2108): adds loss when its antenna is below the clutter height (10 m open / suburban, 15 m urban / forest, 20 m dense urban)')}</label>` +
       `<label title="The surroundings of the receiver">RX ${sel('envRx', envs, 'Clutter around the receiver (ITU-R P.2108)')}</label></div>` +
@@ -15427,7 +15617,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
   function plLegendHtml() {
     return `<div class="pl-leg-b">` + PL_BANDS.map(([t, c], i) => `<span><i style="background:${c}"></i>${i ? Math.round(t * 100) + '-' + Math.round(PL_BANDS[i - 1][0] * 100) : '≥ ' + Math.round(t * 100)} %</span>`).join('') +
-           `</div><div class="pl-note">faint: below ${plF(plState.rel, plState.rel % 1 ? 1 : 0)} % · <span class="pl-wl">━</span> white: the edge of the line of sight</div>`;
+           `</div><div class="pl-note">${PL_MODELS[plState.model]} · faint: below ${plF(plState.rel, plState.rel % 1 ? 1 : 0)} % · <span class="pl-wl">━</span> white: the edge of the line of sight</div>`;
   }
   // (from vsRender) the settings block, the link's line, the strip
   function plRenderSig(force) {
@@ -15497,7 +15687,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const it = r.itm.err ? `<span class="e" title="${digEsc(plItmErr(r.itm.err))}">⚠ ${digEsc(plItmErr(r.itm.err))}</span>` : `${plF(r.itm.A)}<span class="pl-note"> ${['', 'line of sight', 'diffraction', 'troposcatter'][r.itm.mode]}</span>`;
       const row = (k, label, v, tip) => `<tr class="${mdl === k ? 'sel' : ''}" title="${tip}" onclick="plSet('model','${k}')"><td>${label}</td><td>${v}</td></tr>`;
       h += `<div class="plk-path">${path}</div><table class="plk-m">` +
-           row('p1812', 'ITU-R P.1812', `${plF(p.Lb)}<span class="pl-note"> free space ${plF(p.Lbfs)} + diffraction ${plF(p.Ld)}</span>`, 'Delta-Bullington terrain diffraction + troposcatter (median) - the coverage\'s model') +
+           row('p1812', 'ITU-R P.1812', `${plF(p.Lb)}<span class="pl-note"> free space ${plF(p.Lbfs)} + diffraction ${plF(p.Ld)}</span>`, 'Delta-Bullington terrain diffraction + troposcatter (median). Click a row: the model for the budget and the map') +
            row('itm', 'Longley-Rice', it, 'NTIA ITM 1.2.2, point to point, median (50 % time / location / situation)') +
            row('fs', 'Free space', plF(r.fs), 'No terrain, no ground: the least possible loss') +
            row('hata', 'Hata', `${plF(r.hata.L)}<span class="pl-note"> ${r.hata.env}${r.hata.ok ? '' : ' ⚠ outside its range'}</span>`,

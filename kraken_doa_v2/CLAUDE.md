@@ -1116,10 +1116,50 @@ Edit `include/config.hpp`:
   rings use coarser terrain: 30 m at 15 km). Time (node on the Pi 5, tiles
   in memory): 30 km ~6 s, 300 km ~11 s (2.5 / 4.4 M cells; the viewshed
   1-2 s); in the browser on the Pi it took ~17-21 s for 30 km
+- THE MODEL of the coverage = the page's choice (`m.sig.model`; the user
+  expected the map to follow it - it was P.1812 only at first): p1812 (all
+  of the above); fs = free space (32.45 + 20 log f + 20 log of the slant
+  distance, as the link's) + the clutter; hata = `hataLoss` (higher /
+  lower end, the lower end's clutter type as its environment, no P.2108 -
+  as the link's budget); itm = Longley-Rice per cell (`itmCell`) + the
+  clutter. fs / hata skip the terrain work (~3.5 s for 12 km in node).
+  Loss 65534 = outside the model's range (ITM: an antenna > 3000 m above
+  its ground) - transparent, the hover says so
+- ITM PER CELL (`itmCell`, model 'itm'): ITM 1.2.2 point to point on the
+  ray's own points (the site, the points added so far, the cell). Their
+  spacing grows ring by ring, so each of ITM's steps in profile INDICES is
+  taken in DISTANCE - and reduces to NTIA's exactly on an evenly spaced
+  profile: hs = the mean of the middle 80 % of the points (index-based as
+  ITM; -> Ns -> ITM's own Earth radius, per cell), the horizons over the
+  interior points, delta h resampled by distance (p10 from the fractional
+  point-index span), LinearLeastSquaresFit with trapezoid weights in
+  distance (= ITM's half-weighted ends). The shared code: `itmQuickRest`
+  (QuickPfl after the horizons), `itmDhFit` + `itmSelect` (quickselect),
+  `itmZg`, `itmLongleyRice`, `itmVariability` (median, mdvar 12 - as the
+  link's). Incremental per ray (`itmAdd`): prefix sums (hs, the fits:
+  O(1)); the TX horizon = the upper envelope of the lines (z - zt) / s - c
+  s in the cell's curvature c = 1 / 2 ae (exact for each cell's own c, a
+  binary search); the RX horizon = the hull of (s, z - cRef s^2) (cRef from
+  the site's Ns) + a climb along it in the cell's c (they differ only on
+  near ties). Delta h per cell (`itmDhRay`: <= 245 points; each one's
+  neighbours from the runs of even spacing - a ring's - not a search) -
+  about half of ITM's time. Reusing a ray's last delta h while its window
+  moved < 2 % halved that but put single cells up to ~5 dB off: rejected.
+  Checked (tools/pathloss_validate.mjs): the distance-based definitions
+  (`itmRay`, plain loops) = NTIA's itmP2P on 300 random evenly spaced
+  profiles within 1e-8 dB; the sweep = itmRay on every recorded ray sample
+  within 1e-8 dB; itmRay on the ray's own uneven points vs itmP2P on them
+  resampled every 10 m: median 0.03, max 0.22 dB; a link vs its coverage
+  cell: median 0.05, p90 0.1 dB. Time: ~6x P.1812 (node on the Pi 5, the
+  same 1.94 M cells: 47 vs 7.8 s; delta h ~40 % - its resampling, the fit,
+  two quickselects -, LongleyRice + variability ~25 %) - the model's
+  tooltip says so. Tried for delta h: a binary search per point, then the
+  runs (2x), no closures in the loop, a top / bottom-k buffer instead of
+  quickselect (slower: terrain residuals come in rising / falling runs)
 - Page: `plState` (globals block; localStorage `kraken_pl`, rebuilt field by
   field): f MHz, ptx W, gt / gr dBi, lt / lr dB, bw kHz, nf, snr (->
   sensitivity = -174 + 10 log BW + NF + SNR), model (p1812 | itm | fs |
-  hata - the LINK's budget; the coverage is always P.1812), pol, N0 (301:
+  hata - the map's and the link's budget; the strip lists all four), pol, N0 (301:
   troposcatter + ITM), climate + ground (ITM, `PL_GROUNDS`), envTx / envRx
   (P.2108 types, `PL_ENVS`: the transmitter's / receiver's surroundings,
   whichever end that is), fade (auto = Rician K in sight / Rayleigh beyond |
@@ -1128,8 +1168,9 @@ Edit `include/config.hpp`:
   1.0 an antenna up near the clutter, 1.2 one in it - of the RECEIVER: the
   site when it is RX, else the target, `plSiteSigma`), set / prof (folds),
   link {site (a viewshed item id), lat, lon, name, mk}. What each setting
-  redoes (`PL_REDO`): S = the sites' signal jobs (f, pol, N0, clutter -
-  they are in `plSigMsg`, so in `vsKey`), L = the link; everything else
+  redoes (`PL_REDO`): S = the sites' signal jobs (f, pol, N0, clutter,
+  model; climate + ground only with ITM - they are in `plSigMsg`, so in
+  `vsKey`: a job runs only where the key changed), L = the link; everything else
   only repaints from the losses kept (`vsRepaint` -> `plPaintSig`). The
   viewshed's target height / reference and refraction are shared (`vsSetTgt`
   / `vsSetRef` call `vsSigChanged`, `vsSetK` `plKChanged`)
@@ -1185,10 +1226,11 @@ Edit `include/config.hpp`:
   removes it too). `runLink` on its own worker (`plWorker`, see LINK above)
 - UI: the signal block `#map-vs-sig` in the viewshed panel (class
   `vs-sig`: shown only by `.map-vs.sig`; `vs-los` the reverse): Freq + TX
-  power, the rest folded under "Antennas, receiver, model, channel"
-  (gains, cables, receiver, link model + polarization, ITM climate /
-  ground, N0, clutter TX / RX, fading + K, sigma_L), "Wanted reliability",
-  the legend (`plLegendHtml`); a TX / RX tag per site row (click: the
+  power, Model + polarization (and ITM's climate / ground when it is
+  Longley-Rice) - not folded: it is the map's model -, the rest folded
+  under "Antennas, receiver, channel" (gains, cables, receiver, N0,
+  clutter TX / RX, fading + K, sigma_L), "Wanted reliability", the legend
+  (`plLegendHtml`, naming the model); a TX / RX tag per site row (click: the
   role); `#map-vs-link` (the link in one line + Show / Hide). `plRenderSig`
   runs from `vsRender`; `plRender` = `vsRender`. Strip `#map-plk` at the
   bottom of the map (`.map-pane.pl-open` lifts the DF panel, the marker

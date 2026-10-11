@@ -526,10 +526,12 @@ decoders `kraken_doa_v2/plugins/`
   the line of sight a faint white line; line of sight mode is the plain
   viewshed (both show the identical line of sight). Each site is a TX or an
   RX (the station RX by default): which end's clutter / variability is
-  which. The target can be in the air (above sea level). Per site: P.1812
-  to every cell on the viewshed's rays (`plSweep`: the whole profile per
-  ray via convex hulls, O(log n) per cell, EXACTLY P.1812 on the sampled
-  profile). LINK (right-click "📶 Link", markers, masts): a site <-> a
+  which. The target can be in the air (above sea level). Per site: the
+  CHOSEN MODEL to every cell on the viewshed's rays (`plSweep`) - P.1812
+  (the whole profile per ray via convex hulls, O(log n) per cell, EXACTLY
+  P.1812 on the sampled profile), Longley-Rice (`itmCell`: NTIA's ITM on
+  the ray's own points, incremental horizons / fits, delta h per cell -
+  ~6x P.1812's time), free space or Hata (no terrain). LINK (right-click "📶 Link", markers, masts): a site <-> a
   place, the great-circle terrain profile through ITU-R
   P.1812-6 (delta-Bullington diffraction + troposcatter, median, no
   ducting), NTIA's ITM / Longley-Rice (a JS port of the public-domain C++),
@@ -538,7 +540,8 @@ decoders `kraken_doa_v2/plugins/`
   both on the ground, 3.3 air-to-ground at the ground end by elevation),
   P.1546 location variability + Rician / Rayleigh fading -> the margin a
   reliability needs. Validated against NTIA's ITM cases + C++, the ITU-R SG3
-  P.1812 logs and P.2108's table: `kraken_doa_v2/tools/pathloss_validate.mjs`.
+  P.1812 logs and P.2108's table, the coverage per model against the same
+  models on its own ray profiles: `kraken_doa_v2/tools/pathloss_validate.mjs`.
   UI-only (kraken_doa.html "📶 PATH LOSS"; the engine lives in the viewshed
   worker); settings per browser (localStorage `kraken_pl`). DroneRanger
   (the user's reference) only has free space + a line-of-sight check
