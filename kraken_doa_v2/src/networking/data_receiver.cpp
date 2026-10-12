@@ -716,10 +716,10 @@ void DataReceiver::decimation_processor_thread() {
                         // and the accumulator/covariance/auto-squelch never see
                         // calibration data. Applies to every method, squelch on
                         // or off.
+                        const bool doa_held = doa_is_calibrating() || doa_retune_hold_active();
                         if (!wideband_enabled &&
                             squelch_allows_music &&
-                            !doa_is_calibrating() &&
-                            !doa_retune_hold_active() &&
+                            !doa_held &&
                             !result.decimated_data.channels.empty() &&
                             result.decimated_data.min_samples > 0 &&
                             inst->music_processor &&
@@ -749,11 +749,20 @@ void DataReceiver::decimation_processor_thread() {
                             }
 
                             inst->music_processor->processDecimatedIQ(result.decimated_data);
-                            // per-packet DoA (ADS-B) / the Digital squelch: the stream the
-                            // decoder's packets and confirmed frames are cut from
-                            if (inst->talker_doa && inst->talker_doa->wants_blocks())
-                                inst->talker_doa->add_block(result.decimated_data);
                         }
+                        // per-packet DoA (ADS-B, AIS, DME, ISM devices) / the Digital
+                        // squelch: the stream the decoder's packets and confirmed frames
+                        // are cut from. Kept whatever the FFT squelch says - the decoder
+                        // confirms each packet itself - but not while heimdall calibrates
+                        // or retunes (the gap that leaves drops the packets across it).
+                        // Inside the squelch gate, a closed FFT squelch left the ring
+                        // empty: on a 2.4 MHz ISM VFO the averaged spectrum opens late or
+                        // never for a short burst, so a device decoded at once took
+                        // minutes to reach the DF list, or never did
+                        if (!wideband_enabled && !doa_held && inst->talker_doa &&
+                            inst->talker_doa->wants_blocks() &&
+                            !inst->being_deleted.load(std::memory_order_relaxed))
+                            inst->talker_doa->add_block(result.decimated_data);
 
                     } catch (const std::exception& e) {
                         cerr << "Pipeline " << inst->id << " error: " << e.what() << endl;

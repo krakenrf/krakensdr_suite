@@ -116,6 +116,7 @@ struct Shared {
         float doa = -1;
         struct H { int64_t t; double peak; float doa, conf; int frames; };
         std::vector<H> hist;
+        tdoa::PacketStats pk;              // a VFO's (tid ""): its decoder's packets
     };
     std::map<Key, V> v;
     bool full = true;
@@ -300,6 +301,7 @@ void sampler() {
             bool talker = false;
             tdoa::TalkerInfo ti;
             std::vector<Shared::V::H> hist;
+            tdoa::PacketStats pk;          // a VFO's: what became of its decoder's packets
         };
         std::vector<Disp> disp;
         std::map<Key, rdf::Estimate> ests;
@@ -391,6 +393,7 @@ void sampler() {
                 d.gate = s.gate.gate_m();
                 d.moved = s.gate.moved_m();
                 disp.push_back(std::move(d));
+                const size_t vfo_disp = disp.size() - 1;
 
                 // the array the steering uses (for the calibration: what it fits / matches)
                 if (!cal_noted) {
@@ -409,6 +412,7 @@ void sampler() {
                 if (!td || !td->active()) continue;
                 std::vector<tdoa::TalkerFrame> tframes;
                 td->update(mp, &tframes);
+                disp[vfo_disp].pk = td->packet_stats();
                 // aircraft packets with their positions -> the array calibration
                 std::vector<tdoa::CalPacket> cps;
                 td->take_cal(&cps);
@@ -512,6 +516,7 @@ void sampler() {
             v.frames = d.frames;
             v.gate_m = d.gate;
             v.moved_m = d.moved;
+            if (d.k.tid.empty()) v.pk = std::move(d.pk);
             if (d.talker) {
                 v.label = d.ti.label;
                 v.active = d.ti.active;
@@ -884,6 +889,21 @@ std::string status_message() {
         if (!k.tid.empty()) continue;
         o << (first ? "" : ",") << "{\"id\":" << k.vfo;
         common(v);
+        if (v.pk.in) {
+            // what became of its decoder's packets (talker_doa.hpp PacketStats)
+            const auto& p = v.pk;
+            const int64_t now = now_ms();
+            o << ",\"pk\":{\"in\":" << p.in << ",\"ok\":" << p.ok << ",\"late\":" << p.late << ",\"gap\":" << p.gap
+              << ",\"early\":" << p.early << ",\"overlap\":" << p.overlap << ",\"other\":" << p.other
+              << ",\"lag\":" << num(p.lag_last_s, 3) << ",\"lag_med\":" << num(p.lag_med_s, 3)
+              << ",\"lag_max\":" << num(p.lag_max_s, 3) << ",\"ring_s\":" << num(p.ring_s, 2) << ",\"drops\":[";
+            for (size_t i = 0; i < p.drops.size(); i++) {
+                const auto& dr = p.drops[i];
+                o << (i ? "," : "") << "[\"" << json_escape(dr.id) << "\",\"" << dr.why << "\"," << num(dr.lag_s, 3) << ","
+                  << num(static_cast<double>(now - dr.t_ms) / 1000.0, 1) << "]";
+            }
+            o << "]}";
+        }
         o << "}";
         first = false;
     }

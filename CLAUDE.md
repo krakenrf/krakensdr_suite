@@ -635,7 +635,8 @@ device" option (each transmission alone by default - one bearing per
 transmission in its history; a 📟 device in the DF panel, listed by name,
 kept for the plugin's "Keep devices" time - 24 h by default -
 `kp::Talker::keep_s`) - its VFO is 2.4 MHz wide, so kraken_doa keeps the
-stream as 16-bit samples (1 s, 48 MB with 5 antennas) to filter each
+stream as 16-bit samples (2.5 s, 120 MB with 5 antennas - the plugin reports a
+device up to ~2 s after it; 1 s left 8 of 19 without a bearing) to filter each
 device's channel out (the whole band mixed overlapping devices' bearings).
 The DF list sorts by any column heading (per kind, remembered per
 browser); the 2 Hz status carries every talker only every 2.5 s

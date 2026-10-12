@@ -11907,6 +11907,21 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     } else if (n) line += ' · not enough geometry yet - keep driving';
     return line;
   }
+  // A VFO's decoded packets (aircraft, ships, beacons, ISM devices): how many
+  // got a bearing and why the others didn't (talker_doa.hpp PacketStats; the
+  // latest drops in the tooltip)
+  const RDF_PK_WHY = {l: 'too late', g: 'samples not kept', e: 'reported too early', o: 'overlapping another', x: 'other'};
+  function rdfPkLine(id, p) {
+    const parts = [];
+    if (p.late) parts.push(`${p.late} too late` + (p.lag_max !== null ? ` (reported up to ${p.lag_max.toFixed(1)} s after, ${p.ring_s.toFixed(1)} s kept)` : ''));
+    if (p.overlap) parts.push(`${p.overlap} overlapping another device on its channel`);
+    if (p.gap) parts.push(`${p.gap} while the stream wasn't kept`);
+    if (p.early + p.other) parts.push(`${p.early + p.other} other`);
+    const tip = p.drops.length ? 'Latest without a bearing:\n' + p.drops.slice().reverse().map(d =>
+      `${d[0]} - ${RDF_PK_WHY[d[1]] || d[1]}${d[2] !== null ? `, reported ${d[2].toFixed(2)} s after its end` : ''} (${rdfAge(d[3])} ago)`).join('\n') : '';
+    return `<span title="${digEsc(tip)}"><b style="color:${getDecimatorColor(id)}">D${id}</b> ${p.in} decoded, ${p.ok} with a bearing` +
+      (parts.length ? ` · <span class="w">${parts.join(', ')}</span>` : '') + '</span>';
+  }
   function rdfBearingTxt(t) {
     if (t.lobe && t.peak !== null) return t.peak.toFixed(0) + '°';
     const c = rdfStaticCompass(t);
@@ -12029,6 +12044,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         else line += ' · <span class="w">no DoA frames from it yet (needs DoA on and frames entirely inside its transmissions)</span>';
         h += (h ? '<br>' : '') + line + '<br>' + rdfMapLine('Heat map', getDecimatorColor(t.vfo), tsel, t);
       }
+    }
+    for (const id of rdfSelIds()) {
+      const v = vs.find(x => x.id === id);
+      if (v && v.pk && v.pk.in) h += (h ? '<br>' : '') + rdfPkLine(id, v.pk);
     }
     // aircraft: how far the DF bearings are off their reported positions (a
     // check of the array / heading: a steady offset is mounting / heading)

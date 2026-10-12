@@ -58,6 +58,8 @@ void TalkerDoa::reset_locked() {
     dig_done_ = 0;
     dig_R_.resize(0, 0);
     dig_w_ = 0;
+    pstats_ = {};
+    lags_.clear();
 }
 
 // --- digital squelch -------------------------------------------------------------
@@ -250,16 +252,30 @@ void TalkerDoa::add_block(const SharedDecimator::MultiChannelDecimated& d) {
     }
 }
 
-bool TalkerDoa::packet_cov(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R) const {
+bool TalkerDoa::packet_cov(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R, char* why,
+                           double* lag_s) const {
     std::lock_guard<std::mutex> lk(ring_mu_);
-    if (raw_mode_) return wide_ ? packet_cov_wide(a, b, freq, bw, R) : packet_cov_raw(a, b, freq, bw, R);
-    if (!ring_cap_) return false;
+    char w = 'x';
+    if (!why) why = &w;
+    if (lag_s) {
+        const uint64_t head = raw_mode_ ? raw_hi_ : ring_next_ != ~0ull ? ring_next_ : 0;
+        *lag_s = head && ring_rate_ > 0 ? (static_cast<double>(head) - static_cast<double>(b)) / ring_rate_ : NAN;
+    }
+    if (raw_mode_) return wide_ ? packet_cov_wide(a, b, freq, bw, R, why) : packet_cov_raw(a, b, freq, bw, R, why);
+    if (!ring_cap_) {
+        *why = 'g';
+        return false;
+    }
     const uint64_t c0 = (a + CHUNK - 1) / CHUNK, c1 = b / CHUNK;   // chunks entirely inside
     if (c1 < c0 + MIN_PACKET_CHUNKS || c1 - c0 >= ring_cap_) return false;
     std::vector<std::complex<double>> sum(static_cast<size_t>(ring_tri_));
     for (uint64_t c = c0; c < c1; c++) {
         const size_t slot = static_cast<size_t>(c % ring_cap_);
-        if (ring_tag_[slot] != c + 1) return false;   // not taken (calibration, gap) or overwritten
+        if (ring_tag_[slot] != c + 1) {   // not taken (calibration, gap) or overwritten
+            const uint64_t newest = ring_next_ == ~0ull ? 0 : ring_next_ / CHUNK;
+            *why = c >= newest ? 'e' : c + ring_cap_ <= newest ? 'l' : 'g';
+            return false;
+        }
         const std::complex<float>* q = ring_.data() + slot * static_cast<size_t>(ring_tri_);
         for (int k = 0; k < ring_tri_; k++) sum[static_cast<size_t>(k)] += std::complex<double>(q[k]);
     }
@@ -283,9 +299,19 @@ bool TalkerDoa::packet_cov(uint64_t a, uint64_t b, double freq, double bw, Eigen
 // channel, each antenna is mixed down by freq and low-pass filtered (Hamming
 // windowed sinc, cut-off bw / 2, taps ~ 3 fs / bw), the filter's run-in taken
 // from the samples before the packet
-bool TalkerDoa::packet_cov_raw(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R) const {
+// why [a - half, b + half) isn't in the raw ring (ring_mu_ held)
+char TalkerDoa::raw_miss(uint64_t a, uint64_t b, uint64_t half) const {
+    if (b + half > raw_hi_) return 'e';
+    (void)a;
+    return raw_hi_ - raw_lo_ >= raw_cap_ ? 'l' : 'g';   // gone from a full ring / it started after a
+}
+
+bool TalkerDoa::packet_cov_raw(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R, char* why) const {
     const int m = ring_m_;
-    if (!raw_cap_ || m < 2 || b <= a) return false;
+    if (!raw_cap_ || m < 2 || b <= a) {
+        *why = raw_cap_ ? 'x' : 'g';
+        return false;
+    }
     const bool filt = is_finite_value(freq) && bw > 0 && bw < ring_rate_;
     int L = 0;
     std::vector<float> h;
@@ -303,7 +329,10 @@ bool TalkerDoa::packet_cov_raw(uint64_t a, uint64_t b, double freq, double bw, E
         for (auto& v : h) v = static_cast<float>(v / sum);
     }
     const uint64_t half = static_cast<uint64_t>(L / 2);
-    if (a < raw_lo_ + half || b + half > raw_hi_) return false;
+    if (a < raw_lo_ + half || b + half > raw_hi_) {
+        *why = raw_miss(a, b, half);
+        return false;
+    }
     const size_t n = static_cast<size_t>(b - a);
     // the packet's samples (+ the filter's margins), mixed to the channel
     const uint64_t s0 = a - half;
@@ -350,9 +379,12 @@ bool TalkerDoa::packet_cov_raw(uint64_t a, uint64_t b, double freq, double bw, E
 // evaluated at <= WIDE_MAX_OUT points spread evenly over the packet, at most
 // one per rate / (3 bw) samples. Without one: <= WIDE_MAX_PLAIN samples
 // spread over it (the covariance of the whole band, as the chunk ring)
-bool TalkerDoa::packet_cov_wide(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R) const {
+bool TalkerDoa::packet_cov_wide(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R, char* why) const {
     const int m = ring_m_;
-    if (!raw_cap_ || m < 2 || b <= a) return false;
+    if (!raw_cap_ || m < 2 || b <= a) {
+        *why = raw_cap_ ? 'x' : 'g';
+        return false;
+    }
     const double rate = ring_rate_;
     const bool filt = is_finite_value(freq) && bw > 0 && bw < rate;
     std::vector<std::complex<float>> g(1, {1, 0});
@@ -374,7 +406,10 @@ bool TalkerDoa::packet_cov_wide(uint64_t a, uint64_t b, double freq, double bw, 
     }
     const int L = static_cast<int>(g.size());
     const uint64_t half = static_cast<uint64_t>(L / 2);
-    if (a < raw_lo_ + half || b + half > raw_hi_) return false;
+    if (a < raw_lo_ + half || b + half > raw_hi_) {
+        *why = raw_miss(a, b, half);
+        return false;
+    }
     const uint64_t n = b - a;
     const uint64_t step = filt ? std::max<uint64_t>(1, static_cast<uint64_t>(rate / (3 * bw))) : 1;
     const uint64_t n_out = std::max<uint64_t>(1, std::min((n + step - 1) / step, filt ? WIDE_MAX_OUT : WIDE_MAX_PLAIN));
@@ -408,14 +443,26 @@ void TalkerDoa::add_packet(const dig::TalkerSpan& s) {
     want_blocks_ = true;   // the stream is kept from now on (this first packet may come too early)
     if (is_finite_value(s.freq_hz) && s.bw_hz > 0 && s.bw_hz <= WIDE_CHAN_MAX_BW) want_wide_ = true;
     Eigen::MatrixXcd R;
-    const bool ok = packet_cov(s.start, s.end, s.freq_hz, s.bw_hz, &R);
+    char why = 'x';
+    double lag = NAN;
+    const bool ok = packet_cov(s.start, s.end, s.freq_hz, s.bw_hz, &R, &why, &lag);
     const int64_t t = now_ms();
     std::lock_guard<std::mutex> lk(mu_);
     last_packet_ms_ = t;
-    if (!ok) return;
+    pstats_.in++;
+    if (is_finite_value(lag)) {
+        pstats_.lag_last_s = lag;
+        lags_.emplace_back(t, lag);
+        while (lags_.size() > 2000 || t - lags_.front().first > 60000) lags_.pop_front();
+    }
+    if (!ok) {
+        packet_drop_locked(s.id, why, lag, t);
+        return;
+    }
     if (digital()) dig_add_locked(R, static_cast<double>(s.end - s.start));
     Packet p{s.plugin, s.id, s.label, s.start, s.end, s.rate, s.freq_hz, s.bw_hz, s.avg_s, std::move(R), t, false,
              s.lat, s.lon, s.alt_m, s.keep_s};
+    p.lag = lag;
     // overlapping another talker's packet on the same channel (both decoded
     // through each other): neither holds one talker's signal alone. Packets
     // come in stream order, so an overlapping one is among the latest.
@@ -428,6 +475,40 @@ void TalkerDoa::add_packet(const dig::TalkerSpan& s) {
         if (it->a < p.b && p.a < it->b && it->id != p.id && same_channel(*it, p)) it->bad = p.bad = true;
     packets_.push_back(std::move(p));
     while (packets_.size() > 20000) packets_.pop_front();
+}
+
+void TalkerDoa::packet_drop_locked(const std::string& id, char why, double lag_s, int64_t t) {
+    switch (why) {
+        case 'l': pstats_.late++; break;
+        case 'g': pstats_.gap++; break;
+        case 'e': pstats_.early++; break;
+        case 'o': pstats_.overlap++; break;
+        default: pstats_.other++; break;
+    }
+    pstats_.drops.push_back({id, why, lag_s, t});
+    if (pstats_.drops.size() > DROPS_KEPT) pstats_.drops.erase(pstats_.drops.begin());
+}
+
+PacketStats TalkerDoa::packet_stats() const {
+    PacketStats o;
+    std::vector<double> v;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        o = pstats_;
+        const int64_t t = now_ms();
+        for (const auto& [when, lag] : lags_)
+            if (t - when <= 60000) v.push_back(lag);
+    }
+    if (!v.empty()) {
+        std::sort(v.begin(), v.end());
+        o.lag_med_s = v[v.size() / 2];
+        o.lag_max_s = v.back();
+    }
+    std::lock_guard<std::mutex> rl(ring_mu_);
+    if (ring_rate_ > 0)
+        o.ring_s = raw_mode_ ? static_cast<double>(raw_cap_) / ring_rate_
+                             : static_cast<double>(ring_cap_) * CHUNK / ring_rate_;
+    return o;
 }
 
 void TalkerDoa::commit_packet_locked(Packet& p, int64_t now) {
@@ -560,10 +641,19 @@ void TalkerDoa::update(MUSICProcessor& mp, std::vector<TalkerFrame>* out) {
         std::lock_guard<std::mutex> lk(mu_);
         // 0. packets that waited long enough for an overlapping one
         while (!packets_.empty() && t - packets_.front().stamp_ms >= PACKET_HOLD_MS) {
-            if (!packets_.front().bad) commit_packet_locked(packets_.front(), t);
+            Packet& p = packets_.front();
+            if (!p.bad) {
+                commit_packet_locked(p, t);
+                pstats_.ok++;
+            } else {
+                packet_drop_locked(p.id, 'o', p.lag, t);
+            }
             packets_.pop_front();
         }
-        idle = want_blocks_.load() && !digital() && t - last_packet_ms_ > PACKET_IDLE_MS;
+        // (not the 16-bit stream of narrow channels - ISM devices: a key fob or
+        // a door sensor after a quiet spell would lose its transmission, as
+        // the stream starts again only with a packet; it goes with the decoder)
+        idle = want_blocks_.load() && !digital() && !want_wide_.load() && t - last_packet_ms_ > PACKET_IDLE_MS;
         // 1. waiting frames -> talkers
         std::deque<Frame> keep;
         for (auto& f : frames_) {

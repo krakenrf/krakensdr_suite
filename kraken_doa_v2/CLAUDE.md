@@ -1822,8 +1822,13 @@ Edit `include/config.hpp`:
   0.16). Engine: packet -> one closed TalkerSpan {packet} (vfo_pos rounds;
   <= 50 ms). TalkerDoa: while packets come (`want_blocks_`, off after
   PACKET_IDLE_MS 30 s without, ring freed) the pipeline calls
-  `add_block()` after processDecimatedIQ (same gate: no calibration /
-  retune hold / closed FFT squelch) -> per CHUNK (16) stream samples the
+  `add_block()` for every block except while heimdall calibrates / the
+  retune hold runs (a gap: packets across it are dropped) - NOT gated by the
+  FFT squelch (the decoder confirms each packet itself; until 2026-10-13 it
+  sat inside MUSIC's squelch gate, and on a 2.4 MHz ISM VFO with the FFT
+  squelch on the averaged spectrum opened late or never for a short burst:
+  devices decoded at once took minutes to reach the DF list, or never did)
+  -> per CHUNK (16) stream samples the
   upper-triangle covariance into a ring of RING_S 1.5 s (5 ch at 2.4 MHz:
   ~27 MB, ~8 % of a Pi 5 core); a packet = sum of the chunks entirely
   inside it (>= 2), trace-normalised; waits PACKET_HOLD_MS 200 for an
@@ -1840,7 +1845,17 @@ Edit `include/config.hpp`:
   bearing to its ADS-B map point (needs the decoder's Plot on map;
   `rdfPosCheck`), "ADS-B check" = median / quartiles of that over the
   aircraft heard < 30 s (`rdfPosSummary`) - a steady offset = array
-  mounting / heading error
+  mounting / heading error.
+  What became of a VFO's packets is counted (`TalkerDoa::packet_stats()`,
+  `PacketStats`: in / ok / late - its samples had left the ring / gap - the
+  ring started after it / early / overlap / other, the report lag - stream
+  past the packet's end when it came - last / median / max of the last
+  minute, the ring's length, the latest 20 drops with id, reason, lag) ->
+  the DF status per VFO `pk` -> the 📡 DF panel's "Dn: N decoded, M with a
+  bearing · k too late (reported up to x s after, y s kept), ..." line
+  (`rdfPkLine`, the drops in its tooltip). Added 2026-10-13: ISM devices
+  decoded at once that never reached the DF list could not be told apart
+  (every drop was silent).
 - Channel filtering (AIS): `kp::Talker::freq_hz` / `bw_hz` (packet's
   centre in the plugin's band - the engine maps it to the VFO's: + afc_hz_,
   mirrored with invert), `avg_s` (averaging; also TTL = max(2 min, 30
@@ -1854,7 +1869,13 @@ Edit `include/config.hpp`:
   DME; freq ignored) - unless a packet named a channel <= WIDE_CHAN_MAX_BW
   250 kHz (the ism plugin's devices in 2.4 MHz): `want_wide_` then keeps the
   samples themselves as 16-bit (`wide_raw_`, x WIDE_SCALE 8192, WIDE_RING_S
-  1 s: 48 MB at 2.4 MHz with 5 antennas) and `packet_cov_wide` applies the
+  2.5 s: 120 MB at 2.4 MHz with 5 antennas; not released after
+  PACKET_IDLE_MS - a fob / door sensor after a quiet spell lost its
+  transmission - only with the decoder. It was 1 s: the ism plugin reports a
+  device when its burst group ends, up to MAX_LEN_S 1.2 s after the device's
+  rows when other activity keeps the group open, + the queue - live 1.3-1.8
+  s for a weather station on the tuner centre, 8 of 19 transmissions without
+  a bearing, seen with the drop counters below) and `packet_cov_wide` applies the
   same channel filter as complex taps h[t] e^(-iwt) (mixing first differs
   only by a phase common to all antennas) at <= WIDE_MAX_OUT 1024 points
   spread over the packet, at most one per fs / (3 bw) - the filter at all
@@ -2354,7 +2375,7 @@ Edit `include/config.hpp`:
   line (rtl_433 keys + `mic`) + MHz + SNR, `valid(start, end)`. DoA: one
   `kp::Talker::packet` per message, id "model id" (<= 32), span = the latest
   0.24 s of its rows (the whole burst when one device decoded from it -
-  kraken_doa takes <= 0.25 s and keeps 1 s at 2.4 MHz), `freq_hz` = the burst's
+  kraken_doa takes <= 0.25 s and keeps 2.5 s at 2.4 MHz), `freq_hz` = the burst's
   carrier / FSK centre, `bw_hz` = occupied + 10 kHz (25-160 kHz), `avg_s` =
   option `doa_avg` (1 = each transmission alone, 60, 600). Options `units`
   (si / us), `unknown` (0 = none from now on, and the ones heard so far are dropped: `table_remove` + `Host::talker_forget` - wire TALKER_FORGET 33 -> `TalkerSpan::forget` -> `TalkerDoa::add_span` erases the talker and its waiting packets), `keep_h` "Keep devices" (1 / 6 / 24 / 168 h,

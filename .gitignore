@@ -10,3 +10,6 @@ gr-krakensdr_v2/build/
 # recordings) and the compose .env (may hold KRAKEN_API_TOKEN)
 docker-data/
 .env
+# git worktrees (Claude Code puts them in .claude/worktrees/<name>): each is a
+# whole second checkout with its own build output and settings - never add it
+.claude/worktrees/

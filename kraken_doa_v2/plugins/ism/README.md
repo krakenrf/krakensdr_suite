@@ -147,7 +147,7 @@ events, raw frames, talker packets.
 
 For each device's DoA kraken_doa filters the device's channel out of the
 2.4 MHz of every antenna (it keeps the stream as 16-bit samples for that:
-48 MB with 5 antennas) - with the whole band, devices transmitting at the
+2.5 s, 120 MB with 5 antennas) - with the whole band, devices transmitting at the
 same time got each other's bearings.
 
 CPU (Pi 5): the detector ~4 % of a core; the plugin ~7 % with a few devices

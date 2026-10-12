@@ -42,7 +42,8 @@
 // keeps the covariance of each CHUNK-sample piece instead (the whole band): a
 // packet's = the sum over the chunks entirely inside it - unless a packet
 // named a channel <= WIDE_CHAN_MAX_BW (the ism plugin's devices in 2.4 MHz):
-// then the samples are kept as 16-bit for WIDE_RING_S and each packet's
+// then the samples are kept as 16-bit for WIDE_RING_S (kept while the decoder
+// runs - no idle release: a fob / door sensor after a quiet spell) and each packet's
 // channel is filtered out of every antenna like below RAW_MAX_RATE, the
 // filter evaluated at <= WIDE_MAX_OUT points spread over the packet (a 0.24 s
 // packet at 2.4 MHz has 576k samples, its ~30 kHz channel ~7k independent
@@ -100,7 +101,12 @@ constexpr int64_t PACKET_TTL_MS = 2 * 60 * 1000;
 constexpr int64_t PACKET_IDLE_MS = 5 * 60 * 1000; // no packets for this long: stop keeping the stream
 constexpr double RAW_MAX_RATE = 500e3;            // up to this VFO rate the samples themselves are kept
 constexpr double WIDE_CHAN_MAX_BW = 250e3;        // above it: packets naming a channel this narrow keep them as 16-bit
-constexpr double WIDE_RING_S = 1.0;               // ... for this long (2.4 MHz, 5 antennas: 48 MB)
+// ... for this long (2.4 MHz, 5 antennas: 120 MB). The ism plugin reports a
+// device when its burst group ends - up to its MAX_LEN_S 1.2 s after the
+// device's own rows when other activity keeps the group open - plus the
+// decoder's queue; live, a weather station on the tuner centre came 1.3-1.8 s
+// after its end: with 1 s kept 8 of 19 transmissions got no bearing
+constexpr double WIDE_RING_S = 2.5;
 constexpr float WIDE_SCALE = 8192.0f;             // 16-bit sample = value x WIDE_SCALE (+-4 full scale)
 constexpr uint64_t WIDE_MAX_OUT = 1024;           // channel-filtered points per packet (spread over it)
 constexpr uint64_t WIDE_MAX_PLAIN = 16384;        // samples per piece without a channel (digital squelch)
@@ -147,6 +153,23 @@ struct TalkerInfo {
     std::vector<Hist> hist;        // earlier transmissions, oldest first (t = their last frame)
 };
 
+// What became of the packets a VFO's decoder reported (the DF panel says it):
+// ok = given to their talker; late = its samples had already left the stream
+// kept (reported more than the ring's length after it ended); gap = not held
+// for another reason (the stream just started: a VFO's first packet, after a
+// calibration / retune gap, after PACKET_IDLE_MS without packets); early =
+// reported before its end was in the stream; overlap = another talker's packet
+// on the same channel at the same time (both dropped). lag = how long after
+// the packet's end the decoder reported it (stream time; the last minute)
+struct PacketStats {
+    uint64_t in = 0, ok = 0, late = 0, gap = 0, early = 0, overlap = 0, other = 0;
+    double lag_last_s = NAN, lag_med_s = NAN, lag_max_s = NAN;
+    double ring_s = 0;             // the stream kept (s)
+    struct Drop { std::string id; char why; double lag_s; int64_t t_ms; };
+    std::vector<Drop> drops;       // the latest DROPS_KEPT, oldest first
+};
+constexpr size_t DROPS_KEPT = 20;
+
 class TalkerDoa {
 public:
     // on while the VFO's digital decoder is on; off forgets everything
@@ -179,6 +202,7 @@ public:
     // (and, with the Digital squelch, publishes the VFO's DoA on mp)
     void update(MUSICProcessor& mp, std::vector<TalkerFrame>* out);
     std::vector<TalkerInfo> snapshot() const;
+    PacketStats packet_stats() const;
     // the packets with a position committed since the last call (only while
     // the array calibration collects)
     void take_cal(std::vector<CalPacket>* out);
@@ -230,6 +254,7 @@ private:
         bool bad = false;          // overlaps another talker's packet
         double lat = NAN, lon = NAN, alt_m = NAN;   // where its talker was (NAN = unknown)
         double keep = 0;           // kp::Talker::keep_s
+        double lag = NAN;          // how long after its end it was reported (s)
     };
     std::vector<CalPacket> cal_;   // for take_cal
     std::deque<Packet> packets_;
@@ -237,6 +262,9 @@ private:
     int64_t last_packet_ms_ = 0;
     void add_packet(const dig::TalkerSpan& s);
     void commit_packet_locked(Packet& p, int64_t now);
+    PacketStats pstats_;                       // (mu_) drops = the latest DROPS_KEPT
+    std::deque<std::pair<int64_t, double>> lags_;   // (mu_) (when, lag s) of the last minute
+    void packet_drop_locked(const std::string& id, char why, double lag_s, int64_t t);
 
     // per-chunk covariances (upper triangle, row-major) of the stream
     mutable std::mutex ring_mu_;
@@ -261,11 +289,15 @@ private:
     bool wide_ = false;
     std::vector<std::complex<int16_t>> wide_raw_;
     void free_ring();
-    // false: not all of [a, b) is held. freq / bw: the channel to filter out
-    // (raw mode only; NAN = the whole VFO)
-    bool packet_cov(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R) const;
-    bool packet_cov_raw(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R) const;
-    bool packet_cov_wide(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R) const;
+    // false: not all of [a, b) is held (*why: 'l' late - gone from a full
+    // ring, 'g' a gap - the ring started after a, 'e' early - b not in it
+    // yet, 'x' other). freq / bw: the channel to filter out (raw mode only;
+    // NAN = the whole VFO). *lag_s: how far the stream is past b
+    bool packet_cov(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R,
+                    char* why = nullptr, double* lag_s = nullptr) const;
+    bool packet_cov_raw(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R, char* why) const;
+    bool packet_cov_wide(uint64_t a, uint64_t b, double freq, double bw, Eigen::MatrixXcd* R, char* why) const;
+    char raw_miss(uint64_t a, uint64_t b, uint64_t half) const;   // why [a - half, b + half) isn't held
 
     // digital squelch
     std::atomic<bool> dig_on_{false};
