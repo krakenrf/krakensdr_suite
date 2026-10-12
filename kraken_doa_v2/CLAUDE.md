@@ -1283,7 +1283,13 @@ Edit `include/config.hpp`:
   heard in the last TALKERS_RECENT_MS 10 s (every push but each
   TALKERS_FULL_EVERY 5th - 2.5 s - and the one after GET_RDF; an ISM
   receiver keeps hundreds of devices for 24 h, all of them twice a second
-  was a few hundred kB/s per page). `rdfOnStatus` keeps the others from the
+  was a few hundred kB/s per page). Those partial pushes are sent as
+  `{"rdf_part":..}` (same fields), the full ones as `{"rdf":..}`: a page
+  loaded before partial pushes existed - an open tab reconnects by itself
+  after the stack restarts, keeping its old code - took each partial push
+  for the whole list and the DF list flashed between one device and all of
+  them; it ignores `rdf_part` (full list every 2.5 s, lobes 0.4 Hz until
+  reloaded). `rdfOnStatus(m, partial)` keeps the others from the
   previous pushes, their ages (age, tx_age, hist) moved on by the time
   since, `active` false. `rdf_grid` has `tid`. `RDF_RESET:<vfo>`
   resets the VFO and its talkers, `RDF_RESET:<vfo>:<tid>` one talker

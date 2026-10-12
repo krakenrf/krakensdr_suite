@@ -6624,7 +6624,8 @@ function connect() {
           else if(msg.map) { mapOnMessage(msg.map); }
           else if(msg.markers) { mkOnMessage(msg.markers); }
           else if(msg.incidents) { incOnMessage(msg.incidents); }
-          else if(msg.rdf) { rdfOnStatus(msg.rdf); }
+          else if(msg.rdf) { rdfOnStatus(msg.rdf, false); }
+          else if(msg.rdf_part) { rdfOnStatus(msg.rdf_part, true); }
           else if(msg.rdf_grid) { rdfOnGrid(msg.rdf_grid); }
           else if(msg.plugins) { digOnPlugins(msg.plugins); }
           else if(msg.codecs) { digOnCodecs(msg.codecs); }
@@ -11481,12 +11482,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     cx.putImageData(im, 0, 0);
     return {cv, g};
   }
-  function rdfOnStatus(m) {
-    // tfull false: only the talkers heard in the last seconds came (an ISM
-    // receiver keeps hundreds of devices) - the others stay from the previous
-    // pushes, their ages moved on by the time since
+  function rdfOnStatus(m, partial) {
+    // {"rdf_part"} (partial): only the talkers heard in the last seconds came
+    // (an ISM receiver keeps hundreds of devices) - the others stay from the
+    // previous pushes, their ages moved on by the time since. {"rdf"}: all
     const now = performance.now();
-    if (m.tfull === false && rdfStatus && rdfStatus.talkers) {
+    if (partial && rdfStatus && rdfStatus.talkers) {
       const dt = (now - (rdfStatusT || now)) / 1000;
       const got = new Set((m.talkers || []).map(t => rdfGk(t.vfo, t.tid)));
       const keep = rdfStatus.talkers.filter(t => !got.has(rdfGk(t.vfo, t.tid))).map(t => ({

@@ -852,7 +852,19 @@ std::string status_message() {
     Shared& S = SH();
     std::lock_guard<std::mutex> lk(S.mu);
     std::ostringstream o;
-    o << "{\"rdf\":{\"on\":" << (g_enabled.load() ? "true" : "false") << ",\"range_km\":" << num(g_range_km.load(), 1)
+    // Every talker only every TALKERS_FULL_EVERY-th push (and after
+    // request_full) - {"rdf": ...}; the pushes in between carry only the
+    // talkers heard in the last TALKERS_RECENT_MS and are {"rdf_part": ...}
+    // (same fields, tfull false): the page merges them into the list it has.
+    // A separate key, not just the flag: a page loaded before this existed
+    // (an open tab reconnects after a restart) took every partial push for the
+    // whole list - the DF list flashed between one device and all of them.
+    // It ignores rdf_part and shows the full list every 2.5 s instead
+    const bool tfull = S.talkers_full || S.pushes % TALKERS_FULL_EVERY == 0;
+    S.talkers_full = false;
+    S.pushes++;
+    o << "{\"" << (tfull ? "rdf" : "rdf_part") << "\":{\"on\":" << (g_enabled.load() ? "true" : "false")
+      << ",\"range_km\":" << num(g_range_km.load(), 1)
       << ",\"state\":\"" << S.state << "\",\"station\":";
     if (S.have_fix)
         o << "{\"lat\":" << num(S.last.lat, 6) << ",\"lon\":" << num(S.last.lon, 6) << ",\"hdg\":"
@@ -878,11 +890,9 @@ std::string status_message() {
     // talkers (talker_doa.hpp): ages in s; doa = the latest transmission's
     // bearing as the MUSIC DoA plot shows it, peak = the same as a compass
     // bearing; hist = earlier transmissions [age_s, compass|null, doa, conf, frames].
-    // tfull false: only the talkers heard in the last TALKERS_RECENT_MS - the
-    // page keeps the others from the previous pushes (ages moved on)
-    const bool tfull = S.talkers_full || S.pushes % TALKERS_FULL_EVERY == 0;
-    S.talkers_full = false;
-    S.pushes++;
+    // tfull false (rdf_part): only the talkers heard in the last
+    // TALKERS_RECENT_MS - the page keeps the others from the previous pushes
+    // (ages moved on)
     o << "],\"tfull\":" << (tfull ? "true" : "false") << ",\"talkers\":[";
     first = true;
     const int64_t t = now_ms();

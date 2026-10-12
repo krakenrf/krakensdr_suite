@@ -586,8 +586,10 @@ kept for the plugin's "Keep devices" time - 24 h by default -
 stream as 16-bit samples (1 s, 48 MB with 5 antennas) to filter each
 device's channel out (the whole band mixed overlapping devices' bearings).
 The DF list sorts by any column heading (per kind, remembered per
-browser); the 2 Hz status carries every talker only every 2.5 s, the
-recently heard ones in between.
+browser); the 2 Hz status carries every talker only every 2.5 s
+(`{"rdf"}`), the recently heard ones in between (`{"rdf_part"}`, merged by
+the page - a separate key so an old page in a tab that reconnected after a
+restart ignores it instead of showing it as the whole list).
 TETRA isn't split
 (downlink = the base station only). The
 VFO's decimated-stream position (`MultiChannelDecimated::stream_pos`) is the
