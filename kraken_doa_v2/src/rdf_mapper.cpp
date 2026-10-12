@@ -439,9 +439,12 @@ void sampler() {
                     // packets, recomputed about once a second
                     TLobe& L = tlobes[tk];
                     const int64_t lt = ti.packet ? ti.spec_ms : ti.tx_end_ms;
-                    // a packet talker's lobe is kept 60 s / 15 averaging times after its last packet
+                    // a packet talker's lobe is kept 60 s / 15 averaging times after its last
+                    // packet - as long as the talker itself when its plugin set a keep time
+                    // (kp::Talker::keep_s: ISM devices, picked in the DF list hours later)
+                    const bool kept = ti.keep_s > 0;
                     const int64_t keep_ms = std::max<int64_t>(60000, static_cast<int64_t>(15000 * ti.avg_s));
-                    if (ti.spec.empty() || (ti.packet && t - ti.last_ms > keep_ms)) {
+                    if (ti.spec.empty() || (ti.packet && !kept && t - ti.last_ms > keep_ms)) {
                         L.t = -1;
                         L.lobe.clear();
                     } else if (lt != L.t || L.lobe.empty()) {

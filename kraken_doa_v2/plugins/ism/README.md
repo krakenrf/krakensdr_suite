@@ -63,9 +63,10 @@ so its documentation applies):
   "Averaged over 1 / 10 min" combines them (a fixed sensor). The DF panel
   lists the devices (📟) by name - a list that reordered on every
   transmission was hard to click; a click on a column heading sorts by it
-  (Bearing, Heard, Tx...). With a static station location a device whose
-  lobe has gone (a minute after its last transmission) shows its compass
-  bearing, from the station heading.
+  (Bearing, Heard, Tx...). A device keeps its lobe as long as it is kept
+  ("Keep devices"): picked in the list hours later, its last lobe shows on
+  the map; "Every device" draws only the lobes of devices heard in the last
+  minute.
 - **Digital squelch**: a VFO with squelch method "Digital" takes its own DoA
   only from the samples of decoded transmissions.
 - **Raw frames** (Decoder Logging → raw): one JSON line per message

@@ -11700,7 +11700,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         const ids = rdfSelIds();
         for (const v of rdfVfos()) if (ids.includes(v.id) && v.lobe) lobes.push({v, col: getDecimatorColor(v.id), dim: false, label: ''});
       } else {
-        for (const t of rdfSelTalkers()) if (t.lobe) lobes.push({v: t, col: rdfTalkerColor(t), dim: !t.active, label: rdfShortName(t), t});
+        // one talker: its lobe however old (ISM devices keep theirs for hours);
+        // "Every ...": only those heard in the last minute - not hours of devices
+        const every = rdfTidSel() === '*';
+        for (const t of rdfSelTalkers())
+          if (t.lobe && !(every && t.pk && !t.active && (t.age ?? 0) > 60))
+            lobes.push({v: t, col: rdfTalkerColor(t), dim: !t.active, label: rdfShortName(t), t});
       }
       for (const {v, col, dim, label, t} of lobes) {
         c.save();

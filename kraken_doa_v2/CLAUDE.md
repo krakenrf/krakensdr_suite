@@ -1350,7 +1350,7 @@ Edit `include/config.hpp`:
   `kp::Talker::keep_s` - wire TALKER field 13, `TalkerSpan::keep_s`,
   `TalkerInfo::keep_s`; ism: its "Keep devices" option, 24 h). No mobile DF
   records. rdf_mapper: `pk:true`, lobe turned with the heading at
-  `spec_ms`, no lobe 60 s after its last packet. UI: ✈ rows, "Every
+  `spec_ms`, no lobe 60 s after its last packet (a talker with `keep_s` - ISM devices - keeps its lobe as long as it is kept: picked in the DF list hours later it still shows; "Every ..." draws only those heard in the last 60 s). UI: ✈ rows, "Every
   aircraft", Δ pos column + selected-aircraft line = DF bearing minus the
   bearing to its ADS-B map point (needs the decoder's Plot on map;
   `rdfPosCheck`), "ADS-B check" = median / quartiles of that over the
