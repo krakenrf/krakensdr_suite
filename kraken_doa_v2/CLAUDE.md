@@ -1146,7 +1146,16 @@ Edit `include/config.hpp`:
   for m.debug or without nested workers (node: the validator). Replies
   carry job + pass (a cancelled job's late reply can't answer the next
   job); a failure / cancel stops every helper. The row's tooltip says "on
-  N workers". Only the signal sweep: the line of sight viewshed is fast.
+  N workers". Only the signal sweep. The LINE OF SIGHT viewshed was
+  parallelized too (the user asked; ring by ring - the horizons carried
+  between rings, the next ring posted as soon as the last one's horizons
+  were back, compact cell lists merged in ray order: bit-identical) and
+  REVERTED: its sweep is memory-bound, ~175 ns a cell, so copying each
+  ring's terrain to every helper (~270 ms at 300 km, 3 helpers) + merging
+  their cells + the fill-in (~450 ms) cost what the helpers saved - on the
+  Pi 5 with the receiver running: 30 km 0.85 -> 0.77 s, 300 km 1.43 ->
+  1.5-1.7 s (slower); more helpers make the copies worse. Without
+  SharedArrayBuffer (cross-origin isolation) that won't change.
   The line of sight runs DURING PASS 1 (pass 0 is quick - only each cell's
   sample -, so during pass 0 it held pass 1 back: 1.9x -> 2.3x). Measured
   (scratch t_par.py, browser on the Pi 5, 4 cores, the KrakenSDR stack
