@@ -1241,7 +1241,9 @@ Edit `include/config.hpp`:
   channel: R the BEST site's reliability, G in sight of ANY), getImageData,
   per screen pixel: an in-sight pixel next to an out-of-sight one = the line
   (white, alpha 0xa0), else `plColLut` (`PL_BANDS` >= 99 / 95 / 90 / 75 / 50 /
-  25 %; below the wanted reliability alpha 105, below 25 % nothing),
+  25 / < 25 %: EVERY place with data within the radius is coloured - below
+  25 % red; at first it was left blank, the user wanted it red; below the
+  wanted reliability alpha 105),
   putImageData, drawn at alpha 0.6. Cached by `plCompKey` (view, size,
   `plSigVer` - bumped by every paint -, rel, the sites): pointer moves
   don't redo it. Checked in the browser: every sampled pixel's colour = the

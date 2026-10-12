@@ -15214,8 +15214,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   const PL_MODELS = {p1812: 'ITU-R P.1812 (terrain)', itm: 'Longley-Rice / ITM (terrain)', fs: 'Free space'};
   const PL_MODEL_OPTS = Object.entries(PL_MODELS).map(([k, v]) => [k, k === 'itm' ? v + ' - much slower' : v]);   // (the picker)
   const PL_POLS = [['v', 'vertical'], ['h', 'horizontal'], ['c', 'circular'], ['a', 'custom angle']];
-  // the reliability (0..1) -> colour; below 25 % nothing
-  const PL_BANDS = [[0.99, '#1a9850'], [0.95, '#66bd63'], [0.90, '#a6d96a'], [0.75, '#fee08b'], [0.50, '#fdae61'], [0.25, '#d73027']];
+  // the reliability (0..1) -> colour: every place within the radius gets
+  // one - below 25 % red (it was left out at first; the user wanted it red)
+  const PL_BANDS = [[0.99, '#1a9850'], [0.95, '#66bd63'], [0.90, '#a6d96a'], [0.75, '#fee08b'], [0.50, '#fdae61'], [0.25, '#f46d43'], [0, '#d73027']];
   const PL_COL = {tx: '#ff7043', rx: '#4fc3f7'};   // TX / RX tags
   const PL_NAME = {tx: 'TX', rx: 'RX'};
   function plSave() { try { localStorage.setItem('kraken_pl', JSON.stringify(plState)); } catch (e) {} }
@@ -15389,7 +15390,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     plSigVer++;
   }
   // R (1 + reliability x 254) -> ABGR: the band's colour, below the wanted
-  // reliability faint (a tint), below 25 % nothing
+  // reliability faint (a tint)
   let plLutKey = '', plLut = null;
   function plColLut() {
     const key = String(plState.rel);
@@ -15703,7 +15704,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<div class="pl-leg"></div>`;
   }
   function plLegendHtml() {
-    return `<div class="pl-leg-b">` + PL_BANDS.map(([t, c], i) => `<span><i style="background:${c}"></i>${i ? Math.round(t * 100) + '-' + Math.round(PL_BANDS[i - 1][0] * 100) : '≥ ' + Math.round(t * 100)} %</span>`).join('') +
+    return `<div class="pl-leg-b">` + PL_BANDS.map(([t, c], i) => `<span><i style="background:${c}"></i>${!i ? '≥ ' + Math.round(t * 100) : !t ? '< ' + Math.round(PL_BANDS[i - 1][0] * 100) : Math.round(t * 100) + '-' + Math.round(PL_BANDS[i - 1][0] * 100)} %</span>`).join('') +
            `</div><div class="pl-note">${PL_MODELS[plState.model]} · faint: below ${plF(plState.rel, plState.rel % 1 ? 1 : 0)} % · <span class="pl-wl">━</span> white: the edge of the line of sight</div>`;
   }
   // (from vsRender) the settings block, the link's line, the strip
