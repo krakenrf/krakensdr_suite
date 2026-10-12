@@ -1240,10 +1240,14 @@ Edit `include/config.hpp`:
   fine onto `plOffS`, then onto `plComp` with 'lighten' (= the max per
   channel: R the BEST site's reliability, G in sight of ANY), getImageData,
   per screen pixel: an in-sight pixel next to an out-of-sight one = the line
-  (white, alpha 0xa0), else `plColLut` (`PL_BANDS` >= 99 / 95 / 90 / 75 / 50 /
-  25 / < 25 %: EVERY place with data within the radius is coloured - below
-  25 % red; at first it was left blank, the user wanted it red; below the
-  wanted reliability alpha 105),
+  (white, alpha 0xa0), else `plColLut`: a GRADIENT (`PL_STOPS` 0 / 25 /
+  50 / 75 / 90 / 95 / 99 %, red - orange - yellow - greens, linear in RGB
+  between - `plRelRgb`; the user's calls: first hard bands, then every
+  place coloured (below 25 % red, not blank), then blended - no hard
+  edges); EVERY place with data within the radius is coloured; below the
+  wanted reliability the alpha ramps 255 -> 105 over the 10 % below it
+  (a step was a hard edge too). The legend: a gradient bar with the stops
+  evenly spaced + their labels (`.pl-leg-g`, `.pl-leg-t`),
   putImageData, drawn at alpha 0.6. Cached by `plCompKey` (view, size,
   `plSigVer` - bumped by every paint -, rel, the sites): pointer moves
   don't redo it. Checked in the browser: every sampled pixel's colour = the

@@ -525,8 +525,9 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-pl .e {color:#ff8a80}
 .pl-leg {margin-top:3px}
 .pl-leg:empty {display:none}
-.pl-leg-b {display:flex;flex-wrap:wrap;gap:2px 8px;margin-top:2px}
-.pl-leg-b i {display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:3px;vertical-align:-1px;border:1px solid rgba(0,0,0,.6)}
+.pl-leg-g {height:10px;border-radius:2px;border:1px solid rgba(0,0,0,.6);margin-top:4px}
+.pl-leg-t {position:relative;height:14px;margin-top:1px;color:#8fb0d8;font-size:10px}
+.pl-leg-t span {position:absolute;top:0;white-space:nowrap}
 .pl-wl {color:#fff;font-weight:bold}
 .pl-lk {display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px;border-top:1px solid #2a4a7a;padding-top:4px}
 .pl-lk .nm {font-weight:bold;color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px}
@@ -15214,13 +15215,27 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   const PL_MODELS = {p1812: 'ITU-R P.1812 (terrain)', itm: 'Longley-Rice / ITM (terrain)', fs: 'Free space'};
   const PL_MODEL_OPTS = Object.entries(PL_MODELS).map(([k, v]) => [k, k === 'itm' ? v + ' - much slower' : v]);   // (the picker)
   const PL_POLS = [['v', 'vertical'], ['h', 'horizontal'], ['c', 'circular'], ['a', 'custom angle']];
-  // the reliability (0..1) -> colour: every place within the radius gets
-  // one - below 25 % red (it was left out at first; the user wanted it red)
-  const PL_BANDS = [[0.99, '#1a9850'], [0.95, '#66bd63'], [0.90, '#a6d96a'], [0.75, '#fee08b'], [0.50, '#fdae61'], [0.25, '#f46d43'], [0, '#d73027']];
+  // the reliability (0..1) -> colour: a GRADIENT through these stops (the
+  // ColorBrewer red-yellow-green; most of the change where it matters, 90-99
+  // %), linear between them - no hard band edges (the user's call: bands
+  // first, then every place coloured, then blended); every place within
+  // the radius gets one
+  const PL_STOPS = [[0, '#d73027'], [0.25, '#f46d43'], [0.50, '#fdae61'], [0.75, '#fee08b'], [0.90, '#a6d96a'], [0.95, '#66bd63'], [0.99, '#1a9850']];
   const PL_COL = {tx: '#ff7043', rx: '#4fc3f7'};   // TX / RX tags
   const PL_NAME = {tx: 'TX', rx: 'RX'};
   function plSave() { try { localStorage.setItem('kraken_pl', JSON.stringify(plState)); } catch (e) {} }
-  function plRelCol(rel) { for (const [t, c] of PL_BANDS) if (rel >= t) return c; return null; }
+  const plHex = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  function plRelRgb(rel) {
+    const S = PL_STOPS;
+    if (!(rel > S[0][0])) return plHex(S[0][1]);
+    for (let i = 1; i < S.length; i++) {
+      if (rel > S[i][0]) continue;
+      const t = (rel - S[i - 1][0]) / (S[i][0] - S[i - 1][0]), a = plHex(S[i - 1][1]), b = plHex(S[i][1]);
+      return a.map((v, k) => Math.round(v + (b[k] - v) * t));
+    }
+    return plHex(S[S.length - 1][1]);
+  }
+  function plRelCol(rel) { const [r, g, b] = plRelRgb(rel); return `rgb(${r},${g},${b})`; }
 
   // ---- the budget ----
   function plPtxDbm() { return 10 * Math.log10(plState.ptx * 1000); }
@@ -15389,18 +15404,19 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     res.sigPaint = true;
     plSigVer++;
   }
-  // R (1 + reliability x 254) -> ABGR: the band's colour, below the wanted
-  // reliability faint (a tint)
+  // R (1 + reliability x 254) -> ABGR: the gradient's colour; below the
+  // wanted reliability it fades out - opaque at it, faint (105) from 10 %
+  // below it, a ramp between (no hard edge there either)
   let plLutKey = '', plLut = null;
   function plColLut() {
     const key = String(plState.rel);
     if (plLut && plLutKey === key) return plLut;
     plLut = new Uint32Array(256);
+    const want = plState.rel / 100;
     for (let g = 1; g < 256; g++) {
-      const rel = (g - 1) / 254, col = plRelCol(rel);
-      if (!col) continue;
-      const c = parseInt(col.slice(1), 16), a = rel >= plState.rel / 100 ? 255 : 105;
-      plLut[g] = ((a << 24) | ((c & 0xff) << 16) | (c & 0xff00) | ((c >> 16) & 0xff)) >>> 0;
+      const rel = (g - 1) / 254, [r, gg, b] = plRelRgb(rel);
+      const a = Math.round(105 + 150 * Math.min(1, Math.max(0, (rel - (want - 0.1)) / 0.1)));
+      plLut[g] = ((a << 24) | (b << 16) | (gg << 8) | r) >>> 0;
     }
     plLutKey = key;
     return plLut;
@@ -15704,8 +15720,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<div class="pl-leg"></div>`;
   }
   function plLegendHtml() {
-    return `<div class="pl-leg-b">` + PL_BANDS.map(([t, c], i) => `<span><i style="background:${c}"></i>${!i ? '≥ ' + Math.round(t * 100) : !t ? '< ' + Math.round(PL_BANDS[i - 1][0] * 100) : Math.round(t * 100) + '-' + Math.round(PL_BANDS[i - 1][0] * 100)} %</span>`).join('') +
-           `</div><div class="pl-note">${PL_MODELS[plState.model]} · faint: below ${plF(plState.rel, plState.rel % 1 ? 1 : 0)} % · <span class="pl-wl">━</span> white: the edge of the line of sight</div>`;
+    // a bar with the stops evenly spaced (its scale stretches 90-99 %, as the colours do)
+    const n = PL_STOPS.length, pos = i => (i / (n - 1) * 100).toFixed(1);
+    return `<div class="pl-leg-g" style="background:linear-gradient(to right, ${PL_STOPS.map(([, c], i) => `${c} ${pos(i)}%`).join(', ')})"></div>` +
+           `<div class="pl-leg-t">${PL_STOPS.map(([t], i) => `<span style="${!i ? 'left:0' : i === n - 1 ? 'right:0' : `left:${pos(i)}%;transform:translateX(-50%)`}">` +
+           `${Math.round(t * 100)}${i === n - 1 ? '+ %' : !i ? ' %' : ''}</span>`).join('')}</div>` +
+           `<div class="pl-note">${PL_MODELS[plState.model]} · fading out below ${plF(plState.rel, plState.rel % 1 ? 1 : 0)} % · <span class="pl-wl">━</span> white: the edge of the line of sight</div>`;
   }
   // (from vsRender) the settings block, the link's line, the strip
   function plRenderSig(force) {
