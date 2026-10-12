@@ -14,8 +14,10 @@ namespace tdoa {
 namespace {
 
 // a packet talker is forgotten after PACKET_TTL_MS, or 30 averaging times
-// (AIS: a moored ship reports every 3 min)
+// (AIS: a moored ship reports every 3 min), or the time its plugin asked
+// for (kp::Talker::keep_s - ISM devices: 24 h by default)
 int64_t packet_ttl_ms(const TalkerInfo& in) {
+    if (in.keep_s > 0) return static_cast<int64_t>(in.keep_s * 1000);
     return std::max<int64_t>(PACKET_TTL_MS, static_cast<int64_t>(30 * in.avg_s * 1000));
 }
 
@@ -413,7 +415,7 @@ void TalkerDoa::add_packet(const dig::TalkerSpan& s) {
     if (!ok) return;
     if (digital()) dig_add_locked(R, static_cast<double>(s.end - s.start));
     Packet p{s.plugin, s.id, s.label, s.start, s.end, s.rate, s.freq_hz, s.bw_hz, s.avg_s, std::move(R), t, false,
-             s.lat, s.lon, s.alt_m};
+             s.lat, s.lon, s.alt_m, s.keep_s};
     // overlapping another talker's packet on the same channel (both decoded
     // through each other): neither holds one talker's signal alone. Packets
     // come in stream order, so an overlapping one is among the latest.
@@ -439,6 +441,7 @@ void TalkerDoa::commit_packet_locked(Packet& p, int64_t now) {
     }
     tk.info.packet = true;
     tk.info.avg_s = p.avg > 0 ? p.avg : PACKET_TAU_S;
+    tk.info.keep_s = p.keep;
     tk.info.plugin = p.plugin;
     if (!p.label.empty()) tk.info.label = p.label;
     const double ts = static_cast<double>(p.a) / p.rate;

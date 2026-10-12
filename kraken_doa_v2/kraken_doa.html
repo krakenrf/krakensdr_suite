@@ -446,6 +446,11 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-df-tl table {border-collapse:collapse;width:100%}
 .map-df-tl th, .map-df-tl td {padding:1px 4px;text-align:left;white-space:nowrap}
 .map-df-tl th {color:#8fb0d8;font-weight:normal;position:sticky;top:0;background:#101a2e}
+.map-df-tl th[data-sort] {cursor:pointer;user-select:none}
+/* name / reading clipped (full text as the tooltip) so Bearing, Heard and Tx fit the panel */
+.map-df-tl .clip {display:inline-block;max-width:80px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
+.map-df-tl .clip.nm {max-width:130px}
+.map-df-tl th[data-sort]:hover {color:#d8e6ff}
 .map-df-tl td.n {text-align:right;font-variant-numeric:tabular-nums}
 .map-df-tl tr.t {cursor:pointer}
 .map-df-tl tr.t:hover {background:#22345a}
@@ -11439,6 +11444,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // ang, mass, edge, off, off_sd}, lines:[[lat, lon, bearing, t]]}} when a
   // heat map changed
   let rdfStatus = null;
+  let rdfStatusT = 0;   // when it came (performance.now)
   const rdfGrids = {};   // "vfo|tid" ("vfo|" = the VFO) -> {m, coarse, fine (canvases)}
   const rdfLobeCache = new Map();
   let rdfTlPress = null;   // the talker row pressed (rdfTlDown)
@@ -11476,6 +11482,21 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     return {cv, g};
   }
   function rdfOnStatus(m) {
+    // tfull false: only the talkers heard in the last seconds came (an ISM
+    // receiver keeps hundreds of devices) - the others stay from the previous
+    // pushes, their ages moved on by the time since
+    const now = performance.now();
+    if (m.tfull === false && rdfStatus && rdfStatus.talkers) {
+      const dt = (now - (rdfStatusT || now)) / 1000;
+      const got = new Set((m.talkers || []).map(t => rdfGk(t.vfo, t.tid)));
+      const keep = rdfStatus.talkers.filter(t => !got.has(rdfGk(t.vfo, t.tid))).map(t => ({
+        ...t, active: false,
+        age: t.age == null ? t.age : t.age + dt,
+        tx_age: t.tx_age == null ? t.tx_age : t.tx_age + dt,
+        hist: (t.hist || []).map(h => [h[0] == null ? h[0] : h[0] + dt, ...h.slice(1)])}));
+      m.talkers = (m.talkers || []).concat(keep);
+    }
+    rdfStatusT = now;
     rdfStatus = m;
     // grids of VFOs / talkers that are gone
     const live = new Set([...(m.vfos || []).map(v => rdfGk(v.id, '')), ...(m.talkers || []).map(t => rdfGk(t.vfo, t.tid))]);
@@ -11523,19 +11544,49 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (rdfKind(t) === 'aircraft') { const cs = rdfAirParts(t).cs; return cs ? `${cs} (${t.tid})` : t.tid; }
     return t.tid + (t.label ? ' · ' + t.label : '');
   }
-  // the list's order: radios newest first (who talks now on top); aircraft /
-  // ships (many at once, a packet every moment - newest first reshuffled the
-  // list all the time) nearest first, those without a reported position by
-  // name. Returns [talker, rdfPosCheck] pairs
+  // The list's order, per kind of talker: the column the user clicked
+  // (again = reversed; mapState.rdfSort[kind] = [column, 1 | -1]), else the
+  // kind's own - radios newest first (who talks now on top), aircraft /
+  // ships nearest first (by their reported position: newest first reshuffled
+  // a busy list with every packet), DME beacons and ISM devices by name (a
+  // device list that reordered on every transmission was hard to click).
+  // Ties are broken by name, ID and VFO, so rows with equal values (heard in
+  // the same second) never swap; empty values go last either way. Radios
+  // stay above packet talkers. Returns [talker, rdfPosCheck] pairs
+  const RDF_SORT_DEF = {radio: ['heard', 1], aircraft: ['dist', 1], ship: ['dist', 1], beacon: ['name', 1],
+                        device: ['name', 1], talker: ['heard', 1]};
+  const RDF_SORT_KEYS = {
+    vfo: t => t.vfo,
+    name: t => rdfShortName(t).toLowerCase(),
+    info: t => (rdfKind(t) === 'aircraft' ? t.tid : t.label || '').toLowerCase() || null,
+    dist: (t, c) => c ? c.km : null,
+    brg: t => rdfBearingNum(t),
+    dpos: (t, c) => c && c.err !== null ? c.err : null,
+    heard: t => t.active ? -1 : t.age ?? null,
+    tx: t => t.tx,
+  };
+  function rdfSortOf(kinds) {
+    const s = mapState.rdfSort && mapState.rdfSort[kinds];
+    return Array.isArray(s) && RDF_SORT_KEYS[s[0]] && (s[1] === 1 || s[1] === -1) ? s : RDF_SORT_DEF[kinds] || ['name', 1];
+  }
+  // a column heading clicked: sort by it (the same again = reversed; counts
+  // start with the most)
+  function rdfSetSort(col) {
+    if (!RDF_SORT_KEYS[col]) return;
+    const kinds = rdfKinds(rdfTalkers()), [c, d] = rdfSortOf(kinds);
+    mapState.rdfSort = Object.assign({}, mapState.rdfSort, {[kinds]: [col, c === col ? -d : col === 'tx' ? -1 : 1]});
+    mapSave();
+    rdfRenderPanel();
+  }
   function rdfTalkersListed() {
     const rows = rdfTalkers().map(t => [t, t.pk ? rdfPosCheck(t) : null]);
+    const [col, dir] = rdfSortOf(rdfKinds(rows.map(([t]) => t))), key = RDF_SORT_KEYS[col];
+    const cmp = (x, y) => typeof x === 'string' ? x.localeCompare(y) : x - y;
     return rows.sort(([a, ca], [b, cb]) => {
       if (!!a.pk !== !!b.pk) return a.pk ? 1 : -1;
-      // radios and ISM devices (no position; the one that just sent on top)
-      if (!a.pk || (rdfKind(a) === 'device' && rdfKind(b) === 'device')) return (a.age ?? 1e9) - (b.age ?? 1e9);
-      if (!ca !== !cb) return ca ? -1 : 1;
-      if (ca && ca.km !== cb.km) return ca.km - cb.km;
-      return rdfShortName(a).localeCompare(rdfShortName(b)) || a.tid.localeCompare(b.tid) || a.vfo - b.vfo;
+      const va = key(a, ca), vb = key(b, cb), na = va === null || va === undefined, nb = vb === null || vb === undefined;
+      const r = na || nb ? na - nb : dir * cmp(va, vb);
+      return r || rdfShortName(a).localeCompare(rdfShortName(b)) || a.tid.localeCompare(b.tid) || a.vfo - b.vfo;
     });
   }
   // a talker's colour: its VFO's when it is the one shown, else one of its own
@@ -11727,8 +11778,24 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
   function rdfBearingTxt(t) {
     if (t.lobe && t.peak !== null) return t.peak.toFixed(0) + '°';
+    const c = rdfStaticCompass(t);
+    if (c !== null) return c.toFixed(0) + '°';
     if (t.doa !== null) return t.doa.toFixed(0) + '° arr';   // no heading: the DoA plot's angle
     return '';
+  }
+  // A talker whose lobe is gone (a packet talker 60 s after its last packet -
+  // ISM devices stay listed for hours): its compass bearing from the station
+  // heading, when the station doesn't move (static location) - null otherwise
+  function rdfStaticCompass(t) {
+    const st = rdfStatus && rdfStatus.station;
+    if (!st || st.src !== 'static' || st.hdg === null || st.hdg === undefined || t.doa === null || t.doa === undefined) return null;
+    return ((st.hdg - t.doa) % 360 + 360) % 360;
+  }
+  // the bearing the list sorts by: compass, else the DoA plot's angle
+  function rdfBearingNum(t) {
+    if (t.lobe && t.peak !== null) return t.peak;
+    const c = rdfStaticCompass(t);
+    return c !== null ? c : t.doa ?? null;
   }
   // A packet talker (aircraft) that also reports its position on the map
   // (its decoder's "Plot on map"): the bearing from the station to it, and
@@ -11841,25 +11908,32 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
     const tx = $id('map-df-txt');
     if (tx.innerHTML !== h) tx.innerHTML = h;
-    // the radio list: click = show that radio on the map (again = whole signal)
+    // the radio list: click = show that radio on the map (again = whole
+    // signal), a column heading = sort by it (built only while the panel is
+    // open - hundreds of ISM devices are kept for hours)
     let tl = '';
-    if (ts.length) {
+    if (ts.length && mapState.rdfOpen) {
       const air = kinds === 'aircraft';
       const head = {radio: ['Radio', 'Talkgroup', 'Tx'], aircraft: ['Callsign', 'ICAO', 'Pkts'], ship: ['MMSI', 'Name', 'Pkts'],
                     beacon: ['Channel', 'Ident · MHz', 'Pairs'], device: ['Device', 'Reading', 'Tx'],
                     talker: ['ID', 'Info', 'Tx']}[kinds];
       // position columns for talkers that report positions (not DME beacons / ISM devices)
       const posCols = ts.some(t => t.pk && rdfKind(t) !== 'beacon' && rdfKind(t) !== 'device');
-      tl = '<table><tr><th></th>' + (multi ? '<th>VFO</th>' : '') + `<th>${head[0]}</th><th>${head[1]}</th>` +
-        (posCols ? '<th title="Distance from the station to its reported position (the list is sorted by it)">Dist</th>' : '') + '<th>Bearing</th>' +
-        (posCols ? '<th title="DF bearing minus the bearing to its reported position">Δ pos</th>' : '') + `<th>Heard</th><th>${head[2]}</th></tr>`;
+      const [scol, sdir] = rdfSortOf(kinds);
+      const th = (col, text, tip) => `<th data-sort="${col}" title="${tip ? digEsc(tip) + ' - ' : ''}Sort by this column (again: reversed)">` +
+        `${text}${col === scol ? (sdir > 0 ? ' ▲' : ' ▼') : ''}</th>`;
+      tl = '<table><tr><th></th>' + (multi ? th('vfo', 'VFO') : '') + th('name', head[0]) + th('info', head[1]) +
+        (posCols ? th('dist', 'Dist', 'Distance from the station to its reported position') : '') + th('brg', 'Bearing') +
+        (posCols ? th('dpos', 'Δ pos', 'DF bearing minus the bearing to its reported position') : '') +
+        th('heard', 'Heard') + th('tx', head[2]) + '</tr>';
       for (const [t, c] of listed) {
         const k = rdfGk(t.vfo, t.tid), ap = air ? rdfAirParts(t) : null;
         const tip = air ? `${rdfTalkerName(t)}${ap.rest ? ' · ' + ap.rest : ''} - show its DoA on the map` : `Show this ${rdfKind(t)}'s DoA on the map`;
         tl += `<tr class="t${k === tsel ? ' sel' : ''}" data-k="${digEsc(k)}" title="${digEsc(tip)}">` +
           `<td class="air">${t.active ? '●' : ''}</td>` + (multi ? `<td>D${t.vfo}</td>` : '') +
           (air ? `<td><b>${rdfIcon(t)}${digEsc(ap.cs)}</b></td><td class="dim">${digEsc(t.tid)}</td>`
-               : `<td>${rdfIcon(t)}${digEsc(t.tid)}</td><td class="dim">${digEsc(t.label || '')}</td>`) +
+               : `<td><span class="clip nm" title="${digEsc(t.tid)}">${rdfIcon(t)}${digEsc(t.tid)}</span></td>` +
+                 `<td class="dim"><span class="clip" title="${digEsc(t.label || '')}">${digEsc(t.label || '')}</span></td>`) +
           (posCols ? `<td class="n">${c ? (c.km < 10 ? c.km.toFixed(1) : Math.round(c.km)) + ' km' : ''}</td>` : '') +
           `<td class="n">${rdfBearingTxt(t)}</td>` + (posCols ? `<td class="n">${c && c.err !== null ? rdfSigned(c.err) : ''}</td>` : '') +
           `<td class="n dim">${t.active ? 'now' : rdfAge(t.age)}</td><td class="n">${t.tx}</td></tr>`;
@@ -11867,7 +11941,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       tl += '</table>';
     }
     const tlb = $id('map-df-tl');
-    if (tlb.dataset.html !== tl) { tlb.dataset.html = tl; tlb.innerHTML = tl; }
+    if ((ts.length && !mapState.rdfOpen) || tlb.dataset.html === tl) return;
+    tlb.dataset.html = tl;
+    tlb.innerHTML = tl;
   }
   // A row is picked by press + release. Not 'click': the list is rebuilt a
   // few times a second (packets, ages), and a click whose press and release
@@ -11906,13 +11982,16 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     rdfRenderPanel();
   }
   function rdfTlDown(ev) {
-    const tr = ev.button === 0 && ev.target.closest('tr.t');
-    rdfTlPress = tr ? {k: tr.dataset.k, x: ev.clientX, y: ev.clientY} : null;
+    const th = ev.button === 0 && ev.target.closest('th[data-sort]');
+    const tr = ev.button === 0 && !th && ev.target.closest('tr.t');
+    rdfTlPress = th ? {sort: th.dataset.sort, x: ev.clientX, y: ev.clientY}
+               : tr ? {k: tr.dataset.k, x: ev.clientX, y: ev.clientY} : null;
   }
   function rdfTlUp(ev) {
     const p = rdfTlPress;
     rdfTlPress = null;
     if (!p || Math.hypot(ev.clientX - p.x, ev.clientY - p.y) > 8) return;
+    if (p.sort) { rdfSetSort(p.sort); return; }
     mapSet('rdfTid', p.k === rdfTidSel() ? '' : p.k);
     rdfRenderPanel();
   }

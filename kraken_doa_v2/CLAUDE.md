@@ -492,9 +492,10 @@ Edit `include/config.hpp`:
   `info` {id: facts}, `voice`, `opts`, `map_capable` (a running plugin
   declares `kp::Info::map`), `map_points`, `tables` (below; only in some
   pushes)
-- Tables (`kp::Host::table_columns / table_row / table_remove`, wire 25-27):
-  one per plugin in `Report` (headings + rows by key, max 1000, a row not
-  updated for 10 min left out; `table_clear()` empties the rows on a retune /
+- Tables (`kp::Host::table_columns / table_row / table_remove / table_keep`,
+  wire 25-27, 32): one per plugin in `Report` (headings + rows by key, max
+  1000, a row not updated for the table's keep time - 10 min, or what the
+  plugin set with `table_keep`, 60 s .. 7 days - left out; `table_clear()` empties the rows on a retune /
   mode change, headings stay). `status_json(.., tables)`:
   `"tables":{"<id>":{"cols":[..],"rows":[[key, age_s, cells..]]}}` -
   `build_digital_message` adds it at most once a second per VFO (+ every
@@ -1265,8 +1266,9 @@ Edit `include/config.hpp`:
   all every 2 s so array setting changes follow); the frame alone is also
   run through MUSIC and returned as a `TalkerFrame` (a mobile DF record).
   Frames straddling a boundary / two radios / gaps are dropped. A MUSIC
-  frequency move > 10 kHz resets it. Talkers kept 30 min after last heard,
-  max 100. Lock order: the tap runs under the MUSIC lock and takes ours;
+  frequency move > 10 kHz resets it. Talkers kept 30 min after last heard
+  (packet talkers: below), MAX_TALKERS 500 (the least recently heard go
+  first). Lock order: the tap runs under the MUSIC lock and takes ours;
   update() never calls MUSIC while holding ours
 - rdf_mapper: the sampler (10 Hz) calls `update()` + `snapshot()` per VFO
   with DoA (coherent + DoA on) and feeds each TalkerFrame into the key
@@ -1277,7 +1279,13 @@ Edit `include/config.hpp`:
   DoA plot), lobe / peak (the latest transmission turned to north with the
   heading at its last frame, cached once the 20 s track no longer reaches
   it), conf, held, frames, gate_m, moved_m, records, hist:[[age, compass |
-  null, doa, conf, frames]]}]`; `rdf_grid` has `tid`. `RDF_RESET:<vfo>`
+  null, doa, conf, frames]]}]`, and `tfull`: false = only the talkers
+  heard in the last TALKERS_RECENT_MS 10 s (every push but each
+  TALKERS_FULL_EVERY 5th - 2.5 s - and the one after GET_RDF; an ISM
+  receiver keeps hundreds of devices for 24 h, all of them twice a second
+  was a few hundred kB/s per page). `rdfOnStatus` keeps the others from the
+  previous pushes, their ages (age, tx_age, hist) moved on by the time
+  since, `active` false. `rdf_grid` has `tid`. `RDF_RESET:<vfo>`
   resets the VFO and its talkers, `RDF_RESET:<vfo>:<tid>` one talker
 - UI ("Mobile DF" block): `#map-df-tid` (shown when the selected VFO(s)
   have talkers): Whole signal ('' - the VFO as before) / Every radio ('*':
@@ -1289,11 +1297,21 @@ Edit `include/config.hpp`:
   plot's angle when there is no heading -, last heard, transmissions);
   clicking a row selects it (again = Whole signal). `mapState.rdfTid`
   (localStorage); `rdfGrids` keyed "vfo|tid"
-- Order (`rdfTalkersListed`, list + dropdown): radios newest first;
-  packet talkers (aircraft / ships) NEAREST first by their reported
-  position (Dist column; needs the decoder's Plot on map), those without
-  one by name - newest first reshuffled a busy ADS-B list with every
-  packet. Aircraft are named by callsign (`rdfShortName` / `rdfAirParts`:
+- Order (`rdfTalkersListed`, list + dropdown), per kind (`rdfKinds`): the
+  column heading the user clicked (`th[data-sort]` -> `rdfSetSort`, picked
+  by press + release like the rows; again = reversed, counts start with
+  the most; `mapState.rdfSort[kind] = [col, 1|-1]`, localStorage; ▲ / ▼ on
+  the heading), else `RDF_SORT_DEF`: radios newest first; packet talkers
+  (aircraft / ships) NEAREST first by their reported position (Dist
+  column; needs the decoder's Plot on map), those without one by name -
+  newest first reshuffled a busy ADS-B list with every packet; DME beacons
+  and ISM devices by name (newest first moved the device the user was about
+  to click on every transmission, and devices heard in the same second
+  swapped places on every push: there was no tie-break). Ties always go by
+  name, ID, VFO; empty values last. Radios stay above packet talkers. Name
+  and reading cells are clipped (130 / 80 px, `.clip`, full text as the
+  tooltip) so Bearing / Heard / Tx fit the 380 px panel. The list is only
+  built while the panel is open. Aircraft are named by callsign (`rdfShortName` / `rdfAirParts`:
   the ADS-B talker label is "CALLSIGN · 35000 ft"): the lobe label, the
   list's first column (bold; ICAO second), the dropdown "CALLSIGN (ICAO)";
   the ICAO until a callsign is known. A row is picked by press + release
@@ -1328,7 +1346,9 @@ Edit `include/config.hpp`:
   R = sum of packets weighted exp(-dt / PACKET_TAU_S 1.5 s) in stream
   time, MUSIC at most every PACKET_RECOMPUTE_MS 1 s, `hist` every 10 s
   (its bearing track), tx = packets, tx_frames = packets in the average;
-  forgotten after PACKET_TTL_MS 2 min; MAX_TALKERS 200. No mobile DF
+  forgotten after PACKET_TTL_MS 2 min (or 30 x avg_s, or the plugin's
+  `kp::Talker::keep_s` - wire TALKER field 13, `TalkerSpan::keep_s`,
+  `TalkerInfo::keep_s`; ism: its "Keep devices" option, 24 h). No mobile DF
   records. rdf_mapper: `pk:true`, lobe turned with the heading at
   `spec_ms`, no lobe 60 s after its last packet. UI: ✈ rows, "Every
   aircraft", Δ pos column + selected-aircraft line = DF bearing minus the
@@ -1365,7 +1385,10 @@ Edit `include/config.hpp`:
   device for `ism` - `rdfKind`; "Every aircraft / ship / beacon / device",
   "Position check"; beacons and devices have no reported position: no Dist
   / Δ pos columns, no Plot-on-map hint; beacons counted in pulse pairs,
-  devices in transmissions and listed newest first)
+  devices in transmissions; both listed by name. A bearing whose lobe has
+  gone - 60 s after the last packet - is the compass bearing from the
+  station heading when the station is static (`rdfStaticCompass`), else
+  the DoA plot's angle "arr")
 - Not split: TETRA (the plugin decodes the downlink - every bearing is the
   base station's), MPT1327 (analogue voice). On a repeater OUTPUT every ID's
   bearing is the repeater's. A DMR repeater INPUT with both slots busy
@@ -1849,9 +1872,23 @@ Edit `include/config.hpp`:
   kraken_doa takes <= 0.25 s and keeps 1 s at 2.4 MHz), `freq_hz` = the burst's
   carrier / FSK centre, `bw_hz` = occupied + 10 kHz (25-160 kHz), `avg_s` =
   option `doa_avg` (1 = each transmission alone, 60, 600). Options `units`
-  (si / us), `unknown`. Devices forgotten after 1 h
+  (si / us), `unknown`, `keep_h` "Keep devices" (1 / 6 / 24 / 168 h,
+  default 24): a device not heard for that long is forgotten here (max
+  1000, then the least recently heard), its table row hidden
+  (`Host::table_keep`, wire TABLE_KEEP 32 -> `Report::table_keep`, per
+  plugin table, 60 s .. 7 days, default 10 min) and kraken_doa drops its
+  talker (`Talker::keep_s`). Was 1 h here, 10 min in the table and 2 min
+  for the talker: devices vanished from the 📡 DF list after 2 min
 - UI: `rdfKind` 'device' for `pl` 'ism' (📟, "Device / Reading / Tx", no
-  position columns, newest first in the DF list)
+  position columns, by name in the DF list - see *DoA per talker*, Order)
+- Keep tests (scratchpad e2e/: scene_keep.json - the devices stop at 40 s,
+  3 antennas; run_keep.sh + t_keep.py, niced next to a live stack):
+  default - all 8 still listed at 190 s, 159 s after the last packet (the
+  old 2 min dropped them at 120 s); `keep_h` 0.025 (90 s) - talkers and
+  table rows leave together, none older than 88 s. t_ui_sort.py (replayed
+  capture with partial pushes): the list complete between full pushes, one
+  order throughout, by name, compass bearings, heading sorts + reverse +
+  localStorage, a row still picks its device
 - Built with `-O3` (`plugins/ism/CXXFLAGS`): the front end's per-bin loops
   (`__restrict` pointers) vectorise - GCC's -O2 cost model takes no loop
   that needs an epilogue; the output is identical (checked on all 1125

@@ -153,8 +153,9 @@ VFO bandwidth the signal needs; the panel warns when the VFO is narrower.
 | `host.station(&lat, &lon)` | the receiver's location (sidebar → Station Information), false if it has none |
 | `host.rf_hz()` / `host.rf_inverted()` | the radio frequency (Hz) at 0 Hz of your input - the VFO's centre plus the host's frequency correction - NAN when unknown (offline test without `--rf`); `rf_inverted()`: the input is mirrored (the "invert" option), +f is then `rf_hz() - f`. Name the channel you receive (`dme`: a DME channel from its reply frequency), or find the channels inside a wide VFO. A retune also calls `reset()` |
 | `host.table_columns(cols)` | headings of a live table in the panel (e.g. the aircraft ADS-B hears) |
-| `host.table_row(key, cells)` | adds / updates (same key) a table row; rows not updated for 10 min drop out |
+| `host.table_row(key, cells)` | adds / updates (same key) a table row; rows not updated for 10 min (or `table_keep`) drop out |
 | `host.table_remove(key)` | removes a table row |
+| `host.table_keep(seconds)` | how long a row stays without an update (60 s .. 7 days, default 10 min) - things that report rarely want long (ism: its "Keep devices" option, 24 h) |
 | `host.message(from, text)` | a free-text message the decoder received (a pager text): kraken_doa looks for a street address in it and shows it as an incident (set `.messages = true`) |
 | `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the user ticked "Raw frames") |
 | `host.talker(t)` / `host.talker_end(at_s, channel)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`, channel, packet): the DoA is split per radio / aircraft (set `.talkers = true`, below) |
@@ -272,7 +273,10 @@ wider than 500 kHz only channels <= 250 kHz wide - the ism plugin's devices -
 are filtered, kraken_doa then keeps the stream as 16-bit samples for 1 s:
 48 MB at 2.4 MHz with 5 antennas; wider ones use the whole band); `t.avg_s`
 = how long to average a talker's packets (default 1.5 s for fast movers
-that send often; ais: 20 s). A talker that says where it is can also give
+that send often; ais: 20 s); `t.keep_s` = how long kraken_doa keeps the
+talker - its bearing, history and row in the 📡 DF list - after its last
+packet (default 2 min, or 30 x avg_s; ism: its "Keep devices" option, 24 h;
+at most 500 talkers, the least recently heard go first). A talker that says where it is can also give
 its position AT THE PACKET'S TIME - `t.lat` / `t.lon` (WGS84) / `t.alt_m`
 (metres above sea level), NAN = unknown: kraken_doa's ✈ array calibration
 uses such packets as transmitters at known directions (the adsb plugin

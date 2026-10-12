@@ -100,9 +100,12 @@ public:
     void table_columns(const std::string& plugin, std::vector<std::string> cols);
     void table_row(const std::string& plugin, const std::string& key, std::vector<std::string> cells);
     void table_remove(const std::string& plugin, const std::string& key);
+    // how long a row of the plugin's table stays without an update
+    // (kp::Host::table_keep; 60 s .. 7 days, default TABLE_ROW_TTL_MS)
+    void table_keep(const std::string& plugin, int64_t ms);
     void table_clear();   // the rows (VFO retuned / decoder switched); the headings stay
     // {"<plugin>":{"cols":[..],"rows":[[key, age_s, cell, ...],...]}} - rows
-    // not updated for TABLE_ROW_TTL_MS left out
+    // not updated for the table's keep time left out
     std::string tables_json() const;
 
 private:
@@ -118,11 +121,15 @@ private:
     uint64_t map_seq_ = 0;
     static constexpr size_t MAX_MAP_POINTS = 2000;
     void map_expire(int64_t t);
-    struct TableRow { std::vector<std::string> cells; int64_t updated_ms; };
-    struct Table { std::vector<std::string> cols; std::map<std::string, TableRow> rows; };
-    std::map<std::string, Table> tables_;
     static constexpr size_t MAX_TABLE_ROWS = 1000;
     static constexpr int64_t TABLE_ROW_TTL_MS = 600000;
+    struct TableRow { std::vector<std::string> cells; int64_t updated_ms; };
+    struct Table {
+        std::vector<std::string> cols;
+        std::map<std::string, TableRow> rows;
+        int64_t keep_ms = TABLE_ROW_TTL_MS;
+    };
+    std::map<std::string, Table> tables_;
 };
 
 }  // namespace dig

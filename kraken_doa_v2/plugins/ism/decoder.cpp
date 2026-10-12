@@ -34,8 +34,10 @@ using ism::Kind;
 using ism::Msg;
 
 constexpr int DECIM = 10;                   // input 2.4 MHz = 10 x ism::FS, the rate bursts are demodulated at
-constexpr double DEVICE_TTL_S = 3600;       // a device not heard for this long is forgotten
-constexpr size_t MAX_DEVICES = 400;
+// a device not heard for this long is forgotten - here, in the device table and
+// in kraken_doa's 📡 DF list (option "keep_h"; Talker::keep_s, Host::table_keep)
+constexpr double KEEP_DEFAULT_S = 24 * 3600.0;
+constexpr size_t MAX_DEVICES = 1000;        // then the least recently heard go
 constexpr double MAX_SPAN_S = 0.24;         // a talker packet (kraken_doa takes up to 0.25 s)
 
 const char* kind_name(Kind k) {
@@ -87,6 +89,7 @@ class IsmDecoder : public kp::Decoder {
 public:
     explicit IsmDecoder(kp::Host& h) : Decoder(h), fe_(DECIM) {
         host.table_columns(COLS);
+        host.table_keep(keep_s_);
         fe_.set_threshold_db(thr_db_);
     }
 
@@ -107,6 +110,9 @@ public:
         else if (key == "sens") {
             thr_db_ = value.empty() ? 10.0 : std::clamp(atof(value.c_str()), 6.0, 30.0);
             fe_.set_threshold_db(thr_db_);
+        } else if (key == "keep_h") {
+            keep_s_ = value.empty() ? KEEP_DEFAULT_S : std::clamp(atof(value.c_str()) * 3600, 60.0, 7 * 86400.0);
+            host.table_keep(keep_s_);
         }
     }
 
@@ -127,6 +133,7 @@ private:
     double t_off_ = 0, now_ = 0;
     bool imperial_ = false, unknown_ = true;
     double avg_s_ = 1.0, thr_db_ = 10.0;
+    double keep_s_ = KEEP_DEFAULT_S;
     std::map<std::string, Device> dev_;
     // unknown signals without a repeated code, grouped by their signal class:
     // a class becomes a device only when it is heard again within 10 min (a
@@ -261,6 +268,7 @@ private:
             t.freq_hz = b.fc;
             t.bw_hz = std::clamp(b.bw + 10e3, 25e3, 160e3);
             t.avg_s = avg_s_;
+            t.keep_s = keep_s_;
             host.talker(t);
         }
 
@@ -414,7 +422,7 @@ private:
         if (now_ - house_t_ < 5.0) return;
         house_t_ = now_;
         for (auto it = dev_.begin(); it != dev_.end();) {
-            if (now_ - it->second.last > DEVICE_TTL_S) {
+            if (now_ - it->second.last > keep_s_) {
                 forget(it->second);
                 it = dev_.erase(it);
                 continue;
@@ -463,7 +471,10 @@ KRAKEN_PLUGIN(IsmDecoder,
                             "Bursts no protocol decodes are shown as unknown devices when they repeat a code (so they "
                             "get a DoA of their own too)"},
                            {"sens", "Burst detection", "10", "8=8 dB (sensitive)|10=10 dB|13=13 dB|16=16 dB (strong only)",
-                            "How far above the noise a burst must rise to be demodulated"}},
+                            "How far above the noise a burst must rise to be demodulated"},
+                           {"keep_h", "Keep devices", "24", "1=1 hour|6=6 hours|24=24 hours|168=7 days",
+                            "How long a device stays in the device table and in the 🗺 Map's 📡 DF list after it "
+                            "was last heard"}},
                .map = false,
                .manual_only = true,
                .talkers = true,

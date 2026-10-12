@@ -79,6 +79,9 @@ struct TalkerSpan {
     // packets: where the talker was when it sent it (kp::Talker::lat / lon /
     // alt_m; NAN = unknown) - the array calibration from aircraft
     double lat = NAN, lon = NAN, alt_m = NAN;
+    // packets: how long the talker is kept after its last packet (s, 0 = the
+    // default; kp::Talker::keep_s)
+    double keep_s = 0;
     // a confirmed frame (kp::Host::valid(start, end)), not a talker: these
     // samples hold the decoded signal - the Digital squelch. id is "".
     bool signal = false;

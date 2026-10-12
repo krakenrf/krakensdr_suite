@@ -172,6 +172,11 @@ public:
     void table_remove(const std::string& key) override {
         send(kp::wire::TABLE_REMOVE, key.data(), std::min<size_t>(key.size(), 64));
     }
+    void table_keep(double seconds) override {
+        if (!std::isfinite(seconds)) return;
+        const std::string p = std::to_string(static_cast<long long>(std::llround(seconds)));
+        send(kp::wire::TABLE_KEEP, p.data(), p.size());
+    }
     bool raw_wanted() const override { return raw_wanted_; }
     void raw(const std::string& data) override {
         if (raw_wanted_) send(kp::wire::RAW, data.data(), std::min<size_t>(data.size(), 2000));
@@ -204,6 +209,7 @@ public:
             p += fmt_hz(std::isfinite(t.bw_hz) ? std::max(0.0, t.bw_hz) : 0.0);
             p.push_back('\0');
             p += fmt_hz(std::isfinite(t.avg_s) ? std::max(0.0, t.avg_s) : 0.0);
+            const bool keep = std::isfinite(t.keep_s) && t.keep_s > 0;
             if (std::isfinite(t.lat) && std::isfinite(t.lon) && std::isfinite(t.alt_m) && std::fabs(t.lat) <= 90 &&
                 std::fabs(t.lon) <= 180) {
                 char b[40];
@@ -216,6 +222,12 @@ public:
                 snprintf(b, sizeof b, "%.1f", t.alt_m);
                 p.push_back('\0');
                 p += b;
+            } else if (keep) {
+                p.append(3, '\0');   // no position (empty fields), keep_s follows
+            }
+            if (keep) {
+                p.push_back('\0');
+                p += std::to_string(static_cast<long long>(std::llround(t.keep_s)));
             }
         }
         send(kp::wire::TALKER, p.data(), p.size());

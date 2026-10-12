@@ -46,8 +46,9 @@ so its documentation applies):
 
 - **Device table** (decoder tab): model, id, type, channel, the reading
   (temperature, humidity, wind, rain, tyre pressure, button / door state...),
-  battery, the device's own frequency, SNR, message count. Rows stay 10
-  minutes after the last message; devices are forgotten after 1 hour.
+  battery, the device's own frequency, SNR, message count. A device stays
+  (here, in the 🗺 Map's 📡 DF list and for its bearing) for the "Keep
+  devices" time after its last message - 24 hours by default.
 - **Events**: a new device, button presses, door / alarm / tamper states,
   low battery and other alarms (unusual ones start with "⚠"); every message
   with "Log all messages" (verbose).
@@ -60,7 +61,11 @@ so its documentation applies):
   transmission alone" the device's lobe is its latest transmission's and its
   earlier transmissions are in its bearing history (one per transmission);
   "Averaged over 1 / 10 min" combines them (a fixed sensor). The DF panel
-  lists the devices newest first (📟).
+  lists the devices (📟) by name - a list that reordered on every
+  transmission was hard to click; a click on a column heading sorts by it
+  (Bearing, Heard, Tx...). With a static station location a device whose
+  lobe has gone (a minute after its last transmission) shows its compass
+  bearing, from the station heading.
 - **Digital squelch**: a VFO with squelch method "Digital" takes its own DoA
   only from the samples of decoded transmissions.
 - **Raw frames** (Decoder Logging → raw): one JSON line per message
@@ -88,6 +93,7 @@ and wake-up bursts are not devices). Option "Unknown signals" turns this off.
 | DoA per device | Each transmission alone / 1 min / 10 min | the `avg_s` of its talker packets |
 | Unknown signals | Show / Ignore | see above |
 | Burst detection | 8 / 10 / 13 / 16 dB | how far above the noise a burst must rise |
+| Keep devices | 1 h / 6 h / 24 h / 7 days | how long a device stays in the table and the 📡 DF list after it was last heard (default 24 h; `kp::Talker::keep_s` + `Host::table_keep`) - at most 1000 devices here, 500 talkers in kraken_doa (the least recently heard go first) |
 
 ## How it works
 

@@ -112,6 +112,11 @@ struct Talker {
     // bearings (✈ array calibration from ADS-B aircraft). Only give a
     // position that is accurate to some tens of metres at that moment.
     double lat = NAN, lon = NAN, alt_m = NAN;
+    // Packets only: how long kraken_doa keeps the talker (its bearing, its
+    // history, its row in the 🗺 Map's 📡 DF list) after its last packet,
+    // in seconds (0 = the host's: 2 min, or 30 x avg_s). Fixed transmitters
+    // that send rarely want long (ISM devices: 24 h by default).
+    double keep_s = 0;
 };
 
 struct Info {
@@ -193,10 +198,14 @@ public:
     virtual void raw(const std::string& data) { (void)data; }
     // A live table in the panel (e.g. the aircraft ADS-B hears): the column
     // headings once, then rows by key (the same key again = update). A row
-    // not updated for 10 minutes is dropped; table_remove() drops it now.
+    // not updated for 10 minutes (or table_keep()) is dropped; table_remove()
+    // drops it now.
     virtual void table_columns(const std::vector<std::string>& cols) { (void)cols; }
     virtual void table_row(const std::string& key, const std::vector<std::string>& cells) { (void)key; (void)cells; }
     virtual void table_remove(const std::string& key) { (void)key; }
+    // How long a row stays without an update, in seconds (60 s .. 7 days;
+    // default 10 min) - devices that report rarely want long (ism: 24 h)
+    virtual void table_keep(double seconds) { (void)seconds; }
     // The talker of the transmission in progress (see Talker). Call it again
     // with the same id as frames keep passing (end_s moves on); a different id
     // on the same channel ends the previous talker where the new one starts.
@@ -283,11 +292,13 @@ constexpr uint32_t TABLE_REMOVE = 27;  // key
 constexpr uint32_t MESSAGE = 28;       // from '\0' text
 constexpr uint32_t RAW = 29;           // one raw frame (text) for the decoder data log
 // id '\0' label '\0' start_s '\0' end_s ['\0' channel ['\0' flags ['\0'
-// freq_hz '\0' bw_hz '\0' avg_s ['\0' lat '\0' lon '\0' alt_m]]]]: Host::time()
-// seconds as decimal text (7 decimals: a sample at 2.4 MHz is 0.4 us); no
-// channel field = channel 0; flags "p" = Talker::packet; freq_hz "" = NAN;
-// the position fields only on packets that have one
+// freq_hz '\0' bw_hz '\0' avg_s ['\0' lat '\0' lon '\0' alt_m ['\0'
+// keep_s]]]]]: Host::time() seconds as decimal text (7 decimals: a sample at
+// 2.4 MHz is 0.4 us); no channel field = channel 0; flags "p" =
+// Talker::packet; freq_hz "" = NAN; the position fields only on packets that
+// have one (empty when keep_s follows without a position)
 constexpr uint32_t TALKER = 30;
 constexpr uint32_t TALKER_END = 31;    // at_s ['\0' channel] (decimal text)
+constexpr uint32_t TABLE_KEEP = 32;    // seconds (decimal text): Host::table_keep
 // (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends)
 }  // namespace kp::wire

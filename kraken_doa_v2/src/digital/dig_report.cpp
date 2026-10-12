@@ -275,12 +275,13 @@ void Report::table_columns(const std::string& plugin, std::vector<std::string> c
 void Report::table_row(const std::string& plugin, const std::string& key, std::vector<std::string> cells) {
     std::lock_guard<std::mutex> lk(mu_);
     const int64_t t = now_ms();
-    auto& rows = tables_[plugin].rows;
+    auto& tb = tables_[plugin];
+    auto& rows = tb.rows;
     auto it = rows.find(key);
     if (it == rows.end() && rows.size() >= MAX_TABLE_ROWS) {
         // full: drop the rows nobody updated for a while, else the oldest
         for (auto r = rows.begin(); r != rows.end();)
-            r = t - r->second.updated_ms > TABLE_ROW_TTL_MS ? rows.erase(r) : std::next(r);
+            r = t - r->second.updated_ms > tb.keep_ms ? rows.erase(r) : std::next(r);
         if (rows.size() >= MAX_TABLE_ROWS)
             rows.erase(std::min_element(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
                 return a.second.updated_ms < b.second.updated_ms;
@@ -293,6 +294,11 @@ void Report::table_remove(const std::string& plugin, const std::string& key) {
     std::lock_guard<std::mutex> lk(mu_);
     auto it = tables_.find(plugin);
     if (it != tables_.end()) it->second.rows.erase(key);
+}
+
+void Report::table_keep(const std::string& plugin, int64_t ms) {
+    std::lock_guard<std::mutex> lk(mu_);
+    tables_[plugin].keep_ms = std::clamp<int64_t>(ms, 60000, 7 * 86400000LL);
 }
 
 void Report::table_clear() {
@@ -315,7 +321,7 @@ std::string Report::tables_json() const {
         bool fr = true;
         for (const auto& r : kv.second.rows) {
             const int64_t age = t - r.second.updated_ms;
-            if (age > TABLE_ROW_TTL_MS) continue;
+            if (age > kv.second.keep_ms) continue;
             o += std::string(fr ? "" : ",") + "[\"" + json_escape(r.first) + "\"," + std::to_string(age / 1000);
             fr = false;
             for (const auto& c : r.second.cells) o += ",\"" + json_escape(c) + "\"";

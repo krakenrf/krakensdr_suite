@@ -119,7 +119,15 @@ struct Shared {
     };
     std::map<Key, V> v;
     bool full = true;
+    // talkers in the status: all of them every TALKERS_FULL_EVERY-th push (or
+    // after request_full), else only those heard recently - an ISM receiver
+    // keeps hundreds of devices for 24 h, sending them all twice a second
+    // was a few hundred kB/s per page
+    bool talkers_full = true;
+    unsigned pushes = 0;
 };
+constexpr unsigned TALKERS_FULL_EVERY = 5;        // 2.5 s at the 2 Hz push
+constexpr int64_t TALKERS_RECENT_MS = 10000;      // heard within this: in every push
 Shared& SH() {
     static Shared* s = new Shared;   // never destroyed: threads may run while the process exits
     return *s;
@@ -834,6 +842,7 @@ void reset(int vfo, const std::string& tid) {
 void request_full() {
     std::lock_guard<std::mutex> lk(SH().mu);
     SH().full = true;
+    SH().talkers_full = true;
 }
 
 std::string status_message() {
@@ -865,13 +874,19 @@ std::string status_message() {
     }
     // talkers (talker_doa.hpp): ages in s; doa = the latest transmission's
     // bearing as the MUSIC DoA plot shows it, peak = the same as a compass
-    // bearing; hist = earlier transmissions [age_s, compass|null, doa, conf, frames]
-    o << "],\"talkers\":[";
+    // bearing; hist = earlier transmissions [age_s, compass|null, doa, conf, frames].
+    // tfull false: only the talkers heard in the last TALKERS_RECENT_MS - the
+    // page keeps the others from the previous pushes (ages moved on)
+    const bool tfull = S.talkers_full || S.pushes % TALKERS_FULL_EVERY == 0;
+    S.talkers_full = false;
+    S.pushes++;
+    o << "],\"tfull\":" << (tfull ? "true" : "false") << ",\"talkers\":[";
     first = true;
     const int64_t t = now_ms();
     auto age = [t](int64_t ms) { return ms > 0 ? num((t - ms) / 1000.0, 0) : "null"; };
     for (const auto& [k, v] : S.v) {
         if (k.tid.empty()) continue;
+        if (!tfull && !v.active && !(v.last_ms > 0 && t - v.last_ms <= TALKERS_RECENT_MS)) continue;
         o << (first ? "" : ",") << "{\"vfo\":" << k.vfo << ",\"tid\":\"" << json_escape(k.tid) << "\",\"label\":\""
           << json_escape(v.label) << "\",\"active\":" << (v.active ? "true" : "false") << ",\"tx\":" << v.tx
           << ",\"tframes\":" << v.tframes << ",\"tx_frames\":" << v.tx_frames << ",\"age\":" << age(v.last_ms)

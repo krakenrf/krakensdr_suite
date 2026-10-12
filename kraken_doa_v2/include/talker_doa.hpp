@@ -85,7 +85,7 @@ constexpr double FRAME_WAIT_S = 6.0;              // a frame waits this long for
 constexpr double RETUNE_RESET_HZ = 10000;         // MUSIC frequency moved more: another signal, start over
 constexpr int64_t ACTIVE_MS = 3000;               // an open span reported within this long = transmitting
 constexpr int64_t TALKER_TTL_MS = 30 * 60 * 1000; // a talker not heard for this long is forgotten
-constexpr size_t MAX_TALKERS = 200;                // radios + aircraft
+constexpr size_t MAX_TALKERS = 500;                // radios + aircraft + devices (the least recently heard go first)
 constexpr size_t MAX_HIST = 20;                   // earlier transmissions kept per talker
 constexpr int64_t CHANNEL_HOLD_MS = 1500;         // channels != 0: a frame is committed this long after it was computed
 // packet talkers
@@ -135,6 +135,7 @@ struct TalkerInfo {
     int64_t first_ms = 0, last_ms = 0;   // first / last heard (system clock)
     bool packet = false;           // a packet talker (aircraft, ship): tx = packets, no heat map
     double avg_s = 0;              // packets averaged over (s, 0 = PACKET_TAU_S)
+    double keep_s = 0;             // kept after its last packet (s, 0 = packet_ttl_ms's default)
     int64_t spec_ms = 0;           // spec computed (system clock)
     // the latest transmission that had frames: MUSIC on its summed covariance
     int tx_frames = 0;
@@ -228,6 +229,7 @@ private:
         int64_t stamp_ms;
         bool bad = false;          // overlaps another talker's packet
         double lat = NAN, lon = NAN, alt_m = NAN;   // where its talker was (NAN = unknown)
+        double keep = 0;           // kp::Talker::keep_s
     };
     std::vector<CalPacket> cal_;   // for take_cal
     std::deque<Packet> packets_;

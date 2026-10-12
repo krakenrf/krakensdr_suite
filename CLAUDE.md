@@ -580,10 +580,14 @@ panel); ism: every decoded transmission of a device (model + id; the
 latest <= 0.24 s of its rows) as a packet at the burst's own carrier /
 FSK centre and occupied bandwidth, averaged per the plugin's "DoA per
 device" option (each transmission alone by default - one bearing per
-transmission in its history; a 📟 device in the DF panel, newest first) -
-its VFO is 2.4 MHz wide, so kraken_doa keeps the stream as 16-bit samples
-(1 s, 48 MB with 5 antennas) to filter each device's channel out (the whole
-band mixed overlapping devices' bearings).
+transmission in its history; a 📟 device in the DF panel, listed by name,
+kept for the plugin's "Keep devices" time - 24 h by default -
+`kp::Talker::keep_s`) - its VFO is 2.4 MHz wide, so kraken_doa keeps the
+stream as 16-bit samples (1 s, 48 MB with 5 antennas) to filter each
+device's channel out (the whole band mixed overlapping devices' bearings).
+The DF list sorts by any column heading (per kind, remembered per
+browser); the 2 Hz status carries every talker only every 2.5 s, the
+recently heard ones in between.
 TETRA isn't split
 (downlink = the base station only). The
 VFO's decimated-stream position (`MultiChannelDecimated::stream_pos`) is the
