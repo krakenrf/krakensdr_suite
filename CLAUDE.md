@@ -510,19 +510,71 @@ decoders `kraken_doa_v2/plugins/`
   areas at zoom >= 11; kept a week in localStorage, drawn at any zoom;
   coloured by use (communication:* tags), click = all their tags, "📍 Add as
   marker". UI-only (kraken_doa.html "📡 OSM MASTS")
-- 👁 Viewshed ("Viewshed" button, right-click "Viewshed from here", markers,
-  masts): the ground in line of sight of an antenna there (height above
+- 👁 Viewshed ("Viewshed" button; LINE OF SIGHT IS THE STATION'S ONLY -
+  the user's call 2026-10-13, no right-click item for it, other sites
+  hidden in that mode; in signal mode right-click "📶 Add TX antenna here"
+  (the only way to add one; Delete removes the selected one), markers,
+  masts; the station's mast carries the callsign): the ground in line of sight of an antenna there (height above
   ground, radius up to 1000 km, target height above ground or sea level,
   refraction k), anywhere in the world - AWS Terrain Tiles fetched BY THE
   BROWSER, computed in a Web Worker: rays along GREAT CIRCLES in RINGS (~8
   m cells around the antenna, coarser with distance; each ray carries its
   horizon outwards - one coarse grid lost the hills next to the antenna), Earth
   curvature, the tiles' artefacts removed (incl. a band of up-to-32 km
-  "terrain" in the sea north of the Coromandel), decoded tiles kept in
-  the worker (256: a moved point / new height loads only the tiles it
-  hasn't got), up to 6 at once in their own colours, per browser
+  "terrain" in the sea north of the Coromandel - cleaned per tile with
+  its neighbours' edges, so it doesn't depend on the observer), decoded +
+  cleaned tiles kept in the worker (256: a moved point / new height loads
+  and cleans only the tiles it hasn't got - ~2 s per update at 1000 km on
+  a Pi 5), up to 6 at once in their own colours, per browser
   (localStorage). UI-only (kraken_doa.html "👁
   VIEWSHED")
+- 📶 Path loss = the viewshed's "📶 Signal" mode (its panel switches 👁 Line
+  of sight | 📶 Signal - one feature, no separate button): how often (%)
+  a TRANSMITTER's signal is good enough for receivers around it, also
+  WITHOUT line of sight - coloured by that reliability, every shown
+  transmitter at once (the best per place), the edge of the line of sight
+  a black line (2 px; OFF by default - the panel's "Line of sight edge"
+  switch, per browser); line of sight mode is the plain viewshed (both show
+  the identical line of sight). Each site is a TX or an RX, added by right-clicking
+  ("📶 Add TX antenna here"; no TX / RX tag to switch, no RX adding) - the STATION ISN'T PART OF THE SIGNAL
+  MODE (the user's call: hidden there, never coloured or linked; it keeps
+  its line of sight viewshed); ONLY TRANSMITTERS ARE COLOURED (the user's call): TX sites
+  (receivers at the target height), and the TX place of a link from an RX
+  site (`vsLinkItem`: around the place, receivers at that site's antenna
+  height, out past it; worked out when the place is dropped) - an RX site
+  itself isn't. The target can be in the air (above sea level). Per transmitter: the
+  CHOSEN MODEL to every cell on the viewshed's rays (`plSweep`) - P.1812
+  (the whole profile per ray via convex hulls, O(log n) per cell, EXACTLY
+  P.1812 on the sampled profile), Longley-Rice (`itmCell`: NTIA's ITM on
+  the ray's own points, incremental horizons / fits, delta h per cell -
+  ~6x P.1812's time: labelled "much slower"), or free space (no terrain);
+  the rays split over helper workers (`plSweepPar`: one per core but one,
+  the same cells to the bit);
+  Okumura-Hata was dropped (the user's call: no terrain, valid only for
+  1-20 km / a 30-200 m base). LINK (right-click "📶 Path loss analysis from TX 1 to here" - the
+  selected TX antenna, else the first; only once one is placed - markers,
+  masts): a TX antenna -> a
+  place, the great-circle terrain profile through ITU-R
+  P.1812-6 (delta-Bullington diffraction + troposcatter, median, no
+  ducting), NTIA's ITM / Longley-Rice (a JS port of the public-domain C++)
+  and free space, drawn as a profile + link budget in a strip
+  at the bottom of the map. Channel: ITU-R P.2108 clutter at the ends (3.1
+  both on the ground, 3.3 air-to-ground at the ground end by elevation),
+  the TX / RX antennas' polarization (vertical / horizontal / circular /
+  a custom angle: mismatch cos^2 or 3 dB, capped by depolarization from
+  the CLUTTER around each antenna - XPD 20 dB antennas' own, 15 open, 10
+  suburban, 7 urban, 5 dense, none above the clutter; the same everywhere,
+  not switched at the horizon; the models' own h / v = the TX antenna's),
+  P.1546 location variability + Rician fading whose K follows the path
+  per cell (lower behind terrain, towards Rayleigh where troposcatter
+  takes over; continuous through the horizon) -> the margin a
+  reliability needs. In both modes the panel labels each site's antenna
+  and the target "TX antenna" / "RX antenna" by the roles. Validated against NTIA's ITM cases + C++, the ITU-R SG3
+  P.1812 logs and P.2108's table, the coverage per model against the same
+  models on its own ray profiles: `kraken_doa_v2/tools/pathloss_validate.mjs`.
+  UI-only (kraken_doa.html "📶 PATH LOSS"; the engine lives in the viewshed
+  worker); settings per browser (localStorage `kraken_pl`). DroneRanger
+  (the user's reference) only has free space + a line-of-sight check
 - Incident map: text messages from plugins (`kp::Host::message`, POCSAG
   pages) -> street address found in the text -> looked up ONLINE in
   OpenStreetMap Nominatim (no downloaded map data) within `GEO_RADIUS_KM`
