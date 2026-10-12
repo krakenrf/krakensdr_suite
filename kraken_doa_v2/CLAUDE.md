@@ -1323,8 +1323,10 @@ Edit `include/config.hpp`:
   pixels in sight next to one out of sight AND the other way round (2
   device px; dilated once more at devicePixelRatio >= 1.5 = 4, i.e. 2 CSS
   px), black alpha 0xd9 (the user's call, 2026-10-12: it was 1 px faint
-  white inside the colours, hard to see). `plState.los` (default on,
-  `kraken_pl`): the "Line of sight edge" tick on the Wanted reliability row
+  white inside the colours, hard to see). `plState.losEdge` (default OFF -
+  the user's call; `kraken_pl` - its first version `los` defaulted on and
+  was saved with everything, so that key isn't read): the "Line of sight
+  edge" tick on the Wanted reliability row
   (always shown), a redraw only - in the composite's key, not the jobs';
   the legend names it only while on (`.pl-ll` swatch). The legend: a gradient bar with the stops
   evenly spaced + their labels (`.pl-leg-g`, `.pl-leg-t`),
@@ -1388,7 +1390,7 @@ Edit `include/config.hpp`:
   vs an independent formula, one figure; the link's budget row; the
   fading: tables vs the integral, K per cell 6 dB clear / lower behind
   terrain, hover + strip K, the K setting a repaint only; the edge line:
-  black, >= 2 px, switched off / on - no job, the same colours, the
+  off by default, black, >= 2 px, switched on / off - no job, the same colours, the
   legend, kept over a reload; the
   TX / RX antenna labels; an old `pol` / a saved 'hata' migrating; t_dpr2.py:
   the line 2 / 4 device px at devicePixelRatio 1 / 2) in headless Chromium on the

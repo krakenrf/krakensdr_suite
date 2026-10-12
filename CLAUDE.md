@@ -523,8 +523,8 @@ decoders `kraken_doa_v2/plugins/`
   a TRANSMITTER's signal is good enough for receivers around it, also
   WITHOUT line of sight - coloured by that reliability, every shown
   transmitter at once (the best per place), the edge of the line of sight
-  a black line (2 px; the panel's "Line of sight edge" switch, per
-  browser); line of sight mode is the plain viewshed (both show
+  a black line (2 px; OFF by default - the panel's "Line of sight edge"
+  switch, per browser); line of sight mode is the plain viewshed (both show
   the identical line of sight). Each site is a TX or an RX (the station RX
   by default); ONLY TRANSMITTERS ARE COLOURED (the user's call): TX sites
   (receivers at the target height), and the TX place of a link from an RX
