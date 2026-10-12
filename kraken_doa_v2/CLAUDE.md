@@ -1116,8 +1116,14 @@ Edit `include/config.hpp`:
   the same terrain (plSweep's own line of sight - one ray through all the
   rings - differed from sweep()'s ring-by-ring one in ~0.1 % of the cells;
   now both modes show the identical line of sight, checked cell by cell;
-  a cell only sweep() sampled takes its neighbours' loss). In sight or not
-  picks the fading. Spherical-Earth constants hoisted (`seConst`), one
+  a cell only sweep() sampled takes its neighbours' loss). Per ring also
+  `fad` (u16, the fading's path factors from P.1812's terrain analysis -
+  with Longley-Rice too, ~+15 % there: high byte the terrain's knife-edge
+  loss beyond the smooth Earth's, Lbull - Lbulls, 0.25 dB; low byte Lbs -
+  Lbd + 32 dB, 0.25 dB; 255 = free space / no troposcatter), carried
+  through the fills, the helpers' merge and the link of a cell's
+  neighbours; checked against exact P.1812 per recorded sample (±1 per
+  byte). Spherical-Earth constants hoisted (`seConst`), one
   polarization, one ground when omega is 0 / 1. Progress `['sig', %]`
   (status: "signal N %…"), a break for a cancel every 0.25 s
   Checked (tools/pathloss_validate.mjs; scratch t_cov.mjs): the loss at
@@ -1209,8 +1215,9 @@ Edit `include/config.hpp`:
   old single `pol` 0 / 1 becomes both antennas' h / v), N0 (301:
   troposcatter + ITM), climate + ground (ITM, `PL_GROUNDS`), envTx / envRx
   (P.2108 types, `PL_ENVS`: the transmitter's / receiver's surroundings,
-  whichever end that is), fade (auto = Rician K in sight / Rayleigh beyond |
-  rician | rayleigh | none), K dB, rel % (the wanted reliability), sigL
+  whichever end that is), fade (auto = Rician, K per cell from the path,
+  see FADING | rician = K everywhere | rayleigh | none), K dB (a clear
+  path's), rel % (the wanted reliability), sigL
   (null = P.1546-6 (12): K + 1.3 log f, K 0.5 open / a receiver in the air,
   1.0 an antenna up near the clutter, 1.2 one in it - of the RECEIVER: the
   site when it is RX, else the target, `plSiteSigma`), set / prof (folds),
@@ -1219,7 +1226,7 @@ Edit `include/config.hpp`:
   polarization - the models' h / v -, N0, clutter, model; climate + ground
   only with ITM - they are in `plSigMsg`, so in `vsKey`: a job runs only
   where the key changed), L = the link; everything else (the RX antenna's
-  polarization too) only repaints from the losses kept (`vsRepaint` ->
+  polarization, fade, K too) only repaints from the losses + `fad` kept (`vsRepaint` ->
   `plPaintSig`). The viewshed's target height / reference are shared
   (`vsSetTgt` / `vsSetRef` call `vsSigChanged`). The REFRACTION is not:
   `vsK()` = 4/3 in the signal mode (the user's call: its models are for
@@ -1229,33 +1236,61 @@ Edit `include/config.hpp`:
   N0), the stored choice (`vsState.k`, kept) in the line of sight mode -
   in the job key, the job, the link (`plLinkMsg`); the selector shows
   "Radio (k = 4/3)" disabled in the signal mode (t_kref.py)
-- POLARIZATION (`plPolLoss(los)`, `plWavePol`): each antenna 'v' / 'h' /
-  'c' (circular) / 'a' (linear at angT / angR degrees from horizontal). The
-  mismatch relative to matched antennas (the models are for those): the
-  share co of the power the RX antenna takes - two linear cos^2 of the
-  angle between, linear / circular 1/2, circular / circular 1 (the same
-  hand assumed) - with depolarization x = 10^(-XPD/10): co (1 - x) + (1 -
-  co) x, over (1 - x). XPD (`PL_XPD`) 20 dB with a direct path (antennas'
-  own cross-polar rejection), 8 dB without (diffraction / scattering mix
-  them; mobile radio measures ~5-10 dB): crossed antennas lose ~20 / ~7
-  dB, linear to circular ~3 / 2.3 dB. In sight or not: the cell's (the
-  paint, the hover) or the link's P.1812 line of sight (free space: in
-  sight). The propagation models' own polarization (P.1812 / ITM take h or
-  v) = the TX antenna's (a slanted one: the nearer, 45° horizontal;
-  circular: vertical). Shown under the model ("matched" / "mismatch x dB
-  in sight, y dB beyond"), in the hover ("+ polarization x dB") and as a
-  budget row in the strip
+- POLARIZATION (`plPolLoss(ends)`, `plPolEnds(it)` / `plLinkPolEnds(e)`,
+  `plWavePol`): each antenna 'v' / 'h' / 'c' (circular) / 'a' (linear at
+  angT / angR degrees from horizontal). The mismatch relative to matched
+  antennas (the models are for those): the share co of the power the RX
+  antenna takes - two linear cos^2 of the angle between, linear /
+  circular 1/2, circular / circular 1 (the same hand assumed) - with
+  depolarization x: co (1 - x) + (1 - co) x, over (1 - x). x = the
+  antennas' own (XPD 20 dB, `PL_XPD_ANT`) and each END's clutter
+  (`PL_XPD` by the Clutter type: none / water none, open 15, suburban 10,
+  urban / forest 7, dense urban 5 dB - mobile radio measurements, 3GPP
+  38.901's scattered rays 7-12 dB), fully for an antenna down in it, x (1
+  - (h / R)^2) up to P.2108's clutter height R (`PL_ENV_R`), none above it
+  or in the air (`plDepol`), combined as mixings in turn. The wave keeps
+  its polarization along the path (direct, reflected, diffracted,
+  troposcatter: forward, in the path's plane) - scattering off the clutter
+  mixes it, so the figure is the SAME over the whole map. Until
+  2026-10-12 XPD was 20 dB in sight / 8 dB beyond by the cell's line of
+  sight: the user's 320 m TX over the sea, H TX / V RX, fell to 79 % at
+  the 87 km horizon and jumped back to 96 % just past it (~13 dB less
+  mismatch); scratch t_seapol.mjs / t_seapol2.mjs. The propagation models'
+  own polarization (P.1812 / ITM take h or v) = the TX antenna's (a
+  slanted one: the nearer, 45° horizontal; circular: vertical). Shown
+  under the model ("matched" / "mismatch x dB": the link's ends, else the
+  first transmitter's - `plPolNow`), in the hover ("+ polarization x dB")
+  and as a budget row in the strip
+- FADING (`plFading(terr, dts)`, `plKeff`): auto = Rician whose K (the
+  setting: a clear path's) follows the path, continuously - TERRAIN in
+  the way lowers it dB for dB by its knife-edge loss beyond the smooth
+  Earth's (Lbull - Lbulls: the steady path dims behind a hill, scattered
+  power still reaches round it; the Earth's bulge over open sea / flat
+  land adds none), TROPOSCATTER (Rayleigh) taking over far beyond the
+  horizon: K = Kt (1 - w) / (1 + Kt w), w = 1 / (1 + 10^((Lbs - Lbd) /
+  10)). From P.1812 with either terrain model (the cell's `fad`, the
+  link's `p1812`); free space: K. Until 2026-10-12 auto was Rician in
+  sight / Rayleigh beyond - a ~19-point step down at the same horizon
+  once the polarization step was gone. Shown in the hover ("Rician K x
+  dB") and the strip ("Rician K x dB (6 dB on a clear path; terrain in
+  the way y dB, troposcatter z %)", "≈ Rayleigh" below -10 dB)
 - LABELS (signal mode, `vsRender`): a site row's "Antenna" -> "TX antenna"
   / "RX antenna" by its role; "Target" -> the other end's ("RX antenna" for
   TX sites, "TX antenna" for RX sites, "TX / RX antenna" when the shown
   sites have both); line of sight mode: "Antenna" / "Target"
 - Reliability: `plOutage(m, sigma, kind, K)` = integral of phi(z)
-  F_fade(10^((sigma z - m) / 10)) over +-6 sigma (121-point trapezoid; the
-  Rician power CDF by Simpson over the envelope pdf with I0e - A&S 9.8.1 /
-  9.8.2; 'none' = Phi(-m / sigma) exactly; K >= 30 dB = none) ->
-  `plNeed(rel, sigma, kind, K)` (bisection, cached). Per cell: `plRelLut`
-  (the reliability every 0.25 dB of margin from -50 to +70 dB, per sigma /
-  fading, linear between: within 5e-5 of the integral) -> `plRelAt`.
+  F_fade(sigma z - m dB) over +-6 sigma (121-point trapezoid; the Rician
+  power CDF tabulated ONCE per K, `plFadeTab`: the power pdf with I0e - A&S
+  9.8.1 / 9.8.2 - integrated by Simpson every 0.02 dB from -60 to +20 dB,
+  within 1e-4 of a fine reference up to K 25 dB, ~7x faster than the old
+  per-call Simpson over the envelope; 'none' = Phi(-m / sigma) exactly; K
+  >= 30 dB = none) -> `plNeed(rel, sigma, kind, K)` (bisection, cached).
+  Per cell: `plRelLut(sigma, kind, K)` (the reliability every 0.25 dB of
+  margin from -50 to +70 dB, linear between), auto: `plRelSet(sigma)` = a
+  table per K level (Rayleigh at -20 dB, Rician up to the setting <= 30 dB
+  in <= 1 dB steps, ~0.3 s the first time per sigma on the Pi) + idx[fad]
+  (65536 entries, per K setting) -> `plRelK` interpolates between the two
+  levels around the cell's K: within 2e-4 of the integral at its exact K.
   Checked: closed forms (Rayleigh 90 % = 9.773 dB, lognormal 1.2816 /
   2.3263 sigma) and Monte Carlo (Rayleigh / Rician 6 dB with sigma ~4 dB:
   10.03 +- 0.02 % outage at the 90 % margin)
@@ -1341,8 +1376,11 @@ Edit `include/config.hpp`:
   cells differ), t_drag.py (real mouse drags of the link's place, random
   speeds / pauses: the profile drawn for the current link whenever the
   worker is idle - 2 of 40 blank before the F1 clamp, 0 of 80 after), and
-  t_uni_ui.py - 73 checks (incl. polarization: RX-only a repaint, TX h / v
-  a job, 60° = cos^2 30°, circular 3 / 2.3 dB, the link's budget row; the
+  t_uni_ui.py - 81 checks (incl. polarization: RX-only a repaint, TX h / v
+  a job, 60° = cos^2 30°, circular, urban receivers less mismatch - each
+  vs an independent formula, one figure; the link's budget row; the
+  fading: tables vs the integral, K per cell 6 dB clear / lower behind
+  terrain, hover + strip K, the K setting a repaint only; the
   TX / RX antenna labels; an old `pol` / a saved 'hata' migrating) in headless Chromium on the
   page served statically WITH a UTF-8 charset (no receiver; the station set
   from the test): no Path loss button, line of sight as before, signal

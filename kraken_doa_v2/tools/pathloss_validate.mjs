@@ -234,7 +234,7 @@ async function sweepVsExact(name, lat, lon, h, R, sig, txAmsl) {
   if (res.error) { check(false, `${name}: ${res.error}`); return null; }
   if (txAmsl) h = res.eye - res.gnd;   // (the TX above its ground, as the exact model takes it)
   const ae = 4 / 3 * 6371, errIn = [], errOut = [], model = sig.model || 'p1812', vsEven = [];
-  let nan = 0, n0 = 0, nOut = 0;
+  let nan = 0, n0 = 0, nOut = 0, nFad = 0, badFad = 0;
   for (const r of res.sig.rays) {
     const n = r.s.length;
     for (let j = 1; j < n; j += Math.max(1, Math.floor(n / 120))) {
@@ -269,6 +269,16 @@ async function sweepVsExact(name, lat, lon, h, R, sig, txAmsl) {
           if (!ev.err) vsEven.push(Math.abs(ev.A - A));
         }
       }
+      // the fading's path factors (fadQ): P.1812's terrain excess + troposcatter vs diffraction, with either terrain model
+      {
+        let want = 255;
+        if (model !== 'fs') {
+          const q = model === 'p1812' ? ex : T.p1812P2P(Float64Array.from(d), Float64Array.from(hh), null, h, hr, sig.f / 1000, ae, r.sea[j], sig.N0, sig.pol, true);
+          want = (Math.min(255, Math.round(Math.max(0, q.Lbulla - q.Lbulls) * 4)) << 8) | Math.max(0, Math.min(255, Math.round((q.Lbs - q.Lbd + 32) * 4)));
+        }
+        nFad++;
+        if (Math.abs((r.F[j] >> 8) - (want >> 8)) > 1 || Math.abs((r.F[j] & 255) - (want & 255)) > 1) badFad++;
+      }
       // clutter: both on the ground 3.1; the RX up: 3.3 at the TX; the TX up: 3.3 at the RX (by the elevation at that end)
       let cl = 0;
       const el = (from, to) => Math.max(0, Math.atan((to - from) / sm - sm / (2 * ae * 1000)) * 180 / Math.PI);
@@ -286,6 +296,7 @@ async function sweepVsExact(name, lat, lon, h, R, sig, txAmsl) {
     for (let i = 0; i < loss.length; i++) if (need[i] !== 65535) { cells++; if (loss[i] === 0) badCells++; }
   }
   const worst = Math.max(pct(errIn, 100), pct(errOut, 100)), MN = {p1812: 'P.1812', itm: 'Longley-Rice', fs: 'free space'}[model];
+  check(!badFad && nFad > 300, `${name}: the fading's path factors (terrain beyond the smooth Earth, troposcatter vs diffraction) = exact P.1812's on ${nFad} samples`);
   check(worst < 1e-6 && !nan && cells > 1e5 && !badCells && errIn.length + errOut.length > 300,
         `${name}: sweep = exact ${MN} on ` + (model === 'p1812' ? `${errIn.length} line-of-sight + ${errOut.length} beyond-horizon samples` : `${errIn.length} samples`) +
         ` (worst ${worst.toExponential(1)} dB)${n0 ? `, ${n0} under the ground skipped` : ''}${nOut ? `, ${nOut} outside the model's range` : ''}; ${cells} cells, ${((Date.now() - t0) / 1000).toFixed(1)} s`);

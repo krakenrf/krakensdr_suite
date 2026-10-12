@@ -546,9 +546,13 @@ decoders `kraken_doa_v2/plugins/`
   at the bottom of the map. Channel: ITU-R P.2108 clutter at the ends (3.1
   both on the ground, 3.3 air-to-ground at the ground end by elevation),
   the TX / RX antennas' polarization (vertical / horizontal / circular /
-  a custom angle: mismatch cos^2 or 3 dB, capped by depolarization - XPD
-  20 dB in sight, 8 dB beyond; the models' own h / v = the TX antenna's),
-  P.1546 location variability + Rician / Rayleigh fading -> the margin a
+  a custom angle: mismatch cos^2 or 3 dB, capped by depolarization from
+  the CLUTTER around each antenna - XPD 20 dB antennas' own, 15 open, 10
+  suburban, 7 urban, 5 dense, none above the clutter; the same everywhere,
+  not switched at the horizon; the models' own h / v = the TX antenna's),
+  P.1546 location variability + Rician fading whose K follows the path
+  per cell (lower behind terrain, towards Rayleigh where troposcatter
+  takes over; continuous through the horizon) -> the margin a
   reliability needs. In signal mode the panel labels each site's antenna
   and the target "TX antenna" / "RX antenna" by the roles. Validated against NTIA's ITM cases + C++, the ITU-R SG3
   P.1812 logs and P.2108's table, the coverage per model against the same
