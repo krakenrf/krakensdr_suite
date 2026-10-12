@@ -535,6 +535,8 @@ decoders `kraken_doa_v2/plugins/`
   P.1812 on the sampled profile), Longley-Rice (`itmCell`: NTIA's ITM on
   the ray's own points, incremental horizons / fits, delta h per cell -
   ~6x P.1812's time: labelled "much slower"), or free space (no terrain);
+  the rays split over helper workers (`plSweepPar`: one per core but one,
+  the same cells to the bit);
   Okumura-Hata was dropped (the user's call: no terrain, valid only for
   1-20 km / a 30-200 m base). LINK (right-click "📶 Link", markers, masts): a site <-> a
   place, the great-circle terrain profile through ITU-R

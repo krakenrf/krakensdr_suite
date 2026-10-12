@@ -1872,6 +1872,7 @@ const vsState = (() => {
 })();
 const vsRes = new Map(), vsFail = new Map();
 let vsWorker = null, vsJob = null, vsSeq = 0, vsWorkerErr = '', vsHovAt = null, vsOff = null,
+    vsPar = null,      // (the signal sweep's helper workers: null = as many as the cores allow, 0 = none - tests)
     vsReady = false;   // set at the end of the section (rpApply can draw the map before it)
 // 📶 path loss (see 📶 PATH LOSS): the radio + channel settings of the
 // viewshed's signal mode, the link (a viewshed site's id + the far place;
@@ -12793,8 +12794,13 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     let chain = Promise.resolve();
     self.onmessage = e => {
       const m = e.data;
-      if (m.cancel) { cancelled.add(m.cancel); return; }
-      chain = chain.then(() => run(m)).catch(err => {
+      if (m.cancel) {
+        cancelled.add(m.cancel);
+        if (helpers) for (const hp of helpers) hp.w.postMessage({cancel: m.cancel});   // (plSweepPar's helpers too)
+        return;
+      }
+      chain = chain.then(() => m.part ? runPart(m) : run(m)).catch(err => {
+        if (m.part) partJob = null;
         self.postMessage({job: m.job, error: cancelled.has(m.job) ? 'cancelled' : (err && err.message) || String(err)});
       });
     };
@@ -13433,6 +13439,105 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     // 0 none .. 5), hmTx / hmRx (median clutter height around the ground end
     // for P.2108 3.3 when the other end flies)} - every ring's terrain at once
     // (the rays run through all of them), then plSweep
+    // ---- the signal sweep on several cores: HELPERS = nested workers
+    // running this same code. The rays are independent, so each helper takes
+    // a contiguous range of them through both passes of plSweep: pass 0's
+    // best[] merged by the minimum before pass 1, pass 1's cells merged in
+    // ray order (a later ray overwrites, as in one plSweep) - the result is
+    // the same to the bit. Meanwhile this worker does the line of sight
+    // (sweep()). Each helper holds a copy of the rings' terrain (no
+    // SharedArrayBuffer without cross-origin isolation). Not without nested
+    // workers (node: the checks run it in one), nor for m.debug (recorded
+    // rays); m.par: 0 = one worker, n = n helpers
+    let helpers = null, partJob = null;
+    function vsHelperCount(m, rings) {
+      if (m.debug || m.par === 0 || typeof Worker === 'undefined' || typeof navigator === 'undefined') return 0;
+      const bytes = rings.reduce((a, g) => a + g.N * g.N * 4, 0);
+      let h = m.par > 0 ? m.par : Math.min(7, (navigator.hardwareConcurrency || 1) - 1);
+      h = Math.min(h, Math.floor(600e6 / bytes));
+      return h >= 2 ? h : 0;
+    }
+    function helperPool(n) {
+      helpers = helpers || [];
+      while (helpers.length < n) {
+        const w = new Worker(URL.createObjectURL(new Blob(['(' + vsWorkerMain.toString() + ')()'], {type: 'text/javascript'})));
+        const hp = {w, pend: null, frac: 0};
+        w.onmessage = e => {
+          const d = e.data, p = hp.pend;
+          if (!p || d.job !== p.job) return;   // (a cancelled job's late reply: not this call's)
+          if (d.hprog !== undefined) { hp.frac = d.hprog; return; }
+          if (!d.error && d.pass !== p.pass) return;
+          hp.pend = null;
+          if (d.error) p.rej(new Error(d.error)); else p.res(d);
+        };
+        w.onerror = e => {
+          e.preventDefault();
+          const p = hp.pend;
+          hp.pend = null;
+          w.terminate();
+          helpers = helpers.filter(x => x !== hp);
+          if (p) p.rej(new Error('a helper worker failed: ' + (e.message || 'error')));
+        };
+        helpers.push(hp);
+      }
+      return helpers.slice(0, n);
+    }
+    function helperCall(hp, msg) {
+      return new Promise((res, rej) => { hp.pend = {job: msg.job, pass: msg.part.pass, res, rej}; hp.frac = 0; hp.w.postMessage(msg); });
+    }
+    async function plSweepPar(m, rings, dems, gnd, eye, curv, nRays, outs, H, los) {
+      let hs;
+      try { hs = helperPool(H); } catch (e) { const info = await plSweep(m, rings, dems, gnd, eye, curv, nRays, outs); await los(); return info; }
+      const n = hs.length, rng = hs.map((_, i) => [Math.round(nRays * i / n), Math.round(nRays * (i + 1) / n)]);
+      const mm = Object.assign({}, m, {levels: undefined}), info = {lossCalls: 0, losCalls: 0, losScan: 0, workers: n + 1};
+      let stage = 0;
+      const tick = setInterval(() => self.postMessage({job: m.job, prog: ['sig', Math.round((stage + hs.reduce((a, h) => a + h.frac, 0) / n) * 50)]}), 400);
+      try {
+        // pass 0 on the helpers (quick: only each cell's sample); pass 1 on
+        // them with the line of sight here meanwhile (it is only needed at the end)
+        const r0 = await Promise.all(hs.map((hp, i) => helperCall(hp, {job: m.job, part: {pass: 0, k0: rng[i][0], k1: rng[i][1]}, m: mm, rings, dems, gnd, eye, curv, nRays})));
+        rings.forEach((g, r) => {
+          const best = outs[r].best;
+          for (const d of r0) { const hb = d.outs[r].best; for (let c = 0; c < best.length; c++) if (hb[c] < best[c]) best[c] = hb[c]; }
+        });
+        stage = 1;
+        const best = outs.map(o => o.best);
+        const p1 = Promise.all(hs.map((hp, i) => helperCall(hp, {job: m.job, part: {pass: 1, k0: rng[i][0], k1: rng[i][1]}, m: mm, gnd, eye, curv, nRays, best})));
+        p1.catch(() => {});
+        await los();
+        const r1 = await p1;
+        for (const d of r1) {   // (in ray order: a later ray's cell wins, as in one sweep)
+          rings.forEach((g, r) => {
+            const o = outs[r], h = d.outs[r];
+            for (let c = 0; c < o.need.length; c++) if (h.need[c] !== 65535) { o.need[c] = h.need[c]; o.ground[c] = h.ground[c]; o.loss[c] = h.loss[c]; }
+          });
+          for (const k of ['lossCalls', 'losCalls', 'losScan']) info[k] += d.info[k];
+        }
+      } catch (e) {   // (one failed or was cancelled: the others stop too)
+        for (const hp of hs) { hp.w.postMessage({cancel: m.job}); hp.pend = null; }
+        throw e;
+      } finally { clearInterval(tick); }
+      Object.assign(info, await plSweep(m, rings, dems, gnd, eye, curv, nRays, outs, {finish: true}), {lossCalls: info.lossCalls, losCalls: info.losCalls, losScan: info.losScan});
+      return info;
+    }
+    // a helper's part: one pass over its rays (the terrain kept from pass 0 for pass 1)
+    async function runPart(m) {
+      if (m.dems) partJob = {job: m.job, dems: m.dems, rings: m.rings};
+      if (!partJob || partJob.job !== m.job) throw new Error('a helper worker lost its terrain');
+      const {dems, rings} = partJob, pass = m.part.pass;
+      const outs = rings.map((g, r) => pass ? {need: new Uint16Array(g.N * g.N).fill(65535), ground: new Int16Array(g.N * g.N),
+                                               loss: new Uint16Array(g.N * g.N).fill(65535), best: m.best[r]}
+                                            : {best: new Uint8Array(g.N * g.N).fill(255)});
+      const info = await plSweep(m.m, rings, dems, m.gnd, m.eye, m.curv, m.nRays, outs, m.part);
+      if (pass) partJob = null;   // (done: the memory back)
+      const transfer = [];
+      const out = outs.map(o => {
+        if (!pass) { transfer.push(o.best.buffer); return {best: o.best}; }
+        transfer.push(o.need.buffer, o.ground.buffer, o.loss.buffer);
+        return {need: o.need, ground: o.ground, loss: o.loss};
+      });
+      self.postMessage({job: m.job, pass, outs: out, info}, transfer);
+    }
     async function runSignal(m, rings, ringDem, nRays, curv, st) {
       const dems = [];
       for (const g of rings) {
@@ -13444,18 +13549,31 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (eye < gnd) throw new Error(`the transmitter is below the ground there (${Math.round(gnd)} m)`);
       const outs = rings.map(g => ({need: new Uint16Array(g.N * g.N).fill(65535), ground: new Int16Array(g.N * g.N),
                                     loss: new Uint16Array(g.N * g.N).fill(65535), best: new Uint8Array(g.N * g.N).fill(255)}));
-      const info = await plSweep(m, rings, dems, gnd, eye, curv, nRays, outs);
       // the line of sight exactly as the plain viewshed's (sweep(): ring by
       // ring, the horizon carried between them - plSweep's own differs in
-      // ~0.1 % of the cells), so both modes show the same; a cell only
-      // sweep() sampled (a ring's ragged edge) takes its neighbours' loss
-      let hz = null;
+      // ~0.1 % of the cells), so both modes show the same - into needL /
+      // groundL here (on helpers: while they do the loss's first pass)
+      const losR = [];
+      const los = async () => {
+        let hz = null;
+        for (let k = 0; k < rings.length; k++) {
+          await new Promise(res => setTimeout(res, 0));
+          if (cancelled.has(m.job)) throw new Error('cancelled');
+          const N = rings[k].N, needL = new Uint16Array(N * N).fill(65535), groundL = new Int16Array(N * N);
+          hz = sweep(dems[k], rings[k], eye, curv, needL, groundL, hz, nRays);
+          losR.push([needL, groundL]);
+        }
+      };
+      const H = vsHelperCount(m, rings);
+      let info;
+      if (H) info = await plSweepPar(m, rings, dems, gnd, eye, curv, nRays, outs, H, los);
+      else { info = await plSweep(m, rings, dems, gnd, eye, curv, nRays, outs); await los(); }
+      // ... over the loss's: its need / ground where sweep() sampled; a cell
+      // only sweep() sampled (a ring's ragged edge) takes its neighbours' loss
       for (let k = 0; k < rings.length; k++) {
-        await new Promise(res => setTimeout(res, 0));
-        if (cancelled.has(m.job)) throw new Error('cancelled');
-        const g = rings[k], o = outs[k], N = g.N, had = o.need, loss = o.loss;
-        o.need = new Uint16Array(N * N).fill(65535);
-        hz = sweep(dems[k], g, eye, curv, o.need, o.ground, hz, nRays);
+        const g = rings[k], o = outs[k], N = g.N, had = o.need, loss = o.loss, [needL, groundL] = losR[k];
+        o.need = needL;
+        for (let c = 0; c < N * N; c++) if (needL[c] !== 65535) o.ground[c] = groundL[c];
         for (let c = 0; c < N * N; c++) {
           if (o.need[c] === 65535 || had[c] !== 65535) continue;
           let s = 0, n = 0;
@@ -13498,7 +13616,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     // its centre, as sweep()), the second evaluates the loss once per cell.
     // Rings are walked to rExt (their cells there are drawn over the next
     // ring's), the next ring takes over from there.
-    async function plSweep(m, rings, dems, gnd, eye, curv, nRays, outs) {
+    async function plSweep(m, rings, dems, gnd, eye, curv, nRays, outs, part) {
       const S = m.sig, f = S.f / 1000, lam = 0.2998 / f, ae = 1 / (2 * curv), aeK = ae / 1000, pol = S.pol ? 1 : 0;
       const phi0 = m.lat * Math.PI / 180, lam0 = m.lon * Math.PI / 180;
       const sp = Math.sin(phi0), cp = Math.cos(phi0), sl = Math.sin(lam0), cl = Math.cos(lam0), psi0 = Math.atanh(sp);
@@ -13853,19 +13971,27 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
           }
         }
       };
-      let tb = Date.now();
-      for (let pass = 0; pass < 2; pass++)
-        for (let k = 0; k < nRays; k++) {
-          if (pass) { nc = nf = ne = nh = 0; tmax = fmax = -Infinity; v1 = v2 = 0; ps = 0; ph = gnd; nPts = nSea = 0; }
-          rec = pass && recs ? recs.get(k) || null : null;
-          ray(2 * Math.PI * k / nRays, pass);
-          if (Date.now() - tb > 250) {   // (a break for a cancel)
-            self.postMessage({job: m.job, prog: ['sig', Math.round((pass + k / nRays) * 50)]});
-            await new Promise(res => setTimeout(res, 0));
-            if (cancelled.has(m.job)) throw new Error('cancelled');
-            tb = Date.now();
+      // part (plSweepPar): {pass, k0, k1} = one pass over the rays k0..k1 - 1
+      // only (a helper), {finish: true} = only what follows the passes (the
+      // helpers' results merged into outs); none = all of it here
+      if (!part || !part.finish) {
+        let tb = Date.now();
+        const k0 = part ? part.k0 : 0, k1 = part ? part.k1 : nRays;
+        for (const pass of part ? [part.pass] : [0, 1])
+          for (let k = k0; k < k1; k++) {
+            if (pass) { nc = nf = ne = nh = 0; tmax = fmax = -Infinity; v1 = v2 = 0; ps = 0; ph = gnd; nPts = nSea = 0; }
+            rec = pass && recs ? recs.get(k) || null : null;
+            ray(2 * Math.PI * k / nRays, pass);
+            if (Date.now() - tb > 250) {   // (a break for a cancel)
+              if (part) self.postMessage({job: m.job, hprog: (k - k0) / (k1 - k0)});
+              else self.postMessage({job: m.job, prog: ['sig', Math.round((pass + k / nRays) * 50)]});
+              await new Promise(res => setTimeout(res, 0));
+              if (cancelled.has(m.job)) throw new Error('cancelled');
+              tb = Date.now();
+            }
           }
-        }
+        if (part) return {lossCalls, losCalls, losScan};
+      }
       // cells no sample landed in (>= 3 of 4 neighbours have one), as sweep();
       // the observer's own cell
       rings.forEach((g, r) => {
@@ -14639,7 +14765,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const rM = it.r * 1000;
     vsJob = {job: ++vsSeq, id: it.id, key: vsKey(it), prog: null, lat: it.lat, lon: it.lon, h: it.h, r: it.r};
     vsWorker.postMessage({job: vsJob.job, lat: it.lat, lon: it.lon, h: it.h, amsl: !!it.amsl, k: vsState.k, levels: vsPlan(it.lat, rM),
-                          sig: vsState.mode === 'sig' ? plSigMsg(it) : undefined});
+                          sig: vsState.mode === 'sig' ? plSigMsg(it) : undefined, par: vsPar === null ? undefined : vsPar});
     vsRender();
   }
   // an item changed / went away while its job runs: stop it (the reply ends the job)
@@ -14661,7 +14787,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                               need: new Uint16Array(l.need), ground: new Int16Array(l.ground), loss: l.loss ? new Uint16Array(l.loss) : null},
                              o && o.cv && o.N === l.N ? {cv: o.cv, cx: o.cx} : {});   // (canvases reused)
       });
-      const res = {key: job.key, levels, gnd: m.gnd, eye: m.eye, mpp: m.mpp, ms: m.ms, spikes: m.spikes, tiles: m.tiles, loaded: m.loaded,
+      const res = {key: job.key, levels, gnd: m.gnd, eye: m.eye, mpp: m.mpp, ms: m.ms, spikes: m.spikes, tiles: m.tiles, loaded: m.loaded, workers: (m.sig && m.sig.workers) || 1,
                    lat: job.lat, lon: job.lon, h: job.h, r: job.r};
       vsRes.set(job.id, res);
       vsFail.delete(job.id);
@@ -15125,7 +15251,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const tip = vsResOk(it, res) ? `ground ${Math.round(res.gnd)} m + antenna ${it.h} m = ${Math.round(res.eye)} m above sea level · ` +
         `terrain cells of ${Math.round(res.mpp)} m around the antenna` + (res.levels.length > 1 ? ` to ${Math.round(lst.cell)} m at ${it.r} km ` +
         `(${res.levels.length} rings, zoom ${res.levels[0].z} to ${lst.z})` : ` (zoom ${lst.z})`) +
-        ` · ${res.tiles} tiles` + (res.loaded < res.tiles ? ` (${res.loaded} loaded, the rest in memory)` : '') + `, ${(res.ms / 1000).toFixed(1)} s` + (res.spikes ? ` · ${res.spikes} terrain spikes removed` : '') : '';
+        ` · ${res.tiles} tiles` + (res.loaded < res.tiles ? ` (${res.loaded} loaded, the rest in memory)` : '') + `, ${(res.ms / 1000).toFixed(1)} s` + (res.workers > 1 ? ` on ${res.workers} workers` : "") + (res.spikes ? ` · ${res.spikes} terrain spikes removed` : '') : '';
       if (st.dataset.html !== txt) { st.dataset.html = txt; st.innerHTML = txt; }
       st.className = 'st' + (cls ? ' ' + cls : '');
       if (st.title !== tip) st.title = tip;

@@ -1130,6 +1130,29 @@ Edit `include/config.hpp`:
   rings use coarser terrain: 30 m at 15 km). Time (node on the Pi 5, tiles
   in memory): 30 km ~6 s, 300 km ~11 s (2.5 / 4.4 M cells; the viewshed
   1-2 s); in the browser on the Pi it took ~17-21 s for 30 km
+- SEVERAL CORES (`plSweepPar`, the user's request after WebGPU was weighed:
+  no f64 in WGSL - the exact-to-the-reference checks would go -, per-ray
+  sequential hulls, no WebGPU on the Pi's Chromium): the signal sweep's
+  rays split over HELPERS - nested workers running vsWorkerMain itself
+  (`helperPool`, kept between jobs) - contiguous ray ranges, both passes:
+  pass 0's best[] merged by the minimum, pass 1's cells merged in ray
+  order (a later ray overwrites, as in one plSweep) -> THE SAME CELLS TO
+  THE BIT (checked: hash of every need / ground / loss, P.1812 + ITM). The
+  coordinating worker does the line of sight (sweep() into needL / groundL)
+  meanwhile and the finish (`plSweep(.., {finish: true})`). Helpers:
+  hardwareConcurrency - 1 (max 7), fewer if their terrain copies would
+  pass 600 MB (no SharedArrayBuffer without cross-origin isolation), none
+  below 2; `m.par` / page `vsPar` (null auto, 0 one worker - tests); not
+  for m.debug or without nested workers (node: the validator). Replies
+  carry job + pass (a cancelled job's late reply can't answer the next
+  job); a failure / cancel stops every helper. The row's tooltip says "on
+  N workers". Only the signal sweep: the line of sight viewshed is fast.
+  The line of sight runs DURING PASS 1 (pass 0 is quick - only each cell's
+  sample -, so during pass 0 it held pass 1 back: 1.9x -> 2.3x). Measured
+  (scratch t_par.py, browser on the Pi 5, 4 cores, the KrakenSDR stack
+  using ~0.85 of one): P.1812 30 km 8.6 -> 3.8 s, Longley-Rice 10 km 27.8
+  -> 11.6 s, the same hash of every cell value; a parallel job cancelled
+  at 94 % and the next = one worker's
 - THE MODEL of the coverage = the page's choice (`m.sig.model`; the user
   expected the map to follow it - it was P.1812 only at first): p1812 (all
   of the above); fs = free space (32.45 + 20 log f + 20 log of the slant
