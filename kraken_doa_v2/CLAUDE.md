@@ -796,8 +796,10 @@ Edit `include/config.hpp`:
   viewshed is always there (`vsEnsureStation`, from `vsToggle` / `vsRender`:
   re-added when missing; its row has no ✕, `vsRemove` refuses it - hide it
   with its colour box) - no "+ Station" button (the user's call
-  2026-10-12); signal mode has "+ TX Node" instead (`vsAddNode`: a TX site
-  ~1 km east of the station, to drag where wanted). The station's mast on
+  2026-10-12, and no "+ TX Node" either: TX antennas are added only by
+  right-clicking). DELETE removes the selected node (`keydown` beside Esc:
+  a viewshed site - not the station's - or the link's place = the link;
+  not while typing in a field). The station's mast on
   the map carries the callsign (Station Information `station-id`, redrawn
   on `STATION_ID:` / an edit). Right-click menu "👁 Line of sight from a TX
   antenna here" / "at “marker”" (signal mode: "📶 Add TX antenna

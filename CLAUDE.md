@@ -504,8 +504,8 @@ decoders `kraken_doa_v2/plugins/`
   coloured by use (communication:* tags), click = all their tags, "📍 Add as
   marker". UI-only (kraken_doa.html "📡 OSM MASTS")
 - 👁 Viewshed ("Viewshed" button, right-click "👁 Line of sight from a TX
-  antenna here" / in signal mode "📶 Add TX antenna here" or the panel's
-  "+ TX Node" (by the station); the station's own viewshed is always shown
+  antenna here" / in signal mode "📶 Add TX antenna here" (the only way
+  to add one; Delete removes the selected one); the station's own viewshed is always shown
   and its mast carries the callsign, markers,
   masts): the ground in line of sight of an antenna there (height above
   ground, radius up to 1000 km, target height above ground or sea level,
