@@ -1008,7 +1008,7 @@ Edit `include/config.hpp`:
   unchanged) | 'sig' (📶 Signal: how often (%) the signal between each site
   and a radio at the target height is good enough - also WITHOUT line of
   sight, coloured by that reliability, NOT restricted to the cells in
-  sight; the edge of the line of sight as a faint white line). Each site has
+  sight; the edge of the line of sight as a black line, switchable). Each site has
   a ROLE: TX or RX (the station's default RX, other sites TX). ONLY
   TRANSMITTERS ARE COLOURED (the user's call, 2026-10-12: an RX site used
   to get its own "where would a transmitter be heard" map - reciprocal, the
@@ -1312,14 +1312,21 @@ Edit `include/config.hpp`:
   covered"). `plDrawSig` -> `plComposite`: each shown site's rings coarse ->
   fine onto `plOffS`, then onto `plComp` with 'lighten' (= the max per
   channel: R the BEST site's reliability, G in sight of ANY), getImageData,
-  per screen pixel: an in-sight pixel next to an out-of-sight one = the line
-  (white, alpha 0xa0), else `plColLut`: a GRADIENT (`PL_STOPS` 0 / 25 /
+  per screen pixel `plColLut`: a GRADIENT (`PL_STOPS` 0 / 25 /
   50 / 75 / 90 / 95 / 99 %, red - orange - yellow - greens, linear in RGB
   between - `plRelRgb`; the user's calls: first hard bands, then every
   place coloured (below 25 % red, not blank), then blended - no hard
   edges); EVERY place with data within the radius is coloured; below the
   wanted reliability the alpha ramps 255 -> 105 over the 10 % below it
-  (a step was a hard edge too). The legend: a gradient bar with the stops
+  (a step was a hard edge too); `plComp` is drawn at 0.6. The LINE OF
+  SIGHT EDGE on its own layer `plLine`, drawn over it at full strength:
+  pixels in sight next to one out of sight AND the other way round (2
+  device px; dilated once more at devicePixelRatio >= 1.5 = 4, i.e. 2 CSS
+  px), black alpha 0xd9 (the user's call, 2026-10-12: it was 1 px faint
+  white inside the colours, hard to see). `plState.los` (default on,
+  `kraken_pl`): the "Line of sight edge" tick on the Wanted reliability row
+  (always shown), a redraw only - in the composite's key, not the jobs';
+  the legend names it only while on (`.pl-ll` swatch). The legend: a gradient bar with the stops
   evenly spaced + their labels (`.pl-leg-g`, `.pl-leg-t`),
   putImageData, drawn at alpha 0.6. Cached by `plCompKey` (view, size,
   `plSigVer` - bumped by every paint -, rel, the sites): pointer moves
@@ -1376,12 +1383,15 @@ Edit `include/config.hpp`:
   cells differ), t_drag.py (real mouse drags of the link's place, random
   speeds / pauses: the profile drawn for the current link whenever the
   worker is idle - 2 of 40 blank before the F1 clamp, 0 of 80 after), and
-  t_uni_ui.py - 81 checks (incl. polarization: RX-only a repaint, TX h / v
+  t_uni_ui.py - 86 checks (incl. polarization: RX-only a repaint, TX h / v
   a job, 60° = cos^2 30°, circular, urban receivers less mismatch - each
   vs an independent formula, one figure; the link's budget row; the
   fading: tables vs the integral, K per cell 6 dB clear / lower behind
-  terrain, hover + strip K, the K setting a repaint only; the
-  TX / RX antenna labels; an old `pol` / a saved 'hata' migrating) in headless Chromium on the
+  terrain, hover + strip K, the K setting a repaint only; the edge line:
+  black, >= 2 px, switched off / on - no job, the same colours, the
+  legend, kept over a reload; the
+  TX / RX antenna labels; an old `pol` / a saved 'hata' migrating; t_dpr2.py:
+  the line 2 / 4 device px at devicePixelRatio 1 / 2) in headless Chromium on the
   page served statically WITH a UTF-8 charset (no receiver; the station set
   from the test): no Path loss button, line of sight as before, signal
   (job, status, legend, roles), the composite (line pixels, coverage out of

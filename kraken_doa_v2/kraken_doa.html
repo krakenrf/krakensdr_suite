@@ -528,7 +528,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .pl-leg-g {height:10px;border-radius:2px;border:1px solid rgba(0,0,0,.6);margin-top:4px}
 .pl-leg-t {position:relative;height:14px;margin-top:1px;color:#8fb0d8;font-size:10px}
 .pl-leg-t span {position:absolute;top:0;white-space:nowrap}
-.pl-wl {color:#fff;font-weight:bold}
+.pl-ll {display:inline-block;width:16px;height:3px;background:#000;box-shadow:0 0 0 1px rgba(255,255,255,.55);vertical-align:middle;margin:0 2px 1px}
+.pl-losl {white-space:nowrap}
 .pl-lk {display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px;border-top:1px solid #2a4a7a;padding-top:4px}
 .pl-lk .nm {font-weight:bold;color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px}
 .pl-lk .map-btn {height:20px;padding:0 5px;font-size:11px;margin-left:auto}
@@ -1882,7 +1883,7 @@ let vsWorker = null, vsJob = null, vsSeq = 0, vsWorkerErr = '', vsHovAt = null, 
 // angT / angR degrees from horizontal - the propagation models' own h / v follows the TX's)
 const plState = (() => {
   const d = {f: 146, ptx: 5, gt: 2.15, gr: 2.15, lt: 1, lr: 1, bw: 12.5, nf: 6, snr: 10, model: 'p1812', polT: 'v', polR: 'v', angT: 45, angR: 45,
-             N0: 301, climate: 5, ground: 'avg', envTx: 3, envRx: 3, fade: 'auto', K: 6, rel: 90, sigL: null, set: false, prof: true, link: null};
+             N0: 301, climate: 5, ground: 'avg', envTx: 3, envRx: 3, fade: 'auto', K: 6, rel: 90, sigL: null, set: false, prof: true, los: true, link: null};
   try {
     const s = JSON.parse(localStorage.getItem('kraken_pl') || '{}'), num = (v, lo, hi, def) => typeof v === 'number' && v >= lo && v <= hi ? v : def;
     for (const [k, lo, hi] of [['f', 20, 20000], ['ptx', 1e-6, 1e7], ['gt', -30, 60], ['gr', -30, 60], ['lt', 0, 60], ['lr', 0, 60],
@@ -1894,7 +1895,7 @@ const plState = (() => {
     if (['p1812', 'itm', 'fs'].includes(s.model)) d.model = s.model;   // (Okumura-Hata was dropped: -> P.1812)
     if (['avg', 'poor', 'good', 'fresh', 'sea'].includes(s.ground)) d.ground = s.ground;
     if (['auto', 'none', 'rayleigh', 'rician'].includes(s.fade)) d.fade = s.fade;
-    for (const k of ['set', 'prof']) if (typeof s[k] === 'boolean') d[k] = s[k];
+    for (const k of ['set', 'prof', 'los']) if (typeof s[k] === 'boolean') d[k] = s[k];
     const L = s.link;
     if (L && /^[a-z0-9]{1,24}$/.test(L.site) && Math.abs(L.lat) <= 85.05 && Math.abs(L.lon) <= 180)
       d.link = {site: L.site, lat: +L.lat, lon: +L.lon, name: String(L.name || 'Point').slice(0, 60), mk: /^[A-Za-z0-9_-]{1,24}$/.test(L.mk) ? L.mk : ''};
@@ -1902,7 +1903,7 @@ const plState = (() => {
   return d;
 })();
 let plWorker = null, plJob = null, plSeq = 0, plRes = null, plFail = '', plSel = null, plHov = null, plReady = false,
-    plOffS = null, plComp = null, plSigVer = 0, plCompKey = '';
+    plOffS = null, plComp = null, plLine = null, plSigVer = 0, plCompKey = '';
 
 const bwo=[
   {decimation:1,bandwidth:2.4,name:"2.4 MHz (No decimation)"},
@@ -15170,7 +15171,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<div id="map-vs-list"></div><div class="map-vs-hov" id="map-vs-hov"></div><div id="map-vs-link" class="map-pl vs-sig"></div>` +
       `<div class="map-vs-note vs-sig">Only transmitters are coloured: TX sites, and the TX end of a 📶 Link from an RX site (the station receives by default) - ` +
       `worked out for receivers at that site's antenna height. Signal: the median path loss by the chosen model (50 % of the time; ITU-R P.1812: diffraction over the terrain + troposcatter, Longley-Rice: NTIA's ITM, both per place along its terrain profile) + clutter (ITU-R P.2108), ` +
-      `with shadowing (P.1546) and fading, as how often the receiver gets what it needs; the faint white line is the edge of the line of sight. ` +
+      `with shadowing (P.1546) and fading, as how often the receiver gets what it needs; the black line (switch: "Line of sight edge") is the edge of the line of sight. ` +
       `Right-click the map → "📶 Link" for the profile and budget between a site and a place. Bare terrain: buildings and trees only through the clutter setting.</div>` +
       `<div class="map-vs-note vs-los">Line of sight over the terrain only: buildings and trees aren't in the data, the sea counts as 0 m. ` +
       `Radio also reaches a little past it (diffraction). Point at the map for details; at a row's "% in sight" for its cell size. ` +
@@ -15346,7 +15347,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   //   K per cell from the path - lower behind terrain, towards Rayleigh
   //   in troposcatter - or as chosen); nothing switches at the horizon;
   //   every shown site at once, the best per place
-  //   (plDrawSig), the edge of the line of sight as a faint white line,
+  //   (plDrawSig), the edge of the line of sight as a black line (plState.los),
   //   below the wanted reliability faint
   // - a LINK between a site and a place (right-click "📶 Link", a marker, a
   //   mast; the place is dragged like a viewshed point): the great-circle
@@ -15679,25 +15680,27 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
   // every shown site's rings onto one layer each, the layers combined by
   // the LARGER value (canvas 'lighten': R = the best reliability, G = in
-  // sight of any), then coloured per screen pixel; a pixel in sight next to
-  // one out of sight = the faint white line of sight edge. Kept until the
-  // view or a paint changes (redrawn for every pointer move otherwise)
+  // sight of any), then coloured per screen pixel; the line of sight edge
+  // (plState.los, the "Line of sight edge" switch) on a layer of its own,
+  // drawn over the colours at full strength. Kept until the view or a
+  // paint changes (redrawn for every pointer move otherwise)
   function plDrawSig(c) {
     if (!plReady) return;
     const items = vsJobItems().filter(it => it.on && (vsRes.get(it.id) || {}).sigPaint);   // (the transmitters)
     if (!items.length) return;
     const Wc = mapCv.width, Hc = mapCv.height;
-    const key = `${mapState.mx},${mapState.my},${mapWorld()},${Wc},${Hc},${plSigVer},${plState.rel},${items.map(i => i.id).join()}`;
+    const key = `${mapState.mx},${mapState.my},${mapWorld()},${Wc},${Hc},${plSigVer},${plState.rel},${plState.los},${mapDpr},${items.map(i => i.id).join()}`;
     if (key !== plCompKey) { plComposite(items, Wc, Hc); plCompKey = key; }
     c.save();
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.globalAlpha = 0.6;
     c.drawImage(plComp, 0, 0);
+    if (plState.los) { c.globalAlpha = 1; c.drawImage(plLine, 0, 0); }
     c.restore();
   }
   function plComposite(items, Wc, Hc) {
-    if (!plOffS) { plOffS = document.createElement('canvas'); plComp = document.createElement('canvas'); }
-    for (const cv of [plOffS, plComp]) if (cv.width !== Wc || cv.height !== Hc) { cv.width = Wc; cv.height = Hc; }
+    if (!plOffS) { plOffS = document.createElement('canvas'); plComp = document.createElement('canvas'); plLine = document.createElement('canvas'); }
+    for (const cv of [plOffS, plComp, plLine]) if (cv.width !== Wc || cv.height !== Hc) { cv.width = Wc; cv.height = Hc; }
     const o = plOffS.getContext('2d', {willReadFrequently: true}), m = plComp.getContext('2d', {willReadFrequently: true});
     m.setTransform(1, 0, 0, 1, 0, 0);
     m.globalCompositeOperation = 'source-over';
@@ -15714,18 +15717,46 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const img = m.getImageData(0, 0, Wc, Hc), px = new Uint32Array(img.data.buffer), lut = plColLut(), n = Wc * Hc;
     const s = new Uint8Array(n);   // 0 no data, 1 out of sight, 2 in sight
     for (let i = 0; i < n; i++) { const v = px[i]; s[i] = (v >>> 24) < 64 ? 0 : ((v >>> 8) & 255) >= 128 ? 2 : 1; }
-    const LINE = 0xa0ffffff;   // (faint: x 0.6 on the map)
+    for (let i = 0; i < n; i++) {
+      if (!s[i]) { px[i] = 0; continue; }
+      const col = lut[px[i] & 255], a = px[i] >>> 24;
+      px[i] = a === 255 ? col : ((((col >>> 24) * a / 255) << 24) | (col & 0xffffff)) >>> 0;
+    }
+    m.putImageData(img, 0, 0);
+    // the line of sight edge: a pixel in sight next to one out of sight and
+    // the other way round (2 px; 4 on a high-density screen - one more on
+    // each side), black at 85 % (until 2026-10-12: 1 px, faint white)
+    const lc = plLine.getContext('2d');
+    lc.clearRect(0, 0, Wc, Hc);
+    if (!plState.los) return;
+    let e = new Uint8Array(n);
     for (let y = 0; y < Hc; y++) {
       const r0 = y * Wc;
       for (let x = 0; x < Wc; x++) {
         const i = r0 + x, si = s[i];
-        if (!si) { px[i] = 0; continue; }
-        if (si === 2 && ((x > 0 && s[i - 1] === 1) || (x < Wc - 1 && s[i + 1] === 1) || (y > 0 && s[i - Wc] === 1) || (y < Hc - 1 && s[i + Wc] === 1))) { px[i] = LINE; continue; }
-        const col = lut[px[i] & 255], a = px[i] >>> 24;
-        px[i] = a === 255 ? col : ((((col >>> 24) * a / 255) << 24) | (col & 0xffffff)) >>> 0;
+        if (!si) continue;
+        const o = 3 - si;
+        if ((x > 0 && s[i - 1] === o) || (x < Wc - 1 && s[i + 1] === o) || (y > 0 && s[i - Wc] === o) || (y < Hc - 1 && s[i + Wc] === o)) e[i] = 1;
       }
     }
-    m.putImageData(img, 0, 0);
+    if (mapDpr >= 1.5) {
+      const w = e.slice();
+      for (let y = 0; y < Hc; y++) {
+        const r0 = y * Wc;
+        for (let x = 0; x < Wc; x++) {
+          const i = r0 + x;
+          if (!e[i]) continue;
+          if (x > 0 && s[i - 1]) w[i - 1] = 1;
+          if (x < Wc - 1 && s[i + 1]) w[i + 1] = 1;
+          if (y > 0 && s[i - Wc]) w[i - Wc] = 1;
+          if (y < Hc - 1 && s[i + Wc]) w[i + Wc] = 1;
+        }
+      }
+      e = w;
+    }
+    const li = lc.createImageData(Wc, Hc), lp = new Uint32Array(li.data.buffer);
+    for (let i = 0; i < n; i++) if (e[i]) lp[i] = 0xd9000000;   // (ABGR: black, alpha 217)
+    lc.putImageData(li, 0, 0);
   }
   // the hover line of a site (vsHoverRender): reliability, received level, loss
   function plHoverSig(it, ls, fv) {
@@ -15922,6 +15953,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     else if (k === 'sigL') { if (v === '' || v === null) plState.sigL = null; else if (Number.isFinite(n) && n >= 0 && n <= 30) plState.sigL = n; else { plRender(true); return; } }
     else if (['envTx', 'envRx', 'climate'].includes(k)) plState[k] = n;
     else if (k === 'polT' || k === 'polR') { if (!PL_POLS.some(p => p[0] === v)) { plRender(true); return; } plState[k] = v; }
+    else if (k === 'los') { plState.los = !!v; plSave(); plRender(true); mapDraw(); return; }   // (the edge line: a redraw only)
     else plState[k] = v;
     plSave();
     const redo = PL_REDO[k] || '';
@@ -15967,6 +15999,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `</div>` +
       `<div class="map-vs-row"><label title="How often the signal must be good enough: the coverage is faint below it, '% covered' counts what reaches it">Wanted reliability ${num('rel', 48, '1', 'The share of times / places the signal must reach what the receiver needs (%)')} %</label></div>` +
       `<div class="pl-leg"></div>`;
+    const row = el.querySelector('[data-k=rel]').closest('.map-vs-row');
+    row.insertAdjacentHTML('beforeend', `<label class="pl-losl" title="Draw the edge of the line of sight (from the transmitters to the target height) as a black line over the colours">` +
+                           `<input type="checkbox" class="pl-los" onchange="plSet('los',this.checked)"> Line of sight edge</label>`);
   }
   function plLegendHtml() {
     // a bar with the stops evenly spaced (its scale stretches 90-99 %, as the colours do)
@@ -15974,7 +16009,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     return `<div class="pl-leg-g" style="background:linear-gradient(to right, ${PL_STOPS.map(([, c], i) => `${c} ${pos(i)}%`).join(', ')})"></div>` +
            `<div class="pl-leg-t">${PL_STOPS.map(([t], i) => `<span style="${!i ? 'left:0' : i === n - 1 ? 'right:0' : `left:${pos(i)}%;transform:translateX(-50%)`}">` +
            `${Math.round(t * 100)}${i === n - 1 ? '+ %' : !i ? ' %' : ''}</span>`).join('')}</div>` +
-           `<div class="pl-note">${PL_MODELS[plState.model]} · fading out below ${plF(plState.rel, plState.rel % 1 ? 1 : 0)} % · <span class="pl-wl">━</span> white: the edge of the line of sight</div>`;
+           `<div class="pl-note">${PL_MODELS[plState.model]} · fading out below ${plF(plState.rel, plState.rel % 1 ? 1 : 0)} %${plState.los ? ' · <span class="pl-ll"></span> the edge of the line of sight' : ''}</div>`;
   }
   // (from vsRender) the settings block, the link's line, the strip
   function plRenderSig(force) {
@@ -15999,6 +16034,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const pm = plPolNow();
     set(el, '.pl-pm', pm < 0.05 ? 'matched' : `mismatch <b>${plF(pm)} dB</b>`);
     set(el, '.pl-leg', plLegendHtml());
+    const lb = el.querySelector('.pl-los');
+    if (lb.checked !== plState.los) lb.checked = plState.los;
     // the link, one line (the details in the strip)
     const lk = $id('map-vs-link'), e = plEnds();
     let h = '';
