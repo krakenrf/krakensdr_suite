@@ -6,6 +6,9 @@
 //                              [--opt plugin.key=value] [--voice out.wav] [--station LAT,LON]
 // MODE: AUTO, PLUGIN:<id>, or an old protocol name (P25 DMR TETRA DSTAR NXDN MPT1327)
 // FORMAT: u8 (rtl_sdr interleaved uint8 IQ, --fs required), wav (PCM IQ, 16/24 bit),
+//         u8mc (every antenna of an array, uint8 IQ sample by sample, --channels M
+//         --fs HZ, played at the VFO rate = fs: a multichannel plugin gets them all -
+//         SAMPLES_MC -, the others antenna 0; --rf HZ the RF of its centre),
 //         dis (S16LE discriminator samples at 48 kHz, DSDcc test files - FM
 //         modulated again for the plugins), cf32
 // Build: g++ -std=c++20 -O2 -Iinclude tools/digi_test.cpp src/digital/*.cpp -lliquid
@@ -57,6 +60,8 @@ int main(int argc, char** argv) {
     if (argc < 4) { fprintf(stderr, "usage: digi_test MODE FORMAT FILE [opts]\n"); return 1; }
     std::string mode = argv[1], fmt = argv[2], file = argv[3];
     float fs = 0, offset = 0, vfo_rate = 48000, seconds = 1e9;
+    int channels = 0;
+    double rf_hz = 100e6;
     std::string voice_out;
     bool conj = false;
     dig::Options opt;
@@ -68,6 +73,8 @@ int main(int argc, char** argv) {
         else if (a == "--conj") conj = true;
         else if (a == "--verbose") opt.verbose = true;
         else if (a == "--seconds") seconds = atof(argv[++i]);
+        else if (a == "--channels") channels = atoi(argv[++i]);
+        else if (a == "--rf") rf_hz = atof(argv[++i]);
         else if (a == "--voice") voice_out = argv[++i];
         else if (a == "--station") {
             double la = 0, lo = 0;
@@ -139,6 +146,30 @@ int main(int argc, char** argv) {
             pull(0.01);
             flush_events();
         }
+    } else if (fmt == "u8mc") {
+        // every antenna, 10 ms blocks at the VFO rate (= fs), streamed
+        if (channels < 2 || channels > 8 || fs <= 0) { fprintf(stderr, "u8mc needs --channels 2..8 and --fs\n"); return 1; }
+        FILE* f = fopen(file.c_str(), "rb");
+        if (!f) { fprintf(stderr, "cannot open %s\n", file.c_str()); return 1; }
+        const size_t blk = static_cast<size_t>(fs / 100), m = static_cast<size_t>(channels);
+        std::vector<unsigned char> b(blk * m * 2);
+        std::vector<cf> x0(blk);
+        std::vector<std::complex<int16_t>> mc(blk * m);
+        size_t done = 0;
+        for (size_t got; done < seconds * fs && (got = fread(b.data(), m * 2, blk, f)) > 0; done += got) {
+            for (size_t i = 0; i < got; i++)
+                for (size_t k = 0; k < m; k++) {
+                    const float re = (b[(i * m + k) * 2] - 127.5f) / 127.5f, im = (b[(i * m + k) * 2 + 1] - 127.5f) / 127.5f;
+                    if (k == 0) x0[i] = cf(re, im);
+                    mc[i * m + k] = {static_cast<int16_t>(std::lround(re * dig::DigitalDecoder::MC_SCALE)),
+                                     static_cast<int16_t>(std::lround(im * dig::DigitalDecoder::MC_SCALE))};
+                }
+            dec.process(x0.data(), got, fs, rf_hz, dig::DigitalDecoder::NO_POS, mc.data(), channels);
+            pull(0.01);
+            flush_events();
+        }
+        fclose(f);
+        fprintf(stderr, "%zu samples x %d antennas at %.0f Hz\n", done, channels, fs);
     } else {
         std::vector<cf> x;
         if (fmt == "u8") {

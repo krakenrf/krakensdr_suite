@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <deque>
 #include <map>
 #include <string>
 #include <vector>
@@ -99,7 +100,9 @@ public:
             if (d.in_table) host.table_remove(d.tid);
         dev_.clear();
         classes_.clear();
-        total_ = undecoded_ = 0;
+        total_ = undecoded_ = images_ = comb_n_ = 0;
+        comb_sum_ = 0;
+        recent_.clear();
         house_t_ = -1e9;
     }
 
@@ -133,16 +136,24 @@ public:
     }
 
     void process(const kp::cf* x, size_t n) override {
+        feed(n, [&] { fe_.push(reinterpret_cast<const ism::cf*>(x), n, &bursts_); });
+    }
+    // every antenna of a coherent array (Info::multichannel): each burst is
+    // demodulated from all of them combined (FrontEnd::push_multi)
+    void process_multi(const kp::cf* const* x, int m, size_t n) override {
+        feed(n, [&] { fe_.push_multi(reinterpret_cast<const ism::cf* const*>(x), m, n, &bursts_); });
+    }
+
+private:
+    template <class F> void feed(size_t n, F push) {
         t_off_ = host.time() - fe_.abs_time();
         now_ = host.time();
         bursts_.clear();
-        fe_.push(reinterpret_cast<const ism::cf*>(x), n, &bursts_);
+        push();
         for (const auto& b : bursts_) burst(b);
         now_ = host.time() + static_cast<double>(n) / fe_.input_rate();
         housekeeping();
     }
-
-private:
     const std::vector<std::string> COLS = {"Model", "ID", "Type", "Ch", "Reading", "Battery", "MHz", "SNR dB", "Msgs"};
     ism::FrontEnd fe_;
     std::vector<ism::Burst> bursts_;
@@ -153,16 +164,59 @@ private:
     std::map<std::string, Device> dev_;
     // unknown signals without a repeated code, grouped by their signal class:
     // a class becomes a device only when it is heard again within 10 min (a
-    // one-off fragment, collision or wake-up burst doesn't)
-    std::map<std::string, double> classes_;
-    bool class_seen_again(const std::string& id) {
-        auto it = classes_.find(id);
-        const bool again = it != classes_.end() && now_ - it->second < 600;
-        if (classes_.size() > 500) classes_.clear();
-        classes_[id] = now_;
-        return again;
+    // one-off fragment, collision or wake-up burst doesn't). A burst belongs
+    // to a class of the same modulation and coding within 15 % of its bit
+    // rate and 30 kHz, and takes that class's name - matched by the name
+    // alone (rate to 0.1 kbit/s, frequency in 25 kHz bins), one device's
+    // jitter gave it a new name nearly every burst (live: 5.8 / 6.0 / 6.1 /
+    // 6.2 / 6.3 / 6.4k, +50 / +75 kHz), so it was never "heard again"
+    struct Class { std::string mod, coding, id; double bit_us, fc, t; };
+    std::vector<Class> classes_;
+    bool class_seen_again(Msg& m, const ism::Burst& b) {
+        const ism::Val *mv = m.get("modulation"), *cv = m.get("coding"), *bv = m.get("bit_us");
+        const std::string mod = mv ? mv->str : "", coding = cv ? cv->str : "";
+        const double bit = bv ? bv->num : NAN;
+        for (auto it = classes_.begin(); it != classes_.end();)
+            if (now_ - it->t >= 600) it = classes_.erase(it);
+            else ++it;
+        for (auto& c : classes_)
+            if (c.mod == mod && c.coding == coding && std::fabs(bit - c.bit_us) <= 0.15 * c.bit_us &&
+                std::fabs(b.fc - c.fc) <= 30e3) {
+                c.t = now_;
+                c.fc += 0.2 * (b.fc - c.fc);   // (follows a slow drift)
+                m.id = c.id;
+                return true;
+            }
+        if (classes_.size() >= 500) classes_.erase(classes_.begin());
+        classes_.push_back({mod, coding, m.id, bit, b.fc, now_});
+        return false;
+    }
+    // A decode that is another one's image: the same maker and id at the
+    // same time, > 30 kHz away and >= 15 dB weaker - live, a weather station
+    // at 37 dB came with a 3 dB copy 214 kHz away (a spur of the receiver)
+    // that decoded as another model of the maker with the same id
+    struct Recent { std::string maker, id; int64_t a, b; double fc, snr, t; };
+    std::deque<Recent> recent_;
+    uint64_t images_ = 0;
+    static std::string maker_of(const std::string& model) {
+        const size_t p = model.find('-');
+        return p == std::string::npos ? model : model.substr(0, p);
+    }
+    bool image(const Msg& m, const ism::Burst& b) {
+        while (!recent_.empty() && now_ - recent_.front().t > 5) recent_.pop_front();
+        if (m.kind == Kind::UNKNOWN || m.id.empty()) return false;
+        const std::string mk = maker_of(m.model);
+        for (const auto& r : recent_)
+            if (r.id == m.id && r.maker == mk && b.a < r.b && r.a < b.b && std::fabs(b.fc - r.fc) > 30e3 &&
+                r.snr - b.snr_db >= 15)
+                return true;
+        recent_.push_back({mk, m.id, b.a, b.b, b.fc, b.snr_db, now_});
+        if (recent_.size() > 200) recent_.pop_front();
+        return false;
     }
     uint64_t total_ = 0, undecoded_ = 0, bursts_seen_ = 0;
+    double comb_sum_ = 0;          // bursts combined from every antenna: their gain over antenna 0 (dB)
+    uint64_t comb_n_ = 0;
     double house_t_ = -1e9;
     const bool dump_ = getenv("ISM_DUMP") != nullptr;   // offline debugging: every burst's pulses
 
@@ -170,6 +224,7 @@ private:
         std::string s = fmt("burst %.4f s", t_of(b.a)) + fmt(" .. %.4f", t_of(b.b)) + fmt(" fc %+.1f kHz", b.fc / 1e3) +
                         fmt(" bw %.0f kHz", b.bw / 1e3) + fmt(" snr %.1f dB", b.snr_db) +
                         fmt(" fsk_sep %.1f kHz", b.fsk_sep / 1e3) + fmt(" ook %.0f", static_cast<double>(b.ook.size())) +
+                        (b.antennas > 1 ? fmt(" antennas %.0f", static_cast<double>(b.antennas)) + fmt(" (+%.1f dB)", b.comb_db) : "") +
                         fmt(" fsk %.0f pulses", static_cast<double>(b.fsk.size()));
         host.log(s);
         for (int t = 0; t < 2; t++) {
@@ -190,6 +245,10 @@ private:
     // ------------------------------------------------------------ a burst ---
     void burst(const ism::Burst& b) {
         bursts_seen_++;
+        if (b.antennas > 1) {
+            comb_sum_ += b.comb_db;
+            comb_n_++;
+        }
         if (dump_) dump(b);
         ism::Pkt pk(b);
         std::vector<Msg> msgs;
@@ -216,7 +275,7 @@ private:
         if (uniq.empty()) {
             undecoded_++;
             Msg m;
-            if (unknown_ && ism::analyse_unknown(pk, &m) && (m.check[0] || class_seen_again(m.id)))
+            if (unknown_ && ism::analyse_unknown(pk, &m) && (m.check[0] || class_seen_again(m, b)))
                 uniq.push_back(std::move(m));
             else if (host.verbose() && b.snr_db >= 12)
                 host.event(fmt("Undecoded burst: %.0f ms", 1e3 * (b.b - b.a) / ism::FS) +
@@ -235,6 +294,10 @@ private:
             if (uniq.size() == 1 && bb > ba) {
                 m.t0 = std::min(m.t0, ba);
                 m.t1 = std::max(m.t1, bb);
+            }
+            if (image(m, b)) {
+                images_++;
+                continue;
             }
             message(m, b);
         }
@@ -457,8 +520,13 @@ private:
                                kind_name(static_cast<Kind>(k));
         host.fact("Devices", s + (sub.empty() ? "" : " (" + sub + ")"));
         host.fact("Messages", std::to_string(total_));
-        host.fact("Bursts", std::to_string(bursts_seen_) + " (" + std::to_string(undecoded_) + " not decoded)");
+        host.fact("Bursts", std::to_string(bursts_seen_) + " (" + std::to_string(undecoded_) + " not decoded" +
+                                (images_ ? ", " + std::to_string(images_) + " duplicate copies dropped" : "") +
+                                (fe_.broadband_events() ? ", " + std::to_string(fe_.broadband_events()) + " broadband events skipped" : "") + ")");
         host.fact("Noise floor", fmt("%.1f dBFS", fe_.noise_floor_db()));
+        host.fact("Antennas", fe_.antennas() > 1 ? std::to_string(fe_.antennas()) + ", combined per burst" +
+                                                       (comb_n_ ? fmt(" (+%.1f dB on average)", comb_sum_ / comb_n_) : "")
+                                                 : "1");
     }
 };
 
@@ -494,4 +562,5 @@ KRAKEN_PLUGIN(IsmDecoder,
                .map = false,
                .manual_only = true,
                .talkers = true,
-               .lock_vfo = true})
+               .lock_vfo = true,
+               .multichannel = true})

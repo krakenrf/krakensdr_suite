@@ -28,6 +28,16 @@
 //        the two tones' own filtered levels compared.
 // Runs shorter than GLITCH_US are merged away. Burst positions are in FS
 // samples (input sample / D), Burst::fc is the offset in the whole input band.
+//
+// Every antenna of a coherent array (push_multi, D > 1): detection on the
+// antennas' mean power (per bin); each package also sums the spatial
+// covariance of its bins' spectra over its frames, and is demodulated from
+// the antennas combined with that covariance's main eigenvector - blind
+// maximum-ratio combining: up to 10 log10(m) dB more SNR (5 antennas: 7 dB)
+// for every device whatever its direction, no array calibration needed (the
+// covariance holds the channels' phases and gains as they are). Antennas
+// 1.. are kept as 16-bit samples next to antenna 0's ring. push() after
+// push_multi() goes back to one antenna (state reset).
 
 #include "ism.hpp"
 
@@ -48,6 +58,10 @@ public:
     void set_threshold_db(double db);
     // samples in (at input_rate()); finished bursts are appended to *out
     void push(const cf* x, size_t n, std::vector<Burst>* out);
+    // every antenna (x[k], m >= 2; D == 1 or m < 2: antenna 0 via push())
+    void push_multi(const cf* const* x, int m, size_t n, std::vector<Burst>* out);
+    int antennas() const { return M_; }
+    uint64_t broadband_events() const { return broadband_; }
     double input_rate() const { return fs_in_; }
     double abs_time() const { return static_cast<double>(abs_) / fs_in_; }   // input since reset (s)
     double noise_floor_db() const;             // per-sample noise power, dB (full scale = 0)
@@ -72,6 +86,27 @@ private:
     const int max_pkgs_;           // packages (devices) at once: 4 in 240 kHz, 8 in 2.4 MHz
     const int64_t ring_n_;         // input ring: 2.18 s at 240 kHz, 1.75 s at 2.4 MHz
     std::vector<cf> ring_;
+    // push_multi: antennas, the others' rings (16-bit x XSCALE), this frame's
+    // spectrum of each (frequency order), the finished package's weights
+    // (empty = antenna 0 alone)
+    static constexpr float XSCALE = 8192.0f;
+    int M_ = 1;
+    std::vector<std::vector<std::complex<int16_t>>> xring_;
+    std::vector<std::vector<cf>> X_;
+    std::vector<cf> w_;
+    // each antenna's noise (median bin power, smoothed) and the factor that
+    // brings it to their mean (g): the antennas of one array differ - 5.7 dB
+    // between the quietest and the noisiest here - and are normalised to
+    // the same noise before detection and combining (a noisy antenna adds
+    // only what its signal is worth)
+    std::vector<double> xn_, xg_;
+    int xn_tick_ = 0;
+    std::vector<float> xtmp_;
+    void set_antennas(int m);
+    cf xat(int c, int64_t s) const {   // antenna c >= 1, input sample s (in the ring)
+        const std::complex<int16_t> v = xring_[static_cast<size_t>(c - 1)][static_cast<size_t>(s & (ring_n_ - 1))];
+        return {v.real() / XSCALE, v.imag() / XSCALE};
+    }
     int64_t abs_ = 0;
     int hop_fill_ = 0;
     fftwf_complex* fin_ = nullptr;
@@ -93,7 +128,19 @@ private:
         int64_t last = 0;          // last active frame end
         int lo = 0, hi = 0;        // frequency region (signed bins)
         std::vector<float> acc;    // power over the noise floor, summed over its active frames
+        std::vector<std::complex<double>> R;   // push_multi: M x M covariance of its active bins' spectra
+        int born = 0;              // packages started in its first frame (>= 3: broadband, not a device)
     };
+    // packages started in the current frame, and broadband events (>= 3
+    // starting in the same frame at different frequencies: a wideband
+    // transmission / interference, not a device - not demodulated)
+    std::vector<size_t> born_now_;
+    uint64_t broadband_ = 0;
+    int64_t broadband_last_ = -1;
+    // births with >= 3 packages: the members that ended lasting >= 5 ms (a
+    // click - the 251 kHz comb of a switching supply here - is shorter: a
+    // device that starts in the same frame as one is not broadband)
+    std::vector<std::pair<int64_t, int>> born_long_;
     std::vector<Pkg> pkgs_;
     // per-frame scratch
     struct Seg { int lo, hi; float peak; };

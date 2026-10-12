@@ -41,7 +41,7 @@ constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4,
                    W_FACT = 16, W_EVENT = 17, W_VALID = 18, W_AUDIO = 19, W_VOICE_STATE = 20, W_FREQ_ERROR = 21,
                    W_SYNC_DONE = 22, W_MAP_POINT = 23, W_MAP_REMOVE = 24, W_TABLE_COLUMNS = 25, W_TABLE_ROW = 26,
                    W_TABLE_REMOVE = 27, W_MESSAGE = 28, W_RAW = 29, W_TALKER = 30, W_TALKER_END = 31,
-                   W_TABLE_KEEP = 32, W_TALKER_FORGET = 33;
+                   W_TABLE_KEEP = 32, W_TALKER_FORGET = 33, W_SAMPLES_MC = 8;
 // how far back a plugin's sample positions stay mappable to the VFO stream
 constexpr double POS_MAP_SECONDS = 60;
 // a talker packet (kp::Talker::packet) longer than this is not one
@@ -190,7 +190,8 @@ public:
         rebuild_runners();
     }
 
-    void process(const std::complex<float>* x, size_t n, float rate, double rf, uint64_t pos) {
+    void process(const std::complex<float>* x, size_t n, float rate, double rf, uint64_t pos,
+                 const std::complex<int16_t>* mc = nullptr, int mc_m = 0) {
         if (rate <= 0 || n == 0) return;
         if (pos == DigitalDecoder::NO_POS) pos = next_pos_;
         next_pos_ = pos + n;
@@ -231,11 +232,22 @@ public:
             nco_phase_ = std::remainder(nco_phase_, 2.0 * M_PI);
         }
         resample(n);
+        // every antenna (multichannel plugins at the VFO's rate, no AFC
+        // correction to apply: what they get is the VFO's samples as they are)
+        const bool mc_ok = mc && mc_m >= 2 && w == 0.0f && nco_phase_ == 0.0;
         for (size_t i = 0; i < runners_.size(); i++) {
             const Resampled* r = rate_buf(*runners_[i]);
-            run(i, r ? r->out.data() : nullptr, r ? r->ny : 0, pos, r ? in_rate_ / r->rate : 1.0);
+            const bool multi = mc_ok && runners_[i]->info.multichannel && runners_[i]->info.sample_rate == in_rate_;
+            run(i, r ? r->out.data() : nullptr, r ? r->ny : 0, pos, r ? in_rate_ / r->rate : 1.0,
+                multi ? mc : nullptr, multi ? mc_m : 0, n);
         }
         housekeeping();
+    }
+    // a running decoder plugin takes every antenna (kp::Info::multichannel)
+    bool multichannel() const {
+        for (const auto& r : runners_)
+            if (r->info.multichannel) return true;
+        return false;
     }
 
     // Everything back to a cold start (VFO retune, decoder switched off and
@@ -338,6 +350,7 @@ private:
     uint64_t next_pos_ = 0;            // VFO stream position after the last block
     double nco_phase_ = 0;
     std::vector<std::complex<float>> mixed_;
+    std::vector<char> mc_buf_;   // a SAMPLES_MC message
     struct Resampled {
         float rate = 0;
         msresamp_crcf q = nullptr;     // nullptr = same rate as the input
@@ -636,7 +649,8 @@ private:
 
     // y = this block resampled to the plugin's rate; its sample j is VFO
     // stream position pos + j * step
-    void run(size_t idx, const std::complex<float>* y, unsigned int ny, uint64_t pos, double step) {
+    void run(size_t idx, const std::complex<float>* y, unsigned int ny, uint64_t pos, double step,
+             const std::complex<int16_t>* mc = nullptr, int mc_m = 0, size_t mc_n = 0) {
         Runner& r = *runners_[idx];
         const int64_t t = now_ms();
         if (!r.proc) {
@@ -649,6 +663,32 @@ private:
             if (!rb || rb->out.data() != y) ny = 0;
         }
         send_settings(r);
+        if (mc && ny) {
+            // every antenna: SAMPLES_MC = uint32 m + n x m complex int16 (the
+            // VFO's rate - step 1; the invert option mirrors every antenna)
+            const size_t backlog = sync_io_ ? SIZE_MAX : static_cast<size_t>(r.info.sample_rate) * 4 * static_cast<size_t>(mc_m);
+            const size_t n = std::min<size_t>(mc_n, ny);
+            for (size_t p = 0; p < n; p += PLUGIN_CHUNK) {
+                const size_t k = std::min<size_t>(PLUGIN_CHUNK, n - p);
+                mc_buf_.resize(4 + k * static_cast<size_t>(mc_m) * 4);
+                const uint32_t m32 = static_cast<uint32_t>(mc_m);
+                memcpy(mc_buf_.data(), &m32, 4);
+                std::complex<int16_t>* d = reinterpret_cast<std::complex<int16_t>*>(mc_buf_.data() + 4);
+                const std::complex<int16_t>* q = mc + p * static_cast<size_t>(mc_m);
+                const size_t cnt = k * static_cast<size_t>(mc_m);
+                if (opts_.invert)
+                    for (size_t i = 0; i < cnt; i++) d[i] = {q[i].real(), static_cast<int16_t>(-q[i].imag())};
+                else
+                    std::copy(q, q + cnt, d);
+                if (!r.proc->send(W_SAMPLES_MC, mc_buf_.data(), mc_buf_.size(), backlog)) {
+                    r.dropped += k;
+                    continue;
+                }
+                r.pos_map.push_back({r.written, k, static_cast<double>(pos) + static_cast<double>(p), 1.0});
+                r.written += k;
+            }
+            ny = 0;   // (sent)
+        }
         const size_t backlog = sync_io_ ? SIZE_MAX : static_cast<size_t>(r.info.sample_rate) * 8;   // 1 s
         for (size_t p = 0; p < ny; p += PLUGIN_CHUNK) {
             size_t k = std::min<size_t>(PLUGIN_CHUNK, ny - p);
@@ -1194,11 +1234,16 @@ void DigitalDecoder::deliver_talker(const TalkerSpan& s) {
     if (h) h(s);
 }
 
-void DigitalDecoder::push(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos) {
+void DigitalDecoder::push(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos,
+                          const std::complex<int16_t>* mc, int mc_m) {
     if (mode() == Mode::OFF || n == 0) return;
     {
         std::lock_guard<std::mutex> lk(q_mu_);
-        queue_.push_back({std::vector<std::complex<float>>(x, x + n), rate_hz, rf_hz, pos});
+        queue_.push_back({std::vector<std::complex<float>>(x, x + n), rate_hz, rf_hz, pos, {}, 0});
+        if (mc && mc_m >= 2) {
+            queue_.back().mc.assign(mc, mc + n * static_cast<size_t>(mc_m));
+            queue_.back().m = mc_m;
+        }
         queued_samples_ += n;
         // decoder fell behind (CPU starved): drop the oldest data
         while (queued_samples_ > static_cast<size_t>(rate_hz) * QUEUE_MAX_SECONDS && queue_.size() > 1) {
@@ -1210,10 +1255,12 @@ void DigitalDecoder::push(const std::complex<float>* x, size_t n, float rate_hz,
     q_cv_.notify_one();
 }
 
-void DigitalDecoder::process(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos) {
+void DigitalDecoder::process(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos,
+                             const std::complex<int16_t>* mc, int mc_m) {
     if (reset_pending_.exchange(false)) engine_->reset_all();
     engine_->configure(mode(), options(), plugin_id());
-    engine_->process(x, n, rate_hz, rf_hz, pos);
+    want_mc_.store(engine_->multichannel(), std::memory_order_relaxed);
+    engine_->process(x, n, rate_hz, rf_hz, pos, mc, mc_m);
 }
 
 void DigitalDecoder::drain(int timeout_ms) { engine_->drain(timeout_ms); }
@@ -1235,7 +1282,9 @@ void DigitalDecoder::run() {
         }
         if (reset_pending_.exchange(false)) engine_->reset_all();
         engine_->configure(mode(), options(), plugin_id());
-        if (have && mode() != Mode::OFF) engine_->process(b.x.data(), b.x.size(), b.rate, b.rf, b.pos);
+        want_mc_.store(mode() != Mode::OFF && engine_->multichannel(), std::memory_order_relaxed);
+        if (have && mode() != Mode::OFF)
+            engine_->process(b.x.data(), b.x.size(), b.rate, b.rf, b.pos, b.m ? b.mc.data() : nullptr, b.m);
     }
 }
 

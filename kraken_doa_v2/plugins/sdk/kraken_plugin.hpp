@@ -147,6 +147,11 @@ struct Info {
     // the narrowest bandwidth >= min_vfo_rate, drawn as a single line that
     // can't be dragged or resized (a decoder of the whole band: ism)
     bool lock_vfo = false;
+    // true: takes every antenna of a coherent array (Decoder::process_multi)
+    // when kraken_doa has them - coherent mode with DoA on; otherwise (an
+    // independent / wideband tuner, DoA off, an offline test of one channel)
+    // it gets process() as usual
+    bool multichannel = false;
 };
 
 class Host {
@@ -242,6 +247,14 @@ public:
     virtual ~Decoder() = default;
     // n complex samples at Info::sample_rate
     virtual void process(const cf* x, size_t n) = 0;
+    // Every antenna of a coherent array (Info::multichannel): x[k][i] =
+    // antenna k's sample i, m antennas (2..8), n samples each, at
+    // Info::sample_rate - sample-synchronous and on one frequency (gains and
+    // phases need not be calibrated). The default decodes antenna 0
+    virtual void process_multi(const cf* const* x, int m, size_t n) {
+        (void)m;
+        process(x[0], n);
+    }
     // Drop all state (VFO retuned / decoder restarted)
     virtual void reset() {}
     // An option: "verbose" = "0"|"1", or one of Info::options ("" = default)
@@ -277,6 +290,10 @@ constexpr uint32_t VOICE_WANTED = 4;   // 1 byte, 0/1
 constexpr uint32_t SYNC = 5;           // uint32 id: answered with SYNC_DONE once everything before it is processed
 constexpr uint32_t STATION = 6;        // "lat,lon" (degrees) of the receiver, "" = unknown
 constexpr uint32_t RF = 7;             // "rf_hz[,1]": RF at the input's 0 Hz (",1" = mirrored), "" = unknown
+// uint32 m (2..8 antennas), then n x m complex int16 (I, Q) - sample by
+// sample, antenna 0 first; value = int16 / MC_SCALE (Info::multichannel)
+constexpr uint32_t SAMPLES_MC = 8;
+constexpr float MC_SCALE = 8192.0f;
 // plugin -> kraken_doa
 constexpr uint32_t FACT = 16;          // key '\0' value ("" value = remove)
 constexpr uint32_t EVENT = 17;         // float32 dedup_s, text

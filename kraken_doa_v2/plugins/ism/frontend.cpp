@@ -135,6 +135,14 @@ FrontEnd::~FrontEnd() {
 
 void FrontEnd::reset() {
     std::fill(ring_.begin(), ring_.end(), cf{});
+    for (auto& r : xring_) std::fill(r.begin(), r.end(), std::complex<int16_t>{});
+    w_.clear();
+    std::fill(xn_.begin(), xn_.end(), 0.0);
+    std::fill(xg_.begin(), xg_.end(), 1.0);
+    xn_tick_ = 0;
+    broadband_ = 0;
+    broadband_last_ = -1;
+    born_long_.clear();
     abs_ = 0;
     hop_fill_ = 0;
     noise_init_ = false;
@@ -149,7 +157,12 @@ void FrontEnd::reset() {
 
 void FrontEnd::set_threshold_db(double db) {
     thr_on_ = std::pow(10.0, db / 10);
-    thr_cont_ = std::pow(10.0, (db - 2.0) / 10);
+    // a package continues on what holds 2 dB less - but never below 7.5 dB:
+    // noise crosses the statistic at 6 dB once per ~3000 bin-frames, so a
+    // package's region (~40 bins) saw a crossing in 93 % of the 30 ms it
+    // needs to end - at the 8 dB setting packages ran to MAX_LEN_S, merged
+    // transmissions and were reported > 1 s late (7.5 dB: 5 %; 8 dB: 1 %)
+    thr_cont_ = std::pow(10.0, std::max(db - 2.0, 7.5) / 10);
     thr_cont_f_ = static_cast<float>(thr_cont_);
     if (static_cast<double>(thr_cont_f_) > thr_cont_) thr_cont_f_ = std::nextafter(thr_cont_f_, 0.0f);
 }
@@ -168,7 +181,50 @@ double FrontEnd::noise_floor_db() const {
     return 10 * std::log10(std::max(1e-20f, m / win_pow_));
 }
 
+void FrontEnd::set_antennas(int m) {
+    M_ = std::max(1, m);
+    if (M_ == 1) {
+        std::vector<std::vector<std::complex<int16_t>>>().swap(xring_);
+        std::vector<std::vector<cf>>().swap(X_);
+    } else {
+        xring_.assign(static_cast<size_t>(M_ - 1), std::vector<std::complex<int16_t>>(static_cast<size_t>(ring_n_)));
+        X_.assign(static_cast<size_t>(M_), std::vector<cf>(static_cast<size_t>(nfft_)));
+    }
+    xn_.assign(static_cast<size_t>(M_), 0.0);
+    xg_.assign(static_cast<size_t>(M_), 1.0);
+    xtmp_.resize(static_cast<size_t>(nfft_));
+    reset();   // (the packages' covariances, the rings)
+}
+
+void FrontEnd::push_multi(const cf* const* x, int m, size_t n, std::vector<Burst>* out) {
+    if (m < 2 || D_ == 1) {
+        push(x[0], n, out);
+        return;
+    }
+    if (m != M_) set_antennas(m);
+    auto s16 = [](float v) { return static_cast<int16_t>(std::clamp(v * XSCALE, -32767.0f, 32767.0f)); };
+    size_t i = 0;
+    while (i < n) {
+        const size_t at0 = static_cast<size_t>(abs_ & (ring_n_ - 1));
+        const size_t k = std::min({n - i, static_cast<size_t>(hop_ - hop_fill_), static_cast<size_t>(ring_n_) - at0});
+        std::copy(x[0] + i, x[0] + i + k, ring_.begin() + static_cast<long>(at0));
+        for (int c = 1; c < M_; c++) {
+            std::complex<int16_t>* d = xring_[static_cast<size_t>(c - 1)].data() + at0;
+            const cf* q = x[c] + i;
+            for (size_t j = 0; j < k; j++) d[j] = {s16(q[j].real()), s16(q[j].imag())};
+        }
+        i += k;
+        abs_ += static_cast<int64_t>(k);
+        hop_fill_ += static_cast<int>(k);
+        if (hop_fill_ == hop_) {
+            hop_fill_ = 0;
+            if (abs_ >= nfft_) frame(out);
+        }
+    }
+}
+
 void FrontEnd::push(const cf* x, size_t n, std::vector<Burst>* out) {
+    if (M_ != 1) set_antennas(1);
     size_t i = 0;
     while (i < n) {
         // up to the next hop or the ring's end, in one copy
@@ -193,7 +249,69 @@ void FrontEnd::frame(std::vector<Burst>* out) {
     // aliasing check needed): the vectoriser takes them at -O3 - this
     // plugin's CXXFLAGS (2.4 MHz: 6.8 -> ~4 % of a core); the results are
     // the same as -O2's (element-wise, no reordering)
-    if (r0 + static_cast<size_t>(n) <= ring_.size()) {   // contiguous (nearly always)
+    if (M_ > 1) {
+        // every antenna, each brought to the antennas' mean noise (xg_): P =
+        // their mean power per bin, X_ = each one's spectrum (normalised -
+        // the packages' covariance). Every 16th frame each antenna's noise
+        // (its median bin power) is followed (~1 s)
+        float* __restrict P = P_.data();
+        std::fill(P, P + n, 0.0f);
+        const int h = n / 2;
+        const bool tick = (xn_tick_++ & 15) == 0;
+        const bool contig = r0 + static_cast<size_t>(n) <= ring_.size();
+        for (int c = 0; c < M_; c++) {
+            // windowed into the FFT input (plain loops over __restrict
+            // pointers - vectorised -, a wrap around the ring's end aside)
+            const float* __restrict w = win_.data();
+            float* __restrict fi = &fin_[0][0];
+            if (contig && c == 0) {
+                const float* __restrict q = reinterpret_cast<const float*>(ring_.data() + r0);
+                for (int i = 0; i < n; i++) {
+                    fi[2 * i] = q[2 * i] * w[i];
+                    fi[2 * i + 1] = q[2 * i + 1] * w[i];
+                }
+            } else if (contig) {
+                const int16_t* __restrict q = reinterpret_cast<const int16_t*>(xring_[static_cast<size_t>(c - 1)].data() + r0);
+                const float sc = 1.0f / XSCALE;
+                for (int i = 0; i < n; i++) {
+                    fi[2 * i] = static_cast<float>(q[2 * i]) * sc * w[i];
+                    fi[2 * i + 1] = static_cast<float>(q[2 * i + 1]) * sc * w[i];
+                }
+            } else {
+                for (int i = 0; i < n; i++) {
+                    const cf v = (c == 0 ? at(fs + i) : xat(c, fs + i)) * win_[static_cast<size_t>(i)];
+                    fin_[i][0] = v.real();
+                    fin_[i][1] = v.imag();
+                }
+            }
+            fftwf_execute(plan_);
+            const float* __restrict fo = &fout_[0][0];
+            cf* __restrict X = X_[static_cast<size_t>(c)].data();
+            float* __restrict tp = xtmp_.data();
+            const float g = static_cast<float>(xg_[static_cast<size_t>(c)]), sg = std::sqrt(g);
+            for (int j = 0; j < n; j++) {
+                const int k = j < h ? j + h : j - h;   // frequency order
+                const float pw = fo[2 * k] * fo[2 * k] + fo[2 * k + 1] * fo[2 * k + 1];
+                tp[j] = pw;
+                P[j] += g * pw;
+                X[j] = cf(fo[2 * k] * sg, fo[2 * k + 1] * sg);
+            }
+            if (tick) {
+                std::nth_element(xtmp_.begin(), xtmp_.begin() + n / 2, xtmp_.end());
+                const double med = std::max(1e-20, static_cast<double>(xtmp_[static_cast<size_t>(n / 2)]));
+                double& xn = xn_[static_cast<size_t>(c)];
+                xn = xn > 0 ? xn + 0.02 * (med - xn) : med;
+            }
+        }
+        const float inv = 1.0f / static_cast<float>(M_);
+        for (int j = 0; j < n; j++) P[j] *= inv;
+        if (tick) {
+            double mean = 0;
+            for (double v : xn_) mean += v;
+            mean /= M_;
+            for (int c = 0; c < M_; c++) xg_[static_cast<size_t>(c)] = mean / xn_[static_cast<size_t>(c)];
+        }
+    } else if (r0 + static_cast<size_t>(n) <= ring_.size()) {   // contiguous (nearly always)
         const float* __restrict w = win_.data();
         float* __restrict fi = &fin_[0][0];
         const float* __restrict q = reinterpret_cast<const float*>(ring_.data() + r0);
@@ -208,7 +326,7 @@ void FrontEnd::frame(std::vector<Burst>* out) {
             fin_[i][1] = v.imag();
         }
     }
-    fftwf_execute(plan_);
+    if (M_ == 1) fftwf_execute(plan_);
     const float* rr = rr_.data();
     {   // (the buffers are only accessed through these pointers in here)
         float* __restrict P = P_.data();
@@ -218,11 +336,13 @@ void FrontEnd::frame(std::vector<Burst>* out) {
         const float* __restrict fo = &fout_[0][0];
         // power in frequency order (FFT bin k = signed bin k, or k - n above n / 2)
         const int h = n / 2;
-        for (int j = 0; j < h; j++) {
-            const int k = j + h;
-            P[j] = fo[2 * k] * fo[2 * k] + fo[2 * k + 1] * fo[2 * k + 1];
+        if (M_ == 1) {
+            for (int j = 0; j < h; j++) {
+                const int k = j + h;
+                P[j] = fo[2 * k] * fo[2 * k] + fo[2 * k + 1] * fo[2 * k + 1];
+            }
+            for (int k = 0; k < h; k++) P[k + h] = fo[2 * k] * fo[2 * k] + fo[2 * k + 1] * fo[2 * k + 1];
         }
-        for (int k = 0; k < h; k++) P[k + h] = fo[2 * k] * fo[2 * k] + fo[2 * k + 1] * fo[2 * k + 1];
 
         if (!noise_init_) {
             // the first frames: every bin starts at the median bin (a burst
@@ -309,7 +429,15 @@ void FrontEnd::frame(std::vector<Burst>* out) {
         for (int sb = std::max(-n / 2, s.lo - 1); sb <= std::min(n / 2 - 1, s.hi + 1); sb++) {
             const size_t k = ix(sb);
             const float d = P[k] - N[k];
-            if (d > 0) p->acc[k] += d;
+            if (d <= 0) continue;
+            p->acc[k] += d;
+            if (M_ > 1) {   // the spatial covariance of the bin's spectra
+                std::complex<double>* R = p->R.data();
+                for (int a = 0; a < M_; a++) {
+                    const std::complex<double> xa = X_[static_cast<size_t>(a)][k];
+                    for (int c = a; c < M_; c++) R[a * M_ + c] += xa * std::conj(std::complex<double>(X_[static_cast<size_t>(c)][k]));
+                }
+            }
         }
     };
     // 1. segments in an open package's region
@@ -333,6 +461,14 @@ void FrontEnd::frame(std::vector<Burst>* out) {
         taken[i] = true;
         strongest = std::max(strongest, s.peak);
     }
+    born_now_.clear();
+    // (the splatter test below also counts what starts in this frame: a
+    // strong OOK transmitter's first key-down splatters over the band, and
+    // with only the open packages to compare with, its splatter started
+    // packages of its own - 3 or more at once, then all taken for broadband
+    // interference, the device's too)
+    for (int i = 0; i < nseg; i++)
+        if (!taken[i] && segs[i].peak > thr_on_) strongest = std::max(strongest, segs[i].peak);
     // 2. the others: in its first LEARN_S a package takes what appears within
     // FSK_SPAN_BINS (the second tone of a wide FSK burst - also a much weaker
     // one); after that a strong segment elsewhere is another device and
@@ -350,16 +486,20 @@ void FrontEnd::frame(std::vector<Burst>* out) {
             }
         if (!p && s.peak > thr_on_ && s.peak >= 0.01f * strongest && static_cast<int>(pkgs_.size()) < max_pkgs_) {
             pkgs_.emplace_back();
+            born_now_.push_back(pkgs_.size() - 1);
             p = &pkgs_.back();
             p->a = fs;
             p->first = fe;
             p->lo = s.lo;
             p->hi = s.hi;
             p->acc.assign(static_cast<size_t>(n), 0.0f);
+            if (M_ > 1) p->R.assign(static_cast<size_t>(M_ * M_), {});
         }
         if (p) take(p, s);
     }
 
+    if (born_now_.size() >= 3)
+        for (size_t i : born_now_) pkgs_[i].born = static_cast<int>(born_now_.size());
     // packages that ended; the others of the same transmitter (the tones of
     // a wide FSK burst that started apart) end with them and are merged
     for (size_t i = 0; i < pkgs_.size();) {
@@ -378,10 +518,40 @@ void FrontEnd::frame(std::vector<Burst>* out) {
                 p.lo = std::min(p.lo, r.lo);
                 p.hi = std::max(p.hi, r.hi);
                 for (size_t k = 0; k < p.acc.size(); k++) p.acc[k] += r.acc[k];
+                for (size_t k = 0; k < p.R.size() && k < r.R.size(); k++) p.R[k] += r.R[k];
+                p.born = std::max(p.born, r.born);
                 pkgs_.erase(pkgs_.begin() + static_cast<long>(j));
             } else {
                 j++;
             }
+        }
+        // one of >= 3 born together, of which >= 3 lasted 5 ms or more (those
+        // ended and those still open): broadband, not a device
+        int long_ones = 0;
+        if (p.born >= 3) {
+            const int64_t five = static_cast<int64_t>(0.005 * fs_in_);
+            int* done_long = nullptr;
+            for (auto& bl : born_long_)
+                if (bl.first == p.a) done_long = &bl.second;
+            if (!done_long) {
+                born_long_.emplace_back(p.a, 0);
+                if (born_long_.size() > 64) born_long_.erase(born_long_.begin());
+                done_long = &born_long_.back().second;
+            }
+            if (p.last - p.a >= five) ++*done_long;
+            long_ones = *done_long;
+            for (const auto& q : pkgs_)
+                if (q.a == p.a && q.born >= 3 && q.last - q.a >= five) long_ones++;
+        }
+        if (long_ones >= 3) {
+            if (trace_)
+                fprintf(stderr, "broadband: package %.4f .. %.4f s, bins %d..%d, %d born together\n",
+                        static_cast<double>(p.a) / fs_in_, static_cast<double>(p.last) / fs_in_, p.lo, p.hi, p.born);
+            if (p.a != broadband_last_) {
+                broadband_++;
+                broadband_last_ = p.a;
+            }
+            continue;
         }
         finish(p, out);
     }
@@ -403,6 +573,47 @@ void FrontEnd::finish(const Pkg& p, std::vector<Burst>* out) {
     }
     const double fc = (lo + hi) / 2.0 * BIN_HZ;
     const double bw = (hi - lo + 1) * BIN_HZ;
+    // every antenna: the main eigenvector of the package's covariance (power
+    // iteration; the upper triangle was summed) = the device's array response
+    // -> y = w^H x, |w| = 1 (the noise stays one antenna's), antenna 0's
+    // weight real (the phase follows antenna 0's)
+    w_.clear();
+    double comb_db = 0;
+    if (M_ > 1 && p.R.size() == static_cast<size_t>(M_ * M_)) {
+        std::vector<std::complex<double>> R(p.R);
+        for (int a = 0; a < M_; a++)
+            for (int c = 0; c < a; c++) R[a * M_ + c] = std::conj(R[c * M_ + a]);
+        double tr = 0;
+        for (int a = 0; a < M_; a++) tr += R[a * M_ + a].real();
+        if (tr > 0) {
+            std::vector<std::complex<double>> v(static_cast<size_t>(M_), 1.0 / std::sqrt(static_cast<double>(M_))), t(v.size());
+            double lam = 0;
+            for (int it = 0; it < 40; it++) {
+                double nn = 0;
+                for (int a = 0; a < M_; a++) {
+                    std::complex<double> sum = 0;
+                    for (int c = 0; c < M_; c++) sum += R[a * M_ + c] * v[static_cast<size_t>(c)];
+                    t[static_cast<size_t>(a)] = sum;
+                    nn += std::norm(sum);
+                }
+                nn = std::sqrt(nn);
+                if (!(nn > 0)) break;
+                lam = nn;
+                for (int a = 0; a < M_; a++) v[static_cast<size_t>(a)] = t[static_cast<size_t>(a)] / nn;
+            }
+            const double a0 = std::abs(v[0]);
+            if (lam > 0 && a0 > 1e-9) {
+                // the covariance was of the normalised antennas: their weights
+                // v, applied to the antennas as they are: v sqrt(g) - the
+                // combination's noise is then the antennas' mean (the floor's)
+                const std::complex<double> ph = std::conj(v[0]) / a0;
+                w_.resize(static_cast<size_t>(M_));
+                for (int a = 0; a < M_; a++)
+                    w_[static_cast<size_t>(a)] = cf(v[static_cast<size_t>(a)] * ph * std::sqrt(xg_[static_cast<size_t>(a)]));
+                comb_db = 10 * std::log10(lam / std::max(1e-30, R[0].real()));
+            }
+        }
+    }
     const int64_t m = static_cast<int64_t>(MARGIN_S * fs_in_);
     int64_t a = p.a - m, b = p.last + m;
     a = std::max<int64_t>({a, 0, abs_ - ring_n_ + 1});
@@ -426,6 +637,8 @@ void FrontEnd::finish(const Pkg& p, std::vector<Burst>* out) {
         demod(a2, b2, 0.0, bw, &bu);
     }
     if (bu.ook.empty() && bu.fsk.empty()) return;
+    bu.antennas = w_.empty() ? 1 : M_;
+    bu.comb_db = comb_db;
     out->push_back(std::move(bu));
 }
 
@@ -450,7 +663,14 @@ void FrontEnd::make_segment(int64_t s0, int64_t s1, double f) {
         std::complex<double> ph(std::cos(ph0), std::sin(ph0));
         for (size_t k = 0; k < xm.size(); k++) {
             const int64_t s = i0 + static_cast<int64_t>(k);
-            const cf v = s >= 0 && s > abs_ - ring_n_ && s < abs_ ? at(s) : cf{};   // outside the ring: silence
+            cf v{};   // (outside the ring: silence)
+            if (s >= 0 && s > abs_ - ring_n_ && s < abs_) {
+                if (w_.empty()) v = at(s);
+                else {   // every antenna, combined: w^H x
+                    v = std::conj(w_[0]) * at(s);
+                    for (int c = 1; c < M_; c++) v += std::conj(w_[static_cast<size_t>(c)]) * xat(c, s);
+                }
+            }
             xm[k] = v * cf(static_cast<float>(ph.real()), static_cast<float>(ph.imag()));
             ph *= rot;
             if ((k & 1023) == 1023) ph /= std::abs(ph);

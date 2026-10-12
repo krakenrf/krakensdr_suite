@@ -39,6 +39,7 @@ struct PluginInfo {
     bool voice = false;           // decodes voice (kp::Info::voice): the panel offers Listen
     bool messages = false;        // sends text messages (kp::Info::messages): incident addresses
     bool talkers = false;         // reports who transmits (kp::Info::talkers): DoA per talker
+    bool multichannel = false;    // takes every antenna of a coherent array (kp::Info::multichannel)
     std::vector<PluginOption> options;
     bool built = false;           // exe exists and answered --info
     bool stale = false;           // a source file is newer than exe

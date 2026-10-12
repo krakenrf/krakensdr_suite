@@ -71,6 +71,7 @@ class MyDecoder : public kp::Decoder {
 public:
     explicit MyDecoder(kp::Host& h) : Decoder(h) {}
     void process(const kp::cf* x, size_t n) override;   // complex baseband
+    void process_multi(const kp::cf* const* x, int m, size_t n) override;   // optional: every antenna (below)
     void reset() override;                               // optional
     void option(const std::string& key, const std::string& value) override;  // optional
 };
@@ -90,7 +91,8 @@ KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
                           .voice = false,                 // true: decodes voice - the panel offers Listen
                           .messages = false,              // true: sends text messages (host.message)
                           .talkers = false,               // true: reports who transmits (host.talker)
-                          .lock_vfo = false})             // true: the VFO stays on its tuner's centre (below)
+                          .lock_vfo = false,              // true: the VFO stays on its tuner's centre (below)
+                          .multichannel = false})         // true: takes every antenna (process_multi, below)
 ```
 
 The fields of `kp::Info` must be given **in this order** (C++20 designated
@@ -125,6 +127,21 @@ instead: picking it does the same - narrowest bandwidth >= `min_vfo_rate`,
 VFO on its tuner's centre, a single line, fields locked - but leaves the
 tuner where it is; the user tunes the receiver to the band (a 📍 map
 marker's frequency button retunes the tuner then, rather than refusing).
+
+**Every antenna.** A plugin that sets `.multichannel = true` gets every
+antenna of the array through `process_multi(x, m, n)` (`x[k][i]` = antenna
+k's sample i, m = 2..8, at `sample_rate`) whenever kraken_doa has them: in
+coherent mode with DoA on, for a plugin at the VFO's own rate (no
+resampling) and no AFC correction. The antennas are sample-synchronous and
+on one frequency; their phases and gains need not be calibrated (combine
+them blindly - ism uses the main eigenvector of each burst's own spatial
+covariance). Otherwise - independent / wideband mode (each VFO its own
+tuner), DoA off, an offline test of one channel - it gets `process()` as
+usual, so a plugin must work with either and may switch between them at any
+time. The default `process_multi` decodes antenna 0. Wire: `SAMPLES_MC`
+(uint32 m, then n x m complex int16 sample by sample, value / 8192).
+Offline: `decoder --file REC --channels M` (an interleaved recording of
+every antenna; `--channel K`: only antenna K through `process()`).
 
 **Input.** `process()` gets the VFO's complex baseband, centred on the VFO
 frequency, already resampled to `Info::sample_rate`, in blocks of a few ms

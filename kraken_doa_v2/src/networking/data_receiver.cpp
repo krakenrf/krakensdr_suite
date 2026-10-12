@@ -891,8 +891,37 @@ void DataReceiver::decimation_processor_thread() {
                     int tuner = wideband_enabled ? inst->tuner_channel.load(std::memory_order_relaxed) : 0;
                     if (tuner < 0 || tuner >= MAX_CHANNELS) tuner = 0;
                     double rf = static_cast<double>(exact_tuner_hz(tuner)) + result.decimated_data.freq_offset_hz;
-                    dd->push(src->data(), src->size(), result.decimated_data.output_rate_hz, rf,
-                             result.decimated_data.stream_pos);
+                    // every antenna for a multichannel plugin (ism: each burst
+                    // combined from all of them) - only when the block holds
+                    // the whole coherent array: not in independent / wideband
+                    // mode (each VFO has its own tuner), nor with DoA and
+                    // beamforming off (one channel decimated); those decode
+                    // the one channel as before
+                    const std::complex<int16_t>* mc = nullptr;
+                    int mc_m = 0;
+                    const auto& chs = result.decimated_data.channels;
+                    const size_t n = src->size();
+                    if (dd->wants_multichannel() && !wideband_enabled && !fm_only && chs.size() >= 2 &&
+                        n == result.decimated_data.min_samples) {
+                        const int m = static_cast<int>(std::min<size_t>(chs.size(), 8));
+                        bool ok = true;
+                        for (int k = 0; k < m; k++) ok = ok && chs[static_cast<size_t>(k)].samples.size() >= n;
+                        if (ok) {
+                            thread_local vector<complex<int16_t>> mcbuf;
+                            mcbuf.resize(n * static_cast<size_t>(m));
+                            const float sc = dig::DigitalDecoder::MC_SCALE;
+                            auto s16 = [](float v) { return static_cast<int16_t>(std::clamp(v, -32767.0f, 32767.0f)); };
+                            for (int k = 0; k < m; k++) {
+                                const complex<float>* q = chs[static_cast<size_t>(k)].samples.data();
+                                for (size_t i = 0; i < n; i++)
+                                    mcbuf[i * static_cast<size_t>(m) + static_cast<size_t>(k)] = {s16(q[i].real() * sc), s16(q[i].imag() * sc)};
+                            }
+                            mc = mcbuf.data();
+                            mc_m = m;
+                        }
+                    }
+                    dd->push(src->data(), n, result.decimated_data.output_rate_hz, rf,
+                             result.decimated_data.stream_pos, mc, mc_m);
                 }
             }
 

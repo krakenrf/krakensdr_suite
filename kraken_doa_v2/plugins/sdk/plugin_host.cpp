@@ -18,6 +18,10 @@
 //   --verbose        verbose option on;  --invert  conjugate (swap I/Q)
 //   --opt key=value  pass an option to the decoder (repeatable)
 //   --audio OUT.wav  write the decoded 8 kHz audio
+//   --channels M     a recording of every antenna of an array, sample by
+//                    sample (default: REC.json "channels"): decoded with
+//                    process_multi (Info::multichannel); --channel K: only
+//                    antenna K, as a single-channel decoder gets it
 //   --station LAT,LON  the receiver's location (Host::station)
 //   --rf HZ          RF of the file's centre (Host::rf_hz; default: the
 //                    REC.json "rf_hz" of ai/sigtool.py captures)
@@ -71,7 +75,8 @@ int print_info() {
               << ",\"manual_only\":" << (i.manual_only ? "true" : "false") << ",\"fixed_freq_hz\":" << std::fixed
               << std::setprecision(0) << i.fixed_freq_hz << std::defaultfloat << std::setprecision(6)
               << ",\"voice\":" << (i.voice ? "true" : "false") << ",\"messages\":" << (i.messages ? "true" : "false")
-              << ",\"talkers\":" << (i.talkers ? "true" : "false") << ",\"lock_vfo\":" << (i.lock_vfo ? "true" : "false");
+              << ",\"talkers\":" << (i.talkers ? "true" : "false") << ",\"lock_vfo\":" << (i.lock_vfo ? "true" : "false")
+              << ",\"multichannel\":" << (i.multichannel ? "true" : "false");
     // options twice: as JSON for people, and tab-separated for kraken_doa's
     // flat reader (key, label, default, choices, help per line)
     std::string tsv;
@@ -320,6 +325,7 @@ int serve() {
     auto dec = kp_plugin_create(host);
     for (const auto& o : info.options) dec->option(o.key, o.def);
     std::vector<char> buf;
+    std::vector<std::vector<kp::cf>> mc;   // SAMPLES_MC, per antenna
     for (;;) {
         uint32_t hdr[2];
         if (!read_all(0, hdr, 8)) return 0;
@@ -331,6 +337,29 @@ int serve() {
                 case kp::wire::SAMPLES: {
                     size_t n = hdr[1] / sizeof(kp::cf);
                     dec->process(reinterpret_cast<const kp::cf*>(buf.data()), n);
+                    host.samples_ += n;
+                    break;
+                }
+                case kp::wire::SAMPLES_MC: {
+                    uint32_t m = 0;
+                    if (hdr[1] >= 4) memcpy(&m, buf.data(), 4);
+                    if (m < 2 || m > 8) break;
+                    const size_t n = (hdr[1] - 4) / (4 * static_cast<size_t>(m));
+                    if (!n) break;
+                    mc.resize(m);
+                    std::vector<const kp::cf*> ptrs(m);
+                    const int16_t* q = reinterpret_cast<const int16_t*>(buf.data() + 4);
+                    const float sc = 1.0f / kp::wire::MC_SCALE;
+                    for (uint32_t k = 0; k < m; k++) {
+                        mc[k].resize(n);
+                        float* __restrict d = reinterpret_cast<float*>(mc[k].data());
+                        for (size_t i = 0; i < n; i++) {
+                            d[2 * i] = q[2 * (i * m + k)] * sc;
+                            d[2 * i + 1] = q[2 * (i * m + k) + 1] * sc;
+                        }
+                        ptrs[k] = mc[k].data();
+                    }
+                    dec->process_multi(ptrs.data(), static_cast<int>(m), n);
                     host.samples_ += n;
                     break;
                 }
@@ -656,6 +685,60 @@ bool load_file(const std::string& path, std::string fmt, double* rate, double st
     return true;
 }
 
+// A recording of every antenna (--channels M / the sidecar's "channels"):
+// sample by sample, antenna 0 first, cf32 / cs16 / cu8. Read a block at a
+// time (5 antennas at 2.4 MHz are far too big to load whole)
+struct McReader {
+    FILE* f = nullptr;
+    std::string fmt;
+    int m = 1;
+    size_t bps = 8;
+    std::vector<char> raw;
+    bool open(const std::string& path, std::string fm, int channels, double rate, double start, std::string& err) {
+        if (fm.empty()) {
+            std::string ext = path.substr(path.rfind('.') == std::string::npos ? path.size() : path.rfind('.') + 1);
+            fm = ext == "cu8" || ext == "u8" ? "cu8" : ext == "cs16" || ext == "s16" ? "cs16" : "cf32";
+        }
+        if (fm != "cf32" && fm != "cs16" && fm != "cu8") { err = "multichannel recordings: cf32, cs16 or cu8"; return false; }
+        fmt = fm;
+        m = channels;
+        bps = fmt == "cf32" ? 8 : fmt == "cs16" ? 4 : 2;
+        f = fopen(path.c_str(), "rb");
+        if (!f) { err = "cannot open " + path; return false; }
+        const long long skip = static_cast<long long>(std::max(0.0, start) * rate) * m * static_cast<long long>(bps);
+        if (skip && fseeko(f, skip, SEEK_SET) != 0) { err = "cannot seek"; return false; }
+        return true;
+    }
+    // up to n samples of every antenna -> out[k]; returns the samples read
+    size_t read(size_t n, std::vector<std::vector<kp::cf>>& out) {
+        raw.resize(n * m * bps);
+        const size_t got = fread(raw.data(), m * bps, n, f);
+        out.resize(static_cast<size_t>(m));
+        for (int k = 0; k < m; k++) out[static_cast<size_t>(k)].resize(got);
+        const int kind = fmt == "cf32" ? 0 : fmt == "cs16" ? 1 : 2;
+        for (int k = 0; k < m; k++) {
+            kp::cf* o = out[static_cast<size_t>(k)].data();
+            for (size_t i = 0; i < got; i++) {
+                const char* d = raw.data() + (i * m + static_cast<size_t>(k)) * bps;
+                if (kind == 0) {
+                    float iq[2];
+                    memcpy(iq, d, 8);
+                    o[i] = {iq[0], iq[1]};
+                } else if (kind == 1) {
+                    int16_t iq[2];
+                    memcpy(iq, d, 4);
+                    o[i] = {iq[0] * (1.0f / 32768.0f), iq[1] * (1.0f / 32768.0f)};
+                } else {
+                    auto u = reinterpret_cast<const uint8_t*>(d);
+                    o[i] = {(u[0] - 127.5f) * (1.0f / 127.5f), (u[1] - 127.5f) * (1.0f / 127.5f)};
+                }
+            }
+        }
+        return got;
+    }
+    ~McReader() { if (f) fclose(f); }
+};
+
 void write_wav8k(const std::string& path, const std::vector<float>& a) {
     std::ofstream f(path, std::ios::binary);
     auto u32 = [&](uint32_t v) { f.write(reinterpret_cast<char*>(&v), 4); };
@@ -669,6 +752,7 @@ void write_wav8k(const std::string& path, const std::vector<float>& a) {
 int test_file(int argc, char** argv) {
     std::string path, fmt, audio_path;
     double rate = 0, offset = 0, start = 0, seconds = 0, rf = NAN;
+    int channels = 0, pick = -1;   // a recording of every antenna: how many / decode only this one
     bool quiet = false, verbose = false, invert = false, have_station = false, raw = false;
     double st_lat = 0, st_lon = 0;
     std::vector<std::pair<std::string, std::string>> opts;
@@ -690,6 +774,8 @@ int test_file(int argc, char** argv) {
         else if (a == "--verbose") verbose = true;
         else if (a == "--invert") invert = true;
         else if (a == "--raw") raw = true;
+        else if (a == "--channels") channels = atoi(next().c_str());
+        else if (a == "--channel") pick = atoi(next().c_str());
         else if (a == "--station") {
             std::string v = next();
             if (sscanf(v.c_str(), "%lf,%lf", &st_lat, &st_lon) != 2) { fprintf(stderr, "--station needs LAT,LON\n"); return 2; }
@@ -706,11 +792,44 @@ int test_file(int argc, char** argv) {
     }
     std::vector<kp::cf> x;
     std::string err;
-    if (!load_file(path, fmt, &rate, start, seconds, x, err)) {
+    if (channels <= 0) {
+        double c = 0;
+        channels = read_sidecar(path, "channels", &c) ? static_cast<int>(c) : 1;
+    }
+    if (channels > 8) {
+        fprintf(stderr, "error: at most 8 channels\n");
+        return 1;
+    }
+    McReader mcr;
+    const bool mc_all = channels > 1 && pick < 0;
+    if (channels > 1) {
+        if (rate <= 0 && !read_sidecar_rate(path, &rate)) {
+            fprintf(stderr, "error: sample rate unknown: pass --rate\n");
+            return 1;
+        }
+        if (!mcr.open(path, fmt, channels, rate, start, err)) {
+            fprintf(stderr, "error: %s\n", err.c_str());
+            return 1;
+        }
+        if (pick >= channels) {
+            fprintf(stderr, "error: --channel %d of %d\n", pick, channels);
+            return 1;
+        }
+        if (!mc_all) {   // one antenna, as a single-channel decoder gets it
+            std::vector<std::vector<kp::cf>> b;
+            const size_t want = seconds > 0 ? static_cast<size_t>(seconds * rate) : SIZE_MAX;
+            for (size_t got; x.size() < want && (got = mcr.read(std::min<size_t>(1 << 16, want - x.size()), b)) > 0;)
+                x.insert(x.end(), b[static_cast<size_t>(pick)].begin(), b[static_cast<size_t>(pick)].end());
+        }
+    } else if (!load_file(path, fmt, &rate, start, seconds, x, err)) {
         fprintf(stderr, "error: %s\n", err.c_str());
         return 1;
     }
     kp::Info info = kp_plugin_info();
+    if (mc_all && (info.sample_rate != rate || offset != 0)) {
+        fprintf(stderr, "error: every antenna at once needs the plugin's rate (%.0f Hz) and no --offset\n", info.sample_rate);
+        return 1;
+    }
     TestHost host(info.sample_rate, quiet);
     host.verbose_ = verbose;
     host.want_audio_ = !audio_path.empty();
@@ -730,7 +849,9 @@ int test_file(int argc, char** argv) {
     if (verbose) dec->option("verbose", "1");
     for (auto& o : opts) dec->option(o.first, o.second);
 
-    if (!quiet)
+    if (!quiet && mc_all)
+        printf("%s %s: %d antennas of %s at %.0f Hz (process_multi)\n", info.name, info.version, channels, path.c_str(), rate);
+    else if (!quiet)
         printf("%s %s: %.2f s of %s at %.0f Hz -> %.0f Hz%s%s\n", info.name, info.version,
                x.size() / rate, path.c_str(), rate, info.sample_rate,
                offset != 0 ? (" (offset " + std::to_string(static_cast<long>(offset)) + " Hz)").c_str() : "",
@@ -741,6 +862,21 @@ int test_file(int argc, char** argv) {
     const size_t blk = std::max<size_t>(1, static_cast<size_t>(rate / 100));
     std::vector<kp::cf> in(blk), outb(static_cast<size_t>(blk * info.sample_rate / rate) + 64);
     auto t0 = std::chrono::steady_clock::now();
+    if (mc_all) {   // every antenna, 10 ms blocks like live
+        std::vector<std::vector<kp::cf>> b;
+        std::vector<const kp::cf*> ptrs(static_cast<size_t>(channels));
+        const size_t want = seconds > 0 ? static_cast<size_t>(seconds * rate) : SIZE_MAX;
+        size_t done = 0;
+        for (size_t got; done < want && (got = mcr.read(std::min(blk, want - done), b)) > 0; done += got) {
+            for (int k = 0; k < channels; k++) {
+                if (invert)
+                    for (auto& v : b[static_cast<size_t>(k)]) v = std::conj(v);
+                ptrs[static_cast<size_t>(k)] = b[static_cast<size_t>(k)].data();
+            }
+            dec->process_multi(ptrs.data(), channels, got);
+            host.samples_ += got;
+        }
+    }
     for (size_t p = 0; p < x.size(); p += blk) {
         size_t n = std::min(blk, x.size() - p);
         for (size_t i = 0; i < n; i++) in[i] = nco.mix(invert ? std::conj(x[p + i]) : x[p + i]);
@@ -839,7 +975,8 @@ int main(int argc, char** argv) {
             "%s (%s) - KrakenSDR decoder plugin\n"
             "usage: %s --info | --serve | --file REC [--rate HZ] [--format cf32|cu8|cs16|wav]\n"
             "          [--offset HZ] [--start S] [--seconds S] [--verbose] [--invert]\n"
-            "          [--opt key=value] [--audio out.wav] [--station LAT,LON] [--rf HZ] [--raw] [--quiet]\n",
+            "          [--opt key=value] [--audio out.wav] [--station LAT,LON] [--rf HZ] [--raw] [--quiet]\n"
+            "          [--channels M (every antenna, interleaved) [--channel K (only that one)]]\n",
             info.name, info.description, argv[0]);
     return 2;
 }

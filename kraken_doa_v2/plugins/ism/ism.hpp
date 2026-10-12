@@ -46,6 +46,8 @@ struct Burst {
     double snr_db = 0;              // signal amplitude over the noise in the demodulation filter
     double fsk_sep = 0;             // FSK: distance of the two tones (Hz), 0 = not seen
     std::vector<Pulse> ook, fsk;    // the two pulse trains
+    int antennas = 1;               // combined from this many (FrontEnd::push_multi)
+    double comb_db = 0;             // their combined power over antenna 0's (dB)
 };
 
 // ------------------------------------------------------------------ bits ---

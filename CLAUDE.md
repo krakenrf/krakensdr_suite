@@ -391,7 +391,11 @@ decoders `kraken_doa_v2/plugins/`
   remotes, alarm sensors, energy meters - 69 OOK / FSK protocol decoders,
   unknown repeating codes too; a device table and a DoA per device; manual
   only; `kp::Info::lock_vfo`: picking it puts the VFO on its tuner's centre
-  at 2.4 MHz, drawn as a locked line, the tuner left where the user put it).
+  at 2.4 MHz, drawn as a locked line, the tuner left where the user put it;
+  `kp::Info::multichannel`: in coherent mode with DoA on it gets EVERY
+  antenna - `process_multi`, wire SAMPLES_MC - and combines each burst from
+  all of them with its own covariance's main eigenvector: >= 6 dB more
+  sensitive with 5 antennas; one channel as before in independent mode).
   Plugins learn the VFO's RF from `kp::Host::rf_hz()` (wire RF, 7). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as

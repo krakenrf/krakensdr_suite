@@ -170,6 +170,7 @@ void PluginRegistry::scan() {
                     if (json_find(js, "talkers", v)) pi.talkers = v == "true";
                     if (json_find(js, "fixed_freq_hz", v)) pi.fixed_freq_hz = std::max(0.0, atof(v.c_str()));
                     if (json_find(js, "lock_vfo", v)) pi.lock_vfo = v == "true";
+                    if (json_find(js, "multichannel", v)) pi.multichannel = v == "true";
                     // options: one per line, tab-separated key/label/default/choices/help
                     if (json_find(js, "options_tsv", v)) {
                         std::stringstream ls(v);

@@ -122,9 +122,18 @@ public:
     // pos = the VFO stream position of x[0] (talker spans are reported in
     // it); NO_POS = count the samples pushed here instead (offline tests)
     static constexpr uint64_t NO_POS = ~0ull;
-    void push(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos = NO_POS);
+    // mc: every antenna of a coherent array for multichannel plugins
+    // (kp::Info::multichannel; the pipeline fills it only while
+    // wants_multichannel()): n samples x mc_m antennas, sample by sample,
+    // antenna 0 first, value x MC_SCALE
+    void push(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos = NO_POS,
+              const std::complex<int16_t>* mc = nullptr, int mc_m = 0);
+    static constexpr float MC_SCALE = 8192.0f;   // = kp::wire::MC_SCALE
+    // a multichannel plugin runs (the pipeline then hands every antenna over)
+    bool wants_multichannel() const { return want_mc_.load(std::memory_order_relaxed); }
     // Synchronous processing (offline tests; threaded = false)
-    void process(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos = NO_POS);
+    void process(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos = NO_POS,
+                 const std::complex<int16_t>* mc = nullptr, int mc_m = 0);
 
     // Talker spans (kp::Host::talker) of this decoder's plugins go to h -
     // the VFO's per-talker DoA (talker_doa.hpp). Called on the worker thread.
@@ -175,7 +184,15 @@ private:
     TalkerHandler talker_handler_;
 
     // queue
-    struct Block { std::vector<std::complex<float>> x; float rate; double rf; uint64_t pos; };
+    struct Block {
+        std::vector<std::complex<float>> x;
+        float rate;
+        double rf;
+        uint64_t pos;
+        std::vector<std::complex<int16_t>> mc;   // every antenna (push's mc), empty = none
+        int m = 0;
+    };
+    std::atomic<bool> want_mc_{false};
     std::mutex q_mu_;
     std::condition_variable q_cv_;
     std::deque<Block> queue_;

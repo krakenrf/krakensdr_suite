@@ -2387,6 +2387,43 @@ Edit `include/config.hpp`:
   for the talker: devices vanished from the 📡 DF list after 2 min
 - UI: `rdfKind` 'device' for `pl` 'ism' (📟, "Device / Reading / Tx", no
   position columns, by name in the DF list - see *DoA per talker*, Order)
+- EVERY ANTENNA (2026-10-13, `kp::Info::multichannel`, the user's request:
+  "improve sensitivity"): in coherent mode with DoA on, kraken_doa hands
+  the plugin all antennas (`process_multi`; wire SAMPLES_MC 8 = uint32 m +
+  n x m complex int16 / 8192, sample by sample). `FrontEnd::push_multi`:
+  antennas 1.. in 16-bit rings beside antenna 0's (+67 MB), each FFT hop
+  every antenna through the one FFTW plan, each brought to the antennas'
+  mean noise (`xn_` = its median bin power, ~1 s; `xg_` the factor - the
+  five here differ by up to 5.7 dB) -> detection on their mean power; each
+  package sums the M x M covariance of its active bins' (normalised)
+  spectra (`Pkg::R`); `finish` takes its main eigenvector (power iteration),
+  weights w = v sqrt(g) (|v| = 1: the combination's noise = the floor's),
+  antenna 0's weight real, and `make_segment` mixes down sum conj(w_k) x_k
+  - blind MRC, no calibration. Measured: real 5-antenna recording (20 s):
+  antenna 0 8 messages, best antenna 44, combined 88 (+ a Toyota TPMS and a
+  distant WH65B only combined); a real WH65B frame planted at set SNRs into
+  5 noise channels: antenna 0 decodes down to 6 dB (100 kHz), combined down
+  to 0 dB; 5-channel noise: nothing. CPU 38 % vs 14 % of a core (offline).
+  Not in independent / wideband mode or with DoA off (one channel, as
+  before; checked through the engine with digi_test u8 vs u8mc). Antenna 0
+  of the array here hears far less than the others (its noise 5 dB higher):
+  the single-channel decoder used the CH selector's antenna
+- Detector fixes found on a 30 s live recording at sens 8 (same day): a
+  package continues on max(threshold - 2, 7.5) dB (6 dB: noise kept 93 %
+  of package regions active - packages ran to 1.2 s, merged transmissions,
+  DoA reports came 1.3-1.8 s late); splatter is also compared with what
+  starts in the same frame; >= 3 packages born in one frame with >= 3 of
+  them >= 5 ms long = a broadband event (not demodulated; clicks - a 251
+  kHz spur comb here - don't count). Unknown signals: PWM only when most
+  pulse + gap pairs keep the period (NRZ 1T / 2T runs fooled it), classes
+  matched within 15 % / 30 kHz and keeping their first name (the name
+  jittered every burst), 12 dB; a decode with the same maker + id as a >= 15
+  dB stronger overlapping one > 30 kHz away is dropped as a copy. Notes:
+  the "LoRa-like" wide bursts at 433.997 MHz are a real wide-FSK (+-65 kHz)
+  device whose two tones, decoded apart, looked like two OOK devices with
+  inverted codes; 9 "Jansite" TPMS ids at 433.997 MHz live were most
+  likely its preamble passing the checksum-less Jansite decoder (not
+  reproduced on the recording - left as is)
 - Keep tests (scratchpad e2e/: scene_keep.json - the devices stop at 40 s,
   3 antennas; run_keep.sh + t_keep.py, niced next to a live stack):
   default - all 8 still listed at 190 s, 159 s after the last packet (the
@@ -2604,6 +2641,13 @@ Edit `include/config.hpp`:
   [--verbose] [--audio out.wav]` (offline test: same resampling / 10 ms
   blocks as live, cf32 / cu8 / cs16 / 16+24-bit IQ WAV, prints events +
   "VALID FRAMES: N")
+- Every antenna for `kp::Info::multichannel` plugins: `DigitalDecoder::push(..,
+  mc, mc_m)` (the pipeline packs the block's channels as int16 x MC_SCALE
+  only while `wants_multichannel()` and the block holds the coherent array:
+  not multi-tuner, not fm_only), the Block carries them, `Engine::run`
+  sends SAMPLES_MC chunks instead of SAMPLES to such a runner at the VFO's
+  rate with no AFC correction (invert = every antenna's Q negated), same
+  pos_map. digi_test `u8mc --channels M` feeds an interleaved recording
 - Live (`Runner` in digital_decoder.cpp): the process is started on the
   decoder thread (`PluginProcess`, posix_spawn, non-blocking pipes), SAMPLES
   in 16k chunks (dropped, counted, when > 1 s behind; offline: blocking

@@ -77,14 +77,25 @@ so its documentation applies):
 ## Unknown signals
 
 A burst no protocol decodes is sliced by its own timing (PWM if the pulse
-widths fall in two groups, PPM if the gaps do, else NRZ at the shortest
-width). If the burst repeats a row of >= 12 bits it is shown as an
+widths fall in two groups and most pulse + gap pairs keep one period, PPM if
+the gaps fall in two groups, else NRZ at the shortest width - NRZ whose
+runs are 1 and 2 bits long also has short + long gap = long + short gap, and
+was sliced as PWM before the pair test). If the burst repeats a row of >= 12 bits it is shown as an
 **unknown device** whose id is the code (e.g. `OPWM25 3671538`) - it gets
 its own DoA like any other device, which is what you want when hunting an
 unidentified transmitter. A clean burst without a repeat is grouped by its
 signal class (modulation, coding, bit rate, frequency) and shown once the
 same class is heard again within 10 minutes (one-off fragments, collisions
-and wake-up bursts are not devices). Option "Unknown signals" turns this off.
+and wake-up bursts are not devices); a burst belongs to a class of the same
+modulation and coding within 15 % of its bit rate and 30 kHz and takes its
+name (matched by the name - rate to 0.1 kbit/s, 25 kHz bins - one device's
+jitter gave it a new name nearly every burst, so it never showed). Needs 12
+dB (was 15). Option "Unknown signals" turns this off.
+
+A decode with the same maker and id as one made from a burst >= 15 dB
+stronger, at the same time and > 30 kHz away, is dropped as a copy (a 3 dB
+spur of a 37 dB weather station 214 kHz away decoded as another model with
+its id). The Bursts fact counts them ("duplicate copies dropped").
 
 ## Options
 
@@ -102,15 +113,26 @@ and wake-up bursts are not devices). Option "Unknown signals" turns this off.
 (3.75 kHz bins, a frame every 133 µs) with a noise floor per bin. A bin is
 active when it and its neighbours, in this frame and the one 640 samples
 earlier, hold the threshold over their floor (6 bins' worth of noise: no
-false bursts in 20 s of white noise at 8 dB). Active bins are assigned to
+false bursts in 20 s of white noise at 8 dB). A package continues on 2 dB
+less, but never below 7.5 dB: noise crosses the statistic at 6 dB once per
+~3000 bin-frames, so at the 8 dB setting a package's region (~40 bins) saw a
+crossing in 93 % of the 30 ms it needs to end - packages ran to 1.2 s,
+swallowed the next transmissions and were reported > 1 s late (7.5 dB: 5 %).
+Active bins are assigned to
 **packages by frequency** - up to eight at once, so two devices
 transmitting at the same moment on different
 frequencies become two bursts, each demodulated (and its DoA filtered) on its
 own. A package's frequency region grows during its first 50 ms (that is how
 the second tone of a wide FSK transmitter joins it); a strong signal
 elsewhere later starts its own package, unless it is > 20 dB under an active
-one (the splatter of strong OOK keying). A package ends after 30 ms of quiet
-(1.2 s at most - a held key fob is cut into pieces).
+one or under what starts in the same frame (the splatter of strong OOK
+keying). A package ends after 30 ms of quiet (1.2 s at most - a held key fob
+is cut into pieces). Three or more packages born in the same frame, of which
+three or more last >= 5 ms, are a broadband event (a wideband transmission /
+interference - all frequencies rise together), not devices: not demodulated,
+counted ("broadband events skipped"). A click (a 251 kHz comb of spurs from a
+switching supply here, < 1 ms) is no broadband event: a device that starts in
+the same frame as one is kept.
 
 A finished package is mixed down by its centre and decimated to 240 kHz
 (Blackman low-pass, 321 taps, flat to ~88 kHz, -74 dB from 128 kHz,
@@ -144,6 +166,32 @@ fn)`. CRC / digest-checked ones (STRONG) and checksum / parity ones
 EV1527, Nexus, Prologue...) only when nothing stronger decoded it.
 `generic.cpp`: the unknown-signal analysis. `decoder.cpp`: devices, table,
 events, raw frames, talker packets.
+
+**Every antenna (coherent mode, `Info::multichannel`).** With DoA on,
+kraken_doa sends all antennas (`process_multi`). Detection then runs on
+their mean power per bin, each antenna first brought to the antennas' mean
+noise (each antenna's noise followed as its median bin power; here the five
+differed by up to 5.7 dB). Each package also sums the spatial covariance of
+its active bins' spectra (normalised antennas) over its frames; when it ends,
+the covariance's main eigenvector gives the weights and the package is
+demodulated from the antennas combined (w^H x, |w| = 1 on the normalised
+antennas, so the noise stays the floor's) - blind maximum-ratio combining:
+up to 10 log10(m) dB more SNR whatever the device's direction, no
+calibration needed. Antennas 1.. are kept as 16-bit samples next to antenna
+0's ring (+67 MB with 5). Facts: "Antennas: 5, combined per burst (+x dB on
+average)" (the combination's power over antenna 0's, normalised). In
+independent / wideband mode or with DoA off the plugin gets one channel and
+works as before.
+
+Measured (Pi 5): a real 5-antenna recording (20 s, 434 MHz, `decoder --file
+REC --channels 5`): antenna 0 alone 8 messages, the best single antenna 44,
+all five combined 88 - and a Toyota TPMS and a distant WH65B (a broken T/H
+sensor, low battery) only combined. A real WH65B frame planted 12 times at a
+set SNR into 5 channels of independent noise (each copy with random antenna
+phases): antenna 0 decodes all down to 6 dB per antenna (in 100 kHz), none at
+3 dB; combined, all down to 0 dB, none at -3 dB - >= 6 dB (7 dB in theory
+for 5). 5 channels of pure noise: no bursts. CPU: 38 % of a core for the 5
+antennas offline (reading included) vs 14 % for one.
 
 For each device's DoA kraken_doa filters the device's channel out of the
 2.4 MHz of every antenna (it keeps the stream as 16-bit samples for that:
