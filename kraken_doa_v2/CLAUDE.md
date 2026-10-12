@@ -1020,7 +1020,14 @@ Edit `include/config.hpp`:
   and a radio at the target height is good enough - also WITHOUT line of
   sight, coloured by that reliability, NOT restricted to the cells in
   sight; the edge of the line of sight as a black line, switchable). Each site has
-  a ROLE: TX or RX (the station's default RX, other sites TX). ONLY
+  a ROLE: TX or RX (the station's RX, other sites as added). The STATION
+  ISN'T PART OF THE SIGNAL MODE (the user's call 2026-10-12): its row is
+  hidden there (`.vs-it.vs-st`), `vsJobItems` / `vsLinkItem` / `plEnds` /
+  `plPickSite` / `plDraw`'s tags skip it, a link needs a TX / RX antenna
+  (none: no "Signal from" menu item / buttons, `plLinkTo` flashes). TX
+  and RX antennas come only from the right-click menu ("📶 Add TX
+  antenna here" / "📶 Add RX antenna here", `vsAddAt(role)`, named "TX n"
+  / "RX n"; markers too). ONLY
   TRANSMITTERS ARE COLOURED (the user's call, 2026-10-12: an RX site used
   to get its own "where would a transmitter be heard" map - reciprocal, the
   same numbers, but centred on the receiver; with its radius smaller than

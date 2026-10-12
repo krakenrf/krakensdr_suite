@@ -528,8 +528,10 @@ decoders `kraken_doa_v2/plugins/`
   transmitter at once (the best per place), the edge of the line of sight
   a black line (2 px; OFF by default - the panel's "Line of sight edge"
   switch, per browser); line of sight mode is the plain viewshed (both show
-  the identical line of sight). Each site is a TX or an RX (the station RX
-  by default); ONLY TRANSMITTERS ARE COLOURED (the user's call): TX sites
+  the identical line of sight). Each site is a TX or an RX, added by right-clicking
+  ("📶 Add TX / RX antenna here") - the STATION ISN'T PART OF THE SIGNAL
+  MODE (the user's call: hidden there, never coloured or linked; it keeps
+  its line of sight viewshed); ONLY TRANSMITTERS ARE COLOURED (the user's call): TX sites
   (receivers at the target height), and the TX place of a link from an RX
   site (`vsLinkItem`: around the place, receivers at that site's antenna
   height, out past it; worked out when the place is dropped) - an RX site

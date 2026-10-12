@@ -507,7 +507,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-vs-note {margin-top:4px;color:#7f93b4;font-size:10px;line-height:1.35}
 .map-vs-note a {color:#4fc3f7}
 /* 📶 the viewshed's signal mode (📶 PATH LOSS): its settings, legend, link - the .map-vs styles + these */
-.map-vs:not(.sig) .vs-sig, .map-vs.sig .vs-los {display:none}
+.map-vs:not(.sig) .vs-sig, .map-vs.sig .vs-los, .map-vs.sig .vs-it.vs-st {display:none}
 .map-vs .vs-mode button {height:22px;font-size:11px}
 .vs-it .role {cursor:pointer;flex:none}
 .map-vs #map-vs-sig {border-top:1px solid #2a4a7a;margin-top:5px;padding-top:1px}
@@ -12172,15 +12172,17 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const [la, lo] = mapScreenToLatLon(x, y);
     mapMenuAt = {la, lo};
     let h = '<button type="button" onclick="mkAddAt()">📍 Add Marker</button>' +
-            `<button type="button" onclick="vsAddAt()" title="${vsAddTip('here')}">${vsAddLabel('here')}</button>` +
+            `<button type="button" onclick="vsAddAt('tx')" title="${vsAddTip('here')}">${vsAddLabel('here')}</button>` +
+            (vsState.mode === 'sig' ? `<button type="button" onclick="vsAddAt('rx')" title="${vsAddTip('here', 'rx')}">${vsAddLabel('here', 'rx')}</button>` : '') +
             plMenuItem() +
             `<button type="button" onclick="mapSetStationAt()" title="Put the station (Station Information) here - a fixed location; its heading is kept">📡 Set station here${mapStaticSource() ? '' : ' (fixed location)'}</button>`;
     const mk = mkGet(mkHit(x, y));
     if (mk) {
       const n = digEsc(mk.name);
       h += `<button type="button" onclick="mapMenuClose();mkSelect('${mk.id}',true)">✎ Edit “${n}”</button>` +
-           `<button type="button" onclick="mapMenuClose();vsAddMarker('${mk.id}')" title="${vsAddTip('at the marker')}">${vsAddLabel(`at “${n}”`)}</button>` +
-           `<button type="button" onclick="mapMenuClose();plLinkMarker('${mk.id}')" title="${plLinkTip('at the marker')}">${plLinkLabel(`“${n}”`)}</button>` +
+           `<button type="button" onclick="mapMenuClose();vsAddMarker('${mk.id}','tx')" title="${vsAddTip('at the marker')}">${vsAddLabel(`at “${n}”`)}</button>` +
+           (vsState.mode === 'sig' ? `<button type="button" onclick="mapMenuClose();vsAddMarker('${mk.id}','rx')" title="${vsAddTip('at the marker', 'rx')}">${vsAddLabel(`at “${n}”`, 'rx')}</button>` : '') +
+           (plPickSite() ? `<button type="button" onclick="mapMenuClose();plLinkMarker('${mk.id}')" title="${plLinkTip('at the marker')}">${plLinkLabel(`“${n}”`)}</button>` : '') +
            `<button type="button" onclick="mapMenuClose();mkDelete('${mk.id}')">🗑 Delete “${n}”</button>`;
     }
     el.innerHTML = h + `<div class="ll">${la.toFixed(5)}, ${lo.toFixed(5)}</div>`;
@@ -12365,7 +12367,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<div class="b"><button type="button" class="map-btn" onclick="mkSelect('${m.id}',true)">✎ Edit</button>` +
       `<button type="button" class="map-btn" onclick="mkCentre()" title="Centre the map on the marker">⌖ Centre</button>` +
       `<button type="button" class="map-btn" onclick="vsAddMarker('${m.id}')" title="${vsAddTip('at the marker')}">${vsAddShort()}</button>` +
-      `<button type="button" class="map-btn" onclick="plLinkMarker('${m.id}')" title="${plLinkTip('at the marker')}">${plLinkShort()}</button>` +
+      (plPickSite() ? `<button type="button" class="map-btn" onclick="plLinkMarker('${m.id}')" title="${plLinkTip('at the marker')}">${plLinkShort()}</button>` : '') +
       `<button type="button" class="map-btn" onclick="mkDelete('${m.id}')">🗑 Delete</button></div>`;
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
   }
@@ -12745,7 +12747,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
            `<div class="s">OpenStreetMap · ${m.type} ${m.id}</div><table>${rows}</table>` +
            `<div class="lnk"><button type="button" class="map-btn" onclick="mastToMarker('${m.k}')" title="Make it one of your markers, to add its frequencies and notes">📍 Add as marker</button>` +
            `<button type="button" class="map-btn" onclick="vsAddMast('${m.k}')" title="${vsAddTip(`at the top of this mast (its mapped height, else ${vsState.h} m)`)}">${vsAddShort()}</button>` +
-           `<button type="button" class="map-btn" onclick="plLinkMast('${m.k}')" title="${plLinkTip('here')} (for the mast's own antenna height: ${vsAddShort()} adds it as a TX antenna)">${plLinkShort()}</button>` +
+           (plPickSite() ? `<button type="button" class="map-btn" onclick="plLinkMast('${m.k}')" title="${plLinkTip('here')} (for the mast's own antenna height: ${vsAddShort()} adds it as a TX antenna)">${plLinkShort()}</button>` : '') +
            `<a href="${mastOsmUrl(m)}" target="_blank" rel="noopener noreferrer">openstreetmap.org ↗</a></div>`;
   }
   // a marker of the user's on the mast, its OSM details as the notes
@@ -14731,7 +14733,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   const VS_LINK_ID = '_link';
   function vsLinkItem() {
     const L = plState.link, rx = L && vsGet(L.site);
-    if (!rx || rx.role !== 'rx') return null;
+    if (!rx || rx.st || rx.role !== 'rx') return null;
     const d = mapDistKm(rx.lat, rx.lon, L.lat, L.lon);
     return {id: VS_LINK_ID, link: true, name: L.name, lat: L.lat, lon: L.lon, h: vsTgt(), amsl: vsState.amsl, rxH: rx.h, rxId: rx.id,
             r: Math.min(VS_RMAX_KM, Math.max(rx.r, Math.ceil(d * 1.25 + 1))), col: '#ff7043', on: true, role: 'tx', mk: L.mk};
@@ -14739,7 +14741,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // what is worked out (and in the signal mode coloured): every shown site; in the signal mode its TX sites + the link's TX
   function vsJobItems() {
     if (vsState.mode !== 'sig') return vsState.items;
-    const out = vsState.items.filter(i => i.role !== 'rx'), l = vsLinkItem();
+    const out = vsState.items.filter(i => i.role !== 'rx' && !i.st), l = vsLinkItem();   // (the station: line of sight only)
     if (l) out.push(l);
     return out;
   }
@@ -15043,17 +15045,19 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     vsAddStation();
     return true;
   }
-  function vsAddAt() {
+  function vsAddAt(role) {
     const at = mapMenuAt;
     mapMenuClose();
     if (!at) return;
+    role = role === 'rx' ? 'rx' : 'tx';
+    const base = role.toUpperCase() + ' ';
     let i = 1;
-    while (vsState.items.some(v => v.name === 'Point ' + i)) i++;
-    vsAdd(at.la, at.lo, 'Point ' + i);
+    while (vsState.items.some(v => v.name === base + i)) i++;
+    vsAdd(at.la, at.lo, base + i, {role});
   }
-  function vsAddMarker(id) {
+  function vsAddMarker(id, role) {
     const m = mkGet(id);
-    if (m) vsAdd(m.lat, m.lon, m.name, {mk: m.id});
+    if (m) vsAdd(m.lat, m.lon, m.name, {mk: m.id, role: role === 'rx' ? 'rx' : 'tx'});
   }
   // from an OSM mast: the antenna at its mapped height (metres, or feet with ' / ft)
   function vsAddMast(k) {
@@ -15199,7 +15203,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<option value="1">No bending (k = 1)</option></select></div>` +
       `<div class="map-pl vs-sig" id="map-vs-sig"></div>` +
       `<div id="map-vs-list"></div><div class="map-vs-hov" id="map-vs-hov"></div><div id="map-vs-link" class="map-pl vs-sig"></div>` +
-      `<div class="map-vs-note vs-sig">Only transmitters are coloured: TX sites, and the TX end of a 📶 Link from an RX site (the station receives by default) - ` +
+      `<div class="map-vs-note vs-sig">The station isn't part of the signal: right-click the map to add TX and RX antennas. Only transmitters are coloured: TX antennas, and the TX end of a 📶 Link from an RX antenna - ` +
       `worked out for receivers at that site's antenna height. Signal: the median path loss by the chosen model (50 % of the time; ITU-R P.1812: diffraction over the terrain + troposcatter, Longley-Rice: NTIA's ITM, both per place along its terrain profile) + clutter (ITU-R P.2108), ` +
       `with shadowing (P.1546) and fading, as how often the receiver gets what it needs; the black line (switch: "Line of sight edge") is the edge of the line of sight. ` +
       `Right-click the map → "📶 Signal from here to …" for the terrain profile and link budget between a site and a place. Bare terrain: buildings and trees only through the clutter setting.</div>` +
@@ -15209,7 +15213,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
   function vsRowBuild(it) {
     const r = document.createElement('div');
-    r.className = 'vs-it';
+    r.className = 'vs-it' + (it.st ? ' vs-st' : '');
     r.dataset.id = it.id;
     r.innerHTML =
       `<div class="l1"><span class="sw" title="Show / hide" onclick="vsShow('${it.id}')"></span><span class="nm"></span>` +
@@ -15268,7 +15272,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     // the target is the other end: the RX antenna of TX sites, the TX antenna of RX sites - in
     // both modes, as the sites' own "TX antenna" / "RX antenna" (until 2026-10-12 the line of
     // sight mode said "Target" / "Antenna" - the user's call: the same words as the signal mode)
-    const roles = new Set(vsState.items.filter(i => i.on).map(i => i.role)), tl = $id('map-vs-tgt-l');
+    const roles = new Set(vsState.items.filter(i => i.on && !(i.st && vsState.mode === 'sig')).map(i => i.role)), tl = $id('map-vs-tgt-l');
     const tt = roles.size !== 1 ? 'TX / RX antenna' : roles.has('tx') ? 'RX antenna' : 'TX antenna';
     if (tl.textContent !== tt) tl.textContent = tt;
     vsSetVal($id('map-vs-ref'), vsState.amsl ? 'amsl' : 'agl', force);
@@ -15804,7 +15808,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // the link's ends: the site and the place (at the target height), as TX / RX by the site's role
   function plEnds() {
     const L = plState.link, it = L && vsGet(L.site);
-    if (!it) return null;
+    if (!it || it.st) return null;   // (the station isn't part of the signal mode)
     const site = {lat: it.lat, lon: it.lon, h: it.h, amsl: false, name: it.name, site: it},
           far = {lat: L.lat, lon: L.lon, h: vsTgt(), amsl: vsState.amsl, name: L.name, site: null};
     return it.role === 'rx' ? {tx: far, rx: site} : {tx: site, rx: far};
@@ -15861,20 +15865,17 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function plKChanged() { plPump(); plRender(true); }
 
   // ---- the link: a site and a place ----
-  // the site: the selected viewshed point, the station's when the station is
-  // selected, the link's own, else the first shown - none: the station's (added)
+  // the site: the selected TX / RX antenna, the link's own, else the first
+  // shown - never the station (the user's call 2026-10-12: the signal mode
+  // has only the TX and RX antennas added by right-clicking); none: null
   function plPickSite() {
-    const sel = vsSel && vsGet(vsSel), st = mapStSel && vsState.items.find(i => i.st), cur = plState.link && vsGet(plState.link.site);
-    return sel || st || cur || vsState.items.find(i => i.on) || vsState.items[0] || null;
+    const ok = i => i && !i.st, sel = vsSel && vsGet(vsSel), cur = plState.link && vsGet(plState.link.site);
+    return (ok(sel) && sel) || (ok(cur) && cur) || vsState.items.find(i => i.on && !i.st) || null;
   }
   // the link from a site to (lat, lon); the viewshed in the signal mode
   function plLinkTo(lat, lon, name, mk) {
-    let it = plPickSite();
-    if (!it) {
-      vsAddStation();
-      it = vsState.items.find(i => i.st);
-      if (!it) return;
-    }
+    const it = plPickSite();
+    if (!it) { mapStatusFlash('Add a TX or RX antenna first: right-click the map → "Add TX antenna here" / "Add RX antenna here"'); return; }
     plState.link = {site: it.id, lat: +lat.toFixed(6), lon: +lon.toFixed(6), name: String(name || 'Point').slice(0, 60), mk: mk || ''};
     plState.prof = true;
     plSave();
@@ -15912,7 +15913,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // here" - the user found them hard to understand
   function plLinkEnds() {
     const it = plPickSite();
-    return {tx: !it || it.role === 'rx', site: it ? `“${digEsc(it.name)}”` : 'the station'};   // (tx: the place transmits)
+    return {tx: !it || it.role === 'rx', site: it ? `“${digEsc(it.name)}”` : 'an antenna'};   // (tx: the place transmits; no site: no link offered)
   }
   function plLinkLabel(at) {
     const e = plLinkEnds();
@@ -15928,13 +15929,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                  : `The terrain profile and link budget from the TX antenna of ${e.site} to an RX antenna ${at} (${hs}, the Viewshed panel's)`) +
            ` - in the strip at the bottom of the map. To link another Viewshed site, select it first`;
   }
-  function plMenuItem() {
-    return `<button type="button" onclick="plLinkAt()" title="${plLinkTip('here')}">${plLinkLabel('here')}</button>`;
+  function plMenuItem() {   // (only with a TX / RX antenna to link to)
+    return plPickSite() ? `<button type="button" onclick="plLinkAt()" title="${plLinkTip('here')}">${plLinkLabel('here')}</button>` : '';
   }
   // ... and adding a site (a TX antenna): what it shows in the viewshed's mode
-  function vsAddLabel(at) { return vsState.mode === 'sig' ? `📶 Add TX antenna ${at}` : `👁 Line of sight from a TX antenna ${at}`; }
+  function vsAddLabel(at, role) { return vsState.mode === 'sig' ? `📶 Add ${role === 'rx' ? 'RX' : 'TX'} antenna ${at}` : `👁 Line of sight from a TX antenna ${at}`; }
   function vsAddShort() { return vsState.mode === 'sig' ? '📶 Add TX antenna' : '👁 Line of sight'; }
-  function vsAddTip(at) {
+  function vsAddTip(at, role) {
+    if (role === 'rx') return `Adds an RX antenna ${at} to the Viewshed panel (its height is set there) - not coloured itself: link it to a place (right-click → "Signal from here to …") and that place's coverage is coloured`;
     return `Adds a TX antenna ${at} to the Viewshed panel (its height and radius are set there) and ` +
            (vsState.mode === 'sig' ? 'colours how often its signal reaches RX antennas around it' : 'shows the ground in line of sight of it - where an RX antenna at the panel\'s height could see it');
   }
@@ -16303,10 +16305,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (!plJob) plPump();   // (after a reload worked out with the map)
     c.save();
     for (const it of vsState.items) {   // each site's role
-      if (!it.on) continue;
+      if (!it.on || it.st) continue;   // (the station: no part of the signal mode)
       const od = mapObjDrag && mapObjDrag.kind === 'vs' && mapObjDrag.id === it.id && mapObjDrag.lat !== undefined ? mapObjDrag : it;
       const [x, y] = mapLatLonToScreen(od.lat, od.lon);
-      plTag(c, x + (it.st ? -22 : -18), y - (it.st ? 18 : 12), it.role);
+      plTag(c, x - 18, y - 12, it.role);
     }
     c.restore();
     const e = plEnds();
