@@ -92,7 +92,7 @@ and wake-up bursts are not devices). Option "Unknown signals" turns this off.
 |---|---|---|
 | Units | Metric / US | °C, kPa, m/s or °F, PSI, mph in the table and labels |
 | DoA per device | Each transmission alone / 1 min / 10 min | the `avg_s` of its talker packets |
-| Unknown signals | Show / Ignore | see above |
+| Unknown signals | Show / Ignore | see above; Ignore also removes the unknown devices already heard from the table and the 📡 DF list |
 | Burst detection | 8 / 10 / 13 / 16 dB | how far above the noise a burst must rise |
 | Keep devices | 1 h / 6 h / 24 h / 7 days | how long a device stays in the table and the 📡 DF list after it was last heard (default 24 h; `kp::Talker::keep_s` + `Host::table_keep`) - at most 1000 devices here, 500 talkers in kraken_doa (the least recently heard go first) |
 

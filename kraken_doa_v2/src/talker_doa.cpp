@@ -484,6 +484,13 @@ void TalkerDoa::add_span(const dig::TalkerSpan& s) {
         return;
     }
     if (s.id.empty()) return;
+    if (s.forget) {   // kp::Host::talker_forget: gone now, with its waiting packets
+        std::lock_guard<std::mutex> lk(mu_);
+        talkers_.erase(s.id);
+        for (auto it = packets_.begin(); it != packets_.end();)
+            it = it->id == s.id ? packets_.erase(it) : std::next(it);
+        return;
+    }
     if (s.packet) {
         add_packet(s);
         return;

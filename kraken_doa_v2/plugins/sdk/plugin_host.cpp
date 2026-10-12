@@ -240,6 +240,9 @@ public:
         }
         send(kp::wire::TALKER_END, p.data(), p.size());
     }
+    void talker_forget(const std::string& id) override {
+        send(kp::wire::TALKER_FORGET, id.data(), std::min<size_t>(id.size(), 32));
+    }
     bool station(double* lat, double* lon) const override {
         if (!have_station_) return false;
         *lat = st_lat_;

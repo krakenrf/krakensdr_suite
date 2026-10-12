@@ -106,7 +106,23 @@ public:
     void option(const std::string& key, const std::string& value) override {
         if (key == "units") imperial_ = value == "us";
         else if (key == "doa_avg") avg_s_ = value.empty() ? 1.0 : std::clamp(atof(value.c_str()), 0.2, 3600.0);
-        else if (key == "unknown") unknown_ = value != "0";
+        else if (key == "unknown") {
+            unknown_ = value != "0";
+            if (!unknown_) {
+                // the unknown devices heard so far go too: table rows, DF list
+                for (auto it = dev_.begin(); it != dev_.end();) {
+                    if (it->second.kind != Kind::UNKNOWN) {
+                        ++it;
+                        continue;
+                    }
+                    forget(it->second);
+                    host.talker_forget(it->second.tid);
+                    it = dev_.erase(it);
+                }
+                classes_.clear();
+                update_facts();
+            }
+        }
         else if (key == "sens") {
             thr_db_ = value.empty() ? 10.0 : std::clamp(atof(value.c_str()), 6.0, 30.0);
             fe_.set_threshold_db(thr_db_);

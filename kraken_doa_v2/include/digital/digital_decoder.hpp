@@ -82,6 +82,8 @@ struct TalkerSpan {
     // packets: how long the talker is kept after its last packet (s, 0 = the
     // default; kp::Talker::keep_s)
     double keep_s = 0;
+    // not a span: the plugin asked to forget this talker now (kp::Host::talker_forget)
+    bool forget = false;
     // a confirmed frame (kp::Host::valid(start, end)), not a talker: these
     // samples hold the decoded signal - the Digital squelch. id is "".
     bool signal = false;

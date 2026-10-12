@@ -41,7 +41,7 @@ constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4,
                    W_FACT = 16, W_EVENT = 17, W_VALID = 18, W_AUDIO = 19, W_VOICE_STATE = 20, W_FREQ_ERROR = 21,
                    W_SYNC_DONE = 22, W_MAP_POINT = 23, W_MAP_REMOVE = 24, W_TABLE_COLUMNS = 25, W_TABLE_ROW = 26,
                    W_TABLE_REMOVE = 27, W_MESSAGE = 28, W_RAW = 29, W_TALKER = 30, W_TALKER_END = 31,
-                   W_TABLE_KEEP = 32;
+                   W_TABLE_KEEP = 32, W_TALKER_FORGET = 33;
 // how far back a plugin's sample positions stay mappable to the VFO stream
 constexpr double POS_MAP_SECONDS = 60;
 // a talker packet (kp::Talker::packet) longer than this is not one
@@ -780,6 +780,15 @@ private:
             case W_TALKER:
                 on_talker(r, p, len);
                 break;
+            case W_TALKER_FORGET: {
+                if (len == 0) break;
+                TalkerSpan s;
+                s.plugin = r.id;
+                s.id.assign(p, std::min<size_t>(len, 32));
+                s.forget = true;
+                owner_->deliver_talker(s);
+                break;
+            }
             case W_TALKER_END: {
                 auto f = split0(p, std::min<size_t>(len, 64), 2);
                 if (f.empty()) break;

@@ -214,6 +214,9 @@ public:
     // The channel's transmission ended at Host::time() at_s (NAN = now): e.g.
     // on the terminator frame, or when frames stopped coming without one
     virtual void talker_end(double at_s = NAN, int channel = 0) { (void)at_s; (void)channel; }
+    // Forget a talker now (its bearing, history and row in the 📡 DF list) -
+    // e.g. ism drops its unknown devices when the user turns them off
+    virtual void talker_forget(const std::string& id) { (void)id; }
     // The receiver's location (sidebar → Station Information), if it has one:
     // a reference for local position decoding, distances, range checks
     virtual bool station(double* lat, double* lon) const { (void)lat; (void)lon; return false; }
@@ -300,5 +303,6 @@ constexpr uint32_t RAW = 29;           // one raw frame (text) for the decoder d
 constexpr uint32_t TALKER = 30;
 constexpr uint32_t TALKER_END = 31;    // at_s ['\0' channel] (decimal text)
 constexpr uint32_t TABLE_KEEP = 32;    // seconds (decimal text): Host::table_keep
+constexpr uint32_t TALKER_FORGET = 33; // id: Host::talker_forget
 // (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends)
 }  // namespace kp::wire

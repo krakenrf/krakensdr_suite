@@ -1872,7 +1872,7 @@ Edit `include/config.hpp`:
   kraken_doa takes <= 0.25 s and keeps 1 s at 2.4 MHz), `freq_hz` = the burst's
   carrier / FSK centre, `bw_hz` = occupied + 10 kHz (25-160 kHz), `avg_s` =
   option `doa_avg` (1 = each transmission alone, 60, 600). Options `units`
-  (si / us), `unknown`, `keep_h` "Keep devices" (1 / 6 / 24 / 168 h,
+  (si / us), `unknown` (0 = none from now on, and the ones heard so far are dropped: `table_remove` + `Host::talker_forget` - wire TALKER_FORGET 33 -> `TalkerSpan::forget` -> `TalkerDoa::add_span` erases the talker and its waiting packets), `keep_h` "Keep devices" (1 / 6 / 24 / 168 h,
   default 24): a device not heard for that long is forgotten here (max
   1000, then the least recently heard), its table row hidden
   (`Host::table_keep`, wire TABLE_KEEP 32 -> `Report::table_keep`, per
