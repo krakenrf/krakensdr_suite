@@ -14677,13 +14677,19 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // the target height and the site's role too. A signal result also serves
   // the line of sight (vsResOk)
   function vsKey(it) {
-    const g = `${it.lat},${it.lon},${it.h}${it.amsl ? 'a' : ''},${it.r},${vsState.k}`;
+    const g = `${it.lat},${it.lon},${it.h}${it.amsl ? 'a' : ''},${it.r},${vsK()}`;
     return vsState.mode === 'sig' ? g + '|' + JSON.stringify(plSigMsg(it)) : g;
   }
   function vsResOk(it, res) {
     return !!res && (res.key === vsKey(it) || (vsState.mode !== 'sig' && res.key.split('|')[0] === vsKey(it)));
   }
   function vsTgt() { return vsState.tgt; }
+  // the refraction (k = effective Earth radius / real one) in use: the line
+  // of sight mode's choice (radio / light / none); the signal mode always
+  // radio, 4/3 - its models are for radio waves (P.1812's median
+  // atmosphere; ITM takes its own from N0) - the choice is kept for the
+  // line of sight
+  function vsK() { return vsState.mode === 'sig' ? 4 / 3 : vsState.k; }
   // 📶 the signal mode colours TRANSMITTERS only (the user's call): its TX
   // sites, and - when the link's site receives (the station, by default) -
   // the link's place as a transmitter of its own: worked out around the
@@ -14764,7 +14770,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (!vsWorkerStart()) { vsRender(); return; }
     const rM = it.r * 1000;
     vsJob = {job: ++vsSeq, id: it.id, key: vsKey(it), prog: null, lat: it.lat, lon: it.lon, h: it.h, r: it.r};
-    vsWorker.postMessage({job: vsJob.job, lat: it.lat, lon: it.lon, h: it.h, amsl: !!it.amsl, k: vsState.k, levels: vsPlan(it.lat, rM),
+    vsWorker.postMessage({job: vsJob.job, lat: it.lat, lon: it.lon, h: it.h, amsl: !!it.amsl, k: vsK(), levels: vsPlan(it.lat, rM),
                           sig: vsState.mode === 'sig' ? plSigMsg(it) : undefined, par: vsPar === null ? undefined : vsPar});
     vsRender();
   }
@@ -15223,7 +15229,13 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const tt = vsState.mode !== 'sig' || !roles.size ? 'Target' : roles.size > 1 ? 'TX / RX antenna' : roles.has('tx') ? 'RX antenna' : 'TX antenna';
     if (tl.textContent !== tt) tl.textContent = tt;
     vsSetVal($id('map-vs-ref'), vsState.amsl ? 'amsl' : 'agl', force);
-    vsSetVal($id('map-vs-k'), String(vsState.k), force);
+    const ks = $id('map-vs-k'), sigK = vsState.mode === 'sig', kChg = ks.disabled !== sigK;   // (📶 the signal: always radio - vsK)
+    if (kChg) {
+      ks.disabled = sigK;
+      ks.title = sigK ? 'The signal mode always uses radio refraction (k = 4/3, ITU-R P.1812\'s median atmosphere): its propagation models are for radio waves. The line of sight mode keeps your choice'
+                      : 'Earth curvature and how much the air bends the path: radio waves bend more than light (k = effective Earth radius / real one)';
+    }
+    vsSetVal(ks, String(vsK()), force || kChg);
     const stb = $id('map-vs-st');
     const noSt = !mapStationPos() || vsState.items.length >= VS_MAX;
     if (stb.disabled !== noSt) stb.disabled = noSt;
@@ -15637,7 +15649,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function plLinkMsg() {
     const e = plEnds(), g = plGround(), s = plState;
     return {a: {lat: e.tx.lat, lon: e.tx.lon, h: e.tx.h, amsl: e.tx.amsl}, b: {lat: e.rx.lat, lon: e.rx.lon, h: e.rx.h, amsl: e.rx.amsl}, f: s.f,
-            k: vsState.k, pol: plWavePol(), N0: s.N0, climate: s.climate, eps: g[1], sigma: g[2], envA: s.envTx, envB: s.envRx,
+            k: vsK(), pol: plWavePol(), N0: s.N0, climate: s.climate, eps: g[1], sigma: g[2], envA: s.envTx, envB: s.envRx,
             hmA: PL_ENV_HM[s.envTx], hmB: PL_ENV_HM[s.envRx], rel: s.rel};
   }
   function plKey() { return plLinkOn() ? JSON.stringify(plLinkMsg()) : ''; }

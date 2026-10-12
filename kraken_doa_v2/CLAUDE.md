@@ -1220,9 +1220,15 @@ Edit `include/config.hpp`:
   only with ITM - they are in `plSigMsg`, so in `vsKey`: a job runs only
   where the key changed), L = the link; everything else (the RX antenna's
   polarization too) only repaints from the losses kept (`vsRepaint` ->
-  `plPaintSig`). The viewshed's target height / reference and refraction
-  are shared (`vsSetTgt` / `vsSetRef` call `vsSigChanged`, `vsSetK`
-  `plKChanged`)
+  `plPaintSig`). The viewshed's target height / reference are shared
+  (`vsSetTgt` / `vsSetRef` call `vsSigChanged`). The REFRACTION is not:
+  `vsK()` = 4/3 in the signal mode (the user's call: its models are for
+  radio waves - light / no bending made P.1812's effective Earth radius,
+  the line of sight edge / fading choice, the link's profile and the
+  air-to-ground clutter angle inconsistent; ITM always took its own from
+  N0), the stored choice (`vsState.k`, kept) in the line of sight mode -
+  in the job key, the job, the link (`plLinkMsg`); the selector shows
+  "Radio (k = 4/3)" disabled in the signal mode (t_kref.py)
 - POLARIZATION (`plPolLoss(los)`, `plWavePol`): each antenna 'v' / 'h' /
   'c' (circular) / 'a' (linear at angT / angR degrees from horizontal). The
   mismatch relative to matched antennas (the models are for those): the
