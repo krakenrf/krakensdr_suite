@@ -792,9 +792,15 @@ Edit `include/config.hpp`:
 
 **👁 Viewshed (UI only, kraken_doa.html "👁 VIEWSHED"):**
 - Line of sight over the terrain from the station or any picked place:
-  "Viewshed" button (`mapState.vs` layer + `vsOpen` fold; adds the station
-  when the list is empty), right-click menu "👁 Line of sight from a TX
-  antenna here" / "at “marker”" (signal mode: "📶 Coverage of a TX antenna
+  "Viewshed" button (`mapState.vs` layer + `vsOpen` fold). The STATION'S
+  viewshed is always there (`vsEnsureStation`, from `vsToggle` / `vsRender`:
+  re-added when missing; its row has no ✕, `vsRemove` refuses it - hide it
+  with its colour box) - no "+ Station" button (the user's call
+  2026-10-12); signal mode has "+ TX Node" instead (`vsAddNode`: a TX site
+  ~1 km east of the station, to drag where wanted). The station's mast on
+  the map carries the callsign (Station Information `station-id`, redrawn
+  on `STATION_ID:` / an edit). Right-click menu "👁 Line of sight from a TX
+  antenna here" / "at “marker”" (signal mode: "📶 Add TX antenna
   here"; `vsAddLabel` / `vsAddShort` / `vsAddTip` - until 2026-10-12 "👁
   Viewshed from here", which the user found hard to understand), the
   marker panel and the OSM mast popup (`vsAddMast`: antenna
@@ -1351,7 +1357,7 @@ Edit `include/config.hpp`:
   Link: TX here ↔ “Station”", hard to understand), a marker (menu + "📶
   Signal to “site”" / "from “site”" in its panel, `plLinkShort`,
   `plLinkMarker`), an OSM mast (the same, `plLinkMast` - at the target
-  height; "👁 Line of sight" / "📶 Coverage" adds the mast as a TX antenna
+  height; "👁 Line of sight" / "📶 Add TX antenna" adds the mast as a TX antenna
   at its own height). The marker panel and the mast popup re-render on
   every map draw, so their words follow the mode and the picked site. The
   menu wraps long items (max 280 px) instead of cutting them; the site = `plPickSite()`:
@@ -1417,7 +1423,7 @@ Edit `include/config.hpp`:
   no job, sigma changes; other clutter: a job), a second site (best server,
   more coverage), the menu's words ("📶 Signal from “Point 1” to here"
   with a TX site selected, "📶 Signal from here to “Station”" + its tooltip,
-  "📶 Coverage of a TX antenna here" / line of sight "👁 Line of sight
+  "📶 Add TX antenna here" / line of sight "👁 Line of sight
   from a TX antenna here", the buttons), link + strip +
   budget + link = coverage cell, chart + hover, model row, drag the place
   (no coverage job), Esc, ⇄, line of sight again (no job, strip hidden) and

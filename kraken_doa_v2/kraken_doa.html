@@ -3450,7 +3450,7 @@ function applySyncCmdInner(cmd) {
   }
   else if ((v = arg('STATION_ID:')) !== null) {
     const el = $id('station-id');
-    if (idle(el) && el.value !== v) el.value = v;
+    if (idle(el) && el.value !== v) { el.value = v; if (typeof mapDraw === 'function') mapDraw(); }   // (the callsign by the station on the map)
   }
   else if ((v = arg('LOCATION_SOURCE:')) !== null) {
     const el = $id('location-source');
@@ -8604,6 +8604,7 @@ function addTouchHandlers(el, down, move, up) {
   function setStationId() {
     const el = $id('station-id');
     if (el) send('STATION_ID:' + el.value);
+    if (typeof mapDraw === 'function') mapDraw();
   }
   function setLocationSource(v) {
     send('LOCATION_SOURCE:' + v);
@@ -11162,6 +11163,16 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     c.translate(sx, sy);
     c.strokeStyle = '#000'; c.fillStyle = mapStSel ? '#4fc3f7' : '#ffeb3b'; c.lineWidth = 1.5;
     c.beginPath(); c.moveTo(0, -11); c.lineTo(6, 6); c.lineTo(-6, 6); c.closePath(); c.fill(); c.stroke();
+    // its callsign (Station Information) beside it
+    const cs = (($id('station-id') || {}).value || '').trim();
+    if (cs) {
+      c.font = 'bold 12px sans-serif';
+      c.textBaseline = 'middle';
+      c.lineWidth = 3; c.strokeStyle = 'rgba(0,0,0,0.85)'; c.lineJoin = 'round';
+      c.strokeText(cs, 10, -2);
+      c.fillStyle = mapStSel ? '#4fc3f7' : '#ffeb3b';
+      c.fillText(cs, 10, -2);
+    }
     c.restore();
   }
 
@@ -15015,6 +15026,22 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (!p) { mapStatusFlash('No station location - set it in the sidebar (Station Information) or right-click the map → "Set station here"'); return; }
     vsAdd(p[0], p[1], 'Station', {st: true});
   }
+  // the station's viewshed is always there (the user's call, 2026-10-12 -
+  // no "+ Station" button): added whenever the viewshed is on, the station
+  // located and it is missing (an old list without it, the location late)
+  function vsEnsureStation() {
+    if (!mapState.vs || vsState.items.some(i => i.st) || vsState.items.length >= VS_MAX || !mapStationPos()) return false;
+    vsAddStation();
+    return true;
+  }
+  // + TX Node (signal mode): a transmitter ~1 km east of the station, to drag where wanted
+  function vsAddNode() {
+    const p = mapStationPos();
+    if (!p) { mapStatusFlash('No station location - set it in the sidebar (Station Information) or right-click the map → "Set station here"'); return; }
+    let i = 1;
+    while (vsState.items.some(v => v.name === 'TX Node ' + i)) i++;
+    vsAdd(p[0], p[1] + 1 / (111.32 * Math.cos(p[0] * Math.PI / 180)), 'TX Node ' + i, {role: 'tx'});
+  }
   function vsAddAt() {
     const at = mapMenuAt;
     mapMenuClose();
@@ -15041,7 +15068,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     mapState.vs = !mapState.vs;
     if (mapState.vs) {
       mapState.vsOpen = true;
-      if (!vsState.items.length && mapStationPos()) vsAddStation();
+      vsEnsureStation();
     }
     mapSave();
     mapUpdateControls();
@@ -15049,6 +15076,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     vsPump();
   }
   function vsRemove(id) {
+    if ((vsGet(id) || {}).st) return;   // (the station's stays - hide it with its colour box)
     if (vsSel === id) vsSel = null;
     if (plState.link && plState.link.site === id) plLinkRemove();   // (📶 its link)
     vsCancel(id);
@@ -15155,8 +15183,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     el.dataset.built = '1';
     el.innerHTML =
       `<div class="map-vs-h"><span class="t">👁 Viewshed</span>` +
-      `<button type="button" class="map-btn" id="map-vs-st" onclick="vsAddStation()" title="Line of sight from the station's antenna (its location: Station Information)">+ Station</button>` +
-      `<span class="hint">or right-click the map</span>` +
+      `<button type="button" class="map-btn vs-sig" id="map-vs-st" onclick="vsAddNode()" title="Adds a TX antenna near the station (drag it on the map where you want it) - its coverage is coloured">+ TX Node</button>` +
+      `<span class="hint vs-sig">or right-click the map</span><span class="hint vs-los">from the station - right-click the map for more</span>` +
       `<span class="x" id="map-vs-fold" onclick="mapSet('vsOpen', !mapState.vsOpen)" title="Fold / unfold"></span></div>` +
       `<div class="map-vs-body"><div class="map-vs-row"><div class="map-seg vs-mode" id="map-vs-mode">` +
       `<button type="button" data-m="los" onclick="vsSetMode('los')" title="Where an antenna at the target height is in sight of each site">👁 Line of sight</button>` +
@@ -15187,7 +15215,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<div class="l1"><span class="sw" title="Show / hide" onclick="vsShow('${it.id}')"></span><span class="nm"></span>` +
       `<span class="role pl-tag" onclick="vsSetRole('${it.id}')" title="This site transmits (TX) or receives (RX) - it names its antenna and the other one (line of sight works both ways). The signal mode colours a TX site's coverage for receivers at the other antenna's height; an RX site isn't coloured. Click: switch"></span>` +
       `<button type="button" class="map-btn" title="Show it on the map" onclick="vsCentre('${it.id}')">⌖</button>` +
-      `<button type="button" class="map-btn" title="Remove" onclick="vsRemove('${it.id}')">✕</button></div>` +
+      (it.st ? '' : `<button type="button" class="map-btn" title="Remove" onclick="vsRemove('${it.id}')">✕</button>`) + `</div>` +
       `<div class="l2"><label title="This site's antenna height above the ground"><span class="al">TX antenna</span> <input type="number" class="h" min="0" max="5000" step="1" onchange="vsSetItem('${it.id}','h',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> m</label>` +
       `<label title="How far to look (radius)">Radius <input type="number" class="r" min="1" max="${VS_RMAX_KM}" step="1" onchange="vsSetItem('${it.id}','r',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> km</label>` +
       `<span class="st"></span></div>`;
@@ -15226,6 +15254,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function vsRender(force) {
     const el = $id('map-vs');
     if (!el || !vsReady) return;
+    if (vsEnsureStation()) return;   // (it renders again)
     const show = !!mapState.vs;
     if (el.style.display !== (show ? 'block' : 'none')) el.style.display = show ? 'block' : 'none';
     if (!show) { if (plReady) plRenderStrip(); return; }
@@ -15251,7 +15280,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
     vsSetVal(ks, String(vsK()), force || kChg);
     const stb = $id('map-vs-st');
-    const noSt = !mapStationPos() || vsState.items.length >= VS_MAX;
+    const noSt = !mapStationPos() || vsState.items.length >= VS_MAX;   // (+ TX Node: placed by the station)
     if (stb.disabled !== noSt) stb.disabled = noSt;
     const box = $id('map-vs-list');
     const ids = vsState.items.map(i => i.id);
@@ -15906,8 +15935,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     return `<button type="button" onclick="plLinkAt()" title="${plLinkTip('here')}">${plLinkLabel('here')}</button>`;
   }
   // ... and adding a site (a TX antenna): what it shows in the viewshed's mode
-  function vsAddLabel(at) { return vsState.mode === 'sig' ? `📶 Coverage of a TX antenna ${at}` : `👁 Line of sight from a TX antenna ${at}`; }
-  function vsAddShort() { return vsState.mode === 'sig' ? '📶 Coverage' : '👁 Line of sight'; }
+  function vsAddLabel(at) { return vsState.mode === 'sig' ? `📶 Add TX antenna ${at}` : `👁 Line of sight from a TX antenna ${at}`; }
+  function vsAddShort() { return vsState.mode === 'sig' ? '📶 Add TX antenna' : '👁 Line of sight'; }
   function vsAddTip(at) {
     return `Adds a TX antenna ${at} to the Viewshed panel (its height and radius are set there) and ` +
            (vsState.mode === 'sig' ? 'colours how often its signal reaches RX antennas around it' : 'shows the ground in line of sight of it - where an RX antenna at the panel\'s height could see it');
