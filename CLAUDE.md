@@ -503,11 +503,11 @@ decoders `kraken_doa_v2/plugins/`
   areas at zoom >= 11; kept a week in localStorage, drawn at any zoom;
   coloured by use (communication:* tags), click = all their tags, "📍 Add as
   marker". UI-only (kraken_doa.html "📡 OSM MASTS")
-- 👁 Viewshed ("Viewshed" button, right-click "👁 Line of sight from a TX
-  antenna here" / in signal mode "📶 Add TX antenna here" (the only way
-  to add one; Delete removes the selected one); the station's own viewshed is always shown
-  and its mast carries the callsign, markers,
-  masts): the ground in line of sight of an antenna there (height above
+- 👁 Viewshed ("Viewshed" button; LINE OF SIGHT IS THE STATION'S ONLY -
+  the user's call 2026-10-13, no right-click item for it, other sites
+  hidden in that mode; in signal mode right-click "📶 Add TX antenna here"
+  (the only way to add one; Delete removes the selected one), markers,
+  masts; the station's mast carries the callsign): the ground in line of sight of an antenna there (height above
   ground, radius up to 1000 km, target height above ground or sea level,
   refraction k), anywhere in the world - AWS Terrain Tiles fetched BY THE
   BROWSER, computed in a Web Worker: rays along GREAT CIRCLES in RINGS (~8
@@ -529,7 +529,7 @@ decoders `kraken_doa_v2/plugins/`
   a black line (2 px; OFF by default - the panel's "Line of sight edge"
   switch, per browser); line of sight mode is the plain viewshed (both show
   the identical line of sight). Each site is a TX or an RX, added by right-clicking
-  ("📶 Add TX / RX antenna here") - the STATION ISN'T PART OF THE SIGNAL
+  ("📶 Add TX antenna here"; no TX / RX tag to switch, no RX adding) - the STATION ISN'T PART OF THE SIGNAL
   MODE (the user's call: hidden there, never coloured or linked; it keeps
   its line of sight viewshed); ONLY TRANSMITTERS ARE COLOURED (the user's call): TX sites
   (receivers at the target height), and the TX place of a link from an RX
@@ -544,8 +544,9 @@ decoders `kraken_doa_v2/plugins/`
   the rays split over helper workers (`plSweepPar`: one per core but one,
   the same cells to the bit);
   Okumura-Hata was dropped (the user's call: no terrain, valid only for
-  1-20 km / a 30-200 m base). LINK (right-click "📶 Signal from here to “Station”" / "from “site”
-  to here" by the site's role, markers, masts): a site <-> a
+  1-20 km / a 30-200 m base). LINK (right-click "📶 Path loss analysis from TX 1 to here" - the
+  selected TX antenna, else the first; only once one is placed - markers,
+  masts): a TX antenna -> a
   place, the great-circle terrain profile through ITU-R
   P.1812-6 (delta-Bullington diffraction + troposcatter, median, no
   ducting), NTIA's ITM / Longley-Rice (a JS port of the public-domain C++)

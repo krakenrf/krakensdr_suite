@@ -801,10 +801,15 @@ Edit `include/config.hpp`:
   a viewshed site - not the station's - or the link's place = the link;
   not while typing in a field). The station's mast on
   the map carries the callsign (Station Information `station-id`, redrawn
-  on `STATION_ID:` / an edit). Right-click menu "👁 Line of sight from a TX
-  antenna here" / "at “marker”" (signal mode: "📶 Add TX antenna
-  here"; `vsAddLabel` / `vsAddShort` / `vsAddTip` - until 2026-10-12 "👁
-  Viewshed from here", which the user found hard to understand), the
+  on `STATION_ID:` / an edit). LINE OF SIGHT MODE IS THE STATION'S
+  VIEWSHED ONLY (the user's call 2026-10-13): `vsJobItems` = the station,
+  `vsDraw` skips the rest, their rows are hidden (CSS), `vsHit` picks none,
+  and the right-click menu / marker / mast have no add item there - nor
+  any viewshed / path loss item at all outside signal mode or with the
+  viewshed off (`plMenuOn`, 2026-10-13) (it was
+  "👁 Line of sight from a TX antenna here", before that "👁 Viewshed from
+  here"). Signal mode adds TX antennas: right-click "📶 Add TX antenna
+  here" / "at “marker”" (`vsAddLabel` / `vsAddShort` / `vsAddTip`), the
   marker panel and the OSM mast popup (`vsAddMast`: antenna
   at the mast's `height` tag, feet with ' / ft). Up to `VS_MAX` 6, each in
   its own colour, drawn over the tiles (`vsDraw`, before the DF heat maps)
@@ -1023,11 +1028,12 @@ Edit `include/config.hpp`:
   a ROLE: TX or RX (the station's RX, other sites as added). The STATION
   ISN'T PART OF THE SIGNAL MODE (the user's call 2026-10-12): its row is
   hidden there (`.vs-it.vs-st`), `vsJobItems` / `vsLinkItem` / `plEnds` /
-  `plPickSite` / `plDraw`'s tags skip it, a link needs a TX / RX antenna
-  (none: no "Signal from" menu item / buttons, `plLinkTo` flashes). TX
-  and RX antennas come only from the right-click menu ("📶 Add TX
-  antenna here" / "📶 Add RX antenna here", `vsAddAt(role)`, named "TX n"
-  / "RX n"; markers too). ONLY
+  `plPickSite` / `plDraw`'s tags skip it, a link needs a TX antenna
+  (none: no path loss menu item / buttons, `plLinkTo` flashes). TX
+  antennas come only from the right-click menu ("📶 Add TX antenna here",
+  `vsAddAt('tx')`, named "TX n"; markers too) - no RX adding, no TX / RX
+  tag to switch a role (the user's call 2026-10-13; `vsSetRole` is left
+  for old RX sites / tests). ONLY
   TRANSMITTERS ARE COLOURED (the user's call, 2026-10-12: an RX site used
   to get its own "where would a transmitter be heard" map - reciprocal, the
   same numbers, but centred on the receiver; with its radius smaller than
@@ -1041,8 +1047,8 @@ Edit `include/config.hpp`:
   DROPPED (vsPump skips it while mapObjDrag is 'pl'), dropped when the link
   goes / its site transmits (`vsLinkSync`). `vsJobItems()` = what is worked
   out / coloured / hovered (LOS mode: every site). An RX site in signal
-  mode: no job, no radius circle, its row says "an RX antenna: right-click
-  the map → 📶 Signal from here to “name” ..." or
+  mode (old saved ones): no job, no radius circle, its row says "an RX
+  antenna - not coloured ..." or
   its link's TX status. Every shown transmitter at once, the BEST per
   place. The LINK is a tool on top: a site <-> a place
   (at the target height), its profile + every model + the budget. The
@@ -1297,9 +1303,8 @@ Edit `include/config.hpp`:
   sight said "Antenna" / "Target"): a site row's "TX antenna" / "RX
   antenna" by its role; the target -> the other end's ("RX antenna" for
   TX sites, "TX antenna" for RX sites, "TX / RX antenna" when the shown
-  sites have both, or none). The TX / RX tag (click: the role) shows in
-  both modes; in line of sight it only names the ends (reciprocal - a
-  role switch works nothing out again)
+  sites have both, or none). No TX / RX tag on the rows any more (removed
+  2026-10-13: TX antennas are placed by right-clicking)
 - Reliability: `plOutage(m, sigma, kind, K)` = integral of phi(z)
   F_fade(sigma z - m dB) over +-6 sigma (121-point trapezoid; the Rician
   power CDF tabulated ONCE per K, `plFadeTab`: the power pdf with I0e - A&S
@@ -1360,22 +1365,23 @@ Edit `include/config.hpp`:
 - The link: `plState.link` = a site + a place; `plEnds()` -> {tx, rx} by the
   site's role (the place at the target height / reference, so the link =
   the coverage cell there: 146.9 vs 146.6 dB in the test). Made by the
-  right-click menu ("📶 Signal from here to “site”" when the site
-  receives, "📶 Signal from “site” to here" when it transmits; `plMenuItem`
-  / `plLinkLabel` / `plLinkTip` via `plLinkEnds` - until 2026-10-12 "📶
-  Link: TX here ↔ “Station”", hard to understand), a marker (menu + "📶
-  Signal to “site”" / "from “site”" in its panel, `plLinkShort`,
+  right-click menu ("📶 Path loss analysis from TX 1 to here": the
+  selected TX antenna, else the first placed - none: no item; `plMenuItem`
+  / `plLinkLabel` / `plLinkTip` via `plLinkSite` - until 2026-10-12 "📶
+  Link: TX here ↔ “Station”", then "📶 Signal from here to …" / "… to
+  here" + "Add RX antenna here", reconciled by the user 2026-10-13), a
+  marker (menu + "📶 Path loss from TX 1" in its panel, `plLinkShort`,
   `plLinkMarker`), an OSM mast (the same, `plLinkMast` - at the target
   height; "👁 Line of sight" / "📶 Add TX antenna" adds the mast as a TX antenna
   at its own height). The marker panel and the mast popup re-render on
   every map draw, so their words follow the mode and the picked site. The
   menu wraps long items (max 280 px) instead of cutting them; the site = `plPickSite()`:
-  the selected viewshed point, the station's when the station is selected,
-  the link's own, else the first shown (none: the station's added). Turns
+  the selected TX antenna, else the first one placed (never the station or
+  an RX site; none: null). Turns
   the viewshed on in signal mode. Only in signal mode (`plLinkOn`). The
   place: selected + dragged (`mapSelectObj('pl:far')`, drag kind 'pl' ->
   `plMoveFar` after a 0.15 s pause); the site's point moves the link with
-  it. ⇄ (`plSwap`) = the site's role; ✕ (`plLinkRemove`; removing the site
+  it. ✕ (`plLinkRemove`; removing the site - Delete on the selected place too -
   removes it too). `runLink` on its own worker (`plWorker`, see LINK above)
 - UI: the signal block `#map-vs-sig` in the viewshed panel (class
   `vs-sig`: shown only by `.map-vs.sig`; `vs-los` the reverse): Freq + TX
@@ -1384,8 +1390,7 @@ Edit `include/config.hpp`:
   mismatch) - not folded: they change the map -, the rest folded
   under "Antennas, receiver, channel" (gains, cables, receiver, N0,
   clutter TX / RX, fading + K, sigma_L), "Wanted reliability", the legend
-  (`plLegendHtml`, naming the model); a TX / RX tag per site row (click: the
-  role); `#map-vs-link` (the link in one line + Show / Hide). `plRenderSig`
+  (`plLegendHtml`, naming the model); `#map-vs-link` (the link in one line + Show / Hide). `plRenderSig`
   runs from `vsRender`; `plRender` = `vsRender`. Strip `#map-plk` at the
   bottom of the map (`.map-pane.pl-open` lifts the DF panel, the marker
   panel and the status line): TX → RX, the path, the three models (a row
@@ -1413,7 +1418,9 @@ Edit `include/config.hpp`:
   cells differ), t_drag.py (real mouse drags of the link's place, random
   speeds / pauses: the profile drawn for the current link whenever the
   worker is idle - 2 of 40 blank before the F1 clamp, 0 of 80 after), and
-  t_uni_ui.py - 91 checks (incl. the labels by role in both modes;
+  t_uni_ui.py - 91 checks (incl. TX antennas only + the one path loss
+  item, line of sight = the station's only, no menu items outside signal;
+  the labels by role;
   polarization: RX-only a repaint, TX h / v
   a job, 60° = cos^2 30°, circular, urban receivers less mismatch - each
   vs an independent formula, one figure; the link's budget row; the
