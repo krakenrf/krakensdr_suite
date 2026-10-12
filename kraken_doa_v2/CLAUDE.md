@@ -1274,10 +1274,13 @@ Edit `include/config.hpp`:
   once the polarization step was gone. Shown in the hover ("Rician K x
   dB") and the strip ("Rician K x dB (6 dB on a clear path; terrain in
   the way y dB, troposcatter z %)", "≈ Rayleigh" below -10 dB)
-- LABELS (signal mode, `vsRender`): a site row's "Antenna" -> "TX antenna"
-  / "RX antenna" by its role; "Target" -> the other end's ("RX antenna" for
+- LABELS (`vsRender`, BOTH modes - the user's call 2026-10-12: line of
+  sight said "Antenna" / "Target"): a site row's "TX antenna" / "RX
+  antenna" by its role; the target -> the other end's ("RX antenna" for
   TX sites, "TX antenna" for RX sites, "TX / RX antenna" when the shown
-  sites have both); line of sight mode: "Antenna" / "Target"
+  sites have both, or none). The TX / RX tag (click: the role) shows in
+  both modes; in line of sight it only names the ends (reciprocal - a
+  role switch works nothing out again)
 - Reliability: `plOutage(m, sigma, kind, K)` = integral of phi(z)
   F_fade(sigma z - m dB) over +-6 sigma (121-point trapezoid; the Rician
   power CDF tabulated ONCE per K, `plFadeTab`: the power pdf with I0e - A&S
@@ -1385,7 +1388,8 @@ Edit `include/config.hpp`:
   cells differ), t_drag.py (real mouse drags of the link's place, random
   speeds / pauses: the profile drawn for the current link whenever the
   worker is idle - 2 of 40 blank before the F1 clamp, 0 of 80 after), and
-  t_uni_ui.py - 86 checks (incl. polarization: RX-only a repaint, TX h / v
+  t_uni_ui.py - 88 checks (incl. the labels by role in both modes;
+  polarization: RX-only a repaint, TX h / v
   a job, 60° = cos^2 30°, circular, urban receivers less mismatch - each
   vs an independent formula, one figure; the link's budget row; the
   fading: tables vs the integral, K per cell 6 dB clear / lower behind

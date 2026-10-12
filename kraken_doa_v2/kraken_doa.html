@@ -15163,8 +15163,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<button type="button" data-m="sig" onclick="vsSetMode('sig')" title="How often (%) a transmitter's signal is good enough for receivers around it - also beyond the line of sight (path loss over the terrain, the link budget, clutter, fading). Transmitters only: TX sites, and the TX end of a link from an RX site">📶 Signal</button></div></div>` +
       `<div class="map-vs-row">` +
       `<label title="How high the other antenna (a radio, vehicle, aircraft...) is: shown where an antenna at this height could see the observer's - and so, roughly, where a radio link has line of sight">` +
-      `<span id="map-vs-tgt-l">Target</span> <input type="number" id="map-vs-tgt" min="0" max="30000" step="1" onchange="vsSetTgt(this.value)" onkeydown="if(event.key==='Enter')this.blur()"> m</label>` +
-      `<select id="map-vs-ref" onchange="vsSetRef(this.value)" title="Target height above the ground there, or above sea level (e.g. aircraft at an altitude)">` +
+      `<span id="map-vs-tgt-l">RX antenna</span> <input type="number" id="map-vs-tgt" min="0" max="30000" step="1" onchange="vsSetTgt(this.value)" onkeydown="if(event.key==='Enter')this.blur()"> m</label>` +
+      `<select id="map-vs-ref" onchange="vsSetRef(this.value)" title="The other antenna's height above the ground there, or above sea level (e.g. aircraft at an altitude)">` +
       `<option value="agl">above ground</option><option value="amsl">above sea level</option></select>` +
       `<select id="map-vs-k" onchange="vsSetK(this.value)" title="Earth curvature and how much the air bends the path: radio waves bend more than light (k = effective Earth radius / real one)">` +
       `<option value="1.3333333333333333">Radio (k = 4/3)</option><option value="1.1666666666666667">Light (k = 7/6)</option>` +
@@ -15185,10 +15185,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     r.dataset.id = it.id;
     r.innerHTML =
       `<div class="l1"><span class="sw" title="Show / hide" onclick="vsShow('${it.id}')"></span><span class="nm"></span>` +
-      `<span class="role pl-tag vs-sig" onclick="vsSetRole('${it.id}')" title="The signal mode: this site transmits (TX) - its coverage for receivers at the target height - or receives (RX) - where a transmitter at the target height is heard. Click: switch"></span>` +
+      `<span class="role pl-tag" onclick="vsSetRole('${it.id}')" title="This site transmits (TX) or receives (RX) - it names its antenna and the other one (line of sight works both ways). The signal mode colours a TX site's coverage for receivers at the other antenna's height; an RX site isn't coloured. Click: switch"></span>` +
       `<button type="button" class="map-btn" title="Show it on the map" onclick="vsCentre('${it.id}')">⌖</button>` +
       `<button type="button" class="map-btn" title="Remove" onclick="vsRemove('${it.id}')">✕</button></div>` +
-      `<div class="l2"><label title="Antenna height above the ground"><span class="al">Antenna</span> <input type="number" class="h" min="0" max="5000" step="1" onchange="vsSetItem('${it.id}','h',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> m</label>` +
+      `<div class="l2"><label title="This site's antenna height above the ground"><span class="al">TX antenna</span> <input type="number" class="h" min="0" max="5000" step="1" onchange="vsSetItem('${it.id}','h',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> m</label>` +
       `<label title="How far to look (radius)">Radius <input type="number" class="r" min="1" max="${VS_RMAX_KM}" step="1" onchange="vsSetItem('${it.id}','r',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> km</label>` +
       `<span class="st"></span></div>`;
     return r;
@@ -15236,9 +15236,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const fold = $id('map-vs-fold'), ft = mapState.vsOpen ? '▾' : '▸';
     if (fold.textContent !== ft) fold.textContent = ft;
     vsSetVal($id('map-vs-tgt'), vsTgt(), force);
-    // 📶 the target is the other end: the RX antenna of TX sites, the TX antenna of RX sites
+    // the target is the other end: the RX antenna of TX sites, the TX antenna of RX sites - in
+    // both modes, as the sites' own "TX antenna" / "RX antenna" (until 2026-10-12 the line of
+    // sight mode said "Target" / "Antenna" - the user's call: the same words as the signal mode)
     const roles = new Set(vsState.items.filter(i => i.on).map(i => i.role)), tl = $id('map-vs-tgt-l');
-    const tt = vsState.mode !== 'sig' || !roles.size ? 'Target' : roles.size > 1 ? 'TX / RX antenna' : roles.has('tx') ? 'RX antenna' : 'TX antenna';
+    const tt = roles.size !== 1 ? 'TX / RX antenna' : roles.has('tx') ? 'RX antenna' : 'TX antenna';
     if (tl.textContent !== tt) tl.textContent = tt;
     vsSetVal($id('map-vs-ref'), vsState.amsl ? 'amsl' : 'agl', force);
     const ks = $id('map-vs-k'), sigK = vsState.mode === 'sig', kChg = ks.disabled !== sigK;   // (📶 the signal: always radio - vsK)
@@ -15263,7 +15265,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (sw.dataset.bg !== bg) { sw.dataset.bg = bg; sw.style.background = bg; sw.style.borderColor = it.col; }
       const nm = r.querySelector('.nm');
       if (nm.textContent !== it.name) { nm.textContent = it.name; nm.title = `${it.name}: ${it.lat.toFixed(5)}, ${it.lon.toFixed(5)}`; }
-      const al = r.querySelector('.al'), at = vsState.mode === 'sig' ? (it.role === 'rx' ? 'RX antenna' : 'TX antenna') : 'Antenna';   // (📶 the site's role)
+      const al = r.querySelector('.al'), at = it.role === 'rx' ? 'RX antenna' : 'TX antenna';   // (the site's role, both modes)
       if (al.textContent !== at) al.textContent = at;
       const ro = r.querySelector('.role'), rt = it.role === 'rx' ? 'RX' : 'TX';
       if (ro.textContent !== rt) { ro.textContent = rt; ro.style.background = PL_COL[it.role]; }
