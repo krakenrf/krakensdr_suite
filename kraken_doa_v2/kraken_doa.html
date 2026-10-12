@@ -14550,13 +14550,45 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // the target height and the site's role too. A signal result also serves
   // the line of sight (vsResOk)
   function vsKey(it) {
-    const g = `${it.lat},${it.lon},${it.h},${it.r},${vsState.k}`;
+    const g = `${it.lat},${it.lon},${it.h}${it.amsl ? 'a' : ''},${it.r},${vsState.k}`;
     return vsState.mode === 'sig' ? g + '|' + JSON.stringify(plSigMsg(it)) : g;
   }
   function vsResOk(it, res) {
     return !!res && (res.key === vsKey(it) || (vsState.mode !== 'sig' && res.key.split('|')[0] === vsKey(it)));
   }
   function vsTgt() { return vsState.tgt; }
+  // 📶 the signal mode colours TRANSMITTERS only (the user's call): its TX
+  // sites, and - when the link's site receives (the station, by default) -
+  // the link's place as a transmitter of its own: worked out around the
+  // place at the TX antenna height (the target's), for receivers at the RX
+  // site's antenna height, out past the RX site (its radius, at least 1.25 x
+  // the distance + 1 km); not while the place is dragged (vsPump). Not in
+  // vsState.items: id VS_LINK_ID. RX sites aren't worked out in the signal mode
+  const VS_LINK_ID = '_link';
+  function vsLinkItem() {
+    const L = plState.link, rx = L && vsGet(L.site);
+    if (!rx || rx.role !== 'rx') return null;
+    const d = mapDistKm(rx.lat, rx.lon, L.lat, L.lon);
+    return {id: VS_LINK_ID, link: true, name: L.name, lat: L.lat, lon: L.lon, h: vsTgt(), amsl: vsState.amsl, rxH: rx.h, rxId: rx.id,
+            r: Math.min(VS_RMAX_KM, Math.max(rx.r, Math.ceil(d * 1.25 + 1))), col: '#ff7043', on: true, role: 'tx', mk: L.mk};
+  }
+  // what is worked out (and in the signal mode coloured): every shown site; in the signal mode its TX sites + the link's TX
+  function vsJobItems() {
+    if (vsState.mode !== 'sig') return vsState.items;
+    const out = vsState.items.filter(i => i.role !== 'rx'), l = vsLinkItem();
+    if (l) out.push(l);
+    return out;
+  }
+  function vsGetAny(id) { return id === VS_LINK_ID ? vsLinkItem() : vsGet(id); }
+  // the receivers' height: the target's, or (the link's TX) the RX site's antenna above its ground
+  function vsTgtOf(it) { return it.link ? {amsl: false, tgt: it.rxH} : {amsl: vsState.amsl, tgt: vsTgt()}; }
+  // the link's TX gone (no link / its site transmits): its job stopped, its result dropped
+  function vsLinkSync() {
+    if (vsLinkItem()) return;
+    vsCancel(VS_LINK_ID);
+    vsRes.delete(VS_LINK_ID);
+    vsFail.delete(VS_LINK_ID);
+  }
   // the rings (see above): [{z, r0, r1}] from the antenna out to rM, each
   // as far as its grid stays within VS_NMAX cells a side (as run() sizes it:
   // the radius in cells at the poleward edge + margins)
@@ -14598,13 +14630,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // also run from vsDraw, so after a reload the work starts with the map)
   function vsPump() {
     if (vsJob || !mapState.vs || vsWorkerErr) return;
-    const it = vsState.items.find(i => i.on && !vsResOk(i, vsRes.get(i.id)) &&
-                                       (vsFail.get(i.id) || {}).key !== vsKey(i));
+    const drag = mapObjDrag && mapObjDrag.kind === 'pl';   // (the link's place being dragged: its TX worked out when dropped)
+    const it = vsJobItems().find(i => i.on && !(i.link && drag) && !vsResOk(i, vsRes.get(i.id)) &&
+                                      (vsFail.get(i.id) || {}).key !== vsKey(i));
     if (!it) return;
     if (!vsWorkerStart()) { vsRender(); return; }
     const rM = it.r * 1000;
     vsJob = {job: ++vsSeq, id: it.id, key: vsKey(it), prog: null, lat: it.lat, lon: it.lon, h: it.h, r: it.r};
-    vsWorker.postMessage({job: vsJob.job, lat: it.lat, lon: it.lon, h: it.h, k: vsState.k, levels: vsPlan(it.lat, rM),
+    vsWorker.postMessage({job: vsJob.job, lat: it.lat, lon: it.lon, h: it.h, amsl: !!it.amsl, k: vsState.k, levels: vsPlan(it.lat, rM),
                           sig: vsState.mode === 'sig' ? plSigMsg(it) : undefined});
     vsRender();
   }
@@ -14615,7 +14648,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function vsOnWorker(m) {
     if (!vsJob || m.job !== vsJob.job) return;
     if (m.prog) { vsJob.prog = m.prog; vsRender(); return; }
-    const job = vsJob, it = vsGet(job.id);
+    const job = vsJob, it = vsGetAny(job.id);
     vsJob = null;
     if (m.error) {
       if (it && m.error !== 'cancelled') vsFail.set(job.id, {key: job.key, msg: m.error});
@@ -14641,7 +14674,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // each ring as an image: the item's colour (opaque - vsDraw tints) where
   // a target at the set height is in sight, clear elsewhere
   function vsPaint(it, res) {
-    if (vsState.mode === 'sig' && res.levels[0].loss) return plPaintSig(it, res);   // (📶 the signal: reliability)
+    if (vsState.mode === 'sig' && res.levels[0].loss && it.role !== 'rx') return plPaintSig(it, res);   // (📶 the signal: a transmitter's reliability)
     res.sigPaint = false;
     const c = parseInt(it.col.slice(1), 16);
     const rgba = (0xff000000 | ((c & 0xff) << 16) | (c & 0xff00) | ((c >> 16) & 0xff)) >>> 0;   // ABGR (little endian)
@@ -14672,7 +14705,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     res.vis = tot ? vis / tot : 0;
   }
   function vsRepaint() {
-    for (const it of vsState.items) {
+    vsLinkSync();
+    const l = vsLinkItem();
+    for (const it of l ? [...vsState.items, l] : vsState.items) {
       const res = vsRes.get(it.id);
       if (!res) continue;
       if (it.on) vsPaint(it, res);
@@ -14686,9 +14721,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function vsDraw(c) {
     if (!vsReady || !mapState.vs) return;
     if (!vsJob) vsPump();
-    const W = mapWorld(), sig = vsState.mode === 'sig';
-    if (sig) plDrawSig(c);   // (📶 the signal: every site's reliability, the best one per place)
-    for (const it of vsState.items) {
+    const W = mapWorld(), sig = vsState.mode === 'sig', lk = sig && vsLinkItem();
+    if (sig) plDrawSig(c);   // (📶 the signal: every transmitter's reliability, the best one per place)
+    for (const it of lk ? [...vsState.items, lk] : vsState.items) {
       if (!it.on) continue;
       const res = vsRes.get(it.id);
       if (res && res.levels[0].cv && !sig) {
@@ -14725,23 +14760,25 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const g = od ? {lat: od.lat, lon: od.lon, r: it.r} : vsResOk(it, res) ? res : it;
       const [x, y] = mapLatLonToScreen(g.lat, g.lon);
       c.save();
-      c.strokeStyle = it.col;
-      c.globalAlpha = 0.8;
-      c.lineWidth = 1.5;
-      c.setLineDash([6, 5]);
-      c.beginPath();
-      const p1 = g.lat * Math.PI / 180, d = g.r * 1000 / VS_RE;
-      for (let b = 0; b <= 360; b += 2) {
-        const br = b * Math.PI / 180, p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(br));
-        const dl = Math.atan2(Math.sin(br) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2));
-        const nx = mapProj(p2 * 180 / Math.PI, g.lon)[0] + dl / (2 * Math.PI), ny = mapProj(p2 * 180 / Math.PI, g.lon)[1];
-        const [sx, sy] = mapToScreen(nx, ny);
-        if (b) c.lineTo(sx, sy); else c.moveTo(sx, sy);
+      if (!(sig && it.role === 'rx')) {   // (📶 a receiver has no coverage of its own: no radius)
+        c.strokeStyle = it.col;
+        c.globalAlpha = 0.8;
+        c.lineWidth = 1.5;
+        c.setLineDash([6, 5]);
+        c.beginPath();
+        const p1 = g.lat * Math.PI / 180, d = g.r * 1000 / VS_RE;
+        for (let b = 0; b <= 360; b += 2) {
+          const br = b * Math.PI / 180, p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(br));
+          const dl = Math.atan2(Math.sin(br) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2));
+          const nx = mapProj(p2 * 180 / Math.PI, g.lon)[0] + dl / (2 * Math.PI), ny = mapProj(p2 * 180 / Math.PI, g.lon)[1];
+          const [sx, sy] = mapToScreen(nx, ny);
+          if (b) c.lineTo(sx, sy); else c.moveTo(sx, sy);
+        }
+        c.stroke();
+        c.setLineDash([]);
+        c.globalAlpha = 1;
       }
-      c.stroke();
-      c.setLineDash([]);
-      c.globalAlpha = 1;
-      if (!it.st) {
+      if (!it.st && !it.link) {   // (the link's TX: its badge is plDraw's)
         if (vsSel === it.id) {   // selected: draggable (📡 STATION ON THE MAP)
           c.beginPath(); c.arc(x, y, 11, 0, 2 * Math.PI);
           c.strokeStyle = 'rgba(0,0,0,0.75)'; c.lineWidth = 5; c.stroke();
@@ -14953,16 +14990,17 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (!it) return;
     it.role = it.role === 'rx' ? 'tx' : 'rx';
     vsSave();
-    vsSigChanged();   // (its clutter: a new job when the two ends' differ)
+    vsLinkSync();     // (a link's site that transmits now: its place no longer does)
+    vsSigChanged();   // (a TX site: coloured now - a job; an RX one: not)
     plPump();
-    vsRepaint();      // (the receiver's location variability: repainted)
+    vsRepaint();
     plRender(true);
   }
-  // something the signal depends on changed: a running job that is now stale stops, the next starts
+  // something the signal depends on changed: a running job that is now stale (or no longer coloured) stops, the next starts
   function vsSigChanged() {
     if (vsState.mode !== 'sig') return;
-    const it = vsJob && vsGet(vsJob.id);
-    if (vsJob && (!it || vsJob.key !== vsKey(it))) vsCancel(vsJob.id);
+    const it = vsJob && vsGetAny(vsJob.id);
+    if (vsJob && (!it || it.role === 'rx' || vsJob.key !== vsKey(it))) vsCancel(vsJob.id);
     vsPump();
     vsRender();
   }
@@ -14977,7 +15015,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<span class="x" id="map-vs-fold" onclick="mapSet('vsOpen', !mapState.vsOpen)" title="Fold / unfold"></span></div>` +
       `<div class="map-vs-body"><div class="map-vs-row"><div class="map-seg vs-mode" id="map-vs-mode">` +
       `<button type="button" data-m="los" onclick="vsSetMode('los')" title="Where an antenna at the target height is in sight of each site">👁 Line of sight</button>` +
-      `<button type="button" data-m="sig" onclick="vsSetMode('sig')" title="How often (%) the signal between each site and a receiver / transmitter at the target height is good enough - also beyond the line of sight (ITU-R P.1812 path loss, the link budget, clutter, fading)">📶 Signal</button></div></div>` +
+      `<button type="button" data-m="sig" onclick="vsSetMode('sig')" title="How often (%) a transmitter's signal is good enough for receivers around it - also beyond the line of sight (path loss over the terrain, the link budget, clutter, fading). Transmitters only: TX sites, and the TX end of a link from an RX site">📶 Signal</button></div></div>` +
       `<div class="map-vs-row">` +
       `<label title="How high the other antenna (a radio, vehicle, aircraft...) is: shown where an antenna at this height could see the observer's - and so, roughly, where a radio link has line of sight">` +
       `<span id="map-vs-tgt-l">Target</span> <input type="number" id="map-vs-tgt" min="0" max="30000" step="1" onchange="vsSetTgt(this.value)" onkeydown="if(event.key==='Enter')this.blur()"> m</label>` +
@@ -14988,7 +15026,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<option value="1">No bending (k = 1)</option></select></div>` +
       `<div class="map-pl vs-sig" id="map-vs-sig"></div>` +
       `<div id="map-vs-list"></div><div class="map-vs-hov" id="map-vs-hov"></div><div id="map-vs-link" class="map-pl vs-sig"></div>` +
-      `<div class="map-vs-note vs-sig">Signal: the median path loss by the chosen model (50 % of the time; ITU-R P.1812: diffraction over the terrain + troposcatter, Longley-Rice: NTIA's ITM, both per place along its terrain profile) + clutter (ITU-R P.2108), ` +
+      `<div class="map-vs-note vs-sig">Only transmitters are coloured: TX sites, and the TX end of a 📶 Link from an RX site (the station receives by default) - ` +
+      `worked out for receivers at that site's antenna height. Signal: the median path loss by the chosen model (50 % of the time; ITU-R P.1812: diffraction over the terrain + troposcatter, Longley-Rice: NTIA's ITM, both per place along its terrain profile) + clutter (ITU-R P.2108), ` +
       `with shadowing (P.1546) and fading, as how often the receiver gets what it needs; the faint white line is the edge of the line of sight. ` +
       `Right-click the map → "📶 Link" for the profile and budget between a site and a place. Bare terrain: buildings and trees only through the clutter setting.</div>` +
       `<div class="map-vs-note vs-los">Line of sight over the terrain only: buildings and trees aren't in the data, the sea counts as 0 m. ` +
@@ -15015,6 +15054,19 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // status of an item: [text (html), class]
   function vsItemStatus(it) {
     if (!it.on) return ['hidden', ''];
+    if (vsState.mode === 'sig' && it.role === 'rx') {   // (📶 a receiver isn't coloured - its link's TX is)
+      const l = vsLinkItem();
+      if (!l || l.rxId !== it.id) return [`a receiver: right-click the map → 📶 Link to colour a transmitter's coverage`, ''];
+      const lr = vsRes.get(l.id), lf = vsFail.get(l.id);
+      if (vsJob && vsJob.id === l.id) {
+        const p = vsJob.prog;
+        return [`its link's TX: ${Array.isArray(p) ? (p[0] === 'sig' ? `signal ${p[1]} %…` : `loading terrain ${p[0]}/${p[1]}…`) : p === 'compute' ? 'computing…' : 'starting…'}`, 'w'];
+      }
+      if (lf && lf.key === vsKey(l)) return [`⚠ its link's TX: ${digEsc(lf.msg)} · <a onclick="vsRetry('${l.id}')">retry</a>`, 'e'];
+      if (mapObjDrag && mapObjDrag.kind === 'pl') return [`its link's TX: worked out when dropped`, 'w'];
+      if (vsResOk(l, lr) && lr.sigPaint) return [`its link's TX: ${Math.round(lr.vis * 100)} % covered (${l.r} km)`, ''];
+      return [`its link's TX: waiting…`, 'w'];
+    }
     const res = vsRes.get(it.id), f = vsFail.get(it.id), key = vsKey(it);
     if (vsJob && vsJob.id === it.id) {
       const p = vsJob.prog;
@@ -15090,14 +15142,17 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const el = $id('map-vs-hov');
     if (!el || !vsReady) return;
     let html = '';
-    const shown = mapState.vs ? vsState.items.filter(i => i.on && vsRes.get(i.id)) : [];
+    // (📶 the signal mode: the coloured ones - the transmitters)
+    const sig = vsState.mode === 'sig';
+    const shown = !mapState.vs ? [] : vsJobItems().filter(i => i.on && vsRes.get(i.id) && (!sig || vsRes.get(i.id).sigPaint));
     if (vsHovAt && shown.length && mapCv) {
       const [x, y] = vsHovAt, W = mapWorld();
       const nx = mapState.mx + (x - mapW / 2) / W, ny = mapState.my + (y - mapH / 2) / W;
       const [la, lo] = mapScreenToLatLon(x, y);
-      const tgt = vsTgt(), lines = [];
+      const lines = [];
       let gnd = null;
       for (const it of shown) {
+        const {amsl, tgt} = vsTgtOf(it);
         const res = vsRes.get(it.id);
         let q = VS_NODATA, g = 0, ls = 65535;
         for (const l of res.levels) {   // finest first
@@ -15115,9 +15170,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         const nd = vsDec(q);
         if (gnd === null) gnd = g;
         const d = mapDistKm(res.lat, res.lon, la, lo), b = mapBearing(res.lat, res.lon, la, lo);
-        const ok = vsState.amsl ? g + nd <= tgt : nd <= tgt;
-        const why = ok ? '<b>in sight</b>' : `<span class="no">hidden</span> - needs ${vsState.amsl ? vsFmtM(g + nd) + ' above sea level' : vsFmtM(nd) + ' above ground'}`;
-        const sg = vsState.mode === 'sig' && res.sigPaint ? plHoverSig(it, ls, ok) : '';   // (📶 the signal)
+        const ok = amsl ? g + nd <= tgt : nd <= tgt;
+        const why = ok ? '<b>in sight</b>' : `<span class="no">hidden</span> - needs ${amsl ? vsFmtM(g + nd) + ' above sea level' : vsFmtM(nd) + ' above ground'}`;
+        const sg = sig && res.sigPaint ? plHoverSig(it, ls, ok) : '';   // (📶 the signal)
         lines.push(`<span style="color:${it.col}">■</span> ${digEsc(it.name)}: ${sg}${why} · ${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${b.toFixed(0)}°`);
       }
       if (lines.length) html = `Ground ${gnd} m here<br>` + lines.join('<br>');
@@ -15207,7 +15262,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     return K + 1.3 * Math.log10(plState.f);
   }
   // a site's receiver: the site itself (RX) or the target (TX) -> sigma_L
-  function plSiteSigma(it) { return it.role === 'rx' ? plSigmaL(it.h, false) : plSigmaL(vsTgt(), vsState.amsl); }
+  function plSiteSigma(it) { return it.link ? plSigmaL(it.rxH, false) : it.role === 'rx' ? plSigmaL(it.h, false) : plSigmaL(vsTgt(), vsState.amsl); }   // (the link's TX: its receivers are the RX site's antenna)
   // fast fading in line of sight / beyond: [kind, K linear]
   function plFading(los) {
     const f = plState.fade;
@@ -15299,7 +15354,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // (the worker's "Tx" end is always the site)
   function plSigMsg(it) {
     const s = plState, se = it.role === 'rx' ? s.envRx : s.envTx, te = it.role === 'rx' ? s.envTx : s.envRx;
-    const m = {f: s.f, tgt: vsTgt(), amsl: vsState.amsl, pol: plWavePol(), N0: s.N0, envTx: se, envRx: te, hmTx: PL_ENV_HM[se], hmRx: PL_ENV_HM[te], model: s.model};
+    const {amsl, tgt} = vsTgtOf(it);   // (the receivers: the target - or the link's RX site)
+    const m = {f: s.f, tgt, amsl, pol: plWavePol(), N0: s.N0, envTx: se, envRx: te, hmTx: PL_ENV_HM[se], hmRx: PL_ENV_HM[te], model: s.model};
     if (s.model === 'itm') { const g = plGround(); Object.assign(m, {climate: s.climate, eps: g[1], sigma: g[2]}); }   // (only ITM's: the others' keys stay)
     return m;
   }
@@ -15308,7 +15364,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function plPaintSig(it, res) {
     const sg = plSiteSigma(it), lin = plRelLut(sg, true), lout = plRelLut(sg, false), base = plPrx(0) - plSens();
     const pIn = plPolLoss(true), pOut = plPolLoss(false);   // (the antennas' polarization mismatch)
-    const amsl = vsState.amsl, tgt = vsTgt(), tq = vsEnc(tgt), want = plState.rel / 100;
+    const {amsl, tgt} = vsTgtOf(it), tq = vsEnc(tgt), want = plState.rel / 100;
     let vis = 0, tot = 0;
     for (const l of res.levels) {
       const N = l.N;
@@ -15371,7 +15427,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // view or a paint changes (redrawn for every pointer move otherwise)
   function plDrawSig(c) {
     if (!plReady) return;
-    const items = vsState.items.filter(it => it.on && (vsRes.get(it.id) || {}).sigPaint);
+    const items = vsJobItems().filter(it => it.on && (vsRes.get(it.id) || {}).sigPaint);   // (the transmitters)
     if (!items.length) return;
     const Wc = mapCv.width, Hc = mapCv.height;
     const key = `${mapState.mx},${mapState.my},${mapWorld()},${Wc},${Hc},${plSigVer},${plState.rel},${items.map(i => i.id).join()}`;
@@ -15505,6 +15561,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     plSave();
     if (!mapState.vs || !mapState.vsOpen) { mapState.vs = mapState.vsOpen = true; mapSave(); mapUpdateControls(); }
     if (vsState.mode !== 'sig') vsSetMode('sig');
+    vsLinkSync();
+    vsSigChanged();   // (its site receives: the place transmits - worked out)
     plPump();
     plRender();
     mapDraw();
@@ -15541,6 +15599,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (plJob && !plJob.cancel) { plJob.cancel = true; plWorker.postMessage({cancel: plJob.job}); }
     plSel = null;
     plSave();
+    vsLinkSync();   // (its TX's coverage goes too)
+    vsSigChanged();
     plRender();
     mapDraw();
   }
@@ -15558,6 +15618,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     L.mk = '';
     plSave();
     plPump();
+    vsSigChanged();   // (the link's TX moved: its coverage again - once dropped, vsPump)
     plRender();
     mapDraw();
   }

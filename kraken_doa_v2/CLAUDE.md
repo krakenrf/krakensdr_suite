@@ -1009,11 +1009,23 @@ Edit `include/config.hpp`:
   and a radio at the target height is good enough - also WITHOUT line of
   sight, coloured by that reliability, NOT restricted to the cells in
   sight; the edge of the line of sight as a faint white line). Each site has
-  a ROLE: TX (its coverage for receivers at the target height) or RX (where
-  a transmitter at the target height is heard; the station's default, other
-  sites TX) - path loss is reciprocal, the role picks which end's clutter,
-  location variability and antenna / cable are which. Every shown site at
-  once, the BEST per place. The LINK is a tool on top: a site <-> a place
+  a ROLE: TX or RX (the station's default RX, other sites TX). ONLY
+  TRANSMITTERS ARE COLOURED (the user's call, 2026-10-12: an RX site used
+  to get its own "where would a transmitter be heard" map - reciprocal, the
+  same numbers, but centred on the receiver; with its radius smaller than
+  the link it showed green next to a red link, and "best per place" mixed
+  TX coverage with RX hearing areas): TX sites (receivers at the target
+  height), and the link's TX place when the link's site receives -
+  `vsLinkItem()`, id `VS_LINK_ID` '_link', not in vsState.items: around the
+  place at the target height (above sea level too: the worker's `m.amsl`),
+  receivers at the RX site's antenna height (`vsTgtOf`), radius max(the RX
+  site's, 1.25 x the distance + 1 km), worked out when the place is
+  DROPPED (vsPump skips it while mapObjDrag is 'pl'), dropped when the link
+  goes / its site transmits (`vsLinkSync`). `vsJobItems()` = what is worked
+  out / coloured / hovered (LOS mode: every site). An RX site in signal
+  mode: no job, no radius circle, its row says "a receiver: ... 📶 Link" or
+  its link's TX status. Every shown transmitter at once, the BEST per
+  place. The LINK is a tool on top: a site <-> a place
   (at the target height), its profile + every model + the budget. The
   other end can be in the air (target above sea level: aircraft, balloons,
   drones - the aircraft is often the TX for a KrakenSDR). The user's

@@ -520,13 +520,16 @@ decoders `kraken_doa_v2/plugins/`
   VIEWSHED")
 - 📶 Path loss = the viewshed's "📶 Signal" mode (its panel switches 👁 Line
   of sight | 📶 Signal - one feature, no separate button): how often (%)
-  the signal between each viewshed site and a radio at the target height
-  is good enough, also WITHOUT line of sight - coloured by that
-  reliability, every shown site at once (the best per place), the edge of
-  the line of sight a faint white line; line of sight mode is the plain
-  viewshed (both show the identical line of sight). Each site is a TX or an
-  RX (the station RX by default): which end's clutter / variability is
-  which. The target can be in the air (above sea level). Per site: the
+  a TRANSMITTER's signal is good enough for receivers around it, also
+  WITHOUT line of sight - coloured by that reliability, every shown
+  transmitter at once (the best per place), the edge of the line of sight
+  a faint white line; line of sight mode is the plain viewshed (both show
+  the identical line of sight). Each site is a TX or an RX (the station RX
+  by default); ONLY TRANSMITTERS ARE COLOURED (the user's call): TX sites
+  (receivers at the target height), and the TX place of a link from an RX
+  site (`vsLinkItem`: around the place, receivers at that site's antenna
+  height, out past it; worked out when the place is dropped) - an RX site
+  itself isn't. The target can be in the air (above sea level). Per transmitter: the
   CHOSEN MODEL to every cell on the viewshed's rays (`plSweep`) - P.1812
   (the whole profile per ray via convex hulls, O(log n) per cell, EXACTLY
   P.1812 on the sampled profile), Longley-Rice (`itmCell`: NTIA's ITM on
