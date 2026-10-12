@@ -561,8 +561,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-pane.pl-open .map-tl {max-height:calc(100% - 310px)}
 #map-canvas {-webkit-touch-callout:none}
 /* right-click (long-press) menu on the map + the user's markers (📍 MAP MARKERS) */
-.map-menu {position:absolute;z-index:6;min-width:160px;max-width:260px;background:rgba(16,24,44,.97);border:1px solid #4fc3f7;border-radius:4px;padding:3px 0;box-shadow:0 2px 10px rgba(0,0,0,.5);font-size:12px}
-.map-menu button {display:block;width:100%;text-align:left;background:none;border:0;color:#dbe8ff;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.map-menu {position:absolute;z-index:6;min-width:160px;max-width:280px;background:rgba(16,24,44,.97);border:1px solid #4fc3f7;border-radius:4px;padding:3px 0;box-shadow:0 2px 10px rgba(0,0,0,.5);font-size:12px}
+.map-menu button {display:block;width:100%;text-align:left;background:none;border:0;color:#dbe8ff;padding:6px 12px;font-size:12px;cursor:pointer;line-height:1.3;overflow-wrap:anywhere}
 .map-menu button:hover {background:#1a4a7a}
 .map-menu .ll {color:#7f9cc0;font-size:10px;padding:4px 12px 2px;border-top:1px solid #2a4a7a;margin-top:3px;font-variant-numeric:tabular-nums}
 .map-mk {position:absolute;right:6px;bottom:20px;z-index:4;width:270px;max-width:calc(100% - 12px);max-height:calc(100% - 140px);min-height:60px;overflow-y:auto;background:rgba(16,24,44,.96);border:1px solid #e91e63;border-radius:4px;color:#dbe8ff;font-size:12px;padding:6px 8px;box-shadow:0 2px 10px rgba(0,0,0,.5);box-sizing:border-box}
@@ -12152,15 +12152,15 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const [la, lo] = mapScreenToLatLon(x, y);
     mapMenuAt = {la, lo};
     let h = '<button type="button" onclick="mkAddAt()">📍 Add Marker</button>' +
-            '<button type="button" onclick="vsAddAt()" title="Which ground is in line of sight of an antenna here">👁 Viewshed from here</button>' +
+            `<button type="button" onclick="vsAddAt()" title="${vsAddTip('here')}">${vsAddLabel('here')}</button>` +
             plMenuItem() +
             `<button type="button" onclick="mapSetStationAt()" title="Put the station (Station Information) here - a fixed location; its heading is kept">📡 Set station here${mapStaticSource() ? '' : ' (fixed location)'}</button>`;
     const mk = mkGet(mkHit(x, y));
     if (mk) {
       const n = digEsc(mk.name);
       h += `<button type="button" onclick="mapMenuClose();mkSelect('${mk.id}',true)">✎ Edit “${n}”</button>` +
-           `<button type="button" onclick="mapMenuClose();vsAddMarker('${mk.id}')">👁 Viewshed from “${n}”</button>` +
-           `<button type="button" onclick="mapMenuClose();plLinkMarker('${mk.id}')">${plLinkLabel(`at “${n}”`)}</button>` +
+           `<button type="button" onclick="mapMenuClose();vsAddMarker('${mk.id}')" title="${vsAddTip('at the marker')}">${vsAddLabel(`at “${n}”`)}</button>` +
+           `<button type="button" onclick="mapMenuClose();plLinkMarker('${mk.id}')" title="${plLinkTip('at the marker')}">${plLinkLabel(`“${n}”`)}</button>` +
            `<button type="button" onclick="mapMenuClose();mkDelete('${mk.id}')">🗑 Delete “${n}”</button>`;
     }
     el.innerHTML = h + `<div class="ll">${la.toFixed(5)}, ${lo.toFixed(5)}</div>`;
@@ -12344,8 +12344,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       (m.notes ? `<div class="notes">${digEsc(m.notes)}</div>` : '') +
       `<div class="b"><button type="button" class="map-btn" onclick="mkSelect('${m.id}',true)">✎ Edit</button>` +
       `<button type="button" class="map-btn" onclick="mkCentre()" title="Centre the map on the marker">⌖ Centre</button>` +
-      `<button type="button" class="map-btn" onclick="vsAddMarker('${m.id}')" title="Which ground is in line of sight of an antenna at the marker">👁 Viewshed</button>` +
-      `<button type="button" class="map-btn" onclick="plLinkMarker('${m.id}')" title="Signal: the terrain profile and link budget between a viewshed point (the selected one, else the station's) and a radio at the marker, at the target height">📶 Link</button>` +
+      `<button type="button" class="map-btn" onclick="vsAddMarker('${m.id}')" title="${vsAddTip('at the marker')}">${vsAddShort()}</button>` +
+      `<button type="button" class="map-btn" onclick="plLinkMarker('${m.id}')" title="${plLinkTip('at the marker')}">${plLinkShort()}</button>` +
       `<button type="button" class="map-btn" onclick="mkDelete('${m.id}')">🗑 Delete</button></div>`;
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
   }
@@ -12724,8 +12724,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     return `<div class="h"><span style="color:${MAST_CATS[m.cat].col}">●</span>${digEsc(mastTitle(t))}<span class="x" onclick="mapSel=null;mapDraw()">✕</span></div>` +
            `<div class="s">OpenStreetMap · ${m.type} ${m.id}</div><table>${rows}</table>` +
            `<div class="lnk"><button type="button" class="map-btn" onclick="mastToMarker('${m.k}')" title="Make it one of your markers, to add its frequencies and notes">📍 Add as marker</button>` +
-           `<button type="button" class="map-btn" onclick="vsAddMast('${m.k}')" title="Which ground is in line of sight of an antenna at the top of this mast (its mapped height, else ${vsState.h} m)">👁 Viewshed</button>` +
-           `<button type="button" class="map-btn" onclick="plLinkMast('${m.k}')" title="Signal: the terrain profile and link budget between a viewshed point (the selected one, else the station's) and a radio here at the target height (for the mast's own antenna height: 👁 Viewshed adds it as a site)">📶 Link</button>` +
+           `<button type="button" class="map-btn" onclick="vsAddMast('${m.k}')" title="${vsAddTip(`at the top of this mast (its mapped height, else ${vsState.h} m)`)}">${vsAddShort()}</button>` +
+           `<button type="button" class="map-btn" onclick="plLinkMast('${m.k}')" title="${plLinkTip('here')} (for the mast's own antenna height: ${vsAddShort()} adds it as a TX antenna)">${plLinkShort()}</button>` +
            `<a href="${mastOsmUrl(m)}" target="_blank" rel="noopener noreferrer">openstreetmap.org ↗</a></div>`;
   }
   // a marker of the user's on the mast, its OSM details as the notes
@@ -15174,7 +15174,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<div class="map-vs-note vs-sig">Only transmitters are coloured: TX sites, and the TX end of a 📶 Link from an RX site (the station receives by default) - ` +
       `worked out for receivers at that site's antenna height. Signal: the median path loss by the chosen model (50 % of the time; ITU-R P.1812: diffraction over the terrain + troposcatter, Longley-Rice: NTIA's ITM, both per place along its terrain profile) + clutter (ITU-R P.2108), ` +
       `with shadowing (P.1546) and fading, as how often the receiver gets what it needs; the black line (switch: "Line of sight edge") is the edge of the line of sight. ` +
-      `Right-click the map → "📶 Link" for the profile and budget between a site and a place. Bare terrain: buildings and trees only through the clutter setting.</div>` +
+      `Right-click the map → "📶 Signal from here to …" for the terrain profile and link budget between a site and a place. Bare terrain: buildings and trees only through the clutter setting.</div>` +
       `<div class="map-vs-note vs-los">Line of sight over the terrain only: buildings and trees aren't in the data, the sea counts as 0 m. ` +
       `Radio also reaches a little past it (diffraction). Point at the map for details; at a row's "% in sight" for its cell size. ` +
       `Terrain: AWS Terrain Tiles (<a href="${VS_TERRAIN_INFO}" target="_blank" rel="noopener noreferrer">sources ↗</a>)</div></div>`;
@@ -15201,7 +15201,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (!it.on) return ['hidden', ''];
     if (vsState.mode === 'sig' && it.role === 'rx') {   // (📶 a receiver isn't coloured - its link's TX is)
       const l = vsLinkItem();
-      if (!l || l.rxId !== it.id) return [`a receiver: right-click the map → 📶 Link to colour a transmitter's coverage`, ''];
+      if (!l || l.rxId !== it.id) return [`an RX antenna: right-click the map → 📶 Signal from here to “${digEsc(it.name)}” to colour a transmitter's coverage`, ''];
       const lr = vsRes.get(l.id), lf = vsFail.get(l.id);
       if (vsJob && vsJob.id === l.id) {
         const p = vsJob.prog;
@@ -15878,13 +15878,39 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     mapSel = null;
     plLinkTo(m.la, m.lo, mastTitle(m.tags));
   }
-  // the right-click menu's entry: which end the place would be, and the site
-  function plLinkLabel(at) {
+  // the right-click menu's (and the marker / mast buttons') words, as the
+  // viewshed panel's: which way the signal goes between the place and the
+  // site it links to (plPickSite: the selected one, else the station - an
+  // RX site, so the place transmits; none yet: the station is added, RX).
+  // Until 2026-10-12 "📶 Link: TX here ↔ “Station”" / "👁 Viewshed from
+  // here" - the user found them hard to understand
+  function plLinkEnds() {
     const it = plPickSite();
-    return `📶 Link: ${it && it.role === 'rx' ? 'TX' : 'RX'} ${at} ↔ ${it ? `“${digEsc(it.name)}”` : 'station'}`;
+    return {tx: !it || it.role === 'rx', site: it ? `“${digEsc(it.name)}”` : 'the station'};   // (tx: the place transmits)
+  }
+  function plLinkLabel(at) {
+    const e = plLinkEnds();
+    return e.tx ? `📶 Signal from ${at} to ${e.site}` : `📶 Signal from ${e.site} to ${at}`;
+  }
+  function plLinkShort() {
+    const e = plLinkEnds();
+    return e.tx ? `📶 Signal to ${e.site}` : `📶 Signal from ${e.site}`;
+  }
+  function plLinkTip(at) {
+    const e = plLinkEnds(), h = vsTgt(), hs = vsState.amsl ? `${h} m above sea level` : `${h} m above the ground`;
+    return (e.tx ? `The terrain profile and link budget from a TX antenna ${at} (${hs}, the Viewshed panel's) to the RX antenna of ${e.site}; its coverage is coloured too`
+                 : `The terrain profile and link budget from the TX antenna of ${e.site} to an RX antenna ${at} (${hs}, the Viewshed panel's)`) +
+           ` - in the strip at the bottom of the map. To link another Viewshed site, select it first`;
   }
   function plMenuItem() {
-    return `<button type="button" onclick="plLinkAt()" title="Signal: the terrain profile and link budget between a viewshed point (the selected one, else the station's) and a radio here, at the target height">${plLinkLabel('here')}</button>`;
+    return `<button type="button" onclick="plLinkAt()" title="${plLinkTip('here')}">${plLinkLabel('here')}</button>`;
+  }
+  // ... and adding a site (a TX antenna): what it shows in the viewshed's mode
+  function vsAddLabel(at) { return vsState.mode === 'sig' ? `📶 Coverage of a TX antenna ${at}` : `👁 Line of sight from a TX antenna ${at}`; }
+  function vsAddShort() { return vsState.mode === 'sig' ? '📶 Coverage' : '👁 Line of sight'; }
+  function vsAddTip(at) {
+    return `Adds a TX antenna ${at} to the Viewshed panel (its height and radius are set there) and ` +
+           (vsState.mode === 'sig' ? 'colours how often its signal reaches RX antennas around it' : 'shows the ground in line of sight of it - where an RX antenna at the panel\'s height could see it');
   }
   function plLinkRemove() {
     plState.link = null;

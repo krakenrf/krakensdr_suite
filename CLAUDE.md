@@ -503,7 +503,8 @@ decoders `kraken_doa_v2/plugins/`
   areas at zoom >= 11; kept a week in localStorage, drawn at any zoom;
   coloured by use (communication:* tags), click = all their tags, "📍 Add as
   marker". UI-only (kraken_doa.html "📡 OSM MASTS")
-- 👁 Viewshed ("Viewshed" button, right-click "Viewshed from here", markers,
+- 👁 Viewshed ("Viewshed" button, right-click "👁 Line of sight from a TX
+  antenna here" / in signal mode "📶 Coverage of a TX antenna here", markers,
   masts): the ground in line of sight of an antenna there (height above
   ground, radius up to 1000 km, target height above ground or sea level,
   refraction k), anywhere in the world - AWS Terrain Tiles fetched BY THE
@@ -539,7 +540,8 @@ decoders `kraken_doa_v2/plugins/`
   the rays split over helper workers (`plSweepPar`: one per core but one,
   the same cells to the bit);
   Okumura-Hata was dropped (the user's call: no terrain, valid only for
-  1-20 km / a 30-200 m base). LINK (right-click "📶 Link", markers, masts): a site <-> a
+  1-20 km / a 30-200 m base). LINK (right-click "📶 Signal from here to “Station”" / "from “site”
+  to here" by the site's role, markers, masts): a site <-> a
   place, the great-circle terrain profile through ITU-R
   P.1812-6 (delta-Bullington diffraction + troposcatter, median, no
   ducting), NTIA's ITM / Longley-Rice (a JS port of the public-domain C++)

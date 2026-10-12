@@ -793,8 +793,11 @@ Edit `include/config.hpp`:
 **👁 Viewshed (UI only, kraken_doa.html "👁 VIEWSHED"):**
 - Line of sight over the terrain from the station or any picked place:
   "Viewshed" button (`mapState.vs` layer + `vsOpen` fold; adds the station
-  when the list is empty), right-click menu "👁 Viewshed from here" / "from
-  “marker”", the marker panel and the OSM mast popup (`vsAddMast`: antenna
+  when the list is empty), right-click menu "👁 Line of sight from a TX
+  antenna here" / "at “marker”" (signal mode: "📶 Coverage of a TX antenna
+  here"; `vsAddLabel` / `vsAddShort` / `vsAddTip` - until 2026-10-12 "👁
+  Viewshed from here", which the user found hard to understand), the
+  marker panel and the OSM mast popup (`vsAddMast`: antenna
   at the mast's `height` tag, feet with ' / ft). Up to `VS_MAX` 6, each in
   its own colour, drawn over the tiles (`vsDraw`, before the DF heat maps)
   with a dashed radius ring (the circle on the ground, drawn point by point
@@ -1023,7 +1026,8 @@ Edit `include/config.hpp`:
   DROPPED (vsPump skips it while mapObjDrag is 'pl'), dropped when the link
   goes / its site transmits (`vsLinkSync`). `vsJobItems()` = what is worked
   out / coloured / hovered (LOS mode: every site). An RX site in signal
-  mode: no job, no radius circle, its row says "a receiver: ... 📶 Link" or
+  mode: no job, no radius circle, its row says "an RX antenna: right-click
+  the map → 📶 Signal from here to “name” ..." or
   its link's TX status. Every shown transmitter at once, the BEST per
   place. The LINK is a tool on top: a site <-> a place
   (at the target height), its profile + every model + the budget. The
@@ -1341,10 +1345,16 @@ Edit `include/config.hpp`:
 - The link: `plState.link` = a site + a place; `plEnds()` -> {tx, rx} by the
   site's role (the place at the target height / reference, so the link =
   the coverage cell there: 146.9 vs 146.6 dB in the test). Made by the
-  right-click menu ("📶 Link: RX|TX here ↔ “site”", `plMenuItem` /
-  `plLinkLabel`), a marker (menu + 📶 Link in its panel, `plLinkMarker`),
-  an OSM mast (📶 Link, `plLinkMast` - at the target height; 👁 Viewshed
-  adds the mast as a site at its own height); the site = `plPickSite()`:
+  right-click menu ("📶 Signal from here to “site”" when the site
+  receives, "📶 Signal from “site” to here" when it transmits; `plMenuItem`
+  / `plLinkLabel` / `plLinkTip` via `plLinkEnds` - until 2026-10-12 "📶
+  Link: TX here ↔ “Station”", hard to understand), a marker (menu + "📶
+  Signal to “site”" / "from “site”" in its panel, `plLinkShort`,
+  `plLinkMarker`), an OSM mast (the same, `plLinkMast` - at the target
+  height; "👁 Line of sight" / "📶 Coverage" adds the mast as a TX antenna
+  at its own height). The marker panel and the mast popup re-render on
+  every map draw, so their words follow the mode and the picked site. The
+  menu wraps long items (max 280 px) instead of cutting them; the site = `plPickSite()`:
   the selected viewshed point, the station's when the station is selected,
   the link's own, else the first shown (none: the station's added). Turns
   the viewshed on in signal mode. Only in signal mode (`plLinkOn`). The
@@ -1388,7 +1398,7 @@ Edit `include/config.hpp`:
   cells differ), t_drag.py (real mouse drags of the link's place, random
   speeds / pauses: the profile drawn for the current link whenever the
   worker is idle - 2 of 40 blank before the F1 clamp, 0 of 80 after), and
-  t_uni_ui.py - 88 checks (incl. the labels by role in both modes;
+  t_uni_ui.py - 91 checks (incl. the labels by role in both modes;
   polarization: RX-only a repaint, TX h / v
   a job, 60° = cos^2 30°, circular, urban receivers less mismatch - each
   vs an independent formula, one figure; the link's budget row; the
@@ -1405,7 +1415,10 @@ Edit `include/config.hpp`:
   zoom 10 a pixel averages ~16x16 fine cells), the reliability table,
   hover, repaint-only power / wanted reliability, role swap (same clutter:
   no job, sigma changes; other clutter: a job), a second site (best server,
-  more coverage), menu "📶 Link: TX here ↔ “Station”", link + strip +
+  more coverage), the menu's words ("📶 Signal from “Point 1” to here"
+  with a TX site selected, "📶 Signal from here to “Station”" + its tooltip,
+  "📶 Coverage of a TX antenna here" / line of sight "👁 Line of sight
+  from a TX antenna here", the buttons), link + strip +
   budget + link = coverage cell, chart + hover, model row, drag the place
   (no coverage job), Esc, ⇄, line of sight again (no job, strip hidden) and
   back, viewshed off / on, ✕, a link from line of sight mode, the selected
