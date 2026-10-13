@@ -280,6 +280,7 @@ static bool is_query_command(string_view msg) {
            msg.starts_with("ARRAY_CAL") ||     // ✈ array calibration: {"array_cal":...} broadcasts
            // 🗣 Voice to Text actions: {"voice2text":...} / decimator_info broadcasts
            msg.starts_with("VOICE2TEXT_VFO:") || msg.starts_with("VOICE2TEXT_DOWNLOAD:") ||
+           msg.starts_with("VOICE2TEXT_LOBE:") ||
            msg == "VOICE2TEXT_CLEAR" ||
            // operating mode / independent tuners: {"operating_mode":...} broadcasts
            msg.starts_with("OPERATING_MODE:") || msg.starts_with("WIDEBAND_MODE:") ||
@@ -1964,6 +1965,14 @@ void ControlHandler::handle_message_impl(string_view message) {
         v2t::clear_history();
         broadcast(v2t::history_message(0));
         broadcast(v2t::status_message());
+    }
+    else if (message.starts_with("VOICE2TEXT_LOBE:")) {
+        // a transcript's DoA lobe for the 🗺 map (the page that asked shows it;
+        // the others ignore it)
+        const string id(message.substr(16));
+        if (id.empty() || id.size() > 20 || id.find_first_not_of("0123456789") != string::npos)
+            throw CommandRejected("format: VOICE2TEXT_LOBE:<transcript id>");
+        broadcast(v2t::lobe_message(strtoull(id.c_str(), nullptr, 10)));
     }
     else if (message == "GET_VOICE2TEXT") {
         // a page connecting: the settings / state and the latest transcripts

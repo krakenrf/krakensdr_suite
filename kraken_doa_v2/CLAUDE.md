@@ -2177,6 +2177,26 @@ Edit `include/config.hpp`:
   mean = `doa`; `brg` = doa + station heading when valid. With the Digital
   squelch the VFO's DoA is published from confirmed frames only, so a
   digital transmission's bearing is the talker's
+- LOBE per transcript (`sample_doa`, the same frames + weights as `doa`):
+  each frame's pseudospectrum (`getPseudospectrum`, |v|, min..max -> 0..1,
+  array angle = index x res, linear between bins) summed into
+  `LOBE_BINS` 720 x 0.5 deg = the map's live-lobe format (rdf_mapper.cpp
+  `display_lobe`: compass tau = heading - array angle) - TWICE: `lobe_n`
+  turned by the heading of the frame's moment (frames with a heading - a
+  vehicle turning during a transmission stays right) and `lobe_a` with
+  heading 0 (relative to the array, all frames); `finish` keeps lobe_n when
+  >= half the weight had a heading (`lf` "n"), else lobe_a (`lf` "a"), min..max
+  -> u8 -> base64 (960 chars), + the station's mean position (`slat` /
+  `slon`, longitudes around the first - antimeridian). Parts of a long
+  transmission each get their own (`Tap::reset_doa`). In transcripts.jsonl
+  (`transcript_json(t, true)`: lobe, lf, slat, slon; a bad slat keeps the
+  lobe, a malformed lobe - not 960 base64 chars - is dropped), NOT in the
+  pushed lists (`transcript_json(t, false)`: only `"lb":"n|a"`) - 300
+  history items x 1 KB to every page on every connect.
+  `VOICE2TEXT_LOBE:<id>` (digits only, `is_query_command`) -> broadcast
+  `v2t::lobe_message(id)` = `{"voice2text":{"lobe":{id, t, vfo, mhz, dur,
+  lobe, lf, doa, brg, slat, slon}}}` or `{id, error}`; the page that asked
+  (`v2tLobeWant`) shows it, the others ignore it
 - Queue: <= `MAX_QUEUED_JOBS` 40 / `MAX_QUEUED_S` 600 s (then the oldest
   go, `dropped`); `usable_` (helper + model files there) else input is
   ignored and the queue cleared (no "dropped" spam while not set up)
@@ -2229,7 +2249,8 @@ Edit `include/config.hpp`:
   st_mu section that drops the result when `clear_gen` moved since its id
   was taken (a Clear meanwhile brought it back, clip gone). Transcript id =
   max(last + 1, t0 ms) (unique, sortable, survives restarts). JSON {id, t,
-  dur, vfo, mhz, src, tid, tl, doa, brg, part, conf, lang, ms, clip, text}.
+  dur, vfo, mhz, src, tid, tl, doa, brg, lb (pushes) / lobe, lf, slat, slon
+  (the file), part, conf, lang, ms, clip, text}.
   The status `error` = `last_error`, kept until the helper loads (READY) or
   a job goes through (a crash's message used to be overwritten by
   "starting" within ms)
@@ -2293,6 +2314,24 @@ Edit `include/config.hpp`:
   `#v2t-clips` (count, MB, Keep days, folder, low disk / errors), ⬇ CSV `v2tExport` - cells starting = + - @ get a ' so a
   spreadsheet doesn't run them, Clear), tab label with a red dot while
   recording and a count of transcripts that came while hidden
+- Lobes on the 🗺 map (kraken_doa.html, in the "🗣 VOICE TO TEXT" block;
+  state `v2tLobes` (id -> {L, col, peak, el}) / `v2tLobeWant` in the globals
+  block - mapDrawNow -> `v2tLobeDraw` runs before the section is
+  evaluated): a row's 🧭 bearing (`.v2t-brg.lb`, `lb` set) -> `v2tLobeClick`
+  (again = hide) -> VOICE2TEXT_LOBE -> `v2tLobeAdd`: colour = the first of
+  `V2T_LOBE_COLS` (white, pale violet / blue / green / orange / red - none of
+  the VFO colours, `getDecimatorColor`) no other shown lobe has, the map
+  opened (`mapToggle` / `rpShow('map')` from the DoA tab), centred on the
+  place when it is off screen. `v2tLobeDraw` (after `rdfDraw`): from
+  slat / slon, else the station now (`mapStationPos`); `rdfLobePath` at the
+  live lobes' radius (0.3 of the map), fill 0.16, dark edge + the colour
+  DASHED (live lobes: solid in the VFO's colour); a tag (`.v2t-ltag` in
+  `#map-v2t` over the canvas, made once per lobe, moved every draw: past
+  the tip along the peak, kept inside the map) "● D0 17:18:19 · 🧭 60°"
+  ("arr 90° (array)" for an `lf` "a" lobe - drawn with the array's front
+  north) + ✕ (`v2tLobeRemove`); its pointerdown doesn't reach the map (the
+  map listens on the canvas). The row's bearing is outlined in the lobe's
+  colour while shown; a history without the id (Clear) removes it
 - Measured (Pi 5, other sessions loading it, load avg 5-8): base.en ~280 MB
   RSS, an 8-11 s transmission in 3-7 s on 2-3 threads (rtf 0.3-0.6),
   tiny.en 175 MB / ~2x faster but poor on radio audio, small.en-q5_1 460 MB
@@ -2335,7 +2374,18 @@ Edit `include/config.hpp`:
   made the two-way unintelligible - not the code: 10 dB more matched the
   source offline. run_clips.sh: DECODER_LOG_DIR mid-run -> new clips + log
   in the new folder; a build with MIN_FREE_BYTES 2^60 -> no clips,
-  clips_skipped 1..4, transcripts on
+  clips_skipped 1..4, transcripts on. Lobes (run_lobe.sh + t_lobe.py):
+  the voice scene's 4 transcripts each with a 720-bin north lobe peaking at
+  its bearing (300 / 240 / 160 / 60, <= 0.1 deg), the station position;
+  pushes without lobe data; a bad id refused, an unknown one -> error; after
+  a restart (no heimdall) all 4 back from transcripts.jsonl.
+  run_lobe_ui.sh + t_lobe_ui.py (headless Chromium, 20 checks, live D0 / D1
+  lobes on the map at the same time): bearings clickable, click -> map opens,
+  peak = bearing, tag + ✕, row marked, colours unlike the VFOs', drawn
+  along the peak and nothing opposite (on a canvas of their own - the map's
+  holds cross-origin tiles, unreadable), a second lobe in another colour,
+  ✕ / a second click remove, an array-frame lobe tagged "(array)", error
+  answer, another page's answer ignored, Clear removes them
 
 **Digital squelch (squelch method "Digital", with the VFO's decoder on):**
 - The squelch methods are FFT (0) and DIGITAL (3) - the eigenvalue methods

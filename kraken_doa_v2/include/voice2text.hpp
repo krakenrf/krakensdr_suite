@@ -70,6 +70,11 @@ std::string history_message(size_t max);
 // {"voice2text":{"new":[...]}} with the transcripts since the last call, or ""
 std::string take_new_message();
 void clear_history();
+// {"voice2text":{"lobe":{id, t, vfo, mhz, dur, lobe, lf, doa, brg, slat, slon}}}
+// (VOICE2TEXT_LOBE:<id>): the transcript's averaged DoA lobe - b64 of 720 u8,
+// 0.5 deg bins clockwise from north (lf "n") or from the array's front (lf
+// "a": no heading then) - and where the station was; or {id, error}
+std::string lobe_message(uint64_t id);
 // HTTP /voice_clip/<id>.opus: the clip's file ("" = none)
 std::string clip_path(uint64_t id);
 // Download a model of the catalogue into the models folder (curl, in the

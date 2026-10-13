@@ -97,6 +97,12 @@ constexpr double CONT_MIN_S = 5.0, CONT_SOFT_S = 8.0, CONT_MAX_S = 15.0;
 constexpr size_t FRAME = 320;
 constexpr size_t PAUSE_FRAMES = 12;
 constexpr double OVERLAP_S = 0.3;
+// Each transcript's lobe (the 🗺 map shows it from the 🗣 Voice tab): the MUSIC
+// pseudospectra published during it, each min..max -> 0..1, averaged with the
+// bearing's weights; LOBE_BINS of 0.5 deg clockwise from north (as the map's
+// live lobe, rdf_mapper.cpp display_lobe) - or from the array's front when
+// the station had no heading
+constexpr int LOBE_BINS = 720;
 constexpr double MAX_QUEUED_S = 600;    // transmissions waiting for the helper (then the oldest go)
 constexpr size_t MAX_QUEUED_JOBS = 40;
 constexpr double MAX_INPUT_S = 3.0;     // per VFO, audio waiting for the worker
@@ -210,6 +216,9 @@ struct Utterance {
     int64_t t0_ms = 0;
     std::vector<int16_t> pcm;   // 16 kHz
     double doa = NAN, brg = NAN;
+    std::string lobe;           // b64 of LOBE_BINS u8 ("" = none)
+    bool lobe_north = false;    // false: relative to the array (no heading)
+    double slat = NAN, slon = NAN;   // where the station was
     int part = 0;               // > 0: a part of a longer transmission
     int retries = 0;
     double seconds() const { return pcm.size() / static_cast<double>(RATE); }
@@ -228,13 +237,40 @@ struct Transcript {
     double mhz = 0;
     std::string src, tid, tlabel, lang, text;
     double doa = NAN, brg = NAN;
+    std::string lobe;           // see Utterance
+    bool lobe_north = false;
+    double slat = NAN, slon = NAN;
     float conf = 0;
     uint32_t proc_ms = 0;
     bool clip = false;
     int part = 0;
 };
 
-std::string transcript_json(const Transcript& t) {
+std::string b64(const uint8_t* d, size_t n) {
+    static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string o;
+    o.reserve((n + 2) / 3 * 4);
+    for (size_t i = 0; i < n; i += 3) {
+        const uint32_t v = (static_cast<uint32_t>(d[i]) << 16) | (i + 1 < n ? d[i + 1] << 8 : 0) | (i + 2 < n ? d[i + 2] : 0);
+        o += T[(v >> 18) & 63];
+        o += T[(v >> 12) & 63];
+        o += i + 1 < n ? T[(v >> 6) & 63] : '=';
+        o += i + 2 < n ? T[v & 63] : '=';
+    }
+    return o;
+}
+
+// a stored lobe as read back: LOBE_BINS bytes of base64, nothing else
+bool lobe_ok(const std::string& b) {
+    if (b.size() != (LOBE_BINS + 2) / 3 * 4) return false;
+    for (char c : b)
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '+' || c == '/' || c == '=')) return false;
+    return true;
+}
+
+// full = the history file (with the lobe); else the list pushed to the pages,
+// which only says there is one ("lb") - VOICE2TEXT_LOBE:<id> fetches it
+std::string transcript_json(const Transcript& t, bool full) {
     std::string j = "{\"id\":" + std::to_string(t.id) + ",\"t\":" + std::to_string(t.t_ms) + ",\"dur\":" +
                     fmt("%.1f", t.dur) + ",\"vfo\":" + std::to_string(t.vfo) + ",\"mhz\":" + fmt("%.6f", t.mhz) +
                     ",\"src\":\"" + json_escape(t.src) + "\"";
@@ -242,6 +278,15 @@ std::string transcript_json(const Transcript& t) {
     if (!t.tlabel.empty()) j += ",\"tl\":\"" + json_escape(t.tlabel) + "\"";
     if (is_finite_value(t.doa)) j += ",\"doa\":" + fmt("%.1f", t.doa);
     if (is_finite_value(t.brg)) j += ",\"brg\":" + fmt("%.1f", t.brg);
+    if (!t.lobe.empty()) {
+        if (full) {
+            j += ",\"lobe\":\"" + t.lobe + "\",\"lf\":\"" + (t.lobe_north ? "n" : "a") + "\"";
+            if (is_finite_value(t.slat) && is_finite_value(t.slon))
+                j += ",\"slat\":" + fmt("%.6f", t.slat) + ",\"slon\":" + fmt("%.6f", t.slon);
+        } else {
+            j += ",\"lb\":\"" + std::string(t.lobe_north ? "n" : "a") + "\"";
+        }
+    }
     if (t.part > 0) j += ",\"part\":" + std::to_string(t.part);
     j += ",\"conf\":" + fmt("%.2f", t.conf) + ",\"lang\":\"" + json_escape(t.lang) + "\",\"ms\":" +
          std::to_string(t.proc_ms) + ",\"clip\":" + (t.clip ? "true" : "false") + ",\"text\":\"" +
@@ -264,6 +309,19 @@ bool transcript_from_json(const std::string& line, Transcript* t) {
     json_find(line, "lang", t->lang);
     if (json_find(line, "doa", v)) t->doa = stod_finite(v);
     if (json_find(line, "brg", v)) t->brg = stod_finite(v);
+    if (json_find(line, "lobe", v) && lobe_ok(v)) {
+        t->lobe = v;
+        t->lobe_north = json_find(line, "lf", v) && v == "n";
+        std::string la, lo;
+        if (json_find(line, "slat", la) && json_find(line, "slon", lo)) {
+            try {
+                t->slat = stod_finite(la);
+                t->slon = stod_finite(lo);
+            } catch (const std::exception&) {
+                t->slat = t->slon = NAN;   // the lobe without its place (the map takes the station's)
+            }
+        }
+    }
     if (json_find(line, "conf", v)) t->conf = stof_finite(v);
     if (json_find(line, "ms", v)) t->proc_ms = static_cast<uint32_t>(atol(v.c_str()));
     if (json_find(line, "part", v)) t->part = atoi(v.c_str());
@@ -305,6 +363,21 @@ struct Tap {
     // bearing during it
     int64_t doa_stamp = 0;
     double dsx = 0, dsy = 0, dw = 0;
+    // its lobe (LOBE_BINS): the frames turned to north by the heading of
+    // their moment (those with a heading), and relative to the array (all)
+    std::vector<float> lobe_n, lobe_a;
+    double lw_n = 0, lw_a = 0;
+    double plat = 0, plon = 0;      // the station's position, summed (lon relative to plon0)
+    double plon0 = 0;
+    int pn = 0;
+    void reset_doa() {
+        dsx = dsy = dw = 0;
+        lobe_n.clear();
+        lobe_a.clear();
+        lw_n = lw_a = 0;
+        plat = plon = 0;
+        pn = 0;
+    }
     void add_fe(float v) {
         fe_acc += static_cast<double>(v) * v;
         if (++fe_n == FRAME) {
@@ -474,7 +547,7 @@ State& S() {
 void rewrite_history_locked(State& s) {
     const std::string tmp = std::string(HISTORY_FILE) + ".tmp";
     std::ofstream o(tmp, std::ios::trunc);
-    for (const auto& t : s.history) o << transcript_json(t) << "\n";
+    for (const auto& t : s.history) o << transcript_json(t, true) << "\n";
     o.close();
     if (o && rename(tmp.c_str(), HISTORY_FILE) == 0) s.file_lines = s.history.size();
     else unlink(tmp.c_str());
@@ -974,7 +1047,7 @@ void Worker::analog(Tap& tap, int vfo, Input& in, int64_t t) {
         tap.src = DecimatorManager::demodModeToString(in.mode);
         tap.tid.clear();
         tap.tlabel.clear();
-        tap.dsx = tap.dsy = tap.dw = 0;
+        tap.reset_doa();
         tap.doa_stamp = 0;
     }
     tap.append(y);
@@ -1024,7 +1097,7 @@ void Worker::digital(Tap& tap, int vfo, Input& in, int64_t t) {
         tap.tid = in.tid;
         tap.tlabel = in.tlabel;
         tap.rf = in.rf;
-        tap.dsx = tap.dsy = tap.dw = 0;
+        tap.reset_doa();
         tap.doa_stamp = 0;
     } else if ((tap.tid.empty() || tap.tid == "?") && known) {
         tap.tid = in.tid;   // the radio was named after its first frames
@@ -1057,6 +1130,56 @@ void Worker::sample_doa(Tap& tap, int vfo) {
     tap.dsx += w * std::cos(app * M_PI / 180.0);
     tap.dsy += w * std::sin(app * M_PI / 180.0);
     tap.dw += w;
+
+    // the lobe: this frame's pseudospectrum, min..max -> 0..1 (the MUSIC DoA
+    // plot's scale), added with the same weight; array angle a = index x res,
+    // unit circle - compass tau = heading - a (rdf_mapper.cpp display_lobe)
+    const auto spec = mp.getPseudospectrum();
+    const int n = mp.getNumAngles();
+    const double res = mp.getAngularResolution();
+    if (static_cast<int>(spec.size()) != n || n < 8 || !(res > 0)) return;
+    double mn = std::fabs(spec(0)), mx = mn;
+    for (int i = 1; i < n; i++) {
+        const double v = std::fabs(spec(i));
+        mn = std::min(mn, v);
+        mx = std::max(mx, v);
+    }
+    if (!(mx > mn) || !is_finite_value(mx)) return;
+    auto at = [&](double a) {   // array angle (deg) -> 0..1, linear between the bins
+        a = std::fmod(a, 360.0);
+        if (a < 0) a += 360.0;
+        const double x = a / res;
+        int i0 = static_cast<int>(x);
+        const double f = x - i0;
+        i0 %= n;
+        return static_cast<float>((std::fabs(spec(i0)) * (1 - f) + std::fabs(spec((i0 + 1) % n)) * f - mn) / (mx - mn));
+    };
+    const float wf = static_cast<float>(w);
+    if (tap.lobe_a.empty()) tap.lobe_a.assign(LOBE_BINS, 0.0f);
+    for (int k = 0; k < LOBE_BINS; k++) tap.lobe_a[k] += wf * at(-k * 360.0 / LOBE_BINS);   // heading 0
+    tap.lw_a += w;
+    const StationLocation sl = station_info.resolve();
+    if (sl.heading_valid && is_finite_value(sl.heading)) {
+        if (tap.lobe_n.empty()) tap.lobe_n.assign(LOBE_BINS, 0.0f);
+        for (int k = 0; k < LOBE_BINS; k++) tap.lobe_n[k] += wf * at(sl.heading - k * 360.0 / LOBE_BINS);
+        tap.lw_n += w;
+    }
+    if (!(sl.lat == 0.0 && sl.lon == 0.0) && is_finite_value(sl.lat) && is_finite_value(sl.lon)) {
+        if (tap.pn == 0) tap.plon0 = sl.lon;
+        tap.plat += sl.lat;
+        tap.plon += std::remainder(sl.lon - tap.plon0, 360.0);   // across the antimeridian too
+        tap.pn++;
+    }
+}
+
+// a summed lobe -> LOBE_BINS u8 (min..max -> 0..255) as base64
+std::string lobe_b64(const std::vector<float>& l) {
+    if (l.size() != static_cast<size_t>(LOBE_BINS)) return "";
+    const auto [lo, hi] = std::minmax_element(l.begin(), l.end());
+    if (!(*hi > *lo)) return "";
+    uint8_t u[LOBE_BINS];
+    for (int k = 0; k < LOBE_BINS; k++) u[k] = static_cast<uint8_t>(std::lround(255.0f * (l[k] - *lo) / (*hi - *lo)));
+    return b64(u, LOBE_BINS);
 }
 
 void Worker::finish(Tap& tap, int vfo, bool more) {
@@ -1075,6 +1198,15 @@ void Worker::finish(Tap& tap, int vfo, bool more) {
         const StationLocation sl = station_info.resolve();
         if (sl.heading_valid && is_finite_value(sl.heading)) u.brg = std::fmod(d + sl.heading + 720.0, 360.0);
     }
+    // its lobe: turned to north when most of its frames had a heading, else
+    // relative to the array; and where the station was
+    const bool north = tap.lw_n > 0 && tap.lw_n >= 0.5 * tap.lw_a;
+    u.lobe = lobe_b64(north ? tap.lobe_n : tap.lobe_a);
+    u.lobe_north = north && !u.lobe.empty();
+    if (!u.lobe.empty() && tap.pn > 0) {
+        u.slat = tap.plat / tap.pn;
+        u.slon = std::remainder(tap.plon0 + tap.plon / tap.pn, 360.0);
+    }
     u.pcm.resize(tap.cur.size());
     for (size_t i = 0; i < tap.cur.size(); i++)
         u.pcm[i] = static_cast<int16_t>(std::lround(std::clamp(tap.cur[i], -1.0f, 1.0f) * 32767.0f));
@@ -1083,7 +1215,7 @@ void Worker::finish(Tap& tap, int vfo, bool more) {
         // a long transmission: this part goes, the next continues
         tap.t0_ms += static_cast<int64_t>(dur * 1000);
         tap.part++;
-        tap.dsx = tap.dsy = tap.dw = 0;
+        tap.reset_doa();
     } else {
         tap.rec = false;
         tap.part = 0;
@@ -1112,7 +1244,7 @@ void Worker::split(Tap& tap, int vfo, size_t at) {
     tap.part = 0;
     tap.tid.clear();
     tap.tlabel.clear();
-    tap.dsx = tap.dsy = tap.dw = 0;
+    tap.reset_doa();
     tap.doa_stamp = 0;
 }
 
@@ -1302,7 +1434,11 @@ void Worker::on_result(const char* p, size_t len) {
     t.lang = f[0];
     t.doa = u.doa;
     t.brg = u.brg;
-    t.conf = is_finite_value(conf) ? std::clamp(conf, 0.0f, 1.0f) : 0.0f;
+    t.lobe = u.lobe;
+    t.lobe_north = u.lobe_north;
+    t.slat = u.slat;
+    t.slon = u.slon;
+    t.conf =is_finite_value(conf) ? std::clamp(conf, 0.0f, 1.0f) : 0.0f;
     t.proc_ms = ms;
     t.part = u.part;
     const std::string clip = keep_audio ? save_clip(t, u) : "";
@@ -1327,7 +1463,7 @@ void Worker::on_result(const char* p, size_t len) {
         s_.fresh.push_back(t);
         if (s_.fresh.size() > 200) s_.fresh.erase(s_.fresh.begin());
         std::ofstream o(HISTORY_FILE, std::ios::app);
-        o << transcript_json(t) << "\n";
+        o << transcript_json(t, true) << "\n";
         o.close();
         if (++s_.file_lines > MAX_HISTORY * 3) rewrite_history_locked(s_);
     }
@@ -1710,7 +1846,7 @@ std::string history_message(size_t max) {
     std::string o = "{\"voice2text\":{\"history\":[";
     const size_t n = std::min(max, s.history.size());
     for (size_t i = s.history.size() - n; i < s.history.size(); i++) {
-        o += transcript_json(s.history[i]);
+        o += transcript_json(s.history[i], false);
         if (i + 1 < s.history.size()) o += ",";
     }
     s.fresh.clear();   // they are in the history the pages get now
@@ -1722,7 +1858,7 @@ std::string take_new_message() {
     std::lock_guard<std::mutex> lk(s.st_mu);
     if (s.fresh.empty()) return "";
     std::string o = "{\"voice2text\":{\"new\":[";
-    for (size_t i = 0; i < s.fresh.size(); i++) o += (i ? "," : "") + transcript_json(s.fresh[i]);
+    for (size_t i = 0; i < s.fresh.size(); i++) o += (i ? "," : "") + transcript_json(s.fresh[i], false);
     s.fresh.clear();
     return o + "]}}";
 }
@@ -1739,6 +1875,25 @@ void clear_history() {
     for (const auto& kv : s.clips) unlink(kv.second.path.c_str());   // the day folders stay (retention empties them)
     s.clips.clear();
     s.clip_bytes = 0;
+}
+
+std::string lobe_message(uint64_t id) {
+    State& s = S();
+    std::lock_guard<std::mutex> lk(s.st_mu);
+    for (auto it = s.history.rbegin(); it != s.history.rend(); ++it) {
+        if (it->id != id) continue;
+        const Transcript& t = *it;
+        if (t.lobe.empty()) break;
+        std::string o = "{\"voice2text\":{\"lobe\":{\"id\":" + std::to_string(t.id) + ",\"t\":" + std::to_string(t.t_ms) +
+                        ",\"vfo\":" + std::to_string(t.vfo) + ",\"mhz\":" + fmt("%.6f", t.mhz) + ",\"dur\":" +
+                        fmt("%.1f", t.dur) + ",\"lobe\":\"" + t.lobe + "\",\"lf\":\"" + (t.lobe_north ? "n" : "a") + "\"";
+        if (is_finite_value(t.doa)) o += ",\"doa\":" + fmt("%.1f", t.doa);
+        if (is_finite_value(t.brg)) o += ",\"brg\":" + fmt("%.1f", t.brg);
+        if (is_finite_value(t.slat) && is_finite_value(t.slon))
+            o += ",\"slat\":" + fmt("%.6f", t.slat) + ",\"slon\":" + fmt("%.6f", t.slon);
+        return o + "}}}";
+    }
+    return "{\"voice2text\":{\"lobe\":{\"id\":" + std::to_string(id) + ",\"error\":\"no lobe kept for this transcript\"}}}";
 }
 
 std::string clip_path(uint64_t id) {

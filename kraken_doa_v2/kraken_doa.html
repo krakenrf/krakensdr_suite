@@ -201,6 +201,13 @@ body.sb-resizing {cursor:col-resize;user-select:none}
 .v2t-meta .v2t-mhz {font-family:monospace;color:#9fb3cc}
 .v2t-meta .v2t-who {color:#ffd54f}
 .v2t-meta .v2t-brg {color:#80deea}
+.v2t-meta .v2t-brg.lb {cursor:pointer;border:1px solid #2a4a6a;border-radius:3px;padding:0 4px}
+.v2t-meta .v2t-brg.lb:hover {border-color:#80deea;color:#fff}
+.v2t-meta .v2t-brg.lb.on {border-color:var(--lc);color:#fff;background:rgba(255,255,255,.1)}
+.map-v2t {position:absolute;inset:0;pointer-events:none;z-index:3;overflow:hidden}
+.v2t-ltag {position:absolute;transform:translate(-50%,-50%);pointer-events:auto;display:flex;align-items:center;gap:3px;background:rgba(16,24,44,.92);border:1px solid;border-radius:3px;font-size:11px;color:#e8f0ff;padding:1px 1px 1px 5px;white-space:nowrap;cursor:default}
+.v2t-ltag button {background:none;border:none;color:#ffab91;cursor:pointer;font-size:13px;line-height:14px;padding:0 4px}
+.v2t-ltag button:hover {color:#fff;background:#b71c1c;border-radius:2px}
 .v2t-meta .v2t-low {color:#ffb74d;font-weight:bold;cursor:help}
 .v2t-text {color:#e8eef6;font-size:13px;line-height:1.35;margin-top:1px;white-space:pre-wrap;word-break:break-word}
 .v2t-text.low {color:#a3afc0;font-style:italic}
@@ -1822,6 +1829,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <div class="rp-vsplit" id="rp-vsplit" title="Drag to share the height between MUSIC DoA and the map (double-click: default)"></div>
         <div id="map-pane" class="map-pane">
           <canvas id="map-canvas"></canvas>
+          <div class="map-v2t" id="map-v2t"></div>
           <div class="map-ctl map-ctl-tl">
             <div class="map-seg" id="map-layers"></div>
             <button type="button" class="map-btn" id="map-trails" onclick="mapSet('trails', !mapState.trails)" title="Show the tracks the markers left">Trails</button>
@@ -1932,6 +1940,9 @@ let mkList = [], mkSel = null, mkEdit = null, mkWantEdit = null, mapMenuAt = nul
 // transcripts (oldest first), how many came while the Voice tab wasn't shown
 // (infoRenderTabs reads these - it can run before that section is evaluated)
 let v2tStatus = null, v2tList = [], v2tUnseen = 0;
+// transcripts' DoA lobes shown on the 🗺 map (id -> {L, col, el}) and those
+// asked for (mapDrawNow -> v2tLobeDraw reads them)
+let v2tLobes = new Map(), v2tLobeWant = new Set();
 // 📡 OpenStreetMap masts layer (see 📡 OSM MASTS): "n123" -> mast, the
 // zoom-12 cells loaded ("x,y" -> when), masts drawn in the view, the
 // loader's state, the region around the station (centre, half-width km -
@@ -10547,7 +10558,15 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
     if (m.history) {
       v2tList = m.history.slice(-V2T_MAX);
+      // a cleared history takes its lobes off the map
+      const ids = new Set(v2tList.map(t => t.id));
+      for (const id of [...v2tLobes.keys()]) if (!ids.has(id)) v2tLobeRemove(id);
       v2tRenderTab(true);
+    }
+    if (m.lobe && v2tLobeWant.has(m.lobe.id)) {
+      v2tLobeWant.delete(m.lobe.id);
+      if (m.lobe.error) alert('No lobe: ' + m.lobe.error);
+      else v2tLobeAdd(m.lobe);
     }
     if (m.new) {
       const have = new Set(v2tList.map(t => t.id));
@@ -10769,8 +10788,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                  d.toLocaleTimeString([], {hour12: false});
     const col = getDecimatorColor(t.vfo);
     const who = t.tid ? `<span class="v2t-who" title="Who talked (radio ID) and to whom">${digEsc(t.tid)}${t.tl ? ' → ' + digEsc(t.tl) : ''}</span>` : '';
-    const brg = Number.isFinite(t.brg) ? `<span class="v2t-brg" title="Bearing from north during the transmission">🧭 ${Math.round(t.brg)}°</span>`
-              : Number.isFinite(t.doa) ? `<span class="v2t-brg" title="Direction of arrival relative to the array (no station heading)">🧭 arr ${Math.round(t.doa)}°</span>` : '';
+    // with a saved lobe the bearing shows it on the map (again = hides it)
+    const shown = v2tLobes.get(t.id);
+    const lb = t.lb ? ` lb${shown ? ' on' : ''}" onclick="v2tLobeClick(${t.id})"` + (shown ? ` style="--lc:${shown.col}"` : '') : '"';
+    const lbTip = t.lb ? (shown ? ' - shown on the map (click to hide)' : ' - click: its lobe on the map (averaged over the transmission)') : '';
+    const brg = Number.isFinite(t.brg) ? `<span class="v2t-brg${lb} title="Bearing from north during the transmission${lbTip}">🧭 ${Math.round(t.brg)}°</span>`
+              : Number.isFinite(t.doa) ? `<span class="v2t-brg${lb} title="Direction of arrival relative to the array (no station heading)${lbTip}">🧭 arr ${Math.round(t.doa)}°</span>` : '';
     const low = t.conf < 0.5;
     const play = t.clip ? `<button type="button" class="v2t-play${v2tPlaying === t.id ? ' on' : ''}" onclick="v2tPlay(${t.id})" title="${v2tPlaying === t.id ? 'Stop' : 'Play the audio'}">${v2tPlaying === t.id ? '■' : '▶'}</button>` : '';
     const text = v2tMark(t.text || '', q);
@@ -10891,6 +10914,90 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     } catch (e) {
       if (v2tPlaying === id) { v2tPlaying = null; v2tRenderTab(true); }
       alert('Cannot play the audio: ' + (e && e.message ? e.message : e));
+    }
+  }
+
+  // --- a transcript's DoA lobe on the 🗺 map --------------------------------
+  // The receiver keeps each transcript's lobe (the MUSIC pseudospectrum
+  // averaged over the transmission, voice2text.cpp); the 🧭 bearing in its row
+  // asks for it (VOICE2TEXT_LOBE:<id>) and it is drawn from where the station
+  // was, in a pale colour of its own, dashed - never a VFO's live-lobe colour -
+  // with a tag at its tip whose ✕ removes it
+  const V2T_LOBE_COLS = ['#ffffff', '#ea80fc', '#80d8ff', '#ccff90', '#ffd180', '#ff8a80'];
+  function v2tLobeClick(id) {
+    if (v2tLobes.has(id)) { v2tLobeRemove(id); return; }
+    v2tLobeWant.add(id);
+    send('VOICE2TEXT_LOBE:' + id);
+  }
+  function v2tLobeOrigin(L) {
+    return Number.isFinite(L.slat) && Number.isFinite(L.slon) ? [L.slat, L.slon] : mapStationPos();
+  }
+  function v2tLobeAdd(L) {
+    const used = new Set([...v2tLobes.values()].map(o => o.col));
+    const col = V2T_LOBE_COLS.find(c => !used.has(c)) || V2T_LOBE_COLS[v2tLobes.size % V2T_LOBE_COLS.length];
+    const u = rdfB64(L.lobe);
+    let pk = 0;
+    for (let k = 1; k < u.length; k++) if (u[k] > u[pk]) pk = k;
+    v2tLobes.set(L.id, {L, col, peak: pk * 360 / u.length, el: null});
+    v2tRenderTab(true);
+    // the map, with the place in view
+    const org = v2tLobeOrigin(L);
+    const wasOff = !mapState.on;
+    if (wasOff) mapToggle(true);
+    else if (opMode === 'coherent' && mapState.tab === 'doa') rpShow('map');
+    if (!org) { mapStatusFlash('No station position - set it in the sidebar (Station Information) to place the lobe'); return; }
+    setTimeout(() => {
+      const [x, y] = mapLatLonToScreen(org[0], org[1]);
+      if (wasOff || !(x >= 0 && y >= 0 && x <= mapW && y <= mapH)) { mapAutoFit = false; mapCenterOn(org[0], org[1]); }
+      else mapDraw();
+    }, 60);
+  }
+  function v2tLobeRemove(id) {
+    const o = v2tLobes.get(id);
+    if (!o) return;
+    if (o.el) o.el.remove();
+    v2tLobes.delete(id);
+    mapDraw();
+    v2tRenderTab(true);
+  }
+  function v2tLobeTag(id, o) {
+    const L = o.L, el = document.createElement('div');
+    el.className = 'v2t-ltag';
+    el.style.borderColor = o.col;
+    const time = new Date(L.t).toLocaleTimeString([], {hour12: false});
+    const ang = L.lf === 'n' ? `${Math.round(Number.isFinite(L.brg) ? L.brg : o.peak)}°` : `arr ${Math.round(Number.isFinite(L.doa) ? L.doa : o.peak)}°`;
+    el.title = `D${L.vfo} ${(+L.mhz).toFixed(4)} MHz, ${new Date(L.t).toLocaleString()}, ${(+L.dur).toFixed(1)} s: the DoA lobe ` +
+      'averaged over the transmission, from where the station was' +
+      (L.lf === 'n' ? '' : '. The station had no heading then: drawn relative to the array, its front (ANT0) towards north');
+    el.innerHTML = `<span style="color:${o.col}">●</span><span>D${L.vfo} ${time} · 🧭 ${ang}${L.lf === 'n' ? '' : ' (array)'}</span>` +
+      `<button type="button" title="Remove this lobe from the map">✕</button>`;
+    el.querySelector('button').onclick = e => { e.stopPropagation(); v2tLobeRemove(id); };
+    el.addEventListener('pointerdown', e => e.stopPropagation());
+    el.addEventListener('wheel', e => e.preventDefault(), {passive: false});
+    $id('map-v2t').appendChild(el);
+    return el;
+  }
+  function v2tLobeDraw(c) {
+    if (!v2tLobes.size) return;
+    const R = 0.3 * Math.min(mapW, mapH);   // as the live lobes (rdfDraw)
+    for (const [id, o] of v2tLobes) {
+      if (!o.el) o.el = v2tLobeTag(id, o);
+      const org = v2tLobeOrigin(o.L);
+      if (!org) { o.el.style.display = 'none'; continue; }
+      const [sx, sy] = mapLatLonToScreen(org[0], org[1]);
+      c.save();
+      rdfLobePath(c, o.L.lobe, sx, sy, R);
+      c.globalAlpha = 0.16; c.fillStyle = o.col; c.fill();
+      c.globalAlpha = 1; c.strokeStyle = 'rgba(0,0,0,0.75)'; c.lineWidth = 4; c.stroke();
+      c.strokeStyle = o.col; c.lineWidth = 2; c.setLineDash([7, 4]); c.stroke();
+      c.restore();
+      // its tag just past the lobe's tip, kept inside the map
+      const a = o.peak * Math.PI / 180;
+      const tx = Math.min(Math.max(sx + 1.14 * R * Math.sin(a), 70), mapW - 70);
+      const ty = Math.min(Math.max(sy - 1.14 * R * Math.cos(a), 14), mapH - 14);
+      o.el.style.display = '';
+      o.el.style.left = tx + 'px';
+      o.el.style.top = ty + 'px';
     }
   }
 
@@ -11953,6 +12060,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
     vsDraw(c);
     rdfDraw(c);
+    v2tLobeDraw(c);
     mastDraw(c);
     mapRings(c);
     plDraw(c);

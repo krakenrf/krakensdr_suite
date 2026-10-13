@@ -638,6 +638,13 @@ leaves it out) with the models in `docker-data/whisper_models/`
   `VOICE2TEXT_*` (settings persisted before DECIMATORS; the per-VFO flag
   is DECIMATORS snapshot field 11), `VOICE2TEXT_DOWNLOAD:` = a catalogue
   model via curl
+- Each transcript keeps its DoA LOBE: the MUSIC pseudospectrum averaged over
+  the transmission (turned to north per frame by the heading of that moment;
+  without a heading relative to the array) + where the station was, in
+  transcripts.jsonl. Clicking the 🧭 bearing in its row
+  (`VOICE2TEXT_LOBE:<id>`, the list itself only says `lb`) draws it on the
+  🗺 map - pale colours of its own, dashed, never a VFO's live-lobe colour -
+  with a tag whose ✕ removes it
 - Pi 5: base.en ~280 MB RAM, ~2-3x faster than real time on 2-3 cores
 
 **📡 Mobile DF on the map (coherent mode)** (details: `kraken_doa_v2/CLAUDE.md`
