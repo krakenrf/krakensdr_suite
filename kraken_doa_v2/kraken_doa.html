@@ -1528,7 +1528,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <button class="btn sm" type="button" onclick="v2tApplyPrompt()" title="Use these words">Apply</button>
         </div>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#c8d6e5;margin-top:4px" title="Voice activity detection: the speech in each transmission is found first, noise / tones / data bursts are skipped. Without it the model may 'hear' words in noise."><input type="checkbox" id="v2t-vad" onchange="send('VOICE2TEXT_VAD:' + (this.checked ? 1 : 0))"> Skip non-speech (voice detection)</label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#c8d6e5;margin-top:2px" title="Keep each transcript's audio (16 kHz WAV, ~32 kB a second) to play it back in the Voice tab. The oldest go beyond 2000 clips / 400 MB."><input type="checkbox" id="v2t-keep" onchange="send('VOICE2TEXT_KEEP_AUDIO:' + (this.checked ? 1 : 0))"> Keep the audio to play back</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#c8d6e5;margin-top:2px" title="Keep each transcript's audio to play it back in the Voice tab: Opus files (~7 MB an hour of speech) in the Decoder Logging folder (voice_clips/, one folder a day), deleted after the same Keep days as the log files. Not saved while that disk has less than 100 MB free."><input type="checkbox" id="v2t-keep" onchange="send('VOICE2TEXT_KEEP_AUDIO:' + (this.checked ? 1 : 0))"> Keep the audio to play back</label>
+        <div id="v2t-clips" style="font-size:11px;color:#6f87a6;margin:1px 0 0 22px;word-break:break-all"></div>
         <div id="v2t-status" style="font-size:12px;color:#8aa8c7;line-height:1.8;margin-top:6px">
           <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">Status</span><span id="v2t-state" style="text-align:right">&mdash;</span></div>
           <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">VFOs</span><span id="v2t-vfos" style="text-align:right">&mdash;</span></div>
@@ -10691,6 +10692,19 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       : 'The voice detection model is not downloaded (⬇ Get any model, or run transcribe/setup.sh): every transmission goes to the speech model';
     const keep = $id('v2t-keep');
     if (idle(keep)) keep.checked = !!s.keep_audio;
+    // where the clips are, how many, how long they're kept, disk trouble
+    let ch = '';
+    if (s.clip_dir !== undefined) {
+      const kept = s.clip_days > 0 ? `kept ${s.clip_days} day${s.clip_days > 1 ? 's' : ''}` : 'kept forever';
+      ch = `${s.clips} clip${s.clips === 1 ? '' : 's'}, ${s.clip_mb} MB · ${kept} (Decoder Logging's Keep)` +
+           `<br><span title="The Decoder Logging folder">${digEsc(s.clip_dir || '')}</span>`;
+      if (s.clip_low)
+        ch += `<br><span style="color:#ffb74d">⚠ less than 100 MB free there (${s.clip_free_mb} MB): audio not saved</span>`;
+      else if (s.clip_error)
+        ch += `<br><span style="color:#ff8a80">⚠ ${digEsc(s.clip_error)}</span>`;
+      if (s.clips_skipped) ch += `<br><span style="color:#ffb74d">${s.clips_skipped} not saved</span>`;
+    }
+    v2tSetHtml($id('v2t-clips'), s.keep_audio ? ch : '');
     // state
     const [col, label] = V2T_STATE[s.state] || ['#888', s.state];
     let st = `<span style="color:${col}">&#9679;</span> ${digEsc(label)}`;
@@ -10786,7 +10800,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     list.dataset.key = key;
     if (!v2tShown.length) {
       list.innerHTML = `<div class="dig-help" style="padding:6px">${v2tList.length ? 'Nothing matches.' :
-        'No transcripts yet. Each transmission appears here a few seconds after it ends.'}</div>`;
+        'No transcripts yet. Each transmission appears here a few seconds after it ends (one longer than 25 s in ' +
+        'parts); a continuous signal (broadcast FM, or anything on air longer than 30 s) in pieces of about 10 s, ' +
+        'cut where the speech pauses.'}</div>`;
       return;
     }
     // newest first, at most 400 rows (the CSV export has them all)
@@ -10797,21 +10813,81 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     list.scrollTop = atTop ? 0 : top;
   }
 
+  // An Ogg Opus clip -> 48 kHz PCM with the page's own Opus decoder (the live
+  // audio's, opus-decoder.min.js): for browsers that can't play Ogg Opus
+  async function v2tDecodeOgg(buf) {
+    const u = new Uint8Array(buf);
+    const packets = [];
+    let p = 0, part = [];
+    while (p + 27 <= u.length && u[p] === 0x4f && u[p + 1] === 0x67 && u[p + 2] === 0x67 && u[p + 3] === 0x53) {
+      const nseg = u[p + 26];
+      let off = p + 27 + nseg;
+      for (let i = 0; i < nseg; i++) {
+        const l = u[p + 27 + i];
+        part.push(u.subarray(off, off + l));
+        off += l;
+        if (l < 255) {   // a packet ends here
+          const pk = new Uint8Array(part.reduce((a, x) => a + x.length, 0));
+          let o = 0;
+          for (const x of part) { pk.set(x, o); o += x.length; }
+          packets.push(pk);
+          part = [];
+        }
+      }
+      p = off;
+    }
+    if (packets.length < 3) throw new Error('not an Opus clip');
+    const preSkip = packets[0][10] | (packets[0][11] << 8);   // OpusHead
+    const Dec = window['opus-decoder'] && window['opus-decoder'].OpusDecoder;
+    if (!Dec) throw new Error('this browser can\'t play Opus and the page\'s decoder didn\'t load');
+    const dec = new Dec({channels: 1, sampleRate: 48000, preSkip});
+    await dec.ready;
+    const chunks = [];
+    let n = 0;
+    try {
+      for (const pk of packets.slice(2)) {   // after OpusHead + OpusTags
+        const r = dec.decodeFrame(pk);
+        if (r && r.channelData && r.channelData[0]) { chunks.push(r.channelData[0].slice()); n += r.channelData[0].length; }
+      }
+    } finally { try { dec.free(); } catch (e) {} }
+    const out = new Float32Array(n);
+    let o = 0;
+    for (const c of chunks) { out.set(c, o); o += c.length; }
+    return out;
+  }
+
   async function v2tPlay(id) {
     if (v2tAudio) { v2tAudio.pause(); URL.revokeObjectURL(v2tAudio.src); v2tAudio = null; }
     if (v2tPlaying === id) { v2tPlaying = null; v2tRenderTab(true); return; }
     v2tPlaying = id;
     v2tRenderTab(true);
+    const done = () => { if (v2tPlaying === id) { v2tPlaying = null; v2tRenderTab(true); } };
     try {
       // fetched in the page (it trusts the self-signed certificate), played from a blob
       const token = storedToken();
-      const r = await fetch('voice_clip/' + id + '.wav', {cache: 'no-store', headers: token ? {'X-Kraken-Token': token} : {}});
-      if (!r.ok) throw new Error(r.status === 404 ? 'the audio is gone (only the latest are kept)' : 'HTTP ' + r.status);
-      const url = URL.createObjectURL(await r.blob());
-      if (v2tPlaying !== id) { URL.revokeObjectURL(url); return; }
-      v2tAudio = new Audio(url);
-      v2tAudio.onended = () => { if (v2tPlaying === id) { v2tPlaying = null; v2tRenderTab(true); } };
-      await v2tAudio.play();
+      const r = await fetch('voice_clip/' + id + '.opus', {cache: 'no-store', headers: token ? {'X-Kraken-Token': token} : {}});
+      if (!r.ok) throw new Error(r.status === 404 ? 'the audio is gone (deleted after the Keep days of Decoder Logging or to free space, or the Decoder Logging folder was changed since)' : 'HTTP ' + r.status);
+      const blob = await r.blob();
+      if (v2tPlaying !== id) return;
+      if (document.createElement('audio').canPlayType('audio/ogg; codecs="opus"') !== '') {
+        const url = URL.createObjectURL(new Blob([blob], {type: 'audio/ogg'}));
+        v2tAudio = new Audio(url);
+        v2tAudio.onended = done;
+        await v2tAudio.play();
+        return;
+      }
+      // no Ogg Opus in this browser (older Safari): decode it here, play with WebAudio
+      const pcm = await v2tDecodeOgg(await blob.arrayBuffer());
+      if (v2tPlaying !== id) return;
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const ab = ctx.createBuffer(1, Math.max(1, pcm.length), 48000);
+      ab.copyToChannel(pcm, 0);
+      const src = ctx.createBufferSource();
+      src.buffer = ab;
+      src.connect(ctx.destination);
+      src.onended = () => { try { ctx.close(); } catch (e) {} done(); };
+      src.start();
+      v2tAudio = {src: '', paused: false, pause() { this.paused = true; try { src.stop(); } catch (e) {} try { ctx.close(); } catch (e) {} }};
     } catch (e) {
       if (v2tPlaying === id) { v2tPlaying = null; v2tRenderTab(true); }
       alert('Cannot play the audio: ' + (e && e.message ? e.message : e));

@@ -2064,7 +2064,7 @@ Edit `include/config.hpp`:
   rate, IAS / TAS, category, emergency, signal) / data / address, lat, lon,
   precision, confidence, text / voice: text, src (= dec: plugin id or NBFM /
   AM / WBFM), dur, conf, from + to (talker id + label), doa / brg, lang (not
-  "en"), clip (`voice_clips/<id>.wav`)
+  "en"), clip (`voice_clips/YYYY-MM-DD/<id>.opus`, relative to the log folder)
 - SD card: records go to a string buffer (cap 32 MB, then counted as
   dropped); the worker (1 s tick) appends it every `FLUSH_S` (5 s) with one
   fwrite + fflush, keeping the file open. Below `MIN_FREE_MB` (100) free the
@@ -2157,8 +2157,21 @@ Edit `include/config.hpp`:
   transmission (P25 closes a talker after a 0.75 s pause), another radio =
   `split()` there (the next radio's first frames come before the plugin
   names it); a transmission that starts unnamed adopts the first name.
-  RF move > 500 Hz / demod / rate change ends the transmission. > `MAX_UTTERANCE_S` 25 s -> parts (`part` 1, 2..), < 0.4 s
-  dropped. DoA: while recording, each NEW published MUSIC frame
+  RF move > 500 Hz / demod / rate change ends the transmission. < 0.4 s
+  dropped. Long audio -> pieces (`part` 1, 2..; `maybe_cut` / `cut` after
+  every input block): two-way = ONE transcript up to `TWOWAY_MAX_S` 25 s
+  (its text comes at its end anyway; whisper does better with the whole -
+  cutting at 18 s split 20 s transmissions for nothing), then cut at its
+  latest pause after `TWOWAY_MIN_S` 11 s; CONTINUOUS (a WBFM VFO, or
+  `tx_samples` - the transmission so far - > `CONTINUOUS_S` 30 s: AM
+  broadcast, a weather channel) from `CONT_SOFT_S` 8 s on at the latest
+  pause after `CONT_MIN_S` 5 s, so the text follows ~10-20 s behind. Pause =
+  `PAUSE_FRAMES` 12 x 20 ms frames (`Tap::fe`, energies kept as `cur` grows)
+  under max(0.1 median, 2 x 10th percentile) <= 0.5 median - a tenth of the
+  median alone found NO pause in hissy radio audio (an Apollo recording's
+  gaps sit at a third of the median), cut in its middle. No pause by the
+  maximum (15 / 25 s): at the quietest 100 ms of the last 3 s, the next
+  piece repeating `OVERLAP_S` 0.3 s. DoA: while recording, each NEW published MUSIC frame
   (`getResultStampMs`, not stale, coherent, DoA on) adds its compass-sense
   bearing (360 - peak, as the DoA logger) weighted by confidence -> circular
   mean = `doa`; `brg` = doa + station heading when valid. With the Digital
@@ -2188,7 +2201,14 @@ Edit `include/config.hpp`:
   skipped -> [..] (..) *..* and music notes stripped, a sentence / word
   repeated 4+ times kept once -> dropped: empty, subtitle-credit phrases
   ("thanks for watching"...), lone fillers ("thank you", "you", "bye"...)
-  when no_speech > 0.35 or conf < 0.5. conf = mean token p. Our own VAD
+  when no_speech > 0.35 or conf < 0.5. conf = mean token p. Greedy decoding
+  sometimes ENDS after the first sentence ("Roger the register." of 11 s of
+  speech; the clip offline gave the whole text): a result with < 0.6 words
+  per second of speech (>= 4 s) is decoded again as two halves of the
+  speech, split at the VAD gap nearest the middle (`joins`), the longer
+  text wins. Timestamps (whisper.cpp seeks on from the last one) did NOT
+  help - same text, and always on they broke a clip that decoded fine.
+  Our own VAD
   (not whisper_full's vad flag): its segment list goes stale when a clip has
   NO speech, so speech_ms couldn't be read
 - PROMPT ("Words to expect", `VOICE2TEXT_PROMPT:`, <= 300): whisper reads it
@@ -2204,9 +2224,8 @@ Edit `include/config.hpp`:
   appended to `transcripts.jsonl` - cwd, gitignored; rewritten from the
   history when it passes 3000 lines, `rewrite_history_locked`; a line that
   doesn't parse is skipped at startup - `stod` threw and the supervisor
-  restarted into the same crash), `declog::record_voice`, the clip `voice_clips/<id>.wav`
-  (16 kHz 16-bit; "Keep the audio", default on; oldest deleted beyond 2000 /
-  400 MB), `fresh` for the push - the clip list, file and history in ONE
+  restarted into the same crash), `declog::record_voice`, the clip (below),
+  `fresh` for the push - the clip list, file and history in ONE
   st_mu section that drops the result when `clear_gen` moved since its id
   was taken (a Clear meanwhile brought it back, clip gone). Transcript id =
   max(last + 1, t0 ms) (unique, sortable, survives restarts). JSON {id, t,
@@ -2220,7 +2239,10 @@ Edit `include/config.hpp`:
   models [{name, mb, multi, note}], catalogue (MODEL_CATALOGUE = setup.sh's
   CATALOGUE - keep them equal) with have, vad_model, settings, model_multi,
   log{enabled}, loaded, vad_loaded, queue, queued_s, dropped, done, nospeech,
-  failed, rtf, clips, clip_mb, vfos [{id, src, rec, secs, digital}],
+  failed, rtf, clips, clip_mb, clip_dir (absolute), clip_days, clip_free_mb,
+  clip_low, clips_skipped, clip_error, loop_max_ms + in_dropped_s (the
+  worker's longest loop / input dropped at the 3 s cap - diagnostics),
+  vfos [{id, src, rec, secs, digital}],
   download{name, running, pct, error}); `GET_VOICE2TEXT` (page connect) ->
   status + `history` (300). `VOICE2TEXT_CLEAR` empties history, file and
   clips. Settings (schema BEFORE DECIMATORS, so restored VFOs start with
@@ -2236,8 +2258,26 @@ Edit `include/config.hpp`:
   `<dir>/models`). Docker: helper built in the image (`--build-arg
   WHISPER=0` = without), models in `/data/whisper_models` (entrypoint), curl
   in the runtime image
-- HTTP `GET /voice_clip/<id>.wav` (websocket_server): host check + token
-  like /recordings; only ids in the clip list (`v2t::clip_path`)
+- Clips ("Keep the audio", default on; `save_clip` / `write_opus`, on the
+  worker): Ogg Opus (RFC 7845: OpusHead + OpusTags, libopus - already linked
+  for the live audio - 16 kHz mono VOIP 16 kbit/s, complexity 8, pre-skip =
+  lookahead x 3, the last page's granule trims the padding; Ogg CRC by hand;
+  ~2 kB/s = ~7 MB per hour of speech vs 115 MB as WAV) with Vorbis-comment
+  tags TITLE (the text), DATE, KRAKEN_VFO / MHZ / SOURCE / TALKER / BEARING.
+  In the DECODER LOG's folder, also with logging off: `declog::folder()` +
+  `/voice_clips/YYYY-MM-DD/<id>.opus` (local date; .tmp + rename).
+  `clips_tick` (2 s): a changed folder = rescan (`scan_clips`: only
+  `<digits>.opus` in YYYY-MM-DD dirs; clips in the old folder stay there,
+  no longer in the index - the tab says "the audio is gone"); retention
+  (`clip_retention`: day dirs older than `declog::keep_days()`, 0 = keep;
+  clip-named files only, then rmdir - a foreign file keeps its dir) every
+  10 min and when the days / date change; free space (statvfs of the
+  nearest existing parent) < `MIN_FREE_BYTES` 100 MB -> `clip_low`, clips
+  skipped + counted (transcripts go on); `MAX_CLIP_BYTES` 2 GB backstop,
+  oldest first. The log record's `clip` is relative to the log folder
+- HTTP `GET /voice_clip/<id>.opus` (websocket_server, `audio/ogg`): host
+  check + token like /recordings; only ids in the clip list
+  (`v2t::clip_path`)
 - UI (kraken_doa.html "🗣 VOICE TO TEXT" block; state `v2tStatus / v2tList /
   v2tUnseen` in the globals block - `infoRenderTabs` reads them): sidebar
   box `#v2t-section` (`v2tRenderBox`: install hint, model + ⬇ Get list,
@@ -2247,7 +2287,10 @@ Edit `include/config.hpp`:
   updateDecimatorList and every status), info panel tab `infoTab = 'voice'`
   (`#info-body-voice`, `v2tRenderTab`: newest first, 400 rows, search with
   `<mark>` on the raw text, VFO filter, ▶ `v2tPlay` - fetch with the token
-  -> blob -> Audio, ⬇ CSV `v2tExport` - cells starting = + - @ get a ' so a
+  -> blob -> Audio; a browser without Ogg Opus (`canPlayType`, older
+  Safari): `v2tDecodeOgg` (Ogg pages -> packets, pre-skip from OpusHead ->
+  the live audio's opus-decoder.min.js) -> WebAudio; the box's clip line
+  `#v2t-clips` (count, MB, Keep days, folder, low disk / errors), ⬇ CSV `v2tExport` - cells starting = + - @ get a ' so a
   spreadsheet doesn't run them, Clear), tab label with a red dot while
   recording and a count of transcripts that came while hidden
 - Measured (Pi 5, other sessions loading it, load avg 5-8): base.en ~280 MB
@@ -2276,10 +2319,23 @@ Edit `include/config.hpp`:
   ready (the page that pressed ⬇ Get switches to it when the chosen model
   isn't installed, `v2tAutoPick`). Corrupt history lines skipped; a scene
   cut mid-transmission -> its 6.3 s transcribed 2 s later. t_ui.py
-  (headless Chromium, 27 checks): box, cards, tab, search, filter, escaping
-  of injected markup, CSV formula guard, clip play / stop, toggles,
-  settings, tab kept over a reload. No P25 voice recording here and no
-  mbelib (DMR / D-STAR / NXDN): real vocoders not tried
+  (headless Chromium, 34 checks): box, cards, tab, search, filter, escaping
+  of injected markup, CSV formula guard, clip play / stop (native Ogg Opus
+  and the forced decoder fallback - the whole clip decoded), "audio is
+  gone", the clip line, toggles, settings, tab kept over a reload. No P25
+  voice recording here and no mbelib (DMR / D-STAR / NXDN): real vocoders
+  not tried. Cutting + clips (make_bc.sh / run_bc.sh, 3 antennas): a 36 s
+  WBFM station (JFK + Apollo + Micro Machines, no pre-emphasis in the
+  generator) -> 5.5 / 11.9 / 7.9 / 11.4 s pieces, the first cut at JFK's
+  pause ("... ask not" | "what your country ..."); a 25 s two-way -> 22.2 +
+  3.4 s at a pause, a 20 s one -> ONE transcript; Opus files = transcript
+  dur (ffprobe), retention of a planted 12-day-old folder (its foreign file
+  + folder kept), relative clip paths in the log. NB the generator's weak
+  carrier (0.05 in 0.02 noise, ~300 Hz rms deviation: ~17 dB audio SNR)
+  made the two-way unintelligible - not the code: 10 dB more matched the
+  source offline. run_clips.sh: DECODER_LOG_DIR mid-run -> new clips + log
+  in the new folder; a build with MIN_FREE_BYTES 2^60 -> no clips,
+  clips_skipped 1..4, transcripts on
 
 **Digital squelch (squelch method "Digital", with the VFO's decoder on):**
 - The squelch methods are FFT (0) and DIGITAL (3) - the eigenvalue methods

@@ -13,14 +13,16 @@
 //  - otherwise its analog demodulation (NBFM / AM / WBFM - the VFO's demod)
 //    of the stream the FM audio gets, cut by the VFO's squelch (or, with the
 //    squelch off, by a signal 10 dB over the noise floor in the FFT).
-// Each transmission (0.4 .. 25 s; longer ones in 25 s parts) is queued for
+// Each transmission (>= 0.4 s; one longer than 25 s cut into parts at its
+// pauses - continuous signals such as broadcast FM in pieces of ~10 s) is queued for
 // the helper process transcribe/build/kraken_whisper (one at a time, at nice
 // 10; voice2text_wire.hpp), which skips non-speech with Silero VAD and
 // returns the text. Transcripts carry the time, VFO, frequency, source,
 // talker and - in coherent mode with DoA on - the VFO's bearing during the
 // transmission. They go to the history (transcripts.jsonl, the UI's 🗣 Voice
-// tab), the decoder data log (type "voice") and, with "Keep audio", a WAV
-// clip each (voice_clips/) playable from the tab.
+// tab), the decoder data log (type "voice") and, with "Keep audio", an Ogg
+// Opus clip each in the decoder log's folder (voice_clips/YYYY-MM-DD/, kept
+// as long as the log files) playable from the tab.
 
 #include <complex>
 #include <cstdint>
@@ -31,7 +33,6 @@ enum class DemodulatorMode;
 namespace v2t {
 
 constexpr int RATE = 16000;                    // what the model takes
-constexpr double MAX_UTTERANCE_S = 25.0;       // longer: cut into parts
 constexpr double MIN_UTTERANCE_S = 0.4;        // shorter: not sent
 constexpr float AUTO_SQUELCH_DB = 10.0f;       // squelch off: "signal" = 10 dB over the noise floor
 
@@ -69,7 +70,7 @@ std::string history_message(size_t max);
 // {"voice2text":{"new":[...]}} with the transcripts since the last call, or ""
 std::string take_new_message();
 void clear_history();
-// HTTP /voice_clip/<id>.wav: the clip's file ("" = none)
+// HTTP /voice_clip/<id>.opus: the clip's file ("" = none)
 std::string clip_path(uint64_t id);
 // Download a model of the catalogue into the models folder (curl, in the
 // background; progress in the status). false + err: unknown / already running

@@ -11,11 +11,14 @@
 #include <dirent.h>
 #include <signal.h>
 #include <spawn.h>
+#include <opus/opus.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -77,15 +80,37 @@ constexpr double HANG_S = 0.8;          // squelch closed this long = the transm
 constexpr double TAIL_S = 0.25;         // ... of which this much is kept
 constexpr int64_t DIGITAL_GAP_MS = 1500;   // no decoded voice this long = the transmission ended
 constexpr int64_t ANALOG_STALL_MS = 2000;  // no analog input this long = it ended (input stopped)
+// Long audio is cut into pieces, at a pause where there is one. Two-way radio:
+// a transmission is ONE transcript up to TWOWAY_MAX_S (its text comes when it
+// ends anyway, and whisper does better with the whole of it); longer, it is
+// cut there at its latest pause after TWOWAY_MIN_S. Continuous signals - WBFM
+// broadcast, or anything open longer than CONTINUOUS_S (AM broadcast, a
+// weather channel) - from CONT_SOFT_S on at their latest pause after
+// CONT_MIN_S (at the latest CONT_MAX_S), so the text follows ~10-20 s
+// behind. Pause = PAUSE_FRAMES 20 ms frames under a tenth of the piece's
+// median energy (on hissy audio twice its noise floor - see maybe_cut). No
+// pause by the maximum: cut at the quietest 100 ms of the last 3 s, the next
+// piece repeating OVERLAP_S before it (a word cut there is in one of them whole)
+constexpr double CONTINUOUS_S = 30.0;
+constexpr double TWOWAY_MIN_S = 11.0, TWOWAY_MAX_S = 25.0;
+constexpr double CONT_MIN_S = 5.0, CONT_SOFT_S = 8.0, CONT_MAX_S = 15.0;
+constexpr size_t FRAME = 320;
+constexpr size_t PAUSE_FRAMES = 12;
+constexpr double OVERLAP_S = 0.3;
 constexpr double MAX_QUEUED_S = 600;    // transmissions waiting for the helper (then the oldest go)
 constexpr size_t MAX_QUEUED_JOBS = 40;
 constexpr double MAX_INPUT_S = 3.0;     // per VFO, audio waiting for the worker
 constexpr size_t MAX_HISTORY = 1000;
-constexpr size_t MAX_CLIPS = 2000;
-constexpr uint64_t MAX_CLIP_BYTES = 400ull << 20;
 constexpr int64_t HELPER_IDLE_STOP_MS = 120000;   // no VFO transcribing: the helper (its RAM) goes
 constexpr const char* HISTORY_FILE = "transcripts.jsonl";
+// Audio clips: Ogg Opus (16 kbps, ~7 MB an hour of speech) in the decoder
+// log's folder, <dir>/voice_clips/YYYY-MM-DD/<id>.opus, kept as many days as
+// the decoder log keeps its files; not written below MIN_FREE_BYTES free;
+// MAX_CLIP_BYTES = a backstop (the oldest go)
 constexpr const char* CLIP_DIR = "voice_clips";
+constexpr int CLIP_BITRATE = 16000;
+constexpr uint64_t MAX_CLIP_BYTES = 2ull << 30;
+constexpr uint64_t MIN_FREE_BYTES = 100ull << 20;
 
 int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -190,6 +215,11 @@ struct Utterance {
     double seconds() const { return pcm.size() / static_cast<double>(RATE); }
 };
 
+struct ClipFile {
+    std::string path;   // <log folder>/voice_clips/YYYY-MM-DD/<id>.opus
+    uint64_t bytes = 0;
+};
+
 struct Transcript {
     uint64_t id = 0;
     int64_t t_ms = 0;
@@ -267,9 +297,34 @@ struct Tap {
     int part = 0;
     std::string src, tid, tlabel;
     long anon_from = -1;            // digital: where audio without the named talker began (-1 = none)
+    size_t tx_samples = 0;          // the whole transmission so far (all its parts)
+    // 20 ms frame energies of cur (pause search, maybe_cut) + the partial frame
+    std::vector<float> fe;
+    double fe_acc = 0;
+    size_t fe_n = 0;
     // bearing during it
     int64_t doa_stamp = 0;
     double dsx = 0, dsy = 0, dw = 0;
+    void add_fe(float v) {
+        fe_acc += static_cast<double>(v) * v;
+        if (++fe_n == FRAME) {
+            fe.push_back(static_cast<float>(fe_acc / FRAME));
+            fe_acc = 0;
+            fe_n = 0;
+        }
+    }
+    void append(const std::vector<float>& y) {
+        cur.insert(cur.end(), y.begin(), y.end());
+        tx_samples += y.size();
+        for (float v : y) add_fe(v);
+    }
+    // cur was replaced: its frame energies again
+    void refe() {
+        fe.clear();
+        fe_acc = 0;
+        fe_n = 0;
+        for (float v : cur) add_fe(v);
+    }
     Tap() = default;
     Tap(const Tap&) = delete;   // owns the liquid objects
     Tap& operator=(const Tap&) = delete;
@@ -371,6 +426,8 @@ struct State {
     std::condition_variable q_cv;
     std::deque<Input> q;
     std::map<int, double> queued_s;   // per VFO, seconds of input waiting
+    double in_dropped_s = 0;          // input dropped: the worker fell behind (q_mu)
+    int64_t loop_max_ms = 0;          // the worker's slowest pass (st_mu)
     // settings
     std::mutex cfg_mu;
     Config cfg;
@@ -387,8 +444,16 @@ struct State {
     double rtf = 0;               // processing time / audio time (moving average)
     uint32_t last_ms = 0;
     std::vector<VfoState> vfos;
-    std::deque<uint64_t> clips;   // ids with a WAV in voice_clips/, oldest first
+    // audio clips in <decoder log folder>/voice_clips/ (the worker rescans on a
+    // folder change), by id = oldest first
+    std::map<uint64_t, ClipFile> clips;
     uint64_t clip_bytes = 0;
+    std::string clip_root;        // <log folder>/voice_clips
+    int clip_days = 0;            // the decoder log's Keep days (0 = forever)
+    uint64_t clip_free = 0;       // free bytes there
+    bool clip_low = false;        // < MIN_FREE_BYTES free: clips aren't written
+    uint64_t clips_skipped = 0;   // not written: disk nearly full / write failed
+    std::string clip_error;
     size_t file_lines = 0;        // lines in transcripts.jsonl
     uint64_t clear_gen = 0;       // VOICE2TEXT_CLEAR count: a result begun before one is dropped
     std::string last_error;       // the latest helper problem, until a job goes through
@@ -437,49 +502,267 @@ void load_history() {
     for (const auto& t : s.history) s.last_id = std::max(s.last_id, t.id);
     s.file_lines = lines;
     if (lines > MAX_HISTORY * 3) rewrite_history_locked(s);
-    // clips on disk (named <id>.wav), oldest first
-    std::vector<uint64_t> ids;
-    if (DIR* d = opendir(CLIP_DIR)) {
-        while (dirent* e = readdir(d)) {
-            const std::string n = e->d_name;
-            if (n.size() < 5 || n.substr(n.size() - 4) != ".wav") continue;
-            const uint64_t id = strtoull(n.c_str(), nullptr, 10);
-            if (id) ids.push_back(id);
-        }
-        closedir(d);
-    }
-    std::sort(ids.begin(), ids.end());
-    s.clips.assign(ids.begin(), ids.end());
-    s.clip_bytes = 0;
-    for (uint64_t id : ids) s.clip_bytes += file_size(std::string(CLIP_DIR) + "/" + std::to_string(id) + ".wav");
 }
 
-bool write_wav(const std::string& path, const std::vector<int16_t>& pcm) {
-    FILE* f = fopen((path + ".tmp").c_str(), "wb");
+// --- audio clips: Ogg Opus files in the decoder log's folder ---------------------
+
+std::string local_date(time_t t) {
+    struct tm tm{};
+    localtime_r(&t, &tm);
+    char b[16];
+    strftime(b, sizeof b, "%Y-%m-%d", &tm);
+    return b;
+}
+
+// "YYYY-MM-DD" -> days since 1970, -1 = not a date
+long day_number(const std::string& d) {
+    if (d.size() != 10 || d[4] != '-' || d[7] != '-') return -1;
+    for (size_t i : {0, 1, 2, 3, 5, 6, 8, 9})
+        if (!std::isdigit(static_cast<unsigned char>(d[i]))) return -1;
+    struct tm tm{};
+    tm.tm_year = std::stoi(d.substr(0, 4)) - 1900;
+    tm.tm_mon = std::stoi(d.substr(5, 2)) - 1;
+    tm.tm_mday = std::stoi(d.substr(8, 2));
+    return static_cast<long>(timegm(&tm) / 86400);
+}
+
+// "<digits>.opus" (also its ".tmp" leftover) - the only files retention touches
+bool clip_name(const std::string& n, uint64_t* id, bool* tmp) {
+    size_t i = 0;
+    while (i < n.size() && std::isdigit(static_cast<unsigned char>(n[i]))) i++;
+    if (i == 0 || i > 20) return false;
+    const std::string rest = n.substr(i);
+    if (rest != ".opus" && rest != ".opus.tmp") return false;
+    *id = strtoull(n.c_str(), nullptr, 10);
+    *tmp = rest != ".opus";
+    return true;
+}
+
+bool mkdirs(const std::string& path) {
+    std::string cur = !path.empty() && path[0] == '/' ? "/" : "";
+    std::stringstream ss(path);
+    std::string part;
+    while (std::getline(ss, part, '/')) {
+        if (part.empty()) continue;
+        cur += part;
+        if (mkdir(cur.c_str(), 0755) != 0 && errno != EEXIST) return false;
+        cur += "/";
+    }
+    struct stat st{};
+    return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+std::string absolute(const std::string& p) {
+    if (!p.empty() && p[0] == '/') return p;
+    char cwd[4096];
+    if (!getcwd(cwd, sizeof cwd)) return p;
+    return std::string(cwd) + "/" + p;
+}
+
+// free bytes on the file system holding path (or its nearest existing parent)
+bool free_space(std::string path, uint64_t* free_b) {
+    path = absolute(path);
+    for (int i = 0; i < 64 && !path.empty(); i++) {
+        struct statvfs v{};
+        if (statvfs(path.c_str(), &v) == 0) {
+            *free_b = static_cast<uint64_t>(v.f_bavail) * v.f_frsize;
+            return true;
+        }
+        const size_t sl = path.rfind('/');
+        path = sl == 0 ? "/" : (sl == std::string::npos ? "" : path.substr(0, sl));
+    }
+    return false;
+}
+
+// the clips under root: <root>/YYYY-MM-DD/<id>.opus, by id (= oldest first)
+std::map<uint64_t, ClipFile> scan_clips(const std::string& root) {
+    std::map<uint64_t, ClipFile> m;
+    DIR* d = opendir(root.c_str());
+    if (!d) return m;
+    while (dirent* e = readdir(d)) {
+        const std::string day = e->d_name;
+        if (day_number(day) < 0) continue;
+        const std::string dir = root + "/" + day;
+        if (DIR* d2 = opendir(dir.c_str())) {
+            while (dirent* f = readdir(d2)) {
+                uint64_t id;
+                bool tmp;
+                if (!clip_name(f->d_name, &id, &tmp) || tmp) continue;
+                const std::string p = dir + "/" + f->d_name;
+                m[id] = ClipFile{p, file_size(p)};
+            }
+            closedir(d2);
+        }
+    }
+    closedir(d);
+    return m;
+}
+
+// the day folders older than `days` (by name, like the decoder log's files):
+// their clip files are deleted, then the folder if that emptied it. Only
+// "YYYY-MM-DD" folders and "<id>.opus[.tmp]" files are touched
+std::vector<std::string> clip_retention(const std::string& root, int days) {
+    std::vector<std::string> gone;
+    if (days <= 0) return gone;
+    const long today = day_number(local_date(time(nullptr)));
+    DIR* d = opendir(root.c_str());
+    if (!d) return gone;
+    std::vector<std::string> old;
+    while (dirent* e = readdir(d)) {
+        const long dn = day_number(e->d_name);
+        if (dn >= 0 && today - dn > days) old.push_back(root + "/" + e->d_name);
+    }
+    closedir(d);
+    for (const auto& dir : old) {
+        if (DIR* d2 = opendir(dir.c_str())) {
+            std::vector<std::string> files;
+            while (dirent* f = readdir(d2)) {
+                uint64_t id;
+                bool tmp;
+                if (clip_name(f->d_name, &id, &tmp)) files.push_back(dir + "/" + f->d_name);
+            }
+            closedir(d2);
+            for (const auto& f : files) unlink(f.c_str());
+        }
+        rmdir(dir.c_str());   // only if nothing else is in it
+        gone.push_back(dir + "/");
+        std::cout << "Voice to Text: deleted the audio clips in " << dir << " (older than " << days << " days)"
+                  << std::endl;
+    }
+    return gone;
+}
+
+// st_mu held: the oldest clips go while all of them pass MAX_CLIP_BYTES
+void trim_clips_locked(State& s) {
+    while (!s.clips.empty() && s.clip_bytes > MAX_CLIP_BYTES) {
+        auto it = s.clips.begin();
+        unlink(it->second.path.c_str());
+        s.clip_bytes -= std::min(s.clip_bytes, it->second.bytes);
+        s.clips.erase(it);
+    }
+}
+
+void put_le16(std::string& s, uint16_t v) {
+    for (int i = 0; i < 2; i++) s.push_back(static_cast<char>(v >> (8 * i)));
+}
+void put_le32(std::string& s, uint32_t v) {
+    for (int i = 0; i < 4; i++) s.push_back(static_cast<char>(v >> (8 * i)));
+}
+void put_le64(std::string& s, uint64_t v) {
+    for (int i = 0; i < 8; i++) s.push_back(static_cast<char>(v >> (8 * i)));
+}
+
+// Ogg's CRC-32 (polynomial 0x04C11DB7, not reflected, initial 0)
+uint32_t ogg_crc(const std::string& d) {
+    static const std::array<uint32_t, 256> T = [] {
+        std::array<uint32_t, 256> t{};
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t r = i << 24;
+            for (int k = 0; k < 8; k++) r = (r & 0x80000000u) ? (r << 1) ^ 0x04C11DB7u : r << 1;
+            t[i] = r;
+        }
+        return t;
+    }();
+    uint32_t crc = 0;
+    for (unsigned char c : d) crc = (crc << 8) ^ T[((crc >> 24) ^ c) & 0xFF];
+    return crc;
+}
+
+// one Ogg page holding whole packets (<= 255 lacing values)
+void ogg_page(std::string& out, uint32_t serial, uint32_t seq, uint64_t granule, uint8_t flags,
+              const std::vector<std::string>& packets) {
+    std::string lacing, body;
+    for (const auto& p : packets) {
+        size_t n = p.size();
+        for (; n >= 255; n -= 255) lacing.push_back(static_cast<char>(255));
+        lacing.push_back(static_cast<char>(n));
+        body += p;
+    }
+    std::string page = "OggS";
+    page.push_back(0);   // version
+    page.push_back(static_cast<char>(flags));
+    put_le64(page, granule);
+    put_le32(page, serial);
+    put_le32(page, seq);
+    put_le32(page, 0);   // CRC, below
+    page.push_back(static_cast<char>(lacing.size()));
+    page += lacing;
+    page += body;
+    const uint32_t crc = ogg_crc(page);
+    for (int i = 0; i < 4; i++) page[22 + i] = static_cast<char>(crc >> (8 * i));
+    out += page;
+}
+
+// An Ogg Opus file (RFC 7845) of 16 kHz mono speech: libopus (already linked
+// for the live audio) at CLIP_BITRATE in 20 ms frames, ~1 s per page; tags
+// = Vorbis comments ("KEY=value") so the file says what it is elsewhere too
+bool write_opus(const std::string& path, const std::vector<int16_t>& pcm, const std::vector<std::string>& tags,
+                uint32_t serial) {
+    int err = 0;
+    OpusEncoder* enc = opus_encoder_create(RATE, 1, OPUS_APPLICATION_VOIP, &err);
+    if (!enc || err != OPUS_OK) return false;
+    opus_encoder_ctl(enc, OPUS_SET_BITRATE(CLIP_BITRATE));
+    opus_encoder_ctl(enc, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
+    opus_encoder_ctl(enc, OPUS_SET_COMPLEXITY(8));
+    opus_int32 la = 0;
+    opus_encoder_ctl(enc, OPUS_GET_LOOKAHEAD(&la));
+    const uint16_t pre_skip = static_cast<uint16_t>(la * (48000 / RATE));   // in 48 kHz samples
+    std::string out;
+    uint32_t seq = 0;
+    std::string head = "OpusHead";
+    head.push_back(1);   // version
+    head.push_back(1);   // channels
+    put_le16(head, pre_skip);
+    put_le32(head, RATE);   // the input's rate (informational)
+    put_le16(head, 0);      // output gain
+    head.push_back(0);      // mapping family 0: mono / stereo
+    ogg_page(out, serial, seq++, 0, 0x02, {head});
+    std::string tg = "OpusTags";
+    const std::string vendor = std::string("kraken_doa Voice to Text, ") + opus_get_version_string();
+    put_le32(tg, static_cast<uint32_t>(vendor.size()));
+    tg += vendor;
+    put_le32(tg, static_cast<uint32_t>(tags.size()));
+    for (const auto& c : tags) {
+        put_le32(tg, static_cast<uint32_t>(c.size()));
+        tg += c;
+    }
+    ogg_page(out, serial, seq++, 0, 0, {tg});
+    // frames until the encoder has put out the last input sample (its lookahead)
+    constexpr size_t F = RATE / 50;   // 20 ms
+    const size_t nframes = std::max<size_t>(1, (pcm.size() + static_cast<size_t>(la) + F - 1) / F);
+    std::vector<opus_int16> frame(F);
+    unsigned char buf[1500];
+    std::vector<std::string> packets;
+    bool ok = true;
+    for (size_t k = 0; k < nframes && ok; k++) {
+        for (size_t i = 0; i < F; i++) frame[i] = k * F + i < pcm.size() ? pcm[k * F + i] : 0;
+        const int n = opus_encode(enc, frame.data(), static_cast<int>(F), buf, sizeof buf);
+        if (n < 0) {
+            ok = false;
+            break;
+        }
+        packets.emplace_back(reinterpret_cast<const char*>(buf), static_cast<size_t>(n));
+        const bool last = k + 1 == nframes;
+        if (packets.size() == 50 || last) {
+            // granule: 48 kHz samples decodable so far incl. the pre-skip; the
+            // last page's says where the audio ends (the padding is trimmed)
+            const uint64_t g = last ? pre_skip + static_cast<uint64_t>(pcm.size()) * (48000 / RATE)
+                                    : static_cast<uint64_t>(k + 1) * 960;
+            ogg_page(out, serial, seq++, g, last ? 0x04 : 0, packets);
+            packets.clear();
+        }
+    }
+    opus_encoder_destroy(enc);
+    if (!ok) return false;
+    const std::string tmp = path + ".tmp";
+    FILE* f = fopen(tmp.c_str(), "wb");
     if (!f) return false;
-    const uint32_t data = static_cast<uint32_t>(pcm.size() * 2), rate = RATE, byte_rate = RATE * 2;
-    const uint32_t riff = 36 + data, fmt_len = 16;
-    const uint16_t pcm_fmt = 1, ch = 1, align = 2, bits = 16;
-    fwrite("RIFF", 1, 4, f); fwrite(&riff, 4, 1, f); fwrite("WAVEfmt ", 1, 8, f);
-    fwrite(&fmt_len, 4, 1, f); fwrite(&pcm_fmt, 2, 1, f); fwrite(&ch, 2, 1, f);
-    fwrite(&rate, 4, 1, f); fwrite(&byte_rate, 4, 1, f); fwrite(&align, 2, 1, f); fwrite(&bits, 2, 1, f);
-    fwrite("data", 1, 4, f); fwrite(&data, 4, 1, f);
-    const bool ok = fwrite(pcm.data(), 2, pcm.size(), f) == pcm.size();
-    if (fclose(f) != 0 || !ok) {
-        unlink((path + ".tmp").c_str());
+    const bool wrote = fwrite(out.data(), 1, out.size(), f) == out.size();
+    if (fclose(f) != 0 || !wrote) {
+        unlink(tmp.c_str());
         return false;
     }
-    return rename((path + ".tmp").c_str(), path.c_str()) == 0;
-}
-
-// st_mu held
-void trim_clips_locked(State& s) {
-    while (!s.clips.empty() && (s.clips.size() > MAX_CLIPS || s.clip_bytes > MAX_CLIP_BYTES)) {
-        const std::string p = std::string(CLIP_DIR) + "/" + std::to_string(s.clips.front()) + ".wav";
-        s.clip_bytes -= std::min(s.clip_bytes, file_size(p));
-        unlink(p.c_str());
-        s.clips.pop_front();
-    }
+    return rename(tmp.c_str(), path.c_str()) == 0;
 }
 
 // --- the worker ----------------------------------------------------------------
@@ -516,6 +799,14 @@ private:
     void sample_doa(Tap& tap, int vfo);
     void finish(Tap& tap, int vfo, bool more);
     void split(Tap& tap, int vfo, size_t at);
+    void maybe_cut(Tap& tap, int vfo);
+    void cut(Tap& tap, int vfo, size_t at, size_t overlap);
+    // audio clips: the decoder log's folder + Keep days, followed every 2 s
+    std::string clip_root_, clip_day_;
+    int clip_days_ = -1;
+    int64_t clip_tick_ms_ = 0, clip_ret_ms_ = 0;
+    void clips_tick(int64_t t);
+    std::string save_clip(const Transcript& t, const Utterance& u);
     void enqueue(Utterance&& u);
     void helper(int64_t t);
     void start_helper(const Config& c, int64_t t);
@@ -527,6 +818,85 @@ private:
 
 // err "" keeps the last problem: it stays shown (the state moves on to
 // "starting" within ms of a crash) until the helper loads or a job goes through
+// The clips follow the decoder log: its folder (a new one is scanned, the old
+// one's clips stay there, unlisted) and its Keep days (retention every 10
+// min, on a new day and when Keep changes); the free space every 2 s
+void Worker::clips_tick(int64_t t) {
+    if (t - clip_tick_ms_ < 2000) return;
+    clip_tick_ms_ = t;
+    const std::string root = declog::folder() + "/" + CLIP_DIR;
+    const int days = declog::keep_days();
+    const std::string today = local_date(time(nullptr));
+    if (root != clip_root_) {
+        clip_root_ = root;
+        auto idx = scan_clips(root);   // file system work outside the lock
+        uint64_t bytes = 0;
+        for (const auto& kv : idx) bytes += kv.second.bytes;
+        std::lock_guard<std::mutex> lk(s_.st_mu);
+        s_.clips = std::move(idx);
+        s_.clip_bytes = bytes;
+        s_.clip_root = root;
+        clip_ret_ms_ = 0;
+    }
+    if (days != clip_days_ || today != clip_day_) {
+        clip_days_ = days;
+        clip_day_ = today;
+        clip_ret_ms_ = 0;
+    }
+    if (clip_ret_ms_ == 0 || t - clip_ret_ms_ >= 600000) {
+        clip_ret_ms_ = t;
+        const auto gone = clip_retention(root, days);
+        std::lock_guard<std::mutex> lk(s_.st_mu);
+        s_.clip_days = days;
+        for (auto it = s_.clips.begin(); it != s_.clips.end();) {
+            bool del = false;
+            for (const auto& g : gone)
+                if (it->second.path.rfind(g, 0) == 0) del = true;
+            if (del) {
+                s_.clip_bytes -= std::min(s_.clip_bytes, it->second.bytes);
+                it = s_.clips.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        trim_clips_locked(s_);
+    }
+    uint64_t fr = 0;
+    const bool known = free_space(root, &fr);
+    std::lock_guard<std::mutex> lk(s_.st_mu);
+    s_.clip_free = known ? fr : 0;
+    s_.clip_low = known && fr < MIN_FREE_BYTES;
+}
+
+// A transcript's audio as <root>/<its local date>/<id>.opus ("" = not saved:
+// disk nearly full, or it couldn't be written - counted, and said in the box)
+std::string Worker::save_clip(const Transcript& t, const Utterance& u) {
+    {
+        std::lock_guard<std::mutex> lk(s_.st_mu);
+        if (s_.clip_low || clip_root_.empty()) {
+            s_.clips_skipped++;
+            return "";
+        }
+    }
+    const std::string dir = clip_root_ + "/" + local_date(static_cast<time_t>(t.t_ms / 1000));
+    const std::string path = dir + "/" + std::to_string(t.id) + ".opus";
+    char when[32];
+    const time_t tt = static_cast<time_t>(t.t_ms / 1000);
+    struct tm tm{};
+    localtime_r(&tt, &tm);
+    strftime(when, sizeof when, "%Y-%m-%dT%H:%M:%S", &tm);
+    std::vector<std::string> tags{"TITLE=" + t.text.substr(0, 1000), std::string("DATE=") + when,
+                                  "KRAKEN_VFO=D" + std::to_string(t.vfo), "KRAKEN_MHZ=" + fmt("%.6f", t.mhz),
+                                  "KRAKEN_SOURCE=" + t.src};
+    if (!t.tid.empty()) tags.push_back("KRAKEN_TALKER=" + t.tid + (t.tlabel.empty() ? "" : " -> " + t.tlabel));
+    if (is_finite_value(t.brg)) tags.push_back("KRAKEN_BEARING=" + fmt("%.1f", t.brg));
+    if (mkdirs(dir) && write_opus(path, u.pcm, tags, static_cast<uint32_t>(t.id))) return path;
+    std::lock_guard<std::mutex> lk(s_.st_mu);
+    s_.clips_skipped++;
+    s_.clip_error = "cannot write " + absolute(path) + ": " + strerror(errno);
+    return "";
+}
+
 void Worker::set_state(const std::string& st, const std::string& err) {
     std::lock_guard<std::mutex> lk(s_.st_mu);
     s_.state = st;
@@ -595,6 +965,8 @@ void Worker::analog(Tap& tap, int vfo, Input& in, int64_t t) {
         }
         tap.rec = true;
         tap.cur.assign(tap.pre.begin(), tap.pre.end());
+        tap.refe();
+        tap.tx_samples = tap.cur.size();
         tap.t0_ms = t - static_cast<int64_t>(tap.pre.size() * 1000 / RATE);
         tap.pre.clear();
         tap.closed = 0;
@@ -605,15 +977,15 @@ void Worker::analog(Tap& tap, int vfo, Input& in, int64_t t) {
         tap.dsx = tap.dsy = tap.dw = 0;
         tap.doa_stamp = 0;
     }
-    tap.cur.insert(tap.cur.end(), y.begin(), y.end());
+    tap.append(y);
     tap.last_audio_ms = t;
     tap.closed = in.open ? 0 : tap.closed + y.size();
     if (tap.closed >= static_cast<size_t>(HANG_S * RATE)) {
         const size_t keep = static_cast<size_t>(TAIL_S * RATE);
         tap.cur.resize(tap.cur.size() - std::min(tap.cur.size(), tap.closed - keep));
         finish(tap, vfo, false);
-    } else if (tap.cur.size() >= static_cast<size_t>(MAX_UTTERANCE_S * RATE)) {
-        finish(tap, vfo, true);
+    } else {
+        maybe_cut(tap, vfo);
     }
 }
 
@@ -644,6 +1016,8 @@ void Worker::digital(Tap& tap, int vfo, Input& in, int64_t t) {
     if (!tap.rec) {
         tap.rec = true;
         tap.cur.clear();
+        tap.refe();
+        tap.tx_samples = 0;
         tap.t0_ms = t - static_cast<int64_t>(y.size() * 1000 / RATE);
         tap.part = 0;
         tap.src = in.plugin;
@@ -658,9 +1032,9 @@ void Worker::digital(Tap& tap, int vfo, Input& in, int64_t t) {
     } else if (known && !in.tlabel.empty()) {
         tap.tlabel = in.tlabel;
     }
-    tap.cur.insert(tap.cur.end(), y.begin(), y.end());
+    tap.append(y);
     tap.last_audio_ms = t;
-    if (tap.cur.size() >= static_cast<size_t>(MAX_UTTERANCE_S * RATE)) finish(tap, vfo, true);
+    maybe_cut(tap, vfo);
 }
 
 // the VFO's DoA while the transmission lasts: confidence-weighted circular
@@ -715,6 +1089,7 @@ void Worker::finish(Tap& tap, int vfo, bool more) {
         tap.part = 0;
     }
     tap.cur.clear();
+    tap.refe();
     tap.closed = 0;
     tap.anon_from = -1;
     if (dur >= MIN_UTTERANCE_S) enqueue(std::move(u));
@@ -731,12 +1106,79 @@ void Worker::split(Tap& tap, int vfo, size_t at) {
     if (rest.empty()) return;
     tap.rec = true;
     tap.cur = std::move(rest);
+    tap.refe();
+    tap.tx_samples = tap.cur.size();   // a new transmission
     tap.t0_ms = t_rest;
     tap.part = 0;
     tap.tid.clear();
     tap.tlabel.clear();
     tap.dsx = tap.dsy = tap.dw = 0;
     tap.doa_stamp = 0;
+}
+
+// A long piece (see TWOWAY_* / CONT_*): from its trigger length on (two-way:
+// the maximum, continuous: CONT_SOFT_S) it is cut in the middle of its latest
+// pause after the minimum; with no pause by the maximum, at the quietest
+// 100 ms of the last 3 s, the next piece repeating OVERLAP_S before that
+void Worker::maybe_cut(Tap& tap, int vfo) {
+    const bool cont = (!tap.digital && tap.mode == DemodulatorMode::WBFM) ||
+                      tap.tx_samples > static_cast<size_t>(CONTINUOUS_S * RATE);
+    const size_t min = static_cast<size_t>((cont ? CONT_MIN_S : TWOWAY_MIN_S) * RATE);
+    const size_t hard = static_cast<size_t>((cont ? CONT_MAX_S : TWOWAY_MAX_S) * RATE);
+    const size_t trigger = cont ? static_cast<size_t>(CONT_SOFT_S * RATE) : hard;
+    const std::vector<float>& fe = tap.fe;
+    if (tap.cur.size() < trigger || fe.size() < 4 * PAUSE_FRAMES) return;
+    // quiet = under a tenth of the piece's median frame energy - or, on hissy
+    // radio audio where the gaps between words sit at the noise floor (a third
+    // of the median on an Apollo recording: no pause at all at a tenth), under
+    // twice its 10th percentile, at most half the median
+    std::vector<float> e(fe);
+    std::nth_element(e.begin(), e.begin() + static_cast<long>(e.size() / 2), e.end());
+    const float med = e[e.size() / 2];
+    std::nth_element(e.begin(), e.begin() + static_cast<long>(e.size() / 10), e.end());
+    const float quiet = std::min(std::max(0.1f * med, 2.0f * e[e.size() / 10]), 0.5f * med);
+    const size_t first = min / FRAME;
+    size_t cut_frame = 0, run = 0;
+    for (size_t i = first; i < fe.size(); i++) {
+        run = fe[i] < quiet ? run + 1 : 0;
+        if (run >= PAUSE_FRAMES) cut_frame = i + 1 - run / 2;   // the middle of the pause so far
+    }
+    if (cut_frame > 0) {
+        cut(tap, vfo, cut_frame * FRAME, 0);
+        return;
+    }
+    if (tap.cur.size() < hard) return;
+    constexpr size_t W = 5;   // 100 ms
+    const size_t from = fe.size() > 150 + W ? fe.size() - 150 : 0;
+    size_t best = from;
+    double best_e = -1;
+    for (size_t i = from; i + W <= fe.size(); i++) {
+        double s = 0;
+        for (size_t k = 0; k < W; k++) s += fe[i + k];
+        if (best_e < 0 || s < best_e) {
+            best_e = s;
+            best = i;
+        }
+    }
+    cut(tap, vfo, (best + W / 2) * FRAME, static_cast<size_t>(OVERLAP_S * RATE));
+}
+
+// The piece ends at sample `at`; the transmission goes on in the next part,
+// which starts `overlap` samples before it
+void Worker::cut(Tap& tap, int vfo, size_t at, size_t overlap) {
+    at = std::min(at, tap.cur.size());
+    const size_t from = at > overlap ? at - overlap : 0;
+    std::vector<float> rest(tap.cur.begin() + static_cast<long>(from), tap.cur.end());
+    const int64_t t_rest = tap.t0_ms + static_cast<int64_t>(from * 1000 / RATE);
+    const size_t closed = tap.closed;
+    const long anon = tap.anon_from;
+    tap.cur.resize(at);
+    finish(tap, vfo, true);
+    tap.cur = std::move(rest);
+    tap.refe();
+    tap.t0_ms = t_rest;
+    tap.closed = closed;
+    if (anon >= 0) tap.anon_from = static_cast<size_t>(anon) > from ? anon - static_cast<long>(from) : 0;
 }
 
 void Worker::enqueue(Utterance&& u) {
@@ -863,11 +1305,8 @@ void Worker::on_result(const char* p, size_t len) {
     t.conf = is_finite_value(conf) ? std::clamp(conf, 0.0f, 1.0f) : 0.0f;
     t.proc_ms = ms;
     t.part = u.part;
-    const std::string clip = std::string(CLIP_DIR) + "/" + std::to_string(t.id) + ".wav";
-    if (keep_audio) {
-        mkdir(CLIP_DIR, 0755);
-        t.clip = write_wav(clip, u.pcm);
-    }
+    const std::string clip = keep_audio ? save_clip(t, u) : "";
+    t.clip = !clip.empty();
     {
         // the clip, the file and the history together: a Clear (VOICE2TEXT_CLEAR)
         // since the id was taken drops this result instead of bringing it back
@@ -877,8 +1316,10 @@ void Worker::on_result(const char* p, size_t len) {
             return;
         }
         if (t.clip) {
-            s_.clips.push_back(t.id);
-            s_.clip_bytes += file_size(clip);
+            const uint64_t b = file_size(clip);
+            s_.clips[t.id] = ClipFile{clip, b};
+            s_.clip_bytes += b;
+            s_.clip_error.clear();
             trim_clips_locked(s_);
         }
         s_.history.push_back(t);
@@ -898,7 +1339,9 @@ void Worker::on_result(const char* p, size_t len) {
     if (is_finite_value(t.doa)) fields += ",\"doa\":" + fmt("%.1f", t.doa);
     if (is_finite_value(t.brg)) fields += ",\"brg\":" + fmt("%.1f", t.brg);
     if (!t.lang.empty() && t.lang != "en") fields += ",\"lang\":\"" + json_escape(t.lang) + "\"";
-    if (t.clip) fields += ",\"clip\":\"" + clip + "\"";
+    // the clip relative to the log folder: voice_clips/YYYY-MM-DD/<id>.opus
+    if (t.clip && clip.rfind(clip_root_, 0) == 0)
+        fields += ",\"clip\":\"" + json_escape(std::string(CLIP_DIR) + clip.substr(clip_root_.size())) + "\"";
     declog::record_voice(t.vfo, u.rf, t.t_ms, u.src, fields);
 }
 
@@ -1006,6 +1449,7 @@ void Worker::run() {
         }
         const int64_t t = now_ms();
         scan_vfos(t);
+        clips_tick(t);
         if (usable_)
             for (auto& in : batch) take_input(in, t);
         batch.clear();
@@ -1021,6 +1465,9 @@ void Worker::run() {
             }
         }
         helper(t);
+        const int64_t took = now_ms() - t;
+        std::lock_guard<std::mutex> lk(s_.st_mu);
+        s_.loop_max_ms = std::max(s_.loop_max_ms, took);
     }
     // shutdown: what was collected is lost; the helper exits on EOF
     stop_helper("");
@@ -1031,7 +1478,10 @@ void push_input(Input&& in, double seconds) {
     {
         std::lock_guard<std::mutex> lk(s.q_mu);
         double& q = s.queued_s[in.vfo];
-        if (q > MAX_INPUT_S) return;   // the worker is far behind
+        if (q > MAX_INPUT_S) {   // the worker is far behind: a hole in that VFO's audio
+            s.in_dropped_s += seconds;
+            return;
+        }
         q += seconds;
         s.q.push_back(std::move(in));
     }
@@ -1193,6 +1643,11 @@ std::string status_message() {
         std::lock_guard<std::mutex> lk(s.cfg_mu);
         c = s.cfg;
     }
+    double in_dropped;
+    {
+        std::lock_guard<std::mutex> lk(s.q_mu);
+        in_dropped = s.in_dropped_s;
+    }
     const auto inst = installed_models();
     const std::string vad = vad_model_path();
     const bool have_exe = file_exists(helper_exe());
@@ -1226,7 +1681,11 @@ std::string status_message() {
       << fmt("%.1f", s.queued_audio_s) << ",\"dropped\":" << s.dropped << ",\"done\":" << s.done
       << ",\"nospeech\":" << s.nospeech << ",\"failed\":" << s.failed << ",\"rtf\":" << fmt("%.2f", s.rtf)
       << ",\"last_ms\":" << s.last_ms << ",\"clips\":" << s.clips.size() << ",\"clip_mb\":"
-      << fmt("%.1f", s.clip_bytes / 1048576.0) << ",\"vfos\":[";
+      << fmt("%.1f", s.clip_bytes / 1048576.0) << ",\"clip_dir\":\""
+      << json_escape(s.clip_root.empty() ? "" : absolute(s.clip_root)) << "\",\"clip_days\":" << s.clip_days
+      << ",\"clip_free_mb\":" << s.clip_free / 1048576 << ",\"clip_low\":" << (s.clip_low ? "true" : "false")
+      << ",\"clips_skipped\":" << s.clips_skipped << ",\"clip_error\":\"" << json_escape(s.clip_error)
+      << "\",\"loop_max_ms\":" << s.loop_max_ms << ",\"in_dropped_s\":" << fmt("%.1f", in_dropped) << ",\"vfos\":[";
     for (size_t i = 0; i < s.vfos.size(); i++) {
         const auto& v = s.vfos[i];
         o << (i ? "," : "") << "{\"id\":" << v.id << ",\"src\":\"" << json_escape(v.src) << "\",\"rec\":"
@@ -1277,7 +1736,7 @@ void clear_history() {
     s.file_lines = 0;
     FILE* f = fopen(HISTORY_FILE, "w");
     if (f) fclose(f);
-    for (uint64_t id : s.clips) unlink((std::string(CLIP_DIR) + "/" + std::to_string(id) + ".wav").c_str());
+    for (const auto& kv : s.clips) unlink(kv.second.path.c_str());   // the day folders stay (retention empties them)
     s.clips.clear();
     s.clip_bytes = 0;
 }
@@ -1285,8 +1744,8 @@ void clear_history() {
 std::string clip_path(uint64_t id) {
     State& s = S();
     std::lock_guard<std::mutex> lk(s.st_mu);
-    if (std::find(s.clips.begin(), s.clips.end(), id) == s.clips.end()) return "";
-    return std::string(CLIP_DIR) + "/" + std::to_string(id) + ".wav";
+    auto it = s.clips.find(id);
+    return it == s.clips.end() ? "" : it->second.path;
 }
 
 bool download_model(const std::string& name, std::string* err) {

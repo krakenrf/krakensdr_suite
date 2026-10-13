@@ -552,6 +552,18 @@ void record_voice(int vfo, double rf_hz, int64_t t_ms, const std::string& source
     append_locked(s, head(vfo, rf_hz, source, "voice", t_ms) + fields + "}");
 }
 
+std::string folder() {
+    State& s = S();
+    std::lock_guard<std::mutex> lk(s.mu);
+    return s.dir;
+}
+
+int keep_days() {
+    State& s = S();
+    std::lock_guard<std::mutex> lk(s.mu);
+    return s.days;
+}
+
 bool type_logged(const std::string& type) {
     State& s = S();
     std::lock_guard<std::mutex> lk(s.mu);

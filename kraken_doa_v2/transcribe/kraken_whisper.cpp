@@ -244,6 +244,7 @@ Decoded decode(const std::vector<float>& speech, const Opts& o, const std::strin
 Result transcribe(const std::vector<float>& pcm, const Opts& o) {
     Result r;
     std::vector<float> speech;
+    std::vector<size_t> joins;   // where in `speech` a VAD part ends (the middle of the gap after it)
     if (g_vad && o.vad) {
         whisper_vad_params vp = whisper_vad_default_params();
         vp.threshold = std::clamp(o.vad_threshold, 0.05f, 0.95f);
@@ -262,7 +263,10 @@ Result transcribe(const std::vector<float>& pcm, const Opts& o) {
                 a = std::clamp<long>(a, 0, static_cast<long>(pcm.size()));
                 b = std::clamp<long>(b, a, static_cast<long>(pcm.size()));
                 if (b <= a) continue;
-                if (!speech.empty()) speech.insert(speech.end(), gap.begin(), gap.end());
+                if (!speech.empty()) {
+                    joins.push_back(speech.size() + gap.size() / 2);
+                    speech.insert(speech.end(), gap.begin(), gap.end());
+                }
                 speech.insert(speech.end(), pcm.begin() + a, pcm.begin() + b);
                 r.speech_ms += static_cast<int>((b - a) * 1000 / SR);
             }
@@ -292,6 +296,30 @@ Result transcribe(const std::vector<float>& pcm, const Opts& o) {
     if (!prompt.empty() && speech_s >= 2.5 && word_count(d.text) < speech_s * 0.4) {
         Decoded d2 = decode(speech, o, "");
         if (d2.ok && word_count(d2.text) > word_count(d.text)) d = std::move(d2);
+    }
+    // whisper sometimes ends a decode after its first sentence ("Roger the
+    // register." of 11 s of speech; timestamps don't make it go on): such a
+    // short result -> the speech's two halves (split between VAD parts, at
+    // the gap nearest the middle) decoded on their own, the longer text wins
+    if (speech_s >= 4.0 && word_count(d.text) < speech_s * 0.6 && !joins.empty()) {
+        size_t at = joins[0];
+        for (size_t j : joins)
+            if (std::labs(static_cast<long>(j) - static_cast<long>(speech.size() / 2)) <
+                std::labs(static_cast<long>(at) - static_cast<long>(speech.size() / 2)))
+                at = j;
+        if (at >= static_cast<size_t>(SR) && speech.size() - at >= static_cast<size_t>(SR)) {
+            const std::string pr = word_count(d.text) < speech_s * 0.4 ? "" : prompt;
+            Decoded a = decode(std::vector<float>(speech.begin(), speech.begin() + static_cast<long>(at)), o, pr);
+            Decoded b = decode(std::vector<float>(speech.begin() + static_cast<long>(at), speech.end()), o, pr);
+            if (a.ok && b.ok) {
+                const size_t na = word_count(a.text), nb = word_count(b.text);
+                if (na + nb > word_count(d.text)) {
+                    d.text = trim(a.text) + " " + trim(b.text);
+                    d.conf = static_cast<float>((a.conf * na + b.conf * nb) / static_cast<double>(na + nb));
+                    d.no_speech = std::max(a.no_speech, b.no_speech);
+                }
+            }
+        }
     }
     r.conf = d.conf;
     r.no_speech = d.no_speech;

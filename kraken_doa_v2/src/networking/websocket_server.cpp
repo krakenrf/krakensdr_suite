@@ -408,8 +408,9 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
         })
         .get("/voice_clip/*", [](auto* res, auto* req) {
             if (!request_allowed(req)) { refuse_request(res, req); return; }
-            // 🗣 Voice to Text: the audio clip of a transcript (voice_clips/<id>.wav,
-            // only ids the history knows). Token as for /recordings: what was said.
+            // 🗣 Voice to Text: the audio clip of a transcript (<id>.opus in the
+            // decoder log's voice_clips/ - only ids in the clip index). Token as
+            // for /recordings: what was said.
             if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
                 res->writeStatus("401 Unauthorized")->end("Access token required");
                 return;
@@ -425,8 +426,8 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 return;
             }
             std::stringstream buf;
-            buf << f.rdbuf();   // <= 25 s of 16 kHz 16-bit: ~800 kB
-            res->writeHeader("Content-Type", "audio/wav")
+            buf << f.rdbuf();   // <= 25 s at 16 kbps: ~50 kB
+            res->writeHeader("Content-Type", "audio/ogg")
                ->writeHeader("Cache-Control", "private, max-age=3600")
                ->end(buf.str());
         })

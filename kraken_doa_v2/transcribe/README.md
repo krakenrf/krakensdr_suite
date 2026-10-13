@@ -40,8 +40,10 @@ build/kraken_whisper --file clip.wav --model models/ggml-base.en.bin \
 ```
 
 prints the speech found, the time taken, the confidence and the text (or why
-nothing was kept). Any 16-bit WAV works (other rates are resampled crudely);
-the clips kraken_doa keeps (`voice_clips/<id>.wav`) are exactly what it sent.
+nothing was kept). Any 16-bit WAV works (other rates are resampled crudely).
+The clips kraken_doa keeps (`<decoder log folder>/voice_clips/YYYY-MM-DD/<id>.opus`,
+Ogg Opus) are what it sent, compressed: `ffmpeg -i <id>.opus -ar 16000 -ac 1 clip.wav`
+turns one back into a WAV for this.
 
 ## What the helper does with a transmission
 
@@ -51,7 +53,11 @@ the clips kraken_doa keeps (`voice_clips/<id>.wav`) are exactly what it sent.
 2. whisper (greedy decoding, each transmission on its own; the vocabulary
    prompt as "Glossary: ... ." - a bare word list made whisper stop after
    one word; a prompted result far shorter than the speech is decoded again
-   without it).
+   without it). Whisper sometimes stops after the first sentence ("Roger the
+   register." of 11 s of speech - timestamps don't make it go on): a result
+   with fewer than 0.6 words per second of speech (>= 4 s) is decoded again
+   as the speech's two halves, split between speech parts near the middle,
+   and the longer text wins.
 3. Clean-up: non-speech annotations (`[BLANK_AUDIO]`, `(static)`, ♪) are
    removed, a phrase repeated 4+ times is kept once, subtitle credits
    ("thanks for watching") and lone fillers ("thank you", "you") that

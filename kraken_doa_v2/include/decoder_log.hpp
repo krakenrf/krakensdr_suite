@@ -55,6 +55,10 @@ void record_incident(int vfo, const std::string& plugin, const std::string& addr
 void record_voice(int vfo, double rf_hz, int64_t t_ms, const std::string& source, const std::string& fields);
 // logging is on and this record type is ticked
 bool type_logged(const std::string& type);
+// The log folder (as set, possibly relative) and its Keep days (0 = forever):
+// Voice to Text keeps its audio clips there (voice_clips/), as long as the logs
+std::string folder();
+int keep_days();
 
 // {"declog":{settings, "dir_abs", "free", "total", "today_bytes", "per_day",
 //  "files", "total_bytes", "buffered", "dropped", "error", "mounts":[...]}}

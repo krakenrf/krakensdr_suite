@@ -623,9 +623,18 @@ leaves it out) with the models in `docker-data/whisper_models/`
   "no speech", no transcript), whisper, hallucination filters; a vocabulary
   prompt is sent as "Glossary: ... ." (a bare word list made whisper stop
   after one word)
+- Cutting: a two-way transmission is one transcript up to 25 s (longer:
+  parts, cut at its latest pause after 11 s); WBFM, or anything open longer
+  than 30 s, in pieces from 8 s on at a pause (at the latest 15 s, then at
+  the quietest 100 ms with 0.3 s overlap) - the text follows a broadcast live.
+  A pause = 240 ms under a tenth of the median energy, or twice the noise
+  floor on hissy audio
 - Out: the 🗣 Voice tab under the waterfall (search, VFO filter, ▶ audio
-  clip, CSV), `transcripts.jsonl` + `voice_clips/` (cwd), decoder log type
-  "voice", `GET /voice_clip/<id>.wav` (token like /recordings). Commands
+  clip, CSV), `transcripts.jsonl` (cwd), decoder log type "voice", the
+  audio as Ogg Opus 16 kbit/s in the DECODER LOG FOLDER
+  (`<dir>/voice_clips/YYYY-MM-DD/<id>.opus`, deleted with Decoder Logging's
+  Keep days, none written below 100 MB free, 2 GB backstop),
+  `GET /voice_clip/<id>.opus` (audio/ogg, token like /recordings). Commands
   `VOICE2TEXT_*` (settings persisted before DECIMATORS; the per-VFO flag
   is DECIMATORS snapshot field 11), `VOICE2TEXT_DOWNLOAD:` = a catalogue
   model via curl
