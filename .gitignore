@@ -13,3 +13,26 @@ docker-data/
 # git worktrees (Claude Code puts them in .claude/worktrees/<name>): each is a
 # whole second checkout with its own build output and settings - never add it
 .claude/worktrees/
+# Received / logged data and downloaded models, in ANY folder: the apps'
+# default folders are ignored per app (kraken_doa_v2/.gitignore); these catch
+# the same data in a folder the user picked (Decoder Logging's folder,
+# KRAKEN_WHISPER_MODELS) or written by the offline tools (sigtool.py captures,
+# a plugin's `decoder --file ... --audio`, digi_test --voice). A test vector
+# that really belongs in the repo needs `git add -f`
+# Decoder Logging days + Voice to Text audio clips
+decoders-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].jsonl
+decoders-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].jsonl.gz
+voice_clips/
+.kraken_write_test
+# Voice to Text speech models (whisper.cpp) + interrupted downloads
+ggml-*.bin
+ggml-*.bin.part
+# IQ captures and decoded / recorded audio
+*.cf32
+*.cu8
+*.cs8
+*.cs16
+*.sigmf-data
+*.sigmf-meta
+*.wav
+*.opus

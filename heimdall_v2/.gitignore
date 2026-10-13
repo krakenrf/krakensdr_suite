@@ -106,3 +106,5 @@ callgrind.out.*
 
 # Runtime settings (persisted per-machine, not source)
 heimdall_settings.conf
+# .s2p / .s1p calibration files uploaded for THIS receiver (web UI, forward_comp.cpp)
+s2p_calibration/
