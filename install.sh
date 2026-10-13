@@ -24,6 +24,8 @@
 #   SKIP_DEPS=1 ./install.sh    # skip apt install (still builds librtlsdr + apps)
 #   SKIP_RTLSDR=1 ./install.sh  # skip the librtlsdr fork build/install (heimdall's
 #                               # make still builds the static library if missing)
+#   WHISPER=1 ./install.sh      # also set up Voice to Text (local speech-to-text:
+#                               # whisper.cpp + a 142 MB model, ~10 min more)
 #
 # -E (errtrace): without it bash does not run the ERR trap inside functions or
 # subshells - and nearly every step lives in one (install_librtlsdr,
@@ -211,6 +213,17 @@ build_app() {
 build_app "Heimdall server" "$HEIMDALL_DIR" "heimdall"
 build_app "KrakenSDR DoA client" "$KRAKEN_DIR" "kraken_doa"
 
+# --- 3b. Voice to Text (optional) ---------------------------------------------
+# The local speech-to-text helper (whisper.cpp, ~10 min to build on a Pi 5)
+# and the default model (142 MB): only with WHISPER=1, or later with
+# `cd kraken_doa_v2 && make whisper`. Once set up, kraken_doa's make keeps it
+# up to date.
+if [[ "${WHISPER:-0}" == "1" ]]; then
+    say "Setting up Voice to Text (whisper.cpp + the base.en model)"
+    JOBS="$JOBS" "$KRAKEN_DIR/transcribe/setup.sh"
+    ok "Voice to Text ready -> kraken_doa_v2/transcribe/"
+fi
+
 # --- 4. SSL certificate for the DoA client web UI ----------------------------
 # kraken_doa serves HTTPS/WSS on port 8080 and loads server.crt/server.key from
 # its working directory (SSL_CERT_FILE/SSL_KEY_FILE in include/config.hpp).
@@ -260,3 +273,7 @@ echo "       sudo usermod -aG plugdev \"\$USER\""
 warn "Realtime scheduling (rtprio) was granted in limits.conf but only applies to"
 echo "     NEW logins - log out and back in (or reboot) before the first run."
 echo "     Verify with:  rtl_test -t   (rtl_test ships with the fork's rtl-tools)"
+if [[ ! -x "$KRAKEN_DIR/transcribe/build/kraken_whisper" ]]; then
+    echo "   Optional - Voice to Text (speech on the VFOs written down, locally):"
+    echo "       cd kraken_doa_v2 && make whisper"
+fi

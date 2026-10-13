@@ -18,6 +18,7 @@
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
 #include "array_cal.hpp"
+#include "voice2text.hpp"
 #include "networking/data_receiver.hpp"
 #include "networking/web_mapper.hpp"
 #include "networking/websocket_server.hpp"
@@ -277,6 +278,9 @@ static bool is_query_command(string_view msg) {
            msg.starts_with("PLUGIN") ||        // plugins: own broadcasts
            msg.starts_with("MARKER_") ||       // 🗺 map markers: {"markers":...} broadcasts
            msg.starts_with("ARRAY_CAL") ||     // ✈ array calibration: {"array_cal":...} broadcasts
+           // 🗣 Voice to Text actions: {"voice2text":...} / decimator_info broadcasts
+           msg.starts_with("VOICE2TEXT_VFO:") || msg.starts_with("VOICE2TEXT_DOWNLOAD:") ||
+           msg == "VOICE2TEXT_CLEAR" ||
            // operating mode / independent tuners: {"operating_mode":...} broadcasts
            msg.starts_with("OPERATING_MODE:") || msg.starts_with("WIDEBAND_MODE:") ||
            msg.starts_with("TUNER_") || msg.starts_with("TUNERS:");
@@ -378,7 +382,7 @@ static string build_decimator_snapshot() {
            << dig::mode_string(static_cast<dig::Mode>(d.digital_mode), d.digital_plugin) << ","
            << dig::options_to_string(d.digital_opts) << ",";
         auto inst = decimator_manager.getDecimator(d.id);
-        ss << (inst ? inst->tuner_channel.load() : 0);
+        ss << (inst ? inst->tuner_channel.load() : 0) << "," << (d.transcribe ? 1 : 0);
     }
     return ss.str();
 }
@@ -409,6 +413,7 @@ static bool apply_decimator_snapshot(const string& snap) {
         dig::Mode digital = dig::Mode::OFF; dig::Options dopts;
         std::string plugin;
         int tuner = 0;
+        bool transcribe = false;   // 🗣 Voice to Text
     };
     int fm_index;
     vector<Vfo> vfos;
@@ -437,6 +442,8 @@ static bool apply_decimator_snapshot(const string& snap) {
             if (getline(es, tok, ',')) v.dopts = dig::options_from_string(tok);
             // optional (newer files): the VFO's tuner (wideband / independent mode)
             if (getline(es, tok, ',') && !tok.empty()) v.tuner = std::clamp(stoi(tok), 0, MAX_CHANNELS - 1);
+            // optional (newer files): Voice to Text on this VFO
+            if (getline(es, tok, ',')) v.transcribe = tok == "1";
             vfos.push_back(v);
         }
     } catch (const exception&) {
@@ -467,6 +474,7 @@ static bool apply_decimator_snapshot(const string& snap) {
         if (auto inst = decimator_manager.getDecimator(id)) inst->tuner_channel = v.tuner;
         if (v.digital != dig::Mode::OFF) decimator_manager.setDigitalOptions(id, v.dopts);
         decimator_manager.setDigitalMode(id, v.digital, v.plugin);
+        decimator_manager.setTranscribe(id, v.transcribe);
     }
 
     if (fm_index < 0 || static_cast<size_t>(fm_index) >= n) fm_index = 0;
@@ -1897,6 +1905,70 @@ void ControlHandler::handle_message_impl(string_view message) {
             throw CommandRejected(err);
         }
         broadcast(declog::status_message());
+    }
+    // --- 🗣 Voice to Text (voice2text.cpp; settings persisted, VFO ticks in the snapshot) ---
+    else if (message.starts_with("VOICE2TEXT_VFO:")) {
+        // VOICE2TEXT_VFO:id:0|1 - the VFO card's "Transcribe" tick
+        const string params(message.substr(15));
+        const size_t c = params.find(':');
+        if (c == string::npos) throw CommandRejected("format: VOICE2TEXT_VFO:id:0|1");
+        const int id = stoi(params.substr(0, c));
+        const bool on = params.substr(c + 1) == "1";
+        if (!decimator_manager.setTranscribe(id, on)) throw CommandRejected("no such decimator");
+        cout << "Decimator " << id << " transcription " << (on ? "on" : "off") << endl;
+        broadcast(MessageBuilders::build_decimator_info_message());
+        broadcast(v2t::status_message());
+        record_decimator_snapshot();
+    }
+    else if (message.starts_with("VOICE2TEXT_MODEL:")) {
+        string err;
+        if (!v2t::set_model(string(message.substr(17)), &err)) throw CommandRejected(err);
+        broadcast(v2t::status_message());
+    }
+    else if (message.starts_with("VOICE2TEXT_LANGUAGE:")) {
+        if (!v2t::set_language(string(message.substr(20)))) throw CommandRejected("language: auto or a code like en, de");
+        broadcast(v2t::status_message());
+    }
+    else if (message.starts_with("VOICE2TEXT_THREADS:")) {
+        const int n = parse_int(message, 19);
+        if (n < 1 || n > 4) throw CommandRejected("threads must be 1-4");
+        v2t::set_threads(n);
+        broadcast(v2t::status_message());
+    }
+    else if (message.starts_with("VOICE2TEXT_PROMPT:")) {
+        if (!v2t::set_prompt(string(message.substr(18)))) throw CommandRejected("prompt: up to 300 characters");
+        broadcast(v2t::status_message());
+    }
+    else if (message.starts_with("VOICE2TEXT_VAD:")) {
+        v2t::set_vad(parse_int(message, 15) != 0);
+        broadcast(v2t::status_message());
+    }
+    else if (message.starts_with("VOICE2TEXT_TRANSLATE:")) {
+        v2t::set_translate(parse_int(message, 21) != 0);
+        broadcast(v2t::status_message());
+    }
+    else if (message.starts_with("VOICE2TEXT_KEEP_AUDIO:")) {
+        v2t::set_keep_audio(parse_int(message, 22) != 0);
+        broadcast(v2t::status_message());
+    }
+    else if (message.starts_with("VOICE2TEXT_DOWNLOAD:")) {
+        // a model of the catalogue (fixed Hugging Face URLs) into the models folder
+        string err;
+        if (!v2t::download_model(string(message.substr(20)), &err)) {
+            broadcast("{\"voice2text\":{\"error\":\"" + json_escape(err) + "\"}}");
+            throw CommandRejected(err);
+        }
+        broadcast(v2t::status_message());
+    }
+    else if (message == "VOICE2TEXT_CLEAR") {
+        v2t::clear_history();
+        broadcast(v2t::history_message(0));
+        broadcast(v2t::status_message());
+    }
+    else if (message == "GET_VOICE2TEXT") {
+        // a page connecting: the settings / state and the latest transcripts
+        broadcast(v2t::status_message());
+        broadcast(v2t::history_message(300));
     }
     else if (message.starts_with("RDF:")) {
         // Mobile DF heat map: collect bearings while driving (rdf_mapper.cpp)

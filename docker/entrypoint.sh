@@ -156,6 +156,11 @@ run_kraken_doa() {
     fi
     # decoder plugins built into the image (kraken_doa_v2/plugins/<id>/)
     export KRAKEN_PLUGIN_DIR=${KRAKEN_PLUGIN_DIR:-$APP/kraken_doa_v2/plugins}
+    # 🗣 Voice to Text: the helper in the image, the speech models in the
+    # volume (downloaded from the sidebar - they stay across image rebuilds)
+    export KRAKEN_TRANSCRIBE_DIR=${KRAKEN_TRANSCRIBE_DIR:-$APP/kraken_doa_v2/transcribe}
+    export KRAKEN_WHISPER_MODELS=${KRAKEN_WHISPER_MODELS:-$DATA/whisper_models}
+    mkdir -p "$KRAKEN_WHISPER_MODELS"
     ensure_cert
     wait_converged
     export KRAKEN_DOA_NO_TUI=1

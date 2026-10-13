@@ -22,6 +22,7 @@
 #include "ai_manager.hpp"
 #include "incidents.hpp"
 #include "map_markers.hpp"
+#include "voice2text.hpp"
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
 #include "array_cal.hpp"
@@ -302,6 +303,10 @@ int main(int argc, char* argv[]) {
     // Decoder data log (off until enabled in the sidebar; settings replay)
     declog::start();
 
+    // 🗣 Voice to Text (transcripts of the VFOs with "Transcribe" on; the
+    // whisper helper only runs while one does)
+    v2t::start();
+
     // Mobile DF on the map: DoA lobes + the transmitter heat map (coherent mode)
     rdfmap::start();
 
@@ -417,6 +422,7 @@ int main(int argc, char* argv[]) {
     // Stop the web mapper worker (reads the same decimator/station state).
     web_mapper.stop();
     incidents::save_now();
+    v2t::stop();       // before the decoder log's last write
     declog::stop();
     rdfmap::stop();
     array_cal::stop();

@@ -58,10 +58,22 @@ RUN ln -s /src/uws-heimdall heimdall_v2/uWebSockets \
     && make -C heimdall_v2 -j"$JOBS" \
     && make -C kraken_doa_v2 -j"$JOBS"
 
+# 🗣 Voice to Text: the local speech-to-text helper (whisper.cpp at the commit
+# kraken_doa_v2/transcribe/setup.sh pins; ~10 more minutes on a Pi 5). The
+# speech models are NOT in the image - they go to the data volume
+# (/data/whisper_models): the sidebar's "⬇ Get". --build-arg WHISPER=0 leaves
+# the helper out (the sidebar box then says it isn't installed)
+ARG WHISPER=1
+RUN mkdir -p /src/v2t \
+    && if [ "$WHISPER" = 1 ]; then \
+         JOBS="$JOBS" kraken_doa_v2/transcribe/setup.sh --build-only \
+         && cp kraken_doa_v2/transcribe/build/kraken_whisper /src/v2t/; \
+       fi
+
 # Runtime packages = whatever owns the shared libraries the binaries load, so
 # the runtime stage follows the Debian release without a hand-kept list
 RUN for b in heimdall_v2/heimdall kraken_doa_v2/kraken_doa librtlsdr/build/src/rtl_test \
-             kraken_doa_v2/plugins/*/build/decoder; do ldd "$b"; done \
+             kraken_doa_v2/plugins/*/build/decoder /src/v2t/*; do [ -e "$b" ] && ldd "$b"; done \
         | awk '/=> \// {print $3}' | sort -u | xargs realpath | xargs dpkg -S \
         | cut -d: -f1 | sort -u > /src/runtime-packages \
     && cat /src/runtime-packages
@@ -72,8 +84,9 @@ FROM debian:${DEBIAN_RELEASE}-slim
 COPY --from=build /src/runtime-packages /tmp/runtime-packages
 # openssl: TLS certificate for the client web UI on first start
 # usbutils: lsusb for checking the passthrough
+# curl: Voice to Text's model downloads (the sidebar's "⬇ Get")
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        $(cat /tmp/runtime-packages) openssl usbutils ca-certificates \
+        $(cat /tmp/runtime-packages) openssl usbutils ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* /tmp/runtime-packages
 
 WORKDIR /opt/krakensdr
@@ -86,6 +99,8 @@ COPY --from=build /src/kraken_doa_v2/kraken_doa \
 # decoder plugins (built ones: plugins/<id>/build/decoder); kraken_doa finds
 # them through KRAKEN_PLUGIN_DIR (entrypoint)
 COPY --from=build /src/kraken_doa_v2/plugins/ kraken_doa_v2/plugins/
+# Voice to Text helper (empty with WHISPER=0); KRAKEN_TRANSCRIBE_DIR (entrypoint)
+COPY --from=build /src/v2t/ kraken_doa_v2/transcribe/build/
 COPY --from=build /src/librtlsdr/build/src/rtl_test /src/librtlsdr/build/src/rtl_eeprom /usr/local/bin/
 COPY docker/entrypoint.sh /usr/local/bin/krakensdr-entrypoint
 RUN chmod 755 /usr/local/bin/krakensdr-entrypoint

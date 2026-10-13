@@ -34,6 +34,8 @@ services:
       context: .
       args:
         JOBS: ${JOBS:-3}
+        # Voice to Text's speech-to-text helper (whisper.cpp): 0 = leave it out
+        WHISPER: ${WHISPER:-1}
     command: heimdall
     environment:
       VARIANT_FLAGS: ${VARIANT_FLAGS:-}

@@ -7,6 +7,7 @@
 #include "config.hpp"
 #include "channel_manager.hpp"
 #include "signal_processing/fft_processor.hpp"
+#include "voice2text.hpp"
 #include <atomic>
 #include <iostream>
 #include <algorithm>
@@ -316,10 +317,26 @@ bool DecimatorManager::setDemodMode(int id, DemodulatorMode mode) {
 
 void DecimatorManager::recountDigital() {
     std::lock_guard<std::mutex> lock(decimator_mutex);
-    int n = 0;
-    for (const auto& inst : decimators)
+    int n = 0, t = 0;
+    for (const auto& inst : decimators) {
         if (inst->digital_mode.load(std::memory_order_relaxed) != 0) n++;
+        if (inst->transcribe.load(std::memory_order_relaxed)) t++;
+    }
     digital_active_.store(n, std::memory_order_relaxed);
+    transcribe_active_.store(t, std::memory_order_relaxed);
+}
+
+bool DecimatorManager::setTranscribe(int id, bool on) {
+    auto inst = getDecimator(id);
+    if (!inst) return false;
+    {
+        std::lock_guard<std::mutex> lk(inst->digital_mu);
+        inst->transcribe.store(on, std::memory_order_relaxed);
+        if (inst->digital) inst->digital->set_voice_tap(on);
+    }
+    recountDigital();
+    v2t::vfo_changed(id, on);
+    return true;
 }
 
 bool DecimatorManager::setDigitalMode(int id, dig::Mode mode, const std::string& plugin) {
@@ -350,6 +367,7 @@ void DecimatorManager::ensureDigital(DecimatorInstance& inst) {
     if (inst.digital) return;
     inst.digital = std::make_shared<dig::DigitalDecoder>();
     inst.digital->set_vfo(inst.id);
+    inst.digital->set_voice_tap(inst.transcribe.load(std::memory_order_relaxed));
     // who transmits when -> the per-talker DoA (holds the TalkerDoa, not the
     // instance: the handler runs on the decoder's own thread)
     auto td = inst.talker_doa;
@@ -495,6 +513,7 @@ std::vector<DecimatorManager::DecimatorInfo> DecimatorManager::getDecimatorInfoL
         auto dd = inst->getDigital();
         info.digital_opts = dd ? dd->options() : dig::Options();
         info.digital_plugin = dd ? dd->plugin_id() : std::string();
+        info.transcribe = inst->transcribe.load(std::memory_order_relaxed);
 
         info_list.push_back(info);
     }

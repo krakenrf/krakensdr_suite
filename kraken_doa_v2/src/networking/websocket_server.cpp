@@ -8,6 +8,7 @@
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
 #include "array_cal.hpp"
+#include "voice2text.hpp"
 #include "scanner_manager.hpp"
 #include "decimator_manager.hpp"
 #include "channel_manager.hpp"
@@ -405,6 +406,30 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
             }
             stream_download(res, doa_recordings_dir() + "/" + name, name);
         })
+        .get("/voice_clip/*", [](auto* res, auto* req) {
+            if (!request_allowed(req)) { refuse_request(res, req); return; }
+            // 🗣 Voice to Text: the audio clip of a transcript (voice_clips/<id>.wav,
+            // only ids the history knows). Token as for /recordings: what was said.
+            if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
+                res->writeStatus("401 Unauthorized")->end("Access token required");
+                return;
+            }
+            std::string url(req->getUrl());
+            const std::string prefix = "/voice_clip/";
+            const std::string name = url.size() > prefix.size() ? url.substr(prefix.size()) : "";
+            const uint64_t id = strtoull(name.c_str(), nullptr, 10);
+            const std::string path = id ? v2t::clip_path(id) : "";
+            std::ifstream f(path, std::ios::binary);
+            if (path.empty() || !f) {
+                res->writeStatus("404 Not Found")->end("No such clip");
+                return;
+            }
+            std::stringstream buf;
+            buf << f.rdbuf();   // <= 25 s of 16 kHz 16-bit: ~800 kB
+            res->writeHeader("Content-Type", "audio/wav")
+               ->writeHeader("Cache-Control", "private, max-age=3600")
+               ->end(buf.str());
+        })
         .get("/*", [](auto* res, auto* /*req*/) {
             string html_content = load_html_content();
             res->writeHeader("Content-Type", "text/html; charset=utf-8")
@@ -614,6 +639,22 @@ void WebSocketServer::web_server_main() {
                     if (!global_ssl_app || global_ssl_app->numSubscribers(TOPIC_CTL) == 0) return;
                     global_ssl_app->publish(TOPIC_CTL, array_cal::status_message(), uWS::TEXT, false);
                 }, 2000, 2000);
+
+                // 🗣 Voice to Text: new transcripts as they come (1 Hz), the
+                // status when it changed (a connecting page asks with GET_VOICE2TEXT)
+                struct us_timer_t* v2t_timer = us_create_timer(native_loop, 0, 0);
+                us_timer_set(v2t_timer, [](struct us_timer_t* /*timer*/) {
+                    static std::string last_status;
+                    if (!global_ssl_app) return;
+                    const std::string fresh = v2t::take_new_message();
+                    if (global_ssl_app->numSubscribers(TOPIC_CTL) == 0) return;
+                    if (!fresh.empty()) global_ssl_app->publish(TOPIC_CTL, fresh, uWS::TEXT, false);
+                    std::string st = v2t::status_message();
+                    if (st != last_status) {
+                        global_ssl_app->publish(TOPIC_CTL, st, uWS::TEXT, false);
+                        last_status = std::move(st);
+                    }
+                }, 1000, 1000);
 
                 // 🗂 Decoder Logging status (disk space, sizes) - every 2 s
                 struct us_timer_t* declog_timer = us_create_timer(native_loop, 0, 0);

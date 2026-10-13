@@ -309,6 +309,8 @@ void DmrProto::voice_burst(int slot, const uint8_t* bits) {
     // a burst none of whose frames decodes cleanly is not voice (a false
     // sync, or the call's tail in noise): don't play it
     if (clean == 0) return;
+    // the slot = the talker channel (talker_burst): Voice to Text names its radio
+    if (ctx_.voice_channel) ctx_.voice_channel(slot);
     if (ctx_.voice) ctx_.voice(Mode::DMR, pcm, 3 * 160);
     if (ctx_.voice_state)
         ctx_.voice_state(who + ": playing (AMBE+2, " + std::to_string(clean) + "/3 frames clean)");

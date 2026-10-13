@@ -41,7 +41,7 @@ constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4,
                    W_FACT = 16, W_EVENT = 17, W_VALID = 18, W_AUDIO = 19, W_VOICE_STATE = 20, W_FREQ_ERROR = 21,
                    W_SYNC_DONE = 22, W_MAP_POINT = 23, W_MAP_REMOVE = 24, W_TABLE_COLUMNS = 25, W_TABLE_ROW = 26,
                    W_TABLE_REMOVE = 27, W_MESSAGE = 28, W_RAW = 29, W_TALKER = 30, W_TALKER_END = 31,
-                   W_TABLE_KEEP = 32, W_TALKER_FORGET = 33, W_SAMPLES_MC = 8;
+                   W_TABLE_KEEP = 32, W_TALKER_FORGET = 33, W_AUDIO_CHANNEL = 34, W_SAMPLES_MC = 8;
 // how far back a plugin's sample positions stay mappable to the VFO stream
 constexpr double POS_MAP_SECONDS = 60;
 // a talker packet (kp::Talker::packet) longer than this is not one
@@ -58,6 +58,18 @@ void deliver_record(DigitalDecoder* d, const LogRecord& r) {
         h = record_handler;
     }
     if (h) h(d, r);
+}
+
+std::mutex voice_tap_mu;
+VoiceTapHandler voice_tap_handler;
+void deliver_voice_tap(DigitalDecoder* d, const float* x, size_t n, const std::string& plugin, const std::string& tid,
+                       const std::string& tlabel, double rf_hz) {
+    VoiceTapHandler h;
+    {
+        std::lock_guard<std::mutex> lk(voice_tap_mu);
+        h = voice_tap_handler;
+    }
+    if (h) h(d, x, n, plugin, tid, tlabel, rf_hz);
 }
 
 std::mutex message_mu;
@@ -108,6 +120,11 @@ void set_record_handler(RecordHandler h) {
 
 void set_raw_wanted(bool on) { raw_wanted = on; }
 
+void set_voice_tap_handler(VoiceTapHandler h) {
+    std::lock_guard<std::mutex> lk(voice_tap_mu);
+    voice_tap_handler = std::move(h);
+}
+
 void set_message_handler(MessageHandler h) {
     std::lock_guard<std::mutex> lk(message_mu);
     message_handler = std::move(h);
@@ -156,6 +173,9 @@ struct Runner {
     // the open talker of each talker channel (kp::Talker::channel, DMR timeslot)
     struct OpenTalker { std::string id, label; uint64_t start = 0, end = 0; };
     std::map<int, OpenTalker> talkers;
+    // the talker channel its audio is from (wire AUDIO_CHANNEL, DMR: the
+    // timeslot it plays), -1 = not said - Voice to Text names that radio
+    int audio_channel = -1;
     // Host::time() seconds -> VFO stream position (false: not mappable)
     bool vfo_pos(double t, double rate, uint64_t* out) const {
         if (pos_map.empty() || !is_finite_value(t) || t < 0) return false;
@@ -563,6 +583,7 @@ private:
         }
         r.started_ms = t;
         close_talker(r);
+        r.audio_channel = -1;
         r.written = 0;
         r.pos_map.clear();
         if (pi.messages) deliver_message(owner_, r.id, "", "", 0);   // get the street data ready
@@ -619,8 +640,8 @@ private:
             r.proc->send(W_OPTION, kv.data(), kv.size(), 0);
             r.raw_sent = raw;
         }
-        // only the decoder whose voice is played runs its vocoder
-        const int voice = (is_lead(r) && owner_->voice_wanted()) ? 1 : 0;
+        // only the decoder whose voice is played (or transcribed) runs its vocoder
+        const int voice = (is_lead(r) && (owner_->voice_wanted() || owner_->voice_tap())) ? 1 : 0;
         if (voice != r.voice_sent) {
             uint8_t b = static_cast<uint8_t>(voice);
             r.proc->send(W_VOICE_WANTED, &b, 1, 0);
@@ -757,12 +778,35 @@ private:
                 if (len > 0) on_valid_span(r, p, len);
                 break;
             case W_AUDIO:
-                if (is_lead(r) && owner_->voice_wanted() && len >= 4) {
+                if (is_lead(r) && (owner_->voice_wanted() || owner_->voice_tap()) && len >= 4) {
                     std::vector<float> a(len / 4);
                     memcpy(a.data(), p, a.size() * 4);
                     for (float& v : a)
                         if (!is_finite_value(v)) v = 0;
-                    owner_->push_voice(a.data(), a.size());
+                    if (owner_->voice_wanted()) owner_->push_voice(a.data(), a.size());
+                    if (owner_->voice_tap()) {
+                        // who is talking: the open talker on the channel the
+                        // plugin says its audio is from (DMR: the timeslot it
+                        // plays - with both slots busy, the most recent talker
+                        // was often the OTHER slot's radio); not said: the one
+                        // that started first (decoders play the first to talk)
+                        const Runner::OpenTalker* t = nullptr;
+                        if (r.audio_channel >= 0) {
+                            auto it = r.talkers.find(r.audio_channel);
+                            if (it != r.talkers.end()) t = &it->second;
+                        } else {
+                            for (const auto& kv : r.talkers)
+                                if (!t || kv.second.start < t->start) t = &kv.second;
+                        }
+                        deliver_voice_tap(owner_, a.data(), a.size(), r.id, t ? t->id : "", t ? t->label : "", rf_hz_);
+                    }
+                }
+                break;
+            case W_AUDIO_CHANNEL:
+                if (len >= 4) {
+                    int32_t c;
+                    memcpy(&c, p, 4);
+                    r.audio_channel = c >= 0 && c < 8 ? c : -1;
                 }
                 break;
             case W_VOICE_STATE:

@@ -32,9 +32,10 @@ namespace declog {
 
 namespace {
 
-enum : unsigned { T_EVENT = 1, T_MESSAGE = 2, T_POSITION = 4, T_RAW = 8, T_INCIDENT = 16 };
+enum : unsigned { T_EVENT = 1, T_MESSAGE = 2, T_POSITION = 4, T_RAW = 8, T_INCIDENT = 16, T_VOICE = 32 };
 const std::pair<const char*, unsigned> TYPE_NAMES[] = {
-    {"event", T_EVENT}, {"message", T_MESSAGE}, {"position", T_POSITION}, {"raw", T_RAW}, {"incident", T_INCIDENT}};
+    {"event", T_EVENT}, {"message", T_MESSAGE}, {"position", T_POSITION}, {"raw", T_RAW}, {"incident", T_INCIDENT},
+    {"voice", T_VOICE}};
 constexpr size_t MAX_BUFFER = 32u << 20;   // records kept while the disk can't be written (then dropped)
 
 int64_t now_ms() {
@@ -177,7 +178,7 @@ struct State {
     // settings + the buffer (record handler, commands, status)
     std::mutex mu;
     bool enabled = false;
-    unsigned types = T_EVENT | T_MESSAGE | T_POSITION | T_INCIDENT;
+    unsigned types = T_EVENT | T_MESSAGE | T_POSITION | T_INCIDENT | T_VOICE;
     int days = 7;
     int pos_s = 10;
     std::string dir = DEFAULT_DIR;
@@ -208,8 +209,9 @@ void append_locked(State& s, const std::string& line) {
     s.buf += '\n';
 }
 
-std::string head(int vfo, double rf_hz, const std::string& plugin, const char* type) {
-    std::string h = "{\"t\":\"" + iso_time(now_ms()) + "\",\"vfo\":" + std::to_string(vfo);
+// t_ms: the record's time (0 = now)
+std::string head(int vfo, double rf_hz, const std::string& plugin, const char* type, int64_t t_ms = 0) {
+    std::string h = "{\"t\":\"" + iso_time(t_ms > 0 ? t_ms : now_ms()) + "\",\"vfo\":" + std::to_string(vfo);
     if (rf_hz > 0) h += ",\"mhz\":" + num(rf_hz / 1e6, "%.6f");
     return h + ",\"dec\":\"" + json_escape(plugin) + "\",\"type\":\"" + type + "\"";
 }
@@ -541,6 +543,21 @@ void record_incident(int vfo, const std::string& plugin, const std::string& addr
                          num(lat, "%.6f") + ",\"lon\":" + num(lon, "%.6f") + ",\"precision\":\"" +
                          json_escape(precision) + "\",\"confidence\":\"" + json_escape(confidence) +
                          "\",\"text\":\"" + json_escape(text) + "\"}");
+}
+
+void record_voice(int vfo, double rf_hz, int64_t t_ms, const std::string& source, const std::string& fields) {
+    State& s = S();
+    std::lock_guard<std::mutex> lk(s.mu);
+    if (!s.enabled || !(s.types & T_VOICE)) return;
+    append_locked(s, head(vfo, rf_hz, source, "voice", t_ms) + fields + "}");
+}
+
+bool type_logged(const std::string& type) {
+    State& s = S();
+    std::lock_guard<std::mutex> lk(s.mu);
+    for (const auto& tn : TYPE_NAMES)
+        if (type == tn.first) return s.enabled && (s.types & tn.second);
+    return false;
 }
 
 std::string status_message() {

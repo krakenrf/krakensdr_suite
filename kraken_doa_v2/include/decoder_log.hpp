@@ -10,7 +10,9 @@
 // (a text message, e.g. a pager text: from + text), "position" (a map point:
 // id, label, kind, lat, lon, alt_m, kmh, hdg - at most one per object every
 // pos_interval_s), "raw" (raw frames: ADS-B Mode S hex, APRS TNC2, POCSAG
-// codewords), "incident" (an address found in a message, incidents.cpp).
+// codewords), "incident" (an address found in a message, incidents.cpp),
+// "voice" (a transcript of what was said - voice2text.cpp: text, src, dur,
+// conf, from / to (talker), doa / brg, clip; t = when the transmission began).
 //
 // SD card friendly: records collect in memory and are appended every
 // FLUSH_S seconds. At local midnight the day's file is closed and gzipped
@@ -18,9 +20,10 @@
 // days_to_keep are deleted (only files named like that - nothing else in
 // the folder is touched). Writing pauses below MIN_FREE_MB free space.
 // Settings (persisted, control_handler.cpp): DECODER_LOG:0|1,
-// DECODER_LOG_TYPES:event,message,position,raw,incident, DECODER_LOG_DAYS:N
+// DECODER_LOG_TYPES:event,message,position,raw,incident,voice, DECODER_LOG_DAYS:N
 // (0 = keep forever), DECODER_LOG_POS_S:N, DECODER_LOG_DIR:path.
 
+#include <cstdint>
 #include <string>
 
 namespace declog {
@@ -33,8 +36,8 @@ void start();      // worker thread + the decoders' record handler
 void stop();       // shutdown: write what is buffered, close the file
 
 void set_enabled(bool on);
-// comma-separated subset of event,message,position,raw,incident; false if
-// it names something else
+// comma-separated subset of event,message,position,raw,incident,voice; false
+// if it names something else
 bool set_types(const std::string& csv);
 void set_days(int days);            // 0 = keep forever
 void set_pos_interval(int seconds); // 1 .. 3600
@@ -45,6 +48,13 @@ bool set_dir(const std::string& path, std::string* err);
 // incidents.cpp: an address found in a message
 void record_incident(int vfo, const std::string& plugin, const std::string& address, double lat, double lon,
                      const std::string& precision, const std::string& confidence, const std::string& text);
+
+// voice2text.cpp: a transcript. t_ms = when the transmission began, source =
+// the "dec" field (plugin id or NBFM / AM / WBFM), fields = the rest of the
+// record as JSON members, each starting with a comma
+void record_voice(int vfo, double rf_hz, int64_t t_ms, const std::string& source, const std::string& fields);
+// logging is on and this record type is ticked
+bool type_logged(const std::string& type);
 
 // {"declog":{settings, "dir_abs", "free", "total", "today_bytes", "per_day",
 //  "files", "total_bytes", "buffered", "dropped", "error", "mounts":[...]}}

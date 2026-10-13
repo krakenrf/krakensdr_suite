@@ -106,7 +106,8 @@ APP_SRCS = \
 	$(SRCDIR)/rdf_engine.cpp \
 	$(SRCDIR)/rdf_mapper.cpp \
 	$(SRCDIR)/talker_doa.cpp \
-	$(SRCDIR)/array_cal.cpp
+	$(SRCDIR)/array_cal.cpp \
+	$(SRCDIR)/voice2text.cpp
 
 ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_SRCS) $(APP_SRCS)
 
@@ -120,10 +121,23 @@ DEPS = $(ALL_SRCS:$(SRCDIR)/%.cpp=$(DEPDIR)/%.d)
 OBJDIRS = $(OBJDIR) $(OBJDIR)/signal_processing $(OBJDIR)/networking $(OBJDIR)/digital $(OBJDIR)/utils
 DEPDIRS = $(DEPDIR) $(DEPDIR)/signal_processing $(DEPDIR)/networking $(DEPDIR)/digital $(DEPDIR)/utils
 
-.PHONY: all clean distclean install deps check-uws debug help print-% run status plugins
+.PHONY: all clean distclean install deps check-uws debug help print-% run status plugins whisper whisper-update
 
 # Default target
-all: check-uws $(OBJDIRS) $(DEPDIRS) $(TARGET) plugins
+all: check-uws $(OBJDIRS) $(DEPDIRS) $(TARGET) plugins whisper-update
+
+# 🗣 Voice to Text: the local speech-to-text helper (transcribe/, whisper.cpp)
+# is opt-in: `make whisper` = transcribe/setup.sh (clone the pinned whisper.cpp,
+# build, download the default model). Once set up, every `make` keeps it up
+# to date (a failure only warns - kraken_doa runs without it).
+whisper:
+	@transcribe/setup.sh
+
+whisper-update:
+	@if [ -x transcribe/build/kraken_whisper ]; then \
+		transcribe/setup.sh --update || \
+		echo "WARNING: the Voice to Text helper failed to build (transcribe/) - kraken_doa itself is fine"; \
+	fi
 
 # Decoder plugins (plugins/<id>/decoder.cpp -> plugins/<id>/build/decoder,
 # see plugins/SDK.md). Separate executables: kraken_doa doesn't link them, so
@@ -376,6 +390,7 @@ help:
 	@echo "  clean             - Remove build artifacts"
 	@echo "  distclean         - Remove everything including uWebSockets"
 	@echo "  rebuild           - Clean and build"
+	@echo "  whisper           - Set up Voice to Text (local speech-to-text, transcribe/setup.sh)"
 	@echo ""
 	@echo "Dependencies:"
 	@echo "  deps              - Install system packages (Ubuntu/Debian)"

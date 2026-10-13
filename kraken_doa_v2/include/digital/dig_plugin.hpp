@@ -95,7 +95,9 @@ public:
     PluginProcess(const PluginProcess&) = delete;
     PluginProcess& operator=(const PluginProcess&) = delete;
 
-    bool start(const std::string& exe, std::string* err);
+    bool start(const std::string& exe, std::string* err);   // exe --serve
+    // any command line (argv[0] = the executable) - the Voice to Text helper
+    bool start(const std::vector<std::string>& argv, std::string* err);
     // Close its stdin (the plugin exits on EOF) without waiting: call it on
     // every process first, then stop() each, so they exit in parallel
     void request_stop();

@@ -159,7 +159,8 @@ VFO bandwidth the signal needs; the panel warns when the VFO is narrower.
 | `host.event(text, dedup_s = 2)` | a line in the event log; identical texts within `dedup_s` s are dropped (use a large value for repeating broadcasts) |
 | `host.valid()` | one frame/message **passed its checks** (sync + CRC/FEC). Drives "Receiving ..." and the frame counter. Never call it for unverified data |
 | `host.valid(start_s, end_s)` | the same, with the frame's samples (`host.time()` of its first sample and of its end) - **prefer it**: the VFO's **Digital squelch** opens only on these frames and takes the DoA from exactly these samples (see below) |
-| `host.audio(pcm, n)` | decoded audio, 8 kHz mono float (+-1). Only played when the user listens (Demod "Digital"); skip the work when `!host.voice_wanted()` |
+| `host.audio(pcm, n)` | decoded audio, 8 kHz mono float (+-1). Only played when the user listens (Demod "Digital") or the VFO's "🗣 Transcribe" is on (Voice to Text writes it down); skip the work when `!host.voice_wanted()` |
+| `host.audio_channel(ch)` | optional: the talker channel (`kp::Talker::channel`, e.g. the DMR timeslot) the following `audio()` is from, when several transmissions run at once and you play one - Voice to Text then names the radio on that channel. Call it when it changes; -1 = unknown |
 | `host.voice_state(s)` | short call status shown next to the Listen button |
 | `host.freq_error(hz)` | measured carrier offset (+ = above the VFO centre): the host slowly re-centres the input. Optional |
 | `host.verbose()` | the panel's "Log all messages" option |

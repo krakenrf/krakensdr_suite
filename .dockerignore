@@ -20,3 +20,9 @@
 !kraken_doa_v2/plugins/
 kraken_doa_v2/plugins/*/build/
 kraken_doa_v2/plugins/sdk/build/
+# Voice to Text helper sources (the image clones whisper.cpp itself; local
+# checkouts, builds and the speech models stay out)
+!kraken_doa_v2/transcribe/
+kraken_doa_v2/transcribe/whisper.cpp/
+kraken_doa_v2/transcribe/build/
+kraken_doa_v2/transcribe/models/

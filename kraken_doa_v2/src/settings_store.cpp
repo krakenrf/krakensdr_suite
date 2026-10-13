@@ -116,7 +116,8 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // Decimator (VFO) setup - one composite value because the set is
         // dynamic: "<fm_index>|<vfo>;<vfo>;..." with each <vfo> =
         // "offset_hz,bw_index,demod,squelch_en,squelch_db,squelch_method (0 FFT /
-        // 3 Digital),0 (was the eigenvalue threshold),digital_mode,digital_opts,tuner"
+        // 3 Digital),0 (was the eigenvalue threshold),digital_mode,digital_opts,tuner,
+        // transcribe (0|1, Voice to Text)"
         // and fm_index the LIST POSITION of the FM-source VFO (ids are
         // renumbered 0..N-1 across restarts). Built and parsed in
         // control_handler.cpp; the default is the single startup VFO and must
@@ -127,10 +128,19 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // Decoder data log (sidebar 🗂 Decoder Logging): the folder first, so
         // switching it on doesn't create the default folder
         {"decoder_log_dir",          "DECODER_LOG_DIR:",          VType::STRING, "decoder_logs"},
-        {"decoder_log_types",        "DECODER_LOG_TYPES:",        VType::STRING, "event,message,position,incident"},
+        {"decoder_log_types",        "DECODER_LOG_TYPES:",        VType::STRING, "event,message,position,incident,voice"},
         {"decoder_log_days",         "DECODER_LOG_DAYS:",         VType::NUMBER, "7"},
         {"decoder_log_pos_s",        "DECODER_LOG_POS_S:",        VType::NUMBER, "10"},
         {"decoder_log",              "DECODER_LOG:",              VType::BOOL,   "0"},
+        // 🗣 Voice to Text (voice2text.cpp) - before DECIMATORS, whose VFOs may
+        // start transcribing as they are restored. Model = ggml-<name>.bin
+        {"voice2text_model",         "VOICE2TEXT_MODEL:",         VType::STRING, "base.en"},
+        {"voice2text_language",      "VOICE2TEXT_LANGUAGE:",      VType::STRING, "auto"},
+        {"voice2text_threads",       "VOICE2TEXT_THREADS:",       VType::NUMBER, "2"},
+        {"voice2text_prompt",        "VOICE2TEXT_PROMPT:",        VType::STRING, ""},
+        {"voice2text_vad",           "VOICE2TEXT_VAD:",           VType::BOOL,   "1"},
+        {"voice2text_translate",     "VOICE2TEXT_TRANSLATE:",     VType::BOOL,   "0"},
+        {"voice2text_keep_audio",    "VOICE2TEXT_KEEP_AUDIO:",    VType::BOOL,   "1"},
         // Mobile DF heat map on the 🗺 Map: collect bearings while driving,
         // half-width of the grid (km)
         {"rdf_enabled",              "RDF:",                      VType::BOOL,   "1"},

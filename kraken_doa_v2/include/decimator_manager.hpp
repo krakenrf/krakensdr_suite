@@ -56,6 +56,11 @@ public:
             return digital;
         }
 
+        // 🗣 Voice to Text (voice2text.hpp): transcribe what is said on this
+        // VFO (its digital decoder's voice, else its analog demodulation).
+        // Saved in the VFO snapshot; set with setTranscribe()
+        std::atomic<bool> transcribe{false};
+
         // Position of the next decimated sample in this VFO's stream
         // (MultiChannelDecimated::stream_pos; the pipeline advances it)
         std::atomic<uint64_t> stream_pos{0};
@@ -93,6 +98,7 @@ private:
     std::atomic<int> fm_decimator_id{0}; // Which decimator feeds the FM demodulator
     std::atomic<double> last_process_ms_{0.0}; // Duration of the last decimation pass (see getLastProcessMs)
     std::atomic<int> digital_active_{0};      // VFOs with a digital decoder on
+    std::atomic<int> transcribe_active_{0};   // VFOs with Transcribe on
     void recountDigital();
     // the VFO's decoder, created on first use (caller holds digital_mu)
     static void ensureDigital(DecimatorInstance& inst);
@@ -155,6 +161,9 @@ public:
     bool setDigitalMode(int id, dig::Mode mode, const std::string& plugin = "");
     bool setDigitalOptions(int id, const dig::Options& opts);
     bool anyDigitalActive() const { return digital_active_.load(std::memory_order_relaxed) > 0; }
+    // 🗣 Voice to Text on a VFO (its decoder's voice tap follows)
+    bool setTranscribe(int id, bool on);
+    bool anyTranscribeActive() const { return transcribe_active_.load(std::memory_order_relaxed) > 0; }
 
     // Squelch settings
     bool setSquelchEnabled(int id, bool enabled);
@@ -204,6 +213,7 @@ public:
         int digital_mode;              // dig::Mode
         dig::Options digital_opts;
         std::string digital_plugin;    // plugin id (Mode::PLUGIN)
+        bool transcribe = false;       // 🗣 Voice to Text
     };
 
     std::vector<DecimatorInfo> getDecimatorInfoList() const;

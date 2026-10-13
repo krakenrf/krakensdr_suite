@@ -189,6 +189,30 @@ body.sb-resizing {cursor:col-resize;user-select:none}
 #info-dec-log {max-height:none;font-size:11px}
 .ai-hist {width:230px;flex-shrink:0}
 .ai-chat {flex:1}
+/* 🗣 Voice to Text: the tab's transcripts, the VFO cards' state, the sidebar badge */
+#info-body-voice .info-row select {background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:2px 4px;border-radius:3px;font-size:12px}
+.v2t-head {font-size:11px;color:#8aa8c7;margin:0 0 4px;flex-shrink:0}
+.v2t-head:empty {display:none}
+.v2t-list {flex:1;overflow-y:auto;min-height:0;scrollbar-color:#2a3858 #141428;scrollbar-width:thin}
+.v2t-row {padding:4px 6px;border-bottom:1px solid #1b2238}
+.v2t-row:hover {background:#141c33}
+.v2t-meta {display:flex;flex-wrap:wrap;align-items:center;gap:2px 9px;font-size:11px;color:#8aa8c7}
+.v2t-meta .t {color:#6f87a6;font-family:monospace}
+.v2t-meta .v2t-mhz {font-family:monospace;color:#9fb3cc}
+.v2t-meta .v2t-who {color:#ffd54f}
+.v2t-meta .v2t-brg {color:#80deea}
+.v2t-meta .v2t-low {color:#ffb74d;font-weight:bold;cursor:help}
+.v2t-text {color:#e8eef6;font-size:13px;line-height:1.35;margin-top:1px;white-space:pre-wrap;word-break:break-word}
+.v2t-text.low {color:#a3afc0;font-style:italic}
+.v2t-text mark {background:#5d4a00;color:#fff;border-radius:2px}
+.v2t-play {background:#1a1a2e;border:1px solid #2a3858;color:#cfd8e6;border-radius:3px;font-size:10px;padding:0 5px;cursor:pointer;line-height:16px}
+.v2t-play:hover {border-color:#1976d2;color:#fff}
+.v2t-play.on {background:#1565c0;border-color:#1976d2;color:#fff}
+.v2t-new {background:#1565c0;color:#fff;border-radius:8px;padding:0 5px;font-size:10px}
+.v2t-badge {font-size:10px;padding:1px 6px;border-radius:8px;margin-left:auto;margin-right:6px;background:#1b5e20;color:#c8e6c9}
+.v2t-badge:empty {display:none}
+.v2t-badge.warn {background:#5a4520;color:#ffe0b2}
+.dec-v2t-state {margin-left:auto;font-size:10px;color:#8aa8c7;white-space:nowrap}
 .ai-hist-item {padding:4px 6px;border:1px solid #22304a;border-radius:3px;margin-bottom:4px;cursor:pointer;font-size:12px;display:flex;gap:6px;align-items:flex-start}
 .ai-hist-item:hover {border-color:#1a4a7a}
 .ai-hist-item.sel {border-color:#1976d2;background:#132a4a}
@@ -1439,6 +1463,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <input type="number" id="dl-pos-s" min="1" max="3600" value="10" style="width:52px" onclick="event.stopPropagation()" onchange="dlSetPosS()"> s</label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Raw frames: ADS-B Mode S messages (hex + level), APRS packets (TNC2), POCSAG codewords"><input type="checkbox" data-t="raw" onchange="dlSetTypes()"> Raw frames <span style="color:#8aa8c7">(large)</span></label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Addresses found in pager messages (incident map)"><input type="checkbox" data-t="incident" onchange="dlSetTypes()"> Incidents</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="What was said on the VFOs with 🗣 Transcribe ticked (Voice to Text): the text, talker, bearing"><input type="checkbox" data-t="voice" onchange="dlSetTypes()"> Voice transcripts</label>
         </div>
         <div class="ctrl-row" style="margin-top:6px">
           <label>Keep:</label>
@@ -1465,6 +1490,55 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Disk lasts</span><span id="dl-lasts">&mdash;</span></div>
         </div>
         <div id="dl-note" style="font-size:11px;color:#6f87a6;margin-top:4px"></div>
+      </div>
+    </div>
+
+    <!-- 🗣 Voice to Text (voice2text.cpp, transcribe/) - all modes -->
+    <div class="sb-section" id="v2t-section">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>🗣 Voice to Text<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Writes down what is said on the VFOs whose <b>🗣 Transcribe</b> box is ticked (on the VFO cards above) - any number at once, whichever one you listen to. Analog voice is demodulated with the VFO's demod (NBFM / AM / WBFM); a VFO with its <b>digital decoder</b> on gives the decoded voice (P25, DMR, D-STAR, NXDN, TETRA - the voice codec must be installed). It runs <b>on this device</b> with a free speech-to-text model (OpenAI's Whisper, via whisper.cpp): nothing is sent anywhere. Each transmission is cut out by the VFO's squelch (with the squelch off: while a signal stands 10 dB over the noise), or by the decoder's voice frames and talker changes, and is transcribed when it ends - a few seconds later. Noise and data bursts are skipped (voice activity detection). The transcripts are in the <b>🗣 Voice</b> tab under the waterfall - with the talker's ID for digital radios, the bearing in coherent mode with DoA on, and the audio to check them - and go to the <b>Decoder Logging</b> files when that is on (type "Voice transcripts").</span></span></h3>
+        <span class="v2t-badge" id="v2t-badge"></span>
+        <span class="sb-toggle">▼</span>
+      </div>
+      <div class="sb-content">
+        <div id="v2t-install" class="dig-help" style="display:none"></div>
+        <div class="ctrl-row" id="v2t-model-row">
+          <label title="The speech model. Bigger = more accurate but slower; .en models are English only">Model:</label>
+          <select id="v2t-model" style="flex:1;min-width:0;max-width:none" onchange="v2tSetModel(this.value)"></select>
+        </div>
+        <div class="ctrl-row" style="gap:6px" id="v2t-dl-row">
+          <select id="v2t-dl" style="flex:1;min-width:0;max-width:none" title="Speech models that can be downloaded (once, from Hugging Face)"></select>
+          <button class="btn sm" type="button" id="v2t-dl-btn" onclick="v2tDownload()" title="Download this model to the receiver">⬇ Get</button>
+        </div>
+        <div id="v2t-dl-state" style="display:none;font-size:11px;color:#8aa8c7;margin:-2px 0 4px"></div>
+        <div class="ctrl-row" id="v2t-lang-row">
+          <label title="The language spoken (multilingual models only)">Language:</label>
+          <select id="v2t-lang" style="flex:1;min-width:0" onchange="send('VOICE2TEXT_LANGUAGE:' + this.value)"></select>
+          <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:12px" title="Write the text in English, whatever language is spoken (multilingual models)"><input type="checkbox" id="v2t-translate" onchange="send('VOICE2TEXT_TRANSLATE:' + (this.checked ? 1 : 0))"> → English</label>
+        </div>
+        <div class="ctrl-row">
+          <label title="CPU cores the speech model may use. It runs below the receiver's priority; more = faster transcripts">CPU cores:</label>
+          <select id="v2t-threads" onchange="send('VOICE2TEXT_THREADS:' + this.value)">
+            <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+          </select>
+          <span id="v2t-speed" style="font-size:11px;color:#8aa8c7;margin-left:auto"></span>
+        </div>
+        <div class="ctrl-row" style="gap:6px">
+          <input type="text" id="v2t-prompt" maxlength="300" style="flex:1;min-width:0" placeholder="Words to expect: callsigns, places…" title="Vocabulary hint for the model: callsigns, unit names, place names, phrases - spelled as you want them written. Helps with names it would otherwise mishear." onkeydown="if(event.key==='Enter')v2tApplyPrompt()">
+          <button class="btn sm" type="button" onclick="v2tApplyPrompt()" title="Use these words">Apply</button>
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#c8d6e5;margin-top:4px" title="Voice activity detection: the speech in each transmission is found first, noise / tones / data bursts are skipped. Without it the model may 'hear' words in noise."><input type="checkbox" id="v2t-vad" onchange="send('VOICE2TEXT_VAD:' + (this.checked ? 1 : 0))"> Skip non-speech (voice detection)</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#c8d6e5;margin-top:2px" title="Keep each transcript's audio (16 kHz WAV, ~32 kB a second) to play it back in the Voice tab. The oldest go beyond 2000 clips / 400 MB."><input type="checkbox" id="v2t-keep" onchange="send('VOICE2TEXT_KEEP_AUDIO:' + (this.checked ? 1 : 0))"> Keep the audio to play back</label>
+        <div id="v2t-status" style="font-size:12px;color:#8aa8c7;line-height:1.8;margin-top:6px">
+          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">Status</span><span id="v2t-state" style="text-align:right">&mdash;</span></div>
+          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">VFOs</span><span id="v2t-vfos" style="text-align:right">&mdash;</span></div>
+          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">Waiting</span><span id="v2t-queue">&mdash;</span></div>
+          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">Transcribed</span><span id="v2t-done" style="text-align:right">&mdash;</span></div>
+          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">To disk</span><span id="v2t-log" style="text-align:right">&mdash;</span></div>
+        </div>
+        <div class="ctrl-row" style="margin-top:6px">
+          <button class="btn sm" type="button" onclick="infoPanelOpen('voice')" title="The transcripts, in the panel under the waterfall">⤢ Transcripts</button>
+        </div>
       </div>
     </div>
 
@@ -1667,6 +1741,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <button class="btn sm" type="button" id="map-btn" onclick="mapToggle()" title="Street / satellite map in the right-hand pane: positions the decoders report (e.g. ADS-B aircraft)">🗺 Map</button>
             <button class="btn sm" type="button" onclick="infoPanelOpen('dec')" title="Digital decoders: one tab per decoder mode">🔐 Decoders</button>
             <button class="btn sm" type="button" onclick="infoPanelOpen('ai')" title="AI Signal Lab: investigated signals and their chats">🤖 AI</button>
+            <button class="btn sm" type="button" onclick="infoPanelOpen('voice')" title="Voice to Text: what was said on the VFOs with Transcribe ticked">🗣 Voice</button>
           </span>
         </div>
         <!-- Bottom panel: more room for the digital decoder's data and the
@@ -1713,6 +1788,17 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
                 <button class="btn sm primary" type="button" onclick="aiAskFrom('info-ai-ask')">Send</button>
               </div>
             </div>
+          </div>
+          <!-- 🗣 Voice to Text transcripts (voice2text.cpp) -->
+          <div class="info-body" id="info-body-voice" style="display:none;flex-direction:column">
+            <div class="info-row">
+              <input type="text" id="v2t-filter" placeholder="Search transcripts…" oninput="v2tRenderTab(true)">
+              <select id="v2t-vfo-filter" onchange="v2tRenderTab(true)" title="Only this VFO's transcripts"></select>
+              <button class="btn sm" type="button" onclick="v2tExport()" title="Download the transcripts shown as a CSV file (spreadsheet)">⬇ CSV</button>
+              <button class="btn sm" type="button" onclick="v2tClear()" title="Delete every transcript and its audio on the receiver">Clear</button>
+            </div>
+            <div class="v2t-head" id="v2t-tab-head"></div>
+            <div class="scroll v2t-list" id="v2t-list"></div>
           </div>
         </div>
       </div>
@@ -1841,6 +1927,10 @@ if (!['street', 'satellite'].includes(mapState.layer)) mapState.layer = 'street'
 // shown in the panel, the one being edited, the one just added (edited once
 // the backend has it), where the right-click menu was opened
 let mkList = [], mkSel = null, mkEdit = null, mkWantEdit = null, mapMenuAt = null;
+// 🗣 Voice to Text (see 🗣 VOICE TO TEXT): the backend's status, the
+// transcripts (oldest first), how many came while the Voice tab wasn't shown
+// (infoRenderTabs reads these - it can run before that section is evaluated)
+let v2tStatus = null, v2tList = [], v2tUnseen = 0;
 // 📡 OpenStreetMap masts layer (see 📡 OSM MASTS): "n123" -> mast, the
 // zoom-12 cells loaded ("x,y" -> when), masts drawn in the view, the
 // loader's state, the region around the station (centre, half-width km -
@@ -6338,6 +6428,7 @@ function updateDecimatorList(info) {
   if (sameStructure && listDiv.children.length === info.length) {
     info.forEach(dec => refreshDecimatorPanelItem(dec.id));
     digRenderCards();
+    v2tRenderCards();
     decHighlightSelected();
     return;
   }
@@ -6435,6 +6526,13 @@ function updateDecimatorList(info) {
         <select id="dec-dig-mode-${dec.id}" onchange="digSetModeFor(${dec.id}, this.value)" style="flex:1" title="Auto detect, or one decoder. Picking one switches the decoder on."></select>
       </div>
       <div class="dec-row dec-dig-state" id="dec-dig-state-${dec.id}"></div>
+      <div class="dec-row">
+        <label style="display:flex;align-items:center;gap:4px" title="Voice to Text: write down what is said on this VFO (its analog demod, or its digital decoder's voice). Transcripts: the 🗣 Voice tab under the waterfall.">
+          <input type="checkbox" id="dec-v2t-${dec.id}" ${dec.transcribe ? 'checked' : ''} onchange="v2tToggle(${dec.id}, this.checked)">
+          <span>🗣 Transcribe</span>
+        </label>
+        <span class="dec-v2t-state" id="dec-v2t-state-${dec.id}"></span>
+      </div>
       <div class="dec-row" style="border-top:1px solid #444;padding-top:6px;margin-top:4px">
         <label style="display:flex;align-items:center;gap:4px">
           <input type="checkbox" id="dec-squelch-enable-${dec.id}" ${squelchEnabled ? 'checked' : ''}
@@ -6463,6 +6561,7 @@ function updateDecimatorList(info) {
     listDiv.appendChild(decDiv);
   });
   digRenderCards();
+  v2tRenderCards();
   decHighlightSelected();
 
   // Redraw tuning bar overlay with updated offsets
@@ -6660,6 +6759,7 @@ function connect() {
 
     // 🗂 Decoder Logging settings + disk space (then every 2 s)
     setTimeout(() => send('GET_DECODER_LOG'), 850);
+    setTimeout(() => send('GET_VOICE2TEXT'), 860);
     // ✈ Array calibration (then every 2 s)
     setTimeout(() => send('GET_ARRAY_CAL'), 900);
 
@@ -6729,6 +6829,7 @@ function connect() {
           else if(msg.ai_error) { aiOnError(msg.ai_error); }
           else if(msg.ai_sessions) { aiOnSessions(msg.ai_sessions); }
           else if(msg.ai_session) { aiOnSession(msg.ai_session); }
+          else if(msg.voice2text) { v2tOnMessage(msg.voice2text); }
           else if(msg.decimator_added) {
             requestDecimatorInfo(); // Refresh the list
             resetAudioWorklet(); // Reset audio worklet to clear buffers
@@ -9713,6 +9814,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     p.style.display = 'flex';
     $id('info-body-dec').style.display = infoTab.startsWith('dig:') ? 'flex' : 'none';
     $id('info-body-ai').style.display = infoTab === 'ai' ? 'flex' : 'none';
+    $id('info-body-voice').style.display = infoTab === 'voice' ? 'flex' : 'none';
     if (infoTab === 'ai' && !aiViewId && aiState && aiState.busy && (aiState.job || {}).kind === 'investigate') aiViewId = AI_JOB;
     if (infoTab === 'ai' && !aiViewId) {
       const cur = aiState && aiState.session && aiState.session.id;
@@ -9724,6 +9826,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     infoRenderTabs();
     infoRenderDecoder(true);
     infoRenderAi(true);
+    v2tRenderTab(true);
   }
 
   function infoPanelClose() {
@@ -9766,6 +9869,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       html = `<button type="button" class="info-tab${sel}" onclick="infoPanelOpen('dec')">🔐 Decoders</button>`;
     }
     html += `<button type="button" class="info-tab${infoTab === 'ai' ? ' sel' : ''}" onclick="infoPanelOpen('ai')">🤖 AI</button>`;
+    // 🗣 Voice: a dot while a VFO's transmission is being collected, the
+    // count of transcripts that came while another tab was shown
+    const v2tRec = v2tStatus && (v2tStatus.vfos || []).some(v => v.rec);
+    html += `<button type="button" class="info-tab${infoTab === 'voice' ? ' sel' : ''}" onclick="infoPanelOpen('voice')" title="Voice to Text: transcripts">` +
+            (v2tRec ? '<span style="color:#ef5350">&#9679;</span> ' : '') + '🗣 Voice' +
+            (v2tUnseen && infoTab !== 'voice' ? ` <span class="v2t-new">${v2tUnseen}</span>` : '') + '</button>';
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
   }
 
@@ -10403,6 +10512,343 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
 
   // Escapes text for element content AND attribute values (quotes too: names
   // are placed inside title="..." attributes)
+  // --- 🗣 VOICE TO TEXT (voice2text.cpp, {"voice2text":{status | history | new | error}}) ---
+  // The backend transcribes the VFOs with Transcribe ticked; this shows its
+  // settings (sidebar box), each VFO's tick + state (cards) and the
+  // transcripts (🗣 Voice tab). State: see the globals block.
+  const V2T_MAX = 1000;
+  const V2T_LANGS = [['auto', 'Detect'], ['en', 'English'], ['mi', 'Māori'], ['de', 'German'], ['fr', 'French'],
+    ['es', 'Spanish'], ['it', 'Italian'], ['nl', 'Dutch'], ['pt', 'Portuguese'], ['pl', 'Polish'], ['cs', 'Czech'],
+    ['sv', 'Swedish'], ['no', 'Norwegian'], ['da', 'Danish'], ['fi', 'Finnish'], ['hu', 'Hungarian'],
+    ['ro', 'Romanian'], ['el', 'Greek'], ['tr', 'Turkish'], ['ru', 'Russian'], ['uk', 'Ukrainian'], ['ar', 'Arabic'],
+    ['he', 'Hebrew'], ['hi', 'Hindi'], ['ja', 'Japanese'], ['ko', 'Korean'], ['zh', 'Chinese'], ['id', 'Indonesian'],
+    ['ms', 'Malay'], ['tl', 'Tagalog'], ['vi', 'Vietnamese'], ['th', 'Thai']];
+  const V2T_STATE = {
+    off: ['#777', 'Idle - no VFO transcribing'], starting: ['#ffb74d', 'Starting the model…'],
+    ready: ['#4caf50', 'Ready'], busy: ['#4caf50', 'Transcribing…'], error: ['#ff8a80', 'Error'],
+    'not installed': ['#ff8a80', 'Not installed'], 'no model': ['#ffb74d', 'Model not downloaded']};
+  let v2tAudio = null, v2tPlaying = null, v2tShown = [];
+  let v2tAutoPick = null;   // the model this page asked for: used once it is there, if the chosen one isn't
+
+  function v2tSetHtml(el, html) { if (el && el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; } }
+  function v2tSrcName(src) {
+    if (!src || ['NBFM', 'AM', 'WBFM'].includes(src)) return src || '';
+    return digName(src);   // a decoder plugin's voice
+  }
+
+  function v2tOnMessage(m) {
+    if (m.status) {
+      v2tStatus = m.status;
+      v2tRenderBox();
+      v2tRenderCards();
+      infoRenderTabs();
+      if (infoOpen('voice')) v2tRenderHead();
+    }
+    if (m.history) {
+      v2tList = m.history.slice(-V2T_MAX);
+      v2tRenderTab(true);
+    }
+    if (m.new) {
+      const have = new Set(v2tList.map(t => t.id));
+      let added = 0;
+      for (const t of m.new) if (!have.has(t.id)) { v2tList.push(t); added++; }
+      if (added) {
+        v2tList.sort((a, b) => a.id - b.id);
+        if (v2tList.length > V2T_MAX) v2tList.splice(0, v2tList.length - V2T_MAX);
+        if (!infoOpen('voice')) { v2tUnseen += added; infoRenderTabs(); }
+        v2tRenderTab(false);
+      }
+    }
+    if (m.error !== undefined) {
+      const el = $id('v2t-dl-state');
+      if (el) { el.style.display = ''; el.innerHTML = `<span style="color:#ff8a80">⚠ ${digEsc(m.error)}</span>`; }
+    }
+  }
+
+  function v2tToggle(id, on) {
+    send('VOICE2TEXT_VFO:' + id + ':' + (on ? 1 : 0));
+    const d = digDec(id);
+    if (d) d.transcribe = on;
+    v2tRenderCards();
+  }
+  function v2tSetModel(name) { send('VOICE2TEXT_MODEL:' + name); }
+  function v2tApplyPrompt() {
+    const el = $id('v2t-prompt');
+    send('VOICE2TEXT_PROMPT:' + el.value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 300));
+    el.blur();
+  }
+  function v2tDownload() {
+    const n = $id('v2t-dl').value;
+    if (!n) return;
+    const el = $id('v2t-dl-state');
+    el.style.display = '';
+    el.textContent = 'Starting the download of ' + n + '…';
+    v2tAutoPick = n;
+    send('VOICE2TEXT_DOWNLOAD:' + n);
+  }
+  // the decoder log with voice transcripts: on, keeping the other types
+  function v2tLogOn() {
+    const types = new Set(((typeof dlState !== 'undefined' && dlState && dlState.types) || 'event,message,position,incident')
+                          .split(',').filter(Boolean));
+    types.add('voice');
+    send('DECODER_LOG_TYPES:' + [...types].join(','));
+    send('DECODER_LOG:1');
+  }
+
+  // each VFO card: its tick and what its transcription is doing
+  function v2tRenderCards() {
+    for (const d of decimatorInfo) {
+      const en = $id('dec-v2t-' + d.id);
+      if (!en) continue;
+      if (document.activeElement !== en) en.checked = !!d.transcribe;
+      const st = $id('dec-v2t-state-' + d.id);
+      if (!st) continue;
+      let html = '';
+      if (d.transcribe) {
+        const v = ((v2tStatus && v2tStatus.vfos) || []).find(x => x.id === d.id);
+        const state = v2tStatus ? v2tStatus.state : '';
+        if (state === 'not installed' || state === 'no model' || state === 'error')
+          html = `<span style="color:#ffb74d" title="See the 🗣 Voice to Text box in the sidebar">⚠ ${digEsc((V2T_STATE[state] || [, state])[1])}</span>`;
+        else if (v && v.rec)
+          html = `<span style="color:#ef5350">&#9679;</span> ${digEsc(v2tSrcName(v.src))} ${v.secs.toFixed(0)} s`;
+        else
+          html = (d.digital_mode && d.digital_mode !== 'OFF') ? 'decoded voice' : digEsc(d.demod_mode || '');
+      }
+      v2tSetHtml(st, html);
+    }
+  }
+
+  function v2tRenderBox() {
+    const s = v2tStatus;
+    if (!s) return;
+    const idle = (el) => el && document.activeElement !== el;
+    // not set up yet: what to run on the receiver
+    const inst = $id('v2t-install');
+    let ih = '';
+    if (!s.installed)
+      ih = 'The speech-to-text engine isn\'t set up on this receiver yet. On the receiver, run once:<br>' +
+           '<code>cd kraken_doa_v2 && make whisper</code><br>(builds whisper.cpp - about 10 min on a Pi 5 - and ' +
+           'downloads the base.en model, 142 MB). Free, and everything stays on this device. ' +
+           'Docker: the image includes it - rebuild it without <code>WHISPER=0</code>.';
+    else if (!s.models.length)
+      ih = 'No speech model yet: pick one below and press ⬇ Get (base.en is a good start).';
+    v2tSetHtml(inst, ih);
+    inst.style.display = ih ? '' : 'none';
+    // model: the installed ones (+ the chosen one if it isn't)
+    const msel = $id('v2t-model');
+    let mopts = s.models.map(m => `<option value="${digEsc(m.name)}">${digEsc(m.name)} (${m.mb} MB)</option>`).join('');
+    if (!s.models.some(m => m.name === s.model))
+      mopts = `<option value="${digEsc(s.model)}">${digEsc(s.model)} - not downloaded</option>` + mopts;
+    if (msel.dataset.html !== mopts) { msel.dataset.html = mopts; msel.innerHTML = mopts; }
+    if (idle(msel)) msel.value = s.model;
+    const cur = s.models.find(m => m.name === s.model) || s.catalogue.find(m => m.name === s.model);
+    msel.title = cur && cur.note ? cur.note : 'The speech model';
+    // models to download
+    const dsel = $id('v2t-dl');
+    const todo = s.catalogue.filter(c => !c.have);
+    const dopts = todo.map(c => `<option value="${c.name}">${c.name} - ${c.mb} MB - ${digEsc(c.note)}</option>`).join('');
+    if (dsel.dataset.html !== dopts) {
+      const keep = dsel.value;
+      dsel.dataset.html = dopts;
+      dsel.innerHTML = dopts;
+      if (todo.some(c => c.name === keep)) dsel.value = keep;
+    }
+    $id('v2t-dl-row').style.display = todo.length ? '' : 'none';
+    const dl = s.download, dst = $id('v2t-dl-state');
+    $id('v2t-dl-btn').disabled = !!(dl && dl.running);
+    if (dl && dl.running) { dst.style.display = ''; dst.textContent = `Downloading ${dl.name}… ${dl.pct} %`; }
+    else if (dl && dl.error) { dst.style.display = ''; dst.innerHTML = `<span style="color:#ff8a80">⚠ ${digEsc(dl.name)}: ${digEsc(dl.error)}</span>`; }
+    else if (dl && dl.name) {
+      dst.style.display = '';
+      dst.textContent = `✓ ${dl.name} downloaded` + (s.model === dl.name ? '' : ' - pick it as the model above');
+    }
+    // the model this page downloaded: used at once when the chosen one isn't installed
+    if (v2tAutoPick && dl && dl.name === v2tAutoPick && !dl.running) {
+      if (!dl.error && s.models.some(m => m.name === v2tAutoPick) && !s.models.some(m => m.name === s.model))
+        send('VOICE2TEXT_MODEL:' + v2tAutoPick);
+      v2tAutoPick = null;
+    }
+    // language (multilingual models only)
+    $id('v2t-lang-row').style.display = s.model_multi ? '' : 'none';
+    const lsel = $id('v2t-lang');
+    let langs = V2T_LANGS.slice();
+    if (!langs.some(l => l[0] === s.language)) langs.push([s.language, s.language]);
+    const lopts = langs.map(l => `<option value="${digEsc(l[0])}">${digEsc(l[1])}</option>`).join('');
+    if (lsel.dataset.html !== lopts) { lsel.dataset.html = lopts; lsel.innerHTML = lopts; }
+    if (idle(lsel)) lsel.value = s.language;
+    const tr = $id('v2t-translate');
+    if (idle(tr)) tr.checked = !!s.translate;
+    const th = $id('v2t-threads');
+    if (idle(th)) th.value = String(s.threads);
+    const pr = $id('v2t-prompt');
+    if (idle(pr)) pr.value = s.prompt || '';
+    const vad = $id('v2t-vad');
+    if (idle(vad)) vad.checked = !!s.vad;
+    vad.disabled = !s.vad_model;
+    const vl = vad.parentElement;
+    if (vl.dataset.tip === undefined) vl.dataset.tip = vl.title;
+    vl.title = s.vad_model ? vl.dataset.tip
+      : 'The voice detection model is not downloaded (⬇ Get any model, or run transcribe/setup.sh): every transmission goes to the speech model';
+    const keep = $id('v2t-keep');
+    if (idle(keep)) keep.checked = !!s.keep_audio;
+    // state
+    const [col, label] = V2T_STATE[s.state] || ['#888', s.state];
+    let st = `<span style="color:${col}">&#9679;</span> ${digEsc(label)}`;
+    if (s.loaded && (s.state === 'ready' || s.state === 'busy')) st += ` <span style="color:#6f87a6">(${digEsc(s.loaded)})</span>`;
+    if (s.error) st += `<br><span style="color:#ff8a80;font-size:11px">${digEsc(s.error)}</span>`;
+    v2tSetHtml($id('v2t-state'), st);
+    const vf = s.vfos.length ? s.vfos.map(v => `<span style="color:${getDecimatorColor(v.id)};font-weight:bold">D${v.id}</span> ` +
+        digEsc(v2tSrcName(v.src)) + (v.rec ? ` <span style="color:#ef5350" title="Collecting a transmission">&#9679; ${v.secs.toFixed(0)} s</span>` : '')).join(', ')
+      : '<span style="color:#6f87a6">none - tick 🗣 Transcribe on a VFO</span>';
+    v2tSetHtml($id('v2t-vfos'), vf);
+    let q = s.queue ? `${s.queue} (${s.queued_s} s of audio)` : 'nothing';
+    if (s.dropped) q += ` · <span style="color:#ffb74d" title="Transmissions dropped because the model couldn't keep up: fewer VFOs, a smaller model or more CPU cores">⚠ ${s.dropped} dropped</span>`;
+    v2tSetHtml($id('v2t-queue'), q);
+    v2tSetHtml($id('v2t-done'), `${s.done}` + (s.nospeech ? ` · <span title="Transmissions without speech (noise, tones, data) - skipped">${s.nospeech} no speech</span>` : '') +
+      (s.failed ? ` · <span style="color:#ff8a80">${s.failed} failed</span>` : ''));
+    v2tSetHtml($id('v2t-speed'), s.rtf > 0 ? `<span title="Audio seconds transcribed per second of work (last transmissions)">${(1 / s.rtf).toFixed(1)}× real time</span>` : '');
+    v2tSetHtml($id('v2t-log'), s.log && s.log.enabled ? '<span style="color:#81c784">✓</span> decoder log files'
+      : '<span style="color:#6f87a6">off</span> <a href="#" onclick="v2tLogOn();return false" title="Turn Decoder Logging on, with voice transcripts">turn on</a>');
+    // header badge: VFOs transcribing / a problem
+    const badge = $id('v2t-badge');
+    const bad = ['not installed', 'no model', 'error'].includes(s.state) && s.vfos.length;
+    badge.className = 'v2t-badge' + (bad ? ' warn' : '');
+    badge.textContent = bad ? '⚠ ' + label : (s.vfos.length ? s.vfos.length + ' VFO' + (s.vfos.length > 1 ? 's' : '') : '');
+  }
+
+  function v2tRenderHead() {
+    const s = v2tStatus;
+    let h = '';
+    if (s) {
+      if (['not installed', 'no model', 'error'].includes(s.state))
+        h = `<span style="color:#ffb74d">⚠ ${digEsc((V2T_STATE[s.state] || [, s.state])[1])}${s.error ? ': ' + digEsc(s.error) : ''} - see the 🗣 Voice to Text box in the sidebar</span>`;
+      else if (!s.vfos.length)
+        h = 'No VFO is transcribing: tick <b>🗣 Transcribe</b> on a VFO card (Decimators box).';
+      else {
+        const rec = s.vfos.filter(v => v.rec);
+        h = rec.length ? rec.map(v => `<span style="color:#ef5350">&#9679;</span> <span style="color:${getDecimatorColor(v.id)};font-weight:bold">D${v.id}</span> ${v.secs.toFixed(0)} s`).join(' &nbsp; ')
+          : `Listening on ${s.vfos.map(v => 'D' + v.id).join(', ')}`;
+        if (s.queue) h += ` &nbsp;·&nbsp; ${s.queue} waiting`;
+      }
+    }
+    v2tSetHtml($id('v2t-tab-head'), h);
+  }
+
+  // the text escaped, the search words marked (matched on the raw text, so a
+  // word can't land inside an escape like &amp;)
+  function v2tMark(text, q) {
+    if (!q) return digEsc(text);
+    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    let out = '', last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      if (!m[0].length) { re.lastIndex++; continue; }
+      out += digEsc(text.slice(last, m.index)) + '<mark>' + digEsc(m[0]) + '</mark>';
+      last = m.index + m[0].length;
+    }
+    return out + digEsc(text.slice(last));
+  }
+
+  function v2tRowHtml(t, q) {
+    const d = new Date(t.t);
+    const today = d.toDateString() === new Date().toDateString();
+    const time = (today ? '' : d.toLocaleDateString([], {day: 'numeric', month: 'short'}) + ' ') +
+                 d.toLocaleTimeString([], {hour12: false});
+    const col = getDecimatorColor(t.vfo);
+    const who = t.tid ? `<span class="v2t-who" title="Who talked (radio ID) and to whom">${digEsc(t.tid)}${t.tl ? ' → ' + digEsc(t.tl) : ''}</span>` : '';
+    const brg = Number.isFinite(t.brg) ? `<span class="v2t-brg" title="Bearing from north during the transmission">🧭 ${Math.round(t.brg)}°</span>`
+              : Number.isFinite(t.doa) ? `<span class="v2t-brg" title="Direction of arrival relative to the array (no station heading)">🧭 arr ${Math.round(t.doa)}°</span>` : '';
+    const low = t.conf < 0.5;
+    const play = t.clip ? `<button type="button" class="v2t-play${v2tPlaying === t.id ? ' on' : ''}" onclick="v2tPlay(${t.id})" title="${v2tPlaying === t.id ? 'Stop' : 'Play the audio'}">${v2tPlaying === t.id ? '■' : '▶'}</button>` : '';
+    const text = v2tMark(t.text || '', q);
+    return `<div class="v2t-row"><div class="v2t-meta">${play}<span class="t" title="${digEsc(d.toLocaleString())}">${time}</span>` +
+           `<span class="dig-vfo-tag" style="color:${col}">D${t.vfo}</span><span class="v2t-mhz">${(+t.mhz).toFixed(4)} MHz</span>` +
+           `<span>${digEsc(v2tSrcName(t.src))}</span>${who}${brg}<span>${(+t.dur).toFixed(1)} s${t.part ? ' · part ' + t.part : ''}</span>` +
+           (low ? `<span class="v2t-low" title="The model was unsure (confidence ${Math.round(t.conf * 100)} %)">?</span>` : '') +
+           (t.lang && t.lang !== 'en' ? `<span title="Language">${digEsc(t.lang)}</span>` : '') +
+           `</div><div class="v2t-text${low ? ' low' : ''}">${text}</div></div>`;
+  }
+
+  function v2tRenderTab(force) {
+    if (!infoOpen('voice')) return;
+    if (v2tUnseen) { v2tUnseen = 0; infoRenderTabs(); }
+    v2tRenderHead();
+    const sel = $id('v2t-vfo-filter');
+    const vfos = [...new Set(v2tList.map(t => t.vfo))].sort((a, b) => a - b);
+    const opts = '<option value="">All VFOs</option>' + vfos.map(v => `<option value="${v}">D${v}</option>`).join('');
+    if (sel.dataset.html !== opts) { const cur = sel.value; sel.dataset.html = opts; sel.innerHTML = opts; sel.value = cur; }
+    const q = ($id('v2t-filter').value || '').trim();
+    const ql = q.toLowerCase(), vf = sel.value;
+    v2tShown = v2tList.filter(t => (vf === '' || String(t.vfo) === vf) &&
+      (!ql || [t.text, t.tid, t.tl, t.src, (+t.mhz).toFixed(4)].join(' ').toLowerCase().includes(ql)));
+    const list = $id('v2t-list');
+    const key = v2tShown.length + ':' + (v2tShown.length ? v2tShown[v2tShown.length - 1].id : 0) + '|' + ql + '|' + vf + '|' + v2tPlaying;
+    if (!force && list.dataset.key === key) return;
+    list.dataset.key = key;
+    if (!v2tShown.length) {
+      list.innerHTML = `<div class="dig-help" style="padding:6px">${v2tList.length ? 'Nothing matches.' :
+        'No transcripts yet. Each transmission appears here a few seconds after it ends.'}</div>`;
+      return;
+    }
+    // newest first, at most 400 rows (the CSV export has them all)
+    const rows = v2tShown.slice(-400).reverse();
+    const atTop = list.scrollTop < 8;
+    const top = list.scrollTop;
+    list.innerHTML = rows.map(t => v2tRowHtml(t, q)).join('');
+    list.scrollTop = atTop ? 0 : top;
+  }
+
+  async function v2tPlay(id) {
+    if (v2tAudio) { v2tAudio.pause(); URL.revokeObjectURL(v2tAudio.src); v2tAudio = null; }
+    if (v2tPlaying === id) { v2tPlaying = null; v2tRenderTab(true); return; }
+    v2tPlaying = id;
+    v2tRenderTab(true);
+    try {
+      // fetched in the page (it trusts the self-signed certificate), played from a blob
+      const token = storedToken();
+      const r = await fetch('voice_clip/' + id + '.wav', {cache: 'no-store', headers: token ? {'X-Kraken-Token': token} : {}});
+      if (!r.ok) throw new Error(r.status === 404 ? 'the audio is gone (only the latest are kept)' : 'HTTP ' + r.status);
+      const url = URL.createObjectURL(await r.blob());
+      if (v2tPlaying !== id) { URL.revokeObjectURL(url); return; }
+      v2tAudio = new Audio(url);
+      v2tAudio.onended = () => { if (v2tPlaying === id) { v2tPlaying = null; v2tRenderTab(true); } };
+      await v2tAudio.play();
+    } catch (e) {
+      if (v2tPlaying === id) { v2tPlaying = null; v2tRenderTab(true); }
+      alert('Cannot play the audio: ' + (e && e.message ? e.message : e));
+    }
+  }
+
+  // the transcripts shown (search / VFO filter), oldest first, as CSV
+  function v2tExport() {
+    if (!v2tShown.length) { alert('No transcripts to export.'); return; }
+    // a cell starting with = + - @ would be a formula in a spreadsheet: radio speech isn't
+    const cell = v => {
+      let s = v === undefined || v === null ? '' : String(v);
+      if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+      return '"' + s.replace(/"/g, '""') + '"';
+    };
+    const p2 = n => String(n).padStart(2, '0');
+    const iso = ms => { const d = new Date(ms); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`; };
+    const lines = [['time', 'vfo', 'mhz', 'source', 'talker', 'to', 'bearing_deg', 'doa_array_deg', 'duration_s', 'confidence', 'language', 'text'].join(',')];
+    for (const t of v2tShown)
+      lines.push([iso(t.t), 'D' + t.vfo, (+t.mhz).toFixed(6), v2tSrcName(t.src), t.tid || '', t.tl || '',
+        Number.isFinite(t.brg) ? t.brg : '', Number.isFinite(t.doa) ? t.doa : '', t.dur, t.conf, t.lang || '', t.text].map(cell).join(','));
+    const blob = new Blob(['﻿' + lines.join('\r\n') + '\r\n'], {type: 'text/csv;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const d = new Date();
+    a.href = url;
+    a.download = `voice-transcripts-${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
+  function v2tClear() {
+    if (!v2tList.length) return;
+    if (!confirm(`Delete all ${v2tList.length} transcripts and their audio on the receiver? (The decoder log files keep theirs.)`)) return;
+    send('VOICE2TEXT_CLEAR');
+  }
+
   function escapeHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
                     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');

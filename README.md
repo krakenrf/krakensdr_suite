@@ -30,6 +30,8 @@ The **🗺 Map** button (under the waterfall) opens a street / satellite map in 
 
 **Decoder logging**: sidebar → 🗂 Decoder Logging saves what the digital decoders report to disk: events (each decoder's log lines), text messages (pager texts), positions (aircraft, APRS stations, DMR / D-STAR GPS - each object at most every N seconds), raw frames (ADS-B Mode S messages, APRS packets, POCSAG codewords) and incidents - tick the types you want. One file per day, `decoders-YYYY-MM-DD.jsonl` (one JSON record per line: time, VFO, frequency, decoder, type and the data); at midnight the finished day is gzipped, and days older than "Keep" (default 7, 0 = forever) are deleted - only these files, nothing else in the folder. To spare the SD card the records are collected in memory and written every 5 seconds; writing pauses when less than 100 MB is free. The box shows the free space on the drive the logs go to, today's size and an estimate per day, and lets you pick the folder: the default is `decoder_logs` in kraken_doa's folder, or pick a USB drive / other mounted disk from the list. Raw ADS-B frames near a busy airport are roughly 100-300 MB a day before gzip. Positions are logged with the decoder's details (for aircraft: squawk, vertical rate, speeds, category, emergency status). Anything unusual is logged as an event starting with ⚠ - for ADS-B: emergencies (7500 / 7600 / 7700) and when they end, squawk changes, the special squawks 7400 / 7777 / 0000, unusual aircraft types (UAV, balloon, parachutist, ultralight, high performance, space vehicle), climbs or descents of 6000 ft/min or more, and 400 kt or faster below 10000 ft; pilot IDENTs are logged too.
 
+**Voice to Text**: tick "🗣 Transcribe" on a VFO card and what is said on that VFO is written down - by a free speech-to-text model (OpenAI's Whisper, via whisper.cpp) running on the receiver itself: no account, no internet once it is set up, nothing sent anywhere (set it up once, see "Voice to Text" below). Any number of VFOs at once, whichever one you listen to. Analog voice is demodulated with the VFO's demod (NBFM, AM - e.g. airband -, WBFM); a VFO with its digital decoder on gives the decoded voice instead (P25, DMR, D-STAR, NXDN, TETRA - the voice codec must be installed, see "Digital voice codecs"), with the radio's ID and talkgroup. Each transmission is cut out by the VFO's squelch (with the squelch off: while a signal stands 10 dB over the noise) or by the digital decoder's calls and talker changes, and appears in the **🗣 Voice** tab under the waterfall a few seconds after it ends: time, VFO, frequency, mode, who (digital radios), the bearing during the transmission (coherent mode with DoA on), its length, the text, and ▶ to play the audio and check it (kept for the latest 2000, up to 400 MB). Search the transcripts, show one VFO's, or download them as a CSV file; with Decoder Logging on (type "Voice transcripts") they also go to the daily log files. Noise, data bursts and tones are skipped (voice activity detection), so an open squelch doesn't fill the log with invented words. The 🗣 Voice to Text sidebar box picks the model (base.en by default: on a Pi 5 it transcribes about 2-3 times faster than real time on 2-3 CPU cores; small.en is more accurate but slower than real time; models without ".en" do other languages, and can translate them to English), the CPU cores it may use (it runs at a lower priority than the receiver), and "Words to expect" - callsigns, unit and place names spelled as you want them, which helps the model with names it would otherwise mishear. Expect radio-quality transcripts: clear speech comes out well, weak or clipped signals and unusual names less so - the audio is kept so you can check.
+
 **Direction finding on the map (coherent mode)**: the 🗺 Map shows each VFO's live DoA lobe around the station, turned to true north with the station's heading, and the bearing line. While you drive, it builds a heat map of where the transmitter is: bearings are taken every 15-60 m of driving (none while stopped or turning), each is drawn as a faint line from where it was taken, and together they give the most likely transmitter position with its 95 % uncertainty ellipse ("TX ±120 m"). The right pane's "⊞ Both" tab shows the MUSIC DoA plots and the map at once (drag the divider between them). Use the "📡 DF" panel at the bottom left of the map to pick the VFO (or All), switch Lobe / Lines / Heat, set the grid range (km around where you started; the panel warns when the transmitter seems to be outside it), centre on the estimate, or reset. It needs the station position and heading: Station Information → GPS (gpsd; the GPS course is used above 7 km/h, or a compass if gpsd has one); the array's ANT0 must face the front of the vehicle. The receiver also measures whether all bearings are rotated (array mounted a few degrees off) and says so. Retuning a VFO starts a new heat map; the bearings are saved and picked up again after a restart on the same frequency (24 h).
 
 **Direction finding per radio (P25, DMR, NXDN, D-STAR)**: with a VFO's digital decoder on P25, DMR, NXDN or D-STAR, the receiver knows which radio (unit / radio ID, or the D-STAR callsign) is transmitting and when, and cuts the VFO's signal at those points: each radio's bearing is computed only from its own transmissions, so several radios sharing one channel no longer blur into one bearing. In the map's "📡 DF" panel, pick a radio from the list (or the ID selector): you see its latest bearing (plus earlier transmissions as faint lines) and, while driving, its own heat map and position estimate. "Every radio" shows all their bearings at once, labelled with their IDs; "Whole signal" is the plain VFO view. Needs the coherent mode with DoA on; works on encrypted calls too, since the IDs are sent in the clear. On a repeater's output every radio's bearing is the repeater's own (DMR and NXDN labels say "via repeater") - listen on the repeater's input frequency, or to direct (simplex) traffic, to find the radios. TETRA isn't split (the decoder only hears the base station). **ADS-B and AIS**: with the ADS-B or AIS decoder on a VFO, every aircraft / ship (also AIS base stations and aids to navigation) gets its own lobe from its own packets ("Every aircraft" / "Every ship", or pick one in the list); with "🗺 Plot on map" ticked in the decoder's tab the panel also shows how far each DF bearing is from the bearing to its reported position, and the median over all of them ("Position check") - a handy test of the array and its heading/mounting. AIS: picking the decoder tunes a 100 kHz VFO to 162.000 MHz, which holds both AIS channels; a ship's packets are filtered to their own channel before the DoA, so two ships transmitting at once on the two channels don't mix. Other decoders can provide the same split through the plugin API (`host.talker`, see `kraken_doa_v2/plugins/SDK.md`).
@@ -168,6 +170,48 @@ docker compose restart kraken_doa
 
 (paths relative to where you cloned mbelib and osmo-tetra; copy only the ones
 you built)
+
+## Voice to Text
+
+Speech on the VFOs written down by a local, free speech-to-text model
+([whisper.cpp](https://github.com/ggml-org/whisper.cpp), MIT licence - OpenAI's
+Whisper models). Set it up once on the receiver (about 10 minutes on a Pi 5):
+
+```
+cd krakensdr_suite/kraken_doa_v2
+make whisper
+```
+
+This builds the speech-to-text helper (`transcribe/build/kraken_whisper`,
+whisper.cpp at a tested version) and downloads the default model (base.en,
+142 MB) plus a small voice detection model into `transcribe/models/`. No
+restart is needed: tick "🗣 Transcribe" on a VFO. `./install.sh` does it too
+when run as `WHISPER=1 ./install.sh`; after that, `make` keeps the helper up
+to date.
+
+Other models: pick one in the sidebar box's download list and press "⬇ Get",
+or on the receiver `transcribe/setup.sh --models-only small.en`
+(`transcribe/setup.sh --list` shows them all):
+
+| Model | Download | On a Pi 5 | |
+|---|---|---|---|
+| tiny.en | 75 MB | ~5x faster than real time | least accurate |
+| base.en | 142 MB | ~2-3x faster than real time | the default |
+| base.en-q5_1 | 57 MB | about the same | less memory |
+| small.en / small.en-q5_1 | 466 / 181 MB | ~2x slower than real time | most accurate on a Pi; for quiet channels |
+| tiny, base, small (+ -q5_1) | as above | as above | any language, or translated to English |
+
+The receiver keeps working while the model is busy: transmissions wait in a
+queue (up to 40 / 10 minutes of audio; the oldest are dropped beyond that -
+the box shows it). If they pile up, give it more CPU cores, use a smaller model
+or transcribe fewer VFOs. The model process only runs while a VFO transcribes
+and stops 2 minutes after the last one is unticked (base.en uses ~280 MB of
+RAM). Transcripts are kept in `kraken_doa_v2/transcripts.jsonl` (the latest
+1000 are shown) and their audio in `kraken_doa_v2/voice_clips/`.
+
+Docker: the image includes the helper (`WHISPER=0` in `.env` leaves it out);
+get the models with the sidebar's "⬇ Get" - they are kept in
+`docker-data/whisper_models/`.
 
 ## AI Signal Lab and decoder plugins
 

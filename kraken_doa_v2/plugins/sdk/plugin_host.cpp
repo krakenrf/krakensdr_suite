@@ -133,6 +133,12 @@ public:
             n -= k;
         }
     }
+    void audio_channel(int channel) override {
+        if (channel == audio_channel_) return;   // sent when it changes
+        audio_channel_ = channel;
+        const int32_t c = channel;
+        send(kp::wire::AUDIO_CHANNEL, &c, 4);
+    }
     void voice_state(const std::string& s) override { send(kp::wire::VOICE_STATE, s.data(), s.size()); }
     void freq_error(float hz) override { send(kp::wire::FREQ_ERROR, &hz, 4); }
     bool verbose() const override { return verbose_; }
@@ -258,6 +264,7 @@ public:
     bool rf_inverted() const override { return rf_inv_; }
 
     bool verbose_ = false, voice_wanted_ = false, raw_wanted_ = false;
+    int audio_channel_ = -1;   // last AUDIO_CHANNEL sent
     bool have_station_ = false;
     double st_lat_ = 0, st_lon_ = 0;
     double rf_hz_ = NAN;

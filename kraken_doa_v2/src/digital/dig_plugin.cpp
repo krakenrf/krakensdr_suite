@@ -316,6 +316,12 @@ std::string codec_status_message() {
 // Process
 // ---------------------------------------------------------------------------
 bool PluginProcess::start(const std::string& exe, std::string* err) {
+    return start(std::vector<std::string>{exe, "--serve"}, err);
+}
+
+bool PluginProcess::start(const std::vector<std::string>& args, std::string* err) {
+    if (args.empty()) { *err = "no command"; return false; }
+    const std::string& exe = args[0];
     stop();
     signal(SIGPIPE, SIG_IGN);
     int in[2], out[2], er[2];
@@ -332,7 +338,6 @@ bool PluginProcess::start(const std::string& exe, std::string* err) {
     posix_spawn_file_actions_adddup2(&fa, in[0], 0);
     posix_spawn_file_actions_adddup2(&fa, out[1], 1);
     posix_spawn_file_actions_adddup2(&fa, er[1], 2);
-    std::vector<std::string> args{exe, "--serve"};
     auto av = c_argv(args);
     pid_t pid = -1;
     int rc = posix_spawn(&pid, exe.c_str(), &fa, nullptr, av.data(), environ);

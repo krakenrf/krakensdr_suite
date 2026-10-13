@@ -590,7 +590,7 @@ decoders `kraken_doa_v2/plugins/`
 **🗂 Decoder Logging (sidebar, all modes)** (details: `kraken_doa_v2/CLAUDE.md`
 *Decoder data log*): what every VFO's decoder reports - events, text
 messages, positions (throttled per object), raw frames (`kp::Host::raw`,
-only while ticked: OPTION `log_raw`), incidents - to
+only while ticked: OPTION `log_raw`), incidents, voice transcripts - to
 `<dir>/decoders-YYYY-MM-DD.jsonl` (local date). Buffered in memory, written
 every 5 s (SD card); at local midnight the day is closed + gzipped in the
 background; days older than the Keep setting (default 7, 0 = forever) are
@@ -603,6 +603,33 @@ persisted. Code: `kraken_doa_v2/src/decoder_log.cpp`
   vertical rate...); unusual things are events starting with "⚠" (ADS-B:
   emergencies + their end, squawk changes, special squawks, UAV / balloon
   / high-performance types, >= 6000 ft/min, >= 400 kt below 10000 ft)
+
+**🗣 Voice to Text (per VFO, all modes)** (details: `kraken_doa_v2/CLAUDE.md`
+*Voice to Text*): what is said on the VFOs with "🗣 Transcribe" ticked,
+written down LOCALLY by whisper.cpp (MIT, pinned v1.9.4; OpenAI Whisper
+models + Silero VAD) - opt-in setup `cd kraken_doa_v2 && make whisper`
+(= `transcribe/setup.sh`: builds `transcribe/build/kraken_whisper`, gets
+base.en) or `WHISPER=1 ./install.sh`; Docker builds it in (`WHISPER=0`
+leaves it out) with the models in `docker-data/whisper_models/`
+- Source per VFO, not the Audio Src's: its digital decoder's voice when the
+  decoder is on (P25 / DMR / D-STAR / NXDN / TETRA vocoder output via
+  `dig::set_voice_tap_handler`, with the talker's unit ID / talkgroup;
+  cut at talker changes), else its analog demod (NBFM / AM / WBFM) of the
+  same stream, cut by its squelch (squelch off: 10 dB over the noise in the
+  FFT). Bearing during each transmission in coherent mode with DoA on
+- `src/voice2text.cpp`: one worker thread (taps, queue <= 40 / 10 min,
+  helper process); the helper (`PluginProcess`, nice 10, one job at a time,
+  wire `include/voice2text_wire.hpp`) runs VAD (noise / tones / carriers ->
+  "no speech", no transcript), whisper, hallucination filters; a vocabulary
+  prompt is sent as "Glossary: ... ." (a bare word list made whisper stop
+  after one word)
+- Out: the 🗣 Voice tab under the waterfall (search, VFO filter, ▶ audio
+  clip, CSV), `transcripts.jsonl` + `voice_clips/` (cwd), decoder log type
+  "voice", `GET /voice_clip/<id>.wav` (token like /recordings). Commands
+  `VOICE2TEXT_*` (settings persisted before DECIMATORS; the per-VFO flag
+  is DECIMATORS snapshot field 11), `VOICE2TEXT_DOWNLOAD:` = a catalogue
+  model via curl
+- Pi 5: base.en ~280 MB RAM, ~2-3x faster than real time on 2-3 cores
 
 **📡 Mobile DF on the map (coherent mode)** (details: `kraken_doa_v2/CLAUDE.md`
 *Mobile direction finding*): each VFO's live DoA lobe (north frame, from

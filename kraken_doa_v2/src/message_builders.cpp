@@ -772,6 +772,7 @@ string MessageBuilders::build_decimator_info_message() {
              << ",\"squelch_level\":" << info.squelch_level
              << ",\"squelch_open\":" << (info.squelch_open ? "true" : "false")
              << ",\"squelch_method\":\"" << (info.squelch_method == static_cast<int>(SquelchMethod::DIGITAL) ? "DIGITAL" : "FFT") << "\""
+             << ",\"transcribe\":" << (info.transcribe ? "true" : "false")
              << ",\"digital_mode\":\"" << json_escape(dig::mode_string(static_cast<dig::Mode>(info.digital_mode), info.digital_plugin)) << "\""
              << ",\"digital_opts\":{\"verbose\":" << (info.digital_opts.verbose ? "true" : "false")
              << ",\"invert\":" << (info.digital_opts.invert ? "true" : "false")

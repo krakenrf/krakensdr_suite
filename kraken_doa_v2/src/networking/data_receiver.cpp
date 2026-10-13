@@ -13,6 +13,7 @@
 #include "signal_processing/beamformer.hpp"
 #include "decimator_manager.hpp"
 #include "doa_logger.hpp"
+#include "voice2text.hpp"
 #include "networking/tcp_client.hpp"
 #include "utils/system_stats.hpp"
 #include "utils/ring_buffer.hpp"
@@ -565,17 +566,21 @@ void DataReceiver::decimation_processor_thread() {
 
         // Process through all decimators in DecimatorManager (with parallelization)
         // Run decimators if DoA (MUSIC), FM, or beamforming needs processing
-        // Digital voice/data decoders consume their VFO's decimated stream
+        // Digital voice/data decoders consume their VFO's decimated stream,
+        // and so does Voice to Text (voice2text.cpp) on VFOs without a decoder
         const bool digital_needs_processing = decimator_manager.anyDigitalActive();
-        if ((music_needs_processing || fm_needs_processing || beamforming_needs_processing || digital_needs_processing) &&
+        const bool transcribe_needs_processing = decimator_manager.anyTranscribeActive();
+        if ((music_needs_processing || fm_needs_processing || beamforming_needs_processing || digital_needs_processing ||
+             transcribe_needs_processing) &&
             decimator_manager.getDecimatorCount() > 0) {
             // OPTIMIZED PIPELINE: Process decimation + MUSIC in single async tasks
             // This eliminates the synchronization barrier between decimation and MUSIC stages
-            // FM / digital only (no MUSIC, no beamforming): the FM audio and the
-            // digital decoders are the only consumers of decimated data -
-            // squelch reads the main FFT - so run just the FM source VFO and
-            // the VFOs with a digital decoder, on just the listened-to channel.
-            // Every VFO used to decimate every element for nothing.
+            // FM / digital only (no MUSIC, no beamforming): the FM audio, the
+            // digital decoders and Voice to Text are the only consumers of
+            // decimated data - squelch reads the main FFT - so run just the FM
+            // source VFO and the VFOs with a digital decoder / transcription,
+            // on just the listened-to channel. Every VFO used to decimate
+            // every element for nothing.
             const bool fm_only = !music_needs_processing && !beamforming_needs_processing;
             const int fm_source_id = decimator_manager.getFMDecimatorId();
             vector<shared_ptr<DecimatorManager::DecimatorInstance>> active_decimators;
@@ -583,7 +588,8 @@ void DataReceiver::decimation_processor_thread() {
                 // Skip disabled or being-deleted decimators
                 if (!inst || !inst->enabled || inst->being_deleted.load(std::memory_order_relaxed)) continue;
                 const bool single_wanted = (fm_needs_processing && inst->id == fm_source_id) ||
-                                           inst->digital_mode.load(std::memory_order_relaxed) != 0;
+                                           inst->digital_mode.load(std::memory_order_relaxed) != 0 ||
+                                           inst->transcribe.load(std::memory_order_relaxed);
                 if (fm_only && !single_wanted) {
                     // Not decimated in this mode, but keep its FFT-method
                     // squelch indicator live (it reads the main FFT only; a
@@ -922,6 +928,45 @@ void DataReceiver::decimation_processor_thread() {
                     }
                     dd->push(src->data(), n, result.decimated_data.output_rate_hz, rf,
                              result.decimated_data.stream_pos, mc, mc_m);
+                }
+            }
+
+            // 🗣 Voice to Text: VFOs with Transcribe on and no digital decoder
+            // (one with a decoder sends its decoded voice through the
+            // decoder's voice tap) - the same stream, demodulated in
+            // voice2text.cpp with the VFO's demod. Cut into transmissions by
+            // the VFO's squelch; with it off, by a signal AUTO_SQUELCH_DB over
+            // the noise floor in the FFT
+            if (transcribe_needs_processing) {
+                for (auto& result : results) {
+                    const auto& inst = result.instance;
+                    if (!inst || !inst->transcribe.load(std::memory_order_relaxed) ||
+                        inst->digital_mode.load(std::memory_order_relaxed) != 0)
+                        continue;
+                    if (result.decimated_data.channels.empty() || result.decimated_data.min_samples == 0) continue;
+                    const vector<complex<float>>* src = nullptr;
+                    if (result.beamformer_ran) {
+                        if (result.have_beamformed) src = &result.beamformed_samples;
+                    } else {
+                        int idx = (wideband_enabled || fm_only) ? 0 : current_active;
+                        if (idx < static_cast<int>(result.decimated_data.channels.size()))
+                            src = &result.decimated_data.channels[idx].samples;
+                    }
+                    if (!src || src->empty()) continue;
+                    int tuner = wideband_enabled ? inst->tuner_channel.load(std::memory_order_relaxed) : 0;
+                    if (tuner < 0 || tuner >= MAX_CHANNELS) tuner = 0;
+                    const double rf = static_cast<double>(exact_tuner_hz(tuner)) + result.decimated_data.freq_offset_hz;
+                    bool open;
+                    if (inst->squelch_enabled.load(std::memory_order_relaxed)) {
+                        open = inst->squelch_open.load(std::memory_order_relaxed);
+                    } else {
+                        const int ch = wideband_enabled ? inst->tuner_channel.load(std::memory_order_relaxed)
+                                                        : active_channel.load(std::memory_order_relaxed);
+                        open = FFTProcessor::check_squelch_in_range(ch, v2t::AUTO_SQUELCH_DB, inst->frequency_offset_hz,
+                                                                    inst->decimator->getBandwidthMhz() * 1e6f);
+                    }
+                    v2t::feed_analog(inst->id, src->data(), src->size(), result.decimated_data.output_rate_hz, rf,
+                                     inst->demod_mode.load(std::memory_order_relaxed), open);
                 }
             }
 

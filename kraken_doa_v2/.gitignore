@@ -55,3 +55,12 @@ decoder_logs/
 # mobile DF heat map session (rdf_mapper.cpp)
 rdf_session.bin
 rdf_session.bin.tmp
+# Voice to Text (transcribe/setup.sh): the whisper.cpp checkout, the helper
+# build and the downloaded speech models
+transcribe/whisper.cpp/
+transcribe/build/
+transcribe/models/
+# Voice to Text history + audio clips (voice2text.cpp)
+transcripts.jsonl
+transcripts.jsonl.tmp
+voice_clips/

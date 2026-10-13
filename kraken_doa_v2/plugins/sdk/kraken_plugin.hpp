@@ -176,6 +176,12 @@ public:
     // listens to this VFO with Demod "Digital"; cheap to skip otherwise
     // (see voice_wanted()).
     virtual void audio(const float* pcm8k, size_t n) = 0;
+    // The talker channel (Talker::channel - the DMR timeslot) the following
+    // audio() belongs to, for protocols that carry several transmissions at
+    // once but play one: kraken_doa's Voice to Text then names the radio on
+    // THAT channel. Call it before audio() when it changes; -1 = unknown
+    // (the default: the host guesses). Optional.
+    virtual void audio_channel(int channel) { (void)channel; }
     // Short voice/call status for the UI ("" = none), e.g. "Call from 1234"
     virtual void voice_state(const std::string& s) = 0;
     // Measured carrier offset (Hz, + = signal above the VFO centre). The host
@@ -321,5 +327,6 @@ constexpr uint32_t TALKER = 30;
 constexpr uint32_t TALKER_END = 31;    // at_s ['\0' channel] (decimal text)
 constexpr uint32_t TABLE_KEEP = 32;    // seconds (decimal text): Host::table_keep
 constexpr uint32_t TALKER_FORGET = 33; // id: Host::talker_forget
+constexpr uint32_t AUDIO_CHANNEL = 34; // int32 channel (-1 = unknown): Host::audio_channel
 // (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends)
 }  // namespace kp::wire

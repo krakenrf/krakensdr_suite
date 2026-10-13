@@ -65,6 +65,9 @@ struct RxContext {
     std::function<void(Mode, float)> freq_error;
     // Decoded voice, 8 kHz mono (nominal +-1)
     std::function<void(Mode, const float*, size_t)> voice;
+    // The talker channel the following voice belongs to (DMR timeslot;
+    // kp::Host::audio_channel) - set before `voice` when known
+    std::function<void(int channel)> voice_channel;
     // Voice status for the UI ("" = no call)
     std::function<void(const std::string&)> voice_state;
     // true while someone listens - the receivers run their vocoders only then
@@ -92,6 +95,7 @@ public:
         ctx.valid = [&h](Mode) { h.valid(); };
         ctx.freq_error = [&h](Mode, float hz) { h.freq_error(hz); };
         ctx.voice = [&h](Mode, const float* x, size_t n) { h.audio(x, n); };
+        ctx.voice_channel = [&h](int ch) { h.audio_channel(ch); };
         ctx.voice_state = [&h](const std::string& s) { h.voice_state(s); };
         ctx.voice_wanted = [&h] { return h.voice_wanted(); };
     }

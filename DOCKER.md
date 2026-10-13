@@ -88,7 +88,8 @@ docker compose build
 ```
 
 The first build compiles everything and takes about 5 minutes on a Pi 5
-(longer on a Pi 4).
+(longer on a Pi 4), plus about 10 minutes for Voice to Text's speech-to-text
+engine (whisper.cpp) - `WHISPER=0` in `.env` leaves that out.
 Later builds reuse the dependency layers and only recompile the apps. Build
 the image **on the machine that will run it**: kraken_doa compiles with
 `-march=native`, so an image built on a Pi 5 can crash with "Illegal
@@ -183,7 +184,16 @@ docker-data/kraken_doa/fft_wisdom.dat         FFTW plans (made on first start)
 docker-data/kraken_doa/doa_recordings/        DoA recordings
 docker-data/codecs/                           optional self-built voice codecs (libmbe.so.1,
                                               cdecoder, sdecoder - README "Digital voice codecs")
+docker-data/whisper_models/                   Voice to Text speech models (the sidebar's "⬇ Get")
+docker-data/kraken_doa/transcripts.jsonl      Voice to Text history (the 🗣 Voice tab)
+docker-data/kraken_doa/voice_clips/           the transcripts' audio (if "Keep the audio" is on)
 ```
+
+**Voice to Text** (sidebar "🗣 Voice to Text"): the image includes the
+speech-to-text helper (whisper.cpp; `--build-arg WHISPER=0` leaves it out and
+saves ~10 minutes of build). The speech models are not in the image: pick one
+in the sidebar box and press "⬇ Get" - it is downloaded once into
+`docker-data/whisper_models/` and kept across rebuilds.
 
 The containers run as root, so these files belong to root. Read them freely;
 to edit one, stop the stack and use `sudo`.
