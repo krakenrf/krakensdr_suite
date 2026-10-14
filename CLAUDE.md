@@ -397,10 +397,12 @@ decoders `kraken_doa_v2/plugins/`
   `kp::Info::multichannel`: in coherent mode with DoA on it gets EVERY
   antenna - `process_multi`, wire SAMPLES_MC - and combines each burst from
   all of them with its own covariance's main eigenvector: >= 6 dB more
-  sensitive with 5 antennas; one channel as before in independent mode) and
+  sensitive with 5 antennas; one channel as before in independent mode),
   radar (pulsed radars in the 2.4 MHz - L-band ATC / en-route surveillance
   1215-1400 MHz, wind profilers: pulses, chirp, PRI pattern, scan, beam
-  width; a DoA per radar from its main beam; manual only, `lock_vfo`).
+  width; a DoA per radar from its main beam; manual only, `lock_vfo`) and
+  ssr1030 (the 1030 MHz uplink: SSR / Mode S / TCAS interrogations, Mode S
+  bits read at 2.4 MHz, a DoA per interrogator; manual only, fixed 1030 MHz).
   Plugins learn the VFO's RF from `kp::Host::rf_hz()` (wire RF, 7). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
@@ -465,7 +467,7 @@ decoders `kraken_doa_v2/plugins/`
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, radar, dtv and cells (ARRAY
+  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags)
@@ -667,7 +669,7 @@ frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a
 coded ID per transmitter, the plugin reports it as a talker and is tested
@@ -809,6 +811,32 @@ bearings, every antenna, cu8 / cf32). Live: the 1355.0 MHz L-band radar
 here - 59 us LFM -1.17 MHz, PRI 1712 / 1395 us in blocks of 8 alternating
 per turn with 1748 / 1424, 12.3 rpm, 1.5 deg beam, its short pulse on
 1350.07 MHz, a steady bearing; plugin 2-3 % of a core
+
+**🛰 SSR / Mode S / TCAS interrogations (1030 MHz)** (details:
+`kraken_doa_v2/plugins/ssr1030/README.md`, `kraken_doa_v2/CLAUDE.md`
+*1030 MHz interrogations*): the plugin `ssr1030` (2.4 MHz,
+`fixed_freq_hz` 1030 MHz like adsb, manual only) reads the UPLINK the 1090
+MHz replies answer: Mode A / C (P2 SLS level, P4 short / long all-calls,
+S1 whisper-shout) and Mode S - the 4 Mchip/s DPSK bits at 0.6 samples per
+chip by a sequence estimator against the receiver's measured complex step
+response (`s_default.h`, re-fitted from parity-checked frames): UF0 / 4 / 5
+/ 11 / 16 / 20 / 21 / 24, target addresses (uplink AP = CRC xor the
+ENCODED address - coefficients x^47..x^24 of A(x)G(x), confirmed live),
+II / SI codes, ACAS addresses (UF16 MU); all-calls / broadcasts checked +
+corrected against the known address. ID separation: SSR = a periodic
+all-call train (sequence search; sidelobes by the omni P2's level; named
+"SSR II 10" from its checked UF11), Fixed = a non-rotating interrogator at
+one steady level (multilateration), ACAS = whisper-shout / checked UF16
+broadcasts ("ACAS 7C4A51"); packets = an SSR's main-beam interrogations,
+the others' all -> DF kind `interrogator` (🛰 / ✈). PRF / PRI, interlace,
+scan, beam, SLS per interrogator via `plugins/lib/radar_pri` /
+`radar_scan` (moved there from the radar plugin, shared). Generator
+`plugins/ssr1030/tools/ssr_gen.py`. Live: SSR II 10 (199 Hz, A / C + UF11
+every 3rd, 5.00 s scan, 2.6 deg beam), the airport multilateration
+interrogator (1 s bursts, UF4 / 5 to the aircraft adsb hears), TCAS
+aircraft by their broadcasts; plugin ~4 % of a core. Mode S bits need a
+response close to the KrakenSDR's (a different synthetic receiver: none
+decoded); coexists with dme (6X interrogations on 1030 MHz)
 
 **🔇 Digital squelch (per VFO, with its digital decoder on)** (details:
 `kraken_doa_v2/CLAUDE.md` *Digital squelch*): squelch methods are FFT Peak

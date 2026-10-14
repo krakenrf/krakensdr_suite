@@ -7,7 +7,7 @@
 //   pulses   pulse.cpp: |x|^2 against the noise floor, leading edge, width,
 //            level, clipping, centre frequency, linear FM (chirp) rate
 //   modes    every kind of pulse (frequency, width, chirp) is a mode
-//   radars   a mode whose pulse times have a PRI structure (pri.cpp) is a
+//   radars   a mode whose pulse times have a PRI structure (lib/radar_pri.cpp) is a
 //            radar; another mode whose pulses come at a FIXED delay after
 //            its pulses, at comparable power, belongs to the same radar
 //            (frequency diversity, a short fill pulse + a long chirp). What
@@ -17,7 +17,7 @@
 //            (on its PRI grid), echoes 10 dB down at a fixed delay, ghosts
 //            20 dB down with its PRIs (an image from outside the band) - and
 //            a weaker copy of a pulse soon after it is an echo, dropped
-//   scan     scan.cpp: the pulse level over time - the main beam sweeping
+//   scan     lib/radar_scan.cpp: the pulse level over time - the main beam sweeping
 //            past once per turn - gives the scan period (rpm) and, from the
 //            level profile of each unclipped pass, the -3 dB beam width
 //   DoA      each radar is a talker (ID separation by its signature): the
@@ -34,9 +34,9 @@
 // of the strongest radar's pulse level over one turn of its antenna.
 
 #include "kraken_plugin.hpp"
-#include "pri.hpp"
+#include "radar_pri.hpp"
 #include "pulse.hpp"
-#include "scan.hpp"
+#include "radar_scan.hpp"
 
 #include <algorithm>
 #include <cmath>

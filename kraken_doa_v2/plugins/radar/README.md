@@ -105,13 +105,13 @@ section labelled for it.
   its scan period on its frequency. A weaker copy of a pulse within 0.3 PRI
   is an echo and dropped. A mode at a fixed delay (±1.5 µs, comparable
   power) to a radar's pulses is another pulse of its group.
-- `pri.cpp`: consecutive differences (100 µs .. 30 ms) clustered ±max(1.5
+- `lib/radar_pri.cpp` (shared with ssr1030): consecutive differences (100 µs .. 30 ms) clustered ±max(1.5
   µs, 0.12 %); clusters that are sums of 2-3 smaller ones (with fewer
   members) are missed pulses; the rest are the PRIs. Their labels' runs ->
   blocks (median run >= 3; the cycle of levels), else a period -> stagger,
   else "no fixed order"; no levels but a peak -> jitter. A window whose
   levels change half way (a set switching) isn't taken for the set list.
-- `scan.cpp`: levels in 5 ms bins over 41 s; bursts within 6 dB of the
+- `lib/radar_scan.cpp` (shared with ssr1030): levels in 5 ms bins over 41 s; bursts within 6 dB of the
   strongest that dwell there >= half as long as the longest = main-beam
   passes (a pass recorded in the first turn, before the real main beam came,
   is dropped when it no longer qualifies); scan period = the spacing most

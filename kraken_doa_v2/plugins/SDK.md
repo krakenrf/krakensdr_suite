@@ -22,7 +22,9 @@ plugins/
 │                         every plugin; only what a plugin uses ends up in it):
 │                         dig_fec (Golay/Hamming/BCH/RS/Viterbi/CRCs), dig_fsk4
 │                         (P25/DMR 4FSK sync), dig_vocoder (IMBE, mbelib AMBE,
-│                         TETRA ACELP), dig_common (front ends, the Bridge below)
+│                         TETRA ACELP), dig_common (front ends, the Bridge below),
+│                         radar_pri / radar_scan (PRI patterns, antenna scan / main
+│                         beam - radar, ssr1030)
 ├── p25/ dmr/ tetra/ dstar/ nxdn/ mpt1327/   the shipped protocol decoders
 ├── pocsag/ aprs/         more shipped decoders (APRS was written by the AI lab)
 ├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points
@@ -33,6 +35,9 @@ plugins/
 │                         small protocol decoders; a talker packet per device; .lock_vfo
 ├── radar/                pulse radars in the whole 2.4 MHz: a cheap pulse detector, PRI / scan
 │                         analysis, ID separation by signature (main-beam pulses as packets)
+├── ssr1030/              1030 MHz interrogations (SSR / Mode S / TCAS): Mode S DPSK at 0.6
+│                         samples per chip by a sequence estimator against the receiver's
+│                         measured response; interrogators told apart by train / level / code
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
@@ -427,7 +432,10 @@ mixed from all of them. Every new decoder of such a signal does this.
   radar plugin tells radars apart by their pulses and PRI pattern (id =
   frequency to 0.1 MHz) and reports only the samples that surely come
   straight from it (its main beam pointing here, not the reflections it
-  lights).
+  lights). ssr1030 combines both: an interrogator's code where its frames
+  carry a checkable one (an SSR's II / SI from its all-calls, an ACAS's
+  address from its broadcasts), else its signature (a periodic all-call
+  train, a non-rotating one's steady level, whisper-shout).
 - **Who transmits.** The ID must name the RF transmitter of THESE samples,
   not a sender further back or a recipient: an APRS frame repeated by a
   digipeater is the digipeater's (the last path entry marked repeated - "*";

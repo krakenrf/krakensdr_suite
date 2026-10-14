@@ -1,4 +1,4 @@
-#include "scan.hpp"
+#include "radar_scan.hpp"
 
 #include <algorithm>
 #include <cmath>

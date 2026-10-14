@@ -1,0 +1,19 @@
+{
+ "rf_hz": 1030e6, "seconds": 12, "channels": 5, "radius_m": 0.12, "seed": 7,
+ "noise_lsb": 0.6, "response": "measured",
+ "interrogators": [
+  {"name": "SSR-A", "type": "ssr", "bearing": 60, "peak_db": 36,
+   "pri_us": 5000, "jitter_pct": 1.5, "modes": ["A", "C"], "p4": "short", "uf11_every": 3, "ii": 10,
+   "scan_s": 4.0, "beam_deg": 2.5, "sidelobe_db": -26, "az0_deg": 100, "sls_db": -12,
+   "targets": ["C82827", "7C1474", "C8195C"], "df_hz": -3000},
+  {"name": "SSR-B", "type": "ssr", "bearing": 150, "peak_db": 30,
+   "pri_us": 3300, "jitter_pct": 0.2, "modes": ["A", "C", "C"], "p4": "", "uf11_every": 0,
+   "scan_s": 6.0, "beam_deg": 3.0, "sidelobe_db": -24, "az0_deg": 230, "sls_db": -10, "df_hz": 1500},
+  {"name": "MLAT", "type": "fixed", "bearing": 200, "level_db": 22,
+   "period_s": 1.0, "allcalls": ["A", "A", "C"], "allcall_ms": 5, "p4": "short",
+   "targets": ["C82929", "C820CF", "C87EE0", "7C6B07"], "rollcall_ms": 1, "uf": [4, 5], "df_hz": 2500},
+  {"name": "TCAS", "type": "acas", "bearing": 300, "level_db": 24, "address": "C82081",
+   "steps": 8, "step_db": 1.0, "step_ms": 17.5, "s1_db": -2, "period_s": 1.0,
+   "uf0_targets": ["C827A3"], "broadcast_s": 4.0, "df_hz": 500}
+ ]
+}
