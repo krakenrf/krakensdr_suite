@@ -36,13 +36,19 @@ std::string mode_string(Mode m, const std::string& plugin_id) {
     return mode_name(m);
 }
 
+// plugins that were renamed: saved settings still name the old id
+static std::string renamed_plugin(const std::string& id) {
+    if (id == "sfn") return "dtv";   // SFN Separation -> Digital TV (2026-10)
+    return id;
+}
+
 bool parse_mode_string(const std::string& s, Mode* m, std::string* plugin_id) {
     plugin_id->clear();
     if (s == "OFF") { *m = Mode::OFF; return true; }
     if (s == "AUTO") { *m = Mode::AUTO; return true; }
     std::string id;
     if (s.rfind("PLUGIN:", 0) == 0) {
-        id = s.substr(7);
+        id = renamed_plugin(s.substr(7));
     } else {
         // the decoders that used to be built in (settings saved before they
         // became plugins, and the old wire names)
@@ -122,6 +128,8 @@ Options options_from_string(const std::string& s) {
         size_t eq = kv.find('=');
         if (eq == std::string::npos) continue;
         std::string k = kv.substr(0, eq), v = pct_decode(kv.substr(eq + 1));
+        const size_t dot = k.find('.');
+        if (dot != std::string::npos) k = renamed_plugin(k.substr(0, dot)) + k.substr(dot);
         if (k == "v") o.verbose = v == "1";
         else if (k == "i") o.invert = v == "1";
         else if (k == "m") o.map = v == "1";
@@ -287,7 +295,9 @@ void Report::table_row(const std::string& plugin, const std::string& key, std::v
                 return a.second.updated_ms < b.second.updated_ms;
             }));
     }
-    rows[key] = {std::move(cells), t};
+    auto& row = rows[key];   // an update keeps the row's details
+    row.cells = std::move(cells);
+    row.updated_ms = t;
 }
 
 void Report::table_remove(const std::string& plugin, const std::string& key) {
@@ -301,9 +311,42 @@ void Report::table_keep(const std::string& plugin, int64_t ms) {
     tables_[plugin].keep_ms = std::clamp<int64_t>(ms, 60000, 7 * 86400000LL);
 }
 
+void Report::table_detail(const std::string& plugin, const std::string& key, std::vector<std::pair<std::string, std::string>> lines) {
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = tables_.find(plugin);
+    if (it == tables_.end()) return;
+    auto r = it->second.rows.find(key);
+    if (r != it->second.rows.end()) r->second.detail = std::move(lines);   // no row (yet): dropped
+}
+
 void Report::table_clear() {
     std::lock_guard<std::mutex> lk(mu_);
     for (auto& kv : tables_) kv.second.rows.clear();
+}
+
+void Report::plot_set(const std::string& plugin, std::string json) {
+    std::lock_guard<std::mutex> lk(mu_);
+    plots_[plugin] = {std::move(json), now_ms()};
+}
+
+void Report::plot_clear() {
+    std::lock_guard<std::mutex> lk(mu_);
+    plots_.clear();
+}
+
+std::string Report::plots_json() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    const int64_t t = now_ms();
+    std::string o = "{";
+    bool first = true;
+    for (const auto& kv : plots_) {
+        if (!first) o += ",";
+        first = false;
+        // the stored object without its closing brace + the age
+        o += "\"" + json_escape(kv.first) + "\":" + kv.second.json.substr(0, kv.second.json.size() - 1) +
+             ",\"age\":" + std::to_string((t - kv.second.updated_ms) / 1000) + "}";
+    }
+    return o + "}";
 }
 
 std::string Report::tables_json() const {
@@ -319,6 +362,7 @@ std::string Report::tables_json() const {
             o += std::string(i ? "," : "") + "\"" + json_escape(kv.second.cols[i]) + "\"";
         o += "],\"rows\":[";
         bool fr = true;
+        std::string det;
         for (const auto& r : kv.second.rows) {
             const int64_t age = t - r.second.updated_ms;
             if (age > kv.second.keep_ms) continue;
@@ -326,8 +370,15 @@ std::string Report::tables_json() const {
             fr = false;
             for (const auto& c : r.second.cells) o += ",\"" + json_escape(c) + "\"";
             o += "]";
+            if (r.second.detail.empty()) continue;
+            det += std::string(det.empty() ? "" : ",") + "\"" + json_escape(r.first) + "\":[";
+            for (size_t i = 0; i < r.second.detail.size(); i++)
+                det += std::string(i ? "," : "") + "[\"" + json_escape(r.second.detail[i].first) + "\",\"" + json_escape(r.second.detail[i].second) + "\"]";
+            det += "]";
         }
-        o += "]}";
+        o += "]";
+        if (!det.empty()) o += ",\"det\":{" + det + "}";
+        o += "}";
     }
     return o + "}";
 }

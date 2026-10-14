@@ -118,8 +118,11 @@ public:
     // each radio's own frames through it. spec = a pseudospectrum like
     // getPseudospectrum(); peak / conf like getPeakAngleWithConfidence().
     // false: R doesn't fit the array (element count changed) or no steering
-    // vectors yet. Leaves the processor's own results alone.
-    bool spectrumFromCovariance(const Eigen::MatrixXcd& R, Eigen::VectorXd* spec, float* peak_deg, float* conf) const;
+    // vectors yet. Leaves the processor's own results alone. sources > 0:
+    // that many signals instead of the processor's setting (an SFN
+    // transmitter's own covariance from a plugin, kp::Spatial, holds one)
+    bool spectrumFromCovariance(const Eigen::MatrixXcd& R, Eigen::VectorXd* spec, float* peak_deg, float* conf,
+                                int sources = 0) const;
 
     void setArrayTopology(ArrayTopology topology);
     ArrayTopology getArrayTopology() const;

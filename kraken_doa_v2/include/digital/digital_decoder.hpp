@@ -100,6 +100,25 @@ struct TalkerSpan {
 };
 using TalkerHandler = std::function<void(const TalkerSpan&)>;
 
+// A transmitter's spatial covariance from an array plugin (kp::Host::spatial):
+// measured from the VFO stream samples [start, end) of every antenna
+struct SpatialReport {
+    std::string plugin, id, label;
+    uint64_t start = 0, end = 0;
+    float rate = 0;
+    double delay_us = NAN, power_db = NAN, snr_db = NAN, avg_s = 0;
+    bool ref = false;
+    int m = 0;
+    std::vector<std::complex<double>> cov;   // m x m, row-major
+    // kp::Host::spatial_remove: forget the talker id ("" = all of the plugin's)
+    bool remove = false;
+};
+using SpatialHandler = std::function<void(const SpatialReport&)>;
+// A plugin's retune request (kp::Host::tune): the RF to put at 0 Hz of the
+// VFO. Returns "" when it was passed on, else why it was refused. Called on
+// the decoder's worker thread.
+using TuneHandler = std::function<std::string(double rf_hz)>;
+
 class DigitalDecoder {
 public:
     // threaded = false: offline tests - process() runs synchronously and
@@ -149,6 +168,20 @@ public:
     // the VFO's per-talker DoA (talker_doa.hpp). Called on the worker thread.
     void set_talker_handler(TalkerHandler h);
     void deliver_talker(const TalkerSpan& s);
+
+    // Array plugins (kp::Info::array): the decimation pipeline offers every
+    // antenna's block (ch[k] = antenna k's n samples, pos = stream position
+    // of sample 0) while wants_array(); only the blocks inside the plugin's
+    // bursts are queued (copied). Spatial reports go to the spatial handler
+    // (the VFO's TalkerDoa) on the worker thread.
+    bool wants_array() const { return want_array_.load(std::memory_order_relaxed); }
+    void push_array(const std::complex<float>* const* ch, int m, size_t n, float rate_hz, double rf_hz, uint64_t pos);
+    void set_array_wanted(bool on, double burst_s, double period_s, bool only);   // Engine
+    void set_spatial_handler(SpatialHandler h);
+    void deliver_spatial(const SpatialReport& s);
+    // Retune requests of plugins that declare kp::Info::tunes (DecimatorManager)
+    void set_tune_handler(TuneHandler h);
+    std::string deliver_tune(double rf_hz);
     // Offline tests: wait until the plugins have processed all input
     void drain(int timeout_ms = 30000);
 
@@ -197,6 +230,12 @@ private:
 
     std::mutex talker_mu_;
     TalkerHandler talker_handler_;
+    SpatialHandler spatial_handler_;
+    TuneHandler tune_handler_;
+    std::atomic<bool> want_array_{false};
+    std::atomic<bool> array_only_{false};   // nothing but array plugins: push() only ticks
+    uint64_t tick_pos_ = NO_POS;            // the last tick (pipeline thread)
+    std::atomic<double> arr_burst_{0.25}, arr_period_{1.0};
 
     // queue
     struct Block {
@@ -206,6 +245,9 @@ private:
         uint64_t pos;
         std::vector<std::complex<int16_t>> mc;   // every antenna (push's mc), empty = none
         int m = 0;
+        // am > 0: an array block (push_array), x = am antennas x ns samples, antenna-major
+        int am = 0;
+        size_t ns = 0;
     };
     std::atomic<bool> want_mc_{false};
     std::mutex q_mu_;

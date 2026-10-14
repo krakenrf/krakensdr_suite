@@ -103,12 +103,23 @@ public:
     // how long a row of the plugin's table stays without an update
     // (kp::Host::table_keep; 60 s .. 7 days, default TABLE_ROW_TTL_MS)
     void table_keep(const std::string& plugin, int64_t ms);
+    // a row's details (kp::Host::table_detail): label / value lines; they go with the row
+    void table_detail(const std::string& plugin, const std::string& key, std::vector<std::pair<std::string, std::string>> lines);
     void table_clear();   // the rows (VFO retuned / decoder switched); the headings stay
-    // {"<plugin>":{"cols":[..],"rows":[[key, age_s, cell, ...],...]}} - rows
-    // not updated for the table's keep time left out
+    // {"<plugin>":{"cols":[..],"rows":[[key, age_s, cell, ...],...],
+    // "det":{"<key>":[[label, value],...]}}} - rows not updated for the
+    // table's keep time left out (with their details)
     std::string tables_json() const;
 
+    // --- Plots (kp::Host::plot): the latest per plugin, as JSON ---
+    void plot_set(const std::string& plugin, std::string json);
+    void plot_clear();
+    // {"<plugin>":{t, xu, yu, x0, dx, ymin, ymax, thr, y:[..], mk:[[x, label, talker]..], age}}
+    std::string plots_json() const;
+
 private:
+    struct PlotEntry { std::string json; int64_t updated_ms; };
+    std::map<std::string, PlotEntry> plots_;
     struct Fact { std::string key, value; int64_t updated_ms; };
     mutable std::mutex mu_;
     std::map<std::string, std::vector<Fact>> facts_;
@@ -123,7 +134,11 @@ private:
     void map_expire(int64_t t);
     static constexpr size_t MAX_TABLE_ROWS = 1000;
     static constexpr int64_t TABLE_ROW_TTL_MS = 600000;
-    struct TableRow { std::vector<std::string> cells; int64_t updated_ms; };
+    struct TableRow {
+        std::vector<std::string> cells;
+        int64_t updated_ms;
+        std::vector<std::pair<std::string, std::string>> detail;
+    };
     struct Table {
         std::vector<std::string> cols;
         std::map<std::string, TableRow> rows;

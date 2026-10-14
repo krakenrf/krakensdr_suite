@@ -40,6 +40,11 @@ struct PluginInfo {
     bool messages = false;        // sends text messages (kp::Info::messages): incident addresses
     bool talkers = false;         // reports who transmits (kp::Info::talkers): DoA per talker
     bool multichannel = false;    // takes every antenna of a coherent array (kp::Info::multichannel)
+    // array plugin (kp::Info::array): every antenna's samples in bursts of
+    // array_burst_s every array_period_s, spatial covariances back
+    bool array = false;
+    double array_burst_s = 0.25, array_period_s = 1.0;
+    bool tunes = false;           // kp::Info::tunes: may ask for retunes (kp::Host::tune)
     std::vector<PluginOption> options;
     bool built = false;           // exe exists and answered --info
     bool stale = false;           // a source file is newer than exe
@@ -151,6 +156,7 @@ private:
     int exit_status_ = 0;          // waitpid status once reaped
     int in_fd_ = -1, out_fd_ = -1, err_fd_ = -1;
     std::string wbuf_;
+    size_t wpos_ = 0;           // wbuf_[0, wpos_) is written (flush())
     std::vector<char> rbuf_;
     std::string ebuf_;
     mutable std::mutex tail_mu_;

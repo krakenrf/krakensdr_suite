@@ -369,7 +369,8 @@ Edit `include/config.hpp`:
   kraken_doa contains no protocol code. Shipped: p25, dmr, tetra, dstar,
   nxdn, mpt1327, pocsag, aprs, adsb (see *ADS-B* below), ais (see *AIS*),
   radiosonde (see *Radiosonde*), dme and ils (see *DME / TACAN* and *ILS /
-  VOR / marker*), ism (see *ISM devices*)
+  VOR / marker*), ism (see *ISM devices*), dtv and cells (ARRAY plugins -
+  see *Digital TV* and *LTE / 5G NR Cell Decoder*)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
   tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by
   default. WS `PLUGIN_AUTO:id:0|1` -> `PluginRegistry::set_auto()` (bumps the
@@ -388,8 +389,10 @@ Edit `include/config.hpp`:
   decimated, on one channel (`fm_only` in data_receiver.cpp)
 - Modes (`dig::Mode`): OFF, AUTO, PLUGIN (+ plugin id). Wire / snapshot form
   `OFF`, `AUTO`, `PLUGIN:<id>`; `parse_mode_string()` maps the old protocol
-  names (P25, DMR, TETRA, DSTAR, D-STAR, NXDN, MPT1327) to their plugins, so
-  saved settings and old clients keep working
+  names (P25, DMR, TETRA, DSTAR, D-STAR, NXDN, MPT1327) to their plugins and
+  renamed plugins to their new id (`renamed_plugin()`: `sfn` -> `dtv`; the
+  snapshot's `sfn.*` options too), so saved settings and old clients keep
+  working
 - `Engine` (digital_decoder.cpp): AFC mixer at the VFO rate -> one msresamp
   per distinct plugin `sample_rate` (shared by the plugins at that rate) ->
   each plugin process (`Runner`). AUTO runs one Runner per built plugin the
@@ -493,11 +496,15 @@ Edit `include/config.hpp`:
   declares `kp::Info::map`), `map_points`, `tables` (below; only in some
   pushes)
 - Tables (`kp::Host::table_columns / table_row / table_remove / table_keep`,
-  wire 25-27, 32): one per plugin in `Report` (headings + rows by key, max
-  1000, a row not updated for the table's keep time - 10 min, or what the
-  plugin set with `table_keep`, 60 s .. 7 days - left out; `table_clear()` empties the rows on a retune /
-  mode change, headings stay). `status_json(.., tables)`:
-  `"tables":{"<id>":{"cols":[..],"rows":[[key, age_s, cells..]]}}` -
+  wire 25-27, 32; `table_detail`, wire TABLE_DETAIL 38): one per plugin in
+  `Report` (headings + rows by key, max 1000, a row not updated for the
+  table's keep time - 10 min, or what the plugin set with `table_keep`, 60 s
+  .. 7 days - left out; `table_clear()` empties the rows on a retune / mode
+  change, headings stay; a row's details - label / value pairs, <= 200 -
+  live in its `TableRow::detail`, kept across row updates, dropped with the
+  row, a detail for a missing row ignored). `status_json(.., tables)`:
+  `"tables":{"<id>":{"cols":[..],"rows":[[key, age_s, cells..]],
+  "det":{"<key>":[[label, value]..]}}}` -
   `build_digital_message` adds it at most once a second per VFO (+ every
   history reply); the page keeps the last tables in between
   (`digOnMessage`, same mode). UI `digTablesHtml(tab)` merges the plugin's
@@ -508,7 +515,13 @@ Edit `include/config.hpp`:
   numbers, empty cells last; per plugin in localStorage
   `kraken_dig_table_sort`), "Seen" column from the row age, a row whose
   `vfo|plugin|key` is a map point is clickable (`digTableRowClick`: opens
-  the map, selects + centres the marker)
+  the map, selects + centres the marker). A row with details gets a ▸
+  toggle (`.dig-det-tog`, `digDetToggle` - stopPropagation, so the row's
+  own click isn't fired; open rows in `digDetOpen`, this page only): the
+  details render as a row of their own under it (`tr.dig-det`, a
+  label / value table in `.dig-det-box` - sticky left, `100cqw` of the
+  `.dig-table-wrap` container, so a table wider than the panel doesn't
+  push them out of view)
 - Options (`dig::Options`): verbose, invert (host side: conj before the
   mixer), map ("Plot on map", default OFF - the user ticks it in the
   decoder tab; persisted as `&m=1`; `DIGITAL_OPT:id:map:0|1` also asks for
@@ -519,14 +532,41 @@ Edit `include/config.hpp`:
   p25_nac map to dmr.slot / p25.nac). Persisted as the snapshot field
   `v=1&i=0&dmr.slot=1` (values percent-encoded; the old `v/slot/nac/inv` form
   still loads). The panel shows a plugin's options while it is selected, or
-  in AUTO once AUTO detected it
+  in AUTO once AUTO detected it. An option whose two choices are exactly
+  "0" / "1" is an on / off button (`digVfoRowHtml`, `.dig-opt-tog`: "● Label:
+  On" highlighted / "○ Label: Off", the choice's text without a trailing
+  "(...)", the help + "click to turn on / off" as its tooltip; it sends
+  DIGITAL_OPT with the other value and shows the echoed state) - dtv's Path
+  separation, adsb's 1-bit repair, dme's DoA per beacon, cells' Cell
+  information; other choice lists stay `<select>`s. The settings rows
+  (`#info-dec-top`) are rebuilt only while no input / list in them has the
+  focus or a mode list is open (`ddOpenSel`); a focused BUTTON doesn't hold
+  the rebuild back (a clicked button keeps the focus - the on / off button
+  showed its new state only after a click elsewhere) and gets the focus
+  back afterwards (the same button by position). Test: scratchpad
+  e2e/t_dtv_toggle.py clicks with real mouse events (`.click()` doesn't
+  focus, so the first test missed it)
 - UI (kraken_doa.html, "Digital decoders" block): any number of VFOs decode
   at once. Each VFO card (Decimators box, `updateDecimatorList`) has a
   "Digital decoder" tick (`digToggle`: DIGITAL_MODE AUTO or the mode picked
   while off, remembered per VFO in localStorage) and a mode list
   (`digSetModeFor`: picking a decoder also switches it on) plus a state line
   (`digRenderCards`, also run at the end of updateDecimatorList, which
-  rebuilds the cards). The bottom panel has one tab per decoder MODE
+  rebuilds the cards). The mode lists (VFO card + the tab's Mode) are
+  two-line dropdowns: a native `<select>` draws options on one line, and
+  the then "SFN Separation (DVB-T/T2, ISDB-T, ATSC 1.0/3.0, DTMB, DAB)" ran past the
+  card. The `<select>` stays as the hidden model (value, options from
+  `digModeOptions`, its onchange) and `ddEnhance(sel)` puts a button
+  (`.dd-btn`) after it + a pop-up list (`.dd-pop`, in body, zoomed like the
+  sidebar when the button is in it); an option "Name (details)"
+  (`ddSplit`) shows the name with the details on a smaller second line, in
+  the button and the list. Code that sets `sel.value` calls `ddSync(sel)`
+  (`digFillSelect` and the tab rebuild do); `digFillSelect` leaves the value
+  alone while that list is open (`ddOpenSel`). Keyboard: arrows / Home /
+  End / Enter / Escape / Tab; a press elsewhere, a scroll or a resize closes
+  it. Tab labels and state lines use `digShort(name)` (without the
+  "(details)"; the tab's tooltip has the whole name). Test (scratchpad
+  e2e/t_dd_ui.py, headless Chromium, the real plugin list). The bottom panel has one tab per decoder MODE
   (plugin), not per VFO: `infoTab` = `dig:<plugin>` | `ai`
   (`infoPanelOpen('dec:<vfo>')` still works: the tab that VFO is in,
   `digTabOfVfo`). A VFO is in tab P while it runs P fixed or Auto detect
@@ -2450,6 +2490,302 @@ Edit `include/config.hpp`:
   converted for the test), the +10 dB noise at 0 dB after ~1 s (no verdict
   for the first frames after the retune), squelch closed. kraken_doa CPU the
   same (50-55 vs 52 % of a core)
+**Digital TV (`plugins/dtv/`, README.md there; ARRAY plugin API):**
+- Plugin id `dtv`, name "Digital TV (DVB-T/T2, ISDB-T, ATSC 1.0/3.0,
+  DTMB)", v2.0 - was `sfn` "SFN Separation (..., DAB)" (renamed 2026-10-14;
+  DAB removed, to become a plugin of its own). A broadcast TV signal's own
+  information from the 2.4 MHz slice the VFO sees: the standard + mode, the
+  channel (measured centre + the raster's number - `channel_label()` in
+  decoder.cpp: 8 MHz UHF 21-69, 7 MHz Band III / Australia, 6 MHz North
+  America / Korea, ISDB-T Japan / Americas with the 1/7 MHz offset, China
+  DS for DTMB), DVB-T TPS (BCH(67,53)-checked; constellation, hierarchy,
+  code rates, guard, mode, cell ID, DVB-H, net bit rate), ISDB-T TMCC
+  (structure-checked; layers A / B / C, partial reception, next parameters,
+  the EWS start flag -> a "⚠" event), ATSC 1.0's fixed parameters, DTMB's
+  header; the echo profile (CIR paths). `Estimator::info()` / `take_news()`
+  / `centre_hz()` / `bw_mhz()`; OFDM signalling via
+  `OfdmStandard::signal_carriers` / `signalling` / `signalling_symbols`
+  (`signalling.hpp`: DBPSK soft bits; common phase step from DVB-T's
+  continual pilots, else the squared products)
+- **Path separation** (option `separate`, default "0" = off; an on / off
+  button in the decoder tab; plugin v2.1 - it was "SFN separation" until
+  2026-10-15): the signal reaches the antennas on several paths -
+  reflections, and in a single frequency network the other transmitters -
+  one VFO DoA mixes them. On: every ANTENNA's channel impulse response
+  against the signal's known reference, the paths as peaks of the per-tap
+  spatial covariance (by delay), tracked, each one's covariance reported;
+  kraken_doa runs MUSIC with one source on it -> a talker "Path-n" per path
+  (`SfnCore::tid`), its own DoA lobe. Renamed because a transmitter and a
+  reflection are indistinguishable (identical copies of the signal; DVB-T's
+  cell ID is the same on every SFN transmitter) - on the real Auckland
+  muxes every "SFN-2.." was a reflection. Delays from the MAIN path
+  (`SfnCore::strongest()`: the strongest confirmed track, kept unless
+  another is 1 dB stronger), signed (a weaker earlier path is negative);
+  the circular order still comes from `earliest()` (after the largest gap),
+  whose delay is the table's "From first" column; `sp.ref` = the main path
+  (UI tag "main"). Events "New path Path-n: ..." / "Path Path-n gone"; fact
+  "Paths" (count, spread, first-before-main). Off (`SfnCore::
+  set_profile_only`, the core's default): only antenna 0 is analysed (the
+  plugin drops the rest of each block; kraken_doa still sends them), the
+  CIR's paths become the "Echo profile" plot (markers without talkers) +
+  "Paths" fact, a path marked when seen again within 1.5 taps in one of
+  the two bursts before; `Estimator::profile_floor_db` (ATSC 3.0 22 dB)
+  hides artefacts one antenna can't tell by direction. Toggling resets the
+  core: its table rows go, `SfnCore::reset()` calls `spatial_remove("")`
+  (the paths leave the 📡 DF panel within ~1 s instead of SPATIAL_TTL_MS 2
+  min) and turning separation off also sends empty table columns (no empty
+  path table left in the tab); a lost track is removed the same way
+  (`spatial_remove("Path-n")`). Option keys `separate` / `max_tx` ("Max
+  paths") kept, so saved VFOs keep their setting. Per standard: `ofdm.cpp` (generic pilot engine:
+  guard fold / P1 grid / symbol tracking, pilot comb phase - each bin's
+  power against its burst average first, else a 2k signal with paths 37 us
+  apart never locked -, carrier offset by the sparsest CIR, per-symbol phase
+  step measured + removed, runs aligned) + `dvbt.cpp`, `dvbt2.cpp`,
+  `isdbt.cpp`, `atsc3.cpp`; `atsc.cpp` (field sync), `dtmb.cpp` (PN
+  headers, phase schedule fit); `sfn_core.cpp` (per-tap covariance, floor,
+  peaks, echo / sidelobe rules, tracks, spatial reports, plot, table);
+  `std/*_tables.hpp` (the standards' tables). Bursts shorter than half a
+  burst (the host's blocks overshooting one) are ignored
+- Compatibility: `dig::parse_mode_string` maps `PLUGIN:sfn` to `dtv` and
+  `options_from_string` the saved `sfn.*` options to `dtv.*`
+  (`renamed_plugin()` in dig_report.cpp); the plugin treats an unknown
+  `standard` (a saved "dab") as auto
+- ARRAY plugin API (kraken_plugin.hpp): `kp::Info::array` (+
+  `array_burst_s`, `array_period_s`; dtv 0.35 s every 1 s),
+  `Decoder::process_array(const kp::ArrayBlock&)` (m antennas, n samples
+  each, the VFO's own rate - no resampling / AFC -, t0 = Host::time(),
+  gap), `Host::spatial(kp::Spatial)` (id, label, span, m x m cov, delay,
+  power, snr, ref, avg_s), `Host::spatial_remove(id)` ("" = all of the
+  plugin's: `SpatialReport::remove` -> `TalkerDoa::add_spatial` erases them
+  and their pending mobile DF records), `Host::plot(kp::Plot)` (title,
+  units, x0 / dx, y <= 1000, threshold, markers {x, label, talker}). Wire
+  SAMPLES_ARRAY 9 (int16 IQ per antenna, gap flag), SPATIAL 35, PLOT 36,
+  SPATIAL_REMOVE 39 (unknown types are ignored, so older hosts are safe).
+  An empty TABLE_COLUMNS payload = no columns (it used to become one blank
+  column): with no rows either, the page shows no table. `dig_plugin`
+  reads array / burst / period from `--info`; array => manual_only. The
+  offline host runs array plugins on multichannel cf32 (`--channels`,
+  `--all`, `--uca R` prints each spatial talker's MUSIC bearing)
+- Host: `DigitalDecoder::wants_array()` / `push_array()` - the data
+  receiver passes every VFO block of all antennas while not calibrating /
+  in the retune hold; only blocks inside the plugin's bursts (stream time)
+  are copied and sent (int16). Engine `on_spatial` -> `SpatialReport`
+  (span in VFO positions) -> `set_spatial_handler` (DecimatorManager) ->
+  `TalkerDoa::add_spatial`: a spatial talker (`TalkerInfo::spatial`,
+  sp_delay_us / sp_db / sp_snr / sp_ref), its covariances averaged over
+  avg_s (`SPATIAL_AVG_S` 3 s of stream time), MUSIC with ONE source
+  (`spectrumFromCovariance(R, 1)`), each report a mobile DF record;
+  forgotten after `SPATIAL_TTL_MS` 2 min. `on_plot` -> `Report::plot_set`
+  -> the status JSON's `plots` {plugin: {t, xu, yu, x0, dx, ymin, ymax,
+  thr, y, mk: [[x, label, talker]], age}} (with the tables: at most once a
+  second per VFO). rdf_mapper: talker field `sp: [delay_us, power_db,
+  snr_db, first]`; spatial talker IDs are volatile (per plugin run): their
+  heat maps are not saved to rdf_session.bin
+- UI (kraken_doa.html "Plugin plots + TV signal paths" block): the
+  decoder tab draws each VFO's plugin plot (`digRenderPlots` ->
+  `#info-dec-plots`, `plotDraw`; a plot whose markers name no talker - dtv's
+  echo profile - gets a tooltip saying so instead of "click a peak", and
+  the DF panel section only shows plots with talker markers); a marker naming a talker and a table row
+  whose key is a talker of that VFO (`digRowTalker`, class `talker`) call
+  `talkerPick(vfo, tid)`: the 🗺 Map opens with the 📡 DF panel on that
+  VFO and the talker selected (again = the whole signal). The DF panel's
+  `#map-df-sfn` section draws the selected VFO's plot with talker markers
+  (`sfnRenderSection`). Talkers with `sp` are kind 'path' (📶, by
+  delay from the main path, "main" = the strongest; "Every path (n)")
+- It replaced an in-process blind SFN separation per VFO (sfn_doa.cpp,
+  `DEC_SFN:` / `SFN_MAX_US:`; commit 7f3535a): the per-tap CIR against a
+  known reference needs the standard's structure, which belongs in a
+  plugin
+- `PluginProcess::flush()` keeps a write offset (`wpos_`) instead of
+  erasing every write from the front of `wbuf_` (quadratic in what is
+  queued: an array burst queues ~17 MB and the pipe takes 64 KB - 1 MB at
+  a time - it cost up to 60 % of a core) and asks for a 1 MB pipe. While
+  only array plugins run (`array_only_`), `push()` passes a one-sample tick
+  every 100 ms instead of the VFO's stream (it starts the plugin, reads
+  its replies, follows the RF)
+- CPU (Pi 5, DVB-T live, separation on): plugin ~25 % of a core,
+  kraken_doa +6-16 %; the estimation per burst ~3x what it is with
+  separation off (real 522 MHz capture: ~100 vs ~35 ms, busy Pi)
+- Real captures (/home/krakenrf/dvbt_compress_study/captures, 6 Auckland
+  DVB-T muxes, 5 coherent channels): DVB-T 8k GI 1/16 locked on all, TPS
+  BCH-checked in every frame (64-QAM 3/4, 26.35 Mbit/s, cell IDs 32100,
+  10100, 20100, 31100, 30100, 33100 - round decimals, so the high byte in
+  frames 1 / 3 is right), one transmitter each (48-55 dB above the floor) +
+  local reflections 13-35 dB down - hence the `max_rel_db` option (30 dB).
+  No real SFN, no real ISDB-T tried yet
+- Tests: offline regression of 12 synthetic recordings (`tools/sfn_gen.cpp`
+  - every standard, awkward VFO offsets, DTMB phase-varying, ATSC 3.0
+  excess samples; README's table; scratchpad regress2.sh) - separation on:
+  delays / powers exact, bearings within 1.3 deg; off: exactly the 3 paths
+  each. The generator sends real TPS (BCH parity, `--cell`) and TMCC
+  (`--ews`): DVB-T 2k / ISDB-T modes 1 and 3 decoded, the EWS event. Live
+  (scratchpad e2e/: fake_heimdall_rec.py streams a recording in heimdall's
+  8091 format; t_sfn_plugin.py drives a TEST build on ports 4708x / 4709x;
+  t_sfn_plugin_ui.py = headless Chromium): DVB-T exact, the UI's plot /
+  table / DF panel picks; t_dtv_ui.py: `PLUGIN:sfn` -> dtv, the Path
+  separation button (Off by default, On / Off by the echo), the echo
+  profile's tooltip, cells' "Cell information" button
+
+**LTE / 5G NR Cell Decoder (`plugins/cells/`, README.md there; ARRAY plugin API):**
+- Plugin id `cells` (kept from "Cell Separation"; name "LTE / 5G NR Cell
+  Decoder", v2.0): the public broadcast information of every cell on a
+  carrier (LTE MIB, SIB1, SIB2 - SIB5; NR: PCI / beams / SSB frequency) +
+  each cell's own bearing. Only broadcast system information - nothing
+  addressed to a phone (no C-RNTI / P-RNTI / paging) is looked for
+- LTE / 5G NR cells share a carrier (frequency reuse 1): one VFO DoA mixes
+  them. Every cell scrambles its sync / reference signals with its PCI, so
+  correlating with one cell's sequences gives its channel alone - separation
+  by CODE, also for cells at the same delay (co-sited sectors, synchronised
+  networks), where dtv's path separation separates by delay. Talkers "LTE-<pci>" / "NR-<pci>"
+  (spatial, no delay; label + "eNB n / c" once SIB1 is read)
+- Broadcast information (LTE; option `decode`, default on): `lte_dl.cpp`
+  (`CellRx`: a subframe's 14 symbols on every antenna at the cell's frame
+  timing, channel per port 0-3 from the CRS - LS, subframe-averaged with the
+  cell's CFO turned back, interpolated across subcarriers, `set_ports`
+  limits it to the MIB's count; `txd_llr`: SFBC / SFBC + FSTD over all
+  antennas, unseen REs = 0; PBCH -> MIB (4 SFN-mod-4 hypotheses x 1 / 2 / 4
+  ports, CRC16 mask = ports); PCFICH -> CFI; `control_layout` (PCFICH +
+  PHICH REGs, PDCCH REGs by subcarrier then symbol, quadruplet interleaver +
+  PCI shift); `pdcch_llr` (common search space only, CCE 0-15);
+  `dci_search` (AL 4 / 8, formats 1A / 1C, SI-RNTI, re-encoded agreement
+  >= 0.8)), `lte_pdsch.cpp` (`parse_dci` -> `Grant`: RIV, distributed VRB ->
+  PRB per slot (36.211 6.2.3.2), TBS from `lte_tables.hpp`; `pdsch_res` (no
+  CRS / PBCH / sync / control); `pdsch_llr`; `TbAcc` = soft combining in the
+  turbo circular buffer + coverage), `turbo.cpp` (QPP, encoder, rate
+  matching, max-log-MAP with 0.7 extrinsic scaling and CRC early stop),
+  `fec.cpp` (CRC16 / 24A / 24B, tail-biting K=7 encoder + 3-pass Viterbi,
+  convolutional rate matching), `lte_rrc.cpp` (UPER reader; SIB1 incl. v890
+  / v8h0 / v9e0 / v920; SystemInformation with SIB2 - SIB5 field by field,
+  extension additions skipped as open types, any other root SIB ends the
+  message - `complete = false`), `lte_meta.cpp` (`meta_burst`: the MIB every
+  burst = the frames' SFN - two agreeing frames the first time; SIB1 =
+  subframe 5 of even frames, RV ((SFN/2) mod 4) for 1C; each SI message in
+  its window from SIB1's schedule, RV from the window index, round robin
+  over the messages; per cell `META_CELL_S` 0.1 s, per burst `META_BURST_S`
+  0.2 s, the cell served longest ago first; read again after 600 s; a
+  changed SIB1 value tag clears the SI messages), `lte_info.hpp` (36.101
+  band table EARFCN <-> MHz incl. uplink, NR bands, NR-ARFCN, MCC ->
+  country). `lte_tables.hpp` (QPP, TBS, TBS 1C) was generated from srsRAN's
+  copy of the 3GPP tables (QPP pairs checked to be permutations; its
+  TBS[6][0] = 328 corrected to 36.213's 88)
+- Output: table Cell, PCI, Mode, Operator, TAC, eNB / cell, Band, (E)ARFCN,
+  Bandwidth, Ports / beams, Power, Above noise, Timing, Spread + every row's
+  details (`table_detail`: physical, MIB, downlink, SIB1, its DCI, SI fields
+  "SIB2 · ...", "Decoding: waiting for ..."); facts LTE carrier, Network
+  (PLMN), System information; an event per decoded block
+- Partial visibility: a 10 MHz carrier is ~23 % inside the VFO - the DCI
+  decodes from the visible REGs, SIBs are combined until the CRC passes. An
+  SI message sent once per window (RV 0 every time) shows the same bits in
+  every repeat and stays unread when its PRBs are mostly outside (SIB3 /
+  SIB5 on the live band-8 carrier: 36-40 % coverage). `MetaParams::verbose`
+  (the plugin's verbose option) logs every transmission combined (DCI,
+  window index, RV, coverage)
+- Any VFO rate with a whole number of samples per 15 kHz works (a wider
+  SDR): the usable band is `VIS_FRAC` 0.4375 x the rate (+-1.05 MHz at 2.4
+  MHz; `vis_hz_`), the raster reach `search_span()` = it - `SYNC_HALF_HZ`
+  0.45 MHz (>= 0.6 MHz), the scan step `scan_step_` 2 x that. The cell
+  search runs on a decimated copy (`search_at` -> `search_decim`: the
+  largest D with fs / D >= 1.92 (LTE) / 2.4 (NR 15 kHz) / 4.8 MS/s (NR 30
+  kHz) and a usable numerology; `decim_taps` / `decimate` in dsp_util.hpp,
+  centred FIR, 14 D + 1 taps; `SearchParams::band_hz` = 0.4 x the decimated
+  rate limits the sync subcarriers used; hits' sample positions scaled back
+  by D; `SearchOut::rate` = the fold's rate for the plot), everything else at
+  the whole rate. 2.4 MHz: D = 1 - output byte-identical to before. The PSS
+  fold's overlap-save block grows past 1024 when a symbol is > 256 samples.
+  Tested (scratchpad wide/): synthetic LTE at 15.36 MS/s and NR at 9.6 MS/s
+  off the VFO centre (bearings within 0.5 deg), the live capture upsampled
+  to 9.6 MS/s (MIB / SIB1 / SIB2). CPU at wide rates not addressed (mixing
+  per search candidate + channel estimation at the whole rate: 0.6-2.6 s per
+  burst at 9.6 MS/s on a Pi 5)
+- Files: `seq.hpp` (36.211 / 38.211 sequences: LTE PSS ZC, SSS, CRS Gold +
+  RE mapping; NR PSS / SSS), `ofdm.hpp` (numerology at the input rate: 2.4
+  MHz = 160 samples per 15 kHz symbol, no resampling; `SymFft` = FFT window
+  started early inside the CP, the fractional start put back as a phase
+  ramp), `search.cpp` (`cp_offset`, PSS fold, image-aware peak choice, SSS
+  test), `chest.cpp` (per-cell CRS / SSS impulse responses -> per-tap
+  covariance -> the path's covariance), `decoder.cpp` (raster search / lock /
+  frequency tracking per technology, tracks, table, plot, facts), bursts 0.3
+  s every 1 s
+- Carrier: candidates on the LTE 100 kHz raster (|offset| <= 0.6 MHz) / NR
+  GSCN (<= 0.3 MHz) around the VFO centre, `SEARCH_PER_BURST` 4 per burst;
+  fine offset = the cyclic-prefix correlation folded over 0.5 ms, mean
+  removed (CW / DC), modulo the subcarrier spacing; whole-subcarrier
+  ambiguity swept (0, +1, -1 per raster sweep: receivers up to ~22 kHz off);
+  after 3 sweeps without a cell, search every 4th burst. A candidate counts
+  only CONFIRMED cells (a ZC PSS shifted in frequency correlates at another
+  TIME: wrong raster positions show peaks + SSS "hits"). Locked: the
+  frequency is tracked from the cells (`f_abs`; per cell `df_hz` = the SSS's
+  phase against the PSS / dt; a > 300 Hz residual from a z >= 8 cell re-mixes
+  the burst once) - the CP estimate is biased when two systems share the
+  slice (DSS); LOCK_MISSES 5 bursts. Short burst fragments (< half a burst)
+  are ignored
+- PSS fold (2 antennas, FFT 1024 overlap-save, 5 ms LTE / 20 ms NR); peak
+  candidates strongest first, judged against expected images: `X3` (each
+  PSS as received - CP + symbol - against each template, per lag) from the
+  peaks taken and the SSS waveforms of the cells found (prefix sums); peaks
+  of another N_ID2 within 4 samples are exempt (co-timed sectors = images
+  there); max 8 per N_ID2
+- SSS: PSS channel by least squares of all three PSS over 9 subcarriers
+  (filters precomputed per N_ID2), w = SSS x conj(H), summed over antennas
+  and <= 32 occurrences (LTE per frame half; locked: only the carrier's
+  duplex), scored by |sum W d| over every N_ID1 (LTE x sf0/sf5 x FDD/TDD),
+  robust z (median / MAD of all hypotheses) >= 6; cancellation = the
+  detected SSS x its smoothed (+-5 subcarriers) W d, at the same peak and
+  for every co-timed (<= 24 samples) found cell before a peak is tested
+- Confirmation: `estimate(quick)` (40 slots, port 0) must find a path >=
+  `min_snr`; full estimate: LTE CRS ports 0 / 1, symbols 0 + 4 (3-comb, 22.2
+  us window from -5.4 us; the cell's CFO slot to slot removed between the
+  symbols), 160 slots, energy gate drops TDD uplink slots; port 1 counts
+  within 10 dB of port 0 at the same delay; NR SSS of every block (67 us).
+  `analyse()`: per-tap covariance, floor = low-trace taps, D = tr(F^-1 C)/m,
+  path = strongest or first within 15 dB (`path` option), main lobe minus F
+  -> unit-trace covariance, power, snr, spread
+- Carrier scan (`scan` option: 0 / 5 / 10 / 20 MHz, default 10; `Scan` in
+  decoder.cpp, survives reset()): a whole k=0 raster sweep where the
+  receiver is tuned finds no cell -> `kp::Host::tune` to f0 +1.2, -1.2,
+  +2.4 ... MHz (SCAN_STEP_HZ: the raster reaches +-0.6 MHz, LTE and NR), a
+  scan position's whole raster in ONE burst; found -> centred once (a carrier
+  > 5 kHz off the tuning, also without scanning; LTE before NR); nothing
+  within the range -> back to f0, stays (`done`). Bursts from before an asked
+  retune are skipped; an RF change it didn't ask for (> 2 kHz) = the user's:
+  starts over from there; a retune not seen after 15 s is given up, two =
+  scan stopped. Host side: `Info::tunes` + wire TUNE 37 (rf_hz text) ->
+  Engine (only plugins declaring it, >= 2 s apart; a refusal = an event in
+  the decoder's log) -> `DigitalDecoder::set_tune_handler` (DecimatorManager:
+  holds only the VFO id) -> `ControlHandler::request_plugin_tune` (checks
+  wideband scan mode / the tuner range on the decoder thread, then
+  `loop->defer`: VFO looked up there, FREQ:<rf - offset> or
+  TUNER_FREQ:<tuner>:.. in independent mode through
+  `handle_websocket_message` - saved, sent to heimdall, synced to pages)
+- UI (kraken_doa.html): talkers with `sp` and `pl === 'cells'` are kind
+  'cell' (📱; list head Cell / Technology · PCI · power, strongest first, no
+  "1st" tag, selected line "x dB below the strongest cell"); the DF panel
+  section says "N cells" with a sync-correlation tooltip
+- Tests: 10 synthetic cases (`tools/cell_gen.cpp`; README table) - every
+  cell above the limits found, bearings within 1 deg, no false cells on
+  noise; live (scratchpad e2e/: fake_heimdall_rec.py + t_cells_plugin.py +
+  t_cells_ui.py on the TEST build): 3 LTE + 1 NR cell within 0.1 deg, UI
+  picks; scan (fake_heimdall_multi.py: retunable, set_frequency on the
+  control port switches between recordings of one 5 MHz LTE carrier at
+  806.0 MHz seen from 808.0 / 809.2 / 806.8 / 810.4 / 805.6 / 806.0; +
+  t_cells_scan.py): from 808.0 it stepped 809.2, 806.8, 810.4, 805.6 (~7 s a
+  step), found the carrier +400 kHz off, centred 806.000, cells at 40.0 /
+  199.9 / 299.9 deg. CPU (Pi 5): ~15-20 % of a core per locked technology.
+  Live (2026-10-14, the user's stack on 954.8 MHz, LTE band 8): three FDD
+  cells (PCI 191 / 190 / 253, 2 ports each; 190 / 191 co-sited - timing
+  +0.04 us) found and tracked, receiver +1.9-2.1 ppm; bearing confidences low
+  (0.16-0.34) and the co-sited pair 48 deg apart - multipath, not yet checked
+  against the real towers. Broadcast information on 6 s / 20 s captures of
+  that carrier (10 MHz, 2 ports, the SI-RNTI DCI in format 1C, AL 4 at CCE
+  12, from ~23 % of the control region): the MIB in every frame, SIB1 of PCI
+  191 / 253 after 2-8 transmissions (530-01 New Zealand, TAC 41776, eNB
+  5330 / 12 and 42599 / 11, band 8), SIB2 after 3-14 (uplink EARFCN 21748 =
+  band 8's duplex spacing); SIB3 / SIB5 not (above). Streamed through the
+  test build the events arrive the same; UI (scratchpad e2e/t_meta_ui.py:
+  the page with a recorded status injected): ▸ toggles, details open, stay
+  open across pushes, close; facts. The SDK's offline host now streams
+  multichannel files block by block (a 20 s 5-antenna cf32 is 1.9 GB: read
+  whole it was OOM-killed; 74 MB now)
 
 **Digital squelch (squelch method "Digital", with the VFO's decoder on):**
 - The squelch methods are FFT (0) and DIGITAL (3) - the eigenvalue methods
@@ -2528,7 +2864,7 @@ Edit `include/config.hpp`:
   grabbed, resized or squelch-dragged; `centerActiveBarAt` and the pane
   click don't move it when selected; `digRenderCards` disables its Freq / BW
   / Tuner fields. Picking another decoder unlocks it (bandwidth stays)
-- `kp::Info::lock_vfo` (ism; `--info` "lock_vfo", `PluginInfo::lock_vfo`,
+- `kp::Info::lock_vfo` (ism, cells, dtv; `--info` "lock_vfo", `PluginInfo::lock_vfo`,
   the plugin list's `lock_vfo`): the same lock with no frequency - the
   bandwidth + `SET_DECIMATOR_FREQ:id:0`, the tuner left alone
   (`digFixedPlugin` returns such plugins too, `digApplyFixedTune` skips the
@@ -2538,7 +2874,11 @@ Edit `include/config.hpp`:
   0) where a fixed-frequency one refuses
 - Test: scratchpad t_adsb_lock (coherent + independent); e2e/t_ui_wide.py
   (lock_vfo: fields + reason, the commands a pick sends - no FREQ, ADS-B as
-  the control sends FREQ:1090.000 -, the marker paths, DF devices)
+  the control sends FREQ:1090.000 -, the marker paths, DF devices);
+  t_cells_lock.py (cells: offset 0 / 2.4 MHz without a FREQ, no grab box,
+  marker tune, another decoder unlocks). The cells / dtv branch called the
+  same lock `kp::Info::whole_band` before the merge (2026-10-15): one name
+  now; `--info` "whole_band" still reads as lock_vfo
 
 **Radiosonde (`plugins/radiosonde/`, weather balloons; README.md there):**
 - One plugin, eight families side by side (`sonde::Type` each, sonde.hpp):
@@ -2971,7 +3311,9 @@ Edit `include/config.hpp`:
   valid / audio (8 kHz) + audio_channel (whose talker channel - Voice to
   Text) / voice_state / freq_error / verbose / voice_wanted /
   time / log, map_point / table_* / message / raw (data log) / talker +
-  talker_end (DoA per radio, see *DoA per talker*) / station / rf_hz +
+  talker_end (DoA per radio, see *DoA per talker*) / station / tune
+  (retune request, `Info::tunes` plugins only - see *LTE / 5G NR Cell
+  Decoder*) / table_detail (a table row's label / value lines) / rf_hz +
   rf_inverted (the RF at the input's 0 Hz: wire RF 7 "rf_hz,inv" = the
   engine's `rf_hz_` + `afc_hz_` (mirrored with invert), sent by
   `send_settings` when it moves > 10 Hz and after a (re)start; offline

@@ -27,6 +27,14 @@
 //                    REC.json "rf_hz" of ai/sigtool.py captures)
 //   --raw            raw frames on (Host::raw_wanted) and printed
 //   --quiet          only the summary
+// Array plugins (Info::array) read a MULTICHANNEL recording: every sample
+// holds the antennas one after the other (cf32 / cs16 / cu8 pairs):
+//   --channels M     antennas (default: REC.json "channels")
+//   --all            every sample (default: bursts of Info::array_burst_s
+//                    every array_period_s, like live)
+//   --uca R          the antennas form kraken_doa's UCA of radius R metres
+//                    (clockwise, ANT0 on +x): the summary gives each spatial
+//                    report's bearing (MUSIC, one source; needs --rf)
 
 #include "kraken_plugin.hpp"
 #include "kraken_dsp.hpp"
@@ -76,7 +84,9 @@ int print_info() {
               << std::setprecision(0) << i.fixed_freq_hz << std::defaultfloat << std::setprecision(6)
               << ",\"voice\":" << (i.voice ? "true" : "false") << ",\"messages\":" << (i.messages ? "true" : "false")
               << ",\"talkers\":" << (i.talkers ? "true" : "false") << ",\"lock_vfo\":" << (i.lock_vfo ? "true" : "false")
-              << ",\"multichannel\":" << (i.multichannel ? "true" : "false");
+              << ",\"multichannel\":" << (i.multichannel ? "true" : "false") << ",\"array\":" << (i.array ? "true" : "false")
+              << ",\"array_burst_s\":" << i.array_burst_s << ",\"array_period_s\":" << i.array_period_s
+              << ",\"tunes\":" << (i.tunes ? "true" : "false");
     // options twice: as JSON for people, and tab-separated for kraken_doa's
     // flat reader (key, label, default, choices, help per line)
     std::string tsv;
@@ -93,6 +103,51 @@ int print_info() {
     }
     std::cout << "],\"options_tsv\":\"" << jesc(tsv) << "\"}" << std::endl;
     return 0;
+}
+
+// decimal text for the wire, "" = NAN
+std::string wnum(double v, int prec = 6) {
+    if (!std::isfinite(v)) return "";
+    char b[48];
+    snprintf(b, sizeof b, "%.*g", prec, v);
+    return b;
+}
+
+// SPATIAL / PLOT payloads (kraken_plugin.hpp kp::wire)
+std::string spatial_payload(const kp::Spatial& s, double start, double end) {
+    std::string p = s.id.substr(0, 32);
+    for (const std::string& f : {s.label.substr(0, 64), wnum(start, 12), wnum(end, 12), wnum(s.delay_us), wnum(s.power_db),
+                                 wnum(s.snr_db), std::string(s.ref ? "1" : "0"), wnum(s.avg_s), std::to_string(s.m)}) {
+        p.push_back('\0');
+        p += f;
+    }
+    p.push_back('\0');
+    for (size_t i = 0; i < s.cov.size(); i++) {
+        if (i) p.push_back(',');
+        p += wnum(s.cov[i].real(), 7) + "," + wnum(s.cov[i].imag(), 7);
+    }
+    return p;
+}
+std::string plot_payload(const kp::Plot& pl) {
+    std::string p = pl.title.substr(0, 80);
+    for (const std::string& f : {pl.x_unit.substr(0, 16), pl.y_unit.substr(0, 16), wnum(pl.x0, 9), wnum(pl.dx, 9),
+                                 wnum(pl.y_min), wnum(pl.y_max), wnum(pl.threshold)}) {
+        p.push_back('\0');
+        p += f;
+    }
+    p.push_back('\0');
+    for (size_t i = 0; i < pl.y.size() && i < 1000; i++) {
+        if (i) p.push_back(',');
+        p += wnum(pl.y[i], 4);
+    }
+    for (size_t i = 0; i < pl.markers.size() && i < 64; i++) {
+        const kp::PlotMarker& m = pl.markers[i];
+        for (const std::string& f : {wnum(m.x, 9), m.label.substr(0, 16), m.talker.substr(0, 32)}) {
+            p.push_back('\0');
+            p += f;
+        }
+    }
+    return p;
 }
 
 // --------------------------------------------------------------------------
@@ -143,8 +198,27 @@ public:
     void freq_error(float hz) override { send(kp::wire::FREQ_ERROR, &hz, 4); }
     bool verbose() const override { return verbose_; }
     bool voice_wanted() const override { return voice_wanted_; }
-    double time() const override { return samples_ / rate_; }
+    double time() const override { return array_t_ >= 0 ? array_t_ : samples_ / rate_; }
     void log(const std::string& t) override { std::cerr << t << std::endl; }
+    void spatial(const kp::Spatial& sp) override {
+        if (sp.id.empty() || sp.m < 1 || sp.m > 8 || sp.cov.size() != static_cast<size_t>(sp.m * sp.m)) return;
+        const std::string p = spatial_payload(sp, std::isfinite(sp.start_s) ? sp.start_s : time(),
+                                              std::isfinite(sp.end_s) ? sp.end_s : time());
+        send(kp::wire::SPATIAL, p.data(), p.size());
+    }
+    void spatial_remove(const std::string& id) override { send(kp::wire::SPATIAL_REMOVE, id.data(), std::min<size_t>(id.size(), 32)); }
+    void plot(const kp::Plot& pl) override {
+        const std::string p = plot_payload(pl);
+        send(kp::wire::PLOT, p.data(), p.size());
+    }
+    bool tune(double rf_hz) override {
+        if (!std::isfinite(rf_hz) || rf_hz <= 0) return false;
+        char b[32];
+        snprintf(b, sizeof b, "%.0f", rf_hz);
+        send(kp::wire::TUNE, b, strlen(b));
+        return true;
+    }
+    double array_t_ = -1;   // array plugins: Host::time() = the block being processed
     void map_point(const kp::MapPoint& m) override {
         if (!std::isfinite(m.lat) || !std::isfinite(m.lon) || m.id.empty()) return;
         auto num = [](double v, const char* f) {
@@ -187,6 +261,16 @@ public:
         if (!std::isfinite(seconds)) return;
         const std::string p = std::to_string(static_cast<long long>(std::llround(seconds)));
         send(kp::wire::TABLE_KEEP, p.data(), p.size());
+    }
+    void table_detail(const std::string& key, const std::vector<std::pair<std::string, std::string>>& lines) override {
+        std::string p = key.substr(0, 64);
+        for (size_t i = 0; i < lines.size() && i < 200; i++) {
+            p.push_back('\0');
+            p += lines[i].first.substr(0, 80);
+            p.push_back('\0');
+            p += lines[i].second.substr(0, 400);
+        }
+        send(kp::wire::TABLE_DETAIL, p.data(), p.size());
     }
     bool raw_wanted() const override { return raw_wanted_; }
     void raw(const std::string& data) override {
@@ -333,6 +417,7 @@ int serve() {
     for (const auto& o : info.options) dec->option(o.key, o.def);
     std::vector<char> buf;
     std::vector<std::vector<kp::cf>> mc;   // SAMPLES_MC, per antenna
+    std::vector<kp::cf> arr;   // array plugins: the block, antenna-major
     for (;;) {
         uint32_t hdr[2];
         if (!read_all(0, hdr, 8)) return 0;
@@ -368,6 +453,34 @@ int serve() {
                     }
                     dec->process_multi(ptrs.data(), static_cast<int>(m), n);
                     host.samples_ += n;
+                    break;
+                }
+                case kp::wire::SAMPLES_ARRAY: {
+                    // uint32 m, n, flags; float32 scale; float64 rate, t0; int16 I/Q, sample-major
+                    if (buf.size() < 32) break;
+                    uint32_t m, n, flags;
+                    float scale;
+                    double rate, t0;
+                    memcpy(&m, buf.data(), 4);
+                    memcpy(&n, buf.data() + 4, 4);
+                    memcpy(&flags, buf.data() + 8, 4);
+                    memcpy(&scale, buf.data() + 12, 4);
+                    memcpy(&rate, buf.data() + 16, 8);
+                    memcpy(&t0, buf.data() + 24, 8);
+                    if (m < 1 || m > 8 || buf.size() < 32 + static_cast<size_t>(m) * n * 4) break;
+                    arr.resize(static_cast<size_t>(m) * n);
+                    const int16_t* q = reinterpret_cast<const int16_t*>(buf.data() + 32);
+                    for (uint32_t i = 0; i < n; i++)
+                        for (uint32_t k = 0; k < m; k++, q += 2) arr[k * n + i] = kp::cf(q[0] * scale, q[1] * scale);
+                    kp::ArrayBlock b;
+                    b.m = static_cast<int>(m);
+                    b.n = n;
+                    b.rate = rate;
+                    b.t0 = t0;
+                    b.gap = flags & 1;
+                    for (uint32_t k = 0; k < m; k++) b.ch[k] = arr.data() + static_cast<size_t>(k) * n;
+                    host.array_t_ = t0;
+                    dec->process_array(b);
                     break;
                 }
                 case kp::wire::OPTION: {
@@ -467,9 +580,67 @@ public:
     void freq_error(float hz) override { ferr_ = hz; nferr_++; }
     bool verbose() const override { return verbose_; }
     bool voice_wanted() const override { return want_audio_; }
-    double time() const override { return samples_ / rate_; }
+    double time() const override { return array_t_ >= 0 ? array_t_ : samples_ / rate_; }
+    double array_t_ = -1;
     void log(const std::string& t) override {
         if (!quiet_) fprintf(stderr, "[%9.3f s] log: %s\n", time(), t.c_str());
+    }
+    // spatial reports (array plugins): per id, the trace-normalised covariances summed
+    struct Sp {
+        std::string label;
+        uint64_t n = 0;
+        int m = 0;
+        double delay = NAN, power = NAN, snr = NAN, first = 0, last = 0;
+        bool ref = false;
+        std::vector<std::complex<double>> sum;
+    };
+    std::map<std::string, Sp> spatial_;
+    void spatial(const kp::Spatial& s) override {
+        if (s.id.empty() || s.m < 1 || s.m > 8 || s.cov.size() != static_cast<size_t>(s.m * s.m)) return;
+        Sp& k = spatial_[s.id];
+        if (k.m != s.m) {
+            k.m = s.m;
+            k.sum.assign(s.cov.size(), {});
+        }
+        double tr = 0;
+        for (int i = 0; i < s.m; i++) tr += s.cov[static_cast<size_t>(i * s.m + i)].real();
+        if (!(tr > 0)) return;
+        for (size_t i = 0; i < s.cov.size(); i++) k.sum[i] += std::complex<double>(s.cov[i]) / tr;
+        if (!k.n) k.first = time();
+        k.n++;
+        k.last = time();
+        k.label = s.label;
+        k.delay = s.delay_us;
+        k.power = s.power_db;
+        k.snr = s.snr_db;
+        k.ref = s.ref;
+        if (verbose_ && !quiet_)
+            printf("[%9.3f s] (spatial) %s %s delay %.2f us %.1f dB snr %.1f dB%s\n", time(), s.id.c_str(), s.label.c_str(),
+                   s.delay_us, s.power_db, s.snr_db, s.ref ? " ref" : "");
+    }
+    // a removed one leaves the summary (as kraken_doa forgets it)
+    uint64_t spatial_removed_ = 0;
+    void spatial_remove(const std::string& id) override {
+        size_t n = 0;
+        if (id.empty()) {
+            n = spatial_.size();
+            spatial_.clear();
+        } else {
+            n = spatial_.erase(id);
+        }
+        spatial_removed_ += n;
+        if (n && !quiet_) printf("[%9.3f s] (spatial removed) %s\n", time(), id.empty() ? "all" : id.c_str());
+    }
+    kp::Plot plot_;
+    uint64_t plots_ = 0;
+    void plot(const kp::Plot& p) override {
+        plot_ = p;
+        plots_++;
+    }
+    // a recording can't be retuned: shown, refused
+    bool tune(double rf_hz) override {
+        if (!quiet_) printf("[%9.3f s] (tune) %.6f MHz asked - a recording can't be retuned\n", time(), rf_hz / 1e6);
+        return false;
     }
     void map_point(const kp::MapPoint& m) override {
         if (!std::isfinite(m.lat) || !std::isfinite(m.lon) || m.id.empty()) return;
@@ -479,7 +650,33 @@ public:
     void map_remove(const std::string& id) override { map_.erase(id); }
     void table_columns(const std::vector<std::string>& cols) override { cols_ = cols; }
     void table_row(const std::string& key, const std::vector<std::string>& cells) override { rows_[key] = cells; }
-    void table_remove(const std::string& key) override { rows_.erase(key); }
+    void table_remove(const std::string& key) override {
+        rows_.erase(key);
+        details_.erase(key);
+    }
+    void table_detail(const std::string& key, const std::vector<std::pair<std::string, std::string>>& lines) override { details_[key] = lines; }
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>> details_;
+    // the rows + their details
+    void print_table(size_t max_rows) const {
+        if (rows_.empty()) return;
+        printf("table: %zu rows\n", rows_.size());
+        std::string h = "  ";
+        for (const auto& c : cols_) h += c + " | ";
+        printf("%s\n", h.c_str());
+        size_t n = 0;
+        for (const auto& kv : rows_) {
+            if (++n > max_rows) {
+                printf("  ...\n");
+                break;
+            }
+            std::string r = "  ";
+            for (const auto& c : kv.second) r += c + " | ";
+            printf("%s\n", r.c_str());
+            const auto it = details_.find(kv.first);
+            if (it == details_.end()) continue;
+            for (const auto& [k, v] : it->second) printf("      %-34s %s\n", (k + ":").c_str(), v.c_str());
+        }
+    }
     bool raw_wanted() const override { return raw_; }
     void raw(const std::string& data) override {
         raws_++;
@@ -756,10 +953,182 @@ void write_wav8k(const std::string& path, const std::vector<float>& a) {
     for (float v : a) u16(static_cast<uint16_t>(static_cast<int16_t>(std::clamp(v, -1.0f, 1.0f) * 32767)));
 }
 
+// MUSIC with one source on a covariance, kraken_doa's UCA (clockwise, ANT0
+// on +x, radius r metres, wavelength lambda): the bearing (degrees, CCW from
+// ANT0 as the MUSIC DoA plot shows it) and the peak's sharpness
+double uca_bearing(const std::vector<std::complex<double>>& C, int m, double r, double lambda, double* conf) {
+    // principal eigenvector by power iteration
+    std::vector<std::complex<double>> u(static_cast<size_t>(m), 1.0), v(static_cast<size_t>(m));
+    for (int it = 0; it < 200; it++) {
+        double nn = 0;
+        for (int i = 0; i < m; i++) {
+            v[static_cast<size_t>(i)] = 0;
+            for (int j = 0; j < m; j++) v[static_cast<size_t>(i)] += C[static_cast<size_t>(i * m + j)] * u[static_cast<size_t>(j)];
+            nn += std::norm(v[static_cast<size_t>(i)]);
+        }
+        nn = std::sqrt(nn);
+        if (!(nn > 0)) return NAN;
+        for (int i = 0; i < m; i++) u[static_cast<size_t>(i)] = v[static_cast<size_t>(i)] / nn;
+    }
+    double best = -1, bdeg = 0, sum = 0;
+    int cnt = 0;
+    for (int a = 0; a < 3600; a++) {
+        const double th = a * M_PI / 1800;
+        std::complex<double> dot = 0;
+        for (int k = 0; k < m; k++) {
+            const double ea = -2 * M_PI * k / m;
+            const double ph = 2 * M_PI * r / lambda * (std::cos(ea) * std::cos(th) + std::sin(ea) * std::sin(th));
+            dot += std::conj(std::polar(1.0, ph)) * u[static_cast<size_t>(k)];
+        }
+        const double c = std::norm(dot) / m;    // |a^H u|^2 / |a|^2
+        const double pm = 1 / std::max(1e-9, 1 - c);
+        sum += pm;
+        cnt++;
+        if (pm > best) { best = pm; bdeg = a / 10.0; }
+    }
+    if (conf) *conf = best / (sum / cnt);
+    return bdeg;
+}
+
+// Array plugins: a multichannel recording through process_array()
+int test_array(const std::string& path, std::string fmt, double rate, int channels, double offset, double start,
+               double seconds, bool all, double uca_r, TestHost& host, kp::Decoder& dec, const kp::Info& info,
+               bool quiet) {
+    std::vector<kp::cf> x;
+    std::string err;
+    double frate = rate * std::max(1, channels);   // load_file counts complex values
+    if (rate <= 0) {
+        if (!read_sidecar_rate(path, &rate)) { fprintf(stderr, "error: sample rate unknown: pass --rate\n"); return 1; }
+        frate = rate * std::max(1, channels);
+    }
+    const int m = channels;
+    if (m < 1 || m > 8) { fprintf(stderr, "error: --channels 1..8\n"); return 1; }
+    if (fmt.empty()) {
+        const std::string ext = path.substr(path.rfind('.') == std::string::npos ? path.size() : path.rfind('.') + 1);
+        fmt = ext == "cu8" || ext == "u8" ? "cu8" : ext == "cs16" || ext == "s16" ? "cs16" : ext == "wav" ? "wav" : "cf32";
+    }
+    // cf32 / cs16 / cu8 are read block by block (a multichannel recording can
+    // be larger than the RAM: 20 s of 5 antennas at 2.4 MHz is 1.9 GB); a WAV whole
+    const bool stream = fmt != "wav";
+    const size_t bps = fmt == "cf32" ? 8 : fmt == "cs16" ? 4 : 2;
+    std::ifstream sf;
+    size_t total = 0;
+    if (stream) {
+        sf.open(path, std::ios::binary | std::ios::ate);
+        if (!sf) { fprintf(stderr, "error: cannot open %s\n", path.c_str()); return 1; }
+        total = static_cast<size_t>(sf.tellg()) / bps / static_cast<size_t>(m);
+    } else {
+        if (!load_file(path, fmt, &frate, 0, 0, x, err)) {
+            fprintf(stderr, "error: %s\n", err.c_str());
+            return 1;
+        }
+        total = x.size() / static_cast<size_t>(m);
+    }
+    std::vector<char> raw;
+    // samples p .. p + n of every antenna (sample-major, antenna-minor) -> x[0 ..]
+    auto fetch = [&](size_t p, size_t n) -> const kp::cf* {
+        if (!stream) return x.data() + p * static_cast<size_t>(m);
+        const size_t cnt = n * static_cast<size_t>(m);
+        raw.resize(cnt * bps);
+        sf.seekg(static_cast<std::streamoff>(p * static_cast<size_t>(m) * bps));
+        sf.read(raw.data(), static_cast<std::streamsize>(raw.size()));
+        x.resize(cnt);
+        for (size_t i = 0; i < cnt; i++) {
+            if (fmt == "cf32") {
+                float iq[2];
+                memcpy(iq, raw.data() + i * 8, 8);
+                x[i] = {iq[0], iq[1]};
+            } else if (fmt == "cs16") {
+                int16_t iq[2];
+                memcpy(iq, raw.data() + i * 4, 4);
+                x[i] = {iq[0] / 32768.0f, iq[1] / 32768.0f};
+            } else {
+                auto u = reinterpret_cast<const uint8_t*>(raw.data() + i * 2);
+                x[i] = {(u[0] - 127.5f) / 127.5f, (u[1] - 127.5f) / 127.5f};
+            }
+        }
+        return x.data();
+    };
+    const size_t s0 = std::min(total, static_cast<size_t>(std::max(0.0, start) * rate));
+    const size_t s1 = seconds > 0 ? std::min(total, s0 + static_cast<size_t>(seconds * rate)) : total;
+    if (!quiet)
+        printf("%s %s: %.2f s of %s, %d antennas at %.0f Hz%s%s\n", info.name, info.version, (s1 - s0) / rate, path.c_str(), m,
+               rate, all ? "" : (" (bursts of " + std::to_string(info.array_burst_s).substr(0, 5) + " s every " +
+                                 std::to_string(info.array_period_s).substr(0, 5) + " s)").c_str(),
+               std::isfinite(host.rf_hz_) ? (", RF " + std::to_string(host.rf_hz_ / 1e6).substr(0, 11) + " MHz").c_str() : "");
+    const size_t blk = std::max<size_t>(1, static_cast<size_t>(rate / 100));
+    std::vector<std::vector<kp::cf>> ch(static_cast<size_t>(m), std::vector<kp::cf>(blk));
+    const double burst = all ? 0 : std::max(0.0, info.array_burst_s), period = std::max(burst, info.array_period_s);
+    bool gap = true;
+    auto t0 = std::chrono::steady_clock::now();
+    for (size_t p = s0; p < s1; p += blk) {
+        const size_t n = std::min(blk, s1 - p);
+        const double t = static_cast<double>(p) / rate;
+        if (!all && burst < period && std::fmod(t, period) >= burst) {   // between bursts
+            gap = true;
+            continue;
+        }
+        const kp::cf* xs = fetch(p, n);
+        for (size_t i = 0; i < n; i++) {
+            const kp::cf rot = offset != 0 ? std::polar(1.0f, static_cast<float>(std::remainder(-2 * M_PI * offset * static_cast<double>(p + i) / rate, 2 * M_PI)))
+                                           : kp::cf(1, 0);
+            for (int k = 0; k < m; k++) ch[static_cast<size_t>(k)][i] = xs[i * static_cast<size_t>(m) + static_cast<size_t>(k)] * rot;
+        }
+        kp::ArrayBlock b;
+        b.m = m;
+        b.n = n;
+        b.rate = rate;
+        b.t0 = t;
+        b.gap = gap;
+        gap = false;
+        for (int k = 0; k < m; k++) b.ch[k] = ch[static_cast<size_t>(k)].data();
+        host.array_t_ = t;
+        dec.process_array(b);
+    }
+    host.array_t_ = static_cast<double>(s1) / rate;
+    double cpu = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+
+    printf("\n=== %s summary ===\n", info.name);
+    printf("input: %.2f s, process time %.2f s (%.1f%% of real time)\n", (s1 - s0) / rate, cpu, 100.0 * cpu / std::max(1e-9, (s1 - s0) / rate));
+    printf("events: %llu\n", static_cast<unsigned long long>(host.events_));
+    if (!host.facts_.empty()) {
+        printf("facts:\n");
+        for (auto& f : host.facts_) printf("  %-22s %s\n", f.first.c_str(), f.second.c_str());
+    }
+    const double lambda = std::isfinite(host.rf_hz_) && host.rf_hz_ > 0 ? 3e8 / host.rf_hz_ : NAN;
+    if (host.spatial_removed_) printf("spatial removed: %llu\n", static_cast<unsigned long long>(host.spatial_removed_));
+    if (!host.spatial_.empty()) {
+        printf("spatial: %zu transmitters\n", host.spatial_.size());
+        std::vector<std::pair<std::string, TestHost::Sp>> v(host.spatial_.begin(), host.spatial_.end());
+        std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.second.delay < b.second.delay; });
+        for (const auto& [id, k] : v) {
+            char brg[64] = "";
+            if (uca_r > 0 && std::isfinite(lambda)) {
+                double conf = 0;
+                const double b = uca_bearing(k.sum, k.m, uca_r, lambda, &conf);
+                snprintf(brg, sizeof brg, "  bearing %6.1f deg", b);
+            }
+            printf("  %-8s %-34s %5llu reports  delay %8.3f us  %6.1f dB  snr %5.1f dB%s%s\n", id.c_str(), k.label.c_str(),
+                   static_cast<unsigned long long>(k.n), k.delay, k.power, k.snr, k.ref ? " ref" : "    ", brg);
+        }
+    }
+    if (host.plots_) {
+        const kp::Plot& pl = host.plot_;
+        printf("plot: %llu sent; last \"%s\" %zu points %s .. %s %s, %zu markers:", static_cast<unsigned long long>(host.plots_),
+               pl.title.c_str(), pl.y.size(), wnum(pl.x0).c_str(), wnum(pl.x0 + pl.dx * std::max<double>(0, pl.y.size() - 1.0)).c_str(),
+               pl.x_unit.c_str(), pl.markers.size());
+        for (const auto& mk : pl.markers) printf(" %s@%.2f", mk.label.c_str(), mk.x);
+        printf("\n");
+    }
+    host.print_table(1000);
+    return 0;
+}
+
 int test_file(int argc, char** argv) {
     std::string path, fmt, audio_path;
-    double rate = 0, offset = 0, start = 0, seconds = 0, rf = NAN;
+    double rate = 0, offset = 0, start = 0, seconds = 0, rf = NAN, uca_r = 0;
     int channels = 0, pick = -1;   // a recording of every antenna: how many / decode only this one
+    bool all = false;              // array plugins: every sample, not bursts
     bool quiet = false, verbose = false, invert = false, have_station = false, raw = false;
     double st_lat = 0, st_lon = 0;
     std::vector<std::pair<std::string, std::string>> opts;
@@ -783,6 +1152,8 @@ int test_file(int argc, char** argv) {
         else if (a == "--raw") raw = true;
         else if (a == "--channels") channels = atoi(next().c_str());
         else if (a == "--channel") pick = atoi(next().c_str());
+        else if (a == "--all") all = true;
+        else if (a == "--uca") uca_r = atof(next().c_str());
         else if (a == "--station") {
             std::string v = next();
             if (sscanf(v.c_str(), "%lf,%lf", &st_lat, &st_lon) != 2) { fprintf(stderr, "--station needs LAT,LON\n"); return 2; }
@@ -796,6 +1167,23 @@ int test_file(int argc, char** argv) {
             fprintf(stderr, "unknown option %s\n", a.c_str());
             return 2;
         }
+    }
+    kp::Info info = kp_plugin_info();
+    if (info.array) {   // a multichannel recording through process_array()
+        double ch = channels;
+        if (ch <= 0 && !read_sidecar(path, "channels", &ch)) ch = 1;
+        TestHost host(rate > 0 ? rate : 1, quiet);
+        host.verbose_ = verbose;
+        host.have_station_ = have_station;
+        host.st_lat_ = st_lat;
+        host.st_lon_ = st_lon;
+        if (!std::isfinite(rf) && !read_sidecar(path, "rf_hz", &rf)) rf = NAN;
+        if (std::isfinite(rf) && rf > 0) host.rf_hz_ = rf + offset;
+        auto dec = kp_plugin_create(host);
+        for (const auto& o : info.options) dec->option(o.key, o.def);
+        if (verbose) dec->option("verbose", "1");
+        for (auto& o : opts) dec->option(o.first, o.second);
+        return test_array(path, fmt, rate, static_cast<int>(ch), offset, start, seconds, all, uca_r, host, *dec, info, quiet);
     }
     std::vector<kp::cf> x;
     std::string err;
@@ -832,7 +1220,6 @@ int test_file(int argc, char** argv) {
         fprintf(stderr, "error: %s\n", err.c_str());
         return 1;
     }
-    kp::Info info = kp_plugin_info();
     if (mc_all && (info.sample_rate != rate || offset != 0)) {
         fprintf(stderr, "error: every antenna at once needs the plugin's rate (%.0f Hz) and no --offset\n", info.sample_rate);
         return 1;
@@ -939,19 +1326,7 @@ int test_file(int argc, char** argv) {
                    k.len_us / static_cast<double>(k.n), pos);
         }
     }
-    if (!host.rows_.empty()) {
-        printf("table: %zu rows\n", host.rows_.size());
-        std::string h = "  ";
-        for (const auto& c : host.cols_) h += c + " | ";
-        printf("%s\n", h.c_str());
-        size_t n = 0;
-        for (const auto& kv : host.rows_) {
-            if (++n > 30) { printf("  ...\n"); break; }
-            std::string r = "  ";
-            for (const auto& c : kv.second) r += c + " | ";
-            printf("%s\n", r.c_str());
-        }
-    }
+    host.print_table(30);
     if (host.map_updates_ || !host.map_.empty()) {
         printf("map: %llu updates, %zu points\n", static_cast<unsigned long long>(host.map_updates_), host.map_.size());
         for (const auto& kv : host.map_) {
@@ -983,7 +1358,8 @@ int main(int argc, char** argv) {
             "usage: %s --info | --serve | --file REC [--rate HZ] [--format cf32|cu8|cs16|wav]\n"
             "          [--offset HZ] [--start S] [--seconds S] [--verbose] [--invert]\n"
             "          [--opt key=value] [--audio out.wav] [--station LAT,LON] [--rf HZ] [--raw] [--quiet]\n"
-            "          [--channels M (every antenna, interleaved) [--channel K (only that one)]]\n",
+            "          [--channels M (every antenna, interleaved) [--channel K (only that one)]]\n"
+            "          array plugins: [--channels M] [--all] [--uca RADIUS_M]\n",
             info.name, info.description, argv[0]);
     return 2;
 }

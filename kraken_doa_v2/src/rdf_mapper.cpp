@@ -117,6 +117,10 @@ struct Shared {
         struct H { int64_t t; double peak; float doa, conf; int frames; };
         std::vector<H> hist;
         tdoa::PacketStats pk;              // a VFO's (tid ""): its decoder's packets
+        // a spatial talker (TalkerInfo::spatial - a TV signal's path, an LTE
+        // cell): delay, power vs the strongest, above the floor, reference
+        bool sp = false, sp_ref = false;
+        double sp_us = 0, sp_db = 0, sp_snr = 0;
     };
     std::map<Key, V> v;
     bool full = true;
@@ -137,6 +141,20 @@ Shared& SH() {
 std::atomic<bool> g_enabled{true};
 std::atomic<double> g_range_km{10.0};
 std::atomic<bool> g_stop{false};
+
+// talker IDs of plugins' spatial talkers (TalkerInfo::spatial) seen in this
+// run: their IDs are the plugin's own numbering, not stable across restarts -
+// their heat maps aren't saved
+std::mutex vol_mu;
+std::set<std::string> vol_tids;
+void volatile_tid(const std::string& tid) {
+    std::lock_guard<std::mutex> lk(vol_mu);
+    if (vol_tids.size() < 10000) vol_tids.insert(tid);
+}
+bool is_volatile_tid(const std::string& tid) {
+    std::lock_guard<std::mutex> lk(vol_mu);
+    return vol_tids.count(tid) != 0;
+}
 
 // --- the engine's work queue ------------------------------------------------
 struct Job {
@@ -407,28 +425,17 @@ void sampler() {
                     }
                 }
 
-                // its talkers (talker_doa.hpp): each one's own frames feed its own heat map
-                auto& td = dec->talker_doa;
-                if (!td || !td->active()) continue;
-                std::vector<tdoa::TalkerFrame> tframes;
-                td->update(mp, &tframes);
-                disp[vfo_disp].pk = td->packet_stats();
-                // aircraft packets with their positions -> the array calibration
-                std::vector<tdoa::CalPacket> cps;
-                td->take_cal(&cps);
-                if (cal_on && std::strcmp(cal_state, "ok") == 0) {
-                    // steering angle = heading - array offset - compass bearing
-                    const double off = mp.getArrayOffset(), f_hz = mp.getEffectiveFrequency();
-                    for (const auto& c : cps)
-                        array_cal::add(c.R, c.id, c.lat, c.lon, c.alt_m, sl.lat, sl.lon, st_alt, sl.heading, fixed, off, f_hz);
-                }
-                for (const auto& f : tframes) {
-                    if (static_cast<int>(f.spec.size()) < 8 || !(f.res > 0)) continue;
-                    const Key tk{id, f.id};
-                    Disp scratch;
-                    feed(tk, follow(tk, freq), f.spec, f.res, f.conf, f.stamp_ms, &scratch);
-                }
-                for (auto& ti : td->snapshot()) {
+                // a talker (talker_doa.hpp; also a plugin's spatial talker): its
+                // own frames feed its own heat map, its latest bearing is its lobe
+                auto talker_frames = [&](const std::vector<tdoa::TalkerFrame>& tframes) {
+                    for (const auto& f : tframes) {
+                        if (static_cast<int>(f.spec.size()) < 8 || !(f.res > 0)) continue;
+                        const Key tk{id, f.id};
+                        Disp scratch;
+                        feed(tk, follow(tk, freq), f.spec, f.res, f.conf, f.stamp_ms, &scratch);
+                    }
+                };
+                auto add_talker = [&](tdoa::TalkerInfo&& ti) {
                     const Key tk{id, ti.id};
                     SVfo& ts = follow(tk, freq);
                     Disp td_;
@@ -481,7 +488,25 @@ void sampler() {
                     while (L.hist.size() > tdoa::MAX_HIST + 2) L.hist.erase(L.hist.begin());
                     td_.ti = std::move(ti);
                     disp.push_back(std::move(td_));
+                };
+
+                // its talkers (talker_doa.hpp): each one's own frames feed its own heat map
+                auto& td = dec->talker_doa;
+                if (!td || !td->active()) continue;
+                std::vector<tdoa::TalkerFrame> tframes;
+                td->update(mp, &tframes);
+                disp[vfo_disp].pk = td->packet_stats();
+                // aircraft packets with their positions -> the array calibration
+                std::vector<tdoa::CalPacket> cps;
+                td->take_cal(&cps);
+                if (cal_on && std::strcmp(cal_state, "ok") == 0) {
+                    // steering angle = heading - array offset - compass bearing
+                    const double off = mp.getArrayOffset(), f_hz = mp.getEffectiveFrequency();
+                    for (const auto& c : cps)
+                        array_cal::add(c.R, c.id, c.lat, c.lon, c.alt_m, sl.lat, sl.lon, st_alt, sl.heading, fixed, off, f_hz);
                 }
+                talker_frames(tframes);
+                for (auto& ti : td->snapshot()) add_talker(std::move(ti));
             }
         }
         if (cal_on) array_cal::set_state(cal_state);
@@ -518,6 +543,12 @@ void sampler() {
             v.moved_m = d.moved;
             if (d.k.tid.empty()) v.pk = std::move(d.pk);
             if (d.talker) {
+                v.sp = d.ti.spatial;
+                v.sp_ref = d.ti.sp_ref;
+                v.sp_us = d.ti.sp_delay_us;
+                v.sp_db = d.ti.sp_db;
+                v.sp_snr = d.ti.sp_snr;
+                if (d.ti.spatial) volatile_tid(d.ti.id);
                 v.label = d.ti.label;
                 v.active = d.ti.active;
                 v.packet = d.ti.packet;
@@ -597,7 +628,7 @@ void save_session(const std::map<Key, std::unique_ptr<EVfo>>& ev, const std::map
     o.write("KRDF2\n", 6);
     const int64_t t = now_ms();
     auto block = [&](double freq, int64_t saved, const std::string& tid, const std::vector<rdf::Record>& recs) {
-        if (recs.empty()) return;
+        if (recs.empty() || is_volatile_tid(tid)) return;   // a plugin's spatial talker IDs are per run
         const uint32_t n = static_cast<uint32_t>(recs.size());
         const uint8_t tl = static_cast<uint8_t>(std::min<size_t>(tid.size(), 255));
         o.write(reinterpret_cast<const char*>(&freq), 8);
@@ -925,6 +956,11 @@ std::string status_message() {
           << ",\"tframes\":" << v.tframes << ",\"tx_frames\":" << v.tx_frames << ",\"age\":" << age(v.last_ms)
           << ",\"tx_age\":" << age(v.tx_end_ms) << ",\"doa\":" << (v.doa >= 0 ? num(v.doa, 1) : "null")
           << (v.packet ? ",\"pk\":true" : "") << ",\"pl\":\"" << json_escape(v.plugin) << "\"";
+        // a spatial talker (an SFN transmitter): [delay after the earliest
+        // (us), power vs the strongest (dB), above the floor (dB), reference]
+        if (v.sp)
+            o << ",\"sp\":[" << num(v.sp_us, 2) << "," << num(v.sp_db, 1) << "," << num(v.sp_snr, 1) << ","
+              << (v.sp_ref ? 1 : 0) << "]";
         common(v);
         o << ",\"hist\":[";
         for (size_t i = 0; i < v.hist.size(); i++) {

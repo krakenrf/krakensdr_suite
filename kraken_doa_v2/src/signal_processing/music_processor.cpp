@@ -1875,7 +1875,7 @@ bool MUSICProcessor::publishFromCovariance(const Eigen::MatrixXcd& R) {
 }
 
 bool MUSICProcessor::spectrumFromCovariance(const Eigen::MatrixXcd& R, Eigen::VectorXd* spec, float* peak_deg,
-                                            float* conf) const {
+                                            float* conf, int sources) const {
     lock_guard<mutex> config_lock(config_mutex_);
     const int M = num_elements_;
     if (M < 2 || R.rows() != M || R.cols() != M || num_angles_ <= 0) return false;
@@ -1886,7 +1886,7 @@ bool MUSICProcessor::spectrumFromCovariance(const Eigen::MatrixXcd& R, Eigen::Ve
     SelfAdjointEigenSolver<MatrixXcd> es(R);
     if (es.info() != Success) return false;
     // signal subspace as the live frames choose it (without their hysteresis)
-    const int k = auto_num_sources_ ? estimateNumSources(es.eigenvalues()) : num_signal_sources_;
+    const int k = sources > 0 ? sources : auto_num_sources_ ? estimateNumSources(es.eigenvalues()) : num_signal_sources_;
     const int signal_dimension = max(1, min(k, M - 1));
     const auto E = es.eigenvectors().leftCols(M - signal_dimension);
 

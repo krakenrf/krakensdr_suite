@@ -897,6 +897,24 @@ void DataReceiver::decimation_processor_thread() {
                     if (result.decimated_data.channels.empty() || result.decimated_data.min_samples == 0) continue;
                     auto dd = inst->getDigital();
                     if (!dd) continue;
+                    // array plugins (kp::Info::array): every antenna's block, not
+                    // during a noise-source calibration / retune hold (like MUSIC)
+                    if (dd->wants_array() && !doa_is_calibrating() && !doa_retune_hold_active()) {
+                        const auto& chs = result.decimated_data.channels;
+                        const size_t ns = result.decimated_data.min_samples;
+                        const complex<float>* ptr[8];
+                        int m = 0;
+                        while (m < static_cast<int>(chs.size()) && m < 8 && chs[static_cast<size_t>(m)].samples.size() >= ns) {
+                            ptr[m] = chs[static_cast<size_t>(m)].samples.data();
+                            m++;
+                        }
+                        int at = wideband_enabled ? inst->tuner_channel.load(std::memory_order_relaxed) : 0;
+                        if (at < 0 || at >= MAX_CHANNELS) at = 0;
+                        if (m > 0)
+                            dd->push_array(ptr, m, ns, result.decimated_data.output_rate_hz,
+                                           static_cast<double>(exact_tuner_hz(at)) + result.decimated_data.freq_offset_hz,
+                                           result.decimated_data.stream_pos);
+                    }
                     const vector<complex<float>>* src = nullptr;
                     if (result.beamformer_ran) {
                         if (result.have_beamformed) src = &result.beamformed_samples;

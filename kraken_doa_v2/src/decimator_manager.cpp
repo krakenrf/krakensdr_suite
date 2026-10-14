@@ -4,6 +4,7 @@
 // ============================================
 
 #include "decimator_manager.hpp"
+#include "control_handler.hpp"
 #include "config.hpp"
 #include "channel_manager.hpp"
 #include "signal_processing/fft_processor.hpp"
@@ -372,6 +373,12 @@ void DecimatorManager::ensureDigital(DecimatorInstance& inst) {
     // instance: the handler runs on the decoder's own thread)
     auto td = inst.talker_doa;
     inst.digital->set_talker_handler([td](const dig::TalkerSpan& s) { td->add_span(s); });
+    // array plugins: transmitters' covariances -> spatial talkers
+    inst.digital->set_spatial_handler([td](const dig::SpatialReport& s) { td->add_spatial(s); });
+    // a plugin's retune request (kp::Host::tune): checked here, carried out
+    // on the uWS loop like a browser's command (only the VFO's id is held)
+    const int id = inst.id;
+    inst.digital->set_tune_handler([id](double rf_hz) { return ControlHandler::request_plugin_tune(id, rf_hz); });
 }
 
 bool DecimatorManager::setSquelchEnabled(int id, bool enabled) {

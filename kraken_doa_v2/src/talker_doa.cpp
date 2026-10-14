@@ -50,6 +50,7 @@ void TalkerDoa::reset() {
 
 void TalkerDoa::reset_locked() {
     frames_.clear();
+    sp_frames_.clear();
     spans_.clear();
     talkers_.clear();
     packets_.clear();
@@ -548,6 +549,68 @@ void TalkerDoa::commit_packet_locked(Packet& p, int64_t now) {
     tk.dirty = true;
 }
 
+void TalkerDoa::add_spatial(const dig::SpatialReport& s) {
+    if (s.remove) {
+        // the plugin dropped it (lost / separation off): gone now, not after SPATIAL_TTL_MS
+        std::lock_guard<std::mutex> lk(mu_);
+        for (auto it = talkers_.begin(); it != talkers_.end();)
+            if (it->second.info.spatial && it->second.info.plugin == s.plugin && (s.id.empty() || it->first == s.id))
+                it = talkers_.erase(it);
+            else ++it;
+        // its reports not yet run as mobile DF records too
+        std::erase_if(sp_frames_, [&](const SpFrame& f) { return s.id.empty() || f.id == s.id; });
+        return;
+    }
+    const int m = s.m;
+    if (!active() || s.id.empty() || m < 2 || s.cov.size() != static_cast<size_t>(m * m) || !(s.rate > 0)) return;
+    Eigen::MatrixXcd R(m, m);
+    double tr = 0;
+    for (int i = 0; i < m; i++)
+        for (int j = 0; j < m; j++) R(i, j) = s.cov[static_cast<size_t>(i * m + j)];
+    R = 0.5 * (R + R.adjoint().eval());   // Hermitian (text round trip)
+    for (int i = 0; i < m; i++) tr += R(i, i).real();
+    if (!(tr > 1e-30)) return;
+    R /= tr;
+    const int64_t t = now_ms();
+    std::lock_guard<std::mutex> lk(mu_);
+    Talker& tk = talkers_[s.id];
+    if (tk.info.id.empty()) {
+        tk.info.id = s.id;
+        tk.info.first_ms = t;
+    }
+    tk.info.spatial = true;
+    tk.info.plugin = s.plugin;
+    if (!s.label.empty()) tk.info.label = s.label;
+    tk.info.sp_delay_us = is_finite_value(s.delay_us) ? s.delay_us : 0;
+    tk.info.sp_db = is_finite_value(s.power_db) ? s.power_db : 0;
+    tk.info.sp_snr = is_finite_value(s.snr_db) ? s.snr_db : 0;
+    tk.info.sp_ref = s.ref;
+    tk.info.avg_s = s.avg_s > 0 ? s.avg_s : SPATIAL_AVG_S;
+    // averaged over avg_s of stream time (like packet talkers)
+    const double ts = static_cast<double>(s.start) / s.rate;
+    if (tk.R.rows() != m) {
+        tk.R = Eigen::MatrixXcd::Zero(m, m);
+        tk.w = 0;
+        tk.last_s = ts;
+    } else if (ts > tk.last_s) {
+        const double k = std::exp(-(ts - tk.last_s) / tk.info.avg_s);
+        tk.R *= k;
+        tk.w *= k;
+    }
+    tk.R += R;
+    tk.w += 1;
+    tk.last_s = std::max(tk.last_s, ts);
+    tk.info.tx++;
+    tk.info.frames++;
+    tk.info.tx_frames = static_cast<int>(std::lround(tk.w));
+    if (!tk.info.tx_start_ms) tk.info.tx_start_ms = t;
+    tk.info.last_ms = t;
+    tk.open_ms = t;
+    tk.dirty = true;
+    sp_frames_.push_back({s.id, s.label, std::move(R), t});
+    while (sp_frames_.size() > MAX_SPATIAL_FRAMES) sp_frames_.pop_front();
+}
+
 void TalkerDoa::add_frame(const Eigen::MatrixXcd& R, uint64_t a, uint64_t b, float rate_hz, double freq_hz,
                           float /*eig_ratio*/) {
     if (!active() || b <= a || !(rate_hz > 0)) return;
@@ -615,7 +678,9 @@ void TalkerDoa::prune_locked(int64_t now) {
                                          now - spans_.front().updated_ms > SPAN_KEEP_MS))
         spans_.pop_front();
     for (auto it = talkers_.begin(); it != talkers_.end();)
-        if (now - it->second.info.last_ms > (it->second.info.packet ? packet_ttl_ms(it->second.info) : TALKER_TTL_MS))
+        if (now - it->second.info.last_ms > (it->second.info.packet    ? packet_ttl_ms(it->second.info)
+                                             : it->second.info.spatial ? SPATIAL_TTL_MS
+                                                                       : TALKER_TTL_MS))
             it = talkers_.erase(it);
         else ++it;
     while (talkers_.size() > MAX_TALKERS) {
@@ -633,6 +698,7 @@ void TalkerDoa::update(MUSICProcessor& mp, std::vector<TalkerFrame>* out) {
         bool talker;              // false = one frame (a mobile DF record)
         int64_t stamp_ms;
         Eigen::MatrixXcd R;
+        int sources = 0;          // MUSIC signal sources (0 = the processor's setting; spatial talkers: 1)
     };
     std::vector<Job> jobs;
     const int64_t t = now_ms();
@@ -716,6 +782,9 @@ void TalkerDoa::update(MUSICProcessor& mp, std::vector<TalkerFrame>* out) {
             if ((ids.empty() && young) || (may_extend && young)) keep.push_back(std::move(f));
         }
         frames_.swap(keep);
+        // spatial reports: each one a mobile DF record of its talker
+        for (auto& f : sp_frames_) jobs.push_back({f.id, f.label, 0, false, f.stamp_ms, std::move(f.R), 1});
+        sp_frames_.clear();
         // 2. the bearings to (re)compute
         const bool all = t - recompute_ms_ > RECOMPUTE_MS;
         if (all) recompute_ms_ = t;
@@ -728,7 +797,7 @@ void TalkerDoa::update(MUSICProcessor& mp, std::vector<TalkerFrame>* out) {
                 continue;
             }
             tk.dirty = false;
-            jobs.push_back({id, tk.info.label, tk.seq, true, tk.info.tx_end_ms, tk.R / tk.w});
+            jobs.push_back({id, tk.info.label, tk.seq, true, tk.info.tx_end_ms, tk.R / tk.w, tk.info.spatial ? 1 : 0});
         }
         prune_locked(t);
     }
@@ -766,7 +835,7 @@ void TalkerDoa::update(MUSICProcessor& mp, std::vector<TalkerFrame>* out) {
     struct Res { Eigen::VectorXd spec; float peak = -1, conf = 0; bool ok = false; };
     std::vector<Res> res(jobs.size());
     for (size_t i = 0; i < jobs.size(); i++)
-        res[i].ok = mp.spectrumFromCovariance(jobs[i].R, &res[i].spec, &res[i].peak, &res[i].conf);
+        res[i].ok = mp.spectrumFromCovariance(jobs[i].R, &res[i].spec, &res[i].peak, &res[i].conf, jobs[i].sources);
     const double step = mp.getAngularResolution();
 
     std::lock_guard<std::mutex> lk(mu_);
@@ -782,7 +851,7 @@ void TalkerDoa::update(MUSICProcessor& mp, std::vector<TalkerFrame>* out) {
         auto it = talkers_.find(j.id);
         if (it == talkers_.end() || it->second.seq != j.seq) continue;   // reset / a newer transmission meanwhile
         TalkerInfo& in = it->second.info;
-        if (in.packet && in.doa >= 0 && t - it->second.hist_ms >= PACKET_HIST_MS) {
+        if ((in.packet || in.spatial) && in.doa >= 0 && t - it->second.hist_ms >= PACKET_HIST_MS) {
             // an aircraft's bearing track: the previous bearing every PACKET_HIST_MS
             if (it->second.hist_ms) {
                 in.hist.push_back({in.spec_ms, in.doa, in.conf, in.tx_frames});
@@ -791,6 +860,7 @@ void TalkerDoa::update(MUSICProcessor& mp, std::vector<TalkerFrame>* out) {
             it->second.hist_ms = t;
         }
         in.spec_ms = t;
+        if (in.spatial) in.tx_end_ms = t;   // the lobe follows each recomputation (rdf_mapper)
         in.spec = std::move(spec);
         in.res = step;
         in.doa = res[i].peak;

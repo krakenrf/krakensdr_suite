@@ -56,6 +56,12 @@
 // PACKET_HIST_MS. No mobile DF records (aircraft / ships move and say where
 // they are).
 //
+// Spatial talkers (array plugins, kp::Host::spatial - e.g. the transmitters
+// of a single frequency network): the plugin measured each one's covariance
+// itself from every antenna. add_spatial() averages a talker's reports over
+// their avg_s (default SPATIAL_AVG_S, stream time) and MUSIC runs with ONE
+// source on it; every report is also a mobile DF record of that talker.
+//
 // Threads: add_frame on the decimation pipeline (under the MUSIC processor's
 // lock), add_span on the decoder's worker, update / snapshot on the rdf
 // sampler thread. update() never calls into the MUSIC processor while holding
@@ -113,6 +119,10 @@ constexpr uint64_t WIDE_MAX_PLAIN = 16384;        // samples per piece without a
 // Digital squelch (whole signal, confirmed samples only)
 constexpr int64_t DIG_PUBLISH_MS = 200;           // the VFO's DoA from the samples confirmed since, at most this often
 constexpr uint64_t DIG_MIN_SAMPLES = 16;          // a confirmed piece shorter than this is skipped
+// spatial talkers (array plugins)
+constexpr double SPATIAL_AVG_S = 3.0;
+constexpr int64_t SPATIAL_TTL_MS = 2 * 60 * 1000;
+constexpr size_t MAX_SPATIAL_FRAMES = 200;
 inline bool unnamed_talker(const std::string& id) { return id == "?"; }
 
 // One frame matched to a talker, MUSIC re-run on it alone (a mobile DF record)
@@ -151,6 +161,14 @@ struct TalkerInfo {
     float doa = -1, conf = 0;      // peak in degrees as the MUSIC DoA plot shows it (array offset applied)
     struct Hist { int64_t t_ms; float doa, conf; int frames; };
     std::vector<Hist> hist;        // earlier transmissions, oldest first (t = their last frame)
+    // a SPATIAL talker: its plugin measured its covariance itself
+    // (kp::Spatial - e.g. one transmitter of a single frequency network,
+    // told apart by its delay in the channel impulse response). Its delay
+    // after the earliest of its group, power relative to the strongest, its
+    // peak above the estimation floor, the plugin's reference
+    bool spatial = false;
+    double sp_delay_us = 0, sp_db = 0, sp_snr = 0;
+    bool sp_ref = false;
 };
 
 // What became of the packets a VFO's decoder reported (the DF panel says it):
@@ -180,6 +198,8 @@ public:
     void add_frame(const Eigen::MatrixXcd& R, uint64_t a, uint64_t b, float rate_hz, double freq_hz, float eig_ratio);
     // DigitalDecoder talker handler (also confirmed frames: TalkerSpan::signal)
     void add_span(const dig::TalkerSpan& s);
+    // DigitalDecoder spatial handler (array plugins)
+    void add_spatial(const dig::SpatialReport& s);
     // Digital squelch: on while the VFO's squelch is "Digital" (the pipeline,
     // every block). The stream is kept (as for packets) and every piece the
     // decoder CONFIRMED - valid frames with their samples, talkers'
@@ -219,6 +239,9 @@ private:
         int64_t stamp_ms;
     };
     std::deque<Frame> frames_;
+    // spatial reports not yet run through MUSIC as mobile DF records
+    struct SpFrame { std::string id, label; Eigen::MatrixXcd R; int64_t stamp_ms; };
+    std::deque<SpFrame> sp_frames_;
 
     struct Span {
         std::string plugin, id, label;

@@ -376,7 +376,9 @@ decoders `kraken_doa_v2/plugins/`
   p25, dmr, tetra (downlink), dstar, nxdn (48 and 96), mpt1327 (analogue
   trunking signalling), pocsag, aprs, adsb (1090 MHz; manual only -
   picking it tunes the VFO + tuner to 1090 MHz at 2.4 MHz and draws the VFO
-  as a locked line, `kp::Info::fixed_freq_hz`), ais (ships, both channels
+  as a locked line, `kp::Info::fixed_freq_hz`; `kp::Info::lock_vfo` -
+  ism, cells, dtv - locks a 2.4 MHz VFO at its tuner centre the same way
+  without tuning), ais (ships, both channels
   161.975 / 162.025 MHz in one 100 kHz VFO on 162.000 MHz; manual only,
   fixed frequency like adsb) and radiosonde (weather balloons, 400-406 MHz:
   RS41, DFM, M10 / M20, iMet-4 / -54, LMS6, MRZ side by side in one plugin;
@@ -460,8 +462,10 @@ decoders `kraken_doa_v2/plugins/`
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab), adsb, ais, radiosonde, dme, ils, ism. A plugin folder may
-  also hold `CXXFLAGS` (extra compiler flags)
+  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, dtv and cells (ARRAY
+  plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
+  Decoder* below; both read the signals' own broadcast information). A
+  plugin folder may also hold `CXXFLAGS` (extra compiler flags)
 - Same executable tests offline: `decoder --file x.cf32 [--offset HZ] [--rf HZ]`
 - The shipped protocol plugins are thin wrappers around `plugins/lib/`
   (libkrakendig.a: FEC, 4FSK sync, vocoders, front ends) - kraken_doa itself
@@ -700,6 +704,73 @@ are summed per transmission and run through MUSIC again
 radio gets its bearing, history and its own mobile DF heat map (rdf_mapper
 keys VFO + talker, rdf_session.bin "KRDF2"); the 🗺 Map's 📡 DF panel picks
 Whole signal / Every radio / one radio and lists the talkers
+
+**📶 Digital TV plugin** (details: `kraken_doa_v2/plugins/dtv/README.md`,
+`kraken_doa_v2/CLAUDE.md` *Digital TV*): the plugin `dtv` ("Digital TV
+(DVB-T/T2, ISDB-T, ATSC 1.0/3.0, DTMB)", was `sfn` "SFN Separation" - DAB
+removed, to become a plugin of its own; saved `PLUGIN:sfn` VFOs load as
+dtv; picked on a 2.4 MHz VFO like any decoder) reads what a broadcast TV
+signal says about itself in the slice of the channel the VFO sees: standard
++ mode, channel (measured centre + raster number), DVB-T TPS (BCH-checked:
+constellation, code rate, guard, mode, cell ID, net bit rate), ISDB-T TMCC
+(layers, partial reception, the emergency warning flag -> a ⚠ event) and
+the echo profile of the channel impulse response, measured against the
+signal's known reference - DVB-T / DVB-T2 / ISDB-T / ATSC 3.0 scattered
+pilots (generic engine `plugins/dtv/ofdm.cpp`), the ATSC 1.0 field sync,
+DTMB PN headers. **Path separation** (coherent mode; OFF by default - an on
+/ off button in the decoder tab, option `separate`; any plugin option with
+choices exactly 0 / 1 is such a button; was "SFN separation" - renamed
+because a reflection and another transmitter of a single frequency network
+are indistinguishable copies of the signal, and on the real Auckland muxes
+every extra path was a reflection): on, every antenna's CIR is analysed,
+paths = peaks of the per-tap spatial covariance, tracked; each one's
+covariance goes back as a `kp::Spatial` and kraken_doa runs MUSIC with one
+source on it: a talker "Path-n" with its own DoA lobe / heat map on the 🗺
+Map's 📡 DF panel, picked there, in the decoder tab's delay-profile plot
+(`kp::Plot`) or table; delays from the main (strongest) path, the table's
+"From first" column the delay after the first arrival (off: antenna 0
+only, the echo profile without bearings, ~1/3 of the CPU). ARRAY plugin
+API (`kp::Info::array`, `process_array`, bursts of 0.35 s every second,
+`Host::spatial`, `Host::plot`): `plugins/SDK.md`. Synthetic generator
+`plugins/dtv/tools/sfn_gen.cpp` (real TPS / TMCC); offline `decoder --file
+x.cf32 [--opt separate=1 --uca R]`. Real Auckland DVB-T: TPS + cell IDs
+on all six muxes. The SFN part replaced an earlier in-process blind
+separation (commit 7f3535a)
+
+**📱 LTE / 5G NR Cell Decoder plugin** (details:
+`kraken_doa_v2/plugins/cells/README.md`, `kraken_doa_v2/CLAUDE.md` *LTE / 5G
+NR Cell Decoder*): the plugin `cells` ("LTE / 5G NR Cell Decoder", was "Cell
+Separation"; a 2.4 MHz VFO within ~0.5 MHz of the LTE carrier centre / ~0.2
+MHz of the NR SS/PBCH block) reads the public broadcast information of every
+cell on the carrier - LTE MIB (PBCH), PCFICH, the SI-RNTI DCI (PDCCH common
+search space, formats 1A / 1C), SIB1 and SI messages (PDSCH, turbo, soft
+combining of repeats in the circular buffer), RRC UPER (SIB1, SIB2 - SIB5):
+operator MCC-MNC, TAC, cell identity / eNB, band, EARFCN, bandwidth, uplink,
+neighbours ... - shown as table columns + per-row details
+(`kp::Host::table_detail`, wire TABLE_DETAIL 38: a ▸ in the decoder tab's
+table opens a row's label / value lines). Only broadcast system information,
+nothing addressed to a phone. A carrier wider than the VFO is read in part
+(SIB1 / SIB2 of a 10 MHz carrier in seconds; an SI message sent once per
+window with its PRBs outside the VFO stays unread). And each cell gets its
+own bearing - an LTE / NR carrier carries many cells at once (frequency
+reuse 1); each scrambles its signals with its physical cell ID, so it
+separates them by CODE (dtv's path separation: by delay): carrier on the LTE 100 kHz raster /
+NR GSCN (+ cyclic-prefix fine offset, 0 / +-1 subcarrier sweep, then
+tracked from the cells - the "Frequency offset" fact calibrates the
+receiver), PSS fold -> SSS (joint 3-root PSS channel, magnitude score,
+robust z, successive cancellation incl. co-timed cells of other N_ID2) ->
+CRS (LTE ports 0 / 1) / SSS (NR, every beam) impulse response per antenna
+-> per-tap covariance minus the floor (noise + other cells) -> a
+`kp::Spatial` talker "LTE-<pci>" / "NR-<pci>" (📱 kind 'cell' in the DF
+panel, strongest first). Not near a carrier: it retunes the receiver
+itself (`scan` option, +-10 MHz in 1.2 MHz steps, `kp::Host::tune` -> wire
+TUNE -> `ControlHandler::request_plugin_tune` -> FREQ / TUNER_FREQ on the
+uWS loop; only plugins declaring `kp::Info::tunes`) and centres the carrier.
+Its VFO (and the dtv plugin's) is `kp::Info::lock_vfo`: locked at the
+tuner centre like a fixed-frequency decoder, moved by tuning the receiver.
+Generator `plugins/cells/tools/cell_gen.cpp` (OFDM built at 2.4 MHz
+directly). Live: band-8 cells on 954.8 MHz (10 MHz carrier) - MIB, SIB1
+(530-01, TAC, eNB / cell) and SIB2 decoded from the ~23 % the VFO sees
 
 **🔇 Digital squelch (per VFO, with its digital decoder on)** (details:
 `kraken_doa_v2/CLAUDE.md` *Digital squelch*): squelch methods are FFT Peak

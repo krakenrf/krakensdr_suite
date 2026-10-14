@@ -56,6 +56,13 @@ public:
     // no such decimator. Thread-safe.
     static bool switch_fm_source(int id);
 
+    // A decoder plugin of VFO `vfo` asks to put rf_hz at the VFO's centre
+    // (kp::Host::tune): checked now (mode, tuner range), then FREQ (coherent)
+    // or TUNER_FREQ for the VFO's tuner (independent) is dispatched on the
+    // uWS loop like a browser's command - saved, sent to heimdall, shown in
+    // every page. Returns "" when passed on, else why not. Thread-safe.
+    static std::string request_plugin_tune(int vfo, double rf_hz);
+
 private:
     static void handle_message_impl(std::string_view message);
 };

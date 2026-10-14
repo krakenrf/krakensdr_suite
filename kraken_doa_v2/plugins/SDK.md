@@ -101,7 +101,10 @@ initializers); any of them can be left out.
 **Options** (`kp::Option`: key, label, default, choices, help) are the
 decoder's own settings. The panel shows them while the plugin is selected (in
 Auto detect: once it has locked onto this plugin) - `choices` = `"value=Label|..."`
-makes a list, `""` a text field. They arrive through `option(key, value)`:
+makes a list, `""` a text field; exactly two choices with the values `0`
+and `1` (`"0=Off|1=On"`) make an on / off button ("● Label: On"; a
+choice's text after its name in brackets is left off the button and shown
+in its tooltip). They arrive through `option(key, value)`:
 the default when the plugin starts, then whatever the user picks (`""` =
 back to the default). They are saved per VFO.
 
@@ -122,7 +125,8 @@ selected the VFO is drawn as a single line and can't be dragged; its
 frequency, bandwidth and tuner fields are locked.
 
 **Locked VFO, any frequency.** A decoder of the whole band the tuner
-receives (ism: every ISM device in the 2.4 MHz) sets `.lock_vfo = true`
+receives (ism: every ISM device in the 2.4 MHz; the cells / Digital TV array
+plugins: all of a 2.4 MHz VFO) sets `.lock_vfo = true`
 instead: picking it does the same - narrowest bandwidth >= `min_vfo_rate`,
 VFO on its tuner's centre, a single line, fields locked - but leaves the
 tuner where it is; the user tunes the receiver to the band (a 📍 map
@@ -141,7 +145,24 @@ usual, so a plugin must work with either and may switch between them at any
 time. The default `process_multi` decodes antenna 0. Wire: `SAMPLES_MC`
 (uint32 m, then n x m complex int16 sample by sample, value / 8192).
 Offline: `decoder --file REC --channels M` (an interleaved recording of
-every antenna; `--channel K`: only antenna K through `process()`).
+every antenna; `--channel K`: only antenna K through `process()`). (Array
+plugins, below, get every antenna in bursts instead - for measurements per
+antenna, not decoding.)
+
+**Retuning.** A decoder that searches for its signal beyond the VFO (the
+cells plugin looks for an LTE / NR carrier up to 20 MHz away) sets `.tunes =
+true` and calls `host.tune(rf_hz)`: kraken_doa then retunes so that rf_hz
+sits at 0 Hz of the input - the whole receiver in coherent mode (every VFO
+moves along), the VFO's own tuner in independent mode - through the same
+FREQ / TUNER_FREQ path a user's tuning takes (saved, sent to heimdall, shown
+in every page). Fire and forget: when the retune is done the plugin gets
+`reset()` and a new `rf_hz()`; a refused one (out of the tuner range,
+wideband scan mode, sooner than 2 s after the last) changes nothing and the
+decoder's event log says why. `false` = this host can't (the offline test
+prints the request). Each retune makes heimdall recalibrate for a few
+seconds - step through a band, never retune continuously, and treat an RF
+you didn't ask for as the user's choice. Plugins that don't declare
+`.tunes` can't retune.
 
 **Input.** `process()` gets the VFO's complex baseband, centred on the VFO
 frequency, already resampled to `Info::sample_rate`, in blocks of a few ms
@@ -174,6 +195,7 @@ VFO bandwidth the signal needs; the panel warns when the VFO is narrower.
 | `host.table_row(key, cells)` | adds / updates (same key) a table row; rows not updated for 10 min (or `table_keep`) drop out |
 | `host.table_remove(key)` | removes a table row |
 | `host.table_keep(seconds)` | how long a row stays without an update (60 s .. 7 days, default 10 min) - things that report rarely want long (ism: its "Keep devices" option, 24 h) |
+| `host.table_detail(key, lines)` | a row's details: label / value pairs the panel shows when the row is opened (▸) |
 | `host.message(from, text)` | a free-text message the decoder received (a pager text): kraken_doa looks for a street address in it and shows it as an incident (set `.messages = true`) |
 | `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the user ticked "Raw frames") |
 | `host.talker(t)` / `host.talker_end(at_s, channel)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`, channel, packet): the DoA is split per radio / aircraft (set `.talkers = true`, below) |
@@ -331,7 +353,59 @@ at most every second or so per row; the page sorts by any column and adds a
 "Seen" column (time since the row's last update). Use the same key as the
 entry's map point: clicking the row then shows it on the map. kraken_doa
 empties the rows when the VFO is retuned or the decoder switched. The
-offline test prints the final table.
+offline test prints the final table. Whatever doesn't fit the columns goes
+into the row's details: `table_detail(key, {{label, value}, ...})` after
+its `table_row` (a detail for a row that doesn't exist yet is dropped),
+again whenever they change - at most 200 lines (labels <= 80, values <= 400
+characters); they go with the row. The page shows a ▸ in front of such a row
+that opens them under it (the cells plugin: every SIB field of a cell). They
+ride with the table in every status (about once a second), so keep them to
+what a person reads - not hundreds of rows' worth.
+
+**Array plugins: every antenna, spatial talkers, plots.** A decoder that
+measures something PER ANTENNA (the dtv plugin's path separation: each
+antenna's channel impulse response; the cells plugin: each LTE / NR cell's channel from its
+own reference signals) sets `.array = true`: instead of `process()` it gets
+`process_array(const kp::ArrayBlock&)` - `b.m` antennas (the array's
+elements in coherent mode, 1 outside it), `b.n` samples each in `b.ch[a]`,
+at the VFO's own rate `b.rate` (no resampling, no AFC; `sample_rate` is
+ignored), `b.t0` = `host.time()` of the first sample, `b.gap` = a gap
+before this block. The samples come in bursts of `.array_burst_s` every
+`.array_period_s` (default 0.25 s every 1 s; contiguous inside a burst; a
+2.4 MHz VFO with 5 antennas is 48 MB/s on the pipe, so don't ask for all of
+it unless you need it) and not while heimdall calibrates or right after a
+retune. An array plugin is `manual_only` (it never runs in Auto detect).
+
+What it finds about a transmitter's DIRECTION goes back as its spatial
+covariance: `host.spatial(kp::Spatial)` with `id` (stable while you track
+the transmitter), `label`, the samples' span (`start_s` / `end_s`), `m`
+and `cov` (m x m, row-major, any scale) - plus `delay_us`, `power_db`,
+`snr_db`, `ref` if they mean something. kraken_doa runs MUSIC with ONE
+source on it (its array settings and calibration) and makes it a talker of
+the VFO: its own lobe, bearing history and heat map on the 🗺 Map's 📡 DF
+panel, listed with the other talkers. Report each transmitter once per
+burst; the host averages (`avg_s`, default 3 s). A talker you stop
+reporting stays listed for 2 minutes - when you KNOW it's gone (lost, or
+the user turned your separation off) call `host.spatial_remove(id)` (`""`
+= all of yours): it leaves the DF panel at once (wire SPATIAL_REMOVE 39,
+ignored by older hosts).
+
+`host.plot(kp::Plot)` shows a line plot in the decoder's tab (one per VFO
+running it) and, when its markers name talkers, in the 📡 DF panel of the
+map: `x0 + i dx` against `y[i]` (<= 1000 points), units, an optional
+dashed `threshold`, `markers` {x, label, talker} - clicking a marker with a
+talker shows that talker alone on the map. The latest plot replaces the
+previous; send at most a few a second. A table row whose key is a talker id
+selects that talker the same way.
+
+The offline test runs array plugins on multichannel recordings (cf32,
+sample-major: antenna 0..m-1 of sample 0, then of sample 1, ...; `channels`
+in the `.json` sidecar or `--channels M`), in bursts like the live host
+(`--all` = every sample back to back); `--uca R` (metres) puts the
+antennas on kraken_doa's clockwise UCA and prints each spatial talker's
+MUSIC bearing at the end. `plugins/dtv/tools/sfn_gen.cpp` writes synthetic
+single frequency networks in that format, `plugins/cells/tools/cell_gen.cpp`
+LTE / NR cells.
 
 ## Rules for a good decoder
 
@@ -382,6 +456,7 @@ linked as well.
 make -C plugins PLUGIN=mydec              # build one (or `make` in kraken_doa_v2 for all)
 plugins/mydec/build/decoder --info        # what kraken_doa reads
 plugins/mydec/build/decoder --file capture.cf32 [--offset HZ] [--verbose] [--audio out.wav] [--station LAT,LON] [--rf HZ] [--raw]
+plugins/dtv/build/decoder --file sfn.cf32 [--channels M] [--all] [--uca RADIUS_M] [--opt separate=1]   # array plugins
 ```
 
 `--rf HZ` is the RF at the recording's centre (`host.rf_hz()` = it +

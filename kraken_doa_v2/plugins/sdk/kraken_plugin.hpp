@@ -28,6 +28,15 @@
 // in the sidebar), events (a timestamped log), valid() for every frame that
 // passed its checks (drives the "receiving" state), optional 8 kHz audio, and
 // map points (positions) for the web UI's 🗺 Map.
+//
+// ARRAY plugins (Info::array) get every antenna instead: process_array()
+// with each antenna's samples at the VFO's own rate, in bursts - for
+// measuring things per antenna (a channel impulse response per antenna...).
+// What they find about a transmitter's direction goes back as its spatial
+// covariance (Host::spatial); kraken_doa runs MUSIC on it with the
+// receiver's array settings and shows it as a talker of its own on the 🗺
+// Map's 📡 DF panel. Host::plot() shows a line plot (e.g. the impulse
+// response) in the decoder's tab.
 // See plugins/SDK.md for the full guide and kraken_dsp.hpp for DSP helpers.
 
 #include <cmath>
@@ -119,6 +128,59 @@ struct Talker {
     double keep_s = 0;
 };
 
+// A transmitter whose direction an ARRAY plugin measured itself: its
+// spatial covariance over the antennas (e.g. one transmitter of a single
+// frequency network, told apart by its delay in every antenna's channel
+// impulse response - the antennas' values at its tap, summed as v v^H over
+// the snapshots). kraken_doa runs MUSIC with ONE source on it, with the
+// receiver's array settings (and calibration), and makes it a talker of
+// the VFO: its own lobe, bearing history and heat map while driving on the
+// 🗺 Map's 📡 DF panel. Report each transmitter once per measurement (a
+// burst); the host averages over avg_s and takes each report as a mobile DF
+// record. Ids are the plugin's own (stable while it tracks the transmitter).
+struct Spatial {
+    std::string id;                 // <= 32 chars
+    std::string label;              // <= 64 chars (e.g. "+12.4 us · -3 dB")
+    double start_s = NAN;           // Host::time() of the samples it comes from (NAN = now)
+    double end_s = NAN;
+    int m = 0;                      // antennas (ArrayBlock::m)
+    std::vector<cf> cov;            // m x m, row-major, Hermitian; any scale
+    double delay_us = NAN;          // after the earliest transmitter of its group
+    double power_db = NAN;          // relative to the strongest
+    double snr_db = NAN;            // its peak above the estimation floor
+    bool ref = false;               // the plugin's timing reference (strongest / first)
+    double avg_s = 0;               // average over about this long (0 = the host's 3 s)
+};
+
+// A line plot in the decoder's tab (and in the 📡 DF panel of the map for
+// array plugins): x0 + i dx against y[i]. Markers can name a talker / spatial
+// id: clicking one shows that talker alone on the map. The latest plot
+// replaces the previous one; send at most a few per second.
+struct PlotMarker {
+    double x = 0;
+    std::string label;              // short, e.g. "#2"
+    std::string talker;             // a Talker / Spatial id ("" = none)
+};
+struct Plot {
+    std::string title;              // "Channel impulse response"
+    std::string x_unit, y_unit;     // "us", "dB"
+    double x0 = 0, dx = 1;
+    std::vector<float> y;           // <= 1000 points
+    double y_min = NAN, y_max = NAN;   // NAN = from the data
+    double threshold = NAN;         // a dashed horizontal line (NAN = none)
+    std::vector<PlotMarker> markers;
+};
+
+// Array plugins: one block of every antenna's samples (process_array)
+struct ArrayBlock {
+    int m = 0;                      // antennas: the array's elements in coherent mode, else 1 (the VFO's tuner)
+    size_t n = 0;                   // samples per antenna
+    double rate = 0;                // sample rate (Hz) - the VFO's (no resampling, no AFC)
+    double t0 = 0;                  // Host::time() of the first sample (also time() during the call)
+    bool gap = false;               // not contiguous with the previous block (a new burst, a retune, a drop)
+    const cf* ch[8] = {};           // antenna k's n samples
+};
+
 struct Info {
     const char* id = "";            // directory name: [a-z0-9_-], <= 32 chars
     const char* name = "";          // shown in the mode list, e.g. "POCSAG"
@@ -145,13 +207,26 @@ struct Info {
     // true: like fixed_freq_hz, but the tuner stays where the user put it -
     // picking the plugin puts the VFO on its tuner's centre (offset 0) with
     // the narrowest bandwidth >= min_vfo_rate, drawn as a single line that
-    // can't be dragged or resized (a decoder of the whole band: ism)
+    // can't be dragged or resized; you move it by tuning the receiver (a
+    // decoder of the whole band: ism, cells, dtv)
     bool lock_vfo = false;
     // true: takes every antenna of a coherent array (Decoder::process_multi)
     // when kraken_doa has them - coherent mode with DoA on; otherwise (an
     // independent / wideband tuner, DoA off, an offline test of one channel)
     // it gets process() as usual
     bool multichannel = false;
+    // ARRAY plugin: process_array() with every antenna's samples instead of
+    // process() (sample_rate is then ignored: the VFO's rate). They come in
+    // bursts of array_burst_s every array_period_s (contiguous inside a
+    // burst; equal = all of them) - a 2.4 MHz VFO with 5 antennas is 48
+    // MB/s on the pipe. Sends spatial covariances (Host::spatial)
+    bool array = false;
+    double array_burst_s = 0.25;
+    double array_period_s = 1.0;
+    // May ask the host to retune (Host::tune) - e.g. to search for a carrier
+    // the VFO doesn't see yet. kraken_doa honours tune() only from plugins
+    // that declare it
+    bool tunes = false;
 };
 
 class Host {
@@ -210,13 +285,21 @@ public:
     // A live table in the panel (e.g. the aircraft ADS-B hears): the column
     // headings once, then rows by key (the same key again = update). A row
     // not updated for 10 minutes (or table_keep()) is dropped; table_remove()
-    // drops it now.
+    // drops it now. No columns (and no rows left) = no table shown.
     virtual void table_columns(const std::vector<std::string>& cols) { (void)cols; }
     virtual void table_row(const std::string& key, const std::vector<std::string>& cells) { (void)key; (void)cells; }
     virtual void table_remove(const std::string& key) { (void)key; }
     // How long a row stays without an update, in seconds (60 s .. 7 days;
     // default 10 min) - devices that report rarely want long (ism: 24 h)
     virtual void table_keep(double seconds) { (void)seconds; }
+    // The details of a table row (key as in table_row): label / value lines
+    // the panel shows when the user opens the row (▸) - everything known
+    // about it that doesn't fit the columns. Send again when they change
+    // (replaces them; at most 200 lines); they go with the row.
+    virtual void table_detail(const std::string& key, const std::vector<std::pair<std::string, std::string>>& lines) {
+        (void)key;
+        (void)lines;
+    }
     // The talker of the transmission in progress (see Talker). Call it again
     // with the same id as frames keep passing (end_s moves on); a different id
     // on the same channel ends the previous talker where the new one starts.
@@ -241,6 +324,24 @@ public:
     // true: the input is mirrored (the decoder's "invert" option) - a signal
     // at +f Hz in process()'s input is on rf_hz() - f
     virtual bool rf_inverted() const { return false; }
+    // Array plugins: a transmitter's spatial covariance (see Spatial)
+    virtual void spatial(const Spatial& s) { (void)s; }
+    // ... and that transmitter is gone (lost, or the plugin stopped
+    // separating): the host forgets the talker at once - its bearing, the
+    // 📡 DF panel's entry - instead of 2 minutes after its last report.
+    // id "" = every spatial talker of this plugin
+    virtual void spatial_remove(const std::string& id) { (void)id; }
+    // A line plot for the decoder's tab (see Plot)
+    virtual void plot(const Plot& p) { (void)p; }
+    // Ask the host to retune so that rf_hz is at 0 Hz of the input (Info::tunes
+    // plugins only): in coherent mode the receiver retunes - every VFO on it
+    // moves along -, in independent mode the VFO's own tuner. Fire and
+    // forget: done, the plugin gets reset() and a new rf_hz(); refused (out
+    // of the tuner range, wideband scan mode ...), nothing changes and the
+    // decoder's event log says why. false = this host can't (offline tests).
+    // Each retune makes heimdall recalibrate for a few seconds - search a
+    // band step by step, not continuously.
+    virtual bool tune(double rf_hz) { (void)rf_hz; return false; }
     // Debug output (stderr; shown in the plugin's log tail). Do NOT print to
     // stdout: in live mode it carries the binary protocol (the host redirects
     // printf/std::cout to stderr anyway).
@@ -261,6 +362,9 @@ public:
         (void)m;
         process(x[0], n);
     }
+    // Array plugins (Info::array): every antenna's samples in bursts, at the
+    // VFO's rate (process() is then not called)
+    virtual void process_array(const ArrayBlock& b) { (void)b; }
     // Drop all state (VFO retuned / decoder restarted)
     virtual void reset() {}
     // An option: "verbose" = "0"|"1", or one of Info::options ("" = default)
@@ -300,6 +404,10 @@ constexpr uint32_t RF = 7;             // "rf_hz[,1]": RF at the input's 0 Hz ("
 // sample, antenna 0 first; value = int16 / MC_SCALE (Info::multichannel)
 constexpr uint32_t SAMPLES_MC = 8;
 constexpr float MC_SCALE = 8192.0f;
+// array plugins: uint32 m, uint32 n, uint32 flags (1 = gap), float32 scale,
+// float64 rate, float64 t0, then n x m int16 I/Q pairs (sample-major:
+// sample 0 of antenna 0..m-1, sample 1...); value = int16 * scale
+constexpr uint32_t SAMPLES_ARRAY = 9;
 // plugin -> kraken_doa
 constexpr uint32_t FACT = 16;          // key '\0' value ("" value = remove)
 constexpr uint32_t EVENT = 17;         // float32 dedup_s, text
@@ -328,5 +436,16 @@ constexpr uint32_t TALKER_END = 31;    // at_s ['\0' channel] (decimal text)
 constexpr uint32_t TABLE_KEEP = 32;    // seconds (decimal text): Host::table_keep
 constexpr uint32_t TALKER_FORGET = 33; // id: Host::talker_forget
 constexpr uint32_t AUDIO_CHANNEL = 34; // int32 channel (-1 = unknown): Host::audio_channel
+// id '\0' label '\0' start_s '\0' end_s '\0' delay_us '\0' power_db '\0'
+// snr_db '\0' ref (0/1) '\0' avg_s '\0' m '\0' cov: m*m "re,im" pairs
+// comma-separated, row-major (decimal text, "" = NAN)
+constexpr uint32_t SPATIAL = 35;
+// title '\0' x_unit '\0' y_unit '\0' x0 '\0' dx '\0' y_min '\0' y_max '\0'
+// threshold '\0' y (comma-separated) then per marker '\0' x '\0' label
+// '\0' talker
+constexpr uint32_t PLOT = 36;
+constexpr uint32_t TUNE = 37;          // rf_hz (decimal text): Host::tune
+constexpr uint32_t TABLE_DETAIL = 38;  // key '\0' label '\0' value '\0' label '\0' value ...
+constexpr uint32_t SPATIAL_REMOVE = 39;  // id ("" = all of this plugin's): Host::spatial_remove
 // (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends)
 }  // namespace kp::wire

@@ -168,9 +168,16 @@ void PluginRegistry::scan() {
                     if (json_find(js, "voice", v)) pi.voice = v == "true";
                     if (json_find(js, "messages", v)) pi.messages = v == "true";
                     if (json_find(js, "talkers", v)) pi.talkers = v == "true";
+                    if (json_find(js, "array", v)) pi.array = v == "true";
+                    if (json_find(js, "array_burst_s", v)) pi.array_burst_s = std::clamp(atof(v.c_str()), 0.01, 60.0);
+                    if (json_find(js, "array_period_s", v)) pi.array_period_s = std::clamp(atof(v.c_str()), 0.01, 600.0);
+                    if (pi.array) pi.manual_only = true;   // never in Auto detect (all antennas, wide VFOs)
                     if (json_find(js, "fixed_freq_hz", v)) pi.fixed_freq_hz = std::max(0.0, atof(v.c_str()));
                     if (json_find(js, "lock_vfo", v)) pi.lock_vfo = v == "true";
+                    // "whole_band": the same lock, as cells / dtv builds from before the merge call it
+                    if (json_find(js, "whole_band", v) && v == "true") pi.lock_vfo = true;
                     if (json_find(js, "multichannel", v)) pi.multichannel = v == "true";
+                    if (json_find(js, "tunes", v)) pi.tunes = v == "true";
                     // options: one per line, tab-separated key/label/default/choices/help
                     if (json_find(js, "options_tsv", v)) {
                         std::stringstream ls(v);
@@ -269,7 +276,7 @@ std::string PluginRegistry::list_json() const {
           << ",\"fixed_freq_hz\":" << static_cast<long long>(p.fixed_freq_hz) << ",\"lock_vfo\":" << (p.lock_vfo ? "true" : "false")
           << ",\"voice\":" << (p.voice ? "true" : "false")
           << ",\"messages\":" << (p.messages ? "true" : "false") << ",\"talkers\":" << (p.talkers ? "true" : "false")
-          << ",\"options\":[";
+          << ",\"array\":" << (p.array ? "true" : "false") << ",\"tunes\":" << (p.tunes ? "true" : "false") << ",\"options\":[";
         for (size_t k = 0; k < p.options.size(); k++) {
             const auto& op = p.options[k];
             o << (k ? "," : "") << "{\"key\":\"" << json_escape(op.key) << "\",\"label\":\"" << json_escape(op.label)
@@ -357,7 +364,13 @@ bool PluginProcess::start(const std::vector<std::string>& args, std::string* err
     set_nonblock(in_fd_);
     set_nonblock(out_fd_);
     set_nonblock(err_fd_);
+#ifdef F_SETPIPE_SZ
+    // a bigger pipe: fewer, larger writes (array plugins send ~17 MB bursts);
+    // best effort - the system limit (pipe-max-size, 1 MB by default) rules
+    fcntl(in_fd_, F_SETPIPE_SZ, 1 << 20);
+#endif
     wbuf_.clear();
+    wpos_ = 0;
     rbuf_.clear();
     ebuf_.clear();
     proto_error_ = false;
@@ -392,6 +405,7 @@ void PluginProcess::stop() {
     if (err_fd_ >= 0) close(err_fd_);
     out_fd_ = err_fd_ = -1;
     wbuf_.clear();
+    wpos_ = 0;
 }
 
 bool PluginProcess::alive(int* status) {
@@ -409,22 +423,37 @@ bool PluginProcess::alive(int* status) {
     return true;
 }
 
+// Writes what the pipe takes. The written part is skipped by an offset and
+// dropped in one go (when all is written, or once it is most of the buffer):
+// erasing every write from the front moved the whole rest each time -
+// quadratic in what is queued (an array plugin's burst queues ~17 MB, and
+// the pipe takes 64 KB - 1 MB at a time).
 void PluginProcess::flush() {
-    while (in_fd_ >= 0 && !wbuf_.empty()) {
-        ssize_t w = write(in_fd_, wbuf_.data(), wbuf_.size());
+    while (in_fd_ >= 0 && wpos_ < wbuf_.size()) {
+        ssize_t w = write(in_fd_, wbuf_.data() + wpos_, wbuf_.size() - wpos_);
         if (w < 0) {
             if (errno == EINTR) continue;
-            if (errno != EAGAIN) wbuf_.clear();   // EPIPE: it died, alive() reports it
-            return;
+            if (errno != EAGAIN) {   // EPIPE: it died, alive() reports it
+                wbuf_.clear();
+                wpos_ = 0;
+            }
+            break;
         }
-        wbuf_.erase(0, static_cast<size_t>(w));
+        wpos_ += static_cast<size_t>(w);
+    }
+    if (wpos_ >= wbuf_.size()) {
+        wbuf_.clear();
+        wpos_ = 0;
+    } else if (wpos_ > (1u << 20) && wpos_ > wbuf_.size() / 2) {
+        wbuf_.erase(0, wpos_);
+        wpos_ = 0;
     }
 }
 
 bool PluginProcess::send(uint32_t type, const void* data, size_t len, size_t max_backlog) {
     if (in_fd_ < 0) return false;
     flush();
-    if (type == 1 && wbuf_.size() > max_backlog) return false;   // samples: plugin too slow
+    if (type == 1 && wbuf_.size() - wpos_ > max_backlog) return false;   // samples: plugin too slow
     uint32_t hdr[2] = {type, static_cast<uint32_t>(len)};
     wbuf_.append(reinterpret_cast<const char*>(hdr), 8);
     if (len) wbuf_.append(static_cast<const char*>(data), len);

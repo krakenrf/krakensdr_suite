@@ -519,6 +519,37 @@ static void setAllDoaEnabled(bool enable) {
     broadcast_doa_state(enable);
 }
 
+std::string ControlHandler::request_plugin_tune(int vfo, double rf_hz) {
+    if (!is_finite_value(rf_hz) || rf_hz <= 0) return "not a frequency";
+    if (wideband_mode_enabled.load(std::memory_order_relaxed)) return "the receiver is in wideband scan mode";
+    // the VFO sits at (or near) its tuner's centre: the RF itself must be tunable
+    const uint64_t hz = static_cast<uint64_t>(llround(rf_hz));
+    if (wb_variant_enabled.load(std::memory_order_relaxed)) {
+        uint64_t lo, hi;
+        wb_variant_rf_union_range(lo, hi);
+        if (hz < lo || hz > hi) return "outside the receiver's range";
+    } else if (hz < RTL_TUNER_MIN_HZ || hz > RTL_TUNER_MAX_HZ) {
+        return "outside the tuner range (24-1766 MHz)";
+    }
+    if (!loop) return "the receiver isn't ready";
+    // on the loop like a browser's command: the VFO looked up there (never
+    // on the decoder's thread, which must not hold the instance), its offset
+    // taken off, the command saved / sent to heimdall / shown in every page
+    loop->defer([vfo, rf_hz] {
+        auto inst = decimator_manager.getDecimator(vfo);
+        if (!inst) return;
+        const double tuner_hz = rf_hz - inst->frequency_offset_hz.load(std::memory_order_relaxed);
+        char cmd[64];
+        if (independent_mode_enabled.load(std::memory_order_relaxed))
+            snprintf(cmd, sizeof cmd, "TUNER_FREQ:%d:%.6f", inst->tuner_channel.load(std::memory_order_relaxed), tuner_hz / 1e6);
+        else
+            snprintf(cmd, sizeof cmd, "FREQ:%.6f", tuner_hz / 1e6);
+        cout << "Decoder of VFO " << vfo << " retunes: " << cmd << endl;
+        handle_websocket_message(cmd);
+    });
+    return "";
+}
+
 bool ControlHandler::switch_fm_source(int id) {
     auto decimator_inst = decimator_manager.getDecimator(id);
     if (!decimator_inst) return false;

@@ -41,7 +41,12 @@ constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4,
                    W_FACT = 16, W_EVENT = 17, W_VALID = 18, W_AUDIO = 19, W_VOICE_STATE = 20, W_FREQ_ERROR = 21,
                    W_SYNC_DONE = 22, W_MAP_POINT = 23, W_MAP_REMOVE = 24, W_TABLE_COLUMNS = 25, W_TABLE_ROW = 26,
                    W_TABLE_REMOVE = 27, W_MESSAGE = 28, W_RAW = 29, W_TALKER = 30, W_TALKER_END = 31,
-                   W_TABLE_KEEP = 32, W_TALKER_FORGET = 33, W_AUDIO_CHANNEL = 34, W_SAMPLES_MC = 8;
+                   W_TABLE_KEEP = 32, W_TALKER_FORGET = 33, W_AUDIO_CHANNEL = 34, W_SAMPLES_MC = 8,
+                   W_SAMPLES_ARRAY = 9, W_SPATIAL = 35, W_PLOT = 36, W_TUNE = 37, W_TABLE_DETAIL = 38,
+                   W_SPATIAL_REMOVE = 39;
+// a plugin's retune requests (kp::Host::tune): at most one per this
+constexpr int64_t TUNE_MIN_GAP_MS = 2000;
+constexpr size_t MAX_PAYLOAD = 1u << 20;   // kp::wire::MAX_PAYLOAD
 // how far back a plugin's sample positions stay mappable to the VFO stream
 constexpr double POS_MAP_SECONDS = 60;
 // a talker packet (kp::Talker::packet) longer than this is not one
@@ -176,8 +181,17 @@ struct Runner {
     // the talker channel its audio is from (wire AUDIO_CHANNEL, DMR: the
     // timeslot it plays), -1 = not said - Voice to Text names that radio
     int audio_channel = -1;
+    // array plugins: Host::time() = VFO stream position / its rate
+    double array_rate = 0;
+    int64_t last_tune_ms = -1000000;   // kp::Host::tune rate limit
+    uint64_t array_next = ~0ull;       // stream position after the last block sent (gap detection)
     // Host::time() seconds -> VFO stream position (false: not mappable)
     bool vfo_pos(double t, double rate, uint64_t* out) const {
+        if (info.array) {
+            if (!(array_rate > 0) || !is_finite_value(t) || t < 0) return false;
+            *out = static_cast<uint64_t>(std::llround(t * array_rate));
+            return true;
+        }
         if (pos_map.empty() || !is_finite_value(t) || t < 0) return false;
         const double p = t * rate;
         if (p < static_cast<double>(pos_map.front().p0)) return false;
@@ -210,20 +224,80 @@ public:
         rebuild_runners();
     }
 
-    void process(const std::complex<float>* x, size_t n, float rate, double rf, uint64_t pos,
-                 const std::complex<int16_t>* mc = nullptr, int mc_m = 0) {
-        if (rate <= 0 || n == 0) return;
-        if (pos == DigitalDecoder::NO_POS) pos = next_pos_;
-        next_pos_ = pos + n;
+    // the VFO moved (> 100 Hz): everything starts over
+    void check_rf(double rf) {
         if (std::fabs(rf - rf_hz_) > 100.0) {
             if (rf_hz_ != 0.0) {
                 reset_all();
                 report_.clear_all();
                 report_.map_clear();
                 report_.table_clear();
+                report_.plot_clear();
             }
             rf_hz_ = rf;
         }
+    }
+
+    // Array plugins: every antenna's block (x = m x n, antenna-major) as
+    // SAMPLES_ARRAY (int16 I/Q with a per-message scale)
+    void process_array(const std::complex<float>* x, int m, size_t n, float rate, double rf, uint64_t pos) {
+        if (rate <= 0 || n == 0 || m < 1 || m > 8) return;
+        check_rf(rf);
+        for (size_t i = 0; i < runners_.size(); i++) {
+            Runner& r = *runners_[i];
+            if (!r.known || !r.info.array || !r.proc) continue;
+            r.array_rate = rate;
+            send_settings(r);
+            const size_t per = (MAX_PAYLOAD - 32) / (4 * static_cast<size_t>(m));
+            const size_t backlog = sync_io_ ? SIZE_MAX : static_cast<size_t>(rate) * 4 * static_cast<size_t>(m);   // ~1 s
+            for (size_t a = 0; a < n; a += per) {
+                const size_t k = std::min(per, n - a);
+                float mx = 1e-9f;
+                for (int c = 0; c < m; c++)
+                    for (size_t j = a; j < a + k; j++) {
+                        const std::complex<float> v = x[static_cast<size_t>(c) * n + j];
+                        mx = std::max(mx, std::max(std::fabs(v.real()), std::fabs(v.imag())));
+                    }
+                const float scale = mx / 32000.0f;
+                arr_buf_.resize(32 + k * static_cast<size_t>(m) * 4);
+                char* p = arr_buf_.data();
+                const uint32_t mm = static_cast<uint32_t>(m), nn = static_cast<uint32_t>(k);
+                const uint64_t at = pos + a;
+                const uint32_t flags = at != r.array_next ? 1u : 0u;
+                const double rr = rate, t0 = static_cast<double>(at) / rate;
+                memcpy(p, &mm, 4);
+                memcpy(p + 4, &nn, 4);
+                memcpy(p + 8, &flags, 4);
+                memcpy(p + 12, &scale, 4);
+                memcpy(p + 16, &rr, 8);
+                memcpy(p + 24, &t0, 8);
+                int16_t* q = reinterpret_cast<int16_t*>(p + 32);
+                const float inv = 1.0f / scale;
+                for (size_t j = a; j < a + k; j++)
+                    for (int c = 0; c < m; c++) {
+                        const std::complex<float> v = x[static_cast<size_t>(c) * n + j];
+                        *q++ = static_cast<int16_t>(std::lrint(v.real() * inv));
+                        *q++ = static_cast<int16_t>(std::lrint(v.imag() * inv));
+                    }
+                if (!r.proc->send(W_SAMPLES_ARRAY, arr_buf_.data(), arr_buf_.size(), backlog)) {
+                    r.dropped += k;
+                    continue;   // the next block is a gap for the plugin
+                }
+                r.array_next = at + k;
+            }
+            auto handler = [this, i](uint32_t type, const char* pp, size_t len) { on_message(i, type, pp, len); };
+            if (sync_io_) r.proc->flush_blocking(handler, 60000);
+            else r.proc->poll(handler);
+        }
+        housekeeping();
+    }
+
+    void process(const std::complex<float>* x, size_t n, float rate, double rf, uint64_t pos,
+                 const std::complex<int16_t>* mc = nullptr, int mc_m = 0) {
+        if (rate <= 0 || n == 0) return;
+        if (pos == DigitalDecoder::NO_POS) pos = next_pos_;
+        next_pos_ = pos + n;
+        check_rf(rf);
         if (rate != in_rate_) {
             in_rate_ = rate;
             // Auto detect: the plugin set depends on the VFO's rate
@@ -256,6 +330,12 @@ public:
         // correction to apply: what they get is the VFO's samples as they are)
         const bool mc_ok = mc && mc_m >= 2 && w == 0.0f && nco_phase_ == 0.0;
         for (size_t i = 0; i < runners_.size(); i++) {
+            // array plugins get their samples in process_array(); here they
+            // are only started / kept up to date (settings, replies)
+            if (runners_[i]->known && runners_[i]->info.array) {
+                run(i, nullptr, 0, pos, 1.0);
+                continue;
+            }
             const Resampled* r = rate_buf(*runners_[i]);
             const bool multi = mc_ok && runners_[i]->info.multichannel && runners_[i]->info.sample_rate == in_rate_;
             run(i, r ? r->out.data() : nullptr, r ? r->ny : 0, pos, r ? in_rate_ / r->rate : 1.0,
@@ -378,6 +458,7 @@ private:
         unsigned int ny = 0;
     };
     std::vector<Resampled> rs_;
+    std::vector<char> arr_buf_;        // one SAMPLES_ARRAY message
 
     // detection / AFC / status (status() reads them from another thread)
     mutable std::mutex st_mu_;
@@ -436,7 +517,25 @@ private:
             runners_.push_back(std::move(r));
         }
         rebuild_resamplers();
+        update_array_wanted();
         publish_status();
+    }
+
+    // the pipeline offers every antenna while an array plugin runs here (and
+    // only ticks the single-channel path when nothing else needs it)
+    void update_array_wanted() {
+        bool on = false, only = !runners_.empty();
+        double burst = 0.25, period = 1.0;
+        for (const auto& r : runners_) {
+            if (r->known && r->info.array) {
+                on = true;
+                burst = r->info.array_burst_s;
+                period = r->info.array_period_s;
+            } else {
+                only = false;
+            }
+        }
+        owner_->set_array_wanted(on, burst, period, on && only);
     }
 
     // The plugins Auto detect runs on this VFO: the ticked ones, without the
@@ -468,6 +567,7 @@ private:
         destroy_resamplers();
         if (in_rate_ <= 0) return;
         for (auto& rn : runners_) {
+            if (rn->known && rn->info.array) continue;   // their samples aren't resampled
             float rate = rate_of(*rn);
             bool have = false;
             for (auto& r : rs_) have |= r.rate == rate;
@@ -575,6 +675,8 @@ private:
         r.known = true;
         report_.set_label(r.id, pi.name);
         if (rate_changed) rebuild_resamplers();
+        update_array_wanted();
+        r.array_next = ~0ull;
         r.proc = std::make_unique<PluginProcess>();
         std::string err;
         if (!r.proc->start(pi.exe, &err)) {
@@ -829,7 +931,8 @@ private:
                 report_.map_remove(r.id, std::string(p, std::min<size_t>(len, 32)));
                 break;
             case W_TABLE_COLUMNS: {
-                auto f = split0(p, len, 40);
+                // no columns (an empty payload) = no table: the page shows none
+                auto f = len ? split0(p, len, 40) : std::vector<std::string>{};
                 for (auto& c : f) c.resize(std::min<size_t>(c.size(), 40));
                 report_.table_columns(r.id, std::move(f));
                 break;
@@ -861,6 +964,19 @@ private:
                 if (is_finite_value(s)) report_.table_keep(r.id, static_cast<int64_t>(s * 1000));
                 break;
             }
+            case W_TABLE_DETAIL: {
+                // key, then label / value pairs
+                auto f = split0(p, len, 1 + 2 * 200);
+                if (f.empty() || f[0].empty() || f[0].size() > 64) break;
+                std::vector<std::pair<std::string, std::string>> lines;
+                for (size_t i = 1; i + 1 < f.size(); i += 2) {
+                    f[i].resize(std::min<size_t>(f[i].size(), 80));
+                    f[i + 1].resize(std::min<size_t>(f[i + 1].size(), 400));
+                    lines.emplace_back(std::move(f[i]), std::move(f[i + 1]));
+                }
+                report_.table_detail(r.id, f[0], std::move(lines));
+                break;
+            }
             case W_TALKER:
                 on_talker(r, p, len);
                 break;
@@ -884,6 +1000,36 @@ private:
                 close_talker(r, it);
                 break;
             }
+            case W_SPATIAL:
+                on_spatial(r, p, len);
+                break;
+            case W_SPATIAL_REMOVE: {
+                // kp::Host::spatial_remove: id, "" = every spatial talker of the plugin
+                SpatialReport s;
+                s.plugin = r.id;
+                s.id.assign(p, std::min<size_t>(len, 32));
+                s.remove = true;
+                owner_->deliver_spatial(s);
+                break;
+            }
+            case W_PLOT:
+                on_plot(r, p, len);
+                break;
+            case W_TUNE: {
+                // kp::Host::tune - only plugins that declare kp::Info::tunes
+                const double hz = num_or_nan(std::string(p, std::min<size_t>(len, 32)));
+                char mhz[32];
+                snprintf(mhz, sizeof mhz, "%.6f MHz", is_finite_value(hz) ? hz / 1e6 : 0.0);
+                std::string why;
+                const int64_t now = now_ms();
+                if (!r.info.tunes) why = "the plugin doesn't declare kp::Info::tunes";
+                else if (!is_finite_value(hz) || hz <= 0) why = "not a frequency";
+                else if (now - r.last_tune_ms < TUNE_MIN_GAP_MS) why = "too soon after the last one";
+                else why = owner_->deliver_tune(hz);
+                if (why.empty()) r.last_tune_ms = now;
+                else report_.event("", "Retune to " + std::string(mhz) + " asked by " + r.info.name + " refused: " + why, 10.0);
+                break;
+            }
             case W_MESSAGE: {
                 auto f = split0(p, len, 2);
                 if (f.size() == 2 && !f[1].empty()) {
@@ -901,6 +1047,87 @@ private:
             default:
                 break;
         }
+    }
+
+    // kp::wire::SPATIAL: id, label, start_s, end_s, delay_us, power_db, snr_db,
+    // ref, avg_s, m, cov ("re,im" pairs, row-major) - '\0'-separated text
+    static double num_or_nan(const std::string& t) {
+        if (t.empty()) return NAN;
+        char* e = nullptr;
+        const double v = strtod(t.c_str(), &e);
+        return (e && *e == '\0' && is_finite_value(v)) ? v : static_cast<double>(NAN);
+    }
+    void on_spatial(Runner& r, const char* p, size_t len) {
+        auto f = split0(p, len, 11);
+        if (f.size() < 11 || f[0].empty()) return;
+        SpatialReport s;
+        s.plugin = r.id;
+        s.id = f[0].substr(0, 32);
+        s.label = f[1].substr(0, 64);
+        uint64_t a, b;
+        const double ta = num_or_nan(f[2]), tb = num_or_nan(f[3]);
+        if (!r.vfo_pos(ta, r.array_rate > 0 ? r.array_rate : in_rate_, &a) ||
+            !r.vfo_pos(tb, r.array_rate > 0 ? r.array_rate : in_rate_, &b))
+            return;
+        s.start = a;
+        s.end = std::max(a, b);
+        s.rate = r.array_rate > 0 ? static_cast<float>(r.array_rate) : in_rate_;
+        s.delay_us = num_or_nan(f[4]);
+        s.power_db = num_or_nan(f[5]);
+        s.snr_db = num_or_nan(f[6]);
+        s.ref = f[7] == "1";
+        const double avg = num_or_nan(f[8]);
+        s.avg_s = is_finite_value(avg) ? std::clamp(avg, 0.0, 3600.0) : 0.0;
+        s.m = static_cast<int>(strtol(f[9].c_str(), nullptr, 10));
+        if (s.m < 1 || s.m > 8) return;
+        std::vector<double> v;
+        v.reserve(static_cast<size_t>(2 * s.m * s.m));
+        const char* c = f[10].c_str();
+        while (*c && v.size() < static_cast<size_t>(2 * s.m * s.m)) {
+            char* e = nullptr;
+            const double x = strtod(c, &e);
+            if (e == c || !is_finite_value(x)) return;
+            v.push_back(x);
+            c = *e == ',' ? e + 1 : e;
+        }
+        if (v.size() != static_cast<size_t>(2 * s.m * s.m)) return;
+        s.cov.resize(static_cast<size_t>(s.m * s.m));
+        for (size_t i = 0; i < s.cov.size(); i++) s.cov[i] = {v[2 * i], v[2 * i + 1]};
+        owner_->deliver_spatial(s);
+    }
+
+    // kp::wire::PLOT -> the decoder's latest plot (JSON for the page)
+    void on_plot(Runner& r, const char* p, size_t len) {
+        auto f = split0(p, len, 8 + 3 * 64 + 1);
+        if (f.size() < 9) return;
+        auto jn = [](const std::string& t, int prec) {
+            const double v = num_or_nan(t);
+            if (!is_finite_value(v)) return std::string("null");
+            char b[48];
+            snprintf(b, sizeof b, "%.*g", prec, v);
+            return std::string(b);
+        };
+        std::string o = "{\"t\":\"" + json_escape(f[0].substr(0, 80)) + "\",\"xu\":\"" + json_escape(f[1].substr(0, 16)) +
+                        "\",\"yu\":\"" + json_escape(f[2].substr(0, 16)) + "\",\"x0\":" + jn(f[3], 9) + ",\"dx\":" + jn(f[4], 9) +
+                        ",\"ymin\":" + jn(f[5], 6) + ",\"ymax\":" + jn(f[6], 6) + ",\"thr\":" + jn(f[7], 6) + ",\"y\":[";
+        const char* c = f[8].c_str();
+        int n = 0;
+        while (*c && n < 1000) {
+            char* e = nullptr;
+            const double x = strtod(c, &e);
+            if (e == c) break;
+            char b[32];
+            snprintf(b, sizeof b, "%.4g", is_finite_value(x) ? x : 0.0);
+            o += (n ? "," : "") + std::string(b);
+            n++;
+            c = *e == ',' ? e + 1 : e;
+        }
+        o += "],\"mk\":[";
+        for (size_t i = 9, k = 0; i + 2 < f.size() + 0 && k < 64; i += 3, k++)
+            o += std::string(k ? "," : "") + "[" + jn(f[i], 9) + ",\"" + json_escape(f[i + 1].substr(0, 16)) + "\",\"" +
+                 json_escape(f[i + 2].substr(0, 32)) + "\"]";
+        o += "]}";
+        report_.plot_set(r.id, std::move(o));
     }
 
     // kp::wire::MAP_POINT: id, lat, lon, label, kind, heading, altitude_m,
@@ -1239,6 +1466,7 @@ void DigitalDecoder::set_mode(Mode m, const std::string& plugin) {
         report_.clear_all();
         report_.map_clear();
         report_.table_clear();
+        report_.plot_clear();
         set_voice_state("");
         if (m == Mode::PLUGIN) report_.event("", "Decoder set to " + plugin, 0.0);
         else if (m == Mode::AUTO) report_.event("", "Decoder on, detecting the mode automatically", 0.0);
@@ -1281,9 +1509,17 @@ void DigitalDecoder::deliver_talker(const TalkerSpan& s) {
 void DigitalDecoder::push(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos,
                           const std::complex<int16_t>* mc, int mc_m) {
     if (mode() == Mode::OFF || n == 0) return;
+    // only an array plugin runs: it never sees this stream - a one-sample
+    // tick every 100 ms keeps the engine going (starts the plugin, reads its
+    // replies, follows the RF) without copying 2.4 MHz of samples
+    if (array_only_.load(std::memory_order_relaxed) && rate_hz > 0) {
+        if (pos != NO_POS && tick_pos_ != NO_POS && pos >= tick_pos_ && static_cast<double>(pos - tick_pos_) < 0.1 * rate_hz) return;
+        tick_pos_ = pos;
+        n = 1;
+    }
     {
         std::lock_guard<std::mutex> lk(q_mu_);
-        queue_.push_back({std::vector<std::complex<float>>(x, x + n), rate_hz, rf_hz, pos, {}, 0});
+        queue_.push_back({std::vector<std::complex<float>>(x, x + n), rate_hz, rf_hz, pos, {}, 0, 0, n});
         if (mc && mc_m >= 2) {
             queue_.back().mc.assign(mc, mc + n * static_cast<size_t>(mc_m));
             queue_.back().m = mc_m;
@@ -1291,12 +1527,74 @@ void DigitalDecoder::push(const std::complex<float>* x, size_t n, float rate_hz,
         queued_samples_ += n;
         // decoder fell behind (CPU starved): drop the oldest data
         while (queued_samples_ > static_cast<size_t>(rate_hz) * QUEUE_MAX_SECONDS && queue_.size() > 1) {
-            queued_samples_ -= queue_.front().x.size();
+            queued_samples_ -= queue_.front().ns;
             queue_.pop_front();
             dropped_++;
         }
     }
     q_cv_.notify_one();
+}
+
+void DigitalDecoder::set_array_wanted(bool on, double burst_s, double period_s, bool only) {
+    arr_burst_.store(std::max(0.01, burst_s), std::memory_order_relaxed);
+    arr_period_.store(std::max(burst_s, period_s), std::memory_order_relaxed);
+    want_array_.store(on, std::memory_order_relaxed);
+    array_only_.store(only, std::memory_order_relaxed);
+}
+
+void DigitalDecoder::push_array(const std::complex<float>* const* ch, int m, size_t n, float rate_hz, double rf_hz,
+                                uint64_t pos) {
+    if (mode() == Mode::OFF || n == 0 || m < 1 || m > 8 || !wants_array() || !(rate_hz > 0)) return;
+    // only the plugin's bursts (stream time): a block whose first sample is in one
+    const double burst = arr_burst_.load(std::memory_order_relaxed), period = arr_period_.load(std::memory_order_relaxed);
+    if (burst < period && std::fmod(static_cast<double>(pos) / rate_hz, period) >= burst) return;
+    Block b;
+    b.am = m;
+    b.ns = n;
+    b.rate = rate_hz;
+    b.rf = rf_hz;
+    b.pos = pos;
+    b.x.resize(static_cast<size_t>(m) * n);
+    for (int k = 0; k < m; k++) std::copy_n(ch[k], n, b.x.data() + static_cast<size_t>(k) * n);
+    {
+        std::lock_guard<std::mutex> lk(q_mu_);
+        queue_.push_back(std::move(b));
+        queued_samples_ += n;
+        while (queued_samples_ > static_cast<size_t>(rate_hz) * QUEUE_MAX_SECONDS && queue_.size() > 1) {
+            queued_samples_ -= queue_.front().ns;
+            queue_.pop_front();
+            dropped_++;
+        }
+    }
+    q_cv_.notify_one();
+}
+
+void DigitalDecoder::set_tune_handler(TuneHandler h) {
+    std::lock_guard<std::mutex> lk(talker_mu_);
+    tune_handler_ = std::move(h);
+}
+
+std::string DigitalDecoder::deliver_tune(double rf_hz) {
+    TuneHandler h;
+    {
+        std::lock_guard<std::mutex> lk(talker_mu_);
+        h = tune_handler_;
+    }
+    return h ? h(rf_hz) : std::string("this receiver can't retune for plugins");
+}
+
+void DigitalDecoder::set_spatial_handler(SpatialHandler h) {
+    std::lock_guard<std::mutex> lk(talker_mu_);
+    spatial_handler_ = std::move(h);
+}
+
+void DigitalDecoder::deliver_spatial(const SpatialReport& s) {
+    SpatialHandler h;
+    {
+        std::lock_guard<std::mutex> lk(talker_mu_);
+        h = spatial_handler_;
+    }
+    if (h) h(s);
 }
 
 void DigitalDecoder::process(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos,
@@ -1320,15 +1618,17 @@ void DigitalDecoder::run() {
             if (!queue_.empty()) {
                 b = std::move(queue_.front());
                 queue_.pop_front();
-                queued_samples_ -= b.x.size();
+                queued_samples_ -= b.ns;
                 have = true;
             }
         }
         if (reset_pending_.exchange(false)) engine_->reset_all();
         engine_->configure(mode(), options(), plugin_id());
         want_mc_.store(mode() != Mode::OFF && engine_->multichannel(), std::memory_order_relaxed);
-        if (have && mode() != Mode::OFF)
-            engine_->process(b.x.data(), b.x.size(), b.rate, b.rf, b.pos, b.m ? b.mc.data() : nullptr, b.m);
+        if (have && mode() != Mode::OFF) {
+            if (b.am > 0) engine_->process_array(b.x.data(), b.am, b.ns, b.rate, b.rf, b.pos);
+            else engine_->process(b.x.data(), b.x.size(), b.rate, b.rf, b.pos, b.m ? b.mc.data() : nullptr, b.m);
+        }
     }
 }
 
@@ -1396,7 +1696,7 @@ std::string DigitalDecoder::status_json(uint64_t events_after, size_t max_events
     o << "}}";
     // always when asked ({} = none): pages keep the last tables between pushes without them
     if (tables) {
-        o << ",\"tables\":" << report_.tables_json();
+        o << ",\"tables\":" << report_.tables_json() << ",\"plots\":" << report_.plots_json();
     }
     o << ",\"info\":" << report_.info_json() << ",\"events\":" << report_.events_json(events_after, max_events)
       << ",\"seq\":" << report_.last_seq() << "}";

@@ -155,6 +155,36 @@ body.sb-resizing {cursor:col-resize;user-select:none}
 .dig-table tr.onmap td:first-child {color:#4fc3f7}
 .dig-table tr.sel td {background:#1a4a7a}
 .dig-table .cap {color:#7cb3f0;font-size:11px;padding:3px 7px}
+.dig-plots {display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 4px 0}
+.dig-plot {flex:1 1 320px;min-width:240px;border:1px solid #0f3460;border-radius:3px;background:#10101e;padding:3px 5px}
+.dig-plot .cap {color:#7cb3f0;font-size:11px;display:flex;gap:6px;align-items:baseline}
+.dig-plot .cap .age {color:#8296b4;margin-left:auto}
+.dig-plot canvas {display:block;width:100%;height:120px;cursor:pointer;touch-action:none}
+.dig-det-tog {display:inline-block;width:13px;margin-right:3px;color:#7cb3f0;cursor:pointer;user-select:none}
+/* two-line dropdowns (the decoder lists): "Name (details)" -> the name, the details on a smaller line */
+.dd-btn {position:relative;display:flex;flex-direction:column;align-items:flex-start;min-width:0;text-align:left;background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;border-radius:3px;padding:3px 20px 3px 6px;font-size:12px;line-height:1.25;cursor:pointer;font-family:inherit}
+.dd-btn:hover:not(:disabled) {border-color:#1f5a99}
+.dd-btn:focus-visible {outline:1px solid #4fc3f7;outline-offset:0}
+.dd-btn:disabled {opacity:.55;cursor:default}
+.dd-btn .dd-arrow {position:absolute;right:6px;top:50%;transform:translateY(-50%);color:#7cb3f0;font-size:10px}
+.dd-n {white-space:normal;overflow-wrap:anywhere}
+.dd-d {display:block;font-size:10.5px;color:#8fa3bf;white-space:normal;overflow-wrap:anywhere}
+.dd-pop {position:fixed;z-index:10050;background:#10101e;border:1px solid #1f5a99;border-radius:3px;box-shadow:0 6px 18px rgba(0,0,0,.55);overflow:auto;padding:2px 0;font-size:12px;color:#e0e0e0;scrollbar-color:#2a3858 #141428;scrollbar-width:thin}
+.dd-grp {padding:4px 8px 2px;color:#7cb3f0;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
+.dd-it {padding:4px 10px 4px 12px;cursor:pointer;line-height:1.25;border-left:2px solid transparent}
+.dd-it.cur {border-left-color:#4fc3f7}
+.dd-it.hl {background:#1a4a7a}
+.dig-det-tog:hover {color:#fff}
+.dig-table-wrap {container-type:inline-size}
+.dig-table tr.dig-det > td {background:#0c0c18;padding:3px 7px 6px 26px;white-space:normal}
+/* the details stay in the visible part of a table wider than the panel */
+.dig-det-box {position:sticky;left:26px;width:calc(100cqw - 48px);max-width:100%}
+.dig-table tr.dig-det:hover > td {background:#0c0c18}
+.dig-table tr.dig-det table {border-collapse:collapse;font-size:11px}
+.dig-table tr.dig-det th {position:static;background:none;color:#8fa3bf;cursor:default;padding:1px 10px 1px 0;border:none;vertical-align:top;white-space:nowrap;font-weight:normal}
+.dig-table tr.dig-det td td {border:none;padding:1px 0;white-space:normal;color:#e0e6ef;font-family:monospace}
+.dig-table tr.talker {cursor:pointer}
+.dig-table tr.talker td:first-child {color:#ffcc80}
 .dig-table-wrap > .cap {color:#7cb3f0;font-size:11px;padding:3px 7px;position:sticky;left:0}
 .dig-inc {display:flex;align-items:center;gap:5px;flex-wrap:wrap;width:100%}
 .dig-inc input {background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:2px 4px;border-radius:3px;font-size:12px}
@@ -488,6 +518,12 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-df-tl tr.sel {background:#2a4a7a}
 .map-df-tl .air {color:#ff5a5a}
 .map-df-tl .dim {color:#8296b4}
+.map-df-tl .ref {color:#ffd54f;font-size:10px;margin-left:3px}
+.map-df-sfn {margin-top:4px;border-top:1px solid #2a4a7a;padding-top:3px}
+.map-df-sfn .sh {display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.map-df-sfn .sh label {display:flex;align-items:center;gap:3px;margin-left:auto}
+.map-df-sfn .w {color:#ffcc80}
+.map-df-sfn canvas {display:block;width:100%;height:84px;cursor:pointer;background:#0c1426;border:1px solid #22365a;border-radius:3px;margin-top:3px;touch-action:none}
 .map-status {position:absolute;left:6px;bottom:6px;max-width:70%;background:rgba(22,33,62,.85);color:#b8cbe6;font-size:11px;padding:3px 7px;border-radius:3px;z-index:2;pointer-events:none}
 .map-status:empty {display:none}
 .map-offline {position:absolute;left:50%;top:40px;transform:translateX(-50%);max-width:85%;background:rgba(120,70,0,.9);color:#ffe0b2;font-size:12px;padding:5px 10px;border-radius:4px;z-index:2;pointer-events:none;text-align:center}
@@ -1765,6 +1801,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <div id="info-dec-top"></div>
             <!-- a plugin's live table (kp::Host::table_*, e.g. ADS-B aircraft) -->
             <div class="dig-table-wrap" id="info-dec-table" style="display:none"></div>
+            <!-- plugins' plots (kp::Host::plot, e.g. the SFN delay profile), one per VFO -->
+            <div class="dig-plots" id="info-dec-plots" style="display:none"></div>
             <div class="info-dec-cols" id="info-dec-cols">
               <div class="info-col info-dec-facts">
                 <div class="dig-status" id="info-dec-status" style="display:none"></div>
@@ -1851,13 +1889,19 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <div class="map-df-h">
               <button type="button" class="map-btn" id="map-df-tog" onclick="mapSet('rdfOpen', !mapState.rdfOpen)" title="Direction finding on the map: DoA lobes and, while driving, a heat map of where the transmitter is">📡 DF</button>
               <select id="map-df-vfo" onchange="mapSet('rdfVfo', this.value)" title="Which VFO's DoA to show"></select>
-              <select id="map-df-tid" onchange="mapSet('rdfTid', this.value)" style="display:none" title="Which radio / aircraft / ship: a digital decoder that names who transmits (P25 / DMR / NXDN unit ID, D-STAR callsign, ADS-B aircraft, AIS ship) splits the VFO's signal - each one's DoA comes only from its own transmissions / packets"></select>
+              <select id="map-df-tid" onchange="mapSet('rdfTid', this.value)" style="display:none" title="Which radio / aircraft / ship / SFN transmitter: a digital decoder that names who transmits (P25 / DMR / NXDN unit ID, D-STAR callsign, ADS-B aircraft, AIS ship) or the Digital TV decoder with Path separation on (every path a TV signal arrives on - reflections, other transmitters of a single frequency network - told apart by delay) or the LTE / 5G NR Cell Decoder (the cells on one carrier, told apart by their cell ID) splits the VFO's signal - each one's DoA comes only from its own transmissions / packets / delay / reference signals"></select>
               <button type="button" class="map-btn" id="map-df-lobe" onclick="mapSet('rdfLobe', !mapState.rdfLobe)" title="The live DoA lobes around the station">Lobe</button>
               <button type="button" class="map-btn" id="map-df-lines" onclick="mapSet('rdfLines', !mapState.rdfLines)" title="Bearing lines: from each lobe's peak to the edge of the map (one radio / aircraft: also its earlier bearings), and the bearings taken while driving">Lines</button>
               <button type="button" class="map-btn" id="map-df-heat" onclick="mapSet('rdfHeat', !mapState.rdfHeat)" title="Where the transmitter probably is (one VFO at a time)">Heat</button>
             </div>
             <div class="map-df-body">
               <div id="map-df-txt"></div>
+              <!-- the selected VFO's plugin plot with talker markers (Digital TV with path separation: its delay profile; cells) -->
+              <div class="map-df-sfn" id="map-df-sfn" style="display:none">
+                <div class="sh"><span id="map-df-sfn-txt"></span>
+                </div>
+                <canvas id="map-df-sfn-cv" title="Delay profile: how strongly each delay is heard, counted from the main (strongest) path. Each marked peak is a path the signal arrives on - click one to show its DoA alone, again for the whole signal" onpointerdown="plotDown(event)" onpointerup="plotUp(event)" onpointercancel="plotPress = null"></canvas>
+              </div>
               <div class="map-df-tl" id="map-df-tl" onpointerdown="rdfTlDown(event)" onpointerup="rdfTlUp(event)" onpointercancel="rdfTlPress = null"></div>
               <div class="map-df-row">
                 <label title="Collect bearings for the heat map while driving (needs GPS: Station Information)"><input type="checkbox" id="map-df-on" onchange="send('RDF:' + (this.checked ? 1 : 0))"> Collect</label>
@@ -3716,7 +3760,8 @@ function findNearestBw(mhz) {
   return idx;
 }
 
-// A locked VFO (its decoder has a fixed frequency - ADS-B, see vfoLocked):
+// A locked VFO (its decoder has a fixed frequency - ADS-B - or takes its
+// tuner's whole band - Cell / Digital TV; see vfoLocked):
 // one solid line at its centre with a label, nothing to grab. Used by the
 // spectrum, the waterfall and the independent-mode panes.
 function drawLockedVfoLine(ctx, x, h, d, label = true) {
@@ -8780,6 +8825,9 @@ function addTouchHandlers(el, down, move, up) {
   function digPlugin(id) { return digPlugins.find(p => p.id === id) || null; }
   function digModePlugin(mode) { return (mode && mode.startsWith('PLUGIN:')) ? mode.slice(7) : ''; }
   function digName(id) { if (id === 'incidents') return 'Incidents'; const p = digPlugin(id); return p ? p.name : (id || ''); }
+  // a name without its "(details)" - tab labels and state lines; the lists
+  // show the details on a second line, tooltips the whole name
+  function digShort(name) { return ddSplit(name)[0]; }
   function digModeLabel(mode) {
     if (!mode || mode === 'OFF') return 'Off';
     if (mode === 'AUTO') return 'Auto detect';
@@ -8844,6 +8892,7 @@ function addTouchHandlers(el, down, move, up) {
   // clicked column (per table, remembered); a row that is also a map point
   // opens / centres it on the 🗺 Map
   let digTableGrown = false;
+  const digDetOpen = new Set();   // rows whose details (kp::Host::table_detail) are open
   const digTableSort = (() => { try { return JSON.parse(localStorage.getItem('kraken_dig_table_sort') || '{}'); } catch (e) { return {}; } })();
   function digTableSortBy(p, c) {
     const s = digTableSort[p] || {c: -1, d: 1};
@@ -8866,11 +8915,19 @@ function addTouchHandlers(el, down, move, up) {
     });
     const head = cols.map((c, i) => `<th onclick="digTableSortBy('${digEsc(name)}', ${i})" title="Sort">${digEsc(c)}${s.c === i ? (s.d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('');
     const body = rows.map(r => {
-      const cls = (mapPts.has(r.k) ? 'onmap' : '') + (r.k === mapSel ? ' sel' : '');
+      const tk = mapPts.has(r.k) ? null : digRowTalker(r.k);
+      const cls = (mapPts.has(r.k) ? 'onmap' : tk ? 'talker' : '') +
+                  (r.k === mapSel || (tk && rdfTidSel() === rdfGk(tk.vfo, tk.tid)) ? ' sel' : '');
+      // a row with details (kp::Host::table_detail): a ▸ toggle in front, the
+      // details in a row of their own under it while open
+      const open = r.det && digDetOpen.has(r.k);
+      const tog = r.det ? `<span class="dig-det-tog" data-k="${digEsc(r.k)}" onclick="digDetToggle(event, this)" title="${open ? 'Hide' : 'Show'} the details">${open ? '▾' : '▸'}</span>` : '';
       const cells = cols.map((c, i) => i === 0 && r.vfo !== undefined
-        ? `<td><span class="dig-vfo-dot" style="background:${getDecimatorColor(r.vfo)}"></span>${digEsc(r.cells[0] ?? '')}</td>`
-        : `<td>${digEsc(i === cols.length - 1 ? r.age + ' s' : (r.cells[i] ?? ''))}</td>`).join('');
-      return `<tr class="${cls}" data-k="${digEsc(r.k)}" onclick="digTableRowClick(this)"${cls.includes('onmap') ? ' title="Show on the map"' : ''}>${cells}</tr>`;
+        ? `<td>${tog}<span class="dig-vfo-dot" style="background:${getDecimatorColor(r.vfo)}"></span>${digEsc(r.cells[0] ?? '')}</td>`
+        : `<td>${i === 0 ? tog : ''}${digEsc(i === cols.length - 1 ? r.age + ' s' : (r.cells[i] ?? ''))}</td>`).join('');
+      const det = open ? `<tr class="dig-det"><td colspan="${cols.length}"><div class="dig-det-box"><table>${r.det.map(([k, v]) =>
+        `<tr><th>${digEsc(k)}</th><td>${digEsc(v)}</td></tr>`).join('')}</table></div></td></tr>` : '';
+      return `<tr class="${cls}" data-k="${digEsc(r.k)}" onclick="digTableRowClick(this)"${cls.includes('onmap') ? ' title="Show on the map"' : tk ? ' title="Show its own DoA on the map (📡 DF panel) - again for the whole signal"' : ''}>${cells}</tr>${det}`;
     }).join('');
     return `<div class="cap">${digEsc(caption)} · ${rows.length}</div>` +
            `<table class="dig-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
@@ -8885,7 +8942,8 @@ function addTouchHandlers(el, down, move, up) {
       if (!t || !((t.cols || []).length || (t.rows || []).length)) continue;
       const m = merged[tab] || (merged[tab] = {cols: t.cols || [], rows: []});
       const mhz = d ? ((vfoCenterMhz(d) + d.freq_offset_hz / 1e6).toFixed(4)) : '';
-      for (const r of t.rows || []) m.rows.push({k: id + '|' + tab + '|' + r[0], age: r[1], vfo: id, cells: ['D' + id, mhz].concat(r.slice(2))});
+      for (const r of t.rows || [])
+        m.rows.push({k: id + '|' + tab + '|' + r[0], age: r[1], vfo: id, cells: ['D' + id, mhz].concat(r.slice(2)), det: (t.det && t.det[r[0]]) || null});
     }
     for (const [name, m] of Object.entries(merged))
       html += digTableHtml(name + '#v', digName(name), ['VFO', 'MHz'].concat(m.cols), m.rows);
@@ -8896,9 +8954,28 @@ function addTouchHandlers(el, down, move, up) {
                            inc.map(r => ({k: r[3] + '|incidents|' + r[0], age: r[1], vfo: r[3], cells: r.slice(4)})));
     return html;
   }
+  // open row details (row keys "vfo|plugin|key"); this page only
+  function digDetToggle(ev, el) {
+    ev.stopPropagation();
+    const k = el.dataset.k;
+    if (digDetOpen.has(k)) digDetOpen.delete(k);
+    else digDetOpen.add(k);
+    infoRenderDecoder(true);
+  }
+  // a table row whose key is a talker of that VFO (SFN-n): {vfo, tid}
+  function digRowTalker(k) {
+    const f = String(k).split('|');
+    if (f.length < 3) return null;
+    const vfo = +f[0], tid = f.slice(2).join('|');
+    return ((rdfStatus && rdfStatus.talkers) || []).some(t => t.vfo === vfo && t.tid === tid) ? {vfo, tid} : null;
+  }
   function digTableRowClick(tr) {
     const k = tr.dataset.k, p = mapPts.get(k);
-    if (!p) return;
+    if (!p) {
+      const tk = digRowTalker(k);
+      if (tk) talkerPick(tk.vfo, tk.tid);
+      return;
+    }
     if (!mapState.on) mapToggle(true);
     else rpShow('map');
     mapSel = k;
@@ -8910,8 +8987,8 @@ function addTouchHandlers(el, down, move, up) {
   // 1090 MHz): picking it tunes the VFO there (digApplyFixedTune); the VFO is
   // then "locked" - drawn as a single line at its centre, not draggable, its
   // frequency / bandwidth / tuner fields disabled. kp::Info::lock_vfo
-  // (ism, the whole 2.4 MHz): the same lock on the tuner's centre, the
-  // tuner left where it is
+  // (ism, cells, dtv - the whole 2.4 MHz): the same lock on the tuner's
+  // centre, the tuner left where it is (the VFO moves with the receiver)
   function digFixedPlugin(mode) {
     const p = digPlugin(digModePlugin(mode));
     return p && (p.fixed_freq_hz > 0 || p.lock_vfo) ? p : null;
@@ -8921,7 +8998,7 @@ function addTouchHandlers(el, down, move, up) {
     const p = digFixedPlugin(mode), d = digDec(id);
     if (!p || !d) return;
     const mhz = p.fixed_freq_hz / 1e6, need = (p.min_vfo_rate || 0) / 1e6;
-    // the narrowest bandwidth option the decoder can use (ADS-B: 2.4 MHz)
+    // the narrowest bandwidth option the decoder can use (ADS-B, cells: 2.4 MHz)
     let bi = 0;
     bwo.forEach((b, i) => { if (b.bandwidth >= need - 1e-9 && b.bandwidth < bwo[bi].bandwidth) bi = i; });
     if (d.bandwidth_index !== bi) setDecimatorBandwidthFromUI(id, bi);
@@ -8976,8 +9053,150 @@ function addTouchHandlers(el, down, move, up) {
     if (!sel) return;
     const html = digModeOptions(cur);
     if (sel.dataset.html !== html) { sel.dataset.html = html; sel.innerHTML = html; }
-    if (document.activeElement !== sel) sel.value = cur;
+    if (document.activeElement !== sel && ddOpenSel !== sel) sel.value = cur;
+    ddEnhance(sel);
   }
+
+  // --- Two-line dropdowns (the decoder lists) ---
+  // A native <select> draws every option on one line, so a long decoder
+  // name (the old "SFN Separation (DVB-T/T2, ISDB-T, ATSC 1.0/3.0, DTMB, DAB)") ran
+  // far past the VFO card. The <select> stays as the model - hidden, it
+  // keeps its value, options and onchange - and a button + pop-up list show
+  // it: an option "Name (details)" as the name with the details on a second,
+  // smaller line, in the button and in the list. ddEnhance(sel) once (again
+  // is a no-op), ddSync(sel) after setting sel.value from code.
+  // var: digFillSelect may run before this part of the script is evaluated
+  var ddOpenSel = null, ddPop = null, ddHl = -1;
+  function ddSplit(text) {
+    const m = /^(.+?)\s*\((.+)\)\s*$/.exec(text || '');
+    return m ? [m[1], m[2]] : [text || '', ''];
+  }
+  function ddLabelHtml(text) {
+    const [n, d] = ddSplit(text);
+    return `<span class="dd-n">${digEsc(n)}</span>` + (d ? `<span class="dd-d">${digEsc(d)}</span>` : '');
+  }
+  function ddEnhance(sel) {
+    if (!sel) return;
+    let b = sel.__dd;
+    if (!b || !b.isConnected || b.previousElementSibling !== sel) {
+      b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'dd-btn';
+      b.setAttribute('aria-haspopup', 'listbox');
+      b.style.flex = sel.style.flex || '';
+      b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); ddOpenSel === sel ? ddClose() : ddOpen(sel); });
+      b.addEventListener('keydown', e => {
+        if (ddOpenSel !== sel && ['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) { e.preventDefault(); ddOpen(sel); }
+      });
+      sel.style.display = 'none';
+      sel.after(b);
+      sel.__dd = b;
+    }
+    ddSync(sel);
+  }
+  function ddSync(sel) {
+    const b = sel && sel.__dd;
+    if (!b) return;
+    const o = sel.options[sel.selectedIndex];
+    const html = ddLabelHtml(o ? o.textContent : '') + '<span class="dd-arrow">▾</span>';
+    if (b.dataset.html !== html) { b.dataset.html = html; b.innerHTML = html; }
+    b.title = (o && o.title) || sel.title || '';
+    b.disabled = sel.disabled;
+  }
+  function ddItems() { return ddPop ? [...ddPop.querySelectorAll('.dd-it')] : []; }
+  function ddSetHl(i) {
+    const it = ddItems();
+    if (!it.length) return;
+    ddHl = Math.max(0, Math.min(it.length - 1, i));
+    it.forEach((x, k) => x.classList.toggle('hl', k === ddHl));
+    it[ddHl].scrollIntoView({block: 'nearest'});
+  }
+  function ddOpen(sel) {
+    ddClose();
+    const b = sel.__dd;
+    if (!b || b.disabled) return;
+    const pop = document.createElement('div');
+    pop.className = 'dd-pop';
+    pop.setAttribute('role', 'listbox');
+    let html = '', idx = 0, cur = -1;
+    const item = o => {
+      if (o.value === sel.value) cur = idx;
+      idx++;
+      return `<div class="dd-it${o.value === sel.value ? ' cur' : ''}" role="option" data-v="${digEsc(o.value)}" title="${digEsc(o.title || '')}">${ddLabelHtml(o.textContent)}</div>`;
+    };
+    for (const c of sel.children) {
+      if (c.tagName === 'OPTGROUP') html += `<div class="dd-grp">${digEsc(c.label)}</div>` + [...c.children].map(item).join('');
+      else if (c.tagName === 'OPTION') html += item(c);
+    }
+    pop.innerHTML = html;
+    pop.addEventListener('pointerdown', e => e.stopPropagation());
+    pop.addEventListener('click', e => {
+      const it = e.target.closest('.dd-it');
+      if (it) ddPick(it.dataset.v);
+    });
+    pop.addEventListener('pointermove', e => {
+      const it = e.target.closest('.dd-it');
+      if (it) ddSetHl(ddItems().indexOf(it));
+    });
+    // in the zoomed sidebar the list is zoomed the same (its left / top too)
+    const sb = b.closest('.sidebar'), z = sb ? (parseFloat(getComputedStyle(sb).zoom) || 1) : 1;
+    pop.style.zoom = z;
+    document.body.appendChild(pop);
+    ddPop = pop;
+    ddOpenSel = sel;
+    b.setAttribute('aria-expanded', 'true');
+    const r = b.getBoundingClientRect(), m = 8, vw = window.innerWidth, vh = window.innerHeight;
+    pop.style.minWidth = (r.width / z) + 'px';
+    pop.style.maxWidth = (Math.min(460, vw - 2 * m) / z) + 'px';
+    pop.style.maxHeight = (Math.max(120, Math.max(vh - r.bottom, r.top) - 2 * m) / z) + 'px';
+    const pr = pop.getBoundingClientRect();
+    let left = r.left, top = r.bottom + 2;
+    if (left + pr.width > vw - m) left = vw - m - pr.width;
+    if (left < m) left = m;
+    if (top + pr.height > vh - m && r.top - pr.height - 2 >= m) top = r.top - pr.height - 2;   // room above: open upwards
+    pop.style.left = (left / z) + 'px';
+    pop.style.top = (top / z) + 'px';
+    ddSetHl(cur >= 0 ? cur : 0);
+    b.focus();
+  }
+  function ddClose() {
+    if (ddPop) ddPop.remove();
+    if (ddOpenSel && ddOpenSel.__dd) ddOpenSel.__dd.removeAttribute('aria-expanded');
+    ddPop = null;
+    ddOpenSel = null;
+    ddHl = -1;
+  }
+  function ddPick(v) {
+    const sel = ddOpenSel;
+    ddClose();
+    if (!sel) return;
+    if (sel.value !== v) {
+      sel.value = v;
+      ddSync(sel);
+      sel.dispatchEvent(new Event('change', {bubbles: true}));
+    }
+    if (sel.__dd && sel.__dd.isConnected) sel.__dd.focus();
+  }
+  // a press anywhere else closes the list (its own button toggles it in its click)
+  document.addEventListener('pointerdown', e => {
+    if (ddPop && !(ddOpenSel && ddOpenSel.__dd && ddOpenSel.__dd.contains(e.target))) ddClose();
+  });
+  document.addEventListener('keydown', e => {
+    if (!ddPop) return;
+    const it = ddItems();
+    if (e.key === 'ArrowDown') ddSetHl(ddHl + 1);
+    else if (e.key === 'ArrowUp') ddSetHl(ddHl - 1);
+    else if (e.key === 'Home') ddSetHl(0);
+    else if (e.key === 'End') ddSetHl(it.length - 1);
+    else if (e.key === 'Enter' || e.key === ' ') { if (it[ddHl]) ddPick(it[ddHl].dataset.v); }
+    else if (e.key === 'Escape' || e.key === 'Tab') { const s = ddOpenSel; ddClose(); if (e.key === 'Escape' && s && s.__dd) s.__dd.focus(); if (e.key === 'Tab') return; }
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+  window.addEventListener('resize', () => ddClose());
+  // a scroll moves the button away from under the list - except the list's own
+  window.addEventListener('scroll', e => { if (ddPop && !(e.target instanceof Node && ddPop.contains(e.target))) ddClose(); }, true);
 
   // state line of a VFO's decoder: [colour, text]
   function digStateOf(id) {
@@ -8986,8 +9205,8 @@ function addTouchHandlers(el, down, move, up) {
     if (mode === 'OFF') return ['#777', 'Off'];
     const bad = (st && st.plugins || []).filter(p => p.state && p.state !== 'running' && p.state !== 'starting');
     if (mode !== 'AUTO' && bad.length) return ['#ef5350', 'Decoder ' + bad[0].state];
-    if (st && st.state === 'receiving') return ['#4caf50', 'Receiving ' + (st.detected_name || digName(st.detected))];
-    return ['#ffb74d', mode === 'AUTO' ? 'Searching…' : 'No ' + digModeLabel(mode) + ' signal'];
+    if (st && st.state === 'receiving') return ['#4caf50', 'Receiving ' + digShort(st.detected_name || digName(st.detected))];
+    return ['#ffb74d', mode === 'AUTO' ? 'Searching…' : 'No ' + digShort(digModeLabel(mode)) + ' signal'];
   }
 
   function digOnPlugins(list) {
@@ -9120,8 +9339,9 @@ function addTouchHandlers(el, down, move, up) {
   // {"digital":[{id, history, mode, detected, detected_name, state, offset_hz, frames, plugins, info, events, seq}, ...]}
   function digOnMessage(list) {
     for (const st of list) {
-      // tables come at most once a second: keep the last ones in between
+      // tables (and plots) come at most once a second: keep the last ones in between
       if (st.tables === undefined && digStatus[st.id] && digStatus[st.id].mode === st.mode) st.tables = digStatus[st.id].tables;
+      if (st.plots === undefined && digStatus[st.id] && digStatus[st.id].mode === st.mode) st.plots = digStatus[st.id].plots;
       digStatus[st.id] = st;
       let ev = digEvents[st.id] || [];
       if (st.history) ev = [];
@@ -9874,7 +10094,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const sel = infoTab === 'dig:' + t ? ' sel' : '';
       const vfos = ids.length ? ' · ' + ids.map(i => 'D' + i).join(' ') : '';
       return `<button type="button" class="info-tab${sel}${ids.length ? '' : ' idle'}" onclick="infoPanelOpen('dig:${digEsc(t)}')" title="${digEsc(name)}: ${what}">` +
-             `<span style="color:${col}">&#9679;</span> ${digEsc(name)}${vfos}</button>`;
+             `<span style="color:${col}">&#9679;</span> ${digEsc(digShort(name))}${vfos}</button>`;
     }).join('');
     if (!list.length) {
       const sel = infoTab.startsWith('dig:') ? ' sel' : '';
@@ -9905,7 +10125,16 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const key = p.id + '.' + op.key;
       const v = vals[key] !== undefined ? vals[key] : op.default;
       const tip = op.help ? ` title="${digEsc(op.help)}"` : '';
-      if (op.choices && op.choices.length)
+      // exactly the choices 0 / 1: an on / off button (dtv's Path separation...)
+      const tog = op.choices && op.choices.length === 2 && op.choices.every(c => c[0] === '0' || c[0] === '1') &&
+                  op.choices[0][0] !== op.choices[1][0];
+      if (tog) {
+        const on = v === '1';
+        const cur = (op.choices.find(c => c[0] === (on ? '1' : '0')) || ['', on ? 'On' : 'Off'])[1];
+        opts += `<button type="button" class="btn sm dig-opt-tog${on ? ' primary' : ''}" data-key="${digEsc(key)}" aria-pressed="${on}"` +
+                ` title="${digEsc((op.help ? op.help + '\n\n' : '') + 'Now: ' + cur + ' - click to turn ' + (on ? 'off' : 'on'))}"` +
+                ` onclick="digSetOptFor(${id}, this.dataset.key, '${on ? '0' : '1'}')">${on ? '●' : '○'} ${digEsc(op.label || op.key)}: ${digEsc(cur.replace(/\s*\(.*\)\s*$/, ''))}</button>`;
+      } else if (op.choices && op.choices.length)
         opts += `<label${tip}>${digEsc(op.label || op.key)}: <select data-key="${digEsc(key)}" onchange="digSetOptFor(${id}, this.dataset.key, this.value)">` +
                 op.choices.map(c => `<option value="${digEsc(c[0])}"${c[0] === v ? ' selected' : ''}>${digEsc(c[1])}</option>`).join('') + '</select></label>';
       else
@@ -9976,10 +10205,22 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       (plugin && plugin.messages ? digIncidentsRow(tab) : '') +
       (help ? `<div class="dig-help" style="margin:2px 0 0 0">${digEsc(help)}</div>` : '');
     const topEl = $id('info-dec-top');
-    if (force || (topEl.dataset.html !== top && !topEl.contains(document.activeElement))) {
+    // only an input / list being edited (or an open mode list) holds the
+    // rebuild back: a clicked button keeps the focus, and an on / off option
+    // button showed its new state only after a click elsewhere. The focused
+    // button gets the focus back (the same one by position)
+    const ae = document.activeElement, inTop = ae && topEl.contains(ae);
+    const editing = inTop && (ae.tagName !== 'BUTTON' || (ddOpenSel && topEl.contains(ddOpenSel)));
+    if (force || (topEl.dataset.html !== top && !editing)) {
+      const btns = inTop ? [...topEl.querySelectorAll('button')] : [];
+      const bi = btns.indexOf(ae);
       topEl.dataset.html = top;
       topEl.innerHTML = top;
-      topEl.querySelectorAll('select.dig-mode-sel').forEach(sl => { sl.value = digModeOf(+sl.dataset.vfo); });
+      topEl.querySelectorAll('select.dig-mode-sel').forEach(sl => { sl.value = digModeOf(+sl.dataset.vfo); ddEnhance(sl); });
+      if (bi >= 0) {
+        const nb = topEl.querySelectorAll('button')[bi];
+        if (nb) nb.focus({preventScroll: true});
+      }
     }
     $id('info-dec-status').innerHTML = '';
     // tables (plugin tables of every VFO + incidents)
@@ -9997,6 +10238,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       }
     }
     if (tw.dataset.html !== th) { tw.dataset.html = th; tw.innerHTML = th; }
+    digRenderPlots(tab, ids);
     // each VFO's status + facts
     const facts = ids.map(id => digFactsHtml(id, tab)).join('');
     const ft = $id('info-dec-facts');
@@ -12305,16 +12547,20 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // kind's own - radios newest first (who talks now on top), aircraft /
   // ships nearest first (by their reported position: newest first reshuffled
   // a busy list with every packet), DME beacons and ISM devices by name (a
-  // device list that reordered on every transmission was hard to click).
+  // device list that reordered on every transmission was hard to click),
+  // a TV signal's paths by delay from the main path (Info column), mobile
+  // network cells strongest first (Info column).
   // Ties are broken by name, ID and VFO, so rows with equal values (heard in
   // the same second) never swap; empty values go last either way. Radios
   // stay above packet talkers. Returns [talker, rdfPosCheck] pairs
   const RDF_SORT_DEF = {radio: ['heard', 1], aircraft: ['dist', 1], ship: ['dist', 1], beacon: ['name', 1],
-                        device: ['name', 1], talker: ['heard', 1]};
+                        device: ['name', 1], path: ['info', 1], cell: ['info', 1], talker: ['heard', 1]};
   const RDF_SORT_KEYS = {
     vfo: t => t.vfo,
     name: t => rdfShortName(t).toLowerCase(),
-    info: t => (rdfKind(t) === 'aircraft' ? t.tid : t.label || '').toLowerCase() || null,
+    // spatial talkers (sp: [delay, power, ...]): paths by delay, cells by power (strongest first)
+    info: t => t.sp ? (t.pl === 'cells' ? -t.sp[1] : t.sp[0])
+                    : (rdfKind(t) === 'aircraft' ? t.tid : t.label || '').toLowerCase() || null,
     dist: (t, c) => c ? c.km : null,
     brg: t => rdfBearingNum(t),
     dpos: (t, c) => c && c.err !== null ? c.err : null,
@@ -12594,6 +12840,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
   // what a talker is: from the decoder that names it (packet talkers)
   function rdfKind(t) {
+    // a plugin's spatial talker: a mobile network cell (cells plugin, by
+    // its physical cell ID) or a path of a TV signal (dtv plugin with path
+    // separation, by delay: a reflection, or another SFN transmitter)
+    if (t.sp) return t.pl === 'cells' ? 'cell' : 'path';
     return !t.pk ? 'radio' : t.pl === 'ais' ? 'ship' : t.pl === 'adsb' ? 'aircraft' : t.pl === 'dme' ? 'beacon' :
       t.pl === 'ism' ? 'device' : 'talker';
   }
@@ -12608,7 +12858,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (p && p.k === 'station') return '📡 ';
     if (p && p.k === 'point') return '⚓ ';
     const k = rdfKind(t);
-    return k === 'ship' ? '⛴ ' : k === 'aircraft' ? '✈ ' : k === 'beacon' ? '📡 ' : k === 'device' ? '📟 ' : '';
+    return k === 'ship' ? '⛴ ' : k === 'aircraft' ? '✈ ' : k === 'beacon' ? '📡 ' : k === 'device' ? '📟 ' :
+      k === 'path' ? '📶 ' : k === 'cell' ? '📱 ' : '';
   }
   function rdfKinds(ts) {   // one word for a list of talkers: the common kind, else 'talker'
     const ks = new Set(ts.map(rdfKind));
@@ -12667,6 +12918,22 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
           (c.err !== null ? ` · DF error <b>${rdfSigned(c.err)}</b>` : '');
         else if (!bcn && !dev) line += '<br><span style="color:#8296b4">Tick "🗺 Plot on map" in its decoder tab to compare with its reported position</span>';
         h += (h ? '<br>' : '') + line;
+      } else if (t && t.sp) {
+        // a path of a TV signal (a reflection, or another transmitter of a
+        // single frequency network): its delay from the main (strongest)
+        // path, power, bearing; a mobile network cell: its power against the
+        // strongest cell
+        const [us, db, snr] = t.sp, cell = rdfKind(t) === 'cell', au = Math.abs(us), dg = au < 10 ? 2 : 1;
+        let line = `<b style="color:${getDecimatorColor(t.vfo)}">${cell ? '📱' : '📶'} ${digEsc(t.tid)}</b> ` +
+          (cell ? (db > -0.05 ? 'the strongest cell' : `${(-db).toFixed(1)} dB below the strongest cell`)
+                : (t.sp[3] ? 'the main (strongest) path'
+                   : `${au.toFixed(dg)} µs ${us < 0 ? 'before' : 'after'} the main path (${(au * 0.299792458).toFixed(dg)} km ${us < 0 ? 'less' : 'more'} path)`) +
+                  ` · ${db.toFixed(1)} dB`) +
+          ` · ${snr.toFixed(0)} dB above the floor · ` +
+          (t.active ? '<span class="g">heard now</span>' : `heard ${rdfAge(t.age)} ago`);
+        if (t.doa !== null) line += ` · bearing ${rdfBearingTxt(t)} (${Math.round(100 * t.conf)} %)`;
+        else line += ' · <span class="w">no bearing yet</span>';
+        h += (h ? '<br>' : '') + line + '<br>' + rdfMapLine('Heat map', getDecimatorColor(t.vfo), tsel, t);
       } else if (t) {
         let line = `<b style="color:${getDecimatorColor(t.vfo)}">${digEsc(t.tid)}</b>${t.label ? ' ' + digEsc(t.label) : ''} · ` +
           (t.active ? '<span class="g">on air</span>' : `heard ${rdfAge(t.age)} ago`) + ` · ${t.tx} transmission${t.tx === 1 ? '' : 's'}`;
@@ -12696,6 +12963,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const air = kinds === 'aircraft';
       const head = {radio: ['Radio', 'Talkgroup', 'Tx'], aircraft: ['Callsign', 'ICAO', 'Pkts'], ship: ['MMSI', 'Name', 'Pkts'],
                     beacon: ['Channel', 'Ident · MHz', 'Pairs'], device: ['Device', 'Reading', 'Tx'],
+                    path: ['Path', 'From the main path · power', 'Reports'], cell: ['Cell', 'Technology · PCI · power', 'Reports'],
                     talker: ['ID', 'Info', 'Tx']}[kinds];
       // position columns for talkers that report positions (not DME beacons / ISM devices)
       const posCols = ts.some(t => t.pk && rdfKind(t) !== 'beacon' && rdfKind(t) !== 'device');
@@ -12712,7 +12980,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         tl += `<tr class="t${k === tsel ? ' sel' : ''}" data-k="${digEsc(k)}" title="${digEsc(tip)}">` +
           `<td class="air">${t.active ? '●' : ''}</td>` + (multi ? `<td>D${t.vfo}</td>` : '') +
           (air ? `<td><b>${rdfIcon(t)}${digEsc(ap.cs)}</b></td><td class="dim">${digEsc(t.tid)}</td>`
-               : `<td><span class="clip nm" title="${digEsc(t.tid)}">${rdfIcon(t)}${digEsc(t.tid)}</span></td>` +
+               : `<td><span class="clip nm" title="${digEsc(t.tid)}">${rdfIcon(t)}${digEsc(t.tid)}</span>` +
+                 (t.sp && t.sp[3] && rdfKind(t) === 'path' ? '<span class="ref" title="The main (strongest) path: the other paths\' delays are counted from it">main</span>' : '') + '</td>' +
                  `<td class="dim"><span class="clip" title="${digEsc(t.label || '')}">${digEsc(t.label || '')}</span></td>`) +
           (posCols ? `<td class="n">${c ? (c.km < 10 ? c.km.toFixed(1) : Math.round(c.km)) + ' km' : ''}</td>` : '') +
           `<td class="n">${rdfBearingTxt(t)}</td>` + (posCols ? `<td class="n">${c && c.err !== null ? rdfSigned(c.err) : ''}</td>` : '') +
@@ -12721,9 +12990,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       tl += '</table>';
     }
     const tlb = $id('map-df-tl');
-    if ((ts.length && !mapState.rdfOpen) || tlb.dataset.html === tl) return;
-    tlb.dataset.html = tl;
-    tlb.innerHTML = tl;
+    // (the panel closed: the list stays as it was - it isn't built then)
+    if (!(ts.length && !mapState.rdfOpen) && tlb.dataset.html !== tl) { tlb.dataset.html = tl; tlb.innerHTML = tl; }
+    sfnRenderSection();
+    if (infoOpen('dec')) digRenderPlots(infoTab.slice(4), digTabVfos(infoTab.slice(4)));
   }
   // A row is picked by press + release. Not 'click': the list is rebuilt a
   // few times a second (packets, ages), and a click whose press and release
@@ -12799,6 +13069,214 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (e) { mapAutoFit = false; mapCenterOn(e.lat, e.lon); }
     else mapStatusFlash('No transmitter estimate yet');
   }
+
+  // --- Plugin plots (kp::Host::plot) + 📶 TV signal paths ---------------------
+  // A plugin may send plots - the Digital TV plugin its channel impulse
+  // response (echo profile; paths marked with path separation on) - in
+  // the VFO's digital status: plots: {<plugin>: {t, xu, yu, x0,
+  // dx, ymin, ymax, thr, y: [..], mk: [[x, label, talker]], age}} (with the
+  // tables, at most once a second: the page keeps the last). Drawn in the
+  // decoder tab (one per VFO in it) and, for the VFO picked in the 🗺 Map's 📡
+  // DF panel, in its delay-profile section. A marker naming a talker selects
+  // it (its own DoA / heat map on the map), like a row of the plugin's table.
+  // A plugin's spatial talkers (SFN-n) carry sp: [delay after the first
+  // arrival (us), power vs the strongest (dB), above the floor (dB), first 0|1].
+  // State in var (no TDZ): the digital status can come first
+  var plotPress = null;
+  var plotGeo = new Map();   // canvas id -> {vfo, xs: [{x, talker}]}
+  function digPlots(id) { const st = digStatus[id]; return (st && st.plots) || {}; }
+  // a VFO's spatial talkers: TV signal paths by delay from the main path, cells strongest first
+  function sfnTalkers(vfo) {
+    return ((rdfStatus && rdfStatus.talkers) || []).filter(t => t.vfo === vfo && t.sp)
+      .sort((a, b) => (a.pl === 'cells' ? b.sp[1] - a.sp[1] : a.sp[0] - b.sp[0]));
+  }
+  // a talker's own colour (its ID's hash, like "Every radio")
+  function talkerColor(tid) {
+    let h = 0;
+    for (const ch of String(tid)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return `hsl(${(h * 137) % 360},85%,62%)`;
+  }
+  // select a talker on the 🗺 Map's 📡 DF panel (again = the whole signal)
+  function talkerPick(vfo, tid) {
+    if (!mapState.on) mapToggle(true);
+    else if (opMode === 'coherent' && mapState.tab === 'doa') rpShow('map');
+    const k = rdfGk(vfo, tid);
+    if (rdfTidSel() === k) {
+      mapSet('rdfTid', '');
+    } else {
+      const sv = String(mapState.rdfVfo ?? 'all');
+      if (sv !== 'all' && sv !== String(vfo)) mapState.rdfVfo = String(vfo);
+      mapState.rdfOpen = true;
+      mapState.rdfLobe = true;
+      mapSet('rdfTid', k);
+    }
+    rdfRenderPanel();
+    if (infoOpen('dec')) infoRenderDecoder(true);
+  }
+  // the decoder tab: a plot per VFO of the tab that has one
+  function digRenderPlots(tab, ids) {
+    const box = $id('info-dec-plots');
+    if (!box) return;
+    const items = [];
+    for (const id of ids) {
+      const pl = digPlots(id)[tab];
+      if (pl && pl.y && pl.y.length) items.push({id, pl});
+    }
+    // markers naming talkers can be clicked (Digital TV with path separation
+    // on, cells); without, the plot only shows (the echo profile)
+    const picks = x => (x.pl.mk || []).some(m => m[2]);
+    const key = items.map(x => x.id + ':' + x.pl.t + ':' + picks(x)).join(',');
+    box.style.display = items.length ? '' : 'none';
+    if (box.dataset.key !== key) {
+      box.dataset.key = key;
+      box.innerHTML = items.map(x =>
+        `<div class="dig-plot"><div class="cap"><span class="dig-vfo-dot" style="background:${getDecimatorColor(x.id)}"></span>` +
+        `<b>D${x.id}</b> ${digEsc(x.pl.t)}<span class="age" id="dplot-age-${x.id}"></span></div>` +
+        `<canvas id="dplot-${x.id}" title="${picks(x) ? 'Click a marked peak: that path\'s own DoA on the 🗺 Map (again: the whole signal)'
+          : 'The paths the signal arrives on, by delay from the strongest (dB above the noise of the estimate). Digital TV: turn on Path separation to give every path - a reflection, or another transmitter of a single frequency network - its own DoA lobe'}" ` +
+        `onpointerdown="plotDown(event)" onpointerup="plotUp(event)" onpointercancel="plotPress = null"></canvas></div>`).join('');
+    }
+    for (const x of items) {
+      const ag = $id('dplot-age-' + x.id), at = x.pl.age > 2 ? x.pl.age + ' s ago' : '';
+      if (ag && ag.textContent !== at) ag.textContent = at;
+      plotDraw($id('dplot-' + x.id), x.id, x.pl);
+    }
+  }
+  // the DF panel section: the one selected VFO's plot with talker markers
+  function sfnSectionPlot() {
+    const ids = rdfSelIds();
+    for (const id of ids.length === 1 ? ids : []) {
+      for (const [p, pl] of Object.entries(digPlots(id)))
+        if (pl && pl.y && pl.y.length && (pl.mk || []).some(m => m[2])) return {id, p, pl};
+    }
+    return null;
+  }
+  function sfnRenderSection() {
+    const box = $id('map-df-sfn');
+    if (!box || !window.sfnReady) return;
+    const sp = sfnSectionPlot();
+    box.style.display = sp ? '' : 'none';
+    if (!sp) { plotGeo.delete('map-df-sfn-cv'); return; }
+    const n = sfnTalkers(sp.id).length, cells = sp.p === 'cells';
+    // the plugin's "Signal" fact (facts: [[key, value, age], ..])
+    const st = digStatus[sp.id], f = ((st && st.info && st.info[sp.p]) || []).find(x => x[0] === 'Signal');
+    let h = `<b style="color:${getDecimatorColor(sp.id)}">${cells ? '📱' : '📶'} D${sp.id}</b> ${n} ${cells ? 'cell' : 'path'}${n === 1 ? '' : 's'}`;
+    if (f && f[1]) h += ` · ${digEsc(f[1])}`;
+    const tx = $id('map-df-sfn-txt');
+    if (tx.innerHTML !== h) tx.innerHTML = h;
+    const cv = $id('map-df-sfn-cv');
+    const tip = cells ? 'Sync correlation: each marked peak is a cell\'s synchronisation signal, at its timing against the strongest cell - click one to show its DoA alone, again for the whole signal'
+                      : 'Delay profile: how strongly each delay is heard, counted from the main (strongest) path (dB above the noise of the estimate). Each marked peak is a path the signal arrives on - a reflection, or another transmitter of a single frequency network (one whose bearing points at a broadcast mast is likely a transmitter) - click one to show its DoA alone, again for the whole signal';
+    if (cv && cv.title !== tip) cv.title = tip;
+    plotDraw(cv, sp.id, sp.pl);
+  }
+  // one plot: the curve over x0 + i dx, the threshold, the markers (a
+  // talker's in its own colour, the selected one boxed)
+  function plotDraw(cv, vfo, pl) {
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    const W = Math.max(120, cv.clientWidth), H = cv.clientHeight || 84;
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
+      cv.width = Math.round(W * dpr);
+      cv.height = Math.round(H * dpr);
+    }
+    const c = cv.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, W, H);
+    const L = 4, R = 4, T = 14, B = 14, pw = W - L - R, ph = H - T - B;
+    const y = pl.y || [];
+    if (!y.length || !(pl.dx > 0)) {
+      c.fillStyle = '#8296b4';
+      c.font = '11px sans-serif';
+      c.fillText('Nothing to show yet', L + 4, T + ph / 2);
+      plotGeo.delete(cv.id);
+      return;
+    }
+    const x0 = pl.x0, x1 = pl.x0 + (y.length - 1) * pl.dx;
+    const lo = Number.isFinite(pl.ymin) ? pl.ymin : Math.min(...y);
+    let top = Number.isFinite(pl.ymax) ? pl.ymax : -1e9;
+    if (!Number.isFinite(pl.ymax)) for (const v of y) top = Math.max(top, v + 3);
+    const ystep = [1, 2, 5, 10, 20, 50, 100].find(v => (top - lo) / v <= 6) || 200;
+    top = lo + Math.ceil(Math.max(top - lo, ystep) / ystep) * ystep;
+    const X = v => L + (v - x0) / (x1 - x0 || 1) * pw;
+    const Y = v => T + ph * (1 - (Math.min(Math.max(v, lo), top) - lo) / (top - lo || 1));
+    // grid: x ticks in the plot's unit
+    const span = x1 - x0, steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+    const stp = steps.find(v => span / v <= 8) || 2000;
+    c.font = '9px sans-serif';
+    c.textAlign = 'center';
+    const ticks = [];
+    for (let g = Math.ceil(x0 / stp) * stp; g <= x1 + 1e-9; g += stp) ticks.push(+g.toFixed(6));
+    ticks.forEach((g, i) => {
+      const x = X(g);
+      c.strokeStyle = g === 0 ? '#3e5c8a' : '#1c2d4c';
+      c.beginPath(); c.moveTo(x, T); c.lineTo(x, T + ph); c.stroke();
+      c.fillStyle = '#6f88ad';
+      c.fillText((g > 0 ? '+' : '') + g + (i === ticks.length - 1 && pl.xu ? ' ' + pl.xu : ''), x, H - 3);
+    });
+    // the curve
+    c.beginPath();
+    c.moveTo(X(x0), Y(lo));
+    for (let i = 0; i < y.length; i++) c.lineTo(X(x0 + i * pl.dx), Y(y[i]));
+    c.lineTo(X(x1), Y(lo));
+    c.closePath();
+    c.fillStyle = 'rgba(79,195,247,0.25)';
+    c.fill();
+    c.strokeStyle = '#4fc3f7';
+    c.lineWidth = 1;
+    c.stroke();
+    // the detection threshold
+    if (Number.isFinite(pl.thr) && pl.thr > lo) {
+      c.setLineDash([3, 3]);
+      c.strokeStyle = '#ffcc80';
+      c.beginPath(); c.moveTo(L, Y(pl.thr)); c.lineTo(L + pw, Y(pl.thr)); c.stroke();
+      c.setLineDash([]);
+    }
+    c.textAlign = 'left';
+    c.fillStyle = '#6f88ad';
+    c.fillText(top + (pl.yu ? ' ' + pl.yu : ''), L + 2, T - 3);
+    // the markers (click = that talker)
+    const sel = rdfTidSel(), xs = [];
+    c.textAlign = 'center';
+    c.font = 'bold 10px sans-serif';
+    (pl.mk || []).forEach((m, i) => {
+      const [mx, label, talker] = m;
+      if (!Number.isFinite(mx)) return;
+      const x = X(mx), k = talker ? rdfGk(vfo, talker) : null, on = k && k === sel;
+      const t = talker ? sfnTalkers(vfo).find(q => q.tid === talker) : null;
+      const col = talker ? talkerColor(talker) : '#ffcc80';
+      if (talker) xs.push({x, talker});
+      // the curve's height at the marker
+      const yi = Math.round((mx - x0) / pl.dx), yv = yi >= 0 && yi < y.length ? y[yi] : lo;
+      c.strokeStyle = col;
+      c.lineWidth = on ? 3 : 1.5;
+      c.globalAlpha = !t || t.active ? 1 : 0.5;
+      c.beginPath(); c.moveTo(x, T + ph); c.lineTo(x, Y(yv)); c.stroke();
+      const ly = i % 2 ? T + 9 : T - 3;   // alternate rows: close peaks don't overprint
+      const w = c.measureText(label).width + 6;
+      if (on) { c.fillStyle = '#fff'; c.fillRect(x - w / 2, ly - 9, w, 11); }
+      c.fillStyle = on ? '#000' : col;
+      c.fillText(label, x, ly);
+      c.globalAlpha = 1;
+    });
+    plotGeo.set(cv.id, {vfo, xs});
+  }
+  // a marker is picked by press + release (the plot is redrawn often)
+  function plotDown(ev) {
+    plotPress = ev.button === 0 ? {id: ev.currentTarget.id, x: ev.clientX, y: ev.clientY} : null;
+  }
+  function plotUp(ev) {
+    const p = plotPress;
+    plotPress = null;
+    const g = p && plotGeo.get(p.id);
+    if (!g || p.id !== ev.currentTarget.id || Math.hypot(ev.clientX - p.x, ev.clientY - p.y) > 8) return;
+    const r = ev.currentTarget.getBoundingClientRect(), x = ev.clientX - r.left;
+    let best = null;
+    for (const m of g.xs)
+      if (Math.abs(m.x - x) <= 10 && (!best || Math.abs(m.x - x) < Math.abs(best.x - x))) best = m;
+    if (best) talkerPick(g.vfo, best.talker);
+  }
+  window.sfnReady = true;
 
   function mapRenderStatus() {
     const st = $id('map-status');
@@ -12992,7 +13470,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const mhz = hz / 1e6;
     const d = decimatorInfo.find(z => z.id === activeDecimatorId);
     if (!d) { mapStatusFlash('No VFO to tune - add one in the sidebar'); return; }
-    // locked on its tuner's centre (lock_vfo, ism): the tuner moves
+    // locked on its tuner's centre (lock_vfo: ism, cells, dtv): the tuner moves
     const centreOnly = vfoLocked(d);
     if (centreOnly && digFixedPlugin(d.digital_mode).fixed_freq_hz > 0) {
       mapStatusFlash(`D${d.id} is locked to its decoder's frequency - select another VFO`);
