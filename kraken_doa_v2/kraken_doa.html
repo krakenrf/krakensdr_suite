@@ -12557,7 +12557,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // stay above packet talkers. Returns [talker, rdfPosCheck] pairs
   const RDF_SORT_DEF = {radio: ['heard', 1], aircraft: ['dist', 1], ship: ['dist', 1], beacon: ['name', 1],
                         device: ['name', 1], path: ['info', 1], cell: ['info', 1], station: ['dist', 1], sonde: ['dist', 1],
-                        site: ['name', 1], navaid: ['name', 1], radar: ['name', 1], interrogator: ['name', 1], talker: ['heard', 1]};
+                        site: ['name', 1], navaid: ['name', 1], radar: ['name', 1], interrogator: ['name', 1],
+                        gs: ['name', 1], flarm: ['dist', 1], talker: ['heard', 1]};
   const RDF_SORT_KEYS = {
     vfo: t => t.vfo,
     name: t => rdfShortName(t).toLowerCase(),
@@ -12847,18 +12848,23 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // unknown plugin's packets show as plain 'talker's
   const RDF_PK_KIND = {ais: 'ship', adsb: 'aircraft', dme: 'beacon', ism: 'device', aprs: 'station',
                        radiosonde: 'sonde', tetra: 'site', mpt1327: 'site', ils: 'navaid', radar: 'radar',
-                       ssr1030: 'interrogator'};
+                       ssr1030: 'interrogator', uat: 'aircraft', flarm: 'flarm'};
   // kinds that report where they are (their decoder's map points, same id):
   // Dist / Δ pos columns, the position check
-  const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde']);
+  const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde', 'gs', 'flarm']);
   // what one of their packets is called
   const RDF_PK_UNIT = {beacon: 'pulse pair', device: 'transmission', site: 'slot', sonde: 'frame', navaid: 'block', radar: 'pulse',
-                       interrogator: 'interrogation'};
+                       interrogator: 'interrogation', gs: 'frame'};
+  // how a kind is named in "Every ...", counts and the position check
+  const RDF_KIND_WORD = {flarm: 'aircraft', gs: 'ground station'};
   function rdfKind(t) {
     // a plugin's spatial talker: a mobile network cell (cells plugin, by
     // its physical cell ID) or a path of a TV signal (dtv plugin with path
     // separation, by delay: a reflection, or another SFN transmitter)
     if (t.sp) return t.pl === 'cells' ? 'cell' : 'path';
+    // UAT ground stations (their uplinks and the TIS-B / ADS-R traffic they
+    // rebroadcast) beside the aircraft
+    if (t.pk && t.pl === 'uat' && /^GS /.test(t.tid)) return 'gs';
     return !t.pk ? 'radio' : RDF_PK_KIND[t.pl] || 'talker';
   }
   // the talker's map point (its decoder's "Plot on map"), or null
@@ -12874,14 +12880,19 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const k = rdfKind(t);
     // 1030 MHz interrogators: ground SSRs / fixed ones 🛰, an aircraft's ACAS (TCAS) ✈
     if (k === 'interrogator') return /^ACAS/.test(t.tid) ? '✈ ' : '🛰 ';
+    // FLARM / OGN: by the aircraft type an OGN tracker sends (FLARM: ✈)
+    if (k === 'flarm') {
+      const l = t.label || '';
+      return /paraglider|hang glider|parachute/.test(l) ? '🪂 ' : /helicopter/.test(l) ? '🚁 ' : /balloon|airship/.test(l) ? '🎈 ' : '✈ ';
+    }
     return {ship: '⛴ ', aircraft: '✈ ', beacon: '📡 ', device: '📟 ', path: '📶 ', cell: '📱 ', station: '📻 ',
-            sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 '}[k] || '';
+            sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 ', gs: '🗼 '}[k] || '';
   }
   function rdfKinds(ts) {   // one word for a list of talkers: the common kind, else 'talker'
     const ks = new Set(ts.map(rdfKind));
     return ks.size === 1 ? [...ks][0] : 'talker';
   }
-  function rdfPlural(k) { return k === 'aircraft' ? 'aircraft' : k + 's'; }
+  function rdfPlural(k) { k = RDF_KIND_WORD[k] || k; return k === 'aircraft' ? 'aircraft' : k + 's'; }
   function rdfSigned(x) { const r = Math.round(x * 10) / 10; return (r >= 0 ? '+' : '−') + Math.abs(r).toFixed(1) + '°'; }
   function rdfRenderPanel() {
     const box = $id('map-df');
@@ -12900,7 +12911,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const tidSel = $id('map-df-tid');
     tidSel.style.display = ts.length ? '' : 'none';
     const anyPk = ts.some(t => t.pk), kinds = rdfKinds(ts);
-    const topts = `<option value="">Whole signal</option><option value="*">Every ${kinds === 'aircraft' ? 'aircraft' : kinds} (${ts.length})</option>` +
+    const topts = `<option value="">Whole signal</option><option value="*">Every ${RDF_KIND_WORD[kinds] || kinds} (${ts.length})</option>` +
       ts.map(t => `<option value="${digEsc(rdfGk(t.vfo, t.tid))}">${multi ? 'D' + t.vfo + ' ' : ''}${digEsc(rdfTalkerName(t))}</option>`).join('');
     if (tidSel.dataset.html !== topts) { tidSel.dataset.html = topts; tidSel.innerHTML = topts; }
     if (document.activeElement !== tidSel) tidSel.value = tsel;
@@ -12967,7 +12978,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const ps = anyPk ? rdfPosSummary(ts) : null;
     if (ps) {
       const pk = rdfKinds(ts.filter(t => t.pk));
-      h += (h ? '<br>' : '') + `Position check: DF error median <b>${rdfSigned(ps.med)}</b> (half within ${rdfSigned(ps.lo)} … ${rdfSigned(ps.hi)}) over ${ps.n} ${ps.n === 1 ? pk : rdfPlural(pk)}`;
+      h += (h ? '<br>' : '') + `Position check: DF error median <b>${rdfSigned(ps.med)}</b> (half within ${rdfSigned(ps.lo)} … ${rdfSigned(ps.hi)}) over ${ps.n} ${ps.n === 1 ? RDF_KIND_WORD[pk] || pk : rdfPlural(pk)}`;
     }
     const tx = $id('map-df-txt');
     if (tx.innerHTML !== h) tx.innerHTML = h;
@@ -12984,6 +12995,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                     site: ['Site', 'Area · carrier', 'Slots'], navaid: ['Ident', 'Navaid · MHz', 'Blocks'],
                     radar: ['Radar', 'PRF · pulse · scan', 'Pulses'],
                     interrogator: ['Interrogator', 'Type · scan · PRF', 'Interr.'],
+                    gs: ['Station', 'UAT ground station · slot', 'Frames'], flarm: ['Aircraft', 'Reg · altitude · type', 'Pkts'],
                     talker: ['ID', 'Info', 'Tx']}[kinds];
       // position columns for talkers that report positions (not DME beacons / ISM devices / sites / navaids / radars / interrogators)
       const posCols = ts.some(t => t.pk && RDF_POS_KINDS.has(rdfKind(t)));

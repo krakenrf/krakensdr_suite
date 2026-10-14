@@ -370,8 +370,9 @@ Edit `include/config.hpp`:
   nxdn, mpt1327, pocsag, aprs, adsb (see *ADS-B* below), ais (see *AIS*),
   radiosonde (see *Radiosonde*), dme and ils (see *DME / TACAN* and *ILS /
   VOR / marker*), ism (see *ISM devices*), radar (see *Pulse radar*),
-  ssr1030 (see *1030 MHz interrogations*), dtv and cells (ARRAY plugins -
-  see *Digital TV* and *LTE / 5G NR Cell Decoder*)
+  ssr1030 (see *1030 MHz interrogations*), uat (see *UAT*), flarm (see
+  *FLARM / OGN*), dtv and cells (ARRAY plugins - see *Digital TV* and *LTE
+  / 5G NR Cell Decoder*)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
   tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by
   default. WS `PLUGIN_AUTO:id:0|1` -> `PluginRegistry::set_auto()` (bumps the
@@ -1688,7 +1689,7 @@ Edit `include/config.hpp`:
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm}`, 🗺 Map 📡 DF panel):**
 - RULE (ID separation, the user's 2026-10-15): every decoder whose signal
   carries a coded ID per TRANSMITTER reports it as a talker - a core part
   of every such decoder, new ones included. How + how to test:
@@ -1994,6 +1995,28 @@ Edit `include/config.hpp`:
     MHz interrogations*. UI kind `interrogator` (rdfIcon: ✈ when the id
     starts with "ACAS", else 🛰; "Interrogator / Type · scan · PRF /
     Interr.", by name, unit "interrogation")
+  - UAT (`plugins/uat`, task 4 of the batch): every ADS-B message an
+    aircraft / vehicle / beacon sends itself (address qualifier 0 / 1 / 4 /
+    5) = a packet of its address (sync .. last parity bit, the whole band,
+    avg_s 5, keep_s 10 min, its position at the packet's time when NACp >=
+    8); TIS-B / ADS-R messages are sent BY a ground station - packets of
+    "GS site N" (the TIS-B site ID), like its uplink frames (avg_s 20, keep_s
+    30 min, the station's uplinked position) - never of the aircraft they
+    describe. UI: aircraft kind ✈ like adsb's, ground stations kind `gs` 🗼
+    (`rdfKind`: pl uat + tid "GS ..."; "Station / UAT ground station · slot
+    / Frames", position columns, by name) - see *UAT*
+  - FLARM / OGN (`plugins/flarm`, task 4): every packet an aircraft sends
+    itself = a packet of its address ("FLR DD1234", "ICA C81A2B", "OGN
+    3C5A21", "RND / ANO ..."), its first sync chip .. last data chip, on its
+    channel (freq_hz = the burst's measured carrier, bw_hz 160 kHz - aircraft
+    transmitting at once on different channels of the VFO keep their own
+    bearings), avg_s 10, keep_s 1 h; an OGN packet with a relay count names
+    nobody who sent it: no talker. FLARM's payload is encrypted (unpublished
+    keys): ID + bearing only. UI kind `flarm` (✈, 🪂 paraglider / hang glider
+    / parachute, 🚁, 🎈 by the label's aircraft type; "Aircraft / Reg ·
+    altitude · type / Pkts", position columns, nearest first;
+    `RDF_KIND_WORD` names it "aircraft" in "Every ..." / counts) - see
+    *FLARM / OGN*
   - UI (kraken_doa.html): `RDF_PK_KIND` plugin -> kind (station 📻 aprs,
     sonde 🎈, site 🗼 tetra + mpt1327, navaid 🧭 ils, radar 📡 radar - list
     "Radar / PRF · pulse · scan / Pulses", by name; ship / aircraft /
@@ -3204,6 +3227,105 @@ Edit `include/config.hpp`:
   215 deg array frame), multilateration 1 s bursts (276 deg), TCAS by
   broadcasts; interrogation -> reply pairs with adsb on a 1090 MHz tuner
   (independent mode) confirmed the address encoding. CPU ~4 % of a core
+
+**UAT (`plugins/uat/`, 978 MHz, README.md there):**
+- The US's second ADS-B link + its ground stations' uplink: `sample_rate`
+  2.4 MHz, `min_vfo_rate` 2 MHz, `fixed_freq_hz` 978 MHz (like adsb),
+  manual only, talkers, map. Not used in NZ: tested on synthetic signals
+  and on dump978's sample data (real payloads) re-modulated
+- CPFSK 1.041667 Mbit/s, h 0.6: 2.304 samples per bit. Gate = 32-sample
+  block power > 2x the noise floor (lowest 1024-sample mean, smoothed); in
+  a hot stretch the discriminator (fast atan2) smoothed over 2 samples,
+  linearly interpolated at bit centres, correlated with the 36-bit sync
+  (+ = ADS-B 0xEACDDA4E2, - = uplink, its complement); peak refined to 0.1
+  sample, levels from the sync (<= 4 bit errors), Gardner timing loop (mu
+  0.03 sample per transition; +-80 ppm clocks fine)
+- RS (`rs.cpp` = radiosonde's generic GF(256) decoder; on-air byte i =
+  x^(n-1-i), a "correction" into the shortened zeros = failure): long
+  RS(48,34) with type != 0 first, then basic RS(30,18) type 0; uplink 6 x
+  RS(92,72) de-interleaved (on-air 6 i + b). poly 0x187, fcr 120, prim 1
+- `msg.cpp`: header / state vector / mode status / aux SV (dump978's field
+  positions = DO-282B's), uplink header + information frames + FIS-B APDU
+  header (product id, t_opt time), DLAC text -> records (`text_records`),
+  product names. `UAT_DUMP=1` (offline) logs every message's fields
+- Outputs: table (Address, Source, Callsign, Category, Squawk, altitudes,
+  V/S, GS, Track, Lat / Lon, distance / bearing, Air / ground, Emergency,
+  NIC / NACp, Signal, Messages; details: mode status / ground station
+  products + latest text records), map (aircraft, vehicle, point, ground
+  station kind station), events (new aircraft / TIS-B target / station,
+  callsign, first position, products, ⚠ emergencies + unusual categories),
+  raw = dump978's text format `-hex;rs=;ss=` / `+hex;...`. Options `tisb`
+  (show TIS-B / ADS-R traffic), `fisb` (text records in the event log)
+- ID separation: see *DoA per talker* (aircraft by address; TIS-B / ADS-R
+  and uplinks = the ground station "GS site N")
+- Generator `tools/uat_gen.py` (scene JSON: adsb / tisb / uplink sources or
+  `replay` of a dump978 text file; real RS, CPFSK + Gaussian BT 0.5, clock
+  ppm, carrier offset, 5-element UCA, 0.1 s pieces, cu8 / cf32);
+  `tools/scene_five.json`
+- Tests (scratch t4/): dump978 sample data (1143 real messages) re-modulated
+  -> 1143 decoded byte for byte; the generator's RS = Karn's decoder with
+  dump978's parameters on 9326 codewords; fields vs dump978's uat2text
+  (built as a reference): 439 / 439 ADS-B identical (speed +-1 kt
+  rounding), 704 / 704 uplinks, 87 / 88 text records. Sensitivity: ADS-B
+  99 % from 6 dB per-sample SNR (2.4 MHz), uplinks 91-100 % from 6-8 dB;
+  noise nothing. scene_five offline + end to end: 5 talkers (4 aircraft,
+  the ground station incl. its TIS-B) 0.0 deg off; UI headless Chromium
+  (✈ / 🗼, the station's details + METAR, DF error 0.0). CPU 2.1 % of a
+  core live (end to end)
+
+**FLARM / OGN (`plugins/flarm/`, README.md there):**
+- Glider / GA collision-avoidance radios: `sample_rate` = `min_vfo_rate`
+  2.4 MHz, `lock_vfo`, `tunes` (once, when no plan channel is in the VFO:
+  option `band` - auto from the station location -> 868.8 MHz for EU / NZ,
+  921.6 AU / S. America, 915.2 North America, 916.6 Israel; option `tune`
+  off = never), manual only, talkers, map. Channels: every plan channel
+  within +-1.05 MHz of the VFO centre (868.2, 868.4, 868.8, 869.25, 866.0,
+  920.9, the 902.2 + 0.4k grid of the US / AU hopping bands, option
+  `extra`); no RF known (offline without --rf) = a 100 kHz grid
+- Front end: 256-point FFT every 256 samples, Hann; power in +-75 kHz per
+  channel vs its gated-mean floor > `sens` (6 dB); a 2-14 ms burst, decided
+  4 frames after it ended (the strongest of overlapping bursts within 250
+  kHz), mixed down from a 2^17-sample (55 ms) ring, 49-tap 110 kHz low-pass
+  decimated to 400 kHz, fast-atan2 discriminator, summed per chip (4
+  samples); sync search for both (last 56 chips of F531FAB6 / 0AF3656C,
+  either polarity, <= 6 chip errors), timing +-1 sample tried. Bursts
+  starting together (+-2 frames) on 3+ channels spanning >= 600 kHz = one
+  broadband event, skipped (live: heimdall's calibration noise after a
+  retune hit all four EU / NZ channels at once). `FLARM_DUMP=dir`: every
+  demodulated burst's 400 kHz baseband + a log line (live diagnosis)
+- FLARM: 26 bytes, CRC-16 CCITT (init FFFF) over 31 FA B6 + 24 bytes (also
+  the inverted bits); ID bytes 0-2 LE + address type (byte 3 bits 4-5) only.
+  The encrypted 20 bytes (unpublished keys) are NOT decoded - by the
+  project's rules (no brute force / reverse engineering of undisclosed
+  encryption)
+- OGN (`ogn.cpp`, `ogn_ldpc.h` = the protocol's LDPC(208,160) parity-check
+  matrix): hard check, else normalised min-sum (0.75, 16 iterations, <= 16
+  bits changed); header parity checked; TEA (all-zero key, 8 rounds)
+  de-whitening; position / status / info decoded (info: personal strings -
+  pilot, crew, ICE, pilot ID, task - dropped); `Encrypted` = address only;
+  `Stealth` = no map point, no position in table / talker / events (the
+  bearing stays, "no-track"); relay > 0 = no talker
+- Outputs: table (Aircraft, Protocol, type, Registration / CN, altitude,
+  climb, speed, track, Lat / Lon, distance / bearing, Notes, MHz, Signal,
+  Packets; details), map (trackable OGN only), events, raw `FLARM|OGN hex
+  MHz dB`; table_keep 30 min
+- Generator `tools/flarm_gen.py` (FLARM: real header + CRC, random bytes
+  for the encrypted part; OGN: real fields, whitening, LDPC from the
+  plugin's matrix by GF(2) elimination - = the tracker's own generator
+  table; relays `same_as`; channels per packet; GFSK BT 0.5);
+  `tools/scene_six.json`
+- Tests (scratch t4/): scene_six (2 FLARM, OGN glider, no-track OGN
+  paraglider, owner-encrypted OGN, a relay; three packets at the same
+  moment on 868.2 / 868.4 / 869.25): offline 44 / 44 packets, 5 talkers
+  0.0 deg, the relay none; end to end 0.0 deg (285 / 289 packets with a
+  bearing); UI headless Chromium (kind flarm, 🪂 / ✈, Every aircraft,
+  distance + DF error, nothing of the no-track one's position).
+  Sensitivity (160 kHz channel SNR): FLARM 98 % from 9.8 dB, OGN 100 % from
+  7.8 dB (LDPC). CPU 2.9 % of a core live (end to end). Live (real array,
+  2026-10-15 09:15-09:30, a weekday morning): no FLARM / OGN; the plugin
+  retuned the receiver from 922.98 to 868.8 MHz itself (band auto: 868.8 MHz);
+  a periodic narrow-FSK device near 868.166 MHz every 16 s and the
+  calibration noise demodulated, nothing reported; 2.6 % of a core
 
 **ILS / VOR / marker (`plugins/ils/`, README.md there):**
 - 48 kHz (`min_vfo_rate` 48 kHz: the VOR subcarrier reaches +-10.4 kHz).

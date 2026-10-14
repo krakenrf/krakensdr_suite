@@ -38,6 +38,10 @@ plugins/
 ├── ssr1030/              1030 MHz interrogations (SSR / Mode S / TCAS): Mode S DPSK at 0.6
 │                         samples per chip by a sequence estimator against the receiver's
 │                         measured response; interrogators told apart by train / level / code
+├── uat/                  978 MHz UAT (US ADS-B + ground uplink): CPFSK at 2.3 samples per bit,
+│                         Reed-Solomon GF(256), FIS-B headers / DLAC text; TIS-B = the ground station's
+├── flarm/                FLARM (ID + bearing only: encrypted payload) / OGN trackers (LDPC soft
+│                         decoding, TEA de-whitening, stealth honoured) on every channel in the 2.4 MHz
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
@@ -496,7 +500,18 @@ Examples: `aprs/tools/aprs_gen.py`, `ais/tools/ais_gen.py`,
 `mpt1327/tools/mpt1327_gen.py`, `ils/tools/ils_gen.py`; a 2.4 MHz scene of
 several transmitters is too big for uca_scene.py's in-memory mixing (5
 antennas x 12 s = 2.3 GB complex128): `radar/tools/radar_gen.py` writes its
-scene at known bearings itself, in 0.1 s pieces.
+scene at known bearings itself, in 0.1 s pieces (so do
+`ssr1030/tools/ssr_gen.py`, `uat/tools/uat_gen.py` and
+`flarm/tools/flarm_gen.py` - the last with simultaneous packets on
+different channels of one VFO).
+
+**Who transmits, again**: a message ABOUT a transmitter isn't always FROM
+it - UAT's TIS-B / ADS-R messages describe aircraft but are sent by a
+ground station (the uat plugin makes them the station's packets), an OGN
+packet with a relay count was re-sent by another tracker (flarm: no
+talker). And a signal whose payload is encrypted with unpublished keys
+(FLARM) still names its transmitter in the clear header: report the ID and
+its bearing, decode nothing else.
 
 ## Rules for a good decoder
 

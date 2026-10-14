@@ -400,9 +400,18 @@ decoders `kraken_doa_v2/plugins/`
   sensitive with 5 antennas; one channel as before in independent mode),
   radar (pulsed radars in the 2.4 MHz - L-band ATC / en-route surveillance
   1215-1400 MHz, wind profilers: pulses, chirp, PRI pattern, scan, beam
-  width; a DoA per radar from its main beam; manual only, `lock_vfo`) and
+  width; a DoA per radar from its main beam; manual only, `lock_vfo`),
   ssr1030 (the 1030 MHz uplink: SSR / Mode S / TCAS interrogations, Mode S
-  bits read at 2.4 MHz, a DoA per interrogator; manual only, fixed 1030 MHz).
+  bits read at 2.4 MHz, a DoA per interrogator; manual only, fixed 1030 MHz),
+  uat (the US 978 MHz ADS-B link: aircraft, TIS-B / ADS-R traffic, ground
+  station uplinks with their FIS-B products / DLAC text; RS GF(256); a DoA
+  per aircraft and per ground station - TIS-B is the station's signal;
+  manual only, fixed 978 MHz; no UAT in NZ: tested on real payloads
+  re-modulated) and flarm (FLARM + OGN trackers on every regional channel
+  inside the 2.4 MHz - EU / NZ: tune 868.8 MHz; FLARM by radio ID + bearing
+  only, its payload is encrypted and NOT decoded; OGN fully, stealth =
+  no-track honoured; a DoA per aircraft on its own channel; manual only,
+  `lock_vfo`, `tunes` once to the band).
   Plugins learn the VFO's RF from `kp::Host::rf_hz()` (wire RF, 7). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
@@ -467,7 +476,7 @@ decoders `kraken_doa_v2/plugins/`
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, dtv and cells (ARRAY
+  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags)
@@ -669,7 +678,7 @@ frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a
 coded ID per transmitter, the plugin reports it as a talker and is tested

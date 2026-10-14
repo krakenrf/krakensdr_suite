@@ -1,0 +1,26 @@
+{
+  "rf_hz": 978e6, "seconds": 8, "channels": 5, "radius_m": 0.12, "seed": 2,
+  "noise_lsb": 2.5, "station": [-41.0, 174.0],
+  "sources": [
+    {"kind": "adsb", "name": "A1B2C3", "address": "A1B2C3", "aq": 0, "callsign": "N123AB", "cat": 1,
+     "alt_ft": 4500, "gs_kt": 120, "track": 90, "vrate_fpm": -320, "range_km": 25,
+     "bearing": 60, "level_db": 18, "t0": 0.31},
+    {"kind": "adsb", "name": "A4D5E6", "address": "A4D5E6", "aq": 0, "callsign": "N456CD", "cat": 2,
+     "alt_ft": 8500, "gs_kt": 160, "track": 200, "range_km": 40, "nacp": 10,
+     "bearing": 150, "level_db": 12, "t0": 0.52},
+    {"kind": "adsb", "name": "~5E08A6", "address": "5E08A6", "aq": 1, "squawk": 1200, "cat": 9,
+     "alt_ft": 3200, "gs_kt": 55, "track": 300, "range_km": 12,
+     "bearing": 250, "level_db": 22, "t0": 0.73},
+    {"kind": "adsb", "name": "~ABC001", "address": "ABC001", "aq": 4, "callsign": "TUG1", "cat": 18,
+     "alt_ft": 0, "gs_kt": 12, "track": 45, "range_km": 2, "ground": true,
+     "bearing": 320, "level_db": 16, "t0": 0.88},
+    {"kind": "uplink", "name": "GS site 11", "site": 11, "slot": 7, "range_km": 35,
+     "bearing": 200, "level_db": 24, "period_s": 1.0, "t0": 0.0395,
+     "products": [{"id": 413, "text": ["METAR KSJC 150556Z 31008KT 10SM FEW020 18/12 A2992=",
+                                       "TAF KSFO 150520Z 1506/1612 29012KT P6SM FEW010="]},
+                  {"id": 63, "bytes": 200}, {"id": 8, "bytes": 40}]},
+    {"kind": "tisb", "name": "GS site 11", "address": "ABC123", "aq": 2, "site": 11,
+     "alt_ft": 2500, "gs_kt": 90, "track": 10, "range_km": 20,
+     "bearing": 200, "level_db": 24, "t0": 0.61, "types": [0]}
+  ]
+}

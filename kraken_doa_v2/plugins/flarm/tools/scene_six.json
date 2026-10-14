@@ -1,0 +1,27 @@
+{
+  "rf_hz": 868.8e6, "seconds": 8, "channels": 5, "radius_m": 0.12, "seed": 4,
+  "noise_lsb": 2.5, "station": [-41.0, 174.0],
+  "sources": [
+    {"kind": "flarm", "name": "FLR DD1234", "address": "DD1234", "addr_type": 2,
+     "channels_mhz": [868.2, 868.4], "phase": 0,
+     "bearing": 60, "level_db": 14, "period_s": 1.0, "t0": 0.45, "df_hz": 2500},
+    {"kind": "flarm", "name": "ICA C81A2B", "address": "C81A2B", "addr_type": 1,
+     "channels_mhz": [869.25],
+     "bearing": 140, "level_db": 11, "period_s": 1.0, "t0": 0.4515, "df_hz": -4000},
+    {"kind": "ogn", "name": "OGN 3C5A21", "address": "3C5A21", "addr_type": 3,
+     "acft_type": 1, "alt_m": 1250, "baro_diff_m": -40, "climb_ms": 1.8, "speed_kmh": 95,
+     "track": 210, "turn_dps": 3, "range_km": 9,
+     "info": {"Registration": "ZK-GOX", "Competition ID": "OX"}, "info_every": 3,
+     "channels_mhz": [868.2, 868.4], "phase": 1,
+     "bearing": 230, "level_db": 16, "period_s": 1.0, "t0": 0.452, "df_hz": 1200},
+    {"kind": "ogn", "name": "FLR D00F11", "address": "D00F11", "addr_type": 2,
+     "acft_type": 7, "alt_m": 800, "climb_ms": -0.6, "speed_kmh": 35, "track": 90, "range_km": 4,
+     "stealth": true, "channels_mhz": [868.4, 868.2],
+     "bearing": 310, "level_db": 13, "period_s": 1.0, "t0": 0.81},
+    {"kind": "ogn", "name": "OGN 1A2B3C", "address": "1A2B3C", "addr_type": 3, "encrypted": true,
+     "channels_mhz": [869.25], "bearing": 100, "level_db": 12, "period_s": 1.0, "t0": 0.95},
+    {"kind": "ogn", "name": "relay of OGN 3C5A21", "address": "3C5A21", "addr_type": 3, "relay": 1,
+     "same_as": "OGN 3C5A21",
+     "channels_mhz": [868.2], "bearing": 20, "level_db": 12, "period_s": 2.0, "t0": 0.66}
+  ]
+}
