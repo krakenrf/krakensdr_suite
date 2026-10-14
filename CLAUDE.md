@@ -397,7 +397,10 @@ decoders `kraken_doa_v2/plugins/`
   `kp::Info::multichannel`: in coherent mode with DoA on it gets EVERY
   antenna - `process_multi`, wire SAMPLES_MC - and combines each burst from
   all of them with its own covariance's main eigenvector: >= 6 dB more
-  sensitive with 5 antennas; one channel as before in independent mode).
+  sensitive with 5 antennas; one channel as before in independent mode) and
+  radar (pulsed radars in the 2.4 MHz - L-band ATC / en-route surveillance
+  1215-1400 MHz, wind profilers: pulses, chirp, PRI pattern, scan, beam
+  width; a DoA per radar from its main beam; manual only, `lock_vfo`).
   Plugins learn the VFO's RF from `kp::Host::rf_hz()` (wire RF, 7). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
@@ -462,7 +465,7 @@ decoders `kraken_doa_v2/plugins/`
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, dtv and cells (ARRAY
+  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, radar, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags)
@@ -664,7 +667,7 @@ frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a
 coded ID per transmitter, the plugin reports it as a talker and is tested
@@ -785,6 +788,27 @@ tuner centre like a fixed-frequency decoder, moved by tuning the receiver.
 Generator `plugins/cells/tools/cell_gen.cpp` (OFDM built at 2.4 MHz
 directly). Live: band-8 cells on 954.8 MHz (10 MHz carrier) - MIB, SIB1
 (530-01, TAC, eNB / cell) and SIB2 decoded from the ~23 % the VFO sees
+
+**📡 Pulse radar plugin** (details: `kraken_doa_v2/plugins/radar/README.md`,
+`kraken_doa_v2/CLAUDE.md` *Pulse radar*): the plugin `radar` ("Pulse radar
+(L-band ATC / surveillance)", 2.4 MHz, `lock_vfo`, manual only) measures
+every pulsed radar in the band like an ELINT receiver: pulses (width,
+frequency, linear FM chirp, level, ADC clipping; a radar's pulse group -
+frequency diversity, fill pulse + chirp - linked by its fixed delay), PRF
+and PRI pattern (constant / stagger / blocks / jitter, the PRI sets it
+switches between), antenna scan period and -3 dB beam width from the main
+beam sweeping past. Weak chirps fading into pieces, pulses merged with
+their echo, echoes and the RTL's ghost images are folded into their radar
+(on the real recordings one radar first came out as 9-15). ID separation by
+SIGNATURE (no coded ID): talker id = frequency to 0.1 MHz, packets = only
+its unclipped main-beam pulses (within 15 dB of the scan's peak, in a burst
+that dwells near the peak like the main beam - a reflector lit elsewhere in
+the turn stays out), each with its own channel -> 📡 kind `radar` in the DF
+panel. Generator `plugins/radar/tools/radar_gen.py` (radars at known
+bearings, every antenna, cu8 / cf32). Live: the 1355.0 MHz L-band radar
+here - 59 us LFM -1.17 MHz, PRI 1712 / 1395 us in blocks of 8 alternating
+per turn with 1748 / 1424, 12.3 rpm, 1.5 deg beam, its short pulse on
+1350.07 MHz, a steady bearing; plugin 2-3 % of a core
 
 **🔇 Digital squelch (per VFO, with its digital decoder on)** (details:
 `kraken_doa_v2/CLAUDE.md` *Digital squelch*): squelch methods are FFT Peak

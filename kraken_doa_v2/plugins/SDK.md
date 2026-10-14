@@ -31,6 +31,8 @@ plugins/
 ├── ism/                  ISM band devices (433 MHz etc.) in the whole 2.4 MHz: a burst detector,
 │                         each burst decimated to 240 kHz, OOK / FSK demodulator, slicers and 69
 │                         small protocol decoders; a talker packet per device; .lock_vfo
+├── radar/                pulse radars in the whole 2.4 MHz: a cheap pulse detector, PRI / scan
+│                         analysis, ID separation by signature (main-beam pulses as packets)
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
@@ -128,8 +130,9 @@ selected the VFO is drawn as a single line and can't be dragged; its
 frequency, bandwidth and tuner fields are locked.
 
 **Locked VFO, any frequency.** A decoder of the whole band the tuner
-receives (ism: every ISM device in the 2.4 MHz; the cells / Digital TV array
-plugins: all of a 2.4 MHz VFO) sets `.lock_vfo = true`
+receives (ism: every ISM device in the 2.4 MHz; radar: every pulse radar in
+it; the cells / Digital TV array plugins: all of a 2.4 MHz VFO) sets
+`.lock_vfo = true`
 instead: picking it does the same - narrowest bandwidth >= `min_vfo_rate`,
 VFO on its tuner's centre, a single line, fields locked - but leaves the
 tuner where it is; the user tunes the receiver to the band (a 📍 map
@@ -420,6 +423,11 @@ code - the decoder MUST report it as a talker (above), so every transmitter
 gets its own bearing on the 🗺 Map's 📡 DF panel instead of one bearing
 mixed from all of them. Every new decoder of such a signal does this.
 
+- **No coded ID?** A transmitter with a SIGNATURE of its own is one too: the
+  radar plugin tells radars apart by their pulses and PRI pattern (id =
+  frequency to 0.1 MHz) and reports only the samples that surely come
+  straight from it (its main beam pointing here, not the reflections it
+  lights).
 - **Who transmits.** The ID must name the RF transmitter of THESE samples,
   not a sender further back or a recipient: an APRS frame repeated by a
   digipeater is the digipeater's (the last path entry marked repeated - "*";
@@ -477,7 +485,10 @@ at KNOWN bearings:
 
 Examples: `aprs/tools/aprs_gen.py`, `ais/tools/ais_gen.py`,
 `dstar/tools/dstar_gen.py`, `nxdn/tools/nxdn_gen.py`, `tetra/tools/tetra_gen.py`,
-`mpt1327/tools/mpt1327_gen.py`, `ils/tools/ils_gen.py`.
+`mpt1327/tools/mpt1327_gen.py`, `ils/tools/ils_gen.py`; a 2.4 MHz scene of
+several transmitters is too big for uca_scene.py's in-memory mixing (5
+antennas x 12 s = 2.3 GB complex128): `radar/tools/radar_gen.py` writes its
+scene at known bearings itself, in 0.1 s pieces.
 
 ## Rules for a good decoder
 

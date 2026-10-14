@@ -1,0 +1,20 @@
+{
+ "rf_hz": 1300e6, "seconds": 12, "channels": 5, "radius_m": 0.12, "seed": 3,
+ "noise_lsb": 0.7,
+ "radars": [
+  {"name": "ATC-SS", "bearing": 60, "peak_db": 38,
+   "pulses": [{"offset_hz": 400e3, "width_us": 50, "chirp_hz": -0.8e6, "delay_us": 0},
+              {"offset_hz": -150e3, "width_us": 1.0, "delay_us": 80, "rel_db": -2}],
+   "pri": {"type": "blocks", "sets_us": [[1712, 1395], [1748, 1424]], "block": 8},
+   "scan_s": 4.0, "beam_deg": 1.4, "sidelobe_db": -30, "az0_deg": 200, "rise_us": 0.1,
+   "echo": {"bearing": 150, "delay_us": 15, "rel_db": -12, "az_deg": 120}},
+  {"name": "MAG-STAG", "bearing": 200, "peak_db": 30,
+   "pulses": [{"offset_hz": -800e3, "width_us": 2.0, "delay_us": 0}],
+   "pri": {"type": "stagger", "seq_us": [1100, 1250, 1180]},
+   "scan_s": 2.5, "beam_deg": 2.5, "sidelobe_db": -28, "az0_deg": 40, "rise_us": 0.15},
+  {"name": "JIT", "bearing": 300, "peak_db": 34,
+   "pulses": [{"offset_hz": -450e3, "width_us": 1.0, "delay_us": 0}],
+   "pri": {"type": "constant", "pri_us": 2500, "jitter_pct": 5},
+   "scan_s": 3.0, "beam_deg": 2.0, "sidelobe_db": -26, "az0_deg": 300, "rise_us": 0.1}
+ ]
+}

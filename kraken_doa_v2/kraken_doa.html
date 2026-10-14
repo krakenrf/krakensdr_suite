@@ -12550,14 +12550,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // device list that reordered on every transmission was hard to click),
   // a TV signal's paths by delay from the main path (Info column), mobile
   // network cells strongest first (Info column), APRS stations and sondes
-  // nearest first like ships, TETRA / MPT1327 sites and VOR / ILS navaids by
-  // name.
+  // nearest first like ships, TETRA / MPT1327 sites, VOR / ILS navaids and
+  // pulse radars by name.
   // Ties are broken by name, ID and VFO, so rows with equal values (heard in
   // the same second) never swap; empty values go last either way. Radios
   // stay above packet talkers. Returns [talker, rdfPosCheck] pairs
   const RDF_SORT_DEF = {radio: ['heard', 1], aircraft: ['dist', 1], ship: ['dist', 1], beacon: ['name', 1],
                         device: ['name', 1], path: ['info', 1], cell: ['info', 1], station: ['dist', 1], sonde: ['dist', 1],
-                        site: ['name', 1], navaid: ['name', 1], talker: ['heard', 1]};
+                        site: ['name', 1], navaid: ['name', 1], radar: ['name', 1], talker: ['heard', 1]};
   const RDF_SORT_KEYS = {
     vfo: t => t.vfo,
     name: t => rdfShortName(t).toLowerCase(),
@@ -12846,12 +12846,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // kind here - its icon, list columns, unit and default order below; an
   // unknown plugin's packets show as plain 'talker's
   const RDF_PK_KIND = {ais: 'ship', adsb: 'aircraft', dme: 'beacon', ism: 'device', aprs: 'station',
-                       radiosonde: 'sonde', tetra: 'site', mpt1327: 'site', ils: 'navaid'};
+                       radiosonde: 'sonde', tetra: 'site', mpt1327: 'site', ils: 'navaid', radar: 'radar'};
   // kinds that report where they are (their decoder's map points, same id):
   // Dist / Δ pos columns, the position check
   const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde']);
   // what one of their packets is called
-  const RDF_PK_UNIT = {beacon: 'pulse pair', device: 'transmission', site: 'slot', sonde: 'frame', navaid: 'block'};
+  const RDF_PK_UNIT = {beacon: 'pulse pair', device: 'transmission', site: 'slot', sonde: 'frame', navaid: 'block', radar: 'pulse'};
   function rdfKind(t) {
     // a plugin's spatial talker: a mobile network cell (cells plugin, by
     // its physical cell ID) or a path of a TV signal (dtv plugin with path
@@ -12871,7 +12871,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (p && p.k === 'point') return '⚓ ';
     const k = rdfKind(t);
     return {ship: '⛴ ', aircraft: '✈ ', beacon: '📡 ', device: '📟 ', path: '📶 ', cell: '📱 ', station: '📻 ',
-            sonde: '🎈 ', site: '🗼 ', navaid: '🧭 '}[k] || '';
+            sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 '}[k] || '';
   }
   function rdfKinds(ts) {   // one word for a list of talkers: the common kind, else 'talker'
     const ks = new Set(ts.map(rdfKind));
@@ -12978,8 +12978,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                     path: ['Path', 'From the main path · power', 'Reports'], cell: ['Cell', 'Technology · PCI · power', 'Reports'],
                     station: ['Callsign', 'Packet · path', 'Pkts'], sonde: ['Sonde', 'Type · altitude', 'Frames'],
                     site: ['Site', 'Area · carrier', 'Slots'], navaid: ['Ident', 'Navaid · MHz', 'Blocks'],
+                    radar: ['Radar', 'PRF · pulse · scan', 'Pulses'],
                     talker: ['ID', 'Info', 'Tx']}[kinds];
-      // position columns for talkers that report positions (not DME beacons / ISM devices / sites / navaids)
+      // position columns for talkers that report positions (not DME beacons / ISM devices / sites / navaids / radars)
       const posCols = ts.some(t => t.pk && RDF_POS_KINDS.has(rdfKind(t)));
       const [scol, sdir] = rdfSortOf(kinds);
       const th = (col, text, tip) => `<th data-sort="${col}" title="${tip ? digEsc(tip) + ' - ' : ''}Sort by this column (again: reversed)">` +
@@ -13171,15 +13172,19 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const sp = sfnSectionPlot();
     box.style.display = sp ? '' : 'none';
     if (!sp) { plotGeo.delete('map-df-sfn-cv'); return; }
-    const n = sfnTalkers(sp.id).length, cells = sp.p === 'cells';
+    const n = sfnTalkers(sp.id).length, cells = sp.p === 'cells', radar = sp.p === 'radar';
     // the plugin's "Signal" fact (facts: [[key, value, age], ..])
     const st = digStatus[sp.id], f = ((st && st.info && st.info[sp.p]) || []).find(x => x[0] === 'Signal');
-    let h = `<b style="color:${getDecimatorColor(sp.id)}">${cells ? '📱' : '📶'} D${sp.id}</b> ${n} ${cells ? 'cell' : 'path'}${n === 1 ? '' : 's'}`;
+    // the radar plugin: its strongest radar's pulse level over one turn of the antenna
+    const rmk = radar ? (sp.pl.mk || []).find(m => m[2]) : null;
+    let h = radar ? `<b style="color:${getDecimatorColor(sp.id)}">📡 D${sp.id}</b> radar ${digEsc(rmk ? rmk[2] : '')} · pulse level over one turn`
+                  : `<b style="color:${getDecimatorColor(sp.id)}">${cells ? '📱' : '📶'} D${sp.id}</b> ${n} ${cells ? 'cell' : 'path'}${n === 1 ? '' : 's'}`;
     if (f && f[1]) h += ` · ${digEsc(f[1])}`;
     const tx = $id('map-df-sfn-txt');
     if (tx.innerHTML !== h) tx.innerHTML = h;
     const cv = $id('map-df-sfn-cv');
-    const tip = cells ? 'Sync correlation: each marked peak is a cell\'s synchronisation signal, at its timing against the strongest cell - click one to show its DoA alone, again for the whole signal'
+    const tip = radar ? 'The radar\'s pulse level (dB above the noise) over one turn of its antenna: 0° = its main beam pointing here, the rest its sidelobes and reflections. The pulses above the dashed line in the main beam give its DoA - click the main-beam marker to show that DoA alone, again for the whole signal'
+              : cells ? 'Sync correlation: each marked peak is a cell\'s synchronisation signal, at its timing against the strongest cell - click one to show its DoA alone, again for the whole signal'
                       : 'Delay profile: how strongly each delay is heard, counted from the main (strongest) path (dB above the noise of the estimate). Each marked peak is a path the signal arrives on - a reflection, or another transmitter of a single frequency network (one whose bearing points at a broadcast mast is likely a transmitter) - click one to show its DoA alone, again for the whole signal';
     if (cv && cv.title !== tip) cv.title = tip;
     plotDraw(cv, sp.id, sp.pl);
