@@ -79,3 +79,9 @@ already passed sync, length and parity on every other character.
 - Payload meaning (addresses, commands, values) is unknown; shown as hex.
 - 1200 baud only; MPT1327 (1200/1800 Hz) and Bell 202 / APRS (1200/2200 Hz)
   have their own plugins.
+
+## ID separation
+Not applicable for now: the payload format is proprietary and no address
+field is known (the deviation and stop-bit count differ per transmitter, but
+that is no coded ID). With the Digital squelch the VFO's DoA comes from the
+decoded packets only.

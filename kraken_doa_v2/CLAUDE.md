@@ -1687,7 +1687,15 @@ Edit `include/config.hpp`:
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils}`, 🗺 Map 📡 DF panel):**
+- RULE (ID separation, the user's 2026-10-15): every decoder whose signal
+  carries a coded ID per TRANSMITTER reports it as a talker - a core part
+  of every such decoder, new ones included. How + how to test:
+  plugins/SDK.md *ID separation*. Not applicable (README says why): pocsag
+  (the RIC is the recipient; simulcast transmitters send identical
+  signals), v23_telemetry (proprietary payload, no known address), dtv
+  (SFN copies are identical - separated by delay instead), radiosonde's
+  iMet-4 (sends no serial), glide slopes / marker beacons (no ident)
 - Goal: a VFO on a P25 / DMR / NXDN / D-STAR channel carries many radios; the VFO's DoA
   mixes them. The decoder names who transmits when, the VFO's signal is cut
   at those boundaries and each radio's own samples go through MUSIC - one
@@ -1935,8 +1943,76 @@ Edit `include/config.hpp`:
   gone - 60 s after the last packet - is the compass bearing from the
   station heading when the station is static (`rdfStaticCompass`), else
   the DoA plot's angle "arr")
-- Not split: TETRA (the plugin decodes the downlink - every bearing is the
-  base station's), MPT1327 (analogue voice). On a repeater OUTPUT every ID's
+- ID separation added 2026-10-15 (packets, the channel always named):
+  - APRS (`plugins/aprs`): a packet per frame, id = the frame's RF
+    TRANSMITTER: the source, or the last path entry with the H bit ("*") when
+    it is a callsign (a digipeater that inserted its call); repeated under a
+    generic alias only (WIDEn / RELAY / TRACE ..., `generic_alias`) = no
+    talker. Label = packet type / "digipeats SRC". Samples: the frame's last
+    <= 0.24 s, 3 ms short of the decoded end (a 1200 bit/s frame is 0.15-2
+    s); 0 Hz / 16 kHz, avg_s 30, keep_s 1 h
+  - Radiosonde: a packet per frame, id = type + serial (= its map point /
+    table key), label subtype + altitude; the frame's FIRST <= 0.24 s from
+    its sync (the RS41's decoded length is the extended frame's 0.86 s - the
+    end may already be another signal: the first version took the end and
+    one RS41 frame read a DFM that followed at 140 deg -> 133.9 instead of
+    30); bw 24 kHz for M10 / M20 / iMet-4 types, else 15 kHz; avg_s 10,
+    keep_s 3 h. iMet-4: no talker (no serial)
+  - TETRA (`TetraReceiver::cell_packet`): the downlink is the base
+    station's - id "MCC-MNC CCn" (e.g. "530-1 CC12"; the colour code seeds
+    the scrambling, so another co-channel cell's blocks fail the CRC here),
+    label "LA n · carrier MHz" (from SYSINFO); every slot with a block that
+    passed its CRC (BSCH, BNCH, SCH/F, SCH/HD) = one packet of the whole
+    255-symbol slot, the RRC front end's 24-sample delay taken off
+    (`input_delay`); 0 Hz / 25 kHz, avg_s 10, keep_s 30 min. Co-channel
+    cells (frequency reuse) heard in turn keep their own bearings
+  - MPT1327: each control channel slot with a good CCSC = a packet of the
+    SITE, id "SYS hhhh", CCSC + address codeword (107 ms) 2 ms inside both
+    ends; 12.5 kHz. Mobiles' return channel isn't decoded (their idents:
+    not implemented); traffic channels name no transmitter
+  - ILS / VOR (`plugins/ils`): id "<ident> LOC|VOR" while the ident was
+    heard within 30 s on this carrier (within 50 Hz of where it was heard -
+    another navaid on the channel doesn't inherit it); a packet = the middle
+    0.24 s of every analysed block of the recognised navaid, at the
+    carrier's offset, LOC 4 kHz / VOR 22 kHz wide, avg_s 10, keep_s 1 h
+  - `dig::RxContext::packet` (dig_common.hpp): packets for the lib plugins
+    in receiver sample indexes, mapped by `Bridge::clock(rate)` (tetra,
+    mpt1327)
+  - UI (kraken_doa.html): `RDF_PK_KIND` plugin -> kind (station 📻 aprs,
+    sonde 🎈, site 🗼 tetra + mpt1327, navaid 🧭 ils; ship / aircraft /
+    beacon / device as before), `RDF_PK_UNIT` (slot, frame, block ...),
+    `RDF_POS_KINDS` (aircraft, ship, station, sonde: Dist / Δ pos columns,
+    position check, "Plot on map" hint), list headings, `RDF_SORT_DEF`
+    (stations / sondes nearest first, sites / navaids by name). The AIS
+    base-station / aid-to-navigation icons only for ais talkers (an APRS
+    point is no ⚓)
+  - D-STAR fix found by the scene test: a new header within two
+    superframes of a transmission that ended WITHOUT its end pattern (cut
+    off / lost) was taken as a false sync inside the old one - the new
+    transmission came up as a late entry without a talker. A header 756
+    bits before a data sync now always starts a new transmission
+    (`tx_sync`, `new_hdr`). Also: an end pattern in noise long after
+    (> 2 superframes) no longer logs "End of transmission"
+- Tests 2026-10-15 (scratch t1/; generators in the repo, scenes from
+  `plugins/sdk/tools/uca_scene.py`, 5-element UCA r 0.12 m):
+  offline `decoder --file scene.cf32 --channels 5 --uca 0.12` (per-talker
+  bearings in the offline host, `talker_bearings` in plugin_host.cpp) and
+  end to end through the real kraken_doa (scratch cwd, fake heimdall
+  streaming the scene's 2.4 MHz cu8, DF status `doa`): every talker within
+  0.1 deg offline and 0.0 deg end to end -
+  APRS 3 transmitters (one a digipeater repeating another; an alias-only
+  repeat gives no talker), AIS 4 ships on A / B with simultaneous A + B
+  transmissions, D-STAR the real F1NSR (dsdcc dstar_f1zil_1) + 2 generated
+  callsigns back to back (also with FFT squelch 10 dB / Digital squelch),
+  NXDN the real unit 1203 (dsd-samples nxdn96_3) + 2 generated units,
+  radiosonde 3 real sondes (radiosonde_auto_rx RS41 / DFM-09 / M20) one
+  after the other, TETRA 2 co-channel cells, MPT1327 2 sites, VOR 2
+  co-channel idents (offline only). kraken_doa ~50 % of a Pi 5 core in
+  these runs (2.4 MHz, 5 antennas); plugins 0.4-3 %. Regression (old vs new binaries): p25 /
+  dmr / dstar / nxdn on the dsd / dsdcc samples identical; the others only
+  add their talker lines (+ the D-STAR fix). No live check: no AIS
+  (162 MHz, 7 min) or APRS (144.575 MHz, 3 min) traffic at the station
+- Not split: MPT1327 voice (analogue). On a repeater OUTPUT every ID's
   bearing is the repeater's. A DMR repeater INPUT with both slots busy
   can't be split (MS bursts carry no slot) - the two radios' LCs land on
   slot 0, so their frames mostly touch both and are dropped
@@ -2914,6 +2990,8 @@ Edit `include/config.hpp`:
   a simulated 30 km flight (scratchpad harness including decoder.cpp)
 - Not supported: RS92 (needs ephemeris), 1680 MHz types, Meisei, MTS01.
   rs1729/RS is GPL-3.0: used as documentation + test reference only
+- DoA per sonde (`Radiosonde::talker`, ID separation): every frame a
+  packet of type + serial, its first <= 0.24 s - see *DoA per talker*
 
 **DME / TACAN (`plugins/dme/`, README.md there):**
 - 2.4 MHz input (`min_vfo_rate` 600 kHz, manual only, talkers). From
@@ -2995,6 +3073,10 @@ Edit `include/config.hpp`:
   left / right / up / down, SDM), second carrier, radial (+ the station's
   bearing; true with the `magvar` option), marker, audio (LOC / VOR only).
   `valid(t0, t0 + 1)` per recognised block
+- DoA per navaid (ID separation, `talker`): LOC / VOR blocks become
+  packets of "<ident> LOC|VOR" while the ident is fresh (30 s, same carrier
+  within 50 Hz) - see *DoA per talker*. Generator `tools/ils_gen.py`
+  (LOC DDM / VOR radial + keyed 1020 Hz ident)
 - Tests (scratchpad dme/gen_nav.py, t_vor.py): see the README
 
 **ISM devices (`plugins/ism/`, 315 / 345 / 433 / 868 / 915 MHz; README.md there):**
@@ -3195,10 +3277,13 @@ Edit `include/config.hpp`:
   NMEA !AIVDM (multi-sentence over 60 characters) + level. Vessels
   forgotten after 30 min. Option `range` (km, default 500)
 - DoA: every frame -> `kp::Talker{packet, freq_hz = -25000 / +25000, bw_hz
-  16000, avg_s 20}`, span = training sequence (24 bits before the opening
+  16000, avg_s 20, keep_s 1800}` (kept as long as the vessel list), span = training sequence (24 bits before the opening
   flag) .. closing flag, through the channel's filter delays (`to_time`:
   input index = 2 (t - 10.5) - 24); the spans land within 0.3 bit of the
   truth on synthetic signals
+- Generator in the repo since 2026-10-15: `plugins/ais/tools/ais_gen.py`
+  (message 1 per ship, channel A / B, times; GMSK BT 0.4, NRZI, HDLC, CRC)
+  -> `plugins/sdk/tools/uca_scene.py` for ships at known bearings
 - Tested (scratchpad e2e4/): synthetic GMSK (ais_gen.py: real layouts,
   NRZI, stuffing, BT 0.4, ships on both channels incl. simultaneous A / B
   transmissions) - every frame without a same-channel collision decoded,
@@ -3334,7 +3419,13 @@ Edit `include/config.hpp`:
   changes), `--serve` (live), `--file REC [--offset HZ] [--opt k=v]
   [--verbose] [--audio out.wav]` (offline test: same resampling / 10 ms
   blocks as live, cf32 / cu8 / cs16 / 16+24-bit IQ WAV, prints events +
-  "VALID FRAMES: N")
+  "VALID FRAMES: N"); `--channels M --uca R` on a recording of every
+  antenna (sample-major): antenna 0 decoded (multichannel plugins: all),
+  then `talker_bearings` - each talker's covariance from its own samples
+  of every antenna (spans 40 ms inside, packets exact, each through its
+  `freq_hz` / `bw_hz` channel or the plugin's band; > 0.25 s packets and
+  same-channel overlaps dropped like TalkerDoa; the resampler's delay
+  taken off) -> MUSIC, one source, kraken_doa's UCA (needs --rf)
 - Every antenna for `kp::Info::multichannel` plugins: `DigitalDecoder::push(..,
   mc, mc_m)` (the pipeline packs the block's channels as int16 x MC_SCALE
   only while `wants_multichannel()` and the block holds the coherent array:

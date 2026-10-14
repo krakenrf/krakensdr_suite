@@ -8,7 +8,7 @@ namespace {
 class Mpt1327Plugin : public kp::Decoder {
 public:
     explicit Mpt1327Plugin(kp::Host& h) : Decoder(h), br_(h), rx_(br_.ctx) {
-        br_.clock(dig::FmFrontEnd::RATE);   // valid slots with their samples
+        br_.clock(dig::FmFrontEnd::RATE);   // valid slots + site packets with their samples
         facts();
     }
     void process(const kp::cf* x, size_t n) override {
@@ -34,7 +34,8 @@ private:
 KRAKEN_PLUGIN(Mpt1327Plugin, {.id = "mpt1327",
                    .name = "MPT1327",
                    .description = "MPT1327 analogue trunking (1200 bit/s FFSK signalling on NBFM). Control channel: system identity, neighbour sites, access mode, channel grants (idents as prefix-ident), acknowledgements, clear-downs. Voice is analogue FM on the granted traffic channel: listen there with NBFM. Bandwidth 12 kHz.",
-                   .version = "2.0",
+                   .version = "2.1",
                    .sample_rate = 48000,
                    .min_vfo_rate = 12000,
-                   .author = "KrakenSDR"})
+                   .author = "KrakenSDR",
+                   .talkers = true})

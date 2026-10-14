@@ -238,6 +238,7 @@ private:
     std::string ident_, ident_code_;
     int ident_count_ = 0;
     double ident_t_ = -1;
+    double ident_off_ = 0;          // the carrier's offset when the ident was heard
     cd rad_{0, 0};                  // radial vectors (averaged)
     double ddm_avg_ = NAN, sdm_avg_ = NAN;
     double magvar_ = NAN;
@@ -419,6 +420,31 @@ private:
         }
     }
 
+    // ID separation: a localizer / VOR names itself in Morse (its ident, at
+    // least three times in 30 s). Every analysed block of the recognised
+    // navaid is a packet of it while its ident was heard within the last 30 s
+    // on this carrier (within 50 Hz of where the ident was) - the middle 0.24 s
+    // of the block (the 0.5 s hops don't overlap them; a block's edge may
+    // already be past a carrier that just ended), filtered to the carrier: LOC +-2 kHz (90 / 150 Hz, 1020 Hz
+    // ident), VOR +-11 kHz (the 9960 Hz subcarrier). Navaids sharing a channel
+    // far apart, heard in turn, keep their own bearings. Glide slopes and
+    // marker beacons send no ident: no talker.
+    void talker(double t0) {
+        if (type_ != Type::LOC && type_ != Type::VOR) return;
+        if (ident_.empty() || host.time() - ident_t_ > 30 || std::fabs(main_.off_hz - ident_off_) > 50) return;
+        kp::Talker t;
+        t.id = ident_ + (type_ == Type::LOC ? " LOC" : " VOR");
+        t.label = std::string(type_name(type_)) + freq_text();
+        t.start_s = t0 + 0.5 * N / FS - 0.12;
+        t.end_s = t.start_s + 0.24;
+        t.packet = true;
+        t.freq_hz = main_.off_hz;
+        t.bw_hz = type_ == Type::LOC ? 4000 : 22000;
+        t.avg_s = 10;       // a fixed navaid
+        t.keep_s = 3600;
+        host.talker(t);
+    }
+
     void on_ident() {
         const std::string txt = morse_.text();
         if (host.verbose())
@@ -431,6 +457,7 @@ private:
         ident_code_ = morse_.code();
         ident_count_ = again ? ident_count_ + 1 : 1;
         ident_t_ = host.time();
+        ident_off_ = main_.off_hz;
         host.event("Ident " + txt + " [" + ident_code_ + "]" + (type_ != Type::NONE ? std::string(" - ") + type_name(type_) : "") +
                        freq_text(),
                    0.0);
@@ -498,7 +525,10 @@ private:
                 }
         }
         const bool nav = type_ == Type::LOC || type_ == Type::GS || type_ == Type::VOR || type_ == Type::MARKER;
-        if (nav && t == type_) host.valid(t0, t0 + static_cast<double>(N) / FS);
+        if (nav && t == type_) {
+            host.valid(t0, t0 + static_cast<double>(N) / FS);
+            talker(t0);
+        }
         if (type_ != said_type_ && nav) {
             said_type_ = type_;
             host.event(std::string(type_name(type_)) + freq_text() + (paired().empty() ? "" : " - " + paired()), 0.0);
@@ -629,10 +659,11 @@ KRAKEN_PLUGIN(Ils, {.id = "ils",
                                    "course / glide path deviation (DDM), two-carrier systems; VOR (108-118 MHz) - radial; "
                                    "marker beacons (75 MHz); Morse idents; the paired glide slope / DME channel. A 48 kHz VFO "
                                    "on the station's frequency",
-                    .version = "1.0",
+                    .version = "1.1",
                     .sample_rate = FS,
                     .min_vfo_rate = FS,
                     .author = "KrakenSDR",
                     .options = {{"magvar", "Magnetic variation", "", "",
                                  "Degrees east (west negative) at the station, e.g. 20 for Auckland: the VOR bearing is also "
-                                 "given as true (as the DoA shows it)"}}})
+                                 "given as true (as the DoA shows it)"}},
+                    .talkers = true})

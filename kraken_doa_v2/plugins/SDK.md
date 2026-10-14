@@ -16,7 +16,8 @@ plugins/
 │   ├── kraken_plugin.hpp the API: kp::Decoder, kp::Host, kp::Info, KRAKEN_PLUGIN
 │   ├── kraken_dsp.hpp    header-only DSP / bit helpers (filters, FM demod,
 │   │                     clock recovery, sync words, CRC, block codes, Viterbi)
-│   └── plugin_host.cpp   main() of every plugin (live + offline test modes)
+│   ├── plugin_host.cpp   main() of every plugin (live + offline test modes)
+│   └── tools/uca_scene.py  test transmissions at known bearings on the array (ID separation)
 ├── lib/                  shared digital-radio library (libkrakendig.a, linked into
 │                         every plugin; only what a plugin uses ends up in it):
 │                         dig_fec (Golay/Hamming/BCH/RS/Viterbi/CRCs), dig_fsk4
@@ -34,7 +35,9 @@ plugins/
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
     ├── CXXFLAGS          optional: extra compiler flags for this plugin (e.g. -O3)
-    ├── README.md         what it decodes, sources/specs used, test results
+    ├── tools/            test-signal generator (real framing / FEC / CRC, several
+    │                     transmitters with their IDs) - see ID separation below
+    ├── README.md         what it decodes, ID separation, sources/specs used, test results
     └── build/decoder     the executable (generated, not part of the plugin)
 ```
 
@@ -304,15 +307,17 @@ true`, `start_s` = the packet's FIRST SAMPLE and `end_s` = its end, to the
 sample (`host.time()` of the block + the packet's index in it / the rate):
 kraken_doa then computes the covariance from exactly those samples and
 averages each talker's packets over the last ~2 s (its lobe on the map).
-No `talker_end`. The adsb plugin is the reference (`talker_packet`); its
-start times are within half a sample of the true ones. Two optional packet
+No `talker_end`. A packet may be at most 0.25 s long (kraken_doa drops
+longer ones). The adsb plugin is the reference (`talker_packet`); its
+start times are within half a sample of the true ones. Which talker to
+report and how to test it: *ID separation* below. Two optional packet
 fields: `t.freq_hz` / `t.bw_hz` = the packet's channel inside your band
 (Hz from what you receive at 0 Hz) - kraken_doa then filters that channel
 out of every antenna first, so talkers on neighbouring channels of the
 same VFO don't mix (the ais plugin: -25 / +25 kHz, 16 kHz wide; on a VFO
 wider than 500 kHz only channels <= 250 kHz wide - the ism plugin's devices -
-are filtered, kraken_doa then keeps the stream as 16-bit samples for 1 s:
-48 MB at 2.4 MHz with 5 antennas; wider ones use the whole band); `t.avg_s`
+are filtered, kraken_doa then keeps the stream as 16-bit samples for 2.5 s:
+120 MB at 2.4 MHz with 5 antennas; wider ones use the whole band); `t.avg_s`
 = how long to average a talker's packets (default 1.5 s for fast movers
 that send often; ais: 20 s); `t.keep_s` = how long kraken_doa keeps the
 talker - its bearing, history and row in the 📡 DF list - after its last
@@ -407,6 +412,73 @@ MUSIC bearing at the end. `plugins/dtv/tools/sfn_gen.cpp` writes synthetic
 single frequency networks in that format, `plugins/cells/tools/cell_gen.cpp`
 LTE / NR cells.
 
+## ID separation (required when the signal has per-transmitter IDs)
+
+If the signal carries a coded ID per TRANSMITTER - a callsign, MMSI, ICAO
+address, unit ID, serial number, cell / site identity, Morse ident, device
+code - the decoder MUST report it as a talker (above), so every transmitter
+gets its own bearing on the 🗺 Map's 📡 DF panel instead of one bearing
+mixed from all of them. Every new decoder of such a signal does this.
+
+- **Who transmits.** The ID must name the RF transmitter of THESE samples,
+  not a sender further back or a recipient: an APRS frame repeated by a
+  digipeater is the digipeater's (the last path entry marked repeated - "*";
+  an alias-only repeat names nobody: no talker), a repeater output carries
+  every radio at the repeater's bearing, a pager's RIC is the recipient
+  (POCSAG: no talker). A downlink's base station is its cell / site (TETRA
+  MCC-MNC + colour code, the MPT1327 SYS); a signal with no ID of its own
+  (iMet-4 sondes) gets none - one talker would merge every such transmitter.
+- **Packets** (`t.packet = true`) for bursts: one call per frame that passed
+  its checks, `start_s` / `end_s` = its samples (`host.time()` of the block +
+  index / rate; correct for your filters' delays). kraken_doa takes packets
+  up to 0.25 s: report <= 0.24 s of a longer frame - the part that is surely
+  the transmitter's (from the sync on: radiosonde; back from the decoded end:
+  APRS). Lib plugins (`plugins/lib`): `RxContext::packet` with receiver
+  sample indexes (`dig::Bridge::clock(rate)` maps them; tetra, mpt1327).
+- **Transmissions** (`host.talker` / `talker_end`) for voice calls: the
+  frame boundaries of the call, a new id ending the previous one.
+- **The channel**: `freq_hz` / `bw_hz` of the transmitter inside the VFO
+  (Hz from your input's 0 Hz - after the host's AFC, so a decoder whose
+  `freq_error` centres the signal gives 0) - kraken_doa filters exactly that
+  out of every antenna first, so other signals in the VFO (neighbouring
+  channels, a wider VFO than needed) don't pull the bearing. Give it always.
+- **`avg_s`** (packet averaging): 1.5 s default for fast movers; fixed
+  transmitters 10 s+ (sites, navaids), slow / rare ones longer (AIS 20 s,
+  APRS 30 s). **`keep_s`**: how long the talker stays listed after its last
+  packet - as long as the transmitter reports rarely (ISM 24 h, sondes 3 h,
+  APRS 1 h, sites 30 min).
+- `t.label`: short, what the user recognises next to the ID (type, talkgroup,
+  altitude, location area). Use the SAME id as your map points / table rows:
+  the DF panel then shows distance and the DF error against the reported
+  position, and a map popup offers its DoA.
+- **UI**: a new plugin's talkers show as plain "talkers"; give them a kind
+  in kraken_doa.html (`RDF_PK_KIND` plugin -> kind, `rdfIcon`, `RDF_PK_UNIT`,
+  `RDF_POS_KINDS` when they report positions, `RDF_SORT_DEF`, the list
+  heading in `rdfRenderPanel`).
+
+**Test it** - every decoder with ID separation needs a multi-transmitter test
+at KNOWN bearings:
+
+1. A generator in `plugins/<id>/tools/` writes one transmitter's signal
+   (real framing / FEC / CRC, its ID, start times) as cf32 at the plugin's
+   rate; real recordings work too (radiosonde_auto_rx / dsd samples).
+2. `python3 plugins/sdk/tools/uca_scene.py SCENE.json OUT.cf32` puts each
+   transmitter at its own bearing (and frequency, time, level) on
+   kraken_doa's UCA (clockwise, ANT0 on +x), with noise - several at once
+   where the protocol allows it (AIS A / B, ISM).
+3. `plugins/<id>/build/decoder --file OUT.cf32 --channels 5 --uca 0.12`:
+   antenna 0 is decoded as live, and the summary gives each talker's
+   bearing from its own samples of every antenna, with kraken_doa's rules
+   (packets > 0.25 s and same-channel overlaps dropped). Each must match.
+4. End to end: `uca_scene.py ... --wide OUT.cu8 --wide-offset HZ` writes the
+   scene at 2.4 MHz, 8 bit, for a fake heimdall feeding the real kraken_doa
+   (8091 format); the DF status (`{"rdf"}` talkers, `doa`) must give the
+   same bearings.
+
+Examples: `aprs/tools/aprs_gen.py`, `ais/tools/ais_gen.py`,
+`dstar/tools/dstar_gen.py`, `nxdn/tools/nxdn_gen.py`, `tetra/tools/tetra_gen.py`,
+`mpt1327/tools/mpt1327_gen.py`, `ils/tools/ils_gen.py`.
+
 ## Rules for a good decoder
 
 1. **Report only what passed a check.** A sync word match alone is not a
@@ -426,6 +498,9 @@ LTE / NR cells.
 5. **No stdout, no files, no network.** A plugin only decodes.
 6. **Text you show is data.** Pass decoded text through `kp::printable()`
    (control characters escaped).
+7. **ID separation.** If the signal names its transmitter (a coded ID per
+   transmitter), report it as a talker and test it at known bearings (see
+   *ID separation* above) - a core part of every such decoder.
 
 ## Helpers (`kraken_dsp.hpp`)
 
@@ -456,6 +531,7 @@ linked as well.
 make -C plugins PLUGIN=mydec              # build one (or `make` in kraken_doa_v2 for all)
 plugins/mydec/build/decoder --info        # what kraken_doa reads
 plugins/mydec/build/decoder --file capture.cf32 [--offset HZ] [--verbose] [--audio out.wav] [--station LAT,LON] [--rf HZ] [--raw]
+plugins/mydec/build/decoder --file scene.cf32 --channels 5 --uca 0.12 [--rf HZ]   # every antenna: each talker's bearing (ID separation)
 plugins/dtv/build/decoder --file sfn.cf32 [--channels M] [--all] [--uca RADIUS_M] [--opt separate=1]   # array plugins
 ```
 

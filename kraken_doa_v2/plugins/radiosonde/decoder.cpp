@@ -134,6 +134,7 @@ public:
 
 private:
     void on_frame(sonde::Frame& f);
+    void talker(const Sonde& s, const sonde::Frame& f);
     void publish(Sonde& s);
     void events(Sonde& s, const sonde::Frame& f);
 
@@ -217,7 +218,36 @@ void Radiosonde::on_frame(sonde::Frame& f) {
     if (std::isfinite(f.alt)) s.max_alt = std::isfinite(s.max_alt) ? std::max(s.max_alt, f.alt) : f.alt;
     if (std::isfinite(f.vv)) s.vv_avg = std::isfinite(s.vv_avg) ? s.vv_avg + 0.2 * (f.vv - s.vv_avg) : f.vv;
     events(s, f);
+    talker(s, f);
     if (f.t - s.last_out >= 0.9) publish(s);
+}
+
+// ID separation: every frame that passed its checks is a packet of its sonde
+// (kp::Talker::packet, id = type + serial = the map point / table key), so
+// two sondes on one frequency - another site's launch, yesterday's sonde
+// still sending from the ground - each get their own bearing. The samples:
+// the frame's first <= 0.24 s from its sync (kraken_doa takes packets up to
+// 0.25 s; an RS41 frame is 0.53 s, and its decoded length is the extended
+// frame's 0.86 s - the end may already be the next signal); the channel the
+// frame's type occupies, centred (the host's AFC follows the sonde's carrier).
+// Not the iMet-4: it sends no serial (one talker would merge every iMet-4)
+void Radiosonde::talker(const Sonde& s, const sonde::Frame& f) {
+    if (!std::isfinite(f.t_start) || !std::isfinite(f.t_end) || !(f.t_end > f.t_start)) return;
+    if (f.type == "iMet-4") return;
+    kp::Talker t;
+    t.id = s.key.substr(0, 32);
+    const sonde::Frame& m = s.f;
+    t.label = (m.subtype.empty() ? m.type : m.subtype) + (std::isfinite(m.alt) ? " · " + fmt(m.alt, 0) + " m" : "");
+    t.start_s = f.t_start + 0.002;
+    t.end_s = std::min(f.t_end - 0.002, t.start_s + 0.24);
+    if (!(t.end_s > t.start_s)) return;
+    t.packet = true;
+    t.freq_hz = 0;
+    // 9600 Bd M10 / M20 and the AFSK iMet-4 fill +-12 kHz, the others +-7 kHz
+    t.bw_hz = f.type == "M10" || f.type == "M20" || f.type.rfind("iMet-4", 0) == 0 ? 24000 : 15000;
+    t.avg_s = 10;               // a frame a second; the bearing to a balloon moves slowly
+    t.keep_s = MAP_TTL_S;       // as long as its map point
+    host.talker(t);
 }
 
 // standard levels passed on the way up, burst, landing
@@ -340,8 +370,9 @@ KRAKEN_PLUGIN(Radiosonde, {.id = "radiosonde",
                            .name = "Radiosonde",
                            .description = "Weather balloon sondes (400-406 MHz): Vaisala RS41, Graw DFM, Meteomodem M10 / M20, "
                                           "iMet-4 / iMet-54, LMS6, MRZ - position, altitude, temperature, humidity, pressure, wind",
-                           .version = "1.0",
+                           .version = "1.1",
                            .sample_rate = FS,
                            .min_vfo_rate = 24000,
                            .author = "KrakenSDR",
-                           .map = true})
+                           .map = true,
+                           .talkers = true})

@@ -367,6 +367,7 @@ private:
         t.freq_hz = CH_OFF[f.ch];
         t.bw_hz = 16000;
         t.avg_s = 20;
+        t.keep_s = 1800;   // as long as the vessel list (a ship at anchor reports every 3 min)
         host.talker(t);
 
         if (host.verbose())
@@ -642,7 +643,7 @@ KRAKEN_PLUGIN(Ais, {.id = "ais",
                                    "callsign, type, position, speed, course, destination; base stations, aids to "
                                    "navigation, SAR aircraft, AIS-SART / MOB / EPIRB. Picking it tunes the VFO to "
                                    "162.000 MHz at 100 kHz; ships appear on the 🗺 Map, each with its own DoA",
-                    .version = "1.0",
+                    .version = "1.1",
                     .sample_rate = FS,
                     .min_vfo_rate = FS,
                     .author = "KrakenSDR",

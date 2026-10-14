@@ -155,7 +155,11 @@ void DstarReceiver::reset() {
 // the talker may be named after the transmission began.
 void DstarReceiver::tx_sync(int64_t se) {
     const int64_t sf = static_cast<int64_t>(SUPERFRAME_BITS) * SPS;
-    if (call_start_ >= 0) {
+    // a header (frame sync) since the last data sync, exactly 756 bits before
+    // this one: a NEW transmission, even inside the previous one's window - it
+    // ended without its end pattern (lost, or cut off by this one)
+    const bool new_hdr = hdr_cand_ > last_sync_ && std::llabs(se - hdr_cand_ - 756 * SPS) < 3 * SPS;
+    if (call_start_ >= 0 && !new_hdr) {
         const int64_t dt = se - last_sync_;
         if (dt > 0 && dt <= 2 * sf + 3 * SPS) {
             const int64_t rem = dt % sf;
@@ -167,12 +171,14 @@ void DstarReceiver::tx_sync(int64_t se) {
             return;   // else a false sync inside the transmission
         }
         tx_end(voice_end_);
+    } else if (call_start_ >= 0) {
+        tx_end(voice_end_);
     }
     // a new transmission. The header + voice frame 0 come before the first
     // data sync (756 bits from the header's frame sync to it): that exact
     // spacing confirms them.
     last_sync_ = se;
-    if (hdr_cand_ >= 0 && std::llabs(se - hdr_cand_ - 756 * SPS) < 3 * SPS) {
+    if (new_hdr) {
         tx_hdr_sync_ = hdr_cand_;
         call_start_ = hdr_cand_ - 24 * SPS;
         voice_end_ = se;
@@ -264,7 +270,12 @@ void DstarReceiver::correlate() {
             tx_end_pattern(pk_.idx);
             end_sync_end_ = pk_.idx;
             if (ctx_.voice_state) ctx_.voice_state("");
-            if (!header_desc_.empty() || frame_sync_end_ >= 0) {
+            // an end pattern only ends something heard within the last two
+            // superframes (a correlation peak in noise long after is no end)
+            const int64_t recent = 2 * static_cast<int64_t>(SUPERFRAME_BITS) * SPS + 64 * SPS;
+            const bool active = (frame_sync_end_ >= 0 && pk_.idx - frame_sync_end_ <= recent) ||
+                                (hdr_ok_sync_ >= 0 && pk_.idx - hdr_ok_sync_ <= recent + 756 * SPS);
+            if (active && (!header_desc_.empty() || frame_sync_end_ >= 0)) {
                 ctx_.report->event(Mode::DSTAR, "End of transmission" + (header_desc_.empty() ? std::string() : ": " + header_desc_), 2.0);
                 ctx_.report->erase(Mode::DSTAR, "Current call");
             }

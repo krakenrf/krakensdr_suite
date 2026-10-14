@@ -18,6 +18,7 @@
 #include "kraken_dsp.hpp"
 #include "kraken_plugin.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
@@ -259,6 +260,57 @@ private:
         host.map_point(p);
     }
 
+    // ID separation: who put THIS frame on the air - the source, or the last
+    // digipeater that marked it repeated (H bit, "*" in the path). A frame
+    // repeated under a generic alias only (WIDE1*, no callsign inserted) has
+    // no known transmitter: no talker.
+    static bool generic_alias(const std::string& c) {
+        static const char* A[] = {"WIDE", "RELAY", "TRACE", "ECHO", "GATE", "RFONLY", "NOGATE", "TCPIP", "TCPXX"};
+        for (const char* a : A)
+            if (c.rfind(a, 0) == 0) return true;
+        return c.size() == 4 && c[0] == 'Q' && c[1] == 'A';   // qAx (APRS-IS), never on RF
+    }
+    static std::string rf_sender(const aprs::Frame& f) {
+        std::vector<std::string> p;
+        size_t a = 0;
+        while (a <= f.path.size() && !f.path.empty()) {
+            size_t b = f.path.find(',', a);
+            if (b == std::string::npos) b = f.path.size();
+            p.push_back(f.path.substr(a, b - a));
+            a = b + 1;
+        }
+        int last = -1;
+        for (int i = 0; i < static_cast<int>(p.size()); i++)
+            if (!p[i].empty() && p[i].back() == '*') last = i;
+        if (last < 0) return f.src;   // heard direct from its source
+        for (int i = last; i >= 0 && i >= last - 1; i--) {
+            if (p[i].empty() || p[i].back() != '*') break;
+            const std::string c = p[i].substr(0, p[i].size() - 1);
+            if (!generic_alias(c)) return c;   // a digipeater that inserted its callsign
+        }
+        return "";
+    }
+    // One packet talker per frame (kp::Talker::packet): its id is the frame's
+    // transmitter, its samples the frame's last <= 0.24 s (kraken_doa takes
+    // packets up to 0.25 s; a 1200 bit/s frame is 0.15-2 s) - 3 ms short of
+    // its end (the demodulator's filter + correlator delay)
+    void talker(const aprs::Frame& f, double start, double end) {
+        const std::string id = rf_sender(f);
+        if (id.empty()) return;
+        kp::Talker t;
+        t.id = id.substr(0, 32);
+        t.label = (id == f.src ? f.type : "digipeats " + f.src).substr(0, 64);
+        t.end_s = end - 0.003;
+        t.start_s = std::max(start, t.end_s - 0.24);
+        if (!(t.end_s > t.start_s)) return;
+        t.packet = true;
+        t.freq_hz = 0;          // the channel: an NBFM APRS carrier at the VFO centre
+        t.bw_hz = 16000;
+        t.avg_s = 30;           // beacons come minutes apart: each mostly alone
+        t.keep_s = 3600;        // listed for an hour after its last frame (beacon intervals of 10-30 min)
+        host.talker(t);
+    }
+
     void on_frame(const uint8_t* b, int len) {
         uint16_t c = crc_x25(b, len);
         double t = host.time();
@@ -279,9 +331,11 @@ private:
         // the frame's samples: it ended now; len bytes (+ ~2 % bit stuffing) and
         // the two flags at 1200 bit/s before that (Host::valid(start, end) - the
         // Digital squelch)
-        host.valid(now_ - (len * 8 * 1.02 + 16) / 1200.0, now_);
+        const double f_start = now_ - (len * 8 * 1.02 + 16) / 1200.0;
+        host.valid(f_start, now_);
         frames_++;
         stations_.insert(f.src);
+        talker(f, f_start, now_);
 
         std::string head = f.src + ">" + f.dst + (f.path.empty() ? "" : "," + f.path);
         std::string text = head + "  " + f.type;
@@ -322,8 +376,9 @@ private:
 KRAKEN_PLUGIN(Aprs, {.id = "aprs",
                      .name = "APRS (AX.25 1200)",
                      .description = "APRS / AX.25 packet, 1200 bit/s Bell 202 AFSK on NBFM: callsigns, path, positions",
-                     .version = "1.0",
+                     .version = "1.1",
                      .sample_rate = FS,
                      .min_vfo_rate = 16000,
                      .author = "AI Signal Lab",
-                     .map = true})
+                     .map = true,
+                     .talkers = true})

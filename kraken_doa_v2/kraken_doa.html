@@ -12549,12 +12549,15 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // a busy list with every packet), DME beacons and ISM devices by name (a
   // device list that reordered on every transmission was hard to click),
   // a TV signal's paths by delay from the main path (Info column), mobile
-  // network cells strongest first (Info column).
+  // network cells strongest first (Info column), APRS stations and sondes
+  // nearest first like ships, TETRA / MPT1327 sites and VOR / ILS navaids by
+  // name.
   // Ties are broken by name, ID and VFO, so rows with equal values (heard in
   // the same second) never swap; empty values go last either way. Radios
   // stay above packet talkers. Returns [talker, rdfPosCheck] pairs
   const RDF_SORT_DEF = {radio: ['heard', 1], aircraft: ['dist', 1], ship: ['dist', 1], beacon: ['name', 1],
-                        device: ['name', 1], path: ['info', 1], cell: ['info', 1], talker: ['heard', 1]};
+                        device: ['name', 1], path: ['info', 1], cell: ['info', 1], station: ['dist', 1], sonde: ['dist', 1],
+                        site: ['name', 1], navaid: ['name', 1], talker: ['heard', 1]};
   const RDF_SORT_KEYS = {
     vfo: t => t.vfo,
     name: t => rdfShortName(t).toLowerCase(),
@@ -12838,14 +12841,23 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const q = f => e[Math.min(e.length - 1, Math.floor(f * e.length))];
     return {n: e.length, med: q(0.5), lo: q(0.25), hi: q(0.75)};
   }
-  // what a talker is: from the decoder that names it (packet talkers)
+  // what a talker is: from the decoder that names it (packet talkers). Every
+  // decoder with ID separation (a talker per coded transmitter ID) gets a
+  // kind here - its icon, list columns, unit and default order below; an
+  // unknown plugin's packets show as plain 'talker's
+  const RDF_PK_KIND = {ais: 'ship', adsb: 'aircraft', dme: 'beacon', ism: 'device', aprs: 'station',
+                       radiosonde: 'sonde', tetra: 'site', mpt1327: 'site', ils: 'navaid'};
+  // kinds that report where they are (their decoder's map points, same id):
+  // Dist / Δ pos columns, the position check
+  const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde']);
+  // what one of their packets is called
+  const RDF_PK_UNIT = {beacon: 'pulse pair', device: 'transmission', site: 'slot', sonde: 'frame', navaid: 'block'};
   function rdfKind(t) {
     // a plugin's spatial talker: a mobile network cell (cells plugin, by
     // its physical cell ID) or a path of a TV signal (dtv plugin with path
     // separation, by delay: a reflection, or another SFN transmitter)
     if (t.sp) return t.pl === 'cells' ? 'cell' : 'path';
-    return !t.pk ? 'radio' : t.pl === 'ais' ? 'ship' : t.pl === 'adsb' ? 'aircraft' : t.pl === 'dme' ? 'beacon' :
-      t.pl === 'ism' ? 'device' : 'talker';
+    return !t.pk ? 'radio' : RDF_PK_KIND[t.pl] || 'talker';
   }
   // the talker's map point (its decoder's "Plot on map"), or null
   function rdfMapPt(t) {
@@ -12854,12 +12866,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     return null;
   }
   function rdfIcon(t) {
-    const p = t.pk ? rdfMapPt(t) : null;   // AIS base stations / aids to navigation aren't ships
+    const p = t.pk && t.pl === 'ais' ? rdfMapPt(t) : null;   // AIS base stations / aids to navigation aren't ships
     if (p && p.k === 'station') return '📡 ';
     if (p && p.k === 'point') return '⚓ ';
     const k = rdfKind(t);
-    return k === 'ship' ? '⛴ ' : k === 'aircraft' ? '✈ ' : k === 'beacon' ? '📡 ' : k === 'device' ? '📟 ' :
-      k === 'path' ? '📶 ' : k === 'cell' ? '📱 ' : '';
+    return {ship: '⛴ ', aircraft: '✈ ', beacon: '📡 ', device: '📟 ', path: '📶 ', cell: '📱 ', station: '📻 ',
+            sonde: '🎈 ', site: '🗼 ', navaid: '🧭 '}[k] || '';
   }
   function rdfKinds(ts) {   // one word for a list of talkers: the common kind, else 'talker'
     const ks = new Set(ts.map(rdfKind));
@@ -12906,9 +12918,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         // aircraft: callsign first, then the ICAO address and the altitude
         const ap = rdfKind(t) === 'aircraft' ? rdfAirParts(t) : null;
         const sub = ap ? [ap.cs ? t.tid : '', ap.rest].filter(Boolean).join(' · ') : t.label || '';
-        // DME beacons: pulse pairs, ISM devices: transmissions (no reported position)
-        const bcn = rdfKind(t) === 'beacon', dev = rdfKind(t) === 'device';
-        const unit = bcn ? 'pulse pair' : dev ? 'transmission' : 'packet';
+        // DME beacons: pulse pairs, ISM devices: transmissions, TETRA / MPT1327
+        // sites: slots ... (RDF_PK_UNIT); only some report a position
+        const unit = RDF_PK_UNIT[rdfKind(t)] || 'packet', pos = RDF_POS_KINDS.has(rdfKind(t));
         let line = `<b style="color:${getDecimatorColor(t.vfo)}">${rdfIcon(t)}${digEsc(rdfShortName(t))}</b>${sub ? ' ' + digEsc(sub) : ''} · ` +
           (t.active ? '<span class="g">heard now</span>' : `heard ${rdfAge(t.age)} ago`) + ` · ${t.tx} ${unit}${t.tx === 1 ? '' : 's'}`;
         if (t.doa !== null) line += ` · bearing ${rdfBearingTxt(t)} (~${t.tx_frames} ${unit}${t.tx_frames === 1 ? '' : 's'} averaged, ${Math.round(100 * t.conf)} %)`;
@@ -12916,7 +12928,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         const c = rdfPosCheck(t);
         if (c) line += `<br>Reported position: ${c.brg.toFixed(1)}°, ${c.km.toFixed(1)} km` +
           (c.err !== null ? ` · DF error <b>${rdfSigned(c.err)}</b>` : '');
-        else if (!bcn && !dev) line += '<br><span style="color:#8296b4">Tick "🗺 Plot on map" in its decoder tab to compare with its reported position</span>';
+        else if (pos) line += '<br><span style="color:#8296b4">Tick "🗺 Plot on map" in its decoder tab to compare with its reported position</span>';
         h += (h ? '<br>' : '') + line;
       } else if (t && t.sp) {
         // a path of a TV signal (a reflection, or another transmitter of a
@@ -12964,9 +12976,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const head = {radio: ['Radio', 'Talkgroup', 'Tx'], aircraft: ['Callsign', 'ICAO', 'Pkts'], ship: ['MMSI', 'Name', 'Pkts'],
                     beacon: ['Channel', 'Ident · MHz', 'Pairs'], device: ['Device', 'Reading', 'Tx'],
                     path: ['Path', 'From the main path · power', 'Reports'], cell: ['Cell', 'Technology · PCI · power', 'Reports'],
+                    station: ['Callsign', 'Packet · path', 'Pkts'], sonde: ['Sonde', 'Type · altitude', 'Frames'],
+                    site: ['Site', 'Area · carrier', 'Slots'], navaid: ['Ident', 'Navaid · MHz', 'Blocks'],
                     talker: ['ID', 'Info', 'Tx']}[kinds];
-      // position columns for talkers that report positions (not DME beacons / ISM devices)
-      const posCols = ts.some(t => t.pk && rdfKind(t) !== 'beacon' && rdfKind(t) !== 'device');
+      // position columns for talkers that report positions (not DME beacons / ISM devices / sites / navaids)
+      const posCols = ts.some(t => t.pk && RDF_POS_KINDS.has(rdfKind(t)));
       const [scol, sdir] = rdfSortOf(kinds);
       const th = (col, text, tip) => `<th data-sort="${col}" title="${tip ? digEsc(tip) + ' - ' : ''}Sort by this column (again: reversed)">` +
         `${text}${col === scol ? (sdir > 0 ? ' ▲' : ' ▼') : ''}</th>`;

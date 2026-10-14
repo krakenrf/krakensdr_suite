@@ -31,6 +31,27 @@ aircraft, house / digipeater / weather station), course and speed from the
 Raw frames (decoder data log, "Raw frames" ticked): each valid frame in
 TNC2 form, `SRC>DEST,PATH:info` (non-printable bytes escaped).
 
+## ID separation (DoA per station)
+Every frame is a talker packet (`kp::Talker::packet`) of the station that put
+THIS frame on the air: its source, or - when the path has entries marked
+repeated ("*", the H bit) - the last of them that is a callsign (a digipeater
+that inserted its call). A frame repeated under a generic alias only (WIDEn-N,
+RELAY, TRACE ... without a callsign) names no transmitter: no talker. Label =
+the packet type, or "digipeats SRC". Samples: the frame's last <= 0.24 s
+(kraken_doa takes packets up to 0.25 s), 3 ms short of the decoded end; the
+channel 0 Hz / 16 kHz; averaged over 30 s, kept 1 h after the last frame. In
+the 🗺 Map's 📡 DF panel each station is a 📻 row with its bearing (and, with
+"Plot on map", the distance / DF error against its reported position).
+
+Test generator: `tools/aprs_gen.py OUT.cf32 --at T "SRC>DST,PATH:info" ...`
+(Bell 202 AFSK on FM, real AX.25 framing / stuffing / NRZI / FCS; "DIGI*" in
+the path = the digipeater's retransmission), stations at their own bearings
+with `../sdk/tools/uca_scene.py`. Scene: ZL1AAA-9 at 40°, a digipeater
+ZL2DG-1 at 150° repeating ZL1AAA-9 and ZL1BBB, ZL1BBB at 285°, one
+alias-only repeat: offline (`--channels 5 --uca 0.12`) 40.0 / 150.1 / 285.0°,
+through kraken_doa (fake heimdall) 40.0 / 150.0 / 285.0°, the alias-only
+frame without a talker.
+
 ## Implementation
 19200 S/s complex input (16 samples/bit) -> 7 kHz FIR -> FM discriminator ->
 DC removal -> 1200/2200 Hz quadrature correlators over one bit (running sums)

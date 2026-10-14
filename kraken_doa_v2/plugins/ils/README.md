@@ -35,6 +35,18 @@ known). The type needs three agreeing blocks (a marker also 75 MHz when
 the frequency is known); each 1 s block of a recognised navaid is a valid
 frame with its samples (Digital squelch). CPU (Pi 5): 0.7 % of a core.
 
+## ID separation (DoA per navaid)
+A localizer or VOR names itself in Morse. Every analysed block of the
+recognised navaid is a talker packet "<ident> LOC" / "<ident> VOR" while its
+ident was heard within the last 30 s on the same carrier (within 50 Hz of
+where it was heard, so another navaid on the channel doesn't inherit it):
+the middle 0.24 s of the block, filtered to the carrier (LOC 4 kHz, VOR 22
+kHz); averaged over 10 s, kept 1 h. 🧭 rows in the 🗺 Map's 📡 DF panel.
+Glide slopes and marker beacons send no ident: no talker. Test generator:
+`tools/ils_gen.py` (LOC with DDM / VOR with radial, keyed 1020 Hz ident).
+Two VORs sharing a channel (WN at 50°, then OH at 215°, 300 / 380 Hz
+offsets): 50.0 / 215.0° (`--channels 5 --uca 0.12 --rf 114e6`).
+
 ## Options
 
 - **Magnetic variation** (degrees east, west negative): the VOR bearing is

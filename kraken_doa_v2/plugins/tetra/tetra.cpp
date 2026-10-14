@@ -77,6 +77,9 @@ void TetraReceiver::reset() {
     dphi_ = 0;
     have_cell_ = false;
     last_sysinfo_.clear();
+    have_la_ = false;
+    carrier_.clear();
+    packet_slot_ = -1;
     for (int& u : slot_usage_) u = -1;
     voice_tn_ = 0;
     if (codec_) codec_->stop();
@@ -210,6 +213,8 @@ void TetraReceiver::bsch(const uint8_t* t) {
         mcc_ = mcc;
         mnc_ = mnc;
         cc_ = cc;
+        have_la_ = false;   // another cell: its own SYSINFO follows
+        carrier_.clear();
         scramb_ = tetra_scramb_init(mcc, mnc, cc);
         r.event(Mode::TETRA, "Cell: MCC " + std::to_string(mcc) + " MNC " + std::to_string(mnc) + " colour code " +
                                  std::to_string(cc), 60.0);
@@ -219,6 +224,30 @@ void TetraReceiver::bsch(const uint8_t* t) {
     static const char* lvl[4] = {"unknown", "low", "medium", "high"};
     r.set(Mode::TETRA, "Cell service level", lvl[bits_to_u32(t + 57, 2)]);
     report_valid(ctx_, Mode::TETRA, slot_start_, slot_start_ + SLOT_SAMPLES);
+    cell_packet();
+}
+
+// ID separation. The downlink is the base station's: its identity is the
+// cell - MCC / MNC + colour code (the colour code exists to tell co-channel
+// cells apart: it seeds the scrambling, so a block of another cell fails its
+// CRC here) - and every slot whose block passed its CRC under this cell's
+// code (or that carried its BSCH) is a packet of it, the whole 255-symbol
+// slot, in the 25 kHz channel. Cells sharing a carrier in frequency reuse,
+// heard in turn as propagation changes or while driving, then each keep their
+// own bearing. One packet per slot.
+void TetraReceiver::cell_packet() {
+    if (!have_cell_ || !ctx_.packet || slot_start_ == packet_slot_) return;
+    packet_slot_ = slot_start_;
+    RxContext::Packet p;
+    p.id = std::to_string(mcc_) + "-" + std::to_string(mnc_) + " CC" + std::to_string(cc_);
+    p.label = have_la_ ? "LA " + std::to_string(la_) + (carrier_.empty() ? "" : " · " + carrier_) : "TETRA cell";
+    p.start = slot_start_ - input_delay;
+    p.end = p.start + SLOT_SAMPLES;
+    p.freq_hz = 0;
+    p.bw_hz = 25000;
+    p.avg_s = 10;      // a fixed base station, ~20-70 slots a second
+    p.keep_s = 1800;
+    ctx_.packet(p);
 }
 
 void TetraReceiver::sysinfo(const uint8_t* t) {
@@ -245,6 +274,11 @@ void TetraReceiver::sysinfo(const uint8_t* t) {
     Report& r = *ctx_.report;
     r.set(Mode::TETRA, "Main carrier", b);
     r.set(Mode::TETRA, "Location area", std::to_string(la));
+    la_ = la;
+    have_la_ = true;
+    char mhz[32];
+    snprintf(mhz, sizeof mhz, "%.4f MHz", fdl / 1e6);
+    carrier_ = mhz;
     r.set(Mode::TETRA, "Secondary control channels", std::to_string(nsec));
     std::string s;
     static const struct { int bit; const char* name; } sv[] = {
@@ -368,6 +402,7 @@ void TetraReceiver::decode_slot(const uint8_t* bits, const float* soft) {
             if (decode_block(soft + 282, 216, 124, 101, scramb_, t1)) {
                 report_valid(ctx_, Mode::TETRA, slot_start_, slot_start_ + SLOT_SAMPLES);
                 mac_pdus(t1.data(), 124, "BNCH/SCH-HD");
+                cell_packet();
             }
         }
         return;
@@ -390,6 +425,7 @@ void TetraReceiver::decode_slot(const uint8_t* bits, const float* soft) {
         if (decode_block(blk.data(), 432, 268, 103, scramb_, t1)) {
             report_valid(ctx_, Mode::TETRA, slot_start_, slot_start_ + SLOT_SAMPLES);
             mac_pdus(t1.data(), 268, "SCH/F");
+            cell_packet();
         }
     } else {
         // two half slots (SCH/HD, BNCH, STCH)
@@ -397,6 +433,7 @@ void TetraReceiver::decode_slot(const uint8_t* bits, const float* soft) {
             if (decode_block(soft + (h ? 282 : 14), 216, 124, 101, scramb_, t1)) {
                 report_valid(ctx_, Mode::TETRA, slot_start_, slot_start_ + SLOT_SAMPLES);
                 mac_pdus(t1.data(), 124, "SCH/HD");
+                cell_packet();
             }
         }
     }

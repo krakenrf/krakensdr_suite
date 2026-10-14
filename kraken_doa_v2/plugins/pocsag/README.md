@@ -28,3 +28,10 @@ Tested on synthetic transmissions (all three rates, 3-15 dB SNR, inverted,
 700 Hz carrier offset): every message decodes down to ~5 dB; below that
 messages are cut short rather than garbled. Decode time ~1% of real time on
 a Raspberry Pi 5.
+
+## ID separation
+Not applicable: the RIC is the pager being called (the recipient), not the
+transmitter, and paging networks send the same batch from several
+transmitters at once (simulcast) - nothing in the signal tells them apart.
+The VFO's DoA (with the Digital squelch: from the decoded batches only) is
+the paging site's.

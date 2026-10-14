@@ -51,6 +51,20 @@ received (a few seconds); RS41 temperature / humidity need the calibration
 table, which arrives in 51 fragments over about a minute ("Calibration
 n/51").
 
+## ID separation (DoA per sonde)
+Every frame that passed its checks is a talker packet of its sonde: id = type
++ serial (the table / map key), label = model + altitude. Two sondes on one
+frequency - another site's launch, yesterday's sonde still sending from the
+ground - keep their own bearings (🎈 rows in the 🗺 Map's 📡 DF panel, with
+distance / DF error against the sonde's own position when "Plot on map" is
+ticked). Samples: the frame's first <= 0.24 s from its sync (the RS41's
+decoded length is the extended frame's 0.86 s, which may reach into the next
+signal); the channel 15 kHz wide (24 kHz for M10 / M20); averaged over 10 s,
+kept 3 h. The iMet-4 sends no serial: no talker (one would merge every
+iMet-4). Test: the RS41 / DFM-09 / M20 recordings below one after the other
+on one frequency at 30 / 140 / 250°: 30.0 / 140.0 / 250.0° offline and
+through kraken_doa.
+
 ## Not supported
 
 RS92 (raw GPS - needs downloaded ephemeris), the 1680 MHz sondes

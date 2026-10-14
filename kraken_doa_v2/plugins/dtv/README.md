@@ -251,6 +251,11 @@ are taken out; a burst no model fits uses the measured ones.
   filters each transmitter's pilots differently (not handled); a frame's
   later subframes with another FFT size / pattern are not used. One
   antenna's echo profile marks no path more than 22 dB below the strongest.
+- ID separation: the transmitters of a single frequency network send
+  identical signals (the TPS cell ID is the network's, the same from every
+  site), so there is no per-transmitter ID to report - path separation
+  tells them apart by delay instead. ATSC 3.0's transmitter ID (TxID
+  watermark) and DVB-T2's optional TX-SIG are not decoded.
 - DTMB: only the 8 MHz raster is known (6 / 7 MHz: set the channel centre);
   delays beyond the header's cyclic extension still work (linear method).
 - CPU (Pi 5): the estimation per burst on the real 522 MHz DVB-T capture

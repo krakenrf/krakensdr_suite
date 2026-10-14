@@ -9,6 +9,7 @@
 // dig_vocoder.hpp).
 
 #include <chrono>
+#include <cmath>
 #include <complex>
 #include <cstdint>
 #include <functional>
@@ -78,6 +79,17 @@ struct RxContext {
     // timeslot). Unset = not reported.
     std::function<void(const std::string& id, const std::string& label, int64_t start, int64_t end, int channel)> talker;
     std::function<void(int64_t at, int channel)> talker_end;
+    // One PACKET of a talker (kp::Talker::packet - ID separation for bursts:
+    // the TETRA cell of every decoded slot): the receiver's input sample
+    // indexes [start, end) since its last reset (Bridge::clock maps them),
+    // its channel in Hz from the input's 0 Hz (NAN / 0 = the whole input) and
+    // the host's averaging / keep times (kp::Talker::avg_s / keep_s)
+    struct Packet {
+        std::string id, label;
+        int64_t start = 0, end = 0;
+        double freq_hz = NAN, bw_hz = 0, avg_s = 0, keep_s = 0;
+    };
+    std::function<void(const Packet&)> packet;
 };
 
 // A valid frame, with its samples when the host takes them
@@ -108,6 +120,19 @@ public:
     void clock(double rate) {
         ctx.valid_at = [this, rate](Mode, int64_t a, int64_t b) {
             host_.valid(t0_ + static_cast<double>(a) / rate, t0_ + static_cast<double>(b) / rate);
+        };
+        ctx.packet = [this, rate](const RxContext::Packet& p) {
+            kp::Talker t;
+            t.id = p.id;
+            t.label = p.label;
+            t.start_s = t0_ + static_cast<double>(p.start) / rate;
+            t.end_s = t0_ + static_cast<double>(p.end) / rate;
+            t.packet = true;
+            t.freq_hz = p.freq_hz;
+            t.bw_hz = p.bw_hz;
+            t.avg_s = p.avg_s;
+            t.keep_s = p.keep_s;
+            host_.talker(t);
         };
     }
     // Report the receiver's talkers (RxContext::talker) to the host too

@@ -9,7 +9,8 @@ namespace {
 class TetraPlugin : public kp::Decoder {
 public:
     explicit TetraPlugin(kp::Host& h) : Decoder(h), br_(h), rx_(br_.ctx), fe_(4, 6, 0.35f) {
-        br_.clock(72000);   // valid slots with their samples (the receiver runs at the input rate)
+        br_.clock(72000);   // valid slots + cell packets with their samples (the receiver runs at the input rate)
+        rx_.input_delay = 4 * 6;   // the RRC front end's delay: (taps - 1) / 2 = sps * span
         facts();
     }
     void process(const kp::cf* x, size_t n) override {
@@ -37,8 +38,9 @@ KRAKEN_PLUGIN(TetraPlugin, {.id = "tetra",
                             .description = "TETRA downlink (base station, 25 kHz). Network (MCC / MNC), colour code, location "
                                            "area, carrier, services, timeslot usage, call set-up and addresses. Voice: ACELP "
                                            "(ETSI codec, README \"Digital voice codecs\"). Bandwidth 24 kHz or more.",
-                            .version = "2.0",
+                            .version = "2.1",
                             .sample_rate = 72000,
                             .min_vfo_rate = 24000,
                             .author = "KrakenSDR",
-                            .voice = true})
+                            .voice = true,
+                            .talkers = true})

@@ -27,6 +27,12 @@
 //                    REC.json "rf_hz" of ai/sigtool.py captures)
 //   --raw            raw frames on (Host::raw_wanted) and printed
 //   --quiet          only the summary
+//   --uca R          with --channels M: the antennas form kraken_doa's UCA of
+//                    radius R metres (clockwise, ANT0 on +x); antenna 0 is
+//                    decoded (multichannel plugins: every antenna) and the
+//                    summary gives each TALKER's bearing from its own samples
+//                    of every antenna, as kraken_doa's DoA per talker
+//                    computes it (needs --rf) - the ID-separation test
 // Array plugins (Info::array) read a MULTICHANNEL recording: every sample
 // holds the antennas one after the other (cf32 / cs16 / cu8 pairs):
 //   --channels M     antennas (default: REC.json "channels")
@@ -706,11 +712,17 @@ public:
     };
     std::map<std::string, Pk> packets_;
     uint64_t packets_total_ = 0;
+    // every packet with its channel, for the per-talker bearings (--uca on a
+    // multichannel recording)
+    struct PkRec { std::string id; double start, end, freq, bw; };
+    std::vector<PkRec> pk_recs_;
+    bool keep_pk_ = false;
     void talker(const kp::Talker& t) override {
         if (t.id.empty()) return;
         const double st = std::isfinite(t.start_s) ? t.start_s : time();
         const double en = std::isfinite(t.end_s) ? t.end_s : time();
         if (t.packet) {
+            if (keep_pk_) pk_recs_.push_back({t.id, st, en, t.freq_hz, t.bw_hz});
             Pk& k = packets_[t.id];
             if (!k.n) k.first = st;
             k.n++;
@@ -990,6 +1002,147 @@ double uca_bearing(const std::vector<std::complex<double>>& C, int m, double r, 
     return bdeg;
 }
 
+// Per-talker bearings of a decoder run on a multichannel recording (--uca R
+// with --channels M, non-array plugins): every talker's own samples of every
+// antenna - transmissions (Host::talker spans) 40 ms inside both ends, packets
+// exactly, each through the channel it named (Talker::freq_hz / bw_hz; else
+// the band the plugin receives) - summed as trace-normalised covariances ->
+// MUSIC with one source on kraken_doa's UCA. The same rules as kraken_doa's
+// TalkerDoa: packets longer than 0.25 s and packets overlapping another
+// talker's on the same channel are dropped (counted). Times: plugin time ->
+// file time through the resampler's delay.
+struct BearingIn {
+    std::string path, fmt;
+    int m = 1;
+    double rate = 0, start = 0, offset = 0, band = 0, delay_s = 0, uca_r = 0, lambda = NAN;
+};
+void talker_bearings(const BearingIn& in, const TestHost& host) {
+    constexpr double GUARD_S = 0.04, MAX_PACKET_S = 0.25;
+    struct Seg { std::string id, label; double a, b, freq, bw; bool packet; };
+    std::vector<Seg> segs;
+    std::map<std::string, std::string> labels;
+    for (const auto& s : host.spans_) {
+        if (s.id == "?") continue;
+        if (s.end - s.start > 2 * GUARD_S) segs.push_back({s.id, s.label, s.start + GUARD_S, s.end - GUARD_S, NAN, 0, false});
+        labels[s.id] = s.label;
+    }
+    size_t too_long = 0, overlap = 0;
+    std::vector<bool> bad(host.pk_recs_.size(), false);
+    for (size_t i = 0; i < host.pk_recs_.size(); i++) {
+        const auto& p = host.pk_recs_[i];
+        if (p.end - p.start > MAX_PACKET_S) { bad[i] = true; too_long++; continue; }
+        for (size_t j = i + 1; j < host.pk_recs_.size() && j < i + 64; j++) {
+            const auto& q = host.pk_recs_[j];
+            const bool same = !std::isfinite(p.freq) || !std::isfinite(q.freq) || std::fabs(p.freq - q.freq) < 0.5 * std::max(p.bw, q.bw) + 1;
+            if (q.id != p.id && q.start < p.end && p.start < q.end && same) bad[i] = bad[j] = true;
+        }
+    }
+    for (size_t i = 0; i < host.pk_recs_.size(); i++) {
+        const auto& p = host.pk_recs_[i];
+        if (bad[i]) { if (p.end - p.start <= MAX_PACKET_S) overlap++; continue; }
+        auto it = host.packets_.find(p.id);
+        segs.push_back({p.id, it != host.packets_.end() ? it->second.label : "", p.start, p.end, p.freq, p.bw, true});
+    }
+    printf("talker bearings (UCA r = %.3f m, %d antennas, %.4f MHz):\n", in.uca_r, in.m, 3e8 / in.lambda / 1e6);
+    if (too_long) printf("  %zu packets longer than %.2f s dropped (kraken_doa drops them too: report <= 0.24 s of a longer frame)\n", too_long, MAX_PACKET_S);
+    if (overlap) printf("  %zu packets dropped: they overlap another talker's packet on the same channel\n", overlap);
+    FILE* f = fopen(in.path.c_str(), "rb");
+    if (!f) { printf("  cannot open %s\n", in.path.c_str()); return; }
+    const size_t bps = in.fmt == "cf32" ? 8 : in.fmt == "cs16" ? 4 : 2;
+    const int m = in.m;
+    // samples [i0, i0 + n) of every antenna (zeros outside the file)
+    std::vector<char> raw;
+    auto read = [&](int64_t i0, size_t n, std::vector<std::vector<std::complex<double>>>& out) {
+        out.assign(static_cast<size_t>(m), std::vector<std::complex<double>>(n));
+        const int64_t s0 = std::max<int64_t>(0, i0);
+        if (static_cast<int64_t>(n) + i0 <= s0) return;
+        const size_t skip = static_cast<size_t>(s0 - i0), want = n - skip;
+        raw.resize(want * static_cast<size_t>(m) * bps);
+        if (fseeko(f, static_cast<off_t>(s0) * m * static_cast<off_t>(bps), SEEK_SET) != 0) return;
+        const size_t got = fread(raw.data(), static_cast<size_t>(m) * bps, want, f);
+        for (size_t i = 0; i < got; i++)
+            for (int k = 0; k < m; k++) {
+                const char* d = raw.data() + (i * static_cast<size_t>(m) + static_cast<size_t>(k)) * bps;
+                std::complex<double> v;
+                if (bps == 8) { float iq[2]; memcpy(iq, d, 8); v = {iq[0], iq[1]}; }
+                else if (bps == 4) { int16_t iq[2]; memcpy(iq, d, 4); v = {iq[0] / 32768.0, iq[1] / 32768.0}; }
+                else { auto u = reinterpret_cast<const uint8_t*>(d); v = {(u[0] - 127.5) / 127.5, (u[1] - 127.5) / 127.5}; }
+                out[static_cast<size_t>(k)][skip + i] = v;
+            }
+    };
+    struct Acc { std::vector<std::complex<double>> sum; uint64_t n = 0; double secs = 0; bool packet = false; };
+    std::map<std::string, Acc> acc;
+    std::vector<std::vector<std::complex<double>>> x;
+    for (const auto& s : segs) {
+        // the channel in the file: the plugin's 0 Hz is --offset; a packet's own
+        // channel, else the plugin's band
+        const double fc = in.offset + (std::isfinite(s.freq) ? s.freq : 0);
+        const double bw = s.bw > 0 ? s.bw : in.band;
+        const bool filt = bw < 0.98 * in.rate || fc != 0;
+        std::vector<double> h;
+        if (filt) {
+            int nt = static_cast<int>(std::clamp(4.0 * in.rate / std::max(1.0, bw), 15.0, 2047.0)) | 1;
+            h.resize(static_cast<size_t>(nt));
+            const double fcut = 0.5 * std::min(bw, in.rate) / in.rate;
+            double sum = 0;
+            for (int i = 0; i < nt; i++) {
+                const double t = i - (nt - 1) / 2.0;
+                const double sinc = t == 0 ? 2 * fcut : std::sin(2 * M_PI * fcut * t) / (M_PI * t);
+                h[static_cast<size_t>(i)] = sinc * (0.54 - 0.46 * std::cos(2 * M_PI * i / (nt - 1)));
+                sum += h[static_cast<size_t>(i)];
+            }
+            for (auto& v : h) v /= sum;
+        }
+        const int nt = static_cast<int>(h.size());
+        const int64_t ia = std::llround((s.a - in.delay_s + in.start) * in.rate), ib = std::llround((s.b - in.delay_s + in.start) * in.rate);
+        if (ib - ia < 2) continue;
+        std::vector<std::complex<double>> R(static_cast<size_t>(m * m));
+        std::vector<std::complex<double>> y(static_cast<size_t>(m));
+        constexpr int64_t CH = 65536;
+        for (int64_t c0 = ia; c0 < ib; c0 += CH) {
+            const int64_t c1 = std::min(ib, c0 + CH);
+            const int64_t r0 = c0 - (nt ? nt - 1 : 0);
+            read(r0, static_cast<size_t>(c1 - r0), x);
+            if (filt) {
+                // mix the channel to 0 Hz (the phase reference is common to all antennas)
+                for (int64_t i = r0; i < c1; i++) {
+                    const std::complex<double> rot = std::polar(1.0, -2 * M_PI * std::fmod(fc * static_cast<double>(i) / in.rate, 1.0));
+                    for (int k = 0; k < m; k++) x[static_cast<size_t>(k)][static_cast<size_t>(i - r0)] *= rot;
+                }
+            }
+            for (int64_t i = c0; i < c1; i++) {
+                const size_t o = static_cast<size_t>(i - r0);
+                for (int k = 0; k < m; k++) {
+                    if (!filt) { y[static_cast<size_t>(k)] = x[static_cast<size_t>(k)][o]; continue; }
+                    std::complex<double> v = 0;
+                    const auto& xk = x[static_cast<size_t>(k)];
+                    for (int j = 0; j < nt; j++) v += h[static_cast<size_t>(j)] * xk[o - static_cast<size_t>(j)];
+                    y[static_cast<size_t>(k)] = v;
+                }
+                for (int a = 0; a < m; a++)
+                    for (int b = 0; b < m; b++) R[static_cast<size_t>(a * m + b)] += y[static_cast<size_t>(a)] * std::conj(y[static_cast<size_t>(b)]);
+            }
+        }
+        double tr = 0;
+        for (int k = 0; k < m; k++) tr += R[static_cast<size_t>(k * m + k)].real();
+        if (!(tr > 0)) continue;
+        Acc& A = acc[s.id];
+        if (A.sum.empty()) A.sum.assign(static_cast<size_t>(m * m), 0);
+        for (size_t i = 0; i < R.size(); i++) A.sum[i] += R[i] / tr;
+        A.n++;
+        A.secs += s.b - s.a;
+        A.packet = s.packet;
+        if (!s.label.empty()) labels[s.id] = s.label;
+    }
+    fclose(f);
+    for (const auto& [id, A] : acc) {
+        double conf = 0;
+        const double b = uca_bearing(A.sum, m, in.uca_r, in.lambda, &conf);
+        printf("  %-14s %-30s %5llu %s %8.2f s  bearing %6.1f deg  (peak/mean %.0f)\n", id.c_str(), labels[id].substr(0, 30).c_str(),
+               static_cast<unsigned long long>(A.n), A.packet ? "packets" : "spans  ", A.secs, b, conf);
+    }
+}
+
 // Array plugins: a multichannel recording through process_array()
 int test_array(const std::string& path, std::string fmt, double rate, int channels, double offset, double start,
                double seconds, bool all, double uca_r, TestHost& host, kp::Decoder& dec, const kp::Info& info,
@@ -1196,6 +1349,9 @@ int test_file(int argc, char** argv) {
         return 1;
     }
     McReader mcr;
+    // every antenna through process_multi (Info::multichannel); other plugins
+    // decode antenna 0 (or --channel K) like a single-channel VFO
+    if (channels > 1 && pick < 0 && !info.multichannel) pick = 0;
     const bool mc_all = channels > 1 && pick < 0;
     if (channels > 1) {
         if (rate <= 0 && !read_sidecar_rate(path, &rate)) {
@@ -1238,6 +1394,7 @@ int test_file(int argc, char** argv) {
         host.rf_hz_ = invert ? rf - offset : rf + offset;
         host.rf_inv_ = invert;
     }
+    host.keep_pk_ = uca_r > 0 && channels > 1;
     auto dec = kp_plugin_create(host);
     for (const auto& o : info.options) dec->option(o.key, o.def);
     if (verbose) dec->option("verbose", "1");
@@ -1253,6 +1410,8 @@ int test_file(int argc, char** argv) {
     // mix + resample to the plugin's rate, in 10 ms blocks like live
     kp::Nco nco(static_cast<float>(offset), static_cast<float>(rate));
     msresamp_crcf rs = msresamp_crcf_create(static_cast<float>(info.sample_rate / rate), 60.0f);
+    // the plugin's samples lag the file by the resampler's delay (per-talker bearings)
+    const double rs_delay_s = info.sample_rate == rate && offset == 0 ? 0.0 : msresamp_crcf_get_delay(rs) / info.sample_rate;
     const size_t blk = std::max<size_t>(1, static_cast<size_t>(rate / 100));
     std::vector<kp::cf> in(blk), outb(static_cast<size_t>(blk * info.sample_rate / rate) + 64);
     auto t0 = std::chrono::steady_clock::now();
@@ -1342,6 +1501,26 @@ int test_file(int argc, char** argv) {
         write_wav8k(audio_path, host.audio_);
         printf("audio: %.2f s -> %s\n", host.audio_.size() / 8000.0, audio_path.c_str());
     }
+    if (uca_r > 0 && channels > 1) {
+        if (!std::isfinite(host.rf_hz_) || !(host.rf_hz_ > 0)) {
+            printf("talker bearings: need the RF (--rf or the sidecar's rf_hz)\n");
+        } else if (invert) {
+            printf("talker bearings: not with --invert\n");
+        } else {
+            BearingIn b;
+            b.path = path;
+            b.fmt = mcr.fmt;
+            b.m = channels;
+            b.rate = rate;
+            b.start = start;
+            b.offset = offset;
+            b.band = std::min(info.sample_rate, rate);
+            b.delay_s = mc_all ? 0.0 : rs_delay_s;
+            b.uca_r = uca_r;
+            b.lambda = 3e8 / host.rf_hz_;
+            talker_bearings(b, host);
+        }
+    }
     return 0;
 }
 
@@ -1358,7 +1537,7 @@ int main(int argc, char** argv) {
             "usage: %s --info | --serve | --file REC [--rate HZ] [--format cf32|cu8|cs16|wav]\n"
             "          [--offset HZ] [--start S] [--seconds S] [--verbose] [--invert]\n"
             "          [--opt key=value] [--audio out.wav] [--station LAT,LON] [--rf HZ] [--raw] [--quiet]\n"
-            "          [--channels M (every antenna, interleaved) [--channel K (only that one)]]\n"
+            "          [--channels M (every antenna, interleaved) [--channel K (only that one)] [--uca RADIUS_M]]\n"
             "          array plugins: [--channels M] [--all] [--uca RADIUS_M]\n",
             info.name, info.description, argv[0]);
     return 2;

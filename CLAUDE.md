@@ -466,7 +466,9 @@ decoders `kraken_doa_v2/plugins/`
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags)
-- Same executable tests offline: `decoder --file x.cf32 [--offset HZ] [--rf HZ]`
+- Same executable tests offline: `decoder --file x.cf32 [--offset HZ] [--rf HZ]`;
+  `--channels M --uca R` on a recording of every antenna prints each
+  talker's bearing (ID separation)
 - The shipped protocol plugins are thin wrappers around `plugins/lib/`
   (libkrakendig.a: FEC, 4FSK sync, vocoders, front ends) - kraken_doa itself
   contains no protocol code
@@ -662,8 +664,20 @@ frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices)** (details:
-`kraken_doa_v2/CLAUDE.md` *DoA per talker*): a decoder plugin that knows who
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents)** (details:
+`kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
+of every decoder** (the user's rule, 2026-10-15): if the signal carries a
+coded ID per transmitter, the plugin reports it as a talker and is tested
+with several transmitters at known bearings - `plugins/SDK.md` *ID
+separation*, generators in `plugins/<id>/tools/`, `plugins/sdk/tools/
+uca_scene.py` (scenes on the UCA), `decoder --file x.cf32 --channels 5
+--uca 0.12` (each talker's bearing offline). APRS: per frame its RF
+transmitter (source, or the digipeater marked "*"); radiosonde: type +
+serial per frame; TETRA: the cell (MCC-MNC + colour code) per decoded
+slot; MPT1327: the control channel's site (SYS); ILS / VOR: the Morse
+ident (packets, `kp::Talker::packet`, each in its channel). Not applicable
+(README says why): POCSAG (RIC = recipient), v23_telemetry, dtv (SFN
+copies identical: by delay), iMet-4 (no serial). A decoder plugin that knows who
 transmits reports it (`kp::Host::talker` / `talker_end`, `Info::talkers`,
 with the frames' exact sample times; `kp::Talker::channel` for concurrent
 transmissions - DMR timeslots; id "?" = a busy channel whose radio isn't
@@ -694,8 +708,8 @@ browser); the 2 Hz status carries every talker only every 2.5 s
 (`{"rdf"}`), the recently heard ones in between (`{"rdf_part"}`, merged by
 the page - a separate key so an old page in a tab that reconnected after a
 restart ignores it instead of showing it as the whole list).
-TETRA isn't split
-(downlink = the base station only). The
+TETRA: the downlink's base
+station per cell (co-channel cells apart). The
 VFO's decimated-stream position (`MultiChannelDecimated::stream_pos`) is the
 common clock: MUSIC frames (`MUSICProcessor::setFrameTap`: each frame's own
 covariance + its stream samples) that lie inside one talker's transmission

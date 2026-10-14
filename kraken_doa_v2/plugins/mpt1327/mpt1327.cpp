@@ -212,6 +212,26 @@ void Mpt1327Receiver::decode_slot(int64_t sync_end, int which) {
     if (valid)
         report_valid(ctx_, Mode::MPT1327, sync_end - (which == 0 ? 64 : 20) * static_cast<int64_t>(SPB),
                      sync_end + (addr_ok ? 65 : 1) * static_cast<int64_t>(SPB));
+    // ID separation: a control channel slot is the SITE's transmission - its
+    // CCSC names the site (SYS) - so each slot with a good CCSC is a packet of
+    // that site: CCSC + address codeword (107 ms), 2 ms inside both ends (the
+    // tone correlators lag a bit). Co-channel sites (frequency reuse) heard in
+    // turn keep their own bearings. Traffic channels / the mobiles' return
+    // channel name no transmitter here.
+    if (which == 0 && ctx_.packet) {
+        RxContext::Packet p;
+        char id[24];
+        snprintf(id, sizeof id, "SYS %04X", sys_);
+        p.id = id;
+        p.label = "control channel";
+        p.start = sync_end - 64 * static_cast<int64_t>(SPB) + FS / 500;
+        p.end = sync_end + (addr_ok ? 65 : 1) * static_cast<int64_t>(SPB) - FS / 500;
+        p.freq_hz = 0;
+        p.bw_hz = 12500;
+        p.avg_s = 10;      // a fixed site, ~9 slots a second
+        p.keep_s = 1800;
+        ctx_.packet(p);
+    }
 }
 
 void Mpt1327Receiver::process(const float* d, size_t n) {

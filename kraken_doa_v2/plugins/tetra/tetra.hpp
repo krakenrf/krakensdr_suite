@@ -24,6 +24,9 @@ public:
     // matched-filtered complex samples, 72 kHz (4 samples/symbol)
     void process(const std::complex<float>* x, size_t n);
     void reset();
+    // the matched filter's delay (samples): slot k's input samples are this
+    // much earlier than its filtered ones (ID-separation packets)
+    int64_t input_delay = 0;
 private:
     RxContext& ctx_;
     std::vector<std::complex<float>> hist_;   // recent samples
@@ -40,6 +43,13 @@ private:
     int tn_ = 0, fn_ = 0, mn_ = 0;
     uint32_t scramb_ = 0;
     std::string last_sysinfo_;
+    // ID separation: every slot that passed its CRC under the cell's
+    // scrambling code is a packet of that cell (RxContext::packet)
+    uint32_t la_ = 0;
+    bool have_la_ = false;
+    std::string carrier_;
+    int64_t packet_slot_ = -1;
+    void cell_packet();
     // voice: TCH/S of one traffic timeslot -> the user-built ETSI codec
     int slot_usage_[5] = {-1, -1, -1, -1, -1};   // AACH usage marker per timeslot
     int voice_tn_ = 0;
