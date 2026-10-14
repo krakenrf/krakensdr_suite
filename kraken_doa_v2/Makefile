@@ -60,6 +60,7 @@ TARGET = kraken_doa
 # Source files (updated with IQ converter)
 SIGNAL_PROCESSING_SRCS = \
 	$(SRCDIR)/signal_processing/fft_processor.cpp \
+	$(SRCDIR)/signal_processing/noise_floor.cpp \
 	$(SRCDIR)/signal_processing/fm_demodulator.cpp \
 	$(SRCDIR)/signal_processing/music_processor.cpp \
 	$(SRCDIR)/signal_processing/shared_decimator.cpp \

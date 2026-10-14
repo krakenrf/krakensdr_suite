@@ -100,6 +100,12 @@ public:
     // Used for coherent mode normalization to match wideband reference level
     static float calculate_noise_floor(const std::vector<float>& fft_data);
 
+    // The 0 dB reference of tuner channel `channel`'s averaged spectrum: the
+    // floor of its latest frame, or the receiver's remembered floor when a
+    // signal fills the band (noise_floor.hpp). Measured from fft_data when the
+    // channel has no recent frame. Display, squelch and scanner all use it.
+    static float channel_noise_floor(int channel, const std::vector<float>& fft_data);
+
     // Reset all FFT buffers immediately (called on frequency change)
     // Clears both raw and averaged buffers to prevent stale data display
     static void reset_all_buffers();

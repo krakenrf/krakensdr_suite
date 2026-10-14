@@ -1,5 +1,6 @@
 #include "signal_processing/fft_processor.hpp"
 #include "signal_processing/beamformer.hpp"
+#include "signal_processing/noise_floor.hpp"
 #include "globals.hpp"
 #include "config.hpp"
 #include <fftw3.h>
@@ -420,6 +421,10 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
         fft_averaged[channel][i] = alpha * db + (1.0f - alpha) * fft_averaged[channel][i];
     }
 
+    // The channel's noise floor for this frame (the 0 dB reference of the
+    // display, squelch and scanner) - remembered when a signal fills the band
+    nfloor::on_frame(channel, fft_magnitudes[channel], fft_averaged[channel], fft_size, should_reset);
+
     // Mark FFT data as valid now that we've written real data
     // This flag prevents build_fft_message from using stale/reset data
     if (!fft_data_valid.load(std::memory_order_relaxed)) {
@@ -730,6 +735,12 @@ float FFTProcessor::calculate_noise_floor(const std::vector<float>& fft_data) {
     return ::calculate_noise_floor(fft_data);  // Call the helper in anonymous namespace
 }
 
+float FFTProcessor::channel_noise_floor(int channel, const std::vector<float>& fft_data) {
+    float f;
+    if (nfloor::floor_db(channel, &f)) return f;
+    return ::calculate_noise_floor(fft_data);
+}
+
 // Reset all FFT buffers immediately (called on frequency change)
 // This ensures no stale data from previous frequency is displayed
 void FFTProcessor::reset_all_buffers() {
@@ -783,7 +794,7 @@ bool FFTProcessor::check_squelch(int channel, float squelch_threshold_db) {
     }
 
     // Calculate noise floor for this channel
-    float noise_floor = calculate_noise_floor(magnitudes);
+    float noise_floor = channel_noise_floor(channel, magnitudes);
 
     // Find peak magnitude
     float peak = -120.0f;
@@ -872,7 +883,7 @@ float FFTProcessor::get_range_peak_db(int channel, float offset_hz, float bandwi
     }
 
     // Calculate noise floor for this channel (for normalization)
-    float noise_floor = calculate_noise_floor(magnitudes);
+    float noise_floor = channel_noise_floor(channel, magnitudes);
 
     // Calculate bin range for the specified frequency window
     const float sample_rate_hz = SAMPLE_RATE;

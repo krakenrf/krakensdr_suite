@@ -2387,6 +2387,70 @@ Edit `include/config.hpp`:
   ✕ / a second click remove, an array-frame lobe tagged "(array)", error
   answer, another page's answer ignored, Clear removes them
 
+**Noise floor = the spectrum's 0 dB (`src/signal_processing/noise_floor.cpp`, `nfloor::`):**
+- Every tuner channel's spectrum is drawn, FFT-squelched (`check_squelch`,
+  `get_range_peak_db` -> `check_squelch_in_range`) and scanned (continuous
+  scanner) relative to ONE floor per channel: `FFTProcessor::
+  channel_noise_floor(ch, data)`. It was each caller's own 10th percentile
+  of the centre 80 % of the bins (`calculate_noise_floor`, still used by the
+  wideband scan's stitched spectrum) - a signal wider than the 2.4 MHz
+  (DVB-T, LTE) fills those bins, so the percentile landed on it: drawn at
+  ~0-10 dB (only its edge showed its height) and an FFT squelch inside it
+  never opened (the user's report, 2026-10-14)
+- `nfloor::on_frame` (FFT worker, under fft_mutex - after the EMA; worked
+  out at most every `EVAL_MS` 50 per channel and on every retune: a
+  percentile of 13k bins is ~0.1-0.2 ms on the Pi 5 and frames come ~146 / s
+  - the squelch checks, which each took their own percentile per packet,
+  read the cached floor now): f = the averaged spectrum's percentile (today's floor), r = the RAW
+  frame's percentile + 10 log10(fft size) (independent of the averaging and
+  the FFT size). The receiver's own floor is remembered per tuner channel and
+  gain (`"ch|gain"`, from the 8091 header; AGC (-1) and calibration
+  (`doa_is_calibrating`) = the frame's floor, nothing learned):
+  follows a lower r within ~0.5 s, a higher one 1 dB/s, nothing learned
+  `SETTLE_MS` 600 after a retune; a tuner with none takes the others' at
+  that gain. HELD (the band's floor is a signal) -> floor = f - (r - ref):
+  the averaged spectrum's percentile stands as far above its noise as the
+  frame's (a band-filling signal fluctuates like noise). Not held = f,
+  exactly as before
+- When is it held? Coherent mode: the COHERENCE TEST - receiver noise is
+  independent per antenna, a signal isn't. `measure_coherence` (decimation
+  thread, the FFT channel + any other antenna of the same packet, every
+  `MSC_PERIOD_MS` 250; the receiver converts a second channel for it when
+  DoA is off - `coherence_due()`): Welch 256-point Hann segments (64 per
+  16384-sample packet), magnitude-squared coherence per bin, the mean over
+  the quietest quarter of the centre 80 % (no DC) -> >= `MSC_SIGNAL` 0.2 =
+  signal (noise ~1/64; a signal at SNR s (s/(1+s))^2), EMA 0.5, valid 2 s
+  and only after the last retune. Signal: held once r > ref + 1 dB, ref
+  never rises (a day on DVB-T doesn't wear it away); noise: not held, ref
+  follows (a real rise - active antenna, interference - is learned at once).
+  Independent / wideband scan mode or no fresh verdict: held when r > ref +
+  6 dB (released < 4), ref creeps up 1 dB a minute while held (a real +10
+  dB rise shows as ~10 dB noise for minutes there)
+- `noise_floors.json` (cwd, gitignored; `{"version":1,"floors":{"0|49.6":
+  -27.49,...}}`): loaded at start (`nfloor::load`), written by the FFT
+  worker at most every 5 min when a floor moved >= 0.5 dB
+  (`maybe_save`) and at shutdown (`save_now`), so a start on DVB-T is right
+  at once. Not touched by RESET_SETTINGS
+- Not covered: the beamformed-FFT squelch (beamforming on: its own narrow
+  spectrum's percentile, `check_squelch_beamformed`), the wideband scan's
+  stitched spectrum + discrete scanner
+- Tests: unit (scratch t_nfloor.cpp, `-DNFLOOR_TEST_CLOCK` = a test clock,
+  minutes in no time) - noise = the old floor exactly; coherent +20 dB
+  band-filling shown at +20 for 10 min; a +10 dB uncorrelated rise learned
+  at once; independent: +20 held, creeping to +10 in 10 min; retune onto the
+  signal right within 0.5 s; AGC / calibration = old; FFT 8192; another
+  tuner taking tuner 0's floor; a strong carrier in noise (verdict noise);
+  the file round trip. End to end (scratch e2e/fake_heimdall_floor.py +
+  t_floor.py, a test build on ports 4708x): 5 coherent channels, phases
+  noise / a band-filling signal 20 dB over it, the same in every antenna /
+  noise 10 dB up, independent per antenna / noise / the signal again, each a
+  retune; VFO 0 FFT squelch 10 dB. The band's median as drawn (noise's own:
+  2.1-2.4 dB): before 2.2 dB on the signal, squelch never open; now 21.6-
+  21.9 dB, squelch open 100 % (DoA off for 12 s of it - the second channel
+  converted for the test), the +10 dB noise at 0 dB after ~1 s (no verdict
+  for the first frames after the retune), squelch closed. kraken_doa CPU the
+  same (50-55 vs 52 % of a core)
+
 **Digital squelch (squelch method "Digital", with the VFO's decoder on):**
 - The squelch methods are FFT (0) and DIGITAL (3) - the eigenvalue methods
   (1 / 2: λ ratio with a manual / self-learned threshold) were removed (too

@@ -2,6 +2,7 @@
 #include "config.hpp"
 #include "utils/log_sanitize.hpp"
 #include "signal_processing/fft_processor.hpp"
+#include "signal_processing/noise_floor.hpp"
 #include "signal_processing/fm_demodulator.hpp"
 #include "signal_processing/beamformer.hpp"
 #include "decimator_manager.hpp"
@@ -300,6 +301,10 @@ int main(int argc, char* argv[]) {
     // 🗺 Map markers the user placed (map_markers.json)
     markers::load();
 
+    // The receivers' own noise floors (noise_floors.json) - the spectrum's 0 dB
+    // while a signal fills the band
+    nfloor::load();
+
     // Decoder data log (off until enabled in the sidebar; settings replay)
     declog::start();
 
@@ -422,6 +427,7 @@ int main(int argc, char* argv[]) {
     // Stop the web mapper worker (reads the same decimator/station state).
     web_mapper.stop();
     incidents::save_now();
+    nfloor::save_now();
     v2t::stop();       // before the decoder log's last write
     declog::stop();
     rdfmap::stop();

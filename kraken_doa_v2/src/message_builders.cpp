@@ -52,6 +52,15 @@ static float normalize_to_noise_floor(std::vector<float>& fft_data) {
     return noise_floor;
 }
 
+// The same for one tuner channel's spectrum: its floor as the squelch sees it
+// - the receiver's remembered floor while a signal fills the band
+static void normalize_to_channel_floor(std::vector<float>& fft_data, int channel) {
+    const float noise_floor = FFTProcessor::channel_noise_floor(channel, fft_data);
+    for (float& mag : fft_data) {
+        mag -= noise_floor;
+    }
+}
+
 string MessageBuilders::build_fft_message() {
     lock_guard<mutex> lock(fft_mutex);
 
@@ -110,7 +119,7 @@ string MessageBuilders::build_fft_message() {
                 continue;
             }
             norm = fft_averaged[ch];
-            normalize_to_noise_floor(norm);
+            normalize_to_channel_floor(norm, ch);
             CompressedDecimatedFFT c = FFTProcessor::decimate_fft_compressed(
                 norm, exact_tuner_hz(ch) / 1e6f, dec);
             im.add_value(static_cast<uint32_t>(c.min_envelope.size()));
@@ -285,7 +294,7 @@ string MessageBuilders::build_fft_message() {
     // Normalize noise floor to 0dB for consistent display and squelch detection
     static std::vector<float> normalized_fft;
     normalized_fft = fft_averaged[current_active];
-    normalize_to_noise_floor(normalized_fft);
+    normalize_to_channel_floor(normalized_fft, current_active);
 
     // SIGNAL MONITORING IN LOCKED STATE:
     // Feed normalized coherent FFT to scanner to monitor signal presence

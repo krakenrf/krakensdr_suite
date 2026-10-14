@@ -242,7 +242,9 @@ void ContinuousScanner::refreshFFTData() {
         // edge rolloff). Estimating over ALL bins let the rolloff skirt drag
         // the floor several dB low, which made the squelch trigger on signals
         // that sat below the squelch line drawn on the FFT display.
-        float noise = FFTProcessor::calculate_noise_floor(spec);
+        // (channel_noise_floor: the remembered receiver floor while a signal
+        // fills the band - an LTE / DVB-T channel read as noise before)
+        float noise = FFTProcessor::channel_noise_floor(ch, spec);
         if (noise <= -190.0f) {
             // Fallback (size mismatch): 10th percentile over all bins
             std::vector<float> tmp = spec;

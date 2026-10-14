@@ -11,6 +11,7 @@
 #include "signal_processing/fm_demodulator.hpp"
 #include "signal_processing/shared_decimator.hpp"
 #include "signal_processing/beamformer.hpp"
+#include "signal_processing/noise_floor.hpp"
 #include "decimator_manager.hpp"
 #include "doa_logger.hpp"
 #include "voice2text.hpp"
@@ -415,6 +416,17 @@ void DataReceiver::data_receiver_thread() {
                 if (active_in_packet && !channels_to_convert[current_active]) {
                     channels_to_convert[current_active] = true;
                     num_channels_to_convert++;
+                }
+
+                // Noise floor, coherent: a few times a second a second antenna
+                // for the coherence test (noise_floor.hpp) - with DoA off only
+                // the FFT channel is converted otherwise
+                if (!is_wideband && active_in_packet && channels >= 2 && nfloor::coherence_due()) {
+                    const int other = (current_active + 1) % static_cast<int>(channels);
+                    if (other < MAX_CHANNELS && !channels_to_convert[other]) {
+                        channels_to_convert[other] = true;
+                        num_channels_to_convert++;
+                    }
                 }
 
                 // OPTIMIZATION: Batch convert all needed channels with optimized NEON
@@ -1076,6 +1088,18 @@ void DataReceiver::decimation_processor_thread() {
             if (!float_data.empty()) {
                 size_t num_samples = float_data.size();
 
+                // Noise floor: is the band's quiet part receiver noise (independent
+                // per antenna) or a signal filling it? Any other antenna of this
+                // packet (the receiver converts one when the test is due)
+                if (nfloor::coherence_due()) {
+                    for (int b = 0; b < static_cast<int>(raw_packet.channel_iq_data.size()) && b < MAX_CHANNELS; b++) {
+                        const auto& xb = raw_packet.channel_iq_data[b];
+                        if (b == current_active || xb.size() != num_samples) continue;
+                        nfloor::measure_coherence(current_active, float_data.data(), xb.data(), num_samples);
+                        break;
+                    }
+                }
+
                 {
                     lock_guard<mutex> pb_lock(persistent_buffer_mutex);
 
@@ -1142,6 +1166,7 @@ void DataReceiver::fft_processor_thread() {
 
         FFTProcessor::process_channel_fft(work_item.data, work_item.num_samples, work_item.channel,
                                           work_item.buffer_generation);
+        nfloor::maybe_save();   // noise_floors.json now and then
         global_stats.increment_operations(thread_idx);
         global_stats.print_stats_if_time(thread_idx);
     }

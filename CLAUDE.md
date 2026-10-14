@@ -713,6 +713,18 @@ the bearing. Plugins report frames with their samples via
 `RxContext::valid_at` / `dig::report_valid`); talker spans and packets count
 too
 
+**📈 Spectrum noise floor (the 0 dB of display, FFT squelch, scanner)**
+(details: `kraken_doa_v2/CLAUDE.md` *Noise floor*):
+`kraken_doa_v2/src/signal_processing/noise_floor.cpp`. Per tuner channel the
+floor is the frame's 10th percentile as before, unless a signal fills the
+band (DVB-T, LTE - wider than the 2.4 MHz: the percentile landed on it, it was
+drawn at ~0 dB and an FFT squelch inside it never opened): then the
+receiver's own floor, remembered per tuner + gain in `noise_floors.json`
+(cwd, gitignored). Coherent mode tells a band-filling signal from a real
+noise rise by two antennas' coherence (receiver noise is independent per
+antenna); independent / wideband scan mode: > 6 dB above = a signal, the
+remembered floor creeping up 1 dB / min while held
+
 **✈ Array calibration from ADS-B aircraft (coherent mode)** (details:
 `kraken_doa_v2/CLAUDE.md` *Array calibration*): `kraken_doa_v2/src/array_cal.cpp`.
 Aircraft packets with the position the adsb plugin gives them
