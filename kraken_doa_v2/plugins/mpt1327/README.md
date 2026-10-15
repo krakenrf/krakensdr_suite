@@ -25,6 +25,13 @@ the CCS chosen so the check bits are the SYNC, an ALOHA address codeword,
 FFSK on FM). Two sites (SYS 42E1 at 100°, SYS 42E7 at 345°, heard in turn):
 100.0 / 345.0° offline (`--channels 5 --uca 0.12`) and through kraken_doa.
 Validated earlier on a live NZ control channel (SYS 0x42E1).
+Public recordings (2026-10-16): sigidwiki's "MPT1327-like bits" audio and
+"Taxi trunk" IQ (504.625 MHz, 250 kHz, five carriers) are NOT MPT1327 - no
+1200 / 1800 Hz FFSK on any carrier (audio lines 450-1700 Hz, no FFSK
+half-period peaks): the plugin reports nothing on them (correct). No other
+public MPT1327 recording found and no reference decoder buildable here
+(multimon-ng has none; sdrtrunk needs Java): the generator is checked only
+against the live NZ channel's framing above.
 
 ## Sources
 MPT 1327 / MPT 1343 (UK Radiocommunications Agency); sdrtrunk as
