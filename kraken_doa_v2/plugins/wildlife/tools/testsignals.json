@@ -1,0 +1,87 @@
+[
+{
+ "id": "wildlife-five",
+ "title": "Wildlife collars: three collars (one in mortality) and two coded tags on one channel",
+ "description": "Five VHF tracking transmitters in the NZ wildlife band around 160.355 MHz, 30 s looped, in a 50 kHz VFO: a collar at 30 ppm on 160.340 MHz (NZ ch 22, 41 dBHz, 40 deg), one at 60 ppm = the NZ MORTALITY rate on 160.350 MHz (ch 23, 39 dBHz, 130 deg), a weak one at 40 ppm on 160.345 MHz with +2 Hz/s drift (35 dBHz, 170 deg), and two Lotek / Motus-style coded tags sharing 160.367 MHz - 4-pulse bursts with gaps 22.5 / 17.5 / 30.0 ms every 5.0 s (300 deg) and 40.0 / 25.0 / 55.0 ms every 6.0 s (260 deg). Expect five talkers (the collars after 4 pulses, the tags after 3 bursts - allow ~20 s) at their bearings; a ⚠ mortality event for 160.350.",
+ "rf_hz": 160355000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 30,
+ "vfo": {"bw_khz": 50},
+ "steps": [
+  ["{tools}/collar_gen.py", "tx", "a.cf32", "--rate", "48000", "--seconds", "30", "--type", "train", "--offset_hz", "-15000", "--ppm", "30", "--width_ms", "20", "--start", "0.4", "--seed", "1"],
+  ["{tools}/collar_gen.py", "tx", "b.cf32", "--rate", "48000", "--seconds", "30", "--type", "train", "--offset_hz", "-5000", "--ppm", "60", "--width_ms", "25", "--start", "0.9", "--seed", "2"],
+  ["{tools}/collar_gen.py", "tx", "f.cf32", "--rate", "48000", "--seconds", "30", "--type", "train", "--offset_hz", "-10000", "--ppm", "40", "--width_ms", "18", "--start", "0.2", "--seed", "3"],
+  ["{tools}/collar_gen.py", "tx", "d.cf32", "--rate", "48000", "--seconds", "30", "--json", "{\"type\": \"coded\", \"offset_hz\": 12000, \"gaps_ms\": [22.5, 17.5, 30.0], \"bi_s\": 5.0, \"start\": 1.1}"],
+  ["{tools}/collar_gen.py", "tx", "e.cf32", "--rate", "48000", "--seconds", "30", "--json", "{\"type\": \"coded\", \"offset_hz\": 12000, \"gaps_ms\": [40.0, 25.0, 55.0], \"bi_s\": 6.0, \"start\": 2.7}"]
+ ],
+ "scene": {"rate": 48000, "snr_db": -6, "seed": 4, "sources": [
+  {"name": "160.340", "file": "a.cf32", "rate": 48000, "at": 0, "bearing": 40},
+  {"name": "160.350", "file": "b.cf32", "rate": 48000, "at": 0, "bearing": 130, "gain_db": -2},
+  {"name": "160.345", "file": "f.cf32", "rate": 48000, "at": 0, "bearing": 170, "gain_db": -6},
+  {"name": "160.367 22.5/17.5/30.0@5.0", "file": "d.cf32", "rate": 48000, "at": 0, "bearing": 300, "gain_db": 4},
+  {"name": "160.367 40.0/25.0/55.0@6.0", "file": "e.cf32", "rate": 48000, "at": 0, "bearing": 260, "gain_db": 4}
+ ]},
+ "expect": [
+  {"tid": "160.340", "bearing": 40},
+  {"tid": "160.350", "bearing": 130},
+  {"tid": "160.345", "bearing": 170, "tol": 8},
+  {"bearing": 300},
+  {"bearing": 260}
+ ],
+ "tol_deg": 5
+},
+{
+ "id": "wildlife-five-survey",
+ "title": "Wildlife collars: the same five in a 2.4 MHz band-survey VFO",
+ "description": "The wildlife-five scene (160.34-160.37 MHz, 300 kHz above the tuner centre) with the VFO on the tuner's centre at 2.4 MHz - a band survey: the plugin runs at the VFO's own 2.4 MHz (293 Hz bins over the whole band) and each collar's DoA comes from its own 1 kHz channel. Expect the same five talkers and bearings as wildlife-five.",
+ "rf_hz": 160355000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 30,
+ "vfo": {"bw_khz": 2400, "offset_khz": 0},
+ "steps": [
+  ["{tools}/collar_gen.py", "tx", "a.cf32", "--rate", "48000", "--seconds", "30", "--type", "train", "--offset_hz", "-15000", "--ppm", "30", "--width_ms", "20", "--start", "0.4", "--seed", "1"],
+  ["{tools}/collar_gen.py", "tx", "b.cf32", "--rate", "48000", "--seconds", "30", "--type", "train", "--offset_hz", "-5000", "--ppm", "60", "--width_ms", "25", "--start", "0.9", "--seed", "2"],
+  ["{tools}/collar_gen.py", "tx", "f.cf32", "--rate", "48000", "--seconds", "30", "--type", "train", "--offset_hz", "-10000", "--ppm", "40", "--width_ms", "18", "--start", "0.2", "--seed", "3"],
+  ["{tools}/collar_gen.py", "tx", "d.cf32", "--rate", "48000", "--seconds", "30", "--json", "{\"type\": \"coded\", \"offset_hz\": 12000, \"gaps_ms\": [22.5, 17.5, 30.0], \"bi_s\": 5.0, \"start\": 1.1}"],
+  ["{tools}/collar_gen.py", "tx", "e.cf32", "--rate", "48000", "--seconds", "30", "--json", "{\"type\": \"coded\", \"offset_hz\": 12000, \"gaps_ms\": [40.0, 25.0, 55.0], \"bi_s\": 6.0, \"start\": 2.7}"]
+ ],
+ "scene": {"rate": 48000, "snr_db": -6, "seed": 4, "sources": [
+  {"name": "160.340", "file": "a.cf32", "rate": 48000, "at": 0, "bearing": 40},
+  {"name": "160.350", "file": "b.cf32", "rate": 48000, "at": 0, "bearing": 130, "gain_db": -2},
+  {"name": "160.345", "file": "f.cf32", "rate": 48000, "at": 0, "bearing": 170, "gain_db": -6},
+  {"name": "160.367 22.5/17.5/30.0@5.0", "file": "d.cf32", "rate": 48000, "at": 0, "bearing": 300, "gain_db": 4},
+  {"name": "160.367 40.0/25.0/55.0@6.0", "file": "e.cf32", "rate": 48000, "at": 0, "bearing": 260, "gain_db": 4}
+ ]},
+ "expect": [
+  {"tid": "160.340", "bearing": 40},
+  {"tid": "160.350", "bearing": 130},
+  {"tid": "160.345", "bearing": 170, "tol": 8},
+  {"bearing": 300},
+  {"bearing": 260}
+ ],
+ "tol_deg": 5
+},
+{
+ "id": "wildlife-one-collar",
+ "title": "Wildlife collars: a 10 kHz VFO on one collar",
+ "description": "The wildlife-five scene with a 10 kHz VFO on the 30 ppm collar 160.340 MHz only (40 deg) - following one collar while walking. Expect the one talker 160.340 at 40 deg; the others are outside the VFO.",
+ "rf_hz": 160355000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 30,
+ "vfo": {"bw_khz": 10, "offset_khz": 285},
+ "steps": [
+  ["{tools}/collar_gen.py", "tx", "a.cf32", "--rate", "48000", "--seconds", "30", "--type", "train", "--offset_hz", "-15000", "--ppm", "30", "--width_ms", "20", "--start", "0.4", "--seed", "1"],
+  ["{tools}/collar_gen.py", "tx", "b.cf32", "--rate", "48000", "--seconds", "30", "--type", "train", "--offset_hz", "-5000", "--ppm", "60", "--width_ms", "25", "--start", "0.9", "--seed", "2"],
+  ["{tools}/collar_gen.py", "tx", "f.cf32", "--rate", "48000", "--seconds", "30", "--type", "train", "--offset_hz", "-10000", "--ppm", "40", "--width_ms", "18", "--start", "0.2", "--seed", "3"]
+ ],
+ "scene": {"rate": 48000, "snr_db": -6, "seed": 4, "sources": [
+  {"name": "160.340", "file": "a.cf32", "rate": 48000, "at": 0, "bearing": 40},
+  {"name": "160.350", "file": "b.cf32", "rate": 48000, "at": 0, "bearing": 130, "gain_db": -2},
+  {"name": "160.345", "file": "f.cf32", "rate": 48000, "at": 0, "bearing": 170, "gain_db": -6}
+ ]},
+ "expect": [
+  {"tid": "160.340", "bearing": 40}
+ ],
+ "tol_deg": 5
+}
+]

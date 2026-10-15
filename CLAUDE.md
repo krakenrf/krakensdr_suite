@@ -445,7 +445,23 @@ decoders `kraken_doa_v2/plugins/`
   DF kind `node` 📶. The Meshtastic channel from region + preset + channel
   name as the firmware computes it (djb2 hash slot: ANZ LongFast 919.875
   MHz), the other presets' default channels inside the VFO too, LoRaWAN
-  AU915 sub-band 2 optional).
+  AU915 sub-band 2 optional) and wildlife (VHF wildlife tracking collars /
+  tags - pulsed CW - anywhere in the VFO at the VFO'S OWN RATE:
+  `kp::Info::sample_rate` 0, new - `kp::Host::sample_rate()`, the plugin
+  started `--serve --rate HZ` and restarted on a bandwidth change -, so a
+  2.4 MHz VFO surveys the band (NZ 160.12-160.59 MHz, channels 0-47) and a
+  narrow one follows one collar; manual only, talkers. ~250 Hz FFT bins,
+  each pulse measured on the raw samples (edges, carrier to a few Hz,
+  C/N0); a collar = its pulse train (period with misses / extras, ppm,
+  pulse) named by its frequency, modes normal / incubating / ⚠ MORTALITY by
+  the NZ DOC rates (30 / 48 / 60, 80) or a rate change (x2); the NZ data
+  streams decoded (time since death; Chick Timer / kakapo Egg Timer
+  numbers); Lotek / Motus-style coded tags (4-pulse bursts) by their gaps +
+  burst interval, several on one frequency; keyed-carrier checks drop FSK /
+  FM lines, impulses, carriers. ID separation: a packet per pulse on its
+  own 1 kHz channel, DF kind `collar` 🐾, `names` option. kraken_doa:
+  packet channels <= 10 kHz in a wide VFO are decimated before the
+  filter - `narrow_cov`).
   Plugins learn the VFO's RF from `kp::Host::rf_hz()` (wire RF, 7). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
@@ -510,7 +526,7 @@ decoders `kraken_doa_v2/plugins/`
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, ctcss, beacon406, lora, dtv and cells (ARRAY
+  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, ctcss, beacon406, lora, wildlife, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags)
@@ -715,7 +731,7 @@ frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes, wildlife collars / tags)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a
 coded ID per transmitter, the plugin reports it as a talker and is tested

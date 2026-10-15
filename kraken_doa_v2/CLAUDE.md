@@ -372,7 +372,8 @@ Edit `include/config.hpp`:
   VOR / marker*), ism (see *ISM devices*), radar (see *Pulse radar*),
   ssr1030 (see *1030 MHz interrogations*), uat (see *UAT*), flarm (see
   *FLARM / OGN*), ctcss (see *CTCSS / DCS*), beacon406 (see *406 MHz
-  distress beacons*), lora (see *LoRa / Meshtastic / LoRaWAN*), dtv and cells
+  distress beacons*), lora (see *LoRa / Meshtastic / LoRaWAN*), wildlife (see
+  *Wildlife collars*), dtv and cells
   (ARRAY plugins - see *Digital TV* and *LTE / 5G NR Cell Decoder*)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
   tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by
@@ -397,7 +398,9 @@ Edit `include/config.hpp`:
   snapshot's `sfn.*` options too), so saved settings and old clients keep
   working
 - `Engine` (digital_decoder.cpp): AFC mixer at the VFO rate -> one msresamp
-  per distinct plugin `sample_rate` (shared by the plugins at that rate) ->
+  per distinct plugin `sample_rate` (shared by the plugins at that rate; a
+  plugin declaring 0 gets the VFO's rate unresampled - `Runner::vfo_rate`,
+  started `--serve --rate HZ`, restarted when the VFO's rate changes) ->
   each plugin process (`Runner`). AUTO runs one Runner per built plugin the
   user left in Auto detect (rebuilt when the registry generation changes)
   minus `manual_only` plugins (`kp::Info::manual_only`, ADS-B - the plugin
@@ -1690,7 +1693,7 @@ Edit `include/config.hpp`:
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,ctcss,beacon406,lora}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,ctcss,beacon406,lora,wildlife}`, 🗺 Map 📡 DF panel):**
 - RULE (ID separation, the user's 2026-10-15): every decoder whose signal
   carries a coded ID per TRANSMITTER reports it as a talker - a core part
   of every such decoder, new ones included. How + how to test:
@@ -1931,7 +1934,12 @@ Edit `include/config.hpp`:
   only by a phase common to all antennas) at <= WIDE_MAX_OUT 1024 points
   spread over the packet, at most one per fs / (3 bw) - the filter at all
   576k samples of a 0.24 s packet was ~1 G multiply-adds; ~2 M now; without
-  a channel (digital squelch) <= 16384 samples spread over the piece. The
+  a channel (digital squelch) <= 16384 samples spread over the piece. A
+  channel <= 10 kHz that the 401 taps can't resolve (2 ceil(3 fs / bw) + 1 >
+  401: a wildlife collar's 1 kHz in 2.4 MHz - the taps passed ~36 kHz)
+  goes through `narrow_cov` in both raw modes: mixed down and summed over D
+  = fs / (16 bw) samples, then the Hamming sinc at fs / D (<= WIDE_MAX_OUT
+  outputs) - no existing plugin's channel is that narrow. The
   16-bit ring costs less per sample than the chunk ring (3.6 vs 7.8 % of a
   Pi 5 core, scratchpad bench/ring_bench). Why (scratchpad e2e/ab.sh, 7
   devices across the 2.4 MHz, transmissions overlapping): filtered 7/7
@@ -2041,6 +2049,15 @@ Edit `include/config.hpp`:
     beacon406; "Beacon ID / Status · type · country · ID / Bursts", Dist +
     Δ pos from the encoded position - `RDF_POS_KINDS` -, newest first,
     "Every distress beacon") - see *406 MHz distress beacons*
+  - Wildlife collars / coded tags (`plugins/wildlife`, task 9): every
+    pulse of a confirmed collar (pulse train, id = its MHz to the kHz) or
+    Lotek / Motus-style coded tag (id = MHz + gaps + burst interval) = a
+    packet, its edges +-0.1 ms inside, `freq_hz` = its measured carrier,
+    `bw_hz` 1 kHz (`chan_bw`), avg_s 10 (`doa_avg`), keep_s 12 h
+    (`keep_h`); coded tags on ONE frequency apart by their codes. UI kind
+    `collar` 🐾 ("Collar (MHz) / Name · ppm · mode / Pulses", by name).
+    Narrow channels in a wide VFO: `narrow_cov` (Channel filtering below) -
+    see *Wildlife collars*
   - UI (kraken_doa.html): `RDF_PK_KIND` plugin -> kind (station 📻 aprs,
     sonde 🎈, site 🗼 tetra + mpt1327, navaid 🧭 ils, radar 📡 radar - list
     "Radar / PRF · pulse · scan / Pulses", by name; ship / aircraft /
@@ -2222,9 +2239,9 @@ Edit `include/config.hpp`:
   8091 packets - spectrum, waterfall, VFO, decoder, DoA, the 📡 DF panel.
   Catalogue IN THE PLUGINS: `plugins/<id>/tools/testsignals.json` (a list;
   format + how to add one: plugins/SDK.md *Test transmissions for the debug
-  playback*). 16 entries (2026-10-15): ais, aprs, dstar, nxdn, tetra,
+  playback*). 19 entries (2026-10-15): ais, aprs, dstar, nxdn, tetra,
   mpt1327, ils (VOR), ctcss, radar, ssr1030, uat, flarm, beacon406, lora,
-  dtv, cells. No
+  wildlife (three), dtv, cells. No
   generator in the repo yet (their tests used public recordings): adsb, dme,
   ism, p25, dmr, pocsag, radiosonde, v23_telemetry
 - Generation: `PLAYBACK_GEN:<id>` forks `python3 -I
@@ -3692,6 +3709,83 @@ Edit `include/config.hpp`:
   MHz (ANZ default channels) + 25 s at 922.977: no frame. The chain is only
   verified against the in-repo generator - no real LoRa hardware packet
   decoded yet (a known recording would settle the open conventions)
+
+**Wildlife collars (`plugins/wildlife/`, README.md there):**
+- VHF wildlife tracking transmitters (pulsed CW: kiwi / kakapo / deer
+  collars, bird / bat tags, Lotek / Motus-style coded tags). `sample_rate`
+  0 = THE VFO'S OWN RATE (new: `kp::Host::sample_rate()`, see *Decoder
+  plugins*): a 2.4 MHz VFO surveys a band, a narrow one (>= 5 kHz,
+  `min_vfo_rate`) follows one collar; manual only, talkers; NOT lock_vfo
+- `pulse.cpp` `PulseDetector`: N = 2^round(log2(rate / 250)) FFT (2.4 MHz
+  8192 / 293 Hz, 48 kHz 256 / 188 Hz), Hann, 50 % overlap; floor per bin
+  (gated mean 1 s, creeps +1 dB/s under a steady carrier); short (1 frame >
+  19x) and long (~14 ms mean > 5x) detectors, a gate at each known collar's
+  next slot (4x / 14x, ~1 dB); a frame with a quarter of the band over =
+  impulse, blanked; narrow-line check (bins 4..10 away); finished = 2 frames
+  without. Measured on the raw ring (0.6 s): mixed to the bin, boxcar to ~32
+  kHz, +-1 kHz Hamming FIR, noise = the bin's floor N0 x r1 x sum h^2;
+  pulses = maximum-sum runs (2 ms power over 2 x noise / 0.3 x the max, then
+  0.3 ms power over the midpoint, +-5 ms), up to 6 per span (coded bursts),
+  a later one >= 0.4 x the first's power and 6 sigma; duplicates of a pulse
+  already reported (the long sum's memory) dropped; kept only keyed ones:
+  1-150 ms, 1-3 ms outside the edges at the noise (strong pulses), power
+  variance inside <= 2 x the noise's + 0.1 S^2 (FSK tones fail), both
+  halves' phase-slope frequencies within 60 Hz + 2 / T (FM lines fail)
+- `decoder.cpp`: splatter (20 dB within 6 kHz, 10 dB within 3 kHz) and
+  twins (0.6-8.5 kHz apart within 10 dB, starting + ending within 15 ms or
+  within 60 ms of each other = one data burst's tones - live: a ~5 kHz burst
+  every 2.5 s near 160.40 MHz) dropped; channels +-700 Hz; groups < 160 ms. Coded tag = 4 pulses
+  in 0.4 s after 0.3 s quiet (on a collar's channel only a tag known there),
+  gaps +-2 ms, confirmed after 3 bursts (burst interval = the shortest
+  interval all are multiples of, +-30 ms + 5 ms per k; aliased tags = same
+  gaps, other BI, kept apart), id "MHz g1/g2/g3@BI". Train = `find_period`
+  (`train.cpp`: candidates pairwise / 1..4, score = on-grid - 0.5 empty
+  slots, least squares) on the channel's single >= 4 ms pulses of 30 s:
+  >= 4 pulses, jitter <= 2.5 ms + 0.1 %, one length (MAD <= 30 %),
+  duty < 10 %, 0.4-8 s; then grid
+  tolerance max(25 ms, 3.5 %), fragments (8 dB weaker / < 40 % width)
+  dropped, two pulses half way between = period halved (a weak collar), a
+  rate change = a filled grid (>= 80 % of slots, >= 6 pulses, >= 8 s)
+  winning 3 times. Modes `profile` nz (30 / 48 incubating / 60, 80
+  MORTALITY) or change (x1.8-2.25, x2.4-2.9 = MORTALITY). NZ data streams
+  (`decode_stream`): runs (< min(0.5 P, 1 s)) vs single pulses; all runs 2
+  = double-beep scheme (DOC 6.4.3 time since death: N - 2 per digit, 3
+  digits), else burst scheme (digit = run - 2, tens + units with <= 1 single
+  between; 8 numbers = Chick Timer fields, 11 = kakapo Egg Timer V6.3);
+  ends after 12 singles / 40 s silence / 400 s; same text twice = confirmed
+- ID separation: a `kp::Talker` packet per pulse of a confirmed collar /
+  tag, span = its edges +-0.1 ms inside, `freq_hz` = its carrier, `bw_hz`
+  `chan_bw` (1 kHz), `avg_s` `doa_avg` (10), `keep_s` `keep_h` (12 h);
+  label "name · ppm · mode" / "coded · BI". UI kind `collar` 🐾
+  (`RDF_PK_KIND` wildlife, "Collar (MHz) / Name · ppm · mode / Pulses",
+  by name). Option `names` ("MHz=name, ..." within 1.5 kHz, or id=name)
+- Host changes with it: `kp::Info::sample_rate` 0 (digital_decoder.cpp
+  `Runner::vfo_rate` / `prate()` / `rate_of`, started with `--serve --rate
+  <VFO rate>`, restarted on a VFO rate change; dig_plugin.cpp accepts 0;
+  plugin_host.cpp `serve(argc, argv)`, `WireHost` / `TestHost::sample_rate()`,
+  offline at the file's rate); talker_doa.cpp `narrow_cov` (channels <= 10
+  kHz the 401 taps can't resolve: mixed + summed over D = rate / (16 bw),
+  Hamming sinc at that rate, <= WIDE_MAX_OUT points; raw and wide-raw
+  rings); the offline `--uca` channel filter centred (was causal: 2 ms
+  early for 1 kHz at 48 kHz)
+- Generator `tools/collar_gen.py` (`tx` one transmitter / `scene` every
+  antenna streamed, interference), playback entries `wildlife-five`,
+  `wildlife-five-survey` (2.4 MHz VFO), `wildlife-one-collar` (10 kHz)
+- Tests (scratch t9/, numbers in the README): five transmitters on 5
+  antennas (3 collars incl. a 30 -> 60 ppm mortality switch, 2 coded tags on
+  one frequency) offline 40.5 / 172.6 / 130.7 / 298.4 / 259.8 deg (truth 40
+  / 170 / 130 / 300 / 260); NZ streams (time since death 139 h - its repeat
+  138, one pulse lost -, Chick Timer 8 numbers, kakapo Egg Timer 11 exact);
+  collars from ~32-34 dBHz per 20 ms pulse; 300 s of impulses / CW / FSK data: no collar (a strictly
+  periodic tone-FM test signal: one); 2.4 MHz survey: 5 / 5 across +-0.9
+  MHz; live debug playback: survey 5 / 5, 10 kHz VFO 1 / 1, 50 kHz VFO 4 /
+  5 (the second coded tag not confirmed - open), settings identical. Live
+  (4 x 100 s of 160.115-160.595 MHz, heimdall retuned + restored): no
+  collar; data bursts near 160.40 / 160.53 MHz first read as collars, fixed
+  (burst-piece, jitter, one-length rules). CPU:
+  detector 8-12 % of a core at 2.4 MHz (FFTW_MEASURE; ESTIMATE was 14 %),
+  0.2 % at 48 kHz. Regression: every plugin's --info identical, aprs /
+  beacon406 playback scenes decoded identically (one peak / mean ratio)
 
 **ILS / VOR / marker (`plugins/ils/`, README.md there):**
 - 48 kHz (`min_vfo_rate` 48 kHz: the VOR subcarrier reaches +-10.4 kHz).

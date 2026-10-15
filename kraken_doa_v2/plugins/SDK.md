@@ -52,6 +52,10 @@ plugins/
 │                         (SF7-12, BW 125/250/500, Gray/interleave/Hamming/whitening/CRC), Meshtastic
 │                         (default-key AES-CTR decrypt + protobuf) and LoRaWAN (clear headers); a packet
 │                         talker per node / DevAddr, the relaying node when a mesh frame was repeated
+├── wildlife/             VHF wildlife collars / tags (pulsed CW) at the VFO's OWN rate (sample_rate 0:
+│                         a 2.4 MHz band survey or a narrow VFO): pulse detector + edges / carrier from
+│                         the raw samples, pulse trains (period, mortality), NZ data streams, coded
+│                         (Lotek / Motus-style) tags; a packet talker per collar on its 1 kHz channel
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
@@ -104,7 +108,7 @@ KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
                           .name = "My decoder",           // shown in the mode list
                           .description = "one line",      // the panel's help text
                           .version = "1.0",
-                          .sample_rate = 48000,           // rate process() receives
+                          .sample_rate = 48000,           // rate process() receives (0 = the VFO's own)
                           .min_vfo_rate = 12500,          // VFO bandwidth needed
                           .author = "...",
                           .options = {{"slot", "Timeslot", "0", "0=Both|1=Slot 1|2=Slot 2",
@@ -198,6 +202,16 @@ symbol rate when that helps (e.g. 38400 = 32 x 1200 = 16 x 2400), and keep it
 as low as the signal allows: it is the main CPU cost. `min_vfo_rate` is the
 VFO bandwidth the signal needs; the panel warns when the VFO is narrower.
 
+**The VFO's own rate.** `.sample_rate = 0`: no resampling - `process()`
+(and `process_multi()`) get the VFO's samples at whatever bandwidth the user
+set, and `host.sample_rate()` says which, from the constructor on (kraken_doa
+starts the plugin as `decoder --serve --rate HZ`; a change of the VFO's
+bandwidth restarts it). For a decoder of signals anywhere in the VFO that
+works at any width - wildlife: a 2.4 MHz band survey or a 10 kHz VFO on one
+collar - instead of a 2.4 MHz input that a narrow VFO would be upsampled to.
+The offline test feeds the file at its own rate (no `--offset` resampling).
+Older hosts refuse such a plugin ("bad sample_rate").
+
 **Output, through `host`** (`kp::Host`):
 
 | call | effect |
@@ -212,6 +226,7 @@ VFO bandwidth the signal needs; the panel warns when the VFO is narrower.
 | `host.freq_error(hz)` | measured carrier offset (+ = above the VFO centre): the host slowly re-centres the input. Optional |
 | `host.verbose()` | the panel's "Log all messages" option |
 | `host.time()` | seconds of input processed so far (sample clock) - use it for timeouts, not the wall clock |
+| `host.sample_rate()` | the rate `process()` gets (Hz): `Info::sample_rate`, or the VFO's for a plugin that declares 0 |
 | `host.log(text)` | debug output (stderr) |
 | `host.map_point(p)` | a position on the web UI's 🗺 Map (`kp::MapPoint`, below) |
 | `host.map_remove(id)` | takes a point off the map |
@@ -340,7 +355,10 @@ out of every antenna first, so talkers on neighbouring channels of the
 same VFO don't mix (the ais plugin: -25 / +25 kHz, 16 kHz wide; on a VFO
 wider than 500 kHz only channels <= 250 kHz wide - the ism plugin's devices -
 are filtered, kraken_doa then keeps the stream as 16-bit samples for 2.5 s:
-120 MB at 2.4 MHz with 5 antennas; wider ones use the whole band); `t.avg_s`
+120 MB at 2.4 MHz with 5 antennas; wider ones use the whole band; a channel
+<= 10 kHz far narrower than the VFO - a wildlife collar's 1 kHz in 2.4 MHz -
+is mixed down and summed to ~16 x bw first, then filtered: the plain 401-tap
+filter passed ~36 kHz at 2.4 MHz); `t.avg_s`
 = how long to average a talker's packets (default 1.5 s for fast movers
 that send often; ais: 20 s); `t.keep_s` = how long kraken_doa keeps the
 talker - its bearing, history and row in the 📡 DF list - after its last

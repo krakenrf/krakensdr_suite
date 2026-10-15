@@ -28,7 +28,7 @@ struct PluginOption {
 struct PluginInfo {
     std::string id, name, description, version, author;
     std::string exe;              // plugins/<id>/build/decoder
-    double sample_rate = 48000;   // complex input rate the plugin wants
+    double sample_rate = 48000;   // complex input rate the plugin wants (0 = the VFO's own)
     double min_vfo_rate = 12500;
     int64_t mtime = 0;            // of exe (ms) - a rebuild restarts running decoders
     bool auto_detect = true;      // runs in "Auto detect" - the user's choice (set_auto)

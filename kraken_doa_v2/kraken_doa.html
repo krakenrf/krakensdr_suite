@@ -12603,7 +12603,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   const RDF_SORT_DEF = {radio: ['heard', 1], tone: ['heard', 1], aircraft: ['dist', 1], ship: ['dist', 1], beacon: ['name', 1],
                         device: ['name', 1], path: ['info', 1], cell: ['info', 1], station: ['dist', 1], sonde: ['dist', 1],
                         site: ['name', 1], navaid: ['name', 1], radar: ['name', 1], interrogator: ['name', 1],
-                        gs: ['name', 1], flarm: ['dist', 1], sar: ['heard', 1], talker: ['heard', 1]};
+                        gs: ['name', 1], flarm: ['dist', 1], sar: ['heard', 1], collar: ['name', 1], talker: ['heard', 1]};
   const RDF_SORT_KEYS = {
     vfo: t => t.vfo,
     name: t => rdfShortName(t).toLowerCase(),
@@ -12896,13 +12896,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // unknown plugin's packets show as plain 'talker's
   const RDF_PK_KIND = {ais: 'ship', adsb: 'aircraft', dme: 'beacon', ism: 'device', aprs: 'station',
                        radiosonde: 'sonde', tetra: 'site', mpt1327: 'site', ils: 'navaid', radar: 'radar',
-                       ssr1030: 'interrogator', uat: 'aircraft', flarm: 'flarm', beacon406: 'sar', lora: 'node'};
+                       ssr1030: 'interrogator', uat: 'aircraft', flarm: 'flarm', beacon406: 'sar', lora: 'node',
+                       wildlife: 'collar'};
   // kinds that report where they are (their decoder's map points, same id):
   // Dist / Δ pos columns, the position check
   const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde', 'gs', 'flarm', 'sar', 'node']);
   // what one of their packets is called
   const RDF_PK_UNIT = {beacon: 'pulse pair', device: 'transmission', site: 'slot', sonde: 'frame', navaid: 'block', radar: 'pulse',
-                       interrogator: 'interrogation', gs: 'frame', sar: 'burst', node: 'frame'};
+                       interrogator: 'interrogation', gs: 'frame', sar: 'burst', node: 'frame', collar: 'pulse'};
   // how a kind is named in "Every ...", counts and the position check
   const RDF_KIND_WORD = {flarm: 'aircraft', gs: 'ground station', sar: 'distress beacon'};
   function rdfKind(t) {
@@ -12943,7 +12944,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       return /paraglider|hang glider|parachute/.test(l) ? '🪂 ' : /helicopter/.test(l) ? '🚁 ' : /balloon|airship/.test(l) ? '🎈 ' : '✈ ';
     }
     return {ship: '⛴ ', aircraft: '✈ ', beacon: '📡 ', device: '📟 ', path: '📶 ', cell: '📱 ', station: '📻 ',
-            sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 ', gs: '🗼 ', tone: '🔔 ', sar: '🆘 ', node: '📶 '}[k] || '';
+            sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 ', gs: '🗼 ', tone: '🔔 ', sar: '🆘 ', node: '📶 ',
+            collar: '🐾 '}[k] || '';
   }
   function rdfKinds(ts) {   // one word for a list of talkers: the common kind, else 'talker'
     const ks = new Set(ts.map(rdfKind));
@@ -13056,6 +13058,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                     interrogator: ['Interrogator', 'Type · scan · PRF', 'Interr.'],
                     gs: ['Station', 'UAT ground station · slot', 'Frames'], flarm: ['Aircraft', 'Reg · altitude · type', 'Pkts'],
                     sar: ['Beacon ID', 'Status · type · country · ID', 'Bursts'],
+                    collar: ['Collar (MHz)', 'Name · ppm · mode', 'Pulses'],
                     talker: ['ID', 'Info', 'Tx']}[kinds];
       // position columns for talkers that report positions (not DME beacons / ISM devices / sites / navaids / radars / interrogators)
       const posCols = ts.some(t => t.pk && RDF_POS_KINDS.has(rdfKind(t)));

@@ -186,7 +186,11 @@ struct Info {
     const char* name = "";          // shown in the mode list, e.g. "POCSAG"
     const char* description = "";   // one line (the panel's help text)
     const char* version = "1.0";
-    double sample_rate = 48000;     // complex input rate process() gets (Hz)
+    // complex input rate process() gets (Hz). 0 = the VFO's own rate, whatever
+    // the user set (no resampling - a decoder of carriers / pulses anywhere in
+    // a narrow or a 2.4 MHz VFO: wildlife): Host::sample_rate() says which; a
+    // change of the VFO's bandwidth restarts the plugin at the new rate
+    double sample_rate = 48000;
     double min_vfo_rate = 12500;    // VFO bandwidth the signal needs (Hz) - the UI warns below it
     const char* author = "";
     // Deprecated and ignored: which decoders run in the Digital Decoder's
@@ -274,6 +278,10 @@ public:
     // Seconds of input processed so far (sample clock - deterministic in
     // offline tests, unlike the wall clock)
     virtual double time() const = 0;
+    // The rate process() / process_multi() get (Hz): Info::sample_rate, or
+    // the VFO's rate for a plugin that declares 0 - known from the
+    // constructor on. NAN = an older host
+    virtual double sample_rate() const { return NAN; }
     // A position for the web UI's 🗺 Map (see MapPoint). Cheap to call often:
     // updates are sent to the browsers about once a second.
     virtual void map_point(const MapPoint& p) { (void)p; }

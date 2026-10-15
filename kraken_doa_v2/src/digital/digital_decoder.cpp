@@ -184,6 +184,11 @@ struct Runner {
     int audio_channel = -1;
     // array plugins: Host::time() = VFO stream position / its rate
     double array_rate = 0;
+    // a plugin at the VFO's own rate (kp::Info::sample_rate 0): the rate it
+    // was started at (--serve --rate); a new VFO rate restarts it
+    double vfo_rate = 0;
+    // the rate this process gets its samples at
+    double prate() const { return info.sample_rate > 0 ? info.sample_rate : vfo_rate; }
     int64_t last_tune_ms = -1000000;   // kp::Host::tune rate limit
     uint64_t array_next = ~0ull;       // stream position after the last block sent (gap detection)
     // Host::time() seconds -> VFO stream position (false: not mappable)
@@ -301,6 +306,15 @@ public:
         check_rf(rf);
         if (rate != in_rate_) {
             in_rate_ = rate;
+            // plugins at the VFO's own rate start over at the new one
+            for (auto& r : runners_)
+                if (r->proc && r->known && r->info.sample_rate <= 0 && !r->info.array && r->vfo_rate != in_rate_) {
+                    r->proc->stop();
+                    r->proc.reset();
+                    close_talker(*r);
+                    r->retry_ms = 0;
+                    r->note = "new VFO rate";
+                }
             // Auto detect: the plugin set depends on the VFO's rate
             if (mode_ == Mode::AUTO && auto_ids() != runner_ids()) rebuild_runners();
             else rebuild_resamplers();
@@ -338,7 +352,7 @@ public:
                 continue;
             }
             const Resampled* r = rate_buf(*runners_[i]);
-            const bool multi = mc_ok && runners_[i]->info.multichannel && runners_[i]->info.sample_rate == in_rate_;
+            const bool multi = mc_ok && runners_[i]->info.multichannel && rate_of(*runners_[i]) == in_rate_;
             run(i, r ? r->out.data() : nullptr, r ? r->ny : 0, pos, r ? in_rate_ / r->rate : 1.0,
                 multi ? mc : nullptr, multi ? mc_m : 0, n);
         }
@@ -579,7 +593,11 @@ private:
         rs_.clear();
     }
 
-    static float rate_of(const Runner& rn) { return rn.known ? static_cast<float>(rn.info.sample_rate) : 48000.0f; }
+    // a plugin's input rate (kp::Info::sample_rate 0: the VFO's own)
+    float rate_of(const Runner& rn) const {
+        if (!rn.known) return 48000.0f;
+        return rn.info.sample_rate > 0 ? static_cast<float>(rn.info.sample_rate) : in_rate_;
+    }
 
     void rebuild_resamplers() {
         destroy_resamplers();
@@ -654,7 +672,7 @@ private:
             p.error = r->error;
             p.tail = r->tail;
             p.dropped = r->dropped;
-            p.rate = r->known ? r->info.sample_rate : 0;
+            p.rate = r->known ? rate_of(*r) : 0;
             p.min_vfo_rate = r->known ? r->info.min_vfo_rate : 12500;
             p.map = r->known && r->info.map;
             v.push_back(std::move(p));
@@ -687,6 +705,9 @@ private:
         }
         if (!found) return problem(r, "missing", "Plugin '" + r.id + "' is not installed", PLUGIN_RETRY_MS);
         if (!pi.built) return problem(r, "not built", pi.name + ": " + pi.error, PLUGIN_RETRY_MS);
+        // at the VFO's own rate: not before it is known
+        const bool native = pi.sample_rate <= 0 && !pi.array;
+        if (native && !(in_rate_ > 0)) return;
         const bool rebuilt = r.note == "rebuilt";
         const bool rate_changed = !r.known || pi.sample_rate != r.info.sample_rate;
         r.info = pi;
@@ -700,9 +721,17 @@ private:
         if (rate_changed) rebuild_resamplers();
         update_array_wanted();
         r.array_next = ~0ull;
+        r.vfo_rate = native ? in_rate_ : 0;
         r.proc = std::make_unique<PluginProcess>();
         std::string err;
-        if (!r.proc->start(pi.exe, &err)) {
+        std::vector<std::string> args{pi.exe, "--serve"};
+        if (native) {
+            char b[32];
+            snprintf(b, sizeof b, "%.3f", static_cast<double>(in_rate_));
+            args.push_back("--rate");
+            args.push_back(b);
+        }
+        if (!r.proc->start(args, &err)) {
             r.proc.reset();
             return problem(r, "error", pi.name + ": " + err, PLUGIN_RETRY_MS);
         }
@@ -812,7 +841,7 @@ private:
         if (mc && ny) {
             // every antenna: SAMPLES_MC = uint32 m + n x m complex int16 (the
             // VFO's rate - step 1; the invert option mirrors every antenna)
-            const size_t backlog = sync_io_ ? SIZE_MAX : static_cast<size_t>(r.info.sample_rate) * 4 * static_cast<size_t>(mc_m);
+            const size_t backlog = sync_io_ ? SIZE_MAX : static_cast<size_t>(r.prate()) * 4 * static_cast<size_t>(mc_m);
             const size_t n = std::min<size_t>(mc_n, ny);
             for (size_t p = 0; p < n; p += PLUGIN_CHUNK) {
                 const size_t k = std::min<size_t>(PLUGIN_CHUNK, n - p);
@@ -835,7 +864,7 @@ private:
             }
             ny = 0;   // (sent)
         }
-        const size_t backlog = sync_io_ ? SIZE_MAX : static_cast<size_t>(r.info.sample_rate) * 8;   // 1 s
+        const size_t backlog = sync_io_ ? SIZE_MAX : static_cast<size_t>(r.prate()) * 8;   // 1 s
         for (size_t p = 0; p < ny; p += PLUGIN_CHUNK) {
             size_t k = std::min<size_t>(PLUGIN_CHUNK, ny - p);
             if (!r.proc->send(W_SAMPLES, y + p, k * sizeof(std::complex<float>), backlog)) {
@@ -845,7 +874,7 @@ private:
             r.pos_map.push_back({r.written, k, static_cast<double>(pos) + static_cast<double>(p) * step, step});
             r.written += k;
         }
-        const uint64_t keep = static_cast<uint64_t>(r.info.sample_rate * POS_MAP_SECONDS);
+        const uint64_t keep = static_cast<uint64_t>(r.prate() * POS_MAP_SECONDS);
         while (r.pos_map.size() > 1 && r.pos_map.front().p0 + r.pos_map.front().n + keep < r.written)
             r.pos_map.pop_front();
         auto handler = [this, idx](uint32_t type, const char* p, size_t len) { on_message(idx, type, p, len); };
@@ -1018,7 +1047,7 @@ private:
                 auto it = r.talkers.find(f.size() > 1 ? talker_channel(f[1]) : 0);
                 if (it == r.talkers.end()) break;
                 uint64_t at;
-                if (r.vfo_pos(strtod(f[0].c_str(), nullptr), r.info.sample_rate, &at))
+                if (r.vfo_pos(strtod(f[0].c_str(), nullptr), r.prate(), &at))
                     it->second.end = std::max(it->second.start, at);
                 close_talker(r, it);
                 break;
@@ -1204,8 +1233,8 @@ private:
         if (f.size() > 5 && f[5].find('p') != std::string::npos) {
             // one packet: exactly these samples, nothing stays open
             uint64_t a, b;
-            if (!r.vfo_pos(strtod(f[2].c_str(), nullptr), r.info.sample_rate, &a) ||
-                !r.vfo_pos(strtod(f[3].c_str(), nullptr), r.info.sample_rate, &b) || b <= a ||
+            if (!r.vfo_pos(strtod(f[2].c_str(), nullptr), r.prate(), &a) ||
+                !r.vfo_pos(strtod(f[3].c_str(), nullptr), r.prate(), &b) || b <= a ||
                 static_cast<double>(b - a) > in_rate_ * MAX_PACKET_S)
                 return;
             TalkerSpan s;
@@ -1250,8 +1279,8 @@ private:
         }
         auto it = r.talkers.find(ch);
         uint64_t a, b;
-        if (!r.vfo_pos(strtod(f[3].c_str(), nullptr), r.info.sample_rate, &b)) return;
-        if (!r.vfo_pos(strtod(f[2].c_str(), nullptr), r.info.sample_rate, &a)) {
+        if (!r.vfo_pos(strtod(f[3].c_str(), nullptr), r.prate(), &b)) return;
+        if (!r.vfo_pos(strtod(f[2].c_str(), nullptr), r.prate(), &a)) {
             // began before the oldest mapped sample (a transmission > POS_MAP_SECONDS)
             if (it != r.talkers.end() && it->second.id == id) a = it->second.start;
             else a = static_cast<uint64_t>(std::max(0.0, r.pos_map.front().v0));
@@ -1303,8 +1332,8 @@ private:
         auto f = split0(p, len, 2);
         if (f.size() < 2) return;
         uint64_t a, b;
-        if (!r.vfo_pos(strtod(f[0].c_str(), nullptr), r.info.sample_rate, &a) ||
-            !r.vfo_pos(strtod(f[1].c_str(), nullptr), r.info.sample_rate, &b) || b <= a ||
+        if (!r.vfo_pos(strtod(f[0].c_str(), nullptr), r.prate(), &a) ||
+            !r.vfo_pos(strtod(f[1].c_str(), nullptr), r.prate(), &b) || b <= a ||
             static_cast<double>(b - a) > in_rate_ * MAX_SIGNAL_SPAN_S)
             return;
         TalkerSpan s;

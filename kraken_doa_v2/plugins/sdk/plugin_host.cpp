@@ -205,6 +205,7 @@ public:
     bool verbose() const override { return verbose_; }
     bool voice_wanted() const override { return voice_wanted_; }
     double time() const override { return array_t_ >= 0 ? array_t_ : samples_ / rate_; }
+    double sample_rate() const override { return rate_; }
     void log(const std::string& t) override { std::cerr << t << std::endl; }
     void spatial(const kp::Spatial& sp) override {
         if (sp.id.empty() || sp.m < 1 || sp.m > 8 || sp.cov.size() != static_cast<size_t>(sp.m * sp.m)) return;
@@ -412,13 +413,22 @@ bool read_all(int fd, void* p, size_t n) {
     return true;
 }
 
-int serve() {
+int serve(int argc, char** argv) {
+    kp::Info info = kp_plugin_info();
+    // the input rate: the plugin's own, or (Info::sample_rate 0) the VFO's,
+    // which kraken_doa passes as --rate HZ
+    double rate = info.sample_rate;
+    for (int i = 2; i + 1 < argc; i++)
+        if (!strcmp(argv[i], "--rate") && info.sample_rate <= 0) rate = atof(argv[i + 1]);
+    if (!(rate > 0)) {
+        fprintf(stderr, "error: this plugin takes the VFO's rate: --serve --rate HZ\n");
+        return 2;
+    }
     // stdout carries the protocol: keep a private copy of it and point fd 1
     // at stderr, so a stray printf / std::cout in a plugin can't corrupt it
     int out_fd = dup(1);
     dup2(2, 1);
-    kp::Info info = kp_plugin_info();
-    WireHost host(out_fd, info.sample_rate);
+    WireHost host(out_fd, rate);
     auto dec = kp_plugin_create(host);
     for (const auto& o : info.options) dec->option(o.key, o.def);
     std::vector<char> buf;
@@ -587,6 +597,7 @@ public:
     bool verbose() const override { return verbose_; }
     bool voice_wanted() const override { return want_audio_; }
     double time() const override { return array_t_ >= 0 ? array_t_ : samples_ / rate_; }
+    double sample_rate() const override { return rate_; }
     double array_t_ = -1;
     void log(const std::string& t) override {
         if (!quiet_) fprintf(stderr, "[%9.3f s] log: %s\n", time(), t.c_str());
@@ -1099,19 +1110,23 @@ void talker_bearings(const BearingIn& in, const TestHost& host) {
         std::vector<std::complex<double>> R(static_cast<size_t>(m * m));
         std::vector<std::complex<double>> y(static_cast<size_t>(m));
         constexpr int64_t CH = 65536;
+        // the channel filter CENTRED on each sample, like kraken_doa's
+        // packet_cov_raw (a causal one put a 1 kHz channel's packets 2 ms early
+        // at 48 kHz - before the pulse of a short one)
+        const int64_t half = nt ? (nt - 1) / 2 : 0;
         for (int64_t c0 = ia; c0 < ib; c0 += CH) {
             const int64_t c1 = std::min(ib, c0 + CH);
-            const int64_t r0 = c0 - (nt ? nt - 1 : 0);
-            read(r0, static_cast<size_t>(c1 - r0), x);
+            const int64_t r0 = c0 - half;
+            read(r0, static_cast<size_t>(c1 + half - r0), x);
             if (filt) {
                 // mix the channel to 0 Hz (the phase reference is common to all antennas)
-                for (int64_t i = r0; i < c1; i++) {
+                for (int64_t i = r0; i < c1 + half; i++) {
                     const std::complex<double> rot = std::polar(1.0, -2 * M_PI * std::fmod(fc * static_cast<double>(i) / in.rate, 1.0));
                     for (int k = 0; k < m; k++) x[static_cast<size_t>(k)][static_cast<size_t>(i - r0)] *= rot;
                 }
             }
             for (int64_t i = c0; i < c1; i++) {
-                const size_t o = static_cast<size_t>(i - r0);
+                const size_t o = static_cast<size_t>(i - r0 + half);
                 for (int k = 0; k < m; k++) {
                     if (!filt) { y[static_cast<size_t>(k)] = x[static_cast<size_t>(k)][o]; continue; }
                     std::complex<double> v = 0;
@@ -1376,11 +1391,14 @@ int test_file(int argc, char** argv) {
         fprintf(stderr, "error: %s\n", err.c_str());
         return 1;
     }
-    if (mc_all && (info.sample_rate != rate || offset != 0)) {
-        fprintf(stderr, "error: every antenna at once needs the plugin's rate (%.0f Hz) and no --offset\n", info.sample_rate);
+    // the plugin's input rate: its own, or the file's (Info::sample_rate 0 =
+    // the VFO's rate: no resampling)
+    const double prate = info.sample_rate > 0 ? info.sample_rate : rate;
+    if (mc_all && (prate != rate || offset != 0)) {
+        fprintf(stderr, "error: every antenna at once needs the plugin's rate (%.0f Hz) and no --offset\n", prate);
         return 1;
     }
-    TestHost host(info.sample_rate, quiet);
+    TestHost host(prate, quiet);
     host.verbose_ = verbose;
     host.want_audio_ = !audio_path.empty();
     host.have_station_ = have_station;
@@ -1404,16 +1422,16 @@ int test_file(int argc, char** argv) {
         printf("%s %s: %d antennas of %s at %.0f Hz (process_multi)\n", info.name, info.version, channels, path.c_str(), rate);
     else if (!quiet)
         printf("%s %s: %.2f s of %s at %.0f Hz -> %.0f Hz%s%s\n", info.name, info.version,
-               x.size() / rate, path.c_str(), rate, info.sample_rate,
+               x.size() / rate, path.c_str(), rate, prate,
                offset != 0 ? (" (offset " + std::to_string(static_cast<long>(offset)) + " Hz)").c_str() : "",
                std::isfinite(host.rf_hz_) ? (", RF " + std::to_string(host.rf_hz_ / 1e6).substr(0, 11) + " MHz").c_str() : "");
     // mix + resample to the plugin's rate, in 10 ms blocks like live
     kp::Nco nco(static_cast<float>(offset), static_cast<float>(rate));
-    msresamp_crcf rs = msresamp_crcf_create(static_cast<float>(info.sample_rate / rate), 60.0f);
+    msresamp_crcf rs = msresamp_crcf_create(static_cast<float>(prate / rate), 60.0f);
     // the plugin's samples lag the file by the resampler's delay (per-talker bearings)
-    const double rs_delay_s = info.sample_rate == rate && offset == 0 ? 0.0 : msresamp_crcf_get_delay(rs) / info.sample_rate;
+    const double rs_delay_s = prate == rate && offset == 0 ? 0.0 : msresamp_crcf_get_delay(rs) / prate;
     const size_t blk = std::max<size_t>(1, static_cast<size_t>(rate / 100));
-    std::vector<kp::cf> in(blk), outb(static_cast<size_t>(blk * info.sample_rate / rate) + 64);
+    std::vector<kp::cf> in(blk), outb(static_cast<size_t>(blk * prate / rate) + 64);
     auto t0 = std::chrono::steady_clock::now();
     if (mc_all) {   // every antenna, 10 ms blocks like live
         std::vector<std::vector<kp::cf>> b;
@@ -1434,7 +1452,7 @@ int test_file(int argc, char** argv) {
         size_t n = std::min(blk, x.size() - p);
         for (size_t i = 0; i < n; i++) in[i] = nco.mix(invert ? std::conj(x[p + i]) : x[p + i]);
         unsigned int ny = 0;
-        if (info.sample_rate == rate && offset == 0) {
+        if (prate == rate && offset == 0) {
             std::copy(in.begin(), in.begin() + n, outb.begin());
             ny = static_cast<unsigned int>(n);
         } else {
@@ -1514,7 +1532,7 @@ int test_file(int argc, char** argv) {
             b.rate = rate;
             b.start = start;
             b.offset = offset;
-            b.band = std::min(info.sample_rate, rate);
+            b.band = std::min(prate, rate);
             b.delay_s = mc_all ? 0.0 : rs_delay_s;
             b.uca_r = uca_r;
             b.lambda = 3e8 / host.rf_hz_;
@@ -1528,7 +1546,7 @@ int test_file(int argc, char** argv) {
 
 int main(int argc, char** argv) {
     if (argc >= 2 && !strcmp(argv[1], "--info")) return print_info();
-    if (argc >= 2 && !strcmp(argv[1], "--serve")) return serve();
+    if (argc >= 2 && !strcmp(argv[1], "--serve")) return serve(argc, argv);
     for (int i = 1; i < argc; i++)
         if (!strcmp(argv[i], "--file")) return test_file(argc, argv);
     kp::Info info = kp_plugin_info();

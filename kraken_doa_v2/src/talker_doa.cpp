@@ -31,6 +31,82 @@ constexpr size_t MAX_SPANS = 200;
 constexpr int64_t SPAN_KEEP_MS = 120000;
 constexpr int64_t RECOMPUTE_MS = 2000;   // every talker's bearing again (follows array setting changes)
 
+// A channel far narrower than the VFO (a wildlife collar's 1 kHz in a 2.4 MHz
+// VFO): the 401-tap low-pass of packet_cov_raw / _wide resolves only ~3 fs /
+// 200 (36 kHz at 2.4 MHz) - noise of 36 kHz instead of 1 kHz and the
+// neighbouring collars 10 kHz away in the covariance. Narrow channels are
+// therefore mixed down and summed over D samples first (to ~16 x bw; the
+// boxcar's aliases at multiples of 16 bw fall >= 30 dB down), then the
+// Hamming sinc runs at that rate. ring: (p % cap) * m + k
+constexpr double NARROW_CHAN_MAX_BW = 10e3;
+inline bool narrow_channel(double rate, double bw) {
+    return bw > 0 && bw <= NARROW_CHAN_MAX_BW && 2 * std::ceil(3.0 * rate / bw) + 1 > 401;
+}
+template <typename T>
+bool narrow_cov(const T* ring, size_t cap, int m, uint64_t lo, uint64_t hi, uint64_t a, uint64_t b, double freq,
+                double bw, double rate, Eigen::MatrixXcd* R, char* why) {
+    const uint64_t D = std::max<uint64_t>(1, static_cast<uint64_t>(rate / (16 * bw)));
+    const double rd = rate / static_cast<double>(D);
+    const int L = std::clamp(2 * static_cast<int>(std::ceil(3.0 * rd / bw)) + 1, 15, 401);
+    std::vector<float> h(static_cast<size_t>(L));
+    const double fc = bw / 2 / rd;
+    double sum = 0;
+    for (int i = 0; i < L; i++) {
+        const double x = i - (L - 1) / 2.0;
+        const double sinc = x == 0 ? 2 * fc : std::sin(2 * M_PI * fc * x) / (M_PI * x);
+        h[static_cast<size_t>(i)] = static_cast<float>(sinc * (0.54 - 0.46 * std::cos(2 * M_PI * i / (L - 1))));
+        sum += h[static_cast<size_t>(i)];
+    }
+    for (auto& v : h) v = static_cast<float>(v / sum);
+    // output o (centred on a + o D + (D - 1) / 2) = sum_t h[t] z[o + t]; z[j]
+    // = the mixed samples s0 + j D .. + D - 1
+    const uint64_t pre = static_cast<uint64_t>(L / 2) * D;
+    const uint64_t n_out = std::min<uint64_t>(std::max<uint64_t>(1, (b - a) / D), WIDE_MAX_OUT);
+    const uint64_t nz = n_out + static_cast<uint64_t>(L) - 1;
+    if (a < lo + pre || a - pre + nz * D > hi) {
+        *why = a - pre + nz * D > hi ? 'e' : (hi - lo >= cap ? 'l' : 'g');
+        return false;
+    }
+    const uint64_t s0 = a - pre;
+    std::vector<std::complex<float>> z(static_cast<size_t>(nz) * static_cast<size_t>(m));
+    const double w = -2 * M_PI * freq / rate;
+    const std::complex<double> step = std::polar(1.0, w);
+    std::complex<double> rot(1, 0);
+    std::complex<float> acc_z[8];
+    for (uint64_t j = 0; j < nz; j++) {
+        for (int k = 0; k < m; k++) acc_z[k] = {};
+        for (uint64_t i = 0; i < D; i++) {
+            const T* q = ring + static_cast<size_t>((s0 + j * D + i) % cap) * static_cast<size_t>(m);
+            const std::complex<float> r(static_cast<float>(rot.real()), static_cast<float>(rot.imag()));
+            for (int k = 0; k < m; k++)
+                acc_z[k] += r * std::complex<float>(static_cast<float>(q[k].real()), static_cast<float>(q[k].imag()));
+            rot *= step;
+        }
+        rot /= std::abs(rot);
+        for (int k = 0; k < m; k++) z[static_cast<size_t>(j) * static_cast<size_t>(m) + static_cast<size_t>(k)] = acc_z[k];
+    }
+    Eigen::MatrixXcd acc = Eigen::MatrixXcd::Zero(m, m);
+    std::complex<float> y[8];
+    for (uint64_t o = 0; o < n_out; o++) {
+        for (int k = 0; k < m; k++) y[k] = {};
+        for (int t = 0; t < L; t++) {
+            const std::complex<float>* q = z.data() + static_cast<size_t>(o + static_cast<uint64_t>(t)) * static_cast<size_t>(m);
+            const float g = h[static_cast<size_t>(t)];
+            for (int k = 0; k < m; k++) y[k] += q[k] * g;
+        }
+        for (int r = 0; r < m; r++)
+            for (int k = r; k < m; k++) acc(r, k) += std::complex<double>(y[r] * std::conj(y[k]));
+    }
+    double tr = 0;
+    for (int r = 0; r < m; r++) {
+        tr += acc(r, r).real();
+        for (int k = r + 1; k < m; k++) acc(k, r) = std::conj(acc(r, k));
+    }
+    if (!(tr > 1e-30)) return false;
+    *R = acc / tr;
+    return true;
+}
+
 }  // namespace
 
 void TalkerDoa::set_active(bool on) {
@@ -319,6 +395,8 @@ bool TalkerDoa::packet_cov_raw(uint64_t a, uint64_t b, double freq, double bw, E
         return false;
     }
     const bool filt = is_finite_value(freq) && bw > 0 && bw < ring_rate_;
+    if (filt && narrow_channel(ring_rate_, bw))
+        return narrow_cov(raw_.data(), raw_cap_, m, raw_lo_, raw_hi_, a, b, freq, bw, ring_rate_, R, why);
     int L = 0;
     std::vector<float> h;
     if (filt) {
@@ -393,6 +471,8 @@ bool TalkerDoa::packet_cov_wide(uint64_t a, uint64_t b, double freq, double bw, 
     }
     const double rate = ring_rate_;
     const bool filt = is_finite_value(freq) && bw > 0 && bw < rate;
+    if (filt && narrow_channel(rate, bw))
+        return narrow_cov(wide_raw_.data(), raw_cap_, m, raw_lo_, raw_hi_, a, b, freq, bw, rate, R, why);
     std::vector<std::complex<float>> g(1, {1, 0});
     if (filt) {
         const int L = std::clamp(2 * static_cast<int>(std::ceil(3.0 * rate / bw)) + 1, 15, 401);

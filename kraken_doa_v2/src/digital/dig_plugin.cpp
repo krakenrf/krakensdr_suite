@@ -195,7 +195,8 @@ void PluginRegistry::scan() {
                             if (ok) pi.options.push_back({f[0], f[1], f[2], f[3], f[4]});
                         }
                     }
-                    if (!(pi.sample_rate >= 1000 && pi.sample_rate <= 2.4e6)) {
+                    // 0 = the VFO's own rate (kp::Info::sample_rate)
+                    if (!(pi.sample_rate == 0 || (pi.sample_rate >= 1000 && pi.sample_rate <= 2.4e6))) {
                         pi.error = "bad sample_rate";
                         pi.sample_rate = 48000;
                     }
