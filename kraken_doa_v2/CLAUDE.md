@@ -2859,6 +2859,21 @@ Edit `include/config.hpp`:
   only array plugins run (`array_only_`), `push()` passes a one-sample tick
   every 100 ms instead of the VFO's stream (it starts the plugin, reads
   its replies, follows the RF)
+- Memory (2026-10-15, kraken_doa reached 2.3 GB RSS and swapped): the
+  backlog limit in `PluginProcess::send` only applied to SAMPLES, so
+  SAMPLES_ARRAY (and SAMPLES_MC) queued in `wbuf_` without end - and the
+  queue was only written when a new block came in, so between bursts the
+  plugin got 1 MB (one pipe) per 100 ms tick: ~10 MB/s, less than the
+  17 MB/s of a 5-antenna dtv burst stream, while the plugin itself idled
+  at 7 % of a core; and a plugin really slower than real time (dtv
+  searching after a retune: ~95 % of a core for tens of seconds) made it
+  grow too. Now any message sent with `max_backlog > 0` is dropped past
+  it (~1 s; control messages pass 0 = always queued),
+  `DigitalDecoder::run` keeps writing every 2 ms while bytes are pending
+  (`Engine::flush_pending`, which reads the replies too), and `stop()`
+  frees the buffer (`clear()` kept its capacity). Live with a dtv VFO:
+  RSS 140-220 MB (was "~500 MB normal" = a kept backlog buffer), the
+  plugin fed its full 16.8 MB/s, a 12 s SIGSTOPped plugin = no growth
 - CPU (Pi 5, DVB-T live, separation on): plugin ~25 % of a core,
   kraken_doa +6-16 %; the estimation per burst ~3x what it is with
   separation off (real 522 MHz capture: ~100 vs ~35 ms, busy Pi)
@@ -4002,7 +4017,8 @@ Edit `include/config.hpp`:
   pos_map. digi_test `u8mc --channels M` feeds an interleaved recording
 - Live (`Runner` in digital_decoder.cpp): the process is started on the
   decoder thread (`PluginProcess`, posix_spawn, non-blocking pipes), SAMPLES
-  in 16k chunks (dropped, counted, when > 1 s behind; offline: blocking
+  in 16k chunks (dropped, counted, when > 1 s behind - SAMPLES_MC /
+  SAMPLES_ARRAY too; offline: blocking
   `flush_blocking`), replies polled after every block. Protocol: 8-byte
   header (type, len) + payload, types in kraken_plugin.hpp `kp::wire`
   (SYNC / SYNC_DONE drain the offline tests). The plugin's fd 1 is pointed

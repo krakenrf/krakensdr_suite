@@ -111,8 +111,9 @@ public:
     bool running() const { return pid_ > 0; }
     // false once the process has exited; *status = waitpid status
     bool alive(int* status);
-    // Queue a message. Samples are dropped (false) when the plugin is more
-    // than max_backlog bytes behind; other messages are always queued.
+    // Queue a message. max_backlog > 0 (samples): dropped (false) while more
+    // than max_backlog bytes are still unwritten - the plugin reads slower
+    // than they come; 0 = always queued (control messages).
     bool send(uint32_t type, const void* data, size_t len, size_t max_backlog);
     // Reads whatever the plugin sent; on_msg(type, payload, len) per message
     template <typename F>

@@ -405,7 +405,7 @@ void PluginProcess::stop() {
     if (out_fd_ >= 0) close(out_fd_);
     if (err_fd_ >= 0) close(err_fd_);
     out_fd_ = err_fd_ = -1;
-    wbuf_.clear();
+    std::string().swap(wbuf_);   // its memory too (clear() keeps the capacity)
     wpos_ = 0;
 }
 
@@ -454,7 +454,11 @@ void PluginProcess::flush() {
 bool PluginProcess::send(uint32_t type, const void* data, size_t len, size_t max_backlog) {
     if (in_fd_ < 0) return false;
     flush();
-    if (type == 1 && wbuf_.size() - wpos_ > max_backlog) return false;   // samples: plugin too slow
+    // samples (sent with a limit - SAMPLES, SAMPLES_MC, SAMPLES_ARRAY): dropped
+    // while more than max_backlog bytes wait for the plugin. Only SAMPLES used
+    // to be limited: an array plugin that fell behind queued its ~17 MB
+    // bursts without end (kraken_doa grew to 2.3 GB)
+    if (max_backlog && wbuf_.size() - wpos_ > max_backlog) return false;
     uint32_t hdr[2] = {type, static_cast<uint32_t>(len)};
     wbuf_.append(reinterpret_cast<const char*>(hdr), 8);
     if (len) wbuf_.append(static_cast<const char*>(data), len);

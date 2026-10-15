@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -342,6 +343,21 @@ public:
                 multi ? mc : nullptr, multi ? mc_m : 0, n);
         }
         housekeeping();
+    }
+    // Writes what the plugins' pipes take of what is still queued for them
+    // (and reads their replies meanwhile); true while some is left. A burst of
+    // an array plugin is ~17 MB, the pipe holds 1 MB: written only when a new
+    // block came in, the plugin got ~10 MB/s between bursts (the 100 ms
+    // ticks) - less than the 17 MB/s it is sent - and the queue grew
+    bool flush_pending() {
+        bool more = false;
+        for (size_t i = 0; i < runners_.size(); i++) {
+            Runner& r = *runners_[i];
+            if (!r.proc || !r.proc->pending_writes()) continue;
+            r.proc->poll([this, i](uint32_t type, const char* p, size_t len) { on_message(i, type, p, len); });
+            more = more || r.proc->pending_writes();
+        }
+        return more;
     }
     // a running decoder plugin takes every antenna (kp::Info::multichannel)
     bool multichannel() const {
@@ -1643,12 +1659,21 @@ void DigitalDecoder::process(const std::complex<float>* x, size_t n, float rate_
 void DigitalDecoder::drain(int timeout_ms) { engine_->drain(timeout_ms); }
 
 void DigitalDecoder::run() {
+    bool pending = false;   // samples still queued for a plugin's pipe
     for (;;) {
         Block b;
         bool have = false;
         {
             std::unique_lock<std::mutex> lk(q_mu_);
-            q_cv_.wait(lk, [this] { return stop_ || !queue_.empty() || reset_pending_.load(); });
+            const auto ready = [this] { return stop_ || !queue_.empty() || reset_pending_.load(); };
+            if (!pending) {
+                q_cv_.wait(lk, ready);
+            } else if (!q_cv_.wait_for(lk, std::chrono::milliseconds(2), ready)) {
+                // no new block: keep the plugins' pipes full
+                lk.unlock();
+                pending = engine_->flush_pending();
+                continue;
+            }
             if (stop_) return;
             if (!queue_.empty()) {
                 b = std::move(queue_.front());
@@ -1664,6 +1689,7 @@ void DigitalDecoder::run() {
             if (b.am > 0) engine_->process_array(b.x.data(), b.am, b.ns, b.rate, b.rf, b.pos);
             else engine_->process(b.x.data(), b.x.size(), b.rate, b.rf, b.pos, b.m ? b.mc.data() : nullptr, b.m);
         }
+        pending = engine_->flush_pending();
     }
 }
 
