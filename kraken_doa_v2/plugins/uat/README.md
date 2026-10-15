@@ -134,11 +134,29 @@ receiver) - scratch scripts in the agent's job folder:
   mixing / file reading is most of it).
 - **Live** (Auckland, the real array on 978 MHz for 2.5 min): no UAT, as
   expected outside the US - and no false message.
+- **Real RF** (2026-10-16): the IQ recording in lyusupov/UAT-test-signal
+  (`notes/UAT_977MHz-8_333_MSps.wav`: a TI CC1310 transmitting one long
+  ADS-B message, recorded at 8.333 MS/s; padded with noise of its own level
+  - the 0.8 ms file is too short for the noise floor): verified against it -
+  5 / 5 copies decoded, payload byte for byte the one the project publishes
+  (`0d1abba154...`, RS 0 errors), every field as dump978's `uat2text` (fixed
+  beacon ~1ABBA1, RAMPTEST, service vehicle, 59.6583 N 17.9617 E, 150 ft,
+  NACp 10). The CC1310 runs at 625 kHz deviation (h = 1.2, twice the
+  standard's): framing, sync, bit order, RS and fields are real, the
+  modulation index is not - the demodulator takes it in its stride.
+- **Generator vs a reference demodulator**: `uat_gen.py`'s `scene_five`
+  (1 antenna) resampled to 2.083 MS/s 8-bit and run through dump978
+  (mutability, built in scratch from source as a reference - GPL, not in
+  this repo): 48 / 48 transmissions (40 ADS-B, 8 uplinks) decoded, every
+  payload byte-identical to what the generator sent; dump978 also decodes
+  the CC1310 recording identically. No real off-air UAT recording (raw IQ)
+  was found.
 
 ## Limits
 
-- No live signal here (New Zealand): only synthetic transmissions and real
-  payloads re-modulated - the modulation of real transmitters (their
+- No live signal here (New Zealand) and no off-air recording found: one
+  real transmitter (a CC1310 test source, h = 1.2) and real payloads
+  re-modulated - the modulation of certified transmitters (their
   pre-modulation filter, ramp-up) is the standard's, as described publicly.
 - RS decoding is hard-decision (no erasures).
 - FIS-B graphics (NEXRAD etc.) are not drawn; product 413's text is shown

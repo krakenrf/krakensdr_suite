@@ -11,7 +11,8 @@ transmitter's bearing and the packets it sent).
 
 Radio (as publicly documented for both): GFSK (Gaussian BT "bt", default
 0.5), 100 kchip/s, +-50 kHz (a chip 1 = +50 kHz), Manchester (IEEE: a bit 1
-= chips 0 1), 16 preamble chips, then the 32-bit sync and the 26 bytes, MSB
+= chips 0 1), 16 preamble chips (FLARM bits 1: the nRF905 preamble 1111110101
+ends in the sync's F5; OGN bits 0), then the 32-bit sync and the 26 bytes, MSB
 first:
   FLARM  sync F531FAB6, 24 bytes + CRC-16 (CCITT, init FFFF, over 31 FA B6
          and the 24 bytes, sent MSB first). Bytes 0-2 = the radio ID
@@ -244,7 +245,10 @@ def chips_of(sync, pkt):
     bits = [(sync >> (31 - i)) & 1 for i in range(32)]
     for byte in pkt:
         bits += [(byte >> (7 - i)) & 1 for i in range(8)]
-    ch = [1, 0] * 8                         # preamble
+    # preamble: FLARM = the nRF905's 1111110101 (its last 8 bits are the
+    # sync's F5) - bits 1 before F5, as SoftRF sends (0x55 chips); OGN = 0xAA
+    # chips (bits 0)
+    ch = [0, 1] * 8 if sync == SYNC_FLARM else [1, 0] * 8
     for b in bits:
         ch += [0, 1] if b else [1, 0]
     return np.array(ch, np.int8)

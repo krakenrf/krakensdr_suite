@@ -140,6 +140,29 @@ whitening, LDPC parity from the plugin's matrix) at known bearings on the
 reproduce the OGN tracker's own generator table (derived by GF(2)
 elimination: identical).
 
+- **No real FLARM / OGN recording found** (no IQ capture is published by
+  the OGN, SoftRF, gr-flarm, flare or OrcSDR projects; sigidwiki has no
+  entry): the plugin is tested on synthetic signals only. The GENERATOR was
+  checked against independent references (2026-10-16, built in scratch
+  from source, GPL - not in this repo):
+  - FLARM: creaktive/flare's `nrf905_demod` (an nRF905 demodulator written
+    against real FLARM traffic) at 1.6 MS/s: it decoded none of the first
+    version's packets - their preamble was 0000 0000 before the sync's F5,
+    the nRF905 sends 1111110101 (its last 8 bits = F5; SoftRF: preamble
+    0x55 + Manchester(F531FAB6)). Fixed (FLARM preamble chips 01 01 ..);
+    now every packet decodes with its CRC, bytes = the generator's
+    (31 FA B6 + ID LE + type + 20 bytes + CRC); with the IQ conjugated
+    none - so the chip polarity (1 = +50 kHz, data 1 = chips 0 1) is the
+    real devices'. The plugin never used the preamble (it matches the
+    last 28 sync bits): its results are unchanged.
+  - OGN: the OGN tracker's own code (pjalocha/esp32-ogn-tracker `ogn1.h`,
+    `ldpc.cpp`) on the generator's 28 OGN packets of `scene_six`: LDPC 0
+    failed checks, parity = its `LDPC_Encode`, header parity good, and
+    after its `Dewhiten()` every field as the scene sets it (3C5A21 1250 m,
+    26.3 m/s, 210°, +1.8 m/s, 3°/s, glider, ZK-GOX / OX info packets;
+    D00F11 stealth paraglider; 1A2B3C encrypted) - the plugin's decode of
+    the same file gives the same values.
+
 - **ID separation** (`tools/scene_six.json`, 8 s at 868.8 MHz): two FLARM
   aircraft (868.2 / 868.4 alternating, 869.25), an OGN glider with
   registration (868.4 / 868.2), a no-track OGN paraglider, an OGN tracker

@@ -52,7 +52,7 @@ offsets): 50.0 / 215.0° (`--channels 5 --uca 0.12 --rf 114e6`).
 - **Magnetic variation** (degrees east, west negative): the VOR bearing is
   also shown as true (as the DoA shows it)
 
-## Tests (synthetic, ICAO definitions)
+## Tests (synthetic, ICAO definitions; one real VOR)
 
 - Localizer 110.30 MHz DDM -0.050 + ident IAA: DDM -0.050, SDM 40.0 %,
   "right of the course - 49 uA fly left", IAA; paired glide slope 335.00
@@ -65,5 +65,19 @@ offsets): 50.0 / 215.0° (`--channels 5 --uca 0.12 --rf 114e6`).
   recognised
 - Markers: OM "dashes, 2.0 /s", MM "dots and dashes", IM "dots, 6.0 /s"
 - A plain AM carrier and noise: no navaid
+
+Real recording (2026-10-16; verified against it, not in this repo): the
+sigidwiki "VOR" IQ (`Vor_IQ.zip`, 61 s, 64 kS/s 8-bit, station not named):
+recognised as a VOR from 2 s on, 119 valid blocks, carrier 48 dB over the
+floor, 30 Hz 23.6 % / 9960 Hz 28.7 % (FM +-377 Hz), voice on the carrier
+(6 %), radial 295.0°. An independent Python measurement (AM envelope -> 30
+Hz variable vs the 9960 Hz subcarrier's FM -> 30 Hz reference, 10 s
+blocks): 295.1-296.6° - the radial's sense and value agree; the generator's
+VOR at radial 295° reads 295.1-295.6° through the same script (modulation
+30.1 / 29.7 %, +-485 Hz). Its ident was NOT decoded: the 1020 Hz keying sits
+under the voice (a 20 Hz-wide check shows ".- .-" groups every ~7-8 s, the
+10 ms Goertzel ticks of the keyer don't separate it) - no ident is shown,
+none false. No real localizer, glide slope or marker beacon recording was
+found: those stay synthetic only.
 
 Not yet tried on live signals.
