@@ -661,7 +661,9 @@ void Rx::ctcss_progress(int64_t j_conf) {
 
 void Rx::ctcss_end(int64_t j_end, const std::string& why_in, bool tail) {
     std::string why = why_in;
+    bool reverse = false;
     if (rev_j_ >= 0 && rev_j_ <= j_end + static_cast<int64_t>(0.05 * FS_SUB)) {
+        reverse = true;
         // the tone / carrier ended after a phase reversal: a reverse burst, it
         // ended there
         char b[48];
@@ -673,8 +675,11 @@ void Rx::ctcss_end(int64_t j_end, const std::string& why_in, bool tail) {
     // another, stronger carrier coming up ends this transmission there (a
     // capture): its rise in the carrier power is exact, the tone's loss /
     // phase jump / the other tone's dominance in the FFT come later (a
-    // reverse burst has no such rise: the carrier stays, then drops)
-    if (why != "carrier off") {
+    // reverse burst has no such rise: the carrier stays, then drops). Not
+    // after the carrier's own end or a reverse burst: the transmitter itself
+    // ended it, and a fade of its carrier before that is no capture (a real
+    // recording's 3 dB fade 0.5 s before its reverse burst was taken for one)
+    if (why_in != "carrier off" && !reverse) {
         const int64_t lo = std::max(c_start_j_ + static_cast<int64_t>(0.3 * FS_SUB), j_end - static_cast<int64_t>(0.8 * FS_SUB));
         const int64_t c = carrier_onset(j_ - 1 - TRK_HALF, lo);
         if (c >= 0 && c - static_cast<int64_t>(0.01 * FS_SUB) < j_end) j_end = c - static_cast<int64_t>(0.01 * FS_SUB);

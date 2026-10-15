@@ -181,6 +181,27 @@ Offline (`decoder --file`, generated files, scratch suite):
 
 ID separation: a 30 s scene on 145.05 MHz, 5-element UCA r 0.12 m (tools/ctcss_gen.py + uca_scene.py, real speech, SNR 20): 88.5 at 60° (two transmissions), 123.0 at 200° (two; the second one captured), DCS 023N at 300° (two), 151.4 at 140° +6 dB capturing 123.0's second transmission for 2 s. Offline `--channels 5 --uca 0.12`: 60.0 / 200.0 / 300.0°, 151.4 146.7° (its first 2 s hold both carriers; MUSIC with one source). End to end (kraken_doa from a scratch cwd, fake heimdall streaming the scene at 2.4 MHz): 60.0 / 200.0 / 300.0 / 146.0°, every transmission in the history. Tone squelch 123.0 + Digital squelch: the only talker CTCSS 123.0 (200.0°), the squelch open 26 % of the time (its duty: 26 %), the VFO's published DoA 200.0° throughout (before the confirmation lag and the capture-rise end it showed 190° for a moment at the capture). Voice to Text (Transcribe on, squelch off): 17 analog transcripts, each named after its tone ("CTCSS 88.5" / "88.50 Hz", DCS "023N = 047I"), split where the tone changed; the digital path (job 27e7efb6's voicetest plugin) unchanged (1234567 11.0 s, 7654321 split, "?" -> 5550001).
 
+Real recordings (2026-10-16; verified against them, not in this repo; the
+reference an independent numpy tone tracker - discriminator, the tone mixed
+to DC, its level / phase per 0.1 s, the frequency from the phase slope):
+
+| recording | reference | plugin |
+|---|---|---|
+| sigidwiki "CTCSS" IQ (482.768 MHz, 156.25 kHz, 31 s, voice) | 173.79 Hz (173.791 by the phase slope), 441 Hz deviation; two transmissions, each ending with a 174-177° phase reversal ~0.23 s before the carrier drops (6.42 s, 28.62 s); 180° phase steps INSIDE the second transmission at 12.44 and 26.10 s, the tone going on (the repeater / encoder's) | CTCSS 173.8, 173.79 Hz, 440 Hz; 0.041-6.401 and 8.897-28.601 s, both "reverse burst"; the two inner steps ignored ("not followed by the end"), one transmission |
+| sigidwiki's DCS-page IQ (855.111 / 855.361 MHz, 39 kHz, 5 s each, filed there as DCS) | NOT DCS: a 150 bit/s sub-audible code (6.67 ms bits, eye 5.7 vs 2.7 at 134.4 bit/s) repeating a 21-bit word (lines every 7.14 Hz), ~820 Hz rms - an 800 MHz trunked system's low-speed data | nothing (correct: no DCS lock on a 150 bit/s code, no tone) |
+| sigidwiki "APRS" IQ (145.070 MHz, 18.8 s of AX.25) | no tone | nothing |
+
+Found and fixed with the first: the first transmission ended at 5.884 s,
+0.5 s before its reverse burst - the carrier faded 3 dB 0.5 s before it,
+and the capture rule (an end after a stronger carrier's rise is put at the
+rise) ran after a reverse burst / carrier off too (the end reason was
+overwritten by "reverse burst" before the test) and took the fade's end for
+a capture. Now the capture search runs only for "tone off" / "another
+transmitter" ends. The suite's ends / back-to-back / capture rows are
+unchanged. The generator's chain matches the recording (tone 300-800 Hz,
+reverse burst 180° for 0.18 s - the real one 0.23 s); no real DCS
+recording found (the DCS paths are synthetic only).
+
 Live (Auckland, 2026-10-15, real heimdall + a scratch kraken_doa, VFOs
 moved onto every 12.5 kHz channel that came on): ~1.5 h over 145.35-147.75,
 150-174, 437.8-440.2, 444.9-447.3 and 475.7-478.1 MHz - no CTCSS / DCS user
