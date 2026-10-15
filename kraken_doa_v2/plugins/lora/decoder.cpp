@@ -247,6 +247,7 @@ private:
     std::string region_ = "auto", preset_ = "longfast", channels_opt_, sf_opt_ = "preset", lorawan_ = "auto";
     std::string search_ = "1", cpu_ = "normal";
     bool tune_ = true, built_ = false, tune_asked_ = false, others_ = true, beacons_ = true;
+    std::map<std::string, int> last_sync_;   // raw LoRa: the sync word last measured per channel + SF
     std::string chan_name_;   // "" = the preset's own name (the default channel)
     uint64_t n_mesh_ = 0, n_lw_ = 0, n_lw_dn_ = 0, n_lora_ = 0, n_dup_ = 0, n_bcn_ = 0;
     const char* dump_ = getenv("LORA_DUMP");
@@ -1031,7 +1032,13 @@ private:
             handle_lorawan(c, fr, lw, freq, tid, label);
         } else {
             proto = "LoRa";
-            tid = raw_tid(std::isfinite(rf_used_) ? c.name_hz : c.center_off, fr.sf, fr.sync_word, fr.inverted);
+            // a frame whose sync word wasn't clear keeps the one measured before on its channel / SF
+            const std::string base = raw_tid(std::isfinite(rf_used_) ? c.name_hz : c.center_off, fr.sf, -1, fr.inverted);
+            int sw = fr.sync_word;
+            if (sw >= 0) last_sync_[base] = sw;
+            else if (last_sync_.count(base)) sw = last_sync_[base];
+            else if (c.sync >= 0) sw = c.sync;
+            tid = raw_tid(std::isfinite(rf_used_) ? c.name_hz : c.center_off, fr.sf, sw, fr.inverted);
             label = fmt("%.0f bytes", (double)fr.payload.size()) + (fr.has_crc ? "" : " (no CRC)");
             n_lora_++;
         }

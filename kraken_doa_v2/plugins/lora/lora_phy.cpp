@@ -54,7 +54,7 @@ LoraRx::LoraRx(int sf, double bw, int os, Ring* ring, bool invert, bool implicit
 }
 
 int LoraRx::detect_bin(int64_t a, float* pk, float* mean) {
-    const cf* rb = ring_->buf.data();
+    const cf* rb = ring_->buf;
     const int64_t mask = ring_->mask;
     const float qs = invert_ ? -1.f : 1.f;
     for (int i = 0; i < N_; i++) {
@@ -96,7 +96,7 @@ void LoraRx::reset() {
 
 int LoraRx::demod_bin(int64_t a, bool use_up, float* pk, float* mean, float* frac, double derot_bins) {
     const cf* ref = use_up ? up_.data() : down_.data();
-    const cf* rb = ring_->buf.data();
+    const cf* rb = ring_->buf;
     const int64_t mask = ring_->mask;
     // inverted IQ: the packet is conjugated - read conj(x)
     const float qs = invert_ ? -1.f : 1.f;

@@ -17,6 +17,7 @@
 #pragma once
 #include <complex>
 #include <cstdint>
+#include <cstdlib>
 #include <vector>
 
 #include <fftw3.h>
@@ -58,25 +59,29 @@ struct Detect {
     bool inverted = false;
 };
 
-// One channel's resampled samples, shared by its receivers
+// One channel's resampled samples, shared by its receivers. calloc'd: a
+// large block comes as fresh zero pages from the OS, so a ring sized for the
+// longest packet (16-32 MB at 500 kHz) costs no zeroing and only the memory
+// actually written (the search's probes create rings all the time)
 struct Ring {
-    std::vector<cf> buf;
+    cf* buf = nullptr;
     int mask = 0;
     int64_t abs = 0;                // samples pushed so far
+    Ring() = default;
+    Ring(const Ring&) = delete;
+    Ring& operator=(const Ring&) = delete;
+    ~Ring() { std::free(buf); }
     void init(int min_len) {
         int rs = 1;
         while (rs < min_len) rs <<= 1;
-        buf.assign(static_cast<size_t>(rs), cf(0, 0));
+        std::free(buf);
+        buf = static_cast<cf*>(std::calloc(static_cast<size_t>(rs), sizeof(cf)));
         mask = rs - 1;
         abs = 0;
     }
     void push(const cf* x, size_t n) {
         for (size_t i = 0; i < n; i++) buf[static_cast<size_t>((abs + static_cast<int64_t>(i)) & mask)] = x[i];
         abs += static_cast<int64_t>(n);
-    }
-    void reset() {
-        std::fill(buf.begin(), buf.end(), cf(0, 0));
-        abs = 0;
     }
 };
 
