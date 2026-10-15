@@ -1,0 +1,46 @@
+[
+{
+ "id": "dme-two-beacons",
+ "title": "DME / TACAN: a Y TACAN and an X DME on adjacent channels + interrogations",
+ "description": "tools/scene_two.json on 1150.5 MHz, 8 s looped: the TACAN 63Y (1150 MHz, Y replies 30 us, 2700 pairs/s, bearing modulation 237 deg from the beacon, ident TKN) at 60 deg and the DME 64X (1151 MHz, X replies 12 us, 900 pairs/s, ident KDF) at 200 deg in one 2.4 MHz VFO; two aircraft interrogate 126X (12 us pairs) on 1150 MHz from 120 / 300 deg. Each ident is sent once per loop (real beacons: every 30-40 s). Expect a talker per beacon (63Y, 64X) at those bearings, both idents and the TACAN in the event log.",
+ "rf_hz": 1150500000.0,
+ "tuner_offset_hz": 0,
+ "seconds": 8,
+ "vfo": {
+  "bw_khz": 2400
+ },
+ "files": {
+  "scene.json": {
+   "$from": "{tools}/scene_two.json",
+   "seconds": 8
+  }
+ },
+ "steps": [
+  [
+   "{tools}/dme_gen.py",
+   "scene.json",
+   "out.cu8"
+  ]
+ ],
+ "output": "out.cu8",
+ "expect": [
+  {
+   "tid": "63Y",
+   "bearing": 60
+  },
+  {
+   "tid": "64X",
+   "bearing": 200
+  },
+  {
+   "event": "Ident KDF"
+  },
+  {
+   "event": "Ident TKN"
+  },
+  {
+   "event": "TACAN on 1150 MHz"
+  }
+ ]
+}
+]

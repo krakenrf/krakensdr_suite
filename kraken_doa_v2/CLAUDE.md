@@ -2239,11 +2239,11 @@ Edit `include/config.hpp`:
   8091 packets - spectrum, waterfall, VFO, decoder, DoA, the 📡 DF panel.
   Catalogue IN THE PLUGINS: `plugins/<id>/tools/testsignals.json` (a list;
   format + how to add one: plugins/SDK.md *Test transmissions for the debug
-  playback*). 19 entries (2026-10-15): ais, aprs, dstar, nxdn, tetra,
-  mpt1327, ils (VOR), ctcss, radar, ssr1030, uat, flarm, beacon406, lora,
-  wildlife (three), dtv, cells. No
-  generator in the repo yet (their tests used public recordings): adsb, dme,
-  ism, p25, dmr, pocsag, radiosonde, v23_telemetry
+  playback*). 29 entries in 22 catalogues (2026-10-16): ais, aprs, dstar,
+  nxdn, tetra, mpt1327, ils (VOR), ctcss, radar, ssr1030, uat, flarm,
+  beacon406, lora (two), wildlife (five), dtv, cells, adsb, dme, ism,
+  pocsag, v23_telemetry. No generator in the repo yet (their tests used
+  public recordings): p25, dmr, radiosonde
 - Generation: `PLAYBACK_GEN:<id>` forks `python3 -I
   plugins/sdk/tools/make_testsignal.py <id> --plugins DIR --cache
   testsignal_cache --lat --lon` (nice 10, own process group; PROGRESS lines
@@ -2275,7 +2275,15 @@ Edit `include/config.hpp`:
   connection loop - active: data_client disconnected, `playback::read()`
   instead of `receive_data` into the same parser (so every header path is
   the real one); a switch either way breaks out and clears the raw buffer.
-  Not connected to heimdall at startup = playback still works
+  Not connected to heimdall at startup = playback still works. A playback
+  never outruns the pipeline: before each packet the thread waits while
+  the raw buffer holds >= `PLAYBACK_MAX_QUEUED` 16 packets (a file has no
+  deadline) - a machine too busy for 2.4 MHz x 5 antennas in real time
+  plays it slower. It used to fill the 150-packet raw buffer, which then
+  dropped whole packets: a test kraken_doa next to the live stack on the
+  Pi 5 lost 25-40 % of a wide scene's packets with DoA on, and the ism
+  plugin's bursts (cut in pieces) failed their checks - 2 of 6 devices -
+  while ADS-B / DME's microsecond packets passed
 - `DataReceiver::send_control_command`: dropped (logged "[playback] not
   sent to heimdall") while active - the single choke point, heimdall's
   tuning / heimdall_settings.conf are never touched. `handle_websocket_message`
@@ -2326,7 +2334,12 @@ Edit `include/config.hpp`:
   ("🧪 DEBUG PLAYBACK - not live" + title + Stop) and `#pb-overlay` over
   the spectrum (big text + red outline); `#pb-toast` for notices. Check
   (`pbCheckRows`): each `expect` row vs `rdfStatus.talkers` (`tid` exact,
-  else any talker; array-frame `doa`) within `tol` / `tol_deg` (5)
+  else any talker; array-frame `doa`) within `tol` / `tol_deg` (5); a
+  `vfo` row = that VFO's own DoA (`doaPlots[v].peakAngle`, the MUSIC plot
+  - decoders without transmitter IDs, with the Digital squelch in the
+  entry's commands), an `event` row = an event of the VFO's decoder
+  containing the text, only those since its last "Decoder set to / on"
+  (`pbSessionEvents`: the user's decoder before the playback doesn't count)
 - Tests (scratch t6/: fake_heimdall_log.py - logs every control command and
   data connection -, run_pb.sh + t_pb.py, t_pb_ui.py): all 14 entries end to
   end on the scratch kraken_doa, every expected talker within 0.1 deg (CTCSS
@@ -2339,6 +2352,16 @@ Edit `include/config.hpp`:
   talkers of the previous one. UI (headless Chromium, real mouse): box,
   delete + Generate (progress, cached), Play -> banner + overlay, Check 3 / 3,
   DF talkers, toast, banner Stop. Live stack: see the commit
+- Tests 2026-10-16 (scratch pb1/: a TEST build on ports 4708x / 4709x with
+  nothing on 47091 - the playback needs no heimdall -, run_pb.sh + t_pb2.py
+  - talkers, the VFO DoA from the multi-DoA binary message, the session's
+  decoder events; jscheck.py - the page's scripts + pbCheckRows on mocked
+  state): the five new entries 29 / 29 rows (adsb 6 aircraft, dme 2
+  beacons + 2 idents + the TACAN, ism 6 devices - all 0.0-0.2 deg; pocsag
+  6 pages + VFO 60.0, v23 4 packets + VFO 135.0), 0 packets dropped,
+  doa_settings.json identical after Stop. VFO DoA over the last 27 s of
+  the pocsag run: 60.0 .. 60.0 with the Digital squelch, 17.7 .. 352.7 with
+  the squelch off (the FM interferer and the noise between the pages)
 
 **Decoder data log (`src/decoder_log.cpp`, sidebar "🗂 Decoder Logging"):**
 - Sources: the engine's record handler (`dig::set_record_handler`,
@@ -3257,6 +3280,13 @@ Edit `include/config.hpp`:
   on 1030 MHz), D (no RF), N (noise); end to end feed.py + t_dme_e2e.py
   (beacon 69.4° vs whole VFO 198°), t_dme_sq.py (Digital squelch: VFO DoA
   69-70°, open 20/20), t_dme_ui.py (decoder tab, DF panel)
+- Generator in the repo (2026-10-16): `tools/dme_gen.py` (streamed 2.4 MHz
+  scene: Gaussian 3.5 us pulse pairs X 12 / Y 30 us, interrogations 12 /
+  36 us, squitter with a 60 us dead time, Morse idents at 1350 pairs/s,
+  TACAN reference bursts + 15 / 135 Hz modulation) + `tools/scene_two.json`
+  = playback `dme-two-beacons` (63Y TACAN 237° ident TKN at 60°, 64X ident
+  KDF at 200°, two aircraft on 126X): offline both idents, TACAN 236.9°,
+  bearings 60.0 / 200.0; end to end 60.0 / 199.8
 
 **Pulse radar (`plugins/radar/`, README.md there):**
 - Every pulsed radar in the 2.4 MHz the tuner receives (L-band ATC /
@@ -4099,6 +4129,13 @@ Edit `include/config.hpp`:
   (7 devices, bursts ~40 % of the time; the 19 MB/s pipe included), ~7 %
   with 5 devices; kraken_doa no busier than with a 240 kHz VFO (no
   decimation at 2.4 MHz)
+- Generator in the repo (2026-10-16): `tools/ism_gen.py` (streamed 2.4 MHz
+  scene, real framing + checks) + `tools/scene_six.json` = playback
+  `ism-six-devices` (EV1527, PT2262, Acurite 592TXR, LaCrosse
+  TX141TH-Bv2, Toyota TPMS, Fine Offset WH24 across the band, four
+  overlapping pairs): offline 13 / 13 messages (antenna 0 and all
+  combined), noise nothing; end to end 6 / 6 devices at 0.0 deg (after the
+  playback's no-drop fix - see *Debug playback*)
 - Multi-device tests (scratchpad e2e/): gen_wide.py scene_w1.json -> a 20 s
   2.4 MHz cu8 (7 devices at -950..+900 kHz, six starting within 150 ms):
   every transmission of the 6 known devices decoded at its frequency, the
@@ -4222,7 +4259,15 @@ Edit `include/config.hpp`:
   values (KLM1023; 40621D at 52.2572, 3.9194, 38000 ft; 485020 159 kt /
   183 deg), 100% of messages at >= 15 dB SNR, ~67% at 12 dB, none from 20 s
   of noise. CPU (Pi 5): plugin ~5% of a core, kraken_doa +~10% for
-  the 19 MB/s of samples it forwards. Not yet tried on live 1090 MHz
+  the 19 MB/s of samples it forwards. Not yet tried on live 1090 MHz.
+  Generator in the repo (2026-10-16): `tools/adsb_gen.py` (DF17 ident /
+  CPR even + odd position / velocity + DF11, PPM built at 24 MHz and
+  integrated to 2.4, each aircraft its carrier offset, forced collisions;
+  positions around the station given at generation time, fixed - the
+  loop) + `tools/scene_six.json` = playback `adsb-six-aircraft`: offline
+  190 of 197 messages (the 6 lost ones overlap another), the CRC = the
+  Riddle's KLM1023 frame, every aircraft 0.0 deg, positions 25-120 km at
+  their bearings; end to end 6 / 6 at 0.0 deg
 
 **Digital voice (`plugins/lib/dig_vocoder.cpp`, Demod "Digital"):**
 - `DemodulatorMode::DIGITAL`: the FM thread still runs the FM demodulator

@@ -232,6 +232,21 @@ tower and an unknown 71-bit PPM device at 5 bearings and frequencies, some
 transmitting at the same time): every device 0.0° off its true bearing, every
 transmission in its history right.
 
+## Test transmission (debug playback)
+
+`tools/ism_gen.py` writes a 2.4 MHz scene on the 5-element UCA (r 0.12
+m), every antenna streamed in 0.1 s pieces, with each protocol's real
+framing and check: `tools/scene_six.json` = playback `ism-six-devices`,
+433.92 MHz, 6 s looped - EV1527 fob `9b37d` (433.050 MHz, 330°), LaCrosse
+TX141TH-Bv2 `90` (434.182, 95°, LFSR digest), Acurite 592TXR tower `12053`
+(433.442, 170°, checksum + parity), Toyota TPMS `4e3a91c7` (433.767, 30°,
+FSK, differential Manchester, CRC-8), Fine Offset WH24 `101` (434.825,
+250°, FSK, CRC-8 + sum) and PT2262 fob `0F1F0F1F` (434.538, 210°); 13
+transmissions, four pairs at the same moment on other frequencies.
+Offline 13 / 13 messages (antenna 0 alone and all antennas combined), no
+unknown or extra device, bearings within 0.1°, its noise alone nothing;
+through kraken_doa's debug playback 6 / 6 devices at 0.0°.
+
 ## Testing
 
 ```bash

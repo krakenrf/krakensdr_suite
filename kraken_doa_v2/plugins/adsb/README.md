@@ -90,3 +90,20 @@ tested on live 1090 MHz signals.
 ```bash
 plugins/adsb/build/decoder --file capture.cu8 --rate 2400000 --station 52.0,4.0
 ```
+
+**Test transmission** (debug playback `adsb-six-aircraft`): `tools/adsb_gen.py`
+writes a 2.4 MHz scene on the 5-element UCA (r 0.12 m) - DF17
+identification (TC 4), airborne position (TC 11, CPR even / odd in turn),
+velocity (TC 19) and DF11 all-call replies, CRC-24, PPM built at 24 MHz
+with ~70 ns edges and integrated to 2.4 MHz, random sub-sample timing and
+carrier phase, a carrier offset per aircraft (-110..+160 kHz), 17-25 dB.
+`tools/scene_six.json`: six aircraft (ANZ123 C81A2B 40°, QFA44 7C4A51 95°,
+UAL917 A0B1C2 150°, BAW12 406B90 215°, ZKTCA C82F11 270°, DLH410 3C4AD7
+330°) 25-120 km from the station at their compass bearings (the station's
+position at generation time; fixed positions - the playback loops), three
+pairs of messages forced to overlap. The generator's identification of
+KLM1023 is the Riddle's frame byte for byte. Offline (`--channels 5 --uca
+0.12`): 190 of 197 messages (the lost ones collide), every aircraft's
+callsign / position / altitude / speed right, bearings 0.0° off, 20 s of
+its noise nothing; through kraken_doa's debug playback 6 / 6 talkers at
+0.0°.

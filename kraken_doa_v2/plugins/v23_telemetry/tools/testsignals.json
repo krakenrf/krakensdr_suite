@@ -1,0 +1,82 @@
+[
+{
+ "id": "v23-telemetry-rtu",
+ "title": "V.23 telemetry: four packets from one station + an FM interferer",
+ "description": "A telemetry station (135 deg) sends four packets (L = 6, 27, 38, 12; 8O1, 3.5 kHz deviation, 0.5 s mark lead-in, FF x 8 / 00 / L / payload / CRC-16) on 457.2765 MHz; an analog FM transmitter (250 deg) talks in the gaps. The payload format names no address (see the plugin's README), so there are no talkers: the check is the four decoded packets and the VFO's own DoA with the Digital squelch on - taken from the decoded packets only, so it stays on the station's 135 deg.",
+ "rf_hz": 457276500.0,
+ "tuner_offset_hz": -350000,
+ "seconds": 12,
+ "vfo": {
+  "bw_khz": 24
+ },
+ "commands": [
+  "DEC_SQUELCH_METHOD:0:DIGITAL",
+  "DEC_SQUELCH_ENABLE:0:1"
+ ],
+ "steps": [
+  [
+   "{tools}/v23_gen.py",
+   "rtu.cf32",
+   "--offset",
+   "700",
+   "--dev",
+   "3500",
+   "--format",
+   "8O1",
+   "--packet", "0.3", "01037E",
+   "--packet", "3.8", "27007A5011223344556677889900AABBCCDDEEFF10203040",
+   "--packet", "7.6", "3300C21A0F0E0D0C0B0A09080706050403020100F1E2D3C4B5A6978869504132231405",
+   "--packet", "10.8", "0A0B0C0D0E0F101112"
+  ],
+  [
+   "{tools}/v23_gen.py",
+   "fm.cf32",
+   "--offset",
+   "-300",
+   "--fm", "1.4", "2.0", "900", "2500",
+   "--fm", "5.2", "2.0", "700", "3000",
+   "--fm", "9.0", "1.5", "1100", "2500"
+  ]
+ ],
+ "scene": {
+  "rate": 48000,
+  "snr_db": 20,
+  "seed": 6,
+  "sources": [
+   {
+    "name": "telemetry station",
+    "file": "rtu.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 135
+   },
+   {
+    "name": "FM interferer",
+    "file": "fm.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 250,
+    "gain_db": -2
+   }
+  ]
+ },
+ "expect": [
+  {
+   "vfo": 0,
+   "bearing": 135
+  },
+  {
+   "event": "CRC ok: 06 01 03 7E"
+  },
+  {
+   "event": "CRC ok: 1B 27 00 7A 50 11 22"
+  },
+  {
+   "event": "CRC ok: 26 33 00 C2 1A 0F"
+  },
+  {
+   "event": "CRC ok: 0C 0A 0B 0C 0D 0E 0F 10 11 12"
+  }
+ ]
+}
+]

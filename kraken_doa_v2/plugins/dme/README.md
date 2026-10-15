@@ -98,6 +98,16 @@ VFO: 6.6 %).
   69.4°, the whole VFO's 198°; with the Digital squelch the VFO's DoA is
   69-70° and the squelch stays open
 
+- Test transmission (debug playback `dme-two-beacons`, in the repo):
+  `tools/dme_gen.py` + `tools/scene_two.json` on 1150.5 MHz - the TACAN 63Y
+  (1150 MHz, Y replies 30 us, 2700 pairs/s, north / auxiliary bursts of 13
+  pulses at 30 / 15 us, 15 / 135 Hz modulation for 237°, ident TKN) at 60°
+  and the DME 64X (1151 MHz, X 12 us, 900 pairs/s, ident KDF) at 200° in
+  one VFO, two aircraft interrogating 126X on 1150 MHz (120° / 300°).
+  Offline: both idents, TACAN 236.9° (15 Hz 20 %, 135 Hz 10 %), "about 2
+  aircraft", bearings 60.0 / 200.0°; through kraken_doa 60.0 / 199.8°. The
+  idents come once per 8 s loop (real beacons: every 30-40 s)
+
 Not tried on a live TACAN or on Y-mode beacons (none here); the TACAN
 reference burst spacing differs between sources (X north burst pairs 30 or
 24 us apart), so both are accepted.

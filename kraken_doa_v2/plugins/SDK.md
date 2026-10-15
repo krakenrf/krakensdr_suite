@@ -536,12 +536,14 @@ at KNOWN bearings:
 
 Examples: `aprs/tools/aprs_gen.py`, `ais/tools/ais_gen.py`,
 `dstar/tools/dstar_gen.py`, `nxdn/tools/nxdn_gen.py`, `tetra/tools/tetra_gen.py`,
-`mpt1327/tools/mpt1327_gen.py`, `ils/tools/ils_gen.py`; a 2.4 MHz scene of
-several transmitters is too big for uca_scene.py's in-memory mixing (5
-antennas x 12 s = 2.3 GB complex128): `radar/tools/radar_gen.py` writes its
-scene at known bearings itself, in 0.1 s pieces (so do
-`ssr1030/tools/ssr_gen.py`, `uat/tools/uat_gen.py` and
-`flarm/tools/flarm_gen.py` - the last with simultaneous packets on
+`mpt1327/tools/mpt1327_gen.py`, `ils/tools/ils_gen.py`,
+`pocsag/tools/pocsag_gen.py`, `v23_telemetry/tools/v23_gen.py`; a 2.4 MHz
+scene of several transmitters is too big for uca_scene.py's in-memory
+mixing (5 antennas x 12 s = 2.3 GB complex128): `radar/tools/radar_gen.py`
+writes its scene at known bearings itself, in 0.1 s pieces (so do
+`ssr1030/tools/ssr_gen.py`, `uat/tools/uat_gen.py`, `adsb/tools/adsb_gen.py`,
+`dme/tools/dme_gen.py`, `ism/tools/ism_gen.py` and
+`flarm/tools/flarm_gen.py` - the last two with simultaneous packets on
 different channels of one VFO).
 
 **Who transmits, again**: a message ABOUT a transmitter isn't always FROM
@@ -583,6 +585,9 @@ least recently played go).
  "scene": {"rate": 48000, "snr_db": 20, "seed": 3, "sources": [
    {"name": "ZL1AAA-9", "file": "a.cf32", "rate": 48000, "at": 0, "bearing": 40}]},
  "expect": [{"tid": "ZL1AAA-9", "bearing": 40}],
+                                         also {"bearing": B} (any talker),
+                                         {"vfo": 0, "bearing": B} (the VFO's own
+                                         DoA), {"event": "text"} (decoded)
  "tol_deg": 5
 }]
 ```
@@ -615,17 +620,27 @@ least recently played go).
   ANT0), like everywhere in the scenes. `expect`: per transmitter its
   talker `tid` (exact) and bearing, or only a bearing (any talker within
   tolerance - radars, DTV paths); `tol` per row overrides `tol_deg`
-  (default 5). The UI's Check turns each row green when the DF status has
-  it; use the same numbers your README reports
+  (default 5). A decoder whose signal names no transmitter (pocsag,
+  v23_telemetry) checks `{"vfo": 0, "bearing": B}` - the VFO's own DoA
+  (its MUSIC plot; put `DEC_SQUELCH_METHOD:0:DIGITAL` +
+  `DEC_SQUELCH_ENABLE:0:1` in `commands`, so it comes from the decoded
+  frames only and holds between them - an interferer in the gaps then
+  can't move it) - and `{"event": "text"}`: an event of VFO 0's decoder
+  containing the text (only events since the playback set the decoder).
+  The UI's Check turns each row green when the DF status / DoA / event log
+  has it; use the same numbers your README reports
 - Test it: `python3 sdk/tools/make_testsignal.py --check --plugins plugins`
   (all catalogues parse, ids unique), then
   `python3 sdk/tools/make_testsignal.py <id> --plugins plugins --cache /tmp/c`
   (prints PROGRESS lines, writes `<id>.dat` + `<id>.json`; the log of the
   steps in `<id>.log`), then play it in the UI and press nothing but ▶ Play:
   the VFO, decoder and options must come from the entry
+- A playback never outruns the pipeline: on a machine too busy for 2.4
+  MHz x 5 antennas in real time it plays slower (the full raw buffer
+  dropped whole packets - bursts cut in pieces failed the ISM decoders'
+  checks while ADS-B / DME's microsecond packets survived)
 - Decoders still without a generator (their tests used public recordings):
-  adsb, dme, ism, p25, dmr, pocsag, radiosonde, v23_telemetry - bring one
-  when you touch them
+  p25, dmr, radiosonde - bring one when you touch them
 
 ## Rules for a good decoder
 

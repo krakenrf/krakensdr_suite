@@ -18266,7 +18266,19 @@ function pbOnMessage(m) {
 }
 function pbEntry(id) { return pbCatalog.find(e => e.id === id); }
 function pbAngDiff(a, b) { return ((a - b + 540) % 360) - 180; }
-// the check of the playing entry: [{label, exp, got, ok}]
+// the events of VFO v's decoder since its mode was last set (the session's,
+// not those of the user's decoder before the playback), from plugin `src`
+function pbSessionEvents(v, src) {
+  const ev = (typeof digEvents !== 'undefined' && digEvents[v]) || [];
+  let k = ev.length;
+  while (k > 0 && !(!ev[k - 1].src && /^Decoder (set to|on)/.test(ev[k - 1].m || ''))) k--;
+  return ev.slice(k).filter(x => !src || x.src === src);
+}
+// the check of the playing entry: [{label, exp, got, ok, kind}]. Rows: {tid,
+// bearing} = that talker's DoA; {bearing} = any talker's; {vfo, bearing} =
+// the VFO's own DoA (its MUSIC plot - decoders without talkers; with the
+// Digital squelch it holds the bearing of the decoded frames); {event} = an
+// event of the VFO's decoder (vfo, default 0) containing that text
 function pbCheckRows() {
   if (!pbState || !pbState.active) return null;
   const e = pbEntry(pbState.id);
@@ -18274,6 +18286,15 @@ function pbCheckRows() {
   const tl = (rdfStatus && rdfStatus.talkers) || [];
   return e.expect.map(x => {
     const tol = x.tol || e.tol_deg || 5;
+    if (typeof x.event === 'string') {
+      const hit = pbSessionEvents(x.vfo || 0, e.decoder).find(v => (v.m || '').includes(x.event));
+      return {kind: 'event', label: 'decoded “' + x.event + '”', got: hit ? {m: hit.m} : null, ok: !!hit};
+    }
+    if (typeof x.vfo === 'number') {
+      const p = doaPlots[x.vfo];
+      const got = p && p.data && p.data.length && p.peakIdx >= 0 ? {d: pbAngDiff(p.peakAngle, x.bearing), t: {doa: p.peakAngle, tid: 'D' + x.vfo}} : null;
+      return {kind: 'vfo', label: 'VFO D' + x.vfo + ' DoA', exp: x.bearing, tol, got, ok: !!got && Math.abs(got.d) <= tol};
+    }
     let best = null;
     for (const t of tl) {
       if (x.tid && t.tid !== x.tid) continue;
@@ -18318,6 +18339,10 @@ function pbRender() {
       (ok === rows.length ? ' ✓ pass' : ' so far') + '</span><span class="pb-meta"> (bearings in the DF panel vs the scene, array frame)</span>';
     for (const r of rows) {
       const cls = r.ok ? 'pb-ok' : r.got ? 'pb-bad' : 'pb-wait';
+      if (r.kind === 'event') {
+        h += '<div class="' + cls + '"' + (r.got ? ' title="' + pbEsc(r.got.m) + '"' : '') + '>' + (r.ok ? '✓' : '…') + ' ' + pbEsc(r.label) + (r.ok ? '' : ': not yet') + '</div>';
+        continue;
+      }
       const got = r.got ? (r.got.t.doa.toFixed(1) + '° (' + (r.got.d >= 0 ? '+' : '') + r.got.d.toFixed(1) + ')' + (r.label === 'any talker' ? ' ' + pbEsc(r.got.t.tid) : '')) : 'not yet';
       h += '<div class="' + cls + '">' + (r.ok ? '✓' : r.got ? '✗' : '…') + ' ' + pbEsc(r.label) + ' @ ' + r.exp + '° ±' + r.tol + ': ' + got + '</div>';
     }

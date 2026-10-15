@@ -1,0 +1,23 @@
+{
+  "rf_hz": 1090e6, "seconds": 6, "channels": 5, "radius_m": 0.12, "seed": 3,
+  "noise_lsb": 2.5, "station": [0.0, 0.0],
+  "sources": [
+    {"name": "C81A2B", "icao": "C81A2B", "callsign": "ANZ123", "cat": 3, "alt_ft": 23000, "gs_kt": 420, "track": 310,
+     "vrate_fpm": -1200, "range_km": 60, "bearing": 40, "level_db": 22, "df_hz": 45000},
+    {"name": "7C4A51", "icao": "7C4A51", "callsign": "QFA44", "cat": 5, "alt_ft": 38000, "gs_kt": 480, "track": 75,
+     "range_km": 120, "bearing": 95, "level_db": 17, "df_hz": -110000},
+    {"name": "A0B1C2", "icao": "A0B1C2", "callsign": "UAL917", "cat": 5, "alt_ft": 35000, "gs_kt": 465, "track": 200,
+     "range_km": 95, "bearing": 150, "level_db": 19, "df_hz": 160000},
+    {"name": "406B90", "icao": "406B90", "callsign": "BAW12", "cat": 5, "alt_ft": 31000, "gs_kt": 450, "track": 20,
+     "vrate_fpm": 640, "range_km": 80, "bearing": 215, "level_db": 20, "df_hz": -35000},
+    {"name": "C82F11", "icao": "C82F11", "callsign": "ZKTCA", "cat": 1, "alt_ft": 3500, "gs_kt": 110, "track": 160,
+     "range_km": 25, "bearing": 270, "level_db": 25, "df_hz": 15000},
+    {"name": "3C4AD7", "icao": "3C4AD7", "callsign": "DLH410", "cat": 3, "alt_ft": 12000, "gs_kt": 290, "track": 95,
+     "vrate_fpm": 2200, "range_km": 40, "bearing": 330, "level_db": 23, "df_hz": 90000}
+  ],
+  "collisions": [
+    {"t": 1.2, "a": "C81A2B", "b": "7C4A51", "dt_us": 40},
+    {"t": 2.7, "a": "C82F11", "b": "3C4AD7", "dt_us": 70},
+    {"t": 4.1, "a": "406B90", "b": "A0B1C2", "dt_us": 25}
+  ]
+}

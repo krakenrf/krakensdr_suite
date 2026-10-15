@@ -924,7 +924,9 @@ decoded); coexists with dme (6X interrogations on 1030 MHz)
 `kraken_doa_v2/CLAUDE.md` *Debug playback*): a decoder's synthetic
 multi-antenna test transmission (known IDs + bearings) played through the
 real pipeline in place of heimdall's 8091 stream - spectrum, VFO, decoder,
-DoA, 📡 DF panel, a Check of the bearings. Catalogue per plugin in
+DoA, 📡 DF panel, a Check of the bearings (talkers; for decoders without
+transmitter IDs - pocsag, v23_telemetry - the VFO's own DoA with the
+Digital squelch, and decoded events). Catalogue per plugin in
 `plugins/<id>/tools/testsignals.json` (how to add one: plugins/SDK.md),
 generated on demand by `plugins/sdk/tools/make_testsignal.py` into
 `testsignal_cache/` (cwd-relative, gitignored, <= 3 GB; narrow scenes
@@ -935,8 +937,9 @@ refused, the settings store is a sandbox (Stop - or a restart - brings the
 user's settings back; doa_settings.json / heimdall_settings.conf
 untouched), web mapper / decoder log / Voice to Text / incidents / DoA
 recording paused, a red "DEBUG PLAYBACK - not live" banner + spectrum
-overlay. 14 entries; no generator yet for adsb, dme, ism, p25, dmr,
-pocsag, radiosonde, v23_telemetry
+overlay. A playback never outruns the pipeline (a busy machine plays it
+slower than real time instead of dropping packets). 29 entries in 22
+catalogues; no generator yet for p25, dmr, radiosonde
 
 **🔇 Digital squelch (per VFO, with its digital decoder on)** (details:
 `kraken_doa_v2/CLAUDE.md` *Digital squelch*): squelch methods are FFT Peak

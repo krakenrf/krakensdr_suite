@@ -1,0 +1,54 @@
+[
+{
+ "id": "adsb-six-aircraft",
+ "title": "ADS-B 1090 MHz: six aircraft, some messages colliding",
+ "description": "tools/scene_six.json, 6 s looped: ANZ123 (C81A2B, 40 deg), QFA44 (7C4A51, 95), UAL917 (A0B1C2, 150), BAW12 (406B90, 215), ZKTCA (C82F11, a light aircraft at 3500 ft, 270) and DLH410 (3C4AD7, 330) send DF17 identification, airborne positions (CPR even / odd), velocities and DF11 all-call replies, 17-25 dB over the noise, each with its own carrier offset; three pairs of messages overlap. Positions 25-120 km from the station at their compass bearings (heading 0), fixed (the loop). Expect a talker per aircraft (its ICAO address) at those bearings; tick Plot on map to see them.",
+ "rf_hz": 1090000000.0,
+ "tuner_offset_hz": 0,
+ "seconds": 6,
+ "vfo": {
+  "bw_khz": 2400
+ },
+ "files": {
+  "scene.json": {
+   "$from": "{tools}/scene_six.json",
+   "seconds": 6,
+   "station": "{station}"
+  }
+ },
+ "steps": [
+  [
+   "{tools}/adsb_gen.py",
+   "scene.json",
+   "out.cu8"
+  ]
+ ],
+ "output": "out.cu8",
+ "expect": [
+  {
+   "tid": "C81A2B",
+   "bearing": 40
+  },
+  {
+   "tid": "7C4A51",
+   "bearing": 95
+  },
+  {
+   "tid": "A0B1C2",
+   "bearing": 150
+  },
+  {
+   "tid": "406B90",
+   "bearing": 215
+  },
+  {
+   "tid": "C82F11",
+   "bearing": 270
+  },
+  {
+   "tid": "3C4AD7",
+   "bearing": 330
+  }
+ ]
+}
+]

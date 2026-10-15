@@ -1,0 +1,17 @@
+{
+  "rf_hz": 1150.5e6, "seconds": 8, "channels": 5, "radius_m": 0.12, "seed": 4,
+  "noise_lsb": 2.5,
+  "sources": [
+    {"name": "63Y", "kind": "beacon", "mhz": 1150, "mode": "Y", "pairs_s": 2700,
+     "ident": "TKN", "ident_at": 3.7, "dot_s": 0.1,
+     "tacan": {"bearing": 237, "m15": 0.2, "m135": 0.1},
+     "bearing": 60, "level_db": 24, "df_hz": -3500},
+    {"name": "64X", "kind": "beacon", "mhz": 1151, "mode": "X", "pairs_s": 900,
+     "ident": "KDF", "ident_at": 0.6, "dot_s": 0.12,
+     "bearing": 200, "level_db": 21, "df_hz": 2200},
+    {"name": "126X aircraft 1", "kind": "interrogator", "mhz": 1150, "mode": "X", "pairs_s": 40,
+     "bearing": 120, "level_db": 16, "df_hz": 18000},
+    {"name": "126X aircraft 2", "kind": "interrogator", "mhz": 1150, "mode": "X", "pairs_s": 25,
+     "bearing": 300, "level_db": 11, "df_hz": -9000}
+  ]
+}

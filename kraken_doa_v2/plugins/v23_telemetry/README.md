@@ -69,6 +69,18 @@ already passed sync, length and parity on every other character.
 | 60 s Gaussian noise | 0 packets, 0 events | 0.5% |
 | 300 s synthetic V.23 AFSK, random 8O1 characters (FF/00 rich), 15 dB SNR | 0 packets, 0 events | 0.4% |
 
+### Test transmission (debug playback)
+
+`tools/v23_gen.py` writes the framing above (mark lead-in, FF x N, 00, L,
+payload, CRC-16/CCITT-FALSE; 8O1 / 8O2 / 8E1 / 8N1 characters back to
+back, 1300 / 2100 Hz AFSK on NBFM) and an analog FM interferer (`--fm`).
+Playback `v23-telemetry-rtu` (457.2765 MHz, 12 s): a station at 135° sends
+four packets (L = 6, 27, 38, 12; 8O1, 3.5 kHz deviation), an FM
+transmitter at 250° talks in the gaps; no address in the payload, so the
+entry checks the four packets and the VFO's own DoA with the Digital
+squelch: 135.0° throughout. Offline the four packets decode, CRC ok, none
+repaired; the interferer alone gives nothing.
+
 ## Limitations
 
 - Only the framing seen on one link was verified (`FF.. 00 L .. CRC`). Other

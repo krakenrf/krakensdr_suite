@@ -43,6 +43,9 @@ extern DecimatorManager decimator_manager;
 
 // Global raw data buffer for incoming TCP packets
 RawDataBuffer raw_data_buffer(150, 2048, milliseconds(10000));
+// debug playback: packets waiting for the pipeline before the next is read
+// (~110 ms at 2.4 MHz; data_receiver_thread)
+constexpr size_t PLAYBACK_MAX_QUEUED = 16;
 
 // Queue for decimated FM data
 struct DecimatedFMWorkItem {
@@ -158,6 +161,16 @@ void DataReceiver::data_receiver_thread() {
 
         while (running) {
             if (playback::active() != pb) break;   // source switched
+            // a playback is a file, not a receiver: it never outruns the
+            // pipeline. A machine too busy for 2.4 MHz x 5 antennas in real
+            // time plays it slower instead - the full raw buffer dropped
+            // whole packets (25-40 % on a Pi 5 running a second stack), and
+            // the decoders whose bursts span packets (ISM devices) failed
+            // their checks on the cut pieces
+            if (pb) {
+                while (running && playback::active() && raw_data_buffer.size() >= PLAYBACK_MAX_QUEUED)
+                    this_thread::sleep_for(milliseconds(2));
+            }
             ssize_t bytes_read = pb ? playback::read(buffer.data() + bytes_in_buffer, buffer.size() - bytes_in_buffer)
                                     : data_client.receive_data(
                 buffer.data() + bytes_in_buffer, 

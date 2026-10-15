@@ -1,0 +1,54 @@
+[
+{
+ "id": "ism-six-devices",
+ "title": "ISM 433 MHz: six devices across the 2.4 MHz",
+ "description": "tools/scene_six.json, 6 s looped, tuner on 433.920 MHz: an EV1527 fob 9b37d (433.050 MHz, 330 deg), a LaCrosse TX141TH-Bv2 sensor 90 (434.182, 95), an Acurite 592TXR tower 12053 (433.442, 170), a Toyota TPMS 4e3a91c7 (FSK, 433.767, 30), a Fine Offset WH24 weather station 101 (FSK, 434.825, 250) and a PT2262 fob 0F1F0F1F (434.538, 210) - real framing and checks (repeats, checksum + parity, LFSR digest, CRC-8), 13 transmissions, some at the same moment on other frequencies (EV1527 + TX141TH, Acurite + Toyota, Acurite + WH24, PT2262 + Toyota). Expect six device talkers at those bearings.",
+ "rf_hz": 433920000.0,
+ "tuner_offset_hz": 0,
+ "seconds": 6,
+ "vfo": {
+  "bw_khz": 2400
+ },
+ "files": {
+  "scene.json": {
+   "$from": "{tools}/scene_six.json",
+   "seconds": 6
+  }
+ },
+ "steps": [
+  [
+   "{tools}/ism_gen.py",
+   "scene.json",
+   "out.cu8"
+  ]
+ ],
+ "output": "out.cu8",
+ "expect": [
+  {
+   "tid": "Toyota 4e3a91c7",
+   "bearing": 30
+  },
+  {
+   "tid": "LaCrosse-TX141THBv2 90",
+   "bearing": 95
+  },
+  {
+   "tid": "Acurite-Tower 12053",
+   "bearing": 170
+  },
+  {
+   "tid": "PT2262 0F1F0F1F",
+   "bearing": 210
+  },
+  {
+   "tid": "Fineoffset-WH24 101",
+   "bearing": 250
+  },
+  {
+   "tid": "EV1527 9b37d",
+   "bearing": 330
+  }
+ ],
+ "tol_deg": 5
+}
+]
