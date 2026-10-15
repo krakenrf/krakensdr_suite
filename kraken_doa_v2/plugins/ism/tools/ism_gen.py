@@ -219,8 +219,12 @@ def wh24(s):
          light & 0xFF]
     b.append(crc8(b, 0x31, 0x00))
     b.append(sum(b) & 0xFF)
-    frame = [0xAA] * int(s.get('preamble_bytes', 4)) + [0x2D, 0xD4] + b + [0x00]
-    return 'FSK', nrz_segments(bits_of(frame), 58.0), 'Fineoffset-WH24 %d' % ident, {'bytes': bytes(b).hex()}
+    frame = [0xAA] * int(s.get('preamble_bytes', 5)) + [0x2D, 0xD4] + b
+    # a 40-bit preamble and 3 bits after the last byte = 195 of the WH24's
+    # nominal 196 bit periods (rtl_433: "nominal 3 bits
+    # postamble"; a whole 0x00 byte here made rtl_433 read it as a WH65B -
+    # 12 bits - with the WH65B's wind / rain factors)
+    return 'FSK', nrz_segments(bits_of(frame) + [0, 0, 0], 58.0), 'Fineoffset-WH24 %d' % ident, {'bytes': bytes(b).hex()}
 
 
 def toyota(s):

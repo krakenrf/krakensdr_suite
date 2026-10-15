@@ -247,6 +247,24 @@ Offline 13 / 13 messages (antenna 0 alone and all antennas combined), no
 unknown or extra device, bearings within 0.1°, its noise alone nothing;
 through kraken_doa's debug playback 6 / 6 devices at 0.0°.
 
+The generator through rtl_433 (2026-10-16; rtl_433 built in scratch, run
+only - GPL): each device's channel of the scene mixed down and decimated
+to 240 kHz as an RTL-SDR would record it, `rtl_433 -r ch.cu8 -s 240000 -F
+json`: LaCrosse TX141TH-Bv2 90 (CRC, 21.3 °C, 48 %), Acurite-Tower 12053
+A (checksum, 18.4 °C, 62 %), Toyota TPMS 4e3a91c7 (CRC, 33.25 PSI, 24
+°C) - every field as generated, every transmission. Found: the WH24 frame
+ended in a whole 0x00 byte (8 trailing bits) - rtl_433 classifies by the
+preamble / postamble length (WH24 196 bit periods, "nominal 3 bits
+postamble"; WH65 12) and read it as a WH65B with the WH65B's wind / rain
+factors (1.53 / 2.55 m/s, 10.4 mm for 3.4 / 5.6 m/s, 12.3 mm). Now a
+40-bit preamble + 3 bits after the CRC / sum (195 periods): rtl_433
+Fineoffset-WH24 101, 15.2 °C, 71 %, 225°, 3.36 / 5.6 m/s, 12.3 mm, UV
+1200, 25430 lux - and the plugin as before (WH24). EV1527 / PT2262 at the
+scene's clocks (Te 350 / 300 us) are outside rtl_433's Generic-Remote
+window (short 464 +- 200 us, long 1404 +- 200 us); at Te 464 us:
+`Generic-Remote id 39735 cmd 210` = 9B 37 D2 and tristate `0Z1Z0Z1Z0001`
+(its Z = F) = 0F1F0F1F0001, all 10 frames each.
+
 ## Testing
 
 ```bash
