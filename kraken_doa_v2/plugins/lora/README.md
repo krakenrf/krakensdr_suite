@@ -300,9 +300,17 @@ dB/sample); byte-exact check of the whole path (16 / 16); bearings exact.
 
 Offline on the real 927.5 MHz capture: 44 % of real time before (12
 channels, 55 receivers), now (the same plan channels + 2 beacon
-receivers + the search ~9 % + 2 learned channels: ~64 %); live the plugin runs
+receivers + the search ~5-9 % + 2 learned channels: ~64 %); live the plugin runs
 at ~0.65x its offline figure plus the input pipe. `cpu=low` drops plan
-receivers past ~120 M (bw x SF units) and holds the search to 4 %.
+receivers past ~120 M (bw x SF units) and holds the search to 4 %. Live
+(2026-10-16, the user's stack around 924.5 MHz, 14 plan channels + a learned
+one, 30 receivers over the budget): ~40 % of a core incl. the input pipe,
+RSS ~375 MB (the channels' rings sized for the longest packet - 32 MB per
+500 kHz channel - and 20 MB of FFT history). Live it decoded the gateway
+downlinks on 923.9 / 924.5 / 925.1 MHz, the private SF7 BW250 0x12 system on
+923.875 / 924.875 MHz, a sync-0x12 SF8 sensor on 924.000 and learned a
+further SF7 BW250 0x12 channel on 924.401 MHz. Known: a frame whose sync
+word is mis-measured (e.g. 0xB2 for 0x12) still makes its own talker.
 
 ## Limits / sources
 
