@@ -938,8 +938,8 @@ user's settings back; doa_settings.json / heimdall_settings.conf
 untouched), web mapper / decoder log / Voice to Text / incidents / DoA
 recording paused, a red "DEBUG PLAYBACK - not live" banner + spectrum
 overlay. A playback never outruns the pipeline (a busy machine plays it
-slower than real time instead of dropping packets). 29 entries in 22
-catalogues; no generator yet for p25, dmr, radiosonde
+slower than real time instead of dropping packets). 32 entries in 25
+catalogues - every decoder has its own (p25, dmr, radiosonde last)
 
 **🔇 Digital squelch (per VFO, with its digital decoder on)** (details:
 `kraken_doa_v2/CLAUDE.md` *Digital squelch*): squelch methods are FFT Peak

@@ -537,7 +537,9 @@ at KNOWN bearings:
 Examples: `aprs/tools/aprs_gen.py`, `ais/tools/ais_gen.py`,
 `dstar/tools/dstar_gen.py`, `nxdn/tools/nxdn_gen.py`, `tetra/tools/tetra_gen.py`,
 `mpt1327/tools/mpt1327_gen.py`, `ils/tools/ils_gen.py`,
-`pocsag/tools/pocsag_gen.py`, `v23_telemetry/tools/v23_gen.py`; a 2.4 MHz
+`pocsag/tools/pocsag_gen.py`, `v23_telemetry/tools/v23_gen.py`,
+`p25/tools/p25_gen.py`, `dmr/tools/dmr_gen.py`,
+`radiosonde/tools/sonde_gen.py`; a 2.4 MHz
 scene of several transmitters is too big for uca_scene.py's in-memory
 mixing (5 antennas x 12 s = 2.3 GB complex128): `radar/tools/radar_gen.py`
 writes its scene at known bearings itself, in 0.1 s pieces (so do
@@ -639,8 +641,9 @@ least recently played go).
   MHz x 5 antennas in real time it plays slower (the full raw buffer
   dropped whole packets - bursts cut in pieces failed the ISM decoders'
   checks while ADS-B / DME's microsecond packets survived)
-- Decoders still without a generator (their tests used public recordings):
-  p25, dmr, radiosonde - bring one when you touch them
+- Every shipped decoder has its generator + entries (p25, dmr and
+  radiosonde, whose tests used public recordings, were the last -
+  2026-10-16); a new decoder brings both
 
 ## Rules for a good decoder
 

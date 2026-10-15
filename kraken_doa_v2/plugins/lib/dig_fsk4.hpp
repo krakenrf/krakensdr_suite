@@ -47,12 +47,13 @@ private:
     std::vector<Pattern> pats_p25_, pats_dmr_;
     struct Peak { bool active = false; float best = 0; int64_t idx = 0; int pat = 0; int age = 0; };
     Peak pk_p25_, pk_dmr_;
-    struct Job { Mode proto; SymSrc src; int need_k; DmrSync sync; };
+    struct Job { Mode proto; SymSrc src; int need_k; DmrSync sync; bool on_grid; };
     std::deque<Job> jobs_;
     int64_t dmr_expect_ = -1;       // sync_end of the next expected DMR burst
     int dmr_expect_left_ = 0;
     SymSrc dmr_last_src_;
     int dmr_period_ = 144;
+    bool dmr_confirmed_ = false;    // the followed burst sequence's last bursts checked out
     void correlate(SampleBuf& b, std::vector<Pattern>& pats, Peak& pk, Mode proto);
     void on_sync(Mode proto, int pat, int64_t sync_end, float corr_sign);
     void run_jobs();

@@ -1,0 +1,28 @@
+[
+{
+ "id": "p25-three-units",
+ "title": "P25: three radios taking turns on a talkgroup",
+ "description": "P25 Phase 1 C4FM voice calls on 453.6125 MHz, NAC 0x293, TG 101 (HDU, LDU1 link control with the source unit ID, LDU2 clear, placeholder IMBE frames with valid FEC, TDU / TDULC): unit 2010621 (60 deg) twice, unit 3250 (200 deg), unit 1234567 (300 deg), each at its own carrier offset and level. Expect talkers 2010621, 3250 and 1234567 at those bearings.",
+ "rf_hz": 453612500.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 13,
+ "vfo": {"bw_khz": 24},
+ "steps": [
+  ["{tools}/p25_gen.py", "u2010621.cf32", "--at", "0.4", "--dur", "2.5", "--src", "2010621", "--dst", "101",
+   "--at", "9.5", "--dur", "2.2", "--src", "2010621", "--dst", "101"],
+  ["{tools}/p25_gen.py", "u3250.cf32", "--at", "3.5", "--dur", "2.0", "--src", "3250", "--dst", "101", "--end", "tdulc"],
+  ["{tools}/p25_gen.py", "u1234567.cf32", "--at", "6.3", "--dur", "2.4", "--src", "1234567", "--dst", "101"]
+ ],
+ "scene": {"rate": 48000, "snr_db": 20, "seed": 25, "sources": [
+  {"name": "2010621", "file": "u2010621.cf32", "rate": 48000, "at": 0, "bearing": 60, "gain_db": -2, "shift_hz": 150},
+  {"name": "3250", "file": "u3250.cf32", "rate": 48000, "at": 0, "bearing": 200, "gain_db": 1, "shift_hz": -220},
+  {"name": "1234567", "file": "u1234567.cf32", "rate": 48000, "at": 0, "bearing": 300, "gain_db": -4, "shift_hz": 80}
+ ]},
+ "expect": [
+  {"tid": "2010621", "bearing": 60},
+  {"tid": "3250", "bearing": 200},
+  {"tid": "1234567", "bearing": 300},
+  {"event": "Call termination (TDULC)"}
+ ]
+}
+]

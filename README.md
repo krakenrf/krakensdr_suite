@@ -331,7 +331,8 @@ not in the Docker image - generate on the host and copy the files into
 AIS, APRS, D-STAR, NXDN, TETRA, MPT1327, VOR, CTCSS / DCS, pulse radar,
 1030 MHz interrogations, UAT, FLARM / OGN, 406 MHz distress beacons, LoRa /
 Meshtastic, wildlife collars, DVB-T, LTE, ADS-B, DME / TACAN, ISM devices,
-POCSAG and V.23 telemetry. POCSAG and V.23 name no transmitter, so their
+POCSAG, V.23 telemetry, P25, DMR and radiosondes - every decoder. POCSAG
+and V.23 name no transmitter, so their
 Check is the decoded messages and the VFO's own bearing (Digital squelch).
 A busy receiver plays a test slower than real time rather than skipping
 parts of it.

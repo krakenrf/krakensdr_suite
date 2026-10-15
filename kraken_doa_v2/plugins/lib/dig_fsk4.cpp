@@ -86,6 +86,7 @@ void Fsk4Receiver::reset() {
     pk_dmr_ = Peak();
     jobs_.clear();
     dmr_expect_ = -1;
+    dmr_confirmed_ = false;
     sink_.reset();
 }
 
@@ -130,6 +131,7 @@ void Fsk4Receiver::on_sync(Mode proto, int pat, int64_t sync_end, float sign) {
     SampleBuf& b = proto == Mode::P25 ? bp_ : bd_;
     uint64_t word = P25_SYNC;
     DmrSync st = DmrSync::NONE;
+    bool voice_on_grid = false;   // a voice sync on a confirmed sequence's grid
     if (proto == Mode::DMR) {
         static const uint64_t words[4] = {DMR_BS_VOICE, DMR_MS_VOICE, DMR_TS1_VOICE, DMR_TS2_VOICE};
         static const DmrSync v[4] = {DmrSync::BS_VOICE, DmrSync::MS_VOICE, DmrSync::TS1_VOICE, DmrSync::TS2_VOICE};
@@ -138,6 +140,24 @@ void Fsk4Receiver::on_sync(Mode proto, int pat, int64_t sync_end, float sign) {
         // polarity is taken as normal (heimdall delivers upright spectra)
         word = sign > 0 ? words[pat] : (words[pat] ^ 0xAAAAAAAAAAAAULL);   // +3 <-> -3
         st = sign > 0 ? v[pat] : d[pat];
+        // Nothing checks a voice sync (burst A carries no signalling), and
+        // random voice payload does correlate >= 0.8 with a sync word now and
+        // then (~1 in 50 bursts of random AMBE data; a BS pattern 10 ms after
+        // a radio's MS sync in a real recording): taken as burst A, it moved
+        // the extrapolation of the following bursts B..F off their timing and
+        // they were lost. While a CONFIRMED burst sequence is followed (its
+        // last bursts checked out: EMB / slot type + FEC, or a voice sync on
+        // its grid), every burst of the channel lies on its 30 ms grid: a
+        // voice sync off that grid is ignored. A sequence a bare voice sync
+        // started is not confirmed (it may be that false one): any sync
+        // re-anchors it, as before.
+        if (sign > 0 && dmr_expect_ >= 0) {
+            const int64_t per = 144 * SPS;
+            const int64_t off = ((sync_end - dmr_expect_) % per + per) % per;
+            const bool on_grid = std::min(off, per - off) <= 3 * SPS;
+            if (dmr_confirmed_ && !on_grid) return;
+            voice_on_grid = dmr_confirmed_ && on_grid;
+        }
     }
     // least-squares fit of the sync samples to their nominal levels
     std::vector<float> s = sync_symbols(word);
@@ -160,11 +180,11 @@ void Fsk4Receiver::on_sync(Mode proto, int pat, int64_t sync_end, float sign) {
     src.scale = scale;
     src.center = center;
     if (proto == Mode::P25) {
-        jobs_.push_back({Mode::P25, src, P25_FRAME_DIBITS - SYNC_SYMS, DmrSync::NONE});
+        jobs_.push_back({Mode::P25, src, P25_FRAME_DIBITS - SYNC_SYMS, DmrSync::NONE, false});
     } else {
         // a real sync replaces an extrapolated burst at the same place
         if (dmr_expect_ >= 0 && std::llabs(sync_end - dmr_expect_) < SPS * 3) dmr_expect_ = -1;
-        jobs_.push_back({Mode::DMR, src, 54, st});
+        jobs_.push_back({Mode::DMR, src, 54, st, voice_on_grid});
     }
 }
 
@@ -183,6 +203,11 @@ void Fsk4Receiver::run_jobs() {
                 dmr_period_ = period;
                 dmr_expect_ = it->src.sync_end + static_cast<int64_t>(period) * SPS;
                 dmr_expect_left_ = 12;   // keep extrapolating through voice bursts B..F
+                // data bursts are checked (slot type + FEC); a voice sync only
+                // confirms a sequence it continues on the grid
+                const bool voice = it->sync == DmrSync::BS_VOICE || it->sync == DmrSync::MS_VOICE ||
+                                   it->sync == DmrSync::TS1_VOICE || it->sync == DmrSync::TS2_VOICE;
+                dmr_confirmed_ = !voice || it->on_grid;
             }
         }
         it = jobs_.erase(it);
@@ -195,7 +220,11 @@ void Fsk4Receiver::run_jobs() {
         int period = dmr_period_;
         bool ok = bd_.has(s.sync_end - 90 * SPS) && sink_.dmr_burst(s, DmrSync::NONE, &period);
         dmr_expect_ += static_cast<int64_t>(dmr_period_) * SPS;
-        if (!ok && --dmr_expect_left_ <= 0) dmr_expect_ = -1;
+        if (ok) dmr_confirmed_ = true;   // its EMB / slot type checked out
+        if (!ok && --dmr_expect_left_ <= 0) {
+            dmr_expect_ = -1;
+            dmr_confirmed_ = false;
+        }
     }
     (void)end;
 }

@@ -445,7 +445,16 @@ Edit `include/config.hpp`:
     offset), no symbol-timing loop. DMR voice bursts B..F (no sync) are
     decoded at positions extrapolated from the last sync. DMR data sync =
     voice sync with every symbol negated (`^ 0xAAAA...`, NOT `~`). The p25
-    plugin enables only P25, the dmr plugin only DMR
+    plugin enables only P25, the dmr plugin only DMR. A DMR VOICE sync off
+    the 30 ms grid of a CONFIRMED burst sequence (`dmr_confirmed_`: its
+    last burst checked out - EMB / slot type + FEC, or a voice sync on the
+    grid) is ignored: random voice payload correlates >= 0.8 with a sync
+    word now and then (~1 in 50 bursts of random AMBE data), and burst A is
+    checked by nothing, so a false one moved the extrapolation of B..F off
+    their timing; a sequence a bare voice sync started is not confirmed
+    (any sync re-anchors it, as before - a real MS recording has a false BS
+    voice sync 10 ms after a radio's real one) (2026-10-16, found with the
+    dmr generator)
   - `P25Proto` (plugins/p25): NID BCH(63,16) by table search, TSBK (rate 1/2
     trellis + CRC), LDU1/LDU2 (Hamming(10,6) + RS(24,12)/(24,16)), HDU
     (Golay(18,6) + RS(36,20)), TDULC (Golay(24,12) + RS(24,12)), PDU header.
@@ -454,7 +463,13 @@ Edit `include/config.hpp`:
     (max 2 corrections - a third of random words are within 3), BPTC(196,96)
     voice LC header / terminator (RS(12,9)), CSBK, PI and data headers, EMB
     QR(16,7) + embedded LC, GPS and talker alias LCs. Control-channel chatter
-    (Aloha, broadcasts, acks) only with the verbose option. Option `slot`
+    (Aloha, broadcasts, acks) only with the verbose option. Option `slot`.
+    The kind + slot that extrapolated bursts are read with (`ext_bs_`,
+    `ext_slot_`) come only from a burst that checked out (`set_ext`): a
+    false direct-mode data sync inside a repeater's burst made the next
+    burst B..F skip its CACH, on the wrong slot (2026-10-16). Real
+    recordings: dmr_1 263 -> 269 valid bursts, dmr_it_8 604 -> 605, dmr_2
+    identical, talkers unchanged
   - `DstarReceiver` (plugins/dstar): RF header (scrambler, 24-column
     interleaver, K=3 Viterbi, CRC-16/X.25), slow data (text message, GPS /
     DPRS, header copy), end pattern
@@ -1766,6 +1781,17 @@ Edit `include/config.hpp`:
   at the reset (RxContext::talker / talker_end, dig_common.hpp). On
   iq_143.0.u8 (-787.5 kHz): 2010621 0.134-0.314 s, 3250 0.912-2.255 s,
   2010621 6.813- s - matching the decoded frames
+- Generators in the repo (2026-10-16): `plugins/p25/tools/p25_gen.py`
+  (HDU, LDU1 link control / LDU2 encryption sync, placeholder IMBE frames
+  with valid FEC, TDU / TDULC, status symbols, C4FM = raised cosine x
+  inverse sinc) and `plugins/dmr/tools/dmr_gen.py` (repeater: CACH, both
+  timeslots, idle bursts; direct mode TS1 / TS2; voice LC header,
+  superframes with EMB + embedded LC, terminator, placeholder AMBE+2
+  frames with valid FEC) -> playback `p25-three-units` (2010621 / 3250 /
+  1234567 at 60 / 200 / 300 deg) and `dmr-repeater-and-direct` (a repeater
+  at 300 deg with 3100001 on slot 1 and, overlapping, 3100002 on slot 2;
+  3100011 direct TS1 at 60, 3100012 direct TS2 at 200): offline every
+  frame / burst decoded, every talker 0.0 deg off
 - Sample clock: `DecimatorInstance::stream_pos` counts the VFO's decimated
   samples; run_pipeline stamps each block (`MultiChannelDecimated::
   stream_pos`, fetch_add of min_samples) and passes it to MUSIC and to
@@ -2239,11 +2265,11 @@ Edit `include/config.hpp`:
   8091 packets - spectrum, waterfall, VFO, decoder, DoA, the 📡 DF panel.
   Catalogue IN THE PLUGINS: `plugins/<id>/tools/testsignals.json` (a list;
   format + how to add one: plugins/SDK.md *Test transmissions for the debug
-  playback*). 29 entries in 22 catalogues (2026-10-16): ais, aprs, dstar,
-  nxdn, tetra, mpt1327, ils (VOR), ctcss, radar, ssr1030, uat, flarm,
-  beacon406, lora (two), wildlife (five), dtv, cells, adsb, dme, ism,
-  pocsag, v23_telemetry. No generator in the repo yet (their tests used
-  public recordings): p25, dmr, radiosonde
+  playback*). 32 entries in 25 catalogues (2026-10-16) - EVERY decoder:
+  ais, aprs, dstar, nxdn, tetra, mpt1327, ils (VOR), ctcss, radar,
+  ssr1030, uat, flarm, beacon406, lora (two), wildlife (five), dtv, cells,
+  adsb, dme, ism, pocsag, v23_telemetry, p25, dmr, radiosonde (the last
+  three since 2026-10-16 - their earlier tests used public recordings)
 - Generation: `PLAYBACK_GEN:<id>` forks `python3 -I
   plugins/sdk/tools/make_testsignal.py <id> --plugins DIR --cache
   testsignal_cache --lat --lon` (nice 10, own process group; PROGRESS lines
@@ -2362,6 +2388,26 @@ Edit `include/config.hpp`:
   doa_settings.json identical after Stop. VFO DoA over the last 27 s of
   the pocsag run: 60.0 .. 60.0 with the Digital squelch, 17.7 .. 352.7 with
   the squelch off (the FM interferer and the noise between the pages)
+- Tests 2026-10-16, the WHOLE catalogue (scratch pb2/: the same test
+  build, niced below the live stack, every entry generated fresh or taken
+  from a cache generated after its generator last changed; 45 s per entry,
+  80 s for ils and the wildlife entries): 31 of 32 entries pass every row -
+  adsb 6/6, ais 4/4, aprs 3/3, beacon406 5/5, cells 2/2, ctcss 4/4 (151.4
+  +3.6 deg, as offline), dme 5/5, dmr 4/4, dstar 2/2, dtv 3/3, flarm 5/5,
+  ils 2/2, ism 6/6, lora-mesh-five 6/6, lora-au915-gateway 6/6, lora-eu868
+  4/4, mpt1327 2/2, nxdn 2/2, p25 4/4, pocsag 7/7, radar 3/3, radiosonde
+  2/2, ssr1030 4/4, tetra 2/2, uat 5/5, v23 5/5, wildlife-five 5/5,
+  -survey 5/5, -one-collar 1/1, -na-collars 4/4, -motus-tags 4/4 (talkers
+  0.0 deg except the wildlife ones, within 5); `lora-private-search` 1 / 5
+  (also alone for 120 s): through the playback the plan-free search
+  learns only the 446.1 MHz SF10 link, while the same file offline (`lora
+  decoder --file <cache>.dat --format cu8 --channels 5 --rf 446e6`) learns
+  all five within 4 s. Its facts: "Search ... 14.0 % CPU · 151 candidates,
+  4 probed · paused (CPU budget)" - the search's share is wall-clock time
+  per stream time, and with the live stack + the test build on the Pi
+  (load 5-9) it passed its 12 % limit and stopped probing (once the one
+  link learned at 446.069 instead of 446.100: 0 / 5) - open, for the lora
+  plugin. Settings file identical after every run, 0 notices
 
 **Decoder data log (`src/decoder_log.cpp`, sidebar "🗂 Decoder Logging"):**
 - Sources: the engine's record handler (`dig::set_record_handler`,
@@ -3231,6 +3277,14 @@ Edit `include/config.hpp`:
   rs1729/RS is GPL-3.0: used as documentation + test reference only
 - DoA per sonde (`Radiosonde::talker`, ID separation): every frame a
   packet of type + serial, its first <= 0.24 s - see *DoA per talker*
+- Generator in the repo (2026-10-16): `tools/sonde_gen.py` (RS41-SG:
+  GFSK, whitening, the 320-byte block frame with CRCs + the two
+  RS(255,231) codewords - its parity = the recording's -, keyed 0.6 s a
+  second; M20: differential Manchester 9600 Bd, the 70-byte frame + checks,
+  0.17 s a second; positions around the station given at generation time)
+  -> playback `radiosonde-rs41-m20` (RS41 U2410853 at 40 deg, M20
+  512-2-14077 at 250 deg on 403.0 MHz, each in its own part of the
+  second): offline 24 / 24 frames, bearings 40.0 / 250.0
 
 **DME / TACAN (`plugins/dme/`, README.md there):**
 - 2.4 MHz input (`min_vfo_rate` 600 kHz, manual only, talkers). From

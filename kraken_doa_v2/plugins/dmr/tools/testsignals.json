@@ -1,0 +1,28 @@
+[
+{
+ "id": "dmr-repeater-and-direct",
+ "title": "DMR: a repeater with both timeslots busy, then two radios in direct mode",
+ "description": "DMR Tier II on 439.0125 MHz, colour code 1 (voice LC header, voice superframes with EMB + embedded LC, terminator; placeholder AMBE+2 frames with valid FEC). A repeater (300 deg, CACH, idle bursts on a free slot) carries 3100001 -> TG 1 on slot 1 and, overlapping it, 3100002 -> TG 2 on slot 2 - both radios' bearing is the repeater's. Then radio 3100011 (60 deg) on direct-mode timeslot 1 and radio 3100012 (200 deg) on timeslot 2. Expect talkers 3100001 + 3100002 at 300 deg, 3100011 at 60 deg, 3100012 at 200 deg.",
+ "rf_hz": 439012500.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 12,
+ "vfo": {"bw_khz": 24},
+ "steps": [
+  ["{tools}/dmr_gen.py", "rpt.cf32", "--mode", "bs", "--at", "0.5", "--slot", "1", "--dur", "2.6", "--src", "3100001", "--dst", "1",
+   "--at", "1.5", "--slot", "2", "--dur", "2.3", "--src", "3100002", "--dst", "2"],
+  ["{tools}/dmr_gen.py", "dmo1.cf32", "--mode", "dmo", "--at", "5.0", "--slot", "1", "--dur", "2.2", "--src", "3100011", "--dst", "9"],
+  ["{tools}/dmr_gen.py", "dmo2.cf32", "--mode", "dmo", "--at", "8.4", "--slot", "2", "--dur", "2.2", "--src", "3100012", "--dst", "9"]
+ ],
+ "scene": {"rate": 48000, "snr_db": 20, "seed": 31, "sources": [
+  {"name": "repeater", "file": "rpt.cf32", "rate": 48000, "at": 0, "bearing": 300, "gain_db": 2, "shift_hz": 120},
+  {"name": "3100011", "file": "dmo1.cf32", "rate": 48000, "at": 0, "bearing": 60, "gain_db": -3, "shift_hz": -260},
+  {"name": "3100012", "file": "dmo2.cf32", "rate": 48000, "at": 0, "bearing": 200, "gain_db": 0, "shift_hz": 310}
+ ]},
+ "expect": [
+  {"tid": "3100001", "bearing": 300},
+  {"tid": "3100002", "bearing": 300},
+  {"tid": "3100011", "bearing": 60},
+  {"tid": "3100012", "bearing": 200}
+ ]
+}
+]

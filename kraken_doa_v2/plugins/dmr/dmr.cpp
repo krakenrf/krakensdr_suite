@@ -406,15 +406,21 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
         }
         if (slot == 0 && sync == NONE) return false;
     }
-    if (sync != NONE) {
+    // the kind + slot extrapolated bursts take: only from a burst that
+    // checked out (a false data sync in voice payload - a direct-mode
+    // pattern inside a repeater's burst - made the next burst B..F read
+    // without its CACH, on the wrong slot)
+    auto set_ext = [&] {
+        if (sync == NONE) return;
         ext_bs_ = bs;
         ext_slot_ = slot;
-    }
+    };
     Slot& sl = slots_[slot];
 
     if (sync == NONE || voice_sync) {
         // voice burst: A carries the sync, B..F the EMB + embedded signalling
         if (voice_sync) {
+            set_ext();
             sl.voice_idx = 0;
             sl.emb_state = 0;
             voice_burst(slot, bits);
@@ -562,6 +568,7 @@ bool DmrProto::decode(const SymSrc& s, SyncType sync, int* period_syms) {
             break;
     }
     if (ok) {
+        set_ext();
         if (bs) r.set(Mode::DMR, "Source", "Repeater / base station");
         else r.set(Mode::DMR, "Source", slot ? "Direct mode (TDMA)" : "Mobile / direct mode");
         if (cc != cc_) { cc_ = cc; r.event(Mode::DMR, "Colour code " + std::to_string(cc), 30.0); }

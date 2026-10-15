@@ -1,0 +1,25 @@
+[
+{
+ "id": "radiosonde-rs41-m20",
+ "title": "Radiosondes: an RS41 and an M20 sharing 403.0 MHz",
+ "description": "Two climbing weather balloons on one frequency, each keyed once a second in its own part of it: a Vaisala RS41-SG U2410853 (GFSK 4800 bit/s, Reed-Solomon + CRC blocks, ECEF position, 0.6 s per second) at 40 deg, 22 km out, and a Meteomodem M20 512-2-14077 (FSK 9600 Bd Manchester, frame check, 0.17 s per second) at 250 deg, 48 km out - positions on the map around the station given at generation time. Expect talkers 'RS41 U2410853' at 40 deg and 'M20 512-2-14077' at 250 deg.",
+ "rf_hz": 403000000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 12,
+ "vfo": {"bw_khz": 50},
+ "steps": [
+  ["{tools}/sonde_gen.py", "rs41.cf32", "--type", "rs41", "--serial", "U2410853", "--lat", "{lat}", "--lon", "{lon}",
+   "--range_km", "22", "--az_deg", "320", "--alt0", "4200", "--climb", "5.2", "--seconds", "12", "--phase", "0.05"],
+  ["{tools}/sonde_gen.py", "m20.cf32", "--type", "m20", "--serial", "512-2-14077", "--lat", "{lat}", "--lon", "{lon}",
+   "--range_km", "48", "--az_deg", "110", "--alt0", "11800", "--climb", "4.6", "--seconds", "12", "--phase", "0.72"]
+ ],
+ "scene": {"rate": 48000, "snr_db": 22, "seed": 41, "sources": [
+  {"name": "RS41 U2410853", "file": "rs41.cf32", "rate": 48000, "at": 0, "bearing": 40, "gain_db": 0, "shift_hz": 350},
+  {"name": "M20 512-2-14077", "file": "m20.cf32", "rate": 48000, "at": 0, "bearing": 250, "gain_db": -3, "shift_hz": -900}
+ ]},
+ "expect": [
+  {"tid": "RS41 U2410853", "bearing": 40},
+  {"tid": "M20 512-2-14077", "bearing": 250}
+ ]
+}
+]

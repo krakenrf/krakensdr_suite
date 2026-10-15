@@ -103,3 +103,19 @@ rs1729 decoders (`SONDE_DUMP=1` prints every frame):
 
 Each recording decodes only as its own type. CPU: 2.6 % of real time on a
 Raspberry Pi 5 (3.8 % with LMS6's Viterbi decoding running).
+
+Generator `tools/sonde_gen.py` (one sonde per run, a frame every second
+while it climbs, placed --range_km / --az_deg from the station given at
+generation time): RS41-SG (GFSK 4800 bit/s BT 0.5 +-2.4 kHz, keyed ~0.6 s
+per second like the recording; the 320-byte frame with blocks 0x79 / 0x7A /
+0x7C / 0x7D / 0x7B / 0x76 and their CRCs, the two RS(255,231) codewords -
+its encoder reproduces the parity bytes of the recording's frames - and the
+whitening; calibration fragment 0 = the transmit frequency) and M20 (FSK
+9600 Bd +-6.5 kHz, differential Manchester, the 70-byte frame with its
+checks, keyed ~0.17 s per second). Debug playback entry
+`radiosonde-rs41-m20` (`tools/testsignals.json`): RS41 U2410853 at 40 deg
+and M20 512-2-14077 at 250 deg sharing 403.0 MHz, each in its own part of
+the second. Offline (22 dB SNR, `decoder --file scene.cf32 --channels 5
+--uca 0.12 --rf 403000000`): 24 / 24 frames, bearings 40.0 / 250.0 deg; end
+to end: kraken_doa_v2/CLAUDE.md *Debug playback*. The plugin decodes the
+VFO's centre channel only, so sondes on other frequencies need a VFO each.
