@@ -74,10 +74,16 @@ floor, 30 Hz 23.6 % / 9960 Hz 28.7 % (FM +-377 Hz), voice on the carrier
 Hz variable vs the 9960 Hz subcarrier's FM -> 30 Hz reference, 10 s
 blocks): 295.1-296.6° - the radial's sense and value agree; the generator's
 VOR at radial 295° reads 295.1-295.6° through the same script (modulation
-30.1 / 29.7 %, +-485 Hz). Its ident was NOT decoded: the 1020 Hz keying sits
-under the voice (a 20 Hz-wide check shows ".- .-" groups every ~7-8 s, the
-10 ms Goertzel ticks of the keyer don't separate it) - no ident is shown,
-none false. No real localizer, glide slope or marker beacon recording was
+30.1 / 29.7 %, +-485 Hz). Its ident: the 1020 Hz keying sits under voice /
+ATIS audio; with the keyer's 10 ms Hann ticks (+-100 Hz) the key stood only
+5.8x over the gaps (it wants 6) and never engaged. The 1020 Hz level is now
+taken over 40 ms (Hann, centred on each 10 ms tick: +-25 Hz): 7.7x, keyed
+("ident tone 9 %"), and on a noisy synthetic localizer IAA reads 2x where
+the old keyer read nothing (clean LOC / VOR idents 6-12 wpm unchanged).
+The real VOR's ident still isn't read: its voice key-ups (10-50 ms blips,
+`ILS_KEY=1` prints the keying) break the gaps the Morse decoder needs - a
+20 Hz-wide check shows ".- .-" groups every ~7-8 s, but the station is
+unnamed, so it can't be confirmed; nothing false is shown. No real localizer, glide slope or marker beacon recording was
 found: those stay synthetic only.
 
 Not yet tried on live signals.

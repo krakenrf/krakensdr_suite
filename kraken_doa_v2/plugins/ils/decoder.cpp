@@ -173,6 +173,8 @@ public:
         m_.resize(NB);
         win_.resize(TICK_N);
         for (int i = 0; i < TICK_N; i++) win_[i] = static_cast<float>(0.5 - 0.5 * std::cos(2 * M_PI * (i + 0.5) / TICK_N));
+        win_id_.resize(ID_N);
+        for (int i = 0; i < ID_N; i++) win_id_[i] = static_cast<float>(0.5 - 0.5 * std::cos(2 * M_PI * (i + 0.5) / ID_N));
     }
     ~Ils() override {
         for (fftwf_plan p : {fwd_, band_, tone_, sub_}) fftwf_destroy_plan(p);
@@ -228,6 +230,12 @@ private:
     double buf_t0_ = 0;
     std::vector<float> m_;          // modulation of the main carrier (24 kHz, 1 s)
     std::vector<float> win_;        // Hann window of a tick (keeps the 1300 Hz marker tone out of 1020 Hz)
+    // the 1020 Hz ident: 40 ms Hann centred on the tick (+-25 Hz instead of
+    // +-100 Hz): a real VOR's voice / ATIS audio filled the 10 ms window's
+    // band - its keying stood 5.8x over the gaps (the keyer wants 6), 7.7x
+    // with 40 ms; dits of 100 ms and more keep their shape
+    static constexpr int ID_N = 4 * TICK_N;
+    std::vector<float> win_id_;
     Keyer keys_[NTONES];
     Pattern pats_[NTONES];
     nav::MorseDecoder morse_{TICK_S, 0.06, 0.25, 1.5};
@@ -392,15 +400,27 @@ private:
                 const double w = 2 * M_PI * TONES[k] / NB;
                 double s1 = 0, s2 = 0;
                 const double cw = 2 * std::cos(w);
-                for (int i = 0; i < TICK_N; i++) {
-                    const double s0 = m_[t + i] * win_[i] + cw * s1 - s2;
+                const bool id = k == T1020;
+                const int n = id ? ID_N : TICK_N, t0 = id ? t + TICK_N / 2 - ID_N / 2 : t;
+                const float* wn = id ? win_id_.data() : win_.data();
+                for (int i = 0; i < n; i++) {
+                    const double s0 = m_[t0 + i] * wn[i] + cw * s1 - s2;
                     s2 = s1;
                     s1 = s0;
                 }
                 const double pw = s1 * s1 + s2 * s2 - cw * s1 * s2;
-                const float a = static_cast<float>(4 * std::sqrt(std::max(pw, 0.0)) / TICK_N);   // Hann gain 0.5
+                const float a = static_cast<float>(4 * std::sqrt(std::max(pw, 0.0)) / n);   // Hann gain 0.5
                 const bool key = keys_[k].push(a);
                 if (k == T1020) {
+                    static const bool dump = getenv("ILS_KEY") != nullptr;   // offline diagnosis: the ident keying
+                    if (dump) {
+                        static std::string line;
+                        line += key ? '#' : (keys_[k].keyed ? '.' : ' ');
+                        if (line.size() == 100) {
+                            fprintf(stderr, "ILS_KEY %.2f s on %.4f off %.4f |%s|\n", host.time(), keys_[k].on, keys_[k].off, line.c_str());
+                            line.clear();
+                        }
+                    }
                     // the Morse decoder starts after a clear gap once the key
                     // threshold is known (else the first ident is cut short)
                     if (!keys_[k].keyed) {
