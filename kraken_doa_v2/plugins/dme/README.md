@@ -111,3 +111,11 @@ VFO: 6.6 %).
 Not tried on a live TACAN or on Y-mode beacons (none here); the TACAN
 reference burst spacing differs between sources (X north burst pairs 30 or
 24 us apart), so both are accepted.
+
+Generator vs a real beacon (2026-10-16): the AI session's live 40X capture
+(480 kS/s, 10 s, 1001 MHz) measured by the plugin - spacing 11.98 us,
+width 3.88 us, rise 2.7 us (10-90 %), 943 pairs/s - and `dme_gen.py`'s 40X
+taken through the same 480 kS/s / +-192 kHz channel: 12.02 / 3.94 / 2.6
+us (at 2.4 MHz 3.53 us wide - the ICAO 3.5 us Gaussian; the capture's
+filter widens both alike). No open DME decoder exists to cross-check with;
+idents / TACAN stay synthetic only.

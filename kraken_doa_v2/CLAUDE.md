@@ -4448,6 +4448,22 @@ Edit `include/config.hpp`:
   (a snapshot may name a plugin this receiver lacks: accepted on replay,
   refused interactively). The exe's mtime is checked every 2 s: a rebuild
   restarts the decoder ("Rebuilt plugin loaded")
+- Real-recording checks (2026-10-16, part 1 - downloads only in the job's
+  scratch, reference decoders built there from source, results in each
+  plugin README's Tests): uat (a CC1310 UAT capture = dump978; generator
+  through dump978 48 / 48), flarm (none published - generator through
+  flare's nrf905_demod: the FLARM preamble was inverted, fixed; OGN packets
+  through the OGN tracker's own code), beacon406 (sigidwiki EPIRB IQ +
+  F4EHY's dec406 set: the demodulator lost PDF-2 / a whole off-air burst on
+  real carrier phase noise - per-bit phase pass, phase-robust sync, polarity
+  from the bit sync), ils (a real VOR's radial = an independent measurement;
+  ILS synthetic only), aprs (WA8LMF TNC test CD: 967 vs multimon-ng's 955 /
+  660 vs 517; 17-byte AX.25 frames without a PID were dropped - fixed),
+  pocsag (sigidwiki IQ + multimon-ng's samples = multimon-ng), v23 (its
+  real recordings are gone, none public), generators of adsb (dump1090:
+  every one of its 217 messages on its own capture + 111; of the
+  generator's 197 it reads 144, all byte-identical), ais (AIS-catcher 7 / 7), radiosonde (rs1729 12 / 12
+  RS41 + M20), dme (pulse shape = a real 40X)
 
 **AI Signal Lab (`src/ai_manager.cpp`, `ai/`):**
 - Sidebar box "🤖 AI Signal Lab" + the "🤖 AI" tab of the panel under the

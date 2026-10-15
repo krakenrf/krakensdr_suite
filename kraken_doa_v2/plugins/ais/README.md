@@ -24,3 +24,9 @@ on both channels, pairs transmitting at the same moment on A and B: 20.0 /
 110.0 / 200.0 / 300.0° offline (`--channels 5 --uca 0.12`) and through
 kraken_doa; all 16 frames decoded. No AIS traffic reaches the station here
 (162 MHz watched for 7 minutes on 2026-10-15), so no live check.
+
+Generator vs a reference decoder (2026-10-16; AIS-catcher - GPL - built in
+scratch from its sources, not in this repo): two ships, 7 transmissions
+on A and B (`ais_gen.py`, 100 kHz, resampled to 288 kS/s): AIS-catcher
+decodes 7 / 7 on the right channels, every field as generated (MMSI, lat /
+lon to 1e-6, SOG 12.3 / 0.4 kn, COG 45 / 271.5, heading, status).

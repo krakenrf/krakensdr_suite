@@ -107,3 +107,16 @@ KLM1023 is the Riddle's frame byte for byte. Offline (`--channels 5 --uca
 callsign / position / altitude / speed right, bearings 0.0° off, 20 s of
 its noise nothing; through kraken_doa's debug playback 6 / 6 talkers at
 0.0°.
+
+**Real recording + reference decoder** (2026-10-16; dump1090 - antirez's,
+GPL - built in scratch as the reference, not in this repo):
+- dump1090's own test capture `testfiles/modes1.bin` (2 MS/s cu8, real
+  messages of one aircraft, 4D2023 AMC421): dump1090 217 messages (111
+  different); the plugin (resampled to 2.4 MHz) 328 - every one of
+  dump1090's 217 among them, + 111 more (DF17 positions / velocities it
+  misses at 2 MS/s, DF0 / DF11 replies of the known aircraft).
+- The generator's `scene_six` (1 antenna) resampled to 2 MS/s through
+  dump1090: 144 of 197 messages decoded (its 2 MS/s demodulator; the
+  collisions), all byte-identical to what was sent, none it didn't send;
+  its aircraft table = the scene (callsigns, 3500-38000 ft, speeds +-1 kt,
+  tracks, positions to 0.001° by global CPR).

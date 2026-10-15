@@ -119,3 +119,11 @@ the second. Offline (22 dB SNR, `decoder --file scene.cf32 --channels 5
 --uca 0.12 --rf 403000000`): 24 / 24 frames, bearings 40.0 / 250.0 deg; end
 to end: kraken_doa_v2/CLAUDE.md *Debug playback*. The plugin decodes the
 VFO's centre channel only, so sondes on other frequencies need a VFO each.
+
+Generator vs reference decoders (2026-10-16; rs1729/RS `rs41mod` and
+`m10m20mod` - GPL - built in scratch as references, not in this repo): the
+playback's two sondes FM-demodulated to 48 kHz audio - rs41mod (`--ecc2
+--crc`) 12 / 12 RS41 frames (U2410853, frame numbers, position, 4200 m
+climbing 5.2 m/s, 8 m/s drift east, 403.000 MHz from the calibration
+fragment), m10m20mod 12 / 12 M20 frames `[OK]` (512-2-14077, 11800 m
+climbing 4.6 m/s); with the polarity inverted none.
