@@ -34,7 +34,7 @@ constexpr double FS = 19200;   // 16 samples per bit
 constexpr int SPB = 16;
 constexpr int TABLEN = 96;     // 1200 Hz: 6 cycles, 2200 Hz: 11 cycles in 96 samples
 constexpr int MAX_FRAME = 340; // bytes incl. FCS (AX.25 max info 256 + header)
-constexpr int MIN_FRAME = 18;  // dst + src + ctl + pid + FCS = 18
+constexpr int MIN_FRAME = 17;  // dst + src + ctl + FCS: a supervisory / U frame (RR, SABM ...) has no PID
 
 uint16_t crc_x25(const uint8_t* p, int n) {
     static const std::array<uint16_t, 256> tab = [] {

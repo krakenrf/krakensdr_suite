@@ -69,6 +69,13 @@ already passed sync, length and parity on every other character.
 | 60 s Gaussian noise | 0 packets, 0 events | 0.5% |
 | 300 s synthetic V.23 AFSK, random 8O1 characters (FF/00 rich), 15 dB SNR | 0 packets, 0 events | 0.4% |
 
+Re-check against real data (2026-10-16): the session recordings above were
+real (off-air, 457.2765 MHz) but are no longer on this Pi, and no public
+recording of this proprietary link exists (sigidwiki / multimon-ng / the
+usual sample archives have V.23 caller-ID, not this framing) - the
+generator follows the framing measured on them; nothing newer to verify
+against.
+
 ### Test transmission (debug playback)
 
 `tools/v23_gen.py` writes the framing above (mark lead-in, FF x N, 00, L,

@@ -143,6 +143,10 @@ private:
         if (cw_index_ == 16) {
             // after a batch: either the next sync or the end of the transmission
             uint32_t w = word_;
+            static const bool dump = getenv("POCSAG_CW") != nullptr;
+            if (dump)
+                fprintf(stderr, "POCSAG_CW %.3f s %d bit/s next sync? %08X (%d bits off)\n", t_, baud_, w,
+                        __builtin_popcount(w ^ SYNC));
             if (__builtin_popcount(w ^ SYNC) <= 2 && bad_ < 12) {
                 cw_index_ = 0;
                 bad_ = 0;
@@ -162,7 +166,12 @@ private:
     }
 
     void handle_codeword(uint32_t cw, int index) {
+        const uint32_t raw = cw;
         int fixed = correct(cw);
+        static const bool dump = getenv("POCSAG_CW") != nullptr;   // offline diagnosis: every codeword
+        if (dump)
+            fprintf(stderr, "POCSAG_CW %.3f s %d bit/s #%02d %08X -> %s %08X\n", t_, baud_, index, raw,
+                    fixed < 0 ? "BAD" : (fixed ? "fixed" : "ok"), cw);
         if (fixed < 0) {
             bad_++;
             damaged_ = true;

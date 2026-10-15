@@ -49,7 +49,7 @@ inline bool parse_address(const uint8_t* b, int len, Frame& f, int& hdr_len) {
         out.assign(s, n);
         return true;
     };
-    if (len < 16) return false;
+    if (len < 15) return false;   // dst + src + control (RR / RNR / U frames carry no PID)
     if (!call(b, f.dst) || !call(b + 7, f.src)) return false;
     if (b[6] & 1) return false;   // there must be a source address after dst
     int pos = 14;

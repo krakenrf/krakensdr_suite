@@ -78,6 +78,23 @@ on 7 ones) and FCS check. The same frame from several slicers is reported once.
 The live receiver was not running during development, so no off-air traffic
 other than the recording above was tested.
 
+Real recordings (2026-10-16; verified against them, not in this repo -
+multimon-ng built in scratch as the reference, GPL):
+
+| recording | multimon-ng | plugin |
+|---|---|---|
+| WA8LMF TNC Test CD track 1 (25.8 min of Los Angeles 144.39 MHz traffic, flat discriminator audio, FM-modulated to IQ at 19.2 kHz) | 955 frames | 967 frames; 952 of multimon-ng's (header + info start), 15 it doesn't have, 3 missed |
+| track 2 (the same, de-emphasised) | 517 | 660, all 517 of multimon-ng's among them |
+| sigidwiki "APRS" IQ (SDR# 2015, 145.070 MHz, connected-mode AX.25 packet radio) | 5 frames | 5 frames, the same (after the fix below; 4 before) |
+
+Found and fixed: frames shorter than 18 bytes were dropped - but an AX.25
+supervisory / unnumbered frame (RR, RNR, SABM, UA, DISC ...) has no PID:
+2 addresses + control + FCS = 17 bytes (the RR5 a BBS node sent between two
+I-frames in one key-up). Minimum now 17 bytes (the CRC still decides).
+The generator (`tools/aprs_gen.py`): four frames (uncompressed and Mic-E
+positions, a digipeated one, a message) FM-demodulated and fed to
+multimon-ng `-A`: 4 / 4, TNC2 text identical.
+
 ## Limitations
 - Hard-decision demodulation, no single-bit-error FCS repair: weak packets
   below ~8-9 dB SNR (in the signal bandwidth) are lost.

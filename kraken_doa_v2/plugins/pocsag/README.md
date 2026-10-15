@@ -29,6 +29,28 @@ Tested on synthetic transmissions (all three rates, 3-15 dB SNR, inverted,
 messages are cut short rather than garbled. Decode time ~1% of real time on
 a Raspberry Pi 5.
 
+Real recordings (2026-10-16; verified against them, not in this repo -
+multimon-ng built in scratch as the reference, GPL):
+- sigidwiki "POCSAG" IQ (128 kS/s, a transmitter sending 512 and 1200
+  bit/s, inverted): 6 pages - "THIS IS A TEST PERIODIC PAGE ..." at 512 and
+  1200, two dispatch pages ("Unit: WEST2 Job # 1046-1-2015/0 ...") and two
+  scrambled-looking alpha pages - text identical to multimon-ng's.
+  multimon-ng also printed a message-less 512 bit/s "RIC 1860544": its
+  512 decoder read past the transmission's last batch into the 1200 bit/s
+  preamble (the word where the next sync would be is 1C71C71C, 13 bits off
+  it) - nothing was sent there; the plugin stops at the missing sync.
+- multimon-ng's own test samples (FM discriminator audio, FM-modulated to
+  IQ at 38.4 kHz): 512 bit/s "512 B SIDE ZZZZZZ" (RIC 273040), 1200
+  bit/s "+++TIME=0008300324..." (273040), 2400 bit/s (1022869 F1) - all
+  as multimon-ng's test expects; its extra message-less 1200 bit/s page
+  (671968) is again past the last batch (next word FFFFFFFE, no sync).
+- The generator (`tools/pocsag_gen.py`, the playback's six pages) through
+  multimon-ng: 6 / 6 RICs, functions and texts identical, with multimon-ng
+  set to NORMAL polarity (inverted: none) - "1 = the lower frequency" as
+  M.584. The real recording above is inverted (its receiver / transmitter).
+- `POCSAG_CW=1` (offline) prints every codeword and the word checked for
+  the next sync.
+
 ## Test transmission (debug playback)
 
 `tools/pocsag_gen.py`: real framing - 576-bit preamble, batches of sync +
