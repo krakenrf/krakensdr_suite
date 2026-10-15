@@ -32,7 +32,7 @@ Three layers, from cheap to general (option defaults in brackets):
    (`all`: also 7.8 - 41.7 kHz, SF5-10). See *Plan-free search* below.
 3. **Learned channels**: a transmitter the search decoded gets a receiver
    of its own on its exact frequency / SF / BW / IQ (strict no-CRC rule),
-   kept 30 min after it was last heard (<= 16), so its next packets decode
+   kept 30 min after it was last heard (<= 8), so its next packets decode
    like a plan channel's - even below the search's energy threshold.
 
 The old default (`region=anz`, AU915 only) is gone; a saved `anz` / `us` /
@@ -304,9 +304,17 @@ receivers + the search ~5-9 % + 2 learned channels: ~64 %); live the plugin runs
 at ~0.65x its offline figure plus the input pipe. `cpu=low` drops plan
 receivers past ~120 M (bw x SF units) and holds the search to 4 %. Live
 (2026-10-16, the user's stack around 924.5 MHz, 14 plan channels + a learned
-one, 30 receivers over the budget): ~40 % of a core incl. the input pipe,
-RSS ~375 MB (the channels' rings sized for the longest packet - 32 MB per
-500 kHz channel - and 20 MB of FFT history). Live it decoded the gateway
+one, 30 receivers over the budget): ~40 % of a core incl. the input pipe;
+RSS 363-375 MB with rings sized for the longest packet (32 MB per 500 kHz
+channel) and 20 MB of float FFT history; now ~110 MB (peak 117 MB, CPU unchanged ~40-45 %). A channel's ring now
+holds only the sync / header stage (60 symbols of its largest SF: detection
+lookback, a 16-symbol preamble, sync, SFD, header); the payload is
+demodulated block by block as it arrives (`LoraRx::continue_packet`). Rings
+are calloc'd (a probe's ring is committed only as far as it is written), the
+FFT history is int16 with a scale per block (10 MB), <= 8 learned channels, and the mmap threshold is fixed at 256 KB (glibc raised it to the first freed ring, after which rings came from the heap, zeroed and kept).
+The detection hop grid keeps its phase across packets (a first version of
+the block-by-block demod moved it and the real capture lost 3 of its 63
+frames - their CFO / timing split depends on it). Live it decoded the gateway
 downlinks on 923.9 / 924.5 / 925.1 MHz, the private SF7 BW250 0x12 system on
 923.875 / 924.875 MHz, a sync-0x12 SF8 sensor on 924.000 and learned a
 further SF7 BW250 0x12 channel on 924.401 MHz. Known: a frame whose sync

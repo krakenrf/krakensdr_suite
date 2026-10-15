@@ -51,6 +51,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdarg>
+#include <malloc.h>
 #include <map>
 #include <memory>
 #include <set>
@@ -65,7 +66,11 @@ constexpr double AC_KEEP_S = 3600;
 constexpr double VFO_HALF = 1.05e6;   // usable half-width of the 2.4 MHz
 constexpr double HIST_S = 0.8;        // FFT history kept for the search's probes
 constexpr int MAX_PROBES = 4;         // probes alive at once
-constexpr int MAX_LEARNED = 16;
+constexpr int MAX_LEARNED = 8;
+// a channel's ring holds the sync / header stage of its largest SF (the
+// payload is demodulated block by block as it arrives): detection lookback +
+// a 16-symbol Meshtastic preamble + sync + SFD + header + margin
+constexpr double RING_SYMS = 60;
 constexpr double LEARNED_KEEP_S = 1800;
 
 using lora_reg::LW_PLANS;
@@ -169,9 +174,19 @@ inline uint16_t crc16_ccitt(const uint8_t* p, size_t n) { return lora_code::crc1
 class LoraDecoder : public kp::Decoder {
 public:
     explicit LoraDecoder(kp::Host& h) : Decoder(h) {
+        // rings / probe rings (0.1-4 MB) always from mmap: calloc then gets
+        // fresh zero pages (no memset, committed only as written) and free
+        // returns them. glibc's dynamic threshold rose to the first freed
+        // ring's size, after which rings came from the heap - zeroed by
+        // calloc and kept by fragmentation (live RSS 128 MB)
+        mallopt(M_MMAP_THRESHOLD, 256 * 1024);
         host.table_columns({"Node", "Proto", "Name", "SF/BW", "Freq MHz", "From", "To", "Hops", "Last", "Signal dB", "Pkts"});
         host.table_keep(AC_KEEP_S);
         s1_.init(FS);
+    }
+
+    ~LoraDecoder() override {
+        if (xtmp_) fftwf_free(xtmp_);
     }
 
     void reset() override {
@@ -258,7 +273,11 @@ private:
     // ---- plan-free search state ----
     lora_search::Stage1 s1_;
     std::vector<lora_search::Candidate> cands_;
-    std::vector<lora_phy::cf> xhist_;     // the last HIST_S of front FFT blocks
+    // the last HIST_S of front FFT blocks as int16 I / Q with a scale per
+    // block (10 MB instead of 20; ~90 dB of range per block)
+    std::vector<int16_t> xhist_;
+    std::vector<float> xscale_;
+    fftwf_complex* xtmp_ = nullptr;
     int hist_n_ = 0;
     struct Learned {
         double f_hz;          // absolute (or offset when the RF is unknown)
@@ -488,7 +507,7 @@ private:
         for (const Spec& s : use) {
             const double off = std::isfinite(rf) ? (s.freq_hz - rf) : 0.0;
             double& t = ring_s[{std::lround(off / 1000), std::lround(s.bw)}];
-            t = std::max(t, max_airtime_s(s.sf, s.bw) + 4.0 * (1 << s.sf) / s.bw);
+            t = std::max(t, RING_SYMS * (1 << s.sf) / s.bw);
         }
         for (const Spec& s : use) {
             const double off = std::isfinite(rf) ? (s.freq_hz - rf) : 0.0;
@@ -565,13 +584,30 @@ private:
     int hist_cap() const { return static_cast<int>(HIST_S * FS / lora_chan::HOP); }
     void keep_history(const fftwf_complex* X) {
         const int H = hist_cap();
-        if (xhist_.empty()) xhist_.assign(static_cast<size_t>(H) * lora_chan::NFFT, lora_phy::cf(0, 0));
-        lora_phy::cf* d = &xhist_[static_cast<size_t>(front_.blocks % H) * lora_chan::NFFT];
-        std::memcpy(static_cast<void*>(d), X, sizeof(fftwf_complex) * lora_chan::NFFT);
+        constexpr int NF = 2 * lora_chan::NFFT;
+        if (xhist_.empty()) {
+            xhist_.assign(static_cast<size_t>(H) * NF, 0);
+            xscale_.assign(static_cast<size_t>(H), 0.f);
+        }
+        const float* x = &X[0][0];
+        float mx = 0;
+        for (int i = 0; i < NF; i++) mx = std::max(mx, std::fabs(x[i]));
+        const int slot = static_cast<int>(front_.blocks % H);
+        const float sc = mx > 0 ? 32767.f / mx : 1.f;
+        int16_t* d = &xhist_[static_cast<size_t>(slot) * NF];
+        for (int i = 0; i < NF; i++) d[i] = static_cast<int16_t>(std::lrintf(x[i] * sc));
+        xscale_[static_cast<size_t>(slot)] = 1.f / sc;
         hist_n_ = std::min(hist_n_ + 1, H);
     }
-    const fftwf_complex* hist_block(int64_t b) const {
-        return reinterpret_cast<const fftwf_complex*>(&xhist_[static_cast<size_t>(b % hist_cap()) * lora_chan::NFFT]);
+    const fftwf_complex* hist_block(int64_t b) {
+        constexpr int NF = 2 * lora_chan::NFFT;
+        if (!xtmp_) xtmp_ = fftwf_alloc_complex(lora_chan::NFFT);
+        const int slot = static_cast<int>(b % hist_cap());
+        const int16_t* d = &xhist_[static_cast<size_t>(slot) * NF];
+        const float g = xscale_[static_cast<size_t>(slot)];
+        float* o = &xtmp_[0][0];
+        for (int i = 0; i < NF; i++) o[i] = d[i] * g;
+        return xtmp_;
     }
 
     int n_probes_alive() const {
@@ -610,7 +646,7 @@ private:
         const int64_t lb = std::min<int64_t>(hist_n_, static_cast<int64_t>(std::ceil(back_s / blk_s)));
         const int64_t b_end = front_.blocks, b0 = b_end - lb;
         Channel* c = make_channel(cd.off_hz, std::isfinite(rf) ? rf + cd.off_hz : cd.off_hz, cd.bw,
-                                  lb * blk_s + max_airtime_s(sf_hi, cd.bw), b0);
+                                  lb * blk_s + RING_SYMS * (1 << sf_hi) / cd.bw, b0);
         if (!c) return;
         c->probe = true;
         c->probe_t0 = now_;

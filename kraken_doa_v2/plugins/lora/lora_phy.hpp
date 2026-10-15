@@ -105,7 +105,7 @@ public:
     // frames are appended to `out`.
     void poll(std::vector<Frame>& out);
     void reset();
-    bool pending() const { return pending_; }
+    bool pending() const { return pending_ || pk_.active; }
     int triggers() const { return triggers_; }     // preamble candidates looked at so far
 
     // every preamble + SFD found is appended here (nullptr = not logged)
@@ -138,6 +138,20 @@ private:
     int64_t pend_start_ = 0, pend_deadline_ = 0;
     int64_t need_abs_ = 0;          // a pending decode is retried once the ring reaches this
     int triggers_ = 0;
+    // the packet whose payload is demodulated block by block
+    struct Pk {
+        bool active = false;
+        Frame fr;
+        int64_t base = 0;
+        int total_syms = 0;
+        std::vector<uint8_t> nib, ok;
+        int fec_bad = 0, fec_total = 0;
+        double track = 0;
+        int resid = 0;
+        bool ldro = false, has_crc = false, low_sf = false;
+        int cr = 1, length = 0, sf_app = 7, need_nibbles = 0;
+    } pk_;
+    int continue_packet(std::vector<Frame>& out);
 
     // demod a symbol starting at absolute index `a` with the down/up chirp;
     // returns the argmax bin (0..N-1, aliased) and fills pk/mean power.

@@ -87,6 +87,7 @@ LoraRx::~LoraRx() {
 }
 
 void LoraRx::reset() {
+    pk_.active = false;
     det_count_ = 0;
     det_bin_ = -1;
     det_start_ = -1;
@@ -152,14 +153,35 @@ int LoraRx::demod_bin(int64_t a, bool use_up, float* pk, float* mean, float* fra
 void LoraRx::poll(std::vector<Frame>& out) {
     const int64_t abs_ = ring_->abs;
 
-    // a packet is being waited on: retry it as samples arrive
+    // a packet whose payload is being demodulated block by block
+    if (pk_.active) {
+        if (abs_ < need_abs_) return;
+        const int r = continue_packet(out);
+        if (r == 2) return;
+        pending_ = false;
+    }
+    // a packet's sync / header is being waited on: retry it as samples arrive
     if (pending_) {
         if (abs_ < need_abs_ && abs_ <= pend_deadline_) return;   // not enough samples yet
         const int r = decode_from(pend_start_, out);
+        if (r == 2 && pk_.active) { pending_ = false; return; }   // header decoded: the payload follows block by block
         if (r == 1 || r == 0 || abs_ > pend_deadline_) pending_ = false;
         if (pending_) return;   // keep waiting; no new detection meanwhile
     }
 
+    // after a packet the detection resumes where the ring still holds
+    // samples (it holds the sync / header stage only: catching up over
+    // overwritten indices read newer samples at the wrong times - a later
+    // preamble was then "found" outside the ring and lost)
+    {
+        const int64_t first_ok = abs_ - (ring_->mask + 1) + 4LL * L_;
+        if (next_eval_ < first_ok) {   // whole hops: the grid's phase stays (the decodes depend on it)
+            const int64_t hop = static_cast<int64_t>(DET_HOP) * L_;
+            next_eval_ += (first_ok - next_eval_ + hop - 1) / hop * hop;
+            det_count_ = 0;
+            det_bin_ = -1;
+        }
+    }
     // dechirp one symbol per hop, looking for a stable preamble up-peak
     while (next_eval_ + L_ <= abs_) {
         float pk, mean;
@@ -175,6 +197,10 @@ void LoraRx::poll(std::vector<Frame>& out) {
                 det_bin_ = -1;
                 triggers_++;
                 const int r = decode_from(start, out);
+                if (r == 2 && pk_.active) {   // header decoded: the payload follows block by block
+                    next_eval_ += static_cast<int64_t>(DET_HOP) * L_;
+                    break;
+                }
                 if (r == 2) {   // a real packet, waiting for its tail
                     pending_ = true;
                     pend_start_ = start;
@@ -389,38 +415,84 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
     fr.has_crc = has_crc;
     fr.implicit = implicit_;
 
-    // total nibbles needed = payload length + CRC (2 bytes) in bytes*2
-    const int need_bytes = length + (has_crc ? 2 : 0);
-    const int need_nibbles = need_bytes * 2;
-    const int sf_app = ldro ? sf_ - 2 : sf_;
+    // SNR estimate from the preamble peak/mean (the preamble is still in the ring)
+    {
+        float pk = 0, mean = 0;
+        demod_bin(sfd - 3 * L_, false, &pk, &mean, nullptr);
+        fr.snr_db = mean > 0 ? 10.0f * std::log10(std::max(pk / (mean * N_), 1e-6f)) : 0.f;
+    }
+    // the payload is demodulated INCREMENTALLY from here (continue_packet):
+    // the ring only has to hold the sync / header stage (<= ~56 symbols), not
+    // the whole packet - a 255-byte SF12 packet is seconds of samples
+    pk_ = Pk();
+    pk_.active = true;
+    pk_.fr = std::move(fr);
+    pk_.base = hdr_start + 8LL * L_;
+    pk_.total_syms = 8;
+    pk_.nib = std::move(nibbles);
+    pk_.ok = std::move(nib_ok);
+    pk_.fec_bad = fec_bad;
+    pk_.fec_total = fec_total;
+    pk_.track = track;
+    pk_.resid = resid;
+    pk_.ldro = ldro;
+    pk_.cr = cr;
+    pk_.length = length;
+    pk_.has_crc = has_crc;
+    pk_.low_sf = low_sf;
+    pk_.sf_app = ldro ? sf_ - 2 : sf_;
+    pk_.need_nibbles = 2 * (length + (has_crc ? 2 : 0));
+    return continue_packet(out);
+}
 
-    // decode subsequent blocks until we have enough nibbles
-    int64_t base = hdr_start + 8LL * L_;
-    int total_syms = 8;
-    while (static_cast<int>(nibbles.size()) < need_nibbles) {
-        const int nsym = 4 + cr;
-        if (base + static_cast<int64_t>(nsym) * L_ > abs_) {   // wait for the rest of the packet
-            const int left = need_nibbles - static_cast<int>(nibbles.size());
-            const int blocks = (left + sf_app - 1) / sf_app;
-            need_abs_ = base + static_cast<int64_t>(blocks) * nsym * L_;
+// 1 = emitted, 0 = dropped, 2 = waiting for more samples
+int LoraRx::continue_packet(std::vector<Frame>& out) {
+    const int64_t abs_ = ring_->abs;
+    const int64_t oldest = abs_ - (ring_->mask + 1);
+    auto cmod = [&](int d) { return ((d % N_) + N_) % N_; };
+    while (static_cast<int>(pk_.nib.size()) < pk_.need_nibbles) {
+        const int nsym = 4 + pk_.cr;
+        if (pk_.base + static_cast<int64_t>(nsym) * L_ > abs_) {   // the next block isn't complete yet
+            need_abs_ = pk_.base + static_cast<int64_t>(nsym) * L_;
             return 2;
         }
-        block_nibbles(base, nsym, sf_app, cr, ldro, nibbles, &fec_bad, &nib_ok);
-        fec_total += sf_app;
-        base += static_cast<int64_t>(nsym) * L_;
-        total_syms += nsym;
-        if (total_syms > 2000) return 0;   // runaway guard
+        if (pk_.base < oldest) { pk_.active = false; return 0; }   // overwritten (the host stalled)
+        uint16_t sym[8];
+        for (int i = 0; i < nsym; i++) {
+            float frac = 0;
+            const int bb = demod_bin(pk_.base + static_cast<int64_t>(i) * L_, false, nullptr, nullptr, &frac, pk_.track);
+            pk_.track += TRACK_ALPHA * frac;
+            const int v = pk_.ldro ? (cmod(bb - pk_.resid - 1 + 2) >> 2) : cmod(bb - pk_.resid - 1);
+            sym[i] = static_cast<uint16_t>(lora_code::gray_map(static_cast<uint32_t>(v)));
+        }
+        uint8_t cw[12];
+        lora_code::deinterleave(sym, pk_.cr, pk_.sf_app, cw);
+        for (int j = 0; j < pk_.sf_app; j++) {
+            bool cok = false;
+            pk_.nib.push_back(lora_code::hamming_decode(cw[j], pk_.cr, &cok));
+            pk_.ok.push_back(cok ? 1 : 0);
+            if (!cok) pk_.fec_bad++;
+        }
+        pk_.fec_total += pk_.sf_app;
+        pk_.base += static_cast<int64_t>(nsym) * L_;
+        pk_.total_syms += nsym;
+        if (pk_.total_syms > 2000) { pk_.active = false; return 0; }   // runaway guard
     }
-    fr.nsym = total_syms;
-    fr.end_sample = base;
-    fr.fec_bad = fec_bad;
-    fr.fec_total = fec_total;
+    pk_.active = false;
+    Frame fr = std::move(pk_.fr);
+    const int length = pk_.length;
+    const bool has_crc = pk_.has_crc;
+    const int need_bytes = length + (has_crc ? 2 : 0);
+    fr.nsym = pk_.total_syms;
+    fr.end_sample = pk_.base;
+    fr.fec_bad = pk_.fec_bad;
+    fr.fec_total = pk_.fec_total;
 
     // nibbles -> bytes (low nibble first), de-whiten the payload (not the CRC)
     std::vector<uint8_t> bytes(static_cast<size_t>(need_bytes), 0);
     for (int i = 0; i < need_bytes; i++) {
-        const uint8_t lo = nibbles[static_cast<size_t>(2 * i)] & 0xF;
-        const uint8_t hi = nibbles[static_cast<size_t>(2 * i + 1)] & 0xF;
+        const uint8_t lo = pk_.nib[static_cast<size_t>(2 * i)] & 0xF;
+        const uint8_t hi = pk_.nib[static_cast<size_t>(2 * i + 1)] & 0xF;
         bytes[static_cast<size_t>(i)] = static_cast<uint8_t>(lo | (hi << 4));
     }
     lora_code::Whitening wh;
@@ -429,22 +501,17 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
     fr.payload.assign(bytes.begin(), bytes.begin() + length);
     fr.byte_ok.assign(static_cast<size_t>(length), 1);
     for (int i = 0; i < length; i++)
-        fr.byte_ok[static_cast<size_t>(i)] = nib_ok[static_cast<size_t>(2 * i)] && nib_ok[static_cast<size_t>(2 * i + 1)];
+        fr.byte_ok[static_cast<size_t>(i)] = pk_.ok[static_cast<size_t>(2 * i)] && pk_.ok[static_cast<size_t>(2 * i + 1)];
     if (has_crc) {
         const uint16_t rx = static_cast<uint16_t>(bytes[static_cast<size_t>(length)] | (bytes[static_cast<size_t>(length + 1)] << 8));
         fr.crc_ok = rx == lora_code::payload_crc(fr.payload.data(), static_cast<size_t>(length));
     } else {
         fr.crc_ok = false;   // no CRC (LoRaWAN downlinks): the header checks + the parity count only
     }
-    // SNR estimate from the preamble peak/mean
-    float pk, mean;
-    demod_bin(sfd - 3 * L_, false, &pk, &mean, nullptr);
-    fr.snr_db = mean > 0 ? 10.0f * std::log10(std::max(pk / (mean * N_), 1e-6f)) : 0.f;
-
     if (!fr.crc_ok && has_crc) return 0;   // only emit frames that passed the CRC
     // no CRC from an unknown transmitter (the search) or at SF5 / SF6: the
     // payload codewords must hold their parity (4/7 detects nothing: refused)
-    if (!has_crc && !implicit_ && (strict_nocrc || low_sf) && (cr == 3 || fec_bad * 8 > fec_total)) return 0;
+    if (!has_crc && !implicit_ && (strict_nocrc || pk_.low_sf) && (pk_.cr == 3 || pk_.fec_bad * 8 > pk_.fec_total)) return 0;
     out.push_back(std::move(fr));
     return 1;
 }

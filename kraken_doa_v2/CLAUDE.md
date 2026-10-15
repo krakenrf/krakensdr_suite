@@ -3648,7 +3648,10 @@ Edit `include/config.hpp`:
   raised-cosine response + an inverse FFT of 2 BW / 2.4 MHz x 4608 points ->
   EXACTLY 2x BW, zero delay, the off-grid residual mixed at the output rate)
   feeds every watched channel; per channel one sample ring (`lora_phy::Ring`,
-  sized for the longest packet of its largest SF, <= 4 s) shared by a CSS
+  calloc'd, RING_SYMS 60 symbols of its largest SF: the sync / header stage
+  only - after the header the payload is demodulated BLOCK BY BLOCK as it
+  arrives, `LoraRx::continue_packet` / `Pk`; it was sized for the longest
+  packet, 4 s, 16-32 MB per channel, 363 MB live) shared by a CSS
   receiver per SF and IQ orientation (`lora_phy.cpp`): cheap detection
   (`detect_bin`: one chip per sample, a window every DET_HOP 2 symbols, 3 on
   one bin), up/down-chirp sync (integer CFO/STO split by b0 alignment -
@@ -3727,7 +3730,7 @@ Edit `include/config.hpp`:
   BW sits within B/8), `strict_nocrc`, `det_log`; a receiver lives 14 of its
   symbols past the probe's start (or while pending). A frame -> `learn()`
   (a `Learned` channel at the measured frequency, rounded to 1 kHz, unless a
-  plan channel already has that receiver; 30 min, <= 16); nothing -> a
+  plan channel already has that receiver; 30 min, <= 8); nothing -> a
   back-off (2 s doubling to 60 s); a preamble + SFD + sync word without a
   header -> `report_detections` once SEEN AGAIN (same place / SF / BW / IQ /
   sync within 10 min, preamble energy >= -6 dB in its bin) - the first run
