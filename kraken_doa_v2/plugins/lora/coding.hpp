@@ -1,125 +1,114 @@
-// LoRa PHY coding chain (symbols <-> bytes): Gray mapping, diagonal
-// interleaving, Hamming FEC, whitening, payload CRC16 and the explicit
-// header, implemented clean-room from the public reverse-engineering
-// literature (Knight; Robyns et al.; Tapparel "Complete Reverse Engineering
-// of LoRa PHY", EPFL; Seller/Sornin Semtech patents / AN1200.22). No GPL
-// code is copied - gr-lora / gr-lora_sdr were read only as documentation.
+// LoRa PHY coding chain (symbols <-> bytes) as Semtech's radios use it:
+// Gray mapping, diagonal interleaving, Hamming FEC, whitening, payload CRC16
+// and the explicit header. Clean-room from the public reverse-engineering
+// literature (Tapparel et al., "Complete Reverse Engineering of LoRa PHY",
+// EPFL 2020; Robyns et al.; Knight; Semtech AN1200.22 / SX127x datasheets).
+// No GPL code is copied - gr-lora_sdr / LoRaPHY were read as documentation.
 //
-// The matching transmit chain lives in tools/lora_gen.py; decoder and
-// generator are verified bit-exact by round trip. The constants and bit
-// orders here are an internally consistent realisation of the published
-// chain and are checked against real captures where available.
+// Checked on REAL packets (2026-10-15: AU915 LoRaWAN gateway downlinks,
+// 927.5 MHz SF10 BW500, inverted IQ): every header passes its checksum and
+// all eight header codewords, the payload codewords their parity, and
+// consecutive frames carry consecutive FCnt values. The first version of
+// this file was only a self-consistent guess (whitening, diagonal
+// direction, Gray direction, codeword bit order, header checksum, CRC were
+// all different from the radios') - it decoded its own generator only.
+//
+// Conventions (symbol i of a block, codeword k, sf_app bits per symbol):
+//   value  = (bin - 1) mod 2^SF relative to the preamble's bin (data), or
+//            round((bin - 1) / 4) at reduced rate (header block, LDRO)
+//   bits   = gray_map(value) = value ^ (value >> 1)
+//   cw[k] bit (cw_len - 1 - i) = bit ((k - i) mod sf_app) of symbol i
+//   cw bits from the first symbol: d0 d1 d2 d3 p0 [p1 p2 p3] (d0 = nibble LSB)
+//   4/5: p = d0^d1^d2^d3; 4/6-4/8: p0 = d0^d1^d2, p1 = d1^d2^d3,
+//        p2 = d0^d1^d3, p3 = d0^d2^d3
+//   nibbles -> bytes low nibble first; payload whitened (not the header,
+//   not the CRC) with the LFSR w0 = 0xFF, w' = (w << 1) | (w7^w5^w4^w3)
+//   CRC = CRC16-CCITT (0x1021, init 0) of the first n-2 bytes, XOR the last
+//   two bytes (byte n-1 low, n-2 high); sent low byte first
 #pragma once
 #include <cstdint>
+#include <cstddef>
 #include <vector>
 
 namespace lora_code {
 
-// ---- Gray ----
-inline uint32_t gray_encode(uint32_t v) { return v ^ (v >> 1); }
-inline uint32_t gray_decode(uint32_t g) {
+inline uint32_t gray_map(uint32_t v) { return v ^ (v >> 1); }      // receiver side
+inline uint32_t gray_unmap(uint32_t g) {                           // transmitter side
     for (uint32_t m = g >> 1; m; m >>= 1) g ^= m;
     return g;
 }
 
-// ---- Hamming (4 data bits -> 4+CR bits), CR = 1..4 (4/5 .. 4/8) ----
-// Data nibble bits d0(LSB)..d3. Parity equations as documented for LoRa.
-// Codeword bit order (LSB..MSB): d0 d1 d2 d3 p0 [p1 [p2 [p3]]].
+// ---- Hamming: nibble <-> (4 + cr)-bit codeword, bit (cw_len-1) first ----
 inline uint8_t hamming_encode(uint8_t data, int cr) {
     const int d0 = data & 1, d1 = (data >> 1) & 1, d2 = (data >> 2) & 1, d3 = (data >> 3) & 1;
-    const int p0 = d0 ^ d1 ^ d2;         // 4/5 single parity
-    const int p1 = d1 ^ d2 ^ d3;
-    const int p2 = d0 ^ d1 ^ d3;
-    const int p3 = d0 ^ d2 ^ d3;         // 4/8 extra parity
-    uint8_t cw = static_cast<uint8_t>(data & 0xF);
-    if (cr >= 1) cw |= static_cast<uint8_t>(p0 << 4);
-    if (cr >= 2) cw |= static_cast<uint8_t>(p1 << 5);
-    if (cr >= 3) cw |= static_cast<uint8_t>(p2 << 6);
-    if (cr >= 4) cw |= static_cast<uint8_t>(p3 << 7);
-    return cw;
+    if (cr == 1) return static_cast<uint8_t>(d0 << 4 | d1 << 3 | d2 << 2 | d3 << 1 | (d0 ^ d1 ^ d2 ^ d3));
+    const int p0 = d0 ^ d1 ^ d2, p1 = d1 ^ d2 ^ d3, p2 = d0 ^ d1 ^ d3, p3 = d0 ^ d2 ^ d3;
+    const int full = d0 << 7 | d1 << 6 | d2 << 5 | d3 << 4 | p0 << 3 | p1 << 2 | p2 << 1 | p3;
+    return static_cast<uint8_t>(full >> (4 - cr));
 }
 
-// Decode a (4+cr)-bit codeword -> 4-bit nibble. ok: parity consistent (CR 1/2)
-// or corrected (CR 3/4). For CR 3/4 a single-bit error is corrected.
+// Decode a (4 + cr)-bit codeword -> nibble. ok: the parity holds (4/5, 4/6:
+// detection only) or a single-bit error was corrected (4/7, 4/8).
 inline uint8_t hamming_decode(uint8_t cw, int cr, bool* ok, bool* corrected = nullptr) {
     if (corrected) *corrected = false;
     const int n = 4 + cr;
-    if (cr <= 2) {
-        // parity / detect only: check what parity bits we have, no correction
-        const int d0 = cw & 1, d1 = (cw >> 1) & 1, d2 = (cw >> 2) & 1, d3 = (cw >> 3) & 1;
-        bool good = true;
-        if (cr >= 1) good = good && ((cw >> 4 & 1) == (d0 ^ d1 ^ d2));
-        if (cr >= 2) good = good && ((cw >> 5 & 1) == (d1 ^ d2 ^ d3));
-        if (ok) *ok = good;
-        return static_cast<uint8_t>(cw & 0xF);
-    }
-    // CR 3 (4/7) or 4 (4/8): try the codeword and all single-bit flips,
-    // accept the one whose parity is consistent.
-    auto parity_ok = [cr](uint8_t c) {
-        const int d0 = c & 1, d1 = (c >> 1) & 1, d2 = (c >> 2) & 1, d3 = (c >> 3) & 1;
-        if ((c >> 4 & 1) != (d0 ^ d1 ^ d2)) return false;
-        if ((c >> 5 & 1) != (d1 ^ d2 ^ d3)) return false;
-        if (cr >= 3 && (c >> 6 & 1) != (d0 ^ d1 ^ d3)) return false;
-        if (cr >= 4 && (c >> 7 & 1) != (d0 ^ d2 ^ d3)) return false;
-        return true;
+    auto nib = [n](uint8_t c) {
+        const int d0 = (c >> (n - 1)) & 1, d1 = (c >> (n - 2)) & 1, d2 = (c >> (n - 3)) & 1, d3 = (c >> (n - 4)) & 1;
+        return static_cast<uint8_t>(d0 | d1 << 1 | d2 << 2 | d3 << 3);
     };
-    if (parity_ok(cw)) {
+    auto valid = [cr](uint8_t c, uint8_t d) { return hamming_encode(d, cr) == c; };
+    const uint8_t d = nib(cw);
+    if (valid(cw, d)) {
         if (ok) *ok = true;
-        return static_cast<uint8_t>(cw & 0xF);
+        return d;
     }
-    for (int b = 0; b < n; b++) {
-        const uint8_t t = static_cast<uint8_t>(cw ^ (1u << b));
-        if (parity_ok(t)) {
-            if (ok) *ok = true;
-            if (corrected) *corrected = true;
-            return static_cast<uint8_t>(t & 0xF);
+    if (cr >= 3) {
+        for (int b = 0; b < n; b++) {
+            const uint8_t t = static_cast<uint8_t>(cw ^ (1u << b));
+            if (valid(t, nib(t))) {
+                if (ok) *ok = true;
+                if (corrected) *corrected = true;
+                return nib(t);
+            }
         }
     }
-    if (ok) *ok = false;   // uncorrectable (>=2 errors)
-    return static_cast<uint8_t>(cw & 0xF);
+    if (ok) *ok = false;
+    return d;
 }
 
-// ---- Diagonal (de)interleaver ----
-// One block: nsym = 4+cr symbols of sf_app bits each  <->  sf_app codewords
-// of (4+cr) bits each. Diagonal offset (i+j) mod sf_app. Bit 0 = LSB.
+// ---- Diagonal (de)interleaver: cw_len = 4 + cr symbols <-> sf_app codewords ----
+inline int imod(int a, int m) { return ((a % m) + m) % m; }
 inline void deinterleave(const uint16_t* sym, int cr, int sf_app, uint8_t* cw_out) {
-    const int nsym = 4 + cr;
-    for (int j = 0; j < sf_app; j++) {
+    const int n = 4 + cr;
+    for (int k = 0; k < sf_app; k++) {
         uint8_t cw = 0;
-        for (int i = 0; i < nsym; i++) {
-            const int bit = (sym[i] >> ((i + j) % sf_app)) & 1;
-            cw |= static_cast<uint8_t>(bit << (nsym - 1 - i));
-        }
-        cw_out[j] = cw;
+        for (int i = 0; i < n; i++)
+            cw |= static_cast<uint8_t>(((sym[i] >> imod(k - i, sf_app)) & 1) << (n - 1 - i));
+        cw_out[k] = cw;
     }
 }
 inline void interleave(const uint8_t* cw, int cr, int sf_app, uint16_t* sym_out) {
-    const int nsym = 4 + cr;
-    for (int i = 0; i < nsym; i++) sym_out[i] = 0;
-    for (int j = 0; j < sf_app; j++)
-        for (int i = 0; i < nsym; i++) {
-            const int bit = (cw[j] >> (nsym - 1 - i)) & 1;
-            sym_out[i] |= static_cast<uint16_t>(bit << ((i + j) % sf_app));
-        }
+    const int n = 4 + cr;
+    for (int i = 0; i < n; i++) {
+        uint16_t s = 0;
+        for (int k = 0; k < sf_app; k++) s |= static_cast<uint16_t>(((cw[k] >> (n - 1 - i)) & 1) << imod(k - i, sf_app));
+        sym_out[i] = s;
+    }
 }
 
-// ---- Whitening (payload only; the header is never whitened) ----
-// 8-bit LFSR, seed 0xFF, feedback poly 0xB8 (x^8+x^6+x^5+x^4+1, reflected).
+// ---- Whitening (payload bytes only) ----
 struct Whitening {
     uint8_t s = 0xFF;
     void reset() { s = 0xFF; }
     uint8_t next() {
         const uint8_t out = s;
-        for (int k = 0; k < 8; k++) {
-            const uint8_t fb = s & 1;
-            s >>= 1;
-            if (fb) s ^= 0xB8;
-        }
+        const uint8_t fb = static_cast<uint8_t>(((s >> 7) ^ (s >> 5) ^ (s >> 4) ^ (s >> 3)) & 1);
+        s = static_cast<uint8_t>((s << 1) | fb);
         return out;
     }
 };
 
-// ---- CRC16 over the payload (LoRa: poly 0x1021, as Semtech's) ----
+// ---- CRC16-CCITT (poly 0x1021, init 0) ----
 inline uint16_t crc16(const uint8_t* p, size_t n) {
     uint16_t c = 0;
     for (size_t i = 0; i < n; i++) {
@@ -128,26 +117,23 @@ inline uint16_t crc16(const uint8_t* p, size_t n) {
     }
     return c;
 }
+// The value LoRa sends after the payload (low byte first)
+inline uint16_t payload_crc(const uint8_t* p, size_t n) {
+    if (n == 0) return 0;
+    if (n == 1) return p[0];
+    return static_cast<uint16_t>(crc16(p, n - 2) ^ p[n - 1] ^ (static_cast<uint16_t>(p[n - 2]) << 8));
+}
 
-// ---- Explicit header (5 nibbles) ----
-// n0 n1 = payload length byte (n1 high); n2 = CR<<1 | has_crc; n3 n4 = the
-// 5-bit header checksum (documented equations over the 12 header data bits).
-struct Header {
-    int length = 0;
-    int cr = 1;
-    bool has_crc = false;
-    bool valid = false;
-};
+// ---- Explicit header (5 nibbles): length high, length low, CR<<1|CRC, chk ----
 inline uint8_t header_checksum(uint8_t n0, uint8_t n1, uint8_t n2) {
-    // 12 data bits: n0 (payload len high nibble), n1 (low nibble), n2 (cr|crc).
     const int b[12] = {(n0 >> 3) & 1, (n0 >> 2) & 1, (n0 >> 1) & 1, n0 & 1,
                        (n1 >> 3) & 1, (n1 >> 2) & 1, (n1 >> 1) & 1, n1 & 1,
                        (n2 >> 3) & 1, (n2 >> 2) & 1, (n2 >> 1) & 1, n2 & 1};
     const int c4 = b[0] ^ b[1] ^ b[2] ^ b[3];
-    const int c3 = b[0] ^ b[4] ^ b[5] ^ b[6] ^ b[8];
-    const int c2 = b[1] ^ b[4] ^ b[7] ^ b[8] ^ b[9] ^ b[10];
-    const int c1 = b[2] ^ b[5] ^ b[7] ^ b[8] ^ b[9] ^ b[11];
-    const int c0 = b[3] ^ b[6] ^ b[7] ^ b[9] ^ b[10] ^ b[11];
+    const int c3 = b[0] ^ b[4] ^ b[5] ^ b[6] ^ b[11];
+    const int c2 = b[1] ^ b[4] ^ b[7] ^ b[8] ^ b[10];
+    const int c1 = b[2] ^ b[5] ^ b[7] ^ b[9] ^ b[10] ^ b[11];
+    const int c0 = b[3] ^ b[6] ^ b[8] ^ b[9] ^ b[10] ^ b[11];
     return static_cast<uint8_t>((c4 << 4) | (c3 << 3) | (c2 << 2) | (c1 << 1) | c0);
 }
 

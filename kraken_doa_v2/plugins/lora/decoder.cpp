@@ -22,6 +22,7 @@
 // documentation / test reference, never copied.
 
 #include "kraken_plugin.hpp"
+#include "channelizer.hpp"
 #include "lora_phy.hpp"
 #include "lorawan.hpp"
 #include "meshtastic.hpp"
@@ -43,7 +44,7 @@
 namespace {
 
 constexpr double FS = 2.4e6;
-constexpr int MAX_RX = 28;            // cap on (channel x SF) receivers
+constexpr int MAX_RX = 72;            // cap on (channel x SF x IQ) receivers
 constexpr double AC_KEEP_S = 3600;
 
 std::string fmt(const char* f, double v) {
@@ -71,19 +72,42 @@ const Preset PRESETS[] = {
 };
 
 // Meshtastic regions (firmware RDEF: freqStart, freqEnd, spacing MHz) + the
-// LoRaWAN 125 kHz uplink grid used there
+// LoRaWAN channel plan used there (LoRaWAN Regional Parameters RP002):
+// uplinks on a 125 kHz grid (+ a 500 kHz grid), downlinks (gateway ->
+// device, INVERTED IQ) on their own 500 kHz grid (AU915 / US915) or on the
+// uplink channels + RX2 (EU868). Every channel of the plan inside the VFO is
+// watched, at every data rate's SF.
+struct LwGrid {
+    double f0_hz, step_hz;
+    int n;
+    double bw;
+    int sf_lo, sf_hi;
+    int iq;           // 0 normal (uplink), 1 inverted (downlink), 2 both
+};
 struct Region {
     const char* key;
     const char* name;
     double f_start_mhz, f_end_mhz, spacing_mhz;
-    double lw_start_hz;
-    double lw_step_hz;
-    int lw_n;
+    const char* lw_name;
+    double band_lo_mhz, band_hi_mhz;   // the region's LoRa band: inside it the plugin never retunes
+    LwGrid lw[4];
 };
 const Region REGIONS[] = {
-    {"anz", "Australia / New Zealand (915-928 MHz)", 915.0, 928.0, 0, 916.8e6, 200000, 8},   // AU915 sub-band 2
-    {"us", "United States (902-928 MHz)", 902.0, 928.0, 0, 903.9e6, 200000, 8},              // US915 sub-band 2
-    {"eu868", "Europe 868 (869.4-869.65 MHz)", 869.4, 869.65, 0, 868.1e6, 200000, 3},
+    {"anz", "Australia / New Zealand (915-928 MHz)", 915.0, 928.0, 0, "AU915", 915.0, 928.0,
+     {{915.2e6, 200000, 64, 125000, 7, 12, 0},     // uplink DR0-5
+      {915.9e6, 1600000, 8, 500000, 8, 8, 0},      // uplink DR6
+      {923.3e6, 600000, 8, 500000, 7, 12, 1},      // downlink DR8-13
+      {0, 0, 0, 0, 0, 0, 0}}},
+    {"us", "United States (902-928 MHz)", 902.0, 928.0, 0, "US915", 902.0, 928.0,
+     {{902.3e6, 200000, 64, 125000, 7, 10, 0},     // uplink DR0-3
+      {903.0e6, 1600000, 8, 500000, 8, 8, 0},      // uplink DR4
+      {923.3e6, 600000, 8, 500000, 7, 12, 1},      // downlink DR8-13
+      {0, 0, 0, 0, 0, 0, 0}}},
+    {"eu868", "Europe 868 (869.4-869.65 MHz)", 869.4, 869.65, 0, "EU868", 863.0, 870.0,
+     {{868.1e6, 200000, 3, 125000, 7, 12, 2},      // default channels: uplink + RX1 downlink
+      {867.1e6, 200000, 5, 125000, 7, 12, 2},      // the usual extra channels (TTN)
+      {869.525e6, 0, 1, 125000, 7, 12, 1},         // RX2
+      {0, 0, 0, 0, 0, 0, 0}}},
 };
 
 // Meshtastic's channel-name hash (djb2, as the firmware's RadioInterface)
@@ -107,6 +131,8 @@ struct Spec {
     double freq_hz;   // absolute centre
     int sf;
     double bw;
+    int iq = 0;       // 0 normal, 1 inverted, 2 both
+    bool lorawan = false;
 };
 
 struct Node {
@@ -126,108 +152,36 @@ struct Node {
     int alt_m = 0;
     bool on_map = false;
     double table_t = -1e9;
+    // PHY of the last frame
+    bool inverted = false, has_crc = false;
+    int sync_word = -1, fec_bad = 0, fec_total = 0;
+    bool hdr_clean = true;    // the first 9 bytes' codewords passed their parity
 };
 
-// Per channel: mix to the channel (phasor NCO), a decimate-by-D FIR (cutoff
-// ~0.58 bw) and a cubic fractional interpolation to EXACTLY rate_out = 2 bw,
-// so one LoRa symbol is exactly 2 x 2^SF output samples (the demod's hop grid
-// must be a whole symbol). The FIR history is double-buffered (the window is
-// contiguous: no index wrap per tap) and only evaluated every D-th sample.
-struct Resampler {
-    int D = 1, nt = 1;
-    std::vector<float> taps;          // symmetric low-pass
-    std::vector<float> hist;          // interleaved re/im, 2 x nt complex (double buffer)
-    int hpos = 0, phase = 0;
-    double rate_dec = 0, rate_out = 0, step = 0;   // decimated samples per output
-    lora_phy::cf dring[16] = {};      // recent decimated samples
-    int64_t di = 0;                   // decimated samples produced
-    double rpos = 0;                  // next output position (decimated-sample units)
-    std::complex<double> ph{1, 0}, rot{1, 0};   // NCO phasor
-    bool mix = false;
-    int renorm = 0;
-
-    void init(double fs, double bw, double ro, double off_hz) {
-        rate_out = ro;
-        D = std::max(1, static_cast<int>(std::floor(fs / ro)));   // fs/D >= ro
-        rate_dec = fs / D;
-        step = rate_dec / rate_out;   // >= 1
-        nt = 8 * D + 1;
-        taps.assign(static_cast<size_t>(nt), 0.f);
-        double s = 0;
-        const double fc = 0.58 * bw / fs;
-        for (int k = 0; k < nt; k++) {
-            const double m = k - (nt - 1) / 2.0;
-            const double sinc = m == 0 ? 2 * fc : std::sin(2 * M_PI * fc * m) / (M_PI * m);
-            const double w = 0.54 - 0.46 * std::cos(2 * M_PI * k / (nt - 1));
-            taps[static_cast<size_t>(k)] = static_cast<float>(sinc * w);
-            s += sinc * w;
-        }
-        for (auto& t : taps) t = static_cast<float>(t / s);
-        hist.assign(static_cast<size_t>(4 * nt), 0.f);
-        hpos = 0;
-        phase = 0;
-        di = 0;
-        rpos = 1.0;
-        for (auto& d : dring) d = lora_phy::cf(0, 0);
-        mix = off_hz != 0;
-        rot = std::polar(1.0, -2 * M_PI * off_hz / fs);
-        ph = {1, 0};
-        renorm = 0;
-    }
-    lora_phy::cf dget(int64_t idx) const { return dring[static_cast<size_t>(idx & 15)]; }
-    static lora_phy::cf cubic(lora_phy::cf pm1, lora_phy::cf p0, lora_phy::cf p1, lora_phy::cf p2, float t) {
-        const lora_phy::cf a = p2 - p1 - pm1 + p0;
-        const lora_phy::cf b = pm1 - p0 - a;
-        const lora_phy::cf c = p1 - pm1;
-        return ((a * t + b) * t + c) * t + p0;
-    }
-    void run(const kp::cf* x, size_t n, std::vector<lora_phy::cf>& out) {
-        float* h = hist.data();
-        const float* tp = taps.data();
-        for (size_t i = 0; i < n; i++) {
-            float re = x[i].real(), im = x[i].imag();
-            if (mix) {
-                const float pr = static_cast<float>(ph.real()), pi = static_cast<float>(ph.imag());
-                const float r2 = re * pr - im * pi;
-                im = re * pi + im * pr;
-                re = r2;
-                ph *= rot;
-                if (++renorm == 4096) { renorm = 0; ph /= std::abs(ph); }
-            }
-            h[2 * hpos] = h[2 * (hpos + nt)] = re;
-            h[2 * hpos + 1] = h[2 * (hpos + nt) + 1] = im;
-            if (++hpos == nt) hpos = 0;
-            if (++phase < D) continue;
-            phase = 0;
-            // window: oldest .. newest = h[hpos .. hpos+nt-1] (taps symmetric)
-            const float* w = h + 2 * hpos;
-            float ar = 0, ai = 0;
-            for (int k = 0; k < nt; k++) {
-                ar += tp[k] * w[2 * k];
-                ai += tp[k] * w[2 * k + 1];
-            }
-            dring[di & 15] = lora_phy::cf(ar, ai);
-            di++;
-            while (rpos + 2 <= static_cast<double>(di) - 1) {
-                const int64_t f = static_cast<int64_t>(rpos);
-                const float t = static_cast<float>(rpos - static_cast<double>(f));
-                out.push_back(cubic(dget(f - 1), dget(f), dget(f + 1), dget(f + 2), t));
-                rpos += step;
-            }
-        }
-    }
-};
-
-// one resampled channel feeding one or more LoRa receivers (different SF)
+// one resampled channel feeding one or more LoRa receivers (SFs, normal /
+// inverted IQ) that share its sample ring
 struct Channel {
-    Spec first_spec;             // for centre/bw
     double center_off = 0;       // Hz from the VFO centre
     double bw = 0;
     double rate_out = 0;
-    Resampler rs;
+    bool lorawan = false;
+    double t0 = 0;               // Host::time() of the channel's first sample
+    lora_chan::Chan ch;
+    lora_phy::Ring ring;
     std::vector<lora_phy::cf> outbuf;
     std::vector<std::unique_ptr<lora_phy::LoraRx>> rx;
 };
+
+// the longest packet worth keeping in a channel's ring: 255 bytes at CR 4/5
+// (+ preamble), capped at 4 s
+inline double max_airtime_s(int sf, double bw) {
+    const int N = 1 << sf;
+    const bool ldro = N / bw >= 0.016;
+    const int sfa = ldro ? sf - 2 : sf;
+    const int nib = 2 * 257 - (sf - 7);
+    const int syms = 8 + (nib + sfa - 1) / sfa * 5 + 21;
+    return std::min(4.0, syms * N / bw);
+}
 
 class LoraDecoder : public kp::Decoder {
 public:
@@ -241,7 +195,7 @@ public:
         chans_.clear();
         rf_used_ = NAN;
         nodes_.clear();
-        n_mesh_ = n_lw_ = n_lora_ = 0;
+        n_mesh_ = n_lw_ = n_lw_dn_ = n_lora_ = 0;
         summary_t_ = -1e9;
         built_ = false;
     }
@@ -251,7 +205,7 @@ public:
         else if (k == "preset") preset_ = v.empty() ? "longfast" : v;
         else if (k == "channels") channels_opt_ = v;
         else if (k == "sf") sf_opt_ = v.empty() ? "preset" : v;
-        else if (k == "lorawan") lorawan_ = v == "1";
+        else if (k == "lorawan") lorawan_ = v != "0";
         else if (k == "channel") chan_name_ = v;
         else if (k == "others") others_ = v != "0";
         else if (k == "tune") tune_ = v != "0";
@@ -263,12 +217,16 @@ public:
         now_ = host.time();
         rebuild_if_needed();
         frames_.clear();
+        for (auto& c : chans_) c->outbuf.clear();
+        if (!chans_.empty())
+            front_.push(x, n, [&] {
+                for (auto& c : chans_) c->ch.block(front_.X, c->outbuf);
+            });
         for (auto& c : chans_) {
-            c->outbuf.clear();
-            c->rs.run(x, n, c->outbuf);
+            c->ring.push(c->outbuf.data(), c->outbuf.size());
             for (auto& rx : c->rx) {
                 frames_.clear();
-                rx->push(c->outbuf.data(), c->outbuf.size(), frames_);
+                rx->poll(frames_);
                 for (auto& fr : frames_) queue(*c, *rx, std::move(fr));
             }
         }
@@ -279,14 +237,15 @@ public:
 
 private:
     std::vector<std::unique_ptr<Channel>> chans_;
+    lora_chan::Front front_;
     std::vector<lora_phy::Frame> frames_;
     std::map<std::string, Node> nodes_;
     double rf_used_ = NAN, now_ = 0, summary_t_ = -1e9;
     std::string region_ = "anz", preset_ = "longfast", channels_opt_, sf_opt_ = "preset";
-    bool lorawan_ = false, tune_ = true, built_ = false, tune_asked_ = false, others_ = true;
+    bool lorawan_ = true, tune_ = true, built_ = false, tune_asked_ = false, others_ = true;
     std::string chan_name_;   // "" = the preset's own name (the default channel)
     double sens_db_ = 7;
-    uint64_t n_mesh_ = 0, n_lw_ = 0, n_lora_ = 0, n_dup_ = 0;
+    uint64_t n_mesh_ = 0, n_lw_ = 0, n_lw_dn_ = 0, n_lora_ = 0, n_dup_ = 0;
     const char* dump_ = getenv("LORA_DUMP");
 
     const Preset& preset() const {
@@ -314,7 +273,7 @@ private:
     std::vector<Spec> specs() const {
         std::vector<Spec> out;
         if (!channels_opt_.empty()) {
-            // "F:SF:BWkHz,F:SF:BWkHz" (F in MHz)
+            // "F:SF:BWkHz[:inv|:both],..." (F in MHz; SF 0 = SF7-12)
             std::string s = channels_opt_;
             size_t p = 0;
             while (p < s.size()) {
@@ -323,8 +282,14 @@ private:
                 std::string tok = s.substr(p, e - p);
                 double f = 0, bw = 250;
                 int sf = preset().sf;
-                sscanf(tok.c_str(), "%lf:%d:%lf", &f, &sf, &bw);
-                if (f > 0) out.push_back({f * 1e6, sf, bw * 1e3});
+                char iqs[8] = "";
+                sscanf(tok.c_str(), "%lf:%d:%lf:%7s", &f, &sf, &bw, iqs);
+                const int iq = !strcmp(iqs, "inv") ? 1 : !strcmp(iqs, "both") ? 2 : 0;
+                if (f > 0) {
+                    if (sf >= 5 && sf <= 12) out.push_back({f * 1e6, sf, bw * 1e3, iq, false});
+                    else
+                        for (int k = 7; k <= 12; k++) out.push_back({f * 1e6, k, bw * 1e3, iq, false});
+                }
                 p = e + 1;
             }
             return out;
@@ -343,8 +308,14 @@ private:
         }
         if (lorawan_) {
             const Region& r = region();
-            for (int k = 0; k < r.lw_n; k++)
-                out.push_back({r.lw_start_hz + k * r.lw_step_hz, preset().sf >= 10 ? 10 : preset().sf, 125000});
+            const double rf = host.rf_hz();
+            for (const LwGrid& g : r.lw) {
+                for (int k = 0; k < g.n; k++) {
+                    const double f = g.f0_hz + k * g.step_hz;
+                    if (std::isfinite(rf) && std::fabs(f - rf) > 1.05e6 - g.bw / 2) continue;
+                    for (int sf = g.sf_lo; sf <= g.sf_hi; sf++) out.push_back({f, sf, g.bw, g.iq, true});
+                }
+            }
         }
         return out;
     }
@@ -357,58 +328,83 @@ private:
         rf_used_ = rf;
         pend_.clear();
         chans_.clear();
+        front_.reset();
         built_ = true;
         std::vector<Spec> sp = specs();
         // group specs by (freq, bw); each channel then holds one LoraRx per SF
         std::string txt;
         int total_rx = 0;
         std::map<std::pair<long, long>, Channel*> by_fb;
+        // channels first (the ring is sized for the largest SF on it), then
+        // one receiver per SF and IQ orientation
+        std::map<std::pair<long, long>, double> ring_s;
         for (const Spec& s : sp) {
             const double off = std::isfinite(rf) ? (s.freq_hz - rf) : 0.0;
             if (std::isfinite(rf) && std::fabs(off) > 1.05e6) continue;   // outside the VFO
-            if (total_rx >= MAX_RX) break;
             const long fk = std::lround(off / 1000), bk = std::lround(s.bw);
-            Channel* c;
+            double& t = ring_s[{fk, bk}];
+            t = std::max(t, max_airtime_s(s.sf, s.bw) + 4.0 * (1 << s.sf) / s.bw);
             auto it = by_fb.find({fk, bk});
             if (it == by_fb.end()) {
                 auto up = std::make_unique<Channel>();
-                c = up.get();
+                Channel* c = up.get();
                 c->center_off = off;
                 c->bw = s.bw;
                 c->rate_out = 2 * s.bw;
-                c->rs.init(FS, s.bw, c->rate_out, off);
+                c->t0 = now_;
+                c->ch.init(FS, s.bw, off);
                 chans_.push_back(std::move(up));
                 by_fb[{fk, bk}] = c;
-            } else {
-                c = it->second;
             }
-            bool have = false;
-            for (auto& rx : c->rx) if (rx->sf() == s.sf) have = true;
-            if (have) continue;
-            const uint8_t sw = 0;   // accept any sync word; reported per frame
-            auto rx = std::make_unique<lora_phy::LoraRx>(s.sf, s.bw, 2, sw, false, 0, 1, true, true);
-            c->rx.push_back(std::move(rx));
-            total_rx++;
+            by_fb[{fk, bk}]->lorawan |= s.lorawan;
+        }
+        for (auto& kv : by_fb) kv.second->ring.init(static_cast<int>(ring_s[kv.first] * kv.second->rate_out));
+        for (const Spec& s : sp) {
+            const double off = std::isfinite(rf) ? (s.freq_hz - rf) : 0.0;
+            auto it = by_fb.find({std::lround(off / 1000), std::lround(s.bw)});
+            if (it == by_fb.end()) continue;
+            Channel* c = it->second;
+            for (int inv = 0; inv <= 1; inv++) {
+                if (!(s.iq == 2 || s.iq == inv)) continue;
+                if (total_rx >= MAX_RX) break;
+                bool have = false;
+                for (auto& rx : c->rx) if (rx->sf() == s.sf && rx->inverted() == (inv == 1)) have = true;
+                if (have) continue;
+                c->rx.push_back(std::make_unique<lora_phy::LoraRx>(s.sf, s.bw, 2, &c->ring, inv == 1));
+                total_rx++;
+            }
         }
         // description of what we watch
         txt.clear();
         for (auto& c : chans_) {
-            std::string sfs;
-            for (auto& rx : c->rx) sfs += (sfs.empty() ? "" : "/") + std::to_string(rx->sf());
-            txt += (txt.empty() ? "" : ", ") + fmt("%.3f", (std::isfinite(rf) ? rf + c->center_off : c->center_off) / 1e6) +
-                   " SF" + sfs + fmt(" BW%.0f", c->bw / 1e3);
-        }
-        if (chans_.empty()) {
-            txt = "no LoRa channel inside the VFO";
-            if (tune_ && !tune_asked_ && std::isfinite(rf)) {
-                tune_asked_ = true;
-                if (host.tune(mesh_hz()))
-                    host.event(fmt("Tuning to %.3f MHz for ", mesh_hz() / 1e6) + region().name + " " + preset().name, 30.0);
+            int lo = 99, hi = 0;
+            bool nrm = false, inv = false;
+            for (auto& rx : c->rx) {
+                lo = std::min(lo, rx->sf());
+                hi = std::max(hi, rx->sf());
+                (rx->inverted() ? inv : nrm) = true;
             }
+            const std::string sfs = lo == hi ? std::to_string(lo) : std::to_string(lo) + "-" + std::to_string(hi);
+            txt += (txt.empty() ? "" : ", ") + fmt("%.3f", (std::isfinite(rf) ? rf + c->center_off : c->center_off) / 1e6) +
+                   " SF" + sfs + fmt(" BW%.0f", c->bw / 1e3) + (inv ? (nrm ? " up+down" : " down") : "");
+        }
+        if (total_rx >= MAX_RX) txt += " (receiver cap reached)";
+        if (chans_.empty()) txt = "no LoRa channel inside the VFO";
+        // Retune ONCE, and only when the receiver is outside the region's
+        // LoRa band (the decoder picked on some other frequency): inside the
+        // band the user chose the frequency - the plugin restarts on a
+        // rebuild / crash and must not pull the receiver away then
+        const Region& reg = region();
+        if (chans_.empty() && tune_ && !tune_asked_ && std::isfinite(rf) &&
+            (rf < reg.band_lo_mhz * 1e6 || rf > reg.band_hi_mhz * 1e6)) {
+            tune_asked_ = true;
+            if (host.tune(mesh_hz()))
+                host.event(fmt("Tuning to %.3f MHz for ", mesh_hz() / 1e6) + region().name + " " + preset().name, 30.0);
         }
         host.fact("Watching", txt);
         host.fact("Region / preset", std::string(region().name) + " · " + preset().name +
-                                          fmt(" (SF%.0f", (double)preset().sf) + fmt(" BW%.0f)", preset().bw / 1e3));
+                                          fmt(" (SF%.0f", (double)preset().sf) + fmt(" BW%.0f)", preset().bw / 1e3) +
+                                          (lorawan_ ? std::string(" · LoRaWAN ") + region().lw_name : std::string()));
     }
 
     // A strong packet also decodes on a watched channel one bandwidth away (a
@@ -451,7 +447,7 @@ private:
     }
 
     // map a LoRaRx stream sample to host.time() seconds (seconds of 2.4 MHz input)
-    static double tstamp(const Channel& c, int64_t s) { return static_cast<double>(s) / c.rate_out; }
+    static double tstamp(const Channel& c, int64_t s) { return c.t0 + static_cast<double>(s) / c.rate_out; }
 
     void report(const Channel& c, const lora_phy::LoraRx& rx, const lora_phy::Frame& fr) {
         if (fr.payload.empty()) return;
@@ -469,7 +465,10 @@ private:
         std::string tid, label, proto;
         bool mdec_ok = false;
         bool is_mesh = false;
-        if (fr.payload.size() >= 18) {
+        // Meshtastic sends normal IQ with its own sync word (0x2B) - never a
+        // LoRaWAN downlink (inverted) or a frame with the LoRaWAN public sync
+        // word 0x34
+        if (fr.payload.size() >= 18 && !fr.inverted && fr.sync_word != 0x34 && fr.sync_word != 0x12) {
             mesh::parse_header(fr.payload.data(), fr.payload.size(), mh);
             std::vector<uint8_t> dec(fr.payload.begin() + 16, fr.payload.end());
             mesh::decrypt_default(mh, dec);
@@ -478,16 +477,20 @@ private:
         }
         const lorawan::Frame lw = lorawan::parse(fr.payload.data(), fr.payload.size());
 
+        // a LoRaWAN frame's direction must match its IQ: uplinks (join
+        // request, data up) normal, downlinks (join accept, data down) inverted
+        const bool lw_down = lw.mtype == lorawan::JOIN_ACC || lw.mtype == lorawan::UNCONF_DN || lw.mtype == lorawan::CONF_DN;
+        const bool lw_fits = lw.ok && lw_down == fr.inverted && (fr.has_crc || lw_down);
         if (is_mesh) {
             proto = "Meshtastic";
             handle_mesh(c, rx, fr, mh, freq, ts, te, tid, label);
-        } else if (lw.ok) {
+        } else if (lw_fits) {
             proto = "LoRaWAN";
-            handle_lorawan(fr, lw, freq, tid, label);
+            handle_lorawan(c, fr, lw, freq, tid, label);
         } else {
             proto = "LoRa";
-            tid = fmt("lora %.3f", freq) + "/" + std::to_string(fr.sf);
-            label = fmt("%d bytes", (double)fr.payload.size());
+            tid = fmt("lora %.3f", freq) + "/" + std::to_string(fr.sf) + (fr.inverted ? " inv" : "");
+            label = fmt("%.0f bytes", (double)fr.payload.size()) + (fr.has_crc ? "" : " (no CRC)");
             n_lora_++;
         }
         if (tid.empty()) return;
@@ -500,6 +503,13 @@ private:
         nd.freq_mhz = freq;
         nd.sf = fr.sf;
         nd.bw = c.bw;
+        nd.inverted = fr.inverted;
+        nd.sync_word = fr.sync_word;
+        nd.fec_bad = fr.fec_bad;
+        nd.fec_total = fr.fec_total;
+        nd.has_crc = fr.has_crc;
+        nd.hdr_clean = true;
+        for (size_t i = 0; i < std::min<size_t>(9, fr.byte_ok.size()); i++) nd.hdr_clean = nd.hdr_clean && fr.byte_ok[i];
         if (!label.empty()) nd.label = label;
         nd.packets++;
         host.valid(ts, te);
@@ -522,7 +532,9 @@ private:
         if (host.raw_wanted()) host.raw(proto + " " + fmt("%.3f", freq) + " SF" + std::to_string(fr.sf) + " " + hexstr(fr.payload));
         if (dump_)
             host.log(fmt("[%.3f] ", ts) + proto + " f=" + fmt("%.3f", freq) + " SF" + std::to_string(fr.sf) +
-                     fmt(" cfo=%.0f", fr.cfo_hz) + fmt(" snr=%.1f ", fr.snr_db) + hexstr(fr.payload));
+                     fmt(" BW%.0f", c.bw / 1e3) + (fr.inverted ? " inv" : "") + fmt2(" sync=%02x", fr.sync_word & 0xFF) +
+                     fmt(" cfo=%.0f", fr.cfo_hz) + fmt(" snr=%.1f", fr.snr_db) +
+                     (fr.has_crc ? std::string(" crc") : fmt2(" fec=%d/%d", fr.fec_bad, fr.fec_total)) + " " + hexstr(fr.payload));
     }
 
     static bool plausible_mesh(const mesh::Header& mh, const lora_phy::Frame& fr) {
@@ -588,9 +600,30 @@ private:
         host.event(ev + fmt(" · %.3f MHz", freq) + " SF" + std::to_string(fr.sf), 2.0);
     }
 
-    void handle_lorawan(const lora_phy::Frame& fr, const lorawan::Frame& lw, double freq, std::string& tid,
-                        std::string& label) {
+    void handle_lorawan(const Channel& c, const lora_phy::Frame& fr, const lorawan::Frame& lw, double freq,
+                        std::string& tid, std::string& label) {
         n_lw_++;
+        const std::string sfbw = " SF" + std::to_string(fr.sf) + fmt(" BW%.0f", c.bw / 1e3);
+        if (fr.inverted) {
+            // a DOWNLINK is sent by the GATEWAY, not by the device it is
+            // addressed to: its own talker, named by its channel (the frame
+            // carries no gateway ID) - never the DevAddr's
+            n_lw_dn_++;
+            const double ch_mhz = (std::isfinite(rf_used_) ? rf_used_ : 0.0) / 1e6 + c.center_off / 1e6;
+            tid = fmt("GW %.1f", ch_mhz);
+            // no CRC on downlinks: the MAC header (MHDR .. FPort) is trusted
+            // only when its codewords passed their parity
+            bool clean = true;
+            for (size_t i = 0; i < std::min<size_t>(9, fr.byte_ok.size()); i++) clean = clean && fr.byte_ok[i];
+            const std::string q = clean ? "" : "?";
+            const std::string to = lw.mtype == lorawan::JOIN_ACC ? std::string("join accept") : fmt2("→ %08X", lw.devaddr) + q;
+            label = "gateway · " + to;
+            std::string ev = std::string("📡 LoRaWAN ") + lorawan::mtype_name(lw.mtype);
+            if (lw.mtype != lorawan::JOIN_ACC)
+                ev += fmt2(" → DevAddr %08X", lw.devaddr) + q + (lw.fport >= 0 ? fmt(" FPort %.0f", (double)lw.fport) : "");
+            if (clean || lw.mtype == lorawan::JOIN_ACC) host.event(ev + fmt(" · %.3f MHz", freq) + sfbw + " (gateway downlink)", 60.0);
+            return;
+        }
         if (lw.mtype == lorawan::JOIN_REQ) {
             tid = fmt2("DevEUI %016llx", (unsigned long long)lw.deveui);
             label = "join request";
@@ -601,7 +634,7 @@ private:
             label = std::string(lorawan::mtype_name(lw.mtype)) + (lw.fport >= 0 ? fmt(" · FPort %.0f", (double)lw.fport) : "");
             host.event(fmt2("📡 LoRaWAN %s", lorawan::mtype_name(lw.mtype)) + fmt2(" DevAddr %08X", lw.devaddr) +
                            fmt(" FCnt %.0f", (double)lw.fcnt) + (lw.fport >= 0 ? fmt(" FPort %.0f", (double)lw.fport) : "") +
-                           fmt(" · %.3f MHz", freq) + " SF" + std::to_string(fr.sf),
+                           fmt(" · %.3f MHz", freq) + sfbw,
                        2.0);
         }
     }
@@ -636,10 +669,15 @@ private:
             to = mh.to == 0xFFFFFFFF ? "bcast" : "!" + hex8(mh.to);
             hops = std::to_string(mh.hop_limit()) + "/" + std::to_string(mh.hop_start());
         } else if (proto == "LoRaWAN") {
-            from = nd.id;
+            if (nd.inverted) {
+                from = "gateway";
+                to = lw.mtype == lorawan::JOIN_ACC ? "join accept" : fmt2("%08X", lw.devaddr) + (nd.hdr_clean ? "" : "?");
+            } else {
+                from = nd.id;
+            }
             hops = "";
         }
-        host.table_row(nd.id, {nd.id, proto, kp::printable(name), fmt("%d/", (double)nd.sf) + fmt("%.0f", nd.bw / 1e3),
+        host.table_row(nd.id, {nd.id, proto, proto == "Meshtastic" ? kp::printable(name) : name, fmt("%.0f/", (double)nd.sf) + fmt("%.0f", nd.bw / 1e3),
                                fmt("%.3f", nd.freq_mhz), from, to, hops,
                                kp::printable(nd.last_text.substr(0, 40)), fmt("%.0f", nd.rssi),
                                std::to_string(nd.packets)});
@@ -656,7 +694,13 @@ private:
             if (mh.want_ack()) det.push_back({"Want ack", "yes"});
         } else if (proto == "LoRaWAN") {
             det.push_back({"MType", lorawan::mtype_name(lw.mtype)});
-            if (lw.mtype != lorawan::JOIN_REQ) {
+            det.push_back({"Direction", nd.inverted ? "downlink (gateway → device; inverted IQ) - the bearing is the gateway's"
+                                                    : "uplink (device → network)"});
+            if (lw.mtype == lorawan::JOIN_ACC) {
+                det.push_back({"Join accept", "encrypted (keys not public) - header only"});
+            } else if (lw.mtype != lorawan::JOIN_REQ) {
+                if (!nd.has_crc && !nd.hdr_clean)
+                    det.push_back({"MAC header", "a parity error in its codewords - DevAddr / FCnt / FPort may be wrong"});
                 det.push_back({"DevAddr", fmt2("%08X", lw.devaddr)});
                 det.push_back({"FCnt", std::to_string(lw.fcnt)});
                 if (lw.fport >= 0) det.push_back({"FPort", std::to_string(lw.fport)});
@@ -668,7 +712,15 @@ private:
                 det.push_back({"DevNonce", fmt2("%04x", lw.devnonce)});
             }
         }
-        det.push_back({"SF / BW", std::to_string(nd.sf) + " / " + fmt("%.0f kHz", nd.bw / 1e3)});
+        det.push_back({"SF / BW", std::to_string(nd.sf) + " / " + fmt("%.0f kHz", nd.bw / 1e3) +
+                                      (nd.inverted ? " · inverted IQ" : "")});
+        if (nd.sync_word >= 0)
+            det.push_back({"Sync word", fmt2("0x%02X", nd.sync_word) +
+                                            (nd.sync_word == 0x34 ? " (LoRaWAN public)" : nd.sync_word == 0x12 ? " (private / LoRaWAN private)"
+                                             : nd.sync_word == 0x2B ? " (Meshtastic)" : "")});
+        det.push_back({"Integrity", nd.has_crc ? std::string("payload CRC passed")
+                                               : fmt2("no payload CRC (LoRaWAN downlinks send none): header checksum passed, "
+                                                      "%d of %d payload codewords failed their parity", nd.fec_bad, nd.fec_total)});
         if (!nd.last_text.empty()) det.push_back({"Last text", kp::printable(nd.last_text)});
         if (std::isfinite(nd.lat)) det.push_back({"Position", fmt("%.5f", nd.lat) + fmt(", %.5f", nd.lon)});
         host.table_detail(nd.id, det);
@@ -692,8 +744,8 @@ private:
             ++it;
         }
         host.fact("Nodes", std::to_string(nm) + " Meshtastic, " + std::to_string(nl) + " LoRaWAN, " + std::to_string(nr) + " LoRa");
-        host.fact("Packets", std::to_string(n_mesh_) + " Meshtastic, " + std::to_string(n_lw_) + " LoRaWAN, " +
-                                 std::to_string(n_lora_) + " LoRa");
+        host.fact("Packets", std::to_string(n_mesh_) + " Meshtastic, " + std::to_string(n_lw_) + " LoRaWAN (" +
+                                 std::to_string(n_lw_dn_) + " downlinks), " + std::to_string(n_lora_) + " LoRa");
     }
 
     static std::string fmt2(const char* f, ...) {
@@ -718,11 +770,12 @@ KRAKEN_PLUGIN(LoraDecoder, {.id = "lora",
                             .name = "LoRa / Meshtastic / LoRaWAN",
                             .description = "LoRa chirp-spread-spectrum packets in the 2.4 MHz the tuner receives: "
                                            "Meshtastic (node table, text / position / nodeinfo on the public default "
-                                           "channel) and LoRaWAN (clear MAC headers). SF7-12, BW 125/250/500 kHz. The "
+                                           "channel) and LoRaWAN uplinks + gateway downlinks (clear MAC headers). "
+                                           "SF7-12, BW 125/250/500 kHz, normal + inverted IQ. The "
                                            "VFO sits on its tuner's centre with the full bandwidth; tune the receiver "
                                            "to the band (NZ/AU Meshtastic 915-928 MHz). Each node gets its own DoA in "
                                            "the 🗺 Map's 📡 DF panel",
-                            .version = "1.0",
+                            .version = "1.1",
                             .sample_rate = FS,
                             .min_vfo_rate = FS,
                             .author = "KrakenSDR",
@@ -744,13 +797,16 @@ KRAKEN_PLUGIN(LoraDecoder, {.id = "lora",
                                         {"others", "Other presets", "1", "1=On|0=Off",
                                          "Also watch the other presets' default channels that fall inside the VFO "
                                          "(ANZ LongFast window: ShortFast 918.875, ShortSlow 920.625 MHz)"},
-                                        {"lorawan", "Watch LoRaWAN", "0", "0=Off|1=On",
-                                         "Also watch the region's LoRaWAN 125 kHz uplink channels (headers only)"},
+                                        {"lorawan", "Watch LoRaWAN", "1", "1=On|0=Off",
+                                         "Also watch the region's LoRaWAN channels inside the VFO - uplinks (125 / 500 kHz) "
+                                         "and gateway downlinks (500 kHz, inverted IQ; EU868: the uplink channels + RX2), "
+                                         "every data rate's SF (clear headers only)"},
                                         {"channels", "Channels", "",
-                                         "", "Explicit channel list \"MHz:SF:BWkHz,...\" (overrides region/preset)"},
+                                         "", "Explicit channel list \"MHz:SF:BWkHz[:inv|:both],...\" (SF 0 = SF7-12; "
+                                             "inv = inverted IQ; overrides region/preset)"},
                                         {"tune", "Tune to the band", "1", "1=On|0=Off",
-                                         "Retune the receiver (once) to the preset's Meshtastic channel when no "
-                                         "watched channel is inside the VFO"},
+                                         "Retune the receiver (once) to the preset's Meshtastic channel when it is "
+                                         "outside the region's LoRa band (never inside it)"},
                                         {"sens", "Detection", "7", "4=4 dB|7=7 dB|10=10 dB|14=14 dB",
                                          "How far a preamble must stand above the noise to be demodulated"}},
                             .map = true,

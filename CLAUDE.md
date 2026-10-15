@@ -442,10 +442,15 @@ decoders `kraken_doa_v2/plugins/`
   only - DevAddr / FCnt / FPort, join DevEUI - the payload is encrypted. ID
   separation: a DoA per node / DevAddr on its own channel, the RELAYING node
   (`!relay-XX`) when a Meshtastic frame was repeated (hop_start != hop_limit),
-  DF kind `node` 📶. The Meshtastic channel from region + preset + channel
-  name as the firmware computes it (djb2 hash slot: ANZ LongFast 919.875
-  MHz), the other presets' default channels inside the VFO too, LoRaWAN
-  AU915 sub-band 2 optional) and wildlife (wildlife tracking collars /
+  a LoRaWAN DOWNLINK = its gateway ("GW 927.5"), DF kind `node` 📶. The
+  Meshtastic channel from region + preset + channel name as the firmware
+  computes it (djb2 hash slot: ANZ LongFast 919.875 MHz), the other presets'
+  default channels inside the VFO too, and (default on) every LoRaWAN channel
+  of the region's plan inside the VFO - AU915 uplinks + gateway downlinks
+  (inverted IQ, no CRC), every SF; one FFT channelizer for all channels. The
+  coding chain is the radios' since 2026-10-15 - verified on real AU915
+  gateway downlinks at 927.5 MHz (the first version's guessed chain decoded
+  nothing real)) and wildlife (wildlife tracking collars /
   tags - pulsed CW, any country, VHF / UHF - anywhere in the VFO at the
   VFO'S OWN RATE:
   `kp::Info::sample_rate` 0, new - `kp::Host::sample_rate()`, the plugin

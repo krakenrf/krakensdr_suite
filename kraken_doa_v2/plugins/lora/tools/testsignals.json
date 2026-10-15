@@ -48,5 +48,54 @@
    }
   ],
   "tol_deg": 5
+ },
+ {
+  "id": "lora-au915-gateway",
+  "title": "LoRaWAN AU915 at 927.5 MHz: two gateway downlinks + four uplinks",
+  "description": "A 2.4 MHz scene around 927.5 MHz (AU915 sub-band 8) with the plugin's default channel plan: gateway downlinks (inverted IQ, no payload CRC) on 927.5 MHz SF10 BW500 to DevAddr 00F6D6E1 (140 deg) and on 926.9 MHz SF7 BW500 (250 deg), uplinks (sync 0x34, CRC) of DevAddr 260B1234 SF7 BW125 927.2 MHz (40 deg), 260C5678 SF12 BW125 926.8 MHz (300 deg), 26BB9ABC SF9 BW125 927.6 MHz (200 deg) and 26AA0001 SF8 BW500 927.1 MHz (80 deg). A downlink's talker is its gateway (GW 927.5 / GW 926.9), never the DevAddr it is addressed to.",
+  "rf_hz": 927500000.0,
+  "tuner_offset_hz": 0,
+  "seconds": 6,
+  "vfo": {
+   "bw_khz": 2400,
+   "opts": {
+    "region": "anz"
+   }
+  },
+  "steps": [
+   [
+    "{tools}/lora_gen.py",
+    "{tools}/scene_au915.json",
+    "out.cu8"
+   ]
+  ],
+  "output": "out.cu8",
+  "expect": [
+   {
+    "tid": "GW 927.5",
+    "bearing": 140
+   },
+   {
+    "tid": "GW 926.9",
+    "bearing": 250
+   },
+   {
+    "tid": "DevAddr 260B1234",
+    "bearing": 40
+   },
+   {
+    "tid": "DevAddr 260C5678",
+    "bearing": 300
+   },
+   {
+    "tid": "DevAddr 26BB9ABC",
+    "bearing": 200
+   },
+   {
+    "tid": "DevAddr 26AA0001",
+    "bearing": 80
+   }
+  ],
+  "tol_deg": 5
  }
 ]

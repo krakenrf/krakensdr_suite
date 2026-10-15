@@ -61,31 +61,36 @@ C = 299792458.0
 DEFAULT_KEY = bytes.fromhex("d4f1bb3a20290759f0bcffabcf4e6901")
 
 # ---------------------------------------------------------------- coding chain
-def gray_encode(v):
-    return v ^ (v >> 1)
+# The radios' conventions (checked on real AU915 gateway downlinks - see
+# plugins/lora/coding.hpp, which this mirrors): inverse-Gray mapped values,
+# diagonal interleave cw[k] bit (cw_len-1-i) -> bit ((k - i) mod sf_app) of
+# symbol i, codewords d0 d1 d2 d3 p.. (first symbol first), LFSR whitening
+# 0xFF / (w << 1) | (w7^w5^w4^w3) over the payload only, CRC16 of the first
+# n-2 bytes XOR the last two, the header checksum of the SX127x; data symbols
+# sent as value + 1, reduced-rate ones as 4 value + 1.
+def gray_unmap(g):
+    m = g >> 1
+    while m:
+        g ^= m
+        m >>= 1
+    return g
 
 
 def hamming_encode(data, cr):
     d0, d1, d2, d3 = data & 1, (data >> 1) & 1, (data >> 2) & 1, (data >> 3) & 1
-    p0 = d0 ^ d1 ^ d2
-    p1 = d1 ^ d2 ^ d3
-    p2 = d0 ^ d1 ^ d3
-    p3 = d0 ^ d2 ^ d3
-    cw = data & 0xF
-    if cr >= 1: cw |= p0 << 4
-    if cr >= 2: cw |= p1 << 5
-    if cr >= 3: cw |= p2 << 6
-    if cr >= 4: cw |= p3 << 7
-    return cw
+    if cr == 1:
+        return d0 << 4 | d1 << 3 | d2 << 2 | d3 << 1 | (d0 ^ d1 ^ d2 ^ d3)
+    p0, p1, p2, p3 = d0 ^ d1 ^ d2, d1 ^ d2 ^ d3, d0 ^ d1 ^ d3, d0 ^ d2 ^ d3
+    full = d0 << 7 | d1 << 6 | d2 << 5 | d3 << 4 | p0 << 3 | p1 << 2 | p2 << 1 | p3
+    return full >> (4 - cr)
 
 
 def interleave(cw, cr, sf_app):
-    nsym = 4 + cr
-    sym = [0] * nsym
-    for j in range(sf_app):
-        for i in range(nsym):
-            bit = (cw[j] >> (nsym - 1 - i)) & 1
-            sym[i] |= bit << ((i + j) % sf_app)
+    n = 4 + cr
+    sym = [0] * n
+    for i in range(n):
+        for k in range(sf_app):
+            sym[i] |= ((cw[k] >> (n - 1 - i)) & 1) << ((k - i) % sf_app)
     return sym
 
 
@@ -95,11 +100,8 @@ class Whitening:
 
     def nxt(self):
         out = self.s
-        for _ in range(8):
-            fb = self.s & 1
-            self.s >>= 1
-            if fb:
-                self.s ^= 0xB8
+        fb = ((self.s >> 7) ^ (self.s >> 5) ^ (self.s >> 4) ^ (self.s >> 3)) & 1
+        self.s = ((self.s << 1) & 0xFF) | fb
         return out
 
 
@@ -112,30 +114,35 @@ def crc16(data):
     return c
 
 
+def payload_crc(p):
+    if len(p) == 0:
+        return 0
+    if len(p) == 1:
+        return p[0]
+    return crc16(p[:-2]) ^ p[-1] ^ (p[-2] << 8)
+
+
 def header_checksum(n0, n1, n2):
     b = [(n0 >> 3) & 1, (n0 >> 2) & 1, (n0 >> 1) & 1, n0 & 1,
          (n1 >> 3) & 1, (n1 >> 2) & 1, (n1 >> 1) & 1, n1 & 1,
          (n2 >> 3) & 1, (n2 >> 2) & 1, (n2 >> 1) & 1, n2 & 1]
     c4 = b[0] ^ b[1] ^ b[2] ^ b[3]
-    c3 = b[0] ^ b[4] ^ b[5] ^ b[6] ^ b[8]
-    c2 = b[1] ^ b[4] ^ b[7] ^ b[8] ^ b[9] ^ b[10]
-    c1 = b[2] ^ b[5] ^ b[7] ^ b[8] ^ b[9] ^ b[11]
-    c0 = b[3] ^ b[6] ^ b[7] ^ b[9] ^ b[10] ^ b[11]
+    c3 = b[0] ^ b[4] ^ b[5] ^ b[6] ^ b[11]
+    c2 = b[1] ^ b[4] ^ b[7] ^ b[8] ^ b[10]
+    c1 = b[2] ^ b[5] ^ b[7] ^ b[9] ^ b[10] ^ b[11]
+    c0 = b[3] ^ b[6] ^ b[8] ^ b[9] ^ b[10] ^ b[11]
     return (c4 << 4) | (c3 << 3) | (c2 << 2) | (c1 << 1) | c0
 
 
 def lora_symbols(payload, sf, cr, has_crc, ldro):
     N = 1 << sf
     data = bytearray(payload)
-    if has_crc:
-        crc = crc16(payload)
-        data += bytes([crc & 0xFF, crc >> 8])
     wh = Whitening()
     for i in range(len(payload)):
         data[i] ^= wh.nxt()
     if has_crc:
-        data[len(payload)] ^= wh.nxt()
-        data[len(payload) + 1] ^= wh.nxt()
+        crc = payload_crc(bytes(payload))
+        data += bytes([crc & 0xFF, crc >> 8])
     nib = []
     for b in data:
         nib.append(b & 0xF)
@@ -148,35 +155,28 @@ def lora_symbols(payload, sf, cr, has_crc, ldro):
     syms = []
     sfh = sf - 2
     hblk = list(hn)
-    spill = max(0, sfh - 5)
     rest = list(nib)
-    for _ in range(spill):
+    for _ in range(max(0, sfh - 5)):
         if rest:
             hblk.append(rest.pop(0))
     while len(hblk) < sfh:
         hblk.append(0)
     cw = [hamming_encode(hblk[j], 4) for j in range(sfh)]
-    sy = interleave(cw, 4, sfh)
-    for i in range(8):
-        syms.append((gray_encode(sy[i]) << 2) & (N - 1))
+    for v in interleave(cw, 4, sfh):
+        syms.append((4 * gray_unmap(v) + 1) % N)
     sfa = sf - 2 if ldro else sf
     while rest:
-        blk = []
-        for _ in range(sfa):
-            blk.append(rest.pop(0) if rest else 0)
+        blk = [rest.pop(0) if rest else 0 for _ in range(sfa)]
         cw = [hamming_encode(blk[j], cr) for j in range(sfa)]
-        sy = interleave(cw, cr, sfa)
-        for i in range(4 + cr):
-            v = gray_encode(sy[i])
-            if ldro:
-                v <<= 2
-            syms.append(v & (N - 1))
+        for v in interleave(cw, cr, sfa):
+            syms.append((4 * gray_unmap(v) + 1) % N if ldro else (gray_unmap(v) + 1) % N)
     return syms
 
 
-def lora_waveform(payload, sf, bw, cr, has_crc, sync_word, fs=FS, preamble=8):
+def lora_waveform(payload, sf, bw, cr, has_crc, sync_word, fs=FS, preamble=8, inverted=False):
     """Full CSS packet at fs with CONTINUOUS phase (exact symbol timing):
-    8 preamble up-chirps, 2 sync symbols, 2.25 SFD down-chirps, data symbols."""
+    8 preamble up-chirps, 2 sync symbols, 2.25 SFD down-chirps, data symbols.
+    inverted: the whole packet conjugated (LoRaWAN downlinks, inverted IQ)."""
     N = 1 << sf
     ldro = (N / bw) >= 0.016
     syms = lora_symbols(payload, sf, cr, has_crc, ldro)
@@ -199,6 +199,8 @@ def lora_waveform(payload, sf, bw, cr, has_crc, sync_word, fs=FS, preamble=8):
     dn = bw / 2 - (rate * tau % bw)
     f = np.where(sign > 0, up, dn)
     phase = np.cumsum(2 * np.pi * f / fs)
+    if inverted:
+        phase = -phase
     return np.exp(1j * phase), len(syms)
 
 
@@ -444,7 +446,10 @@ def main():
         fch = float(s.get("freq_mhz", rf / 1e6)) * 1e6
         off = fch - rf + float(s.get("df_hz", 0))
         amp = math.sqrt(noise_p * 10 ** (float(s.get("level_db", 14)) / 10))
-        wav1, nsym = lora_waveform(payload, sf, bw, cr, s.get("crc", True), sw, preamble=npre)
+        down = s.get("proto") == "lorawan" and s.get("mtype", "unconf_up") in ("unconf_dn", "conf_dn")
+        inv = bool(s.get("inverted", down))
+        # LoRaWAN downlinks carry no payload CRC
+        wav1, nsym = lora_waveform(payload, sf, bw, cr, s.get("crc", not down), sw, preamble=npre, inverted=inv)
         L = len(wav1)
         steer = np.exp(2j * np.pi * R / (C / rf) * np.cos(np.deg2rad(b) - phi))
         period = float(s.get("period_s", 2.0))
@@ -458,20 +463,21 @@ def main():
             sent.append([round(t, 6), round(fch / 1e6, 4), len(payload)])
             t += period
         tr = {"name": s.get("name", "s%d" % si), "proto": s.get("proto", "lora"), "bearing": b,
-              "sf": sf, "bw": bw, "freq_mhz": fch / 1e6, "packets": sent, "payload_hex": payload.hex()}
+              "sf": sf, "bw": bw, "freq_mhz": fch / 1e6, "inverted": inv, "packets": sent, "payload_hex": payload.hex()}
         truth.append(tr)
         print("%-18s %-16s bearing %6.1f  SF%d BW%d  %3d pkts @ %.3f MHz  %+.0f dB" % (
             tr["name"], s.get("proto", "lora"), b, sf, int(bw / 1e3), len(sent), fch / 1e6, s.get("level_db", 14)))
 
     waves.sort(key=lambda x: x[0])
     starts = np.array([w[0] for w in waves]) if waves else np.zeros(0)
+    maxlen = max([len(w[1]) for w in waves], default=0)
     PIECE = int(0.1 * FS)
     with open(out, "wb") as fo:
         for c0 in range(0, Ntot, PIECE):
             c1 = min(Ntot, c0 + PIECE)
             n = c1 - c0
             x = (rng.standard_normal((n, M)) + 1j * rng.standard_normal((n, M))) * sig_n
-            lo = np.searchsorted(starts, c0 - 2_400_000)
+            lo = np.searchsorted(starts, c0 - maxlen)   # every packet still on air (SF12 / 125 kHz ones last > 1 s)
             hi = np.searchsorted(starts, c1)
             for k0, w, steer in waves[lo:hi]:
                 a, e = max(c0, k0), min(c1, k0 + len(w))

@@ -1,0 +1,35 @@
+{
+  "rf_hz": 927.5e6, "seconds": 6, "channels": 5, "radius_m": 0.12, "seed": 7,
+  "noise_lsb": 2.0, "station": [-41.0, 174.0],
+  "sources": [
+    {"proto": "lorawan", "name": "GW 927.5", "bearing": 140,
+     "sf": 10, "bw": 500000, "cr": 1, "freq_mhz": 927.5, "level_db": 12, "df_hz": 1700,
+     "period_s": 1.6, "t0": 0.3, "mtype": "unconf_dn",
+     "devaddr": "0x00F6D6E1", "fcnt": 2616, "fport": 204, "payload_len": 220},
+
+    {"proto": "lorawan", "name": "GW 926.9", "bearing": 250,
+     "sf": 7, "bw": 500000, "cr": 1, "freq_mhz": 926.9, "level_db": 12,
+     "period_s": 2.0, "t0": 0.5, "mtype": "unconf_dn",
+     "devaddr": "0x01C294FD", "fcnt": 1359, "fport": 1, "payload_len": 40},
+
+    {"proto": "lorawan", "name": "DevAddr 260B1234", "bearing": 40,
+     "sf": 7, "bw": 125000, "cr": 1, "freq_mhz": 927.2, "level_db": 12,
+     "period_s": 1.7, "t0": 0.2, "mtype": "unconf_up",
+     "devaddr": "0x260B1234", "fcnt": 17, "fport": 2, "payload_len": 12},
+
+    {"proto": "lorawan", "name": "DevAddr 260C5678", "bearing": 300,
+     "sf": 12, "bw": 125000, "cr": 1, "freq_mhz": 926.8, "level_db": 6,
+     "period_s": 3.0, "t0": 0.9, "mtype": "conf_up",
+     "devaddr": "0x260C5678", "fcnt": 5, "fport": 10, "payload_len": 6},
+
+    {"proto": "lorawan", "name": "DevAddr 26BB9ABC", "bearing": 200,
+     "sf": 9, "bw": 125000, "cr": 1, "freq_mhz": 927.6, "level_db": 10,
+     "period_s": 3.2, "t0": 0.86, "mtype": "unconf_up",
+     "devaddr": "0x26BB9ABC", "fcnt": 300, "fport": 3, "payload_len": 20},
+
+    {"proto": "lorawan", "name": "DevAddr 26AA0001", "bearing": 80,
+     "sf": 8, "bw": 500000, "cr": 1, "freq_mhz": 927.1, "level_db": 12,
+     "period_s": 2.4, "t0": 1.0, "mtype": "unconf_up",
+     "devaddr": "0x26AA0001", "fcnt": 9, "fport": 5, "payload_len": 30}
+  ]
+}

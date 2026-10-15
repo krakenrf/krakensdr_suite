@@ -3643,16 +3643,34 @@ Edit `include/config.hpp`:
 
 **LoRa / Meshtastic / LoRaWAN (`plugins/lora/`, README.md there):**
 - `sample_rate` = `min_vfo_rate` 2.4 MHz, `lock_vfo`, `manual_only`,
-  `talkers`, `map`, `tunes`. Every watched channel in the 2.4 MHz is mixed
-  down (NCO + a decimate-by-D FIR + cubic fractional interpolation to EXACTLY
-  2x BW - the hop grid must be a whole symbol) and run through a CSS receiver
-  (`lora_phy.cpp`): dechirped preamble detection (catches below-noise
-  packets), up/down-chirp sync (integer CFO/STO split by b0 alignment -
+  `talkers`, `map`, `tunes`. ONE FFT channelizer (`channelizer.hpp`:
+  4608-point overlap-save, hop 3456, per channel its bins through a flat /
+  raised-cosine response + an inverse FFT of 2 BW / 2.4 MHz x 4608 points ->
+  EXACTLY 2x BW, zero delay, the off-grid residual mixed at the output rate)
+  feeds every watched channel; per channel one sample ring (`lora_phy::Ring`,
+  sized for the longest packet of its largest SF, <= 4 s) shared by a CSS
+  receiver per SF and IQ orientation (`lora_phy.cpp`): cheap detection
+  (`detect_bin`: one chip per sample, a window every DET_HOP 2 symbols, 3 on
+  one bin), up/down-chirp sync (integer CFO/STO split by b0 alignment -
   which cancels the integer CFO in the data - + fractional-CFO de-rotation),
-  symbol demod, then the coding chain (`coding.hpp`: Gray, diagonal
-  interleave, Hamming 4/5-4/8, PN whitening, header checksum, CRC16). SF7-12,
-  BW 125/250/500, explicit + implicit header, LDRO. Only header-checksum +
-  CRC-passing frames are reported
+  symbol demod with the fractional offset TRACKED per symbol (TRACK_ALPHA
+  0.2: sample-clock drift, ~0.4 bin over a 0.5 s SF10 packet), INVERTED IQ
+  (downlinks) = the ring read conjugated, the sync word measured, then the
+  coding chain (`coding.hpp`). SF7-12, BW 125/250/500, explicit + implicit
+  header, LDRO. Frames with a CRC only when it passes; without one (LoRaWAN
+  downlinks) when the header checksum + all 8 header codewords pass, with
+  the payload codewords' parity count (`fec_bad`) and per-byte validity
+  (`byte_ok`)
+- THE RADIOS' CODING CHAIN (2026-10-15, settled on a real capture of AU915
+  gateway downlinks by brute force against the header checksum + Hamming
+  codewords, then consecutive FCnt): value = (bin - 1) relative to the
+  preamble (reduced rate round((bin - 1) / 4)), Gray MAPPED v ^ v >> 1,
+  `cw[k] bit (cw_len-1-i) = bit ((k - i) mod sf_app) of symbol i` (d0 first),
+  4/5 = parity of all four bits, whitening LFSR 0xFF / (w << 1) |
+  (w7^w5^w4^w3) over the payload only, CRC16 of the first n-2 bytes XOR the
+  last two, the SX127x header checksum. The first version guessed each of
+  these differently (self-consistent with its generator) and could not
+  decode a real packet
 - Meshtastic (`meshtastic.hpp`): the clear 16-byte PacketHeader; the payload
   decrypted ONLY with the PUBLISHED default channel key
   (`d4f1bb3a20290759f0bcffabcf4e6901`, AES-128-CTR, `aes.hpp`) - a private
@@ -3661,11 +3679,16 @@ Edit `include/config.hpp`:
   ROUTING. LoRaWAN (`lorawan.hpp`): clear MAC header only (MHDR, DevAddr,
   FCtrl/FCnt/FPort; join DevEUI/JoinEUI) - the FRMPayload is encrypted.
   Meshtastic vs LoRaWAN: a valid default-key-decrypted Data protobuf (or a
-  broadcast header with sane hops) = Meshtastic, else LoRaWAN, else raw LoRa
+  broadcast header with sane hops) = Meshtastic (never with inverted IQ or
+  sync 0x34 / 0x12), else LoRaWAN when its direction matches the IQ (uplinks
+  normal, downlinks / join accept inverted), else raw LoRa (id "lora MHz/SF")
 - ID separation: a `kp::Talker` packet per frame of the actual transmitter -
   the Meshtastic node (`!xxxxxxxx` from `from`), or the RELAYING node
   (`!relay-XX`, the header `relay_node` byte) when `hop_start != hop_limit`
-  (like flarm's relay handling), or the LoRaWAN DevAddr / DevEUI; `freq_hz` /
+  (like flarm's relay handling), or the LoRaWAN DevAddr / DevEUI of an
+  UPLINK; a DOWNLINK is the GATEWAY's ("GW 927.5" by its channel - the frame
+  names no gateway; never the DevAddr's device; its MAC header shown with a
+  "?" when a codeword of bytes 0-8 failed parity, no event then); `freq_hz` /
   `bw_hz` = the LoRa channel so nodes on different channels/SFs keep their
   own bearings. `avg_s` 10, `keep_s` 30 min. UI kind `node` 📶
 - Watched channels: the Meshtastic channel as the FIRMWARE computes it
@@ -3676,11 +3699,18 @@ Edit `include/config.hpp`:
   906.875, EU868 869.525). Options `region` (anz / us / eu868), `preset`,
   `channel` (a named primary channel), `others` (default on: the other
   presets' default channels inside the VFO - at 919.750 MHz LongFast +
-  ShortFast + ShortSlow), `sf` (preset | auto | 7..12), `lorawan` (the
-  region's 125 kHz uplink grid, AU915 sub-band 2 for anz), `channels`
-  (explicit `MHz:SF:BWkHz,...`, overrides), `tune`, `sens`
-- Per channel (`Resampler`): phasor NCO, decimate-by-D FIR over a contiguous
-  double-buffered history, cubic interpolation to exactly 2 x BW. A strong
+  ShortFast + ShortSlow), `sf` (preset | auto | 7..12, Meshtastic channels),
+  `lorawan` (default ON: the region's plan `Region::lw` inside the VFO at
+  every data rate's SF - AU915 uplinks 915.2 + 0.2 n (125 kHz SF7-12) /
+  915.9 + 1.6 n (500 kHz SF8), downlinks 923.3 + 0.6 n (500 kHz SF7-12,
+  inverted); US915; EU868 both directions + RX2; at 927.5 MHz 12 channels /
+  55 receivers, MAX_RX 72), `channels` (explicit `MHz:SF:BWkHz[:inv|:both]`,
+  SF 0 = 7-12, overrides), `tune` (once, ONLY when the receiver is outside
+  the region's band `band_lo/hi_mhz` - a restart must not pull a receiver
+  tuned inside it away; the first version retuned whenever nothing watched
+  was in the VFO), `sens`
+- Channel timestamps: `Channel::t0` = Host::time() at its creation (a
+  rebuild mid-stream kept the old zero). A strong
   packet also decodes on the watched channel one BW away (a whole-BW offset
   aliases to CFO 0): same payload within 0.15 s on two channels = one
   transmission, the strongest kept (`queue` / `flush_pending`, 50 ms hold)
@@ -3692,8 +3722,24 @@ Edit `include/config.hpp`:
 - Generator `tools/lora_gen.py` (full chain mirroring coding.hpp, AES default
   key + protobuf, LoRaWAN frames, continuous-phase CSS at 2.4 MHz with
   Meshtastic's 16-symbol preamble / sync 0x2B and LoRaWAN's 8 / 0x34, several
-  nodes + a relay on a UCA, hex IDs, seeded bytes), `tools/scene_five.json`,
-  playback entry `lora-mesh-five` (6 talkers, all by id)
+  nodes + a relay on a UCA, hex IDs, seeded bytes; LoRaWAN `unconf_dn` /
+  `conf_dn` = inverted IQ without CRC), `tools/scene_five.json` (playback
+  `lora-mesh-five`, 6 talkers) and `tools/scene_au915.json` (playback
+  `lora-au915-gateway`: 927.5 MHz default plan, GW 927.5 / GW 926.9 + uplinks
+  SF7 / SF12 LDRO / SF9 / SF8-500; it used to write only the first second of
+  a packet - SF12 / 125 kHz lasts 1.3 s)
+- Real signal (2026-10-15, user's array at 927.500 MHz, 120 s channel-0
+  capture, scratch lora2/): AU915 gateway downlinks on 927.5 MHz SF10 BW500
+  (233-byte unconfirmed downs to DevAddr 00F6D6E1 FPort 204 every 0.8 s,
+  FCnt consecutive) + SF7 BW500 ones there and on 926.9, and a sync-0x12
+  sensor (2-byte frames, SF8 BW125, ~926.997 MHz): 63 frames decoded in 120 s
+  (all CRCs pass; 13 downlinks without a parity error, the rest hit by the
+  busy band - the Python reference sees the same). Not decoded: SF9 BW500
+  normal-IQ bursts on 926.9 / 927.4 MHz (header never validates). Rework
+  tests: scene_five 16 / 16 + bearings exact; scene_au915 six talkers
+  within 0.6 deg. CPU live at 927.5 MHz 27-30 % of a core (incl. ~11 % for
+  the input pipe; 90 % before the channelizer + cheap detector), 113 MB.
+  Playback entries not run on the live kraken_doa (in use)
 - Tests: C++ `t_phy` round trip SF7-12 x CR x BW incl. CFO / STO / noise
   (71 / 72; SF12 to ~-12 dB/sample); byte-exact check of the whole path
   (scratch verify.py: every CRC-valid frame = the generator's payload): 16 /
@@ -3706,9 +3752,8 @@ Edit `include/config.hpp`:
   (was 120 %). Limits: two packets overlapping on one channel can't both
   decode (half-duplex); a CFO beyond ~-20 % of BW at SF7 sometimes costs a
   symbol; GPL projects used as documentation only. Live 10 min at 919.750
-  MHz (ANZ default channels) + 25 s at 922.977: no frame. The chain is only
-  verified against the in-repo generator - no real LoRa hardware packet
-  decoded yet (a known recording would settle the open conventions)
+  MHz (ANZ default channels) + 25 s at 922.977: no frame (first version -
+  its chain could not have decoded one). No real Meshtastic packet yet
 
 **Wildlife collars (`plugins/wildlife/`, README.md there):**
 - Wildlife tracking transmitters anywhere in VHF / UHF, in any country

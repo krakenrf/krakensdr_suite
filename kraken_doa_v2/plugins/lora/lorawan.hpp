@@ -57,6 +57,11 @@ inline Frame parse(const uint8_t* p, size_t n) {
         f.ok = true;
         return f;
     }
+    if (f.mtype == JOIN_ACC) {
+        // MHDR + an encrypted body of 16 or 32 bytes (incl. the MIC)
+        f.ok = n == 17 || n == 33;
+        return f;
+    }
     if (f.mtype == UNCONF_UP || f.mtype == UNCONF_DN || f.mtype == CONF_UP || f.mtype == CONF_DN) {
         // MHDR(1) DevAddr(4) FCtrl(1) FCnt(2) [FOpts] [FPort(1) FRMPayload] MIC(4)
         if (n < 1 + 4 + 1 + 2 + 4) return f;
