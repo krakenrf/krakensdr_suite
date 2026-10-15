@@ -431,26 +431,32 @@ decoders `kraken_doa_v2/plugins/`
   reported to the RCC by the user - the decoder reports nothing); a DoA per
   15-hex ID (a packet per burst on its own 3 kHz channel, kept 24 h, DF kind
   `sar` 🆘); second-generation (T.018 DSSS) bursts detected, not decoded) and
-  lora (LoRa CSS in the whole 2.4 MHz, manual only, `lock_vfo`, `tunes`:
-  Meshtastic and LoRaWAN on top. SF7-12, BW 125/250/500, CR 4/5-4/8, explicit
-  / implicit header; each watched channel dechirped - a below-noise preamble
-  detector, up/down-chirp sync, Gray / diagonal interleave / Hamming / PN
-  whitening / CRC16. Meshtastic: the clear 16-byte header, the payload
-  decrypted ONLY with the PUBLISHED default channel key - a private channel
-  shows its header only, keys are never guessed - into the Data protobuf
-  (text, position on the map, nodeinfo, telemetry); LoRaWAN: clear MAC header
-  only - DevAddr / FCnt / FPort, join DevEUI - the payload is encrypted. ID
-  separation: a DoA per node / DevAddr on its own channel, the RELAYING node
-  (`!relay-XX`) when a Meshtastic frame was repeated (hop_start != hop_limit),
-  a LoRaWAN DOWNLINK = its gateway ("GW 927.5"), DF kind `node` 📶. The
-  Meshtastic channel from region + preset + channel name as the firmware
-  computes it (djb2 hash slot: ANZ LongFast 919.875 MHz), the other presets'
-  default channels inside the VFO too, and (default on) every LoRaWAN channel
-  of the region's plan inside the VFO - AU915 uplinks + gateway downlinks
-  (inverted IQ, no CRC), every SF; one FFT channelizer for all channels. The
-  coding chain is the radios' since 2026-10-15 - verified on real AU915
-  gateway downlinks at 927.5 MHz (the first version's guessed chain decoded
-  nothing real)) and wildlife (wildlife tracking collars /
+  lora (LoRa CSS in the whole 2.4 MHz, manual only, `lock_vfo`, `tunes`;
+  REGION-NEUTRAL: `region` / `lorawan` Auto = every Meshtastic region (the
+  firmware's 25: US, EU_433 / 868, CN, JP, ANZ / ANZ_433, RU, KR, TW, IN,
+  NZ_865, TH, UA, MY, SG_923, PH, KZ, NP_865, BR_902) and every LoRaWAN
+  RP002 plan (EU868, US915, AU915, AS923-1..4, KR920, IN865, RU864, CN470,
+  EU433, CN779 - uplinks, downlinks / RX2 inverted IQ, class-B beacons with
+  their CRCs) whose band holds the tuned frequency, within a CPU budget by
+  priority; specific ones selectable, Auto never retunes. A PLAN-FREE SEARCH
+  finds LoRa anywhere in the VFO (any centre, SF5-12, 62.5-500 kHz - option
+  `all`: down to 7.8 kHz -, both IQ): LoRa-shaped energy in the channelizer's
+  FFTs -> dechirped at every SF from 0.8 s of FFT history -> a decoded
+  transmitter becomes a LEARNED channel. SF5 / SF6 (SX126x, header
+  convention not verified on a real radio), BW 7.8-500 kHz, CR 4/5-4/8,
+  explicit / implicit header (beacons); the radios' coding chain (verified on
+  real AU915 gateway downlinks at 927.5 MHz). Meshtastic: the clear 16-byte
+  header, the payload decrypted ONLY with the PUBLISHED default channel key -
+  a private channel shows its header only, keys are never guessed - into the
+  Data protobuf (text, position on the map, nodeinfo, telemetry); LoRaWAN:
+  clear MAC header only - DevAddr / FCnt / FPort, join DevEUI - the payload
+  is encrypted. ID separation: a DoA per node / DevAddr on its own channel,
+  the RELAYING node (`!relay-XX`) when a Meshtastic frame was repeated, a
+  LoRaWAN DOWNLINK / beacon = its gateway ("GW 927.5"), other LoRa its channel
+  + SF + sync word ("LoRa 926.901 SF7 0x12"), DF kind `node` 📶. Live at
+  927.5 MHz the search found the private SF7 BW250 sync-0x12 system on 926.9
+  / 927.4 MHz whose "SF9 BW500" bursts had never decoded (same chirp slope)
+  and learned both channels) and wildlife (wildlife tracking collars /
   tags - pulsed CW, any country, VHF / UHF - anywhere in the VFO at the
   VFO'S OWN RATE:
   `kp::Info::sample_rate` 0, new - `kp::Host::sample_rate()`, the plugin
@@ -745,7 +751,7 @@ frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes, wildlife collars / tags)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a
 coded ID per transmitter, the plugin reports it as a talker and is tested

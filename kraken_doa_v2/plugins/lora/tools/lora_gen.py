@@ -37,7 +37,10 @@ SCENE (JSON):
     {"proto": "lora", "name": "raw", "text": "...", ...}
   ]
 }
-Per source also: "preamble" (symbols; default 16 for Meshtastic, 8 else),
+Per source also: "preamble" (symbols; default 16 for Meshtastic, 10 beacon, 8 else),
+"implicit" (no header; beacons), "sf56_extra" (SF5 / SF6: up-chirps after
+the SFD, default 2), proto "beacon" (LoRaWAN class-B: "rfu1", "rfu2",
+"gps_time", "gw_lat", "gw_lon", "info_desc"; CR 4/5, no CRC, implicit),
 "sync_word" (default 0x2B Meshtastic, 0x34 LoRaWAN, 0x12 else), "df_hz"
 (carrier offset), "crc". IDs (from / to / id / devaddr / deveui ...) may be
 numbers or hex strings ("0x26011F88"); random bytes (private keys, LoRaWAN
@@ -134,7 +137,11 @@ def header_checksum(n0, n1, n2):
     return (c4 << 4) | (c3 << 3) | (c2 << 2) | (c1 << 1) | c0
 
 
-def lora_symbols(payload, sf, cr, has_crc, ldro):
+def lora_symbols(payload, sf, cr, has_crc, ldro, implicit=False):
+    """explicit header: the 5 header nibbles lead the first block (8 symbols,
+    CR 4/8, reduced rate - SF5 / SF6: the full rate, see lora_waveform's
+    extra symbols); implicit: the first block carries payload nibbles only
+    (still CR 4/8, reduced rate)."""
     N = 1 << sf
     data = bytearray(payload)
     wh = Whitening()
@@ -150,20 +157,18 @@ def lora_symbols(payload, sf, cr, has_crc, ldro):
     plen = len(payload)
     h0, h1, h2 = (plen >> 4) & 0xF, plen & 0xF, ((cr << 1) | (1 if has_crc else 0))
     chk = header_checksum(h0, h1, h2)
-    hn = [h0, h1, h2, (chk >> 4) & 1, chk & 0xF]
+    hn = [] if implicit else [h0, h1, h2, (chk >> 4) & 1, chk & 0xF]
 
     syms = []
-    sfh = sf - 2
+    low = sf < 7
+    sfh = sf if low else sf - 2
     hblk = list(hn)
     rest = list(nib)
-    for _ in range(max(0, sfh - 5)):
-        if rest:
-            hblk.append(rest.pop(0))
     while len(hblk) < sfh:
-        hblk.append(0)
+        hblk.append(rest.pop(0) if rest else 0)
     cw = [hamming_encode(hblk[j], 4) for j in range(sfh)]
     for v in interleave(cw, 4, sfh):
-        syms.append((4 * gray_unmap(v) + 1) % N)
+        syms.append((gray_unmap(v) + 1) % N if low else (4 * gray_unmap(v) + 1) % N)
     sfa = sf - 2 if ldro else sf
     while rest:
         blk = [rest.pop(0) if rest else 0 for _ in range(sfa)]
@@ -173,13 +178,17 @@ def lora_symbols(payload, sf, cr, has_crc, ldro):
     return syms
 
 
-def lora_waveform(payload, sf, bw, cr, has_crc, sync_word, fs=FS, preamble=8, inverted=False):
+def lora_waveform(payload, sf, bw, cr, has_crc, sync_word, fs=FS, preamble=8, inverted=False, implicit=False,
+                  extra=2):
     """Full CSS packet at fs with CONTINUOUS phase (exact symbol timing):
     8 preamble up-chirps, 2 sync symbols, 2.25 SFD down-chirps, data symbols.
-    inverted: the whole packet conjugated (LoRaWAN downlinks, inverted IQ)."""
+    inverted: the whole packet conjugated (LoRaWAN downlinks, inverted IQ).
+    SF5 / SF6 (SX126x): `extra` up-chirps (value 0) after the SFD."""
     N = 1 << sf
     ldro = (N / bw) >= 0.016
-    syms = lora_symbols(payload, sf, cr, has_crc, ldro)
+    syms = lora_symbols(payload, sf, cr, has_crc, ldro, implicit)
+    if sf < 7:
+        syms = [0] * int(extra) + syms
     Ts = N / bw
     rate = bw / Ts
     segs = [(1, 0, 1.0)] * int(preamble)
@@ -385,8 +394,25 @@ def build_lorawan(s):
     return mac + rbytes(4)   # MIC (unknown key: random)
 
 
+def build_beacon(s):
+    """LoRaWAN class-B beacon: RFU1 | Param | Time (LSB first) | CRC1 |
+    InfoDesc + Info (lat / lon 24 bit) | RFU2 | CRC2 (CRC-16 0x1021 init 0, LSB first)"""
+    r1, r2 = int(s.get("rfu1", 1)), int(s.get("rfu2", 0))
+    t = int(s.get("gps_time", 1_400_000_000 // 128 * 128))
+    body = bytes(r1) + bytes([0]) + t.to_bytes(4, "little")
+    c1 = crc16(body)
+    lat, lon = float(s.get("gw_lat", -41.1)), float(s.get("gw_lon", 174.1))
+    la = int(round(lat * 8388608 / 90)) & 0xFFFFFF
+    lo = int(round(lon * 8388608 / 180)) & 0xFFFFFF
+    gw = bytes([int(s.get("info_desc", 0))]) + la.to_bytes(3, "little") + lo.to_bytes(3, "little") + bytes(r2)
+    c2 = crc16(gw)
+    return body + c1.to_bytes(2, "little") + gw + c2.to_bytes(2, "little")
+
+
 def build_payload(s):
     p = s.get("proto", "lora")
+    if p == "beacon":
+        return build_beacon(s)
     if p.startswith("meshtastic"):
         return build_meshtastic(s)
     if p == "lorawan":
@@ -441,15 +467,17 @@ def main():
         bw = float(s.get("bw", 250000))
         cr = int(s.get("cr", 1))
         mesh = s.get("proto", "lora").startswith("meshtastic")
-        sw = num(s.get("sync_word"), 0x2B if mesh else (0x34 if s.get("proto") == "lorawan" else 0x12))
-        npre = int(s.get("preamble", 16 if mesh else 8))
+        bcn = s.get("proto") == "beacon"
+        sw = num(s.get("sync_word"), 0x2B if mesh else (0x34 if s.get("proto") in ("lorawan", "beacon") else 0x12))
+        npre = int(s.get("preamble", 16 if mesh else 10 if bcn else 8))
         fch = float(s.get("freq_mhz", rf / 1e6)) * 1e6
         off = fch - rf + float(s.get("df_hz", 0))
         amp = math.sqrt(noise_p * 10 ** (float(s.get("level_db", 14)) / 10))
         down = s.get("proto") == "lorawan" and s.get("mtype", "unconf_up") in ("unconf_dn", "conf_dn")
         inv = bool(s.get("inverted", down))
         # LoRaWAN downlinks carry no payload CRC
-        wav1, nsym = lora_waveform(payload, sf, bw, cr, s.get("crc", not down), sw, preamble=npre, inverted=inv)
+        wav1, nsym = lora_waveform(payload, sf, bw, cr, s.get("crc", not (down or bcn)), sw, preamble=npre, inverted=inv,
+                                   implicit=bool(s.get("implicit", bcn)), extra=int(s.get("sf56_extra", 2)))
         L = len(wav1)
         steer = np.exp(2j * np.pi * R / (C / rf) * np.cos(np.deg2rad(b) - phi))
         period = float(s.get("period_s", 2.0))

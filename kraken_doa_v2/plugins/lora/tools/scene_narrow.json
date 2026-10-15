@@ -1,0 +1,89 @@
+{
+ "channels": 5,
+ "radius_m": 0.12,
+ "noise_lsb": 2.0,
+ "station": [
+  -41.0,
+  174.0
+ ],
+ "rf_hz": 446000000.0,
+ "seconds": 10,
+ "seed": 27,
+ "sources": [
+  {
+   "proto": "lora",
+   "name": "LoRa 445.700 SF8 0x12",
+   "bearing": 100,
+   "sf": 8,
+   "bw": 15625,
+   "cr": 1,
+   "freq_mhz": 445.7,
+   "level_db": 12,
+   "period_s": 2.0,
+   "t0": 1.0,
+   "sync_word": 18,
+   "inverted": false,
+   "crc": true,
+   "bytes": [
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107
+   ]
+  },
+  {
+   "proto": "lora",
+   "name": "LoRa 446.300 SF7 0x12",
+   "bearing": 200,
+   "sf": 7,
+   "bw": 7812.5,
+   "cr": 1,
+   "freq_mhz": 446.3,
+   "level_db": 12,
+   "period_s": 2.5,
+   "t0": 1.3,
+   "sync_word": 18,
+   "inverted": false,
+   "crc": true,
+   "bytes": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ]
+  },
+  {
+   "proto": "lora",
+   "name": "LoRa 445.400 SF9 0x12",
+   "bearing": 300,
+   "sf": 9,
+   "bw": 41666.666666666664,
+   "cr": 1,
+   "freq_mhz": 445.4,
+   "level_db": 12,
+   "period_s": 2.2,
+   "t0": 1.6,
+   "sync_word": 18,
+   "inverted": false,
+   "crc": true,
+   "bytes": [
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107
+   ]
+  }
+ ]
+}

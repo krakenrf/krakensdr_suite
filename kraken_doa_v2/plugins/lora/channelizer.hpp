@@ -68,7 +68,19 @@ struct Front {
     }
 };
 
-// One channel: centre offset from the input's 0 Hz, output rate 2 bw
+// the oversampling that gives a whole number of output samples per block
+// (M = NFFT x os x bw / fs must be a multiple of 4: OVL and HOP are 1/4 and
+// 3/4 of NFFT)
+inline int os_for(double fs, double bw) {
+    for (int os = 2; os <= 16; os *= 2) {
+        const double m = NFFT * os * bw / fs;
+        const long mi = std::lround(m);
+        if (std::fabs(m - mi) < 1e-3 && mi % 4 == 0) return os;
+    }
+    return 0;
+}
+
+// One channel: centre offset from the input's 0 Hz, output rate os x bw
 struct Chan {
     int M = 0, k0 = 0, keep0 = 0;
     std::vector<float> G;             // response per output bin, FFT order
@@ -86,9 +98,11 @@ struct Chan {
         plan = nullptr;
         Y = y = nullptr;
     }
-    void init(double fs, double bw, double off_hz) {
+    // output rate os x bw (os 2; the caller passes 4 where 2 x bw isn't a
+    // whole multiple of 4 bins - 7.8 kHz: `os_for`)
+    void init(double fs, double bw, double off_hz, int os = 2) {
         release();
-        M = static_cast<int>(std::lround(NFFT * 2 * bw / fs));
+        M = static_cast<int>(std::lround(NFFT * os * bw / fs));
         keep0 = OVL * M / NFFT;
         const double df = fs / NFFT;
         k0 = static_cast<int>(std::lround(off_hz / df));
@@ -107,7 +121,7 @@ struct Chan {
         blk_ph = {1, 0};
         blk_rot = std::polar(1.0, -2 * M_PI * static_cast<double>(k0) * HOP / NFFT);
         nco = {1, 0};
-        nco_rot = std::polar(1.0, -2 * M_PI * resid / (2 * bw));
+        nco_rot = std::polar(1.0, -2 * M_PI * resid / (os * bw));
         renorm = 0;
     }
     // one block of the front end -> HOP x M / NFFT output samples

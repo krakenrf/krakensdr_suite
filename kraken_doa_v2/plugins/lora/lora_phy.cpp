@@ -17,7 +17,9 @@ namespace lora_phy {
 // apart always fit. The candidate is then aligned at os=2 by decode_from.
 static constexpr int DET_HOP = 2;
 static constexpr int DETECT_SYMS = 3;      // stable preamble up-peaks to trigger
-static constexpr float DETECT_RATIO = 3.0f;  // peak / mean power threshold
+// peak / mean power threshold: N bins of noise put their maximum above 3x
+// the mean most of the time at small N - SF5 / SF6 need more
+static float detect_ratio(int N) { return N >= 128 ? 3.0f : N >= 64 ? 3.5f : 4.0f; }
 static constexpr int MAX_PAYLOAD = 255;
 static constexpr int SCAN_MAX_SYMS = 40;   // symbols to scan for the SFD (Meshtastic sends a 16-symbol preamble)
 
@@ -162,15 +164,16 @@ void LoraRx::poll(std::vector<Frame>& out) {
     while (next_eval_ + L_ <= abs_) {
         float pk, mean;
         const int v = detect_bin(next_eval_, &pk, &mean);
-        const bool strong = pk > DETECT_RATIO * mean && mean > 0;
+        const bool strong = pk > detect_ratio(N_) * mean && mean > 0;
         if (strong && (det_bin_ < 0 || std::abs(((v - det_bin_ + N_ + N_ / 2) % N_) - N_ / 2) <= 1)) {
             if (det_count_ == 0) det_start_ = next_eval_;
             det_bin_ = v;
             det_count_++;
-            if (det_count_ >= DETECT_SYMS) {
+            if (det_count_ >= (sf_ <= 6 ? DETECT_SYMS + 1 : DETECT_SYMS)) {   // SF5 / 6: 32 / 64 bins match by chance more often
                 const int64_t start = det_start_;
                 det_count_ = 0;
                 det_bin_ = -1;
+                triggers_++;
                 const int r = decode_from(start, out);
                 if (r == 2) {   // a real packet, waiting for its tail
                     pending_ = true;
@@ -290,8 +293,14 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
         if (std::abs(s1 - 8 * n1) <= 1 && std::abs(s2 - 8 * n2) <= 1 && n1 < 16 && n2 < 16) sync_word = n1 << 4 | n2;
     }
 
-    // ---- header block: 8 symbols at reduced rate (sf_app = sf-2), CR 4/8 ----
-    const int sf_app_hdr = sf_ - 2;
+    // ---- header block: 8 symbols at CR 4/8, reduced rate (sf_app = sf-2) ----
+    // SF5 / SF6 (SX126x): sf - 2 bits can't carry the 5 header nibbles in a
+    // block, so the header block is read at the FULL rate, with or without
+    // two extra symbols after the SFD (both tried - the header checksum and
+    // the 8 codewords decide; not verified on a real SX126x here).
+    const bool low_sf = sf_ < 7;
+    const int sf_app_hdr = low_sf ? sf_ : sf_ - 2;
+    const bool hdr_reduced = !low_sf;
     Frame fr;
     fr.sf = sf_;
     fr.start_sample = sfd - 10 * L_;   // >= 8 preamble + 2 sync symbols before the SFD
@@ -317,36 +326,64 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
             if (!cok && bad) (*bad)++;
         }
     };
+    auto log_detect = [&](bool hok) {
+        if (!det_log) return;
+        Detect d;
+        d.sfd = sfd;
+        d.sync_word = sync_word;
+        d.cfo_hz = cfo_hz;
+        float pk = 0, mean = 0;
+        demod_bin(sfd - 3 * L_, false, &pk, &mean, nullptr);
+        d.snr_db = mean > 0 ? 10.0f * std::log10(std::max(pk / (mean * N_), 1e-6f)) : 0.f;
+        d.header_ok = hok;
+        d.sf = sf_;
+        d.inverted = invert_;
+        det_log->push_back(d);
+    };
 
-    if (data_start + 8LL * L_ > abs_) { need_abs_ = data_start + 8LL * L_; return 2; }
+    const int64_t hdr_wait = data_start + (low_sf ? 10LL : 8LL) * L_;
+    if (hdr_wait > abs_) { need_abs_ = hdr_wait; return 2; }
+    int64_t hdr_start = data_start;
+    const double track0 = track;
     if (!implicit_) {
-        std::vector<uint8_t> hn;
-        int hbad = 0;
-        block_nibbles(data_start, 8, sf_app_hdr, 4, true, hn, &hbad, nullptr);
-        if (hn.size() < 5) return 0;
-        const int plen = (hn[0] << 4) | hn[1];
-        const int hcr = (hn[2] >> 1) & 0x7;
-        const bool hcrc = hn[2] & 1;
-        const uint8_t chk = static_cast<uint8_t>(((hn[3] & 1) << 4) | hn[4]);
-        const uint8_t want = lora_code::header_checksum(hn[0], hn[1], hn[2]);
-        // a real header: the checksum AND every header codeword valid (CR
-        // 4/8, single errors corrected) - noise passes both ~1 in 10^7
-        fr.header_ok = (chk == want) && hbad == 0 && hcr >= 1 && hcr <= 4 && plen >= 1 && plen <= MAX_PAYLOAD;
-        if (!fr.header_ok) return 0;   // not a real header - drop the candidate
-        length = plen;
-        cr = hcr;
-        has_crc = hcrc;
-        // the header block also carries sf_app_hdr nibbles; the first 5 are the
-        // header, the remaining (sf_app_hdr - 5) are the first payload nibbles.
-        for (size_t k = 5; k < hn.size(); k++) {
-            nibbles.push_back(hn[k]);
-            nib_ok.push_back(1);
+        bool found = false;
+        for (int h = 0; h < (low_sf ? 2 : 1) && !found; h++) {
+            const int64_t hs = data_start + (low_sf && h == 0 ? 2LL * L_ : 0);
+            track = track0;
+            std::vector<uint8_t> hn;
+            int hbad = 0;
+            block_nibbles(hs, 8, sf_app_hdr, 4, hdr_reduced, hn, &hbad, nullptr);
+            if (hn.size() < 5) continue;
+            const int plen = (hn[0] << 4) | hn[1];
+            const int hcr = (hn[2] >> 1) & 0x7;
+            const bool hcrc = hn[2] & 1;
+            const uint8_t chk = static_cast<uint8_t>(((hn[3] & 1) << 4) | hn[4]);
+            const uint8_t want = lora_code::header_checksum(hn[0], hn[1], hn[2]);
+            // a real header: the checksum AND every header codeword valid (CR
+            // 4/8, single errors corrected) - noise passes both ~1 in 10^7
+            if (!((chk == want) && hbad == 0 && hcr >= 1 && hcr <= 4 && plen >= 1 && plen <= MAX_PAYLOAD)) continue;
+            found = true;
+            hdr_start = hs;
+            length = plen;
+            cr = hcr;
+            has_crc = hcrc;
+            // the header block also carries sf_app_hdr nibbles; the first 5 are the
+            // header, the remaining (sf_app_hdr - 5) are the first payload nibbles.
+            for (size_t k = 5; k < hn.size(); k++) {
+                nibbles.push_back(hn[k]);
+                nib_ok.push_back(1);
+            }
         }
+        fr.header_ok = found;
+        log_detect(found);
+        if (!found) return 0;   // not a real header - drop the candidate
     } else {
-        // implicit header: the first block is still 8 reduced-rate symbols at CR 4/8
-        block_nibbles(data_start, 8, sf_app_hdr, 4, true, nibbles, &fec_bad, &nib_ok);
+        // implicit header: the first block is still 8 symbols at CR 4/8
+        if (low_sf) hdr_start = data_start + 2LL * L_;
+        block_nibbles(hdr_start, 8, sf_app_hdr, 4, hdr_reduced, nibbles, &fec_bad, &nib_ok);
         fec_total += sf_app_hdr;
         fr.header_ok = true;
+        log_detect(true);
     }
     fr.cr = cr;
     fr.has_crc = has_crc;
@@ -358,7 +395,7 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
     const int sf_app = ldro ? sf_ - 2 : sf_;
 
     // decode subsequent blocks until we have enough nibbles
-    int64_t base = data_start + 8LL * L_;
+    int64_t base = hdr_start + 8LL * L_;
     int total_syms = 8;
     while (static_cast<int>(nibbles.size()) < need_nibbles) {
         const int nsym = 4 + cr;
@@ -405,6 +442,9 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
     fr.snr_db = mean > 0 ? 10.0f * std::log10(std::max(pk / (mean * N_), 1e-6f)) : 0.f;
 
     if (!fr.crc_ok && has_crc) return 0;   // only emit frames that passed the CRC
+    // no CRC from an unknown transmitter (the search) or at SF5 / SF6: the
+    // payload codewords must hold their parity (4/7 detects nothing: refused)
+    if (!has_crc && !implicit_ && (strict_nocrc || low_sf) && (cr == 3 || fec_bad * 8 > fec_total)) return 0;
     out.push_back(std::move(fr));
     return 1;
 }

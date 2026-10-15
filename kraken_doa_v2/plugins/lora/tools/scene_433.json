@@ -1,0 +1,69 @@
+{
+ "channels": 5,
+ "radius_m": 0.12,
+ "noise_lsb": 2.0,
+ "station": [
+  -41.0,
+  174.0
+ ],
+ "rf_hz": 433900000.0,
+ "seconds": 6,
+ "seed": 25,
+ "sources": [
+  {
+   "proto": "meshtastic",
+   "name": "!43343301",
+   "bearing": 70,
+   "sf": 11,
+   "bw": 250000,
+   "cr": 1,
+   "freq_mhz": 433.875,
+   "level_db": 12,
+   "period_s": 2.5,
+   "t0": 0.3,
+   "from": "0x43343301",
+   "to": "0xFFFFFFFF",
+   "id": "0x123401ea",
+   "hop_limit": 3,
+   "hop_start": 3,
+   "port": "text",
+   "text": "hello"
+  },
+  {
+   "proto": "meshtastic",
+   "name": "!43343302",
+   "bearing": 160,
+   "sf": 11,
+   "bw": 250000,
+   "cr": 1,
+   "freq_mhz": 434.425,
+   "level_db": 12,
+   "period_s": 2.5,
+   "t0": 0.9,
+   "from": "0x43343302",
+   "to": "0xFFFFFFFF",
+   "id": "0x12340460",
+   "hop_limit": 3,
+   "hop_start": 3,
+   "port": "text",
+   "text": "hello"
+  },
+  {
+   "proto": "lorawan",
+   "name": "DevAddr 26430001",
+   "bearing": 260,
+   "sf": 9,
+   "bw": 125000,
+   "cr": 1,
+   "freq_mhz": 433.375,
+   "level_db": 12,
+   "period_s": 1.8,
+   "t0": 0.5,
+   "mtype": "unconf_up",
+   "devaddr": "0x26430001",
+   "fcnt": 270,
+   "fport": 2,
+   "payload_len": 12
+  }
+ ]
+}

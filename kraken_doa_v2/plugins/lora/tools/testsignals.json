@@ -52,15 +52,13 @@
  {
   "id": "lora-au915-gateway",
   "title": "LoRaWAN AU915 at 927.5 MHz: two gateway downlinks + four uplinks",
-  "description": "A 2.4 MHz scene around 927.5 MHz (AU915 sub-band 8) with the plugin's default channel plan: gateway downlinks (inverted IQ, no payload CRC) on 927.5 MHz SF10 BW500 to DevAddr 00F6D6E1 (140 deg) and on 926.9 MHz SF7 BW500 (250 deg), uplinks (sync 0x34, CRC) of DevAddr 260B1234 SF7 BW125 927.2 MHz (40 deg), 260C5678 SF12 BW125 926.8 MHz (300 deg), 26BB9ABC SF9 BW125 927.6 MHz (200 deg) and 26AA0001 SF8 BW500 927.1 MHz (80 deg). A downlink's talker is its gateway (GW 927.5 / GW 926.9), never the DevAddr it is addressed to.",
+  "description": "A 2.4 MHz scene around 927.5 MHz (AU915 sub-band 8) with the plugin's defaults (Auto: Meshtastic US + ANZ, LoRaWAN US915 + AU915 + AS923): gateway downlinks (inverted IQ, no payload CRC) on 927.5 MHz SF10 BW500 to DevAddr 00F6D6E1 (140 deg) and on 926.9 MHz SF7 BW500 (250 deg), uplinks (sync 0x34, CRC) of DevAddr 260B1234 SF7 BW125 927.2 MHz (40 deg), 260C5678 SF12 BW125 926.8 MHz (300 deg), 26BB9ABC SF9 BW125 927.6 MHz (200 deg) and 26AA0001 SF8 BW500 927.1 MHz (80 deg). A downlink's talker is its gateway (GW 927.5 / GW 926.9), never the DevAddr it is addressed to.",
   "rf_hz": 927500000.0,
   "tuner_offset_hz": 0,
   "seconds": 6,
   "vfo": {
    "bw_khz": 2400,
-   "opts": {
-    "region": "anz"
-   }
+   "opts": {}
   },
   "steps": [
    [
@@ -94,6 +92,85 @@
    {
     "tid": "DevAddr 26AA0001",
     "bearing": 80
+   }
+  ],
+  "tol_deg": 5
+ },
+ {
+  "id": "lora-eu868",
+  "title": "LoRa EU868 (Auto): Meshtastic EU_868, LoRaWAN up / RX2 down, class-B beacon",
+  "description": "A 2.4 MHz scene around 868.8 MHz, the plugin's defaults (Auto picks Meshtastic EU_868 + the other 86x regions and LoRaWAN EU868 + RU864): a Meshtastic LongFast node !e1e2e3e4 on 869.525 MHz (50 deg), LoRaWAN uplinks DevAddr 26E00001 SF12 868.1 MHz (130 deg) and 26E00002 SF7 868.5 MHz (210 deg), and a gateway on 869.525 MHz sending an RX2 downlink (SF9, inverted IQ) and a class-B beacon (implicit header, both beacon CRCs, its position) - one talker GW 869.5 (290 deg).",
+  "rf_hz": 868800000.0,
+  "tuner_offset_hz": 0,
+  "seconds": 6,
+  "vfo": {
+   "bw_khz": 2400,
+   "opts": {}
+  },
+  "steps": [
+   [
+    "{tools}/lora_gen.py",
+    "{tools}/scene_eu868.json",
+    "out.cu8"
+   ]
+  ],
+  "output": "out.cu8",
+  "expect": [
+   {
+    "tid": "!e1e2e3e4",
+    "bearing": 50
+   },
+   {
+    "tid": "DevAddr 26E00001",
+    "bearing": 130
+   },
+   {
+    "tid": "DevAddr 26E00002",
+    "bearing": 210
+   },
+   {
+    "tid": "GW 869.5",
+    "bearing": 290
+   }
+  ],
+  "tol_deg": 5
+ },
+ {
+  "id": "lora-private-search",
+  "title": "LoRa off-plan private links found by the plan-free search (SF5-SF10, 62.5-500 kHz)",
+  "description": "446 MHz, where no LoRa plan exists: five private links the search has to find by itself - SF9 BW125 sync 0x12 on 445.2 MHz (45 deg), SF5 BW125 on 445.5 (300 deg), SF6 BW250 on 445.8 (330 deg), SF10 BW62.5 with sync 0x56 and INVERTED IQ on 446.1 (135 deg) and SF7 BW500 on 446.5 (225 deg). Each becomes a learned channel ('LoRa <MHz> SF<n> <sync>') after its first packet.",
+  "rf_hz": 446000000.0,
+  "tuner_offset_hz": 0,
+  "seconds": 8,
+  "vfo": {
+   "bw_khz": 2400,
+   "opts": {}
+  },
+  "steps": [
+   [
+    "{tools}/lora_gen.py",
+    "{tools}/scene_private.json",
+    "out.cu8"
+   ]
+  ],
+  "output": "out.cu8",
+  "expect": [
+   {
+    "tid": "LoRa 445.200 SF9 0x12",
+    "bearing": 45
+   },
+   {
+    "bearing": 300
+   },
+   {
+    "bearing": 330
+   },
+   {
+    "tid": "LoRa 446.100 SF10 0x56 inv",
+    "bearing": 135
+   },
+   {
+    "bearing": 225
    }
   ],
   "tol_deg": 5

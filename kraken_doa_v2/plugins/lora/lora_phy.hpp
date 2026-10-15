@@ -46,6 +46,18 @@ struct Frame {
     int nsym = 0;
 };
 
+// A preamble + SFD found (the header may still fail): what the plan-free
+// search reports about a LoRa signal it could not decode
+struct Detect {
+    int64_t sfd = 0;                // SFD start (channel stream sample)
+    int sync_word = -1;
+    double cfo_hz = 0;
+    float snr_db = 0;
+    bool header_ok = false;
+    int sf = 0;
+    bool inverted = false;
+};
+
 // One channel's resampled samples, shared by its receivers
 struct Ring {
     std::vector<cf> buf;
@@ -88,6 +100,14 @@ public:
     // frames are appended to `out`.
     void poll(std::vector<Frame>& out);
     void reset();
+    bool pending() const { return pending_; }
+    int triggers() const { return triggers_; }     // preamble candidates looked at so far
+
+    // every preamble + SFD found is appended here (nullptr = not logged)
+    std::vector<Detect>* det_log = nullptr;
+    // frames without a payload CRC need (almost) every payload codeword's
+    // parity to hold (frames from unknown transmitters: the plan-free search)
+    bool strict_nocrc = false;
 
 private:
     int sf_, os_, impl_len_, impl_cr_;
@@ -112,6 +132,7 @@ private:
     bool pending_ = false;
     int64_t pend_start_ = 0, pend_deadline_ = 0;
     int64_t need_abs_ = 0;          // a pending decode is retried once the ring reaches this
+    int triggers_ = 0;
 
     // demod a symbol starting at absolute index `a` with the down/up chirp;
     // returns the argmax bin (0..N-1, aliased) and fills pk/mean power.

@@ -3656,7 +3656,7 @@ Edit `include/config.hpp`:
   symbol demod with the fractional offset TRACKED per symbol (TRACK_ALPHA
   0.2: sample-clock drift, ~0.4 bin over a 0.5 s SF10 packet), INVERTED IQ
   (downlinks) = the ring read conjugated, the sync word measured, then the
-  coding chain (`coding.hpp`). SF7-12, BW 125/250/500, explicit + implicit
+  coding chain (`coding.hpp`). SF5-12, BW 7.8-500 kHz, explicit + implicit
   header, LDRO. Frames with a CRC only when it passes; without one (LoRaWAN
   downlinks) when the header checksum + all 8 header codewords pass, with
   the payload codewords' parity count (`fec_bad`) and per-byte validity
@@ -3691,24 +3691,59 @@ Edit `include/config.hpp`:
   "?" when a codeword of bytes 0-8 failed parity, no event then); `freq_hz` /
   `bw_hz` = the LoRa channel so nodes on different channels/SFs keep their
   own bearings. `avg_s` 10, `keep_s` 30 min. UI kind `node` 📶
-- Watched channels: the Meshtastic channel as the FIRMWARE computes it
-  (`mesh_freq_hz`: numChannels = floor((end - start) / (spacing + bw)), slot =
-  djb2(channel name) % numChannels, f = start + bw/2 + slot bw; the default
-  channel hashes the preset's name - ANZ LongFast = slot 19 / 52 = 919.875
-  MHz, ShortFast 918.875, ShortSlow 920.625, MediumFast 926.125; US
-  906.875, EU868 869.525). Options `region` (anz / us / eu868), `preset`,
-  `channel` (a named primary channel), `others` (default on: the other
-  presets' default channels inside the VFO - at 919.750 MHz LongFast +
-  ShortFast + ShortSlow), `sf` (preset | auto | 7..12, Meshtastic channels),
-  `lorawan` (default ON: the region's plan `Region::lw` inside the VFO at
-  every data rate's SF - AU915 uplinks 915.2 + 0.2 n (125 kHz SF7-12) /
-  915.9 + 1.6 n (500 kHz SF8), downlinks 923.3 + 0.6 n (500 kHz SF7-12,
-  inverted); US915; EU868 both directions + RX2; at 927.5 MHz 12 channels /
-  55 receivers, MAX_RX 72), `channels` (explicit `MHz:SF:BWkHz[:inv|:both]`,
-  SF 0 = 7-12, overrides), `tune` (once, ONLY when the receiver is outside
-  the region's band `band_lo/hi_mhz` - a restart must not pull a receiver
-  tuned inside it away; the first version retuned whenever nothing watched
-  was in the VFO), `sens`
+- Watched channels, REGION-NEUTRAL (the user's rule 2026-10-15; reworked
+  2026-10-16, `regions.hpp`): `region` (Meshtastic) and `lorawan` (plan)
+  default **auto** = every Meshtastic region (the firmware's table: 25
+  regions, spacing 0; presets incl. LongTurbo SF11/500; display names -
+  LONG_MODERATE hashes "LongMod") and every RP002 LoRaWAN plan (EU868, US915,
+  AU915, AS923-1..4, KR920, IN865, RU864, CN470 on its 470.3 + 0.2 n grid,
+  EU433, CN779; grids `LwGrid` iq 0 up / 1 down / 2 both, RX2, class-B
+  beacons `LwBeacon`) whose band overlaps the VFO; a key = only that one,
+  off / 0 = none (old `lorawan=1` = auto, `region=eu868` = eu_868). The
+  Meshtastic channel as the FIRMWARE computes it (`mesh_freq_hz`: numChannels
+  = floor((end - start) / bw), slot = djb2(name) % numChannels, f = start +
+  bw/2 + slot bw; the default channel hashes the preset's name - ANZ LongFast
+  919.875, US 906.875, EU_868 869.525, IN 865.875, EU_433 433.875). Specs
+  get a priority (`Prio`: explicit, learned, primary preset, LoRaWAN
+  downlink / RX2, beacon, other presets, uplinks - then nearest the VFO
+  centre, SF) and are added while the `cpu` budget holds (`budget_cost`:
+  receiver ~ bw x SF, a NEW channel ~ bw x 5.3 log2(2 bw / 520.8 Hz) - its
+  IFFT costs more than a one-SF receiver; normal 330 M ~ the AU915 window at
+  927.5 MHz; MAX_RX 128); what's dropped is named in Watching. `tune` only
+  with a chosen region, once, from outside its band. `channels`: explicit
+  `MHz:SF:BWkHz[:inv|:both]` (SF5-12, any LoRa BW - `snap_bw`; channels with
+  2 bw not a multiple of 4 bins run at os 4: `lora_chan::os_for`)
+- Class-B beacons: an implicit-header receiver (`LoraRx` implicit, CR 4/5,
+  no CRC, the plan's length); `beacon()` tries every RFU1 split, needs both
+  CRC-16s (0x1021 init 0, LSB first, LoRaMac-node's parser) -> talker "GW
+  <MHz>", InfoDesc 0-2 = the gateway's position
+- PLAN-FREE SEARCH (`search` 1 = 62.5-500 kHz, all = 7.8-500, 0 = off):
+  stage 1 `lora_search::Stage1` on the channelizer's forward FFTs (per-bin
+  floor, 11.5 ms groups, per BW a window of 4-12 groups, centres every B/8:
+  >= 9 sigma, flat quarters, band-limited, local max, rising edge); stage 2
+  `probe()`: a channel at the candidate synthesized from the last HIST_S 0.8 s
+  of FFT blocks (`xhist_`), receivers for every SF (5-12; narrow 5-10) / IQ
+  no channel of that BW there has (none if a plan / learned channel of the
+  BW sits within B/8), `strict_nocrc`, `det_log`; a receiver lives 14 of its
+  symbols past the probe's start (or while pending). A frame -> `learn()`
+  (a `Learned` channel at the measured frequency, rounded to 1 kHz, unless a
+  plan channel already has that receiver; 30 min, <= 16); nothing -> a
+  back-off (2 s doubling to 60 s); a preamble + SFD + sync word without a
+  header -> `report_detections` once SEEN AGAIN (same place / SF / BW / IQ /
+  sync within 10 min, preamble energy >= -6 dB in its bin) - the first run
+  on the real capture reported 291 one-off SF5 / SF6 / narrow "detections"
+  of FSK bursts before that rule. Cost: <= 6 probes/s (token bucket), <= 4
+  alive, the search's measured share <= 12 % of a core (cpu low 4 / high 25)
+- PHY additions (2026-10-16): SF5 / SF6 (header block at the full rate, with
+  or without 2 extra symbols after the SFD - both tried; unverified on an
+  SX126x), detection 4 windows + a higher peak threshold at SF <= 6
+  (`detect_ratio`), no-CRC frames from the search / SF <= 6 need <= 1/8 bad
+  payload codewords and CR != 4/7; `Detect` log; the dedupe (`same_frame`)
+  also matches no-CRC copies with >= 80 % equal bytes (a KR920 923.3
+  channel decoded the AS923 923.4 downlink with errors)
+- Other LoRa's talker: channel + SF + sync word ("LoRa 926.901 SF7 0x12",
+  `raw_tid`, the channel's nominal / learned frequency) - one sensor no
+  longer splits into two IDs by its measured frequency
 - Channel timestamps: `Channel::t0` = Host::time() at its creation (a
   rebuild mid-stream kept the old zero). A strong
   packet also decodes on the watched channel one BW away (a whole-BW offset
@@ -3734,8 +3769,11 @@ Edit `include/config.hpp`:
   FCnt consecutive) + SF7 BW500 ones there and on 926.9, and a sync-0x12
   sensor (2-byte frames, SF8 BW125, ~926.997 MHz): 63 frames decoded in 120 s
   (all CRCs pass; 13 downlinks without a parity error, the rest hit by the
-  busy band - the Python reference sees the same). Not decoded: SF9 BW500
-  normal-IQ bursts on 926.9 / 927.4 MHz (header never validates). Rework
+  busy band - the Python reference sees the same). The "SF9 BW500 normal-IQ
+  bursts" on 926.9 / 927.4 MHz were SF7 BW250 (the same chirp slope BW^2 /
+  2^SF): a private system, sync 0x12, explicit header without CRC, 21 / 101 /
+  231-byte frames starting 00 00 fd 1d - since 2026-10-16 the search learns
+  both channels (63 + 45 frames in the 120 s, no false ones; scratch lora3/) Rework
   tests: scene_five 16 / 16 + bearings exact; scene_au915 six talkers
   within 0.6 deg. CPU live at 927.5 MHz 27-30 % of a core (incl. ~11 % for
   the input pipe; 90 % before the channelizer + cheap detector), 113 MB.
