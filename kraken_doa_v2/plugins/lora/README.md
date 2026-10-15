@@ -106,6 +106,17 @@ the scene may be hex strings, random bytes come from the scene's seed.
   `!000000aa` 100.0, DevAddr 26011F88 20.0, the relay `!relay-44` 230.0 deg -
   each exact. Noise produces no frames.
 
+Live (2026-10-15, the real array, heimdall retuned via 8092 and its settings
+put back): 10 min at 919.750 MHz (the ANZ LongFast / ShortFast / ShortSlow
+default channels, every antenna captured in 15 s pieces and decoded with
+bearings) + 25 s at 922.977 MHz: no LoRa frame. NOTE: the coding chain is
+verified only by round trip against the in-repo generator (both written from
+the published descriptions) - no packet from real LoRa hardware has been
+decoded yet, so a convention the literature leaves open (whitening sequence,
+interleaver diagonal, Gray direction, header checksum bits) may still differ
+from Semtech's; a recording of a known Meshtastic / LoRaWAN packet would
+settle it.
+
 Bugs these tests found and fixed: the preamble residual was measured where
 the b0 alignment put the start - one symbol BEFORE the preamble whenever the
 first stable hop fell into the first preamble symbol, i.e. on noise: ~40 % of

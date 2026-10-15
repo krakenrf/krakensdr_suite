@@ -3688,7 +3688,10 @@ Edit `include/config.hpp`:
   it the host's file read): one busy channel 15.6 % (was 39 %), five 43 %
   (was 120 %). Limits: two packets overlapping on one channel can't both
   decode (half-duplex); a CFO beyond ~-20 % of BW at SF7 sometimes costs a
-  symbol; GPL projects used as documentation only
+  symbol; GPL projects used as documentation only. Live 10 min at 919.750
+  MHz (ANZ default channels) + 25 s at 922.977: no frame. The chain is only
+  verified against the in-repo generator - no real LoRa hardware packet
+  decoded yet (a known recording would settle the open conventions)
 
 **ILS / VOR / marker (`plugins/ils/`, README.md there):**
 - 48 kHz (`min_vfo_rate` 48 kHz: the VOR subcarrier reaches +-10.4 kHz).
