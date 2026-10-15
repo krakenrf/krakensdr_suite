@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <map>
 #include <memory>
@@ -71,6 +72,7 @@ struct Tx {                  // one transmitter (collar / tag)
     bool lost = false;
     // train
     double period = 0, t_ref = 0, jitter = 0;
+    double found_t = 0;      // when the train was found (its first period may be a multiple)
     double ppm_first = 0, ppm_prev = 0;
     double base_ppm = 0;     // its first steady rate (the generic modes are relative to it)
     std::deque<std::pair<double, double>> changes;   // (t, new ppm) of its sustained rate changes, 30 min
@@ -192,6 +194,7 @@ private:
     std::string streams_ = "auto", focus_;
     double doa_avg_ = 10, keep_h_ = 12, chan_bw_ = 1000;
     bool verbose_ = false;
+    const bool dump_ = getenv("WILDLIFE_DUMP") != nullptr;   // offline: train discovery
     std::vector<std::pair<double, std::string>> names_num_;   // MHz -> name
     std::map<std::string, std::string> names_id_;
 
@@ -396,6 +399,18 @@ private:
             coded = known;
         }
         for (auto& p : g) p.gsize = static_cast<int>(g.size());
+        // a collar-length pulse whose group holds only far shorter blips (an
+        // impulse / noise spike within GROUP_GAP_S: real UAV-RT recording,
+        // ~12 one-ms impulses a second) is still a single pulse of a train -
+        // it used to count as a group, so most of a real tag's pulses were
+        // left out of the train search and it was found at 3x its period
+        if (g.size() >= 2)
+            for (auto& p : g) {
+                const double w = p.t1 - p.t0;
+                bool dom = w >= 0.004;
+                for (const auto& o : g) dom = dom && (&o == &p || o.t1 - o.t0 < 0.4 * w);
+                if (dom) p.gsize = 1;
+            }
         for (const auto& p : g) {
             c.recent.push_back(p);
             while (!c.recent.empty() && c.recent.front().t0 < p.t0 - TRAIN_WIN_S) c.recent.pop_front();
@@ -580,6 +595,14 @@ private:
             if (r.t0 > p.t0 - TRAIN_WIN_S && single(r)) ts.push_back(r.t0);
         if (static_cast<int>(ts.size()) < CONFIRM_PULSES) return;
         const wl::Period P = wl::find_period(ts, PMIN, PMAX);
+        if (dump_)
+            fprintf(stderr, "WL train? %.4f f %+.0f: %zu pulses -> P %.4f support %d slots %d score %.1f jitter %.2f ms\n", p.t0,
+                    c.freq, ts.size(), P.period, P.support, P.slots, P.score, P.jitter * 1e3);
+        if (dump_) {
+            for (const auto& r : c.recent)
+                if (r.t0 > p.t0 - TRAIN_WIN_S)
+                    fprintf(stderr, "   %.4f %.1f ms g%d %.0f dBHz%s\n", r.t0, (r.t1 - r.t0) * 1e3, r.gsize, r.cn0, single(r) ? "" : " (not single)");
+        }
         if (P.support < CONFIRM_PULSES || P.score < CONFIRM_PULSES - 0.5 || P.slots > 3 * P.support) return;
         // a transmitter's crystal keeps time: the pulses sit on the grid to a few ms
         if (P.jitter > 0.0025 + 0.001 * P.period) return;
@@ -622,6 +645,7 @@ private:
         t.period = P.period;
         t.t_ref = p.t0;
         t.jitter = P.jitter;
+        t.found_t = p.t0;
         t.confirmed = true;
         t.id = make_id(c.freq, "");
         t.name = name_for(t);
@@ -684,9 +708,32 @@ private:
         if (++t.switch_votes < 3) return;
         t.switch_votes = 0;
         const double old_ppm = 60.0 / t.period;
+        // just found at a whole multiple of its period (missed pulses - a
+        // weak or fading collar): it was always this fast, no rate change
+        // (like the halving above; real UAV-RT tag: found at 3x, then
+        // "faster x3.0"). Told from a real speed-up soon after it was found
+        // by the pulses from BEFORE it was found: some sat on the new grid
+        // between the old one's slots (after a real switch none do)
+        bool always = false;
+        {
+            const double inv = 1.0 / rel, kq = std::round(inv);
+            if (now - t.found_t < std::max(30.0, 8 * 60.0 / old_ppm) && t.changes.empty() && kq >= 2 && kq <= 4 &&
+                std::fabs(inv / kq - 1) < 0.03) {
+                Tx nt;
+                nt.period = P.period;
+                nt.t_ref = P.t_ref;
+                for (const auto& r : t.hist)
+                    always = always || (r.t0 < t.found_t - 0.5 * P.period && on_grid(nt, r.t0) && !on_grid(t, r.t0));
+            }
+        }
         t.period = P.period;
         t.t_ref = P.t_ref;
         t.jitter = P.jitter;
+        if (always) {
+            classify(t, 0, true);
+            publish(t, true);
+            return;
+        }
         classify(t, old_ppm, false);
     }
 

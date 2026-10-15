@@ -315,6 +315,39 @@ identical, see *Region-neutral rework* below):
   - false alarms: the noise scene (300 s: impulses, a carrier, two FSK
     data signals, tone FM) - the same single tone-FM "collar" as before in
     every profile; no collar from the rest
+- **Real recording** (2026-10-16; verified against it, not in this repo):
+  the UAV-RT project's published flight data (Zenodo 5013572, "UAV
+  wildlife radio telemetry: system and methods of localization", range
+  test RNG005-ant_V - a small bird / bat VHF beacon received from a
+  drone, 48 kHz IQ, 294 s; one member fetched out of the 3.5 GB zip by
+  HTTP range requests). The reference: an independent numpy analysis
+  (the carrier's channel, 1 ms power envelope, half-power widths, phase
+  slopes). The tag: 16.2-16.4 ms pulses every 1292.5 ms (46.4 ppm), jitter
+  < 1 ms, carrier -643 Hz drifting ~-10 Hz/min, and a CHIRP inside every
+  pulse (the oscillator pulled by the keying: ~-90 Hz over the pulse with
+  a +-50 Hz wobble repeating pulse to pulse), rise 1-4 ms; well above the
+  noise only 86-140 s (19-66 dB in 1 kHz), the rest fading / truncated
+  pulses, plus ~12 one-ms impulses a second (the drone).
+  Plugin before: found at 87 s as 15.5 ppm (3x the period), then
+  "baseline -> faster x3.0" - a false rate change. Two causes, both fixed:
+  (1) a real pulse with an impulse within 0.16 s counted as a GROUP (a
+  coded-burst candidate) and was left out of the train search - a
+  collar-length pulse whose group holds only blips < 40 % of its width is
+  single now; (2) with 40 % of the first pulses lost a 3x grid scored best
+  - a whole-multiple period (x2..x4) corrected within max(30 s, 8 old
+  periods) of the discovery, before any other change, is taken as "it was
+  always this fast" (re-baselined, no event) WHEN pulses from before the
+  discovery sit on the new grid between the old one's slots (after a real
+  switch none do). Now: one collar, 46.4 ppm (1292.7 ms, jitter 0.2 ms),
+  16.6 ms, baseline, 32 DoA packets 87-144 s, lost after the flight leg.
+  Generator: `chirp_hz` added (the carrier moving linearly over each
+  pulse); a scene of 46.4 ppm collars with chirps 0 / -90 / -300 Hz, a
+  40 ms pulse with -150 Hz, a real 30 -> 60 ppm switch 10 s after its
+  discovery and 12 impulses a second: all six found, the switch still
+  "faster x2.0" (old and new binaries identical on it, on the five offline
+  scenes and the modes scene under global / na / nz). No coded-tag (Lotek /
+  Motus) recording found - those paths stay synthetic only.
+  `WILDLIFE_DUMP=1` (offline) prints every train search with its pulses
 ## Not decoded / limits
 
 - Lotek coded IDs: the gaps + burst interval identify a tag, but Lotek's

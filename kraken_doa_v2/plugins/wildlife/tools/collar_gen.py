@@ -15,6 +15,9 @@ common keys as options):
   type        "train" (a collar: one pulse per period) | "coded" (Lotek /
               Motus style: bursts of 4 pulses, gaps = the tag's code)
   offset_hz   carrier offset from the scene's centre;  drift_hz_s  (linear)
+  chirp_hz    the carrier moving this far (linearly) over each pulse - a real
+              tag's oscillator pulled by the keying (UAV-RT recording: ~-90 Hz
+              over its 16 ms pulses); 0 = none (default)
   ppm         pulses per minute;  width_ms (20; coded 2.5);  jitter_ms (0.5)
   start       first pulse (s);  rise_ms  edges (raised cosine, 1 ms; coded 0.3),
               centred on the half-amplitude points (width_ms = their distance)
@@ -142,10 +145,12 @@ class Renderer:
         self.drift = float(tx.get('drift_hz_s', 0))
         self.rise = float(tx.get('rise_ms', 0.3 if tx.get('type') == 'coded' else 1.0)) / 1e3
         self.ph0 = float(tx.get('phase', 0.3))
+        self.chirp = float(tx.get('chirp_hz', 0))
 
     def piece(self, n0, n):
         t = (n0 + np.arange(n)) / self.rate
         env = np.zeros(n)
+        cph = np.zeros(n)   # the in-pulse chirp's phase (analytic per pulse: piece independent)
         t_a, t_b = t[0], t[-1]
         i0 = np.searchsorted(self.lead, t_a - 0.2)
         r2 = self.rise / 2
@@ -162,7 +167,10 @@ class Renderer:
             dn = np.clip(((a + w + r2) - tt) / self.rise, 0, 1)
             e = (0.5 - 0.5 * np.cos(np.pi * up)) * (0.5 - 0.5 * np.cos(np.pi * dn))
             env[k0:k1] = np.maximum(env[k0:k1], e)
-        ph = 2 * np.pi * (self.f0 * t + 0.5 * self.drift * t * t) + self.ph0
+            if self.chirp:
+                u = np.clip((tt - a) / w, 0, 1)
+                cph[k0:k1] = 2 * np.pi * self.chirp * (0.5 * u * u * w + np.maximum(tt - a - w, 0))
+        ph = 2 * np.pi * (self.f0 * t + 0.5 * self.drift * t * t) + self.ph0 + cph
         return env * np.exp(1j * ph)
 
 
