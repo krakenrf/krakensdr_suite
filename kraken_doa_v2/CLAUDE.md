@@ -4465,6 +4465,24 @@ Edit `include/config.hpp`:
   every one of its 217 messages on its own capture + 111; of the
   generator's 197 it reads 144, all byte-identical), ais (AIS-catcher 7 / 7), radiosonde (rs1729 12 / 12
   RS41 + M20), dme (pulse shape = a real 40X)
+- Real-recording checks, part 2 (2026-10-16): ctcss (sigidwiki CTCSS IQ:
+  173.79 Hz = an independent tracker; a reverse burst's end had been moved
+  0.5 s back to a carrier fade taken for a capture - fixed; the "DCS" IQ
+  there is a 150 bit/s 21-bit code: nothing, correct; DCS synthetic only),
+  wildlife (UAV-RT's published drone IQ of a real tag: found at 3x its
+  period then "faster x3.0" - impulse blips made its pulses "groups", and a
+  multiple-period start is now corrected; generator `chirp_hz`), lora
+  (21 real Meshtastic packets from the public MQTT, real header +
+  ciphertext modulated: the AES-CTR counter was little-endian in plugin AND
+  generator - only 16 bytes decrypted; 11 -> 21 / 21; real Meshtastic IQ
+  none), generators through dsdcc (DMR repeater IDs / CC, D-STAR headers,
+  NXDN unit / TG exact; DMR direct mode and P25 not checkable there), p25 /
+  tetra on sigidwiki IQ (WACN / system = the file names; MCC 228 / MNC
+  8889), mpt1327 (the public "MPT1327-like" / taxi files aren't), ism
+  generator through rtl_433 (all fields; the WH24 frame read as a WH65B -
+  its tail, fixed). Not done: radar / ssr1030 / dtv / cells generators vs
+  the live captures (their generators were built from those captures'
+  measurements; no independent reference)
 
 **AI Signal Lab (`src/ai_manager.cpp`, `ai/`):**
 - Sidebar box "🤖 AI Signal Lab" + the "🤖 AI" tab of the panel under the
