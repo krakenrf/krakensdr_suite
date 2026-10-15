@@ -3737,8 +3737,13 @@ Edit `include/config.hpp`:
   every 2.5 s near 160.40 MHz) dropped; channels +-700 Hz; groups < 160 ms. Coded tag = 4 pulses
   in 0.4 s after 0.3 s quiet (on a collar's channel only a tag known there),
   gaps +-2 ms, confirmed after 3 bursts (burst interval = the shortest
-  interval all are multiples of, +-30 ms + 5 ms per k; aliased tags = same
-  gaps, other BI, kept apart), id "MHz g1/g2/g3@BI". Train = `find_period`
+  interval all are multiples of, +-30 ms + 5 ms per k - over the longest
+  run of the LATEST bursts that agree, `burst_interval`: an older one off
+  that grid - a jump in the input, a false burst - is dropped; aliased tags
+  = same gaps, other BI, kept apart; a candidate with a confirmed tag's gaps
+  + BI that wasn't heard since the candidate's first burst = that tag
+  resynchronised, same id - `resume_tag`, it came back as "...b"), id "MHz
+  g1/g2/g3@BI". Train = `find_period`
   (`train.cpp`: candidates pairwise / 1..4, score = on-grid - 0.5 empty
   slots, least squares) on the channel's single >= 4 ms pulses of 30 s:
   >= 4 pulses, jitter <= 2.5 ms + 0.1 %, one length (MAD <= 30 %),
@@ -3778,12 +3783,18 @@ Edit `include/config.hpp`:
   138, one pulse lost -, Chick Timer 8 numbers, kakapo Egg Timer 11 exact);
   collars from ~32-34 dBHz per 20 ms pulse; 300 s of impulses / CW / FSK data: no collar (a strictly
   periodic tone-FM test signal: one); 2.4 MHz survey: 5 / 5 across +-0.9
-  MHz; live debug playback: survey 5 / 5, 10 kHz VFO 1 / 1, 50 kHz VFO 4 /
-  5 (the second coded tag not confirmed - open), settings identical. Live
+  MHz; live debug playback: survey 5 / 5, 10 kHz VFO 1 / 1, 50 kHz VFO 5 /
+  5 (was 4 / 5 - the second coded tag never confirmed: the plugin's
+  FFTW_MEASURE plan took 6 s at 50 kHz / 23 s at 2.4 MHz before it read a
+  sample, kraken_doa dropped 2.3 s of its input between that tag's first two
+  bursts, and the confirmation wanted every burst on one grid - FFTW_ESTIMATE
+  now + the latest-run rule above), settings identical. Live
   (4 x 100 s of 160.115-160.595 MHz, heimdall retuned + restored): no
   collar; data bursts near 160.40 / 160.53 MHz first read as collars, fixed
   (burst-piece, jitter, one-length rules). CPU:
-  detector 8-12 % of a core at 2.4 MHz (FFTW_MEASURE; ESTIMATE was 14 %),
+  detector 8-12 % of a core at 2.4 MHz (measured with FFTW_MEASURE; the
+  ESTIMATE plan's 8192-point FFT is 77 vs 59 us = ~1 % of a core more; the
+  plugin live at 2.4 MHz 9.3 % incl. the pipe),
   0.2 % at 48 kHz. Regression: every plugin's --info identical, aprs /
   beacon406 playback scenes decoded identically (one peak / mean ratio)
 
@@ -4189,6 +4200,16 @@ Edit `include/config.hpp`:
   stderr tail (30 lines) is in the status JSON (`plugins[].log`) and the
   panel's "Plugin output". Stopping a decoder closes every plugin's stdin
   first, then reaps them (parallel exit - AUTO has 6)
+- No inherited fds: every child kraken_doa starts (plugins, `--info` runs,
+  the Voice to Text helper, the AI bridge, curl downloads, the playback's
+  generator; the tetra plugin's codec programs too) gets only its pipes /
+  stdio - `spawn_fds::close_above_stdio` (`include/utils/spawn_fds.hpp`:
+  `posix_spawn_file_actions_addclosefrom_np(3)` as the last file action,
+  `closefrom(3)` after fork) - and kraken_doa's own sockets are created
+  `SOCK_CLOEXEC` (tcp_client, gpsd, web mapper incl. accept4, geo_http; uWS's
+  already were). Before (2026-10-15) a plugin held copies of the 8091 /
+  8092 / gpsd sockets: heimdall kept the old 8091 connection (and queued
+  data to it) after kraken_doa had reconnected
 - Crash / malformed message -> event with the signal and last stderr line,
   restart after 2, 4 .. 30 s; missing / unbuilt plugin -> retried every 5 s
   (a snapshot may name a plugin this receiver lacks: accepted on replay,

@@ -320,13 +320,9 @@ private:
                 best = &c;
             }
         if (best) return *best;
-        if (ch_.size() >= 300) {   // the stalest goes
+        if (ch_.size() >= 300) {   // the stalest goes (Chan::train indexes tx_, not ch_: unchanged)
             auto it = std::min_element(ch_.begin(), ch_.end(), [](const Chan& a, const Chan& b) { return a.last_t < b.last_t; });
-            const int gone = static_cast<int>(it - ch_.begin());
             ch_.erase(it);
-            for (auto& c : ch_)
-                if (c.train > gone) c.train--;
-            (void)gone;
         }
         ch_.push_back({});
         ch_.back().freq = f;
@@ -392,6 +388,52 @@ private:
     }
 
     // ---- coded tags (Lotek / Motus style) ------------------------------
+    // the burst interval of b[s..]: the shortest interval (or a half / third
+    // of it) every interval is a whole multiple of; 0 = none
+    static double burst_interval(const std::vector<double>& b, size_t s) {
+        double dmin = 1e9;
+        for (size_t i = s + 1; i < b.size(); i++) dmin = std::min(dmin, b[i] - b[i - 1]);
+        for (int div = 1; div <= 3; div++) {
+            const double bi = dmin / div;
+            if (bi < BI_MIN || bi > BI_MAX) continue;
+            bool ok = true;
+            double sk = 0, sd = 0;
+            for (size_t i = s + 1; i < b.size(); i++) {
+                const double d = b[i] - b[i - 1], k = std::round(d / bi);
+                if (k < 1 || std::fabs(d - k * bi) > 0.03 + 0.005 * k) ok = false;
+                sk += k;
+                sd += d;
+            }
+            if (ok) return sd / sk;
+        }
+        return 0;
+    }
+
+    // a new candidate x with the gaps + burst interval of a confirmed tag not
+    // heard since x's first burst is that tag after a jump in the input (or
+    // back in range): it carries on under its own id (it came back as a
+    // second "...b" tag). g = x's latest burst
+    bool resume_tag(Tx& x, const std::vector<PRec>& g) {
+        const size_t ix = static_cast<size_t>(&x - tx_.data());
+        for (size_t iy = 0; iy < tx_.size(); iy++) {
+            Tx& y = tx_[iy];
+            if (iy == ix || !y.coded || !y.confirmed || std::fabs(y.freq - x.freq) > FREQ_TOL_HZ) continue;
+            bool same = std::fabs(y.bi - x.bi) <= 0.03 && y.last_t < x.bursts.front();
+            for (int i = 0; i < 3; i++) same = same && std::fabs(y.gaps[i] - x.gaps[i]) <= GAP_TOL_MS;
+            if (!same) continue;
+            y.bursts = x.bursts;
+            y.bi = x.bi;
+            for (const auto& p : x.hist) y.hist.push_back(p);
+            if (verbose_) host.log(y.id + fmt(": resynchronised (bursts every %.3f s)", y.bi));
+            erase_tx(ix);
+            Tx& z = tx_[iy > ix ? iy - 1 : iy];
+            for (const auto& p : g) report(z, p);
+            note_heard(z, g.back());
+            return true;
+        }
+        return false;
+    }
+
     void coded_burst(Chan& c, const std::vector<PRec>& g) {
         double gp[3];
         for (int i = 0; i < 3; i++) gp[i] = (g[static_cast<size_t>(i) + 1].t0 - g[static_cast<size_t>(i)].t0) * 1e3;
@@ -424,22 +466,20 @@ private:
         if (x.bursts.size() > 50) x.bursts.erase(x.bursts.begin());
         for (const auto& p : g) add_hist(x, p);
         if (!x.confirmed && x.bursts.size() >= 3) {
-            // burst interval: the shortest interval every interval is a multiple of
-            double dmin = 1e9;
-            for (size_t i = 1; i < x.bursts.size(); i++) dmin = std::min(dmin, x.bursts[i] - x.bursts[i - 1]);
-            for (int div = 1; div <= 3 && x.bi == 0; div++) {
-                const double bi = dmin / div;
-                if (bi < BI_MIN || bi > BI_MAX) continue;
-                bool ok = true;
-                double sk = 0, sd = 0;
-                for (size_t i = 1; i < x.bursts.size(); i++) {
-                    const double d = x.bursts[i] - x.bursts[i - 1], k = std::round(d / bi);
-                    if (k < 1 || std::fabs(d - k * bi) > 0.03 + 0.005 * k) ok = false;
-                    sk += k;
-                    sd += d;
+            // burst interval over the longest run of the LATEST bursts that
+            // agree; older bursts off that grid are dropped - a jump in the
+            // input (dropped samples don't advance Host::time()) or a false
+            // burst. All bursts had to agree before, so one jump blocked the
+            // tag for 50 bursts (the debug playback's 50 kHz VFO lost 2.3 s of
+            // samples at the plugin's start, between a tag's first two bursts)
+            for (size_t s = 0; s + 3 <= x.bursts.size() && x.bi == 0; s++) {
+                const double bi = burst_interval(x.bursts, s);
+                if (bi > 0) {
+                    x.bi = bi;
+                    x.bursts.erase(x.bursts.begin(), x.bursts.begin() + static_cast<long>(s));
                 }
-                if (ok) x.bi = sd / sk;
             }
+            if (x.bi > 0 && resume_tag(x, g)) return;
             if (x.bi > 0) {
                 x.confirmed = true;
                 char b[80];
@@ -840,14 +880,18 @@ private:
         host.table_detail(t.id, d);
     }
 
-    void drop_stalest() {
-        auto it = std::min_element(tx_.begin(), tx_.end(), [](const Tx& a, const Tx& b) { return a.last_t < b.last_t; });
-        const int gone = static_cast<int>(it - tx_.begin());
-        tx_.erase(it);
+    void erase_tx(size_t i) {
+        tx_.erase(tx_.begin() + static_cast<long>(i));
+        const int gone = static_cast<int>(i);
         for (auto& c : ch_) {
             if (c.train == gone) c.train = -1;
             else if (c.train > gone) c.train--;
         }
+    }
+
+    void drop_stalest() {
+        auto it = std::min_element(tx_.begin(), tx_.end(), [](const Tx& a, const Tx& b) { return a.last_t < b.last_t; });
+        erase_tx(static_cast<size_t>(it - tx_.begin()));
     }
 
     void update_gates() {

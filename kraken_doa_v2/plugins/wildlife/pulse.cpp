@@ -49,8 +49,11 @@ void PulseDetector::configure(double rate) {
     }
     fin_ = fftwf_alloc_complex(static_cast<size_t>(N_));
     fout_ = fftwf_alloc_complex(static_cast<size_t>(N_));
-    // MEASURE: ~2-3x faster than ESTIMATE at 8192 points on a Pi 5; planned once (< 1 s)
-    plan_ = fftwf_plan_dft_1d(N_, fin_, fout_, FFTW_FORWARD, N_ <= 16384 ? FFTW_MEASURE : FFTW_ESTIMATE);
+    // ESTIMATE: FFTW_MEASURE planned for 6 s (256 points) / 23 s (8192) on the
+    // Pi 5 before the plugin read its first sample - kraken_doa dropped what
+    // came meanwhile (> 1 s backlog) - for an FFT only ~25 % faster (8192:
+    // 59 vs 77 us, ~1 % of a core at 2.4 MHz)
+    plan_ = fftwf_plan_dft_1d(N_, fin_, fout_, FFTW_FORWARD, FFTW_ESTIMATE);
     size_t cap = 1;
     while (cap < static_cast<size_t>(rate * RING_S)) cap <<= 1;
     ring_.assign(cap, kp::cf(0, 0));

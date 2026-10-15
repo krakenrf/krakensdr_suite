@@ -670,7 +670,9 @@ least recently played go).
 
 liquid-dsp (`#include <liquid/liquid.h>`: resamplers, `symsync`, modems,
 `firfilt`, `nco`, FEC) and FFTW3 (`<fftw3.h>`, float API `fftwf_*`) are
-linked as well.
+linked as well. Plan with `FFTW_ESTIMATE`: `FFTW_MEASURE` takes seconds on
+the Pi 5 (6 s for 256 points, 23 s for 8192) before the plugin reads its
+first sample, and kraken_doa drops what queues up meanwhile (> 1 s).
 
 ## Build and test
 

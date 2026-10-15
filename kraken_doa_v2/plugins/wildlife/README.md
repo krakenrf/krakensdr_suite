@@ -48,9 +48,16 @@ one its own bearing on the 🗺 Map's 📡 DF panel (🐾 collar).
   - **coded tag** (Lotek / Motus style): a group of exactly 4 pulses within
     0.4 s after >= 0.3 s quiet; tags by their 3 gaps (lead to lead, +-2 ms),
     confirmed after 3 bursts give the burst interval (the shortest interval
-    every interval is a multiple of; +-30 ms + 5 ms per missed burst). Two
-    tags with the same gaps but another burst interval (Motus "aliasing")
-    stay apart. Id `<MHz> <g1>/<g2>/<g3>@<BI>` ("160.367 22.5/17.5/30.0@5.0")
+    every interval is a multiple of; +-30 ms + 5 ms per missed burst) - over
+    the longest run of the latest bursts that agree: an older burst off that
+    grid (a jump in the input - samples kraken_doa dropped don't advance
+    Host::time() - or a false burst) is dropped. Two tags with the same gaps
+    but another burst interval (Motus "aliasing") stay apart; a new
+    candidate with a confirmed tag's gaps AND interval that wasn't heard
+    since the candidate's first burst is that tag after a jump in the input
+    (or back in range) and carries on under its own id (it used to come back
+    as a second "...b" tag). Id `<MHz> <g1>/<g2>/<g3>@<BI>` ("160.367
+    22.5/17.5/30.0@5.0")
   - **collar (pulse train)**: the period of the channel's single pulses
     (>= 4 ms wide) over 30 s - candidates from the pairwise intervals / 1..4,
     scored by the pulses on the grid minus half the empty slots (so P/2 and
@@ -164,7 +171,9 @@ VFO), `wildlife-five-survey` (the same in a 2.4 MHz VFO),
   / 22 / 36 named), rates and modes; a 60 dBHz carrier, FSK bursts and
   impulses in the band: nothing
 - **CPU** (Pi 5, other load): the detector alone 8-12 % of a core at 2.4
-  MHz (FFTW_MEASURE plan; 14 % with ESTIMATE), 0.2 % at 48 kHz, ~0 at 10
+  MHz (measured with an FFTW_MEASURE plan; ESTIMATE since 2026-10-15 -
+  MEASURE planned 23 s at the start for a 77 -> 59 us FFT, ~1 % of a core),
+  0.2 % at 48 kHz, ~0 at 10
   kHz; the offline decode incl. the host's file conversion 15-24 % at 2.4
   MHz, 1.1 % at 48 kHz
 - **Regression** (old vs new binaries after the SDK change): `--info` of
@@ -177,11 +186,22 @@ VFO), `wildlife-five-survey` (the same in a 2.4 MHz VFO),
   165.1 / 131.0 / 300.9 / 260.1 deg (truth 40 / 170 / 130 / 300 / 260; the
   first run, before the last false-alarm rules: 39.1 / 166.8 / 129.1 / 302.0
   / 260.7); `wildlife-one-collar` (10 kHz VFO) 1 / 1 - 39.0;
-  `wildlife-five` (50 kHz VFO) 4 / 5 - 42.4 / 164.0 / 130.7 / 300.9, the
-  second coded tag (6.0 s bursts) NOT confirmed within 55, 60 or 90 s,
-  while offline at 48 and 50 kHz (the same scene with noise) both tags are
-  found (301.7 / 259.2) - open. The plugin live at 2.4 MHz: 9 % of a core
-  (the pipe included); kraken_doa 74 % while playing (~65 % before)
+  `wildlife-five` (50 kHz VFO) first 4 / 5 - the second coded tag (6.0 s
+  bursts) never confirmed, while offline at 48 and 50 kHz both tags were
+  found. Cause (the plugin's input captured live and replayed offline):
+  the FFTW_MEASURE plan took 6 s at 50 kHz (23 s at 2.4 MHz) on the Pi 5
+  before the plugin read its first sample, kraken_doa dropped 2.3 s of its
+  input (> 1 s backlog) right between that tag's first two bursts, and the
+  confirmation wanted EVERY burst on one grid (3.665 s then 6.0 s: never).
+  Fixed: FFTW_ESTIMATE (starts in ~10 ms, nothing dropped), the latest
+  consistent run of bursts, and `resume_tag` (a 2.3 s jump cut into a
+  scene after both tags were confirmed: both resynchronised under their
+  ids - the old code made "...b" / new-gap duplicates and lost the
+  originals). Re-run 2026-10-15 (cleanup): `wildlife-five` 5 / 5 - 39.0 /
+  129.0 / 167.9 / 302.0 / 260.8, `wildlife-five-survey` 5 / 5 - 39.1 /
+  130.4 / 169.6 / 297.4 / 262.3, `wildlife-one-collar` 39.0. The plugin
+  live at 2.4 MHz: 9.3 % of a core (the pipe included); kraken_doa ~70 %
+  while playing
 - **Live** (2026-10-15 19:25-19:38, heimdall retuned to 160.355 MHz via 8092
   and back, both settings files byte-identical): 4 x 100 s of 160.115-160.595
   MHz (sigtool captures at 480 kHz, decoded offline): no wildlife
@@ -209,9 +229,6 @@ VFO), `wildlife-five-survey` (the same in a 2.4 MHz VFO),
 - A strictly periodic modulated FM signal (the generator's tone FM with a
   3.1 Hz modulation) can still pass as one collar; impulses, CW carriers,
   FSK data bursts don't
-- Open: in the live pipeline's 50 kHz VFO the playback's second coded tag
-  (6.0 s bursts on the first tag's frequency) wasn't confirmed (above);
-  offline and in the 2.4 MHz survey it is
 - Collars below ~31-33 dBHz per 20 ms pulse are missed (the gate at a
   known collar's next slot is only ~1 dB more sensitive); at the limit a
   collar may be found at twice its period until it halves
