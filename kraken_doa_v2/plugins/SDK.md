@@ -45,6 +45,9 @@ plugins/
 │                         decoding, TEA de-whitening, stealth honoured) on every channel in the 2.4 MHz
 ├── ctcss/                CTCSS tones / DCS codes under analog FM (FFT search + narrowband tracker,
 │                         Golay DCS words): a transmission talker per tone, tone squelch, no voice
+├── beacon406/            406 MHz distress beacons (Cospas-Sarsat): bursts on every channel of a 100 kHz
+│                         VFO, biphase-L demodulator, BCH syndrome tables, every protocol; a packet
+│                         talker per 15-hex ID on its own channel; distress vs self-test
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)

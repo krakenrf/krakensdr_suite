@@ -1,0 +1,16 @@
+{
+ "rate": 100000,
+ "rf_hz": 406050000.0,
+ "channels": 5,
+ "radius_m": 0.12,
+ "seconds": 16,
+ "snr_db": 10,
+ "seed": 6,
+ "sources": [
+  {"name": "EPIRB 512123456", "file": "b1.cf32", "rate": 100000, "at": 0, "bearing": 40},
+  {"name": "PLB 245/9876", "file": "b2.cf32", "rate": 100000, "at": 0, "bearing": 130, "gain_db": -6},
+  {"name": "ELT ZK-OKA", "file": "b3.cf32", "rate": 100000, "at": 0, "bearing": 220, "gain_db": -3},
+  {"name": "PLB self-test", "file": "b4.cf32", "rate": 100000, "at": 0, "bearing": 300},
+  {"name": "SGB", "file": "b5.cf32", "rate": 100000, "at": 0, "bearing": 260, "gain_db": 3}
+ ]
+}

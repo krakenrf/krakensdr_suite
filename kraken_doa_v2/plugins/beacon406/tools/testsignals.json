@@ -1,0 +1,36 @@
+[
+{
+ "id": "beacon406-five",
+ "title": "406 MHz beacons: three distress, a self-test, a second-generation burst",
+ "description": "First-generation bursts with real framing + BCH on four channels: EPIRB MMSI 512123456 (standard location, 406.040 MHz, 40 deg) and PLB TAC 245 / serial 9876 (406.028 MHz, 130 deg) at the same moment, an ELT ZK-OKA (aviation user, short message, no position, bit rate +0.5 %, 220 deg), a PLB SELF-TEST (national location, 406.076 MHz, 300 deg, not an alert), and a second-generation DSSS burst on 406.050 MHz (260 deg, detected only). Each repeats after ~9 s (real beacons: ~50 s). Expect three ⚠ distress beacons with positions near the station (EPIRB, PLB), one self-test, one SGB, each at its bearing.",
+ "rf_hz": 406050000.0,
+ "tuner_offset_hz": 0,
+ "seconds": 16,
+ "vfo": {"bw_khz": 100},
+ "steps": [
+  ["{tools}/beacon_gen.py", "b1.cf32", "--seconds", "16", "--protocol", "std-mmsi", "--country", "512", "--mmsi", "512123456",
+   "--lat", "{lat+0.04}", "--lon", "{lon+0.05}", "--offset", "-10000", "--at", "1.0", "--at", "9.0", "--seed", "1"],
+  ["{tools}/beacon_gen.py", "b2.cf32", "--seconds", "16", "--protocol", "std-plb-serial", "--country", "512", "--cert", "245",
+   "--serial", "9876", "--lat", "{lat-0.03}", "--lon", "{lon-0.06}", "--offset", "-22000", "--at", "1.2", "--at", "10.5", "--seed", "2"],
+  ["{tools}/beacon_gen.py", "b3.cf32", "--seconds", "16", "--protocol", "user-aviation", "--country", "512", "--reg", "ZK-OKA",
+   "--short", "--offset", "-13000", "--at", "4.0", "--at", "13.0", "--bit-err", "0.5", "--seed", "3"],
+  ["{tools}/beacon_gen.py", "b4.cf32", "--seconds", "16", "--protocol", "nat-plb", "--country", "512", "--national", "54321",
+   "--offset", "26000", "--test-at", "6.0", "--test-at", "14.6", "--seed", "4"],
+  ["{tools}/beacon_gen.py", "b5.cf32", "--seconds", "16", "--sgb-at", "7.4", "--seed", "5"]
+ ],
+ "scene": {"rate": 100000, "snr_db": 10, "seed": 6, "sources": [
+  {"name": "40043C4800FFBFF", "file": "b1.cf32", "rate": 100000, "at": 0, "bearing": 40},
+  {"name": "400E7ACD28FFBFF", "file": "b2.cf32", "rate": 100000, "at": 0, "bearing": 130, "gain_db": -6},
+  {"name": "C0064C7E623FB81", "file": "b3.cf32", "rate": 100000, "at": 0, "bearing": 220, "gain_db": -3},
+  {"name": "40166A18BF81FE0", "file": "b4.cf32", "rate": 100000, "at": 0, "bearing": 300},
+  {"name": "SGB", "file": "b5.cf32", "rate": 100000, "at": 0, "bearing": 260, "gain_db": 3}
+ ]},
+ "expect": [
+  {"tid": "40043C4800FFBFF", "bearing": 40},
+  {"tid": "400E7ACD28FFBFF", "bearing": 130},
+  {"tid": "C0064C7E623FB81", "bearing": 220},
+  {"tid": "40166A18BF81FE0", "bearing": 300},
+  {"tid": "SGB", "bearing": 260}
+ ]
+}
+]
