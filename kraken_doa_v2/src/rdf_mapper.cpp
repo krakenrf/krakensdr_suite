@@ -121,6 +121,7 @@ struct Shared {
         // cell): delay, power vs the strongest, above the floor, reference
         bool sp = false, sp_ref = false;
         double sp_us = 0, sp_db = 0, sp_snr = 0;
+        double dur_s = 0, air_s = 0;       // transmissions: the latest one's length, all together
     };
     std::map<Key, V> v;
     bool full = true;
@@ -558,6 +559,8 @@ void sampler() {
                 v.tx_frames = d.ti.tx_frames;
                 v.last_ms = d.ti.last_ms;
                 v.tx_end_ms = d.ti.tx_end_ms;
+                v.dur_s = d.ti.dur_s;
+                v.air_s = d.ti.air_s;
                 v.doa = d.ti.doa;
                 v.hist = std::move(d.hist);
             }
@@ -956,6 +959,8 @@ std::string status_message() {
           << ",\"tframes\":" << v.tframes << ",\"tx_frames\":" << v.tx_frames << ",\"age\":" << age(v.last_ms)
           << ",\"tx_age\":" << age(v.tx_end_ms) << ",\"doa\":" << (v.doa >= 0 ? num(v.doa, 1) : "null")
           << (v.packet ? ",\"pk\":true" : "") << ",\"pl\":\"" << json_escape(v.plugin) << "\"";
+        // transmissions: the latest one's length and the air time (s)
+        if (!v.packet && !v.sp && v.dur_s > 0) o << ",\"dur\":" << num(v.dur_s, 1) << ",\"air\":" << num(v.air_s, 1);
         // a spatial talker (an SFN transmitter): [delay after the earliest
         // (us), power vs the strongest (dB), above the floor (dB), reference]
         if (v.sp)

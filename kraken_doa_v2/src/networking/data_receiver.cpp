@@ -962,17 +962,23 @@ void DataReceiver::decimation_processor_thread() {
             }
 
             // 🗣 Voice to Text: VFOs with Transcribe on and no digital decoder
-            // (one with a decoder sends its decoded voice through the
-            // decoder's voice tap) - the same stream, demodulated in
-            // voice2text.cpp with the VFO's demod. Cut into transmissions by
-            // the VFO's squelch; with it off, by a signal AUTO_SQUELCH_DB over
-            // the noise floor in the FFT
+            // of voice (one that decodes voice sends it through the decoder's
+            // voice tap; ctcss / pocsag / adsb ... decode none: the analog
+            // demod then, named after the decoder's talker - the CTCSS tone /
+            // DCS code) - the same stream, demodulated in voice2text.cpp with
+            // the VFO's demod. Cut into transmissions by the VFO's squelch;
+            // with it off, by a signal AUTO_SQUELCH_DB over the noise floor in
+            // the FFT
             if (transcribe_needs_processing) {
                 for (auto& result : results) {
                     const auto& inst = result.instance;
-                    if (!inst || !inst->transcribe.load(std::memory_order_relaxed) ||
-                        inst->digital_mode.load(std::memory_order_relaxed) != 0)
-                        continue;
+                    if (!inst || !inst->transcribe.load(std::memory_order_relaxed)) continue;
+                    std::string v2t_tid, v2t_tlabel;
+                    if (inst->digital_mode.load(std::memory_order_relaxed) != 0) {
+                        auto dd = inst->getDigital();
+                        if (!dd || dd->takes_voice()) continue;
+                        dd->lead_talker(&v2t_tid, &v2t_tlabel);
+                    }
                     if (result.decimated_data.channels.empty() || result.decimated_data.min_samples == 0) continue;
                     const vector<complex<float>>* src = nullptr;
                     if (result.beamformer_ran) {
@@ -996,7 +1002,7 @@ void DataReceiver::decimation_processor_thread() {
                                                                     inst->decimator->getBandwidthMhz() * 1e6f);
                     }
                     v2t::feed_analog(inst->id, src->data(), src->size(), result.decimated_data.output_rate_hz, rf,
-                                     inst->demod_mode.load(std::memory_order_relaxed), open);
+                                     inst->demod_mode.load(std::memory_order_relaxed), open, v2t_tid, v2t_tlabel);
                 }
             }
 

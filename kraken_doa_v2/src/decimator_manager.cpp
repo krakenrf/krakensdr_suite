@@ -422,7 +422,7 @@ SquelchMethod DecimatorManager::effectiveSquelchMethod(const DecimatorInstance& 
 
 bool DecimatorManager::digitalSquelchOpen(const DecimatorInstance& inst) {
     auto dd = inst.getDigital();
-    return dd && dd->frames_within(DIGITAL_SQUELCH_HOLD_MS);
+    return dd && dd->squelch_open(DIGITAL_SQUELCH_HOLD_MS);
 }
 
 bool DecimatorManager::setSquelchOpen(int id, bool open) {

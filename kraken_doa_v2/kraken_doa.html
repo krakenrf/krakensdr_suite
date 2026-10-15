@@ -6611,7 +6611,7 @@ function updateDecimatorList(info) {
         <span id="dec-squelch-val-${dec.id}" style="width:45px;text-align:right;font-size:10px">${squelchLevel} dB</span>
       </div>
       <div class="dec-row" style="display:${squelchEnabled && sqMethod === 'DIGITAL' ? 'flex' : 'none'}" id="dec-squelch-dig-${dec.id}">
-        <span style="font-size:10px;color:#888;line-height:1.35">Opens on frames the decoder confirms (stays open 1.5 s after the last); the DoA comes from exactly their samples</span>
+        <span style="font-size:10px;color:#888;line-height:1.35">Opens on frames the decoder confirms (stays open 1.5 s after the last - CTCSS / DCS: 0.35 s); the DoA comes from exactly their samples</span>
       </div>
     `;
 
@@ -12555,7 +12555,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // Ties are broken by name, ID and VFO, so rows with equal values (heard in
   // the same second) never swap; empty values go last either way. Radios
   // stay above packet talkers. Returns [talker, rdfPosCheck] pairs
-  const RDF_SORT_DEF = {radio: ['heard', 1], aircraft: ['dist', 1], ship: ['dist', 1], beacon: ['name', 1],
+  const RDF_SORT_DEF = {radio: ['heard', 1], tone: ['heard', 1], aircraft: ['dist', 1], ship: ['dist', 1], beacon: ['name', 1],
                         device: ['name', 1], path: ['info', 1], cell: ['info', 1], station: ['dist', 1], sonde: ['dist', 1],
                         site: ['name', 1], navaid: ['name', 1], radar: ['name', 1], interrogator: ['name', 1],
                         gs: ['name', 1], flarm: ['dist', 1], talker: ['heard', 1]};
@@ -12570,17 +12570,20 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     dpos: (t, c) => c && c.err !== null ? c.err : null,
     heard: t => t.active ? -1 : t.age ?? null,
     tx: t => t.tx,
+    // transmissions' lengths (CTCSS / DCS tones): the latest one, the air time
+    dur: t => t.dur ?? null,
+    air: t => t.air ?? null,
   };
   function rdfSortOf(kinds) {
     const s = mapState.rdfSort && mapState.rdfSort[kinds];
     return Array.isArray(s) && RDF_SORT_KEYS[s[0]] && (s[1] === 1 || s[1] === -1) ? s : RDF_SORT_DEF[kinds] || ['name', 1];
   }
   // a column heading clicked: sort by it (the same again = reversed; counts
-  // start with the most)
+  // and lengths start with the most)
   function rdfSetSort(col) {
     if (!RDF_SORT_KEYS[col]) return;
     const kinds = rdfKinds(rdfTalkers()), [c, d] = rdfSortOf(kinds);
-    mapState.rdfSort = Object.assign({}, mapState.rdfSort, {[kinds]: [col, c === col ? -d : col === 'tx' ? -1 : 1]});
+    mapState.rdfSort = Object.assign({}, mapState.rdfSort, {[kinds]: [col, c === col ? -d : ['tx', 'dur', 'air'].includes(col) ? -1 : 1]});
     mapSave();
     rdfRenderPanel();
   }
@@ -12865,7 +12868,16 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     // UAT ground stations (their uplinks and the TIS-B / ADS-R traffic they
     // rebroadcast) beside the aircraft
     if (t.pk && t.pl === 'uat' && /^GS /.test(t.tid)) return 'gs';
+    // an analog FM transmitter named by its CTCSS tone / DCS code (ctcss plugin)
+    if (!t.pk && t.pl === 'ctcss') return 'tone';
     return !t.pk ? 'radio' : RDF_PK_KIND[t.pl] || 'talker';
+  }
+  // a length in seconds, short (the tone list's Last / Air columns)
+  function rdfDur(s) {
+    if (s === null || s === undefined) return '';
+    if (s < 60) return s.toFixed(s < 10 ? 1 : 0) + ' s';
+    const m = Math.floor(s / 60);
+    return m < 60 ? m + ':' + String(Math.round(s % 60)).padStart(2, '0') : Math.floor(m / 60) + ' h ' + (m % 60) + ' min';
   }
   // the talker's map point (its decoder's "Plot on map"), or null
   function rdfMapPt(t) {
@@ -12886,7 +12898,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       return /paraglider|hang glider|parachute/.test(l) ? '🪂 ' : /helicopter/.test(l) ? '🚁 ' : /balloon|airship/.test(l) ? '🎈 ' : '✈ ';
     }
     return {ship: '⛴ ', aircraft: '✈ ', beacon: '📡 ', device: '📟 ', path: '📶 ', cell: '📱 ', station: '📻 ',
-            sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 ', gs: '🗼 '}[k] || '';
+            sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 ', gs: '🗼 ', tone: '🔔 '}[k] || '';
   }
   function rdfKinds(ts) {   // one word for a list of talkers: the common kind, else 'talker'
     const ks = new Set(ts.map(rdfKind));
@@ -12962,8 +12974,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         else line += ' · <span class="w">no bearing yet</span>';
         h += (h ? '<br>' : '') + line + '<br>' + rdfMapLine('Heat map', getDecimatorColor(t.vfo), tsel, t);
       } else if (t) {
-        let line = `<b style="color:${getDecimatorColor(t.vfo)}">${digEsc(t.tid)}</b>${t.label ? ' ' + digEsc(t.label) : ''} · ` +
-          (t.active ? '<span class="g">on air</span>' : `heard ${rdfAge(t.age)} ago`) + ` · ${t.tx} transmission${t.tx === 1 ? '' : 's'}`;
+        let line = `<b style="color:${getDecimatorColor(t.vfo)}">${rdfIcon(t)}${digEsc(t.tid)}</b>${t.label ? ' ' + digEsc(t.label) : ''} · ` +
+          (t.active ? '<span class="g">on air</span>' : `heard ${rdfAge(t.age)} ago`) + ` · ${t.tx} transmission${t.tx === 1 ? '' : 's'}` +
+          (t.dur ? ` · latest ${rdfDur(t.dur)}, air time ${rdfDur(t.air)}` : '');
         if (t.doa !== null) line += ` · latest: ${rdfBearingTxt(t)} (${t.tx_frames} frame${t.tx_frames === 1 ? '' : 's'}, ${Math.round(100 * t.conf)} %)`;
         else line += ' · <span class="w">no DoA frames from it yet (needs DoA on and frames entirely inside its transmissions)</span>';
         h += (h ? '<br>' : '') + line + '<br>' + rdfMapLine('Heat map', getDecimatorColor(t.vfo), tsel, t);
@@ -12988,7 +13001,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     let tl = '';
     if (ts.length && mapState.rdfOpen) {
       const air = kinds === 'aircraft';
-      const head = {radio: ['Radio', 'Talkgroup', 'Tx'], aircraft: ['Callsign', 'ICAO', 'Pkts'], ship: ['MMSI', 'Name', 'Pkts'],
+      const head = {radio: ['Radio', 'Talkgroup', 'Tx'], tone: ['Tone / code', 'Measured', 'Tx'],
+                    aircraft: ['Callsign', 'ICAO', 'Pkts'], ship: ['MMSI', 'Name', 'Pkts'],
                     beacon: ['Channel', 'Ident · MHz', 'Pairs'], device: ['Device', 'Reading', 'Tx'],
                     path: ['Path', 'From the main path · power', 'Reports'], cell: ['Cell', 'Technology · PCI · power', 'Reports'],
                     station: ['Callsign', 'Packet · path', 'Pkts'], sonde: ['Sonde', 'Type · altitude', 'Frames'],
@@ -12999,13 +13013,17 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                     talker: ['ID', 'Info', 'Tx']}[kinds];
       // position columns for talkers that report positions (not DME beacons / ISM devices / sites / navaids / radars / interrogators)
       const posCols = ts.some(t => t.pk && RDF_POS_KINDS.has(rdfKind(t)));
+      // transmitters named by their tone (ctcss): the transmissions' lengths
+      const toneCols = ts.some(t => rdfKind(t) === 'tone');
       const [scol, sdir] = rdfSortOf(kinds);
       const th = (col, text, tip) => `<th data-sort="${col}" title="${tip ? digEsc(tip) + ' - ' : ''}Sort by this column (again: reversed)">` +
         `${text}${col === scol ? (sdir > 0 ? ' ▲' : ' ▼') : ''}</th>`;
       tl = '<table><tr><th></th>' + (multi ? th('vfo', 'VFO') : '') + th('name', head[0]) + th('info', head[1]) +
         (posCols ? th('dist', 'Dist', 'Distance from the station to its reported position') : '') + th('brg', 'Bearing') +
         (posCols ? th('dpos', 'Δ pos', 'DF bearing minus the bearing to its reported position') : '') +
-        th('heard', 'Heard') + th('tx', head[2]) + '</tr>';
+        th('heard', 'Heard') +
+        (toneCols ? th('dur', 'Last', 'The latest transmission\'s length') + th('air', 'Air', 'All its transmissions together') : '') +
+        th('tx', head[2]) + '</tr>';
       for (const [t, c] of listed) {
         const k = rdfGk(t.vfo, t.tid), ap = air ? rdfAirParts(t) : null;
         const tip = air ? `${rdfTalkerName(t)}${ap.rest ? ' · ' + ap.rest : ''} - show its DoA on the map` : `Show this ${rdfKind(t)}'s DoA on the map`;
@@ -13017,7 +13035,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                  `<td class="dim"><span class="clip" title="${digEsc(t.label || '')}">${digEsc(t.label || '')}</span></td>`) +
           (posCols ? `<td class="n">${c ? (c.km < 10 ? c.km.toFixed(1) : Math.round(c.km)) + ' km' : ''}</td>` : '') +
           `<td class="n">${rdfBearingTxt(t)}</td>` + (posCols ? `<td class="n">${c && c.err !== null ? rdfSigned(c.err) : ''}</td>` : '') +
-          `<td class="n dim">${t.active ? 'now' : rdfAge(t.age)}</td><td class="n">${t.tx}</td></tr>`;
+          `<td class="n dim">${t.active ? 'now' : rdfAge(t.age)}</td>` +
+          (toneCols ? `<td class="n">${t.active ? '' : rdfDur(t.dur)}</td><td class="n">${rdfDur(t.air)}</td>` : '') +
+          `<td class="n">${t.tx}</td></tr>`;
       }
       tl += '</table>';
     }

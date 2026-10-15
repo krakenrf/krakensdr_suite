@@ -227,6 +227,13 @@ struct Info {
     // the VFO doesn't see yet. kraken_doa honours tune() only from plugins
     // that declare it
     bool tunes = false;
+    // How long the VFO's Digital squelch stays open after the last valid
+    // frame, in seconds (0 = the host's 1.5 s, for frames a few hundred ms
+    // apart). A decoder that reports valid(start, end) for short pieces of a
+    // continuous signal (ctcss: every 50 ms while the tone is there) sets it
+    // shorter, so the squelch closes soon after the signal ends instead of
+    // passing 1.5 s of noise after every transmission
+    double squelch_hold_s = 0;
 };
 
 class Host {

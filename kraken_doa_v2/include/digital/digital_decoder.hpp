@@ -143,6 +143,19 @@ public:
     // The Digital squelch's live state: the active plugin (fixed, or what
     // Auto detect locked onto) reported a valid frame within the last ms
     bool frames_within(int64_t ms) const;
+    // ... within its own hold (kp::Info::squelch_hold_s; def_ms when it sets none)
+    bool squelch_open(int64_t def_ms) const;
+    // The VFO's voice comes from this decoder (Voice to Text, the analog
+    // feed): its plugin decodes voice (kp::Info::voice) - in Auto detect the
+    // detected one, or, still searching, any it runs. A decoder of no voice
+    // (ctcss, pocsag, adsb...) leaves the VFO's analog demod to Voice to Text
+    bool takes_voice() const { return takes_voice_.load(std::memory_order_relaxed); }
+    // the lead plugin's talker now (the open one that started first): Voice
+    // to Text names an ANALOG transmission after it (ctcss: "CTCSS 88.5").
+    // false = none
+    bool lead_talker(std::string* id, std::string* label) const;
+    void set_lead_talker(const std::string& id, const std::string& label);   // Engine
+    void set_takes_voice(bool on) { takes_voice_.store(on, std::memory_order_relaxed); }   // Engine
     void set_options(const Options& o);
     Options options() const;
 
@@ -209,6 +222,9 @@ public:
 
 private:
     std::atomic<int> vfo_id_{-1};
+    std::atomic<bool> takes_voice_{true};
+    mutable std::mutex lead_mu_;
+    std::string lead_tid_, lead_tlabel_;
     std::atomic<Mode> mode_{Mode::OFF};
     std::atomic<bool> reset_pending_{false};   // set_mode -> worker reconfigures + resets
     mutable std::mutex opt_mu_;

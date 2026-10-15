@@ -149,6 +149,9 @@ struct TalkerInfo {
     int tx = 0;                    // transmissions heard
     int frames = 0;                // frames used, all transmissions
     int64_t first_ms = 0, last_ms = 0;   // first / last heard (system clock)
+    // transmissions (not packets / spatial): the latest one's length and
+    // all of them together (s, from their spans - the ctcss plugin's tones)
+    double dur_s = 0, air_s = 0;
     bool packet = false;           // a packet talker (aircraft, ship): tx = packets, no heat map
     double avg_s = 0;              // packets averaged over (s, 0 = PACKET_TAU_S)
     double keep_s = 0;             // kept after its last packet (s, 0 = packet_ttl_ms's default)
@@ -263,6 +266,9 @@ private:
         // packet talkers: R / w decay with stream time
         double last_s = 0;         // stream time of the latest packet
         int64_t computed_ms = 0, hist_ms = 0;
+        // transmissions' lengths: the span info.dur_s is of, the earlier ones' sum
+        uint64_t dur_seq = ~0ull;
+        double air_done = 0;
     };
     std::map<std::string, Talker> talkers_;
 

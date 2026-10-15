@@ -472,6 +472,8 @@ private:
     int64_t afc_changed_ms_ = 0;
     int64_t last_valid_ms_ = 0;
     std::map<std::string, int64_t> last_valid_by_;   // plugin -> its last valid frame (the Digital squelch)
+    std::map<std::string, int64_t> hold_ms_by_;      // plugin -> its squelch hold (kp::Info::squelch_hold_s)
+    std::string lead_tid_sent_, lead_tlabel_sent_;   // what set_lead_talker last got (worker thread)
     std::vector<PluginStatus> status_plugins_;
 
     // --- runner set ---------------------------------------------------------
@@ -674,6 +676,11 @@ private:
         r.info = pi;
         r.known = true;
         report_.set_label(r.id, pi.name);
+        {
+            std::lock_guard<std::mutex> lk(st_mu_);
+            if (pi.squelch_hold_s > 0) hold_ms_by_[r.id] = static_cast<int64_t>(pi.squelch_hold_s * 1000);
+            else hold_ms_by_.erase(r.id);
+        }
         if (rate_changed) rebuild_resamplers();
         update_array_wanted();
         r.array_next = ~0ull;
@@ -1299,6 +1306,11 @@ public:
         auto it = last_valid_by_.find(id);
         return it == last_valid_by_.end() ? 0 : it->second;
     }
+    int64_t squelch_hold_ms(const std::string& id, int64_t def) const {
+        std::lock_guard<std::mutex> lk(st_mu_);
+        auto it = hold_ms_by_.find(id);
+        return it == hold_ms_by_.end() ? def : it->second;
+    }
 private:
 
     void on_freq_error(float hz) {
@@ -1362,6 +1374,29 @@ private:
                 report_.event(now, std::string(mode_ == Mode::AUTO ? "Detected " : "Receiving ") + name_of(now), 0.0);
             else
                 report_.event(old, "Signal lost", 0.0);
+        }
+        // who has the VFO's voice (Voice to Text): the lead plugin if it decodes
+        // voice; in Auto detect, still searching, any of its plugins that does;
+        // an unknown plugin (not started yet) counts as a voice decoder
+        bool voice = false;
+        const Runner* lead = nullptr;
+        for (const auto& r : runners_) {
+            if (mode_ == Mode::PLUGIN || (!now.empty() && r->id == now)) lead = r.get();
+            if (mode_ == Mode::AUTO && now.empty() && (!r->known || r->info.voice)) voice = true;
+        }
+        if (lead) voice = !lead->known || lead->info.voice;
+        else if (mode_ == Mode::PLUGIN) voice = true;
+        owner_->set_takes_voice(voice);
+        // its talker now: the open one that started first
+        const Runner::OpenTalker* tk = nullptr;
+        if (lead)
+            for (const auto& kv : lead->talkers)
+                if (!tk || kv.second.start < tk->start) tk = &kv.second;
+        const std::string tid = tk && tk->id != "?" ? tk->id : "", tl = tk && tk->id != "?" ? tk->label : "";
+        if (tid != lead_tid_sent_ || tl != lead_tlabel_sent_) {
+            lead_tid_sent_ = tid;
+            lead_tlabel_sent_ = tl;
+            owner_->set_lead_talker(tid, tl);
         }
     }
 };
@@ -1637,6 +1672,27 @@ std::string DigitalDecoder::active_plugin() const {
     if (m == Mode::PLUGIN) return plugin_id();
     if (m == Mode::AUTO) return engine_->detected();
     return "";
+}
+
+bool DigitalDecoder::squelch_open(int64_t def_ms) const {
+    const std::string id = active_plugin();
+    if (id.empty()) return false;
+    const int64_t t = engine_->last_valid_of(id);
+    return t != 0 && now_ms() - t < engine_->squelch_hold_ms(id, def_ms);
+}
+
+bool DigitalDecoder::lead_talker(std::string* id, std::string* label) const {
+    std::lock_guard<std::mutex> lk(lead_mu_);
+    if (lead_tid_.empty()) return false;
+    *id = lead_tid_;
+    *label = lead_tlabel_;
+    return true;
+}
+
+void DigitalDecoder::set_lead_talker(const std::string& id, const std::string& label) {
+    std::lock_guard<std::mutex> lk(lead_mu_);
+    lead_tid_ = id;
+    lead_tlabel_ = label;
 }
 
 bool DigitalDecoder::frames_within(int64_t ms) const {

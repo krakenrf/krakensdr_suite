@@ -371,8 +371,8 @@ Edit `include/config.hpp`:
   radiosonde (see *Radiosonde*), dme and ils (see *DME / TACAN* and *ILS /
   VOR / marker*), ism (see *ISM devices*), radar (see *Pulse radar*),
   ssr1030 (see *1030 MHz interrogations*), uat (see *UAT*), flarm (see
-  *FLARM / OGN*), dtv and cells (ARRAY plugins - see *Digital TV* and *LTE
-  / 5G NR Cell Decoder*)
+  *FLARM / OGN*), ctcss (see *CTCSS / DCS*), dtv and cells (ARRAY plugins
+  - see *Digital TV* and *LTE / 5G NR Cell Decoder*)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
   tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by
   default. WS `PLUGIN_AUTO:id:0|1` -> `PluginRegistry::set_auto()` (bumps the
@@ -1689,7 +1689,7 @@ Edit `include/config.hpp`:
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,ctcss}`, 🗺 Map 📡 DF panel):**
 - RULE (ID separation, the user's 2026-10-15): every decoder whose signal
   carries a coded ID per TRANSMITTER reports it as a talker - a core part
   of every such decoder, new ones included. How + how to test:
@@ -2017,6 +2017,17 @@ Edit `include/config.hpp`:
     altitude · type / Pkts", position columns, nearest first;
     `RDF_KIND_WORD` names it "aircraft" in "Every ..." / counts) - see
     *FLARM / OGN*
+  - CTCSS / DCS (`plugins/ctcss`, task 5): an analog FM transmission =
+    a TRANSMISSION talker (`host.talker` / `talker_end`, not packets) named
+    by its sub-audible tone / code ("CTCSS 88.5", "DCS 023N"; label the
+    measured frequency / "023N = 047I"), from the carrier's (or the tone's)
+    onset to its reverse burst / tone off / carrier off, to a few ms; the
+    DoA from the MUSIC frames inside it like a radio's. With the tone
+    squelch option set only that tone gets talkers. UI kind `tone` 🔔
+    (`rdfKind`: not a packet, pl ctcss; "Tone / code / Measured / Tx" + two
+    columns only it has: Last = the latest transmission's length, Air = all
+    of them - TalkerInfo `dur_s` / `air_s` from the spans, status `dur` /
+    `air`, `RDF_SORT_KEYS` dur / air; newest first) - see *CTCSS / DCS*
   - UI (kraken_doa.html): `RDF_PK_KIND` plugin -> kind (station 📻 aprs,
     sonde 🎈, site 🗼 tetra + mpt1327, navaid 🧭 ils, radar 📡 radar - list
     "Radar / PRF · pulse · scan / Pulses", by name; ship / aircraft /
@@ -2277,7 +2288,16 @@ Edit `include/config.hpp`:
   older files load with it off). `anyTranscribeActive()` makes the pipeline
   decimate (in fm_only mode the VFO counts as `single_wanted`)
 - Source = the VFO's own stream, not the Audio Src's: with its DIGITAL
-  DECODER ON, the decoder's voice - `dig::set_voice_tap_handler` (one
+  DECODER ON and the decoder decoding voice (`DigitalDecoder::takes_voice()`:
+  the lead plugin's `kp::Info::voice`; Auto detect still searching: any of
+  its plugins; set by the engine's housekeeping) the decoder's voice; a
+  decoder of NO voice (ctcss, pocsag, adsb ...) leaves the ANALOG path below
+  to the VFO, as without one - and names the transcript after the
+  decoder's talker (`DigitalDecoder::lead_talker`: the lead plugin's open
+  talker that started first, e.g. "CTCSS 88.5" / "88.47 Hz" as from / to;
+  `feed_analog(.., tid, tlabel)`; another talker after it while the gate
+  stayed open splits the transcript where the first one was last named, as
+  `Worker::digital` does) - `dig::set_voice_tap_handler` (one
   global handler) gets the lead plugin's W_AUDIO 8 kHz + plugin id + its
   talker + RF, on the decoder's worker thread. The talker: the open one on
   the channel the plugin says its audio is from (`kp::Host::audio_channel`
@@ -2914,10 +2934,14 @@ Edit `include/config.hpp`:
   (`DecimatorManager::effectiveSquelchMethod`; else FFT - the choice is kept
   and comes back with the decoder), in EVERY operating mode (it needs no
   MUSIC). Open = the active plugin (fixed, or the one Auto detect locked onto)
-  reported a valid frame within `DIGITAL_SQUELCH_HOLD_MS` 1.5 s
-  (`digitalSquelchOpen` -> `DigitalDecoder::frames_within`, the engine's
-  `last_valid_by_` per plugin) - the pipeline's squelch_open, the audio gate,
-  the web mapper
+  reported a valid frame within `DIGITAL_SQUELCH_HOLD_MS` 1.5 s - or the
+  plugin's own hold, `kp::Info::squelch_hold_s` (`--info`
+  "squelch_hold_s", `PluginInfo::squelch_hold_s`, the engine's
+  `hold_ms_by_`; ctcss 0.35 s: it reports a valid span every 50 ms while a
+  tone is there, and 1.5 s would pass 1.5 s of noise after every
+  transmission) (`digitalSquelchOpen` -> `DigitalDecoder::squelch_open`,
+  the engine's `last_valid_by_` per plugin) - the pipeline's squelch_open,
+  the audio gate, the web mapper
 - The DoA (coherent, `dig_doa` in the pipeline): MUSIC runs with its publish
   held (`setPublishHold`) and `TalkerDoa::set_digital(true)` keeps the
   stream (raw <= 500 kHz / chunk ring above, as for packets). Every
@@ -3326,6 +3350,74 @@ Edit `include/config.hpp`:
   retuned the receiver from 922.98 to 868.8 MHz itself (band auto: 868.8 MHz);
   a periodic narrow-FSK device near 868.166 MHz every 16 s and the
   calibration noise demodulated, nothing reported; 2.6 % of a core
+
+**CTCSS / DCS (`plugins/ctcss/`, README.md there):**
+- The sub-audible signalling under analog FM (ETSI TS 103 236: tones,
+  DCS codeword, polarity, the 83 codes' bit patterns): `sample_rate` 24
+  kHz (= the 24 kHz VFO, no resampling), `min_vfo_rate` 12 kHz, talkers,
+  NOT manual only (in Auto detect an analog channel with a tone shows as
+  this plugin; without one it reports nothing), no voice
+- `rx.cpp`: channel filter +-7.5 kHz, discriminator, 24 kHz -> 2400 -> 1200
+  Hz; a 45 Hz high-passed stream (CTCSS), a 130-290 Hz low-passed one (DCS)
+  and the carrier power aligned with them. CTCSS: 2048-point FFT of the last
+  0.3 s every 50 ms (only what follows a carrier's onset in the window),
+  candidates = strongest 60-257 Hz peak >= 13 dB over the band median, >= 55
+  % of the band's power, "Weakest tone" .. 1.5 kHz deviation, not a line of
+  a periodic family (f +- f/k within 15 dB, k 2..10: a TDMA data carrier's
+  33.33 Hz lines, seen live); lock = 3 candidates (2
+  strong) agreeing in frequency (0.12-0.8 Hz by SNR) and amplitude (30 %),
+  phase linear over 0.2 s; off-list +1 candidate and >= 70 % purity, only
+  62-252 Hz; 67.2 Hz (DCS 1010 runs) +5; 133-135.8 Hz never; a tone NOT at a
+  carrier onset (voice harmonic? capture / late entry) only after 0.8 s.
+  Classification: a listed tone within 0.85 % + 2 sigma of the lock's
+  measurement (<= 1.4 %), else non-standard by its measured value (an id
+  within 0.5 % reused, `ns_seen_`). Tracker: mixed to the tone, 97-tap 35
+  Hz low-pass every 10 ms - frequency ("Measured" = the whole phase advance
+  over the ticks with the tone there / their time, a reverse burst's step
+  rolled back, vs the median of the ticks' frequencies), end = amplitude through half / the carrier
+  gone / another tone dominating 3 hops / a phase step > 100 deg confirmed
+  by the end within 0.5 s (reverse burst, at the step); an end after a
+  stronger carrier's rise is put at the rise (capture). Start = the
+  carrier's onset or the amplitude's half crossing back in the stream.
+  DCS: zero-crossing clock + rate loop (leaks to 134.4 while searching),
+  decision-directed levels, hard bits; lock = 46 bits 23-periodic + Golay
+  codeword, or 69 bits' 3-word majority a codeword with <= 5 errors; no DCS
+  search while a CTCSS tone is locked; end = > 6 of 23 wrong, at the last
+  clean bit; turn-off = a 134.4 Hz tone within 0.8 s after (NOTE event)
+- `tones.hpp`: the 51 tones, Golay g = 0xC75 (checked on all 83 ETSI
+  patterns), `dcs_name` (ETSI code N > I > the 104-list N > I > any; the
+  other polarity's equivalent)
+- `decoder.cpp`: talker / valid spans CONFIRM_LAG 0.3 s behind the
+  receiver (an end is known only after it: capture, tone loss), the end
+  exact minus END_GUARD 20 ms; valid() every hop for the squelch;
+  `.squelch_hold_s` 0.35. Option `squelch` (tone squelch: tokens 88.5 /
+  023N / D023N / 047I, comma list) - other tones: no talker, no valid
+  frames, "(tone squelch: ignored)" in the log. Table (row key = talker id)
+  + details, facts, events (new tone once, every transmission's end)
+- Host changes with it: `kp::Info::squelch_hold_s` (`--info`,
+  `PluginInfo`, `Engine::hold_ms_by_`, `DigitalDecoder::squelch_open`),
+  `DigitalDecoder::takes_voice()` / `lead_talker()` (Voice to Text's analog
+  fallback + naming, see *Voice to Text*), TalkerInfo `dur_s` / `air_s`
+  (status `dur` / `air`), UI kind `tone` (see *DoA per talker*)
+- Generator `tools/ctcss_gen.py` (one transmitter: keyed spans, real or
+  synthetic speech through a TX audio chain, CTCSS + reverse burst / DCS +
+  turn-off, tolerances, narrow, de-emphasis, offset, noise); scenes with
+  `plugins/sdk/tools/uca_scene.py`
+- Tests (scratch t5/, numbers in the README): all 51 tones and all 104 DCS
+  codes N / I named right; lock median 190 ms (CTCSS) / 360 ms (DCS),
+  start / end within a few ms; false alarms 2 in 40 min of voice-only /
+  noise (synthetic voice, harsh cases; real speech none); 10 / 10
+  transmissions from 2-4 dB CNR; scene of 4 transmitters (2 overlapping)
+  offline + end to end: 60.0 / 200.0 / 300.0 deg exact, the capturing one
+  146 vs 140 (its first 2 s overlap the other carrier); tone squelch e2e:
+  only 123.0 talked, squelch open 26 % (its duty 26 %), VFO DoA 200.0 only;
+  Voice to Text e2e: analog transcripts named after the tones, split at
+  tone changes, the digital path (voicetest plugin) unchanged. CPU 0.6-0.7
+  % of a core. Live (Auckland, ~1.5 h on 2 m / 150-174 / 70 cm / PMR446 /
+  PRS 476 MHz): no CTCSS / DCS user caught; two false alarms seen live and
+  fixed (256 Hz at 5.7 kHz deviation; a data carrier's 200 Hz line among
+  33.33 Hz multiples read as 199.5 - the deviation limit and the periodic-
+  family rule)
 
 **ILS / VOR / marker (`plugins/ils/`, README.md there):**
 - 48 kHz (`min_vfo_rate` 48 kHz: the VOR subcarrier reaches +-10.4 kHz).

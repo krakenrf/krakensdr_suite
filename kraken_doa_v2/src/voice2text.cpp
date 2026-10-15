@@ -984,7 +984,13 @@ void Worker::scan_vfos(int64_t t) {
     for (const auto& inst : decimator_manager.getAllDecimators()) {
         if (!inst || inst->being_deleted.load(std::memory_order_relaxed)) continue;
         if (!inst->transcribe.load(std::memory_order_relaxed)) continue;
-        const bool dig = inst->digital_mode.load(std::memory_order_relaxed) != 0;
+        // the decoder's voice - unless it decodes none (ctcss, pocsag...):
+        // then the VFO's analog demod, as without a decoder
+        bool dig = inst->digital_mode.load(std::memory_order_relaxed) != 0;
+        if (dig) {
+            auto dd = inst->getDigital();
+            dig = dd && dd->takes_voice();
+        }
         cfg[inst->id] = {true, dig ? "digital" : DecimatorManager::demodModeToString(inst->demod_mode.load())};
     }
     // VFOs that stopped (or were removed): the transmission in progress is sent
@@ -1027,6 +1033,20 @@ void Worker::analog(Tap& tap, int vfo, Input& in, int64_t t) {
         tap.rf = in.rf;
         tap.pre.clear();
     }
+    // the decoder's talker (a CTCSS tone / DCS code) names the transmission;
+    // another one after it (another transmitter while the squelch stayed
+    // open) splits it where the first one was last heard - decided when the
+    // next name comes, as for digital talkers
+    const bool known = !in.tid.empty() && in.tid != "?";
+    if (tap.rec && !tap.tid.empty()) {
+        if (!known) {
+            if (tap.anon_from < 0) tap.anon_from = static_cast<long>(tap.cur.size());
+        } else if (in.tid != tap.tid) {
+            split(tap, vfo, tap.anon_from >= 0 ? static_cast<size_t>(tap.anon_from) : tap.cur.size());
+        } else {
+            tap.anon_from = -1;
+        }
+    }
     std::vector<float> y;
     tap.demod(in.iq, y);
     const size_t preroll = static_cast<size_t>(PREROLL_S * RATE);
@@ -1049,6 +1069,10 @@ void Worker::analog(Tap& tap, int vfo, Input& in, int64_t t) {
         tap.tlabel.clear();
         tap.reset_doa();
         tap.doa_stamp = 0;
+    }
+    if (known && (tap.tid.empty() || tap.tid == in.tid)) {
+        tap.tid = in.tid;   // named after its first frames, or the label updated
+        if (!in.tlabel.empty()) tap.tlabel = in.tlabel;
     }
     tap.append(y);
     tap.last_audio_ms = t;
@@ -1709,7 +1733,7 @@ void stop() {
 }
 
 void feed_analog(int vfo, const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, DemodulatorMode mode,
-                 bool open) {
+                 bool open, const std::string& tid, const std::string& tlabel) {
     if (!S().running.load(std::memory_order_relaxed) || n == 0 || !(rate_hz > 1000)) return;
     Input in;
     in.vfo = vfo;
@@ -1718,6 +1742,8 @@ void feed_analog(int vfo, const std::complex<float>* x, size_t n, float rate_hz,
     in.rf = rf_hz;
     in.mode = mode == DemodulatorMode::DIGITAL ? DemodulatorMode::NBFM : mode;
     in.open = open;
+    in.tid = tid;
+    in.tlabel = tlabel;
     push_input(std::move(in), n / rate_hz);
 }
 

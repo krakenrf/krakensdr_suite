@@ -45,6 +45,7 @@ struct PluginInfo {
     bool array = false;
     double array_burst_s = 0.25, array_period_s = 1.0;
     bool tunes = false;           // kp::Info::tunes: may ask for retunes (kp::Host::tune)
+    double squelch_hold_s = 0;    // kp::Info::squelch_hold_s: the Digital squelch's hold (0 = the host's)
     std::vector<PluginOption> options;
     bool built = false;           // exe exists and answered --info
     bool stale = false;           // a source file is newer than exe

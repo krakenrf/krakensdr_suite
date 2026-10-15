@@ -42,6 +42,8 @@ plugins/
 │                         Reed-Solomon GF(256), FIS-B headers / DLAC text; TIS-B = the ground station's
 ├── flarm/                FLARM (ID + bearing only: encrypted payload) / OGN trackers (LDPC soft
 │                         decoding, TEA de-whitening, stealth honoured) on every channel in the 2.4 MHz
+├── ctcss/                CTCSS tones / DCS codes under analog FM (FFT search + narrowband tracker,
+│                         Golay DCS words): a transmission talker per tone, tone squelch, no voice
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
@@ -106,7 +108,8 @@ KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
                           .messages = false,              // true: sends text messages (host.message)
                           .talkers = false,               // true: reports who transmits (host.talker)
                           .lock_vfo = false,              // true: the VFO stays on its tuner's centre (below)
-                          .multichannel = false})         // true: takes every antenna (process_multi, below)
+                          .multichannel = false,          // true: takes every antenna (process_multi, below)
+                          .squelch_hold_s = 0})           // > 0: the Digital squelch's hold (below)
 ```
 
 The fields of `kp::Info` must be given **in this order** (C++20 designated
@@ -354,6 +357,11 @@ end (the first sample of the block in `process()` is `host.time()`; add
 the frame's index in your input / `sample_rate`). A frame's span may also
 take in what proved it (the sync word, a preamble); keep it under 3 s.
 Talker spans and packets (`host.talker`) count as confirmed samples too.
+The squelch stays open 1.5 s after the last valid frame - right for frames
+a few hundred ms apart; a decoder of a continuous signal that reports short
+pieces (ctcss: every 50 ms while the tone is there) sets
+`.squelch_hold_s` (ctcss 0.35), so the squelch closes soon after the
+signal ends instead of passing 1.5 s of noise after every transmission.
 The shipped plugins: the lib protocols report through
 `RxContext::valid_at` (`dig::report_valid(ctx, mode, start, end)` with the
 receiver's own sample indexes; `Bridge::clock(rate)` + `restart_clock()`
@@ -456,7 +464,11 @@ mixed from all of them. Every new decoder of such a signal does this.
   APRS). Lib plugins (`plugins/lib`): `RxContext::packet` with receiver
   sample indexes (`dig::Bridge::clock(rate)` maps them; tetra, mpt1327).
 - **Transmissions** (`host.talker` / `talker_end`) for voice calls: the
-  frame boundaries of the call, a new id ending the previous one.
+  frame boundaries of the call, a new id ending the previous one. Also for
+  an analog transmitter named by its sub-audible tone (ctcss: `CTCSS 88.5`
+  from the carrier's / tone's onset to its reverse burst / end) - such a
+  plugin decodes no voice (`.voice` false), so Voice to Text transcribes the
+  VFO's analog audio and names each transcript after its talker.
 - **The channel**: `freq_hz` / `bw_hz` of the transmitter inside the VFO
   (Hz from your input's 0 Hz - after the host's AFC, so a decoder whose
   `freq_error` centres the signal gives 0) - kraken_doa filters exactly that

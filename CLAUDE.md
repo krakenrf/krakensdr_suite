@@ -411,7 +411,15 @@ decoders `kraken_doa_v2/plugins/`
   inside the 2.4 MHz - EU / NZ: tune 868.8 MHz; FLARM by radio ID + bearing
   only, its payload is encrypted and NOT decoded; OGN fully, stealth =
   no-track honoured; a DoA per aircraft on its own channel; manual only,
-  `lock_vfo`, `tunes` once to the band).
+  `lock_vfo`, `tunes` once to the band) and ctcss (CTCSS tones / DCS codes
+  under analog FM on a 12-24 kHz VFO: every standard + non-standard tone,
+  measured to ~0.01 Hz, reverse burst; DCS 23-bit Golay words, normal /
+  inverted, turn-off code - ETSI TS 103 236; each transmission a talker
+  "CTCSS 88.5" / "DCS 023N" from its onset to its end, a DoA per tone;
+  valid spans every 50 ms drive the Digital squelch, `kp::Info::
+  squelch_hold_s` 0.35 s; option "Tone squelch" = only that tone / code
+  opens it and gets talkers; no voice: Voice to Text keeps the analog demod
+  and names the transcript after the tone).
   Plugins learn the VFO's RF from `kp::Host::rf_hz()` (wire RF, 7). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
@@ -476,7 +484,7 @@ decoders `kraken_doa_v2/plugins/`
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, dtv and cells (ARRAY
+  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, ctcss, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags)
@@ -632,11 +640,14 @@ models + Silero VAD) - opt-in setup `cd kraken_doa_v2 && make whisper`
 base.en) or `WHISPER=1 ./install.sh`; Docker builds it in (`WHISPER=0`
 leaves it out) with the models in `docker-data/whisper_models/`
 - Source per VFO, not the Audio Src's: its digital decoder's voice when the
-  decoder is on (P25 / DMR / D-STAR / NXDN / TETRA vocoder output via
-  `dig::set_voice_tap_handler`, with the talker's unit ID / talkgroup;
-  cut at talker changes), else its analog demod (NBFM / AM / WBFM) of the
-  same stream, cut by its squelch (squelch off: 10 dB over the noise in the
-  FFT). Bearing during each transmission in coherent mode with DoA on
+  decoder is on and decodes voice (P25 / DMR / D-STAR / NXDN / TETRA vocoder
+  output via `dig::set_voice_tap_handler`, with the talker's unit ID /
+  talkgroup; cut at talker changes), else - no decoder, or one of no voice
+  (`DigitalDecoder::takes_voice()`: ctcss, pocsag ...) - its analog demod
+  (NBFM / AM / WBFM) of the same stream, cut by its squelch (squelch off: 10
+  dB over the noise in the FFT), named after the decoder's talker if it has
+  one (ctcss: "CTCSS 88.5"; `DigitalDecoder::lead_talker`). Bearing during
+  each transmission in coherent mode with DoA on
 - `src/voice2text.cpp`: one worker thread (taps, queue <= 40 / 10 min,
   helper process); the helper (`PluginProcess`, nice 10, one job at a time,
   wire `include/voice2text_wire.hpp`) runs VAD (noise / tones / carriers ->
@@ -678,7 +689,7 @@ frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a
 coded ID per transmitter, the plugin reports it as a talker and is tested
@@ -850,7 +861,8 @@ decoded); coexists with dme (6X interrogations on 1030 MHz)
 **🔇 Digital squelch (per VFO, with its digital decoder on)** (details:
 `kraken_doa_v2/CLAUDE.md` *Digital squelch*): squelch methods are FFT Peak
 and Digital (the eigenvalue methods were removed - saved values map to
-FFT). Digital opens while the decoder reports valid frames (+1.5 s) and the
+FFT). Digital opens while the decoder reports valid frames (+1.5 s, or the
+plugin's `kp::Info::squelch_hold_s` - ctcss 0.35 s) and the
 VFO's DoA is published from exactly the confirmed samples
 (`TalkerDoa::set_digital` -> `MUSICProcessor::publishFromCovariance`; MUSIC's
 own frames held) - interference / noise between the frames never reaches

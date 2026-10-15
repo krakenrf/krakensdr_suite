@@ -666,6 +666,16 @@ void TalkerDoa::add_span(const dig::TalkerSpan& s) {
     }
     if (unnamed_talker(s.id)) return;
     Talker& tk = talkers_[s.id];
+    if (s.rate > 0 && sp->end >= sp->start) {
+        // the transmission's length (and the total: the earlier ones' + this)
+        const double d = static_cast<double>(sp->end - sp->start) / s.rate;
+        if (sp->seq != tk.dur_seq) {
+            tk.air_done += tk.info.dur_s;
+            tk.dur_seq = sp->seq;
+        }
+        tk.info.dur_s = d;
+        tk.info.air_s = tk.air_done + d;
+    }
     tk.info.plugin = s.plugin;
     if (!s.label.empty()) tk.info.label = s.label;
     tk.info.last_ms = t;

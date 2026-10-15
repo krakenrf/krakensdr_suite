@@ -178,6 +178,7 @@ void PluginRegistry::scan() {
                     if (json_find(js, "whole_band", v) && v == "true") pi.lock_vfo = true;
                     if (json_find(js, "multichannel", v)) pi.multichannel = v == "true";
                     if (json_find(js, "tunes", v)) pi.tunes = v == "true";
+                    if (json_find(js, "squelch_hold_s", v)) pi.squelch_hold_s = std::clamp(atof(v.c_str()), 0.0, 10.0);
                     // options: one per line, tab-separated key/label/default/choices/help
                     if (json_find(js, "options_tsv", v)) {
                         std::stringstream ls(v);
