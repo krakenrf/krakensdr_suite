@@ -33,10 +33,17 @@ SCENE (JSON):
      "relay_of": "!a1b2c3d4", "relay_node_last": 222, ...},
     {"proto": "lorawan", "name": "DevAddr 26011F88", "bearing": 200,
      "sf": 9, "bw": 125000, "cr": 1, "freq_mhz": 922.0,
-     "devaddr": 638484360, "fcnt": 42, "fport": 1, "mtype": "unconf_up"},
+     "devaddr": "0x26011F88", "fcnt": 42, "fport": 1, "mtype": "unconf_up"},
     {"proto": "lora", "name": "raw", "text": "...", ...}
   ]
 }
+Per source also: "preamble" (symbols; default 16 for Meshtastic, 8 else),
+"sync_word" (default 0x2B Meshtastic, 0x34 LoRaWAN, 0x12 else), "df_hz"
+(carrier offset), "crc". IDs (from / to / id / devaddr / deveui ...) may be
+numbers or hex strings ("0x26011F88"); random bytes (private keys, LoRaWAN
+FRMPayload / MIC) come from the scene's seed - reproducible scenes.
+The waveform has continuous phase (exact symbol timing at any rate).
+
 Bearings as the MUSIC DoA plot shows them (CCW from ANT0); antennas on
 kraken_doa's UCA - ANT0 on +x, the others CLOCKWISE (as uca_scene.py).
 
@@ -167,7 +174,7 @@ def lora_symbols(payload, sf, cr, has_crc, ldro):
     return syms
 
 
-def lora_waveform(payload, sf, bw, cr, has_crc, sync_word, fs=FS):
+def lora_waveform(payload, sf, bw, cr, has_crc, sync_word, fs=FS, preamble=8):
     """Full CSS packet at fs with CONTINUOUS phase (exact symbol timing):
     8 preamble up-chirps, 2 sync symbols, 2.25 SFD down-chirps, data symbols."""
     N = 1 << sf
@@ -175,7 +182,7 @@ def lora_waveform(payload, sf, bw, cr, has_crc, sync_word, fs=FS):
     syms = lora_symbols(payload, sf, cr, has_crc, ldro)
     Ts = N / bw
     rate = bw / Ts
-    segs = [(1, 0, 1.0)] * 8
+    segs = [(1, 0, 1.0)] * int(preamble)
     segs += [(1, ((sync_word >> 4) & 0xF) * 8, 1.0), (1, (sync_word & 0xF) * 8, 1.0)]
     segs += [(-1, 0, 2.25)]
     segs += [(1, v, 1.0) for v in syms]
@@ -311,17 +318,31 @@ def mesh_nodeinfo(node_id, longname, shortname, hwmodel):
     return b
 
 
+def num(v, default=0):
+    """an integer from JSON: a number or a string like "0x26011F88"."""
+    if v is None:
+        return default
+    return int(v, 0) if isinstance(v, str) else int(v)
+
+
+RNG = np.random.default_rng(1)   # reseeded from the scene in main(): reproducible bytes
+
+
+def rbytes(n):
+    return RNG.bytes(n)
+
+
 PORTS = {"text": 1, "position": 3, "nodeinfo": 4, "routing": 5, "telemetry": 67}
 
 
 def build_meshtastic(s):
-    frm = int(s.get("from", 0xABCDEF12)) & 0xFFFFFFFF
-    to = int(s.get("to", 0xFFFFFFFF)) & 0xFFFFFFFF
-    pid = int(s.get("id", 0x12345678)) & 0xFFFFFFFF
+    frm = num(s.get("from"), 0xABCDEF12) & 0xFFFFFFFF
+    to = num(s.get("to"), 0xFFFFFFFF) & 0xFFFFFFFF
+    pid = num(s.get("id"), 0x12345678) & 0xFFFFFFFF
     hop_limit = int(s.get("hop_limit", 3))
     hop_start = int(s.get("hop_start", 3))
     want_ack = 1 if s.get("want_ack") else 0
-    chan_hash = int(s.get("channel_hash", 0x08)) & 0xFF
+    chan_hash = num(s.get("channel_hash"), 0x08) & 0xFF
     next_hop = int(s.get("next_hop", 0)) & 0xFF
     relay_node = int(s.get("relay_node_last", 0)) & 0xFF
     flags = (hop_limit & 0x7) | (want_ack << 3) | ((hop_start & 0x7) << 5)
@@ -336,7 +357,7 @@ def build_meshtastic(s):
     else:
         inner = s.get("text", "hi").encode()
     data = mesh_data(PORTS.get(port, 1), inner)
-    key = DEFAULT_KEY if s.get("key", "default") == "default" else os.urandom(16)
+    key = DEFAULT_KEY if s.get("key", "default") == "default" else rbytes(16)
     nonce = pid.to_bytes(8, "little") + frm.to_bytes(4, "little") + b"\x00\x00\x00\x00"
     enc = aes_ctr(key, nonce, data)
     return hdr + enc
@@ -347,19 +368,19 @@ def build_lorawan(s):
     mtype = mtypes.get(s.get("mtype", "unconf_up"), 2)
     mhdr = (mtype << 5) | 0x00
     if mtype == 0:   # join request
-        joineui = int(s.get("joineui", 0x70B3D57ED0000000)).to_bytes(8, "little")
-        deveui = int(s.get("deveui", 0x0004A30B001C0530)).to_bytes(8, "little")
-        devnonce = int(s.get("devnonce", 0x1234)).to_bytes(2, "little")
+        joineui = num(s.get("joineui"), 0x70B3D57ED0000000).to_bytes(8, "little")
+        deveui = num(s.get("deveui"), 0x0004A30B001C0530).to_bytes(8, "little")
+        devnonce = num(s.get("devnonce"), 0x1234).to_bytes(2, "little")
         mac = bytes([mhdr]) + joineui + deveui + devnonce
-        return mac + os.urandom(4)
-    devaddr = int(s.get("devaddr", 0x26011F88)) & 0xFFFFFFFF
+        return mac + rbytes(4)
+    devaddr = num(s.get("devaddr"), 0x26011F88) & 0xFFFFFFFF
     fctrl = int(s.get("fctrl", 0))
     fcnt = int(s.get("fcnt", 1)) & 0xFFFF
     fport = int(s.get("fport", 1))
-    frmpayload = os.urandom(int(s.get("payload_len", 6)))
+    frmpayload = rbytes(int(s.get("payload_len", 6)))
     mac = (bytes([mhdr]) + devaddr.to_bytes(4, "little") + bytes([fctrl]) + fcnt.to_bytes(2, "little")
            + bytes([fport]) + frmpayload)
-    return mac + os.urandom(4)   # MIC (unknown key: random)
+    return mac + rbytes(4)   # MIC (unknown key: random)
 
 
 def build_payload(s):
@@ -396,7 +417,9 @@ def main():
     rf = float(scene.get("rf_hz", 921.8e6))
     T = float(scene.get("seconds", 6))
     Ntot = int(T * FS)
+    global RNG
     rng = np.random.default_rng(int(scene.get("seed", 1)))
+    RNG = np.random.default_rng(int(scene.get("seed", 1)) + 1000)
     sig_n = float(scene.get("noise_lsb", 2.0))
     noise_p = 2 * sig_n ** 2
     st = scene.get("station", [-41.0, 174.0])
@@ -415,11 +438,13 @@ def main():
         sf = int(s.get("sf", 11))
         bw = float(s.get("bw", 250000))
         cr = int(s.get("cr", 1))
-        sw = int(s.get("sync_word", 0x12))
+        mesh = s.get("proto", "lora").startswith("meshtastic")
+        sw = num(s.get("sync_word"), 0x2B if mesh else (0x34 if s.get("proto") == "lorawan" else 0x12))
+        npre = int(s.get("preamble", 16 if mesh else 8))
         fch = float(s.get("freq_mhz", rf / 1e6)) * 1e6
         off = fch - rf + float(s.get("df_hz", 0))
         amp = math.sqrt(noise_p * 10 ** (float(s.get("level_db", 14)) / 10))
-        wav1, nsym = lora_waveform(payload, sf, bw, cr, s.get("crc", True), sw)
+        wav1, nsym = lora_waveform(payload, sf, bw, cr, s.get("crc", True), sw, preamble=npre)
         L = len(wav1)
         steer = np.exp(2j * np.pi * R / (C / rf) * np.cos(np.deg2rad(b) - phi))
         period = float(s.get("period_s", 2.0))

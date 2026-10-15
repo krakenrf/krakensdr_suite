@@ -30,7 +30,7 @@
     {"proto": "lorawan", "name": "DevAddr 26011F88", "bearing": 20,
      "sf": 9, "bw": 125000, "cr": 1, "freq_mhz": 922.3, "level_db": 15,
      "period_s": 2.5, "t0": 0.55, "mtype": "unconf_up",
-     "devaddr": 638484360, "fcnt": 42, "fport": 1, "payload_len": 8},
+     "devaddr": "0x26011F88", "fcnt": 42, "fport": 1, "payload_len": 8},
 
     {"proto": "meshtastic", "name": "!private", "bearing": 100,
      "sf": 11, "bw": 250000, "cr": 1, "freq_mhz": 921.3, "level_db": 14,

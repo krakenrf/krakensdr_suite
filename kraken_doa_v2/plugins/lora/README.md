@@ -60,58 +60,85 @@ columns for nodes that send POSITION.
 
 ## Region / channel plans
 
-`region` (default **anz** = Australia / New Zealand, 915-928 MHz) sets the
-default Meshtastic channel frequency and the LoRaWAN uplink grid. `preset`
-(default **LongFast** = SF11 BW250) is the Meshtastic modem preset
-(ShortTurbo / ShortFast / MediumFast / LongModerate / LongSlow ...). With no
-explicit `channels` the plugin watches the region's Meshtastic default
-channel; `lorawan=1` adds the region's 125 kHz uplink channels (headers only).
-`channels` = an explicit `"MHz:SF:BWkHz,..."` list overrides all of that;
-`sf=auto` scans SF7-12 on each channel (more CPU). If no watched channel is
-inside the VFO and `tune` is on, the plugin retunes the receiver once to the
-region's Meshtastic frequency.
+The watched Meshtastic channel is computed as the firmware does
+(`RadioInterface`): `numChannels = floor((freqEnd - freqStart) / (spacing +
+bw))`, `slot = djb2(channel name) % numChannels`, `f = freqStart + bw/2 +
+slot x bw`. The default (unnamed) primary channel hashes the modem preset's
+name, so **ANZ LongFast = slot 19 of 52 = 919.875 MHz** (MediumFast 926.125,
+ShortFast 918.875, ShortSlow 920.625, LongSlow 918.312 ...); US LongFast
+906.875, EU868 869.525 MHz. Options: `region` (anz 915-928 / us 902-928 /
+eu868), `preset` (LongFast default: SF11 BW250), `channel` (a named primary
+channel: its hash slot), `others` (default on: also the other presets'
+default channels that fall inside the VFO - tune to 919.750 MHz and LongFast,
+ShortFast and ShortSlow are all watched), `lorawan` (the region's 125 kHz
+uplink grid: AU915 sub-band 2 916.8-918.2 MHz for anz), `sf=auto` (SF7-12 on
+each channel, more CPU), `channels` (an explicit `"MHz:SF:BWkHz,..."` list
+that overrides all of it). If no watched channel is inside the VFO and `tune`
+is on, the plugin retunes the receiver once to the preset's channel.
 
-> The region default frequencies are the commonly used LongFast channel
-> centres; a real mesh may use another channel name (the frequency comes from
-> a hash of the channel name) - set `channels` or tune the receiver to match.
+A strong packet also decodes on a watched channel one bandwidth away (a
+whole-bandwidth offset aliases to CFO 0 after dechirping). Frames with the
+same payload ending within 0.15 s are one transmission: the channel where it
+is strongest is kept (the real one), so no duplicate talker packet is ever
+reported on the wrong channel.
 
 ## Tests
 
 Generator `tools/lora_gen.py` builds the full transmit chain (mirrors
-`coding.hpp` exactly; verified bit-exact by round trip) and modulates CSS at
-2.4 MHz with several transmitters at known bearings on the 5-element UCA,
-overlapping in time, on different channels / SFs, with a relayed packet and
-noise. `tools/scene_five.json` is the shipped scene; playback entry
-`lora-mesh-five` (`tools/testsignals.json`).
+`coding.hpp` exactly) and modulates CSS at 2.4 MHz with continuous phase
+(Meshtastic: 16-symbol preamble, sync word 0x2B; LoRaWAN: 8, 0x34) - several
+transmitters at known bearings on the 5-element UCA, overlapping in time, on
+different channels / SFs, a relayed packet, a private channel, noise; IDs in
+the scene may be hex strings, random bytes come from the scene's seed.
+`tools/scene_five.json` is the shipped scene; playback entry `lora-mesh-five`.
 
-- **PHY round trip** (C++ `t_phy`): every SF7-12 x CR 4/5-4/8 x BW
-  125/250/500, clean and with CFO (to +-60 bins), timing offset and noise -
-  payload bit-exact. SF12 decodes down to about -12 dB per-sample SNR (well
-  below 0 dB, as a LoRa demod should).
-- **Offline, multi-antenna** (`decoder --file scene5.cu8 --channels 5
-  --uca 0.12 --rf 921.8e6`): Meshtastic text / position / nodeinfo / private
-  and the LoRaWAN uplink decoded; per-talker bearings
-  `!a1b2c3d4` 60.0, `!11223344` 160.0, `!deadbeef` 300.0, `!000000aa` 100.0,
-  DevAddr 20.0, relay 230.0 deg - each exact.
-- Noise produces no frames.
+- **PHY round trip** (C++, scratch `t_phy`): SF7-12 x CR 4/5-4/8 at BW 125 /
+  250 / 500, CFO 0 / +7 / -25 bins, timing offsets, noise: 71 / 72 bit-exact
+  (the one miss: below). SF12 decodes down to about -12 dB per-sample SNR
+  (well below 0 dB, as a LoRa demod should).
+- **Byte-exact check of the whole path** (2.4 MHz scene -> channel resampler ->
+  CSS receiver -> chain; scratch `verify.py` compares every CRC-valid frame
+  with the generator's payload): **16 / 16 packets sent, 16 / 16 decoded
+  exactly**, each on its own channel, no duplicates - incl. the LoRaWAN uplink
+  on a channel +0.5 MHz off the VFO centre (DevAddr 26011F88).
+- **Bearings** (`decoder --file scene5.cu8 --channels 5 --uca 0.12 --rf
+  921.8e6`): `!a1b2c3d4` 60.0, `!11223344` 160.0, `!deadbeef` 300.0,
+  `!000000aa` 100.0, DevAddr 26011F88 20.0, the relay `!relay-44` 230.0 deg -
+  each exact. Noise produces no frames.
 
-CPU (Pi 5, offline incl. the 2.4 MHz file read / conversion): ~30 % of a core
-for one watched channel, ~80 % for three. The default (one Meshtastic
-channel) stays modest; each extra channel / SF adds a resampler + dechirp
-receiver (capped at 28).
+Bugs these tests found and fixed: the preamble residual was measured where
+the b0 alignment put the start - one symbol BEFORE the preamble whenever the
+first stable hop fell into the first preamble symbol, i.e. on noise: ~40 % of
+packets failed their header checksum (now measured on the last preamble
+symbol, 3 before the SFD); the SFD search looked only 12 symbols ahead
+(Meshtastic's 16-symbol preamble would have been missed; now 40); a "wrong"
+LoRaWAN DevAddr was the scene's own typo (638484360 = 0x260E7F88, not
+0x26011F88) - the decoder had returned exactly the bytes sent.
+
+CPU (Pi 5, offline; the host's own 2.4 MHz file read + conversion ~6 % of it):
+one busy channel 15.6 % (was 39 %), five channels 43 % (was 120 %) - the
+pending decode is retried only once the samples it waits for are there (it
+was re-run every block while a packet's tail arrived), the channel mixer is a
+phasor recursion, the decimating FIR runs over a contiguous double-buffered
+history. Each watched channel / SF adds a resampler + dechirp receiver
+(capped at 28).
 
 ## Limits / sources
 
 - Several packets on the SAME channel overlapping in time cannot both be
   decoded (LoRa is half-duplex; one receiver per channel) - on the real band
   nodes back off, so this is rare.
+- A carrier offset beyond about -20 % of the bandwidth (SF7 BW125: -24 kHz)
+  sometimes costs a symbol (5 of 40 trials with noise, +20 % fine): the
+  timing shift that cancels the integer CFO then puts a fifth of every window
+  into the next symbol. LongFast (BW250) at 20 ppm is 7 % of its bandwidth.
 - `sf=auto` across many channels is expensive; keep the watch list small.
-- The channel-name-hash frequency is not computed; use the region default or
-  set `channels`.
 
 Protocol knowledge is clean-room from public documentation: the LoRa PHY
 reverse-engineering literature (Knight; Robyns et al.; Tapparel, "Complete
-Reverse Engineering of LoRa PHY", EPFL; Semtech AN1200.22 / SX127x datasheets)
-and the Meshtastic (meshtastic.org, meshtastic/meshtastic-sdk) and LoRaWAN MAC
-specifications. GPL projects (gr-lora, gr-lora_sdr, rtl_433) were read only as
-documentation / test reference, never copied.
+Reverse Engineering of LoRa PHY", EPFL; Semtech AN1200.22 / SX127x datasheets),
+the Meshtastic protocol / encryption documentation (meshtastic.org,
+meshtastic/meshtastic-sdk; the frequency slot formula from the firmware's
+RadioInterface) and the LoRaWAN MAC specification. GPL projects (gr-lora,
+gr-lora_sdr, rtl_433) were read only as documentation / test reference, never
+copied.

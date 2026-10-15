@@ -70,24 +70,38 @@ const Preset PRESETS[] = {
     {"longmod", "LongModerate", 11, 125000},  {"longslow", "LongSlow", 12, 125000},
 };
 
+// Meshtastic regions (firmware RDEF: freqStart, freqEnd, spacing MHz) + the
+// LoRaWAN 125 kHz uplink grid used there
 struct Region {
     const char* key;
     const char* name;
-    double mesh_freq_hz;   // the region's default LongFast channel centre (approx)
-    double lw_start_hz;    // LoRaWAN 125 kHz uplink grid start (AU915 sub-band 2 / AS923)
+    double f_start_mhz, f_end_mhz, spacing_mhz;
+    double lw_start_hz;
     double lw_step_hz;
     int lw_n;
 };
-// Meshtastic default-channel frequencies are the commonly used defaults for
-// the region's LongFast preset; override with the freq option if your mesh
-// uses another channel / preset.
 const Region REGIONS[] = {
-    {"anz", "Australia / New Zealand (915-928 MHz)", 921.875e6, 916.8e6, 200000, 8},
-    {"au915", "AU915", 917.5e6, 916.8e6, 200000, 8},
-    {"us915", "US915 (902-928 MHz)", 906.875e6, 903.9e6, 200000, 8},
-    {"eu868", "EU868 (863-870 MHz)", 869.525e6, 868.1e6, 200000, 3},
-    {"as923", "AS923", 923.2e6, 923.2e6, 200000, 2},
+    {"anz", "Australia / New Zealand (915-928 MHz)", 915.0, 928.0, 0, 916.8e6, 200000, 8},   // AU915 sub-band 2
+    {"us", "United States (902-928 MHz)", 902.0, 928.0, 0, 903.9e6, 200000, 8},              // US915 sub-band 2
+    {"eu868", "Europe 868 (869.4-869.65 MHz)", 869.4, 869.65, 0, 868.1e6, 200000, 3},
 };
+
+// Meshtastic's channel-name hash (djb2, as the firmware's RadioInterface)
+inline uint32_t djb2(const std::string& s) {
+    uint32_t h = 5381;
+    for (unsigned char c : s) h = ((h << 5) + h) + c;
+    return h;
+}
+// The firmware's frequency: numChannels = floor((end - start) / (spacing + bw)),
+// slot = hash(channel name) % numChannels, f = start + bw/2 + slot * bw (MHz).
+// The default (unnamed) primary channel hashes the modem preset's name, so
+// ANZ LongFast = slot 19 of 52 = 919.875 MHz.
+inline double mesh_freq_hz(const Region& r, double bw_hz, const std::string& name) {
+    const double bw = bw_hz / 1e6;
+    const int n = std::max(1, static_cast<int>(std::floor((r.f_end_mhz - r.f_start_mhz) / (r.spacing_mhz + bw) + 1e-9)));
+    const uint32_t slot = djb2(name) % static_cast<uint32_t>(n);
+    return (r.f_start_mhz + bw / 2 + slot * bw) * 1e6;
+}
 
 struct Spec {
     double freq_hz;   // absolute centre
@@ -114,29 +128,33 @@ struct Node {
     double table_t = -1e9;
 };
 
-// A fixed decimate-by-D FIR (cutoff ~ bw) followed by a fractional linear
-// interpolation to EXACTLY rate_out = os*bw, so one LoRa symbol is exactly
-// os*2^SF output samples (the demod hop grid must align with symbols).
+// Per channel: mix to the channel (phasor NCO), a decimate-by-D FIR (cutoff
+// ~0.58 bw) and a cubic fractional interpolation to EXACTLY rate_out = 2 bw,
+// so one LoRa symbol is exactly 2 x 2^SF output samples (the demod's hop grid
+// must be a whole symbol). The FIR history is double-buffered (the window is
+// contiguous: no index wrap per tap) and only evaluated every D-th sample.
 struct Resampler {
-    int D = 1;
-    std::vector<float> taps;          // decimating FIR
-    std::vector<lora_phy::cf> hist;   // input history for the FIR
+    int D = 1, nt = 1;
+    std::vector<float> taps;          // symmetric low-pass
+    std::vector<float> hist;          // interleaved re/im, 2 x nt complex (double buffer)
     int hpos = 0, phase = 0;
     double rate_dec = 0, rate_out = 0, step = 0;   // decimated samples per output
-    // cubic-interpolating fractional reader over the decimated stream
-    lora_phy::cf dring[16] = {};      // ring of recent decimated samples
-    int64_t di = 0;                   // count of decimated samples produced
+    lora_phy::cf dring[16] = {};      // recent decimated samples
+    int64_t di = 0;                   // decimated samples produced
     double rpos = 0;                  // next output position (decimated-sample units)
+    std::complex<double> ph{1, 0}, rot{1, 0};   // NCO phasor
+    bool mix = false;
+    int renorm = 0;
 
-    void init(double fs, double bw, double ro) {
+    void init(double fs, double bw, double ro, double off_hz) {
         rate_out = ro;
         D = std::max(1, static_cast<int>(std::floor(fs / ro)));   // fs/D >= ro
         rate_dec = fs / D;
         step = rate_dec / rate_out;   // >= 1
-        const int nt = 8 * D + 1;
+        nt = 8 * D + 1;
         taps.assign(static_cast<size_t>(nt), 0.f);
         double s = 0;
-        const double fc = 0.58 * bw / fs;   // pass the full +-bw/2 chirp
+        const double fc = 0.58 * bw / fs;
         for (int k = 0; k < nt; k++) {
             const double m = k - (nt - 1) / 2.0;
             const double sinc = m == 0 ? 2 * fc : std::sin(2 * M_PI * fc * m) / (M_PI * m);
@@ -145,40 +163,57 @@ struct Resampler {
             s += sinc * w;
         }
         for (auto& t : taps) t = static_cast<float>(t / s);
-        hist.assign(taps.size(), lora_phy::cf(0, 0));
+        hist.assign(static_cast<size_t>(4 * nt), 0.f);
         hpos = 0;
         phase = 0;
         di = 0;
-        rpos = 1.0;   // first output uses decimated indices 0..3 (floor=1)
+        rpos = 1.0;
         for (auto& d : dring) d = lora_phy::cf(0, 0);
+        mix = off_hz != 0;
+        rot = std::polar(1.0, -2 * M_PI * off_hz / fs);
+        ph = {1, 0};
+        renorm = 0;
     }
-    lora_phy::cf dget(int64_t idx) const { return dring[static_cast<size_t>(((idx % 16) + 16) % 16)]; }
+    lora_phy::cf dget(int64_t idx) const { return dring[static_cast<size_t>(idx & 15)]; }
     static lora_phy::cf cubic(lora_phy::cf pm1, lora_phy::cf p0, lora_phy::cf p1, lora_phy::cf p2, float t) {
-        // Catmull-Rom at fraction t in [0,1) between p0 and p1
         const lora_phy::cf a = p2 - p1 - pm1 + p0;
         const lora_phy::cf b = pm1 - p0 - a;
         const lora_phy::cf c = p1 - pm1;
         return ((a * t + b) * t + c) * t + p0;
     }
-    void push(lora_phy::cf x, std::vector<lora_phy::cf>& out) {
-        hist[static_cast<size_t>(hpos)] = x;
-        hpos = (hpos + 1) % static_cast<int>(hist.size());
-        if (++phase < D) return;
-        phase = 0;
-        lora_phy::cf acc0(0, 0);
-        const int nt = static_cast<int>(taps.size());
-        for (int k = 0; k < nt; k++) {
-            const int idx = (hpos - 1 - k + 2 * nt) % nt;
-            acc0 += hist[static_cast<size_t>(idx)] * taps[static_cast<size_t>(k)];
-        }
-        dring[static_cast<size_t>(di % 16)] = acc0;   // decimated index di
-        di++;
-        // emit outputs whose window floor-1..floor+2 is available (floor+2 <= di-1)
-        while (rpos + 2 <= static_cast<double>(di) - 1) {
-            const int64_t f = static_cast<int64_t>(std::floor(rpos));
-            const float t = static_cast<float>(rpos - f);
-            out.push_back(cubic(dget(f - 1), dget(f), dget(f + 1), dget(f + 2), t));
-            rpos += step;
+    void run(const kp::cf* x, size_t n, std::vector<lora_phy::cf>& out) {
+        float* h = hist.data();
+        const float* tp = taps.data();
+        for (size_t i = 0; i < n; i++) {
+            float re = x[i].real(), im = x[i].imag();
+            if (mix) {
+                const float pr = static_cast<float>(ph.real()), pi = static_cast<float>(ph.imag());
+                const float r2 = re * pr - im * pi;
+                im = re * pi + im * pr;
+                re = r2;
+                ph *= rot;
+                if (++renorm == 4096) { renorm = 0; ph /= std::abs(ph); }
+            }
+            h[2 * hpos] = h[2 * (hpos + nt)] = re;
+            h[2 * hpos + 1] = h[2 * (hpos + nt) + 1] = im;
+            if (++hpos == nt) hpos = 0;
+            if (++phase < D) continue;
+            phase = 0;
+            // window: oldest .. newest = h[hpos .. hpos+nt-1] (taps symmetric)
+            const float* w = h + 2 * hpos;
+            float ar = 0, ai = 0;
+            for (int k = 0; k < nt; k++) {
+                ar += tp[k] * w[2 * k];
+                ai += tp[k] * w[2 * k + 1];
+            }
+            dring[di & 15] = lora_phy::cf(ar, ai);
+            di++;
+            while (rpos + 2 <= static_cast<double>(di) - 1) {
+                const int64_t f = static_cast<int64_t>(rpos);
+                const float t = static_cast<float>(rpos - static_cast<double>(f));
+                out.push_back(cubic(dget(f - 1), dget(f), dget(f + 1), dget(f + 2), t));
+                rpos += step;
+            }
         }
     }
 };
@@ -190,7 +225,6 @@ struct Channel {
     double bw = 0;
     double rate_out = 0;
     Resampler rs;
-    double nco_ph = 0, nco_step = 0;
     std::vector<lora_phy::cf> outbuf;
     std::vector<std::unique_ptr<lora_phy::LoraRx>> rx;
 };
@@ -203,6 +237,7 @@ public:
     }
 
     void reset() override {
+        pend_.clear();
         chans_.clear();
         rf_used_ = NAN;
         nodes_.clear();
@@ -217,6 +252,8 @@ public:
         else if (k == "channels") channels_opt_ = v;
         else if (k == "sf") sf_opt_ = v.empty() ? "preset" : v;
         else if (k == "lorawan") lorawan_ = v == "1";
+        else if (k == "channel") chan_name_ = v;
+        else if (k == "others") others_ = v != "0";
         else if (k == "tune") tune_ = v != "0";
         else if (k == "sens") sens_db_ = v.empty() ? 7 : atof(v.c_str());
         built_ = false;
@@ -228,23 +265,14 @@ public:
         frames_.clear();
         for (auto& c : chans_) {
             c->outbuf.clear();
-            if (c->nco_step == 0) {
-                for (size_t i = 0; i < n; i++) c->rs.push(x[i], c->outbuf);   // channel at the VFO centre
-            } else {
-                for (size_t i = 0; i < n; i++) {
-                    const lora_phy::cf m = x[i] * lora_phy::cf(static_cast<float>(std::cos(c->nco_ph)), static_cast<float>(std::sin(c->nco_ph)));
-                    c->nco_ph += c->nco_step;
-                    if (c->nco_ph > M_PI) c->nco_ph -= 2 * M_PI;
-                    else if (c->nco_ph < -M_PI) c->nco_ph += 2 * M_PI;
-                    c->rs.push(m, c->outbuf);
-                }
-            }
+            c->rs.run(x, n, c->outbuf);
             for (auto& rx : c->rx) {
                 frames_.clear();
                 rx->push(c->outbuf.data(), c->outbuf.size(), frames_);
-                for (auto& fr : frames_) report(*c, *rx, fr);
+                for (auto& fr : frames_) queue(*c, *rx, std::move(fr));
             }
         }
+        flush_pending(false);
         housekeeping();
     }
     void process(const kp::cf* x, size_t n) override { process(x, n, nullptr, 0); }
@@ -255,9 +283,10 @@ private:
     std::map<std::string, Node> nodes_;
     double rf_used_ = NAN, now_ = 0, summary_t_ = -1e9;
     std::string region_ = "anz", preset_ = "longfast", channels_opt_, sf_opt_ = "preset";
-    bool lorawan_ = false, tune_ = true, built_ = false, tune_asked_ = false;
+    bool lorawan_ = false, tune_ = true, built_ = false, tune_asked_ = false, others_ = true;
+    std::string chan_name_;   // "" = the preset's own name (the default channel)
     double sens_db_ = 7;
-    uint64_t n_mesh_ = 0, n_lw_ = 0, n_lora_ = 0;
+    uint64_t n_mesh_ = 0, n_lw_ = 0, n_lora_ = 0, n_dup_ = 0;
     const char* dump_ = getenv("LORA_DUMP");
 
     const Preset& preset() const {
@@ -266,8 +295,12 @@ private:
     }
     const Region& region() const {
         for (auto& r : REGIONS) if (region_ == r.key) return r;
+        if (region_ == "au915") return REGIONS[0];
         return REGIONS[0];
     }
+    // the watched Meshtastic channel: the channel name's hash slot (the
+    // preset's name for the default channel)
+    double mesh_hz() const { return mesh_freq_hz(region(), preset().bw, chan_name_.empty() ? preset().name : chan_name_); }
 
     std::vector<int> sf_set() const {
         if (sf_opt_ == "auto") return {7, 8, 9, 10, 11, 12};
@@ -297,7 +330,17 @@ private:
             return out;
         }
         const Preset& pr = preset();
-        for (int sf : sf_set()) out.push_back({region().mesh_freq_hz, sf, pr.bw});
+        for (int sf : sf_set()) out.push_back({mesh_hz(), sf, pr.bw});
+        // the other presets' default channels that fall inside the VFO too
+        // (in the ANZ LongFast window: ShortFast 918.875, ShortSlow 920.625)
+        if (others_ && chan_name_.empty()) {
+            const double rf = host.rf_hz();
+            for (const Preset& o : PRESETS) {
+                if (&o == &pr) continue;
+                const double f = mesh_freq_hz(region(), o.bw, o.name);
+                if (std::isfinite(rf) && std::fabs(f - rf) <= 1.05e6 - o.bw / 2) out.push_back({f, o.sf, o.bw});
+            }
+        }
         if (lorawan_) {
             const Region& r = region();
             for (int k = 0; k < r.lw_n; k++)
@@ -312,6 +355,7 @@ private:
             (!std::isfinite(rf) || std::fabs(rf - rf_used_) < 1e3))
             return;
         rf_used_ = rf;
+        pend_.clear();
         chans_.clear();
         built_ = true;
         std::vector<Spec> sp = specs();
@@ -332,8 +376,7 @@ private:
                 c->center_off = off;
                 c->bw = s.bw;
                 c->rate_out = 2 * s.bw;
-                c->rs.init(FS, s.bw, c->rate_out);
-                c->nco_step = -2 * M_PI * off / FS;
+                c->rs.init(FS, s.bw, c->rate_out, off);
                 chans_.push_back(std::move(up));
                 by_fb[{fk, bk}] = c;
             } else {
@@ -359,13 +402,52 @@ private:
             txt = "no LoRa channel inside the VFO";
             if (tune_ && !tune_asked_ && std::isfinite(rf)) {
                 tune_asked_ = true;
-                if (host.tune(region().mesh_freq_hz))
-                    host.event(fmt("Tuning to %.3f MHz for ", region().mesh_freq_hz / 1e6) + region().name, 30.0);
+                if (host.tune(mesh_hz()))
+                    host.event(fmt("Tuning to %.3f MHz for ", mesh_hz() / 1e6) + region().name + " " + preset().name, 30.0);
             }
         }
         host.fact("Watching", txt);
         host.fact("Region / preset", std::string(region().name) + " · " + preset().name +
                                           fmt(" (SF%.0f", (double)preset().sf) + fmt(" BW%.0f)", preset().bw / 1e3));
+    }
+
+    // A strong packet also decodes on a watched channel one bandwidth away (a
+    // whole-bandwidth offset aliases to CFO 0 after dechirping): frames with
+    // the same payload ending within 0.15 s are one transmission - keep the
+    // channel where it is strongest (the real one; the neighbour sees it
+    // through the channel filter's skirt). Held 50 ms (both decode in the same block or the next).
+    struct Pend {
+        const Channel* c;
+        const lora_phy::LoraRx* rx;
+        lora_phy::Frame fr;
+        double te, ready;
+    };
+    std::vector<Pend> pend_;
+    void queue(const Channel& c, const lora_phy::LoraRx& rx, lora_phy::Frame&& fr) {
+        const double te = tstamp(c, fr.end_sample);
+        for (Pend& p : pend_)
+            if (p.fr.payload == fr.payload && std::fabs(p.te - te) < 0.15) {
+                n_dup_++;
+                if (fr.snr_db > p.fr.snr_db) {
+                    p.c = &c;
+                    p.rx = &rx;
+                    p.fr = std::move(fr);
+                    p.te = te;
+                }
+                return;
+            }
+        pend_.push_back({&c, &rx, std::move(fr), te, now_ + 0.05});
+    }
+    void flush_pending(bool all) {
+        for (size_t i = 0; i < pend_.size();) {
+            if (all || now_ >= pend_[i].ready) {
+                Pend p = std::move(pend_[i]);
+                pend_.erase(pend_.begin() + static_cast<long>(i));
+                report(*p.c, *p.rx, p.fr);
+            } else {
+                i++;
+            }
+        }
     }
 
     // map a LoRaRx stream sample to host.time() seconds (seconds of 2.4 MHz input)
@@ -645,8 +727,9 @@ KRAKEN_PLUGIN(LoraDecoder, {.id = "lora",
                             .min_vfo_rate = FS,
                             .author = "KrakenSDR",
                             .options = {{"region", "Region", "anz",
-                                         "anz=Australia / New Zealand|au915=AU915|us915=US915|eu868=EU868|as923=AS923",
-                                         "Sets the default Meshtastic channel frequency and the LoRaWAN uplink grid"},
+                                         "anz=Australia / New Zealand (915-928)|us=United States (902-928)|eu868=Europe 868",
+                                         "The Meshtastic region (its band sets the channel frequency, as the firmware "
+                                         "computes it) and the LoRaWAN uplink grid"},
                                         {"preset", "Meshtastic preset", "longfast",
                                          "shortturbo=ShortTurbo (SF7 BW500)|shortfast=ShortFast (SF7 BW250)|"
                                          "shortslow=ShortSlow (SF8)|mediumfast=MediumFast (SF9)|mediumslow=MediumSlow (SF10)|"
@@ -655,12 +738,18 @@ KRAKEN_PLUGIN(LoraDecoder, {.id = "lora",
                                         {"sf", "Spreading factor", "preset",
                                          "preset=From the preset|auto=Scan SF7-12|7=SF7|8=SF8|9=SF9|10=SF10|11=SF11|12=SF12",
                                          "Which spreading factors to demodulate on each channel (Scan costs more CPU)"},
+                                        {"channel", "Channel name", "", "",
+                                         "The Meshtastic primary channel's name (\"\" = the default channel, named after "
+                                         "the preset): its hash picks the frequency slot. ANZ LongFast = 919.875 MHz"},
+                                        {"others", "Other presets", "1", "1=On|0=Off",
+                                         "Also watch the other presets' default channels that fall inside the VFO "
+                                         "(ANZ LongFast window: ShortFast 918.875, ShortSlow 920.625 MHz)"},
                                         {"lorawan", "Watch LoRaWAN", "0", "0=Off|1=On",
                                          "Also watch the region's LoRaWAN 125 kHz uplink channels (headers only)"},
                                         {"channels", "Channels", "",
                                          "", "Explicit channel list \"MHz:SF:BWkHz,...\" (overrides region/preset)"},
                                         {"tune", "Tune to the band", "1", "1=On|0=Off",
-                                         "Retune the receiver (once) to the region's Meshtastic frequency when no "
+                                         "Retune the receiver (once) to the preset's Meshtastic channel when no "
                                          "watched channel is inside the VFO"},
                                         {"sens", "Detection", "7", "4=4 dB|7=7 dB|10=10 dB|14=14 dB",
                                          "How far a preamble must stand above the noise to be demodulated"}},

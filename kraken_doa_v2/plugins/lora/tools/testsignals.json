@@ -1,24 +1,52 @@
 [
-{
- "id": "lora-mesh-five",
- "title": "LoRa / Meshtastic / LoRaWAN: five nodes and a relay",
- "description": "A 2.4 MHz scene around 921.8 MHz (NZ ANZ band): Meshtastic text !a1b2c3d4 'ZL hello mesh' (60 deg, SF11 BW250, public default channel), a Meshtastic POSITION !deadbeef (300 deg, SF9 BW250), a Meshtastic NODEINFO 'Wellington Hill' !11223344 (160 deg, SF11), a relayed copy of !a1b2c3d4 (230 deg, hop_start!=hop_limit, attributed to the relay node !relay-44), a private-channel Meshtastic !000000aa (100 deg, header only - not decrypted), and a LoRaWAN uplink DevAddr 26011F88 (20 deg, SF9 BW125, clear MAC header only). Expect the Meshtastic nodes at their bearings; the LoRaWAN and relay by bearing.",
- "rf_hz": 921.8e6,
- "tuner_offset_hz": 0,
- "seconds": 6,
- "vfo": {"bw_khz": 2400, "opts": {"region": "anz", "channels": "921.8:11:250,922.05:9:250,921.55:11:250,922.3:9:125,921.3:11:250"}},
- "steps": [
-  ["{tools}/lora_gen.py", "{tools}/scene_five.json", "out.cu8"]
- ],
- "output": "out.cu8",
- "expect": [
-  {"tid": "!a1b2c3d4", "bearing": 60},
-  {"tid": "!deadbeef", "bearing": 300},
-  {"tid": "!11223344", "bearing": 160},
-  {"tid": "!000000aa", "bearing": 100},
-  {"bearing": 20},
-  {"bearing": 230}
- ],
- "tol_deg": 6
-}
+ {
+  "id": "lora-mesh-five",
+  "title": "LoRa / Meshtastic / LoRaWAN: five nodes and a relay",
+  "description": "A 2.4 MHz scene around 921.8 MHz (NZ ANZ band), Meshtastic with its 16-symbol preamble and sync word 0x2B: text !a1b2c3d4 'ZL hello mesh' (60 deg, SF11 BW250, public default channel), POSITION !deadbeef (300 deg, SF9), NODEINFO 'Wellington Hill' !11223344 (160 deg, SF11), a relayed copy of !a1b2c3d4 (230 deg, hop_start != hop_limit: the relaying node !relay-44), a private-channel node !000000aa (100 deg, header only - not decrypted) and a LoRaWAN uplink DevAddr 26011F88 (20 deg, SF9 BW125, sync 0x34, clear MAC header only). Expect all six talkers at their bearings.",
+  "rf_hz": 921800000.0,
+  "tuner_offset_hz": 0,
+  "seconds": 6,
+  "vfo": {
+   "bw_khz": 2400,
+   "opts": {
+    "region": "anz",
+    "channels": "921.8:11:250,922.05:9:250,921.55:11:250,922.3:9:125,921.3:11:250"
+   }
+  },
+  "steps": [
+   [
+    "{tools}/lora_gen.py",
+    "{tools}/scene_five.json",
+    "out.cu8"
+   ]
+  ],
+  "output": "out.cu8",
+  "expect": [
+   {
+    "tid": "!a1b2c3d4",
+    "bearing": 60
+   },
+   {
+    "tid": "!deadbeef",
+    "bearing": 300
+   },
+   {
+    "tid": "!11223344",
+    "bearing": 160
+   },
+   {
+    "tid": "!000000aa",
+    "bearing": 100
+   },
+   {
+    "tid": "DevAddr 26011F88",
+    "bearing": 20
+   },
+   {
+    "tid": "!relay-44",
+    "bearing": 230
+   }
+  ],
+  "tol_deg": 5
+ }
 ]

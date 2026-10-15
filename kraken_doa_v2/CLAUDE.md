@@ -3651,20 +3651,44 @@ Edit `include/config.hpp`:
   (like flarm's relay handling), or the LoRaWAN DevAddr / DevEUI; `freq_hz` /
   `bw_hz` = the LoRa channel so nodes on different channels/SFs keep their
   own bearings. `avg_s` 10, `keep_s` 30 min. UI kind `node` 📶
-- Options: `region` (anz default - the Meshtastic frequency + LoRaWAN grid),
-  `preset` (LongFast etc - SF/BW), `sf` (preset | auto | 7..12), `lorawan`
-  (add the 125 kHz uplink channels), `channels` (explicit `MHz:SF:BWkHz,...`,
-  overrides), `tune`, `sens`. Default = the region's Meshtastic channel
+- Watched channels: the Meshtastic channel as the FIRMWARE computes it
+  (`mesh_freq_hz`: numChannels = floor((end - start) / (spacing + bw)), slot =
+  djb2(channel name) % numChannels, f = start + bw/2 + slot bw; the default
+  channel hashes the preset's name - ANZ LongFast = slot 19 / 52 = 919.875
+  MHz, ShortFast 918.875, ShortSlow 920.625, MediumFast 926.125; US
+  906.875, EU868 869.525). Options `region` (anz / us / eu868), `preset`,
+  `channel` (a named primary channel), `others` (default on: the other
+  presets' default channels inside the VFO - at 919.750 MHz LongFast +
+  ShortFast + ShortSlow), `sf` (preset | auto | 7..12), `lorawan` (the
+  region's 125 kHz uplink grid, AU915 sub-band 2 for anz), `channels`
+  (explicit `MHz:SF:BWkHz,...`, overrides), `tune`, `sens`
+- Per channel (`Resampler`): phasor NCO, decimate-by-D FIR over a contiguous
+  double-buffered history, cubic interpolation to exactly 2 x BW. A strong
+  packet also decodes on the watched channel one BW away (a whole-BW offset
+  aliases to CFO 0): same payload within 0.15 s on two channels = one
+  transmission, the strongest kept (`queue` / `flush_pending`, 50 ms hold)
+- `LoraRx`: the preamble residual (b_up) and the SNR are measured on the LAST
+  preamble symbol (SFD - 3 symbols) - the b0 alignment can put the start one
+  symbol before the preamble; the SFD is searched up to 40 symbols ahead
+  (Meshtastic's preamble is 16); a pending packet is retried only once
+  `need_abs_` samples are there (it was re-run every block)
 - Generator `tools/lora_gen.py` (full chain mirroring coding.hpp, AES default
-  key + protobuf, LoRaWAN frames, CSS at 2.4 MHz, several nodes + a relay on
-  a UCA), `tools/scene_five.json`, playback entry `lora-mesh-five`
-- Tests: C++ `t_phy` round trip every SF/CR/BW incl. CFO/STO/noise (SF12 to
-  ~-12 dB/sample); offline multi-antenna 5 nodes exact bearings (60/160/300/
-  100/20/230 deg), text/position/nodeinfo/private/LoRaWAN decoded, noise
-  silent. CPU (Pi 5, offline incl. the 2.4 MHz read): ~30 % of a core per
-  watched channel. Limits: two packets overlapping on one channel can't both
-  decode (half-duplex); the channel-name-hash frequency isn't computed (use
-  the region default or `channels`); GPL projects used as documentation only
+  key + protobuf, LoRaWAN frames, continuous-phase CSS at 2.4 MHz with
+  Meshtastic's 16-symbol preamble / sync 0x2B and LoRaWAN's 8 / 0x34, several
+  nodes + a relay on a UCA, hex IDs, seeded bytes), `tools/scene_five.json`,
+  playback entry `lora-mesh-five` (6 talkers, all by id)
+- Tests: C++ `t_phy` round trip SF7-12 x CR x BW incl. CFO / STO / noise
+  (71 / 72; SF12 to ~-12 dB/sample); byte-exact check of the whole path
+  (scratch verify.py: every CRC-valid frame = the generator's payload): 16 /
+  16 sent / decoded, each on its own channel, no duplicates; bearings 60 /
+  160 / 300 / 100 / 20 / 230 deg exact, noise silent. Found + fixed by them:
+  the b_up-on-noise bug (~40 % of packets failed the header checksum), the
+  12-symbol SFD search, adjacent-channel duplicates; the "wrong DevAddr" was
+  a typo in the scene (638484360 = 0x260E7F88). CPU (Pi 5, offline, ~6 % of
+  it the host's file read): one busy channel 15.6 % (was 39 %), five 43 %
+  (was 120 %). Limits: two packets overlapping on one channel can't both
+  decode (half-duplex); a CFO beyond ~-20 % of BW at SF7 sometimes costs a
+  symbol; GPL projects used as documentation only
 
 **ILS / VOR / marker (`plugins/ils/`, README.md there):**
 - 48 kHz (`min_vfo_rate` 48 kHz: the VOR subcarrier reaches +-10.4 kHz).

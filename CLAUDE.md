@@ -442,8 +442,10 @@ decoders `kraken_doa_v2/plugins/`
   only - DevAddr / FCnt / FPort, join DevEUI - the payload is encrypted. ID
   separation: a DoA per node / DevAddr on its own channel, the RELAYING node
   (`!relay-XX`) when a Meshtastic frame was repeated (hop_start != hop_limit),
-  DF kind `node` 📶. Region / preset options - NZ / AU Meshtastic 915-928 MHz
-  (ANZ LongFast), LoRaWAN AU915 / AS923).
+  DF kind `node` 📶. The Meshtastic channel from region + preset + channel
+  name as the firmware computes it (djb2 hash slot: ANZ LongFast 919.875
+  MHz), the other presets' default channels inside the VFO too, LoRaWAN
+  AU915 sub-band 2 optional).
   Plugins learn the VFO's RF from `kp::Host::rf_hz()` (wire RF, 7). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as

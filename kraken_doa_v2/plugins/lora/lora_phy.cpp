@@ -13,7 +13,7 @@ namespace lora_phy {
 static constexpr int DETECT_SYMS = 5;      // stable preamble up-peaks to trigger
 static constexpr float DETECT_RATIO = 3.0f;  // peak / mean power threshold
 static constexpr int MAX_PAYLOAD = 255;
-static constexpr int SCAN_MAX_SYMS = 12;   // symbols to scan for the SFD after preamble
+static constexpr int SCAN_MAX_SYMS = 40;   // symbols to scan for the SFD (Meshtastic sends a 16-symbol preamble)
 
 LoraRx::LoraRx(int sf, double bw, int os, uint8_t sync_word, bool implicit, int impl_len, int impl_cr, bool impl_crc,
                bool ldro_auto)
@@ -113,6 +113,7 @@ void LoraRx::push(const cf* x, size_t n, std::vector<Frame>& out) {
 
     // a packet is being waited on: retry it as samples arrive
     if (pending_) {
+        if (abs_ < need_abs_ && abs_ <= pend_deadline_) return;   // not enough samples yet
         const int r = decode_from(pend_start_, out);
         if (r == 1 || r == 0 || abs_ > pend_deadline_) pending_ = false;
         if (pending_) return;   // keep waiting; no new detection meanwhile
@@ -164,12 +165,12 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
     // dechirp peak bin b0 encodes that offset: delta ~= b0 * os samples.
     // Shift the start by that, then fine-search +-os samples for the true
     // boundary (max preamble peak).
-    if (preamble_start + 2LL * L_ > abs_) return 2;
+    if (preamble_start + 2LL * L_ > abs_) { need_abs_ = preamble_start + 2LL * L_; return 2; }
     const int b0 = demod_bin(preamble_start, false, nullptr, nullptr, nullptr);
     // the window straddles the true boundary by b0*os samples: shift back
     int64_t astart = preamble_start - static_cast<int64_t>(b0) * os_;
     while (astart < oldest) astart += L_;
-    if (astart + 2LL * L_ > abs_) return 2;
+    if (astart + 2LL * L_ > abs_) { need_abs_ = astart + 2LL * L_; return 2; }
     {
         float best = -1;
         int64_t bestd = 0;
@@ -191,7 +192,7 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
     int b_down = 0;
     for (int s = 0; s < SCAN_MAX_SYMS; s++) {
         const int64_t a = astart + static_cast<int64_t>(s) * L_;
-        if (a + 2 * L_ > abs_) return 2;
+        if (a + 2 * L_ > abs_) { need_abs_ = a + 2LL * L_; return 2; }
         float pu, pd;
         const int vu = demod_bin(a, false, &pu, nullptr, nullptr);
         const int vd = demod_bin(a, true, &pd, nullptr, &bdown_f);
@@ -209,6 +210,12 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
         const int vd = demod_bin(a, true, &pd, nullptr, &bdown_f);
         if (pd > 1.3f * pu) { sfd = a; b_down = vd; } else break;
     }
+    // The preamble residual is measured on the LAST preamble symbol (3
+    // symbols before the SFD: the 2 sync symbols are in between) - astart may
+    // be one symbol before the preamble when the first stable hop fell in its
+    // first symbol, so b_up at astart could be noise.
+    if (sfd - 3 * L_ < oldest) return 0;
+    b_up = demod_bin(sfd - 3 * L_, false, nullptr, nullptr, &bup_f);
 
     // The b0-based alignment shifts the start by -(cfo)*os samples, which
     // exactly cancels the carrier offset in the dechirped data symbols (the
@@ -234,7 +241,7 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
     const int sf_app_hdr = sf_ - 2;
     Frame fr;
     fr.sf = sf_;
-    fr.start_sample = astart;
+    fr.start_sample = sfd - 10 * L_;   // >= 8 preamble + 2 sync symbols before the SFD
     fr.cfo_hz = cfo_hz;
     fr.sync_word = sync_word_;
 
@@ -263,7 +270,7 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
     };
 
     if (!implicit_) {
-        if (data_start + 8LL * L_ > abs_) return 2;
+        if (data_start + 8LL * L_ > abs_) { need_abs_ = data_start + 8LL * L_; return 2; }
         std::vector<uint8_t> hn;
         bool hok = false;
         block_nibbles(data_start, 8, sf_app_hdr, 4, true, hn, &hok);
@@ -300,7 +307,12 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
     int total_syms = data_sym0;
     while (static_cast<int>(nibbles.size()) < need_nibbles) {
         const int nsym = 4 + cr;
-        if (base + static_cast<int64_t>(nsym) * L_ > abs_) return 2;   // wait for more samples
+        if (base + static_cast<int64_t>(nsym) * L_ > abs_) {   // wait for the rest of the packet
+            const int left = need_nibbles - static_cast<int>(nibbles.size());
+            const int blocks = (left + sf_app - 1) / sf_app;
+            need_abs_ = base + static_cast<int64_t>(blocks) * nsym * L_;
+            return 2;
+        }
         std::vector<uint8_t> nb;
         block_nibbles(base, nsym, sf_app, cr, ldro, nb, nullptr);
         for (uint8_t x : nb) nibbles.push_back(x);
@@ -335,7 +347,7 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
     }
     // SNR estimate from the preamble peak/mean
     float pk, mean;
-    demod_bin(astart, false, &pk, &mean, nullptr);
+    demod_bin(sfd - 3 * L_, false, &pk, &mean, nullptr);
     fr.snr_db = mean > 0 ? 10.0f * std::log10(std::max(pk / (mean * N_), 1e-6f)) : 0.f;
 
     if (!fr.crc_ok && has_crc) return 0;   // only emit frames that passed the CRC

@@ -81,6 +81,7 @@ private:
     // one pending packet being waited on (LoRa is half-duplex per channel)
     bool pending_ = false;
     int64_t pend_start_ = 0, pend_deadline_ = 0;
+    int64_t need_abs_ = 0;          // a pending decode is retried once abs_ reaches this
 
     // demod a symbol starting at absolute index `a` with the down/up chirp;
     // returns the argmax bin (0..N-1, aliased) and fills pk/mean power.
