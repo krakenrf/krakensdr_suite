@@ -430,7 +430,20 @@ decoders `kraken_doa_v2/plugins/`
   SELF-TEST frame sync = a test, any other = a "⚠ DISTRESS" alert (to be
   reported to the RCC by the user - the decoder reports nothing); a DoA per
   15-hex ID (a packet per burst on its own 3 kHz channel, kept 24 h, DF kind
-  `sar` 🆘); second-generation (T.018 DSSS) bursts detected, not decoded).
+  `sar` 🆘); second-generation (T.018 DSSS) bursts detected, not decoded) and
+  lora (LoRa CSS in the whole 2.4 MHz, manual only, `lock_vfo`, `tunes`:
+  Meshtastic and LoRaWAN on top. SF7-12, BW 125/250/500, CR 4/5-4/8, explicit
+  / implicit header; each watched channel dechirped - a below-noise preamble
+  detector, up/down-chirp sync, Gray / diagonal interleave / Hamming / PN
+  whitening / CRC16. Meshtastic: the clear 16-byte header, the payload
+  decrypted ONLY with the PUBLISHED default channel key - a private channel
+  shows its header only, keys are never guessed - into the Data protobuf
+  (text, position on the map, nodeinfo, telemetry); LoRaWAN: clear MAC header
+  only - DevAddr / FCnt / FPort, join DevEUI - the payload is encrypted. ID
+  separation: a DoA per node / DevAddr on its own channel, the RELAYING node
+  (`!relay-XX`) when a Meshtastic frame was repeated (hop_start != hop_limit),
+  DF kind `node` 📶. Region / preset options - NZ / AU Meshtastic 915-928 MHz
+  (ANZ LongFast), LoRaWAN AU915 / AS923).
   Plugins learn the VFO's RF from `kp::Host::rf_hz()` (wire RF, 7). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
@@ -495,7 +508,7 @@ decoders `kraken_doa_v2/plugins/`
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, ctcss, beacon406, dtv and cells (ARRAY
+  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, ctcss, beacon406, lora, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags)

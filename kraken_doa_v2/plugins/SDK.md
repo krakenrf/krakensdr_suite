@@ -48,6 +48,10 @@ plugins/
 ├── beacon406/            406 MHz distress beacons (Cospas-Sarsat): bursts on every channel of a 100 kHz
 │                         VFO, biphase-L demodulator, BCH syndrome tables, every protocol; a packet
 │                         talker per 15-hex ID on its own channel; distress vs self-test
+├── lora/                 LoRa CSS in the full 2.4 MHz (lock_vfo): per-channel dechirp receiver
+│                         (SF7-12, BW 125/250/500, Gray/interleave/Hamming/whitening/CRC), Meshtastic
+│                         (default-key AES-CTR decrypt + protobuf) and LoRaWAN (clear headers); a packet
+│                         talker per node / DevAddr, the relaying node when a mesh frame was repeated
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)

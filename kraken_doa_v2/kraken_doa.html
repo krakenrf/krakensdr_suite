@@ -12896,13 +12896,13 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // unknown plugin's packets show as plain 'talker's
   const RDF_PK_KIND = {ais: 'ship', adsb: 'aircraft', dme: 'beacon', ism: 'device', aprs: 'station',
                        radiosonde: 'sonde', tetra: 'site', mpt1327: 'site', ils: 'navaid', radar: 'radar',
-                       ssr1030: 'interrogator', uat: 'aircraft', flarm: 'flarm', beacon406: 'sar'};
+                       ssr1030: 'interrogator', uat: 'aircraft', flarm: 'flarm', beacon406: 'sar', lora: 'node'};
   // kinds that report where they are (their decoder's map points, same id):
   // Dist / Δ pos columns, the position check
-  const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde', 'gs', 'flarm', 'sar']);
+  const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde', 'gs', 'flarm', 'sar', 'node']);
   // what one of their packets is called
   const RDF_PK_UNIT = {beacon: 'pulse pair', device: 'transmission', site: 'slot', sonde: 'frame', navaid: 'block', radar: 'pulse',
-                       interrogator: 'interrogation', gs: 'frame', sar: 'burst'};
+                       interrogator: 'interrogation', gs: 'frame', sar: 'burst', node: 'frame'};
   // how a kind is named in "Every ...", counts and the position check
   const RDF_KIND_WORD = {flarm: 'aircraft', gs: 'ground station', sar: 'distress beacon'};
   function rdfKind(t) {
@@ -12943,7 +12943,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       return /paraglider|hang glider|parachute/.test(l) ? '🪂 ' : /helicopter/.test(l) ? '🚁 ' : /balloon|airship/.test(l) ? '🎈 ' : '✈ ';
     }
     return {ship: '⛴ ', aircraft: '✈ ', beacon: '📡 ', device: '📟 ', path: '📶 ', cell: '📱 ', station: '📻 ',
-            sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 ', gs: '🗼 ', tone: '🔔 ', sar: '🆘 '}[k] || '';
+            sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 ', gs: '🗼 ', tone: '🔔 ', sar: '🆘 ', node: '📶 '}[k] || '';
   }
   function rdfKinds(ts) {   // one word for a list of talkers: the common kind, else 'talker'
     const ks = new Set(ts.map(rdfKind));

@@ -1,0 +1,41 @@
+{
+  "rf_hz": 921.8e6, "seconds": 6, "channels": 5, "radius_m": 0.12, "seed": 3,
+  "noise_lsb": 2.0, "station": [-41.0, 174.0],
+  "sources": [
+    {"proto": "meshtastic", "name": "!a1b2c3d4", "bearing": 60,
+     "sf": 11, "bw": 250000, "cr": 1, "freq_mhz": 921.8, "level_db": 16,
+     "period_s": 2.0, "t0": 0.4, "df_hz": 1500,
+     "from": 2712847316, "to": 4294967295, "id": 305419896,
+     "hop_limit": 3, "hop_start": 3, "port": "text", "text": "ZL hello mesh"},
+
+    {"proto": "meshtastic", "name": "!deadbeef", "bearing": 300,
+     "sf": 9, "bw": 250000, "cr": 1, "freq_mhz": 922.05, "level_db": 15,
+     "period_s": 2.0, "t0": 0.9, "df_hz": -3000,
+     "from": 3735928559, "to": 4294967295, "id": 48813,
+     "hop_limit": 3, "hop_start": 3, "port": "position",
+     "lat": -41.05, "lon": 174.06, "alt": 120},
+
+    {"proto": "meshtastic", "name": "!11223344", "bearing": 160,
+     "sf": 11, "bw": 250000, "cr": 1, "freq_mhz": 921.55, "level_db": 14,
+     "period_s": 3.0, "t0": 0.42,
+     "from": 287454020, "to": 4294967295, "id": 1122334,
+     "hop_limit": 3, "hop_start": 3, "port": "nodeinfo",
+     "node_id": "!11223344", "longname": "Wellington Hill", "shortname": "WHL", "hwmodel": 9},
+
+    {"proto": "meshtastic_relay", "name": "!relay-44", "bearing": 230,
+     "relay_of": "!a1b2c3d4", "relay_node_last": 68,
+     "hop_limit": 2, "hop_start": 3, "level_db": 13,
+     "sf": 11, "bw": 250000, "freq_mhz": 921.8, "period_s": 2.0, "t0": 1.4},
+
+    {"proto": "lorawan", "name": "DevAddr 26011F88", "bearing": 20,
+     "sf": 9, "bw": 125000, "cr": 1, "freq_mhz": 922.3, "level_db": 15,
+     "period_s": 2.5, "t0": 0.55, "mtype": "unconf_up",
+     "devaddr": 638484360, "fcnt": 42, "fport": 1, "payload_len": 8},
+
+    {"proto": "meshtastic", "name": "!private", "bearing": 100,
+     "sf": 11, "bw": 250000, "cr": 1, "freq_mhz": 921.3, "level_db": 14,
+     "period_s": 3.0, "t0": 1.1, "key": "private",
+     "from": 170, "to": 4294967295, "id": 999, "channel_hash": 170,
+     "hop_limit": 3, "hop_start": 3, "port": "text", "text": "secret"}
+  ]
+}

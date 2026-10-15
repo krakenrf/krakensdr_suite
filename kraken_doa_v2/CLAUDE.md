@@ -372,8 +372,8 @@ Edit `include/config.hpp`:
   VOR / marker*), ism (see *ISM devices*), radar (see *Pulse radar*),
   ssr1030 (see *1030 MHz interrogations*), uat (see *UAT*), flarm (see
   *FLARM / OGN*), ctcss (see *CTCSS / DCS*), beacon406 (see *406 MHz
-  distress beacons*), dtv and cells (ARRAY plugins
-  - see *Digital TV* and *LTE / 5G NR Cell Decoder*)
+  distress beacons*), lora (see *LoRa / Meshtastic / LoRaWAN*), dtv and cells
+  (ARRAY plugins - see *Digital TV* and *LTE / 5G NR Cell Decoder*)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
   tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by
   default. WS `PLUGIN_AUTO:id:0|1` -> `PluginRegistry::set_auto()` (bumps the
@@ -1690,7 +1690,7 @@ Edit `include/config.hpp`:
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,ctcss,beacon406}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,ctcss,beacon406,lora}`, 🗺 Map 📡 DF panel):**
 - RULE (ID separation, the user's 2026-10-15): every decoder whose signal
   carries a coded ID per TRANSMITTER reports it as a talker - a core part
   of every such decoder, new ones included. How + how to test:
@@ -2222,9 +2222,9 @@ Edit `include/config.hpp`:
   8091 packets - spectrum, waterfall, VFO, decoder, DoA, the 📡 DF panel.
   Catalogue IN THE PLUGINS: `plugins/<id>/tools/testsignals.json` (a list;
   format + how to add one: plugins/SDK.md *Test transmissions for the debug
-  playback*). 15 entries (2026-10-15): ais, aprs, dstar, nxdn, tetra,
-  mpt1327, ils (VOR), ctcss, radar, ssr1030, uat, flarm, beacon406, dtv,
-  cells. No
+  playback*). 16 entries (2026-10-15): ais, aprs, dstar, nxdn, tetra,
+  mpt1327, ils (VOR), ctcss, radar, ssr1030, uat, flarm, beacon406, lora,
+  dtv, cells. No
   generator in the repo yet (their tests used public recordings): adsb, dme,
   ism, p25, dmr, pocsag, radiosonde, v23_telemetry
 - Generation: `PLAYBACK_GEN:<id>` forks `python3 -I
@@ -3623,6 +3623,48 @@ Edit `include/config.hpp`:
 - Not decoded: second-generation messages (despreading with the public
   PRN, BCH(250,202), 23-hex ID - a follow-up), 121.5 MHz homing (swept AM
   tone - a follow-up), orbitography contents (T.006)
+
+**LoRa / Meshtastic / LoRaWAN (`plugins/lora/`, README.md there):**
+- `sample_rate` = `min_vfo_rate` 2.4 MHz, `lock_vfo`, `manual_only`,
+  `talkers`, `map`, `tunes`. Every watched channel in the 2.4 MHz is mixed
+  down (NCO + a decimate-by-D FIR + cubic fractional interpolation to EXACTLY
+  2x BW - the hop grid must be a whole symbol) and run through a CSS receiver
+  (`lora_phy.cpp`): dechirped preamble detection (catches below-noise
+  packets), up/down-chirp sync (integer CFO/STO split by b0 alignment -
+  which cancels the integer CFO in the data - + fractional-CFO de-rotation),
+  symbol demod, then the coding chain (`coding.hpp`: Gray, diagonal
+  interleave, Hamming 4/5-4/8, PN whitening, header checksum, CRC16). SF7-12,
+  BW 125/250/500, explicit + implicit header, LDRO. Only header-checksum +
+  CRC-passing frames are reported
+- Meshtastic (`meshtastic.hpp`): the clear 16-byte PacketHeader; the payload
+  decrypted ONLY with the PUBLISHED default channel key
+  (`d4f1bb3a20290759f0bcffabcf4e6901`, AES-128-CTR, `aes.hpp`) - a private
+  channel shows its clear header only, keys are never guessed. The Data
+  protobuf -> portnum + TEXT / POSITION (map point) / NODEINFO / TELEMETRY /
+  ROUTING. LoRaWAN (`lorawan.hpp`): clear MAC header only (MHDR, DevAddr,
+  FCtrl/FCnt/FPort; join DevEUI/JoinEUI) - the FRMPayload is encrypted.
+  Meshtastic vs LoRaWAN: a valid default-key-decrypted Data protobuf (or a
+  broadcast header with sane hops) = Meshtastic, else LoRaWAN, else raw LoRa
+- ID separation: a `kp::Talker` packet per frame of the actual transmitter -
+  the Meshtastic node (`!xxxxxxxx` from `from`), or the RELAYING node
+  (`!relay-XX`, the header `relay_node` byte) when `hop_start != hop_limit`
+  (like flarm's relay handling), or the LoRaWAN DevAddr / DevEUI; `freq_hz` /
+  `bw_hz` = the LoRa channel so nodes on different channels/SFs keep their
+  own bearings. `avg_s` 10, `keep_s` 30 min. UI kind `node` 📶
+- Options: `region` (anz default - the Meshtastic frequency + LoRaWAN grid),
+  `preset` (LongFast etc - SF/BW), `sf` (preset | auto | 7..12), `lorawan`
+  (add the 125 kHz uplink channels), `channels` (explicit `MHz:SF:BWkHz,...`,
+  overrides), `tune`, `sens`. Default = the region's Meshtastic channel
+- Generator `tools/lora_gen.py` (full chain mirroring coding.hpp, AES default
+  key + protobuf, LoRaWAN frames, CSS at 2.4 MHz, several nodes + a relay on
+  a UCA), `tools/scene_five.json`, playback entry `lora-mesh-five`
+- Tests: C++ `t_phy` round trip every SF/CR/BW incl. CFO/STO/noise (SF12 to
+  ~-12 dB/sample); offline multi-antenna 5 nodes exact bearings (60/160/300/
+  100/20/230 deg), text/position/nodeinfo/private/LoRaWAN decoded, noise
+  silent. CPU (Pi 5, offline incl. the 2.4 MHz read): ~30 % of a core per
+  watched channel. Limits: two packets overlapping on one channel can't both
+  decode (half-duplex); the channel-name-hash frequency isn't computed (use
+  the region default or `channels`); GPL projects used as documentation only
 
 **ILS / VOR / marker (`plugins/ils/`, README.md there):**
 - 48 kHz (`min_vfo_rate` 48 kHz: the VOR subcarrier reaches +-10.4 kHz).
