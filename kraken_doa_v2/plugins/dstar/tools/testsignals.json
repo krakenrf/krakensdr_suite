@@ -1,0 +1,84 @@
+[
+{
+ "id": "dstar-two-radios",
+ "title": "D-STAR: two callsigns back to back",
+ "description": "GMSK 4800 bit/s on 438.7 MHz with real RF headers: ZL1ABC (200 deg) calls CQ, ZL2XYZ (310 deg) answers, ZL1ABC again. Voice frames carry random bits (no AMBE). Expect talkers ZL1ABC and ZL2XYZ at those bearings.",
+ "rf_hz": 438700000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 13,
+ "vfo": {
+  "bw_khz": 24
+ },
+ "steps": [
+  [
+   "{tools}/dstar_gen.py",
+   "zl1abc.cf32",
+   "--at",
+   "0.5",
+   "--dur",
+   "3",
+   "--my",
+   "ZL1ABC",
+   "--sfx",
+   "ID51",
+   "--ur",
+   "CQCQCQ",
+   "--at",
+   "8.4",
+   "--dur",
+   "2.5",
+   "--my",
+   "ZL1ABC",
+   "--ur",
+   "ZL2XYZ"
+  ],
+  [
+   "{tools}/dstar_gen.py",
+   "zl2xyz.cf32",
+   "--at",
+   "4.2",
+   "--dur",
+   "3.4",
+   "--my",
+   "ZL2XYZ",
+   "--sfx",
+   "5100",
+   "--ur",
+   "ZL1ABC"
+  ]
+ ],
+ "scene": {
+  "rate": 48000,
+  "snr_db": 22,
+  "seed": 5,
+  "sources": [
+   {
+    "name": "ZL1ABC",
+    "file": "zl1abc.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 200,
+    "gain_db": -2
+   },
+   {
+    "name": "ZL2XYZ",
+    "file": "zl2xyz.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 310,
+    "gain_db": 1
+   }
+  ]
+ },
+ "expect": [
+  {
+   "tid": "ZL1ABC",
+   "bearing": 200
+  },
+  {
+   "tid": "ZL2XYZ",
+   "bearing": 310
+  }
+ ]
+}
+]

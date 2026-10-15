@@ -1,4 +1,5 @@
 #include "incidents.hpp"
+#include "playback.hpp"
 #include "decoder_log.hpp"
 
 #include "decimator_manager.hpp"
@@ -353,6 +354,7 @@ void start() {
     dig::set_message_handler([](dig::DigitalDecoder* d, const std::string& plugin, const std::string& from,
                                 const std::string& text, double rf_hz) {
         if (text.empty()) return;   // a decoder that sends messages started: nothing to prepare
+        if (playback::active()) return;   // debug playback: no lookups, no incidents
         State& st = S();
         std::lock_guard<std::mutex> lk(st.mu);
         st.queue.push_back({d, plugin, from, text, rf_hz, now_ms()});

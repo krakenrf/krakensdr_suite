@@ -1,0 +1,50 @@
+[
+{
+ "id": "uat-five",
+ "title": "UAT 978 MHz: four aircraft and a ground station",
+ "description": "tools/scene_five.json, 6 s looped: aircraft A1B2C3 (60 deg), A4D5E6 (150), a TIS-B-addressed glider ~5E08A6 (250), a vehicle ~ABC001 (320) and ground station site 11 (200 deg, uplink with a METAR + TIS-B). Positions at their compass bearings from the station (heading 0). Expect five talkers at those bearings.",
+ "rf_hz": 978000000.0,
+ "tuner_offset_hz": 0,
+ "seconds": 6,
+ "vfo": {
+  "bw_khz": 2400
+ },
+ "files": {
+  "scene.json": {
+   "$from": "{tools}/scene_five.json",
+   "seconds": 6,
+   "station": "{station}"
+  }
+ },
+ "steps": [
+  [
+   "{tools}/uat_gen.py",
+   "scene.json",
+   "out.cu8"
+  ]
+ ],
+ "output": "out.cu8",
+ "expect": [
+  {
+   "tid": "A1B2C3",
+   "bearing": 60
+  },
+  {
+   "tid": "A4D5E6",
+   "bearing": 150
+  },
+  {
+   "tid": "GS site 11",
+   "bearing": 200
+  },
+  {
+   "tid": "~5E08A6",
+   "bearing": 250
+  },
+  {
+   "tid": "~ABC001",
+   "bearing": 320
+  }
+ ]
+}
+]

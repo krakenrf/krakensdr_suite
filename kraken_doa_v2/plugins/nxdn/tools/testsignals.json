@@ -1,0 +1,80 @@
+[
+{
+ "id": "nxdn-two-units",
+ "title": "NXDN96: two units on one talkgroup",
+ "description": "NXDN96 voice calls on 155.0 MHz (VCALL, SACCH / FACCH1 with real FEC, random voice bits): unit 2001 (190 deg) twice, unit 2002 (330 deg) in between, both to TG 100. Expect talkers 2001 and 2002 at those bearings.",
+ "rf_hz": 155000000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 12,
+ "vfo": {
+  "bw_khz": 24
+ },
+ "steps": [
+  [
+   "{tools}/nxdn_gen.py",
+   "u2001.cf32",
+   "--at",
+   "0.5",
+   "--dur",
+   "3",
+   "--src",
+   "2001",
+   "--dst",
+   "100",
+   "--at",
+   "8.2",
+   "--dur",
+   "2.4",
+   "--src",
+   "2001",
+   "--dst",
+   "100"
+  ],
+  [
+   "{tools}/nxdn_gen.py",
+   "u2002.cf32",
+   "--at",
+   "4.0",
+   "--dur",
+   "3.5",
+   "--src",
+   "2002",
+   "--dst",
+   "100"
+  ]
+ ],
+ "scene": {
+  "rate": 48000,
+  "snr_db": 22,
+  "seed": 6,
+  "sources": [
+   {
+    "name": "2001",
+    "file": "u2001.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 190,
+    "gain_db": -2
+   },
+   {
+    "name": "2002",
+    "file": "u2002.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 330,
+    "gain_db": 2
+   }
+  ]
+ },
+ "expect": [
+  {
+   "tid": "2001",
+   "bearing": 190
+  },
+  {
+   "tid": "2002",
+   "bearing": 330
+  }
+ ]
+}
+]

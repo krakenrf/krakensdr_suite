@@ -1,0 +1,48 @@
+[
+{
+ "id": "cells-two-lte",
+ "title": "LTE: two cells on one carrier",
+ "description": "Synthetic LTE FDD cells (tools/cell_gen.cpp, OFDM at 2.4 MHz, no SIBs) on 806.13 MHz, the carrier 130 kHz below the VFO centre, 4 s looped: PCI 101 (40 deg, 2 ports) and PCI 102 (200 deg, 4 dB weaker, its own timing and carrier offset). Carrier scan off. Expect talkers LTE-101 at 40 deg and LTE-102 at 200 deg.",
+ "rf_hz": 806130000.0,
+ "tuner_offset_hz": 0,
+ "seconds": 4,
+ "vfo": {
+  "bw_khz": 2400,
+  "opts": {
+   "scan": "0"
+  }
+ },
+ "steps": [
+  [
+   "{tools}/cell_gen.cpp",
+   "--secs",
+   "4",
+   "--rf",
+   "806.13e6",
+   "--lte_off",
+   "-130e3",
+   "--snr",
+   "15",
+   "--radius",
+   "0.12",
+   "--cell",
+   "lte,101,40,0,0,20,2",
+   "--cell",
+   "lte,102,200,-4,1234.5,-15,1",
+   "--out",
+   "out.cf32"
+  ]
+ ],
+ "output": "out.cf32",
+ "expect": [
+  {
+   "tid": "LTE-101",
+   "bearing": 40
+  },
+  {
+   "tid": "LTE-102",
+   "bearing": 200
+  }
+ ]
+}
+]

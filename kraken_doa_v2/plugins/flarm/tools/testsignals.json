@@ -1,0 +1,53 @@
+[
+{
+ "id": "flarm-six",
+ "title": "FLARM / OGN: five aircraft and a relay",
+ "description": "tools/scene_six.json on 868.8 MHz, 6 s looped: FLARM DD1234 (60 deg) and C81A2B (140), OGN glider 3C5A21 (230, ZK-GOX), a no-track paraglider D00F11 (310), an owner-encrypted OGN 1A2B3C (100) and a relay of 3C5A21 (no talker). Some packets at the same moment on 868.2 / 868.4 / 869.25 MHz. Expect five talkers at those bearings.",
+ "rf_hz": 868800000.0,
+ "tuner_offset_hz": 0,
+ "seconds": 6,
+ "vfo": {
+  "bw_khz": 2400,
+  "opts": {
+   "tune": "0"
+  }
+ },
+ "files": {
+  "scene.json": {
+   "$from": "{tools}/scene_six.json",
+   "seconds": 6,
+   "station": "{station}"
+  }
+ },
+ "steps": [
+  [
+   "{tools}/flarm_gen.py",
+   "scene.json",
+   "out.cu8"
+  ]
+ ],
+ "output": "out.cu8",
+ "expect": [
+  {
+   "tid": "FLR DD1234",
+   "bearing": 60
+  },
+  {
+   "tid": "ICA C81A2B",
+   "bearing": 140
+  },
+  {
+   "tid": "OGN 3C5A21",
+   "bearing": 230
+  },
+  {
+   "tid": "FLR D00F11",
+   "bearing": 310
+  },
+  {
+   "tid": "OGN 1A2B3C",
+   "bearing": 100
+  }
+ ]
+}
+]

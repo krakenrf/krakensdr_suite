@@ -1,0 +1,92 @@
+[
+{
+ "id": "aprs-three-stations",
+ "title": "APRS: two stations and a digipeater",
+ "description": "1200 bit/s AFSK on 144.575 MHz: ZL1AAA-9 (40 deg) and ZL1BBB (285 deg) send positions / status, the digipeater ZL2DG-1 (150 deg) repeats them; one repeat goes out under an alias only (no talker for it). Expect talkers ZL1AAA-9, ZL1BBB, ZL2DG-1 at those bearings.",
+ "rf_hz": 144575000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 16,
+ "vfo": {
+  "bw_khz": 20
+ },
+ "steps": [
+  [
+   "{tools}/aprs_gen.py",
+   "ZL1AAA.cf32",
+   "--at",
+   "0.5",
+   "ZL1AAA-9>APRS,WIDE1-1:!3651.20S/17445.67E>moving",
+   "--at",
+   "9.0",
+   "ZL1AAA-9>APRS,WIDE1-1:>status text here"
+  ],
+  [
+   "{tools}/aprs_gen.py",
+   "DIGI.cf32",
+   "--at",
+   "2.0",
+   "ZL1AAA-9>APRS,ZL2DG-1*,WIDE1*:!3651.20S/17445.67E>moving",
+   "--at",
+   "6.0",
+   "ZL1BBB>APRS,ZL2DG-1*:=3650.00S/17440.00E-home",
+   "--at",
+   "11.5",
+   "ZL1CCC-7>APRS,WIDE1*:>repeated under an alias only"
+  ],
+  [
+   "{tools}/aprs_gen.py",
+   "ZL1BBB.cf32",
+   "--at",
+   "3.5",
+   "ZL1BBB>APRS,WIDE1-1:=3650.00S/17440.00E-home",
+   "--at",
+   "13.5",
+   "ZL1BBB>APRS,WIDE1-1:>second"
+  ]
+ ],
+ "scene": {
+  "rate": 48000,
+  "snr_db": 20,
+  "seed": 3,
+  "sources": [
+   {
+    "name": "ZL1AAA-9",
+    "file": "ZL1AAA.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 40
+   },
+   {
+    "name": "ZL2DG-1",
+    "file": "DIGI.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 150,
+    "gain_db": -3
+   },
+   {
+    "name": "ZL1BBB",
+    "file": "ZL1BBB.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 285,
+    "gain_db": 2
+   }
+  ]
+ },
+ "expect": [
+  {
+   "tid": "ZL1AAA-9",
+   "bearing": 40
+  },
+  {
+   "tid": "ZL2DG-1",
+   "bearing": 150
+  },
+  {
+   "tid": "ZL1BBB",
+   "bearing": 285
+  }
+ ]
+}
+]

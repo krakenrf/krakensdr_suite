@@ -1,0 +1,121 @@
+[
+{
+ "id": "ctcss-four-tones",
+ "title": "CTCSS / DCS: four FM transmitters on one channel",
+ "description": "Analog FM on 145.05 MHz with synthetic speech: CTCSS 88.5 Hz (60 deg), 123.0 Hz with a 120 deg reverse burst (200 deg), DCS 023N (300 deg), and 151.4 Hz (140 deg, +6 dB) keying over the end of another one (capture). Expect tone talkers at those bearings (151.4 a few degrees off while both carriers are on).",
+ "rf_hz": 145050000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 20,
+ "vfo": {
+  "bw_khz": 24,
+  "demod": "NBFM"
+ },
+ "steps": [
+  [
+   "{tools}/ctcss_gen.py",
+   "tx1.cf32",
+   "--seconds",
+   "20",
+   "--tx",
+   "0.5:4.5,11:13.5",
+   "--ctcss",
+   "88.5",
+   "--seed",
+   "1"
+  ],
+  [
+   "{tools}/ctcss_gen.py",
+   "tx2.cf32",
+   "--seconds",
+   "20",
+   "--tx",
+   "4.8:8,14:17.5",
+   "--ctcss",
+   "123.0",
+   "--tail",
+   "reverse120",
+   "--seed",
+   "2"
+  ],
+  [
+   "{tools}/ctcss_gen.py",
+   "tx3.cf32",
+   "--seconds",
+   "20",
+   "--tx",
+   "8.3:10.6",
+   "--dcs",
+   "023N",
+   "--seed",
+   "3"
+  ],
+  [
+   "{tools}/ctcss_gen.py",
+   "tx4.cf32",
+   "--seconds",
+   "20",
+   "--tx",
+   "16.5:19.5",
+   "--ctcss",
+   "151.4",
+   "--seed",
+   "4"
+  ]
+ ],
+ "scene": {
+  "rate": 48000,
+  "snr_db": 20,
+  "seed": 3,
+  "sources": [
+   {
+    "name": "CTCSS 88.5",
+    "file": "tx1.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 60
+   },
+   {
+    "name": "CTCSS 123.0",
+    "file": "tx2.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 200
+   },
+   {
+    "name": "DCS 023N",
+    "file": "tx3.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 300
+   },
+   {
+    "name": "CTCSS 151.4",
+    "file": "tx4.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 140,
+    "gain_db": 6
+   }
+  ]
+ },
+ "expect": [
+  {
+   "tid": "CTCSS 88.5",
+   "bearing": 60
+  },
+  {
+   "tid": "CTCSS 123.0",
+   "bearing": 200
+  },
+  {
+   "tid": "DCS 023N",
+   "bearing": 300
+  },
+  {
+   "tid": "CTCSS 151.4",
+   "bearing": 140,
+   "tol": 10
+  }
+ ]
+}
+]

@@ -1,0 +1,57 @@
+[
+{
+ "id": "dtv-dvbt-paths",
+ "title": "DVB-T 8k: one transmitter and two echoes",
+ "description": "A DVB-T 8k GI 1/4 signal on 600.95 MHz (real TPS, cell ID), the 2.4 MHz VFO 0.95 MHz off the channel centre, 3 s looped: the direct path from 30 deg, copies 37 us later from 150 deg (-4 dB) and 112 us from 260 deg (-10 dB). Path separation on. Expect the TPS facts and three Path talkers at those bearings.",
+ "rf_hz": 600950000.0,
+ "tuner_offset_hz": 0,
+ "seconds": 3,
+ "vfo": {
+  "bw_khz": 2400,
+  "opts": {
+   "separate": "1"
+  }
+ },
+ "steps": [
+  [
+   "{tools}/sfn_gen.cpp",
+   "--std",
+   "dvbt",
+   "--mode",
+   "8k",
+   "--gi",
+   "4",
+   "--secs",
+   "3",
+   "--rf",
+   "600.95e6",
+   "--offset",
+   "0.95e6",
+   "--snr",
+   "15",
+   "--radius",
+   "0.12",
+   "--tx",
+   "30,0,0",
+   "--tx",
+   "150,37,-4",
+   "--tx",
+   "260,112,-10",
+   "--out",
+   "out.cf32"
+  ]
+ ],
+ "output": "out.cf32",
+ "expect": [
+  {
+   "bearing": 30
+  },
+  {
+   "bearing": 150
+  },
+  {
+   "bearing": 260
+  }
+ ]
+}
+]

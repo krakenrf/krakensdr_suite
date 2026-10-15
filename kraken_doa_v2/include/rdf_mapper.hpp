@@ -47,6 +47,9 @@ void start();
 void stop();   // shutdown: saves the session
 
 void set_enabled(bool on);
+// Debug playback: on = the session saved and rdf_session.bin left alone;
+// off = what the playback added is dropped and the saved session reloaded
+void set_sandbox(bool on);
 bool set_range_km(double km);
 // -1 = every VFO and talker; a VFO = it and its talkers; vfo + tid = that talker
 void reset(int vfo, const std::string& tid = "");

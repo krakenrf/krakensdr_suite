@@ -159,7 +159,7 @@ bool is_volatile_tid(const std::string& tid) {
 
 // --- the engine's work queue ------------------------------------------------
 struct Job {
-    enum Kind { RECORD, RESET, RANGE, HELLO, REMOVE } kind;
+    enum Kind { RECORD, RESET, RANGE, HELLO, REMOVE, SANDBOX_ON, SANDBOX_OFF } kind;
     Key key;
     double freq = 0;
     rdf::Record rec{};
@@ -718,6 +718,7 @@ void engine() {
     if (!pending.empty()) std::cout << "RDF map: " << pending.size() << " saved session(s) to resume" << std::endl;
     int64_t saved_ms = now_ms();
     bool dirty_file = false;
+    bool sandbox = false;   // debug playback: the session file isn't written
     auto claim = [&](const Key& k, EVfo& e, double freq) {
         // a saved session on this frequency (+-5 kHz) and talker resumes
         for (auto it = pending.begin(); it != pending.end(); ++it)
@@ -752,6 +753,33 @@ void engine() {
         }
         const double range = g_range_km.load();
         for (auto& j : jobs) {
+            if (j.kind == Job::SANDBOX_ON) {
+                // debug playback begins: the user's session saved, then frozen
+                if (!sandbox) save_session(ev, pending);
+                sandbox = true;
+                dirty_file = false;
+                continue;
+            }
+            if (j.kind == Job::SANDBOX_OFF) {
+                // it ends: everything it added goes, the saved session comes back
+                ev.clear();
+                pending.clear();
+                load_session(&pending);
+                {
+                    std::lock_guard<std::mutex> lk(SH().mu);
+                    for (auto it = SH().v.begin(); it != SH().v.end();)
+                        it = it->first.tid.empty() ? std::next(it) : SH().v.erase(it);
+                    for (auto& [k, v] : SH().v) {
+                        v.grid.clear();
+                        v.records = 0;
+                        v.est = rdf::Estimate{};
+                    }
+                    SH().full = SH().talkers_full = true;
+                }
+                sandbox = false;
+                dirty_file = false;
+                continue;
+            }
             if (j.kind == Job::REMOVE) {
                 auto it = ev.find(j.key);
                 if (it != ev.end()) {
@@ -837,13 +865,13 @@ void engine() {
             v.est = e->solver.estimate();
             v.records = static_cast<int>(e->solver.records().size());
         }
-        if (dirty_file && t - saved_ms > 30000) {
+        if (dirty_file && !sandbox && t - saved_ms > 30000) {
             save_session(ev, pending);
             saved_ms = t;
             dirty_file = false;
         }
     }
-    save_session(ev, pending);
+    if (!sandbox) save_session(ev, pending);
 }
 
 }  // namespace
@@ -862,6 +890,8 @@ void stop() {
 }
 
 void set_enabled(bool on) { g_enabled = on; }
+
+void set_sandbox(bool on) { push({on ? Job::SANDBOX_ON : Job::SANDBOX_OFF, {}, 0, {}}); }
 
 bool set_range_km(double km) {
     if (!(km >= 1 && km <= 50)) return false;

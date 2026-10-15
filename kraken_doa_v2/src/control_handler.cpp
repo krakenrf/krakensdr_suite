@@ -1,4 +1,5 @@
 #include "control_handler.hpp"
+#include "playback.hpp"
 #include "globals.hpp"
 #include "config.hpp"
 #include "channel_manager.hpp"
@@ -521,6 +522,7 @@ static void setAllDoaEnabled(bool enable) {
 
 std::string ControlHandler::request_plugin_tune(int vfo, double rf_hz) {
     if (!is_finite_value(rf_hz) || rf_hz <= 0) return "not a frequency";
+    if (playback::active()) return "debug playback: the receiver frequency is fixed";
     if (wideband_mode_enabled.load(std::memory_order_relaxed)) return "the receiver is in wideband scan mode";
     // the VFO sits at (or near) its tuner's centre: the RF itself must be tunable
     const uint64_t hz = static_cast<uint64_t>(llround(rf_hz));
@@ -2539,6 +2541,21 @@ void ControlHandler::handle_websocket_message(string_view message) {
     // A malformed number in any command (stof/stoi throwing) must not
     // propagate into the uWS event loop, which would exit(1) the process.
     try {
+        // Debug playback (playback.hpp): its own commands, and what can't run
+        // while a test transmission plays (told to every page)
+        if (playback::handle_command(message)) return;
+        if (playback::active() && !playback::internal() && !g_replaying_settings.load()) {
+            uint64_t f = 0;
+            if (message.starts_with("FREQ:")) {
+                const double mhz = parse_double(message, 5);
+                if (mhz > 0 && mhz < 100000) f = static_cast<uint64_t>(llround(mhz * 1e6));
+            }
+            if (const char* why = playback::refuse(message, f)) {
+                cout << "Rejected control message: '" << string(message.substr(0, 100)) << "' (" << why << ")" << endl;
+                broadcast("{\"playback\":{\"notice\":\"" + json_escape(why) + "\"}}");
+                return;
+            }
+        }
         // UI:<KEY>:<value> - browser display settings (waterfall colormap
         // etc.) the backend doesn't interpret. Store the latest value per
         // key and relay to all browsers so their displays stay in sync.

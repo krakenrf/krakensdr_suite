@@ -1,4 +1,5 @@
 #include "networking/web_mapper.hpp"
+#include "playback.hpp"
 
 // Built-in KrakenSDR web mapper output. Replaces the external Node.js
 // web_mapper_middleware: the doapost record is built in-process from the same
@@ -1204,6 +1205,7 @@ void WebMapper::workerThread() {
                 };
 
                 for (const DoaRecord& rec : capture_doa_records()) {
+                    if (playback::active()) break;   // debug playback: test bearings stay here
                     if (squelched(rec.decimator_id)) continue;
                     int sources = 1;
                     auto dec = decimator_manager.getDecimator(rec.decimator_id);

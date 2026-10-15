@@ -1,0 +1,38 @@
+[
+{
+ "id": "radar-three",
+ "title": "Pulse radar: three rotating radars",
+ "description": "tools/scene_three.json at 2.4 MHz around 1300 MHz, 8 s looped: an ATC radar with LFM pulses (60 deg), a staggered-PRI one (200 deg), a jittered one (300 deg), each with its own antenna scan. The DoA comes after two main-beam passes (allow ~40 s). Expect three radar talkers (named by frequency) at those bearings. The loop restarts the scans every 8 s.",
+ "rf_hz": 1300000000.0,
+ "tuner_offset_hz": 0,
+ "seconds": 8,
+ "vfo": {
+  "bw_khz": 2400
+ },
+ "files": {
+  "scene.json": {
+   "$from": "{tools}/scene_three.json",
+   "seconds": 8
+  }
+ },
+ "steps": [
+  [
+   "{tools}/radar_gen.py",
+   "scene.json",
+   "out.cu8"
+  ]
+ ],
+ "output": "out.cu8",
+ "expect": [
+  {
+   "bearing": 60
+  },
+  {
+   "bearing": 200
+  },
+  {
+   "bearing": 300
+  }
+ ]
+}
+]

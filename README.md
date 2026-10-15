@@ -299,6 +299,32 @@ should run the same (or a newer) version of this software. A plugin is
 native code that runs on your receiver: only install plugins from people you
 trust.
 
+### Debug playback (test transmissions)
+
+The sidebar box **🧪 Debug Playback** plays a decoder's synthetic test
+transmission - several transmitters with known IDs at known bearings,
+received on a 5-element circular array - through the receiver as if the
+antennas had picked it up: spectrum, waterfall, the decoder, the DoA and
+the 🗺 Map's 📡 DF panel. Use it to see what a decoder shows, or to check
+it still finds every transmitter at the right bearing (**Check** compares
+the DF panel with the bearings the test was made with). Press **⚙
+Generate** once per test (the decoders' own generators, a few seconds to a
+minute of CPU; stored in `kraken_doa_v2/testsignal_cache/`, at most 3 GB),
+then **▶ Play**.
+
+While it plays, a red **DEBUG PLAYBACK - not live** banner sits in the top
+bar and over the spectrum; heimdall's data is disconnected and nothing is
+sent to heimdall (its tuning stays as it was); retuning, gain and the
+scanners are refused; the VFO, decoder and array settings the test sets up
+are NOT saved - **Stop** puts your own settings back, and so does a restart
+in the middle of a playback. Nothing from a playback goes out: web mapper,
+decoder data log, Voice to Text, DoA recording and incident lookups pause.
+Generating needs python3 with numpy and scipy (installed by `install.sh`;
+not in the Docker image - generate on the host and copy the files into
+`docker-data/kraken_doa/testsignal_cache/`). Test transmissions exist for
+AIS, APRS, D-STAR, NXDN, TETRA, MPT1327, VOR, CTCSS / DCS, pulse radar,
+1030 MHz interrogations, UAT, FLARM / OGN, DVB-T and LTE.
+
 ### AI Signal Lab
 
 1. Install Claude Code on the Pi and log in once (a Claude subscription or an

@@ -46,6 +46,31 @@ body.sb-resizing {cursor:col-resize;user-select:none}
 .acal-badge:empty {display:none}
 .acal-badge.on {background:#1b5e20;color:#c8e6c9}
 .acal-badge.col {background:#0d47a1;color:#bbdefb}
+/* 🧪 Debug playback (DEBUG PLAYBACK block in the script) */
+#pb-banner {display:none;align-items:center;gap:8px;background:#b71c1c;color:#fff;font-weight:bold;font-size:14px;padding:3px 10px;border-radius:4px;letter-spacing:.5px;white-space:nowrap;box-shadow:0 0 0 2px #ff8a80}
+#pb-banner .pb-bt {font-weight:normal;max-width:340px;overflow:hidden;text-overflow:ellipsis}
+#pb-banner button {background:#fff;color:#b71c1c;border:none;border-radius:3px;font-weight:bold;cursor:pointer;padding:2px 8px}
+body.pb-on #pb-banner {display:flex}
+body.pb-on .top-bar {box-shadow:inset 0 -3px 0 #e53935}
+#pb-overlay {display:none;position:absolute;inset:0;pointer-events:none;z-index:6;justify-content:center;align-items:flex-start;outline:3px solid #e53935;outline-offset:-3px}
+#pb-overlay span {margin-top:26px;font:bold 26px sans-serif;color:rgba(255,110,110,.75);letter-spacing:3px;border:3px solid rgba(255,90,90,.6);padding:2px 16px;border-radius:6px;background:rgba(60,0,0,.35)}
+body.pb-on #pb-overlay {display:flex}
+.pb-it {border:1px solid #0f3460;border-radius:3px;padding:4px 6px;margin:4px 0;background:#16213e;font-size:12px;color:#c8d6e5}
+.pb-it.on {border-color:#e53935;background:#2a1520}
+.pb-it .pb-h {display:flex;align-items:center;gap:6px;cursor:pointer}
+.pb-it .pb-h b {flex:1;color:#e0e6f0}
+.pb-it .pb-d {display:none;margin-top:3px;color:#9fb3c8;line-height:1.45}
+.pb-it.open .pb-d {display:block}
+.pb-it .pb-row {display:flex;align-items:center;gap:5px;margin-top:3px;flex-wrap:wrap}
+.pb-it button {font-size:11px;padding:1px 7px;background:#0f3460;color:#e0e6f0;border:1px solid #1f4a80;border-radius:3px;cursor:pointer}
+.pb-it button:disabled {opacity:.4;cursor:default}
+.pb-it button.pb-play {background:#1b5e20;border-color:#2e7d32}
+.pb-it button.pb-stop {background:#b71c1c;border-color:#e53935}
+.pb-meta {color:#7f93a8;font-size:11px}
+.pb-bar {height:4px;background:#0f3460;border-radius:2px;overflow:hidden;flex:1;min-width:60px}
+.pb-bar i {display:block;height:100%;background:#4fc3f7}
+.pb-ok {color:#81c784} .pb-bad {color:#ef9a9a} .pb-wait {color:#ffd54f}
+#pb-toast {position:fixed;top:54px;left:50%;transform:translateX(-50%);z-index:9999;background:#b71c1c;color:#fff;padding:6px 14px;border-radius:5px;font-size:13px;box-shadow:0 2px 10px #000a;display:none;max-width:80vw}
 .acal-box {font-size:12px;color:#c8d6e5;line-height:1.6;background:#16213e;border:1px solid #0f3460;border-radius:3px;padding:6px;margin:4px 0 6px}
 .acal-box .w, #acal-state .w, #acal-fit .w {color:#ffb74d}
 .acal-box .g, #acal-fit .g {color:#81c784}
@@ -1612,6 +1637,20 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       </div>
     </div>
 
+    <!-- 🧪 Debug Playback: decoders' test transmissions through the real pipeline (playback.cpp) -->
+    <div class="sb-section collapsed" id="pb-section">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>🧪 Debug Playback<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Plays a decoder's <b>synthetic test transmission</b> (several transmitters with known IDs at known bearings on a 5-element UCA) through the real receiver as if the antennas had picked it up: spectrum, waterfall, VFO, decoder, DoA and the map's 📡 DF panel - to see and check a decoder without the real signal.<br><br>While it plays: heimdall's data is disconnected and <b>nothing is sent to heimdall</b>; the frequency / gain can't be changed; <b>your settings are not saved</b> - the VFO, decoder and array set up for the playback are a sandbox, and Stop puts your own settings back (also after a restart). Nothing goes out either: web mapper, decoder log, Voice to Text, DoA recording, incidents are paused.<br><br><b>Generate</b> builds a test transmission once (the plugins' own generators, a few seconds of CPU; kept in testsignal_cache/). <b>Check</b> compares the bearings in the DF panel with the ones the test transmission was made with.</span></span></h3>
+        <span class="acal-badge" id="pb-badge"></span>
+        <span class="sb-toggle">▶</span>
+      </div>
+      <div class="sb-content">
+        <div class="acal-box" id="pb-state">Not playing - the receiver shows the antennas.</div>
+        <div id="pb-check"></div>
+        <div id="pb-list"></div>
+      </div>
+    </div>
+
     <!-- Settings Persistence / Reset -->
     <div class="sb-section">
       <div class="sb-content" style="padding-top:12px">
@@ -1643,6 +1682,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <div class="top-bar">
       <!-- Hamburger (mobile only) -->
       <button class="menu-btn" onclick="toggleSidebar()" title="Settings">☰</button>
+      <!-- 🧪 Debug playback: shown while a test transmission plays instead of heimdall's data -->
+      <div id="pb-banner" title="A synthetic test transmission is playing through the receiver instead of the antennas. Nothing is sent to heimdall, settings are not saved and are put back when it stops."><span>🧪 DEBUG PLAYBACK - not live</span><span class="pb-bt" id="pb-banner-t"></span><button onclick="pbStop()">■ Stop</button></div>
       <!-- Center Frequency (SDR#-style) - FIRST. Hidden in independent mode
            (every tuner pane has its own frequency digits and gain) -->
       <div class="tb-group not-indep" id="tb-freq">
@@ -1742,6 +1783,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <span class="hint">Click/drag tuning bar</span>
         </div>
         <div class="spectrum-content">
+          <div id="pb-overlay"><span>DEBUG PLAYBACK - not live</span></div>
           <div id="fp"></div>
           <div id="fp-split" class="hsplit" title="Drag to change the spectrum / waterfall split (double-click: default)"></div>
           <div id="wf-container">
@@ -6816,6 +6858,7 @@ function connect() {
 
     // 🗂 Decoder Logging settings + disk space (then every 2 s)
     setTimeout(() => send('GET_DECODER_LOG'), 850);
+    setTimeout(() => send('PLAYBACK_LIST'), 870);
     setTimeout(() => send('GET_VOICE2TEXT'), 860);
     // ✈ Array calibration (then every 2 s)
     setTimeout(() => send('GET_ARRAY_CAL'), 900);
@@ -6879,6 +6922,7 @@ function connect() {
           else if(msg.plugins) { digOnPlugins(msg.plugins); }
           else if(msg.codecs) { digOnCodecs(msg.codecs); }
           else if(msg.declog) { dlOnStatus(msg.declog); }
+          else if(msg.playback) { pbOnMessage(msg.playback); }
           else if(msg.array_cal) { acalOnStatus(msg.array_cal); }
           else if(msg.declog_error !== undefined) { dlOnError(msg.declog_error); }
           else if(msg.ai_state) { aiOnState(msg.ai_state); }
@@ -18178,12 +18222,144 @@ window.addEventListener('load',()=>{
   updateSpacingFactor();
   initHelpTips();
   connect();
+  setInterval(pbTick, 1000);
 
   // Start auto-range if enabled by default
   if ($id('wf-autorange') && $id('wf-autorange').checked) {
     toggleAutoRange(true);
   }
 });
+
+// ================================================================
+// 🧪 DEBUG PLAYBACK (playback.cpp; catalogue: plugins/<id>/tools/testsignals.json)
+// ================================================================
+// {"playback":{active, id, title, rf_hz, loop_s, pos_s, elapsed_s, decoder,
+// gen:{id, running, pct, text, error}, catalog:[{plugin, text}], cache:{id:
+// {mb, generated, seconds}}}} or {"playback":{"notice":"..."}}. The
+// catalogues come as text (parsed here, one at a time: a broken file only
+// loses its own entries). Check: each expected bearing against the DF
+// status' talkers (rdfStatus, doa = the array frame - as the scenes give them)
+var pbState = null, pbCatalog = [], pbOpenIds = {}, pbToastT = 0;
+function pbEsc(t) {
+  return String(t == null ? '' : t).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
+}
+function pbOnMessage(m) {
+  if (m.notice !== undefined) { pbNotice(m.notice); return; }
+  pbState = m;
+  const cat = [];
+  for (const c of (m.catalog || [])) {
+    try {
+      const list = JSON.parse(c.text);
+      for (const e of list) if (e && typeof e.id === 'string') { e.decoder = e.decoder || c.plugin; cat.push(e); }
+    } catch (err) {
+      cat.push({id: '', bad: true, decoder: c.plugin, title: c.plugin + ': tools/testsignals.json does not parse'});
+    }
+  }
+  pbCatalog = cat;
+  document.body.classList.toggle('pb-on', !!m.active);
+  pbRender();
+}
+function pbEntry(id) { return pbCatalog.find(e => e.id === id); }
+function pbAngDiff(a, b) { return ((a - b + 540) % 360) - 180; }
+// the check of the playing entry: [{label, exp, got, ok}]
+function pbCheckRows() {
+  if (!pbState || !pbState.active) return null;
+  const e = pbEntry(pbState.id);
+  if (!e || !Array.isArray(e.expect)) return null;
+  const tl = (rdfStatus && rdfStatus.talkers) || [];
+  return e.expect.map(x => {
+    const tol = x.tol || e.tol_deg || 5;
+    let best = null;
+    for (const t of tl) {
+      if (x.tid && t.tid !== x.tid) continue;
+      if (t.doa == null || t.doa < 0) continue;
+      const d = pbAngDiff(t.doa, x.bearing);
+      if (!best || Math.abs(d) < Math.abs(best.d)) best = {d, t};
+    }
+    return {label: x.tid || 'any talker', exp: x.bearing, tol, got: best, ok: !!best && Math.abs(best.d) <= tol};
+  });
+}
+function pbFmtS(s) { s = Math.max(0, Math.round(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+function pbRender() {
+  const st = pbState;
+  if (!st) return;
+  const set = (id, html) => { const el = $id(id); if (el && el.innerHTML !== html) el.innerHTML = html; };
+  const bt = $id('pb-banner-t');
+  if (bt) { const t = st.active ? (st.title || st.id) : ''; if (bt.textContent !== t) bt.textContent = t; }
+  const badge = $id('pb-badge');
+  if (badge) {
+    const t = st.active ? 'PLAYING' : (st.gen && st.gen.running ? 'generating' : '');
+    if (badge.textContent !== t) badge.textContent = t;
+    badge.style.display = t ? '' : 'none';
+    badge.style.background = st.active ? '#b71c1c' : '#0f3460';
+  }
+  let head;
+  if (st.active) {
+    head = '<b style="color:#ff8a80">▶ Playing</b> ' + pbEsc(st.title || st.id) + '<br><span class="pb-meta">' +
+      ((st.rf_hz || 0) / 1e6).toFixed(4) + ' MHz · loop ' + (st.loop_s || 0).toFixed(1) + ' s (at ' + (st.pos_s || 0).toFixed(1) +
+      ' s) · playing ' + pbFmtS(st.elapsed_s) + ' · decoder ' + pbEsc(st.decoder || '') + '</span><br>' +
+      '<span class="pb-meta">Heimdall disconnected, nothing sent to it; your settings come back on Stop.</span>' +
+      '<div class="pb-row"><button class="pb-stop" onclick="pbStop()">■ Stop playback</button></div>';
+  } else {
+    head = 'Not playing - the receiver shows the antennas.';
+  }
+  if (st.gen && st.gen.error) head += '<div class="pb-bad" style="margin-top:3px">Generating ' + pbEsc(st.gen.id) + ' failed: ' + pbEsc(st.gen.error) + '</div>';
+  set('pb-state', '<div style="font-size:12px;line-height:1.5">' + head + '</div>');
+  // the check
+  const rows = pbCheckRows();
+  if (rows && rows.length) {
+    const ok = rows.filter(r => r.ok).length;
+    let h = '<div class="acal-box"><b>Check</b> <span class="' + (ok === rows.length ? 'pb-ok' : 'pb-wait') + '">' + ok + ' / ' + rows.length +
+      (ok === rows.length ? ' ✓ pass' : ' so far') + '</span><span class="pb-meta"> (bearings in the DF panel vs the scene, array frame)</span>';
+    for (const r of rows) {
+      const cls = r.ok ? 'pb-ok' : r.got ? 'pb-bad' : 'pb-wait';
+      const got = r.got ? (r.got.t.doa.toFixed(1) + '° (' + (r.got.d >= 0 ? '+' : '') + r.got.d.toFixed(1) + ')' + (r.label === 'any talker' ? ' ' + pbEsc(r.got.t.tid) : '')) : 'not yet';
+      h += '<div class="' + cls + '">' + (r.ok ? '✓' : r.got ? '✗' : '…') + ' ' + pbEsc(r.label) + ' @ ' + r.exp + '° ±' + r.tol + ': ' + got + '</div>';
+    }
+    set('pb-check', h + '</div>');
+  } else set('pb-check', '');
+  // the list
+  const cache = st.cache || {}, g = st.gen || {};
+  let h = '';
+  for (const e of pbCatalog) {
+    if (e.bad) { h += '<div class="pb-it"><span class="pb-bad">' + pbEsc(e.title) + '</span></div>'; continue; }
+    const c = cache[e.id], on = st.active && st.id === e.id, gen = g.running && g.id === e.id;
+    h += '<div class="pb-it' + (on ? ' on' : '') + (pbOpenIds[e.id] ? ' open' : '') + '" data-id="' + pbEsc(e.id) + '">' +
+      '<div class="pb-h" onclick="pbToggle(\'' + pbEsc(e.id) + '\')"><b>' + pbEsc(e.title || e.id) + '</b><span class="pb-meta">' + pbEsc(e.decoder) + '</span></div>' +
+      '<div class="pb-d">' + pbEsc(e.description || '') + '<br><span class="pb-meta">' + ((e.rf_hz || 0) / 1e6).toFixed(4) + ' MHz · VFO ' +
+      ((e.vfo && e.vfo.bw_khz) || '?') + ' kHz · id ' + pbEsc(e.id) + '</span></div>' +
+      '<div class="pb-row">';
+    if (gen) {
+      h += '<span class="pb-meta">' + pbEsc(g.text || 'generating') + '</span><span class="pb-bar"><i style="width:' + (g.pct || 0) + '%"></i></span>' +
+        '<button onclick="send(\'PLAYBACK_GEN_CANCEL\')">Cancel</button>';
+    } else {
+      if (c) h += on ? '<button class="pb-stop" onclick="pbStop()">■ Stop</button>' : '<button class="pb-play" onclick="pbPlay(\'' + pbEsc(e.id) + '\')">▶ Play</button>';
+      h += '<button ' + (g.running ? 'disabled ' : '') + 'onclick="pbGen(\'' + pbEsc(e.id) + '\')" title="Build it with the plugin\'s generator (a few seconds to a minute; nice 10)">' + (c ? '↻ Regenerate' : '⚙ Generate') + '</button>';
+      h += c ? '<span class="pb-meta">' + c.mb + ' MB · ' + (c.seconds || 0).toFixed(0) + ' s</span>' + (on ? '' : '<button onclick="pbDel(\'' + pbEsc(e.id) + '\')" title="Delete the generated file">🗑</button>')
+             : '<span class="pb-meta">not generated</span>';
+    }
+    h += '</div></div>';
+  }
+  if (!pbCatalog.length) h = '<div class="pb-meta">No test transmissions (plugins/&lt;id&gt;/tools/testsignals.json).</div>';
+  set('pb-list', h);
+}
+function pbToggle(id) { pbOpenIds[id] = !pbOpenIds[id]; pbRender(); }
+function pbGen(id) { send('PLAYBACK_GEN:' + id); }
+function pbPlay(id) {
+  // the panel and map follow: the DF panel shows the talkers
+  send('PLAYBACK_START:' + id);
+}
+function pbStop() { send('PLAYBACK_STOP'); }
+function pbDel(id) { send('PLAYBACK_DELETE:' + id); }
+function pbNotice(t) {
+  let el = $id('pb-toast');
+  if (!el) { el = document.createElement('div'); el.id = 'pb-toast'; document.body.appendChild(el); }
+  el.textContent = t;
+  el.style.display = 'block';
+  clearTimeout(pbToastT);
+  pbToastT = setTimeout(() => { el.style.display = 'none'; }, 6000);
+}
+function pbTick() { if (pbState && pbState.active) pbRender(); }
 </script>
 </body>
 </html>

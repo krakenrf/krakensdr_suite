@@ -38,6 +38,11 @@ void TalkerDoa::set_active(bool on) {
     if (!on) reset();
 }
 
+void TalkerDoa::set_plugin(const std::string& p) {
+    std::lock_guard<std::mutex> lk(mu_);
+    plugin_ = p;
+}
+
 void TalkerDoa::reset() {
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -550,6 +555,11 @@ void TalkerDoa::commit_packet_locked(Packet& p, int64_t now) {
 }
 
 void TalkerDoa::add_spatial(const dig::SpatialReport& s) {
+    if (!s.remove && !active()) return;   // off: forget all (a switched-off plugin's queued reports too)
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!plugin_.empty() && s.plugin != plugin_) return;   // the VFO's previous plugin
+    }
     if (s.remove) {
         // the plugin dropped it (lost / separation off): gone now, not after SPATIAL_TTL_MS
         std::lock_guard<std::mutex> lk(mu_);
@@ -623,6 +633,10 @@ void TalkerDoa::add_frame(const Eigen::MatrixXcd& R, uint64_t a, uint64_t b, flo
 
 void TalkerDoa::add_span(const dig::TalkerSpan& s) {
     if (!active()) return;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!plugin_.empty() && !s.plugin.empty() && s.plugin != plugin_) return;   // the VFO's previous plugin
+    }
     if (s.signal) {   // a confirmed frame: only the Digital squelch uses it
         dig_confirm(s.start, s.end);
         return;

@@ -1,6 +1,7 @@
 // The spectrum's noise floor per tuner channel, with the receiver's own floor
 // remembered - see noise_floor.hpp.
 #include "signal_processing/noise_floor.hpp"
+#include "playback.hpp"
 
 #include "channel_manager.hpp"
 #include "config.hpp"
@@ -337,6 +338,7 @@ void write_file(const std::map<std::string, float>& m) {
 }
 
 void save(bool force) {
+    if (playback::active()) return;   // debug playback: the playback's floors aren't the receiver's
     std::unique_lock<std::mutex> sl(save_mu, std::try_to_lock);
     if (!sl.owns_lock()) return;   // another thread is writing
     std::map<std::string, float> snap;

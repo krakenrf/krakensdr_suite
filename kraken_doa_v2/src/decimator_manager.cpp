@@ -350,6 +350,7 @@ bool DecimatorManager::setDigitalMode(int id, dig::Mode mode, const std::string&
         inst->digital_mode.store(static_cast<int>(mode), std::memory_order_relaxed);
         // DoA per talker while a decoder can report talkers
         inst->talker_doa->set_active(mode != dig::Mode::OFF);
+        inst->talker_doa->set_plugin(mode == dig::Mode::PLUGIN ? plugin : "");
     }
     recountDigital();
     return true;

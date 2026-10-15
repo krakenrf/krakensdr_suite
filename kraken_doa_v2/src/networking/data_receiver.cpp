@@ -3,6 +3,7 @@
 // ============================================
 
 #include "networking/data_receiver.hpp"
+#include "playback.hpp"
 #include "utils/thread_pool.hpp"
 #include "utils/parse_num.hpp"
 #include "globals.hpp"
@@ -117,15 +118,23 @@ void DataReceiver::data_receiver_thread() {
     cout << "Server-side discrete scanner detection enabled" << endl;
 
     while (running) {
-        if (!data_client.connect_to_port(TCP_DATA_PORT)) {
+        // Debug playback (playback.hpp): the packets come from the test
+        // transmission instead, heimdall's stream is disconnected meanwhile
+        const bool pb = playback::active();
+        if (pb) {
+            if (data_client.is_connected()) data_client.disconnect();
+            raw_data_buffer.clear();
+            cout << "Data receiver: playing the debug playback (heimdall disconnected)" << endl;
+        } else if (!data_client.connect_to_port(TCP_DATA_PORT)) {
             global_stats.increment_errors(thread_idx);
             this_thread::sleep_for(seconds(1));
             continue;
+        } else {
+            raw_data_buffer.clear();
+            cout << "Connected to Heimdall data port" << endl;
         }
 
-        cout << "Connected to Heimdall data port" << endl;
-
-        if (!settings_restored) {
+        if (!pb && !settings_restored) {
             // Replay on the uWS loop thread, where browser commands (and the
             // web mapper's cloud settings) are dispatched. Replaying from this
             // thread raced them: a browser change landing mid-replay could be
@@ -148,11 +157,14 @@ void DataReceiver::data_receiver_thread() {
         bytes_in_buffer = 0;
 
         while (running) {
-            ssize_t bytes_read = data_client.receive_data(
+            if (playback::active() != pb) break;   // source switched
+            ssize_t bytes_read = pb ? playback::read(buffer.data() + bytes_in_buffer, buffer.size() - bytes_in_buffer)
+                                    : data_client.receive_data(
                 buffer.data() + bytes_in_buffer, 
                 buffer.size() - bytes_in_buffer
             );
             
+            if (pb && bytes_read <= 0) continue;
             if (bytes_read < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
                 // Receive timeout (SO_RCVTIMEO) - no data yet; loop so the
                 // `running` flag is observed for prompt shutdown
@@ -1374,6 +1386,12 @@ void DataReceiver::drain_control_socket() {
 }
 
 void DataReceiver::send_control_command(const string& cmd) {
+    // Debug playback: heimdall keeps the user's tuning - the session's
+    // commands only change this client (a stop replays the saved settings)
+    if (playback::active()) {
+        cout << "[playback] not sent to heimdall: " << cmd.substr(0, 120) << endl;
+        return;
+    }
     lock_guard<mutex> lock(control_socket_mutex);
 
     // Keep the receive side empty before writing: a full receive buffer here

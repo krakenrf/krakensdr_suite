@@ -7,6 +7,7 @@
 // process - and publishes results / status under st_mu for the uWS thread.
 
 #include "voice2text.hpp"
+#include "playback.hpp"
 
 #include <dirent.h>
 #include <signal.h>
@@ -1705,7 +1706,7 @@ void start() {
     // the digital decoders' voice (8 kHz, the lead plugin's) of VFOs with Transcribe on
     dig::set_voice_tap_handler([](dig::DigitalDecoder* d, const float* x, size_t n, const std::string& plugin,
                                   const std::string& tid, const std::string& tlabel, double rf_hz) {
-        if (!d || n == 0) return;
+        if (!d || n == 0 || playback::active()) return;   // debug playback: no transcripts
         Input in;
         in.vfo = d->vfo();
         in.digital = true;
@@ -1734,7 +1735,7 @@ void stop() {
 
 void feed_analog(int vfo, const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, DemodulatorMode mode,
                  bool open, const std::string& tid, const std::string& tlabel) {
-    if (!S().running.load(std::memory_order_relaxed) || n == 0 || !(rate_hz > 1000)) return;
+    if (!S().running.load(std::memory_order_relaxed) || n == 0 || !(rate_hz > 1000) || playback::active()) return;
     Input in;
     in.vfo = vfo;
     in.iq.assign(x, x + n);

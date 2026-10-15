@@ -1,4 +1,5 @@
 #include "decoder_log.hpp"
+#include "playback.hpp"
 
 #include "digital/digital_decoder.hpp"
 #include "globals.hpp"
@@ -403,6 +404,7 @@ void worker() {
 
 void start() {
     dig::set_record_handler([](dig::DigitalDecoder* d, const dig::LogRecord& r) {
+        if (playback::active()) return;   // debug playback: test transmissions aren't logged
         State& s = S();
         unsigned bit = 0;
         for (const auto& tn : TYPE_NAMES)
@@ -536,6 +538,7 @@ bool set_dir(const std::string& path, std::string* err) {
 
 void record_incident(int vfo, const std::string& plugin, const std::string& address, double lat, double lon,
                      const std::string& precision, const std::string& confidence, const std::string& text) {
+    if (playback::active()) return;
     State& s = S();
     std::lock_guard<std::mutex> lk(s.mu);
     if (!s.enabled || !(s.types & T_INCIDENT)) return;
@@ -546,6 +549,7 @@ void record_incident(int vfo, const std::string& plugin, const std::string& addr
 }
 
 void record_voice(int vfo, double rf_hz, int64_t t_ms, const std::string& source, const std::string& fields) {
+    if (playback::active()) return;
     State& s = S();
     std::lock_guard<std::mutex> lk(s.mu);
     if (!s.enabled || !(s.types & T_VOICE)) return;

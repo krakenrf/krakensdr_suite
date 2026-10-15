@@ -1,4 +1,5 @@
 #include "doa_logger.hpp"
+#include "playback.hpp"
 
 #include "globals.hpp"
 #include "config.hpp"
@@ -637,6 +638,7 @@ void DoaLogger::loggerThread() {
             break;
         }
         if (!any_due) continue;
+        if (playback::active()) continue;   // debug playback: not recorded
 
         std::vector<DoaRecord> records = capture_doa_records();
 

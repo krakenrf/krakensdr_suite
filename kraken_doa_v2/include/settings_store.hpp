@@ -38,4 +38,13 @@ namespace SettingsStore {
 
     // Write immediately if there are unsaved changes.
     void flush();
+
+    // Debug playback: begin_sandbox() writes what is pending, keeps a copy of
+    // the store and stops every write to the file; changes still go into the
+    // store (so the session works as usual). end_sandbox() puts the copy back
+    // (the caller replays apply_commands()). A restart while sandboxed simply
+    // loads the untouched file.
+    void begin_sandbox();
+    void end_sandbox();
+    bool sandboxed();
 }

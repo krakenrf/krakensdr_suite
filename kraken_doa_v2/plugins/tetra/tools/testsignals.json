@@ -1,0 +1,79 @@
+[
+{
+ "id": "tetra-two-cells",
+ "title": "TETRA: two co-channel cells",
+ "description": "Two base stations of network 530-1 on 390.0 MHz in turn (colour codes 12 and 33, location areas 1001 / 2002): BSCH, BNCH SYSINFO, SCH/F, AACH. Expect site talkers '530-1 CC12' at 70 deg and '530-1 CC33' at 235 deg.",
+ "rf_hz": 390000000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 14,
+ "vfo": {
+  "bw_khz": 30
+ },
+ "steps": [
+  [
+   "{tools}/tetra_gen.py",
+   "cellA.cf32",
+   "--mcc",
+   "530",
+   "--mnc",
+   "1",
+   "--cc",
+   "12",
+   "--la",
+   "1001",
+   "--at",
+   "0.3",
+   "--dur",
+   "5.5"
+  ],
+  [
+   "{tools}/tetra_gen.py",
+   "cellB.cf32",
+   "--mcc",
+   "530",
+   "--mnc",
+   "1",
+   "--cc",
+   "33",
+   "--la",
+   "2002",
+   "--at",
+   "6.6",
+   "--dur",
+   "6.5"
+  ]
+ ],
+ "scene": {
+  "rate": 96000,
+  "snr_db": 25,
+  "seed": 8,
+  "sources": [
+   {
+    "name": "530-1 CC12",
+    "file": "cellA.cf32",
+    "rate": 72000,
+    "at": 0,
+    "bearing": 70
+   },
+   {
+    "name": "530-1 CC33",
+    "file": "cellB.cf32",
+    "rate": 72000,
+    "at": 0,
+    "bearing": 235,
+    "gain_db": -4
+   }
+  ]
+ },
+ "expect": [
+  {
+   "tid": "530-1 CC12",
+   "bearing": 70
+  },
+  {
+   "tid": "530-1 CC33",
+   "bearing": 235
+  }
+ ]
+}
+]

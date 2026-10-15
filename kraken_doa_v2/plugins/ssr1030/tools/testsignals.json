@@ -1,0 +1,43 @@
+[
+{
+ "id": "ssr1030-four",
+ "title": "1030 MHz: two SSRs, a fixed interrogator and a TCAS",
+ "description": "tools/scene_four.json, 10 s looped: SSR-A (II 10, 60 deg), SSR-B (150 deg, a 20 s scan - cut by the loop), a multilateration / fixed interrogator (200 deg) and an ACAS (C82081, 300 deg). Expect talkers 'SSR II 10', 'SSR #n', 'Fixed #n', 'ACAS C82081' at those bearings.",
+ "rf_hz": 1030000000.0,
+ "tuner_offset_hz": 0,
+ "seconds": 10,
+ "vfo": {
+  "bw_khz": 2400
+ },
+ "files": {
+  "scene.json": {
+   "$from": "{tools}/scene_four.json",
+   "seconds": 10
+  }
+ },
+ "steps": [
+  [
+   "{tools}/ssr_gen.py",
+   "scene.json",
+   "out.cu8"
+  ]
+ ],
+ "output": "out.cu8",
+ "expect": [
+  {
+   "tid": "SSR II 10",
+   "bearing": 60
+  },
+  {
+   "bearing": 150
+  },
+  {
+   "bearing": 200
+  },
+  {
+   "tid": "ACAS C82081",
+   "bearing": 300
+  }
+ ]
+}
+]

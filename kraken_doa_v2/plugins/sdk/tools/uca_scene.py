@@ -4,7 +4,7 @@ from a plugin's generator) placed in time, frequency and DIRECTION onto
 kraken_doa's uniform circular array - every transmitter at its own known
 bearing - so a decoder's per-talker DoA can be checked against the truth.
 
-  uca_scene.py SCENE.json OUT.cf32 [--wide OUT.cu8 [--wide-offset HZ]]
+  uca_scene.py SCENE.json OUT.cf32 [--wide OUT.cu8 [--wide-offset HZ]] [--clean]
 
 OUT.cf32: every antenna, sample by sample (cf32, antenna 0 first) at the
 scene's rate, + OUT.json (rate, channels, rf_hz, radius_m, truth). Test it
@@ -16,6 +16,10 @@ with the decoder itself:
 own samples of all antennas). --wide also writes the scene at 2.4 MHz as
 8-bit IQ of every antenna (sample by sample), the band placed at
 --wide-offset Hz, for a fake heimdall feeding the real kraken_doa.
+--clean leaves the noise out of OUT.cf32 and writes its rms (per sample at
+the scene's rate, in the file's scale) as "noise_rms" into OUT.json:
+kraken_doa's debug playback adds the noise itself over the whole 2.4 MHz
+(make_testsignal.py).
 
 SCENE (JSON):
 {
@@ -97,6 +101,7 @@ def main():
     out = a[1]
     wide = None
     wide_off = 0.0
+    clean = '--clean' in a
     for i, v in enumerate(a):
         if v == '--wide':
             wide = a[i + 1]
@@ -133,11 +138,16 @@ def main():
         print('%-14s %7.2f .. %7.2f s  bearing %6.1f deg  %+8.0f Hz' % (truth[-1]['name'], n0 / rate,
               (n0 + len(x)) / rate, s['bearing'], s.get('shift_hz', 0)))
     sigma = 10 ** (-float(scene.get('snr_db', 25)) / 20)
-    noisy = sig + (rng.standard_normal((M, N)) + 1j * rng.standard_normal((M, N))) * sigma / np.sqrt(2)
-    peak = np.max(np.abs(noisy))
+    if clean:
+        noisy = sig.copy()
+    else:
+        noisy = sig + (rng.standard_normal((M, N)) + 1j * rng.standard_normal((M, N))) * sigma / np.sqrt(2)
+    peak = max(np.max(np.abs(noisy)), 1e-9)
     noisy /= peak * 1.05
     noisy.T.astype(np.complex64).tofile(out)
     side = {'rate': rate, 'channels': M, 'rf_hz': float(scene['rf_hz']), 'radius_m': r, 'truth': truth}
+    if clean:
+        side['noise_rms'] = sigma / (peak * 1.05)
     json.dump(side, open(out.rsplit('.', 1)[0] + '.json', 'w'), indent=1)
     print('%s: %d antennas, %.1f s at %.0f Hz' % (out, M, N / rate, rate))
     if not wide:

@@ -187,6 +187,10 @@ bool write_file_atomic(const char* path, const std::string& data) {
     atomic<bool> g_dirty{false};
     atomic<bool> g_running{false};
     thread g_saver;
+    // Debug playback (playback.cpp): the store as it was when playback
+    // began; nothing is written while g_sandbox is set
+    atomic<bool> g_sandbox{false};
+    map<string, string> g_snapshot;
 
     const Setting* find_by_prefix(string_view cmd) {
         for (const Setting& s : SCHEMA)
@@ -210,6 +214,7 @@ bool write_file_atomic(const char* path, const std::string& data) {
     // atomically and durably (write_file_atomic).
     void write_now() {
         lock_guard<mutex> wlk(g_write_mtx);
+        if (g_sandbox.load()) return;   // debug playback: the file keeps the user's settings
         string out = "{\n";
         {
             lock_guard<mutex> lk(g_mtx);
@@ -336,6 +341,31 @@ void start() {
         }
     });
 }
+
+void begin_sandbox() {
+    if (g_sandbox.load()) return;
+    flush();   // the user's last change before playback is theirs: written now
+    {
+        lock_guard<mutex> wlk(g_write_mtx);   // no write in flight
+        lock_guard<mutex> lk(g_mtx);
+        g_snapshot = g_store;
+        g_sandbox.store(true);
+    }
+}
+
+void end_sandbox() {
+    if (!g_sandbox.load()) return;
+    {
+        lock_guard<mutex> wlk(g_write_mtx);
+        lock_guard<mutex> lk(g_mtx);
+        g_store = g_snapshot;
+        g_snapshot.clear();
+        g_dirty.store(false);
+        g_sandbox.store(false);
+    }
+}
+
+bool sandboxed() { return g_sandbox.load(); }
 
 void stop() {
     if (!g_running.exchange(false)) return;

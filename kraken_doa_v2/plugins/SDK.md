@@ -18,6 +18,7 @@ plugins/
 │   │                     clock recovery, sync words, CRC, block codes, Viterbi)
 │   ├── plugin_host.cpp   main() of every plugin (live + offline test modes)
 │   └── tools/uca_scene.py  test transmissions at known bearings on the array (ID separation)
+│       tools/make_testsignal.py  builds a <id>/tools/testsignals.json entry for the debug playback
 ├── lib/                  shared digital-radio library (libkrakendig.a, linked into
 │                         every plugin; only what a plugin uses ends up in it):
 │                         dig_fec (Golay/Hamming/BCH/RS/Viterbi/CRCs), dig_fsk4
@@ -524,6 +525,81 @@ packet with a relay count was re-sent by another tracker (flarm: no
 talker). And a signal whose payload is encrypted with unpublished keys
 (FLARM) still names its transmitter in the clear header: report the ID and
 its bearing, decode nothing else.
+
+## Test transmissions for the debug playback (required with a generator)
+
+kraken_doa's sidebar box **🧪 Debug Playback** plays a decoder's synthetic
+multi-antenna test transmission through the REAL pipeline as if heimdall
+had received it (spectrum, waterfall, VFO, decoder, DoA, the 📡 DF panel)
+and checks the bearings. Every decoder with a generator registers its test
+transmissions in **`plugins/<id>/tools/testsignals.json`** - a JSON list;
+the folder carries it along when the plugin moves. Nothing large is
+committed: the user presses Generate, kraken_doa runs
+`sdk/tools/make_testsignal.py <id-of-entry>` (nice 10) and keeps the
+result in `testsignal_cache/` (cwd-relative, gitignored, at most 3 GB - the
+least recently played go).
+
+```json
+[{
+ "id": "aprs-three-stations",            [a-z0-9-], unique over all plugins
+ "title": "APRS: two stations and a digipeater",
+ "description": "What is in it + what to expect (IDs, bearings, facts)",
+ "rf_hz": 144.575e6,                     the band's centre = where the VFO goes
+ "tuner_offset_hz": 300000,              the band's place in the tuner's 2.4 MHz
+                                         (keeps it off DC); 0 for fixed-frequency
+                                         and lock_vfo decoders
+ "seconds": 16,                          loop length (keep it short)
+ "vfo": {"bw_khz": 20, "demod": "NBFM", "opts": {"key": "value"}},
+                                         the VFO the playback sets up (decoder =
+                                         this plugin, opts = its options)
+ "commands": ["..."],                    optional extra WebSocket commands
+ "steps": [["{tools}/aprs_gen.py", "a.cf32", "--at", "0.5", "SRC>DST:..."]],
+ "scene": {"rate": 48000, "snr_db": 20, "seed": 3, "sources": [
+   {"name": "ZL1AAA-9", "file": "a.cf32", "rate": 48000, "at": 0, "bearing": 40}]},
+ "expect": [{"tid": "ZL1AAA-9", "bearing": 40}],
+ "tol_deg": 5
+}]
+```
+
+- NARROW signals (a VFO of <= ~1 MHz): `steps` write one file per
+  transmitter (your generator), `scene` is a `sdk/tools/uca_scene.py`
+  SCENE (channels 5, radius 0.12, rf_hz and seconds default to the
+  entry's). It is built with `--clean`: no noise in the file, which stays
+  at the scene's low rate (`rate` must divide 2.4 MHz: 48 / 96 / 100 / 120 /
+  240 kHz ...; content within +-0.35 x rate). kraken_doa interpolates it to
+  2.4 MHz live, puts it at `tuner_offset_hz` and adds the noise of
+  `snr_db` over the whole band - 40 bytes per sample (5 antennas), so 16 s
+  at 48 kHz = 31 MB
+- WIDE signals (2.4 MHz): a step writes the whole multi-antenna scene at
+  2.4 MHz itself (cu8, or cf32 - converted to cu8) + its `.json` sidecar;
+  name it in `"output": "out.cu8"` instead of `scene`. 24 MB per second
+  with 5 antennas: a few seconds, looped (a scan / repetition period that
+  fits the loop helps). `"files": {"scene.json": {"$from":
+  "{tools}/scene_x.json", "seconds": 6, "station": "{station}"}}` writes an
+  in-repo scene with some keys replaced
+- A step that is a `.py` runs with python3 -I (numpy / scipy); a `.cpp` is
+  compiled once into `testsignal_cache/.bin/` (`g++ -std=c++20 -O2
+  -I<plugin> -Isdk ... -lfftw3f`). Working directory = a scratch folder in
+  the cache; placeholders `{tools}` (your tools/), `{sdk}`, `{plugins}`,
+  `{work}`, `{lat}` / `{lon}` (+ `{lat+0.05}` ...) = the STATION's position
+  when the user generates (0, 0 without one) and the value `"{station}"` =
+  [lat, lon] - so positions for the map are near the station. Never put
+  coordinates or keys in the repo
+- Bearings are array-relative (as the MUSIC plot shows them, CCW from
+  ANT0), like everywhere in the scenes. `expect`: per transmitter its
+  talker `tid` (exact) and bearing, or only a bearing (any talker within
+  tolerance - radars, DTV paths); `tol` per row overrides `tol_deg`
+  (default 5). The UI's Check turns each row green when the DF status has
+  it; use the same numbers your README reports
+- Test it: `python3 sdk/tools/make_testsignal.py --check --plugins plugins`
+  (all catalogues parse, ids unique), then
+  `python3 sdk/tools/make_testsignal.py <id> --plugins plugins --cache /tmp/c`
+  (prints PROGRESS lines, writes `<id>.dat` + `<id>.json`; the log of the
+  steps in `<id>.log`), then play it in the UI and press nothing but ▶ Play:
+  the VFO, decoder and options must come from the entry
+- Decoders still without a generator (their tests used public recordings):
+  adsb, dme, ism, p25, dmr, pocsag, radiosonde, v23_telemetry - bring one
+  when you touch them
 
 ## Rules for a good decoder
 

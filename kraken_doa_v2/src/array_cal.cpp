@@ -1,4 +1,5 @@
 #include "array_cal.hpp"
+#include "playback.hpp"
 
 #include "geo_address.hpp"   // geo::json_parse
 #include "utils/json_escape.hpp"
@@ -835,7 +836,7 @@ void note_array(int n, const double* x, const double* y, const double* z) {
 
 void add(const Eigen::MatrixXcd& R, const std::string& id, double lat, double lon, double alt_m, double st_lat,
          double st_lon, double st_alt_m, double heading_deg, bool heading_fixed, double offset_deg, double freq_hz) {
-    if (!collecting()) return;
+    if (!collecting() || playback::active()) return;
     const int n = static_cast<int>(R.rows());
     if (n < 3 || n > MAXN || R.cols() != n || !(freq_hz > 0)) return;
     const uint64_t ac = std::hash<std::string>{}(id);

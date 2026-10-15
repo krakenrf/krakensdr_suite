@@ -196,6 +196,11 @@ public:
     // on while the VFO's digital decoder is on; off forgets everything
     void set_active(bool on);
     bool active() const { return active_.load(std::memory_order_relaxed); }
+    // the one plugin whose talkers count ("" = any: Auto detect). A VFO
+    // switched to another plugin kept getting the old one's talkers for a
+    // few seconds (its queued output) - with a busy 2.4 MHz plugin they
+    // stayed in the DF list as if the new decoder had found them
+    void set_plugin(const std::string& p);
 
     // MUSICProcessor::FrameTap
     void add_frame(const Eigen::MatrixXcd& R, uint64_t a, uint64_t b, float rate_hz, double freq_hz, float eig_ratio);
@@ -232,6 +237,7 @@ public:
 
 private:
     std::atomic<bool> active_{false};
+    std::string plugin_;   // set_plugin (mu_)
     mutable std::mutex mu_;
 
     struct Frame {

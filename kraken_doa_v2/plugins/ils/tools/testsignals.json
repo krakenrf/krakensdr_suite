@@ -1,0 +1,83 @@
+[
+{
+ "id": "ils-two-vors",
+ "title": "VOR: two co-channel navaids in turn",
+ "description": "VOR signals on 114.0 MHz with their 1020 Hz Morse idents: WN (radial 123, 50 deg) for 20 s, then OH (radial 20, 215 deg). The navaid talker needs its ident first (~10 s). Expect 'WN VOR' at 50 deg and 'OH VOR' at 215 deg, the radials in the facts.",
+ "rf_hz": 114000000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 40,
+ "vfo": {
+  "bw_khz": 50
+ },
+ "steps": [
+  [
+   "{tools}/ils_gen.py",
+   "wn.cf32",
+   "--type",
+   "vor",
+   "--ident",
+   "WN",
+   "--radial",
+   "123",
+   "--offset",
+   "300",
+   "--every",
+   "6",
+   "--at",
+   "0.2",
+   "--dur",
+   "19.5"
+  ],
+  [
+   "{tools}/ils_gen.py",
+   "oh.cf32",
+   "--type",
+   "vor",
+   "--ident",
+   "OH",
+   "--radial",
+   "20",
+   "--offset",
+   "380",
+   "--every",
+   "6",
+   "--at",
+   "20.2",
+   "--dur",
+   "19.5"
+  ]
+ ],
+ "scene": {
+  "rate": 48000,
+  "snr_db": 25,
+  "seed": 10,
+  "sources": [
+   {
+    "name": "WN VOR",
+    "file": "wn.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 50
+   },
+   {
+    "name": "OH VOR",
+    "file": "oh.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 215,
+    "gain_db": -3
+   }
+  ]
+ },
+ "expect": [
+  {
+   "tid": "WN VOR",
+   "bearing": 50
+  },
+  {
+   "tid": "OH VOR",
+   "bearing": 215
+  }
+ ]
+}
+]

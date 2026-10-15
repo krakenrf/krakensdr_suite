@@ -1,4 +1,5 @@
 #include "networking/websocket_server.hpp"
+#include "playback.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/host_check.hpp"
 #include "globals.hpp"
@@ -655,6 +656,15 @@ void WebSocketServer::web_server_main() {
                         global_ssl_app->publish(TOPIC_CTL, st, uWS::TEXT, false);
                         last_status = std::move(st);
                     }
+                }, 1000, 1000);
+
+                // 🧪 Debug playback: status when it changed, every 2 s while
+                // playing / generating
+                struct us_timer_t* pb_timer = us_create_timer(native_loop, 0, 0);
+                us_timer_set(pb_timer, [](struct us_timer_t* /*timer*/) {
+                    if (!global_ssl_app) return;
+                    const std::string m = playback::tick_message();
+                    if (!m.empty()) global_ssl_app->publish(TOPIC_CTL, m, uWS::TEXT, false);
                 }, 1000, 1000);
 
                 // 🗂 Decoder Logging status (disk space, sizes) - every 2 s

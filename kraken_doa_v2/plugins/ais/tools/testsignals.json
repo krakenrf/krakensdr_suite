@@ -1,0 +1,158 @@
+[
+{
+ "id": "ais-four-ships",
+ "title": "AIS: four ships on channels A and B",
+ "description": "Four ships send class A position reports (message 1) on 161.975 (A) and 162.025 MHz (B), some at the same moment on A and B. Expect four ship talkers: MMSI 512000001 at 20 deg, 512000002 at 110, 235000003 at 200, 3669990 at 300 (array frame), positions a few km from the station.",
+ "rf_hz": 162000000.0,
+ "tuner_offset_hz": 0,
+ "seconds": 16,
+ "vfo": {
+  "bw_khz": 100
+ },
+ "steps": [
+  [
+   "{tools}/ais_gen.py",
+   "s1.cf32",
+   "--mmsi",
+   "512000001",
+   "--lat",
+   "{lat+0.03}",
+   "--lon",
+   "{lon+0.02}",
+   "--at",
+   "0.5",
+   "A",
+   "--at",
+   "4.0",
+   "B",
+   "--at",
+   "8.0",
+   "A",
+   "--at",
+   "12.0",
+   "B"
+  ],
+  [
+   "{tools}/ais_gen.py",
+   "s2.cf32",
+   "--mmsi",
+   "512000002",
+   "--lat",
+   "{lat-0.02}",
+   "--lon",
+   "{lon+0.04}",
+   "--at",
+   "0.5",
+   "B",
+   "--at",
+   "4.5",
+   "A",
+   "--at",
+   "8.0",
+   "B",
+   "--at",
+   "12.5",
+   "A"
+  ],
+  [
+   "{tools}/ais_gen.py",
+   "s3.cf32",
+   "--mmsi",
+   "235000003",
+   "--lat",
+   "{lat-0.04}",
+   "--lon",
+   "{lon-0.03}",
+   "--at",
+   "2.0",
+   "A",
+   "--at",
+   "6.0",
+   "A",
+   "--at",
+   "10.0",
+   "A",
+   "--at",
+   "14.0",
+   "A"
+  ],
+  [
+   "{tools}/ais_gen.py",
+   "s4.cf32",
+   "--mmsi",
+   "3669990",
+   "--lat",
+   "{lat+0.05}",
+   "--lon",
+   "{lon-0.05}",
+   "--at",
+   "2.0",
+   "B",
+   "--at",
+   "6.02",
+   "B",
+   "--at",
+   "10.0",
+   "B",
+   "--at",
+   "14.0",
+   "B"
+  ]
+ ],
+ "scene": {
+  "rate": 100000,
+  "snr_db": 25,
+  "seed": 4,
+  "sources": [
+   {
+    "name": "512000001",
+    "file": "s1.cf32",
+    "rate": 100000,
+    "at": 0,
+    "bearing": 20
+   },
+   {
+    "name": "512000002",
+    "file": "s2.cf32",
+    "rate": 100000,
+    "at": 0,
+    "bearing": 110,
+    "gain_db": -4
+   },
+   {
+    "name": "235000003",
+    "file": "s3.cf32",
+    "rate": 100000,
+    "at": 0,
+    "bearing": 200,
+    "gain_db": 3
+   },
+   {
+    "name": "3669990",
+    "file": "s4.cf32",
+    "rate": 100000,
+    "at": 0,
+    "bearing": 300
+   }
+  ]
+ },
+ "expect": [
+  {
+   "tid": "512000001",
+   "bearing": 20
+  },
+  {
+   "tid": "512000002",
+   "bearing": 110
+  },
+  {
+   "tid": "235000003",
+   "bearing": 200
+  },
+  {
+   "tid": "3669990",
+   "bearing": 300
+  }
+ ]
+}
+]

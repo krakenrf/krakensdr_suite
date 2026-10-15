@@ -108,7 +108,8 @@ APP_SRCS = \
 	$(SRCDIR)/rdf_mapper.cpp \
 	$(SRCDIR)/talker_doa.cpp \
 	$(SRCDIR)/array_cal.cpp \
-	$(SRCDIR)/voice2text.cpp
+	$(SRCDIR)/voice2text.cpp \
+	$(SRCDIR)/playback.cpp
 
 ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_SRCS) $(APP_SRCS)
 
