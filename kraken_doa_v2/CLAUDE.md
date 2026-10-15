@@ -4457,7 +4457,8 @@ Edit `include/config.hpp`:
   F4EHY's dec406 set: the demodulator lost PDF-2 / a whole off-air burst on
   real carrier phase noise - per-bit phase pass, phase-robust sync, polarity
   from the bit sync), ils (a real VOR's radial = an independent measurement;
-  ILS synthetic only), aprs (WA8LMF TNC test CD: 967 vs multimon-ng's 955 /
+  its ident under voice made the 1020 Hz keyer read over 40 ms; ILS
+  synthetic only), aprs (WA8LMF TNC test CD: 967 vs multimon-ng's 955 /
   660 vs 517; 17-byte AX.25 frames without a PID were dropped - fixed),
   pocsag (sigidwiki IQ + multimon-ng's samples = multimon-ng), v23 (its
   real recordings are gone, none public), generators of adsb (dump1090:
