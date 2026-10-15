@@ -135,9 +135,16 @@ already has, scanned at once; then:
 - nothing -> that place / bandwidth backs off 2 s doubling to 60 s.
 No probe where a plan / learned channel of the same bandwidth sits (its
 signal is being decoded). Cost control: <= 6 probes a second, <= 4 at once,
-and the search's measured share of real time (stage 1 + probes) <= 12 % of
-a core (`cpu` low 4 % / high 25 %): above it no new probes ("paused" in the
-Search fact). A probe costs ~5-30 ms (0.15-0.8 s of history x 16 receivers).
+and the probes' CPU budget: the plugin's OWN thread CPU time
+(CLOCK_THREAD_CPUTIME_ID) per second of INPUT, 12 % of a core (`cpu` low 4
+% / high 25 %; <= 0.3 s banked). Over it the probes are SLOWED - at least
+one every 2 s still runs - and the Search fact says "SLOWED to its CPU
+budget (N candidates waited)". It used to time itself on the wall clock and
+stop probing above the budget: on a busy Pi (load 3-5: the live stack + a
+scratch kraken_doa) the preempted time counted as its own, it "paused (CPU
+budget)" for good and the debug playback lora-private-search found 1 of its
+5 links (now 5 / 5 under load 5-7). A probe costs ~5-30 ms of CPU (0.15-0.8
+s of history x 16 receivers).
 Frames found by the search without a payload CRC need (almost) every
 payload codeword's parity to hold.
 

@@ -3820,7 +3820,12 @@ Edit `include/config.hpp`:
   sync within 10 min, preamble energy >= -6 dB in its bin) - the first run
   on the real capture reported 291 one-off SF5 / SF6 / narrow "detections"
   of FSK bursts before that rule. Cost: <= 6 probes/s (token bucket), <= 4
-  alive, the search's measured share <= 12 % of a core (cpu low 4 / high 25)
+  alive, a CPU budget in the plugin's own THREAD CPU time per stream second
+  (`thread_cpu_s`, `probe_cpu_tok_`: 12 % normal, low 4 / high 25, <= 0.3 s
+  banked) - over it the probes are slowed (>= one per PROBE_MIN_GAP_S 2 s),
+  never stopped; the Search fact says "SLOWED". (The wall-clock version
+  counted preemption on a busy Pi as its own time and paused the search for
+  good: playback lora-private-search 1 / 5 at load 3-5)
 - PHY additions (2026-10-16): SF5 / SF6 (header block at the full rate, with
   or without 2 extra symbols after the SFD - both tried; unverified on an
   SX126x), detection 4 windows + a higher peak threshold at SF <= 6

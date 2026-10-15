@@ -52,6 +52,7 @@
 #include <cstring>
 #include <cstdarg>
 #include <malloc.h>
+#include <time.h>
 #include <map>
 #include <memory>
 #include <set>
@@ -168,6 +169,15 @@ inline int ring_len(double secs, double rate) {
     return static_cast<int>(std::min(secs * rate, cap)) + 4096;
 }
 
+// this thread's CPU time (s): the search's budget is in the plugin's OWN CPU
+// time per second of input - a wall clock also counts the time the thread
+// was preempted, and on a busy Pi (load 3-5) that "paused" the search for good
+inline double thread_cpu_s() {
+    timespec ts{};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return static_cast<double>(ts.tv_sec) + 1e-9 * static_cast<double>(ts.tv_nsec);
+}
+
 // the LoRaWAN beacon's CRC (CRC-16, poly 0x1021, init 0, MSB first; stored LSB first)
 inline uint16_t crc16_ccitt(const uint8_t* p, size_t n) { return lora_code::crc16(p, n); }
 
@@ -231,10 +241,10 @@ public:
         if (!chans_.empty() || searching)
             front_.push(x, n, [&] {
                 if (searching) {
-                    const auto t_a = std::chrono::steady_clock::now();
+                    const double t_a = thread_cpu_s();
                     keep_history(front_.X);
                     s1_.block(front_.X, cands_);
-                    search_cpu_s_ += std::chrono::duration<double>(std::chrono::steady_clock::now() - t_a).count();
+                    search_cpu_s_ += thread_cpu_s() - t_a;
                 }
                 for (auto& c : chans_) c->ch.block(front_.X, c->outbuf);
             });
@@ -295,6 +305,12 @@ private:
     struct DetSeen { double f, bw; int sf; bool inv; int sync; double t; };
     std::vector<DetSeen> det_seen_;
     double probe_tokens_ = 6, probe_tok_t_ = 0;
+    // the probes' CPU budget: thread CPU seconds, refilled at search_cpu_max()
+    // per stream second (<= 0.3 s banked); over it the probes slow down (one
+    // every PROBE_MIN_GAP_S at least) - the search never stops
+    double probe_cpu_tok_ = 0.3, cpu_tok_t_ = 0, last_probe_t_ = -1e9, slowed_t_ = -1e9;
+    uint64_t n_slowed_ = 0;
+    static constexpr double PROBE_MIN_GAP_S = 2.0;
     std::vector<RecentDet> recent_det_;
     uint64_t n_probes_ = 0, n_probe_hits_ = 0, n_probe_det_ = 0, n_cand_ = 0;
     double search_cpu_s_ = 0, search_cpu_win_ = 0, search_cpu_t0_ = 0, search_cpu_frac_ = 0;
@@ -674,7 +690,9 @@ private:
     }
 
     void run_search() {
-        const auto t_a = std::chrono::steady_clock::now();
+        const double t_a = thread_cpu_s();
+        probe_cpu_tok_ = std::min(0.3, probe_cpu_tok_ + search_cpu_max() * std::max(0.0, now_ - cpu_tok_t_));
+        cpu_tok_t_ = now_;
         // the clearest first (the budget below may not reach them all)
         std::sort(cands_.begin(), cands_.end(), [](const auto& a, const auto& b) { return a.z > b.z; });
         for (const lora_search::Candidate& cd : cands_) {
@@ -685,10 +703,20 @@ private:
             // <= 6 probes a second (token bucket), <= MAX_PROBES at once, within the CPU budget
             probe_tokens_ = std::min(6.0, probe_tokens_ + 6.0 * (now_ - probe_tok_t_));
             probe_tok_t_ = now_;
-            if (probe_tokens_ < 1 || n_probes_alive() >= MAX_PROBES || search_cpu_frac_ > search_cpu_max()) continue;
+            if (probe_tokens_ < 1 || n_probes_alive() >= MAX_PROBES) continue;
+            if (probe_cpu_tok_ <= 0 && now_ - last_probe_t_ < PROBE_MIN_GAP_S) {   // over budget: slowed, not stopped
+                n_slowed_++;
+                slowed_t_ = now_;
+                continue;
+            }
             const uint64_t before = n_probes_;
+            const double c0 = thread_cpu_s();
             probe(cd);
-            if (n_probes_ != before) probe_tokens_ -= 1;
+            if (n_probes_ != before) {
+                probe_tokens_ -= 1;
+                probe_cpu_tok_ -= thread_cpu_s() - c0;
+                last_probe_t_ = now_;
+            }
         }
         // probes: decoded -> learned (the receivers that decoded stay);
         // waiting for a packet's tail -> kept; else done
@@ -756,7 +784,7 @@ private:
         }
         backoff_.erase(std::remove_if(backoff_.begin(), backoff_.end(), [&](const Backoff& b) { return now_ > b.until + 300; }),
                        backoff_.end());
-        search_cpu_s_ += std::chrono::duration<double>(std::chrono::steady_clock::now() - t_a).count();
+        search_cpu_s_ += thread_cpu_s() - t_a;
         // the search's share of real time, over ~10 s
         if (search_cpu_t0_ == 0) search_cpu_t0_ = now_;
         if (now_ - search_cpu_t0_ >= 1.0) {
@@ -1352,7 +1380,8 @@ private:
                 fmt("%.1f %% CPU", 100 * search_cpu_frac_) + fmt(" · %.0f candidates", (double)n_cand_) +
                 fmt(", %.0f probed", (double)n_probes_) + fmt(", %.0f decoded", (double)n_probe_hits_) +
                 fmt(", %.0f undecoded LoRa", (double)n_probe_det_) + fmt(" · %.0f learned channels", (double)learned_.size());
-            if (search_cpu_frac_ > search_cpu_max()) s += " · paused (CPU budget)";
+            if (now_ - slowed_t_ < 10)
+                s += fmt(" · SLOWED to its CPU budget (%.0f candidates waited)", (double)n_slowed_);
             host.fact("Search", s);
             if (!recent_det_.empty()) host.fact("Search: last undecoded", recent_det_.back().txt);
         } else {
