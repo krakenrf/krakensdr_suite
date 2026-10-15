@@ -107,12 +107,21 @@ burst: 0.67 s of input from the ring, mixed to 0 Hz, 401-tap low-pass to
 frequency from the burst's strongest line (16384-point FFT); bit + frame
 sync found NON-coherently (sum of template x signal = A e^(j theta) j
 sin(1.1) C - independent of the carrier phase), both sync patterns, bit rate
--1 / 0 / +1 %; carrier phase, amplitude and C/N0 from the 138 ms before the
-first bit; bits by integrate-and-dump of the two half-bits with a timing
-loop on the mid-bit transition (+-1.5 % bit rate) and a decision-free phase
-loop (a biphase bit's mean is the residual carrier, cos 1.1). Biphase-L
-sense as T.001 Fig 2.5 (1 = +1.1 rad first); the opposite is accepted too
-(a mirrored input). CPU (Pi 5): 0.6 % of a core on noise, 3 % during the
+-1 / 0 / +1 %, twice: over all 24 sync bits (best on a weak, steady carrier)
+and in 6 pieces of 4 bits with their magnitudes summed (a carrier whose
+phase wanders); both peaks are demodulated when they disagree and the
+cleaner sync wins. Carrier amplitude and C/N0 from 20 ms pieces of the 138
+ms before the first bit (scatter around each piece's own mean), its phase
+from the last piece; bits by integrate-and-dump of the two half-bits with a
+timing loop on the mid-bit transition (+-1.5 % bit rate) and a
+decision-free phase loop (a biphase bit's mean is the residual carrier, cos
+1.1), then again with each bit's phase from the means of the 5 bits around
+it (non-causal: a phase step costs <= 2 bits) - the more confident of the
+two is kept. Normal / self-test from the decoded frame-sync bits.
+Biphase-L sense as T.001 Fig 2.5 (1 = +1.1 rad first); the opposite is
+accepted too (a mirrored input) - settled by the decoded 15-bit bit sync,
+not by the carrier's phase. `B406_BITS=1` (offline) prints every
+demodulated burst's soft bits. CPU (Pi 5): 0.6 % of a core on noise, 3 % during the
 playback scene (5 transmitters).
 
 ## Tests
@@ -152,6 +161,43 @@ multi-beacon scene; `tools/testsignals.json` = the debug playback entry
   3-bit correction is only taken when all three bits were weak soft
   decisions (|soft| < 0.8 - else a 4-error burst could become a phantom ID);
   no wrong ID in any low-SNR run
+- Real recordings (2026-10-16; verified against them, not in this repo):
+  - sigidwiki "EPIRB" IQ (`Epirbsignal.zip`, SDR# 37.5 kS/s, 2015, one
+    burst padded with noise and repeated): a New Zealand PLB, national
+    location protocol, serial 13016, distress frame, ID 4016196C3F81FE0.
+    The first version decoded PDF-1 but lost PDF-2 (BCH-2) in every copy:
+    the recording's carrier wanders ~0.3 rad per bit and jumps by ~2.3 rad
+    once in the carrier and twice in the data - the phase loop fell behind
+    and the 138 ms carrier mean (across a jump) read C/N0 32 dBHz on a
+    strong signal. An independent Python demodulator (each bit's phase
+    from its own mean) gave both BCH checks clean at 399 bit/s; with the
+    per-bit phase pass the plugin now decodes the same 144 bits, PDF-2
+    included (C/N0 44 dBHz - the coherent figure, phase noise counted;
+    63 from the amplitude alone). It is "inverted" (1 = -1.1 rad first) -
+    a mirrored recording or receiver; T.001's sense is kept.
+  - F4EHY's dec406 test set (`scan406_PI_V9.tar`, jgsenlis.free.fr:
+    FM-discriminator WAVs, turned into IQ by integrating the audio; dec406
+    itself built in scratch as the reference): the off-air
+    `406discri_N42_39_16_E2_57_8` (a French standard-location test-protocol
+    alert) - the first version refused it (its carrier phase, from the 160
+    ms before, was > 90 deg off, so every bit came out inverted: bit sync
+    15 / 15 wrong) - now decoded = dec406 (8E3E0425A7..., 42.65444 N
+    2.95222 E = the file name), and three generated frames (national
+    location EPIRB 10753, standard location MMSI 506153, serial user
+    float-free EPIRB 506153 with 4' position) = dec406, hex and fields. Its
+    ELT(DT) frame didn't survive the audio-to-IQ conversion (a filtered
+    audio chain); its message through `beacon_gen.py --hex` decodes as
+    dec406 does (aircraft 123456, 42.95444 N 1.36444 E, 800-1200 m,
+    France). Two more off-air files (an ADRASEC exercise beacon, Lanester)
+    neither decoder reads.
+  - The generator matches the real bursts (+-1.0-1.1 rad, 160 ms carrier,
+    bit rate 398-400) except the carrier's phase noise: `--phase-noise RAD`
+    (random walk, rad rms per bit) adds it. Old vs new demodulator, 10
+    bursts each: 0.15 rad/bit 40 / 34 dBHz 9 -> 10 / 7 -> 9; 0.3: 6 -> 9
+    / 4 -> 7; 0.45: 3 -> 7 / 0 -> 6; without phase noise unchanged (36 /
+    34 dBHz 10 / 10; 32 dBHz 19 vs 21 of 40 over 4 seeds), +-1 % bit rate
+    10 / 10, 60 s of noise nothing, the published examples and the scene
+    (40.0 / 130.0 / 220.0 / 300.0 / 260.0 deg) as before
 - Live (Auckland, 2026-10-15 15:17-15:33, heimdall retuned to 405.75 MHz via
   its control port, settings restored): ~9 min at 406.0-406.1 MHz, nothing
   heard (no beacon, no self-test). The first version's second-generation

@@ -426,124 +426,250 @@ bool Receiver::demod(const Cand& c, Burst* b) {
         }
         return s;
     };
-    double bestm = 0, bt0 = 0, bT = SPB;
-    int bv = 0;
+    // the same in 6 coherent pieces of 4 bits, their magnitudes summed: a
+    // carrier whose phase wanders over the 60 ms (a real recording: ~0.3 rad
+    // per bit) no longer cancels its own correlation
+    auto corr_seg = [&](double t0, double T, int v) {
+        double s = 0;
+        for (int g = 0; g < 24; g += 4) {
+            cd p{};
+            for (int k = g; k < g + 4; k++) {
+                const double a = t0 + k * T;
+                const cd d = cum.integ(a, a + T / 2) - cum.integ(a + T / 2, a + T);
+                p += tmpl[v][k] ? d : -d;
+            }
+            s += std::abs(p);
+        }
+        return s;
+    };
+    // the sync's position, bit period and pattern - by the coherent
+    // correlation (best at a weak, steady carrier) and by the one in 4-bit
+    // pieces (a carrier whose phase wanders); both are demodulated when they
+    // disagree and the one whose sync bits come out cleaner is taken
+    struct Peak {
+        double m = 0, t0 = 0, T = SPB;
+        int v = 0;
+    } pc, ps;
     const int t_lo = std::max(0, static_cast<int>(on_n + 0.085 * FSD)),
               t_hi = std::min(static_cast<int>(nout) - static_cast<int>(30 * SPB), static_cast<int>(on_n + 0.27 * FSD));
     for (double T : {SPB * 0.99, SPB, SPB * 1.01})
         for (int v = 0; v < 2; v++)
             for (int t0 = t_lo; t0 <= t_hi; t0++) {
-                const double s = std::abs(corr(t0, T, v));
-                if (s > bestm) {
-                    bestm = s;
-                    bt0 = t0;
-                    bT = T;
-                    bv = v;
-                }
+                const double c = std::abs(corr(t0, T, v)), g = corr_seg(t0, T, v);
+                if (c > pc.m) pc = {c, static_cast<double>(t0), T, v};
+                if (g > ps.m) ps = {g, static_cast<double>(t0), T, v};
             }
-    if (bestm <= 0) return false;
+    if (pc.m <= 0 || ps.m <= 0) return false;
     {
-        const double l = std::abs(corr(bt0 - 1, bT, bv)), rr = std::abs(corr(bt0 + 1, bT, bv));
-        const double den = l - 2 * bestm + rr;
-        if (den < 0) bt0 += std::clamp(0.5 * (l - rr) / den, -0.5, 0.5);
+        const double l = std::abs(corr(pc.t0 - 1, pc.T, pc.v)), rr = std::abs(corr(pc.t0 + 1, pc.T, pc.v));
+        const double den = l - 2 * pc.m + rr;
+        if (den < 0) pc.t0 += std::clamp(0.5 * (l - rr) / den, -0.5, 0.5);
     }
-    // the carrier: 150 .. 12 ms before the first bit
-    const int c0 = std::max(1, static_cast<int>(bt0 - 0.150 * FSD)), c1 = static_cast<int>(bt0 - 0.012 * FSD);
-    if (c1 - c0 < static_cast<int>(0.08 * FSD)) return false;
-    cd m{};
-    for (int n = c0; n < c1; n++) m += wv[static_cast<size_t>(n)];
-    m /= static_cast<double>(c1 - c0);
-    const double A = std::abs(m);
-    if (A <= 0) return false;
-    const double th = std::arg(m);
-    double noise = 0;
-    for (int n = c0; n < c1; n++) noise += std::norm(wv[static_cast<size_t>(n)] - m);
-    noise /= static_cast<double>(c1 - c0);
-    std::vector<cd> r(nout);
-    for (size_t n = 0; n < nout; n++) r[n] = wv[n] * cd(std::cos(-th), std::sin(-th)) / A;
-    cum.build(r);
-    const double norm0 = 24 * bT * std::sin(PHASE_DEV);
-    const cd sc = corr(bt0, bT, bv);
-    const double best = sc.imag();   // + = biphase-L as T.001 (1 = +1.1 rad first)
-    if (std::fabs(best) < 0.4 * norm0) return false;
-    const double pol = best > 0 ? 1.0 : -1.0;
+    {
+        const double l = corr_seg(ps.t0 - 1, ps.T, ps.v), rr = corr_seg(ps.t0 + 1, ps.T, ps.v);
+        const double den = l - 2 * ps.m + rr;
+        if (den < 0) ps.t0 += std::clamp(0.5 * (l - rr) / den, -0.5, 0.5);
+    }
+    auto attempt = [&](double bt0, double bT, int bv, Burst* b) -> bool {
+        // the carrier: 150 .. 12 ms before the first bit
+        const int c0 = std::max(1, static_cast<int>(bt0 - 0.150 * FSD)), c1 = static_cast<int>(bt0 - 0.012 * FSD);
+        if (c1 - c0 < static_cast<int>(0.08 * FSD)) return false;
+        // in 20 ms pieces: amplitude = their mean magnitude, noise = the scatter
+        // around each piece's own mean, phase = the last piece's (next to the
+        // bits) - a carrier phase step or wander inside the 138 ms (a real
+        // recording has one) no longer shrinks A, inflates the noise (C/N0 read
+        // 32 dBHz on a ~60 dB signal) or starts the phase loop off
+        const int piece = static_cast<int>(0.020 * FSD);
+        double asum = 0, noise = 0;
+        int npc = 0;
+        cd last{};
+        for (int p0 = c0; p0 + piece / 2 <= c1; p0 += piece) {
+            const int p1 = std::min(c1, p0 + piece);
+            cd m{};
+            for (int n = p0; n < p1; n++) m += wv[static_cast<size_t>(n)];
+            m /= static_cast<double>(p1 - p0);
+            for (int n = p0; n < p1; n++) noise += std::norm(wv[static_cast<size_t>(n)] - m);
+            asum += std::abs(m);
+            npc++;
+            last = m;
+        }
+        noise /= static_cast<double>(c1 - c0);
+        const double A = npc ? asum / npc : 0;
+        if (A <= 0) return false;
+        const double th = std::arg(last);
+        std::vector<cd> r(nout);
+        for (size_t n = 0; n < nout; n++) r[n] = wv[n] * cd(std::cos(-th), std::sin(-th)) / A;
+        cum.build(r);
+        const double norm0 = 24 * bT * std::sin(PHASE_DEV);
+        const cd sc = corr(bt0, bT, bv);
+        const double best = sc.imag();   // + = biphase-L as T.001 (1 = +1.1 rad first)
+        const double strength = corr_seg(bt0, bT, bv) / norm0;
+        if (strength < 0.4) {
+            if (verbose) {
+                char s[160];
+                snprintf(s, sizeof s, "carrier %+.1f Hz: sync corr %.2f of a clean one at %.1f ms (T %.2f) - too weak", fc + df,
+                         strength, (bt0 - on_n) / FSD * 1e3, bT);
+                log.push_back(s);
+            }
+            return false;
+        }
+        // the phase sense from the carrier's phase - checked against the bit sync below
+        double pol = best >= 0 ? 1.0 : -1.0;
 
-    // bits with timing + phase tracking
-    b->bits.assign(144, 0);
-    b->soft.assign(144, 0.0f);
-    double t = bt0, T = bT, phi = 0, nu = 0;
-    double amp = std::sin(PHASE_DEV);
-    {
-        double s = 0;
-        for (int k = 0; k < 24; k++) {
-            const double a = bt0 + k * bT;
-            s += std::fabs((cum.integ(a, a + bT / 2) - cum.integ(a + bT / 2, a + bT)).imag());
+        // bits with timing + phase tracking
+        b->bits.assign(144, 0);
+        b->soft.assign(144, 0.0f);
+        double t = bt0, T = bT, phi = 0, nu = 0;
+        double amp = std::sin(PHASE_DEV);
+        {
+            double s = 0;
+            for (int k = 0; k < 24; k++) {
+                const double a = bt0 + k * bT;
+                s += std::fabs((cum.integ(a, a + bT / 2) - cum.integ(a + bT / 2, a + bT)).imag());
+            }
+            amp = std::max(0.05, s / 24 / bT);
         }
-        amp = std::max(0.05, s / 24 / bT);
+        int nb = 144;
+        // per bit, for the second pass: the half-bit integrals as received (the
+        // first pass's timing) and the amplitude then
+        std::vector<cd> raw1(144), raw2(144);
+        std::vector<double> amp_k(144, 0.0), T_k(144, SPB);
+        for (int k = 0; k < 144; k++) {
+            if (t + T + 2 >= static_cast<double>(nout)) {
+                nb = k;
+                break;
+            }
+            const double mid = t + T / 2;
+            const cd rot(std::cos(-phi), std::sin(-phi));
+            raw1[static_cast<size_t>(k)] = cum.integ(t, mid);
+            raw2[static_cast<size_t>(k)] = cum.integ(mid, t + T);
+            amp_k[static_cast<size_t>(k)] = amp;
+            T_k[static_cast<size_t>(k)] = T;
+            const cd h1 = raw1[static_cast<size_t>(k)] * rot, h2 = raw2[static_cast<size_t>(k)] * rot;
+            const double D = pol * (h1 - h2).imag();
+            const double soft = D / (amp * T);
+            b->soft[static_cast<size_t>(k)] = static_cast<float>(soft);
+            b->bits[static_cast<size_t>(k)] = D > 0;
+            // phase: the bit's mean is the residual carrier (cos 1.1, real)
+            const cd P = h1 + h2;
+            if (std::abs(P) > 0) {
+                const double e = wrap(std::arg(P));
+                nu += 0.01 * e;
+                phi += 0.25 * e + nu;
+            }
+            // timing: the mid-bit transition
+            const double W = pol * (cum.integ(mid - T / 4, mid + T / 4) * rot).imag() * (D > 0 ? 1 : -1);
+            double tau = std::clamp(W / (2 * amp), -T / 4, T / 4);
+            if (k < 24 || std::fabs(soft) > 0.3) {
+                amp += 0.05 * (std::fabs(D) / T - amp);
+            } else {
+                tau = 0;
+            }
+            t += T + 0.3 * tau;
+            T += 0.01 * tau;
+            T = std::clamp(T, SPB * 0.985, SPB * 1.015);
+        }
+        if (nb < 112) return false;
+        // second pass: the carrier phase of each bit from the bits around it
+        // (+-PH_W, non-causal - the means of biphase bits are the residual
+        // carrier): a phase step or fast wander of the carrier costs <= PH_W
+        // bits instead of the loop's settling. A real recording (sigidwiki's
+        // EPIRB, 2015) has three such steps; the loop lost PDF-2 there. Kept
+        // when it is the more confident of the two (mean |soft|)
+        {
+            constexpr int PH_W = 2;
+            std::vector<float> s2(static_cast<size_t>(nb));
+            double a1 = 0, a2 = 0;
+            for (int k = 0; k < nb; k++) {
+                cd ref{};
+                for (int j = std::max(0, k - PH_W); j <= std::min(nb - 1, k + PH_W); j++)
+                    ref += raw1[static_cast<size_t>(j)] + raw2[static_cast<size_t>(j)];
+                const double ra = std::abs(ref);
+                const cd rot = ra > 0 ? std::conj(ref) / ra : cd(1, 0);
+                const double D = pol * ((raw1[static_cast<size_t>(k)] - raw2[static_cast<size_t>(k)]) * rot).imag();
+                s2[static_cast<size_t>(k)] = static_cast<float>(D / (amp_k[static_cast<size_t>(k)] * T_k[static_cast<size_t>(k)]));
+                a1 += std::fabs(b->soft[static_cast<size_t>(k)]);
+                a2 += std::fabs(s2[static_cast<size_t>(k)]);
+            }
+            if (a2 > a1)
+                for (int k = 0; k < nb; k++) {
+                    b->soft[static_cast<size_t>(k)] = s2[static_cast<size_t>(k)];
+                    b->bits[static_cast<size_t>(k)] = s2[static_cast<size_t>(k)] > 0;
+                }
+            if (verbose) {
+                char s[120];
+                snprintf(s, sizeof s, "phase per bit: mean |soft| loop %.2f, +-%d bits %.2f -> %s", a1 / nb, PH_W, a2 / nb,
+                         a2 > a1 ? "per bit" : "loop");
+                log.push_back(s);
+            }
+        }
+        double sum_abs = 0, sum_sq = 0;
+        for (int k = 0; k < 112; k++) {
+            const double v = b->soft[static_cast<size_t>(k)];
+            sum_abs += std::fabs(v);
+            sum_sq += v * v;
+        }
+        int bs_err = 0, fs_err = 0;
+        for (int k = 0; k < 15; k++) bs_err += b->bits[static_cast<size_t>(k)] != 1;
+        // the phase sense came from the sync correlation at the carrier's phase;
+        // when that phase was off by > 90 deg (a real recording's carrier drifts
+        // through the 160 ms) every bit comes out inverted - the 15-bit bit sync
+        // (all ones) settles it once the bits are tracked
+        if (bs_err >= 8) {
+            pol = -pol;
+            for (int k = 0; k < nb; k++) {
+                b->soft[static_cast<size_t>(k)] = -b->soft[static_cast<size_t>(k)];
+                b->bits[static_cast<size_t>(k)] = !b->bits[static_cast<size_t>(k)];
+            }
+            bs_err = 15 - bs_err;
+        }
+        // normal or self-test: the frame sync the decoded bits match (they differ
+        // in 8 of 9 bits; the correlation's pick could follow a wandering phase)
+        int fe[2] = {0, 0};
+        for (int v = 0; v < 2; v++)
+            for (int k = 0; k < 9; k++) fe[v] += b->bits[static_cast<size_t>(15 + k)] != tmpl[v][15 + k];
+        bv = fe[1] < fe[0] ? 1 : 0;
+        fs_err = fe[bv];
+        if (verbose) {
+            char s[200];
+            snprintf(s, sizeof s, "carrier %+.1f Hz: sync corr %.2f, bit sync errors %d, frame sync %s errors %d, T %.3f", fc + df,
+                     strength, bs_err, bv ? "self-test" : "normal", fs_err, T);
+            log.push_back(s);
+        }
+        if (getenv("B406_BITS")) {   // offline diagnosis: every demodulated burst's soft bits
+            fprintf(stderr, "B406_BITS carrier %+.1f Hz T %.3f A %.4g pol %+.0f bs_err %d fs_err %d:", fc + df, T, A, pol, bs_err, fs_err);
+            for (int k = 0; k < nb; k++) fprintf(stderr, " %.2f", b->soft[static_cast<size_t>(k)]);
+            fprintf(stderr, "\n");
+        }
+        if (bs_err > 2 || fs_err > 1) return false;
+        const double mean = sum_abs / 112, var = sum_sq / 112 - mean * mean;
+        double tq = 0;
+        for (int k = 112; k < nb; k++) tq += std::fabs(b->soft[static_cast<size_t>(k)]);
+        b->tail_q = nb > 112 ? tq / (nb - 112) : 0;
+        b->self_test = bv == 1;
+        b->sync_errors = bs_err + fs_err;
+        b->inverted = pol < 0;
+        b->freq_hz = fc + df;
+        b->t_mod = base + bt0 * DEC;
+        b->t_carrier = b->t_mod - 0.160 * FS;
+        b->bit_s = T / FSD;
+        b->level_db = 10 * std::log10(A * A);
+        // C/N0: the channel filter passes ~2 x LP_CUT of noise
+        b->snr_db = 10 * std::log10(std::max(1e-12, A * A / std::max(1e-30, noise / (2 * LP_CUT))));
+        b->ber_q = var > 0 ? mean / std::sqrt(var) : 99;
+        return true;
+    };
+    Burst b1, b2;
+    const bool ok1 = attempt(pc.t0, pc.T, pc.v, &b1);
+    const bool same = std::fabs(ps.t0 - pc.t0) < 1.5 && ps.T == pc.T;
+    const bool ok2 = !same && attempt(ps.t0, ps.T, ps.v, &b2);
+    if (!ok1 && !ok2) return false;
+    if (ok1 && ok2) {
+        const bool second = b2.sync_errors < b1.sync_errors || (b2.sync_errors == b1.sync_errors && b2.ber_q > b1.ber_q);
+        *b = second ? b2 : b1;
+    } else {
+        *b = ok1 ? b1 : b2;
     }
-    double sum_abs = 0, sum_sq = 0;
-    int nb = 144;
-    for (int k = 0; k < 144; k++) {
-        if (t + T + 2 >= static_cast<double>(nout)) {
-            nb = k;
-            break;
-        }
-        const double mid = t + T / 2;
-        const cd rot(std::cos(-phi), std::sin(-phi));
-        const cd h1 = cum.integ(t, mid) * rot, h2 = cum.integ(mid, t + T) * rot;
-        const double D = pol * (h1 - h2).imag();
-        const double soft = D / (amp * T);
-        b->soft[static_cast<size_t>(k)] = static_cast<float>(soft);
-        b->bits[static_cast<size_t>(k)] = D > 0;
-        if (k < 112) {
-            sum_abs += std::fabs(soft);
-            sum_sq += soft * soft;
-        }
-        // phase: the bit's mean is the residual carrier (cos 1.1, real)
-        const cd P = h1 + h2;
-        if (std::abs(P) > 0) {
-            const double e = wrap(std::arg(P));
-            nu += 0.01 * e;
-            phi += 0.25 * e + nu;
-        }
-        // timing: the mid-bit transition
-        const double W = pol * (cum.integ(mid - T / 4, mid + T / 4) * rot).imag() * (D > 0 ? 1 : -1);
-        double tau = std::clamp(W / (2 * amp), -T / 4, T / 4);
-        if (k < 24 || std::fabs(soft) > 0.3) {
-            amp += 0.05 * (std::fabs(D) / T - amp);
-        } else {
-            tau = 0;
-        }
-        t += T + 0.3 * tau;
-        T += 0.01 * tau;
-        T = std::clamp(T, SPB * 0.985, SPB * 1.015);
-    }
-    if (nb < 112) return false;
-    int bs_err = 0, fs_err = 0;
-    for (int k = 0; k < 15; k++) bs_err += b->bits[static_cast<size_t>(k)] != 1;
-    for (int k = 0; k < 9; k++) fs_err += b->bits[static_cast<size_t>(15 + k)] != tmpl[bv][15 + k];
-    if (verbose) {
-        char s[200];
-        snprintf(s, sizeof s, "carrier %+.1f Hz: sync corr %.2f, bit sync errors %d, frame sync %s errors %d, T %.3f", fc + df,
-                 std::fabs(best) / norm0, bs_err, bv ? "self-test" : "normal", fs_err, T);
-        log.push_back(s);
-    }
-    if (bs_err > 2 || fs_err > 1) return false;
-    const double mean = sum_abs / 112, var = sum_sq / 112 - mean * mean;
-    double tq = 0;
-    for (int k = 112; k < nb; k++) tq += std::fabs(b->soft[static_cast<size_t>(k)]);
-    b->tail_q = nb > 112 ? tq / (nb - 112) : 0;
-    b->self_test = bv == 1;
-    b->sync_errors = bs_err + fs_err;
-    b->inverted = pol < 0;
-    b->freq_hz = fc + df;
-    b->t_mod = base + bt0 * DEC;
-    b->t_carrier = b->t_mod - 0.160 * FS;
-    b->bit_s = T / FSD;
-    b->level_db = 10 * std::log10(A * A);
-    // C/N0: the channel filter passes ~2 x LP_CUT of noise
-    b->snr_db = 10 * std::log10(std::max(1e-12, A * A / std::max(1e-30, noise / (2 * LP_CUT))));
-    b->ber_q = var > 0 ? mean / std::sqrt(var) : 99;
     return true;
 }
 

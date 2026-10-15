@@ -9,7 +9,7 @@ protected data fields with their real BCH(82,61) / BCH(38,26) parity.
   beacon_gen.py OUT.cf32 [--rate 100000] [--seconds S] [--offset HZ]
                 [--at T ...] [--test-at T ...] [--bit-err PCT] [--seed N]
                 (--hex HEX | --protocol NAME [fields])
-                [--sgb-at T ...] [--snr DB]
+                [--sgb-at T ...] [--snr DB] [--phase-noise RAD]
 
 --offset: the carrier in Hz from the input's 0 Hz (the beacon406 VFO sits on
 406.050 MHz: channel 406.040 MHz = -10000). --at: normal bursts (s),
@@ -29,7 +29,9 @@ elt24|elt-op) | user-test | orbitography. Fields: --country MID --mmsi N
 --short --homing --internal.
 
 --snr: add noise (per-sample SNR at --rate; 100 kHz: C/N0 = SNR + 50 dBHz) -
-leave it out for uca_scene.py, which adds its own.
+leave it out for uca_scene.py, which adds its own. --phase-noise: the
+carrier's phase as a random walk, RAD rms per bit (2.5 ms) - a real EPIRB
+recording (sigidwiki, 2015) wanders ~0.3 rad per bit.
 
 Output: OUT.cf32 (complex float32) + OUT.json (rate, bursts, messages). Put
 several beacons at their own bearings with plugins/sdk/tools/uca_scene.py.
@@ -215,8 +217,9 @@ def build(o):
     return m + pdf2 + bch(pdf2, G2, 12)
 
 
-def waveform(bits, rate, bit_err, rng, carrier_s=0.160):
-    """complex baseband of one burst (bits = '0'/'1' string incl. sync)"""
+def waveform(bits, rate, bit_err, rng, carrier_s=0.160, phase_noise=0.0):
+    """complex baseband of one burst (bits = '0'/'1' string incl. sync);
+    phase_noise = random-walk carrier phase, rad rms over one bit (2.5 ms)"""
     T = 1.0 / (BAUD * (1 + bit_err / 100))
     n_c = int(round(carrier_s * rate))
     n = n_c + int(np.ceil(len(bits) * T * rate)) + int(0.002 * rate)
@@ -235,6 +238,8 @@ def waveform(bits, rate, bit_err, rng, carrier_s=0.160):
     h = np.hanning(w + 2)[1:-1]
     m = np.convolve(m, h / h.sum(), mode='same')
     ph = DEV * m + rng.uniform(0, 2 * np.pi)
+    if phase_noise > 0:   # a real recording (sigidwiki EPIRB) wanders ~0.3 rad per bit
+        ph += np.cumsum(rng.normal(0, phase_noise / np.sqrt(rate / BAUD), n))
     x = np.exp(1j * ph)
     # 1 ms rise / fall of the carrier
     r = int(0.001 * rate)
@@ -268,6 +273,7 @@ def main():
     o = {'protocol': 'std-mmsi'}
     at, test_at, sgb_at = [], [], []
     rate, seconds, offset, bit_err, seed, hexmsg, sgb_off, snr = 100000.0, None, 0.0, 0.0, 1, None, 0.0, None
+    phase_noise = 0.0
     i = 1
     while i < len(a):
         k = a[i]
@@ -283,6 +289,7 @@ def main():
         elif k == '--seed': seed = int(v)
         elif k == '--hex': hexmsg = v
         elif k == '--snr': snr = float(v)
+        elif k == '--phase-noise': phase_noise = float(v)
         elif k in ('--short', '--internal-off', '--no-homing'):
             o[{'--short': 'short', '--internal-off': 'internal', '--no-homing': 'homing'}[k]] = k == '--short'
             i += 1
@@ -313,7 +320,7 @@ def main():
     bursts = []
     for t0, test in sorted([(t, False) for t in at] + [(t, True) for t in test_at]):
         bits = '1' * 15 + (SYNC_TEST if test else SYNC_NORMAL) + msg
-        w = waveform(bits, rate, bit_err, rng)
+        w = waveform(bits, rate, bit_err, rng, phase_noise=phase_noise)
         n0 = int(round(t0 * rate))
         w = w[:max(0, N - n0)]
         x[n0:n0 + len(w)] += w * np.exp(2j * np.pi * offset * (np.arange(len(w)) + n0) / rate)
