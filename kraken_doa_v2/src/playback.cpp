@@ -29,6 +29,7 @@
 #include "station_info.hpp"
 #include "utils/parse_num.hpp"
 #include "utils/json_escape.hpp"
+#include "utils/spawn_fds.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -507,6 +508,7 @@ std::string start_gen(const std::string& id) {
         dup2(pfd[1], 1);
         const int dn = ::open("/dev/null", O_RDONLY);
         if (dn >= 0) dup2(dn, 0);
+        spawn_fds::close_above_stdio_in_child();
         std::vector<char*> av;
         for (auto& a : args) av.push_back(a.data());
         av.push_back(nullptr);

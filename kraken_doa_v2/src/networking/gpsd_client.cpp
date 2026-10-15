@@ -132,7 +132,7 @@ int connect_gpsd(const char* host, int port) {
 
     int fd = -1;
     for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {
-        fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        fd = socket(ai->ai_family, ai->ai_socktype | SOCK_CLOEXEC, ai->ai_protocol);
         if (fd < 0) continue;
 
         // Non-blocking connect with a select() timeout so an unreachable host

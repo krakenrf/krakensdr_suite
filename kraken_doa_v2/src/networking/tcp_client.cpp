@@ -15,7 +15,7 @@ TCPClient::~TCPClient() {
 bool TCPClient::connect_to_port(int port, const std::string& host) {
     if (connected) return true;
     
-    socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    socket_fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (socket_fd < 0) return false;
     
     sockaddr_in addr{};

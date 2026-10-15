@@ -466,6 +466,10 @@ bool TetraCodec::start() {
         posix_spawn_file_actions_adddup2(&fa, in, 0);
         posix_spawn_file_actions_adddup2(&fa, out, 1);
         posix_spawn_file_actions_adddup2(&fa, devnull, 2);
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 34))
+        // nothing of the plugin's own beyond stderr (its protocol pipe to kraken_doa)
+        posix_spawn_file_actions_addclosefrom_np(&fa, 3);
+#endif
         char* argv[] = {const_cast<char*>(prog.c_str()), const_cast<char*>("/dev/stdin"),
                         const_cast<char*>("/dev/stdout"), nullptr};
         int rc = posix_spawn(pid, prog.c_str(), &fa, nullptr, argv, environ);

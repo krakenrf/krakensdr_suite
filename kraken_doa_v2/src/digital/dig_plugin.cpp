@@ -19,6 +19,7 @@
 
 #include "digital/dig_report.hpp"
 #include "utils/json_escape.hpp"
+#include "utils/spawn_fds.hpp"
 
 extern char** environ;
 
@@ -82,6 +83,7 @@ bool run_and_capture(const std::vector<std::string>& argv, int timeout_ms, std::
     posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
     posix_spawn_file_actions_adddup2(&fa, p[1], 1);
     posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
+    spawn_fds::close_above_stdio(&fa);
     auto av = c_argv(argv);
     pid_t pid = -1;
     int rc = posix_spawn(&pid, argv[0].c_str(), &fa, nullptr, av.data(), environ);
@@ -347,6 +349,7 @@ bool PluginProcess::start(const std::vector<std::string>& args, std::string* err
     posix_spawn_file_actions_adddup2(&fa, in[0], 0);
     posix_spawn_file_actions_adddup2(&fa, out[1], 1);
     posix_spawn_file_actions_adddup2(&fa, er[1], 2);
+    spawn_fds::close_above_stdio(&fa);
     auto av = c_argv(args);
     pid_t pid = -1;
     int rc = posix_spawn(&pid, exe.c_str(), &fa, nullptr, av.data(), environ);

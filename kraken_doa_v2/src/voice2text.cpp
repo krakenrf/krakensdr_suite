@@ -46,6 +46,7 @@
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
 #include "voice2text_wire.hpp"
+#include "utils/spawn_fds.hpp"
 
 extern char** environ;
 
@@ -1663,7 +1664,11 @@ void download_thread(std::vector<std::pair<std::string, std::string>> files) {
         for (auto& a : args) av.push_back(a.data());
         av.push_back(nullptr);
         pid_t pid = -1;
-        const int rc = posix_spawnp(&pid, "curl", nullptr, nullptr, av.data(), environ);
+        posix_spawn_file_actions_t fa;
+        posix_spawn_file_actions_init(&fa);
+        spawn_fds::close_above_stdio(&fa);
+        const int rc = posix_spawnp(&pid, "curl", &fa, nullptr, av.data(), environ);
+        posix_spawn_file_actions_destroy(&fa);
         if (rc != 0) {
             err = "cannot run curl (" + std::string(strerror(rc)) + ") - install it, or use transcribe/setup.sh";
             break;

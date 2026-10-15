@@ -26,6 +26,7 @@
 #include "globals.hpp"
 #include "networking/websocket_server.hpp"
 #include "utils/json_escape.hpp"
+#include "utils/spawn_fds.hpp"
 
 extern char** environ;
 
@@ -390,6 +391,7 @@ std::string AiManager::start_job(const std::string& kind, const std::vector<std:
     posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
     posix_spawn_file_actions_adddup2(&fa, p[1], 1);
     posix_spawn_file_actions_adddup2(&fa, p[1], 2);
+    spawn_fds::close_above_stdio(&fa);
     posix_spawnattr_t at;
     posix_spawnattr_init(&at);
     posix_spawnattr_setflags(&at, POSIX_SPAWN_SETPGROUP);   // own group: Stop kills the agent too

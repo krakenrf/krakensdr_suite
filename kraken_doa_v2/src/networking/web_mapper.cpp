@@ -206,7 +206,7 @@ public:
         }
         int fd = -1;
         for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {
-            fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+            fd = socket(ai->ai_family, ai->ai_socktype | SOCK_CLOEXEC, ai->ai_protocol);
             if (fd < 0) continue;
             set_timeout(fd, SO_SNDTIMEO, 8000);
             set_timeout(fd, SO_RCVTIMEO, 8000);
@@ -435,9 +435,9 @@ public:
 
     bool listen(int port, string& err) {
         close();
-        int fd = socket(AF_INET6, SOCK_STREAM, 0);
+        int fd = socket(AF_INET6, SOCK_STREAM | SOCK_CLOEXEC, 0);
         bool v6 = fd >= 0;
-        if (!v6) fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (!v6) fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
         if (fd < 0) { err = "socket() failed"; return false; }
         int one = 1;
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
@@ -479,7 +479,7 @@ public:
         const auto now = std::chrono::steady_clock::now();
         if (n > 0 && (pfds[0].revents & POLLIN)) {
             for (;;) {
-                int cfd = accept(listen_fd_, nullptr, nullptr);
+                int cfd = accept4(listen_fd_, nullptr, nullptr, SOCK_CLOEXEC);
                 if (cfd < 0) break;
                 if (clients_.size() >= MAX_CLIENTS) {  // refuse: close at once
                     ::close(cfd);

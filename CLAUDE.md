@@ -522,7 +522,10 @@ decoders `kraken_doa_v2/plugins/`
   that fails to compile only warns). The Digital Decoder runs it as a child
   process per VFO (`Mode::PLUGIN`, wire form `PLUGIN:<id>`): complex baseband
   over stdin, facts/events/valid/audio/map points back over stdout (binary
-  protocol in kraken_plugin.hpp; kraken_doa sends the station location). A
+  protocol in kraken_plugin.hpp; kraken_doa sends the station location). No
+  child of kraken_doa inherits its sockets / files (closefrom(3) at every
+  spawn, sockets SOCK_CLOEXEC - a plugin used to hold the old 8091
+  connection open after a reconnect). A
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
