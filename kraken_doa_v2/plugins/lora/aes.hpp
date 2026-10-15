@@ -85,8 +85,12 @@ inline void ctr_xor(const uint8_t key[16], uint8_t nonce[16], uint8_t* data, siz
         a.encrypt_block(ks);
         const size_t m = (n - off < 16) ? (n - off) : 16;
         for (size_t i = 0; i < m; i++) data[off + i] ^= ks[i];
-        // increment the block counter (bytes 12..15, little-endian as a uint32)
-        for (int i = 12; i < 16; i++) { if (++ctr[i]) break; }
+        // increment the block counter: bytes 12..15 as a BIG-endian 32-bit
+        // number (Meshtastic's CTR<AES128> with setCounterSize(4), = standard
+        // CTR). It was little-endian (byte 12 first) here and in the
+        // generator - only the first 16 bytes of a payload decrypted; found
+        // on real packets from Meshtastic's public MQTT (2026-10-16)
+        for (int i = 15; i >= 12; i--) { if (++ctr[i]) break; }
     }
 }
 

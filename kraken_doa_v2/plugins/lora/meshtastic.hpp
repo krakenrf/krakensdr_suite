@@ -20,6 +20,46 @@
 
 namespace mesh {
 
+// Meshtastic names / texts are UTF-8 (emoji are common in node names): valid
+// UTF-8 is kept, control characters, DEL and invalid bytes become "\xNN"
+// (kp::printable escapes every non-ASCII byte - a real node "🐐Public MQTT
+// Gate" showed as "\xF0\x9F\x90\x90Public MQTT Gate")
+inline std::string utf8_printable(const std::string& s) {
+    std::string o;
+    const auto* p = reinterpret_cast<const unsigned char*>(s.data());
+    const size_t n = s.size();
+    auto esc = [&o](unsigned char c) {
+        static const char* hx = "0123456789ABCDEF";
+        o += "\\x";
+        o += hx[c >> 4];
+        o += hx[c & 15];
+    };
+    for (size_t i = 0; i < n;) {
+        const unsigned char c = p[i];
+        if (c >= 32 && c < 127) { o += static_cast<char>(c); i++; continue; }
+        size_t len = c >= 0xC2 && c <= 0xDF ? 2 : c >= 0xE0 && c <= 0xEF ? 3 : c >= 0xF0 && c <= 0xF4 ? 4 : 0;
+        bool ok = len && i + len <= n;
+        for (size_t k = 1; ok && k < len; k++) ok = (p[i + k] & 0xC0) == 0x80;
+        if (ok && len == 3) {
+            const unsigned c1 = p[i + 1];
+            ok = !(c == 0xE0 && c1 < 0xA0) && !(c == 0xED && c1 >= 0xA0);   // overlong / surrogates
+        }
+        if (ok && len == 4) {
+            const unsigned c1 = p[i + 1];
+            ok = !(c == 0xF0 && c1 < 0x90) && !(c == 0xF4 && c1 >= 0x90);
+        }
+        if (ok && len == 2 && c == 0xC2 && p[i + 1] < 0xA0) ok = false;   // C1 controls
+        if (ok) {
+            o.append(s, i, len);
+            i += len;
+        } else {
+            esc(c);
+            i++;
+        }
+    }
+    return o;
+}
+
 inline const uint8_t DEFAULT_KEY[16] = {0xd4, 0xf1, 0xbb, 0x3a, 0x20, 0x29, 0x07, 0x59,
                                         0xf0, 0xbc, 0xff, 0xab, 0xcf, 0x4e, 0x69, 0x01};
 

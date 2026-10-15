@@ -42,7 +42,9 @@ Per source also: "preamble" (symbols; default 16 for Meshtastic, 10 beacon, 8 el
 the SFD, default 2), proto "beacon" (LoRaWAN class-B: "rfu1", "rfu2",
 "gps_time", "gw_lat", "gw_lon", "info_desc"; CR 4/5, no CRC, implicit),
 "sync_word" (default 0x2B Meshtastic, 0x34 LoRaWAN, 0x12 else), "df_hz"
-(carrier offset), "crc". IDs (from / to / id / devaddr / deveui ...) may be
+(carrier offset), "crc"; Meshtastic "payload_hex" (the encrypted payload
+as sent - a real packet's ciphertext, not re-encrypted) or "data_hex" (a
+Data protobuf, encrypted here) instead of port / text. IDs (from / to / id / devaddr / deveui ...) may be
 numbers or hex strings ("0x26011F88"); random bytes (private keys, LoRaWAN
 FRMPayload / MIC) come from the scene's seed - reproducible scenes.
 The waveform has continuous phase (exact symbol timing at any rate).
@@ -270,7 +272,7 @@ def aes_ctr(key, nonce, data):
         ks = _aes_enc_block(rk, ctr)
         for i in range(min(16, len(data) - off)):
             out[off + i] ^= ks[i]
-        for i in range(12, 16):
+        for i in range(15, 11, -1):   # bytes 12..15 big-endian (Meshtastic / standard CTR)
             ctr[i] = (ctr[i] + 1) & 0xFF
             if ctr[i]:
                 break
@@ -359,7 +361,17 @@ def build_meshtastic(s):
     flags = (hop_limit & 0x7) | (want_ack << 3) | ((hop_start & 0x7) << 5)
     hdr = (to.to_bytes(4, "little") + frm.to_bytes(4, "little") + pid.to_bytes(4, "little")
            + bytes([flags, chan_hash, next_hop, relay_node]))
+    if s.get("payload_hex"):
+        # the encrypted payload as it was on air (e.g. a real packet's from
+        # Meshtastic's public MQTT: header fields + ciphertext) - not re-encrypted
+        return hdr + bytes.fromhex(s["payload_hex"])
     port = s.get("port", "text")
+    if s.get("data_hex"):
+        # a ready Data protobuf (plaintext), encrypted here
+        data = bytes.fromhex(s["data_hex"])
+        key = DEFAULT_KEY if s.get("key", "default") == "default" else rbytes(16)
+        nonce = pid.to_bytes(8, "little") + frm.to_bytes(4, "little") + b"\x00\x00\x00\x00"
+        return hdr + aes_ctr(key, nonce, data)
     if port == "position":
         inner = mesh_position(s["lat"], s["lon"], s.get("alt"))
     elif port == "nodeinfo":

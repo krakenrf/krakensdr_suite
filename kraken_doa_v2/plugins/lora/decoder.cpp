@@ -1186,7 +1186,7 @@ private:
         if (d.ok) {
             if (d.portnum == mesh::TEXT && !d.text.empty()) {
                 nd.last_text = d.text;
-                ev = "💬 " + ((relayed) ? ("!" + hex8(mh.from)) : nd_name(mh.from)) + ": " + d.text;
+                ev = "💬 " + ((relayed) ? ("!" + hex8(mh.from)) : nd_name(mh.from)) + ": " + mesh::utf8_printable(d.text);
                 if (!relayed && label.empty()) label = d.text.substr(0, 24);
             } else if (d.portnum == mesh::NODEINFO) {
                 if (!d.longname.empty()) node_names_[mh.from] = d.longname;
@@ -1194,7 +1194,7 @@ private:
                 o.longname = d.longname;
                 o.shortname = d.shortname;
                 if (!relayed) label = d.longname;
-                ev = "👤 NodeInfo !" + hex8(mh.from) + ": " + kp::printable(d.longname) + " (" + kp::printable(d.shortname) + ")";
+                ev = "👤 NodeInfo !" + hex8(mh.from) + ": " + mesh::utf8_printable(d.longname) + " (" + mesh::utf8_printable(d.shortname) + ")";
             } else if (d.portnum == mesh::POSITION && d.has_pos) {
                 Node& o = nodes_["!" + hex8(mh.from)];
                 o.lat = d.lat;
@@ -1209,9 +1209,9 @@ private:
             }
         } else {
             ev = "🔒 Meshtastic (not the default channel) from !" + hex8(mh.from) +
-                 fmt(" ch#%02x", mh.chan_hash) + " - header only";
+                 fmt2(" ch#%02x", mh.chan_hash) + " - header only";
         }
-        if (!label.empty()) label = kp::printable(label);
+        if (!label.empty()) label = mesh::utf8_printable(label);
         host.event(ev + fmt(" · %.3f MHz", freq) + " SF" + std::to_string(fr.sf), 2.0);
     }
 
@@ -1257,7 +1257,7 @@ private:
     std::map<uint32_t, std::string> node_names_;
     std::string nd_name(uint32_t from) {
         auto it = node_names_.find(from);
-        return it != node_names_.end() ? it->second : ("!" + hex8(from));
+        return it != node_names_.end() ? mesh::utf8_printable(it->second) : ("!" + hex8(from));
     }
 
     void map_point(uint32_t from, const mesh::Decoded& d) {
@@ -1292,14 +1292,14 @@ private:
             }
             hops = "";
         }
-        host.table_row(nd.id, {nd.id, proto, proto == "Meshtastic" ? kp::printable(name) : name, fmt("%.0f/", (double)nd.sf) + fmt(nd.bw < 1e5 ? "%.1f" : "%.0f", nd.bw / 1e3),
+        host.table_row(nd.id, {nd.id, proto, proto == "Meshtastic" ? mesh::utf8_printable(name) : name, fmt("%.0f/", (double)nd.sf) + fmt(nd.bw < 1e5 ? "%.1f" : "%.0f", nd.bw / 1e3),
                                fmt("%.3f", nd.freq_mhz), from, to, hops,
-                               kp::printable(nd.last_text.substr(0, 40)), fmt("%.0f", nd.rssi),
+                               mesh::utf8_printable(nd.last_text.substr(0, 40)), fmt("%.0f", nd.rssi),
                                std::to_string(nd.packets)});
         std::vector<std::pair<std::string, std::string>> det;
         det.push_back({"Protocol", proto});
-        if (!nd.longname.empty()) det.push_back({"Long name", kp::printable(nd.longname)});
-        if (!nd.shortname.empty()) det.push_back({"Short name", kp::printable(nd.shortname)});
+        if (!nd.longname.empty()) det.push_back({"Long name", mesh::utf8_printable(nd.longname)});
+        if (!nd.shortname.empty()) det.push_back({"Short name", mesh::utf8_printable(nd.shortname)});
         if (proto == "Meshtastic") {
             det.push_back({"From", "!" + hex8(mh.from)});
             det.push_back({"To", mh.to == 0xFFFFFFFF ? "broadcast" : "!" + hex8(mh.to)});
@@ -1343,7 +1343,7 @@ private:
         det.push_back({"Integrity", nd.has_crc ? std::string("payload CRC passed")
                                                : fmt2("no payload CRC (LoRaWAN downlinks send none): header checksum passed, "
                                                       "%d of %d payload codewords failed their parity", nd.fec_bad, nd.fec_total)});
-        if (!nd.last_text.empty()) det.push_back({"Last text", kp::printable(nd.last_text)});
+        if (!nd.last_text.empty()) det.push_back({"Last text", mesh::utf8_printable(nd.last_text)});
         if (std::isfinite(nd.lat)) det.push_back({"Position", fmt("%.5f", nd.lat) + fmt(", %.5f", nd.lon)});
         host.table_detail(nd.id, det);
     }

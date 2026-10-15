@@ -277,6 +277,37 @@ plugin decodes the same 63 frames as before (51 downlinks: GW 927.5 47, GW
 - no false frames, no undecoded-LoRa reports (FSK / OOK bursts of the busy
   band were probed and backed off).
 
+**Real Meshtastic packets** (2026-10-16; verified against them, not in this
+repo): no real Meshtastic IQ recording was found (the one public SigMF file
+named in a GitLab project was never uploaded), so 2 min of Meshtastic's
+public MQTT (`msh/ANZ/#`, read only) gave 21 real over-the-air packets
+(ServiceEnvelope -> MeshPacket: from, to, id, hop limit / start, channel
+hash, next hop, relay node + the ENCRYPTED payload as the radio sent it).
+Reference: an independent decode (own protobuf walker, AES-128-CTR from the
+`cryptography` library, the published default key): 14 decrypt to valid
+Data protobufs (5 NODEINFO, 4 POSITION, 5 TELEMETRY), 7 are private
+channels. Each packet = its real 16-byte header + real ciphertext
+(`lora_gen.py` "payload_hex"), modulated on ANZ LongFast (919.875 MHz, SF11
+/ 250 kHz, CR 4/5) and decoded by the plugin. Found and fixed:
+- **AES-CTR counter**: bytes 12..15 were incremented LITTLE-endian (byte 12
+  first) in `aes.hpp` AND in the generator; Meshtastic (CTR<AES128>,
+  counter size 4) and standard CTR count big-endian from byte 15. So only
+  the first 16 bytes of every payload decrypted - the round trip passed
+  because the generator shared the error. Before: 11 / 21 as the
+  reference (7 private headers + 4 whose protobuf survived; real NODEINFO
+  names empty or the packet called "not the default channel"); after: 21 /
+  21 - names, positions to 1e-7 deg, telemetry, the private ones header
+  only; the generator's own encryption of the reference plaintexts = the
+  real ciphertexts 21 / 21 (0 / 21 before)
+- the "header only" event printed the channel hash through a double
+  format (`ch#06` for every hash); now the real hashes (0x08 = LongFast,
+  as the firmware's golden value)
+- node names / texts are UTF-8 (`mesh::utf8_printable`; `kp::printable`
+  showed "🐐Public MQTT Gate" as "\xF0\x9F\x90\x90Public MQTT Gate")
+The radio PHY itself (Meshtastic's sync 0x2B, 16-symbol preamble) is not
+checked on a real Meshtastic transmission (the PHY chain was, on real AU915
+LoRaWAN gateway frames - sync 0x34 - and a 0x12 system).
+
 **Synthetic scenes** (`tools/lora_gen.py`, 5-element UCA r 0.12 m, every
 antenna, `decoder --file x.cu8 --channels 5 --uca 0.12 --rf F`, defaults =
 Auto + search), every talker's bearing vs the truth:
