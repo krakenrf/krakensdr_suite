@@ -445,18 +445,24 @@ decoders `kraken_doa_v2/plugins/`
   DF kind `node` 📶. The Meshtastic channel from region + preset + channel
   name as the firmware computes it (djb2 hash slot: ANZ LongFast 919.875
   MHz), the other presets' default channels inside the VFO too, LoRaWAN
-  AU915 sub-band 2 optional) and wildlife (VHF wildlife tracking collars /
-  tags - pulsed CW - anywhere in the VFO at the VFO'S OWN RATE:
+  AU915 sub-band 2 optional) and wildlife (wildlife tracking collars /
+  tags - pulsed CW, any country, VHF / UHF - anywhere in the VFO at the
+  VFO'S OWN RATE:
   `kp::Info::sample_rate` 0, new - `kp::Host::sample_rate()`, the plugin
   started `--serve --rate HZ` and restarted on a bandwidth change -, so a
-  2.4 MHz VFO surveys the band (NZ 160.12-160.59 MHz, channels 0-47) and a
-  narrow one follows one collar; manual only, talkers. ~250 Hz FFT bins,
+  2.4 MHz VFO surveys a band and a narrow one follows one collar; manual
+  only, talkers. ~250 Hz FFT bins,
   each pulse measured on the raw samples (edges, carrier to a few Hz,
   C/N0); a collar = its pulse train (period with misses / extras, ppm,
-  pulse) named by its frequency, modes normal / incubating / ⚠ MORTALITY by
-  the NZ DOC rates (30 / 48 / 60, 80) or a rate change (x2); the NZ data
-  streams decoded (time since death; Chick Timer / kakapo Egg Timer
-  numbers); Lotek / Motus-style coded tags (4-pulse bursts) by their gaps +
+  pulse) named by its frequency in MHz; REGION-NEUTRAL by default
+  (profile `global`, the user's call): modes from the collar's own rate -
+  baseline, a sustained rise held 2 min = ⚠ possible mortality, toggling
+  between known rates = activity; region / vendor profiles only ADD
+  (`profiles.hpp`: na / eu / au doubling = MORTALITY, motus channel names,
+  nz = DOC channels + rate table + Wildtech data streams - time since
+  death, Chick / Egg Timer; without a scheme a stream shows as its pulse
+  groups), band hints from a worldwide list; Lotek / Motus-style coded
+  tags (4-pulse bursts) by their gaps +
   burst interval, several on one frequency; keyed-carrier checks drop FSK /
   FM lines, impulses, carriers. ID separation: a packet per pulse on its
   own 1 kHz channel, DF kind `collar` 🐾, `names` option. kraken_doa:

@@ -54,8 +54,9 @@ plugins/
 │                         talker per node / DevAddr, the relaying node when a mesh frame was repeated
 ├── wildlife/             VHF wildlife collars / tags (pulsed CW) at the VFO's OWN rate (sample_rate 0:
 │                         a 2.4 MHz band survey or a narrow VFO): pulse detector + edges / carrier from
-│                         the raw samples, pulse trains (period, mortality), NZ data streams, coded
-│                         (Lotek / Motus-style) tags; a packet talker per collar on its 1 kHz channel
+│                         the raw samples, pulse trains (period, modes from the collar's own rate),
+│                         region / vendor profiles (profiles.hpp), coded (Lotek / Motus-style) tags;
+│                         a packet talker per collar on its 1 kHz channel
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)

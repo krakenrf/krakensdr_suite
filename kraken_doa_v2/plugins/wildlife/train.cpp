@@ -170,4 +170,32 @@ StreamResult decode_stream(const std::vector<StreamEvent>& ev) {
     return res;
 }
 
+StreamResult describe_runs(const std::vector<StreamEvent>& ev) {
+    StreamResult res;
+    size_t a = 0, b = ev.size();
+    while (a < b && ev[a].run < 2) a++;        // leading / trailing single pulses
+    while (b > a && ev[b - 1].run < 2) b--;
+    int runs = 0, singles = 0;
+    std::string txt;
+    for (size_t i = a; i < b; i++) {
+        if (ev[i].run < 2) {
+            singles++;
+            continue;
+        }
+        if (singles) txt += " (" + std::to_string(singles) + ")";
+        singles = 0;
+        txt += (txt.empty() ? "" : " ") + std::to_string(ev[i].run);
+        res.numbers.push_back(ev[i].run);
+        runs++;
+    }
+    if (runs < 2) return res;
+    res.ok = true;
+    res.scheme = "pulse-groups";
+    res.kind = "pulse-groups";
+    res.text = txt;
+    res.fields = {{"Pulse groups", txt + " (runs of close pulses; single pulses between in brackets)"},
+                  {"Scheme", "not decoded - no vendor scheme selected (option Data streams / profile)"}};
+    return res;
+}
+
 }  // namespace wl

@@ -9,9 +9,13 @@
 //   period from the pulses with misses / extras, ppm, mode) and / or CODED
 //   tags (Lotek / Motus style: bursts of 4 pulses, the 3 gaps + the burst
 //   interval = the tag)
-// - modes: normal / incubating / MORTALITY by the rate (NZ DOC convention:
-//   30 / 48 / 60 (80 kakapo) ppm) or a rate change (x2 = mortality); the
-//   NZ data streams (time since death, Egg Timer / Chick Timer) decoded
+// - modes from the collar's OWN behaviour (region-neutral by default): its
+//   first steady rate = its baseline, a sustained rise x1.4-3 = possible
+//   mortality, switching back and forth = an activity sensor; a region /
+//   vendor profile (profiles.hpp, option `profile`) adds its channel
+//   numbers, rate table (NZ DOC: 30 / 48 / 60, 80 ppm), what a doubling
+//   means and its data-stream scheme (Wildtech: time since death, Egg Timer
+//   / Chick Timer); other data streams are shown as their pulse groups
 //
 // ID separation: each collar / tag is a transmitter - every pulse a
 // kp::Talker packet with its exact span and its own 1 kHz channel
@@ -20,6 +24,7 @@
 
 #include "kraken_dsp.hpp"
 #include "kraken_plugin.hpp"
+#include "profiles.hpp"
 #include "pulse.hpp"
 #include "train.hpp"
 
@@ -43,6 +48,8 @@ constexpr int CONFIRM_PULSES = 4;
 constexpr double GAP_TOL_MS = 2.0;        // a coded tag's gaps
 constexpr double BI_MIN = 1.5, BI_MAX = 120;
 constexpr double STREAM_END_S = 40;
+constexpr double ACT_WIN_S = 1800;        // >= 3 sustained rate changes in 30 min = an activity sensor
+constexpr double POSSIBLE_HOLD_S = 120;   // a generic rise held this long = possible mortality
 
 struct PRec {
     double t0 = 0, t1 = 0;   // host time (s)
@@ -65,6 +72,11 @@ struct Tx {                  // one transmitter (collar / tag)
     // train
     double period = 0, t_ref = 0, jitter = 0;
     double ppm_first = 0, ppm_prev = 0;
+    double base_ppm = 0;     // its first steady rate (the generic modes are relative to it)
+    std::deque<std::pair<double, double>> changes;   // (t, new ppm) of its sustained rate changes, 30 min
+    bool activity = false;   // switches back and forth: an activity sensor
+    double act_lo = 0, act_hi = 0;
+    double rise_t = 0, rise_q = 0;   // a generic rise since (0 = none): possible mortality when it holds
     std::string mode, mode_note;
     int switch_votes = 0;
     double switch_to = 0;
@@ -112,13 +124,23 @@ public:
         rate_ = host.sample_rate();
         if (!(rate_ > 0)) rate_ = 48000;
         det_.configure(rate_);
-        host.table_columns({"Collar", "Name", "MHz", "Ch", "ppm", "Pulse", "Mode", "Code", "C/N0", "Level", "Pulses"});
+        set_columns();
         host.table_keep(keep_h_ * 3600);
     }
 
     void option(const std::string& k, const std::string& v) override {
         if (k == "names") parse_names(v);
-        else if (k == "profile") profile_ = v.empty() ? "nz" : v;
+        else if (k == "profile") {
+            const wl::Profile* p = &wl::profile_by_id(v);
+            if (p != prof_) {
+                prof_ = p;
+                set_columns();
+                // the rows in the new columns (only those still listed)
+                const double now = host.time();
+                for (auto& t : tx_)
+                    if (t.confirmed && now - t.last_t < keep_h_ * 3600) publish(t, true);
+            }
+        } else if (k == "streams") streams_ = v.empty() ? "auto" : v;
         else if (k == "doa_avg") doa_avg_ = std::clamp(atof(v.c_str()), 1.0, 600.0);
         else if (k == "keep_h") {
             keep_h_ = std::clamp(atof(v.c_str()), 0.02, 168.0);
@@ -166,7 +188,8 @@ private:
     bool inv_ = false;
     double last_pub_ = -1e9, last_facts_ = -1e9, last_plot_ = -1e9;
     uint64_t n_pulses_ = 0, n_twins_ = 0;
-    std::string profile_ = "nz", focus_;
+    const wl::Profile* prof_ = &wl::profile_by_id("global");
+    std::string streams_ = "auto", focus_;
     double doa_avg_ = 10, keep_h_ = 12, chan_bw_ = 1000;
     bool verbose_ = false;
     std::vector<std::pair<double, std::string>> names_num_;   // MHz -> name
@@ -220,13 +243,16 @@ private:
         return "";
     }
 
-    // NZ wildlife channels: 160.120 + 0.010 n MHz (Telonics TR4 channels 0-47 general use, 48-99 special licence)
-    static std::string nz_channel(double mhz) {
-        if (!std::isfinite(mhz) || mhz < 160.115 || mhz > 161.115) return "";
-        const long n = std::lround((mhz - 160.120) / 0.010);
-        if (n < 0 || n > 99 || std::fabs(mhz - (160.120 + 0.010 * n)) > 0.0025) return "";
-        return std::to_string(n);
+    // a channel column only for profiles with a channel scheme (NZ, Motus)
+    bool has_channels() const { return prof_->nz_channels || prof_->motus; }
+    void set_columns() {
+        std::vector<std::string> c = {"Collar", "Name", "MHz"};
+        if (has_channels()) c.push_back("Ch");
+        for (const char* x : {"ppm", "Pulse", "Mode", "Code", "C/N0", "Level", "Pulses"}) c.push_back(x);
+        host.table_columns(c);
     }
+    // Wildtech's data streams decoded (else their pulse groups shown)
+    bool wildtech() const { return streams_ == "wildtech" || (streams_ == "auto" && prof_->wildtech); }
 
     std::string make_id(double f, const std::string& suffix) const {
         const double m = abs_mhz(f);
@@ -513,7 +539,10 @@ private:
             // a weak collar found at twice its period: its other pulses come
             // half way between (two of them, single, of its length = halve it)
             // (isolated ones: a data stream's fast pulses are no slots)
+            // (half a period after the pulse before it: a rate slowed by 2 / 3
+            // also puts every other pulse half way - it read as a doubling)
             if (!q.grid && !t.in_stream && t.period >= 2 * PMIN && p.gsize == 1 && p.t0 - t.last_pulse_t > 0.4 * t.period &&
+                std::fabs(p.t0 - t.last_pulse_t - 0.5 * t.period) <= wl::grid_tol(t.period / 2) &&
                 std::fabs((p.t1 - p.t0) * 1e3 - t.width_med) < 0.5 * t.width_med) {
                 const double qh = (p.t0 - t.t_ref) / t.period;
                 if (std::fabs((qh - std::floor(qh) - 0.5) * t.period) <= wl::grid_tol(t.period / 2)) {
@@ -605,8 +634,8 @@ private:
         t.ppm_first = 60.0 / t.period;
         t.last_pulse_t = p.t0;
         classify(t, 0, true);
-        const std::string ch = nz_channel(abs_mhz(t.freq));
-        host.event("🐾 New collar " + t.id + (ch.empty() ? "" : " (NZ ch " + ch + ")") +
+        const std::string ch = wl::channel_label(*prof_, abs_mhz(t.freq));
+        host.event("🐾 New collar " + t.id + (ch.empty() ? "" : " (" + ch + ")") +
                        (t.name.empty() ? "" : " - " + t.name) + fmt(": %.1f ppm", 60.0 / t.period) +
                        fmt(", %.0f ms pulses", (p.t1 - p.t0) * 1e3) + fmt(", %.1f dBHz", p.cn0) + " - " + t.mode,
                    3600);
@@ -661,44 +690,133 @@ private:
         classify(t, old_ppm, false);
     }
 
+    // A collar's mode. Generic (every profile): relative to its baseline -
+    // the first steady rate it was heard at - a sustained rise x1.4-3.1 =
+    // "faster", held POSSIBLE_HOLD_S = possible mortality (most mortality
+    // sensors raise the rate; tick() escalates), the baseline again = back
+    // to normal; >= 3 sustained changes in 30 min between rates it already
+    // had = an activity sensor (a mortality switch stays), and a NEW rate
+    // after such toggling is judged against the slowest of them (its resting
+    // rate). The profile adds its absolute rate table (NZ DOC) and, where its
+    // vendors' convention says so, a doubling (x1.8-2.25, kakapo x2.4-2.9) =
+    // MORTALITY at once.
     void classify(Tx& t, double old_ppm, bool first) {
+        const wl::Profile& P = *prof_;
         const double ppm = 60.0 / t.period;
-        std::string m = "normal";
-        const double q = old_ppm > 0 ? ppm / old_ppm : 1.0;
-        auto near = [&](double a, double tol) { return std::fabs(ppm - a) <= tol; };
-        if (profile_ == "nz") {
-            if (near(48, 4)) m = "incubating";
-            else if (near(60, 5) || near(80, 6)) m = "MORTALITY";
-        }
+        const double now = t.last_pulse_t;
+        // the rates it had in the last 30 min (before this one)
+        std::vector<double> known;
         if (!first) {
-            if ((q > 1.8 && q < 2.25) || (q > 2.4 && q < 2.9)) m = "MORTALITY";
-            else if (q > 1.45 && q < 1.75 && m == "normal") m = profile_ == "nz" && old_ppm > 26 && old_ppm < 34 ? "incubating" : "fast";
-            else if (q < 0.7 && m == "normal") m = "normal";
+            known.push_back(t.base_ppm);
+            if (old_ppm > 0) known.push_back(old_ppm);
+            for (const auto& c : t.changes)
+                if (c.first >= now - ACT_WIN_S) known.push_back(c.second);
+        }
+        bool is_new = true;
+        for (double k : known) is_new = is_new && std::fabs(ppm / k - 1) > 0.08;
+        if (first) {
+            t.base_ppm = ppm;
+            t.changes.clear();
+        } else {
+            t.changes.push_back({now, ppm});
+            while (!t.changes.empty() && t.changes.front().first < now - ACT_WIN_S) t.changes.pop_front();
+        }
+        // pulses at the new rate came closer than half the OLD period: runs
+        // that are no data stream (they read as "pulse-coded data" / digits)
+        t.in_stream = false;
+        t.stream.clear();
+        t.run = 0;
+        t.rise_t = 0;
+        const bool was_activity = t.activity;
+        const bool toggling = !first && t.changes.size() >= 3;
+        t.activity = toggling && !is_new;
+        double rest = t.base_ppm;
+        if (toggling) {
+            t.act_lo = t.act_hi = ppm;
+            for (double k : known) {
+                t.act_lo = std::min(t.act_lo, k);
+                t.act_hi = std::max(t.act_hi, k);
+                rest = std::min(rest, k);
+            }
+        }
+        const double qb = rest > 0 ? ppm / rest : 1.0;   // vs its baseline / resting rate
+        const double qd = toggling ? qb : old_ppm > 0 ? ppm / old_ppm : 1.0;
+        std::string m;
+        bool mort = false;
+        for (const auto& r : P.rates)
+            if (std::fabs(ppm - r.ppm) <= r.tol) {
+                m = r.mode;
+                mort = r.mortality;
+                break;
+            }
+        bool doubled = false;
+        if (!first && P.doubling_is_mortality && ((qd > 1.8 && qd < 2.25) || (qd > 2.4 && qd < 2.9))) {
+            m = "MORTALITY";
+            mort = doubled = true;
+        }
+        if (m.empty()) {
+            if (first || std::fabs(ppm / t.base_ppm - 1) < 0.08) m = P.first_mode;
+            else if (qb >= 1.4 && qb <= 3.1) {
+                m = "faster x" + fmt("%.1f", qb);
+                t.rise_t = now;   // possible mortality when it holds
+                t.rise_q = qb;
+            } else m = (qb > 1 ? "faster x" : "slower x") + fmt(qb > 1 ? "%.1f" : "%.2f", qb);
+        }
+        if (t.activity) {
+            m = "activity";
+            mort = false;
+            t.rise_t = 0;
         }
         const std::string old = t.mode;
         t.mode = m;
         t.ppm_prev = old_ppm;
         if (first) {
-            if (m == "MORTALITY")
-                host.event("⚠ MORTALITY? " + label_name(t) + fmt(" pulses at %.0f ppm", ppm) +
-                               " - the NZ mortality rate (double the normal 30 ppm): the animal may be dead or the collar off",
+            if (mort)
+                host.event("⚠ MORTALITY? " + label_name(t) + fmt(" pulses at %.0f ppm", ppm) + " - a mortality rate in the " +
+                               P.name + " convention: the animal may be dead or the collar off",
                            3600);
             return;
         }
-        if (m == "MORTALITY" && old != "MORTALITY")
-            host.event("⚠ MORTALITY: " + label_name(t) + fmt(" rate %.0f", old_ppm) + fmt(" -> %.0f ppm", ppm) +
-                           " - no movement for the transmitter's mortality time (dead, or the collar came off)",
+        const std::string rates = fmt(" %.0f", old_ppm) + fmt(" -> %.0f ppm", ppm);
+        if (t.activity && !was_activity)
+            host.event("🐾 " + label_name(t) + fmt(": switches between %.0f", t.act_lo) + fmt(" and %.0f ppm", t.act_hi) +
+                           " - an activity sensor (a mortality switch stays), not a mortality",
+                       600);
+        else if (mort && old != "MORTALITY")
+            host.event("⚠ MORTALITY: " + label_name(t) + " rate" + rates + (toggling && doubled ? fmt(" (x%.1f its resting rate)", qb) : "") +
+                           " - the mortality signal of the " + P.name +
+                           " convention: no movement for the transmitter's mortality time (dead, or the collar came off)",
                        600);
         else if (m != old)
-            host.event("🐾 " + label_name(t) + ": " + old + " -> " + m + fmt(" (%.0f", old_ppm) + fmt(" -> %.0f ppm)", ppm), 600);
+            host.event("🐾 " + label_name(t) + ": " + old + " -> " + m + " (" + rates.substr(1) + ")" +
+                           (m == P.first_mode && (old == "MORTALITY" || old == "possible mortality")
+                                ? " - back to its baseline rate: moving again"
+                                : ""),
+                       600);
         else
-            host.event("🐾 " + label_name(t) + fmt(": rate %.1f", old_ppm) + fmt(" -> %.1f ppm", ppm), 600);
+            host.event("🐾 " + label_name(t) + ": rate" + rates, 600);
+        publish(t, true);
+    }
+
+    // a generic rise that held: possible mortality (from tick)
+    void escalate(Tx& t, double now) {
+        if (!(t.rise_t > 0) || t.lost || now - t.rise_t < POSSIBLE_HOLD_S) return;
+        t.rise_t = 0;
+        t.mode = "possible mortality";
+        host.event("⚠ Possible mortality: " + label_name(t) + fmt(" pulses at %.0f ppm", 60.0 / t.period) +
+                       fmt(" for %.0f s", POSSIBLE_HOLD_S) + fmt(" (x%.1f its baseline", t.rise_q) +
+                       fmt(" %.0f ppm)", t.base_ppm) +
+                       " - most mortality sensors raise the rate after hours without movement; an activity switch "
+                       "looks the same until it switches back",
+                   600);
         publish(t, true);
     }
 
     std::string label_name(const Tx& t) const { return t.id + (t.name.empty() ? "" : " (" + t.name + ")"); }
 
-    // ---- data streams (NZ: time since death, Egg / Chick Timer) ---------
+    // ---- data streams: runs of close pulses between single ones --------
+    // (Wildtech: time since death, Egg / Chick Timer; other vendors' codes
+    // are shown as their pulse groups)
     void stream_step(Tx& t, const PRec& p) {
         const double d = p.t0 - t.last_pulse_t;
         t.last_pulse_t = p.t0;
@@ -732,7 +850,11 @@ private:
         while (!t.stream.empty() && t.stream.back().run == 1) t.stream.pop_back();
         t.stream.push_back({1, 0});
         t.stream.push_back({1, 0});
-        const wl::StreamResult r = wl::decode_stream(t.stream);
+        if (streams_ == "off") {
+            t.stream.clear();
+            return;
+        }
+        const wl::StreamResult r = wildtech() ? wl::decode_stream(t.stream) : wl::describe_runs(t.stream);
         if (verbose_) {
             std::string ev;
             for (const auto& e : t.stream) ev += e.run == 1 ? "." : " " + std::to_string(e.run) + " ";
@@ -749,9 +871,10 @@ private:
         t.code_kind = r.kind;
         t.code_fields = r.fields;
         t.code_t = host.time();
-        const std::string what = r.kind == "time-since-death" ? "mortality data" :
-                                 r.kind == "chick-timer" ? "Chick Timer data" :
-                                 r.kind == "egg-timer" ? "Egg Timer data" : "code";
+        const std::string what = r.kind == "time-since-death" ? "Wildtech mortality data" :
+                                 r.kind == "chick-timer" ? "Wildtech Chick Timer data" :
+                                 r.kind == "egg-timer" ? "Wildtech Egg Timer data" :
+                                 r.kind == "pulse-groups" ? "pulse-coded data" : "code";
         if (same) host.event("🐾 " + label_name(t) + ": " + what + " again (confirmed): " + r.text, 300);
         else host.event((r.kind == "time-since-death" ? "⚠ " : "🐾 ") + label_name(t) + ": " + what + " - " + r.text, 60);
         if (host.raw_wanted()) {
@@ -829,15 +952,28 @@ private:
                                                                 fmt("%.1f ms", t.gaps[2]) + fmt(" @%.2f s", t.bi)
                                                           : "")
                                                : t.code_text + (t.code_repeats > 1 ? " ✓" : "");
-        host.table_row(t.id, {t.id, t.name, std::isfinite(m) ? fmt("%.4f", m) : fmt("%+.0f Hz", t.freq),
-                              nz_channel(m), t.coded ? "" : fmt("%.1f", 60.0 / t.period), fmt("%.0f ms", t.width_ms),
-                              t.lost ? t.mode + " (lost)" : t.mode, code, fmt("%.1f dBHz", t.cn0),
-                              fmt("%.1f dB", t.pdb), std::to_string(t.pulses)});
+        const std::string chl = wl::channel_label(*prof_, m);
+        std::vector<std::string> cells = {t.id, t.name, std::isfinite(m) ? fmt("%.4f", m) : fmt("%+.0f Hz", t.freq)};
+        if (has_channels()) cells.push_back(chl);
+        for (auto& x : {t.coded ? std::string() : fmt("%.1f", 60.0 / t.period), fmt("%.0f ms", t.width_ms),
+                        t.lost ? t.mode + " (lost)" : t.mode, code, fmt("%.1f dBHz", t.cn0), fmt("%.1f dB", t.pdb),
+                        std::to_string(t.pulses)})
+            cells.push_back(x);
+        host.table_row(t.id, cells);
         std::vector<std::pair<std::string, std::string>> d;
         d.push_back({"Carrier", std::isfinite(m) ? fmt("%.6f MHz", m) : fmt("%+.1f Hz from the VFO centre", t.freq)});
-        if (!nz_channel(m).empty())
-            d.push_back({"NZ channel", nz_channel(m) + (std::stoi(nz_channel(m)) > 47 ? " (special licence)" : "") +
-                                           fmt(", %+.0f Hz off it", (m - (160.120 + 0.010 * std::stoi(nz_channel(m)))) * 1e6)});
+        if (!chl.empty()) {
+            const int n = wl::nz_channel(m);
+            if (prof_->nz_channels && n >= 0)
+                d.push_back({"Channel", chl + (n > 47 ? " (special licence)" : "") +
+                                            fmt(", %+.0f Hz off it", (m - (160.120 + 0.010 * n)) * 1e6)});
+            else
+                d.push_back({"Channel", chl + fmt(", %+.0f Hz off it", (m - atof(chl.c_str() + chl.rfind(' ') + 1)) * 1e6)});
+        }
+        if (std::isfinite(m)) {
+            const std::string b = wl::band_label(m, m, *prof_);
+            d.push_back({"Band", b.empty() ? "not a band known for wildlife tracking (collars are found anywhere)" : b});
+        }
         if (t.coded) {
             d.push_back({"Coded tag", fmt("4 pulses, gaps %.2f / ", t.gaps[0]) + fmt("%.2f / ", t.gaps[1]) +
                                           fmt("%.2f ms", t.gaps[2])});
@@ -847,8 +983,10 @@ private:
         } else {
             d.push_back({"Period", fmt("%.1f ms", t.period * 1e3) + fmt(" (%.2f ppm)", 60.0 / t.period) +
                                        fmt(", jitter %.1f ms", t.jitter * 1e3)});
+            d.push_back({"Baseline", fmt("%.1f ppm (its first steady rate)", t.base_ppm)});
             if (t.ppm_prev > 0) d.push_back({"Previous rate", fmt("%.1f ppm", t.ppm_prev)});
-            d.push_back({"Mode", t.mode + (profile_ == "nz" ? " (NZ: 30 normal, 48 incubating, 60 / 80 mortality)" : "")});
+            d.push_back({"Mode", t.mode + (t.activity ? fmt(" (switches between %.0f", t.act_lo) + fmt(" and %.0f ppm)", t.act_hi) : "")});
+            d.push_back({"Convention", std::string(prof_->name) + ": " + prof_->convention});
         }
         // drift over the history
         if (t.hist.size() >= 6) {
@@ -924,6 +1062,7 @@ private:
                 publish(t, true);
             }
             if (t.in_stream && !t.stream.empty() && now - t.stream.back().t > STREAM_END_S) end_stream(t);
+            if (!t.coded) escalate(t, now);
         }
         if (now - last_facts_ >= 1.0) {
             last_facts_ = now;
@@ -957,18 +1096,15 @@ private:
         host.fact("Detector", fmt("%.0f Hz bins", det_.bin_hz()) + fmt(" at %.0f kHz", rate_ / 1e3) +
                                   fmt(", pulses from ~%.0f dBHz", det_.cn0_ref()) +
                                   (det_.blanked_frames() ? ", " + std::to_string(det_.blanked_frames()) + " impulse frames blanked" : ""));
+        host.fact("Profile", std::string(prof_->name) +
+                                 (wildtech() ? " - Wildtech data streams decoded" :
+                                  streams_ == "off" ? " - data streams off" : ""));
         if (std::isfinite(rf_)) {
             const double lo = abs_mhz(-0.46 * rate_), hi = abs_mhz(0.46 * rate_);
             const double a = std::min(lo, hi), b = std::max(lo, hi);
-            std::string band;
-            if (b >= 160.12 && a <= 160.59) band = "NZ wildlife band 160.12-160.59 MHz (ch 0-47)";
-            else if (b >= 160.60 && a <= 161.11) band = "NZ wildlife ch 48-99 (special licence)";
-            else if ((b >= 148 && a <= 152) || (b >= 159 && a <= 161) || (b >= 164 && a <= 167) || (b >= 216 && a <= 220))
-                band = "a wildlife tracking band (US 148-152 / 159-161 / 164-167 / 216-220 MHz)";
-            if (b >= 166.38 && a <= 166.38) band += std::string(band.empty() ? "" : ", ") + "Motus 166.380 MHz";
-            if (b >= 150.1 && a <= 150.1) band += std::string(band.empty() ? "" : ", ") + "Motus 150.100 MHz";
-            if (b >= 151.5 && a <= 151.5) band += std::string(band.empty() ? "" : ", ") + "Motus 151.500 MHz";
-            host.fact("Band", band.empty() ? fmt("%.3f", a) + fmt("-%.3f MHz (not a wildlife band)", b) : band);
+            const std::string band = wl::band_label(a, b, *prof_);
+            host.fact("Band", fmt("%.3f", a) + fmt("-%.3f MHz: ", b) +
+                                  (band.empty() ? "no band known for wildlife tracking (collars are found anywhere)" : band));
         }
     }
 
@@ -1004,24 +1140,33 @@ private:
 }  // namespace
 
 KRAKEN_PLUGIN(Wildlife, {.id = "wildlife",
-                         .name = "Wildlife tracking collars (VHF pulse)",
-                         .description = "VHF wildlife transmitters (kiwi / kakapo / deer collars, bird tags): pulsed CW "
-                                        "anywhere in the VFO - a 2.4 MHz VFO surveys the band, a narrow one follows one "
-                                        "collar. Per collar: frequency to a few Hz (NZ channel), ppm, pulse, mode "
-                                        "(normal / incubating / MORTALITY), NZ time-since-death and Egg / Chick Timer "
-                                        "data, Lotek / Motus-style coded tags, signal strength history; a DoA per collar",
-                         .version = "1.0",
+                         .name = "Wildlife tracking collars / tags (pulsed VHF / UHF)",
+                         .description = "Wildlife radio-tracking transmitters (collars and tags on mammals, birds, bats ...): "
+                                        "pulsed CW anywhere in the VFO, in any country - a 2.4 MHz VFO surveys a band, a "
+                                        "narrow one follows one collar. Per collar: frequency to a few Hz, ppm, pulse, mode "
+                                        "from its own rate (baseline / possible MORTALITY / activity), Lotek / Motus-style "
+                                        "coded tags, pulse-coded data streams, signal strength history; a DoA per collar. "
+                                        "Region / vendor profiles add channel numbers, rate conventions and data-stream "
+                                        "decoding (e.g. New Zealand DOC + Wildtech)",
+                         .version = "1.1",
                          .sample_rate = 0,
                          .min_vfo_rate = 5000,
                          .author = "KrakenSDR",
                          .options = {{"names", "Collar names", "", "",
-                                      "Known collars: MHz=name or id=name, comma separated (e.g. 160.512=Kiwi Bob, "
+                                      "Known collars: MHz=name or id=name, comma separated (e.g. 150.512=Elk 7, "
                                       "160.734=Kaka 3) - shown in the table and the 📡 DF list"},
-                                     {"profile", "Pulse-rate meaning", "nz",
-                                      "nz=NZ (30 normal / 48 incubating / 60 + 80 mortality)|change=Rate changes only "
-                                      "(x2 = mortality)",
-                                      "How a collar's rate is read: the NZ DOC convention, or only a change of rate "
-                                      "while it is heard (other countries' collars)"},
+                                     {"profile", "Region / vendor profile", "global",
+                                      "global=Global (no country)|na=North America|eu=Europe|au=Australia|motus=Motus "
+                                      "(coded tags)|nz=New Zealand (DOC / Wildtech)",
+                                      "Global reads every collar from its own rate changes (baseline, possible "
+                                      "mortality, activity). A region / vendor profile adds its channel numbers, rate "
+                                      "table, mortality convention, data-stream scheme and band names - the detection is "
+                                      "the same"},
+                                     {"streams", "Data streams", "auto",
+                                      "auto=As the profile says|wildtech=Wildtech (time since death, Chick / Egg "
+                                      "Timer)|raw=Pulse groups only|off=Off",
+                                      "Pulse-coded data some transmitters send (runs of close pulses): decoded with the "
+                                      "vendor's scheme, else shown as their pulse groups"},
                                      {"doa_avg", "DoA per collar", "10", "3=3 s|10=10 s|30=30 s|120=2 minutes",
                                       "How long each collar's pulses are averaged for its bearing (walking: short)"},
                                      {"keep_h", "Keep collars", "12", "1=1 hour|12=12 hours|24=24 hours|168=7 days",

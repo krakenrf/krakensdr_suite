@@ -1693,7 +1693,7 @@ Edit `include/config.hpp`:
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,ctcss,beacon406,lora,wildlife}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country); `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,ctcss,beacon406,lora,wildlife}`, 🗺 Map 📡 DF panel):**
 - RULE (ID separation, the user's 2026-10-15): every decoder whose signal
   carries a coded ID per TRANSMITTER reports it as a talker - a core part
   of every such decoder, new ones included. How + how to test:
@@ -3711,8 +3711,14 @@ Edit `include/config.hpp`:
   decoded yet (a known recording would settle the open conventions)
 
 **Wildlife collars (`plugins/wildlife/`, README.md there):**
-- VHF wildlife tracking transmitters (pulsed CW: kiwi / kakapo / deer
-  collars, bird / bat tags, Lotek / Motus-style coded tags). `sample_rate`
+- Wildlife tracking transmitters anywhere in VHF / UHF, in any country
+  (pulsed CW: mammal / livestock collars, bird / bat tags, Lotek /
+  Motus-style coded tags). REGION-NEUTRAL by default (the user's call
+  2026-10-15: "don't make it specific to any country"): profile `global`;
+  country / vendor specifics only as selectable profiles (`profiles.hpp`)
+  that ADD channel numbers, a rate table, a mortality convention, a
+  data-stream scheme and band names - never remove the generic detection.
+  `sample_rate`
   0 = THE VFO'S OWN RATE (new: `kp::Host::sample_rate()`, see *Decoder
   plugins*): a 2.4 MHz VFO surveys a band, a narrow one (>= 5 kHz,
   `min_vfo_rate`) follows one collar; manual only, talkers; NOT lock_vfo
@@ -3751,13 +3757,38 @@ Edit `include/config.hpp`:
   tolerance max(25 ms, 3.5 %), fragments (8 dB weaker / < 40 % width)
   dropped, two pulses half way between = period halved (a weak collar), a
   rate change = a filled grid (>= 80 % of slots, >= 6 pulses, >= 8 s)
-  winning 3 times. Modes `profile` nz (30 / 48 incubating / 60, 80
-  MORTALITY) or change (x1.8-2.25, x2.4-2.9 = MORTALITY). NZ data streams
-  (`decode_stream`): runs (< min(0.5 P, 1 s)) vs single pulses; all runs 2
-  = double-beep scheme (DOC 6.4.3 time since death: N - 2 per digit, 3
-  digits), else burst scheme (digit = run - 2, tens + units with <= 1 single
-  between; 8 numbers = Chick Timer fields, 11 = kakapo Egg Timer V6.3);
-  ends after 12 singles / 40 s silence / 400 s; same text twice = confirmed
+  winning 3 times; the halving needs the pulse half a period after the one
+  before (a rate slowed 60 -> 40 ppm put every other pulse half way and read
+  as a doubling)
+- Modes, generic (`classify`, every profile): baseline = the first steady
+  rate; a sustained change to x1.4-3.1 of it = "faster xN", held
+  `POSSIBLE_HOLD_S` 120 s (`escalate` from tick) = ⚠ "possible mortality"
+  (Kenward / Lotek: mortality sensors raise the rate - double - after hours
+  still); slower = "slower xN"; the baseline again = back ("moving again");
+  >= 3 sustained changes in 30 min (`ACT_WIN_S`) among rates it already had
+  = "activity" (no ⚠; the USFS collar 40 resting / 60 active / 80
+  mortality), a NEW rate after toggling is judged against the slowest
+  (resting) one; a rate change drops an open data stream (the transition's
+  close pulses read as data). Profiles (`profile`): global (default), na /
+  eu / au (band names + a doubling - x1.8-2.25 / x2.4-2.9 over the previous
+  or resting rate - = MORTALITY at once; no public vendor rate tables
+  found, so none invented), motus (channel "Motus 166.380 / 150.100 /
+  151.500" within 5 kHz), nz (DOC / Telonics TR4 channels 160.120 + 0.010 n,
+  the DOC table 30 normal / 48 incubating / 60, 80 MORTALITY, doubling,
+  Wildtech streams); a saved `change` loads as global. The table's "Ch"
+  column only with a channel scheme (`set_columns`, re-sent + rows
+  republished on a profile change). Band hints `band_hints()`: a worldwide
+  list (US FCC 90.248, NA agency bands, Germany, Finland, UK, Japan,
+  Australia, NZ, South Africa, Motus) for the "Band" fact / detail only
+- Data streams (option `streams`: auto = as the profile says / wildtech /
+  raw / off): runs (< min(0.5 P, 1 s)) vs single pulses; without a vendor
+  scheme shown as their pulse groups (`describe_runs`: "2 (3) 2 (5) 2 (11)
+  2") - no scheme is auto-detected (the same pulses mean different things
+  per vendor). Wildtech scheme (`decode_stream`): all runs 2 = double-beep
+  (DOC 6.4.3 time since death: N - 2 per digit, 3 digits), else burst
+  scheme (digit = run - 2, tens + units with <= 1 single between; 8 numbers
+  = Chick Timer fields, 11 = kakapo Egg Timer V6.3); ends after 12 singles
+  / 40 s silence / 400 s; same text twice = confirmed
 - ID separation: a `kp::Talker` packet per pulse of a confirmed collar /
   tag, span = its edges +-0.1 ms inside, `freq_hz` = its carrier, `bw_hz`
   `chan_bw` (1 kHz), `avg_s` `doa_avg` (10), `keep_s` `keep_h` (12 h);
@@ -3774,12 +3805,15 @@ Edit `include/config.hpp`:
   rings); the offline `--uca` channel filter centred (was causal: 2 ms
   early for 1 kHz at 48 kHz)
 - Generator `tools/collar_gen.py` (`tx` one transmitter / `scene` every
-  antenna streamed, interference), playback entries `wildlife-five`,
-  `wildlife-five-survey` (2.4 MHz VFO), `wildlife-one-collar` (10 kHz)
+  antenna streamed, interference, `rates` schedules), playback entries
+  `wildlife-five` (profile nz), `wildlife-five-survey` (2.4 MHz VFO),
+  `wildlife-one-collar` (10 kHz), `wildlife-na-collars` (150.985-151.015
+  MHz, profile na), `wildlife-motus-tags` (four coded tags on 166.380 MHz,
+  profile motus)
 - Tests (scratch t9/, numbers in the README): five transmitters on 5
   antennas (3 collars incl. a 30 -> 60 ppm mortality switch, 2 coded tags on
   one frequency) offline 40.5 / 172.6 / 130.7 / 298.4 / 259.8 deg (truth 40
-  / 170 / 130 / 300 / 260); NZ streams (time since death 139 h - its repeat
+  / 170 / 130 / 300 / 260); Wildtech streams (time since death 139 h - its repeat
   138, one pulse lost -, Chick Timer 8 numbers, kakapo Egg Timer 11 exact);
   collars from ~32-34 dBHz per 20 ms pulse; 300 s of impulses / CW / FSK data: no collar (a strictly
   periodic tone-FM test signal: one); 2.4 MHz survey: 5 / 5 across +-0.9
@@ -3797,6 +3831,15 @@ Edit `include/config.hpp`:
   plugin live at 2.4 MHz 9.3 % incl. the pipe),
   0.2 % at 48 kHz. Regression: every plugin's --info identical, aprs /
   beacon406 playback scenes decoded identically (one peak / mean ratio)
+- Region-neutral rework (scratch wl2/, README *Region-neutral rework*):
+  with `profile=nz` every old offline scene gives the same collars, data
+  numbers and bearings (the noise scene's one false tone-FM collar now
+  "activity", no ⚠); global: MHz only, "baseline", streams as pulse groups;
+  a 300 s modes scene (7 collars) under global / na / nz as designed; NA
+  scene 49.2 / 141.3 / 220.7 / 312.3 deg (truth 50 / 140 / 220 / 310),
+  Motus 31.5 / 110.5 / 200.6 / 320.0 (30 / 110 / 200 / 320); debug
+  playback on the live kraken_doa: all five entries 19 / 19 talkers within
+  3.9 deg, settings files byte-identical
 
 **ILS / VOR / marker (`plugins/ils/`, README.md there):**
 - 48 kHz (`min_vfo_rate` 48 kHz: the VOR subcarrier reaches +-10.4 kHz).

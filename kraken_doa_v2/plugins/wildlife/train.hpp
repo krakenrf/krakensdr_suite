@@ -1,7 +1,7 @@
 #pragma once
 // Pulse-train analysis of wildlife transmitters: the period of a train
-// with missed pulses and extra (coded) ones, and the coded data streams
-// the NZ kiwi / kakapo transmitters send.
+// with missed pulses and extra (coded) ones, and pulse-coded data streams
+// (Wildtech's scheme decoded; any other shown as its pulse groups).
 #include <string>
 #include <vector>
 
@@ -23,9 +23,10 @@ Period find_period(const std::vector<double>& t, double pmin, double pmax);
 inline double grid_tol(double period) { return std::max(0.025, 0.035 * period); }
 
 // One data stream of a train, as runs of close pulses (R, length >= 2)
-// and single normal pulses (N): the digit codes NZ transmitters send every
-// ~10 minutes (DOC Kiwi Best Practice Manual 6.4.3 / 6.4.4; Wildtech
-// kakapo Egg Timer manual V6.3): each digit = its value + 2 pulses.
+// and single normal pulses (N): the WILDTECH scheme (kiwi / kakapo
+// transmitters, every ~10 minutes - DOC Kiwi Best Practice Manual 6.4.3 /
+// 6.4.4; Wildtech kakapo Egg Timer manual V6.3): each digit = its value + 2
+// pulses.
 //   double-beep scheme (mortality time-since-death): R(2) N*(d+2) R(2) ...
 //   burst scheme (Egg Timer / Chick Timer): R(d+2) per digit, tens and units
 //   back to back (N 0..1 between them), outputs apart (N ~5)
@@ -37,10 +38,14 @@ struct StreamResult {
     bool ok = false;
     std::string scheme;              // "double-beep" | "burst"
     std::vector<int> numbers;        // decoded values (digits for double-beep)
-    std::string kind;                // "time-since-death" | "chick-timer" | "egg-timer" | "code"
+    std::string kind;                // "time-since-death" | "chick-timer" | "egg-timer" | "code" | "pulse-groups"
     std::string text;                // human readable
     std::vector<std::pair<std::string, std::string>> fields;
 };
 StreamResult decode_stream(const std::vector<StreamEvent>& ev);
+// No vendor scheme: the stream as its pulse groups - each run of close
+// pulses as its count, the single pulses between them in brackets
+// ("2 (5) 2 (3) 2 (11) 2", "4 5 (5) 2 2 (5) ..."); ok with >= 2 runs
+StreamResult describe_runs(const std::vector<StreamEvent>& ev);
 
 }  // namespace wl

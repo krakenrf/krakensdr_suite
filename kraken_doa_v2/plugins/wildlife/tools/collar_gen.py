@@ -19,14 +19,16 @@ common keys as options):
   start       first pulse (s);  rise_ms  edges (raised cosine, 1 ms; coded 0.3),
               centred on the half-amplitude points (width_ms = their distance)
   switch_at, switch_ppm   the rate changes there (mortality: x2)
-  tsd_at [s...], tsd_hours N   NZ time-since-death stream (DOC Kiwi Best
-              Practice Manual 6.4.3): double beep, (2 + digit) normal pulses
-              per digit, double beeps between, 3 digits
-  chick_at [s...], chick [8 numbers]   NZ Chick Timer stream (fields of the
-              Manual 6.4.4) sent the way the Wildtech kakapo Egg Timer manual
-              V6.3 describes: per number a burst of (2 + tens) fast pulses,
-              3 s gap, a burst of (2 + units), then 5 normal pulses
-  egg_at, egg [11 numbers]   the kakapo Egg Timer (11 outputs)
+  rates       [[from_s, ppm], ...]: a rate schedule (activity sensors that
+              switch back and forth, a mortality switch and back, ...)
+  tsd_at [s...], tsd_hours N   Wildtech / DOC time-since-death stream (DOC
+              Kiwi Best Practice Manual 6.4.3): double beep, (2 + digit)
+              normal pulses per digit, double beeps between, 3 digits
+  chick_at [s...], chick [8 numbers]   Wildtech Chick Timer stream (fields
+              of the Manual 6.4.4) sent the way the Wildtech kakapo Egg Timer
+              manual V6.3 describes: per number a burst of (2 + tens) fast
+              pulses, 3 s gap, a burst of (2 + units), then 5 normal pulses
+  egg_at, egg [11 numbers]   the Wildtech kakapo Egg Timer (11 outputs)
   double_ms   double-beep spacing (150);  fast_ms  fast pulse spacing (250)
   gaps_ms [g1, g2, g3], bi_s   coded tags (lead to lead, ms; burst interval)
   -- scene only --
@@ -71,8 +73,18 @@ def pulse_times(tx, seconds):
         return [p for p in out if p[0] + p[1] < seconds]
     w = float(tx.get('width_ms', 20)) / 1e3
     period = 60.0 / float(tx.get('ppm', 30))
-    sw_at = float(tx.get('switch_at', 1e9))
-    sw_p = 60.0 / float(tx.get('switch_ppm', 60))
+    # rate schedule: [[from s, ppm], ...] (switch_at / switch_ppm = one entry)
+    sched = [(float(a), 60.0 / float(b)) for a, b in tx.get('rates', [])]
+    if 'switch_at' in tx:
+        sched.append((float(tx['switch_at']), 60.0 / float(tx.get('switch_ppm', 60))))
+    sched.sort()
+
+    def period_at(x):
+        p = period
+        for a, q in sched:
+            if x >= a:
+                p = q
+        return p
     dbl = float(tx.get('double_ms', 150)) / 1e3
     fast = float(tx.get('fast_ms', 250)) / 1e3
     streams = []
@@ -88,7 +100,7 @@ def pulse_times(tx, seconds):
     t = float(tx.get('start', 0.5))
     si = 0
     while t < seconds:
-        P = sw_p if t >= sw_at else period
+        P = period_at(t)
         if si < len(streams) and t >= streams[si][0]:
             _, kind, data = streams[si]
             si += 1
