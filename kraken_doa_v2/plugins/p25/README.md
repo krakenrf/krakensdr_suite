@@ -44,6 +44,17 @@ output every unit's bearing is the repeater's.
   bearings 60.0 / 200.0 / 300.0 deg; end to end through the playback: see
   kraken_doa_v2/CLAUDE.md *Debug playback*. The generated symbol levels
   match the real recordings' (equally spaced, outer = 3 x inner).
+- More real recordings (2026-10-16; verified against them, not in this
+  repo): sigidwiki's P25 IF files (24 kHz IQ, the system named in the file
+  name): `P25_C4FM-CC_BEE0014C` 54 s control channel - 723 valid frames,
+  WACN BEE00 / system 14C / RFSS 5 site 9, channel tables, neighbours (=
+  the file name's BEE00 + 14C); `P25_CQPSK-CC_920650D5` (a simulcast LSM /
+  CQPSK control channel, read through the discriminator) - 1454 frames,
+  WACN 92065 / system 0D5 (= the name's 92065 + 0D5); `P25-C4FM-VC` 8 s
+  voice channel - NAC 0x293, a call TG 1 <- 1 from header to TDU. The
+  generator has no independent decoder here: dsdcc (built in scratch for
+  DMR / D-STAR / NXDN) has no P25, and OP25 / dsd / dsd-fme need GNU Radio
+  out-of-tree builds, itpp, libsndfile, PulseAudio and mbelib
 
 ## Sources / limits
 

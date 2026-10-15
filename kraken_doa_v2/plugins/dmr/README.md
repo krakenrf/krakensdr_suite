@@ -40,6 +40,14 @@ repeater output every radio's bearing is the repeater's, in direct mode
   (20 dB SNR): every burst decoded (burst A carries no checked signalling,
   so it isn't counted as a valid frame), bearings 300.0 / 300.0 / 60.0 /
   200.0 deg; end to end: kraken_doa_v2/CLAUDE.md *Debug playback*.
+- Generator through an independent decoder (2026-10-16): dsdcc's
+  `dsdccx` (f4exb, GPL - built in scratch, run only), the generator's
+  output FM-demodulated to 48 kHz at 25 dB SNR: the repeater (BS) call
+  pair - `BS S1: *01 VOX 03100001>G00000001 S2: *01 VOX 03100002>G00000002`,
+  colour code 1, voice LC header / superframes / idle bursts on both slots
+  as generated. The direct-mode (DMO) transmissions can't be checked there:
+  dsdcc handles only the BS / MS syncs, not the TDMA direct-mode TS1 / TS2
+  ones (its output on them is noise)
 - Found with the generator (2026-10-16): random voice payload correlates >=
   0.8 with a sync word now and then. A false VOICE sync off the 30 ms grid
   of a confirmed burst sequence moved the extrapolation of bursts B..F (now

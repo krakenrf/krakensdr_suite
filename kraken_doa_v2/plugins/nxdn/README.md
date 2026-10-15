@@ -21,4 +21,10 @@ TX_REL; real FEC / CRC / scrambling, RRC 0.2 4FSK). Scene: the real unit 1203
 of dsd-samples `nxdn96_3_48000.raw` (FM-modulated) at 80°, then generated
 units 2001 (190°) and 2002 (330°) and 2001 again, back to back: 80.0 / 190.0
 / 330.0° offline (`--channels 5 --uca 0.12`) and through kraken_doa.
-dsd-samples' recordings decode as before.
+dsd-samples' recordings decode as before. Generator through an
+independent decoder (2026-10-16): dsdcc's `dsdccx` (f4exb, GPL - built in
+scratch, run only; `-fn`, the output FM-demodulated to 48 kHz at 25 dB SNR)
+reads `NXD>H RD 01 01 01203>G00012` (RAN 1, unit 1203 -> TG 12) and `...
+04567>G00089` for a second call alone, inbound and outbound alike; two calls
+1 s apart in one file: it reads only the first (it doesn't resync after the
+TX_REL - the plugin reads both).

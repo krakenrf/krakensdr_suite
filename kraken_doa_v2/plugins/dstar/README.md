@@ -28,4 +28,9 @@ pattern). Scene: the real F1NSR transmission of dsdcc's `dstar_f1zil_1.dis`
 (FM-modulated) at 60°, then generated ZL1ABC (200°), ZL2XYZ (310°) and ZL1ABC
 again, back to back: 60.0 / 200.0 / 310.0° offline (`--channels 5 --uca
 0.12`) and through kraken_doa (also with the FFT squelch at 10 dB and with
-the Digital squelch). dsdcc's samples decode as before.
+the Digital squelch). dsdcc's samples decode as before. Generator through an
+independent decoder (2026-10-16): dsdcc's `dsdccx` (f4exb, GPL - built in
+scratch, run only; `-fd`, FM-demodulated to 48 kHz at 25 dB SNR) reads the
+generated headers exactly - `DST>ZL1ABC  /ID51>CQCQCQ  |ZL1XYZ B>ZL1XYZ G|`
+(MY / suffix / UR / RPT1 / RPT2) and the second transmission's `ZL2DEF
+/9000` - and follows the voice frames (data syncs) to the end pattern.
