@@ -69,3 +69,5 @@ transcripts.jsonl.tmp
 voice_clips/
 # Debug playback: generated test transmissions (plugins/sdk/tools/make_testsignal.py)
 testsignal_cache/
+# Python caches of the plugins' tools (generators run by make_testsignal.py)
+plugins/**/__pycache__/
