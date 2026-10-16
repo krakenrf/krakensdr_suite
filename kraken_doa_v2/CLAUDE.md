@@ -750,8 +750,10 @@ Edit `include/config.hpp`:
 **📻 Saved frequencies + 📍 map markers (one feature; `src/saved_freqs.cpp`, UI "📍 MAP MARKERS" + "📻 SAVED FREQUENCIES" in kraken_doa.html):**
 - Model: CATEGORIES {id, name, col #rrggbb}, LOCATIONS {id, name, lat, lon,
   notes, t} = the map markers, FREQUENCIES {id, name, hz, cat, loc, mode
-  ""|WBFM|NBFM|AM|DIGITAL, bw Hz (0 = the VFO's), dec ""|OFF|AUTO|PLUGIN:<id>,
-  tone, notes, t}; only name + hz are required, cat / loc are ids or "". A
+  ""|WBFM|NBFM|AM|DIGITAL, bw Hz (0 = the VFO's), gain null (keep the
+  receiver's) | -1 (Auto / AGC) | dB 0..60 (0.1 steps), dec
+  ""|OFF|AUTO|PLUGIN:<id>, tone, notes, t}; only name + hz are required,
+  cat / loc are ids or "". A
   frequency with a location is listed in that marker's panel - several
   frequencies at one place share ONE location (the editor snaps a new
   location within `SF_SNAP_M` 15 m of an existing marker onto it); a marker
@@ -810,9 +812,14 @@ Edit `include/config.hpp`:
   `SF_PALETTE` entry; an existing name = that one), location (a marker, or
   "+ New location…": name - blank = the frequency's -, lat / lon - "lat, lon"
   pasted in the latitude box works -, 🗺 Pick on map, 📡 Station), demod /
-  bandwidth / decoder ("Keep the VFO's" = ""), tone / code, notes. New
-  entries are filled from the selected VFO (frequency on 100 Hz, demod,
-  bandwidth, decoder when on). Save sends SF_SET and waits for the list
+  bandwidth / decoder ("Keep the VFO's" = ""), gain (`#sf-f-gain`: "Keep
+  the VFO's" = null, the default; "Current gain (29.7 dB)" = `sfCurrentGain()`
+  - the top bar's gain, in independent mode the selected VFO's tuner's -
+  resolved to that NUMBER on save (`sfDlgGain`); then every `GAIN_VALUES`
+  step, Auto (AGC) = -1; a saved value that isn't a step gets its own
+  option), tone / code, notes. New entries are filled from the selected VFO
+  (frequency on 100 Hz, demod, bandwidth, decoder when on; gain stays
+  "Keep"). Save sends SF_SET and waits for the list
   (`sfDlg.pending`): an error with its id is shown in the dialog, else it
   closes + a toast (`sfFlash`, `#sf-toast`). Tune (the form, unsaved),
   Delete, Cancel; Escape (document level - once) / ✕ / the backdrop ask
@@ -839,7 +846,13 @@ Edit `include/config.hpp`:
   independent - the clicked pane / the VFO's own tuner / any tuner whose band
   holds it (`paneMoveVfo`), else the VFO's own tuner retunes
   (`paneSendFreq`) with the VFO at 0. No VFO at all: the receiver's centre
-  (independent: the clicked / selected tuner). A toast says what happened
+  (independent: the clicked / selected tuner). Then the entry's gain, if it
+  has one (also after a fixed-frequency decoder's own tune): `sfApplyGain` -
+  the nearest step, `GAIN:` + the top-bar slider (gainUserChanging, cooldown
+  countdown) or in independent mode `TUNER_GAIN:` on the tuner the VFO ended
+  up on (`paneSendGain`); NOTHING is sent when the gain already is that (a
+  gain change recalibrates the array). A toast says what happened (+ the
+  gain)
 - Spectrum: `sfDrawSpectrum` (drawBox, before the AI badges) - tags in the
   category colour from y 18 (under the VFO labels) in up to 3 rows (2 below
   200 px), entries within 3 px share one ("Name +2"), names over 22 chars

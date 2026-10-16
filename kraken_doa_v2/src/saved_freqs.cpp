@@ -35,6 +35,8 @@ struct Freq {
     std::string cat, loc;   // ids, "" = none
     std::string mode;       // "" (the VFO's) | WBFM | NBFM | AM | DIGITAL
     int64_t bw = 0;         // Hz, 0 = the VFO's
+    bool has_gain = false;  // false = the receiver's gain is kept
+    double gain = 0;        // dB (0.1 steps), -1 = Auto (AGC)
     std::string dec;        // "" (the VFO's) | OFF | AUTO | PLUGIN:<id>
     std::string tone, notes;
     int64_t t = 0;
@@ -170,6 +172,16 @@ bool freq_from_json(const geo::Json& j, Freq* f, std::string* err) {
     double bw = 0;
     if (j.get("bw") && !num(j, "bw", 0, 1e8, &bw)) { *err = "bad bandwidth"; return false; }
     f->bw = std::llround(bw);
+    // gain: absent / null = keep the receiver's, -1 = Auto (AGC), else dB
+    f->has_gain = false;
+    if (const geo::Json* g = j.get("gain"); g && g->type != geo::Json::NUL) {
+        if (g->type != geo::Json::NUM || !std::isfinite(g->n) || !(g->n == -1 || (g->n >= 0 && g->n <= 60))) {
+            *err = "bad gain";
+            return false;
+        }
+        f->has_gain = true;
+        f->gain = g->n == -1 ? -1 : std::round(g->n * 10) / 10;
+    }
     f->dec = j.str("dec");
     if (!valid_dec(f->dec)) { *err = "bad decoder"; return false; }
     f->tone = clean(j.str("tone"), MAX_TONE, false);
@@ -190,9 +202,12 @@ std::string to_json(const Location& l) {
            "\",\"notes\":\"" + json_escape(l.notes) + "\",\"t\":" + std::to_string(l.t) + "}";
 }
 std::string to_json(const Freq& f) {
+    char gain[16] = "null";
+    if (f.has_gain) snprintf(gain, sizeof gain, "%.1f", f.gain);
     return "{\"id\":\"" + json_escape(f.id) + "\",\"name\":\"" + json_escape(f.name) + "\",\"hz\":" +
            std::to_string(f.hz) + ",\"cat\":\"" + json_escape(f.cat) + "\",\"loc\":\"" + json_escape(f.loc) +
-           "\",\"mode\":\"" + json_escape(f.mode) + "\",\"bw\":" + std::to_string(f.bw) + ",\"dec\":\"" +
+           "\",\"mode\":\"" + json_escape(f.mode) + "\",\"bw\":" + std::to_string(f.bw) + ",\"gain\":" + gain +
+           ",\"dec\":\"" +
            json_escape(f.dec) + "\",\"tone\":\"" + json_escape(f.tone) + "\",\"notes\":\"" + json_escape(f.notes) +
            "\",\"t\":" + std::to_string(f.t) + "}";
 }

@@ -4,7 +4,7 @@
 // frequencies, grouped by category, and the places they are transmitted
 // from. A LOCATION is a map marker (name, position, notes); a FREQUENCY has
 // a name and a frequency (both required) and optionally a category, a
-// location, how to receive it (demod, bandwidth, digital decoder), a tone /
+// location, how to receive it (demod, bandwidth, gain, digital decoder), a tone /
 // code and notes. Every frequency that points at a location is listed in
 // that marker's panel on the map; a marker without frequencies is a plain
 // marker. Kept on the backend, so every browser shows the same list:
@@ -14,7 +14,7 @@
 //
 // Commands (control_handler.cpp, uWS loop thread), each answered with
 // message_json() to every browser:
-//   SF_SET:{"id","name","hz","cat","loc","mode","bw","dec","tone","notes"
+//   SF_SET:{"id","name","hz","cat","loc","mode","bw","gain","dec","tone","notes"
 //           [,"newcat":{"id","name","col"}][,"newloc":{"id","name","lat",
 //           "lon","notes"}]}           frequency create / replace (+ the new
 //                                      category / location it refers to)
@@ -52,7 +52,8 @@ bool remove_location(const std::string& id);
 bool remove_category(const std::string& id);
 
 // {"savedfreq":{"cats":[{id,name,col}],"locs":[{id,name,lat,lon,notes,t}],
-//  "freqs":[{id,name,hz,cat,loc,mode,bw,dec,tone,notes,t}]
+//  "freqs":[{id,name,hz,cat,loc,mode,bw,gain,dec,tone,notes,t}]   gain: null =
+//  keep the receiver's, -1 = Auto (AGC), else dB
 //  [,"error":"..","id":".."]}}
 std::string message_json(const std::string& error = "", const std::string& id = "");
 

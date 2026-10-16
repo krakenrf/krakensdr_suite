@@ -580,8 +580,9 @@ decoders `kraken_doa_v2/plugins/`
 - One backend list (every browser): categories (user-made; Airband,
   Broadcast, Business band, Amateur, Marine, Emergency services to start),
   locations (= the 🗺 map markers) and frequencies - name + frequency
-  required; category, location, demod, bandwidth, digital decoder, tone /
-  code, notes optional. Several frequencies at one place share one location,
+  required; category, location, demod, bandwidth, gain ("Keep the VFO's" by
+  default, "Current gain" = the gain when saved, or any gain step), digital
+  decoder, tone / code, notes optional. Several frequencies at one place share one location,
   so its marker lists them all (the editor snaps a new location within 15 m
   of a marker onto it)
 - Sidebar "📻 Saved Frequencies": search, grouped by category (fold, 👁 =
@@ -589,7 +590,8 @@ decoders `kraken_doa_v2/plugins/`
   + Add / ☆ Save on a VFO card (filled in from that VFO), editor dialog
   (location: a marker, typed, picked on the map or the station's). A click
   on an entry tunes the SELECTED VFO: its decoder, demod and bandwidth (when
-  set), then the frequency (retuning the receiver if outside the band)
+  set), then the frequency (retuning the receiver if outside the band), then
+  its gain (when set; independent mode: the VFO's tuner)
 - Spectrum: tags with the names at the top of the main spectrum and the
   independent-mode panes; click = tune
 - WS `SF_SET:{json}` (+ newcat / newloc made in the same step), `SF_DEL:id`,

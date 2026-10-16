@@ -2100,10 +2100,14 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <select id="sf-f-bw"></select>
       </div>
       <div>
+        <div class="lbl">Gain</div>
+        <select id="sf-f-gain" title="The receiver's gain while tuned to this frequency (in Independent mode: the VFO's tuner). Current gain = the gain set now"></select>
+      </div>
+      <div>
         <div class="lbl">Digital decoder</div>
         <select id="sf-f-dec"></select>
       </div>
-      <div>
+      <div style="grid-column:span 2">
         <div class="lbl">Tone / code</div>
         <input type="text" id="sf-f-tone" maxlength="40" style="width:100%" placeholder="CTCSS 110.9, NAC 293…" title="CTCSS / DCS tone, P25 NAC, DMR colour code, ... (shown in the list)">
       </div>
@@ -13947,11 +13951,46 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (dec === 'AUTO') return 'Auto detect';
     return digName(digModePlugin(dec));
   }
-  // how it is received + where: "AM · 10 kHz · P25 · NAC 293 · 📍 Airport"
+  // how it is received + where: "AM · 10 kHz · gain 29.7 dB · P25 · NAC 293 · 📍 Airport"
   function sfMeta(f, withLoc) {
     const l = withLoc && sfLoc(f.loc);
-    return [f.mode && SF_MODES[f.mode], f.bw > 0 && sfFmtBw(f.bw), f.dec && sfDecName(f.dec), f.tone,
-            l && '📍 ' + l.name].filter(Boolean).join(' · ');
+    return [f.mode && SF_MODES[f.mode], f.bw > 0 && sfFmtBw(f.bw), sfHasGain(f) && 'gain ' + sfGainText(f.gain),
+            f.dec && sfDecName(f.dec), f.tone, l && '📍 ' + l.name].filter(Boolean).join(' · ');
+  }
+  // an entry's gain: null = keep the receiver's, -1 = Auto (AGC), else dB
+  function sfHasGain(f) { return typeof f.gain === 'number'; }
+  function sfGainText(g) { return g === -1 ? 'Auto' : (+g).toFixed(1) + ' dB'; }
+  // the receiver's gain now (null = not known): the selected VFO's tuner in
+  // independent mode, else the top bar's (synced from the FFT header)
+  function sfCurrentGain() {
+    if (opMode === 'independent') {
+      const d = decimatorInfo.find(z => z.id === activeDecimatorId);
+      const p = panes[d ? (d.tuner || 0) : selTuner];
+      return p && typeof p.gainDb === 'number' ? p.gainDb : null;
+    }
+    const gs = $id('gn-slider');
+    const g = gs ? GAIN_VALUES[parseInt(gs.value)] : undefined;
+    return typeof g === 'number' ? g : null;
+  }
+  // The receiver's gain to db (the nearest step; independent mode: tuner ch).
+  // Nothing is sent when it already is: a gain change recalibrates the array
+  function sfApplyGain(db, ch) {
+    const gi = gainIndexOf(db), g = GAIN_VALUES[gi], gs = $id('gn-slider');
+    if (opMode === 'independent') {
+      const p = panes[ch];
+      if (p && p.gainDb === g) return false;
+      paneSendGain(ch, g);
+      if (ch === selTuner && gs) { gs.value = gi; updateGainDisplay(gi); }
+      return true;
+    }
+    if (gs && GAIN_VALUES[parseInt(gs.value)] === g) return false;
+    if (gs) { gs.value = gi; updateGainDisplay(gi); }
+    gainUserChanging = true;   // a lagging FFT header must not pull the slider back
+    clearTimeout(gainUserChangeTimeout);
+    gainUserChangeTimeout = setTimeout(() => { gainUserChanging = false; }, 3000);
+    send('GAIN:' + g);
+    restartCooldownCountdown();
+    return true;
   }
   function sfTip(f) {
     const c = sfCat(f.cat);
@@ -14214,7 +14253,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     $id('sf-dlg-title').textContent = isNew ? '📻 Save frequency' : '📻 Edit saved frequency';
     $id('sf-f-name').value = f.name || '';
     $id('sf-f-mhz').value = f.hz ? mkFmtMhz(f.hz) : '';
-    sfDlgFillSelects(f.cat || '', newLoc ? '+new' : (f.loc || ''), f.dec || '');
+    sfDlgFillSelects(f.cat || '', newLoc ? '+new' : (f.loc || ''), f.dec || '', sfHasGain(f) ? f.gain : '');
     $id('sf-f-mode').value = f.mode || '';
     $id('sf-f-bw').value = f.bw > 0 ? String(Math.round(bwo[sfBwIndex(f.bw)].bandwidth * 1e6)) : '';
     $id('sf-f-tone').value = f.tone || '';
@@ -14233,7 +14272,23 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     n.focus();
     if (!isNew) n.select();
   }
-  function sfDlgFillSelects(cat, loc, dec) {
+  // gain: '' = Keep the VFO's, 'cur' = Current gain, a number = that gain;
+  // undefined = keep what is picked (the "Current gain (..)" label refreshes)
+  function sfDlgFillSelects(cat, loc, dec, gain) {
+    const gsel = $id('sf-f-gain');
+    let gv = gain === undefined ? gsel.value : typeof gain === 'number' ? String(GAIN_VALUES[gainIndexOf(gain)]) : gain;
+    const cur = sfCurrentGain();
+    let gh = '<option value="">Keep the VFO\'s</option>' +
+      `<option value="cur">Current gain${cur === null ? '' : ' (' + sfGainText(cur) + ')'}</option>` +
+      GAIN_VALUES.map(v => `<option value="${v}">${v === -1 ? 'Auto (AGC)' : v.toFixed(1) + ' dB'}</option>`).join('');
+    // a saved gain that isn't one of the steps (edited file): shown as it is
+    if (typeof gain === 'number' && Math.abs(GAIN_VALUES[gainIndexOf(gain)] - gain) > 0.05) {
+      gv = String(gain);
+      gh += `<option value="${gv}">${sfGainText(gain)}</option>`;
+    }
+    gsel.innerHTML = gh;
+    gsel.value = gv;
+    if (gsel.value !== gv) gsel.value = '';
     const cs = $id('sf-f-cat');
     cs.innerHTML = '<option value="">— None —</option>' +
       sfCats.map(c => `<option value="${c.id}">${digEsc(c.name)}</option>`).join('') + '<option value="+new">+ New category…</option>';
@@ -14279,7 +14334,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     } else info.style.display = 'none';
   }
   function sfDlgRaw() {
-    const ids = ['name', 'mhz', 'cat', 'newcat', 'loc', 'locname', 'lat', 'lon', 'mode', 'bw', 'dec', 'tone', 'notes'];
+    const ids = ['name', 'mhz', 'cat', 'newcat', 'loc', 'locname', 'lat', 'lon', 'mode', 'bw', 'gain', 'dec', 'tone', 'notes'];
     return ids.map(k => $id('sf-f-' + k).value);
   }
   function sfDlgErr(t) { $id('sf-err').textContent = t; }
@@ -14322,8 +14377,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (!name) return 'Give it a name';
     const hz = sfParseHz(v('mhz'));
     if (!hz) return `"${v('mhz').trim()}" is not a frequency (MHz, or with kHz / GHz)`;
+    const gain = sfDlgGain();
+    if (gain === undefined) return 'The current gain isn\'t known yet - pick a gain from the list';
     const e = {id: sfDlg.id, name, hz, cat: v('cat'), loc: v('loc'), mode: v('mode'), bw: +v('bw') || 0,
-               dec: v('dec'), tone: v('tone').trim(), notes: v('notes')};
+               gain, dec: v('dec'), tone: v('tone').trim(), notes: v('notes')};
     if (e.cat === '+new') {
       const cn = v('newcat').trim();
       if (!cn) return 'Name the new category';
@@ -14347,6 +14404,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (new TextEncoder().encode(e.notes).length > 2000) return 'The notes are too long (2000 bytes at most)';
     return e;
   }
+  // the gain picked: null = keep, a number (Current gain = the gain now);
+  // undefined = Current gain while it isn't known
+  function sfDlgGain() {
+    const g = $id('sf-f-gain').value;
+    if (g === '') return null;
+    if (g === 'cur') { const c = sfCurrentGain(); return c === null ? undefined : c; }
+    return +g;
+  }
   function sfDlgSave() {
     if (!sfDlg || sfDlg.pending) return;
     const e = sfDlgEntry();
@@ -14363,7 +14428,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const hz = sfParseHz(v('mhz'));
     if (!hz) { sfDlgErr(`"${v('mhz').trim()}" is not a frequency (MHz, or with kHz / GHz)`); return; }
     sfDlgErr('');
-    sfTune({id: '', name: v('name').trim() || mkFmtMhz(hz) + ' MHz', hz, mode: v('mode'), bw: +v('bw') || 0, dec: v('dec')});
+    sfTune({id: '', name: v('name').trim() || mkFmtMhz(hz) + ' MHz', hz, mode: v('mode'), bw: +v('bw') || 0,
+            gain: sfDlgGain() ?? null, dec: v('dec')});
   }
   function sfDlgDelete() {
     const f = sfDlg && sfGet(sfDlg.id);
@@ -14418,9 +14484,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // (picking a fixed-frequency one - ADS-B - tunes by itself; another unlocks
   // a VFO such a decoder held; a lock_vfo one - ism - keeps the VFO on its
   // tuner's centre), then the demod (which sets its usual bandwidth), the
-  // bandwidth, then the frequency (sfTuneHz). Nothing is changed when the
-  // frequency can't be reached. opts.tuner = the pane clicked (independent
-  // mode)
+  // bandwidth, then the frequency (sfTuneHz), then the entry's gain (when it
+  // has one - on the tuner the VFO ended up on in independent mode). Nothing
+  // is changed when the frequency can't be reached. opts.tuner = the pane
+  // clicked (independent mode)
   function sfTune(x, opts = {}) {
     const f = typeof x === 'string' ? sfGet(x) : x;
     if (!f) return;
@@ -14435,14 +14502,18 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (f.dec === 'OFF') digToggle(d.id, false);
       else digSetModeFor(d.id, f.dec);
     }
-    if (d && fixed) { sfFlash(`D${d.id} → ${f.name} (${sfDecName(f.dec)})`); return; }
+    // the gain on the VFO's tuner (independent mode; else the receiver's)
+    const gainNow = () => sfHasGain(f) && sfApplyGain(f.gain, d ? (d.tuner || 0) : (opts.tuner ?? selTuner));
+    const gainTxt = () => sfHasGain(f) ? ', gain ' + sfGainText(GAIN_VALUES[gainIndexOf(f.gain)]) : '';
+    if (d && fixed) { gainNow(); sfFlash(`D${d.id} → ${f.name} (${sfDecName(f.dec)})${gainTxt()}`); return; }
     // (not on a VFO its decoder holds - ism needs its whole 2.4 MHz)
     if (d && !vfoLocked(d)) {
       if (f.mode && f.mode !== d.demod_mode) setDecimatorDemodMode(d.id, f.mode);
       if (f.bw > 0) { const i = sfBwIndex(f.bw); if (i !== d.bandwidth_index) setDecimatorBandwidthFromUI(d.id, i); }
     }
     const e2 = sfTuneHz(f.hz, opts);
-    sfFlash(e2 || `${d ? 'D' + d.id + ' → ' : 'Tuned to '}${f.name} · ${mkFmtMhz(f.hz)} MHz`, !!e2);
+    if (!e2) gainNow();
+    sfFlash(e2 || `${d ? 'D' + d.id + ' → ' : 'Tuned to '}${f.name} · ${mkFmtMhz(f.hz)} MHz${gainTxt()}`, !!e2);
   }
   // the VFO's decoder holds it on a fixed frequency (ADS-B, AIS) - unlike a
   // lock_vfo decoder (ism), which only keeps it on its tuner's centre
