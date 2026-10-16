@@ -138,6 +138,11 @@ public:
     void poll(std::vector<Frame>& out);
     void reset();
     bool pending() const { return pending_ || pk_.active; }
+    // the packet in progress: its first sample (stream index), else -1 -
+    // busy_from: a preamble found (header pending) or the header decoded;
+    // decoding_from: the header decoded (its payload follows)
+    int64_t busy_from() const { return pk_.active ? pk_.fr.start_sample : pending_ ? pend_start_ : -1; }
+    int64_t decoding_from() const { return pk_.active ? pk_.fr.start_sample : -1; }
     int triggers() const { return triggers_; }     // preamble candidates looked at so far
 
     // every preamble + SFD found is appended here (nullptr = not logged)

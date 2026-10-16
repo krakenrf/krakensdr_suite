@@ -236,7 +236,8 @@ public:
         backoff_.clear();
         recent_det_.clear();
         det_seen_.clear();
-        n_probes_ = n_probe_hits_ = n_probe_det_ = 0;
+        heard_.clear();
+        n_probes_ = n_probe_hits_ = n_probe_det_ = n_probe_alias_ = 0;
         split_.clear();
     }
 
@@ -360,6 +361,12 @@ private:
     static constexpr double PROBE_MIN_GAP_S = 2.0;
     std::vector<RecentDet> recent_det_;
     uint64_t n_probes_ = 0, n_probe_hits_ = 0, n_probe_det_ = 0, n_cand_ = 0;
+    // undecoded preambles that were aliases of decoded packets (near_decoded) or sync 0x00: not reported
+    uint64_t n_probe_alias_ = 0;
+    // decoded packets of the last HEARD_KEEP_S: host time span + band (Hz from the VFO centre)
+    struct Heard { double t0, t1, f, bw; };
+    std::vector<Heard> heard_;
+    static constexpr double HEARD_KEEP_S = 30;
     double search_cpu_s_ = 0, search_cpu_win_ = 0, search_cpu_t0_ = 0, search_cpu_frac_ = 0;
 
     bool search_on() const { return search_ != "0"; }
@@ -877,6 +884,24 @@ private:
         // dechirps into a chance peak now and then, at SF5 / SF6 more often)
         // is not reported
         if (d.sync_word < 0 || d.snr_db < -6) return;
+        // Not another transmitter (2026-10-16: lora-mesh-five listed "LoRa
+        // 921.733 SF9 0x00" and four more at the bearings of its real nodes):
+        // - inside / next to a packet decoded - or being decoded - at the same
+        //   time in the same band: its alias (a chirp of another SF / BW with
+        //   the same slope - SF11 / 250 kHz dechirps like SF9 / 125 kHz and
+        //   SF7 / 62.5 kHz - or a piece of its chirps through the probe's
+        //   channel edge)
+        // - sync word 0x00: both sync symbols on the preamble's own bin, no
+        //   sync word told apart from the preamble - what such an alias gives;
+        //   radios use 0x12 (private), 0x34 (LoRaWAN), 0x2B (Meshtastic) ...
+        {
+            const int L = c.os << d.sf;
+            if (d.sync_word == 0 ||
+                near_decoded(c, tstamp(c, d.sfd - 10LL * L), tstamp(c, d.sfd + 3LL * L), c.center_off + d.cfo_hz, c.bw)) {
+                n_probe_alias_++;
+                return;
+            }
+        }
         const double f_hz = std::isfinite(rf_used_) ? rf_used_ + c.center_off + d.cfo_hz : c.center_off + d.cfo_hz;
         bool again = false;
         for (DetSeen& sn : det_seen_)
@@ -932,6 +957,30 @@ private:
         mesh::Header mh;
         lorawan::Frame lw;
         update_row(nd, mh, lw, "LoRa");
+    }
+
+    // An undecoded preamble at host time [t0, t1] in f +- bw / 2 (Hz from the
+    // VFO centre): inside / next to (50 ms, an eighth of its BW) a packet
+    // decoded at the same time in the same band - reported (heard_), waiting
+    // for its duplicate check (pend_) or in progress on another channel (a
+    // preamble found / the header decoded; on the search's probes only a
+    // decoded header counts - their preambles may be such aliases themselves)
+    bool near_decoded(const Channel& self, double t0, double t1, double f, double bw) const {
+        constexpr double DT = 0.05;
+        auto band = [&](double f2, double bw2) { return std::fabs(f - f2) < (bw + bw2) / 2 + bw / 8; };
+        auto time = [&](double a, double b) { return a < t1 + DT && b > t0 - DT; };
+        for (const Heard& h : heard_)
+            if (time(h.t0, h.t1) && band(h.f, h.bw)) return true;
+        for (const Pend& p : pend_)
+            if (time(tstamp(*p.c, p.fr.start_sample), p.te) && band(p.c->center_off + p.fr.cfo_hz, p.c->bw)) return true;
+        for (const auto& o : chans_) {
+            if (o.get() == &self) continue;
+            for (const auto& rx : o->rx) {
+                const int64_t s = o->probe && !o->learned ? rx->decoding_from() : rx->busy_from();
+                if (s >= 0 && time(tstamp(*o, s), now_) && band(o->center_off, o->bw)) return true;
+            }
+        }
+        return false;
     }
 
     // the talker of a LoRa frame that names no transmitter: its channel + SF + sync word
@@ -1164,6 +1213,10 @@ private:
 
     void report(Channel& c, const lora_phy::LoraRx& rx, const lora_phy::Frame& fr) {
         if (fr.payload.empty()) return;
+        // where + when a packet was (near_decoded: its aliases aren't transmitters)
+        heard_.erase(std::remove_if(heard_.begin(), heard_.end(), [&](const Heard& h) { return h.t1 < now_ - HEARD_KEEP_S; }),
+                     heard_.end());
+        if (heard_.size() < 4096) heard_.push_back({tstamp(c, fr.start_sample), tstamp(c, fr.end_sample), c.center_off + fr.cfo_hz, c.bw});
         const double freq = std::isfinite(rf_used_) ? (rf_used_ + c.center_off + fr.cfo_hz) / 1e6 : (c.center_off) / 1e6;
         double te = tstamp(c, fr.end_sample);
         double ts = tstamp(c, fr.start_sample);
@@ -1512,7 +1565,9 @@ private:
             std::string s = std::string(search_ == "all" ? "7.8-500 kHz" : "62.5-500 kHz") + ", SF5-12, both IQ · " +
                 fmt("%.1f %% CPU", 100 * search_cpu_frac_) + fmt(" · %.0f candidates", (double)n_cand_) +
                 fmt(", %.0f probed", (double)n_probes_) + fmt(", %.0f decoded", (double)n_probe_hits_) +
-                fmt(", %.0f undecoded LoRa", (double)n_probe_det_) + fmt(" · %.0f learned channels", (double)learned_.size());
+                fmt(", %.0f undecoded LoRa", (double)n_probe_det_) +
+                (n_probe_alias_ ? fmt(" (%.0f aliases of decoded packets left out)", (double)n_probe_alias_) : std::string()) +
+                fmt(" · %.0f learned channels", (double)learned_.size());
             if (now_ - slowed_t_ < 10)
                 s += fmt(" · SLOWED to its CPU budget (%.0f candidates waited)", (double)n_slowed_);
             host.fact("Search", s);

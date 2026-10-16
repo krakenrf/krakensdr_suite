@@ -415,7 +415,13 @@ Edit `include/config.hpp`:
   averaged and applied at most every 300 ms, ignoring reports from the 300 ms
   after a correction (the pipe latency made an every-report integrator run
   away - TETRA drifted -5 kHz). With no correction (yet) the mixer is a
-  plain copy (a sin/cos per sample cost ~5% of a core at 2.4 MHz). A VFO
+  plain copy (a sin/cos per sample cost ~5% of a core at 2.4 MHz) and its
+  phase goes back to 0; idle, the correction decays to the VFO centre and
+  lands on 0 below 0.5 Hz (until 2026-10-16 the phase of the last
+  correction was kept for good: once a decoder that reports an offset -
+  D-STAR, P25, ... - had run on a VFO, a later multichannel plugin there -
+  lora, ism - got one antenna until kraken_doa restarted: a debug playback
+  of lora-mesh-five after dstar-two-radios had no separation by code). A VFO
   retune (> 100 Hz) or mode change resets everything (RESET to the plugins,
   facts + map points cleared; `reset_pending_` is consumed by the worker)
 - Station location for the plugins: `dig::set_station_location()` (called
@@ -1876,7 +1882,16 @@ Edit `include/config.hpp`:
   name, ID, VFO; empty values last. Radios stay above packet talkers. Name
   and reading cells are clipped (130 / 80 px, `.clip`, full text as the
   tooltip) so Bearing / Heard / Tx fit the 380 px panel. The list is only
-  built while the panel is open. Aircraft are named by callsign (`rdfShortName` / `rdfAirParts`:
+  built while the panel is open. Column headings per kind (`heads` in
+  rdfRenderPanel; a kind missing there gets the generic `talker` ones - until
+  2026-10-16 a missing one threw: LoRa nodes ('node') were in the ID
+  selector but the list stayed empty and the map wasn't redrawn after a DF
+  push or a panel control (`mapSet` -> `mapUpdateControls` threw before
+  `mapDraw`) - the user's "nodes only in the lower info pane"). A NEW KIND needs
+  `RDF_PK_KIND`, `rdfIcon`, `heads`, `RDF_SORT_DEF` (and `RDF_PK_UNIT` /
+  `RDF_POS_KINDS` / `RDF_KIND_WORD` where they apply). Dist / Δ pos columns
+  only while a listed talker has a reported position (map point + station):
+  empty ones pushed Heard / Tx out of the panel. Aircraft are named by callsign (`rdfShortName` / `rdfAirParts`:
   the ADS-B talker label is "CALLSIGN · 35000 ft"): the lobe label, the
   list's first column (bold; ICAO second), the dropdown "CALLSIGN (ICAO)";
   the ICAO until a callsign is known. A row is picked by press + release
@@ -3791,7 +3806,9 @@ Edit `include/config.hpp`:
   names no gateway; never the DevAddr's device; its MAC header shown with a
   "?" when a codeword of bytes 0-8 failed parity, no event then); `freq_hz` /
   `bw_hz` = the LoRa channel so nodes on different channels/SFs keep their
-  own bearings. `avg_s` 10, `keep_s` 30 min. UI kind `node` 📶
+  own bearings. `avg_s` 10, `keep_s` 30 min. UI kind `node` 📶 ("Node /
+  Name · packet / Frames", nearest first by a Meshtastic POSITION, else by
+  name)
 - SEPARATION BY CODE (2026-10-16, the user's "implement separation by code":
   at 927.5 MHz the DF panel listed none of the decoder's transmitters - the
   SF10 BW500 gateway downlink is on air 60 % of the time, and TalkerDoa
@@ -3880,7 +3897,18 @@ Edit `include/config.hpp`:
   header -> `report_detections` once SEEN AGAIN (same place / SF / BW / IQ /
   sync within 10 min, preamble energy >= -6 dB in its bin) - the first run
   on the real capture reported 291 one-off SF5 / SF6 / narrow "detections"
-  of FSK bursts before that rule. Cost: <= 6 probes/s (token bucket), <= 4
+  of FSK bursts before that rule. NOT reported (2026-10-16, `near_decoded`,
+  counted in the Search fact "N aliases of decoded packets left out"): a
+  preamble inside / next to (50 ms, BW / 8) a packet decoded at the same
+  time in the same band - reported in the last 30 s (`heard_`), waiting in
+  `pend_`, or in progress on another channel (`LoraRx::busy_from`; on probes
+  only a decoded header, `decoding_from`) - and sync word 0x00 (both sync
+  symbols on the preamble's own bin): aliases of a real packet (a chirp of
+  the same slope BW^2 / 2^SF - SF11 / 250 kHz dechirps like SF9 / 125 and
+  SF7 / 62.5 kHz - or a piece of it through the probe's edge). Playback
+  lora-mesh-five listed five such "LoRa 921.733 SF9 0x00" talkers at the
+  real nodes' bearings after ~14 min; offline 30 loops (180 s): 11 left
+  out, 0 reported (before: 2 nodes in 120 s). Cost: <= 6 probes/s (token bucket), <= 4
   alive, a CPU budget in the plugin's own THREAD CPU time per stream second
   (`thread_cpu_s`, `probe_cpu_tok_`: 12 % normal, low 4 / high 25, <= 0.3 s
   banked) - over it the probes are slowed (>= one per PROBE_MIN_GAP_S 2 s),
@@ -4481,8 +4509,8 @@ Edit `include/config.hpp`:
   only while `wants_multichannel()` and the block holds the coherent array:
   not multi-tuner, not fm_only), the Block carries them, `Engine::run`
   sends SAMPLES_MC chunks instead of SAMPLES to such a runner at the VFO's
-  rate with no AFC correction (invert = every antenna's Q negated), same
-  pos_map. digi_test `u8mc --channels M` feeds an interleaved recording
+  rate while no AFC correction is applied (invert = every antenna's Q
+  negated; with one, one channel as before), same pos_map. digi_test `u8mc --channels M` feeds an interleaved recording
 - Live (`Runner` in digital_decoder.cpp): the process is started on the
   decoder thread (`PluginProcess`, posix_spawn, non-blocking pipes), SAMPLES
   in 16k chunks (dropped, counted, when > 1 s behind - SAMPLES_MC /

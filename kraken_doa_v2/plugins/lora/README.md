@@ -132,7 +132,16 @@ already has, scanned at once; then:
   samples) once it was seen AGAIN at the same place within 10 min with most
   of the preamble window's energy in its bin (a one-off chance match of a
   non-LoRa burst - FSK data dechirps into a peak now and then, at SF5 / SF6
-  more often - is not reported);
+  more often - is not reported). Never reported either (2026-10-16): a
+  preamble inside / next to (50 ms, an eighth of its bandwidth) a packet
+  decoded - or being decoded on another channel - at the same time in the
+  same band, and sync word 0x00 (both sync symbols on the preamble's own
+  bin): ALIASES of a real packet, not other transmitters - a chirp with the
+  same slope BW^2 / 2^SF (SF11 / 250 kHz dechirps like SF9 / 125 kHz and
+  SF7 / 62.5 kHz) or a piece of one through the probe's channel edge. The
+  playback lora-mesh-five showed five such "LoRa 921.733 SF9 0x00" talkers
+  at the real nodes' bearings after ~14 min; the Search fact counts them as
+  "aliases of decoded packets left out";
 - nothing -> that place / bandwidth backs off 2 s doubling to 60 s.
 No probe where a plan / learned channel of the same bandwidth sits (its
 signal is being decoded). Cost control: <= 6 probes a second, <= 4 at once,
@@ -242,8 +251,11 @@ keep their own bearings:
 - **Undecoded LoRa found by the search**: the same form, from the preamble's
   samples (row "preamble only - header not decoded").
 
-`avg_s` 10, `keep_s` 30 min. UI kind `node` (📶), with Dist / position
-columns for nodes that send POSITION.
+`avg_s` 10, `keep_s` 30 min. UI kind `node` (📶; list columns Node / Name ·
+packet / Frames), with Dist / position columns while a node has sent a
+POSITION (nearest first, the others by name). Until 2026-10-16 the 📡 DF
+panel had no column headings for this kind: its list threw and stayed
+empty (the nodes were only in the ID selector and the decoder tab).
 
 ### Separation by code (every antenna, since 2026-10-16)
 
@@ -253,6 +265,10 @@ one channel as before, no bearings). Antenna 0 is decoded exactly as before;
 the antennas' input is kept 0.87 s in 8 bits per I / Q (`despread.hpp`
 `RawRing`, 2^21 samples - the RTL's own resolution, 21 MB for 5 antennas;
 long enough for the search's probes, which decode up to 0.8 s of history).
+(A kraken_doa from before 2026-10-16 fed one antenna on a VFO where a
+decoder that corrects its frequency - D-STAR, P25, ... - had run before,
+e.g. this playback after another: the fact then says "one antenna" in
+coherent mode with DoA on; fixed in kraken_doa's AFC mixer.)
 
 Before, each frame was a packet whose covariance kraken_doa cut out of its
 stream through the frame's channel filter - and it DROPPED both packets

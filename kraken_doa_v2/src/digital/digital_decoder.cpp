@@ -327,9 +327,15 @@ public:
         // AFC mixer at the input rate
         mixed_.resize(n);
         const float w = -2.0f * static_cast<float>(M_PI) * afc_hz_ / in_rate_;
-        if (w == 0.0f && nco_phase_ == 0.0) {
+        if (w == 0.0f) {
             // no correction (yet, or the plugins report no offset - e.g. ADS-B
-            // at 2.4 MHz): a plain copy instead of a sin/cos per sample
+            // at 2.4 MHz): a plain copy instead of a sin/cos per sample, and
+            // nothing to keep continuous - the mixer's phase goes back to 0.
+            // It used to keep the last correction's phase for good, so once
+            // any decoder on this VFO had reported a frequency error (D-STAR,
+            // P25, ...) every later multichannel plugin (lora, ism) got one
+            // antenna only (mc_ok below) until kraken_doa restarted
+            nco_phase_ = 0.0;
             if (opts_.invert) for (size_t i = 0; i < n; i++) mixed_[i] = std::conj(x[i]);
             else std::copy(x, x + n, mixed_.begin());
         } else {
@@ -343,7 +349,7 @@ public:
         resample(n);
         // every antenna (multichannel plugins at the VFO's rate, no AFC
         // correction to apply: what they get is the VFO's samples as they are)
-        const bool mc_ok = mc && mc_m >= 2 && w == 0.0f && nco_phase_ == 0.0;
+        const bool mc_ok = mc && mc_m >= 2 && w == 0.0f;
         for (size_t i = 0; i < runners_.size(); i++) {
             // array plugins get their samples in process_array(); here they
             // are only started / kept up to date (settings, replies)
@@ -1435,7 +1441,11 @@ private:
             }
             now = detected_;
             if (now.empty() && t - last_valid_ms_ > 5000) {
-                afc_hz_ *= 0.99f;   // drift back to the VFO centre when idle
+                // drift back to the VFO centre when idle - and land on it (a
+                // float decaying by 0.99 takes minutes of denormals to reach
+                // 0; at exactly 0 the mixer is a copy and multichannel
+                // plugins get every antenna again)
+                afc_hz_ = std::fabs(afc_hz_) < 0.5f ? 0.0f : afc_hz_ * 0.99f;
                 residual_hz_ = 0;
             }
         }

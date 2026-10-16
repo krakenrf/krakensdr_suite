@@ -12596,14 +12596,16 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // network cells strongest first (Info column), APRS stations and sondes
   // nearest first like ships, TETRA / MPT1327 sites, VOR / ILS navaids,
   // pulse radars and 1030 MHz interrogators by name, 406 MHz distress
-  // beacons newest first.
+  // beacons newest first, LoRa nodes nearest first (Meshtastic POSITION
+  // packets), the others by name.
   // Ties are broken by name, ID and VFO, so rows with equal values (heard in
   // the same second) never swap; empty values go last either way. Radios
   // stay above packet talkers. Returns [talker, rdfPosCheck] pairs
   const RDF_SORT_DEF = {radio: ['heard', 1], tone: ['heard', 1], aircraft: ['dist', 1], ship: ['dist', 1], beacon: ['name', 1],
                         device: ['name', 1], path: ['info', 1], cell: ['info', 1], station: ['dist', 1], sonde: ['dist', 1],
                         site: ['name', 1], navaid: ['name', 1], radar: ['name', 1], interrogator: ['name', 1],
-                        gs: ['name', 1], flarm: ['dist', 1], sar: ['heard', 1], collar: ['name', 1], talker: ['heard', 1]};
+                        gs: ['name', 1], flarm: ['dist', 1], sar: ['heard', 1], collar: ['name', 1], node: ['dist', 1],
+                        talker: ['heard', 1]};
   const RDF_SORT_KEYS = {
     vfo: t => t.vfo,
     name: t => rdfShortName(t).toLowerCase(),
@@ -13051,7 +13053,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     let tl = '';
     if (ts.length && mapState.rdfOpen) {
       const air = kinds === 'aircraft';
-      const head = {radio: ['Radio', 'Talkgroup', 'Tx'], tone: ['Tone / code', 'Measured', 'Tx'],
+      // the columns' headings per kind - a kind missing here gets the generic
+      // ones (LoRa nodes had none: head[0] threw - the list stayed empty, and
+      // the map wasn't redrawn after a DF push or a panel control (mapSet);
+      // only the ID selector showed them)
+      const heads = {radio: ['Radio', 'Talkgroup', 'Tx'], tone: ['Tone / code', 'Measured', 'Tx'],
                     aircraft: ['Callsign', 'ICAO', 'Pkts'], ship: ['MMSI', 'Name', 'Pkts'],
                     beacon: ['Channel', 'Ident · MHz', 'Pairs'], device: ['Device', 'Reading', 'Tx'],
                     path: ['Path', 'From the main path · power', 'Reports'], cell: ['Cell', 'Technology · PCI · power', 'Reports'],
@@ -13062,9 +13068,15 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                     gs: ['Station', 'UAT ground station · slot', 'Frames'], flarm: ['Aircraft', 'Reg · altitude · type', 'Pkts'],
                     sar: ['Beacon ID', 'Status · type · country · ID', 'Bursts'],
                     collar: ['Collar (MHz)', 'Name · ppm · mode', 'Pulses'],
-                    talker: ['ID', 'Info', 'Tx']}[kinds];
-      // position columns for talkers that report positions (not DME beacons / ISM devices / sites / navaids / radars / interrogators)
-      const posCols = ts.some(t => t.pk && RDF_POS_KINDS.has(rdfKind(t)));
+                    node: ['Node', 'Name · packet', 'Frames'],
+                    talker: ['ID', 'Info', 'Tx']};
+      const head = heads[kinds] || heads.talker;
+      // position columns while a listed talker has a reported position (its
+      // decoder's map point + the station): kinds that can report one (not DME
+      // beacons / ISM devices / sites / navaids / radars / interrogators) -
+      // empty ones pushed Heard / Tx out of the 380 px panel (LoRa nodes:
+      // only Meshtastic POSITION packets carry one)
+      const posCols = listed.some(([t, c]) => c && RDF_POS_KINDS.has(rdfKind(t)));
       // transmitters named by their tone (ctcss): the transmissions' lengths
       const toneCols = ts.some(t => rdfKind(t) === 'tone');
       const [scol, sdir] = rdfSortOf(kinds);
