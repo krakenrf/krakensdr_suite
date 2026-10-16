@@ -312,6 +312,7 @@ public:
             p.push_back('\0');
             p += fmt_hz(std::isfinite(t.avg_s) ? std::max(0.0, t.avg_s) : 0.0);
             const bool keep = std::isfinite(t.keep_s) && t.keep_s > 0;
+            const bool cov = t.m >= 2 && t.m <= 8 && t.cov.size() == static_cast<size_t>(t.m * t.m);
             if (std::isfinite(t.lat) && std::isfinite(t.lon) && std::isfinite(t.alt_m) && std::fabs(t.lat) <= 90 &&
                 std::fabs(t.lon) <= 180) {
                 char b[40];
@@ -324,12 +325,21 @@ public:
                 snprintf(b, sizeof b, "%.1f", t.alt_m);
                 p.push_back('\0');
                 p += b;
-            } else if (keep) {
+            } else if (keep || cov) {
                 p.append(3, '\0');   // no position (empty fields), keep_s follows
             }
-            if (keep) {
+            if (keep || cov) {
                 p.push_back('\0');
-                p += std::to_string(static_cast<long long>(std::llround(t.keep_s)));
+                p += keep ? std::to_string(static_cast<long long>(std::llround(t.keep_s))) : std::string("0");
+            }
+            if (cov) {   // the packet's own covariance (Talker::cov)
+                p.push_back('\0');
+                p += std::to_string(t.m);
+                p.push_back('\0');
+                for (size_t i = 0; i < t.cov.size(); i++) {
+                    if (i) p.push_back(',');
+                    p += wnum(t.cov[i].real(), 7) + "," + wnum(t.cov[i].imag(), 7);
+                }
             }
         }
         send(kp::wire::TALKER, p.data(), p.size());
@@ -725,7 +735,12 @@ public:
     uint64_t packets_total_ = 0;
     // every packet with its channel, for the per-talker bearings (--uca on a
     // multichannel recording)
-    struct PkRec { std::string id; double start, end, freq, bw; };
+    struct PkRec {
+        std::string id;
+        double start, end, freq, bw;
+        int m = 0;                                   // Talker::cov (separation by code; 0 = none)
+        std::vector<std::complex<double>> cov;
+    };
     std::vector<PkRec> pk_recs_;
     bool keep_pk_ = false;
     void talker(const kp::Talker& t) override {
@@ -733,7 +748,13 @@ public:
         const double st = std::isfinite(t.start_s) ? t.start_s : time();
         const double en = std::isfinite(t.end_s) ? t.end_s : time();
         if (t.packet) {
-            if (keep_pk_) pk_recs_.push_back({t.id, st, en, t.freq_hz, t.bw_hz});
+            if (keep_pk_) {
+                pk_recs_.push_back({t.id, st, en, t.freq_hz, t.bw_hz});
+                if (t.m >= 2 && t.cov.size() == static_cast<size_t>(t.m * t.m)) {
+                    pk_recs_.back().m = t.m;
+                    pk_recs_.back().cov.assign(t.cov.begin(), t.cov.end());
+                }
+            }
             Pk& k = packets_[t.id];
             if (!k.n) k.first = st;
             k.n++;
@@ -1020,8 +1041,10 @@ double uca_bearing(const std::vector<std::complex<double>>& C, int m, double r, 
 // the band the plugin receives) - summed as trace-normalised covariances ->
 // MUSIC with one source on kraken_doa's UCA. The same rules as kraken_doa's
 // TalkerDoa: packets longer than 0.25 s and packets overlapping another
-// talker's on the same channel are dropped (counted). Times: plugin time ->
-// file time through the resampler's delay.
+// talker's on the same channel are dropped (counted) - except packets that
+// carry their own covariance (Talker::cov, separation by code: taken as they
+// are, and not dropped for an overlap). Times: plugin time -> file time
+// through the resampler's delay.
 struct BearingIn {
     std::string path, fmt;
     int m = 1;
@@ -1029,7 +1052,7 @@ struct BearingIn {
 };
 void talker_bearings(const BearingIn& in, const TestHost& host) {
     constexpr double GUARD_S = 0.04, MAX_PACKET_S = 0.25;
-    struct Seg { std::string id, label; double a, b, freq, bw; bool packet; };
+    struct Seg { std::string id, label; double a, b, freq, bw; bool packet; const std::vector<std::complex<double>>* cov = nullptr; };
     std::vector<Seg> segs;
     std::map<std::string, std::string> labels;
     for (const auto& s : host.spans_) {
@@ -1041,26 +1064,31 @@ void talker_bearings(const BearingIn& in, const TestHost& host) {
     std::vector<bool> bad(host.pk_recs_.size(), false);
     for (size_t i = 0; i < host.pk_recs_.size(); i++) {
         const auto& p = host.pk_recs_[i];
-        if (p.end - p.start > MAX_PACKET_S) { bad[i] = true; too_long++; continue; }
+        if (p.end - p.start > MAX_PACKET_S && !p.m) { bad[i] = true; too_long++; continue; }
         for (size_t j = i + 1; j < host.pk_recs_.size() && j < i + 64; j++) {
             const auto& q = host.pk_recs_[j];
             const bool same = !std::isfinite(p.freq) || !std::isfinite(q.freq) || std::fabs(p.freq - q.freq) < 0.5 * std::max(p.bw, q.bw) + 1;
-            if (q.id != p.id && q.start < p.end && p.start < q.end && same) bad[i] = bad[j] = true;
+            if (q.id != p.id && q.start < p.end && p.start < q.end && same) {
+                // a packet with its own covariance (by code) holds its transmitter alone
+                if (!p.m) bad[i] = true;
+                if (!q.m) bad[j] = true;
+            }
         }
     }
     for (size_t i = 0; i < host.pk_recs_.size(); i++) {
         const auto& p = host.pk_recs_[i];
         if (bad[i]) { if (p.end - p.start <= MAX_PACKET_S) overlap++; continue; }
         auto it = host.packets_.find(p.id);
-        segs.push_back({p.id, it != host.packets_.end() ? it->second.label : "", p.start, p.end, p.freq, p.bw, true});
+        segs.push_back({p.id, it != host.packets_.end() ? it->second.label : "", p.start, p.end, p.freq, p.bw, true,
+                        p.m == in.m ? &p.cov : nullptr});
     }
+    const int m = in.m;
     printf("talker bearings (UCA r = %.3f m, %d antennas, %.4f MHz):\n", in.uca_r, in.m, 3e8 / in.lambda / 1e6);
     if (too_long) printf("  %zu packets longer than %.2f s dropped (kraken_doa drops them too: report <= 0.24 s of a longer frame)\n", too_long, MAX_PACKET_S);
     if (overlap) printf("  %zu packets dropped: they overlap another talker's packet on the same channel\n", overlap);
     FILE* f = fopen(in.path.c_str(), "rb");
     if (!f) { printf("  cannot open %s\n", in.path.c_str()); return; }
     const size_t bps = in.fmt == "cf32" ? 8 : in.fmt == "cs16" ? 4 : 2;
-    const int m = in.m;
     // samples [i0, i0 + n) of every antenna (zeros outside the file)
     std::vector<char> raw;
     auto read = [&](int64_t i0, size_t n, std::vector<std::vector<std::complex<double>>>& out) {
@@ -1081,10 +1109,24 @@ void talker_bearings(const BearingIn& in, const TestHost& host) {
                 out[static_cast<size_t>(k)][skip + i] = v;
             }
     };
-    struct Acc { std::vector<std::complex<double>> sum; uint64_t n = 0; double secs = 0; bool packet = false; };
+    struct Acc { std::vector<std::complex<double>> sum; uint64_t n = 0, coded = 0; double secs = 0; bool packet = false; };
     std::map<std::string, Acc> acc;
     std::vector<std::vector<std::complex<double>>> x;
     for (const auto& s : segs) {
+        if (s.cov) {   // the plugin's own covariance of the packet (by code)
+            double tr = 0;
+            for (int k = 0; k < m; k++) tr += (*s.cov)[static_cast<size_t>(k * m + k)].real();
+            if (!(tr > 0)) continue;
+            Acc& A = acc[s.id];
+            if (A.sum.empty()) A.sum.assign(static_cast<size_t>(m * m), 0);
+            for (size_t i = 0; i < s.cov->size(); i++) A.sum[i] += (*s.cov)[i] / tr;
+            A.n++;
+            A.coded++;
+            A.secs += s.b - s.a;
+            A.packet = true;
+            if (!s.label.empty()) labels[s.id] = s.label;
+            continue;
+        }
         // the channel in the file: the plugin's 0 Hz is --offset; a packet's own
         // channel, else the plugin's band
         const double fc = in.offset + (std::isfinite(s.freq) ? s.freq : 0);
@@ -1153,8 +1195,10 @@ void talker_bearings(const BearingIn& in, const TestHost& host) {
     for (const auto& [id, A] : acc) {
         double conf = 0;
         const double b = uca_bearing(A.sum, m, in.uca_r, in.lambda, &conf);
-        printf("  %-14s %-30s %5llu %s %8.2f s  bearing %6.1f deg  (peak/mean %.0f)\n", id.c_str(), labels[id].substr(0, 30).c_str(),
-               static_cast<unsigned long long>(A.n), A.packet ? "packets" : "spans  ", A.secs, b, conf);
+        char by[40] = "";
+        if (A.coded) snprintf(by, sizeof by, "  [%llu by code]", static_cast<unsigned long long>(A.coded));
+        printf("  %-14s %-30s %5llu %s %8.2f s  bearing %6.1f deg  (peak/mean %.0f)%s\n", id.c_str(), labels[id].substr(0, 30).c_str(),
+               static_cast<unsigned long long>(A.n), A.packet ? "packets" : "spans  ", A.secs, b, conf, by);
     }
 }
 

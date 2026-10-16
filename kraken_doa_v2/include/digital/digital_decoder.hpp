@@ -92,6 +92,10 @@ struct TalkerSpan {
     // packets: how long the talker is kept after its last packet (s, 0 = the
     // default; kp::Talker::keep_s)
     double keep_s = 0;
+    // packets: the plugin's own covariance of the packet (kp::Talker::cov -
+    // separation by code, the lora plugin): cov_m x cov_m, row-major; 0 = none
+    int cov_m = 0;
+    std::vector<std::complex<double>> cov;
     // not a span: the plugin asked to forget this talker now (kp::Host::talker_forget)
     bool forget = false;
     // a confirmed frame (kp::Host::valid(start, end)), not a talker: these

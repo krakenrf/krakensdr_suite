@@ -959,6 +959,7 @@ std::string status_message() {
             const int64_t now = now_ms();
             o << ",\"pk\":{\"in\":" << p.in << ",\"ok\":" << p.ok << ",\"late\":" << p.late << ",\"gap\":" << p.gap
               << ",\"early\":" << p.early << ",\"overlap\":" << p.overlap << ",\"other\":" << p.other
+              << ",\"coded\":" << p.coded
               << ",\"lag\":" << num(p.lag_last_s, 3) << ",\"lag_med\":" << num(p.lag_med_s, 3)
               << ",\"lag_max\":" << num(p.lag_max_s, 3) << ",\"ring_s\":" << num(p.ring_s, 2) << ",\"drops\":[";
             for (size_t i = 0; i < p.drops.size(); i++) {

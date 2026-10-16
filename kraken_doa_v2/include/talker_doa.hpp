@@ -56,6 +56,13 @@
 // PACKET_HIST_MS. No mobile DF records (aircraft / ships move and say where
 // they are).
 //
+// Packets with their OWN covariance (kp::Talker::cov - the lora plugin
+// de-spreads each decoded packet with its chirp on every antenna: separation
+// by code): taken as they are - no stream needed for them, no channel filter -
+// and never dropped for overlapping another talker's packet (the other one,
+// cut from the stream, still is: it holds both); MUSIC with ONE source on
+// such a talker.
+//
 // Spatial talkers (array plugins, kp::Host::spatial - e.g. the transmitters
 // of a single frequency network): the plugin measured each one's covariance
 // itself from every antenna. add_spatial() averages a talker's reports over
@@ -184,6 +191,7 @@ struct TalkerInfo {
 // the packet's end the decoder reported it (stream time; the last minute)
 struct PacketStats {
     uint64_t in = 0, ok = 0, late = 0, gap = 0, early = 0, overlap = 0, other = 0;
+    uint64_t coded = 0;            // of in: with the plugin's own covariance (separation by code)
     double lag_last_s = NAN, lag_med_s = NAN, lag_max_s = NAN;
     double ring_s = 0;             // the stream kept (s)
     struct Drop { std::string id; char why; double lag_s; int64_t t_ms; };
@@ -275,6 +283,7 @@ private:
         // transmissions' lengths: the span info.dur_s is of, the earlier ones' sum
         uint64_t dur_seq = ~0ull;
         double air_done = 0;
+        bool coded = false;        // its latest packet came with its own covariance (MUSIC: one source)
     };
     std::map<std::string, Talker> talkers_;
 
@@ -290,6 +299,7 @@ private:
         double lat = NAN, lon = NAN, alt_m = NAN;   // where its talker was (NAN = unknown)
         double keep = 0;           // kp::Talker::keep_s
         double lag = NAN;          // how long after its end it was reported (s)
+        bool coded = false;        // R = the plugin's own covariance (kp::Talker::cov)
     };
     std::vector<CalPacket> cal_;   // for take_cal
     std::deque<Packet> packets_;

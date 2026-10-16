@@ -526,16 +526,32 @@ bool TalkerDoa::packet_cov_wide(uint64_t a, uint64_t b, double freq, double bw, 
 }
 
 void TalkerDoa::add_packet(const dig::TalkerSpan& s) {
-    want_blocks_ = true;   // the stream is kept from now on (this first packet may come too early)
-    if (is_finite_value(s.freq_hz) && s.bw_hz > 0 && s.bw_hz <= WIDE_CHAN_MAX_BW) want_wide_ = true;
     Eigen::MatrixXcd R;
     char why = 'x';
     double lag = NAN;
-    const bool ok = packet_cov(s.start, s.end, s.freq_hz, s.bw_hz, &R, &why, &lag);
+    bool ok = false;
+    const bool coded = s.cov_m >= 2 && s.cov.size() == static_cast<size_t>(s.cov_m * s.cov_m);
+    if (coded) {
+        // the plugin's own covariance of the packet (separation by code): no
+        // stream needed - and none kept for it
+        const int m = s.cov_m;
+        R.resize(m, m);
+        for (int i = 0; i < m; i++)
+            for (int j = 0; j < m; j++) R(i, j) = s.cov[static_cast<size_t>(i * m + j)];
+        R = 0.5 * (R + R.adjoint().eval());   // Hermitian (text round trip)
+        const double tr = R.trace().real();
+        ok = tr > 1e-30;
+        if (ok) R /= tr;
+    } else {
+        want_blocks_ = true;   // the stream is kept from now on (this first packet may come too early)
+        if (is_finite_value(s.freq_hz) && s.bw_hz > 0 && s.bw_hz <= WIDE_CHAN_MAX_BW) want_wide_ = true;
+        ok = packet_cov(s.start, s.end, s.freq_hz, s.bw_hz, &R, &why, &lag);
+    }
     const int64_t t = now_ms();
     std::lock_guard<std::mutex> lk(mu_);
     last_packet_ms_ = t;
     pstats_.in++;
+    if (coded) pstats_.coded++;
     if (is_finite_value(lag)) {
         pstats_.lag_last_s = lag;
         lags_.emplace_back(t, lag);
@@ -549,16 +565,22 @@ void TalkerDoa::add_packet(const dig::TalkerSpan& s) {
     Packet p{s.plugin, s.id, s.label, s.start, s.end, s.rate, s.freq_hz, s.bw_hz, s.avg_s, std::move(R), t, false,
              s.lat, s.lon, s.alt_m, s.keep_s};
     p.lag = lag;
+    p.coded = coded;
     // overlapping another talker's packet on the same channel (both decoded
-    // through each other): neither holds one talker's signal alone. Packets
-    // come in stream order, so an overlapping one is among the latest.
+    // through each other): neither holds one talker's signal alone - unless
+    // its covariance came by code (that one holds its own transmitter; the
+    // other, cut from the stream, still holds both). Packets come in stream
+    // order, so an overlapping one is among the latest.
     auto same_channel = [](const Packet& x, const Packet& y) {
         if (!is_finite_value(x.freq) || !is_finite_value(y.freq)) return true;
         return std::fabs(x.freq - y.freq) < 0.5 * std::max(x.bw, y.bw) + 1;
     };
     int k = 0;
     for (auto it = packets_.rbegin(); it != packets_.rend() && k < 64; ++it, ++k)
-        if (it->a < p.b && p.a < it->b && it->id != p.id && same_channel(*it, p)) it->bad = p.bad = true;
+        if (it->a < p.b && p.a < it->b && it->id != p.id && same_channel(*it, p)) {
+            if (!it->coded) it->bad = true;
+            if (!p.coded) p.bad = true;
+        }
     packets_.push_back(std::move(p));
     while (packets_.size() > 20000) packets_.pop_front();
 }
@@ -610,6 +632,7 @@ void TalkerDoa::commit_packet_locked(Packet& p, int64_t now) {
     tk.info.avg_s = p.avg > 0 ? p.avg : PACKET_TAU_S;
     tk.info.keep_s = p.keep;
     tk.info.plugin = p.plugin;
+    tk.coded = p.coded;
     if (!p.label.empty()) tk.info.label = p.label;
     const double ts = static_cast<double>(p.a) / p.rate;
     if (tk.R.rows() != p.R.rows()) {
@@ -901,7 +924,7 @@ void TalkerDoa::update(MUSICProcessor& mp, std::vector<TalkerFrame>* out) {
                 continue;
             }
             tk.dirty = false;
-            jobs.push_back({id, tk.info.label, tk.seq, true, tk.info.tx_end_ms, tk.R / tk.w, tk.info.spatial ? 1 : 0});
+            jobs.push_back({id, tk.info.label, tk.seq, true, tk.info.tx_end_ms, tk.R / tk.w, tk.info.spatial || tk.coded ? 1 : 0});
         }
         prune_locked(t);
     }

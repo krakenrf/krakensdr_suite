@@ -126,6 +126,18 @@ struct Talker {
     // in seconds (0 = the host's: 2 min, or 30 x avg_s). Fixed transmitters
     // that send rarely want long (ISM devices: 24 h by default).
     double keep_s = 0;
+    // Packets only, optional (multichannel plugins, Info::multichannel): the
+    // packet's OWN spatial covariance over the m antennas of process_multi()
+    // (m x m, row-major, Hermitian, any scale), measured from this
+    // transmitter's signal alone - e.g. the lora plugin de-spreads every
+    // decoded symbol with its own chirp on each antenna, so other
+    // transmitters in the same samples stay spread out ("separation by
+    // code"). kraken_doa then runs MUSIC (one source) on it instead of cutting
+    // the packet out of its stream: no channel filter, no stream kept for it,
+    // and it is NOT dropped for overlapping another talker's packet. m = 0 =
+    // none (the host takes the packet's samples, as without it).
+    int m = 0;
+    std::vector<cf> cov;
 };
 
 // A transmitter whose direction an ARRAY plugin measured itself: its
@@ -442,10 +454,12 @@ constexpr uint32_t MESSAGE = 28;       // from '\0' text
 constexpr uint32_t RAW = 29;           // one raw frame (text) for the decoder data log
 // id '\0' label '\0' start_s '\0' end_s ['\0' channel ['\0' flags ['\0'
 // freq_hz '\0' bw_hz '\0' avg_s ['\0' lat '\0' lon '\0' alt_m ['\0'
-// keep_s]]]]]: Host::time() seconds as decimal text (7 decimals: a sample at
-// 2.4 MHz is 0.4 us); no channel field = channel 0; flags "p" =
-// Talker::packet; freq_hz "" = NAN; the position fields only on packets that
-// have one (empty when keep_s follows without a position)
+// keep_s ['\0' m '\0' cov]]]]]]: Host::time() seconds as decimal text (7
+// decimals: a sample at 2.4 MHz is 0.4 us); no channel field = channel 0;
+// flags "p" = Talker::packet; freq_hz "" = NAN; the position fields only on
+// packets that have one (empty when keep_s follows without a position; keep_s
+// "0" when the covariance follows without it); cov = Talker::cov, m*m
+// "re,im" pairs comma-separated, row-major (as SPATIAL's)
 constexpr uint32_t TALKER = 30;
 constexpr uint32_t TALKER_END = 31;    // at_s ['\0' channel] (decimal text)
 constexpr uint32_t TABLE_KEEP = 32;    // seconds (decimal text): Host::table_keep

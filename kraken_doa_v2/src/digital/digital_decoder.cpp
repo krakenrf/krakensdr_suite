@@ -1220,13 +1220,13 @@ private:
     }
 
     // --- talkers (kp::wire::TALKER: id, label, start_s, end_s [, channel [, flags,
-    // freq, bw, avg [, lat, lon, alt [, keep]]]]) -----------------------------------
+    // freq, bw, avg [, lat, lon, alt [, keep [, m, cov]]]]]) -------------------------
     using OpenTalker = Runner::OpenTalker;
     static int talker_channel(const std::string& v) {
         return static_cast<int>(std::clamp(strtol(v.c_str(), nullptr, 10), 0L, 7L));
     }
     void on_talker(Runner& r, const char* p, size_t len) {
-        auto f = split0(p, len, 13);
+        auto f = split0(p, len, 15);
         if (f.size() < 4 || f[0].empty()) return;
         const std::string id = f[0].substr(0, 32);
         const int ch = f.size() > 4 ? talker_channel(f[4]) : 0;
@@ -1273,6 +1273,31 @@ private:
                 // how long the talker is kept after its last packet (0 = the default)
                 const double k = strtod(f[12].c_str(), nullptr);
                 if (is_finite_value(k)) s.keep_s = std::clamp(k, 0.0, 7 * 86400.0);
+            }
+            if (f.size() > 14) {
+                // the packet's own covariance (kp::Talker::cov: separation by code)
+                const long m = strtol(f[13].c_str(), nullptr, 10);
+                if (m >= 2 && m <= 8) {
+                    std::vector<std::complex<double>> c;
+                    c.reserve(static_cast<size_t>(m * m));
+                    const char* q = f[14].c_str();
+                    char* e = nullptr;
+                    while (*q && c.size() < static_cast<size_t>(m * m)) {
+                        const double re = strtod(q, &e);
+                        if (e == q || *e != ',') break;
+                        q = e + 1;
+                        const double im = strtod(q, &e);
+                        if (e == q) break;
+                        if (!is_finite_value(re) || !is_finite_value(im)) break;
+                        // the invert option negated every antenna's Q: R conjugated
+                        c.emplace_back(re, opts_.invert ? -im : im);
+                        q = *e == ',' ? e + 1 : e;
+                    }
+                    if (c.size() == static_cast<size_t>(m * m)) {
+                        s.cov_m = static_cast<int>(m);
+                        s.cov = std::move(c);
+                    }
+                }
             }
             owner_->deliver_talker(s);
             return;

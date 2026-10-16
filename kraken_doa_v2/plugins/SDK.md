@@ -372,6 +372,22 @@ moves the last position on with the velocity: `packet_position`). Only
 give one that is good to some tens of metres. The offline test counts
 them ("talker packets:", "N with position"; each one with `--verbose`).
 
+**A packet's own covariance (separation by code).** A `multichannel`
+plugin (every antenna, below) that can isolate ONE transmitter's signal in
+the samples itself - spread spectrum: the lora plugin correlates every
+antenna with each decoded symbol's own chirp, so other transmitters at the
+same moment stay spread out - sends that covariance with the packet:
+`t.m` = the antennas, `t.cov` = m x m row-major (any scale). kraken_doa then
+takes it as it is (MUSIC with one source on the talker): no channel filter,
+no stream kept for the packet, and it is NOT dropped for overlapping another
+talker's packet on the same channel (the other one, cut from the stream,
+still is). Ids, labels, avg_s, keep_s work as for any packet. Wire: TALKER
+fields 14 / 15 (m, "re,im,..."); an older kraken_doa ignores them and cuts
+the packet from its stream as before. The offline `--uca` bearings use it
+too ("[n by code]"). Only send it when it really holds one transmitter
+(the lora plugin's `code_cov`: outlier symbols out, the main eigenvalue
+>= 40 % of the trace).
+
 **Valid frames with their samples → the Digital squelch.** A VFO's squelch
 can be set to "Digital" while its decoder runs: it opens only while the
 decoder reports valid frames (and 1.5 s after the last), and the VFO's DoA
@@ -501,6 +517,11 @@ mixed from all of them. Every new decoder of such a signal does this.
   `freq_error` centres the signal gives 0) - kraken_doa filters exactly that
   out of every antenna first, so other signals in the VFO (neighbouring
   channels, a wider VFO than needed) don't pull the bearing. Give it always.
+- **Overlapping on one channel?** kraken_doa drops packets of two talkers
+  that overlap in time on the same channel (neither holds one transmitter
+  alone). A spread-spectrum signal can do better: separate by CODE in the
+  plugin (`multichannel` + `t.cov`, above - the lora plugin: every decoded
+  symbol de-spread with its own chirp on every antenna).
 - **`avg_s`** (packet averaging): 1.5 s default for fast movers; fixed
   transmitters 10 s+ (sites, navaids), slow / rare ones longer (AIS 20 s,
   APRS 30 s). **`keep_s`**: how long the talker stays listed after its last

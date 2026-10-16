@@ -1980,6 +1980,20 @@ Edit `include/config.hpp`:
   gone - 60 s after the last packet - is the compass bearing from the
   station heading when the station is static (`rdfStaticCompass`), else
   the DoA plot's angle "arr")
+- Packets with their OWN covariance (`kp::Talker::cov` + `m`, wire TALKER
+  fields 14 / 15 "m" / "re,im,...", `TalkerSpan::cov_m` / `cov`; 2026-10-16,
+  the lora plugin's separation by code - see *LoRa*): `add_packet` takes R
+  from it (Hermitian, trace-normalised) instead of `packet_cov` - it sets
+  neither `want_blocks_` nor `want_wide_` (no stream kept for such packets:
+  a VFO whose packets all come coded holds no 120 MB wide ring), the
+  `Packet::coded` one is never marked `bad` by an overlap (an uncoded packet
+  it overlaps on the same channel still is: that one holds both), and its
+  talker runs MUSIC with ONE source (`Talker::coded`, like spatial ones).
+  `PacketStats::coded` = how many came so (DF status `pk.coded`; the 📡 DF
+  panel's line "N decoded, M with a bearing (all / k separated by code)").
+  The invert option conjugates it (every antenna's Q was negated). An older
+  kraken_doa ignores the fields (split0 stops at 13): the stream path, as
+  before
 - ID separation added 2026-10-15 (packets, the channel always named):
   - APRS (`plugins/aprs`): a packet per frame, id = the frame's RF
     TRANSMITTER: the source, or the last path entry with the H bit ("*") when
@@ -2265,9 +2279,9 @@ Edit `include/config.hpp`:
   8091 packets - spectrum, waterfall, VFO, decoder, DoA, the 📡 DF panel.
   Catalogue IN THE PLUGINS: `plugins/<id>/tools/testsignals.json` (a list;
   format + how to add one: plugins/SDK.md *Test transmissions for the debug
-  playback*). 32 entries in 25 catalogues (2026-10-16) - EVERY decoder:
+  playback*). 34 entries in 25 catalogues (2026-10-16) - EVERY decoder:
   ais, aprs, dstar, nxdn, tetra, mpt1327, ils (VOR), ctcss, radar,
-  ssr1030, uat, flarm, beacon406, lora (two), wildlife (five), dtv, cells,
+  ssr1030, uat, flarm, beacon406, lora (six), wildlife (five), dtv, cells,
   adsb, dme, ism, pocsag, v23_telemetry, p25, dmr, radiosonde (the last
   three since 2026-10-16 - their earlier tests used public recordings)
 - Generation: `PLAYBACK_GEN:<id>` forks `python3 -I
@@ -3778,6 +3792,53 @@ Edit `include/config.hpp`:
   "?" when a codeword of bytes 0-8 failed parity, no event then); `freq_hz` /
   `bw_hz` = the LoRa channel so nodes on different channels/SFs keep their
   own bearings. `avg_s` 10, `keep_s` 30 min. UI kind `node` 📶
+- SEPARATION BY CODE (2026-10-16, the user's "implement separation by code":
+  at 927.5 MHz the DF panel listed none of the decoder's transmitters - the
+  SF10 BW500 gateway downlink is on air 60 % of the time, and TalkerDoa
+  dropped every pair of packets overlapping on the "same channel"):
+  `kp::Info::multichannel` - in coherent mode with DoA on every antenna
+  (`process_multi`); antenna 0 decoded as before; `despread.hpp`
+  `lora_ds::RawRing` keeps every antenna's input 2^21 samples (0.87 s, 8 bits
+  per I / Q = the RTL's grid, 21 MB at 5 antennas; covers the probes' 0.8 s
+  of history), indexed like the front end (`Channel::first_block`: channel
+  sample a = input first_block x HOP + a x FS / rate_out). `LoraRx::desp`
+  (`lora_phy::Despreader`, `ChanDesp` per channel): every symbol the receiver
+  demodulates - the preamble's last <= 8 up-chirps (at its bin, a clear
+  peak), the 2 sync symbols, the header block, the payload block by block -
+  is correlated on every antenna with exactly the receiver's model of it
+  (`despread_sym`: up-chirp from -BW/2 + (bin + de-rotation) BW/N, wrap at
+  +BW/2, continuous phase, the channel's offset, conjugated for inverted IQ;
+  phase recursion in 128-sample pieces from an exact phase) -> y per
+  antenna; other LoRa (other SF / BW, the same SF at another timing / offset)
+  and everything else in the 2.4 MHz stay spread. Held to
+  `DESPREAD_BUDGET_S` 0.1 s of airtime per packet (every k-th symbol beyond).
+  `Frame::sym_y` -> `lora_ds::code_cov` (power 0.25-4x the median, fit to the
+  main eigenvector within 0.3 of the median, >= 4 symbols, main eigenvalue
+  >= 40 % of the trace) -> `kp::Talker::cov`. With the antennas but no
+  usable covariance the frame gives no talker packet (`set_cov`); with one
+  antenna (process()) everything as before. Fact "Separation by code"
+  (packets de-spread, mean symbols / coherence, without a bearing, CPU).
+  At least `DESPREAD_MIN_SYMS` 12 symbols per packet (SF12 BW125)
+- TWO TRANSMITTERS BEHIND ONE ID (`split.hpp`, the coded packets'
+  signatures = main eigenvectors): IDs that name no transmitter (`GW <MHz>`,
+  `LoRa <MHz> SF<n> ...`) split into `<id> #1` / `#2` when the last 30
+  signatures form two clusters (>= 6 each, in both halves of the window,
+  median fit >= 0.9 inside, centroids |c1^H c2|^2 <= 0.5 = >= ~30 deg apart
+  on the live UCA, <= 20 % unclear); the merged talker is forgotten
+  (`talker_forget`), a packet fitting neither gives none, 12 in a row = one
+  ID again. #1 = the first heard since the decoder started (playback
+  `lora-two-gateways` checks bearings only)
+- Separation tests (2026-10-16, scratch lora4/): `scene_au915_busy` /
+  playback `lora-au915-busy` (8 transmitters at 927.5 MHz, the gateway on
+  air 60 %): before 138 packets, 109 with a bearing, 20 dropped as
+  overlapping, an uplink inside the gateway's channel 26 deg off (7 / 8);
+  after 124 / 124 coded, 0 dropped, 8 / 8 at 0.0 deg; `scene_two_gw` /
+  `lora-two-gateways`: split after 12 packets, 60.0 / 220.0 (3 / 3); every
+  other scene / entry unchanged frames, bearings within 0.1 deg; the real
+  single-channel capture's frame dump byte-identical; dtv / cells / ism
+  rebuilt with the new SDK host: identical output. CPU: +3.8 % (antennas'
+  ring) +0.5-3 % (de-spreading) of a core, +21 MB; kraken_doa -45 MB (no
+  wide ring for coded packets)
 - Watched channels, REGION-NEUTRAL (the user's rule 2026-10-15; reworked
   2026-10-16, `regions.hpp`): `region` (Meshtastic) and `lorawan` (plan)
   default **auto** = every Meshtastic region (the firmware's table: 25

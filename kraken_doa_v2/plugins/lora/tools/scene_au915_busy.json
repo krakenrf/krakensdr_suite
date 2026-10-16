@@ -1,0 +1,45 @@
+{
+  "rf_hz": 927.5e6, "seconds": 8, "channels": 5, "radius_m": 0.12, "seed": 11,
+  "noise_lsb": 2.0, "station": [-41.0, 174.0], "wave_c64": true,
+  "sources": [
+    {"proto": "lorawan", "name": "GW 927.5", "bearing": 140,
+     "sf": 10, "bw": 500000, "cr": 1, "freq_mhz": 927.5, "level_db": 8, "df_hz": 1700,
+     "period_s": 0.8, "t0": 0.15, "mtype": "unconf_dn",
+     "devaddr": "0x00F6D6E1", "fcnt": 2616, "fport": 204, "payload_len": 220},
+
+    {"proto": "lorawan", "name": "GW 926.9", "bearing": 250,
+     "sf": 7, "bw": 500000, "cr": 1, "freq_mhz": 926.9, "level_db": 4,
+     "period_s": 0.55, "t0": 0.3, "mtype": "unconf_dn",
+     "devaddr": "0x01C294FD", "fcnt": 1359, "fport": 1, "payload_len": 40},
+
+    {"proto": "lora", "name": "LoRa 927.400 SF7 0x12", "bearing": 30,
+     "sf": 7, "bw": 250000, "cr": 1, "freq_mhz": 927.4, "level_db": 3, "df_hz": 800,
+     "period_s": 0.9, "t0": 0.45, "crc": false, "sync_word": 18,
+     "text": "private system frame on 927.4 MHz, sixty-odd bytes long, no CRC ..."},
+
+    {"proto": "lora", "name": "LoRa 926.900 SF7 0x12", "bearing": 320,
+     "sf": 7, "bw": 250000, "cr": 1, "freq_mhz": 926.9, "level_db": 2, "df_hz": -600,
+     "period_s": 0.9, "t0": 0.7, "crc": false, "sync_word": 18,
+     "text": "private system frame on 926.9 MHz, sixty-odd bytes long, no CRC ..."},
+
+    {"proto": "lora", "name": "LoRa 927.000 SF8 0x12", "bearing": 200,
+     "sf": 8, "bw": 125000, "cr": 1, "freq_mhz": 927.0, "level_db": -2, "df_hz": -3000,
+     "period_s": 0.7, "t0": 0.25, "crc": true, "sync_word": 18, "bytes": [65, 7]},
+
+    {"proto": "lorawan", "name": "DevAddr 260B1234", "bearing": 100,
+     "sf": 7, "bw": 125000, "cr": 1, "freq_mhz": 927.2, "level_db": -1,
+     "period_s": 1.1, "t0": 0.5, "mtype": "unconf_up",
+     "devaddr": "0x260B1234", "fcnt": 17, "fport": 2, "payload_len": 12},
+
+    {"proto": "lorawan", "name": "DevAddr 26CC0042", "bearing": 170,
+     "sf": 9, "bw": 125000, "cr": 1, "freq_mhz": 927.6, "level_db": -4,
+     "period_s": 1.6, "t0": 0.95, "mtype": "unconf_up",
+     "devaddr": "0x26CC0042", "fcnt": 300, "fport": 3, "payload_len": 16},
+
+    {"proto": "meshtastic", "name": "!c0ffee01", "bearing": 280,
+     "sf": 10, "bw": 250000, "cr": 1, "freq_mhz": 927.875, "level_db": 0,
+     "period_s": 1.9, "t0": 0.6,
+     "from": "0xc0ffee01", "to": 4294967295, "id": 99887766,
+     "hop_limit": 3, "hop_start": 3, "port": "text", "text": "busy band mesh"}
+  ]
+}

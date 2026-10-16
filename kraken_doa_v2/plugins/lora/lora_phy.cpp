@@ -302,22 +302,43 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
     // a long one) is de-rotated before each FFT.
     const int resid = cmod(b_up);
     double track = bup_f;
+    std::vector<SymRef> hdr_refs;   // the header block's symbols (separation by code)
     auto demod_sym = [&](int64_t a, bool reduced) {
         float fr = 0;
+        const double tr0 = track;
         const int b = demod_bin(a, false, nullptr, nullptr, &fr, track);
         track += TRACK_ALPHA * fr;
+        if (desp) hdr_refs.push_back({a, b, tr0});
         const int v = reduced ? (cmod(b - resid - 1 + 2) >> 2) : cmod(b - resid - 1);
         return static_cast<uint16_t>(lora_code::gray_map(static_cast<uint32_t>(v)));
     };
 
     // sync word: the two symbols before the SFD carry its nibbles x 8
     int sync_word = -1;
+    const int sb1 = demod_bin(sfd - 2 * L_, false, nullptr, nullptr, nullptr, bup_f);
+    const int sb2 = demod_bin(sfd - L_, false, nullptr, nullptr, nullptr, bup_f);
     {
-        const int s1 = cmod(demod_bin(sfd - 2 * L_, false, nullptr, nullptr, nullptr, bup_f) - resid);
-        const int s2 = cmod(demod_bin(sfd - L_, false, nullptr, nullptr, nullptr, bup_f) - resid);
+        const int s1 = cmod(sb1 - resid);
+        const int s2 = cmod(sb2 - resid);
         const int n1 = (s1 + 4) / 8, n2 = (s2 + 4) / 8;
         if (std::abs(s1 - 8 * n1) <= 1 && std::abs(s2 - 8 * n2) <= 1 && n1 < 16 && n2 < 16) sync_word = n1 << 4 | n2;
     }
+
+    // separation by code: the preamble's last up-chirps (value 0 - checked:
+    // at the preamble's bin, a clear peak) and the two sync symbols
+    auto collect_pre = [&](std::vector<SymRef>& v) {
+        v.clear();
+        for (int k = DESPREAD_PRE - 1; k >= 0; k--) {
+            const int64_t a = sfd - 3LL * L_ - static_cast<int64_t>(k) * L_;
+            if (a < astart || a < oldest) continue;
+            float pk = 0, mean = 0;
+            const int b = demod_bin(a, false, &pk, &mean, nullptr, bup_f);
+            const int d = std::abs(((b - resid + N_ + N_ / 2) % N_) - N_ / 2);
+            if (d <= 1 && pk > 3.f * mean) v.push_back({a, b, bup_f});
+        }
+        v.push_back({sfd - 2LL * L_, sb1, bup_f});
+        v.push_back({sfd - L_, sb2, bup_f});
+    };
 
     // ---- header block: 8 symbols at CR 4/8, reduced rate (sf_app = sf-2) ----
     // SF5 / SF6 (SX126x): sf - 2 bits can't carry the 5 header nibbles in a
@@ -364,6 +385,11 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
         d.header_ok = hok;
         d.sf = sf_;
         d.inverted = invert_;
+        if (desp) {
+            std::vector<SymRef> pre;
+            collect_pre(pre);
+            for (const SymRef& r : pre) despread_into(r, d.sym_y, &d.ant);
+        }
         det_log->push_back(d);
     };
 
@@ -376,6 +402,7 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
         for (int h = 0; h < (low_sf ? 2 : 1) && !found; h++) {
             const int64_t hs = data_start + (low_sf && h == 0 ? 2LL * L_ : 0);
             track = track0;
+            hdr_refs.clear();
             std::vector<uint8_t> hn;
             int hbad = 0;
             block_nibbles(hs, 8, sf_app_hdr, 4, hdr_reduced, hn, &hbad, nullptr);
@@ -442,7 +469,37 @@ int LoraRx::decode_from(int64_t preamble_start, std::vector<Frame>& out) {
     pk_.low_sf = low_sf;
     pk_.sf_app = ldro ? sf_ - 2 : sf_;
     pk_.need_nibbles = 2 * (length + (has_crc ? 2 : 0));
+    if (desp && desp->antennas() >= 2) {
+        // separation by code: every stride-th symbol of the packet (its
+        // de-spreading held to DESPREAD_BUDGET_S of airtime), starting with the
+        // preamble / sync / header symbols that are still in the input kept
+        std::vector<SymRef> pre;
+        collect_pre(pre);
+        const int rem = std::max(0, pk_.need_nibbles - static_cast<int>(pk_.nib.size()));
+        const int payload_syms = (rem + pk_.sf_app - 1) / pk_.sf_app * (4 + cr);
+        const int total = static_cast<int>(pre.size() + hdr_refs.size()) + payload_syms;
+        const double sym_s = static_cast<double>(N_) / bw_;
+        pk_.stride = std::max(1, std::min(static_cast<int>(std::ceil(total * sym_s / DESPREAD_BUDGET_S)),
+                                          total / DESPREAD_MIN_SYMS));
+        pk_.sym_total = total;
+        int j = 0;
+        for (const SymRef& r : pre)
+            if (j++ % pk_.stride == 0) despread_into(r, pk_.ys, &pk_.ym);
+        for (const SymRef& r : hdr_refs)
+            if (j++ % pk_.stride == 0) despread_into(r, pk_.ys, &pk_.ym);
+        pk_.sym_i = j;
+    }
     return continue_packet(out);
+}
+
+void LoraRx::despread_into(const SymRef& r, std::vector<cf>& ys, int* ym) {
+    if (!desp) return;
+    cf y[8];
+    const int m = desp->despread(*this, r.a, r.bin, r.frac, y);
+    if (m < 2 || m > 8) return;
+    if (*ym == 0) *ym = m;
+    if (m != *ym) return;
+    ys.insert(ys.end(), y, y + m);
 }
 
 // 1 = emitted, 0 = dropped, 2 = waiting for more samples
@@ -460,8 +517,11 @@ int LoraRx::continue_packet(std::vector<Frame>& out) {
         uint16_t sym[8];
         for (int i = 0; i < nsym; i++) {
             float frac = 0;
-            const int bb = demod_bin(pk_.base + static_cast<int64_t>(i) * L_, false, nullptr, nullptr, &frac, pk_.track);
+            const int64_t a = pk_.base + static_cast<int64_t>(i) * L_;
+            const double tr0 = pk_.track;
+            const int bb = demod_bin(a, false, nullptr, nullptr, &frac, pk_.track);
             pk_.track += TRACK_ALPHA * frac;
+            if (desp && pk_.stride > 0 && pk_.sym_i++ % pk_.stride == 0) despread_into({a, bb, tr0}, pk_.ys, &pk_.ym);
             const int v = pk_.ldro ? (cmod(bb - pk_.resid - 1 + 2) >> 2) : cmod(bb - pk_.resid - 1);
             sym[i] = static_cast<uint16_t>(lora_code::gray_map(static_cast<uint32_t>(v)));
         }
@@ -485,6 +545,9 @@ int LoraRx::continue_packet(std::vector<Frame>& out) {
     const int need_bytes = length + (has_crc ? 2 : 0);
     fr.nsym = pk_.total_syms;
     fr.end_sample = pk_.base;
+    fr.ant = pk_.ym;
+    fr.sym_y = std::move(pk_.ys);
+    fr.sym_total = pk_.sym_total;
     fr.fec_bad = pk_.fec_bad;
     fr.fec_total = pk_.fec_total;
 

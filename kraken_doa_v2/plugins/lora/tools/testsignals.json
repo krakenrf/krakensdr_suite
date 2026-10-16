@@ -97,6 +97,92 @@
   "tol_deg": 5
  },
  {
+  "id": "lora-au915-busy",
+  "title": "LoRa at 927.5 MHz, a busy band: 8 transmitters overlapping in time - separation by code",
+  "description": "The user's band around 927.5 MHz (AU915 sub-band 8), plugin defaults: AU915 gateway downlinks (inverted IQ, no payload CRC) SF10 BW500 on 927.5 MHz every 0.8 s (60 % of the time on air, 140 deg) and SF7 BW500 on 926.9 MHz (250 deg), a private SF7 BW250 system (sync 0x12, no CRC) on 927.4 (30 deg) and 926.9 MHz (320 deg) that the plan-free search has to find, a sync-0x12 SF8 BW125 sensor on 927.0 MHz (200 deg), LoRaWAN uplinks DevAddr 260B1234 SF7 BW125 927.2 MHz (100 deg) and 26CC0042 SF9 BW125 927.6 MHz (170 deg, inside the gateway's 500 kHz channel) and a Meshtastic node !c0ffee01 on 927.875 MHz SF10 BW250 (280 deg). Nearly every packet overlaps another on its channel: cut from the stream they were dropped (or mixed); every decoded packet is de-spread with its own chirp on every antenna instead (Separation by code) - expect all eight at their bearings.",
+  "rf_hz": 927500000.0,
+  "tuner_offset_hz": 0,
+  "seconds": 8,
+  "vfo": {
+   "bw_khz": 2400,
+   "opts": {}
+  },
+  "steps": [
+   [
+    "{tools}/lora_gen.py",
+    "{tools}/scene_au915_busy.json",
+    "out.cu8"
+   ]
+  ],
+  "output": "out.cu8",
+  "expect": [
+   {
+    "tid": "GW 927.5",
+    "bearing": 140
+   },
+   {
+    "tid": "GW 926.9",
+    "bearing": 250
+   },
+   {
+    "bearing": 30
+   },
+   {
+    "bearing": 320
+   },
+   {
+    "tid": "LoRa 927.000 SF8 0x12",
+    "bearing": 200
+   },
+   {
+    "tid": "DevAddr 260B1234",
+    "bearing": 100
+   },
+   {
+    "tid": "DevAddr 26CC0042",
+    "bearing": 170
+   },
+   {
+    "tid": "!c0ffee01",
+    "bearing": 280
+   }
+  ],
+  "tol_deg": 5
+ },
+ {
+  "id": "lora-two-gateways",
+  "title": "LoRaWAN: two gateways answering on one downlink channel (927.5 MHz) - split by their signatures",
+  "description": "Two AU915 gateways send SF10 BW500 downlinks (inverted IQ) on the same 927.5 MHz channel, one from 60 deg and one from 220 deg, in turn every 0.6 s, plus a sync-0x12 SF8 sensor on 927.0 MHz (300 deg). A downlink names no gateway, so both are 'GW 927.5' - until the de-spread packets' spatial signatures fall into two persistent clusters (after ~12 packets): then the ID is split into 'GW 927.5 #1' (the one heard first since the decoder started - either of the two) and 'GW 927.5 #2', each with its own bearing; the merged 'GW 927.5' (a bearing between them) is forgotten. Expect a talker at 60 and one at 220 deg.",
+  "rf_hz": 927500000.0,
+  "tuner_offset_hz": 0,
+  "seconds": 10,
+  "vfo": {
+   "bw_khz": 2400,
+   "opts": {}
+  },
+  "steps": [
+   [
+    "{tools}/lora_gen.py",
+    "{tools}/scene_two_gw.json",
+    "out.cu8"
+   ]
+  ],
+  "output": "out.cu8",
+  "expect": [
+   {
+    "bearing": 60
+   },
+   {
+    "bearing": 220
+   },
+   {
+    "tid": "LoRa 927.000 SF8 0x12",
+    "bearing": 300
+   }
+  ],
+  "tol_deg": 5
+ },
+ {
   "id": "lora-eu868",
   "title": "LoRa EU868 (Auto): Meshtastic EU_868, LoRaWAN up / RX2 down, class-B beacon",
   "description": "A 2.4 MHz scene around 868.8 MHz, the plugin's defaults (Auto picks Meshtastic EU_868 + the other 86x regions and LoRaWAN EU868 + RU864): a Meshtastic LongFast node !e1e2e3e4 on 869.525 MHz (50 deg), LoRaWAN uplinks DevAddr 26E00001 SF12 868.1 MHz (130 deg) and 26E00002 SF7 868.5 MHz (210 deg), and a gateway on 869.525 MHz sending an RX2 downlink (SF9, inverted IQ) and a class-B beacon (implicit header, both beacon CRCs, its position) - one talker GW 869.5 (290 deg).",

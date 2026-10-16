@@ -36,6 +36,8 @@
 #include "kraken_plugin.hpp"
 #include "channelizer.hpp"
 #include "coding.hpp"
+#include "despread.hpp"
+#include "split.hpp"
 #include "lora_phy.hpp"
 #include "lorawan.hpp"
 #include "meshtastic.hpp"
@@ -141,6 +143,7 @@ struct Channel {
     bool lorawan = false;
     int beacon_len = 0;
     double t0 = 0;               // Host::time() of the channel's first sample
+    int64_t first_block = 0;     // the front end's block its first sample came from (input index / HOP)
     lora_chan::Chan ch;
     lora_phy::Ring ring;
     std::vector<lora_phy::cf> outbuf;
@@ -151,7 +154,9 @@ struct Channel {
     double probe_t0 = 0;
     std::vector<lora_phy::Detect> dets;
     int sync = -1;               // learned: the transmitter's sync word
+    std::unique_ptr<lora_phy::Despreader> desp;   // separation by code (its receivers' symbols on every antenna)
 };
+
 
 // the longest packet worth keeping in a channel's ring: 255 bytes at CR 4/5
 // (+ preamble)
@@ -177,6 +182,26 @@ inline double thread_cpu_s() {
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
     return static_cast<double>(ts.tv_sec) + 1e-9 * static_cast<double>(ts.tv_nsec);
 }
+
+// Separation by code: a channel's receivers' symbols de-spread on every
+// antenna's input (despread.hpp) - channel sample a = input index
+// first_block x HOP + a x FS / rate_out (the channelizer has no delay)
+struct ChanDesp : lora_phy::Despreader {
+    const lora_ds::RawRing* raw = nullptr;
+    const Channel* c = nullptr;
+    double* cpu_s = nullptr;                   // the de-spreading's thread CPU time (s)
+    int antennas() const override { return raw ? raw->m : 0; }
+    int despread(const lora_phy::LoraRx& rx, int64_t a, int bin, double frac, lora_phy::cf* y) override {
+        if (!raw || raw->m < 2) return 0;
+        const double t0 = thread_cpu_s();
+        const double spc = FS / c->rate_out;   // input samples per channel sample
+        const double p = static_cast<double>(c->first_block) * lora_chan::HOP + static_cast<double>(a) * spc;
+        const int r = lora_ds::despread_sym(*raw, p, rx.window() * spc, c->center_off / FS, c->bw / FS, bin + frac,
+                                            1 << rx.sf(), rx.inverted(), y);
+        if (cpu_s) *cpu_s += thread_cpu_s() - t0;
+        return r;
+    }
+};
 
 // the LoRaWAN beacon's CRC (CRC-16, poly 0x1021, init 0, MSB first; stored LSB first)
 inline uint16_t crc16_ccitt(const uint8_t* p, size_t n) { return lora_code::crc16(p, n); }
@@ -212,6 +237,7 @@ public:
         recent_det_.clear();
         det_seen_.clear();
         n_probes_ = n_probe_hits_ = n_probe_det_ = 0;
+        split_.clear();
     }
 
     void option(const std::string& k, const std::string& v) override {
@@ -231,14 +257,24 @@ public:
         built_ = false;
     }
 
-    void process(const kp::cf* x, size_t n, const kp::cf* const*, int) {
+    void process(const kp::cf* x, size_t n, const kp::cf* const* xs, int m) {
         now_ = host.time();
         rebuild_if_needed();
         frames_.clear();
         for (auto& c : chans_) c->outbuf.clear();
         cands_.clear();
         const bool searching = search_on();
-        if (!chans_.empty() || searching)
+        if (!chans_.empty() || searching) {
+            // every antenna's input for the separation by code, indexed like the front end's
+            if (xs && m >= 2) {
+                const int64_t at = front_.blocks * lora_chan::HOP + front_.fill;
+                const double t_a = thread_cpu_s();
+                if (raw_.m != m || raw_.abs != at) raw_.start(m, at);
+                raw_.push(xs, n);
+                raw_cpu_s_ += thread_cpu_s() - t_a;
+            } else {
+                raw_.off();
+            }
             front_.push(x, n, [&] {
                 if (searching) {
                     const double t_a = thread_cpu_s();
@@ -248,6 +284,7 @@ public:
                 }
                 for (auto& c : chans_) c->ch.block(front_.X, c->outbuf);
             });
+        }
         for (auto& c : chans_) {
             c->ring.push(c->outbuf.data(), c->outbuf.size());
             for (auto& rx : c->rx) {
@@ -261,11 +298,21 @@ public:
         housekeeping();
     }
     void process(const kp::cf* x, size_t n) override { process(x, n, nullptr, 0); }
+    // every antenna (coherent mode with DoA on): antenna 0 is decoded as
+    // before, all of them de-spread for each decoded packet's DoA
+    void process_multi(const kp::cf* const* x, int m, size_t n) override {
+        process(x[0], n, m >= 2 ? x : nullptr, m);
+    }
 
 private:
     std::vector<std::unique_ptr<Channel>> chans_;
     lora_chan::Front front_;
     double front_t0_ = 0;                 // Host::time() of the front's first sample
+    lora_ds::RawRing raw_;                // every antenna's input (separation by code)
+    std::map<std::string, lora_split::State> split_;   // IDs that name no transmitter: two behind one? (split.hpp)
+    uint64_t n_split_skip_ = 0;
+    uint64_t n_coded_ = 0, n_uncoded_ = 0, coded_syms_ = 0;
+    double coded_coh_ = 0, desp_cpu_s_ = 0, raw_cpu_s_ = 0;   // thread CPU time: de-spreading, keeping the antennas' input
     std::vector<lora_phy::Frame> frames_;
     std::map<std::string, Node> nodes_;
     double rf_used_ = NAN, now_ = 0, summary_t_ = -1e9;
@@ -449,6 +496,12 @@ private:
         if (c->os == 0) return nullptr;
         c->rate_out = c->os * bw;
         c->t0 = front_t0_ + static_cast<double>(first_block) * lora_chan::HOP / FS;
+        c->first_block = first_block;
+        auto d = std::make_unique<ChanDesp>();
+        d->raw = &raw_;
+        d->c = c;
+        d->cpu_s = &desp_cpu_s_;
+        c->desp = std::move(d);
         c->ch.init(FS, bw, off, c->os);
         c->ring.init(ring_len(ring_secs, c->rate_out));
         chans_.push_back(std::move(up));
@@ -544,6 +597,7 @@ private:
                          : std::make_unique<lora_phy::LoraRx>(s.sf, s.bw, c->os, &c->ring, s.iq == 1);
             if (s.beacon_len > 0) c->beacon_len = s.beacon_len;
             if (s.prio == P_LEARNED) r->strict_nocrc = true;
+            r->desp = c->desp.get();
             c->rx.push_back(std::move(r));
         }
         plan_rx_ = static_cast<int>(use.size());
@@ -671,6 +725,7 @@ private:
             auto r = std::make_unique<lora_phy::LoraRx>(sf, cd.bw, c->os, &c->ring, inv == 1);
             r->strict_nocrc = true;
             r->det_log = &c->dets;
+            r->desp = c->desp.get();
             c->rx.push_back(std::move(r));
         }
         for (int64_t b = b0; b < b_end; b++) c->ch.block(hist_block(b), c->outbuf);
@@ -868,7 +923,7 @@ private:
         t.bw_hz = c.bw;
         t.avg_s = 10;
         t.keep_s = 1800;
-        if (d.sync_word >= 0) host.talker(t);
+        if (d.sync_word >= 0 && set_cov(t, d.ant, d.sym_y)) host.talker(t);
         const std::string txt = fmt("%.3f MHz", f_hz / 1e6) + " SF" + std::to_string(d.sf) +
                                 fmt(c.bw < 1e5 ? " BW%.1f" : " BW%.0f", c.bw / 1e3) + (d.inverted ? " inverted IQ" : "") +
                                 (d.sync_word >= 0 ? fmt2(" sync 0x%02X", d.sync_word) : std::string(""));
@@ -1028,7 +1083,8 @@ private:
             t.bw_hz = c.bw;
             t.avg_s = 10;
             t.keep_s = 1800;
-            host.talker(t);
+            lora_ds::CovStats cst;
+            if (set_cov(t, fr.ant, fr.sym_y, &cst) && split_talker(t, cst)) host.talker(t);
             host.event(fmt2("📡 LoRaWAN class-B beacon: GPS time %u s", gps) + fmt(" · %.3f MHz", freq) + " SF" + std::to_string(fr.sf) +
                            (std::isfinite(lat) ? fmt(" · gateway at %.4f", lat) + fmt(", %.4f", lon) : std::string()),
                        60.0);
@@ -1045,6 +1101,65 @@ private:
             return true;
         }
         return false;
+    }
+
+    // Separation by code: the packet's own spatial covariance from its
+    // de-spread symbols -> t.m / t.cov (kraken_doa runs MUSIC on it instead of
+    // cutting the packet out of its stream: other transmitters overlapping it
+    // stay out, and it isn't dropped for overlapping them). With one antenna
+    // (independent mode, DoA off) nothing to do - true. With the antennas but
+    // no usable covariance (the samples gone, too few clean symbols): false,
+    // the frame gives no talker packet (from the stream it would mix in
+    // whatever else is in its channel - and make kraken_doa keep 2.5 s of
+    // the whole 2.4 MHz for it)
+    bool set_cov(kp::Talker& t, int ant, const std::vector<lora_phy::cf>& ys, lora_ds::CovStats* stp = nullptr) {
+        lora_ds::CovStats st;
+        if (stp) *stp = st;
+        if (raw_.m < 2) return true;
+        std::vector<lora_phy::cf> R;
+        const bool ok = ant >= 2 && lora_ds::code_cov(ant, ys, R, &st);
+        if (stp) *stp = st;
+        if (!ok) {
+            n_uncoded_++;
+            return false;
+        }
+        t.m = ant;
+        t.cov = std::move(R);
+        n_coded_++;
+        coded_syms_ += static_cast<uint64_t>(st.used);
+        coded_coh_ += st.coherence;
+        return true;
+    }
+
+    // Two transmitters behind an ID that names none - "GW <MHz>" (gateways
+    // answering on one downlink channel), "LoRa <MHz> SF<n> ..." - told apart
+    // by their packets' spatial signatures (split.hpp; only with clear,
+    // persistent evidence): "<id> #1" / "#2". false = this packet fits neither
+    // of the two clearly: no talker packet
+    bool split_talker(kp::Talker& t, const lora_ds::CovStats& st) {
+        if (t.cov.empty() || !(t.id.rfind("GW ", 0) == 0 || t.id.rfind("LoRa ", 0) == 0)) return true;
+        const std::string base = t.id;
+        int ev = 0;
+        const int k = split_[base].add(st.u, &ev);
+        if (ev == 1) {
+            host.talker_forget(base);
+            host.event("📶 " + base + ": two transmitters behind this ID (their packets arrive from two directions far " +
+                           "apart, again and again) - now " + base + " #1 / #2 in the DF panel",
+                       60.0);
+        } else if (ev == -1) {
+            host.talker_forget(base + " #1");
+            host.talker_forget(base + " #2");
+            host.event("📶 " + base + ": one transmitter again", 60.0);
+        }
+        if (k < 0) {
+            n_split_skip_++;
+            return false;
+        }
+        if (k > 0) {
+            t.id = base + " #" + std::to_string(k);
+            t.label += " · transmitter " + std::to_string(k);
+        }
+        return true;
     }
 
     void report(Channel& c, const lora_phy::LoraRx& rx, const lora_phy::Frame& fr) {
@@ -1141,7 +1256,8 @@ private:
         t.avg_s = 10;
         t.keep_s = 1800;
         if (std::isfinite(nd.lat) && now_ - nd.pos_t < 0.5) { t.lat = nd.lat; t.lon = nd.lon; t.alt_m = nd.alt_m; }
-        host.talker(t);
+        lora_ds::CovStats cst;
+        if (set_cov(t, fr.ant, fr.sym_y, &cst) && split_talker(t, cst)) host.talker(t);
 
         update_row(nd, mh, lw, proto);
         if (host.raw_wanted()) host.raw(proto + " " + fmt("%.3f", freq) + " SF" + std::to_string(fr.sf) + " " + hexstr(fr.payload));
@@ -1149,7 +1265,11 @@ private:
             host.log(fmt("[%.3f] ", ts) + proto + " f=" + fmt("%.3f", freq) + " SF" + std::to_string(fr.sf) +
                      fmt(" BW%.1f", c.bw / 1e3) + (fr.inverted ? " inv" : "") + fmt2(" sync=%02x", fr.sync_word & 0xFF) +
                      fmt(" cfo=%.0f", fr.cfo_hz) + fmt(" snr=%.1f", fr.snr_db) + (c.learned ? " learned" : "") +
-                     (fr.has_crc ? std::string(" crc") : fmt2(" fec=%d/%d", fr.fec_bad, fr.fec_total)) + " " + hexstr(fr.payload));
+                     (fr.has_crc ? std::string(" crc") : fmt2(" fec=%d/%d", fr.fec_bad, fr.fec_total)) +
+                     (fr.ant >= 2 ? fmt2(" code=%d/", cst.used) + fmt2("%d", cst.total) + fmt2("/%d", fr.sym_total) +
+                                        fmt(" coh=%.3f", cst.coherence) + (t.cov.empty() ? " NO-COV" : "")
+                                  : std::string()) +
+                     " " + hexstr(fr.payload));
     }
 
     static bool plausible_mesh(const mesh::Header& mh, const lora_phy::Frame& fr) {
@@ -1375,6 +1495,19 @@ private:
         host.fact("Packets", std::to_string(n_mesh_) + " Meshtastic, " + std::to_string(n_lw_) + " LoRaWAN (" +
                                  std::to_string(n_lw_dn_) + " downlinks), " + std::to_string(n_bcn_) + " beacons, " +
                                  std::to_string(n_lora_) + " LoRa");
+        if (raw_.m >= 2 || n_coded_ + n_uncoded_ > 0)
+            host.fact("Separation by code",
+                      (raw_.m >= 2 ? fmt("%.0f antennas", (double)raw_.m) : std::string("one antenna now")) +
+                          fmt(" · %.0f packets de-spread", (double)n_coded_) +
+                          (n_coded_ ? fmt(" (%.0f symbols", (double)coded_syms_ / n_coded_) + fmt(", coherence %.2f)", coded_coh_ / n_coded_)
+                                    : std::string()) +
+                          fmt(" · %.0f without a bearing (samples gone / no clear direction)", (double)n_uncoded_) +
+                          split_txt() +
+                          (now_ > 0 ? fmt(" · %.1f %% CPU", 100 * (desp_cpu_s_ + raw_cpu_s_) / now_) +
+                                          fmt(" (de-spreading %.1f %%)", 100 * desp_cpu_s_ / now_)
+                                    : std::string()));
+        else
+            host.fact("Separation by code", "one antenna (coherent mode with DoA on gives the plugin every antenna)");
         if (search_on()) {
             std::string s = std::string(search_ == "all" ? "7.8-500 kHz" : "62.5-500 kHz") + ", SF5-12, both IQ · " +
                 fmt("%.1f %% CPU", 100 * search_cpu_frac_) + fmt(" · %.0f candidates", (double)n_cand_) +
@@ -1387,6 +1520,15 @@ private:
         } else {
             host.fact("Search", "off");
         }
+    }
+
+    // the IDs split into two transmitters (for the fact)
+    std::string split_txt() const {
+        std::string o;
+        for (const auto& [id, st] : split_)
+            if (st.on) o += (o.empty() ? "" : ", ") + id + " #1 / #2";
+        if (o.empty()) return "";
+        return " · split: " + o + (n_split_skip_ ? fmt(" (%.0f packets fitting neither)", (double)n_split_skip_) : std::string());
     }
 
     static std::string fmt2(const char* f, ...) {
@@ -1476,4 +1618,5 @@ KRAKEN_PLUGIN(LoraDecoder, {.id = "lora",
                             .manual_only = true,
                             .talkers = true,
                             .lock_vfo = true,
+                            .multichannel = true,
                             .tunes = true})

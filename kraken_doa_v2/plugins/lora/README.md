@@ -7,7 +7,8 @@ panel.
 
 `sample_rate` = `min_vfo_rate` = 2.4 MHz, `lock_vfo` (the VFO sits on its
 tuner's centre with the full bandwidth; tune the receiver to the band),
-`manual_only`, `talkers`, `map`, `tunes`.
+`manual_only`, `talkers`, `map`, `tunes`, `multichannel` (every antenna:
+separation by code, below).
 
 ## Where it listens: region-neutral by default
 
@@ -244,6 +245,81 @@ keep their own bearings:
 `avg_s` 10, `keep_s` 30 min. UI kind `node` (📶), with Dist / position
 columns for nodes that send POSITION.
 
+### Separation by code (every antenna, since 2026-10-16)
+
+The plugin is `multichannel`: in coherent mode with DoA on kraken_doa hands
+it every antenna (`process_multi`; independent / wideband mode or DoA off:
+one channel as before, no bearings). Antenna 0 is decoded exactly as before;
+the antennas' input is kept 0.87 s in 8 bits per I / Q (`despread.hpp`
+`RawRing`, 2^21 samples - the RTL's own resolution, 21 MB for 5 antennas;
+long enough for the search's probes, which decode up to 0.8 s of history).
+
+Before, each frame was a packet whose covariance kraken_doa cut out of its
+stream through the frame's channel filter - and it DROPPED both packets
+when two talkers overlapped in time on the "same channel" (|df| < half the
+wider bandwidth). In a busy band that is nearly every packet: the 927.5 MHz
+SF10 BW500 gateway downlink is on air 60 % of the time and its 500 kHz
+channel holds 927.4 / 927.6 MHz too; and what wasn't dropped mixed every
+signal in its slice (a 500 kHz packet even the whole 2.4 MHz, until a
+narrower one made kraken_doa keep the samples themselves).
+
+LoRa is chirp spread spectrum, and a demodulated symbol IS its own code.
+For every symbol the receiver demodulated (its window, the bin it decided,
+its fractional de-rotation - the preamble's last up-chirps (checked: at the
+preamble's bin, a clear peak), the two sync symbols, the header and the
+payload) `lora_ds::despread_sym` correlates EVERY antenna's 2.4 MHz input
+with exactly that chirp - the receiver's own model of the symbol (an
+up-chirp from -BW/2 + u BW/N, wrapping at +BW/2 by BW, continuous phase, u
+= bin + de-rotation; conjugated for inverted IQ), shifted to the channel's
+offset, at the exact input times of the window (channel sample a = input
+index first_block x HOP + a x 2.4 MHz / (os x BW): the channelizer has no
+delay). y[k] = THIS transmitter's complex amplitude at antenna k; another
+LoRa signal in the same samples - another SF / BW, or the same SF at
+another timing / offset - stays spread (processing gain 2^SF), and so does
+everything else in the 2.4 MHz. A model error (a fraction of a bin, the
+receiver's CFO-for-timing window shift of a few chips) only lowers the
+correlation: it is common to all antennas, so the direction is unbiased.
+The two halves of a wrapped symbol are one coherent sum (no +-1 bin
+bookkeeping). A packet's de-spreading is held to ~0.1 s of its airtime
+(`DESPREAD_BUDGET_S`): longer packets take every k-th symbol (a 220-byte
+SF10 downlink: 48 of its 240 symbols).
+
+`lora_ds::code_cov` turns the packet's y vectors into its covariance:
+symbols whose power is outside 0.25-4x the packet's median are left out (a
+symbol decided wrong - the bin held another transmitter's energy, or none),
+then those whose fit to the packet's main eigenvector is 0.3 below the
+median fit; R = sum y y^H of the rest. It is sent with the packet
+(`kp::Talker::cov`, wire TALKER fields 14 / 15) when >= 4 symbols are left
+and the main eigenvalue holds >= 40 % of the trace ("coherence"). kraken_doa
+then uses it as it is - no stream kept for the packet, no channel filter -,
+never drops it for an overlap and runs MUSIC with ONE source on the talker
+(`TalkerDoa::add_packet`). Talker IDs, labels, `avg_s`, `keep_s`, history
+and the UI kind are unchanged. With the antennas but no usable covariance
+(the samples already gone, too few clean symbols) the frame gives NO talker
+packet: from the stream it would mix whatever else is in its channel - and
+make kraken_doa keep 2.5 s of the whole 2.4 MHz (120 MB) for it. The
+"Separation by code" fact counts both, with the mean symbols / coherence and
+the CPU; the 📡 DF panel's packet line says "(all separated by code)". At
+least `DESPREAD_MIN_SYMS` 12 symbols are taken whatever the budget (the
+first version's 0.1 s left an SF12 BW125 uplink 3 symbols - no bearing).
+
+**Two transmitters behind one ID** (`split.hpp`): an ID that names no
+transmitter - `GW <MHz>` (two gateways of a network answering on one RX1
+channel), `LoRa <MHz> SF<n> <sync>` - may hold several. Each coded packet's
+spatial signature (the main eigenvector of its covariance) is kept for the
+ID's last 30 packets; when they fall into two clusters - each >= 6 packets,
+both in the older AND the newer half of the window (persistent and
+interleaved, not one transmitter that moved), alike inside (median |u^H c|^2
+>= 0.9; one transmitter's agree to ~0.99), apart from each other (|c1^H
+c2|^2 <= 0.5 - on this 5-element UCA, r 0.12 m at 927 MHz, >= ~30 deg
+apart), <= 20 % in between - the ID splits: `GW 927.5 #1` (the one heard
+first since the decoder started) and `#2`, label "· transmitter n", the
+merged talker forgotten (`talker_forget`); a packet fitting neither clearly
+(>= 0.8 to one, 0.2 more than to the other) gives no talker, 12 such in a
+row = one ID again. Event "📶 GW 927.5: two transmitters behind this ID";
+the fact lists split IDs. Uplinks / Meshtastic nodes name themselves and are
+never split (a moving node would cluster by its path).
+
 A strong packet also decodes on a watched channel one bandwidth away (a
 whole-bandwidth offset aliases to CFO 0 after dechirping) or 100 kHz away (a
 neighbour channel of another plan): frames ending within 0.15 s with the
@@ -328,7 +404,46 @@ CPU = offline decode time / real time on the Pi 5 (incl. the host's file
 read and the per-talker bearing work; live ~0.65x of it, see below).
 
 Playback entries (`tools/testsignals.json`): `lora-mesh-five`,
-`lora-au915-gateway`, `lora-eu868`, `lora-private-search`.
+`lora-au915-gateway`, `lora-au915-busy`, `lora-two-gateways`, `lora-eu868`,
+`lora-private-search`.
+
+**Separation by code** (2026-10-16, scratch lora4/; offline = `decoder
+--file x.cu8 --channels 5 --uca 0.12 --rf F`, whose bearings now use the
+packets' own covariances - "[n by code]"):
+
+- `scene_au915_busy` (the user's band at 927.5 MHz, 8 s, plugin defaults):
+  GW 927.5 SF10 BW500 downlinks every 0.8 s (on air 60 %, 140 deg), GW 926.9
+  SF7 BW500 (250), the private SF7 BW250 0x12 system on 927.4 (30) and
+  926.9 MHz (320, both found by the search), the SF8 BW125 0x12 sensor on
+  927.0 (200), uplinks 260B1234 SF7 BW125 927.2 (100) and 26CC0042 SF9 BW125
+  927.6 MHz (170 - inside the gateway's channel, 12 dB weaker), Meshtastic
+  !c0ffee01 927.875 MHz SF10 BW250 (280). Before (cut from the stream):
+  offline 13 of 64 packets dropped for overlaps, 26CC0042 at 144.0 (the
+  gateway's direction), the 927.4 link peak/mean 5; debug playback (old
+  kraken_doa + plugin) 138 packets in, 109 with a bearing, 20 dropped as
+  overlapping, 26CC0042 -25.9 deg - 7 / 8. After: offline 64 / 64 de-spread
+  (62 symbols each, coherence 1.00), every bearing within 0.6 deg; playback
+  124 in, 124 with a bearing, 124 separated by code, 0 dropped - 8 / 8 at
+  0.0 deg (26CC0042 -0.4 in a second run).
+- `scene_two_gw` (two gateways on 927.5 MHz SF10 at 60 / 220 deg in turn
+  every 0.6 s + the 927.0 sensor at 300): split after 12 packets (7 s) -
+  before it `GW 927.5` read 54.4 deg (peak/mean 3: a bearing between them);
+  then #1 60.0, #2 220.0, the sensor 300.0; playback 64 / 64 packets coded,
+  3 / 3. No ID split in any other scene.
+- Every other scene (au915, five, eu868, us915, as923, in865, 433, private,
+  narrow): the same frames decoded as before, every talker's bearing within
+  0.1 deg; in865 `!1d1d1d1d` keeps both packets (one was dropped for an
+  overlap before). Playback (test build, ports 4708x): lora-mesh-five 6 / 6,
+  lora-au915-gateway 6 / 6, lora-eu868 4 / 4, lora-private-search 5 / 5,
+  every packet coded, settings file identical after Stop. (In a 5-entry
+  session under load 6 lora-eu868 once missed its SF12 uplink: the plugin
+  had fallen > 1 s behind and its input was dropped - the old plugin drops
+  input there too.)
+- Real single-channel capture (lora2/ch0_a.cu8, process() path): the
+  per-frame dump is byte-identical to the old build (99 frames: GW 927.5
+  47, GW 926.9 4, LoRa 927.000 12, the private system 18 + 18).
+- Old plugin + new kraken_doa: works as before (no covariance sent: the
+  stream path, 4 / 4 eu868, the busy scene's overlap drops as before).
 
 **First-version tests** (still valid for the parts they cover): PHY round
 trip SF7-12 x CR x BW incl. CFO / STO / noise (71 / 72; SF12 to ~-12
@@ -358,6 +473,16 @@ downlinks on 923.9 / 924.5 / 925.1 MHz, the private SF7 BW250 0x12 system on
 further SF7 BW250 0x12 channel on 924.401 MHz. Known: a frame whose sync
 word is mis-measured (e.g. 0xB2 for 0x12) still makes its own talker.
 
+Separation by code (every antenna, 2026-10-16): the antennas' input ring
+3.8 % of a core (5 antennas x 2.4 MHz into 8 bits; -O3 / vector extensions
+didn't speed it up), de-spreading 0.5-3 % (18 ns per input sample for all 5
+antennas; the busy scene 2.8 %), +21 MB (the ring). Offline busy scene 63.8
+-> 70.2 % of real time. Debug playback (plugin process, Pi 5 at load 4-6):
+busy scene 46 -> 45 %, eu868 39 -> 43 % of a core, RSS 85-89 -> 107-111 MB;
+kraken_doa 77 -> 74 % of a core and RSS 433 -> 388 MB (coded packets need
+no stream kept: the 120 MB wide ring isn't allocated; the 48 MB/s of
+SAMPLES_MC cost about what it saves).
+
 ## Limits / sources
 
 - 2.4 GHz LoRa (SX128x, Meshtastic LORA_24) is outside the RTL-SDR's range.
@@ -365,6 +490,12 @@ word is mis-measured (e.g. 0xB2 for 0x12) still makes its own talker.
   default key, LoRaWAN FRMPayload / join accepts never (keys not public).
 - Several packets on the SAME channel overlapping in time cannot both be
   decoded (one receiver per channel); collisions are lost.
+- With every antenna, antenna 0 is decoded (as the CH selector's default; a
+  weaker antenna 0 decodes less - combining the antennas for decoding, as
+  ism does, isn't done). A frame decoded without enough clean de-spread
+  symbols (the input already gone, a probe's oldest history) gives no
+  bearing. An ID shared by transmitters < ~30 deg apart, or by three, is not
+  split.
 - Implicit-header frames decode only where the length is known (LoRaWAN
   beacons); other implicit links show up as undecoded LoRa.
 - SF5 / SF6 header convention not verified on a real SX126x.

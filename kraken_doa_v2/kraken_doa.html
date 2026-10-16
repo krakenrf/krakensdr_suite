@@ -12847,7 +12847,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (p.early + p.other) parts.push(`${p.early + p.other} other`);
     const tip = p.drops.length ? 'Latest without a bearing:\n' + p.drops.slice().reverse().map(d =>
       `${d[0]} - ${RDF_PK_WHY[d[1]] || d[1]}${d[2] !== null ? `, reported ${d[2].toFixed(2)} s after its end` : ''} (${rdfAge(d[3])} ago)`).join('\n') : '';
-    return `<span title="${digEsc(tip)}"><b style="color:${getDecimatorColor(id)}">D${id}</b> ${p.in} decoded, ${p.ok} with a bearing` +
+    // packets the plugin de-spread itself (lora: separation by code - their
+    // own covariance, never dropped for an overlap)
+    const coded = p.coded ? ` (${p.coded === p.in ? 'all' : p.coded} separated by code)` : '';
+    return `<span title="${digEsc(tip)}"><b style="color:${getDecimatorColor(id)}">D${id}</b> ${p.in} decoded, ${p.ok} with a bearing${coded}` +
       (parts.length ? ` · <span class="w">${parts.join(', ')}</span>` : '') + '</span>';
   }
   function rdfBearingTxt(t) {

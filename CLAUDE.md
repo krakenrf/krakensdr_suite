@@ -453,7 +453,11 @@ decoders `kraken_doa_v2/plugins/`
   is encrypted. ID separation: a DoA per node / DevAddr on its own channel,
   the RELAYING node (`!relay-XX`) when a Meshtastic frame was repeated, a
   LoRaWAN DOWNLINK / beacon = its gateway ("GW 927.5"), other LoRa its channel
-  + SF + sync word ("LoRa 926.901 SF7 0x12"), DF kind `node` 📶. Live at
+  + SF + sync word ("LoRa 926.901 SF7 0x12"), DF kind `node` 📶; SEPARATION
+  BY CODE (`multichannel`: every decoded symbol de-spread with its own chirp
+  on every antenna -> the packet's own covariance, `kp::Talker::cov` -
+  never dropped / mixed when transmitters overlap; two gateways behind one
+  "GW" ID split into "#1 / #2" by their signatures). Live at
   927.5 MHz the search found the private SF7 BW250 sync-0x12 system on 926.9
   / 927.4 MHz whose "SF9 BW500" bursts had never decoded (same chirp slope)
   and learned both channels) and wildlife (wildlife tracking collars /

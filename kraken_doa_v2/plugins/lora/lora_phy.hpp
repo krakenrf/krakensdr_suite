@@ -45,6 +45,12 @@ struct Frame {
     int64_t start_sample = 0;
     int64_t end_sample = 0;
     int nsym = 0;
+    // separation by code (Despreader): each de-spread symbol's value on every
+    // antenna - sym_y[i * ant + k] - and how many of the packet's symbols there
+    // were to take them from (ant 0 = none)
+    int ant = 0;
+    std::vector<cf> sym_y;
+    int sym_total = 0;
 };
 
 // A preamble + SFD found (the header may still fail): what the plan-free
@@ -57,7 +63,33 @@ struct Detect {
     bool header_ok = false;
     int sf = 0;
     bool inverted = false;
+    // the preamble + sync symbols de-spread on every antenna (Despreader)
+    int ant = 0;
+    std::vector<cf> sym_y;
 };
+
+class LoraRx;
+
+// Separation by CODE: a demodulated symbol de-spread on every antenna with
+// its own chirp. The receiver knows each symbol's window (ring index a, one
+// symbol long), the bin it decided and the fractional offset it de-rotated
+// by; the despreader correlates every antenna's input with exactly that
+// chirp - y[k] = the antenna's complex amplitude of THIS transmitter's
+// symbol (another LoRa signal - other SF / BW, or the same SF at another
+// timing / offset - stays spread over all bins). Returns the antennas
+// filled (0 = not available: no antennas, or the samples are gone).
+class Despreader {
+public:
+    virtual ~Despreader() = default;
+    virtual int despread(const LoraRx& rx, int64_t a, int bin, double frac, cf* y) = 0;
+    virtual int antennas() const = 0;
+};
+// a packet's de-spreading is held to about this much of its airtime (s; the
+// input rate x every antenna per second): longer packets take every k-th symbol
+constexpr double DESPREAD_BUDGET_S = 0.1;
+// ... but at least this many symbols (an SF12 BW125 symbol is 33 ms)
+constexpr int DESPREAD_MIN_SYMS = 12;
+constexpr int DESPREAD_PRE = 8;   // preamble up-chirps de-spread (the last ones before the sync word)
 
 // One channel's resampled samples, shared by its receivers. calloc'd: a
 // large block comes as fresh zero pages from the OS, so a ring sized for the
@@ -110,6 +142,8 @@ public:
 
     // every preamble + SFD found is appended here (nullptr = not logged)
     std::vector<Detect>* det_log = nullptr;
+    // de-spreads the packet's symbols on every antenna (nullptr = none)
+    Despreader* desp = nullptr;
     // frames without a payload CRC need (almost) every payload codeword's
     // parity to hold (frames from unknown transmitters: the plan-free search)
     bool strict_nocrc = false;
@@ -150,7 +184,13 @@ private:
         int resid = 0;
         bool ldro = false, has_crc = false, low_sf = false;
         int cr = 1, length = 0, sf_app = 7, need_nibbles = 0;
+        // separation by code: the de-spread symbols (every stride-th, ym antennas each)
+        std::vector<cf> ys;
+        int ym = 0, stride = 1, sym_i = 0, sym_total = 0;
     } pk_;
+    // a symbol to de-spread: its window, decided bin, fractional de-rotation
+    struct SymRef { int64_t a; int bin; double frac; };
+    void despread_into(const SymRef& r, std::vector<cf>& ys, int* ym);
     int continue_packet(std::vector<Frame>& out);
 
     // demod a symbol starting at absolute index `a` with the down/up chirp;

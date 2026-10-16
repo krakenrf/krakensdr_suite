@@ -1,0 +1,19 @@
+{
+  "rf_hz": 927.5e6, "seconds": 10, "channels": 5, "radius_m": 0.12, "seed": 23,
+  "noise_lsb": 2.0, "station": [-41.0, 174.0], "wave_c64": true,
+  "sources": [
+    {"proto": "lorawan", "name": "GW 927.5 #1", "bearing": 60,
+     "sf": 10, "bw": 500000, "cr": 1, "freq_mhz": 927.5, "level_db": 6, "df_hz": 1200,
+     "period_s": 1.2, "t0": 0.2, "mtype": "unconf_dn",
+     "devaddr": "0x00F6D6E1", "fcnt": 2616, "fport": 204, "payload_len": 60},
+
+    {"proto": "lorawan", "name": "GW 927.5 #2", "bearing": 220,
+     "sf": 10, "bw": 500000, "cr": 1, "freq_mhz": 927.5, "level_db": 3, "df_hz": -900,
+     "period_s": 1.2, "t0": 0.8, "mtype": "unconf_dn",
+     "devaddr": "0x0123ABCD", "fcnt": 77, "fport": 1, "payload_len": 40},
+
+    {"proto": "lora", "name": "LoRa 927.000 SF8 0x12", "bearing": 300,
+     "sf": 8, "bw": 125000, "cr": 1, "freq_mhz": 927.0, "level_db": -2,
+     "period_s": 0.7, "t0": 0.3, "crc": true, "sync_word": 18, "bytes": [65, 7]}
+  ]
+}

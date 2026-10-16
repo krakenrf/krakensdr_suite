@@ -22,6 +22,7 @@ SCENE (JSON):
 {
   "rf_hz": 921.8e6,  "seconds": 6, "channels": 5, "radius_m": 0.12,
   "seed": 1, "noise_lsb": 2.0, "station": [-41.0, 174.0],
+  "wave_c64": false,   (true: waveforms held as complex64 - long busy scenes)
   "sources": [
     {"proto": "meshtastic", "name": "!a1b2c3d4", "bearing": 60,
      "sf": 11, "bw": 250000, "cr": 1, "freq_mhz": 921.8, "level_db": 14,
@@ -465,6 +466,9 @@ def main():
     st = scene.get("station", [-41.0, 174.0])
     phi = -2 * np.pi * np.arange(M) / M
     by_name = {s.get("name"): s for s in scene["sources"]}
+    # "wave_c64": the packets' waveforms kept as complex64 (half the memory -
+    # a busy band holds seconds of 2.4 MHz packets); off = complex128 as before
+    wdt = np.complex64 if scene.get("wave_c64") else np.complex128
 
     waves, truth = [], []
     for si, s in enumerate(scene["sources"]):
@@ -499,7 +503,7 @@ def main():
             k0 = int(round(t * FS))
             kk = np.arange(L)
             w = wav1 * amp * np.exp(1j * (rng.uniform(0, 2 * np.pi) + 2 * np.pi * off * (k0 + kk) / FS))
-            waves.append((k0, w.astype(np.complex128), steer))
+            waves.append((k0, w.astype(wdt), steer))
             sent.append([round(t, 6), round(fch / 1e6, 4), len(payload)])
             t += period
         tr = {"name": s.get("name", "s%d" % si), "proto": s.get("proto", "lora"), "bearing": b,
