@@ -5,7 +5,7 @@
 // transcribe/setup.sh; nothing leaves the machine).
 //
 // Per VFO ("Transcribe" on its card, DecimatorInstance::transcribe, saved in
-// the VFO snapshot). The audio is the VFO's own - not the Audio Src's - so
+// the VFO snapshot). The audio is the VFO's own - not the 🔊 live audio - so
 // any number of VFOs are transcribed at once, whatever is being listened to:
 //  - a VFO with its digital decoder on: the decoder's voice (P25 / DMR /
 //    D-STAR / NXDN / TETRA vocoder output, dig::set_voice_tap_handler), cut

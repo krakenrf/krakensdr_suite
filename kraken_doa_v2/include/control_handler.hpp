@@ -50,11 +50,13 @@ public:
     // which keep reporting the OLD RF for a moment after a commanded retune
     static bool follow_wideband_ring(uint64_t rf_hz, bool from_stream = false);
 
-    // Point the FM demodulator at decimator `id` the way SET_FM_DECIMATOR does
-    // (its demod mode applied, audio reset, browsers told) - without saving the
-    // VFO snapshot (the continuous scanner's switches are temporary). false =
-    // no such decimator. Thread-safe.
-    static bool switch_fm_source(int id);
+    // 🔊 The VFOs heard in the live audio: exactly `ids` (none = silence) /
+    // only `id` (what SET_FM_DECIMATOR does) - their channels in the audio
+    // mixer follow, browsers told (decimator_info) - without saving the VFO
+    // snapshot (the continuous scanner's switches are temporary). false = no
+    // such decimator (nothing changed). Thread-safe.
+    static bool set_audio_vfos(const std::vector<int>& ids);
+    static bool listen_only(int id);
 
     // A decoder plugin of VFO `vfo` asks to put rf_hz at the VFO's centre
     // (kp::Host::tune): checked now (mode, tuner range), then FREQ (coherent)

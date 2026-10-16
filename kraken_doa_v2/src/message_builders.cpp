@@ -3,6 +3,7 @@
 #include "config.hpp"
 #include "signal_processing/fft_processor.hpp"
 #include "signal_processing/fm_demodulator.hpp"
+#include "signal_processing/audio_mixer.hpp"
 #include "signal_processing/beamformer.hpp"
 #include "decimator_manager.hpp"
 #include "scanner_manager.hpp"
@@ -330,11 +331,12 @@ string MessageBuilders::build_fft_message() {
 }
 
 string MessageBuilders::build_audio_message() {
-    if (!fm_enabled.load() || !fm_demod.is_processing_enabled()) {
+    if (!fm_enabled.load() || !audio_mixer.is_processing_enabled()) {
         return string();
     }
 
-    auto opus_packet = fm_demod.get_opus_packet(AUDIO_SAMPLES_PER_PACKET);
+    // every VFO heard, mixed (audio_mixer.hpp)
+    auto opus_packet = audio_mixer.get_opus_packet(AUDIO_SAMPLES_PER_PACKET);
     if (opus_packet.empty()) {
         return string();
     }
@@ -565,9 +567,14 @@ string MessageBuilders::build_system_status_message() {
     web_mapper.appendStatusJson(wm_json);    // -> "web_mapper":{...}
     json << "," << wm_json;
 
-    // Include beamforming status (reported for the FM-source decimator, which is
-    // the audible/primary one; mode/MVDR are shared across all decimators).
-    int bf_fm_dec_id = decimator_manager.getFMDecimatorId();
+    // Include beamforming status (reported for the first VFO heard - the
+    // audible/primary one, else the first VFO; mode/MVDR are shared across all
+    // decimators).
+    int bf_fm_dec_id = decimator_manager.primaryAudioVfo();
+    if (bf_fm_dec_id < 0) {
+        const auto all = decimator_manager.getAllDecimators();
+        if (!all.empty() && all.front()) bf_fm_dec_id = all.front()->id;
+    }
     auto bf_fm_inst = decimator_manager.getDecimator(bf_fm_dec_id);
     json << "},\"beamforming_status\":{";
     json << "\"enabled\":" << (beamforming_enabled.load() ? "true" : "false");
@@ -775,7 +782,9 @@ string MessageBuilders::build_decimator_info_message() {
              << ",\"bandwidth_index\":" << info.bandwidth_index
              << ",\"bandwidth_mhz\":" << info.bandwidth_mhz
              << ",\"enabled\":" << (info.enabled ? "true" : "false")
-             << ",\"is_fm_source\":" << (info.is_fm_source ? "true" : "false")
+             << ",\"audio\":" << (info.audio_out ? "true" : "false")
+             // the old single "Audio Src" (pages from before the speaker toggles)
+             << ",\"is_fm_source\":" << (info.audio_out ? "true" : "false")
              << ",\"demod_mode\":\"" << DecimatorManager::demodModeToString(info.demod_mode) << "\""
              << ",\"squelch_enabled\":" << (info.squelch_enabled ? "true" : "false")
              << ",\"squelch_level\":" << info.squelch_level

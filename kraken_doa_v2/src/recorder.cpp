@@ -157,7 +157,7 @@ struct Settings {
     std::string mode = "iq";        // iq | audio
     std::string iq = "full";        // full | band
     int duration_s = 30;            // 0 = no time limit
-    int band_vfo = -1;              // -1 = the Audio Src VFO
+    int band_vfo = -1;              // -1 = the VFO you listen to (the first 🔊)
     std::string aformat = "wav";    // wav | opus
     int arate = 48000;              // WAV
     int akbps = 32;                 // Opus
@@ -701,7 +701,15 @@ Need need_locked() {
     if (multi_tuner_mode()) n.why = "IQ recording needs coherent mode (the antennas as one array)";
     else if (playback::active()) n.why = "not during a playback";
     if (s.iq == "band") {
-        n.vfo = s.band_vfo >= 0 ? s.band_vfo : decimator_manager.getFMDecimatorId();
+        n.vfo = s.band_vfo;
+        if (n.vfo < 0) {
+            // the VFO you listen to (the first 🔊), else the first VFO
+            n.vfo = decimator_manager.primaryAudioVfo();
+            if (n.vfo < 0) {
+                const auto all = decimator_manager.getAllDecimators();
+                if (!all.empty() && all.front()) n.vfo = all.front()->id;
+            }
+        }
         auto inst = decimator_manager.getDecimator(n.vfo);
         if (!inst || !inst->decimator) {
             if (n.why.empty()) n.why = "no VFO D" + std::to_string(n.vfo);

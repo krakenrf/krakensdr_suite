@@ -33,7 +33,8 @@ private:
     std::atomic<bool> initial_fill_complete{false};
 
     // Opus encoder for audio compression
-    OpusEncoder* opus_encoder = nullptr;
+    OpusEncoder* opus_encoder = nullptr;   // made by the first get_opus_packet()
+    bool opus_failed_ = false;
     std::vector<opus_int16> opus_input_buffer;  // int16 input for Opus
     std::vector<unsigned char> opus_output_buffer;  // Encoded Opus packet
     static constexpr int OPUS_BITRATE = 32000;  // 32 kbps (good quality for FM)

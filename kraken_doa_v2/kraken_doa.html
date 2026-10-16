@@ -819,6 +819,18 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 #decimator-list .dec-item.sel {outline:2px solid var(--dec-col, #4fc3f7);outline-offset:-1px;box-shadow:0 0 8px var(--dec-col, #4fc3f7)}
 #decimator-list .dec-header {display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
 #decimator-list .dec-header h4 {margin:0;font-size:13px}
+/* 🔊 the VFO's speaker toggle next to its D<n> title: green = heard in the
+   live audio, red + cross = muted; any number of VFOs at once */
+#decimator-list .dec-title {display:flex;align-items:center;gap:6px}
+#decimator-list .dec-spk {display:inline-flex;align-items:center;justify-content:center;width:24px;height:22px;padding:0;
+  background:transparent;border:1px solid transparent;border-radius:4px;cursor:pointer;line-height:0}
+#decimator-list .dec-spk svg {width:18px;height:18px;display:block}
+#decimator-list .dec-spk.on {color:#4caf50;border-color:rgba(76,175,80,.45);background:rgba(76,175,80,.12)}
+#decimator-list .dec-spk.off {color:#ef5350;border-color:rgba(239,83,80,.35)}
+#decimator-list .dec-spk:hover {filter:brightness(1.25)}
+#decimator-list .dec-spk:focus-visible {outline:2px solid #4fc3f7;outline-offset:1px}
+/* the top bar's Audio is off: the toggles still show (and keep) the choice, dimmed */
+#decimator-list .dec-spk.mute-all {opacity:.55}
 #decimator-list .dec-row {margin:4px 0;font-size:12px;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
 #decimator-list .dec-row label {min-width:60px;color:#888}
 #decimator-list input[type="text"],#decimator-list input[type="number"],#decimator-list select {background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:3px 5px;border-radius:2px;font-size:12px}
@@ -4054,7 +4066,7 @@ function applySyncCmdInner(cmd) {
     applyUiSetting(v);
   }
   // Anything else (FREQ/GAIN/CHANNEL/AVG sync via the FFT header; decimator,
-  // FM-source and scanner changes have their own JSON broadcasts) is ignored.
+  // VFO audio (🔊) and scanner changes have their own JSON broadcasts) is ignored.
 }
 
 // Display preferences relayed via the backend (UI:<KEY>:<value>)
@@ -4937,10 +4949,11 @@ function updatePlotTitle() {
   if(widebandEnabled) {
     $id('fpt').textContent='Wideband Scan (~'+widebandCoverageMhz()+' MHz coverage, all '+activeNumElements+' tuners)';
   } else {
-    // Get demod mode from FM source decimator
-    const fmDec = decimatorInfo.find(d => d.is_fm_source);
-    const currentDemod = fmDec ? fmDec.demod_mode : 'WBFM';
-    $id('fpt').textContent='Channel '+activeChannel+(fmEnabled?' ('+currentDemod+')':'');
+    // The demods of the VFOs heard (🔊)
+    const heard = decimatorInfo.filter(decAudioOn);
+    const what = heard.length === 1 ? heard[0].demod_mode :
+                 heard.length ? heard.map(d => 'D' + d.id + ' ' + d.demod_mode).join(', ') : 'no VFO heard';
+    $id('fpt').textContent='Channel '+activeChannel+(fmEnabled?' ('+what+')':'');
   }
 }
 
@@ -5277,6 +5290,7 @@ function tfm() {
   b.textContent=fmEnabled?'ON':'OFF';
   b.className='tb-btn '+(fmEnabled?'on':'off');
   updatePlotTitle();
+  decSpkRenderAll();   // the VFO speakers dim while the audio is off
   send('FM:'+(fmEnabled?'1':'0'));
 }
 
@@ -6672,6 +6686,8 @@ function refreshDecimatorPanelItem(id) {
   const dec = decimatorInfo.find(d => d.id === id);
   if (!dec) return;
 
+  decSpkRender(dec);
+
   // Update actual frequency input - unless the user is typing in it (a
   // refresh from another browser's tuning, a pan or the center frequency
   // used to replace the half-typed value)
@@ -6695,8 +6711,53 @@ function refreshDecimatorPanelItem(id) {
   }
 }
 
-function setFMDecimator(id) {
-  send('SET_FM_DECIMATOR:' + id);
+// 🔊 The VFOs heard in the live audio (any number at once - the receiver
+// mixes them into the one audio stream): the speaker toggle next to each
+// card's D<n>. dec.audio (older receivers: is_fm_source, a single VFO)
+// (a function, not consts: tfm() can run before this part of the script)
+function decSpkIcon(on) {
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h4l5-4.5v15L7 15H3z" fill="currentColor"/>' +
+    (on ? '<path d="M15.5 8.6a4.8 4.8 0 0 1 0 6.8M18.4 5.7a8.9 8.9 0 0 1 0 12.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'
+        : '<path d="M15.5 9l6 6M21.5 9l-6 6" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>') +
+    '</svg>';
+}
+
+function decAudioOn(dec) { return !!(dec && (dec.audio !== undefined ? dec.audio : dec.is_fm_source)); }
+
+function decSpkRender(dec) {
+  const b = $id('dec-spk-' + dec.id);
+  if (!b) return;
+  const on = decAudioOn(dec);
+  const cls = 'dec-spk ' + (on ? 'on' : 'off') + (fmEnabled ? '' : ' mute-all');
+  if (b.className !== cls) b.className = cls;
+  if (b.dataset.on !== String(on)) {
+    b.dataset.on = String(on);
+    b.innerHTML = decSpkIcon(on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+  const t = (on ? `D${dec.id} is heard - click to mute it` : `D${dec.id} is muted - click to hear it`) +
+            ' (several VFOs can be heard at once)' + (fmEnabled ? '' : '. The audio is off in the top bar');
+  if (b.title !== t) { b.title = t; b.setAttribute('aria-label', t); }
+}
+
+function decSpkRenderAll() { decimatorInfo.forEach(decSpkRender); }
+
+function setVfoAudio(id, on) {
+  const dec = decimatorInfo.find(d => d.id === id);
+  if (!dec) return;
+  send('AUDIO_VFO:' + id + ':' + (on ? '1' : '0'));
+  // shown at once; the receiver's decimator_info confirms it
+  dec.audio = on;
+  dec.is_fm_source = on;
+  decSpkRender(dec);
+  updatePlotTitle();
+  // asked to hear one while the top bar's Audio is off: switch it on
+  if (on && !fmEnabled) tfm();
+}
+
+function toggleVfoAudio(id) {
+  const dec = decimatorInfo.find(d => d.id === id);
+  if (dec) setVfoAudio(id, !decAudioOn(dec));
 }
 
 function setDecimatorDemodMode(id, mode) {
@@ -6816,7 +6877,6 @@ function updateDecimatorList(info) {
   const prev = decimatorInfo;
   const sameStructure = decListMode === opMode && prev.length === info.length && info.every((d, i) =>
     prev[i] && prev[i].id === d.id &&
-    !!prev[i].is_fm_source === !!d.is_fm_source &&
     prev[i].demod_mode === d.demod_mode &&
     !!prev[i].squelch_enabled === !!d.squelch_enabled &&
     (prev[i].squelch_method || 'FFT') === (d.squelch_method || 'FFT') &&
@@ -6870,7 +6930,6 @@ function updateDecimatorList(info) {
     // clicking anywhere on the card selects the VFO (its controls still work)
     decDiv.addEventListener('pointerdown', () => selectDecimator(dec.id));
 
-    const fmChecked = dec.is_fm_source ? 'checked' : '';
     const bgColor = getDecimatorColor(dec.id);
 
     // Calculate actual frequency for display
@@ -6886,7 +6945,10 @@ function updateDecimatorList(info) {
 
     decDiv.innerHTML = `
       <div class="dec-header">
-        <h4 style="color:${bgColor}">D${dec.id}</h4>
+        <span class="dec-title">
+          <h4 style="color:${bgColor}">D${dec.id}</h4>
+          <button type="button" id="dec-spk-${dec.id}" onclick="toggleVfoAudio(${dec.id})"></button>
+        </span>
         <span style="display:flex;gap:4px">
           <button onclick="sfNewFromVfo(${dec.id})" class="btn sm" title="Save this VFO's frequency (📻 Saved Frequencies)">☆ Save</button>
           <button onclick="removeDecimator(${dec.id})" class="btn sm" style="background:#b71c1c">✕</button>
@@ -6922,12 +6984,6 @@ function updateDecimatorList(info) {
           <option value="AM" ${dec.demod_mode === 'AM' ? 'selected' : ''}>AM</option>
           <option value="DIGITAL" ${dec.demod_mode === 'DIGITAL' ? 'selected' : ''} title="Decoded digital voice (P25 / DMR / D-STAR / TETRA / NXDN) from this VFO's digital decoder">Digital</option>
         </select>
-      </div>
-      <div class="dec-row">
-        <label>
-          <input type="radio" name="fm-source" ${fmChecked} onchange="if(this.checked) setFMDecimator(${dec.id})">
-          Audio Src
-        </label>
       </div>
       <div class="dec-row" style="border-top:1px solid #444;padding-top:6px;margin-top:4px">
         <label style="display:flex;align-items:center;gap:4px" title="Decode the digital signal in this VFO (P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS, ... - any decoder plugin). Several VFOs can decode at once; each gets a tab in the panel under the waterfall.">
@@ -6974,6 +7030,7 @@ function updateDecimatorList(info) {
 
     listDiv.appendChild(decDiv);
   });
+  decSpkRenderAll();
   digRenderCards();
   v2tRenderCards();
   decHighlightSelected();
@@ -7298,7 +7355,7 @@ function connect() {
             // Legacy DEMOD_MODE reply (this UI sends the per-VFO
             // SET_DECIMATOR_DEMOD instead). If bandwidth_index is provided, update the FM decimator's bandwidth selector
             if (msg.demod_mode.bandwidth_index !== undefined) {
-              const fmDecId = decimatorInfo.find(d => d.is_fm_source)?.id;
+              const fmDecId = decimatorInfo.find(decAudioOn)?.id;
               if (fmDecId !== undefined) {
                 const bwSelect = $id('dec-bw-' + fmDecId);
                 if (bwSelect) {
@@ -7386,9 +7443,9 @@ function connect() {
             applyScannerRunning(!!msg.scanner_started);
           }
           else if(msg.fm_decimator) {
-            // FM audio source moved to another VFO (possibly by another browser)
+            // An older receiver's single audio source moved to another VFO
             const id = msg.fm_decimator.id;
-            updateDecimatorList(decimatorInfo.map(d => ({...d, is_fm_source: d.id === id})));
+            updateDecimatorList(decimatorInfo.map(d => ({...d, audio: d.id === id, is_fm_source: d.id === id})));
           }
           // Demod mode is now per-decimator - see msg.decimator_demod handler above
           else if(msg.continuous_scanner) {
@@ -7659,11 +7716,11 @@ function connect() {
           lastUpdate: Date.now()
         };
 
-        // Update the steering/SNR readouts from the FM-source decimator only
+        // Update the steering/SNR readouts from the first VFO heard only
         // (the audible/primary one), so the status panel stays unambiguous.
         // A late-arriving beamformed-FFT packet must NOT force enabled:true -
         // that flipped the toggle back ON right after the user disabled it.
-        const fmDec = decimatorInfo.find(d => d.is_fm_source);
+        const fmDec = decimatorInfo.find(decAudioOn) || decimatorInfo[0];
         if (!fmDec || fmDec.id === bfDecimatorId) {
           updateBeamformingStatus({
             steering_angle: bfSteeringAngle,
@@ -9677,13 +9734,18 @@ function addTouchHandlers(el, down, move, up) {
 
   function digSetOptFor(id, key, val) { send('DIGITAL_OPT:' + id + ':' + key + ':' + val); }
 
-  // Make this VFO the audio source with the Digital demodulator (and audio on)
+  // Listen: hear this VFO (🔊, with any others heard) with the Digital
+  // demodulator, audio on; while listening: mute it again
   function digListenFor(id) {
     const d = digDec(id);
     if (!d) return;
-    if (!d.is_fm_source) setFMDecimator(d.id);
-    if (d.demod_mode !== 'DIGITAL') setDecimatorDemodMode(d.id, 'DIGITAL');
-    if (!fmEnabled) tfm();
+    if (decAudioOn(d) && d.demod_mode === 'DIGITAL' && fmEnabled) {
+      setVfoAudio(d.id, false);
+    } else {
+      if (!decAudioOn(d)) setVfoAudio(d.id, true);
+      if (d.demod_mode !== 'DIGITAL') setDecimatorDemodMode(d.id, 'DIGITAL');
+      if (!fmEnabled) tfm();
+    }
     setTimeout(digRenderAll, 300);
   }
 
@@ -10488,7 +10550,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const mode = d ? (d.digital_mode || 'OFF') : 'OFF';
     const st = digStatus[id];
     const o = (d && d.digital_opts) || {};
-    const listening = d && d.is_fm_source && d.demod_mode === 'DIGITAL' && fmEnabled;
+    const listening = d && decAudioOn(d) && d.demod_mode === 'DIGITAL' && fmEnabled;
     const p = digOptionsPlugin(mode, st);
     const vals = o.plugin || {};
     let opts = '';
@@ -10532,7 +10594,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     return `<div class="info-dec-settings dig-vfo-row">` +
         `<span class="dig-vfo" style="border-color:${getDecimatorColor(id)}" title="${digEsc(txt)}"><span style="color:${col}">●</span> D${id} · ${digMhzOf(id)} MHz</span>` +
         `<label>Mode: <select class="dig-mode-sel" data-vfo="${id}" onchange="digSetModeFor(${id}, this.value)">${digModeOptions(mode)}</select></label>` +
-        (hasVoice ? `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="Play this VFO's decoded digital voice: makes it the audio source with the Digital demodulator">${listening ? '🔊 Listening' : '🔊 Listen'}</button>` : '') +
+        (hasVoice ? `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="${listening ? 'Hearing this VFO\'s decoded digital voice - click to mute it' : 'Play this VFO\'s decoded digital voice: hears it (🔊, with any other VFOs heard) with the Digital demodulator'}">${listening ? '🔊 Listening' : '🔊 Listen'}</button>` : '') +
         (voice ? `<span class="v">${digEsc(voice)}</span>` : '') +
         opts +
         `<label title="Also log the messages a control channel repeats constantly (system broadcasts, Aloha / acknowledgement CSBKs, GPS sentences)"><input type="checkbox" ${o.verbose ? 'checked' : ''} onchange="digSetOptFor(${id}, 'verbose', this.checked ? 1 : 0)"> Log all</label>` +
@@ -19562,7 +19624,7 @@ function recRenderVfos() {
   }
   if (sel && document.activeElement !== sel) {
     const want = String(st.settings.band_vfo);
-    let h = '<option value="-1">The Audio Src VFO</option>';
+    let h = '<option value="-1">The VFO you listen to (the first 🔊)</option>';
     for (const d of list) {
       const bw = (typeof bwo !== 'undefined' && bwo[d.bandwidth_index]) ? bwo[d.bandwidth_index].bandwidth * 1000 : 0;
       h += '<option value="' + d.id + '">D' + d.id + ' ' + mhz(d) + ' MHz · ' + (bw >= 1000 ? (bw / 1000) + ' MHz' : bw + ' kHz') + '</option>';

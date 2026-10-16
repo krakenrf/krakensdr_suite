@@ -239,7 +239,7 @@ Edit `include/config.hpp`:
   outside coherent only update what is restored. It broadcasts
   `{"operating_mode":{"mode","tuners":[{f,g}]}}` (also sent on connect).
   The coherent `active_channel` (CH selector) is saved on leaving coherent
-  and put back on return (the FM source VFO moves it to its tuner meanwhile).
+  and put back on return (the first VFO heard - 🔊 - moves it to its tuner meanwhile).
   The handler saves the mode itself (`SettingsStore::record`): OPERATING_MODE
   is in `is_query_command` (no sync_cmd echo), which also skips the generic
   save - it was never remembered, so each cold start the replayed default
@@ -389,7 +389,7 @@ Edit `include/config.hpp`:
   FM audio gets) with `push()`; a worker thread ("digital-dec") per decoder
   drives the plugin processes, so the pipeline never waits. Queue capped at
   1 s (oldest dropped, `dropped` in the status). In FM/digital-only mode (DoA
-  and beamforming off) only the FM source and the VFOs with a decoder are
+  and beamforming off) only the VFOs heard (🔊) and the VFOs with a decoder are
   decimated, on one channel (`fm_only` in data_receiver.cpp)
 - Modes (`dig::Mode`): OFF, AUTO, PLUGIN (+ plugin id). Wire / snapshot form
   `OFF`, `AUTO`, `PLUGIN:<id>`; `parse_mode_string()` maps the old protocol
@@ -2469,7 +2469,7 @@ Edit `include/config.hpp`:
   also takes spans / spatial reports only from its VFO's current plugin
   now, `TalkerDoa::set_plugin`): `OPERATING_MODE:coherent`, `DECIMATORS:0|
   <offset>,<bw idx>,<demod>,0,-60,0,0,PLUGIN:<id>,,0,0` (one VFO, squelch
-  off, Audio Src), `DOA:1`, `TOPOLOGY:UCA`, `RADIUS:<scene mm>`, the entry's
+  off, heard), `DOA:1`, `TOPOLOGY:UCA`, `RADIUS:<scene mm>`, the entry's
   commands (its plugin options as DIGITAL_OPT) - all via
   `handle_websocket_message` with `internal()` set. Switching entries while
   playing keeps the sandbox (the user's state from before the first one)
@@ -2655,7 +2655,7 @@ Edit `include/config.hpp`:
   `{"recorder":{"notice":..}}` to every page): settings (schema, after the
   web mapper) `RECORDER_DIR / _MODE iq|audio / _IQ full|band / _DURATION 0|
   10|30|60|120|300|600|1800|3600|7200|21600|43200|86400 / _BAND_VFO -1 (the
-  Audio Src VFO)|id / _AUDIO_FORMAT wav|opus / _AUDIO_RATE 48000|16000|8000 /
+  first VFO heard, 🔊, else the first VFO)|id / _AUDIO_FORMAT wav|opus / _AUDIO_RATE 48000|16000|8000 /
   _AUDIO_KBPS 16|24|32|64|96 / _AUDIO_SKIP / _AUDIO_VFOS all|ids /
   _LOCATION` (dir / mode / iq / band VFO / format refused while recording);
   actions `RECORDER_START / _STOP / _LIST / _DELETE:<name> / _SPEEDTEST /
@@ -2833,7 +2833,7 @@ Edit `include/config.hpp`:
   sets the decoder's voice tap; DECIMATORS snapshot field 11, optional -
   older files load with it off). `anyTranscribeActive()` makes the pipeline
   decimate (in fm_only mode the VFO counts as `single_wanted`)
-- Source = the VFO's own stream, not the Audio Src's: with its DIGITAL
+- Source = the VFO's own stream, not what the 🔊 speakers play: with its DIGITAL
   DECODER ON and the decoder decoding voice (`DigitalDecoder::takes_voice()`:
   the lead plugin's `kp::Info::voice`; Auto detect still searching: any of
   its plugins; set by the engine's housekeeping) the decoder's voice; a
@@ -4729,10 +4729,75 @@ Edit `include/config.hpp`:
   Riddle's KLM1023 frame, every aircraft 0.0 deg, positions 25-120 km at
   their bearings; end to end 6 / 6 at 0.0 deg
 
+**🔊 VFO audio - any number of VFOs heard at once (`src/signal_processing/audio_mixer.cpp`, the speaker toggle on each VFO card):**
+- The user's request (2026-10-17): the "Audio Src" radio button became a
+  speaker toggle next to each card's D0 / D1 ... title - green with sound
+  waves = heard, red with a cross = muted - and several VFOs can be heard at
+  once. `DecimatorInstance::audio_out` (atomic, per VFO) replaced
+  DecimatorManager's single `fm_decimator_id`: `setAudioVfo` /
+  `setAudioVfos` / `audioVfoIds` / `primaryAudioVfo` (the first VFO heard in
+  LIST order, -1 = none - where one VFO stands for "the one you listen to":
+  the beamforming readout, the recorder's band VFO -1, independent mode's
+  CH following the VFO's tuner). New VFOs start muted; the first VFO is
+  heard on a fresh start; removing the LAST VFO heard makes the first one
+  left heard (as the single source moved before) - not when every VFO had
+  been muted
+- Server-side mix, ONE audio stream: the pipeline queues an FM work item
+  per VFO heard per block (`DecimatedFMWorkItem::vfo_id`, queue cap 20 per
+  VFO); the FM thread feeds each into its OWN `AudioMixer::Channel` - an
+  `FMDemodulatorRobust` (demodulator, filters, levels and its 48 kHz ring),
+  rate and demod taken from the VFO block by block (so the old
+  `fm_demod.setDemodulatorMode / setInputSampleRate` calls in the control
+  handler are gone), its squelch (FFT / beamformed FFT / Digital, the old
+  FM-source code per VFO) and Digital demod (`pull_voice` of its decoder);
+  the 40 ms audio timer (`build_audio_message`) reads every channel's ring
+  (each with its own initial fill, exactly as the single source's) and SUMS
+  them, soft-limited above 0.95 (tanh) - one VFO open at a time (squelch)
+  plays at its own level - into one Opus encoder (32 kbit/s VBR, as
+  before): the page's player is unchanged. No VFO heard = encoded silence
+  (the stream keeps flowing). A channel not fed for `IDLE_MS` 3 s leaves
+  the mix (it comes back with the next block); a VFO muted is dropped at
+  once (`retain()`); FM:0 drops them all. `FMDemodulatorRobust` makes its
+  Opus encoder lazily now (only `get_opus_packet` uses it - the live
+  channels and the recorder's demodulators never encode)
+- Commands: `AUDIO_VFO:<id>:0|1` (the toggle; `is_query_command`, every
+  page gets `decimator_info`), `SET_FM_DECIMATOR:<id>` kept = hear only
+  that VFO (older pages / scripts); `decimator_info[]` carries `audio` and
+  still `is_fm_source` (= audio, for pages from before). Persisted in the
+  DECIMATORS snapshot's head: list positions "0,2", "-1" = none (was one
+  position; an older kraken_doa reads the first, "-1" as the first VFO; an
+  old "1" loads as only the second VFO). `ControlHandler::set_audio_vfos` /
+  `listen_only` (thread-safe, no snapshot save: the continuous scanner
+  listens only to the VFO it locks - `audio_before_` is put back at stop)
+- UI (kraken_doa.html, `decSpkRender` / `setVfoAudio` / `toggleVfoAudio`,
+  `decAudioOn(d)` = `d.audio`, older receivers `is_fm_source`): an inline
+  SVG button `#dec-spk-<id>` (`.dec-spk.on` #4caf50 / `.off` #ef5350,
+  aria-pressed, a tooltip), shown at once and confirmed by the receiver's
+  decimator_info; refreshed in place (not part of updateDecimatorList's
+  structure check). The top bar's Audio off dims them (`.mute-all`, said in
+  the tooltip); clicking a muted speaker while it is off switches the audio
+  on too. The decoder tab's 🔊 Listen adds the VFO (Digital demod), "🔊
+  Listening" mutes it again. The spectrum title lists the VFOs heard ("D0
+  NBFM, D2 AM"). The recorder's band VFO default reads "The VFO you listen
+  to (the first 🔊)"
+- Tests (job scratch 46eef211, test build on 5708x, fake heimdall with FM
+  tones 1 kHz at -300 kHz and 2.5 kHz at +500 kHz - `--f2 / --tone2`):
+  t_ma.py decodes the real Opus stream (libopus via ctypes) and measures
+  both tones: D0 only / both (level = sum, not halved) / D1 only / none
+  (silence, packets flowing) / D1 squelch closed / SET_FM_DECIMATOR / FM:0
+  (no packets) + FM:1 / restart restores "0,1" / an old "1|" snapshot / the
+  last VFO heard removed / unknown VFO refused - 23 / 23; t_ma2.py DoA off
+  (fm_only, one channel) and beamforming on (incl. a 10 kHz VFO's bursty
+  FD-DAS output) - 5 / 5, no ring under- / overruns; t_ma_ui.py (headless
+  Chromium, real clicks): speakers green / red with the right icons next
+  to the title, no radio buttons, title, another client's change followed,
+  audio-off dimming + click-to-hear, Listen, an older receiver's
+  is_fm_source - 22 / 22
+
 **Digital voice (`plugins/lib/dig_vocoder.cpp`, Demod "Digital"):**
 - `DemodulatorMode::DIGITAL`: the FM thread still runs the FM demodulator
   (as NBFM - `setDemodulatorMode` maps it) only because its output length
-  clocks the audio stream; for a DIGITAL Audio Src VFO the samples are then
+  clocks the audio stream; for every DIGITAL VFO heard (🔊) the samples are then
   replaced by `DigitalDecoder::pull_voice()` (silence when there is none) and
   squelch is skipped. `pull_voice` also marks the voice "wanted" for 0.5 s -
   the lead plugin gets VOICE_WANTED and runs its vocoder only then.
@@ -5136,7 +5201,7 @@ mode change): RF AGC tau 50 ms, envelope AGC tau 0.5 s, DC blocker 30 Hz.
 Fixed per-sample constants put their corners at kHz at wide VFOs and stripped
 the AM audio's lows.
 
-**FM only (DoA and beamforming off):** only the FM source VFO runs, decimating
+**FM only (DoA and beamforming off):** only the VFOs heard (🔊) run (+ those with a decoder / Transcribe / audio recording), decimating
 only the listened-to channel (squelch reads the main FFT, not decimated data),
 and the receiver converts only that channel.
 

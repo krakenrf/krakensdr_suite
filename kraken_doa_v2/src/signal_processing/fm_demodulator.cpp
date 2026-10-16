@@ -15,26 +15,9 @@ FMDemodulatorRobust::FMDemodulatorRobust() : audio_ring_buffer(AUDIO_RING_BUFFER
     setupAudioProcessing(input_sample_rate.load());
     recreateFilters();
 
-    // Initialize Opus encoder (48 kHz, mono, VOIP application for low latency)
-    int error;
-    opus_encoder = opus_encoder_create(AUDIO_SAMPLE_RATE, 1, OPUS_APPLICATION_AUDIO, &error);
-    if (error != OPUS_OK || !opus_encoder) {
-        std::cerr << "Failed to create Opus encoder: " << opus_strerror(error) << std::endl;
-        opus_encoder = nullptr;
-    } else {
-        // Configure encoder for optimal FM audio quality and low latency
-        opus_encoder_ctl(opus_encoder, OPUS_SET_BITRATE(OPUS_BITRATE));
-        opus_encoder_ctl(opus_encoder, OPUS_SET_COMPLEXITY(OPUS_COMPLEXITY));
-        opus_encoder_ctl(opus_encoder, OPUS_SET_SIGNAL(OPUS_SIGNAL_MUSIC));  // Better for FM audio
-        opus_encoder_ctl(opus_encoder, OPUS_SET_VBR(1));  // Variable bitrate for better quality
-        opus_encoder_ctl(opus_encoder, OPUS_SET_VBR_CONSTRAINT(0));  // Unconstrained VBR
-
-        // Pre-allocate buffers
-        opus_input_buffer.resize(AUDIO_SAMPLES_PER_PACKET);
-        opus_output_buffer.resize(4000);  // Max Opus packet size
-
-        std::cout << "Opus encoder initialized: 48kHz mono, " << (OPUS_BITRATE/1000) << " kbps, complexity " << OPUS_COMPLEXITY << std::endl;
-    }
+    // The Opus encoder is made by the first get_opus_packet(): the live
+    // audio's per-VFO demodulators (audio_mixer.cpp) and the recorder's only
+    // demodulate - the mixer encodes the sum
 
     std::cout << "FM Demodulator initialized (WBFM mode, 75kHz deviation)" << std::endl;
     std::cout << "Default: " << (input_sample_rate.load()/1000.0f) << "kHz input" << std::endl;
@@ -691,6 +674,24 @@ int FMDemodulatorRobust::get_tuner_for_frequency(
 }
 
 std::vector<unsigned char> FMDemodulatorRobust::get_opus_packet(size_t requested_samples) {
+    if (!opus_encoder && !opus_failed_) {
+        // 48 kHz mono, tuned for FM audio quality and low latency
+        int error;
+        opus_encoder = opus_encoder_create(AUDIO_SAMPLE_RATE, 1, OPUS_APPLICATION_AUDIO, &error);
+        if (error != OPUS_OK || !opus_encoder) {
+            std::cerr << "Failed to create Opus encoder: " << opus_strerror(error) << std::endl;
+            opus_encoder = nullptr;
+            opus_failed_ = true;
+        } else {
+            opus_encoder_ctl(opus_encoder, OPUS_SET_BITRATE(OPUS_BITRATE));
+            opus_encoder_ctl(opus_encoder, OPUS_SET_COMPLEXITY(OPUS_COMPLEXITY));
+            opus_encoder_ctl(opus_encoder, OPUS_SET_SIGNAL(OPUS_SIGNAL_MUSIC));  // Better for FM audio
+            opus_encoder_ctl(opus_encoder, OPUS_SET_VBR(1));  // Variable bitrate for better quality
+            opus_encoder_ctl(opus_encoder, OPUS_SET_VBR_CONSTRAINT(0));  // Unconstrained VBR
+            opus_input_buffer.resize(AUDIO_SAMPLES_PER_PACKET);
+            opus_output_buffer.resize(4000);  // Max Opus packet size
+        }
+    }
     if (!opus_encoder) {
         return std::vector<unsigned char>();
     }

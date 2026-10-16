@@ -4,6 +4,7 @@
 #include "signal_processing/fft_processor.hpp"
 #include "signal_processing/noise_floor.hpp"
 #include "signal_processing/fm_demodulator.hpp"
+#include "signal_processing/audio_mixer.hpp"
 #include "signal_processing/beamformer.hpp"
 #include "decimator_manager.hpp"
 #include "scanner_manager.hpp"
@@ -101,7 +102,7 @@ condition_variable fft_work_available;
 
 SystemStats global_stats;
 
-FMDemodulatorRobust fm_demod;
+AudioMixer audio_mixer;
 
 ScannerManager scanner_manager;
 
@@ -381,9 +382,8 @@ int main(int argc, char* argv[]) {
             cout << "\n=== RAW DATA BUFFER STATUS ===" << endl;
             DataReceiver::print_raw_buffer_status();
 
-            if (fm_enabled.load() && fm_demod.is_processing_enabled()) {
-                size_t writes, reads, over, under;
-                fm_demod.get_buffer_stats(writes, reads, over, under);
+            if (fm_enabled.load() && audio_mixer.is_processing_enabled()) {
+                const auto ast = audio_mixer.stats();
 
                 float active_freq_mhz = ChannelManager::get_frequency(current_active) / 1e6f;
                 float active_gain_db = ChannelManager::get_gain(current_active);
@@ -392,8 +392,9 @@ int main(int argc, char* argv[]) {
                 cout << "Active_Ch=" << current_active << ", "
                      << "Freq=" << active_freq_mhz << "MHz, "
                      << "Gain=" << (active_gain_db < 0 ? "Auto" : to_string(active_gain_db) + "dB") << ", "
-                     << "FM_fill=" << fm_demod.get_buffer_fill() << "%, "
-                     << "Overruns=" << over << ", Signal=" << fm_demod.get_signal_strength() << endl;
+                     << "Audio=" << (ast.modes.empty() ? "none" : ast.modes) << ", "
+                     << "FM_fill=" << ast.fill << "%, "
+                     << "Overruns=" << ast.over << ", Signal=" << ast.signal << endl;
             }
 
             if (doa_enabled.load()) {

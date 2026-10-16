@@ -45,8 +45,8 @@ void DecimatorManager::initialize(int num_channels, int initial_decimators) {
         decimators.push_back(std::move(instance));
     }
 
-    // First decimator feeds FM by default
-    fm_decimator_id = 0;
+    // The first VFO is heard by default
+    if (!decimators.empty()) decimators.front()->audio_out = true;
 
     std::cout << "DecimatorManager initialized with " << initial_decimators
               << " decimator(s) for " << num_channels << " channels" << std::endl;
@@ -197,13 +197,20 @@ bool DecimatorManager::removeDecimator(int id) {
         // Mark as being deleted so other threads skip it for new work
         (*it)->being_deleted = true;
 
-        // If this was the FM source, switch to first available
-        if (fm_decimator_id == id && !decimators.empty()) {
-            for (const auto& dec : decimators) {
-                if (dec->id != id) {
-                    fm_decimator_id = dec->id;
-                    std::cout << "FM source switched to decimator " << dec->id << std::endl;
-                    break;
+        // The last VFO heard goes: the first one left is heard instead (as
+        // the single "Audio Src" moved before) - not when the user had muted
+        // every VFO
+        if ((*it)->audio_out.load()) {
+            bool other = false;
+            for (const auto& dec : decimators)
+                if (dec->id != id && dec->audio_out.load()) other = true;
+            if (!other) {
+                for (const auto& dec : decimators) {
+                    if (dec->id != id) {
+                        dec->audio_out = true;
+                        std::cout << "Audio now from decimator " << dec->id << std::endl;
+                        break;
+                    }
                 }
             }
         }
@@ -498,11 +505,44 @@ DemodulatorMode DecimatorManager::stringToDemodMode(const std::string& str) {
     return DemodulatorMode::WBFM;  // Default
 }
 
+bool DecimatorManager::setAudioVfo(int id, bool on) {
+    std::lock_guard<std::mutex> lock(decimator_mutex);
+    for (const auto& inst : decimators) {
+        if (inst->id == id) {
+            inst->audio_out = on;
+            return true;
+        }
+    }
+    return false;
+}
+
+void DecimatorManager::setAudioVfos(const std::vector<int>& ids) {
+    std::lock_guard<std::mutex> lock(decimator_mutex);
+    for (const auto& inst : decimators)
+        inst->audio_out = std::find(ids.begin(), ids.end(), inst->id) != ids.end();
+}
+
+std::vector<int> DecimatorManager::audioVfoIds() const {
+    std::lock_guard<std::mutex> lock(decimator_mutex);
+    std::vector<int> ids;
+    for (const auto& inst : decimators)
+        if (inst->audio_out.load(std::memory_order_relaxed)) ids.push_back(inst->id);
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
+int DecimatorManager::primaryAudioVfo() const {
+    // the first in LIST order, as the page's cards (and the snapshot) are
+    std::lock_guard<std::mutex> lock(decimator_mutex);
+    for (const auto& inst : decimators)
+        if (inst->audio_out.load(std::memory_order_relaxed)) return inst->id;
+    return -1;
+}
+
 std::vector<DecimatorManager::DecimatorInfo> DecimatorManager::getDecimatorInfoList() const {
     std::lock_guard<std::mutex> lock(decimator_mutex);
 
     std::vector<DecimatorInfo> info_list;
-    int fm_id = fm_decimator_id.load();
 
     for (const auto& inst : decimators) {
         DecimatorInfo info;
@@ -511,7 +551,7 @@ std::vector<DecimatorManager::DecimatorInfo> DecimatorManager::getDecimatorInfoL
         info.bandwidth_index = inst->bandwidth_index;
         info.bandwidth_mhz = inst->decimator->getBandwidthMhz();
         info.enabled = inst->enabled;
-        info.is_fm_source = (inst->id == fm_id);
+        info.audio_out = inst->audio_out.load(std::memory_order_relaxed);
         info.demod_mode = inst->demod_mode;
         info.squelch_enabled = inst->squelch_enabled.load(std::memory_order_relaxed);
         info.squelch_level = inst->squelch_level.load(std::memory_order_relaxed);

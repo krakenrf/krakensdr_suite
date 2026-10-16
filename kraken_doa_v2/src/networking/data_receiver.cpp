@@ -11,6 +11,7 @@
 #include "config.hpp"
 #include "signal_processing/fft_processor.hpp"
 #include "signal_processing/fm_demodulator.hpp"
+#include "signal_processing/audio_mixer.hpp"
 #include "signal_processing/shared_decimator.hpp"
 #include "signal_processing/beamformer.hpp"
 #include "signal_processing/noise_floor.hpp"
@@ -48,9 +49,10 @@ RawDataBuffer raw_data_buffer(150, 2048, milliseconds(10000));
 // (~110 ms at 2.4 MHz; data_receiver_thread)
 constexpr size_t PLAYBACK_MAX_QUEUED = 16;
 
-// Queue for decimated FM data
+// Queue for decimated FM data: one item per VFO heard (🔊) per block
 struct DecimatedFMWorkItem {
     vector<complex<float>> decimated_samples;
+    int vfo_id = -1;   // the VFO (audio_mixer channel)
     int channel_id;
     int decimation_used;
     float output_rate_hz;
@@ -647,12 +649,11 @@ void DataReceiver::decimation_processor_thread() {
             // every element for nothing.
             // (a VFO-band recording needs every antenna: decimated as with DoA on)
             const bool fm_only = !music_needs_processing && !beamforming_needs_processing && rec_band_vfo < 0;
-            const int fm_source_id = decimator_manager.getFMDecimatorId();
             vector<shared_ptr<DecimatorManager::DecimatorInstance>> active_decimators;
             for (auto& inst : decimator_manager.getAllDecimators()) {
                 // Skip disabled or being-deleted decimators
                 if (!inst || !inst->enabled || inst->being_deleted.load(std::memory_order_relaxed)) continue;
-                const bool single_wanted = (fm_needs_processing && inst->id == fm_source_id) ||
+                const bool single_wanted = (fm_needs_processing && inst->audio_out.load(std::memory_order_relaxed)) ||
                                            inst->digital_mode.load(std::memory_order_relaxed) != 0 ||
                                            inst->transcribe.load(std::memory_order_relaxed) ||
                                            (rec_audio && rec::audio_wants(inst->id));
@@ -676,12 +677,12 @@ void DataReceiver::decimation_processor_thread() {
             // Pipelined task per decimator: decimation → MUSIC (no intermediate barrier)
             // In wideband mode, each decimator gets data from its specific tuner
             auto run_pipeline =
-                [&raw_packet, fm_id = fm_source_id, wideband_enabled, packet_elements, fm_only, current_active](
+                [&raw_packet, wideband_enabled, packet_elements, fm_only, current_active](
                     const shared_ptr<DecimatorManager::DecimatorInstance>& inst) -> DecimatorManager::ProcessResult {
 
                     DecimatorManager::ProcessResult result;
                     result.decimator_id = inst->id;
-                    result.is_fm_source = (inst->id == fm_id);
+                    result.audio_out = inst->audio_out.load(std::memory_order_relaxed);
                     result.instance = inst;  // kept for the post-barrier beamforming pass
 
                     try {
@@ -1109,14 +1110,20 @@ void DataReceiver::decimation_processor_thread() {
 
             // Now queue FM data (after MUSIC is done to avoid data race)
             // If beamforming produced output, use that instead of single-channel data
+            // One item per VFO heard (🔊): the FM thread feeds each into its
+            // own audio_mixer channel
+            size_t n_audio = 0;
+            for (const auto& result : results) n_audio += result.audio_out ? 1 : 0;
+            const size_t fm_queue_max = 20 * std::max<size_t>(1, n_audio);
             for (auto& result : results) {
                 if (!result.decimated_data.channels.empty() && result.decimated_data.min_samples > 0) {
 
-                    // If this is the FM source decimator, queue FM data
+                    // A VFO heard: queue its FM data
                     // In wideband mode: only 1 channel at index 0 (contains active_channel data)
                     // In normal mode: multiple channels, access by current_active index
-                    if (result.is_fm_source && fm_needs_processing) {
+                    if (result.audio_out && fm_needs_processing) {
                         DecimatedFMWorkItem fm_item;
+                        fm_item.vfo_id = result.decimator_id;
                         fm_item.channel_id = current_active;  // Logical channel ID (user-facing)
                         fm_item.decimation_used = result.decimated_data.decimation_used;
                         fm_item.output_rate_hz = result.decimated_data.output_rate_hz;
@@ -1144,7 +1151,7 @@ void DataReceiver::decimation_processor_thread() {
 
                         // OPTIMIZATION: ConcurrentQueue is already lock-free, no mutex needed
                         // Only the condition variable notification needs to be done
-                        if (!fm_item.decimated_samples.empty() && fm_decimated_queue.size_approx() < 20) {
+                        if (!fm_item.decimated_samples.empty() && fm_decimated_queue.size_approx() < fm_queue_max) {
                             fm_decimated_queue.enqueue(std::move(fm_item));
                             fm_decimated_available.notify_one();
                         }
@@ -1352,7 +1359,7 @@ void DataReceiver::fm_processor_thread() {
                 if (!fm_decimated_queue.try_dequeue(work_item)) break;
                 age = steady_clock::now() - work_item.timestamp;
             }
-            fm_demod.reset_audio_buffer();
+            audio_mixer.reset();
         }
 
         // Drop stale items
@@ -1361,74 +1368,75 @@ void DataReceiver::fm_processor_thread() {
             continue;
         }
 
-        // Only update sample rate if it actually changed
-        static float last_fm_rate = 0.0f;
-        if (work_item.output_rate_hz != last_fm_rate) {
-            fm_demod.setInputSampleRate(work_item.output_rate_hz);
-            last_fm_rate = work_item.output_rate_hz;
-        }
+        // The VFO's own channel of the mix (🔊 any number of VFOs at once):
+        // its demodulator follows the VFO's rate and demod block by block.
+        // A VFO muted / removed since the block was queued is skipped
+        auto vfo = decimator_manager.getDecimator(work_item.vfo_id);
+        if (!vfo || !vfo->audio_out.load(std::memory_order_relaxed) ||
+            vfo->being_deleted.load(std::memory_order_relaxed)) continue;
+        auto ch = audio_mixer.channel(work_item.vfo_id);
+        if (!ch) continue;
+        const DemodulatorMode vfo_mode = vfo->demod_mode.load(std::memory_order_relaxed);
+        ch->mode.store(vfo_mode, std::memory_order_relaxed);
+        FMDemodulatorRobust& demod = ch->demod;
+        demod.setInputSampleRate(work_item.output_rate_hz);
+        demod.setDemodulatorMode(vfo_mode);
 
-        fm_demod.process_decimated_samples(std::move(work_item.decimated_samples), audio_samples);
+        demod.process_decimated_samples(std::move(work_item.decimated_samples), audio_samples);
+        if (audio_samples.empty()) {
+            global_stats.print_stats_if_time(thread_idx);
+            continue;
+        }
+        ch->fed_ms.store(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count(),
+                         std::memory_order_relaxed);
 
         // Digital demod: the FM output only sets how many samples this block
         // is worth; the audio itself is the VFO's decoded digital voice
         // (silence when there is none). Squelch doesn't apply - the decoder
         // only produces audio for valid voice frames.
-        if (!audio_samples.empty()) {
-            auto src_dec = decimator_manager.getDecimator(decimator_manager.getFMDecimatorId());
-            if (src_dec && src_dec->demod_mode.load(std::memory_order_relaxed) == DemodulatorMode::DIGITAL) {
-                auto dd = src_dec->getDigital();
-                if (dd) dd->pull_voice(audio_samples.data(), audio_samples.size());
-                else std::fill(audio_samples.begin(), audio_samples.end(), 0.0f);
-                fm_demod.add_audio_samples(audio_samples);
-                global_stats.increment_operations(thread_idx);
-                global_stats.print_stats_if_time(thread_idx);
-                continue;
-            }
-        }
-
-        if (!audio_samples.empty()) {
-            // Check squelch for the FM source decimator - if enabled and closed, output silence
-            bool squelch_allows_audio = true;
-            int fm_dec_id = decimator_manager.getFMDecimatorId();
-            auto fm_decimator = decimator_manager.getDecimator(fm_dec_id);
-            if (fm_decimator && fm_decimator->squelch_enabled.load(std::memory_order_relaxed)) {
-                float squelch_level = fm_decimator->squelch_level.load(std::memory_order_relaxed);
-
-                // Check squelch method (per decimator). Wideband / independent:
-                // FFT on the VFO's own tuner (no beamformer there); Digital in
-                // every mode (it only needs the decoder)
-                const bool multi = multi_tuner_mode();
-                if (DecimatorManager::effectiveSquelchMethod(*fm_decimator) == SquelchMethod::DIGITAL) {
-                    // Digital: open while the VFO's decoder reports valid frames
-                    squelch_allows_audio = DecimatorManager::digitalSquelchOpen(*fm_decimator);
-                } else if (!multi && beamforming_enabled.load(std::memory_order_relaxed) &&
-                           fm_decimator->beamformed_fft.valid.load(std::memory_order_acquire)) {
-                    // FFT-based squelch with beamforming: use the FM decimator's
-                    // beamformed signal for better SNR
-                    squelch_allows_audio = FFTProcessor::check_squelch_beamformed(
-                        fm_decimator->beamformed_fft, squelch_level);
-                } else {
-                    // FFT-based squelch: fall back to single-channel squelch
-                    int check_channel = multi ? fm_decimator->tuner_channel.load(std::memory_order_relaxed)
-                                              : active_channel.load(std::memory_order_relaxed);
-                    float offset_hz = fm_decimator->frequency_offset_hz;
-                    float bw_hz = fm_decimator->decimator->getBandwidthMhz() * 1e6f;
-                    squelch_allows_audio = FFTProcessor::check_squelch_in_range(
-                        check_channel, squelch_level, offset_hz, bw_hz);
-                }
-                fm_decimator->squelch_open.store(squelch_allows_audio, std::memory_order_relaxed);
-            }
-
-            if (squelch_allows_audio) {
-                fm_demod.add_audio_samples(audio_samples);
-            } else {
-                // Output silence when squelched to maintain audio timing
-                std::fill(audio_samples.begin(), audio_samples.end(), 0.0f);
-                fm_demod.add_audio_samples(audio_samples);
-            }
+        if (vfo_mode == DemodulatorMode::DIGITAL) {
+            auto dd = vfo->getDigital();
+            if (dd) dd->pull_voice(audio_samples.data(), audio_samples.size());
+            else std::fill(audio_samples.begin(), audio_samples.end(), 0.0f);
+            demod.add_audio_samples(audio_samples);
             global_stats.increment_operations(thread_idx);
+            global_stats.print_stats_if_time(thread_idx);
+            continue;
         }
+
+        // Squelch of this VFO - if enabled and closed, output silence (keeps the
+        // audio timing)
+        bool squelch_allows_audio = true;
+        if (vfo->squelch_enabled.load(std::memory_order_relaxed)) {
+            float squelch_level = vfo->squelch_level.load(std::memory_order_relaxed);
+
+            // Check squelch method (per decimator). Wideband / independent:
+            // FFT on the VFO's own tuner (no beamformer there); Digital in
+            // every mode (it only needs the decoder)
+            const bool multi = multi_tuner_mode();
+            if (DecimatorManager::effectiveSquelchMethod(*vfo) == SquelchMethod::DIGITAL) {
+                // Digital: open while the VFO's decoder reports valid frames
+                squelch_allows_audio = DecimatorManager::digitalSquelchOpen(*vfo);
+            } else if (!multi && beamforming_enabled.load(std::memory_order_relaxed) &&
+                       vfo->beamformed_fft.valid.load(std::memory_order_acquire)) {
+                // FFT-based squelch with beamforming: use the VFO's
+                // beamformed signal for better SNR
+                squelch_allows_audio = FFTProcessor::check_squelch_beamformed(
+                    vfo->beamformed_fft, squelch_level);
+            } else {
+                // FFT-based squelch: fall back to single-channel squelch
+                int check_channel = multi ? vfo->tuner_channel.load(std::memory_order_relaxed)
+                                          : active_channel.load(std::memory_order_relaxed);
+                float offset_hz = vfo->frequency_offset_hz;
+                float bw_hz = vfo->decimator->getBandwidthMhz() * 1e6f;
+                squelch_allows_audio = FFTProcessor::check_squelch_in_range(
+                    check_channel, squelch_level, offset_hz, bw_hz);
+            }
+            vfo->squelch_open.store(squelch_allows_audio, std::memory_order_relaxed);
+        }
+        if (!squelch_allows_audio) std::fill(audio_samples.begin(), audio_samples.end(), 0.0f);
+        demod.add_audio_samples(audio_samples);
+        global_stats.increment_operations(thread_idx);
 
         global_stats.print_stats_if_time(thread_idx);
     }

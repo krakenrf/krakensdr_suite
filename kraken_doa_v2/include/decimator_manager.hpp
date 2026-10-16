@@ -61,6 +61,12 @@ public:
         // Saved in the VFO snapshot; set with setTranscribe()
         std::atomic<bool> transcribe{false};
 
+        // 🔊 Heard in the live audio (the speaker toggle on the VFO card):
+        // any number of VFOs at once, each demodulated on its own and mixed
+        // into the one audio stream (audio_mixer.hpp). Saved in the VFO
+        // snapshot; set with setAudioVfo() / setAudioVfos()
+        std::atomic<bool> audio_out{false};
+
         // Position of the next decimated sample in this VFO's stream
         // (MultiChannelDecimated::stream_pos; the pipeline advances it)
         std::atomic<uint64_t> stream_pos{0};
@@ -95,7 +101,6 @@ private:
     std::vector<std::shared_ptr<DecimatorInstance>> decimators;
     mutable std::mutex decimator_mutex;
     std::atomic<int> next_id{0};
-    std::atomic<int> fm_decimator_id{0}; // Which decimator feeds the FM demodulator
     std::atomic<double> last_process_ms_{0.0}; // Duration of the last decimation pass (see getLastProcessMs)
     std::atomic<int> digital_active_{0};      // VFOs with a digital decoder on
     std::atomic<int> transcribe_active_{0};   // VFOs with Transcribe on
@@ -140,9 +145,16 @@ public:
     double getLastProcessMs() const { return last_process_ms_.load(std::memory_order_relaxed); }
     void setLastProcessMs(double ms) { last_process_ms_.store(ms, std::memory_order_relaxed); }
 
-    // Set which decimator feeds the FM demodulator
-    void setFMDecimatorId(int id) { fm_decimator_id = id; }
-    int getFMDecimatorId() const { return fm_decimator_id.load(); }
+    // 🔊 The VFOs heard in the live audio (DecimatorInstance::audio_out).
+    // setAudioVfo: false = no such VFO. setAudioVfos: exactly these (unknown
+    // ids ignored, none = silence). audioVfoIds: ascending.
+    // primaryAudioVfo: the lowest-id VFO heard, -1 = none - where one VFO
+    // stands for "the one you listen to" (beamforming readout, the
+    // recorder's default band VFO, independent mode's CH)
+    bool setAudioVfo(int id, bool on);
+    void setAudioVfos(const std::vector<int>& ids);
+    std::vector<int> audioVfoIds() const;
+    int primaryAudioVfo() const;
 
     // Beamforming config - applied to every decimator's beamformer and
     // remembered so new decimators inherit it. Called from the control handler.
@@ -188,7 +200,7 @@ public:
     struct ProcessResult {
         int decimator_id;
         SharedDecimator::MultiChannelDecimated decimated_data;
-        bool is_fm_source;
+        bool audio_out = false;   // heard in the live audio (queued for the FM thread)
         // Kept alive for the post-barrier beamforming pass (steering + FFT).
         std::shared_ptr<DecimatorInstance> instance;
         // Beamformed combined stream for this decimator (DAS/MVDR/etc).
@@ -204,7 +216,7 @@ public:
         int bandwidth_index;
         float bandwidth_mhz;
         bool enabled;
-        bool is_fm_source;
+        bool audio_out;                // 🔊 heard in the live audio
         DemodulatorMode demod_mode;
         bool squelch_enabled;
         float squelch_level;

@@ -504,7 +504,7 @@ decoders `kraken_doa_v2/plugins/`
   `DIGITAL_OPT:id:verbose|invert|<plugin>.<key>:value` (plugin-declared
   options, e.g. `dmr.slot`, `p25.nac`); persisted in the VFO snapshot. See
   `kraken_doa_v2/CLAUDE.md` for the design
-- Voice: Demod "Digital" (or the panel's Listen button) on the Audio Src VFO
+- Voice: Demod "Digital" (or the panel's Listen button) on a VFO heard (🔊)
   plays the decoded voice. P25 IMBE is built in (port of mbelib, ISC); DMR /
   D-STAR / NXDN AMBE use a user-installed mbelib (dlopen, `KRAKEN_MBELIB`), TETRA
   ACELP the user-built ETSI codec programs (`tetra-cdecoder` /
@@ -514,6 +514,16 @@ decoders `kraken_doa_v2/plugins/`
   calls are muted
 - Fed from the VFO's decimated stream (beamformer output when beamforming
   runs), so DoA, beamforming and decoding can run on the same signal
+
+**🔊 VFO audio (speaker toggle on each VFO card, all modes)** (details:
+`kraken_doa_v2/CLAUDE.md` *VFO audio*): any number of VFOs heard at once -
+the speaker next to a card's D0 / D1 title is green (heard) or red with a
+cross (muted); it replaced the single "Audio Src" radio button. Each VFO
+heard has its own demodulator + jitter buffer in
+`kraken_doa_v2/src/signal_processing/audio_mixer.cpp`; the audio timer sums
+them (soft-limited) into the one Opus stream the page plays. WS
+`AUDIO_VFO:<id>:0|1` (`SET_FM_DECIMATOR:<id>` = only that VFO), saved in the
+DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
 
 **Web Mapper output (built-in)**:
 - The DoA client streams legacy "doapost" records to the KrakenSDR web mapper
@@ -732,7 +742,7 @@ models + Silero VAD) - opt-in setup `cd kraken_doa_v2 && make whisper`
 (= `transcribe/setup.sh`: builds `transcribe/build/kraken_whisper`, gets
 base.en) or `WHISPER=1 ./install.sh`; Docker builds it in (`WHISPER=0`
 leaves it out) with the models in `docker-data/whisper_models/`
-- Source per VFO, not the Audio Src's: its digital decoder's voice when the
+- Source per VFO, not what the 🔊 speakers play: its digital decoder's voice when the
   decoder is on and decodes voice (P25 / DMR / D-STAR / NXDN / TETRA vocoder
   output via `dig::set_voice_tap_handler`, with the talker's unit ID /
   talkgroup; cut at talker changes), else - no decoder, or one of no voice

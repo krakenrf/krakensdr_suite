@@ -11,6 +11,7 @@
 #include "networking/tcp_client.hpp"
 #include "networking/gpsd_client.hpp"
 #include "signal_processing/fm_demodulator.hpp"
+#include "signal_processing/audio_mixer.hpp"
 #include "signal_processing/beamformer.hpp"
 #include "signal_processing/music_processor.hpp"
 #include "utils/system_stats.hpp"
@@ -591,7 +592,7 @@ void render() {
                      info.id, freq_mhz, bandwidth_str(info.bandwidth_mhz).c_str(),
                      bearing.c_str(), conf.c_str(), eig.c_str(), proc.c_str(),
                      info.squelch_open ? "op" : (info.squelch_enabled ? "sq" : "--"),
-                     info.is_fm_source ? "FM+DoA" : "DoA");
+                     info.audio_out ? "FM+DoA" : "DoA");
             string line = row;
             if (!info.enabled) line = string(col::DIM) + line + col::RST;
             add(line);
@@ -604,21 +605,14 @@ void render() {
     {
         ostringstream o;
         o << label("FM AUDIO") << onoff(fm_enabled.load());
-        if (fm_enabled.load() && fm_demod.is_processing_enabled()) {
-            size_t w, r, over, under;
-            fm_demod.get_buffer_stats(w, r, over, under);
-            const char* mode = "?";
-            switch (fm_demod.getDemodulatorMode()) {
-                case DemodulatorMode::WBFM: mode = "WBFM"; break;
-                case DemodulatorMode::NBFM: mode = "NBFM"; break;
-                case DemodulatorMode::AM:   mode = "AM";   break;
-                case DemodulatorMode::DIGITAL: mode = "DIGI"; break;
-            }
-            o << col::DIM << "  " << col::RST << mode
-              << col::DIM << "  fill " << col::RST << f1(fm_demod.get_buffer_fill()) << "%"
-              << col::DIM << "  sig " << col::RST << f1(fm_demod.get_signal_strength()) << "dB"
-              << col::DIM << "  over " << col::RST << (over ? col::YEL : col::DIM) << over << col::RST
-              << col::DIM << " under " << col::RST << (under ? col::YEL : col::DIM) << under << col::RST;
+        if (fm_enabled.load() && audio_mixer.is_processing_enabled()) {
+            // every VFO heard (🔊), mixed into one stream
+            const auto st = audio_mixer.stats();
+            o << col::DIM << "  " << col::RST << (st.modes.empty() ? std::string("no VFO") : st.modes)
+              << col::DIM << "  fill " << col::RST << f1(st.fill) << "%"
+              << col::DIM << "  sig " << col::RST << f1(st.signal) << "dB"
+              << col::DIM << "  over " << col::RST << (st.over ? col::YEL : col::DIM) << st.over << col::RST
+              << col::DIM << " under " << col::RST << (st.under ? col::YEL : col::DIM) << st.under << col::RST;
         }
         add(o.str());
     }

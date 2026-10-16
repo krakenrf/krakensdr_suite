@@ -5,6 +5,7 @@
 #include "config.hpp"
 #include "channel_manager.hpp"
 #include "signal_processing/fm_demodulator.hpp"
+#include "signal_processing/audio_mixer.hpp"
 #include "signal_processing/fft_processor.hpp"
 #include "signal_processing/beamformer.hpp"
 #include "signal_processing/music_processor.hpp"
@@ -281,6 +282,7 @@ static bool is_query_command(string_view msg) {
            msg.starts_with("SF_") ||           // 📻 saved frequencies + map markers: {"savedfreq":...} broadcasts
            msg.starts_with("ARRAY_CAL") ||     // ✈ array calibration: {"array_cal":...} broadcasts
            msg.starts_with("RECORDER_") ||     // 📼 recorder: {"recorder":...} / {"recordings":...} broadcasts
+           msg.starts_with("AUDIO_VFO:") ||    // 🔊 VFOs heard: decimator_info broadcasts
            // 🗣 Voice to Text actions: {"voice2text":...} / decimator_info broadcasts
            msg.starts_with("VOICE2TEXT_VFO:") || msg.starts_with("VOICE2TEXT_DOWNLOAD:") ||
            msg.starts_with("VOICE2TEXT_LOBE:") ||
@@ -363,19 +365,21 @@ static void store_for_replay(string_view msg, size_t key_len) {
 static std::atomic<bool> g_replaying_settings{false};
 
 // --- Decimator (VFO) setup persistence ---
-// The VFO set is dynamic (count, per-VFO tuning/bandwidth/demod/squelch, FM
-// source), so it is remembered as ONE composite DECIMATORS: setting rather
-// than per-command schema entries. The FM source is stored as a list POSITION,
-// not an id: ids can become non-contiguous after removals but are renumbered
-// 0..N-1 on the next start.
+// The VFO set is dynamic (count, per-VFO tuning/bandwidth/demod/squelch, the
+// VFOs heard), so it is remembered as ONE composite DECIMATORS: setting rather
+// than per-command schema entries. The VFOs heard (🔊) are stored as list
+// POSITIONS, not ids: ids can become non-contiguous after removals but are
+// renumbered 0..N-1 on the next start. "0,2" = the first and third, "-1" =
+// none (was ONE position - the single "Audio Src": an older kraken_doa reads
+// the first number, "-1" as the first VFO).
 static string build_decimator_snapshot() {
     auto info = decimator_manager.getDecimatorInfoList();
-    int fm_id = decimator_manager.getFMDecimatorId();
-    size_t fm_index = 0;
+    string heard;
     for (size_t i = 0; i < info.size(); i++)
-        if (info[i].id == fm_id) { fm_index = i; break; }
+        if (info[i].audio_out) heard += (heard.empty() ? "" : ",") + to_string(i);
+    if (heard.empty()) heard = "-1";
     ostringstream ss;
-    ss << fm_index << "|" << fixed << setprecision(2);
+    ss << heard << "|" << fixed << setprecision(2);
     for (size_t i = 0; i < info.size(); i++) {
         const auto& d = info[i];
         if (i) ss << ";";
@@ -396,7 +400,7 @@ static string build_decimator_snapshot() {
 // would capture their transient state.
 static void record_decimator_snapshot() {
     if (g_replaying_settings.load()) return;
-    // While a scanner runs, the live VFO set is the scan's (offsets, FM source,
+    // While a scanner runs, the live VFO set is the scan's (offsets, VFOs heard,
     // bandwidths it moved) - saving it made the scan state the user's setup
     // after a restart. Edits made during a scan are therefore not persisted.
     if (scanner_manager.isRunning() || continuous_scanner.isRunning()) return;
@@ -404,7 +408,7 @@ static void record_decimator_snapshot() {
 }
 
 // Restore a saved snapshot: grow/shrink to the saved VFO count, apply each
-// VFO's settings positionally, then reselect the FM source. Parses the whole
+// VFO's settings positionally, then the VFOs heard. Parses the whole
 // snapshot before mutating anything so a malformed value leaves the startup
 // defaults intact. Returns true if a snapshot was applied.
 static bool apply_decimator_snapshot(const string& snap) {
@@ -419,10 +423,17 @@ static bool apply_decimator_snapshot(const string& snap) {
         int tuner = 0;
         bool transcribe = false;   // 🗣 Voice to Text
     };
-    int fm_index;
+    vector<int> heard_pos;   // list positions of the VFOs heard
     vector<Vfo> vfos;
     try {
-        fm_index = stoi(snap.substr(0, bar));
+        {
+            stringstream hs(snap.substr(0, bar));
+            string tok;
+            while (getline(hs, tok, ',')) {
+                const int pos = stoi(tok);
+                if (pos >= 0) heard_pos.push_back(pos);
+            }
+        }
         stringstream list(snap.substr(bar + 1));
         string entry;
         while (getline(list, entry, ';')) {
@@ -481,13 +492,16 @@ static bool apply_decimator_snapshot(const string& snap) {
         decimator_manager.setTranscribe(id, v.transcribe);
     }
 
-    if (fm_index < 0 || static_cast<size_t>(fm_index) >= n) fm_index = 0;
-    decimator_manager.setFMDecimatorId(info[fm_index].id);
-    fm_demod.setDemodulatorMode(vfos[fm_index].demod);
-    fm_demod.reset_audio_buffer();
+    vector<int> heard;
+    for (int pos : heard_pos)
+        if (static_cast<size_t>(pos) < n) heard.push_back(info[pos].id);
+    decimator_manager.setAudioVfos(heard);
+    audio_mixer.retain(heard);
+    audio_mixer.reset();
 
-    cout << "Restored " << n << " decimator(s), FM source: decimator "
-         << info[fm_index].id << endl;
+    string ids;
+    for (int id : heard) ids += (ids.empty() ? "D" : ", D") + to_string(id);
+    cout << "Restored " << n << " decimator(s), audio: " << (ids.empty() ? "none" : ids) << endl;
     return true;
 }
 
@@ -554,24 +568,21 @@ std::string ControlHandler::request_plugin_tune(int vfo, double rf_hz) {
     return "";
 }
 
-bool ControlHandler::switch_fm_source(int id) {
-    auto decimator_inst = decimator_manager.getDecimator(id);
-    if (!decimator_inst) return false;
-    decimator_manager.setFMDecimatorId(id);
-
-    // Apply the decimator's demod mode to the FM demodulator
-    fm_demod.setDemodulatorMode(decimator_inst->demod_mode);
-    cout << "FM demodulator now using decimator " << id
-         << " (offset=" << (decimator_inst->frequency_offset_hz / 1000.0f) << " kHz"
-         << ", mode=" << DecimatorManager::demodModeToString(decimator_inst->demod_mode) << ")" << endl;
-
-    // Clear audio buffer immediately for instant FM source switching
-    fm_demod.reset_audio_buffer();
-
-    stringstream json;
-    json << "{\"fm_decimator\":{\"id\":" << id << "}}";
-    broadcast(json.str());
+bool ControlHandler::set_audio_vfos(const vector<int>& ids) {
+    for (int id : ids)
+        if (!decimator_manager.getDecimator(id)) return false;
+    decimator_manager.setAudioVfos(ids);
+    const auto heard = decimator_manager.audioVfoIds();
+    audio_mixer.retain(heard);   // a VFO muted is silent at once (its channel goes)
+    string s;
+    for (int id : heard) s += (s.empty() ? "D" : ", D") + to_string(id);
+    cout << "Audio from: " << (s.empty() ? "no VFO" : s) << endl;
+    broadcast(MessageBuilders::build_decimator_info_message());
     return true;
+}
+
+bool ControlHandler::listen_only(int id) {
+    return set_audio_vfos({id});
 }
 
 bool ControlHandler::follow_wideband_ring(uint64_t rf_hz, bool from_stream) {
@@ -644,15 +655,15 @@ bool ControlHandler::apply_operating_mode_state(int mode) {
         g_mode_change_ms.store(steady_ms_now(), std::memory_order_relaxed);
         const int cur = operating_mode_index();
         changed = cur != mode;
-        // The coherent CH selection: in wideband / independent mode the FM
-        // source VFO moves active_channel to its tuner; coming back puts the
+        // The coherent CH selection: in wideband / independent mode the first
+        // VFO heard moves active_channel to its tuner; coming back puts the
         // user's channel back
         static int channel_before = -1;
         if (changed) {
             if (cur == 0) channel_before = active_channel.load();
             if (mode == 0 && channel_before >= 0) {
                 if (active_channel.exchange(channel_before) != channel_before) {
-                    fm_demod.reset_audio_buffer();
+                    audio_mixer.reset();
                     cout << "Channel " << channel_before << " restored (coherent mode)" << endl;
                 }
                 channel_before = -1;
@@ -1021,7 +1032,7 @@ void ControlHandler::handle_message_impl(string_view message) {
             cout << "Active channel changed to: " << new_channel << " (Display & FM)" << endl;
 
             // Clear audio buffer immediately for instant channel switching
-            fm_demod.reset_audio_buffer();
+            audio_mixer.reset();
 
             lock_guard<mutex> lock(fft_mutex);
             if (new_channel < static_cast<int>(fft_magnitudes.size()) && new_channel < static_cast<int>(fft_averaged.size())) {
@@ -1072,11 +1083,11 @@ void ControlHandler::handle_message_impl(string_view message) {
             fm_enabled = enable;
 
             if (enable) {
-                cout << "Enabling FM demodulator on channel " << active_channel.load(std::memory_order_relaxed) << endl;
-                fm_demod.enable_processing();
+                cout << "Enabling the audio on channel " << active_channel.load(std::memory_order_relaxed) << endl;
+                audio_mixer.enable_processing();
             } else {
-                cout << "Disabling FM demodulator" << endl;
-                fm_demod.disable_processing();
+                cout << "Disabling the audio" << endl;
+                audio_mixer.disable_processing();
             }
         }
     }
@@ -1099,22 +1110,24 @@ void ControlHandler::handle_message_impl(string_view message) {
             suggested_bandwidth_index = find_bandwidth_index(10);   // 240 kHz
         }
 
-        fm_demod.setDemodulatorMode(new_mode);
+        // Legacy (pages send the per-VFO SET_DECIMATOR_DEMOD): the first VFO
+        // heard gets the mode and its usual bandwidth
+        const int fm_dec_id = decimator_manager.primaryAudioVfo();
+        if (fm_dec_id >= 0 && decimator_manager.setDemodMode(fm_dec_id, new_mode)) {
+            stringstream dj;
+            dj << "{\"decimator_demod\":{\"id\":" << fm_dec_id
+               << ",\"mode\":\"" << DecimatorManager::demodModeToString(new_mode) << "\"}}";
+            broadcast(dj.str());
+        }
 
         // Auto-adjust bandwidth for FM decimator to match demod mode
         if (suggested_bandwidth_index >= 0) {
-            int fm_dec_id = decimator_manager.getFMDecimatorId();
             if (fm_dec_id >= 0) {
                 decimator_manager.setBandwidthIndex(fm_dec_id, suggested_bandwidth_index);
                 cout << "Auto-adjusted FM decimator bandwidth to "
                      << get_bandwidth_option(suggested_bandwidth_index).display_name
                      << " for " << mode_str << " mode" << endl;
-
-                // Update FM demodulator with new input rate
                 auto fm_dec_inst = decimator_manager.getDecimator(fm_dec_id);
-                if (fm_dec_inst && fm_dec_inst->decimator) {
-                    fm_demod.setInputSampleRate(fm_dec_inst->decimator->getOutputRate());
-                }
 
                 // Invalidate the FM decimator's beamformed FFT to force refresh
                 // with the new bandwidth.
@@ -1157,16 +1170,9 @@ void ControlHandler::handle_message_impl(string_view message) {
             }
         }
 
-        // Update FM demodulator with new input rate from FM decimator
-        int fm_decimator = decimator_manager.getFMDecimatorId();
-        if (fm_decimator >= 0) {
-            auto fm_dec_inst = decimator_manager.getDecimator(fm_decimator);
-            if (fm_dec_inst && fm_dec_inst->decimator) {
-                float new_rate_hz = fm_dec_inst->decimator->getBandwidthMhz() * 1e6f;
-                fm_demod.setInputSampleRate(new_rate_hz);
-                cout << "Processing bandwidth changed to: " << fm_dec_inst->decimator->getBandwidthName() << endl;
-            }
-        }
+        // (each VFO heard follows its own rate block by block: audio_mixer)
+        if (!all_decimators.empty() && all_decimators.front() && all_decimators.front()->decimator)
+            cout << "Processing bandwidth changed to: " << all_decimators.front()->decimator->getBandwidthName() << endl;
 
         cout << "Bandwidth updated for all decimators" << endl;
         record_decimator_snapshot();
@@ -1662,6 +1668,9 @@ void ControlHandler::handle_message_impl(string_view message) {
         int id = parse_int(message, 17);
         if (decimator_manager.removeDecimator(id)) {
             cout << "Removed decimator with ID: " << id << endl;
+            // its audio channel goes (the manager may have moved the audio
+            // to the first VFO left - the pages ask for decimator_info)
+            audio_mixer.retain(decimator_manager.audioVfoIds());
 
             stringstream json;
             json << "{\"decimator_removed\":{\"id\":" << id << "}}";
@@ -1690,7 +1699,7 @@ void ControlHandler::handle_message_impl(string_view message) {
                 auto inst = decimator_manager.getDecimator(id);
                 if (inst && inst->tuner_channel.exchange(tuner) != tuner) {
                     cout << "Decimator " << id << " -> tuner " << tuner << endl;
-                    if (decimator_manager.getFMDecimatorId() == id) active_channel = tuner;
+                    if (decimator_manager.primaryAudioVfo() == id) active_channel = tuner;
                     // (a digital decoder resets itself: its VFO's RF jumped)
                 }
             }
@@ -1744,10 +1753,10 @@ void ControlHandler::handle_message_impl(string_view message) {
                              << ", offset=" << (offset_hz / 1000.0f) << " kHz" << endl;
                     }
 
-                    // Update global active_channel for FM demod if this is the FM source
-                    if (decimator_manager.getFMDecimatorId() == id) {
+                    // Update global active_channel for FM demod if this is the first VFO heard
+                    if (decimator_manager.primaryAudioVfo() == id) {
                         active_channel = best_channel;
-                        cout << "Updated global active_channel to " << best_channel << " (FM source)" << endl;
+                        cout << "Updated global active_channel to " << best_channel << " (first VFO heard)" << endl;
                     }
                 }
             }
@@ -1790,11 +1799,27 @@ void ControlHandler::handle_message_impl(string_view message) {
         }
     }
     else if (message.starts_with("SET_FM_DECIMATOR:")) {
-        // Set which decimator feeds the FM demodulator
+        // Old single "Audio Src" (older pages / scripts): hear only this VFO
         int id = parse_int(message, 17);
         // Unknown id: reject (it used to select a nonexistent source - dead
         // audio - and save the snapshot with FM source 0)
-        if (!ControlHandler::switch_fm_source(id)) throw CommandRejected("no such decimator");
+        if (!ControlHandler::listen_only(id)) throw CommandRejected("no such decimator");
+        record_decimator_snapshot();
+    }
+    else if (message.starts_with("AUDIO_VFO:")) {
+        // AUDIO_VFO:<id>:0|1 - the speaker toggle on a VFO card: hear this
+        // VFO in the live audio or not; any number at once (audio_mixer.hpp).
+        // Not echoed (is_query_command): every page gets decimator_info
+        string params = string(message.substr(10));
+        size_t colon_pos = params.find(':');
+        if (colon_pos == string::npos) throw CommandRejected("format: AUDIO_VFO:id:0|1");
+        const int id = stoi(params.substr(0, colon_pos));
+        const bool on = parse_bool(params.substr(colon_pos + 1));
+        if (!decimator_manager.getDecimator(id)) throw CommandRejected("no such decimator");
+        auto heard = decimator_manager.audioVfoIds();
+        heard.erase(std::remove(heard.begin(), heard.end(), id), heard.end());
+        if (on) heard.push_back(id);
+        ControlHandler::set_audio_vfos(heard);
         record_decimator_snapshot();
     }
     else if (message.starts_with("SET_DECIMATOR_DEMOD:")) {
@@ -1817,12 +1842,7 @@ void ControlHandler::handle_message_impl(string_view message) {
                         broadcast(MessageBuilders::build_decimator_info_message());
                     }
                 }
-                // If this is the FM source decimator, apply the mode to the FM demodulator immediately
-                if (decimator_manager.getFMDecimatorId() == id) {
-                    fm_demod.setDemodulatorMode(new_mode);
-                    cout << "FM demodulator mode updated to " << DecimatorManager::demodModeToString(new_mode)
-                         << " (from FM source decimator " << id << ")" << endl;
-                }
+                // (a VFO heard takes its new demod with its next block: audio_mixer)
 
                 // Broadcast update to UI
                 stringstream json;
@@ -2425,7 +2445,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         }
 
         // Reset audio buffer to prevent corruption
-        fm_demod.reset_audio_buffer();
+        audio_mixer.reset();
 
         // Send acknowledgment to UI
         stringstream json;
@@ -2446,7 +2466,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         FFTProcessor::set_decimation(new_decimation);
 
         // Reset audio buffer to prevent corruption
-        fm_demod.reset_audio_buffer();
+        audio_mixer.reset();
 
         // Send acknowledgment to UI
         stringstream json;

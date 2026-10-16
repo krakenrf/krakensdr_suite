@@ -17,7 +17,7 @@
 
 // Forward declarations
 class SystemStats;
-class FMDemodulatorRobust;
+class AudioMixer;
 class MUSICProcessor;
 class Beamformer;
 class TCPClient;
@@ -150,7 +150,7 @@ extern std::mutex fft_queue_mutex;
 extern std::condition_variable fft_work_available;
 
 extern SystemStats global_stats;
-extern FMDemodulatorRobust fm_demod;
+extern AudioMixer audio_mixer;   // 🔊 the live audio: every VFO heard, mixed (audio_mixer.hpp)
 extern ScannerManager scanner_manager;
 extern GpsdClient gps_client;
 extern StationInfo station_info;

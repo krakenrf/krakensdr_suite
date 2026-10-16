@@ -124,7 +124,7 @@ The Web UI can then be accessed at:
 
 A VFO's digital decoder can play the voice of P25, DMR, D-STAR, NXDN and TETRA
 calls. Click "🔊 Listen" in the VFO's decoder tab (panel under the waterfall),
-or pick Demod "Digital" on the VFO that is the Audio Src. Encrypted calls are shown and muted - they can't be decoded.
+or pick Demod "Digital" on a VFO whose speaker (🔊 next to its D0 / D1 ... title) is green. Encrypted calls are shown and muted - they can't be decoded.
 
 | System | Voice codec | Needs |
 |---|---|---|

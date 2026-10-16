@@ -12,8 +12,8 @@
 // declares auto_detect and reports the one whose frames pass their checks.
 //
 // The plugins report facts and events (Report) and decoded voice, which is
-// played through the voice FIFO here when the VFO is the audio source in
-// Digital demod mode.
+// played through the voice FIFO here when the VFO is heard (🔊) in Digital
+// demod mode.
 
 #include <atomic>
 #include <complex>

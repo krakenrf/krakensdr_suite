@@ -114,12 +114,13 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"fft_size",                 "FFT_SIZE:",                 VType::NUMBER, "16384"},
         {"fft_downsampling",         "FFT_DECIMATION:",           VType::NUMBER, "8"},
         // Decimator (VFO) setup - one composite value because the set is
-        // dynamic: "<fm_index>|<vfo>;<vfo>;..." with each <vfo> =
+        // dynamic: "<heard>|<vfo>;<vfo>;..." with each <vfo> =
         // "offset_hz,bw_index,demod,squelch_en,squelch_db,squelch_method (0 FFT /
         // 3 Digital),0 (was the eigenvalue threshold),digital_mode,digital_opts,tuner,
         // transcribe (0|1, Voice to Text)"
-        // and fm_index the LIST POSITION of the FM-source VFO (ids are
-        // renumbered 0..N-1 across restarts). Built and parsed in
+        // and heard the LIST POSITIONS of the VFOs heard in the live audio
+        // (🔊, "0,2"; "-1" = none; was one position, the single Audio Src) - ids
+        // are renumbered 0..N-1 across restarts. Built and parsed in
         // control_handler.cpp; the default is the single startup VFO and must
         // match DecimatorInstance's constructor defaults + DEFAULT_BANDWIDTH_INDEX
         // Incident map: addresses in decoder messages are looked up within

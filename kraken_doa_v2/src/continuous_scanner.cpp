@@ -83,7 +83,8 @@ bool ContinuousScanner::start() {
                   << 500 << "ms" << std::endl;
     }
 
-    fm_source_before_ = decimator_manager.getFMDecimatorId();
+    audio_before_ = decimator_manager.audioVfoIds();
+    audio_saved_ = true;
     running_.store(true);
     if (start_with_retune) {
         initiateRetune(0);
@@ -145,10 +146,14 @@ bool ContinuousScanner::stop() {
     }
 
     // Give the audio back to the VFO the user had (the scan moved it)
-    if (fm_source_before_ >= 0 && decimator_manager.getFMDecimatorId() != fm_source_before_) {
-        ControlHandler::switch_fm_source(fm_source_before_);
+    if (audio_saved_) {
+        std::vector<int> keep;   // those still there
+        for (int id : audio_before_)
+            if (decimator_manager.getDecimator(id)) keep.push_back(id);
+        if (decimator_manager.audioVfoIds() != keep) ControlHandler::set_audio_vfos(keep);
     }
-    fm_source_before_ = -1;
+    audio_saved_ = false;
+    audio_before_.clear();
 
     std::string cmd = "{\"set_stability_delay\":{\"delay_ms\":" +
                       std::to_string(3000) + "}}";
@@ -588,10 +593,8 @@ void ContinuousScanner::tuneTo(int decimator_id, float freq_hz, float signal_db,
         std::lock_guard<std::mutex> lock(tracked_mutex_);
         for (int i = 0; i < MAX_TRACKED_SIGNALS; i++) {
             if (tracked_signals_[i].active) {
-                if (decimator_manager.getFMDecimatorId() != tracked_signals_[i].decimator_id) {
-                    // with that VFO's demod mode (setFMDecimatorId alone decoded
-                    // e.g. an NBFM VFO as WBFM, and the UI kept the old source)
-                    ControlHandler::switch_fm_source(tracked_signals_[i].decimator_id);
+                if (decimator_manager.audioVfoIds() != std::vector<int>{tracked_signals_[i].decimator_id}) {
+                    ControlHandler::listen_only(tracked_signals_[i].decimator_id);
                 }
                 break;
             }
@@ -618,8 +621,8 @@ void ContinuousScanner::updateFMToSignal() {
     std::lock_guard<std::mutex> lock(tracked_mutex_);
     for (auto& sig : tracked_signals_) {
         if (sig.active) {
-            if (decimator_manager.getFMDecimatorId() != sig.decimator_id) {
-                ControlHandler::switch_fm_source(sig.decimator_id);
+            if (decimator_manager.audioVfoIds() != std::vector<int>{sig.decimator_id}) {
+                ControlHandler::listen_only(sig.decimator_id);
             }
             return;
         }
