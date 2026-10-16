@@ -795,8 +795,10 @@ Edit `include/config.hpp`:
   uncategorised}), `sfSpecRects`. `sfOnMessage` replaces the lists and
   redraws everything (list, categories, marker panel, map, drawBox, panes).
   No optimistic updates
-- Sidebar "📻 Saved Frequencies" (`#sf-section`, right after Decimators, all
-  modes; header count `#sf-count`): search (words in name, MHz, tone, notes,
+- Sidebar "📻 Saved Frequencies" (`#sf-section`, just above the 🔍
+  Continuous Scanner - the user's choice; no mode class, so it shows in all
+  modes even though its neighbours are wideband- / coherent-only; header
+  count `#sf-count`): search (words in name, MHz, tone, notes,
   location, category, demod, decoder), + Add, "Show on spectrum", ⚙
   Categories (`#sf-cats`: colour picker, rename, count, ✕, + Add; not
   re-rendered while it has the focus - refreshed on focusout).

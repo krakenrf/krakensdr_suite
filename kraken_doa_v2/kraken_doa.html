@@ -919,27 +919,6 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       </div>
     </div>
 
-    <!-- 📻 Saved frequencies (saved_freqs.cpp) + the map markers - all modes -->
-    <div class="sb-section" id="sf-section">
-      <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📻 Saved Frequencies<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Your list of frequencies, kept on the receiver (every browser sees the same list). <b>Click one to tune</b> the selected VFO to it (also its demod, bandwidth and decoder, when the entry has them); the receiver retunes when it is outside the band shown. Each needs a name and a frequency; a category, a location, demod, bandwidth, decoder, tone / code and notes are optional. Group them in categories (⚙ Categories: add your own, rename, recolour). A frequency with a <b>location</b> appears on the 🗺 map: the marker there lists every frequency saved at that place. Saved frequencies are marked on the spectrum (👁 on a category hides its marks); click a mark to tune. ☆ Save on a VFO card saves that VFO's frequency.</span></span></h3>
-        <span class="sf-count" id="sf-count"></span>
-        <span class="sb-toggle">▼</span>
-      </div>
-      <div class="sb-content">
-        <div class="sf-bar">
-          <input type="search" id="sf-search" placeholder="Search name, MHz, notes…" oninput="sfRenderList()" title="Words in the name, frequency, category, location, tone or notes">
-          <button type="button" class="btn sm primary" onclick="sfNew()" title="Save a frequency (filled in from the selected VFO)">+ Add</button>
-        </div>
-        <div class="sf-opts">
-          <label title="Mark the saved frequencies on the spectrum"><input type="checkbox" id="sf-spec" onchange="sfSetSpectrum(this.checked)"> Show on spectrum</label>
-          <button type="button" class="btn sm" id="sf-cats-btn" onclick="sfToggleCats()" title="Add, rename, recolour or delete categories">⚙ Categories</button>
-        </div>
-        <div id="sf-cats" class="sf-cats" style="display:none"></div>
-        <div id="sf-list" class="sf-list"></div>
-      </div>
-    </div>
-
     <!-- DoA Settings -->
     <div class="sb-section coh-only">
       <div class="sb-header" onclick="toggleSection(this)">
@@ -1457,6 +1436,27 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <div class="scanner-lock-info" id="scanner-lock-info" style="display:none">
           🔒 <span id="scan-lock-freq">---</span> MHz
         </div>
+      </div>
+    </div>
+
+    <!-- 📻 Saved frequencies (saved_freqs.cpp) + the map markers - all modes -->
+    <div class="sb-section" id="sf-section">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>📻 Saved Frequencies<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Your list of frequencies, kept on the receiver (every browser sees the same list). <b>Click one to tune</b> the selected VFO to it (also its demod, bandwidth and decoder, when the entry has them); the receiver retunes when it is outside the band shown. Each needs a name and a frequency; a category, a location, demod, bandwidth, decoder, tone / code and notes are optional. Group them in categories (⚙ Categories: add your own, rename, recolour). A frequency with a <b>location</b> appears on the 🗺 map: the marker there lists every frequency saved at that place. Saved frequencies are marked on the spectrum (👁 on a category hides its marks); click a mark to tune. ☆ Save on a VFO card saves that VFO's frequency.</span></span></h3>
+        <span class="sf-count" id="sf-count"></span>
+        <span class="sb-toggle">▼</span>
+      </div>
+      <div class="sb-content">
+        <div class="sf-bar">
+          <input type="search" id="sf-search" placeholder="Search name, MHz, notes…" oninput="sfRenderList()" title="Words in the name, frequency, category, location, tone or notes">
+          <button type="button" class="btn sm primary" onclick="sfNew()" title="Save a frequency (filled in from the selected VFO)">+ Add</button>
+        </div>
+        <div class="sf-opts">
+          <label title="Mark the saved frequencies on the spectrum"><input type="checkbox" id="sf-spec" onchange="sfSetSpectrum(this.checked)"> Show on spectrum</label>
+          <button type="button" class="btn sm" id="sf-cats-btn" onclick="sfToggleCats()" title="Add, rename, recolour or delete categories">⚙ Categories</button>
+        </div>
+        <div id="sf-cats" class="sf-cats" style="display:none"></div>
+        <div id="sf-list" class="sf-list"></div>
       </div>
     </div>
 
