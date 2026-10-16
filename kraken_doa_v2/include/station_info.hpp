@@ -64,6 +64,14 @@ public:
     void setStatic(double lat, double lon, double heading);
     void getStatic(double& lat, double& lon, double& heading) const;
 
+    // 📼 Playback of a recording: where the station was while it was recorded
+    // (static, or moved along the recording's GPS track) - resolve() returns
+    // it instead of the live source until cleared (the map, mobile DF, the
+    // north reference of the bearings follow the recording). moving = from a
+    // GPS track: reported as a GPS fix (speed, time of now) so mobile DF runs
+    void setPlaybackOverride(double lat, double lon, double heading, bool moving = false, double speed = 0);   // heading < 0 = none
+    void clearPlaybackOverride();
+
     // Resolve identity + the effective location for the current source.
     // For GPS this reads the live gpsd snapshot; for STATIC the manual values;
     // for MOBILE, zeros (until the phone-app path exists).
@@ -76,4 +84,7 @@ private:
     double         static_lat_ = 0.0;
     double         static_lon_ = 0.0;
     double         static_heading_ = 0.0;
+    bool           ov_on_ = false;
+    double         ov_lat_ = 0.0, ov_lon_ = 0.0, ov_heading_ = -1.0, ov_speed_ = 0.0;
+    bool           ov_moving_ = false;
 };

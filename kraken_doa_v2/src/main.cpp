@@ -27,6 +27,7 @@
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
 #include "array_cal.hpp"
+#include "recorder.hpp"
 #include "digital/dig_plugin.hpp"
 #include <iostream>
 #include <thread>
@@ -68,6 +69,7 @@ atomic<bool> wideband_mode_enabled{false};
 atomic<bool> independent_mode_enabled{false};
 atomic<bool> doa_enabled_before_wideband{false};  // DoA state before leaving coherent mode
 atomic<double> indep_tuner_freq_hz[8] = {};
+atomic<uint64_t> requested_freq_hz{0};
 atomic<float> indep_tuner_gain_db[8] = {-999.0f, -999.0f, -999.0f, -999.0f, -999.0f, -999.0f, -999.0f, -999.0f};
 static_assert(MAX_CHANNELS <= 8, "indep_tuner_* hold 8 tuners");
 atomic<bool> fm_enabled_before_scanner{false};     // Store FM state before discrete scanner
@@ -321,6 +323,9 @@ int main(int argc, char* argv[]) {
     // Ensure the recordings folder exists so the UI can list/download from it.
     cout << "DoA recordings folder: " << doa_recordings_dir() << endl;
 
+    // 📼 IQ & audio recorder (recordings folder; nothing runs until asked)
+    rec::start();
+
     // Start worker threads
     thread data_worker(DataReceiver::data_receiver_thread);
     thread decimation_worker(DataReceiver::decimation_processor_thread);
@@ -423,6 +428,9 @@ int main(int argc, char* argv[]) {
     // Stop the DoA logger: flush + close the open file before the decimators
     // and station/scanner state it reads are torn down.
     doa_logger.stop();
+
+    // 📼 an IQ / audio recording is finished (its metadata written)
+    rec::stop();
 
     // Stop the web mapper worker (reads the same decimator/station state).
     web_mapper.stop();

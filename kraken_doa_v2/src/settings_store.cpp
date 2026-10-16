@@ -167,7 +167,21 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"web_mapper_url",           "WEB_MAPPER_URL:",           VType::STRING, "wss://map.krakenrf.com:2096"},
         {"web_mapper_ws_port",       "WEB_MAPPER_WS_PORT:",       VType::NUMBER, "8021"},
         {"web_mapper_enabled",       "WEB_MAPPER:",               VType::BOOL,   "0"},
-        // Local DoA recording (config only — recording is never auto-started;
+        // 📼 Recorder (IQ & audio, recorder.cpp): its folder and choices -
+        // never started by the replay; the name / notes of the next recording
+        // aren't kept
+        {"recorder_dir",             "RECORDER_DIR:",             VType::STRING, "recordings"},
+        {"recorder_mode",            "RECORDER_MODE:",            VType::STRING, "iq"},
+        {"recorder_iq",              "RECORDER_IQ:",              VType::STRING, "full"},
+        {"recorder_duration_s",      "RECORDER_DURATION:",        VType::NUMBER, "30"},
+        {"recorder_band_vfo",        "RECORDER_BAND_VFO:",        VType::NUMBER, "-1"},
+        {"recorder_audio_format",    "RECORDER_AUDIO_FORMAT:",    VType::STRING, "wav"},
+        {"recorder_audio_rate",      "RECORDER_AUDIO_RATE:",      VType::NUMBER, "48000"},
+        {"recorder_audio_kbps",      "RECORDER_AUDIO_KBPS:",      VType::NUMBER, "32"},
+        {"recorder_audio_skip",      "RECORDER_AUDIO_SKIP:",      VType::BOOL,   "0"},
+        {"recorder_audio_vfos",      "RECORDER_AUDIO_VFOS:",      VType::STRING, "all"},
+        {"recorder_location",        "RECORDER_LOCATION:",        VType::BOOL,   "1"},
+        // DoA recording (config only — recording is never auto-started;
         // the target filename is transient and not persisted)
         {"log_interval_sec",         "LOG_INTERVAL:",             VType::NUMBER, "1"},
         {"log_format",               "LOG_FORMAT:",               VType::STRING, "sqlite"},

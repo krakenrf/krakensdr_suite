@@ -3,6 +3,7 @@
 
 #include "digital/digital_decoder.hpp"
 #include "globals.hpp"
+#include "utils/disk_util.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
 
@@ -32,6 +33,10 @@
 namespace declog {
 
 namespace {
+
+using diskutil::absolute;
+using diskutil::disk_space;
+using diskutil::mkdirs;
 
 enum : unsigned { T_EVENT = 1, T_MESSAGE = 2, T_POSITION = 4, T_RAW = 8, T_INCIDENT = 16, T_VOICE = 32 };
 const std::pair<const char*, unsigned> TYPE_NAMES[] = {
@@ -90,58 +95,6 @@ std::string log_date(const std::string& name, bool* gz) {
     if (rest == ".jsonl") { *gz = false; return d; }
     if (rest == ".jsonl.gz") { *gz = true; return d; }
     return "";
-}
-
-bool mkdirs(const std::string& path) {
-    std::string cur;
-    std::stringstream ss(path);
-    std::string part;
-    if (!path.empty() && path[0] == '/') cur = "/";
-    while (std::getline(ss, part, '/')) {
-        if (part.empty()) continue;
-        cur += part;
-        if (mkdir(cur.c_str(), 0755) != 0 && errno != EEXIST) return false;
-        cur += "/";
-    }
-    struct stat st{};
-    return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
-}
-
-std::string absolute(const std::string& p) {
-    if (!p.empty() && p[0] == '/') return p;
-    char cwd[PATH_MAX];
-    if (!getcwd(cwd, sizeof cwd)) return p;
-    return std::string(cwd) + "/" + p;
-}
-
-// free / total bytes of the file system holding path (or its nearest existing parent)
-bool disk_space(std::string path, uint64_t* free_b, uint64_t* total_b) {
-    path = absolute(path);
-    for (int i = 0; i < 64 && !path.empty(); i++) {
-        struct statvfs v{};
-        if (statvfs(path.c_str(), &v) == 0) {
-            *free_b = static_cast<uint64_t>(v.f_bavail) * v.f_frsize;
-            *total_b = static_cast<uint64_t>(v.f_blocks) * v.f_frsize;
-            return true;
-        }
-        const size_t sl = path.rfind('/');
-        path = sl == 0 ? "/" : (sl == std::string::npos ? "" : path.substr(0, sl));
-    }
-    return false;
-}
-
-// /proc/mounts escapes " " as \040
-std::string unescape_mount(const std::string& s) {
-    std::string o;
-    for (size_t i = 0; i < s.size(); i++) {
-        if (s[i] == '\\' && i + 3 < s.size()) {
-            o += static_cast<char>(strtol(s.substr(i + 1, 3).c_str(), nullptr, 8));
-            i += 3;
-        } else {
-            o += s[i];
-        }
-    }
-    return o;
 }
 
 // gzip file -> file.gz (then the original is removed); false keeps the original
@@ -587,47 +540,8 @@ std::string status_message() {
     const bool have_space = disk_space(dir, &fr, &tot);
     const std::string dir_abs = absolute(dir);
     // drives to offer: / and what is mounted under /media, /mnt, /run/media, /srv
-    std::ostringstream mounts;
-    {
-        struct Mount { std::string dev, mp, type; };
-        std::vector<Mount> all;
-        std::ifstream pm("/proc/mounts");
-        std::string line, mount_of_dir = "/";
-        while (std::getline(pm, line)) {
-            std::istringstream ls(line);
-            Mount m;
-            ls >> m.dev >> m.mp >> m.type;
-            m.mp = unescape_mount(m.mp);
-            if (m.mp.empty()) continue;
-            if (dir_abs.compare(0, m.mp.size(), m.mp) == 0 &&
-                (dir_abs.size() == m.mp.size() || dir_abs[m.mp.size()] == '/' || m.mp == "/") &&
-                m.mp.size() > mount_of_dir.size())
-                mount_of_dir = m.mp;
-            all.push_back(m);
-        }
-        bool first = true;
-        std::vector<std::string> listed;
-        mounts << "[";
-        for (const auto& m : all) {
-            // the folder's own drive is always listed
-            const bool want = m.mp == mount_of_dir ||
-                              ((m.mp == "/" || m.mp.rfind("/media/", 0) == 0 || m.mp.rfind("/mnt/", 0) == 0 ||
-                                m.mp.rfind("/run/media/", 0) == 0 || m.mp.rfind("/srv", 0) == 0) &&
-                               m.type != "tmpfs" && m.type != "devtmpfs" && m.type != "squashfs" && m.type != "overlay" &&
-                               m.type != "autofs" && m.type != "proc" && m.type != "sysfs" &&
-                               // statvfs on a dead network mount blocks (this runs on the uWS loop)
-                               m.type.rfind("nfs", 0) != 0 && m.type != "cifs" && m.type != "smb3" &&
-                               m.type.rfind("fuse.", 0) != 0);
-            if (!want || std::find(listed.begin(), listed.end(), m.mp) != listed.end()) continue;
-            listed.push_back(m.mp);
-            uint64_t mf = 0, mt = 0;
-            if (!disk_space(m.mp, &mf, &mt) || mt == 0) continue;
-            mounts << (first ? "" : ",") << "{\"path\":\"" << json_escape(m.mp) << "\",\"dev\":\"" << json_escape(m.dev)
-                   << "\",\"type\":\"" << json_escape(m.type) << "\",\"free\":" << mf << ",\"total\":" << mt << "}";
-            first = false;
-        }
-        mounts << "],\"mount\":\"" << json_escape(mount_of_dir) << "\"";
-    }
+    std::string mount_of_dir;
+    const std::string mounts = diskutil::mounts_json(dir_abs, &mount_of_dir) + ",\"mount\":\"" + json_escape(mount_of_dir) + "\"";
     std::lock_guard<std::mutex> lk(s.mu);
     std::string types;
     for (const auto& tn : TYPE_NAMES)
@@ -650,7 +564,7 @@ std::string status_message() {
       << ",\"per_day\":" << static_cast<uint64_t>(per_day) << ",\"files\":" << s.files << ",\"total_bytes\":"
       << s.total_bytes + s.buf.size() << ",\"buffered\":" << s.buf.size() << ",\"dropped\":" << s.dropped
       << ",\"compressing\":" << s.compressing << ",\"error\":\"" << json_escape(s.error) << "\",\"mounts\":"
-      << mounts.str() << "}}";
+      << mounts << "}}";
     return o.str();
 }
 

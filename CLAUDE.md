@@ -972,6 +972,37 @@ overlay. A playback never outruns the pipeline (a busy machine plays it
 slower than real time instead of dropping packets). 32 entries in 25
 catalogues - every decoder has its own (p25, dmr, radiosonde last)
 
+**📼 IQ & audio recorder + playback of recordings (sidebar "📼 IQ & Audio
+Recorder")** (details: `kraken_doa_v2/CLAUDE.md` *📼 IQ & audio recorder*,
+format: `kraken_doa_v2/SIGMF.md`): `src/recorder.cpp`, `recorder_audio.cpp`,
+`sigmf.cpp`, playback in `playback.cpp`
+- IQ (coherent): every antenna as a SigMF COLLECTION - one Recording per
+  antenna + `<name>.sigmf-collection` in the folder `<name>/` (`spatial`
+  extension for the geometry / calibration bursts, `krakensdr` namespace for
+  the array settings, VFOs, band, station + GPS track); full band = the
+  8091 bytes (cu8 2.4 MHz, 24 MB/s with 5 antennas) or one VFO's band (ci16
+  at its rate). Transport = one SigMF Archive `<name>.sigmf` (tar) made on
+  the fly by the download / taken by the upload, played in place
+- Audio (any mode, also during a playback): a WAV (48 / 16 / 8 kHz) or Ogg
+  Opus file per VFO - its own demod (the live audio's demodulator) or, with
+  demod Digital, its decoder's voice (new record tap); squelch closed =
+  silence or left out
+- Limits: 10 s .. 24 h or Unlimited; refused when the projected size doesn't
+  fit (a reserve of max(512 MiB, 2 %) stays free; FAT32 4 GiB per file),
+  stopped at the reserve. A drive slower than the data (this Pi's SD card:
+  ~10 MB/s) buffers in memory (<= 40 % of MemAvailable) and writes after the
+  end; with its speed known ("Test write speed" / an earlier recording) a
+  length the buffer can't cover is refused
+- Open = playback through the real pipeline (the 🧪 debug playback's
+  sandbox: heimdall disconnected, nothing saved / sent out) with pause, seek,
+  loop, the recording's array settings, its VFOs if asked, the station where
+  it was made (`StationInfo::setPlaybackOverride`, along its GPS track);
+  foreign SigMF too (1-8 channels, complex u/i/f types, 2.4 MHz / N)
+- "Local Recording" (DoA logger) is called "📝 DoA Recording" in the UI now
+- Files only of recordings are listed / served / deleted (the folder setting
+  can point anywhere); `RECORDER_*` commands, `GET /recording/<name>[/<file>]`,
+  `POST /recording_upload/<name>.sigmf`
+
 **🔇 Digital squelch (per VFO, with its digital decoder on)** (details:
 `kraken_doa_v2/CLAUDE.md` *Digital squelch*): squelch methods are FFT Peak
 and Digital (the eigenvalue methods were removed - saved values map to
@@ -1031,7 +1062,7 @@ see the client CLAUDE.md
   0x400 / 0x800 - the client follows heimdall's mode from them
   (`ControlHandler::note_server_mode`, after a 3 s grace for its own changes)
 - The DoA panel and DoA/coherent sidebar sections (MUSIC DoA, Beamforming,
-  Web Mapper, Local Recording, continuous scanner, CH selector) are hidden
+  Web Mapper, DoA Recording, continuous scanner, CH selector) are hidden
   outside coherent; the discrete scanner section only shows in wideband
 - AI Signal Lab captures (`sigtool.py capture`) record the tuner whose band
   holds the signal outside coherent mode

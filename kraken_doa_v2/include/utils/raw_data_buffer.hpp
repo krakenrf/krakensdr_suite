@@ -17,6 +17,7 @@ struct RawDataPacket {
     uint32_t samples_per_channel;                       // Samples per channel
     uint32_t phase_compensation_state;                  // Phase calibration state from server
     uint32_t noise_source_active;                       // Bias tee / noise source status
+    uint64_t seq = 0;                                   // packet number (every parsed packet, skipped ones too)
     std::chrono::steady_clock::time_point timestamp;
 
     RawDataPacket() : num_channels(0), samples_per_channel(0),

@@ -1,5 +1,6 @@
 #include "control_handler.hpp"
 #include "playback.hpp"
+#include "recorder.hpp"
 #include "globals.hpp"
 #include "config.hpp"
 #include "channel_manager.hpp"
@@ -279,6 +280,7 @@ static bool is_query_command(string_view msg) {
            msg.starts_with("PLUGIN") ||        // plugins: own broadcasts
            msg.starts_with("SF_") ||           // 📻 saved frequencies + map markers: {"savedfreq":...} broadcasts
            msg.starts_with("ARRAY_CAL") ||     // ✈ array calibration: {"array_cal":...} broadcasts
+           msg.starts_with("RECORDER_") ||     // 📼 recorder: {"recorder":...} / {"recordings":...} broadcasts
            // 🗣 Voice to Text actions: {"voice2text":...} / decimator_info broadcasts
            msg.starts_with("VOICE2TEXT_VFO:") || msg.starts_with("VOICE2TEXT_DOWNLOAD:") ||
            msg.starts_with("VOICE2TEXT_LOBE:") ||
@@ -842,6 +844,7 @@ void ControlHandler::handle_message_impl(string_view message) {
             broadcast(build_operating_mode_json());
         }
 
+        requested_freq_hz.store(freq_hz, std::memory_order_relaxed);
         ChannelManager::set_frequency(static_cast<float>(freq_hz), active_channel.load(std::memory_order_relaxed));
 
         forEachMusicProcessor([&](auto* mp) { mp->setFrequency(static_cast<float>(freq_hz)); });
@@ -1908,6 +1911,18 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (km < 10 || km > 1000) throw CommandRejected("radius must be 10-1000 km");
         incidents::set_radius_km(km);
         cout << "Incident map: addresses within " << km << " km of the station" << endl;
+    }
+    // 📼 Recorder (recorder.cpp): settings + actions; refusals told to the pages
+    else if (message.starts_with("RECORDER_") || message == "GET_RECORDER") {
+        string err, applied;
+        if (!rec::handle_command(message, &err, &applied)) {
+            broadcast("{\"recorder\":{\"notice\":\"" + json_escape(err) + "\"}}");
+            throw CommandRejected(err);
+        }
+        if (!err.empty()) broadcast("{\"recorder\":{\"notice\":\"" + json_escape(err) + "\"}}");
+        // remembered (RECORDER_ is in is_query_command: not echoed - the status shows it)
+        if (rec::is_setting(message) && !applied.empty() && !g_replaying_settings.load()) SettingsStore::record(applied);
+        for (const auto& m : rec::tick_messages()) broadcast(m);
     }
     else if (message.starts_with("DECODER_LOG:")) {
         // Decoder data log (sidebar 🗂 Decoder Logging, decoder_log.cpp)

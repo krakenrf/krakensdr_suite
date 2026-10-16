@@ -68,6 +68,11 @@ using VoiceTapHandler = std::function<void(DigitalDecoder* dec, const float* x8k
                                            const std::string& talker_id, const std::string& talker_label,
                                            double rf_hz)>;
 void set_voice_tap_handler(VoiceTapHandler h);
+// 📼 Recorder (recorder_audio.cpp): the same decoded voice (8 kHz) of
+// decoders whose record tap is on (DigitalDecoder::set_record_tap - a VFO in
+// an audio recording). Decoder worker thread; unset = not tapped
+using RecordVoiceHandler = std::function<void(DigitalDecoder* dec, const float* x8k, size_t n)>;
+void set_record_voice_handler(RecordVoiceHandler h);
 
 // Who transmits, as a plugin reports it (kp::Host::talker): the samples
 // [start, end) of the VFO's decimated stream (DigitalDecoder::push pos - the
@@ -223,6 +228,9 @@ public:
     // listened, and the audio goes to the voice tap handler too
     void set_voice_tap(bool on) { voice_tap_.store(on, std::memory_order_relaxed); }
     bool voice_tap() const { return voice_tap_.load(std::memory_order_relaxed); }
+    // 📼 an audio recording of this VFO takes the voice too (the vocoder runs)
+    void set_record_tap(bool on) { record_tap_.store(on, std::memory_order_relaxed); }
+    bool record_tap() const { return record_tap_.load(std::memory_order_relaxed); }
 
 private:
     std::atomic<int> vfo_id_{-1};
@@ -247,6 +255,7 @@ private:
     std::string voice_state_;
     std::atomic<int64_t> voice_wanted_until_{0};
     std::atomic<bool> voice_tap_{false};
+    std::atomic<bool> record_tap_{false};
 
     std::mutex talker_mu_;
     TalkerHandler talker_handler_;

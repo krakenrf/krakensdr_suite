@@ -34,5 +34,7 @@ ggml-*.bin.part
 *.cs16
 *.sigmf-data
 *.sigmf-meta
+*.sigmf-collection
+*.sigmf
 *.wav
 *.opus

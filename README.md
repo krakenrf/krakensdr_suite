@@ -269,6 +269,45 @@ Docker: the image includes the helper (`WHISPER=0` in `.env` leaves it out);
 get the models with the sidebar's "⬇ Get" - they are kept in
 `docker-data/whisper_models/`.
 
+## IQ & audio recording (📼)
+
+The sidebar box **📼 IQ & Audio Recorder** records to the receiver's disk:
+
+- **IQ** (coherent mode): the raw, phase-calibrated samples of every
+  antenna - either the whole 2.4 MHz (2 bytes per sample per antenna: 24
+  MB/s with 5 antennas) or just one VFO's band (e.g. 1 MB/s at 50 kHz). The
+  recording is a [SigMF](https://sigmf.org) collection - one SigMF
+  recording per antenna plus a collection file - in one folder; **⬇**
+  downloads it as a single `.sigmf` archive. Details and how to read it
+  elsewhere: `kraken_doa_v2/SIGMF.md`.
+- **Audio**: what one or more VFOs demodulate (NBFM / AM / WBFM, or with the
+  VFO's demod set to *Digital* its decoder's voice), as WAV or Opus, one file
+  per VFO; optionally only while the squelch is open.
+
+Pick a length (10 s to 24 h) or **Unlimited** (until the drive's reserve is
+reached); a recording that can't fit is refused, and the list shows how big
+each length would be. An SD card writes roughly 8-20 MB/s - too slow for a
+full-band recording, which is then held in memory and written after it
+ends: only short ones (about a minute) fit. **⏱ Test write speed** (under
+Drive) measures the drive; for long full-band recordings use a USB SSD
+(pick it under Drive), or record the VFO band.
+
+**▶ Open** plays an IQ recording back through the receiver - spectrum,
+waterfall, VFOs, decoders, DoA and the map work as if the antennas picked it
+up again, with pause, seek and loop. The recording's array settings come
+with it (and its VFOs, if you tick that), and the station is put where the
+recording was made (moving along its GPS track for a mobile recording). As
+with the debug playback, heimdall is disconnected meanwhile and your own
+settings come back when you press Stop. Audio recordings can run during a
+playback - the way to get the audio of a VFO out of an IQ recording.
+**⬆ Upload** takes a `.sigmf` archive (from another KrakenSDR, or any SigMF
+recording at 2.4 MHz or 2.4 MHz / N) to open it here.
+
+"Save the station's position with it" (on by default) writes the station's
+position and GPS track into IQ recordings - untick it before recording
+something you will share. The old **Local Recording** box (DoA bearings to
+CSV / SQLite) is now called **📝 DoA Recording**.
+
 ## AI Signal Lab and decoder plugins
 
 ### Decoder plugins

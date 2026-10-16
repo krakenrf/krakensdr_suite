@@ -1,10 +1,13 @@
 #pragma once
 
-// Debug playback: a decoder's synthetic multi-antenna test transmission
-// (plugins/<id>/tools/testsignals.json, built by
-// plugins/sdk/tools/make_testsignal.py into testsignal_cache/) played through
-// the real pipeline as if heimdall had received it - spectrum, waterfall,
-// VFOs, decoders, DoA, the map's DF panel.
+// Playback through the real pipeline as if heimdall had received it -
+// spectrum, waterfall, VFOs, decoders, DoA, the map's DF panel - of
+//  - 🧪 a decoder's synthetic multi-antenna test transmission
+//    (plugins/<id>/tools/testsignals.json, built by
+//    plugins/sdk/tools/make_testsignal.py into testsignal_cache/), or
+//  - 📼 an IQ recording (SigMF, the recorder's folder - recorder.hpp): paused,
+//    sought, looped; its array settings, VFOs (when asked) and the station's
+//    position come with it.
 //
 // While it plays: heimdall's 8091 stream is disconnected (the data receiver
 // reads playback::read() instead - the same packet format, CONVERGED,
@@ -29,8 +32,13 @@ extern std::atomic<bool> g_active;
 inline bool active() { return g_active.load(std::memory_order_relaxed); }
 
 // PLAYBACK_LIST | PLAYBACK_GEN:<id> | PLAYBACK_GEN_CANCEL | PLAYBACK_START:<id>
-// | PLAYBACK_STOP | PLAYBACK_DELETE:<id>  (uWS loop thread)
+// | PLAYBACK_STOP | PLAYBACK_DELETE:<id> | PLAYBACK_OPEN:<recording>[:<its
+// VFOs 0|1>[:<loop 0|1>]] | PLAYBACK_PAUSE:0|1 | PLAYBACK_SEEK:<s> |
+// PLAYBACK_LOOP:0|1  (uWS loop thread)
 bool handle_command(std::string_view msg);
+
+// the recording playing (its path), "" = none
+std::string playing_path();
 
 // Why `msg` can't run during playback (nullptr = it can). Not for the
 // playback's own session commands.

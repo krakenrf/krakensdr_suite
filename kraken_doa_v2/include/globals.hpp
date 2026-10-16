@@ -90,6 +90,16 @@ extern std::atomic<bool> fft_data_valid;                // False after reset unt
 // wideband (downconverter) variant this carries the true RF, which reaches
 // ~6.7 GHz on low-side injection - past uint32's ~4.3 GHz cap.
 extern std::array<std::atomic<uint64_t>, MAX_CHANNELS> tuner_frequencies;
+// Coherent mode: the centre frequency the client asked heimdall for (FREQ:,
+// exact Hz; 0 = none yet) - the header's float32 is only ~64 Hz exact near 1 GHz
+extern std::atomic<uint64_t> requested_freq_hz;
+// the receiver's centre (tuner 0) in Hz: the request when the stream agrees
+// with it, else the header's value
+inline uint64_t coherent_tuner_hz() {
+    const uint64_t hdr = tuner_frequencies[0].load(std::memory_order_relaxed);
+    const uint64_t req = requested_freq_hz.load(std::memory_order_relaxed);
+    return (req && (req > hdr ? req - hdr : hdr - req) < 500) ? req : hdr;
+}
 // Independent mode: tuner ch's frequency in Hz - the client's own request
 // when the stream agrees with it (the header's float32 is only ~64 Hz exact
 // near 1 GHz), else the header's value

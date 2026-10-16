@@ -1,5 +1,6 @@
 #include "networking/websocket_server.hpp"
 #include "playback.hpp"
+#include "recorder.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/host_check.hpp"
 #include "globals.hpp"
@@ -312,6 +313,53 @@ void stream_download(uWS::HttpResponse<SSL>* res, const std::string& fullpath,
     (*pump)(0);
 }
 
+// 📼 a recording (recorder.hpp): the parts one after the other - an IQ
+// recording's folder goes out as one SigMF archive (tar headers made here,
+// the files read in place), so a multi-GB download needs no copy on the disk
+template<bool SSL>
+void stream_parts(uWS::HttpResponse<SSL>* res, std::shared_ptr<rec::Download> d) {
+    res->writeHeader("Content-Type", d->content_type);
+    res->writeHeader("Content-Disposition", "attachment; filename=\"" + d->filename + "\"");
+    res->writeHeader("Cache-Control", "no-store");
+    if (d->total == 0) { res->end(); return; }
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    auto buf = std::make_shared<std::vector<char>>(256 * 1024);
+    auto pump = std::make_shared<std::function<bool(uintmax_t)>>();
+    *pump = [res, d, buf, aborted](uintmax_t offset) -> bool {
+        if (*aborted) return true;
+        while (offset < d->total) {
+            if (*aborted) return true;
+            // the part holding offset
+            uint64_t base = 0;
+            size_t i = 0;
+            while (i < d->parts.size() && base + d->parts[i].len <= offset) base += d->parts[i++].len;
+            if (i == d->parts.size()) return true;
+            const rec::Part& p = d->parts[i];
+            const uint64_t in = offset - base;
+            const size_t want = static_cast<size_t>(std::min<uint64_t>(buf->size(), p.len - in));
+            size_t n = 0;
+            if (p.path.empty()) {
+                memcpy(buf->data(), p.mem.data() + in, want);
+                n = want;
+            } else {
+                std::ifstream f(p.path, std::ios::binary);
+                f.seekg(static_cast<std::streamoff>(p.off + in));
+                f.read(buf->data(), static_cast<std::streamsize>(want));
+                if (f.gcount() <= 0) { res->close(); return true; }   // the file shrank: abort rather than send garbage
+                n = static_cast<size_t>(f.gcount());
+            }
+            auto [ok, done] = res->tryEnd(std::string_view(buf->data(), n), d->total);
+            if (done) return true;
+            if (!ok) return false;    // backpressure: resume on onWritable
+            offset += n;
+        }
+        return true;
+    };
+    res->onWritable([pump](uintmax_t offset) -> bool { return (*pump)(offset); });
+    (*pump)(0);
+}
+
 } // namespace
 
 string WebSocketServer::load_html_content() {
@@ -406,6 +454,84 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 return;
             }
             stream_download(res, doa_recordings_dir() + "/" + name, name);
+        })
+        .get("/recording/*", [](auto* res, auto* req) {
+            if (!request_allowed(req)) { refuse_request(res, req); return; }
+            // 📼 a recording of the recorder's folder: /recording/<name> (an IQ
+            // recording = one .sigmf archive) or /recording/<name>/<file>.
+            // Token as for /recordings: positions, what was said
+            if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
+                res->writeStatus("401 Unauthorized")->end("Access token required");
+                return;
+            }
+            std::string url(req->getUrl());
+            const std::string prefix = "/recording/";
+            const std::string rel = url_decode(url.size() > prefix.size() ? url.substr(prefix.size()) : "");
+            auto d = std::make_shared<rec::Download>();
+            std::string status, err;
+            if (!rec::download(rel, d.get(), &status, &err)) {
+                res->writeStatus(status)->end(err);
+                return;
+            }
+            stream_parts(res, d);
+        })
+        .post("/recording_upload/*", [](auto* res, auto* req) {
+            if (!request_allowed(req)) { refuse_request(res, req); return; }
+            // 📼 a SigMF archive into the recorder's folder (open it there to play
+            // it). Streamed to the disk by a thread of its own; the socket is
+            // paused while that is behind
+            if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
+                res->writeStatus("401 Unauthorized")->end("Access token required");
+                return;
+            }
+            std::string url(req->getUrl());
+            const std::string prefix = "/recording_upload/";
+            const std::string name = url_decode(url.size() > prefix.size() ? url.substr(prefix.size()) : "");
+            const std::string cl(req->getHeader("content-length"));
+            const uint64_t len = cl.empty() ? 0 : strtoull(cl.c_str(), nullptr, 10);
+            std::string status, err;
+            rec::Upload* up = rec::upload_begin(name, len, &status, &err);
+            if (!up) {
+                res->writeStatus(status)->end(err);
+                return;
+            }
+            struct St { rec::Upload* up; bool aborted = false; };
+            auto st = std::make_shared<St>(St{up});
+            res->onAborted([st]() {
+                st->aborted = true;
+                if (st->up) rec::upload_abort(st->up);
+                st->up = nullptr;
+            });
+            res->onData([res, st](std::string_view chunk, bool last) {
+                if (!st->up) return;
+                bool pause = false;
+                std::string e;
+                if (!rec::upload_data(st->up, chunk, &pause, &e)) {
+                    rec::upload_abort(st->up);
+                    st->up = nullptr;
+                    res->writeStatus("500 Internal Server Error")->end(e);
+                    return;
+                }
+                if (last) {
+                    rec::Upload* u = st->up;
+                    st->up = nullptr;
+                    rec::upload_finish(u, [res, st](bool ok, std::string msg) {
+                        if (!loop) return;
+                        loop->defer([res, st, ok, msg]() {
+                            if (st->aborted) return;
+                            res->writeStatus(ok ? "200 OK" : "422 Unprocessable Entity")->end(msg);
+                        });
+                    });
+                    return;
+                }
+                if (pause) {
+                    res->pause();
+                    rec::upload_on_drain(st->up, [res, st]() {
+                        if (!loop) return;
+                        loop->defer([res, st]() { if (!st->aborted) res->resume(); });
+                    });
+                }
+            });
         })
         .get("/voice_clip/*", [](auto* res, auto* req) {
             if (!request_allowed(req)) { refuse_request(res, req); return; }
@@ -665,6 +791,14 @@ void WebSocketServer::web_server_main() {
                     if (!global_ssl_app) return;
                     const std::string m = playback::tick_message();
                     if (!m.empty()) global_ssl_app->publish(TOPIC_CTL, m, uWS::TEXT, false);
+                }, 1000, 1000);
+
+                // 📼 Recorder: status when it changed / every second while
+                // recording, the recordings list when it changed
+                struct us_timer_t* rec_timer = us_create_timer(native_loop, 0, 0);
+                us_timer_set(rec_timer, [](struct us_timer_t* /*timer*/) {
+                    if (!global_ssl_app) return;
+                    for (const auto& m : rec::tick_messages()) global_ssl_app->publish(TOPIC_CTL, m, uWS::TEXT, false);
                 }, 1000, 1000);
 
                 // 🗂 Decoder Logging status (disk space, sizes) - every 2 s

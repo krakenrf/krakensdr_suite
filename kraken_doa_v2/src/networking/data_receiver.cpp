@@ -4,6 +4,7 @@
 
 #include "networking/data_receiver.hpp"
 #include "playback.hpp"
+#include "recorder.hpp"
 #include "utils/thread_pool.hpp"
 #include "utils/parse_num.hpp"
 #include "globals.hpp"
@@ -327,7 +328,11 @@ void DataReceiver::data_receiver_thread() {
                     break;
                 }
                 
+                // every whole packet is numbered (a jump after the decimation = lost packets)
+                static uint64_t packet_seq = 0;
+                packet_seq++;
                 RawDataPacket raw_packet;
+                raw_packet.seq = packet_seq;
                 raw_packet.num_channels = channels;
                 raw_packet.samples_per_channel = samples;
                 raw_packet.phase_compensation_state = phase_comp_state;
@@ -367,6 +372,23 @@ void DataReceiver::data_receiver_thread() {
                     if (ref_freq_hz != 0.0f) last_ref_freq_hz = ref_freq_hz;
                 }
 
+                // 📼 full-band IQ recording: the packet as heimdall sent it
+                // (retuning packets only mark a gap)
+                if (rec::full_active()) {
+                    float rf[MAX_CHANNELS], rg[MAX_CHANNELS];
+                    for (uint32_t ch = 0; ch < channels && ch < MAX_CHANNELS; ch++) {
+                        rf[ch] = ch_freq_hz[ch];
+                        rg[ch] = EndianUtils::read_le_float(buffer.data(), offset + 32 + ch * 8 + 4);
+                    }
+                    rec::PacketInfo pi;
+                    pi.phase_state = phase_comp_state;
+                    pi.noise = noise_source != 0;
+                    pi.retuning = is_retuning;
+                    pi.freq_hz = rf;
+                    pi.gain_db = rg;
+                    rec::on_packet(buffer.data() + offset + header_size, channels, samples, pi);
+                }
+
                 // SKIP PROCESSING if server is currently retuning (data contains noise)
                 // Only advance past the packet without processing it
                 if (is_retuning) {
@@ -393,7 +415,9 @@ void DataReceiver::data_receiver_thread() {
                 // OPTIMIZATION: Determine which channels to convert upfront
                 // Use relaxed memory ordering for 5-10% faster atomic loads (flags don't need strict ordering)
                 int current_active = active_channel.load(std::memory_order_relaxed);
-                bool need_doa = (static_cast<int>(channels) >= current_elements && doa_enabled.load(std::memory_order_relaxed));
+                // a 📼 VFO-band IQ recording needs every antenna too
+                bool need_doa = (static_cast<int>(channels) >= current_elements &&
+                                 (doa_enabled.load(std::memory_order_relaxed) || rec::band_vfo() >= 0));
                 bool need_fm = (fm_enabled.load(std::memory_order_relaxed) && current_active < static_cast<int>(channels));
                 // Wideband / independent: every tuner is converted (one FFT each)
                 bool is_wideband = multi_tuner_mode();
@@ -607,8 +631,11 @@ void DataReceiver::decimation_processor_thread() {
         // and so does Voice to Text (voice2text.cpp) on VFOs without a decoder
         const bool digital_needs_processing = decimator_manager.anyDigitalActive();
         const bool transcribe_needs_processing = decimator_manager.anyTranscribeActive();
+        // 📼 recorder: a VFO's band of every antenna (IQ), VFOs' audio
+        const int rec_band_vfo = wideband_enabled ? -1 : rec::band_vfo();
+        const bool rec_audio = rec::audio_active();
         if ((music_needs_processing || fm_needs_processing || beamforming_needs_processing || digital_needs_processing ||
-             transcribe_needs_processing) &&
+             transcribe_needs_processing || rec_band_vfo >= 0 || rec_audio) &&
             decimator_manager.getDecimatorCount() > 0) {
             // OPTIMIZED PIPELINE: Process decimation + MUSIC in single async tasks
             // This eliminates the synchronization barrier between decimation and MUSIC stages
@@ -618,7 +645,8 @@ void DataReceiver::decimation_processor_thread() {
             // source VFO and the VFOs with a digital decoder / transcription,
             // on just the listened-to channel. Every VFO used to decimate
             // every element for nothing.
-            const bool fm_only = !music_needs_processing && !beamforming_needs_processing;
+            // (a VFO-band recording needs every antenna: decimated as with DoA on)
+            const bool fm_only = !music_needs_processing && !beamforming_needs_processing && rec_band_vfo < 0;
             const int fm_source_id = decimator_manager.getFMDecimatorId();
             vector<shared_ptr<DecimatorManager::DecimatorInstance>> active_decimators;
             for (auto& inst : decimator_manager.getAllDecimators()) {
@@ -626,7 +654,8 @@ void DataReceiver::decimation_processor_thread() {
                 if (!inst || !inst->enabled || inst->being_deleted.load(std::memory_order_relaxed)) continue;
                 const bool single_wanted = (fm_needs_processing && inst->id == fm_source_id) ||
                                            inst->digital_mode.load(std::memory_order_relaxed) != 0 ||
-                                           inst->transcribe.load(std::memory_order_relaxed);
+                                           inst->transcribe.load(std::memory_order_relaxed) ||
+                                           (rec_audio && rec::audio_wants(inst->id));
                 if (fm_only && !single_wanted) {
                     // Not decimated in this mode, but keep its FFT-method
                     // squelch indicator live (it reads the main FFT only; a
@@ -1028,6 +1057,53 @@ void DataReceiver::decimation_processor_thread() {
                     }
                     v2t::feed_analog(inst->id, src->data(), src->size(), result.decimated_data.output_rate_hz, rf,
                                      inst->demod_mode.load(std::memory_order_relaxed), open, v2t_tid, v2t_tlabel);
+                }
+            }
+
+            // 📼 recorder: the band VFO's block of every antenna (IQ), and each
+            // recorded VFO's stream - the one its FM audio / decoders get -
+            // with its demod and squelch (audio)
+            if (rec_band_vfo >= 0) {
+                for (auto& result : results) {
+                    const auto& inst = result.instance;
+                    if (!inst || inst->id != rec_band_vfo) continue;
+                    const auto& chs = result.decimated_data.channels;
+                    const size_t ns = result.decimated_data.min_samples;
+                    const complex<float>* ptr[MAX_CHANNELS];
+                    int m = 0;
+                    while (m < static_cast<int>(chs.size()) && m < MAX_CHANNELS && chs[static_cast<size_t>(m)].samples.size() >= ns) {
+                        ptr[m] = chs[static_cast<size_t>(m)].samples.data();
+                        m++;
+                    }
+                    if (m > 0 && ns > 0)
+                        rec::on_band_block(inst->id, raw_packet.seq, ptr, m, ns, result.decimated_data.output_rate_hz,
+                                           static_cast<double>(coherent_tuner_hz()) + result.decimated_data.freq_offset_hz,
+                                           result.decimated_data.freq_offset_hz, raw_packet.noise_source_active != 0,
+                                           raw_packet.phase_compensation_state);
+                }
+            }
+            if (rec_audio) {
+                for (auto& result : results) {
+                    const auto& inst = result.instance;
+                    if (!inst || !rec::audio_wants(inst->id)) continue;
+                    if (result.decimated_data.channels.empty() || result.decimated_data.min_samples == 0) continue;
+                    const vector<complex<float>>* src = nullptr;
+                    if (result.beamformer_ran) {
+                        if (result.have_beamformed) src = &result.beamformed_samples;
+                    } else {
+                        int idx = (wideband_enabled || fm_only) ? 0 : current_active;
+                        if (idx < static_cast<int>(result.decimated_data.channels.size()))
+                            src = &result.decimated_data.channels[idx].samples;
+                    }
+                    if (!src || src->empty()) continue;
+                    int tuner = wideband_enabled ? inst->tuner_channel.load(std::memory_order_relaxed) : 0;
+                    if (tuner < 0 || tuner >= MAX_CHANNELS) tuner = 0;
+                    const double rf = static_cast<double>(exact_tuner_hz(tuner)) + result.decimated_data.freq_offset_hz;
+                    const auto dd = inst->digital_mode.load(std::memory_order_relaxed) != 0 ? inst->getDigital() : nullptr;
+                    rec::feed_audio(inst->id, src->data(), src->size(), result.decimated_data.output_rate_hz, rf,
+                                    inst->demod_mode.load(std::memory_order_relaxed),
+                                    inst->squelch_enabled.load(std::memory_order_relaxed),
+                                    inst->squelch_open.load(std::memory_order_relaxed), dd && dd->takes_voice());
                 }
             }
 

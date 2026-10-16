@@ -182,6 +182,7 @@ docker-data/kraken_doa/api_token              web UI API token (if used)
 docker-data/kraken_doa/server.crt/.key        TLS certificate (self-signed, made on first start)
 docker-data/kraken_doa/fft_wisdom.dat         FFTW plans (made on first start)
 docker-data/kraken_doa/doa_recordings/        DoA recordings
+docker-data/kraken_doa/recordings/            📼 IQ (SigMF) and audio recordings
 docker-data/codecs/                           optional self-built voice codecs (libmbe.so.1,
                                               cdecoder, sdecoder - README "Digital voice codecs")
 docker-data/whisper_models/                   Voice to Text speech models (the sidebar's "⬇ Get")
@@ -195,6 +196,13 @@ speech-to-text helper (whisper.cpp; `--build-arg WHISPER=0` leaves it out and
 saves ~10 minutes of build). The speech models are not in the image: pick one
 in the sidebar box and press "⬇ Get" - it is downloaded once into
 `docker-data/whisper_models/` and kept across rebuilds.
+
+**📼 Recordings on a USB drive**: the container only sees `/data` and what
+is mounted into it. Mount the drive's folder into the `kraken_doa`
+container (a `volumes:` entry in `compose.override.yaml`, e.g.
+`/media/usb/kraken_recordings:/recordings`) and pick that folder in the
+recorder box under Drive - a full-band IQ recording needs a drive faster
+than an SD card.
 
 The containers run as root, so these files belong to root. Read them freely;
 to edit one, stop the stack and use `sudo`.

@@ -1,4 +1,6 @@
 #include "station_info.hpp"
+
+#include <chrono>
 #include "globals.hpp"
 #include "networking/gpsd_client.hpp"
 
@@ -36,11 +38,40 @@ void StationInfo::getStatic(double& lat, double& lon, double& heading) const {
     heading = static_heading_;
 }
 
+void StationInfo::setPlaybackOverride(double lat, double lon, double heading, bool moving, double speed) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ov_on_ = true;
+    ov_lat_ = lat;
+    ov_lon_ = lon;
+    ov_heading_ = heading;
+    ov_moving_ = moving;
+    ov_speed_ = speed;
+}
+
+void StationInfo::clearPlaybackOverride() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ov_on_ = false;
+}
+
 StationLocation StationInfo::resolve() const {
     StationLocation out;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         out.id = id_;
+        if (ov_on_) {
+            // a recording plays: where it was made (a static station, or a
+            // fix of its GPS track at the playback's position)
+            out.source = ov_moving_ ? LocationSource::GPS : LocationSource::STATIC;
+            out.lat = ov_lat_;
+            out.lon = ov_lon_;
+            out.heading = ov_heading_ >= 0 ? ov_heading_ : 0.0;
+            out.heading_valid = ov_heading_ >= 0;
+            out.speed = ov_speed_;
+            if (ov_moving_)
+                out.timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::system_clock::now().time_since_epoch()).count();
+            return out;
+        }
         out.source = source_;
         if (source_ == LocationSource::STATIC) {
             out.lat = static_lat_;

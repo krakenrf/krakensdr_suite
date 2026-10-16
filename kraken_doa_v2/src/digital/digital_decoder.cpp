@@ -78,6 +78,17 @@ void deliver_voice_tap(DigitalDecoder* d, const float* x, size_t n, const std::s
     if (h) h(d, x, n, plugin, tid, tlabel, rf_hz);
 }
 
+std::mutex record_voice_mu;
+RecordVoiceHandler record_voice_handler;
+void deliver_record_voice(DigitalDecoder* d, const float* x, size_t n) {
+    RecordVoiceHandler h;
+    {
+        std::lock_guard<std::mutex> lk(record_voice_mu);
+        h = record_voice_handler;
+    }
+    if (h) h(d, x, n);
+}
+
 std::mutex message_mu;
 MessageHandler message_handler;
 void deliver_message(DigitalDecoder* d, const std::string& plugin, const std::string& from, const std::string& text,
@@ -129,6 +140,11 @@ void set_raw_wanted(bool on) { raw_wanted = on; }
 void set_voice_tap_handler(VoiceTapHandler h) {
     std::lock_guard<std::mutex> lk(voice_tap_mu);
     voice_tap_handler = std::move(h);
+}
+
+void set_record_voice_handler(RecordVoiceHandler h) {
+    std::lock_guard<std::mutex> lk(record_voice_mu);
+    record_voice_handler = std::move(h);
 }
 
 void set_message_handler(MessageHandler h) {
@@ -800,8 +816,8 @@ private:
             r.proc->send(W_OPTION, kv.data(), kv.size(), 0);
             r.raw_sent = raw;
         }
-        // only the decoder whose voice is played (or transcribed) runs its vocoder
-        const int voice = (is_lead(r) && (owner_->voice_wanted() || owner_->voice_tap())) ? 1 : 0;
+        // only the decoder whose voice is played (transcribed, recorded) runs its vocoder
+        const int voice = (is_lead(r) && (owner_->voice_wanted() || owner_->voice_tap() || owner_->record_tap())) ? 1 : 0;
         if (voice != r.voice_sent) {
             uint8_t b = static_cast<uint8_t>(voice);
             r.proc->send(W_VOICE_WANTED, &b, 1, 0);
@@ -938,7 +954,7 @@ private:
                 if (len > 0) on_valid_span(r, p, len);
                 break;
             case W_AUDIO:
-                if (is_lead(r) && (owner_->voice_wanted() || owner_->voice_tap()) && len >= 4) {
+                if (is_lead(r) && (owner_->voice_wanted() || owner_->voice_tap() || owner_->record_tap()) && len >= 4) {
                     std::vector<float> a(len / 4);
                     memcpy(a.data(), p, a.size() * 4);
                     for (float& v : a)
@@ -960,6 +976,7 @@ private:
                         }
                         deliver_voice_tap(owner_, a.data(), a.size(), r.id, t ? t->id : "", t ? t->label : "", rf_hz_);
                     }
+                    if (owner_->record_tap()) deliver_record_voice(owner_, a.data(), a.size());
                 }
                 break;
             case W_AUDIO_CHANNEL:

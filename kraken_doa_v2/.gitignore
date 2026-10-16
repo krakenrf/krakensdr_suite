@@ -17,6 +17,9 @@ doa_settings.json.tmp
 
 # DoA recordings (fixed output folder + common log extensions)
 doa_recordings/
+# 📼 IQ & audio recordings (the recorder's default folder; SigMF data /
+# meta / .wav / .opus are ignored repo-wide in ../.gitignore)
+recordings/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm

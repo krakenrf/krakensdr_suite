@@ -67,6 +67,56 @@ body.pb-on #pb-overlay {display:flex}
 .pb-it button.pb-play {background:#1b5e20;border-color:#2e7d32}
 .pb-it button.pb-stop {background:#b71c1c;border-color:#e53935}
 .pb-meta {color:#7f93a8;font-size:11px}
+/* 📼 IQ & audio recorder (📼 RECORDER block in the script) */
+.rec-seg {display:flex;gap:0;margin-bottom:6px;border:1px solid #1f4a80;border-radius:4px;overflow:hidden}
+.rec-seg button {flex:1;background:#16213e;color:#9fb3c8;border:none;padding:5px 0;cursor:pointer;font-size:13px}
+.rec-seg button.on {background:#1565c0;color:#fff;font-weight:bold}
+.rec-seg button:disabled {opacity:.45;cursor:default}
+.rec-opt {display:flex;align-items:flex-start;gap:6px;font-size:12px;color:#c8d6e5;margin:3px 0;cursor:pointer;line-height:1.35}
+.rec-opt input {margin-top:2px}
+.rec-chk {display:flex;align-items:center;gap:6px;font-size:12px;color:#c8d6e5;margin:4px 0;cursor:pointer}
+.rec-meta {color:#7f93a8;font-size:11px;font-weight:normal}
+.rec-note {font-size:11px;color:#8aa8c7;line-height:1.45;margin-top:3px}
+.rec-note:empty {display:none}
+.rec-warn {color:#ffb74d}
+.rec-bad {color:#ff8a80}
+.rec-ok {color:#81c784}
+.rec-bar {height:6px;background:#1a1a2e;border:1px solid #0f3460;border-radius:3px;overflow:hidden;margin:4px 0}
+.rec-bar i {display:block;height:100%;width:0;background:#3d7ab8}
+.rec-bar.red i {background:#e53935}
+.rec-bar.orange i {background:#fb8c00}
+.rec-sub {font-size:12px;color:#7cb3f0;font-weight:bold;cursor:pointer;user-select:none}
+.rec-vfos {font-size:12px;color:#c8d6e5;line-height:1.8;margin-bottom:2px}
+.rec-vfos label {display:flex;align-items:center;gap:6px;cursor:pointer}
+.rec-vfos .sw {display:inline-block;width:9px;height:9px;border-radius:2px}
+.rec-cur {border:1px solid #e53935;border-radius:4px;background:#2a1520;padding:5px 7px;margin-top:6px;font-size:12px;color:#e0e6f0;line-height:1.5}
+.rec-cur.fin {border-color:#fb8c00;background:#2a2015}
+.rec-cur .rec-dot {color:#ef5350;animation:recblink 1s steps(2) infinite}
+@keyframes recblink {50% {opacity:.25}}
+.rec-list {max-height:330px;overflow-y:auto;border:1px solid #0f3460;border-radius:4px;background:#1a1a2e}
+.rec-it {padding:5px 7px;border-bottom:1px solid #0f3460;font-size:12px;color:#cfe8ff}
+.rec-it:last-child {border-bottom:none}
+.rec-it.playing {background:#1f2d4a;outline:1px solid #7e57c2;outline-offset:-1px}
+.rec-it .rec-h {display:flex;justify-content:space-between;gap:6px;align-items:baseline}
+.rec-it .rec-h b {font-weight:normal;word-break:break-all;color:#e0e6f0}
+.rec-it .rec-acts {display:flex;gap:4px;flex-wrap:wrap;margin-top:3px}
+.rec-it button {font-size:11px;padding:1px 7px;background:#0f3460;color:#e0e6f0;border:1px solid #1f4a80;border-radius:3px;cursor:pointer}
+.rec-it button:disabled {opacity:.4;cursor:default}
+.rec-it button.go {background:#4527a0;border-color:#7e57c2}
+.rec-it button.del {background:#5a1f1f;border-color:#8b2525;color:#ffd9d9}
+.rec-it .rec-file {display:flex;align-items:center;gap:5px;margin-top:2px;color:#9fb3c8;font-size:11px}
+.rec-it .rec-file span {flex:1;word-break:break-all}
+.rec-pb {border:1px solid #7e57c2;border-radius:4px;background:#1c1830;padding:5px 7px;margin:6px 0;font-size:12px;color:#e0e6f0}
+.rec-pb input[type=range] {width:100%;margin:4px 0}
+.rec-pb .rec-row {display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.rec-pb button {font-size:12px;padding:2px 9px;background:#311b92;color:#fff;border:1px solid #7e57c2;border-radius:3px;cursor:pointer}
+.rec-pb button.stop {background:#b71c1c;border-color:#e53935}
+/* a recording plays: the playback banner in its own colour */
+body.pb-rec #pb-banner {background:#4527a0;box-shadow:0 0 0 2px #b39ddb}
+body.pb-rec #pb-banner button {color:#4527a0}
+body.pb-rec .top-bar {box-shadow:inset 0 -3px 0 #7e57c2}
+body.pb-rec #pb-overlay {outline-color:#7e57c2}
+body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,120,255,.6);background:rgba(30,10,70,.35)}
 .pb-bar {height:4px;background:#0f3460;border-radius:2px;overflow:hidden;flex:1;min-width:60px}
 .pb-bar i {display:block;height:100%;background:#4fc3f7}
 .pb-ok {color:#81c784} .pb-bad {color:#ef9a9a} .pb-wait {color:#ffd54f}
@@ -1278,10 +1328,10 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       </div>
     </div>
 
-    <!-- Local Recording -->
+    <!-- DoA Recording (doa_logger.cpp): bearings to a file. Not the 📼 recorder below (IQ / audio) -->
     <div class="sb-section coh-only">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📝 Local Recording<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Logs DoA lobe values to a file <b>on this device's disk</b> (the KrakenPi), not your browser. <b>Legacy CSV</b> matches DOA_value.html line-for-line; <b>SQLite</b> is a compact, app-readable database for plotting on a map. The interval applies to both formats; below the actual DoA data rate it logs at the data rate, and duplicate frames are never written.</span></span></h3>
+        <h3>📝 DoA Recording<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Logs the <b>DoA results</b> (bearing, confidence and the lobe of every VFO) to a file <b>on this device's disk</b> (the KrakenPi), not your browser - for IQ samples or audio use the <b>📼 IQ &amp; Audio Recorder</b>. <b>Legacy CSV</b> matches DOA_value.html line-for-line; <b>SQLite</b> is a compact, app-readable database for plotting on a map. The interval applies to both formats; below the actual DoA data rate it logs at the data rate, and duplicate frames are never written.</span></span></h3>
         <span class="sb-toggle">▼</span>
       </div>
       <div class="sb-content">
@@ -1321,6 +1371,91 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <button id="rec-download-btn" class="btn sm" style="flex:1" onclick="downloadSelected()">&#11015; Download</button>
             <button class="btn sm" style="flex:1;background:#5a1f1f;border-color:#8b2525;color:#ffd9d9" onclick="deleteSelected()">&#128465; Delete</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 📼 IQ & Audio Recorder (recorder.cpp, recorder_audio.cpp; playback: playback.cpp) - all modes -->
+    <div class="sb-section" id="iqr-section">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>📼 IQ &amp; Audio Recorder<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Records to <b>this device's disk</b> (the KrakenPi):<br><b>IQ</b> (coherent mode): the raw samples of <b>every antenna</b>, phase-calibrated - the whole 2.4 MHz (as heimdall sends it, 2 bytes per sample per antenna: 24 MB/s with 5 antennas) or just one VFO's band (much smaller). Saved in the open <b>SigMF</b> format: one recording per antenna + a collection file tying them together, in one folder; downloaded as one <code>.sigmf</code> archive. <b>Open</b> plays a recording back through the receiver - spectrum, VFOs, decoders, DoA, the map - as if the antennas picked it up again.<br><b>Audio</b>: what one or more VFOs demodulate (their demod - NBFM / AM / WBFM - or with demod <i>Digital</i> their decoder's voice), a WAV or Opus file per VFO.<br><br>A recording stops at its time limit, when you press Stop, or before the drive is full (a reserve is kept free). It doesn't start when it can't fit. An SD card writes ~8-20 MB/s: a full-band recording of 5 antennas is then held in memory and written after it ends - only short ones fit; use the VFO band or a USB SSD for long ones.</span></span></h3>
+        <span class="acal-badge" id="iqr-badge"></span>
+        <span class="sb-toggle">▼</span>
+      </div>
+      <div class="sb-content">
+        <div id="iqr-pbbox"></div>
+        <div class="rec-seg" id="iqr-mode">
+          <button data-v="iq" onclick="recSet('RECORDER_MODE:iq')" title="The raw IQ samples of every antenna (coherent mode)">📡 IQ</button>
+          <button data-v="audio" onclick="recSet('RECORDER_MODE:audio')" title="The demodulated audio of one or more VFOs">🔊 Audio</button>
+        </div>
+        <div id="iqr-iq-opts">
+          <label class="rec-opt"><input type="radio" name="rec-iq" value="full" onchange="recSet('RECORDER_IQ:full')"> <span><b>Full band</b> - 2.4 MHz, every antenna <span class="rec-meta" id="iqr-iq-full-rate"></span></span></label>
+          <label class="rec-opt"><input type="radio" name="rec-iq" value="band" onchange="recSet('RECORDER_IQ:band')"> <span><b>VFO band</b> - one VFO's bandwidth, every antenna <span class="rec-meta" id="iqr-iq-band-rate"></span></span></label>
+          <div class="ctrl-row" id="iqr-band-row" style="margin-left:22px">
+            <label>VFO:</label>
+            <select id="iqr-band-vfo" style="flex:1;min-width:0" onchange="recSet('RECORDER_BAND_VFO:' + this.value)"></select>
+          </div>
+        </div>
+        <div id="iqr-audio-opts">
+          <div style="font-size:12px;color:#7cb3f0;font-weight:bold;margin:4px 0 2px">VFOs <span class="rec-meta">(set a VFO's demod to <i>Digital</i> to record its decoder's voice)</span></div>
+          <div id="iqr-vfos" class="rec-vfos"></div>
+          <div class="ctrl-row">
+            <label>Format:</label>
+            <select id="iqr-afmt" style="flex:1;min-width:0" onchange="recSetFormat(this.value)">
+              <option value="wav:48000">WAV 48 kHz (16-bit)</option>
+              <option value="wav:16000">WAV 16 kHz (voice)</option>
+              <option value="wav:8000">WAV 8 kHz (voice, smallest)</option>
+              <option value="opus:16">Opus 16 kbit/s (voice)</option>
+              <option value="opus:24">Opus 24 kbit/s</option>
+              <option value="opus:32">Opus 32 kbit/s</option>
+              <option value="opus:64">Opus 64 kbit/s (music)</option>
+              <option value="opus:96">Opus 96 kbit/s (broadcast FM)</option>
+            </select>
+          </div>
+          <label class="rec-chk" title="With the VFO's squelch on: the time the squelch is closed is left out instead of recorded as silence (the file only holds the transmissions). Digital: only the decoded voice"><input type="checkbox" id="iqr-askip" onchange="recSet('RECORDER_AUDIO_SKIP:' + (this.checked ? 1 : 0))"> Leave out silence (closed squelch)</label>
+        </div>
+        <div class="ctrl-row">
+          <label>Length:</label>
+          <select id="iqr-dur" style="flex:1;min-width:0" onchange="recSet('RECORDER_DURATION:' + this.value)"></select>
+        </div>
+        <div class="ctrl-row">
+          <input type="text" id="iqr-name" placeholder="name (optional)" maxlength="64" style="flex:1;min-width:0" onchange="send('RECORDER_NAME:' + this.value.trim())">
+        </div>
+        <div class="ctrl-row">
+          <input type="text" id="iqr-notes" placeholder="notes (optional, saved with it)" maxlength="500" style="flex:1;min-width:0" onchange="send('RECORDER_NOTES:' + this.value.trim())">
+        </div>
+        <label class="rec-chk" title="The station's position (and, from a GPS, its track while recording) and heading go into the recording - playback puts the map and the bearings' north back where it was made"><input type="checkbox" id="iqr-loc" onchange="recSet('RECORDER_LOCATION:' + (this.checked ? 1 : 0))"> Save the station's position with it</label>
+        <div id="iqr-need" class="rec-note"></div>
+        <div class="ctrl-row" style="margin-top:4px">
+          <button id="iqr-go" class="btn" style="flex:1" onclick="recToggle()">● Start Recording</button>
+        </div>
+        <div id="iqr-cur"></div>
+        <div id="iqr-last" class="rec-note"></div>
+        <div style="margin-top:8px;border-top:1px solid #0f3460;padding-top:6px">
+          <div class="rec-sub" onclick="recToggleSub('drive')"><span id="iqr-drive-tog">▶</span> Drive <span class="rec-meta" id="iqr-drive-sum"></span></div>
+          <div id="iqr-drive" style="display:none">
+            <div class="ctrl-row"><select id="iqr-mount" style="flex:1;min-width:0;max-width:none" onchange="recPickDrive(this.value)" title="Drives on this device (free space)"></select></div>
+            <div class="ctrl-row" style="gap:6px">
+              <input type="text" id="iqr-dir" style="flex:1;min-width:0" placeholder="recordings" title="Folder on this device; a relative path is inside kraken_doa's folder. Created if missing." onkeydown="if(event.key==='Enter')recApplyDir()">
+              <button class="btn sm" onclick="recApplyDir()" title="Use this folder">Apply</button>
+            </div>
+            <div title="Disk used" class="rec-bar"><i id="iqr-free-bar"></i></div>
+            <div class="rec-note" id="iqr-disk"></div>
+            <div class="ctrl-row"><button class="btn sm" id="iqr-test" style="flex:1" onclick="send('RECORDER_SPEEDTEST')" title="Writes 128 MB to the folder (and deletes it) to measure how fast the drive takes a recording">⏱ Test write speed</button></div>
+          </div>
+        </div>
+        <div style="margin-top:8px;border-top:1px solid #0f3460;padding-top:6px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <span style="color:#7cb3f0;font-size:12px;font-weight:bold">Recordings <span class="rec-meta" id="iqr-count"></span></span>
+            <span>
+              <button class="btn sm" title="Upload a SigMF archive (.sigmf) from this computer - e.g. one downloaded from another KrakenSDR - to open it here" onclick="$id('iqr-up-file').click()">⬆ Upload</button>
+              <button class="btn sm" title="Refresh the list" onclick="send('RECORDER_LIST')">&#8635;</button>
+            </span>
+          </div>
+          <input type="file" id="iqr-up-file" accept=".sigmf" style="display:none" onchange="recUpload(this)">
+          <div id="iqr-up" class="rec-note"></div>
+          <label class="rec-chk" title="Open puts the VFOs back the way they were when the recording was made (else your VFOs stay, at the same offsets). Either way your own setup returns when the playback stops"><input type="checkbox" id="iqr-pb-vfos"> Open with the recording's VFOs</label>
+          <div id="iqr-list" class="rec-list"></div>
         </div>
       </div>
     </div>
@@ -1769,7 +1904,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       <!-- Hamburger (mobile only) -->
       <button class="menu-btn" onclick="toggleSidebar()" title="Settings">☰</button>
       <!-- 🧪 Debug playback: shown while a test transmission plays instead of heimdall's data -->
-      <div id="pb-banner" title="A synthetic test transmission is playing through the receiver instead of the antennas. Nothing is sent to heimdall, settings are not saved and are put back when it stops."><span>🧪 DEBUG PLAYBACK - not live</span><span class="pb-bt" id="pb-banner-t"></span><button onclick="pbStop()">■ Stop</button></div>
+      <div id="pb-banner" title="A synthetic test transmission is playing through the receiver instead of the antennas. Nothing is sent to heimdall, settings are not saved and are put back when it stops."><span id="pb-banner-k">🧪 DEBUG PLAYBACK - not live</span><span class="pb-bt" id="pb-banner-t"></span><button onclick="pbStop()">■ Stop</button></div>
       <!-- Center Frequency (SDR#-style) - FIRST. Hidden in independent mode
            (every tuner pane has its own frequency digits and gain) -->
       <div class="tb-group not-indep" id="tb-freq">
@@ -1869,7 +2004,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <span class="hint">Click/drag tuning bar</span>
         </div>
         <div class="spectrum-content">
-          <div id="pb-overlay"><span>DEBUG PLAYBACK - not live</span></div>
+          <div id="pb-overlay"><span id="pb-overlay-k">DEBUG PLAYBACK - not live</span></div>
           <div id="fp"></div>
           <div id="fp-split" class="hsplit" title="Drag to change the spectrum / waterfall split (double-click: default)"></div>
           <div id="wf-container">
@@ -7039,6 +7174,7 @@ function connect() {
     // 🗂 Decoder Logging settings + disk space (then every 2 s)
     setTimeout(() => send('GET_DECODER_LOG'), 850);
     setTimeout(() => send('PLAYBACK_LIST'), 870);
+    setTimeout(() => send('GET_RECORDER'), 890);
     setTimeout(() => send('GET_VOICE2TEXT'), 860);
     // ✈ Array calibration (then every 2 s)
     setTimeout(() => send('GET_ARRAY_CAL'), 900);
@@ -7087,6 +7223,7 @@ function connect() {
           if(msg.decimator_info) {
             updateDecimatorList(msg.decimator_info);
             digOnDecimatorInfo(msg.decimator_info);
+            if (typeof recRenderVfos === 'function') recRenderVfos();
             updatePlotTitle();
           }
           else if(msg.digital) {
@@ -7103,6 +7240,8 @@ function connect() {
           else if(msg.codecs) { digOnCodecs(msg.codecs); }
           else if(msg.declog) { dlOnStatus(msg.declog); }
           else if(msg.playback) { pbOnMessage(msg.playback); }
+          else if(msg.recorder) { recOnStatus(msg.recorder); }
+          else if(msg.recordings) { recOnList(msg.recordings); }
           else if(msg.array_cal) { acalOnStatus(msg.array_cal); }
           else if(msg.declog_error !== undefined) { dlOnError(msg.declog_error); }
           else if(msg.ai_state) { aiOnState(msg.ai_state); }
@@ -10991,7 +11130,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     $id('dl-note').textContent = extra.join(' · ');
   }
 
-  // --- Local Recording controls ---
+  // --- DoA Recording controls (doa_logger.cpp; "Local Recording" until the 📼 recorder came) ---
   let recordingRunning = false;
   let recFiles = [];        // [{name,size,mtime}] from LOG_LIST
   let recSelected = null;   // selected filename
@@ -18720,7 +18859,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     // Update GPS status panel
     if (status.gps) updateGpsStatus(status.gps);
 
-    // Update local recording panel (file size / entries / state)
+    // Update the DoA Recording panel (file size / entries / state)
     if (status.recording) updateRecordingStatus(status.recording);
 
     // Update web mapper panel (connection state / record count)
@@ -19175,7 +19314,17 @@ function pbOnMessage(m) {
   }
   pbCatalog = cat;
   document.body.classList.toggle('pb-on', !!m.active);
+  // 📼 a recording plays (the 📼 recorder box has its controls)
+  const isRec = !!m.active && m.kind === 'rec';
+  document.body.classList.toggle('pb-rec', isRec);
+  const bk = $id('pb-banner-k'), ok = $id('pb-overlay-k'), bn = $id('pb-banner');
+  if (bk) bk.textContent = isRec ? '📼 PLAYBACK - not live' : '🧪 DEBUG PLAYBACK - not live';
+  if (ok) ok.textContent = isRec ? 'PLAYBACK - not live' : 'DEBUG PLAYBACK - not live';
+  if (bn) bn.title = isRec ? 'A recording is playing through the receiver instead of the antennas. Nothing is sent to heimdall, settings are not saved and are put back when it stops.'
+                           : 'A synthetic test transmission is playing through the receiver instead of the antennas. Nothing is sent to heimdall, settings are not saved and are put back when it stops.';
+  recPbAt = performance.now();
   pbRender();
+  if (typeof recPbRender === 'function') { recPbRender(); recRenderList(); }
 }
 function pbEntry(id) { return pbCatalog.find(e => e.id === id); }
 function pbAngDiff(a, b) { return ((a - b + 540) % 360) - 180; }
@@ -19224,7 +19373,7 @@ function pbRender() {
   if (!st) return;
   const set = (id, html) => { const el = $id(id); if (el && el.innerHTML !== html) el.innerHTML = html; };
   const bt = $id('pb-banner-t');
-  if (bt) { const t = st.active ? (st.title || st.id) : ''; if (bt.textContent !== t) bt.textContent = t; }
+  if (bt && st.kind !== 'rec') { const t = st.active ? (st.title || st.id) : ''; if (bt.textContent !== t) bt.textContent = t; }
   const badge = $id('pb-badge');
   if (badge) {
     const t = st.active ? 'PLAYING' : (st.gen && st.gen.running ? 'generating' : '');
@@ -19233,7 +19382,10 @@ function pbRender() {
     badge.style.background = st.active ? '#b71c1c' : '#0f3460';
   }
   let head;
-  if (st.active) {
+  if (st.active && st.kind === 'rec') {
+    head = '📼 A recording is playing (<b>' + pbEsc(st.rec ? st.rec.name : st.id) + '</b>) - its controls are in the 📼 IQ &amp; Audio Recorder box.' +
+      '<div class="pb-row"><button class="pb-stop" onclick="pbStop()">■ Stop playback</button></div>';
+  } else if (st.active) {
     head = '<b style="color:#ff8a80">▶ Playing</b> ' + pbEsc(st.title || st.id) + '<br><span class="pb-meta">' +
       ((st.rf_hz || 0) / 1e6).toFixed(4) + ' MHz · loop ' + (st.loop_s || 0).toFixed(1) + ' s (at ' + (st.pos_s || 0).toFixed(1) +
       ' s) · playing ' + pbFmtS(st.elapsed_s) + ' · decoder ' + pbEsc(st.decoder || '') + '</span><br>' +
@@ -19303,6 +19455,429 @@ function pbNotice(t) {
   pbToastT = setTimeout(() => { el.style.display = 'none'; }, 6000);
 }
 function pbTick() { if (pbState && pbState.active) pbRender(); }
+
+// ================================================================
+// 📼 RECORDER (recorder.cpp, recorder_audio.cpp; recordings played by playback.cpp)
+// ================================================================
+// {"recorder":{settings, durations, disk, mounts, need, speed, test, cur,
+// last, error}} - when it changed / every second while recording - or
+// {"recorder":{"notice":"..."}} (a refusal, a toast on every page);
+// {"recordings":{dir, dir_abs, items:[{name, kind iq|audio, form
+// folder|archive, bytes, mtime, writing, channels, rate, datatype, seconds,
+// freq_hz, start, format, description | files:[{name, bytes, seconds}] |
+// error}]}} when the folder changed. A recording that plays is the playback
+// status (pbState, kind "rec") - its controls are drawn here (recPbRender)
+var recState = null, recItems = [], recOpenIds = {}, recPbDrag = false, recPbAt = 0, recAudio = null, recAudioName = '';
+function recEsc(t) { return pbEsc(t); }
+function recFmtB(b) {
+  b = +b || 0;
+  if (b < 1e3) return b + ' B';
+  if (b < 1e6) return (b / 1e3).toFixed(0) + ' kB';
+  if (b < 1e9) return (b / 1e6).toFixed(b < 1e7 ? 1 : 0) + ' MB';
+  return (b / 1e9).toFixed(2) + ' GB';
+}
+function recFmtS(s) {
+  s = Math.max(0, Math.floor(+s || 0));
+  const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0');
+}
+function recFmtDur(s) {
+  if (!s) return 'Unlimited';
+  if (s < 60) return s + ' s';
+  if (s < 3600) return (s / 60) + ' min';
+  return (s / 3600) + ' h';
+}
+function recFmtLong(s) {
+  s = Math.floor(+s || 0);
+  if (s < 120) return s + ' s';
+  if (s < 7200) return Math.floor(s / 60) + ' min';
+  if (s < 172800) return (s / 3600).toFixed(1) + ' h';
+  return (s / 86400).toFixed(1) + ' days';
+}
+function recFmtRate(bps) { return bps >= 1e6 ? (bps / 1e6).toFixed(1) + ' MB/s' : (bps / 1e3).toFixed(0) + ' kB/s'; }
+function recSet(cmd) { send(cmd); }
+function recSetFormat(v) {
+  const [f, x] = v.split(':');
+  send('RECORDER_AUDIO_FORMAT:' + f);
+  send(f === 'wav' ? 'RECORDER_AUDIO_RATE:' + x : 'RECORDER_AUDIO_KBPS:' + x);
+}
+function recOnStatus(m) {
+  if (m.notice !== undefined) { pbNotice('📼 ' + m.notice); return; }
+  recState = m;
+  recRender();
+}
+function recOnList(m) {
+  recItems = (m && m.items) || [];
+  recRenderList();
+}
+function recToggle() {
+  if (!recState) return;
+  if (recState.cur) { send('RECORDER_STOP'); return; }
+  const n = $id('iqr-name'), t = $id('iqr-notes');
+  send('RECORDER_NAME:' + (n ? n.value.trim() : ''));
+  send('RECORDER_NOTES:' + (t ? t.value.trim() : ''));
+  send('RECORDER_START');
+  if (n) n.value = '';
+  if (t) t.value = '';
+}
+function recToggleSub(k) {
+  const el = $id('iqr-' + k), tg = $id('iqr-' + k + '-tog');
+  if (!el) return;
+  const open = el.style.display === 'none';
+  el.style.display = open ? '' : 'none';
+  if (tg) tg.textContent = open ? '▼' : '▶';
+}
+function recPickDrive(mp) {
+  const el = $id('iqr-dir');
+  if (el) el.value = (mp === '/' || !mp) ? 'recordings' : mp.replace(/\/$/, '') + '/kraken_recordings';
+}
+function recApplyDir() {
+  const el = $id('iqr-dir');
+  if (el && el.value.trim()) send('RECORDER_DIR:' + el.value.trim());
+}
+// the audio recording's VFOs: "all" or the ticked ids
+function recVfosChanged(allBox) {
+  const boxes = [...document.querySelectorAll('#iqr-vfos input[data-v]')];
+  const all = $id('iqr-vfo-all');
+  if (allBox) boxes.forEach(b => { b.checked = all.checked; });
+  const ids = boxes.filter(b => b.checked).map(b => b.dataset.v);
+  if (all) all.checked = ids.length === boxes.length && boxes.length > 0;
+  send('RECORDER_AUDIO_VFOS:' + (all && all.checked ? 'all' : ids.length ? ids.join(',') : 'all'));
+}
+function recRenderVfos() {
+  const st = recState, box = $id('iqr-vfos'), sel = $id('iqr-band-vfo');
+  if (!st) return;
+  const list = (typeof decimatorInfo !== 'undefined' && decimatorInfo) || [];
+  const mhz = d => ((vfoCenterMhz(d) * 1e6 + (d.freq_offset_hz || 0)) / 1e6).toFixed(4);
+  if (box && !box.contains(document.activeElement)) {
+    const sv = st.settings.avfos, all = sv === 'all', ids = all ? [] : sv.split(',');
+    let h = '<label title="Every VFO there is when the recording starts"><input type="checkbox" id="iqr-vfo-all" onchange="recVfosChanged(true)"' + (all ? ' checked' : '') + '> All VFOs</label>';
+    for (const d of list) {
+      const on = all || ids.includes(String(d.id));
+      h += '<label><input type="checkbox" data-v="' + d.id + '" onchange="recVfosChanged(false)"' + (on ? ' checked' : '') + '><span class="sw" style="background:' +
+        getDecimatorColor(d.id) + '"></span>D' + d.id + ' ' + mhz(d) + ' MHz <span class="rec-meta">' + recEsc(d.demod_mode || '') +
+        (d.squelch_enabled ? ' · squelch' : '') + '</span></label>';
+    }
+    if (box.dataset.html !== h) { box.dataset.html = h; box.innerHTML = h; }
+  }
+  if (sel && document.activeElement !== sel) {
+    const want = String(st.settings.band_vfo);
+    let h = '<option value="-1">The Audio Src VFO</option>';
+    for (const d of list) {
+      const bw = (typeof bwo !== 'undefined' && bwo[d.bandwidth_index]) ? bwo[d.bandwidth_index].bandwidth * 1000 : 0;
+      h += '<option value="' + d.id + '">D' + d.id + ' ' + mhz(d) + ' MHz · ' + (bw >= 1000 ? (bw / 1000) + ' MHz' : bw + ' kHz') + '</option>';
+    }
+    if (sel.dataset.html !== h) { sel.dataset.html = h; sel.innerHTML = h; }
+    sel.value = want;
+    if (sel.value !== want) sel.value = '-1';
+  }
+}
+function recRender() {
+  const st = recState;
+  if (!st) return;
+  const S = st.settings, need = st.need || {}, cur = st.cur, disk = st.disk || {};
+  const set = (id, html) => { const el = $id(id); if (el && el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; } };
+  const busy = !!cur;
+  const coherent = typeof opMode === 'undefined' || opMode === 'coherent';
+  // mode buttons, options
+  document.querySelectorAll('#iqr-mode button').forEach(b => {
+    b.classList.toggle('on', b.dataset.v === S.mode);
+    b.disabled = busy;
+  });
+  const iq = S.mode === 'iq';
+  $id('iqr-iq-opts').style.display = iq ? '' : 'none';
+  $id('iqr-audio-opts').style.display = iq ? 'none' : '';
+  document.querySelectorAll('input[name=rec-iq]').forEach(r => { r.checked = r.value === S.iq; r.disabled = busy; });
+  $id('iqr-band-row').style.display = S.iq === 'band' ? '' : 'none';
+  const M = need.channels || 5;
+  set('iqr-iq-full-rate', '(' + recFmtRate(M * 2 * 2.4e6) + ')');
+  set('iqr-iq-band-rate', S.iq === 'band' && need.rate ? '(' + recFmtRate(M * 4 * need.rate) + ' at ' + (need.rate / 1e3).toFixed(1) + ' kHz)' : '');
+  const fmt = $id('iqr-afmt');
+  if (fmt && document.activeElement !== fmt) fmt.value = S.aformat === 'wav' ? 'wav:' + S.arate : 'opus:' + S.akbps;
+  const ak = $id('iqr-askip'); if (ak) ak.checked = !!S.askip;
+  const lo = $id('iqr-loc'); if (lo) lo.checked = !!S.location;
+  recRenderVfos();
+  // lengths: each with its size; what doesn't fit (drive, memory buffer) disabled
+  const dur = $id('iqr-dur');
+  if (dur && document.activeElement !== dur) {
+    let h = '';
+    for (const d of [...(st.durations || []), 0]) {
+      let label = recFmtDur(d), dis = false;
+      if (d) {
+        label += ' - ' + recFmtB(need.bps * d);
+        if (need.max_s >= 0 && d > need.max_s) { label += ' (doesn\'t fit)'; dis = true; }
+        else if (need.ram_s >= 0 && d > need.ram_s) { label += ' (drive too slow)'; dis = true; }
+      } else {
+        label += need.ram_s >= 0 ? ' (stops after ~' + recFmtLong(Math.min(need.ram_s, need.max_s)) + ': drive too slow)'
+                                 : ' (up to ' + recFmtLong(need.max_s) + ' on this drive)';
+      }
+      h += '<option value="' + d + '"' + (dis ? ' disabled' : '') + '>' + recEsc(label) + '</option>';
+    }
+    if (dur.dataset.html !== h) { dur.dataset.html = h; dur.innerHTML = h; }
+    dur.value = String(S.duration);
+  }
+  // what it needs / can't
+  let n = '';
+  if (need.why) n = '<span class="rec-bad">⚠ ' + recEsc(need.why) + '</span>';
+  else if (iq && !coherent) n = '<span class="rec-bad">⚠ IQ recording needs coherent mode</span>';
+  else {
+    n = 'Needs ' + recFmtRate(need.bps) + (iq ? ' (' + M + ' antennas × ' + (S.iq === 'band' ? (need.rate / 1e3).toFixed(1) + ' kHz ci16' : '2.4 MHz cu8') + ')'
+                                              : ' (' + need.files + ' file' + (need.files === 1 ? '' : 's') + ')');
+    if (st.speed && st.speed.mbps) {
+      const slow = st.speed.mbps * 1e6 < need.bps;
+      n += ' · drive ' + st.speed.mbps.toFixed(1) + ' MB/s' + (st.speed.live ? ' (seen recording)' : ' (tested)');
+      if (slow) n += '<br><span class="rec-warn">The drive is slower: held in memory (' + recFmtB(need.mem) + '), at most ' + recFmtLong(need.ram_s) +
+                     ', then written out. For longer: the VFO band, or a faster drive (USB SSD).</span>';
+    } else if (iq && need.bps > 8e6) {
+      n += '<br><span class="rec-meta">An SD card may not keep up - ⏱ Test write speed (Drive, below).</span>';
+    }
+  }
+  set('iqr-need', n);
+  // start / stop
+  const go = $id('iqr-go');
+  if (go) {
+    const blocked = !busy && (!!need.why || (iq && !coherent));
+    go.innerHTML = busy ? (cur.state === 'finishing' ? '⏳ Writing to the drive…' : '■ Stop Recording') : '● Start Recording';
+    go.disabled = blocked || (busy && cur.state === 'finishing');
+    go.style.background = busy ? '#5a1f1f' : '';
+    go.style.borderColor = busy ? '#8b2525' : '';
+    go.style.color = busy ? '#ffd9d9' : '';
+  }
+  // the running recording
+  let c = '';
+  if (cur) {
+    const fin = cur.state === 'finishing';
+    const lim = +cur.limit_s || 0;
+    c = '<div class="rec-cur' + (fin ? ' fin' : '') + '"><div style="display:flex;justify-content:space-between;gap:6px"><span>' +
+      (fin ? '⏳ ' : '<span class="rec-dot">●</span> ') + '<b>' + recEsc(cur.name) + '</b></span><span>' + recFmtS(cur.elapsed_s) +
+      (lim ? ' / ' + recFmtS(lim) : '') + '</span></div>';
+    if (lim) c += '<div class="rec-bar red"><i style="width:' + Math.min(100, cur.elapsed_s / lim * 100).toFixed(1) + '%"></i></div>';
+    if (cur.kind === 'iq') {
+      c += '<span class="rec-meta">' + cur.channels + ' antennas · ' + (cur.iq === 'band' ? 'VFO D' + cur.vfo + ' band ' + (cur.rate / 1e3).toFixed(1) + ' kHz' : 'full band') +
+        ' · ' + recFmtB(cur.bytes) + ' on the drive · ' + recFmtRate(cur.bps) + '</span>';
+      const q = cur.queued || 0, pct = cur.budget ? q / cur.budget * 100 : 0;
+      if (q > 4e6 || fin) {
+        c += '<div class="rec-bar ' + (pct > 70 ? 'red' : 'orange') + '"><i style="width:' + Math.min(100, pct).toFixed(1) + '%"></i></div><span class="rec-meta">' +
+          (fin ? 'Writing the rest to the drive: ' + recFmtB(q) + ' left (' + recFmtS(cur.written_s) + ' of ' + recFmtS(cur.elapsed_s) + ' written)'
+               : 'Memory buffer ' + pct.toFixed(0) + ' % - the drive writes ' + recFmtRate(cur.out_bps)) + '</span>';
+      }
+    } else {
+      c += '<span class="rec-meta">' + (cur.format === 'wav' ? 'WAV' : 'Opus') + ' · ' + recFmtB(cur.bytes) + (cur.dropped_s > 0.5 ? ' · <span class="rec-warn">' + cur.dropped_s.toFixed(1) + ' s dropped (busy)</span>' : '') + '</span>';
+      for (const v of (cur.vfos || []))
+        c += '<div class="rec-file" style="display:flex;gap:5px;font-size:11px;color:#c8d6e5"><span class="sw" style="display:inline-block;width:9px;height:9px;border-radius:2px;background:' +
+          getDecimatorColor(v.id) + '"></span><span style="flex:1">D' + v.id + ' ' + v.mhz.toFixed(4) + ' ' + recEsc(v.demod) + ' ' +
+          (!v.sq ? '<span class="rec-meta">(no squelch)</span>' : v.open ? '<span class="rec-ok">● ' + (v.demod === 'Digital' ? 'voice' : 'open') + '</span>' : '<span class="rec-meta">○ ' + (v.demod === 'Digital' ? 'no voice' : 'closed') + '</span>') + '</span><span class="rec-meta">' + recFmtS(v.seconds) + ' · ' + recFmtB(v.bytes) + '</span></div>';
+    }
+    c += '</div>';
+  }
+  set('iqr-cur', c);
+  let l = '';
+  if (st.last && st.last.kind) {
+    const L = st.last;
+    l = L.error ? '<span class="rec-bad">⚠ ' + recEsc(L.error) + '</span>'
+      : 'Saved <b>' + recEsc(L.name) + '</b>: ' + recFmtS(L.seconds) + ', ' + recFmtB(L.bytes) + ' <span class="rec-meta">(' + recEsc(L.reason) + ', ' + fmtTime(L.t) + ')</span>';
+  }
+  if (st.error && !busy) l = (l ? l + '<br>' : '') + '<span class="rec-bad">Not started: ' + recEsc(st.error) + '</span>';
+  set('iqr-last', l);
+  // the drive
+  const free = disk.free || 0, tot = disk.total || 0;
+  set('iqr-drive-sum', '(' + recFmtB(free) + ' free' + (disk.fs ? ', ' + recEsc(disk.fs) : '') + (st.speed && st.speed.mbps ? ', ' + st.speed.mbps.toFixed(1) + ' MB/s' : '') + ')');
+  const fb = $id('iqr-free-bar'); if (fb) fb.style.width = (tot ? (1 - free / tot) * 100 : 0).toFixed(1) + '%';
+  set('iqr-disk', recEsc(disk.dir_abs || '') + '<br>' + recFmtB(free) + ' free of ' + recFmtB(tot) + ', ' + recFmtB(disk.reserve) +
+    ' kept free for the system' + (disk.fs === 'vfat' ? '<br><span class="rec-warn">FAT32: a file can\'t reach 4 GB (IQ: ~15 min full band per antenna file)</span>' : '') +
+    (st.test && st.test.running ? '<br>Testing… ' + st.test.pct + ' %' : st.test && st.test.error ? '<br><span class="rec-bad">' + recEsc(st.test.error) + '</span>' : ''));
+  const dir = $id('iqr-dir');
+  if (dir && document.activeElement !== dir && dir.dataset.v !== S.dir) { dir.value = S.dir; dir.dataset.v = S.dir; }
+  const ms = $id('iqr-mount');
+  if (ms && document.activeElement !== ms) {
+    let h = '';
+    for (const m of (st.mounts || []))
+      h += '<option value="' + recEsc(m.path) + '"' + (m.path === disk.mount ? ' selected' : '') + '>' + recEsc(m.path) + ' - ' + recFmtB(m.free) + ' free (' + recEsc(m.type) + ')</option>';
+    if (ms.dataset.html !== h) { ms.dataset.html = h; ms.innerHTML = h; }
+  }
+  const tb = $id('iqr-test'); if (tb) tb.disabled = busy || (st.test && st.test.running);
+  ['iqr-name', 'iqr-notes', 'iqr-dur', 'iqr-afmt', 'iqr-band-vfo', 'iqr-dir', 'iqr-mount'].forEach(id => { const e = $id(id); if (e) e.disabled = busy; });
+  document.querySelectorAll('#iqr-vfos input').forEach(e => { e.disabled = busy; });
+  // the badge (visible while folded)
+  const badge = $id('iqr-badge');
+  if (badge) {
+    const t = cur ? (cur.state === 'finishing' ? 'writing' : '● REC ' + recFmtS(cur.elapsed_s)) : '';
+    if (badge.textContent !== t) badge.textContent = t;
+    badge.style.background = cur ? (cur.state === 'finishing' ? '#e65100' : '#b71c1c') : '';
+    badge.style.color = '#fff';
+  }
+  recPbRender();
+}
+function recRenderList() {
+  const list = $id('iqr-list');
+  if (!list) return;
+  const playing = pbState && pbState.active && pbState.kind === 'rec' ? pbState.rec && pbState.rec.name : null;
+  $id('iqr-count').textContent = recItems.length ? '(' + recItems.length + ')' : '';
+  if (!recItems.length) { const h = '<div class="rec-note" style="padding:8px">No recordings yet</div>'; if (list.dataset.html !== h) { list.dataset.html = h; list.innerHTML = h; } return; }
+  let h = '';
+  for (const it of recItems) {
+    const nm = recEsc(it.name), q = "'" + nm.replace(/'/g, '') + "'";
+    const icon = it.kind === 'audio' ? '🔊' : it.form === 'archive' ? '📦' : '📡';
+    const on = playing === it.name || playing === it.name.replace(/\.sigmf$/, '');
+    h += '<div class="rec-it' + (on ? ' playing' : '') + '"><div class="rec-h"><b>' + icon + ' ' + nm + '</b><span class="rec-meta" style="white-space:nowrap">' + recFmtB(it.bytes) + '</span></div>';
+    if (it.writing) { h += '<div class="rec-meta"><span class="rec-dot" style="color:#ef5350">●</span> being recorded…</div></div>'; continue; }
+    if (it.error) h += '<div class="rec-bad" style="font-size:11px">' + recEsc(it.error) + '</div>';
+    if (it.kind === 'iq' && !it.error) {
+      h += '<div class="rec-meta">' + fmtTime(it.start || it.mtime) + ' · ' + recFmtS(it.seconds) + ' · ' + it.channels + ' ch · ' +
+        (it.rate >= 1e6 ? (it.rate / 1e6) + ' MHz' : (it.rate / 1e3) + ' kHz') + ' ' + recEsc(it.datatype) + ' · ' + (it.freq_hz / 1e6).toFixed(4) + ' MHz</div>';
+      if (it.description) h += '<div class="rec-meta" style="color:#9fb3c8">' + recEsc(it.description) + '</div>';
+    }
+    if (it.kind === 'audio') {
+      h += '<div class="rec-meta">' + fmtTime(it.mtime) + '</div>';
+      for (const f of (it.files || [])) {
+        const rel = "'" + (nm + '/' + recEsc(f.name)).replace(/'/g, '') + "'";
+        const pl = recAudioName === it.name + '/' + f.name;
+        h += '<div class="rec-file"><span>' + recEsc(f.name.replace(it.name + '_', '')) + ' · ' + recFmtS(f.seconds) + ' · ' + recFmtB(f.bytes) + '</span>' +
+          '<button onclick="recPlayAudio(' + rel + ')" title="Listen here">' + (pl ? '■' : '▶') + '</button>' +
+          '<button onclick="recDownload(' + rel + ',' + "'" + recEsc(f.name).replace(/'/g, '') + "'" + ',' + f.bytes + ')" title="Download this file">⬇</button></div>';
+      }
+    }
+    h += '<div class="rec-acts">';
+    if (it.kind === 'iq' && !it.error)
+      h += on ? '<button class="del" onclick="pbStop()">■ Stop playback</button>'
+              : '<button class="go" onclick="recOpen(' + q + ')" title="Play it through the receiver: spectrum, VFOs, decoders, DoA, map (heimdall is disconnected meanwhile; your settings come back on Stop)">▶ Open</button>';
+    const dlName = it.kind === 'iq' ? (it.form === 'archive' ? it.name : it.name + '.sigmf') : it.name + '.tar';
+    h += '<button onclick="recDownload(' + q + ',' + "'" + recEsc(dlName).replace(/'/g, '') + "'" + ',' + (it.bytes || 0) + ')" title="' +
+      (it.kind === 'iq' ? 'Download as one SigMF archive (.sigmf = an uncompressed tar of the folder)' : 'Download all files as one .tar') + '">⬇ ' + recEsc(dlName.split('.').pop()) + '</button>';
+    h += '<button class="del" ' + (on ? 'disabled ' : '') + 'onclick="recDelete(' + q + ')" title="Delete it from the receiver">🗑</button></div></div>';
+  }
+  if (list.dataset.html !== h) { list.dataset.html = h; list.innerHTML = h; }
+}
+function recOpen(name) {
+  const v = $id('iqr-pb-vfos');
+  send('PLAYBACK_OPEN:' + name + ':' + (v && v.checked ? 1 : 0) + ':1');
+}
+function recDelete(name) {
+  if (!confirm('Delete "' + name + '" from the receiver? This cannot be undone.')) return;
+  send('RECORDER_DELETE:' + name);
+}
+function recNote(html) { const el = $id('iqr-up'); if (el) el.innerHTML = html; }
+// a download streamed to a file where the browser can (File System Access:
+// Chrome / Edge), else through memory (a blob) - a multi-GB recording asks first
+async function recDownload(rel, filename, bytes) {
+  const url = 'recording/' + rel.split('/').map(encodeURIComponent).join('/');
+  const token = storedToken();
+  const headers = token ? {'X-Kraken-Token': token} : {};
+  let handle = null;
+  if (window.showSaveFilePicker) {
+    try { handle = await window.showSaveFilePicker({suggestedName: filename}); }
+    catch (e) { if (e && e.name === 'AbortError') return; handle = null; }
+  }
+  if (!handle && bytes > 1.5e9 && !confirm('This browser can\'t stream a download into a file: ' + recFmtB(bytes) +
+      ' would first be held in its memory. Chrome / Edge stream it - or copy it from the receiver: ' +
+      ((recState && recState.disk && recState.disk.dir_abs) || '') + '/' + rel + '\n\nDownload anyway?')) return;
+  try {
+    const resp = await fetch(url, {cache: 'no-store', headers});
+    if (!resp.ok) { recNote('<span class="rec-bad">Download failed: HTTP ' + resp.status + ' ' + recEsc(await resp.text()) + '</span>'); return; }
+    const total = +resp.headers.get('Content-Length') || bytes || 0;
+    const reader = resp.body.getReader();
+    const w = handle ? await handle.createWritable() : null;
+    const parts = [];
+    let got = 0, shown = 0;
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      if (w) await w.write(value); else parts.push(value);
+      got += value.length;
+      if (got - shown > 4e6) { shown = got; recNote('⬇ ' + recEsc(filename) + ': ' + (total ? (got / total * 100).toFixed(0) + ' % of ' + recFmtB(total) : recFmtB(got))); }
+    }
+    if (w) await w.close();
+    else {
+      const blobUrl = URL.createObjectURL(new Blob(parts, {type: 'application/octet-stream'}));
+      const a = document.createElement('a');
+      a.href = blobUrl; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    }
+    recNote('⬇ ' + recEsc(filename) + ': done (' + recFmtB(got) + ')');
+  } catch (e) {
+    recNote('<span class="rec-bad">Download error: ' + recEsc(e && e.message ? e.message : e) + '</span>');
+  }
+}
+async function recPlayAudio(rel) {
+  if (recAudio) { recAudio.pause(); recAudio = null; }
+  if (recAudioName === rel) { recAudioName = ''; recRenderList(); return; }
+  recAudioName = rel;
+  recRenderList();
+  try {
+    const token = storedToken();
+    const r = await fetch('recording/' + rel.split('/').map(encodeURIComponent).join('/'), {cache: 'no-store', headers: token ? {'X-Kraken-Token': token} : {}});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const url = URL.createObjectURL(await r.blob());
+    if (recAudioName !== rel) return;
+    recAudio = new Audio(url);
+    recAudio.onended = () => { recAudioName = ''; recAudio = null; URL.revokeObjectURL(url); recRenderList(); };
+    await recAudio.play();
+  } catch (e) {
+    recAudioName = '';
+    recNote('<span class="rec-bad">Can\'t play it here: ' + recEsc(e && e.message ? e.message : e) + '</span>');
+    recRenderList();
+  }
+}
+function recUpload(input) {
+  const f = input.files && input.files[0];
+  input.value = '';
+  if (!f) return;
+  if (!/\.sigmf$/i.test(f.name)) { recNote('<span class="rec-bad">Only SigMF archives (.sigmf) can be uploaded</span>'); return; }
+  const d = recState && recState.disk;
+  if (d && f.size + d.reserve > d.free) { recNote('<span class="rec-bad">' + recFmtB(f.size) + ' doesn\'t fit (' + recFmtB(d.free) + ' free, ' + recFmtB(d.reserve) + ' kept free)</span>'); return; }
+  const name = f.name.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^[._-]+/, '');
+  const x = new XMLHttpRequest();
+  x.open('POST', 'recording_upload/' + encodeURIComponent(name));
+  const token = storedToken();
+  if (token) x.setRequestHeader('X-Kraken-Token', token);
+  x.upload.onprogress = e => { if (e.lengthComputable) recNote('⬆ ' + recEsc(name) + ': ' + (e.loaded / e.total * 100).toFixed(0) + ' % of ' + recFmtB(e.total)); };
+  x.onload = () => recNote(x.status === 200 ? '⬆ ' + recEsc(name) + ': stored - Open it below' : '<span class="rec-bad">Upload refused: ' + recEsc(x.responseText || ('HTTP ' + x.status)) + '</span>');
+  x.onerror = () => recNote('<span class="rec-bad">Upload failed (connection)</span>');
+  recNote('⬆ ' + recEsc(name) + ': starting…');
+  x.send(f);
+}
+// a recording playing: transport controls (pause, position, loop, stop)
+function recPbPos() {
+  const st = pbState, r = st && st.rec;
+  if (!r) return 0;
+  let p = r.pos_s;
+  if (!r.paused && !r.ended) {
+    p += (performance.now() - recPbAt) / 1000;
+    if (r.loop && r.dur_s > 0) p %= r.dur_s; else p = Math.min(p, r.dur_s);
+  }
+  return p;
+}
+function recPbRender() {
+  const box = $id('iqr-pbbox');
+  if (!box) return;
+  const st = pbState;
+  if (!st || !st.active || st.kind !== 'rec' || !st.rec) { if (box.innerHTML) { box.innerHTML = ''; box.dataset.html = ''; } return; }
+  const r = st.rec;
+  const h = '<div class="rec-pb"><div style="display:flex;justify-content:space-between;gap:6px"><b>📼 ' + recEsc(r.name) + '</b><span class="rec-meta">' + r.channels + ' ch · ' +
+    (r.rate >= 1e6 ? (r.rate / 1e6) + ' MHz' : (r.rate / 1e3) + ' kHz') + ' ' + recEsc(r.datatype) + '</span></div>' +
+    '<input type="range" id="iqr-pb-pos" min="0" max="' + r.dur_s + '" step="0.1" oninput="recPbDrag=true;$id(\'iqr-pb-t\').textContent=recFmtS(this.value)+\' / \'+recFmtS(' + r.dur_s + ')" onchange="recPbDrag=false;send(\'PLAYBACK_SEEK:\'+this.value)">' +
+    '<div class="rec-row"><button onclick="send(\'PLAYBACK_PAUSE:' + (r.paused ? 0 : 1) + '\')">' + (r.paused ? '▶ Play' : '⏸ Pause') + '</button>' +
+    '<label class="rec-chk" style="margin:0"><input type="checkbox"' + (r.loop ? ' checked' : '') + ' onchange="send(\'PLAYBACK_LOOP:\'+(this.checked?1:0))"> Loop</label>' +
+    '<span id="iqr-pb-t" style="flex:1;text-align:right"></span><button class="stop" onclick="pbStop()">■ Stop</button></div>' +
+    '<div class="rec-meta" id="iqr-pb-when"></div>' +
+    '<div class="rec-meta">' + (r.station ? (r.moving ? 'The station moves along the recording\'s GPS track. ' : 'The station is where the recording was made. ') : '') +
+    'Heimdall is disconnected; your settings come back on Stop.</div></div>';
+  if (box.dataset.html !== h) { box.dataset.html = h; box.innerHTML = h; }
+  recPbTick();
+}
+function recPbTick() {
+  const st = pbState, r = st && st.active && st.kind === 'rec' && st.rec;
+  if (!r) return;
+  const p = recPbPos();
+  const sl = $id('iqr-pb-pos'), t = $id('iqr-pb-t'), w = $id('iqr-pb-when');
+  if (sl && !recPbDrag) sl.value = p;
+  if (t && !recPbDrag) t.textContent = (r.ended ? 'ended ' : r.paused ? 'paused ' : '') + recFmtS(p) + ' / ' + recFmtS(r.dur_s);
+  if (w) w.textContent = r.t_ms ? 'Recorded ' + new Date(r.t_ms + (p - r.pos_s) * 1000).toLocaleString() : '';
+  const bt = $id('pb-banner-t');
+  if (bt) { const s2 = r.name + ' · ' + recFmtS(p) + ' / ' + recFmtS(r.dur_s) + (r.paused ? ' (paused)' : r.ended ? ' (ended)' : ''); if (bt.textContent !== s2) bt.textContent = s2; }
+}
+setInterval(recPbTick, 250);
 </script>
 </body>
 </html>

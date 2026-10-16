@@ -85,7 +85,8 @@ UTILS_SRCS = \
 	$(SRCDIR)/utils/raw_data_buffer.cpp \
 	$(SRCDIR)/utils/system_stats.cpp \
 	$(SRCDIR)/utils/status_dashboard.cpp \
-	$(SRCDIR)/utils/iq_converter.cpp
+	$(SRCDIR)/utils/iq_converter.cpp \
+	$(SRCDIR)/utils/disk_util.cpp
 
 APP_SRCS = \
 	$(SRCDIR)/main.cpp \
@@ -109,7 +110,10 @@ APP_SRCS = \
 	$(SRCDIR)/talker_doa.cpp \
 	$(SRCDIR)/array_cal.cpp \
 	$(SRCDIR)/voice2text.cpp \
-	$(SRCDIR)/playback.cpp
+	$(SRCDIR)/playback.cpp \
+	$(SRCDIR)/sigmf.cpp \
+	$(SRCDIR)/recorder.cpp \
+	$(SRCDIR)/recorder_audio.cpp
 
 ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_SRCS) $(APP_SRCS)
 
