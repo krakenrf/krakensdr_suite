@@ -221,7 +221,7 @@ public:
     }
 
     ~LoraDecoder() override {
-        if (xtmp_) fftwf_free(xtmp_);
+        if (xtmp_) kfft_free(xtmp_);
     }
 
     void reset() override {
@@ -335,7 +335,7 @@ private:
     // block (10 MB instead of 20; ~90 dB of range per block)
     std::vector<int16_t> xhist_;
     std::vector<float> xscale_;
-    fftwf_complex* xtmp_ = nullptr;
+    kfft_complex* xtmp_ = nullptr;
     int hist_n_ = 0;
     struct Learned {
         double f_hz;          // absolute (or offset when the RF is unknown)
@@ -659,7 +659,7 @@ private:
 
     // ---------------------------------------------------------------- plan-free search, stage 2
     int hist_cap() const { return static_cast<int>(HIST_S * FS / lora_chan::HOP); }
-    void keep_history(const fftwf_complex* X) {
+    void keep_history(const kfft_complex* X) {
         const int H = hist_cap();
         constexpr int NF = 2 * lora_chan::NFFT;
         if (xhist_.empty()) {
@@ -676,9 +676,9 @@ private:
         xscale_[static_cast<size_t>(slot)] = 1.f / sc;
         hist_n_ = std::min(hist_n_ + 1, H);
     }
-    const fftwf_complex* hist_block(int64_t b) {
+    const kfft_complex* hist_block(int64_t b) {
         constexpr int NF = 2 * lora_chan::NFFT;
-        if (!xtmp_) xtmp_ = fftwf_alloc_complex(lora_chan::NFFT);
+        if (!xtmp_) xtmp_ = kfft_alloc_complex(lora_chan::NFFT);
         const int slot = static_cast<int>(b % hist_cap());
         const int16_t* d = &xhist_[static_cast<size_t>(slot) * NF];
         const float g = xscale_[static_cast<size_t>(slot)];

@@ -32,7 +32,7 @@ stream and runs FFT/FM/MUSIC direction finding.
 ## Quick start
 
 ```bash
-make deps      # install librtlsdr-dev, libfftw3-dev, libeigen3-dev, libssl-dev, build tools
+make deps      # install libusb, libeigen3-dev, libssl-dev, cmake, build tools
 make           # build (auto-clones & builds uWebSockets)
 make run       # build and run
 ```
@@ -84,7 +84,7 @@ the usual cause of silent sample loss under CPU pressure.
    → complex with lag/phase/EQ compensation applied, broadcasts every set to the
    TCP/RTL-TCP servers, then pushes to the **L2** queue. Runs at normal priority on
    purpose: it may fall behind safely, and at realtime it would priority-invert
-   against the web/FFTW threads.
+   against the web/correlation threads.
 4. **Correlation processor** → consumes the *newest* L2 set (drains backlog so
    readings are ~10 ms fresh), FFTs all channels, cross-correlates against the
    reference, and broadcasts correlation + state over WebSocket.
@@ -330,10 +330,11 @@ add `<user> - rtprio 30` to `/etc/security/limits.conf` or grant `CAP_SYS_NICE`.
 
 ## Dependencies
 
-`librtlsdr-dev` (**krakenrf fork** — see note above), `libfftw3-dev` (single-precision
-`fftw3f`), `libeigen3-dev` (phase eigendecomposition), `libssl-dev`,
-`build-essential` / `git` / `pkg-config`. `uWebSockets/` is vendored and built
-automatically by the Makefile.
+`librtlsdr-dev` (**krakenrf fork** — see note above), `libeigen3-dev` (phase
+eigendecomposition), `libssl-dev`, `build-essential` / `git` / `pkg-config`.
+`uWebSockets/` is vendored and built automatically by the Makefile; the FFT is
+pffft, vendored in `external/pffft` (BSD-style licence - it replaced FFTW
+in 2026-10; no system FFT library).
 
 ## Further reading
 

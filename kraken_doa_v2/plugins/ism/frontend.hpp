@@ -41,7 +41,7 @@
 
 #include "ism.hpp"
 
-#include <fftw3.h>
+#include "kraken_fft.hpp"
 
 #include <vector>
 
@@ -109,9 +109,9 @@ private:
     }
     int64_t abs_ = 0;
     int hop_fill_ = 0;
-    fftwf_complex* fin_ = nullptr;
-    fftwf_complex* fout_ = nullptr;
-    fftwf_plan plan_ = nullptr;
+    kfft_complex* fin_ = nullptr;
+    kfft_complex* fout_ = nullptr;
+    kfft_plan plan_ = nullptr;
     std::vector<float> win_;
     float win_pow_ = 0;            // sum of w^2
     std::vector<float> P_, P1_, P2_, N_;   // this frame, the 2 before, noise floor (frequency order)

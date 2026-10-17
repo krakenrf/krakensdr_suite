@@ -14,7 +14,7 @@
 #include <cstring>
 #include <vector>
 
-#include <fftw3.h>
+#include "kraken_fft.hpp"
 
 namespace lora_chan {
 
@@ -26,26 +26,26 @@ constexpr int HOP = NFFT - OVL;
 
 // The shared front end: collects HOP new samples, runs the forward FFT
 struct Front {
-    fftwf_complex* in = nullptr;
-    fftwf_complex* X = nullptr;
-    fftwf_plan plan = nullptr;
+    kfft_complex* in = nullptr;
+    kfft_complex* X = nullptr;
+    kfft_plan plan = nullptr;
     int fill = 0;
     int64_t blocks = 0;
     Front() {
-        in = fftwf_alloc_complex(NFFT);
-        X = fftwf_alloc_complex(NFFT);
-        std::memset(in, 0, sizeof(fftwf_complex) * NFFT);
-        plan = fftwf_plan_dft_1d(NFFT, in, X, FFTW_FORWARD, FFTW_ESTIMATE);
+        in = kfft_alloc_complex(NFFT);
+        X = kfft_alloc_complex(NFFT);
+        std::memset(in, 0, sizeof(kfft_complex) * NFFT);
+        plan = kfft_plan_dft_1d(NFFT, in, X, KFFT_FORWARD);
     }
     ~Front() {
-        fftwf_destroy_plan(plan);
-        fftwf_free(in);
-        fftwf_free(X);
+        kfft_destroy_plan(plan);
+        kfft_free(in);
+        kfft_free(X);
     }
     Front(const Front&) = delete;
     Front& operator=(const Front&) = delete;
     void reset() {
-        std::memset(in, 0, sizeof(fftwf_complex) * NFFT);
+        std::memset(in, 0, sizeof(kfft_complex) * NFFT);
         fill = 0;
         blocks = 0;
     }
@@ -54,13 +54,13 @@ struct Front {
         size_t i = 0;
         while (i < n) {
             const size_t take = std::min(n - i, static_cast<size_t>(HOP - fill));
-            std::memcpy(in + OVL + fill, x + i, take * sizeof(fftwf_complex));
+            std::memcpy(in + OVL + fill, x + i, take * sizeof(kfft_complex));
             fill += static_cast<int>(take);
             i += take;
             if (fill == HOP) {
-                fftwf_execute(plan);
+                kfft_execute(plan);
                 on_block();
-                std::memmove(in, in + HOP, OVL * sizeof(fftwf_complex));
+                std::memmove(in, in + HOP, OVL * sizeof(kfft_complex));
                 fill = 0;
                 blocks++;
             }
@@ -84,17 +84,17 @@ inline int os_for(double fs, double bw) {
 struct Chan {
     int M = 0, k0 = 0, keep0 = 0;
     std::vector<float> G;             // response per output bin, FFT order
-    fftwf_complex* Y = nullptr;
-    fftwf_complex* y = nullptr;
-    fftwf_plan plan = nullptr;
+    kfft_complex* Y = nullptr;
+    kfft_complex* y = nullptr;
+    kfft_plan plan = nullptr;
     std::complex<double> blk_ph{1, 0}, blk_rot{1, 0};   // the carrier's phase at each block start
     std::complex<double> nco{1, 0}, nco_rot{1, 0};      // residual (off-grid) offset, at the output rate
     int renorm = 0;
     ~Chan() { release(); }
     void release() {
-        if (plan) fftwf_destroy_plan(plan);
-        if (Y) fftwf_free(Y);
-        if (y) fftwf_free(y);
+        if (plan) kfft_destroy_plan(plan);
+        if (Y) kfft_free(Y);
+        if (y) kfft_free(y);
         plan = nullptr;
         Y = y = nullptr;
     }
@@ -113,11 +113,11 @@ struct Chan {
             const double f = std::fabs(mm * df);
             const double a = 0.52 * bw, b = 0.75 * bw;
             double g = f <= a ? 1.0 : f >= b ? 0.0 : 0.5 * (1 + std::cos(M_PI * (f - a) / (b - a)));
-            G[static_cast<size_t>(m)] = static_cast<float>(g / NFFT);   // FFTW is unnormalised
+            G[static_cast<size_t>(m)] = static_cast<float>(g / NFFT);   // the FFT is unnormalised
         }
-        Y = fftwf_alloc_complex(M);
-        y = fftwf_alloc_complex(M);
-        plan = fftwf_plan_dft_1d(M, Y, y, FFTW_BACKWARD, FFTW_ESTIMATE);
+        Y = kfft_alloc_complex(M);
+        y = kfft_alloc_complex(M);
+        plan = kfft_plan_dft_1d(M, Y, y, KFFT_BACKWARD);
         blk_ph = {1, 0};
         blk_rot = std::polar(1.0, -2 * M_PI * static_cast<double>(k0) * HOP / NFFT);
         nco = {1, 0};
@@ -125,7 +125,7 @@ struct Chan {
         renorm = 0;
     }
     // one block of the front end -> HOP x M / NFFT output samples
-    void block(const fftwf_complex* X, std::vector<cf>& out) {
+    void block(const kfft_complex* X, std::vector<cf>& out) {
         for (int m = 0; m < M; m++) {
             const int mm = m < M / 2 ? m : m - M;
             const int k = ((k0 + mm) % NFFT + NFFT) % NFFT;
@@ -133,7 +133,7 @@ struct Chan {
             Y[m][0] = X[k][0] * g;
             Y[m][1] = X[k][1] * g;
         }
-        fftwf_execute(plan);
+        kfft_execute(plan);
         // the IFFT's time origin is the block start: rotate by the carrier's
         // phase there (as a mixer running since the first sample would)
         const std::complex<double> bp = blk_ph * (OVL ? std::polar(1.0, -2 * M_PI * static_cast<double>(k0) * (-OVL) / NFFT) : 1.0);

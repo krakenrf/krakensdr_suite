@@ -154,7 +154,8 @@ make debug-arm    # ARM build with NEON debug output
 ## Docker (DOCKER.md)
 
 - `Dockerfile` (one image: both apps, librtlsdr fork + uWebSockets cloned at
-  pinned commits, runtime packages derived from `ldd`) + `docker-compose.yml`
+  pinned commits, liquid-dsp built by `kraken_doa_v2/liquid.mk` in a layer of
+  its own, runtime packages derived from `ldd`) + `docker-compose.yml`
   (two containers, `heimdall` and `kraken_doa`, `network_mode: host`,
   `restart: unless-stopped` = autostart at boot) + `docker/entrypoint.sh`
 - USB passthrough: `/dev/bus/usb` bind-mounted + `device_cgroup_rules: c
@@ -193,7 +194,7 @@ main.cpp (orchestration)
 **Key Components**:
 - **Core Module**: Types, configuration, logging, utilities
 - **SDR Module**: RTL-SDR device management, L1/L2 buffers, sample pipeline
-- **DSP Module**: FFT (FFTW3), cross-correlation, eigenvalue-based phase calibration (Eigen3)
+- **DSP Module**: FFT (pffft, vendored `external/pffft`), cross-correlation, eigenvalue-based phase calibration (Eigen3)
 - **Net Module**: TCP data server (port 8091), control server (8092), RTL-TCP (1234)
 - **Web Module**: uWebSockets HTTP/WebSocket server (port 8070)
 
@@ -240,7 +241,13 @@ See `heimdall_v2/CLAUDE.md` → *Coherence-Loss Detection and Recovery* and *Pip
 **Optimizations** (see OPTIMIZATION_SUMMARY.md):
 - Compiler auto-vectorization for IQ conversion (faster than manual NEON)
 - Thread-local decimators with shared coefficient cache
-- FFTW3 wisdom files for optimal FFT plans
+- FFT: pffft (vendored `kraken_doa_v2/external/pffft`, BSD-style licence;
+  replaced FFTW 2026-10-17) behind `plugins/sdk/kraken_fft.hpp` - also the
+  decoder plugins' FFT
+- liquid-dsp built from source (`kraken_doa_v2/liquid.mk`: pinned v1.7.0,
+  static, NEON dot products, WITHOUT FFTW / libfec - Debian's libliquid1
+  links both): nothing GPL linked into kraken_doa or a plugin; its filters /
+  decimators run 1.5-3.4x faster than Debian's build
 - Moodycamel concurrent queues for lock-free communication
 - ARM NEON support with automatic fallback to scalar code
 
@@ -1406,7 +1413,10 @@ tree at the repo root):
 
 **Required System Libraries**:
 - `libusb-1.0-0-dev`, `cmake`: build and link the librtlsdr fork
-- `libfftw3-dev`: Fast Fourier Transform (single-precision `fftw3f`)
+- (no FFT library: pffft is vendored in `heimdall_v2/external/pffft` - the
+  same files as kraken_doa_v2's; FFTW was dropped 2026-10-17, see
+  heimdall_v2/CLAUDE.md *FFT (pffft)*. No program of the suite links FFTW;
+  only gr-krakensdr_v2 still uses it - GNU Radio needs it anyway)
 - `libeigen3-dev`: Eigenvalue decomposition for phase calibration
 - `libssl-dev`: SSL/TLS for uWebSockets
 - `build-essential`, `git`, `pkg-config`: Build tools
@@ -1418,14 +1428,28 @@ tree at the repo root):
 ### DoA Client
 
 **Required System Libraries**:
-- `libfftw3-dev`: FFT processing
-- `libliquid-dev`: Digital signal processing (decimation, filtering)
+- (no FFT library: pffft is vendored in `kraken_doa_v2/external/pffft`; no
+  `libliquid-dev`: liquid-dsp is built from source, below)
 - `libeigen3-dev`: MUSIC DoA algorithm
 - `libssl-dev`: SSL for WebSocket server
-- `build-essential`, `git`, `pkg-config`: Build tools
+- `libopus-dev`, `zlib1g-dev`, `libsqlite3-dev`: audio, compression, settings
+- `build-essential`, `cmake`, `git`, `pkg-config`: Build tools (cmake + git
+  for liquid-dsp)
 
 **Vendored Dependencies**:
 - `uWebSockets/`: WebSocket server (auto-installed by Makefile)
+- `external/pffft/`: the FFT (pffft, FFTPACK / BSD-style licence, pinned
+  commit in its README.md) - kraken_doa's and the plugins' through
+  `plugins/sdk/kraken_fft.hpp`; replaced FFTW (GPL) 2026-10-17. Built with
+  `-DPFFFT_ENABLE_NEON` on ARM (the Makefiles add it). Details:
+  kraken_doa_v2/CLAUDE.md *FFT (pffft)*
+- `liquid-dsp/` (gitignored, like `uWebSockets/`): liquid-dsp (MIT) fetched
+  at a pinned commit (`LIQUID_COMMIT` in `kraken_doa_v2/liquid.mk` = v1.7.0,
+  Debian 13's version) and built by its own CMake as a STATIC library without
+  FFTW / libfec - Debian's libliquid1 links FFTW (GPL) + libfec (LGPL), so
+  every program on it loaded FFTW. One recipe for the Makefile, plugins/
+  Makefile, CMake and the Dockerfile; `ldd kraken_doa` / any plugin shows no
+  liquid, FFTW or libfec. Details: kraken_doa_v2/CLAUDE.md *liquid-dsp*
 
 **uWebSockets is PINNED** (`UWS_COMMIT` in both Makefiles = `UWS_COMMIT` in
 the Dockerfile, fe7da4cb, 2026-07-31; keep all three equal): uWebSockets
@@ -1514,15 +1538,17 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
 
 **DoA Client**:
 - IQ conversion: Compiler auto-vectorization preferred over manual NEON
-- Decimation: Thread-local instances with shared coefficient cache
-- FFT: FFTW3 wisdom files for optimal plans
+- Decimation: Thread-local instances with shared coefficient cache;
+  liquid-dsp's NEON dot products (built from source - `liquid.mk`)
+- FFT: pffft (NEON), no planning / wisdom file - see kraken_doa_v2/CLAUDE.md
+  *FFT (pffft)*
 
 ### Memory Management
 
 **Server**:
 - L1 buffers: Per-device circular buffers
 - L2 buffer: Global synchronized queue (moodycamel::ConcurrentQueue)
-- FFT pool: Thread-safe FFTW plan pool (RAII management)
+- FFT pool: thread-safe pool of pffft plans (RAII); forward transforms in place, pffft's scratch one per thread
 
 **Client**:
 - Raw data buffer: Bounded queue with automatic cleanup

@@ -459,7 +459,7 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
     // Name only, NORMAL priority on purpose. This stage allocates (ComplexBuffers,
     // the ~160 KB TCP packet) and takes the TCP clients_mutex / glibc arena lock;
     // at realtime priority those become unbounded priority-inversion sources
-    // against normal-priority web/FFTW threads. It does not need RT: if it falls
+    // against normal-priority web/correlation threads. It does not need RT: if it falls
     // behind, whole aligned sets drop at L2-raw (coherence-safe) and only the
     // converted-output rate dips - USB keep-up is unaffected (that is the drain).
     set_thread_realtime("convert", 0);

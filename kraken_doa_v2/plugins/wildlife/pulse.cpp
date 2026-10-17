@@ -26,15 +26,15 @@ constexpr float FLOOR_CREEP_DB_S = 1.0f; // ... but creeps it up (a steady carri
 }  // namespace
 
 PulseDetector::~PulseDetector() {
-    if (plan_) fftwf_destroy_plan(plan_);
-    if (fin_) fftwf_free(fin_);
-    if (fout_) fftwf_free(fout_);
+    if (plan_) kfft_destroy_plan(plan_);
+    if (fin_) kfft_free(fin_);
+    if (fout_) kfft_free(fout_);
 }
 
 void PulseDetector::configure(double rate) {
-    if (plan_) fftwf_destroy_plan(plan_);
-    if (fin_) fftwf_free(fin_);
-    if (fout_) fftwf_free(fout_);
+    if (plan_) kfft_destroy_plan(plan_);
+    if (fin_) kfft_free(fin_);
+    if (fout_) kfft_free(fout_);
     plan_ = nullptr;
     rate_ = rate;
     const int lg = std::clamp(static_cast<int>(std::lround(std::log2(rate / TARGET_BIN_HZ))), 5, 14);
@@ -47,13 +47,12 @@ void PulseDetector::configure(double rate) {
         win_[static_cast<size_t>(i)] = static_cast<float>(0.5 - 0.5 * std::cos(2 * M_PI * (i + 0.5) / N_));
         win_pow_ += win_[static_cast<size_t>(i)] * win_[static_cast<size_t>(i)];
     }
-    fin_ = fftwf_alloc_complex(static_cast<size_t>(N_));
-    fout_ = fftwf_alloc_complex(static_cast<size_t>(N_));
-    // ESTIMATE: FFTW_MEASURE planned for 6 s (256 points) / 23 s (8192) on the
-    // Pi 5 before the plugin read its first sample - kraken_doa dropped what
-    // came meanwhile (> 1 s backlog) - for an FFT only ~25 % faster (8192:
-    // 59 vs 77 us, ~1 % of a core at 2.4 MHz)
-    plan_ = fftwf_plan_dft_1d(N_, fin_, fout_, FFTW_FORWARD, FFTW_ESTIMATE);
+    fin_ = kfft_alloc_complex(static_cast<size_t>(N_));
+    fout_ = kfft_alloc_complex(static_cast<size_t>(N_));
+    // (pffft plans are made at once - FFTW_MEASURE planned for 6 s (256
+    // points) / 23 s (8192) on the Pi 5 before the plugin read its first
+    // sample, and kraken_doa dropped what came meanwhile)
+    plan_ = kfft_plan_dft_1d(N_, fin_, fout_, KFFT_FORWARD);
     size_t cap = 1;
     while (cap < static_cast<size_t>(rate * RING_S)) cap <<= 1;
     ring_.assign(cap, kp::cf(0, 0));
@@ -106,7 +105,7 @@ void PulseDetector::frame(std::vector<Pulse>& out) {
         fin_[i][0] = v.real();
         fin_[i][1] = v.imag();
     }
-    fftwf_execute(plan_);
+    kfft_execute(plan_);
     const float fps = static_cast<float>(rate_ / hop_);
     const float a = frames_ < 32 ? 1.0f / static_cast<float>(frames_ + 1) : 1.0f / (FLOOR_ALPHA_S * fps);
     const float creep = std::pow(10.0f, FLOOR_CREEP_DB_S / 10.0f / fps);

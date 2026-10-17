@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-#include <fftw3.h>
+#include "kraken_fft.hpp"
 
 namespace wl {
 
@@ -84,9 +84,9 @@ private:
     int N_ = 0, hop_ = 0, L_ = 1;
     std::vector<float> win_;
     float win_pow_ = 1;          // sum w^2
-    fftwf_complex* fin_ = nullptr;
-    fftwf_complex* fout_ = nullptr;
-    fftwf_plan plan_ = nullptr;
+    kfft_complex* fin_ = nullptr;
+    kfft_complex* fout_ = nullptr;
+    kfft_plan plan_ = nullptr;
     // raw ring (power of two)
     std::vector<kp::cf> ring_;
     uint64_t mask_ = 0;

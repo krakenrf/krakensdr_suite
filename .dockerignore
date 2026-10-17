@@ -11,8 +11,13 @@
 !heimdall_v2/src/
 !heimdall_v2/external/
 !kraken_doa_v2/Makefile
+# liquid-dsp's pinned build recipe (the Dockerfile fetches and builds it;
+# a local kraken_doa_v2/liquid-dsp/ checkout stays out)
+!kraken_doa_v2/liquid.mk
 !kraken_doa_v2/include/
 !kraken_doa_v2/src/
+# vendored FFT library (pffft) the build compiles in
+!kraken_doa_v2/external/
 !kraken_doa_v2/kraken_doa.html
 !kraken_doa_v2/array_calculator.html
 !kraken_doa_v2/opus-decoder.js

@@ -78,13 +78,14 @@ die()  { echo "${RED}${BOLD}Error:${RST} $*" >&2; exit 1; }
 #   zlib1g-dev   - both link -lz
 #   libsqlite3-dev - kraken links -lsqlite3
 #   tmux         - used by run.sh for the split-screen dashboards
+#   (no libfftw3-dev: both apps use the vendored pffft - external/pffft; no
+#    libliquid-dev: kraken_doa's make fetches liquid-dsp at a pinned commit and
+#    builds it as a static library without FFTW / libfec - liquid.mk)
 PACKAGES=(
     build-essential cmake git pkg-config     # toolchain (both apps + librtlsdr)
     libusb-1.0-0-dev libusb-dev              # USB backend for librtlsdr fork
-    libfftw3-dev                             # FFT (both, single-precision fftw3f)
     libeigen3-dev                            # eigenvalue decomposition (both)
     libssl-dev libcrypto++-dev               # SSL for uWebSockets (both)
-    libliquid-dev                            # DSP: decimation/resampling (kraken)
     libopus-dev                              # Opus audio codec (kraken)
     zlib1g-dev                               # zlib -lz (both)
     libsqlite3-dev                           # settings store (kraken)
@@ -160,7 +161,7 @@ install_librtlsdr() {
 # load. Without an rtprio limit it silently runs at normal priority instead.
 # Only these two thread classes are meant to be realtime - do NOT run the whole
 # process under chrt: the conversion worker is deliberately normal priority
-# (its malloc/mutex use would priority-invert against the web/FFTW threads).
+# (its malloc/mutex use would priority-invert against the web/correlation threads).
 install_rtprio_limit() {
     local user="${SUDO_USER:-$USER}"
     local conf=/etc/security/limits.conf

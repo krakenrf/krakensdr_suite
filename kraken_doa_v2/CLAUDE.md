@@ -53,7 +53,7 @@ Decimation Processor Thread
   │  FFT Work Queue (moodycamel::ConcurrentQueue)
   │    ↓
   ├→ Per-Channel FFT Workers (8 parallel threads)
-  │   └→ FFTW3 (per-channel plans, true parallel)
+  │   └→ pffft (per-channel plans, true parallel)
   ↓
 FM Demodulator Thread
   └→ Audio output (48kHz WebSocket stream)
@@ -97,7 +97,7 @@ directly.
 ### Key Components
 
 **Signal Processing** (`src/signal_processing/`):
-- `fft_processor.cpp`: Spectrum calculation with FFTW3 wisdom files
+- `fft_processor.cpp`: Spectrum calculation (pffft via plugins/sdk/kraken_fft.hpp)
 - `fm_demodulator.cpp`: Phase-based FM demod with hardware atan2f
 - `music_processor.cpp`: Eigenvalue-based direction finding
 - `shared_decimator.cpp`: Thread-local decimators with coefficient caching
@@ -653,8 +653,10 @@ Edit `include/config.hpp`:
 - Offline test harness: `tools/digi_test.cpp` (runs the plugins like a VFO,
   synchronously: waits for slow plugins instead of dropping, SYNC-drains at
   the end; .dis files are FM-modulated again; `--opt dmr.slot=1`; run from
-  kraken_doa_v2): `g++ -std=c++20 -O2 -Iinclude tools/digi_test.cpp
-  src/digital/*.cpp -lliquid`
+  kraken_doa_v2): `g++ -std=c++20 -O2 -Iinclude -isystem
+  liquid-dsp/build-kraken/include tools/digi_test.cpp src/digital/*.cpp
+  liquid-dsp/build-kraken/libliquid.a` (liquid built by `make` first - see
+  *liquid-dsp*)
 - Validated on live P25 (VFO on a trunked control channel + its voice
   channel) and DMR Tier III here, and on recordings for TETRA, D-STAR, DMR,
   NXDN, MPT1327 and P25 (regression of 33 checks incl. voice passes through
@@ -3635,7 +3637,8 @@ Edit `include/config.hpp`:
   around its centre (raised cosine flat +-350 kHz, zero +-550 kHz) -> 2048
   IFFT = 1.2 MHz, the block's shift phase undone (continuous carrier
   phase). Channel sample K = input sample in0_ + 2K; `abs_in_` never resets
-  (Host::time()). FFTW_ESTIMATE: MEASURE planned for 32 s on the Pi
+  (Host::time()). (FFTW_MEASURE planned for 32 s on the Pi; pffft since
+  2026-10-17 has no planning)
 - Pulses: noise = median magnitude (every 7th sample, ~50 ms, smoothed),
   threshold `min_snr` (10 dB, peak power over median^2 / ln 2), local max
   +-3 samples, half-amplitude width 2.4-5.6 us (SSR 0.8 us pulses fail),
@@ -4398,7 +4401,8 @@ Edit `include/config.hpp`:
   FFTW_MEASURE plan took 6 s at 50 kHz / 23 s at 2.4 MHz before it read a
   sample, kraken_doa dropped 2.3 s of its input between that tag's first two
   bursts, and the confirmation wanted every burst on one grid - FFTW_ESTIMATE
-  now + the latest-run rule above), settings identical. Live
+  then, pffft since 2026-10-17 (no planning), + the latest-run rule above),
+  settings identical. Live
   (4 x 100 s of 160.115-160.595 MHz, heimdall retuned + restored): no
   collar; data bursts near 160.40 / 160.53 MHz first read as collars, fixed
   (burst-piece, jitter, one-length rules). CPU:
@@ -4540,7 +4544,7 @@ Edit `include/config.hpp`:
   the plugin all antennas (`process_multi`; wire SAMPLES_MC 8 = uint32 m +
   n x m complex int16 / 8192, sample by sample). `FrontEnd::push_multi`:
   antennas 1.. in 16-bit rings beside antenna 0's (+67 MB), each FFT hop
-  every antenna through the one FFTW plan, each brought to the antennas'
+  every antenna through the one FFT plan, each brought to the antennas'
   mean noise (`xn_` = its median bin power, ~1 s; `xg_` the factor - the
   five here differ by up to 5.7 dB) -> detection on their mean power; each
   package sums the M x M covariance of its active bins' (normalised)
@@ -4728,6 +4732,144 @@ Edit `include/config.hpp`:
   190 of 197 messages (the 6 lost ones overlap another), the CRC = the
   Riddle's KLM1023 frame, every aircraft 0.0 deg, positions 25-120 km at
   their bearings; end to end 6 / 6 at 0.0 deg
+
+**FFT (pffft) - `external/pffft/` + `plugins/sdk/kraken_fft.hpp`, kraken_doa and every plugin:**
+- The user's request (2026-10-17): swap FFTW for pffft (FFTW is GPL-2.0+;
+  the licensing note of 2026-10-14 picked pffft after a Pi 5 benchmark).
+  pffft = the marton78 fork (commit aa16fd3, 2026-09-29), single-precision
+  core only, VENDORED unmodified in `external/pffft/` (FFTPACK / BSD-style
+  `LICENSE.txt`, README.md with the files + commit) - no system FFT package
+  for kraken_doa. Built as C (`gcc -O3`) with **`-DPFFFT_ENABLE_NEON` on ARM
+  - without it pffft silently builds its scalar code** (both Makefiles +
+  CMake add it; x86 picks SSE itself). kraken_doa links the two objects;
+  the plugins get them in `lib/build/libkrakendig.a`; `.dockerignore`
+  allows `kraken_doa_v2/external/`
+- `plugins/sdk/kraken_fft.hpp` (header-only, used by the core too -
+  `-Iplugins/sdk -Iexternal/pffft`): FFTW-shaped plans so the port was
+  call-for-call - `kfft_complex` (= `float[2]`, so `x[i][0]` / `[1]` code
+  stayed), `kfft_alloc_complex / _real / kfft_malloc / kfft_free` (64-byte
+  aligned), `kfft_plan_dft_1d(n, in, out, KFFT_FORWARD | KFFT_BACKWARD)`,
+  `kfft_plan_dft_r2c_1d(n, in, out)` (FFTW's n/2 + 1 layout, unpacked from
+  pffft's ordered real output), `kfft_execute`, `kfft_execute_dft(_r2c)`
+  (other arrays), `kfft_destroy_plan` (null-safe), `kfft_direct(n)`,
+  `kfft_simd()`. Results = FFTW's: forward e^-, unscaled, natural bin order
+  (`pffft_transform_ordered`). ANY n: pffft takes n = 2^a 3^b 5^c and a
+  multiple of 16 (real: 32) directly; any other n (lora's narrow channels,
+  dtv / cells OFDM sizes at the VFO rate, primes) goes through BLUESTEIN
+  on a pffft of the nearest valid m >= 2n - 1 (chirp angles from k^2 mod 2n
+  in integers + double, the filter's FFT kept in pffft's z-domain,
+  `pffft_zconvolve_scale`) - ~3 transforms of m. In place and unaligned
+  buffers work (unaligned ones are copied through an aligned scratch).
+  Plans are thread-safe to make (no planner lock - `fftw_planner_mutex`,
+  `FFTProcessor::export_wisdom` and the wisdom file are gone); one plan per
+  executing thread (it owns its scratch)
+- Ported: fft_processor (per-channel spectra, beamformed FFT), beamformer
+  (SNR FFT, FD-DAS 256 forward / inverse), plugins beacon406, cells
+  (dsp_util Fft + tools/cell_gen), ctcss (r2c), dme, dtv (dsp_util Fft),
+  flarm, ils (incl. r2c), ism, lora (channelizer, phy, search, decoder),
+  wildlife; `sdk/tools/make_testsignal.py` compiles .cpp generators with
+  `-I../external/pffft` + libkrakendig.a. heimdall_v2 followed the same day
+  (its own copy of these files, `FftPlan` on pffft directly - heimdall_v2/
+  CLAUDE.md *FFT (pffft)*); gr-krakensdr_v2 keeps FFTW (the user's call: GNU
+  Radio needs it anyway). Debian's `libliquid1` still loaded
+  `libfftw3-single3`: liquid-dsp is built from source without it now - see
+  *liquid-dsp*
+- Accuracy (scratch pf/t_kfft.cpp vs FFTW double): every n 1..80 and 96 ..
+  99991 (primes, 2150, 24000, 48000, 65536), forward + backward, in place /
+  unaligned: worst relative error 4.4e-7 direct, 6.2e-7 Bluestein (FFTW
+  float 3.1e-7); r2c 1 .. 48000 <= 4.4e-7. Speed (pf/b_kfft.cpp, one Pi 5
+  core): vs FFTW_ESTIMATE (what the plugins used) equal or faster at every
+  valid size (4608: 24 vs 48 us, 24000: 150 vs 232), vs FFTW_MEASURE (the
+  core) 10-30 % slower at <= 4096, equal at 16384 (89 us), faster above;
+  Bluestein 2150 54 vs 44-48 us
+- Regression (2026-10-17, job scratch 46eef211 pf/: gen.sh + run_ab.py, the
+  catalogue's 19 FFT-plugin test transmissions generated once - 2.5 GB,
+  deleted afterwards -, narrow ones with noise added; OLD = the FFTW builds
+  of main, NEW = pffft, the same arguments; outputs in pf/ab_out/): every
+  plugin's offline output identical to the old one except its decode-time /
+  CPU-share lines - the same frames, talkers, bearings, levels; CPU of the
+  runs equal or 5-12 % lower. Core (scratch t_core_ab.py, FFTW vs pffft
+  test builds alternately, fake heimdall: CW + two FM tones on a 5-element
+  UCA): averaged spectrum mean |difference| 0.04 dB (max 0.2 dB = the
+  0.47 dB display step), peaks within 0.03 dB; DoA of three VFOs identical
+  every frame; audio tones and beamformed (FD-DAS) tones identical; the
+  beamformer's SNR-boost estimate the same spread; kraken_doa CPU 106.5-
+  106.8 vs 106.6-107.5 % (equal). Debug playback through the pffft build
+  (t_pb_pf.py): ism-six-devices 6 / 6, lora-mesh-five 6 / 6, dtv-dvbt-paths
+  3 / 3, beacon406-five 5 / 5, cells-two-lte 2 / 2, wildlife-five-survey
+  5 / 5 talkers at their bearings
+
+**liquid-dsp (built from source: static, without FFTW / libfec) - `liquid.mk`:**
+- The user's request (2026-10-17, licensing, after the pffft swap): Debian's
+  `libliquid1` 1.7.0-1 is built WITH FFTW (GPL-2.0+) and libfec (LGPL-2.1) -
+  its Debian patches add both to liquid's CMake build - so kraken_doa and
+  every plugin still loaded FFTW at run time. liquid-dsp itself is MIT
+  (Expat). The call graph of that libliquid (objdump): of the 38 liquid
+  functions kraken_doa / the plugins import, only `fftwf_malloc / _free` were
+  reachable (liquid's own FFT allocates with them, inside `msresamp_*_create`'s
+  halfband design); FFTW's transforms sit only in fftfilt / spgram /
+  firpfbch* / ofdmframe* / qdetector / qpilotsync / fskdem - none used
+- `liquid.mk` - ONE recipe: included by the Makefile (`LIQUID_ROOT` .) and
+  plugins/Makefile (..), run by CMake (`make -f liquid.mk liquid`, custom
+  target `liquid_build`) and by the Dockerfile (a layer of its own, before
+  the sources are copied). It fetches `LIQUID_COMMIT` (4dda702 = v1.7.0, the
+  version Debian 13 ships: liquid.h byte-identical, Debian's changes are
+  build-only) with a shallow fetch into `liquid-dsp/` (gitignored), runs
+  liquid's own CMake (examples / autotests / benchmarks off, `-march=native`,
+  armv7 `-mfpu=neon`) - v1.7.0's CMake never looks for FFTW or libfec
+  (`config.h` has neither: its own FFT, libfec's codes compiled out) - builds
+  its shared target `liquid` (1.7.0 has no static target) and archives that
+  target's objects (`CMakeFiles/*.dir/*.o`, 159) as
+  `liquid-dsp/build-kraken/libliquid.a`, the header at
+  `build-kraken/include/liquid/liquid.h`, the commit in `build-kraken/commit`;
+  the archive is renamed into place LAST (it existing = a complete build).
+  Log: `liquid-dsp/build-kraken.log`. `+` on the build line: liquid's make
+  joins the jobserver (-j3 stays -j3). ~22 s on the Pi 5. A build from
+  another commit (an older pin) is removed at parse time - the whole
+  build-kraken - and made again; `make distclean` removes `liquid-dsp/`
+- Linking: kraken_doa `$(TARGET): $(OBJS) $(LIQUID_A)` ($^ ends with the
+  archive); every plugin and `lib/build/codecs`: `$(LIB_A) $(LIQUID_A)`.
+  Included with `-isystem $(LIQUID_INC)` - as a non-system header liquid.h
+  warns about its own deprecated `eqlms` objects in every file; the system
+  copy (/usr/include) was silent - so the dependency files don't list it and
+  objects depend on `$(LIQUID_H)` explicitly (its rule order-only on the
+  archive; `cp -p` keeps the checkout's time: a rebuild of the same commit
+  recompiles nothing, a new commit everything that includes it). The
+  `plugins` target waits for the archive (two builds of it at once otherwise).
+  `ldd` of kraken_doa / every plugin / codecs: no liquid, FFTW or libfec;
+  the Docker image's runtime packages (from `ldd`) lose libliquid1 + libfec0
+  (and libfftw3-single3 with heimdall on pffft). A system libliquid-dev may stay
+  installed: `-isystem` dirs come before /usr/include, the archive is linked
+  by path
+- What changes in the DSP: liquid's CMake picks the NEON dot products
+  (`dotprod_*.neon.c`; SSE / AVX on x86) - Debian's build had the portable C
+  ones. Outputs (scratch lq/bench, same input): firdecim / firfilt / msresamp
+  differ by float rounding (max 1.5e-7 .. 7.9e-7 of full scale - the sums'
+  order), agc / iirfilt bit-identical. Speed (Pi 5, one core): firdecim_cccf
+  (kraken_doa's decimator stages, M 5) 21 taps 15.8 -> 10.4 ns per input
+  sample, 63: 32.9 -> 16.0, 127: 53.5 -> 21.4, 255: 108 -> 32 (1.5-3.4x);
+  firfilt_crcf 63 taps (the plugins' FM front end) 89 -> 37, RRC 161 taps
+  207 -> 61; msresamp 1.1-1.4x; agc equal; iirfilt 1.1x. msresamp creation
+  unchanged (~74 ms at rate 0.02: liquid's firdespm halfband design, its own
+  FFT 10-20 % of it - 1.8.x designs those halfbands with Kaiser windows, not
+  taken: other filters)
+- Without libfec, liquid's convolutional / Reed-Solomon `fec` schemes are
+  compiled out (`fec_create` fails) - plugins/SDK.md sends plugin authors to
+  `kp::` / `lib/dig_fec`; liquid's FFT-based objects use its own FFT (~8x
+  pffft's time at 1200 points)
+- Tests (2026-10-17, job scratch 46eef211 lq/): every catalogue test
+  transmission (all 34) decoded offline by the plugins built on Debian's
+  liquid and on this one, same arguments: every output identical except
+  the decode-time lines; plugin CPU equal or lower (-8 .. -15 % for the FM
+  front-end decoders p25 / dmr / nxdn / tetra / mpt1327 / radiosonde). Core
+  (t_core_ab.py: fake heimdall, 5-antenna UCA, three VFOs, DoA + then
+  beamforming; two runs each): kraken_doa 106.6-107.0 % of a core -> 84.0-
+  84.3 % (with beamforming 107.3-107.7 -> 85.8-88.2 %) - the decimators'
+  NEON dot products; spectrum mean |difference| 0.010 dB (max 0.055), DoA
+  identical every frame, audio / beamformed tones within their run-to-run
+  spread. Build: a fresh `make` 22 s for liquid, every object recompiled
+  once after the switch, `make` again a no-op; liquid prints no warnings;
+  the CMake recipe checked in a scratch project
 
 **🔊 VFO audio - any number of VFOs heard at once (`src/signal_processing/audio_mixer.cpp`, the speaker toggle on each VFO card):**
 - The user's request (2026-10-17): the "Audio Src" radio button became a
@@ -5171,20 +5313,16 @@ static std::shared_mutex cache_mutex;        // Multi-reader, single-writer
 
 ### 3. FFT Processing
 
-**Per-Channel FFTW Plans:**
+**Per-Channel FFT Plans (pffft, see *FFT (pffft)*):**
 - Each channel has dedicated `ChannelFFTContext` (plan, buffers)
 - True parallel execution with zero mutex contention
 - 5x parallelism on 5-channel system
+- No planning / wisdom file: a pffft plan is made at once (FFTW needed
+  `fft_wisdom.dat` + FFTW_MEASURE; a leftover file is unused, gitignored)
 
-**FFTW3 Wisdom Files:**
-- Pre-planned transforms saved to disk
-- 50x faster startup (0.5s → 0.01s)
-- Optimized for Raspberry Pi 4 Cortex-A72
-
-**Plan Creation Flags:**
 ```cpp
-fftwf_plan_dft_r2c_1d(size, in, out,
-    FFTW_MEASURE | FFTW_DESTROY_INPUT | FFTW_UNALIGNED);
+ctx.plan = kfft_plan_dft_1d(fft_size, ctx.fft_in, ctx.fft_out, KFFT_FORWARD);
+kfft_execute(ctx.plan);
 ```
 
 ### 4. FM Demodulation
@@ -5462,14 +5600,20 @@ sudo perf stat -e cache-references,cache-misses ./kraken_doa
 ## Dependencies
 
 **Required System Libraries:**
-- `libfftw3-dev`: FFT processing (single-precision `fftw3f`)
-- `libliquid-dev`: Digital signal processing (decimation, filtering, resampling)
+- (no FFT library: pffft is vendored in `external/pffft`; no
+  `libliquid-dev`: liquid-dsp is built from source - below)
 - `libeigen3-dev`: MUSIC DoA algorithm (eigenvalue decomposition)
 - `libssl-dev`: SSL for WebSocket server (HTTPS required for Web Audio API)
-- `build-essential`, `git`, `pkg-config`: Build tools
+- `libopus-dev`, `zlib1g-dev`, `libsqlite3-dev`: audio, compression, settings
+- `build-essential`, `cmake`, `git`, `pkg-config`: Build tools (cmake + git
+  also fetch and build liquid-dsp)
 
 **Vendored Dependencies:**
 - `uWebSockets/`: HTTP/WebSocket server (auto-installed by Makefile)
+- `liquid-dsp/`: filters / decimators / resamplers (MIT), fetched at a
+  pinned commit and built as a static library without FFTW / libfec by
+  `liquid.mk` (see *liquid-dsp*)
+- `external/pffft/`: the FFT (see *FFT (pffft)*)
 - `concurrentqueue.h`: Moodycamel lock-free queue (header-only, in `include/`)
 
 **Install All:**

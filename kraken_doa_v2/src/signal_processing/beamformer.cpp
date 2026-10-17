@@ -20,7 +20,6 @@
 #include "signal_processing/beamformer.hpp"
 #include "array_cal.hpp"
 #include "utils/parse_num.hpp"
-#include "signal_processing/fft_processor.hpp"   // fftw_planner_mutex
 #include "globals.hpp"
 
 #include <algorithm>
@@ -56,17 +55,10 @@ Beamformer::Beamformer() {
     snr_db_buffer_.resize(SNR_FFT_SIZE);
     snr_sorted_buffer_.resize(SNR_FFT_SIZE);
 
-    // SNR estimation FFT - uses FFTW_MEASURE, so this constructor must run
-    // after FFTW wisdom is loaded (see main.cpp). The planner is not
-    // thread-safe; beamformers are now created at runtime (per decimator),
-    // so serialize plan creation against all other FFTW planning.
-    snr_in_ = fftwf_alloc_complex(SNR_FFT_SIZE);
-    snr_out_ = fftwf_alloc_complex(SNR_FFT_SIZE);
-    if (snr_in_ && snr_out_) {
-        std::lock_guard<std::mutex> planner_lock(fftw_planner_mutex);
-        snr_plan_ = fftwf_plan_dft_1d(SNR_FFT_SIZE, snr_in_, snr_out_,
-                                      FFTW_FORWARD, FFTW_MEASURE);
-    }
+    // SNR estimation FFT (pffft - plans may be made on any thread)
+    snr_in_ = kfft_alloc_complex(SNR_FFT_SIZE);
+    snr_out_ = kfft_alloc_complex(SNR_FFT_SIZE);
+    snr_plan_ = kfft_plan_dft_1d(SNR_FFT_SIZE, snr_in_, snr_out_, KFFT_FORWARD);
 
     computeElementPositions();
     initFreqDomainDAS();
@@ -74,13 +66,9 @@ Beamformer::Beamformer() {
 
 Beamformer::~Beamformer() {
     cleanupFreqDomainDAS();
-    {
-        // Plan destruction is a planner operation - serialize it too.
-        std::lock_guard<std::mutex> planner_lock(fftw_planner_mutex);
-        if (snr_plan_) fftwf_destroy_plan(snr_plan_);
-    }
-    if (snr_in_) fftwf_free(snr_in_);
-    if (snr_out_) fftwf_free(snr_out_);
+    kfft_destroy_plan(snr_plan_);
+    kfft_free(snr_in_);
+    kfft_free(snr_out_);
 }
 
 // ============================================================================
@@ -451,10 +439,10 @@ float Beamformer::computeChannelSNR_FFT(const std::vector<std::complex<float>>& 
         snr_in_[i][1] = samples[i].imag();
     }
     if (n < SNR_FFT_SIZE) {
-        std::memset(&snr_in_[n], 0, (SNR_FFT_SIZE - n) * sizeof(fftwf_complex));
+        std::memset(&snr_in_[n], 0, (SNR_FFT_SIZE - n) * sizeof(kfft_complex));
     }
 
-    fftwf_execute(snr_plan_);
+    kfft_execute(snr_plan_);
 
     for (int i = 0; i < SNR_FFT_SIZE; i++) {
         const float re = snr_out_[i][0];
@@ -627,24 +615,12 @@ void Beamformer::mvdrBeamform(const SharedDecimator::MultiChannelDecimated& inpu
 void Beamformer::initFreqDomainDAS() {
     std::lock_guard<std::mutex> lock(fdds_mutex_);
 
-    fdds_fft_in_ = fftwf_alloc_complex(FDDAS_FFT_SIZE);
-    fdds_fft_out_ = fftwf_alloc_complex(FDDAS_FFT_SIZE);
-    fdds_ifft_in_ = fftwf_alloc_complex(FDDAS_FFT_SIZE);
-    fdds_ifft_out_ = fftwf_alloc_complex(FDDAS_FFT_SIZE);
-
-    {
-        // Serialize plan creation against all other FFTW planning (the planner
-        // is not thread-safe and beamformers are created at runtime).
-        std::lock_guard<std::mutex> planner_lock(fftw_planner_mutex);
-        if (fdds_fft_in_ && fdds_fft_out_) {
-            fdds_fwd_plan_ = fftwf_plan_dft_1d(FDDAS_FFT_SIZE, fdds_fft_in_, fdds_fft_out_,
-                                               FFTW_FORWARD, FFTW_MEASURE);
-        }
-        if (fdds_ifft_in_ && fdds_ifft_out_) {
-            fdds_inv_plan_ = fftwf_plan_dft_1d(FDDAS_FFT_SIZE, fdds_ifft_in_, fdds_ifft_out_,
-                                               FFTW_BACKWARD, FFTW_MEASURE);
-        }
-    }
+    fdds_fft_in_ = kfft_alloc_complex(FDDAS_FFT_SIZE);
+    fdds_fft_out_ = kfft_alloc_complex(FDDAS_FFT_SIZE);
+    fdds_ifft_in_ = kfft_alloc_complex(FDDAS_FFT_SIZE);
+    fdds_ifft_out_ = kfft_alloc_complex(FDDAS_FFT_SIZE);
+    fdds_fwd_plan_ = kfft_plan_dft_1d(FDDAS_FFT_SIZE, fdds_fft_in_, fdds_fft_out_, KFFT_FORWARD);
+    fdds_inv_plan_ = kfft_plan_dft_1d(FDDAS_FFT_SIZE, fdds_ifft_in_, fdds_ifft_out_, KFFT_BACKWARD);
 
     // PERIODIC Hann window: sums to exactly unity at 50% overlap (the
     // symmetric form, /(N-1), left a ~0.6% ripple at fs/hop in the output)
@@ -665,15 +641,12 @@ void Beamformer::initFreqDomainDAS() {
 void Beamformer::cleanupFreqDomainDAS() {
     std::lock_guard<std::mutex> lock(fdds_mutex_);
 
-    {
-        std::lock_guard<std::mutex> planner_lock(fftw_planner_mutex);
-        if (fdds_fwd_plan_) { fftwf_destroy_plan(fdds_fwd_plan_); fdds_fwd_plan_ = nullptr; }
-        if (fdds_inv_plan_) { fftwf_destroy_plan(fdds_inv_plan_); fdds_inv_plan_ = nullptr; }
-    }
-    if (fdds_fft_in_) { fftwf_free(fdds_fft_in_); fdds_fft_in_ = nullptr; }
-    if (fdds_fft_out_) { fftwf_free(fdds_fft_out_); fdds_fft_out_ = nullptr; }
-    if (fdds_ifft_in_) { fftwf_free(fdds_ifft_in_); fdds_ifft_in_ = nullptr; }
-    if (fdds_ifft_out_) { fftwf_free(fdds_ifft_out_); fdds_ifft_out_ = nullptr; }
+    kfft_destroy_plan(fdds_fwd_plan_); fdds_fwd_plan_ = nullptr;
+    kfft_destroy_plan(fdds_inv_plan_); fdds_inv_plan_ = nullptr;
+    kfft_free(fdds_fft_in_); fdds_fft_in_ = nullptr;
+    kfft_free(fdds_fft_out_); fdds_fft_out_ = nullptr;
+    kfft_free(fdds_ifft_in_); fdds_ifft_in_ = nullptr;
+    kfft_free(fdds_ifft_out_); fdds_ifft_out_ = nullptr;
 }
 
 void Beamformer::updateFDDASSteeringPhases() {
@@ -740,7 +713,7 @@ void Beamformer::freqDomainDAS(const SharedDecimator::MultiChannelDecimated& inp
     const size_t available = fdds_history_[0].size();
     if (available < FDDAS_FFT_SIZE) return; // Need a full frame
 
-    const float scale = 1.0f / FDDAS_FFT_SIZE; // FFTW round-trip normalization
+    const float scale = 1.0f / FDDAS_FFT_SIZE; // FFT round-trip normalization
     static thread_local std::vector<std::complex<float>> frame_sum;
     frame_sum.resize(FDDAS_FFT_SIZE);
 
@@ -755,7 +728,7 @@ void Beamformer::freqDomainDAS(const SharedDecimator::MultiChannelDecimated& inp
                 fdds_fft_in_[i][0] = src[i].real() * fdds_window_[i];
                 fdds_fft_in_[i][1] = src[i].imag() * fdds_window_[i];
             }
-            fftwf_execute(fdds_fwd_plan_);
+            kfft_execute(fdds_fwd_plan_);
 
             for (int b = 0; b < FDDAS_FFT_SIZE; b++) {
                 const std::complex<float> bin(fdds_fft_out_[b][0], fdds_fft_out_[b][1]);
@@ -768,7 +741,7 @@ void Beamformer::freqDomainDAS(const SharedDecimator::MultiChannelDecimated& inp
             fdds_ifft_in_[b][0] = frame_sum[b].real();
             fdds_ifft_in_[b][1] = frame_sum[b].imag();
         }
-        fftwf_execute(fdds_inv_plan_);
+        kfft_execute(fdds_inv_plan_);
 
         // Overlap-add: first half overlaps the previous frame's tail
         for (int i = 0; i < FDDAS_HOP; i++) {

@@ -115,13 +115,10 @@ GpsdClient gps_client;
 StationInfo station_info;
 
 // Beamformers are per-decimator now (DecimatorInstance::beamformer), created
-// lazily as decimators are added (after FFTW wisdom is loaded at startup).
+// lazily as decimators are added.
 
 // FFT management - per-channel contexts for true parallel processing
 std::array<ChannelFFTContext, MAX_CHANNELS> channel_fft_contexts;
-
-// Global FFTW mutex - FFTW plan creation/destruction is NOT thread-safe
-std::mutex fftw_planner_mutex;
 
 // Dynamic FFT settings
 std::atomic<int> current_fft_size{FFT_SIZE};
@@ -241,7 +238,7 @@ int main(int argc, char* argv[]) {
     mallopt(M_ARENA_MAX, 32);  // Allow up to 32 malloc arenas
 
     // Take over the terminal for the live dashboard BEFORE the heavy init below,
-    // so every startup message (FFTW wisdom, channels, server connect, ...) is
+    // so every startup message (FFT setup, channels, server connect, ...) is
     // captured and shown live on the "startup" screen — i.e. WHAT is loading —
     // instead of a static "Loading...". No-op on a non-TTY (piped/redirected),
     // where the plain scrolling text path is used instead.
@@ -258,11 +255,10 @@ int main(int argc, char* argv[]) {
     cout << "=======================================================================" << endl;
 
     // Initialize components
-    FFTProcessor::initialize();  // Loads FFTW wisdom file
+    FFTProcessor::initialize();  // per-channel FFT contexts (pffft)
 
     // Beamformers are created per-decimator (DecimatorManager::initialize, run
-    // from the data receiver thread). FFTW wisdom is already loaded here, so the
-    // FFTW_MEASURE plans built in each Beamformer's constructor stay fast.
+    // from the data receiver thread).
 
     ChannelManager::initialize();
 
@@ -466,7 +462,7 @@ int main(int argc, char* argv[]) {
 
     SettingsStore::stop();    // Joins the writer thread, flushing any last change
 
-    FFTProcessor::cleanup();  // Saves FFTW wisdom
+    FFTProcessor::cleanup();
 
     cout << "Shutdown complete" << endl;
     cout.flush();

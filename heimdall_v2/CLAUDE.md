@@ -107,7 +107,7 @@ Manages RTL-SDR device lifecycle and sample streaming.
 Signal processing: FFT, cross-correlation, and compensation algorithms.
 
 **Key Files:**
-- `fft_plan.{hpp,cpp}`: RAII FFT wrappers (FFTForward, FFTInverse) and thread-safe FFT plan pool
+- `fft_plan.{hpp,cpp}`: RAII FFT plan (`FftPlan`: forward, cross_correlate, inverse_transform at `CORRELATION_SIZE`; pffft - see *FFT (pffft)*) and the thread-safe plan pool (`FftPool`)
 - `correlation.{hpp,cpp}`: Cross-correlation processing, Gaussian interpolation for peak detection, correlation message building
 - `compensation.{hpp,cpp}`: Phase and lag compensation state machines
 
@@ -261,7 +261,7 @@ loss under high CPU load.
    - Consumes `l2_raw_buffer` **in order**; converts uint8 IQ → complex with phase/lag/EQ compensation (`samples_to_complex_with_compensation`, per channel, written in place into a recycled `l2_buffer_pool` set). Everything applied set-wide (phase vector × forward comp, noise-source state, per-bin EQ, spectral inversion) is read ONCE per set (`SetConversionState`), so a set straddling a change is converted the same way on every channel.
    - Broadcasts **every** set to the TCP servers (tcp_data_server, rtl_tcp_server), then pushes the converted set to the L2 global queue (`l2_buffer`).
    - **Flush epoch**: every flush (`clear_l1_buffer` / `clear_l2_buffer` → `flush_downstream()`) empties L2-raw and L2 and THEN bumps `l2_flush_epoch`, under `l2_flush_mutex`. The worker reads the epoch BEFORE dequeuing a set; the TCP broadcast and the L2 push happen under the mutex after re-checking it, so no pre-flush set reaches L2 (calibration) or the 8091/1234 taps after a recovery/retune flush. Broadcasting under it is safe because the data server reads the phase state with a try_lock (`get_phase_compensation_state_nonblocking`) - `check_phase_convergence` flushes while holding `state_mutex`. `clear_l1_buffer()` empties the downstream queues AFTER the drain has served the L1 flush (a set completed just before it went into L2-raw).
-   - Runs at **normal** priority on purpose: it may fall behind safely (whole sets drop upstream at L2-raw) and at realtime priority its malloc/mutex use would priority-invert against the web/FFTW threads.
+   - Runs at **normal** priority on purpose: it may fall behind safely (whole sets drop upstream at L2-raw) and at realtime priority its malloc/mutex use would priority-invert against the web/correlation threads.
 
 4. **Correlation Processor** (`correlation_processor` in correlation.cpp):
    - Consumes L2 (drain-to-newest); FFTs all channels; cross-correlates vs the reference.
@@ -593,6 +593,45 @@ The time-critical L1 drain (`sample_processor`) is separated from the heavy IQ c
 - **Frequent coherence recoveries / `!! COHERENCE LOST` logs**: the ingest is dropping under load. Watch `coherence_events` / `recovering` in the control-port status. Causes: CPU overload (the conversion worker or correlation can't keep up), USB/power issues, or a flaky dongle. Grant realtime scheduling (see Configuration), reduce active channels, or check USB. A recovery that wedges is aborted after 120 s (noise source switched off).
 - **Realtime priority not taking effect**: `set_thread_realtime` logs once if it lacks privilege; add `rtprio` to limits.conf or grant `CAP_SYS_NICE`. The app runs correctly at normal priority either way.
 
+### FFT (pffft)
+
+- The user's request (2026-10-17, after kraken_doa_v2's swap): FFTW (GPL)
+  replaced by pffft (FFTPACK / BSD-style) so the suite needs no FFTW at all -
+  `external/pffft` = the same files as kraken_doa_v2's (each app builds on its
+  own; keep the copies identical). Built as C with `-DPFFFT_ENABLE_NEON` on
+  ARM (Makefile `PFFFT_CC` / `PFFFT_CFLAGS`, CMake target `pffft`); without it
+  pffft silently builds its scalar code. `config.h`'s `FFTW_PLANNER_EFFORT`
+  was dead (the plans were always FFTW_ESTIMATE) and is gone
+- `src/dsp/fft_plan.cpp`: `FftPlan` keeps its interface; pffft directly
+  (`pffft_transform_ordered` = FFTW's natural order, unscaled both ways, e^-
+  forward) - `CORRELATION_SIZE` (2 x NUM_SAMPLES) is a power of two, which
+  pffft takes as it is (static_assert). The forward transform zero-pads
+  straight into `output` and runs IN PLACE; pffft's scratch is ONE buffer per
+  thread (`thread_work()`), not per plan. Both matter: a correlation pass
+  walks 5-9 plans of 256 KB buffers, more than the Pi 5's L2 - the first
+  port (separate input + per-plan scratch, as FFTW had) was only 4 % faster
+  per pass although each transform alone was 25-28 % faster.
+  `correlation_freq` stays a separate buffer: correlation.cpp reads the
+  cross-spectrum after `cross_correlate`
+- Benchmark (2026-10-17, job scratch 46eef211 hp/: bench_fft.cpp drives the
+  old and the new `FftPlan` with correlation.cpp's per-set sequence on a
+  5-channel noise-source scene; heimdall's own -O3 -march=armv8-a flags, Pi
+  5): forward (copy + zero-pad + FFT, 32768 points) 305-320 -> 200-210 us,
+  cross_correlate 365-375 -> 264-275 us, inverse 310-320 -> 220-235 us; a
+  whole 5-channel set (5 forwards, 4 cross-correlations, 4 peak searches)
+  3.65-3.67 -> 2.22-2.29 ms (-39 %); correlation outputs identical to 1.9e-7
+  of the peak (same lags, phases to 0.0001 deg). On the KrakenSDR (hb.py:
+  416.839 MHz, 5 channels, the user's settings copied, old HEAD build vs this
+  one, alternately): every run converged (5 + 5), 0 coherence events; during
+  the calibration heimdall 60.8-61.1 -> 57.8-57.9 % of a core, the
+  correlation thread 47-49 -> 44-45 % - with its 10 ms loop sleep that is
+  ~9.2 -> ~8.0 ms per correlation pass (the FFTs' 1.2 ms; the rest is the
+  eigen solve, peak interpolation and the WebSocket message), so ~7 % more
+  lag / phase readings per second for less CPU; startup to CONVERGED 22-36 s
+  either way (the lag servo's slew, not the FFT). Once CONVERGED the
+  correlation FFT is off: 12.5-14.2 % of a core for both (conversion worker +
+  USB readers) - pffft changes nothing there
+
 ## Dependencies
 
 **KrakenSDR librtlsdr fork** (github.com/krakenrf/librtlsdr), linked
@@ -608,13 +647,16 @@ other setup calls only warn.
 
 **System Libraries:**
 - `libusb-1.0-0-dev`, `cmake`: build and link the librtlsdr fork
-- `libfftw3-dev`: Fast Fourier Transform (single-precision `fftw3f`)
+- (no FFT library: pffft is vendored in `external/pffft` - see *FFT (pffft)*)
 - `libeigen3-dev`: Eigenvalue decomposition for phase calibration
 - `libssl-dev`, `libcrypto++-dev`: SSL/TLS for uWebSockets (optional)
 - `build-essential`, `git`, `pkg-config`: Build tools
 
 **Vendored Dependencies:**
 - `uWebSockets/`: Cloned and built automatically by Makefile (HTTP/WebSocket server)
+- `external/pffft/`: the FFT (pffft, FFTPACK / BSD-style licence, pinned commit
+  in its README.md; the SAME files as `kraken_doa_v2/external/pffft` - keep the
+  two copies identical)
 
 ## Testing
 

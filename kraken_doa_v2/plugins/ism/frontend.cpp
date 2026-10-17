@@ -90,9 +90,9 @@ std::vector<Pulse> to_pulses(const std::vector<Run>& r) {
 FrontEnd::FrontEnd(int decim)
     : D_(std::max(1, decim)), fs_in_(FS * D_), nfft_(64 * D_), hop_(32 * D_), max_pkgs_(D_ == 1 ? 4 : 8),
       ring_n_(ring_size(fs_in_)), ring_(static_cast<size_t>(ring_n_)), trace_(getenv("ISM_TRACE") != nullptr) {
-    fin_ = fftwf_alloc_complex(static_cast<size_t>(nfft_));
-    fout_ = fftwf_alloc_complex(static_cast<size_t>(nfft_));
-    plan_ = fftwf_plan_dft_1d(nfft_, fin_, fout_, FFTW_FORWARD, FFTW_ESTIMATE);
+    fin_ = kfft_alloc_complex(static_cast<size_t>(nfft_));
+    fout_ = kfft_alloc_complex(static_cast<size_t>(nfft_));
+    plan_ = kfft_plan_dft_1d(nfft_, fin_, fout_, KFFT_FORWARD);
     win_.resize(static_cast<size_t>(nfft_));
     P_.resize(win_.size());
     P1_.resize(win_.size());
@@ -128,9 +128,9 @@ FrontEnd::FrontEnd(int decim)
 }
 
 FrontEnd::~FrontEnd() {
-    fftwf_destroy_plan(plan_);
-    fftwf_free(fin_);
-    fftwf_free(fout_);
+    kfft_destroy_plan(plan_);
+    kfft_free(fin_);
+    kfft_free(fout_);
 }
 
 void FrontEnd::reset() {
@@ -284,7 +284,7 @@ void FrontEnd::frame(std::vector<Burst>* out) {
                     fin_[i][1] = v.imag();
                 }
             }
-            fftwf_execute(plan_);
+            kfft_execute(plan_);
             const float* __restrict fo = &fout_[0][0];
             cf* __restrict X = X_[static_cast<size_t>(c)].data();
             float* __restrict tp = xtmp_.data();
@@ -326,7 +326,7 @@ void FrontEnd::frame(std::vector<Burst>* out) {
             fin_[i][1] = v.imag();
         }
     }
-    if (M_ == 1) fftwf_execute(plan_);
+    if (M_ == 1) kfft_execute(plan_);
     const float* rr = rr_.data();
     {   // (the buffers are only accessed through these pointers in here)
         float* __restrict P = P_.data();

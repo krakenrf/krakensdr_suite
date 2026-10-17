@@ -61,7 +61,7 @@ public:
     int64_t groups() const { return groups_; }
 
     // one forward FFT block (FFT order); candidates are appended on group ends
-    void block(const fftwf_complex* X, std::vector<Candidate>& out) {
+    void block(const kfft_complex* X, std::vector<Candidate>& out) {
         for (int k = 0; k < NB; k++) {
             const int i = (k + NB / 2) % NB;    // frequency order
             acc_[i] += X[k][0] * X[k][0] + X[k][1] * X[k][1];

@@ -66,20 +66,20 @@ struct Cum {
 
 Receiver::Receiver() {
     ring_.assign(RING, cf{});
-    win_ = static_cast<float*>(fftwf_malloc(sizeof(float) * NFFT));
-    fin_ = static_cast<fftwf_complex*>(fftwf_malloc(sizeof(fftwf_complex) * NFFT));
-    fout_ = static_cast<fftwf_complex*>(fftwf_malloc(sizeof(fftwf_complex) * NFFT));
-    plan_ = fftwf_plan_dft_1d(NFFT, fin_, fout_, FFTW_FORWARD, FFTW_ESTIMATE);
+    win_ = static_cast<float*>(kfft_malloc(sizeof(float) * NFFT));
+    fin_ = static_cast<kfft_complex*>(kfft_malloc(sizeof(kfft_complex) * NFFT));
+    fout_ = static_cast<kfft_complex*>(kfft_malloc(sizeof(kfft_complex) * NFFT));
+    plan_ = kfft_plan_dft_1d(NFFT, fin_, fout_, KFFT_FORWARD);
     for (int k = 0; k < NFFT; k++) win_[k] = static_cast<float>(0.5 - 0.5 * std::cos(2 * M_PI * k / NFFT));
     lp_ = kp::fir_lowpass(LP_TAPS, static_cast<float>(LP_CUT), static_cast<float>(FS));
     reset();
 }
 
 Receiver::~Receiver() {
-    fftwf_destroy_plan(plan_);
-    fftwf_free(win_);
-    fftwf_free(fin_);
-    fftwf_free(fout_);
+    kfft_destroy_plan(plan_);
+    kfft_free(win_);
+    kfft_free(fin_);
+    kfft_free(fout_);
 }
 
 void Receiver::reset() {
@@ -117,7 +117,7 @@ void Receiver::frame(std::vector<Burst>* out, std::vector<WideBurst>* wide) {
         fin_[k][0] = v.real();
         fin_[k][1] = v.imag();
     }
-    fftwf_execute(plan_);
+    kfft_execute(plan_);
     for (int k = 0; k < NFFT; k++) {
         const int idx = (k + NFFT / 2) % NFFT;   // bin b at index b + NFFT/2
         pw_[static_cast<size_t>(idx)] = fout_[k][0] * fout_[k][0] + fout_[k][1] * fout_[k][1];
@@ -386,9 +386,9 @@ bool Receiver::demod(const Cand& c, Burst* b) {
         if (a1 - a0 < 1000 || a1 - a0 > NF) return false;
         std::vector<cf> fi(NF, cf{}), fo(NF);
         for (int n = a0; n < a1; n++) fi[static_cast<size_t>(n - a0)] = cf(static_cast<float>(y[static_cast<size_t>(n)].real()), static_cast<float>(y[static_cast<size_t>(n)].imag()));
-        fftwf_plan p = fftwf_plan_dft_1d(NF, reinterpret_cast<fftwf_complex*>(fi.data()), reinterpret_cast<fftwf_complex*>(fo.data()), FFTW_FORWARD, FFTW_ESTIMATE);
-        fftwf_execute(p);
-        fftwf_destroy_plan(p);
+        kfft_plan p = kfft_plan_dft_1d(NF, reinterpret_cast<kfft_complex*>(fi.data()), reinterpret_cast<kfft_complex*>(fo.data()), KFFT_FORWARD);
+        kfft_execute(p);
+        kfft_destroy_plan(p);
         const int span = static_cast<int>(250.0 / (FSD / NF));
         int bk = 0;
         float bp = -1;

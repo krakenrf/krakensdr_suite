@@ -9,7 +9,6 @@
 #include <memory>
 #include <chrono>
 #include <cmath>
-#include <fftw3.h>
 #include "App.h"
 #include "types.hpp"
 #include "config.hpp"

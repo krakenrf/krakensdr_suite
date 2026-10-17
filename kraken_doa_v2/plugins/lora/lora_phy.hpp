@@ -20,7 +20,7 @@
 #include <cstdlib>
 #include <vector>
 
-#include <fftw3.h>
+#include "kraken_fft.hpp"
 
 namespace lora_phy {
 
@@ -159,11 +159,11 @@ private:
     bool invert_, implicit_, impl_crc_, ldro_auto_;
     int N_, L_;                     // 2^sf, os*2^sf
     std::vector<cf> down_, up_;     // reference chirps (length L_)
-    fftwf_complex *fin_, *fout_;
-    fftwf_plan plan_;
+    kfft_complex *fin_, *fout_;
+    kfft_plan plan_;
     std::vector<cf> down1_;         // detection: one sample per chip (N points)
-    fftwf_complex *fin1_, *fout1_;
-    fftwf_plan plan1_;
+    kfft_complex *fin1_, *fout1_;
+    kfft_plan plan1_;
     Ring* ring_;
 
     // detector history

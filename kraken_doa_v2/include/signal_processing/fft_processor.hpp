@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <mutex>
-#include <fftw3.h>
+#include "kraken_fft.hpp"   // pffft (plugins/sdk)
 #include "config.hpp"
 #include "types.hpp"
 #include "signal_processing/beamformed_fft.hpp"
@@ -18,11 +18,11 @@ struct CompressedFFT {
 };
 
 // Per-channel FFT context for true parallel processing
-// Each channel has its own FFTW plan and buffers, eliminating serialization
+// Each channel has its own FFT plan and buffers, eliminating serialization
 struct ChannelFFTContext {
-    fftwf_plan plan = nullptr;
-    fftwf_complex* fft_in = nullptr;
-    fftwf_complex* fft_out = nullptr;
+    kfft_plan plan = nullptr;
+    kfft_complex* fft_in = nullptr;
+    kfft_complex* fft_out = nullptr;
     std::mutex mutex;                    // Per-channel mutex for parallel execution
     std::vector<float> window_lut;       // Per-channel window lookup table
     int current_size = 0;                // Current FFT size for this channel
@@ -41,21 +41,10 @@ struct ChannelFFTContext {
 // Global per-channel FFT contexts - declared here, defined in main.cpp
 extern std::array<ChannelFFTContext, MAX_CHANNELS> channel_fft_contexts;
 
-// Global FFTW mutex - FFTW plan creation/destruction is NOT thread-safe
-// This mutex must be held for fftwf_plan_*, fftwf_destroy_plan, fftwf_alloc_*, fftwf_free
-// Note: fftwf_execute IS thread-safe and doesn't need this mutex
-extern std::mutex fftw_planner_mutex;
-
 class FFTProcessor {
 public:
     static void initialize();
     static void cleanup();
-
-    // Re-export accumulated FFTW wisdom to fft_wisdom.dat. Call after creating
-    // plans initialize() did not cover (e.g. the Beamformer's FFTW_MEASURE
-    // plans, built with the first decimator) so the NEXT boot plans instantly
-    // instead of re-measuring for seconds.
-    static void export_wisdom();
 
     // buffer_generation: persistent_data_buffer generation the data was
     // written under (0 = data not from the shared buffer). If the generation

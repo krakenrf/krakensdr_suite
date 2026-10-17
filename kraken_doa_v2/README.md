@@ -117,7 +117,7 @@ TCP 8091 ─► IQ convert (uint8→complex<float>) ─► raw data buffer (boun
    │
    ├─► decimation_processor_thread ─► per-decimator decimation (thread-local, cached coeffs)
    │        │
-   │        ├─► 8× per-channel FFT workers (FFTW3, per-channel plans, true parallel) ─► spectrum
+   │        ├─► 8× per-channel FFT workers (pffft, per-channel plans, true parallel) ─► spectrum
    │        ├─► fm_processor_thread ─► FM demod + Opus ─► 48 kHz audio
    │        ├─► doa_processor_thread ─► MUSIC (Eigen) ─► bearings
    │        └─► beamformer (DAS / MVDR / diversity)
@@ -125,7 +125,7 @@ TCP 8091 ─► IQ convert (uint8→complex<float>) ─► raw data buffer (boun
    └─► WebSocket server (8080) ─► browser
 ```
 
-**Threading** (`src/main.cpp` startup order): FFTW wisdom + beamformer init → data
+**Threading** (`src/main.cpp` startup order): FFT contexts + beamformer init → data
 receiver → decimation processor → 8 FFT workers → FM processor → web server (8080) →
 DoA HTTP server (8081) → status monitor. ~23–28 threads total — intentional
 oversubscription on 4 cores, since most are I/O-bound.
@@ -133,7 +133,9 @@ oversubscription on 4 cores, since most are I/O-bound.
 **Key design choices** (details in `OPTIMIZATION_SUMMARY.md`, `CLAUDE.md`):
 - Compiler auto-vectorization for IQ conversion (beats hand-written NEON here).
 - Thread-local decimators with a shared coefficient cache (zero alloc in hot path).
-- Per-channel FFTW plans + on-disk wisdom (`fft_wisdom.dat`) for instant startup.
+- Per-channel FFT plans: pffft (vendored in `external/pffft`, BSD-style licence,
+  NEON) behind `plugins/sdk/kraken_fft.hpp`, the plugins' FFT too - no planning,
+  no wisdom file (a `fft_wisdom.dat` from older versions can be deleted).
 - Lock-free `moodycamel::ConcurrentQueue` between stages; `mallopt(M_ARENA_MAX,32)`.
 
 ### Source layout
@@ -161,8 +163,12 @@ make deps       # install system deps (Ubuntu/Debian)
 make status     # check deps / build state
 ```
 
-**Dependencies:** `libfftw3-dev`, `libliquid-dev`, `libeigen3-dev`, `libssl-dev`,
-`build-essential`, `git`, `pkg-config`. uWebSockets is vendored/auto-installed.
+**Dependencies:** `libeigen3-dev`, `libssl-dev`, `libopus-dev`, `zlib1g-dev`,
+`libsqlite3-dev`, `build-essential`, `cmake`, `git`, `pkg-config`.
+uWebSockets is vendored/auto-installed; liquid-dsp is fetched at a pinned
+commit and built by `make` as a static library without FFTW / libfec
+(`liquid.mk` - no `libliquid-dev` needed); the FFT (pffft) is vendored in
+`external/pffft`.
 
 **Usage:**
 1. Start the Heimdall server first and let phase calibration converge (~60 s).

@@ -1,9 +1,9 @@
 #pragma once
 
-// DSP helpers of the SFN plugin: FFTW plans, an arbitrary-ratio resampler,
+// DSP helpers of the SFN plugin: FFT plans (kraken_fft.hpp), an arbitrary-ratio resampler,
 // frequency shifting
 
-#include <fftw3.h>
+#include "kraken_fft.hpp"
 
 #include <cmath>
 #include <complex>
@@ -17,29 +17,30 @@ namespace sfn {
 
 using cf = kp::cf;
 
-// In-place complex FFT of one size (FFTW_ESTIMATE: MEASURE plans take
-// tens of seconds on a busy Pi). sign -1 = forward, +1 = backward (no scaling)
+// In-place complex FFT of one size (any size: kraken_fft.hpp runs the ones
+// pffft can't do directly through Bluestein). sign -1 = forward, +1 =
+// backward (no scaling)
 class Fft {
 public:
     Fft(int n, int sign) : n_(n) {
-        buf_ = reinterpret_cast<cf*>(fftwf_malloc(sizeof(fftwf_complex) * static_cast<size_t>(n)));
-        plan_ = fftwf_plan_dft_1d(n, reinterpret_cast<fftwf_complex*>(buf_), reinterpret_cast<fftwf_complex*>(buf_),
-                                  sign < 0 ? FFTW_FORWARD : FFTW_BACKWARD, FFTW_ESTIMATE);
+        buf_ = reinterpret_cast<cf*>(kfft_malloc(sizeof(kfft_complex) * static_cast<size_t>(n)));
+        plan_ = kfft_plan_dft_1d(n, reinterpret_cast<kfft_complex*>(buf_), reinterpret_cast<kfft_complex*>(buf_),
+                                 sign < 0 ? KFFT_FORWARD : KFFT_BACKWARD);
     }
     ~Fft() {
-        fftwf_destroy_plan(plan_);
-        fftwf_free(buf_);
+        kfft_destroy_plan(plan_);
+        kfft_free(buf_);
     }
     Fft(const Fft&) = delete;
     Fft& operator=(const Fft&) = delete;
     int size() const { return n_; }
     cf* data() { return buf_; }
-    void run() { fftwf_execute(plan_); }
+    void run() { kfft_execute(plan_); }
 
 private:
     int n_;
     cf* buf_;
-    fftwf_plan plan_;
+    kfft_plan plan_;
 };
 
 // FFT plans by (size, sign), created on first use

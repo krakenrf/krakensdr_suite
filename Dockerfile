@@ -26,8 +26,8 @@ ARG LIBRTLSDR_COMMIT=08fb08165ecfcdd954c7a20cb1bbfbc159294f0e
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git pkg-config ca-certificates \
-        libusb-1.0-0-dev libfftw3-dev libeigen3-dev libssl-dev \
-        libliquid-dev libopus-dev zlib1g-dev libsqlite3-dev \
+        libusb-1.0-0-dev libeigen3-dev libssl-dev \
+        libopus-dev zlib1g-dev libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -50,6 +50,13 @@ RUN git init -q uws && cd uws \
     && cd .. && cp -a uws uws-heimdall && mv uws uws-kraken \
     && make -C uws-heimdall/uSockets WITH_SSL=0 \
     && make -C uws-kraken/uSockets WITH_OPENSSL=1
+
+# liquid-dsp (MIT) for kraken_doa + the plugins: built from source as a
+# static library WITHOUT FFTW / libfec (Debian's libliquid1 links both). The
+# pinned commit and the build are kraken_doa_v2/liquid.mk - the Makefiles'
+# own recipe, run here in a layer of its own (rebuilt only when it changes)
+COPY kraken_doa_v2/liquid.mk kraken_doa_v2/liquid.mk
+RUN make -C kraken_doa_v2 -f liquid.mk -j"$JOBS" liquid
 
 COPY heimdall_v2/ heimdall_v2/
 COPY kraken_doa_v2/ kraken_doa_v2/
@@ -105,7 +112,7 @@ COPY --from=build /src/librtlsdr/build/src/rtl_test /src/librtlsdr/build/src/rtl
 COPY docker/entrypoint.sh /usr/local/bin/krakensdr-entrypoint
 RUN chmod 755 /usr/local/bin/krakensdr-entrypoint
 
-# State (settings, TLS cert, FFTW wisdom, DoA recordings) lives here
+# State (settings, TLS cert, DoA / IQ recordings, ...) lives here
 VOLUME /data
 ENTRYPOINT ["/usr/local/bin/krakensdr-entrypoint"]
 CMD ["help"]

@@ -1,19 +1,28 @@
 # Makefile for KrakenSDR DoA with MUSIC DoA and Raw Data Buffering
 CXX = g++
 CXXFLAGS = -std=c++20 -Ofast -Wall -Wextra -pthread
-INCLUDES = -Iinclude -IuWebSockets/src -IuWebSockets/uSockets/src -I/usr/include/eigen3
+INCLUDES = -isystem $(LIQUID_INC) -Iinclude -Iplugins/sdk -Iexternal/pffft -IuWebSockets/src -IuWebSockets/uSockets/src -I/usr/include/eigen3
 LDFLAGS = -L/usr/local/lib
-LIBS = -lfftw3f -lliquid -lopus -lssl -lcrypto -lz -lsqlite3
+# liquid-dsp: built from source as a static library without FFTW / libfec
+# (liquid.mk - Debian's libliquid1 links both); linked as $(LIQUID_A)
+LIBS = -lopus -lssl -lcrypto -lz -lsqlite3
+
+# FFT: pffft, vendored in external/pffft (plain C; plugins/sdk/kraken_fft.hpp
+# wraps it). It builds its scalar code unless told about NEON
+CC = gcc
+PFFFT_CFLAGS = -O3 -march=native -Wno-unused-parameter
 
 # Detect ARM architecture for NEON optimizations
 ARCH := $(shell uname -m)
 ifeq ($(ARCH),aarch64)
     # ARM 64-bit (Raspberry Pi 4/5, etc.)
     CXXFLAGS += -march=native -mtune=native
+    PFFFT_CFLAGS += -DPFFFT_ENABLE_NEON
     $(info Detected ARM64 architecture - NEON optimizations will be enabled)
 else ifeq ($(ARCH),armv7l)
     # ARM 32-bit
     CXXFLAGS += -march=native -mtune=native -mfpu=neon
+    PFFFT_CFLAGS += -mfpu=neon -DPFFFT_ENABLE_NEON
     $(info Detected ARM32 architecture - NEON optimizations will be enabled)
 else ifeq ($(findstring arm,$(ARCH)),arm)
     # Other ARM variants
@@ -118,20 +127,24 @@ APP_SRCS = \
 
 ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_SRCS) $(APP_SRCS)
 
-# Object files
-OBJS = $(ALL_SRCS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o)
+# Object files (+ pffft, C)
+PFFFT_OBJS = $(OBJDIR)/pffft/pffft.o $(OBJDIR)/pffft/pffft_common.o
+OBJS = $(ALL_SRCS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o) $(PFFFT_OBJS)
 
 # Dependency files
 DEPS = $(ALL_SRCS:$(SRCDIR)/%.cpp=$(DEPDIR)/%.d)
 
 # Create object and dependency directories
-OBJDIRS = $(OBJDIR) $(OBJDIR)/signal_processing $(OBJDIR)/networking $(OBJDIR)/digital $(OBJDIR)/utils
+OBJDIRS = $(OBJDIR) $(OBJDIR)/signal_processing $(OBJDIR)/networking $(OBJDIR)/digital $(OBJDIR)/utils $(OBJDIR)/pffft
 DEPDIRS = $(DEPDIR) $(DEPDIR)/signal_processing $(DEPDIR)/networking $(DEPDIR)/digital $(DEPDIR)/utils
 
 .PHONY: all clean distclean install deps check-uws debug help print-% run status plugins whisper whisper-update
 
 # Default target
 all: check-uws $(OBJDIRS) $(DEPDIRS) $(TARGET) plugins whisper-update
+
+# liquid-dsp: LIQUID_A / LIQUID_INC and the `liquid` target (static, pinned)
+include liquid.mk
 
 # 🗣 Voice to Text: the local speech-to-text helper (transcribe/, whisper.cpp)
 # is opt-in: `make whisper` = transcribe/setup.sh (clone the pinned whisper.cpp,
@@ -149,7 +162,7 @@ whisper-update:
 # Decoder plugins (plugins/<id>/decoder.cpp -> plugins/<id>/build/decoder,
 # see plugins/SDK.md). Separate executables: kraken_doa doesn't link them, so
 # a plugin that doesn't compile only warns (-k builds the others).
-plugins:
+plugins: $(LIQUID_A)
 	@if [ -f plugins/Makefile ]; then \
 		$(MAKE) --no-print-directory -k -C plugins || \
 		echo "WARNING: a decoder plugin failed to build (see above) - kraken_doa itself is fine"; \
@@ -175,8 +188,9 @@ $(OBJDIRS) $(DEPDIRS):
 	mkdir -p $@
 
 # Link target (order-only check-uws: under -j the link otherwise races the
-# uWebSockets clone/build and fails on the missing uSockets/*.o)
-$(TARGET): $(OBJS) | check-uws
+# uWebSockets clone/build and fails on the missing uSockets/*.o). $^ ends
+# with the liquid archive, after the objects that use it
+$(TARGET): $(OBJS) $(LIQUID_A) | check-uws
 	@echo "Linking $(TARGET)..."
 	$(CXX) $(CXXFLAGS) -o $@ $^ uWebSockets/uSockets/*.o $(LDFLAGS) $(LIBS)
 	@echo "Build complete!"
@@ -193,9 +207,13 @@ endif
 	@echo "Run with: ./$(TARGET)"
 
 # Compile source files and generate dependencies
-$(OBJDIR)/%.o: $(SRCDIR)/%.cpp | $(OBJDIRS) $(DEPDIRS) check-uws
+$(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(LIQUID_H) | $(OBJDIRS) $(DEPDIRS) check-uws
 	@echo "Compiling $<..."
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $(DEPDIR)/$*.d -c $< -o $@
+
+$(OBJDIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) | $(OBJDIRS)
+	@echo "Compiling $<..."
+	$(CC) $(PFFFT_CFLAGS) -c $< -o $@
 
 # Include dependency files (only if they exist and we're not cleaning)
 ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
@@ -208,20 +226,20 @@ clean:
 	@if [ -f plugins/Makefile ]; then $(MAKE) --no-print-directory -C plugins clean; fi
 	@echo "Build artifacts cleaned"
 
-# Complete clean including uWebSockets
+# Complete clean including uWebSockets and liquid-dsp
 distclean: clean
-	rm -rf uWebSockets
-	@echo "All artifacts including uWebSockets removed"
+	rm -rf uWebSockets liquid-dsp
+	@echo "All artifacts including uWebSockets and liquid-dsp removed"
 
 # Install system dependencies only (Ubuntu/Debian)
 deps:
 	@echo "Installing system dependencies..."
 	sudo apt-get update
 	sudo apt-get install -y build-essential cmake pkg-config git
-	sudo apt-get install -y libfftw3-dev libliquid-dev libeigen3-dev
+	sudo apt-get install -y libeigen3-dev
 	sudo apt-get install -y libssl-dev libz-dev libsqlite3-dev
 	@echo "System dependencies installed!"
-	@echo "uWebSockets will be installed locally when you run 'make'"
+	@echo "uWebSockets and liquid-dsp will be fetched and built locally when you run 'make'"
 
 # Install target (optional system-wide installation)
 install: $(TARGET)
@@ -262,17 +280,12 @@ endif
 	else \
 	    echo "✗ Not installed (will be installed on build)"; \
 	fi
-	@echo -n "FFTW3: "
-	@if pkg-config --exists fftw3f 2>/dev/null; then \
-	    echo "✓ Found"; \
-	else \
-	    echo "✗ Not found (run 'make deps')"; \
-	fi
+	@echo "FFT: pffft (vendored in external/pffft)"
 	@echo -n "liquid-dsp: "
-	@if pkg-config --exists liquid 2>/dev/null || ldconfig -p | grep -q libliquid; then \
-	    echo "✓ Found"; \
+	@if [ -f "$(LIQUID_A)" ]; then \
+	    echo "✓ Built locally ($(LIQUID_A), static, without FFTW / libfec)"; \
 	else \
-	    echo "✗ Not found (run 'make deps')"; \
+	    echo "✗ Not built yet (built on 'make', or 'make liquid')"; \
 	fi
 	@echo -n "Eigen3: "
 	@if pkg-config --exists eigen3 2>/dev/null || [ -d "/usr/include/eigen3" ]; then \
@@ -402,6 +415,7 @@ help:
 	@echo "Dependencies:"
 	@echo "  deps              - Install system packages (Ubuntu/Debian)"
 	@echo "  check-uws         - Install uWebSockets locally"
+	@echo "  liquid            - Build liquid-dsp locally (static, without FFTW / libfec)"
 	@echo "  reinstall-uws     - Force reinstall uWebSockets"
 	@echo ""
 	@echo "Information:"

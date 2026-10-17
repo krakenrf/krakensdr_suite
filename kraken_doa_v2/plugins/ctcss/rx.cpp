@@ -112,16 +112,16 @@ Rx::Rx() {
         win_[i] = static_cast<float>(0.5 - 0.5 * std::cos(2 * PI * (i + 0.5) / WIN));
         win_sum_ += win_[i];
     }
-    fft_in_ = fftwf_alloc_real(NFFT);
-    fft_out_ = fftwf_alloc_complex(NFFT / 2 + 1);
-    plan_ = fftwf_plan_dft_r2c_1d(NFFT, fft_in_, fft_out_, FFTW_ESTIMATE);
+    fft_in_ = kfft_alloc_real(NFFT);
+    fft_out_ = kfft_alloc_complex(NFFT / 2 + 1);
+    plan_ = kfft_plan_dft_r2c_1d(NFFT, fft_in_, fft_out_);
     reset(0);
 }
 
 Rx::~Rx() {
-    if (plan_) fftwf_destroy_plan(plan_);
-    if (fft_in_) fftwf_free(fft_in_);
-    if (fft_out_) fftwf_free(fft_out_);
+    if (plan_) kfft_destroy_plan(plan_);
+    if (fft_in_) kfft_free(fft_in_);
+    if (fft_out_) kfft_free(fft_out_);
 }
 
 void Rx::reset(double t0) {
@@ -300,7 +300,7 @@ Rx::Spec Rx::analyse(int64_t j_end) {
         }
     }
     std::fill(fft_in_ + L, fft_in_ + NFFT, 0.0f);
-    fftwf_execute(plan_);
+    kfft_execute(plan_);
     const int k55 = static_cast<int>(55 / BIN_HZ), k275 = static_cast<int>(275 / BIN_HZ);
     // tones 60-257 Hz (the highest listed is 254.1; above it only voice leaks
     // in, through the transmitters' 300 Hz high-pass)

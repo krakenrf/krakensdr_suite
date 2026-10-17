@@ -5,6 +5,8 @@ kraken_doa
 
 # Vendored dependency (auto-installed by Makefile)
 uWebSockets/
+# liquid-dsp checkout + its static build (liquid.mk, fetched by make)
+liquid-dsp/
 
 # Runtime files
 fingerprints.db

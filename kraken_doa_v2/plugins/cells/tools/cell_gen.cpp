@@ -12,7 +12,8 @@
 // are exact; only subcarriers inside the VFO's +-1.15 MHz are generated.
 //
 // Build (from kraken_doa_v2/plugins):
-//   g++ -std=c++20 -O2 -Icells -Isdk cells/tools/cell_gen.cpp -lfftw3f -o /tmp/cell_gen
+//   g++ -std=c++20 -O2 -Icells -Isdk -I../external/pffft cells/tools/cell_gen.cpp \
+//       lib/build/libkrakendig.a -o /tmp/cell_gen        (pffft is in the lib)
 // Run:
 //   cell_gen [--secs 3] [--rf HZ] [--lte_off HZ] [--nr_off HZ] [--rxoff HZ] [--nrscs 15|30]
 //            [--nrb 25] [--load 0.3] [--ssbper 20] [--snr DB] [--radius M] [--seed N]

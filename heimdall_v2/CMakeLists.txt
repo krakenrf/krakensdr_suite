@@ -14,7 +14,21 @@ find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
 # Find other dependencies using pkg-config
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
-pkg_check_modules(FFTW3F REQUIRED fftw3f)
+
+# FFT: pffft, vendored in external/pffft (plain C, BSD-style licence; replaced
+# FFTW 2026-10-17) - no system FFT library
+add_library(pffft STATIC external/pffft/pffft.c external/pffft/pffft_common.c)
+set_target_properties(pffft PROPERTIES C_STANDARD 99)
+target_compile_options(pffft PRIVATE -O3)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|armv7|arm")
+    # without it pffft silently builds its scalar code
+    target_compile_definitions(pffft PRIVATE PFFFT_ENABLE_NEON)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "armv7")
+        target_compile_options(pffft PRIVATE -mfpu=neon)
+    endif()
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+    target_compile_options(pffft PRIVATE -march=native)
+endif()
 
 # KrakenSDR librtlsdr fork, linked STATICALLY so a distro librtlsdr0 (earlier
 # in the loader's search path than /usr/local/lib) can never shadow it - see
@@ -96,7 +110,6 @@ target_include_directories(heimdall PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/src
     ${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/uSockets/src
     ${RTLSDR_DIR}/include
-    ${FFTW3F_INCLUDE_DIRS}
 )
 
 # Add Eigen3 include directories
@@ -112,7 +125,6 @@ target_compile_definitions(heimdall PRIVATE
 target_compile_options(heimdall PRIVATE
     -Wall
     -Wextra
-    ${FFTW3F_CFLAGS_OTHER}
 )
 
 # Architecture-specific optimizations
@@ -131,7 +143,7 @@ file(GLOB USOCKETS_OBJS "${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/uSockets/*.o")
 target_link_libraries(heimdall
     ${RTLSDR_STATIC_LIB}
     ${LIBUSB_LIBRARIES}
-    ${FFTW3F_LIBRARIES}
+    pffft
     ${USOCKETS_OBJS}
     Threads::Threads
     Eigen3::Eigen
@@ -144,7 +156,6 @@ target_link_libraries(heimdall
 # Link directories
 target_link_directories(heimdall PRIVATE
     ${LIBUSB_LIBRARY_DIRS}
-    ${FFTW3F_LIBRARY_DIRS}
 )
 
 # Installation
@@ -171,7 +182,7 @@ add_custom_target(status
     COMMAND ${CMAKE_COMMAND} -E echo "Eigen3 found: ${EIGEN3_FOUND}"
     COMMAND ${CMAKE_COMMAND} -E echo "Eigen3 version: ${EIGEN3_VERSION}"
     COMMAND ${CMAKE_COMMAND} -E echo "RTL-SDR: KrakenSDR fork, static (${RTLSDR_STATIC_LIB})"
-    COMMAND ${CMAKE_COMMAND} -E echo "FFTW3 found: ${FFTW3F_FOUND}"
+    COMMAND ${CMAKE_COMMAND} -E echo "FFT: pffft (vendored, external/pffft)"
     COMMENT "Checking build status..."
 )
 
@@ -181,7 +192,7 @@ message(STATUS "=== Heimdall Configuration ===")
 message(STATUS "C++ Standard: C++20")
 message(STATUS "Eigen3: ${EIGEN3_VERSION} (${EIGEN3_INCLUDE_DIR})")
 message(STATUS "RTL-SDR: KrakenSDR fork, static (${RTLSDR_STATIC_LIB})")
-message(STATUS "FFTW3: ${FFTW3F_VERSION}")
+message(STATUS "FFT: pffft (vendored, external/pffft)")
 message(STATUS "Architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 message(STATUS "Phase Calibration: Eigenvalue Decomposition")
 message(STATUS "==============================")

@@ -2,9 +2,10 @@
 
 // Header-only DSP / bit helpers for decoder plugins. Plain C++ (no external
 // dependencies) so a plugin stays readable; liquid-dsp (<liquid/liquid.h>)
-// and FFTW3 (<fftw3.h>, float API fftwf_*) are linked as well for anything
-// heavier. Conventions: bits are UNPACKED (one bit per uint8_t, 0/1, first
-// transmitted bit first) unless a function says otherwise.
+// is linked as well for anything heavier, and FFTs come from
+// "kraken_fft.hpp" (pffft behind FFTW-like plans, any size). Conventions:
+// bits are UNPACKED (one bit per uint8_t, 0/1, first transmitted bit first)
+// unless a function says otherwise.
 
 #include <algorithm>
 #include <cmath>

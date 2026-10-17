@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-#include <fftw3.h>
+#include "kraken_fft.hpp"
 
 #include "kraken_plugin.hpp"
 #include "tones.hpp"
@@ -99,8 +99,8 @@ private:
         int64_t j_end = 0;
     };
     float* fft_in_ = nullptr;
-    fftwf_complex* fft_out_ = nullptr;
-    fftwf_plan plan_ = nullptr;
+    kfft_complex* fft_out_ = nullptr;
+    kfft_plan plan_ = nullptr;
     std::vector<float> win_, med_;
     float win_sum_ = 0;
     std::deque<Spec> hops_;                // recent hop results

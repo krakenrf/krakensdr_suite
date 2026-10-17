@@ -22,7 +22,7 @@
 #include <vector>
 
 #include <Eigen/Dense>
-#include <fftw3.h>
+#include "kraken_fft.hpp"   // pffft (plugins/sdk)
 
 #include "types.hpp"                                // ArrayTopology
 #include "signal_processing/shared_decimator.hpp"   // SharedDecimator::MultiChannelDecimated
@@ -199,9 +199,9 @@ private:
     float channel_snrs_[8] = {};
 
     // --- SNR estimation FFT (256-point, plan shared, mutex guarded) ---
-    fftwf_plan snr_plan_ = nullptr;
-    fftwf_complex* snr_in_ = nullptr;
-    fftwf_complex* snr_out_ = nullptr;
+    kfft_plan snr_plan_ = nullptr;
+    kfft_complex* snr_in_ = nullptr;
+    kfft_complex* snr_out_ = nullptr;
     mutable std::mutex snr_mutex_;
     std::vector<float> snr_db_buffer_;
     std::vector<float> snr_sorted_buffer_;
@@ -214,12 +214,12 @@ private:
 
     // --- Frequency-domain DAS state ---
     mutable std::mutex fdds_mutex_;
-    fftwf_plan fdds_fwd_plan_ = nullptr;
-    fftwf_plan fdds_inv_plan_ = nullptr;
-    fftwf_complex* fdds_fft_in_ = nullptr;
-    fftwf_complex* fdds_fft_out_ = nullptr;
-    fftwf_complex* fdds_ifft_in_ = nullptr;
-    fftwf_complex* fdds_ifft_out_ = nullptr;
+    kfft_plan fdds_fwd_plan_ = nullptr;
+    kfft_plan fdds_inv_plan_ = nullptr;
+    kfft_complex* fdds_fft_in_ = nullptr;
+    kfft_complex* fdds_fft_out_ = nullptr;
+    kfft_complex* fdds_ifft_in_ = nullptr;
+    kfft_complex* fdds_ifft_out_ = nullptr;
     std::vector<float> fdds_window_;     // Hann window
     // Per-channel, per-bin steering phasors [channel][bin]
     std::vector<std::vector<std::complex<float>>> fdds_steering_;

@@ -2,15 +2,25 @@
 
 #include "../core/types.hpp"
 #include "../external/concurrentqueue/blockingconcurrentqueue.h"
-#include <fftw3.h>
+#include <complex>
 #include <memory>
 #include <vector>
 
-// RAII FFT Plan wrapper - eliminates global FFTW state
+struct PFFFT_Setup;
+
+// RAII FFT plan: one pffft setup (external/pffft) for CORRELATION_SIZE
+// complex points + its buffers. Results are FFTW's: natural bin order,
+// unscaled forward (e^-) and inverse. Not thread-safe - one per thread at a
+// time, through FftPool
 class FftPlan {
 private:
-    fftwf_plan forward_plan, inverse_plan;
-    fftwf_complex *input, *output, *correlation_freq, *correlation_time;
+    PFFFT_Setup* setup;
+    // 64-byte aligned (pffft_aligned_malloc), CORRELATION_SIZE complex each.
+    // The forward transform runs in place in `output`; pffft's scratch is one
+    // buffer per thread (fft_plan.cpp) - a correlation set walks 5-9 plans,
+    // and each 256 KB buffer it touches is memory traffic (the set is
+    // memory-bound on the Pi, not arithmetic-bound)
+    std::complex<float> *output, *correlation_freq, *correlation_time;
 
 public:
     FftPlan();

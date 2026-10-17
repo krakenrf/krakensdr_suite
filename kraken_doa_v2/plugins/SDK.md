@@ -633,7 +633,8 @@ least recently played go).
   in-repo scene with some keys replaced
 - A step that is a `.py` runs with python3 -I (numpy / scipy); a `.cpp` is
   compiled once into `testsignal_cache/.bin/` (`g++ -std=c++20 -O2
-  -I<plugin> -Isdk ... -lfftw3f`). Working directory = a scratch folder in
+  -I<plugin> -Isdk -I../external/pffft ... lib/build/libkrakendig.a` - so
+  a generator can use `kraken_fft.hpp`). Working directory = a scratch folder in
   the cache; placeholders `{tools}` (your tools/), `{sdk}`, `{plugins}`,
   `{work}`, `{lat}` / `{lon}` (+ `{lat+0.05}` ...) = the STATION's position
   when the user generates (0, 0 without one) and the value `"{station}"` =
@@ -709,10 +710,32 @@ least recently played go).
 - `printable(s)`
 
 liquid-dsp (`#include <liquid/liquid.h>`: resamplers, `symsync`, modems,
-`firfilt`, `nco`, FEC) and FFTW3 (`<fftw3.h>`, float API `fftwf_*`) are
-linked as well. Plan with `FFTW_ESTIMATE`: `FFTW_MEASURE` takes seconds on
-the Pi 5 (6 s for 256 points, 23 s for 8192) before the plugin reads its
-first sample, and kraken_doa drops what queues up meanwhile (> 1 s).
+`firfilt`, `nco`) is linked as well - built from source WITHOUT FFTW and
+libfec (`kraken_doa_v2/liquid.mk`), so its FEC schemes that need libfec
+(convolutional / Reed-Solomon `fec` types) fail to create: use `kp::`'s
+`viterbi_decode` / `BlockCode` or `lib/dig_fec` instead; and its FFT-based
+objects (`fftfilt`, `spgram`, `firpfbch*`, `ofdmframe*`, `qdetector`) run
+on liquid's own, slower FFT. FFTs: `#include "kraken_fft.hpp"`
+(sdk/) - pffft (vendored in `kraken_doa_v2/external/pffft`, BSD-style
+licence) behind FFTW-like plans, linked through `lib/build/libkrakendig.a`:
+
+```cpp
+kfft_complex* in  = kfft_alloc_complex(n);   // float[2] per sample (in[i][0] re, [1] im)
+kfft_complex* out = kfft_alloc_complex(n);
+kfft_plan p = kfft_plan_dft_1d(n, in, out, KFFT_FORWARD);   // KFFT_BACKWARD: the inverse
+kfft_execute(p);                             // out = DFT(in), natural bin order, unscaled
+kfft_plan r = kfft_plan_dft_r2c_1d(n, real_in, out);         // n real -> n/2 + 1 bins
+kfft_execute_dft(p, other_in, other_out);    // the plan on other arrays
+kfft_destroy_plan(p); kfft_free(in); kfft_free(out);
+```
+
+The results are FFTW's (sign, order, scaling). Any size works, but pffft
+does N = 2^a 3^b 5^c that are multiples of 16 (32 for r2c) directly and
+every other N through Bluestein (~3 transforms of a bigger size) - pick
+2/3/5-smooth sizes (`kfft_direct(n)` says). Plans are made instantly (no
+measuring - FFTW_MEASURE used to take 6-23 s on the Pi 5 before a plugin
+read its first sample); one plan per thread. FFTW itself is no longer
+linked (it is GPL; kraken_doa_v2 avoids GPL code).
 
 ## Build and test
 

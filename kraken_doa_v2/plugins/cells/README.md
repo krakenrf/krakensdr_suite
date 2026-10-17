@@ -279,7 +279,7 @@ MHz VFO, written as a multichannel cf32 + .json sidecar. The OFDM symbols
 are built at 2.4 MHz directly (fractional cyclic prefixes and path delays as
 phase ramps: exact), only the subcarriers inside the VFO's +-1.15 MHz.
 
-    g++ -std=c++20 -O2 -Icells -Isdk cells/tools/cell_gen.cpp -lfftw3f -o /tmp/cell_gen
+    g++ -std=c++20 -O2 -Icells -Isdk -I../external/pffft cells/tools/cell_gen.cpp lib/build/libkrakendig.a -o /tmp/cell_gen
     /tmp/cell_gen --secs 4 --rf 806.13e6 --lte_off -130e3 --snr 15 \
         --cell lte,101,40,0,0,20,2 --cell lte,102,200,-4,1234.5,-15,1 --out /tmp/cells.cf32
     cells/build/decoder --file /tmp/cells.cf32 --uca 0.1582

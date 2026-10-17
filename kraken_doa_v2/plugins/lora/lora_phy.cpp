@@ -39,17 +39,17 @@ LoraRx::LoraRx(int sf, double bw, int os, Ring* ring, bool invert, bool implicit
         up_[n] = cf(std::cos(ph), std::sin(ph));
         down_[n] = std::conj(up_[n]);
     }
-    fin_ = fftwf_alloc_complex(L_);
-    fout_ = fftwf_alloc_complex(L_);
-    plan_ = fftwf_plan_dft_1d(L_, fin_, fout_, FFTW_FORWARD, FFTW_ESTIMATE);
+    fin_ = kfft_alloc_complex(L_);
+    fout_ = kfft_alloc_complex(L_);
+    plan_ = kfft_plan_dft_1d(L_, fin_, fout_, KFFT_FORWARD);
     down1_.resize(N_);
     for (int n = 0; n < N_; n++) {
         const double ph = 2.0 * M_PI * (static_cast<double>(n) * n / (2.0 * N_) - n / 2.0);
         down1_[n] = cf(std::cos(ph), -std::sin(ph));
     }
-    fin1_ = fftwf_alloc_complex(N_);
-    fout1_ = fftwf_alloc_complex(N_);
-    plan1_ = fftwf_plan_dft_1d(N_, fin1_, fout1_, FFTW_FORWARD, FFTW_ESTIMATE);
+    fin1_ = kfft_alloc_complex(N_);
+    fout1_ = kfft_alloc_complex(N_);
+    plan1_ = kfft_plan_dft_1d(N_, fin1_, fout1_, KFFT_FORWARD);
     next_eval_ = ring_->abs + L_;
 }
 
@@ -63,7 +63,7 @@ int LoraRx::detect_bin(int64_t a, float* pk, float* mean) {
         fin1_[i][0] = v.real();
         fin1_[i][1] = v.imag();
     }
-    fftwf_execute(plan1_);
+    kfft_execute(plan1_);
     float best = -1;
     int bestv = 0;
     double sum = 0;
@@ -78,12 +78,12 @@ int LoraRx::detect_bin(int64_t a, float* pk, float* mean) {
 }
 
 LoraRx::~LoraRx() {
-    fftwf_destroy_plan(plan_);
-    fftwf_free(fin_);
-    fftwf_free(fout_);
-    fftwf_destroy_plan(plan1_);
-    fftwf_free(fin1_);
-    fftwf_free(fout1_);
+    kfft_destroy_plan(plan_);
+    kfft_free(fin_);
+    kfft_free(fout_);
+    kfft_destroy_plan(plan1_);
+    kfft_free(fin1_);
+    kfft_free(fout1_);
 }
 
 void LoraRx::reset() {
@@ -119,7 +119,7 @@ int LoraRx::demod_bin(int64_t a, bool use_up, float* pk, float* mean, float* fra
             fin_[i][1] = v.imag();
         }
     }
-    fftwf_execute(plan_);
+    kfft_execute(plan_);
     // alias-combine the os halves: power at value v = sum_k |X[v + k*N]|^2
     float best = -1;
     int bestv = 0;

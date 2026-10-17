@@ -31,7 +31,7 @@
 #include "kraken_plugin.hpp"
 #include "navaid.hpp"
 
-#include <fftw3.h>
+#include "kraken_fft.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -158,18 +158,18 @@ struct Pattern {
 class Ils : public kp::Decoder {
 public:
     explicit Ils(kp::Host& h) : Decoder(h) {
-        fin_ = fftwf_alloc_complex(N);
-        fout_ = fftwf_alloc_complex(N);
-        bin_ = fftwf_alloc_complex(NB);
-        bout_ = fftwf_alloc_complex(NB);
-        rin_ = fftwf_alloc_real(NB);
-        rout_ = fftwf_alloc_complex(NB / 2 + 1);
-        sin_ = fftwf_alloc_complex(NS);
-        sout_ = fftwf_alloc_complex(NS);
-        fwd_ = fftwf_plan_dft_1d(N, fin_, fout_, FFTW_FORWARD, FFTW_ESTIMATE);
-        band_ = fftwf_plan_dft_1d(NB, bin_, bout_, FFTW_BACKWARD, FFTW_ESTIMATE);
-        tone_ = fftwf_plan_dft_r2c_1d(NB, rin_, rout_, FFTW_ESTIMATE);
-        sub_ = fftwf_plan_dft_1d(NS, sin_, sout_, FFTW_BACKWARD, FFTW_ESTIMATE);
+        fin_ = kfft_alloc_complex(N);
+        fout_ = kfft_alloc_complex(N);
+        bin_ = kfft_alloc_complex(NB);
+        bout_ = kfft_alloc_complex(NB);
+        rin_ = kfft_alloc_real(NB);
+        rout_ = kfft_alloc_complex(NB / 2 + 1);
+        sin_ = kfft_alloc_complex(NS);
+        sout_ = kfft_alloc_complex(NS);
+        fwd_ = kfft_plan_dft_1d(N, fin_, fout_, KFFT_FORWARD);
+        band_ = kfft_plan_dft_1d(NB, bin_, bout_, KFFT_BACKWARD);
+        tone_ = kfft_plan_dft_r2c_1d(NB, rin_, rout_);
+        sub_ = kfft_plan_dft_1d(NS, sin_, sout_, KFFT_BACKWARD);
         m_.resize(NB);
         win_.resize(TICK_N);
         for (int i = 0; i < TICK_N; i++) win_[i] = static_cast<float>(0.5 - 0.5 * std::cos(2 * M_PI * (i + 0.5) / TICK_N));
@@ -177,15 +177,15 @@ public:
         for (int i = 0; i < ID_N; i++) win_id_[i] = static_cast<float>(0.5 - 0.5 * std::cos(2 * M_PI * (i + 0.5) / ID_N));
     }
     ~Ils() override {
-        for (fftwf_plan p : {fwd_, band_, tone_, sub_}) fftwf_destroy_plan(p);
-        fftwf_free(fin_);
-        fftwf_free(fout_);
-        fftwf_free(bin_);
-        fftwf_free(bout_);
-        fftwf_free(rin_);
-        fftwf_free(rout_);
-        fftwf_free(sin_);
-        fftwf_free(sout_);
+        for (kfft_plan p : {fwd_, band_, tone_, sub_}) kfft_destroy_plan(p);
+        kfft_free(fin_);
+        kfft_free(fout_);
+        kfft_free(bin_);
+        kfft_free(bout_);
+        kfft_free(rin_);
+        kfft_free(rout_);
+        kfft_free(sin_);
+        kfft_free(sout_);
     }
 
     void option(const std::string& k, const std::string& v) override {
@@ -223,9 +223,9 @@ public:
     }
 
 private:
-    fftwf_complex *fin_, *fout_, *bin_, *bout_, *rout_, *sin_, *sout_;
+    kfft_complex *fin_, *fout_, *bin_, *bout_, *rout_, *sin_, *sout_;
     float* rin_;
-    fftwf_plan fwd_, band_, tone_, sub_;
+    kfft_plan fwd_, band_, tone_, sub_;
     std::vector<cf> buf_;
     double buf_t0_ = 0;
     std::vector<float> m_;          // modulation of the main carrier (24 kHz, 1 s)
@@ -265,7 +265,7 @@ private:
 
     void analyse(double t0) {
         std::copy(buf_.begin(), buf_.begin() + N, reinterpret_cast<cf*>(fin_));
-        fftwf_execute(fwd_);
+        kfft_execute(fwd_);
         // --- carriers (|f| <= 20 kHz)
         const int span = 20000;
         std::vector<double> p(2 * span + 1);
@@ -325,7 +325,7 @@ private:
             bin_[dst][0] = fout_[src][0];
             bin_[dst][1] = fout_[src][1];
         }
-        fftwf_execute(band_);
+        kfft_execute(band_);
         double mean = 0;
         for (int i = 0; i < NB; i++) {
             const float e = std::sqrt(bout_[i][0] * bout_[i][0] + bout_[i][1] * bout_[i][1]);
@@ -336,7 +336,7 @@ private:
         if (mean <= 0) return m;
         for (int i = 0; i < NB; i++) rin_[i] = static_cast<float>(rin_[i] / mean - 1);
         if (keep) std::copy(rin_, rin_ + NB, m_.begin());
-        fftwf_execute(tone_);
+        kfft_execute(tone_);
         auto M = [&](int f) { return cd(rout_[f][0], rout_[f][1]); };
         // depth of a tone: amplitude in m(t), its power summed over +-w bins
         auto depth = [&](double f, int w) {
@@ -374,7 +374,7 @@ private:
                 sin_[(r + NS) % NS][0] = static_cast<float>(v.real());
                 sin_[(r + NS) % NS][1] = static_cast<float>(v.imag());
             }
-            fftwf_execute(sub_);
+            kfft_execute(sub_);
             cd R(0, 0);
             for (int i = 0; i < NS; i++) {
                 const cd s1(sout_[i][0], sout_[i][1]), s0(sout_[(i + NS - 1) % NS][0], sout_[(i + NS - 1) % NS][1]);

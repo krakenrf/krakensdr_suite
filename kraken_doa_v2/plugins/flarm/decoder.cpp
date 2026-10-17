@@ -38,7 +38,7 @@
 #include "kraken_plugin.hpp"
 #include "ogn.hpp"
 
-#include <fftw3.h>
+#include "kraken_fft.hpp"
 
 #include <algorithm>
 #include <array>
@@ -208,9 +208,9 @@ class Flarm : public kp::Decoder {
 public:
     explicit Flarm(kp::Host& h) : Decoder(h) {
         ring_.assign(RING, kp::cf(0, 0));
-        fin_ = fftwf_alloc_complex(NFFT);
-        fout_ = fftwf_alloc_complex(NFFT);
-        plan_ = fftwf_plan_dft_1d(NFFT, fin_, fout_, FFTW_FORWARD, FFTW_ESTIMATE);
+        fin_ = kfft_alloc_complex(NFFT);
+        fout_ = kfft_alloc_complex(NFFT);
+        plan_ = kfft_plan_dft_1d(NFFT, fin_, fout_, KFFT_FORWARD);
         for (int i = 0; i < NFFT; i++) hann_[i] = 0.5f - 0.5f * std::cos(2 * M_PI * (i + 0.5) / NFFT);
         // channel filter for the 400 kHz demodulator: windowed sinc, 110 kHz
         const int nt = 49;
@@ -231,9 +231,9 @@ public:
         host.table_keep(AC_TIMEOUT_S);
     }
     ~Flarm() override {
-        fftwf_destroy_plan(plan_);
-        fftwf_free(fin_);
-        fftwf_free(fout_);
+        kfft_destroy_plan(plan_);
+        kfft_free(fin_);
+        kfft_free(fout_);
     }
 
     void reset() override {
@@ -291,8 +291,8 @@ public:
 
 private:
     std::vector<kp::cf> ring_;
-    fftwf_complex *fin_, *fout_;
-    fftwf_plan plan_;
+    kfft_complex *fin_, *fout_;
+    kfft_plan plan_;
     float hann_[NFFT];
     float pw_[NFFT];
     std::vector<float> lp_;
@@ -374,7 +374,7 @@ private:
     }
 
     void frame() {
-        fftwf_execute(plan_);
+        kfft_execute(plan_);
         for (int b = 0; b < NFFT; b++) pw_[b] = fout_[b][0] * fout_[b][0] + fout_[b][1] * fout_[b][1];
         const uint64_t f = frame_++;
         for (size_t wi = 0; wi < wins_.size(); wi++) {

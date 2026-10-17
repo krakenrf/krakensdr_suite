@@ -21,9 +21,19 @@ include_directories(include)
 # Find required packages
 find_package(PkgConfig REQUIRED)
 
-# Find FFTW3
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(FFTW3F REQUIRED fftw3f)
+# FFT: pffft, vendored in external/pffft (plain C, wrapped by
+# plugins/sdk/kraken_fft.hpp) - no system FFT library
+add_library(pffft STATIC external/pffft/pffft.c external/pffft/pffft_common.c)
+target_include_directories(pffft PUBLIC external/pffft)
+set_target_properties(pffft PROPERTIES C_STANDARD 99)
+target_compile_options(pffft PRIVATE -O3)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|armv7|arm")
+    # without it pffft silently builds its scalar code
+    target_compile_definitions(pffft PRIVATE PFFFT_ENABLE_NEON)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "armv7")
+        target_compile_options(pffft PRIVATE -mfpu=neon)
+    endif()
+endif()
 
 # Find OpenSSL
 find_package(OpenSSL REQUIRED)
@@ -40,13 +50,19 @@ if(NOT LIBUV_FOUND)
     message(STATUS "libuv not found, will install as dependency")
 endif()
 
-# Manually find liquid-dsp (usually not in cmake modules)
-find_library(LIQUID_LIB liquid REQUIRED)
-find_path(LIQUID_INCLUDE liquid/liquid.h)
-
-if(NOT LIQUID_LIB)
-    message(FATAL_ERROR "liquid-dsp library not found. Install with: sudo apt-get install libliquid-dev")
-endif()
+# liquid-dsp: built from source as a STATIC library without FFTW / libfec
+# (Debian's libliquid1 links both) by liquid.mk - the recipe the Makefiles
+# use (pinned commit, fetched into liquid-dsp/). Runs every build; a no-op
+# once built
+set(LIQUID_BUILD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/liquid-dsp/build-kraken)
+set(LIQUID_LIB ${LIQUID_BUILD_DIR}/libliquid.a)
+set(LIQUID_INCLUDE ${LIQUID_BUILD_DIR}/include)
+add_custom_target(liquid_build ALL
+    COMMAND make -f liquid.mk liquid
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    BYPRODUCTS ${LIQUID_LIB}
+    COMMENT "liquid-dsp (static, without FFTW / libfec)"
+)
 
 # Try to find uWebSockets first
 find_path(UWS_INCLUDE uWS/App.h PATHS /usr/local/include /usr/include)
@@ -145,18 +161,20 @@ set(ALL_SOURCES
 
 # Create executable
 add_executable(${PROJECT_NAME} ${ALL_SOURCES})
+add_dependencies(${PROJECT_NAME} liquid_build)
 
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE
     include
-    ${LIQUID_INCLUDE}
+    plugins/sdk
     ${UWS_INCLUDE}
-    ${FFTW3F_INCLUDE_DIRS}
 )
+# SYSTEM: liquid.h warns about its own deprecated objects otherwise
+target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${LIQUID_INCLUDE})
 
 # Link libraries
 target_link_libraries(${PROJECT_NAME}
-    ${FFTW3F_LIBRARIES}
+    pffft
     ${LIQUID_LIB}
     ${UWS_LIB}
     OpenSSL::SSL
@@ -166,9 +184,6 @@ target_link_libraries(${PROJECT_NAME}
     z
     sqlite3
 )
-
-# Compiler definitions
-target_compile_definitions(${PROJECT_NAME} PRIVATE ${FFTW3F_CFLAGS_OTHER})
 
 # Install target
 install(TARGETS ${PROJECT_NAME}
@@ -184,10 +199,10 @@ message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Install prefix: ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "")
 message(STATUS "Dependencies found:")
-message(STATUS "  FFTW3F: ${FFTW3F_FOUND}")
+message(STATUS "  FFT: pffft (vendored, external/pffft)")
 message(STATUS "  OpenSSL: ${OPENSSL_FOUND}")
 message(STATUS "  Eigen3: ${Eigen3_FOUND}")
-message(STATUS "  liquid-dsp: ${LIQUID_LIB}")
+message(STATUS "  liquid-dsp: ${LIQUID_LIB} (built from source by liquid.mk)")
 message(STATUS "  uWebSockets: ${UWS_LIB}")
 message(STATUS "")
 
@@ -195,7 +210,6 @@ message(STATUS "")
 add_custom_target(deps
     COMMAND sudo apt-get update
     COMMAND sudo apt-get install -y build-essential cmake pkg-config
-    COMMAND sudo apt-get install -y libfftw3-dev libliquid-dev
     COMMAND sudo apt-get install -y libeigen3-dev
     COMMAND sudo apt-get install -y libssl-dev libz-dev libuv1-dev
     COMMENT "Installing system dependencies (Ubuntu/Debian)"
@@ -214,3 +228,4 @@ add_custom_target(plugins ALL
     COMMAND make -C ${CMAKE_CURRENT_SOURCE_DIR}/plugins
     COMMENT "Building decoder plugins"
 )
+add_dependencies(plugins liquid_build)

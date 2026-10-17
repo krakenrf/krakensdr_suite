@@ -18,7 +18,10 @@ SOURCES = $(CORE_SOURCES) $(SDR_SOURCES) $(DSP_SOURCES) $(NET_SOURCES) $(WEB_SOU
 
 # Object files (in build directory)
 BUILD_DIR = build
-OBJECTS = $(SOURCES:src/%.cpp=$(BUILD_DIR)/%.o)
+# FFT: pffft, vendored in external/pffft (plain C, BSD-style licence; replaced
+# FFTW 2026-10-17) - the correlation FFTs (src/dsp/fft_plan.cpp)
+PFFFT_OBJECTS = $(BUILD_DIR)/pffft/pffft.o $(BUILD_DIR)/pffft/pffft_common.o
+OBJECTS = $(SOURCES:src/%.cpp=$(BUILD_DIR)/%.o) $(PFFFT_OBJECTS)
 
 # Check if uWebSockets is installed
 UWS_EXISTS := $(shell test -d uWebSockets && echo yes || echo no)
@@ -63,7 +66,7 @@ LIBUSB_LIBS := $(shell pkg-config --libs libusb-1.0 2>/dev/null || echo -lusb-1.
 CFLAGS = -Wall -Wextra -std=c++20 -D_GNU_SOURCE -DUWS_NO_ZLIB
 CFLAGS += -I. -Isrc -Isrc/core -Isrc/sdr -Isrc/dsp -Isrc/net -Isrc/web -Iexternal
 CFLAGS += -I$(RTLSDR_DIR)/include   # the fork's headers, never a system rtl-sdr.h
-LDFLAGS = $(RTLSDR_LIB) $(LIBUSB_LIBS) -lfftw3f -lpthread -lm -lz
+LDFLAGS = $(RTLSDR_LIB) $(LIBUSB_LIBS) -lpthread -lm -lz
 
 # Add Eigen include path
 ifeq ($(EIGEN_EXISTS),yes)
@@ -79,10 +82,20 @@ LDFLAGS += -lssl -lcrypto
 # Architecture detection
 ARCH := $(shell uname -m)
 
+# pffft is C (CC above is g++): built with gcc, its SIMD named explicitly on
+# ARM - without -DPFFFT_ENABLE_NEON it silently builds its scalar code
+PFFFT_CC = gcc
+PFFFT_CFLAGS = -O3 -Wno-unused-parameter
+
 ifeq ($(ARCH),aarch64)
     CFLAGS += -O3 -march=armv8-a -mtune=cortex-a72 -ftree-vectorize
+    PFFFT_CFLAGS += -march=armv8-a -mtune=cortex-a72 -DPFFFT_ENABLE_NEON
 else ifeq ($(ARCH),x86_64)
     CFLAGS += -O3 -march=native -mtune=native
+    PFFFT_CFLAGS += -march=native
+else ifeq ($(ARCH),armv7l)
+    CFLAGS += -O2
+    PFFFT_CFLAGS += -mfpu=neon -DPFFFT_ENABLE_NEON
 else
     CFLAGS += -O2
 endif
@@ -131,9 +144,14 @@ $(BUILD_DIR)/%.o: src/%.cpp | $(BUILD_DIR) check-uws $(RTLSDR_LIB)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -MP -IuWebSockets/src -IuWebSockets/uSockets/src -c $< -o $@
 
+$(BUILD_DIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) | $(BUILD_DIR)
+	@echo "Compiling $<..."
+	@mkdir -p $(dir $@)
+	$(PFFFT_CC) $(PFFFT_CFLAGS) -c $< -o $@
+
 # Auto-generated header dependencies (one .d per object, alongside the .o).
 # Leading '-' silences the harmless "no such file" on the very first build.
--include $(OBJECTS:.o=.d)
+-include $(filter-out $(PFFFT_OBJECTS:.o=.d),$(OBJECTS:.o=.d))
 
 # Build the target
 $(TARGET): $(OBJECTS) $(CONFIG_HEADER) $(RTLSDR_LIB) | check-uws
@@ -183,7 +201,6 @@ deps:
 	sudo apt-get install -y \
 	    cmake \
 	    libusb-1.0-0-dev \
-	    libfftw3-dev \
 	    libeigen3-dev \
 	    build-essential \
 	    git \
@@ -198,7 +215,6 @@ deps-fedora:
 	sudo dnf install -y \
 	    cmake \
 	    libusb1-devel \
-	    fftw3-devel \
 	    eigen3-devel \
 	    gcc-c++ \
 	    git \
@@ -210,7 +226,6 @@ deps-arch:
 	sudo pacman -S \
 	    cmake \
 	    libusb \
-	    fftw \
 	    eigen \
 	    gcc \
 	    git \
@@ -257,12 +272,7 @@ status:
 	else \
 	    echo "✗ Not built (run 'make' or ../install.sh)"; \
 	fi
-	@echo -n "FFTW3: "
-	@if pkg-config --exists fftw3f 2>/dev/null; then \
-	    echo "✓ Installed"; \
-	else \
-	    echo "✗ Not installed (run 'make deps')"; \
-	fi
+	@echo "FFT: pffft (vendored in external/pffft, no system FFT library)"
 	@echo -n "Eigen3: "
 	@if pkg-config --exists eigen3 2>/dev/null || [ -d "/usr/include/eigen3" ]; then \
 	    echo "✓ Installed"; \

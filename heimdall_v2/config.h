@@ -121,7 +121,7 @@
 // priority. USB readers > sample drain so reads always win a core. The
 // conversion worker deliberately runs at NORMAL priority (it can fall behind
 // safely, and at RT its malloc/mutex use would priority-invert against the web/
-// FFTW threads), so it has no RT priority here.
+// correlation threads), so it has no RT priority here.
 #define RT_PRIO_USB_READER      20  // per-device librtlsdr async reader threads
 #define RT_PRIO_SAMPLE_DRAIN    15  // L1 -> L2-raw aligned-collection thread
 
@@ -187,13 +187,8 @@
 #define KERBEROS_SW_GPIO_ANT1   23
 #define KERBEROS_SW_GPIO_ANT2   24
 
-// ========================================================================
-// FFTW CONFIGURATION
-// ========================================================================
-
-// FFTW planner effort (affects startup time vs. runtime performance)
-// Options: FFTW_ESTIMATE, FFTW_MEASURE, FFTW_PATIENT, FFTW_EXHAUSTIVE
-#define FFTW_PLANNER_EFFORT     FFTW_MEASURE
+// (FFT: pffft, external/pffft - no planner settings; CORRELATION_SIZE above
+// is its only size)
 
 // ========================================================================
 // DEVICE MAPPING
@@ -270,11 +265,9 @@
 
 // High Performance Configuration (more samples, higher precision)
 #define NUM_SAMPLES     32768
-#define FFTW_PLANNER_EFFORT FFTW_PATIENT
 
 // Low Resource Configuration (fewer samples, faster processing)
 #define NUM_SAMPLES     8192
-#define FFTW_PLANNER_EFFORT FFTW_ESTIMATE
 */
 
 #endif // CONFIG_H

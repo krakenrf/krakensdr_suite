@@ -180,7 +180,6 @@ docker-data/heimdall/s2p_calibration/         forward-compensation files
 docker-data/kraken_doa/doa_settings.json      client settings, incl. KrakenPro API key + station location
 docker-data/kraken_doa/api_token              web UI API token (if used)
 docker-data/kraken_doa/server.crt/.key        TLS certificate (self-signed, made on first start)
-docker-data/kraken_doa/fft_wisdom.dat         FFTW plans (made on first start)
 docker-data/kraken_doa/doa_recordings/        DoA recordings
 docker-data/kraken_doa/recordings/            📼 IQ (SigMF) and audio recordings
 docker-data/codecs/                           optional self-built voice codecs (libmbe.so.1,

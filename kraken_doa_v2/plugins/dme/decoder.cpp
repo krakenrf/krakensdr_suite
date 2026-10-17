@@ -40,7 +40,7 @@
 #include "kraken_plugin.hpp"
 #include "navaid.hpp"
 
-#include <fftw3.h>
+#include "kraken_fft.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -250,12 +250,12 @@ struct Channel {
 class Dme : public kp::Decoder {
 public:
     explicit Dme(kp::Host& h) : Decoder(h) {
-        fin_ = fftwf_alloc_complex(NFFT);
-        fout_ = fftwf_alloc_complex(NFFT);
-        cin_ = fftwf_alloc_complex(NOUT);
-        cout_ = fftwf_alloc_complex(NOUT);
-        fwd_ = fftwf_plan_dft_1d(NFFT, fin_, fout_, FFTW_FORWARD, FFTW_ESTIMATE);
-        inv_ = fftwf_plan_dft_1d(NOUT, cin_, cout_, FFTW_BACKWARD, FFTW_ESTIMATE);
+        fin_ = kfft_alloc_complex(NFFT);
+        fout_ = kfft_alloc_complex(NFFT);
+        cin_ = kfft_alloc_complex(NOUT);
+        cout_ = kfft_alloc_complex(NOUT);
+        fwd_ = kfft_plan_dft_1d(NFFT, fin_, fout_, KFFT_FORWARD);
+        inv_ = kfft_plan_dft_1d(NOUT, cin_, cout_, KFFT_BACKWARD);
         // channel filter over the kept bins (relative bin r = -NOUT/2 .. NOUT/2 - 1)
         H_.resize(NOUT);
         for (int r = -NOUT / 2; r < NOUT / 2; r++) {
@@ -267,12 +267,12 @@ public:
                             "Width us", "Carrier kHz", "Paired with", "TACAN", "Ident heard"});
     }
     ~Dme() override {
-        fftwf_destroy_plan(fwd_);
-        fftwf_destroy_plan(inv_);
-        fftwf_free(fin_);
-        fftwf_free(fout_);
-        fftwf_free(cin_);
-        fftwf_free(cout_);
+        kfft_destroy_plan(fwd_);
+        kfft_destroy_plan(inv_);
+        kfft_free(fin_);
+        kfft_free(fout_);
+        kfft_free(cin_);
+        kfft_free(cout_);
     }
 
     void option(const std::string& k, const std::string& v) override {
@@ -318,8 +318,8 @@ public:
 
 private:
     // channelizer
-    fftwf_complex *fin_, *fout_, *cin_, *cout_;
-    fftwf_plan fwd_, inv_;
+    kfft_complex *fin_, *fout_, *cin_, *cout_;
+    kfft_plan fwd_, inv_;
     std::vector<float> H_;
     std::vector<cf> buf_;           // input; buf_[0] is input sample base_
     int64_t base_ = 0;
@@ -375,9 +375,9 @@ private:
 
     // one overlap-save block: FFT, then every channel's bins -> IFFT -> detector
     void block() {
-        static_assert(sizeof(cf) == sizeof(fftwf_complex));
+        static_assert(sizeof(cf) == sizeof(kfft_complex));
         std::copy(buf_.begin(), buf_.begin() + NFFT, reinterpret_cast<cf*>(fin_));
-        fftwf_execute(fwd_);
+        kfft_execute(fwd_);
         for (auto& cp : chans_) {
             Channel& c = *cp;
             for (int o = 0; o < NOUT; o++) {
@@ -385,7 +385,7 @@ private:
                 cin_[o][0] = fout_[k][0] * H_[o];
                 cin_[o][1] = fout_[k][1] * H_[o];
             }
-            fftwf_execute(inv_);
+            kfft_execute(inv_);
             // the shift by c.bin is relative to this block's first sample:
             // turn it back to one continuous phase (carrier measurement)
             const double ph = -2 * M_PI * static_cast<double>(c.bin) * static_cast<double>(base_ % NFFT) / NFFT;

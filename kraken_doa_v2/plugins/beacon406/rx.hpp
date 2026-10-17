@@ -19,7 +19,7 @@
 
 #include "kraken_plugin.hpp"
 
-#include <fftw3.h>
+#include "kraken_fft.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -89,8 +89,8 @@ private:
     uint64_t abs_ = 0;               // input samples since reset
     int64_t frame_ = 0;              // frames computed
     float* win_;
-    fftwf_complex *fin_, *fout_;
-    fftwf_plan plan_;
+    kfft_complex *fin_, *fout_;
+    kfft_plan plan_;
     std::vector<float> pw_, nf_;     // power per bin (bin b at index b + NFFT/2), floor
     std::vector<uint8_t> claimed_;
     std::vector<uint8_t> claimed_conf_;   // ... by confirmed carriers only (the SGB detector: an unbiased band)

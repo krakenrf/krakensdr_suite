@@ -227,8 +227,9 @@ identical, see *Region-neutral rework* below):
   / 22 / 36 named), rates and modes; a 60 dBHz carrier, FSK bursts and
   impulses in the band: nothing
 - **CPU** (Pi 5, other load): the detector alone 8-12 % of a core at 2.4
-  MHz (measured with an FFTW_MEASURE plan; ESTIMATE since 2026-10-15 -
-  MEASURE planned 23 s at the start for a 77 -> 59 us FFT, ~1 % of a core),
+  MHz (measured with an FFTW_MEASURE plan; ESTIMATE from 2026-10-15 -
+  MEASURE planned 23 s at the start for a 77 -> 59 us FFT, ~1 % of a core -
+  and pffft since 2026-10-17, ~41 us for the 8192 points, no planning),
   0.2 % at 48 kHz, ~0 at 10
   kHz; the offline decode incl. the host's file conversion 15-24 % at 2.4
   MHz, 1.1 % at 48 kHz
@@ -249,7 +250,8 @@ identical, see *Region-neutral rework* below):
   before the plugin read its first sample, kraken_doa dropped 2.3 s of its
   input (> 1 s backlog) right between that tag's first two bursts, and the
   confirmation wanted EVERY burst on one grid (3.665 s then 6.0 s: never).
-  Fixed: FFTW_ESTIMATE (starts in ~10 ms, nothing dropped), the latest
+  Fixed: FFTW_ESTIMATE (starts in ~10 ms, nothing dropped; pffft since
+  2026-10-17), the latest
   consistent run of bursts, and `resume_tag` (a 2.3 s jump cut into a
   scene after both tags were confirmed: both resynchronised under their
   ids - the old code made "...b" / new-gap duplicates and lost the

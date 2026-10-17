@@ -27,8 +27,9 @@ A catalogue entry (a JSON list per plugin):
                                        file with those keys replaced
   "steps": [["{tools}/x_gen.py", "a.cf32", "--opt", "{lat+0.05}"], ...],
                                        *.py runs with python3, *.cpp is
-                                       compiled once (g++ -O2, -lfftw3f) into
-                                       CACHE/.bin/ and run
+                                       compiled once (g++ -O2, with sdk/ +
+                                       lib/build/libkrakendig.a - pffft for
+                                       kraken_fft.hpp) into CACHE/.bin/ and run
   "scene": {uca_scene.py SCENE},       narrow scenes: placed on the UCA by
                                        uca_scene.py --clean (no noise in the
                                        file; kraken_doa interpolates to 2.4 MHz
@@ -113,8 +114,9 @@ def run(argv, work, cache, plugins, log):
         binp = os.path.join(bindir, name)
         if not os.path.exists(binp) or os.path.getmtime(binp) < os.path.getmtime(exe):
             src_dir = os.path.dirname(os.path.dirname(exe))
-            cmd = ['g++', '-std=c++20', '-O2', '-I' + src_dir, '-I' + os.path.join(plugins, 'sdk'), exe,
-                   '-lfftw3f', '-o', binp + '.tmp']
+            cmd = ['g++', '-std=c++20', '-O2', '-I' + src_dir, '-I' + os.path.join(plugins, 'sdk'),
+                   '-I' + os.path.join(plugins, '..', 'external', 'pffft'), exe,
+                   os.path.join(plugins, 'lib', 'build', 'libkrakendig.a'), '-lm', '-o', binp + '.tmp']
             r = subprocess.run(cmd, cwd=work, stdout=log, stderr=subprocess.STDOUT)
             if r.returncode != 0:
                 fail('compiling %s failed (see %s)' % (os.path.basename(exe), log.name))

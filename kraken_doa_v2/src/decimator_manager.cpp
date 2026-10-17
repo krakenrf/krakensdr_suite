@@ -50,12 +50,6 @@ void DecimatorManager::initialize(int num_channels, int initial_decimators) {
 
     std::cout << "DecimatorManager initialized with " << initial_decimators
               << " decimator(s) for " << num_channels << " channels" << std::endl;
-
-    // The Beamformer constructors above created FFTW_MEASURE plans that the
-    // startup wisdom file may not cover (it is only written once, before any
-    // decimator exists). Re-export now so the next boot skips the measurement
-    // (which takes many seconds on a busy Pi).
-    FFTProcessor::export_wisdom();
 }
 
 void DecimatorManager::cleanup() {

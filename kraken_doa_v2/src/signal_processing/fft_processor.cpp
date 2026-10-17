@@ -3,7 +3,6 @@
 #include "signal_processing/noise_floor.hpp"
 #include "globals.hpp"
 #include "config.hpp"
-#include <fftw3.h>
 #include <cmath>
 #include <iostream>
 #include <algorithm>
@@ -42,31 +41,20 @@ namespace {
         return mags[percentile_idx];
     }
 
-    // Helper: Initialize a single channel's FFT context
-    // IMPORTANT: Caller must hold fftw_planner_mutex before calling this function!
-    void initialize_channel_context_locked(ChannelFFTContext& ctx, int fft_size, bool use_measure) {
+    // Helper: Initialize a single channel's FFT context (caller holds its mutex)
+    void initialize_channel_context_locked(ChannelFFTContext& ctx, int fft_size) {
         // Cleanup any existing resources
-        if (ctx.plan) {
-            fftwf_destroy_plan(ctx.plan);
-            ctx.plan = nullptr;
-        }
-        if (ctx.fft_in) {
-            fftwf_free(ctx.fft_in);
-            ctx.fft_in = nullptr;
-        }
-        if (ctx.fft_out) {
-            fftwf_free(ctx.fft_out);
-            ctx.fft_out = nullptr;
-        }
+        kfft_destroy_plan(ctx.plan);
+        ctx.plan = nullptr;
+        kfft_free(ctx.fft_in);
+        ctx.fft_in = nullptr;
+        kfft_free(ctx.fft_out);
+        ctx.fft_out = nullptr;
 
-        // Allocate new buffers
-        ctx.fft_in = fftwf_alloc_complex(fft_size);
-        ctx.fft_out = fftwf_alloc_complex(fft_size);
-
-        // Create plan - use FFTW_MEASURE for first channel (optimal), FFTW_ESTIMATE for others (fast)
-        // The MEASURE plan is shared via wisdom, so subsequent channels benefit too
-        unsigned flags = use_measure ? FFTW_MEASURE : FFTW_ESTIMATE;
-        ctx.plan = fftwf_plan_dft_1d(fft_size, ctx.fft_in, ctx.fft_out, FFTW_FORWARD, flags);
+        // Allocate new buffers + the plan (pffft: nothing to measure)
+        ctx.fft_in = kfft_alloc_complex(fft_size);
+        ctx.fft_out = kfft_alloc_complex(fft_size);
+        ctx.plan = kfft_plan_dft_1d(fft_size, ctx.fft_in, ctx.fft_out, KFFT_FORWARD);
 
         // Pre-compute Hamming window for this channel
         ctx.window_lut.resize(fft_size);
@@ -80,34 +68,14 @@ namespace {
 }
 
 void FFTProcessor::initialize() {
-    // OPTIMIZATION: Try to load FFTW wisdom for instant optimal FFT plans
-    std::cout << "Loading FFTW wisdom..." << std::endl;
-
-    // Lock FFTW planner mutex for all plan creation operations
-    std::lock_guard<std::mutex> fftw_lock(fftw_planner_mutex);
-
-    int wisdom_loaded = fftwf_import_wisdom_from_filename("fft_wisdom.dat");
-    if (wisdom_loaded) {
-        std::cout << "  FFTW wisdom loaded successfully" << std::endl;
-    } else {
-        std::cout << "  No wisdom file found, will measure optimal plan (takes ~100ms)" << std::endl;
-    }
-
     // Initialize per-channel FFT contexts for TRUE PARALLEL processing
-    // Each channel gets its own FFTW plan and buffers
-    std::cout << "Initializing " << MAX_CHANNELS << " per-channel FFT contexts..." << std::endl;
+    // Each channel gets its own FFT plan and buffers (pffft - kraken_fft.hpp)
+    std::cout << "Initializing " << MAX_CHANNELS << " per-channel FFT contexts (pffft, "
+              << kfft_simd() << ")..." << std::endl;
 
     for (int ch = 0; ch < MAX_CHANNELS; ch++) {
         std::lock_guard<std::mutex> lock(channel_fft_contexts[ch].mutex);
-        // Use FFTW_MEASURE for first channel to establish wisdom, FFTW_ESTIMATE for others
-        bool use_measure = (ch == 0 && !wisdom_loaded);
-        initialize_channel_context_locked(channel_fft_contexts[ch], FFT_SIZE, use_measure);
-    }
-
-    // Save wisdom after first channel's MEASURE planning
-    if (!wisdom_loaded) {
-        fftwf_export_wisdom_to_filename("fft_wisdom.dat");
-        std::cout << "  FFTW wisdom saved to fft_wisdom.dat" << std::endl;
+        initialize_channel_context_locked(channel_fft_contexts[ch], FFT_SIZE);
     }
 
     // Initialize magnitude storage arrays
@@ -120,45 +88,23 @@ void FFTProcessor::initialize() {
 
     std::cout << "FFT Processor initialized with PER-CHANNEL PARALLELISM: " << FFT_SIZE << " points, "
               << MAX_CHANNELS << " independent channels" << std::endl;
-    std::cout << "  TRUE PARALLEL: Each channel has dedicated FFTW plan - no serialization!" << std::endl;
+    std::cout << "  TRUE PARALLEL: Each channel has dedicated FFT plan - no serialization!" << std::endl;
     std::cout << "  Expected performance: 5-8x throughput improvement in wideband mode" << std::endl;
 }
 
-void FFTProcessor::export_wisdom() {
-    std::lock_guard<std::mutex> fftw_lock(fftw_planner_mutex);
-    if (fftwf_export_wisdom_to_filename("fft_wisdom.dat")) {
-        std::cout << "FFTW wisdom exported to fft_wisdom.dat" << std::endl;
-    } else {
-        std::cerr << "Failed to export FFTW wisdom to fft_wisdom.dat" << std::endl;
-    }
-}
-
 void FFTProcessor::cleanup() {
-    // Persist wisdom for any plan created since startup so the comment at the
-    // call site ("Saves FFTW wisdom") is actually true.
-    export_wisdom();
-
     std::cout << "Cleaning up " << MAX_CHANNELS << " per-channel FFT contexts..." << std::endl;
-
-    // Lock FFTW planner mutex for all plan destruction operations
-    std::lock_guard<std::mutex> fftw_lock(fftw_planner_mutex);
 
     for (int ch = 0; ch < MAX_CHANNELS; ch++) {
         std::lock_guard<std::mutex> lock(channel_fft_contexts[ch].mutex);
         ChannelFFTContext& ctx = channel_fft_contexts[ch];
 
-        if (ctx.plan) {
-            fftwf_destroy_plan(ctx.plan);
-            ctx.plan = nullptr;
-        }
-        if (ctx.fft_in) {
-            fftwf_free(ctx.fft_in);
-            ctx.fft_in = nullptr;
-        }
-        if (ctx.fft_out) {
-            fftwf_free(ctx.fft_out);
-            ctx.fft_out = nullptr;
-        }
+        kfft_destroy_plan(ctx.plan);
+        ctx.plan = nullptr;
+        kfft_free(ctx.fft_in);
+        ctx.fft_in = nullptr;
+        kfft_free(ctx.fft_out);
+        ctx.fft_out = nullptr;
         ctx.window_lut.clear();
         ctx.initialized = false;
     }
@@ -205,7 +151,7 @@ void FFTProcessor::resize(int new_fft_size) {
               << MAX_CHANNELS << " channel contexts)" << std::endl;
 
     // CRITICAL: We must wait for all in-flight FFT operations to complete before resizing.
-    // fftwf_execute() might be running concurrently, and destroying the plan/buffers
+    // kfft_execute() might be running concurrently, and destroying the plan/buffers
     // while it's executing causes heap corruption ("double free or corruption").
 
     // Step 1: Signal that resize is starting - new FFT work should not start.
@@ -238,15 +184,11 @@ void FFTProcessor::resize(int new_fft_size) {
         std::cout << "FFT Resize: All workers drained, proceeding with resize" << std::endl;
     }
 
-    // Step 3: Lock FFTW planner mutex for all plan creation/destruction operations
-    std::lock_guard<std::mutex> fftw_lock(fftw_planner_mutex);
-
-    // Resize all per-channel FFT contexts
+    // Step 3: Resize all per-channel FFT contexts
     // Each channel is resized independently with its own lock
     for (int ch = 0; ch < MAX_CHANNELS; ch++) {
         std::lock_guard<std::mutex> lock(channel_fft_contexts[ch].mutex);
-        // Use FFTW_ESTIMATE for fast resize (wisdom already established at startup)
-        initialize_channel_context_locked(channel_fft_contexts[ch], new_fft_size, false);
+        initialize_channel_context_locked(channel_fft_contexts[ch], new_fft_size);
     }
 
     // Resize magnitude and averaged arrays
@@ -275,7 +217,7 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
     if (channel < 0 || channel >= MAX_CHANNELS) return;
 
     // CRITICAL: Check if resize is in progress - skip processing to allow safe resize
-    // This prevents the race condition where we're executing fftwf_execute while
+    // This prevents the race condition where we're executing kfft_execute while
     // the resize operation is destroying/recreating the FFT context
     if (fft_resize_in_progress.load(std::memory_order_acquire)) {
         return;  // Skip this FFT - resize is happening
@@ -352,7 +294,7 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
 
     // OPTIMIZATION: Use memset for efficient zero-padding
     if (max_samples < static_cast<size_t>(fft_size)) {
-        std::memset(&ctx.fft_in[max_samples], 0, (fft_size - max_samples) * sizeof(fftwf_complex));
+        std::memset(&ctx.fft_in[max_samples], 0, (fft_size - max_samples) * sizeof(kfft_complex));
     }
 
     // The windowing loop above was the last read of the shared persistent
@@ -364,7 +306,7 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
     }
 
     // Execute FFT using THIS channel's plan - TRUE PARALLEL with other channels!
-    fftwf_execute(ctx.plan);
+    kfft_execute(ctx.plan);
 
     // Now lock the shared magnitude arrays for storage
     std::lock_guard<std::mutex> mag_lock(fft_mutex);
@@ -1001,9 +943,9 @@ void FFTProcessor::process_beamformed_fft(BeamformedFFTData& out,
     }
 
     // Use a static context for beamformed FFT (thread-safe via mutex)
-    static fftwf_plan bf_plan = nullptr;
-    static fftwf_complex* bf_fft_in = nullptr;
-    static fftwf_complex* bf_fft_out = nullptr;
+    static kfft_plan bf_plan = nullptr;
+    static kfft_complex* bf_fft_in = nullptr;
+    static kfft_complex* bf_fft_out = nullptr;
     static std::vector<float> bf_window;
     static std::mutex bf_fft_mutex;
     static bool bf_initialized = false;
@@ -1012,11 +954,9 @@ void FFTProcessor::process_beamformed_fft(BeamformedFFTData& out,
 
     // Initialize on first call
     if (!bf_initialized) {
-        std::lock_guard<std::mutex> fftw_lock(fftw_planner_mutex);
-
-        bf_fft_in = fftwf_alloc_complex(BEAMFORMED_FFT_SIZE);
-        bf_fft_out = fftwf_alloc_complex(BEAMFORMED_FFT_SIZE);
-        bf_plan = fftwf_plan_dft_1d(BEAMFORMED_FFT_SIZE, bf_fft_in, bf_fft_out, FFTW_FORWARD, FFTW_ESTIMATE);
+        bf_fft_in = kfft_alloc_complex(BEAMFORMED_FFT_SIZE);
+        bf_fft_out = kfft_alloc_complex(BEAMFORMED_FFT_SIZE);
+        bf_plan = kfft_plan_dft_1d(BEAMFORMED_FFT_SIZE, bf_fft_in, bf_fft_out, KFFT_FORWARD);
 
         // Pre-compute Hamming window
         bf_window.resize(BEAMFORMED_FFT_SIZE);
@@ -1044,7 +984,7 @@ void FFTProcessor::process_beamformed_fft(BeamformedFFTData& out,
             bf_fft_in[i][1] = iq_data[i].imag() * win;
         }
         // Zero-pad the rest
-        std::memset(&bf_fft_in[max_samples], 0, (BEAMFORMED_FFT_SIZE - max_samples) * sizeof(fftwf_complex));
+        std::memset(&bf_fft_in[max_samples], 0, (BEAMFORMED_FFT_SIZE - max_samples) * sizeof(kfft_complex));
     } else {
         // Use pre-computed window
         for (size_t i = 0; i < max_samples; i++) {
@@ -1054,7 +994,7 @@ void FFTProcessor::process_beamformed_fft(BeamformedFFTData& out,
     }
 
     // Execute FFT
-    fftwf_execute(bf_plan);
+    kfft_execute(bf_plan);
 
     // Lock this decimator's beamformed FFT output mutex
     std::lock_guard<std::mutex> out_lock(out.mutex);
