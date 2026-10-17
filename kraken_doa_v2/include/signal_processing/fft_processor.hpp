@@ -55,8 +55,6 @@ public:
     // Dynamic FFT resizing
     static void resize(int new_fft_size);
     static int get_current_size();
-    static int get_current_decimation();
-    static void set_decimation(int new_decimation);
 
     // Compressed decimation (uses uint8 for magnitudes)
     static CompressedDecimatedFFT decimate_fft_compressed(const std::vector<float>& fft_data, float center_freq_mhz, int decimation);

@@ -112,7 +112,6 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"edge_clip",                "EDGE_CLIP:",                VType::NUMBER, "0.80"},
         // FFT
         {"fft_size",                 "FFT_SIZE:",                 VType::NUMBER, "16384"},
-        {"fft_downsampling",         "FFT_DECIMATION:",           VType::NUMBER, "8"},
         // Decimator (VFO) setup - one composite value because the set is
         // dynamic: "<heard>|<vfo>;<vfo>;..." with each <vfo> =
         // "offset_hz,bw_index,demod,squelch_en,squelch_db,squelch_method (0 FFT /

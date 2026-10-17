@@ -289,7 +289,8 @@ static bool is_query_command(string_view msg) {
            msg == "VOICE2TEXT_CLEAR" ||
            // operating mode / independent tuners: {"operating_mode":...} broadcasts
            msg.starts_with("OPERATING_MODE:") || msg.starts_with("WIDEBAND_MODE:") ||
-           msg.starts_with("TUNER_") || msg.starts_with("TUNERS:");
+           msg.starts_with("TUNER_") || msg.starts_with("TUNERS:") ||
+           msg.starts_with("FFT_DECIMATION:");    // removed setting, ignored
 }
 
 // Commands whose latest value is replayed to newly connecting clients.
@@ -2418,69 +2419,25 @@ void ControlHandler::handle_message_impl(string_view message) {
         // Resize FFT
         FFTProcessor::resize(new_size);
 
-        // Auto-adjust decimation only for smaller FFT sizes (< 32768)
-        // For large FFT sizes (32768+), user controls downsampling manually for fine-tuned resolution
-        if (new_size < 32768) {
-            int current_decimation = FFTProcessor::get_current_decimation();
-            int output_points = FFTProcessor::get_current_size() / current_decimation;
-
-            if (output_points > 4096) {
-                // Calculate new decimation to target ~2048 output points
-                int new_decimation = FFTProcessor::get_current_size() / 2048;
-                // Round up to next power of 2 for efficiency
-                int power = 1;
-                while (power < new_decimation) power *= 2;
-                new_decimation = power;
-
-                FFTProcessor::set_decimation(new_decimation);
-                // Save it too: only FFT_SIZE was recorded, so a restart
-                // replayed the new size followed by the OLD decimation - a
-                // combination the user never had. (Skipped while replaying:
-                // the saved FFT_DECIMATION follows and is authoritative.)
-                if (!g_replaying_settings.load())
-                    SettingsStore::record("FFT_DECIMATION:" + to_string(new_decimation));
-                cout << "Auto-adjusted downsampling to " << new_decimation
-                     << " (output points: " << (FFTProcessor::get_current_size() / new_decimation) << ")" << endl;
-            }
-        }
-
         // Reset audio buffer to prevent corruption
         audio_mixer.reset();
 
         // Send acknowledgment to UI
         stringstream json;
-        json << "{\"fft_settings\":{\"fft_size\":" << FFTProcessor::get_current_size()
-             << ",\"decimation\":" << FFTProcessor::get_current_decimation() << "}}";
+        json << "{\"fft_settings\":{\"fft_size\":" << FFTProcessor::get_current_size() << "}}";
         broadcast(json.str());
 
         cout << "FFT size changed: " << old_size << " -> " << FFTProcessor::get_current_size() << endl;
     }
     else if (message.starts_with("FFT_DECIMATION:")) {
-        int new_decimation = parse_int(message, 15);
-        if (new_decimation < 1 || new_decimation > 64) {   // FFTProcessor::set_decimation's rule
-            throw CommandRejected("FFT decimation must be 1-64");
-        }
-        int old_decimation = FFTProcessor::get_current_decimation();
-
-        // Set decimation
-        FFTProcessor::set_decimation(new_decimation);
-
-        // Reset audio buffer to prevent corruption
-        audio_mixer.reset();
-
-        // Send acknowledgment to UI
-        stringstream json;
-        json << "{\"fft_settings\":{\"fft_size\":" << FFTProcessor::get_current_size()
-             << ",\"decimation\":" << FFTProcessor::get_current_decimation() << "}}";
-        broadcast(json.str());
-
-        cout << "FFT decimation changed: " << old_decimation << " -> " << FFTProcessor::get_current_decimation() << endl;
+        // The "Downsampling" setting is gone: each page gets its plot's width
+        // in points (spectrum views, FFT_VIEW). Accepted and ignored for old
+        // pages / tools (is_query_command: not echoed either)
     }
     else if (message.starts_with("GET_FFT_SETTINGS")) {
         // Send current FFT settings to UI
         stringstream json;
-        json << "{\"fft_settings\":{\"fft_size\":" << FFTProcessor::get_current_size()
-             << ",\"decimation\":" << FFTProcessor::get_current_decimation() << "}}";
+        json << "{\"fft_settings\":{\"fft_size\":" << FFTProcessor::get_current_size() << "}}";
         broadcast(json.str());
     }
     // Squelch commands

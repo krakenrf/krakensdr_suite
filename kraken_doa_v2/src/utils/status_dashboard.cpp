@@ -488,8 +488,7 @@ void render() {
           << (conv ? col::GRN : col::YEL) << "phase " << phase_state_name(phase) << col::RST
           << col::DIM << "  noise src " << col::RST
           << (noise ? string(col::YEL) + "ACTIVE" + col::RST : string(col::DIM) + "quiet" + col::RST)
-          << col::DIM << "  fft " << col::RST << current_fft_size.load()
-          << col::DIM << "/dec " << col::RST << current_fft_decimation.load();
+          << col::DIM << "  fft " << col::RST << current_fft_size.load();
         add(o.str());
     }
 

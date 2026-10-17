@@ -1,16 +1,65 @@
 #pragma once
 
+#include "config.hpp"
+#include <array>
+#include <cstdint>
 #include <string>
+#include <vector>
+
+// Spectrum views (FFT message type 7): one display's averaged spectrum at full
+// FFT resolution, kept for a tick so each page can be sent the part it shows
+// (its zoom) - see MessageBuilders::build_spectrum_view
+struct SpectrumDisplay {
+    bool valid = false;
+    double center_hz = 0;       // the display's centre (tuner / stitched centre)
+    double f0_hz = 0;           // bin i at f0_hz + i * step_hz
+    double step_hz = 0;
+    float gain_db = 0;
+    std::vector<float> db;      // dB, noise floor = 0
+};
+struct SpectrumSnapshot {
+    bool independent = false;   // displays 1..channels (tuners), else display 0
+    uint8_t marker = 0;         // display 0: 0x80 | channel (coherent), 0xFE (wideband scan)
+    uint8_t channels = 0;
+    float avg_alpha = 0;
+    std::array<SpectrumDisplay, 1 + MAX_CHANNELS> disp;  // 0 = main, 1 + ch = tuner ch
+};
+// One VFO's beamformed spectrum (overlay, FFT message type 4) at the
+// beamformer's full resolution, normalized - kept for a tick so each page
+// gets it at the point spacing of the spectrum it shows
+struct BeamformedSpectrum {
+    uint32_t id = 0;
+    float center_mhz = 0, bandwidth_mhz = 0;
+    float steering_deg = 0, snr_boost_db = 0;
+    std::vector<float> db;      // dB, noise floor = 0, DC-centred
+};
 
 class MessageBuilders {
 public:
-    static std::string build_fft_message();
+    // The legacy spectrum message (types 0 / 6, for pages that asked for no
+    // view). Runs once per tick whether or not anyone gets it: it also feeds
+    // the scanners and keeps the wideband scan's average. snap: filled with
+    // the spectra for the views; legacy = false skips encoding the message
+    // ("" returned) when no page wants it
+    static std::string build_fft_message(SpectrumSnapshot* snap = nullptr, bool legacy = true);
+    // Type 7: display (0 = main, 1 + ch = independent-mode tuner ch) between
+    // lo / hi Hz from its centre (lo >= hi = the whole band), max-pooled to
+    // about `bins` points (0 = SPECTRUM_LEGACY_POINTS), never more than
+    // SPECTRUM_VIEW_MAX_POINTS - so a zoomed view is finer, not bigger.
+    // point_step_hz: set to the frame's point spacing. "" = no data
+    static std::string build_spectrum_view(const SpectrumSnapshot& snap, int display, double lo_off_hz,
+                                           double hi_off_hz, uint32_t bins, uint32_t seq,
+                                           double* point_step_hz = nullptr);
     static std::string build_audio_message();
     static std::string build_multi_doa_message();
     static std::string build_system_status_message();
-    // Beamformed FFT overlay for a single decimator (empty string if it has no
-    // valid beamformed data). The websocket loop calls this for each decimator.
-    static std::string build_beamformed_fft_message(int decimator_id);
+    // Beamformed FFT overlay: a decimator's spectrum (false if it has no valid
+    // beamformed data - beamforming off, or none produced yet), then type 4
+    // max-pooled to about point_step_hz per point - the spacing of the main
+    // spectrum the page shows, so the overlay follows its zoom (<= 0: the
+    // old-format frames' spacing)
+    static bool beamformed_spectrum(int decimator_id, BeamformedSpectrum& out);
+    static std::string build_beamformed_fft_message(const BeamformedSpectrum& bf, double point_step_hz);
     // {"decimator_info":[...]} snapshot of every decimator for the UI. In
     // wideband mode offsets are converted to be relative to the wideband
     // center.

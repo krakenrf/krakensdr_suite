@@ -377,6 +377,20 @@ sheet), shows the usable frequency range of an existing array, draws
 top/side/3D views with coordinates, and can push the result into the
 receiver. See `kraken_doa_v2/CLAUDE.md`
 
+**Spectrum to the browser (spectrum views, FFT message type 7)** (details:
+`kraken_doa_v2/CLAUDE.md` *Spectrum views*): each page tells kraken_doa which
+part of each display it shows (`FFT_VIEW:` - window from the centre + its
+plot's width in device pixels) and gets that window max-pooled from the
+full-resolution FFT to about its width (at most 4096 points): zoomed in, the
+same points cover less spectrum - down to one FFT bin - so the detail grows,
+the data rate doesn't; the beamformed overlays (type 4) follow each page's
+spacing. Frames carry start + step instead of a frequency per point and only
+the max envelope, and go permessage-deflate compressed: a page took ~250
+KB/s before, ~20 KB/s now. The "Downsampling" setting is gone (FFT_DECIMATION
+ignored); FFT Settings' "Slow link" tick (per browser) asks for half the
+points. Pages that never send `FFT_VIEW` (an open tab from before) keep
+getting the old type 0 / 6 frames at 2048 points per tuner band
+
 **Digital voice/data decoders (per VFO)**: engine `kraken_doa_v2/src/digital/`,
 decoders `kraken_doa_v2/plugins/`
 - EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below):

@@ -1520,19 +1520,12 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           </select>
         </div>
         <div class="ctrl-row">
-          <label>Downsampling:</label>
-          <select id="fft-dec-sel" onchange="setFFTDecimation(this.value)">
-            <option value="1">1 (full)</option>
-            <option value="2">2</option>
-            <option value="4">4</option>
-            <option value="8" selected>8</option>
-            <option value="16">16</option>
-            <option value="32">32</option>
-          </select>
+          <label title="For a slow connection (mobile data, VPN): this browser asks for half the spectrum points - about one per two pixels of the plot. Saved in this browser only">Slow link:</label>
+          <input type="checkbox" id="spec-slow" title="For a slow connection (mobile data, VPN): this browser asks for half the spectrum points - about one per two pixels of the plot. Saved in this browser only" onchange="specSlowSet(this.checked)">
         </div>
         <div style="font-size:11px;color:#888;margin-top:8px">
-          Points sent: <span id="fft-points-sent" style="color:#7cb3f0">1024</span><br>
-          <span style="font-size:10px;color:#666">Higher FFT = better resolution, more CPU</span>
+          Points sent: <span id="fft-points-sent" title="Spectrum points per frame to this browser: about one per pixel of the plot (half with Slow link), at most 4096. Zoomed in, the same points cover less spectrum - more detail, down to one FFT bin, at the same data rate" style="color:#7cb3f0">-</span><br>
+          <span style="font-size:10px;color:#666">Higher FFT = finer detail when zoomed in, more CPU</span>
         </div>
       </div>
     </div>
@@ -2028,7 +2021,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         </div>
         <div class="wf-controls" id="wf-controls-bar">
           <label>FFT Y:<input type="range" id="fft-ymax" min="10" max="100" value="60" step="10" oninput="updateFFTYAxis(this.value);sendUI('FFT_Y',this.value)" style="width:50px"><span id="fft-ymax-val">60</span></label>
-          <label title="Spectrum zoom - or use the mouse wheel on the spectrum (in independent mode: the selected pane)">Zoom:<input type="range" id="zoom-sl" min="0" max="100" value="0" oninput="zoomFromSlider(this.value)" style="width:70px"><span id="zoom-val" style="min-width:34px">1.0x</span></label>
+          <label title="Spectrum zoom - or use the mouse wheel on the spectrum (in independent mode: the selected pane)">Zoom:<input type="range" id="zoom-sl" min="0" max="100" value="0" oninput="zoomFromSlider(this.value)" style="width:70px"><span id="zoom-val" style="min-width:34px">1.0x</span><span id="zoom-res" title="Spacing of the displayed spectrum points. Zooming in sends the same number of points over less spectrum - more detail, down to the FFT's own bin width, at the same data rate" style="color:#888;margin-left:4px;min-width:44px"></span></label>
           <span style="color:#555">|</span>
           <label>Speed: <input type="range" id="wf-speed" min="1" max="10" value="5" oninput="updateWaterfallSpeed(this.value);sendUI('WF_SPEED',this.value)"></label>
           <label>Color:
@@ -2280,6 +2273,9 @@ let ws,fftPlot,audioEngine,activeChannel=0,currentAveraging=85,
     audioInitialized=false,currentBandwidth=7,currentCenterFreq=100,currentFrequencies=[],
     currentMagnitudes=[],isDragging=false,dragStartX=0,isDraggingEdge=false,draggedEdge=null,pendingOffsetTimeout=null,
     dragStartBandwidth=null,dragStartOffset=null,activeDecimatorId=0,currentEdgeClip=0.8,fullFrequencies=[],fullMagnitudes=[],
+    // spectrum views (FFT type 7, "SPECTRUM VIEWS" block): the last main
+    // frame, the views asked for per display ({lo, hi, bins, at, t})
+    specMain=null,specViewSent={},specViewSeq=0,
     isScrollDragging=false,scrollDragStartX=0,scrollDragStartY=0,scrollDragStartFreq=0,scrollDragSavedBoxes=null,scrollDragLock=false,scrollDragMoved=false,
     lastFreqSendTime=0,freqSendThrottleMs=50,
     doaPlots={},widebandEnabled=false,fbAveragingEnabled=false,
@@ -6429,11 +6425,72 @@ function sec() {
   }
 }
 
+// The main spectrum frame's header (types 0 and 7): mode hint, channel, the
+// frequency digits, gain / averaging sliders and the centre - as other
+// browsers change them
+function specHeaderSync(fm, gd, aa, isWb, realChannel) {
+  // The frame format tells the mode too (the operating_mode message is
+  // authoritative; this catches a page that missed it)
+  if(isWb) {
+    opHint('wideband');
+  } else {
+    opHint('coherent');
+    if(realChannel!==activeChannel) {
+      activeChannel=realChannel;
+      $id('chs').value=activeChannel;
+      updatePlotTitle();
+    }
+  }
+
+  updateFreqDisplay(fm);
+
+  // Sync gain slider from the broadcast header (mirrors changes made in
+  // other browser sessions). Same echo guard as the frequency display.
+  if (!gainUserChanging) {
+    let gi = 0, gbest = Infinity;
+    for (let i = 0; i < GAIN_VALUES.length; i++) {
+      const d = Math.abs(GAIN_VALUES[i] - gd);
+      if (d < gbest) { gbest = d; gi = i; }
+    }
+    const gs = $id('gn-slider');
+    if (gs && document.activeElement !== gs && parseInt(gs.value) !== gi) {
+      gs.value = gi;
+      updateGainDisplay(gi);
+    }
+  }
+
+  // Sync averaging slider the same way (alpha = 1 - slider/100)
+  if (!avgUserChanging && aa >= 0 && aa <= 1) {
+    const avPct = Math.round((1 - aa) * 100);
+    const asl = $id('asl');
+    if (asl && document.activeElement !== asl && parseInt(asl.value) !== avPct) {
+      asl.value = avPct;
+      $id('av').textContent = avPct + '%';
+      currentAveraging = avPct;
+    }
+  }
+
+  // Store center frequency for wideband mode (needed for accurate tuning bar positioning)
+  // Refresh decimator actual frequency displays if center frequency changed.
+  // Skip while the user is actively dragging - a lagging server echo
+  // would yank currentCenterFreq back mid-pan (the frequency digits
+  // display already has this same guard).
+  if (!freqUserChanging && !isScrollDragging) {
+    if (Math.abs(currentCenterFreq - fm) > 0.0001) {
+      currentCenterFreq=fm;
+      decimatorInfo.forEach(dec => refreshDecimatorPanelItem(dec.id));
+    } else {
+      currentCenterFreq=fm;
+    }
+  }
+}
+
 // newFrame: a frame from the receiver - only that adds a waterfall line. A
 // redraw of the last frame (zoom, zoom / edge-clip slider) must not: every
 // wheel notch pushed the frame into the waterfall again, so scrolling made
 // it run fast (also scrolling out at 1x, where nothing changed)
 function applyClip(newFrame = false) {
+  if(specMain && fftPlot) { specApplyMain(newFrame); return; }
   if(!fullFrequencies.length||!fullMagnitudes.length||!fftPlot)return;
   const tp=fullFrequencies.length;
 
@@ -6448,7 +6505,17 @@ function applyClip(newFrame = false) {
   // mouse-wheel / slider zoom: the visible part only (spectrum, tuning bars
   // and waterfall all follow it)
   [currentFrequencies, currentMagnitudes] = zoomSlice(mainZoom, currentFrequencies, currentMagnitudes, displayCenterFreq ?? currentCenterFreq);
+  // a server with spectrum views answers with type 7 frames from now on
+  if (currentFrequencies.length > 1) {
+    const c = displayCenterFreq ?? currentCenterFreq;
+    specViewWant(0, currentFrequencies[0] - c, currentFrequencies[currentFrequencies.length - 1] - c, specBinsMain());
+  }
 
+  specShowMain(newFrame);
+}
+
+// the main display from currentFrequencies / currentMagnitudes
+function specShowMain(newFrame) {
   if(currentFrequencies.length>0&&currentMagnitudes.length>0) {
     // batch() commits the new x-scale synchronously. A bare setData only
     // schedules the commit (microtask), so drawBox() below would map the
@@ -6494,7 +6561,6 @@ function ua(v) {
 
 // FFT Settings functions
 let currentFFTSize = 4096;
-let currentFFTDecimation = 8;
 
 function setFFTSize(size) {
   size = parseInt(size);
@@ -6502,27 +6568,10 @@ function setFFTSize(size) {
   send('FFT_SIZE:' + size);
 }
 
-function setFFTDecimation(dec) {
-  dec = parseInt(dec);
-  if (isNaN(dec) || dec < 1 || dec > 64) return;
-  send('FFT_DECIMATION:' + dec);
-}
-
-function updateFFTSettingsUI(fftSize, decimation) {
+function updateFFTSettingsUI(fftSize) {
   currentFFTSize = fftSize;
-  currentFFTDecimation = decimation;
-
-  // Update dropdowns
   const sizeSel = $id('fft-size-sel');
-  const decSel = $id('fft-dec-sel');
-
   if (sizeSel) sizeSel.value = fftSize;
-  if (decSel) decSel.value = decimation;
-
-  // Update points sent display
-  const pointsSent = Math.floor(fftSize / decimation);
-  const pointsEl = $id('fft-points-sent');
-  if (pointsEl) pointsEl.textContent = pointsSent;
 }
 
 function requestFFTSettings() {
@@ -7201,6 +7250,8 @@ function connect() {
   setTimeout(()=>{if(attempt===ws&&attempt.readyState===WebSocket.CONNECTING)attempt.close();},6000);
 
   ws.onopen=()=>{
+    // a new connection has no spectrum views: ask again with the next frame
+    specViewSent = {}; specMain = null;
     // API auth: send a remembered token first, so the server authenticates
     // before any command/stream. Without one, nothing is sent: a server with
     // no token configured needs none, and one that has will ask (onmessage).
@@ -7430,8 +7481,8 @@ function connect() {
             // change resets the audio (it used to cut out every open
             // browser's audio whenever another browser connected).
             const fs = msg.fft_settings;
-            const changed = fs.fft_size !== currentFFTSize || fs.decimation !== currentFFTDecimation;
-            updateFFTSettingsUI(fs.fft_size, fs.decimation);
+            const changed = fs.fft_size !== currentFFTSize;
+            updateFFTSettingsUI(fs.fft_size);
             if (changed) resetAudioWorklet();
           }
           else if(msg.scanner_config_loaded === false) {
@@ -7540,6 +7591,7 @@ function connect() {
       if(e.data.byteLength<4)return;
       const mt=v.getUint32(o,true);o+=4;
       if(mt===6) { indepOnFrame(v, e.data); return; }
+      if(mt===7) { specOnFrame(v, e.data); return; }
       
       if(mt===1) {
         if(e.data.byteLength<16)return; // Minimum: 4 fields (msgType, sampleCount, sampleRate, opusSize)
@@ -7758,60 +7810,7 @@ function connect() {
       const isCompressedSingleChannel = (ac >= 128 && ac < 254);  // 0x80-0xFD
       const realChannel = isCompressedSingleChannel ? (ac & 0x7F) : ac;
 
-      // The frame format tells the mode too (the operating_mode message is
-      // authoritative; this catches a page that missed it)
-      if(isCompressedWideband || isWideband) {
-        opHint('wideband');
-      } else {
-        opHint('coherent');
-        if(realChannel!==activeChannel) {
-          activeChannel=realChannel;
-          $id('chs').value=activeChannel;
-          updatePlotTitle();
-        }
-      }
-
-      updateFreqDisplay(fm);
-
-      // Sync gain slider from the broadcast header (mirrors changes made in
-      // other browser sessions). Same echo guard as the frequency display.
-      if (!gainUserChanging) {
-        let gi = 0, gbest = Infinity;
-        for (let i = 0; i < GAIN_VALUES.length; i++) {
-          const d = Math.abs(GAIN_VALUES[i] - gd);
-          if (d < gbest) { gbest = d; gi = i; }
-        }
-        const gs = $id('gn-slider');
-        if (gs && document.activeElement !== gs && parseInt(gs.value) !== gi) {
-          gs.value = gi;
-          updateGainDisplay(gi);
-        }
-      }
-
-      // Sync averaging slider the same way (alpha = 1 - slider/100)
-      if (!avgUserChanging && aa >= 0 && aa <= 1) {
-        const avPct = Math.round((1 - aa) * 100);
-        const asl = $id('asl');
-        if (asl && document.activeElement !== asl && parseInt(asl.value) !== avPct) {
-          asl.value = avPct;
-          $id('av').textContent = avPct + '%';
-          currentAveraging = avPct;
-        }
-      }
-
-      // Store center frequency for wideband mode (needed for accurate tuning bar positioning)
-      // Refresh decimator actual frequency displays if center frequency changed.
-      // Skip while the user is actively dragging - a lagging server echo
-      // would yank currentCenterFreq back mid-pan (the frequency digits
-      // display already has this same guard).
-      if (!freqUserChanging && !isScrollDragging) {
-        if (Math.abs(currentCenterFreq - fm) > 0.0001) {
-          currentCenterFreq=fm;
-          decimatorInfo.forEach(dec => refreshDecimatorPanelItem(dec.id));
-        } else {
-          currentCenterFreq=fm;
-        }
-      }
+      specHeaderSync(fm, gd, aa, isCompressedWideband || isWideband, realChannel);
 
       // Parse frequency and magnitude data based on format
       const freq=[];
@@ -7849,6 +7848,7 @@ function connect() {
       
       fullFrequencies=freq;
       fullMagnitudes=mag;
+      specMain=null;   // a type 0 frame: a server without spectrum views
       displayCenterFreq=fm;
       applyClip(true);
 
@@ -8180,6 +8180,7 @@ function indepOnFrame(v, buf) {
       mags[i] = maxU8[i + edge] * (120 / 255);
     }
     [p.freqs, p.mags] = zoomSlice(p.zoom, freqs, mags, p.freqMhz);
+    specViewWant(ch + 1, p.freqs[0] - p.freqMhz, p.freqs[p.freqs.length - 1] - p.freqMhz, specBinsPane(p));
     p.wf.addLine(p.freqs, p.mags, noiseLive);
     paneDrawSpec(p);
     paneDrawOverlay(p);
@@ -8691,8 +8692,11 @@ function zoomWheel(z, zoomIn, cursorMhz, visible, centerMhz) {
 function zoomSyncSlider() {
   const t = zoomTarget(), sl = $id('zoom-sl'), lv = $id('zoom-val');
   if (!t || !sl) return;
+  // no focus check: a range input keeps focus after a mouse drag, which left
+  // the slider behind every later wheel zoom. Its own value maps back to
+  // itself (level = 2^(v/25)), so setting it during a drag changes nothing
   const v = Math.round(Math.log2(t.z.level) * 25);
-  if (document.activeElement !== sl && parseInt(sl.value) !== v) sl.value = v;
+  if (parseInt(sl.value) !== v) sl.value = v;
   if (lv) lv.textContent = t.z.level.toFixed(1) + 'x';
 }
 function zoomFromSlider(v) {
@@ -8720,6 +8724,172 @@ function zoomFromSlider(v) {
     applyClip();
   }, {passive: false});
 });
+
+// ============================================================================
+// SPECTRUM VIEWS (FFT message type 7)
+// ----------------------------------------------------------------------------
+// The page tells the server which part of each display it shows - FFT_VIEW:
+// display:seq:lo:hi:points, lo / hi in Hz from the display's centre (so a
+// retune needs no new request), points = the plot's width in device pixels -
+// and gets exactly that, max-pooled from the full-resolution FFT to about
+// those points (half with "Slow link"), never more than 4096.
+// Zoomed in, the same number of points covers less spectrum, down to one FFT
+// bin each: more detail at the same data rate. Frames carry no per-point
+// frequencies (start + step) and only the max envelope (the only one drawn) -
+// see MessageBuilders::build_spectrum_view. A frame for another window (the
+// zoom changed meanwhile) is cut / padded to the current one, so a zoom
+// answers at once and the detail follows with the next frame (~50-100 ms).
+// display 0 = the main spectrum (coherent / wideband scan), 1 + ch = tuner ch
+// (independent mode). A server without views keeps sending types 0 / 6.
+// ============================================================================
+function specOnFrame(v, buf) {
+  if (buf.byteLength < 64) return;
+  const disp = v.getUint8(4), marker = v.getUint8(5), nch = v.getUint8(6);
+  const center = v.getFloat64(12, true) / 1e6, bandLo = v.getFloat64(20, true) / 1e6;
+  const bandHi = v.getFloat64(28, true) / 1e6, start = v.getFloat64(36, true) / 1e6;
+  const step = v.getFloat64(44, true) / 1e6;
+  const gd = v.getFloat32(52, true), aa = v.getFloat32(56, true), n = v.getUint32(60, true);
+  if (n < 2 || n > 65536 || buf.byteLength < 64 + n || !(step > 0) || !(bandHi > bandLo)) return;
+  const u8 = new Uint8Array(buf, 64, n), mags = new Float32Array(n);
+  for (let i = 0; i < n; i++) mags[i] = u8[i] * (120 / 255);
+  const fr = {center, bandLo, bandHi, start, step, mags, wb: marker === 0xFE};
+  if (disp > 0) { specPaneFrame(disp - 1, nch, fr, gd, aa); return; }
+  specHeaderSync(center, gd, aa, fr.wb, marker & 0x7F);
+  specMain = fr;
+  displayCenterFreq = center;
+  applyClip(true);
+  // deferred tuning-bar re-sync (as for type 0 frames)
+  if (pendingScrollSync && Math.abs(center - pendingScrollSync.targetFreqMhz) < 0.01) finishScrollSync();
+  if (!fftPlot) createPlot();
+}
+// the window [w0, w1] (MHz) zoom z shows of the span lo1..hi1 (its 1x view);
+// keeps z.off inside it, like zoomSlice
+function zoomWindow(z, lo1, hi1, centerMhz) {
+  if (!z || z.level <= 1.0001) return [lo1, hi1];
+  const w = (hi1 - lo1) / z.level;
+  let c = centerMhz + z.off;
+  c = Math.max(lo1 + w / 2, Math.min(hi1 - w / 2, c));
+  z.off = c - centerMhz;
+  return [c - w / 2, c + w / 2];
+}
+// frame fr's points inside [w0, w1], evenly spaced (the waterfall maps by
+// index) - padded with 0 dB where the frame doesn't reach (zoomed out, until
+// the wider frame comes); a window far wider than the frame is pooled to
+// <= 4096 points
+function specWindow(fr, w0, w1) {
+  const n = fr.mags.length, st = fr.step;
+  const j0 = Math.ceil((w0 - fr.start) / st - 1e-6);
+  const j1 = Math.max(j0 + 1, Math.floor((w1 - fr.start) / st + 1e-6));
+  const count = j1 - j0 + 1, stride = count > 8192 ? Math.ceil(count / 4096) : 1;
+  const m = Math.ceil(count / stride), freqs = new Array(m), mags = new Array(m);
+  for (let k = 0; k < m; k++) {
+    const a = j0 + k * stride;
+    let mx = 0;
+    for (let j = Math.max(a, 0), e = Math.min(a + stride, n); j < e; j++) if (fr.mags[j] > mx) mx = fr.mags[j];
+    freqs[k] = fr.start + (a + (stride - 1) / 2) * st;
+    mags[k] = mx;
+  }
+  return [freqs, mags];
+}
+// zoom-1 span of a frame: the middle edge-clip of its band (the wideband
+// scan's stitched band is edge-clipped per tuner already)
+function specSpan1(fr) {
+  const half = (fr.bandHi - fr.bandLo) / 2, mid = (fr.bandHi + fr.bandLo) / 2, k = fr.wb ? 1 : currentEdgeClip;
+  return [mid - half * k, mid + half * k];
+}
+function specApplyMain(newFrame) {
+  const fr = specMain;
+  const [lo1, hi1] = specSpan1(fr);
+  const [w0, w1] = zoomWindow(mainZoom, lo1, hi1, fr.center);
+  [currentFrequencies, currentMagnitudes] = specWindow(fr, w0, w1);
+  specViewWant(0, w0 - fr.center, w1 - fr.center, specBinsMain());
+  specShowMain(newFrame);
+  if (opMode !== 'independent') specShowRes(fr);
+}
+function specPaneFrame(ch, nch, fr, gd, aa) {
+  opHint('independent');
+  if (opMode !== 'independent') return;   // not (yet) confirmed - see opHint
+  if (nch >= 1 && nch <= 8 && panes.length !== nch) panesBuild(nch);
+  const p = panes[ch];
+  if (!p) return;
+  p.freqMhz = fr.center; p.gainDb = gd;
+  p.sr = Math.round((fr.bandHi - fr.bandLo) * 1e3) * 1e3;   // Hz (as type 6's)
+  const [lo1, hi1] = specSpan1(fr);
+  const [w0, w1] = zoomWindow(p.zoom, lo1, hi1, p.freqMhz);
+  [p.freqs, p.mags] = specWindow(fr, w0, w1);
+  specViewWant(ch + 1, w0 - p.freqMhz, w1 - p.freqMhz, specBinsPane(p));
+  p.wf.addLine(p.freqs, p.mags, noiseLive);
+  paneDrawSpec(p);
+  paneDrawOverlay(p);
+  if (ch === selTuner) {
+    specShowRes(fr);
+    if (p.freqMhz > 0 && Date.now() > p.holdF) updateFreqDisplay(p.freqMhz);
+    if (!gainUserChanging && Date.now() > p.holdG) {
+      const gi = gainIndexOf(p.gainDb), gs = $id('gn-slider');
+      if (gs && document.activeElement !== gs && parseInt(gs.value) !== gi) { gs.value = gi; updateGainDisplay(gi); }
+    }
+  }
+  if (!avgUserChanging && aa >= 0 && aa <= 1) {
+    const avPct = Math.round((1 - aa) * 100), asl = $id('asl');
+    if (asl && document.activeElement !== asl && parseInt(asl.value) !== avPct) {
+      asl.value = avPct; $id('av').textContent = avPct + '%'; currentAveraging = avPct;
+    }
+  }
+  panesSyncHeads();
+}
+// points wanted: the plot area's width in device pixels (uPlot's bbox is in
+// canvas pixels) - more could not be drawn; half with "Slow link" (sidebar FFT
+// Settings, per browser: localStorage kraken_spec_slow). The server sends at
+// most 4096 (SPECTRUM_VIEW_MAX_POINTS)
+let specSlow = false;
+try { specSlow = localStorage.getItem('kraken_spec_slow') === '1'; } catch (e) {}
+{ const cb = $id('spec-slow'); if (cb) cb.checked = specSlow; }
+function specSlowSet(on) {
+  specSlow = !!on;
+  try { if (specSlow) localStorage.setItem('kraken_spec_slow', '1'); else localStorage.removeItem('kraken_spec_slow'); } catch (e) {}
+  // the next frame asks for the new width (specViewWant); redraw now so it
+  // doesn't wait for one
+  if (specMain && fftPlot && opMode !== 'independent') applyClip();
+}
+function specBinsMain() {
+  const w = fftPlot && fftPlot.bbox && fftPlot.bbox.width > 0 ? fftPlot.bbox.width : 1024;
+  return specSlow ? w / 2 : w;
+}
+function specBinsPane(p) {
+  const w = Math.max(64, ((p.sw || 400) - 4 - (p.L || 34)) * (p.dpr || window.devicePixelRatio || 1));
+  return specSlow ? w / 2 : w;
+}
+// ask the server for a display's view when it changed: at most every 100 ms,
+// the last one always (trailing timer). Not while applying another browser's
+// change (send()'s rule) - the next frame asks again
+function specViewWant(disp, loMhz, hiMhz, bins) {
+  const lo = Math.round(loMhz * 1e6), hi = Math.round(hiMhz * 1e6);
+  bins = Math.max(16, Math.min(16384, Math.round(bins) || 0));
+  const st = specViewSent[disp] || (specViewSent[disp] = {lo: NaN, hi: NaN, bins: 0, at: 0, t: null, want: null});
+  if (st.lo === lo && st.hi === hi && st.bins === bins) { st.want = null; return; }
+  st.want = {lo, hi, bins};
+  const now = Date.now();
+  if (now - st.at >= 100) specViewFlush(disp);
+  else if (!st.t) st.t = setTimeout(() => { st.t = null; specViewFlush(disp); }, 100 - (now - st.at));
+}
+function specViewFlush(disp) {
+  const st = specViewSent[disp];
+  if (!st || !st.want || applyingRemote || !ws || ws.readyState !== 1) return;
+  const w = st.want;
+  ws.send('FFT_VIEW:' + disp + ':' + (++specViewSeq) + ':' + w.lo + ':' + w.hi + ':' + w.bins);
+  st.lo = w.lo; st.hi = w.hi; st.bins = w.bins; st.at = Date.now(); st.want = null;
+}
+// the zoom control's resolution readout: the displayed points' spacing; and
+// FFT Settings' "Points sent": the frame's points
+function specShowRes(fr) {
+  const el = $id('zoom-res'), pe = $id('fft-points-sent');
+  const n = String(fr.mags.length);
+  if (pe && pe.textContent !== n) pe.textContent = n;
+  if (!el) return;
+  const hz = fr.step * 1e6;
+  const t = hz >= 1000 ? (hz / 1000).toFixed(hz >= 10000 ? 0 : 1) + ' kHz' : Math.round(hz) + ' Hz';
+  if (el.textContent !== t) el.textContent = t;
+}
 
 // ---- split: main display (#fp height, px) / panes (--spec-frac, shared) ----
 const FP_DEFAULT_H = 280, PANE_SPLIT_DEFAULT = 0.42;

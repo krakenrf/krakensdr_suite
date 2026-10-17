@@ -24,6 +24,7 @@
 #include <iomanip>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <map>
 #include <set>
@@ -53,6 +54,13 @@ static float normalize_to_noise_floor(std::vector<float>& fft_data) {
     return noise_floor;
 }
 
+// Downsampling of the old-format frames (types 0 / 6 / 4, pages without
+// spectrum views): SPECTRUM_LEGACY_POINTS per tuner band, as the removed
+// "Downsampling" setting's default gave (8 at 16384)
+static int legacy_fft_decimation() {
+    return std::max(1, current_fft_size.load() / SPECTRUM_LEGACY_POINTS);
+}
+
 // The same for one tuner channel's spectrum: its floor as the squelch sees it
 // - the receiver's remembered floor while a signal fills the band
 static void normalize_to_channel_floor(std::vector<float>& fft_data, int channel) {
@@ -62,8 +70,12 @@ static void normalize_to_channel_floor(std::vector<float>& fft_data, int channel
     }
 }
 
-string MessageBuilders::build_fft_message() {
+string MessageBuilders::build_fft_message(SpectrumSnapshot* snap, bool legacy) {
     lock_guard<mutex> lock(fft_mutex);
+    if (snap) {
+        for (auto& d : snap->disp) d.valid = false;
+        snap->independent = false;
+    }
 
     BinaryMessage msg;
     msg.add_value(uint32_t(0)); // FFT message type
@@ -106,7 +118,7 @@ string MessageBuilders::build_fft_message() {
         BinaryMessage im;
         im.add_value(uint32_t(6));
         const int nch = min(channels, MAX_CHANNELS);
-        const int dec = max(1, current_fft_decimation.load());
+        const int dec = legacy_fft_decimation();
         im.add_value(static_cast<uint32_t>(nch));
         im.add_value(averaging_alpha.load());
         im.add_value(static_cast<float>(SAMPLE_RATE));
@@ -121,13 +133,28 @@ string MessageBuilders::build_fft_message() {
             }
             norm = fft_averaged[ch];
             normalize_to_channel_floor(norm, ch);
+            if (snap && norm.size() >= 2) {
+                SpectrumDisplay& d = snap->disp[1 + ch];
+                d.valid = true;
+                d.center_hz = static_cast<double>(exact_tuner_hz(ch));
+                d.step_hz = static_cast<double>(SAMPLE_RATE) / static_cast<double>(norm.size());
+                d.f0_hz = d.center_hz - static_cast<double>(SAMPLE_RATE) / 2.0;  // as decimate_fft_compressed
+                d.gain_db = ChannelManager::get_gain(ch);
+                d.db = norm;
+            }
+            if (!legacy) continue;
             CompressedDecimatedFFT c = FFTProcessor::decimate_fft_compressed(
                 norm, exact_tuner_hz(ch) / 1e6f, dec);
             im.add_value(static_cast<uint32_t>(c.min_envelope.size()));
             im.add_vector(c.min_envelope);
             im.add_vector(c.max_envelope);
         }
-        return im.to_string();
+        if (snap) {
+            snap->independent = true;
+            snap->channels = static_cast<uint8_t>(nch);
+            snap->avg_alpha = averaging_alpha.load();
+        }
+        return legacy ? im.to_string() : string();
     }
 
     // Handle wideband mode
@@ -214,8 +241,24 @@ string MessageBuilders::build_fft_message() {
                     scanner_manager.updateFFTData(normalized_wideband, cached_wideband_freqs);
                 }
 
-                // Decimate and compress wideband FFT using user-adjustable setting
-                int wideband_decimation = current_fft_decimation.load();
+                if (snap && normalized_wideband.size() >= 2) {
+                    // bin i at min + i / size * (max - min), as decimate_and_compress_wideband
+                    SpectrumDisplay& d = snap->disp[0];
+                    d.valid = true;
+                    d.f0_hz = static_cast<double>(min_freq_mhz) * 1e6;
+                    d.step_hz = (static_cast<double>(max_freq_mhz) - min_freq_mhz) * 1e6 /
+                                static_cast<double>(normalized_wideband.size());
+                    d.center_hz = (static_cast<double>(min_freq_mhz) + max_freq_mhz) / 2.0 * 1e6;
+                    d.gain_db = ChannelManager::get_gain(0);
+                    d.db = normalized_wideband;
+                    snap->marker = 0xFE;
+                    snap->channels = static_cast<uint8_t>(channels);
+                    snap->avg_alpha = averaging_alpha.load();
+                }
+                if (!legacy) return string();
+
+                // Decimate and compress the wideband FFT (old-format frames)
+                const int wideband_decimation = legacy_fft_decimation();
                 CompressedFFT compressed = FFTProcessor::decimate_and_compress_wideband(
                     normalized_wideband,
                     min_freq_mhz,
@@ -318,7 +361,25 @@ string MessageBuilders::build_fft_message() {
         scanner_manager.updateFFTData(normalized_fft, cached_coherent_freqs);
     }
 
-    CompressedDecimatedFFT compressed = FFTProcessor::decimate_fft_compressed(normalized_fft, center_freq_mhz, current_fft_decimation.load());
+    if (snap && normalized_fft.size() >= 2) {
+        // the exact centre (the header's float MHz is ~30 Hz coarse at 400 MHz,
+        // more than a bin at full zoom)
+        SpectrumDisplay& d = snap->disp[0];
+        const uint64_t hz = coherent_tuner_hz();
+        d.valid = true;
+        d.center_hz = hz ? static_cast<double>(hz)
+                         : static_cast<double>(ChannelManager::get_frequency(current_active));
+        d.step_hz = static_cast<double>(SAMPLE_RATE) / static_cast<double>(normalized_fft.size());
+        d.f0_hz = d.center_hz - static_cast<double>(SAMPLE_RATE) / 2.0;  // as decimate_fft_compressed
+        d.gain_db = active_gain_db;
+        d.db = normalized_fft;
+        snap->marker = static_cast<uint8_t>(0x80 | current_active);
+        snap->channels = static_cast<uint8_t>(channels);
+        snap->avg_alpha = averaging_alpha.load();
+    }
+    if (!legacy) return string();
+
+    CompressedDecimatedFFT compressed = FFTProcessor::decimate_fft_compressed(normalized_fft, center_freq_mhz, legacy_fft_decimation());
 
     msg.add_value(static_cast<uint32_t>(compressed.frequencies.size()));
 
@@ -328,6 +389,82 @@ string MessageBuilders::build_fft_message() {
     msg.add_vector(compressed.max_envelope);  // uint8 compressed
 
     return msg.to_string();
+}
+
+// Spectrum view (type 7), little-endian, 64-byte header:
+//   u32 7 | u8 display (0 main, 1 + ch tuner) | u8 marker (0x80|ch coherent,
+//   0xFE wideband scan, ch independent) | u8 channels | u8 flags (1 = the
+//   requested window, else the whole band) | u32 view seq |
+//   f64 centre Hz | f64 band lo Hz | f64 band hi Hz (first / last bin of the
+//   whole spectrum) | f64 start Hz (point 0) | f64 step Hz | f32 gain dB |
+//   f32 averaging alpha | u32 n | u8 level[n] (0..255 = 0..120 dB, max-pooled)
+// No per-point frequencies (the old type 0 sent a float32 for every point:
+// two thirds of it) and no min envelope (no page ever drew it).
+string MessageBuilders::build_spectrum_view(const SpectrumSnapshot& snap, int display, double lo_off_hz,
+                                            double hi_off_hz, uint32_t bins, uint32_t seq,
+                                            double* point_step_hz) {
+    if (display < 0 || display > MAX_CHANNELS) return string();
+    const SpectrumDisplay& d = snap.disp[display];
+    const size_t L = d.db.size();
+    if (!d.valid || L < 2 || !(d.step_hz > 0)) return string();
+
+    // bins whose centres lie in the window (at least 2), else the whole band
+    size_t i0 = 0, i1 = L - 1;
+    bool windowed = false;
+    if (hi_off_hz > lo_off_hz) {
+        const double a = std::ceil((d.center_hz + lo_off_hz - d.f0_hz) / d.step_hz - 1e-6);
+        const double b = std::floor((d.center_hz + hi_off_hz - d.f0_hz) / d.step_hz + 1e-6);
+        const double last = static_cast<double>(L - 1);
+        const double ca = std::clamp(a, 0.0, last), cb = std::clamp(b, 0.0, last);
+        if (cb - ca >= 1.0) {
+            i0 = static_cast<size_t>(ca);
+            i1 = static_cast<size_t>(cb);
+            windowed = true;
+        }
+    }
+    const size_t count = i1 - i0 + 1;
+    // points: what the page asks for (its plot's width in device pixels),
+    // never more than SPECTRUM_VIEW_MAX_POINTS - zoomed in, the same number
+    // of points cover less spectrum (down to one FFT bin each)
+    const size_t budget = SPECTRUM_VIEW_MAX_POINTS;
+    const size_t want = std::clamp<size_t>(bins ? bins : SPECTRUM_LEGACY_POINTS, 16, budget);
+    // the pool nearest to `want` points (0.67 - 1.5x of it: rounding up made
+    // 819 bins in an 816-pixel plot 410 points - half the resolution), never
+    // past the budget
+    const size_t pool = std::max({size_t(1), (count + budget - 1) / budget, (count + want / 2) / want});
+    const size_t n = (count + pool - 1) / pool;
+    if (point_step_hz) *point_step_hz = d.step_hz * static_cast<double>(pool);
+
+    string out;
+    out.resize(64 + n);
+    char* p = out.data();
+    auto put = [&p](const auto& v) { std::memcpy(p, &v, sizeof v); p += sizeof v; };
+    put(uint32_t(7));
+    put(static_cast<uint8_t>(display));
+    put(display == 0 ? snap.marker : static_cast<uint8_t>(display - 1));
+    put(snap.channels);
+    put(static_cast<uint8_t>(windowed ? 1 : 0));
+    put(seq);
+    put(d.center_hz);
+    put(d.f0_hz);
+    put(d.f0_hz + static_cast<double>(L - 1) * d.step_hz);
+    // a point stands for its pooled bins: at their middle
+    put(d.f0_hz + (static_cast<double>(i0) + (static_cast<double>(pool) - 1.0) / 2.0) * d.step_hz);
+    put(d.step_hz * static_cast<double>(pool));
+    put(d.gain_db);
+    put(snap.avg_alpha);
+    put(static_cast<uint32_t>(n));
+    // max of each pool (keeps narrow peaks), quantised as compress_magnitudes
+    constexpr float SCALE = 255.0f / 120.0f;
+    const float* src = d.db.data();
+    for (size_t j = 0; j < n; j++) {
+        const size_t a = i0 + j * pool, b = std::min(a + pool, i1 + 1);
+        float m = src[a];
+        for (size_t k = a + 1; k < b; k++) m = std::max(m, src[k]);
+        const int q = static_cast<int>(m * SCALE + 0.5f);
+        *p++ = static_cast<char>(static_cast<uint8_t>(std::clamp(q, 0, 255)));
+    }
+    return out;
 }
 
 string MessageBuilders::build_audio_message() {
@@ -614,116 +751,93 @@ string MessageBuilders::build_system_status_message() {
     return json.str();
 }
 
-string MessageBuilders::build_beamformed_fft_message(int decimator_id) {
+bool MessageBuilders::beamformed_spectrum(int decimator_id, BeamformedSpectrum& out) {
     // Only send if beamforming is enabled
     if (!beamforming_enabled.load()) {
-        return string();
+        return false;
     }
 
     auto inst = decimator_manager.getDecimator(decimator_id);
     if (!inst || !inst->beamformer) {
-        return string();
+        return false;
     }
     BeamformedFFTData& bf = inst->beamformed_fft;
 
     if (!bf.valid.load(std::memory_order_acquire)) {
-        return string();
+        return false;
     }
 
     // Copy this decimator's averaged FFT under its own lock, then release.
-    vector<float> bf_normalized_fft;
     {
         lock_guard<mutex> lock(bf.mutex);
         if (bf.averaged.empty()) {
-            return string();
+            return false;
         }
-        bf_normalized_fft = bf.averaged;
+        out.db = bf.averaged;
     }
 
-    BinaryMessage msg;
-    msg.add_value(uint32_t(4)); // Beamformed FFT message type
-    msg.add_value(static_cast<uint32_t>(decimator_id));  // which decimator this overlay is for
-
-    float center_freq_mhz = bf.center_freq_hz.load(std::memory_order_relaxed) / 1e6f;
-    float bandwidth_mhz = bf.bandwidth_hz.load(std::memory_order_relaxed) / 1e6f;
+    out.id = static_cast<uint32_t>(decimator_id);
+    out.center_mhz = bf.center_freq_hz.load(std::memory_order_relaxed) / 1e6f;
+    out.bandwidth_mhz = bf.bandwidth_hz.load(std::memory_order_relaxed) / 1e6f;
 
     // Get this decimator's beamformer stats for SNR boost display
     auto stats = inst->beamformer->getStats();
+    out.steering_deg = stats.current_steering_angle;
+    out.snr_boost_db = stats.estimated_snr_improvement_db;
 
     // Normalize beamformed FFT to noise floor = 0dB
     // Note: can't use normalize_to_noise_floor() here because FFTProcessor::calculate_noise_floor()
     // checks against current_fft_size which is the main FFT size, not the beamformed slice size.
     {
-        vector<float> bf_sorted = bf_normalized_fft;
+        static thread_local vector<float> bf_sorted;
+        bf_sorted = out.db;
         size_t p10 = bf_sorted.size() / 10;
         std::nth_element(bf_sorted.begin(), bf_sorted.begin() + p10, bf_sorted.end());
         float noise_floor = bf_sorted[p10];
-        for (float& mag : bf_normalized_fft) {
+        for (float& mag : out.db) {
             mag -= noise_floor;
         }
     }
+    return true;
+}
 
-    // DECIMATION: Match the DISPLAY bin density of the main FFT (bins per MHz after decimation)
-    // Main FFT: current_fft_size bins for SAMPLE_RATE Hz, then decimated by current_fft_decimation
-    // Display density = main_fft_size / (sample_rate_mhz * fft_decimation) bins/MHz
-    // Beamformed FFT should have: bandwidth_mhz * display_density bins
-    size_t input_size = bf_normalized_fft.size();
-    float sample_rate_mhz = SAMPLE_RATE / 1e6f;
-    int main_fft_size = current_fft_size.load();
-    int fft_decimation = current_fft_decimation.load();
+string MessageBuilders::build_beamformed_fft_message(const BeamformedSpectrum& bf, double point_step_hz) {
+    const size_t input_size = bf.db.size();
+    if (input_size == 0 || !(bf.bandwidth_mhz > 0)) return string();
 
-    // Calculate the display bin density (after main FFT's decimation is applied)
-    float display_bins_per_mhz = static_cast<float>(main_fft_size) / (sample_rate_mhz * fft_decimation);
+    // The main spectrum's point spacing: the page's (its zoom), else the
+    // old-format frames' (SPECTRUM_LEGACY_POINTS over a tuner's band)
+    if (!(point_step_hz > 0))
+        point_step_hz = static_cast<double>(SAMPLE_RATE) * legacy_fft_decimation() /
+                        std::max(1, current_fft_size.load());
+    // Max-pool bins of the overlay (preserves peaks) to that spacing - a power
+    // of two, so the points stay evenly spaced over the band (the page places
+    // point i at centre - bw / 2 + i * bw / n), at least 16 points
+    const double bin_hz = static_cast<double>(bf.bandwidth_mhz) * 1e6 / static_cast<double>(input_size);
+    size_t pool = 1;
+    while (pool * 2 * bin_hz <= point_step_hz && input_size / (pool * 2) >= 16) pool *= 2;
+    const size_t output_size = (input_size + pool - 1) / pool;
 
-    // Target bins for beamformed FFT to match the same visual density
-    size_t target_bins = static_cast<size_t>(bandwidth_mhz * display_bins_per_mhz);
-
-    // Ensure minimum of 16 bins and don't upsample
-    target_bins = std::max(target_bins, size_t(16));
-    target_bins = std::min(target_bins, input_size);
-
-    size_t decimation_factor = (input_size > target_bins) ? (input_size / target_bins) : 1;
-    size_t output_size = (input_size + decimation_factor - 1) / decimation_factor;
-
-    // Decimate by taking max value in each bin group (preserves peaks)
-    vector<float> decimated_fft;
-    decimated_fft.reserve(output_size);
-
-    for (size_t i = 0; i < output_size; i++) {
-        size_t start_idx = i * decimation_factor;
-        size_t end_idx = min(start_idx + decimation_factor, input_size);
-
-        float max_val = bf_normalized_fft[start_idx];
-        for (size_t j = start_idx + 1; j < end_idx; j++) {
-            max_val = max(max_val, bf_normalized_fft[j]);
-        }
-        decimated_fft.push_back(max_val);
-    }
-
-    // Add metadata (use decimated size)
-    msg.add_value(center_freq_mhz);
-    msg.add_value(bandwidth_mhz);
-    msg.add_value(static_cast<uint32_t>(decimated_fft.size()));
-
-    msg.add_value(stats.current_steering_angle);
-    msg.add_value(stats.estimated_snr_improvement_db);
+    BinaryMessage msg;
+    msg.add_value(uint32_t(4)); // Beamformed FFT message type
+    msg.add_value(bf.id);       // which decimator this overlay is for
+    msg.add_value(bf.center_mhz);
+    msg.add_value(bf.bandwidth_mhz);
+    msg.add_value(static_cast<uint32_t>(output_size));
+    msg.add_value(bf.steering_deg);
+    msg.add_value(bf.snr_boost_db);
 
     // Compress magnitudes to uint8 for bandwidth savings
     // Map 0dB to 120dB range to 0-255
     vector<uint8_t> compressed;
-    compressed.reserve(decimated_fft.size());
-
-    constexpr float MIN_DB = 0.0f;
-    constexpr float MAX_DB = 120.0f;
-    constexpr float DB_RANGE = MAX_DB - MIN_DB;
-    constexpr float SCALE = 255.0f / DB_RANGE;
-
-    for (float mag_db : decimated_fft) {
-        float normalized = (mag_db - MIN_DB) * SCALE;
-        int value = static_cast<int>(normalized + 0.5f);
-        if (value < 0) value = 0;
-        if (value > 255) value = 255;
-        compressed.push_back(static_cast<uint8_t>(value));
+    compressed.reserve(output_size);
+    constexpr float SCALE = 255.0f / 120.0f;
+    for (size_t i = 0; i < output_size; i++) {
+        const size_t a = i * pool, b = min(a + pool, input_size);
+        float m = bf.db[a];
+        for (size_t j = a + 1; j < b; j++) m = max(m, bf.db[j]);
+        const int q = static_cast<int>(m * SCALE + 0.5f);
+        compressed.push_back(static_cast<uint8_t>(std::clamp(q, 0, 255)));
     }
 
     // Add compressed FFT data

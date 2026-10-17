@@ -3,6 +3,7 @@
 #include "recorder.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/host_check.hpp"
+#include "utils/parse_num.hpp"
 #include "globals.hpp"
 #include "config.hpp"
 #include "control_handler.hpp"
@@ -25,6 +26,9 @@
 #include <cmath>
 #include <chrono>
 #include <unordered_map>
+#include <unordered_set>
+#include <array>
+#include <charconv>
 #include <iomanip>
 #include <cstdlib>
 #include <iterator>
@@ -41,6 +45,17 @@ namespace {
 struct PerSocketData {
     bool authed = false;     // has this connection passed the AUTH gate?
     uint32_t sub_mask = 0;   // subscribed data streams (0 = unset; see SUB_*)
+    // Spectrum views (FFT_VIEW:, FFT message type 7): once a page sends one,
+    // it gets its own spectra - the window each display shows (its zoom) at
+    // its own width - instead of the shared type 0 / 6 broadcast
+    bool spec_views = false;
+    struct SpecView {
+        double lo_hz = 0, hi_hz = 0;   // from the display's centre; lo >= hi = whole band
+        uint32_t bins = 0;             // points wanted (0 = the user's points per frame)
+        uint32_t seq = 0;              // echoed in the frames
+    };
+    std::array<SpecView, 1 + MAX_CHANNELS> views{};  // 0 = main, 1 + ch = tuner ch
+    double main_step_hz = 0;   // point spacing of its last main frame (beamformed overlays follow it)
 };
 
 // Data-stream subscription bits (the heavy/optional streams).
@@ -53,7 +68,7 @@ constexpr uint32_t SUB_ALL   = SUB_FFT | SUB_AUDIO | SUB_DOA;
 // scanner/doa state, system_status) and is ALWAYS subscribed so multi-client
 // settings-sync stays correct. fft/audio/doa are selectable via SUBSCRIBE.
 constexpr string_view TOPIC_CTL   = "ctl";
-constexpr string_view TOPIC_FFT   = "fft";
+constexpr string_view TOPIC_FFT   = "fft";     // shared spectrum (types 0 / 6 / 4) - pages without views
 constexpr string_view TOPIC_AUDIO = "audio";
 constexpr string_view TOPIC_DOA   = "doa";
 
@@ -119,6 +134,7 @@ constexpr int64_t AUTH_DEADLINE_MS = 10000;      // ...each closed after this
 constexpr int AUTH_MAX_FAILURES = 5;             // wrong tokens per IP...
 constexpr int64_t AUTH_FAILURE_WINDOW_MS = 60000;  // ...per window, then refused
 std::unordered_map<ClientWS*, int64_t> g_pending_auth;           // socket -> opened (steady ms)
+std::unordered_set<ClientWS*> g_spec_sockets;  // sockets with spectrum views (uWS loop only)
 std::unordered_map<std::string, std::pair<int, int64_t>> g_auth_failures;  // ip -> (count, window start)
 
 int64_t steady_ms() {
@@ -191,9 +207,69 @@ template<typename WS>
 void apply_subscriptions(WS* ws, uint32_t mask) {
     ws->getUserData()->sub_mask = mask;
     ws->subscribe(TOPIC_CTL);  // always on; idempotent
-    if (mask & SUB_FFT)   ws->subscribe(TOPIC_FFT);   else ws->unsubscribe(TOPIC_FFT);
+    // a page with spectrum views is sent its own spectra (send_spectrum_views)
+    if ((mask & SUB_FFT) && !ws->getUserData()->spec_views) ws->subscribe(TOPIC_FFT);
+    else ws->unsubscribe(TOPIC_FFT);
     if (mask & SUB_AUDIO) ws->subscribe(TOPIC_AUDIO); else ws->unsubscribe(TOPIC_AUDIO);
     if (mask & SUB_DOA)   ws->subscribe(TOPIC_DOA);   else ws->unsubscribe(TOPIC_DOA);
+}
+
+// FFT_VIEW:<display>:<seq>:<lo Hz>:<hi Hz>:<points> (see .message). A bad one
+// is ignored; the first good one moves the page from the shared spectrum
+// broadcast (types 0 / 6) to its own frames (type 7).
+template<typename WS>
+void handle_fft_view(WS* ws, string_view args) {
+    string_view f[5];
+    for (int i = 0; i < 5; i++) {
+        const size_t c = args.find(':');
+        if (i < 4 && c == string_view::npos) return;
+        f[i] = args.substr(0, c);
+        args = c == string_view::npos ? string_view() : args.substr(c + 1);
+    }
+    int disp = -1;
+    uint32_t seq = 0, bins = 0;
+    double lo = 0, hi = 0;
+    auto num = [](string_view t, auto& v) {
+        auto r = std::from_chars(t.data(), t.data() + t.size(), v);
+        return r.ec == std::errc() && r.ptr == t.data() + t.size();
+    };
+    if (!num(f[0], disp) || !num(f[1], seq) || !num(f[2], lo) || !num(f[3], hi) || !num(f[4], bins)) return;
+    // is_finite_value, not std::isfinite: -Ofast folds that to true
+    if (disp < 0 || disp > MAX_CHANNELS || !is_finite_value(lo) || !is_finite_value(hi) ||
+        std::abs(lo) > 1e10 || std::abs(hi) > 1e10 || bins > 65536)
+        return;
+    PerSocketData* ud = ws->getUserData();
+    ud->views[disp] = {lo, hi, bins, seq};
+    if (!ud->spec_views) {
+        ud->spec_views = true;
+        g_spec_sockets.insert(ws);
+        apply_subscriptions(ws, ud->sub_mask ? ud->sub_mask : SUB_ALL);  // off the shared broadcast
+    }
+}
+
+// Each page with views gets every display of the current mode (independent:
+// one frame per tuner, else the main one), cut to its window and width, and
+// the beamformed overlays (coherent mode) at its main frame's point spacing -
+// zoomed in, they get finer with the spectrum. A slow link drops frames
+// instead of queueing them: uWS closes a socket past maxBackpressure (2 MB)
+constexpr unsigned SPEC_MAX_BUFFERED = 256 * 1024;
+void send_spectrum_views(const SpectrumSnapshot& snap, const vector<BeamformedSpectrum>& bfs) {
+    const int first = snap.independent ? 1 : 0;
+    const int last = snap.independent ? std::min<int>(snap.channels, MAX_CHANNELS) : 0;
+    for (ClientWS* ws : g_spec_sockets) {
+        PerSocketData* ud = ws->getUserData();
+        if (!(ud->sub_mask & SUB_FFT) || ws->getBufferedAmount() > SPEC_MAX_BUFFERED) continue;
+        for (int d = first; d <= last; d++) {
+            const auto& v = ud->views[d];
+            const string m = MessageBuilders::build_spectrum_view(snap, d, v.lo_hz, v.hi_hz, v.bins, v.seq,
+                                                                  d == 0 ? &ud->main_step_hz : nullptr);
+            if (!m.empty()) ws->send(m, uWS::BINARY, true);
+        }
+        for (const auto& bf : bfs) {
+            const string m = MessageBuilders::build_beamformed_fft_message(bf, ud->main_step_hz);
+            if (!m.empty()) ws->send(m, uWS::BINARY, true);
+        }
+    }
 }
 
 // Subscribe the connection and replay current state so its UI matches the
@@ -566,7 +642,10 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                ->writeHeader("Expires", "0")
                ->end(html_content);
         }).ws<PerSocketData>("/*", {
-        .compression = uWS::DISABLED,
+        // permessage-deflate, used for the spectrum frames only (send(.., true)):
+        // ~2x smaller there, ~0.1 ms each; audio (Opus) and the small JSON
+        // messages go uncompressed. Shared compressor = no context per socket
+        .compression = uWS::CompressOptions(uWS::SHARED_COMPRESSOR | uWS::SHARED_DECOMPRESSOR),
         // The largest real message is a scanner config (SCANNER_LOAD_CONFIG,
         // ~100 bytes per channel). uWS buffers a whole message before the
         // AUTH gate sees it, so this also bounds what an unauthenticated
@@ -659,11 +738,22 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 return;
             }
 
+            // --- Spectrum view (transport-level, this connection only) ---
+            // FFT_VIEW:<display>:<seq>:<lo Hz>:<hi Hz>:<points> - display 0 =
+            // the main spectrum, 1 + ch = independent-mode tuner ch; lo / hi
+            // from that display's centre (lo >= hi = the whole band). The
+            // first one switches the page to type 7 frames
+            if (message.starts_with("FFT_VIEW:")) {
+                handle_fft_view(ws, message.substr(9));
+                return;
+            }
+
             ControlHandler::handle_websocket_message(message);
         },
         
         .close = [](auto* ws, int code, string_view reason) {
             g_pending_auth.erase(ws);
+            g_spec_sockets.erase(ws);
             int remaining = --ws_client_count;  // keep the live dashboard count in sync
             if (remaining < 0) { ws_client_count.store(0); remaining = 0; }
             std::cout << "[WS] Client DISCONNECTED! Code=" << code
@@ -694,21 +784,36 @@ void WebSocketServer::web_server_main() {
                 
                 us_timer_set(broadcast_timer, [](struct us_timer_t* /*timer*/) {
                     if (global_ssl_app && data_ready) {
-                        auto message = MessageBuilders::build_fft_message();
-                        global_ssl_app->publish(TOPIC_FFT, message, uWS::BINARY, false);
+                        // built every tick (it feeds the scanners); encoded
+                        // only for pages without spectrum views
+                        static SpectrumSnapshot snap;
+                        const bool legacy = global_ssl_app->numSubscribers(TOPIC_FFT) > 0;
+                        auto message = MessageBuilders::build_fft_message(
+                            g_spec_sockets.empty() ? nullptr : &snap, legacy);
+                        if (legacy && !message.empty())
+                            global_ssl_app->publish(TOPIC_FFT, message, uWS::BINARY, true);
 
-                        // Send a beamformed FFT overlay per decimator (each
-                        // steered to its own DoA) if beamforming is enabled.
+                        // A beamformed FFT overlay per decimator (each
+                        // steered to its own DoA) if beamforming is enabled:
+                        // pages without views at the old frames' spacing,
+                        // the others at their own (send_spectrum_views)
+                        static vector<BeamformedSpectrum> bfs;
+                        size_t nbf = 0;
                         if (beamforming_enabled.load(std::memory_order_relaxed)) {
                             for (const auto& inst : decimator_manager.getAllDecimators()) {
                                 if (!inst || !inst->enabled ||
                                     inst->being_deleted.load(std::memory_order_relaxed)) continue;
-                                auto bf_message = MessageBuilders::build_beamformed_fft_message(inst->id);
-                                if (!bf_message.empty()) {
-                                    global_ssl_app->publish(TOPIC_FFT, bf_message, uWS::BINARY, false);
+                                if (bfs.size() <= nbf) bfs.emplace_back();
+                                if (!MessageBuilders::beamformed_spectrum(inst->id, bfs[nbf])) continue;
+                                if (legacy) {
+                                    const string m = MessageBuilders::build_beamformed_fft_message(bfs[nbf], 0);
+                                    if (!m.empty()) global_ssl_app->publish(TOPIC_FFT, m, uWS::BINARY, true);
                                 }
+                                nbf++;
                             }
                         }
+                        bfs.resize(nbf);
+                        if (!g_spec_sockets.empty()) send_spectrum_views(snap, bfs);
                     }
                 }, 50, 50);
                 

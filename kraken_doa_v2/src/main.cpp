@@ -122,7 +122,6 @@ std::array<ChannelFFTContext, MAX_CHANNELS> channel_fft_contexts;
 
 // Dynamic FFT settings
 std::atomic<int> current_fft_size{FFT_SIZE};
-std::atomic<int> current_fft_decimation{8};  // FFT display downsampling (separate from signal decimation)
 std::atomic<float> current_edge_clip{0.8f};  // Edge clip percentage (0.0-1.0, default 80%)
 
 // FFT resize synchronization

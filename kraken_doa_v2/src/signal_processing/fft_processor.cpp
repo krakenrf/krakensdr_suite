@@ -116,19 +116,6 @@ int FFTProcessor::get_current_size() {
     return current_fft_size.load();
 }
 
-int FFTProcessor::get_current_decimation() {
-    return current_fft_decimation.load();
-}
-
-void FFTProcessor::set_decimation(int new_decimation) {
-    if (new_decimation < 1 || new_decimation > 64) {
-        std::cout << "FFT Decimation: Invalid value " << new_decimation << " (must be 1-64)" << std::endl;
-        return;
-    }
-    int old_decimation = current_fft_decimation.exchange(new_decimation);
-    std::cout << "FFT Decimation changed: " << old_decimation << " -> " << new_decimation << std::endl;
-}
-
 void FFTProcessor::resize(int new_fft_size) {
     // Validate: must be power of 2 and within range
     if (new_fft_size < 1024 || new_fft_size > 65536) {

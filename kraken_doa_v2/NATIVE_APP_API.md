@@ -81,7 +81,7 @@ answered `403`.
 ### 2b. Stream subscription (`SUBSCRIBE:`)
 
 By default a client receives **all** streams. To save bandwidth (e.g. a phone
-that doesn't need the ~246 KB/s FFT firehose), send:
+that doesn't need the spectrum at all), send:
 
 ```
 SUBSCRIBE:FFT,AUDIO,DOA      # any subset; or "ALL"; or empty for control-only
@@ -181,9 +181,10 @@ are decimal; booleans are `1`/`0` unless noted.
 ### FFT display
 | Command | Meaning |
 |---|---|
-| `FFT_SIZE:<n>` | FFT size. |
-| `FFT_DECIMATION:<n>` | On-wire bin decimation (bandwidth lever for the FFT stream). |
-| `GET_FFT_SETTINGS` | Query → replies with FFT settings JSON. |
+| `FFT_SIZE:<n>` | FFT size (power of 2, 1024–65536): the finest spacing a zoomed view can reach is 2.4 MHz / n. |
+| `FFT_VIEW:<display>:<seq>:<lo Hz>:<hi Hz>:<points>` | Ask for your own spectrum frames (type 7, §5.2) instead of type 0 / 6: `display` 0 = the main spectrum, 1 + ch = tuner ch in independent mode; `lo` / `hi` = the window in Hz from that display's centre (`lo >= hi` = the whole band); `points` = how many you want (your plot's width in pixels; 0 = 2048; at most 4096 are sent). `seq` is echoed in the frames. Per connection, not echoed or saved; the first one switches the connection to type 7. **The bandwidth lever:** fewer points = fewer bytes. |
+| `FFT_DECIMATION:<n>` | Removed (was the "Downsampling" setting). Accepted and ignored - use `FFT_VIEW`'s points. |
+| `GET_FFT_SETTINGS` | Query → replies `{"fft_settings":{"fft_size":n}}`. |
 
 ### Wideband / scanner
 | Command | Meaning |
@@ -212,6 +213,8 @@ All binary frames are **little-endian**. The first `uint32` is the message
 message per WS binary frame).
 
 ### 5.1 FFT — type `0` (topic `fft`, ~20/s)
+Sent to connections that never sent `FFT_VIEW` (prefer type 7, §5.2: ~12x
+fewer bytes). 2048 points per tuner band (FFT size / 2048 bins each).
 Header, then arrays:
 
 | Field | Type | Notes |
@@ -232,8 +235,47 @@ Header, then arrays:
 dB range `[0,120]` → `uint8 [0,255]`). Each bin carries both the min and max
 magnitude within its decimation group (draw as a vertical span).
 
-### 5.2 Beamformed FFT — type `4` (topic `fft`)
-Same layout/decoding as type 0; only sent while beamforming is enabled.
+### 5.2 Spectrum view — type `7` (~20/s per display, after `FFT_VIEW`)
+One display's window (`FFT_VIEW`), max-pooled from the full-resolution FFT to
+about the points asked for (each point = the max of its bins, so narrow peaks
+survive): zoomed in, the same points cover less spectrum, down to one FFT bin
+each. Independent mode: one frame per tuner (display 1 + ch). 64-byte header:
+
+| Field | Type | Notes |
+|---|---|---|
+| type | uint32 | `7` |
+| display | uint8 | 0 = main, 1 + ch = tuner ch |
+| marker | uint8 | display 0: `0x80\|ch` coherent, `0xFE` wideband scan; else ch |
+| channels | uint8 | active channel count |
+| flags | uint8 | bit 0 = the frame is the requested window (else the whole band) |
+| seq | uint32 | the `FFT_VIEW` it answers |
+| center | float64 | display centre, Hz |
+| band_lo / band_hi | float64 × 2 | first / last bin of the whole spectrum, Hz |
+| start | float64 | frequency of point 0, Hz |
+| step | float64 | point spacing, Hz (point i at start + i × step) |
+| gain | float32 | dB |
+| averaging_alpha | float32 | 0..1 |
+| n | uint32 | points |
+| levels | uint8 × n | `dB = value * (120.0 / 255.0)`, noise floor = 0 dB |
+
+Frames are permessage-deflate compressed when the client offers it (most
+WebSocket libraries do). A connection whose send buffer holds > 256 KB skips
+frames instead of queueing them.
+
+### 5.2a Beamformed FFT — type `4` (topic `fft`, or with the type 7 frames)
+One per VFO, only while beamforming is enabled. Point spacing follows the
+connection's main type 7 frame (zoomed in = finer), else that of type 0.
+
+| Field | Type | Notes |
+|---|---|---|
+| type | uint32 | `4` |
+| decimator_id | uint32 | the VFO |
+| center_freq | float32 | MHz |
+| bandwidth | float32 | MHz |
+| n | uint32 | points, evenly over the band: point i at center - bw/2 + i × bw / n |
+| steering_angle | float32 | degrees |
+| snr_boost | float32 | dB |
+| levels | uint8 × n | as type 7 |
 
 ### 5.3 Audio — type `1` (topic `audio`, ~25/s)
 | Field | Type | Notes |

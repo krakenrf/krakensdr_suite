@@ -161,7 +161,6 @@ extern ContinuousScanner continuous_scanner;
 
 // Dynamic FFT settings
 extern std::atomic<int> current_fft_size;
-extern std::atomic<int> current_fft_decimation;
 
 // FFT resize synchronization
 // When resizing, we must drain all in-flight FFT operations before destroying contexts

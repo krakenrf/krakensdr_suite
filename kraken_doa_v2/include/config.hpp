@@ -20,6 +20,13 @@ constexpr int GPSD_PORT = 2947;
 
 // Signal Processing Configuration
 constexpr int FFT_SIZE = 16384;
+// Spectrum points per frame to the browser (no user setting - it was the
+// "Downsampling" select): a page's view (type 7) gets its plot's width in
+// device pixels, at most SPECTRUM_VIEW_MAX_POINTS; old-format frames (types
+// 0 / 6 / 4 for pages without views) and a view without a width get
+// SPECTRUM_LEGACY_POINTS per tuner band (= the old default, 16384 / 8)
+constexpr int SPECTRUM_VIEW_MAX_POINTS = 4096;
+constexpr int SPECTRUM_LEGACY_POINTS = 2048;
 // Compile-time CEILING on wire/processing channels (matches heimdall's
 // NUM_DEVICES). The count actually in use is the runtime atomic
 // active_num_elements, synced from the 8091 packet header.
