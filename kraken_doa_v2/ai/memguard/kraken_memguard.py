@@ -1,4 +1,4 @@
-"""Memory ceiling for the AI Signal Lab's Python processes.
+"""Memory ceiling for the AI assistant's Python processes.
 
 A Python process that needs more memory than the Pi has free does not just
 fail: Linux first pushes the receiver (heimdall, kraken_doa) and everything

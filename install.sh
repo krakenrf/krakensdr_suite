@@ -92,6 +92,7 @@ PACKAGES=(
     tmux                                     # split-screen dashboards (run.sh)
     gpsd gpsd-tools                          # GPS daemon (kraken talks JSON to port 2947; tools = cgps/gpsmon for debugging)
     openssl                                  # self-signed cert generation for the kraken web UI
+    bubblewrap socat                         # AI assistant: sandboxes (its shell commands, plugins it changed)
 )
 
 if [[ "${SKIP_DEPS:-0}" == "1" ]]; then

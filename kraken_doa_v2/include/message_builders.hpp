@@ -42,6 +42,15 @@ public:
     // the spectra for the views; legacy = false skips encoding the message
     // ("" returned) when no page wants it
     static std::string build_fft_message(SpectrumSnapshot* snap = nullptr, bool legacy = true);
+    // The latest spectra (every display), filled by the websocket timer's
+    // build_fft_message every 50 ms tick - the spectrum views and the AI
+    // assistant's tools (ai_mcp.cpp) read it. uWS loop thread only
+    static SpectrumSnapshot& spectrum_snapshot();
+    // When it was last filled (ms since epoch) and its main display's centre
+    // (Hz) - any thread (the assistant's tune tool waits for a retune)
+    static void note_spectrum();
+    static int64_t spectrum_ms();
+    static double spectrum_center_hz();
     // Type 7: display (0 = main, 1 + ch = independent-mode tuner ch) between
     // lo / hi Hz from its centre (lo >= hi = the whole band), max-pooled to
     // about `bins` points (0 = SPECTRUM_LEGACY_POINTS), never more than

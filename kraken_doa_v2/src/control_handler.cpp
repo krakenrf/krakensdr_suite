@@ -26,7 +26,10 @@
 #include "networking/web_mapper.hpp"
 #include "networking/websocket_server.hpp"
 #include "utils/json_escape.hpp"
+#include "ai_map.hpp"
 #include "ai_manager.hpp"
+#include "ai_mcp.hpp"
+#include "geo_address.hpp"   // geo::json_parse
 #include "digital/dig_plugin.hpp"
 #include "utils/parse_num.hpp"
 #include <string>
@@ -123,15 +126,27 @@ static void broadcast(const string& json) {
     WebSocketServer::broadcast_json_message(json);
 }
 
-// --- AI Signal Lab + decoder plugins ---
-//   AI_STATE                       -> {"ai_state":{...,"log":[...]}}
+// True while the saved settings are replayed (see the note further down)
+static std::atomic<bool> g_replaying_settings{false};
+
+// --- AI assistant + decoder plugins ---
+//   AI_STATE                       -> {"ai_state":{...,"log":[...]}} + plugins, conversations, marks
+//   AI_ASK:{"text":..,"view":{..},"new":bool}   a question (view = the page's screen context;
+//                                  new = start a new conversation)
+//   AI_NEW                         the next question starts a new conversation
 //   AI_TEST | AI_CANCEL
-//   AI_INVESTIGATE:vfo:freq_hz:seconds[:instructions]   (freq_hz 0 = the VFO's)
-//   AI_CREATE:plugin_id[:instructions]                   (also improves an existing one)
-//   AI_ASK:question                                      (about the current session)
-//   AI_SESSIONS                    -> {"ai_sessions":[...]} (saved investigations)
+//   AI_READONLY:0|1                the assistant may only look (persisted)
+//   AI_MODEL:<alias / name | "">   the model for the next questions (persisted; "" = ai_config.json's)
+//   AI_EFFORT:<low..max | "">      its effort (persisted; "" = the CLI's default)
+//   AI_PAGE:<id>                   a page announces its id (map / viewshed commands go to it)
+//   AI_PAGE_REPLY:{"id":..,..}     a page's answer to {"ai_page":{..}} (ai_mcp.cpp)
+//   AI_MAP_GET                     -> {"ai_map":{..}} (the assistant's map layers)
+//   AI_MAP_DELETE:<layer id>       removes one (-> {"ai_map":{..}})
+//   AI_SESSIONS                    -> {"ai_sessions":[...]} (conversations)
 //   AI_SESSION_GET:id              -> {"ai_session":{...,chat,activity}}
 //   AI_SESSION_SELECT:id | AI_SESSION_DELETE:id
+//   AI_MARKS                       -> {"ai_marks":[...]} (identifications: the spectrum badges)
+//   AI_MARK_DELETE:id
 //   PLUGINS_LIST | PLUGINS_RESCAN  -> {"plugins":[...]}
 //   PLUGIN_CODECS                  -> {"codecs":{...}} (installed voice codecs)
 //   PLUGIN_AUTO:id:0|1             take part in "Auto detect" (persisted as
@@ -148,6 +163,8 @@ static void handle_ai_command(string_view message) {
     if (message == "AI_STATE") {
         broadcast(ai.state_json(true));
         broadcast(AiManager::plugins_message());
+        broadcast(ai.marks_message());
+        broadcast(aimap::message());
         AiManager::sessions_async();
         std::thread([] { broadcast(dig::codec_status_message()); }).detach();
         return;
@@ -169,34 +186,60 @@ static void handle_ai_command(string_view message) {
         err = ai.test();
     } else if (message == "AI_CANCEL") {
         ai.cancel();
-    } else if (message.starts_with("AI_INVESTIGATE:")) {
-        string p = rest(15);
-        size_t c1 = p.find(':'), c2 = c1 == string::npos ? c1 : p.find(':', c1 + 1);
-        if (c2 == string::npos) {
-            err = "format: AI_INVESTIGATE:vfo:freq_hz:seconds[:instructions]";
+    } else if (message == "AI_NEW") {
+        ai.new_conversation();
+    } else if (message.starts_with("AI_READONLY:")) {
+        const string v = rest(12);
+        if (v != "0" && v != "1") {
+            err = "format: AI_READONLY:0|1";
         } else {
-            size_t c3 = p.find(':', c2 + 1);
-            try {
-                int vfo = stoi(p.substr(0, c1));
-                double f = stod(p.substr(c1 + 1, c2 - c1 - 1));
-                double secs = stod(p.substr(c2 + 1, c3 == string::npos ? string::npos : c3 - c2 - 1));
-                string instr = c3 == string::npos ? "" : p.substr(c3 + 1);
-                if (instr.size() > 4000) instr.resize(4000);
-                err = ai.investigate(vfo, std::isfinite(f) ? f : 0, std::isfinite(secs) ? secs : 10, instr);
-            } catch (const exception&) {
-                err = "bad number in AI_INVESTIGATE";
-            }
+            ai.set_readonly(v == "1");
+            if (!g_replaying_settings.load()) SettingsStore::record(string(message));   // not echoed: saved here
+            cout << "AI assistant: " << (v == "1" ? "read only" : "control allowed") << endl;
         }
-    } else if (message.starts_with("AI_CREATE:")) {
-        string p = rest(10);
-        size_t c = p.find(':');
-        string instr = c == string::npos ? "" : p.substr(c + 1);
-        if (instr.size() > 8000) instr.resize(8000);
-        err = ai.create(p.substr(0, c), instr);
+    } else if (message.starts_with("AI_MODEL:") || message.starts_with("AI_EFFORT:")) {
+        const bool model = message.starts_with("AI_MODEL:");
+        const string v = rest(model ? 9 : 10);
+        if (!(model ? ai.set_model(v) : ai.set_effort(v))) {
+            err = model ? "AI_MODEL: a model alias (sonnet, opus, haiku, fable) or a full model name"
+                        : "AI_EFFORT: low | medium | high | xhigh | max (or empty)";
+        } else if (!g_replaying_settings.load()) {
+            SettingsStore::record(string(message));   // not echoed: ai_state carries it
+        }
+    } else if (message.starts_with("AI_PAGE:")) {
+        ai.note_page(rest(8));
+        return;
+    } else if (message.starts_with("AI_PAGE_REPLY:")) {
+        ai_mcp::page_reply(rest(14));
+        return;
+    } else if (message == "AI_MAP_GET") {
+        broadcast(aimap::message());
+        return;
+    } else if (message.starts_with("AI_MAP_DELETE:")) {
+        string sum;
+        err = aimap::remove(rest(14), &sum);
+        if (err.empty()) {
+            broadcast(aimap::message());
+            cout << "AI map layer removed by a page: " << rest(14) << endl;
+        }
     } else if (message.starts_with("AI_ASK:")) {
-        string q = rest(7);
-        if (q.size() > 4000) q.resize(4000);
-        err = q.empty() ? "empty question" : ai.ask(q);
+        geo::Json j;
+        const string body = rest(7);
+        if (body.size() > 64 * 1024 || !geo::json_parse(body, &j) || j.type != geo::Json::OBJ) {
+            err = "format: AI_ASK:{\"text\":..,\"view\":{..},\"new\":false}";
+        } else {
+            // the page's view, re-serialised (so it is valid JSON whatever
+            // the page sent)
+            string view = "{}";
+            if (const geo::Json* v = j.get("view"); v && v->type == geo::Json::OBJ) view = ai_mcp::to_json(*v);
+            const geo::Json* nw = j.get("new");
+            err = ai.ask(j.str("text"), view, nw && nw->type == geo::Json::BOOL && nw->b, j.str("page"));
+        }
+    } else if (message == "AI_MARKS") {
+        broadcast(ai.marks_message());
+        return;
+    } else if (message.starts_with("AI_MARK_DELETE:")) {
+        err = ai.forget(rest(15));
     } else if (message == "PLUGINS_LIST") {
         broadcast(AiManager::plugins_message());
         return;
@@ -205,7 +248,7 @@ static void handle_ai_command(string_view message) {
         dig::PluginRegistry::instance().scan_async([] { broadcast(AiManager::plugins_message()); });
         return;
     } else if (message.starts_with("PLUGIN_AUTO:")) {
-        // not gated on the AI lab: it only chooses which decoders run
+        // not gated on the assistant: it only chooses which decoders run
         string p = rest(12);
         size_t c = p.rfind(':');
         string id = c == string::npos ? "" : p.substr(0, c), v = c == string::npos ? "" : p.substr(c + 1);
@@ -224,7 +267,7 @@ static void handle_ai_command(string_view message) {
         err = "unknown command";
     }
     if (!err.empty()) {
-        cout << "AI Signal Lab: " << cmd << " refused (" << err << ")" << endl;
+        cout << "AI assistant: " << cmd << " refused (" << err << ")" << endl;
         ai_error(cmd, err);
     }
 }
@@ -277,7 +320,7 @@ static bool is_query_command(string_view msg) {
            msg == "CONTINUOUS_SCANNER_STATUS" ||
            msg.starts_with("LOG_LIST") ||      // recordings listing query
            msg.starts_with("LOG_DELETE:") ||   // delete acks via its own list broadcast
-           msg.starts_with("AI_") ||           // AI Signal Lab: results come as ai_event / ai_state
+           msg.starts_with("AI_") ||           // AI assistant: results come as ai_event / ai_state
            msg.starts_with("PLUGIN") ||        // plugins: own broadcasts
            msg.starts_with("SF_") ||           // 📻 saved frequencies + map markers: {"savedfreq":...} broadcasts
            msg.starts_with("ARRAY_CAL") ||     // ✈ array calibration: {"array_cal":...} broadcasts
@@ -363,7 +406,7 @@ static void store_for_replay(string_view msg, size_t key_len) {
 // record hooks don't re-save commands mid-restore. The replay runs on the uWS
 // loop thread (see data_receiver.cpp), so no browser command can interleave
 // with it - one arriving meanwhile is dispatched, and saved, after it.
-static std::atomic<bool> g_replaying_settings{false};
+// (g_replaying_settings is defined above handle_ai_command, which uses it)
 
 // --- Decimator (VFO) setup persistence ---
 // The VFO set is dynamic (count, per-VFO tuning/bandwidth/demod/squelch, the
@@ -2151,7 +2194,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         dd->report().event("", "Log cleared", 0.0);
         broadcast(MessageBuilders::build_digital_message(id, true));
     }
-    // --- AI Signal Lab + decoder plugins (ai_manager.hpp). Errors go back
+    // --- AI assistant + decoder plugins (ai_manager.hpp). Errors go back
     // as {"ai_error":...} so the panel can show them ---
     else if (message.starts_with("AI_") || message.starts_with("PLUGIN")) {
         handle_ai_command(message);
@@ -2543,12 +2586,16 @@ void ControlHandler::handle_message_impl(string_view message) {
 }
 
 void ControlHandler::handle_websocket_message(string_view message) {
+    apply_command(message);
+}
+
+string ControlHandler::apply_command(string_view message) {
     // A malformed number in any command (stof/stoi throwing) must not
     // propagate into the uWS event loop, which would exit(1) the process.
     try {
         // Debug playback (playback.hpp): its own commands, and what can't run
         // while a test transmission plays (told to every page)
-        if (playback::handle_command(message)) return;
+        if (playback::handle_command(message)) return "";
         if (playback::active() && !playback::internal() && !g_replaying_settings.load()) {
             uint64_t f = 0;
             if (message.starts_with("FREQ:")) {
@@ -2558,7 +2605,7 @@ void ControlHandler::handle_websocket_message(string_view message) {
             if (const char* why = playback::refuse(message, f)) {
                 cout << "Rejected control message: '" << string(message.substr(0, 100)) << "' (" << why << ")" << endl;
                 broadcast("{\"playback\":{\"notice\":\"" + json_escape(why) + "\"}}");
-                return;
+                return why;
             }
         }
         // UI:<KEY>:<value> - browser display settings (waterfall colormap
@@ -2572,12 +2619,12 @@ void ControlHandler::handle_websocket_message(string_view message) {
             g_replaying_settings.store(true);
             for (const auto& cmd : defaults) handle_websocket_message(cmd);
             g_replaying_settings.store(false);
-            return;
+            return "";
         }
 
         if (message.starts_with("UI:")) {
             size_t value_sep = message.find(':', 3);
-            if (value_sep == string_view::npos) return;
+            if (value_sep == string_view::npos) return "malformed UI setting";
             // Only the display settings the page knows (the UI: entries of
             // the settings schema), with short values: every distinct key was
             // stored for replay, so a client inventing keys grew the store -
@@ -2589,7 +2636,7 @@ void ControlHandler::handle_websocket_message(string_view message) {
             store_for_replay(message, value_sep);
             if (!g_replaying_settings.load()) SettingsStore::record(message);
             broadcast(make_sync_cmd_json(message));
-            return;
+            return "";
         }
 
         g_applied_cmd.reset();
@@ -2614,10 +2661,13 @@ void ControlHandler::handle_websocket_message(string_view message) {
     } catch (const CommandRejected& e) {
         cout << "Rejected control message: '" << string(message.substr(0, 100))
              << "' (" << e.what() << ")" << endl;
+        return e.what();
     } catch (const exception& e) {
         cerr << "Ignoring malformed control message: '"
              << string(message.substr(0, 100)) << "' (" << e.what() << ")" << endl;
+        return string("malformed: ") + e.what();
     }
+    return "";
 }
 
 void ControlHandler::send_control_command(const string& cmd) {

@@ -1872,6 +1872,18 @@ std::string status_message() {
     return o.str();
 }
 
+std::string history_json(size_t max) {
+    State& s = S();
+    std::lock_guard<std::mutex> lk(s.st_mu);
+    std::string o = "[";
+    const size_t n = std::min(max, s.history.size());
+    for (size_t i = s.history.size() - n; i < s.history.size(); i++) {
+        o += transcript_json(s.history[i], false);
+        if (i + 1 < s.history.size()) o += ",";
+    }
+    return o + "]";
+}
+
 std::string history_message(size_t max) {
     State& s = S();
     std::lock_guard<std::mutex> lk(s.st_mu);

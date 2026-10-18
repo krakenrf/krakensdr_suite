@@ -225,7 +225,7 @@ add_custom_target(install-uws
 # plugins/SDK.md): separate executables built by their own Makefile, in the
 # source tree where kraken_doa (run from this directory) finds them
 add_custom_target(plugins ALL
-    COMMAND make -C ${CMAKE_CURRENT_SOURCE_DIR}/plugins
+    COMMAND make -C ${CMAKE_CURRENT_SOURCE_DIR}/plugins -f Makefile
     COMMENT "Building decoder plugins"
 )
 add_dependencies(plugins liquid_build)

@@ -1,4 +1,9 @@
 #include "ai_manager.hpp"
+#include "ai_map.hpp"
+#include "ai_mcp.hpp"
+#include "ai_sandbox.hpp"
+#include "geo_address.hpp"   // geo::json_parse
+#include "settings_store.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -26,6 +31,7 @@
 #include "globals.hpp"
 #include "networking/websocket_server.hpp"
 #include "utils/json_escape.hpp"
+#include "utils/parse_num.hpp"
 #include "utils/spawn_fds.hpp"
 
 extern char** environ;
@@ -34,7 +40,9 @@ namespace {
 
 constexpr const char* BRIDGE = "ai/kraken_ai.py";
 constexpr const char* SESSIONS = "ai/sessions";
-constexpr size_t LOG_MAX = 300;
+constexpr size_t LOG_MAX = 400;
+constexpr const char* MARKS = "ai/identifications.json";
+constexpr size_t MARKS_MAX = 1000;
 
 int64_t wall_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -210,9 +218,59 @@ bool AiManager::enabled() const {
     return config_value("enabled", v) && v == "true";
 }
 
+
+namespace {
+
+std::string fmt_num(double v, int decimals) {
+    if (!is_finite_value(v)) return "null";
+    char b[48];
+    snprintf(b, sizeof b, "%.*f", decimals, v);
+    return b;
+}
+
+std::string lower(std::string s) {
+    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+// text from a tool / page: valid UTF-8 cut to max bytes, control characters
+// (but \n) dropped
+std::string clean_text(const std::string& in, size_t max) {
+    std::string out;
+    for (size_t i = 0; i < in.size() && out.size() < max;) {
+        unsigned char c = static_cast<unsigned char>(in[i]);
+        size_t n = c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : (c >> 3) == 30 ? 4 : 0;
+        if (n == 0 || i + n > in.size()) { i++; continue; }
+        bool ok = true;
+        for (size_t k = 1; k < n; k++)
+            if ((static_cast<unsigned char>(in[i + k]) & 0xC0) != 0x80) ok = false;
+        if (!ok) { i++; continue; }
+        if (out.size() + n > max) break;
+        if (n == 1 && (c < 0x20 || c == 0x7F) && c != '\n') { if (c == '\t') out += ' '; i++; continue; }
+        out.append(in, i, n);
+        i += n;
+    }
+    return out;
+}
+
+std::string random_hex(size_t bytes) {
+    std::string out;
+    std::ifstream f("/dev/urandom", std::ios::binary);
+    static const char* hx = "0123456789abcdef";
+    for (size_t i = 0; i < bytes; i++) {
+        unsigned char c = static_cast<unsigned char>(f.get());
+        out += hx[c >> 4];
+        out += hx[c & 15];
+    }
+    return out;
+}
+
+}  // namespace
+
 void AiManager::init() {
+    mkdir("ai", 0755);
     mkdir(SESSIONS, 0755);
-    // newest session (names start with a timestamp)
+    // newest conversation (names start with a timestamp)
     std::string newest;
     if (DIR* d = opendir(SESSIONS)) {
         while (dirent* e = readdir(d)) {
@@ -224,6 +282,13 @@ void AiManager::init() {
         closedir(d);
     }
     if (!newest.empty()) load_session(newest);
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        fresh_ = true;   // a restart starts a new conversation (the last one is in the history)
+    }
+    load_marks();
+    aimap::load();
+    aisandbox::recover();
     probe_async();
 }
 
@@ -232,16 +297,11 @@ void AiManager::load_session(const std::string& id) {
     std::string v;
     std::lock_guard<std::mutex> lk(mu_);
     session_ = id;
-    analysis_ = signal_name_ = suggested_id_ = plugin_id_ = session_state_ = "";
-    session_freq_ = 0;
-    session_vfo_ = -1;
-    if (json_find(j, "analysis", v)) analysis_ = v;
-    if (json_find(j, "signal_name", v)) signal_name_ = v;
-    if (json_find(j, "suggested_plugin_id", v)) suggested_id_ = v;
-    if (json_find(j, "plugin_id", v)) plugin_id_ = v;
+    title_ = session_state_ = "";
+    if (json_find(j, "title", v)) title_ = v;
+    else if (json_find(j, "signal_name", v)) title_ = v;   // an AI Signal Lab investigation
     if (json_find(j, "state", v)) session_state_ = v;
-    if (json_find(j, "freq_hz", v)) session_freq_ = atof(v.c_str());
-    if (json_find(j, "vfo", v)) session_vfo_ = atoi(v.c_str());
+    fresh_ = false;
 }
 
 bool AiManager::valid_session_id(const std::string& id) {
@@ -261,12 +321,15 @@ void AiManager::sessions_async() {
                 if (!valid_session_id(id)) continue;
                 std::string j = read_file(std::string(SESSIONS) + "/" + id + "/session.json", 1 << 20);
                 if (j.empty()) continue;
-                std::string v, freq = "0", vfo = "-1";
+                std::string v, title, freq = "0";
                 std::ostringstream o;
+                if (json_find(j, "title", v)) title = v;
+                // an AI Signal Lab investigation: its frequency + signal name
                 if (json_find(j, "freq_hz", v)) freq = std::to_string(static_cast<long long>(atof(v.c_str())));
-                if (json_find(j, "vfo", v) && !v.empty() && v != "null") vfo = std::to_string(atoi(v.c_str()));
-                o << "{\"id\":\"" << json_escape(id) << "\",\"freq_hz\":" << freq << ",\"vfo\":" << vfo;
-                for (const char* k : {"signal_name", "created", "state", "plugin_id", "suggested_plugin_id"}) {
+                if (title.empty() && json_find(j, "signal_name", v) && !v.empty()) title = v;
+                if (title.empty() && freq != "0") title = fmt_num(atof(freq.c_str()) / 1e6, 5) + " MHz";
+                o << "{\"id\":\"" << json_escape(id) << "\",\"title\":\"" << json_escape(title) << "\",\"freq_hz\":" << freq;
+                for (const char* k : {"created", "state", "updated"}) {
                     v.clear();
                     json_find(j, k, v);
                     o << ",\"" << k << "\":\"" << json_escape(v) << "\"";
@@ -291,36 +354,36 @@ void AiManager::session_async(const std::string& id) {
         std::string j = read_file(dir + "/session.json", 4 << 20);
         if (j.empty()) {
             WebSocketServer::broadcast_json_message("{\"ai_session\":{\"id\":\"" + json_escape(id) +
-                                                    "\",\"error\":\"no such session\"}}");
+                                                    "\",\"error\":\"no such conversation\"}}");
             return;
         }
-        std::string v, freq = "0";
-        if (json_find(j, "freq_hz", v)) freq = std::to_string(static_cast<long long>(atof(v.c_str())));
+        std::string v, title;
+        if (json_find(j, "title", v)) title = v;
+        else if (json_find(j, "signal_name", v)) title = v;
         std::ostringstream o;
-        o << "{\"ai_session\":{\"id\":\"" << json_escape(id) << "\",\"freq_hz\":" << freq;
-        for (const char* k : {"signal_name", "created", "state", "plugin_id", "suggested_plugin_id"}) {
+        o << "{\"ai_session\":{\"id\":\"" << json_escape(id) << "\",\"title\":\"" << json_escape(title) << "\"";
+        for (const char* k : {"created", "state"}) {
             v.clear();
             json_find(j, k, v);
             o << ",\"" << k << "\":\"" << json_escape(v) << "\"";
         }
         // the conversation: chat.json (written by the bridge - checked, the
-        // agent can edit files in its session folder); older sessions only
-        // have the analysis
+        // agent can edit files in its folder); an old AI Signal Lab session
+        // without one: its analysis
         std::string chat = read_file(dir + "/chat.json", 4 << 20);
         size_t p = chat.find_first_not_of(" \t\r\n");
         if (p == std::string::npos || chat[p] != '[' || !json_valid(chat)) {
-            std::string analysis;
+            std::string analysis, freq = "0";
             json_find(j, "analysis", analysis);
-            char mhz[32];
-            snprintf(mhz, sizeof mhz, "%.5f", atof(freq.c_str()) / 1e6);
+            if (json_find(j, "freq_hz", v)) freq = v;
             chat = "[{\"role\":\"user\",\"kind\":\"investigate\",\"text\":\"Investigate the signal at " +
-                   std::string(mhz) + " MHz\"}";
+                   fmt_num(atof(freq.c_str()) / 1e6, 5) + " MHz\"}";
             if (!analysis.empty())
                 chat += ",{\"role\":\"assistant\",\"kind\":\"investigate\",\"text\":\"" + json_escape(analysis) + "\"}";
             chat += "]";
         }
         o << ",\"chat\":" << chat;
-        // the agent's steps: the last 400 lines of activity.jsonl
+        // the agent's steps: the last 600 lines of activity.jsonl
         std::string act = read_file(dir + "/activity.jsonl", 8 << 20);
         std::vector<std::string> lines;
         std::stringstream ss(act);
@@ -329,7 +392,7 @@ void AiManager::session_async(const std::string& id) {
             if (line.empty() || line[0] != '{' || line.size() > 20000) continue;
             lines.push_back(line);
         }
-        size_t from = lines.size() > 400 ? lines.size() - 400 : 0;
+        size_t from = lines.size() > 600 ? lines.size() - 600 : 0;
         o << ",\"activity\":[";
         bool first = true;
         for (size_t i = from; i < lines.size(); i++) {
@@ -343,19 +406,32 @@ void AiManager::session_async(const std::string& id) {
 }
 
 std::string AiManager::select_session(const std::string& id) {
-    if (!valid_session_id(id)) return "bad session id";
-    if (access((std::string(SESSIONS) + "/" + id + "/session.json").c_str(), R_OK) != 0) return "no such session";
-    if (busy_.load()) return "the AI Signal Lab is busy - stop the running job first";
+    if (!valid_session_id(id)) return "bad conversation id";
+    if (access((std::string(SESSIONS) + "/" + id + "/session.json").c_str(), R_OK) != 0) return "no such conversation";
+    if (busy_.load()) return "the assistant is answering - stop it first";
     load_session(id);
     WebSocketServer::broadcast_json_message(state_json(false));
     return "";
 }
 
-std::string AiManager::delete_session(const std::string& id) {
-    if (!valid_session_id(id)) return "bad session id";
+void AiManager::new_conversation() {
     {
         std::lock_guard<std::mutex> lk(mu_);
-        if (busy_.load() && id == session_) return "the AI is working on that session - stop it first";
+        if (busy_.load()) return;
+        fresh_ = true;
+        session_.clear();
+        title_.clear();
+        session_state_.clear();
+        log_.clear();
+    }
+    WebSocketServer::broadcast_json_message(state_json(true));
+}
+
+std::string AiManager::delete_session(const std::string& id) {
+    if (!valid_session_id(id)) return "bad conversation id";
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (busy_.load() && id == session_) return "the assistant is answering in that conversation - stop it first";
     }
     std::thread([this, id] {
         std::string out;
@@ -367,12 +443,11 @@ std::string AiManager::delete_session(const std::string& id) {
             current = id == session_;
             if (current) {
                 session_.clear();
-                analysis_ = signal_name_ = suggested_id_ = plugin_id_ = session_state_ = "";
-                session_freq_ = 0;
-                session_vfo_ = -1;
+                title_ = session_state_ = "";
+                fresh_ = true;
             }
         }
-        std::cout << "AI Signal Lab: deleted session " << id << std::endl;
+        std::cout << "AI assistant: deleted conversation " << id << std::endl;
         sessions_async();
         if (current) WebSocketServer::broadcast_json_message(state_json(false));
     }).detach();
@@ -381,7 +456,7 @@ std::string AiManager::delete_session(const std::string& id) {
 
 std::string AiManager::start_job(const std::string& kind, const std::vector<std::string>& argv,
                                  const std::string& label) {
-    if (busy_.load()) return "the AI Signal Lab is busy - stop the running job first";
+    if (busy_.load()) return "the assistant is busy - stop the running answer first";
     if (thread_.joinable()) thread_.join();   // previous job's reader (already done)
     signal(SIGPIPE, SIG_IGN);
     int p[2];
@@ -399,8 +474,18 @@ std::string AiManager::start_job(const std::string& kind, const std::vector<std:
     std::vector<char*> av;
     for (const auto& s : argv) av.push_back(const_cast<char*>(s.c_str()));
     av.push_back(nullptr);
+    // the environment + where the MCP server is (the bridge writes the
+    // agent's --mcp-config from these; never on a command line)
+    std::vector<std::string> env;
+    for (char** e = environ; e && *e; e++)
+        if (strncmp(*e, "KRAKEN_MCP_", 11) != 0) env.emplace_back(*e);
+    env.push_back("KRAKEN_MCP_URL=" + ai_mcp::url());
+    env.push_back("KRAKEN_MCP_TOKEN=" + ai_mcp::token());
+    std::vector<char*> ev;
+    for (auto& s : env) ev.push_back(s.data());
+    ev.push_back(nullptr);
     pid_t pid = -1;
-    int rc = posix_spawnp(&pid, av[0], &fa, &at, av.data(), environ);
+    int rc = posix_spawnp(&pid, av[0], &fa, &at, av.data(), ev.data());
     posix_spawn_file_actions_destroy(&fa);
     posix_spawnattr_destroy(&at);
     close(p[1]);
@@ -414,10 +499,10 @@ std::string AiManager::start_job(const std::string& kind, const std::vector<std:
         job_kind_ = kind;
         job_label_ = label;
         job_started_ms_ = wall_ms();
-        log_.clear();
     }
     busy_ = true;
-    std::cout << "AI Signal Lab: started " << kind << " (" << label << ")" << std::endl;
+    if (kind == "chat") aisandbox::turn_started(wall_ms());
+    std::cout << "AI assistant: started " << kind << " (" << label << ")" << std::endl;
     on_line(kind, "{\"ev\":\"start\",\"label\":\"" + json_escape(label) + "\"}");
     WebSocketServer::broadcast_json_message(state_json(false));
     thread_ = std::thread([this, fd = p[0], pid, kind] { reader(fd, pid, kind); });
@@ -451,8 +536,8 @@ void AiManager::on_line(const std::string& kind, const std::string& raw) {
     std::string line = raw;
     while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
     std::string ev;
-    // the bridge's own JSON events pass through; anything else (make output,
-    // a Python traceback) becomes a text event
+    // the bridge's own JSON events pass through; anything else (a Python
+    // traceback) becomes a text event
     if (line.size() >= 2 && line.front() == '{' && line.back() == '}' && json_find(line, "ev", ev) && json_valid(line)) {
         // keep it
     } else {
@@ -466,24 +551,21 @@ void AiManager::on_line(const std::string& kind, const std::string& raw) {
         if (ev == "done") {
             std::string v;
             last_result_ = line;
-            std::string k;
-            json_find(line, "kind", k);
-            bool ok = json_find(line, "ok", v) && v == "true";
-            if (k == "investigate") {
-                if (json_find(line, "analysis", v)) analysis_ = v;
-                if (json_find(line, "signal_name", v)) signal_name_ = v;
-                if (json_find(line, "plugin_id", v)) suggested_id_ = v;
-                session_state_ = ok ? "investigated" : "failed";
-            } else if (k == "create") {
-                if (json_find(line, "plugin_id", v)) plugin_id_ = v;
-                session_state_ = ok ? "plugin ready" : "plugin failed";
-            }
+            if (json_find(line, "title", v) && !v.empty()) title_ = v;
+            session_state_ = json_find(line, "ok", v) && v == "true" ? "answered" : "failed";
+        } else if (ev == "session") {
+            std::string v;
+            if (json_find(line, "title", v) && !v.empty()) title_ = v;
         }
         seq_++;
         msg = "{\"seq\":" + std::to_string(seq_) + ",\"kind\":\"" + json_escape(kind) + "\",\"t\":" +
               std::to_string(wall_ms()) + ",\"e\":" + line + "}";
-        log_.push_back(msg);
-        while (log_.size() > LOG_MAX) log_.pop_front();
+        // streamed text pieces aren't kept for pages opened later (the
+        // complete text follows as one "text" event)
+        if (ev != "delta") {
+            log_.push_back(msg);
+            while (log_.size() > LOG_MAX) log_.pop_front();
+        }
     }
     WebSocketServer::broadcast_json_message("{\"ai_event\":" + msg + "}");
 }
@@ -491,23 +573,27 @@ void AiManager::on_line(const std::string& kind, const std::string& raw) {
 void AiManager::finished(const std::string& kind, int st) {
     int code = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + (WIFSIGNALED(st) ? WTERMSIG(st) : 0);
     on_line(kind, "{\"ev\":\"exit\",\"code\":" + std::to_string(code) + "}");
+    std::string sid, result;
     {
         std::lock_guard<std::mutex> lk(mu_);
         pid_ = -1;
+        sid = session_;
+        result = last_result_;
+        view_ = "{}";
+        running_dir_.clear();
     }
+    if (kind == "chat") aisandbox::turn_finished();
     busy_ = false;
-    std::cout << "AI Signal Lab: " << kind << " finished (" << code << ")" << std::endl;
-    if (kind == "create") {
+    std::cout << "AI assistant: " << kind << " finished (" << code << ")" << std::endl;
+    // a turn that touched plugin folders (the bridge lists them): the plugin
+    // list again - running decoders restart on a rebuilt executable
+    std::string touched;
+    if (json_find(result, "plugins", touched) && touched.size() > 2) {
         dig::PluginRegistry::instance().scan();   // this reader thread, not the uWS loop
         WebSocketServer::broadcast_json_message(plugins_message());
     }
-    if (kind == "investigate" || kind == "create" || kind == "ask") {
+    if (kind == "chat") {
         sessions_async();
-        std::string sid;
-        {
-            std::lock_guard<std::mutex> lk(mu_);
-            sid = session_;
-        }
         if (!sid.empty()) session_async(sid);   // the updated conversation
     }
     WebSocketServer::broadcast_json_message(state_json(false));
@@ -528,113 +614,126 @@ void AiManager::cancel() {
     }).detach();
 }
 
-std::string AiManager::investigate(int vfo_id, double freq_hz, double seconds, const std::string& instructions) {
-    if (!enabled()) return "the AI Signal Lab is not enabled on this receiver (run: python3 ai/kraken_ai.py setup)";
-    auto list = decimator_manager.getDecimatorInfoList();
-    const DecimatorManager::DecimatorInfo* vfo = nullptr;
-    for (const auto& d : list)
-        if (d.id == vfo_id) vfo = &d;
-    if (!vfo) return "no such VFO";
-    // Wideband / independent mode: the VFO's offset is relative to its own
-    // tuner (sigtool capture records the tuner whose band holds the signal)
-    int tuner = 0;
-    if (multi_tuner_mode())
-        if (auto inst = decimator_manager.getDecimator(vfo_id)) tuner = inst->tuner_channel.load();
-    const double center = multi_tuner_mode() ? static_cast<double>(exact_tuner_hz(tuner))
-                                             : ChannelManager::get_frequency(0);
-    const double vfo_freq = center + vfo->frequency_offset_hz;
-    if (freq_hz <= 0) freq_hz = vfo_freq;
-    if (std::fabs(freq_hz - center) > SAMPLE_RATE / 2 - 5000)
-        return "the frequency is outside the receiver's current span - tune the receiver there first";
-    seconds = std::clamp(seconds, 2.0, 60.0);
-    double rate = std::clamp(vfo->bandwidth_mhz * 1e6, 12500.0, 600000.0);
-
-    // receiver context for the agent
-    std::ostringstream ctx;
-    ctx << "{\"vfo_id\":" << vfo->id << ",\"vfo_freq_hz\":" << static_cast<long long>(vfo_freq)
-        << ",\"vfo_offset_hz\":" << vfo->frequency_offset_hz << ",\"vfo_rate_hz\":" << rate
-        << ",\"demod\":\"" << DecimatorManager::demodModeToString(vfo->demod_mode) << "\""
-        << ",\"center_freq_hz\":" << static_cast<long long>(center)
-        << ",\"operating_mode\":\"" << (wideband_mode_enabled.load() ? "wideband" : independent_mode_enabled.load() ? "independent" : "coherent") << "\""
-        << ",\"tuner\":" << tuner
-        << ",\"num_elements\":" << active_num_elements.load()
-        << ",\"squelch_db\":" << vfo->squelch_level;
-    if (auto inst = decimator_manager.getDecimator(vfo_id)) {
-        if (auto dd = inst->getDigital(); dd && dd->mode() != dig::Mode::OFF) ctx << ",\"digital\":" << dd->status_json(0, 0);
+std::string AiManager::ask(const std::string& text_in, const std::string& view_json, bool new_conv, const std::string& page) {
+    if (!enabled()) return "the AI assistant is not enabled on this receiver (run on the Pi: python3 ai/kraken_ai.py setup)";
+    if (busy_.load()) return "the assistant is answering - wait or press Stop";
+    const std::string text = clean_text(text_in, 8000);
+    if (text.find_first_not_of(" \n") == std::string::npos) return "empty question";
+    std::string view = view_json;
+    {
+        size_t p = view.find_first_not_of(" \t\r\n");
+        if (view.size() > 16384 || p == std::string::npos || view[p] != '{' || !json_valid(view)) view = "{}";
     }
-    ctx << ",\"plugins\":" << dig::PluginRegistry::instance().list_json() << "}";
-
-    char stamp[32];
-    time_t t = time(nullptr);
-    strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", localtime(&t));
-    std::string sid = std::string(stamp) + "-" + std::to_string(static_cast<long long>(freq_hz / 1000)) + "kHz";
-    std::string sdir = std::string(SESSIONS) + "/" + sid;
+    std::string sid;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (new_conv) fresh_ = true;
+        if (fresh_ || session_.empty() || !valid_session_id(session_)) {
+            char stamp[32];
+            time_t t = time(nullptr);
+            strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", localtime(&t));
+            sid = stamp;
+            for (int k = 2; access((std::string(SESSIONS) + "/" + sid).c_str(), F_OK) == 0 && k < 100; k++)
+                sid = std::string(stamp) + "-" + std::to_string(k);
+            session_ = sid;
+            title_.clear();
+            log_.clear();
+            fresh_ = false;
+        } else {
+            sid = session_;
+        }
+        session_state_ = "answering";
+        view_ = view;
+        asker_page_ = valid_page_id(page) ? page : std::string();
+        if (!asker_page_.empty()) last_page_ = asker_page_;
+        running_dir_ = std::string(SESSIONS) + "/" + sid;
+    }
     mkdir(SESSIONS, 0755);
-    char fbuf[64], rbuf[32], sbuf[32];
-    snprintf(fbuf, sizeof fbuf, "%.0f", freq_hz);
-    snprintf(rbuf, sizeof rbuf, "%.0f", rate);
-    snprintf(sbuf, sizeof sbuf, "%.0f", seconds);
-    std::vector<std::string> argv{"python3", BRIDGE, "investigate", "--session", sdir, "--freq", fbuf, "--rate", rbuf,
-                                  "--seconds", sbuf, "--context-json", ctx.str()};
-    if (!instructions.empty()) {
-        argv.push_back("--instructions");
-        argv.push_back(instructions);
-    }
+    mkdir((std::string(SESSIONS) + "/" + sid).c_str(), 0755);
+    // what is on screen, for the agent's first look (the same as its
+    // get_screen tool)
+    const std::string ctx = ai_mcp::screen_json(view);
+    std::vector<std::string> argv{"python3", BRIDGE, "chat", "--session", std::string(SESSIONS) + "/" + sid,
+                                  "--text", text, "--context-json", ctx};
     {
         std::lock_guard<std::mutex> lk(mu_);
-        if (busy_.load()) return "the AI Signal Lab is busy - stop the running job first";
-        session_ = sid;
-        session_freq_ = freq_hz;
-        session_vfo_ = vfo_id;
-        analysis_.clear();
-        signal_name_.clear();
-        suggested_id_.clear();
-        plugin_id_.clear();
-        session_state_ = "investigating";
+        if (!model_.empty()) argv.insert(argv.end(), {"--model", model_});
+        if (!effort_.empty()) argv.insert(argv.end(), {"--effort", effort_});
     }
-    char label[96];
-    snprintf(label, sizeof label, "investigating %.5f MHz (VFO %d)", freq_hz / 1e6, vfo_id);
-    return start_job("investigate", argv, label);
-}
-
-std::string AiManager::create(const std::string& plugin_id, const std::string& instructions) {
-    if (!enabled()) return "the AI Signal Lab is not enabled on this receiver";
-    if (!dig::PluginRegistry::valid_id(plugin_id)) return "plugin id: 1-32 characters a-z 0-9 _ - (not \"sdk\")";
-    std::string sid;
-    {
+    std::string label = text.substr(0, 80);
+    std::string err = start_job("chat", argv, label);
+    if (!err.empty()) {
         std::lock_guard<std::mutex> lk(mu_);
-        sid = session_;
-        if (sid.empty() || analysis_.empty()) return "investigate a signal first";
+        session_state_ = "failed";
+        view_ = "{}";
+        running_dir_.clear();
     }
-    std::vector<std::string> argv{"python3", BRIDGE, "create", "--session", std::string(SESSIONS) + "/" + sid,
-                                  "--plugin", plugin_id};
-    if (!instructions.empty()) {
-        argv.push_back("--instructions");
-        argv.push_back(instructions);
-    }
-    {
-        std::lock_guard<std::mutex> lk(mu_);
-        plugin_id_ = plugin_id;
-        session_state_ = "creating";
-    }
-    return start_job("create", argv, "creating decoder plugin " + plugin_id);
-}
-
-std::string AiManager::ask(const std::string& question) {
-    if (!enabled()) return "the AI Signal Lab is not enabled on this receiver";
-    std::string sid;
-    {
-        std::lock_guard<std::mutex> lk(mu_);
-        sid = session_;
-    }
-    if (sid.empty()) return "investigate a signal first";
-    return start_job("ask", {"python3", BRIDGE, "ask", "--session", std::string(SESSIONS) + "/" + sid, "--text", question},
-                     "follow-up question");
+    return err;
 }
 
 std::string AiManager::test() {
-    if (!enabled()) return "the AI Signal Lab is not enabled on this receiver (run: python3 ai/kraken_ai.py setup)";
+    if (!enabled()) return "the AI assistant is not enabled on this receiver (run on the Pi: python3 ai/kraken_ai.py setup)";
     return start_job("test", {"python3", BRIDGE, "test"}, "testing the LLM connection");
+}
+
+void AiManager::set_readonly(bool on) {
+    readonly_ = on;
+    WebSocketServer::broadcast_json_message(state_json(false));
+}
+
+// a Claude model alias or full name ("sonnet", "claude-opus-5-5", "...[1m]")
+bool AiManager::valid_model(const std::string& m) {
+    if (m.empty()) return true;
+    if (m.size() > 64 || !std::isalnum(static_cast<unsigned char>(m[0]))) return false;
+    for (char c : m)
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '.' || c == '_' || c == '[' || c == ']')) return false;
+    return true;
+}
+bool AiManager::valid_effort(const std::string& e) {
+    return e.empty() || e == "low" || e == "medium" || e == "high" || e == "xhigh" || e == "max";
+}
+bool AiManager::set_model(const std::string& m) {
+    if (!valid_model(m)) return false;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        model_ = m;
+    }
+    WebSocketServer::broadcast_json_message(state_json(false));
+    return true;
+}
+bool AiManager::set_effort(const std::string& e) {
+    if (!valid_effort(e)) return false;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        effort_ = e;
+    }
+    WebSocketServer::broadcast_json_message(state_json(false));
+    return true;
+}
+bool AiManager::valid_page_id(const std::string& id) {
+    if (id.size() < 8 || id.size() > 32) return false;
+    for (char c : id)
+        if (!std::isalnum(static_cast<unsigned char>(c))) return false;
+    return true;
+}
+void AiManager::note_page(const std::string& id) {
+    if (!valid_page_id(id)) return;
+    std::lock_guard<std::mutex> lk(mu_);
+    last_page_ = id;
+}
+std::string AiManager::target_page() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return busy_.load() && !asker_page_.empty() ? asker_page_ : last_page_;
+}
+
+std::string AiManager::view_json() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return view_.empty() ? "{}" : view_;
+}
+
+std::string AiManager::conversation_dir() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return busy_.load() ? running_dir_ : std::string();
 }
 
 std::string AiManager::plugins_message() {
@@ -654,20 +753,31 @@ std::string AiManager::state_json(bool with_log) const {
         probe_ms = g_probe_ms;
     }
     if (wall_ms() - probe_ms > 300000) probe_async();   // installed / logged in meanwhile?
-    std::string cli, version;
+    std::string cli, version, sandbox, sandbox_why, d_model, d_name, d_from, d_effort, d_info;
     json_find(probe, "cli", cli);
     json_find(probe, "version", version);
+    json_find(probe, "sandbox", sandbox);
+    json_find(probe, "sandbox_why", sandbox_why);
+    // what "Default" in the dock's model / effort lists runs (kraken_ai.py cli_defaults)
+    json_find(probe, "default_model", d_model);
+    json_find(probe, "default_model_name", d_name);
+    json_find(probe, "default_model_from", d_from);
+    json_find(probe, "effort_fixed", d_effort);
+    json_find(probe, "model_info", d_info);
     std::ostringstream o;
     std::lock_guard<std::mutex> lk(mu_);
     o << "{\"ai_state\":{\"enabled\":" << (enabled() ? "true" : "false") << ",\"backend\":\"" << json_escape(backend)
-      << "\",\"model\":\"" << json_escape(model) << "\",\"cli\":\"" << json_escape(cli) << "\",\"version\":\""
-      << json_escape(version) << "\",\"token\":" << (WebSocketServer::auth_enabled() ? "true" : "false")
-      << ",\"busy\":" << (busy_.load() ? "true" : "false") << ",\"job\":{\"kind\":\"" << json_escape(job_kind_)
-      << "\",\"label\":\"" << json_escape(job_label_) << "\",\"started\":" << job_started_ms_ << "}"
-      << ",\"session\":{\"id\":\"" << json_escape(session_) << "\",\"freq_hz\":" << static_cast<long long>(session_freq_)
-      << ",\"vfo\":" << session_vfo_ << ",\"state\":\"" << json_escape(session_state_) << "\",\"signal_name\":\""
-      << json_escape(signal_name_) << "\",\"suggested_plugin_id\":\"" << json_escape(suggested_id_)
-      << "\",\"plugin_id\":\"" << json_escape(plugin_id_) << "\",\"analysis\":\"" << json_escape(analysis_) << "\"}"
+      << "\",\"model\":\"" << json_escape(model) << "\",\"model_sel\":\"" << json_escape(model_) << "\",\"effort\":\""
+      << json_escape(effort_) << "\",\"defaults\":{\"model\":\"" << json_escape(d_model) << "\",\"name\":\""
+      << json_escape(d_name) << "\",\"from\":\"" << json_escape(d_from) << "\",\"effort\":\"" << json_escape(d_effort)
+      << "\",\"info\":\"" << json_escape(d_info) << "\"},\"cli\":\"" << json_escape(cli) << "\",\"version\":\""
+      << json_escape(version) << "\",\"sandbox\":" << (sandbox == "true" ? "true" : "false") << ",\"sandbox_why\":\""
+      << json_escape(sandbox_why) << "\",\"token\":" << (WebSocketServer::auth_enabled() ? "true" : "false")
+      << ",\"busy\":" << (busy_.load() ? "true" : "false") << ",\"readonly\":" << (readonly_.load() ? "true" : "false")
+      << ",\"job\":{\"kind\":\"" << json_escape(job_kind_) << "\",\"label\":\"" << json_escape(job_label_)
+      << "\",\"started\":" << job_started_ms_ << "}"
+      << ",\"session\":{\"id\":\"" << json_escape(fresh_ ? std::string() : session_) << "\",\"title\":\""
+      << json_escape(fresh_ ? std::string() : title_) << "\",\"state\":\"" << json_escape(session_state_) << "\"}"
       << ",\"seq\":" << seq_;
     if (with_log) {
         o << ",\"log\":[";
@@ -680,4 +790,133 @@ std::string AiManager::state_json(bool with_log) const {
     }
     o << "}}";
     return o.str();
+}
+
+// --- identifications (ai/identifications.json) ---
+
+std::string AiManager::mark_json(const Mark& m) {
+    std::ostringstream o;
+    o << "{\"id\":\"" << json_escape(m.id) << "\",\"hz\":" << fmt_num(m.hz, 0) << ",\"bw\":" << fmt_num(m.bw, 0)
+      << ",\"name\":\"" << json_escape(m.name) << "\",\"summary\":\"" << json_escape(m.summary) << "\",\"conv\":\""
+      << json_escape(m.conv) << "\",\"t\":" << m.t << ",\"brg\":" << (m.brg >= 0 ? fmt_num(m.brg, 1) : "null")
+      << ",\"conf\":\"" << json_escape(m.conf) << "\"}";
+    return o.str();
+}
+
+void AiManager::load_marks() {
+    geo::Json j;
+    std::string text = read_file(MARKS, 8 << 20);
+    std::vector<Mark> out;
+    if (!text.empty() && geo::json_parse(text, &j) && j.type == geo::Json::OBJ) {
+        if (const geo::Json* a = j.get("marks"); a && a->type == geo::Json::ARR) {
+            for (const auto& e : a->a) {
+                if (e.type != geo::Json::OBJ) continue;
+                Mark m;
+                m.id = e.str("id");
+                m.name = clean_text(e.str("name"), 80);
+                m.summary = clean_text(e.str("summary"), 2000);
+                m.conv = e.str("conv");
+                m.conf = e.str("conf");
+                if (const auto* x = e.get("hz"); x && x->type == geo::Json::NUM) m.hz = x->n;
+                if (const auto* x = e.get("bw"); x && x->type == geo::Json::NUM) m.bw = x->n;
+                if (const auto* x = e.get("brg"); x && x->type == geo::Json::NUM) m.brg = x->n;
+                if (const auto* x = e.get("t"); x && x->type == geo::Json::NUM) m.t = static_cast<int64_t>(x->n);
+                if (m.id.empty() || m.name.empty() || !(m.hz > 0)) continue;   // a damaged entry
+                out.push_back(m);
+            }
+        }
+    }
+    std::lock_guard<std::mutex> lk(mu_);
+    marks_ = std::move(out);
+}
+
+void AiManager::save_marks_locked() const {
+    std::string s = "{\"version\":1,\"marks\":[\n";
+    for (size_t i = 0; i < marks_.size(); i++) s += (i ? ",\n" : "") + mark_json(marks_[i]);
+    s += "\n]}\n";
+    const std::string tmp = std::string(MARKS) + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) return;
+        f << s;
+        if (!f) return;
+    }
+    rename(tmp.c_str(), MARKS);
+}
+
+std::string AiManager::remember(double hz, double bw_hz, const std::string& name_in, const std::string& summary_in,
+                                double bearing_deg, const std::string& confidence, std::string* id_out) {
+    if (!(hz >= 1e3 && hz <= 1e11)) return "frequency out of range";
+    const std::string name = clean_text(name_in, 80), summary = clean_text(summary_in, 2000);
+    if (name.find_first_not_of(" \n") == std::string::npos) return "a name is needed";
+    std::string conf = lower(confidence);
+    if (conf != "low" && conf != "medium" && conf != "high") conf = "";
+    std::string msg;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        Mark m;
+        m.hz = std::round(hz);
+        m.bw = is_finite_value(bw_hz) && bw_hz > 0 ? std::min(bw_hz, 1e8) : 0;
+        m.brg = is_finite_value(bearing_deg) && bearing_deg >= 0 ? std::fmod(bearing_deg, 360.0) : -1;
+        m.name = name;
+        m.summary = summary;
+        m.conf = conf;
+        m.conv = busy_.load() ? session_ : std::string();
+        m.t = wall_ms();
+        // the same signal again (same name, within its half bandwidth / 2
+        // kHz): updated in place
+        const double tol = std::max(2000.0, m.bw / 2);
+        auto it = std::find_if(marks_.begin(), marks_.end(), [&](const Mark& x) {
+            return lower(x.name) == lower(name) && std::fabs(x.hz - m.hz) <= tol;
+        });
+        if (it != marks_.end()) {
+            m.id = it->id;
+            marks_.erase(it);
+        } else {
+            m.id = random_hex(4);
+        }
+        marks_.push_back(m);
+        while (marks_.size() > MARKS_MAX) marks_.erase(marks_.begin());
+        save_marks_locked();
+        if (id_out) *id_out = m.id;
+    }
+    WebSocketServer::broadcast_json_message(marks_message());
+    return "";
+}
+
+std::string AiManager::forget(const std::string& id) {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = std::find_if(marks_.begin(), marks_.end(), [&](const Mark& x) { return x.id == id; });
+        if (it == marks_.end()) return "no such identification";
+        marks_.erase(it);
+        save_marks_locked();
+    }
+    WebSocketServer::broadcast_json_message(marks_message());
+    return "";
+}
+
+std::string AiManager::identifications_json(double hz, double within_hz, const std::string& query, size_t limit) const {
+    std::vector<const Mark*> sel;
+    std::lock_guard<std::mutex> lk(mu_);
+    const std::string q = lower(query);
+    for (const auto& m : marks_) {
+        if (hz > 0 && std::fabs(m.hz - hz) > std::max(within_hz, m.bw / 2)) continue;
+        if (!q.empty() && lower(m.name + " " + m.summary).find(q) == std::string::npos) continue;
+        sel.push_back(&m);
+    }
+    if (hz > 0)
+        std::sort(sel.begin(), sel.end(), [hz](const Mark* a, const Mark* b) { return std::fabs(a->hz - hz) < std::fabs(b->hz - hz); });
+    else
+        std::reverse(sel.begin(), sel.end());   // newest first
+    std::string out = "[";
+    for (size_t i = 0; i < sel.size() && i < limit; i++) out += (i ? "," : "") + mark_json(*sel[i]);
+    return out + "]";
+}
+
+std::string AiManager::marks_message() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    std::string out = "{\"ai_marks\":[";
+    for (size_t i = 0; i < marks_.size(); i++) out += (i ? "," : "") + mark_json(marks_[i]);
+    return out + "]}";
 }

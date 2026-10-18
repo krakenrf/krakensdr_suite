@@ -6,7 +6,7 @@ The **Mode** selector in the top bar of the KrakenSDR DOA page picks how the rec
 
 - **Coherent** (default): all tuners work as one phase-calibrated antenna array - MUSIC DoA, beamforming, the web mapper and DoA logging.
 - **Wideband**: the tuners sit side by side for one wide stitched spectrum (about 5 x 1.9 MHz on a KrakenSDR); the discrete scanner runs in this mode. No DoA.
-- **Independent**: every tuner is its own receiver with its own frequency and gain - the page shows one spectrum + waterfall per tuner in a grid. Each pane has its own frequency digits (click the top / bottom half of a digit, or use the mouse wheel on it) and gain slider - the top bar's frequency and gain are hidden in this mode, and put VFOs (demodulation, digital decoders, the AI Signal Lab) on any pane: drag a pane's spectrum to tune that tuner (like the main display), drag a VFO bar to move it, click a pane to move the selected VFO there, or pick the tuner on the VFO's card. No DoA, and no calibration runs (the noise source stays off).
+- **Independent**: every tuner is its own receiver with its own frequency and gain - the page shows one spectrum + waterfall per tuner in a grid. Each pane has its own frequency digits (click the top / bottom half of a digit, or use the mouse wheel on it) and gain slider - the top bar's frequency and gain are hidden in this mode, and put VFOs (demodulation, digital decoders) on any pane: drag a pane's spectrum to tune that tuner (like the main display), drag a VFO bar to move it, click a pane to move the selected VFO there, or pick the tuner on the VFO's card. No DoA, and no calibration runs (the noise source stays off).
 
 In every mode the spectrum zooms with the mouse wheel (or the Zoom slider under the waterfall, up to 16x; in Independent mode the pane under the cursor / the selected pane), and the bar between the spectrum and the waterfall can be dragged to change the split (in Independent mode it moves every pane at once; double-click for the default).
 
@@ -69,7 +69,7 @@ The **🗺 Map** button (under the waterfall) opens a street / satellite map in 
 
 **LTE / 5G NR Cell Decoder** (coherent mode for bearings): reads the public information every LTE / 5G NR cell on a carrier broadcasts to all phones, and gives each cell its own bearing. Pick it for a VFO (Decimators box → Digital decoder → "LTE / 5G NR Cell Decoder"), with DoA on: the VFO becomes the whole 2.4 MHz band, drawn as one locked line at the centre like ADS-B, and you tune the receiver into an LTE / NR carrier. Near the carrier's centre it finds it on the LTE / NR raster itself; further away it retunes the receiver step by step (up to 10 MHz each way by default - every retune makes the receiver recalibrate for a few seconds) and centres it on the carrier it finds. It finds the cells (LTE FDD and TDD, NR with 15 / 30 kHz SS blocks) by their physical cell ID and lists them in its tab: operator (MCC-MNC and country), tracking area code, cell identity (eNB and sector), band, EARFCN, bandwidth, antenna ports, power and timing - open a row (▸) for everything else the cell broadcasts (MIB, SIB1, SIB2: access rules, uplink frequency, random access, power settings...; SIB3 - SIB5 when they come inside the VFO). On a carrier wider than the 2.4 MHz VFO it reads the part it sees and combines repeated transmissions until each message's checksum passes (SIB1 / SIB2 of a 10 MHz carrier in seconds). Each cell also becomes a talker "LTE-123" / "NR-456" on the 🗺 Map's 📡 DF panel (lobe, bearing, heat map while driving) - a cell's signals are scrambled with its cell ID, so correlating with them separates the cells even when they arrive at the same time. The "Frequency offset" it reports is the network's carrier against your receiver: base stations are accurate to 0.05 ppm, so it calibrates the KrakenSDR. Only broadcast system information is decoded - nothing addressed to a phone (calls, data, paging). See `kraken_doa_v2/plugins/cells/README.md`.
 
-New decoders can be added as plugins, and the **AI Signal Lab** (sidebar "🤖 AI Signal Lab") can write them for you: it points an LLM coding agent (Claude Code, or another LLM CLI) at the signal in a VFO, tells you what the signal is, and on request writes, builds and tests a decoder plugin for it - see "AI Signal Lab and decoder plugins" below.
+New decoders can be added as plugins, and the **🤖 AI assistant** (the column on the right) can write them for you - it also answers questions about what the receiver shows and decodes, looks transmitters up online and controls the receiver; see "AI assistant and decoder plugins" below.
 
 The KrakenSDR Suite V2 software is currently in beta.
 
@@ -308,14 +308,14 @@ position and GPS track into IQ recordings - untick it before recording
 something you will share. The old **Local Recording** box (DoA bearings to
 CSV / SQLite) is now called **📝 DoA Recording**.
 
-## AI Signal Lab and decoder plugins
+## AI assistant and decoder plugins
 
 ### Decoder plugins
 
 Every decoder in a VFO's decoder list is a plugin: a folder of C++
 source in `kraken_doa_v2/plugins/<id>/`, which `./install.sh` / `make` builds.
 The suite ships P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG (pagers),
-APRS (AX.25 1200 bit/s packet; written by the AI Signal Lab) and ADS-B
+APRS (AX.25 1200 bit/s packet; written by the AI assistant's predecessor, the AI Signal Lab) and ADS-B
 (1090 MHz aircraft, plotted on the 🗺 Map). "Auto detect"
 runs every decoder ticked "Auto detect" in the sidebar's plugin list (Digital
 Decoders box, "Decoder plugins") - all of them by default; untick the ones you never need, since each
@@ -378,9 +378,51 @@ Check is the decoded messages and the VFO's own bearing (Digital squelch).
 A busy receiver plays a test slower than real time rather than skipping
 parts of it.
 
-### AI Signal Lab
+### AI assistant
 
-1. Install Claude Code on the Pi and log in once (a Claude subscription or an
+The **🤖 Assistant** column on the right of the web UI is a chat with an AI
+agent (Claude Code) that sees and drives the receiver:
+
+- **Questions about the screen and the data**: "what is the signal on D0?",
+  "what are the strongest signals here?", "which aircraft did we hear in the
+  last hour?". Each question carries what your page shows (zoom window,
+  selected VFO, open tab, map view); the agent reads the spectrum (also a
+  peak hold for bursty signals), the decoders' facts, events and tables, the
+  bearings (per VFO and per transmitter ID), decoded positions, Voice to Text
+  transcripts and the decoder data log, and can record + analyse a signal.
+- **Who is transmitting**: it combines the decoded data (callsigns, IDs),
+  the signal's level, bandwidth and bearing with your saved frequencies, the
+  files you put in `kraken_doa_v2/ai/knowledge/` (e.g. an export of your
+  country's licence register) and the internet (licence registers, frequency
+  tables, sigidwiki, radioreference, SondeHub ...). What it identifies is
+  remembered on the receiver and marked with an "AI" badge on the spectrum.
+- **Doing things**: "look for an active weather balloon", "put a DMR decoder
+  on 439.475", "add a VFO on that signal and listen to it". It tunes, adds and
+  changes VFOs, decoders, squelch and saved frequencies through the same
+  commands the page uses, and every change shows in the chat (amber steps).
+  The **Read only** switch at the top of the panel stops it changing anything
+  (for every page using the receiver).
+- **Decoder plugins**: "write a decoder for this signal" - it captures,
+  analyses, writes, builds and tests a plugin, which then appears in every
+  VFO's decoder list.
+- **The map**: "plot the licensed sites on 162.4 MHz", "draw the bearing
+  from D0", "is that tower in line of sight of us?". It draws layers on the
+  🗺 map - transmitter sites it found online or in your knowledge files,
+  bearing lines, areas, any data with a position (also a GeoJSON or CSV
+  file) - listed in the map's **🤖 AI layers** panel (click an item for its
+  details; hide a layer here, ✕ removes it for everyone), and it uses the
+  map's Viewshed panel (line of sight from the station, the coverage of a
+  candidate transmitter, a path loss link with its budget) to check its
+  answers. The viewshed runs in your browser, so it uses the page you asked
+  from.
+
+The panel can be resized (drag its left edge), collapsed to a strip (⟩), and
+keeps your earlier conversations (🕘; ＋ starts a new one). On a phone it is
+a 🤖 button that opens it full screen.
+
+Setting it up (once, on the Pi):
+
+1. Install Claude Code and log in once (a Claude subscription or an
    Anthropic API key):
 
    ```
@@ -388,60 +430,62 @@ parts of it.
    claude          # log in, then /exit
    ```
 
-2. Enable the lab, which checks the login first:
+2. Enable the assistant, which checks the login first:
 
    ```
    cd krakensdr_suite/kraken_doa_v2
    python3 ai/kraken_ai.py setup
    ```
 
-   It stays off until you do this. The web UI can't switch it on, because it
-   lets UI users run an AI agent on the Pi and compile code there. If other
-   people can reach your receiver's web UI, set an API token
-   (`KRAKEN_API_TOKEN` / the `api_token` file) first. `python3 ai/kraken_ai.py disable`
-   switches it off again.
+   It stays off until you do this - the web UI can't switch it on, because
+   it lets UI users run an AI agent on the Pi that controls the receiver and
+   compiles code. If other people can reach your receiver's web UI, set an
+   API token (`KRAKEN_API_TOKEN` / the `api_token` file) first.
+   `python3 ai/kraken_ai.py disable` switches it off again.
 
-3. In the web UI (sidebar "🤖 AI Signal Lab"), pick the VFO sitting on the
-   signal and press **🔍 Investigate this signal with AI**. The lab records the
-   signal (5-60 s at the VFO's bandwidth) and measures it: spectrum, bursts,
-   envelope, FM levels, symbol rate and repeated sync words, plus plots. The
-   agent can make more captures and run its own analysis scripts. Then it
-   writes a report: what the signal is, the evidence for it, and whether an
-   existing decoder handles it. The report, the live progress and the
-   agent's steps appear in the **🤖 AI** tab of the panel under the waterfall
-   (the sidebar only shows the job's status); ask follow-up questions there.
-4. **🛠 Create Decoder** has the agent write a plugin for it, build it and test
-   it on the captures. This takes about 5-30 minutes. The plugin then shows up
-   in every VFO's decoder list and in the "Digital Decoders" box; "Use on VFO"
-   next to the finished job selects it on the AI box's VFO.
-   **✍ Custom Instructions** passes your own hints to the agent: specs or
-   links, what to show, what to ignore. Pressing the button again on an
-   existing plugin improves that plugin.
+What it can and can't do:
 
-Every investigation is kept with its conversation: an "AI" badge appears in
-the spectrum above the analysed frequency, and the AI Signal Lab's History list
-shows them all. Clicking either opens the **🤖 AI** tab of the panel under the
-waterfall (also the "🤖 AI" button there), with the whole chat, the agent's
-steps and a box for further questions; ✕ deletes an analysis together with its
-captures and chat.
+- It reads the `kraken_doa_v2` folder (not the API token, the settings file
+  with the web mapper key, the TLS key or its own configuration), and writes
+  only its conversation folder (`ai/sessions/<id>/`), decoder plugin folders
+  (`plugins/<id>/` - never `plugins/sdk`, `plugins/lib` or the plugins
+  Makefile) and `ai/knowledge/`. None of your own Claude Code settings, MCP
+  servers, CLAUDE.md files or memory are loaded into it.
+- Its shell commands run in Claude Code's sandbox (`bubblewrap` + `socat`,
+  installed by `install.sh`): the same write limits enforced by the
+  operating system, the credentials in your home folder unreadable, and no
+  network. Without the sandbox it has no shell: it still answers, looks
+  things up and controls the receiver, but can't build plugins or run
+  scripts (the panel says so).
+- A plugin it changed is run by the receiver in a sandbox too (`bwrap`:
+  read-only files, no network) - also the shipped plugins, which it may
+  improve. `python3 ai/kraken_ai.py sandboxed` lists them; after checking
+  what it changed, `python3 ai/kraken_ai.py trust <id>` runs one normally
+  again.
+- It controls the receiver only through its own tool server
+  (`127.0.0.1:8079`, a new secret on every start): tuning, gain, VFOs,
+  decoders, DoA on/off and saved frequencies - no settings resets, folders,
+  web mapper or array setup.
+- Web pages and decoded messages can contain text written to mislead an AI;
+  it is told never to follow instructions found there and never to send
+  local files or keys anywhere, and its shell has no network - but what you
+  ask about may go to the sites it searches.
 
-The agent's tools are restricted. It can read the plugin SDK and the existing
-decoder plugins, run the capture/analysis tool (`ai/sigtool.py`) and Python scripts
-in its session folder, and write only in `ai/sessions/<session>/` and
-`plugins/<id>/`. It can't read the receiver's settings, API key or TLS key.
-Sessions (captures, plots, reports, chats) are kept in `kraken_doa_v2/ai/sessions/`.
-Captures are written to disk as they arrive, so long ones (up to a minute
-from the web UI) need little memory. Every Python process the agent runs is
-limited to the memory the Pi has free (minus a reserve for the receiver): a
-script that needs more stops with an out-of-memory error instead of freezing
-the Pi.
-Usage counts against your Claude plan or API budget. A typical
-investigation costs about $0.30-0.50 API-equivalent, and a decoder about
-$1-5.
+Usage counts against your Claude plan or API budget. A question about the
+screen costs a cent or two (API-equivalent), a search like the weather
+balloon about $0.10-0.30, a decoder plugin about $1-5. The panel's ⚙ picks
+the model (Sonnet, Opus - the most capable and dearest -, Haiku - fast and
+cheap -, Fable) and the effort (how much it thinks first: higher is better
+on hard tasks, slower and dearer) for every page. "Default" shows in
+brackets what it will run: the model is `"model"` in `ai/ai_config.json`, or
+your Claude account's default when that is empty; the effort is the picked
+model's own default level (your Claude Code `effortLevel` setting doesn't
+apply to the assistant).
 
 Other LLM command-line tools can be used instead:
 `python3 ai/kraken_ai.py setup --backend command --command "your-cli args"`
-(the prompt goes to its stdin, and it runs in the session folder). Such a tool
-gets no tool restrictions from the lab; its own configuration decides what it
-may do. The AI Signal Lab needs the native install (it is not available in
-Docker). The plugins that ship with the suite work in Docker as well.
+(the prompt goes to its stdin, and it runs in the conversation's folder).
+Such a tool gets none of the restrictions above and no access to the
+receiver's tools; its own configuration decides what it may do. The
+assistant needs the native install (it is not available in Docker). The
+plugins that ship with the suite work in Docker as well.

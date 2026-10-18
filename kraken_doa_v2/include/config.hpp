@@ -6,6 +6,9 @@
 // Network Configuration
 constexpr int WEB_PORT = 8080;          // HTTPS WebSocket UI (kraken_doa.html)
 constexpr int DOA_HTTP_PORT = 8081;     // Plain HTTP for DOA_value.html (Android app)
+// AI assistant: its MCP server (ai_mcp.cpp) - 127.0.0.1 only, a random token
+// per run; KRAKEN_AI_MCP_PORT overrides it (a second kraken_doa for tests)
+constexpr int AI_MCP_PORT = 8079;
 constexpr int TCP_DATA_PORT = 8091;
 constexpr int TCP_CONTROL_PORT = 8092;
 constexpr uint32_t TCP_MAGIC = 0x4D434851; // 'MCHQ'

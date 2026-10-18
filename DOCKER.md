@@ -271,10 +271,10 @@ services:
   - The decoder plugins in `kraken_doa_v2/plugins/` (all the decoders: P25,
     DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS) are built
     into the image, and kraken_doa finds them through `KRAKEN_PLUGIN_DIR`.
-    The AI Signal Lab is not available in Docker: the image has no LLM CLI
-    and no compiler. Create plugins on a native install (or copy plugin
-    folders into `kraken_doa_v2/plugins/`), then rebuild the image to
-    include them.
+    The AI assistant is not available in Docker (its panel stays hidden):
+    the image has no LLM CLI and no compiler. Create plugins on a native
+    install (or copy plugin folders into `kraken_doa_v2/plugins/`), then
+    rebuild the image to include them.
 - **`docker-compose.yml`**:
   - `network_mode: host`.
   - `/dev/bus/usb` bind-mounted plus the cgroup rule `c 189:* rmw`, rather

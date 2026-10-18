@@ -44,6 +44,19 @@ plugins/sdk/build/
 ai/ai_config.json
 ai/ai_config.json.tmp
 ai/sessions/
+# AI assistant runtime: the agent's MCP / settings files (a token), kraken_doa's
+# list of plugins it changed, captures without a conversation, what it
+# identified, the user's reference files (only the folder's README is ours)
+ai/run/
+ai/state/
+ai/captures/
+ai/identifications.json
+ai/identifications.json.tmp
+ai/map_layers.json
+ai/map_layers.json.tmp
+ai/map_layers.json.bad
+ai/knowledge/*
+!ai/knowledge/README.md
 ai/**/__pycache__/
 
 # incident map (incidents.cpp): incidents found in decoder messages, kept 24 h

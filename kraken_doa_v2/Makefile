@@ -110,6 +110,10 @@ APP_SRCS = \
 	$(SRCDIR)/scanner_manager.cpp \
 	$(SRCDIR)/continuous_scanner.cpp \
 	$(SRCDIR)/ai_manager.cpp \
+	$(SRCDIR)/ai_mcp.cpp \
+	$(SRCDIR)/ai_capture.cpp \
+	$(SRCDIR)/ai_map.cpp \
+	$(SRCDIR)/ai_sandbox.cpp \
 	$(SRCDIR)/geo_address.cpp \
 	$(SRCDIR)/geo_http.cpp \
 	$(SRCDIR)/incidents.cpp \
@@ -164,7 +168,7 @@ whisper-update:
 # a plugin that doesn't compile only warns (-k builds the others).
 plugins: $(LIQUID_A)
 	@if [ -f plugins/Makefile ]; then \
-		$(MAKE) --no-print-directory -k -C plugins || \
+		$(MAKE) --no-print-directory -k -C plugins -f Makefile || \
 		echo "WARNING: a decoder plugin failed to build (see above) - kraken_doa itself is fine"; \
 	fi
 
@@ -223,7 +227,7 @@ endif
 # Clean build artifacts
 clean:
 	rm -rf $(OBJDIR) $(DEPDIR) $(TARGET)
-	@if [ -f plugins/Makefile ]; then $(MAKE) --no-print-directory -C plugins clean; fi
+	@if [ -f plugins/Makefile ]; then $(MAKE) --no-print-directory -C plugins -f Makefile clean; fi
 	@echo "Build artifacts cleaned"
 
 # Complete clean including uWebSockets and liquid-dsp

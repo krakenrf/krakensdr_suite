@@ -5,6 +5,7 @@
 #include "networking/data_receiver.hpp"
 #include "playback.hpp"
 #include "recorder.hpp"
+#include "ai_capture.hpp"
 #include "utils/thread_pool.hpp"
 #include "utils/parse_num.hpp"
 #include "globals.hpp"
@@ -389,6 +390,18 @@ void DataReceiver::data_receiver_thread() {
                     pi.freq_hz = rf;
                     pi.gain_db = rg;
                     rec::on_packet(buffer.data() + offset + header_size, channels, samples, pi);
+                }
+
+                // 🤖 the AI assistant's IQ capture (capture_iq): the wanted
+                // channels' bytes, copied for its worker (ai_capture.hpp)
+                if (aicap::active()) {
+                    float rf[MAX_CHANNELS], rg[MAX_CHANNELS];
+                    for (uint32_t ch = 0; ch < channels && ch < MAX_CHANNELS; ch++) {
+                        rf[ch] = ch_freq_hz[ch];
+                        rg[ch] = EndianUtils::read_le_float(buffer.data(), offset + 32 + ch * 8 + 4);
+                    }
+                    aicap::on_packet(buffer.data() + offset + header_size, std::min<uint32_t>(channels, MAX_CHANNELS), samples,
+                                     noise_source != 0, is_retuning, rf, rg);
                 }
 
                 // SKIP PROCESSING if server is currently retuning (data contains noise)
