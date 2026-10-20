@@ -277,6 +277,29 @@ Edit `include/config.hpp`:
   the VFO's colour (`.dec-item.sel`, `decHighlightSelected`, re-applied after
   every list update; a removed VFO hands the selection to the first). A click
   on empty spectrum places this VFO, and only its edges resize
+- VFO card frequency (the user's request 2026-10-20: wheel-tunable like the
+  top bar; first 14 px, then "double the size" 2026-10-21): digits
+  `G.MMM.kkk.hhh` down to 1 Hz (`.vfd-box` / `.vfd`, 28 px - the top bar's
+  size - in 16 px cells, "MHz" inside the box; a row of its own without a
+  "Freq:" label, 236 of the card's 241 px with the ✎), click the
+  top / bottom half or a wheel notch = +- that digit (`vfdInit` / `vfdStep`,
+  selects the VFO); clamped inside the VFO's band like a typed frequency
+  (coherent: `maxOffsetHz`; independent: its OWN tuner - a typed one may move
+  to another, `paneTuneVfoTo`), never retunes the receiver. Sent at most
+  every 100 ms + the last value (the drags' `setDecimatorFreq` debounce
+  waited for the spin to end), echoes ignored 1.5 s after a step (`vfdHeld`
+  in updateDecimatorList). A wheel gesture stays with what it began on: one
+  that started scrolling the sidebar keeps scrolling when digits slide under
+  the pointer (capture listener, 400 ms of quiet ends a gesture), and a
+  tuning gesture only starts where the pointer last MOVED over the digits
+  with the box still there (`vfdHover`): Chrome scrolls the sidebar for a
+  notch over a part without a blocking wheel handler (the card title) and
+  only then hit-tests it - the very first notch of a scroll landed on the
+  digits now under the pointer and retuned the VFO by 1 GHz (clamped). ✎ swaps in the old text box
+  (`dec-actual-freq-<id>`, Enter / blur = apply, Escape = cancel); locked
+  with the Freq / BW fields by fixed-frequency / `lock_vfo` decoders
+  (`digRenderCards`). Test: job scratch t_vfd.py (headless Chrome over CDP,
+  fake WebSocket, 33 checks) + t_vfd_zoom.py (sidebar zoom 1.8)
 - FFT message type 6 (independent; pages without spectrum views - see
   *Spectrum views* for type 7): `u32 6, u32 nch, f32 avg_alpha, f32
   sample_rate, f32 bin_step`, per tuner `u32 center_hz, f32 gain_db, u32 ds,
@@ -5274,6 +5297,31 @@ Edit `include/config.hpp`:
   (AACH usage marker >= 4, training sequence 1) of one timeslot; after 400 ms
   without traffic, erasure blocks flush the pipes' stdio buffers. Muted for
   60 s after any encrypted MAC-RESOURCE. ~0.5 s extra latency (pipe buffers)
+  Windows (no /dev/stdin there): each program gets two NAMED PIPES as its
+  file names (`\\.\pipe\krakensdr-tetra-<pid>-<n>-<64 random bits>`, one
+  instance, local only, the server end the plugin's; its client checked by
+  process ID - GetNamedPipeClientProcessId - before any data), started
+  through kproc (NUL stdio, no console); three plugin threads (writer ->
+  cdecoder, relay cdecoder -> sdecoder, reader) in overlapped I/O ended by a
+  stop event, so data moves through both programs between slots as on
+  Linux. A program that exits / breaks a pipe: stopped, restarted no sooner
+  than 2 s later (not every slot). The ETSI code needs no change: fopen
+  "rb" / "wb" + sequential fread / fwrite open a pipe like a file (binary).
+  Found as `$KRAKEN_TETRA_CODEC_DIR\{cdecoder,sdecoder}.exe`, else
+  `tetra-{cdecoder,sdecoder}.exe` in the working directory (kraken_doa_v2,
+  where libmbe.dll goes), else on the PATH. Tested 2026-10-20 with
+  stand-in programs that use the same file I/O: byte-exact at real-time
+  pace (~0.47 s to the first audio), only whole frames dropped when flooded
+  (the 64-block cap, as Linux), a codec that dies is restarted, one that
+  hangs doesn't block stop(); and with the real ETSI codec built by the
+  WINDOWS.md steps (MinGW UCRT64, only the system UCRT DLLs; MSYS2's patch
+  needs `--binary` - CRLF sources): 200 random slots and a TTS sentence
+  encoded with scoder + ccoder decode through TetraCodec bit-identical to
+  cdecoder + sdecoder on plain files, and to the Pi's build / pipes
+  (fixed-point code: the same samples on both OSes); the sentence's
+  correlation with the spoken input 0.948 (codec delay 40 samples). ccoder
+  writes a 1 as 0x0081 (129), TetraCodec sends -127 - cdecoder decodes both
+  the same
 - Codec availability: the sidebar box (above), and each voice plugin sets a "Voice codec" fact (e.g.
   "AMBE+2: libmbe.so.1 (mbelib 1.3.0)" / "not installed"), and its voice
   state says "... codec not installed" while someone listens

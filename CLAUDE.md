@@ -880,8 +880,11 @@ decoders `kraken_doa_v2/plugins/`
   plays the decoded voice. P25 IMBE is built in (port of mbelib, ISC); DMR /
   D-STAR / NXDN AMBE use a user-installed mbelib (dlopen, `KRAKEN_MBELIB`), TETRA
   ACELP the user-built ETSI codec programs (`tetra-cdecoder` /
-  `tetra-sdecoder` on PATH or `KRAKEN_TETRA_CODEC_DIR`) - neither is shipped
-  (licensing); README "Digital voice codecs" has the install steps. Docker:
+  `tetra-sdecoder` on PATH or `KRAKEN_TETRA_CODEC_DIR`; Windows also
+  `tetra-*.exe` in the kraken_doa_v2 folder, fed through named pipes - the
+  programs need file names, Windows has no /dev/stdin) - neither is shipped
+  (licensing); README "Digital voice codecs" has the install steps
+  (Windows: WINDOWS.md). Docker:
   files in `docker-data/codecs/` are picked up by the entrypoint. Encrypted
   calls are muted
 - Fed from the VFO's decimated stream (beamformer output when beamforming
@@ -2058,6 +2061,15 @@ automatically:
   `doa_settings.json` or `api_token` slipped through (bypass:
   `git push --no-verify`). Root commits and merge commits (including a
   secret added while resolving a merge) are scanned too.
+- **Voice codecs / binaries** never go to the remote (licensing: the ETSI
+  TETRA codec may not be redistributed, AMBE is DVSI's): `.gitignore`
+  ignores the user-built codec programs / libraries (`cdecoder`,
+  `tetra-*decoder[.exe]`, `libmbe*`), the ETSI zip and osmo-tetra / mbelib
+  checkouts in any folder; the pre-push hook blocks outgoing commits that
+  add one anyway (`git add -f`), any `*.exe` / `*.dll` (everything is built
+  from source) or the ETSI sources. `windows/package.sh` copies a fixed
+  list of files, so a codec next to kraken_doa.exe doesn't reach the
+  package either
 - Filters and hooks are per-clone git config, so `install.sh` registers them
   (`filter.kraken-secrets.*`, `core.hooksPath .githooks`). A clone that never
   ran install.sh silently skips both — run it once after cloning.

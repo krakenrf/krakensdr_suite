@@ -946,6 +946,24 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 #decimator-list .dec-row {margin:4px 0;font-size:12px;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
 #decimator-list .dec-row label {min-width:60px;color:#888}
 #decimator-list input[type="text"],#decimator-list input[type="number"],#decimator-list select {background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:3px 5px;border-radius:2px;font-size:12px}
+/* VFO frequency: digits like the top bar's, the same size, down to 1 Hz -
+   click the top / bottom half of a digit or use the mouse wheel on it; ✎
+   swaps in the text box to type one (vfdInit). A row of its own: at this
+   size there's no room for a "Freq:" label in the 290 px sidebar */
+#decimator-list .vfd-box {display:inline-flex;align-items:center;background:#0a0a15;border:1px solid #0f3460;border-radius:3px;padding:0 3px;
+  user-select:none;font-family:'Consolas','Monaco','Courier New',monospace}
+#decimator-list .vfd {font-size:28px;font-weight:bold;width:16px;text-align:center;color:#4fc3f7;cursor:pointer;line-height:36px}
+#decimator-list .vfd.lead {color:#2c4a63}
+#decimator-list .vfd:hover {color:#81d4fa}
+#decimator-list .vfd.hover-top {background:linear-gradient(to bottom,rgba(79,195,247,0.28) 50%,transparent 50%)}
+#decimator-list .vfd.hover-bottom {background:linear-gradient(to top,rgba(79,195,247,0.28) 50%,transparent 50%)}
+#decimator-list .vfd-sep {color:#1a4a7a;font-size:24px;font-weight:bold;width:5px;text-align:center}
+#decimator-list .vfd-unit {color:#666;font-size:10px;margin-left:3px;font-family:sans-serif}
+#decimator-list .vfd-box.locked {opacity:.5}
+#decimator-list .vfd-box.locked .vfd {cursor:not-allowed;background:none}
+#decimator-list .vfd-ed {padding:1px 5px;margin-left:auto}
+#decimator-list .dec-row.typing .vfd-box, #decimator-list .dec-row.typing .vfd-ed,
+#decimator-list .dec-row:not(.typing) .vfd-in, #decimator-list .dec-row:not(.typing) .vfd-in-unit {display:none}
 
 /* Scanner in sidebar */
 #scanner-freq-list {max-height:200px;overflow-y:auto;background:#16213e;border:1px solid #0f3460;border-radius:3px;padding:5px}
@@ -6885,12 +6903,13 @@ function refreshDecimatorPanelItem(id) {
 
   decSpkRender(dec);
 
-  // Update actual frequency input - unless the user is typing in it (a
-  // refresh from another browser's tuning, a pan or the center frequency
-  // used to replace the half-typed value)
+  // Update the frequency digits, and the text box unless the user is typing
+  // in it (a refresh from another browser's tuning, a pan or the center
+  // frequency used to replace the half-typed value)
+  const actualFreqMhz = vfoCenterMhz(dec) + (dec.freq_offset_hz / 1000000);
+  vfdShow(id, actualFreqMhz);
   const actualFreqEl = $id('dec-actual-freq-' + id);
   if (actualFreqEl && document.activeElement !== actualFreqEl) {
-    const actualFreqMhz = vfoCenterMhz(dec) + (dec.freq_offset_hz / 1000000);
     actualFreqEl.value = actualFreqMhz.toFixed(6);
   }
 
@@ -7022,8 +7041,9 @@ function handleActualFreqInput(decimatorId, inputValue, focusValue) {
   // frequency (its own first), offset relative to that tuner
   if (opMode === 'independent') { paneTuneVfoTo(dec, inputFreqMhz); return; }
 
-  // Calculate the desired offset in Hz
-  const desiredOffsetHz = (inputFreqMhz - currentCenterFreq) * 1000000;
+  // Calculate the desired offset in Hz (whole Hz: the box shows 6 decimals,
+  // and 434.5 - 433.92 alone came out as 579999.99999)
+  const desiredOffsetHz = Math.round((inputFreqMhz - currentCenterFreq) * 1000000);
 
   // Get bandwidth for this decimator to calculate max offset
   // Account for edge clipping - visible bandwidth is reduced by currentEdgeClip
@@ -7055,6 +7075,129 @@ function handleActualFreqInput(decimatorId, inputValue, focusValue) {
   drawBox();
 }
 
+// ---- VFO card frequency digits (like the top bar's, down to 1 Hz) ----
+// A click on the top / bottom half of a digit or a wheel notch on it moves
+// the VFO by that digit's place value, inside the band its tuner receives
+// (clamped at the edge like a typed frequency - the receiver isn't retuned;
+// independent mode: it stays on its own tuner). ✎ swaps in the text box.
+const VFD_POS = [9, 's', 8, 7, 6, 's', 5, 4, 3, 's', 2, 1, 0];   // Hz place values
+const VFD_TIP = 'VFO frequency: click the top / bottom half of a digit, or use the mouse wheel on it (✎ to type one)';
+const VFD_ED_TIP = 'Type a frequency (MHz)';
+const vfdTx = {};   // id -> {last: time of the last send, timer, hold: its echoes ignored until}
+
+function vfdDigitsHtml() {
+  return VFD_POS.map(p => p === 's' ? '<span class="vfd-sep">.</span>' : `<span class="vfd" data-pos="${p}">0</span>`).join('');
+}
+
+function vfdShow(id, mhz) {
+  const el = $id('dec-freq-' + id);
+  if (!el || !Number.isFinite(mhz)) return;
+  const hz = Math.max(0, Math.round(mhz * 1e6));
+  let lead = true;
+  el.querySelectorAll('.vfd').forEach(d => {
+    const pos = parseInt(d.dataset.pos), v = Math.floor(hz / Math.pow(10, pos)) % 10;
+    if (d.textContent !== String(v)) d.textContent = v;
+    if (v || pos <= 6) lead = false;   // dim the leading zeros only (down to the MHz digit)
+    d.classList.toggle('lead', lead);
+  });
+}
+
+function vfdHeld(id) { const s = vfdTx[id]; return !!s && Date.now() < s.hold; }
+
+function vfdStep(id, pos, up) {
+  const d = decimatorInfo.find(z => z.id === id);
+  if (!d || vfoLocked(d)) return;
+  if (activeDecimatorId !== id) selectDecimator(id, false);
+  const hz = Math.round((vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6) * 1e6) + (up ? 1 : -1) * Math.pow(10, pos);
+  let off;
+  if (opMode === 'independent') {
+    const p = panes[d.tuner || 0];
+    if (!p || !(p.freqMhz > 0)) return;
+    const bw = d.bandwidth_mhz || (bwo[d.bandwidth_index || 0] || {}).bandwidth || 0.1;
+    const half = Math.max(0, (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2) * 1e6;
+    off = Math.max(-half, Math.min(half, hz - p.freqMhz * 1e6));
+  } else {
+    const max = maxOffsetHz(bwo[d.bandwidth_index || 0].bandwidth);
+    off = Math.max(-max, Math.min(max, hz - currentCenterFreq * 1e6));
+  }
+  const s = vfdTx[id] || (vfdTx[id] = {last: 0, timer: null, hold: 0});
+  s.hold = Date.now() + 1500;
+  off = Math.round(off);
+  if (off === d.freq_offset_hz) return;   // at the band edge already
+  d.freq_offset_hz = off;
+  refreshDecimatorPanelItem(id);
+  if (opMode === 'independent') { paneDrawAllOverlays(); panesSyncHeads(); }
+  else drawBox();
+  // wheel spins fire fast: the latest offset at most every 100 ms, so the VFO
+  // follows the spin (setDecimatorFreq's debounce would wait for its end)
+  if (s.timer) return;
+  const go = () => {
+    s.timer = null;
+    s.last = Date.now();
+    const dd = decimatorInfo.find(z => z.id === id);
+    if (!dd) return;
+    pendingFreqUpdates.delete(id);   // a queued drag value must not land after this
+    send('SET_DECIMATOR_FREQ:' + id + ':' + ((dd.freq_offset_hz || 0) / 1000).toFixed(3));
+  };
+  const wait = 100 - (Date.now() - s.last);
+  if (wait <= 0) go(); else s.timer = setTimeout(go, wait);
+}
+
+// A wheel gesture stays with what it began on: scrolling the sidebar must not
+// start retuning a VFO whose digits slide under the pointer. Tuning begins only
+// where the pointer last MOVED over the digits, with them still where they were
+// then (vfdHover): Chrome may scroll the sidebar before it hit-tests the first
+// notch, which then lands on the digits now under a still pointer
+let vfdWheelAt = 0, vfdWheelTune = false, vfdHover = null;
+document.addEventListener('wheel', e => {
+  if (e.target instanceof Element && e.target.closest('.vfd-box:not(.locked)')) return;
+  vfdWheelAt = performance.now();
+  vfdWheelTune = false;
+}, {capture: true, passive: true});
+
+function vfdInit(id) {
+  const el = $id('dec-freq-' + id);
+  if (!el) return;
+  const half = (e, d) => { const r = d.getBoundingClientRect(); return e.clientY - r.top < r.height / 2; };
+  const unhover = x => x.classList.remove('hover-top', 'hover-bottom');
+  el.addEventListener('mousemove', e => {
+    vfdHover = {el, top: el.getBoundingClientRect().top};
+    const d = el.classList.contains('locked') ? null : e.target.closest('.vfd');
+    el.querySelectorAll('.vfd').forEach(x => { if (x !== d) unhover(x); });
+    if (d) { const t = half(e, d); d.classList.toggle('hover-top', t); d.classList.toggle('hover-bottom', !t); }
+  });
+  el.addEventListener('mouseleave', () => { vfdHover = null; el.querySelectorAll('.vfd').forEach(unhover); });
+  el.addEventListener('click', e => { const d = e.target.closest('.vfd'); if (d) vfdStep(id, parseInt(d.dataset.pos), half(e, d)); });
+  el.addEventListener('wheel', e => {
+    if (el.classList.contains('locked')) return;
+    const now = performance.now(), going = now - vfdWheelAt < 400;   // a gesture going on
+    if (!(going && vfdWheelTune)) {
+      const moved = !vfdHover || vfdHover.el !== el || Math.abs(el.getBoundingClientRect().top - vfdHover.top) >= 1;
+      if (going || moved) { vfdWheelAt = now; vfdWheelTune = false; return; }   // a scroll goes on
+    }
+    vfdWheelAt = now;
+    vfdWheelTune = true;
+    e.preventDefault();
+    const d = e.target.closest('.vfd');
+    if (d && e.deltaY) vfdStep(id, parseInt(d.dataset.pos), e.deltaY < 0);
+  }, {passive: false});
+}
+
+function vfdEdit(id) {
+  const row = $id('dec-freq-row-' + id), inp = $id('dec-actual-freq-' + id);
+  const d = decimatorInfo.find(z => z.id === id);
+  if (!row || !inp || !d || inp.disabled) return;
+  inp.value = (vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6).toFixed(6);
+  row.classList.add('typing');
+  inp.focus();
+  inp.select();
+}
+
+function vfdEditEnd(id) {
+  const row = $id('dec-freq-row-' + id);
+  if (row) row.classList.remove('typing');
+}
+
 function updateDecimatorList(info) {
   // Preserve local offsets during ANY drag operation (tuning bar drag, edge drag, or scroll drag)
   // to prevent server from overwriting user's intended position
@@ -7067,6 +7210,13 @@ function updateDecimatorList(info) {
       }
     });
   }
+  // ...and of a VFO being tuned with its card's digits: the echo of an
+  // earlier wheel step would set the digits back mid-spin
+  info.forEach(serverDec => {
+    if (!vfdHeld(serverDec.id)) return;
+    const localDec = decimatorInfo.find(d => d.id === serverDec.id);
+    if (localDec) serverDec.freq_offset_hz = localDec.freq_offset_hz;
+  });
   // In-place update when the panel structure is unchanged: rebuilding the
   // whole list with innerHTML on every decimator_info push destroyed input
   // focus mid-typing and aborted slider drags. Rebuild only when the set of
@@ -7151,14 +7301,15 @@ function updateDecimatorList(info) {
           <button onclick="removeDecimator(${dec.id})" class="btn sm" style="background:#b71c1c">✕</button>
         </span>
       </div>
-      <div class="dec-row">
-        <label>Freq:</label>
-        <input type="text" id="dec-actual-freq-${dec.id}" value="${actualFreqMhz.toFixed(4)}"
-               style="width:85px;font-family:monospace"
-               onkeydown="if(event.key==='Enter'){event.target.blur()}"
+      <div class="dec-row" id="dec-freq-row-${dec.id}">
+        <span class="vfd-box" id="dec-freq-${dec.id}" title="${VFD_TIP}">${vfdDigitsHtml()}<span class="vfd-unit">MHz</span></span>
+        <input type="text" class="vfd-in" id="dec-actual-freq-${dec.id}" value="${actualFreqMhz.toFixed(6)}"
+               style="width:96px;font-family:monospace"
+               onkeydown="if(event.key==='Enter'){event.target.blur()}else if(event.key==='Escape'){this.value=this.dataset.orig;event.target.blur()}"
                onfocus="this.dataset.orig=this.value"
-               onblur="handleActualFreqInput(${dec.id}, this.value, this.dataset.orig)">
-        <span>MHz</span>
+               onblur="handleActualFreqInput(${dec.id}, this.value, this.dataset.orig); vfdEditEnd(${dec.id})">
+        <span class="vfd-in-unit">MHz</span>
+        <button type="button" class="btn sm vfd-ed" id="dec-freq-ed-${dec.id}" onclick="vfdEdit(${dec.id})" title="${VFD_ED_TIP}">✎</button>
       </div>
       <div class="dec-row indep-only">
         <label>Tuner:</label>
@@ -7226,6 +7377,8 @@ function updateDecimatorList(info) {
     `;
 
     listDiv.appendChild(decDiv);
+    vfdInit(dec.id);
+    vfdShow(dec.id, actualFreqMhz);
   });
   decSpkRenderAll();
   digRenderCards();
@@ -10188,6 +10341,9 @@ function addTouchHandlers(el, down, move, up) {
         const el = $id(k + d.id);
         if (el && el.disabled !== lock) { el.disabled = lock; el.title = why; }
       }
+      const fd = $id('dec-freq-' + d.id), fe = $id('dec-freq-ed-' + d.id);
+      if (fd && fd.classList.contains('locked') !== lock) { fd.classList.toggle('locked', lock); fd.title = lock ? why : VFD_TIP; }
+      if (fe && fe.disabled !== lock) { fe.disabled = lock; fe.title = lock ? why : VFD_ED_TIP; }
     }
   }
 
@@ -10197,8 +10353,12 @@ function addTouchHandlers(el, down, move, up) {
   // Windows receiver gets install_win + win_note instead: mbelib built as a
   // DLL in MSYS2 (CMake 4 needs the policy minimum for its 2.6 project), put
   // where the plugins' dlopen() finds it - they run in the kraken_doa_v2
-  // folder. No TETRA recipe there: the ETSI codec programs need /dev/stdin
-  // and /dev/stdout, which Windows hasn't got (the codec's status says so)
+  // folder. TETRA: the ETSI programs built natively in MSYS2 (the plugin
+  // hands them named pipes instead of /dev/stdin and /dev/stdout), the zip
+  // fetched in a browser - etsi.org's firewall refuses scripted downloads -,
+  // patched with patch --binary (MSYS2's patch reads a patch file in text
+  // mode, and the zip's sources and osmo-tetra's patches have CRLF lines),
+  // found as tetra-*.exe in that folder (lib/dig_vocoder.cpp find_codec)
   const DIG_CODECS = [
     {key: 'imbe', name: 'IMBE', used: 'P25'},
     {key: 'ambe', name: 'AMBE / AMBE+2 (mbelib)', used: 'DMR, D-STAR, NXDN',
@@ -10227,7 +10387,23 @@ sh ./download_and_patch.sh
 cd ../codec/c-code
 make
 sudo install -m 755 cdecoder /usr/local/bin/tetra-cdecoder
-sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
+sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`,
+     install_win: `# in the MSYS2 UCRT64 shell (C:\\msys64\\ucrt64.exe)
+pacman -S --needed git make patch unzip mingw-w64-ucrt-x86_64-gcc
+git clone https://github.com/osmocom/osmo-tetra.git
+cd osmo-tetra/etsi_codec-patches
+# download the codec in your browser (etsi.org may refuse scripted downloads):
+#   https://www.etsi.org/deliver/etsi_en/300300_300399/30039502/01.03.01_60/en_30039502v010301p0.zip
+cp "$(cygpath "$USERPROFILE")/Downloads/en_30039502v010301p0.zip" etsi_tetra_codec.zip
+md5sum etsi_tetra_codec.zip     # must be a8115fe68ef8f8cc466f4192572a1e3e
+sed -i 's/patch -p1/patch --binary -p1/' download_and_patch.sh   # the codec's files are CRLF
+sh ./download_and_patch.sh
+cd ../codec/c-code
+make
+explorer .                      # the folder with cdecoder.exe and sdecoder.exe`,
+     win_note: 'Then copy <code>cdecoder.exe</code> and <code>sdecoder.exe</code> into the kraken_doa_v2 folder, next to ' +
+       'kraken_doa.exe, as <code>tetra-cdecoder.exe</code> and <code>tetra-sdecoder.exe</code> (or set ' +
+       'KRAKEN_TETRA_CODEC_DIR to the folder holding cdecoder.exe and sdecoder.exe and restart the software), and '},
   ];
   let digCodecsLast = null;   // the last {"codecs"}: drawn again when the receiver's OS becomes known
   function digOnCodecs(c) {

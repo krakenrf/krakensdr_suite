@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <algorithm>
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 
 namespace dig {
@@ -405,33 +406,347 @@ int AmbeStream::decode(char fr[4][24], float* out) { return MbeLib::instance().d
 // ---------------------------------------------------------------------------
 // TETRA ACELP: the ETSI reference codec programs, user-built (README).
 //   us --(690-word blocks)--> cdecoder --(2 x 138 words)--> sdecoder --> PCM
-// Both programs take file names; /dev/stdin and /dev/stdout make them
-// filters. Their stdio buffering adds ~0.5 s of latency.
+// Both programs take two file names (fopen "rb" / "wb", then sequential
+// fread / fwrite). Linux: /dev/stdin and /dev/stdout make them filters.
+// Windows has no file name for a process's own standard input / output, so
+// the plugin creates a named pipe for each of the four files and relays
+// cdecoder's output to sdecoder itself. Their stdio buffering adds ~0.5 s of
+// latency.
 // ---------------------------------------------------------------------------
-#ifdef _WIN32
-// Windows: no TETRA voice. Windows has no file name for a process's own
-// standard input / output (CONIN$ / CONOUT$ are the console, not a pipe), so
-// the programs can't be chained as filters; they would need a named pipe per
-// file relayed by the plugin. Everything else of TETRA still decodes, and the
-// plugin's "Voice codec" fact says why there is no voice.
 namespace dig {
 
-bool TetraCodec::available() { return false; }
+namespace {
+// the codec's test-frame format: markers 0x6B21.. every 115 words,
+// soft bits +127 = 0 / -127 = 1, 0 = erasure (t4 == nullptr: flush)
+void tetra_block(const uint8_t* t4, int16_t block[690]) {
+    std::memset(block, 0, 690 * sizeof(int16_t));
+    for (int i = 0; i < 6; i++) block[115 * i] = static_cast<int16_t>(0x6B21 + i);
+    auto sb = [t4](int i) -> int16_t { return t4 ? (t4[i] ? -127 : 127) : 0; };
+    for (int i = 0; i < 114; i++) block[1 + i] = sb(i);
+    for (int i = 0; i < 114; i++) block[116 + i] = sb(114 + i);
+    for (int i = 0; i < 114; i++) block[231 + i] = sb(228 + i);
+    for (int i = 0; i < 90; i++) block[346 + i] = sb(342 + i);
+}
+
+// sdecoder's 16-bit samples in carry -> out (an odd last byte stays)
+void tetra_pcm(std::vector<uint8_t>& carry, std::vector<float>& out) {
+    size_t ns = carry.size() / 2;
+    for (size_t i = 0; i < ns; i++) {
+        int16_t v;
+        std::memcpy(&v, carry.data() + 2 * i, 2);
+        out.push_back(v / 32768.0f);
+    }
+    carry.erase(carry.begin(), carry.begin() + static_cast<long>(ns * 2));
+}
+
+bool find_codec(std::string& cdec, std::string& sdec);   // per platform, below
+}  // namespace
+
+bool TetraCodec::available() {
+    std::string c, s;
+    return find_codec(c, s);
+}
 
 std::string TetraCodec::status() {
-    return "not available on Windows (the ETSI codec programs need /dev/stdin and /dev/stdout)";
+    std::string c, s;
+    return find_codec(c, s) ? c + " + " + s : "not installed (see README: Digital voice codecs)";
 }
 
 TetraCodec::TetraCodec() = default;
 TetraCodec::~TetraCodec() { stop(); }
-bool TetraCodec::start() { return false; }
+
+}  // namespace dig
+
+#ifdef _WIN32
+#include <windows.h>
+#include <atomic>
+#include <chrono>
+#include <random>
+#include <thread>
+
+#include "utils/process.hpp"   // kproc (kraken_doa_v2/include, linked into libkrakendig.a)
+
+namespace dig {
+
+namespace {
+// $KRAKEN_TETRA_CODEC_DIR\{cdecoder,sdecoder}.exe, else tetra-cdecoder.exe /
+// tetra-sdecoder.exe in the kraken_doa_v2 folder (the plugins' working
+// directory - where libmbe.dll goes too), else on the PATH
+bool find_codec(std::string& cdec, std::string& sdec) {
+    if (const char* d = std::getenv("KRAKEN_TETRA_CODEC_DIR")) {
+        std::string dir = d;
+        if (!dir.empty() && dir.back() != '\\' && dir.back() != '/') dir += '\\';
+        cdec = dir + "cdecoder.exe";
+        sdec = dir + "sdecoder.exe";
+        if (kproc::is_executable(cdec) && kproc::is_executable(sdec)) return true;
+    }
+    std::vector<char> cwd(32768);
+    DWORD n = GetCurrentDirectoryA(static_cast<DWORD>(cwd.size()), cwd.data());   // UTF-8 (app.manifest)
+    if (n > 0 && n < cwd.size()) {
+        std::string dir(cwd.data(), n);
+        if (dir.back() != '\\') dir += '\\';
+        cdec = dir + "tetra-cdecoder.exe";
+        sdec = dir + "tetra-sdecoder.exe";
+        if (kproc::is_executable(cdec) && kproc::is_executable(sdec)) return true;
+    }
+    cdec = kproc::find_in_path("tetra-cdecoder");
+    sdec = kproc::find_in_path("tetra-sdecoder");
+    return !cdec.empty() && !sdec.empty();
+}
+
+int64_t steady_ms() {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+// One file of a codec program: a named pipe whose server end is ours
+// (overlapped) and which the program opens by its name (its fopen). Unique
+// name (pid, counter, 64 random bits), one instance, local clients only, and
+// the client is checked by its process ID before any data goes through.
+struct CodecPipe {
+    HANDLE h = INVALID_HANDLE_VALUE;
+    std::string name;
+    CodecPipe() = default;
+    CodecPipe(const CodecPipe&) = delete;
+    CodecPipe& operator=(const CodecPipe&) = delete;
+    ~CodecPipe() {
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+    }
+    bool create(bool we_write) {
+        static std::atomic<unsigned> counter{0};
+        static std::mt19937_64 rng = [] {
+            LARGE_INTEGER q;
+            QueryPerformanceCounter(&q);
+            uint64_t seed = static_cast<uint64_t>(q.QuadPart) ^ (static_cast<uint64_t>(GetCurrentProcessId()) << 32);
+            try {
+                std::random_device rd;
+                seed ^= (static_cast<uint64_t>(rd()) << 32) ^ rd();
+            } catch (...) {
+            }
+            return std::mt19937_64(seed);
+        }();
+        static std::mutex rng_mu;
+        for (int attempt = 0; attempt < 8; attempt++) {
+            uint64_t r;
+            {
+                std::lock_guard<std::mutex> lk(rng_mu);
+                r = rng();
+            }
+            char nm[128];
+            std::snprintf(nm, sizeof nm, "\\\\.\\pipe\\krakensdr-tetra-%lu-%u-%016llx",
+                          static_cast<unsigned long>(GetCurrentProcessId()), ++counter, static_cast<unsigned long long>(r));
+            h = CreateNamedPipeA(nm, (we_write ? PIPE_ACCESS_OUTBOUND : PIPE_ACCESS_INBOUND) | FILE_FLAG_OVERLAPPED |
+                                         FILE_FLAG_FIRST_PIPE_INSTANCE,
+                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 65536,
+                                 65536, 0, nullptr);
+            if (h != INVALID_HANDLE_VALUE) {
+                name = nm;
+                return true;
+            }
+            DWORD e = GetLastError();
+            if (e != ERROR_ACCESS_DENIED && e != ERROR_PIPE_BUSY) return false;   // else: the name is taken
+        }
+        return false;
+    }
+};
+
+// An overlapped operation on h that returned ERROR_IO_PENDING: waits for it,
+// or for the stop event, which cancels it. true = done, *n bytes
+bool ov_wait(HANDLE h, OVERLAPPED& ov, HANDLE stop, DWORD* n) {
+    HANDLE w[2] = {ov.hEvent, stop};
+    if (WaitForMultipleObjects(2, w, FALSE, INFINITE) != WAIT_OBJECT_0) {
+        CancelIoEx(h, &ov);
+        GetOverlappedResult(h, &ov, n, TRUE);   // the buffer is ours again
+        return false;
+    }
+    return GetOverlappedResult(h, &ov, n, FALSE) != 0;
+}
+
+// Waits until the program with process ID pid has opened the pipe; anything
+// else connecting first fails it (the name is unguessable - a backstop)
+bool ov_connect(CodecPipe& p, HANDLE ev, HANDLE stop, long pid) {
+    OVERLAPPED ov{};
+    ov.hEvent = ev;
+    ResetEvent(ev);
+    DWORD n = 0;
+    if (!ConnectNamedPipe(p.h, &ov)) {
+        DWORD e = GetLastError();
+        if (e == ERROR_IO_PENDING) {
+            if (!ov_wait(p.h, ov, stop, &n)) return false;
+        } else if (e != ERROR_PIPE_CONNECTED) {
+            return false;
+        }
+    }
+    ULONG client = 0;
+    return GetNamedPipeClientProcessId(p.h, &client) && static_cast<long>(client) == pid;
+}
+
+// true + *n (0 is possible) = read; false = stopped, the program closed its
+// end (ERROR_BROKEN_PIPE) or an error
+bool ov_read(HANDLE h, HANDLE ev, HANDLE stop, void* p, DWORD len, DWORD* n) {
+    OVERLAPPED ov{};
+    ov.hEvent = ev;
+    ResetEvent(ev);
+    if (ReadFile(h, p, len, nullptr, &ov)) return GetOverlappedResult(h, &ov, n, FALSE) != 0;
+    return GetLastError() == ERROR_IO_PENDING && ov_wait(h, ov, stop, n);
+}
+
+bool ov_write_all(HANDLE h, HANDLE ev, HANDLE stop, const uint8_t* p, size_t len) {
+    while (len > 0) {
+        OVERLAPPED ov{};
+        ov.hEvent = ev;
+        ResetEvent(ev);
+        DWORD chunk = static_cast<DWORD>(std::min<size_t>(len, 1u << 20)), n = 0;
+        bool ok = WriteFile(h, p, chunk, nullptr, &ov) ? GetOverlappedResult(h, &ov, &n, FALSE) != 0
+                                                       : GetLastError() == ERROR_IO_PENDING && ov_wait(h, ov, stop, &n);
+        if (!ok || n == 0) return false;
+        p += n;
+        len -= n;
+    }
+    return true;
+}
+
+struct Event {
+    HANDLE h = CreateEventW(nullptr, TRUE, FALSE, nullptr);   // manual reset
+    ~Event() {
+        if (h) CloseHandle(h);
+    }
+};
+}  // namespace
+
+// cdecoder c_in c_out, sdecoder s_in s_out. Three threads, each blocked in
+// its pipe I/O (overlapped, ended by the stop event): writer (feed_slot's
+// blocks -> c_in), relay (c_out -> s_in) and reader (s_out -> pcm), so data
+// moves through both programs as on Linux, not only when feed_slot runs
+struct TetraCodec::Win {
+    Event stop_ev, data_ev;           // data_ev: in has data (set by feed_slot, reset by the writer)
+    CodecPipe c_in, c_out, s_in, s_out;
+    kproc::Process pc, ps;
+    std::thread writer, relay, reader;
+    std::mutex mu;                    // in, pcm
+    std::vector<uint8_t> in;          // blocks for cdecoder
+    std::vector<uint8_t> pcm;         // sdecoder's output not yet taken
+    std::atomic<bool> failed{false};  // a program exited / closed a pipe, or an error
+
+    void run_writer() {
+        Event ev;
+        if (!ov_connect(c_in, ev.h, stop_ev.h, pc.pid())) return fail();
+        std::vector<uint8_t> chunk;
+        for (;;) {
+            {
+                std::lock_guard<std::mutex> lk(mu);
+                chunk.swap(in);
+                if (chunk.empty()) ResetEvent(data_ev.h);
+            }
+            if (chunk.empty()) {
+                HANDLE w[2] = {data_ev.h, stop_ev.h};
+                if (WaitForMultipleObjects(2, w, FALSE, INFINITE) != WAIT_OBJECT_0) return;
+                continue;
+            }
+            if (!ov_write_all(c_in.h, ev.h, stop_ev.h, chunk.data(), chunk.size())) return fail();
+            chunk.clear();
+        }
+    }
+    void run_relay() {
+        Event ev;
+        if (!ov_connect(c_out, ev.h, stop_ev.h, pc.pid()) || !ov_connect(s_in, ev.h, stop_ev.h, ps.pid())) return fail();
+        std::vector<uint8_t> buf(8192);
+        for (;;) {
+            DWORD n = 0;
+            if (!ov_read(c_out.h, ev.h, stop_ev.h, buf.data(), static_cast<DWORD>(buf.size()), &n)) return fail();
+            if (n > 0 && !ov_write_all(s_in.h, ev.h, stop_ev.h, buf.data(), n)) return fail();
+        }
+    }
+    void run_reader() {
+        Event ev;
+        if (!ov_connect(s_out, ev.h, stop_ev.h, ps.pid())) return fail();
+        std::vector<uint8_t> buf(8192);
+        for (;;) {
+            DWORD n = 0;
+            if (!ov_read(s_out.h, ev.h, stop_ev.h, buf.data(), static_cast<DWORD>(buf.size()), &n)) return fail();
+            std::lock_guard<std::mutex> lk(mu);
+            pcm.insert(pcm.end(), buf.data(), buf.data() + n);
+            if (pcm.size() > (1u << 20)) pcm.erase(pcm.begin(), pcm.end() - (1u << 20));   // nobody takes it
+        }
+    }
+    void fail() {
+        if (WaitForSingleObject(stop_ev.h, 0) != WAIT_OBJECT_0) failed = true;   // not a stop of ours
+    }
+    void shutdown() {
+        SetEvent(stop_ev.h);
+        for (std::thread* t : {&writer, &relay, &reader})
+            if (t->joinable()) t->join();
+        // the programs are ended (kill + reap) by ~Process, the pipes closed by ~CodecPipe
+    }
+};
+
+bool TetraCodec::start() {
+    if (steady_ms() < retry_ms_) return false;
+    std::string cdec, sdec;
+    if (!find_codec(cdec, sdec)) return false;
+    auto w = std::make_unique<Win>();
+    retry_ms_ = steady_ms() + 2000;   // until it is running: no new attempt for every slot
+    if (!w->stop_ev.h || !w->data_ev.h || !w->c_in.create(true) || !w->c_out.create(false) || !w->s_in.create(true) ||
+        !w->s_out.create(false))
+        return false;
+    auto spawn = [](kproc::Process& p, const std::string& prog, const std::string& in, const std::string& out) {
+        kproc::SpawnOptions o;
+        o.argv = {prog, in, out};
+        o.in = o.out = o.err = kproc::Stdio::Null;   // they log every frame on stderr
+        o.console = kproc::Console::None;
+        std::string err;
+        return p.spawn(o, &err);
+    };
+    if (!spawn(w->pc, cdec, w->c_in.name, w->c_out.name) || !spawn(w->ps, sdec, w->s_in.name, w->s_out.name)) {
+        w->shutdown();
+        return false;
+    }
+    Win* p = w.get();
+    try {
+        w->writer = std::thread([p] { p->run_writer(); });
+        w->relay = std::thread([p] { p->run_relay(); });
+        w->reader = std::thread([p] { p->run_reader(); });
+    } catch (...) {
+        w->shutdown();
+        return false;
+    }
+    win_ = std::move(w);
+    retry_ms_ = 0;
+    return true;
+}
 
 void TetraCodec::stop() {
+    if (win_) {
+        win_->shutdown();
+        win_.reset();
+    }
     pending_.clear();
     carry_.clear();
 }
 
-void TetraCodec::feed_slot(const uint8_t*, std::vector<float>& out) { out.clear(); }
+void TetraCodec::feed_slot(const uint8_t* t4, std::vector<float>& out) {
+    out.clear();
+    if (!win_ && !start()) return;
+    kproc::ExitStatus st;
+    if (win_->failed || win_->pc.try_wait(&st) || win_->ps.try_wait(&st)) {   // codec died
+        stop();
+        retry_ms_ = steady_ms() + 2000;
+        return;
+    }
+    int16_t block[690];
+    tetra_block(t4, block);
+    const uint8_t* b = reinterpret_cast<const uint8_t*>(block);
+    {
+        std::lock_guard<std::mutex> lk(win_->mu);
+        std::vector<uint8_t>& in = win_->in;
+        in.insert(in.end(), b, b + sizeof block);
+        if (in.size() > 64 * sizeof block) in.erase(in.begin(), in.end() - 64 * sizeof block);
+        SetEvent(win_->data_ev.h);
+        carry_.insert(carry_.end(), win_->pcm.begin(), win_->pcm.end());
+        win_->pcm.clear();
+    }
+    tetra_pcm(carry_, out);
+}
 
 }  // namespace dig
 
@@ -474,19 +789,6 @@ bool find_codec(std::string& cdec, std::string& sdec) {
     return false;
 }
 }  // namespace
-
-bool TetraCodec::available() {
-    std::string c, s;
-    return find_codec(c, s);
-}
-
-std::string TetraCodec::status() {
-    std::string c, s;
-    return find_codec(c, s) ? c + " + " + s : "not installed (see README: Digital voice codecs)";
-}
-
-TetraCodec::TetraCodec() = default;
-TetraCodec::~TetraCodec() { stop(); }
 
 bool TetraCodec::start() {
     std::string cdec, sdec;
@@ -547,15 +849,8 @@ void TetraCodec::stop() {
 void TetraCodec::feed_slot(const uint8_t* t4, std::vector<float>& out) {
     out.clear();
     if (to_cdec_ < 0 && !start()) return;
-    // the codec's test-frame format: markers 0x6B21.. every 115 words,
-    // soft bits +127 = 0 / -127 = 1, 0 = erasure (t4 == nullptr: flush)
-    int16_t block[690] = {0};
-    for (int i = 0; i < 6; i++) block[115 * i] = static_cast<int16_t>(0x6B21 + i);
-    auto sb = [t4](int i) -> int16_t { return t4 ? (t4[i] ? -127 : 127) : 0; };
-    for (int i = 0; i < 114; i++) block[1 + i] = sb(i);
-    for (int i = 0; i < 114; i++) block[116 + i] = sb(114 + i);
-    for (int i = 0; i < 114; i++) block[231 + i] = sb(228 + i);
-    for (int i = 0; i < 90; i++) block[346 + i] = sb(342 + i);
+    int16_t block[690];
+    tetra_block(t4, block);
     const uint8_t* b = reinterpret_cast<const uint8_t*>(block);
     pending_.insert(pending_.end(), b, b + sizeof block);
     if (pending_.size() > 64 * sizeof block) pending_.erase(pending_.begin(), pending_.end() - 64 * sizeof block);
@@ -567,19 +862,12 @@ void TetraCodec::feed_slot(const uint8_t* t4, std::vector<float>& out) {
         return;
     }
     uint8_t buf[8192];
-    std::vector<uint8_t>& carry = carry_;
     for (;;) {
         ssize_t r = read(from_sdec_, buf, sizeof buf);
         if (r <= 0) break;
-        carry.insert(carry.end(), buf, buf + r);
+        carry_.insert(carry_.end(), buf, buf + r);
     }
-    size_t ns = carry.size() / 2;
-    for (size_t i = 0; i < ns; i++) {
-        int16_t v;
-        std::memcpy(&v, carry.data() + 2 * i, 2);
-        out.push_back(v / 32768.0f);
-    }
-    carry.erase(carry.begin(), carry.begin() + static_cast<long>(ns * 2));
+    tetra_pcm(carry_, out);
 }
 
 }  // namespace dig

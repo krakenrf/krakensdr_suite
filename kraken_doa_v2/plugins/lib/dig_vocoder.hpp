@@ -10,8 +10,9 @@
 //    time with dlopen, so kraken_doa neither ships nor links any AMBE code
 //    (Windows: libmbe.dll through dlfcn-win32).
 //  - TetraCodec: TETRA ACELP through the ETSI reference codec programs
-//    (cdecoder / sdecoder) the user built (README), run as child processes.
-//    Not on Windows: the programs need /dev/stdin and /dev/stdout.
+//    (cdecoder / sdecoder) the user built (README), run as child processes
+//    (Linux: chained through /dev/stdin and /dev/stdout; Windows: a named
+//    pipe per file, relayed by the plugin).
 //
 // All decoders output 8 kHz float audio, nominally +-1.
 
@@ -105,8 +106,14 @@ public:
     void feed_slot(const uint8_t* type4_432, std::vector<float>& out);
     void stop();
 private:
+#ifdef _WIN32
+    struct Win;                      // the programs, their pipes and relay threads
+    std::unique_ptr<Win> win_;
+    int64_t retry_ms_ = 0;           // no new start before this (steady ms) after a failure
+#else
     int to_cdec_ = -1, from_sdec_ = -1;
     int pid_c_ = -1, pid_s_ = -1;
+#endif
     bool start();
     std::vector<uint8_t> pending_;   // blocks not yet accepted by the pipe
     std::vector<uint8_t> carry_;     // odd byte of a PCM sample
