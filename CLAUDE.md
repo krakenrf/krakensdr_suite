@@ -1220,7 +1220,10 @@ mobile DF engine PORTED from `src/rdf_engine.cpp` (keep the two alike:
 fed like rdf_mapper.cpp. The strip at the bottom of the map plays it back
 (0.5-500x, scrub, step, click the track): track, vehicle, the moment's lobe
 + bearing, bearing lines, power dots, the heat map + 95 % ellipse as known
-at that moment (snapshots along the drive); long pauses shortened
+at that moment (snapshots along the drive); long pauses shortened. A CSV a
+spreadsheet re-saved (timestamps as 1.68843E+12 = rounded to 2.8 h, padded
+rows, ';' + decimal commas, UTF-16) is read too: times rebuilt from the
+track (`lrRetime`), "The drive took N min" corrects the pace
 
 **📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part

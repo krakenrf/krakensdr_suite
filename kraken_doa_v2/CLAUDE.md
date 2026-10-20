@@ -1862,6 +1862,43 @@ Edit `include/config.hpp`:
   B = spectrum index heading - B; the heading = the compass field in
   COMPASS mode, else the GPS one (KRAKEN / MANUAL write it into both).
   Confidence / power scales differ per server generation (only displayed)
+- A log RE-SAVED BY A SPREADSHEET (the user's OneDrive "KrakenSDR Android
+  Logs": 040723-106700-hunt1.csv + its copy, 030823-gsm.csv) is read too
+  (the user's request 2026-10-20, `lrDecodeText` / `lrParseCsv` /
+  `lrRetime`): Excel's General format writes the 13-digit timestamps as
+  1.68843E+12 - 6 significant digits = rounded to 10^7 ms (2.8 h), every row
+  of a drive at one or two "moments" (speed / turn rate came out NaN: no
+  heat map); numbers lose the space after the separator, text keeps it
+  (" UCA"); rows padded to the longest with empty fields (a 2021-layout row
+  then had the newest layout's count - trailing empty fields are dropped
+  before counting: 372 / 373 = 2021, >= 377 newest); European locales ';'
+  + decimal commas; "Unicode text" = UTF-16 (BOM) + tabs; quoted fields.
+  The rounding step comes from the digits kept (`tsStep`; also found when
+  every timestamp is a multiple of >= 10^5 ms and repeats within a signal -
+  re-saved as plain numbers). Times are REBUILT in file order from the track:
+  the clock advances one GPS fix per change of position (the row rate varies
+  20/s .. 1/2.4 s between logs, the fix rate much less: 1.2-2.4 s per fix in
+  the 20 intact logs, median 1.6 = `LR_FIX_MS`); a group of rows at one
+  position longer than the run's median (a stop; several VFOs per fix) takes
+  its share; the pace is fitted where the rounded value steps twice (> 2.8 h
+  logs: a 10 h synthetic drive to 0 s), else assumed; placed next to an
+  intact row (the app appended after the save - only when the run still
+  fits its rounded values: rows appended days later aren't glued on), else
+  on a step of the rounded value (it passes the step's middle there), else
+  centred in its rounding step (time of day +-1.4 h). The strip says so
+  (`.lr-warn`, "≈" on the clock) and "The drive took [N] min" re-times it
+  (worker op 'retime' on the kept text - `L.text`, only for re-timed CSVs;
+  the page keeps the signal, the place on the timeline and the map view).
+  The heat map hardly depends on the pace (its bearings close by distance;
+  speed only gates at 2 m/s and widens the bearing sigma). Checked
+  (scratch t_excel.mjs on 20 intact logs x 4 damaged forms - Excel CSV,
+  ';' + decimal comma, UTF-16 tabs, half damaged): the same rows, positions,
+  bearings; estimates 0-391 m from the originals' (median ~5 m), bearings
+  as many, rebuilt duration 0.66-1.41x the real (median 1.04); 77 / 80 - the
+  misses are kiwi-433-110823 (51 rows, one per 4.6 s: time 3x too short,
+  more rows over the 8 deg/s turn limit, 7 vs 16 bearings, its estimate
+  still 103 m from the original's). t_retime.mjs 14 / 14,
+  tools/replay_validate.mjs has two spreadsheet layouts
 - The worker (`lrWorkerMain`, started from a Blob of its source like the
   viewshed's; `self.lrTest` exposes it to node):
   - its own READ-ONLY SQLITE READER (`sqlOpen`: header, table b-trees +

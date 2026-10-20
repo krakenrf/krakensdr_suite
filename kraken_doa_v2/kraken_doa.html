@@ -804,6 +804,9 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .lr-msg {margin-top:3px;line-height:1.45}
 .lr-help {color:#b8cbe6;margin-top:2px}
 .lr-help .map-btn {height:20px;font-size:11px;margin:0 2px}
+.lr-warn {color:#ffcc80;margin-top:2px}
+.lr-warn b {color:#ffe0b2}
+.map-lr .lr-warn label {display:inline-flex;color:#dbe8ff}
 .map-lr:not(.loaded) .lr-ld {display:none}
 .map-pane.lr-open .map-df, .map-pane.lr-open .map-mk {bottom:calc(var(--lr-h, 150px) + 30px)}
 .map-pane.lr-open .map-mk {max-height:calc(100% - var(--lr-h, 150px) - 150px)}
@@ -20323,27 +20326,77 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const MODES = ['GPS', 'COMPASS', 'KRAKEN', 'MANUAL'];
     const modeOf = s => { const k = MODES.indexOf(String(s || '').trim().toUpperCase()); return k < 0 ? 0 : k; };
     const num = s => { if (s === null || s === undefined) return NaN; if (typeof s === 'number') return s; s = String(s).trim(); return s === '' ? NaN : Number(s); };
+    // A log opened in a spreadsheet and saved again (Excel, LibreOffice) comes
+    // back changed - read it anyway: the 13-digit timestamps written in
+    // scientific notation with 6 significant digits (1.68843E+12 = rounded to
+    // 10^7 ms, 2.8 h - every row of a drive at one or two "moments": rebuilt
+    // from the track, lrRetime), every row padded with empty fields to the
+    // longest (a 2021-layout row then looked like the newest layout: trailing
+    // empty fields are dropped before the count), ';' between fields and ','
+    // as the decimal point (European locales), "Unicode text" (UTF-16, tabs),
+    // fields in quotes, text fields with a leading space
+    function lrDecodeText(u8) {
+      if (u8[0] === 0xff && u8[1] === 0xfe) return new TextDecoder('utf-16le').decode(u8.subarray(2));
+      if (u8[0] === 0xfe && u8[1] === 0xff) return new TextDecoder('utf-16be').decode(u8.subarray(2));
+      // a binary that isn't SQLite is refused (NULs: UTF-16 without a BOM is that too)
+      for (let i = 0; i < Math.min(u8.length, 4096); i++) if (u8[i] === 0) throw new Error('not a DoA log (neither SQLite nor text)');
+      return new TextDecoder().decode(u8);   // (UTF-8; it drops a BOM)
+    }
+    // the rounding step (ms) of a timestamp in scientific notation (0: exact)
+    const tsStep = s => {
+      const m = /^\s*[-+]?\d+(?:[.,](\d*))?[eE]\+?(\d+)\s*$/.exec(s);
+      if (!m) return 0;
+      const q = Math.pow(10, +m[2] - (m[1] || '').length);
+      return q > 1 ? q : 0;
+    };
     function lrParseCsv(text, out) {
       const lines = text.split('\n');
       let bad = 0, fmt = {};
+      // the separator: the commonest of , ; tab on the first lines; with ; or
+      // tab a ',' in a number is its decimal point
+      const head = lines.slice(0, 20).join('\n'), cnt = c => head.split(c).length - 1;
+      const sep = cnt(';') > cnt(',') && cnt(';') >= cnt('\t') ? ';' : cnt('\t') > cnt(',') ? '\t' : ',';
+      const dec = sep !== ',' && /\d,\d/.test(head);
+      const N = dec ? s => num(s == null ? s : String(s).replace(',', '.')) : num;
+      // a line -> fields (quotes honoured when there are any), trailing empty fields dropped
+      const split = line => {
+        let tok;
+        if (line.indexOf('"') < 0) tok = line.split(sep);
+        else {
+          tok = [];
+          let cur = '', q = false;
+          for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            if (q) { if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+            else if (ch === '"') q = true;
+            else if (ch === sep) { tok.push(cur); cur = ''; }
+            else cur += ch;
+          }
+          tok.push(cur);
+        }
+        for (let i = 0; i < tok.length; i++) tok[i] = tok[i].trim();
+        while (tok.length && tok[tok.length - 1] === '') tok.pop();
+        return tok;
+      };
       const add = (tok, f) => {
         let r;
         if (f === 'new') {
-          r = {t: num(tok[0]), rel: num(tok[1]), conf: num(tok[2]), pow: num(tok[3]), freq: num(tok[4]), ant: tok[5].trim(),
-               st: tok[7].trim(), lat: num(tok[8]), lon: num(tok[9]), gh: num(tok[10]), ch: num(tok[11]), mode: modeOf(tok[12]),
+          r = {t: N(tok[0]), rel: N(tok[1]), conf: N(tok[2]), pow: N(tok[3]), freq: N(tok[4]), ant: tok[5],
+               st: tok[7], lat: N(tok[8]), lon: N(tok[9]), gh: N(tok[10]), ch: N(tok[11]), mode: modeOf(tok[12]),
                s0: 17};
         } else if (f === '373') {
-          r = {t: num(tok[0]), lat: num(tok[1]), lon: num(tok[2]), gh: num(tok[3]), ch: num(tok[4]), rel: num(tok[5]), conf: num(tok[6]),
-               pow: num(tok[7]), freq: num(tok[8]), ant: tok[9].trim(), mode: modeOf(tok[11]), s0: 12};
+          r = {t: N(tok[0]), lat: N(tok[1]), lon: N(tok[2]), gh: N(tok[3]), ch: N(tok[4]), rel: N(tok[5]), conf: N(tok[6]),
+               pow: N(tok[7]), freq: N(tok[8]), ant: tok[9], mode: modeOf(tok[11]), s0: 12};
         } else {
-          r = {t: num(tok[0]), lat: num(tok[1]), lon: num(tok[2]), gh: num(tok[3]), ch: num(tok[4]), rel: num(tok[5]),
-               conf: f === '8' ? num(tok[6]) : NaN, pow: f === '8' ? num(tok[7]) : NaN, freq: NaN, mode: 0, s0: -1};
+          r = {t: N(tok[0]), lat: N(tok[1]), lon: N(tok[2]), gh: N(tok[3]), ch: N(tok[4]), rel: N(tok[5]),
+               conf: f === '8' ? N(tok[6]) : NaN, pow: f === '8' ? N(tok[7]) : NaN, freq: NaN, mode: 0, s0: -1};
         }
         if (!(r.t > 1e11 && r.t < 1e14)) return false;   // epoch ms (2001 .. 5138)
+        r.tq = tsStep(tok[0]);
         if (r.s0 >= 0) {
           const sp = new Float32Array(360);
           let ok = 0;
-          for (let i = 0; i < 360; i++) { const v = num(tok[r.s0 + i]); sp[i] = v; if (Number.isFinite(v)) ok++; }
+          for (let i = 0; i < 360; i++) { const v = N(tok[r.s0 + i]); sp[i] = v; if (Number.isFinite(v)) ok++; }
           r.spec = ok === 360 ? sp : null;
         }
         delete r.s0;
@@ -20354,18 +20407,107 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       for (let line of lines) {
         line = line.trim();
         if (!line) continue;
-        let tok = line.split(',');
         // several records on one line (a DOA_value.html body whose newlines were
-        // lost): split before each "<timestamp>," not preceded by a comma
-        let recs = [tok];
-        if (tok.length >= 2 * 377 - 1) recs = line.split(/(?<!,)\s+(?=\d{12,14}\s*,)/).map(s => s.split(','));
-        for (tok of recs) {
-          const n = tok.length;
-          const f = n >= 377 ? 'new' : n === 373 ? '373' : n === 8 ? '8' : n === 6 ? '6' : null;
+        // lost): split before each "<timestamp><separator>" not after a separator
+        let recs = [line];
+        if (line.split(sep).length >= 2 * 377 - 1)
+          recs = line.split(sep === ',' ? /(?<!,)\s+(?=\d{12,14}\s*,)/ : sep === ';' ? /(?<!;)\s+(?=\d{12,14}\s*;)/ : /(?<!\t) +(?=\d{12,14}\s*\t)/);
+        for (const rec of recs) {
+          const tok = split(rec), n = tok.length;
+          // (a 2021-layout row ends with a separator: 372 fields are left)
+          const f = n >= 377 ? 'new' : n === 372 || n === 373 ? '373' : n === 8 ? '8' : n === 6 ? '6' : null;
           if (!f || !add(tok, f)) bad++;
         }
       }
-      return {bad, fmt};
+      return {bad, fmt, sep, dec};
+    }
+    // Timestamps rounded by a spreadsheet (r.tq: the rounding step, ms; also
+    // when every timestamp is a multiple of >= 10^5 ms and rows of a signal
+    // share them - re-saved as plain numbers) get a time rebuilt from the
+    // track, in file order: the clock advances one GPS fix at each change of
+    // position - fixMs per fix: from durMs (the user's "the drive took ..."),
+    // else fitted to where the rounded value steps (it passes the middle of the
+    // step there) when it steps twice, else LR_FIX_MS (1.2-2.4 s in 20 intact
+    // Android logs, median 1.6); a run of rows at one position longer than
+    // usual (stopped, several VFOs per fix) takes that many rows' share.
+    // Placed after / before an intact row next to the run, else on a step of
+    // the rounded value, else centred in its rounding step. -> the info for the
+    // page, or null (nothing was rounded)
+    const LR_FIX_MS = 1600;
+    function lrRetime(rows, durMs) {
+      if (!rows.some(r => r.tq) && rows.length > 10) {
+        let q = 1e12;
+        for (const r of rows) while (q >= 1e5 && r.t % q) q /= 10;
+        if (q >= 1e5) {
+          const last = new Map();
+          let same = 0, pairs = 0;
+          for (const r of rows) {
+            const k = r.freq + '|' + r.vfo;
+            if (last.has(k)) { pairs++; if (last.get(k) === r.t) same++; }
+            last.set(k, r.t);
+          }
+          if (same > pairs / 2) for (const r of rows) r.tq = q;
+        }
+      }
+      const runs = [];
+      for (let i = 0; i < rows.length; i++) {
+        if (!rows[i].tq) continue;
+        let j = i;
+        while (j + 1 < rows.length && rows[j + 1].tq) j++;
+        runs.push([i, j]);
+        i = j;
+      }
+      if (!runs.length) return null;
+      // per run: the rows' clock in fixes (u), the steps of the rounded value [u, t]
+      const R = runs.map(([a, b]) => {
+        const groups = [];
+        for (let i = a; i <= b; i++) {
+          const r = rows[i], g = groups[groups.length - 1];
+          if (!g || (Number.isFinite(r.lat) && (r.lat !== rows[g.i0].lat || r.lon !== rows[g.i0].lon))) groups.push({i0: i, n: 1});
+          else g.n++;
+        }
+        const sz = groups.map(g => g.n).sort((x, y) => x - y), med = sz[sz.length >> 1];
+        const u = new Float64Array(b - a + 1);
+        let U = 0;
+        for (const g of groups) {
+          const w = Math.max(1, g.n / med);
+          for (let k = 0; k < g.n; k++) u[g.i0 - a + k] = U + w * k / g.n;
+          U += w;
+        }
+        const steps = [];
+        for (let i = a + 1; i <= b; i++) if (rows[i].t > rows[i - 1].t) steps.push([u[i - a], (rows[i].t + rows[i - 1].t) / 2]);
+        let q = 0;
+        for (let i = a; i <= b; i++) q = Math.max(q, rows[i].tq);
+        return {a, b, u, U, steps, q};
+      });
+      const Utot = R.reduce((s, r) => s + r.U, 0);
+      let how = 'assumed', fixMs = LR_FIX_MS;
+      if (durMs > 0) { fixMs = durMs / Utot; how = 'given'; }
+      else {
+        // fitted on the run with the most steps (two at least)
+        const best = R.reduce((x, r) => r.steps.length > x.steps.length ? r : x, R[0]);
+        if (best.steps.length >= 2) {
+          const [u0, t0] = best.steps[0], [u1, t1] = best.steps[best.steps.length - 1];
+          const f = (t1 - t0) / (u1 - u0);
+          if (f >= 300 && f <= 10000) { fixMs = f; how = 'fitted'; }
+        }
+      }
+      let anchored = 'none';
+      for (const r of R) {
+        const prev = r.a > 0 ? rows[r.a - 1] : null, next = r.b + 1 < rows.length ? rows[r.b + 1] : null;
+        // an intact neighbour only when the run then still matches its rounded
+        // values (rows appended days after the spreadsheet saved the file aren't)
+        const fits = base => Math.abs(base - rows[r.a].t) <= r.q / 2 + 2 * fixMs &&
+                             Math.abs(base + r.u[r.b - r.a] * fixMs - rows[r.b].t) <= r.q / 2 + 2 * fixMs;
+        let base = prev ? prev.t + fixMs : NaN;
+        if (!(prev && fits(base))) base = next ? next.t - (r.U + 1) * fixMs : NaN;
+        if ((prev || next) && fits(base)) anchored = 'row';
+        else if (r.steps.length) { base = r.steps[0][1] - r.steps[0][0] * fixMs; if (anchored === 'none') anchored = 'step'; }
+        else base = rows[r.a].t - r.U * fixMs / 2;
+        for (let i = r.a; i <= r.b; i++) rows[i].t = Math.round(base + r.u[i - r.a] * fixMs);
+      }
+      return {rows: R.reduce((s, r) => s + r.b - r.a + 1, 0), runs: R.length, q: Math.max(...R.map(r => r.q)), fixMs: Math.round(fixMs),
+              how, anchored, durMs: Math.round(Utot * fixMs)};
     }
     // with its -wal file's pages; if they don't fit this database (another
     // database's -wal of the same name), read again without them
@@ -20416,24 +20558,28 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
     // the file -> rows sorted by time, each with its heading, compass bearing,
     // speed / turn rate (from the track) and signal; spectra -> display lobes
-    function lrParse(name, buf, wal) {
-      const u8 = new Uint8Array(buf), rows = [];
-      const sq = u8.length >= 16 && String.fromCharCode(...u8.subarray(0, 15)) === 'SQLite format 3';
+    // (text: a CSV's text read before - a re-time with the drive's length, durMs)
+    function lrParse(name, buf, wal, durMs, text) {
+      const u8 = buf ? new Uint8Array(buf) : new Uint8Array(0), rows = [];
+      const sq = !text && u8.length >= 16 && String.fromCharCode(...u8.subarray(0, 15)) === 'SQLite format 3';
       let info;
+      L.text = null;
       if (sq) {
         const r = lrParseSqlite(buf, wal, rows);
         const app = r.meta.app || '';
         info = {kind: 'sqlite', format: 'SQLite' + (app === 'kraken_doa_v2' ? ' (KrakenSDR DoA Recording)' : app ? ' (' + (app === 'krakensdr_rdf_android' ? 'Android app' : app) + ')' : ''),
                 bad: r.bad, meta: r.meta, walFrames: r.walFrames, walBad: r.walBad};
       } else {
-        // a text file (BOM, UTF-8); a binary that isn't SQLite is refused
-        let nul = 0;
-        for (let i = 0; i < Math.min(u8.length, 4096); i++) if (u8[i] === 0) nul++;
-        if (nul) throw new Error('not a DoA log (neither SQLite nor text)');
-        const r = lrParseCsv(new TextDecoder().decode(u8), rows);
+        if (!text) text = lrDecodeText(u8);
+        const r = lrParseCsv(text, rows);
         const fk = Object.keys(r.fmt).sort((a, b) => r.fmt[b] - r.fmt[a]);
         const names = {new: 'DOA_value.html lines', 373: '2021 layout', 8: 'bearings + confidence', 6: 'bearings only'};
-        info = {kind: 'csv', format: 'CSV (' + (fk.map(k => names[k]).join(' + ') || 'nothing readable') + ')', bad: r.bad, fmts: r.fmt};
+        info = {kind: 'csv', format: 'CSV (' + (fk.map(k => names[k]).join(' + ') || 'nothing readable') + ')', bad: r.bad, fmts: r.fmt,
+                sep: r.sep, dec: r.dec};
+        // rounded timestamps: rebuilt in file order (before the sort); the text
+        // kept for a re-time with the drive's real length
+        info.retimed = lrRetime(rows, durMs);
+        if (info.retimed) L.text = text;
       }
       if (!rows.length) throw new Error(info.bad ? 'no DoA rows found (' + info.bad + ' lines not readable)' : 'the log is empty');
       // time order (stable: rows of one moment keep the file's order)
@@ -20626,11 +20772,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
 
     self.onmessage = ev => {
       const m = ev.data;
-      if (m.op === 'load') {
+      // load: a file; retime: the CSV read last again, its rounded timestamps
+      // rebuilt for a drive of durMs (the page's "the drive took ...")
+      if (m.op === 'load' || m.op === 'retime') {
         job++;   // a heat job of the previous log stops
         try {
-          const {info, o} = lrParse(m.name, m.buf, m.wal || null);
-          postMessage({op: 'loaded', id: m.id, info, o});
+          if (m.op === 'retime' && !L.text) throw new Error('the log is no longer loaded - open it again');
+          const {info, o} = m.op === 'load' ? lrParse(m.name, m.buf, m.wal || null) : lrParse(m.name, null, null, m.durMs, L.text);
+          postMessage({op: 'loaded', id: m.id, info, o, retime: m.op === 'retime'});
         } catch (e) {
           postMessage({op: 'error', id: m.id, error: e && e.message ? e.message : String(e)});
         }
@@ -20638,7 +20787,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       else if (m.op === 'cancel') job++;
     };
     // offline tests (node)
-    self.lrTest = {sqlOpen, sqlParseCreate, lrParse, lrParseCsv, lrHeat, L, RdfGate, RdfGrid, RdfSolver, rdfNorthLobe, rdfBearingLobe,
+    self.lrTest = {sqlOpen, sqlParseCreate, lrParse, lrParseCsv, lrRetime, lrHeat, L, RdfGate, RdfGrid, RdfSolver, rdfNorthLobe, rdfBearingLobe,
                    rdfLobePeak, rdfDistM, rdfBrg, rdfToEnu, rdfFromEnu, rdfOpt};
   }
   // (end of lrWorkerMain)
@@ -20651,7 +20800,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   const LR_LINES = [[0, 'Off'], [30, '30 s'], [120, '2 min'], [600, '10 min'], [-1, 'All']];
   const LR_COL = '#ffd54f';   // the replay's colour (no VFO's: getDecimatorColor)
   const LR_MODES = ['GPS', 'compass', 'KrakenSDR', 'manual'];
-  let lrWorker = null, lrLoadSeq = 0, lrJobSeq = 0, lrRaf = 0, lrLastDraw = 0, lrInfoAt = 0, lrScrub = null;
+  let lrWorker = null, lrLoadSeq = 0, lrJobSeq = 0, lrRaf = 0, lrLastDraw = 0, lrInfoAt = 0, lrInfoT = 0, lrScrub = null;
   let lrLoadMsg = null, lrLoadName = '';   // loading / its error; the file being read
   function lrSaveUi() { try { localStorage.setItem('kraken_lr', JSON.stringify(lrUi)); } catch (e) {} }
   function lrSet(k, v) {
@@ -20730,7 +20879,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (m.op === 'loaded' && m.id === lrLoadSeq) { lrLoaded(m); return; }
     if (m.op === 'heat' && lr && lr.heat && m.job === lr.heat.job) lrOnHeat(m);
   }
+  // (m.retime: the same log with its times rebuilt again - the signal and
+  // the place on the timeline kept, the map left where it is)
   function lrLoaded(m) {
+    const keep = m.retime && lr ? {key: lr.sigs[lr.sel].key, f: lr.a / lr.A1} : null;
     const o = m.o, n = o.t.length, info = m.info;
     const L = {name: lrLoadName, info, o, n, sigs: info.sigs, t: o.t[0], a: 0, playing: false, heat: null, snapCv: null};
     // the vehicle's track: positioned rows in time order, in map coordinates
@@ -20758,10 +20910,25 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     // the signal with the most lobes (then rows)
     let best = 0;
     info.sigs.forEach((s, i) => { if (s.ns > info.sigs[best].ns || (s.ns === info.sigs[best].ns && s.n > info.sigs[best].n)) best = i; });
-    lrSetSig(best, true);
+    const kept = keep ? info.sigs.findIndex(s => s.key === keep.key) : -1;
+    lrSetSig(kept >= 0 ? kept : best, true);
     lrRender();
+    if (keep) { lrSeekAxis(keep.f * lr.A1, true); return; }
     lrSeekAxis(0, true);
     lrFit();
+  }
+  // a log whose timestamps a spreadsheet rounded (info.retimed): its times
+  // rebuilt again for a drive of `min` minutes (the worker kept its text)
+  function lrRetimeTo(min) {
+    const v = Math.round(+min);
+    if (!lr || !lr.info.retimed || !(v >= 1 && v <= 7 * 24 * 60)) { if ($id('lr-msg')) $id('lr-msg').dataset.html = ''; lrRender(); return; }
+    lrPlay(false);
+    lrLoadMsg = {busy: 'Rebuilding the times for a ' + v + ' min drive…'};
+    lrWorkerGet().postMessage({op: 'retime', id: ++lrLoadSeq, name: lr.name, durMs: v * 60000});
+    lrRender();
+  }
+  function lrFmtStep(ms) {
+    return ms >= 3600000 ? (ms / 3600000).toFixed(1) + ' h' : ms >= 60000 ? Math.round(ms / 60000) + ' min' : ms >= 1000 ? Math.round(ms / 1000) + ' s' : ms + ' ms';
   }
   // a signal picked: its rows, power range; the heat map worked out again
   function lrSetSig(i, quiet) {
@@ -21211,12 +21378,24 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (lrLoadMsg && lrLoadMsg.busy) mh = `<span class="lr-dim">${escapeHtml(lrLoadMsg.busy)}</span>`;
     else if (lrLoadMsg && lrLoadMsg.err) mh = `<span class="e">${escapeHtml(lrLoadMsg.err)}</span>`;
     if (!lr) mh += `<div class="lr-help">Play back a <b>DoA log</b> of a drive on the map: the KrakenSDR Android app's log (<b>.csv</b>, or <b>.sqlite</b> - with its <b>-wal</b> file if there is one) or a <b>📝 DoA Recording</b> of this receiver (its box: 🗺 Replay). <button type="button" class="map-btn" onclick="lrOpenDialog()">📂 Open a log…</button> or drop the file on the map. It is read here in the browser - nothing is uploaded. The track, the bearings, each moment's DoA lobe and the heat map of where the transmitter is (the live mobile DF's) - at any speed, back and forth.</div>`;
+    // timestamps a spreadsheet rounded: how the times were rebuilt + the drive's length to set
+    const R = lr && lr.info.retimed;
+    if (R) {
+      const how = R.how === 'given' ? 'spread over the drive\'s length set here' :
+                  R.how === 'fitted' ? `one GPS fix every ${(R.fixMs / 1000).toFixed(1)} s, fitted to where the rounded times change` :
+                  `assuming one GPS fix every ${(R.fixMs / 1000).toFixed(1)} s (the Android app's usual: 1.2 - 2.4 s)`;
+      const where = R.anchored === 'row' ? 'next to the log\'s intact rows' : R.anchored === 'step' ? 'where the rounded time changes' :
+                    `in the middle of its rounded time - the time of day is only known to ±${lrFmtStep(R.q / 2)}`;
+      mh += `<div class="lr-warn" title="${escapeHtml('A spreadsheet (Excel, LibreOffice) opened this log and saved it again, writing its 13-digit timestamps in scientific notation - 1.68843E+12 - with 6 digits: rounded to ' + lrFmtStep(R.q) + ', so the rows of a drive share one or two times. Positions, bearings and lobes are intact. The rows keep their order in the file; the clock advances at each new GPS position. The heat map hardly depends on it (its bearings are taken by distance driven); the speed, and with it the pace of the playback, does.')}">` +
+            `⚠ <b>Times rebuilt</b>: a spreadsheet rounded this log's timestamps to ${lrFmtStep(R.q)} (${R.rows} of ${lr.info.rows} rows) - ${how}, placed ${where}. ` +
+            `<label>The drive took <input type="number" id="lr-dur" min="1" max="10080" step="1" value="${Math.max(1, Math.round(R.durMs / 60000))}" style="width:56px" onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="lrRetimeTo(this.value)"> min</label></div>`;
+    }
     if (msg.dataset.html !== mh) { msg.dataset.html = mh; msg.innerHTML = mh; }
     if (lr) {
       $id('lr-nm').textContent = lr.name;
       $id('lr-nm').title = lr.name;
       const I = lr.info, d0 = new Date(lr.o.t[0]).toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
-      $id('lr-fmt').textContent = `${I.format} · ${I.rows} rows${I.bad ? ` (${I.bad} unreadable)` : ''} · ${d0}${I.walBad ? ' · ⚠ its -wal file does not fit (not used)' : ''}`;
+      $id('lr-fmt').textContent = `${I.format} · ${I.rows} rows${I.bad ? ` (${I.bad} unreadable)` : ''} · ${d0}${I.walBad ? ' · ⚠ its -wal file does not fit (not used)' : ''}${I.retimed ? ' · ⚠ times rebuilt' : ''}${I.sep && I.sep !== ',' ? ` · ${I.sep === ';' ? '";"' : 'tab'}-separated` : ''}`;
       $id('lr-fmt').title = [I.format + (I.walFrames ? ` + ${I.walFrames} pages from its -wal file` : ''), I.walBad ? 'its -wal file was not used: ' + I.walBad : '',
         I.meta && I.meta.created_utc ? 'created ' + I.meta.created_utc : '', I.stations && I.stations.length ? 'station: ' + I.stations.join(', ') : '',
         I.ants && I.ants.length ? 'array: ' + I.ants.join(', ') : '', `${I.pos} of ${I.rows} rows with a position, ${I.lobes} with a DoA spectrum`,
@@ -21243,14 +21422,17 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // the parts that change while playing: time, play button, timeline, the row / heat line
   function lrRenderDyn(force) {
     if (!lrOpen || !lr || !$id('lr-time')) return;
-    $id('lr-time').textContent = lrFmtT(lr.t);
+    $id('lr-time').textContent = (lr.info.retimed ? '≈ ' : '') + lrFmtT(lr.t);
     $id('lr-pos').textContent = lrFmtDur(lr.a) + ' / ' + lrFmtDur(lr.A1);
     const pb = $id('lr-play');
     const pl = lr.playing ? '⏸' : '▶';
     if (pb.textContent !== pl) pb.textContent = pl;
     lrTlDraw();
     const now = performance.now();
-    if (!force && now - lrInfoAt < 150) return;
+    // at most ~7 times a second - but a skipped one comes after (a seek just
+    // after a heat update left the line on the moment before)
+    clearTimeout(lrInfoT);
+    if (!force && now - lrInfoAt < 150) { lrInfoT = setTimeout(() => lrRenderDyn(true), 150 - (now - lrInfoAt)); return; }
     lrInfoAt = now;
     const o = lr.o, ri = lrRowAt(lr.t), H = lr.heat, f1 = x => Number.isFinite(x) ? x.toFixed(1) : '–';
     let h = '';

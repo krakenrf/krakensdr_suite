@@ -88,14 +88,23 @@ const layouts = {
   'newest without spaces': rs => rs.map(r => [r.t, r.rel, r.conf, r.pow, 433920000, 'UCA', 100, 'NOCALL', r.lat, r.lon, r.gh, r.ch, r.mode, 'R,R,R,R', ...r.spec].join(',') + ',,, \n').join(''),
   '2021 (373 fields)': rs => rs.map(r => [r.t, r.lat, r.lon, r.gh, r.ch, r.rel, r.conf, r.pow, 400000000, 'UCA', 100, r.mode, ...r.spec].join(',') + ', \n').join(''),
   'bearings only (6 fields)': rs => rs.map(r => [r.t, r.lat, r.lon, r.gh, r.ch, r.rel].join(',') + '\r\n').join(''),
+  // a spreadsheet's re-save: 13-digit timestamps as 1.72900E+12 (6 significant digits - every row at one
+  // "moment", rebuilt from the track), rows padded to a common width; then the ';' + decimal-comma form
+  'Excel re-save (1.729E+12 timestamps)': rs => rs.map(r => [excelTs(r.t), r.rel, r.conf, r.pow, 433920000, ' UCA', 100, ' NOCALL', r.lat, r.lon, r.gh, r.ch, ' ' + r.mode, ' R', 'R', 'R', 'R', ...r.spec].join(',') + ',,,,\r\n').join(''),
+  'Excel re-save, ";" + decimal commas': rs => rs.map(r => [excelTs(r.t), r.rel, r.conf, r.pow, 433920000, ' UCA', 100, ' NOCALL', r.lat, r.lon, r.gh, r.ch, ' ' + r.mode, ' R', 'R', 'R', 'R', ...r.spec]
+                                          .map(x => typeof x === 'string' && /^-?\d+\.\d+(E\+\d+)?$/.test(x) ? x.replace('.', ',') : x).join(';') + ';\r\n').join(''),
 };
+function excelTs(t) { const s = t.toExponential(5).toUpperCase(); return s.replace(/0+E/, 'E').replace('.E', 'E'); }
 let job = 0, gpsRecs = null;
 for (const [lab, write] of [...Object.entries(layouts).map(([l, w]) => [l, () => w(gpsRows)]), ['COMPASS heading mode', () => layouts['newest (DOA_value.html line)'](cmpRows)]]) {
   const m = load(lab, write());
   if (m.op !== 'loaded') { check(false, `${lab}: ${m.error}`); continue; }
   const h = await heat({job: ++job, sig: 0});
   const e = h.ests[h.ests.length - 1], d = e ? T.rdfDistM(e.lat, e.lon, TX[0], TX[1]) : Infinity;
-  check(m.info.rows === 1200 && d < 60, `${lab}: ${m.info.rows} rows, ${h.recs} bearings in ${h.ms} ms, estimate ${d.toFixed(1)} m from the transmitter (r95 ${e ? e.r95 : '-'} m)`);
+  const rt = m.info.retimed;
+  check(m.info.rows === 1200 && d < 60 && !!rt === lab.startsWith('Excel'),
+        `${lab}: ${m.info.rows} rows, ${h.recs} bearings in ${h.ms} ms, estimate ${d.toFixed(1)} m from the transmitter (r95 ${e ? e.r95 : '-'} m)` +
+        (rt ? `; times rebuilt (${rt.how} ${rt.fixMs} ms per fix: ${(rt.durMs / 60000).toFixed(0)} min for the real 20)` : ''));
   if (lab.startsWith('newest (')) gpsRecs = T.L.solver.recs.map(r => Object.assign({}, r, {p: Float32Array.from(r.p)}));
 }
 
