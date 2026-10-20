@@ -706,9 +706,29 @@ Edit `kraken_doa_v2/include/config.hpp`:
   draws a VFO at least 8 px wide so a 1 kHz bar stays visible/grabbable
 
 **Scanners**:
-- The discrete (server-side hop) and continuous scanners are mutually
-  exclusive: starting one while the other runs is refused and the browser's
-  button reset
+- The discrete (server-side hop), continuous and saved-frequency scanners
+  are mutually exclusive: starting one while another runs is refused and
+  the browser's button reset
+- 📻 Saved-frequency scanner (`kraken_doa_v2/src/sf_scanner.cpp` +
+  `sf_scan_plan.cpp`; details: `kraken_doa_v2/CLAUDE.md` *Saved-frequency
+  scan*): scans the saved frequencies ticked in the 📻 list - one by one or
+  a whole category (its `scan` flag: also entries added later; a frequency's
+  `scan` -1 leaves it out) - with the page's SELECTED VFO: groups them into
+  tuner bands (all entries whose VFO fits the edge-clipped 2.4 MHz of one
+  centre - a centre kept off every entry's channel: DC is removed / the
+  RTL's spike; entries with a gain only share a band with that gain), watches
+  every entry of a band at once in the averaged FFT (squelch = dB over the
+  noise floor) and retunes only between bands. Coherent: one band at a
+  time (Dwell each), nothing measured while heimdall recalibrates after a
+  retune; independent: a band on every tuner no other VFO is on. Lock = the
+  entry's decoder / demod / bandwidth + the VFO's offset (the page's
+  sfTune), heard; Delay after the transmission, Skip / Hold / Longest stay.
+  Its own commands go through `apply_command` but are NOT saved
+  (`sfscan::dispatching()`); the tuning it leaves is saved at stop. A manual
+  retune, a mode change, removing its VFO or a playback stop it; refused in
+  wideband mode. WS `SF_SCAN:`, `SFSCAN_START:<vfo>` / `STOP` / `SKIP` /
+  `HOLD:` / `SQUELCH:` / `DWELL:` / `HANG:` / `MAX:` (persisted), `GET_SFSCAN`
+  -> `{"sfscan":{...}}`
 - Discrete scanner: config entries outside the tunable range (R820T, or the
   Wideband variant's span) are refused - the whole load, the previous config
   stays; frequencies go to heimdall as uint64 Hz. heimdall's settle and dwell
@@ -1019,6 +1039,9 @@ DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
   its gain (when set; independent mode: the VFO's tuner)
 - Spectrum: tags with the names at the top of the main spectrum and the
   independent-mode panes; click = tune
+- ▶ Scan: a tick per entry and per category heading picks what the
+  saved-frequency scanner scans (see *Scanners*), kept in the list itself
+  (`scan` per frequency / category, `scan_uncat`; `SF_SCAN:`)
 - WS `SF_SET:{json}` (+ newcat / newloc made in the same step), `SF_DEL:id`,
   `SF_LOC_SET` / `SF_LOC_DEL` (a location's frequencies stay, unplaced),
   `SF_CAT_SET` / `SF_CAT_DEL` (uncategorises), `GET_SF` ->

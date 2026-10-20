@@ -910,6 +910,134 @@ Edit `include/config.hpp`:
   keyring (fetch() from a data: page still works, which makes it look like a
   network problem); when other builds load the Pi, use long CDP timeouts
 
+**📻 Saved-frequency scan (`src/sf_scanner.cpp`, `src/sf_scan_plan.cpp`, UI "📻 SAVED FREQUENCY SCAN" in kraken_doa.html):**
+- What it scans is part of the saved-frequency list (saved_freqs.cpp, so
+  every page shows the same ticks and it survives restarts): a CATEGORY's
+  `scan` (bool) takes every frequency in it - also those added later -,
+  `scan_uncat` (top level of the file / message) the uncategorised ones; a
+  FREQUENCY's `scan` 1 = scanned on its own, -1 = left out even though its
+  category is scanned, 0 = its category decides. `SF_SCAN:{"freqs":{id:-1|0|1},
+  "cats":{id:bool},"uncat":bool}` (any subset; ids gone meanwhile skipped; a
+  bad value refuses the whole command - `{"savedfreq":...,"error","id":"sfscan"}`)
+  -> the whole list to every page like every SF_ command. SF_SET / SF_CAT_SET
+  WITHOUT "scan" keep the entry's (the editor / ⚙ Categories don't send it);
+  a frequency moved to another category, or left without one by SF_CAT_DEL,
+  drops a -1. `savedfreq::scan_entries()` (the effective list, lowest first)
+  and `savedfreq::generation()` (bumped by every save) feed the scanner
+- Plan (`sf_scan_plan.cpp`, no receiver state - tested offline): entries
+  outside the tunable range (R820T, or the Wideband variant's union) or with
+  a decoder that holds its VFO (`fixed_freq_hz` / `lock_vfo` plugins: ADS-B,
+  AIS, ism, cells, dtv, lora, radar ...) are `skipped` with a reason. The rest
+  go into BANDS = one tuner centre (whole kHz, clamped to the range) whose
+  usable span (edge clip x 2.4 MHz) holds every member's VFO (its bandwidth
+  around its frequency: the entry's, else its demod's usual - WBFM 240 kHz,
+  NBFM / AM 16 kHz, what the page's demod buttons set -, else the VFO's,
+  capped at 240 kHz for fitting): entries with a gain - per gain, lowest
+  first, a new band when the next doesn't fit; then the rest into the first
+  band they fit (any gain), else bands of their own. Bands lowest centre
+  first. The CENTRE keeps every channel off DC (`pick_centre`: half its
+  channel + `DC_GUARD_HZ` 3 kHz away - the IQ path takes the DC off and an
+  RTL-SDR has its spike there: a band of ONE entry centred on it never saw
+  its carrier, found by the e2e test), the nearest such centre to the middle
+  that still holds every VFO, else (channels every few kHz) the one farthest
+  from them. `band_fits()` = a centre that already holds a band, channels
+  off DC (or the plan's own centre) - no retune.
+  Level of an entry = strongest bin in the inner 80 % of its channel (its
+  bandwidth, else 180 kHz WBFM / 12.5 kHz) of the averaged FFT, minus the
+  channel's noise floor (`FFTProcessor::channel_noise_floor`)
+- Scanner (`sf_scanner.cpp`, one thread, 100 ms ticks; class `Scan`, state
+  TUNE -> SETTLE -> WATCH -> LISTEN): SLOTS = the array (coherent: 1, the
+  FFT of `active_channel`) or every tuner NO OTHER VFO is on (independent;
+  another VFO moving onto a scanned tuner = a new turn without it, none left
+  = stop). A turn gives slot k band (cycle + k) % nb; with more bands than
+  slots the cycle advances by the slot count after DWELL of ready time (not
+  while held). TUNE: a slot whose centre doesn't hold its band gets FREQ: /
+  TUNER_FREQ:, a band's gain GAIN: / TUNER_GAIN: when it differs. SETTLE:
+  the stream's header frequency (`tuner_frequencies`) within 2 kHz (6 s max,
+  else that band is left out this turn: `ok:false`) + 250 ms, then an FFT
+  averaging reset (`fft_reset_generation`; independent retunes don't get one
+  from heimdall). READY = not `server_retuning` (new global: the header's
+  retuning flag - packets are skipped meanwhile, the spectrum is the old
+  band), `fft_data_valid`, 1 s since the last FFT reset (as the continuous
+  scanner) and, coherent, not calibrating: noise source on / within
+  `NOISE_QUIET_MS`, or phase state 0-3 / 6 (WAITING_STABILITY 5 is fine:
+  noise off, antennas in) - the phase state alone is ignored after 20 s
+  (a heimdall that never settles); KerberosSDR manual mode: noise only.
+  WATCH: an entry over the squelch on 2 polls in a row is active (`act`);
+  entries skipped stay out until measured below squelch - 3 dB; the first
+  active one after the last heard (list order, wrapping) is LOCKED: on the
+  uWS loop, as `sfTune` in the page: DIGITAL_MODE (the entry's decoder),
+  SET_DECIMATOR_DEMOD (+ that demod's usual bandwidth), SET_DECIMATOR_BW
+  (the entry's; Digital: widened to the decoder's `min_vfo_rate`, 24 kHz for
+  Auto), SET_DECIMATOR_FREQ (offset from the slot's centre; independent
+  `:tuner`), the VFO heard. LISTEN: the entry measured on its slot; over
+  squelch - 3 dB keeps it, not ready (calibration) counts as active; resumes
+  after HANG of quiet, or after MAX (then skipped until quiet); SKIP resumes
+  (skipped until quiet) - in WATCH it advances the turn; HOLD stays (WATCH:
+  no turn advance). Resume mutes the VFO; a plan change while listening
+  re-tunes when it resumes (`need_tune_`)
+- Commands run through `ControlHandler::apply_command` on the uWS loop
+  (`loop->defer`, dropped when the run ended - `alive(run id)`), so pages see
+  them like a browser's; `sfscan::dispatching()` (set around them) keeps them
+  out of the settings file (the generic record, TUNER_FREQ's TUNERS:, FREQ's
+  independent TUNERS:) and from stopping the scan; `record_decimator_snapshot`
+  skips while it runs (as for the other scanners). At stop `set_on_stop` ->
+  `persist_after_sf_scan` (control_handler.cpp) saves the live FREQ / GAIN
+  (or TUNERS) + the VFO snapshot: what the scan left is the user's now.
+  Shutdown only joins the thread (nothing saved)
+- Stops it: SFSCAN_STOP, a manual FREQ (any mode), TUNER_FREQ of a scanned
+  tuner, OPERATING_MODE to another mode, heimdall switching mode
+  (`note_server_mode`), its VFO removed, a playback, the plan left empty
+  (each with `msg`). Refused: wideband mode, a playback, another scanner
+  running (and the other two refuse while it runs), a VFO its decoder holds,
+  nothing scannable. The VFO: the page's selected one (`SFSCAN_START:<id>`,
+  -1 / unknown = the first). Muted while scanning, heard while locked; stop
+  keeps it heard if it was listening, else as before the scan. (Muting it
+  in independent mode exposed a crash in data_receiver.cpp's decimation
+  pass: FM / digital only with NO VFO heard left the pass without VFOs and
+  `reserve(size() - 1)` threw - the process ended; muting every VFO by hand
+  did the same. Fixed there: an empty pass does nothing)
+- Status `{"sfscan":{run, state tune|watch|listen, hold, vfo, mode, n, nb,
+  cycle, ready, watch:[{b,ch,hz,lo,hi,n,ok}], cur:{id,name,hz,db,ms,quiet} |
+  null, act:[ids <= 50], skipped:[{id,name,why} <= 50], nskipped, sq, dwell,
+  hang, max[, msg][, err]}}` to every page: on changes and every 500 ms
+  while running; GET_SFSCAN (page connect). `err` = a refused start (the
+  page that pressed ▶ shows it); `msg` = why it stopped. SFSCAN_* are
+  `is_query_command`s; SFSCAN_SQUELCH (3-40 dB, 0.5 steps) / DWELL (500-60000
+  ms) / HANG (0-60000) / MAX (0-3600000, 0 = no limit) are saved by the
+  handler (schema `sfscan_*`, defaults 12 dB / 2 s / 2 s / 0)
+- Page: a tick per row and per category heading (`sfsCatState`: 2 checked,
+  1 indeterminate - `data-mixed`, set after innerHTML -, 0); a row's tick
+  toggles its effective state (`sfsToggleFreq`: -1 / 0 / 1 by its group), a
+  heading's = all / none of it (its rows back to 0); clicks are
+  preventDefault'ed (no optimistic update - the list's broadcast redraws).
+  `#sfs` panel above the categories: ▶ Scan (`sfsStart`, the selected VFO) /
+  ■ Stop / ⏸ Hold / ⏭ Skip, "N ticked", ⚙ settings (squelch, delay, dwell,
+  longest stay, tick all / none), the status (`sfsRender`: 🔊 name · MHz ·
+  dB · time → VFO, or "Scanning N frequencies", the watched band(s) +
+  tuners, "N left out" with the reasons as its tooltip). Rows: `.sfs-cur`
+  (🔊, green outline), `.sfs-act` (orange dot) - `sfsMark` after every list
+  render and status
+- Tests (job scratch, not in the repo): `t_sfscan.cpp` (saved_freqs.cpp
+  scan flags - category / single / left out, editor saves keep them,
+  refusals change nothing, reload, category delete - and sf_scan_plan.cpp:
+  bands, gains, range ends, 300 entries, levels), `t_sfscan_e2e.py` (a TEST
+  build - ports 28080/28081/28091/28092, `KRAKEN_AI_MCP_PORT` - fed by
+  `fake_heimdall.py`: synthetic carriers in 8091 packets, the 8092 commands
+  obeyed, coherent retunes with the retuning flag, WAITING_STABILITY and a
+  noise-source calibration; checks the plan, both bands tuned, the gain
+  with its band, lock / VFO / audio / delay / skip / hold / longest stay,
+  list changes, refusals, manual-retune stop, what is saved, independent
+  mode with two bands on two tuners and a VFO taking a tuner),
+  `t_sfscan_ui.py` (the same + the page in a headless Edge with its own
+  profile over the DevTools protocol: ticks per row / heading incl. the
+  mixed state and -1 / 0 / 1, counts, ▶ / ■ / Hold / Skip, the 🔊 row, the
+  status + "left out" tooltip, the settings inputs, tick all / none, the
+  editor keeping a tick, no page exceptions). On a Windows PC with the live
+  stack running the test build gets its own ports, cwd and exe name (the
+  launcher's stale-process sweep), builds through `C:\msys64\usr\bin\bash
+  -lc` (Git Bash's runtime loses TMP for gcc)
+
 **📡 OpenStreetMap masts layer (UI only, kraken_doa.html "📡 OSM MASTS"):**
 - "Masts" button (`mapState.masts`, localStorage like the other view
   settings) + a colour legend (`#map-legend`). The BROWSER fetches from

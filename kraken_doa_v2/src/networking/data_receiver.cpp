@@ -260,6 +260,7 @@ void DataReceiver::data_receiver_thread() {
                 // This ensures we don't capture noisy settling data
                 static bool was_retuning = false;
                 bool is_retuning = (retuning_in_progress != 0);
+                server_retuning.store(is_retuning, std::memory_order_relaxed);   // (the saved-frequency scan)
 
                 if (was_retuning && !is_retuning) {
                     // Retuning just completed
@@ -866,7 +867,10 @@ void DataReceiver::decimation_processor_thread() {
             if (active_decimators.size() == 1) {
                 // Common case: run inline instead of spawning an OS thread per packet
                 results.push_back(run_pipeline(active_decimators[0]));
-            } else {
+            } else if (active_decimators.size() > 1) {
+                // (none at all - FM / digital only with no VFO heard, e.g. every
+                // VFO muted in independent mode: size() - 1 wrapped and the
+                // reserve below threw, which ended the process)
                 // Every VFO but the first on a persistent pool, the first
                 // inline here, then one barrier. std::async(launch::async)
                 // created and joined an OS thread per VFO per packet (~146

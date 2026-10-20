@@ -101,6 +101,7 @@ cooldown / scanner).
 | **📊 FFT Settings** | FFT **size** (1024–65536): bigger = finer detail when zoomed in, more CPU. The spectrum is sent at about one point per pixel of the plot (zoomed in: more detail, same data); **Slow link** halves that for a slow connection (per browser). Shows the points sent. |
 | **📻 Scanner** | Discrete frequency-list scanner (needs wideband mode). Load/save/new scan files, per-frequency enable, squelch, dwell time; locks onto and reports active frequencies. Start / Next controls. |
 | **🔍 Continuous Scanner** | Sweeps for active signals automatically — either within the current bandwidth or across a **wideband MHz range** (e.g. 88–108). Adjustable squelch, dwell, and signal-decay; lists tracked signals as they appear. |
+| **📻 Saved Frequencies ▶ Scan** | Scans the saved frequencies you tick — one by one, or a whole category (also entries added to it later). The selected VFO goes to each active one with its demod / bandwidth / decoder / gain and is heard while it is (+ Delay). Every frequency in a tuner band is watched at once; coherent mode takes the bands in turn (recalibrating after each retune), independent mode watches a band on every free tuner. Skip, Hold, Squelch, Dwell, Longest stay. Coherent or independent mode. |
 
 The main area shows the **spectrum + waterfall** (click/drag the tuning bar to set the
 listen frequency; waterfall has speed, colormap, and min/max/auto-range controls) and

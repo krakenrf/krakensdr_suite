@@ -147,6 +147,14 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // half-width of the grid (km)
         {"rdf_enabled",              "RDF:",                      VType::BOOL,   "1"},
         {"rdf_range_km",             "RDF_RANGE_KM:",             VType::NUMBER, "10"},
+        // 📻 Saved-frequency scan (sf_scanner.hpp): squelch (dB over the
+        // noise floor), dwell per band, delay after a transmission, longest
+        // stay on one frequency (0 = no limit) - ms. What it scans is kept
+        // with the saved frequencies (saved_frequencies.json)
+        {"sfscan_squelch_db",        "SFSCAN_SQUELCH:",           VType::NUMBER, "12.0"},
+        {"sfscan_dwell_ms",          "SFSCAN_DWELL:",             VType::NUMBER, "2000"},
+        {"sfscan_hang_ms",           "SFSCAN_HANG:",              VType::NUMBER, "2000"},
+        {"sfscan_max_ms",            "SFSCAN_MAX:",               VType::NUMBER, "0"},
         {"decimators",               "DECIMATORS:",               VType::STRING, "0|0.00,7,WBFM,0,15.00,0,2.00"},
         // Decoder plugins the user excluded from the Digital Decoder's "Auto
         // detect" ("id,id"; empty = every plugin takes part)

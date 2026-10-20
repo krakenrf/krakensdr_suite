@@ -170,6 +170,8 @@ APP_SRCS = \
 	$(SRCDIR)/geo_http.cpp \
 	$(SRCDIR)/incidents.cpp \
 	$(SRCDIR)/saved_freqs.cpp \
+	$(SRCDIR)/sf_scan_plan.cpp \
+	$(SRCDIR)/sf_scanner.cpp \
 	$(SRCDIR)/decoder_log.cpp \
 	$(SRCDIR)/rdf_engine.cpp \
 	$(SRCDIR)/rdf_mapper.cpp \

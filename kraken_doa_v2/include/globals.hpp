@@ -85,6 +85,9 @@ extern std::atomic<bool> fm_enabled_before_scanner;     // Store FM state before
 extern std::atomic<uint32_t> fft_reset_generation;      // Generation counter for FFT reset (scanner retune)
 extern std::atomic<uint32_t> wideband_last_reset_gen;   // Track wideband FFT reset generation
 extern std::atomic<bool> fft_data_valid;                // False after reset until first valid FFT frame
+// heimdall is retuning (the latest packet header's retuning flag): its packets
+// are skipped, so the spectrum still shows the old frequency meanwhile
+extern std::atomic<bool> server_retuning;
 // Per-channel frequency from server packet metadata, Hz. uint64_t: in the
 // wideband (downconverter) variant this carries the true RF, which reaches
 // ~6.7 GHz on low-side injection - past uint32's ~4.3 GHz cap.
