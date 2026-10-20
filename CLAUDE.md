@@ -1669,8 +1669,9 @@ The dominant eigenvector of the noise-source data gives each channel's phase
 channel, applied per sample in the conversion hot loop and reported in the
 control-port status JSON as `channel_comp` (`amp_db` is always 0).
 
-**Drag retunes**: coherent retunes close together (a drag, within 400 ms -
-up to 1 s while the previous step isn't finished) use the librtlsdr fork's
+**Drag retunes**: coherent and wideband scan retunes close together (a drag,
+within 400 ms - up to 1 s while the previous step isn't finished; wideband
+scan since 2026-10-21: 114 -> 74 ms per step on Windows) use the librtlsdr fork's
 `rtlsdr_set_center_freq_fast` (PLL autotune clock left at 128 kHz between
 steps, lock still read every step); the coherence watchdog (400 ms quiet)
 and every noise-source switch-on (`set_bias_tee_all_devices(true)`, which

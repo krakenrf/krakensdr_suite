@@ -3248,11 +3248,13 @@ Edit `include/config.hpp`:
   squelch reads the flattened floor against the unflattened spectrum
   (<= ~2 dB at the band edges); a few frames after a retune carry old
   samples under the new header frequency (heimdall's pipeline) - averaged
-  in at the new place with weight alpha each. Not done: heimdall's drag
-  fast path for wideband retunes (Windows 113 -> 74 ms per step expected;
-  `fast_retune_allowed()` is coherent only - needs hardware tests), the
-  page panning locally while dragging (it waits for frames: the display
-  follows ~140-210 ms behind on Windows)
+  in at the new place with weight alpha each. heimdall's wideband scan
+  retunes take the drag fast path since 2026-10-21 (Windows 114 -> 74 ms per
+  step on the KrakenSDR - heimdall_v2/CLAUDE.md *Drag retunes*). Not done:
+  the page panning locally while dragging (it waits for frames: the display
+  follows the receiver - 140-210 ms behind in the drag test, modelled on the
+  full path's ~110 ms sweep; the fast path's 40 ms less per step not measured
+  end to end)
 - `noise_floors.json` (cwd, gitignored; `{"version":1,"floors":{"0|49.6":
   -27.49,...}}`): loaded at start (`nfloor::load`), written by the FFT
   worker at most every 5 min when a floor moved >= 0.5 dB
