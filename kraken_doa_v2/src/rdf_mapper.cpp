@@ -7,6 +7,7 @@
 #include "globals.hpp"
 #include "networking/gpsd_client.hpp"
 #include "rdf_engine.hpp"
+#include "signal_processing/fft_processor.hpp"
 #include "signal_processing/music_processor.hpp"
 #include "station_info.hpp"
 #include "talker_doa.hpp"
@@ -85,6 +86,38 @@ struct Fix {
     bool hvalid, compass, fixed;   // fixed = static location
 };
 
+// --- 📏 the received level (the page's range from signal strength, kraken_doa.html "📏 RANGE") ---
+// A VFO's band in the FFT channel's latest frame (FFTProcessor::band_power:
+// absolute, full scale = 1), sampled every tick the signal is above the
+// band's noise (and the VFO's squelch, when on, is open): averaged in power -
+// the first few as their mean, then an EMA over ~0.5 s. A pause longer than
+// LVL_GAP_MS (the next transmission) or another gain starts it afresh; held
+// after the signal ends (its age goes out with it). A talker takes the VFO's
+// moments while it is the only one transmitting there.
+constexpr int64_t LVL_GAP_MS = 3000;
+constexpr double LVL_EMA = 0.2;
+struct Lvl {
+    double sig = 0;       // signal power (the band without its noise), averaged
+    double noise = 0;     // the band's noise, the latest moment
+    double total = 0;     // the whole frame then (the ADC's load: clipping)
+    float gain = 0;       // the tuner gain then (dB; -1 = AGC)
+    int64_t t = 0;        // the latest moment counted (0: none)
+    int n = 0;            // moments in this average
+    void add(int64_t now, double s, double nz, double tot, float g) {
+        if (!t || now - t > LVL_GAP_MS || g != gain) {
+            sig = s;
+            n = 1;
+        } else {
+            n++;
+            sig += std::max(1.0 / n, LVL_EMA) * (s - sig);
+        }
+        noise = nz;
+        total = tot;
+        gain = g;
+        t = now;
+    }
+};
+
 // --- shared state (mu) --------------------------------------------------------
 struct Shared {
     std::mutex mu;
@@ -123,6 +156,7 @@ struct Shared {
         bool sp = false, sp_ref = false;
         double sp_us = 0, sp_db = 0, sp_snr = 0;
         double dur_s = 0, air_s = 0;       // transmissions: the latest one's length, all together
+        Lvl lvl;                           // 📏 the received level
     };
     std::map<Key, V> v;
     bool full = true;
@@ -184,6 +218,7 @@ struct SVfo {
     rdf::Gate gate{rdf::GateCfg{}};
     int64_t last_stamp = 0;
     double freq = 0;
+    Lvl lvl;
 };
 
 // position / heading at time t from the track (false: no usable fix then)
@@ -322,6 +357,7 @@ void sampler() {
             tdoa::TalkerInfo ti;
             std::vector<Shared::V::H> hist;
             tdoa::PacketStats pk;          // a VFO's: what became of its decoder's packets
+            Lvl lvl;
         };
         std::vector<Disp> disp;
         std::map<Key, rdf::Estimate> ests;
@@ -379,12 +415,17 @@ void sampler() {
                 const bool first = s.freq == 0;
                 s.freq = freq;
                 s.gate.reset();
+                s.lvl = Lvl{};
                 push({first ? Job::HELLO : Job::RESET, k, freq, {}});
             }
             return s;
         };
         if (coherent && doa_enabled.load()) {
             const double centre = ChannelManager::get_frequency(active_channel.load());
+            // 📏 levels: from the FFT channel's spectrum, not while the noise source fills it
+            const int fft_ch = active_channel.load();
+            const float gain = ChannelManager::get_gain(fft_ch);
+            const bool lvl_ok = !doa_is_calibrating();
             for (const auto& dec : decimator_manager.getAllDecimators()) {
                 if (!dec || !dec->music_processor || dec->being_deleted.load()) continue;
                 auto& mp = *dec->music_processor;
@@ -412,6 +453,15 @@ void sampler() {
                 d.frames = s.gate.frames();
                 d.gate = s.gate.gate_m();
                 d.moved = s.gate.moved_m();
+                // 📏 its level this tick: the band while the signal is above its noise
+                FFTProcessor::BandPower bp;
+                const bool lvl_now = lvl_ok && dec->decimator &&
+                                     (!dec->squelch_enabled.load() || dec->squelch_open.load()) &&
+                                     FFTProcessor::band_power(fft_ch, dec->frequency_offset_hz.load(),
+                                                              dec->decimator->getBandwidthMhz() * 1e6f, 2, &bp) &&
+                                     bp.sig > bp.noise;
+                if (lvl_now) s.lvl.add(t, bp.sig, bp.noise, bp.total, gain);
+                d.lvl = s.lvl;
                 disp.push_back(std::move(d));
                 const size_t vfo_disp = disp.size() - 1;
 
@@ -447,6 +497,7 @@ void sampler() {
                     td_.frames = ts.gate.frames();
                     td_.gate = ts.gate.gate_m();
                     td_.moved = ts.gate.moved_m();
+                    td_.lvl = ts.lvl;
                     // the latest transmission's lobe, north frame (heading at its last
                     // frame); a packet talker's (aircraft) = its bearing of the last
                     // packets, recomputed about once a second
@@ -508,7 +559,17 @@ void sampler() {
                         array_cal::add(c.R, c.id, c.lat, c.lon, c.alt_m, sl.lat, sl.lon, st_alt, sl.heading, fixed, off, f_hz);
                 }
                 talker_frames(tframes);
-                for (auto& ti : td->snapshot()) add_talker(std::move(ti));
+                auto snap = td->snapshot();
+                // 📏 the VFO's level this tick is a talker's while it is the only one
+                // transmitting (not a packet or spatial talker: those share the moment)
+                if (lvl_now) {
+                    const tdoa::TalkerInfo* one = nullptr;
+                    int on_air = 0;
+                    for (const auto& ti : snap)
+                        if (ti.active && !ti.packet && !ti.spatial) { one = &ti; on_air++; }
+                    if (on_air == 1) follow(Key{id, one->id}, freq).lvl.add(t, bp.sig, bp.noise, bp.total, gain);
+                }
+                for (auto& ti : snap) add_talker(std::move(ti));
             }
         }
         if (cal_on) array_cal::set_state(cal_state);
@@ -543,6 +604,7 @@ void sampler() {
             v.frames = d.frames;
             v.gate_m = d.gate;
             v.moved_m = d.moved;
+            v.lvl = d.lvl;
             if (d.k.tid.empty()) v.pk = std::move(d.pk);
             if (d.talker) {
                 v.sp = d.ti.spatial;
@@ -944,11 +1006,20 @@ std::string status_message(bool peek) {
           << (S.last.fixed ? "static" : S.last.compass ? "compass" : "gps") << "\"}";
     else
         o << "null";
+    const int64_t tnow = now_ms();
     auto common = [&](const Shared::V& v) {
         o << ",\"mhz\":" << num(v.mhz, 4) << ",\"lobe\":" << (v.lobe.empty() ? "null" : "\"" + v.lobe + "\"")
           << ",\"peak\":" << (v.lobe.empty() ? "null" : num(v.peak, 1)) << ",\"conf\":" << num(v.conf, 2)
           << ",\"held\":" << (v.held ? "true" : "false") << ",\"frames\":" << v.frames << ",\"gate_m\":"
           << num(v.gate_m, 0) << ",\"moved_m\":" << num(v.moved_m, 0) << ",\"records\":" << v.records;
+        // 📏 the received level: dBFS of the signal (its band without the noise),
+        // the band's noise and the whole frame (clipping), the tuner gain then
+        // (dB, -1 = AGC), its age (s) and the moments averaged
+        const Lvl& L = v.lvl;
+        if (L.t > 0 && L.sig > 0 && L.noise > 0 && L.total > 0)
+            o << ",\"lvl\":{\"dbfs\":" << num(10 * std::log10(L.sig), 2) << ",\"noise\":" << num(10 * std::log10(L.noise), 2)
+              << ",\"total\":" << num(10 * std::log10(L.total), 2) << ",\"gain\":" << num(L.gain, 1)
+              << ",\"age\":" << num((tnow - L.t) / 1000.0, 1) << ",\"n\":" << L.n << "}";
     };
     o << ",\"vfos\":[";
     bool first = true;

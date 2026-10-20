@@ -634,7 +634,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-df-body {margin-top:4px;line-height:1.45}
 .map-df-row {display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:3px}
 .map-df-row label {display:flex;align-items:center;gap:3px}
-.map-df.closed .map-df-body, .map-df.closed #map-df-vfo, .map-df.closed #map-df-tid, .map-df.closed #map-df-lobe, .map-df.closed #map-df-lines, .map-df.closed #map-df-heat {display:none}
+.map-df.closed .map-df-body, .map-df.closed #map-df-vfo, .map-df.closed #map-df-tid, .map-df.closed #map-df-lobe, .map-df.closed #map-df-lines, .map-df.closed #map-df-heat, .map-df.closed #map-df-rng {display:none}
 #map-df-txt .w {color:#ffcc80}
 #map-df-txt .g {color:#a5d6a7}
 #map-df-tid {max-width:150px}
@@ -751,6 +751,15 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .pl-lk {display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px;border-top:1px solid #2a4a7a;padding-top:4px}
 .pl-lk .nm {font-weight:bold;color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px}
 .pl-lk .map-btn {height:20px;padding:0 5px;font-size:11px;margin-left:auto}
+/* 📏 range from signal strength (📏 RANGE) - the viewshed / path loss panels' look */
+.map-rg {flex:0 1 auto}
+.map-rg .rg-src {margin-top:4px;line-height:1.45}
+.map-rg .rg-st {margin-top:5px;border-top:1px solid #2a4a7a;padding-top:4px;line-height:1.45}
+.map-rg .rg-st:empty, .map-rg .rg-calh:empty, .map-rg .rg-job:empty {display:none}
+.map-rg.cfg-closed .rg-cfg {display:none}
+.map-rg .rg-cfg {border-top:1px solid #2a4a7a;margin-top:4px}
+.map-rg .map-btn {height:20px;padding:0 5px;font-size:11px}
+.map-rg .map-btn:disabled {opacity:.5}
 /* the link at the bottom of the map: numbers left, profile right */
 .map-plk {position:absolute;left:6px;right:6px;bottom:20px;height:232px;z-index:4;display:flex;gap:8px;background:rgba(16,24,44,.95);border:1px solid #2a4a7a;border-radius:4px;padding:5px 7px;font-size:11px;color:#cfe3ff;box-sizing:border-box}
 .plk-t {flex:0 1 410px;min-width:220px;overflow-y:auto}
@@ -2148,6 +2157,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <div class="map-legend" id="map-legend" style="display:none"></div>
             <div class="map-vs" id="map-vs" style="display:none"></div>
             <div class="map-vs map-ai" id="map-ai" style="display:none"></div>
+            <div class="map-vs map-pl map-rg coh-only" id="map-rg" style="display:none"></div>
           </div>
           <div class="map-ctl map-ctl-tr">
             <button type="button" class="map-btn" onclick="mapZoomBy(1)" title="Zoom in (mouse wheel / double-click)">+</button>
@@ -2164,6 +2174,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
               <button type="button" class="map-btn" id="map-df-lobe" onclick="mapSet('rdfLobe', !mapState.rdfLobe)" title="The live DoA lobes around the station">Lobe</button>
               <button type="button" class="map-btn" id="map-df-lines" onclick="mapSet('rdfLines', !mapState.rdfLines)" title="Bearing lines: from each lobe's peak to the edge of the map (one radio / aircraft: also its earlier bearings), and the bearings taken while driving">Lines</button>
               <button type="button" class="map-btn" id="map-df-heat" onclick="mapSet('rdfHeat', !mapState.rdfHeat)" title="Where the transmitter probably is (one VFO at a time)">Heat</button>
+              <button type="button" class="map-btn" id="map-df-rng" onclick="rgToggle()" title="📏 Range from signal strength: where the transmitter of the selected lobe probably is - its measured level against the path loss over the terrain (ITU-R P.1812) and your estimate of its EIRP">Range</button>
             </div>
             <div class="map-df-body">
               <div id="map-df-txt"></div>
@@ -2484,6 +2495,39 @@ const plState = (() => {
 })();
 let plWorker = null, plJob = null, plSeq = 0, plRes = null, plFail = '', plSel = null, plHov = null, plReady = false,
     plOffS = null, plComp = null, plLine = null, plSigVer = 0, plCompKey = '';
+// 📏 range from signal strength (see 📏 RANGE): where the transmitter of the
+// DF panel's selected lobe probably is - the settings (localStorage
+// kraken_rg; rebuilt field by field): the transmitter (power + antenna -
+// cable, or its EIRP; +- dB; antenna height, surroundings), our antenna
+// (gain, cable, height - null: the viewshed station's / 5 m -, surroundings),
+// the receiver's calibration (dBm = dBFS - gain + cal, +- dB; how / where it
+// was set; calTx = a known transmitter to set it from), the model and the
+// uncertainties; the sweep worker / job / result, the estimate
+const rgState = (() => {
+  const d = {on: false, open: true, cfg: true, set: false, txMode: 'ptx', ptx: 5, gt: 0, lt: 0, eirp: 5, sigE: 3, txH: 1.5, envTx: 3,
+             gr: 0, lr: 1, stH: null, envRx: 3, cal: -23, sigC: 6, calHow: '', calF: 0, calTx: null,
+             model: 'p1812', pol: 'v', r: 30, fade: 'auto', K: 6, sigL: null, sigM: 4, bsd: null};
+  try {
+    const s = JSON.parse(localStorage.getItem('kraken_rg') || '{}'), num = (v, lo, hi, def) => typeof v === 'number' && v >= lo && v <= hi ? v : def;
+    for (const [k, lo, hi] of [['ptx', 1e-6, 1e7], ['gt', -30, 60], ['lt', 0, 60], ['eirp', 1e-6, 1e8], ['sigE', 0, 30], ['txH', 0.5, 3000],
+                               ['envTx', 0, 5], ['gr', -30, 60], ['lr', 0, 60], ['envRx', 0, 5], ['cal', -200, 200], ['sigC', 0, 30], ['calF', 0, 20000],
+                               ['r', 1, 300], ['K', -20, 40], ['sigM', 0, 30]]) d[k] = num(s[k], lo, hi, d[k]);
+    for (const [k, hi] of [['stH', 3000], ['sigL', 30], ['bsd', 90]]) if (s[k] !== null && s[k] !== undefined) d[k] = num(s[k], 0, hi, null);   // (null = automatic)
+    for (const k of ['on', 'open', 'cfg', 'set']) if (typeof s[k] === 'boolean') d[k] = s[k];
+    if (['ptx', 'eirp'].includes(s.txMode)) d.txMode = s.txMode;
+    if (['p1812', 'itm', 'fs'].includes(s.model)) d.model = s.model;
+    if (['v', 'h'].includes(s.pol)) d.pol = s.pol;
+    if (['auto', 'none', 'rayleigh', 'rician'].includes(s.fade)) d.fade = s.fade;
+    if (typeof s.calHow === 'string') d.calHow = s.calHow.slice(0, 200);
+    const t = s.calTx;
+    if (t && Math.abs(t.lat) <= 85.05 && Math.abs(t.lon) <= 180)
+      d.calTx = {lat: +t.lat, lon: +t.lon, h: num(t.h, 0.5, 3000, 30), eirp: num(t.eirp, 1e-6, 1e8, 50)};   // (eirp W)
+  } catch (e) {}
+  return d;
+})();
+let rgWorker = null, rgJob = null, rgSeq = 0, rgRes = null, rgFail = null, rgCalJob = null, rgCalMsg = '',
+    rgPostW = null, rgPostBusy = false, rgPostAt = 0, rgPostT = 0, rgPostSeq = 0, rgPostKidx = '',
+    rgEst = null, rgLast = null, rgHovAt = null, rgOff = null, rgLevelKnown = false, rgReady = false;
 
 const bwo=[
   {decimation:1,bandwidth:2.4,name:"2.4 MHz (No decimation)"},
@@ -12699,8 +12743,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const at = $id('map-attr');
     if (at) at.textContent = MAP_LAYERS[mapState.layer].attr +
       (mapState.masts && mapState.layer !== 'street' ? ' · masts © OpenStreetMap contributors' : '') +
-      (mapState.vs ? ' · terrain: Mapzen, SRTM, GMTED2010, ETOPO1 & others' : '');
+      (mapState.vs || rgState.on ? ' · terrain: Mapzen, SRTM, GMTED2010, ETOPO1 & others' : '');
     if (typeof rdfRenderPanel === 'function') rdfRenderPanel();
+    rgRender();
   }
 
   function mapResize() {
@@ -13084,6 +13129,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
           mapDrawTile(urlf, tz, x, y, (x - left) * size, (y - top) * size, size, fb);
     }
     vsDraw(c);
+    rgDraw(c);   // (📏 the range estimate: under the DF lobes)
     rdfDraw(c);
     v2tLobeDraw(c);
     mastDraw(c);
@@ -13152,6 +13198,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     mapRenderPopup();
     mkRender();
     vsRender();
+    rgRender();
     mapRenderStatus();
     if (mapState.masts) mastSchedule();
     else mastViewKey = '';   // switched on again: load whatever is missing
@@ -13219,6 +13266,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // held, frames, gate_m, moved_m, records}], talkers:[{vfo, tid, label,
   // active, tx, tframes, tx_frames, age, tx_age, doa, lobe, peak, conf, held,
   // frames, gate_m, moved_m, records, hist:[[age, peak, doa, conf, frames]]}]}}
+  // (vfos / talkers also lvl: {dbfs, noise, total, gain, age, n} - the
+  // received level for 📏 RANGE, when measured)
   // at 2 Hz - talkers = the radios a VFO's digital decoder named (P25 unit
   // IDs, talker_doa.cpp), each with the DoA of its own transmissions only;
   // {"rdf_grid":{vfo, tid ("" = the VFO's whole signal), mhz, records,
@@ -13285,6 +13334,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const live = new Set([...(m.vfos || []).map(v => rdfGk(v.id, '')), ...(m.talkers || []).map(t => rdfGk(t.vfo, t.tid))]);
     for (const k of Object.keys(rdfGrids)) if (!live.has(k)) delete rdfGrids[k];
     rdfRenderPanel();
+    rgOnStatus();   // (📏 the range estimate follows the lobe and its level)
     if (mapCv && document.body.classList.contains('rp-map')) mapDraw();
   }
   function rdfOnGrid(g) {
@@ -14248,7 +14298,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     let h = '<button type="button" onclick="mkAddAt()">📍 Add Marker</button>' +
             '<button type="button" onclick="mapMenuClose();sfNew({lat:mapMenuAt.la,lon:mapMenuAt.lo})" title="Save a frequency transmitted from here (a new marker)">📻 Save a frequency here</button>' +
             (plMenuOn() ? `<button type="button" onclick="vsAddAt('tx')" title="${vsAddTip('here')}">${vsAddLabel('here')}</button>` : '') +
-            plMenuItem() +
+            plMenuItem() + rgMenuItem() +
             `<button type="button" onclick="mapSetStationAt()" title="Put the station (Station Information) here - a fixed location; its heading is kept">📡 Set station here${mapStaticSource() ? '' : ' (fixed location)'}</button>`;
     const mk = mkGet(mkHit(x, y));
     if (mk) {
@@ -18112,6 +18162,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function vsHover(x, y) {
     vsHovAt = x === null ? null : [x, y];
     vsHoverRender();
+    rgHover(x, y);   // (📏 the range estimate's line)
   }
   function vsHoverRender() {
     const el = $id('map-vs-hov');
@@ -19152,6 +19203,941 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
 
   plReady = true;
+
+  // --- 📏 RANGE: where the transmitter of ONE DoA lobe probably is, from its signal strength ------
+  // The 📡 DF panel's selected lobe (a VFO's whole signal, or one radio's -
+  // rdf_mapper.cpp) and its received level ({"rdf"} "lvl": the VFO band's
+  // power in the FFT channel's raw frames while the signal is there, dBFS,
+  // + the tuner gain then) -> dBm at the receiver input = dBFS - gain + the
+  // calibration. With the user's estimate of the transmitter (power +
+  // antenna - cable, or its EIRP; its antenna height and surroundings) and
+  // our antenna, the level says how much path loss the signal took. The
+  // STATION's own sweep - the viewshed worker's signal sweep (the 📶 path
+  // loss's models: ITU-R P.1812 over the terrain, Longley-Rice or free
+  // space, + P.2108 clutter) from the station to every cell around it, with
+  // a transmitter at the TX antenna height there (path loss is reciprocal;
+  // each end's clutter by its role) - gives each place's median loss. A
+  // worker of its own (rgPostMain) weighs every cell: its area x the lobe's
+  // factor at its bearing x how likely the measured level is with that
+  // place's median. Coloured by how much of the probability lies in places
+  // at least as likely (the 50 / 90 / 99 % regions); the most likely place
+  // is marked, the distance's quantiles are in the panel.
+  // - bearing: the lobe as a record of 📡 mobile DF (rdf_engine.hpp):
+  //   blurred by the bearing uncertainty (2 deg MUSIC + the heading's, as
+  //   rdf_mapper.cpp), normalised, (1 - eps) p 720 + eps - NOT tempered
+  //   (mobile DF's alpha 0.5 discounts many correlated records; one lobe
+  //   is one observation - tempered, its square root put ~half of the
+  //   probability off the bearing)
+  // - level: the slope of the 📶 path loss's reliability tables (plRelLut)
+  //   in the margin = the level's pdf around the median: lognormal (sigma =
+  //   the location variability of the transmitter's end (P.1546), the
+  //   model's error and the EIRP's / calibration's +-, in squares) with the
+  //   fading around it (Rician, K per cell from the path as the path loss's
+  //   auto, or as chosen)
+  // Its own worker, panel (top left, "Range" in the DF panel's header),
+  // layer and settings (rgState): the viewshed's signal mode stays without
+  // the station (the user's call 2026-10-12 - that is about coverage)
+  const RG_EPS = 0.05, RG_ALPHA = 1, RG_NEAR_M = 30, RG_BASE_SD = 2;   // (rdf_engine.hpp Options - alpha 1: one record; rdf_mapper.cpp BASE_SIGMA_DEG)
+  // the uncalibrated receiver: a KrakenSDR's own noise at 49.6 dB gain (the
+  // dev PC's noise_floors.json: -46.7 -> -32.9 dBFS over the 2.4 MHz) taken
+  // as kTB + a 5 dB noise figure (-105.2 dBm): dBm = dBFS - 49.6 - 22.7
+  const RG_CAL_NOMINAL = -23, RG_CAL_NOMINAL_SD = 6;
+  const RG_PRESETS = [
+    ['Handheld radio: 5 W, -3 dBi, 1.5 m', {txMode: 'ptx', ptx: 5, gt: -3, lt: 0, txH: 1.5, sigE: 4}],
+    ['PMR446 / FRS: 0.5 W ERP, 1.5 m', {txMode: 'eirp', eirp: 0.82, txH: 1.5, sigE: 4}],
+    ['Vehicle radio: 25 W, 2 dBi, 1.8 m', {txMode: 'ptx', ptx: 25, gt: 2, lt: 1, txH: 1.8, sigE: 4}],
+    ['Base / repeater: 50 W, 6 dBi, 25 m', {txMode: 'ptx', ptx: 50, gt: 6, lt: 2, txH: 25, sigE: 5}],
+    ['ISM device (433 / 868 MHz): 10 mW, 1.5 m', {txMode: 'eirp', eirp: 0.01, txH: 1.5, sigE: 6}]];
+  // the colours: by the share of the probability in places at least as
+  // likely (0 = the most likely place .. 0.99 - beyond: transparent)
+  const RG_STOPS = [[0, '#ff1e14'], [0.2, '#ff8c00'], [0.5, '#ffe600'], [0.75, '#3ddc4b'], [0.9, '#00c8e6'], [0.99, '#2a4bd7']];
+  let rgUiKl = false, rgUiKt = false, rgPostKey = '', rgPostReq = null, rgPostFailKey = '', rgLutA = null;
+
+  function rgSave() { try { localStorage.setItem('kraken_rg', JSON.stringify(rgState)); } catch (e) {} }
+  const rgDbm = w => 10 * Math.log10(w * 1000);
+  function rgEirp() { const s = rgState; return s.txMode === 'eirp' ? rgDbm(s.eirp) : rgDbm(s.ptx) + s.gt - s.lt; }
+  // our antenna's height: the setting, else the viewshed's station's, else 5 m
+  function rgStH() {
+    if (rgState.stH !== null) return rgState.stH;
+    const st = vsState.items.find(i => i.st);
+    return st ? st.h : 5;
+  }
+  // P.1546-6 (12) for the transmitter's end (the unknown one): K 0.5 in the
+  // open, 1.0 an antenna up at its clutter, 1.2 one down in it
+  function rgSigmaL(f) {
+    if (rgState.sigL !== null) return rgState.sigL;
+    const env = rgState.envTx, K = env <= 2 ? 0.5 : rgState.txH >= PL_ENV_R[env] ? 1.0 : 1.2;
+    return K + 1.3 * Math.log10(f);
+  }
+  function rgSigma(f) { const s = rgState; return Math.hypot(rgSigmaL(f), s.sigM, s.sigE, s.sigC); }
+  // the bearing's uncertainty (deg): the setting, else as mobile DF's frames
+  // (2 deg + the heading's: compass 4, else 1.5 + 8 / speed - a static
+  // location counts as a slow GPS course, 5.5)
+  function rgBsd(sn) {
+    if (rgState.bsd !== null) return rgState.bsd;
+    return Math.hypot(RG_BASE_SD, sn.src === 'compass' ? 4 : 1.5 + 8 / Math.max(sn.spd || 0, 2));
+  }
+
+  // ---- the source: the DF panel's selection ----
+  // one radio (a talker), else the selected VFO - with all of them shown:
+  // the sidebar's selected one if it has a lobe, else the first with a lobe
+  function rgSource() {
+    if (!rdfStatus || opMode !== 'coherent') return null;
+    const ts = rdfTidSel();
+    if (ts && ts !== '*') {
+      const t = rdfTalkers().find(x => rdfGk(x.vfo, x.tid) === ts);
+      return t ? {key: ts, vfo: t.vfo, tid: t.tid, name: `D${t.vfo} · ${rdfShortName(t)}`, col: rdfTalkerColor(t), mhz: t.mhz,
+                  lobe: t.lobe, peak: t.peak, lvl: t.lvl || null, pk: !!t.pk} : null;
+    }
+    const ids = rdfSelIds(), vs = rdfVfos().filter(v => ids.includes(v.id));
+    const v = vs.find(x => x.id === activeDecimatorId && x.lobe) || vs.find(x => x.lobe && x.lvl) || vs.find(x => x.lobe) || vs[0];
+    return v ? {key: rdfGk(v.id, ''), vfo: v.id, tid: '', name: 'D' + v.id, col: getDecimatorColor(v.id), mhz: v.mhz,
+                lobe: v.lobe, peak: v.peak, lvl: v.lvl || null, pk: false} : null;
+  }
+  // what the estimate is made from: the source's lobe + level now, with
+  // where the station is - or the last ones it had (held: the signal ended)
+  function rgSnap() {
+    const s = rgSource(), st = rdfStatus && rdfStatus.station;
+    if (s && s.lobe && st && s.mhz > 0) {
+      rgLast = {key: s.key, name: s.name, col: s.col, mhz: s.mhz, lobe: s.lobe, peak: s.peak, lvl: s.lvl, pk: s.pk,
+                lat: st.lat, lon: st.lon, src: st.src, spd: st.spd, t: Date.now()};
+      return Object.assign({held: false}, rgLast);
+    }
+    if (rgLast && (!s || rgLast.key === s.key)) return Object.assign({held: true}, rgLast);
+    return null;
+  }
+  // why there is nothing to work with (the source line)
+  function rgNoSource() {
+    if (opMode !== 'coherent') return 'Coherent mode only (it needs a DoA lobe)';
+    if (!rdfStatus) return 'Waiting for the DoA lobes…';
+    if (!rdfStatus.station) return 'No station position (Station Information: a static location or GPS)';
+    const s = rgSource();
+    if (!s) return 'No VFO with DoA: add a VFO in coherent mode with DoA on';
+    return `${digEsc(s.name)}: no DoA lobe yet (a heading is needed - Station Information; the signal on, its squelch open)`;
+  }
+  // the measured level -> the numbers the posterior needs (base: the margin
+  // of a place = base - its loss)
+  function rgInputs(sn) {
+    const L = sn.lvl;
+    if (!L) return {why: sn.pk ? 'No level for a packet decoder\'s radios (aircraft, ships...): their packets share the VFO\'s band'
+                               : sn.key.endsWith('|') ? 'No level yet: it is measured while the signal is above the noise in the VFO\'s band (its squelch open)'
+                               : 'No level for this radio yet: it is measured while it is the only one transmitting on its VFO'};
+    if (L.gain < 0) return {why: 'The tuner AGC is on: its gain isn\'t known, so the level can\'t be turned into dBm - set a fixed gain'};
+    const prx = L.dbfs - L.gain + rgState.cal, sigma = rgSigma(sn.mhz);
+    return {ok: true, prx, sigma, base: rgEirp() + rgState.gr - rgState.lr - prx, snr: L.dbfs - L.noise};
+  }
+
+  // ---- the station's sweep (the viewshed worker's code, an instance of its own) ----
+  // the job: the station (rounded to ~10 m) with our antenna, the radius,
+  // the signal message (the worker's "Tx" end = the station: our clutter
+  // there, the transmitter's in the cells) - its JSON is the result's key
+  function rgSweepMsg(sn) {
+    const s = rgState, f = Number(sn.mhz.toPrecision(3));   // (0.3 %: < 0.03 dB of loss)
+    const sig = {f, tgt: s.txH, amsl: false, pol: s.pol === 'h' ? 0 : 1, N0: plState.N0, envTx: s.envRx, envRx: s.envTx,
+                 hmTx: PL_ENV_HM[s.envRx], hmRx: PL_ENV_HM[s.envTx], model: s.model};
+    if (s.model === 'itm') { const g = PL_GROUNDS[plState.ground]; Object.assign(sig, {climate: plState.climate, eps: g[1], sigma: g[2]}); }
+    return {lat: +sn.lat.toFixed(4), lon: +sn.lon.toFixed(4), h: rgStH(), r: s.r, sig};
+  }
+  function rgKey(sn) { return sn ? JSON.stringify(rgSweepMsg(sn)) : ''; }
+  function rgWorkerStart() {
+    if (rgWorker) return true;
+    try {
+      rgWorker = new Worker(URL.createObjectURL(new Blob(['(' + vsWorkerMain.toString() + ')()'], {type: 'text/javascript'})));
+    } catch (e) { rgFail = {key: '', msg: 'this browser can\'t run it (' + e.message + ')'}; return false; }
+    rgWorker.onmessage = e => rgOnWorker(e.data);
+    rgWorker.onerror = e => {
+      e.preventDefault();
+      rgWorker.terminate();
+      rgWorker = null;
+      rgFail = {key: rgJob ? rgJob.key : '', msg: 'failed: ' + (e.message || 'worker error')};
+      rgJob = rgCalJob = null;
+      rgRender();
+    };
+    return true;
+  }
+  // one sweep at a time; a newer key cancels the running one (the station
+  // moved, a setting changed)
+  function rgPump() {
+    if (!rgReady || !rgState.on || !mapState.on) return;
+    const sn = rgSnap();
+    if (!sn) return;
+    const key = rgKey(sn);
+    if (rgRes && rgRes.key === key) { rgPostPump(); return; }
+    if (rgJob) {
+      if (rgJob.key !== key && !rgJob.cancel) { rgJob.cancel = true; rgWorker.postMessage({cancel: rgJob.job}); }
+      return;
+    }
+    if (rgFail && rgFail.key === key) return;
+    if (!rgWorkerStart()) { rgRender(); return; }
+    const m = rgSweepMsg(sn);
+    rgJob = {job: ++rgSeq, key, prog: null, m};
+    rgWorker.postMessage({job: rgJob.job, lat: m.lat, lon: m.lon, h: m.h, amsl: false, k: 4 / 3, levels: vsPlan(m.lat, m.r * 1000),
+                          sig: m.sig, par: vsPar === null ? undefined : vsPar});
+    rgRender();
+  }
+  function rgOnWorker(m) {
+    if (rgCalJob && m.job === rgCalJob.job) { rgOnCal(m); return; }
+    if (!rgJob || m.job !== rgJob.job) return;
+    if (m.prog) { rgJob.prog = m.prog; rgRender(); return; }
+    const job = rgJob;
+    rgJob = null;
+    if (m.error) {
+      if (m.error !== 'cancelled') rgFail = {key: job.key, msg: m.error};
+    } else {
+      rgRes = {key: job.key, lat: job.m.lat, lon: job.m.lon, r: job.m.r, f: job.m.sig.f, model: job.m.sig.model, ms: m.ms, tiles: m.tiles,
+               workers: (m.sig && m.sig.workers) || 1, ready: false, shown: false,
+               levels: m.levels.map(l => ({z: l.z, N: l.N, gx0: l.gx0, gy0: l.gy0, cell: l.cell, loss: new Uint16Array(l.loss),
+                                           fad: new Uint16Array(l.fad), rank: null, cv: null, cx: null}))};
+      rgFail = null;
+      rgEst = null;
+      rgPostInit();
+    }
+    rgPump();
+    rgRender();
+    mapDraw();
+  }
+
+  // ---- the posterior (a worker of its own: a few million cells) ----
+  // init: the sweep's rings -> each cell's bearing + distance from the
+  // station (great circle; bearing in 65536ths of a turn), its block of a
+  // BLK x BLK grid over the radius and each row's cell area. post: one
+  // estimate -> per ring a u8 per cell (0 = no data / beyond the 99 %
+  // region; 1..255 = the share of the probability in places at least as
+  // likely, 0..99 %) + the numbers: the most likely place = the centre of
+  // the probability in the most probable block (one cell's maximum jumps
+  // between places of the same loss over terrain), the distance's
+  // quantiles, the margins' range (a level no place fits). self.rgTest for node
+  function rgPostMain() {
+    const RE = 6371000, D2R = Math.PI / 180, NB = 1200, ND = 2000, BLK = 128;
+    let G = null, KIDX = null;
+    function init(I) {
+      const s1 = Math.sin(I.lat * D2R), c1 = Math.cos(I.lat * D2R), lv = [], half = I.rM * 1.05;
+      for (const l of I.levels) {
+        const N = l.N, W = 256 * 2 ** l.z, n = N * N, mpp = 2 * Math.PI * RE / W;
+        const brg = new Uint16Array(n), dist = new Float32Array(n), blk = new Uint16Array(n), area = new Float64Array(N), dens = new Float32Array(n);
+        const sx = new Float64Array(N), cx = new Float64Array(N);   // per column: the longitude difference's sin / cos
+        for (let i = 0; i < N; i++) { const d = (((l.gx0 + i + 0.5) / W) * 360 - 180 - I.lon) * D2R; sx[i] = Math.sin(d); cx[i] = Math.cos(d); }
+        for (let j = 0; j < N; j++) {
+          const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * (l.gy0 + j + 0.5) / W))), s2 = Math.sin(lat), c2 = Math.cos(lat);
+          area[j] = (mpp * c2) ** 2;
+          for (let i = 0; i < N; i++) {
+            const k = j * N + i;
+            if (l.loss[k] >= 65534) continue;
+            // the initial bearing's east / north parts have the length sin(angle) (the distance's)
+            const e = sx[i] * c2, nn = c1 * s2 - s1 * c2 * cx[i];
+            let b = Math.atan2(e, nn) / D2R;
+            if (b < 0) b += 360;
+            brg[k] = Math.round(b / 360 * 65536) & 65535;
+            const hy = Math.hypot(e, nn), d = dist[k] = RE * Math.atan2(hy, s1 * s2 + c1 * c2 * cx[i]);
+            // its block: east / north of the station (on the ground along the great circle)
+            const bx = hy > 0 ? Math.floor((d * e / hy + half) / (2 * half) * BLK) : BLK / 2, by = hy > 0 ? Math.floor((d * nn / hy + half) / (2 * half) * BLK) : BLK / 2;
+            blk[k] = Math.max(0, Math.min(BLK - 1, by)) * BLK + Math.max(0, Math.min(BLK - 1, bx));
+          }
+        }
+        lv.push({N, z: l.z, gx0: l.gx0, gy0: l.gy0, loss: l.loss, fad: l.fad, brg, dist, blk, area, dens});
+      }
+      return {key: I.key, lat: I.lat, lon: I.lon, rM: I.rM, lv};
+    }
+    // P: {seq, key, ang (720: the bearing factor every 0.5 deg), base (dB),
+    // D (nk x 481: the level's pdf every 0.25 dB of margin from -50 dB), nk,
+    // near (m)}; KIDX: a cell's fadQ -> its place between the nk tables
+    function post(P) {
+      const t0 = Date.now(), {ang, base, D, nk, near} = P, idx = nk > 1 ? KIDX : null;
+      let Z = 0, dmax = 0, mMin = Infinity, mMax = -Infinity;
+      const dh = new Float64Array(ND), dbin = ND / (G.rM * 1.05), bm = new Float64Array(BLK * BLK);
+      for (let li = 0; li < G.lv.length; li++) {
+        const l = G.lv[li], N = l.N, loss = l.loss, fad = l.fad, brg = l.brg, dist = l.dist, blk = l.blk, dens = l.dens;
+        for (let j = 0; j < N; j++) {
+          const A = l.area[j];
+          for (let i = 0, k = j * N; i < N; i++, k++) {
+            const ls = loss[k];
+            if (ls >= 65534) { dens[k] = 0; continue; }
+            const m = base - ls / 10;
+            if (m < mMin) mMin = m;
+            if (m > mMax) mMax = m;
+            const x = (m + 50) * 4;
+            let lik = 0;
+            if (x > 0 && x < 480) {
+              const i0 = Math.floor(x), f = x - i0;
+              if (idx) {
+                const fi = idx[fad[k]], t0 = Math.min(nk - 2, Math.floor(fi)), u = fi - t0, o0 = t0 * 481 + i0, o1 = o0 + 481;
+                const a = D[o0] + (D[o0 + 1] - D[o0]) * f, b = D[o1] + (D[o1 + 1] - D[o1]) * f;
+                lik = a + (b - a) * u;
+              } else {
+                lik = D[i0] + (D[i0 + 1] - D[i0]) * f;
+              }
+            }
+            let a = 1;   // (near the station the bearing says nothing)
+            if (dist[k] >= near) {
+              const bb = brg[k] * (720 / 65536), b0 = Math.floor(bb), fb = bb - b0;
+              a = ang[b0 % 720] + (ang[(b0 + 1) % 720] - ang[b0 % 720]) * fb;
+            }
+            const d = a * lik;
+            dens[k] = d;
+            if (d > 0) {
+              const w = d * A;
+              Z += w;
+              dh[Math.min(ND - 1, Math.floor(dist[k] * dbin))] += w;
+              bm[blk[k]] += w;
+              if (d > dmax) dmax = d;
+            }
+          }
+        }
+      }
+      if (!(Z > 0)) return {seq: P.seq, key: G.key, empty: true, mMin, mMax};
+      // the highest-density regions: the probability by density (0.01
+      // decade bins over 12 decades), summed from the top
+      const hb = new Float64Array(NB + 1), lmax = Math.log10(dmax);
+      for (const l of G.lv) {
+        const n = l.N * l.N, N = l.N;
+        for (let k = 0; k < n; k++) {
+          const d = l.dens[k];
+          if (d > 0) hb[Math.min(NB, Math.floor((lmax - Math.log10(d)) * 100))] += d * l.area[Math.floor(k / N)];
+        }
+      }
+      const cum = new Float64Array(NB + 1);
+      let s = 0;
+      for (let b = 0; b <= NB; b++) { s += hb[b]; cum[b] = s / Z; }
+      cum[NB] = 1;
+      let bb = 0;
+      for (let b = 1; b < BLK * BLK; b++) if (bm[b] > bm[bb]) bb = b;
+      let a50 = 0, a90 = 0, edge = 0, sx = 0, sy = 0, sw = 0;
+      const levels = G.lv.map(l => {
+        const N = l.N, n = N * N, out = new Uint8Array(n);
+        for (let k = 0; k < n; k++) {
+          const d = l.dens[k];
+          if (!(d > 0)) continue;
+          const c = cum[Math.min(NB, Math.floor((lmax - Math.log10(d)) * 100))], A = l.area[Math.floor(k / N)];
+          if (l.dist[k] > 0.9 * G.rM) edge += d * A;
+          if (l.blk[k] === bb) {   // (the most probable block: the centre of its probability)
+            const b = l.brg[k] * (2 * Math.PI / 65536), w = d * A;
+            sx += w * l.dist[k] * Math.sin(b);
+            sy += w * l.dist[k] * Math.cos(b);
+            sw += w;
+          }
+          if (c > 0.99) continue;
+          out[k] = 1 + Math.round(c / 0.99 * 254);
+          if (c <= 0.5) a50 += A;
+          if (c <= 0.9) a90 += A;
+        }
+        return out;
+      });
+      // the distance's quantiles
+      const q = [0.05, 0.25, 0.5, 0.75, 0.95].map(p => {
+        let c = 0;
+        for (let b = 0; b < ND; b++) { c += dh[b]; if (c >= p * Z) return (b + 0.5) / dbin; }
+        return G.rM;
+      });
+      // the most likely place: that centre, along the great circle from the station
+      const x = sx / sw, y = sy / sw, dd = Math.hypot(x, y), br = (Math.atan2(x, y) / D2R + 360) % 360;
+      const p1 = G.lat * D2R, a = dd / RE, t = br * D2R;
+      const p2 = Math.asin(Math.sin(p1) * Math.cos(a) + Math.cos(p1) * Math.sin(a) * Math.cos(t));
+      const lon = ((G.lon + Math.atan2(Math.sin(t) * Math.sin(a) * Math.cos(p1), Math.cos(a) - Math.sin(p1) * Math.sin(p2)) / D2R + 540) % 360) - 180;
+      return {seq: P.seq, key: G.key, levels, st: {lat: p2 / D2R, lon, d: dd, b: br, q, edge: edge / Z, a50: a50 / 1e6, a90: a90 / 1e6,
+              blk: bm[bb] / Z, mMin, mMax, ms: Date.now() - t0}};
+    }
+    self.rgTest = {init: I => { G = init(I); return G; }, post, setIdx: v => { KIDX = v; }};
+    self.onmessage = e => {
+      const m = e.data;
+      try {
+        if (m.init) { G = init(m.init); return; }
+        if (!m.post) return;
+        if (m.post.idx) KIDX = m.post.idx;   // (kept: sent once per K setting)
+        if (!G || G.key !== m.post.key) { self.postMessage({seq: m.post.seq, key: m.post.key, error: 'no sweep'}); return; }
+        const r = post(m.post);
+        self.postMessage(r, r.levels ? r.levels.map(u => u.buffer) : []);
+      } catch (err) {
+        self.postMessage({seq: m.post ? m.post.seq : 0, key: m.post ? m.post.key : '', error: String((err && err.message) || err)});
+      }
+    };
+  }
+  function rgPostStart() {
+    if (rgPostW) return true;
+    try {
+      rgPostW = new Worker(URL.createObjectURL(new Blob(['(' + rgPostMain.toString() + ')()'], {type: 'text/javascript'})));
+    } catch (e) { rgFail = {key: '', msg: 'this browser can\'t run it (' + e.message + ')'}; return false; }
+    rgPostW.onmessage = e => rgOnPost(e.data);
+    rgPostW.onerror = e => {
+      e.preventDefault();
+      rgPostW.terminate();
+      rgPostW = null;
+      rgPostBusy = false;
+      rgPostKidx = '';
+      if (rgRes) { rgRes.ready = false; rgPostFailKey = rgRes.key; }
+      rgEst = {why: 'failed: ' + (e.message || 'worker error')};
+      rgRender();
+    };
+    return true;
+  }
+  // the sweep's rings to the posterior worker (copies: the page keeps its own for the hover)
+  function rgPostInit() {
+    if (!rgRes || !rgPostStart()) return;
+    const L = rgRes.levels.map(l => ({z: l.z, N: l.N, gx0: l.gx0, gy0: l.gy0, loss: l.loss.slice(), fad: l.fad.slice()}));
+    rgPostW.postMessage({init: {key: rgRes.key, lat: rgRes.lat, lon: rgRes.lon, rM: rgRes.r * 1000, levels: L}},
+                        L.flatMap(l => [l.loss.buffer, l.fad.buffer]));
+    rgRes.ready = true;
+    rgPostKey = '';
+    rgPostPump();
+  }
+  // the bearing factor every 0.5 deg from the lobe (as rdf::north_lobe + one record of the grid)
+  function rgAng(lobe, sd) {
+    const u = rdfB64(lobe), n = 720, v = new Float64Array(n);
+    if (u.length !== n) return null;
+    const sb = Math.max(sd, 0.25) / 0.5, half = Math.ceil(3 * sb), ker = [];
+    let ks = 0, tot = 0;
+    for (let j = -half; j <= half; j++) { const w = Math.exp(-0.5 * j * j / (sb * sb)); ker.push(w); ks += w; }
+    for (let k = 0; k < n; k++) {
+      let s = 0;
+      for (let j = -half; j <= half; j++) s += ker[j + half] * u[((k + j) % n + n) % n];
+      tot += v[k] = s / ks;
+    }
+    const out = new Float32Array(n);
+    for (let k = 0; k < n; k++) out[k] = Math.pow((1 - RG_EPS) * (tot > 0 ? v[k] / tot : 1 / n) * n + RG_EPS, RG_ALPHA);
+    return out;
+  }
+  // the fading per cell (auto): the 📶 path loss's plKeff with this panel's K
+  function rgKeffQ(v) {
+    const terr = (v >> 8) / 4, dts = (v & 255) === 255 ? 99 : (v & 255) / 4 - 32;
+    const Kt = 10 ** ((rgState.K - Math.max(0, terr)) / 10), w = 1 / (1 + 10 ** (dts / 10));
+    return Kt * (1 - w) / (1 + Kt * w);
+  }
+  function rgAutoFade() { return rgState.fade === 'auto' && rgState.model !== 'fs'; }
+  // the level's pdf (per dB of margin) = the reliability's slope: per K
+  // level as plRelSet (Rayleigh at -20 dB, Rician to the setting <= 30 dB in
+  // <= 1 dB steps) + idx[fadQ] (a cell's place between them; ikey says when it changed)
+  let rgKidx = null, rgKidxKey = '';
+  function rgLik(sigma) {
+    const tabs = [];
+    let idx = null, ikey = '';
+    if (!rgAutoFade()) {
+      const f = rgState.fade, kind = f === 'none' ? 'none' : f === 'rayleigh' ? 'rayleigh' : 'rician';
+      tabs.push(plRelLut(sigma, kind, kind === 'rician' ? 10 ** (rgState.K / 10) : 0));
+    } else {
+      const lo = -20, hi = Math.min(30, rgState.K), n = hi > lo ? Math.ceil(hi - lo) : 0, step = n ? (hi - lo) / n : 1;
+      for (let i = 0; i <= n; i++) tabs.push(i ? plRelLut(sigma, 'rician', 10 ** ((lo + i * step) / 10)) : plRelLut(sigma, 'rayleigh', 0));
+      if (n) {
+        ikey = String(rgState.K);
+        if (rgKidxKey !== ikey) {
+          rgKidx = new Float32Array(65536);
+          for (let v = 0; v < 65536; v++) rgKidx[v] = Math.max(0, Math.min(n, (10 * Math.log10(rgKeffQ(v)) - lo) / step));
+          rgKidxKey = ikey;
+        }
+        idx = rgKidx;
+      }
+    }
+    const D = new Float32Array(481 * tabs.length);
+    tabs.forEach((t, o) => { for (let i = 1; i < 480; i++) D[o * 481 + i] = Math.max(0, (t[i + 1] - t[i - 1]) / 0.5); });
+    return {D, nk: tabs.length, idx, ikey};
+  }
+  // the next estimate (one at a time; only when something it depends on
+  // changed): a setting / the source at once (0.3 s), the live lobe and
+  // level at most every RG_LIVE_MS - each is a pass over a few million
+  // cells (a Pi's browser); not while the map isn't shown
+  const RG_LIVE_MS = 2500;
+  let rgPostSetKey = '';
+  function rgPostPump() {
+    clearTimeout(rgPostT);
+    if (!rgReady || !rgState.on || !rgRes || rgPostBusy || !document.body.classList.contains('rp-map')) return;
+    if (!rgRes.ready) { if (rgPostFailKey !== rgRes.key) rgPostInit(); return; }
+    const sn = rgSnap();
+    if (!sn || rgKey(sn) !== rgRes.key) return;
+    const inp = rgInputs(sn);
+    if (!inp.ok) {
+      if (!rgEst || rgEst.why !== inp.why) { rgEst = {why: inp.why}; rgRes.shown = false; rgRender(); mapDraw(); }
+      rgPostKey = '';
+      return;
+    }
+    const sd = rgBsd(sn), lik = rgLik(inp.sigma), ang = rgAng(sn.lobe, sd);
+    if (!ang) return;
+    // (setKey: what the user set + the source; the rest: the live lobe and level)
+    const setKey = [rgRes.key, sn.key, rgEirp().toFixed(2), rgState.gr, rgState.lr, rgState.cal, sd.toFixed(2), inp.sigma.toFixed(3), rgState.fade, rgState.K].join('|');
+    const ikey = setKey + '|' + sn.lobe + '|' + inp.base.toFixed(2);
+    if (ikey === rgPostKey) return;
+    const wait = rgPostAt + (setKey !== rgPostSetKey ? 300 : RG_LIVE_MS) - Date.now();
+    if (wait > 0) { rgPostT = setTimeout(rgPostPump, wait); return; }
+    rgPostAt = Date.now();
+    rgPostBusy = true;
+    rgPostKey = ikey;
+    rgPostSetKey = setKey;
+    rgPostReq = {seq: ++rgPostSeq, inp, sn, sd};
+    const msg = {seq: rgPostSeq, key: rgRes.key, ang, base: inp.base, D: lik.D, nk: lik.nk, near: RG_NEAR_M};
+    if (lik.idx && lik.ikey !== rgPostKidx) { msg.idx = lik.idx; rgPostKidx = lik.ikey; }
+    rgPostW.postMessage({post: msg});
+  }
+  function rgOnPost(m) {
+    rgPostBusy = false;
+    const req = rgPostReq && rgPostReq.seq === m.seq ? rgPostReq : null;
+    if (rgRes && m.key === rgRes.key && req) {
+      if (m.error) { rgEst = {why: m.error}; rgRes.shown = false; }
+      else if (m.empty) { rgEst = {empty: true, mMin: m.mMin, mMax: m.mMax, inp: req.inp, sn: req.sn, sd: req.sd}; rgRes.shown = false; }
+      else {
+        m.levels.forEach((u, i) => { rgRes.levels[i].rank = u; });
+        rgPaint();
+        rgEst = Object.assign({inp: req.inp, sn: req.sn, sd: req.sd, at: Date.now()}, m.st);
+      }
+    }
+    rgPostPump();
+    rgRender();
+    mapDraw();
+  }
+
+  // ---- the paint + the map ----
+  function rgRelRgb(c) {
+    const S = RG_STOPS;
+    for (let i = 1; i < S.length; i++) {
+      if (c > S[i][0] && i < S.length - 1) continue;
+      const t = Math.max(0, Math.min(1, (c - S[i - 1][0]) / (S[i][0] - S[i - 1][0]))), a = plHex(S[i - 1][1]), b = plHex(S[i][1]);
+      return a.map((v, k) => Math.round(v + (b[k] - v) * t));
+    }
+    return plHex(S[S.length - 1][1]);
+  }
+  // u8 -> ABGR: the colour of its share, opaque at the most likely place, fainter out to 99 %
+  function rgLut() {
+    if (rgLutA) return rgLutA;
+    rgLutA = new Uint32Array(256);
+    for (let u = 1; u < 256; u++) {
+      const c = (u - 1) / 254 * 0.99, [r, g, b] = rgRelRgb(c), a = Math.round(235 - 135 * c / 0.99);
+      rgLutA[u] = ((a << 24) | (b << 16) | (g << 8) | r) >>> 0;
+    }
+    return rgLutA;
+  }
+  function rgPaint() {
+    const lut = rgLut();
+    for (const l of rgRes.levels) {
+      if (!l.rank) continue;
+      const N = l.N;
+      if (!l.cv) { l.cv = document.createElement('canvas'); l.cv.width = l.cv.height = N; l.cx = l.cv.getContext('2d'); }
+      const img = l.cx.createImageData(N, N), px = new Uint32Array(img.data.buffer), r = l.rank;
+      for (let i = 0; i < N * N; i++) px[i] = lut[r[i]];
+      l.cx.putImageData(img, 0, 0);
+    }
+    rgRes.shown = true;
+  }
+  // a point dM metres from (lat, lon) towards brg (deg) on the sphere
+  function rgDest(lat, lon, brg, dM) {
+    const r = Math.PI / 180, d = dM / 6371000, p1 = lat * r, b = brg * r;
+    const p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(b));
+    return [p2 / r, lon + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2)) / r];
+  }
+  // (mapDrawNow, under the DF lobes) the rings coarse -> fine onto one layer,
+  // drawn at 0.75; the radius (dashed); the most likely place; the known
+  // transmitter of a calibration
+  function rgDraw(c) {
+    if (!rgReady || !rgState.on || opMode !== 'coherent') return;
+    if (!rgJob) rgPump();
+    const res = rgRes;
+    if (res && res.shown) {
+      if (!rgOff) rgOff = document.createElement('canvas');
+      if (rgOff.width !== mapCv.width || rgOff.height !== mapCv.height) { rgOff.width = mapCv.width; rgOff.height = mapCv.height; }
+      const o = rgOff.getContext('2d');
+      o.setTransform(1, 0, 0, 1, 0, 0);
+      o.clearRect(0, 0, rgOff.width, rgOff.height);
+      o.setTransform(mapDpr, 0, 0, mapDpr, 0, 0);
+      plDrawLevels(o, res);
+      c.save();
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.globalAlpha = 0.75;
+      c.drawImage(rgOff, 0, 0);
+      c.restore();
+    }
+    c.save();
+    if (res) {
+      // the radius: the circle on the ground (dashed; faint once the estimate is in)
+      c.beginPath();
+      for (let a = 0; a <= 360; a += 4) {
+        const [x, y] = mapLatLonToScreen(...rgDest(res.lat, res.lon, a, res.r * 1000));
+        if (a) c.lineTo(x, y); else c.moveTo(x, y);
+      }
+      c.setLineDash([6, 5]);
+      c.lineWidth = 1.2;
+      c.strokeStyle = res.shown ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.7)';
+      c.stroke();
+      c.setLineDash([]);
+    }
+    if (res && res.shown && rgEst && rgEst.lat !== undefined) {
+      const [x, y] = mapLatLonToScreen(rgEst.lat, rgEst.lon);
+      for (const lw of [4, 2]) {
+        c.lineWidth = lw;
+        c.strokeStyle = lw === 4 ? 'rgba(0,0,0,0.8)' : '#fff';
+        c.beginPath();
+        c.moveTo(x - 7, y - 7); c.lineTo(x + 7, y + 7); c.moveTo(x + 7, y - 7); c.lineTo(x - 7, y + 7);
+        c.stroke();
+      }
+      const lab = `TX? ${rgKm(rgEst.d)}`;
+      c.font = 'bold 11px sans-serif';
+      c.lineJoin = 'round';
+      c.lineWidth = 3;
+      c.strokeStyle = 'rgba(0,0,0,0.85)';
+      c.fillStyle = '#fff';
+      c.strokeText(lab, x + 10, y - 6);
+      c.fillText(lab, x + 10, y - 6);
+    }
+    const t = rgState.calTx;
+    if (t && (rgUiKt || rgCalJob)) {
+      const [x, y] = mapLatLonToScreen(t.lat, t.lon);
+      c.fillStyle = '#ffd54f';
+      c.strokeStyle = 'rgba(0,0,0,0.85)';
+      c.lineWidth = 2;
+      c.beginPath();
+      c.rect(x - 6, y - 6, 12, 12);
+      c.fill();
+      c.stroke();
+      c.font = 'bold 11px sans-serif';
+      c.lineWidth = 3;
+      c.strokeText('known TX', x + 9, y + 4);
+      c.fillStyle = '#ffd54f';
+      c.fillText('known TX', x + 9, y + 4);
+    }
+    c.restore();
+  }
+
+  // ---- calibration: dBm = dBFS - gain + cal ----
+  function rgCalNominal() {
+    Object.assign(rgState, {cal: RG_CAL_NOMINAL, sigC: RG_CAL_NOMINAL_SD, calHow: '', calF: 0});
+    rgCalMsg = '';
+    rgSave();
+    rgChanged();
+  }
+  // a known level at the receiver input (a signal generator through an
+  // attenuator, a calibrated meter): the selected signal's level now
+  function rgCalLevel() {
+    const el = document.querySelector('#map-rg .rg-klv'), v = el ? Number(el.value) : NaN, sn = rgSnap();
+    if (!(el && el.value !== '' && Number.isFinite(v) && v > -200 && v < 50)) { rgCalMsg = '⚠ enter the level the receiver gets (dBm)'; rgRender(); return; }
+    if (!sn || !sn.lvl || sn.lvl.gain < 0) { rgCalMsg = '⚠ no level measured for the selected signal (or the AGC is on)'; rgRender(); return; }
+    rgState.cal = +(v - (sn.lvl.dbfs - sn.lvl.gain)).toFixed(1);
+    Object.assign(rgState, {sigC: 1.5, calHow: `a known level: ${plF(v)} dBm`, calF: sn.mhz});
+    rgCalMsg = `Set: ${plF(sn.lvl.dbfs)} dBFS at ${plF(sn.lvl.gain)} dB gain = ${plF(v)} dBm`;
+    rgUiKl = false;
+    rgSave();
+    rgChanged();
+  }
+  // a known transmitter (right-click its place): the selected signal must be
+  // it - its path loss to the station by the model -> the level expected
+  function rgMenuItem() {
+    return rgReady && rgState.on && opMode === 'coherent'
+      ? `<button type="button" onclick="rgCalTxAt()" title="Calibrate the receiver for the 📏 range on a transmitter here whose EIRP you know (a repeater, a broadcast station from a licence register): tune the DF panel's selected VFO to it first">📏 Known transmitter here (calibrate)</button>` : '';
+  }
+  function rgCalTxAt() {
+    const at = mapMenuAt;
+    mapMenuClose();
+    if (!at) return;
+    const o = rgState.calTx || {h: 30, eirp: 50};
+    rgState.calTx = {lat: +at.la.toFixed(6), lon: +at.lo.toFixed(6), h: o.h, eirp: o.eirp};
+    rgUiKt = true;
+    rgState.open = true;
+    rgSave();
+    rgRender(true);
+    mapDraw();
+  }
+  function rgCalTxSet(k, v) {
+    const t = rgState.calTx, n = Number(v), lim = {h: [0.5, 3000], eirp: [1e-6, 1e8]}[k];
+    if (t && lim && Number.isFinite(n) && n >= lim[0] && n <= lim[1]) { t[k] = n; rgSave(); }
+    rgRender(true);
+  }
+  function rgCalTx() {
+    const t = rgState.calTx, sn = rgSnap();
+    if (!t) return;
+    if (!sn || !sn.lvl || sn.lvl.gain < 0) { rgCalMsg = '⚠ no level measured for the selected signal (or the AGC is on): tune its VFO to the known transmitter'; rgRender(); return; }
+    if (rgCalJob || !rgWorkerStart()) return;
+    const s = rgState, g = PL_GROUNDS[plState.ground];
+    rgCalJob = {job: ++rgSeq, lvl: sn.lvl, mhz: sn.mhz, d: mapDistKm(sn.lat, sn.lon, t.lat, t.lon), eirp: t.eirp};
+    rgWorker.postMessage({job: rgCalJob.job, link: {a: {lat: t.lat, lon: t.lon, h: t.h, amsl: false}, b: {lat: sn.lat, lon: sn.lon, h: rgStH(), amsl: false},
+      f: sn.mhz, k: 4 / 3, pol: s.pol === 'h' ? 0 : 1, N0: plState.N0, climate: plState.climate, eps: g[1], sigma: g[2],
+      envA: s.envTx, envB: s.envRx, hmA: PL_ENV_HM[s.envTx], hmB: PL_ENV_HM[s.envRx], rel: 50}});
+    rgCalMsg = 'working out the path loss from the known transmitter…';
+    rgRender();
+  }
+  function rgOnCal(m) {
+    if (m.prog) return;
+    const job = rgCalJob;
+    rgCalJob = null;
+    if (m.error) rgCalMsg = m.error === 'cancelled' ? '' : '⚠ ' + m.error;
+    else {
+      const r = m.link, mdl = rgState.model;
+      const Lm = mdl === 'itm' ? (r.itm.err ? null : r.itm.A) : mdl === 'fs' ? r.fs : r.p1812.Lb;
+      if (Lm === null) rgCalMsg = '⚠ Longley-Rice: ' + plItmErr(r.itm.err);
+      else {
+        const L = Lm + r.clut.a + r.clut.b, exp = rgDbm(job.eirp) - L + rgState.gr - rgState.lr;
+        rgState.cal = +(exp - (job.lvl.dbfs - job.lvl.gain)).toFixed(1);
+        // (the prediction itself is uncertain: the location variability + the model's error)
+        rgState.sigC = +Math.hypot(rgSigmaL(job.mhz), rgState.sigM).toFixed(1);
+        rgState.calHow = `a known transmitter ${plF(job.d)} km away: ${plF(L)} dB (${PL_MODELS[mdl]}) → ${plF(exp)} dBm expected`;
+        rgState.calF = job.mhz;
+        rgCalMsg = `Set: ${plF(job.lvl.dbfs)} dBFS at ${plF(job.lvl.gain)} dB gain = ${plF(exp)} dBm`;
+        rgUiKt = false;
+        rgSave();
+      }
+    }
+    rgChanged();
+  }
+
+  // ---- the panel (#map-rg, top left) ----
+  function rgToggle() {
+    rgState.on = !rgState.on;
+    if (rgState.on) rgState.open = true;
+    else if (rgJob && rgWorker && !rgJob.cancel) { rgJob.cancel = true; rgWorker.postMessage({cancel: rgJob.job}); }
+    rgSave();
+    rgChanged();
+  }
+  function rgPreset(i) {
+    const p = RG_PRESETS[+i];
+    if (!p) return;
+    Object.assign(rgState, p[1]);
+    rgSave();
+    rgChanged();
+  }
+  function rgSet(k, v) {
+    const n = Number(v), lim = {ptx: [1e-6, 1e7], gt: [-30, 60], lt: [0, 60], eirp: [1e-6, 1e8], sigE: [0, 30], txH: [0.5, 3000], gr: [-30, 60],
+                                lr: [0, 60], cal: [-200, 200], sigC: [0, 30], r: [1, 300], K: [-20, 40], sigM: [0, 30]}[k];
+    if (lim) {
+      if (!(v !== '' && Number.isFinite(n) && n >= lim[0] && n <= lim[1])) { rgRender(true); return; }
+      rgState[k] = n;
+      if (k === 'cal') { rgState.calHow = 'entered'; rgState.calF = 0; }
+    } else if (['stH', 'sigL', 'bsd'].includes(k)) {
+      const hi = {stH: 3000, sigL: 30, bsd: 90}[k];
+      if (v === '' || v === null) rgState[k] = null;
+      else if (Number.isFinite(n) && n >= 0 && n <= hi) rgState[k] = n;
+      else { rgRender(true); return; }
+    } else if (k === 'envTx' || k === 'envRx') rgState[k] = Math.max(0, Math.min(5, Math.round(n) || 0));
+    else if (k === 'open' || k === 'cfg' || k === 'set') rgState[k] = !!v;
+    else if ({txMode: ['ptx', 'eirp'], model: ['p1812', 'itm', 'fs'], pol: ['v', 'h'], fade: ['auto', 'rician', 'rayleigh', 'none']}[k]?.includes(v)) rgState[k] = v;
+    else { rgRender(true); return; }
+    rgSave();
+    rgChanged();
+  }
+  // anything changed: a new sweep where its key moved, a new estimate
+  function rgChanged() {
+    rgPostKey = '';
+    rgPump();
+    rgPostPump();
+    rgRender(true);
+    mapDraw();
+  }
+  // {"rdf"} came (2 Hz): the lobe / level moved on
+  function rgOnStatus() {
+    if (!rgReady || !rgState.on) return;
+    rgPump();
+    rgPostPump();
+    rgRender();
+  }
+  function rgPanelBuild(el) {
+    el.dataset.built = '1';
+    const num = (k, w, step, tip) => `<input type="number" data-k="${k}" style="width:${w}px" step="${step}" title="${tip}" onchange="rgSet('${k}',this.value)" onkeydown="if(event.key==='Enter')this.blur()">`;
+    const txt = (k, w, tip) => `<input type="text" data-k="${k}" style="width:${w}px" title="${tip}" onchange="rgSet('${k}',this.value)" onkeydown="if(event.key==='Enter')this.blur()">`;
+    const sel = (k, opts, tip) => `<select data-k="${k}" title="${tip}" onchange="rgSet('${k}',this.value)">${opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>`;
+    const envs = PL_ENVS.map((t, i) => [i, t]);
+    el.innerHTML =
+      `<div class="map-vs-h"><span class="t">📏 Range from signal strength</span><span class="hint">the DF panel's lobe</span>` +
+      `<span class="x rg-fold" onclick="rgSet('open', !rgState.open)" title="Fold / unfold"></span></div>` +
+      `<div class="map-vs-body">` +
+      `<div class="rg-src"></div><div class="rg-job pl-note"></div>` +
+      // (the readout first: the settings fold away once set up - the map is narrow)
+      `<div class="rg-st"></div><div class="rg-leg"></div>` +
+      `<div class="map-vs-row rg-btns"><button type="button" class="map-btn" onclick="rgCentre()" title="Centre the map on the most likely spot">◎ Most likely</button>` +
+      `<button type="button" class="map-btn" onclick="rgClear()" title="Forget the held lobe and level (the estimate shows again with the next ones)">Clear</button></div>` +
+      `<div class="map-vs-hov rg-hov"></div>` +
+      `<div class="pl-set-h" onclick="rgSet('cfg', !rgState.cfg)"><span class="rg-cfg-f"></span> Transmitter, our antenna, calibration, model</div>` +
+      `<div class="rg-cfg">` +
+      `<div class="map-vs-row"><span class="pl-l">Transmitter</span>${sel('txMode', [['ptx', 'power + antenna'], ['eirp', 'EIRP']], 'Give the transmitter\'s power, antenna gain and cable loss - or its EIRP (effective isotropic radiated power; ERP + 2.15 dB) directly')}` +
+      `<select onchange="rgPreset(this.value);this.value=''" title="Fill in a typical transmitter"><option value="">typical…</option>${RG_PRESETS.map(([t], i) => `<option value="${i}">${t}</option>`).join('')}</select></div>` +
+      `<div class="map-vs-row rg-ptx"><span class="pl-l"></span><label>${num('ptx', 56, 'any', 'Transmitter power at its antenna connector (W) - your estimate')} W</label>` +
+      `<label>antenna ${num('gt', 44, '0.5', 'Its antenna gain (dBi): a handheld\'s rubber duck ~ -3 to 0, a vehicle\'s whip ~ 0-3, a collinear ~ 6')} dBi</label>` +
+      `<label>cable ${num('lt', 40, '0.5', 'Its feed line + connector loss (dB)')} dB</label></div>` +
+      `<div class="map-vs-row rg-eirp"><span class="pl-l"></span><label>EIRP ${num('eirp', 64, 'any', 'Effective isotropic radiated power (W) - your estimate; from an ERP add 2.15 dB (x 1.64)')} W</label></div>` +
+      `<div class="map-vs-row"><span class="pl-l"></span><span class="rg-eirpv pl-note"></span>` +
+      `<label title="How far off your estimate of the EIRP may be (dB, one standard deviation): widens the range">± ${num('sigE', 40, '0.5', 'Uncertainty of the EIRP estimate (dB, 1 sigma)')} dB</label></div>` +
+      `<div class="map-vs-row"><span class="pl-l">TX antenna</span><label>${num('txH', 50, 'any', 'The transmitter\'s antenna height above the ground there (m): a handheld ~1.5, a vehicle ~1.8, a mast more')} m above ground</label>` +
+      `${sel('envTx', envs, 'The transmitter\'s surroundings (ITU-R P.2108 clutter: adds loss when its antenna is below the clutter height - 10 m open / suburban, 15 m urban / forest, 20 m dense urban)')}</div>` +
+      `<div class="map-vs-row"><span class="pl-l">Our antenna</span><label>${num('gr', 44, '0.5', 'Our receiving antenna\'s gain (dBi) - one array element: a magnetic whip ~0, a dipole 2.15')} dBi</label>` +
+      `<label>cable ${num('lr', 40, '0.5', 'Feed line + connector loss between our antenna and the KrakenSDR (dB)')} dB</label></div>` +
+      `<div class="map-vs-row"><span class="pl-l"></span><label>${txt('stH', 44, 'Our antenna\'s height above the ground (m); empty = the viewshed station\'s antenna height, else 5 m')} m above ground</label>` +
+      `${sel('envRx', envs, 'Our surroundings (ITU-R P.2108 clutter)')}</div>` +
+      `<div class="map-vs-row"><span class="pl-l">Calibration</span><label title="The receiver's calibration: dBm at its input = the level in dBFS - the tuner gain + this">dBm = dBFS − gain ${num('cal', 56, '0.1', 'dBm at the receiver input = dBFS - tuner gain (dB) + this (dB)')} dB</label>` +
+      `<label title="How far off the calibration may be (dB, one standard deviation): widens the range">± ${num('sigC', 40, '0.5', 'Uncertainty of the calibration (dB, 1 sigma)')} dB</label></div>` +
+      `<div class="map-vs-row rg-calh pl-note"></div>` +
+      `<div class="map-vs-row rg-calb"><span class="pl-l"></span><button type="button" class="map-btn" onclick="rgUiKl=!rgUiKl;rgRender(true)" title="You know the level the selected signal arrives with at the receiver input (a signal generator through an attenuator, a calibrated meter)">Known level…</button>` +
+      `<button type="button" class="map-btn" onclick="rgUiKt=!rgUiKt;rgRender(true);mapDraw()" title="A transmitter whose place and EIRP you know (a repeater, a broadcast station from a licence register): its path loss to the station by the model says what level it should arrive with">Known transmitter…</button>` +
+      `<button type="button" class="map-btn" onclick="rgCalNominal()" title="Back to the uncalibrated figure: ${RG_CAL_NOMINAL} dB ± ${RG_CAL_NOMINAL_SD} dB (a KrakenSDR's own noise at 49.6 dB gain taken as a 5 dB noise figure)">Nominal</button></div>` +
+      `<div class="map-vs-row rg-kl"><span class="pl-l"></span><label>the signal is <input type="number" class="rg-klv" style="width:60px" step="0.1" title="The level the selected signal arrives with at the receiver input (dBm)" onkeydown="if(event.key==='Enter')rgCalLevel()"> dBm at the input</label>` +
+      `<button type="button" class="map-btn" onclick="rgCalLevel()">Set</button></div>` +
+      `<div class="map-vs-row rg-kt"><span class="pl-l"></span><span class="rg-ktd pl-note"></span></div>` +
+      `<div class="map-vs-row rg-kt2"><span class="pl-l"></span><label>EIRP <input type="number" class="rg-kte" style="width:64px" step="any" title="The known transmitter's EIRP (W)" onchange="rgCalTxSet('eirp',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> W</label>` +
+      `<label>antenna <input type="number" class="rg-kth" style="width:50px" step="any" title="Its antenna height above the ground (m)" onchange="rgCalTxSet('h',this.value)" onkeydown="if(event.key==='Enter')this.blur()"> m</label>` +
+      `<button type="button" class="map-btn rg-ktb" onclick="rgCalTx()" title="Work out its path loss to the station (the model chosen below) and set the calibration from what the selected signal measures">Calibrate</button></div>` +
+      `<div class="map-vs-row rg-calm pl-note"></div>` +
+      `<div class="map-vs-row"><span class="pl-l">Model</span>${sel('model', PL_MODEL_OPTS, 'The propagation model (as the Viewshed\'s 📶 path loss): P.1812 and Longley-Rice follow the terrain, free space doesn\'t. Longley-Rice\'s climate and ground, and N0: the 📶 Signal settings')}` +
+      `${sel('pol', [['v', 'vertical'], ['h', 'horizontal']], 'The antennas\' polarization (both; the models\' horizontal / vertical)')}</div>` +
+      `<div class="map-vs-row"><span class="pl-l"></span><label>radius ${num('r', 50, '1', 'How far out to look (km, up to 300): the terrain is loaded and the loss worked out to here - larger takes longer')} km</label></div>` +
+      `<div class="pl-set-h" onclick="rgSet('set', !rgState.set)"><span class="pl-set-f"></span> Uncertainty, fading</div>` +
+      `<div class="pl-set">` +
+      `<div class="map-vs-row"><label title="Location variability (lognormal shadowing)">σ<sub>L</sub> ${txt('sigL', 40, 'Location variability (dB); empty = automatic (ITU-R P.1546 for the transmitter\'s end: 0.5 + 1.3 log f in the open, 1.0-1.2 + 1.3 log f in clutter)')} dB</label>` +
+      `<label>model ± ${num('sigM', 40, '0.5', 'The model\'s own error over real terrain (dB, 1 sigma): buildings and trees aren\'t in the terrain data')} dB</label>` +
+      `<label>bearing σ ${txt('bsd', 40, 'The bearing\'s uncertainty (degrees); empty = automatic: 2 + the heading\'s (compass 4, a static location 5.5)')}°</label></div>` +
+      `<div class="map-vs-row"><span class="pl-l">Fading</span>${sel('fade', [['auto', 'auto: Rician, K lower behind terrain'], ['rician', 'Rician, the same K everywhere'], ['rayleigh', 'Rayleigh'], ['none', 'none (averaged out)']], 'Fast (multipath) fading of the measured level around its local mean - none when the transmitter moved while it was measured (a vehicle) and the level averaged it out')}` +
+      `<label class="rg-k">K ${num('K', 40, '1', 'Rician K-factor (dB) of a clear path')} dB</label></div>` +
+      `<div class="map-vs-row rg-sig pl-note"></div></div>` +
+      `<div class="map-vs-note">Where the transmitter of the DF panel's selected lobe probably is: the measured level (dBFS - gain + the calibration = dBm at the receiver input) against ` +
+      `the path loss from the station to each place (the model over the terrain, with a transmitter at the TX antenna height there) and the lobe's bearing. ` +
+      `Coloured by how likely: the red core is the most likely, out to the 50 / 90 / 99 % regions. Only as good as the EIRP guess and the calibration - calibrate on a ` +
+      `known transmitter (right-click it on the map) for absolute levels. Bare terrain: buildings and trees only through the clutter setting.</div></div></div>`;
+  }
+  function rgCentre() { if (rgEst && rgEst.lat !== undefined) { mapCenterOn(rgEst.lat, rgEst.lon); mapDraw(); } }
+  function rgClear() {
+    rgLast = null;
+    rgEst = null;
+    if (rgRes) rgRes.shown = false;
+    rgPostKey = '';
+    rgRender(true);
+    mapDraw();
+  }
+  function rgLegendHtml() {
+    const S = RG_STOPS, pos = c => (c / 0.99 * 100).toFixed(1);
+    return `<div class="pl-leg-g" style="background:linear-gradient(to right, ${S.map(([c, col]) => `${col} ${pos(c)}%`).join(', ')})"></div>` +
+           `<div class="pl-leg-t"><span style="left:0">most likely</span><span style="left:${pos(0.5)}%;transform:translateX(-50%)">50 %</span>` +
+           `<span style="left:${pos(0.9)}%;transform:translateX(-100%)">90 %│</span><span style="right:0">99 %</span></div>`;
+  }
+  const rgKm = m => m >= 10000 ? (m / 1000).toFixed(0) + ' km' : m >= 1000 ? (m / 1000).toFixed(1) + ' km' : Math.round(m) + ' m';
+  function rgRender(force) {
+    const el = $id('map-rg');
+    if (!el || !rgReady) return;
+    const show = rgState.on && opMode === 'coherent' && document.body.classList.contains('rp-map');
+    if (el.style.display !== (show ? '' : 'none')) el.style.display = show ? '' : 'none';
+    const bt = $id('map-df-rng');
+    if (bt) bt.classList.toggle('on', !!rgState.on);
+    if (!show) return;
+    if (!el.dataset.built) rgPanelBuild(el);
+    el.classList.toggle('closed', !rgState.open);
+    el.classList.toggle('cfg-closed', !rgState.cfg);
+    el.classList.toggle('set-closed', !rgState.set);
+    const set = (sel, html) => { const e = el.querySelector(sel); if (e && e.dataset.html !== html) { e.dataset.html = html; e.innerHTML = html; } };
+    const vis = (sel, on) => { const e = el.querySelector(sel); if (e && e.style.display !== (on ? '' : 'none')) e.style.display = on ? '' : 'none'; };
+    set('.rg-fold', rgState.open ? '▾' : '▸');
+    set('.rg-cfg-f', rgState.cfg ? '▾' : '▸');
+    set('.pl-set-f', rgState.set ? '▾' : '▸');
+    for (const inp of el.querySelectorAll('[data-k]')) {
+      const k = inp.dataset.k, v = rgState[k];
+      vsSetVal(inp, v === null ? '' : v, force);
+    }
+    const sh = el.querySelector('[data-k=stH]');
+    if (sh) { const ph = String(rgStH()); if (rgState.stH === null && sh.placeholder !== ph) sh.placeholder = ph; }
+    for (const [k, ph] of [['sigL', 'auto'], ['bsd', 'auto']]) { const e = el.querySelector(`[data-k=${k}]`); if (e && e.placeholder !== ph) e.placeholder = ph; }
+    vis('.rg-ptx', rgState.txMode === 'ptx');
+    vis('.rg-eirp', rgState.txMode === 'eirp');
+    vis('.rg-k', rgState.fade === 'auto' || rgState.fade === 'rician');
+    set('.rg-eirpv', `EIRP <b>${plF(rgEirp())} dBm</b> (${rgFmtW(10 ** (rgEirp() / 10) / 1000)})`);
+    // the source: what is measured
+    const sn = rgSnap();
+    let src = '';
+    if (!sn) src = `<span class="w">${rgNoSource()}</span>`;
+    else {
+      const L = sn.lvl, age = L ? L.age + (sn.held ? (Date.now() - sn.t) / 1000 : 0) : 0;
+      src = `<span style="color:${sn.col}">■</span> <b>${digEsc(sn.name)}</b> · ${sn.mhz.toFixed(4)} MHz · lobe ${plF(sn.peak, 0)}°`;
+      if (L && L.gain >= 0) src += ` · ${plF(L.dbfs)} dBFS at ${plF(L.gain)} dB → <b>${plF(L.dbfs - L.gain + rgState.cal)} dBm</b> · SNR ${plF(L.dbfs - L.noise, 0)} dB`;
+      if (sn.held || age > 3) src += ` <span class="w">(${sn.held ? 'held, ' : ''}level ${age < 90 ? age.toFixed(0) + ' s' : (age / 60).toFixed(0) + ' min'} old)</span>`;
+    }
+    set('.rg-src', src);
+    // the calibration
+    const s = rgState;
+    set('.rg-calh', s.calHow ? `calibrated from ${digEsc(s.calHow)}${s.calF ? ` at ${plF(s.calF, 3)} MHz` : ''}` +
+                    (s.calF && sn && Math.abs(Math.log2(sn.mhz / s.calF)) > 0.5 ? ' <span class="w">- far from this frequency: the tuner\'s gain differs</span>' : '')
+                  : `<span class="w">uncalibrated: the nominal ${RG_CAL_NOMINAL} dB (± ${RG_CAL_NOMINAL_SD} dB)${s.cal !== RG_CAL_NOMINAL ? ' - changed' : ''}</span>`);
+    vis('.rg-kl', rgUiKl);
+    vis('.rg-kt', rgUiKt);
+    vis('.rg-kt2', rgUiKt && !!s.calTx);
+    const t = s.calTx;
+    set('.rg-ktd', !t ? 'Right-click the transmitter\'s place on the map → "📏 Known transmitter here", tune the selected VFO to it' :
+        `Known TX ${sn ? `${plF(mapDistKm(sn.lat, sn.lon, t.lat, t.lon))} km, ${plF(mapBearing(sn.lat, sn.lon, t.lat, t.lon), 0)}°` : `at ${t.lat.toFixed(4)}, ${t.lon.toFixed(4)}`}` +
+        ` - the selected VFO tuned to it (right-click elsewhere to move it)`);
+    if (t) {
+      const ke = el.querySelector('.rg-kte'), kh = el.querySelector('.rg-kth');
+      if (ke) vsSetVal(ke, t.eirp, force);
+      if (kh) vsSetVal(kh, t.h, force);
+      const kb = el.querySelector('.rg-ktb');
+      if (kb) kb.disabled = !!rgCalJob;
+    }
+    set('.rg-calm', rgCalMsg ? digEsc(rgCalMsg) : '');
+    vis('.rg-calm', !!rgCalMsg);
+    // the uncertainty in total
+    const f = sn ? sn.mhz : 146;
+    set('.rg-sig', `in total σ <b>${plF(rgSigma(f))} dB</b> (location ${plF(rgSigmaL(f))}, model ${plF(s.sigM)}, EIRP ${plF(s.sigE)}, calibration ${plF(s.sigC)})` +
+                   (sn ? ` + fading · bearing σ ${plF(rgBsd(sn))}°` : ''));
+    // the sweep
+    let job = '';
+    if (rgJob) job = Array.isArray(rgJob.prog) && rgJob.prog[0] === 'sig' ? `path loss ${rgJob.prog[1]} %…` :
+                     Array.isArray(rgJob.prog) ? `loading terrain ${rgJob.prog[0]}/${rgJob.prog[1]}…` : 'working out the path loss…';
+    else if (rgFail && sn && rgFail.key === rgKey(sn)) job = `<span class="e">⚠ ${digEsc(rgFail.msg)}</span>`;
+    else if (rgRes) job = `${PL_MODELS[rgRes.model]} at ${plF(rgRes.f, 0)} MHz, ${rgRes.r} km, ${(rgRes.ms / 1000).toFixed(1)} s` +
+                          (rgEst && rgEst.ms !== undefined ? ` · estimate ${rgEst.ms} ms` : '');
+    set('.rg-job', job);
+    // the estimate
+    let st = '';
+    const E = rgEst;
+    if (E && E.why) st = `<span class="w">${digEsc(E.why)}</span>`;
+    else if (E && E.empty) {
+      const sg = E.inp ? E.inp.sigma : 6;
+      st = E.mMax < 0 ? `<span class="e">⚠ The signal is stronger than this transmitter could give anywhere within ${rgRes ? rgRes.r : s.r} km ` +
+                        `(at best ${plF(-E.mMax)} dB short, σ ${plF(sg)} dB): more EIRP, a higher / nearer transmitter, or check the calibration</span>`
+         : `<span class="e">⚠ The signal is weaker than this transmitter would give anywhere within ${rgRes ? rgRes.r : s.r} km ` +
+           `(at least ${plF(E.mMin)} dB): a larger radius, less EIRP, or check the calibration</span>`;
+    } else if (E && E.lat !== undefined) {
+      // (the distance's quantiles first: with a few dB of uncertainty the
+      // probability is spread along the lobe - the most likely spot is the
+      // mode of a broad distribution)
+      const [q05, q25, q50, q75, q95] = E.q;
+      st = `Bearing <b>${plF(E.sn.peak, 0)}°</b> · distance: median <b>${rgKm(q50)}</b>, half the probability <b>${rgKm(q25)} – ${rgKm(q75)}</b>, ` +
+           `90 % ${rgKm(q05)} – ${rgKm(q95)}<br>✕ most likely spot ${rgKm(E.d)} at ${plF(E.b, 0)}° · the 50 % region ${rgArea(E.a50)}, the 90 % ${rgArea(E.a90)}`;
+      const w = [], sg = E.inp.sigma;
+      // no place fits well: even the strongest place's median is 3 sigma below the level (too strong), or the weakest above it
+      if (E.mMax < -3 * sg) w.push(`no place fits: stronger than this transmitter would be even next to the station (by ${plF(-E.mMax, 0)} dB, σ ${plF(sg)} dB) - more EIRP, or check the calibration`);
+      else if (E.mMin > 3 * sg) w.push(`no place fits: weaker than anywhere within the radius (by ${plF(E.mMin, 0)} dB, σ ${plF(sg)} dB) - a larger radius, less EIRP, or check the calibration`);
+      if (E.edge > 0.05) w.push(`${Math.round(E.edge * 100)} % of the probability is at the edge of the ${rgRes.r} km radius - it may be further: a larger radius`);
+      const L = E.sn.lvl;
+      if (E.inp.snr < 6) w.push(`weak (SNR ${plF(E.inp.snr, 0)} dB): the level reads high, the range short`);
+      if (L.total > -8) w.push(`the receiver is near full scale (${plF(L.total)} dBFS in the band): the level may read low - lower the gain`);
+      if (!s.calHow) w.push('uncalibrated: absolute levels ± ' + RG_CAL_NOMINAL_SD + ' dB');
+      if (E.sn.held) w.push('held: the signal ended');
+      if (w.length) st += '<br><span class="w">⚠ ' + w.join('<br>⚠ ') + '</span>';
+    } else if (sn && rgRes && !rgJob) st = 'working out…';
+    set('.rg-st', st);
+    set('.rg-leg', rgRes && rgRes.shown ? rgLegendHtml() : '');
+    vis('.rg-btns', !!(rgRes && rgRes.shown) || !!rgLast);
+    set('.rg-hov', rgHoverHtml());
+  }
+  const rgFmtW = w => w >= 1000 ? plF(w / 1000, w >= 1e4 ? 0 : 1) + ' kW' : w >= 1 ? plF(w, w >= 10 ? 0 : 1) + ' W' : plF(w * 1000, w >= 0.01 ? 0 : 1) + ' mW';
+  const rgArea = a => a >= 100 ? a.toFixed(0) + ' km²' : a >= 1 ? a.toFixed(1) + ' km²' : (a * 100).toFixed(1) + ' ha';
+  // ---- under the pointer: how likely, how far, the loss and the level expected from there ----
+  function rgHover(x, y) {
+    rgHovAt = x === null ? null : [x, y];
+    if (!rgReady || !rgState.on) return;
+    const el = $id('map-rg');
+    if (!el || !el.dataset.built) return;
+    const e = el.querySelector('.rg-hov'), h = rgHoverHtml();
+    if (e && e.dataset.html !== h) { e.dataset.html = h; e.innerHTML = h; }
+  }
+  function rgHoverHtml() {
+    const res = rgRes, E = rgEst;
+    if (!rgHovAt || !res || !res.shown || !E || !E.inp || !mapCv) return '';
+    const [x, y] = rgHovAt, W = mapWorld();
+    const nx = mapState.mx + (x - mapW / 2) / W, ny = mapState.my + (y - mapH / 2) / W;
+    for (const l of res.levels) {   // finest first
+      const Wv = 256 * 2 ** l.z, N = l.N;
+      let px = nx * Wv - l.gx0;
+      px -= Math.round((px - N / 2) / Wv) * Wv;
+      const i = Math.floor(px), j = Math.floor(ny * Wv - l.gy0);
+      if (i < 0 || j < 0 || i >= N || j >= N) continue;
+      const k = j * N + i, ls = l.loss[k];
+      if (ls === 65535) continue;
+      if (ls === 65534) return '📏 outside the model\'s range here';
+      const [la, lo] = mapScreenToLatLon(x, y), u = l.rank ? l.rank[k] : 0;
+      const d = mapDistKm(res.lat, res.lon, la, lo), b = mapBearing(res.lat, res.lon, la, lo);
+      const med = rgEirp() - ls / 10 + rgState.gr - rgState.lr;
+      const where = u ? `in the <b>${Math.max(1, Math.round((u - 1) / 254 * 99))} %</b> region` : '<span class="no">outside the 99 % region</span>';
+      return `📏 ${where} · ${d < 10 ? d.toFixed(2) : d.toFixed(1)} km, ${b.toFixed(0)}° · loss ${plF(ls / 10)} dB → ${plF(med)} dBm from here (median; measured ${plF(E.inp.prx)})`;
+    }
+    return '';
+  }
+
+  rgReady = true;
 
   // --- 🤖 AI MAP LAYERS: what the assistant plots (ai_map.cpp) ----------------------
   // {"ai_map":{seq, layers:[{id, name, desc, src, conv, col, t, f:[{g: pt|ln|pg|ci,

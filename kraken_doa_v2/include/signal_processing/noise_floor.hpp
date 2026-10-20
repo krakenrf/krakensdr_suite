@@ -34,6 +34,14 @@ void on_frame(int ch, const std::vector<float>& raw, const std::vector<float>& a
 // (FFTProcessor::calculate_noise_floor), as before.
 bool floor_db(int ch, float* out);
 
+// The mean noise power of ONE bin of channel ch's RAW frames (dB, the FFT's
+// own units - FFTProcessor's fft_magnitudes): the latest frame's 10th
+// percentile + 9.77 dB (a noise bin's power is exponential: its 10th
+// percentile is 0.105 x its mean), or the remembered floor's while a signal
+// fills the band. False when there is no recent frame of that channel.
+// (📏 range from signal strength: a VFO's band minus its noise)
+bool bin_noise_db(int ch, int fft_size, float* out);
+
 // Coherent mode, the data receiver: a second antenna of the FFT channel's
 // packet is wanted for the coherence test (a few times a second).
 bool coherence_due();

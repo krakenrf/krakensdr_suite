@@ -24,6 +24,12 @@
 // latest transmission. A talker's solver is created with its first record;
 // at most MAX_TALKER_MAPS are kept in memory (the stalest one is parked).
 //
+// 📏 Each VFO's (and a talker's, while it alone transmits on its VFO)
+// received level for the page's range from signal strength: the VFO band in
+// the FFT channel's latest frame (FFTProcessor::band_power, dBFS), sampled
+// while the signal is above the band's noise, averaged in power, with the
+// tuner gain of the moment - "lvl" in the status.
+//
 // Settings (persisted): RDF:0|1 (collect, default on), RDF_RANGE_KM:1-50
 // (half-width of the coarse grid, default 10). RDF_RESET:<vfo|-1>[:<talker>],
 // GET_RDF (the next grid push carries every VFO / talker).
@@ -56,7 +62,8 @@ void reset(int vfo, const std::string& tid = "");
 void request_full();
 
 // {"rdf":{...}}: station + every VFO's live lobe (north frame, 720 x 0.5 deg,
-// linear min..max like the MUSIC DoA plot) and gate state, + every talker's
+// linear min..max like the MUSIC DoA plot), gate state and received level
+// (lvl: {dbfs, noise, total, gain, age, n}), + every talker's
 // (talkers:[{vfo, tid, label, active, tx, ...}]) - 2 Hz.
 // peek: every talker, without touching the pushes' full / partial cadence
 // (the AI assistant's tools read it - ai_mcp.cpp)

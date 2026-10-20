@@ -1196,6 +1196,40 @@ leaves it out) with the models in `docker-data/whisper_models/`
   with a tag whose ✕ removes it
 - Pi 5: base.en ~280 MB RAM, ~2-3x faster than real time on 2-3 cores
 
+**📏 Range from signal strength (🗺 Map, coherent mode; the user's request
+2026-10-20)** (details: `kraken_doa_v2/CLAUDE.md` *Range from signal
+strength*): "Range" in the 📡 DF panel's header -> a panel (top left) + a
+heat map of where the transmitter of the DF panel's selected lobe (a VFO's,
+or one radio's) probably is, from its signal strength over the terrain
+- kraken_doa: each VFO's received level in `{"rdf"}` (vfos / talkers
+  `lvl`: dbfs, noise, total, gain, age, n) - `rdf_mapper.cpp` samples
+  `FFTProcessor::band_power` (the VFO band in the FFT channel's latest RAW
+  frame, Parseval, the Hamming window's 0.3974 taken out, the band's noise -
+  `nfloor::bin_noise_db`, the frame's 10th percentile + 9.77 dB - taken
+  out) every 100 ms while it is above the noise (and the squelch open),
+  averaged in power; a talker gets it while it alone transmits on its VFO
+- page (`kraken_doa.html` "📏 RANGE", settings `rgState`, localStorage
+  `kraken_rg`): dBm = dBFS - gain + calibration (nominal -23 dB +- 6;
+  "Known level…", "Known transmitter…" = right-click its place, its path
+  loss to the station by the model); the user's EIRP guess (power +
+  antenna - cable, or EIRP; presets) + our antenna -> the loss the signal
+  took; the STATION's own sweep (the viewshed worker's signal sweep - P.1812
+  / ITM / free space + P.2108 - from the station, a transmitter at the TX
+  antenna height in every cell; an instance of its own) -> per cell area x
+  the lobe's factor (as one mobile DF record, NOT tempered) x the level's
+  pdf around its median (the slope of the 📶 path loss's reliability
+  tables: sigma = location variability, model, EIRP, calibration in
+  squares, with the fading - Rician K per cell) in a worker of its own
+  (`rgPostMain`) -> coloured by the highest-density regions (50 / 90 / 99
+  %), the distance's quantiles, the most likely spot (the centre of the
+  most probable block). Separate from the viewshed's signal mode (the
+  station stays out of that - the user's call 2026-10-12)
+- Tests: `kraken_doa_v2/tools/range_validate.mjs` (node, offline; incl. a
+  Monte Carlo calibration over P.1812: the true place in the 50 / 90 %
+  regions 50 / 91 % of the time; the station's sweep = links from the
+  transmitter's cells, 0.03 dB median); band_power through the real FFT path
+  (scratch: tones, NBFM, multitone, SNR -2 dB - within 0.3 dB)
+
 **📡 Mobile DF on the map (coherent mode)** (details: `kraken_doa_v2/CLAUDE.md`
 *Mobile direction finding*): each VFO's live DoA lobe (north frame, from
 the station heading) + bearing on the 🗺 Map, and while driving a heat map

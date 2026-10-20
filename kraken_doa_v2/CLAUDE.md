@@ -1627,6 +1627,176 @@ Edit `include/config.hpp`:
   back, viewshed off / on, ✕, a link from line of sight mode, the selected
   site, a removed site's link, reload, damaged localStorage, no exceptions
 
+**📏 Range from signal strength (🗺 Map, coherent mode; kraken_doa.html "📏 RANGE", `rdf_mapper.cpp` lvl, `FFTProcessor::band_power`):**
+- The user's request (2026-10-20): from ONE DoA lobe + the received level +
+  an estimate of the transmitter's EIRP and our antenna gain, a heat map of
+  where the transmitter probably is - with the terrain through ITU-R P.1812
+  as the 📶 path loss does. "Range" in the 📡 DF panel's header
+  (`#map-df-rng`, `rgToggle`) -> the panel `#map-rg` (in `.map-tl`, the
+  viewshed panels' look: `.map-vs.map-pl.map-rg`) + its layer (`rgDraw`,
+  under the DF lobes). The source = the DF panel's selection (`rgSource`):
+  one radio (a talker), else the selected VFO (all: the sidebar's selected
+  one with a lobe, else the first with a lobe and a level)
+- THE LEVEL (server): `rdf_mapper.cpp` sampler, every 100 ms per VFO
+  (coherent, DoA on, not while `doa_is_calibrating`): its squelch open (or
+  off) -> `FFTProcessor::band_power(active_channel, offset, the VFO's
+  bandwidth, 2 DC bins out)` = the band's bins of the FFT channel's LATEST
+  RAW frame (`fft_magnitudes`, not the dB-averaged spectrum - a log average
+  reads noise-like signals 2.5 dB low) summed in power, by Parseval / the
+  Hamming window's mean w^2 0.3974 (+4.01 dB) = absolute: 1 = a full-scale
+  complex tone ((u - 127.5) / 127.5) = 0 dBFS; minus the band's noise
+  (`nfloor::bin_noise_db`: the raw frame's 10th percentile + 10 log10(fft
+  size) as nfloor keeps it, -10 log10(N) + 9.773 dB - an exponential's mean
+  over its 10th percentile -, or the remembered receiver floor while a
+  signal fills the band). A moment counts while the signal is above the
+  band's noise (sig > noise: TDMA's empty slots, squelch-less silence don't
+  pull it down), averaged in power (`Lvl::add`: the first ones' mean, then
+  EMA 0.2 ~ 0.5 s; a gap > 3 s or another gain starts afresh; held after,
+  its age sent; reset on a retune > 10 kHz). A TALKER gets the VFO's moment
+  while it is the only active non-packet, non-spatial talker on that VFO
+  (packet talkers - aircraft, ships - and spatial ones share the band: no
+  level). `{"rdf"}` vfos / talkers (`common()`): `lvl: {dbfs (the signal
+  without the noise), noise (the band's), total (the whole frame: ADC
+  load - summed by the FFT loop itself, `channel_frame_power`, so
+  band_power only reads the band's bins under fft_mutex), gain (dB, -1
+  AGC), age (s), n}` when known
+  Checked (scratch t_bandpower.cpp, the real `process_channel_fft` + pffft +
+  nfloor with stubs, MinGW): a bin-centred tone -30 dBFS -> -29.96, between
+  bins -50 -> -50.29, NBFM -45 (3 kHz deviation) -> -44.86, an 8 kHz
+  64-tone signal -55 -> -54.69, a tone at SNR -2 dB in the band -62 ->
+  -61.91; the band's noise within 0.15 dB of the truth in all, the whole
+  frame (signal + noise) within 0.1 dB
+- dBm (page): dBFS - the tuner gain (the moment's, from the server) + the
+  CALIBRATION `rgState.cal` (dB, +- `sigC`). Not a noise-floor (kTB + NF)
+  conversion: the dev PC's noise_floors.json (49.6 dB -46.7, 25.4 dB -56.5,
+  20.7 dB -58.7) drops ~10 dB for 24 dB less gain - below the top gains the
+  floor is the IF / ADC noise, not the antenna's. Nominal (`RG_CAL_NOMINAL`
+  -23 dB, +- 6): the dev PC's floor at 49.6 dB (-32.9 dBFS over the 2.4
+  MHz) taken as kTB + a 5 dB noise figure (-105.2 dBm). Calibrate:
+  "Known level…" (`rgCalLevel`: the selected signal arrives with X dBm ->
+  cal = X - (dbfs - gain), +- 1.5 dB) or "Known transmitter…" (right-click
+  its place -> "📏 Known transmitter here" `rgMenuItem` / `rgCalTxAt`,
+  `rgState.calTx` {lat, lon, h, eirp W}; `rgCalTx` = a LINK job on the range
+  worker from it to the station (our antenna height), the model's loss +
+  P.2108 -> the level expected = EIRP - L + G - cable -> cal; +- sqrt(sigma_L^2
+  + model^2), the prediction's own spread). `calHow` / `calF` shown; far
+  (> 1.4x) from calF: a warning (the tuner's gain changes with frequency).
+  The tuner AGC (gain -1): no dBm, said
+- THE SWEEP: the viewshed worker's signal sweep (`vsWorkerMain` -> runJob /
+  runSignal / plSweep, UNCHANGED) on an instance of its own (`rgWorker`;
+  also its calibration links) with the STATION as the worker's "Tx" end
+  (path loss is reciprocal; each end's clutter by its role: `envTx` of the
+  message = OUR surroundings, `envRx` = the transmitter's - checked for the
+  link both ways in pathloss_validate.mjs) and a transmitter at the TX
+  antenna height (`rgState.txH`, above ground) in every cell; radius
+  `rgState.r` (default 30, <= 300 km), `vsPlan` rings, k 4/3, helpers as
+  the viewshed's (`vsPar`). Key (`rgKey` = JSON of `rgSweepMsg`): the
+  station rounded to 1e-4 deg, our antenna height (`rgStH`: the setting,
+  else the viewshed station's, else 5 m), the radius, f to 3 significant
+  digits (0.3 %: < 0.03 dB), the model, polarization, both clutters, N0 /
+  ITM's climate + ground (the 📶 Signal settings'). One job at a time, a
+  newer key cancels it. The viewshed's signal mode is untouched (the
+  station stays out of it - the user's call 2026-10-12 was about coverage)
+- THE POSTERIOR (a worker of its own, `rgPostMain` - a few million cells; the
+  page stays responsive): `init` = the sweep's rings (copies of loss / fad)
+  -> each cell's bearing (65536ths) + distance from the station (great
+  circle: atan2(|east, north parts|, dot) - the bearing formula's parts
+  have the length sin of the angle), its block of a 128 x 128 grid over
+  the radius, each row's cell area. `post` per cell (no data 65534 / 65535
+  skipped): density = the bearing factor at its bearing x the level's pdf at
+  the margin m = base - loss (base = EIRP + G_rx - cable - P_measured) ->
+  mass = density x area (the prior: uniform per area within the radius)
+  - bearing factor (`rgAng`, page): the north-frame lobe (rdf u8) blurred
+    by the bearing uncertainty (auto: hypot(2, the heading's: compass 4,
+    else 1.5 + 8 / speed - static 5.5) as rdf_mapper), normalised,
+    (1 - eps) p 720 + eps, eps 0.05, NOT tempered (`RG_ALPHA` 1: mobile
+    DF's 0.5 discounts many correlated records; on one lobe its square root
+    left ~half of the probability off the bearing - the 90 % region 43.8 ->
+    14.5 km² in the Auckland test); cells within 30 m: 1 (no bearing)
+  - the level's pdf (`rgLik`): the slope of the 📶 path loss's reliability
+    table (`plRelLut`: P(level >= threshold) at a median margin) - rel'(m) =
+    the pdf of the measured dB given the cell's median: lognormal sigma =
+    hypot(sigma_L (P.1546 for the TRANSMITTER's end: 0.5 / 1.0 / 1.2 + 1.3
+    log f by its clutter + height, `rgSigmaL`), model error `sigM` (4), the
+    EIRP's `sigE`, the calibration's `sigC`) with the fading around it:
+    auto = Rician whose K follows the path per cell (`rgKeffQ` = plKeff with
+    this panel's K; the tables per K level + idx[fadQ] as plRelSet), or
+    Rician / Rayleigh / none (a moving transmitter averaged it out). Sent as
+    nk x 481 values every 0.25 dB from -50 dB; idx (65536) once per K
+  - the HIGHEST-DENSITY REGIONS: the mass by density (0.01 decade bins over
+    12 decades) summed from the top -> each cell's c = the share of the
+    probability in places at least as likely -> u8 1 + c / 0.99 x 254 (0 =
+    beyond 99 % / no data) -> `rgLut` colours (`RG_STOPS`: red at the most
+    likely, orange, yellow 50 %, green, cyan 90 %, blue 99 %; alpha 235 ->
+    100), painted per ring (`rgPaint`), composited coarse -> fine at 0.75
+    (`rgDraw` via `plDrawLevels`)
+  - the numbers: the distance's quantiles 5 / 25 / 50 / 75 / 95 % (2000
+    bins over 1.05 x the radius), the 50 / 90 % regions' areas, the share at
+    the edge (> 0.9 radius), the margins' range (mMin / mMax: no place fits
+    when even the strongest place's median is 3 sigma below the level, or
+    the weakest 3 sigma above - said; none within the tables -> "empty"),
+    the MOST LIKELY SPOT = the centre of the probability in the most
+    probable block (a single cell's maximum jumped between places of the
+    same loss over terrain - 3 km for a true 5 km in the synthetic test),
+    ms
+  - the readout leads with the bearing and the distance's quantiles: with
+    sigma ~6-9 dB the probability spreads along the lobe (free space: a
+    factor of 2 in distance per sigma), the spot is the mode of a broad
+    distribution
+- Live: `rgOnStatus` (from rdfOnStatus, 2 Hz) -> `rgPump` (the sweep's key)
+  + `rgPostPump`: one post at a time; a setting / the source changed: after
+  0.3 s, the live lobe / level only every `RG_LIVE_MS` 2.5 s (each post is
+  ~0.1 s on the dev PC at 30 km, 4 rings - several times that in a Pi's
+  browser); not while the map isn't shown. The snapshot (`rgSnap`): the
+  source's lobe + level + where the station was; the lobe gone -> the last
+  one HELD (said, with the level's age) until Clear (`rgClear`) or a new
+  one. Hover (`rgHover` from vsHover): the region %, distance / bearing,
+  the cell's loss and the median level a transmitter there would give vs
+  the measured. Map: the radius dashed (faint once painted), ✕ "TX? x km"
+  at the spot, the known transmitter (yellow square) while calibrating
+- Panel (`rgPanelBuild`, `rgRender` - from mapDrawNow / mapUpdateControls /
+  rgOnStatus, innerHTML only when changed): the source line (dBFS at gain
+  -> dBm, SNR, held), the sweep's status, the readout + warnings (edge > 5
+  %, SNR < 6 dB: reads high, total > -8 dBFS: near full scale - lower the
+  gain, uncalibrated, held, no place fits), legend, ◎ / Clear, hover, then
+  the fold "Transmitter, our antenna, calibration, model" (`rgState.cfg`,
+  open the first time: the map is narrow - the readout first): power +
+  antenna - cable or EIRP (W) + presets (`RG_PRESETS`: handheld 5 W -3
+  dBi 1.5 m, PMR446 0.5 W ERP, vehicle 25 W, base / repeater 50 W 6 dBi 25
+  m, ISM 10 mW) +- dB, TX antenna height + clutter, our antenna gain /
+  cable / height / clutter, calibration + the two helpers, model +
+  polarization (both antennas: the models' h / v), radius, and the
+  sub-fold "Uncertainty, fading" (sigma_L auto, model +-, bearing sigma
+  auto, fading + K, the total sigma). `rgSet` validates, `rgChanged`
+  re-pumps. `rgState` in the globals block (localStorage `kraken_rg`,
+  rebuilt field by field), `rgReady` set at the section's end (the map can
+  draw before it)
+- Limits: one antenna's level (the FFT channel; no array gain), the bare
+  terrain + P.2108 clutter (buildings / trees otherwise not in the data),
+  the median models (no ducting), the EIRP is a guess - its +- widens the
+  range; the uncalibrated level +- 6 dB; a packet talker has no level
+- Tests: committed `tools/range_validate.mjs` (node 20+, offline - the
+  synthetic terrain of pathloss_validate.mjs through fetch, the page's own
+  functions + both workers): the pdf (no fading = the normal pdf to 2e-5;
+  Rayleigh 2.51 dB; auto tables integrate to 1), the bearing factor (peak,
+  floor eps, peak / floor 548), free space with an exact level (the spot
+  3.8 km at 62 deg for 4 km at 60 deg - one block), the distance's
+  quantiles = an independent posterior in plain loops (worst 2 m), a level
+  100 dB too strong (no place fits) / 200 dB too weak (empty), the
+  CALIBRATION by Monte Carlo (P.1812 over the synthetic hills, 446 MHz,
+  sigma 6 dB, a flat lobe, 150 transmitters uniform over the area, levels
+  drawn from the model): the true place in the 50 % region 50 %, in the 90
+  % region 91 % of the time; auto fading runs; the station's sweep (clutter
+  roles swapped) = links from 25 transmitter cells (1.5 m, urban: up to
+  14.8 dB of P.2108) to the station: median 0.03, p90 0.08 dB. Scratch (job 3cc78a36):
+  t_bandpower.cpp (above), ui_test.mjs - headless Chrome over the DevTools
+  protocol on the page served statically, a fake {"rdf"} (Auckland, 446
+  MHz, a lobe at 60 deg, -22.4 dBFS at 49.6 dB), real terrain: the Range
+  button, the panel, the sweep (P.1812 30 km, 6.4 s) + estimate (108 ms),
+  heat colours along the lobe, the folds (saved), hover, a known level (-80
+  dBm -> cal -8), a known transmitter (5 km, 100 W, 40 m: P.1812 137.0 dB
+  -> cal -16 +- 6.1), the menu item, AGC, held, off, no exceptions
+
 **Incident map (`src/incidents.cpp`, `geo_address.cpp`, `geo_http.cpp`):**
 - Plugins send free-text messages with `host.message(from, text)`
   (`kp::Info::messages`; POCSAG: every alphanumeric page). Wire MESSAGE (28)

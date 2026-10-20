@@ -122,6 +122,17 @@ public:
                                        float center_freq_mhz, float bandwidth_mhz,
                                        int exclude_dc_bins = 0);
 
+    // 📏 The power in a band of channel `channel`'s LATEST raw frame, absolute:
+    // linear, 1 = a full-scale complex tone (the samples as converted, (u -
+    // 127.5) / 127.5) = 0 dBFS. By Parseval: the band's bins summed, the
+    // window's power (Hamming, 0.3974) taken out. sig = the band minus its
+    // noise (nfloor::bin_noise_db per bin; <= 0 when nothing is above it),
+    // noise = the band's noise, total = the whole frame (the ADC's load).
+    // The bins +-exclude_dc_bins around the centre are left out and the
+    // band's sum scaled up for them. False without a recent frame.
+    struct BandPower { double sig = 0, noise = 0, total = 0; int bins = 0; };
+    static bool band_power(int channel, float offset_hz, float bandwidth_hz, int exclude_dc_bins, BandPower* out);
+
     // Check squelch on one decimator's beamformed FFT data.
     // Returns true if squelch is open (signal present above threshold).
     // Note: beamformed FFT is normalized to noise floor = 0dB inside.
