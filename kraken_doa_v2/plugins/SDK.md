@@ -33,7 +33,8 @@ plugins/
 │                         beam - radar, ssr1030)
 ├── p25/ dmr/ tetra/ dstar/ nxdn/ mpt1327/   the shipped protocol decoders
 ├── pocsag/ aprs/         more shipped decoders (APRS was written by the AI lab)
-├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points
+├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points; multichannel: every
+│                         antenna combined, per-message MRC / MVDR beams, its own pulse covariances
 ├── radiosonde/           weather balloon sondes (RS41, DFM, M10/M20, iMet-4/-54, LMS6, MRZ):
 │                         several protocols side by side, Reed-Solomon, Viterbi, balloon map points
 ├── ism/                  ISM band devices (433 MHz etc.) in the whole 2.4 MHz: a burst detector,

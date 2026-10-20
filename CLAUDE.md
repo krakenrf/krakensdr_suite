@@ -748,7 +748,12 @@ decoders `kraken_doa_v2/plugins/`
   p25, dmr, tetra (downlink), dstar, nxdn (48 and 96), mpt1327 (analogue
   trunking signalling), pocsag, aprs, adsb (1090 MHz; manual only -
   picking it tunes the VFO + tuner to 1090 MHz at 2.4 MHz and draws the VFO
-  as a locked line, `kp::Info::fixed_freq_hz`; `kp::Info::lock_vfo` -
+  as a locked line, `kp::Info::fixed_freq_hz`; v2.0: in coherent mode with
+  DoA on it combines every antenna - `kp::Info::multichannel`, a beam per
+  weak message, overlapping messages separated, each message's own pulse
+  covariance as its DoA - ~6 dB more sensitive with 5 antennas, plus
+  extended bit repair and long CPR pairing; each an option in its tab;
+  `kp::Info::lock_vfo` -
   ism, cells, dtv - locks a 2.4 MHz VFO at its tuner centre the same way
   without tuning), ais (ships, both channels
   161.975 / 162.025 MHz in one 100 kHz VFO on 162.000 MHz; manual only,

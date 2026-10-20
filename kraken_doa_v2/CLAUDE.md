@@ -569,7 +569,8 @@ Edit `include/config.hpp`:
   On" highlighted / "○ Label: Off", the choice's text without a trailing
   "(...)", the help + "click to turn on / off" as its tooltip; it sends
   DIGITAL_OPT with the other value and shows the echoed state) - dtv's Path
-  separation, adsb's 1-bit repair, dme's DoA per beacon, cells' Cell
+  separation, adsb's Array combining / Overlap separation (its Bit repair
+  is a three-way list since v2.0), dme's DoA per beacon, cells' Cell
   information; other choice lists stay `<select>`s. The settings rows
   (`#info-dec-top`) are rebuilt only while no input / list in them has the
   focus or a mode list is open (`ddOpenSel`); a focused BUTTON doesn't hold
@@ -2022,8 +2023,10 @@ Edit `include/config.hpp`:
   Lobe on), again = Whole signal; "DoA ✓" while picked. It acts on
   pointerdown: the popup is rebuilt every second ("Updated N s ago")
 - Packets (ADS-B per aircraft; `kp::Talker::packet`, wire flags field "p",
-  times sent with 7 decimals): the plugin reports every accepted message
-  of a confirmed aircraft (`talker_packet` in plugins/adsb: start = the
+  times sent with 7 decimals; since adsb v2.0 - every antenna, option
+  `pulse_doa` - each with its own pulse covariance, `kp::Talker::cov`, so
+  the ring below isn't kept for it - see *ADS-B*): the plugin reports every accepted message
+  of a confirmed aircraft (`queue_packet` in plugins/adsb: start = the
   first preamble pulse - mag_ index + timing phase / 5, mapped through
   `abs0_` / `blk_abs_` to host.time() -, end = + (8 + bits) us; offline
   check on a synthetic feed: start within 0.5 sample of the truth, sd
@@ -4739,6 +4742,54 @@ Edit `include/config.hpp`:
   190 of 197 messages (the 6 lost ones overlap another), the CRC = the
   Riddle's KLM1023 frame, every aircraft 0.0 deg, positions 25-120 km at
   their bearings; end to end 6 / 6 at 0.0 deg
+- v2.0 (2026-10-20, the user's request: weaker / more distant aircraft,
+  better error correction, the coherent array - each an option in the
+  decoder tab; README *Every antenna* + its test table):
+  - `kp::Info::multichannel`: in coherent mode with DoA on every antenna
+    (`process_multi`, `xs_` ring beside `mag_`). Option `array` (on): the
+    detector's magnitude = sqrt of the noise-normalised power sum
+    (`g_` / `pn_` per antenna, `set_noise`), gate `GATE_ARRAY` 1.3; what
+    the sum doesn't decode -> `decode_beams`: a preamble >= `ARRAY_RATIO`
+    1.35 x its gaps with the LOOSE gap rule (no gap above the pulses'
+    mean - the strict min-pulse rule lost 40 % of the 5 dB messages) ->
+    MRC weights = principal eigenvector of the preamble pulses'
+    covariance (`array.hpp`: power iteration, solve), strict preamble on
+    the beam, slice -> decision-directed weights from every sliced pulse
+    -> option `separate`: MVDR (target = principal of pulses minus gaps,
+    the window's covariance + one antenna's noise) and `scan_inside` (a
+    second message inside a decoded one, its signature projected out:
+    `decode_null`). Option `pulse_doa`: each packet's `kp::Talker::cov` =
+    its own pulse samples, minus samples of another accepted message's
+    pulses (`acc_`, `dirty`); packets wait in `pk_` until the separation
+    scan after their decode (`flush_packets`) - kraken_doa keeps no
+    stream ring for such a VFO and never drops them for an overlap.
+    Aircraft signature (`Aircraft::sig`, raw antennas, learnt from exact-
+    parity DF17/18 / DF11): repaired messages, repaired replies and DF11
+    with an IID must reach |a^H s|^2 >= `SIG_RHO_MIN` 0.7
+  - `fix` 0 / 1 / 2 (was on / off: a saved 1 = standard, as before):
+    extended = DF17/18 up to 3 of the 12 least certain bits (`search`),
+    DF11 1 anywhere (IID 0) / 1-2 weak with any IID (known AA), replies
+    1-2 of the 8 weakest -> a known aircraft's address at its level
+    (`level_ok` 6 dB) AND content (`reply_consistent`: altitude within
+    1000 ft of the last 2 min / its squawk) - without the content check a
+    sens + extended run made 1 wrong DF20 in 6243
+  - `cpr` (on): pairs up to `PAIR_MAX_MOVE_M` 4 km / ground speed (10-30
+    s; 15 s without a velocity), the dead-reckoned last position
+    (`reference`) the local reference for `REF_AGE_LONG_S` 180 s
+  - `sens` (off): gates 1.35 / 1.2, every timing sliced, one antenna also
+    a preamble >= `RATIO1_SENS` 1.6 with the loose rule
+  - Facts "Antennas" (combined, decoded only with a beam, separated,
+    bearings from pulses; one antenna: says DoA must be on) and "Bit
+    repair"; `ADSB_STATS=1` (offline) prints path / repair counters
+  - Tests (job scratch e4b30c3e t/: mkscene.py + score.py - every decoded
+    message against the truth hex -, trace / pos / track.py): v2.0 with
+    one antenna = v1.0 exactly on every scene (also through digi_test);
+    array: sweep 18 -> 73 %, busy 66 -> 94 %, replies sweep 15 -> 69 % /
+    busy 55 -> 89 %, ~6 dB more sensitive, noise 0, 0 wrong anywhere;
+    numbers in the README. `adsb_gen.py` got `replies` (DF4/5/20/21 per
+    aircraft) and `moving` (scene) - both opt-in, the playback's cache
+    unchanged. digi_test's Windows build line needs src/ai_sandbox.cpp +
+    src/geo_address.cpp now (dig_plugin.cpp calls aisandbox)
 
 **FFT (pffft) - `external/pffft/` + `plugins/sdk/kraken_fft.hpp`, kraken_doa and every plugin:**
 - The user's request (2026-10-17): swap FFTW for pffft (FFTW is GPL-2.0+;
