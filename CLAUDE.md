@@ -1207,6 +1207,21 @@ frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
 
+**⏯ Log replay (🗺 Map's "Replay", every mode, UI only)** (details:
+`kraken_doa_v2/CLAUDE.md` *⏯ Log replay*): a DoA log of a drive - the
+KrakenSDR Android app's (krakensdr_rdf_android: CSV in all its layouts, by
+field count, or its SQLite `entries` table) or a 📝 DoA Recording of this
+receiver (same formats; its box's 🗺 Replay) - opened in the browser (📂 /
+dropped on the map, an SQLite `-wal` file with it), nothing sent to the
+receiver. A worker (`lrWorkerMain` in kraken_doa.html) reads it - its own
+SQLite reader (+ the WAL's committed pages), no library - and runs the
+mobile DF engine PORTED from `src/rdf_engine.cpp` (keep the two alike:
+`kraken_doa_v2/tools/replay_validate.mjs --cpp` + `tools/rdf_cmp.cpp`)
+fed like rdf_mapper.cpp. The strip at the bottom of the map plays it back
+(0.5-500x, scrub, step, click the track): track, vehicle, the moment's lobe
++ bearing, bearing lines, power dots, the heat map + 95 % ellipse as known
+at that moment (snapshots along the drive); long pauses shortened
+
 **📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a

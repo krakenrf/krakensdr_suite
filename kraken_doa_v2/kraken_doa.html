@@ -777,6 +777,44 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-pane.pl-open .map-mk {bottom:260px;max-height:calc(100% - 380px)}
 .map-pane.pl-open .map-status {bottom:256px}
 .map-pane.pl-open .map-tl {max-height:calc(100% - 310px)}
+/* ⏯ the DoA log replay at the bottom of the map (⏯ LOG REPLAY): the others stand on it (--lr-h = its height) */
+.map-lr {position:absolute;left:6px;right:6px;bottom:20px;z-index:4;background:rgba(16,24,44,.95);border:1px solid #8a6d1a;border-radius:4px;padding:4px 7px 5px;font-size:11px;color:#cfe3ff;box-sizing:border-box;outline:none}
+.lr-row {display:flex;gap:4px 6px;align-items:center;flex-wrap:wrap}
+.lr-row + .lr-row {margin-top:3px}
+.lr-t {font-weight:bold;color:#ffd54f;white-space:nowrap}
+.lr-nm {color:#fff;font-weight:bold;min-width:0;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lr-fmt {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:420px}
+.lr-dim {color:#8296b4}
+.lr-sp {flex:1}
+.map-lr label {display:flex;align-items:center;gap:3px;white-space:nowrap}
+.map-lr .map-btn {height:22px;min-width:24px;padding:0 5px;font-size:12px}
+.map-lr .lr-play {min-width:34px;color:#ffd54f}
+.map-lr select, .map-lr input[type="number"] {background:#1a1a2e;border:1px solid #2a4a7a;color:#e0e0e0;border-radius:3px;font-size:11px;padding:1px 3px;height:22px;box-sizing:border-box}
+.map-lr select {max-width:240px}
+.lr-time {font-variant-numeric:tabular-nums;color:#fff;white-space:nowrap}
+.lr-pos {font-variant-numeric:tabular-nums;white-space:nowrap}
+.lr-tl {display:block;width:100%;height:36px;margin-top:4px;cursor:pointer;touch-action:none;border-radius:3px;outline:none}
+.lr-tl:focus-visible {box-shadow:0 0 0 1px #ffd54f}
+.lr-info {margin-top:3px;line-height:1.45;color:#dbe8ff;font-variant-numeric:tabular-nums}
+.lr-info b {color:#fff}
+.map-lr .w {color:#ffcc80}
+.map-lr .e {color:#ff8a80}
+.map-lr .g {color:#a5d6a7}
+.lr-msg:empty {display:none}
+.lr-msg {margin-top:3px;line-height:1.45}
+.lr-help {color:#b8cbe6;margin-top:2px}
+.lr-help .map-btn {height:20px;font-size:11px;margin:0 2px}
+.map-lr:not(.loaded) .lr-ld {display:none}
+.map-pane.lr-open .map-df, .map-pane.lr-open .map-mk {bottom:calc(var(--lr-h, 150px) + 30px)}
+.map-pane.lr-open .map-mk {max-height:calc(100% - var(--lr-h, 150px) - 150px)}
+.map-pane.lr-open .map-status {bottom:calc(var(--lr-h, 150px) + 26px)}
+.map-pane.lr-open .map-plk {bottom:calc(var(--lr-h, 150px) + 26px)}
+.map-pane.lr-open .map-tl {max-height:calc(100% - var(--lr-h, 150px) - 90px)}
+.map-pane.lr-open.pl-open .map-df, .map-pane.lr-open.pl-open .map-mk {bottom:calc(var(--lr-h, 150px) + 266px)}
+.map-pane.lr-open.pl-open .map-status {bottom:calc(var(--lr-h, 150px) + 262px)}
+.map-pane.lr-open.pl-open .map-tl {max-height:calc(100% - var(--lr-h, 150px) - 330px)}
+/* a file dragged over the map */
+.map-pane.lr-drop::after {content:'Drop the DoA log here (CSV, or SQLite + its -wal file)';position:absolute;inset:8px;border:2px dashed #ffd54f;border-radius:6px;background:rgba(16,24,44,.65);color:#ffd54f;font-size:15px;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;z-index:8;pointer-events:none}
 #map-canvas {-webkit-touch-callout:none}
 /* right-click (long-press) menu on the map + the user's markers (📍 MAP MARKERS) */
 .map-menu {position:absolute;z-index:6;min-width:160px;max-width:280px;background:rgba(16,24,44,.97);border:1px solid #4fc3f7;border-radius:4px;padding:3px 0;box-shadow:0 2px 10px rgba(0,0,0,.5);font-size:12px}
@@ -1414,7 +1452,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- DoA Recording (doa_logger.cpp): bearings to a file. Not the 📼 recorder below (IQ / audio) -->
     <div class="sb-section coh-only">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📝 DoA Recording<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Logs the <b>DoA results</b> (bearing, confidence and the lobe of every VFO) to a file <b>on this device's disk</b> (<span class="os-lin">the KrakenPi</span><span class="os-win">the receiver's computer</span>), not your browser - for IQ samples or audio use the <b>📼 IQ &amp; Audio Recorder</b>. <b>Legacy CSV</b> matches DOA_value.html line-for-line; <b>SQLite</b> is a compact, app-readable database for plotting on a map. The interval applies to both formats; below the actual DoA data rate it logs at the data rate, and duplicate frames are never written.</span></span></h3>
+        <h3>📝 DoA Recording<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Logs the <b>DoA results</b> (bearing, confidence and the lobe of every VFO) to a file <b>on this device's disk</b> (<span class="os-lin">the KrakenPi</span><span class="os-win">the receiver's computer</span>), not your browser - for IQ samples or audio use the <b>📼 IQ &amp; Audio Recorder</b>. <b>Legacy CSV</b> matches DOA_value.html line-for-line; <b>SQLite</b> is a compact, app-readable database for plotting on a map - <b>🗺 Replay</b> under Saved Recordings plays one back on this page's map (track, bearings, heat map). The interval applies to both formats; below the actual DoA data rate it logs at the data rate, and duplicate frames are never written.</span></span></h3>
         <span class="sb-toggle">▼</span>
       </div>
       <div class="sb-content">
@@ -1452,6 +1490,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <div id="rec-list" style="max-height:170px;overflow-y:auto;border:1px solid #0f3460;border-radius:4px;background:#1a1a2e"></div>
           <div class="ctrl-row" style="margin-top:6px;gap:6px">
             <button id="rec-download-btn" class="btn sm" style="flex:1" onclick="downloadSelected()">&#11015; Download</button>
+            <button id="rec-replay-btn" class="btn sm" style="flex:1" onclick="replaySelected()" title="Play the selected recording back on the 🗺 map: the track, bearings, lobes and the heat map of where the transmitter is (the map's ⏯ Replay)">🗺 Replay</button>
             <button class="btn sm" style="flex:1;background:#5a1f1f;border-color:#8b2525;color:#ffd9d9" onclick="deleteSelected()">&#128465; Delete</button>
           </div>
         </div>
@@ -2143,6 +2182,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <button type="button" class="map-btn" id="map-trails" onclick="mapSet('trails', !mapState.trails)" title="Show the tracks the markers left">Trails</button>
             <button type="button" class="map-btn" id="map-masts" onclick="mapSet('masts', !mapState.masts)" title="Radio masts, towers and antennas mapped in OpenStreetMap, loaded online for the area shown (zoom in to see them). The colour says what OpenStreetMap lists them for; click one for everything it knows about it">Masts</button>
             <button type="button" class="map-btn" id="map-vs-btn" onclick="vsToggle()" title="Viewshed: the ground in line of sight of an antenna at the station or any place you pick (right-click the map, a marker or a mast), over the terrain, anywhere in the world (terrain loaded online) - or, in its 📶 Signal mode, how reliably the signal gets there, also without line of sight (path loss over the terrain, link budget, clutter, fading)">Viewshed</button>
+            <button type="button" class="map-btn" id="map-lr-btn" onclick="lrToggle()" title="Replay a DoA log of a drive on the map: the KrakenSDR Android app's (.csv / .sqlite) or a 📝 DoA Recording of this receiver - its track, bearings, lobes and the heat map of where the transmitter is, at any speed, back and forth. Read in this browser - nothing is uploaded (or drop the file on the map)">Replay</button>
           </div>
           <div class="map-tl">
             <div class="map-legend" id="map-legend" style="display:none"></div>
@@ -2184,6 +2224,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           </div>
           <!-- 📶 the path loss link: terrain profile + the models + the budget -->
           <div class="map-plk" id="map-plk" style="display:none"></div>
+          <!-- ⏯ a DoA log played back: transport, timeline, the moment's row + heat map (⏯ LOG REPLAY) -->
+          <div class="map-lr" id="map-lr" tabindex="-1" style="display:none"></div>
           <div class="map-status" id="map-status"></div>
           <div class="map-offline" id="map-offline" style="display:none">Map tiles can't be loaded (no internet connection?) - positions are still shown on a plain grid.</div>
           <div class="map-attr" id="map-attr"></div>
@@ -2453,6 +2495,22 @@ const vsRes = new Map(), vsFail = new Map();
 let vsWorker = null, vsJob = null, vsSeq = 0, vsWorkerErr = '', vsHovAt = null, vsOff = null,
     vsPar = null,      // (the signal sweep's helper workers: null = as many as the cores allow, 0 = none - tests)
     vsReady = false;   // set at the end of the section (rpApply can draw the map before it)
+// ⏯ the DoA log replay (see ⏯ LOG REPLAY): per browser the view settings
+// (localStorage kraken_lr: speed, layers, bearing lines' window s - -1 all,
+// heat map range km), the log loaded (null: none), the strip shown;
+// mapDrawNow -> lrDraw reads them before that section is evaluated (lrReady)
+const lrUi = (() => {
+  const d = {speed: 10, follow: true, track: true, lines: 120, lobe: true, heat: true, power: false, range: 10};
+  try {
+    const s = JSON.parse(localStorage.getItem('kraken_lr') || '{}');
+    if ([0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500].includes(s.speed)) d.speed = s.speed;
+    if ([0, 30, 120, 600, -1].includes(s.lines)) d.lines = s.lines;
+    for (const k of ['follow', 'track', 'lobe', 'heat', 'power']) if (typeof s[k] === 'boolean') d[k] = s[k];
+    if (Number.isInteger(s.range) && s.range >= 1 && s.range <= 50) d.range = s.range;
+  } catch (e) {}
+  return d;
+})();
+let lr = null, lrOpen = false, lrReady = false;
 // 📶 path loss (see 📶 PATH LOSS): the radio + channel settings of the
 // viewshed's signal mode, the link (a viewshed site's id + the far place;
 // localStorage kraken_pl; rebuilt field by field); the link worker, its job
@@ -12192,6 +12250,25 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (btn) { btn.disabled = false; btn.innerHTML = label; }
     }
   }
+  // 🗺 the selected recording played back on the map (⏯ LOG REPLAY; fetched
+  // like the download - a running SQLite recording reaches the file at its
+  // next checkpoint, every 30 s)
+  async function replaySelected() {
+    if (!recSelected) { alert('Select a recording first.'); return; }
+    const name = recSelected, btn = $id('rec-replay-btn'), label = btn ? btn.innerHTML : null;
+    if (btn) { btn.disabled = true; btn.innerHTML = '&#8987; Loading…'; }
+    try {
+      const token = storedToken();
+      const resp = await fetch('recordings/' + encodeURIComponent(name),
+                               { cache: 'no-store', headers: token ? { 'X-Kraken-Token': token } : {} });
+      if (!resp.ok) { alert('Could not load it (HTTP ' + resp.status + ')'); return; }
+      lrLoadBuffer(name, await resp.arrayBuffer(), null);
+    } catch (e) {
+      alert('Could not load it: ' + (e && e.message ? e.message : e));
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = label; }
+    }
+  }
   function deleteSelected() {
     if (!recSelected) { alert('Select a recording first.'); return; }
     if (!confirm('Delete "' + recSelected + '"? This cannot be undone.')) return;
@@ -12501,6 +12578,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     for (const p of mapPts.values()) ll.push([p.la, p.lo]);
     for (const m of sfLocs) ll.push([m.lat, m.lon]);
     if (mapStation) ll.push(mapStation);
+    if (lrOpen && lr && lr.bb) ll.push(mapUnproj(lr.bb[0], lr.bb[1]), mapUnproj(lr.bb[2], lr.bb[3]));   // ⏯ the replay's drive
     if (!ll.length) { mapStatusFlash('Nothing on the map yet'); return; }
     if (ll.length === 1) { mapCenterOn(ll[0][0], ll[0][1], Math.max(mapState.z, 9)); return; }
     let x0 = 1, x1 = 0, y0 = 1, y1 = 0;
@@ -12572,7 +12650,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         const grab = mapObjGrab(e.offsetX, e.offsetY);
         const over = !grab && !!(mkHit(e.offsetX, e.offsetY) || mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY) ||
                                  stHit(e.offsetX, e.offsetY) || vsHit(e.offsetX, e.offsetY) || plHit(e.offsetX, e.offsetY) ||
-                                 aimHit(e.offsetX, e.offsetY));
+                                 aimHit(e.offsetX, e.offsetY) || lrHit(e.offsetX, e.offsetY) >= 0);
         mapCv.classList.toggle('over', over);
         mapCv.classList.toggle('obj', grab === 'obj');
         mapCv.classList.toggle('rot', grab === 'rot');
@@ -12633,6 +12711,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
           const st = !mk && !pl && stHit(e.offsetX, e.offsetY), vs = !mk && !st && !pl ? vsHit(e.offsetX, e.offsetY) : null;
           mapSelectObj(st ? 'st' : pl ? 'pl:' + pl : vs);
           mapSel = mk || st || vs || pl ? null : (mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY) || aimSelectAt(e.offsetX, e.offsetY));
+          // ⏯ the replay's track (under the markers): the replay goes to that moment
+          const lh = mk || st || vs || pl || mapSel ? -1 : lrHit(e.offsetX, e.offsetY);
+          if (lh >= 0) lrSeekRow(lh);
           if (mk) mkSelect(mk);
           else if (!mkEdit && mkSel) mkClose();
           mapDraw();
@@ -12690,6 +12771,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (ms) ms.classList.toggle('on', !!mapState.masts);
     const vb = $id('map-vs-btn');
     if (vb) vb.classList.toggle('on', !!mapState.vs);
+    const lb = $id('map-lr-btn');
+    if (lb) lb.classList.toggle('on', !!lrOpen);
     vsRender();
     const lg = $id('map-legend');
     if (lg) {
@@ -13086,6 +13169,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     vsDraw(c);
     rdfDraw(c);
     v2tLobeDraw(c);
+    lrDraw(c);
     mastDraw(c);
     mapRings(c);
     plDraw(c);
@@ -13149,6 +13233,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       }
       c.restore();
     }
+    lrDrawTop(c);
     mapRenderPopup();
     mkRender();
     vsRender();
@@ -14154,6 +14239,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (parts.length) msg = parts.join(' | ') + (ms ? ' | ' + ms : '');
       else if (ms) msg = ms;
       else if (opMode === 'coherent' && rdfVfos().length) msg = '';   // DF on the map: its panel says it all
+      else if (lrOpen) msg = '';   // ⏯ a log replay: its strip says it all
       else {
         const plot = decimatorInfo.filter(d => d.digital_mode && d.digital_mode !== 'OFF');
         msg = plot.length ? 'No positions yet from the running decoders' :
@@ -19678,6 +19764,1631 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
               points: out, note: sites.length ? undefined : 'no site has been worked out yet - viewshed_set / viewshed_add_tx first'};
     },
   };
+
+  // --- ⏯ LOG REPLAY: a drive's DoA log played back on the map ----------------------
+  // A DoA log - the KrakenSDR Android app's (krakensdr_rdf_android: CSV, or
+  // its newer SQLite) or one of this receiver's 📝 DoA Recordings (the same
+  // formats: doa_logger.cpp) - opened IN THE BROWSER (📂, dropped on the map,
+  // or the DoA Recording box's 🗺 Replay): nothing is uploaded or sent to the
+  // receiver, no library (the page works offline). A worker (lrWorkerMain)
+  // reads it - its own SQLite reader (+ a -wal file's committed pages), the
+  // CSV layouts by field count - and works out the heat map: the live mobile
+  // DF's engine (src/rdf_engine.cpp, ported - keep the two alike) fed the
+  // rows the way rdf_mapper.cpp feeds it MUSIC frames, so a log gives the
+  // map the live map would have drawn. Played back on a timeline (long
+  // pauses shortened): the track, the bearing lines, each row's lobe around
+  // the vehicle, power dots, the heat map + estimate as known at that moment
+  // (snapshots along the drive). View settings per browser (lrUi, kraken_lr)
+  // ---- the worker (its own scope: only this function's text runs there) ----
+  // load: the file -> rows sorted by time (lrParse); heat: one signal's rows
+  // through the mobile DF engine (gate -> grid -> estimate), the heat maps
+  // sent back as snapshots along the timeline. Each job runs in slices (a
+  // newer job / a cancel gets in between them)
+  function lrWorkerMain() {
+    // ---- a read-only SQLite file reader (no library: the page works offline).
+    // The file format (sqlite.org/fileformat2.html): header, table b-trees
+    // (rowid tables + overflow pages), index b-trees (WITHOUT ROWID tables),
+    // records; a -wal file's COMMITTED frames are laid over the pages first
+    // (a database in WAL mode copied without a checkpoint keeps its newest rows
+    // there). sqlOpen(ArrayBuffer, wal ArrayBuffer | null) -> {tables: {name:
+    // {name, cols, ipk, rows(cb(values))}}, walFrames}; throws an Error whose
+    // message can be shown to the user
+    function sqlOpen(buf, wal) {
+      const u8 = new Uint8Array(buf);
+      const magic = 'SQLite format 3\0';
+      if (u8.length < 512) throw new Error('not an SQLite database');
+      for (let i = 0; i < 16; i++) if (u8[i] !== magic.charCodeAt(i)) throw new Error('not an SQLite database');
+      const dv = new DataView(buf);
+      let ps = dv.getUint16(16);
+      if (ps === 1) ps = 65536;
+      if (ps < 512 || ps > 65536 || (ps & (ps - 1))) throw new Error('damaged SQLite header (page size ' + ps + ')');
+      const usable = ps - u8[20];
+      const enc = dv.getUint32(56);
+      const td = new TextDecoder(enc === 2 ? 'utf-16le' : enc === 3 ? 'utf-16be' : 'utf-8');
+      const npages = Math.floor(u8.length / ps);
+      const u32 = (p, i) => (p[i] << 24 | p[i + 1] << 16 | p[i + 2] << 8 | p[i + 3]) >>> 0;
+      // the WAL: committed frames replace pages (the last copy of a page wins);
+      // frames after the last commit, or after a bad checksum / salt, are ignored
+      const walPages = new Map();
+      let walFrames = 0;
+      if (wal && wal.byteLength >= 32) {
+        const w = new Uint8Array(wal), wv = new DataView(wal), wm = wv.getUint32(0);
+        if ((wm === 0x377f0682 || wm === 0x377f0683) && wv.getUint32(8) === ps) {
+          const le = wm === 0x377f0682;   // the checksum's word order
+          const ck = (off, len, a, b) => {
+            for (let i = off; i < off + len; i += 8) {
+              a = (a + wv.getUint32(i, le) + b) >>> 0;
+              b = (b + wv.getUint32(i + 4, le) + a) >>> 0;
+            }
+            return [a, b];
+          };
+          let [c1, c2] = ck(0, 24, 0, 0);
+          if (c1 === wv.getUint32(24) && c2 === wv.getUint32(28)) {
+            const s1 = wv.getUint32(16), s2 = wv.getUint32(20), pend = new Map();
+            for (let off = 32; off + 24 + ps <= w.length; off += 24 + ps) {
+              if (wv.getUint32(off + 8) !== s1 || wv.getUint32(off + 12) !== s2) break;
+              [c1, c2] = ck(off, 8, c1, c2);
+              [c1, c2] = ck(off + 24, ps, c1, c2);
+              if (c1 !== wv.getUint32(off + 16) || c2 !== wv.getUint32(off + 20)) break;
+              pend.set(wv.getUint32(off), off + 24);
+              if (wv.getUint32(off + 4)) {   // a commit frame: it and the frames before it count
+                for (const [pn, o] of pend) walPages.set(pn, w.subarray(o, o + ps));
+                walFrames += pend.size;
+                pend.clear();
+              }
+            }
+          }
+        }
+      }
+      const page = n => {
+        const wp = walPages.get(n);
+        if (wp) return wp;
+        if (n < 1 || n > npages) throw new Error('damaged or incomplete SQLite file (page ' + n + ' of ' + npages + ')');
+        return u8.subarray((n - 1) * ps, n * ps);
+      };
+      // a varint at p[i] -> [value, bytes] (sizes and rowids: never past 2^53 here)
+      const varint = (p, i) => {
+        let v = 0;
+        for (let k = 0; k < 8; k++) {
+          const b = p[i + k];
+          v = v * 128 + (b & 0x7f);
+          if (!(b & 0x80)) return [v, k + 1];
+        }
+        return [v * 256 + p[i + 8], 9];
+      };
+      // a cell's payload: its local part + the overflow chain
+      const payload = (p, i, len, index) => {
+        const X = index ? Math.floor((usable - 12) * 64 / 255) - 23 : usable - 35;
+        if (len <= X) return p.subarray(i, i + len);
+        const M = Math.floor((usable - 12) * 32 / 255) - 23;
+        let K = M + ((len - M) % (usable - 4));
+        if (K > X) K = M;
+        const out = new Uint8Array(len);
+        out.set(p.subarray(i, i + K), 0);
+        let got = K, ov = u32(p, i + K), hops = 0;
+        while (got < len) {
+          if (!ov || ++hops > npages + walPages.size) throw new Error('damaged SQLite file (overflow chain)');
+          const q = page(ov), n = Math.min(len - got, usable - 4);
+          out.set(q.subarray(4, 4 + n), got);
+          got += n;
+          ov = u32(q, 0);
+        }
+        return out;
+      };
+      // a record -> its values (null, number, string, Uint8Array)
+      const record = r => {
+        const [hl, a] = varint(r, 0);
+        const vals = [], v = new DataView(r.buffer, r.byteOffset, r.byteLength);
+        let o = hl;
+        for (let i = a; i < hl;) {
+          const [t, n] = varint(r, i);
+          i += n;
+          if (t === 0) vals.push(null);
+          else if (t <= 6) {
+            const nb = [0, 1, 2, 3, 4, 6, 8][t];
+            if (o + nb > r.length) throw new Error('damaged SQLite record');
+            if (nb === 8) vals.push(Number(v.getBigInt64(o)));
+            else {
+              let x = 0;
+              for (let k = 0; k < nb; k++) x = x * 256 + r[o + k];
+              if (r[o] & 0x80) x -= Math.pow(2, 8 * nb);   // two's complement
+              vals.push(x);
+            }
+            o += nb;
+          } else if (t === 7) { vals.push(v.getFloat64(o)); o += 8; }
+          else if (t === 8 || t === 9) vals.push(t - 8);
+          else if (t >= 12) {
+            const nb = (t - (t & 1 ? 13 : 12)) / 2;
+            if (o + nb > r.length) throw new Error('damaged SQLite record');
+            vals.push(t & 1 ? td.decode(r.subarray(o, o + nb)) : r.slice(o, o + nb));
+            o += nb;
+          } else throw new Error('damaged SQLite record');
+        }
+        return vals;
+      };
+      // every row of the b-tree at root in key order: cb(values, rowid | null).
+      // An index interior page's cells are rows too (between their children)
+      const walk = (root, cb) => {
+        const st = [root], seen = new Set();
+        while (st.length) {
+          const it = st.pop();
+          if (typeof it === 'object') { cb(record(it.row), null); continue; }
+          if (seen.has(it)) throw new Error('damaged SQLite file (b-tree loop)');
+          seen.add(it);
+          const p = page(it), h = it === 1 ? 100 : 0, type = p[h];
+          if (type !== 2 && type !== 5 && type !== 10 && type !== 13) throw new Error('damaged SQLite file (page ' + it + ' type ' + type + ')');
+          const nc = p[h + 3] << 8 | p[h + 4], leaf = type >= 10, hs = leaf ? 8 : 12;
+          const cells = [];
+          for (let k = 0; k < nc; k++) cells.push(p[h + hs + 2 * k] << 8 | p[h + hs + 2 * k + 1]);
+          if (leaf) {
+            for (const c of cells) {
+              let i = c, rowid = null;
+              const [len, n1] = varint(p, i);
+              i += n1;
+              if (type === 13) { const [rr, n2] = varint(p, i); rowid = rr; i += n2; }
+              cb(record(payload(p, i, len, type === 10)), rowid);
+            }
+            continue;
+          }
+          const items = [];
+          for (const c of cells) {
+            items.push(u32(p, c));
+            if (type === 2) { const [len, n] = varint(p, c + 4); items.push({row: payload(p, c + 4 + n, len, true)}); }
+          }
+          items.push(u32(p, h + 8));
+          for (let k = items.length - 1; k >= 0; k--) st.push(items[k]);
+        }
+      };
+      // the schema (sqlite_schema = page 1): type, name, tbl_name, rootpage, sql
+      const tables = {};
+      walk(1, v => {
+        if (v[0] !== 'table' || typeof v[4] !== 'string' || !(v[3] > 0)) return;
+        const t = sqlParseCreate(v[4]);
+        if (!t) return;
+        const root = v[3];
+        tables[v[1]] = {name: v[1], cols: t.cols, ipk: t.ipk,
+          // the INTEGER PRIMARY KEY column is stored as NULL: it is the rowid
+          rows(cb) { walk(root, (vals, rowid) => { if (t.ipk >= 0 && rowid !== null && vals[t.ipk] == null) vals[t.ipk] = rowid; cb(vals); }); }};
+      });
+      return {tables, walFrames};
+    }
+    // CREATE TABLE x (a INTEGER PRIMARY KEY, "b c" REAL, ..., PRIMARY KEY(a))
+    // -> {cols: names, ipk: the rowid alias's index or -1} (null: no column list)
+    function sqlParseCreate(sql) {
+      const open = sql.indexOf('(');
+      if (open < 0) return null;
+      // the column list's top-level commas (quotes, brackets and parentheses skipped)
+      const parts = [];
+      let depth = 0, cur = '', q = null, i = open + 1;
+      for (; i < sql.length; i++) {
+        const ch = sql[i];
+        if (q) { cur += ch; if (ch === q) q = null; continue; }
+        if (ch === '"' || ch === "'" || ch === '`') q = ch;
+        else if (ch === '[') q = ']';
+        else if (ch === '(') depth++;
+        else if (ch === ')') { if (depth === 0) break; depth--; }
+        else if (ch === ',' && depth === 0) { parts.push(cur.trim()); cur = ''; continue; }
+        cur += ch;
+      }
+      parts.push(cur.trim());
+      const unq = s => /^["`'[]/.test(s) ? s.slice(1, -1).replace(/""/g, '"') : s;
+      const cols = [], types = [];
+      let ipk = -1;
+      for (const s of parts) {
+        if (/^(CONSTRAINT|PRIMARY\s+KEY|UNIQUE|CHECK|FOREIGN\s+KEY)\b/i.test(s)) continue;
+        const m = s.match(/^("(?:[^"]|"")*"|`[^`]*`|\[[^\]]*\]|'(?:[^']|'')*'|\S+)\s*([\s\S]*)$/);
+        if (!m) continue;
+        const rest = m[2].toUpperCase();
+        // "x INTEGER PRIMARY KEY" (not DESC) is the rowid
+        if (/^INTEGER\s+PRIMARY\s+KEY(?!\s+DESC)\b/.test(rest)) ipk = cols.length;
+        cols.push(unq(m[1]));
+        types.push(rest.split(/\s/)[0]);
+      }
+      // a table constraint PRIMARY KEY(x) on an INTEGER column is the rowid too
+      for (const s of parts) {
+        const m = s.match(/^PRIMARY\s+KEY\s*\(\s*("(?:[^"]|"")*"|`[^`]*`|\[[^\]]*\]|[^\s,)]+)(\s+ASC)?\s*\)/i);
+        if (!m) continue;
+        const k = cols.findIndex(c => c.toLowerCase() === unq(m[1]).toLowerCase());
+        if (k >= 0 && types[k] === 'INTEGER') ipk = k;
+      }
+      if (/WITHOUT\s+ROWID/i.test(sql.slice(i + 1))) ipk = -1;
+      return {cols, ipk};
+    }
+    // ---- mobile DF engine: a port of src/rdf_engine.cpp (the live heat map's
+    // algorithm - keep the two alike; the C++ has the reasoning). Lobes are
+    // 720 x 0.5 deg compass bins (Float32Array, sum 1)
+    const RB = 720, RBD = 360 / RB, D2R = Math.PI / 180, R2D = 180 / Math.PI, EARTH_R = 6371008.8;
+    const rdfOpt = {eps: 0.05, alpha: 0.5, ess_cap: 40, offsets: [-8, -6, -4, -2, 0, 2, 4, 6, 8], prior_sd: 4, near_m: 30};
+    const wrap360 = a => { a %= 360; return a < 0 ? a + 360 : a; };
+    function rdfDistM(la1, lo1, la2, lo2) {
+      const p1 = la1 * D2R, p2 = la2 * D2R, dp = p2 - p1, dl = (lo2 - lo1) * D2R;
+      const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+      return 2 * EARTH_R * Math.asin(Math.min(1, Math.sqrt(a)));
+    }
+    function rdfBrg(la1, lo1, la2, lo2) {
+      const p1 = la1 * D2R, p2 = la2 * D2R, dl = (lo2 - lo1) * D2R;
+      return wrap360(Math.atan2(Math.sin(dl) * Math.cos(p2), Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl)) * R2D);
+    }
+    function rdfToEnu(la0, lo0, la, lo) {
+      const d = rdfDistM(la0, lo0, la, lo), b = rdfBrg(la0, lo0, la, lo) * D2R;
+      return [d * Math.sin(b), d * Math.cos(b)];
+    }
+    function rdfFromEnu(la0, lo0, e, n) {
+      const d = Math.hypot(e, n) / EARTH_R, b = Math.atan2(e, n), p1 = la0 * D2R, l1 = lo0 * D2R;
+      const p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(b));
+      const l2 = l1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2));
+      return [p2 * R2D, ((l2 * R2D + 540) % 360) - 180];
+    }
+    // a spectrum (linear >= 0; index i = i * res deg, unit circle CCW from the
+    // array's front) + heading -> north lobe blurred by sigma (null: unusable).
+    // compass: the spectrum is already in compass bearings (index i = i * res
+    // deg clockwise from north) - the heading is not applied
+    function rdfNorthLobe(spec, res, hdg, sigma, compass) {
+      const n = spec.length;
+      if (n < 8 || !(res > 0)) return null;
+      let mx = 0;
+      for (let i = 0; i < n; i++) { const s = spec[i]; if (!(s >= 0) || s > 3e38) return null; if (s > mx) mx = s; }
+      if (!(mx > 0)) return null;
+      const v = new Float64Array(RB);
+      for (let k = 0; k < RB; k++) {
+        const x = (compass ? wrap360(k * RBD) : wrap360(hdg - k * RBD)) / res;
+        let i0 = Math.floor(x);
+        const f = x - i0;
+        i0 %= n;
+        v[k] = (spec[i0] * (1 - f) + spec[(i0 + 1) % n] * f) / mx;
+      }
+      return rdfBlur(v, sigma);
+    }
+    // circular Gaussian blur + normalise to sum 1
+    function rdfBlur(v, sigma) {
+      const sb = Math.max(sigma, 0.25) / RBD, half = Math.ceil(3 * sb), ker = new Float64Array(2 * half + 1);
+      let ks = 0;
+      for (let j = -half; j <= half; j++) ks += ker[j + half] = Math.exp(-0.5 * j * j / (sb * sb));
+      const out = new Float32Array(RB);
+      let tot = 0;
+      for (let k = 0; k < RB; k++) {
+        let s = 0;
+        for (let j = -half; j <= half; j++) s += ker[j + half] * v[((k + j) % RB + RB) % RB];
+        out[k] = s / ks;
+        tot += s / ks;
+      }
+      if (!(tot > 0) || !isFinite(tot)) return null;
+      for (let k = 0; k < RB; k++) out[k] /= tot;
+      return out;
+    }
+    // a single bearing (compass deg) as a lobe of width sigma
+    function rdfBearingLobe(brg, sigma) {
+      const v = new Float64Array(RB), x = wrap360(brg) / RBD, i0 = Math.floor(x) % RB, f = x - Math.floor(x);
+      v[i0] = 1 - f;
+      v[(i0 + 1) % RB] = f;
+      return rdfBlur(v, sigma);
+    }
+    function rdfLobePeak(p) {
+      let m = 0;
+      for (let k = 1; k < RB; k++) if (p[k] > p[m]) m = k;
+      const a = p[(m + RB - 1) % RB], b = p[m], c = p[(m + 1) % RB], den = a - 2 * b + c;
+      const d = den < 0 ? Math.max(-0.5, Math.min(0.5, 0.5 * (a - c) / den)) : 0;
+      return wrap360((m + d) * RBD);
+    }
+    // distance gate: frames -> records (the window's normalised geometric mean)
+    class RdfGate {
+      constructor() { this.sum = new Float64Array(RB); this.reset(); this.tlast = 0; }
+      reset() { this.n = 0; this.slat = this.slon = this.sconf = 0; this.tsum = 0; this.sum.fill(0); this.moved = 0; }
+      add(t, lat, lon, p, conf, R) {
+        if (this.n > 0 && t - this.tlast > 10000) this.reset();
+        if (this.n === 0) {
+          this.lat0 = lat; this.lon0 = lon; this.t0 = t;
+          this.gate = Math.max(15, Math.min(60, (R > 0 ? R : 1000) * Math.tan(3 * D2R)));
+        }
+        const s = this.sum;
+        for (let k = 0; k < RB; k++) s[k] += Math.log(0.95 * p[k] + 0.05 / RB);
+        this.slat += lat; this.slon += lon; this.sconf += conf; this.tsum += t - this.t0;
+        this.n++;
+        this.tlast = t;
+        this.moved = rdfDistM(this.lat0, this.lon0, lat, lon);
+        let out = null;
+        if (this.moved >= this.gate && this.n >= 2) {
+          let mx = -Infinity;
+          for (let k = 0; k < RB; k++) if (s[k] > mx) mx = s[k];
+          const q = new Float32Array(RB);
+          let tot = 0;
+          for (let k = 0; k < RB; k++) tot += q[k] = Math.exp((s[k] - mx) / this.n);
+          for (let k = 0; k < RB; k++) q[k] /= tot;
+          out = {t: this.t0 + this.tsum / this.n, lat: this.slat / this.n, lon: this.slon / this.n, conf: this.sconf / this.n, frames: this.n, p: q};
+          this.reset();
+        } else if (t - this.t0 > 90000) this.reset();
+        return out;
+      }
+    }
+    class RdfGrid {
+      constructor(lat0, lon0, half, n) {
+        const K = rdfOpt.offsets.length;
+        Object.assign(this, {lat0, lon0, half, n, cell: 2 * half / n, K, records: 0, ver: 0, mc: null, mcVer: -1});
+        this.L = new Float32Array(K * n * n);
+        this.e = new Float32Array(n * n);
+        this.nn = new Float32Array(n * n);
+        for (let j = 0; j < n; j++)
+          for (let i = 0; i < n; i++) { this.e[j * n + i] = -half + (i + 0.5) * this.cell; this.nn[j * n + i] = -half + (j + 0.5) * this.cell; }
+        const sd = Math.max(rdfOpt.prior_sd, 0.1), lp = rdfOpt.offsets.map(d => -0.5 * d * d / (sd * sd));
+        const mx = Math.max(...lp), ls = lp.reduce((a, x) => a + Math.exp(x - mx), 0);
+        this.lprior = lp.map(x => x - mx - Math.log(ls));
+      }
+      add(r) {
+        const ell = new Float32Array(RB + 1), al = rdfOpt.alpha, eps = rdfOpt.eps;
+        for (let k = 0; k < RB; k++) ell[k] = al * Math.log((1 - eps) * r.p[k] * RB + eps);
+        ell[RB] = ell[0];
+        const [er, nr] = rdfToEnu(this.lat0, this.lon0, r.lat, r.lon);
+        const [la2, lo2] = rdfFromEnu(this.lat0, this.lon0, er, nr + 1000);
+        const gamma = rdfBrg(r.lat, r.lon, la2, lo2);
+        const near2 = Math.max(rdfOpt.near_m, 1.5 * this.cell) ** 2, cells = this.n * this.n, K = this.K;
+        const xoff = rdfOpt.offsets.map(o => (gamma - o) / RBD), INV = RB / (2 * Math.PI);
+        const L = this.L, E = this.e, N = this.nn;
+        for (let c = 0; c < cells; c++) {
+          const dx = E[c] - er, dy = N[c] - nr;
+          if (dx * dx + dy * dy < near2) continue;   // near_value 0
+          const xb = Math.atan2(dx, dy) * INV;
+          for (let k = 0; k < K; k++) {
+            let x = xb + xoff[k];
+            x -= RB * Math.floor(x / RB);
+            let i = x | 0;
+            if (i >= RB) i -= RB;
+            L[k * cells + c] += ell[i] + (x - i) * (ell[i + 1] - ell[i]);
+          }
+        }
+        this.records++;
+        this.ver++;
+      }
+      marginal() {
+        if (this.mcVer === this.ver) return this.mc;
+        const cells = this.n * this.n, K = this.K, L = this.L, lp = this.lprior;
+        const m = this.mc && this.mc.length === cells ? this.mc : new Float32Array(cells);
+        for (let c = 0; c < cells; c++) {
+          let mx = -Infinity;
+          for (let k = 0; k < K; k++) { const v = L[k * cells + c] + lp[k]; if (v > mx) mx = v; }
+          let s = 0;
+          for (let k = 0; k < K; k++) s += Math.exp(L[k * cells + c] + lp[k] - mx);
+          m[c] = mx + Math.log(s);
+        }
+        this.mc = m;
+        this.mcVer = this.ver;
+        return m;
+      }
+      estimate() {
+        if (this.estVer === this.ver) return this.est;
+        const e = {valid: false, records: this.records};
+        this.est = e;
+        this.estVer = this.ver;
+        if (!this.records) return e;
+        const n = this.n, cells = n * n, M = this.marginal();
+        let cmax = 0;
+        for (let c = 1; c < cells; c++) if (M[c] > M[cmax]) cmax = c;
+        const Mmax = M[cmax], s = Math.min(1, rdfOpt.ess_cap / (rdfOpt.alpha * this.records));
+        const w = new Float64Array(cells);
+        let total = 0;
+        for (let c = 0; c < cells; c++) total += w[c] = Math.exp(s * (M[c] - Mmax));
+        const inm = new Uint8Array(cells), mode = [], st = [cmax];
+        inm[cmax] = 1;
+        e.edge = false;
+        while (st.length) {
+          const c = st.pop();
+          mode.push(c);
+          const i = c % n, j = (c / n) | 0;
+          if (i === 0 || j === 0 || i === n - 1 || j === n - 1) e.edge = true;
+          for (let dj = -1; dj <= 1; dj++)
+            for (let di = -1; di <= 1; di++) {
+              const a = i + di, b = j + dj;
+              if (a < 0 || b < 0 || a >= n || b >= n) continue;
+              const q = b * n + a;
+              if (!inm[q] && w[q] >= 1e-4) { inm[q] = 1; st.push(q); }
+            }
+        }
+        let mm = 0, me = 0, mn = 0;
+        for (const c of mode) { mm += w[c]; me += w[c] * this.e[c]; mn += w[c] * this.nn[c]; }
+        me /= mm; mn /= mm;
+        let cee = 0, cnn = 0, cen = 0;
+        for (const c of mode) { const de = this.e[c] - me, dn = this.nn[c] - mn; cee += w[c] * de * de; cnn += w[c] * dn * dn; cen += w[c] * de * dn; }
+        const cv = this.cell * this.cell / 12;
+        cee = cee / mm + cv; cnn = cnn / mm + cv; cen /= mm;
+        const tr = cee + cnn, det = cee * cnn - cen * cen, l1 = tr / 2 + Math.sqrt(Math.max(0, tr * tr / 4 - det)), l2 = Math.max(0, tr - l1);
+        e.a = Math.sqrt(l1); e.b = Math.sqrt(l2);
+        e.ang = wrap360(0.5 * Math.atan2(2 * cen, cnn - cee) * R2D);
+        const ws = mode.map(c => w[c]).sort((x, y) => y - x);
+        let acc = 0, n50 = 0, n95 = 0;
+        for (let i = 0; i < ws.length; i++) {
+          acc += ws[i];
+          if (!n50 && acc >= 0.5 * mm) n50 = i + 1;
+          if (!n95 && acc >= 0.95 * mm) { n95 = i + 1; break; }
+        }
+        if (!n95) n95 = ws.length;
+        if (!n50) n50 = n95;
+        e.r50 = Math.sqrt(n50 * this.cell * this.cell / Math.PI);
+        e.r95 = Math.sqrt(n95 * this.cell * this.cell / Math.PI);
+        e.mass = mm / total;
+        const ci = cmax % n, cj = (cmax / n) | 0;
+        const sub = (di, dj) => {
+          const a = ci - di, b = cj - dj, c = ci + di, d = cj + dj;
+          if (a < 0 || b < 0 || c >= n || d >= n || a >= n || b >= n || c < 0 || d < 0) return 0;
+          const ya = M[b * n + a], yb = M[cmax], yc = M[d * n + c], den = ya - 2 * yb + yc;
+          return den < 0 ? Math.max(-0.5, Math.min(0.5, 0.5 * (ya - yc) / den)) : 0;
+        };
+        [e.lat, e.lon] = rdfFromEnu(this.lat0, this.lon0, this.e[cmax] + sub(1, 0) * this.cell, this.nn[cmax] + sub(0, 1) * this.cell);
+        e.Mmax = Mmax;
+        e.s = s;
+        e.valid = true;
+        return e;
+      }
+      // the systematic bearing offset (posterior over the offset planes) -
+      // apart from estimate(): the most costly part, needed only for display
+      offset(e) {
+        const K = this.K, cells = this.n * this.n, lp = [];
+        if (K < 2 || !e.valid) return {off: 0, sd: 0};
+        for (let k = 0; k < K; k++) {
+          let s2 = 0;
+          for (let c = 0; c < cells; c++) s2 += Math.exp(e.s * (this.L[k * cells + c] - e.Mmax));
+          lp.push(this.lprior[k] + Math.log(Math.max(s2, 1e-300)));
+        }
+        const mx = Math.max(...lp);
+        let z = 0, m1 = 0, m2 = 0;
+        for (let k = 0; k < K; k++) { const p = Math.exp(lp[k] - mx), o = rdfOpt.offsets[k]; z += p; m1 += p * o; m2 += p * o * o; }
+        return {off: m1 / z, sd: Math.sqrt(Math.max(0, m2 / z - (m1 / z) ** 2))};
+      }
+      // u8 per cell, row 0 = north: 255 * (1 + s (M - Mmax) / nats)
+      raster(nats) {
+        const n = this.n, out = new Uint8Array(n * n);
+        if (!this.records) return out;
+        const M = this.marginal();
+        let Mmax = -Infinity;
+        for (let c = 0; c < M.length; c++) if (M[c] > Mmax) Mmax = M[c];
+        const s = Math.min(1, rdfOpt.ess_cap / (rdfOpt.alpha * this.records));
+        for (let row = 0; row < n; row++) {
+          const j = n - 1 - row;
+          for (let i = 0; i < n; i++) {
+            const v = 1 + s * (M[j * n + i] - Mmax) / nats;
+            out[row * n + i] = Math.round(255 * Math.max(0, Math.min(1, v)));
+          }
+        }
+        return out;
+      }
+      box() {   // the corners for drawing: [nw, se] (lat, lon)
+        return [rdfFromEnu(this.lat0, this.lon0, -this.half, this.half), rdfFromEnu(this.lat0, this.lon0, this.half, -this.half)];
+      }
+    }
+    // coarse grid + an adaptive fine grid (rdf::Solver)
+    class RdfSolver {
+      constructor(halfKm, n) { this.halfKm = halfKm; this.n = n || 256; this.recs = []; this.coarse = null; this.fine = null; this.est = {valid: false}; }
+      rebuildCoarse(lat, lon) {
+        this.coarse = new RdfGrid(lat, lon, this.halfKm * 1000, this.n);
+        for (const r of this.recs) this.coarse.add(r);
+      }
+      refresh() {
+        let est = this.coarse ? this.coarse.estimate() : {valid: false};
+        this.estGrid = this.coarse;
+        if (this.fine) {
+          const f = this.fine.estimate();
+          if (f.valid && !f.edge) { est = Object.assign({}, f, {mass: Math.min(f.mass, est.mass)}); this.estGrid = this.fine; }
+        }
+        this.est = est;
+      }
+      updateFine(force) {
+        const c = this.coarse ? this.coarse.estimate() : {valid: false}, ch = this.halfKm * 1000;
+        if (!(c.valid && c.records >= 5 && c.mass > 0.5 && !c.edge && c.r95 < ch / 3)) { this.fine = null; return; }
+        const want = Math.max(250, Math.min(ch / 3, 4 * c.r95));
+        let rebuild = force || !this.fine;
+        if (this.fine) {
+          const moved = rdfDistM(this.fine.lat0, this.fine.lon0, c.lat, c.lon), ratio = want / this.fine.half;
+          if (moved > 0.3 * this.fine.half || ratio > 1.6 || ratio < 1 / 1.6) rebuild = true;
+        }
+        if (!rebuild) return;
+        this.fine = new RdfGrid(c.lat, c.lon, want, 128);
+        for (const r of this.recs) this.fine.add(r);
+      }
+      add(r) {
+        this.recs.push(r);
+        if (this.recs.length > 4000) {
+          const half = this.recs.length >> 1;
+          this.recs = this.recs.filter((x, i) => i >= half || i % 2 === 0);
+          this.rebuildCoarse(this.coarse ? this.coarse.lat0 : r.lat, this.coarse ? this.coarse.lon0 : r.lon);
+          this.updateFine(true);
+          this.refresh();
+          return;
+        }
+        if (!this.coarse) this.rebuildCoarse(r.lat, r.lon);
+        else if (rdfDistM(this.coarse.lat0, this.coarse.lon0, r.lat, r.lon) > 0.7 * this.halfKm * 1000) {
+          const e = this.est, conf = e.valid && e.mass > 0.5 && !e.edge;
+          this.rebuildCoarse(conf ? e.lat : r.lat, conf ? e.lon : r.lon);
+        } else this.coarse.add(r);
+        if (this.fine) this.fine.add(r);
+        this.updateFine(false);
+        this.refresh();
+      }
+    }
+    // ---- the log formats (the KrakenSDR Android app - krakensdr_rdf_android -
+    // and kraken_doa's 📝 DoA Recording, doa_logger.cpp, write the same ones):
+    //  CSV, no header, ", " between fields, the layout told by the field count:
+    //   6   ts, lat, lon, gps heading, compass heading, bearing (oldest)
+    //   8   + confidence, power
+    //   373 ts, lat, lon, gps, compass, bearing, conf, power, freq Hz, antenna,
+    //       latency, heading mode, 360 spectrum values (2021)
+    //   377+ the DOA_value.html line: ts, bearing, conf, power, freq Hz,
+    //       antenna, latency, station id, lat, lon, gps heading, compass
+    //       heading, heading mode, 4 reserved, 360 spectrum values
+    //  SQLite: table entries (ts_ms, decimator_id, bearing_deg, confidence,
+    //   power_db, freq_hz, antenna, station_id, lat, lon, gps_heading,
+    //   compass_heading, heading_sensor, spectrum BLOB u8 x spectrum_len scaled
+    //   spec_min_db .. spec_max_db, + the app's latency / reserved1-4) + meta
+    // Timestamps epoch ms; bearing = relative to the heading, clockwise; the
+    // spectrum: 360 x 1 deg counter-clockwise from the array's front, dB above
+    // its minimum (the compass bearing B is spectrum index heading - B); the
+    // heading: the compass field in COMPASS mode, the GPS one otherwise
+    const MODES = ['GPS', 'COMPASS', 'KRAKEN', 'MANUAL'];
+    const modeOf = s => { const k = MODES.indexOf(String(s || '').trim().toUpperCase()); return k < 0 ? 0 : k; };
+    const num = s => { if (s === null || s === undefined) return NaN; if (typeof s === 'number') return s; s = String(s).trim(); return s === '' ? NaN : Number(s); };
+    function lrParseCsv(text, out) {
+      const lines = text.split('\n');
+      let bad = 0, fmt = {};
+      const add = (tok, f) => {
+        let r;
+        if (f === 'new') {
+          r = {t: num(tok[0]), rel: num(tok[1]), conf: num(tok[2]), pow: num(tok[3]), freq: num(tok[4]), ant: tok[5].trim(),
+               st: tok[7].trim(), lat: num(tok[8]), lon: num(tok[9]), gh: num(tok[10]), ch: num(tok[11]), mode: modeOf(tok[12]),
+               s0: 17};
+        } else if (f === '373') {
+          r = {t: num(tok[0]), lat: num(tok[1]), lon: num(tok[2]), gh: num(tok[3]), ch: num(tok[4]), rel: num(tok[5]), conf: num(tok[6]),
+               pow: num(tok[7]), freq: num(tok[8]), ant: tok[9].trim(), mode: modeOf(tok[11]), s0: 12};
+        } else {
+          r = {t: num(tok[0]), lat: num(tok[1]), lon: num(tok[2]), gh: num(tok[3]), ch: num(tok[4]), rel: num(tok[5]),
+               conf: f === '8' ? num(tok[6]) : NaN, pow: f === '8' ? num(tok[7]) : NaN, freq: NaN, mode: 0, s0: -1};
+        }
+        if (!(r.t > 1e11 && r.t < 1e14)) return false;   // epoch ms (2001 .. 5138)
+        if (r.s0 >= 0) {
+          const sp = new Float32Array(360);
+          let ok = 0;
+          for (let i = 0; i < 360; i++) { const v = num(tok[r.s0 + i]); sp[i] = v; if (Number.isFinite(v)) ok++; }
+          r.spec = ok === 360 ? sp : null;
+        }
+        delete r.s0;
+        fmt[f] = (fmt[f] || 0) + 1;
+        out.push(r);
+        return true;
+      };
+      for (let line of lines) {
+        line = line.trim();
+        if (!line) continue;
+        let tok = line.split(',');
+        // several records on one line (a DOA_value.html body whose newlines were
+        // lost): split before each "<timestamp>," not preceded by a comma
+        let recs = [tok];
+        if (tok.length >= 2 * 377 - 1) recs = line.split(/(?<!,)\s+(?=\d{12,14}\s*,)/).map(s => s.split(','));
+        for (tok of recs) {
+          const n = tok.length;
+          const f = n >= 377 ? 'new' : n === 373 ? '373' : n === 8 ? '8' : n === 6 ? '6' : null;
+          if (!f || !add(tok, f)) bad++;
+        }
+      }
+      return {bad, fmt};
+    }
+    // with its -wal file's pages; if they don't fit this database (another
+    // database's -wal of the same name), read again without them
+    function lrParseSqlite(buf, wal, out) {
+      if (wal) {
+        try { return lrReadSqlite(buf, wal, out); }
+        catch (e) {
+          out.length = 0;
+          const r = lrReadSqlite(buf, null, out);
+          r.walBad = e.message;
+          return r;
+        }
+      }
+      return lrReadSqlite(buf, null, out);
+    }
+    function lrReadSqlite(buf, wal, out) {
+      const db = sqlOpen(buf, wal);
+      const T = db.tables.entries;
+      if (!T) throw new Error('no DoA table in this database (it has: ' + (Object.keys(db.tables).join(', ') || 'no tables') + ')');
+      const ix = {};
+      T.cols.forEach((c, i) => { ix[c.toLowerCase()] = i; });
+      for (const need of ['ts_ms', 'lat', 'lon']) if (ix[need] === undefined) throw new Error('the entries table has no ' + need + ' column');
+      const g = (v, k) => ix[k] === undefined ? null : v[ix[k]];
+      let bad = 0;
+      T.rows(v => {
+        const t = num(g(v, 'ts_ms'));
+        if (!(t > 1e11 && t < 1e14)) { bad++; return; }
+        const b = g(v, 'spectrum'), len = num(g(v, 'spectrum_len')), lo = num(g(v, 'spec_min_db')), hi = num(g(v, 'spec_max_db'));
+        let spec = null;
+        if (b instanceof Uint8Array && b.length >= 360 && (!(len > 0) || len === b.length)) {
+          const n = b.length, k = (Number.isFinite(hi) && Number.isFinite(lo) ? hi - lo : 0) / 255;
+          // (a spectrum of another length is resampled to 360 x 1 deg)
+          spec = new Float32Array(360);
+          for (let i = 0; i < 360; i++) {
+            const x = i * n / 360, i0 = Math.floor(x), f = x - i0;
+            spec[i] = (lo || 0) + k * (b[i0] * (1 - f) + b[(i0 + 1) % n] * f);
+          }
+        }
+        const vfo = g(v, 'decimator_id');
+        out.push({t, rel: num(g(v, 'bearing_deg')), conf: num(g(v, 'confidence')), pow: num(g(v, 'power_db')), freq: num(g(v, 'freq_hz')),
+                  vfo: vfo === null || vfo === undefined ? null : num(vfo), ant: String(g(v, 'antenna') || ''), st: String(g(v, 'station_id') || ''),
+                  lat: num(g(v, 'lat')), lon: num(g(v, 'lon')), gh: num(g(v, 'gps_heading')), ch: num(g(v, 'compass_heading')),
+                  mode: modeOf(g(v, 'heading_sensor')), spec});
+      });
+      const meta = {};
+      if (db.tables.meta) db.tables.meta.rows(v => { if (typeof v[0] === 'string') meta[v[0]] = String(v[1] ?? ''); });
+      return {bad, meta, walFrames: db.walFrames};
+    }
+    // the file -> rows sorted by time, each with its heading, compass bearing,
+    // speed / turn rate (from the track) and signal; spectra -> display lobes
+    function lrParse(name, buf, wal) {
+      const u8 = new Uint8Array(buf), rows = [];
+      const sq = u8.length >= 16 && String.fromCharCode(...u8.subarray(0, 15)) === 'SQLite format 3';
+      let info;
+      if (sq) {
+        const r = lrParseSqlite(buf, wal, rows);
+        const app = r.meta.app || '';
+        info = {kind: 'sqlite', format: 'SQLite' + (app === 'kraken_doa_v2' ? ' (KrakenSDR DoA Recording)' : app ? ' (' + (app === 'krakensdr_rdf_android' ? 'Android app' : app) + ')' : ''),
+                bad: r.bad, meta: r.meta, walFrames: r.walFrames, walBad: r.walBad};
+      } else {
+        // a text file (BOM, UTF-8); a binary that isn't SQLite is refused
+        let nul = 0;
+        for (let i = 0; i < Math.min(u8.length, 4096); i++) if (u8[i] === 0) nul++;
+        if (nul) throw new Error('not a DoA log (neither SQLite nor text)');
+        const r = lrParseCsv(new TextDecoder().decode(u8), rows);
+        const fk = Object.keys(r.fmt).sort((a, b) => r.fmt[b] - r.fmt[a]);
+        const names = {new: 'DOA_value.html lines', 373: '2021 layout', 8: 'bearings + confidence', 6: 'bearings only'};
+        info = {kind: 'csv', format: 'CSV (' + (fk.map(k => names[k]).join(' + ') || 'nothing readable') + ')', bad: r.bad, fmts: r.fmt};
+      }
+      if (!rows.length) throw new Error(info.bad ? 'no DoA rows found (' + info.bad + ' lines not readable)' : 'the log is empty');
+      // time order (stable: rows of one moment keep the file's order)
+      rows.forEach((r, i) => { r.i = i; });
+      rows.sort((a, b) => a.t - b.t || a.i - b.i);
+      const n = rows.length;
+      // signals: frequency (+ VFO in the receiver's own logs); the old layouts have no frequency
+      const sigs = [], sigIx = new Map();
+      // the arrays sent to the page
+      const o = {t: new Float64Array(n), lat: new Float64Array(n), lon: new Float64Array(n), hdg: new Float32Array(n), brg: new Float32Array(n),
+                 rel: new Float32Array(n), conf: new Float32Array(n), pow: new Float32Array(n), spd: new Float32Array(n), yaw: new Float32Array(n),
+                 mode: new Uint8Array(n), sig: new Uint16Array(n), lob: new Int32Array(n), dup: new Uint8Array(n), lmin: new Float32Array(n)};
+      let nl = 0;
+      for (const r of rows) if (r.spec) nl++;
+      o.lobes = new Uint8Array(nl * 360);
+      const stations = new Set(), ants = new Set();
+      let li = 0;
+      const prevSpec = [];
+      rows.forEach((r, i) => {
+        const fq = Number.isFinite(r.freq) && r.freq > 100 ? Math.round(r.freq) : 0;   // (100 = the app's "unknown")
+        const key = fq + '|' + (r.vfo ?? '');
+        let s = sigIx.get(key);
+        if (s === undefined) {
+          s = sigs.length;
+          sigIx.set(key, s);
+          sigs.push({key, freq: fq, vfo: r.vfo ?? null, n: 0, ns: 0, t0: r.t, t1: r.t});
+        }
+        const S = sigs[s];
+        S.n++; S.t1 = r.t;
+        if (r.st) stations.add(r.st);
+        if (r.ant) ants.add(r.ant);
+        const pos = Number.isFinite(r.lat) && Number.isFinite(r.lon) && Math.abs(r.lat) <= 90 && Math.abs(r.lon) <= 180 && !(r.lat === 0 && r.lon === 0);
+        const hdg = r.mode === 1 ? r.ch : r.gh;
+        // the bearing: as logged, else from the spectrum's peak
+        let rel = r.rel;
+        if (r.spec) {
+          S.ns++;
+          // display lobe: linear (10^(dB/10)) min..max - the MUSIC DoA plot's
+          // scale, as the live map's; with its floor (lmin) it is also what the
+          // heat map reads (the spectra themselves aren't kept)
+          let mx = -Infinity, im = 0;
+          for (let k = 0; k < 360; k++) if (r.spec[k] > mx) { mx = r.spec[k]; im = k; }
+          let lmin = 1;
+          for (let k = 0; k < 360; k++) lmin = Math.min(lmin, Math.pow(10, (r.spec[k] - mx) / 10));
+          const rg = 1 - lmin;
+          for (let k = 0; k < 360; k++) o.lobes[li * 360 + k] = rg > 1e-9 ? Math.round(255 * (Math.pow(10, (r.spec[k] - mx) / 10) - lmin) / rg) : 255;
+          o.lmin[i] = lmin;
+          if (!Number.isFinite(rel)) rel = (360 - im) % 360;
+          // the same spectrum as this signal's previous row: the same DoA frame logged again
+          const p = prevSpec[s];
+          let same = !!p;
+          if (p) for (let k = 0; k < 360 && same; k++) same = p[k] === r.spec[k];
+          o.dup[i] = same ? 1 : 0;
+          prevSpec[s] = r.spec;
+          r.spec = null;
+          o.lob[i] = li++;
+        } else o.lob[i] = -1;
+        o.t[i] = r.t;
+        o.lat[i] = pos ? r.lat : NaN;
+        o.lon[i] = pos ? r.lon : NaN;
+        o.hdg[i] = Number.isFinite(hdg) ? ((hdg % 360) + 360) % 360 : NaN;
+        o.rel[i] = rel;
+        o.brg[i] = Number.isFinite(hdg) && Number.isFinite(rel) ? (((hdg + rel) % 360) + 360) % 360 : NaN;
+        o.conf[i] = r.conf; o.pow[i] = r.pow; o.mode[i] = r.mode; o.sig[i] = s;
+      });
+      // speed: the track over +-3 s (the vehicle's - every signal's rows);
+      // sparse logs (distance-gated rows): the neighbours within 30 s
+      const pi = [];
+      for (let i = 0; i < n; i++) if (Number.isFinite(o.lat[i])) pi.push(i);
+      let a = 0, b = 0;
+      for (let k = 0; k < pi.length; k++) {
+        const t = o.t[pi[k]];
+        while (o.t[pi[a]] < t - 3000) a++;
+        if (b < k) b = k;
+        while (b + 1 < pi.length && o.t[pi[b + 1]] <= t + 3000) b++;
+        let i0 = a, i1 = b;
+        if (o.t[pi[i1]] - o.t[pi[i0]] < 1000) {
+          if (i0 > 0 && t - o.t[pi[i0 - 1]] <= 30000) i0--;
+          if (i1 + 1 < pi.length && o.t[pi[i1 + 1]] - t <= 30000) i1++;
+        }
+        const dt = (o.t[pi[i1]] - o.t[pi[i0]]) / 1000;
+        o.spd[pi[k]] = dt >= 0.5 ? rdfDistM(o.lat[pi[i0]], o.lon[pi[i0]], o.lat[pi[i1]], o.lon[pi[i1]]) / dt : NaN;
+      }
+      for (let i = 0; i < n; i++) if (!Number.isFinite(o.lat[i])) o.spd[i] = NaN;
+      // turn rate: the heading over a signal's neighbouring rows (within 3 s)
+      const bySig = sigs.map(() => []);
+      for (let i = 0; i < n; i++) bySig[o.sig[i]].push(i);
+      for (const ix of bySig)
+        for (let k = 0; k < ix.length; k++) {
+          const i = ix[k], p = k > 0 && o.t[i] - o.t[ix[k - 1]] <= 3000 ? ix[k - 1] : i, q = k + 1 < ix.length && o.t[ix[k + 1]] - o.t[i] <= 3000 ? ix[k + 1] : i;
+          const dt = (o.t[q] - o.t[p]) / 1000;
+          if (!(dt > 0) || !Number.isFinite(o.hdg[p]) || !Number.isFinite(o.hdg[q])) { o.yaw[i] = 0; continue; }
+          let d = (o.hdg[q] - o.hdg[p]) % 360;
+          if (d > 180) d -= 360; else if (d < -180) d += 360;
+          o.yaw[i] = Math.abs(d) / dt;
+        }
+      // kept for the heat jobs
+      L.o = o;
+      L.sigs = sigs;
+      info.rows = n;
+      info.sigs = sigs;
+      info.stations = [...stations].slice(0, 8);
+      info.ants = [...ants].slice(0, 8);
+      info.lobes = nl;
+      info.pos = pi.length;
+      return {info, o};
+    }
+    // ---- heat jobs: one signal's rows through the engine, as the live mapper
+    // (rdf_mapper.cpp) feeds it: the heading of the row's mode, a GPS course
+    // only at >= 2 m/s and while not turning > 8 deg/s (other headings 30),
+    // bearing sigma hypot(2, compass 4 / GPS 1.5 + 8 / speed); a row whose
+    // spectrum repeats the previous one is the same DoA frame logged again.
+    // Rows with a bearing but no spectrum (the oldest layouts) get a lobe of
+    // that bearing, hypot(5, heading sigma) wide
+    const L = {};    // the loaded log: L.o (lrParse's arrays), L.sigs
+    let job = 0;     // the running heat job's id (a newer one / a cancel ends it)
+    const NATS = 12; // the heat colours span 12 nats below the peak (rdf_mapper's NATS_RANGE)
+    function lrGridJson(g) {
+      if (!g || !g.records) return null;
+      const [nw, se] = g.box();
+      return {n: g.n, nw, se, cell: g.cell, data: g.raster(NATS)};
+    }
+    function lrHeat(m) {
+      const o = L.o, my = m.job;
+      job = my;
+      if (!o) return;
+      const idx = [];
+      for (let i = 0; i < o.t.length; i++) if (o.sig[i] === m.sig) idx.push(i);
+      if (!idx.length) { postMessage({op: 'heat', job: my, pct: 100, done: true, snaps: [], ests: [], why: {}, recs: 0}); return; }
+      const solver = new RdfSolver(m.rangeKm, 256), gate = new RdfGate();
+      L.solver = solver;   // (offline tests compare it with the C++ engine)
+      const T0 = o.t[idx[0]], T1 = o.t[idx[idx.length - 1]];
+      // snapshots of the heat map along the timeline: ~400 at most (64 + 16 KB each)
+      const snapDt = Math.max(1000, (T1 - T0) / 400);
+      const why = {used: 0, nopos: 0, nohdg: 0, dup: 0, slow: 0, turning: 0, nolobe: 0};
+      const lin = new Float32Array(360);
+      let k = 0, lastSnap = -Infinity, unsnapped = false, recs = 0, lastTc = 0;
+      const snap = tc => {
+        const e = solver.est, g = solver.estGrid, off = g ? g.offset(e) : {off: 0, sd: 0};
+        return {t: tc, recs, est: lrEstJson(e, off), coarse: lrGridJson(solver.coarse), fine: lrGridJson(solver.fine)};
+      };
+      const step = () => {
+        if (job !== my) return;
+        const t0 = performance.now(), snaps = [], ests = [];
+        while (k < idx.length && performance.now() - t0 < 80) {
+          const i = idx[k++], lat = o.lat[i], lon = o.lon[i], hdg = o.hdg[i], mode = o.mode[i];
+          if (!Number.isFinite(lat)) { why.nopos++; continue; }
+          if (!Number.isFinite(hdg) || !Number.isFinite(o.brg[i]) && o.lob[i] < 0) { why.nohdg++; continue; }
+          if (o.dup[i]) { why.dup++; continue; }
+          const gps = mode === 0, spd = o.spd[i];
+          if (gps && !(spd >= 2)) { why.slow++; continue; }
+          if (o.yaw[i] > (gps ? 8 : 30)) { why.turning++; continue; }
+          const hs = gps ? 1.5 + 8 / Math.max(spd, 2) : 4;
+          let p;
+          if (o.lob[i] >= 0) {
+            const b = o.lob[i] * 360, lm = o.lmin[i];
+            for (let q = 0; q < 360; q++) lin[q] = lm + (1 - lm) * L.o.lobes[b + q] / 255;
+            p = rdfNorthLobe(lin, 1, hdg, Math.hypot(2, hs), false);
+          } else p = rdfBearingLobe(o.brg[i], Math.hypot(5, hs));
+          if (!p) { why.nolobe++; continue; }
+          why.used++;
+          const e = solver.est, R = e.valid && e.mass > 0.5 ? rdfDistM(lat, lon, e.lat, e.lon) : 0;
+          const conf = Number.isFinite(o.conf[i]) ? o.conf[i] : 0;
+          const r = gate.add(o.t[i], lat, lon, p, conf, R);
+          if (!r) continue;
+          solver.add(r);
+          recs++;
+          // a record is known when the frame that closed its window came
+          lastTc = o.t[i];
+          ests.push(Object.assign({t: lastTc, recs, rlat: r.lat, rlon: r.lon, rb: rdfLobePeak(r.p)}, lrEstJson(solver.est)));
+          if (lastTc - lastSnap >= snapDt) { snaps.push(snap(lastTc)); lastSnap = lastTc; unsnapped = false; }
+          else unsnapped = true;
+        }
+        const done = k >= idx.length;
+        if (done && unsnapped) snaps.push(snap(lastTc));
+        const tr = [];
+        for (const s of snaps) for (const g of [s.coarse, s.fine]) if (g) tr.push(g.data.buffer);
+        postMessage({op: 'heat', job: my, pct: Math.round(100 * k / idx.length), done, snaps, ests, why, recs}, tr);
+        if (!done) setTimeout(step, 0);
+      };
+      step();
+    }
+    function lrEstJson(e, off) {
+      if (!e || !e.valid) return null;
+      const r = x => Math.round(x * 10) / 10;
+      const o = {lat: e.lat, lon: e.lon, r50: r(e.r50), r95: r(e.r95), a: r(e.a), b: r(e.b), ang: r(e.ang), mass: Math.round(e.mass * 1000) / 1000, edge: e.edge};
+      if (off) { o.off = r(off.off); o.off_sd = r(off.sd); }
+      return o;
+    }
+
+    self.onmessage = ev => {
+      const m = ev.data;
+      if (m.op === 'load') {
+        job++;   // a heat job of the previous log stops
+        try {
+          const {info, o} = lrParse(m.name, m.buf, m.wal || null);
+          postMessage({op: 'loaded', id: m.id, info, o});
+        } catch (e) {
+          postMessage({op: 'error', id: m.id, error: e && e.message ? e.message : String(e)});
+        }
+      } else if (m.op === 'heat') lrHeat(m);
+      else if (m.op === 'cancel') job++;
+    };
+    // offline tests (node)
+    self.lrTest = {sqlOpen, sqlParseCreate, lrParse, lrParseCsv, lrHeat, L, RdfGate, RdfGrid, RdfSolver, rdfNorthLobe, rdfBearingLobe,
+                   rdfLobePeak, rdfDistM, rdfBrg, rdfToEnu, rdfFromEnu, rdfOpt};
+  }
+  // (end of lrWorkerMain)
+
+  // ---- page side ----
+  // pauses longer than LR_GAP take LR_GAPC of the timeline (a log appended
+  // to over days, a stop for lunch); a row stays "current" LR_HOLD
+  const LR_GAP = 60000, LR_GAPC = 4000, LR_HOLD = 30000;
+  const LR_SPEEDS = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
+  const LR_LINES = [[0, 'Off'], [30, '30 s'], [120, '2 min'], [600, '10 min'], [-1, 'All']];
+  const LR_COL = '#ffd54f';   // the replay's colour (no VFO's: getDecimatorColor)
+  const LR_MODES = ['GPS', 'compass', 'KrakenSDR', 'manual'];
+  let lrWorker = null, lrLoadSeq = 0, lrJobSeq = 0, lrRaf = 0, lrLastDraw = 0, lrInfoAt = 0, lrScrub = null;
+  let lrLoadMsg = null, lrLoadName = '';   // loading / its error; the file being read
+  function lrSaveUi() { try { localStorage.setItem('kraken_lr', JSON.stringify(lrUi)); } catch (e) {} }
+  function lrSet(k, v) {
+    lrUi[k] = v;
+    lrSaveUi();
+    if (k === 'range' && lr) lrHeatStart();
+    lrRender();
+    mapDraw();
+  }
+  function lrWorkerGet() {
+    if (!lrWorker) {
+      lrWorker = new Worker(URL.createObjectURL(new Blob(['(' + lrWorkerMain.toString() + ')()'], {type: 'text/javascript'})));
+      lrWorker.onmessage = lrOnWorker;
+      lrWorker.onerror = e => { lrFail('The replay worker failed: ' + (e.message || 'unknown error')); lrWorker = null; };
+    }
+    return lrWorker;
+  }
+
+  // --- the strip: shown / hidden (the Replay button), the log unloaded (✕) ---
+  function lrToggle(on) {
+    lrOpen = on === undefined ? !lrOpen : !!on;
+    if (!lrOpen) lrPlay(false);
+    if (lrOpen && !mapState.on) mapToggle(true);
+    else if (lrOpen && mapState.tab === 'doa') rpShow('map');
+    lrRender();
+    mapUpdateControls();
+    mapDraw();
+  }
+  function lrClose() {
+    lrPlay(false);
+    if (lrWorker) lrWorker.postMessage({op: 'cancel'});
+    lr = null;
+    lrLoadSeq++;
+    lrToggle(false);
+  }
+  function lrFail(msg) {
+    if (lr && lr.loading) lr = null;
+    lrLoadMsg = {err: msg};
+    lrRender();
+  }
+
+  // --- opening a log ---
+  function lrOpenDialog() {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.multiple = true;   // (an SQLite file + its -wal)
+    inp.accept = '.csv,.txt,.log,.sqlite,.sqlite3,.db,.db3,.sqlite-wal,.db-wal,.sqlite3-wal,text/csv';
+    inp.onchange = () => lrOpenFiles(inp.files);
+    inp.click();
+  }
+  async function lrOpenFiles(files) {
+    files = [...(files || [])];
+    if (!files.length) return;
+    const main = files.find(f => !/-wal$/i.test(f.name)) || files[0];
+    const wal = files.find(f => f !== main && f.name.toLowerCase() === main.name.toLowerCase() + '-wal');
+    if (main.size > 1024 * 1024 * 1024) { lrToggle(true); lrFail(`${main.name} is ${formatBytes(main.size)} - logs up to 1 GB can be replayed here`); return; }
+    if (/-wal$/i.test(main.name)) { lrToggle(true); lrFail('That is only the -wal part of an SQLite log: open the database file itself (pick both at once)'); return; }
+    try {
+      lrLoadBuffer(main.name, await main.arrayBuffer(), wal ? await wal.arrayBuffer() : null);
+    } catch (e) { lrToggle(true); lrFail('Could not read ' + main.name + ': ' + (e.message || e)); }
+  }
+  function lrLoadBuffer(name, buf, wal) {
+    lrPlay(false);
+    lrLoadMsg = {busy: `Reading ${name} (${formatBytes(buf.byteLength + (wal ? wal.byteLength : 0))})…`};
+    lr = null;
+    lrToggle(true);
+    const id = ++lrLoadSeq;
+    lrLoadName = name;
+    const tr = [buf];
+    if (wal) tr.push(wal);
+    lrWorkerGet().postMessage({op: 'load', id, name, buf, wal}, tr);
+  }
+  function lrOnWorker(ev) {
+    const m = ev.data;
+    if (m.op === 'error' && m.id === lrLoadSeq) { lrFail(m.error); return; }
+    if (m.op === 'loaded' && m.id === lrLoadSeq) { lrLoaded(m); return; }
+    if (m.op === 'heat' && lr && lr.heat && m.job === lr.heat.job) lrOnHeat(m);
+  }
+  function lrLoaded(m) {
+    const o = m.o, n = o.t.length, info = m.info;
+    const L = {name: lrLoadName, info, o, n, sigs: info.sigs, t: o.t[0], a: 0, playing: false, heat: null, snapCv: null};
+    // the vehicle's track: positioned rows in time order, in map coordinates
+    L.pidx = [];
+    for (let i = 0; i < n; i++) if (Number.isFinite(o.lat[i])) L.pidx.push(i);
+    L.nx = new Float64Array(n); L.ny = new Float64Array(n);
+    let x0 = 1, x1 = 0, y0 = 1, y1 = 0;
+    for (const i of L.pidx) {
+      const [x, y] = mapProj(o.lat[i], o.lon[i]);
+      L.nx[i] = x; L.ny[i] = y;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+    L.bb = L.pidx.length ? [x0, y0, x1, y1] : null;
+    // the timeline: segments between long pauses
+    L.segs = [];
+    for (let i = 0; i < n; i++) {
+      const S = L.segs[L.segs.length - 1];
+      if (S && o.t[i] - S.t1 <= LR_GAP) S.t1 = o.t[i];
+      else L.segs.push({t0: o.t[i], t1: o.t[i], a0: S ? S.a0 + (S.t1 - S.t0) + LR_GAPC : 0});
+    }
+    const S = L.segs[L.segs.length - 1];
+    L.A1 = Math.max(1, S.a0 + S.t1 - S.t0);
+    lr = L;
+    lrLoadMsg = null;
+    // the signal with the most lobes (then rows)
+    let best = 0;
+    info.sigs.forEach((s, i) => { if (s.ns > info.sigs[best].ns || (s.ns === info.sigs[best].ns && s.n > info.sigs[best].n)) best = i; });
+    lrSetSig(best, true);
+    lrRender();
+    lrSeekAxis(0, true);
+    lrFit();
+  }
+  // a signal picked: its rows, power range; the heat map worked out again
+  function lrSetSig(i, quiet) {
+    if (!lr) return;
+    const o = lr.o;
+    lr.sel = Math.max(0, Math.min(lr.sigs.length - 1, i | 0));
+    lr.idx = [];
+    const pw = [];
+    for (let k = 0; k < lr.n; k++) if (o.sig[k] === lr.sel) { lr.idx.push(k); if (Number.isFinite(o.pow[k])) pw.push(o.pow[k]); }
+    pw.sort((a, b) => a - b);
+    // the power colours span the middle 90 % (one outlier doesn't flatten them)
+    lr.p0 = pw.length ? pw[Math.floor(pw.length * 0.05)] : 0;
+    lr.p1 = pw.length ? pw[Math.min(pw.length - 1, Math.floor(pw.length * 0.95))] : 1;
+    if (!(lr.p1 > lr.p0)) lr.p1 = lr.p0 + 1;
+    lrHeatStart();
+    if (!quiet) { lrRender(); mapDraw(); }
+  }
+  function lrHeatStart() {
+    if (!lr) return;
+    lr.heat = {job: ++lrJobSeq, pct: 0, at: lr.o.t[lr.idx[0]] || 0, done: false, snaps: [], ests: [], why: {}, recs: 0};
+    lr.snapCv = null;
+    lr.tlKey = '';
+    lrWorkerGet().postMessage({op: 'heat', job: lr.heat.job, sig: lr.sel, rangeKm: lrUi.range});
+  }
+  function lrOnHeat(m) {
+    const H = lr.heat;
+    H.snaps.push(...m.snaps);
+    H.ests.push(...m.ests);
+    H.pct = m.pct; H.done = m.done; H.why = m.why; H.recs = m.recs;
+    H.at = m.done ? Infinity : (H.ests.length ? H.ests[H.ests.length - 1].t : H.at);
+    lr.tlKey = '';
+    lrRenderDyn(true);
+    mapDraw();
+  }
+
+  // --- time: the log's ms <-> the timeline (pauses collapsed) ---
+  function lrSegAt(t) {
+    const g = lr.segs;
+    let lo = 0, hi = g.length - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (g[m].t0 <= t) lo = m; else hi = m - 1; }
+    return lo;
+  }
+  function lrAxisOf(t) {
+    const k = lrSegAt(t), S = lr.segs[k], N = lr.segs[k + 1];
+    if (t <= S.t0) return S.a0;
+    if (t <= S.t1 || !N) return S.a0 + Math.min(t, S.t1) - S.t0;
+    return S.a0 + S.t1 - S.t0 + LR_GAPC * (t - S.t1) / (N.t0 - S.t1);
+  }
+  function lrTimeOf(a) {
+    const g = lr.segs;
+    let k = 0;
+    while (k + 1 < g.length && g[k + 1].a0 <= a) k++;
+    const S = g[k], N = g[k + 1], d = a - S.a0;
+    if (d <= S.t1 - S.t0 || !N) return S.t0 + Math.min(d, S.t1 - S.t0);
+    return S.t1 + (N.t0 - S.t1) * (d - (S.t1 - S.t0)) / LR_GAPC;
+  }
+  // the last index of arr (row indices in time order) whose row is at or before t (-1: none)
+  function lrBs(arr, t) {
+    const T = lr.o.t;
+    let lo = 0, hi = arr.length - 1, r = -1;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (T[arr[m]] <= t) { r = m; lo = m + 1; } else hi = m - 1; }
+    return r;
+  }
+  // the selected signal's row shown at time t (-1: none within LR_HOLD)
+  function lrRowAt(t) {
+    const k = lrBs(lr.idx, t);
+    return k >= 0 && t - lr.o.t[lr.idx[k]] <= LR_HOLD ? lr.idx[k] : -1;
+  }
+  // the vehicle at time t: interpolated between rows up to 10 s apart (else held)
+  function lrPosAt(t) {
+    const P = lr.pidx, o = lr.o, k = lrBs(P, t);
+    if (k < 0) return P.length ? {i: P[0], nx: lr.nx[P[0]], ny: lr.ny[P[0]], lat: o.lat[P[0]], lon: o.lon[P[0]], hdg: o.hdg[P[0]], before: true} : null;
+    const i = P[k], j = P[k + 1];
+    const p = {i, nx: lr.nx[i], ny: lr.ny[i], lat: o.lat[i], lon: o.lon[i], hdg: o.hdg[i]};
+    if (j !== undefined && o.t[j] > o.t[i] && o.t[j] - o.t[i] <= 10000) {
+      const f = (t - o.t[i]) / (o.t[j] - o.t[i]);
+      p.nx += f * (lr.nx[j] - p.nx); p.ny += f * (lr.ny[j] - p.ny);
+      p.lat += f * (o.lat[j] - p.lat); p.lon += f * (o.lon[j] - p.lon);
+      if (Number.isFinite(p.hdg) && Number.isFinite(o.hdg[j])) {
+        let d = (o.hdg[j] - p.hdg) % 360;
+        if (d > 180) d -= 360; else if (d < -180) d += 360;
+        p.hdg = (p.hdg + f * d + 360) % 360;
+      }
+    }
+    return p;
+  }
+  // the heat map / estimate as known at time t
+  function lrSnapAt(t) {
+    const s = lr.heat ? lr.heat.snaps : [];
+    let lo = 0, hi = s.length - 1, r = -1;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (s[m].t <= t) { r = m; lo = m + 1; } else hi = m - 1; }
+    return r;
+  }
+  function lrEstAt(t) {
+    const s = lr.heat ? lr.heat.ests : [];
+    let lo = 0, hi = s.length - 1, r = -1;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (s[m].t <= t) { r = m; lo = m + 1; } else hi = m - 1; }
+    return r < 0 ? null : s[r];
+  }
+
+  // --- playback ---
+  function lrSeekAxis(a, keepView) {
+    if (!lr) return;
+    lr.a = Math.max(0, Math.min(lr.A1, a));
+    lr.t = lrTimeOf(lr.a);
+    if (!keepView) lrFollow(false);
+    lrRenderDyn();
+    mapDraw();
+  }
+  function lrSeekTime(t) { if (lr) lrSeekAxis(lrAxisOf(t)); }
+  // step to the selected signal's previous / next row
+  function lrStep(dir) {
+    if (!lr || !lr.idx.length) return;
+    lrPlay(false);
+    const k = lrBs(lr.idx, lr.t), T = lr.o.t;
+    let j = dir > 0 ? k + 1 : (k >= 0 && T[lr.idx[k]] < lr.t ? k : k - 1);
+    j = Math.max(0, Math.min(lr.idx.length - 1, j));
+    lrSeekTime(T[lr.idx[j]]);
+  }
+  function lrPlay(on) {
+    if (!lr) return;
+    on = on === undefined ? !lr.playing : !!on;
+    if (on && lr.a >= lr.A1) lr.a = 0;   // at the end: from the start
+    lr.playing = on;
+    cancelAnimationFrame(lrRaf);
+    lrRaf = 0;
+    if (on) { lr.last = performance.now(); lrRaf = requestAnimationFrame(lrTick); }
+    lrRenderDyn(true);
+  }
+  function lrTick(now) {
+    lrRaf = 0;
+    if (!lr || !lr.playing) return;
+    // the map hidden: pause (nothing to watch)
+    if (!lrOpen || !document.body.classList.contains('rp-map')) { lrPlay(false); return; }
+    const dt = Math.min(250, now - lr.last);
+    lr.last = now;
+    lr.a = Math.min(lr.A1, lr.a + dt * lrUi.speed);
+    lr.t = lrTimeOf(lr.a);
+    if (lr.a >= lr.A1) lr.playing = false;
+    // ~30 frames a second is plenty
+    if (now - lrLastDraw >= 33 || !lr.playing) {
+      lrLastDraw = now;
+      lrFollow(true);
+      lrRenderDyn(!lr.playing);
+      mapDraw();
+    }
+    if (lr.playing) lrRaf = requestAnimationFrame(lrTick);
+  }
+  // Follow: the vehicle kept in view (re-centred once it nears an edge; the
+  // strip's height left out)
+  function lrFollow(playing) {
+    if (!lr || !lrUi.follow || !mapCv || !mapW) return;
+    const p = lrPosAt(lr.t);
+    if (!p) return;
+    const [x, y] = mapToScreen(p.nx, p.ny), sh = lrStripH(), m = playing ? 0.15 : 0.05;
+    if (x > mapW * m && x < mapW * (1 - m) && y > mapH * m && y < (mapH - sh) - (mapH - sh) * m) return;
+    const W = mapWorld();
+    mapState.mx = p.nx;
+    mapState.my = p.ny + sh / 2 / W;
+    mapAutoFit = false;
+    mapClampView();
+    mapSaveSoon();
+  }
+  function lrStripH() {
+    const el = $id('map-lr');
+    return lrOpen && el && el.offsetHeight ? el.offsetHeight + 20 : 0;
+  }
+  // the whole track in view (above the strip)
+  function lrFit() {
+    if (!lr || !lr.bb || !mapW) return;
+    const [x0, y0, x1, y1] = lr.bb, sh = lrStripH();
+    const span = Math.max((x1 - x0) / Math.max(1, mapW - 80), (y1 - y0) / Math.max(1, mapH - sh - 90), 1e-9);
+    mapState.z = Math.max(MAP_MIN_Z, Math.min(17, Math.log2(1 / (span * 256))));
+    mapState.mx = (x0 + x1) / 2;
+    mapState.my = (y0 + y1) / 2 + (sh - 20) / 2 / mapWorld();
+    mapAutoFit = false;
+    mapClampView();
+    mapSave();
+    mapDraw();
+  }
+
+  // --- on the map ---
+  // power -> colour (blue, cyan, green, yellow, red: the heat map's ramp)
+  function lrPowCol(v) {
+    const i = Math.max(0, Math.min(255, Math.round(255 * (0.15 + 0.85 * v)))) * 4;
+    return `rgb(${RDF_LUT[i]},${RDF_LUT[i + 1]},${RDF_LUT[i + 2]})`;
+  }
+  function lrScr(i) {   // a row's screen position
+    const W = mapWorld();
+    let dx = lr.nx[i] - mapState.mx;
+    dx -= Math.round(dx);
+    return [mapW / 2 + dx * W, mapH / 2 + (lr.ny[i] - mapState.my) * W];
+  }
+  function lrSnapCv(si) {
+    if (lr.snapCv && lr.snapCv.i === si) return lr.snapCv;
+    const s = lr.heat.snaps[si], mk = g => {
+      if (!g) return null;
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = g.n;
+      const cx = cv.getContext('2d'), im = cx.createImageData(g.n, g.n);
+      for (let i = 0; i < g.n * g.n; i++) im.data.set(RDF_LUT.subarray(g.data[i] * 4, g.data[i] * 4 + 4), i * 4);
+      cx.putImageData(im, 0, 0);
+      return {cv, g};
+    };
+    lr.snapCv = {i: si, coarse: mk(s.coarse), fine: mk(s.fine)};
+    return lr.snapCv;
+  }
+  function lrDraw(c) {
+    if (!lrReady || !lr || !lrOpen) return;
+    const o = lr.o, t = lr.t, idx = lr.idx;
+    // the heat map as known then (coarse, then the fine grid around the estimate)
+    if (lrUi.heat && lr.heat) {
+      const si = lrSnapAt(t);
+      if (si >= 0) {
+        const S = lrSnapCv(si);
+        c.save();
+        c.imageSmoothingEnabled = true;
+        c.globalAlpha = 0.8;
+        for (const L of [S.coarse, S.fine]) {
+          if (!L) continue;
+          const [x0, y0] = mapLatLonToScreen(L.g.nw[0], L.g.nw[1]), [x1, y1] = mapLatLonToScreen(L.g.se[0], L.g.se[1]);
+          if (x1 < 0 || y1 < 0 || x0 > mapW || y0 > mapH) continue;
+          c.drawImage(L.cv, x0, y0, x1 - x0, y1 - y0);
+        }
+        c.restore();
+      }
+    }
+    // the track: driven solid, still to come dashed (broken at pauses)
+    const P = lr.pidx, kNow = lrBs(P, t);
+    if (lrUi.track && P.length > 1) {
+      const path = (a, b) => {
+        c.beginPath();
+        let lx = -1e9, ly = -1e9, lt = -1e18;
+        for (let k = a; k <= b; k++) {
+          const i = P[k], [x, y] = lrScr(i);
+          if (o.t[i] - lt > LR_GAP) { c.moveTo(x, y); lx = x; ly = y; }
+          else if (Math.abs(x - lx) + Math.abs(y - ly) > 1.5 || k === b) { c.lineTo(x, y); lx = x; ly = y; }
+          lt = o.t[i];
+        }
+      };
+      c.save();
+      c.lineJoin = c.lineCap = 'round';
+      if (kNow < P.length - 1) {
+        path(Math.max(0, kNow), P.length - 1);
+        c.strokeStyle = 'rgba(0,0,0,0.3)'; c.lineWidth = 3.5; c.stroke();
+        c.setLineDash([5, 5]); c.strokeStyle = 'rgba(255,224,130,0.9)'; c.lineWidth = 1.5; c.stroke();
+        c.setLineDash([]);
+      }
+      if (kNow > 0) {
+        path(0, kNow);
+        c.strokeStyle = 'rgba(0,0,0,0.6)'; c.lineWidth = 4.5; c.stroke();
+        c.strokeStyle = LR_COL; c.lineWidth = 2.2; c.stroke();
+      }
+      c.restore();
+    }
+    const kSig = lrBs(idx, t);
+    // signal power along the way (the rows so far)
+    if (lrUi.power && kSig >= 0) {
+      c.save();
+      const step = Math.max(1, Math.floor((kSig + 1) / 4000));
+      for (let k = 0; k <= kSig; k += step) {
+        const i = idx[k];
+        if (!Number.isFinite(o.lat[i]) || !Number.isFinite(o.pow[i])) continue;
+        const [x, y] = lrScr(i);
+        if (x < -5 || y < -5 || x > mapW + 5 || y > mapH + 5) continue;
+        c.beginPath(); c.arc(x, y, 3.5, 0, 2 * Math.PI);
+        c.fillStyle = lrPowCol((o.pow[i] - lr.p0) / (lr.p1 - lr.p0)); c.fill();
+        c.strokeStyle = 'rgba(0,0,0,0.55)'; c.lineWidth = 1; c.stroke();
+      }
+      c.restore();
+    }
+    // the bearings of the last lrUi.lines s (older fainter), from where each was taken
+    if (lrUi.lines && kSig >= 0) {
+      const t0 = lrUi.lines < 0 ? -Infinity : t - lrUi.lines * 1000, len = lrUi.range * 1500;
+      let k0 = kSig;
+      while (k0 > 0 && o.t[idx[k0 - 1]] > t0) k0--;
+      const step = Math.max(1, Math.floor((kSig - k0 + 1) / 600));
+      c.save();
+      c.strokeStyle = LR_COL; c.lineWidth = 1.2;
+      for (let k = k0; k <= kSig; k += step) {
+        const i = idx[k];
+        if (!Number.isFinite(o.lat[i]) || !Number.isFinite(o.brg[i])) continue;
+        const [x, y] = lrScr(i), px = len / rdfMpp(o.lat[i]), r = o.brg[i] * Math.PI / 180;
+        c.globalAlpha = 0.1 + 0.5 * (k - k0 + 1) / (kSig - k0 + 1);
+        c.beginPath(); c.moveTo(x, y); c.lineTo(x + px * Math.sin(r), y - px * Math.cos(r)); c.stroke();
+      }
+      c.restore();
+    }
+    // the estimate then: cross + 95 % ellipse
+    const e = lrUi.heat && lr.heat ? lrEstAt(t) : null;
+    if (e && Number.isFinite(e.lat)) {
+      const [x, y] = mapLatLonToScreen(e.lat, e.lon), mpp = rdfMpp(e.lat);
+      c.save();
+      c.strokeStyle = '#000'; c.lineWidth = 4;
+      c.beginPath(); c.ellipse(x, y, Math.max(2, 2.45 * e.a / mpp), Math.max(2, 2.45 * e.b / mpp), (e.ang - 90) * Math.PI / 180, 0, 2 * Math.PI); c.stroke();
+      c.strokeStyle = LR_COL; c.lineWidth = 2;
+      if (e.edge) c.setLineDash([5, 4]);
+      c.stroke();
+      c.setLineDash([]);
+      for (const [w, s] of [[4, '#000'], [2, '#fff']]) {
+        c.strokeStyle = s; c.lineWidth = w;
+        c.beginPath(); c.moveTo(x - 8, y - 8); c.lineTo(x + 8, y + 8); c.moveTo(x + 8, y - 8); c.lineTo(x - 8, y + 8); c.stroke();
+      }
+      rdfMapLabel(c, `Replay TX ±${rdfDist(e.r95)}${e.edge ? ' (edge!)' : ''}`, x + 11, y - 9);
+      c.restore();
+    }
+    // the lobe of the row shown now, around the vehicle + its bearing to the edge of the map
+    const ri = lrRowAt(t), p = lrPosAt(t);
+    if (ri >= 0 && p && !p.before) {
+      const [sx, sy] = mapToScreen(p.nx, p.ny), R = 0.25 * Math.min(mapW, mapH), hd = o.hdg[ri];
+      c.save();
+      if (lrUi.lobe && o.lob[ri] >= 0 && Number.isFinite(hd)) {
+        const b = o.lob[ri] * 360;
+        c.beginPath();
+        for (let k = 0; k <= 360; k++) {
+          // array index k (counter-clockwise from the front) = compass heading - k
+          const r = R * o.lobes[b + k % 360] / 255, a = (hd - k) * Math.PI / 180;
+          const x = sx + r * Math.sin(a), y = sy - r * Math.cos(a);
+          if (k) c.lineTo(x, y); else c.moveTo(x, y);
+        }
+        c.closePath();
+        c.globalAlpha = 0.18; c.fillStyle = LR_COL; c.fill();
+        c.globalAlpha = 1; c.strokeStyle = LR_COL; c.lineWidth = 1.8; c.stroke();
+      }
+      if ((lrUi.lobe || lrUi.lines) && Number.isFinite(o.brg[ri])) {
+        const a = o.brg[ri] * Math.PI / 180, L2 = 2 * Math.max(mapW, mapH);
+        c.globalAlpha = 1; c.strokeStyle = LR_COL; c.setLineDash([8, 5]); c.lineWidth = 2;
+        c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx + L2 * Math.sin(a), sy - L2 * Math.cos(a)); c.stroke();
+      }
+      c.restore();
+    }
+  }
+  // the vehicle (over the markers)
+  function lrDrawTop(c) {
+    if (!lrReady || !lr || !lrOpen) return;
+    const p = lrPosAt(lr.t);
+    if (!p) return;
+    const [x, y] = mapToScreen(p.nx, p.ny);
+    c.save();
+    c.translate(x, y);
+    c.globalAlpha = p.before ? 0.5 : 1;
+    c.fillStyle = LR_COL; c.strokeStyle = '#000'; c.lineWidth = 1.5;
+    if (Number.isFinite(p.hdg)) {
+      c.rotate(p.hdg * Math.PI / 180);
+      c.beginPath(); c.moveTo(0, -11); c.lineTo(7, 8); c.lineTo(0, 4); c.lineTo(-7, 8); c.closePath();
+    } else {
+      c.beginPath(); c.arc(0, 0, 6, 0, 2 * Math.PI);
+    }
+    c.fill(); c.stroke();
+    c.restore();
+  }
+  // a click on the track: the replay goes to that moment (the nearest row within 8 px)
+  function lrHit(x, y) {
+    if (!lrReady || !lr || !lrOpen || !lrUi.track) return -1;
+    let best = -1, bd = 64;
+    for (const i of lr.pidx) {
+      const [sx, sy] = lrScr(i), d = (sx - x) ** 2 + (sy - y) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+  function lrSeekRow(i) {
+    if (!lr) return;
+    lrPlay(false);
+    lr.a = lrAxisOf(lr.o.t[i]);
+    lr.t = lr.o.t[i];
+    lrRenderDyn(true);
+    mapDraw();
+  }
+
+  // --- the strip ---
+  function lrFmtDur(ms) {
+    const s = Math.round(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0');
+  }
+  function lrFmtT(t) {
+    try {
+      return new Date(t).toLocaleString(undefined, {year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'});
+    } catch (e) { return new Date(t).toISOString(); }
+  }
+  function lrSigName(s) {
+    return (s.freq ? (s.freq / 1e6).toFixed(4) + ' MHz' : 'frequency not logged') + (s.vfo !== null ? ' · D' + s.vfo : '');
+  }
+  function lrRender() {
+    const el = $id('map-lr'), pane = $id('map-pane');
+    if (!el) return;
+    el.style.display = lrOpen ? '' : 'none';
+    pane.classList.toggle('lr-open', lrOpen);
+    if (!lrOpen) return;
+    if (!el.dataset.built) {
+      el.dataset.built = 1;
+      el.innerHTML = `
+        <div class="lr-row">
+          <span class="lr-t">⏯ Replay</span><span class="lr-nm" id="lr-nm"></span><span class="lr-dim lr-fmt" id="lr-fmt"></span>
+          <select id="lr-sig" onchange="lrSetSig(+this.value)" title="Which signal (frequency / VFO) of the log: its lobes, bearings and heat map. The track is the vehicle's - every signal's rows"></select>
+          <span class="lr-sp"></span>
+          <button type="button" class="map-btn" onclick="lrOpenDialog()" title="Open a DoA log: the KrakenSDR Android app's (.csv, or .sqlite / .db - pick its -wal file too if there is one) or a 📝 DoA Recording of this receiver. It is read in this browser - nothing is uploaded. Or drop the file on the map">📂</button>
+          <button type="button" class="map-btn lr-ld" onclick="lrFit()" title="Show the whole drive">⤢</button>
+          <button type="button" class="map-btn" onclick="lrClose()" title="Close the replay">✕</button>
+        </div>
+        <div class="lr-msg" id="lr-msg"></div>
+        <div class="lr-ld">
+          <div class="lr-row">
+            <button type="button" class="map-btn" onclick="lrSeekAxis(0)" title="To the start (Home)">⏮</button>
+            <button type="button" class="map-btn" onclick="lrStep(-1)" title="The previous row of this signal (←)">⏴</button>
+            <button type="button" class="map-btn lr-play" id="lr-play" onclick="lrPlay()" title="Play / pause (Space)">▶</button>
+            <button type="button" class="map-btn" onclick="lrStep(1)" title="The next row of this signal (→)">⏵</button>
+            <select id="lr-speed" onchange="lrSet('speed', +this.value)" title="Playback speed (log time per second)">${LR_SPEEDS.map(s => `<option value="${s}">${s}×</option>`).join('')}</select>
+            <span class="lr-time" id="lr-time"></span><span class="lr-dim lr-pos" id="lr-pos"></span>
+            <span class="lr-sp"></span>
+            <button type="button" class="map-btn" id="lr-b-track" onclick="lrSet('track', !lrUi.track)" title="The vehicle's track: driven solid, still to come dashed. Click it to go to that moment">Track</button>
+            <label class="lr-dim" title="Bearing lines: each row's bearing from where it was taken, for the last …">Lines <select id="lr-lines" onchange="lrSet('lines', +this.value)">${LR_LINES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></label>
+            <button type="button" class="map-btn" id="lr-b-lobe" onclick="lrSet('lobe', !lrUi.lobe)" title="The DoA lobe of the row shown, around the vehicle (the logged spectrum, turned by the heading - linear, like the MUSIC DoA plot)">Lobe</button>
+            <button type="button" class="map-btn" id="lr-b-heat" onclick="lrSet('heat', !lrUi.heat)" title="Where the transmitter probably is, as known at that moment: the live mobile DF's heat map and estimate (95 % ellipse), worked out from the log in this browser">Heat</button>
+            <label class="lr-dim" title="Half-width of the heat map's grid around the first bearing (re-centred when the vehicle leaves it) - as the DF panel's Range">±<input type="number" id="lr-range" min="1" max="50" step="1" style="width:40px" onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="lrSetRange(this.value)"> km</label>
+            <button type="button" class="map-btn" id="lr-b-power" onclick="lrSet('power', !lrUi.power)" title="The signal's power along the way: a dot per row, blue (weak) to red (strong) over this log's range">Power</button>
+            <button type="button" class="map-btn" id="lr-b-follow" onclick="lrSet('follow', !lrUi.follow)" title="Keep the vehicle in view">Follow</button>
+          </div>
+          <canvas class="lr-tl" id="lr-tl" tabindex="0" title="The timeline: a tick per row of this signal (colour + height = its power), white dots = bearings collected for the heat map. Click or drag to go there; long pauses are shortened (┊)"></canvas>
+          <div class="lr-info" id="lr-info"></div>
+        </div>`;
+      const tl = $id('lr-tl');
+      tl.addEventListener('pointerdown', e => {
+        if (!lr) return;
+        tl.setPointerCapture(e.pointerId);
+        lrScrub = {was: lr.playing};
+        lrPlay(false);
+        lrTlSeek(e);
+      });
+      tl.addEventListener('pointermove', e => {
+        if (!lr) return;
+        if (lrScrub) lrTlSeek(e);
+        else {
+          const r = tl.getBoundingClientRect(), a = (e.clientX - r.left) / r.width * lr.A1;
+          tl.title = lrFmtT(lrTimeOf(a)) + ' - click or drag to go there';
+        }
+      });
+      const end = () => { if (lrScrub && lrScrub.was) lrPlay(true); lrScrub = null; };
+      tl.addEventListener('pointerup', end);
+      tl.addEventListener('pointercancel', end);
+      el.addEventListener('keydown', lrKey);
+      if (window.ResizeObserver) new ResizeObserver(() => { lrPaneH(); if (lr) { lr.tlKey = ''; lrTlDraw(); } }).observe(el);
+    }
+    el.classList.toggle('loaded', !!lr);
+    const msg = $id('lr-msg');
+    let mh = '';
+    if (lrLoadMsg && lrLoadMsg.busy) mh = `<span class="lr-dim">${escapeHtml(lrLoadMsg.busy)}</span>`;
+    else if (lrLoadMsg && lrLoadMsg.err) mh = `<span class="e">${escapeHtml(lrLoadMsg.err)}</span>`;
+    if (!lr) mh += `<div class="lr-help">Play back a <b>DoA log</b> of a drive on the map: the KrakenSDR Android app's log (<b>.csv</b>, or <b>.sqlite</b> - with its <b>-wal</b> file if there is one) or a <b>📝 DoA Recording</b> of this receiver (its box: 🗺 Replay). <button type="button" class="map-btn" onclick="lrOpenDialog()">📂 Open a log…</button> or drop the file on the map. It is read here in the browser - nothing is uploaded. The track, the bearings, each moment's DoA lobe and the heat map of where the transmitter is (the live mobile DF's) - at any speed, back and forth.</div>`;
+    if (msg.dataset.html !== mh) { msg.dataset.html = mh; msg.innerHTML = mh; }
+    if (lr) {
+      $id('lr-nm').textContent = lr.name;
+      $id('lr-nm').title = lr.name;
+      const I = lr.info, d0 = new Date(lr.o.t[0]).toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
+      $id('lr-fmt').textContent = `${I.format} · ${I.rows} rows${I.bad ? ` (${I.bad} unreadable)` : ''} · ${d0}${I.walBad ? ' · ⚠ its -wal file does not fit (not used)' : ''}`;
+      $id('lr-fmt').title = [I.format + (I.walFrames ? ` + ${I.walFrames} pages from its -wal file` : ''), I.walBad ? 'its -wal file was not used: ' + I.walBad : '',
+        I.meta && I.meta.created_utc ? 'created ' + I.meta.created_utc : '', I.stations && I.stations.length ? 'station: ' + I.stations.join(', ') : '',
+        I.ants && I.ants.length ? 'array: ' + I.ants.join(', ') : '', `${I.pos} of ${I.rows} rows with a position, ${I.lobes} with a DoA spectrum`,
+        I.bad ? `${I.bad} lines / rows not readable (skipped)` : ''].filter(Boolean).join('\n');
+      const sel = $id('lr-sig');
+      const sh = lr.sigs.map((s, i) => `<option value="${i}">${escapeHtml(lrSigName(s))} · ${s.n} rows</option>`).join('');
+      if (sel.dataset.html !== sh) { sel.dataset.html = sh; sel.innerHTML = sh; }
+      sel.value = lr.sel;
+      sel.style.display = lr.sigs.length > 1 ? '' : 'none';
+      if (lr.sigs.length === 1) $id('lr-fmt').textContent += ' · ' + lrSigName(lr.sigs[0]);
+    }
+    $id('lr-speed').value = lrUi.speed;
+    $id('lr-lines').value = lrUi.lines;
+    if (document.activeElement !== $id('lr-range')) $id('lr-range').value = lrUi.range;
+    for (const k of ['track', 'lobe', 'heat', 'power', 'follow']) $id('lr-b-' + k).classList.toggle('on', !!lrUi[k]);
+    lrPaneH();
+    lrRenderDyn(true);
+  }
+  // the strip's height -> the map pane (the other panels stand on it)
+  function lrPaneH() {
+    const el = $id('map-lr');
+    if (el && lrOpen) $id('map-pane').style.setProperty('--lr-h', el.offsetHeight + 'px');
+  }
+  // the parts that change while playing: time, play button, timeline, the row / heat line
+  function lrRenderDyn(force) {
+    if (!lrOpen || !lr || !$id('lr-time')) return;
+    $id('lr-time').textContent = lrFmtT(lr.t);
+    $id('lr-pos').textContent = lrFmtDur(lr.a) + ' / ' + lrFmtDur(lr.A1);
+    const pb = $id('lr-play');
+    const pl = lr.playing ? '⏸' : '▶';
+    if (pb.textContent !== pl) pb.textContent = pl;
+    lrTlDraw();
+    const now = performance.now();
+    if (!force && now - lrInfoAt < 150) return;
+    lrInfoAt = now;
+    const o = lr.o, ri = lrRowAt(lr.t), H = lr.heat, f1 = x => Number.isFinite(x) ? x.toFixed(1) : '–';
+    let h = '';
+    if (ri < 0) h += `<span class="lr-dim">${lr.t < o.t[lr.idx[0]] ? 'before this signal\'s first row' : 'no row of this signal in the last ' + LR_HOLD / 1000 + ' s'}</span>`;
+    else {
+      const sp = o.spd[ri], hm = LR_MODES[o.mode[ri]] || 'GPS';
+      h += `<b>${Number.isFinite(o.brg[ri]) ? Math.round(o.brg[ri]) + '°' : '–'}</b> <span class="lr-dim">(${Number.isFinite(o.rel[ri]) ? Math.round(o.rel[ri]) + '° from the heading' : 'no bearing'})</span>` +
+           ` · conf ${f1(o.conf[ri])} · ${f1(o.pow[ri])} dB · ${Number.isFinite(sp) ? Math.round(sp * 3.6) + ' km/h' : 'speed –'}` +
+           ` · ${hm} heading ${Number.isFinite(o.hdg[ri]) ? Math.round(o.hdg[ri]) + '°' : '–'}` +
+           (o.lob[ri] < 0 ? ' <span class="w">· no spectrum (bearing only)</span>' : '') +
+           (!Number.isFinite(o.lat[ri]) ? ' <span class="w">· no position</span>' : '');
+    }
+    // the heat map: what was used, the estimate at this moment
+    if (H) {
+      const w = H.why || {}, e = lrUi.heat ? lrEstAt(lr.t) : null;
+      const skipped = [[w.slow, 'slower than 7 km/h'], [w.turning, 'turning'], [w.dup, 'repeated frames'], [w.nopos, 'no position'],
+                       [w.nohdg, 'no heading / bearing'], [w.nolobe, 'unusable spectrum']].filter(([n]) => n).map(([n, s]) => `${n} ${s}`);
+      // the bearings known AT THIS MOMENT (of the whole log's)
+      const now = e ? e.recs : 0, cnt = H.done && now < H.recs ? `${now} of ${H.recs} bearings` : !H.done && now < H.recs ? `${now} bearings so far` : `${H.recs} bearings`;
+      let hh = `<br><span title="${escapeHtml('The live mobile DF\'s engine on this signal\'s rows: a GPS heading only above 2 m/s and while not turning, the rows combined per 15-60 m driven into one bearing each, the bearings into a likelihood grid ±' + lrUi.range + ' km around the first one (re-centred when the vehicle leaves it). The whole log: ' + H.recs + ' bearings from ' + (w.used || 0) + ' rows; rows not used: ' + (skipped.join(', ') || 'none'))}">Heat map: ${cnt}</span>`;
+      if (!H.done) hh += ` <span class="g">· working it out ${H.pct} %</span>`;
+      if (e) {
+        const p = lrPosAt(lr.t), d = p ? mapDistKm(p.lat, p.lon, e.lat, e.lon) * 1000 : NaN;
+        hh += ` · TX <b>±${rdfDist(e.r95)}</b>${e.edge ? ' <span class="w" title="The likely area reaches the edge of the heat map\'s grid: the transmitter may be further out. If it stays so to the end of the drive, try a larger range (±)">at the grid\'s edge</span>' : ''}` +
+              (Number.isFinite(d) ? ` · ${rdfDist(d)} from the vehicle at ${Math.round(mapBearing(p.lat, p.lon, e.lat, e.lon))}°` : '') +
+              (e.mass < 0.5 ? ' <span class="w">· ambiguous</span>' : '');
+      } else if (H.done && !H.recs) hh += ` · <span class="w">none: ${w.used ? 'the log never moved 15 m at driving speed with this signal' : 'no row could be used (' + (skipped.join(', ') || 'no spectrum or bearing') + ')'}</span>`;
+      else if (H.recs && !e && lrUi.heat) hh += ' · <span class="lr-dim">no estimate yet at this moment</span>';
+      const si = lrSnapAt(lr.t), off = si >= 0 && H.snaps[si].est ? H.snaps[si].est : null;
+      if (off && Math.abs(off.off) >= 2 && Math.abs(off.off) > 2 * off.off_sd && H.recs >= 20)
+        hh += ` · <span class="w" title="The bearings fit best when turned by this much: the array's mounting or the heading source is off by about that">offset ${off.off > 0 ? '+' : ''}${off.off}° ± ${off.off_sd}</span>`;
+      h += hh;
+    }
+    const el = $id('lr-info');
+    if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
+  }
+  function lrSetRange(v) {
+    const n = Math.round(+v);
+    if (!(n >= 1 && n <= 50)) { lrRenderDyn(true); return; }
+    lrSet('range', n);
+  }
+  // the timeline: per pixel column the strongest row of the signal, the
+  // collected bearings (dots), pauses (┊), the heat map's progress, the playhead
+  function lrTlDraw() {
+    const cv = $id('lr-tl');
+    if (!cv || !lr) return;
+    const dpr = window.devicePixelRatio || 1, w = Math.max(10, cv.clientWidth), h = Math.max(10, cv.clientHeight);
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); lr.tlKey = ''; }
+    const key = [w, h, dpr, lr.sel, lr.heat ? lr.heat.ests.length : 0, lr.heat ? lr.heat.done : 0].join('|');
+    if (lr.tlKey !== key) {
+      lr.tlKey = key;
+      const b = lr.tlBase || (lr.tlBase = document.createElement('canvas'));
+      b.width = cv.width; b.height = cv.height;
+      const c = b.getContext('2d'), o = lr.o, X = a => a / lr.A1 * w;
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      c.fillStyle = '#0c1426'; c.fillRect(0, 0, w, h);
+      // pauses
+      c.strokeStyle = '#4a6a9a'; c.setLineDash([2, 2]); c.lineWidth = 1;
+      for (let k = 1; k < lr.segs.length; k++) {
+        const x = Math.round(X(lr.segs[k].a0 - LR_GAPC / 2)) + 0.5;
+        c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke();
+      }
+      c.setLineDash([]);
+      // rows: per column the strongest
+      const col = new Float32Array(Math.ceil(w) + 1).fill(-1);
+      for (const i of lr.idx) {
+        const x = Math.min(col.length - 1, Math.floor(X(lrAxisOf(o.t[i]))));
+        const v = Number.isFinite(o.pow[i]) ? Math.max(0, Math.min(1, (o.pow[i] - lr.p0) / (lr.p1 - lr.p0))) : 0.5;
+        if (v > col[x]) col[x] = v;
+      }
+      for (let x = 0; x < col.length; x++) {
+        if (col[x] < 0) continue;
+        const bh = 5 + col[x] * (h - 14);
+        c.fillStyle = lrPowCol(col[x]);
+        c.fillRect(x, h - 4 - bh, 1, bh);
+      }
+      // bearings collected for the heat map
+      if (lr.heat) {
+        c.fillStyle = '#fff';
+        let lx = -9;
+        for (const e of lr.heat.ests) {
+          const x = X(lrAxisOf(e.t));
+          if (x - lx < 2) continue;
+          lx = x;
+          c.fillRect(x - 0.75, 2, 1.5, 1.5);
+        }
+        // still working: how far
+        if (!lr.heat.done) {
+          c.fillStyle = '#66bb6a';
+          c.fillRect(0, h - 3, X(lrAxisOf(Math.min(lr.heat.at, lr.o.t[lr.n - 1]))), 3);
+        }
+      }
+    }
+    const c = cv.getContext('2d');
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.drawImage(lr.tlBase, 0, 0);
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const x = Math.round(lr.a / lr.A1 * w) + 0.5;
+    c.strokeStyle = '#000'; c.lineWidth = 3;
+    c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke();
+    c.strokeStyle = '#fff'; c.lineWidth = 1.5; c.stroke();
+    c.fillStyle = LR_COL;
+    c.beginPath(); c.moveTo(x - 5, 0); c.lineTo(x + 5, 0); c.lineTo(x, 6); c.closePath(); c.fill();
+  }
+  function lrTlSeek(e) {
+    const r = $id('lr-tl').getBoundingClientRect();
+    lrSeekAxis(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * lr.A1);
+  }
+  // keys while the strip has the focus: Space play / pause, ← → a row, Home / End
+  function lrKey(e) {
+    if (!lr || /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+    if (e.target.tagName === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) return;   // (the button's own click)
+    if (e.key === ' ' || e.key === 'k') lrPlay();
+    else if (e.key === 'ArrowLeft') lrStep(-1);
+    else if (e.key === 'ArrowRight') lrStep(1);
+    else if (e.key === 'Home') lrSeekAxis(0);
+    else if (e.key === 'End') lrSeekAxis(lr.A1);
+    else return;
+    e.preventDefault();
+  }
+  // a file dropped on the map
+  function lrDropInit() {
+    const pane = $id('map-pane');
+    const files = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+    let depth = 0;
+    pane.addEventListener('dragenter', e => { if (!files(e)) return; e.preventDefault(); depth++; pane.classList.add('lr-drop'); });
+    pane.addEventListener('dragover', e => { if (!files(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+    pane.addEventListener('dragleave', e => { if (!files(e)) return; if (--depth <= 0) { depth = 0; pane.classList.remove('lr-drop'); } });
+    pane.addEventListener('drop', e => {
+      if (!files(e)) return;
+      e.preventDefault();
+      depth = 0;
+      pane.classList.remove('lr-drop');
+      lrOpenFiles(e.dataTransfer.files);
+    });
+  }
+  lrDropInit();
+  lrReady = true;
 
   // markers' age / staleness changes without new data
   setInterval(() => { if (mapPts.size || mapSel || (mapState.masts && (mastErr || mastBusy))) mapDraw(); }, 2000);

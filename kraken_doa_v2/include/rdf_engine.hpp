@@ -3,7 +3,9 @@
 // Mobile direction finding: DoA bearings taken while driving -> a likelihood
 // grid ("heat map") of where the transmitter is. Pure algorithm (no globals,
 // no I/O): used by the live mapper (rdf_mapper.cpp) and the offline drive
-// simulator (tools/rdf_sim.cpp).
+// simulator (tools/rdf_sim.cpp). Ported to JavaScript for the map's ⏯ log
+// replay (lrWorkerMain in kraken_doa.html) - a change here belongs there
+// too; tools/replay_validate.mjs --cpp (with tools/rdf_cmp.cpp) compares them.
 //
 // Pipeline
 //   1. A MUSIC frame (pseudospectrum relative to the array, unit circle CCW)
