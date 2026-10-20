@@ -57,8 +57,10 @@ void request_full();
 
 // {"rdf":{...}}: station + every VFO's live lobe (north frame, 720 x 0.5 deg,
 // linear min..max like the MUSIC DoA plot) and gate state, + every talker's
-// (talkers:[{vfo, tid, label, active, tx, ...}]) - 2 Hz
-std::string status_message();
+// (talkers:[{vfo, tid, label, active, tx, ...}]) - 2 Hz.
+// peek: every talker, without touching the pushes' full / partial cadence
+// (the AI assistant's tools read it - ai_mcp.cpp)
+std::string status_message(bool peek = false);
 // {"rdf_grid":{...}} per VFO whose map changed since the last call (at most
 // every 2 s each; every VFO after request_full())
 std::vector<std::string> grid_messages();

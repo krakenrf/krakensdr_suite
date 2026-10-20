@@ -3,8 +3,13 @@
 Every decoder in the receiver's **Digital Decoder** (sidebar → 🔐 Digital
 Decoder → Mode) is a plugin - the protocols that ship with the suite (P25,
 DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS, ADS-B) as well as the ones you add.
-Plugins are written by hand or by the **🤖 AI Signal Lab**, which has an LLM
-agent write, build and test one for a signal it investigated.
+Plugins are written by hand or by the **🤖 AI assistant** (the web UI's
+right-hand column), which has an LLM agent capture and analyse a signal, then
+write, build and test a plugin for it - in Claude Code's sandbox; the receiver
+runs a plugin the assistant changed sandboxed too (read-only files, no
+network: a plugin needs neither). A plugin folder's `CXXFLAGS` file only
+passes optimisation / target / `-D` flags (plugins/Makefile
+`CXXFLAGS_ALLOWED`): a flag like `-B` would make the compiler run programs.
 
 ## Layout
 

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """KrakenSDR signal tool - capture and measure a signal (numpy only).
 
-Used by the AI Signal Lab (ai/kraken_ai.py) and handy on its own. Captures
-come from heimdall's data port (8091, channel 0 - in wideband / independent
-mode the tuner whose band holds the frequency) and are channelized around
-the requested frequency; everything else works on the resulting
-complex-float32 files (.cf32 + .json sidecar with the sample rate and RF).
+Used by the AI assistant (ai/kraken_ai.py; its capture_iq tool captures
+inside kraken_doa - src/ai_capture.cpp, same file format - and runs analyze
+on the file) and handy on its own. `capture` here is for standalone use: it
+opens its own connection to heimdall's data port (8091, channel 0 - in
+wideband / independent mode the tuner whose band holds the frequency) and
+channelizes around the requested frequency; everything else works on the
+resulting complex-float32 files (.cf32 + .json sidecar with the sample rate
+and RF).
 
   sigtool.py capture --freq HZ [--rate HZ] [--bw HZ] [--seconds S] -o OUT.cf32
   sigtool.py analyze IN.cf32 [--outdir DIR]       report + PNG plots
@@ -555,7 +558,7 @@ def capture(args):
     center = args.center
     st = None
     try:
-        st = heimdall_status(host)
+        st = heimdall_status(host, args.control_port)
     except (OSError, RuntimeError) as e:
         if center is None:
             sys.exit(f"error: cannot read heimdall status ({e}); pass --center HZ")
@@ -608,7 +611,7 @@ def capture(args):
     def reader():
         s = None
         try:
-            s = socket.create_connection((host, 8091), timeout=5)
+            s = socket.create_connection((host, args.data_port), timeout=5)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
             hdr = bytearray(32)
             got = 0
@@ -1033,6 +1036,38 @@ def kmeans1d(v, k, iters=30):
     return np.sort(c), lab
 
 
+def kmeans_rows(V, valid, k, iters):
+    """kmeans1d on every row of V at once (valid = the row's samples; rows
+    may be shorter than V is wide): started the same way (the row's 10..90 %
+    percentiles), an empty cluster keeps its centre. Returns the centres
+    (rows x k - ascending: 1-D clusters keep their order) and each sample's
+    cluster."""
+    R, N = V.shape
+    rows = np.arange(R)[:, None]
+    L = valid.sum(1)
+    Vs = np.sort(np.where(valid, V, np.inf), axis=1)
+    pos = (L[:, None] - 1) * (np.linspace(10, 90, k) / 100)[None, :]   # np.percentile's "linear"
+    lo = np.floor(pos).astype(np.int64)
+    hi = np.minimum(lo + 1, (L - 1)[:, None])
+    fr = pos - lo
+    c = Vs[rows, lo] * (1 - fr) + Vs[rows, hi] * fr
+    Vv = V[valid]
+    base = np.broadcast_to(rows * k, (R, N))[valid]
+    for it in range(iters + 1):
+        # nearest centre = how many midpoints lie below (the centres are in order)
+        mid = (c[:, 1:] + c[:, :-1]) / 2
+        lab = np.zeros((R, N), np.int64)
+        for j in range(k - 1):
+            lab += V > mid[:, j:j + 1]
+        if it == iters:
+            break
+        idx = base + lab[valid]
+        cnt = np.bincount(idx, minlength=R * k).reshape(R, k)
+        sm = np.bincount(idx, weights=Vv, minlength=R * k).reshape(R, k)
+        c = np.where(cnt > 0, sm / np.maximum(cnt, 1), c)
+    return c, lab
+
+
 def cmd_symbols(args):
     x, fs, meta = load(args.input, args.start, args.seconds)
     sps = fs / args.baud
@@ -1044,27 +1079,36 @@ def cmd_symbols(args):
         y = np.abs(x)
     n = max(1, int(round(sps)))
     y = np.convolve(y, np.full(n, 1 / n, np.float32), "same")   # integrate over a symbol (float32)
-    # sample per segment at the phase with the best cluster separation
+    # sample per segment of 200 symbols at the phase (16 tried) with the best
+    # cluster separation - every segment and phase as one array (it was a
+    # Python loop of 16 k-means runs per segment: 13.6 s for 30 s at 4800 Bd)
     seg = int(200 * sps)
-    t_all, v_all = [], []
-
-    def at(t):                      # y at fractional sample times (linear)
+    v_all = []
+    phases = np.linspace(0, sps, 16, endpoint=False)
+    counts = np.array([int((seg - ph) / sps) for ph in phases])
+    N = int(counts.max()) if len(counts) else 0
+    valid = np.arange(N)[None, :] < counts[:, None]                   # 16 x N
+    starts = np.arange(0, len(y) - seg + 1, seg)
+    B = max(1, 4096 // 16)                                            # segments per batch (bounded memory)
+    for b0 in range(0, len(starts), B):
+        p0 = starts[b0:b0 + B].astype(np.float64)
+        S = len(p0)
+        t = (p0[:, None, None] + phases[None, :, None]) + np.arange(N)[None, None, :] * sps
+        t = np.where(valid[None], t, p0[:, None, None])               # padding: any sample, masked out
         i = np.minimum(t.astype(np.int64), len(y) - 2)
         fr = np.minimum(t - i, 1.0).astype(np.float32)
-        return y[i] * (1 - fr) + y[i + 1] * fr
-
-    for p0 in range(0, len(y) - seg + 1, seg):
-        best = None
-        for ph in np.linspace(0, sps, 16, endpoint=False):
-            t = p0 + ph + np.arange(int((seg - ph) / sps)) * sps
-            v = at(t)
-            c, lab = kmeans1d(v, args.levels, 8)
-            within = np.mean((v - c[lab]) ** 2)
-            score = np.var(v) / (within + 1e-9)
-            if best is None or score > best[0]:
-                best = (score, t, v)
-        t_all.append(best[1])
-        v_all.append(best[2])
+        V = (y[i] * (1 - fr) + y[i + 1] * fr).reshape(S * 16, N)
+        M = np.broadcast_to(valid[None], (S, 16, N)).reshape(S * 16, N)
+        c, lab = kmeans_rows(V, M, args.levels, 8)
+        cnt = M.sum(1)
+        mean = np.where(M, V, 0).sum(1) / cnt
+        within = np.where(M, (V - np.take_along_axis(c, lab, 1)) ** 2, 0).sum(1) / cnt
+        var = np.where(M, (V - mean[:, None]) ** 2, 0).sum(1) / cnt
+        score = (var / (within + 1e-9)).reshape(S, 16)
+        best = np.argmax(score, axis=1)                               # the first of equal scores, as before
+        V = V.reshape(S, 16, N)
+        for s_, ph in enumerate(best):
+            v_all.append(V[s_, ph, :counts[ph]])
     if not v_all:
         sys.exit("error: capture too short")
     v = np.concatenate(v_all)
@@ -1080,8 +1124,8 @@ def cmd_symbols(args):
         bit_note = "bits: 1 = higher level"
     else:
         # P25/DMR/NXDN dibits: +3 -> 01, +1 -> 00, -1 -> 10, -3 -> 11 (index 3 = +3)
-        dib = {3: (0, 1), 2: (0, 0), 1: (1, 0), 0: (1, 1)}
-        bits = np.array([b for s in sym for b in dib.get(int(s), (0, 0))], np.uint8)
+        dib = np.array([[1, 1], [1, 0], [0, 0], [0, 1]], np.uint8)    # index = symbol 0..3
+        bits = dib[np.clip(sym, 0, 3)].reshape(-1)
         bit_note = "dibits mapped +3->01 +1->00 -1->10 -3->11 (P25/DMR/NXDN convention)"
     # repeated words = sync candidates
     for L in (24, 32, 48):
@@ -1118,7 +1162,7 @@ def cmd_symbols(args):
     if args.output:
         with open(args.output, "w") as fo:
             fo.write(f"# {len(sym)} symbols, levels {' '.join(f'{l:.1f}' for l in c)}; symbol 0 = lowest\n")
-            s = "".join(str(int(v)) for v in sym)
+            s = (sym.astype(np.uint8) + ord("0")).tobytes().decode()
             for i in range(0, len(s), 100):
                 fo.write(s[i:i + 100] + "\n")
         print(f"symbols written to {args.output}")
@@ -1133,6 +1177,10 @@ def main():
     c.add_argument("--bw", type=float, default=0, help="filter bandwidth, Hz (default 0.8 x rate)")
     c.add_argument("--seconds", type=float, default=10)
     c.add_argument("--host", default=os.environ.get("KRAKEN_HEIMDALL_HOST", "127.0.0.1"))
+    c.add_argument("--data-port", type=int, default=int(os.environ.get("KRAKEN_HEIMDALL_DATA_PORT") or 8091),
+                   help="heimdall's data port (8091)")
+    c.add_argument("--control-port", type=int, default=int(os.environ.get("KRAKEN_HEIMDALL_CONTROL_PORT") or 8092),
+                   help="heimdall's control port (8092)")
     c.add_argument("--center", type=float, default=None, help="receiver centre, Hz (default: ask heimdall)")
     c.add_argument("--channel", type=int, default=None,
                    help="tuner / channel to record (default 0; in wideband / independent mode the tuner whose band holds --freq)")
@@ -1165,7 +1213,7 @@ def main():
     t = sub.add_parser("tones")
     t.add_argument("input")
     a = ap.parse_args()
-    # Stop (SIGTERM from the AI Signal Lab) unwinds normally, so a capture /
+    # Stop (SIGTERM from the AI assistant) unwinds normally, so a capture /
     # extract in progress removes its unfinished .part file
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     try:

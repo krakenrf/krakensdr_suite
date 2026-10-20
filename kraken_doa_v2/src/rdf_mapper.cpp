@@ -918,7 +918,7 @@ void request_full() {
     SH().talkers_full = true;
 }
 
-std::string status_message() {
+std::string status_message(bool peek) {
     Shared& S = SH();
     std::lock_guard<std::mutex> lk(S.mu);
     std::ostringstream o;
@@ -930,9 +930,11 @@ std::string status_message() {
     // (an open tab reconnects after a restart) took every partial push for the
     // whole list - the DF list flashed between one device and all of them.
     // It ignores rdf_part and shows the full list every 2.5 s instead
-    const bool tfull = S.talkers_full || S.pushes % TALKERS_FULL_EVERY == 0;
-    S.talkers_full = false;
-    S.pushes++;
+    const bool tfull = peek || S.talkers_full || S.pushes % TALKERS_FULL_EVERY == 0;
+    if (!peek) {
+        S.talkers_full = false;
+        S.pushes++;
+    }
     o << "{\"" << (tfull ? "rdf" : "rdf_part") << "\":{\"on\":" << (g_enabled.load() ? "true" : "false")
       << ",\"range_km\":" << num(g_range_km.load(), 1)
       << ",\"state\":\"" << S.state << "\",\"station\":";

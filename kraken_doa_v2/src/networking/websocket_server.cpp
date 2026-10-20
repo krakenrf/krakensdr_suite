@@ -1,4 +1,5 @@
 #include "networking/websocket_server.hpp"
+#include "ai_mcp.hpp"
 #include "playback.hpp"
 #include "recorder.hpp"
 #include "utils/json_escape.hpp"
@@ -864,10 +865,12 @@ void WebSocketServer::web_server_main() {
                     if (global_ssl_app && data_ready) {
                         // built every tick (it feeds the scanners); encoded
                         // only for pages without spectrum views
-                        static SpectrumSnapshot snap;
+                        // the snapshot every tick: the views and the AI
+                        // assistant's tools read it
+                        SpectrumSnapshot& snap = MessageBuilders::spectrum_snapshot();
                         const bool legacy = global_ssl_app->numSubscribers(TOPIC_FFT) > 0;
-                        auto message = MessageBuilders::build_fft_message(
-                            g_spec_sockets.empty() ? nullptr : &snap, legacy);
+                        auto message = MessageBuilders::build_fft_message(&snap, legacy);
+                        MessageBuilders::note_spectrum();
                         if (legacy && !message.empty())
                             global_ssl_app->publish(TOPIC_FFT, message, uWS::BINARY, true);
 
@@ -1044,6 +1047,9 @@ void WebSocketServer::web_server_main() {
         });
 
         global_ssl_app = &ssl_app;
+        // the AI assistant's MCP server: a second app on this loop, so its
+        // control tools run on the thread every command runs on
+        ai_mcp::attach();
         ssl_app.run();
 
     } catch (const exception& e) {

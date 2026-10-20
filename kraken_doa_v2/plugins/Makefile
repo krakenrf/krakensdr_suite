@@ -155,7 +155,13 @@ $(LIB_A): $(LIB_OBJS)
 
 # plugins/<id>/CXXFLAGS: extra compiler flags for that plugin (e.g. -O3, last
 # on the command line, so they win over the defaults)
-extra_flags = $(shell cat $(1)/CXXFLAGS 2>/dev/null)
+# Only harmless flags are taken (optimisation, target, defines): a flag such as
+# -B <dir> or -fplugin=... makes the compiler RUN programs - and the AI
+# assistant may write plugin folders (its own builds are sandboxed, a later
+# `make` by the user is not)
+CXXFLAGS_ALLOWED = -O0 -O1 -O2 -O3 -Os -Ofast -ffast-math -funroll-loops -fno-math-errno -ftree-vectorize \
+                   -fno-tree-vectorize -march=% -mtune=% -mcpu=% -D%
+extra_flags = $(filter $(CXXFLAGS_ALLOWED),$(shell cat $(1)/CXXFLAGS 2>/dev/null))
 
 # Linked to a temporary name and renamed: a running copy (kraken_doa runs
 # the plugin) keeps its old inode, and kraken_doa sees the new mtime and

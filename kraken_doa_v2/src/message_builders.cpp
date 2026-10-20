@@ -405,6 +405,22 @@ string MessageBuilders::build_fft_message(SpectrumSnapshot* snap, bool legacy) {
 //   f32 averaging alpha | u32 n | u8 level[n] (0..255 = 0..120 dB, max-pooled)
 // No per-point frequencies (the old type 0 sent a float32 for every point:
 // two thirds of it) and no min envelope (no page ever drew it).
+static SpectrumSnapshot g_spectrum_snapshot;
+static std::atomic<int64_t> g_spectrum_ms{0};
+static std::atomic<double> g_spectrum_center_hz{0};
+
+SpectrumSnapshot& MessageBuilders::spectrum_snapshot() { return g_spectrum_snapshot; }
+
+void MessageBuilders::note_spectrum() {
+    const SpectrumDisplay& d = g_spectrum_snapshot.disp[0];
+    if (!g_spectrum_snapshot.independent && d.valid) g_spectrum_center_hz.store(d.center_hz);
+    g_spectrum_ms.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
+int64_t MessageBuilders::spectrum_ms() { return g_spectrum_ms.load(); }
+double MessageBuilders::spectrum_center_hz() { return g_spectrum_center_hz.load(); }
+
 string MessageBuilders::build_spectrum_view(const SpectrumSnapshot& snap, int display, double lo_off_hz,
                                             double hi_off_hz, uint32_t bins, uint32_t seq,
                                             double* point_step_hz) {

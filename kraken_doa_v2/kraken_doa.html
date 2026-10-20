@@ -169,7 +169,7 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .dig-log div {white-space:pre-wrap;word-break:break-word;border-bottom:1px solid #1b2238}
 .dig-log .t {color:#6f87a6}
 .dig-log .p {color:#4fc3f7}
-/* AI Signal Lab */
+/* Markdown in the AI assistant's answers (aiMd) */
 .ai-result {font-size:12px;line-height:1.45;color:#d6dde8;margin:6px 0;word-break:break-word}
 .ai-result h1,.ai-result h2,.ai-result h3,.ai-result h4 {color:#4fc3f7;font-size:13px;margin:8px 0 3px}
 .ai-result h1 {font-size:14px}
@@ -181,15 +181,6 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .ai-result table {border-collapse:collapse;font-size:11px;margin:4px 0}
 .ai-result td,.ai-result th {border:1px solid #22304a;padding:2px 4px;text-align:left;vertical-align:top}
 .ai-result a {color:#7cb3f0}
-.ai-status {font-size:12px;color:#9fb0c8;margin:4px 0;word-break:break-word}
-.ai-status:empty {display:none}
-.ai-status .ok {color:#81c784}
-.ai-status .btn {margin-left:4px}
-.ai-log .tool {color:#ce93d8}
-.ai-log .res {color:#6f87a6}
-.ai-log .err {color:#ef9a9a}
-.ai-log .st {color:#ffcc80}
-.ai-log .txt {color:#c8d2e0}
 .dig-plug-head {justify-content:space-between;margin-top:10px;border-top:1px solid #22304a;padding-top:6px;cursor:pointer;user-select:none}
 .dig-plug-head:hover > span:first-child {color:#b0c4de !important}
 .dig-plug-caret {display:inline-block;width:10px;font-size:9px;transition:transform 0.15s}
@@ -292,8 +283,6 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .info-dec-facts {width:38%;flex-shrink:0}
 .info-dec-log {flex:1}
 #info-dec-log {max-height:none;font-size:11px}
-.ai-hist {width:230px;flex-shrink:0}
-.ai-chat {flex:1}
 /* 🗣 Voice to Text: the tab's transcripts, the VFO cards' state, the sidebar badge */
 #info-body-voice .info-row select {background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:2px 4px;border-radius:3px;font-size:12px}
 .v2t-head {font-size:11px;color:#8aa8c7;margin:0 0 4px;flex-shrink:0}
@@ -332,7 +321,6 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .ai-hist-item .n {color:#8aa8c7;font-size:11px;word-break:break-word}
 .ai-hist-item .del {background:none;border:none;color:#888;cursor:pointer;font-size:12px;padding:0 2px}
 .ai-hist-item .del:hover {color:#ef9a9a}
-.ai-history {max-height:170px;overflow-y:auto}
 .ai-msg {margin:5px 0;padding:6px 9px;border-radius:7px;max-width:94%;font-size:12px;line-height:1.45;word-break:break-word}
 .ai-msg.user {background:#1b4f8f;color:#fff;margin-left:auto;white-space:pre-wrap;width:fit-content}
 .ai-msg.assistant {background:#1f2740;border:1px solid #2a3858;color:#d6dde8}
@@ -346,12 +334,77 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .ai-msg table {border-collapse:collapse;font-size:11px;margin:4px 0}
 .ai-msg td,.ai-msg th {border:1px solid #22304a;padding:2px 4px;text-align:left}
 .ai-msg a {color:#7cb3f0}
-.ai-acts summary {font-size:11px;color:#888;cursor:pointer;margin-top:4px}
+/* 🤖 AI assistant: the docked right-hand column (kraken_doa.html "AI ASSISTANT") */
+.ai-dock {flex:0 0 var(--ai-w,360px);width:var(--ai-w,360px);min-width:260px;max-width:60vw;display:flex;flex-direction:column;background:#141428;border-left:1px solid #0f3460;min-height:0}
+.ai-dock-rs {flex:0 0 5px;width:5px;cursor:col-resize;background:#0f3460;touch-action:none}
+.ai-dock-rs:hover,.ai-dock-rs.dragging {background:#1976d2}
+body.ai-rs {cursor:col-resize;user-select:none}
+.ai-strip {flex:0 0 30px;width:30px;background:#16213e;border-left:1px solid #0f3460;display:flex;flex-direction:column;align-items:center;gap:8px;padding-top:8px;cursor:pointer;user-select:none}
+.ai-strip:hover {background:#1a2a4a}
+.ai-strip .v {writing-mode:vertical-rl;transform:rotate(180deg);font-size:12px;color:#8aa8c7;letter-spacing:1px}
+.ai-dk-head {display:flex;align-items:center;gap:6px;padding:6px 8px;background:#16213e;border-bottom:1px solid #0f3460;flex-shrink:0}
+.ai-dk-head .t {font-weight:bold;color:#7cb3f0;font-size:13px;white-space:nowrap}
+.ai-dk-head .sp {flex:1}
+.ai-dk-head button {background:none;border:1px solid transparent;color:#9fb0c8;cursor:pointer;font-size:14px;padding:1px 5px;border-radius:3px}
+.ai-dk-head button:hover {border-color:#1a4a7a;color:#e0e0e0}
+.ai-dot {font-size:11px}
+.ai-ro {display:flex;align-items:center;gap:4px;font-size:11px;color:#9fb0c8;cursor:pointer;white-space:nowrap;padding:1px 6px;border:1px solid #22304a;border-radius:10px}
+.ai-ro.on {background:#5a4520;border-color:#8d6e30;color:#ffe0b2}
+.ai-ro input {margin:0}
+.ai-dk-warn {font-size:11px;color:#ffcc80;background:#2a2410;border-bottom:1px solid #4a3a10;padding:4px 8px;flex-shrink:0}
+/* the model / effort row (⚙) */
+.ai-dk-set {display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:5px 8px;background:#121a30;border-bottom:1px solid #0f3460;font-size:11px;color:#9fb0c8;flex-shrink:0}
+.ai-dk-set label {display:flex;align-items:center;gap:4px;white-space:nowrap}
+.ai-dk-set select {background:#1a1a2e;border:1px solid #2a4a7a;color:#e0e0e0;border-radius:3px;font-size:11px;padding:1px 3px;height:22px}
+.ai-dk-set .n {flex-basis:100%;color:#7f8fa8;font-size:10px}
+.ai-dk-warn:empty {display:none}
+.ai-dk-hist {flex:1;overflow-y:auto;padding:6px 8px;min-height:0;scrollbar-width:thin;scrollbar-color:#2a3858 #141428}
+.ai-dk-msgs {flex:1;overflow-y:auto;padding:6px 8px;min-height:0;scrollbar-width:thin;scrollbar-color:#2a3858 #141428}
+.ai-dk-msgs .ai-msg {max-width:100%}
+.ai-dk-msgs .ai-msg.user {max-width:88%}
+.ai-dk-empty {color:#8aa8c7;font-size:12px;line-height:1.5;padding:6px 2px}
+.ai-steps {margin:3px 0;font-size:11px}
+.ai-step {display:flex;gap:5px;align-items:baseline;color:#8aa8c7;padding:1px 0;cursor:pointer;min-width:0}
+.ai-step .n {color:#ce93d8;white-space:nowrap}
+.ai-step.rx .n {color:#4fc3f7}
+.ai-step.ctl .n {color:#ffb74d;font-weight:bold}
+.ai-step .d {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
+.ai-step .r {white-space:nowrap}
+.ai-step.err .r,.ai-step.err .n {color:#ef9a9a}
+.ai-step-res {font-size:10.5px;color:#9fb0c8;background:#10101e;border:1px solid #22304a;border-radius:3px;padding:3px 5px;margin:1px 0 3px 14px;white-space:pre-wrap;word-break:break-word;max-height:160px;overflow-y:auto}
+.ai-note {font-size:11px;color:#9fb0c8;margin:3px 0}
+.ai-note.err {color:#ef9a9a}
+.ai-working {font-size:11px;color:#ffcc80;margin:4px 0}
+.ai-working .ai-spin {display:inline-block;animation:aispin 1s linear infinite}
+@keyframes aispin {to {transform:rotate(360deg)}}
+.ai-mark-card {border:1px solid #6a1b9a;background:#1e1530;border-radius:5px;padding:6px 8px;margin:4px 0 8px;font-size:12px;color:#d6dde8}
+.ai-mark-card .h {display:flex;gap:6px;align-items:baseline}
+.ai-mark-card .h b {color:#ce93d8}
+.ai-mark-card .h .sp {flex:1}
+.ai-mark-card button {font-size:11px}
+.ai-dk-chips {display:flex;flex-wrap:wrap;gap:4px;padding:0 8px 4px;flex-shrink:0}
+.ai-dk-chips:empty {display:none}
+.ai-chip {font-size:11px;background:#1a2a4a;color:#b0c4de;border:1px solid #22304a;border-radius:10px;padding:2px 8px;cursor:pointer}
+.ai-chip:hover {border-color:#1976d2;color:#fff}
+.ai-dk-in {display:flex;gap:6px;padding:6px 8px;border-top:1px solid #0f3460;flex-shrink:0;align-items:flex-end}
+.ai-dk-in textarea {flex:1;min-width:0;resize:none;background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;border-radius:4px;padding:5px 7px;font:12px Arial;line-height:1.35;max-height:140px}
+.ai-dk-in textarea:focus {outline:none;border-color:#1976d2}
+.ai-dk-foot {font-size:10px;color:#6f87a6;padding:0 8px 5px;flex-shrink:0;min-height:0}
+.ai-dk-foot:empty {display:none}
+body.ai-dk-off .ai-dock,body.ai-dk-off .ai-dock-rs,body.ai-dk-off .ai-strip {display:none !important}
+body.ai-dk-col .ai-dock,body.ai-dk-col .ai-dock-rs {display:none !important}
+body:not(.ai-dk-col) .ai-strip {display:none !important}
+.ai-fab {display:none}
+@media (max-width:900px), (pointer:coarse) and (max-width:1280px) {
+  .ai-dock {position:fixed;top:0;right:0;bottom:0;left:0;width:auto;max-width:none;z-index:1002;border-left:none}
+  .ai-dock-rs,.ai-strip {display:none !important}
+  .ai-fab {display:flex;position:fixed;right:14px;bottom:14px;width:48px;height:48px;border-radius:50%;background:#1565c0;color:#fff;font-size:24px;align-items:center;justify-content:center;z-index:1001;box-shadow:0 2px 8px rgba(0,0,0,0.5);cursor:pointer;border:none}
+  body:not(.ai-dk-col) .ai-fab,body.ai-dk-off .ai-fab {display:none}
+}
 @media (max-width:768px) {
   .info-body {flex-direction:column}
-  .info-dec-facts,.ai-hist {width:auto;max-height:35%}
+  .info-dec-facts {width:auto;max-height:35%}
 }
-#ai-instr {background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;border-radius:3px;font-size:12px;padding:4px;box-sizing:border-box;resize:vertical}
 .slider {flex:1;height:5px;-webkit-appearance:none;background:#0f3460;outline:none;border-radius:2px;max-width:120px}
 .slider::-webkit-slider-thumb {-webkit-appearance:none;width:14px;height:14px;background:#1976d2;cursor:pointer;border-radius:50%}
 .slider::-moz-range-thumb {width:14px;height:14px;background:#1976d2;cursor:pointer;border-radius:50%;border:none}
@@ -645,6 +698,16 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-vs-row {display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px}
 .map-vs-row label, .vs-it label {display:flex;align-items:center;gap:3px;white-space:nowrap}
 #map-vs-list {margin-top:4px;border-top:1px solid #2a4a7a}
+/* 🤖 the assistant's map layers (🤖 AI MAP LAYERS) - the viewshed panel's look */
+/* (own row classes: the viewshed's .vs-it rows are hidden by its line of sight mode) */
+.map-ai {flex:none;max-height:40%}
+.aim-it {padding:3px 0;border-bottom:1px solid #1d2c4a}
+.aim-it .l1 {display:flex;gap:4px 6px;align-items:center}
+.aim-it .sw {width:12px;height:12px;border-radius:2px;border:1.5px solid;box-sizing:border-box;cursor:pointer;flex:none}
+.aim-it .nm {font-weight:bold;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aim-it .map-btn {height:20px;min-width:20px;padding:0 4px;font-size:11px}
+.aim-it.off .nm, .aim-it.off .aim-d {opacity:.5}
+.aim-it .aim-d {color:#8296b4;font-size:10px;margin:1px 0 0 18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .vs-it {padding:3px 0;border-bottom:1px solid #1d2c4a}
 .vs-it .l1, .vs-it .l2 {display:flex;gap:4px 6px;align-items:center}
 .vs-it .l2 {flex-wrap:wrap;padding-left:18px;margin-top:2px}
@@ -947,7 +1010,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 }
 </style>
 </head>
-<body>
+<body class="ai-dk-off">
 <div class="app-container">
   <!-- LEFT SIDEBAR -->
   <div class="sidebar">
@@ -1689,61 +1752,6 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       </div>
     </div>
 
-    <!-- AI Signal Lab: identify a signal and write decoder plugins with an LLM -->
-    <div class="sb-section" id="sb-ai">
-      <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🤖 AI Signal Lab<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Points an AI coding agent (Claude Code, or another LLM CLI) at the signal in a VFO. <b>Investigate</b> captures it, measures it (spectrum, bursts, modulation, symbol rate, sync words) and asks the AI what it is. <b>Create Decoder</b> then has the AI write, build and test a decoder plugin for it, which appears in the Digital Decoders box and the VFOs' decoder lists. <b>Custom Instructions</b> add your own hints. The AI's answers, the conversation and its steps show in the 🤖 AI tab under the waterfall. Uses your LLM account; enable it <span class="os-lin">on the Pi with <code>python3 ai/kraken_ai.py setup</code></span><span class="os-win">on the receiver's computer with <code>py -3 ai\kraken_ai.py setup</code> (in the kraken_doa_v2 folder)</span>.</span></span></h3>
-        <span class="sb-toggle">▼</span>
-      </div>
-      <div class="sb-content">
-        <div class="ctrl-row" style="justify-content:space-between">
-          <span class="cv" style="margin-left:0;flex:1;min-width:0"><span id="ai-dot" style="color:#777">&#9679;</span> <span id="ai-conn">Checking…</span></span>
-          <button class="btn sm" type="button" id="ai-test-btn" onclick="aiTest()" title="Send a one-line request to the LLM">Test</button>
-        </div>
-        <div id="ai-setup" class="dig-help" style="display:none"></div>
-        <div id="ai-token-warn" class="dig-warn" style="display:none">No API token is set: anyone who can open this page can start the AI agent (and build code) on this receiver. See README → API token.</div>
-        <div class="ctrl-row">
-          <label style="min-width:30px">VFO:</label>
-          <select id="ai-vfo" onchange="aiVfoChanged()" style="width:64px"></select>
-          <input type="text" id="ai-freq" style="width:92px;font-family:monospace" title="Frequency to investigate, MHz (default: the VFO's). Must lie in the receiver's current span." placeholder="MHz">
-          <span style="font-size:12px;color:#888">MHz</span>
-        </div>
-        <div class="ctrl-row">
-          <label style="min-width:30px">Capture:</label>
-          <select id="ai-secs" style="width:70px">
-            <option value="5">5 s</option><option value="10" selected>10 s</option><option value="20">20 s</option>
-            <option value="30">30 s</option><option value="60">60 s</option>
-          </select>
-          <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">How much of the signal to record for the analysis (at the VFO's bandwidth). Use a longer capture for signals that are only on now and then; the AI can also make further captures itself.</span></span>
-        </div>
-        <button class="btn primary" type="button" id="ai-investigate" onclick="aiInvestigate()" style="width:100%;margin:2px 0">🔍 Investigate this signal with AI</button>
-        <div class="ctrl-row" style="gap:4px;margin:4px 0">
-          <button class="btn" type="button" id="ai-create" onclick="aiCreate()" disabled style="flex:1" title="Have the AI write, build and test a decoder plugin for the investigated signal">🛠 Create Decoder</button>
-          <button class="btn" type="button" id="ai-instr-btn" onclick="aiToggleInstr()" style="flex:1" title="Your own hints for the AI">✍ Custom Instructions</button>
-        </div>
-        <div id="ai-instr-box" style="display:none">
-          <textarea id="ai-instr" rows="5" style="width:100%" oninput="aiSaveInstr()"
-            placeholder="Anything that helps the AI: what you know about the signal, links to specifications, what the decoder should show (e.g. &quot;list the unit IDs as facts&quot;), what to ignore..."></textarea>
-          <div class="dig-help">Sent with Create Decoder and the next investigation. Kept in this browser.</div>
-        </div>
-        <div class="ctrl-row" id="ai-plugin-row" style="display:none">
-          <label style="min-width:56px">Plugin id:</label>
-          <input type="text" id="ai-plugin-id" maxlength="32" style="flex:1;min-width:0;font-family:monospace" title="Folder name of the plugin: a-z 0-9 _ -">
-        </div>
-        <div class="ctrl-row" id="ai-job-row" style="display:none">
-          <span id="ai-job" style="flex:1;font-size:12px;color:#ffcc80;min-width:0"></span>
-          <button class="btn sm off" type="button" onclick="aiCancel()">■ Stop</button>
-        </div>
-        <!-- status only: the AI's answers, the conversation and the agent's
-             steps are in the AI tab of the panel under the waterfall -->
-        <div id="ai-status" class="ai-status"></div>
-        <div class="ctrl-row" style="justify-content:space-between;margin-top:10px;border-top:1px solid #22304a;padding-top:6px">
-          <span style="font-size:12px;color:#888">History</span>
-          <button class="btn sm" type="button" onclick="infoPanelOpen('ai')" title="Show the conversations in the large panel under the waterfall">⤢ Chat</button>
-        </div>
-        <div id="ai-history" class="ai-history"></div>
-      </div>
-    </div>
 
     <!-- Decoder Logging (decoder_log.cpp) - all modes -->
     <div class="sb-section" id="declog-section">
@@ -2060,12 +2068,11 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <span class="wf-panel-btns" style="margin-left:auto;display:flex;gap:4px">
             <button class="btn sm" type="button" id="map-btn" onclick="mapToggle()" title="Street / satellite map in the right-hand pane: positions the decoders report (e.g. ADS-B aircraft)">🗺 Map</button>
             <button class="btn sm" type="button" onclick="infoPanelOpen('dec')" title="Digital decoders: one tab per decoder mode">🔐 Decoders</button>
-            <button class="btn sm" type="button" onclick="infoPanelOpen('ai')" title="AI Signal Lab: investigated signals and their chats">🤖 AI</button>
             <button class="btn sm" type="button" onclick="infoPanelOpen('voice')" title="Voice to Text: what was said on the VFOs with Transcribe ticked">🗣 Voice</button>
           </span>
         </div>
-        <!-- Bottom panel: more room for the digital decoder's data and the
-             AI Signal Lab's conversations (tabs) -->
+        <!-- Bottom panel: more room for the digital decoders' data and the
+             Voice to Text transcripts (tabs) -->
         <div id="info-panel" class="info-panel" style="display:none">
           <div class="info-resize" id="info-resize" title="Drag to resize"></div>
           <div class="info-tabs">
@@ -2095,19 +2102,6 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
                   <button class="btn sm" type="button" onclick="digClearTab(digTabShown)" title="Clear this tab's log (lines up to now)">Clear</button>
                 </div>
                 <div class="scroll dig-log" id="info-dec-log"></div>
-              </div>
-            </div>
-          </div>
-          <div class="info-body" id="info-body-ai" style="display:none">
-            <div class="info-col ai-hist">
-              <div class="info-caption">Investigated signals</div>
-              <div class="scroll" id="info-ai-hist"></div>
-            </div>
-            <div class="info-col ai-chat">
-              <div class="scroll" id="info-ai-chat"></div>
-              <div class="info-row">
-                <input type="text" id="info-ai-ask" placeholder="Ask about this signal…" onkeydown="if(event.key==='Enter'){aiAskFrom('info-ai-ask')}">
-                <button class="btn sm primary" type="button" onclick="aiAskFrom('info-ai-ask')">Send</button>
               </div>
             </div>
           </div>
@@ -2153,6 +2147,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <div class="map-tl">
             <div class="map-legend" id="map-legend" style="display:none"></div>
             <div class="map-vs" id="map-vs" style="display:none"></div>
+            <div class="map-vs map-ai" id="map-ai" style="display:none"></div>
           </div>
           <div class="map-ctl map-ctl-tr">
             <button type="button" class="map-btn" onclick="mapZoomBy(1)" title="Zoom in (mouse wheel / double-click)">+</button>
@@ -2200,7 +2195,48 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       </div>
     </div>
   </div>
+
+  <!-- 🤖 AI assistant: docked right-hand column (ai_manager.cpp, ai_mcp.cpp,
+       ai/kraken_ai.py; script block "AI ASSISTANT"). Shown while the assistant
+       is enabled on the receiver; collapses to a strip -->
+  <div class="ai-dock-rs" id="ai-dock-rs" title="Drag to resize the assistant (double-click: default width)"></div>
+  <aside class="ai-dock" id="ai-dock" aria-label="AI assistant">
+    <div class="ai-dk-head">
+      <span class="t">🤖 Assistant</span>
+      <span class="ai-dot" id="ai-dk-dot" title="">&#9679;</span>
+      <span class="sp"></span>
+      <label class="ai-ro" id="ai-dk-ro-l" title="Read only: the assistant may look at the receiver, but not tune, change VFOs / decoders or save anything. Applies to every page using this receiver">
+        <input type="checkbox" id="ai-dk-ro" onchange="aiSetReadonly(this.checked)"> Read only</label>
+      <button type="button" id="ai-dk-set-btn" onclick="aiToggleSettings()" title="Model and effort">⚙</button>
+      <button type="button" onclick="aiNewChat()" title="New conversation">＋</button>
+      <button type="button" id="ai-dk-hist-btn" onclick="aiToggleHistory()" title="Earlier conversations">🕘</button>
+      <button type="button" onclick="aiDockCollapse(true)" title="Collapse the assistant to a strip">⟩</button>
+    </div>
+    <div class="ai-dk-warn" id="ai-dk-warn"></div>
+    <div class="ai-dk-set" id="ai-dk-set" style="display:none">
+      <label title="Which Claude model answers the next questions. Default (in brackets) = the model set up on the receiver (python3 ai/kraken_ai.py setup --model), else your Claude account's default. Opus: the most capable, slowest, ~5x Sonnet's cost; Haiku: fastest, cheapest, weakest at long tasks">Model
+        <select id="ai-dk-model" onchange="aiSetModel(this.value)"></select></label>
+      <label title="How much it thinks before answering and acting: higher = better on hard tasks (identifying a transmitter, writing a plugin), slower and dearer. Default (in brackets) = the picked model's own default level - your Claude Code settings (effortLevel) don't apply to the assistant">Effort
+        <select id="ai-dk-effort" onchange="aiSetEffort(this.value)"></select></label>
+      <span class="n" id="ai-dk-set-n"></span>
+    </div>
+    <div class="ai-dk-hist" id="ai-dk-hist" style="display:none"></div>
+    <div class="ai-dk-msgs" id="ai-dk-msgs"></div>
+    <div class="ai-dk-chips" id="ai-dk-chips"></div>
+    <div class="ai-dk-in">
+      <textarea id="ai-dk-q" rows="2" placeholder="Ask about what you see, a signal, the decoded data - or tell it what to do"
+        onkeydown="aiInputKey(event)" oninput="aiInputGrow()"></textarea>
+      <button class="btn primary" type="button" id="ai-dk-send" onclick="aiSendOrStop()">Send</button>
+    </div>
+    <div class="ai-dk-foot" id="ai-dk-foot"></div>
+  </aside>
+  <div class="ai-strip" id="ai-strip" onclick="aiDockCollapse(false)" title="Open the AI assistant">
+    <span style="font-size:16px">🤖</span>
+    <span class="ai-dot" id="ai-strip-dot">&#9679;</span>
+    <span class="v">Assistant</span>
+  </div>
 </div>
+<button type="button" class="ai-fab" id="ai-fab" onclick="aiDockCollapse(false)" title="AI assistant">🤖</button>
 
 <!-- 📻 Saved frequency editor (see 📻 SAVED FREQUENCIES) -->
 <div class="sf-dlg-bg" id="sf-dlg-bg" style="display:none" onpointerdown="if(event.target===this)sfDlgCancel()">
@@ -2361,6 +2397,23 @@ let v2tStatus = null, v2tList = [], v2tUnseen = 0;
 // transcripts' DoA lobes shown on the 🗺 map (id -> {L, col, el}) and those
 // asked for (mapDrawNow -> v2tLobeDraw reads them)
 let v2tLobes = new Map(), v2tLobeWant = new Set();
+// 🤖 the assistant's map layers (see 🤖 AI MAP LAYERS): the receiver's list
+// (each feature with its projected points, added here), per browser the
+// hidden layers + the panel folded (localStorage kraken_aim), where a clicked
+// line / area's popup sits. mapDrawNow -> aimDraw reads them
+let aimLayers = [], aimSeq = 0, aimPopAt = null;
+const aimUi = (() => {
+  const d = {hide: {}, open: true};
+  try {
+    const s = JSON.parse(localStorage.getItem('kraken_aim') || '{}');
+    if (s.hide && typeof s.hide === 'object') d.hide = s.hide;
+    if (typeof s.open === 'boolean') d.open = s.open;
+  } catch (e) {}
+  return d;
+})();
+// this page's id: the assistant's map / viewshed commands are carried out by
+// the page that asked (AI_PAGE / AI_ASK "page")
+const aiPageId = (() => { const a = new Uint8Array(8); (window.crypto || {getRandomValues: x => x.forEach((_, i) => x[i] = Math.random() * 256)}).getRandomValues(a); return [...a].map(b => b.toString(16).padStart(2, '0')).join(''); })();
 // 📡 OpenStreetMap masts layer (see 📡 OSM MASTS): "n123" -> mast, the
 // zoom-12 cells loaded ("x,y" -> when), masts drawn in the view, the
 // loader's state, the region around the station (centre, half-width km -
@@ -4512,7 +4565,7 @@ function drawBox() {
   // 📻 Saved frequencies: tags at the top + faint lines (sfDrawSpectrum)
   sfDrawSpectrum(ctx, w, h);
 
-  // AI Signal Lab: an "AI" badge above every investigated frequency
+  // AI assistant: an "AI" badge above every signal it identified
   aiDrawMarkers(ctx, w);
 
   // Also draw on waterfall overlay
@@ -7307,8 +7360,8 @@ function connect() {
     // Request decimator info on connection (includes per-decimator bandwidth and demod mode)
     setTimeout(() => requestDecimatorInfo(), 500);
 
-    // AI Signal Lab state + decoder plugin list
-    setTimeout(() => send('AI_STATE'), 800);
+    // AI assistant state + decoder plugin list
+    setTimeout(() => { send('AI_STATE'); send('AI_PAGE:' + aiPageId); }, 800);
 
     // incidents for the decoder tabs (then pushed when they change)
     setTimeout(() => send('GET_INCIDENTS'), 820);
@@ -7391,6 +7444,9 @@ function connect() {
           else if(msg.ai_error) { aiOnError(msg.ai_error); }
           else if(msg.ai_sessions) { aiOnSessions(msg.ai_sessions); }
           else if(msg.ai_session) { aiOnSession(msg.ai_session); }
+          else if(msg.ai_marks) { aiOnMarks(msg.ai_marks); }
+          else if(msg.ai_map) { aimOnLayers(msg.ai_map); }
+          else if(msg.ai_page) { aiPageCmd(msg.ai_page); }
           else if(msg.voice2text) { v2tOnMessage(msg.voice2text); }
           else if(msg.decimator_added) {
             requestDecimatorInfo(); // Refresh the list
@@ -8382,7 +8438,7 @@ function paneDrawSpec(p) {
 function paneDrawAllOverlays() { panes.forEach(paneDrawOverlay); }
 
 // VFO bars of the VFOs on this tuner (across spectrum + waterfall) and the
-// AI Signal Lab badges of investigated frequencies in view
+// AI assistant: badges of the signals it identified, in view
 function paneDrawOverlay(p) {
   const c = $id('tpane-ov-' + p.ch);
   if (!c || !p.sw) return;
@@ -8466,8 +8522,8 @@ function paneDrawOverlay(p) {
   }
   ctx.font = 'bold 9px sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  for (const s of (typeof aiSessions !== 'undefined' ? aiSessions : [])) {
-    const f = s.freq_hz / 1e6;
+  for (const s of (typeof aiMarks !== 'undefined' && !document.body.classList.contains('ai-dk-off') ? aiMarks : [])) {
+    const f = s.hz / 1e6;
     if (f < span[0] || f > span[1]) continue;
     const x = paneX(p, f);
     ctx.fillStyle = '#6a1b9a';
@@ -8507,7 +8563,7 @@ function paneDown(p, e) {
   const {x, y} = paneXY(e);
   paneSelect(p.ch);
   const ai = p.ai.find(b => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1);
-  if (ai) { aiOpenSession(ai.id); return; }
+  if (ai) { aiShowMark(ai.id); return; }
   const sft = sfSpecAt(p.sf || [], x, y, 2);   // a saved frequency's tag: tune there
   if (sft) { sfTune(sft.fs[0].id, {tuner: p.ch}); return; }
   if (!paneSpan(p)) return;
@@ -9847,7 +9903,6 @@ function addTouchHandlers(el, down, move, up) {
     if (infoTab === 'dig:' && infoOpen('dec')) infoPanelOpen('dec');
     digRenderAll();
     aiRenderPlugins();
-    aiQueueRender();   // Create / Improve label depends on the list
   }
 
   // the plugin a VFO's decoder shows data of: the fixed one, or in Auto detect
@@ -9906,7 +9961,6 @@ function addTouchHandlers(el, down, move, up) {
     }
     for (const d of info) digVfoMhz[d.id] = (vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6).toFixed(4);
     digRenderAll();
-    aiOnDecimatorInfo(info);
   }
 
   // Tick on a VFO card: decoder on (with the mode picked in its list) / off
@@ -10143,113 +10197,65 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
 
 
-  // --- AI Signal Lab (ai_manager.cpp drives ai/kraken_ai.py) ---
-  // ai_state: config + current job + current session (analysis); ai_event:
-  // one event of the running job ({seq, kind, t, e:{ev, ...}}). The page keeps
-  // the job's events (the server replays them in ai_state.log on connect).
+  // ===========================================================================
+  // 🤖 AI ASSISTANT - the docked right-hand column (ai_manager.cpp runs
+  // ai/kraken_ai.py: Claude Code with the receiver's MCP server, ai_mcp.cpp)
+  // ---------------------------------------------------------------------------
+  // ai_state: config, the running question, the current conversation (+ log =
+  // its events so far, for a page opened meanwhile); ai_event {seq, kind, t,
+  // e:{ev,...}}: question | session | status | delta (streamed text) | text (a
+  // finished text block) | tool / tool_result (a step) | denied | error |
+  // usage | done | exit; ai_session = a conversation's chat.json + its
+  // activity (the same events, saved); ai_sessions = the list; ai_marks = the
+  // identifications (spectrum badges). One conversation is current for every
+  // page (AI_SESSION_SELECT switches it), one question runs at a time.
+  // ===========================================================================
   let aiState = null;
-  let aiLog = [];
+  let aiLog = [];              // events of the current conversation so far
   let aiLastSeq = 0;
-  let aiErrorText = '';
-  let aiTestText = '';
-  let aiFreqEdited = false;
-  let aiTick = null;
-  let aiRenderQueued = false;
+  let aiSessions = [];
+  let aiConv = null;           // ai_session of the current conversation
+  let aiMarks = [];
+  let aiMarkShown = null;      // an identification shown as a card (its id)
+  let aiErr = '';
+  let aiHistOpen = false;
+  let aiAskedHere = false;     // this page asked the running question (it follows the answer)
+  let aiOpenSteps = {};        // tool_use id -> result shown
+  let aiRenderQ = false;
+  let aiMarkerRects = [];
+  let aiMarkerConsumed = false;
+  const AI_DOCK_W = 360;
+  // the receiver's tools that CHANGE it (shown in amber in the steps)
+  const AI_CONTROL_TOOLS = ['tune', 'set_gain', 'add_vfo', 'set_vfo', 'set_decoder_option', 'remove_vfo', 'set_doa',
+                            'save_frequency', 'remember_signal', 'forget_signal'];
 
-  function aiQueueRender() {
-    if (aiRenderQueued) return;
-    aiRenderQueued = true;
-    requestAnimationFrame(() => { aiRenderQueued = false; aiRender(); });
-  }
-
-  function aiOnState(st) {
-    // a job that just started: the AI tab follows it (a new investigation
-    // has no session until it is done - the AI_JOB view shows it meanwhile)
-    if (st.busy && (!aiState || !aiState.busy) && st.job) {
-      if (st.job.kind === 'investigate') aiViewId = AI_JOB;
-      else if (['ask', 'create'].includes(st.job.kind) && st.session && st.session.id) aiViewId = st.session.id;
-    }
-    aiState = st;
-    if (st.log) {
-      aiLog = st.log.slice();
-      aiLastSeq = st.seq || 0;
-    }
-    if (st.busy && !aiTick) aiTick = setInterval(aiQueueRender, 1000);
-    if (!st.busy && aiTick) { clearInterval(aiTick); aiTick = null; }
-    aiQueueRender();
-  }
-
-  function aiOnEvent(x) {
-    if (x.seq <= aiLastSeq && x.e.ev !== 'start') return;
-    if (x.e.ev === 'start') aiLog = [];
-    aiLastSeq = x.seq;
-    aiLog.push(x);
-    if (aiLog.length > 300) aiLog = aiLog.slice(aiLog.length - 300);
-    const e = x.e;
-    if (e.ev === 'done' && e.kind === 'test')
-      aiTestText = e.ok ? ' · ✔ connected' : ' · ✗ no answer';
-    if (e.ev === 'done' && e.kind === 'investigate' && e.ok) {
-      const pid = $id('ai-plugin-id');
-      if (pid) pid.value = e.plugin_id || aiSlug(e.signal_name);
-    }
-    // the job view becomes the session the job created
-    if (e.ev === 'done' && e.session && aiViewId === AI_JOB) {
-      aiViewId = e.session;
-      send('AI_SESSION_GET:' + e.session);
-    }
-    aiQueueRender();
-  }
-
-  function aiOnError(x) {
-    aiErrorText = x.error;
-    aiQueueRender();
-  }
-
-  function aiSlug(name) {
-    return String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 32);
-  }
-
-  function aiElapsed(ms) {
-    const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
-    return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s';
-  }
-
-  // absolute paths in tool calls -> relative to kraken_doa_v2 / the session
-  function aiShort(t) {
-    return String(t || '').replace(/(\/[\w.\-]+)+\/(?=(ai|plugins)\/)/g, '')
-      .replace(/ai\/sessions\/[\w.\-]+\//g, '');
-  }
-
-  // Minimal, safe Markdown: everything is escaped first, then a few
-  // constructs are turned into tags (headings, lists, code, bold, tables,
-  // http(s) links)
   function aiMd(src) {
     const lines = String(src || '').replace(/\r/g, '').split('\n');
     const inline = t => digEsc(t)
       .replace(/`([^`]+)`/g, '<code>$1</code>')
       .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
-      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+      .replace(/(^|[\s(])(https?:\/\/[^\s<)"]+[^\s<)".,;:!?])/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
     let out = '', list = null, para = [], table = [], code = null;
     const flushPara = () => { if (para.length) { out += '<p>' + para.map(inline).join(' ') + '</p>'; para = []; } };
     const flushList = () => { if (list) { out += `</${list}>`; list = null; } };
     const flushTable = () => {
       if (!table.length) return;
       const rows = table.filter(r => !/^\s*\|?[\s:|-]+$/.test(r));
-      out += '<table>' + rows.map((r, i) => '<tr>' + r.trim().replace(/^\||\|$/g, '').split('|')
-        .map(c => (i ? '<td>' : '<th>') + inline(c.trim()) + (i ? '</td>' : '</th>')).join('') + '</tr>').join('') + '</table>';
+      out += '<table>' + rows.map((r, i) => '<tr>' + r.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|')
+        .map(c => i ? `<td>${inline(c.trim())}</td>` : `<th>${inline(c.trim())}</th>`).join('') + '</tr>').join('') + '</table>';
       table = [];
     };
     for (const raw of lines) {
-      if (/^\s*```/.test(raw)) {
-        if (code) { out += '<pre><code>' + digEsc(code.join('\n')) + '</code></pre>'; code = null; }
-        else { flushPara(); flushList(); flushTable(); code = []; }
+      const line = raw.replace(/\s+$/, '');
+      if (code) {
+        if (/^\s*```/.test(line)) { out += '<pre><code>' + digEsc(code.join('\n')) + '</code></pre>'; code = null; }
+        else code.push(raw);
         continue;
       }
-      if (code) { code.push(raw); continue; }
-      const line = raw.replace(/\s+$/, '');
-      if (/^(SIGNAL_NAME|SUGGESTED_PLUGIN_ID|PLUGIN_READY|PLUGIN_FAILED):/.test(line.trim())) continue;
       let m;
-      if (/^\s*\|/.test(line)) { flushPara(); flushList(); table.push(line); continue; }
+      if (/^\s*```/.test(line)) { flushPara(); flushList(); flushTable(); code = []; continue; }
+      if (/^\s*\|.*\|\s*$/.test(line)) { flushPara(); flushList(); table.push(line); continue; }
       flushTable();
       if ((m = line.match(/^(#{1,4})\s+(.*)$/))) {
         flushPara(); flushList();
@@ -10277,178 +10283,546 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     return out;
   }
 
-  function aiLogLine(x) {
-    const e = x.e, t = new Date(x.t).toLocaleTimeString([], {hour12: false});
-    switch (e.ev) {
-      case 'start': return `<div class="st">${t} ▶ ${digEsc(e.label)}</div>`;
-      case 'status': return `<div class="st">${t} ⏳ ${digEsc(e.msg || e.state)}</div>`;
-      case 'text': return `<div class="txt">${digEsc(e.text)}</div>`;
-      case 'tool': return `<div class="tool">🔧 ${digEsc(e.name)}: ${digEsc(aiShort(e.detail))}</div>`;
-      case 'tool_result': return `<div class="res">↳ ${e.ok ? '' : '✗ '}${digEsc(aiShort(e.detail).slice(0, 400))}</div>`;
-      case 'report': return `<div class="res">${digEsc(e.text)}</div>`;
-      case 'usage': return `<div class="st">${t} agent: ${e.turns ?? '?'} turns, ${e.duration_s ?? '?'} s` +
-        (e.cost_usd != null ? `, $${Number(e.cost_usd).toFixed(2)} (API-equivalent)` : '') +
-        (e.denied ? `, ${e.denied} tool call(s) refused` : '') + '</div>';
-      case 'error': return `<div class="err">${t} ✗ ${digEsc(e.msg)}</div>`;
-      case 'done': return `<div class="st">${t} ${e.ok ? '✔' : '✗'} ${digEsc(e.kind)} finished</div>`;
-      case 'exit': return e.code ? `<div class="err">${t} exited with status ${e.code}</div>` : '';
-      default: return '';
+  // --- messages from the receiver ---
+  function aiOnState(st) {
+    const prevId = aiState && aiState.session ? aiState.session.id : '';
+    aiState = st;
+    if (Array.isArray(st.log)) {
+      aiLog = st.log.slice();
+      aiLastSeq = aiLog.length ? aiLog[aiLog.length - 1].seq : st.seq || 0;
     }
+    const id = st.session ? st.session.id : '';
+    if (id !== prevId) {
+      aiConv = null;
+      if (id) send('AI_SESSION_GET:' + id);
+    }
+    if (!st.busy) aiAskedHere = false;
+    aiDockApply();
+    aiQueueRender();
+  }
+  function aiOnEvent(x) {
+    if (x.seq <= aiLastSeq) return;
+    aiLastSeq = x.seq;
+    if (x.e.ev === 'question' && aiConv && aiConv.id !== (aiState && aiState.session && aiState.session.id)) aiConv = null;
+    aiLog.push(x);
+    if (aiLog.length > 2000) aiLog.splice(0, aiLog.length - 2000);
+    if (x.e.ev === 'start' || x.e.ev === 'exit') aiErr = '';
+    aiQueueRender();
+  }
+  function aiOnError(x) {
+    // (a receiver from before map commands doesn't know the page's own announcement / replies)
+    if (x.cmd === 'AI_PAGE' || x.cmd === 'AI_PAGE_REPLY') return;
+    aiErr = (x.error || 'refused');
+    aiQueueRender();
+  }
+  function aiOnSessions(list) {
+    aiSessions = list || [];
+    if (aiHistOpen) aiRenderHistory();
+  }
+  function aiOnSession(s) {
+    const cur = aiState && aiState.session ? aiState.session.id : '';
+    if (s.id !== cur) return;
+    aiConv = s;
+    // the saved conversation now holds what the log streamed
+    if (!(aiState && aiState.busy)) aiLog = aiLog.filter(x => x.t > aiConvLastT());
+    aiQueueRender();
+  }
+  function aiOnMarks(list) {
+    aiMarks = list || [];
+    if (aiMarkShown && !aiMarks.some(m => m.id === aiMarkShown)) aiMarkShown = null;
+    aiQueueRender();
+    if (typeof drawBox === 'function' && fftPlot) drawBox();
+    if (typeof panes !== 'undefined') for (const p of panes) paneDrawOverlay(p);
+  }
+  function aiConvLastT() {
+    const c = aiConv && aiConv.chat;
+    return c && c.length ? (c[c.length - 1].t || 0) : 0;
   }
 
+  // --- the dock itself: shown while enabled; width, collapse (per browser) ---
+  let aiDock = {w: AI_DOCK_W, collapsed: false};
+  try {
+    const v = JSON.parse(localStorage.getItem('kraken_ai_dock') || 'null');
+    if (v && typeof v === 'object') {
+      if (v.w >= 260 && v.w <= 1400) aiDock.w = v.w;
+      aiDock.collapsed = !!v.collapsed;
+    }
+  } catch (e) {}
+  if (window.matchMedia && window.matchMedia('(max-width:900px), (pointer:coarse) and (max-width:1280px)').matches)
+    aiDock.collapsed = true;   // a phone: the floating 🤖 button until tapped
+  function aiDockSave() { try { localStorage.setItem('kraken_ai_dock', JSON.stringify(aiDock)); } catch (e) {} }
+  function aiDockApply() {
+    const on = !!(aiState && aiState.enabled);
+    const b = document.body;
+    const wasOff = b.classList.contains('ai-dk-off'), wasCol = b.classList.contains('ai-dk-col');
+    b.classList.toggle('ai-dk-off', !on);
+    b.classList.toggle('ai-dk-col', aiDock.collapsed);
+    document.documentElement.style.setProperty('--ai-w', Math.round(aiDock.w) + 'px');
+    if (wasOff !== !on || wasCol !== aiDock.collapsed) setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+  }
+  function aiDockCollapse(c) {
+    aiDock.collapsed = !!c;
+    aiDockSave();
+    aiDockApply();
+    if (!c) {
+      aiQueueRender();
+      setTimeout(() => { const q = $id('ai-dk-q'); if (q && !window.matchMedia('(pointer:coarse)').matches) q.focus(); }, 50);
+    }
+  }
+  (function () {
+    const rs = $id('ai-dock-rs');
+    if (!rs) return;
+    let drag = null;
+    rs.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      drag = {x: e.clientX, w: aiDock.w};
+      rs.setPointerCapture(e.pointerId);
+      rs.classList.add('dragging');
+      document.body.classList.add('ai-rs');
+    });
+    rs.addEventListener('pointermove', e => {
+      if (!drag) return;
+      aiDock.w = Math.max(260, Math.min(window.innerWidth * 0.6, drag.w + (drag.x - e.clientX)));
+      document.documentElement.style.setProperty('--ai-w', Math.round(aiDock.w) + 'px');
+      window.dispatchEvent(new Event('resize'));
+    });
+    const end = () => {
+      if (!drag) return;
+      drag = null;
+      rs.classList.remove('dragging');
+      document.body.classList.remove('ai-rs');
+      aiDockSave();
+    };
+    rs.addEventListener('pointerup', end);
+    rs.addEventListener('pointercancel', end);
+    rs.addEventListener('dblclick', () => { aiDock.w = AI_DOCK_W; aiDockSave(); aiDockApply(); window.dispatchEvent(new Event('resize')); });
+  })();
+
+  // --- asking ---
+  // What this page shows: sent with each question, so "this signal", "D0",
+  // "what I'm zoomed into" mean something to the assistant
+  function aiViewContext() {
+    const v = {mode: opMode, selected_vfo: activeDecimatorId};
+    try {
+      if (opMode === 'independent') {
+        const p = panes[selTuner];
+        v.selected_tuner = selTuner;
+        if (p && p.freqs && p.freqs.length) {
+          v.zoom = {level: +(p.zoom.level || 1).toFixed(2), window_mhz: [+p.freqs[0].toFixed(6), +p.freqs[p.freqs.length - 1].toFixed(6)]};
+        }
+      } else if (currentFrequencies.length) {
+        v.zoom = {level: +(mainZoom.level || 1).toFixed(2),
+                  window_mhz: [+currentFrequencies[0].toFixed(6), +currentFrequencies[currentFrequencies.length - 1].toFixed(6)]};
+      }
+      v.audio_on = !!fmEnabled;
+      if (infoOpen('dec')) v.bottom_tab = 'decoder: ' + (digTabShown || '');
+      else if (infoOpen('voice')) v.bottom_tab = 'voice to text';
+      const b = document.body.classList;
+      if (b.contains('map-on')) {
+        const [la, lo] = mapUnproj(mapState.mx, mapState.my);
+        v.map = {shown: true, tab: mapState.tab, center: [+la.toFixed(4), +lo.toFixed(4)], zoom: +mapState.z.toFixed(1)};
+        if (mapState.rdfTid) v.map.df_selected = mapState.rdfTid;
+      }
+      if (aiMarkShown) {
+        const m = aiMarks.find(x => x.id === aiMarkShown);
+        if (m) v.identification_shown = {name: m.name, mhz: +(m.hz / 1e6).toFixed(6)};
+      }
+    } catch (e) {}
+    return v;
+  }
+  function aiSend(text, fresh) {
+    text = String(text || '').trim();
+    if (!text) return;
+    if (!aiState || !aiState.enabled) return;
+    if (aiState.busy) { aiErr = 'The assistant is answering - wait or press Stop'; aiQueueRender(); return; }
+    aiErr = '';
+    aiAskedHere = true;
+    aiHistOpen = false;
+    send('AI_ASK:' + JSON.stringify({text, view: aiViewContext(), new: !!fresh, page: aiPageId}));
+    aiQueueRender();
+  }
+  function aiSendOrStop() {
+    if (aiState && aiState.busy) { send('AI_CANCEL'); return; }
+    const q = $id('ai-dk-q');
+    const t = q.value;
+    if (!t.trim()) return;
+    q.value = '';
+    aiInputGrow();
+    aiSend(t, false);
+  }
+  function aiInputKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); aiSendOrStop(); }
+  }
+  function aiInputGrow() {
+    const q = $id('ai-dk-q');
+    if (!q) return;
+    q.style.height = 'auto';
+    q.style.height = Math.min(140, q.scrollHeight + 2) + 'px';
+  }
+  function aiNewChat() {
+    if (aiState && aiState.busy) return;
+    aiMarkShown = null;
+    aiHistOpen = false;
+    send('AI_NEW');
+  }
+  function aiSetReadonly(on) { send('AI_READONLY:' + (on ? 1 : 0)); }
+  // model / effort for the next questions (every page: the receiver keeps them)
+  let aiSetOpen = false;
+  const AI_MODELS = [['', 'Default'], ['sonnet', 'Sonnet'], ['opus', 'Opus'], ['haiku', 'Haiku'], ['fable', 'Fable']];
+  const AI_EFFORTS = [['', 'Default'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra high'], ['max', 'Max']];
+  function aiToggleSettings() { aiSetOpen = !aiSetOpen; aiQueueRender(); }
+  function aiSetModel(v) { send('AI_MODEL:' + v); }
+  function aiSetEffort(v) { send('AI_EFFORT:' + v); }
+  function aiModelName(m) { const x = AI_MODELS.find(o => o[0] === m); return x ? x[1] : m; }
+  // What "Default" runs (ai_state.defaults, from kraken_ai.py status: the
+  // model - ai_config.json's, else the account's default - and each model's
+  // own default effort from Claude Code's model catalog; info = "id or
+  // alias=name|effort;...")
+  let aiDefInfo = {}, aiDefInfoSrc = null;
+  function aiModelInfo(st, m) {
+    const s = (st && st.defaults && st.defaults.info) || '';
+    if (s !== aiDefInfoSrc) {
+      aiDefInfoSrc = s;
+      aiDefInfo = {};
+      for (const row of s.split(';')) {
+        const i = row.indexOf('='), j = row.lastIndexOf('|');
+        if (i > 0 && j > i) aiDefInfo[row.slice(0, i).toLowerCase()] = {name: row.slice(i + 1, j), effort: row.slice(j + 1)};
+      }
+    }
+    return aiDefInfo[String(m || '').replace(/\[1m\]$/, '').toLowerCase()] || null;
+  }
+  function aiModelLabel(st, m) { const x = aiModelInfo(st, m); return x ? x.name : aiModelName(m); }
+  function aiEffortName(e) { const x = AI_EFFORTS.find(o => o[0] === e); return x ? x[1] : e; }
+  // the effort "Default" runs for the model picked: '' = the model has no
+  // effort levels, null = unknown
+  // (ai_config.json's model is read fresh, the defaults every 5 min - it first)
+  function aiDefaultModel(st) { return st.model || (st.defaults || {}).model || ''; }
+  function aiDefaultEffort(st) {
+    const d = st.defaults || {};
+    if (d.effort) return d.effort;
+    const x = aiModelInfo(st, st.model_sel || aiDefaultModel(st));
+    return x ? x.effort : null;
+  }
+  // the model / effort the next question runs with
+  function aiRunsWith(st) {
+    const m = st.model_sel || aiDefaultModel(st);
+    return [m ? aiModelLabel(st, m) : '', st.effort || aiDefaultEffort(st)];
+  }
+  function aiToggleHistory() {
+    aiHistOpen = !aiHistOpen;
+    if (aiHistOpen) send('AI_SESSIONS');
+    aiQueueRender();
+  }
+  function aiPickSession(id) {
+    aiHistOpen = false;
+    if (aiState && aiState.session && aiState.session.id === id) { aiQueueRender(); return; }
+    send('AI_SESSION_SELECT:' + id);
+    aiQueueRender();
+  }
+  function aiDeleteSession(id, ev) {
+    if (ev) ev.stopPropagation();
+    const s = aiSessions.find(x => x.id === id);
+    if (!confirm('Delete the conversation "' + ((s && s.title) || id) + '" and its files?')) return;
+    send('AI_SESSION_DELETE:' + id);
+  }
+
+  // --- rendering ---
+  function aiQueueRender() {
+    if (aiRenderQ) return;
+    aiRenderQ = true;
+    requestAnimationFrame(() => { aiRenderQ = false; aiRender(); });
+  }
+  function aiStepHtml(e, res, key) {
+    const n = e.name || '';
+    const rx = !!e.receiver || AI_CONTROL_TOOLS.includes(n) || /^get_|^list_|^search_|^find_|^capture_|^wait_for/.test(n);
+    const ctl = AI_CONTROL_TOOLS.includes(n);
+    const map = /^map_|^viewshed_|^path_loss|^terrain_at/.test(n);
+    const icon = ctl ? '⚙' : map ? '🗺' : rx ? '📡' : n === 'WebSearch' || n === 'WebFetch' ? '🌐' : n === 'Bash' ? '⌨' : '🔧';
+    const state = !res ? '<span class="ai-spin">◌</span>' : res.ok ? '<span style="color:#81c784">✓</span>' : '<span style="color:#ef9a9a">✗</span>';
+    const open = res && aiOpenSteps[key];
+    return `<div class="ai-step${ctl ? ' ctl' : rx ? ' rx' : ''}${res && !res.ok ? ' err' : ''}" onclick="aiToggleStep('${digEsc(key)}')" title="${digEsc((e.detail || '') + (res ? '\n\n' + (res.detail || '') : ''))}">` +
+           `<span class="n">${icon} ${digEsc(n)}</span><span class="d">${digEsc(e.detail || '')}</span><span class="r">${state}</span></div>` +
+           (open ? `<div class="ai-step-res">${digEsc(res.detail || '(no output)')}</div>` : '');
+  }
+  function aiToggleStep(key) { aiOpenSteps[key] = !aiOpenSteps[key]; aiQueueRender(); }
+  // One answer from its events (live or saved): text blocks in order, the
+  // steps between them, errors; the final text when no block came
+  function aiTurnHtml(evs, final, live) {
+    let html = '', text = '', steps = '', nsteps = 0;
+    const res = {};
+    for (const e of evs) if (e.ev === 'tool_result' && e.id) res[e.id] = e;
+    const flushSteps = () => { if (steps) { html += `<div class="ai-steps">${steps}</div>`; steps = ''; } };
+    let sawText = false;
+    for (const e of evs) {
+      if (e.ev === 'delta') { text += e.text || ''; continue; }
+      if (e.ev === 'text') {
+        flushSteps();
+        html += aiMd(e.text || '');
+        text = '';
+        sawText = true;
+      } else if (e.ev === 'tool') {
+        if (text) { html += aiMd(text); text = ''; }
+        nsteps++;
+        steps += aiStepHtml(e, res[e.id], e.id || ('s' + nsteps));
+      } else if (e.ev === 'denied') {
+        steps += `<div class="ai-note err">⛔ refused: ${digEsc(e.detail || '')}</div>`;
+      } else if (e.ev === 'error') {
+        flushSteps();
+        html += `<div class="ai-note err">⚠ ${digEsc(e.msg || '')}</div>`;
+      }
+    }
+    flushSteps();
+    if (text) html += aiMd(text);   // still streaming
+    if (!sawText && !text && final) html += aiMd(final);
+    if (live) {
+      const st = [...evs].reverse().find(e => e.ev === 'status');
+      html += `<div class="ai-working"><span class="ai-spin">◌</span> ${digEsc(st && st.msg && !/started/.test(st.msg) ? st.msg : 'working…')}</div>`;
+    }
+    const us = [...evs].reverse().find(e => e.ev === 'usage');
+    if (us && !live) {
+      const parts = [];
+      if (nsteps) parts.push(nsteps + ' step' + (nsteps > 1 ? 's' : ''));
+      if (us.duration_s) parts.push(us.duration_s + ' s');
+      if (us.cost_usd) parts.push('$' + (+us.cost_usd).toFixed(us.cost_usd < 0.1 ? 3 : 2));
+      if (us.denied) parts.push(us.denied + ' refused');
+      if (us.model) parts.push(us.model.replace(/^claude-/, '') + (us.effort ? ' · ' + us.effort : ''));
+      if (parts.length) html += `<div class="ai-note">${parts.join(' · ')}</div>`;
+    }
+    return html;
+  }
+  // The conversation: saved turns (chat.json paired with the activity split
+  // at each "question" event) + the turn running now (aiLog since its question)
+  function aiConvHtml() {
+    const out = [];
+    const chat = (aiConv && aiConv.chat) || [];
+    const act = (aiConv && aiConv.activity) || [];
+    const turns = [];
+    let cur = null;
+    for (const e of act) {
+      if (e.ev === 'question') { cur = []; turns.push(cur); continue; }
+      if (cur) cur.push(e);
+    }
+    let ti = 0;
+    for (let i = 0; i < chat.length; i++) {
+      const m = chat[i];
+      if (m.role === 'user') {
+        out.push(`<div class="ai-msg user">${digEsc(m.text)}</div>`);
+        const a = chat[i + 1] && chat[i + 1].role === 'assistant' ? chat[i + 1] : null;
+        const evs = turns[ti++] || [];
+        if (a) {
+          out.push(`<div class="ai-msg assistant">${aiTurnHtml(evs, a.text, false)}</div>`);
+          i++;
+        }
+      } else {
+        out.push(`<div class="ai-msg assistant">${aiMd(m.text)}</div>`);
+      }
+    }
+    // the running question (and, until the saved conversation arrives, the
+    // one that just finished)
+    const lastT = aiConvLastT();
+    const live = aiLog.map(x => Object.assign({t: x.t}, x.e)).filter(e => e.t > lastT);
+    let q = -1;
+    for (let i = live.length - 1; i >= 0; i--) if (live[i].ev === 'question') { q = i; break; }
+    if (q >= 0) {
+      const evs = live.slice(q + 1);
+      const busy = !!(aiState && aiState.busy);
+      out.push(`<div class="ai-msg user">${digEsc(live[q].text || '')}</div>`);
+      const done = evs.find(e => e.ev === 'done');
+      out.push(`<div class="ai-msg assistant">${aiTurnHtml(evs, done && done.text, busy && !done)}</div>`);
+    } else if (aiState && aiState.busy && (aiState.job || {}).kind === 'chat') {
+      out.push(`<div class="ai-msg assistant"><div class="ai-working"><span class="ai-spin">◌</span> working…</div></div>`);
+    }
+    return out.join('');
+  }
+  function aiEmptyHtml() {
+    const ro = aiState && aiState.readonly;
+    return `<div class="ai-dk-empty">Ask about what you see on the receiver, the signals and what was decoded - or ask it to do something:` +
+           ` tune, add VFOs, pick decoders, look things up online, write a decoder plugin.` +
+           (ro ? '<br><b>Read only</b> is on: it can look, not change anything.' : '') + '</div>';
+  }
+  const AI_CHIPS = [
+    ['What is on D0?', () => 'What is the signal on D' + activeDecimatorId + '? Identify it if you can.'],
+    ['Strongest signals', () => 'What are the strongest signals in the band I\'m looking at, and what are they likely to be?'],
+    ['Who is transmitting?', () => 'Which transmitter is the signal on D' + activeDecimatorId + ' coming from? Use the decoded data, the bearing, the saved frequencies and online licence registers.'],
+    ['Find a weather balloon', () => 'Look for an active weather balloon (radiosonde) signal and decode it.'],
+  ];
+  function aiChip(i) { aiSend(AI_CHIPS[i][1](), false); }
+  function aiMarkCardHtml() {
+    const m = aiMarks.find(x => x.id === aiMarkShown);
+    if (!m) return '';
+    const when = m.t ? new Date(m.t).toLocaleString([], {hour12: false}) : '';
+    return `<div class="ai-mark-card"><div class="h"><b>📌 ${digEsc(m.name)}</b><span>${(m.hz / 1e6).toFixed(5)} MHz</span><span class="sp"></span>` +
+           `<button type="button" class="btn sm" onclick="aiMarkShown=null;aiQueueRender()" title="Close">✕</button></div>` +
+           (m.summary ? `<div style="margin:3px 0">${aiMd(m.summary)}</div>` : '') +
+           `<div class="ai-note">${[m.conf ? 'confidence ' + digEsc(m.conf) : '', m.brg !== null && m.brg !== undefined ? 'bearing ' + m.brg + '°' : '', m.bw ? (m.bw / 1000).toFixed(1) + ' kHz wide' : '', when].filter(Boolean).join(' · ')}</div>` +
+           `<div style="display:flex;gap:4px;margin-top:4px">` +
+           (m.conv ? `<button type="button" class="btn sm" onclick="aiPickSession('${digEsc(m.conv)}')">Open its conversation</button>` : '') +
+           `<button type="button" class="btn sm" onclick="aiSend('Tell me more about ${digEsc(m.name).replace(/'/g, '')} at ${(m.hz / 1e6).toFixed(5)} MHz.')">Ask about it</button>` +
+           `<button type="button" class="btn sm" onclick="if(confirm('Forget this identification?'))send('AI_MARK_DELETE:${digEsc(m.id)}')">Forget</button></div></div>`;
+  }
+  function aiRenderHistory() {
+    const el = $id('ai-dk-hist');
+    if (!el) return;
+    const cur = aiState && aiState.session ? aiState.session.id : '';
+    const html = aiSessions.length ? aiSessions.map(s => {
+      const when = (s.updated || s.created || '').replace(/:\d\d$/, '');
+      return `<div class="ai-hist-item${s.id === cur ? ' sel' : ''}" onclick="aiPickSession('${digEsc(s.id)}')">` +
+             `<div style="flex:1;min-width:0"><div class="n" style="color:#e0e0e0;font-size:12px">${digEsc(s.title || s.id)}</div>` +
+             `<div class="n">${digEsc(when)}</div></div>` +
+             `<button type="button" class="del" onclick="aiDeleteSession('${digEsc(s.id)}', event)" title="Delete">✕</button></div>`;
+    }).join('') : '<div class="ai-dk-empty">No conversations yet.</div>';
+    if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+  }
   function aiRender() {
     const st = aiState;
     if (!st) return;
-    const dot = $id('ai-dot'), conn = $id('ai-conn'), setup = $id('ai-setup');
-    if (!st.enabled) {
-      dot.style.color = '#777';
-      conn.textContent = 'Not enabled on this receiver';
-      setup.style.display = '';
-      setup.innerHTML = (serverWin
-          ? 'To use it, run <code>py -3 ai\\kraken_ai.py setup</code> on the receiver\'s computer (in the kraken_doa_v2 folder; Python 3 from python.org). '
-          : 'To use it, run <code>python3 ai/kraken_ai.py setup</code> on the Pi (in the kraken_doa_v2 folder). ') +
-        (st.backend === 'claude' && !st.cli
-          ? (serverWin
-            ? 'It needs Claude Code (and Git for Windows): in PowerShell <code>irm https://claude.ai/install.ps1 | iex</code>, then run <code>claude</code> once to log in.'
-            : 'It needs Claude Code: <code>curl -fsSL https://claude.ai/install.sh | bash</code>, then run <code>claude</code> once to log in.')
-          : (st.cli ? 'Found: ' + digEsc(st.version || st.cli) + '.' : '')) + ' See the README, "AI Signal Lab".';
-    } else {
-      dot.style.color = st.busy ? '#ffb74d' : '#4caf50';
-      conn.textContent = (st.backend === 'claude'
-        ? 'Claude Code ' + String(st.version || '').replace(/\s*\(Claude Code\)/, '')
-        : 'LLM command: ' + (st.cli || '?')) + (st.model ? ' · ' + st.model : '') + aiTestText;
-      setup.style.display = 'none';
-    }
-    $id('ai-token-warn').style.display = (st.enabled && !st.token) ? '' : 'none';
     const busy = !!st.busy;
-    const sess = st.session || {};
-    const has = !!sess.analysis;
-    $id('ai-investigate').disabled = !st.enabled || busy;
-    $id('ai-test-btn').disabled = !st.enabled || busy;
-    $id('ai-plugin-row').style.display = has ? 'flex' : 'none';
-    const pid = $id('ai-plugin-id');
-    if (has && !pid.value && document.activeElement !== pid)
-      pid.value = sess.plugin_id || sess.suggested_plugin_id || aiSlug(sess.signal_name);
-    const exists = digPlugins.some(p => p.id === pid.value.trim());
-    const cb = $id('ai-create');
-    cb.disabled = !st.enabled || busy || !has;
-    cb.textContent = exists ? '🛠 Improve Decoder' : '🛠 Create Decoder';
-    $id('ai-job-row').style.display = busy ? 'flex' : 'none';
-    if (busy) $id('ai-job').textContent = (st.job.label || st.job.kind) + ' · ' + aiElapsed(st.job.started);
-    const ib = $id('ai-instr-btn');
-    ib.className = 'btn' + (($id('ai-instr').value || '').trim() ? ' primary' : '');
-
-    // status line - the AI's text itself only goes to the panel's AI tab
-    let html = '';
-    const panelBtn = '<button class="btn sm" type="button" onclick="aiShowJob()">⤢ Show</button>';
-    if (aiErrorText) html += `<div class="dig-warn">${digEsc(aiErrorText)}</div>`;
-    const done = [...aiLog].reverse().find(x => x.e.ev === 'done');
-    const lastErr = [...aiLog].reverse().find(x => x.e.ev === 'error');
-    if (busy) {
-      const ls = [...aiLog].reverse().find(x => x.e.ev === 'status');
-      html += `<div>⏳ ${digEsc(ls ? (ls.e.msg || ls.e.state) : 'working')}…${st.job.kind !== 'test' ? panelBtn : ''}</div>`;
-    } else if (lastErr && (!done || !done.e.ok)) {
-      html += `<div class="dig-warn">${digEsc(lastErr.e.msg)}${panelBtn}</div>`;
-    } else if (done && done.e.kind === 'create') {
-      const e = done.e;
-      html += e.ok
-        ? `<div class="ok">✔ Plugin <b>${digEsc(e.plugin_id)}</b> is built ` +
-          `<button class="btn sm" type="button" onclick="aiUsePlugin('${digEsc(e.plugin_id)}')">Use on VFO</button>${panelBtn}</div>`
-        : `<div class="dig-warn">Plugin not ready${e.build && e.build !== 'built' ? ': ' + digEsc(e.build) : ''}${panelBtn}</div>`;
-    } else if (done && done.e.kind === 'ask') {
-      html += `<div class="ok">✔ Answered${panelBtn}</div>`;
-    } else if (done && done.e.kind === 'investigate') {
-      html += `<div class="ok">✔ ${digEsc(done.e.signal_name || 'Investigation finished')}${panelBtn}</div>`;
+    // header: state dot, Read only
+    const col = !st.enabled ? '#666' : busy ? '#ffb74d' : st.cli || st.backend !== 'claude' ? '#4caf50' : '#ef5350';
+    const what = !st.enabled ? 'off' : busy ? 'answering: ' + ((st.job || {}).label || '') :
+                 st.cli || st.backend !== 'claude' ? 'ready' + (st.version ? ' (' + st.version + ')' : '') : 'Claude Code not found';
+    for (const id of ['ai-dk-dot', 'ai-strip-dot']) {
+      const d = $id(id);
+      if (d) { d.style.color = col; d.title = what; }
     }
-    const res = $id('ai-status');
-    if (res.dataset.html !== html) { res.dataset.html = html; res.innerHTML = html; }
-    aiRenderHistory();
-    infoRenderAi();
-    aiRenderPlugins();
-  }
-
-  function aiOnDecimatorInfo(info) {
-    const sel = $id('ai-vfo');
-    if (!sel) return;
-    const cur = sel.value === '' ? (digTabVfos(digTabShown || '')[0] ?? (info[0] || {}).id) : parseInt(sel.value);
-    const opts = info.map(d => `<option value="${d.id}"${d.id === cur ? ' selected' : ''}>D${d.id}</option>`).join('');
-    if (sel.innerHTML !== opts) sel.innerHTML = opts;
-    if (!info.some(d => d.id === cur) && info.length) sel.value = info[0].id;
-    aiFillFreq();
-  }
-
-  function aiFillFreq() {
-    const f = $id('ai-freq');
-    if (!f || aiFreqEdited || document.activeElement === f) return;
-    const d = decimatorInfo.find(x => x.id === parseInt($id('ai-vfo').value));
-    if (d && vfoCenterMhz(d) > 0)
-      f.value = (vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6).toFixed(5);
-  }
-
-  function aiVfoChanged() {
-    aiFreqEdited = false;
-    aiFillFreq();
-  }
-
-  function aiTest() {
-    aiErrorText = '';
-    aiTestText = ' · testing…';
-    send('AI_TEST');
-    aiQueueRender();
-  }
-
-  function aiInvestigate() {
-    aiErrorText = '';
-    const vfo = parseInt($id('ai-vfo').value);
-    if (!isFinite(vfo)) return;
-    // 0 = the VFO's own frequency (the server knows it exactly); a typed one
-    // is sent as is
-    const f = parseFloat($id('ai-freq').value);
-    const hz = (aiFreqEdited && isFinite(f) && f > 0) ? Math.round(f * 1e6) : 0;
-    const instr = ($id('ai-instr').value || '').trim();
-    $id('ai-plugin-id').value = '';
-    send(`AI_INVESTIGATE:${vfo}:${hz}:${$id('ai-secs').value}` + (instr ? ':' + instr : ''));
-    aiViewId = AI_JOB;
-    infoPanelOpen('ai');
-  }
-
-  function aiCreate() {
-    aiErrorText = '';
-    const id = ($id('ai-plugin-id').value || '').trim().toLowerCase();
-    if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(id) || id === 'sdk') {
-      alert('Plugin id: 1-32 characters a-z 0-9 _ - (e.g. "pocsag")');
-      return;
+    const ro = $id('ai-dk-ro');
+    if (ro && ro.checked !== !!st.readonly) ro.checked = !!st.readonly;
+    const rol = $id('ai-dk-ro-l');
+    if (rol) rol.classList.toggle('on', !!st.readonly);
+    // warnings: no API token, no sandbox
+    const w = [];
+    if (st.enabled && !st.token) w.push('No API token is set: anyone who can open this page can drive the assistant (it controls the receiver and runs code here). See README → API token.');
+    if (st.enabled && st.backend === 'claude' && st.sandbox === false)
+      w.push('No sandbox for its shell (' + (st.sandbox_why || 'bubblewrap + socat') + '): it can answer and use the receiver, but not build plugins or run scripts.');
+    const warn = $id('ai-dk-warn');
+    const wh = w.map(digEsc).join('<br>');
+    if (warn && warn.dataset.html !== wh) { warn.dataset.html = wh; warn.innerHTML = wh; }
+    // history or the conversation
+    $id('ai-dk-hist').style.display = aiHistOpen ? '' : 'none';
+    $id('ai-dk-msgs').style.display = aiHistOpen ? 'none' : '';
+    $id('ai-dk-hist-btn').style.color = aiHistOpen ? '#4fc3f7' : '';
+    if (aiHistOpen) aiRenderHistory();
+    const msgs = $id('ai-dk-msgs');
+    const conv = aiConvHtml();
+    const html = aiMarkCardHtml() + (conv || aiEmptyHtml()) +
+                 (aiErr ? `<div class="ai-note err">⚠ ${digEsc(aiErr)}</div>` : '');
+    if (msgs.dataset.html !== html) {
+      const atEnd = msgs.scrollTop + msgs.clientHeight >= msgs.scrollHeight - 40;
+      msgs.dataset.html = html;
+      msgs.innerHTML = html;
+      if (atEnd || aiAskedHere) msgs.scrollTop = msgs.scrollHeight;
     }
-    const exists = digPlugins.some(p => p.id === id);
-    if (!confirm((exists ? `Improve plugin "${id}"` : `Create plugin "${id}"`) + ' with the AI?\n\n' +
-        `The agent writes, builds and tests C++ code in plugins/${id}/ on this receiver. ` +
-        'This can take 10-30 minutes and uses your LLM account.')) return;
-    const instr = ($id('ai-instr').value || '').trim();
-    send('AI_CREATE:' + id + (instr ? ':' + instr : ''));
-    const cur = aiState && aiState.session && aiState.session.id;
-    if (cur) aiOpenSession(cur); else infoPanelOpen('ai');
+    // suggestions while the conversation is empty
+    const chips = $id('ai-dk-chips');
+    const ch = !conv && !busy && st.enabled ? AI_CHIPS.map((c, i) => `<button type="button" class="ai-chip" onclick="aiChip(${i})">${digEsc(c[0])}</button>`).join('') : '';
+    if (chips.dataset.html !== ch) { chips.dataset.html = ch; chips.innerHTML = ch; }
+    // Send / Stop
+    const b = $id('ai-dk-send');
+    b.textContent = busy ? '■ Stop' : 'Send';
+    b.classList.toggle('primary', !busy);
+    b.disabled = !st.enabled;
+    const q = $id('ai-dk-q');
+    q.disabled = !st.enabled;
+    // model / effort
+    const set = $id('ai-dk-set');
+    set.style.display = aiSetOpen ? '' : 'none';
+    $id('ai-dk-set-btn').style.color = aiSetOpen ? '#4fc3f7' : '';
+    const opts = (list, cur, def) => {
+      const l = list.map(o => o[0] === '' ? ['', def] : o);
+      if (cur && !l.some(o => o[0] === cur)) l.push([cur, aiModelLabel(st, cur)]);   // a full model name set elsewhere
+      return l.map(([v, t]) => `<option value="${digEsc(v)}"${v === cur ? ' selected' : ''}>${digEsc(t)}</option>`).join('');
+    };
+    // "Default (Opus 5.5)" / "Default (Medium)": what runs without a pick - the
+    // effort's for the model picked (each model has its own default)
+    const dm = aiDefaultModel(st), de = aiDefaultEffort(st);
+    const models = AI_MODELS.map(([v, t]) => [v, v ? aiModelLabel(st, v) : t]);
+    for (const [id, html] of [['ai-dk-model', opts(models, st.model_sel || '', 'Default' + (dm ? ' (' + aiModelLabel(st, dm) + ')' : ''))],
+                              ['ai-dk-effort', opts(AI_EFFORTS, st.effort || '', 'Default' + (de === null ? '' : ' (' + (de ? aiEffortName(de) : 'none for this model') + ')'))]]) {
+      const el = $id(id);
+      if (el.dataset.html !== html && document.activeElement !== el) { el.dataset.html = html; el.innerHTML = html; }
+    }
+    const sn = busy ? 'Applies from the next question' : 'For every page using this receiver; kept over restarts';
+    if ($id('ai-dk-set-n').textContent !== sn) $id('ai-dk-set-n').textContent = sn;
+    const foot = $id('ai-dk-foot');
+    const [rm, re] = aiRunsWith(st), f = [rm, re ? 'effort ' + re : ''].filter(Boolean).join(' · ');
+    if (foot.textContent !== f) foot.textContent = f;
   }
 
-  function aiCancel() { send('AI_CANCEL'); }
-
-  function aiToggleInstr() {
-    const b = $id('ai-instr-box');
-    b.style.display = b.style.display === 'none' ? '' : 'none';
-    if (b.style.display === '') $id('ai-instr').focus();
+  // --- identifications: "AI" badges at the top of the spectrum ---
+  // Called at the end of drawBox(): a badge above every identified signal in
+  // view (several within 2 kHz share one); a click shows it in the dock
+  function aiDrawMarkers(ctx, w) {
+    aiMarkerRects = [];
+    if (!fftPlot || !currentFrequencies.length || !aiMarks.length || document.body.classList.contains('ai-dk-off')) return;
+    const lo = currentFrequencies[0], hi = currentFrequencies[currentFrequencies.length - 1];
+    const groups = [];
+    for (const m of aiMarks) {
+      const f = m.hz / 1e6;
+      if (!(f >= lo && f <= hi)) continue;
+      const g = groups.find(x => Math.abs(x.f - f) < 0.002);
+      if (g) g.ids.push(m.id);
+      else groups.push({f, ids: [m.id], name: m.name});
+    }
+    ctx.save();
+    ctx.font = 'bold 11px sans-serif';
+    for (const g of groups) {
+      const x = fftPlot.valToPos(g.f, 'x');
+      if (x == null || isNaN(x) || x < 0 || x > w) continue;
+      const label = g.ids.length > 1 ? `AI ×${g.ids.length}` : 'AI';
+      const bw = ctx.measureText(label).width + 12, bh = 16, y = 2;
+      const bx = Math.min(Math.max(0, x - bw / 2), w - bw);
+      const sel = g.ids.includes(aiMarkShown);
+      ctx.fillStyle = sel ? '#ce93d8' : 'rgba(171,71,188,0.9)';
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(bx, y, bw, bh, 3); else ctx.rect(bx, y, bw, bh);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, bx + 6, y + 12);
+      ctx.strokeStyle = 'rgba(206,147,216,0.7)';
+      ctx.beginPath();
+      ctx.moveTo(x, y + bh);
+      ctx.lineTo(x, y + bh + 6);
+      ctx.stroke();
+      aiMarkerRects.push({x: bx, y, w: bw, h: bh + 6, ids: g.ids, name: g.name});
+    }
+    ctx.restore();
   }
-
-  function aiSaveInstr() {
-    try { localStorage.setItem('kraken_ai_instructions', $id('ai-instr').value); } catch (e) {}
+  function aiMarkerAt(x, y) {
+    return aiMarkerRects.find(k => x >= k.x - 6 && x <= k.x + k.w + 6 && y >= k.y - 4 && y <= k.y + k.h + 6) || null;
+  }
+  function aiMarkerHover(e) {
+    const c = $id('fo');
+    if (!c) return false;
+    const r = c.getBoundingClientRect();
+    const m = aiMarkerRects.length ? aiMarkerAt(e.clientX - r.left, e.clientY - r.top) : null;
+    const tip = m ? `${m.name || 'AI identification'}${m.ids.length > 1 ? ` (+${m.ids.length - 1} more)` : ''} — click for what the assistant found` : '';
+    if (c.title !== tip) c.title = tip;
+    if (m) c.style.cursor = 'pointer';
+    return !!m;
+  }
+  function aiShowMark(id) {
+    aiMarkShown = id;
+    aiHistOpen = false;
+    if (aiDock.collapsed) aiDockCollapse(false);
     aiQueueRender();
+    const msgs = $id('ai-dk-msgs');
+    if (msgs) msgs.scrollTop = 0;
+    if (fftPlot) drawBox();
   }
-
-  function aiUsePlugin(id) {
-    let vfo = parseInt($id('ai-vfo').value);
-    if (!isFinite(vfo)) vfo = digTabVfos(digTabShown || '')[0];
-    if (vfo === null || vfo === undefined || !isFinite(vfo)) return;
-    digSetModeFor(vfo, 'PLUGIN:' + id);
-    infoPanelOpen('dig:' + id);
+  function aiMarkerHit(e) {
+    const c = $id('fo');
+    if (!c || !aiMarkerRects.length) return false;
+    const r = c.getBoundingClientRect();
+    const m = aiMarkerAt(e.clientX - r.left, e.clientY - r.top);
+    if (!m) return false;
+    aiMarkerConsumed = true;
+    setTimeout(() => { aiMarkerConsumed = false; }, 400);
+    // the newest of the group (the list is oldest first)
+    aiShowMark(m.ids[m.ids.length - 1]);
+    return true;
   }
+  aiDockApply();
 
 
   function aiRenderPlugins() {
@@ -10463,7 +10837,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         'source folder (build_windows.bat), copy each kraken_doa_v2\\plugins\\&lt;id&gt;\\build\\decoder.exe into the same place ' +
         'in this folder and press ↻.</div>';
     } else if (!digPlugins.length) {
-      html = '<div class="dig-help">No plugins yet. Investigate a signal and press Create Decoder, or copy a plugin folder into kraken_doa_v2/plugins/ and run ' +
+      html = '<div class="dig-help">No plugins yet. Ask the 🤖 assistant to write one, or copy a plugin folder into kraken_doa_v2/plugins/ and run ' +
         (serverWin ? 'build_windows.bat' : 'make') + '.</div>';
     } else {
       html = digPlugins.map(p => `<div class="ai-plugin">
@@ -10505,193 +10879,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
   })();
 
-  try {
-    const saved = localStorage.getItem('kraken_ai_instructions');
-    if (saved) setTimeout(() => { const t = $id('ai-instr'); if (t && !t.value) t.value = saved; }, 0);
-  } catch (e) {}
-  setTimeout(() => {
-    const f = $id('ai-freq');
-    if (f) f.addEventListener('input', () => { aiFreqEdited = f.value.trim() !== ''; });
-  }, 0);
-  setInterval(aiFillFreq, 2000);   // follows retunes / VFO moves until the user types one
-
-  // --- Saved investigations (ai/sessions/<id>/) -------------------------------
-  // {"ai_sessions":[{id,freq_hz,signal_name,created,state,plugin_id,...}]}
-  // newest first; {"ai_session":{id,...,chat:[{role,kind,text,t}],activity:[..]}}
-  // for one. A session is the analysis of one signal plus its conversation;
-  // it is marked in the spectrum ("AI" badge above its frequency) and listed in
-  // the sidebar and the bottom panel's AI tab.
-  let aiSessions = [];
-  const aiSessionCache = {};   // id -> ai_session
-  const AI_JOB = '#job';       // aiViewId of the running / last job (no session yet)
-  let aiViewId = null;         // session shown in the bottom panel (or AI_JOB)
-  let aiMarkerRects = [];      // spectrum badges [{x,y,w,h,ids}]
-  let aiMarkerConsumed = false;
-
-  function aiOnSessions(list) {
-    aiSessions = list || [];
-    for (const id of Object.keys(aiSessionCache))
-      if (!aiSessions.some(s => s.id === id)) delete aiSessionCache[id];
-    if (aiViewId && aiViewId !== AI_JOB && !aiSessions.some(s => s.id === aiViewId)) aiViewId = null;
-    aiRenderHistory();
-    infoRenderAi();
-    drawBox();   // markers
-  }
-
-  function aiOnSession(s) {
-    if (!s || !s.id) return;
-    aiSessionCache[s.id] = s;
-    if (s.id === aiViewId) infoRenderAi(true);
-  }
-
-  // Show a session in the bottom panel (and make it the current one, so
-  // follow-up questions and Create Decoder apply to it)
-  function aiOpenSession(id) {
-    aiViewId = id;
-    send('AI_SESSION_GET:' + id);
-    if (aiState && aiState.enabled && !aiState.busy && (!aiState.session || aiState.session.id !== id))
-      send('AI_SESSION_SELECT:' + id);
-    infoPanelOpen('ai');
-    aiRenderHistory();
-    infoRenderAi(true);
-    // the panel opens under the waterfall, away from the click: bring it into
-    // view and flash it
-    const p = $id('info-panel');
-    if (p) {
-      p.scrollIntoView({block: 'nearest', behavior: 'smooth'});
-      p.classList.remove('flash');
-      void p.offsetWidth;
-      p.classList.add('flash');
-    }
-  }
-
-  // The running (or last) job in the panel's AI tab
-  function aiShowJob() {
-    const st = aiState || {};
-    const kind = st.busy ? (st.job || {}).kind : (([...aiLog].reverse().find(x => x.e.ev === 'done') || {}).e || {}).kind;
-    const done = [...aiLog].reverse().find(x => x.e.ev === 'done');
-    if (!st.busy && done && done.e.session) { aiOpenSession(done.e.session); return; }
-    if (st.busy && kind !== 'investigate' && st.session && st.session.id) { aiOpenSession(st.session.id); return; }
-    aiViewId = AI_JOB;
-    infoPanelOpen('ai');
-    infoRenderAi(true);
-    const p = $id('info-panel');
-    if (p) p.scrollIntoView({block: 'nearest', behavior: 'smooth'});
-  }
-
-  function aiDeleteSession(id, ev) {
-    if (ev) ev.stopPropagation();
-    const s = aiSessions.find(x => x.id === id);
-    const what = s ? `${(s.freq_hz / 1e6).toFixed(5)} MHz${s.signal_name ? ' (' + s.signal_name + ')' : ''}` : id;
-    if (!confirm(`Delete the saved AI analysis and chat of ${what}?\n\nIts captures, plots and conversation are removed from the receiver.`)) return;
-    send('AI_SESSION_DELETE:' + id);
-  }
-
-  function aiSessionLabel(s) {
-    const f = (s.freq_hz / 1e6).toFixed(5) + ' MHz';
-    const when = (s.created || '').replace(/:\d\d$/, '');
-    return {f, name: s.signal_name || (s.state === 'investigating' ? 'investigating…' : 'unidentified'), when};
-  }
-
-  function aiHistoryHtml(compact) {
-    if (!aiSessions.length) return '<div class="dig-help">No signals investigated yet.</div>';
-    return aiSessions.map(s => {
-      const l = aiSessionLabel(s);
-      const sel = s.id === aiViewId ? ' sel' : '';
-      const plug = s.plugin_id ? ` · plugin <code>${digEsc(s.plugin_id)}</code>` : '';
-      return `<div class="ai-hist-item${sel}" onclick="aiOpenSession('${digEsc(s.id)}')" title="Show the analysis and chat">` +
-        `<div style="min-width:0;flex:1"><div class="f">${digEsc(l.f)}</div><div class="n">${digEsc(l.name)}</div>` +
-        (compact ? '' : `<div class="n">${digEsc(l.when)}${plug}</div>`) + '</div>' +
-        `<button type="button" class="del" onclick="aiDeleteSession('${digEsc(s.id)}', event)" title="Delete this analysis and its chat">✕</button></div>`;
-    }).join('');
-  }
-
-  function aiRenderHistory() {
-    const el = $id('ai-history');
-    if (el) {
-      const html = aiHistoryHtml(true);
-      if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
-    }
-  }
-
-  // --- Spectrum markers ---------------------------------------------------
-  // Called at the end of drawBox(): an "AI" badge at the top of the spectrum
-  // above every investigated frequency in view (several within 2 kHz share one)
-  function aiDrawMarkers(ctx, w) {
-    aiMarkerRects = [];
-    if (!fftPlot || !currentFrequencies.length || !aiSessions.length) return;
-    const lo = currentFrequencies[0], hi = currentFrequencies[currentFrequencies.length - 1];
-    const groups = [];
-    for (const s of aiSessions) {
-      const f = s.freq_hz / 1e6;
-      if (!(f >= lo && f <= hi)) continue;
-      const g = groups.find(x => Math.abs(x.f - f) < 0.002);
-      if (g) g.ids.push(s.id);
-      else groups.push({f, ids: [s.id], name: s.signal_name});
-    }
-    ctx.save();
-    ctx.font = 'bold 11px sans-serif';
-    for (const g of groups) {
-      const x = fftPlot.valToPos(g.f, 'x');
-      if (x == null || isNaN(x) || x < 0 || x > w) continue;
-      const label = g.ids.length > 1 ? `AI ×${g.ids.length}` : 'AI';
-      const bw = ctx.measureText(label).width + 12, bh = 16, y = 2;
-      const bx = Math.min(Math.max(0, x - bw / 2), w - bw);
-      const sel = g.ids.includes(aiViewId);
-      ctx.fillStyle = sel ? '#ce93d8' : 'rgba(171,71,188,0.9)';
-      ctx.beginPath();
-      if (ctx.roundRect) ctx.roundRect(bx, y, bw, bh, 3); else ctx.rect(bx, y, bw, bh);
-      ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.fillText(label, bx + 6, y + 12);
-      // a thin tick down to the signal
-      ctx.strokeStyle = 'rgba(206,147,216,0.7)';
-      ctx.beginPath();
-      ctx.moveTo(x, y + bh);
-      ctx.lineTo(x, y + bh + 6);
-      ctx.stroke();
-      aiMarkerRects.push({x: bx, y, w: bw, h: bh + 6, ids: g.ids, name: g.name});
-    }
-    ctx.restore();
-  }
-
-  // the badge under a point of the spectrum overlay (a generous target)
-  function aiMarkerAt(x, y) {
-    return aiMarkerRects.find(k => x >= k.x - 6 && x <= k.x + k.w + 6 && y >= k.y - 4 && y <= k.y + k.h + 6) || null;
-  }
-
-  // hovering a badge: hand cursor + the signal's name as a tooltip
-  function aiMarkerHover(e) {
-    const c = $id('fo');
-    if (!c) return false;
-    const r = c.getBoundingClientRect();
-    const m = aiMarkerRects.length ? aiMarkerAt(e.clientX - r.left, e.clientY - r.top) : null;
-    const tip = m ? `${m.name || 'AI analysis'}${m.ids.length > 1 ? ` (+${m.ids.length - 1} more)` : ''} — click to open the chat` : '';
-    if (c.title !== tip) c.title = tip;
-    if (m) c.style.cursor = 'pointer';
-    return !!m;
-  }
-
-  // mousedown on the spectrum: a badge opens its analysis instead of tuning
-  function aiMarkerHit(e) {
-    const c = $id('fo');
-    if (!c || !aiMarkerRects.length) return false;
-    const r = c.getBoundingClientRect();
-    const x = e.clientX - r.left, y = e.clientY - r.top;
-    const m = aiMarkerAt(x, y);
-    if (!m) return false;
-    aiMarkerConsumed = true;
-    setTimeout(() => { aiMarkerConsumed = false; }, 400);
-    // newest of the group (the list is newest first)
-    aiOpenSession(m.ids[0]);
-    return true;
-  }
-
-  // --- Bottom panel (under the waterfall): one tab per decoder mode + AI ----
-  // infoTab: 'dig:<plugin id>' | 'ai'. Also accepted by
+  // --- Bottom panel (under the waterfall): one tab per decoder mode + Voice --
+  // infoTab: 'dig:<plugin id>' | 'voice'. Also accepted by
   // infoPanelOpen: 'dec' (the shown / first decoder tab), 'dec:<vfo id>' (the
   // tab that VFO's decoder is in)
-  let infoTab = 'ai';
+  let infoTab = 'dec';
   function digMhzOf(id) {
     const d = digDec(id);
     if (d) digVfoMhz[id] = (vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6).toFixed(4);
@@ -10701,6 +10893,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const p = $id('info-panel');
     if (!p) return;
     tab = tab || infoTab;
+    if (tab === 'ai') tab = 'dec';   // the AI Signal Lab's tab (saved by older pages): the assistant is the dock now
     if (tab === 'dec' || tab.startsWith('dec:')) {
       const list = digTabList();
       let t = tab.startsWith('dec:') ? digTabOfVfo(parseInt(tab.slice(4))) : digTabShown;
@@ -10714,19 +10907,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const was = p.style.display !== 'none';
     p.style.display = 'flex';
     $id('info-body-dec').style.display = infoTab.startsWith('dig:') ? 'flex' : 'none';
-    $id('info-body-ai').style.display = infoTab === 'ai' ? 'flex' : 'none';
     $id('info-body-voice').style.display = infoTab === 'voice' ? 'flex' : 'none';
-    if (infoTab === 'ai' && !aiViewId && aiState && aiState.busy && (aiState.job || {}).kind === 'investigate') aiViewId = AI_JOB;
-    if (infoTab === 'ai' && !aiViewId) {
-      const cur = aiState && aiState.session && aiState.session.id;
-      const pick = cur || (aiSessions[0] && aiSessions[0].id);
-      if (pick) { aiViewId = pick; send('AI_SESSION_GET:' + pick); }
-    }
     try { localStorage.setItem('kraken_info_panel', JSON.stringify({open: true, tab: infoTab})); } catch (e) {}
     if (!was) setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
     infoRenderTabs();
     infoRenderDecoder(true);
-    infoRenderAi(true);
     v2tRenderTab(true);
   }
 
@@ -10751,7 +10936,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (ids.some(id => (digStatus[id] || {}).state === 'receiving')) return ['#4caf50', 'receiving'];
     return ['#ffb74d', 'searching'];
   }
-  // tab buttons: one per decoder mode (+ Auto detect), then AI
+  // tab buttons: one per decoder mode, then Voice
   function infoRenderTabs() {
     const el = $id('info-tab-list');
     if (!el) return;
@@ -10769,7 +10954,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const sel = infoTab.startsWith('dig:') ? ' sel' : '';
       html = `<button type="button" class="info-tab${sel}" onclick="infoPanelOpen('dec')">🔐 Decoders</button>`;
     }
-    html += `<button type="button" class="info-tab${infoTab === 'ai' ? ' sel' : ''}" onclick="infoPanelOpen('ai')">🤖 AI</button>`;
     // 🗣 Voice: a dot while a VFO's transmission is being collected, the
     // count of transcripts that came while another tab was shown
     const v2tRec = v2tStatus && (v2tStatus.vfos || []).some(v => v.rec);
@@ -10941,132 +11125,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
 
   // the "AI · working" bubble of a running job; its clock is a span filled
   // by aiFillElapsed, so the ticking time doesn't change the HTML
-  function aiWorkingHtml() {
-    const ls = [...aiLog].reverse().find(x => x.e.ev === 'status');
-    const lt = [...aiLog].reverse().find(x => x.e.ev === 'text');
-    return `<div class="ai-msg assistant"><div class="meta">AI · working <span class="ai-el" data-t="${+aiState.job.started || 0}"></span></div>` +
-           `<div class="dig-help">⏳ ${digEsc(ls ? (ls.e.msg || ls.e.state) : 'working')}…</div>` +
-           (lt ? `<div style="opacity:.85">${aiMd(lt.e.text)}</div>` : '') + '</div>';
-  }
-
-  function aiFillElapsed(el) {
-    for (const sp of el.querySelectorAll('.ai-el')) {
-      const t = aiElapsed(+sp.dataset.t);
-      if (sp.textContent !== t) sp.textContent = t;
-    }
-  }
-
-  // AI tab: saved investigations + the selected one's conversation
-  function infoRenderAi(force) {
-    if (!infoOpen('ai')) return;
-    const hist = $id('info-ai-hist');
-    const busy = !!(aiState && aiState.busy);
-    const jobKind = busy ? (aiState.job || {}).kind : '';
-    const newInv = busy && jobKind === 'investigate';
-    const hh = (newInv || aiViewId === AI_JOB
-      ? `<div class="ai-hist-item${aiViewId === AI_JOB ? ' sel' : ''}" onclick="aiShowJob()" title="The AI's current job">` +
-        `<div style="min-width:0;flex:1"><div class="f">${newInv ? '⏳ Investigating…' : 'Last job'}</div>` +
-        `<div class="n">${digEsc(newInv ? aiState.job.label || '' : '')}</div></div></div>` : '') + aiHistoryHtml(false);
-    if (hist.dataset.html !== hh) { hist.dataset.html = hh; hist.innerHTML = hh; }
-    const chat = $id('info-ai-chat');
-    const s = aiViewId ? aiSessionCache[aiViewId] : null;
-    const meta = aiSessions.find(x => x.id === aiViewId);
-    const live = busy && (aiViewId === AI_JOB ? newInv
-      : !newInv && jobKind !== 'test' && aiState.session && aiState.session.id === aiViewId);
-    let html = '', acts = null, actsOpen = false, actsH = 220;
-    if (aiViewId === AI_JOB) {
-      const err = [...aiLog].reverse().find(x => x.e.ev === 'error');
-      if (live) {
-        html += aiWorkingHtml();
-      } else if (err) {
-        html += `<div class="dig-warn">${digEsc(err.e.msg)}</div>`;
-      } else if (!aiLog.length) {
-        html += '<div class="dig-help">No job yet.</div>';
-      }
-      if (aiLog.length) { acts = aiLog; actsOpen = true; actsH = 320; }
-    } else if (!aiViewId) {
-      html = '<div class="dig-help">Investigate a signal (sidebar → 🤖 AI Signal Lab) or pick one from the list.</div>';
-    } else {
-      if (!s) html += '<div class="dig-help">Loading…</div>';
-      for (const m of (s && s.chat) || []) {
-        const t = m.t ? new Date(m.t).toLocaleString([], {hour12: false}) : '';
-        const what = {investigate: 'investigation', ask: 'question', create: 'decoder'}[m.kind] || '';
-        if (m.role === 'user')
-          html += `<div class="ai-msg user"><div class="meta">You · ${digEsc(what)} · ${digEsc(t)}</div>${digEsc(m.text)}</div>`;
-        else
-          html += `<div class="ai-msg assistant"><div class="meta">AI · ${digEsc(t)}</div>${aiMd(m.text)}</div>`;
-      }
-      if (live) html += aiWorkingHtml();
-      // the agent's steps: live, or saved with the session
-      const a = live ? aiLog : ((s && s.activity) || []).map(e => ({t: e.t || 0, e}));
-      if (a.length) { acts = a; actsOpen = live; }
-    }
-    // The messages and the agent's activity are separate boxes, and the
-    // activity only APPENDS new lines: its scroll position and open / closed
-    // state survive the updates. (Everything was rebuilt each second for the
-    // "working N s" clock, which threw a reader of the activity back to the
-    // top.) The activity follows the newest line while scrolled to the end.
-    let msgs = chat.querySelector(':scope > .ai-msgs'), det = chat.querySelector(':scope > details.ai-acts');
-    if (!msgs || !det) {
-      chat.innerHTML = '<div class="ai-msgs"></div><details class="ai-acts"><summary></summary><div class="dig-log ai-log"></div></details>';
-      msgs = chat.querySelector(':scope > .ai-msgs');
-      det = chat.querySelector(':scope > details.ai-acts');
-    }
-    const atBottom = chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 30;
-    const newView = chat.dataset.view !== String(aiViewId);
-    const wentLive = live && chat.dataset.live !== '1';
-    chat.dataset.view = String(aiViewId);
-    chat.dataset.live = live ? '1' : '';
-    if (force || newView || msgs.dataset.html !== html) { msgs.dataset.html = html; msgs.innerHTML = html; }
-    aiFillElapsed(msgs);
-    det.style.display = acts ? '' : 'none';
-    if (acts) {
-      // first lines of this view (a saved session's arrive after the view
-      // switched to it): its default open state, start at the newest line
-      const first = det.dataset.view !== String(aiViewId);
-      det.dataset.view = String(aiViewId);
-      if (first || wentLive) det.open = actsOpen;
-      det.querySelector('summary').textContent = `Agent activity (${acts.length})`;
-      const box = det.querySelector('.ai-log');
-      box.style.maxHeight = actsH + 'px';
-      const key = x => (x.seq ?? '') + ':' + x.t + ':' + x.e.ev;
-      const n = +box.dataset.n || 0;
-      const follow = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
-      const top = box.scrollTop;
-      if (!force && !first && n && n <= acts.length && box.dataset.first === key(acts[0])) {
-        if (acts.length > n) box.insertAdjacentHTML('beforeend', acts.slice(n).map(aiLogLine).join(''));
-      } else {
-        box.innerHTML = acts.map(aiLogLine).join('');
-      }
-      box.dataset.n = acts.length;
-      box.dataset.first = key(acts[0]);
-      box.scrollTop = follow || first || force ? box.scrollHeight : top;
-    } else {
-      det.dataset.view = '';
-      det.querySelector('.ai-log').dataset.n = '';
-    }
-    if (atBottom || force) chat.scrollTop = chat.scrollHeight;
-    const can = aiState && aiState.enabled && !aiState.busy && !!aiViewId && aiViewId !== AI_JOB;
-    $id('info-ai-ask').disabled = !can;
-    $id('info-ai-ask').placeholder = !aiState || !aiState.enabled ? 'The AI Signal Lab is not enabled on this receiver'
-      : aiState.busy ? 'The AI is working…' : aiViewId && aiViewId !== AI_JOB ? 'Ask about this signal…' : 'Pick an investigation first';
-  }
-
-  // follow-up question from an input (sidebar or bottom panel) about the
-  // viewed / current session
-  function aiAskFrom(inputId) {
-    const el = $id(inputId);
-    const q = (el.value || '').trim();
-    if (!q) return;
-    aiErrorText = '';
-    const cur = aiState && aiState.session && aiState.session.id;
-    if (aiViewId && aiViewId !== cur) send('AI_SESSION_SELECT:' + aiViewId);
-    else if (!aiViewId && cur) aiViewId = cur;
-    el.value = '';
-    send('AI_ASK:' + q);
-    infoPanelOpen('ai');
-  }
-
   // panel height: drag the top edge (remembered in this browser)
   (function () {
     let startY = 0, startH = 0, dragging = false;
@@ -12513,7 +12571,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (!ptrs.has(e.pointerId)) {
         const grab = mapObjGrab(e.offsetX, e.offsetY);
         const over = !grab && !!(mkHit(e.offsetX, e.offsetY) || mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY) ||
-                                 stHit(e.offsetX, e.offsetY) || vsHit(e.offsetX, e.offsetY) || plHit(e.offsetX, e.offsetY));
+                                 stHit(e.offsetX, e.offsetY) || vsHit(e.offsetX, e.offsetY) || plHit(e.offsetX, e.offsetY) ||
+                                 aimHit(e.offsetX, e.offsetY));
         mapCv.classList.toggle('over', over);
         mapCv.classList.toggle('obj', grab === 'obj');
         mapCv.classList.toggle('rot', grab === 'rot');
@@ -12573,7 +12632,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
           const pl = !mk ? plHit(e.offsetX, e.offsetY) : null;
           const st = !mk && !pl && stHit(e.offsetX, e.offsetY), vs = !mk && !st && !pl ? vsHit(e.offsetX, e.offsetY) : null;
           mapSelectObj(st ? 'st' : pl ? 'pl:' + pl : vs);
-          mapSel = mk || st || vs || pl ? null : (mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY));
+          mapSel = mk || st || vs || pl ? null : (mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY) || aimSelectAt(e.offsetX, e.offsetY));
           if (mk) mkSelect(mk);
           else if (!mkEdit && mkSel) mkClose();
           mapDraw();
@@ -13030,6 +13089,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     mastDraw(c);
     mapRings(c);
     plDraw(c);
+    aimDraw(c);
     mkDraw(c);
     // trails, then markers + labels
     const now = Date.now();
@@ -13111,13 +13171,14 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function mapRenderPopup() {
     const el = $id('map-pop');
     const mast = mapSel && mapSel.startsWith('osm:') && mastShown() ? mastPts.get(mapSel.slice(4)) : null;
-    const p = mast || (mapSel ? mapPts.get(mapSel) : null);
+    const aim = mapSel && mapSel.startsWith('ai:') ? aimPopPoint(mapSel) : null;
+    const p = mast || aim || (mapSel ? mapPts.get(mapSel) : null);
     if (!p || p.sx === undefined || p.sx < 0 || p.sy < 0 || p.sx > mapW || p.sy > mapH) {
       if (el.style.display !== 'none') el.style.display = 'none';
       if (!p) mapSel = null;
       return;
     }
-    const html = mast ? mastPopupHtml(mast) : mapPointPopupHtml(p);
+    const html = mast ? mastPopupHtml(mast) : aim ? aimPopupHtml(aim) : mapPointPopupHtml(p);
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
     el.style.display = 'block';
     const w = el.offsetWidth, h = el.offsetHeight;
@@ -14141,7 +14202,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     }
     const live = new Set(m.keys || []);
     for (const k of [...mapPts.keys()]) if (!live.has(k)) mapPts.delete(k);
-    if (mapSel && !mapSel.startsWith('osm:') && !mapPts.has(mapSel)) mapSel = null;
+    if (mapSel && !mapSel.startsWith('osm:') && !mapSel.startsWith('ai:') && !mapPts.has(mapSel)) mapSel = null;   // (masts, 🤖 AI layers: theirs)
     // first data and no saved view: show the station / the markers
     if (mapAutoFit && mapCv && (mapPts.size || (mapStation && !hadStation))) {
       mapAutoFit = false;
@@ -19091,6 +19152,532 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
 
   plReady = true;
+
+  // --- 🤖 AI MAP LAYERS: what the assistant plots (ai_map.cpp) ----------------------
+  // {"ai_map":{seq, layers:[{id, name, desc, src, conv, col, t, f:[{g: pt|ln|pg|ci,
+  // c, r, l, col, ic, sz, w, da, fo, ar, x}]}]}} to every page; this page
+  // projects each feature once (P: [[nx, ny], ..] per ring, B: its box) and
+  // draws the shown layers over the viewshed, under the markers. Per browser:
+  // hidden layers, the panel folded (aimUi, localStorage kraken_aim)
+  function aimSave() { try { localStorage.setItem('kraken_aim', JSON.stringify(aimUi)); } catch (e) {} }
+  // a circle on the ground as its outline (64 points along great circles)
+  function aimCircle(la, lo, r) {
+    const out = [], d = r / 6371008.8, p1 = la * Math.PI / 180, l1 = lo * Math.PI / 180;
+    for (let i = 0; i <= 64; i++) {
+      const b = i / 64 * 2 * Math.PI;
+      const p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(b));
+      const l2 = l1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2));
+      out.push([p2 * 180 / Math.PI, ((l2 * 180 / Math.PI + 540) % 360) - 180]);
+    }
+    return out;
+  }
+  function aimPrep(f) {
+    const rings = f.g === 'pt' ? [[f.c]] : f.g === 'ci' ? [aimCircle(f.c[0], f.c[1], f.r)] : f.g === 'ln' ? [f.c] : f.c;
+    // projected; a ring crossing the antimeridian is kept continuous (x past 0..1)
+    f.P = rings.map(r => {
+      let px = null;
+      return r.map(([la, lo]) => {
+        let [x, y] = mapProj(la, lo);
+        if (px !== null) x -= Math.round(x - px);
+        px = x;
+        return [x, y];
+      });
+    });
+    let x0 = 9, y0 = 9, x1 = -9, y1 = -9;
+    for (const r of f.P) for (const [x, y] of r) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    f.B = [x0, y0, x1, y1];
+  }
+  function aimOnLayers(m) {
+    if (!m || !Array.isArray(m.layers) || m.seq === aimSeq) return;
+    aimSeq = m.seq;
+    aimLayers = m.layers;
+    for (const L of aimLayers) for (const f of L.f) { try { aimPrep(f); } catch (e) { f.P = []; f.B = [0, 0, -1, -1]; } }
+    for (const id of Object.keys(aimUi.hide)) if (!aimLayers.some(L => L.id === id)) delete aimUi.hide[id];
+    if (mapSel && mapSel.startsWith('ai:') && !aimFeat(mapSel)) mapSel = null;
+    aimRender();
+    mapDraw();
+  }
+  function aimFeat(key) {
+    const [, id, i] = key.split(':'), L = aimLayers.find(x => x.id === id);
+    return L && L.f[+i] ? {L, f: L.f[+i], i: +i} : null;
+  }
+  function aimCol(L, f) { return f.col || L.col || '#ff7043'; }
+  // a projected point on screen, near the view's copy of the world (the
+  // whole feature shifted by one offset, so it stays in one piece)
+  function aimShift(f) { const c = (f.B[0] + f.B[2]) / 2; return Math.round(mapState.mx - c); }
+  function aimScr(x, y, k) {
+    const W = mapWorld();
+    return [mapW / 2 + (x + k - mapState.mx) * W, mapH / 2 + (y - mapState.my) * W];
+  }
+  function aimInView(f, k) {
+    const [a, b] = aimScr(f.B[0], f.B[1], k), [c, d] = aimScr(f.B[2], f.B[3], k);
+    return !(c < -40 || a > mapW + 40 || d < -40 || b > mapH + 40);
+  }
+  // a point's emoji in px (>= 18: an icon of the dot's size was hard to see -
+  // the agent's size 2 drew a 5 px 📡) and its radius on screen (rings,
+  // labels, clicks)
+  function aimIconPx(f) { return Math.max(18, Math.round((f.sz || 5.5) * 3.6)); }
+  function aimPtR(f) { return f.ic ? aimIconPx(f) / 2 : (f.sz || 5.5); }
+  function aimDraw(c) {
+    if (!aimLayers.length) return;
+    const sel = mapSel && mapSel.startsWith('ai:') ? mapSel : null;
+    let pts = 0;
+    for (const L of aimLayers) if (!aimUi.hide[L.id]) for (const f of L.f) if (f.g === 'pt' && aimInView(f, aimShift(f))) pts++;
+    const labels = pts <= 400 || mapState.z >= 13;
+    c.save();
+    c.lineJoin = c.lineCap = 'round';
+    for (const L of aimLayers) {
+      if (aimUi.hide[L.id]) continue;
+      // areas first, then lines, then points (a layer's points stay clickable)
+      for (const pass of ['pg', 'ln', 'pt']) {
+        L.f.forEach((f, i) => {
+          const g = f.g === 'ci' ? 'pg' : f.g;
+          if (g !== pass || !f.P || !f.P.length) return;
+          const k = aimShift(f);
+          if (!aimInView(f, k)) return;
+          const col = aimCol(L, f), on = sel === `ai:${L.id}:${i}`;
+          if (g === 'pt') {
+            const [x, y] = aimScr(f.P[0][0][0], f.P[0][0][1], k), sz = aimPtR(f);
+            if (on) { c.beginPath(); c.arc(x, y, sz + 6, 0, 2 * Math.PI); c.strokeStyle = 'rgba(0,0,0,0.75)'; c.lineWidth = 4; c.stroke(); c.strokeStyle = '#fff'; c.lineWidth = 2; c.stroke(); }
+            if (f.ic) {
+              c.font = `${aimIconPx(f)}px sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+              c.fillText(f.ic, x, y);
+            } else {
+              c.beginPath(); c.arc(x, y, sz, 0, 2 * Math.PI);
+              c.fillStyle = col; c.fill();
+              c.strokeStyle = 'rgba(0,0,0,0.85)'; c.lineWidth = 1.3; c.stroke();
+            }
+            if (labels && f.l) {
+              c.font = 'bold 11px sans-serif'; c.textAlign = 'left'; c.textBaseline = 'middle';
+              c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineWidth = 3; c.fillStyle = '#fff';
+              c.strokeText(f.l, x + sz + 5, y); c.fillText(f.l, x + sz + 5, y);
+            }
+            return;
+          }
+          c.beginPath();
+          for (const r of f.P) r.forEach(([nx, ny], j) => { const [x, y] = aimScr(nx, ny, k); if (j) c.lineTo(x, y); else c.moveTo(x, y); });
+          if (g === 'pg') {
+            c.closePath();
+            c.globalAlpha = f.fo === undefined ? 0.18 : f.fo;
+            c.fillStyle = col;
+            c.fill('evenodd');
+            c.globalAlpha = 1;
+          }
+          const w = f.w || (g === 'pg' ? 1.6 : 2.6);
+          c.setLineDash(f.da ? [7, 5] : []);
+          c.strokeStyle = 'rgba(0,0,0,0.55)'; c.lineWidth = w + 2.2; c.stroke();
+          c.strokeStyle = on ? '#fff' : col; c.lineWidth = w; c.stroke();
+          c.setLineDash([]);
+          if (g === 'ln') {
+            const r = f.P[0], n = r.length, [ex, ey] = aimScr(r[n - 1][0], r[n - 1][1], k), [px, py] = aimScr(r[n - 2][0], r[n - 2][1], k);
+            if (f.ar) {   // the arrowhead at the end
+              const a = Math.atan2(ey - py, ex - px), h = 7 + w * 2;
+              c.beginPath(); c.moveTo(ex, ey);
+              c.lineTo(ex - h * Math.cos(a - 0.45), ey - h * Math.sin(a - 0.45)); c.lineTo(ex - h * Math.cos(a + 0.45), ey - h * Math.sin(a + 0.45));
+              c.closePath(); c.fillStyle = col; c.fill(); c.strokeStyle = 'rgba(0,0,0,0.6)'; c.lineWidth = 1; c.stroke();
+            }
+            if (labels && f.l) {
+              c.font = 'bold 11px sans-serif'; c.textAlign = 'left'; c.textBaseline = 'middle';
+              c.strokeStyle = 'rgba(0,0,0,0.8)'; c.lineWidth = 3; c.fillStyle = '#fff';
+              c.strokeText(f.l, ex + 6, ey); c.fillText(f.l, ex + 6, ey);
+            }
+          }
+        });
+      }
+    }
+    c.restore();
+  }
+  // what is under (x, y): a point (within its size + 6 px), a line (5 px), an
+  // area (inside) - the topmost layer first; -> {key, nx, ny} | null
+  function aimHitAt(x, y) {
+    let best = null;
+    for (let li = aimLayers.length - 1; li >= 0; li--) {
+      const L = aimLayers[li];
+      if (aimUi.hide[L.id]) continue;
+      for (let i = L.f.length - 1; i >= 0; i--) {
+        const f = L.f[i];
+        if (!f.P || !f.P.length) continue;
+        const k = aimShift(f);
+        if (!aimInView(f, k)) continue;
+        const key = `ai:${L.id}:${i}`;
+        if (f.g === 'pt') {
+          const [px, py] = aimScr(f.P[0][0][0], f.P[0][0][1], k), r = aimPtR(f) + 6;
+          const d = (px - x) ** 2 + (py - y) ** 2;
+          if (d <= r * r && (!best || best.rank > 0 || d < best.d)) best = {key, rank: 0, d};
+          continue;
+        }
+        if (best && best.rank === 0) continue;
+        if (f.g === 'ln') {
+          const r = f.P[0];
+          for (let j = 1; j < r.length; j++) {
+            const [ax, ay] = aimScr(r[j - 1][0], r[j - 1][1], k), [bx, by] = aimScr(r[j][0], r[j][1], k);
+            const dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)));
+            const d = (ax + t * dx - x) ** 2 + (ay + t * dy - y) ** 2;
+            if (d <= 25 && (!best || best.rank > 1 || d < best.d)) best = {key, rank: 1, d};
+          }
+          continue;
+        }
+        if (best) continue;
+        let inside = false;
+        for (const r of f.P)
+          for (let j = 0, m = r.length - 1; j < r.length; m = j++) {
+            const [ax, ay] = aimScr(r[j][0], r[j][1], k), [bx, by] = aimScr(r[m][0], r[m][1], k);
+            if ((ay > y) !== (by > y) && x < (bx - ax) * (y - ay) / (by - ay) + ax) inside = !inside;
+          }
+        if (inside) best = {key, rank: 2, d: 0};
+      }
+    }
+    return best;
+  }
+  function aimHit(x, y) { return aimLayers.length ? !!aimHitAt(x, y) : false; }
+  // a click: the feature's popup (a line / area's at the clicked spot)
+  function aimSelectAt(x, y) {
+    const h = aimLayers.length ? aimHitAt(x, y) : null;
+    if (!h) return null;
+    const W = mapWorld();
+    aimPopAt = [mapState.mx + (x - mapW / 2) / W, mapState.my + (y - mapH / 2) / W];
+    return h.key;
+  }
+  function aimPopPoint(key) {
+    const h = aimFeat(key);
+    if (!h || aimUi.hide[h.L.id]) return null;
+    const {f} = h;
+    // a point / circle: its centre; a line / area: where it was clicked
+    const [nx, ny] = f.g === 'pt' || f.g === 'ci' ? mapProj(f.c[0], f.c[1]) : aimPopAt || f.P[0][0];
+    const [sx, sy] = mapToScreen(nx, ny);
+    return Object.assign({sx, sy, nx, ny}, h);
+  }
+  function aimLenKm(r) {
+    let d = 0;
+    for (let j = 1; j < r.length; j++) d += mapDistKm(r[j - 1][0], r[j - 1][1], r[j][0], r[j][1]);
+    return d;
+  }
+  function aimPopupHtml(p) {
+    const {L, f} = p, col = aimCol(L, f);
+    const [la, lo] = f.g === 'pt' || f.g === 'ci' ? f.c : mapUnproj(p.nx - Math.floor(p.nx), p.ny);
+    let rows = (f.x || []).map(([k, v]) => `<tr><td>${digEsc(k)}</td><td>${aiMd(String(v)).replace(/^<p>|<\/p>$/g, '')}</td></tr>`).join('');
+    if (f.g === 'ci') rows += `<tr><td>Radius</td><td>${vsFmtM(f.r)}</td></tr>`;
+    if (f.g === 'ln') rows += `<tr><td>Length</td><td>${plF(aimLenKm(f.c), 1)} km</td></tr>`;
+    rows += `<tr><td>${f.g === 'pt' || f.g === 'ci' ? 'Position' : 'Here'}</td><td>${la.toFixed(5)}, ${lo.toFixed(5)}</td></tr>`;
+    if (mapStation) {
+      const d = mapDistKm(mapStation[0], mapStation[1], la, lo), b = mapBearing(mapStation[0], mapStation[1], la, lo);
+      rows += `<tr><td>From station</td><td>${d < 10 ? d.toFixed(1) : d.toFixed(0)} km, ${b.toFixed(0)}°</td></tr>`;
+    }
+    const btn = f.g === 'pt' ? `<div style="margin-top:4px"><button type="button" class="map-btn" onclick="aimToMarker('${digEsc(p.key)}')" title="Make it one of your map markers (📍 - a saved location)">📍 Add as marker</button></div>` : '';
+    return `<div class="h"><span style="color:${col}">●</span>${digEsc(f.l || L.name)}<span class="x" onclick="mapSel=null;mapDraw()">✕</span></div>` +
+           `<div class="s">🤖 ${digEsc(L.name)}${L.src ? ' · ' + aiMd(L.src).replace(/^<p>|<\/p>$/g, '') : ''}</div><table>${rows}</table>${btn}`;
+  }
+  function aimToMarker(key) {
+    const h = aimFeat(key);
+    if (!h) return;
+    const notes = [(h.f.x || []).map(([k, v]) => `${k}: ${v}`).join('\n'), `From the assistant's map layer "${h.L.name}"`].filter(Boolean).join('\n');
+    mapSel = null;
+    mkCreate(h.f.c[0], h.f.c[1], (h.f.l || h.L.name).slice(0, 80), notes.slice(0, 2000));
+    mapDraw();
+  }
+  // the box of normalized x0, y0, x1, y1 in view
+  function aimFitBox(b) {
+    const span = Math.max((b[2] - b[0]) / Math.max(1, mapW - 160), (b[3] - b[1]) / Math.max(1, mapH - 120), 1e-9);
+    mapAutoFit = false;
+    mapState.z = Math.max(MAP_MIN_Z, Math.min(15, Math.log2(1 / (span * 256))));
+    mapState.mx = (b[0] + b[2]) / 2;
+    mapState.mx -= Math.floor(mapState.mx);
+    mapState.my = (b[1] + b[3]) / 2;
+    mapClampView();
+    mapSave();
+    mapDraw();
+  }
+  function aimLayerBox(L) {
+    let b = null;
+    for (const f of L.f) {
+      if (!f.B || f.B[2] < f.B[0]) continue;
+      const k = b ? Math.round((b[0] + b[2]) / 2 - (f.B[0] + f.B[2]) / 2) : 0;
+      b = b ? [Math.min(b[0], f.B[0] + k), Math.min(b[1], f.B[1]), Math.max(b[2], f.B[2] + k), Math.max(b[3], f.B[3])] : f.B.slice();
+    }
+    return b;
+  }
+  function aimFit(id) {
+    const L = aimLayers.find(x => x.id === id), b = L && aimLayerBox(L);
+    if (b) aimFitBox(b);
+  }
+  function aimShow(id) { aimUi.hide[id] ? delete aimUi.hide[id] : (aimUi.hide[id] = 1); aimSave(); aimRender(); mapDraw(); }
+  function aimDelete(id) {
+    const L = aimLayers.find(x => x.id === id);
+    if (L && confirm(`Remove the assistant's map layer "${L.name}" (${L.f.length} items) for every page?`)) send('AI_MAP_DELETE:' + id);
+  }
+  // the panel under the viewshed's: one row per layer
+  function aimRender() {
+    const el = $id('map-ai');
+    if (!el) return;
+    const show = aimLayers.length > 0;
+    if (el.style.display !== (show ? 'block' : 'none')) el.style.display = show ? 'block' : 'none';
+    if (!show) return;
+    const n = aimLayers.reduce((a, L) => a + L.f.length, 0);
+    const html = `<div class="map-vs-h"><span class="t">🤖 AI layers</span><span class="hint">${aimLayers.length} · ${n} item${n === 1 ? '' : 's'}</span>` +
+      `<span class="x" onclick="aimUi.open=!aimUi.open;aimSave();aimRender()" title="Fold / unfold">${aimUi.open ? '▾' : '▸'}</span></div>` +
+      (aimUi.open ? `<div class="map-vs-body">` + aimLayers.map(L => {
+        const off = !!aimUi.hide[L.id], when = L.t ? new Date(L.t).toLocaleString([], {hour12: false, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : '';
+        const tip = [L.desc, L.src && 'Source: ' + L.src, when && 'Plotted ' + when].filter(Boolean).join('\n');
+        return `<div class="aim-it${off ? ' off' : ''}"><div class="l1"><span class="sw" style="background:${off ? 'transparent' : L.col};border-color:${L.col}" title="Show / hide (this browser)" onclick="aimShow('${L.id}')"></span>` +
+               `<span class="nm" title="${digEsc(tip)}">${digEsc(L.name)}</span><span class="hint">${L.f.length}</span>` +
+               `<button type="button" class="map-btn" title="Show it all on the map" onclick="aimFit('${L.id}')">⌖</button>` +
+               `<button type="button" class="map-btn" title="Remove it (every page)" onclick="aimDelete('${L.id}')">✕</button></div>` +
+               (L.desc ? `<div class="aim-d">${digEsc(L.desc)}</div>` : '') + `</div>`;
+      }).join('') + `</div>` : '');
+    if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+  }
+
+  // --- 🤖 the assistant's commands to THIS page (ai_mcp.cpp page_call): the map's
+  // view, the viewshed / path loss (they live in the browser - per page, its
+  // worker). {"ai_page":{id, page, op, args}}: only the page with that id acts -
+  // AI_PAGE_REPLY {id, ack} at once, then {id, ok, result | error} ---
+  const aiPageSeen = new Set();
+  function aiPageCmd(x) {
+    if (!x || x.page !== aiPageId || aiPageSeen.has(x.id)) return;
+    aiPageSeen.add(x.id);
+    const reply = o => send('AI_PAGE_REPLY:' + JSON.stringify(Object.assign({id: x.id}, o)));
+    reply({ack: true});
+    const fn = AI_PAGE_OPS[x.op];
+    Promise.resolve().then(() => { if (!fn) throw new Error('unknown command ' + x.op); return fn(x.args || {}); })
+      .then(result => reply({ok: true, result: result === undefined ? {} : result}))
+      .catch(e => reply({ok: false, error: String((e && e.message) || e)}));
+  }
+  // the map pane open on the map tab
+  function aiMapOpen() {
+    if (!mapState.on) mapToggle(true);
+    else if (opMode === 'coherent' && mapState.tab === 'doa') rpShow('map');
+  }
+  const aiSleep = ms => new Promise(r => setTimeout(r, ms));
+  const aiNum = (v, lo, hi) => { const n = Number(v); return v !== undefined && v !== null && v !== '' && Number.isFinite(n) && n >= lo && n <= hi ? n : null; };
+  const aiTxt = h => String(h || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+  const aiR = (v, d) => v === null || v === undefined || !Number.isFinite(v) ? null : +v.toFixed(d === undefined ? 1 : d);
+  // jobs still to run for the shown sites / the link?
+  function aiVsBusy() {
+    if (vsJob || plJob) return true;
+    if (!mapState.vs || vsWorkerErr) return false;
+    for (const it of vsJobItems()) {
+      if (!it.on) continue;
+      const f = vsFail.get(it.id);
+      if (f && f.key === vsKey(it)) continue;
+      if (!vsResOk(it, vsRes.get(it.id))) return true;
+    }
+    const k = plKey();
+    return !!(k && !(plRes && plRes.key === k) && !(plFail && plFail.key === k));
+  }
+  async function aiVsWait(ms) {
+    const t0 = Date.now();
+    vsPump(); plPump();
+    while (aiVsBusy()) {
+      if (Date.now() - t0 > ms) return false;
+      await aiSleep(250);
+      vsPump(); plPump();
+    }
+    return true;
+  }
+  const AI_ENVS = ['none', 'water', 'open', 'suburban', 'urban', 'dense_urban'];
+  const AI_POLS = {vertical: 'v', horizontal: 'h', circular: 'c'};
+  function aiSiteJson(it) {
+    const res = vsRes.get(it.id), ok = vsResOk(it, res), sig = vsState.mode === 'sig';
+    const o = {id: it.id, name: it.name, lat: it.lat, lon: it.lon, height_m: it.h, radius_km: it.r,
+               role: it.st ? 'station' : it.role === 'rx' ? 'rx' : 'tx', shown: it.on, status: aiTxt(vsItemStatus(it)[0])};
+    if (!sig && !it.st) o.note = 'line of sight mode shows the station\'s only - switch to signal mode for this site';
+    if (ok && (!sig || res.sigPaint)) {
+      o[sig ? 'covered_pct' : 'in_sight_pct'] = aiR(res.vis * 100, 1);
+      Object.assign(o, {ground_m: Math.round(res.gnd), antenna_asl_m: Math.round(res.eye), terrain_cell_m: Math.round(res.mpp), computed_s: aiR(res.ms / 1000, 1)});
+    }
+    return o;
+  }
+  function aiLinkJson() {
+    const e = plEnds();
+    if (!e) return null;
+    const a = e.tx, b = e.rx, r = plRes && plRes.key === plKey() ? plRes : null, bu = plBudget(r);
+    const o = {from: a.name, to: b.name, from_pos: [a.lat, a.lon], to_pos: [b.lat, b.lon],
+               distance_km: aiR(mapDistKm(a.lat, a.lon, b.lat, b.lon), 2), bearing_deg: aiR(mapBearing(a.lat, a.lon, b.lat, b.lon), 1)};
+    if (plJob) o.status = 'computing';
+    else if (plFail && plFail.key === plKey()) o.error = plFail.msg;
+    if (!r) return o;
+    const p = r.p1812;
+    o.path = p.los ? (r.clr >= 0.6 ? `line of sight, ${plF(r.clr, 2)} of the first Fresnel zone clear`
+                                   : `line of sight, but the Fresnel zone is ${r.clr >= 0 ? 'partly' : 'mostly'} blocked (${plF(r.clr, 2)} F1 at ${plF(r.clrAt / 1000)} km)`)
+                   : `beyond the horizon - the main obstruction (Bullington edge) at ${plF(p.dbp)} km${p.Lbs < p.Lbd ? ', troposcatter dominates' : ''}`;
+    o.line_of_sight = !!p.los;
+    o.loss_db = {p1812: aiR(p.Lb), longley_rice: r.itm.err ? 'error: ' + plItmErr(r.itm.err) : aiR(r.itm.A), free_space: aiR(r.fs)};
+    o.model = plState.model;
+    o.tx_asl_m = Math.round(r.hts); o.rx_asl_m = Math.round(r.hrs);
+    if (bu && !bu.err) Object.assign(o, {clutter_db: aiR(bu.clut), polarization_db: aiR(bu.pol), received_dbm: aiR(bu.Prx), snr_db: aiR(bu.snr),
+                                           sensitivity_dbm: aiR(plSens()), margin_db: aiR(bu.margin), reliability_pct: aiR(bu.rel, 2),
+                                           margin_needed_db: aiR(bu.need), for_reliability_pct: plState.rel,
+                                           fading: bu.kind === 'rician' ? `Rician K ${plF(10 * Math.log10(bu.K), 1)} dB` : bu.kind});
+    else if (bu && bu.err) o.error = bu.err;
+    return o;
+  }
+  function aiVsStateJson(extra) {
+    const s = plState, st = mapStationPos();
+    const o = {enabled: !!mapState.vs, map_open: !!mapState.on, mode: vsState.mode === 'sig' ? 'signal' : 'line_of_sight',
+               target: {height_m: vsState.tgt, reference: vsState.amsl ? 'sea' : 'ground'}, refraction_k: aiR(vsK(), 4),
+               station: st ? {lat: +st[0].toFixed(5), lon: +st[1].toFixed(5)} : null,
+               sites: vsState.items.map(aiSiteJson), busy: aiVsBusy()};
+    if (vsWorkerErr) o.error = vsWorkerErr;
+    if (vsState.mode === 'sig')
+      o.signal = {freq_mhz: s.f, tx_power_w: s.ptx, tx_power_dbm: aiR(plPtxDbm()), tx_gain_dbi: s.gt, rx_gain_dbi: s.gr, tx_cable_db: s.lt, rx_cable_db: s.lr,
+                  rx_bandwidth_khz: s.bw, noise_figure_db: s.nf, required_snr_db: s.snr, sensitivity_dbm: aiR(plSens()),
+                  model: s.model === 'fs' ? 'free_space' : s.model, tx_polarization: Object.keys(AI_POLS).find(k => AI_POLS[k] === s.polT) || 'custom',
+                  rx_polarization: Object.keys(AI_POLS).find(k => AI_POLS[k] === s.polR) || 'custom',
+                  tx_clutter: AI_ENVS[s.envTx], rx_clutter: AI_ENVS[s.envRx], fading: s.fade, rician_k_db: s.K, reliability_pct: s.rel};
+    o.link = aiLinkJson();
+    o.note = 'computed in the user\'s browser on terrain tiles (bare ground; clutter only by the setting)';
+    return Object.assign(o, extra || {});
+  }
+  function aiVsOn() {
+    aiMapOpen();
+    if (!mapState.vs) vsToggle();
+    vsEnsureStation();
+  }
+  function aiVsSite(w) {
+    const s = String(w || '').toLowerCase();
+    return vsState.items.find(i => i.id === w) || vsState.items.find(i => i.name.toLowerCase() === s) || null;
+  }
+  const AI_PAGE_OPS = {
+    map_show(a) {
+      aiMapOpen();
+      const L = a.layer && aimLayers.find(x => x.id === a.layer);
+      const s = aiNum(a.south, -90, 90), w = aiNum(a.west, -180, 180), n = aiNum(a.north, -90, 90), e = aiNum(a.east, -180, 180);
+      const la = aiNum(a.lat, -90, 90), lo = aiNum(a.lon, -180, 180), z = aiNum(a.zoom, MAP_MIN_Z, 18);
+      if (L) { if (aimUi.hide[L.id]) aimShow(L.id); aimFit(L.id); }
+      else if (s !== null && w !== null && n !== null && e !== null) {
+        const [x0, y1] = mapProj(Math.min(s, n), w), [x1, y0] = mapProj(Math.max(s, n), e);
+        aimFitBox([x0, y0, x1 < x0 ? x1 + 1 : x1, y1]);
+      } else if (la !== null && lo !== null) { mapAutoFit = false; mapCenterOn(la, lo, z === null ? Math.max(mapState.z, 12) : z); }
+      else if (a.station) mapCenterStation();
+      else if (z !== null) { mapState.z = z; mapClampView(); mapSave(); mapDraw(); }
+      const [cla, clo] = mapUnproj(mapState.mx, mapState.my);
+      return {shown: true, center: [aiR(cla, 5), aiR(clo, 5)], zoom: aiR(mapState.z, 1)};
+    },
+    vs_state() { return aiVsStateJson(); },
+    async vs_set(a) {
+      const applied = [], rejected = [];
+      if (a.enabled === false) { if (mapState.vs) vsToggle(); return aiVsStateJson({applied: ['enabled']}); }
+      aiVsOn();
+      if (a.mode !== undefined) { if (['line_of_sight', 'signal', 'los', 'sig'].includes(a.mode)) { vsSetMode(a.mode === 'signal' || a.mode === 'sig' ? 'sig' : 'los'); applied.push('mode'); } else rejected.push('mode'); }
+      if (a.target_height_m !== undefined) { const v = aiNum(a.target_height_m, 0, 30000); if (v === null) rejected.push('target_height_m'); else { vsSetTgt(v); applied.push('target_height_m'); } }
+      if (a.target_reference !== undefined) { if (['ground', 'sea'].includes(a.target_reference)) { vsSetRef(a.target_reference === 'sea' ? 'amsl' : 'agl'); applied.push('target_reference'); } else rejected.push('target_reference'); }
+      if (a.refraction !== undefined) { const k = {radio: 4 / 3, light: 7 / 6, none: 1}[a.refraction]; if (k) { vsSetK(k); applied.push('refraction'); } else rejected.push('refraction'); }
+      const st = vsState.items.find(i => i.st);
+      for (const [k, key, lo, hi] of [['station_height_m', 'h', 0, 5000], ['station_radius_km', 'r', 1, VS_RMAX_KM]]) {
+        if (a[k] === undefined) continue;
+        const v = aiNum(a[k], lo, hi);
+        if (!st) rejected.push(k + ' (no station location)');
+        else if (v === null) rejected.push(k);
+        else { vsSetItem(st.id, key, v); applied.push(k); }
+      }
+      const num = {freq_mhz: 'f', tx_power_w: 'ptx', tx_gain_dbi: 'gt', rx_gain_dbi: 'gr', tx_cable_db: 'lt', rx_cable_db: 'lr', rx_bandwidth_khz: 'bw',
+                   noise_figure_db: 'nf', required_snr_db: 'snr', reliability_pct: 'rel', rician_k_db: 'K', n0: 'N0'};
+      for (const [k, key] of Object.entries(num)) {
+        if (a[k] === undefined) continue;
+        plSet(key, a[k]);
+        (plState[key] === Number(a[k]) ? applied : rejected).push(k);
+      }
+      const pick = (k, key, map) => {
+        if (a[k] === undefined) return;
+        const v = map(a[k]);
+        if (v === undefined || v === null) { rejected.push(k); return; }
+        plSet(key, v);
+        applied.push(k);
+      };
+      pick('model', 'model', v => ({p1812: 'p1812', itm: 'itm', longley_rice: 'itm', free_space: 'fs', fs: 'fs'})[v]);
+      pick('tx_polarization', 'polT', v => AI_POLS[v]);
+      pick('rx_polarization', 'polR', v => AI_POLS[v]);
+      pick('tx_clutter', 'envTx', v => AI_ENVS.indexOf(v) >= 0 ? AI_ENVS.indexOf(v) : null);
+      pick('rx_clutter', 'envRx', v => AI_ENVS.indexOf(v) >= 0 ? AI_ENVS.indexOf(v) : null);
+      pick('fading', 'fade', v => ['auto', 'rician', 'rayleigh', 'none'].includes(v) ? v : null);
+      if (a.los_edge !== undefined) { plSet('losEdge', !!a.los_edge); applied.push('los_edge'); }
+      const done = await aiVsWait(280000);
+      return aiVsStateJson({applied, rejected, finished: done});
+    },
+    async vs_add_tx(a) {
+      const la = aiNum(a.lat, -90, 90), lo = aiNum(a.lon, -180, 180);
+      if (la === null || lo === null) throw new Error('lat / lon needed');
+      aiVsOn();
+      if (vsState.mode !== 'sig') vsSetMode('sig');
+      if (vsState.items.length >= VS_MAX) throw new Error(`the panel has ${VS_MAX} sites already - viewshed_remove one first`);
+      let name = String(a.name || '').trim().slice(0, 60);
+      if (!name) { let i = 1; while (vsState.items.some(v => v.name === 'TX ' + i)) i++; name = 'TX ' + i; }
+      const h = aiNum(a.height_m, 0, 5000);
+      vsAdd(la, lo, name, Object.assign({role: 'tx'}, h === null ? {} : {h}));
+      const it = vsState.items[vsState.items.length - 1];
+      const r = aiNum(a.radius_km, 1, VS_RMAX_KM);
+      if (r !== null) vsSetItem(it.id, 'r', Math.round(r));
+      vsCentre(it.id);
+      const done = await aiVsWait(280000);
+      return aiVsStateJson({added: aiSiteJson(it), finished: done});
+    },
+    vs_remove(a) {
+      const w = String(a.site || '');
+      const gone = w.toLowerCase() === 'all' ? vsState.items.filter(i => !i.st) : [aiVsSite(w)].filter(Boolean);
+      if (!gone.length) throw new Error('no such site (viewshed_get lists them)');
+      if (gone.some(i => i.st)) throw new Error('the station\'s own viewshed stays (viewshed_set station_radius_km / enabled:false)');
+      for (const it of gone) vsRemove(it.id);
+      return aiVsStateJson({removed: gone.map(i => i.name)});
+    },
+    async pl_link(a) {
+      const la = aiNum(a.lat, -90, 90), lo = aiNum(a.lon, -180, 180);
+      if (la === null || lo === null) throw new Error('lat / lon needed');
+      aiVsOn();
+      const it = a.site ? aiVsSite(a.site) : plPickSite();
+      if (!it || it.st || it.role === 'rx') throw new Error(a.site ? 'no TX antenna "' + a.site + '" (viewshed_get lists the sites)' : 'no TX antenna yet - viewshed_add_tx first');
+      plState.link = {site: it.id, lat: +la.toFixed(6), lon: +lo.toFixed(6), name: String(a.name || 'Point').slice(0, 60), mk: ''};
+      plState.prof = true;
+      plSave();
+      if (vsState.mode !== 'sig') vsSetMode('sig');
+      vsLinkSync();
+      vsSigChanged();
+      plPump();
+      plRender();
+      plFit();
+      const done = await aiVsWait(170000);
+      return Object.assign(aiLinkJson() || {}, {finished: done});
+    },
+    vs_query(a) {
+      const pts = Array.isArray(a.points) ? a.points.slice(0, 200) : [];
+      const sites = !mapState.vs ? [] : vsJobItems().filter(i => i.on && vsResOk(i, vsRes.get(i.id)));
+      const sig = vsState.mode === 'sig';
+      const out = pts.map(p => {
+        const la = aiNum(p.lat, -90, 90), lo = aiNum(p.lon, -180, 180);
+        const o = {name: p.name ? String(p.name).slice(0, 60) : undefined, lat: la, lon: lo};
+        if (la === null || lo === null) return Object.assign(o, {error: 'bad lat / lon'});
+        const [nx, ny] = mapProj(la, lo);
+        o.sites = [];
+        for (const it of sites) {
+          const res = vsRes.get(it.id), {amsl, tgt} = vsTgtOf(it);
+          let q = VS_NODATA, g = 0, ls = 65535, fv = 255;
+          for (const l of res.levels) {   // finest first
+            const Wv = 256 * 2 ** l.z, N = l.N;
+            let px = nx * Wv - l.gx0;
+            px -= Math.round((px - N / 2) / Wv) * Wv;
+            const i = Math.floor(px), j = Math.floor(ny * Wv - l.gy0);
+            if (i < 0 || j < 0 || i >= N || j >= N || l.need[j * N + i] === VS_NODATA) continue;
+            q = l.need[j * N + i]; g = l.ground[j * N + i];
+            if (l.loss) { ls = l.loss[j * N + i]; fv = l.fad[j * N + i]; }
+            break;
+          }
+          const s = {site: it.name, distance_km: aiR(mapDistKm(res.lat, res.lon, la, lo), 2), bearing_deg: aiR(mapBearing(res.lat, res.lon, la, lo), 1)};
+          if (q === VS_NODATA) { o.sites.push(Object.assign(s, {note: 'outside its radius'})); continue; }
+          const nd = vsDec(q);
+          o.ground_m = g;
+          s.in_sight = amsl ? g + nd <= tgt : nd <= tgt;
+          s[amsl ? 'needs_m_above_sea' : 'needs_m_above_ground'] = aiR(amsl ? g + nd : nd, 1);
+          if (sig && res.sigPaint && ls < 65534) {
+            const pl = plPolLoss(plPolEnds(it)), prx = plPrx(ls / 10) - pl;
+            Object.assign(s, {loss_db: aiR(ls / 10), received_dbm: aiR(prx), reliability_pct: aiR(plRelK(plRelSet(plSiteSigma(it)), fv, prx - plSens()) * 100, 1)});
+          }
+          o.sites.push(s);
+        }
+        return o;
+      });
+      return {mode: sig ? 'signal' : 'line_of_sight', target: {height_m: vsState.tgt, reference: vsState.amsl ? 'sea' : 'ground'},
+              points: out, note: sites.length ? undefined : 'no site has been worked out yet - viewshed_set / viewshed_add_tx first'};
+    },
+  };
 
   // markers' age / staleness changes without new data
   setInterval(() => { if (mapPts.size || mapSel || (mapState.masts && (mastErr || mastBusy))) mapDraw(); }, 2000);

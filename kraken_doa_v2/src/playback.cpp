@@ -32,6 +32,7 @@
 // station where the recording was made (StationInfo playback override, moved
 // along krakensdr:track).
 
+#include "ai_sandbox.hpp"
 #include "playback.hpp"
 
 #include "config.hpp"
@@ -874,6 +875,16 @@ std::string start_gen(const std::string& id) {
 #endif
     o.argv = kproc::python_cmd({isolate, tool, id, "--plugins", dig::PluginRegistry::dir(), "--cache", CACHE_DIR,
                                 "--lat", lat, "--lon", lon});
+    // the generators are the plugins' own code (plugins/<id>/tools/), which
+    // the AI assistant may have written: sandboxed when bwrap is there
+    // (only the cache writable), refused without it while any plugin is one
+    // the assistant changed (ai_sandbox.hpp; Windows: never a sandbox)
+    if (aisandbox::available()) {
+        o.argv = aisandbox::wrap(o.argv, {CACHE_DIR});
+    } else if (aisandbox::any_marked()) {
+        return std::string("the AI assistant changed plugins here: test signals are generated only in a sandbox - ") +
+               aisandbox::NO_SANDBOX_FIX;
+    }
     o.search_path = true;
     o.in = kproc::Stdio::Null;
     o.out = kproc::Stdio::Pipe;                   // PROGRESS / ERROR lines; stderr stays ours
@@ -1134,7 +1145,6 @@ const char* refuse(std::string_view m, uint64_t freq_hz) {
     if (m.starts_with("SCANNER_START") || m.starts_with("CONTINUOUS_SCANNER_START") || m.starts_with("SCANNER_NEXT"))
         return "Playback: the scanners need the real receiver";
     if (m == "RESET_SETTINGS") return "Playback: stop the playback before resetting the settings";
-    if (m.starts_with("AI_INVESTIGATE")) return "Playback: the AI Signal Lab captures from heimdall - stop the playback first";
     return nullptr;
 }
 

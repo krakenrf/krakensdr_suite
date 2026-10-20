@@ -69,6 +69,8 @@ void feed_analog(int vfo, const std::complex<float>* x, size_t n, float rate_hz,
 // catalogue, settings, queue, per-VFO state, statistics
 std::string status_message();
 // {"voice2text":{"history":[...]}}: the last `max` transcripts
+// the newest max transcripts [..] - no side effect (the AI assistant's tool)
+std::string history_json(size_t max);
 std::string history_message(size_t max);
 // {"voice2text":{"new":[...]}} with the transcripts since the last call, or ""
 std::string take_new_message();

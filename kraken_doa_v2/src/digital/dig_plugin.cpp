@@ -1,4 +1,5 @@
 #include "digital/dig_plugin.hpp"
+#include "ai_sandbox.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -23,12 +24,13 @@ namespace {
 // MinGW's access(X_OK) is true for any existing file)
 bool is_exe(const std::string& path) { return kproc::is_executable(path); }
 
-// `decoder --info` must answer within this. Windows: 10 s - the first start
-// of a freshly built exe waits for the antivirus to scan it (seconds)
+// `decoder --info` must answer within this (5 s: a sandboxed plugin starts
+// under bwrap). Windows: 10 s - the first start of a freshly built exe waits
+// for the antivirus to scan it (seconds)
 #ifdef _WIN32
 constexpr int INFO_TIMEOUT_MS = 10000;
 #else
-constexpr int INFO_TIMEOUT_MS = 3000;
+constexpr int INFO_TIMEOUT_MS = 5000;
 #endif
 
 // How the user builds the plugins - the "not built" hints the web UI shows.
@@ -118,7 +120,14 @@ void PluginRegistry::scan() {
                 pi.mtime = fs_mtime_ms(pi.exe);
                 pi.stale = src_mtime > pi.mtime;
                 std::string js;
-                if (!run_and_capture({pi.exe, "--info"}, INFO_TIMEOUT_MS, &js)) {
+                // a plugin the AI assistant changed runs only sandboxed (ai_sandbox.hpp)
+                std::vector<std::string> info_argv{pi.exe, "--info"};
+                const bool boxed = aisandbox::must_sandbox_exe(pi.exe);
+                if (boxed) info_argv = aisandbox::wrap(info_argv);
+                if (boxed && info_argv.empty()) {
+                    pi.error = std::string("changed by the AI assistant: it runs only in a sandbox - ") +
+                               aisandbox::NO_SANDBOX_FIX;
+                } else if (!run_and_capture(info_argv, INFO_TIMEOUT_MS, &js)) {
                     pi.error = "--info failed (rebuild the plugin)";
                 } else {
                     std::string v;
@@ -294,8 +303,17 @@ bool PluginProcess::start(const std::string& exe, std::string* err) {
     return start(std::vector<std::string>{exe, "--serve"}, err);
 }
 
-bool PluginProcess::start(const std::vector<std::string>& args, std::string* err) {
-    if (args.empty()) { *err = "no command"; return false; }
+bool PluginProcess::start(const std::vector<std::string>& args_in, std::string* err) {
+    if (args_in.empty()) { *err = "no command"; return false; }
+    // a plugin the AI assistant changed runs only sandboxed (ai_sandbox.hpp)
+    std::vector<std::string> args = args_in;
+    if (aisandbox::must_sandbox_exe(args_in[0])) {
+        args = aisandbox::wrap(args_in);
+        if (args.empty()) {
+            *err = std::string("changed by the AI assistant: it runs only in a sandbox - ") + aisandbox::NO_SANDBOX_FIX;
+            return false;
+        }
+    }
     stop();
     kproc::SpawnOptions o;
     o.argv = args;

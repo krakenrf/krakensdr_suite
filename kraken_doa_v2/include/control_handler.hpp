@@ -8,6 +8,11 @@
 class ControlHandler {
 public:
     static void handle_websocket_message(std::string_view message);
+    // The same, for callers that need to know whether it was taken (the AI
+    // assistant's control tools, ai_mcp.cpp): "" = applied, else why it was
+    // refused (CommandRejected, a debug playback's refusal, malformed). Same
+    // thread rule: the uWS loop only
+    static std::string apply_command(std::string_view message);
     static void send_control_command(const std::string& cmd);
 
     // Settings-sync messages ({"sync_cmd":...}) sent to a newly connected

@@ -879,7 +879,55 @@ DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
   (`KRAKEN_WEB_MAPPER_INSECURE=1` disables that for a self-signed self-hosted
   server). See `kraken_doa_v2/CLAUDE.md` for details
 
-**Decoder plugins + AI Signal Lab** (details: `kraken_doa_v2/CLAUDE.md`):
+**🤖 AI assistant (docked right-hand column; replaced the AI Signal Lab
+2026-10-17)** (details: `kraken_doa_v2/CLAUDE.md` *AI assistant*):
+- A chat with Claude Code (`claude -p`, one process per question,
+  `--resume` within a conversation) that answers questions about what the
+  page shows and what was received, looks transmitters up online (WebSearch /
+  WebFetch: licence registers, sigidwiki, SondeHub ...), writes decoder
+  plugins, and CONTROLS the receiver. `src/ai_manager.cpp` (job runner,
+  conversations `ai/sessions/<id>/`, identifications `ai/identifications.json`
+  = the spectrum's "AI" badges), `ai/kraken_ai.py` (the bridge: the agent's
+  command line, permissions, sandbox settings, stream-json -> events),
+  `src/ai_mcp.cpp` = kraken_doa's MCP server (streamable HTTP with JSON
+  answers, `127.0.0.1:AI_MCP_PORT` 8079, a bearer token per run handed to the
+  bridge in its environment): reading tools (screen, spectrum + peak hold,
+  decoders, bearings, map points, transcripts, decoder log, saved
+  frequencies, incidents, plugins, IQ capture + analysis, wait for events,
+  identifications) and control tools (tune, gain, VFOs, decoders, options,
+  DoA, saved frequencies) through `ControlHandler::apply_command` - refused
+  while the panel's "Read only" (`AI_READONLY:`, persisted) is on. Each
+  question carries the page's view (zoom window, selected VFO, tab, map).
+  The dock's ⚙ row picks the model and effort (`AI_MODEL:` / `AI_EFFORT:`,
+  persisted; passed to each question's `claude -p`); "Default" names what
+  it runs - "Default (Opus 5.5)", "Default (Medium)" for the model picked -
+  from Claude Code's cached model catalog (`kraken_ai.py status`)
+- 🗺 The assistant plots on the map (`src/ai_map.cpp`: named layers of
+  points / lines / areas / circles / bearing lines, from its own features,
+  GeoJSON or a CSV - transmitter sites from licence registers, bearings,
+  anything with a position; `ai/map_layers.json`, every page, the "🤖 AI
+  layers" panel) and drives the asking page's map + Viewshed / path loss
+  (they run in the browser: `{"ai_page":..}` commands the asking page
+  carries out and answers - `AI_PAGE_REPLY`)
+- IQ captures (`capture_iq`) are made INSIDE kraken_doa (`src/ai_capture.cpp`:
+  the packets' bytes -> the VFO decimator's cascade, ~6 % of a core per
+  antenna; `all_antennas` = every antenna for a plugin's offline bearings)
+  - `ai/sigtool.py` (Python) analyses them
+- Lockdown (the user's requirement: no core files): no user settings / MCP /
+  CLAUDE.md / auto memory (`--setting-sources ""`, `--strict-mcp-config`,
+  `CLAUDE_CODE_DISABLE_CLAUDE_MDS`, `..._AUTO_MEMORY`; without them each turn
+  loaded both CLAUDE.md files + this repo's memory, ~224k tokens), path-scoped
+  Read / Grep / Glob / Edit rules (a bare Grep allow reads anything not
+  denied), Bash only in Claude Code's sandbox (bubblewrap + socat; none =
+  no Bash), and kraken_doa runs every plugin the assistant changed under
+  bwrap (`src/ai_sandbox.cpp`: its own list by ctime, `ai/state/`; also
+  `--info` and the debug playback's generators); `CXXFLAGS` filtered; the
+  main Makefile builds plugins with `-f Makefile` (a GNUmakefile there
+  can't take over)
+- OFF unless enabled on the Pi (`python3 ai/kraken_ai.py setup`); native
+  install only. Tests in the job scratch (ai/t_*.py)
+
+**Decoder plugins** (details: `kraken_doa_v2/CLAUDE.md`):
 - A plugin = a source folder `kraken_doa_v2/plugins/<id>/` (decoder.cpp +
   extras, API `plugins/sdk/kraken_plugin.hpp`, guide `plugins/SDK.md`), linked
   with `plugins/sdk/plugin_host.cpp` into its OWN executable
@@ -894,27 +942,18 @@ DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, ctcss, beacon406, lora, wildlife, dtv and cells (ARRAY
+  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, ctcss, beacon406, lora, wildlife, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
-  plugin folder may also hold `CXXFLAGS` (extra compiler flags)
+  plugin folder may also hold `CXXFLAGS` (extra compiler flags - only
+  optimisation / target / -D ones are taken, `CXXFLAGS_ALLOWED`: -B and the
+  like make the compiler run programs)
 - Same executable tests offline: `decoder --file x.cf32 [--offset HZ] [--rf HZ]`;
   `--channels M --uca R` on a recording of every antenna prints each
   talker's bearing (ID separation)
 - The shipped protocol plugins are thin wrappers around `plugins/lib/`
   (libkrakendig.a: FEC, 4FSK sync, vocoders, front ends) - kraken_doa itself
   contains no protocol code
-- AI Signal Lab (sidebar box, `src/ai_manager.cpp`): runs `ai/kraken_ai.py`
-  (Claude Code `claude -p`, restricted tools, or any LLM CLI) to investigate a
-  VFO's signal (`ai/sigtool.py` captures from heimdall 8091 + measures it) and
-  to write/build/test plugins. Every investigation is kept (ai/sessions/<id>/
-  incl. chat.json) - "AI" badges in the spectrum + a History list open it in
-  the "🤖 AI" tab under the waterfall (chat, agent steps, follow-ups, delete).
-  The AI's output (answers, live progress, agent steps) is shown ONLY there;
-  the sidebar box has the controls + a one-line job status
-  OFF unless enabled on the Pi with
-  `python3 ai/kraken_ai.py setup` (`ai/ai_config.json`, gitignored; the web UI
-  can't enable it - it runs an agent and native code). Native install only
 - Plugins move between receivers as folders only: copy `plugins/<id>/`, run
   `make`, press ↻ (no web-UI export / import / rebuild - removed on purpose:
   compiling code sent from a web page was a recipe for issues)
@@ -1408,8 +1447,9 @@ see the client CLAUDE.md
 - The DoA panel and DoA/coherent sidebar sections (MUSIC DoA, Beamforming,
   Web Mapper, DoA Recording, continuous scanner, CH selector) are hidden
   outside coherent; the discrete scanner section only shows in wideband
-- AI Signal Lab captures (`sigtool.py capture`) record the tuner whose band
-  holds the signal outside coherent mode
+- The assistant's IQ captures (`capture_iq`, done inside kraken_doa -
+  `ai_capture.cpp`) record the tuner whose band holds the signal outside
+  coherent mode
 - Only coherent exists on the downconverter variant. See heimdall_v2/CLAUDE.md
   *Operating Modes* and kraken_doa_v2/CLAUDE.md *Operating modes*
 

@@ -300,7 +300,7 @@ int main(int argc, char* argv[]) {
     SettingsStore::start();
 
     // Decoder plugins (plugins/<id>/build/decoder) - before the settings
-    // replay, which may select one on a VFO - and the AI Signal Lab
+    // replay, which may select one on a VFO - and the AI assistant
     dig::PluginRegistry::instance().scan();
     {
         auto pl = dig::PluginRegistry::instance().list();
