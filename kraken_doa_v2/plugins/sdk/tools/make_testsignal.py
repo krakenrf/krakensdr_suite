@@ -30,6 +30,8 @@ A catalogue entry (a JSON list per plugin):
                                        compiled once (g++ -O2, with sdk/ +
                                        lib/build/libkrakendig.a - pffft for
                                        kraken_fft.hpp) into CACHE/.bin/ and run
+                                       (Windows: the tools/build/NAME.exe
+                                       plugins/Makefile prebuilt, if there)
   "scene": {uca_scene.py SCENE},       narrow scenes: placed on the UCA by
                                        uca_scene.py --clean (no noise in the
                                        file; kraken_doa interpolates to 2.4 MHz
@@ -48,6 +50,7 @@ at generation time, 0 0 without one), {lat+0.05} {lon-0.1} ..., and a value
 station; the bearings are relative to the array (as the MUSIC plot shows
 them), not compass bearings.
 """
+import importlib.util
 import json
 import os
 import re
@@ -57,6 +60,7 @@ import sys
 import time
 
 ID_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,47}$')
+WINDOWS = os.name == 'nt'
 
 
 def catalogues(plugins):
@@ -64,7 +68,7 @@ def catalogues(plugins):
     for d in sorted(os.listdir(plugins)):
         f = os.path.join(plugins, d, 'tools', 'testsignals.json')
         if os.path.isfile(f):
-            with open(f) as fh:
+            with open(f, encoding='utf-8') as fh:
                 for e in json.load(fh):
                     e['decoder'] = e.get('decoder', d)
                     e['_plugin'] = d
@@ -106,17 +110,47 @@ def subst(v, ctx):
 def run(argv, work, cache, plugins, log):
     exe = argv[0]
     if exe.endswith('.py'):
-        argv = [sys.executable, '-I'] + argv
+        # Windows: UTF-8 mode, as kraken_doa runs this script (open() and the
+        # pipes default to the ANSI code page there; -E ignores PYTHONUTF8),
+        # and -E instead of -I: -I also hides the user site-packages, where
+        # the Microsoft Store Python's pip installs numpy + scipy
+        argv = ([sys.executable, '-X', 'utf8', '-E'] if WINDOWS else [sys.executable, '-I']) + argv
     elif exe.endswith('.cpp'):
         name = os.path.splitext(os.path.basename(exe))[0]
         bindir = os.path.join(cache, '.bin')
         os.makedirs(bindir, exist_ok=True)
-        binp = os.path.join(bindir, name)
-        if not os.path.exists(binp) or os.path.getmtime(binp) < os.path.getmtime(exe):
+        # Windows: name.exe - a program without it doesn't start from a
+        # command line (CreateProcess appends .exe), and g++ adds none to
+        # "-o name.exe.tmp"
+        binp = os.path.join(bindir, name + ('.exe' if WINDOWS else ''))
+        # Windows: plugins/Makefile prebuilds the generators (tools/build/),
+        # as a PC running kraken_doa usually has no compiler - an older one
+        # is taken too when there is no g++ to rebuild it with
+        pre = os.path.join(os.path.dirname(exe), 'build', name + '.exe')
+        if WINDOWS and os.path.exists(pre) and (os.path.getmtime(pre) >= os.path.getmtime(exe) or not shutil.which('g++')):
+            binp = pre
+        elif not os.path.exists(binp) or os.path.getmtime(binp) < os.path.getmtime(exe):
             src_dir = os.path.dirname(os.path.dirname(exe))
             cmd = ['g++', '-std=c++20', '-O2', '-I' + src_dir, '-I' + os.path.join(plugins, 'sdk'),
                    '-I' + os.path.join(plugins, '..', 'external', 'pffft'), exe,
                    os.path.join(plugins, 'lib', 'build', 'libkrakendig.a'), '-lm', '-o', binp + '.tmp']
+            if WINDOWS:
+                if not shutil.which('g++'):
+                    fail('%s is not built: run make in kraken_doa_v2/plugins (MSYS2 UCRT64) - it makes %s'
+                         % (os.path.basename(exe), pre))
+                # the plugins' Windows flags (plugins/Makefile): M_PI only
+                # with _USE_MATH_DEFINES under -std=c++20; pffft linked
+                # statically (pffft.h declares its functions dllimport
+                # otherwise); the POSIX shims + the process setup (binary file
+                # mode, Winsock ...) of every exe of the suite; a static exe,
+                # so the generator doesn't need MinGW's DLLs on the PATH
+                win = os.path.join(plugins, '..', 'win')
+                cmd[1:1] = ['-D_WIN32_WINNT=0x0A00', '-DWINVER=0x0A00', '-DWIN32_LEAN_AND_MEAN', '-DNOMINMAX',
+                            '-DNOGDI', '-D_USE_MATH_DEFINES', '-D_FILE_OFFSET_BITS=64', '-DPFFFT_STATIC_DEFINE',
+                            '-include', os.path.join(win, 'posix_compat.h')]
+                cmd.insert(cmd.index(exe) + 1, os.path.join(win, 'win_init.cpp'))
+                k = cmd.index('-lm') + 1
+                cmd[k:k] = ['-static', '-lws2_32', '-lwinmm']
             r = subprocess.run(cmd, cwd=work, stdout=log, stderr=subprocess.STDOUT)
             if r.returncode != 0:
                 fail('compiling %s failed (see %s)' % (os.path.basename(exe), log.name))
@@ -152,9 +186,39 @@ def to_cu8(src, dst, channels, progress_base):
 CACHE_MAX_BYTES = 3 << 30
 
 
+def replace(src, dst):
+    """os.replace - on Windows also onto a file kraken_doa has open: a moment
+    of reading (no FILE_SHARE_DELETE) is waited out, a file held open for
+    longer is renamed aside first (allowed while it is open, unlike replacing
+    it) and deleted once it is let go (here or by prune)"""
+    if not WINDOWS:
+        os.replace(src, dst)
+        return
+    for _ in range(20):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            time.sleep(0.05)
+    aside = '%s.old-%d-%d' % (dst, os.getpid(), int(time.time() * 1000))
+    os.replace(dst, aside)
+    os.replace(src, dst)
+    try:
+        os.remove(aside)
+    except OSError:
+        pass
+
+
 def prune(cache, keep):
     """the cache over CACHE_MAX_BYTES: the least recently played / made go
     (kraken_doa touches a sidecar when it plays it)"""
+    if WINDOWS:
+        for f in os.listdir(cache):   # replace()'s leftovers, once let go
+            if '.old-' in f:
+                try:
+                    os.remove(os.path.join(cache, f))
+                except OSError:
+                    pass
     items = []
     for f in os.listdir(cache):
         if f.endswith('.dat') and not f.startswith('.'):
@@ -178,6 +242,9 @@ def prune(cache, keep):
 
 def main():
     a = sys.argv[1:]
+    if WINDOWS:
+        # kraken_doa splits the PROGRESS / ERROR lines at \n: no \r\n
+        sys.stdout.reconfigure(newline='\n')
     o = {'plugins': None, 'cache': None, 'lat': '0', 'lon': '0'}
     ident, check = None, False
     i = 0
@@ -213,6 +280,15 @@ def main():
     if not match:
         fail('no test transmission "%s"' % ident)
     e = match[0]
+    if WINDOWS:
+        # a Windows Python seldom has them: say so on the page (kraken_doa
+        # shows the ERROR line), not in a traceback in the log
+        # (scipy: uca_scene.py and most generators written in Python)
+        need = ['numpy'] + (['scipy'] if 'scene' in e or any(str(st[0]).endswith('.py') for st in e.get('steps', [])) else [])
+        missing = [m for m in need if importlib.util.find_spec(m) is None]
+        if missing:
+            fail('Python needs %s for test transmissions: "%s" -m pip install %s'
+                 % (' + '.join(missing), sys.executable, ' '.join(missing)))
     cache = os.path.abspath(o['cache'])
     os.makedirs(cache, exist_ok=True)
     work = os.path.join(cache, '.work-' + ident)
@@ -226,7 +302,7 @@ def main():
         content = subst(content, ctx)
         if isinstance(content, dict) and '$from' in content:
             # an in-repo scene file with some keys replaced
-            base = json.load(open(content.pop('$from')))
+            base = json.load(open(content.pop('$from'), encoding='utf-8'))
             base.update(content)
             content = base
         with open(os.path.join(work, name), 'w') as fh:
@@ -281,8 +357,9 @@ def main():
     }
     with open(os.path.join(cache, ident + '.json.tmp'), 'w') as fh:
         json.dump(meta, fh, indent=1)
-    os.replace(dat, os.path.join(cache, ident + '.dat'))
-    os.replace(os.path.join(cache, ident + '.json.tmp'), os.path.join(cache, ident + '.json'))
+    # the old ones may be playing (kraken_doa has them mapped / open)
+    replace(dat, os.path.join(cache, ident + '.dat'))
+    replace(os.path.join(cache, ident + '.json.tmp'), os.path.join(cache, ident + '.json'))
     shutil.rmtree(work, ignore_errors=True)
     log.close()
     prune(cache, ident)

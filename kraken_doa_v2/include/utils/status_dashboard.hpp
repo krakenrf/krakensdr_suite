@@ -9,7 +9,8 @@
 // so the scattered one-off log lines never scroll the readout away.
 //
 // The dashboard only takes over when stdout is an interactive terminal
-// (isatty). When output is a pipe/file/systemd journal, active() stays false
+// (isatty; Windows: a real console with VT processing - not mintty's pipe).
+// When output is a pipe/file/systemd journal, active() stays false
 // and the caller keeps the plain periodic text dump, so a logfile never fills
 // with ANSI escape garbage. The KRAKEN_DOA_NO_TUI environment variable forces
 // the plain path even on a terminal.

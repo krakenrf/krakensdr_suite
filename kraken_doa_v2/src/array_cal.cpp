@@ -2,6 +2,7 @@
 #include "playback.hpp"
 
 #include "geo_address.hpp"   // geo::json_parse
+#include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
 
@@ -667,7 +668,9 @@ void save_locked() {
             return;
         }
     }
-    if (std::rename(tmp.c_str(), CAL_FILE) != 0) std::cerr << "Array calibration: can't save " << CAL_FILE << std::endl;
+    // fs_replace: Windows' rename() refuses an existing target (a restart
+    // then applied the previous calibration)
+    if (fs_replace(tmp.c_str(), CAL_FILE) != 0) std::cerr << "Array calibration: can't save " << CAL_FILE << std::endl;
 }
 
 bool get_arr(const geo::Json& j, const char* key, int n, double* out, double lim) {

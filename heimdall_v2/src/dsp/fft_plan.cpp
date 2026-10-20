@@ -1,5 +1,11 @@
 #include "fft_plan.hpp"
 #include "../core/config.hpp"
+// Windows: pffft is linked in statically, not from a DLL - without this its
+// header declares every function dllimport there and the link fails
+// ("undefined reference to __imp_pffft_..."). Elsewhere it changes nothing.
+#if defined(_WIN32) && !defined(PFFFT_STATIC_DEFINE)
+#define PFFFT_STATIC_DEFINE
+#endif
 #include "pffft/pffft.h"
 #include <algorithm>
 #include <cstdio>

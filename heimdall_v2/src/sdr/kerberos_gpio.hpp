@@ -14,6 +14,7 @@
 // (pigpio does not work on the Pi 5's RP1). The header controller is found by
 // its "pinctrl-*" chip label (rp1 on Pi 5, bcm2711 on Pi 4, ...), and the
 // whole module only activates on a Raspberry Pi (/proc/device-tree/model).
+// Off Linux (Windows) the functions are stubs: init fails, nothing is active.
 
 // Claim the GPIO lines and drive the idle state (ANT1=1, ANT2=0). Returns
 // false - with the reason on stderr - when not running on a Raspberry Pi or

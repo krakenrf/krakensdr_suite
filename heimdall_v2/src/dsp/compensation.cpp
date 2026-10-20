@@ -426,6 +426,11 @@ void begin_retune_cooldown(const char* what) {
         recovery_settings_changed_locked(what);
         return;
     }
+#ifdef _WIN32
+    // Windows: switching the already-off noise source off again (every
+    // retune of a drag) cost 10 USB control transfers, ~40 ms
+    if (bias_tee_enabled.load())
+#endif
     set_bias_tee_all_devices(false, devices);  // state -> device_io: documented lock order
     reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_STABILITY);
     phase_compensation->last_frequency_change = std::chrono::steady_clock::now();
@@ -644,6 +649,10 @@ void coherence_watchdog() {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
+
+        // A drag is over (no retune for 400 ms): its tuners back in the
+        // resting PLL state well before the cooldown's calibration
+        finish_fast_retunes(devices, "drag settled", true);
 
         const auto now = std::chrono::steady_clock::now();
         bool recovering = recovery_in_progress.load(std::memory_order_acquire);

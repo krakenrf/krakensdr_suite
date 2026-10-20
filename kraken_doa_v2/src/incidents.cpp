@@ -8,6 +8,7 @@
 #include "geo_http.hpp"
 #include "globals.hpp"
 #include "station_info.hpp"
+#include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
 
@@ -129,7 +130,7 @@ void save_locked(State& s) {
         f << '\n';
     }
     f.close();
-    if (f) rename(tmp.c_str(), INCIDENT_FILE);
+    if (f) fs_replace(tmp.c_str(), INCIDENT_FILE);   // Windows' rename() refuses an existing target
     s.dirty = false;
 }
 

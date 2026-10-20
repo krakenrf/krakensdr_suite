@@ -6,7 +6,8 @@
 // ---- KrakenSDR Wideband (downconverter) variant ----
 // The Wideband hardware puts a mixer in front of every tuner, all fed by ONE
 // shared LO: an Othernet moRFeus box running in signal-generator mode,
-// controlled over USB HID (Silicon Labs USBXpress, VID 0x10C4 / PID 0xEAC9).
+// controlled over USB HID (Silicon Labs USBXpress, VID 0x10C4 / PID 0xEAC9;
+// Linux: /dev/hidraw*, Windows: the built-in HID class driver).
 // The tuners are parked at the fixed IF (WB_VARIANT_IF_HZ, the hardware IF
 // filter's centre) and a "retune" only reprograms the LO, which the mixer
 // side (Mix High/Low/Below in the web UI) places around the IF:

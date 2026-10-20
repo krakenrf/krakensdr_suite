@@ -5,6 +5,10 @@
 #include <sched.h>
 #include <cstring>
 #include <iostream>
+#ifdef _WIN32
+#include <windows.h>
+#include <avrt.h>
+#endif
 
 void append_big_endian(std::vector<uint8_t>& vec, uint32_t value) {
     vec.push_back((value >> 24) & 0xFF);
@@ -13,13 +17,67 @@ void append_big_endian(std::vector<uint8_t>& vec, uint32_t value) {
     vec.push_back(value & 0xFF);
 }
 
+#ifdef _WIN32
+namespace {
+// The calling thread's MMCSS registration, undone when the thread ends: the
+// USB readers are recreated on every element-count change, and MMCSS limits
+// how many threads a process may have registered.
+struct MmcssTask {
+    HANDLE h = nullptr;
+    ~MmcssTask() {
+        if (h) AvRevertMmThreadCharacteristics(h);
+    }
+};
+thread_local MmcssTask t_mmcss;
+}  // namespace
+#endif
+
 bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
     pthread_t self = pthread_self();
     bool ok = true;
 
     // Thread name for `top -H`/htop/perf (Linux caps it at 15 chars + NUL).
+    // (winpthreads sets the Win32 thread description - debuggers, Process Explorer)
     if (name) pthread_setname_np(self, name);
 
+#ifdef _WIN32
+    // Windows has no SCHED_RR (winpthreads' pthread_setschedparam returns
+    // ENOTSUP: the readers silently ran at normal priority). The Multimedia
+    // Class Scheduler (MMCSS, task "Pro Audio") lifts the thread above every
+    // normal-priority thread without admin rights and - SCHED_RR's role here -
+    // keeps a runaway from starving the machine: it reserves a share of each
+    // period for normal threads. USB readers get HIGH, the drain NORMAL within
+    // the task. Without MMCSS (its service stopped) a plain thread priority.
+    // Never REALTIME_PRIORITY_CLASS: admin only, and it can hang the PC.
+    if (cpu >= 0) {
+        // processor groups ignored: the first 64 CPUs only
+        if (cpu >= static_cast<int>(sizeof(DWORD_PTR) * 8) ||
+            SetThreadAffinityMask(GetCurrentThread(), DWORD_PTR(1) << cpu) == 0)
+            ok = false;
+    }
+    if (rt_priority > 0) {
+        const bool reader = rt_priority >= RT_PRIO_USB_READER;
+        if (!t_mmcss.h) {
+            DWORD task_index = 0;
+            t_mmcss.h = AvSetMmThreadCharacteristicsW(L"Pro Audio", &task_index);
+        }
+        if (!t_mmcss.h || !AvSetMmThreadPriority(t_mmcss.h, reader ? AVRT_PRIORITY_HIGH : AVRT_PRIORITY_NORMAL)) {
+            const DWORD err = GetLastError();
+            const bool raised = SetThreadPriority(GetCurrentThread(), reader ? THREAD_PRIORITY_TIME_CRITICAL
+                                                                             : THREAD_PRIORITY_HIGHEST) != 0;
+            static bool warned = false;
+            if (!warned) {
+                std::cerr << "Thread '" << (name ? name : "?") << "': MMCSS unavailable (error " << err
+                          << " - Multimedia Class Scheduler service stopped?); "
+                          << (raised ? (reader ? "using THREAD_PRIORITY_TIME_CRITICAL" : "using THREAD_PRIORITY_HIGHEST")
+                                     : "running at normal priority")
+                          << std::endl;
+                warned = true;
+            }
+            if (!raised) ok = false;
+        }
+    }
+#else
     // Optional CPU pinning. Off by default (cpu < 0): real isolation needs
     // isolcpus on the kernel cmdline, which we can't assume on an arbitrary Pi.
     if (cpu >= 0) {
@@ -65,6 +123,7 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
             ok = false;
         }
     }
+#endif
     return ok;
 }
 

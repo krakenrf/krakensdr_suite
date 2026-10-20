@@ -470,6 +470,14 @@ body:not(.mode-independent) .indep-only {display:none !important}
 body.mode-independent .not-indep {display:none !important}
 body.mode-wideband .doa-panel, body.mode-independent .doa-panel {display:none !important}
 body.mode-independent #fp, body.mode-independent #wf-container, body.mode-independent #fp-split {display:none !important}
+/* The receiver's OS (system_status.platform, setServerOs): a text naming
+   Linux commands or the Pi has a Windows twin; an older backend that doesn't
+   say = Linux */
+body:not(.os-windows) .os-win {display:none !important}
+body.os-windows .os-lin {display:none !important}
+/* a Windows text in two forms: the source folder's build steps (os-win-src)
+   and a package's (os-win-pkg: windows/package.sh, no sources - serverPkg) */
+body.win-pkg .os-win-src, body:not(.win-pkg) .os-win-pkg {display:none !important}
 #indep-grid {display:none}
 /* rows of up to 3 panes (5 tuners = 3 + 2), the last row centered; pane
    size set by panesLayout() through --pane-w / --pane-h */
@@ -1237,7 +1245,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- Station Information -->
     <div class="sb-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📡 Station Information<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Callsign &amp; location are published to DOA_value.html and the API. <b>Mobile App</b> takes location from a phone app (pending — reports 0's for now); <b>Static</b> uses the values above; <b>KrakenPi GPS</b> uses the gpsd-connected receiver.</span></span></h3>
+        <h3>📡 Station Information<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Callsign &amp; location are published to DOA_value.html and the API. <b>Mobile App</b> takes location from a phone app (pending — reports 0's for now); <b>Static</b> uses the values above; <span class="os-lin"><b>KrakenPi GPS</b> uses the gpsd-connected receiver.</span><span class="os-win"><b>Receiver GPS</b> uses gpsd - Windows has none of its own: a gpsd on the network (KRAKEN_GPSD_HOST).</span></span></span></h3>
         <span class="sb-toggle">▼</span>
       </div>
       <div class="sb-content">
@@ -1279,7 +1287,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- GPS Status -->
     <div class="sb-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📍 GPS Status<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Location &amp; heading come from gpsd. A compass heading is used when the receiver provides one; otherwise heading is inferred from movement (course over ground). With no GPS, all values are 0.</span></span></h3>
+        <h3>📍 GPS Status<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Location &amp; heading come from gpsd. A compass heading is used when the receiver provides one; otherwise heading is inferred from movement (course over ground). With no GPS, all values are 0.<span class="os-win"> Windows has no gpsd of its own: set KRAKEN_GPSD_HOST (and KRAKEN_GPSD_PORT) to one on the network, or use a Static location.</span></span></span></h3>
         <span class="sb-toggle">▼</span>
       </div>
       <div class="sb-content">
@@ -1343,7 +1351,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- DoA Recording (doa_logger.cpp): bearings to a file. Not the 📼 recorder below (IQ / audio) -->
     <div class="sb-section coh-only">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📝 DoA Recording<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Logs the <b>DoA results</b> (bearing, confidence and the lobe of every VFO) to a file <b>on this device's disk</b> (the KrakenPi), not your browser - for IQ samples or audio use the <b>📼 IQ &amp; Audio Recorder</b>. <b>Legacy CSV</b> matches DOA_value.html line-for-line; <b>SQLite</b> is a compact, app-readable database for plotting on a map. The interval applies to both formats; below the actual DoA data rate it logs at the data rate, and duplicate frames are never written.</span></span></h3>
+        <h3>📝 DoA Recording<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Logs the <b>DoA results</b> (bearing, confidence and the lobe of every VFO) to a file <b>on this device's disk</b> (<span class="os-lin">the KrakenPi</span><span class="os-win">the receiver's computer</span>), not your browser - for IQ samples or audio use the <b>📼 IQ &amp; Audio Recorder</b>. <b>Legacy CSV</b> matches DOA_value.html line-for-line; <b>SQLite</b> is a compact, app-readable database for plotting on a map. The interval applies to both formats; below the actual DoA data rate it logs at the data rate, and duplicate frames are never written.</span></span></h3>
         <span class="sb-toggle">▼</span>
       </div>
       <div class="sb-content">
@@ -1390,7 +1398,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- 📼 IQ & Audio Recorder (recorder.cpp, recorder_audio.cpp; playback: playback.cpp) - all modes -->
     <div class="sb-section" id="iqr-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📼 IQ &amp; Audio Recorder<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Records to <b>this device's disk</b> (the KrakenPi):<br><b>IQ</b> (coherent mode): the raw samples of <b>every antenna</b>, phase-calibrated - the whole 2.4 MHz (as heimdall sends it, 2 bytes per sample per antenna: 24 MB/s with 5 antennas) or just one VFO's band (much smaller). Saved in the open <b>SigMF</b> format: one recording per antenna + a collection file tying them together, in one folder; downloaded as one <code>.sigmf</code> archive. <b>Open</b> plays a recording back through the receiver - spectrum, VFOs, decoders, DoA, the map - as if the antennas picked it up again.<br><b>Audio</b>: what one or more VFOs demodulate (their demod - NBFM / AM / WBFM - or with demod <i>Digital</i> their decoder's voice), a WAV or Opus file per VFO.<br><br>A recording stops at its time limit, when you press Stop, or before the drive is full (a reserve is kept free). It doesn't start when it can't fit. An SD card writes ~8-20 MB/s: a full-band recording of 5 antennas is then held in memory and written after it ends - only short ones fit; use the VFO band or a USB SSD for long ones.</span></span></h3>
+        <h3>📼 IQ &amp; Audio Recorder<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Records to <b>this device's disk</b> (<span class="os-lin">the KrakenPi</span><span class="os-win">the receiver's computer</span>):<br><b>IQ</b> (coherent mode): the raw samples of <b>every antenna</b>, phase-calibrated - the whole 2.4 MHz (as heimdall sends it, 2 bytes per sample per antenna: 24 MB/s with 5 antennas) or just one VFO's band (much smaller). Saved in the open <b>SigMF</b> format: one recording per antenna + a collection file tying them together, in one folder; downloaded as one <code>.sigmf</code> archive. <b>Open</b> plays a recording back through the receiver - spectrum, VFOs, decoders, DoA, the map - as if the antennas picked it up again.<br><b>Audio</b>: what one or more VFOs demodulate (their demod - NBFM / AM / WBFM - or with demod <i>Digital</i> their decoder's voice), a WAV or Opus file per VFO.<br><br>A recording stops at its time limit, when you press Stop, or before the drive is full (a reserve is kept free). It doesn't start when it can't fit. An SD card writes ~8-20 MB/s: a full-band recording of 5 antennas is then held in memory and written after it ends - only short ones fit; use the VFO band or a USB SSD for long ones.</span></span></h3>
         <span class="acal-badge" id="iqr-badge"></span>
         <span class="sb-toggle">▼</span>
       </div>
@@ -1659,7 +1667,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- Digital voice/data decoder (one per VFO) -->
     <div class="sb-section" id="sb-digital">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🔐 Digital Decoders<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The voice codecs the digital decoders can use, and the installed decoder plugins. <b>Auto detect</b> on a plugin = it runs when a VFO's decoder is on Auto detect (untick the ones you never need: each costs CPU). Plugins are plain source folders (plugins/&lt;id&gt;/): to add one, copy its folder into kraken_doa_v2/plugins/, run make in kraken_doa_v2 and press ↻. To decode a VFO, tick <b>Digital decoder</b> on it in the Decimators box and pick <b>Auto detect</b> or a decoder; any number of VFOs can decode at once, each with its own tab in the panel under the waterfall. Voice plays with Demod "Digital" (or Listen in the VFO's tab). The AMBE and TETRA codecs are not shipped (licensing): you build them yourself, for personal use - whether that is allowed where you live is your responsibility.</span></span></h3>
+        <h3>🔐 Digital Decoders<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The voice codecs the digital decoders can use, and the installed decoder plugins. <b>Auto detect</b> on a plugin = it runs when a VFO's decoder is on Auto detect (untick the ones you never need: each costs CPU). Plugins are plain source folders (plugins/&lt;id&gt;/): to add one, <span class="os-win os-win-pkg">build it in the KrakenSDR source folder (build_windows.bat - this package has no sources or compiler), copy its kraken_doa_v2\plugins\&lt;id&gt;\build\decoder.exe into the same place in this folder</span><span class="os-win-src">copy its folder into kraken_doa_v2/plugins/, run </span><span class="os-lin">make in kraken_doa_v2</span><span class="os-win os-win-src">build_windows.bat (or make in kraken_doa_v2 in the MSYS2 UCRT64 shell)</span> and press ↻. To decode a VFO, tick <b>Digital decoder</b> on it in the Decimators box and pick <b>Auto detect</b> or a decoder; any number of VFOs can decode at once, each with its own tab in the panel under the waterfall. Voice plays with Demod "Digital" (or Listen in the VFO's tab). The AMBE and TETRA codecs are not shipped (licensing): you build them yourself, for personal use - whether that is allowed where you live is your responsibility.</span></span></h3>
         <span class="sb-toggle">▼</span>
       </div>
       <div class="sb-content">
@@ -1684,7 +1692,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- AI Signal Lab: identify a signal and write decoder plugins with an LLM -->
     <div class="sb-section" id="sb-ai">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🤖 AI Signal Lab<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Points an AI coding agent (Claude Code, or another LLM CLI) at the signal in a VFO. <b>Investigate</b> captures it, measures it (spectrum, bursts, modulation, symbol rate, sync words) and asks the AI what it is. <b>Create Decoder</b> then has the AI write, build and test a decoder plugin for it, which appears in the Digital Decoders box and the VFOs' decoder lists. <b>Custom Instructions</b> add your own hints. The AI's answers, the conversation and its steps show in the 🤖 AI tab under the waterfall. Uses your LLM account; enable it on the Pi with <code>python3 ai/kraken_ai.py setup</code>.</span></span></h3>
+        <h3>🤖 AI Signal Lab<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Points an AI coding agent (Claude Code, or another LLM CLI) at the signal in a VFO. <b>Investigate</b> captures it, measures it (spectrum, bursts, modulation, symbol rate, sync words) and asks the AI what it is. <b>Create Decoder</b> then has the AI write, build and test a decoder plugin for it, which appears in the Digital Decoders box and the VFOs' decoder lists. <b>Custom Instructions</b> add your own hints. The AI's answers, the conversation and its steps show in the 🤖 AI tab under the waterfall. Uses your LLM account; enable it <span class="os-lin">on the Pi with <code>python3 ai/kraken_ai.py setup</code></span><span class="os-win">on the receiver's computer with <code>py -3 ai\kraken_ai.py setup</code> (in the kraken_doa_v2 folder)</span>.</span></span></h3>
         <span class="sb-toggle">▼</span>
       </div>
       <div class="sb-content">
@@ -1740,7 +1748,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- Decoder Logging (decoder_log.cpp) - all modes -->
     <div class="sb-section" id="declog-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🗂 Decoder Logging<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Saves what the <b>digital decoders</b> report (every VFO with a decoder on) to files <b>on this device's disk</b>: one JSON Lines file per day (<code>decoders-YYYY-MM-DD.jsonl</code>). At midnight the day's file is closed and gzipped; days older than <b>Keep</b> are deleted (only these files - nothing else in the folder). To spare the SD card the records are collected in memory and written every few seconds; writing pauses when less than 100 MB is free. Raw frames (ADS-B, APRS, POCSAG) can be large - ADS-B near an airport is roughly 100-300 MB a day before gzip.</span></span></h3>
+        <h3>🗂 Decoder Logging<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Saves what the <b>digital decoders</b> report (every VFO with a decoder on) to files <b>on this device's disk</b>: one JSON Lines file per day (<code>decoders-YYYY-MM-DD.jsonl</code>). At midnight the day's file is closed and gzipped; days older than <b>Keep</b> are deleted (only these files - nothing else in the folder). To spare the <span class="os-lin">SD card</span><span class="os-win">disk</span> the records are collected in memory and written every few seconds; writing pauses when less than 100 MB is free. Raw frames (ADS-B, APRS, POCSAG) can be large - ADS-B near an airport is roughly 100-300 MB a day before gzip.</span></span></h3>
         <span class="sb-toggle">▼</span>
       </div>
       <div class="sb-content">
@@ -2295,6 +2303,13 @@ let indepTuners = [];        // [{f: Hz, g: dB}] requested per tuner (0 / -999 =
 let selTuner = 0;            // pane the top-bar frequency digits + gain edit
 const panes = [];            // one per tuner, see panesBuild
 let paneDrag = null;         // {p, id, grab, pointerId} while dragging a VFO bar
+
+// The receiver runs Windows (system_status.platform, see setServerOs): the
+// boxes that tell how to install / build something show its commands
+let serverWin = false;
+// ... from a package (windows/package.sh: no Makefile, sources or MSYS2 -
+// system_status.source_tree false): building happens in the source folder
+let serverPkg = false;
 
 // 🗺 Map state (see 🗺 MAP below). Up here: rpApply runs from applyOpModeUI,
 // which can run before the map section has been evaluated.
@@ -5220,6 +5235,23 @@ function initFreqSelector() {
   });
 }
 
+// Windows receiver: a retune takes ~0.45 s there, and heimdall skips a
+// retune that a newer one replaces - after a drag the frames can still show
+// a frequency left behind for up to a second. The digits / centre don't take
+// such a frame (they jumped back, then forward) until one is at the
+// frequency sent last, for at most 2 s (a drag settles within ~1 s). Not
+// armed during a playback (kraken_doa refuses FREQ there), dropped on its
+// refusal notice. Linux: never armed.
+let lastSentFreqMhz = null, lastSentFreqAt = 0;
+function retunePending(fm) {
+  if (lastSentFreqMhz === null) return false;
+  if (Math.abs(fm - lastSentFreqMhz) < 0.0015 || Date.now() - lastSentFreqAt > 2000) {
+    lastSentFreqMhz = null;
+    return false;
+  }
+  return true;
+}
+
 // Helper function to send frequency change - uses WIDEBAND_FREQ in wideband mode
 function sendFreqChange(freqMhz) {
   if (opMode === 'independent') {
@@ -5231,6 +5263,7 @@ function sendFreqChange(freqMhz) {
     send('WIDEBAND_FREQ:' + freqMhz.toFixed(3));
   } else {
     send('FREQ:' + freqMhz.toFixed(3));
+    if (serverWin && !(pbState && pbState.active)) { lastSentFreqMhz = Math.round(freqMhz * 1000) / 1000; lastSentFreqAt = Date.now(); }
     restartCooldownCountdown();
   }
   updateWbReadout();
@@ -6442,7 +6475,8 @@ function specHeaderSync(fm, gd, aa, isWb, realChannel) {
     }
   }
 
-  updateFreqDisplay(fm);
+  const pending = retunePending(fm);  // Windows: a frame from before the last retune
+  if (!pending) updateFreqDisplay(fm);
 
   // Sync gain slider from the broadcast header (mirrors changes made in
   // other browser sessions). Same echo guard as the frequency display.
@@ -6475,7 +6509,7 @@ function specHeaderSync(fm, gd, aa, isWb, realChannel) {
   // Skip while the user is actively dragging - a lagging server echo
   // would yank currentCenterFreq back mid-pan (the frequency digits
   // display already has this same guard).
-  if (!freqUserChanging && !isScrollDragging) {
+  if (!freqUserChanging && !isScrollDragging && !pending) {
     if (Math.abs(currentCenterFreq - fm) > 0.0001) {
       currentCenterFreq=fm;
       decimatorInfo.forEach(dec => refreshDecimatorPanelItem(dec.id));
@@ -10044,7 +10078,12 @@ function addTouchHandlers(el, down, move, up) {
 
   // Sidebar "Digital Decoders" box: the voice codecs the decoders can use,
   // as the plugins find them ({"codecs":{...}}, plugins/lib/tools/codecs.cpp)
-  // and how to install the missing ones (same steps as the README)
+  // and how to install the missing ones (same steps as the README). A
+  // Windows receiver gets install_win + win_note instead: mbelib built as a
+  // DLL in MSYS2 (CMake 4 needs the policy minimum for its 2.6 project), put
+  // where the plugins' dlopen() finds it - they run in the kraken_doa_v2
+  // folder. No TETRA recipe there: the ETSI codec programs need /dev/stdin
+  // and /dev/stdout, which Windows hasn't got (the codec's status says so)
   const DIG_CODECS = [
     {key: 'imbe', name: 'IMBE', used: 'P25'},
     {key: 'ambe', name: 'AMBE / AMBE+2 (mbelib)', used: 'DMR, D-STAR, NXDN',
@@ -10054,7 +10093,15 @@ cd mbelib && mkdir build && cd build
 cmake .. -DDISABLE_TEST=ON
 make -j3
 sudo make install
-sudo ldconfig`},
+sudo ldconfig`,
+     install_win: `# in the MSYS2 UCRT64 shell (C:\\msys64\\ucrt64.exe)
+pacman -S --needed git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+git clone https://github.com/szechyjs/mbelib.git
+cd mbelib
+cmake -S . -B build -G Ninja -DDISABLE_TEST=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+cmake --build build`,
+     win_note: 'Then copy <code>build\\libmbe.dll</code> into the kraken_doa_v2 folder, next to kraken_doa.exe (or set ' +
+       'KRAKEN_MBELIB to its full path and restart the software), and '},
     {key: 'acelp', name: 'ACELP (ETSI TETRA codec)', used: 'TETRA',
      install: `sudo apt-get install -y git build-essential unzip patch wget
 git clone https://github.com/osmocom/osmo-tetra.git
@@ -10067,7 +10114,9 @@ make
 sudo install -m 755 cdecoder /usr/local/bin/tetra-cdecoder
 sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   ];
+  let digCodecsLast = null;   // the last {"codecs"}: drawn again when the receiver's OS becomes known
   function digOnCodecs(c) {
+    digCodecsLast = c;
     const el = $id('dig-codecs-box');
     if (!el) return;
     let html;
@@ -10077,11 +10126,16 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       html = DIG_CODECS.map(k => {
         const ok = !!c[k.key + '_ok'];
         const st = String(c[k.key] || '').replace(/\s*\(see README[^)]*\)/, '');
+        // a package (windows/package.sh) has no MSYS2: build it on any PC that has
+        let inst = serverWin ? k.install_win : k.install;
+        if (serverPkg && inst)
+          inst = '# needs MSYS2 (https://www.msys2.org - not part of this package; any PC with it will do)\n' + inst;
         return `<div class="dig-codec ${ok ? 'ok' : 'missing'}">` +
           `<div class="h"><span class="i">${ok ? '✔' : '✗'}</span><b>${digEsc(k.name)}</b><span class="u">${digEsc(k.used)}</span></div>` +
           `<div class="s">${ok ? digEsc(st) : 'Not installed' + (st && st !== 'not installed' ? ' — ' + digEsc(st) : '')}</div>` +
-          (!ok && k.install ? `<details><summary>How to install</summary><pre>${digEsc(k.install)}</pre>` +
-            '<div class="dig-help">Then switch the decoders off and on, or restart the KrakenSDR software. Docker: README, "Digital voice codecs".</div></details>' : '') +
+          (!ok && inst ? `<details><summary>How to install</summary><pre>${digEsc(inst)}</pre>` +
+            (serverWin ? '<div class="dig-help">' + (k.win_note || 'Then ') + 'switch the decoders off and on, or restart the KrakenSDR software.</div></details>'
+              : '<div class="dig-help">Then switch the decoders off and on, or restart the KrakenSDR software. Docker: README, "Digital voice codecs".</div></details>') : '') +
           '</div>';
       }).join('');
     }
@@ -10250,9 +10304,13 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       dot.style.color = '#777';
       conn.textContent = 'Not enabled on this receiver';
       setup.style.display = '';
-      setup.innerHTML = 'To use it, run <code>python3 ai/kraken_ai.py setup</code> on the Pi (in the kraken_doa_v2 folder). ' +
+      setup.innerHTML = (serverWin
+          ? 'To use it, run <code>py -3 ai\\kraken_ai.py setup</code> on the receiver\'s computer (in the kraken_doa_v2 folder; Python 3 from python.org). '
+          : 'To use it, run <code>python3 ai/kraken_ai.py setup</code> on the Pi (in the kraken_doa_v2 folder). ') +
         (st.backend === 'claude' && !st.cli
-          ? 'It needs Claude Code: <code>curl -fsSL https://claude.ai/install.sh | bash</code>, then run <code>claude</code> once to log in.'
+          ? (serverWin
+            ? 'It needs Claude Code (and Git for Windows): in PowerShell <code>irm https://claude.ai/install.ps1 | iex</code>, then run <code>claude</code> once to log in.'
+            : 'It needs Claude Code: <code>curl -fsSL https://claude.ai/install.sh | bash</code>, then run <code>claude</code> once to log in.')
           : (st.cli ? 'Found: ' + digEsc(st.version || st.cli) + '.' : '')) + ' See the README, "AI Signal Lab".';
     } else {
       dot.style.color = st.busy ? '#ffb74d' : '#4caf50';
@@ -10397,8 +10455,16 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const el = $id('ai-plugins');
     if (!el) return;
     let html;
-    if (!digPlugins.length) {
-      html = '<div class="dig-help">No plugins yet. Investigate a signal and press Create Decoder, or copy a plugin folder into kraken_doa_v2/plugins/ and run make.</div>';
+    // how a plugin gets built on this receiver
+    const make = serverPkg ? 'build_windows.bat in the KrakenSDR source folder and copy the new decoder.exe here'
+      : serverWin ? 'build_windows.bat (or make in kraken_doa_v2 in the MSYS2 UCRT64 shell)' : 'make in kraken_doa_v2';
+    if (!digPlugins.length && serverPkg) {
+      html = '<div class="dig-help">No plugins yet. This package has no plugin sources or compiler: build them in the KrakenSDR ' +
+        'source folder (build_windows.bat), copy each kraken_doa_v2\\plugins\\&lt;id&gt;\\build\\decoder.exe into the same place ' +
+        'in this folder and press ↻.</div>';
+    } else if (!digPlugins.length) {
+      html = '<div class="dig-help">No plugins yet. Investigate a signal and press Create Decoder, or copy a plugin folder into kraken_doa_v2/plugins/ and run ' +
+        (serverWin ? 'build_windows.bat' : 'make') + '.</div>';
     } else {
       html = digPlugins.map(p => `<div class="ai-plugin">
           <div style="display:flex;align-items:baseline;gap:6px">
@@ -10408,7 +10474,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
           </div>
           <div class="ds">${digEsc(p.description || '')}</div>
           ${p.error ? `<div class="ds" style="color:#ffb74d">${digEsc(p.error)}</div>` : ''}
-          ${p.stale ? '<div class="ds" style="color:#ffb74d">The source changed since the last build: run make in kraken_doa_v2</div>' : ''}
+          ${p.stale ? '<div class="ds" style="color:#ffb74d">The source changed since the last build: run ' + make + '</div>' : ''}
           </div>`).join('');
     }
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
@@ -11287,12 +11353,47 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     el.value = v;
     send('DECODER_LOG_DAYS:' + v);
   }
+  // The drive lists of the folder pickers (here and the 📼 Recorder's): mount
+  // points on Linux ("/", "/media/usb"), drives on Windows ("C:/",
+  // "//srv/share" - '/'-separated, diskutil::mounts_json). The system disk is
+  // the one the default folders are on (relative = inside kraken_doa's
+  // folder): picking it gives the default folder back.
+  const drvIsAbs = p => /^([\\/]|[A-Za-z]:)/.test(p || '');
+  // no trailing separator except on a root ("C:\" -> "C:/", "/" stays), so a
+  // folder name is joined with one '/' ("C:/" + "/x" was "C://x")
+  function drvStrip(p) {
+    p = String(p || '');
+    if (/^[A-Za-z]:[\\/]*$/.test(p)) return p.slice(0, 2) + '/';
+    return p.replace(/[\\/]+$/, '') || (p ? '/' : '');
+  }
+  const drvJoin = (mp, name) => { const b = drvStrip(mp); return b + (b.endsWith('/') ? '' : '/') + name; };
+  // one spelling to compare: '/' separators; drive letters and shares in any case
+  function drvKey(p) {
+    const s = drvStrip(String(p || '').replace(/\\/g, '/'));
+    return /^([A-Za-z]:|\/\/)/.test(s) ? s.toLowerCase() : s;
+  }
+  // Windows has no "/": the working directory's drive is learnt from a status
+  // whose folder is relative (Decoder Logging's or the Recorder's) - the
+  // drive that status names for it
+  let drvCwdMount = '';
+  function drvNoteCwd(dir, mount) { if (dir && mount && !drvIsAbs(dir)) drvCwdMount = mount; }
+  // is mp the system disk of the list? The one the backend marks sys, else
+  // "/" (Linux), else - a list of drive letters (Windows) - the working
+  // directory's drive
+  function drvIsSystem(mounts, mp) {
+    if (!mp) return false;
+    mounts = mounts || [];
+    const k = drvKey(mp);
+    if (mounts.some(m => m.sys)) return mounts.some(m => m.sys && drvKey(m.path) === k);
+    if (mp === '/') return true;
+    return !!drvCwdMount && mounts.some(m => /^[A-Za-z]:/.test(m.path || '')) && drvKey(drvCwdMount) === k;
+  }
   // a drive picked from the list: a folder on it (the system disk = the default folder)
   function dlPickDrive(mp) {
     if (!mp) return;
     const el = $id('dl-dir');
-    if (dlState && dlState.mount === mp) { el.value = dlState.dir; return; }
-    el.value = mp === '/' ? 'decoder_logs' : mp.replace(/\/+$/, '') + '/kraken_decoder_logs';
+    if (dlState && drvKey(dlState.mount) === drvKey(mp)) { el.value = dlState.dir; return; }
+    el.value = drvIsSystem(dlState && dlState.mounts, mp) ? 'decoder_logs' : drvJoin(mp, 'kraken_decoder_logs');
     el.focus();
     const e = $id('dl-dir-err');
     e.style.display = ''; e.style.color = '#ffb74d';
@@ -11322,14 +11423,18 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (idle($id('dl-pos-s'))) $id('dl-pos-s').value = d.pos_s;
     const dir = $id('dl-dir');
     if (idle(dir) && $id('dl-dir-err').style.display === 'none') dir.value = d.dir;
-    // drive list: path - free of total
+    // drive list: path - free of total. Windows' "system disk" (drive letters,
+    // shares) is the one kraken_doa runs from, not necessarily Windows' own
+    drvNoteCwd(d.dir, d.mount);
     const sel = $id('dl-drive');
     if (idle(sel)) {
+      const sysLabel = mp => /^([A-Za-z]:|\/\/)/.test(mp || '') ? ' (KrakenSDR\'s drive - default folder)' : ' (system disk)';
       const opts = (d.mounts || []).map(m =>
-        `<option value="${escapeHtml(m.path)}">${escapeHtml(m.path)}${m.path === '/' ? ' (system disk)' : m.type === 'tmpfs' ? ' (RAM - lost at reboot)' : ''} - ${dlBytes(m.free)} free of ${dlBytes(m.total)}</option>`).join('');
+        `<option value="${escapeHtml(m.path)}">${escapeHtml(m.path)}${drvIsSystem(d.mounts, m.path) ? sysLabel(m.path) : m.type === 'tmpfs' ? ' (RAM - lost at reboot)' : ''} - ${dlBytes(m.free)} free of ${dlBytes(m.total)}</option>`).join('');
       const html = opts || '<option value="">(no drives found)</option>';
       if (sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html; }
-      if (d.mount) sel.value = d.mount;
+      const own = (d.mounts || []).find(m => drvKey(m.path) === drvKey(d.mount));
+      if (d.mount) sel.value = own ? own.path : d.mount;
     }
     let state;
     if (d.error) state = `<span style="color:#ff8a80">⚠ ${escapeHtml(d.error)}</span>`;
@@ -11490,7 +11595,17 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     // not set up yet: what to run on the receiver
     const inst = $id('v2t-install');
     let ih = '';
-    if (!s.installed)
+    if (!s.installed && serverPkg)
+      ih = 'This package was made without Voice to Text (and has no sources or compiler to build it). In the KrakenSDR ' +
+           'source folder: <code>set WHISPER=1</code>, run <code>build_windows.bat</code>, then make the package again ' +
+           '(windows/package.sh) - or copy its <code>kraken_doa_v2\\transcribe\\build\\kraken_whisper.exe</code> into the ' +
+           'same place in this folder. Free, and everything stays on this device.';
+    else if (!s.installed && serverWin)
+      ih = 'The speech-to-text engine isn\'t set up on this receiver yet. On the receiver, run once in the MSYS2 UCRT64 shell ' +
+           '(C:\\msys64\\ucrt64.exe), in the KrakenSDR folder:<br>' +
+           '<code>cd kraken_doa_v2 && make whisper</code><br>(builds whisper.cpp - a few minutes on a PC - and ' +
+           'downloads the base.en model, 142 MB). Free, and everything stays on this device.';
+    else if (!s.installed)
       ih = 'The speech-to-text engine isn\'t set up on this receiver yet. On the receiver, run once:<br>' +
            '<code>cd kraken_doa_v2 && make whisper</code><br>(builds whisper.cpp - about 10 min on a Pi 5 - and ' +
            'downloads the base.en model, 142 MB). Free, and everything stays on this device. ' +
@@ -11553,7 +11668,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const vl = vad.parentElement;
     if (vl.dataset.tip === undefined) vl.dataset.tip = vl.title;
     vl.title = s.vad_model ? vl.dataset.tip
-      : 'The voice detection model is not downloaded (⬇ Get any model, or run transcribe/setup.sh): every transmission goes to the speech model';
+      : 'The voice detection model is not downloaded (⬇ Get any model' +
+        (serverPkg ? '' : ', or run transcribe/setup.sh' + (serverWin ? ' in the MSYS2 UCRT64 shell' : '')) +
+        '): every transmission goes to the speech model';
     const keep = $id('v2t-keep');
     if (idle(keep)) keep.checked = !!s.keep_audio;
     // where the clips are, how many, how long they're kept, disk trouble
@@ -19036,7 +19153,30 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
 
 }
 
+  // The receiver's OS: system_status.platform ("windows" / "linux"; hw.os is
+  // taken too). The body class os-windows swaps the static texts (.os-lin /
+  // .os-win); the boxes built from status messages are drawn again from
+  // their last data. A backend that doesn't say runs Linux. src: its
+  // source_tree (sent by Windows only; false = a package, body class win-pkg)
+  function setServerOs(os, src) {
+    const win = os === 'windows';
+    const pkg = win && src === false;
+    if (win === serverWin && pkg === serverPkg) return;
+    serverWin = win;
+    serverPkg = pkg;
+    document.body.classList.toggle('os-windows', win);
+    document.body.classList.toggle('win-pkg', pkg);
+    const gps = document.querySelector('#location-source option[value="gps"]');
+    if (gps) gps.textContent = win ? 'Receiver GPS (gpsd)' : 'KrakenPi GPS';
+    if (digCodecsLast) digOnCodecs(digCodecsLast);
+    aiRender();
+    aiRenderPlugins();
+    v2tRenderBox();
+    recRender();
+  }
+
   function updateSystemStatus(status) {
+    setServerOs(status.platform || (status.hw && status.hw.os), status.source_tree);
     // KerberosSDR manual-calibration warnings (heimdall --kerberos). The
     // server never recalibrates automatically there: warn when uncalibrated
     // or when a settings change made the calibration stale.
@@ -19533,7 +19673,7 @@ function pbEsc(t) {
   return String(t == null ? '' : t).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
 }
 function pbOnMessage(m) {
-  if (m.notice !== undefined) { pbNotice(m.notice); return; }
+  if (m.notice !== undefined) { lastSentFreqMhz = null; pbNotice(m.notice); return; }
   pbState = m;
   const cat = [];
   for (const c of (m.catalog || [])) {
@@ -19734,7 +19874,7 @@ function recSetFormat(v) {
   send(f === 'wav' ? 'RECORDER_AUDIO_RATE:' + x : 'RECORDER_AUDIO_KBPS:' + x);
 }
 function recOnStatus(m) {
-  if (m.notice !== undefined) { pbNotice('📼 ' + m.notice); return; }
+  if (m.notice !== undefined) { lastSentFreqMhz = null; pbNotice('📼 ' + m.notice); return; }
   recState = m;
   recRender();
 }
@@ -19759,9 +19899,11 @@ function recToggleSub(k) {
   el.style.display = open ? '' : 'none';
   if (tg) tg.textContent = open ? '▼' : '▶';
 }
+// a drive picked from the list: a folder on it (the system disk = the default
+// folder; drvIsSystem etc. are with Decoder Logging's picker)
 function recPickDrive(mp) {
   const el = $id('iqr-dir');
-  if (el) el.value = (mp === '/' || !mp) ? 'recordings' : mp.replace(/\/$/, '') + '/kraken_recordings';
+  if (el) el.value = (!mp || drvIsSystem(recState && recState.mounts, mp)) ? 'recordings' : drvJoin(mp, 'kraken_recordings');
 }
 function recApplyDir() {
   const el = $id('iqr-dir');
@@ -19861,7 +20003,7 @@ function recRender() {
       if (slow) n += '<br><span class="rec-warn">The drive is slower: held in memory (' + recFmtB(need.mem) + '), at most ' + recFmtLong(need.ram_s) +
                      ', then written out. For longer: the VFO band, or a faster drive (USB SSD).</span>';
     } else if (iq && need.bps > 8e6) {
-      n += '<br><span class="rec-meta">An SD card may not keep up - ⏱ Test write speed (Drive, below).</span>';
+      n += '<br><span class="rec-meta">' + (serverWin ? 'A slow drive' : 'An SD card') + ' may not keep up - ⏱ Test write speed (Drive, below).</span>';
     }
   }
   set('iqr-need', n);
@@ -19920,11 +20062,12 @@ function recRender() {
     (st.test && st.test.running ? '<br>Testing… ' + st.test.pct + ' %' : st.test && st.test.error ? '<br><span class="rec-bad">' + recEsc(st.test.error) + '</span>' : ''));
   const dir = $id('iqr-dir');
   if (dir && document.activeElement !== dir && dir.dataset.v !== S.dir) { dir.value = S.dir; dir.dataset.v = S.dir; }
+  drvNoteCwd(S.dir, disk.mount);
   const ms = $id('iqr-mount');
   if (ms && document.activeElement !== ms) {
     let h = '';
     for (const m of (st.mounts || []))
-      h += '<option value="' + recEsc(m.path) + '"' + (m.path === disk.mount ? ' selected' : '') + '>' + recEsc(m.path) + ' - ' + recFmtB(m.free) + ' free (' + recEsc(m.type) + ')</option>';
+      h += '<option value="' + recEsc(m.path) + '"' + (drvKey(m.path) === drvKey(disk.mount) ? ' selected' : '') + '>' + recEsc(m.path) + ' - ' + recFmtB(m.free) + ' free (' + recEsc(m.type) + ')</option>';
     if (ms.dataset.html !== h) { ms.dataset.html = h; ms.innerHTML = h; }
   }
   const tb = $id('iqr-test'); if (tb) tb.disabled = busy || (st.test && st.test.running);

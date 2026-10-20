@@ -4,15 +4,24 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
-#include <dirent.h>
-#include <fcntl.h>
 #include <iostream>
 #include <mutex>
 #include <string>
-#include <sys/ioctl.h>
 #include <thread>
+#ifdef __linux__
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 #include <linux/hidraw.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#include <setupapi.h>
+#include <hidsdi.h>
+#include <hidpi.h>
+#include <system_error>
+#include <vector>
+#endif
 
 Downconverter downconverter;
 
@@ -35,8 +44,10 @@ constexpr uint8_t FUNC_CURRENT   = 131;    // LO output drive current, 0..7
 // the WB board's firmware doesn't implement it (its output is always on) and
 // v1 never sent it (see downconverter_init).
 
-int mrf_fd = -1;
 std::mutex mrf_mutex;  // serializes open/write across control paths
+
+#ifdef __linux__
+int mrf_fd = -1;
 
 // Find the moRFeus among /dev/hidraw* by VID/PID. Returns an open fd or -1.
 int open_morfeus_locked() {
@@ -108,6 +119,176 @@ bool mrf_write(uint8_t func, uint64_t value) {
     }
     return false;
 }
+
+void close_morfeus_locked() {
+    if (mrf_fd >= 0) {
+        close(mrf_fd);
+        mrf_fd = -1;
+    }
+}
+
+#elif defined(_WIN32)
+// Windows: the moRFeus through Windows' own HID class driver (SetupAPI +
+// hid.dll) - no extra library or driver. It must keep that driver: Zadig's
+// "List All Devices" shows it as well, and with WinUSB instead it is no
+// longer a HID device. Writes are overlapped with a 1 s limit (hidraw's write
+// returns at once): a wedged box must not hang a retune holding
+// device_io_mutex. Its input reports (echoes) are never read - the HID
+// driver's ring drops them, as hidraw's does.
+HANDLE mrf_handle = INVALID_HANDLE_VALUE;
+USHORT mrf_report_len = 0;   // the interface's output report length, incl. the report id
+
+// Find the moRFeus among the present HID interfaces by VID/PID and open it
+// (mrf_handle). Caller holds mrf_mutex.
+bool open_morfeus_locked() {
+    GUID hid_guid;
+    HidD_GetHidGuid(&hid_guid);
+    HDEVINFO set = SetupDiGetClassDevsW(&hid_guid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (set == INVALID_HANDLE_VALUE) {
+        std::cerr << "Downconverter: cannot list the HID devices ("
+                  << std::system_category().message(static_cast<int>(GetLastError())) << ")" << std::endl;
+        return false;
+    }
+    bool busy = false;
+    SP_DEVICE_INTERFACE_DATA ifd{};
+    ifd.cbSize = sizeof(ifd);
+    for (DWORD i = 0; mrf_handle == INVALID_HANDLE_VALUE && SetupDiEnumDeviceInterfaces(set, nullptr, &hid_guid, i, &ifd); i++) {
+        DWORD need = 0;
+        SetupDiGetDeviceInterfaceDetailW(set, &ifd, nullptr, 0, &need, nullptr);
+        if (need < sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W)) continue;
+        std::vector<unsigned char> buf(need);
+        auto* detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(buf.data());
+        detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+        if (!SetupDiGetDeviceInterfaceDetailW(set, &ifd, detail, need, nullptr, nullptr)) continue;
+
+        // No access rights asked for: the attributes can be read even from a
+        // device another program holds (keyboards, mice: the system does)
+        HANDLE q = CreateFileW(detail->DevicePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (q == INVALID_HANDLE_VALUE) continue;
+        HIDD_ATTRIBUTES attr{};
+        attr.Size = sizeof(attr);
+        const bool match = HidD_GetAttributes(q, &attr) && attr.VendorID == MORFEUS_VID && attr.ProductID == MORFEUS_PID;
+        CloseHandle(q);
+        if (!match) continue;
+
+        HANDLE h = CreateFileW(detail->DevicePath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+        if (h == INVALID_HANDLE_VALUE) {
+            const DWORD e = GetLastError();
+            if (e == ERROR_ACCESS_DENIED || e == ERROR_SHARING_VIOLATION) busy = true;
+            continue;
+        }
+        // 17 = report id + 16 data bytes; a longer report is zero-padded
+        HIDP_CAPS caps{};
+        PHIDP_PREPARSED_DATA pp = nullptr;
+        if (HidD_GetPreparsedData(h, &pp)) {
+            HidP_GetCaps(pp, &caps);
+            HidD_FreePreparsedData(pp);
+        }
+        if (caps.OutputReportByteLength < 17) {
+            CloseHandle(h);   // another collection of the device (no 17-byte output report)
+            continue;
+        }
+        mrf_handle = h;
+        mrf_report_len = caps.OutputReportByteLength;
+        std::cout << "Downconverter: moRFeus LO found (HID, " << mrf_report_len << "-byte output report)" << std::endl;
+    }
+    SetupDiDestroyDeviceInfoList(set);
+
+    if (mrf_handle == INVALID_HANDLE_VALUE) {
+        std::cerr << "Downconverter: no moRFeus LO found on USB (VID 0x10C4 PID 0xEAC9)";
+        if (busy) {
+            std::cerr << " - it is open in another program; close that program";
+        } else {
+            std::cerr << " - it uses Windows' built-in HID driver: do NOT replace that driver with WinUSB in"
+                         " Zadig (if it was: Device Manager, uninstall the device incl. its driver, replug)";
+        }
+        std::cerr << std::endl;
+        return false;
+    }
+    return true;
+}
+
+// One output report, zero-padded to the interface's report length.
+// Caller holds mrf_mutex; mrf_handle is open. false + *err on failure.
+bool hid_write_locked(const uint8_t* report, size_t len, DWORD* err) {
+    std::vector<uint8_t> buf(mrf_report_len, 0);
+    std::memcpy(buf.data(), report, len);   // len <= mrf_report_len (checked at open)
+    OVERLAPPED ov{};
+    ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ov.hEvent) {
+        *err = GetLastError();
+        return false;
+    }
+    DWORD n = 0;
+    bool ok = WriteFile(mrf_handle, buf.data(), static_cast<DWORD>(buf.size()), &n, &ov) != 0;
+    if (!ok) {
+        DWORD e = GetLastError();
+        if (e == ERROR_IO_PENDING) {
+            if (WaitForSingleObject(ov.hEvent, 1000) == WAIT_OBJECT_0) {
+                ok = GetOverlappedResult(mrf_handle, &ov, &n, FALSE) != 0;
+                if (!ok) e = GetLastError();
+            } else {
+                // cancel, and wait for it: buf and ov must outlive the I/O
+                CancelIoEx(mrf_handle, &ov);
+                GetOverlappedResult(mrf_handle, &ov, &n, TRUE);
+                e = ERROR_TIMEOUT;
+            }
+        }
+        if (!ok) *err = e;
+    }
+    CloseHandle(ov.hEvent);
+    if (ok && n != buf.size()) {
+        *err = ERROR_WRITE_FAULT;
+        ok = false;
+    }
+    return ok;
+}
+
+// Write one 17-byte command (the report layout above), reopening the device
+// once if the write fails (survives a USB replug). Caller must NOT hold
+// mrf_mutex.
+bool mrf_write(uint8_t func, uint64_t value) {
+    std::lock_guard<std::mutex> lock(mrf_mutex);
+
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (mrf_handle == INVALID_HANDLE_VALUE && !open_morfeus_locked()) return false;
+
+        uint8_t report[17] = {0};
+        report[0] = 0;        // HID report id (unnumbered)
+        report[1] = MRF_SET;
+        report[2] = func;
+        for (int i = 0; i < 8; i++) {
+            report[3 + i] = static_cast<uint8_t>(value >> (8 * (7 - i)));  // big-endian
+        }
+
+        DWORD err = 0;
+        if (hid_write_locked(report, sizeof(report), &err)) return true;
+
+        std::cerr << "Downconverter: moRFeus HID write failed ("
+                  << std::system_category().message(static_cast<int>(err)) << ") - reopening device" << std::endl;
+        CloseHandle(mrf_handle);
+        mrf_handle = INVALID_HANDLE_VALUE;
+    }
+    return false;
+}
+
+void close_morfeus_locked() {
+    if (mrf_handle != INVALID_HANDLE_VALUE) {
+        CloseHandle(mrf_handle);
+        mrf_handle = INVALID_HANDLE_VALUE;
+    }
+}
+
+#else
+// No HID backend on this platform: --wideband reports the LO missing
+bool mrf_write(uint8_t, uint64_t) {
+    std::cerr << "Downconverter: moRFeus control is not supported on this platform" << std::endl;
+    return false;
+}
+
+void close_morfeus_locked() {}
+#endif
 
 }  // namespace
 
@@ -252,8 +433,5 @@ bool downconverter_init(uint64_t initial_rf_hz) {
 
 void downconverter_close() {
     std::lock_guard<std::mutex> lock(mrf_mutex);
-    if (mrf_fd >= 0) {
-        close(mrf_fd);
-        mrf_fd = -1;
-    }
+    close_morfeus_locked();
 }

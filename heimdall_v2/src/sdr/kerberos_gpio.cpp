@@ -1,6 +1,30 @@
 #include "kerberos_gpio.hpp"
 #include "../core/config.hpp"
 
+#ifndef __linux__
+#include <iostream>
+
+// No Raspberry Pi header GPIOs off Linux (a Windows PC has none to drive the
+// CKOVAL switches with): init fails with the reason, and main falls back to
+// plain --kerberos (manual calibration) like on a non-Pi Linux box.
+bool kerberos_gpio_init() {
+#ifdef _WIN32
+    std::cerr << "Kerberos switches: Raspberry Pi header GPIOs are not available on this platform (Windows)"
+              << std::endl;
+#else
+    std::cerr << "Kerberos switches: Raspberry Pi header GPIOs are not available on this platform" << std::endl;
+#endif
+    return false;
+}
+
+bool kerberos_gpio_active() { return false; }
+
+void kerberos_gpio_set_noise_path(bool) {}
+
+void kerberos_gpio_cleanup() {}
+
+#else  // __linux__
+
 #include <linux/gpio.h>
 #include <sys/ioctl.h>
 #include <fcntl.h>
@@ -160,3 +184,5 @@ void kerberos_gpio_cleanup() {
     close(line_fd);
     line_fd = -1;
 }
+
+#endif  // __linux__

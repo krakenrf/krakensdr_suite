@@ -16,8 +16,12 @@
 // always send one. Kept identical in heimdall_v2/src/core/ and
 // kraken_doa_v2/include/utils/.
 
+#ifdef _WIN32
+#include "net_compat.hpp"  // Winsock inet_pton / gethostname (next to this file in both apps)
+#else
 #include <arpa/inet.h>
 #include <unistd.h>
+#endif
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -44,6 +48,19 @@ inline const std::vector<std::string>& allowed_names() {
             for (const char* suffix : {"", ".local", ".lan", ".home", ".localdomain", ".home.arpa"})
                 v.push_back(bare + suffix);
         }
+#ifdef _WIN32
+        // Windows' gethostname() is the bare computer name, never with its
+        // domain: a domain-joined PC reached as pc.corp.example was refused.
+        // Its DNS name with the primary suffix is a name it is reached by too.
+        {
+            char fq[256] = {};
+            DWORD n = sizeof(fq);
+            if (GetComputerNameExA(ComputerNameDnsFullyQualified, fq, &n) && fq[0]) {
+                const std::string f = lower(fq);
+                if (std::find(v.begin(), v.end(), f) == v.end()) v.push_back(f);
+            }
+        }
+#endif
         if (const char* env = std::getenv("KRAKEN_ALLOWED_HOSTS")) {
             std::string list(env), item;
             for (size_t i = 0; i <= list.size(); i++) {

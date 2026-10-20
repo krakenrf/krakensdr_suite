@@ -24,12 +24,22 @@ TcpDataServer::~TcpDataServer() {
 }
 
 bool TcpDataServer::start() {
-    server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    server_socket = sock_socket(AF_INET, SOCK_STREAM, 0);
     if (server_socket < 0) return false;
     
-    if (!set_socket_reuse(server_socket)) {
-        close(server_socket);
+    // On a failure errno stays the error of the failed call (main's message
+    // shows it on Windows - listen_error_detail), and the socket is closed
+    // once: stop() (the destructor) must not close the number again.
+    auto fail = [this]() {
+        const int err = errno;
+        sock_close(server_socket);
+        server_socket = -1;
+        errno = err;
         return false;
+    };
+
+    if (!set_socket_reuse(server_socket)) {
+        return fail();
     }
     
     sockaddr_in addr{};
@@ -37,14 +47,12 @@ bool TcpDataServer::start() {
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(TCP_DATA_PORT);
     
-    if (bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(server_socket);
-        return false;
+    if (sock_bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0) {
+        return fail();
     }
     
-    if (listen(server_socket, 5) < 0) {
-        close(server_socket);
-        return false;
+    if (sock_listen(server_socket, 5) < 0) {
+        return fail();
     }
     
     server_thread = std::thread(&TcpDataServer::accept_loop, this);
@@ -55,7 +63,7 @@ bool TcpDataServer::start() {
 void TcpDataServer::stop() {
     running = false;
     if (server_socket >= 0) {
-        close(server_socket);
+        sock_close(server_socket);
         server_socket = -1;
     }
     if (server_thread.joinable()) {
@@ -266,7 +274,9 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
     static std::chrono::steady_clock::time_point last_drop_warn{};
     static uint64_t dropped_since_warn = 0;
     auto send_some = [](TcpClient& c, const uint8_t* data, size_t len) -> ssize_t {
-        ssize_t n = send(c.socket, data, len, MSG_NOSIGNAL);
+        // sock_send: errno from the Winsock error on Windows (WSAEWOULDBLOCK
+        // = EAGAIN), so a full send buffer stays back-pressure there too
+        ssize_t n = sock_send(c.socket, data, len, MSG_NOSIGNAL);
         if (n >= 0) return n;
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
         std::cerr << "TCP Data: client disconnected (" << strerror(errno) << ")" << std::endl;
@@ -313,12 +323,18 @@ void TcpDataServer::accept_loop() {
         FD_SET(server_socket, &read_fds);
         
         timeval timeout{0, 100000}; // 100ms timeout
-        int result = select(server_socket + 1, &read_fds, nullptr, nullptr, &timeout);
+        int result = sock_select(server_socket + 1, &read_fds, nullptr, nullptr, &timeout);
+        if (result < 0) {
+            // a failing select() returns at once: don't spin on it
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
         
         if (result > 0 && FD_ISSET(server_socket, &read_fds)) {
             sockaddr_in client_addr{};
             socklen_t addr_len = sizeof(client_addr);
-            int client_socket = accept(server_socket, (sockaddr*)&client_addr, &addr_len);
+            // sock_accept: on Windows also not inherited by child processes
+            int client_socket = sock_accept(server_socket, (sockaddr*)&client_addr, &addr_len);
             
             if (client_socket >= 0) {
                 std::lock_guard<std::mutex> lock(clients_mutex);
@@ -327,7 +343,7 @@ void TcpDataServer::accept_loop() {
                 if (clients.size() >= MAX_DATA_CLIENTS) {
                     std::cerr << "TCP Data: refusing connection from " << inet_ntoa(client_addr.sin_addr)
                               << " (" << clients.size() << " clients connected)" << std::endl;
-                    close(client_socket);
+                    sock_close(client_socket);
                     continue;
                 }
                 // Set non-blocking mode

@@ -17,6 +17,9 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#include <deque>
+#endif
 
 std::atomic<bool> pipeline_running{false};
 std::atomic<bool> reconfig_in_progress{false};
@@ -30,6 +33,76 @@ namespace {
 std::thread drain_thread;
 std::thread conversion_thread;
 std::vector<std::thread> compensation_threads;
+
+#ifdef _WIN32
+// USB stream supervision (read_async_supervised)
+constexpr int USB_RESTART_MAX = 20;                               // restarts within...
+constexpr auto USB_RESTART_WINDOW = std::chrono::minutes(10);     // ...this window
+constexpr int USB_REOPEN_ATTEMPTS = 60;                           // 1 s apart: a replug within a minute resumes
+
+// Windows: the fork's USB callback cancels the whole stream on the FIRST
+// transfer that fails (Linux: only after RTL_USB_BUF_COUNT failures in a row,
+// or once the device is gone - Windows reports an unplug as a plain transfer
+// error) and marks the device lost; an unplugged dongle needs a new handle
+// anyway (before the fork's WinUSB fixes the old one couldn't stream again
+// at all: rtlsdr_read_async returned -2 at once from then on). The
+// reader thread just ended, and its channel stayed dead until a restart (the
+// drain starved, every recalibration failed). Here the dongle is reopened
+// (reopen_device_after_stream_loss) and its stream restarted; the samples
+// lost meanwhile broke the alignment, so the coherence watchdog then flushes
+// and recalibrates. A dongle that keeps failing stays down after
+// USB_RESTART_MAX restarts within USB_RESTART_WINDOW, one that doesn't come
+// back within USB_REOPEN_ATTEMPTS seconds too (an element-count change or a
+// restart retries it).
+void read_async_supervised(SDRDevice* dev_ptr, int device_index) {
+    using clock = std::chrono::steady_clock;
+    auto keep_going = [dev_ptr]() { return dev_ptr->running.load() && global_running.load(); };
+    // sleeps in short steps: a pipeline stop waits for this thread
+    auto pause = [&keep_going](int ms) {
+        for (int t = 0; t < ms && keep_going(); t += 50) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    };
+    std::deque<clock::time_point> restarts;
+    while (keep_going()) {
+        rtlsdr_dev_t* dev = dev_ptr->dev;
+        const int r = dev ? rtlsdr_read_async(dev, rtlsdr_callback, dev_ptr, RTL_USB_BUF_COUNT, NUM_SAMPLES * 2) : -1;
+        if (!keep_going()) break;
+
+        const auto now = clock::now();
+        while (!restarts.empty() && now - restarts.front() > USB_RESTART_WINDOW) restarts.pop_front();
+        if (static_cast<int>(restarts.size()) >= USB_RESTART_MAX) {
+            std::cerr << "Channel " << device_index << ": USB stream stopped (" << r << ") " << USB_RESTART_MAX
+                      << " times within 10 minutes - giving up; the channel stays down until the element count "
+                         "is changed or heimdall restarts" << std::endl;
+            break;
+        }
+        restarts.push_back(now);
+        std::cerr << "Channel " << device_index << " (Serial " << dev_ptr->serial_number << "): USB stream stopped ("
+                  << r << ") - reopening the dongle" << std::endl;
+
+        // A moment first: the cancelled transfers complete, an unplugged
+        // dongle drops off the bus / a replugged one re-enumerates
+        bool reopened = false;
+        for (int attempt = 0; attempt < USB_REOPEN_ATTEMPTS && keep_going(); attempt++) {
+            pause(attempt == 0 ? 250 : 1000);
+            if (!keep_going()) break;
+            if (reopen_device_after_stream_loss(dev_ptr)) {
+                reopened = true;
+                break;
+            }
+        }
+        if (!keep_going()) break;
+        if (!reopened) {
+            std::cerr << "Channel " << device_index << " (Serial " << dev_ptr->serial_number
+                      << "): dongle not back within " << USB_REOPEN_ATTEMPTS
+                      << " s - giving up; the channel stays down until the element count is changed or "
+                         "heimdall restarts" << std::endl;
+            break;
+        }
+        std::cerr << "Channel " << device_index << ": dongle reopened - restarting its USB stream" << std::endl;
+        signal_coherence_lost("USB stream restarted");
+    }
+}
+#endif
 }  // namespace
 
 void start_pipeline_threads() {
@@ -59,9 +132,15 @@ void start_pipeline_threads() {
                  << " (Serial: " << dev_ptr->serial_number
                  << ", Physical device: " << dev_ptr->device_id << ")" << std::endl;
             // A stop that lands before this point must not start streaming.
+#ifdef _WIN32
+            // read_async_supervised checks that too, and restarts a stream
+            // that dies (see above)
+            read_async_supervised(dev_ptr, device_index);
+#else
             if (dev_ptr->running) {
                 rtlsdr_read_async(dev_ptr->dev, rtlsdr_callback, dev_ptr, RTL_USB_BUF_COUNT, NUM_SAMPLES * 2);
             }
+#endif
             dev_ptr->async_exited.store(true, std::memory_order_release);
         });
     }

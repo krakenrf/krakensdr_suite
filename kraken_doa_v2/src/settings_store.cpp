@@ -1,6 +1,7 @@
 #include "settings_store.hpp"
 #include "utils/parse_num.hpp"
 #include "utils/json_escape.hpp"
+#include "utils/fs_compat.hpp"
 
 #include <map>
 #include <mutex>
@@ -39,12 +40,13 @@ bool write_file_atomic(const char* path, const std::string& data) {
     }
     if (::fsync(fd) != 0) { ::close(fd); ::unlink(tmp.c_str()); return false; }
     if (::close(fd) != 0) { ::unlink(tmp.c_str()); return false; }
-    if (::rename(tmp.c_str(), path) != 0) { ::unlink(tmp.c_str()); return false; }
+    // fs_replace: Windows' rename() refuses an existing target - no setting
+    // was saved after the file's first write
+    if (fs_replace(tmp.c_str(), path) != 0) { ::unlink(tmp.c_str()); return false; }
     const std::string p(path);
     const size_t slash = p.rfind('/');
     const std::string dir = (slash == std::string::npos) ? "." : p.substr(0, slash ? slash : 1);
-    int dfd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY);
-    if (dfd >= 0) { ::fsync(dfd); ::close(dfd); }  // best effort
+    fs_fsync_dir(dir);  // best effort (Windows: fs_replace wrote through)
     return true;
 }
     const char* SETTINGS_FILE = "doa_settings.json";

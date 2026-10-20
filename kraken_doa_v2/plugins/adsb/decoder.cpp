@@ -343,7 +343,7 @@ private:
         if (host.raw_wanted()) {
             // the decoder data log: the message in hex + its level (dBFS)
             std::string h;
-            for (int i = 0; i < len / 8; i++) h += fmt("%02X", msg[i]);
+            h += hex_bytes(msg, len / 8);
             host.raw(h + fmt(" %.1f", 20.0 * std::log10(std::max(level, 1e-6f))));
         }
         if (a->confirmed) update_outputs(*a);
@@ -628,6 +628,17 @@ private:
         return b;
     }
 
+    // bytes as upper-case hex (not through fmt: %02X needs an integer)
+    static std::string hex_bytes(const uint8_t* b, int n) {
+        static const char* const X = "0123456789ABCDEF";
+        std::string h;
+        for (int i = 0; i < n; i++) {
+            h += X[b[i] >> 4];
+            h += X[b[i] & 15];
+        }
+        return h;
+    }
+
     std::string alt_text(const Aircraft& a) const {
         if (a.ground) return "ground";
         if (std::isfinite(a.alt_baro)) return fmt("%.0f ft", a.alt_baro);
@@ -852,7 +863,7 @@ private:
 
     std::string describe(const Aircraft& a, const uint8_t* msg, int len, int df, bool repaired) const {
         std::string h;
-        for (int i = 0; i < len / 8; i++) h += fmt("%02X", msg[i]);
+        h += hex_bytes(msg, len / 8);
         std::string s = "DF" + std::to_string(df) + " " + hex6(a.addr) + " " + h;
         if (df == 17 || df == 18) s += " TC" + std::to_string(modes::bits(msg + 4, 1, 5));
         if (repaired) s += " (1 bit repaired)";

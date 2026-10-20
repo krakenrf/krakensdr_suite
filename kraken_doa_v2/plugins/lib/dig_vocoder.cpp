@@ -344,7 +344,14 @@ MbeLib::MbeLib() {
         }
         names.push_back(v);
     }
+#ifdef _WIN32
+    // Windows: a DLL (a MinGW / CMake build of mbelib makes libmbe.dll) next
+    // to the plugin, in the system folders or on the PATH - dlopen() is
+    // dlfcn-win32's LoadLibrary; KRAKEN_MBELIB may name its full path
+    for (const char* n : {"libmbe.dll", "mbe.dll", "libmbe-1.dll"})
+#else
     for (const char* n : {"libmbe.so.1", "libmbe.so", "/usr/local/lib/libmbe.so.1", "/usr/local/lib/libmbe.so"})
+#endif
         names.push_back(n);
     void* h = nullptr;
     std::string used;
@@ -401,6 +408,34 @@ int AmbeStream::decode(char fr[4][24], float* out) { return MbeLib::instance().d
 // Both programs take file names; /dev/stdin and /dev/stdout make them
 // filters. Their stdio buffering adds ~0.5 s of latency.
 // ---------------------------------------------------------------------------
+#ifdef _WIN32
+// Windows: no TETRA voice. Windows has no file name for a process's own
+// standard input / output (CONIN$ / CONOUT$ are the console, not a pipe), so
+// the programs can't be chained as filters; they would need a named pipe per
+// file relayed by the plugin. Everything else of TETRA still decodes, and the
+// plugin's "Voice codec" fact says why there is no voice.
+namespace dig {
+
+bool TetraCodec::available() { return false; }
+
+std::string TetraCodec::status() {
+    return "not available on Windows (the ETSI codec programs need /dev/stdin and /dev/stdout)";
+}
+
+TetraCodec::TetraCodec() = default;
+TetraCodec::~TetraCodec() { stop(); }
+bool TetraCodec::start() { return false; }
+
+void TetraCodec::stop() {
+    pending_.clear();
+    carry_.clear();
+}
+
+void TetraCodec::feed_slot(const uint8_t*, std::vector<float>& out) { out.clear(); }
+
+}  // namespace dig
+
+#else  // POSIX
 #include <fcntl.h>
 #include <signal.h>
 #include <spawn.h>
@@ -548,3 +583,5 @@ void TetraCodec::feed_slot(const uint8_t* t4, std::vector<float>& out) {
 }
 
 }  // namespace dig
+
+#endif  // POSIX

@@ -21,8 +21,12 @@ ARG JOBS=3
 # Makefiles pin (UWS_COMMIT; keep them equal). Its submodule pins uSockets
 ARG UWS_REPO=https://github.com/uNetworking/uWebSockets
 ARG UWS_COMMIT=fe7da4cb05622b8d004718ec3ca05101782eb1c2
+# librtlsdr: the fork commit heimdall's Makefile requires at least
+# (RTLSDR_FIX_MARK: 578b43d, the fast drag calls + the stalled control OUT
+# retry); an older one stops the heimdall build - a checkout of a commit has
+# no upstream for the Makefile to fast-forward to
 ARG LIBRTLSDR_REPO=https://github.com/krakenrf/librtlsdr
-ARG LIBRTLSDR_COMMIT=08fb08165ecfcdd954c7a20cb1bbfbc159294f0e
+ARG LIBRTLSDR_COMMIT=578b43ddd971786e84e2a6ab3c338ee48c8739c3
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git pkg-config ca-certificates \

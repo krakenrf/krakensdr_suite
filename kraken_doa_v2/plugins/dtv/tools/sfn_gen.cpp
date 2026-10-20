@@ -20,6 +20,7 @@
 
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -332,7 +333,7 @@ Source atsc_source() {
         taps->push_back(h);
     }
     auto hist = std::make_shared<std::vector<cd>>(taps->size(), cd(0, 0));
-    auto n = std::make_shared<long>(0);
+    auto n = std::make_shared<int64_t>(0);
     auto field = std::make_shared<int>(0);
     s.next = [=](std::vector<cd>* out) {
         // one field: field sync + 312 data segments
@@ -428,7 +429,7 @@ int main(int argc, char** argv) {
     if (radius <= 0) radius = 0.425 * lambda;
     // steering x gain per transmitter / antenna
     std::vector<std::vector<cd>> A;
-    std::vector<long> dl;
+    std::vector<int64_t> dl;
     double ptot = 0;
     for (const auto& t : txs) {
         std::vector<cd> a(static_cast<size_t>(M));
@@ -442,18 +443,18 @@ int main(int argc, char** argv) {
         dl.push_back(std::lround(t.delay_us * 1e-6 * src.fs));
         ptot += std::pow(10.0, t.db / 10);
     }
-    long dmax = 0;
-    for (long d : dl) dmax = std::max(dmax, d);
+    int64_t dmax = 0;
+    for (int64_t d : dl) dmax = std::max(dmax, d);
     // the source, generated ahead as needed
     std::vector<cd> s;
-    long sbase = 0;   // absolute index of s[0]
+    int64_t sbase = 0;   // absolute index of s[0]
     // the source mixed by the VFO's offset as it is generated (the channel
     // centre sits at -offset in the VFO's baseband): a transmitter's delay
     // then only adds a constant phase, folded into its steering below
     double mix_ph = 0;
     const double mix_w = -2 * M_PI * offset / src.fs;
-    auto need = [&](long i) {
-        while (sbase + static_cast<long>(s.size()) <= i) {
+    auto need = [&](int64_t i) {
+        while (sbase + static_cast<int64_t>(s.size()) <= i) {
             const size_t a = s.size();
             src.next(&s);
             for (size_t j = a; j < s.size(); j++) {
@@ -464,7 +465,7 @@ int main(int argc, char** argv) {
     };
     for (size_t k = 0; k < txs.size(); k++)
         for (auto& a : A[k]) a *= std::polar(1.0, mix_w * static_cast<double>(dl[k]));
-    auto S = [&](long i) -> cd { return i < 0 ? cd(0, 0) : s[static_cast<size_t>(i - sbase)]; };
+    auto S = [&](int64_t i) -> cd { return i < 0 ? cd(0, 0) : s[static_cast<size_t>(i - sbase)]; };
     // signal power of the source (for the SNR)
     need(200000);
     double ps = 0;
@@ -485,12 +486,12 @@ int main(int argc, char** argv) {
                 sinc * (0.42 + 0.5 * std::cos(M_PI * x / (TAPS / 2.0)) + 0.08 * std::cos(2 * M_PI * x / (TAPS / 2.0)));
         }
     std::ofstream f(out, std::ios::binary);
-    const long nout = static_cast<long>(secs * rate);
+    const int64_t nout = static_cast<int64_t>(secs * rate);
     std::vector<cf> row(static_cast<size_t>(M));
     std::vector<cd> u(static_cast<size_t>(M));
-    for (long n = 0; n < nout; n++) {
+    for (int64_t n = 0; n < nout; n++) {
         const double t = n * step;
-        const long i0 = static_cast<long>(std::floor(t));
+        const int64_t i0 = static_cast<int64_t>(std::floor(t));
         const double fr = t - i0;
         need(i0 + TAPS);
         std::fill(row.begin(), row.end(), cf(0, 0));
@@ -499,7 +500,7 @@ int main(int argc, char** argv) {
         for (size_t k = 0; k < txs.size(); k++) {
             cd v = 0;
             for (int j = 0; j < TAPS; j++) {
-                const long idx = i0 - TAPS / 2 + 1 + j - dl[k];
+                const int64_t idx = i0 - TAPS / 2 + 1 + j - dl[k];
                 v += S(idx) * h[j];
             }
             if (txs[k].dop != 0) v *= std::polar(1.0, 2 * M_PI * txs[k].dop * n / rate);
@@ -512,17 +513,17 @@ int main(int argc, char** argv) {
         f.write(reinterpret_cast<const char*>(row.data()), static_cast<std::streamsize>(row.size() * sizeof(cf)));
         // drop source history no longer needed
         if (i0 - TAPS - dmax - sbase > 1000000) {
-            const long drop = i0 - TAPS - dmax - sbase - 1000;
+            const int64_t drop = i0 - TAPS - dmax - sbase - 1000;
             s.erase(s.begin(), s.begin() + drop);
             sbase += drop;
         }
     }
     std::ofstream js(out.substr(0, out.rfind('.')) + ".json");
-    js << "{\"rate\": " << static_cast<long>(rate) << ", \"channels\": " << M << ", \"rf_hz\": " << static_cast<long>(rf)
+    js << "{\"rate\": " << static_cast<long long>(rate) << ", \"channels\": " << M << ", \"rf_hz\": " << static_cast<long long>(rf)
        << ", \"radius_m\": " << radius << "}\n";
     printf("%s: %.2f s, %d antennas at %.0f Hz, RF %.3f MHz, VFO %+.0f Hz from the channel centre, UCA r %.4f m\n", out.c_str(),
            nout / rate, M, rate, rf / 1e6, offset, radius);
     for (size_t k = 0; k < txs.size(); k++)
-        printf("  TX az %6.1f delay %8.3f us (%ld samples at %.0f Hz) %5.1f dB\n", txs[k].az, dl[k] / src.fs * 1e6, dl[k], src.fs, txs[k].db);
+        printf("  TX az %6.1f delay %8.3f us (%lld samples at %.0f Hz) %5.1f dB\n", txs[k].az, dl[k] / src.fs * 1e6, static_cast<long long>(dl[k]), src.fs, txs[k].db);
     return 0;
 }

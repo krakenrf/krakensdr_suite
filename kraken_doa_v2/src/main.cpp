@@ -18,6 +18,7 @@
 #include "utils/ring_buffer.hpp"
 #include "utils/system_stats.hpp"
 #include "utils/status_dashboard.hpp"
+#include "utils/platform.hpp"
 #include "channel_manager.hpp"
 #include "settings_store.hpp"
 #include "doa_logger.hpp"
@@ -161,12 +162,29 @@ void initialize_persistent_buffer() {
 }
 
 // SIGINT/SIGTERM/SIGHUP → clear `running`; worker loops poll it (the data receiver's
-// recv has a 500 ms timeout for exactly this) and main's joins then complete
+// recv has a 500 ms timeout for exactly this) and main's joins then complete.
+// Windows: Ctrl+C, the console window closing, logoff / shutdown, taskkill and
+// the launcher's stop event (platform::install_stop_handler) end up here the
+// same way.
 static void handle_shutdown_signal(int) {
     running.store(false);
 }
 
 int main(int argc, char* argv[]) {
+    // Windows: UTF-8 console output (the log lines carry °, →, emoji) and
+    // QuickEdit off - a click in the console window otherwise froze every
+    // thread that logs. No-op on Linux. platform::fast_exit puts the console
+    // back at the end; the atexit covers the returns of the option parsing.
+    platform::console_init();
+#ifdef _WIN32
+    std::atexit(platform::console_restore);
+#endif
+    // Windows: started from another folder (a shell, a shortcut), make the
+    // exe's folder the cwd - every runtime file of the client is cwd-relative
+    // (kraken_doa.html, server.crt, doa_settings.json, plugins/ ...). No-op on
+    // Linux, where run.sh / the Docker entrypoint set the cwd.
+    platform::chdir_to_exe_dir_if_missing("kraken_doa.html");
+
     // Parse command line arguments
     // Pre-connect default only: once data flows, the element count follows
     // the server's packet header (see data_receiver.cpp).
@@ -207,8 +225,10 @@ int main(int argc, char* argv[]) {
     // for years accumulates only stderr (errors) in its log - no routine
     // status dumps or connection chatter. Interactive runs (TTY) are
     // unaffected, and KRAKEN_DOA_VERBOSE_LOG=1 restores full output to files
-    // for debugging.
-    if (!isatty(STDOUT_FILENO) && !getenv("KRAKEN_DOA_VERBOSE_LOG")) {
+    // for debugging. Windows: mintty (MSYS2 / Git Bash) hands programs a pipe,
+    // not a console - it counts as interactive (StdoutKind::Pty) and keeps
+    // the output; NUL, which _isatty() calls a terminal, counts as redirected.
+    if (platform::stdout_kind() == platform::StdoutKind::Redirected && !getenv("KRAKEN_DOA_VERBOSE_LOG")) {
         static struct : streambuf {
             int overflow(int c) override { return traits_type::not_eof(c); }
             streamsize xsputn(const char*, streamsize n) override { return n; }
@@ -225,16 +245,20 @@ int main(int argc, char* argv[]) {
     active_num_elements.store(num_elements);
 
     // Ctrl+C / kill must trigger the orderly shutdown below instead of
-    // hard-killing the process
-    signal(SIGINT, handle_shutdown_signal);
-    signal(SIGTERM, handle_shutdown_signal);
-    // tmux kill-session (run.sh stop / systemd stop) and a closed terminal
-    // send SIGHUP; without a handler it killed the process mid-write
-    signal(SIGHUP, handle_shutdown_signal);
+    // hard-killing the process. Linux: SIGINT, SIGTERM and SIGHUP (tmux
+    // kill-session - run.sh stop / systemd stop - and a closed terminal send
+    // SIGHUP; without a handler it killed the process mid-write). Windows has
+    // no SIGHUP / external SIGTERM: a console control handler (Ctrl+C, the
+    // window closing), a hidden window (logoff / shutdown, taskkill) and the
+    // named stop event krakensdr.exe sets.
+    platform::install_stop_handler(handle_shutdown_signal);
 
     // FIX: Increase malloc arena count to reduce contention with many threads
     // With 2 decimators × 5 channels = 10 threads, default arenas (8) cause lock contention
+    // (glibc only - the Windows C runtime's heap has no arenas to tune)
+#ifdef __GLIBC__
     mallopt(M_ARENA_MAX, 32);  // Allow up to 32 malloc arenas
+#endif
 
     // Take over the terminal for the live dashboard BEFORE the heavy init below,
     // so every startup message (FFT setup, channels, server connect, ...) is
@@ -412,6 +436,22 @@ int main(int argc, char* argv[]) {
     running = false;
     cout << "\nShutting down..." << endl;
 
+    // Windows: the console window was closed (or logoff / shutdown, or the
+    // launcher's urgent stop event) - the process is ended ~4.5 s from now
+    // (the launcher waits that long; 10 s at a logoff) or ~5 s (Windows),
+    // whatever it is doing. What is cheap to save goes first,
+    // before the waits below (gpsd's read, the recorder's writer); each is
+    // called again in its usual place, where it saves only what came since
+    // (SettingsStore::stop writes a later change). Never on Linux.
+    if (platform::stop_is_urgent()) {
+        SettingsStore::flush();   // a change still in the 1 s debounce
+        incidents::save_now();
+        nfloor::save_now();
+        declog::stop();
+        doa_logger.stop();
+        rec::stop();              // the writer drops its backlog at once, then the final metadata
+    }
+
     // Stop the continuous scanner first: its thread drives decimators, the
     // FFT processor and the websocket broadcast path, all torn down below.
     // stop() joins the scanner thread and is a no-op if it never ran.
@@ -465,5 +505,7 @@ int main(int argc, char* argv[]) {
 
     cout << "Shutdown complete" << endl;
     cout.flush();
-    _Exit(0);
+    // _Exit on Linux; Windows: TerminateProcess, after putting the console's
+    // code page / modes back (see platform.hpp)
+    platform::fast_exit(0);
 }

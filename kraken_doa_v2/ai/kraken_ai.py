@@ -9,6 +9,7 @@ stdout - one JSON object per line ({"ev": ...}) - to the browser.
 On the Pi (once, in a terminal):
   python3 ai/kraken_ai.py setup      check the LLM CLI + login, enable the lab
   python3 ai/kraken_ai.py disable    turn it off again
+(Windows: py -3 ai/kraken_ai.py setup / disable, in the kraken_doa_v2 folder)
 
 Used by kraken_doa:
   kraken_ai.py status                configuration as JSON (no LLM call)
@@ -19,6 +20,8 @@ Used by kraken_doa:
   kraken_ai.py create --session DIR --plugin ID [--instructions TEXT]
   kraken_ai.py ask --session DIR --text QUESTION
   kraken_ai.py delete --session DIR        the session and its Claude transcript
+Used by the agent on Windows:
+  kraken_ai.py build --plugin ID [-j N]    make -C plugins PLUGIN=ID with MSYS2's make
 
 Sessions live in ai/sessions/<id>/ (capture, plots, analysis.md,
 session.json, chat.json = the conversation, activity.jsonl = the agent's
@@ -42,6 +45,122 @@ SESSIONS = os.path.join(AI_DIR, "sessions")
 CONFIG = os.environ.get("KRAKEN_AI_CONFIG") or os.path.join(AI_DIR, "ai_config.json")
 SIGTOOL = os.path.join(AI_DIR, "sigtool.py")
 MEMGUARD = os.path.join(AI_DIR, "memguard")
+WINDOWS = os.name == "nt"
+
+
+def agent_path(p):
+    """A path as the agent types it in its Bash commands: unchanged on Linux.
+    Windows: '/'-separated - Claude Code's Bash there is Git Bash, where '\\'
+    is an escape character."""
+    return p.replace("\\", "/") if WINDOWS else p
+
+
+def path_quote(p):
+    """'"' when the agent must quote agent_path(p) on its command line (Windows:
+    a path with a space, C:\\Users\\First Last\\...), else ''. Linux: always ''."""
+    return '"' if WINDOWS and " " in p else ""
+
+
+def agent_cmd(p):
+    """agent_path(p) as a command (or its first word) - quoted when it must be"""
+    q = path_quote(p)
+    return q + agent_path(p) + q
+
+
+def replace_file(src, dst):
+    """os.replace; on Windows a target that kraken_doa is reading at that moment
+    (std::ifstream opens without FILE_SHARE_DELETE) refuses to be replaced: wait
+    that moment out, as its fs_replace does"""
+    if not WINDOWS:
+        os.replace(src, dst)
+        return
+    for _ in range(20):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            time.sleep(0.02)
+    os.replace(src, dst)   # last try: raise the real error
+
+
+def trusted_owner(path):
+    """Windows: is path owned by this account, SYSTEM, the Administrators or
+    TrustedInstaller? (windows/setup_msys2.ps1's rule: any account can create
+    C:\\msys64, and the make of one another account put there would run here)"""
+    import ctypes
+    from ctypes import wintypes
+    advapi, kernel = ctypes.WinDLL("advapi32"), ctypes.WinDLL("kernel32")
+    pvoid = ctypes.POINTER(ctypes.c_void_p)
+    advapi.GetNamedSecurityInfoW.argtypes = [wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD, pvoid,
+                                             ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, pvoid]
+    advapi.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    advapi.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, pvoid]
+    advapi.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    advapi.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+                                           ctypes.POINTER(wintypes.DWORD)]
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+
+    def sid_text(sid):
+        s = ctypes.c_void_p()
+        if not advapi.ConvertSidToStringSidW(sid, ctypes.byref(s)):
+            return None
+        t = ctypes.wstring_at(s.value)
+        kernel.LocalFree(s)
+        return t
+
+    trusted = {"S-1-5-18", "S-1-5-32-544", "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"}
+    tok = wintypes.HANDLE()
+    if advapi.OpenProcessToken(kernel.GetCurrentProcess(), 0x0008, ctypes.byref(tok)):   # TOKEN_QUERY
+        n = wintypes.DWORD()
+        advapi.GetTokenInformation(tok, 1, None, 0, ctypes.byref(n))   # TokenUser
+        buf = ctypes.create_string_buffer(n.value)
+        if n.value and advapi.GetTokenInformation(tok, 1, buf, n, ctypes.byref(n)):
+            trusted.add(sid_text(ctypes.c_void_p.from_buffer(buf)))   # TOKEN_USER.User.Sid comes first
+        kernel.CloseHandle(tok)
+    owner, sd = ctypes.c_void_p(), ctypes.c_void_p()
+    # SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION
+    if advapi.GetNamedSecurityInfoW(path, 1, 1, ctypes.byref(owner), None, None, None, ctypes.byref(sd)) != 0:
+        return False
+    o = sid_text(owner)
+    kernel.LocalFree(sd)
+    return o is not None and o in trusted
+
+
+def msys2_root():
+    """Windows: the MSYS2 the suite is built with, looked for as
+    windows/setup_msys2.ps1 does it, or None. kraken_doa started from run.bat /
+    krakensdr.exe has no MSYS2 on its PATH, and Git for Windows has no make"""
+    named = os.environ.get("MSYS2_ROOT")
+    if named:
+        # named by the user: as it is
+        return named if os.path.isfile(os.path.join(named, "usr", "bin", "make.exe")) else None
+    # this account's own folder first; D:\msys64 only through MSYS2_ROOT
+    local = os.environ.get("LOCALAPPDATA")
+    for r in (local and os.path.join(local, "msys64"), r"C:\msys64"):
+        mk = r and os.path.join(r, "usr", "bin", "make.exe")
+        if mk and os.path.isfile(mk) and all(trusted_owner(p) for p in (r, os.path.dirname(mk), mk)):
+            return r
+    return None
+
+
+# The interpreter the agent runs sigtool and its own scripts with: python3 on
+# the Pi. Windows: this very interpreter (a "python3" there is often missing or
+# the Microsoft Store stub), quoted when its path has a space.
+PYTHON = "python3"
+if WINDOWS:
+    PYTHON = agent_path(sys.executable)
+    if " " in PYTHON:
+        PYTHON = '"' + PYTHON + '"'
+
+# What the messages below tell the user to run, and where: on the Pi, or on
+# the Windows PC itself (python.org's Python is started with its py launcher,
+# Claude Code is installed from PowerShell)
+HERE = "on this PC" if WINDOWS else "on the Pi"
+SETUP_CMD = "py -3 ai/kraken_ai.py setup" if WINDOWS else "python3 ai/kraken_ai.py setup"
+CLAUDE_INSTALL = ("    irm https://claude.ai/install.ps1 | iex      (in PowerShell)" if WINDOWS
+                  else "    curl -fsSL https://claude.ai/install.sh | bash")
 BUILTIN = ("the decoder plugins listed above (every decoder is a plugin, including the protocols that "
            "ship with the suite: P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS, ADS-B, AIS, radiosondes, "
            "DME / TACAN (dme) and ILS / VOR / marker beacons (ils); Auto detect runs "
@@ -104,7 +223,7 @@ def chat_append(sdir, role, kind, text):
     tmp = p + ".tmp"
     with open(tmp, "w") as f:
         json.dump(chat, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, p)
+    replace_file(tmp, p)
 
 
 def set_session(sdir):
@@ -126,10 +245,17 @@ def save_config(cfg):
     tmp = CONFIG + ".tmp"
     with open(tmp, "w") as f:
         json.dump(cfg, f, indent=2)
-    os.replace(tmp, CONFIG)
+    replace_file(tmp, CONFIG)
 
 
 def claude_path():
+    if WINDOWS:
+        # the native installer's claude.exe before an npm claude.cmd shim
+        # (a .cmd runs through cmd.exe, which re-parses the arguments - the
+        # --allowedTools patterns have parentheses and spaces)
+        for c in (shutil.which("claude.exe"), os.path.expanduser("~/.local/bin/claude.exe")):
+            if c and os.path.isfile(c):
+                return c
     p = shutil.which("claude")
     if p:
         return p
@@ -160,21 +286,22 @@ def session_save(sdir, s):
     tmp = os.path.join(sdir, "session.json.tmp")
     with open(tmp, "w") as f:
         json.dump(s, f, indent=1, ensure_ascii=False)
-    os.replace(tmp, os.path.join(sdir, "session.json"))
+    replace_file(tmp, os.path.join(sdir, "session.json"))
 
 
 def sigtool_help():
-    return """python3 {t} capture --freq HZ [--rate HZ] [--bw HZ] [--seconds S] -o FILE.cf32
+    return """{py} {t} capture --freq HZ [--rate HZ] [--bw HZ] [--seconds S] -o FILE.cf32
       new capture from the receiver (channel 0, 2.4 MHz span around the current centre -
       in wideband / independent mode the tuner whose band holds HZ; the context's
       "tuner" / "center_freq_hz" say which; the rate becomes 2.4 MHz / integer). Use a longer capture for intermittent signals.
-python3 {t} analyze FILE.cf32 [--start S] [--seconds S]      report + PNG plots (Read them)
-python3 {t} spectrogram FILE.cf32 -o OUT.png [--start S] [--seconds S] [--fft N]
-python3 {t} extract FILE.cf32 --offset HZ [--rate HZ] [--bw HZ] -o OUT.cf32   re-centre / narrow
-python3 {t} demod FILE.cf32 --mode fm|am|usb|lsb -o OUT.wav
-python3 {t} tones FILE.cf32|FILE.wav                          audio tones after FM demod
-python3 {t} symbols FILE.cf32 --baud B [--levels 2|4] [--demod fm|am] [-o OUT.txt]
-      symbol recovery, eye quality, repeated words (sync candidates), frame period""".format(t=SIGTOOL)
+{py} {t} analyze FILE.cf32 [--start S] [--seconds S]      report + PNG plots (Read them)
+{py} {t} spectrogram FILE.cf32 -o OUT.png [--start S] [--seconds S] [--fft N]
+{py} {t} extract FILE.cf32 --offset HZ [--rate HZ] [--bw HZ] -o OUT.cf32   re-centre / narrow
+{py} {t} demod FILE.cf32 --mode fm|am|usb|lsb -o OUT.wav
+{py} {t} tones FILE.cf32|FILE.wav                          audio tones after FM demod
+{py} {t} symbols FILE.cf32 --baud B [--levels 2|4] [--demod fm|am] [-o OUT.txt]
+      symbol recovery, eye quality, repeated words (sync candidates), frame period""".format(t=agent_cmd(SIGTOOL),
+                                                                                             py=PYTHON)
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +315,10 @@ def agent_env():
     to a standstill (a 45 s capture froze the Pi twice)."""
     env = dict(os.environ)
     env["PYTHONPATH"] = MEMGUARD + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    if WINDOWS:
+        # its Python processes in UTF-8 mode, as on Linux (open() and the
+        # pipes would use the ANSI code page: an emoji in a print fails)
+        env.setdefault("PYTHONUTF8", "1")
     return env
 
 
@@ -302,7 +433,7 @@ class Runner:
         if not ok:
             hint = err[-600:] if err else ""
             if "login" in hint.lower() or "auth" in hint.lower() or "api key" in hint.lower():
-                hint += "\n(Claude Code is not logged in: run `claude` once in a terminal on the Pi)"
+                hint += "\n(Claude Code is not logged in: run `claude` once in a terminal " + HERE + ")"
             emit("error", msg=("agent failed (exit %d)" % rc) + (": " + hint if hint else ""))
         return ok, final
 
@@ -322,7 +453,12 @@ def tool_detail(name, inp):
 
 
 def rel(p):
-    return "//" + os.path.abspath(p).lstrip("/")
+    p = os.path.abspath(p)
+    if WINDOWS:
+        # Claude Code matches Windows paths in their POSIX form: C:\x -> /c/x
+        drive, rest = os.path.splitdrive(p)
+        p = "/" + drive.rstrip(":").lower() + rest.replace("\\", "/")
+    return "//" + p.lstrip("/")
 
 
 def base_tools(sdir):
@@ -330,10 +466,11 @@ def base_tools(sdir):
         f"Read({rel(sdir)}/**)", f"Read({rel(PLUGIN_DIR)}/**)", f"Read({rel(AI_DIR)}/*.py)",
         "Glob", "Grep", "WebSearch", "WebFetch",
         f"Edit({rel(sdir)}/**)",
-        f"Bash(python3 {SIGTOOL}:*)",
+        f"Bash({PYTHON} {agent_cmd(SIGTOOL)}:*)",
         # scripts the agent writes into its session directory (a `:*` prefix
-        # rule only matches whole words, so a wildcard)
-        f"Bash(python3 {os.path.abspath(sdir)}/*)",
+        # rule only matches whole words, so a wildcard - it matches a closing
+        # quote too)
+        f"Bash({PYTHON} {path_quote(sdir)}{agent_path(os.path.abspath(sdir))}/*)",
     ]
 
 
@@ -341,7 +478,7 @@ SYSTEM = """You are the AI Signal Lab of a KrakenSDR receiver (a 5-channel coher
 on a Raspberry Pi). You analyse radio signals the user points you at and write decoder plugins.
 - Work only in your session directory {sdir} (scratch scripts and notes go there) and, when asked
   to write a decoder, in the plugin directory you are given. Python 3 with numpy is available
-  (no scipy/matplotlib). Run your own scripts as: python3 {sdir}/<script>.py
+  (no scipy/matplotlib). Run your own scripts as: {python} {q}{sdir}/<script>.py{q}
 - The Pi has 4 cores: never build with more than -j3; keep scripts efficient.
 - Memory is tight: the receiver needs most of the Pi's RAM, and every Python process you start
   has a ceiling (what is free minus a reserve - often well under 1 GB): past it you get a
@@ -352,7 +489,11 @@ on a Raspberry Pi). You analyse radio signals the user points you at and write d
 - Your text output is shown live in the receiver's web UI: keep progress notes short.
 - Be factual: state confidence and the measurements behind a conclusion; say "unknown" rather
   than guessing. Do not decode/describe the content of private communications beyond what is
-  needed to identify the system."""
+  needed to identify the system.""".replace("{python}", PYTHON)   # {sdir}, {q}: system_prompt()
+
+
+def system_prompt(sdir):
+    return SYSTEM.format(sdir=agent_path(sdir), q=path_quote(sdir))
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +540,7 @@ def cmd_test(_a):
         except (OSError, subprocess.SubprocessError, ValueError) as e:
             ok, text = False, str(e)
     emit("done", kind="test", ok=ok, text=text if ok else "No answer: " + text +
-         "\nIs the CLI logged in? Run `claude` once in a terminal on the Pi.")
+         "\nIs the CLI logged in? Run `claude` once in a terminal " + HERE + ".")
 
 
 def cmd_setup(a):
@@ -415,7 +556,7 @@ def cmd_setup(a):
         exe = claude_path()
         if not exe:
             print("Claude Code is not installed. Install it with:\n"
-                  "    curl -fsSL https://claude.ai/install.sh | bash\n"
+                  + CLAUDE_INSTALL + "\n"
                   "then run `claude` once to log in, and run this setup again.")
             return 1
         print(f"Claude Code found: {exe}")
@@ -461,7 +602,7 @@ def cmd_disable(_a):
 def require_enabled(cfg):
     if not cfg.get("enabled"):
         emit("error", msg="The AI Signal Lab is not enabled on this receiver: run "
-                          "`python3 ai/kraken_ai.py setup` on the Pi")
+                          "`" + SETUP_CMD + "` " + HERE)
         sys.exit(1)
 
 
@@ -473,6 +614,10 @@ def install_term_handler(runner):
         sys.exit(1)
     signal.signal(signal.SIGTERM, h)
     signal.signal(signal.SIGINT, h)
+    if hasattr(signal, "SIGBREAK"):
+        # Windows: kraken_doa's cancel is a Ctrl+Break to this process group
+        # (no SIGTERM there)
+        signal.signal(signal.SIGBREAK, h)
 
 
 def context_summary(ctx):
@@ -559,7 +704,7 @@ Receiver context:
 
 The receiver already decodes with {BUILTIN}.
 
-A {a.seconds:g} s capture was made: {cap} (complex float32, sidecar capture.json). Its automatic
+A {a.seconds:g} s capture was made: {agent_path(cap)} (complex float32, sidecar capture.json). Its automatic
 analysis (PNG plots next to it - Read them, the waterfall is especially useful):
 --------------------------------------------------------------------------------
 {report}
@@ -567,7 +712,7 @@ analysis (PNG plots next to it - Read them, the waterfall is especially useful):
 
 Tools (run with Bash):
 {sigtool_help()}
-You can also write numpy scripts into {sdir} and run them. Capture again (longer, other rate,
+You can also write numpy scripts into {agent_path(sdir)} and run them. Capture again (longer, other rate,
 other offset) if the signal was weak or absent; intermittent signals may need 30-60 s.
 {("Extra instructions from the user: " + a.instructions) if a.instructions else ""}
 
@@ -587,7 +732,7 @@ SUGGESTED_PLUGIN_ID: <id: lowercase a-z 0-9 _ -, max 32 chars, or "none" if an e
     runner = Runner(cfg, sdir, int(cfg.get("investigate_timeout_s", 900)))
     install_term_handler(runner)
     emit("status", state="thinking", msg="the AI is analysing the signal")
-    ok, text = runner.run(prompt, base_tools(sdir), new_id=new_id, system=SYSTEM.format(sdir=sdir))
+    ok, text = runner.run(prompt, base_tools(sdir), new_id=new_id, system=system_prompt(sdir))
     sess = session_load(sdir)
     if cfg.get("backend", "claude") == "claude":
         sess["claude_session"] = new_id
@@ -607,8 +752,33 @@ SUGGESTED_PLUGIN_ID: <id: lowercase a-z 0-9 _ -, max 32 chars, or "none" if an e
     sys.exit(0 if ok else 1)
 
 
+def build_plugin(pid, jobs=0):
+    """make -C plugins PLUGIN=<pid> -> CompletedProcess. Windows: MSYS2's make
+    with its UCRT64 compiler first on PATH, started from here - the agent's Git
+    Bash can't run MSYS2's programs itself (they get almost none of its
+    environment, no TMP: g++ fails); a missing make is a failed build with the
+    reason instead of a crash"""
+    argv = ["make", "-C", PLUGIN_DIR, f"PLUGIN={pid}"] + ([f"-j{jobs}"] if jobs > 0 else [])
+    if not WINDOWS:
+        return subprocess.run(argv, capture_output=True, text=True)
+    env = dict(os.environ)
+    root = msys2_root()
+    if root:
+        argv[0] = os.path.join(root, "usr", "bin", "make.exe")
+        env["PATH"] = os.pathsep.join([os.path.join(root, "ucrt64", "bin"), os.path.join(root, "usr", "bin")] +
+                                      ([env["PATH"]] if env.get("PATH") else []))
+    try:
+        # errors="replace": compiler output in another code page must not end the job
+        return subprocess.run(argv, capture_output=True, text=True, errors="replace", env=env)
+    except OSError as e:
+        return subprocess.CompletedProcess(argv, 127, "", f"make not found ({e}): plugins are built with MSYS2 "
+                                           f"(build_windows.bat installs it; one outside %LOCALAPPDATA%\\msys64 and "
+                                           f"C:\\msys64 is found through MSYS2_ROOT) - build this one in the KrakenSDR "
+                                           f"source folder's MSYS2 UCRT64 shell: make -C kraken_doa_v2/plugins PLUGIN={pid}")
+
+
 def plugin_ok(pid):
-    exe = os.path.join(PLUGIN_DIR, pid, "build", "decoder")
+    exe = os.path.join(PLUGIN_DIR, pid, "build", "decoder" + (".exe" if WINDOWS else ""))
     if not os.access(exe, os.X_OK):
         return False, "not built"
     try:
@@ -633,6 +803,11 @@ def cmd_create(a):
     if not ID_RE.match(pid) or pid == "sdk":
         emit("error", msg="plugin id must be 1-32 characters a-z 0-9 _ - (not 'sdk')")
         sys.exit(1)
+    if WINDOWS and not os.path.isfile(os.path.join(PLUGIN_DIR, "Makefile")):
+        # a package (windows/package.sh): no plugin sources, Makefile or compiler
+        emit("error", msg="this KrakenSDR folder is a package without the plugin sources - create decoders on "
+                          "the PC with the KrakenSDR source folder (built with build_windows.bat)")
+        sys.exit(1)
     pdir = os.path.join(PLUGIN_DIR, pid)
     exists = os.path.exists(os.path.join(pdir, "decoder.cpp"))
     os.makedirs(pdir, exist_ok=True)
@@ -649,21 +824,28 @@ def cmd_create(a):
     session_save(sdir, sess)
 
     task = ("IMPROVE the existing decoder plugin" if exists else "WRITE a new decoder plugin")
+    ap, apd = agent_path(PLUGIN_DIR), agent_path(pdir)
+    decoder = agent_cmd(pdir + "/build/decoder")   # = {apd}/build/decoder, quoted when it must be
+    build = build_txt = f"make -C {PLUGIN_DIR} PLUGIN={pid}"
+    if WINDOWS:
+        # through this script: MSYS2's make can't run from Git Bash (build_plugin)
+        build = f"{PYTHON} {agent_cmd(os.path.join(AI_DIR, 'kraken_ai.py'))} build --plugin {pid}"
+        build_txt = build + f"   (runs make -C {ap} PLUGIN={pid} with MSYS2; -j N as for make)"
     prompt = f"""{task} for the signal you investigated ({sess.get('signal_name') or 'see your analysis'}).
 
 Plugin id: {pid}
-Plugin directory (the only place you may write code): {pdir}/
+Plugin directory (the only place you may write code): {apd}/
   decoder.cpp (required; KRAKEN_PLUGIN(..., {{.id = "{pid}", ...}}) - the id MUST be "{pid}"),
   optional extra .cpp/.hpp files, and README.md (what the signal is, what is decoded, the sources /
   specifications used, test results, limitations).
-Read first: {PLUGIN_DIR}/SDK.md (the API and rules) and the example {PLUGIN_DIR}/pocsag/decoder.cpp.
-The other plugins in {PLUGIN_DIR}/ are further examples (p25, dmr, nxdn, dstar, tetra, mpt1327, aprs),
-and {PLUGIN_DIR}/lib/ is a shared library you may use (FEC/CRC: dig_fec.hpp, 4FSK sync: dig_fsk4.hpp,
+Read first: {ap}/SDK.md (the API and rules) and the example {ap}/pocsag/decoder.cpp.
+The other plugins in {ap}/ are further examples (p25, dmr, nxdn, dstar, tetra, mpt1327, aprs),
+and {ap}/lib/ is a shared library you may use (FEC/CRC: dig_fec.hpp, 4FSK sync: dig_fsk4.hpp,
 vocoders: dig_vocoder.hpp, front ends: dig_common.hpp).
 
-Build:  make -C {PLUGIN_DIR} PLUGIN={pid}
-Test:   {pdir}/build/decoder --file <capture.cf32> [--offset HZ] [--verbose]
-Captures in this session: {", ".join(os.path.join(sdir, c) for c in caps) or cap}
+Build:  {build_txt}
+Test:   {decoder} --file <capture.cf32> [--offset HZ] [--verbose]
+Captures in this session: {", ".join(agent_path(os.path.join(sdir, c)) for c in caps) or agent_path(cap)}
 (make new ones with sigtool capture if needed - e.g. a longer one with more traffic).
 
 Iterate until the decoder works on the captures: frames are found and pass their checks
@@ -679,8 +861,8 @@ one line:  PLUGIN_READY: {pid}   - or -   PLUGIN_FAILED: <reason>"""
 
     tools = base_tools(sdir) + [
         f"Edit({rel(pdir)}/**)",
-        f"Bash(make -C {PLUGIN_DIR} PLUGIN={pid}:*)",
-        f"Bash({pdir}/build/decoder:*)",
+        f"Bash({build}:*)",
+        f"Bash({decoder}:*)",
     ]
     runner = Runner(cfg, sdir, int(cfg.get("create_timeout_s", 3600)))
     install_term_handler(runner)
@@ -689,14 +871,14 @@ one line:  PLUGIN_READY: {pid}   - or -   PLUGIN_FAILED: <reason>"""
     if cfg.get("backend", "claude") != "claude":
         prompt = "Your earlier analysis:\n" + sess.get("analysis", "") + "\n\n" + prompt
     new_id = None if resume else str(uuid.uuid4())
-    ok, text = runner.run(prompt, tools, resume_id=resume, new_id=new_id, system=SYSTEM.format(sdir=sdir))
+    ok, text = runner.run(prompt, tools, resume_id=resume, new_id=new_id, system=system_prompt(sdir))
     if new_id and cfg.get("backend", "claude") == "claude":
         s2 = session_load(sdir)
         s2["claude_session"] = new_id
         session_save(sdir, s2)
     emit("status", state="checking", msg=f"checking plugin {pid}")
     # build it ourselves too: the agent may have stopped after editing
-    b = subprocess.run(["make", "-C", PLUGIN_DIR, f"PLUGIN={pid}"], capture_output=True, text=True)
+    b = build_plugin(pid)
     built, info = plugin_ok(pid)
     if b.returncode != 0:
         built = False
@@ -719,6 +901,18 @@ one line:  PLUGIN_READY: {pid}   - or -   PLUGIN_FAILED: <reason>"""
     sys.exit(0 if ready else 1)
 
 
+def cmd_build(a):
+    """The agent's build command on Windows (see build_plugin)"""
+    pid = a.plugin.strip().lower()
+    if not ID_RE.match(pid) or pid == "sdk":
+        print("plugin id must be 1-32 characters a-z 0-9 _ - (not 'sdk')", file=sys.stderr)
+        return 2
+    b = build_plugin(pid, a.jobs)
+    sys.stdout.write(b.stdout)
+    sys.stderr.write(b.stderr)
+    return b.returncode
+
+
 def cmd_ask(a):
     cfg = load_config()
     require_enabled(cfg)
@@ -734,7 +928,7 @@ def cmd_ask(a):
     set_session(sdir)
     chat_append(sdir, "user", "ask", a.text)
     emit("status", state="thinking", msg="asking a follow-up question")
-    ok, text = runner.run(prompt, base_tools(sdir), resume_id=resume, system=SYSTEM.format(sdir=sdir))
+    ok, text = runner.run(prompt, base_tools(sdir), resume_id=resume, system=system_prompt(sdir))
     chat_append(sdir, "assistant", "ask", text or "(no answer - see the agent activity)")
     emit("done", kind="ask", ok=ok, text=text, session=os.path.basename(sdir))
 
@@ -796,9 +990,13 @@ def main():
     q.add_argument("--text", required=True)
     d = sub.add_parser("delete")
     d.add_argument("--session", required=True)
+    b = sub.add_parser("build")
+    b.add_argument("--plugin", required=True)
+    b.add_argument("-j", "--jobs", type=int, default=0)
     a = ap.parse_args()
     r = {"setup": cmd_setup, "disable": cmd_disable, "status": cmd_status, "test": cmd_test,
-         "investigate": cmd_investigate, "create": cmd_create, "ask": cmd_ask, "delete": cmd_delete}[a.cmd](a)
+         "investigate": cmd_investigate, "create": cmd_create, "ask": cmd_ask, "delete": cmd_delete,
+         "build": cmd_build}[a.cmd](a)
     sys.exit(r or 0)
 
 

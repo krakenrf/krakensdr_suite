@@ -9,6 +9,7 @@
 #include "scanner_manager.hpp"
 #include "station_info.hpp"
 #include "signal_processing/music_processor.hpp"
+#include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 
 #include <sqlite3.h>
@@ -199,6 +200,10 @@ std::string doa_sanitize_filename(const std::string& name) {
         if (c < 0x20 || c == 0x7f) return "";
         if (std::strchr("\"'<>`&", c)) return "";
     }
+    // Windows: no ':' (an alternate data stream), * ? |, trailing '.' / ' '
+    // (another spelling of a name) or device names - "NUL" or "COM3" in the
+    // folder is still that device. Always true on Linux.
+    if (!fs_portable_name(base)) return "";
     return base;
 }
 
@@ -224,7 +229,7 @@ std::vector<RecFile> doa_list_recordings() {
         auto sz = it->file_size(fec);
         rf.size = fec ? 0 : static_cast<uint64_t>(sz);
         struct stat stt;
-        if (::stat(it->path().c_str(), &stt) == 0)
+        if (::stat(it->path().string().c_str(), &stt) == 0)   // Windows: path::c_str() is wchar_t
             rf.mtime_ms = static_cast<int64_t>(stt.st_mtime) * 1000;
         out.push_back(std::move(rf));
     }

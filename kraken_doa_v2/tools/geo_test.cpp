@@ -2,7 +2,14 @@
 //   geo_test LAT LON KM [TEXT...]   find + position (online, Nominatim) the address in each TEXT, or stdin lines
 //   geo_test --dry ...                only print the searches it would make (no network)
 // Build (from kraken_doa_v2):
-//   g++ -std=c++20 -O2 -Iinclude tools/geo_test.cpp src/geo_address.cpp src/geo_http.cpp -lssl -lcrypto
+//   g++ -std=c++20 -O2 -Iinclude tools/geo_test.cpp src/geo_address.cpp src/geo_http.cpp src/utils/tls_compat.cpp
+//       src/utils/fs_compat.cpp -lssl -lcrypto
+// Windows (MSYS2 UCRT64 shell): the Windows flags and win/win_init.cpp (it
+// starts Winsock), static:
+//   g++ -std=c++20 -O2 -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -DNOGDI
+//       -D_USE_MATH_DEFINES -D_FILE_OFFSET_BITS=64 -include win/posix_compat.h -Iinclude tools/geo_test.cpp
+//       src/geo_address.cpp src/geo_http.cpp src/utils/tls_compat.cpp src/utils/fs_compat.cpp win/win_init.cpp
+//       -static -lssl -lcrypto -lws2_32 -lcrypt32 -lwinmm
 #include "geo_address.hpp"
 #include "geo_http.hpp"
 

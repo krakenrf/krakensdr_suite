@@ -1,54 +1,51 @@
 #include "digital/dig_plugin.hpp"
 
 #include <algorithm>
-#include <cerrno>
 #include <chrono>
-#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <thread>
 
 #include <dirent.h>
-#include <fcntl.h>
-#include <poll.h>
-#include <spawn.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 #include "digital/dig_report.hpp"
+#include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
-#include "utils/spawn_fds.hpp"
-
-extern char** environ;
 
 namespace dig {
 
 namespace {
 
-int64_t file_mtime_ms(const std::string& path) {
-    struct stat st{};
-    if (stat(path.c_str(), &st) != 0) return 0;
-    return static_cast<int64_t>(st.st_mtim.tv_sec) * 1000 + st.st_mtim.tv_nsec / 1000000;
-}
+// a regular file we may run (kproc: on Windows also the .exe extension -
+// MinGW's access(X_OK) is true for any existing file)
+bool is_exe(const std::string& path) { return kproc::is_executable(path); }
 
-bool is_exe(const std::string& path) {
-    struct stat st{};
-    return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) && access(path.c_str(), X_OK) == 0;
-}
+// `decoder --info` must answer within this. Windows: 10 s - the first start
+// of a freshly built exe waits for the antivirus to scan it (seconds)
+#ifdef _WIN32
+constexpr int INFO_TIMEOUT_MS = 10000;
+#else
+constexpr int INFO_TIMEOUT_MS = 3000;
+#endif
 
-void set_nonblock(int fd) {
-    int fl = fcntl(fd, F_GETFL);
-    if (fl >= 0) fcntl(fd, F_SETFL, fl | O_NONBLOCK);
-}
+// How the user builds the plugins - the "not built" hints the web UI shows.
+// Windows: build_windows.bat (make itself runs only in the MSYS2 UCRT64 shell)
+#ifdef _WIN32
+constexpr const char* BUILD_HINT = "run build_windows.bat";
+#else
+constexpr const char* BUILD_HINT = "run make in kraken_doa_v2";
+#endif
 
-std::vector<char*> c_argv(const std::vector<std::string>& a) {
-    std::vector<char*> v;
-    for (const auto& s : a) v.push_back(const_cast<char*>(s.c_str()));
-    v.push_back(nullptr);
-    return v;
-}
+#ifdef _WIN32
+// Windows: kproc::python_argv() finds the interpreter by running candidates
+// (py -3, python3.exe ...: seconds) the first time it is called. The startup
+// scan resolves it on a thread of its own, so the first test-signal
+// generation (PLAYBACK_GEN, on the uWS loop) doesn't wait for it there
+std::once_flag g_python_warm;
+#endif
 
 }  // namespace
 
@@ -74,50 +71,17 @@ void PluginRegistry::scan_async(std::function<void()> done) {
     }).detach();
 }
 
-bool run_and_capture(const std::vector<std::string>& argv, int timeout_ms, std::string* out, int* exit_status) {
-    signal(SIGPIPE, SIG_IGN);
-    int p[2];
-    if (pipe2(p, O_CLOEXEC) != 0) return false;
-    posix_spawn_file_actions_t fa;
-    posix_spawn_file_actions_init(&fa);
-    posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
-    posix_spawn_file_actions_adddup2(&fa, p[1], 1);
-    posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
-    spawn_fds::close_above_stdio(&fa);
-    auto av = c_argv(argv);
-    pid_t pid = -1;
-    int rc = posix_spawn(&pid, argv[0].c_str(), &fa, nullptr, av.data(), environ);
-    posix_spawn_file_actions_destroy(&fa);
-    close(p[1]);
-    if (rc != 0) {
-        close(p[0]);
-        return false;
-    }
-    out->clear();
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    bool timed_out = false;
-    for (;;) {
-        int left = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                        deadline - std::chrono::steady_clock::now()).count());
-        if (left <= 0) { timed_out = true; break; }
-        pollfd pf{p[0], POLLIN, 0};
-        int pr = poll(&pf, 1, left);
-        if (pr < 0 && errno == EINTR) continue;
-        if (pr <= 0) { timed_out = pr == 0; break; }
-        char buf[4096];
-        ssize_t n = read(p[0], buf, sizeof buf);
-        if (n <= 0) break;
-        if (out->size() < (1u << 20)) out->append(buf, static_cast<size_t>(n));
-    }
-    close(p[0]);
-    if (timed_out) kill(pid, SIGKILL);
-    int st = 0;
-    while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
-    if (exit_status) *exit_status = st;
-    return !timed_out && WIFEXITED(st) && WEXITSTATUS(st) == 0;
+// stdin /dev/null, stdout captured (first 1 MB), stderr /dev/null; killed at
+// the deadline. A plugin is a leaf process (Windows: no console of its own)
+bool run_and_capture(const std::vector<std::string>& argv, int timeout_ms, std::string* out,
+                     kproc::ExitStatus* exit_status, bool search_path) {
+    return kproc::run_capture(argv, timeout_ms, out, exit_status, 1u << 20, search_path, kproc::Console::None);
 }
 
 void PluginRegistry::scan() {
+#ifdef _WIN32
+    std::call_once(g_python_warm, [] { std::thread([] { (void)kproc::python_argv(); }).detach(); });
+#endif
     std::lock_guard<std::mutex> scan_lk(scan_mu_);
     std::vector<PluginInfo> found;
     const std::string base = dir();
@@ -131,7 +95,7 @@ void PluginRegistry::scan() {
             PluginInfo pi;
             pi.id = id;
             pi.name = id;
-            pi.exe = pdir + "/build/decoder";
+            pi.exe = kproc::exe_path(pdir + "/build/decoder");
             const bool has_src = access((pdir + "/decoder.cpp").c_str(), R_OK) == 0;
             if (!has_src && !is_exe(pi.exe)) continue;
             // newest source file
@@ -144,17 +108,17 @@ void PluginRegistry::scan() {
                         return n.size() > l && n.compare(n.size() - l, l, x) == 0;
                     };
                     if (ends(".cpp") || ends(".hpp") || ends(".h"))
-                        src_mtime = std::max(src_mtime, file_mtime_ms(pdir + "/" + n));
+                        src_mtime = std::max(src_mtime, fs_mtime_ms(pdir + "/" + n));
                 }
                 closedir(sd);
             }
             if (!is_exe(pi.exe)) {
-                pi.error = "not built (run make in kraken_doa_v2)";
+                pi.error = std::string("not built (") + BUILD_HINT + ")";
             } else {
-                pi.mtime = file_mtime_ms(pi.exe);
+                pi.mtime = fs_mtime_ms(pi.exe);
                 pi.stale = src_mtime > pi.mtime;
                 std::string js;
-                if (!run_and_capture({pi.exe, "--info"}, 3000, &js)) {
+                if (!run_and_capture({pi.exe, "--info"}, INFO_TIMEOUT_MS, &js)) {
                     pi.error = "--info failed (rebuild the plugin)";
                 } else {
                     std::string v;
@@ -307,10 +271,10 @@ std::string PluginRegistry::list_json() const {
 }
 
 std::string codec_status_message() {
-    const std::string tool = PluginRegistry::dir() + "/lib/build/codecs";
+    const std::string tool = kproc::exe_path(PluginRegistry::dir() + "/lib/build/codecs");
     std::string out;
     if (!is_exe(tool) || !run_and_capture({tool}, 5000, &out))
-        return "{\"codecs\":{\"checked\":false,\"error\":\"codec check not built (run make in kraken_doa_v2)\"}}";
+        return std::string("{\"codecs\":{\"checked\":false,\"error\":\"codec check not built (") + BUILD_HINT + ")\"}}";
     std::ostringstream o;
     o << "{\"codecs\":{\"checked\":true";
     for (const char* k : {"imbe", "ambe", "acelp"}) {
@@ -332,48 +296,24 @@ bool PluginProcess::start(const std::string& exe, std::string* err) {
 
 bool PluginProcess::start(const std::vector<std::string>& args, std::string* err) {
     if (args.empty()) { *err = "no command"; return false; }
-    const std::string& exe = args[0];
     stop();
-    signal(SIGPIPE, SIG_IGN);
-    int in[2], out[2], er[2];
-    if (pipe2(in, O_CLOEXEC) != 0) { *err = "pipe failed"; return false; }
-    if (pipe2(out, O_CLOEXEC) != 0) { close(in[0]); close(in[1]); *err = "pipe failed"; return false; }
-    if (pipe2(er, O_CLOEXEC) != 0) {
-        close(in[0]); close(in[1]); close(out[0]); close(out[1]);
-        *err = "pipe failed";
+    kproc::SpawnOptions o;
+    o.argv = args;
+    o.in = o.out = o.err = kproc::Stdio::Pipe;   // our ends non-blocking
+    // a bigger stdin pipe: ~3 s of 38.4 kHz samples, fewer and larger writes
+    // (array plugins send ~17 MB bursts); best effort on Linux - the system
+    // limit (pipe-max-size, 1 MB by default) rules
+    o.in_pipe_bytes = 1u << 20;
+    o.out_pipe_bytes = 1u << 20;   // Windows: a plugin bursting tables / plots doesn't block on 64 KB
+    o.err_pipe_bytes = 64u << 10;
+    o.console = kproc::Console::None;   // Windows: a leaf - no console host per plugin
+    std::string e;
+    if (!proc_.spawn(o, &e)) {
+        *err = "cannot start: " + e;
         return false;
     }
-    fcntl(in[1], F_SETPIPE_SZ, 1 << 20);   // ~3 s of 38.4 kHz samples; best effort
-    posix_spawn_file_actions_t fa;
-    posix_spawn_file_actions_init(&fa);
-    posix_spawn_file_actions_adddup2(&fa, in[0], 0);
-    posix_spawn_file_actions_adddup2(&fa, out[1], 1);
-    posix_spawn_file_actions_adddup2(&fa, er[1], 2);
-    spawn_fds::close_above_stdio(&fa);
-    auto av = c_argv(args);
-    pid_t pid = -1;
-    int rc = posix_spawn(&pid, exe.c_str(), &fa, nullptr, av.data(), environ);
-    posix_spawn_file_actions_destroy(&fa);
-    close(in[0]);
-    close(out[1]);
-    close(er[1]);
-    if (rc != 0) {
-        close(in[1]); close(out[0]); close(er[0]);
-        *err = std::string("cannot start: ") + strerror(rc);
-        return false;
-    }
-    pid_ = pid;
-    in_fd_ = in[1];
-    out_fd_ = out[0];
-    err_fd_ = er[0];
-    set_nonblock(in_fd_);
-    set_nonblock(out_fd_);
-    set_nonblock(err_fd_);
-#ifdef F_SETPIPE_SZ
-    // a bigger pipe: fewer, larger writes (array plugins send ~17 MB bursts);
-    // best effort - the system limit (pipe-max-size, 1 MB by default) rules
-    fcntl(in_fd_, F_SETPIPE_SZ, 1 << 20);
-#endif
+    reaped_ = false;
+    exit_status_ = kproc::ExitStatus{};
     wbuf_.clear();
     wpos_ = 0;
     rbuf_.clear();
@@ -387,42 +327,30 @@ bool PluginProcess::start(const std::vector<std::string>& args, std::string* err
 }
 
 void PluginProcess::request_stop() {
-    if (in_fd_ >= 0) close(in_fd_);   // EOF: the plugin exits on its own
-    in_fd_ = -1;
+    proc_.close_stdin();   // EOF: the plugin exits on its own
 }
 
 void PluginProcess::stop() {
     request_stop();
-    if (pid_ > 0) {
-        int st;
-        bool gone = false;
-        for (int i = 0; i < 30 && !gone; i++) {
-            if (waitpid(pid_, &st, WNOHANG) == pid_) gone = true;
-            else std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    // up to 300 ms to exit by itself, then killed
+    if (proc_.started() && !reaped_) {
+        if (!proc_.wait_for(300, &exit_status_)) {
+            proc_.kill();
+            exit_status_ = proc_.wait();
         }
-        if (!gone) {
-            kill(pid_, SIGKILL);
-            while (waitpid(pid_, &st, 0) < 0 && errno == EINTR) {}
-        }
+        reaped_ = true;
     }
-    pid_ = -1;
-    if (out_fd_ >= 0) close(out_fd_);
-    if (err_fd_ >= 0) close(err_fd_);
-    out_fd_ = err_fd_ = -1;
+    proc_.close();
     std::string().swap(wbuf_);   // its memory too (clear() keeps the capacity)
     wpos_ = 0;
 }
 
-bool PluginProcess::alive(int* status) {
-    if (pid_ <= 0) {
+// Reaped, the pipes stay open until stop(): poll() still reads what the
+// plugin wrote before it exited
+bool PluginProcess::alive(kproc::ExitStatus* status) {
+    if (proc_.started() && !reaped_ && proc_.try_wait(&exit_status_)) reaped_ = true;
+    if (!proc_.started() || reaped_) {
         if (status) *status = exit_status_;
-        return false;
-    }
-    int st = 0;
-    if (waitpid(pid_, &st, WNOHANG) == pid_) {
-        pid_ = -1;
-        exit_status_ = st;
-        if (status) *status = st;
         return false;
     }
     return true;
@@ -434,16 +362,14 @@ bool PluginProcess::alive(int* status) {
 // quadratic in what is queued (an array plugin's burst queues ~17 MB, and
 // the pipe takes 64 KB - 1 MB at a time).
 void PluginProcess::flush() {
-    while (in_fd_ >= 0 && wpos_ < wbuf_.size()) {
-        ssize_t w = write(in_fd_, wbuf_.data() + wpos_, wbuf_.size() - wpos_);
-        if (w < 0) {
-            if (errno == EINTR) continue;
-            if (errno != EAGAIN) {   // EPIPE: it died, alive() reports it
-                wbuf_.clear();
-                wpos_ = 0;
-            }
+    while (proc_.stdin_open() && wpos_ < wbuf_.size()) {
+        const ptrdiff_t w = proc_.write_some(wbuf_.data() + wpos_, wbuf_.size() - wpos_);
+        if (w < 0) {   // EPIPE: it died, alive() reports it
+            wbuf_.clear();
+            wpos_ = 0;
             break;
         }
+        if (w == 0) break;   // the pipe is full
         wpos_ += static_cast<size_t>(w);
     }
     if (wpos_ >= wbuf_.size()) {
@@ -456,7 +382,7 @@ void PluginProcess::flush() {
 }
 
 bool PluginProcess::send(uint32_t type, const void* data, size_t len, size_t max_backlog) {
-    if (in_fd_ < 0) return false;
+    if (!proc_.stdin_open()) return false;
     flush();
     // samples (sent with a limit - SAMPLES, SAMPLES_MC, SAMPLES_ARRAY): dropped
     // while more than max_backlog bytes wait for the plugin. Only SAMPLES used
@@ -471,18 +397,16 @@ bool PluginProcess::send(uint32_t type, const void* data, size_t len, size_t max
 }
 
 bool PluginProcess::read_stdout() {
-    if (out_fd_ < 0) return false;
     char buf[65536];
-    ssize_t n = read(out_fd_, buf, sizeof buf);
-    if (n <= 0) return false;
+    const ptrdiff_t n = proc_.read_some(kproc::Stream::Out, buf, sizeof buf);
+    if (n <= 0) return false;   // nothing now / EOF
     rbuf_.insert(rbuf_.end(), buf, buf + n);
     return rbuf_.size() < (4u << 20);
 }
 
 void PluginProcess::read_stderr() {
-    if (err_fd_ < 0) return;
     char buf[65536];
-    ssize_t n = read(err_fd_, buf, sizeof buf);
+    const ptrdiff_t n = proc_.read_some(kproc::Stream::Err, buf, sizeof buf);
     if (n <= 0) return;
     ebuf_.append(buf, static_cast<size_t>(n));
     size_t p;
@@ -504,12 +428,6 @@ std::vector<std::string> PluginProcess::stderr_tail() const {
 
 void PluginProcess::memcpy_u32(uint32_t* d, const char* s) { std::memcpy(d, s, 4); }
 
-void PluginProcess::wait_io(int ms) {
-    pollfd pf[2];
-    int n = 0;
-    if (out_fd_ >= 0) pf[n++] = {out_fd_, POLLIN, 0};
-    if (in_fd_ >= 0 && !wbuf_.empty()) pf[n++] = {in_fd_, POLLOUT, 0};
-    if (n) ::poll(pf, static_cast<nfds_t>(n), ms);
-}
+void PluginProcess::wait_io(int ms) { proc_.wait_io(ms, true, !wbuf_.empty()); }
 
 }  // namespace dig

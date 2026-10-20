@@ -61,6 +61,10 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+double lora_thread_cpu_s_win();   // cpu_time_win.cpp
+#endif
+
 namespace {
 
 constexpr double FS = 2.4e6;
@@ -178,9 +182,14 @@ inline int ring_len(double secs, double rate) {
 // time per second of input - a wall clock also counts the time the thread
 // was preempted, and on a busy Pi (load 3-5) that "paused" the search for good
 inline double thread_cpu_s() {
+#ifdef _WIN32
+    // winpthreads' CLOCK_THREAD_CPUTIME_ID only moves every 15.6 ms
+    return lora_thread_cpu_s_win();
+#else
     timespec ts{};
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
     return static_cast<double>(ts.tv_sec) + 1e-9 * static_cast<double>(ts.tv_nsec);
+#endif
 }
 
 // Separation by code: a channel's receivers' symbols de-spread on every
@@ -213,8 +222,12 @@ public:
         // fresh zero pages (no memset, committed only as written) and free
         // returns them. glibc's dynamic threshold rose to the first freed
         // ring's size, after which rings came from the heap - zeroed by
-        // calloc and kept by fragmentation (live RSS 128 MB)
+        // calloc and kept by fragmentation (live RSS 128 MB). A glibc knob:
+        // the Windows heap has none (it gives blocks over ~0.5 MB their own
+        // VirtualAlloc and returns them on free)
+#ifdef __GLIBC__
         mallopt(M_MMAP_THRESHOLD, 256 * 1024);
+#endif
         host.table_columns({"Node", "Proto", "Name", "SF/BW", "Freq MHz", "From", "To", "Hops", "Last", "Signal dB", "Pkts"});
         host.table_keep(AC_KEEP_S);
         s1_.init(FS);

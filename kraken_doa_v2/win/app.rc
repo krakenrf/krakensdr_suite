@@ -1,0 +1,4 @@
+// Windows resources linked into every .exe (windres -> win/app.res.o):
+// the manifest (1 = CREATEPROCESS_MANIFEST_RESOURCE_ID, 24 = RT_MANIFEST).
+// Identical copy in heimdall_v2/win and kraken_doa_v2/win.
+1 24 "app.manifest"

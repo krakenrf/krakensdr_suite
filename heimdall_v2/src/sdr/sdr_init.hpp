@@ -8,7 +8,9 @@
 #include <mutex>
 
 // Device enumeration functions
-std::string get_device_serial(int device_index);
+// rc (optional): librtlsdr's result, 0 = read; a libusb error code otherwise
+// (Windows: -12 = no WinUSB driver, -3 = opened by another program).
+std::string get_device_serial(int device_index, int* rc = nullptr);
 std::vector<DeviceMapping> enumerate_devices_by_serial();
 // How many of the expected serials are attached right now. Used by main() to
 // pick the startup element count when neither -n nor a persisted setting says
@@ -31,6 +33,15 @@ bool open_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices);
 // Close every open handle. The per-device USB reader threads must be joined
 // before calling this.
 void close_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices);
+#ifdef _WIN32
+// Windows only, called by a device's own USB reader thread once its stream
+// died (see pipeline_control.cpp): close the handle, find the dongle again by
+// serial, open + initialize it and put its tuning, noise source and (channel
+// 0) GPIOs back as the rest of the array has them. false while it can't be
+// opened (unplugged - dev is then nullptr), or once a pipeline stop has begun
+// (running cleared - the handle is left to the stop). Takes device_io_mutex.
+bool reopen_device_after_stream_loss(SDRDevice* sdr);
+#endif
 
 // Device management functions
 // frequency is the user-facing RF in Hz (uint64_t - the wideband variant's
@@ -64,13 +75,46 @@ bool rf_frequency_valid(uint64_t rf_hz);
 // on every open tuner, RTL2832 AGC loop off. Diagnostic/tuning aid (control
 // port set_if_vga); the next gain change re-applies the configured step.
 bool set_if_vga_all(int index, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+// What update_sdr_settings did with a request, for a caller that answers
+// someone (the control port): its return value only says whether the hardware
+// was written. Filled on every return; frequency / gain are the settings in
+// place afterwards (what the 8091 header and the status report).
+struct SdrUpdateResult {
+    bool frequency_out_of_range = false;  // outside rf_frequency_range(): frequency unchanged
+    bool lo_retune_failed = false;        // Wideband variant: the LO retune failed, frequency unchanged
+    // Coherent / wideband scan: the change failed on failed_channels and every
+    // tuner was put back on the previous settings (rolled_back) - or that
+    // failed too on restore_failed_channels (restore_failed: tuners
+    // inconsistent, a coherence recovery was forced). Independent mode
+    // records per tuner instead: failed_channels kept their previous
+    // settings, the others took the new ones (no rollback).
+    bool rolled_back = false;
+    bool restore_failed = false;
+    std::string failed_channels;          // channel indexes, "0, 3"
+    std::string restore_failed_channels;
+    uint64_t frequency = 0;               // Hz
+    int gain = -999;                      // tenths of dB, -1 = AGC
+    bool ok() const { return !frequency_out_of_range && !lo_retune_failed && failed_channels.empty(); }
+};
 // Rejects (logs, ignores) a frequency outside rf_frequency_range(); the gain
 // part of the request still applies. Values equal to the current ones are
 // no-ops. Returns true when the hardware was written (the caller then
 // recalibrates) - including a partial failure, after which every tuner is put
 // back on the previous settings (logged; a failed restore signals coherence
-// loss). frequency 0 / gain -999 = leave unchanged.
-bool update_sdr_settings(uint64_t frequency = 0, int gain = -999, const std::vector<std::unique_ptr<SDRDevice>>& devices = {});
+// loss). frequency 0 / gain -999 = leave unchanged. result (optional): what
+// was applied, see SdrUpdateResult.
+bool update_sdr_settings(uint64_t frequency = 0, int gain = -999, const std::vector<std::unique_ptr<SDRDevice>>& devices = {},
+                         SdrUpdateResult* result = nullptr);
+// The end of a drag: update_sdr_settings retunes that follow one another
+// within 400 ms (or before this finished the previous one, up to 1 s) take
+// the fork's fast path (rtlsdr_set_center_freq_fast: the
+// R820T's PLL autotune clock stays at 128 kHz); this puts those tuners back
+// in the state a full tune leaves (rtlsdr_finish_tune: lock read, 8 kHz). A
+// tuner found unlocked is retuned on the full path (twice), else coherence is
+// lost. No-op when nothing is pending. only_if_quiet: only once 400 ms have
+// passed since the last retune (the coherence watchdog's call; the noise
+// source switch-on calls it unconditionally). Takes device_io_mutex.
+void finish_fast_retunes(const std::vector<std::unique_ptr<SDRDevice>>& devices, const char* why, bool only_if_quiet);
 void handle_settings_change();
 
 // Operating mode (COHERENT / WIDEBAND_SCAN / INDEPENDENT, see types.hpp).

@@ -16,6 +16,8 @@ struct HardwareStats {
 
 // Get current hardware stats (CPU temp, CPU usage, RAM)
 // Uses cached /proc/stat values to compute CPU usage delta between calls
+// (Windows: GetSystemTimes / GlobalMemoryStatusEx, no temperature - see
+// utils/platform.hpp)
 HardwareStats get_hardware_stats();
 
 class SystemStats {

@@ -12,8 +12,8 @@
 // are exact; only subcarriers inside the VFO's +-1.15 MHz are generated.
 //
 // Build (from kraken_doa_v2/plugins):
-//   g++ -std=c++20 -O2 -Icells -Isdk -I../external/pffft cells/tools/cell_gen.cpp \
-//       lib/build/libkrakendig.a -o /tmp/cell_gen        (pffft is in the lib)
+//   g++ -std=c++20 -O2 -Icells -Isdk -I../external/pffft cells/tools/cell_gen.cpp lib/build/libkrakendig.a -o /tmp/cell_gen
+//       (pffft is in the lib; Windows: make builds cells/tools/build/cell_gen.exe)
 // Run:
 //   cell_gen [--secs 3] [--rf HZ] [--lte_off HZ] [--nr_off HZ] [--rxoff HZ] [--nrscs 15|30]
 //            [--nrb 25] [--load 0.3] [--ssbper 20] [--snr DB] [--radius M] [--seed N]
@@ -48,8 +48,8 @@ uint64_t mix64(uint64_t z) {
     return z ^ (z >> 31);
 }
 
-long fdiv(long a, long b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
-long fmod_l(long a, long b) { return ((a % b) + b) % b; }
+int64_t fdiv(int64_t a, int64_t b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
+int64_t fmod_l(int64_t a, int64_t b) { return ((a % b) + b) % b; }
 
 struct Path {
     double az = 0, delay_us = 0, db = 0;
@@ -75,7 +75,7 @@ const cd QPSK[4] = {cd(M_SQRT1_2, M_SQRT1_2), cd(-M_SQRT1_2, M_SQRT1_2), cd(M_SQ
 
 // the cell's subcarrier values of global symbol g (f = subcarrier from the
 // carrier / SSB centre); X[f + F] for f = -F..F
-void cell_symbol(const Gen& G, const CellCfg& c, long g, int F, std::vector<cd>* X) {
+void cell_symbol(const Gen& G, const CellCfg& c, int64_t g, int F, std::vector<cd>* X) {
     X->assign(static_cast<size_t>(2 * F + 1), cd(0, 0));
     auto data = [&](int f, int port) {
         const uint64_t h = mix64(G.seed ^ mix64(static_cast<uint64_t>(c.index) * 1000003ull + static_cast<uint64_t>(g) * 7919ull +
@@ -88,8 +88,8 @@ void cell_symbol(const Gen& G, const CellCfg& c, long g, int F, std::vector<cd>*
     };
     if (c.tech == "nr") {
         const int S = 7 << G.nr_mu;
-        const long per = static_cast<long>(G.ssbper_ms) * 2 * S;   // symbols per SSB period
-        const long sp = fmod_l(g, per);
+        const int64_t per = static_cast<int64_t>(G.ssbper_ms) * 2 * S;   // symbols per SSB period
+        const int64_t sp = fmod_l(g, per);
         const int first[4] = {2, 8, 16, 22};
         int beam = -1, i = 0;
         for (int b = 0; b < c.beams && b < 4; b++)
@@ -119,7 +119,7 @@ void cell_symbol(const Gen& G, const CellCfg& c, long g, int F, std::vector<cd>*
     }
     // LTE, normal cyclic prefix
     const bool tdd = c.tech == "ltetdd";
-    const long h = fdiv(g, 7);
+    const int64_t h = fdiv(g, 7);
     const int l = static_cast<int>(fmod_l(g, 7));
     const int ns = static_cast<int>(fmod_l(h, 20));
     const int sf = ns / 2;
@@ -272,12 +272,12 @@ int main(int argc, char** argv) {
     }
 
     std::ofstream fo(out, std::ios::binary);
-    const long total = static_cast<long>(secs * G.fs);
-    const long B = 24000;
+    const int64_t total = static_cast<int64_t>(secs * G.fs);
+    const int64_t B = 24000;
     std::vector<cd> acc(static_cast<size_t>(B) * M);
     std::vector<cd> X;
     std::vector<cf> row(static_cast<size_t>(B) * M);
-    for (long n0 = 0; n0 < total; n0 += B) {
+    for (int64_t n0 = 0; n0 < total; n0 += B) {
         std::fill(acc.begin(), acc.end(), cd(0, 0));
         for (size_t ci = 0; ci < cells_.size(); ci++) {
             const CellCfg& c = cells_[ci];
@@ -287,16 +287,16 @@ int main(int argc, char** argv) {
             const double half = num.half_ms();
             for (const auto& pr : r.paths) {
                 // symbols overlapping [n0, n0 + B)
-                const long h0 = static_cast<long>(std::floor((n0 - pr.D) / half)) - 1;
-                for (long g = h0 * S;; g++) {
-                    const long h = fdiv(g, S);
+                const int64_t h0 = static_cast<int64_t>(std::floor((n0 - pr.D) / half)) - 1;
+                for (int64_t g = h0 * S;; g++) {
+                    const int64_t h = fdiv(g, S);
                     const int l = static_cast<int>(fmod_l(g, S));
                     const double u = h * half + num.useful(l) + pr.D;
                     const double st = h * half + num.sym_start(l) + pr.D;
                     if (st >= n0 + B) break;
                     if (u + N <= n0) continue;
                     cell_symbol(G, c, g, r.F, &X);
-                    const long ui = static_cast<long>(std::floor(u));
+                    const int64_t ui = static_cast<int64_t>(std::floor(u));
                     const double uf = u - static_cast<double>(ui);
                     cf* Z = r.ifft->data();
                     std::fill(Z, Z + N, cf(0, 0));
@@ -312,8 +312,8 @@ int main(int argc, char** argv) {
                     }
                     r.ifft->run();
                     const cd sym_ph = std::polar(1.0 / std::sqrt(static_cast<double>(N)), 2 * M_PI * r.K0 * u / N);
-                    const long a0 = std::max(n0, static_cast<long>(std::ceil(st))), a1 = std::min(n0 + B, static_cast<long>(std::ceil(u + N)));
-                    for (long nn = a0; nn < a1; nn++) {
+                    const int64_t a0 = std::max(n0, static_cast<int64_t>(std::ceil(st))), a1 = std::min(n0 + B, static_cast<int64_t>(std::ceil(u + N)));
+                    for (int64_t nn = a0; nn < a1; nn++) {
                         const cf zv = Z[fmod_l(nn - ui, N)];
                         const cd v = cd(zv.real(), zv.imag()) * sym_ph * std::polar(1.0, std::remainder(2 * M_PI * r.fr * static_cast<double>(nn) / G.fs, 2 * M_PI));
                         cd* o = &acc[static_cast<size_t>(nn - n0) * M];
@@ -322,14 +322,14 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        const long nb = std::min(B, total - n0);
-        for (long i = 0; i < nb * M; i++)
+        const int64_t nb = std::min(B, total - n0);
+        for (int64_t i = 0; i < nb * M; i++)
             row[static_cast<size_t>(i)] = cf(static_cast<float>(acc[static_cast<size_t>(i)].real() + nsd * gauss(rng)),
                                              static_cast<float>(acc[static_cast<size_t>(i)].imag() + nsd * gauss(rng)));
         fo.write(reinterpret_cast<const char*>(row.data()), static_cast<std::streamsize>(nb * M * sizeof(cf)));
     }
     std::ofstream js(out.substr(0, out.rfind('.')) + ".json");
-    js << "{\"rate\": " << static_cast<long>(G.fs) << ", \"channels\": " << M << ", \"rf_hz\": " << static_cast<long>(rf)
+    js << "{\"rate\": " << static_cast<long long>(G.fs) << ", \"channels\": " << M << ", \"rf_hz\": " << static_cast<long long>(rf)
        << ", \"radius_m\": " << radius << "}\n";
     printf("%s: %.2f s, %d antennas at %.0f Hz, RF %.6f MHz, UCA r %.4f m, LTE carrier %+.1f kHz, NR SSB %+.1f kHz from the VFO centre\n",
            out.c_str(), total / G.fs, M, G.fs, rf / 1e6, radius, G.lte_off / 1e3, G.nr_off / 1e3);

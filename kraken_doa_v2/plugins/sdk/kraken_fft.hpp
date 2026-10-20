@@ -38,6 +38,13 @@
 #include <cstdint>
 #include <cstring>
 #include <new>
+// Windows: pffft is linked statically (lib/build/libkrakendig.a, kraken_doa's
+// own objects), but pffft.h declares its functions dllimport on _WIN32 unless
+// told otherwise - the link then looks for __imp_pffft_*. The Makefiles pass
+// -DPFFFT_STATIC_DEFINE; this covers a build line that doesn't
+#if defined(_WIN32) && !defined(PFFFT_STATIC_DEFINE)
+#define PFFFT_STATIC_DEFINE
+#endif
 #include "pffft.h"
 
 typedef float kfft_complex[2];

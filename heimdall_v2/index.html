@@ -204,7 +204,9 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             <div class="info">Hardware notes: KrakenSDR has 5 elements. KerberosSDR (4 elements,
                 no noise-source switch) should be run with the <code>--kerberos</code> flag;
                 a KerberosSDR modified with CKOVAL antenna switches with
-                <code>--kerberos_sw</code>.</div>
+                <code>--kerberos_sw</code>.<span id="kerberos-sw-win" style="display:none"> On Windows
+                <code>--kerberos_sw</code> isn't available (it drives a Raspberry Pi's GPIO pins):
+                heimdall runs it as <code>--kerberos</code>, with manual calibration.</span></div>
         </div>
     </div>
 
@@ -1130,6 +1132,9 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                     }
                     if (Number.isFinite(st.antenna_bias_tee_mask) && Date.now() >= biasTeeHoldUntil)
                         applyBiasTeeMask(st.antenna_bias_tee_mask);
+                    // the server's OS ("windows" / "linux"; a heimdall that
+                    // doesn't say runs Linux): hardware notes that differ
+                    $('kerberos-sw-win').style.display = st.platform === 'windows' ? '' : 'none';
                 } catch (err) { console.error('Bad STATE message', err); }
             }
         };

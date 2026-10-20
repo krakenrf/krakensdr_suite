@@ -30,6 +30,7 @@
 #include "utils/disk_util.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
+#include "utils/platform.hpp"
 
 #include <liquid/liquid.h>
 #include <opus/opus.h>
@@ -125,17 +126,20 @@ public:
         data_ += n * 2;
         return true;
     }
-    // the sizes in the header: a crash leaves a playable file
+    // the sizes in the header: a crash leaves a playable file. ftello /
+    // fseeko: a file grows to 4 GiB, and ftell's long is 32 bits on Windows
+    // (-1 past 2 GiB - the next samples then overwrote the start of the
+    // audio); off_t is 64 bits there (_FILE_OFFSET_BITS=64)
     void update_header() {
         if (!f_) return;
         fflush(f_);
-        const long end = ftell(f_);
+        const off_t end = ftello(f_);
         const uint32_t data = static_cast<uint32_t>(data_), riff = static_cast<uint32_t>(header_ - 8 + data_);
-        fseek(f_, 4, SEEK_SET);
+        fseeko(f_, 4, SEEK_SET);
         fwrite(&riff, 4, 1, f_);
-        fseek(f_, size_pos_, SEEK_SET);
+        fseeko(f_, static_cast<off_t>(size_pos_), SEEK_SET);
         fwrite(&data, 4, 1, f_);
-        fseek(f_, end, SEEK_SET);
+        fseeko(f_, end, SEEK_SET);
         fflush(f_);
     }
     void close() {
@@ -633,7 +637,8 @@ bool audio_running() {
 void audio_shutdown() {
     audio_request_stop("kraken_doa shut down");
     std::unique_lock<std::mutex> lk(a_mu);
-    a_cv.wait_for(lk, std::chrono::seconds(5), [] { return g_s == nullptr; });
+    // Windows: the console window was closed - the process is ended within seconds
+    a_cv.wait_for(lk, std::chrono::seconds(platform::stop_is_urgent() ? 1 : 5), [] { return g_s == nullptr; });
 }
 
 std::string audio_status_json() {

@@ -1,6 +1,7 @@
 #include "settings.hpp"
 #include "types.hpp"
 #include "forward_comp.hpp"
+#include "fs_compat.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -21,6 +22,9 @@ namespace {
 // the directory so the rename itself survives a power cut. On any failure the
 // temp file is removed and the existing file is left untouched - a full disk
 // or a power cut can never leave the settings truncated or empty.
+// fs_replace / fs_fsync_dir (fs_compat.hpp): Windows' rename() refuses an
+// existing target - every save after the first failed there - and a
+// directory can't be fsync'ed; the replace is written through instead.
 bool write_file_atomic(const char* path, const std::string& data) {
     const std::string tmp = std::string(path) + ".tmp";
     int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -34,12 +38,11 @@ bool write_file_atomic(const char* path, const std::string& data) {
     }
     if (::fsync(fd) != 0) { ::close(fd); ::unlink(tmp.c_str()); return false; }
     if (::close(fd) != 0) { ::unlink(tmp.c_str()); return false; }
-    if (::rename(tmp.c_str(), path) != 0) { ::unlink(tmp.c_str()); return false; }
+    if (fs_replace(tmp.c_str(), path) != 0) { ::unlink(tmp.c_str()); return false; }
     const std::string p(path);
     const size_t slash = p.rfind('/');
     const std::string dir = (slash == std::string::npos) ? "." : p.substr(0, slash ? slash : 1);
-    int dfd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY);
-    if (dfd >= 0) { ::fsync(dfd); ::close(dfd); }  // best effort
+    fs_fsync_dir(dir);  // best effort
     return true;
 }
 
@@ -115,7 +118,14 @@ void load() {
     }
 
     std::string line;
+    bool first_line = true;
     while (std::getline(f, line)) {
+        // A UTF-8 byte-order mark (Windows editors - Notepad - save one) would
+        // otherwise be part of the first key, which was then silently ignored
+        if (first_line) {
+            first_line = false;
+            if (line.rfind("\xEF\xBB\xBF", 0) == 0) line.erase(0, 3);
+        }
         // Whole-line comments only: save() never writes a trailing comment,
         // and stripping from any '#' cut a forward-comp filename containing
         // one, so that channel's correction was lost on the next start

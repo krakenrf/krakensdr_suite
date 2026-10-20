@@ -4,7 +4,6 @@
 #include <cerrno>
 #include <chrono>
 #include <cmath>
-#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -13,10 +12,7 @@
 #include <sstream>
 
 #include <dirent.h>
-#include <fcntl.h>
-#include <spawn.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 #include "config.hpp"
@@ -26,9 +22,7 @@
 #include "globals.hpp"
 #include "networking/websocket_server.hpp"
 #include "utils/json_escape.hpp"
-#include "utils/spawn_fds.hpp"
-
-extern char** environ;
+#include "utils/process.hpp"
 
 namespace {
 
@@ -60,6 +54,16 @@ bool config_value(const std::string& key, std::string& out) {
     std::string j = read_file(config_path(), 65536);
     return !j.empty() && json_find(j, key, out);
 }
+
+// the answer to a job asked for while the lab is off: how to enable it
+// (Windows: python.org's Python is started with its py launcher, and there
+// may be no python3 at all)
+#ifdef _WIN32
+constexpr const char* NOT_ENABLED =
+    "the AI Signal Lab is not enabled on this receiver (run in the kraken_doa_v2 folder: py -3 ai/kraken_ai.py setup)";
+#else
+constexpr const char* NOT_ENABLED = "the AI Signal Lab is not enabled on this receiver (run: python3 ai/kraken_ai.py setup)";
+#endif
 
 // Strict JSON syntax check (RFC 8259) - files the agent could have edited are
 // embedded in messages only when they parse
@@ -172,6 +176,42 @@ bool json_valid(const std::string& s) {
     return j.p == s.size();
 }
 
+// A short `kraken_ai.py <command>` run; its stdout. python3 is looked up on
+// PATH (what /usr/bin/env did); Windows: the interpreter kproc found
+// (python_argv), on a hidden console of its own - the bridge starts console
+// programs (claude --version), and under a console-less parent each would
+// open a window
+bool run_bridge(std::vector<std::string> args, int timeout_ms, std::string* out) {
+    return kproc::run_capture(kproc::python_cmd(std::move(args)), timeout_ms, out, nullptr, 1u << 20, true,
+                              kproc::Console::Hidden);
+}
+
+#ifdef _WIN32
+// A Windows command line holds at most 32766 characters, and the receiver
+// context with every plugin's description and options is ~35-45 K once
+// quoted: the plugin list is cut down to ids + names (all the bridge's prompt
+// uses; the agent reads plugins/ itself) when the whole line wouldn't fit.
+// Upper bound per argument: its bytes, every " and \ escaped, quotes, space.
+size_t cmdline_estimate(const std::vector<std::string>& argv) {
+    size_t n = 0;
+    for (const auto& a : argv)
+        n += a.size() + static_cast<size_t>(std::count(a.begin(), a.end(), '"') + std::count(a.begin(), a.end(), '\\')) + 3;
+    return n;
+}
+
+std::string plugin_list_brief() {
+    std::ostringstream o;
+    o << "[";
+    bool first = true;
+    for (const auto& p : dig::PluginRegistry::instance().list()) {
+        o << (first ? "" : ",") << "{\"id\":\"" << json_escape(p.id) << "\",\"name\":\"" << json_escape(p.name) << "\"}";
+        first = false;
+    }
+    o << "]";
+    return o.str();
+}
+#endif
+
 // cached `kraken_ai.py status` (CLI path + version)
 std::mutex g_probe_mu;
 std::string g_probe;
@@ -182,7 +222,7 @@ void probe_async() {
     if (g_probing.exchange(true)) return;
     std::thread([] {
         std::string out;
-        dig::run_and_capture({"/usr/bin/env", "python3", BRIDGE, "status"}, 30000, &out);
+        run_bridge({BRIDGE, "status"}, 30000, &out);
         {
             std::lock_guard<std::mutex> lk(g_probe_mu);
             g_probe = out;
@@ -201,7 +241,12 @@ AiManager& AiManager::instance() {
 }
 
 AiManager::~AiManager() {
-    if (pid_ > 0) killpg(pid_, SIGKILL);
+    std::shared_ptr<kproc::Process> p;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        p = proc_;
+    }
+    if (p) p->kill();   // the whole group (kill_tree)
     if (thread_.joinable()) thread_.detach();
 }
 
@@ -359,8 +404,7 @@ std::string AiManager::delete_session(const std::string& id) {
     }
     std::thread([this, id] {
         std::string out;
-        dig::run_and_capture({"/usr/bin/env", "python3", BRIDGE, "delete", "--session", std::string(SESSIONS) + "/" + id},
-                             30000, &out);
+        run_bridge({BRIDGE, "delete", "--session", std::string(SESSIONS) + "/" + id}, 30000, &out);
         bool current = false;
         {
             std::lock_guard<std::mutex> lk(mu_);
@@ -383,34 +427,27 @@ std::string AiManager::start_job(const std::string& kind, const std::vector<std:
                                  const std::string& label) {
     if (busy_.load()) return "the AI Signal Lab is busy - stop the running job first";
     if (thread_.joinable()) thread_.join();   // previous job's reader (already done)
-    signal(SIGPIPE, SIG_IGN);
-    int p[2];
-    if (pipe2(p, O_CLOEXEC) != 0) return "pipe failed";
-    posix_spawn_file_actions_t fa;
-    posix_spawn_file_actions_init(&fa);
-    posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
-    posix_spawn_file_actions_adddup2(&fa, p[1], 1);
-    posix_spawn_file_actions_adddup2(&fa, p[1], 2);
-    spawn_fds::close_above_stdio(&fa);
-    posix_spawnattr_t at;
-    posix_spawnattr_init(&at);
-    posix_spawnattr_setflags(&at, POSIX_SPAWN_SETPGROUP);   // own group: Stop kills the agent too
-    posix_spawnattr_setpgroup(&at, 0);
-    std::vector<char*> av;
-    for (const auto& s : argv) av.push_back(const_cast<char*>(s.c_str()));
-    av.push_back(nullptr);
-    pid_t pid = -1;
-    int rc = posix_spawnp(&pid, av[0], &fa, &at, av.data(), environ);
-    posix_spawn_file_actions_destroy(&fa);
-    posix_spawnattr_destroy(&at);
-    close(p[1]);
-    if (rc != 0) {
-        close(p[0]);
-        return std::string("cannot start ") + argv[0] + ": " + strerror(rc);
-    }
+    // no interpreter (Windows: kproc::python_argv found none)
+    if (argv.empty()) return "Python 3 was not found - install it, or set KRAKEN_PYTHON to python.exe";
+    auto proc = std::make_shared<kproc::Process>();
+    kproc::SpawnOptions o;
+    o.argv = argv;
+    o.search_path = true;
+    o.in = kproc::Stdio::Null;
+    o.out = kproc::Stdio::Pipe;
+    o.err = kproc::Stdio::SameAsStdout;
+    o.kill_tree = true;   // own group: Stop kills the agent too
+    o.console = kproc::Console::Share;
+#ifdef _WIN32
+    // UTF-8 in the bridge's own Python children too (sigtool.py, the agent's
+    // scripts): their pipes / files use the ANSI code page otherwise
+    o.env_set = {{"PYTHONUTF8", "1"}};
+#endif
+    std::string e;
+    if (!proc->spawn(o, &e)) return std::string("cannot start ") + argv[0] + ": " + e;
     {
         std::lock_guard<std::mutex> lk(mu_);
-        pid_ = pid;
+        proc_ = proc;
         job_kind_ = kind;
         job_label_ = label;
         job_started_ms_ = wall_ms();
@@ -420,17 +457,16 @@ std::string AiManager::start_job(const std::string& kind, const std::vector<std:
     std::cout << "AI Signal Lab: started " << kind << " (" << label << ")" << std::endl;
     on_line(kind, "{\"ev\":\"start\",\"label\":\"" + json_escape(label) + "\"}");
     WebSocketServer::broadcast_json_message(state_json(false));
-    thread_ = std::thread([this, fd = p[0], pid, kind] { reader(fd, pid, kind); });
+    thread_ = std::thread([this, proc, kind] { reader(proc, kind); });
     return "";
 }
 
-void AiManager::reader(int fd, pid_t pid, std::string kind) {
+void AiManager::reader(std::shared_ptr<kproc::Process> proc, std::string kind) {
     std::string buf;
     char tmp[8192];
     for (;;) {
-        ssize_t n = read(fd, tmp, sizeof tmp);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) break;
+        const ptrdiff_t n = proc->read(kproc::Stream::Out, tmp, sizeof tmp, -1);   // blocks
+        if (n <= 0) break;   // EOF (or an error)
         buf.append(tmp, static_cast<size_t>(n));
         size_t p;
         while ((p = buf.find('\n')) != std::string::npos) {
@@ -441,9 +477,8 @@ void AiManager::reader(int fd, pid_t pid, std::string kind) {
         if (buf.size() > (1u << 20)) buf.clear();
     }
     if (!buf.empty()) on_line(kind, buf);
-    close(fd);
-    int st = 0;
-    while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+    const kproc::ExitStatus st = proc->wait();
+    proc->close();
     finished(kind, st);
 }
 
@@ -488,12 +523,12 @@ void AiManager::on_line(const std::string& kind, const std::string& raw) {
     WebSocketServer::broadcast_json_message("{\"ai_event\":" + msg + "}");
 }
 
-void AiManager::finished(const std::string& kind, int st) {
-    int code = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + (WIFSIGNALED(st) ? WTERMSIG(st) : 0);
+void AiManager::finished(const std::string& kind, const kproc::ExitStatus& st) {
+    const int code = st.shell_code();   // exit status, or 128 + the signal
     on_line(kind, "{\"ev\":\"exit\",\"code\":" + std::to_string(code) + "}");
     {
         std::lock_guard<std::mutex> lk(mu_);
-        pid_ = -1;
+        proc_.reset();
     }
     busy_ = false;
     std::cout << "AI Signal Lab: " << kind << " finished (" << code << ")" << std::endl;
@@ -514,22 +549,24 @@ void AiManager::finished(const std::string& kind, int st) {
 }
 
 void AiManager::cancel() {
-    pid_t pid;
+    std::shared_ptr<kproc::Process> p;
     {
         std::lock_guard<std::mutex> lk(mu_);
-        pid = pid_;
+        p = proc_;
     }
-    if (pid <= 0 || !busy_.load()) return;
-    killpg(pid, SIGTERM);
-    std::thread([this, pid] {
+    if (!p || !busy_.load()) return;
+    // SIGTERM to the group (Windows: CTRL_BREAK when it shares our console,
+    // else its job is ended at once), 3 s later SIGKILL
+    p->terminate();
+    std::thread([this, p] {
         std::this_thread::sleep_for(std::chrono::seconds(3));
         std::lock_guard<std::mutex> lk(mu_);
-        if (pid_ == pid) killpg(pid, SIGKILL);
+        if (proc_ == p) p->kill();
     }).detach();
 }
 
 std::string AiManager::investigate(int vfo_id, double freq_hz, double seconds, const std::string& instructions) {
-    if (!enabled()) return "the AI Signal Lab is not enabled on this receiver (run: python3 ai/kraken_ai.py setup)";
+    if (!enabled()) return NOT_ENABLED;
     auto list = decimator_manager.getDecimatorInfoList();
     const DecimatorManager::DecimatorInfo* vfo = nullptr;
     for (const auto& d : list)
@@ -562,6 +599,9 @@ std::string AiManager::investigate(int vfo_id, double freq_hz, double seconds, c
     if (auto inst = decimator_manager.getDecimator(vfo_id)) {
         if (auto dd = inst->getDigital(); dd && dd->mode() != dig::Mode::OFF) ctx << ",\"digital\":" << dd->status_json(0, 0);
     }
+#ifdef _WIN32
+    const std::string ctx_head = ctx.str();
+#endif
     ctx << ",\"plugins\":" << dig::PluginRegistry::instance().list_json() << "}";
 
     char stamp[32];
@@ -574,12 +614,16 @@ std::string AiManager::investigate(int vfo_id, double freq_hz, double seconds, c
     snprintf(fbuf, sizeof fbuf, "%.0f", freq_hz);
     snprintf(rbuf, sizeof rbuf, "%.0f", rate);
     snprintf(sbuf, sizeof sbuf, "%.0f", seconds);
-    std::vector<std::string> argv{"python3", BRIDGE, "investigate", "--session", sdir, "--freq", fbuf, "--rate", rbuf,
+    std::vector<std::string> args{BRIDGE, "investigate", "--session", sdir, "--freq", fbuf, "--rate", rbuf,
                                   "--seconds", sbuf, "--context-json", ctx.str()};
     if (!instructions.empty()) {
-        argv.push_back("--instructions");
-        argv.push_back(instructions);
+        args.push_back("--instructions");
+        args.push_back(instructions);
     }
+#ifdef _WIN32
+    if (cmdline_estimate(args) > 32000) args[11] = ctx_head + ",\"plugins\":" + plugin_list_brief() + "}";   // --context-json
+#endif
+    const std::vector<std::string> argv = kproc::python_cmd(std::move(args));   // python3 + args
     {
         std::lock_guard<std::mutex> lk(mu_);
         if (busy_.load()) return "the AI Signal Lab is busy - stop the running job first";
@@ -606,18 +650,17 @@ std::string AiManager::create(const std::string& plugin_id, const std::string& i
         sid = session_;
         if (sid.empty() || analysis_.empty()) return "investigate a signal first";
     }
-    std::vector<std::string> argv{"python3", BRIDGE, "create", "--session", std::string(SESSIONS) + "/" + sid,
-                                  "--plugin", plugin_id};
+    std::vector<std::string> args{BRIDGE, "create", "--session", std::string(SESSIONS) + "/" + sid, "--plugin", plugin_id};
     if (!instructions.empty()) {
-        argv.push_back("--instructions");
-        argv.push_back(instructions);
+        args.push_back("--instructions");
+        args.push_back(instructions);
     }
     {
         std::lock_guard<std::mutex> lk(mu_);
         plugin_id_ = plugin_id;
         session_state_ = "creating";
     }
-    return start_job("create", argv, "creating decoder plugin " + plugin_id);
+    return start_job("create", kproc::python_cmd(std::move(args)), "creating decoder plugin " + plugin_id);
 }
 
 std::string AiManager::ask(const std::string& question) {
@@ -628,13 +671,13 @@ std::string AiManager::ask(const std::string& question) {
         sid = session_;
     }
     if (sid.empty()) return "investigate a signal first";
-    return start_job("ask", {"python3", BRIDGE, "ask", "--session", std::string(SESSIONS) + "/" + sid, "--text", question},
+    return start_job("ask", kproc::python_cmd({BRIDGE, "ask", "--session", std::string(SESSIONS) + "/" + sid, "--text", question}),
                      "follow-up question");
 }
 
 std::string AiManager::test() {
-    if (!enabled()) return "the AI Signal Lab is not enabled on this receiver (run: python3 ai/kraken_ai.py setup)";
-    return start_job("test", {"python3", BRIDGE, "test"}, "testing the LLM connection");
+    if (!enabled()) return NOT_ENABLED;
+    return start_job("test", kproc::python_cmd({BRIDGE, "test"}), "testing the LLM connection");
 }
 
 std::string AiManager::plugins_message() {

@@ -1,4 +1,5 @@
 #include "utils/system_stats.hpp"
+#include "utils/platform.hpp"
 #include <iostream>
 #include <iomanip>
 #include <fstream>
@@ -12,6 +13,11 @@ using namespace chrono;
 
 // Read CPU temperature from thermal zone
 static float read_cpu_temp() {
+#ifdef _WIN32
+    // no /sys on Windows and no unprivileged temperature source: -1 = "n/a"
+    // (the web UI hides it, the dashboard prints n/a)
+    return platform::cpu_temperature_c();
+#else
     ifstream f("/sys/class/thermal/thermal_zone0/temp");
     if (f.is_open()) {
         int millidegrees;
@@ -20,6 +26,7 @@ static float read_cpu_temp() {
         }
     }
     return -1.0f;
+#endif
 }
 
 // Read CPU usage from /proc/stat (delta since the previous sample).
@@ -42,6 +49,14 @@ static float read_cpu_usage() {
     }
     last_sample = now;
 
+#ifdef _WIN32
+    // No /proc/stat: GetSystemTimes' idle and kernel + user counters (100 ns
+    // units, all CPUs together) - the same idle / total ratio
+    uint64_t idle_100ns = 0, total_100ns = 0;
+    if (!platform::cpu_times(&idle_100ns, &total_100ns)) return 0.0f;
+    long long total = static_cast<long long>(total_100ns);
+    long long idle_total = static_cast<long long>(idle_100ns);
+#else
     ifstream f("/proc/stat");
     if (!f.is_open()) return 0.0f;
 
@@ -57,6 +72,7 @@ static float read_cpu_usage() {
 
     long long total = user + nice + system + idle + iowait + irq + softirq + steal;
     long long idle_total = idle + iowait;
+#endif
 
     long long total_delta = total - prev_total;
     long long idle_delta = idle_total - prev_idle;
@@ -71,6 +87,14 @@ static float read_cpu_usage() {
 
 // Read RAM usage from /proc/meminfo
 static void read_ram_usage(float& used_mb, float& total_mb) {
+#ifdef _WIN32
+    // No /proc/meminfo: GlobalMemoryStatusEx - its available physical memory
+    // (free + standby lists) is what Linux's MemAvailable counts
+    uint64_t total_b = 0, avail_b = 0;
+    if (!platform::mem_info(&total_b, &avail_b)) { used_mb = 0; total_mb = 0; return; }
+    total_mb = static_cast<float>(total_b) / (1024.0f * 1024.0f);
+    used_mb = static_cast<float>(total_b - avail_b) / (1024.0f * 1024.0f);
+#else
     ifstream f("/proc/meminfo");
     if (!f.is_open()) { used_mb = 0; total_mb = 0; return; }
 
@@ -88,6 +112,7 @@ static void read_ram_usage(float& used_mb, float& total_mb) {
     }
     total_mb = mem_total_kb / 1024.0f;
     used_mb = (mem_total_kb - mem_available_kb) / 1024.0f;
+#endif
 }
 
 HardwareStats get_hardware_stats() {

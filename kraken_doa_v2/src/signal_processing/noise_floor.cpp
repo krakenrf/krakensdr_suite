@@ -8,6 +8,7 @@
 #include "doa_logger.hpp"      // doa_is_calibrating
 #include "geo_address.hpp"     // geo::json_parse
 #include "globals.hpp"         // multi_tuner_mode
+#include "utils/fs_compat.hpp"
 #include "utils/parse_num.hpp" // is_finite_value (-Ofast folds std::isfinite)
 
 #include <algorithm>
@@ -333,7 +334,7 @@ void write_file(const std::map<std::string, float>& m) {
         f << "\n}}\n";
         f.close();
     }
-    if (!f || rename(tmp.c_str(), FILE_NAME) != 0)
+    if (!f || fs_replace(tmp.c_str(), FILE_NAME) != 0)   // Windows' rename() refuses an existing target
         std::cerr << "Noise floors: can't write " << FILE_NAME << std::endl;
 }
 

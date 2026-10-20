@@ -3,6 +3,7 @@
 #include "core/types.hpp"
 #include "core/config.hpp"
 #include "core/log_sanitize.hpp"
+#include "core/platform.hpp"
 #include "sdr/sdr_device.hpp"
 #include "sdr/sdr_pipeline.hpp"
 #include "sdr/downconverter.hpp"
@@ -18,7 +19,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
-#include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -28,7 +28,6 @@
 #include <string>
 #include <vector>
 
-#include <sys/ioctl.h>
 #include <unistd.h>
 
 // These globals live in main.cpp with external linkage but are passed by
@@ -50,7 +49,13 @@ static constexpr int REFRESH_MS = 250;
 namespace col {
     constexpr const char* RST  = "\033[0m";
     constexpr const char* BOLD = "\033[1m";
+#ifdef _WIN32
+    // The classic Windows console ignores faint (SGR 2): labels would look
+    // like values there. Bright black (grey) reads the same in Windows Terminal.
+    constexpr const char* DIM  = "\033[90m";
+#else
     constexpr const char* DIM  = "\033[2m";
+#endif
     constexpr const char* RED  = "\033[31m";
     constexpr const char* GRN  = "\033[32m";
     constexpr const char* YEL  = "\033[33m";
@@ -151,12 +156,10 @@ void term_write(const string& s) {
     }
 }
 
+// Visible window size (Linux: TIOCGWINSZ; Windows: the console window, not
+// its scroll-back buffer - platform.hpp)
 void term_size(int& rows, int& cols) {
-    struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0 && ws.ws_col > 0) {
-        rows = ws.ws_row;
-        cols = ws.ws_col;
-    } else {
+    if (!platform::console_size(&cols, &rows)) {
         rows = 24;
         cols = 80;
     }
@@ -210,10 +213,12 @@ string f3(double v) { char b[32]; snprintf(b, sizeof(b), "%.3f", v); return b; }
 
 // Browser URL for the web UI (HTTP). Uses the machine hostname so the link
 // works from another device on the network; computed once.
+// (platform::host_name: Windows' gethostname needs Winsock started - the URL
+// stayed "localhost" if the first frame came before that)
 string web_url() {
     static const string url = [] {
-        char h[256] = {0};
-        string host = (gethostname(h, sizeof(h) - 1) == 0 && h[0]) ? string(h) : string("localhost");
+        string host = platform::host_name();
+        if (host.empty()) host = "localhost";
         return "http://" + host + ":" + to_string(WEB_PORT);
     }();
     return url;
@@ -246,42 +251,30 @@ long uptime_seconds() {
 }
 
 // ---------------------------------------------------------------------------
-// Hardware stats (/proc, /sys) — Heimdall has no system_stats module of its own
+// Hardware stats — Heimdall has no system_stats module of its own. Linux:
+// /proc/stat, /proc/meminfo, /sys/class/thermal; Windows: GetSystemTimes,
+// GlobalMemoryStatusEx, no temperature (shown as n/a) - see platform.hpp
 // ---------------------------------------------------------------------------
 struct HwStats { float cpu = 0, temp = -1, ram_used = 0, ram_total = 0; };
 
-float read_cpu_temp() {
-    ifstream f("/sys/class/thermal/thermal_zone0/temp");
-    int mdeg;
-    if (f && (f >> mdeg)) return mdeg / 1000.0f;
-    return -1.0f;
-}
 float read_cpu_usage() {
-    static long long pt = 0, pi = 0;
-    ifstream f("/proc/stat");
-    string cpu;
-    long long u, n, s, i, io, ir, si, st;
-    if (!(f >> cpu >> u >> n >> s >> i >> io >> ir >> si >> st)) return 0.0f;
-    long long total = u + n + s + i + io + ir + si + st, idle = i + io;
-    long long dt = total - pt, di = idle - pi;
+    static uint64_t pt = 0, pi = 0;
+    uint64_t idle = 0, total = 0;
+    if (!platform::cpu_times(&idle, &total)) return 0.0f;
+    const long long dt = static_cast<long long>(total - pt), di = static_cast<long long>(idle - pi);
     pt = total; pi = idle;
     if (dt <= 0) return 0.0f;
     return 100.0f * (1.0f - static_cast<float>(di) / static_cast<float>(dt));
 }
 void read_ram(float& used, float& total) {
-    ifstream f("/proc/meminfo");
-    string k; long long v; string unit;
-    long long mt = 0, ma = 0;
-    while (f >> k >> v >> unit) {
-        if (k == "MemTotal:") mt = v;
-        else if (k == "MemAvailable:") { ma = v; break; }
-    }
-    total = mt / 1024.0f;
-    used = (mt - ma) / 1024.0f;
+    uint64_t mt = 0, ma = 0;   // bytes
+    if (!platform::mem_info(&mt, &ma)) mt = ma = 0;
+    total = static_cast<float>(mt) / (1024.0f * 1024.0f);
+    used = static_cast<float>(mt - ma) / (1024.0f * 1024.0f);
 }
 HwStats get_hw() {
     HwStats h;
-    h.temp = read_cpu_temp();
+    h.temp = platform::cpu_temperature_c();
     h.cpu = read_cpu_usage();
     read_ram(h.ram_used, h.ram_total);
     return h;
@@ -369,9 +362,14 @@ void mark_ready() { g_ready = true; }
 
 void begin() {
     if (g_active) return;
-    if (!isatty(STDOUT_FILENO)) return;
+    // A real terminal only (Windows: a console - _isatty() is also true for
+    // NUL, so `heimdall >NUL 2>errors.log` captured the errors into the TUI)
+    if (!platform::stdout_is_terminal()) return;
     const char* off = getenv("HEIMDALL_NO_TUI");
     if (off && off[0] && strcmp(off, "0") != 0) return;
+    // Windows: the console only interprets the escape sequences below once
+    // VT processing is on (else they print as text) - plain logs if it can't be
+    if (!platform::console_enable_vt()) return;
 
     g_start = steady_clock::now();
     g_orig_cout = std::cout.rdbuf(&g_capbuf);
@@ -686,6 +684,11 @@ void end() {
     g_active = false;
 
     term_write("\033[?25h\033[?1049l");
+    // Windows: the console mode back as begin() found it. console_restore()
+    // also undoes console_init() (UTF-8 output, QuickEdit off), which the
+    // shutdown that follows still wants - re-applied at once. No-ops on Linux.
+    platform::console_restore();
+    platform::console_init();
 
     if (g_orig_cout) std::cout.rdbuf(g_orig_cout);
     if (g_orig_cerr) std::cerr.rdbuf(g_orig_cerr);

@@ -12,11 +12,10 @@
 #include <sstream>
 
 #include <pthread.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
 
 #include <liquid/liquid.h>
 
+#include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
 
@@ -123,11 +122,10 @@ std::mutex station_mu;
 std::string station_text;          // "lat,lon" or "" (unknown)
 std::atomic<uint64_t> station_gen{1};
 
-int64_t mtime_ms(const std::string& path) {
-    struct stat st{};
-    if (stat(path.c_str(), &st) != 0) return 0;
-    return static_cast<int64_t>(st.st_mtim.tv_sec) * 1000 + st.st_mtim.tv_nsec / 1000000;
-}
+// of a plugin's exe: a rebuild restarts it. Windows: the build replaces the
+// running decoder.exe with MSYS2's mv -f (it moves the busy file aside) - the
+// mtime changes as on Linux
+int64_t mtime_ms(const std::string& path) { return fs_mtime_ms(path); }
 }  // namespace
 
 void set_record_handler(RecordHandler h) {
@@ -561,7 +559,12 @@ private:
             ids = auto_ids();
             bool any = false;
             for (const auto& p : reg.list()) any |= p.built && p.auto_detect && !p.manual_only;
+#ifdef _WIN32
+            // the Windows build of the plugins is build_windows.bat
+            if (!any) report_.event("", "Auto detect: no auto-detect decoder plugins are built (run build_windows.bat)", 0.0);
+#else
             if (!any) report_.event("", "Auto detect: no auto-detect decoder plugins are built (run make)", 0.0);
+#endif
         }
         for (const auto& id : ids) {
             auto r = std::make_unique<Runner>();
@@ -902,14 +905,13 @@ private:
         auto handler = [this, idx](uint32_t type, const char* p, size_t len) { on_message(idx, type, p, len); };
         if (sync_io_) r.proc->flush_blocking(handler, 60000);
         else r.proc->poll(handler);
-        int st = 0;
+        kproc::ExitStatus st;
         const bool bad = r.proc->protocol_error();
         if (bad || !r.proc->alive(&st)) {
             r.proc->poll(handler);   // whatever it said last
             std::string why;
             if (bad) why = "sent a malformed message (printing to stdout?)";
-            else if (WIFSIGNALED(st)) why = std::string("crashed (") + strsignal(WTERMSIG(st)) + ")";
-            else why = "exited with status " + std::to_string(WEXITSTATUS(st));
+            else why = st.describe();   // "crashed (<strsignal>)" / "exited with status N"
             r.tail = r.proc->stderr_tail();
             if (!r.tail.empty()) why += " - last output: " + r.tail.back();
             r.proc->stop();

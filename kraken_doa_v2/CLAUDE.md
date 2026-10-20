@@ -659,8 +659,10 @@ Edit `include/config.hpp`:
   the end; .dis files are FM-modulated again; `--opt dmr.slot=1`; run from
   kraken_doa_v2): `g++ -std=c++20 -O2 -Iinclude -isystem
   liquid-dsp/build-kraken/include tools/digi_test.cpp src/digital/*.cpp
+  src/utils/process_posix.cpp src/utils/fs_compat.cpp
   liquid-dsp/build-kraken/libliquid.a` (liquid built by `make` first - see
-  *liquid-dsp*)
+  *liquid-dsp*; the plugin processes are kproc's, `utils/process.hpp`; the
+  Windows command line is in the file's header)
 - Validated on live P25 (VFO on a trunked control channel + its voice
   channel) and DMR Tier III here, and on recordings for TETRA, D-STAR, DMR,
   NXDN, MPT1327 and P25 (regression of 33 checks incl. voice passes through

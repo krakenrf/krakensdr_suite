@@ -986,7 +986,8 @@ private:
                                    fmt("; 15 Hz %.0f %%", c.tacan_m15 * 100) + fmt(", 135 Hz %.0f %%", c.tacan_m135 * 100) +
                                    fmt("; north bursts %.2f /s", c.tacan_rot_hz));
         else if (now - s.first_t > 5)
-            host.fact("TACAN", c.north_n ? fmt("reference bursts seen (%d north", c.north_n) + fmt(", %d auxiliary) - no steady 15 Hz", c.aux_n)
+            host.fact("TACAN", c.north_n ? "reference bursts seen (" + std::to_string(c.north_n) + " north, " + std::to_string(c.aux_n) +
+                                               " auxiliary) - no steady 15 Hz"
                                          : "no (no reference bursts: a plain DME)");
     }
 };

@@ -10,12 +10,8 @@
 #include "playback.hpp"
 
 #include <dirent.h>
-#include <signal.h>
-#include <spawn.h>
 #include <opus/opus.h>
 #include <sys/stat.h>
-#include <sys/statvfs.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -31,6 +27,7 @@
 #include <iostream>
 #include <liquid/liquid.h>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <thread>
@@ -43,12 +40,12 @@
 #include "globals.hpp"
 #include "signal_processing/fm_demodulator.hpp"
 #include "station_info.hpp"
+#include "utils/disk_util.hpp"
+#include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
+#include "utils/process.hpp"
 #include "voice2text_wire.hpp"
-#include "utils/spawn_fds.hpp"
-
-extern char** environ;
 
 namespace v2t {
 
@@ -57,18 +54,26 @@ namespace {
 namespace wire = v2t::wire;
 
 // The models setup.sh / the UI can download - the same list as CATALOGUE in
-// transcribe/setup.sh. mb = download size.
+// transcribe/setup.sh. mb = download size. The speed notes are a Pi's; the
+// Windows build runs on a PC (tiny.en: ~40x faster than real time there)
+#ifdef _WIN32
+constexpr bool PC_NOTES = true;
+#else
+constexpr bool PC_NOTES = false;
+#endif
 struct CatalogueEntry { const char* name; int mb; bool multi; const char* note; };
 const CatalogueEntry MODEL_CATALOGUE[] = {
     {"tiny.en", 75, false, "fastest, least accurate"},
-    {"base.en", 142, false, "recommended: good on a Pi 5, faster than real time"},
+    {"base.en", 142, false, PC_NOTES ? "recommended: many times faster than real time on a PC"
+                                     : "recommended: good on a Pi 5, faster than real time"},
     {"base.en-q5_1", 57, false, "base.en compressed: less memory, about as accurate"},
-    {"small.en", 466, false, "most accurate on a Pi: about 2x slower than real time"},
+    {"small.en", 466, false, PC_NOTES ? "more accurate, faster than real time on a PC"
+                                      : "most accurate on a Pi: about 2x slower than real time"},
     {"small.en-q5_1", 181, false, "small.en compressed"},
     {"tiny", 75, true, "any language (or translated to English), fastest"},
     {"base", 142, true, "any language (or translated to English)"},
     {"base-q5_1", 57, true, "base compressed"},
-    {"small", 466, true, "any language, most accurate on a Pi"},
+    {"small", 466, true, PC_NOTES ? "any language, more accurate" : "any language, most accurate on a Pi"},
     {"small-q5_1", 181, true, "small compressed"},
     {"medium.en-q5_0", 514, false, "PC-class CPU only"},
     {"large-v3-turbo-q5_0", 547, true, "PC-class CPU only, best for other languages"},
@@ -129,7 +134,17 @@ std::string transcribe_dir() {
     const char* e = std::getenv("KRAKEN_TRANSCRIBE_DIR");
     return (e && *e) ? std::string(e) : std::string("transcribe");
 }
-std::string helper_exe() { return transcribe_dir() + "/build/kraken_whisper"; }
+std::string helper_exe() { return kproc::exe_path(transcribe_dir() + "/build/kraken_whisper"); }   // Windows: .exe
+// how a helper that didn't exit by itself ended: "signal 9". Windows has no
+// signals - a crash is an NTSTATUS, named with its code ("access violation,
+// 0xC0000005")
+std::string signal_text(const kproc::ExitStatus& st) {
+#ifdef _WIN32
+    return st.signal_name();
+#else
+    return "signal " + std::to_string(st.signal);
+#endif
+}
 std::string models_dir() {
     const char* e = std::getenv("KRAKEN_WHISPER_MODELS");
     return (e && *e) ? std::string(e) : transcribe_dir() + "/models";
@@ -487,7 +502,7 @@ struct Config {
 
 struct Download {
     std::string name, error;
-    pid_t pid = -1;
+    std::shared_ptr<kproc::Process> proc;   // curl while it runs (v2t::stop() ends it)
     std::string part;     // the file growing
     uint64_t total = 0;   // expected bytes (catalogue)
     bool running = false;
@@ -551,7 +566,7 @@ void rewrite_history_locked(State& s) {
     std::ofstream o(tmp, std::ios::trunc);
     for (const auto& t : s.history) o << transcript_json(t, true) << "\n";
     o.close();
-    if (o && rename(tmp.c_str(), HISTORY_FILE) == 0) s.file_lines = s.history.size();
+    if (o && fs_replace(tmp.c_str(), HISTORY_FILE) == 0) s.file_lines = s.history.size();
     else unlink(tmp.c_str());
 }
 
@@ -613,41 +628,10 @@ bool clip_name(const std::string& n, uint64_t* id, bool* tmp) {
     return true;
 }
 
-bool mkdirs(const std::string& path) {
-    std::string cur = !path.empty() && path[0] == '/' ? "/" : "";
-    std::stringstream ss(path);
-    std::string part;
-    while (std::getline(ss, part, '/')) {
-        if (part.empty()) continue;
-        cur += part;
-        if (mkdir(cur.c_str(), 0755) != 0 && errno != EEXIST) return false;
-        cur += "/";
-    }
-    struct stat st{};
-    return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
-}
-
-std::string absolute(const std::string& p) {
-    if (!p.empty() && p[0] == '/') return p;
-    char cwd[4096];
-    if (!getcwd(cwd, sizeof cwd)) return p;
-    return std::string(cwd) + "/" + p;
-}
-
-// free bytes on the file system holding path (or its nearest existing parent)
-bool free_space(std::string path, uint64_t* free_b) {
-    path = absolute(path);
-    for (int i = 0; i < 64 && !path.empty(); i++) {
-        struct statvfs v{};
-        if (statvfs(path.c_str(), &v) == 0) {
-            *free_b = static_cast<uint64_t>(v.f_bavail) * v.f_frsize;
-            return true;
-        }
-        const size_t sl = path.rfind('/');
-        path = sl == 0 ? "/" : (sl == std::string::npos ? "" : path.substr(0, sl));
-    }
-    return false;
-}
+// The clip folders are made, measured and shown with diskutil's mkdirs /
+// disk_space / absolute (the recorder's and the decoder log's): the same code
+// on Linux, and on Windows drive letters ("E:/logs" - the decoder log may sit
+// on another drive) and shares work there too
 
 // the clips under root: <root>/YYYY-MM-DD/<id>.opus, by id (= oldest first)
 std::map<uint64_t, ClipFile> scan_clips(const std::string& root) {
@@ -837,7 +821,7 @@ bool write_opus(const std::string& path, const std::vector<int16_t>& pcm, const 
         unlink(tmp.c_str());
         return false;
     }
-    return rename(tmp.c_str(), path.c_str()) == 0;
+    return fs_replace(tmp.c_str(), path.c_str()) == 0;   // over an old <id>.opus too (ids restart after a clear)
 }
 
 // --- the worker ----------------------------------------------------------------
@@ -936,8 +920,8 @@ void Worker::clips_tick(int64_t t) {
         }
         trim_clips_locked(s_);
     }
-    uint64_t fr = 0;
-    const bool known = free_space(root, &fr);
+    uint64_t fr = 0, total = 0;
+    const bool known = diskutil::disk_space(root, &fr, &total);
     std::lock_guard<std::mutex> lk(s_.st_mu);
     s_.clip_free = known ? fr : 0;
     s_.clip_low = known && fr < MIN_FREE_BYTES;
@@ -965,10 +949,10 @@ std::string Worker::save_clip(const Transcript& t, const Utterance& u) {
                                   "KRAKEN_SOURCE=" + t.src};
     if (!t.tid.empty()) tags.push_back("KRAKEN_TALKER=" + t.tid + (t.tlabel.empty() ? "" : " -> " + t.tlabel));
     if (is_finite_value(t.brg)) tags.push_back("KRAKEN_BEARING=" + fmt("%.1f", t.brg));
-    if (mkdirs(dir) && write_opus(path, u.pcm, tags, static_cast<uint32_t>(t.id))) return path;
+    if (diskutil::mkdirs(dir) && write_opus(path, u.pcm, tags, static_cast<uint32_t>(t.id))) return path;
     std::lock_guard<std::mutex> lk(s_.st_mu);
     s_.clips_skipped++;
-    s_.clip_error = "cannot write " + absolute(path) + ": " + strerror(errno);
+    s_.clip_error = "cannot write " + diskutil::absolute(path) + ": " + strerror(errno);
     return "";
 }
 
@@ -1531,7 +1515,7 @@ void Worker::helper(int64_t t) {
     // the model changed: restart
     if (proc_on_ && proc_model_ != c.model) stop_helper("model changed to " + c.model);
     if (proc_on_) {
-        int status = 0;
+        kproc::ExitStatus status;
         proc_.poll([&](uint32_t type, const char* p, size_t len) {
             if (type == wire::READY) {
                 ready_ = true;
@@ -1551,8 +1535,8 @@ void Worker::helper(int64_t t) {
         });
         if (proc_.protocol_error() || !proc_.alive(&status)) {
             std::string why = "the helper stopped";
-            if (WIFSIGNALED(status)) why += " (signal " + std::to_string(WTERMSIG(status)) + ")";
-            else if (WIFEXITED(status)) why += " (exit " + std::to_string(WEXITSTATUS(status)) + ")";
+            if (status.signaled()) why += " (" + signal_text(status) + ")";
+            else if (status.exited()) why += " (exit " + std::to_string(status.code) + ")";
             const auto tail = proc_.stderr_tail();
             if (!tail.empty()) why += ": " + tail.back();
             std::cerr << "Voice to Text: " << why << std::endl;
@@ -1659,37 +1643,45 @@ void download_thread(std::vector<std::pair<std::string, std::string>> files) {
         const std::string url = f.first, out = f.second, part = out + ".part";
         mkdir(transcribe_dir().c_str(), 0755);
         mkdir(models_dir().c_str(), 0755);
-        std::vector<std::string> args{"curl", "-fsSL", "--retry", "3", "--connect-timeout", "20", "-o", part, url};
-        std::vector<char*> av;
-        for (auto& a : args) av.push_back(a.data());
-        av.push_back(nullptr);
-        pid_t pid = -1;
-        posix_spawn_file_actions_t fa;
-        posix_spawn_file_actions_init(&fa);
-        spawn_fds::close_above_stdio(&fa);
-        const int rc = posix_spawnp(&pid, "curl", &fa, nullptr, av.data(), environ);
-        posix_spawn_file_actions_destroy(&fa);
-        if (rc != 0) {
-            err = "cannot run curl (" + std::string(strerror(rc)) + ") - install it, or use transcribe/setup.sh";
+        kproc::SpawnOptions o;
+        o.argv = {"curl", "-fsSL", "--retry", "3", "--connect-timeout", "20", "-o", part, url};
+#ifdef _WIN32
+        // Windows' own curl.exe (System32) checks certificate revocation
+        // through Schannel, which fails without access to the CA's OCSP / CRL
+        // servers (proxies, filtered networks): revocation best effort only
+        o.argv.insert(o.argv.begin() + 1, "--ssl-revoke-best-effort");
+#endif
+        o.search_path = true;   // curl on the PATH, as posix_spawnp found it
+        o.console = kproc::Console::Share;
+        auto proc = std::make_shared<kproc::Process>();
+        std::string spawn_err;
+        if (!proc->spawn(o, &spawn_err)) {
+#ifdef _WIN32
+            // Windows 10 1803+ has curl.exe in System32 - missing = an old
+            // Windows or a PATH without System32
+            err = "cannot run curl.exe (" + spawn_err + ") - Windows 10 1803+ has it in C:\\Windows\\System32 (on the PATH?), "
+                  "or download the model with transcribe/setup.sh in the MSYS2 UCRT64 shell";
+#else
+            err = "cannot run curl (" + spawn_err + ") - install it, or use transcribe/setup.sh";
+#endif
             break;
         }
         {
             std::lock_guard<std::mutex> lk(s.st_mu);
-            s.dl.pid = pid;
+            s.dl.proc = proc;
             s.dl.part = part;
         }
-        int st = 0;
-        while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+        const kproc::ExitStatus st = proc->wait();
         {
             std::lock_guard<std::mutex> lk(s.st_mu);
-            s.dl.pid = -1;
+            s.dl.proc.reset();
         }
-        if (!WIFEXITED(st) || WEXITSTATUS(st) != 0 || file_size(part) < 100000) {
+        if (!st.ok() || file_size(part) < 100000) {
             unlink(part.c_str());
-            err = WIFEXITED(st) ? "download failed (curl exit " + std::to_string(WEXITSTATUS(st)) + ")" : "download stopped";
+            err = st.exited() ? "download failed (curl exit " + std::to_string(st.code) + ")" : "download stopped";
             break;
         }
-        if (rename(part.c_str(), out.c_str()) != 0) {
+        if (fs_replace(part.c_str(), out.c_str()) != 0) {
             err = "cannot save " + out;
             break;
         }
@@ -1735,7 +1727,7 @@ void stop() {
     s.q_cv.notify_all();
     if (s.worker.joinable()) s.worker.join();
     std::lock_guard<std::mutex> lk(s.st_mu);
-    if (s.dl.pid > 0) kill(s.dl.pid, SIGTERM);
+    if (s.dl.proc) s.dl.proc->terminate();   // curl: SIGTERM (Windows: ended)
 }
 
 void feed_analog(int vfo, const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, DemodulatorMode mode,
@@ -1850,7 +1842,7 @@ std::string status_message() {
       << ",\"nospeech\":" << s.nospeech << ",\"failed\":" << s.failed << ",\"rtf\":" << fmt("%.2f", s.rtf)
       << ",\"last_ms\":" << s.last_ms << ",\"clips\":" << s.clips.size() << ",\"clip_mb\":"
       << fmt("%.1f", s.clip_bytes / 1048576.0) << ",\"clip_dir\":\""
-      << json_escape(s.clip_root.empty() ? "" : absolute(s.clip_root)) << "\",\"clip_days\":" << s.clip_days
+      << json_escape(s.clip_root.empty() ? "" : diskutil::absolute(s.clip_root)) << "\",\"clip_days\":" << s.clip_days
       << ",\"clip_free_mb\":" << s.clip_free / 1048576 << ",\"clip_low\":" << (s.clip_low ? "true" : "false")
       << ",\"clips_skipped\":" << s.clips_skipped << ",\"clip_error\":\"" << json_escape(s.clip_error)
       << "\",\"loop_max_ms\":" << s.loop_max_ms << ",\"in_dropped_s\":" << fmt("%.1f", in_dropped) << ",\"vfos\":[";

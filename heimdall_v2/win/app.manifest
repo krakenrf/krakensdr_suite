@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Windows application manifest, linked into every .exe of the suite (win/app.rc).
+     activeCodePage UTF-8: the narrow (char*) Win32 / C runtime APIs - fopen, open,
+     stat, CreateFileA, getenv, argv - take and return UTF-8, as on Linux, so file
+     names with non-ASCII characters work without converting every call.
+     longPathAware: paths longer than 260 characters (Windows 10 1607+, when the
+     LongPathsEnabled policy is on). Identical copy in heimdall_v2/win and
+     kraken_doa_v2/win (each app builds on its own). -->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="KrakenSDR.Suite" version="2.0.0.0"/>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 / 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>

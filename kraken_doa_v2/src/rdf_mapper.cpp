@@ -10,6 +10,7 @@
 #include "signal_processing/music_processor.hpp"
 #include "station_info.hpp"
 #include "talker_doa.hpp"
+#include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
 
@@ -645,7 +646,7 @@ void save_session(const std::map<Key, std::unique_ptr<EVfo>>& ev, const std::map
         if (e) block(e->freq, t, k.tid, e->solver.records());
     for (const auto& [pk, p] : pending) block(static_cast<double>(pk.first), p.saved_ms, pk.second, p.recs);
     o.close();
-    if (o) rename(tmp.c_str(), SESSION_FILE);
+    if (o) fs_replace(tmp.c_str(), SESSION_FILE);   // Windows' rename() refuses an existing target
 }
 
 void load_session(std::map<PendKey, Pending>* pending) {

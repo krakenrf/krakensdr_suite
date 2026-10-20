@@ -1,3 +1,4 @@
+#include "../core/platform.hpp"
 #include "web_server.hpp"
 #include "html_loader.hpp"
 #include "../sdr/sdr_init.hpp"
@@ -11,6 +12,9 @@
 #include "../core/settings.hpp"
 #include "../core/forward_comp.hpp"
 #include "App.h"  // uWebSockets main header
+#ifdef _WIN32
+#include "../net/tcp_common.hpp"  // listen_error_detail
+#endif
 #include <iostream>
 #include <map>
 #include <functional>
@@ -24,6 +28,26 @@
 // Global web server state
 std::thread web_thread;
 void* global_app = nullptr;
+
+#ifdef _WIN32
+// uWS reports a failed listen without its reason, and on Windows a busy port
+// isn't the only one: a port inside an excluded port range (Hyper-V, WSL2,
+// Docker) can't be bound either ("access denied"). Bind the port once more,
+// exclusively like uWS, for the error text (" (...)", "" if it binds now).
+static std::string web_port_error_detail() {
+    const int s = sock_socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) return std::string();
+    int on = 1;
+    sock_setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));  // = SO_EXCLUSIVEADDRUSE
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(WEB_PORT);
+    const int err = sock_bind(s, (sockaddr*)&addr, sizeof(addr)) < 0 ? errno : 0;
+    sock_close(s);
+    return listen_error_detail(err);
+}
+#endif
 
 // Global references for timer callback (set by main.cpp)
 static CorrelationResult* global_correlation_result = nullptr;
@@ -86,7 +110,7 @@ static void refuse_cross_origin(Res* res, uWS::HttpRequest* req) {
 // binary broadcast feed carries correlation/FFT data). Sent on connect and
 // re-broadcast at a low rate from the timer so the counters / settings stay live.
 static std::string build_state_message() {
-    std::string s = std::string("STATE:{\"num_elements\":")
+    std::string s = std::string("STATE:{\"platform\":\"") + platform::os_name() + "\",\"num_elements\":"
         + std::to_string(active_num_elements.load(std::memory_order_relaxed))
         + ",\"max_elements\":"
         + std::to_string(expected_serials.size())
@@ -450,6 +474,11 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                     }
 
                     if (new_freq > 0 || new_gain != -999) {
+                        // A failed / rolled-back change is logged by
+                        // update_sdr_settings; this page has no error display,
+                        // and its "Current:" frequency and gain come from the
+                        // binary broadcast (current_frequency / current_gain),
+                        // which shows the settings really in place.
                         if (update_sdr_settings(new_freq, new_gain, devices)) {
                             if (new_freq > 0 && recovery_in_progress.load(std::memory_order_acquire)) {
                                 // A coherence recovery is recalibrating: update_sdr_settings
@@ -602,6 +631,9 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
             }, 50, 50);
         } else {
             std::cerr << "FATAL: cannot listen on web port " << WEB_PORT
+#ifdef _WIN32
+                      << web_port_error_detail()
+#endif
                       << " - is another heimdall instance already running?" << std::endl;
             fatal_exit = true;       // exit status 1, not a clean stop
             global_running = false;  // trigger the normal clean shutdown in main()

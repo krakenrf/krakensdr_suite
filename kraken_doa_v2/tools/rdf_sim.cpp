@@ -4,6 +4,7 @@
 //
 //   g++ -std=c++20 -O2 -Iinclude tools/rdf_sim.cpp src/rdf_engine.cpp -o rdf_sim
 //   ./rdf_sim [runs] [minutes] [seed]
+// (Windows, MSYS2 UCRT64 shell: add -D_USE_MATH_DEFINES -static, -o rdf_sim.exe)
 //
 // World model per run: transmitter 1.5-6 km from the start; the vehicle
 // drives straight road segments (150-900 m, 8-20 m/s) and turns (12 deg/s)

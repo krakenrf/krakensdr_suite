@@ -7,14 +7,10 @@
 
 #include "networking/gpsd_client.hpp"
 #include "config.hpp"
+#include "utils/net_compat.hpp"   // sockets: BSD on Linux, Winsock on Windows
 
-#include <sys/socket.h>
 #include <sys/types.h>
-#include <sys/select.h>
 #include <sys/time.h>
-#include <netdb.h>
-#include <fcntl.h>
-#include <unistd.h>
 #include <cerrno>
 #include <cmath>
 #include <cstdlib>
@@ -118,6 +114,17 @@ int gpsd_port() {
     return GPSD_PORT;
 }
 
+#ifdef _WIN32
+// 127.x / ::1 - a refused connect there can't be a lost SYN
+bool is_loopback(const struct sockaddr* a) {
+    if (a->sa_family == AF_INET)
+        return (ntohl(reinterpret_cast<const sockaddr_in*>(a)->sin_addr.s_addr) >> 24) == 127;
+    if (a->sa_family == AF_INET6)
+        return IN6_IS_ADDR_LOOPBACK(&reinterpret_cast<const sockaddr_in6*>(a)->sin6_addr);
+    return false;
+}
+#endif
+
 // Open a TCP connection to gpsd with a bounded connect timeout. Returns the fd
 // (with a read timeout already applied) or -1 on failure.
 int connect_gpsd(const char* host, int port) {
@@ -132,9 +139,21 @@ int connect_gpsd(const char* host, int port) {
 
     int fd = -1;
     for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {
-        fd = socket(ai->ai_family, ai->ai_socktype | SOCK_CLOEXEC, ai->ai_protocol);
+        fd = sock_socket(ai->ai_family, ai->ai_socktype | SOCK_CLOEXEC, ai->ai_protocol);
         if (fd < 0) continue;
 
+#ifdef _WIN32
+        // Windows: Winsock leaves errno alone (the EINPROGRESS test below
+        // never matched, so no connect ever completed) and reports a refused
+        // connect in select()'s EXCEPT set, not the write set -
+        // sock_connect_timeout handles both and leaves the socket blocking.
+        // There is no native gpsd for Windows, so a local one is usually not
+        // running: refused at once instead of after ~2 s of SYN retries (a
+        // remote gpsd via KRAKEN_GPSD_HOST, or one in WSL, works).
+        if (is_loopback(ai->ai_addr)) sock_loopback_fast_refuse(fd);
+        if (sock_connect_timeout(fd, ai->ai_addr, static_cast<socklen_t>(ai->ai_addrlen), 2000) == 0)
+            break;  // connected
+#else
         // Non-blocking connect with a select() timeout so an unreachable host
         // can't wedge the thread.
         int flags = fcntl(fd, F_GETFL, 0);
@@ -159,7 +178,8 @@ int connect_gpsd(const char* host, int port) {
                 }
             }
         }
-        ::close(fd);
+#endif
+        sock_close(fd);
         fd = -1;
     }
     freeaddrinfo(res);
@@ -168,12 +188,12 @@ int connect_gpsd(const char* host, int port) {
         // Read timeout lets the read loop poll the shutdown flag and notice a
         // silently dead daemon.
         struct timeval rtv{2, 0};
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
+        sock_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
         // Generous receive buffer so a CPU-starved reader (the kraken_doa runs
         // ~25 hot threads) doesn't overflow and get dropped by gpsd, and so one
         // read can drain a whole multi-report backlog (SKY frames are ~2.7 KB).
         int rcvbuf = 256 * 1024;
-        setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+        sock_setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
     }
     return fd;
 }
@@ -230,8 +250,8 @@ void GpsdClient::run() {
         }
 
         const char* watch = "?WATCH={\"enable\":true,\"json\":true}\n";
-        if (send(fd, watch, std::strlen(watch), MSG_NOSIGNAL) < 0) {
-            ::close(fd);
+        if (sock_send(fd, watch, std::strlen(watch), MSG_NOSIGNAL) < 0) {
+            sock_close(fd);
             reset_disconnected();
             continue;
         }
@@ -239,7 +259,7 @@ void GpsdClient::run() {
         std::string buf;
         char tmp[16384];  // large enough to drain a full backlog per read
         while (running_.load()) {
-            ssize_t n = recv(fd, tmp, sizeof(tmp), 0);
+            ssize_t n = sock_recv(fd, tmp, sizeof(tmp), 0);
             if (n > 0) {
                 buf.append(tmp, n);
                 size_t nl;
@@ -257,7 +277,7 @@ void GpsdClient::run() {
             }
         }
 
-        ::close(fd);
+        sock_close(fd);
         reset_disconnected();
     }
 }

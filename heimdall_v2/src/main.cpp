@@ -19,6 +19,7 @@
 #include "web/web_server.hpp"
 #include "web/html_loader.hpp"
 #include "core/status_dashboard.hpp"
+#include "core/platform.hpp"
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
@@ -101,6 +102,9 @@ std::unique_ptr<RtlTcpServer> rtl_tcp_server;
 // orderly shutdown. (Closing the uWS timer / waking the loop here was unsafe:
 // it frees memory and touches epoll state the web thread may be using, and
 // main never needed the loop to exit - it _Exits after releasing the dongles.)
+// On Windows it is called from a console control handler / the stop-event
+// thread / a hidden window's session end (logoff, shutdown) instead
+// (platform::install_stop_handler), with SIGINT, SIGBREAK or SIGTERM.
 static volatile std::sig_atomic_t shutdown_signal = 0;
 void signal_handler(int sig) {
     shutdown_signal = sig;
@@ -299,10 +303,16 @@ static void release_hardware() {
     // (use after free at exit). Bounded - a stuck holder must not hang the
     // exit - and never released: the process is about to _Exit, and a
     // reconfiguration starting after this must not reopen anything.
-    const auto lock_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    // Windows ends the process about 5 s after its console window was closed
+    // (or at logoff / shutdown): wait less there, so the noise source is still
+    // switched off and the dongles closed within that time.
+    const bool urgent = platform::stop_is_urgent();
+    const auto lock_deadline = std::chrono::steady_clock::now() +
+                               (urgent ? std::chrono::milliseconds(1500) : std::chrono::milliseconds(5000));
     while (!settings_mutex.try_lock()) {
         if (std::chrono::steady_clock::now() > lock_deadline) {
-            std::cerr << "Shutdown: settings lock still held after 5 s - releasing the devices anyway" << std::endl;
+            std::cerr << "Shutdown: settings lock still held after " << (urgent ? "1.5" : "5")
+                      << " s - releasing the devices anyway" << std::endl;
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -357,6 +367,17 @@ static void release_hardware() {
 }
 
 int main(int argc, char* argv[]) {
+    // Windows console: UTF-8 output (degree signs, the dashboard's glyphs)
+    // and QuickEdit off - a mouse click in a classic console window otherwise
+    // pauses every thread that logs, the USB callbacks included. Restored on
+    // every exit path (platform::fast_exit restores it itself). No-op on Linux.
+    platform::console_init();
+    std::atexit(platform::console_restore);
+    // Windows: started from a shortcut or another folder, the cwd isn't
+    // heimdall's folder - index.html, the settings file and the S2P folder
+    // are all cwd-relative (run.sh cds there on Linux). No-op on Linux.
+    platform::chdir_to_exe_dir_if_missing("index.html");
+
     // Parse command line arguments
     int num_elements_cli = 0;  // 0 = not given on the command line
 
@@ -414,6 +435,10 @@ int main(int argc, char* argv[]) {
                       << "                          web UI. No automatic recalibration ever runs\n"
                       << "  --kerberos_sw           KerberosSDR with CKOVAL antenna switches on Pi GPIOs:\n"
                       << "                          like --kerberos but calibration is automatic again\n"
+#ifdef _WIN32
+                      // a PC has no Pi header: kerberos_gpio_init fails, main falls back
+                      << "                          (Raspberry Pi only - on Windows it runs as --kerberos)\n"
+#endif
                       << "  --ext_noise             KrakenSDR + add-on antenna array with its own noise\n"
                       << "                          source, powered from the CH0 bias tee: calibration\n"
                       << "                          switches that bias tee; the internal noise source\n"
@@ -456,13 +481,22 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Windows: the PC must not go to sleep while the receiver runs (it stops
+    // the USB streams; ends with the process), and heimdall runs above normal
+    // priority - libusb's USB completion threads can't be raised one by one,
+    // and kraken_doa's DSP on the same PC must not delay them. No-ops on Linux.
+    platform::keep_system_awake();
+    platform::raise_process_priority();
+
     // Errors-only file logging: when stdout is NOT a terminal (output captured
     // to a logfile / journal), discard cout entirely so a deployment that runs
     // for years accumulates only stderr (errors) in its log - no routine
     // status, calibration or connection chatter. Interactive runs (TTY) are
     // unaffected, and HEIMDALL_VERBOSE_LOG=1 restores full output to files
-    // for debugging.
-    if (!isatty(STDOUT_FILENO) && !std::getenv("HEIMDALL_VERBOSE_LOG")) {
+    // for debugging. (Windows: isatty() is true for NUL, and a mintty / Git
+    // Bash terminal is a pipe - platform::stdout_kind() tells them apart, and
+    // such a terminal keeps the output: Pty.)
+    if (platform::stdout_kind() == platform::StdoutKind::Redirected && !std::getenv("HEIMDALL_VERBOSE_LOG")) {
         static struct : std::streambuf {
             int overflow(int c) override { return traits_type::not_eof(c); }
             std::streamsize xsputn(const char*, std::streamsize n) override { return n; }
@@ -568,12 +602,15 @@ int main(int argc, char* argv[]) {
          << "TCP Control Port: " << TCP_CONTROL_PORT << " (JSON commands)\n"
          << "=========================================================================================================\n" << std::endl;
     
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
-    // SIGHUP too: tmux kill-session (run.sh stop, the systemd unit's stop)
-    // and a closed terminal deliver it - without a handler it killed heimdall
-    // outright, skipping the dongle release and the KerberosSDR GPIO restore.
-    signal(SIGHUP, signal_handler);
+    // SIGINT, SIGTERM and SIGHUP (core/platform.cpp). SIGHUP too: tmux
+    // kill-session (run.sh stop, the systemd unit's stop) and a closed
+    // terminal deliver it - without a handler it killed heimdall outright,
+    // skipping the dongle release and the KerberosSDR GPIO restore.
+    // Windows has none of them: Ctrl+C / Ctrl+Break, the console window
+    // closing and the launcher's stop event reach a console control handler
+    // (signal(SIGINT) would be reset after the first Ctrl+C, and the second
+    // killed heimdall in the middle of releasing the dongles).
+    platform::install_stop_handler(signal_handler);
 
     // Live status dashboard. Take over the terminal BEFORE the (slow) device
     // init below so its progress shows on the loading screen; a background
@@ -608,12 +645,14 @@ int main(int argc, char* argv[]) {
     // global destructors, and RtlTcpServer's joins a thread blocked in
     // accept() - so a busy 8091/8092 hung heimdall instead of exiting 1 (the
     // supervisor never restarted it), with the dongles left open.
+    // (platform::fast_exit = _Exit; on Windows TerminateProcess - see the
+    // end of main.)
     auto fail_startup = [&dash]() {
         dash.stop();
         release_hardware();
         std::cout.flush();
         std::cerr.flush();
-        _Exit(1);
+        platform::fast_exit(1);
     };
 
     std::string html_content;
@@ -643,8 +682,14 @@ int main(int argc, char* argv[]) {
     // missing moRFeus is fatal in this mode.
     if (downconverter.enabled.load()) {
         if (!downconverter_init(current_frequency.load())) {
+#ifdef _WIN32
+            // no hidraw: the moRFeus is a HID device on Windows' own driver
+            std::cerr << "Downconverter initialization failed - is the moRFeus connected"
+                         " (on Windows' HID driver - not replaced with WinUSB in Zadig)?" << std::endl;
+#else
             std::cerr << "Downconverter initialization failed - is the moRFeus connected"
                          " (and /dev/hidraw* accessible)?" << std::endl;
+#endif
             fail_startup();
         }
     }
@@ -655,13 +700,17 @@ int main(int argc, char* argv[]) {
     // Start RTL-TCP server with default channel 0
     // Built locally and published only once started: the dashboard thread
     // already reads the global
+    // (listen_error_detail: the reason on Windows, where "busy" isn't the
+    // only one - "" on Linux)
     if (auto rtl = std::make_unique<RtlTcpServer>(0); rtl->start()) {
         rtl_tcp_server = std::move(rtl);
     } else {
         // An optional tap: a stock rtl_tcp on a spare dongle (the default
         // port 1234) must not keep the array from starting - that made the
         // supervisor restart-loop. Run without it.
-        std::cerr << "RTL-TCP: port " << RTL_TCP_PORT << " is busy - running without the RTL-TCP tap" << std::endl;
+        const int err = errno;
+        std::cerr << "RTL-TCP: port " << RTL_TCP_PORT << " is busy" << listen_error_detail(err)
+                  << " - running without the RTL-TCP tap" << std::endl;
     }
     
     // Start TCP servers
@@ -669,12 +718,15 @@ int main(int argc, char* argv[]) {
     tcp_control_server = std::make_unique<TcpControlServer>();
     
     if (!tcp_data_server->start()) {
-        std::cerr << "Failed to start TCP data server on port " << TCP_DATA_PORT << std::endl;
+        const int err = errno;
+        std::cerr << "Failed to start TCP data server on port " << TCP_DATA_PORT << listen_error_detail(err) << std::endl;
         fail_startup();
     }
     
     if (!tcp_control_server->start()) {
-        std::cerr << "Failed to start TCP control server on port " << TCP_CONTROL_PORT << std::endl;
+        const int err = errno;
+        std::cerr << "Failed to start TCP control server on port " << TCP_CONTROL_PORT << listen_error_detail(err)
+                  << std::endl;
         fail_startup();
     }
     
@@ -718,8 +770,11 @@ int main(int argc, char* argv[]) {
     // switch the dashboard from the loading screen to the full status view.
     StatusDashboard::mark_ready();
 
+    // A 500 ms poll; on Windows a stop request ends the wait at once - after
+    // the console window was closed (or at logoff / shutdown) the OS gives the
+    // shutdown ~5 s in all
     while (global_running) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        platform::wait_stop_request(500);
     }
 
     // Restore the terminal (stop + join the dashboard thread) before the
@@ -739,8 +794,11 @@ int main(int argc, char* argv[]) {
     release_hardware();
 
     // _Exit skips static/global destructors that the still-live worker threads
-    // could otherwise race against during teardown.
+    // could otherwise race against during teardown. platform::fast_exit is
+    // _Exit on Linux; on Windows TerminateProcess, since _Exit (ExitProcess)
+    // runs every DLL's detach code there after killing the other threads -
+    // a thread killed holding a lock that code needs would hang the exit.
     std::cout << "Heimdall shutdown complete." << std::endl;
     std::cout.flush();
-    _Exit(fatal_exit.load() ? 1 : 0);
+    platform::fast_exit(fatal_exit.load() ? 1 : 0);
 }

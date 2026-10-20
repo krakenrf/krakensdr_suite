@@ -1,6 +1,7 @@
 #include "saved_freqs.hpp"
 
 #include "geo_address.hpp"   // geo::json_parse
+#include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 
 #include <cctype>
@@ -237,7 +238,8 @@ void save(const State& s) {
         f << "{\"version\":2," << lists_json(s, "categories", "locations", "frequencies", ",\n  ") << "}\n";
         f.close();
     }
-    if (!f || rename(tmp.c_str(), SF_FILE) != 0)
+    // fs_replace: Windows' rename() refuses an existing target (every change after the first save was lost)
+    if (!f || fs_replace(tmp.c_str(), SF_FILE) != 0)
         std::cerr << "Saved frequencies: can't write " << SF_FILE << " - changes are lost at a restart" << std::endl;
 }
 
@@ -343,7 +345,7 @@ void load() {
         if (migrate_markers(st)) {
             save(st);
             const std::string done = std::string(OLD_MARKER_FILE) + ".migrated";
-            if (rename(OLD_MARKER_FILE, done.c_str()) != 0)
+            if (fs_replace(OLD_MARKER_FILE, done.c_str()) != 0)   // over an old .migrated
                 std::cerr << "Saved frequencies: can't rename " << OLD_MARKER_FILE << " to " << done << std::endl;
         }
         return;
@@ -362,7 +364,7 @@ void load() {
         freqs->type != geo::Json::ARR) {
         // kept aside, not overwritten by the next change
         const std::string bad = std::string(SF_FILE) + ".bad";
-        rename(SF_FILE, bad.c_str());
+        fs_replace(SF_FILE, bad.c_str());   // over an older .bad
         std::cerr << "Saved frequencies: " << SF_FILE << " is unreadable (kept as " << bad
                   << ") - starting with an empty list" << std::endl;
         return;

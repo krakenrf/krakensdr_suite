@@ -14,8 +14,9 @@
 #include <mutex>
 #include <set>
 #include <string>
-#include <sys/types.h>
 #include <vector>
+
+#include "utils/process.hpp"
 
 namespace dig {
 
@@ -27,7 +28,7 @@ struct PluginOption {
 
 struct PluginInfo {
     std::string id, name, description, version, author;
-    std::string exe;              // plugins/<id>/build/decoder
+    std::string exe;              // plugins/<id>/build/decoder (decoder.exe on Windows)
     double sample_rate = 48000;   // complex input rate the plugin wants (0 = the VFO's own)
     double min_vfo_rate = 12500;
     int64_t mtime = 0;            // of exe (ms) - a rebuild restarts running decoders
@@ -90,9 +91,10 @@ private:
 // {"codecs":{"checked":true,"imbe_ok":..,"imbe":"..","ambe_ok":..,"ambe":"..","acelp_ok":..,"acelp":".."}}
 std::string codec_status_message();
 
-// Runs argv (argv[0] = path), returns its stdout; false on failure/timeout
+// Runs argv (argv[0] = path; a bare name with search_path), returns its
+// stdout; false on failure/timeout (kproc::run_capture)
 bool run_and_capture(const std::vector<std::string>& argv, int timeout_ms, std::string* out,
-                     int* exit_status = nullptr);
+                     kproc::ExitStatus* exit_status = nullptr, bool search_path = false);
 
 class PluginProcess {
 public:
@@ -108,9 +110,9 @@ public:
     // every process first, then stop() each, so they exit in parallel
     void request_stop();
     void stop();
-    bool running() const { return pid_ > 0; }
-    // false once the process has exited; *status = waitpid status
-    bool alive(int* status);
+    bool running() const { return proc_.started() && !reaped_; }
+    // false once the process has exited; *status = how it ended
+    bool alive(kproc::ExitStatus* status);
     // Queue a message. max_backlog > 0 (samples): dropped (false) while more
     // than max_backlog bytes are still unwritten - the plugin reads slower
     // than they come; 0 = always queued (control messages).
@@ -154,9 +156,9 @@ public:
     std::vector<std::string> stderr_tail() const;
 
 private:
-    pid_t pid_ = -1;
-    int exit_status_ = 0;          // waitpid status once reaped
-    int in_fd_ = -1, out_fd_ = -1, err_fd_ = -1;
+    kproc::Process proc_;          // stdin / stdout / stderr pipes, non-blocking on our side
+    bool reaped_ = false;
+    kproc::ExitStatus exit_status_;   // once reaped
     std::string wbuf_;
     size_t wpos_ = 0;           // wbuf_[0, wpos_) is written (flush())
     std::vector<char> rbuf_;

@@ -26,6 +26,7 @@
 #include "networking/web_mapper.hpp"
 #include "networking/websocket_server.hpp"
 #include "utils/json_escape.hpp"
+#include "utils/fs_compat.hpp"
 #include "ai_manager.hpp"
 #include "digital/dig_plugin.hpp"
 #include "utils/parse_num.hpp"
@@ -798,7 +799,9 @@ static std::string build_log_list_json() {
     auto files = doa_list_recordings();
     for (size_t i = 0; i < files.size(); i++) {
         if (i) js << ",";
-        uint64_t size = (running && files[i].name == active) ? active_bytes : files[i].size;
+        // fs_same_name: on Windows the folder may spell the active file
+        // differently ("Rec.csv" opened as an existing "rec.csv")
+        uint64_t size = (running && fs_same_name(files[i].name, active)) ? active_bytes : files[i].size;
         js << "{\"name\":\"" << json_escape(files[i].name)
            << "\",\"size\":" << size
            << ",\"mtime\":" << files[i].mtime_ms << "}";
@@ -2532,7 +2535,8 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     else if (message.starts_with("LOG_DELETE:")) {
         string name = string(message.substr(11));
-        if (doa_logger.isRunning() && doa_sanitize_filename(name) == doa_logger.activeFilename()) {
+        // fs_same_name: on Windows "REC.csv" / "rec.csv." are the active rec.csv too
+        if (doa_logger.isRunning() && fs_same_name(doa_sanitize_filename(name), doa_logger.activeFilename())) {
             cout << "DoA log delete refused (recording in progress): " << name << endl;
         } else {
             bool ok = doa_delete_recording(name);

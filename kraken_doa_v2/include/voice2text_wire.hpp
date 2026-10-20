@@ -10,6 +10,14 @@
 
 #include <cstdint>
 
+// Windows: wingdi.h (through windows.h, e.g. from uWebSockets' winsock2.h)
+// has #define ERROR 0, which would turn wire::ERROR below into "0 = 18".
+// The Windows builds define NOGDI; this covers a build that doesn't (no
+// code here uses GDI's ERROR).
+#if defined(_WIN32) && defined(ERROR)
+#undef ERROR
+#endif
+
 namespace v2t::wire {
 
 // kraken_doa -> helper

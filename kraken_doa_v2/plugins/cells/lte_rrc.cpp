@@ -111,7 +111,9 @@ void ac_barring(Bits& r, const std::string& what, Lines* L) {
     static const int TIME[8] = {4, 8, 16, 32, 64, 128, 256, 512};
     const int f = r.range(0, 15), t = r.range(0, 7);
     const int sp = static_cast<int>(r.u(5));
-    L->push_back({what, std::string("factor ") + FAC[f] + " %, " + S(TIME[t]) + " s" + (sp ? ", special AC 0x" + F("%02x", sp) : "")});
+    char hx[8];
+    snprintf(hx, sizeof hx, "%02x", sp);   // not F(): an integer format
+    L->push_back({what, std::string("factor ") + FAC[f] + " %, " + S(TIME[t]) + " s" + (sp ? ", special AC 0x" + std::string(hx) : "")});
 }
 
 // --- SIB1 ---
@@ -216,7 +218,9 @@ bool sib1(Bits& r, Sib1* s) {
     std::string pl;
     for (const auto& p : s->plmn) pl += (pl.empty() ? "" : ", ") + p.text() + (p.reserved ? " (reserved for operator use)" : "");
     L.push_back({"PLMN", pl});
-    L.push_back({"Tracking area code", S(s->tac) + F(" (0x%04X)", s->tac)});
+    char tachx[16];
+    snprintf(tachx, sizeof tachx, " (0x%04X)", static_cast<unsigned>(s->tac));   // not F(): an integer format
+    L.push_back({"Tracking area code", S(s->tac) + tachx});
     char cid[96];
     snprintf(cid, sizeof cid, "%u (0x%07X): eNB %u, cell %u", s->cell_id, s->cell_id, s->cell_id >> 8, s->cell_id & 0xFF);
     L.push_back({"Cell identity", cid});

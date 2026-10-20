@@ -1,13 +1,12 @@
 #include "geo_http.hpp"
+#include "utils/net_compat.hpp"   // sockets: BSD on Linux, Winsock on Windows
+#include "utils/tls_compat.hpp"
 
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
 
-#include <netdb.h>
-#include <sys/socket.h>
 #include <sys/time.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <cctype>
@@ -53,13 +52,20 @@ bool https_get(const std::string& host, const std::string& path_query, const std
     }
     int fd = -1;
     for (auto* ai = res; ai; ai = ai->ai_next) {
-        fd = socket(ai->ai_family, ai->ai_socktype | SOCK_CLOEXEC, ai->ai_protocol);
+        fd = sock_socket(ai->ai_family, ai->ai_socktype | SOCK_CLOEXEC, ai->ai_protocol);
         if (fd < 0) continue;
+        // (sock_setsockopt: Winsock takes a DWORD of ms - read as a timeval
+        // this was 15 ms, too short for any handshake)
         timeval tv{15, 0};
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+        sock_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+        sock_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+#ifdef _WIN32
+        // SO_SNDTIMEO doesn't bound connect() on Windows (~21 s per address)
+        if (sock_connect_timeout(fd, ai->ai_addr, static_cast<socklen_t>(ai->ai_addrlen), 15000) == 0) break;
+#else
         if (::connect(fd, ai->ai_addr, ai->ai_addrlen) == 0) break;
-        ::close(fd);
+#endif
+        sock_close(fd);
         fd = -1;
     }
     freeaddrinfo(res);
@@ -69,10 +75,11 @@ bool https_get(const std::string& host, const std::string& path_query, const std
     auto done = [&](bool ok) {
         if (ssl) { SSL_shutdown(ssl); SSL_free(ssl); }
         if (ctx) SSL_CTX_free(ctx);
-        ::close(fd);
+        sock_close(fd);
         return ok;
     };
-    if (!ctx || SSL_CTX_set_default_verify_paths(ctx) != 1) { *err = "TLS setup failed"; return done(false); }
+    // CA certificates: utils/tls_compat.hpp (Linux: the default verify paths)
+    if (!ctx || tls_load_system_roots(ctx) != 1) { *err = "TLS setup failed"; return done(false); }
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
     ssl = SSL_new(ctx);
     if (!ssl) { *err = "TLS setup failed"; return done(false); }

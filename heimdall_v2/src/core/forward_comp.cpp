@@ -1,6 +1,7 @@
 #include "forward_comp.hpp"
 #include "config.hpp"
 #include "utils.hpp"
+#include "fs_compat.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -73,6 +74,13 @@ bool valid_basename(const std::string& filename, std::string& err) {
         err = "invalid filename";
         return false;
     }
+    // Windows also turns ':' (a drive, an NTFS alternate data stream), < > " | ? *,
+    // a trailing dot and device names ("nul.s2p" opens NUL) into something
+    // other than a file in CAL_DIR. Always true on Linux.
+    if (!fs_portable_name(filename)) {
+        err = "invalid filename";
+        return false;
+    }
     return true;
 }
 
@@ -100,7 +108,14 @@ bool parse_stream(std::istream& f, int ports,
     std::vector<double> nums;  // all numeric data tokens, in file order
 
     std::string line;
+    bool first_line = true;
     while (std::getline(f, line)) {
+        // A UTF-8 byte-order mark (Windows VNA software / editors) made a data
+        // first line unparseable, so the value count missed the stride
+        if (first_line) {
+            first_line = false;
+            if (line.rfind("\xEF\xBB\xBF", 0) == 0) line.erase(0, 3);
+        }
         // Strip '!' comments (anywhere on the line).
         if (auto bang = line.find('!'); bang != std::string::npos) line.erase(bang);
         // Option line "# <unit> S <format> R <z0>": parse units/format, ignore rest.
@@ -242,11 +257,16 @@ std::vector<std::string> list_files() {
     fs::create_directories(CAL_DIR, ec);   // best-effort; ignore failure
     if (fs::is_directory(CAL_DIR, ec)) {
         for (fs::directory_iterator it(CAL_DIR, ec), end; !ec && it != end; it.increment(ec)) {
-            std::error_code fec;
-            if (!it->is_regular_file(fec)) continue;
-            const std::string ext = upper(it->path().extension().string());
-            if (ext == ".S2P" || ext == ".S1P")
-                files.push_back(it->path().filename().string());
+            // Windows: string() converts the UTF-16 name to UTF-8 and throws
+            // for one that isn't valid UTF-16 - skip that file, don't throw
+            try {
+                std::error_code fec;
+                if (!it->is_regular_file(fec)) continue;
+                const std::string ext = upper(it->path().extension().string());
+                if (ext == ".S2P" || ext == ".S1P")
+                    files.push_back(it->path().filename().string());
+            } catch (const std::exception&) {
+            }
         }
     }
     std::sort(files.begin(), files.end());
@@ -287,10 +307,11 @@ bool delete_file(const std::string& filename, std::string& err) {
     if (!fs::remove(p, ec) || ec) { err = "delete failed"; return false; }
 
     // Drop the file from any channel that referenced it; recompute() (called by
-    // the caller) then reverts those channels to identity.
+    // the caller) then reverts those channels to identity. (fs_same_name:
+    // Windows names are case-insensitive - deleting "a.s2p" removed "A.s2p")
     std::lock_guard<std::mutex> lk(forward_comp.mutex);
     for (int k = 0; k < ForwardCompensation::N; ++k) {
-        if (forward_comp.files[k] == filename) {
+        if (fs_same_name(forward_comp.files[k], filename)) {
             forward_comp.files[k].clear();
             forward_comp.tables[k].clear();
             forward_comp.loaded[k] = false;

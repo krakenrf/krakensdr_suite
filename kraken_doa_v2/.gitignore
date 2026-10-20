@@ -2,6 +2,7 @@
 obj/
 dep/
 kraken_doa
+kraken_doa.exe
 
 # Vendored dependency (auto-installed by Makefile)
 uWebSockets/
@@ -39,6 +40,8 @@ api_token
 
 # Decoder plugin builds (the sources in plugins/<id>/ are the plugin)
 plugins/*/build/
+# prebuilt test-signal generators (Windows: plugins/Makefile)
+plugins/*/tools/build/
 plugins/sdk/build/
 # AI Signal Lab: per-receiver config and session data (captures, analyses)
 ai/ai_config.json

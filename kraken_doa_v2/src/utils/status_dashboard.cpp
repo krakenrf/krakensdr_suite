@@ -16,6 +16,7 @@
 #include "signal_processing/music_processor.hpp"
 #include "utils/system_stats.hpp"
 #include "utils/raw_data_buffer.hpp"
+#include "utils/platform.hpp"
 
 #include <atomic>
 #include <cctype>
@@ -33,7 +34,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include <sys/ioctl.h>
 #include <unistd.h>
 
 using namespace std;
@@ -156,15 +156,20 @@ void term_write(const string& s) {
     }
 }
 
+// Visible size (Linux: TIOCGWINSZ; Windows: the console WINDOW, not its
+// scroll-back buffer - see platform::console_size)
 void term_size(int& rows, int& cols) {
-    struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0 && ws.ws_col > 0) {
-        rows = ws.ws_row;
-        cols = ws.ws_col;
-    } else {
+    if (!platform::console_size(&cols, &rows)) {
         rows = 24;
         cols = 80;
     }
+#ifdef _WIN32
+    // Older Windows consoles wrap - and on the last row scroll - as soon as a
+    // write fills the last column (a VT terminal waits for the next
+    // character), so a full-width row (the rule, a long log line) pushed the
+    // rest of the frame down a line. Never write into that column.
+    if (cols > 1) cols--;
+#endif
 }
 
 // Clip a (possibly colored) string to `cols` visible columns, treating ANSI CSI
@@ -219,8 +224,9 @@ string f2(float v) { char b[32]; snprintf(b, sizeof(b), "%.2f", v); return b; }
 // link works from another device on the network; computed once.
 string web_url() {
     static const string url = [] {
-        char h[256] = {0};
-        string host = (gethostname(h, sizeof(h) - 1) == 0 && h[0]) ? string(h) : string("localhost");
+        // gethostname on Linux; Windows: the computer's DNS host name
+        string host = platform::host_name();
+        if (host.empty()) host = "localhost";
         return "https://" + host + ":" + to_string(WEB_PORT);
     }();
     return url;
@@ -368,9 +374,14 @@ bool active() { return g_active; }
 
 void begin() {
     if (g_active) return;
-    if (!isatty(STDOUT_FILENO)) return;               // piped/redirected -> plain path
+    // piped/redirected -> plain path. Windows: a real console only - mintty's
+    // pipe (MSYS2 / Git Bash) has no window size, NUL passes _isatty()
+    if (!platform::stdout_is_terminal()) return;
     const char* off = getenv("KRAKEN_DOA_NO_TUI");
     if (off && off[0] && strcmp(off, "0") != 0) return;
+    // Windows: the console only understands the escape sequences below with
+    // VT processing on (Windows 10 1809+); without it, keep the plain path
+    if (!platform::console_enable_vt()) return;
 
     g_start = steady_clock::now();
 
@@ -758,7 +769,10 @@ void end() {
     if (!g_active) return;
     g_active = false;
 
-    // Leave the alternate screen and show the cursor.
+    // Leave the alternate screen and show the cursor. (Windows: the console's
+    // VT mode and UTF-8 code page stay on until platform::fast_exit puts them
+    // back at the process end - restored here, the UTF-8 in the log tail and
+    // the shutdown messages that follow would come out garbled.)
     term_write("\033[?25h\033[?1049l");
 
     // Restore the real cout/cerr so shutdown messages print normally.

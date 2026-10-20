@@ -7,9 +7,11 @@
 //    mbe_tables.hpp) with a per-instance random generator.
 //  - MbeLib: AMBE (D-STAR, 3600x2400) and AMBE+2 (DMR, 3600x2450) through a
 //    mbelib the USER installed (README "Digital voice codecs"). Loaded at run
-//    time with dlopen, so kraken_doa neither ships nor links any AMBE code.
+//    time with dlopen, so kraken_doa neither ships nor links any AMBE code
+//    (Windows: libmbe.dll through dlfcn-win32).
 //  - TetraCodec: TETRA ACELP through the ETSI reference codec programs
 //    (cdecoder / sdecoder) the user built (README), run as child processes.
+//    Not on Windows: the programs need /dev/stdin and /dev/stdout.
 //
 // All decoders output 8 kHz float audio, nominally +-1.
 

@@ -22,16 +22,18 @@ namespace {
 constexpr size_t MAX_CONTROL_TX_BACKLOG = 256 * 1024;
 
 // Bounded so a reconnect storm cannot exhaust fds, and so no client socket can
-// reach select()'s FD_SETSIZE limit.
+// reach select()'s FD_SETSIZE limit (on Windows: 16 + the listener stay well
+// inside the 64 sockets a Winsock fd_set holds).
 constexpr size_t MAX_CONTROL_CLIENTS = 16;
 
 // Push as much of the queued output as the socket will take right now. Assumes
 // a non-blocking socket: a full send buffer is normal back-pressure (retry when
-// select() reports writable), not a connection failure.
+// select() reports writable), not a connection failure. sock_send sets errno
+// from the Winsock error on Windows, so the EAGAIN test holds there too.
 void flush_output(TcpClient* client) {
     while (!client->tx_buffer.empty()) {
-        ssize_t sent = send(client->socket, client->tx_buffer.data(),
-                            client->tx_buffer.size(), MSG_NOSIGNAL);
+        ssize_t sent = sock_send(client->socket, client->tx_buffer.data(),
+                                 client->tx_buffer.size(), MSG_NOSIGNAL);
         if (sent > 0) {
             client->tx_buffer.erase(0, static_cast<size_t>(sent));
             continue;
@@ -56,6 +58,128 @@ void queue_output(TcpClient* client, const std::string& data) {
     flush_output(client);
 }
 
+// The reply to a set_frequency / set_gain that update_sdr_settings did not
+// apply as asked (!res.ok()): "error", why, and the setting the tuners are
+// on now - a rolled-back retune used to reply "success" with the requested
+// frequency while every tuner was back on the previous one.
+std::string settings_error_reply(const SdrUpdateResult& res, bool is_frequency) {
+    const char* what = is_frequency ? "Retune" : "Gain change";
+    std::string msg;
+    auto add = [&msg](const std::string& part) { msg += (msg.empty() ? "" : "; ") + part; };
+    if (res.frequency_out_of_range) add("Frequency out of range - unchanged");
+    if (res.lo_retune_failed) add("LO retune failed - frequency unchanged");
+    if (!res.failed_channels.empty()) {
+        if (res.restore_failed)
+            add(std::string(what) + " failed on channel(s) " + res.failed_channels +
+                " and restoring the previous settings failed on channel(s) " + res.restore_failed_channels +
+                " - tuners inconsistent, coherence recovery forced");
+        else if (res.rolled_back)
+            add(std::string(what) + " failed on channel(s) " + res.failed_channels + " - previous settings restored");
+        else  // independent mode: recorded per tuner, no rollback
+            add(std::string(what) + " failed on channel(s) " + res.failed_channels +
+                " - the failed tuner(s) keep their previous settings, the others took the new ones");
+    }
+    std::ostringstream o;
+    o << "{\"status\":\"error\",\"message\":\"" << msg << "\"";
+    if (is_frequency) o << ",\"frequency\":" << res.frequency;
+    else o << ",\"gain\":" << (res.gain < 0 ? -1.0 : res.gain / 10.0);
+    if (!res.failed_channels.empty()) o << ",\"failed_channels\":[" << res.failed_channels << "]";
+    o << "}";
+    return o.str();
+}
+
+// The closing brace of the JSON object starting at buf[start] ('{'), npos
+// while it is incomplete. Quote-aware, so braces inside string values don't
+// count.
+size_t json_object_end(const std::string& buf, size_t start) {
+    int depth = 0;
+    bool in_string = false, escaped = false;
+    for (size_t i = start; i < buf.size(); i++) {
+        const char c = buf[i];
+        if (escaped)          { escaped = false; continue; }
+        if (c == '\\')        { escaped = in_string; continue; }
+        if (c == '"')         { in_string = !in_string; continue; }
+        if (in_string)        continue;
+        if (c == '{')         depth++;
+        else if (c == '}' && --depth == 0) return i;
+    }
+    return std::string::npos;
+}
+
+#ifdef _WIN32
+// Windows: a retune took ~0.45 s with 00606c0's librtlsdr (every USB control
+// transfer to the KrakenSDR costs ~4 ms on WinUSB, and the tuners are tuned
+// one after the other - for_each_tuner; the fork's fewer transfers: ~0.11 s,
+// a drag step ~0.07 s), while a page dragging the spectrum sends ~20
+// set_frequency a second: run one by one, they kept the array retuning for
+// seconds after the drag (1 s of dragging: the last frequency 7.7 s late).
+// A command whose setting the NEXT queued command sets again is skipped
+// (latest wins), still answered, so replies stay one per command, in order.
+
+// The kind of a command as process_command dispatches it (its first
+// matching key, in process_command's order); "" for kinds never skipped,
+// and for a command its values would get refused (that one runs and
+// answers its error, and never stands in for the one before it).
+// set_independent_tuner: per tuner and per field set (frequency / gain).
+std::string superseding_key(const std::string& cmd) {
+    // "key":<finite number>, parsed as process_command's num_field does
+    auto num = [&](const char* key, double& out) {
+        const std::string k = std::string("\"") + key + "\":";
+        size_t p = cmd.find(k);
+        if (p == std::string::npos) return false;
+        p += k.size();
+        try { out = std::stod(cmd.substr(p, cmd.find_first_of(",}", p) - p)); } catch (...) { return false; }
+        return std::isfinite(out);
+    };
+    // dB -> tenths as set_gain / set_independent_tuner convert it; -1 = auto
+    auto gain_ok = [](double db) { return db < 0 || (db <= 1000.0 && std::lround(db * 10.0) <= 500); };
+    static const char* const order[] = {"get_status", "set_operating_mode", "set_independent_tuner",
+        "set_num_elements", "set_frequency", "set_mixer_side", "set_array", "set_if_vga",
+        "set_lo_current", "set_stability_delay", "set_gain"};
+    for (const char* k : order) {
+        const std::string kind = k;
+        if (cmd.find("\"" + kind + "\"") == std::string::npos) continue;
+        double v = 0;
+        if (kind == "set_frequency")
+            return num("frequency", v) && v > 0 && v < 1e12 &&
+                   rf_frequency_valid(static_cast<uint64_t>(std::llround(v))) ? kind : "";
+        if (kind == "set_gain") return num("gain", v) && gain_ok(v) ? kind : "";
+        if (kind != "set_independent_tuner") return "";
+        double ch = 0, f = 0, g = 0;
+        if (operating_mode.load() != OperatingMode::INDEPENDENT || !num("channel", ch) || ch < 0 ||
+            ch >= std::min(active_num_elements.load(), NUM_DEVICES) || ch != std::floor(ch))
+            return "";
+        const bool have_f = num("frequency", f), have_g = num("gain", g);
+        if (!have_f && !have_g) return "";
+        if (have_f && !(f >= RTL_TUNER_MIN_HZ && f <= RTL_TUNER_MAX_HZ)) return "";
+        if (have_g && !gain_ok(g)) return "";
+        return kind + ":" + std::to_string(static_cast<int>(ch)) + (have_f ? ":f" : "") + (have_g ? ":g" : "");
+    }
+    return "";
+}
+
+// Whether the complete command queued at rx[from...] sets again what cmd sets
+bool superseded_by_next(const std::string& rx, size_t from, const std::string& cmd) {
+    while (from < rx.size() && (rx[from] == '\n' || rx[from] == '\r' || rx[from] == ' ' || rx[from] == '\t')) from++;
+    if (from >= rx.size() || rx[from] != '{') return false;
+    const size_t end = json_object_end(rx, from);
+    if (end == std::string::npos) return false;
+    const std::string key = superseding_key(cmd);
+    return !key.empty() && key == superseding_key(rx.substr(from, end - from + 1));
+}
+
+// Everything the client has sent so far into rx_buffer (to its cap), so the
+// command after the one about to run is there to be seen
+void read_available(TcpClient* client) {
+    char buffer[4096];
+    while (client->rx_buffer.size() < 65536) {
+        const ssize_t n = sock_recv(client->socket, buffer, sizeof(buffer), 0);
+        if (n <= 0) return;  // nothing waiting, or closed (the next select pass sees that)
+        client->rx_buffer.append(buffer, static_cast<size_t>(n));
+    }
+}
+#endif
+
 } // namespace
 
 TcpControlServer::TcpControlServer() : server_socket(-1) {}
@@ -65,12 +189,22 @@ TcpControlServer::~TcpControlServer() {
 }
 
 bool TcpControlServer::start() {
-    server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    server_socket = sock_socket(AF_INET, SOCK_STREAM, 0);
     if (server_socket < 0) return false;
     
-    if (!set_socket_reuse(server_socket)) {
-        close(server_socket);
+    // On a failure errno stays the error of the failed call (main's message
+    // shows it on Windows - listen_error_detail), and the socket is closed
+    // once: stop() (the destructor) must not close the number again.
+    auto fail = [this]() {
+        const int err = errno;
+        sock_close(server_socket);
+        server_socket = -1;
+        errno = err;
         return false;
+    };
+
+    if (!set_socket_reuse(server_socket)) {
+        return fail();
     }
     
     sockaddr_in addr{};
@@ -78,9 +212,8 @@ bool TcpControlServer::start() {
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(TCP_CONTROL_PORT);
     
-    if (bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0 || listen(server_socket, 5) < 0) {
-        close(server_socket);
-        return false;
+    if (sock_bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0 || sock_listen(server_socket, 5) < 0) {
+        return fail();
     }
     
     server_thread = std::thread(&TcpControlServer::control_loop, this);
@@ -113,7 +246,7 @@ std::string rf_range_error(const std::string& given) {
 void TcpControlServer::stop() {
     running = false;
     if (server_socket >= 0) {
-        close(server_socket);
+        sock_close(server_socket);
         server_socket = -1;
     }
     if (server_thread.joinable()) {
@@ -279,27 +412,52 @@ void TcpControlServer::control_loop() {
         }
 
         timeval timeout{0, 100000}; // 100ms timeout
-        int result = select(max_fd + 1, &read_fds, &write_fds, nullptr, &timeout);
+        int result = sock_select(max_fd + 1, &read_fds, &write_fds, nullptr, &timeout);
+        if (result < 0) {
+            // A failing select() returns at once: don't spin on it. (Windows
+            // fails the whole call when broadcast_status() closed a reaped
+            // client's socket after the sets were built.)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
 
         if (result > 0) {
             // Check for new connections
             if (FD_ISSET(server_socket, &read_fds)) {
                 sockaddr_in client_addr{};
                 socklen_t addr_len = sizeof(client_addr);
-                int client_socket = accept(server_socket, (sockaddr*)&client_addr, &addr_len);
+                // sock_accept: on Windows also not inherited by child processes
+                int client_socket = sock_accept(server_socket, (sockaddr*)&client_addr, &addr_len);
                 
                 if (client_socket >= 0) {
                     std::lock_guard<std::mutex> lock(clients_mutex);
                     // select() cannot watch an fd at or beyond FD_SETSIZE, and
                     // FD_SET on one corrupts memory - refuse rather than risk it.
-                    if (client_socket >= FD_SETSIZE || clients.size() >= MAX_CONTROL_CLIENTS) {
+                    // (Windows: an fd_set is a list of FD_SETSIZE sockets of any
+                    // handle value - there it is the count that matters, the
+                    // listener + the clients already in the set.)
+                    if (!sock_fits_fd_set(client_socket, static_cast<int>(clients.size()) + 1) ||
+                        clients.size() >= MAX_CONTROL_CLIENTS) {
                         std::cerr << "TCP Control: refusing connection (fd " << client_socket
                                   << ", " << clients.size() << " clients)" << std::endl;
-                        close(client_socket);
+                        sock_close(client_socket);
                     } else {
                         // Non-blocking: every write to this socket goes through
                         // flush_output(), which treats EAGAIN as back-pressure.
                         set_socket_nonblocking(client_socket);
+                        // Small commands, each answered at once: no Nagle.
+                        // A reply queued while the 2 Hz status broadcast is
+                        // still unacknowledged otherwise waits for the
+                        // client's delayed ACK - Windows' ~200 ms; on a Pi 5
+                        // every ~10th drag reply came 40-47 ms after a
+                        // broadcast that fell inside the step (Linux's 40 ms
+                        // delayed ACK; ~12 ms late) while this was set on
+                        // Windows only - with it on Linux too: 0 late replies
+                        // in 4 Pi drag runs (2026-10-20). Not on 8091 / 1234:
+                        // bulk sample streams, where Nagle only merges a
+                        // block's tail.
+                        const int nodelay = 1;
+                        sock_setsockopt(client_socket, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
                         clients.push_back(std::make_unique<TcpClient>(client_socket));
                         std::cout << "TCP Control: Client connected from " << inet_ntoa(client_addr.sin_addr) << std::endl;
                     }
@@ -322,7 +480,7 @@ void TcpControlServer::control_loop() {
 
 void TcpControlServer::handle_client_data(TcpClient* client) {
     char buffer[1024];
-    ssize_t bytes_read = recv(client->socket, buffer, sizeof(buffer), 0);
+    ssize_t bytes_read = sock_recv(client->socket, buffer, sizeof(buffer), 0);
 
     if (bytes_read < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
         return;  // spurious readability on the non-blocking socket, not a drop
@@ -375,22 +533,22 @@ void TcpControlServer::handle_client_data(TcpClient* client) {
             continue;
         }
 
-        int depth = 0;
-        bool in_string = false, escaped = false;
-        size_t end = std::string::npos;
-        for (size_t i = start; i < client->rx_buffer.size(); i++) {
-            const char c = client->rx_buffer[i];
-            if (escaped)          { escaped = false; continue; }
-            if (c == '\\')        { escaped = in_string; continue; }
-            if (c == '"')         { in_string = !in_string; continue; }
-            if (in_string)        continue;
-            if (c == '{')         depth++;
-            else if (c == '}' && --depth == 0) { end = i; break; }
-        }
+        const size_t end = json_object_end(client->rx_buffer, start);
         if (end == std::string::npos) break;  // incomplete - wait for more data
 
         std::string command = client->rx_buffer.substr(start, end - start + 1);
         start = end + 1;
+
+#ifdef _WIN32
+        // latest wins (see superseding_key); not during a reconfiguration,
+        // which refuses the command anyway
+        read_available(client);
+        if (!reconfig_in_progress.load(std::memory_order_acquire) &&
+            superseded_by_next(client->rx_buffer, start, command)) {
+            queue_output(client, "{\"status\":\"success\",\"superseded\":true}\n");
+            continue;
+        }
+#endif
 
         try {
             auto response = process_command(command);
@@ -551,8 +709,24 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                         return "{\"status\":\"success\",\"frequency\":" + std::to_string(frequency) + "}";
                     }
 
+#ifdef _WIN32
+                    // Windows retunes the tuners one after the other: enter the
+                    // cooldown before the sweep too, so clients see
+                    // WAITING_FOR_STABILITY (and hold DoA) while the array is
+                    // split across two frequencies, not only once it is done.
+                    // Only from CONVERGED (the later retunes of a drag are in the
+                    // cooldown already); not with --kerberos (STALE logged twice),
+                    // during a recovery or a discrete scan (each call restarts /
+                    // defers again) or on the downconverter (an LO retune).
+                    if (frequency != current_frequency.load() && !kerberos_manual_cal_only() &&
+                        !downconverter.enabled.load() && !discrete_scanner.enabled.load() &&
+                        !recovery_in_progress.load(std::memory_order_acquire) &&
+                        get_phase_compensation_state() == PhaseCompensatorState::CONVERGED)
+                        begin_retune_cooldown("Frequency changing");
+#endif
                     // Coherent mode: update all tuners to same frequency
-                    bool changed = update_sdr_settings(frequency, -999, devices);
+                    SdrUpdateResult res;
+                    bool changed = update_sdr_settings(frequency, -999, devices, &res);
                     // Skip the cooldown override during a coherence recovery: the
                     // hardware is already retuned and the recovery recalibrates
                     // lag+phase at the new frequency; clobbering its state / killing
@@ -565,6 +739,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                         // (--kerberos: marks the calibration STALE instead)
                         begin_retune_cooldown("Frequency changed");
                     }
+                    if (!res.ok()) return settings_error_reply(res, true);
                     return "{\"status\":\"success\",\"frequency\":" + std::to_string(frequency) + "}";
                 } else {
                     return "{\"status\":\"error\",\"message\":\"Frequency out of range (" +
@@ -778,7 +953,8 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                 int gain = (gain_db < 0) ? -1 : static_cast<int>(std::lround(gain_db * 10.0));
 
                 if (gain == -1 || (gain >= 0 && gain <= 500)) {
-                    bool changed = update_sdr_settings(0, gain, devices);
+                    SdrUpdateResult res;
+                    bool changed = update_sdr_settings(0, gain, devices, &res);
                     if (changed) {
                         // In wideband mode, skip cooldown - phase calibration is disabled anyway
                         if (operating_mode.load() != OperatingMode::COHERENT) {
@@ -790,6 +966,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                             begin_retune_cooldown("Gain changed");
                         }
                     }
+                    if (!res.ok()) return settings_error_reply(res, false);
                     std::ostringstream applied;
                     applied << (gain < 0 ? -1.0 : gain / 10.0);
                     return "{\"status\":\"success\",\"gain\":" + applied.str() + "}";

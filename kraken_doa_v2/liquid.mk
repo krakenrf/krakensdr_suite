@@ -30,17 +30,42 @@ LIQUID_LOG := $(LIQUID_DIR)/build-kraken.log
 # NEON / SSE dot products (liquid's CMake picks them); -march=native as the
 # rest of the build. armv7 needs -mfpu=neon for liquid to find NEON
 LIQUID_ARCH := $(shell uname -m)
-ifeq ($(LIQUID_ARCH),armv7l)
+# Windows (MSYS2 UCRT64): the exes' portable -march (WIN_MARCH, see
+# kraken_doa_v2/Makefile) instead of native, unaligned AVX moves (GCC bug
+# 54412), and two Linux-isms of liquid's CMakeLists patched after checkout:
+# it runs scripts/version.sh directly (Windows can't execute a .sh - through
+# sh then) and links its shared library with -lc (no libc.a on MinGW). The
+# library itself is the same static archive of objects (*.obj there).
+LIQUID_WINDOWS := $(if $(findstring mingw,$(shell $(CC) -dumpmachine 2>/dev/null)),1,)
+ifeq ($(LIQUID_WINDOWS),1)
+LIQUID_CFLAGS ?= $(or $(WIN_MARCH),-march=x86-64-v3 -mtune=generic) -Wa,-muse-unaligned-vector-move
+# liquid picks its dot-product SIMD by RUNNING test programs on the build PC
+# (cmake/FindSIMD.cmake) and ignores -march: on an AVX-512 build machine the
+# archive got AVX-512 code - an illegal instruction on most other CPUs. The
+# extensions above WIN_MARCH are switched off (x86-64-v3 = up to AVX2,
+# x86-64-v2 = SSE4); WIN_MARCH=-march=native keeps liquid's own choice.
+ifneq ($(findstring x86-64-v2,$(LIQUID_CFLAGS)),)
+LIQUID_CMAKE_SIMD = -DC_AVX512_FOUND:BOOL=FALSE -DCXX_AVX512_FOUND:BOOL=FALSE -DC_AVX2_FOUND:BOOL=FALSE \
+	-DCXX_AVX2_FOUND:BOOL=FALSE -DC_AVX_FOUND:BOOL=FALSE -DCXX_AVX_FOUND:BOOL=FALSE
+else ifeq ($(findstring native,$(LIQUID_CFLAGS)),)
+LIQUID_CMAKE_SIMD = -DC_AVX512_FOUND:BOOL=FALSE -DCXX_AVX512_FOUND:BOOL=FALSE
+endif
+LIQUID_PATCH = sed -i -e 's|COMMAND $${CMAKE_CURRENT_SOURCE_DIR}/scripts/version.sh|COMMAND sh $${CMAKE_CURRENT_SOURCE_DIR}/scripts/version.sh|' \
+	-e 's|target_link_libraries($${LIBNAME} c m)|target_link_libraries($${LIBNAME} m)|' $(LIQUID_DIR)/CMakeLists.txt
+else ifeq ($(LIQUID_ARCH),armv7l)
 LIQUID_CFLAGS ?= -march=native -mfpu=neon
 else ifneq ($(filter aarch64 x86_64,$(LIQUID_ARCH)),)
 LIQUID_CFLAGS ?= -march=native
 endif
+LIQUID_PATCH ?= true
+# what the archive was built from: the commit, plus (Windows) the CPU target
+LIQUID_STAMP = $(LIQUID_COMMIT)$(if $(LIQUID_WINDOWS), $(strip $(LIQUID_CFLAGS) $(LIQUID_CMAKE_SIMD)),)
 
 # A library built from another commit (an older pin) is rebuilt: the build
 # (archive + header) removed here, before any rule runs, so everything that
 # includes the header is compiled again too
 ifneq ($(wildcard $(LIQUID_A)),)
-ifneq ($(shell cat $(LIQUID_BUILD)/commit 2>/dev/null),$(LIQUID_COMMIT))
+ifneq ($(shell cat $(LIQUID_BUILD)/commit 2>/dev/null),$(LIQUID_STAMP))
 $(info liquid-dsp was built from another commit - rebuilding $(LIQUID_COMMIT))
 LIQUID_SWITCH := $(shell rm -rf $(LIQUID_BUILD))
 endif
@@ -64,17 +89,18 @@ $(LIQUID_A):
 		git -C $(LIQUID_DIR) fetch -q --depth 1 origin $(LIQUID_COMMIT) || \
 		{ echo "could not fetch liquid-dsp $(LIQUID_COMMIT) - delete $(LIQUID_DIR) and run make again"; exit 1; }; \
 	fi
-	@git -C $(LIQUID_DIR) -c advice.detachedHead=false checkout -q --force $(LIQUID_COMMIT)
+	@git -C $(LIQUID_DIR) -c advice.detachedHead=false -c core.autocrlf=false checkout -q --force $(LIQUID_COMMIT)
+	@$(LIQUID_PATCH)
 	@rm -rf $(LIQUID_BUILD)
 	@cmake -S $(LIQUID_DIR) -B $(LIQUID_BUILD) -DCMAKE_BUILD_TYPE=Release \
 		-DBUILD_EXAMPLES=OFF -DBUILD_AUTOTESTS=OFF -DBUILD_BENCHMARKS=OFF \
-		-DCMAKE_C_FLAGS="$(LIQUID_CFLAGS)" > $(LIQUID_LOG) 2>&1 || \
+		-DCMAKE_C_FLAGS="$(LIQUID_CFLAGS)" $(LIQUID_CMAKE_SIMD) > $(LIQUID_LOG) 2>&1 || \
 		{ tail -20 $(LIQUID_LOG); exit 1; }
 	+@cmake --build $(LIQUID_BUILD) --target liquid >> $(LIQUID_LOG) 2>&1 || \
 		{ grep -E 'error|Error' $(LIQUID_LOG) | head -20; tail -5 $(LIQUID_LOG); exit 1; }
-	@find $(LIQUID_BUILD)/CMakeFiles -path '*.dir/*' -name '*.o' | LC_ALL=C sort > $(LIQUID_BUILD)/objects
+	@find $(LIQUID_BUILD)/CMakeFiles -path '*.dir/*' \( -name '*.o' -o -name '*.obj' \) | LC_ALL=C sort > $(LIQUID_BUILD)/objects
 	@rm -f $@.tmp && ar rcs $@.tmp $$(cat $(LIQUID_BUILD)/objects)
 	@mkdir -p $(LIQUID_INC)/liquid && cp -p $(LIQUID_DIR)/include/liquid.h $(LIQUID_INC)/liquid/
-	@echo $(LIQUID_COMMIT) > $(LIQUID_BUILD)/commit
+	@echo '$(LIQUID_STAMP)' > $(LIQUID_BUILD)/commit
 	@mv -f $@.tmp $@
 	@echo "liquid-dsp: $@ ($$(wc -l < $(LIQUID_BUILD)/objects) objects)"

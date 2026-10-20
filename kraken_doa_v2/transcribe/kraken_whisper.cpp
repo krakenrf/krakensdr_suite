@@ -12,9 +12,12 @@
 // Silero VAD (when its model is given): only the speech parts, padded, joined
 // by short silences -> whisper -> text, cleaned of non-speech annotations
 // ("[BLANK_AUDIO]", "(static)") and of the loops and stock phrases whisper
-// invents on noise. The process runs at nice 10, below the receiver.
+// invents on noise. The process runs at nice 10 (Windows: the below-normal
+// priority class), below the receiver.
 
+#ifndef _WIN32
 #include <sys/resource.h>
+#endif
 #include <unistd.h>
 
 #include <algorithm>
@@ -33,6 +36,9 @@
 
 #include "whisper.h"
 #include "voice2text_wire.hpp"
+#ifdef _WIN32
+#include "utils/process.hpp"   // kproc::lower_own_priority (no setpriority / nice on Windows)
+#endif
 
 namespace {
 
@@ -388,7 +394,12 @@ int serve(Opts o, const std::string& model) {
     // so nothing printed by the libraries can corrupt it
     g_out = dup(1);
     dup2(2, 1);
-    std::string ready = "model=" + model.substr(model.find_last_of('/') + 1);
+#ifdef _WIN32
+    const char* const seps = "/\\";   // a Windows path may use either (KRAKEN_WHISPER_MODELS=C:\models)
+#else
+    const char* const seps = "/";
+#endif
+    std::string ready = "model=" + model.substr(model.find_last_of(seps) + 1);
     ready += std::string("\0type=", 6) + whisper_model_type_readable(g_ctx);
     ready += std::string("\0multilingual=", 14) + (g_multilingual ? "1" : "0");
     ready += std::string("\0vad=", 5) + (g_vad ? "1" : "0");
@@ -522,7 +533,11 @@ int main(int argc, char** argv) {
     }
     if (model.empty() || (!serve_mode && file.empty())) { usage(); return 1; }
     // below the receiver: the Pi's cores are shared with the DSP pipeline
+#ifdef _WIN32
+    kproc::lower_own_priority();   // BELOW_NORMAL_PRIORITY_CLASS
+#else
     setpriority(PRIO_PROCESS, 0, 10);
+#endif
     whisper_log_set(quiet_log, nullptr);
 
     whisper_context_params cp = whisper_context_default_params();

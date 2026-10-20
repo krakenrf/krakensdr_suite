@@ -16,8 +16,10 @@
 #include "station_info.hpp"
 #include "signal_processing/music_processor.hpp"
 #include "utils/json_escape.hpp"
+#include "utils/net_compat.hpp"   // sockets: BSD on Linux, Winsock on Windows
 #include "utils/host_check.hpp"
 #include "utils/parse_num.hpp"
+#include "utils/tls_compat.hpp"
 
 #include <openssl/evp.h>
 #include <openssl/err.h>
@@ -26,15 +28,7 @@
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
 
-#include <arpa/inet.h>
 #include <cstring>
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <cctype>
@@ -161,7 +155,7 @@ bool ws_decode(string& buf, WsFrame& out, bool& bad) {
 bool send_all(int fd, const string& data) {
     size_t off = 0;
     while (off < data.size()) {
-        ssize_t n = ::send(fd, data.data() + off, data.size() - off, MSG_NOSIGNAL);
+        ssize_t n = sock_send(fd, data.data() + off, data.size() - off, MSG_NOSIGNAL);
         if (n <= 0) {
             if (n < 0 && (errno == EINTR)) continue;
             return false;
@@ -171,12 +165,24 @@ bool send_all(int fd, const string& data) {
     return true;
 }
 
+// sock_setsockopt: Winsock takes a DWORD of milliseconds, not a timeval
+// (read as one, 8000 ms became 8 ms and 100 ms no timeout at all)
 void set_timeout(int fd, int which, int ms) {
     struct timeval tv;
     tv.tv_sec = ms / 1000;
     tv.tv_usec = (ms % 1000) * 1000;
-    setsockopt(fd, SOL_SOCKET, which, &tv, sizeof(tv));
+    sock_setsockopt(fd, SOL_SOCKET, which, &tv, sizeof(tv));
 }
+
+#ifdef _WIN32
+// Windows: did SSL_read stop at the socket's receive timeout? OpenSSL
+// reports a Winsock timeout as SSL_ERROR_SYSCALL with WSAETIMEDOUT (errno
+// untouched) - EAGAIN on Linux. The connection stays usable: OpenSSL keeps
+// a partly read record for the next call (no alert, no fatal state).
+bool ssl_read_timed_out(int serr) {
+    return serr == SSL_ERROR_SYSCALL && WSAGetLastError() == WSAETIMEDOUT;
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Cloud sink: WSS client to the KrakenPro mapping server
@@ -206,22 +212,29 @@ public:
         }
         int fd = -1;
         for (struct addrinfo* ai = res; ai; ai = ai->ai_next) {
-            fd = socket(ai->ai_family, ai->ai_socktype | SOCK_CLOEXEC, ai->ai_protocol);
+            fd = sock_socket(ai->ai_family, ai->ai_socktype | SOCK_CLOEXEC, ai->ai_protocol);
             if (fd < 0) continue;
             set_timeout(fd, SO_SNDTIMEO, 8000);
             set_timeout(fd, SO_RCVTIMEO, 8000);
+#ifdef _WIN32
+            // SO_SNDTIMEO doesn't bound connect() on Windows: an unreachable
+            // server (or a broken IPv6 route, tried first) blocked ~21 s per
+            // address - the worker missed config changes, shutdown waited
+            if (sock_connect_timeout(fd, ai->ai_addr, static_cast<socklen_t>(ai->ai_addrlen), 8000) == 0) break;
+#else
             if (::connect(fd, ai->ai_addr, ai->ai_addrlen) == 0) break;
-            ::close(fd);
+#endif
+            sock_close(fd);
             fd = -1;
         }
         freeaddrinfo(res);
         if (fd < 0) { err = "TCP connect to " + host + ":" + to_string(port) + " failed"; return false; }
 
         int one = 1;
-        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+        sock_setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
         ctx_ = SSL_CTX_new(TLS_client_method());
-        if (!ctx_) { ::close(fd); err = "SSL_CTX_new failed"; return false; }
+        if (!ctx_) { sock_close(fd); err = "SSL_CTX_new failed"; return false; }
         // Verify the server certificate (system CA store + hostname). The
         // legacy middleware didn't (rejectUnauthorized:false), which let
         // anyone on the network path impersonate the map server and collect
@@ -234,13 +247,15 @@ public:
         if (insecure) {
             SSL_CTX_set_verify(ctx_, SSL_VERIFY_NONE, nullptr);
         } else {
-            if (SSL_CTX_set_default_verify_paths(ctx_) != 1) {
-                cleanupSsl(); ::close(fd); err = "cannot load the system CA certificates"; return false;
+            // (utils/tls_compat.hpp: SSL_CTX_set_default_verify_paths on
+            // Linux; on Windows the system certificate stores)
+            if (tls_load_system_roots(ctx_) != 1) {
+                cleanupSsl(); sock_close(fd); err = "cannot load the system CA certificates"; return false;
             }
             SSL_CTX_set_verify(ctx_, SSL_VERIFY_PEER, nullptr);
         }
         ssl_ = SSL_new(ctx_);
-        if (!ssl_) { cleanupSsl(); ::close(fd); err = "SSL_new failed"; return false; }
+        if (!ssl_) { cleanupSsl(); sock_close(fd); err = "SSL_new failed"; return false; }
         SSL_set_fd(ssl_, fd);
         // An IP-literal host is matched against the certificate's IP entries
         // (and gets no SNI); a name against its DNS names.
@@ -251,7 +266,7 @@ public:
             if (!insecure) {
                 X509_VERIFY_PARAM_set_hostflags(vp, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
                 if (SSL_set1_host(ssl_, host.c_str()) != 1) {
-                    cleanupSsl(); ::close(fd); err = "bad host name " + host; return false;
+                    cleanupSsl(); sock_close(fd); err = "bad host name " + host; return false;
                 }
             }
         }
@@ -261,7 +276,7 @@ public:
                 ? "certificate of " + host + " rejected: " + X509_verify_cert_error_string(vr)
                 : "TLS handshake with " + host + " failed";
             cleanupSsl();
-            ::close(fd);
+            sock_close(fd);
             return false;
         }
         fd_ = fd;
@@ -327,7 +342,21 @@ public:
     bool pump(vector<string>& messages) {
         if (!open_) return false;
         char buf[16384];
-        int n = SSL_read(ssl_, buf, sizeof(buf));
+        bool can_read = true;
+#ifdef _WIN32
+        // Windows: the 100 ms wait happens here, so SSL_read normally runs
+        // only with bytes to read - OpenSSL sees a Winsock receive timeout
+        // as SSL_ERROR_SYSCALL (see ssl_read_timed_out), every quiet 100 ms
+        if (!SSL_has_pending(ssl_)) {
+            pollfd p{};
+            p.fd = fd_;
+            p.events = POLLIN;
+            const int r = sock_poll(&p, 1, 100);
+            if (r < 0) { close(); return false; }
+            can_read = r > 0;   // nothing yet: only decode what rxbuf_ holds (frames sent with the 101)
+        }
+#endif
+        int n = can_read ? SSL_read(ssl_, buf, sizeof(buf)) : 0;
         if (n > 0) {
             rxbuf_.append(buf, n);
             // Drain everything OpenSSL already has decrypted.
@@ -336,10 +365,13 @@ public:
                 if (n <= 0) break;
                 rxbuf_.append(buf, n);
             }
-        } else {
+        } else if (can_read) {
             int serr = SSL_get_error(ssl_, n);
             bool timeout = (serr == SSL_ERROR_WANT_READ || serr == SSL_ERROR_WANT_WRITE ||
                             (serr == SSL_ERROR_SYSCALL && (errno == EAGAIN || errno == EWOULDBLOCK)));
+#ifdef _WIN32
+            timeout = timeout || ssl_read_timed_out(serr);   // the rest of a record not within 100 ms
+#endif
             if (!timeout) { close(); return false; }
         }
 
@@ -370,7 +402,7 @@ public:
     void close() {
         open_ = false;
         cleanupSsl();
-        if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
+        if (fd_ >= 0) { sock_close(fd_); fd_ = -1; }
         rxbuf_.clear();
         frag_.clear();
     }
@@ -435,34 +467,36 @@ public:
 
     bool listen(int port, string& err) {
         close();
-        int fd = socket(AF_INET6, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        int fd = sock_socket(AF_INET6, SOCK_STREAM | SOCK_CLOEXEC, 0);
         bool v6 = fd >= 0;
-        if (!v6) fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (!v6) fd = sock_socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
         if (fd < 0) { err = "socket() failed"; return false; }
         int one = 1;
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+        // (Windows: an exclusive bind - SO_REUSEADDR there would let another
+        // process share the port, see utils/net_compat.hpp)
+        sock_setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
         int ok;
         if (v6) {
-            int zero = 0;  // dual-stack: accept IPv4 too
-            setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof(zero));
+            int zero = 0;  // dual-stack: accept IPv4 too (Windows' default is v6 only)
+            sock_setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof(zero));
             struct sockaddr_in6 a = {};
             a.sin6_family = AF_INET6;
             a.sin6_addr = in6addr_any;
             a.sin6_port = htons((uint16_t)port);
-            ok = ::bind(fd, (struct sockaddr*)&a, sizeof(a));
+            ok = sock_bind(fd, (struct sockaddr*)&a, sizeof(a));
         } else {
             struct sockaddr_in a = {};
             a.sin_family = AF_INET;
             a.sin_addr.s_addr = INADDR_ANY;
             a.sin_port = htons((uint16_t)port);
-            ok = ::bind(fd, (struct sockaddr*)&a, sizeof(a));
+            ok = sock_bind(fd, (struct sockaddr*)&a, sizeof(a));
         }
-        if (ok != 0 || ::listen(fd, 8) != 0) {
-            ::close(fd);
+        if (ok != 0 || sock_listen(fd, 8) != 0) {
+            sock_close(fd);
             err = "cannot listen on port " + to_string(port) + " (" + strerror(errno) + ")";
             return false;
         }
-        fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+        sock_set_nonblocking(fd, true);
         listen_fd_ = fd;
         port_ = port;
         return true;
@@ -473,21 +507,21 @@ public:
     void pump(int timeout_ms) {
         if (listen_fd_ < 0) return;
         vector<struct pollfd> pfds;
-        pfds.push_back({listen_fd_, POLLIN, 0});
-        for (auto& c : clients_) pfds.push_back({c.fd, POLLIN, 0});
-        int n = poll(pfds.data(), pfds.size(), timeout_ms);
+        pfds.push_back(poll_in(listen_fd_));
+        for (auto& c : clients_) pfds.push_back(poll_in(c.fd));
+        int n = sock_poll(pfds.data(), pfds.size(), timeout_ms);
         const auto now = std::chrono::steady_clock::now();
         if (n > 0 && (pfds[0].revents & POLLIN)) {
             for (;;) {
-                int cfd = accept4(listen_fd_, nullptr, nullptr, SOCK_CLOEXEC);
+                int cfd = sock_accept4(listen_fd_, nullptr, nullptr, SOCK_CLOEXEC);
                 if (cfd < 0) break;
                 if (clients_.size() >= MAX_CLIENTS) {  // refuse: close at once
-                    ::close(cfd);
+                    sock_close(cfd);
                     continue;
                 }
-                fcntl(cfd, F_SETFL, fcntl(cfd, F_GETFL, 0) | O_NONBLOCK);
+                sock_set_nonblocking(cfd, true);
                 int one = 1;
-                setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+                sock_setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
                 clients_.push_back(Client{cfd, false, {}, now});
             }
         }
@@ -514,7 +548,7 @@ public:
         int sent = 0;
         for (auto& c : clients_) {
             if (c.fd < 0 || !c.open) continue;
-            ssize_t n = ::send(c.fd, frame.data(), frame.size(), MSG_NOSIGNAL);
+            ssize_t n = sock_send(c.fd, frame.data(), frame.size(), MSG_NOSIGNAL);
             if (n == (ssize_t)frame.size()) sent++;
             else drop(c);
         }
@@ -524,7 +558,7 @@ public:
     void close() {
         for (auto& c : clients_) drop(c);
         clients_.clear();
-        if (listen_fd_ >= 0) { ::close(listen_fd_); listen_fd_ = -1; }
+        if (listen_fd_ >= 0) { sock_close(listen_fd_); listen_fd_ = -1; }
         port_ = 0;
     }
 
@@ -539,8 +573,16 @@ private:
     static constexpr size_t MAX_CLIENTS = 16;
     static constexpr std::chrono::seconds HANDSHAKE_TIMEOUT{10};
 
+    // field-wise: pollfd::fd is a SOCKET on Windows (no narrowing in braces)
+    static struct pollfd poll_in(int fd) {
+        struct pollfd p{};
+        p.fd = fd;
+        p.events = POLLIN;
+        return p;
+    }
+
     void drop(Client& c) {
-        if (c.fd >= 0) ::close(c.fd);
+        if (c.fd >= 0) sock_close(c.fd);
         c.fd = -1;
         c.open = false;
     }
@@ -548,7 +590,7 @@ private:
     void service(Client& c) {
         char buf[4096];
         for (;;) {
-            ssize_t n = recv(c.fd, buf, sizeof(buf), 0);
+            ssize_t n = sock_recv(c.fd, buf, sizeof(buf), 0);
             if (n > 0) { c.rxbuf.append(buf, n); if (c.rxbuf.size() > 65536) { drop(c); return; } continue; }
             if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
             drop(c);  // closed or errored
@@ -864,7 +906,9 @@ void apply_cloud_settings_on_loop(map<string, string> s, const string& apikey) {
     // for a ULA.
     if (has("ant_spacing_meters")) {
         try {
-            long mm = lround(stod_finite(s["ant_spacing_meters"]) * 1000.0);
+            // llround: lround wraps a 32-bit long (Windows), so a bogus
+            // pushed value of 4295 km came out as an accepted 204 mm
+            long long mm = llround(stod_finite(s["ant_spacing_meters"]) * 1000.0);
             string topo = arrangement;
             if (topo.empty()) {
                 for (const auto& d : decimator_manager.getAllDecimators()) {
@@ -883,18 +927,18 @@ void apply_cloud_settings_on_loop(map<string, string> s, const string& apikey) {
 
     // --- Per-VFO reconciliation (vfo_freq_N / vfo_bw_N / vfo_squelch_N) ---
     auto info = decimator_manager.getDecimatorInfoList();
-    long target = -1;
+    long long target = -1;
     if (has("active_vfos")) {
-        try { target = stol(s["active_vfos"]); } catch (const exception&) { target = -1; }
+        try { target = stoll(s["active_vfos"]); } catch (const exception&) { target = -1; }
     }
-    if (target >= 1 && target != (long)info.size()) {
-        while ((long)info.size() < target) {
+    if (target >= 1 && target != (long long)info.size()) {
+        while ((long long)info.size() < target) {
             cmd("ADD_DECIMATOR");
             auto next = decimator_manager.getDecimatorInfoList();
             if (next.size() == info.size()) break;  // add failed; stop
             info = std::move(next);
         }
-        while ((long)info.size() > target) {
+        while ((long long)info.size() > target) {
             cmd("REMOVE_DECIMATOR:" + to_string(info.back().id));
             auto next = decimator_manager.getDecimatorInfoList();
             if (next.size() == info.size()) break;

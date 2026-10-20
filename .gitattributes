@@ -8,3 +8,19 @@ kraken_doa_v2/web_mapper_middleware/config.json filter=kraken-secrets
 # doa_settings.json is gitignored; the filter is a second line of defense if
 # one is ever force-added.
 doa_settings.json filter=kraken-secrets
+
+# Line endings, whatever core.autocrlf says: a Windows checkout (Git for
+# Windows sets core.autocrlf=true) wrote these with CRLF, and bash / make in
+# MSYS2 then fail on the \r ("$'\r': command not found", recipes with a
+# trailing \r). Windows command scripts stay CRLF (cmd.exe needs it for labels).
+*.sh text eol=lf
+Makefile text eol=lf
+*.mk text eol=lf
+*.patch text eol=lf
+Dockerfile text eol=lf
+.githooks/* text eol=lf
+scripts/* text eol=lf
+docker/* text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

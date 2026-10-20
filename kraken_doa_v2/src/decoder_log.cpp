@@ -4,13 +4,13 @@
 #include "digital/digital_decoder.hpp"
 #include "globals.hpp"
 #include "utils/disk_util.hpp"
+#include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
 
 #include <dirent.h>
 #include <limits.h>
 #include <sys/stat.h>
-#include <sys/statvfs.h>
 #include <unistd.h>
 #include <zlib.h>
 
@@ -113,7 +113,11 @@ bool gzip_file(const std::string& path) {
     }
     fclose(in);
     ok = gzclose(out) == Z_OK && ok;
-    if (!ok || rename(part.c_str(), (path + ".gz").c_str()) != 0) {
+    // fs_replace: a .gz left by an earlier try is replaced (Windows' rename()
+    // refused it, so that day was never compressed). Windows also can't
+    // delete a .jsonl another program has open: it stays, and the next
+    // compress_old() gzips it again
+    if (!ok || fs_replace(part.c_str(), (path + ".gz").c_str()) != 0) {
         unlink(part.c_str());
         return false;
     }
@@ -457,7 +461,31 @@ void set_pos_interval(int seconds) {
     s.pos_s = std::clamp(seconds, 1, 3600);
 }
 
-bool set_dir(const std::string& path, std::string* err) {
+bool set_dir(const std::string& path_in, std::string* err) {
+#ifdef _WIN32
+    // one spelling per folder ("E:\logs", "E:/logs/" -> "E:/logs"), and the
+    // characters no Windows file name can hold (':' only after a drive letter)
+    const std::string path = fs_normalize_dir(path_in);
+    if (path.find_first_of("*?\"<>|") != std::string::npos || (path.find(':') != std::string::npos && path.find(':') != 1) ||
+        path.find(':', 2) != std::string::npos) {
+        *err = "Windows folder names can't hold * ? \" < > | :";
+        return false;
+    }
+    // a share: Windows would sign in to the host a page names, as this user
+    // (fs_compat.hpp). The settings replay too: a stored share leaves the
+    // default folder
+    if (fs_is_network_path(path)) {
+        const char* e = getenv("KRAKEN_ALLOW_NETWORK_DIRS");
+        if (!e || std::string(e) != "1") {
+            std::cerr << "Decoder log: folder " << path << " refused - a network share" << std::endl;
+            *err = "network shares (\\\\server\\share) are refused - map the share to a drive letter, "
+                   "or start kraken_doa with KRAKEN_ALLOW_NETWORK_DIRS=1";
+            return false;
+        }
+    }
+#else
+    const std::string& path = path_in;
+#endif
     if (path.empty() || path.size() > 255) { *err = "folder name empty or too long"; return false; }
     State& s = S();
     {

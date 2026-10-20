@@ -56,17 +56,19 @@ public:
     // line up to within one packet - measured 2026-10-02); the margin covers
     // the decimators' filter memory (<= ~25 ms at 1 kHz) and the 100 ms
     // pollers. Was 750 ms.
-    static constexpr long NOISE_QUIET_MS = 250;
+    static constexpr int64_t NOISE_QUIET_MS = 250;
 
     // Milliseconds since the last packet that reported the noise source
-    // active (effectively "forever" if it was never seen).
-    long msSinceNoiseActive() const {
+    // active (effectively "forever" if it was never seen). int64_t, not
+    // long: a 32-bit long (Windows) wrapped negative 24.8 days after the
+    // last calibration and then read as "noise recently on" for 24.8 more.
+    int64_t msSinceNoiseActive() const {
         int64_t last_ns = getLastNoiseActiveNs();
         if (last_ns == 0) {
-            return std::numeric_limits<long>::max();
+            return std::numeric_limits<int64_t>::max();
         }
         int64_t now_ns = std::chrono::steady_clock::now().time_since_epoch().count();
-        return (long)((now_ns - last_ns) / 1000000);
+        return (now_ns - last_ns) / 1000000;
     }
 
     // Noise source on now, or seen within the last NOISE_QUIET_MS.

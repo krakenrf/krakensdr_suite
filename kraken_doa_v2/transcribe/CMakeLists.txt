@@ -25,3 +25,25 @@ add_executable(kraken_whisper kraken_whisper.cpp)
 target_include_directories(kraken_whisper PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include)
 target_link_libraries(kraken_whisper PRIVATE whisper)
 target_compile_options(kraken_whisper PRIVATE -Wall -Wextra)
+
+# Windows (MSYS2 UCRT64 / MinGW-w64, setup.sh's MinGW branch): built like the
+# suite's other .exe files (see ../Makefile) - win_init.cpp (binary stdin /
+# stdout, which carry the voice2text wire - the C runtime would turn every
+# \n byte into \r\n; Winsock, timer resolution) + the manifest (UTF-8 file
+# names: a model path with an accent), the POSIX shims force-included, the
+# same defines, and linked statically: kraken_doa starts it from
+# transcribe/build/, where no MSYS2 DLL is found. process_win.cpp:
+# kproc::lower_own_priority (Windows has no setpriority / nice).
+if(WIN32)
+    enable_language(RC)
+    set(KRAKEN_WIN ${CMAKE_CURRENT_SOURCE_DIR}/../win)
+    target_sources(kraken_whisper PRIVATE ${KRAKEN_WIN}/win_init.cpp ${KRAKEN_WIN}/app.rc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/../src/utils/process_win.cpp)
+    # windres finds app.rc's app.manifest there
+    target_include_directories(kraken_whisper PRIVATE $<$<COMPILE_LANGUAGE:RC>:${KRAKEN_WIN}>)
+    target_compile_definitions(kraken_whisper PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 WIN32_LEAN_AND_MEAN NOMINMAX
+                               NOGDI _USE_MATH_DEFINES _FILE_OFFSET_BITS=64)
+    target_compile_options(kraken_whisper PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include ${KRAKEN_WIN}/posix_compat.h>")
+    target_link_options(kraken_whisper PRIVATE -static)
+    target_link_libraries(kraken_whisper PRIVATE ws2_32 winmm)
+endif()

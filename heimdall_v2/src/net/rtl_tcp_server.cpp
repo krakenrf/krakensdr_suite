@@ -40,20 +40,25 @@ int RtlTcpServer::get_source_channel() const {
 }
 
 bool RtlTcpServer::start() {
-    server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    server_socket = sock_socket(AF_INET, SOCK_STREAM, 0);
     if (server_socket < 0) return false;
     
+    // Exclusive on Windows (sock_setsockopt, see set_socket_reuse): there a
+    // plain SO_REUSEADDR co-bound 1234 with a stock rtl_tcp.exe (which sets
+    // it too) instead of failing, and SDR# connections landed on either one
     int opt = 1;
-    setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    sock_setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(RTL_TCP_PORT);
     
-    if (bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0 || listen(server_socket, 1) < 0) {
-        close(server_socket);
+    if (sock_bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0 || sock_listen(server_socket, 1) < 0) {
+        const int err = errno;  // for main's message (listen_error_detail)
+        sock_close(server_socket);
         server_socket = -1;  // stop() (the destructor) must not close the number again
+        errno = err;
         return false;
     }
     
@@ -67,12 +72,15 @@ bool RtlTcpServer::start() {
 void RtlTcpServer::stop() {
     running = false;
     if (server_socket >= 0) {
-        shutdown(server_socket, SHUT_RDWR);  // wakes the accept(); close() alone doesn't
-        close(server_socket);
+        // Linux: the shutdown wakes the accept(); close() alone doesn't.
+        // Windows: the shutdown fails (not connected) and it is the
+        // closesocket() that wakes it.
+        sock_shutdown(server_socket, SHUT_RDWR);
+        sock_close(server_socket);
         server_socket = -1;
     }
     if (client_socket >= 0) {
-        close(client_socket);
+        sock_close(client_socket);
         client_socket = -1;
     }
     
@@ -99,7 +107,7 @@ void RtlTcpServer::send_dongle_info() {
     uint32_t gain_count = htonl(29);
     memcpy(rtl_tcp_header + 8, &gain_count, 4);
     
-    send(client_socket, rtl_tcp_header, 12, MSG_NOSIGNAL);
+    sock_send(client_socket, rtl_tcp_header, 12, MSG_NOSIGNAL);
 }
 
 void RtlTcpServer::broadcast_data(const std::vector<ComplexBuffer>& channel_data) {
@@ -141,7 +149,8 @@ void RtlTcpServer::server_loop() {
         
         sockaddr_in client_addr{};
         socklen_t addr_len = sizeof(client_addr);
-        client_socket = accept(server_socket, (sockaddr*)&client_addr, &addr_len);
+        // sock_accept: on Windows also not inherited by child processes
+        client_socket = sock_accept(server_socket, (sockaddr*)&client_addr, &addr_len);
         
         if (client_socket < 0) {
             if (running) {
@@ -152,14 +161,9 @@ void RtlTcpServer::server_loop() {
         
         // Keepalive: a client that vanished without a FIN (powered off, Wi-Fi
         // dropped) held the single slot until the kernel gave up on the
-        // send - 15-30 min. Now it's found within ~25 s.
-        {
-            int on = 1, idle = 10, intvl = 5, cnt = 3;
-            setsockopt(client_socket, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
-            setsockopt(client_socket, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
-            setsockopt(client_socket, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
-            setsockopt(client_socket, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
-        }
+        // send - 15-30 min. Now it's found within ~25 s (10 s idle, 3 probes
+        // 5 s apart; Windows 10 before 1709 can't set the probe count: ~60 s).
+        sock_set_keepalive(client_socket, 10, 5, 3);
         ignored_cmds_logged = 0;
         cmd_carry_len = 0;
 
@@ -178,7 +182,7 @@ void RtlTcpServer::server_loop() {
             worker_thread.join();
         }
         
-        close(client_socket);
+        sock_close(client_socket);
         client_socket = -1;
         clear_buffers();
         
@@ -197,7 +201,9 @@ bool RtlTcpServer::read_client_commands() {
     for (int reads = 0; reads < 8; reads++) {
         uint8_t buf[5 + 510];  // carry-over + a whole number of commands
         std::memcpy(buf, cmd_carry, cmd_carry_len);
-        const ssize_t n = recv(client_socket, buf + cmd_carry_len, 510, MSG_DONTWAIT);
+        // MSG_DONTWAIT: the socket stays blocking for the sends below
+        // (Winsock has no such flag - sock_recv checks readability first)
+        const ssize_t n = sock_recv(client_socket, buf + cmd_carry_len, 510, MSG_DONTWAIT);
         if (n == 0) return false;  // orderly close
         if (n < 0) return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;
         const size_t total = cmd_carry_len + static_cast<size_t>(n);
@@ -270,9 +276,9 @@ void RtlTcpServer::worker_loop() {
             tv.tv_sec = 1;
             tv.tv_usec = 0;
             
-            int r = select(client_socket + 1, nullptr, &writefds, nullptr, &tv);
+            int r = sock_select(client_socket + 1, nullptr, &writefds, nullptr, &tv);
             if (r > 0 && FD_ISSET(client_socket, &writefds)) {
-                ssize_t bytes_sent = send(client_socket, 
+                ssize_t bytes_sent = sock_send(client_socket,
                                         current_buffer->data.data() + index, 
                                         bytes_left, MSG_NOSIGNAL);
                 

@@ -12,9 +12,43 @@ LIBS = -lopus -lssl -lcrypto -lz -lsqlite3
 CC = gcc
 PFFFT_CFLAGS = -O3 -march=native -Wno-unused-parameter
 
+# Windows: a native build with MSYS2's UCRT64 toolchain (MinGW-w64 GCC; see
+# ../WINDOWS.md) - run `make` in the UCRT64 shell, or ../build_windows.bat.
+# Everything Windows-specific in this Makefile (and plugins/Makefile,
+# liquid.mk) is under WINDOWS; the Linux build is unchanged.
+WINDOWS := $(if $(findstring mingw,$(shell $(CXX) -dumpmachine 2>/dev/null)),1,)
+ifeq ($(WINDOWS),1)
+    # An exe that runs on other PCs too: AVX2 (x86-64-v3) rather than
+    # -march=native (this machine's AVX-512 = an illegal instruction
+    # elsewhere); `make WIN_MARCH=-march=native` for this PC only.
+    # -muse-unaligned-vector-move: GCC can't 32-byte-align the Win64 stack
+    # (GCC bug 54412), so an AVX spill with an aligned move could fault
+    WIN_MARCH ?= -march=x86-64-v3 -mtune=generic
+    export WIN_MARCH
+    WIN_ASFLAGS = -Wa,-muse-unaligned-vector-move
+    # Windows 10+ API, windows.h without min/max macros and GDI (its ERROR
+    # macro collides with voice2text_wire.hpp), M_PI & co. under -std=c++20,
+    # 64-bit off_t / stat sizes (recordings > 2 GB), libuv under uSockets,
+    # and the POSIX functions MinGW lacks (win/posix_compat.h, force-included)
+    # PFFFT_STATIC_DEFINE: pffft.h otherwise declares its API dllimport on _WIN32
+    WIN_DEFS = -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -DNOGDI \
+               -D_USE_MATH_DEFINES -D_FILE_OFFSET_BITS=64 -DPFFFT_STATIC_DEFINE
+    INCLUDES = -isystem $(LIQUID_INC) -Iinclude -Iplugins/sdk -Iexternal/pffft -IuWebSockets/src \
+               -IuWebSockets/uSockets/src $(shell pkg-config --cflags eigen3)
+    PFFFT_CFLAGS = -O3 $(WIN_MARCH) $(WIN_ASFLAGS) -DPFFFT_STATIC_DEFINE -Wno-unused-parameter
+    # one self-contained exe (no MSYS2 DLLs needed): static libstdc++ /
+    # winpthread / OpenSSL / opus / zlib / sqlite / libuv + the system libs
+    LDFLAGS = -static
+    LIBS = -lopus -lssl -lcrypto -lz -lsqlite3 $(shell pkg-config --static --libs libuv) \
+           -lws2_32 -lcrypt32 -lbcrypt -lgdi32 -luser32 -ladvapi32 -lwinmm
+endif
+
 # Detect ARM architecture for NEON optimizations
 ARCH := $(shell uname -m)
-ifeq ($(ARCH),aarch64)
+ifeq ($(WINDOWS),1)
+    CXXFLAGS += $(WIN_MARCH) $(WIN_ASFLAGS) $(WIN_DEFS) -DLIBUS_USE_LIBUV -include win/posix_compat.h
+    $(info Windows build (MinGW-w64): $(WIN_MARCH))
+else ifeq ($(ARCH),aarch64)
     # ARM 64-bit (Raspberry Pi 4/5, etc.)
     CXXFLAGS += -march=native -mtune=native
     PFFFT_CFLAGS += -DPFFFT_ENABLE_NEON
@@ -65,6 +99,15 @@ INCDIR = include
 OBJDIR = obj
 DEPDIR = dep
 TARGET = kraken_doa
+ifeq ($(WINDOWS),1)
+TARGET = kraken_doa.exe
+# linked to a temporary name, then moved: Windows can't overwrite a running
+# exe, MSYS2's mv moves the busy one aside (a rebuild while the stack runs)
+LINK_TMP = .tmp
+# every object depends on this stamp of WIN_MARCH (rule below): another
+# WIN_MARCH recompiles everything, not only the files that changed
+WIN_MARCH_STAMP = $(OBJDIR)/.win_march
+endif
 
 # Source files (updated with IQ converter)
 SIGNAL_PROCESSING_SRCS = \
@@ -96,7 +139,16 @@ UTILS_SRCS = \
 	$(SRCDIR)/utils/system_stats.cpp \
 	$(SRCDIR)/utils/status_dashboard.cpp \
 	$(SRCDIR)/utils/iq_converter.cpp \
-	$(SRCDIR)/utils/disk_util.cpp
+	$(SRCDIR)/utils/disk_util.cpp \
+	$(SRCDIR)/utils/platform.cpp \
+	$(SRCDIR)/utils/fs_compat.cpp \
+	$(SRCDIR)/utils/tls_compat.cpp
+# child processes (include/utils/process.hpp): one backend per platform
+ifeq ($(WINDOWS),1)
+UTILS_SRCS += $(SRCDIR)/utils/process_win.cpp
+else
+UTILS_SRCS += $(SRCDIR)/utils/process_posix.cpp
+endif
 
 APP_SRCS = \
 	$(SRCDIR)/main.cpp \
@@ -130,6 +182,12 @@ ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_
 # Object files (+ pffft, C)
 PFFFT_OBJS = $(OBJDIR)/pffft/pffft.o $(OBJDIR)/pffft/pffft_common.o
 OBJS = $(ALL_SRCS:$(SRCDIR)/%.cpp=$(OBJDIR)/%.o) $(PFFFT_OBJS)
+# Windows: process setup (binary file mode, timers, Winsock - win/win_init.cpp)
+# and the manifest (UTF-8 code page, long paths) in every exe
+ifeq ($(WINDOWS),1)
+WIN_OBJS = $(OBJDIR)/win/win_init.o $(OBJDIR)/win/app_res.o
+OBJS += $(WIN_OBJS)
+endif
 
 # Dependency files
 DEPS = $(ALL_SRCS:$(SRCDIR)/%.cpp=$(DEPDIR)/%.d)
@@ -154,7 +212,7 @@ whisper:
 	@transcribe/setup.sh
 
 whisper-update:
-	@if [ -x transcribe/build/kraken_whisper ]; then \
+	@if [ -x transcribe/build/kraken_whisper$(if $(WINDOWS),.exe,) ]; then \
 		transcribe/setup.sh --update || \
 		echo "WARNING: the Voice to Text helper failed to build (transcribe/) - kraken_doa itself is fine"; \
 	fi
@@ -168,17 +226,23 @@ plugins: $(LIQUID_A)
 		echo "WARNING: a decoder plugin failed to build (see above) - kraken_doa itself is fine"; \
 	fi
 
-# Check and install uWebSockets locally
+# Check and install uWebSockets locally (Windows: uSockets on libuv - there
+# is no epoll - without LTO; core.autocrlf=false: Git for Windows would check
+# scripts out with CRLF line ends, no effect elsewhere)
+USOCKETS_FLAGS = WITH_OPENSSL=1
+ifeq ($(WINDOWS),1)
+USOCKETS_FLAGS = WITH_OPENSSL=1 WITH_LIBUV=1 WITH_LTO=0 CC=gcc CXX=g++
+endif
 check-uws:
 	@if [ ! -d uWebSockets ]; then \
 		echo "Installing uWebSockets $(UWS_COMMIT) locally..."; \
-		git clone $(UWS_REPO) uWebSockets && \
+		git -c core.autocrlf=false clone $(UWS_REPO) uWebSockets && \
 		git -C uWebSockets checkout -q $(UWS_COMMIT) && \
-		git -C uWebSockets submodule update -q --init uSockets || exit 1; \
+		git -c core.autocrlf=false -C uWebSockets submodule update -q --init uSockets || exit 1; \
 	fi
 	@if ! ls uWebSockets/uSockets/*.o >/dev/null 2>&1; then \
 		echo "Building uSockets..."; \
-		$(MAKE) -C uWebSockets/uSockets WITH_OPENSSL=1 || exit 1; \
+		$(MAKE) -C uWebSockets/uSockets $(USOCKETS_FLAGS) || exit 1; \
 	else \
 		echo "uWebSockets found locally"; \
 	fi
@@ -192,7 +256,10 @@ $(OBJDIRS) $(DEPDIRS):
 # with the liquid archive, after the objects that use it
 $(TARGET): $(OBJS) $(LIQUID_A) | check-uws
 	@echo "Linking $(TARGET)..."
-	$(CXX) $(CXXFLAGS) -o $@ $^ uWebSockets/uSockets/*.o $(LDFLAGS) $(LIBS)
+	$(CXX) $(CXXFLAGS) -o $@$(LINK_TMP) $^ uWebSockets/uSockets/*.o $(LDFLAGS) $(LIBS)
+ifeq ($(WINDOWS),1)
+	@mv -f $@$(LINK_TMP) $@
+endif
 	@echo "Build complete!"
 	@echo "Architecture: $(ARCH)"
 ifeq ($(findstring arm,$(ARCH)),arm)
@@ -207,13 +274,39 @@ endif
 	@echo "Run with: ./$(TARGET)"
 
 # Compile source files and generate dependencies
-$(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(LIQUID_H) | $(OBJDIRS) $(DEPDIRS) check-uws
+$(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(LIQUID_H) $(WIN_MARCH_STAMP) | $(OBJDIRS) $(DEPDIRS) check-uws
 	@echo "Compiling $<..."
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $(DEPDIR)/$*.d -c $< -o $@
 
-$(OBJDIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) | $(OBJDIRS)
+$(OBJDIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) $(WIN_MARCH_STAMP) | $(OBJDIRS)
 	@echo "Compiling $<..."
 	$(CC) $(PFFFT_CFLAGS) -c $< -o $@
+
+# Windows process setup + manifest resource (see WIN_OBJS)
+$(OBJDIR)/win/win_init.o: win/win_init.cpp win/posix_compat.h $(WIN_MARCH_STAMP) | $(OBJDIRS)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(OBJDIR)/win/app_res.o: win/app.rc win/app.manifest | $(OBJDIRS)
+	@mkdir -p $(dir $@)
+	windres --include-dir win -O coff $< -o $@
+
+ifeq ($(WINDOWS),1)
+# The WIN_MARCH the objects were built with. Rewritten (and so newer than
+# every object) only when it differs, e.g. `make WIN_MARCH=-march=x86-64-v2`
+# for a CPU without AVX2: the objects of the default x86-64-v3 build would
+# otherwise stay in the exe and still crash there (liquid.mk rebuilds
+# liquid-dsp itself; plugins/Makefile has a stamp of its own)
+ifneq ($(shell cat $(WIN_MARCH_STAMP) 2>/dev/null),$(strip $(WIN_MARCH)))
+$(WIN_MARCH_STAMP): win-march-changed
+endif
+$(WIN_MARCH_STAMP):
+	@mkdir -p $(dir $@)
+	@echo '$(strip $(WIN_MARCH))' > $@
+
+.PHONY: win-march-changed
+win-march-changed:
+endif
 
 # Include dependency files (only if they exist and we're not cleaning)
 ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)

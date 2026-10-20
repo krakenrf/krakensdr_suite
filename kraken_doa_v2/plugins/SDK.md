@@ -747,6 +747,14 @@ plugins/mydec/build/decoder --file scene.cf32 --channels 5 --uca 0.12 [--rf HZ] 
 plugins/dtv/build/decoder --file sfn.cf32 [--channels M] [--all] [--uca RADIUS_M] [--opt separate=1]   # array plugins
 ```
 
+**Windows** (MSYS2 UCRT64 shell, see ../../WINDOWS.md): the same commands;
+the executable is `plugins/<id>/build/decoder.exe`. A plugin has to compile
+with MinGW-w64 GCC as well: the Makefile force-includes
+`kraken_doa_v2/win/posix_compat.h` (pread, strptime, setenv, ...), anything
+else POSIX-only (fork, pipes, signals other than INT / TERM, `/dev/...` paths)
+needs an `#ifdef _WIN32` branch, and `long` is 32-bit there (LLP64): Hz,
+sample counts and times are `int64_t`, printed with `%lld` / PRId64.
+
 `--rf HZ` is the RF at the recording's centre (`host.rf_hz()` = it +
 `--offset`); `ai/sigtool.py` captures carry it in their `.json` sidecar
 (`rf_hz`), which is used when `--rf` isn't given.

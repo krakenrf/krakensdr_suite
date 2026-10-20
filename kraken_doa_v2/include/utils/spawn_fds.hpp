@@ -5,6 +5,10 @@
 // after kraken_doa had reconnected, and the 8092 / gpsd sockets went the same
 // way. Every spawn closes all fds above stderr in the child (the sockets are
 // also created close-on-exec, which covers a libc without closefrom).
+// Linux only - used by src/utils/process_posix.cpp (kproc, process.hpp);
+// Windows has no fds to close in a child: process_win.cpp hands it an
+// explicit list of the handles it may inherit instead.
+#ifndef _WIN32
 #include <spawn.h>
 #include <unistd.h>
 
@@ -28,3 +32,4 @@ inline void close_above_stdio_in_child() {
 }
 
 }  // namespace spawn_fds
+#endif  // !_WIN32

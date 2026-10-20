@@ -48,8 +48,9 @@
 #include "settings_store.hpp"
 #include "station_info.hpp"
 #include "utils/parse_num.hpp"
+#include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
-#include "utils/spawn_fds.hpp"
+#include "utils/process.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -65,12 +66,8 @@
 #include <memory>
 #include <mutex>
 #include <numeric>
-#include <signal.h>
 #include <sstream>
-#include <sys/mman.h>
-#include <sys/resource.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 #include <utime.h>
@@ -221,8 +218,8 @@ struct Source {
     uint64_t tuner_hz = 0;
     double rf_hz = 0, band_off_hz = 0, radius_m = 0.12;
     float amp = 1, sigma = 0;         // output scale; noise rms per I / Q (output units)
-    const uint8_t* map = nullptr;
-    size_t map_len = 0;
+    FsMappedFile file;                // <id>.dat, mapped (Windows: still deletable while it plays)
+    const uint8_t* map = nullptr;     // = file.data()
     size_t N = 0;                     // samples per antenna in the file
     std::vector<float> hr;            // L x TAPS, each branch reversed
     std::vector<cf> rot;              // e^(j 2 pi f n / FS), one period
@@ -234,10 +231,6 @@ struct Source {
     uint64_t fill_ns = 0, fill_n = 0;   // the cost of making the samples (logged)
     std::vector<cf> xin;
     std::vector<uint8_t> pkt;
-
-    ~Source() {
-        if (map) munmap(const_cast<uint8_t*>(map), map_len);
-    }
 
     bool open(const std::string& ident, std::string* err) {
         const std::string side = read_file(std::string(CACHE_DIR) + "/" + ident + ".json");
@@ -259,21 +252,14 @@ struct Source {
         if (L < 1 || std::fabs(L * rate - FS) > 1) return *err = "the rate must divide 2.4 MHz", false;
         if (!narrow && L != 1) return *err = "a cu8 test transmission must be at 2.4 MHz", false;
         const std::string path = std::string(CACHE_DIR) + "/" + ident + ".dat";
-        const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
-        if (fd < 0) return *err = "can't open " + path, false;
-        struct stat st{};
-        fstat(fd, &st);
+        std::string e;
+        if (!file.open(path, &e)) return *err = "can't open " + path + " (" + e + ")", false;
         const size_t bps = static_cast<size_t>(M) * (narrow ? 8 : 2);
-        if (static_cast<size_t>(st.st_size) < N * bps) {
-            ::close(fd);
+        if (file.size() < static_cast<uint64_t>(N) * bps) {
+            file.close();
             return *err = "the file is shorter than its sidecar says", false;
         }
-        map_len = N * bps;
-        void* p = mmap(nullptr, map_len, PROT_READ, MAP_SHARED, fd, 0);
-        ::close(fd);
-        if (p == MAP_FAILED) return map = nullptr, *err = "mmap failed", false;
-        map = static_cast<const uint8_t*>(p);
-        madvise(p, map_len, MADV_SEQUENTIAL);
+        map = file.data();
         if (narrow) setup_narrow(num(side, "noise_rms", 0));
         pkt.resize(32 + 8 * M + static_cast<size_t>(M) * NSAMP * 2);
         return true;
@@ -405,7 +391,7 @@ struct RecSource {
     uint64_t N = 0;                   // samples per antenna
     std::vector<const uint8_t*> chp;  // channel c: its first sample
     std::vector<size_t> stride;       // bytes from one sample of channel c to the next
-    std::vector<std::pair<uint8_t*, size_t>> maps;
+    std::vector<std::unique_ptr<FsMappedFile>> maps;   // every data file, mapped
     double scale = 1;                 // the datatype -> the receiver's units (+ the level fix)
     float sigma = 0;                  // dither (output units)
     double shift_hz = 0;              // where the band goes in the 2.4 MHz (VFO-band recordings)
@@ -423,10 +409,6 @@ struct RecSource {
     int64_t station_ms = 0;
     std::vector<cf> xin;
     std::vector<uint8_t> pkt;
-
-    ~RecSource() {
-        for (auto& m : maps) munmap(m.first, m.second);
-    }
 
     double seconds() const { return static_cast<double>(N) / r.rate; }
     double pos_s() const { return static_cast<double>(out_pos.load()) / FS; }
@@ -446,16 +428,11 @@ struct RecSource {
         std::map<std::string, const uint8_t*> base;
         for (const auto& st : r.streams) {
             if (base.count(st.data_path)) continue;
-            const int fd = ::open(st.data_path.c_str(), O_RDONLY | O_CLOEXEC);
-            if (fd < 0) return *err = "can't open " + st.data_path, false;
-            struct stat sb{};
-            fstat(fd, &sb);
-            void* m = sb.st_size > 0 ? mmap(nullptr, static_cast<size_t>(sb.st_size), PROT_READ, MAP_SHARED, fd, 0) : MAP_FAILED;
-            ::close(fd);
-            if (m == MAP_FAILED) return *err = "can't map " + st.data_path, false;
-            madvise(m, static_cast<size_t>(sb.st_size), MADV_SEQUENTIAL);
-            maps.emplace_back(static_cast<uint8_t*>(m), static_cast<size_t>(sb.st_size));
-            base[st.data_path] = static_cast<const uint8_t*>(m);
+            auto m = std::make_unique<FsMappedFile>();
+            std::string e;
+            if (!m->open(st.data_path, &e)) return *err = "can't map " + st.data_path + " (" + e + ")", false;
+            base[st.data_path] = m->data();
+            maps.push_back(std::move(m));
         }
         for (const auto& st : r.streams)
             for (int j = 0; j < st.nch; j++) {
@@ -713,7 +690,7 @@ int64_t g_started_ms = 0;
 
 struct Gen {
     std::string id;
-    pid_t pid = -1;
+    std::shared_ptr<kproc::Process> proc;   // make_testsignal.py while it runs (+ the reader thread's copy)
     int pct = 0;
     std::string text, error, done_id;
     bool running = false;
@@ -808,13 +785,21 @@ std::string status_json() {
 }
 
 // --- generation (a child process) ----------------------------------------------
-void gen_reader(int fd, pid_t pid, std::string id) {
+#ifdef _WIN32
+// (no python3 on a stock Windows - the Store's stub doesn't count, see
+// kproc::python_argv; python.org's installer brings the py launcher)
+const char* const PYTHON_NEEDED = "Python 3 (python.org) with numpy + scipy is needed to generate test transmissions - "
+                                  "after installing it: py -m pip install numpy scipy";
+#else
+const char* const PYTHON_NEEDED = "python3 (with numpy + scipy) is needed to generate test transmissions";
+#endif
+
+void gen_reader(std::shared_ptr<kproc::Process> p, std::string id) {
     std::string buf;
     char tmp[512];
     std::string last_err;
     for (;;) {
-        const ssize_t n = ::read(fd, tmp, sizeof tmp);
-        if (n < 0 && errno == EINTR) continue;
+        const ptrdiff_t n = p->read(kproc::Stream::Out, tmp, sizeof tmp, -1);   // until EOF
         if (n <= 0) break;
         buf.append(tmp, static_cast<size_t>(n));
         size_t nl;
@@ -832,20 +817,20 @@ void gen_reader(int fd, pid_t pid, std::string id) {
             bump();
         }
     }
-    ::close(fd);
-    int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    // reaped; its pipe and handles go with the last reference (this one -
+    // g_gen's is dropped below, so a cancel can't reach it any more)
+    const kproc::ExitStatus status = p->wait();
     std::lock_guard<std::mutex> lk(g_mu);
     g_gen.running = false;
-    g_gen.pid = -1;
-    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+    g_gen.proc.reset();
+    if (status.ok()) {
         g_gen.pct = 100;
         g_gen.error.clear();
         g_gen.done_id = id;
     } else {
         g_gen.error = !last_err.empty() ? last_err
-                    : WIFSIGNALED(status) ? "stopped"
-                    : WIFEXITED(status) && WEXITSTATUS(status) == 127 ? "python3 (with numpy + scipy) is needed to generate test transmissions"
+                    : status.signaled() ? "stopped"
+                    : status.exited() && status.code == 127 ? PYTHON_NEEDED
                     : "the generator failed (see " + std::string(CACHE_DIR) + "/" + id + ".log)";
     }
     std::cout << "Playback: generating " << id << (g_gen.error.empty() ? " done" : " failed: " + g_gen.error) << std::endl;
@@ -864,41 +849,55 @@ std::string start_gen(const std::string& id) {
     char lat[32], lon[32];
     snprintf(lat, sizeof lat, "%.6f", st.lat);
     snprintf(lon, sizeof lon, "%.6f", st.lon);
-    std::vector<std::string> args = {"python3", "-I", tool, id, "--plugins", dig::PluginRegistry::dir(), "--cache", CACHE_DIR,
-                                     "--lat", lat, "--lon", lon};
-    int pfd[2];
-    if (pipe2(pfd, O_CLOEXEC) != 0) return "pipe failed";
-    const pid_t pid = fork();
-    if (pid < 0) {
-        ::close(pfd[0]);
-        ::close(pfd[1]);
-        return "fork failed";
+    // a python3 that can't be started ends like one that exits 127 at once
+    // (what a fork + execvp of a missing python3 gives): the page says so
+    auto no_python = [&] {
+        {
+            std::lock_guard<std::mutex> lk(g_mu);
+            g_gen = Gen{};
+            g_gen.id = id;
+            g_gen.error = PYTHON_NEEDED;
+        }
+        bump();
+        std::cout << "Playback: generating " << id << " failed: " << PYTHON_NEEDED << std::endl;
+        return std::string();
+    };
+    if (kproc::python_argv().empty()) return no_python();   // Windows: none found
+    kproc::SpawnOptions o;
+    // python3 -I tool ... (Windows: the interpreter kproc found, in UTF-8 mode,
+    // with -E instead of -I: -I also hides the user site-packages, where the
+    // Microsoft Store Python's pip installs numpy + scipy)
+#ifdef _WIN32
+    const char* const isolate = "-E";
+#else
+    const char* const isolate = "-I";
+#endif
+    o.argv = kproc::python_cmd({isolate, tool, id, "--plugins", dig::PluginRegistry::dir(), "--cache", CACHE_DIR,
+                                "--lat", lat, "--lon", lon});
+    o.search_path = true;
+    o.in = kproc::Stdio::Null;
+    o.out = kproc::Stdio::Pipe;                   // PROGRESS / ERROR lines; stderr stays ours
+    o.kill_tree = true;                           // its own group: a cancel ends g++ / the generators too
+    o.priority = kproc::Priority::Below;          // nice 10: the receiver comes first
+    o.console = kproc::Console::Share;
+    auto proc = std::make_shared<kproc::Process>();
+    std::string e;
+    int ecode = 0;
+    if (!proc->spawn(o, &e, &ecode)) {
+        if (ecode == ENOENT) return no_python();
+        return "can't start the generator: " + e;
     }
-    if (pid == 0) {
-        setpgid(0, 0);
-        setpriority(PRIO_PROCESS, 0, 10);   // nice 10: the receiver comes first
-        dup2(pfd[1], 1);
-        const int dn = ::open("/dev/null", O_RDONLY);
-        if (dn >= 0) dup2(dn, 0);
-        spawn_fds::close_above_stdio_in_child();
-        std::vector<char*> av;
-        for (auto& a : args) av.push_back(a.data());
-        av.push_back(nullptr);
-        execvp("python3", av.data());
-        _exit(127);
-    }
-    ::close(pfd[1]);
     {
         std::lock_guard<std::mutex> lk(g_mu);
         g_gen = Gen{};
         g_gen.id = id;
-        g_gen.pid = pid;
+        g_gen.proc = proc;
         g_gen.running = true;
         g_gen.text = "starting";
     }
     bump();
-    std::cout << "Playback: generating " << id << " (pid " << pid << ")" << std::endl;
-    std::thread(gen_reader, pfd[0], pid, id).detach();
+    std::cout << "Playback: generating " << id << " (pid " << proc->pid() << ")" << std::endl;
+    std::thread(gen_reader, proc, id).detach();
     return "";
 }
 
@@ -1149,7 +1148,9 @@ bool handle_command(std::string_view m) {
         err = valid_id(id) ? start_gen(id) : "bad id";
     } else if (m == "PLAYBACK_GEN_CANCEL") {
         std::lock_guard<std::mutex> lk(g_mu);
-        if (g_gen.running && g_gen.pid > 0) kill(-g_gen.pid, SIGTERM);
+        // SIGTERM to its whole group (Windows: Ctrl+Break to its console
+        // group, else the job of its process tree ends)
+        if (g_gen.running && g_gen.proc) g_gen.proc->terminate();
     } else if (m.starts_with("PLAYBACK_START:")) {
         err = start(std::string(m.substr(15)));
     } else if (m.starts_with("PLAYBACK_OPEN:")) {

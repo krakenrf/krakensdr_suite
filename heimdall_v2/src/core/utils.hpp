@@ -18,6 +18,8 @@ void append_big_endian(std::vector<uint8_t>& vec, uint32_t value);
 // time-critical USB reader and sample drain threads use this so they resist
 // preemption under high CPU load, but the app must still run unprivileged. Pass
 // rt_priority <= 0 to set only name/affinity (used for the conversion worker).
+// Windows: MMCSS ("Pro Audio") instead of SCHED_RR - HIGH for priorities >=
+// RT_PRIO_USB_READER, NORMAL below; reverted when the thread ends.
 bool set_thread_realtime(const char* name, int rt_priority, int cpu = -1);
 
 // Math utilities

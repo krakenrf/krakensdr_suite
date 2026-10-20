@@ -20,6 +20,9 @@
 #include "signal_processing/fft_processor.hpp"
 #include "doa_logger.hpp"
 #include "utils/status_dashboard.hpp"
+#include "utils/platform.hpp"
+#include "utils/fs_compat.hpp"
+#include "utils/tls_compat.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -80,6 +83,11 @@ const string& auth_token() {
         ifstream f(AUTH_TOKEN_FILE);
         if (f.good()) {
             string t((istreambuf_iterator<char>(f)), istreambuf_iterator<char>());
+#ifdef _WIN32
+            // Notepad's "UTF-8 with BOM" (the default of older builds): the
+            // 3 bytes became part of the token, which then never matched
+            if (t.compare(0, 3, "\xEF\xBB\xBF") == 0) t.erase(0, 3);
+#endif
             while (!t.empty() && (t.back() == '\n' || t.back() == '\r' ||
                                   t.back() == ' '  || t.back() == '\t'))
                 t.pop_back();
@@ -338,19 +346,61 @@ std::string url_decode(std::string_view s) {
     return out;
 }
 
+// Can a URL-decoded name from a request (a recording, "<name>/<file>") go to
+// the file APIs? Always on Linux, where the routes' own checks decide.
+// Windows: std::filesystem::path throws on bytes that aren't UTF-8 (Linux
+// takes any bytes) - an exception out of a route handler ends the process -
+// and each '/'-part must be a portable file name: no '\' or ':' (a drive, an
+// NTFS stream), no device name (NUL, COM3 ... exist in every folder).
+bool request_name_ok(const std::string& s) {
+#ifdef _WIN32
+    for (size_t i = 0; i < s.size();) {
+        if (static_cast<unsigned char>(s[i]) < 0x80) { i++; continue; }
+        const size_t n = json_utf8_len(s, i);
+        if (n == 0) return false;
+        i += n;
+    }
+    for (size_t b = 0; b <= s.size();) {
+        const size_t e = std::min(s.find('/', b), s.size());
+        if (e > b && !fs_portable_name(std::string_view(s).substr(b, e - b))) return false;
+        b = e + 1;
+    }
+#else
+    (void)s;
+#endif
+    return true;
+}
+
 // Stream a file to the client as an attachment (download), with backpressure
 // handling so large recordings don't have to be buffered in memory. Re-supplies
 // data from getWriteOffset() on each writable event, per the uWS tryEnd model.
 template<bool SSL>
 void stream_download(uWS::HttpResponse<SSL>* res, const std::string& fullpath,
                      const std::string& dlname) {
+#ifdef _WIN32
+    // Windows: only a regular file - a device name opens the device (a
+    // serial GPS on COM3 would be read here, on the uWS loop thread, for
+    // ever; tellg() = -1 made its size UINTMAX_MAX)
+    struct stat st{};
+    if (::stat(fullpath.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
+        res->writeStatus("404 Not Found")->end("Recording not found");
+        return;
+    }
+#endif
     auto file = std::make_shared<std::ifstream>(fullpath, std::ios::binary);
     if (!file->good()) {
         res->writeStatus("404 Not Found")->end("Recording not found");
         return;
     }
     file->seekg(0, std::ios::end);
-    uintmax_t total = static_cast<uintmax_t>(file->tellg());
+    const std::streamoff end = file->tellg();
+    if (end < 0) {
+        // no size (not a seekable file): -1 cast to uintmax_t announced an
+        // endless body and the pump never finished
+        res->writeStatus("500 Internal Server Error")->end("Cannot read recording");
+        return;
+    }
+    uintmax_t total = static_cast<uintmax_t>(end);
     file->seekg(0, std::ios::beg);
 
     res->writeHeader("Content-Type", "application/octet-stream");
@@ -455,17 +505,36 @@ string WebSocketServer::load_html_content() {
 }
 
 void WebSocketServer::verify_ssl_certificates() {
+#ifdef _WIN32
+    // Windows has no install step (install.sh makes the pair with the
+    // openssl CLI on Linux) and no openssl.exe: a missing pair is made here,
+    // in-process - the same kind, self-signed for 10 years
+    {
+        bool created = false;
+        string err;
+        if (!tls_ensure_self_signed_cert(SSL_CERT_FILE, SSL_KEY_FILE, &created, &err))
+            cerr << "ERROR: cannot create the SSL certificate: " << err << endl;
+        else if (created)
+            cout << "Created a self-signed SSL certificate for the web UI (" << SSL_CERT_FILE << " + "
+                 << SSL_KEY_FILE << ")" << endl;
+    }
+#endif
     ifstream cert_file(SSL_CERT_FILE);
     ifstream key_file(SSL_KEY_FILE);
-    
+
     if (!cert_file.good() || !key_file.good()) {
         // Runs on the web-server thread: no exit() here either (see the
         // listen-failure path below for why).
         StatusDashboard::end();
         cerr << "ERROR: Cannot read SSL certificate files" << endl;
+#ifdef _WIN32
+        cerr << "kraken_doa makes " << SSL_CERT_FILE << " + " << SSL_KEY_FILE
+             << " when they are missing - check that its folder is writable" << endl;
+#else
         cerr << "Run: openssl req -x509 -newkey rsa:4096 -keyout " << SSL_KEY_FILE
              << " -out " << SSL_CERT_FILE << " -days 365 -nodes -subj \"/CN=krakensdr\"" << endl;
-        _Exit(1);
+#endif
+        platform::fast_exit(1);
     }
 }
 
@@ -524,7 +593,8 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
             std::string url(req->getUrl());
             const std::string prefix = "/recordings/";
             std::string raw = (url.size() > prefix.size()) ? url.substr(prefix.size()) : "";
-            std::string name = doa_sanitize_filename(url_decode(raw));
+            const std::string decoded = url_decode(raw);
+            std::string name = request_name_ok(decoded) ? doa_sanitize_filename(decoded) : "";
             if (name.empty()) {
                 res->writeStatus("400 Bad Request")->end("Invalid filename");
                 return;
@@ -543,6 +613,10 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
             std::string url(req->getUrl());
             const std::string prefix = "/recording/";
             const std::string rel = url_decode(url.size() > prefix.size() ? url.substr(prefix.size()) : "");
+            if (!request_name_ok(rel)) {
+                res->writeStatus("404 Not Found")->end("no such recording");
+                return;
+            }
             auto d = std::make_shared<rec::Download>();
             std::string status, err;
             if (!rec::download(rel, d.get(), &status, &err)) {
@@ -563,6 +637,10 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
             std::string url(req->getUrl());
             const std::string prefix = "/recording_upload/";
             const std::string name = url_decode(url.size() > prefix.size() ? url.substr(prefix.size()) : "");
+            if (!request_name_ok(name)) {
+                res->writeStatus("400 Bad Request")->end("not a valid recording name");
+                return;
+            }
             const std::string cl(req->getHeader("content-length"));
             const uint64_t len = cl.empty() ? 0 : strtoull(cl.c_str(), nullptr, 10);
             std::string status, err;
@@ -818,6 +896,16 @@ void WebSocketServer::web_server_main() {
                 }, 50, 50);
                 
                 int audio_timer_ms = static_cast<int>(round(AUDIO_PACKET_TIME_MS));
+#ifdef _WIN32
+                // Windows: libuv (uSockets' event loop there) re-arms a
+                // repeating timer from the moment it ran, so late wake-ups add
+                // up (Linux's timerfd doesn't drift): one packet per 40 ms tick
+                // went out ~1 % slower than the mixer filled (17 % without 1 ms
+                // timers), its buffer overran and the audio dropped out. The
+                // timer ticks at half the period instead and each tick sends
+                // the packets due by the steady clock.
+                audio_timer_ms = std::max(1, audio_timer_ms / 2);
+#endif
                 us_timer_set(audio_timer, [](struct us_timer_t* /*timer*/) {
                     if (!global_ssl_app) return;
 
@@ -825,9 +913,21 @@ void WebSocketServer::web_server_main() {
                         return;
                     }
 
-                    auto audio_message = MessageBuilders::build_audio_message();
-                    if (!audio_message.empty()) {
-                        global_ssl_app->publish(TOPIC_AUDIO, audio_message, uWS::BINARY, false);
+                    int packets = 1;
+#ifdef _WIN32
+                    static int64_t due_us = 0;
+                    const int64_t now_us = chrono::duration_cast<chrono::microseconds>(
+                        chrono::steady_clock::now().time_since_epoch()).count();
+                    const int64_t period_us = static_cast<int64_t>(AUDIO_PACKET_TIME_MS * 1000.0f);
+                    // first tick, back from a stall or from FM off: no burst of old packets
+                    if (due_us == 0 || now_us - due_us > 200000) due_us = now_us;
+                    for (packets = 0; packets < 3 && due_us <= now_us; packets++) due_us += period_us;
+#endif
+                    for (int i = 0; i < packets; i++) {
+                        auto audio_message = MessageBuilders::build_audio_message();
+                        if (!audio_message.empty()) {
+                            global_ssl_app->publish(TOPIC_AUDIO, audio_message, uWS::BINARY, false);
+                        }
                     }
                 }, audio_timer_ms, audio_timer_ms);
                 
@@ -932,19 +1032,25 @@ void WebSocketServer::web_server_main() {
                 StatusDashboard::end();
                 cerr << "FATAL ERROR: Failed to listen on HTTPS port " << WEB_PORT
                      << " - is another kraken_doa (or kraken_pr) already using it?"
+#ifdef _WIN32
+                     // or a port range Hyper-V / WSL / Docker reserved (bind is refused then)
+                     << " (check: netstat -ano -p tcp | findstr :" << WEB_PORT
+                     << " and: netsh interface ipv4 show excludedportrange protocol=tcp)" << endl;
+#else
                      << " (check: ss -tlnp | grep " << WEB_PORT << ")" << endl;
-                _Exit(1);
+#endif
+                platform::fast_exit(1);
             }
         });
-        
+
         global_ssl_app = &ssl_app;
         ssl_app.run();
-        
+
     } catch (const exception& e) {
         // Same as the listen-failure path: no exit() from this thread.
         StatusDashboard::end();
         cerr << "FATAL SSL ERROR: " << e.what() << endl;
-        _Exit(1);
+        platform::fast_exit(1);
     }
 }
 

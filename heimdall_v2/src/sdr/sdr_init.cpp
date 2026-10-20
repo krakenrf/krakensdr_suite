@@ -11,6 +11,7 @@
 #include <iostream>
 #include <algorithm>
 #include <thread>
+#include <system_error>
 #include <vector>
 #include <array>
 #include <iomanip>
@@ -36,11 +37,161 @@ static bool set_external_noise_power(bool on, const std::vector<std::unique_ptr<
 extern void clear_l2_buffer();
 extern std::atomic<size_t> l2_raw_cap;  // C5: runtime L2-raw depth cap (defined in sdr_pipeline.cpp)
 
-std::string get_device_serial(int device_index) {
+// Runs fn(0) .. fn(n - 1), one call per tuner: in parallel threads on
+// Linux - each RTL-SDR has its own PLL settling time, so it costs
+// max(latency) rather than n x latency - and one after the other on
+// Windows, where concurrent control transfers to the KrakenSDR's dongles
+// time out on WinUSB (-7): opened together, 4 of 5 dongles' first register
+// write timed out and librtlsdr reset them mid-init; a parallel retune left
+// one tuner on the old frequency and forced a coherence recovery.
+template <class F>
+static void for_each_tuner(size_t n, F&& fn) {
+#ifdef _WIN32
+    for (size_t i = 0; i < n; i++) fn(i);
+#else
+    std::vector<std::thread> threads;
+    threads.reserve(n);
+    for (size_t i = 0; i < n; i++) {
+        // No thread to be had (EAGAIN: thread / memory limits): that tuner
+        // on this thread instead. The exception escaping would destroy the
+        // joinable threads above - std::terminate, e.g. in the shutdown's
+        // noise-source switch-off before the handles are closed.
+        try {
+            threads.emplace_back([&fn, i]() { fn(i); });
+        } catch (const std::system_error&) {
+            fn(i);
+        }
+    }
+    for (auto& t : threads) t.join();
+#endif
+}
+
+// Drag retunes (the fork's rtlsdr_set_center_freq_fast): a coherent retune
+// while a drag is open - within FAST_TUNE_SETTLE_MS of the previous retune,
+// or its tuners not finished yet (at most FAST_TUNE_DRAG_WINDOW_MS) - keeps
+// the R820T's PLL autotune clock at 128 kHz. The full path switches it to
+// 128 kHz before N / SDM and back to 8 kHz after the lock: 2 of the control
+// transfers a drag step costs per tuner (5 on Windows, 6 on Linux - its
+// dummy read before a tuner access; the tune bench with 5 tuners: Windows,
+// one after another, 113 -> 73 ms; Raspberry Pi 5, in parallel, 15 -> 10 ms).
+// The finish costs 2 per tuner (3 on Linux).
+// The lock is still read on every step, so a failed step rolls back as
+// before. finish_fast_retunes() puts the tuners back in the resting state of
+// a full tune (lock read, then 8 kHz) FAST_TUNE_SETTLE_MS after the last
+// retune (coherence watchdog), and before the noise source comes on for a
+// calibration in any case (set_bias_tee_all_devices). The first retune of a
+// drag, a step after the finish (slower stepping: the finish and the next
+// step's 128 kHz write would cost more than the full path saves), and every
+// other tuning path stay on the full path. Built against a fork without the
+// call (an older Linux install, the Dockerfile's pin): full path only.
+#ifdef RTLSDR_TUNE_KEEP_AUTOTUNE
+// Not RTLSDR_TUNE_SPAN_AUTOTUNE (the 128 kHz write in the N / SDM one): on
+// the Windows bench it saved only a drag's first step (73 -> 62 ms, 5
+// tuners, measured with an earlier library); later steps cost the same
+static constexpr int FAST_TUNE_FLAGS = RTLSDR_TUNE_KEEP_AUTOTUNE;
+static constexpr int64_t FAST_TUNE_DRAG_WINDOW_MS = 1000;
+static constexpr int64_t FAST_TUNE_SETTLE_MS = 400;
+// a tuner may be in the drag state; both under device_io_mutex
+static std::atomic<bool> fast_tune_pending{false};
+static std::atomic<int64_t> last_coherent_retune_ns{0};
+
+static int64_t steady_now_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// begin_retune_cooldown's early returns: only a coherent retune that runs the
+// normal cooldown -> recalibration (not --kerberos manual mode, a discrete
+// scan or a recovery) - and no downconverter (the tuners stay at the IF)
+static bool fast_retune_allowed() {
+    return operating_mode.load() == OperatingMode::COHERENT && !kerberos_manual_cal_only() &&
+           !discrete_scanner.enabled.load() && !recovery_in_progress.load(std::memory_order_acquire) &&
+           !downconverter.enabled.load();
+}
+#endif
+
+// One tuner's retune: a drag step's fast path or the full one
+static int retune_tuner(rtlsdr_dev_t* dev, uint32_t f, bool fast) {
+#ifdef RTLSDR_TUNE_KEEP_AUTOTUNE
+    if (fast) return rtlsdr_set_center_freq_fast(dev, f, FAST_TUNE_FLAGS);
+#else
+    (void)fast;
+#endif
+    return rtlsdr_set_center_freq(dev, f);
+}
+
+void finish_fast_retunes(const std::vector<std::unique_ptr<SDRDevice>>& devices, const char* why, bool only_if_quiet) {
+#ifdef RTLSDR_TUNE_KEEP_AUTOTUNE
+    if (!fast_tune_pending.load(std::memory_order_acquire)) return;
+    std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
+    // re-checked under the lock: a retune or another finish may have run
+    if (!fast_tune_pending.load(std::memory_order_acquire)) return;
+    if (only_if_quiet && steady_now_ns() - last_coherent_retune_ns.load() < FAST_TUNE_SETTLE_MS * 1000000)
+        return;
+    fast_tune_pending.store(false, std::memory_order_release);
+
+    // 0 = done (no transfer for a tuner a full tune finished already); else
+    // not locked / I/O error: that tuner again on the full path (lock check,
+    // VCO current bump), retried once - at its own frequency (a mode switch
+    // may have come in between), the array's if a failed tune left it none
+    std::vector<int> rc(devices.size(), 0);
+    std::vector<char> fixed(devices.size(), 1);
+    const uint32_t array_f = (operating_mode.load() == OperatingMode::COHERENT && !downconverter.enabled.load())
+                                 ? static_cast<uint32_t>(current_frequency.load()) : 0;
+    for_each_tuner(devices.size(), [&devices, &rc, &fixed, array_f](size_t i) {
+        if (!devices[i] || !devices[i]->dev) return;
+        rtlsdr_dev_t* dev = devices[i]->dev;
+        rc[i] = rtlsdr_finish_tune(dev);
+        if (rc[i] == 0) return;
+        const uint32_t f = rtlsdr_get_center_freq(dev) ? rtlsdr_get_center_freq(dev) : array_f;
+        fixed[i] = f != 0 && (rtlsdr_set_center_freq(dev, f) >= 0 || rtlsdr_set_center_freq(dev, f) >= 0);
+    });
+    bool lost = false;
+    for (size_t i = 0; i < devices.size(); i++) {
+        if (rc[i] == 0) continue;
+        std::cerr << "SDR: channel " << devices[i]->index << (rc[i] == 1 ? " PLL not locked" : " I/O error")
+                  << " at the end of a drag (" << why << ", " << rc[i] << ") - "
+                  << (fixed[i] ? "retuned on the full path" : "full retune FAILED") << std::endl;
+        if (!fixed[i]) lost = true;
+    }
+    if (lost) signal_coherence_lost("PLL not locked after a drag");
+#else
+    (void)devices; (void)why; (void)only_if_quiet;
+#endif
+}
+
+std::string get_device_serial(int device_index, int* rc) {
     char manufacturer[256], product[256], serial[256];
-    if (rtlsdr_get_device_usb_strings(device_index, manufacturer, product, serial) == 0) {
+    const int r = rtlsdr_get_device_usb_strings(device_index, manufacturer, product, serial);
+    if (rc) *rc = r;
+    if (r == 0) {
         return std::string(serial);
     }
+    return "";
+}
+
+// Why a dongle can't be opened / read, for the messages below ("" = nothing
+// to add). Windows: libusb reaches the dongles through WinUSB, which is
+// exclusive - a dongle another program holds can't even be asked for its
+// serial - and a dongle still on Windows' own DVB-T driver is listed but
+// can't be opened at all (the usual first-run failure). Linux: "", its
+// messages stay as they were.
+static std::string usb_open_hint(int libusb_rc) {
+#ifdef _WIN32
+    switch (libusb_rc) {
+        case -12:  // LIBUSB_ERROR_NOT_SUPPORTED
+            return "no WinUSB driver - install it with Zadig (https://zadig.akeo.ie: Options > List All "
+                   "Devices, then 'Bulk-In, Interface (Interface 0)' of each RTL2832U, USB ID 0BDA 2838)";
+        case -3:   // LIBUSB_ERROR_ACCESS
+            return "busy - opened by another program (SDR#, rtl_tcp, another heimdall)";
+        case -4:   // LIBUSB_ERROR_NO_DEVICE
+            return "unplugged";
+        default:
+            break;
+    }
+#else
+    (void)libusb_rc;
+#endif
     return "";
 }
 
@@ -75,20 +226,28 @@ std::vector<DeviceMapping> enumerate_devices_by_serial() {
     std::cout << "Found " << device_count << " RTL-SDR devices" << std::endl;
     
     if (device_count == 0) {
+#ifdef _WIN32
+        // Windows lists a dongle whatever its driver: none at all = not
+        // connected (the KrakenSDR needs its own power supply)
+        std::cerr << "No RTL-SDR devices found! Check the USB cable and the KrakenSDR's power supply." << std::endl;
+#else
         std::cerr << "No RTL-SDR devices found!" << std::endl;
+#endif
         return mappings;
     }
     
     // Enumerate all devices and match by serial
     for (int dev_idx = 0; dev_idx < device_count; dev_idx++) {
-        std::string device_serial = get_device_serial(dev_idx);
+        int serial_rc = 0;
+        std::string device_serial = get_device_serial(dev_idx, &serial_rc);
         std::string device_name = rtlsdr_get_device_name(dev_idx);
         
         std::cout << "Device " << dev_idx << ": " << device_name;
         if (!device_serial.empty()) {
             std::cout << " (Serial: " << device_serial << ")";
         } else {
-            std::cout << " (No serial)";
+            const std::string hint = usb_open_hint(serial_rc);
+            std::cout << " (No serial" << (hint.empty() ? "" : " - " + hint) << ")";
         }
         
         // Find matching expected serial
@@ -154,13 +313,26 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
     std::cout << "Initializing Channel " << sdr->index << " using RTL-SDR device " << sdr->device_id 
          << " (Serial: " << sdr->serial_number << ")" << std::endl;
     
-    if (rtlsdr_open(&sdr->dev, sdr->device_id) < 0) {
-        std::cerr << "Failed to open RTL-SDR device " << sdr->device_id << " for channel " << sdr->index << std::endl;
+    if (const int open_rc = rtlsdr_open(&sdr->dev, sdr->device_id); open_rc < 0) {
+        const std::string hint = usb_open_hint(open_rc);
+        std::cerr << "Failed to open RTL-SDR device " << sdr->device_id << " for channel " << sdr->index
+                  << (hint.empty() ? "" : " (" + hint + ")") << std::endl;
         return false;
     }
     
     // Verify serial number matches what we expect
+#ifdef _WIN32
+    // Windows: through the open handle. WinUSB is exclusive, so reading it by
+    // index (a second open of the same dongle) failed and every channel
+    // warned "Serial mismatch ... got " on every open.
+    std::string actual_serial;
+    {
+        char manufacturer[256], product[256], serial[256];
+        if (rtlsdr_get_usb_strings(sdr->dev, manufacturer, product, serial) == 0) actual_serial = serial;
+    }
+#else
     std::string actual_serial = get_device_serial(sdr->device_id);
+#endif
     if (actual_serial != sdr->serial_number) {
         std::cerr << "WARNING: Serial mismatch for device " << sdr->device_id 
              << " - expected " << sdr->serial_number << ", got " << actual_serial << std::endl;
@@ -276,6 +448,13 @@ bool open_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
         std::cerr << "ERROR: " << num_to_open << " elements need serials " << expected_serials[0]
                   << ".." << expected_serials[num_to_open - 1] << ", but " << missing
                   << " not found on USB. Cannot proceed." << std::endl;
+#ifdef _WIN32
+        // Windows: a dongle without the WinUSB driver, or held by another
+        // program, is listed without its serial (the "Device N" lines above)
+        std::cerr << "On Windows every dongle of the array needs the WinUSB driver (Zadig, "
+                     "https://zadig.akeo.ie - 'Bulk-In, Interface (Interface 0)' of each RTL2832U, "
+                     "USB ID 0BDA 2838) and must not be open in another program." << std::endl;
+#endif
         return false;
     }
 
@@ -285,19 +464,14 @@ bool open_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
              << " (Serial: " << mappings[i].serial << ")" << std::endl;
     }
 
-    // Initialize devices in parallel
-    std::vector<std::thread> init_threads;
+    // Initialize devices in parallel (Windows: one by one, see for_each_tuner)
     // char, not bool: vector<bool> packs results into shared words, so the
     // init threads' concurrent writes would race and could lose a result.
     std::vector<char> init_results(num_to_open, 0);
 
-    for (int i = 0; i < num_to_open; i++) {
-        init_threads.emplace_back([i, &init_results, &devices]() {
-            init_results[i] = init_rtlsdr_device(devices[i].get());
-        });
-    }
-
-    for (auto& thread : init_threads) thread.join();
+    for_each_tuner(static_cast<size_t>(num_to_open), [&init_results, &devices](size_t i) {
+        init_results[i] = init_rtlsdr_device(devices[i].get());
+    });
 
     bool all_success = std::all_of(init_results.begin(), init_results.end(), [](bool result) { return result; });
 
@@ -345,6 +519,11 @@ bool open_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
 void close_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
     // Callers must have joined the USB reader threads first (the handle is
     // freed here; a concurrent rtlsdr_read_async on it would be use-after-free).
+#ifdef RTLSDR_TUNE_KEEP_AUTOTUNE
+    // every handle gone: no drag state left to finish (a reopened handle
+    // starts in the resting state)
+    fast_tune_pending.store(false, std::memory_order_release);
+#endif
     for (auto& device : devices) {
         if (device && device->dev) {
             rtlsdr_close(device->dev);
@@ -427,19 +606,39 @@ static bool set_external_noise_power(bool on, const std::vector<std::unique_ptr<
 }
 
 void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
-#if ENABLE_BIAS_TEE
     std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
+    // Every calibration switches the noise source on through here (cooldown
+    // expiry, recovery, periodic check, scanner resume, BIAS_TEE_ENABLE):
+    // tuners a drag left in its fast state are put back in the resting one
+    // first - normally the coherence watchdog did that already. Outside
+    // ENABLE_BIAS_TEE too: the calibration runs without GPIO control as well.
+    if (enable) finish_fast_retunes(devices, "noise source on", false);
+#if ENABLE_BIAS_TEE
     // --ext_noise: the KrakenSDR's own noise source (GPIO0) stays OFF - the
     // add-on array's noise source, on the CH0 bias tee, is switched instead
     const bool ext = external_noise_mode.load(std::memory_order_relaxed);
     const bool internal_on = enable && !ext;
     std::cout << "Bias Tee: " << (internal_on ? "Enabling" : "Disabling") << " on all devices..." << std::endl;
-    for (const auto& device : devices) {
-        if (device && device->dev) {
-            bool success = (rtlsdr_set_bias_tee(device->dev, internal_on ? 1 : 0) == 0);
-            std::cout << "Bias Tee: Ch" << device->index << " (Serial " << device->serial_number << ") "
-                 << (success ? (internal_on ? "ON" : "OFF") : "FAILED") << std::endl;
-        }
+    // The noise-source GPIO (a GPIO register read + write per dongle, ~1.8 ms
+    // each on a Pi 5) through for_each_tuner: in parallel on Linux, where
+    // begin_retune_cooldown re-asserts noise-off on every retune: 5 dongles
+    // one after another 18.3 ms of a 28.7 ms drag step, in parallel 3.8 ms
+    // of 14.4 (Pi 5, 2026-10-19); one by one on Windows. Each call touches only its own handle; this thread holds
+    // device_io_mutex for all of them (the workers take no lock), so no other
+    // rtlsdr call reaches these handles meanwhile. Results per slot, logged
+    // here afterwards (no output from the workers): 1 = ok, 0 = failed,
+    // -1 = no device in that slot.
+    std::vector<int> bias_ok(devices.size(), -1);
+    for_each_tuner(devices.size(), [&devices, &bias_ok, internal_on](size_t i) {
+        const auto& device = devices[i];
+        if (device && device->dev)
+            bias_ok[i] = (rtlsdr_set_bias_tee(device->dev, internal_on ? 1 : 0) == 0) ? 1 : 0;
+    });
+    for (size_t i = 0; i < devices.size(); i++) {
+        if (bias_ok[i] < 0) continue;
+        const auto& device = devices[i];
+        std::cout << "Bias Tee: Ch" << device->index << " (Serial " << device->serial_number << ") "
+             << (bias_ok[i] ? (internal_on ? "ON" : "OFF") : "FAILED") << std::endl;
     }
     if (ext) set_external_noise_power(enable, devices);
     // Wideband variant: GPIO0 only powers the noise source; the RF switches
@@ -575,14 +774,27 @@ bool rf_frequency_valid(uint64_t rf_hz) {
     return rf_hz >= min_hz && rf_hz <= max_hz;
 }
 
-bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::unique_ptr<SDRDevice>>& devices,
+                         SdrUpdateResult* result) {
+    SdrUpdateResult local;
+    SdrUpdateResult& res = result ? *result : local;
+    res = SdrUpdateResult{};
+    // every return: the settings in place now (read under settings_mutex
+    // except on the first, unlocked return - no retune happened there)
+    auto done = [&res](bool changed) {
+        res.frequency = current_frequency.load();
+        res.gain = current_gain.load();
+        return changed;
+    };
+
     if (frequency > 0 && !rf_frequency_valid(frequency)) {
         uint64_t min_hz, max_hz;
         rf_frequency_range(min_hz, max_hz);
         std::cerr << "SDR: rejecting frequency " << frequency / 1e6 << " MHz (tunable range "
                   << min_hz / 1e6 << " - " << max_hz / 1e6 << " MHz)" << std::endl;
         frequency = 0;
-        if (gain == -999) return false;
+        res.frequency_out_of_range = true;
+        if (gain == -999) return done(false);
     }
 
     std::lock_guard<std::mutex> lock(settings_mutex);
@@ -603,7 +815,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
         if (frequency == prev_frequency) frequency = 0;
         if (gain == prev_gain) gain = -999;
     }
-    if (frequency == 0 && gain == -999) return false;
+    if (frequency == 0 && gain == -999) return done(false);
 
     std::cout << "SDR: Updating settings - ";
     if (frequency > 0) std::cout << "Freq: " << frequency/1e6 << " MHz ";
@@ -618,31 +830,46 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
     if (wb_variant && frequency > 0 && !wideband_retune_rf(frequency, devices)) {
         std::cerr << "SDR: LO retune to " << frequency / 1e6 << " MHz failed - frequency unchanged" << std::endl;
         frequency = 0;
-        if (gain == -999) return false;
+        res.lo_retune_failed = true;
+        if (gain == -999) return done(false);
     }
     const bool tune_tuners = !wb_variant && frequency > 0;
+
+    // A drag step takes the fast path (see FAST_TUNE_FLAGS). Decided and done
+    // under device_io_mutex (held since the top), which is what keeps a
+    // calibration off tuners still in the drag state: a recovery sets
+    // recovery_in_progress before its set_bias_tee_all_devices(true), which
+    // takes this mutex and finishes them first.
+    bool fast = false;
+#ifdef RTLSDR_TUNE_KEEP_AUTOTUNE
+    if (tune_tuners && !independent) {
+        const int64_t now = steady_now_ns();
+        const int64_t since = now - last_coherent_retune_ns.load();
+        // a drag still open: the previous step's tuners not finished yet
+        fast = fast_retune_allowed() && since < FAST_TUNE_DRAG_WINDOW_MS * 1000000 &&
+               (since < FAST_TUNE_SETTLE_MS * 1000000 || fast_tune_pending.load(std::memory_order_acquire));
+        last_coherent_retune_ns.store(now);
+        if (fast) fast_tune_pending.store(true, std::memory_order_release);
+    }
+#endif
 
     // Apply to every open tuner in parallel - each RTL-SDR has independent PLL
     // settling time, so this costs max(latency) rather than N*latency. Records
     // frequency and gain success per device (char, not vector<bool>: packed
     // bits would make the threads' writes race).
-    auto apply_all = [&](uint64_t f, int g, std::vector<char>& f_ok, std::vector<char>& g_ok) {
+    auto apply_all = [&](uint64_t f, int g, bool fast_path, std::vector<char>& f_ok, std::vector<char>& g_ok) {
         f_ok.assign(devices.size(), 1);
         g_ok.assign(devices.size(), 1);
-        std::vector<std::thread> threads;
-        for (size_t i = 0; i < devices.size(); i++) {
-            if (!devices[i] || !devices[i]->dev) continue;
-            threads.emplace_back([i, f, g, &devices, &f_ok, &g_ok]() {
+        for_each_tuner(devices.size(), [f, g, fast_path, &devices, &f_ok, &g_ok](size_t i) {
+                if (!devices[i] || !devices[i]->dev) return;
                 rtlsdr_dev_t* dev = devices[i]->dev;
-                if (f > 0 && rtlsdr_set_center_freq(dev, static_cast<uint32_t>(f)) < 0) f_ok[i] = 0;
+                if (f > 0 && retune_tuner(dev, static_cast<uint32_t>(f), fast_path) < 0) f_ok[i] = 0;
                 if (g == -999) return;
                 bool ok = (g == -1) ? rtlsdr_set_tuner_gain_mode(dev, 0) >= 0
                                     : rtlsdr_set_tuner_gain_mode(dev, 1) >= 0 && rtlsdr_set_tuner_gain(dev, g) >= 0;
                 if (set_fixed_if_vga(dev, g == -1) < 0) ok = false;
                 g_ok[i] = ok;
-            });
-        }
-        for (auto& t : threads) t.join();
+        });
     };
     auto failed_channels = [&](const std::vector<char>& f_ok, const std::vector<char>& g_ok) {
         std::string list;
@@ -655,7 +882,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
     };
 
     std::vector<char> f_ok, g_ok;
-    apply_all(tune_tuners ? frequency : 0, gain, f_ok, g_ok);
+    apply_all(tune_tuners ? frequency : 0, gain, fast, f_ok, g_ok);
 
     // A partial failure used to be silent: the other tuners sat at the new
     // settings while the state (and the 8091 packets) reported the old ones,
@@ -663,6 +890,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
     // previous settings instead, so the array stays coherent, and still report
     // a change so the caller recalibrates (the PLLs were rewritten).
     const std::string failed = failed_channels(f_ok, g_ok);
+    res.failed_channels = failed;
     if (independent) {
         // No common array to keep together: record what each tuner took
         if (!failed.empty())
@@ -681,8 +909,12 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
         std::cerr << "SDR: settings change failed on channel(s) " << failed
                   << " - restoring the previous settings on every tuner" << std::endl;
         std::vector<char> rf_ok, rg_ok;
-        apply_all(tune_tuners ? prev_frequency : 0, gain != -999 ? prev_gain : -999, rf_ok, rg_ok);
+        // (the full path: it also ends this step's drag state)
+        apply_all(tune_tuners ? prev_frequency : 0, gain != -999 ? prev_gain : -999, false, rf_ok, rg_ok);
         const std::string still = failed_channels(rf_ok, rg_ok);
+        res.rolled_back = still.empty();
+        res.restore_failed = !still.empty();
+        res.restore_failed_channels = still;
         if (!still.empty()) {
             std::cerr << "SDR: restoring the previous settings also failed on channel(s) " << still
                       << " - tuners inconsistent, forcing a coherence recovery" << std::endl;
@@ -704,7 +936,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
         fwdcomp::recompute(static_cast<double>(current_frequency.load()));
     }
 
-    return true;
+    return done(true);
 }
 
 void handle_settings_change() {
@@ -1139,27 +1371,21 @@ void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::
     // Tune all devices in PARALLEL - critical for responsive drag-to-tune
     // Each RTL-SDR has independent PLL, so parallel tuning reduces total time
     // from N*latency (~500ms) to max(latency) (~100ms)
-    std::vector<std::thread> tune_threads;
+    // (Windows: one by one, see for_each_tuner)
     std::vector<char> results(num_tuners, 0);  // char: see init_results
 
-    for (int i = 0; i < num_tuners; i++) {
-        tune_threads.emplace_back([i, &target_freqs, &devices, &results]() {
-            for (const auto& device : devices) {
-                if (device && device->index == i && device->dev) {
-                    if (rtlsdr_set_center_freq(device->dev, target_freqs[i]) == 0) {
-                        wideband_config.set_tuner_frequency(i, target_freqs[i]);
-                        results[i] = true;
-                    }
-                    break;
+    for_each_tuner(static_cast<size_t>(num_tuners), [&target_freqs, &devices, &results](size_t ui) {
+        const int i = static_cast<int>(ui);
+        for (const auto& device : devices) {
+            if (device && device->index == i && device->dev) {
+                if (rtlsdr_set_center_freq(device->dev, target_freqs[i]) == 0) {
+                    wideband_config.set_tuner_frequency(i, target_freqs[i]);
+                    results[i] = true;
                 }
+                break;
             }
-        });
-    }
-
-    // Wait for all tuners to complete
-    for (auto& thread : tune_threads) {
-        thread.join();
-    }
+        }
+    });
 
     // Log results
     int success_count = 0;
@@ -1170,3 +1396,59 @@ void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::
     std::cout << "Wideband: " << success_count << "/" << num_tuners << " tuners configured in parallel" << std::endl;
     std::cout << "Wideband: Total coverage = " << (num_tuners * usable_bandwidth) / 1e6 << " MHz" << std::endl;
 }
+
+#ifdef _WIN32
+bool reopen_device_after_stream_loss(SDRDevice* sdr) {
+    std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
+    // A pipeline stop (element-count change, shutdown) owns the handles from
+    // the moment it clears `running` - leave them to it
+    if (!sdr->running.load() || !global_running.load()) return false;
+    if (sdr->dev) {
+        // its stream has ended (inactive, or dev_lost set by the fork's
+        // error path): rtlsdr_close doesn't wait for it
+        rtlsdr_close(sdr->dev);
+        sdr->dev = nullptr;
+        sdr->init_success = false;
+    }
+    // By serial: USB indices shift when a dongle re-enumerates (a replug)
+    const int idx = rtlsdr_get_index_by_serial(sdr->serial_number.c_str());
+    if (idx < 0) return false;
+    sdr->device_id = idx;
+    if (!init_rtlsdr_device(sdr)) {
+        if (sdr->dev) {
+            rtlsdr_close(sdr->dev);
+            sdr->dev = nullptr;
+        }
+        return false;
+    }
+
+    // init_rtlsdr_device set it up like a startup open: the coherent tuning and
+    // the noise source on for the startup calibration. Put it back in step with
+    // the rest of the array. (The lag servo's clock correction is gone too; the
+    // coherence recovery the caller triggers re-runs it from scratch.)
+    const OperatingMode mode = operating_mode.load();
+    if (mode != OperatingMode::COHERENT && sdr->index >= 0 && sdr->index < NUM_DEVICES) {
+        // both other modes: the tuner's own frequency (the scan's spread / independent)
+        bool ok = rtlsdr_set_center_freq(sdr->dev, wideband_config.get_tuner_frequency(sdr->index)) >= 0;
+        // only independent mode has gains per tuner: the scan runs current_gain,
+        // which init_rtlsdr_device applied (tuner_gains is stale there)
+        if (mode == OperatingMode::INDEPENDENT)
+            ok = apply_tuner_gain(sdr->dev, wideband_config.get_tuner_gain(sdr->index)) && ok;
+        if (!ok) std::cerr << "Channel " << sdr->index << ": reopened, but restoring its own tuning failed" << std::endl;
+    }
+#if ENABLE_BIAS_TEE
+    const bool ext = external_noise_mode.load(std::memory_order_relaxed);
+    const bool noise = bias_tee_enabled.load();
+    rtlsdr_set_bias_tee(sdr->dev, noise && !ext ? 1 : 0);
+    if (sdr->index == 0) {
+        // The channel-0 chip's other GPIOs (lost with a replug): the external
+        // noise source, the Wideband RF switches, the antenna bias tees
+        if (ext) set_external_noise_power(noise, devices);
+        wideband_set_noise_path(noise, devices);   // no-op unless the Wideband variant
+        if (const uint32_t mask = antenna_bias_tee_mask.load(std::memory_order_acquire); mask != 0)
+            apply_antenna_bias_tees(mask, devices);
+    }
+#endif
+    return true;
+}
+#endif

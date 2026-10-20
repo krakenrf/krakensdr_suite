@@ -60,6 +60,17 @@
 
 #include <liquid/liquid.h>
 #include <unistd.h>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#include <windows.h>
+
+// the offline reader seeks in multichannel recordings far over 2 GB (5
+// antennas at 2.4 MHz are 24 MB/s as cu8): fseeko's off_t must be 64-bit,
+// which MinGW's is only with _FILE_OFFSET_BITS=64 (the plugins' Makefile) -
+// otherwise a 5 GB seek silently lands at 705 MB
+static_assert(sizeof(off_t) == 8, "build with -D_FILE_OFFSET_BITS=64");
+#endif
 
 namespace {
 
@@ -437,7 +448,20 @@ int serve(int argc, char** argv) {
     // stdout carries the protocol: keep a private copy of it and point fd 1
     // at stderr, so a stray printf / std::cout in a plugin can't corrupt it
     int out_fd = dup(1);
+#ifdef _WIN32
+    if (out_fd >= 0) {
+        _setmode(out_fd, _O_BINARY);
+        // UCRT's dup() makes an INHERITABLE handle: a program the plugin
+        // starts would hold kraken_doa's end of the protocol pipe open, and
+        // kraken_doa would see no end when the plugin dies
+        SetHandleInformation(reinterpret_cast<HANDLE>(_get_osfhandle(out_fd)), HANDLE_FLAG_INHERIT, 0);
+    }
+    // no stderr to point fd 1 at (a parent without a console that passed
+    // none): fd 1 would stay the protocol pipe - stray output goes to NUL
+    if (dup2(2, 1) < 0) freopen("NUL", "w", stdout);
+#else
     dup2(2, 1);
+#endif
     WireHost host(out_fd, rate);
     auto dec = kp_plugin_create(host);
     for (const auto& o : info.options) dec->option(o.key, o.def);
@@ -773,7 +797,7 @@ public:
                 char where[96] = "";
                 if (pos) snprintf(where, sizeof where, " at %.5f, %.5f, %.0f m", t.lat, t.lon, t.alt_m);
                 printf("[%9.3f s] (packet) %s %.7f .. %.7f s%s%s\n", time(), t.id.c_str(), st, en,
-                       std::isfinite(t.freq_hz) ? (" at " + std::to_string(static_cast<long>(std::lround(t.freq_hz))) + " Hz").c_str() : "",
+                       std::isfinite(t.freq_hz) ? (" at " + std::to_string(static_cast<long long>(std::llround(t.freq_hz))) + " Hz").c_str() : "",
                        where);
             }
             return;
@@ -1336,7 +1360,24 @@ int test_array(const std::string& path, std::string fmt, double rate, int channe
     return 0;
 }
 
+#ifdef _WIN32
+// the summary is UTF-8 (deg, us, warning signs): a Windows console shows it
+// in its OEM code page even with the exe's UTF-8 manifest - switched to
+// UTF-8 for the run and back at exit (the console outlives the plugin).
+// A pipe, a file or the MSYS2 terminal take the bytes as they are.
+void console_utf8() {
+    DWORD mode = 0;
+    if (!GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &mode)) return;
+    static const UINT old_cp = GetConsoleOutputCP();
+    if (old_cp == CP_UTF8 || !SetConsoleOutputCP(CP_UTF8)) return;
+    atexit([] { SetConsoleOutputCP(old_cp); });
+}
+#endif
+
 int test_file(int argc, char** argv) {
+#ifdef _WIN32
+    console_utf8();
+#endif
     std::string path, fmt, audio_path;
     double rate = 0, offset = 0, start = 0, seconds = 0, rf = NAN, uca_r = 0;
     int channels = 0, pick = -1;   // a recording of every antenna: how many / decode only this one
@@ -1467,7 +1508,7 @@ int test_file(int argc, char** argv) {
     else if (!quiet)
         printf("%s %s: %.2f s of %s at %.0f Hz -> %.0f Hz%s%s\n", info.name, info.version,
                x.size() / rate, path.c_str(), rate, prate,
-               offset != 0 ? (" (offset " + std::to_string(static_cast<long>(offset)) + " Hz)").c_str() : "",
+               offset != 0 ? (" (offset " + std::to_string(static_cast<long long>(offset)) + " Hz)").c_str() : "",
                std::isfinite(host.rf_hz_) ? (", RF " + std::to_string(host.rf_hz_ / 1e6).substr(0, 11) + " MHz").c_str() : "");
     // mix + resample to the plugin's rate, in 10 ms blocks like live
     kp::Nco nco(static_cast<float>(offset), static_cast<float>(rate));
@@ -1589,6 +1630,15 @@ int test_file(int argc, char** argv) {
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    // the protocol is bytes: binary stdin / stdout / stderr (in text mode a
+    // 0x1A in a sample block reads as end of file and every 0x0A of a reply
+    // goes out as 0D 0A). win/win_init.cpp does it before main already -
+    // this keeps the protocol right whatever the exe was linked with
+    _setmode(0, _O_BINARY);
+    _setmode(1, _O_BINARY);
+    _setmode(2, _O_BINARY);
+#endif
     if (argc >= 2 && !strcmp(argv[1], "--info")) return print_info();
     if (argc >= 2 && !strcmp(argv[1], "--serve")) return serve(argc, argv);
     for (int i = 1; i < argc; i++)

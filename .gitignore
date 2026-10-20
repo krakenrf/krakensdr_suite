@@ -38,3 +38,8 @@ ggml-*.bin.part
 *.sigmf
 *.wav
 *.opus
+# Windows build: the launcher (windows/krakensdr.cpp), its objects, and the
+# portable package windows/package.sh makes
+/krakensdr.exe
+/windows/build/
+/dist/

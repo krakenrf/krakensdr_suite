@@ -14,11 +14,16 @@
 
 #include <atomic>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
-#include <sys/types.h>
 #include <thread>
 #include <vector>
+
+namespace kproc {
+class Process;
+struct ExitStatus;
+}  // namespace kproc
 
 class AiManager {
 public:
@@ -56,15 +61,17 @@ private:
     AiManager() = default;
     ~AiManager();
     std::string start_job(const std::string& kind, const std::vector<std::string>& argv, const std::string& label);
-    void reader(int fd, pid_t pid, std::string kind);
+    void reader(std::shared_ptr<kproc::Process> proc, std::string kind);
     void on_line(const std::string& kind, const std::string& line);
-    void finished(const std::string& kind, int status);
+    void finished(const std::string& kind, const kproc::ExitStatus& status);
     void load_session(const std::string& id);   // current session <- session.json
 
     mutable std::mutex mu_;
     std::atomic<bool> busy_{false};
     std::thread thread_;
-    pid_t pid_ = -1;
+    // the running job (its own process group - Windows: job object), under
+    // mu_; the reader thread holds it too and reaps it
+    std::shared_ptr<kproc::Process> proc_;
     std::string job_kind_, job_label_;
     int64_t job_started_ms_ = 0;
     std::deque<std::string> log_;      // relayed event objects (JSON)

@@ -97,7 +97,7 @@ def main():
     if len(a) < 2:
         print(__doc__)
         sys.exit(2)
-    scene = json.load(open(a[0]))
+    scene = json.load(open(a[0], encoding='utf-8'))
     out = a[1]
     wide = None
     wide_off = 0.0

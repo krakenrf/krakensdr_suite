@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
 project(KrakenSDRDoA VERSION 1.0.0 LANGUAGES CXX C)
 
+# Windows: the Makefile is the build there (MinGW-w64 in MSYS2 - uSockets on
+# libuv, the static link, win/win_init.cpp + the manifest, the force-included
+# win/posix_compat.h); this file builds the Linux way (epoll, `make -f
+# liquid.mk` and the plugins through make, system libraries)
+if(WIN32)
+    message(FATAL_ERROR "on Windows use the Makefile (build_windows.bat / make in the MSYS2 UCRT64 shell)")
+endif()
+
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -104,6 +104,19 @@ The containers then start automatically at every boot. Don't run the native
 stack (run.sh or its boot service) at the same time. See [DOCKER.md](DOCKER.md)
 for settings, hardware variants and troubleshooting.
 
+Windows 10 / 11 install (native: heimdall.exe, kraken_doa.exe and the decoder
+plugins as ordinary Windows programs):
+
+```
+git clone https://github.com/krakenrf/krakensdr_suite
+cd krakensdr_suite
+build_windows.bat                      # installs MSYS2 (the compiler) if needed, builds everything
+run.bat                                # starts both apps (run.bat stop stops them)
+```
+
+Each tuner needs the WinUSB driver once (Zadig). See [WINDOWS.md](WINDOWS.md)
+for the driver step, options and troubleshooting.
+
 To Run:
 
 Simply use the command:

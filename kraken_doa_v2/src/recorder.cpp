@@ -31,8 +31,10 @@
 #include "signal_processing/music_processor.hpp"
 #include "station_info.hpp"
 #include "utils/disk_util.hpp"
+#include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
+#include "utils/platform.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -40,6 +42,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <deque>
@@ -79,12 +82,15 @@ int64_t mono_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(clk::now().time_since_epoch()).count();
 }
 
-// recording names: letters, digits, '_', '-', '.' (no leading '.'), <= 80
+// recording names: letters, digits, '_', '-', '.' (no leading '.'), <= 80.
+// Windows also refuses a trailing '.' (another spelling of the name without
+// it - the "is it being recorded" checks below compare names) and the device
+// names ("nul", "com1.sigmf" ...); fs_portable_name is always true on Linux
 bool valid_name(const std::string& n) {
     if (n.empty() || n.size() > 80 || n[0] == '.' || n[0] == '-') return false;
     for (char c : n)
         if (!(isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' || c == '.')) return false;
-    return n.find("..") == std::string::npos;
+    return n.find("..") == std::string::npos && fs_portable_name(n);
 }
 std::string clean_name(const std::string& in) {
     std::string o;
@@ -94,6 +100,8 @@ std::string clean_name(const std::string& in) {
         if (o.size() >= 64) break;
     }
     while (!o.empty() && (o[0] == '_' || o[0] == '-')) o.erase(0, 1);
+    // Windows: "con", "aux", "com1" ... are devices, not folders
+    if (!o.empty() && !fs_portable_name(o)) o = "_" + o;
     return o;
 }
 
@@ -134,7 +142,9 @@ bool write_file(const std::string& path, const std::string& data) {
     if (fd < 0) return false;
     const bool ok = write_all(fd, reinterpret_cast<const uint8_t*>(data.data()), data.size()) && fdatasync(fd) == 0;
     ::close(fd);
-    if (!ok || rename(tmp.c_str(), path.c_str()) != 0) {
+    // fs_replace: Windows' rename() refuses an existing target (the metadata
+    // is rewritten every 2 s - the second rewrite stopped every recording)
+    if (!ok || fs_replace(tmp.c_str(), path.c_str()) != 0) {
         unlink(tmp.c_str());
         return false;
     }
@@ -142,6 +152,11 @@ bool write_file(const std::string& path, const std::string& data) {
 }
 
 uint64_t mem_available() {
+#ifdef _WIN32
+    // no /proc/meminfo: GlobalMemoryStatusEx's available physical memory
+    // (without it the memory buffer fell to its 64 MB floor)
+    return fs_mem_available();
+#else
     std::ifstream f("/proc/meminfo");
     std::string k;
     uint64_t v;
@@ -149,6 +164,7 @@ uint64_t mem_available() {
     while (f >> k >> v >> unit)
         if (k == "MemAvailable:") return v * 1024;
     return 0;
+#endif
 }
 
 // --- settings ---------------------------------------------------------------------
@@ -516,7 +532,9 @@ void writer_main(std::shared_ptr<IqSession> sp) {
         const int64_t t = mono_ms();
         if (s.shutdown.load()) {
             if (!shutdown_at) shutdown_at = t;
-            if (t - shutdown_at > 4000) {
+            // Windows: the console window was closed - the process is ended
+            // within seconds, so the final metadata goes first
+            if (platform::stop_is_urgent() || t - shutdown_at > 4000) {
                 // kraken_doa is ending: what is still queued is dropped
                 std::lock_guard<std::mutex> lk(s.qmu);
                 s.q.clear();
@@ -576,9 +594,12 @@ void writer_main(std::shared_ptr<IqSession> sp) {
     }
     // finish: the files' last pages, the final metadata
     s.finishing.store(true);
+    // an urgent stop (Windows) doesn't wait for the drive to take the data:
+    // the system's cache outlives the process and is written all the same
+    const bool urgent = platform::stop_is_urgent();
     for (size_t k = 0; k < s.fd.size(); k++) {
         if (s.fd[k] < 0) continue;
-        fdatasync(s.fd[k]);
+        if (!urgent) fdatasync(s.fd[k]);
         posix_fadvise(s.fd[k], 0, 0, POSIX_FADV_DONTNEED);
         ::close(s.fd[k]);
         s.fd[k] = -1;
@@ -1050,12 +1071,26 @@ std::string item_path_locked(const std::string& name) {
     return rec ? p : "";
 }
 
+// is `name` (as a page sent it) the IQ or audio recording running now?
+// fs_same_name: on Windows "iq_x" names the folder "IQ_x" too
+bool being_recorded_locked(const std::string& name) {
+    if (g_iq && fs_same_name(g_iq->name, name)) return true;
+#ifdef _WIN32
+    // the running audio recording's name = its status' first "name"
+    const std::string aj = detail::audio_status_json();
+    const size_t a = aj.find("\"name\":\"");
+    const size_t b = a == std::string::npos ? std::string::npos : aj.find('"', a + 8);
+    return b != std::string::npos && fs_same_name(aj.substr(a + 8, b - a - 8), name);
+#else
+    return detail::audio_status_json().find("\"name\":\"" + json_escape(name) + "\"") != std::string::npos;
+#endif
+}
+
 std::string delete_locked(const std::string& name) {
     const std::string p = item_path_locked(name);
     if (p.empty()) return "no recording " + name;
-    if ((g_iq && g_iq->name == name) || detail::audio_status_json().find("\"name\":\"" + json_escape(name) + "\"") != std::string::npos)
-        return "it is being recorded - stop it first";
-    if (playback::playing_path() == p) return "it is playing - stop the playback first";
+    if (being_recorded_locked(name)) return "it is being recorded - stop it first";
+    if (fs_same_name(playback::playing_path(), p)) return "it is playing - stop the playback first";
     struct stat st{};
     stat(p.c_str(), &st);
     if (S_ISREG(st.st_mode)) {
@@ -1063,15 +1098,22 @@ std::string delete_locked(const std::string& name) {
         return "";
     }
     // a folder: only the files a recording consists of
+    [[maybe_unused]] bool in_use = false;
     if (DIR* d = opendir(p.c_str())) {
         while (dirent* e = readdir(d)) {
             const std::string n = e->d_name;
             // its files + the metadata's tmp leftovers (".<file>.tmp")
-            if (recording_file(n) || (n.size() > 5 && n[0] == '.' && ends_with(n, ".tmp") && recording_file(n.substr(1, n.size() - 5))))
-                unlink((p + "/" + n).c_str());
+            if ((recording_file(n) || (n.size() > 5 && n[0] == '.' && ends_with(n, ".tmp") && recording_file(n.substr(1, n.size() - 5)))) &&
+                unlink((p + "/" + n).c_str()) != 0)
+                in_use = true;
         }
         closedir(d);
     }
+#ifdef _WIN32
+    // Windows can't delete a file another program has open (a download being
+    // sent, a media player, Explorer's preview) - not "other files"
+    if (in_use) return "a file of the recording is in use (a download, a player?) - try again later";
+#endif
     if (rmdir(p.c_str()) != 0) return "deleted the recording's files; the folder holds other files and was kept";
     return "";
 }
@@ -1189,9 +1231,11 @@ void stop() {
     if (s) {
         s->shutdown.store(true);
         s->request_stop("kraken_doa shut down");
-        // the writer drops what is still queued after 4 s, then writes the metadata
+        // the writer drops what is still queued after 4 s (an urgent stop:
+        // at once), then writes the metadata
         std::unique_lock<std::mutex> lk(g_mu);
-        g_done_cv.wait_for(lk, std::chrono::seconds(15), [] { return g_iq == nullptr; });
+        g_done_cv.wait_for(lk, std::chrono::seconds(platform::stop_is_urgent() ? 2 : 15),
+                           [] { return g_iq == nullptr; });
     }
     detail::audio_shutdown();
 }
@@ -1288,10 +1332,28 @@ bool handle_command(std::string_view m, std::string* err, std::string* applied) 
             return *err = "not while recording", false;
     }
     if (m.starts_with("RECORDER_DIR:")) {
-        std::string d = val(13);
-        while (d.size() > 1 && d.back() == '/') d.pop_back();
+        // without a trailing '/' (Windows: '\' -> '/', and "E:/" stays the
+        // drive's root - "E:" would be the current folder of drive E)
+        std::string d = fs_normalize_dir(val(13));
         if (d.empty()) d = DEFAULT_DIR;
         if (d.size() > 400 || d.find('\n') != std::string::npos) return *err = "bad folder", false;
+#ifdef _WIN32
+        // characters no Windows file name can hold (':' only after a drive letter)
+        if (d.find_first_of("*?\"<>|") != std::string::npos || (d.find(':') != std::string::npos && d.find(':') != 1) ||
+            d.find(':', 2) != std::string::npos)
+            return *err = "bad folder: Windows folder names can't hold * ? \" < > | :", false;
+        // a share: Windows would sign in to the host a page names, as this
+        // user (fs_compat.hpp). The settings replay too: a stored share
+        // leaves the default folder
+        if (fs_is_network_path(d)) {
+            const char* e = getenv("KRAKEN_ALLOW_NETWORK_DIRS");
+            if (!e || std::string(e) != "1") {
+                std::cerr << "Recorder: folder " << d << " refused - a network share" << std::endl;
+                return *err = "bad folder: network shares (\\\\server\\share) are refused - map the share to a drive letter, "
+                              "or start kraken_doa with KRAKEN_ALLOW_NETWORK_DIRS=1", false;
+            }
+        }
+#endif
         if (d != g_set.dir) {
             if (!SettingsStore::sandboxed() && !diskutil::mkdirs(diskutil::absolute(d))) return *err = "can't create the folder " + d, false;
             g_set.dir = d;
@@ -1626,7 +1688,7 @@ bool download(const std::string& rel, Download* d, std::string* status, std::str
         *err = "no such recording";
         return false;
     }
-    if ((g_iq && g_iq->name == name) || detail::audio_status_json().find("\"name\":\"" + json_escape(name) + "\"") != std::string::npos) {
+    if (being_recorded_locked(name)) {
         *status = "409 Conflict";
         *err = "it is still being recorded";
         return false;
@@ -1773,7 +1835,9 @@ void upload_main(Upload* u) {
         if (!sigmf::open_recording(u->part, &r, &err)) msg = "not a usable SigMF archive: " + err;
     }
     if (msg.empty()) {
-        if (rename(u->part.c_str(), u->final_path.c_str()) != 0) msg = std::string("can't rename: ") + strerror(errno);
+        // fs_replace = rename() as on Linux; on Windows it also waits out a
+        // virus scanner that still has the just-written file open
+        if (fs_replace(u->part.c_str(), u->final_path.c_str()) != 0) msg = std::string("can't rename: ") + strerror(errno);
         else ok = true;
     }
     if (!ok) unlink(u->part.c_str());

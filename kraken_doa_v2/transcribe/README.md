@@ -23,6 +23,12 @@ make whisper               # = transcribe/setup.sh: clone + build + base.en + th
 | `transcribe/setup.sh --update` | rebuild if set up already (kraken_doa's `make` runs it) |
 | `transcribe/setup.sh --list` | the models that can be downloaded |
 
+**Windows**: in MSYS2's UCRT64 shell the same commands build
+`build/kraken_whisper.exe` (for the CPU level of `WIN_MARCH`, default
+x86-64-v3 like the apps); `set WHISPER=1` before `build_windows.bat` runs it
+as part of the build. Models are downloaded with `curl.exe` (Windows 10 1803+
+has one).
+
 Files: `whisper.cpp/` (the pinned checkout), `build/` and `models/`
 (`ggml-<name>.bin`) - all gitignored. `KRAKEN_TRANSCRIBE_DIR` /
 `KRAKEN_WHISPER_MODELS` move them (Docker: the helper is in the image, the

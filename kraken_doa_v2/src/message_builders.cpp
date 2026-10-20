@@ -1,3 +1,4 @@
+#include "utils/platform.hpp"
 #include "message_builders.hpp"
 #include "globals.hpp"
 #include "config.hpp"
@@ -29,6 +30,10 @@
 #include <map>
 #include <set>
 #include <mutex>
+#ifdef _WIN32
+#include <filesystem>
+#include <system_error>
+#endif
 
 using namespace std;
 using namespace std::chrono;
@@ -612,6 +617,17 @@ string MessageBuilders::build_system_status_message() {
     json << ",\"phase_state\":" << phase_state;
     json << ",\"noise_source\":" << (scanner_manager.isNoiseSourceActive() ? "true" : "false");
     json << ",\"active_elements\":" << active_num_elements.load();
+    json << ",\"platform\":\"" << platform::os_name() << "\"";   // the UI's per-OS instructions
+#ifdef _WIN32
+    // running from the source folder (kraken_doa_v2/Makefile in the cwd) or
+    // from a package (windows/package.sh: no sources, Makefile or MSYS2) -
+    // the UI's build steps differ. Once: the cwd doesn't change
+    static const bool source_tree = [] {
+        std::error_code ec;
+        return std::filesystem::is_regular_file("Makefile", ec);
+    }();
+    json << ",\"source_tree\":" << (source_tree ? "true" : "false");
+#endif
 
     // KerberosSDR support mode (heimdall --kerberos): calibration is manual,
     // so the UI must warn when the server is uncalibrated or the calibration
