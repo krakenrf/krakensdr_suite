@@ -905,21 +905,24 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 #decimator-list .dec-row {margin:4px 0;font-size:12px;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
 #decimator-list .dec-row label {min-width:60px;color:#888}
 #decimator-list input[type="text"],#decimator-list input[type="number"],#decimator-list select {background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:3px 5px;border-radius:2px;font-size:12px}
-/* VFO frequency: digits like the top bar's, smaller and down to 1 Hz - click
-   the top / bottom half of a digit or use the mouse wheel on it; ✎ swaps in
-   the text box to type one (vfdInit) */
+/* VFO frequency: digits like the top bar's, the same size, down to 1 Hz -
+   click the top / bottom half of a digit or use the mouse wheel on it; ✎
+   swaps in the text box to type one (vfdInit). A row of its own: at this
+   size there's no room for a "Freq:" label in the 290 px sidebar */
 #decimator-list .vfd-box {display:inline-flex;align-items:center;background:#0a0a15;border:1px solid #0f3460;border-radius:3px;padding:0 3px;
   user-select:none;font-family:'Consolas','Monaco','Courier New',monospace}
-#decimator-list .vfd {font-size:14px;font-weight:bold;width:9px;text-align:center;color:#4fc3f7;cursor:ns-resize;line-height:22px}
+#decimator-list .vfd {font-size:28px;font-weight:bold;width:16px;text-align:center;color:#4fc3f7;cursor:ns-resize;line-height:36px}
 #decimator-list .vfd.lead {color:#2c4a63}
 #decimator-list .vfd:hover {color:#81d4fa}
 #decimator-list .vfd.hover-top {background:linear-gradient(to bottom,rgba(79,195,247,0.28) 50%,transparent 50%)}
 #decimator-list .vfd.hover-bottom {background:linear-gradient(to top,rgba(79,195,247,0.28) 50%,transparent 50%)}
-#decimator-list .vfd-sep {color:#1a4a7a;font-size:14px;width:4px;text-align:center}
+#decimator-list .vfd-sep {color:#1a4a7a;font-size:24px;font-weight:bold;width:5px;text-align:center}
+#decimator-list .vfd-unit {color:#666;font-size:10px;margin-left:3px;font-family:sans-serif}
 #decimator-list .vfd-box.locked {opacity:.5}
 #decimator-list .vfd-box.locked .vfd {cursor:not-allowed;background:none}
-#decimator-list .vfd-ed {padding:1px 5px}
-#decimator-list .dec-row.typing .vfd-box, #decimator-list .dec-row.typing .vfd-ed, #decimator-list .dec-row:not(.typing) .vfd-in {display:none}
+#decimator-list .vfd-ed {padding:1px 5px;margin-left:auto}
+#decimator-list .dec-row.typing .vfd-box, #decimator-list .dec-row.typing .vfd-ed,
+#decimator-list .dec-row:not(.typing) .vfd-in, #decimator-list .dec-row:not(.typing) .vfd-in-unit {display:none}
 
 /* Scanner in sidebar */
 #scanner-freq-list {max-height:200px;overflow-y:auto;background:#16213e;border:1px solid #0f3460;border-radius:3px;padding:5px}
@@ -7080,8 +7083,11 @@ function vfdStep(id, pos, up) {
 }
 
 // A wheel gesture stays with what it began on: scrolling the sidebar must not
-// start retuning a VFO whose digits slide under the pointer
-let vfdWheelAt = 0, vfdWheelTune = false;
+// start retuning a VFO whose digits slide under the pointer. Tuning begins only
+// where the pointer last MOVED over the digits, with them still where they were
+// then (vfdHover): Chrome may scroll the sidebar before it hit-tests the first
+// notch, which then lands on the digits now under a still pointer
+let vfdWheelAt = 0, vfdWheelTune = false, vfdHover = null;
 document.addEventListener('wheel', e => {
   if (e.target instanceof Element && e.target.closest('.vfd-box:not(.locked)')) return;
   vfdWheelAt = performance.now();
@@ -7094,16 +7100,20 @@ function vfdInit(id) {
   const half = (e, d) => { const r = d.getBoundingClientRect(); return e.clientY - r.top < r.height / 2; };
   const unhover = x => x.classList.remove('hover-top', 'hover-bottom');
   el.addEventListener('mousemove', e => {
+    vfdHover = {el, top: el.getBoundingClientRect().top};
     const d = el.classList.contains('locked') ? null : e.target.closest('.vfd');
     el.querySelectorAll('.vfd').forEach(x => { if (x !== d) unhover(x); });
     if (d) { const t = half(e, d); d.classList.toggle('hover-top', t); d.classList.toggle('hover-bottom', !t); }
   });
-  el.addEventListener('mouseleave', () => el.querySelectorAll('.vfd').forEach(unhover));
+  el.addEventListener('mouseleave', () => { vfdHover = null; el.querySelectorAll('.vfd').forEach(unhover); });
   el.addEventListener('click', e => { const d = e.target.closest('.vfd'); if (d) vfdStep(id, parseInt(d.dataset.pos), half(e, d)); });
   el.addEventListener('wheel', e => {
     if (el.classList.contains('locked')) return;
-    const now = performance.now();
-    if (!vfdWheelTune && now - vfdWheelAt < 400) { vfdWheelAt = now; return; }   // a scroll goes on
+    const now = performance.now(), going = now - vfdWheelAt < 400;   // a gesture going on
+    if (!(going && vfdWheelTune)) {
+      const moved = !vfdHover || vfdHover.el !== el || Math.abs(el.getBoundingClientRect().top - vfdHover.top) >= 1;
+      if (going || moved) { vfdWheelAt = now; vfdWheelTune = false; return; }   // a scroll goes on
+    }
     vfdWheelAt = now;
     vfdWheelTune = true;
     e.preventDefault();
@@ -7231,14 +7241,13 @@ function updateDecimatorList(info) {
         </span>
       </div>
       <div class="dec-row" id="dec-freq-row-${dec.id}">
-        <label>Freq:</label>
-        <span class="vfd-box" id="dec-freq-${dec.id}" title="${VFD_TIP}">${vfdDigitsHtml()}</span>
+        <span class="vfd-box" id="dec-freq-${dec.id}" title="${VFD_TIP}">${vfdDigitsHtml()}<span class="vfd-unit">MHz</span></span>
         <input type="text" class="vfd-in" id="dec-actual-freq-${dec.id}" value="${actualFreqMhz.toFixed(6)}"
                style="width:96px;font-family:monospace"
                onkeydown="if(event.key==='Enter'){event.target.blur()}else if(event.key==='Escape'){this.value=this.dataset.orig;event.target.blur()}"
                onfocus="this.dataset.orig=this.value"
                onblur="handleActualFreqInput(${dec.id}, this.value, this.dataset.orig); vfdEditEnd(${dec.id})">
-        <span>MHz</span>
+        <span class="vfd-in-unit">MHz</span>
         <button type="button" class="btn sm vfd-ed" id="dec-freq-ed-${dec.id}" onclick="vfdEdit(${dec.id})" title="${VFD_ED_TIP}">✎</button>
       </div>
       <div class="dec-row indep-only">
