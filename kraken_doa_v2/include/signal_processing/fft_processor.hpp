@@ -59,14 +59,18 @@ public:
     // Compressed decimation (uses uint8 for magnitudes)
     static CompressedDecimatedFFT decimate_fft_compressed(const std::vector<float>& fft_data, float center_freq_mhz, int decimation);
 
-    // Wideband FFT stitching
-    static void stitch_wideband_fft(
+    // Wideband scan mode: the tuners' spectra (channel_ffts - the averaged
+    // ones) side by side on one grid of FFT bins, each frequency from the
+    // tuner whose centre is nearest, each relative to that tuner's noise floor
+    // (channel_noise_floor). The edge-clipped band of the lowest tuner to the
+    // highest's; bin i at f0_hz + i * step_hz. False = nothing to stitch
+    static bool stitch_wideband_fft(
         const std::vector<std::vector<float>>& channel_ffts,
-        const std::array<uint32_t, MAX_CHANNELS>& tuner_freqs,
+        const std::array<uint64_t, MAX_CHANNELS>& tuner_hz,
         int num_tuners,
         std::vector<float>& output_fft,
-        float& min_freq_mhz,
-        float& max_freq_mhz
+        double& f0_hz,
+        double& step_hz
     );
 
     // Compress float magnitudes to uint8 (dB range: -120 to 0 dB)

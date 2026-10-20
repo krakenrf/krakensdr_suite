@@ -16,6 +16,13 @@
 // interference) is learned at once and a long stay on DVB-T never wears the
 // remembered floor away. Without that test (independent / wideband scan mode)
 // a floor more than 6 dB up is taken as a signal and creeps up 1 dB a minute.
+// Wideband scan mode (tuners side by side, one stitched spectrum) has better
+// evidence: the spectrum is continuous across a tuner boundary, so a tuner's
+// floor follows from its neighbour's plus the step between their spectra at
+// the shared edge (their gains cancel). A tuner whose own floor stands well
+// above that is filled by a signal that continues from the neighbour (DVB-T,
+// LTE across several tuners): it takes that floor - it showed the signal at
+// ~0 dB, so the signal vanished at the boundary - and never learns it.
 
 #include <complex>
 #include <cstddef>
@@ -29,9 +36,10 @@ namespace nfloor {
 void on_frame(int ch, const std::vector<float>& raw, const std::vector<float>& avg,
               int fft_size, bool reset);
 
-// The floor to subtract from channel ch's AVERAGED spectrum (dB). False when
-// there is no recent frame of that channel: measure it from the data then
-// (FFTProcessor::calculate_noise_floor), as before.
+// The floor to subtract from channel ch's AVERAGED spectrum (dB) - in
+// wideband scan mode the one the stitched spectrum and the VFO squelch on
+// that tuner share. False when there is no recent frame of that channel:
+// measure it from the data then (FFTProcessor::calculate_noise_floor), as before.
 bool floor_db(int ch, float* out);
 
 // Coherent mode, the data receiver: a second antenna of the FFT channel's

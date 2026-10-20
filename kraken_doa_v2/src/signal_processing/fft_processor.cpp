@@ -411,152 +411,72 @@ CompressedDecimatedFFT FFTProcessor::decimate_fft_compressed(const std::vector<f
     return result;
 }
 
-void FFTProcessor::stitch_wideband_fft(
+bool FFTProcessor::stitch_wideband_fft(
     const std::vector<std::vector<float>>& channel_ffts,
-    const std::array<uint32_t, MAX_CHANNELS>& tuner_freqs,
+    const std::array<uint64_t, MAX_CHANNELS>& tuner_hz,
     int num_tuners,
     std::vector<float>& output_fft,
-    float& min_freq_mhz,
-    float& max_freq_mhz
+    double& f0_hz,
+    double& step_hz
 ) {
-    if (num_tuners == 0 || channel_ffts.empty()) {
-        output_fft.clear();
-        return;
-    }
-
-    // Constants - use dynamic FFT size and edge clip setting
-    const int fft_size = current_fft_size.load();
-    const float sample_rate_mhz = SAMPLE_RATE / 1e6f;
-    const float edge_clip = current_edge_clip.load();  // User-adjustable edge clip (0.0-1.0)
-    const int total_bins = fft_size;
-    // At least 1 bin: usable_bins==0 would index an empty percentile vector below
-    const int usable_bins = std::max(1, static_cast<int>(total_bins * edge_clip));
-    const int skip_bins = (total_bins - usable_bins) / 2;  // Skip edge bins on each side
-
-    // Step 1: Calculate noise floor for each tuner (10th percentile for robustness)
-    std::vector<float> noise_floor_offsets(num_tuners, 0.0f);
-
-    for (int tuner = 0; tuner < num_tuners; tuner++) {
-        if (tuner >= static_cast<int>(channel_ffts.size()) || channel_ffts[tuner].size() < static_cast<size_t>(total_bins)) {
-            continue;
-        }
-
-        const std::vector<float>& fft_data = channel_ffts[tuner];
-
-        // Extract magnitudes from usable region and sort to find percentile
-        std::vector<float> tuner_mags;
-        tuner_mags.reserve(usable_bins);
-
-        for (int i = 0; i < usable_bins; i++) {
-            int fft_idx = skip_bins + i;
-            tuner_mags.push_back(fft_data[fft_idx]);
-        }
-
-        // Use nth_element O(n) instead of sort O(n log n) to find 10th percentile
-        int percentile_idx = static_cast<int>(tuner_mags.size() * 0.10f);
-        std::nth_element(tuner_mags.begin(), tuner_mags.begin() + percentile_idx, tuner_mags.end());
-        float noise_floor = tuner_mags[percentile_idx];
-
-        // Store this tuner's noise floor for offset calculation
-        noise_floor_offsets[tuner] = noise_floor;
-    }
-
-    // Calculate offsets to:
-    // 1. Align all tuners to the maximum noise floor (equalize tuner sensitivity)
-    // 2. Then shift so noise floor sits at 0dB (normalized output)
-    // Final offset = (max_noise_floor - tuner_noise_floor) - max_noise_floor
-    //              = -tuner_noise_floor
-    // This makes each tuner's noise floor become 0dB
-    for (int tuner = 0; tuner < num_tuners; tuner++) {
-        // offset = align_to_max + shift_to_zero
-        // align_to_max = max_noise_floor - noise_floor_offsets[tuner]
-        // shift_to_zero = -max_noise_floor
-        // Combined: -noise_floor_offsets[tuner] (which is the original tuner noise floor)
-        noise_floor_offsets[tuner] = -noise_floor_offsets[tuner];
-    }
-
-    // Store the reference noise floor for debug (now always 0dB after normalization)
-    // Coherent mode will also normalize to 0dB independently
-    extern std::atomic<float> wideband_reference_noise_floor;
-    wideband_reference_noise_floor.store(0.0f, std::memory_order_release);  // Normalized to 0dB
-
-    // Step 2: Create frequency-magnitude pairs with noise floor alignment applied
-    std::vector<std::pair<float, float>> freq_mag_pairs;
-    freq_mag_pairs.reserve(num_tuners * usable_bins);
-
-    // Process each tuner's FFT with alignment offset
-    for (int tuner = 0; tuner < num_tuners; tuner++) {
-        if (tuner >= static_cast<int>(channel_ffts.size()) || channel_ffts[tuner].size() < total_bins) {
-            continue;
-        }
-
-        const std::vector<float>& fft_data = channel_ffts[tuner];
-        float center_freq_mhz = tuner_freqs[tuner] / 1e6f;
-        float tuner_offset = noise_floor_offsets[tuner];
-
-        // Extract center 80% of this tuner's FFT with alignment offset applied
-        for (int i = 0; i < usable_bins; i++) {
-            int fft_idx = skip_bins + i;
-
-            // Calculate frequency for this bin (DC-centered FFT)
-            // FFT is already fftshift'd: bin 0 = -Fs/2, bin FFT_SIZE/2 = DC, bin FFT_SIZE-1 ≈ +Fs/2
-            float bin_freq_offset = (fft_idx - total_bins / 2) * sample_rate_mhz / total_bins;
-
-            float absolute_freq_mhz = center_freq_mhz + bin_freq_offset;
-            float magnitude = fft_data[fft_idx] + tuner_offset;  // Apply alignment offset
-
-            freq_mag_pairs.emplace_back(absolute_freq_mhz, magnitude);
-        }
-    }
-
-    // Sort by frequency
-    std::sort(freq_mag_pairs.begin(), freq_mag_pairs.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
-
-    // Handle overlapping bins by averaging
     output_fft.clear();
-    if (freq_mag_pairs.empty()) return;
+    const int fft_size = current_fft_size.load();
+    if (fft_size < 2) return false;
 
-    output_fft.reserve(freq_mag_pairs.size());
+    // the tuners with a spectrum, by frequency (heimdall spreads them in order;
+    // nothing here relies on it - insertion: <= 8 tuners)
+    int order[MAX_CHANNELS];
+    int count = 0;
+    for (int t = 0; t < std::min(num_tuners, MAX_CHANNELS); t++) {
+        if (t >= static_cast<int>(channel_ffts.size()) ||
+            channel_ffts[t].size() != static_cast<size_t>(fft_size) || tuner_hz[t] == 0) continue;
+        int i = count++;
+        for (; i > 0 && tuner_hz[order[i - 1]] > tuner_hz[t]; i--) order[i] = order[i - 1];
+        order[i] = t;
+    }
+    if (count == 0) return false;
 
-    // Determine frequency resolution for overlap detection
-    const float freq_resolution = sample_rate_mhz / total_bins;
-    const float overlap_threshold = freq_resolution * 0.5f;  // Half a bin width
+    // From the lowest tuner's edge-clipped band to the highest's (the tuners
+    // are spaced by it), on the FFT's own bins: bin i of tuner t is centred on
+    // its centre + (i - fft_size / 2) * bin
+    const double bin = static_cast<double>(SAMPLE_RATE) / fft_size;
+    const int usable_bins = std::max(1, static_cast<int>(fft_size * current_edge_clip.load()));
+    const int skip_bins = (fft_size - usable_bins) / 2;
+    const double first = static_cast<double>(tuner_hz[order[0]]);
+    const double last = static_cast<double>(tuner_hz[order[count - 1]]);
+    f0_hz = first + (skip_bins - fft_size / 2) * bin;
+    const double end_hz = last + (skip_bins + usable_bins - 1 - fft_size / 2) * bin;
+    const long long bins = std::llround((end_hz - f0_hz) / bin) + 1;
+    // tuners far apart (a mode change on its way): nothing that stitches
+    if (bins < 2 || bins > static_cast<long long>(MAX_CHANNELS) * fft_size) return false;
+    step_hz = bin;
+    output_fft.resize(static_cast<size_t>(bins));
 
-    float current_freq = freq_mag_pairs[0].first;
-    float mag_sum = freq_mag_pairs[0].second;
-    int count = 1;
-
-    for (size_t i = 1; i < freq_mag_pairs.size(); i++) {
-        float freq = freq_mag_pairs[i].first;
-        float mag = freq_mag_pairs[i].second;
-
-        if (std::abs(freq - current_freq) < overlap_threshold) {
-            // Same bin, accumulate for averaging
-            mag_sum += mag;
-            count++;
-        } else {
-            // New bin, output the averaged previous bin
-            output_fft.push_back(mag_sum / count);
-
-            // Start new bin
-            current_freq = freq;
-            mag_sum = mag;
-            count = 1;
+    // Each tuner up to half way to the next one's centre (= nfloor's
+    // boundaries); a gap wider than a tuner's band (none in heimdall's plan)
+    // stays at 0 dB
+    size_t j = 0;
+    for (int k = 0; k < count; k++) {
+        const int t = order[k];
+        const double fc = static_cast<double>(tuner_hz[t]);
+        size_t end = output_fft.size();
+        if (k + 1 < count) {
+            const double mid = 0.5 * (fc + static_cast<double>(tuner_hz[order[k + 1]]));
+            end = static_cast<size_t>(std::clamp<double>(std::ceil((mid - f0_hz) / bin), static_cast<double>(j),
+                                                         static_cast<double>(output_fft.size())));
+        }
+        if (end <= j) continue;
+        const std::vector<float>& s = channel_ffts[t];
+        const float floor_db = channel_noise_floor(t, s);
+        // grid bin j -> this tuner's bin (j - j0) + i0
+        const long long i0 = fft_size / 2 + std::llround((f0_hz + static_cast<double>(j) * bin - fc) / bin);
+        const size_t j0 = j;
+        for (; j < end; j++) {
+            const long long i = i0 + static_cast<long long>(j - j0);
+            output_fft[j] = (i >= 0 && i < fft_size) ? s[static_cast<size_t>(i)] - floor_db : 0.0f;
         }
     }
-
-    // Output last bin
-    if (count > 0) {
-        output_fft.push_back(mag_sum / count);
-    }
-
-    // Calculate frequency range
-    if (!freq_mag_pairs.empty()) {
-        min_freq_mhz = freq_mag_pairs.front().first;
-        max_freq_mhz = freq_mag_pairs.back().first;
-    }
-
+    return true;
 }
 
 // Compress float magnitudes (dB) to uint8 for bandwidth reduction

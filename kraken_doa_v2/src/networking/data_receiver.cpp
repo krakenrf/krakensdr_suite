@@ -292,13 +292,6 @@ void DataReceiver::data_receiver_thread() {
                         // Clear per-channel FFT buffers to prevent stale data display
                         // First valid FFT frame will reinitialize with alpha=1.0 (direct copy)
                         FFTProcessor::reset_all_buffers();
-
-                        // Clear wideband FFT buffers (will be re-initialized by first frame with alpha=1.0)
-                        {
-                            lock_guard<mutex> wb_lock(wideband_fft_mutex);
-                            fill(wideband_fft_magnitudes.begin(), wideband_fft_magnitudes.end(), -100.0f);
-                            fill(wideband_fft_averaged.begin(), wideband_fft_averaged.end(), -100.0f);
-                        }
                     }
                 }
 
