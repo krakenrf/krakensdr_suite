@@ -323,6 +323,27 @@ std::string random_hex(size_t bytes) {
     return out;
 }
 
+#ifdef _WIN32
+// Windows: a Stop with no console to share ends the bridge's job at once (no
+// Ctrl+Break for it to handle), so its cleanup() never runs and the agent's
+// --mcp-config / --settings files (mcp-<pid>.json holds the MCP token) stay
+// in ai/run. One job runs at a time: whatever is left there when none runs
+// (a job ended, kraken_doa started) is a leftover
+void remove_bridge_leftovers() {
+    std::vector<std::string> gone;
+    if (DIR* d = opendir("ai/run")) {
+        while (dirent* e = readdir(d)) {
+            const std::string n = e->d_name;
+            if ((n.rfind("mcp-", 0) == 0 || n.rfind("settings-", 0) == 0) && n.size() > 5 &&
+                n.compare(n.size() - 5, 5, ".json") == 0)
+                gone.push_back("ai/run/" + n);
+        }
+        closedir(d);
+    }
+    for (const auto& p : gone) unlink(p.c_str());
+}
+#endif
+
 }  // namespace
 
 void AiManager::init() {
@@ -347,6 +368,9 @@ void AiManager::init() {
     load_marks();
     aimap::load();
     aisandbox::recover();
+#ifdef _WIN32
+    remove_bridge_leftovers();
+#endif
     probe_async();
 }
 
@@ -530,7 +554,11 @@ std::string AiManager::start_job(const std::string& kind, const std::vector<std:
     // agent's --mcp-config from these; never on a command line): every
     // KRAKEN_MCP_* we inherited is left out
     for (char** e = environ; e && *e; e++)
+#ifdef _WIN32
+        if (_strnicmp(*e, "KRAKEN_MCP_", 11) == 0) {   // (names are case-insensitive there)
+#else
         if (strncmp(*e, "KRAKEN_MCP_", 11) == 0) {
+#endif
             const char* eq = strchr(*e, '=');
             o.env_unset.emplace_back(*e, eq ? static_cast<size_t>(eq - *e) : strlen(*e));
         }
@@ -629,6 +657,9 @@ void AiManager::finished(const std::string& kind, const kproc::ExitStatus& st) {
         view_ = "{}";
         running_dir_.clear();
     }
+#ifdef _WIN32
+    remove_bridge_leftovers();   // (the job's process tree is gone: reader() closed it)
+#endif
     if (kind == "chat") aisandbox::turn_finished();
     busy_ = false;
     std::cout << "AI assistant: " << kind << " finished (" << code << ")" << std::endl;

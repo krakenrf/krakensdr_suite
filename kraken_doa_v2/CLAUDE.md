@@ -5467,7 +5467,9 @@ the internet and writes / changes decoder plugins):
   ai/kraken_ai.py setup` on the Pi; backend "command" (another CLI) gets the
   text only - no MCP, no tools, the last exchanges as context
 - Windows (merge of 2026-10-20; `py -3 ai/kraken_ai.py setup` on the PC):
-  the dock, MCP server, capture_iq, map tools and conversations work; the
+  the dock, MCP server, map_plot / map layers and conversations work
+  (smoke-tested, below); capture_iq and the viewshed / path-loss tools are
+  NOT yet tested on Windows (they need heimdall / a browser page); the
   sandboxes don't exist there. Claude Code has no sandbox on Windows ->
   `sandbox_status()` false ("Claude Code has no sandbox on Windows") -> no
   Bash for the agent (as on a Pi without bubblewrap). `aisandbox::available()`
@@ -5489,13 +5491,34 @@ the internet and writes / changes decoder plugins):
   listen socket `LIBUS_LISTEN_EXCLUSIVE_PORT` (Linux keeps uSockets'
   default), `read_input_file` takes drive paths, refuses shares
   (`fs_is_network_path`) and compares case-insensitively. Smoke test on
-  Windows (scratch fix6/merge): MCP 401 / 403 / 405, 33 tools, get_screen,
+  Windows (2026-10-20): MCP 401 / 403 / 405, 33 tools, get_screen,
   remember / forget, map_plot over existing files, CSV from ai/knowledge by
   relative and drive path, `..` / share / outside path refused, a second
   bind of the port refused (WSAEACCES), a chat turn through a "command"
   backend (start / question / session / text / done / exit 0, the changed
   plugin folder put on the list), a 30 K context through --context-file, a
   listed plugin refused at the scan
+- Windows, after the review of that merge (2026-10-20): `claude_path()`
+  takes only a `claude.exe` (native installer); an npm `claude.cmd` shim
+  runs through cmd.exe, whose 8191-character command line can't hold the
+  ~10 K system prompt (and which re-parses & | % in it), so every question
+  failed - `claude_missing()` names the shim in setup / test / the dock's
+  error. The path rules hold on NTFS: a dummy turn with Claude Code 2.1.304
+  had API_TOKEN / Api_Token / api_token. / "api_token " / API_TO~1 (8.3) /
+  api_token::$DATA / plugins/../api_token reads and plugins/SDK/, Sdk/,
+  sdk./, "sdk "/, foo/../sdk/, sdk::$INDEX_ALLOCATION/ writes all refused
+  (the allowed write went through). Backstop anyway: `turn_finished` puts
+  EVERY plugin on the list when `plugins/sdk`, `plugins/lib` or a file
+  directly in `plugins/` changed during the turn (stderr line; a changed
+  `ai/kraken_ai.py` / `ai/sigtool.py` is logged). kraken_doa deletes
+  `ai/run/mcp-*.json` / `settings-*.json` when a job ends and at startup:
+  a Stop without a console to share ends the job at once, the bridge's own
+  cleanup never ran and the MCP token file stayed. Runtime test (command
+  backend, scratch KRAKEN_PLUGIN_DIR, kraken_doa without a console and
+  with a hidden one): 13/13 each - startup leftovers removed (other files
+  kept), one changed plugin -> only it listed, sdk / top-level file ->
+  all, no change -> none, Stop -> exit 143 (no console) / 1 (Ctrl+Break)
+  and the leftovers removed
 - Tests 2026-10-18 (scratchpad ai/): t_cap.py (capture_iq in kraken_doa,
   19/19, below), t_map.py (40/40: map_plot features / GeoJSON / CSV,
   refusals with reasons, files outside the folders refused, replace /

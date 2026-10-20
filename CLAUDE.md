@@ -43,6 +43,10 @@ krakensdr_v2/                        # repository root
     └── kraken_doa.html         # Client web UI
 ```
 
+Windows port (see *Windows (WINDOWS.md)* below): `WINDOWS.md`,
+`build_windows.bat` and `run.bat` at the root, `windows/` (MSYS2 setup,
+build and package scripts, the `krakensdr.exe` launcher's source).
+
 ## Build Commands
 
 ### Heimdall Server
@@ -480,7 +484,9 @@ launcher `krakensdr.exe` (repo root, from `windows/krakensdr.cpp`).
 - AI assistant (`ai_manager.cpp`, `ai_mcp.cpp`, `ai_capture.cpp`,
   `ai_map.cpp`, `ai_sandbox.cpp`, `ai/kraken_ai.py`): runs on Windows except
   for its sandboxes. Enabled with `py -3 ai/kraken_ai.py setup` on the PC
-  (Claude Code's native installer + Git for Windows); the bridge through
+  (Claude Code's native installer + Git for Windows; only a `claude.exe` is
+  used - an npm `claude.cmd` runs through cmd.exe, whose 8191-character
+  command line can't hold the ~10 K system prompt); the bridge through
   kproc (`python_cmd`, UTF-8, `KRAKEN_MCP_*` passed in `env_set` /
   `env_unset`), Ctrl+Break = Stop (`SIGBREAK`). Claude Code has NO sandbox on
   Windows, so the agent never gets Bash there (`sandbox_status()`: "Claude
@@ -491,12 +497,19 @@ launcher `krakensdr.exe` (repo root, from `windows/krakensdr.cpp`).
   (`--info`, decoders, debug-playback generators refused with
   `NO_SANDBOX_FIX`) until `py -3 ai/kraken_ai.py trust <id>`; changes are
   detected by mtime / creation time (Windows has no ctime; the agent has no
-  shell to set one back). Permission rules in Claude Code's POSIX form
-  (`//c/...`, `rule_path`); no `/usr/include`; a screen context over the
+  shell to set one back); a turn that changed `plugins/sdk`, `plugins/lib`
+  or a file directly in `plugins/` puts EVERY plugin on the list (a backstop:
+  the rules refuse those writes). Permission rules in Claude Code's POSIX form
+  (`//c/...`, `rule_path`; Claude Code 2.1.304 matched them through case,
+  8.3 short name, trailing dot / space, `..` and `::$DATA` variants - tested
+  2026-10-20); no `/usr/include`; a screen context over the
   32 K command line goes in `ai/sessions/<id>/context.json`
   (`--context-file`, Windows only, read + deleted by the bridge); `ai/run`
   (the MCP token while a question runs) gets an owner-only ACL (`icacls`,
-  `private_dir`); the MCP server binds with `SO_EXCLUSIVEADDRUSE`
+  `private_dir`), and kraken_doa deletes the bridge's `mcp-*.json` /
+  `settings-*.json` there when a job ends and at startup (a Stop without a
+  console to share kills the job at once - the bridge's own cleanup never
+  runs); the MCP server binds with `SO_EXCLUSIVEADDRUSE`
   (`LIBUS_LISTEN_EXCLUSIVE_PORT` - uSockets' Windows default SO_REUSEADDR let
   any program share the port); tokens / IDs from OpenSSL's `RAND_bytes` (no
   /dev/urandom); `map_plot` files: drive paths, '\', case-insensitive
@@ -953,7 +966,8 @@ DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
   install only. Tests in the job scratch (ai/t_*.py)
 - Windows (`py -3 ai/kraken_ai.py setup` on the PC): everything but the
   sandboxes - no shell for the agent (Claude Code has no sandbox there) and a
-  plugin it changed doesn't run until trusted; see *Windows* below
+  plugin it changed doesn't run until trusted (capture_iq and the viewshed /
+  path-loss tools not yet tested there); see *Windows (WINDOWS.md)* above
 
 **Decoder plugins** (details: `kraken_doa_v2/CLAUDE.md`):
 - A plugin = a source folder `kraken_doa_v2/plugins/<id>/` (decoder.cpp +
@@ -2003,6 +2017,8 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
 **DoA Client**:
 - **8080**: Web interface (HTTPS + WebSocket)
 - **8081**: Plain HTTP DoA value page (Android app)
+- **8079**: the AI assistant's MCP server, 127.0.0.1 only, bearer token per
+  run (`AI_MCP_PORT`, `KRAKEN_AI_MCP_PORT` overrides it)
 - Connects to server ports 8091 (data) and 8092 (control)
 
 ## Git Secret Guards
@@ -2031,3 +2047,4 @@ automatically:
 - **Server**: See `heimdall_v2/README.md` for module details
 - **Client**: See `kraken_doa_v2/OPTIMIZATION_SUMMARY.md` for performance analysis
 - **Client**: See `kraken_doa_v2/AGENTS.md` for development workflow
+- **Windows**: See `WINDOWS.md` for the Windows build, launcher and limits

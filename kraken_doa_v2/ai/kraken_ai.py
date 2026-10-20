@@ -268,12 +268,14 @@ def save_config(cfg):
 
 def claude_path():
     if WINDOWS:
-        # the native installer's claude.exe before an npm claude.cmd shim
-        # (a .cmd runs through cmd.exe, which re-parses the arguments - the
-        # system prompt and the settings path)
+        # the native installer's claude.exe only: an npm claude.cmd shim runs
+        # through cmd.exe, whose command line ends at 8191 characters (the
+        # system prompt alone is ~10000) and which re-parses & | % in the
+        # arguments - every question would fail (claude_missing says why)
         for c in (shutil.which("claude.exe"), os.path.expanduser("~/.local/bin/claude.exe")):
             if c and os.path.isfile(c):
                 return c
+        return None
     p = shutil.which("claude")
     if p:
         return p
@@ -282,6 +284,16 @@ def claude_path():
         if os.access(c, os.X_OK):
             return c
     return None
+
+
+def claude_missing():
+    """What to tell the user when claude_path() found nothing"""
+    if WINDOWS:
+        shim = shutil.which("claude")
+        if shim and os.path.splitext(shim)[1].lower() != ".exe":
+            return ("Only " + shim + " was found (the npm package's shim: it runs through cmd.exe, which can't pass "
+                    "the assistant's arguments). Install the native Claude Code with:\n" + CLAUDE_INSTALL)
+    return "Claude Code is not installed. Install it with:\n" + CLAUDE_INSTALL
 
 
 def cli_catalog():
@@ -691,7 +703,8 @@ class Runner:
     def run_claude(self, prompt, system, resume_id, new_id):
         exe = claude_path()
         if not exe:
-            emit("error", msg="Claude Code (claude) is not installed - see the README (AI assistant)")
+            emit("error", msg=claude_missing() if WINDOWS else
+                 "Claude Code (claude) is not installed - see the README (AI assistant)")
             return False, ""
         sandbox_ok, sandbox_why = sandbox_status()
         os.makedirs(RUN_DIR, exist_ok=True)
@@ -961,7 +974,7 @@ def cmd_test(_a):
         r = Runner(cfg, AI_DIR, 120)
         ok, text = r.run_command("Reply with exactly: KRAKEN_OK", "")
     elif not claude_path():
-        ok, text = False, "Claude Code is not installed"
+        ok, text = False, claude_missing() if WINDOWS else "Claude Code is not installed"
     else:
         try:
             text = one_shot("Reply with exactly: KRAKEN_OK")
@@ -984,8 +997,7 @@ def cmd_setup(a):
     if cfg.get("backend", "claude") == "claude":
         exe = claude_path()
         if not exe:
-            print("Claude Code is not installed. Install it with:\n"
-                  + CLAUDE_INSTALL + "\n"
+            print(claude_missing() + "\n"
                   "then run `claude` once to log in (or set ANTHROPIC_API_KEY for the receiver's service), "
                   "and run this setup again.")
             return 1

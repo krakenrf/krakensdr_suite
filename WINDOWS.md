@@ -143,15 +143,21 @@ UI shows on a Windows receiver are meant for that source checkout.
   `set KRAKEN_PYTHON=C:\path\to\python.exe` picks a particular interpreter.
 - **AI assistant** (the 🤖 dock): enabled on the PC itself with
   `py -3 ai/kraken_ai.py setup` in the `kraken_doa_v2` folder; it needs Claude
-  Code (in PowerShell `irm https://claude.ai/install.ps1 | iex`, then `claude`
-  once to log in) and Git for Windows, which Claude Code requires. It answers,
-  looks things up, controls the receiver, captures and plots as on Linux, but
+  Code's native `claude.exe` (in PowerShell `irm https://claude.ai/install.ps1
+  | iex`, then `claude` once to log in - an npm-installed `claude.cmd` is not
+  used: cmd.exe can't pass the assistant's arguments) and Git for Windows,
+  which Claude Code requires. It answers, looks things up, controls the
+  receiver and draws on the map as on Linux (its IQ captures and the terrain /
+  path-loss tools are not tested on Windows yet), but
   **without its sandboxes**: Claude Code has no sandbox on Windows, so the
   assistant gets no shell there (it can't build plugins or run scripts - the
   dock says so), and a plugin it changed is not run at all (no bubblewrap to
   run it in) until you have checked it and run
   `py -3 ai/kraken_ai.py trust <id>` (`py -3 ai/kraken_ai.py sandboxed` lists
-  them). Build such a plugin yourself with `build_windows.bat`.
+  them). Build such a plugin yourself with `build_windows.bat`. Should
+  `plugins\sdk`, `plugins\lib` or a file directly in `plugins\` change while
+  it answers (its rules refuse that; a rebuild or `git pull` during an answer
+  does it too), every plugin goes on that list.
 - **Voice to Text** is optional as on Linux: `set WHISPER=1` before
   `build_windows.bat` (or `make -C kraken_doa_v2 whisper` in an MSYS2 UCRT64
   shell) builds whisper.cpp and fetches the base.en model.
@@ -178,7 +184,8 @@ UI shows on a Windows receiver are meant for that source checkout.
 - **A port is in use / access denied**: `run.bat stop` ends a previous stack.
   With Hyper-V, WSL2 or Docker Desktop, Windows reserves port ranges - check
   `netsh int ipv4 show excludedportrange protocol=tcp` (8070, 8080, 8081, 8091,
-  8092, 1234 must be free).
+  8092, 1234 must be free, and 8079 on 127.0.0.1 for the AI assistant's MCP
+  server - `set KRAKEN_AI_MCP_PORT=<port>` moves it).
 - **Antivirus**: freshly built, unsigned exes are sometimes quarantined or slow
   to start the first time; allow the repository folder if needed.
 - **Logs**: with `--headless` the apps log errors only (as on Linux);

@@ -55,10 +55,12 @@ if [[ -f "$K/plugins/lib/build/codecs.exe" ]]; then
 fi
 [[ -d "$K/plugins/sdk/tools" ]] && mkdir -p "$OUT/kraken_doa_v2/plugins/sdk" && cp -r "$K/plugins/sdk/tools" "$OUT/kraken_doa_v2/plugins/sdk/"
 
-# AI assistant bridge (Python; off until set up) and Voice to Text, when built
+# AI assistant bridge (Python; off until set up) and Voice to Text, when built.
+# The bridge's own files only - not ai/run, ai/state, ai/sessions, the user's
+# ai/knowledge files or ai/ai_config.json of this machine
 if [[ -d "$K/ai" ]]; then
-    mkdir -p "$OUT/kraken_doa_v2/ai"
-    find "$K/ai" -maxdepth 2 -name '*.py' | while read -r f; do
+    for f in "$K"/ai/*.py "$K"/ai/memguard/*.py "$K"/ai/knowledge/README.md; do
+        [[ -f "$f" ]] || continue
         rel="${f#$K/ai/}"
         mkdir -p "$OUT/kraken_doa_v2/ai/$(dirname "$rel")"
         cp "$f" "$OUT/kraken_doa_v2/ai/$rel"

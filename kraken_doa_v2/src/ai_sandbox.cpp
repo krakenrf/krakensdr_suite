@@ -138,6 +138,32 @@ bool changed_since(const std::string& dir, int64_t ms, int depth = 0) {
     return hit;
 }
 
+#ifdef _WIN32
+// Windows: the receiver's own plugin files changed since ms - sdk/, lib/ or a
+// file directly in plugins/ (Makefile, *.mk ...). The agent's permission
+// rules refuse every write there (Claude Code 2.1.304 refused case, 8.3,
+// trailing dot / space, "..", and stream variants of those paths too - tested
+// 2026-10-20) and it has no shell; should a rule ever be got round anyway,
+// nothing would sandbox what the next build makes from them (turn_finished)
+bool core_changed_since(const std::string& root, int64_t ms) {
+    if (changed_since(root + "/sdk", ms) || changed_since(root + "/lib", ms)) return true;
+    DIR* d = opendir(root.c_str());
+    if (!d) return false;
+    bool hit = false;
+    while (dirent* e = readdir(d)) {
+        const std::string p = root + "/" + e->d_name;
+        struct stat st {};
+        if (e->d_name[0] == '.' || lstat(p.c_str(), &st) != 0 || S_ISDIR(st.st_mode)) continue;
+        if (changed_since(p, ms)) {
+            hit = true;
+            break;
+        }
+    }
+    closedir(d);
+    return hit;
+}
+#endif
+
 std::string real(const std::string& p) {
     char b[PATH_MAX];
 #ifdef _WIN32
@@ -219,6 +245,19 @@ void turn_finished() {
     const int64_t start = g_turn_start_ms.load();
     const std::string root = real(dig::PluginRegistry::dir());
     std::vector<std::string> changed;
+#ifdef _WIN32
+    // the plugins' own files changed: every plugin is built from them
+    const bool core = !root.empty() && core_changed_since(root, start);
+    if (core)
+        std::cerr << "AI assistant: plugins/sdk, plugins/lib or a file in plugins/ changed during the turn - no "
+                     "plugin runs until trusted now; check the changes (git status / git diff) first" << std::endl;
+    // what kraken_doa itself runs with its full rights (the same rules refuse it)
+    for (const char* f : {"ai/kraken_ai.py", "ai/sigtool.py"})
+        if (changed_since(f, start))
+            std::cerr << "AI assistant: " << f << " changed during the turn - check it (git diff)" << std::endl;
+#else
+    const bool core = false;
+#endif
     if (!root.empty())
         if (DIR* d = opendir(root.c_str())) {
             while (dirent* e = readdir(d)) {
@@ -227,7 +266,7 @@ void turn_finished() {
                 const std::string p = root + "/" + n;
                 struct stat st {};
                 if (lstat(p.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) continue;
-                if (changed_since(p, start)) changed.push_back(n);
+                if (core || changed_since(p, start)) changed.push_back(n);
             }
             closedir(d);
         }
@@ -241,8 +280,15 @@ void turn_finished() {
     }
     g_turn = false;
     unlink(TURN);
+#ifdef _WIN32
+    if (core) return;   // (said once above, for all of them)
+    for (const auto& id : changed)
+        std::cout << "AI assistant: plugin " << id << " was changed - it doesn't run until trusted (py -3 "
+                  << "ai/kraken_ai.py trust " << id << ")" << std::endl;
+#else
     for (const auto& id : changed)
         std::cout << "AI assistant: plugin " << id << " was changed - it runs sandboxed from now on" << std::endl;
+#endif
 }
 
 std::vector<std::string> wrap(const std::vector<std::string>& argv, const std::vector<std::string>& rw) {

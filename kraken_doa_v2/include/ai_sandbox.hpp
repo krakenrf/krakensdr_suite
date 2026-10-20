@@ -20,7 +20,9 @@
 // a plugin on the list doesn't run at all until the user trusts it (`py -3
 // ai/kraken_ai.py trust <id>` on the PC); the list is kept the same way, by
 // the files' modification / creation times (Windows has no ctime - the
-// assistant has no shell there, so nothing can set a time back either).
+// assistant has no shell there, so nothing can set a time back either). A
+// turn that changed plugins/sdk, plugins/lib or a file directly in plugins/
+// (refused by the agent's rules - a backstop) puts EVERY plugin on the list.
 
 #include <cstdint>
 #include <string>
