@@ -155,6 +155,9 @@ allowed where you live is your responsibility. The sidebar's "🔐 Digital
 Decoders" box shows which codecs are installed and the install steps for the
 missing ones (press "↻ Check again" after installing).
 
+Windows: the same codecs, built in MSYS2 - see WINDOWS.md, "Digital voice
+codecs".
+
 ### DMR, D-STAR and NXDN voice: mbelib
 
 ```

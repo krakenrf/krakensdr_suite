@@ -5074,6 +5074,31 @@ Edit `include/config.hpp`:
   (AACH usage marker >= 4, training sequence 1) of one timeslot; after 400 ms
   without traffic, erasure blocks flush the pipes' stdio buffers. Muted for
   60 s after any encrypted MAC-RESOURCE. ~0.5 s extra latency (pipe buffers)
+  Windows (no /dev/stdin there): each program gets two NAMED PIPES as its
+  file names (`\\.\pipe\krakensdr-tetra-<pid>-<n>-<64 random bits>`, one
+  instance, local only, the server end the plugin's; its client checked by
+  process ID - GetNamedPipeClientProcessId - before any data), started
+  through kproc (NUL stdio, no console); three plugin threads (writer ->
+  cdecoder, relay cdecoder -> sdecoder, reader) in overlapped I/O ended by a
+  stop event, so data moves through both programs between slots as on
+  Linux. A program that exits / breaks a pipe: stopped, restarted no sooner
+  than 2 s later (not every slot). The ETSI code needs no change: fopen
+  "rb" / "wb" + sequential fread / fwrite open a pipe like a file (binary).
+  Found as `$KRAKEN_TETRA_CODEC_DIR\{cdecoder,sdecoder}.exe`, else
+  `tetra-{cdecoder,sdecoder}.exe` in the working directory (kraken_doa_v2,
+  where libmbe.dll goes), else on the PATH. Tested 2026-10-20 with
+  stand-in programs that use the same file I/O: byte-exact at real-time
+  pace (~0.47 s to the first audio), only whole frames dropped when flooded
+  (the 64-block cap, as Linux), a codec that dies is restarted, one that
+  hangs doesn't block stop(); and with the real ETSI codec built by the
+  WINDOWS.md steps (MinGW UCRT64, only the system UCRT DLLs; MSYS2's patch
+  needs `--binary` - CRLF sources): 200 random slots and a TTS sentence
+  encoded with scoder + ccoder decode through TetraCodec bit-identical to
+  cdecoder + sdecoder on plain files, and to the Pi's build / pipes
+  (fixed-point code: the same samples on both OSes); the sentence's
+  correlation with the spoken input 0.948 (codec delay 40 samples). ccoder
+  writes a 1 as 0x0081 (129), TetraCodec sends -127 - cdecoder decodes both
+  the same
 - Codec availability: the sidebar box (above), and each voice plugin sets a "Voice codec" fact (e.g.
   "AMBE+2: libmbe.so.1 (mbelib 1.3.0)" / "not installed"), and its voice
   state says "... codec not installed" while someone listens

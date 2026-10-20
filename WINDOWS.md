@@ -161,11 +161,51 @@ UI shows on a Windows receiver are meant for that source checkout.
 - **Voice to Text** is optional as on Linux: `set WHISPER=1` before
   `build_windows.bat` (or `make -C kraken_doa_v2 whisper` in an MSYS2 UCRT64
   shell) builds whisper.cpp and fetches the base.en model.
-- **Digital voice codecs**: DMR / D-STAR / NXDN AMBE voice uses a user-built
-  mbelib DLL (`libmbe.dll`, or `KRAKEN_MBELIB=<path>`), as the `.so` on Linux.
-  **TETRA voice is not available on Windows** (the ETSI codec programs are
-  chained through their standard input / output, which Windows can't name as
-  files); everything else of TETRA decodes.
+- **Digital voice codecs** (not shipped - licensing, see the README's
+  "Digital voice codecs"; the web UI's "🔐 Digital Decoders" box shows the
+  steps below for a missing one). Build them in the MSYS2 UCRT64 shell
+  (`C:\msys64\ucrt64.exe`) and put the results in the `kraken_doa_v2` folder,
+  next to `kraken_doa.exe`:
+  - DMR / D-STAR / NXDN (AMBE, mbelib): `libmbe.dll` (or
+    `KRAKEN_MBELIB=<path>`), as the `.so` on Linux:
+
+    ```
+    pacman -S --needed git mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+    git clone https://github.com/szechyjs/mbelib.git
+    cd mbelib
+    cmake -S . -B build -G Ninja -DDISABLE_TEST=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+    cmake --build build             # -> build/libmbe.dll
+    ```
+  - TETRA (ACELP, the ETSI codec with osmo-tetra's patches): `cdecoder.exe`
+    and `sdecoder.exe`, copied as `tetra-cdecoder.exe` and
+    `tetra-sdecoder.exe` (or `KRAKEN_TETRA_CODEC_DIR=<folder>` holding
+    `cdecoder.exe` and `sdecoder.exe`; or the `tetra-*.exe` on the PATH).
+    Download the codec zip in your browser first
+    (<https://www.etsi.org/deliver/etsi_en/300300_300399/30039502/01.03.01_60/en_30039502v010301p0.zip>
+    - etsi.org's firewall may refuse a scripted download), then:
+
+    ```
+    pacman -S --needed git make patch unzip mingw-w64-ucrt-x86_64-gcc
+    git clone https://github.com/osmocom/osmo-tetra.git
+    cd osmo-tetra/etsi_codec-patches
+    cp "$(cygpath "$USERPROFILE")/Downloads/en_30039502v010301p0.zip" etsi_tetra_codec.zip
+    md5sum etsi_tetra_codec.zip     # must be a8115fe68ef8f8cc466f4192572a1e3e
+    sed -i 's/patch -p1/patch --binary -p1/' download_and_patch.sh
+    sh ./download_and_patch.sh
+    cd ../codec/c-code
+    make                            # -> cdecoder.exe, sdecoder.exe
+    ```
+
+    On Linux the plugin chains the two programs through `/dev/stdin` and
+    `/dev/stdout`; Windows has no such names, so it gives each program
+    named pipes as its input and output files and relays between them
+    (voice ~0.5 s late, as on Linux). The `sed` line: MSYS2's `patch` reads
+    a patch file as text unless told `--binary`, and the codec's sources
+    have DOS (CRLF) line ends - without it every hunk fails with
+    "different line endings".
+
+  Then switch the decoders off and on (or restart the stack); the box shows
+  the codec as installed.
 - **RTL-TCP (port 1234)**: connect SDR# / GQRX to `127.0.0.1:1234` rather than
   `localhost` - heimdall listens on IPv4, and Windows takes about 2 s to give
   up on `localhost`'s IPv6 address first.

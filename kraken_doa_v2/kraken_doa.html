@@ -10136,8 +10136,12 @@ function addTouchHandlers(el, down, move, up) {
   // Windows receiver gets install_win + win_note instead: mbelib built as a
   // DLL in MSYS2 (CMake 4 needs the policy minimum for its 2.6 project), put
   // where the plugins' dlopen() finds it - they run in the kraken_doa_v2
-  // folder. No TETRA recipe there: the ETSI codec programs need /dev/stdin
-  // and /dev/stdout, which Windows hasn't got (the codec's status says so)
+  // folder. TETRA: the ETSI programs built natively in MSYS2 (the plugin
+  // hands them named pipes instead of /dev/stdin and /dev/stdout), the zip
+  // fetched in a browser - etsi.org's firewall refuses scripted downloads -,
+  // patched with patch --binary (MSYS2's patch reads a patch file in text
+  // mode, and the zip's sources and osmo-tetra's patches have CRLF lines),
+  // found as tetra-*.exe in that folder (lib/dig_vocoder.cpp find_codec)
   const DIG_CODECS = [
     {key: 'imbe', name: 'IMBE', used: 'P25'},
     {key: 'ambe', name: 'AMBE / AMBE+2 (mbelib)', used: 'DMR, D-STAR, NXDN',
@@ -10166,7 +10170,23 @@ sh ./download_and_patch.sh
 cd ../codec/c-code
 make
 sudo install -m 755 cdecoder /usr/local/bin/tetra-cdecoder
-sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
+sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`,
+     install_win: `# in the MSYS2 UCRT64 shell (C:\\msys64\\ucrt64.exe)
+pacman -S --needed git make patch unzip mingw-w64-ucrt-x86_64-gcc
+git clone https://github.com/osmocom/osmo-tetra.git
+cd osmo-tetra/etsi_codec-patches
+# download the codec in your browser (etsi.org may refuse scripted downloads):
+#   https://www.etsi.org/deliver/etsi_en/300300_300399/30039502/01.03.01_60/en_30039502v010301p0.zip
+cp "$(cygpath "$USERPROFILE")/Downloads/en_30039502v010301p0.zip" etsi_tetra_codec.zip
+md5sum etsi_tetra_codec.zip     # must be a8115fe68ef8f8cc466f4192572a1e3e
+sed -i 's/patch -p1/patch --binary -p1/' download_and_patch.sh   # the codec's files are CRLF
+sh ./download_and_patch.sh
+cd ../codec/c-code
+make
+explorer .                      # the folder with cdecoder.exe and sdecoder.exe`,
+     win_note: 'Then copy <code>cdecoder.exe</code> and <code>sdecoder.exe</code> into the kraken_doa_v2 folder, next to ' +
+       'kraken_doa.exe, as <code>tetra-cdecoder.exe</code> and <code>tetra-sdecoder.exe</code> (or set ' +
+       'KRAKEN_TETRA_CODEC_DIR to the folder holding cdecoder.exe and sdecoder.exe and restart the software), and '},
   ];
   let digCodecsLast = null;   // the last {"codecs"}: drawn again when the receiver's OS becomes known
   function digOnCodecs(c) {

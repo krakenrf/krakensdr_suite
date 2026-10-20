@@ -1,6 +1,5 @@
 // TETRA plugin: 72 kHz complex -> RRC 0.35 (4 samples/symbol) -> TETRA
-// downlink receiver (tetra.cpp). Voice: ACELP via the user-built ETSI codec
-// (Linux only).
+// downlink receiver (tetra.cpp). Voice: ACELP via the user-built ETSI codec.
 
 #include "dig_common.hpp"
 #include "tetra.hpp"
@@ -34,19 +33,11 @@ private:
 
 }  // namespace
 
-#ifdef _WIN32
-// no TETRA voice on Windows (lib/dig_vocoder.cpp: the ETSI codec programs
-// need /dev/stdin and /dev/stdout) - the plugin list says so
-#define TETRA_VOICE "Voice: ACELP on Linux only (ETSI codec)."
-#else
-#define TETRA_VOICE "Voice: ACELP (ETSI codec, README \"Digital voice codecs\")."
-#endif
-
 KRAKEN_PLUGIN(TetraPlugin, {.id = "tetra",
                             .name = "TETRA",
                             .description = "TETRA downlink (base station, 25 kHz). Network (MCC / MNC), colour code, location "
-                                           "area, carrier, services, timeslot usage, call set-up and addresses. " TETRA_VOICE
-                                           " Bandwidth 24 kHz or more.",
+                                           "area, carrier, services, timeslot usage, call set-up and addresses. Voice: ACELP "
+                                           "(ETSI codec, README \"Digital voice codecs\"). Bandwidth 24 kHz or more.",
                             .version = "2.1",
                             .sample_rate = 72000,
                             .min_vfo_rate = 24000,
