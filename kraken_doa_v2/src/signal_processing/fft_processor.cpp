@@ -452,9 +452,15 @@ bool FFTProcessor::stitch_wideband_fft(
     step_hz = bin;
     output_fft.resize(static_cast<size_t>(bins));
 
-    // Each tuner up to half way to the next one's centre (= nfloor's
-    // boundaries); a gap wider than a tuner's band (none in heimdall's plan)
-    // stays at 0 dB
+    // The tuners' common response (tilt, roll-off) taken off: flat across each
+    // band and every boundary (the stitch only runs under fft_mutex)
+    static std::vector<float> shape;
+    static uint32_t shape_ver = 0;
+    nfloor::shape_db(fft_size, shape, &shape_ver);
+    if (shape.size() != static_cast<size_t>(fft_size)) shape.assign(static_cast<size_t>(fft_size), 0.0f);
+
+    // Each tuner up to half way to the next one's centre; a gap wider than a
+    // tuner's band (none in heimdall's plan) stays at 0 dB
     size_t j = 0;
     for (int k = 0; k < count; k++) {
         const int t = order[k];
@@ -473,7 +479,8 @@ bool FFTProcessor::stitch_wideband_fft(
         const size_t j0 = j;
         for (; j < end; j++) {
             const long long i = i0 + static_cast<long long>(j - j0);
-            output_fft[j] = (i >= 0 && i < fft_size) ? s[static_cast<size_t>(i)] - floor_db : 0.0f;
+            output_fft[j] = (i >= 0 && i < fft_size)
+                                ? s[static_cast<size_t>(i)] - shape[static_cast<size_t>(i)] - floor_db : 0.0f;
         }
     }
     return true;

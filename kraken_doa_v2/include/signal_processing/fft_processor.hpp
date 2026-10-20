@@ -61,7 +61,8 @@ public:
 
     // Wideband scan mode: the tuners' spectra (channel_ffts - the averaged
     // ones) side by side on one grid of FFT bins, each frequency from the
-    // tuner whose centre is nearest, each relative to that tuner's noise floor
+    // tuner whose centre is nearest, each flattened by the tuners' common
+    // response (nfloor::shape_db) and relative to that tuner's noise floor
     // (channel_noise_floor). The edge-clipped band of the lowest tuner to the
     // highest's; bin i at f0_hz + i * step_hz. False = nothing to stitch
     static bool stitch_wideband_fft(

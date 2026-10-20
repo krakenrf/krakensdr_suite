@@ -56,49 +56,101 @@ constexpr int MSC_MIN_SEGS = 16;
 constexpr int64_t SAVE_EVERY_MS = 300000;
 constexpr float SAVE_DELTA_DB = 0.5f;
 const char* const FILE_NAME = "noise_floors.json";
-// Wideband scan mode (wideband_pass). A tuner is FILLED (takes the floor its
-// neighbours hand on) when that floor lies WB_ENTER_DB under its own
-// percentile (left under WB_LEAVE_DB) and its remembered floor agrees - the
-// band stands WB_REF_ENTER (WB_REF_LEAVE) of that above it: a signal ending
-// right at a boundary looks the same as one going on. It is QUIET (noise of
-// its own - another antenna / gain than the others' -, learned at once) when
-// a neighbour at its remembered floor (within WB_NOISE_REF_DB: known noise)
-// hands on a floor within WB_NOISE_DB of its percentile, for WB_NOISE_HOLD_MS
-// on end. A neighbour merely consistent with it isn't enough: a rise on every
-// tuner (or a signal wider than all of them) is consistent everywhere, and
-// right then the first tuner to see it meets the others' floors from before
-// for a moment. Edge windows: WB_EDGE of the bins each, just inside a
-// boundary; a tuner's edges count WB_FRESH_MS
-constexpr float WB_ENTER_DB = 3.0f;
-constexpr float WB_LEAVE_DB = 2.0f;
-constexpr float WB_NOISE_DB = 1.5f;
-constexpr float WB_NOISE_REF_DB = 3.0f;
-constexpr int64_t WB_NOISE_HOLD_MS = 1000;
-constexpr float WB_REF_ENTER = 0.5f;
-constexpr float WB_REF_LEAVE = 0.3f;
-constexpr float WB_EDGE = 0.02f;
-constexpr int64_t WB_FRESH_MS = 400;
-constexpr double WB_JOIN_HZ = 1000.0;   // the two sides' boundary frequencies agree to this
 
-// Wideband scan mode: one tuner's part in the stitched spectrum's floor
+// ---- Wideband scan mode (tuners side by side, one stitched spectrum) ----
+// Every tuner's response across its band is the same - the RTL2832U's and
+// R820T's filters: a tilt of ~3.5 dB, a slow roll-off below -1 MHz, a steep
+// one above +1 MHz: one common SHAPE (dB over the band's floor at WB_SHAPE_N
+// points across the sample rate, DC centred) flattens them all. Measured on a
+// KrakenSDR (2026-10-20: 5 x R820T, 2.4 MS/s, the median of three quiet
+// tuners), learned on from quiet tuners
+constexpr int WB_SHAPE_N = 256;
+const float WB_SHAPE_DEFAULT[WB_SHAPE_N] = {
+    -7.02f, -6.80f, -6.53f, -6.23f, -5.91f, -5.60f, -5.32f, -5.04f,
+    -4.81f, -4.58f, -4.32f, -4.10f, -3.93f, -3.70f, -3.44f, -3.21f,
+    -2.99f, -2.76f, -2.53f, -2.36f, -2.19f, -2.02f, -1.89f, -1.72f,
+    -1.54f, -1.39f, -1.26f, -1.11f, -1.00f, -0.91f, -0.80f, -0.72f,
+    -0.59f, -0.48f, -0.37f, -0.31f, -0.25f, -0.21f, -0.18f, -0.14f,
+    -0.07f, -0.01f, 0.02f, 0.08f, 0.12f, 0.14f, 0.15f, 0.19f,
+    0.17f, 0.14f, 0.15f, 0.16f, 0.14f, 0.15f, 0.16f, 0.14f,
+    0.11f, 0.12f, 0.15f, 0.12f, 0.13f, 0.14f, 0.12f, 0.09f,
+    0.09f, 0.08f, 0.02f, 0.00f, -0.00f, 0.09f, 0.16f, 0.22f,
+    0.21f, 0.20f, 0.08f, -0.04f, -0.12f, -0.14f, -0.18f, -0.20f,
+    -0.21f, -0.20f, -0.18f, -0.15f, -0.10f, -0.07f, -0.06f, -0.06f,
+    -0.05f, -0.06f, -0.06f, -0.06f, -0.07f, -0.09f, -0.08f, -0.02f,
+    0.07f, 0.10f, 0.14f, 0.20f, 0.19f, 0.18f, 0.21f, 0.25f,
+    0.28f, 0.33f, 0.39f, 0.45f, 0.46f, 0.47f, 0.49f, 0.50f,
+    0.49f, 0.53f, 0.61f, 0.65f, 0.69f, 0.75f, 0.77f, 0.68f,
+    0.67f, 0.69f, 0.68f, 0.65f, 0.68f, 0.67f, 0.61f, 0.55f,
+    0.55f, 0.57f, 0.60f, 0.62f, 0.66f, 0.72f, 0.74f, 0.71f,
+    0.71f, 0.74f, 0.70f, 0.62f, 0.60f, 0.59f, 0.54f, 0.49f,
+    0.51f, 0.50f, 0.46f, 0.44f, 0.45f, 0.42f, 0.42f, 0.44f,
+    0.43f, 0.40f, 0.36f, 0.34f, 0.31f, 0.28f, 0.25f, 0.23f,
+    0.21f, 0.19f, 0.20f, 0.22f, 0.22f, 0.21f, 0.17f, 0.14f,
+    0.11f, 0.11f, 0.12f, 0.16f, 0.20f, 0.20f, 0.20f, 0.23f,
+    0.24f, 0.27f, 0.41f, 0.55f, 0.57f, 0.56f, 0.58f, 0.53f,
+    0.47f, 0.49f, 0.54f, 0.55f, 0.54f, 0.55f, 0.56f, 0.59f,
+    0.63f, 0.65f, 0.66f, 0.72f, 0.79f, 0.88f, 0.98f, 1.07f,
+    1.13f, 1.19f, 1.22f, 1.21f, 1.22f, 1.28f, 1.28f, 1.28f,
+    1.30f, 1.31f, 1.27f, 1.32f, 1.43f, 1.50f, 1.53f, 1.58f,
+    1.58f, 1.50f, 1.49f, 1.53f, 1.53f, 1.53f, 1.52f, 1.51f,
+    1.45f, 1.39f, 1.33f, 1.28f, 1.18f, 1.07f, 0.94f, 0.73f,
+    0.49f, 0.19f, -0.16f, -0.57f, -1.07f, -1.65f, -2.32f, -3.01f,
+    -3.75f, -4.49f, -5.26f, -5.97f, -6.66f, -7.23f, -7.71f, -8.08f,
+    -8.34f, -8.50f, -8.58f, -8.54f, -8.30f, -8.04f, -7.77f, -7.55f,
+};
+// Neighbouring tuners overlap (each 2.4 MHz wide, spaced by edge clip x 2.4
+// MHz): at the same frequencies their flattened spectra differ only by their
+// gains, whatever the band holds - noise, carriers, DVB-T alike. The median of
+// that difference over the bins where both responses are above
+// WB_OVERLAP_MIN_DB (>= WB_OVERLAP_MIN_BINS of them; median: a strong signal
+// just past one tuner's band aliases into that one only), smoothed over
+// WB_STEP_TAU_S, links the tuners' levels
+constexpr float WB_OVERLAP_MIN_DB = -6.0f;
+constexpr int WB_OVERLAP_MIN_BINS = 64;
+constexpr float WB_STEP_TAU_S = 1.0f;
+// Along tuners linked so, the common floor is the quietest one's (gains taken
+// off); a tuner standing WB_FILL_DB over it (left under WB_UNFILL_DB) is
+// FILLED by a signal - its own percentile is the signal - and takes the
+// common floor + its gain. The others keep their own floor: their noise lines
+// up exactly. A raised floor in one tuner (overload, its antenna) is in the
+// overlaps too: a gain difference, not a signal
+constexpr float WB_FILL_DB = 3.0f;
+constexpr float WB_UNFILL_DB = 2.0f;
+constexpr int64_t WB_FRESH_MS = 400;        // a tuner's figures count this long
+// The shape learned from quiet tuners (not filled, the flattened band's 50th
+// - 10th percentile within WB_QUIET_MARGIN_DB of noise's - noise_spread_db)
+// at most every WB_SHAPE_EVERY_MS, each point within WB_SHAPE_GATE_DB of it
+// only (a signal is not the response), over WB_SHAPE_TAU_S; FFTs of
+// WB_SHAPE_MIN_FFT bins and up
+constexpr float WB_QUIET_MARGIN_DB = 1.5f;
+constexpr int64_t WB_SHAPE_EVERY_MS = 1000;
+constexpr float WB_SHAPE_GATE_DB = 3.0f;
+constexpr float WB_SHAPE_TAU_S = 60.0f;
+constexpr int WB_SHAPE_MIN_FFT = 4096;
+// After a retune the averaged spectra hold both bands for a while: gain steps,
+// decisions and the shape wait 5 averaging time constants (frame interval /
+// alpha), WB_SETTLE_MIN_MS .. WB_SETTLE_MAX_MS. A move over WB_JUMP_HZ drops
+// the decisions (another band)
+constexpr int64_t WB_SETTLE_MIN_MS = 300;
+constexpr int64_t WB_SETTLE_MAX_MS = 4000;
+constexpr double WB_MOVE_HZ = 1000.0;
+constexpr double WB_JUMP_HZ = 1e6;
+
 struct Wb {
-    bool ok = false;        // worked out (wideband scan mode, finite)
+    bool ok = false;        // worked out (wideband scan mode)
     int64_t ms = 0;
     double fc = 0.0;        // the tuner's centre, Hz
-    double lo_hz = 0.0;     // its boundaries with the tuners next to it (0 = none)
-    double hi_hz = 0.0;
-    float lo_db = 0.0f;     // its averaged spectrum's floor just inside each
-    float hi_db = 0.0f;
-    float f = 0.0f;         // the band's own floor (the averaged spectrum's percentile)
-    float own = 0.0f;       // the floor from this tuner alone (held or not)
-    bool held = false;      // own = the remembered floor (Chan::held)
-    float r = 0.0f;         // its raw floor (on_frame's r) ...
-    float gain = 0.0f;      // ... at this gain
-    float d = 0.0f;         // its raw floor over the remembered one
-    bool has_ref = false;   // d known (no tuner AGC, a remembered floor)
-    bool filled = false;    // a signal from the neighbours fills the band: their floor
-    bool quiet = false;     // the neighbours' floor = its own: noise ...
-    int64_t quiet_ms = 0;   // ... since
+    float f = 0.0f;         // the flattened band's floor (10th percentile of the centre 80 %)
+    float spread = 0.0f;    // its 50th - 10th percentile
+    int up = -1;            // the tuner next up whose band overlaps this one's
+    float step = 0.0f;      // its flattened level minus this one's at the same frequencies
+    bool step_ok = false;
+    int64_t step_ms = 0;
+    bool filled = false;
+    int64_t settle_until = 0;
+    double settle_fc = 0.0; // the centre before the retune that started the settling
+    int64_t shape_ms = 0;
 };
 
 struct Chan {
@@ -108,8 +160,6 @@ struct Chan {
     bool msc_ok = false;    // coherence verdict (since the last retune)
     float msc = 0.0f;
     int64_t msc_ms = 0;
-    Wb wb;
-    int64_t wb_since = 0;   // wideband scan stats since (0 = none)
 };
 
 std::mutex mu;
@@ -125,7 +175,17 @@ std::mutex save_mu;                    // one writer at a time
 std::atomic<float> out_db[MAX_CHANNELS];
 std::atomic<int64_t> out_ms[MAX_CHANNELS];      // when out_db was worked out
 std::atomic<int64_t> frame_ms[MAX_CHANNELS];    // the channel's latest frame (staleness)
+std::atomic<float> frame_dt_ms[MAX_CHANNELS];   // its frame interval (smoothed)
 std::atomic<int64_t> last_msc_ms{0};
+
+// Wideband scan mode, under mu
+Wb wbs[MAX_CHANNELS];
+float shape[WB_SHAPE_N];
+bool shape_ready = false;
+uint32_t shape_ver = 1;
+std::vector<float> shape_bins;   // the shape for each bin of a shape_bins_n spectrum
+int shape_bins_n = 0;
+uint32_t shape_bins_ver = 0;
 
 #ifdef NFLOOR_TEST_CLOCK
 }  // namespace
@@ -139,21 +199,16 @@ int64_t now_ms() {
 }
 #endif
 
-// The 10th percentile of v[a, b)
-float p10_of(const std::vector<float>& v, int a, int b) {
-    thread_local std::vector<float> m;
-    m.assign(v.begin() + a, v.begin() + b);
-    const int idx = static_cast<int>(m.size() * 0.10f);
-    std::nth_element(m.begin(), m.begin() + idx, m.end());
-    return m[idx];
-}
-
 // The estimate FFTProcessor::calculate_noise_floor makes: the 10th percentile
 // of the centre 80 % of the bins (the tuner's filter skirts left out)
 float p10(const std::vector<float>& v, int n) {
     const int usable = static_cast<int>(n * 0.8f);
     const int skip = (n - usable) / 2;
-    return p10_of(v, skip, skip + usable);
+    thread_local std::vector<float> m;
+    m.assign(v.begin() + skip, v.begin() + skip + usable);
+    const int idx = static_cast<int>(m.size() * 0.10f);
+    std::nth_element(m.begin(), m.begin() + idx, m.end());
+    return m[idx];
 }
 
 std::string key_of(int ch, float gain_db) {
@@ -173,122 +228,200 @@ void follow(float& ref, float d, float dt, float rise_db_s) {
     else ref += std::min(d, rise_db_s * dt);
 }
 
-// Wideband scan mode: tuner ch's boundaries with the tuners next to it - half
-// way between the centres, where the stitched spectrum changes tuner - and its
-// averaged spectrum's floor just inside each. Neighbours: tuners with a recent
-// frame whose band overlaps this one's
-Wb edges_of(int ch, const std::vector<float>& avg, int n, int64_t now) {
-    Wb e;
-    e.fc = static_cast<double>(tuner_frequencies[ch].load(std::memory_order_relaxed));
+// ---- wideband scan mode (everything under mu) ----
+
+// The shape for each bin of an n-bin spectrum (bin i at (i - n/2) / n of the
+// sample rate; grid point c at (c + 0.5) / WB_SHAPE_N - 0.5), linear between
+const std::vector<float>& shape_for(int n) {
+    if (!shape_ready) {
+        std::copy(WB_SHAPE_DEFAULT, WB_SHAPE_DEFAULT + WB_SHAPE_N, shape);
+        shape_ready = true;
+    }
+    if (shape_bins_n != n || shape_bins_ver != shape_ver) {
+        shape_bins.resize(static_cast<size_t>(n));
+        for (int i = 0; i < n; i++) {
+            const float u = std::clamp(static_cast<float>(i) * WB_SHAPE_N / n - 0.5f, 0.0f,
+                                       static_cast<float>(WB_SHAPE_N - 1));
+            const int a = std::min(static_cast<int>(u), WB_SHAPE_N - 2);
+            shape_bins[static_cast<size_t>(i)] = shape[a] + (u - a) * (shape[a + 1] - shape[a]);
+        }
+        shape_bins_n = n;
+        shape_bins_ver = shape_ver;
+    }
+    return shape_bins;
+}
+
+// The 50th - 10th percentile of an averaged spectrum of noise: a bin's dB of
+// one frame has a 5.57 dB sd (8.2 dB between those percentiles), the
+// spectrum's EMA a factor sqrt(alpha / (2 - alpha)) of that; the ratio 1.4
+// fits the skew left at the usual alphas (0.15: 2.27 dB measured)
+float noise_spread_db() {
+    const float a = std::clamp(averaging_alpha.load(std::memory_order_relaxed), 0.01f, 1.0f);
+    return std::min(8.2f, 1.4f * 5.57f * std::sqrt(a / (2.0f - a)));
+}
+
+// How long a tuner's averaged spectrum takes to forget its old band
+int64_t settle_ms(int ch) {
+    float dt = frame_dt_ms[ch].load(std::memory_order_relaxed);
+    if (!(dt > 0.0f)) dt = 7.0f;
+    const float alpha = std::max(averaging_alpha.load(std::memory_order_relaxed), 0.01f);
+    return std::clamp(static_cast<int64_t>(5.0f * dt / alpha), WB_SETTLE_MIN_MS, WB_SETTLE_MAX_MS);
+}
+
+// The gain step from tuner ch (its averaged spectrum avg, flattened by h) to
+// the tuner next up whose band overlaps: the median over the shared bins of
+// the difference of the two flattened spectra. The neighbour's spectrum is
+// fft_averaged[up] - on_frame runs under fft_mutex
+void update_step(int ch, Wb& w, const std::vector<float>& avg, int n, const std::vector<float>& h,
+                 int64_t now, bool settling) {
     const double sr = SAMPLE_RATE;
-    const double bin = sr / n;
-    const int w = std::max(16, static_cast<int>(n * WB_EDGE));
-    double below = 0.0, above = 0.0;   // the nearest centres (0 = none)
+    int up = -1;
+    double fu = 0.0;
     for (int j = 0; j < MAX_CHANNELS; j++) {
         const int64_t fm = frame_ms[j].load(std::memory_order_acquire);
         if (j == ch || fm == 0 || now - fm > WB_FRESH_MS) continue;
         const double f = static_cast<double>(tuner_frequencies[j].load(std::memory_order_relaxed));
-        const double gap = std::fabs(f - e.fc);
-        // both windows fit between the centres; bands that don't overlap share no edge
-        if (gap < 2.5 * w * bin || gap > 0.98 * sr) continue;
-        if (f < e.fc) below = std::max(below, f);
-        else if (above == 0.0 || f < above) above = f;
+        if (f - w.fc > WB_MOVE_HZ && f - w.fc < sr && (up < 0 || f < fu)) {
+            up = j;
+            fu = f;
+        }
     }
-    // bin i is centred on fc + (i - n/2) bin
-    if (below > 0.0) {
-        e.lo_hz = 0.5 * (below + e.fc);
-        const int a = std::max(0, n / 2 + static_cast<int>(std::ceil((e.lo_hz - e.fc) / bin)));
-        e.lo_db = p10_of(avg, a, std::min(a + w, n / 2));
+    if (up != w.up) {
+        w.up = up;
+        w.step_ok = false;
     }
-    if (above > 0.0) {
-        e.hi_hz = 0.5 * (above + e.fc);
-        const int b = std::min(n, n / 2 + static_cast<int>(std::ceil((e.hi_hz - e.fc) / bin)));
-        e.hi_db = p10_of(avg, std::max(b - w, n / 2 + 1), b);
+    if (up < 0 || settling || now < wbs[up].settle_until) return;
+    if (up >= static_cast<int>(fft_averaged.size()) || fft_averaged[up].size() != static_cast<size_t>(n)) return;
+    const std::vector<float>& b = fft_averaged[up];
+    const double shift = (fu - w.fc) / (sr / n);   // bin i here = bin i - shift there
+    thread_local std::vector<float> diff;
+    diff.clear();
+    for (int i = std::max(0, static_cast<int>(std::ceil(shift - 0.5))); i < n; i++) {
+        const long long j = std::llround(i - shift);
+        if (j < 0 || j >= n) continue;
+        const size_t ju = static_cast<size_t>(j), iu = static_cast<size_t>(i);
+        if (h[iu] <= WB_OVERLAP_MIN_DB || h[ju] <= WB_OVERLAP_MIN_DB) continue;
+        diff.push_back((b[ju] - h[ju]) - (avg[iu] - h[iu]));
     }
-    e.ok = is_finite_value(e.lo_db) && is_finite_value(e.hi_db);
-    e.ms = now;
-    return e;
+    if (static_cast<int>(diff.size()) < WB_OVERLAP_MIN_BINS) return;
+    const size_t mid = diff.size() / 2;
+    std::nth_element(diff.begin(), diff.begin() + static_cast<std::ptrdiff_t>(mid), diff.end());
+    const float s = diff[mid];
+    if (!is_finite_value(s)) return;
+    if (!w.step_ok) {
+        w.step = s;
+        w.step_ok = true;
+    } else {
+        const float dt = std::clamp((now - w.step_ms) / 1000.0f, 0.0f, 1.0f);
+        w.step += (s - w.step) * std::min(1.0f, dt / WB_STEP_TAU_S);
+    }
+    w.step_ms = now;
 }
 
-// a (below) and b share a boundary, both sides measured at it
-bool joined(const Wb& a, const Wb& b) {
-    return a.hi_hz > 0.0 && b.lo_hz > 0.0 && std::fabs(a.hi_hz - b.lo_hz) < WB_JOIN_HZ;
+// The shape from a quiet tuner's averaged spectrum: each grid point's 10th
+// percentile over the band's (the default's definition)
+void learn_shape(const std::vector<float>& avg, int n, float dt) {
+    const float band = [&] {
+        thread_local std::vector<float> m;
+        const int usable = static_cast<int>(n * 0.8f), skip = (n - usable) / 2;
+        m.assign(avg.begin() + skip, avg.begin() + skip + usable);
+        const size_t idx = m.size() / 10;
+        std::nth_element(m.begin(), m.begin() + static_cast<std::ptrdiff_t>(idx), m.end());
+        return m[idx];
+    }();
+    if (!is_finite_value(band)) return;
+    const int per = n / WB_SHAPE_N;
+    const float k = std::min(1.0f, dt / WB_SHAPE_TAU_S);
+    thread_local std::vector<float> blk;
+    bool changed = false;
+    for (int c = 0; c < WB_SHAPE_N; c++) {
+        blk.assign(avg.begin() + c * per, avg.begin() + (c + 1) * per);
+        const size_t idx = blk.size() / 10;
+        std::nth_element(blk.begin(), blk.begin() + static_cast<std::ptrdiff_t>(idx), blk.end());
+        const float v = blk[idx] - band;
+        if (!is_finite_value(v) || std::fabs(v - shape[c]) > WB_SHAPE_GATE_DB) continue;
+        const float nv = shape[c] + (v - shape[c]) * k;
+        if (std::fabs(nv - shape[c]) > 1e-4f) changed = true;
+        shape[c] = nv;
+    }
+    if (changed) shape_ver++;
 }
 
-// Wideband scan mode, under mu, after tuner ch's Wb was updated: every tuner
-// with fresh edges gets its floor. The spectrum is continuous across a
-// boundary, so a tuner's noise lies as far under its edge level as its
-// neighbour's noise lies under the neighbour's edge level there: neighbour's
-// floor + the step between the two spectra at the shared edge (the tuners'
-// gains cancel). Where that lies well under the band's own percentile, a
-// signal the neighbour shows above its noise fills this band (the percentile
-// is the signal) - if the band's remembered floor agrees (Wb::d, see
-// WB_REF_ENTER) - and the tuner takes it; along a run of filled tuners it is
-// handed on tuner by tuner. Only a floor MEASURED somewhere is handed on (a
-// tuner's own percentile, or one handed to it): held tuners (the remembered
-// floor) don't vouch for each other, or a rise over every tuner (an active
-// antenna) would never be learned. Where the floor a neighbour at its
-// remembered floor hands on equals the band's own percentile, the band is
-// noise (Wb::quiet - a held tuner's remembered floor was off). Sets each
-// tuner's filled / quiet state and out_db, returns ch's
+// Every fresh tuner's floor (see WB_FILL_DB): runs of tuners linked by gain
+// steps, the common floor = the quietest's. Sets out_db of the others, returns ch's
 float wideband_pass(int ch, int64_t now) {
     int k[MAX_CHANNELS];
-    int n = 0;
+    int cnt = 0;
     for (int j = 0; j < MAX_CHANNELS; j++) {
-        if (!chans[j].wb.ok || now - chans[j].wb.ms > WB_FRESH_MS) continue;
-        int i = n++;   // by frequency (insertion: <= 8 tuners)
-        for (; i > 0 && chans[k[i - 1]].wb.fc > chans[j].wb.fc; i--) k[i] = k[i - 1];
+        if (!wbs[j].ok || now - wbs[j].ms > WB_FRESH_MS) continue;
+        int i = cnt++;   // by frequency (insertion: <= 8 tuners)
+        for (; i > 0 && wbs[k[i - 1]].fc > wbs[j].fc; i--) k[i] = k[i - 1];
         k[i] = j;
     }
-    float fl[MAX_CHANNELS];
-    bool fill[MAX_CHANNELS], quiet[MAX_CHANNELS];
-    bool anchor[MAX_CHANNELS];   // fl[i] measured: handed on
-    bool noise[MAX_CHANNELS];    // ... and at its remembered floor: known noise
-    for (int i = 0; i < n; i++) {
-        const Wb& e = chans[k[i]].wb;
-        fl[i] = e.own;
-        fill[i] = quiet[i] = false;
-        anchor[i] = !e.held;
-        noise[i] = !e.held && e.has_ref && std::fabs(e.d) < WB_NOISE_REF_DB;
-    }
-    for (int round = 0; round < n; round++) {
-        bool changed = false;
-        for (int i = 0; i < n; i++) {
-            const Wb& e = chans[k[i]].wb;
-            bool have = false, have_q = false;
-            float c = 0.0f;    // the floor the neighbours give it (-Ofast: no infinity)
-            float cq = 0.0f;   // ... the known-noise ones
-            const auto take = [&](int j, float v) {
-                if (anchor[j] && (!have || v < c)) { c = v; have = true; }
-                if (noise[j] && (!have_q || v < cq)) { cq = v; have_q = true; }
-            };
-            if (i > 0 && joined(chans[k[i - 1]].wb, e))
-                take(i - 1, fl[i - 1] + (e.lo_db - chans[k[i - 1]].wb.hi_db));
-            if (i + 1 < n && joined(e, chans[k[i + 1]].wb))
-                take(i + 1, fl[i + 1] + (e.hi_db - chans[k[i + 1]].wb.lo_db));
-            const float excess = e.f - c;
-            const bool fills = have && excess > (e.filled ? WB_LEAVE_DB : WB_ENTER_DB) &&
-                               (!e.has_ref || e.d >= excess * (e.filled ? WB_REF_LEAVE : WB_REF_ENTER));
-            const float v = fills ? c : e.own;
-            if (fills != fill[i] || std::fabs(v - fl[i]) > 0.01f) changed = true;
-            fill[i] = fills;
-            quiet[i] = have_q && std::fabs(e.f - cq) < WB_NOISE_DB;
-            fl[i] = v;
-            anchor[i] = fills || !e.held;
-            if (fills) noise[i] = false;
+    float out = wbs[ch].f;
+    float g[MAX_CHANNELS];
+    for (int a = 0; a < cnt;) {
+        int e = a;
+        g[a] = 0.0f;
+        while (e + 1 < cnt && wbs[k[e]].up == k[e + 1] && wbs[k[e]].step_ok) {
+            g[e + 1] = g[e] + wbs[k[e]].step;
+            e++;
         }
-        if (!changed) break;
-    }
-    float out = chans[ch].wb.own;
-    for (int i = 0; i < n; i++) {
-        Wb& e = chans[k[i]].wb;
-        e.filled = fill[i];
-        if (quiet[i] && !e.quiet) e.quiet_ms = now;
-        e.quiet = quiet[i];
-        if (k[i] == ch) out = fl[i];
-        else out_db[k[i]].store(fl[i], std::memory_order_relaxed);
+        float common = wbs[k[a]].f - g[a];
+        for (int m = a + 1; m <= e; m++) common = std::min(common, wbs[k[m]].f - g[m]);
+        for (int m = a; m <= e; m++) {
+            Wb& w = wbs[k[m]];
+            const float over = w.f - g[m] - common;
+            if (now >= w.settle_until)
+                w.filled = e > a && over > (w.filled ? WB_UNFILL_DB : WB_FILL_DB);
+            const float fl = w.filled ? common + g[m] : w.f;
+            if (k[m] == ch) out = fl;
+            else out_db[k[m]].store(fl, std::memory_order_relaxed);
+        }
+        a = e + 1;
     }
     return out;
+}
+
+// Wideband scan mode: tuner ch's frame (its averaged spectrum avg) -> its floor
+float wideband_frame(int ch, const std::vector<float>& avg, int n, int64_t now) {
+    std::lock_guard<std::mutex> lk(mu);
+    const std::vector<float>& h = shape_for(n);
+    const int usable = static_cast<int>(n * 0.8f), skip = (n - usable) / 2;
+    thread_local std::vector<float> flat;
+    flat.resize(static_cast<size_t>(usable));
+    for (int i = 0; i < usable; i++)
+        flat[static_cast<size_t>(i)] = avg[static_cast<size_t>(skip + i)] - h[static_cast<size_t>(skip + i)];
+    const size_t i10 = flat.size() / 10, i50 = flat.size() / 2;
+    std::nth_element(flat.begin(), flat.begin() + static_cast<std::ptrdiff_t>(i10), flat.end());
+    const float f = flat[i10];
+    std::nth_element(flat.begin() + static_cast<std::ptrdiff_t>(i10), flat.begin() + static_cast<std::ptrdiff_t>(i50),
+                     flat.end());
+    const float f50 = flat[i50];
+    Wb& w = wbs[ch];
+    if (!is_finite_value(f) || !is_finite_value(f50)) {
+        w = Wb{};
+        return f;
+    }
+    const double fc = static_cast<double>(tuner_frequencies[ch].load(std::memory_order_relaxed));
+    if (w.ok && std::fabs(fc - w.fc) > WB_MOVE_HZ) {   // retuned
+        if (now >= w.settle_until) w.settle_fc = w.fc;
+        w.settle_until = now + settle_ms(ch);
+        if (std::fabs(fc - w.settle_fc) > WB_JUMP_HZ) w.filled = false;
+    }
+    const bool settling = now < w.settle_until;
+    w.ok = true;
+    w.ms = now;
+    w.fc = fc;
+    w.f = f;
+    w.spread = f50 - f;
+    update_step(ch, w, avg, n, h, now, settling);
+    if (!settling && !w.filled && w.spread < noise_spread_db() + WB_QUIET_MARGIN_DB && n >= WB_SHAPE_MIN_FFT &&
+        now - w.shape_ms >= WB_SHAPE_EVERY_MS) {
+        learn_shape(avg, n, std::clamp((now - w.shape_ms) / 1000.0f, 0.0f, 5.0f));
+        w.shape_ms = now;
+    }
+    return wideband_pass(ch, now);
 }
 
 // Radix-2 FFT of MSC_LEN points with a Hann window (the coherence test only)
@@ -331,18 +464,28 @@ void on_frame(int ch, const std::vector<float>& raw, const std::vector<float>& a
         raw.size() < static_cast<size_t>(fft_size) || avg.size() < static_cast<size_t>(fft_size)) return;
     {
         const int64_t t = now_ms();
-        frame_ms[ch].store(t, std::memory_order_release);
+        const int64_t prev = frame_ms[ch].exchange(t, std::memory_order_acq_rel);
+        if (prev > 0 && t > prev && t - prev < 1000) {
+            const float d = static_cast<float>(t - prev), old = frame_dt_ms[ch].load(std::memory_order_relaxed);
+            frame_dt_ms[ch].store(old > 0.0f ? old + 0.05f * (d - old) : d, std::memory_order_relaxed);
+        }
         if (!reset && t - out_ms[ch].load(std::memory_order_relaxed) < EVAL_MS) return;
+    }
+    if (wideband_mode_enabled.load(std::memory_order_relaxed)) {
+        // Tuners side by side: their floors from each other (see WB_FILL_DB);
+        // the remembered floors aren't used - nor learned - here
+        const int64_t now = now_ms();
+        const float out = wideband_frame(ch, avg, fft_size, now);
+        out_db[ch].store(out, std::memory_order_relaxed);
+        out_ms[ch].store(now, std::memory_order_release);
+        return;
     }
     const float f_avg = p10(avg, fft_size);   // today's floor of the averaged spectrum
     const float r = p10(raw, fft_size) + 10.0f * std::log10(static_cast<float>(fft_size));
     const float gain = ChannelManager::get_gain(ch);
     const bool cal = doa_is_calibrating();
     const bool coherent = !multi_tuner_mode();
-    const bool wb = wideband_mode_enabled.load(std::memory_order_relaxed);   // tuners side by side
     const int64_t now = now_ms();
-    Wb e;
-    if (wb && is_finite_value(f_avg)) e = edges_of(ch, avg, fft_size, now);
     float out = f_avg;
     {
         std::lock_guard<std::mutex> lk(mu);
@@ -353,13 +496,6 @@ void on_frame(int ch, const std::vector<float>& raw, const std::vector<float>& a
         }
         const float dt = std::clamp((now - c.last_ms) / 1000.0f, 0.0f, 1.0f);
         c.last_ms = now;
-        // the last wideband pass: the neighbouring tuners show a signal going
-        // on into this band / their noise going on at this band's floor
-        const bool wb_fresh = wb && c.wb.ok && now - c.wb.ms <= WB_FRESH_MS;
-        const bool wb_signal = wb_fresh && c.wb.filled;
-        const bool wb_noise = wb_fresh && c.wb.quiet && now - c.wb.quiet_ms >= WB_NOISE_HOLD_MS;
-        if (!e.ok) c.wb_since = 0;
-        else if (c.wb_since == 0) c.wb_since = now;
         // Tuner AGC: the floor moves with what the band holds. Calibration:
         // the noise source fills every band. Both measured per frame as before.
         if (gain < 0.0f || cal || !is_finite_value(r) || !is_finite_value(f_avg)) {
@@ -372,36 +508,20 @@ void on_frame(int ch, const std::vector<float>& raw, const std::vector<float>& a
             auto it = refs.find(key);
             if (it == refs.end()) {
                 // A first value: the other tuners' at this gain (they differ by
-                // a dB or two), else this frame's once it is known to be noise.
-                // Wideband scan mode: no more than the quietest tuner's floor
-                // at this gain - this one may sit in a signal that fills its
-                // band, and every other tuner would take that as its first
-                // value too; nothing until every tuner has reported once, nor
-                // while one still reports another gain (a gain change on its
-                // way: their floors aren't comparable)
-                float quietest = r;
-                bool settled = !wb || now - c.wb_since >= WB_FRESH_MS;
-                for (int j = 0; wb && j < MAX_CHANNELS; j++) {
-                    const Wb& o = chans[j].wb;
-                    if (j == ch || !o.ok || now - o.ms > WB_FRESH_MS || !is_finite_value(o.r)) continue;
-                    if (std::fabs(o.gain - gain) > 0.05f) settled = false;
-                    else quietest = std::min(quietest, o.r);
-                }
+                // a dB or two), else this frame's once it is known to be noise
                 float sum = 0.0f;
                 int cnt = 0;
                 const std::string g = gain_part(key);
                 for (const auto& [k, v] : refs)
                     if (gain_part(k) == g) { sum += v; cnt++; }
-                if (cnt && settled) it = refs.emplace(key, wb ? std::min(sum / cnt, quietest) : sum / cnt).first;
-                else if (learn && !signal && settled) it = refs.emplace(key, quietest).first;
+                if (cnt) it = refs.emplace(key, sum / cnt).first;
+                else if (learn && !signal) it = refs.emplace(key, r).first;
             }
             if (it == refs.end()) {
                 c.held = false;
             } else {
                 float& ref = it->second;
                 const float d = r - ref;
-                e.d = d;
-                e.has_ref = true;
                 if (verdict) {
                     // Quiet bins correlated across the antennas: a signal fills
                     // the band, measured from the remembered floor. Uncorrelated:
@@ -409,18 +529,6 @@ void on_frame(int ch, const std::vector<float>& raw, const std::vector<float>& a
                     // interference - at once)
                     c.held = signal && d > HELD_MIN_DB;
                     if (learn && (!signal || d < 0.0f)) follow(ref, d, dt, RISE_DB_S);
-                } else if (wb_signal) {
-                    // A signal the neighbouring tuners show goes on into this
-                    // band: its floor comes from theirs (wideband_pass), the
-                    // remembered one is the fallback and never learns the signal
-                    c.held = d > HELD_MIN_DB;
-                    if (learn && d < 0.0f) follow(ref, d, dt, RISE_DB_S);
-                } else if (wb_noise) {
-                    // The neighbours' noise goes on at this band's own floor:
-                    // receiver noise (this antenna / gain differs from the
-                    // others'), followed at once as a noise verdict
-                    c.held = false;
-                    if (learn) follow(ref, d, dt, RISE_DB_S);
                 } else {
                     if (!c.held && d > ENTER_DB) c.held = true;
                     else if (c.held && d < LEAVE_DB) c.held = false;
@@ -431,20 +539,6 @@ void on_frame(int ch, const std::vector<float>& raw, const std::vector<float>& a
                 // like noise), so subtracting the excess leaves the noise's
                 if (c.held) out = f_avg - (r - ref);
             }
-        }
-        if (e.ok) {
-            e.f = f_avg;
-            e.r = r;
-            e.gain = gain;
-            e.own = out;
-            e.held = c.held;
-            e.filled = c.wb.filled;
-            e.quiet = c.wb.quiet;
-            e.quiet_ms = c.wb.quiet_ms;
-            c.wb = e;
-            out = wideband_pass(ch, now);
-        } else {
-            c.wb = Wb{};
         }
     }
     out_db[ch].store(out, std::memory_order_relaxed);
@@ -457,6 +551,28 @@ bool floor_db(int ch, float* out) {
     if (out_ms[ch].load(std::memory_order_acquire) == 0 || now_ms() - f > STALE_MS) return false;
     *out = out_db[ch].load(std::memory_order_relaxed);
     return true;
+}
+
+#ifdef NFLOOR_TEST_CLOCK
+void test_dump() {   // tests: the wideband state
+    std::lock_guard<std::mutex> lk(mu);
+    for (int c = 0; c < MAX_CHANNELS; c++) {
+        const Wb& w = wbs[c];
+        if (!w.ok) continue;
+        printf("    wb t%d fc %.3f f %.2f spread %.2f up %d step %+.2f%s filled %d settle %lld\n", c, w.fc / 1e6, w.f,
+               w.spread, w.up, w.step, w.step_ok ? "" : "(none)", w.filled, (long long)(w.settle_until - now_ms()));
+    }
+}
+#endif
+
+void shape_db(int fft_size, std::vector<float>& out, uint32_t* version) {
+    if (fft_size < 2) return;
+    std::lock_guard<std::mutex> lk(mu);
+    const std::vector<float>& h = shape_for(fft_size);
+    if (out.size() != h.size() || !version || *version != shape_ver) {
+        out = h;
+        if (version) *version = shape_ver;
+    }
 }
 
 bool coherence_due() {

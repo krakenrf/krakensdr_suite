@@ -3153,59 +3153,75 @@ Edit `include/config.hpp`:
   and only after the last retune. Signal: held once r > ref + 1 dB, ref
   never rises (a day on DVB-T doesn't wear it away); noise: not held, ref
   follows (a real rise - active antenna, interference - is learned at once).
-  Independent mode, wideband scan mode without one of its verdicts (below),
-  or no fresh verdict: held when r > ref + 6 dB (released < 4), ref creeps
-  up 1 dB a minute while held (a real +10 dB rise shows as ~10 dB noise for
-  minutes there)
-- WIDEBAND SCAN MODE (the stitched spectrum; 2026-10-20, the user's report
-  "wideband signals seem to disappear over the boundaries"): the stitch
+  Independent mode or no fresh verdict: held when r > ref + 6 dB (released
+  < 4), ref creeps up 1 dB a minute while held (a real +10 dB rise shows as
+  ~10 dB noise for minutes there)
+- WIDEBAND SCAN MODE (the stitched spectrum; 2026-10-20/21, the user's
+  reports "wideband signals seem to disappear over the boundaries", then
+  "noise floors don't align between tuners, some show a much higher signal
+  level, a tuner's level glitches up and down before settling"): the stitch
   (`FFTProcessor::stitch_wideband_fft`) normalised every tuner to its own
   per-frame percentile, so a DVB-T / LTE over several tuners was drawn at
   full height in the partly covered tuners and at ~0 dB in the ones it
-  filled - gone past the boundary - and a whole-array second normalisation
-  (`calculate_noise_floor` on the stitched array: the first 13k bins only)
-  shifted everything down when tuner 0 held a signal. Now the stitch is one
-  grid of FFT bins (each frequency from the tuner whose centre is nearest,
-  boundaries half way between the centres; no sort of 65k pairs per tick),
-  each tuner's AVERAGED spectrum minus `channel_noise_floor(t)` (the floor
-  its VFOs' squelch reads too), built from `fft_averaged` - every frame
-  averaged as in coherent mode; the old second EMA at the 20 Hz tick, its
-  globals (`wideband_fft_magnitudes / _averaged / _mutex`,
-  `wideband_last_reset_gen`, `wideband_reference_noise_floor`) and the
-  second normalisation are gone; while `fft_data_valid` is false the tick
-  sends nothing (the pages keep the last frame - it used to flash the
-  single-tuner display)
-- The floors (`edges_of`, `wideband_pass`, under `mu` after each tuner's
-  evaluation): the spectrum is continuous across a boundary, so a tuner's
-  noise lies as far under its edge level as the neighbour's noise under the
-  neighbour's there: neighbour's floor + (this tuner's edge p10 - the
-  neighbour's edge p10) - edges = p10 of `WB_EDGE` 2 % of the bins just
-  inside each boundary (gains cancel; a carrier ON the boundary shows on
-  both sides). FILLED (the band's percentile is a signal going on from the
-  neighbour): that floor lies `WB_ENTER_DB` 3 (left < 2) under the band's
-  percentile AND the remembered floor agrees - d = r - ref >= `WB_REF_ENTER`
-  0.5 (0.3) of it: a signal ENDING right at the boundary gives the quiet
-  neighbour the same step (checked: not lifted). Filled tuners take that
-  floor, hand it on (a run of filled tuners, Bellman-Ford rounds, min of both
-  sides) and never learn upwards - no creep: shown for good. Only MEASURED
-  floors are handed on (a tuner's own percentile, or one handed to it): held
-  tuners don't vouch for each other, else a rise over every tuner would
-  never be learned. QUIET (`WB_NOISE_DB` 1.5 of the floor a neighbour at its
-  remembered floor - |d| < `WB_NOISE_REF_DB` 3, known noise - hands on, for
-  `WB_NOISE_HOLD_MS` 1 s on end): noise verdict, followed at once - a tuner
-  whose antenna / gain gives it a few dB more noise was "held" as a signal by
-  the 6 dB rule (its first ref taken from the others). A merely consistent
-  neighbour is not enough: after a rise on every tuner all are consistent,
-  and the first tuner to see it meets the others' stale floors for a moment
-  (the rise test caught both). New refs in wideband scan mode: none until
-  every tuner has reported (`WB_FRESH_MS` 400 ms) and all report this gain
-  (a gain change), then at most the QUIETEST tuner's r at the gain - the
-  first tuner may sit in the signal and the others copy its value. Tuner
-  AGC: no refs - continuity alone
-- Known limit: a signal starting within ~5 kHz of the outer boundary of an
-  END tuner (or exactly spanning one tuner's part) shows no step its
-  neighbour can see: QUIET, learned as noise in ~1 s - as the old stitch
-  drew it. A signal wider than all the tuners: the 6 dB rule (held, creeps)
+  filled, and a whole-array second normalisation (`calculate_noise_floor` on
+  the stitched array: the first 13k bins only) shifted everything down when
+  tuner 0 held a signal. Now the stitch is one grid of FFT bins (each
+  frequency from the tuner whose centre is nearest, boundaries half way
+  between the centres; no sort of 65k pairs per tick), each tuner's AVERAGED
+  spectrum minus the common shape (`nfloor::shape_db`) minus
+  `channel_noise_floor(t)` (the floor its VFOs' squelch reads too), built
+  from `fft_averaged` - every frame averaged as in coherent mode; the old
+  second EMA at the 20 Hz tick, its globals (`wideband_fft_magnitudes /
+  _averaged / _mutex`, `wideband_last_reset_gen`,
+  `wideband_reference_noise_floor`) and the second normalisation are gone;
+  while `fft_data_valid` is false the tick sends nothing (the pages keep the
+  last frame - it used to flash the single-tuner display)
+- What the live KrakenSDR showed (a read-only 8091 capture, 593-601 MHz,
+  a DVB-T mux over tuners 3-4): the dongles' noise floors differ by up to
+  4.4 dB at the same gain; every tuner's response has the SAME shape (a
+  ~3.5 dB tilt across the usable band, a slow roll-off below -1 MHz, a steep
+  one above +1 MHz - three quiet tuners within ~0.3 dB); the DVB-T fades ~13
+  dB across a tuner (multipath). A first version (commit bfaa5bf) derived a
+  filled tuner's floor from p10s of 2 % edge windows at the boundaries - on
+  the hardware those sit in the roll-off, 2.4-3.3 dB apart per boundary, so
+  chains of them drew tuners several dB too high - and used the remembered
+  floors (refs, per tuner + gain, frequency-blind: 7-19 dB off there) with
+  the 6 dB rule, which held tuners and drew their noise up to +19 dB. The
+  same capture replayed through it: noise of a tuner jumping 1.9 -> 7.9 dB,
+  the DVB-T 25.0 / 29.6 dB in tuners 3 / 4, up to 7.9 dB of wander
+- Now (`wideband_frame`, `update_step`, `wideband_pass`, under `mu`; no refs
+  used or learned in wideband scan mode - the coherent / independent path is
+  main's, byte for byte): (1) the common SHAPE (`WB_SHAPE_DEFAULT`, 256
+  points over 2.4 MHz, measured on that KrakenSDR = the median of three
+  quiet tuners, 5-point smoothed; GENERATED - shape_default.txt in the job
+  scratch; a hand-typed copy once differed by 3 dB) is taken off every
+  tuner; each tuner's floor f = p10 of its flattened centre 80 %. (2) GAIN
+  STEPS from the OVERLAPS: neighbours (each 2.4 MHz, spaced by edge clip x
+  2.4) share 0.48 MHz; at the same frequencies their flattened averaged
+  spectra differ only by gain, whatever the band holds - the median of the
+  difference over the bins where both responses are > `WB_OVERLAP_MIN_DB`
+  -6 (>= 64 bins; ~2000 at 16384), smoothed `WB_STEP_TAU_S` 1 s. Live:
+  +4.06 / +0.02 between quiet tuners whose floors differ +4.36 / -0.08. A
+  floor raised in one tuner only (overload, its antenna) is in the overlap
+  too: a gain step, so that tuner stays aligned. The median (not a quantile
+  difference) because it compares identical frequencies (DVB-T ripple) and
+  tolerates a station aliasing into one side. (3) Along tuners linked by
+  steps, common = min(f - g); a tuner with f - g - common > `WB_FILL_DB` 3
+  (left < 2) is FILLED and takes common + g, the others keep f (their noise
+  lines up exactly). (4) The shape learned from quiet tuners (not filled,
+  flattened p50 - p10 < noise's + 1.5 dB - `noise_spread_db()`: 8.2 dB for
+  one frame, x sqrt(alpha / (2 - alpha)), 2.27 at 0.15 - every 1 s, points
+  within 3 dB, tau 60 s; FFTs >= 4096; not persisted) - a 2 dB-steeper tilt
+  is learned within 60 s. (5) After a retune (> 1 kHz) steps, decisions and
+  learning wait 5 averaging time constants (measured frame interval / alpha,
+  0.3-4 s); a move > 1 MHz drops the decision
+- Limits: a signal wider than all the tuners (or a rise on every tuner)
+  leaves no quiet tuner - drawn as the floor (nothing remembered in this
+  mode); a tuner's step to a neighbour it never overlapped quietly is still
+  measured (any content works); a response unlike the default shape gives
+  wrong steps until learned (~1 min, false fills meanwhile); the squelch
+  reads the flattened floor against the unflattened spectrum (<= ~2 dB at
+  the band edges)
 - `noise_floors.json` (cwd, gitignored; `{"version":1,"floors":{"0|49.6":
   -27.49,...}}`): loaded at start (`nfloor::load`), written by the FFT
   worker at most every 5 min when a floor moved >= 0.5 dB
@@ -3229,24 +3245,30 @@ Edit `include/config.hpp`:
   converted for the test), the +10 dB noise at 0 dB after ~1 s (no verdict
   for the first frames after the retune), squelch closed. kraken_doa CPU the
   same (50-55 vs 52 % of a core)
-- Tests, wideband scan (job scratch 0d0a7cca, not in the repo): t_wbfloor.cpp
-  (noise_floor.cpp + fft_processor.cpp's stitch on synthetic 5-tuner
-  spectra - per-tuner gains 0 / +1.5 / -1 / +2.5 / +0.5 dB, IF roll-off, a
-  filled tuner reporting first where it matters; 13 scenarios): noise even
-  (0.77-0.79); DVB-T +20 dB over tuners 1-3: 20.5-20.8 in every tuner (old
-  stitch 0.77 in 1-3), the same after 30 min; +5 dB; tuner AGC; a signal
-  ending exactly at a boundary (the quiet tuner not lifted); +5 / +9 dB of
-  antenna noise on one tuner (even within 1 s); +12 dB on every tuner (held,
-  learned by 15 min); carriers on boundaries; a gain change and a start on
-  the signal (refs from the quietest); coherent mode = the old floor; the
-  known limit. End to end (fake_wb.py = heimdall in wideband scan mode on
-  4809x with the same receiver model, t_wb_e2e.py reading type 7 frames in
-  exact-bin windows from a test build on 48080): new 19 / 19 - DVB-T 21.2-
-  21.7 dB in all five tuners, ~20 dB over the noise, after 60 s too, after a
-  pan of +1 MHz (tuner 0 covered to its outer edge, its floor via 4 -> 0)
-  20.2-21.2 dB over the noise, carriers on the 4 boundaries; the old build
-  (main) 4.24 dB in tuners 1-3 and 0-2.35 after the pan. kraken_doa CPU in
-  that run 7.7 vs 9.9 s over 91 s (the stitch's sort gone)
+- Tests, wideband scan (job scratch 0d0a7cca, not in the repo): REPLAY
+  (t_wbreplay.cpp: a live 8091 capture, cap8091.py, through the client's
+  own process_channel_fft + nfloor + stitch at its packet rate, alpha 0.15,
+  60 s): noise 2.15 / 2.18 / 2.10 / 2.35 dB in tuners 0-3 (the last one's
+  only noise beside the DVB-T), the DVB-T 22.4 dB in tuner 3, 22.1 just past
+  the 3 | 4 boundary (tuner 4's 24.3 is the mux's own multipath shape), each
+  level wandering <= 1 dB (alpha 0.15's own noise); the first version on the
+  same replay: see above. UNIT (t_wbfloor.cpp, synthetic 5-tuner spectra
+  with the default shape + per-dongle deviations of +-0.3 dB, the live
+  gains, alpha 0.15 noise; 13 scenarios): noise aligned within 0.05 dB and
+  flat; DVB-T +20 / +5 dB over tuners 1-3 equal in every tuner (<= 0.3 dB),
+  the same after 30 min; a signal ending exactly at a boundary (the quiet
+  tuner not lifted); +6 dB of antenna noise on one tuner; +12 dB on every
+  tuner; carriers on boundaries; an FM-like band (200 kHz stations at +25-45
+  dB over half of it) for 10 min, then gone - still flat; a gain change; a
+  start on the signal; a pan of +1 MHz and back; a 2 dB-steeper response
+  learned in 60 s; coherent mode = the old floor. END TO END (fake_wb.py =
+  heimdall in wideband scan mode on 4809x with the measured shape + gains,
+  t_wb_e2e.py reading type 7 frames in exact-bin windows from a test build
+  on 48080): 20 / 20 - noise 2.35 dB in every tuner, DVB-T 21.2-22.1 dB in
+  all five, ~20 dB over the noise, after a pan too, no tuner's level moving
+  more than 0.47 dB (one display step) over 60 s, carriers on the 4
+  boundaries; the main build 4.24 dB in tuners 1-3. kraken_doa CPU 7.7 vs
+  9.9 s over 91 s (the stitch's sort gone)
 **Digital TV (`plugins/dtv/`, README.md there; ARRAY plugin API):**
 - Plugin id `dtv`, name "Digital TV (DVB-T/T2, ISDB-T, ATSC 1.0/3.0,
   DTMB)", v2.0 - was `sfn` "SFN Separation (..., DAB)" (renamed 2026-10-14;

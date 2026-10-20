@@ -1451,13 +1451,15 @@ receiver's own floor, remembered per tuner + gain in `noise_floors.json`
 (cwd, gitignored). Coherent mode tells a band-filling signal from a real
 noise rise by two antennas' coherence (receiver noise is independent per
 antenna); independent / wideband scan mode: > 6 dB above = a signal, the
-remembered floor creeping up 1 dB / min while held. Wideband scan mode's
-stitched spectrum uses the same per-tuner floors, and there the spectrum's
-continuity across a tuner boundary decides: a tuner a signal from its
-neighbours fills (DVB-T / LTE over several tuners) takes the neighbour's floor
-+ the step at the shared edge, for as long as it is there - each tuner used to
-be drawn against its own percentile, so such a signal dropped to ~0 dB past
-the boundary (fixed 2026-10-20)
+remembered floor creeping up 1 dB / min while held. Wideband scan mode
+(the stitched spectrum) uses no remembered floors: the tuners' common
+response shape (measured on the KrakenSDR, learned on) is taken off, the gain
+steps between neighbours come from the 0.48 MHz their bands share, and a
+tuner whose floor stands > 3 dB over the quietest one's (gains taken off) is
+filled by a signal (DVB-T / LTE over several tuners) and takes that floor +
+its gain - each tuner used to be drawn against its own percentile, so such a
+signal dropped to ~0 dB past the boundary (fixed 2026-10-21; a first version
+misjudged real hardware, see the client CLAUDE.md)
 
 **✈ Array calibration from ADS-B aircraft (coherent mode)** (details:
 `kraken_doa_v2/CLAUDE.md` *Array calibration*): `kraken_doa_v2/src/array_cal.cpp`.

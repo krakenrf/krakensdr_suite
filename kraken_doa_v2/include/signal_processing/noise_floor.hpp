@@ -14,18 +14,22 @@
 // receiver noise is independent per antenna, a signal isn't (the coherence of
 // the band's quietest bins) - so a real rise of the floor (an active antenna,
 // interference) is learned at once and a long stay on DVB-T never wears the
-// remembered floor away. Without that test (independent / wideband scan mode)
-// a floor more than 6 dB up is taken as a signal and creeps up 1 dB a minute.
-// Wideband scan mode (tuners side by side, one stitched spectrum) has better
-// evidence: the spectrum is continuous across a tuner boundary, so a tuner's
-// floor follows from its neighbour's plus the step between their spectra at
-// the shared edge (their gains cancel). A tuner whose own floor stands well
-// above that is filled by a signal that continues from the neighbour (DVB-T,
-// LTE across several tuners): it takes that floor - it showed the signal at
-// ~0 dB, so the signal vanished at the boundary - and never learns it.
+// remembered floor away. Without that test (independent mode) a floor more
+// than 6 dB up is taken as a signal and creeps up 1 dB a minute.
+// Wideband scan mode (tuners side by side, one stitched spectrum) doesn't use
+// the remembered floors - they are per tuner and frequency-blind, and the
+// tuners' gains and the external noise differ: it compares the tuners with
+// each other at the same moment. Their common response shape (the filters'
+// tilt and roll-off) is taken off, the gain steps between neighbours come
+// from the frequencies their bands share, and a tuner whose floor stands well
+// above the quietest one's (gains taken off) is filled by a signal (DVB-T, LTE
+// over several tuners - its own percentile is the signal, so it was drawn at
+// ~0 dB past the boundary): it takes the common floor + its gain. The others
+// keep their own floor, so their noise lines up exactly.
 
 #include <complex>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace nfloor {
@@ -37,10 +41,16 @@ void on_frame(int ch, const std::vector<float>& raw, const std::vector<float>& a
               int fft_size, bool reset);
 
 // The floor to subtract from channel ch's AVERAGED spectrum (dB) - in
-// wideband scan mode the one the stitched spectrum and the VFO squelch on
-// that tuner share. False when there is no recent frame of that channel:
-// measure it from the data then (FFTProcessor::calculate_noise_floor), as before.
+// wideband scan mode the one the stitched spectrum (after shape_db) and the
+// VFO squelch on that tuner share. False when there is no recent frame of that
+// channel: measure it from the data then (FFTProcessor::calculate_noise_floor),
+// as before.
 bool floor_db(int ch, float* out);
+
+// Wideband scan mode: the tuners' common response (dB) at each bin of an
+// fft_size spectrum (DC centred) - the stitched spectrum takes it off before
+// floor_db. Copied into out when it changed since *version (updated).
+void shape_db(int fft_size, std::vector<float>& out, uint32_t* version);
 
 // Coherent mode, the data receiver: a second antenna of the FFT channel's
 // packet is wanted for the coherence test (a few times a second).
