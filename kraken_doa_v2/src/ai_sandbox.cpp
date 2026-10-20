@@ -33,6 +33,7 @@ bool g_loaded = false;
 std::atomic<bool> g_turn{false};
 std::atomic<int64_t> g_turn_start_ms{0};
 
+#ifndef _WIN32
 std::string bwrap_path() {
     static const std::string p = [] {
         for (const char* c : {"/usr/bin/bwrap", "/bin/bwrap", "/usr/local/bin/bwrap"})
@@ -41,6 +42,7 @@ std::string bwrap_path() {
     }();
     return p;
 }
+#endif
 
 #ifdef _WIN32
 // struct stat has no st_mtim / st_ctim on Windows: the mtime in ms (fs_compat)
@@ -88,15 +90,20 @@ void save_locked() {
         s += (first ? "\"" : ",\"") + json_escape(id) + "\"";
         first = false;
     }
+#ifdef _WIN32
+    s += "],\"note\":\"plugins the AI assistant changed - kraken_doa doesn't run them (Windows has no sandbox). "
+         "py -3 ai/kraken_ai.py trust <id> takes one off\"}\n";
+#else
     s += "],\"note\":\"plugins the AI assistant changed - kraken_doa runs them sandboxed (bwrap). "
          "python3 ai/kraken_ai.py trust <id> takes one off\"}\n";
+#endif
     const std::string tmp = std::string(LIST) + ".tmp";
     {
         std::ofstream f(tmp, std::ios::trunc);
         if (!f) return;
         f << s;
     }
-    if (rename(tmp.c_str(), LIST) == 0) {
+    if (fs_replace(tmp, LIST) == 0) {   // rename(); Windows: also over the old list
         struct stat st {};
         if (stat(LIST, &st) == 0) g_list_mtime = list_mtime(st);
     }
@@ -133,12 +140,20 @@ bool changed_since(const std::string& dir, int64_t ms, int depth = 0) {
 
 std::string real(const std::string& p) {
     char b[PATH_MAX];
+#ifdef _WIN32
+    // '/'-separated: the paths are taken apart at '/' below (realpath = _fullpath, '\')
+    return realpath(p.c_str(), b) ? fs_normalize_dir(b) : std::string();
+#else
     return realpath(p.c_str(), b) ? std::string(b) : std::string();
+#endif
 }
 
 }  // namespace
 
 bool available() {
+#ifdef _WIN32
+    return false;   // no bwrap on Windows (NO_SANDBOX_FIX)
+#else
     static const bool ok = [] {
         const std::string b = bwrap_path();
         if (b.empty()) return false;
@@ -150,6 +165,7 @@ bool available() {
         return st.ok();
     }();
     return ok;
+#endif
 }
 
 bool must_sandbox_dir(const std::string& plugin_dir) {
@@ -230,6 +246,11 @@ void turn_finished() {
 }
 
 std::vector<std::string> wrap(const std::vector<std::string>& argv, const std::vector<std::string>& rw) {
+#ifdef _WIN32
+    (void)argv;
+    (void)rw;
+    return {};   // nothing to wrap it in: the callers refuse (NO_SANDBOX_FIX)
+#else
     if (!available() || argv.empty()) return {};
     std::vector<std::string> w = {bwrap_path(), "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
                                   "--tmpfs", "/tmp"};
@@ -241,6 +262,7 @@ std::vector<std::string> wrap(const std::vector<std::string>& argv, const std::v
     w.insert(w.end(), {"--unshare-net", "--unshare-ipc", "--die-with-parent", "--new-session", "--"});
     w.insert(w.end(), argv.begin(), argv.end());
     return w;
+#endif
 }
 
 std::string list_json() {

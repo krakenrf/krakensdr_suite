@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 
 #include "geo_address.hpp"   // geo::Json
+#include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
 
@@ -658,18 +659,30 @@ void save_locked() {
     for (size_t i = 0; i < g_layers.size(); i++) o += (i ? ",\n" : "\n") + layer_json(g_layers[i]);
     o += "\n]}\n";
     const std::string tmp = std::string(FILE_PATH) + ".tmp";
-    FILE* f = fopen(tmp.c_str(), "w");
+    FILE* f = fopen(tmp.c_str(), "wb");   // (b: no \r\n on Windows)
     if (!f) return;
     const bool ok = fwrite(o.data(), 1, o.size(), f) == o.size();
     fclose(f);
-    if (ok) rename(tmp.c_str(), FILE_PATH);
+    if (ok) fs_replace(tmp, FILE_PATH);   // rename(); Windows: also over the old file
 }
 
 // a file the agent may hand in: in its conversation folder or ai/knowledge
 bool read_input_file(const std::string& path_in, const std::string& conv_dir, std::string* text, std::string* err) {
     std::string path = path_in;
     if (path.empty()) return false;
+#ifdef _WIN32
+    // a drive letter or a share is absolute too. A share is refused before
+    // anything touches it: opening it signs in to that host as this user
+    // (fs_compat.hpp)
+    if (fs_is_network_path(path)) {
+        *err = "files are read from your conversation folder or ai/knowledge only";
+        return false;
+    }
+    if (path[0] != '/' && path[0] != '\\' && !(path.size() > 1 && path[1] == ':'))
+        path = (conv_dir.empty() ? std::string("ai/knowledge") : conv_dir) + "/" + path;
+#else
     if (path[0] != '/') path = (conv_dir.empty() ? std::string("ai/knowledge") : conv_dir) + "/" + path;
+#endif
     char rp[PATH_MAX], base[PATH_MAX];
     if (!realpath(path.c_str(), rp)) {
         *err = "file not found: " + clean(path_in, 200);
@@ -678,8 +691,16 @@ bool read_input_file(const std::string& path_in, const std::string& conv_dir, st
     bool ok = false;
     for (const std::string& d : {conv_dir, std::string("ai/knowledge")}) {
         if (d.empty() || !realpath(d.c_str(), base)) continue;
+#ifdef _WIN32
+        // realpath = _fullpath: '\' and the case as typed (NTFS ignores case);
+        // it resolves ".." but no links - the assistant can't make one there
+        // (no shell)
+        const std::string r = fs_normalize_dir(rp), b = fs_normalize_dir(base);
+        if (r.size() > b.size() && _strnicmp(r.c_str(), b.c_str(), b.size()) == 0 && r[b.size()] == '/') ok = true;
+#else
         const size_t n = strlen(base);
         if (strncmp(rp, base, n) == 0 && rp[n] == '/') ok = true;
+#endif
     }
     if (!ok) {
         *err = "files are read from your conversation folder or ai/knowledge only";
@@ -714,7 +735,7 @@ void load() {
     Json j;
     if (!geo::json_parse(ss.str(), &j) || j.type != Json::OBJ) {
         std::cerr << "AI map layers: " << FILE_PATH << " can't be read - renamed .bad" << std::endl;
-        rename(FILE_PATH, (std::string(FILE_PATH) + ".bad").c_str());
+        fs_replace(FILE_PATH, std::string(FILE_PATH) + ".bad");   // rename(); Windows: also over an older .bad
         return;
     }
     std::lock_guard<std::mutex> lk(g_mu);

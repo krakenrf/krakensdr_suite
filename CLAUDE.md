@@ -477,7 +477,32 @@ launcher `krakensdr.exe` (repo root, from `windows/krakensdr.cpp`).
 - Checks for Windows-port changes: every changed file compiles with the
   Windows flags (MinGW g++ -fsyntax-only) AND for Linux (glibc; e.g. zig c++
   -target x86_64-linux-gnu) - a Linux regression is the main risk
-- Python children (Debug Playback generators, AI Signal Lab): the interpreter
+- AI assistant (`ai_manager.cpp`, `ai_mcp.cpp`, `ai_capture.cpp`,
+  `ai_map.cpp`, `ai_sandbox.cpp`, `ai/kraken_ai.py`): runs on Windows except
+  for its sandboxes. Enabled with `py -3 ai/kraken_ai.py setup` on the PC
+  (Claude Code's native installer + Git for Windows); the bridge through
+  kproc (`python_cmd`, UTF-8, `KRAKEN_MCP_*` passed in `env_set` /
+  `env_unset`), Ctrl+Break = Stop (`SIGBREAK`). Claude Code has NO sandbox on
+  Windows, so the agent never gets Bash there (`sandbox_status()`: "Claude
+  Code has no sandbox on Windows" - upstream's rule: no sandbox = no shell):
+  it answers, reads / edits within the path rules, uses the web and every
+  MCP tool, but builds and runs nothing. No bwrap either: `aisandbox::
+  available()` is false, so a plugin the assistant changed doesn't run at all
+  (`--info`, decoders, debug-playback generators refused with
+  `NO_SANDBOX_FIX`) until `py -3 ai/kraken_ai.py trust <id>`; changes are
+  detected by mtime / creation time (Windows has no ctime; the agent has no
+  shell to set one back). Permission rules in Claude Code's POSIX form
+  (`//c/...`, `rule_path`); no `/usr/include`; a screen context over the
+  32 K command line goes in `ai/sessions/<id>/context.json`
+  (`--context-file`, Windows only, read + deleted by the bridge); `ai/run`
+  (the MCP token while a question runs) gets an owner-only ACL (`icacls`,
+  `private_dir`); the MCP server binds with `SO_EXCLUSIVEADDRUSE`
+  (`LIBUS_LISTEN_EXCLUSIVE_PORT` - uSockets' Windows default SO_REUSEADDR let
+  any program share the port); tokens / IDs from OpenSSL's `RAND_bytes` (no
+  /dev/urandom); `map_plot` files: drive paths, '\', case-insensitive
+  containment, shares refused before any access
+- Python children (Debug Playback generators, the AI assistant's bridge and
+  sigtool): the interpreter
   `kproc::python_argv` finds (`KRAKEN_PYTHON`, `py -3`, python3 / python -
   the Store stub fails the probe), in UTF-8 mode; where Linux passes `-I`,
   Windows passes `-E`: `-I` also hides the user site-packages, where the
@@ -926,6 +951,9 @@ DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
   can't take over)
 - OFF unless enabled on the Pi (`python3 ai/kraken_ai.py setup`); native
   install only. Tests in the job scratch (ai/t_*.py)
+- Windows (`py -3 ai/kraken_ai.py setup` on the PC): everything but the
+  sandboxes - no shell for the agent (Claude Code has no sandbox there) and a
+  plugin it changed doesn't run until trusted; see *Windows* below
 
 **Decoder plugins** (details: `kraken_doa_v2/CLAUDE.md`):
 - A plugin = a source folder `kraken_doa_v2/plugins/<id>/` (decoder.cpp +

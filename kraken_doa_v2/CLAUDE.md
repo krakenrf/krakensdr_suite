@@ -5466,6 +5466,36 @@ the internet and writes / changes decoder plugins):
 - Gate unchanged: `ai/ai_config.json` `"enabled": true` only via `python3
   ai/kraken_ai.py setup` on the Pi; backend "command" (another CLI) gets the
   text only - no MCP, no tools, the last exchanges as context
+- Windows (merge of 2026-10-20; `py -3 ai/kraken_ai.py setup` on the PC):
+  the dock, MCP server, capture_iq, map tools and conversations work; the
+  sandboxes don't exist there. Claude Code has no sandbox on Windows ->
+  `sandbox_status()` false ("Claude Code has no sandbox on Windows") -> no
+  Bash for the agent (as on a Pi without bubblewrap). `aisandbox::available()`
+  is always false (no bwrap): a plugin on the list is refused (`--info`,
+  `PluginProcess::start`, test-signal generation while any is listed or a
+  turn runs) with `aisandbox::NO_SANDBOX_FIX` ("Windows has none: check ...
+  py -3 ai/kraken_ai.py trust <id>"); `changed_since` uses max(mtime,
+  creation time) in s (no ctime; NTFS tunnels creation times), `real()`
+  '/'-separates `_fullpath`'s result, the list's mtime comes from
+  `fs_mtime_ms`, saves go through `fs_replace`. The bridge: permission rules
+  in Claude Code's POSIX path form (`rule_path`: `//c/Users/...`), no
+  /usr/include, paths in the prompt '/'-separated, "on a Windows PC" in the
+  system prompt, `--context-file` when the command line would pass 32000
+  characters (`cmdline_estimate`), `private_dir()` = icacls owner-only ACL on
+  `ai/run`, `replace_file` (retries a target kraken_doa has open),
+  SIGBREAK = Stop. kraken_doa: kproc for the bridge (env_unset of inherited
+  `KRAKEN_MCP_*`, env_set URL / TOKEN + PYTHONUTF8), sigtool through
+  `kproc::python_cmd`, the MCP token / mark IDs from `RAND_bytes`, the MCP
+  listen socket `LIBUS_LISTEN_EXCLUSIVE_PORT` (Linux keeps uSockets'
+  default), `read_input_file` takes drive paths, refuses shares
+  (`fs_is_network_path`) and compares case-insensitively. Smoke test on
+  Windows (scratch fix6/merge): MCP 401 / 403 / 405, 33 tools, get_screen,
+  remember / forget, map_plot over existing files, CSV from ai/knowledge by
+  relative and drive path, `..` / share / outside path refused, a second
+  bind of the port refused (WSAEACCES), a chat turn through a "command"
+  backend (start / question / session / text / done / exit 0, the changed
+  plugin folder put on the list), a 30 K context through --context-file, a
+  listed plugin refused at the scan
 - Tests 2026-10-18 (scratchpad ai/): t_cap.py (capture_iq in kraken_doa,
   19/19, below), t_map.py (40/40: map_plot features / GeoJSON / CSV,
   refusals with reasons, files outside the folders refused, replace /

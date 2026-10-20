@@ -22,6 +22,7 @@
 #include "playback.hpp"
 #include "signal_processing/music_processor.hpp"
 #include "utils/disk_util.hpp"
+#include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 
 namespace aicap {
@@ -237,12 +238,12 @@ bool write_sidecar(const std::string& cf32, const Result& r, uint64_t samples, i
           << ",\n \"array\": " << array_info;
     o << ",\n \"captured_by\": \"kraken_doa (AI assistant capture_iq)\"\n}\n";
     const std::string tmp = side + ".tmp";
-    FILE* f = fopen(tmp.c_str(), "w");
+    FILE* f = fopen(tmp.c_str(), "wb");   // (b: no \r\n on Windows)
     if (!f) return false;
     const std::string s = o.str();
     const bool ok = fwrite(s.data(), 1, s.size(), f) == s.size();
     fclose(f);
-    return ok && rename(tmp.c_str(), side.c_str()) == 0;
+    return ok && fs_replace(tmp, side) == 0;   // rename(); Windows: also over an older one
 }
 
 void clear_queue() {
@@ -489,7 +490,7 @@ Result run(const Request& req) {
     }
     r.seconds = static_cast<double>(got) / r.rate_hz;
     r.gain_db = gain_n ? gain_sum / static_cast<double>(gain_n) : NAN;
-    rename((req.path + ".part").c_str(), req.path.c_str());
+    fs_replace(req.path + ".part", req.path);
     write_sidecar(req.path, r, got, 1, "");
     r.path = req.path;
     if (fa) {
@@ -500,7 +501,7 @@ Result run(const Request& req) {
         ra.channel = 0;
         ra.source = "every antenna (0 .. " + std::to_string(count - 1) + ")" +
                     (playback::active() ? std::string(" of a playback - not live") : std::string(" of heimdall's stream"));
-        rename((apath + ".part").c_str(), apath.c_str());
+        fs_replace(apath + ".part", apath);
         write_sidecar(apath, ra, got, count, ai);
         r.array_path = apath;
     }

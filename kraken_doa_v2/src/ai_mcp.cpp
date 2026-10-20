@@ -20,6 +20,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <zlib.h>
+#ifdef _WIN32
+#include <openssl/rand.h>   // random_token: Windows has no /dev/urandom
+#endif
 
 #include "App.h"
 #include "ai_capture.hpp"
@@ -1767,6 +1770,19 @@ bool token_ok(std::string_view auth) {
 }
 
 std::string random_token() {
+#ifdef _WIN32
+    // no /dev/urandom: OpenSSL's CSPRNG (the system's BCryptGenRandom). No
+    // token without it - "" = the server isn't started (attach)
+    unsigned char r[24];
+    if (RAND_bytes(r, static_cast<int>(sizeof r)) != 1) return "";
+    std::string out;
+    static const char* hx = "0123456789abcdef";
+    for (unsigned char c : r) {
+        out += hx[c >> 4];
+        out += hx[c & 15];
+    }
+    return out;
+#else
     std::ifstream f("/dev/urandom", std::ios::binary);
     std::string out;
     static const char* hx = "0123456789abcdef";
@@ -1776,6 +1792,7 @@ std::string random_token() {
         out += hx[c & 15];
     }
     return out;
+#endif
 }
 
 }  // namespace
@@ -1786,6 +1803,13 @@ void attach() {
     // KRAKEN_AI_MCP_TOKEN: a fixed token (>= 16 characters) - tests only
     const char* tk = std::getenv("KRAKEN_AI_MCP_TOKEN");
     g_token = tk && strlen(tk) >= 16 ? std::string(tk) : random_token();
+#ifdef _WIN32
+    if (g_token.empty()) {
+        std::cerr << "AI assistant: no random token for its MCP server - the assistant can't see or control the receiver"
+                  << std::endl;
+        return;
+    }
+#endif
     g_port = AI_MCP_PORT;
     if (const char* e = std::getenv("KRAKEN_AI_MCP_PORT"); e && *e) g_port = atoi(e);
     if (g_port <= 0 || g_port > 65535) return;
@@ -1807,7 +1831,14 @@ void attach() {
           })
         .get("/mcp", [](auto* res, auto*) { res->writeStatus("405 Method Not Allowed")->writeHeader("Allow", "POST")->end(); })
         .any("/*", [](auto* res, auto*) { res->writeStatus("404 Not Found")->end(); })
+#ifdef _WIN32
+        // SO_EXCLUSIVEADDRUSE: uSockets' default on Windows is SO_REUSEADDR,
+        // with which any other program could bind 127.0.0.1:<port> too and
+        // receive the bridge's requests (and their token)
+        .listen("127.0.0.1", g_port, LIBUS_LISTEN_EXCLUSIVE_PORT, [](auto* ls) {
+#else
         .listen("127.0.0.1", g_port, [](auto* ls) {
+#endif
             if (ls) {
                 g_listening = true;
                 std::cout << "AI assistant MCP server on http://127.0.0.1:" << g_port << "/mcp" << std::endl;

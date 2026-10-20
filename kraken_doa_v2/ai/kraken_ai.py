@@ -38,6 +38,11 @@ Claude Code settings, MCP servers, CLAUDE.md files or memory are loaded):
   MCP server's tools (control refused while the page's "Read only" is on)
 kraken_doa runs every plugin the assistant changed in a bwrap sandbox too
 (ai_sandbox.cpp).
+
+Windows: Claude Code has no sandbox there, so the agent never gets a shell
+(it answers, reads / edits files within the rules above, uses the web and the
+receiver's tools - no builds, no scripts), and kraken_doa doesn't run a plugin
+the assistant changed at all until it is trusted (no bwrap either).
 """
 import argparse
 import json
@@ -136,6 +141,51 @@ def replace_file(src, dst):
     os.replace(src, dst)   # last try: raise the real error
 
 
+def private_dir(path):
+    """mode 0700. Windows ignores the mode: the folder's inherited permissions
+    are replaced by full control for this account, SYSTEM and the
+    Administrators (what 0700 means there) - the run folder holds the MCP
+    server's token while a question runs"""
+    os.chmod(path, 0o700)
+    if not WINDOWS:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        advapi, kernel = ctypes.WinDLL("advapi32"), ctypes.WinDLL("kernel32")
+        advapi.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+        advapi.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+                                               ctypes.POINTER(wintypes.DWORD)]
+        advapi.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+        kernel.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.LocalFree.argtypes = [ctypes.c_void_p]
+        sid = None
+        tok = wintypes.HANDLE()
+        if advapi.OpenProcessToken(kernel.GetCurrentProcess(), 0x0008, ctypes.byref(tok)):   # TOKEN_QUERY
+            n = wintypes.DWORD()
+            advapi.GetTokenInformation(tok, 1, None, 0, ctypes.byref(n))   # TokenUser
+            buf = ctypes.create_string_buffer(n.value)
+            if n.value and advapi.GetTokenInformation(tok, 1, buf, n, ctypes.byref(n)):
+                sp = ctypes.c_void_p()
+                # TOKEN_USER.User.Sid comes first
+                if advapi.ConvertSidToStringSidW(ctypes.c_void_p.from_buffer(buf), ctypes.byref(sp)):
+                    sid = ctypes.wstring_at(sp.value)
+                    kernel.LocalFree(sp)
+            kernel.CloseHandle(tok)
+        if not sid:
+            raise OSError("no user SID")
+        sysdir = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+        r = subprocess.run([os.path.join(sysdir, "icacls.exe"), path, "/inheritance:r", "/grant:r",
+                            f"*{sid}:(OI)(CI)F", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/Q"],
+                           capture_output=True, text=True, errors="replace", timeout=20)
+        if r.returncode != 0:
+            raise OSError((r.stdout + r.stderr).strip()[-200:] or f"icacls exit {r.returncode}")
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        emit("status", state="warn", msg=f"could not make {path} private ({e}) - other accounts on this PC may read "
+                                         "the receiver's MCP token while a question runs")
+
+
 # The interpreter the messages name: python3 on the Pi. Windows: this very
 # interpreter (a "python3" there is often missing or the Microsoft Store
 # stub), quoted when its path has a space.
@@ -150,6 +200,7 @@ if WINDOWS:
 # Claude Code is installed from PowerShell)
 HERE = "on this PC" if WINDOWS else "on the Pi"
 SETUP_CMD = "py -3 ai/kraken_ai.py setup" if WINDOWS else "python3 ai/kraken_ai.py setup"
+TRUST_CMD = "py -3 ai/kraken_ai.py trust" if WINDOWS else "python3 ai/kraken_ai.py trust"
 CLAUDE_INSTALL = ("    irm https://claude.ai/install.ps1 | iex      (in PowerShell)" if WINDOWS
                   else "    curl -fsSL https://claude.ai/install.sh | bash")
 
@@ -348,7 +399,9 @@ def session_save(sdir, s):
 
 def sandbox_status():
     """Claude Code's sandbox for the agent's shell commands needs bubblewrap +
-    socat (Linux)"""
+    socat (Linux); there is none on Windows"""
+    if WINDOWS:
+        return False, "Claude Code has no sandbox on Windows"
     missing = [p for p, exe in (("bubblewrap", "bwrap"), ("socat", "socat")) if not shutil.which(exe)]
     if missing:
         return False, "not installed: " + ", ".join(missing) + " (sudo apt install " + " ".join(missing) + ")"
@@ -377,7 +430,8 @@ def rule(kind, path, tree=True):
 
 
 def claude_settings(sdir, sandbox):
-    readable = [KRAKEN_DIR, PLUGIN_DIR, sdir, KNOWLEDGE, "/usr/include"]
+    # (Windows: no /usr/include - and no shell to build with anyway)
+    readable = [KRAKEN_DIR, PLUGIN_DIR, sdir, KNOWLEDGE] + ([] if WINDOWS else ["/usr/include"])
     allow = []
     for d in readable:
         allow += [rule("Read", d), rule("Grep", d), rule("Glob", d)]
@@ -537,8 +591,11 @@ def system_prompt(sdir, sandbox_ok, sandbox_why):
              "You have NO shell on this receiver (its sandbox isn't installed: " + sandbox_why + ") - you can "
              "read, answer, use the receiver's tools and the web, but not build plugins or run scripts; say so "
              "if a task needs it.")
-    return SYSTEM.format(sdir=agent_path(sdir), knowledge=agent_path(KNOWLEDGE), plugins=agent_path(PLUGIN_DIR),
-                         sigtool_help=sigtool_help(), shell=shell)
+    s = SYSTEM.format(sdir=agent_path(sdir), knowledge=agent_path(KNOWLEDGE), plugins=agent_path(PLUGIN_DIR),
+                      sigtool_help=sigtool_help(), shell=shell)
+    if WINDOWS:
+        s = s.replace("on a Raspberry Pi 5 (kraken_doa_v2 + heimdall)", "on a Windows PC (kraken_doa_v2 + heimdall)")
+    return s
 
 
 # ---------------------------------------------------------------------------
@@ -638,7 +695,7 @@ class Runner:
             return False, ""
         sandbox_ok, sandbox_why = sandbox_status()
         os.makedirs(RUN_DIR, exist_ok=True)
-        os.chmod(RUN_DIR, 0o700)
+        private_dir(RUN_DIR)
         tag = f"{os.getpid()}"
         # where the receiver's MCP server is (kraken_doa passes it in our
         # environment; a file only the bridge reads, not a command line)
@@ -806,6 +863,18 @@ def cmd_chat(a):
     emit("session", id=sess["id"], title=sess.get("title", ""))
     chat_append(sdir, "user", "ask", text)
     ctx = a.context_json.strip() if a.context_json else ""
+    if getattr(a, "context_file", ""):
+        # Windows: a context too long for its command line comes in a file
+        # (ai_manager.cpp), read once and deleted
+        try:
+            with open(a.context_file, encoding="utf-8") as f:
+                ctx = f.read().strip()
+        except OSError:
+            ctx = ""
+        try:
+            os.remove(a.context_file)
+        except OSError:
+            pass
     prompt = text + ("\n\n---\nThe receiver right now (get_screen):\n" + ctx if ctx else "")
     claude = cfg.get("backend", "claude") == "claude"
     resume = sess.get("claude_session") if claude and not first else None
@@ -938,6 +1007,9 @@ def cmd_setup(a):
         print("Using command:", " ".join(cfg["command"]))
     sok, why = sandbox_status()
     print("\nSandbox for the assistant's shell commands: " + ("OK (bubblewrap + socat)" if sok else why))
+    if WINDOWS:
+        print("  Plugins it changes don't run at all on Windows (no sandbox for them either) until you check them")
+        print("  and run: " + TRUST_CMD + " <id>")
     if not sok:
         print("  Without it the assistant has no shell: it answers, looks things up and controls the receiver,")
         print("  but can't build decoder plugins or run analysis scripts.")
@@ -1007,8 +1079,13 @@ def write_sandboxed(ids):
     os.makedirs(STATE_DIR, exist_ok=True)
     tmp = SANDBOXED_LIST + ".tmp"
     with open(tmp, "w") as f:
-        json.dump({"plugins": sorted(set(ids)), "note": "plugins the AI assistant changed - kraken_doa runs them "
-                   "sandboxed (bwrap). python3 ai/kraken_ai.py trust <id> takes one off"}, f)
+        if WINDOWS:   # (the note ai_sandbox.cpp writes)
+            note = ("plugins the AI assistant changed - kraken_doa doesn't run them (Windows has no sandbox). "
+                    "py -3 ai/kraken_ai.py trust <id> takes one off")
+        else:
+            note = ("plugins the AI assistant changed - kraken_doa runs them "
+                    "sandboxed (bwrap). python3 ai/kraken_ai.py trust <id> takes one off")
+        json.dump({"plugins": sorted(set(ids)), "note": note}, f)
     replace_file(tmp, SANDBOXED_LIST)
 
 
@@ -1017,7 +1094,8 @@ def cmd_trust(a):
     if a.id not in ids:
         print(f"{a.id} is not on the list (sandboxed: {', '.join(ids) or 'none'})")
         return 1
-    print(f"Plugin {a.id} will run WITHOUT the sandbox: only do this after checking what the assistant changed in")
+    print(f"Plugin {a.id} will run WITHOUT the sandbox{' (Windows has none: it runs at all only then)' if WINDOWS else ''}: "
+          "only do this after checking what the assistant changed in")
     print(f"  {os.path.join(PLUGIN_DIR, a.id)}  (git diff / its files).")
     if not a.yes and input("Trust it? [y/N] ").strip().lower() not in ("y", "yes"):
         return 1
@@ -1031,13 +1109,15 @@ def cmd_untrust(a):
         print("bad plugin id")
         return 1
     write_sandboxed(sandboxed_list() + [a.id])
-    print(f"{a.id} runs sandboxed from its next start.")
+    print(f"{a.id} doesn't run from its next start (Windows has no sandbox for it)." if WINDOWS
+          else f"{a.id} runs sandboxed from its next start.")
     return 0
 
 
 def cmd_sandboxed(_a):
     ids = sandboxed_list()
-    print("Plugins kraken_doa runs sandboxed (changed by the AI assistant): " + (", ".join(ids) or "none"))
+    print(("Plugins kraken_doa doesn't run (changed by the AI assistant; Windows has no sandbox): " if WINDOWS
+           else "Plugins kraken_doa runs sandboxed (changed by the AI assistant): ") + (", ".join(ids) or "none"))
 
 
 def main():
@@ -1057,6 +1137,8 @@ def main():
     c.add_argument("--context-json", default="")
     c.add_argument("--model", default="")
     c.add_argument("--effort", default="")
+    if WINDOWS:
+        c.add_argument("--context-file", default="")   # in place of --context-json (cmd_chat)
     d = sub.add_parser("delete")
     d.add_argument("--session", required=True)
     t = sub.add_parser("trust")

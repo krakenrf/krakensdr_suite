@@ -55,7 +55,7 @@ if [[ -f "$K/plugins/lib/build/codecs.exe" ]]; then
 fi
 [[ -d "$K/plugins/sdk/tools" ]] && mkdir -p "$OUT/kraken_doa_v2/plugins/sdk" && cp -r "$K/plugins/sdk/tools" "$OUT/kraken_doa_v2/plugins/sdk/"
 
-# AI Signal Lab bridge (Python; off until set up) and Voice to Text, when built
+# AI assistant bridge (Python; off until set up) and Voice to Text, when built
 if [[ -d "$K/ai" ]]; then
     mkdir -p "$OUT/kraken_doa_v2/ai"
     find "$K/ai" -maxdepth 2 -name '*.py' | while read -r f; do

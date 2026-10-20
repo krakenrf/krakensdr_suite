@@ -15,6 +15,12 @@
 // mid-turn restarts before the turn ends). Such plugins run under bwrap:
 // read-only filesystem, no network, a private /tmp. `python3 ai/kraken_ai.py
 // trust <id>` (on the Pi) takes one off the list.
+//
+// Windows has no bwrap (and no other sandbox here): available() is false, so
+// a plugin on the list doesn't run at all until the user trusts it (`py -3
+// ai/kraken_ai.py trust <id>` on the PC); the list is kept the same way, by
+// the files' modification / creation times (Windows has no ctime - the
+// assistant has no shell there, so nothing can set a time back either).
 
 #include <cstdint>
 #include <string>
@@ -22,7 +28,7 @@
 
 namespace aisandbox {
 
-// bwrap is installed and works here (checked once)
+// bwrap is installed and works here (checked once); always false on Windows
 bool available();
 
 // How to get going when something must run sandboxed and can't be - the end
@@ -50,7 +56,7 @@ void turn_finished();
 void recover();
 
 // argv wrapped in bwrap (rw = folders it may write besides a private /tmp);
-// empty when bwrap isn't available
+// empty when bwrap isn't available (always on Windows)
 std::vector<std::string> wrap(const std::vector<std::string>& argv, const std::vector<std::string>& rw = {});
 
 std::string list_json();   // ["id", ...]

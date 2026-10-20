@@ -455,6 +455,11 @@ Setting it up (once, on the Pi):
    compiles code. If other people can reach your receiver's web UI, set an
    API token (`KRAKEN_API_TOKEN` / the `api_token` file) first.
    `python3 ai/kraken_ai.py disable` switches it off again.
+   Windows: `py -3 ai/kraken_ai.py setup` in the `kraken_doa_v2` folder of
+   the PC (Claude Code from PowerShell: `irm https://claude.ai/install.ps1 |
+   iex`). Claude Code has no sandbox on Windows, so the assistant has no
+   shell there (no plugin builds or scripts), and a plugin it changed runs
+   only after `py -3 ai/kraken_ai.py trust <id>` - see WINDOWS.md.
 
 What it can and can't do:
 

@@ -19,6 +19,10 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef _WIN32
+#include <openssl/rand.h>   // random_hex: Windows has no /dev/urandom
+#include <random>
+#endif
 
 #include "config.hpp"
 #include "channel_manager.hpp"
@@ -26,6 +30,7 @@
 #include "digital/dig_plugin.hpp"
 #include "globals.hpp"
 #include "networking/websocket_server.hpp"
+#include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
 #include "utils/process.hpp"
@@ -200,6 +205,19 @@ bool run_bridge(std::vector<std::string> args, int timeout_ms, std::string* out)
                               kproc::Console::Hidden);
 }
 
+#ifdef _WIN32
+// A Windows command line holds at most 32766 characters; the screen context
+// (the page's view + every VFO) can be more once quoted - ask() then hands it
+// over in a file. Upper bound per argument: its bytes, every " and \ escaped,
+// quotes, space.
+size_t cmdline_estimate(const std::vector<std::string>& argv) {
+    size_t n = 0;
+    for (const auto& a : argv)
+        n += a.size() + static_cast<size_t>(std::count(a.begin(), a.end(), '"') + std::count(a.begin(), a.end(), '\\')) + 3;
+    return n;
+}
+#endif
+
 // cached `kraken_ai.py status` (CLI path + version)
 std::mutex g_probe_mu;
 std::string g_probe;
@@ -280,6 +298,20 @@ std::string clean_text(const std::string& in, size_t max) {
 
 std::string random_hex(size_t bytes) {
     std::string out;
+#ifdef _WIN32
+    // no /dev/urandom: OpenSSL's CSPRNG (the system's BCryptGenRandom)
+    std::vector<unsigned char> r(bytes);
+    if (bytes && RAND_bytes(r.data(), static_cast<int>(bytes)) != 1) {
+        std::random_device rd;   // (rand_s)
+        for (auto& c : r) c = static_cast<unsigned char>(rd());
+    }
+    static const char* hx = "0123456789abcdef";
+    for (size_t i = 0; i < bytes; i++) {
+        const unsigned char c = r[i];
+        out += hx[c >> 4];
+        out += hx[c & 15];
+    }
+#else
     std::ifstream f("/dev/urandom", std::ios::binary);
     static const char* hx = "0123456789abcdef";
     for (size_t i = 0; i < bytes; i++) {
@@ -287,6 +319,7 @@ std::string random_hex(size_t bytes) {
         out += hx[c >> 4];
         out += hx[c & 15];
     }
+#endif
     return out;
 }
 
@@ -676,6 +709,22 @@ std::string AiManager::ask(const std::string& text_in, const std::string& view_j
         if (!model_.empty()) args.insert(args.end(), {"--model", model_});
         if (!effort_.empty()) args.insert(args.end(), {"--effort", effort_});
     }
+#ifdef _WIN32
+    // too long for a Windows command line: the context in a file of the
+    // conversation folder, which the bridge reads and deletes (--context-file)
+    if (cmdline_estimate(args) > 32000) {
+        const std::string cf = std::string(SESSIONS) + "/" + sid + "/context.json";
+        std::ofstream f(cf, std::ios::binary | std::ios::trunc);
+        f << ctx;
+        f.close();
+        if (f) {
+            args[6] = "--context-file";   // in place of --context-json
+            args[7] = cf;
+        } else {
+            args[7] = "{}";
+        }
+    }
+#endif
     const std::vector<std::string> argv = kproc::python_cmd(std::move(args));   // python3 + args
     std::string label = text.substr(0, 80);
     std::string err = start_job("chat", argv, label);
@@ -858,7 +907,7 @@ void AiManager::save_marks_locked() const {
         f << s;
         if (!f) return;
     }
-    rename(tmp.c_str(), MARKS);
+    fs_replace(tmp, MARKS);   // rename(); Windows: also over the old file
 }
 
 std::string AiManager::remember(double hz, double bw_hz, const std::string& name_in, const std::string& summary_in,

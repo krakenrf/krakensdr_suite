@@ -137,10 +137,21 @@ UI shows on a Windows receiver are meant for that source checkout.
 - **Wideband variant**: the moRFeus LO is driven through Windows' HID driver.
 - **GPS**: the client reads gpsd's JSON protocol (port 2947) as on Linux; on
   Windows that needs a gpsd-compatible server, otherwise use a static location.
-- **Python** (AI Signal Lab, Debug Playback's test transmissions): Python 3
+- **Python** (the AI assistant, Debug Playback's test transmissions): Python 3
   from python.org (found through its `py` launcher) or the Microsoft Store.
   The test transmissions need numpy + scipy: `py -m pip install numpy scipy`.
   `set KRAKEN_PYTHON=C:\path\to\python.exe` picks a particular interpreter.
+- **AI assistant** (the 🤖 dock): enabled on the PC itself with
+  `py -3 ai/kraken_ai.py setup` in the `kraken_doa_v2` folder; it needs Claude
+  Code (in PowerShell `irm https://claude.ai/install.ps1 | iex`, then `claude`
+  once to log in) and Git for Windows, which Claude Code requires. It answers,
+  looks things up, controls the receiver, captures and plots as on Linux, but
+  **without its sandboxes**: Claude Code has no sandbox on Windows, so the
+  assistant gets no shell there (it can't build plugins or run scripts - the
+  dock says so), and a plugin it changed is not run at all (no bubblewrap to
+  run it in) until you have checked it and run
+  `py -3 ai/kraken_ai.py trust <id>` (`py -3 ai/kraken_ai.py sandboxed` lists
+  them). Build such a plugin yourself with `build_windows.bat`.
 - **Voice to Text** is optional as on Linux: `set WHISPER=1` before
   `build_windows.bat` (or `make -C kraken_doa_v2 whisper` in an MSYS2 UCRT64
   shell) builds whisper.cpp and fetches the base.en model.

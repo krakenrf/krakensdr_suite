@@ -10694,7 +10694,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const w = [];
     if (st.enabled && !st.token) w.push('No API token is set: anyone who can open this page can drive the assistant (it controls the receiver and runs code here). See README → API token.');
     if (st.enabled && st.backend === 'claude' && st.sandbox === false)
-      w.push('No sandbox for its shell (' + (st.sandbox_why || 'bubblewrap + socat') + '): it can answer and use the receiver, but not build plugins or run scripts.');
+      w.push('No sandbox for its shell (' + (st.sandbox_why || (serverWin ? 'none on Windows' : 'bubblewrap + socat')) + '): it can answer and use the receiver, but not build plugins or run scripts.');
     const warn = $id('ai-dk-warn');
     const wh = w.map(digEsc).join('<br>');
     if (warn && warn.dataset.html !== wh) { warn.dataset.html = wh; warn.innerHTML = wh; }
@@ -19756,6 +19756,9 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     const gps = document.querySelector('#location-source option[value="gps"]');
     if (gps) gps.textContent = win ? 'Receiver GPS (gpsd)' : 'KrakenPi GPS';
     if (digCodecsLast) digOnCodecs(digCodecsLast);
+    const aiModelLbl = $id('ai-dk-model') && $id('ai-dk-model').parentElement;
+    if (aiModelLbl) aiModelLbl.title = aiModelLbl.title.replace(win ? 'python3 ai/kraken_ai.py setup --model' : 'py -3 ai\\kraken_ai.py setup --model',
+                                                               win ? 'py -3 ai\\kraken_ai.py setup --model' : 'python3 ai/kraken_ai.py setup --model');
     aiRender();
     aiRenderPlugins();
     v2tRenderBox();
