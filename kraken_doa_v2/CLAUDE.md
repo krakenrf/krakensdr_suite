@@ -3205,23 +3205,54 @@ Edit `include/config.hpp`:
   floor raised in one tuner only (overload, its antenna) is in the overlap
   too: a gain step, so that tuner stays aligned. The median (not a quantile
   difference) because it compares identical frequencies (DVB-T ripple) and
-  tolerates a station aliasing into one side. (3) Along tuners linked by
-  steps, common = min(f - g); a tuner with f - g - common > `WB_FILL_DB` 3
-  (left < 2) is FILLED and takes common + g, the others keep f (their noise
-  lines up exactly). (4) The shape learned from quiet tuners (not filled,
-  flattened p50 - p10 < noise's + 1.5 dB - `noise_spread_db()`: 8.2 dB for
-  one frame, x sqrt(alpha / (2 - alpha)), 2.27 at 0.15 - every 1 s, points
-  within 3 dB, tau 60 s; FFTs >= 4096; not persisted) - a 2 dB-steeper tilt
-  is learned within 60 s. (5) After a retune (> 1 kHz) steps, decisions and
-  learning wait 5 averaging time constants (measured frame interval / alpha,
-  0.3-4 s); a move > 1 MHz drops the decision
+  tolerates a station aliasing into one side. A step is the two dongles'
+  gain difference: kept PER PAIR of tuners (`Wb::step[j]`) through retunes,
+  replaced by the next measurement after a move > `WB_STEP_RESET_HZ` 2 MHz.
+  (3) Tuners adjacent by frequency with a step for the pair are linked
+  (also while they don't overlap - see the drag below); along a chain common
+  = min(f - g) = each tuner's receiver floor + g; over = f - g - common, and
+  the floor BLENDS from f (over <= `WB_BLEND_LO_DB` 1: quiet tuners' noise
+  lines up exactly) to common + g (over >= `WB_BLEND_HI_DB` 3: filled by a
+  signal), linearly between - no switching, no state (`Wb::blend`). (4) The
+  shape learned from quiet tuners (blend 0, flattened p50 - p10 < noise's +
+  1.5 dB - `noise_spread_db()`: 8.2 dB for one frame, x sqrt(alpha / (2 -
+  alpha)), 2.27 at 0.15 - every 1 s, points within 3 dB, tau 60 s; FFTs >=
+  4096; not persisted) - a 2 dB-steeper tilt is learned within 60 s. (5)
+  After a retune (> 1 kHz) only the step and shape MEASUREMENTS wait 5
+  averaging time constants (measured frame interval / alpha, 0.3-4 s); the
+  floors follow at once. (6) `FFTProcessor::process_channel_fft` shifts a
+  retuned tuner's average by the move (whole bins, the rest carried; bins
+  the old band didn't hold keep their old values; a move past the band: no
+  shift) - the 8091 header frequency of the packet rides `RawDataPacket::
+  freq_hz` -> `FFTWorkItem::freq_hz` / `seq` (an older packet processed late
+  by another FFT worker doesn't move it back)
+- DRAGS (2026-10-21, the user's "dragging is laggy and glitchy, it takes
+  time to equalize after a retune"): heimdall's wideband scan retune
+  (`setup_wideband_frequencies`) is the full `rtlsdr_set_center_freq` per
+  tuner - not the coherent drag fast path -, one by one on Windows (~110 ms
+  for 5), each tuner's 8091 header frequency flipping as it finishes, no
+  retuning flag, no cooldown; 8092 coalesces queued `set_frequency`s. The
+  first version froze the fill decisions for the settle time after every
+  retune (renewed by every drag step) and dropped them after 1 MHz: a
+  DVB-T drawn at 0 dB for most of a drag, 0.4-3.6 s to recover. Steps were
+  dropped when a neighbour went out of reach: in a fast drag (~0.5 MHz per
+  sweep) a moved tuner and the next unmoved one are > 2.4 MHz apart for a
+  moment - a chain of tuners all inside the signal, no quiet one, the
+  signal at 0 dB for that frame. And the average kept the old band shifted
+  with the tuner until it decayed
 - Limits: a signal wider than all the tuners (or a rise on every tuner)
   leaves no quiet tuner - drawn as the floor (nothing remembered in this
   mode); a tuner's step to a neighbour it never overlapped quietly is still
   measured (any content works); a response unlike the default shape gives
-  wrong steps until learned (~1 min, false fills meanwhile); the squelch
-  reads the flattened floor against the unflattened spectrum (<= ~2 dB at
-  the band edges)
+  wrong steps until learned (~1 min, partial blends meanwhile); the
+  squelch reads the flattened floor against the unflattened spectrum
+  (<= ~2 dB at the band edges); a few frames after a retune carry old
+  samples under the new header frequency (heimdall's pipeline) - averaged
+  in at the new place with weight alpha each. Not done: heimdall's drag
+  fast path for wideband retunes (Windows 113 -> 74 ms per step expected;
+  `fast_retune_allowed()` is coherent only - needs hardware tests), the
+  page panning locally while dragging (it waits for frames: the display
+  follows ~140-210 ms behind on Windows)
 - `noise_floors.json` (cwd, gitignored; `{"version":1,"floors":{"0|49.6":
   -27.49,...}}`): loaded at start (`nfloor::load`), written by the FFT
   worker at most every 5 min when a floor moved >= 0.5 dB
@@ -3268,7 +3299,23 @@ Edit `include/config.hpp`:
   all five, ~20 dB over the noise, after a pan too, no tuner's level moving
   more than 0.47 dB (one display step) over 60 s, carriers on the 4
   boundaries; the main build 4.24 dB in tuners 1-3. kraken_doa CPU 7.7 vs
-  9.9 s over 91 s (the stitch's sort gone)
+  9.9 s over 91 s (the stitch's sort gone). DRAG (fake_wbd.py = heimdall in
+  wideband scan mode following each retune like the Windows one - tuners
+  one by one, 22 ms each, header per tuner, data 8 ms after it, latest
+  command wins; 16384-sample packets; a 7.6 MHz block 20 dB over the noise
+  fixed in RF; t_wb_drag.py plays drags as WIDEBAND_FREQ steps every 50 ms -
+  600 -> 604 MHz in 50 kHz, back in 100 kHz, a 6 MHz jump, 606 -> 596 MHz in
+  250 kHz = 5 MHz/s - and reads every type 7 frame of the whole band): the
+  block over the noise during drags (median / worst frame) - main 0 / -2.8
+  dB (never shown), the first version 0 / -1.4 dB (gone from 1 MHz into a
+  drag), the blend 19.3 / 17.4 dB but the fast drag -0.5 dB (the chain
+  break), now 19.3-19.8 / 16.5 dB; the tuners inside it within 1.4 dB of
+  each other (p95; fast 1.9; the first version 18 dB); settled (3-frame
+  median within 1 dB) 0 s after a drag, 0.25 s after the jump (first
+  version 0.4-3.6 s); its edges drawn within 1.3 kHz of the truth in 95 %
+  of the frames during drags (without the shift 100-250 kHz: the old band
+  shifted); the display at the new frequency 140-210 ms after the last
+  command in every build (the tuners' sweep + the 50 ms frame tick)
 **Digital TV (`plugins/dtv/`, README.md there; ARRAY plugin API):**
 - Plugin id `dtv`, name "Digital TV (DVB-T/T2, ISDB-T, ATSC 1.0/3.0,
   DTMB)", v2.0 - was `sfn` "SFN Separation (..., DAB)" (renamed 2026-10-14;

@@ -105,18 +105,23 @@ const float WB_SHAPE_DEFAULT[WB_SHAPE_N] = {
 // that difference over the bins where both responses are above
 // WB_OVERLAP_MIN_DB (>= WB_OVERLAP_MIN_BINS of them; median: a strong signal
 // just past one tuner's band aliases into that one only), smoothed over
-// WB_STEP_TAU_S, links the tuners' levels
+// WB_STEP_TAU_S, links the tuners' levels. A step is the two dongles' gain
+// difference: kept per pair of tuners through retunes (re-measured once both
+// have settled; replaced outright after a move of WB_STEP_RESET_HZ)
 constexpr float WB_OVERLAP_MIN_DB = -6.0f;
 constexpr int WB_OVERLAP_MIN_BINS = 64;
 constexpr float WB_STEP_TAU_S = 1.0f;
+constexpr double WB_STEP_RESET_HZ = 2e6;
 // Along tuners linked so, the common floor is the quietest one's (gains taken
-// off); a tuner standing WB_FILL_DB over it (left under WB_UNFILL_DB) is
-// FILLED by a signal - its own percentile is the signal - and takes the
-// common floor + its gain. The others keep their own floor: their noise lines
-// up exactly. A raised floor in one tuner (overload, its antenna) is in the
-// overlaps too: a gain difference, not a signal
-constexpr float WB_FILL_DB = 3.0f;
-constexpr float WB_UNFILL_DB = 2.0f;
+// off) = each tuner's receiver floor (+ its gain). A tuner whose own
+// percentile stands `over` above that is (partly) filled by a signal: its
+// floor goes from its own percentile (over <= WB_BLEND_LO_DB - the noise of
+// quiet tuners lines up exactly) to the common one (over >= WB_BLEND_HI_DB),
+// linearly between - no switching, so a signal sliding over a tuner during a
+// drag keeps its level. A raised floor in one tuner (overload, its antenna) is
+// in the overlaps too: a gain difference, not a signal
+constexpr float WB_BLEND_LO_DB = 1.0f;
+constexpr float WB_BLEND_HI_DB = 3.0f;
 constexpr int64_t WB_FRESH_MS = 400;        // a tuner's figures count this long
 // The shape learned from quiet tuners (not filled, the flattened band's 50th
 // - 10th percentile within WB_QUIET_MARGIN_DB of noise's - noise_spread_db)
@@ -128,14 +133,13 @@ constexpr int64_t WB_SHAPE_EVERY_MS = 1000;
 constexpr float WB_SHAPE_GATE_DB = 3.0f;
 constexpr float WB_SHAPE_TAU_S = 60.0f;
 constexpr int WB_SHAPE_MIN_FFT = 4096;
-// After a retune the averaged spectra hold both bands for a while: gain steps,
-// decisions and the shape wait 5 averaging time constants (frame interval /
-// alpha), WB_SETTLE_MIN_MS .. WB_SETTLE_MAX_MS. A move over WB_JUMP_HZ drops
-// the decisions (another band)
+// After a retune the averaged spectra hold both bands for a while (and heimdall
+// retunes the tuners one by one): the gain steps and the shape aren't measured
+// for 5 averaging time constants (frame interval / alpha), WB_SETTLE_MIN_MS ..
+// WB_SETTLE_MAX_MS - the floors themselves follow at once (a drag)
 constexpr int64_t WB_SETTLE_MIN_MS = 300;
 constexpr int64_t WB_SETTLE_MAX_MS = 4000;
 constexpr double WB_MOVE_HZ = 1000.0;
-constexpr double WB_JUMP_HZ = 1e6;
 
 struct Wb {
     bool ok = false;        // worked out (wideband scan mode)
@@ -144,12 +148,13 @@ struct Wb {
     float f = 0.0f;         // the flattened band's floor (10th percentile of the centre 80 %)
     float spread = 0.0f;    // its 50th - 10th percentile
     int up = -1;            // the tuner next up whose band overlaps this one's
-    float step = 0.0f;      // its flattened level minus this one's at the same frequencies
-    bool step_ok = false;
-    int64_t step_ms = 0;
-    bool filled = false;
+    // per tuner j: j's flattened level minus this one's at the same frequencies
+    float step[MAX_CHANNELS] = {};
+    bool step_ok[MAX_CHANNELS] = {};
+    int64_t step_ms[MAX_CHANNELS] = {};
+    double step_fc[MAX_CHANNELS] = {};   // this tuner's centre when it was measured
+    float blend = 0.0f;     // 0 = its own floor .. 1 = the common one (see WB_BLEND_LO_DB)
     int64_t settle_until = 0;
-    double settle_fc = 0.0; // the centre before the retune that started the settling
     int64_t shape_ms = 0;
 };
 
@@ -286,10 +291,7 @@ void update_step(int ch, Wb& w, const std::vector<float>& avg, int n, const std:
             fu = f;
         }
     }
-    if (up != w.up) {
-        w.up = up;
-        w.step_ok = false;
-    }
+    w.up = up;
     if (up < 0 || settling || now < wbs[up].settle_until) return;
     if (up >= static_cast<int>(fft_averaged.size()) || fft_averaged[up].size() != static_cast<size_t>(n)) return;
     const std::vector<float>& b = fft_averaged[up];
@@ -308,14 +310,15 @@ void update_step(int ch, Wb& w, const std::vector<float>& avg, int n, const std:
     std::nth_element(diff.begin(), diff.begin() + static_cast<std::ptrdiff_t>(mid), diff.end());
     const float s = diff[mid];
     if (!is_finite_value(s)) return;
-    if (!w.step_ok) {
-        w.step = s;
-        w.step_ok = true;
+    if (!w.step_ok[up] || std::fabs(w.fc - w.step_fc[up]) > WB_STEP_RESET_HZ) {
+        w.step[up] = s;     // first, or another band: this measurement
+        w.step_ok[up] = true;
     } else {
-        const float dt = std::clamp((now - w.step_ms) / 1000.0f, 0.0f, 1.0f);
-        w.step += (s - w.step) * std::min(1.0f, dt / WB_STEP_TAU_S);
+        const float dt = std::clamp((now - w.step_ms[up]) / 1000.0f, 0.0f, 1.0f);
+        w.step[up] += (s - w.step[up]) * std::min(1.0f, dt / WB_STEP_TAU_S);
     }
-    w.step_ms = now;
+    w.step_ms[up] = now;
+    w.step_fc[up] = w.fc;
 }
 
 // The shape from a quiet tuner's averaged spectrum: each grid point's 10th
@@ -347,7 +350,7 @@ void learn_shape(const std::vector<float>& avg, int n, float dt) {
     if (changed) shape_ver++;
 }
 
-// Every fresh tuner's floor (see WB_FILL_DB): runs of tuners linked by gain
+// Every fresh tuner's floor (see WB_BLEND_LO_DB): runs of tuners linked by gain
 // steps, the common floor = the quietest's. Sets out_db of the others, returns ch's
 float wideband_pass(int ch, int64_t now) {
     int k[MAX_CHANNELS];
@@ -363,8 +366,13 @@ float wideband_pass(int ch, int64_t now) {
     for (int a = 0; a < cnt;) {
         int e = a;
         g[a] = 0.0f;
-        while (e + 1 < cnt && wbs[k[e]].up == k[e + 1] && wbs[k[e]].step_ok) {
-            g[e + 1] = g[e] + wbs[k[e]].step;
+        // neighbours by frequency with a step measured for the pair - also while
+        // they don't overlap: heimdall retunes the tuners one by one, and in a
+        // fast drag a moved tuner is more than a band away from the next one
+        // for a moment (that broke the chain: a run of tuners all inside a
+        // signal had no quiet one to take the floor from)
+        while (e + 1 < cnt && wbs[k[e]].step_ok[k[e + 1]]) {
+            g[e + 1] = g[e] + wbs[k[e]].step[k[e + 1]];
             e++;
         }
         float common = wbs[k[a]].f - g[a];
@@ -372,9 +380,9 @@ float wideband_pass(int ch, int64_t now) {
         for (int m = a; m <= e; m++) {
             Wb& w = wbs[k[m]];
             const float over = w.f - g[m] - common;
-            if (now >= w.settle_until)
-                w.filled = e > a && over > (w.filled ? WB_UNFILL_DB : WB_FILL_DB);
-            const float fl = w.filled ? common + g[m] : w.f;
+            w.blend = e > a ? std::clamp((over - WB_BLEND_LO_DB) / (WB_BLEND_HI_DB - WB_BLEND_LO_DB), 0.0f, 1.0f)
+                            : 0.0f;
+            const float fl = w.f - w.blend * over;
             if (k[m] == ch) out = fl;
             else out_db[k[m]].store(fl, std::memory_order_relaxed);
         }
@@ -404,11 +412,8 @@ float wideband_frame(int ch, const std::vector<float>& avg, int n, int64_t now) 
         return f;
     }
     const double fc = static_cast<double>(tuner_frequencies[ch].load(std::memory_order_relaxed));
-    if (w.ok && std::fabs(fc - w.fc) > WB_MOVE_HZ) {   // retuned
-        if (now >= w.settle_until) w.settle_fc = w.fc;
+    if (w.ok && std::fabs(fc - w.fc) > WB_MOVE_HZ)   // retuned
         w.settle_until = now + settle_ms(ch);
-        if (std::fabs(fc - w.settle_fc) > WB_JUMP_HZ) w.filled = false;
-    }
     const bool settling = now < w.settle_until;
     w.ok = true;
     w.ms = now;
@@ -416,7 +421,7 @@ float wideband_frame(int ch, const std::vector<float>& avg, int n, int64_t now) 
     w.f = f;
     w.spread = f50 - f;
     update_step(ch, w, avg, n, h, now, settling);
-    if (!settling && !w.filled && w.spread < noise_spread_db() + WB_QUIET_MARGIN_DB && n >= WB_SHAPE_MIN_FFT &&
+    if (!settling && w.blend <= 0.0f && w.spread < noise_spread_db() + WB_QUIET_MARGIN_DB && n >= WB_SHAPE_MIN_FFT &&
         now - w.shape_ms >= WB_SHAPE_EVERY_MS) {
         learn_shape(avg, n, std::clamp((now - w.shape_ms) / 1000.0f, 0.0f, 5.0f));
         w.shape_ms = now;
@@ -559,8 +564,10 @@ void test_dump() {   // tests: the wideband state
     for (int c = 0; c < MAX_CHANNELS; c++) {
         const Wb& w = wbs[c];
         if (!w.ok) continue;
-        printf("    wb t%d fc %.3f f %.2f spread %.2f up %d step %+.2f%s filled %d settle %lld\n", c, w.fc / 1e6, w.f,
-               w.spread, w.up, w.step, w.step_ok ? "" : "(none)", w.filled, (long long)(w.settle_until - now_ms()));
+        const bool sok = w.up >= 0 && w.step_ok[w.up];
+        printf("    wb t%d fc %.3f f %.2f spread %.2f up %d step %+.2f%s blend %.2f settle %lld\n", c, w.fc / 1e6, w.f,
+               w.spread, w.up, sok ? w.step[w.up] : 0.0f, sok ? "" : "(none)", w.blend,
+               (long long)(w.settle_until - now_ms()));
     }
 }
 #endif

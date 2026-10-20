@@ -24,8 +24,9 @@
 // from the frequencies their bands share, and a tuner whose floor stands well
 // above the quietest one's (gains taken off) is filled by a signal (DVB-T, LTE
 // over several tuners - its own percentile is the signal, so it was drawn at
-// ~0 dB past the boundary): it takes the common floor + its gain. The others
-// keep their own floor, so their noise lines up exactly.
+// ~0 dB past the boundary): it takes the common floor + its gain, blended in
+// over 1 -> 3 dB, so a signal sliding over a tuner in a drag keeps its level.
+// The others keep their own floor, so their noise lines up exactly.
 
 #include <complex>
 #include <cstddef>

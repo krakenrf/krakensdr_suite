@@ -200,7 +200,7 @@ void FFTProcessor::resize(int new_fft_size) {
 }
 
 void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_t num_samples, int channel,
-                                       uint32_t buffer_generation) {
+                                       uint32_t buffer_generation, double freq_hz, uint64_t seq) {
     if (channel < 0 || channel >= MAX_CHANNELS) return;
 
     // CRITICAL: Check if resize is in progress - skip processing to allow safe resize
@@ -323,6 +323,38 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
 
     if (should_reset) {
         channel_last_reset_gen[channel] = current_gen;
+    }
+
+    // Wideband scan mode: a tuner that retuned (a drag moves all five) keeps
+    // its average where it was in RF - shifted by the move in whole bins, the
+    // rest carried to the next move - instead of drawing the old band moved
+    // with the tuner until the average forgets it. Bins whose frequencies the
+    // old band didn't hold keep their old values (as without the shift; raw
+    // frame values there would pull the floor's percentile down). A move past
+    // the whole band: nothing to keep, averaged as before. A frame of an older
+    // packet processed late (several FFT workers) doesn't move it back
+    {
+        static double placed_hz[MAX_CHANNELS] = {};
+        static uint64_t placed_seq[MAX_CHANNELS] = {};
+        const bool wb = wideband_mode_enabled.load(std::memory_order_relaxed);
+        if (!wb) placed_hz[channel] = 0.0;   // the next wideband frame starts afresh
+        if (freq_hz > 0.0 && wb && seq >= placed_seq[channel]) {
+            placed_seq[channel] = seq;
+            const double bin_hz = static_cast<double>(SAMPLE_RATE) / fft_size;
+            const double d = (freq_hz - placed_hz[channel]) / bin_hz;
+            if (should_reset || placed_hz[channel] <= 0.0 || std::fabs(d) >= fft_size) {
+                placed_hz[channel] = freq_hz;
+            } else if (const long long s = std::llround(d); s != 0) {
+                // content at bin i + s before the move is at bin i now
+                thread_local std::vector<float> old;
+                std::vector<float>& avg = fft_averaged[channel];
+                old = avg;
+                const int lo = static_cast<int>(std::max(0LL, -s));
+                const int hi = static_cast<int>(std::min<long long>(fft_size, fft_size - s));
+                for (int i = lo; i < hi; i++) avg[i] = old[static_cast<size_t>(i + s)];
+                placed_hz[channel] += static_cast<double>(s) * bin_hz;
+            }
+        }
     }
 
     // OPTIMIZATION: Fast magnitude calculation with log2-based dB conversion

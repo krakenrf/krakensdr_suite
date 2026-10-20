@@ -344,6 +344,7 @@ void DataReceiver::data_receiver_thread() {
                     float gain_db = EndianUtils::read_le_float(buffer.data(), ch_info_offset + 4);
 
                     ch_freq_hz[ch] = frequency_hz;
+                    raw_packet.freq_hz[ch] = frequency_hz;   // where its spectrum is (FFTWorkItem::freq_hz)
 
                     ChannelManager::update_channel_info(ch, frequency_hz, gain_db);
                 }
@@ -1202,6 +1203,8 @@ void DataReceiver::decimation_processor_thread() {
 
                         FFTWorkItem work_item(ch, dest, num_samples,
                                               persistent_buffer_generation.load(std::memory_order_relaxed));
+                        work_item.freq_hz = raw_packet.freq_hz[ch];   // the spectrum's place (see process_channel_fft)
+                        work_item.seq = raw_packet.seq;
 
                         if (fft_work_queue.size_approx() < 100) {
                             fft_work_queue.enqueue(work_item);
@@ -1303,7 +1306,7 @@ void DataReceiver::fft_processor_thread() {
         if (age > milliseconds(500)) continue;
 
         FFTProcessor::process_channel_fft(work_item.data, work_item.num_samples, work_item.channel,
-                                          work_item.buffer_generation);
+                                          work_item.buffer_generation, work_item.freq_hz, work_item.seq);
         nfloor::maybe_save();   // noise_floors.json now and then
         global_stats.increment_operations(thread_idx);
         global_stats.print_stats_if_time(thread_idx);

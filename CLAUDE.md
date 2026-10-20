@@ -1454,12 +1454,15 @@ antenna); independent / wideband scan mode: > 6 dB above = a signal, the
 remembered floor creeping up 1 dB / min while held. Wideband scan mode
 (the stitched spectrum) uses no remembered floors: the tuners' common
 response shape (measured on the KrakenSDR, learned on) is taken off, the gain
-steps between neighbours come from the 0.48 MHz their bands share, and a
-tuner whose floor stands > 3 dB over the quietest one's (gains taken off) is
-filled by a signal (DVB-T / LTE over several tuners) and takes that floor +
-its gain - each tuner used to be drawn against its own percentile, so such a
-signal dropped to ~0 dB past the boundary (fixed 2026-10-21; a first version
-misjudged real hardware, see the client CLAUDE.md)
+steps between neighbours come from the 0.48 MHz their bands share (kept per
+pair of dongles through retunes), and a tuner whose floor stands over the
+quietest one's (gains taken off) is filled by a signal (DVB-T / LTE over
+several tuners) and blends to that floor + its gain (1 -> 3 dB over, no
+switching) - each tuner used to be drawn against its own percentile, so such
+a signal dropped to ~0 dB past the boundary (fixed 2026-10-21; a first version
+misjudged real hardware and dropped the signal during drags, see the client
+CLAUDE.md). A retuned tuner's average is shifted with the move, so a drag
+doesn't draw the old band moved along
 
 **✈ Array calibration from ADS-B aircraft (coherent mode)** (details:
 `kraken_doa_v2/CLAUDE.md` *Array calibration*): `kraken_doa_v2/src/array_cal.cpp`.
