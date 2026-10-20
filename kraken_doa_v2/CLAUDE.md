@@ -1770,14 +1770,40 @@ Edit `include/config.hpp`:
   cells >= 1e-4 of the peak) -> covariance ellipse (+ a cell's variance),
   50 / 95 % HPD radii, mode mass, `at_edge`
 - `rdf::Solver`: coarse grid 256 x 256 over +-range_km (default 10 -> 78 m
-  cells) with its origin at the first record; re-centred (rebuilt from all
-  records) when the vehicle gets > 0.7 range from it (on a confident
-  estimate, else on the vehicle). Fine grid 128 x 128 around a confident
-  coarse estimate (mode mass > 0.5, not at the edge, r95 < range / 3): half
-  = clamp(4 * r95, 250 m, range / 3), rebuilt from all records when the
-  estimate moves > 0.3 half or the wanted size changes > 1.6x, else updated
-  per record; the estimate comes from the fine grid while its mode isn't at
+  cells), fine grid 128 x 128 around a confident coarse estimate (mode mass
+  > 0.5, not at the edge, r95 < range / 3; half = clamp(4 * r95, 250 m,
+  range / 3)); the estimate comes from the fine grid while its mode isn't at
   its edge. Max 4000 records (then the older half is thinned)
+- SLIDING WINDOWS (the user's request 2026-10-21: "the heatmap moves
+  smoothly as the vehicle moves, rather than in jumps when the vehicle nears
+  the edge"; before, the coarse grid stayed on its first record until the
+  vehicle was 0.7 range out and was then REBUILT around a new centre - a ~7
+  km jump of the heat map, 5 of the user's 20 Android logs had one - and the
+  fine grid was rebuilt each time the estimate moved 0.3 of its size). Each
+  `rdf::Grid` is now a window onto a fixed metric frame (azimuthal
+  equidistant around `lat0 / lon0`; the window centre `cx / cy`, cells at
+  cx - half + (i + 0.5) cell) that `scroll(di, dj, recs, count)`s by WHOLE
+  cells: the cells it keeps keep their sums (exact - their frame
+  coordinates don't change), the column / row bands coming in get every
+  record (`add_rect`); bit-identical to a window built there (scratch
+  t_scroll.cpp, 22 shifts incl. >= n). The coarse window follows the VEHICLE
+  (`follow_coarse`, before each record is added: centred on it, the LAST
+  confident estimate - `pull_` - kept within KEEP_EST 0.7 of the half-width,
+  at most FOLLOW_STEP 2 cells a record or 1.5x what the vehicle moved -
+  never lags it); the fine window follows the ESTIMATE (scrolls; rebuilt
+  only when its size must change > 1.6x or it jumps >= half its width).
+  Past REANCHOR_M 100 km from the frame's origin a window gets a new frame
+  there (the same place on the map). Away from the origin the frame's north
+  isn't true north (meridian convergence: -0.32 deg 47 km east at 37 S):
+  `Grid::north_deg()` -> the grid message's `rot`, the ellipse's `ang` is
+  turned to true north. Cost: each scroll = the band's cells x all records
+  (~records x 15 us on a desktop per cell column); a long drive is CHEAPER
+  than before (no rebuilds: 30 km, 900 records 48.5 -> 17 ms per record),
+  a drive that never left the old 7 km pays the bands (the JS replay:
+  0.7-16 s for the user's logs, ~+10 %; a 2 h 4-rows/s log 26 -> 41 s). The
+  simulator (tools/rdf_sim.cpp, 40 x 5 / 15 min) gives the same errors and
+  95 % hits as before (36 / 40, 40 / 40); the user's logs the same
+  estimates (0-57 m apart)
 - Engine thread (rdf_mapper): owns the solvers; a VFO retuned by more than
   10 kHz starts over (its old session is parked by frequency); records are
   saved to `rdf_session.bin` (cwd, gitignored; "KRDF1" + blocks of freq,
@@ -1787,7 +1813,10 @@ Edit `include/config.hpp`:
   "KRDF2" (each block also carries the talker ID, "" = the VFO; "KRDF1" is
   still read) and every map is keyed VFO + talker (`Key` in rdf_mapper.cpp) Grid messages at most every 2 s per VFO:
   `{"rdf_grid":{vfo, mhz, records, range_km, nats, coarse/fine:{n, cell_m,
-  nw, se, data (b64 u8, row 0 north, 255 * (1 + s (M - Mmax) / 12 nats))},
+  nw, se, c: [lat, lon] (the window's centre), half (m), rot (deg: the
+  true bearing of its "up" - the page's `rdfGridDraw` draws the raster
+  there turned by it; a page from before stretches it between nw and se),
+  data (b64 u8, row 0 north, 255 * (1 + s (M - Mmax) / 12 nats))},
   est:{lat, lon, r50, r95, a, b, ang, mass, edge, off, off_sd}, lines:[[lat,
   lon, bearing, t]] (last 150 records)}}`; `GET_RDF` (page opening the map)
   makes the next push carry every VFO
@@ -1806,7 +1835,8 @@ Edit `include/config.hpp`:
   warnings, measured offset when |off| >= 2 deg and > 2 sd after 20
   records) and the reason frames aren't used (`RDF_STATE`). `rdfDraw` (in
   `mapDrawNow` before the rings): heat canvases (`RDF_LUT` blue..red,
-  transparent below 8 %) stretched between nw / se, bearing lines (1.5x the
+  transparent below 8 %) drawn by `rdfGridDraw` - a square of 2 x half
+  around c, turned by rot (nw / se from an older receiver), bearing lines (1.5x the
   range, older fainter), estimate X + 2.45-sigma (95 %) ellipse (dashed at the
   edge), lobes (radius 0.3 of the map, dashed when held) + the peak line,
   the heading tick. Heat map: the selected VFO's, or in All the only VFO
@@ -1953,8 +1983,13 @@ Edit `include/config.hpp`:
   `lrTimeOf`; the Android sample redoubt16sept.csv has a stray 2026 row
   after a 2022 drive - 3.9 years -> 12 min); playback advances the axis by
   real time x speed (0.5-500x), redraws <= ~30 fps, pauses when the map is
-  hidden; Follow re-centres when the vehicle nears an edge (the strip's
-  height left out). A row is shown up to `LR_HOLD` 30 s; the vehicle is
+  hidden; Follow keeps the vehicle in the middle of the map above the strip
+  every frame (`lrFollow`; it used to re-centre in one jump when the vehicle
+  neared an edge - the user's 2026-10-21 request); a drag of the map (the
+  view moved > 3 px from where Follow put it at the same zoom,
+  `lr.followAt`) turns Follow off, a wheel zoom keeps it. The heat
+  snapshots carry their window (c / half / rot) and are drawn by
+  `rdfGridDraw` like the live map's. A row is shown up to `LR_HOLD` 30 s; the vehicle is
   interpolated between rows <= 10 s apart. Strip `#map-lr` (bottom, like
   the path-loss strip; `.map-pane.lr-open` + `--lr-h` = its height lift the
   DF / marker panels, the status line, the path-loss strip and cap the

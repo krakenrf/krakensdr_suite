@@ -33,9 +33,16 @@
 //      independent bearings (systematic errors don't average out). Location =
 //      posterior mean of the main mode (8-connected region around the peak),
 //      ellipse from its covariance, 50 % / 95 % HPD radii, edge warning.
-//   Solver: a coarse grid (fixed origin, re-centred only when the vehicle
-//   leaves it) + a fine grid around a converging estimate, rebuilt from all
-//   records when the estimate moves / shrinks.
+//   Solver: a coarse grid + a fine grid around a converging estimate. Each
+//   is a WINDOW onto a fixed metric frame that slides by whole cells
+//   (Grid::scroll): the coarse one follows the vehicle (a confident estimate
+//   kept inside), the fine one the estimate - only the cells that come into
+//   view are worked out (from all records), so the heat map moves smoothly
+//   instead of jumping (it used to stay put until the vehicle was 0.7 of the
+//   range out, then rebuilt around a new centre; the fine grid on every 0.3
+//   of its size the estimate moved). The fine grid is rebuilt when its size
+//   must change, both when the window gets REANCHOR_M from the frame's
+//   origin (a new frame there - the same place on the map).
 
 #include <array>
 #include <cstdint>
@@ -126,16 +133,30 @@ void from_enu(double lat0, double lon0, double e, double n, double* lat, double*
 double distance_m(double lat1, double lon1, double lat2, double lon2);
 double bearing_deg(double lat1, double lon1, double lat2, double lon2);
 
+// n x n cells of a window (half-width half_m) onto a metric frame around
+// (lat0, lon0); the window starts centred on the frame's origin
 class Grid {
 public:
     Grid(const Options& o, double lat0, double lon0, double half_m, int n);
     void add(const Record& r);
+    // the window moved by whole cells (di east, dj north): the cells it keeps
+    // keep their values, those that come into it get the first `count` of
+    // recs (the records already added)
+    void scroll(int di, int dj, const std::vector<Record>& recs, size_t count);
     void clear();
     Estimate estimate() const;
     // u8 per cell, row 0 = north: 255 * (1 + s * (M - Mmax) / nats_range), clamped
     std::vector<uint8_t> raster(double nats_range) const;
-    double lat0() const { return lat0_; }
+    double lat0() const { return lat0_; }    // the frame's origin
     double lon0() const { return lon0_; }
+    double cx_m() const { return cx_; }      // the window's centre in the frame (m east / north)
+    double cy_m() const { return cy_; }
+    void centre(double* lat, double* lon) const;
+    // the window's corners (row 0 west / east ...) and the true bearing of
+    // its "up" (the frame's north at the window's centre: the meridians
+    // converge away from the origin - the raster is drawn turned by it)
+    void corners(double* nw_lat, double* nw_lon, double* se_lat, double* se_lon) const;
+    double north_deg() const;
     double half_m() const { return half_; }
     double cell_m() const { return cell_; }
     int n() const { return n_; }
@@ -143,8 +164,11 @@ public:
 
 private:
     void marginal(std::vector<float>* m) const;
+    void add_rect(const Record& r, int i0, int i1, int j0, int j1);   // r into cells [i0, i1) x [j0, j1)
+    void place();                            // the cells' frame coordinates from the window
     Options o_;
     double lat0_, lon0_, half_, cell_;
+    double cx_ = 0, cy_ = 0;
     int n_, k_;
     int records_ = 0;
     std::vector<float> L_;                 // k_ planes of n_ * n_
@@ -170,6 +194,8 @@ public:
 
 private:
     void rebuild_coarse(double lat, double lon);
+    // the coarse window toward the vehicle (count = records in it; limit: at most a few cells a record)
+    void follow_coarse(const Record& r, size_t count, bool limit = true);
     void update_fine(bool force);
     void refresh_estimate();
     Options o_;
@@ -178,6 +204,8 @@ private:
     std::vector<Record> recs_;
     std::unique_ptr<Grid> coarse_, fine_;
     Estimate est_;
+    bool pull_valid_ = false;                // the last confident estimate (the coarse window keeps it inside)
+    double pull_lat_ = 0, pull_lon_ = 0;
     uint64_t version_ = 0;
 };
 

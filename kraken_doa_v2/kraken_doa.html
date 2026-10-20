@@ -2219,7 +2219,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
               <div class="map-df-tl" id="map-df-tl" onpointerdown="rdfTlDown(event)" onpointerup="rdfTlUp(event)" onpointercancel="rdfTlPress = null"></div>
               <div class="map-df-row">
                 <label title="Collect bearings for the heat map while driving (needs GPS: Station Information)"><input type="checkbox" id="map-df-on" onchange="send('RDF:' + (this.checked ? 1 : 0))"> Collect</label>
-                <label title="Half-width of the heat map grid around where the drive started">Range <input type="number" id="map-df-range" min="1" max="50" step="1" style="width:44px" onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="rdfSetRange(this.value)"> km</label>
+                <label title="Half-width of the heat map's grid - the grid moves with the vehicle (and keeps a confident estimate of the transmitter inside)">Range <input type="number" id="map-df-range" min="1" max="50" step="1" style="width:44px" onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="rdfSetRange(this.value)"> km</label>
                 <button type="button" class="map-btn" onclick="rdfCentreEst()" title="Centre the map on the estimated transmitter">◎</button>
                 <button type="button" class="map-btn" onclick="rdfReset()" title="Forget the bearings collected (the shown VFO / radio, or all)">Reset</button>
               </div>
@@ -13499,6 +13499,27 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     return rdfSelTalkers().map(t => ({key: rdfGk(t.vfo, t.tid), col: rdfTalkerColor(t), name: rdfShortName(t), lines: sel !== '*'}));
   }
   function rdfMpp(lat) { return 40075016.686 * Math.cos(lat * Math.PI / 180) / mapWorld(); }
+  // a heat map raster ({cv, g}) onto the map: its window's centre (g.c) +
+  // half-width, turned by g.rot (its "up" = its frame's north there - the
+  // window slides with the vehicle, rdf_engine.cpp Grid::scroll, and away
+  // from the frame's origin the meridians converge); from a receiver before
+  // that (no c / half) stretched between nw and se
+  function rdfGridDraw(c, L) {
+    const g = L.g;
+    if (g.c && g.half > 0) {
+      const [x, y] = mapLatLonToScreen(g.c[0], g.c[1]), h = g.half / rdfMpp(g.c[0]);
+      if (x + 1.5 * h < 0 || y + 1.5 * h < 0 || x - 1.5 * h > mapW || y - 1.5 * h > mapH) return;
+      c.save();
+      c.translate(x, y);
+      if (g.rot) c.rotate(g.rot * Math.PI / 180);
+      c.drawImage(L.cv, -h, -h, 2 * h, 2 * h);
+      c.restore();
+      return;
+    }
+    const [x0, y0] = mapLatLonToScreen(g.nw[0], g.nw[1]), [x1, y1] = mapLatLonToScreen(g.se[0], g.se[1]);
+    if (x1 < 0 || y1 < 0 || x0 > mapW || y0 > mapH) return;
+    c.drawImage(L.cv, x0, y0, x1 - x0, y1 - y0);
+  }
   function rdfLobePath(c, lobe, sx, sy, R) {
     let u = rdfLobeCache.get(lobe);
     if (!u) { u = rdfB64(lobe); if (rdfLobeCache.size > 64) rdfLobeCache.clear(); rdfLobeCache.set(lobe, u); }
@@ -13524,13 +13545,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       c.save();
       c.imageSmoothingEnabled = true;
       c.globalAlpha = 0.8;
-      for (const L of [rdfGrids[hk].coarse, rdfGrids[hk].fine]) {
-        if (!L) continue;
-        const [x0, y0] = mapLatLonToScreen(L.g.nw[0], L.g.nw[1]);
-        const [x1, y1] = mapLatLonToScreen(L.g.se[0], L.g.se[1]);
-        if (x1 < 0 || y1 < 0 || x0 > mapW || y0 > mapH) continue;
-        c.drawImage(L.cv, x0, y0, x1 - x0, y1 - y0);
-      }
+      for (const L of [rdfGrids[hk].coarse, rdfGrids[hk].fine]) if (L) rdfGridDraw(c, L);
       c.restore();
     }
     // bearings taken while driving: lines from where they were taken, older fainter
@@ -20103,43 +20118,95 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         return out;
       }
     }
+    // n x n cells of a WINDOW (half-width `half`) onto a metric frame around
+    // (lat0, lon0) - the window starts on the frame's origin and slides by
+    // whole cells (scroll), so the heat map follows the vehicle smoothly
     class RdfGrid {
       constructor(lat0, lon0, half, n) {
         const K = rdfOpt.offsets.length;
-        Object.assign(this, {lat0, lon0, half, n, cell: 2 * half / n, K, records: 0, ver: 0, mc: null, mcVer: -1});
+        Object.assign(this, {lat0, lon0, half, n, cell: 2 * half / n, K, records: 0, ver: 0, mc: null, mcVer: -1, cx: 0, cy: 0});
         this.L = new Float32Array(K * n * n);
         this.e = new Float32Array(n * n);
         this.nn = new Float32Array(n * n);
-        for (let j = 0; j < n; j++)
-          for (let i = 0; i < n; i++) { this.e[j * n + i] = -half + (i + 0.5) * this.cell; this.nn[j * n + i] = -half + (j + 0.5) * this.cell; }
+        this.place();
         const sd = Math.max(rdfOpt.prior_sd, 0.1), lp = rdfOpt.offsets.map(d => -0.5 * d * d / (sd * sd));
         const mx = Math.max(...lp), ls = lp.reduce((a, x) => a + Math.exp(x - mx), 0);
         this.lprior = lp.map(x => x - mx - Math.log(ls));
       }
+      place() {   // the cells' frame coordinates from the window
+        const n = this.n;
+        for (let j = 0; j < n; j++)
+          for (let i = 0; i < n; i++) { this.e[j * n + i] = this.cx - this.half + (i + 0.5) * this.cell; this.nn[j * n + i] = this.cy - this.half + (j + 0.5) * this.cell; }
+      }
       add(r) {
-        const ell = new Float32Array(RB + 1), al = rdfOpt.alpha, eps = rdfOpt.eps;
-        for (let k = 0; k < RB; k++) ell[k] = al * Math.log((1 - eps) * r.p[k] * RB + eps);
-        ell[RB] = ell[0];
+        this.addRect(r, 0, this.n, 0, this.n);
+        this.records++;
+        this.ver++;
+      }
+      // r into the cells [i0, i1) x [j0, j1)
+      addRect(r, i0, i1, j0, j1) {
+        if (i0 >= i1 || j0 >= j1) return;
+        // its log-likelihood ratio per bin, kept with the record (each scroll
+        // needs it again for every record: 720 logs each time; 2.9 KB a record)
+        let ell = r.ell;
+        if (!ell) {
+          const al = rdfOpt.alpha, eps = rdfOpt.eps;
+          ell = r.ell = new Float32Array(RB + 1);
+          for (let k = 0; k < RB; k++) ell[k] = al * Math.log((1 - eps) * r.p[k] * RB + eps);
+          ell[RB] = ell[0];
+        }
         const [er, nr] = rdfToEnu(this.lat0, this.lon0, r.lat, r.lon);
         const [la2, lo2] = rdfFromEnu(this.lat0, this.lon0, er, nr + 1000);
         const gamma = rdfBrg(r.lat, r.lon, la2, lo2);
-        const near2 = Math.max(rdfOpt.near_m, 1.5 * this.cell) ** 2, cells = this.n * this.n, K = this.K;
+        const near2 = Math.max(rdfOpt.near_m, 1.5 * this.cell) ** 2, n = this.n, cells = n * n, K = this.K;
         const xoff = rdfOpt.offsets.map(o => (gamma - o) / RBD), INV = RB / (2 * Math.PI);
         const L = this.L, E = this.e, N = this.nn;
-        for (let c = 0; c < cells; c++) {
-          const dx = E[c] - er, dy = N[c] - nr;
-          if (dx * dx + dy * dy < near2) continue;   // near_value 0
-          const xb = Math.atan2(dx, dy) * INV;
-          for (let k = 0; k < K; k++) {
-            let x = xb + xoff[k];
-            x -= RB * Math.floor(x / RB);
-            let i = x | 0;
-            if (i >= RB) i -= RB;
-            L[k * cells + c] += ell[i] + (x - i) * (ell[i + 1] - ell[i]);
+        for (let j = j0; j < j1; j++)
+          for (let c = j * n + i0, ce = j * n + i1; c < ce; c++) {
+            const dx = E[c] - er, dy = N[c] - nr;
+            if (dx * dx + dy * dy < near2) continue;   // near_value 0
+            const xb = Math.atan2(dx, dy) * INV;
+            for (let k = 0; k < K; k++) {
+              let x = xb + xoff[k];
+              x -= RB * Math.floor(x / RB);
+              let i = x | 0;
+              if (i >= RB) i -= RB;
+              L[k * cells + c] += ell[i] + (x - i) * (ell[i + 1] - ell[i]);
+            }
+          }
+      }
+      // the window moved by whole cells (di east, dj north): the cells it keeps
+      // keep their values, those coming in get the first `count` of recs
+      scroll(di, dj, recs, count) {
+        if (!di && !dj) return;
+        const n = this.n, cells = n * n, all = Math.abs(di) >= n || Math.abs(dj) >= n;
+        if (all) this.L.fill(0);
+        else {
+          const plane = new Float32Array(cells), i0 = Math.max(0, -di), i1 = Math.min(n, n - di);
+          for (let k = 0; k < this.K; k++) {
+            const L = this.L.subarray(k * cells, (k + 1) * cells);
+            plane.fill(0);
+            for (let j = Math.max(0, -dj); j < Math.min(n, n - dj); j++) plane.set(L.subarray((j + dj) * n + i0 + di, (j + dj) * n + i1 + di), j * n + i0);
+            L.set(plane);
           }
         }
-        this.records++;
+        this.cx += di * this.cell;
+        this.cy += dj * this.cell;
+        this.place();
+        const ci0 = di > 0 ? Math.max(0, n - di) : 0, ci1 = di > 0 ? n : Math.min(n, -di);
+        const rj0 = dj > 0 ? Math.max(0, n - dj) : 0, rj1 = dj > 0 ? n : Math.min(n, -dj);
+        for (let q = 0; q < count && q < recs.length; q++) {
+          if (all) { this.addRect(recs[q], 0, n, 0, n); continue; }
+          if (di) this.addRect(recs[q], ci0, ci1, 0, n);
+          if (dj) this.addRect(recs[q], di > 0 ? 0 : ci1, di > 0 ? ci0 : n, rj0, rj1);
+        }
         this.ver++;
+      }
+      centre() { return rdfFromEnu(this.lat0, this.lon0, this.cx, this.cy); }
+      // the true bearing of the window's "up" (the frame's north at its centre)
+      north() {
+        const [la, lo] = this.centre(), [la2, lo2] = rdfFromEnu(this.lat0, this.lon0, this.cx, this.cy + 1000), b = rdfBrg(la, lo, la2, lo2);
+        return b > 180 ? b - 360 : b;
       }
       marginal() {
         if (this.mcVer === this.ver) return this.mc;
@@ -20194,7 +20261,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         cee = cee / mm + cv; cnn = cnn / mm + cv; cen /= mm;
         const tr = cee + cnn, det = cee * cnn - cen * cen, l1 = tr / 2 + Math.sqrt(Math.max(0, tr * tr / 4 - det)), l2 = Math.max(0, tr - l1);
         e.a = Math.sqrt(l1); e.b = Math.sqrt(l2);
-        e.ang = wrap360(0.5 * Math.atan2(2 * cen, cnn - cee) * R2D);
+        // major axis: CW from grid north + the true bearing of grid north there (meridian convergence)
+        const [gla, glo] = rdfFromEnu(this.lat0, this.lon0, me, mn), [gla2, glo2] = rdfFromEnu(this.lat0, this.lon0, me, mn + 1000);
+        e.ang = wrap360(0.5 * Math.atan2(2 * cen, cnn - cee) * R2D + rdfBrg(gla, glo, gla2, glo2));
         const ws = mode.map(c => w[c]).sort((x, y) => y - x);
         let acc = 0, n50 = 0, n95 = 0;
         for (let i = 0; i < ws.length; i++) {
@@ -20252,16 +20321,48 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         }
         return out;
       }
-      box() {   // the corners for drawing: [nw, se] (lat, lon)
-        return [rdfFromEnu(this.lat0, this.lon0, -this.half, this.half), rdfFromEnu(this.lat0, this.lon0, this.half, -this.half)];
+      box() {   // the window's corners: [nw, se] (lat, lon)
+        return [rdfFromEnu(this.lat0, this.lon0, this.cx - this.half, this.cy + this.half), rdfFromEnu(this.lat0, this.lon0, this.cx + this.half, this.cy - this.half)];
       }
     }
-    // coarse grid + an adaptive fine grid (rdf::Solver)
+    // coarse grid + an adaptive fine grid (rdf::Solver): the coarse window
+    // follows the vehicle (the last confident estimate kept within
+    // RDF_KEEP_EST of its half-width; at most RDF_FOLLOW_STEP cells a record or
+    // 1.5x the vehicle's move), the fine one the estimate; past RDF_REANCHOR_M
+    // from its frame's origin a window gets a new frame there
+    const RDF_REANCHOR_M = 100000, RDF_KEEP_EST = 0.7, RDF_FINE_N = 128, RDF_FOLLOW_STEP = 2;
     class RdfSolver {
-      constructor(halfKm, n) { this.halfKm = halfKm; this.n = n || 256; this.recs = []; this.coarse = null; this.fine = null; this.est = {valid: false}; }
+      constructor(halfKm, n) { this.halfKm = halfKm; this.n = n || 256; this.recs = []; this.coarse = null; this.fine = null; this.est = {valid: false}; this.pull = null; }
       rebuildCoarse(lat, lon) {
         this.coarse = new RdfGrid(lat, lon, this.halfKm * 1000, this.n);
         for (const r of this.recs) this.coarse.add(r);
+      }
+      // the coarse window toward the vehicle r (count = the records already in it; limit: a few cells a record)
+      followCoarse(r, count, limit = true) {
+        const g = this.coarse, e = this.pull;
+        let [tx, ty] = rdfToEnu(g.lat0, g.lon0, r.lat, r.lon);
+        if (e) {
+          const [ex, ey] = rdfToEnu(g.lat0, g.lon0, e[0], e[1]), dx = tx - ex, dy = ty - ey, d = Math.hypot(dx, dy), lim = RDF_KEEP_EST * g.half;
+          if (d > lim) { tx = ex + dx * lim / d; ty = ey + dy * lim / d; }
+        }
+        // (C++ rounds halves away from zero)
+        const rnd = x => x < 0 ? -Math.round(-x) : Math.round(x);
+        let di = rnd((tx - g.cx) / g.cell), dj = rnd((ty - g.cy) / g.cell);
+        if (!di && !dj) return;
+        if (limit) {
+          const p = this.recs[count - 1], moved = count ? rdfDistM(p.lat, p.lon, r.lat, r.lon) / g.cell : 0;
+          const step = Math.max(RDF_FOLLOW_STEP, Math.ceil(1.5 * moved));
+          di = Math.max(-step, Math.min(step, di));
+          dj = Math.max(-step, Math.min(step, dj));
+        }
+        const ncx = g.cx + di * g.cell, ncy = g.cy + dj * g.cell;
+        if (Math.hypot(ncx, ncy) > RDF_REANCHOR_M) {
+          const [la, lo] = rdfFromEnu(g.lat0, g.lon0, ncx, ncy);
+          this.coarse = new RdfGrid(la, lo, this.halfKm * 1000, this.n);
+          for (let q = 0; q < count; q++) this.coarse.add(this.recs[q]);
+          return;
+        }
+        g.scroll(di, dj, this.recs, count);
       }
       refresh() {
         let est = this.coarse ? this.coarse.estimate() : {valid: false};
@@ -20271,6 +20372,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
           if (f.valid && !f.edge) { est = Object.assign({}, f, {mass: Math.min(f.mass, est.mass)}); this.estGrid = this.fine; }
         }
         this.est = est;
+        // the coarse window keeps the last confident estimate in it (followCoarse)
+        if (est.valid && est.mass > 0.5 && !est.edge) this.pull = [est.lat, est.lon];
       }
       updateFine(force) {
         const c = this.coarse ? this.coarse.estimate() : {valid: false}, ch = this.halfKm * 1000;
@@ -20278,28 +20381,36 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         const want = Math.max(250, Math.min(ch / 3, 4 * c.r95));
         let rebuild = force || !this.fine;
         if (this.fine) {
-          const moved = rdfDistM(this.fine.lat0, this.fine.lon0, c.lat, c.lon), ratio = want / this.fine.half;
-          if (moved > 0.3 * this.fine.half || ratio > 1.6 || ratio < 1 / 1.6) rebuild = true;
+          const ratio = want / this.fine.half;
+          if (ratio > 1.6 || ratio < 1 / 1.6) rebuild = true;
         }
-        if (!rebuild) return;
-        this.fine = new RdfGrid(c.lat, c.lon, want, 128);
+        if (!rebuild) {
+          // the window follows the estimate by whole cells (a jump of half the grid or more: rebuilt there)
+          const f = this.fine, [ex, ey] = rdfToEnu(f.lat0, f.lon0, c.lat, c.lon);
+          const rnd = x => x < 0 ? -Math.round(-x) : Math.round(x), di = rnd((ex - f.cx) / f.cell), dj = rnd((ey - f.cy) / f.cell);
+          if (!di && !dj) return;
+          if (Math.abs(di) < RDF_FINE_N / 2 && Math.abs(dj) < RDF_FINE_N / 2 && Math.hypot(f.cx + di * f.cell, f.cy + dj * f.cell) <= RDF_REANCHOR_M) {
+            f.scroll(di, dj, this.recs, this.recs.length);
+            return;
+          }
+        }
+        this.fine = new RdfGrid(c.lat, c.lon, want, RDF_FINE_N);
         for (const r of this.recs) this.fine.add(r);
       }
       add(r) {
         this.recs.push(r);
         if (this.recs.length > 4000) {
+          // thin the older half and start over - the window where it is
           const half = this.recs.length >> 1;
           this.recs = this.recs.filter((x, i) => i >= half || i % 2 === 0);
-          this.rebuildCoarse(this.coarse ? this.coarse.lat0 : r.lat, this.coarse ? this.coarse.lon0 : r.lon);
+          const [la, lo] = this.coarse ? this.coarse.centre() : [r.lat, r.lon];
+          this.rebuildCoarse(la, lo);
           this.updateFine(true);
           this.refresh();
           return;
         }
         if (!this.coarse) this.rebuildCoarse(r.lat, r.lon);
-        else if (rdfDistM(this.coarse.lat0, this.coarse.lon0, r.lat, r.lon) > 0.7 * this.halfKm * 1000) {
-          const e = this.est, conf = e.valid && e.mass > 0.5 && !e.edge;
-          this.rebuildCoarse(conf ? e.lat : r.lat, conf ? e.lon : r.lon);
-        } else this.coarse.add(r);
+        else { this.followCoarse(r, this.recs.length - 1); this.coarse.add(r); }
         if (this.fine) this.fine.add(r);
         this.updateFine(false);
         this.refresh();
@@ -20697,10 +20808,11 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const L = {};    // the loaded log: L.o (lrParse's arrays), L.sigs
     let job = 0;     // the running heat job's id (a newer one / a cancel ends it)
     const NATS = 12; // the heat colours span 12 nats below the peak (rdf_mapper's NATS_RANGE)
+    // a grid's window as rdf_mapper.cpp sends it (corners, centre + half-width, rot = its "up"'s true bearing)
     function lrGridJson(g) {
       if (!g || !g.records) return null;
       const [nw, se] = g.box();
-      return {n: g.n, nw, se, cell: g.cell, data: g.raster(NATS)};
+      return {n: g.n, nw, se, c: g.centre(), half: g.half, rot: g.north(), cell: g.cell, data: g.raster(NATS)};
     }
     function lrHeat(m) {
       const o = L.o, my = m.job;
@@ -20807,6 +20919,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     lrUi[k] = v;
     lrSaveUi();
     if (k === 'range' && lr) lrHeatStart();
+    if (k === 'follow' && v && lr) { lr.followAt = null; lrFollow(); }
     lrRender();
     mapDraw();
   }
@@ -21034,7 +21147,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (!lr) return;
     lr.a = Math.max(0, Math.min(lr.A1, a));
     lr.t = lrTimeOf(lr.a);
-    if (!keepView) lrFollow(false);
+    if (!keepView) lrFollow();
     lrRenderDyn();
     mapDraw();
   }
@@ -21071,25 +21184,32 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     // ~30 frames a second is plenty
     if (now - lrLastDraw >= 33 || !lr.playing) {
       lrLastDraw = now;
-      lrFollow(true);
+      lrFollow();
       lrRenderDyn(!lr.playing);
       mapDraw();
     }
     if (lr.playing) lrRaf = requestAnimationFrame(lrTick);
   }
-  // Follow: the vehicle kept in view (re-centred once it nears an edge; the
-  // strip's height left out)
-  function lrFollow(playing) {
+  // Follow: the map keeps the vehicle in the middle of its part above the
+  // strip, every frame - it moves with the vehicle (it used to jump once the
+  // vehicle neared an edge, the heat map with it). The map dragged since
+  // (same zoom, another place: lr.followAt = where Follow put it) = Follow
+  // off; a zoom keeps it (the next frame centres again)
+  function lrFollow() {
     if (!lr || !lrUi.follow || !mapCv || !mapW) return;
     const p = lrPosAt(lr.t);
     if (!p) return;
-    const [x, y] = mapToScreen(p.nx, p.ny), sh = lrStripH(), m = playing ? 0.15 : 0.05;
-    if (x > mapW * m && x < mapW * (1 - m) && y > mapH * m && y < (mapH - sh) - (mapH - sh) * m) return;
-    const W = mapWorld();
+    const W = mapWorld(), f = lr.followAt;
+    if (f && f.z === mapState.z && Math.hypot((mapState.mx - f.mx) * W, (mapState.my - f.my) * W) > 3) {
+      lr.followAt = null;
+      lrSet('follow', false);
+      return;
+    }
     mapState.mx = p.nx;
-    mapState.my = p.ny + sh / 2 / W;
+    mapState.my = p.ny + lrStripH() / 2 / W;
     mapAutoFit = false;
     mapClampView();
+    lr.followAt = {mx: mapState.mx, my: mapState.my, z: mapState.z};
     mapSaveSoon();
   }
   function lrStripH() {
@@ -21099,6 +21219,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // the whole track in view (above the strip)
   function lrFit() {
     if (!lr || !lr.bb || !mapW) return;
+    lr.followAt = null;
     const [x0, y0, x1, y1] = lr.bb, sh = lrStripH();
     const span = Math.max((x1 - x0) / Math.max(1, mapW - 80), (y1 - y0) / Math.max(1, mapH - sh - 90), 1e-9);
     mapState.z = Math.max(MAP_MIN_Z, Math.min(17, Math.log2(1 / (span * 256))));
@@ -21147,12 +21268,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         c.save();
         c.imageSmoothingEnabled = true;
         c.globalAlpha = 0.8;
-        for (const L of [S.coarse, S.fine]) {
-          if (!L) continue;
-          const [x0, y0] = mapLatLonToScreen(L.g.nw[0], L.g.nw[1]), [x1, y1] = mapLatLonToScreen(L.g.se[0], L.g.se[1]);
-          if (x1 < 0 || y1 < 0 || x0 > mapW || y0 > mapH) continue;
-          c.drawImage(L.cv, x0, y0, x1 - x0, y1 - y0);
-        }
+        for (const L of [S.coarse, S.fine]) if (L) rdfGridDraw(c, L);
         c.restore();
       }
     }
@@ -21343,9 +21459,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
             <label class="lr-dim" title="Bearing lines: each row's bearing from where it was taken, for the last …">Lines <select id="lr-lines" onchange="lrSet('lines', +this.value)">${LR_LINES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></label>
             <button type="button" class="map-btn" id="lr-b-lobe" onclick="lrSet('lobe', !lrUi.lobe)" title="The DoA lobe of the row shown, around the vehicle (the logged spectrum, turned by the heading - linear, like the MUSIC DoA plot)">Lobe</button>
             <button type="button" class="map-btn" id="lr-b-heat" onclick="lrSet('heat', !lrUi.heat)" title="Where the transmitter probably is, as known at that moment: the live mobile DF's heat map and estimate (95 % ellipse), worked out from the log in this browser">Heat</button>
-            <label class="lr-dim" title="Half-width of the heat map's grid around the first bearing (re-centred when the vehicle leaves it) - as the DF panel's Range">±<input type="number" id="lr-range" min="1" max="50" step="1" style="width:40px" onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="lrSetRange(this.value)"> km</label>
+            <label class="lr-dim" title="Half-width of the heat map's grid - the grid moves with the vehicle (and keeps a confident estimate inside), as the DF panel's Range">±<input type="number" id="lr-range" min="1" max="50" step="1" style="width:40px" onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="lrSetRange(this.value)"> km</label>
             <button type="button" class="map-btn" id="lr-b-power" onclick="lrSet('power', !lrUi.power)" title="The signal's power along the way: a dot per row, blue (weak) to red (strong) over this log's range">Power</button>
-            <button type="button" class="map-btn" id="lr-b-follow" onclick="lrSet('follow', !lrUi.follow)" title="Keep the vehicle in view">Follow</button>
+            <button type="button" class="map-btn" id="lr-b-follow" onclick="lrSet('follow', !lrUi.follow)" title="Keep the vehicle in the middle of the map - the map moves with it (dragging the map turns this off)">Follow</button>
           </div>
           <canvas class="lr-tl" id="lr-tl" tabindex="0" title="The timeline: a tick per row of this signal (colour + height = its power), white dots = bearings collected for the heat map. Click or drag to go there; long pauses are shortened (┊)"></canvas>
           <div class="lr-info" id="lr-info"></div>
@@ -21452,7 +21568,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                        [w.nohdg, 'no heading / bearing'], [w.nolobe, 'unusable spectrum']].filter(([n]) => n).map(([n, s]) => `${n} ${s}`);
       // the bearings known AT THIS MOMENT (of the whole log's)
       const now = e ? e.recs : 0, cnt = H.done && now < H.recs ? `${now} of ${H.recs} bearings` : !H.done && now < H.recs ? `${now} bearings so far` : `${H.recs} bearings`;
-      let hh = `<br><span title="${escapeHtml('The live mobile DF\'s engine on this signal\'s rows: a GPS heading only above 2 m/s and while not turning, the rows combined per 15-60 m driven into one bearing each, the bearings into a likelihood grid ±' + lrUi.range + ' km around the first one (re-centred when the vehicle leaves it). The whole log: ' + H.recs + ' bearings from ' + (w.used || 0) + ' rows; rows not used: ' + (skipped.join(', ') || 'none'))}">Heat map: ${cnt}</span>`;
+      let hh = `<br><span title="${escapeHtml('The live mobile DF\'s engine on this signal\'s rows: a GPS heading only above 2 m/s and while not turning, the rows combined per 15-60 m driven into one bearing each, the bearings into a likelihood grid ±' + lrUi.range + ' km that moves with the vehicle. The whole log: ' + H.recs + ' bearings from ' + (w.used || 0) + ' rows; rows not used: ' + (skipped.join(', ') || 'none'))}">Heat map: ${cnt}</span>`;
       if (!H.done) hh += ` <span class="g">· working it out ${H.pct} %</span>`;
       if (e) {
         const p = lrPosAt(lr.t), d = p ? mapDistKm(p.lat, p.lon, e.lat, e.lon) * 1000 : NaN;

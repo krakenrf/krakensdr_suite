@@ -1203,6 +1203,10 @@ of the transmitter's position: `kraken_doa_v2/src/rdf_engine.cpp` (the
 algorithm - an improved version of the KrakenSDR Android app's grid; offline
 comparison `tools/rdf_sim.cpp`) + `src/rdf_mapper.cpp` (GPS track, MUSIC
 frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
+The heat map's grids are windows that SLIDE cell by cell (the coarse one
+with the vehicle, the fine one with the estimate) - no ~7 km re-centring
+jump near the edge any more (2026-10-21); `rdf_grid` carries each window's
+centre / half-width / rotation, drawn by the page's `rdfGridDraw`.
 `RDF:0|1`, `RDF_RANGE_KM:1-50` (persisted), `RDF_RESET:<vfo|-1>[:<talker>]`, `GET_RDF`;
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
@@ -1220,7 +1224,8 @@ mobile DF engine PORTED from `src/rdf_engine.cpp` (keep the two alike:
 fed like rdf_mapper.cpp. The strip at the bottom of the map plays it back
 (0.5-500x, scrub, step, click the track): track, vehicle, the moment's lobe
 + bearing, bearing lines, power dots, the heat map + 95 % ellipse as known
-at that moment (snapshots along the drive); long pauses shortened. A CSV a
+at that moment (snapshots along the drive), Follow centring the vehicle
+every frame; long pauses shortened. A CSV a
 spreadsheet re-saved (timestamps as 1.68843E+12 = rounded to 2.8 h, padded
 rows, ';' + decimal commas, UTF-16) is read too: times rebuilt from the
 track (`lrRetime`), "The drive took N min" corrects the pace

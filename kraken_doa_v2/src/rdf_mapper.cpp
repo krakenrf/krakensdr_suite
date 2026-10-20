@@ -676,15 +676,20 @@ void load_session(std::map<PendKey, Pending>* pending) {
     }
 }
 
+// a grid's window: nw / se corners (pages from before draw the raster
+// between them), its centre + half-width + rot = the true bearing of its
+// "up" (the frame's north there: a window that slid away from its frame's
+// origin is turned a little - the page draws it so)
 std::string grid_json(const char* name, const rdf::Grid* g) {
     if (!g || !g->records()) return std::string("\"") + name + "\":null";
-    double nlat, nlon, slat, slon;
-    rdf::from_enu(g->lat0(), g->lon0(), -g->half_m(), g->half_m(), &nlat, &nlon);
-    rdf::from_enu(g->lat0(), g->lon0(), g->half_m(), -g->half_m(), &slat, &slon);
+    double nlat, nlon, slat, slon, clat, clon;
+    g->corners(&nlat, &nlon, &slat, &slon);
+    g->centre(&clat, &clon);
     const auto r = g->raster(NATS_RANGE);
     return std::string("\"") + name + "\":{\"n\":" + std::to_string(g->n()) + ",\"cell_m\":" + num(g->cell_m(), 1) +
            ",\"nw\":[" + num(nlat, 6) + "," + num(nlon, 6) + "],\"se\":[" + num(slat, 6) + "," + num(slon, 6) +
-           "],\"data\":\"" + b64(r.data(), r.size()) + "\"}";
+           "],\"c\":[" + num(clat, 7) + "," + num(clon, 7) + "],\"half\":" + num(g->half_m(), 1) + ",\"rot\":" + num(g->north_deg(), 4) +
+           ",\"data\":\"" + b64(r.data(), r.size()) + "\"}";
 }
 
 std::string build_grid(const Key& k, const EVfo& e) {
