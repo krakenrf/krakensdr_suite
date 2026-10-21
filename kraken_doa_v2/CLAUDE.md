@@ -242,13 +242,17 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   display `pointerMove`, panes `paneMove`) give `bwUserHz` = 3 significant
   figures (a pixel is ~0.3 % of a bar) and keep the offset inside the band as
   the bar grows; the tooltip adds "(runs at 300 kS/s)" for a custom width.
-  The card's BW row: a list of the 59 `BW_EFFICIENT` sizes (+ the VFO's own
-  width as "(custom)"; tooltip: the rate it runs at, x its width) and ✎ =
-  a typed width (`bwEdit` / `bwEditApply`, `bwParseHz`: kHz, or Hz / k / MHz,
-  comma decimals; Escape = cancel) - the frequency row's pattern; locked
-  VFOs (fixed / lock_vfo decoders) disable both. Saved frequencies: the
-  editor's list = the efficient sizes + an entry's custom width
-  (`sfBwSelectSet`), tuning applies the saved width exactly
+  The card's BW row: ONE number box in kHz (the user's request 2026-10-21 -
+  first it was a list of the 59 `BW_EFFICIENT` sizes + "(custom)" and a ✎
+  text field): `<input type=number id=dec-bw-<id> min 1 max 2400 step any>`;
+  its change event (Enter = blur, leaving it, the spinner / arrow keys - 1
+  kHz steps) -> `bwBoxApply` (clamped; empty / not a number = back to the
+  VFO's width), Escape = the value it had on focus; `bwBoxSync` keeps it on
+  the VFO's width (not while focused, unless forced) and its tooltip
+  (`bwTitle`: what rate the width runs at, x its width); locked VFOs (fixed
+  / lock_vfo decoders) disable it. Saved frequencies: the editor's list =
+  the efficient sizes + an entry's custom width (`sfBwSelectSet`), tuning
+  applies the saved width exactly
 - No snapping option: an "Efficient bandwidths only" tick (snap every width
   to `BW_EFFICIENT`) was built because the request asked for one "if
   significant efficiency is lost", then REMOVED the same day (the user's
@@ -280,9 +284,11 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   overlay 1.5000 / 0.2508 MHz, the beamformed squelch closed on noise in a
   1.25 MHz VFO and open on the tones, the snapshot's field 12, a restart, an
   older snapshot by index; `t_bw_ui.py` (headless Chromium, real mouse /
-  keys): 21 / 21 - the card list + ✎ (typed kHz / "1.5 MHz" / junk), a
-  main-display edge drag to an arbitrary width the receiver keeps, no
-  snapping tick, a second drag arbitrary too, independent mode's 2.4 MHz bar (both
+  keys): 24 / 24 - the BW number box (typed 26 / 12.5 / 1500 + Enter, the
+  tooltip's rate, letters and Escape change nothing, arrow up = +1 kHz, 5000
+  clamped to 2400), a main-display edge drag to an arbitrary width the
+  receiver keeps (the box follows), no snapping tick, a second drag
+  arbitrary too, independent mode's 2.4 MHz bar (both
   clipped edges grabbable, resize cursor, dragged in and back out, below),
   no page exceptions. A width change at the same rate clears MUSIC's
   accumulator (`last_input_bw_hz_`: the rebuilt filters' restart is no
@@ -6347,7 +6353,7 @@ sudo perf top
 1. Reduce active channels (process fewer channels)
 2. Narrow the VFOs (a smaller bandwidth = a higher decimation); between 1.2
    and 2.4 MHz a VFO runs a full-rate filter - 1.2 MHz or 2.4 MHz exactly is
-   cheaper (the card's list holds the sizes that fill their rate)
+   cheaper (the BW box's tooltip says what rate a width runs at)
 3. Disable DoA processing if not needed: `doa_enabled = false` via WebSocket
 4. Check thread count: Should be ~23-28 threads (expected)
 

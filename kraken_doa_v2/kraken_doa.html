@@ -964,12 +964,9 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 #decimator-list .vfd-ed {padding:1px 5px;margin-left:auto}
 #decimator-list .dec-row.typing .vfd-box, #decimator-list .dec-row.typing .vfd-ed,
 #decimator-list .dec-row:not(.typing) .vfd-in, #decimator-list .dec-row:not(.typing) .vfd-in-unit {display:none}
-/* the BW row: the size list + ✎ (any width, typed in kHz) - as the frequency row */
-#decimator-list .dec-bw-sel {flex:1;min-width:0}
-#decimator-list .dec-bw-in {width:96px;font-family:monospace}
-#decimator-list .dec-bw-ed {padding:1px 5px}
-#decimator-list .dec-row.bw-typing .dec-bw-sel, #decimator-list .dec-row.bw-typing .dec-bw-ed,
-#decimator-list .dec-row:not(.bw-typing) .dec-bw-in, #decimator-list .dec-row:not(.bw-typing) .dec-bw-in-unit {display:none}
+/* the BW row: one number box in kHz (any width) */
+#decimator-list .dec-bw-in {flex:1;min-width:0;font-family:monospace}
+#decimator-list .dec-bw-unit {color:#888;font-size:12px}
 
 /* Scanner in sidebar */
 #scanner-freq-list {max-height:200px;overflow-y:auto;background:#16213e;border:1px solid #0f3460;border-radius:3px;padding:5px}
@@ -6960,62 +6957,39 @@ function decSetLocalBw(dec, hz) {
   dec.bandwidth_index = bwIndexNearest(hz);
 }
 
-// The card's BW list: every efficient size (widest first), + the VFO's own
-// width when it isn't one ("custom"); the tooltip says what it runs at
-function bwOptionsHtml(hz) {
-  let s = '', placed = false;
-  for (let i = BW_EFFICIENT.length - 1; i >= 0; i--) {
-    const e = BW_EFFICIENT[i];
-    if (!placed && hz > e) {
-      s += `<option value="${hz}" selected>${bwLabel(hz)} (custom)</option>`;
-      placed = true;
-    }
-    if (e === hz) placed = true;
-    s += `<option value="${e}"${e === hz ? ' selected' : ''}>${bwLabel(e)}${e === BW_SR ? ' (full)' : ''}</option>`;
-  }
-  if (!placed) s += `<option value="${hz}" selected>${bwLabel(hz)} (custom)</option>`;
-  return s;
-}
+// The card's BW box: a number in kHz (1 - 2400, any decimals down to 1 Hz);
+// Enter / leaving it applies, Escape cancels, the arrows step 1 kHz. Its
+// tooltip says what rate the width runs at
+function bwKhzText(hz) { return String(+(hz / 1e3).toFixed(3)); }
 function bwTitle(hz) {
   const r = bwRateHz(hz);
-  if (r === hz) return 'Bandwidth ' + bwLabel(hz) + ': an efficient size (it fills its sample rate). ✎ = type any width';
-  return 'Bandwidth ' + bwLabel(hz) + ' (custom): the VFO runs at ' + bwLabel(r).replace('Hz', 'S/s') + ', ' +
+  const how = ' Any width 1 - 2400 kHz: type it (Enter = set, Escape = cancel) or use the arrows (1 kHz steps).';
+  if (r === hz) return 'Bandwidth ' + bwLabel(hz) + ': fills its sample rate (nothing decimated is wasted).' + how;
+  return 'Bandwidth ' + bwLabel(hz) + ': the VFO runs at ' + bwLabel(r).replace('Hz', 'S/s') + ', ' +
     (r / hz).toFixed(2) + 'x its width - the receiver decimates by whole numbers, so everything after it ' +
-    '(DoA, audio, decoders) works on the wider rate' + (r === BW_SR ? ', with a filter at the full 2.4 MHz' : '') +
-    '. The other sizes in this list fill their rate. ✎ = type any width';
+    '(DoA, audio, decoders) works on the wider rate' + (r === BW_SR ? ', with a filter at the full 2.4 MHz' : '') + '.' + how;
 }
-function bwSelectSync(dec) {
+// the box shows the VFO's width (not while it is being typed in, unless forced)
+function bwBoxSync(dec, force) {
   const el = $id('dec-bw-' + dec.id);
-  if (!el || document.activeElement === el) return;
-  const hz = decBwHz(dec);
-  if (el.dataset.hz === String(hz)) return;
-  el.innerHTML = bwOptionsHtml(hz);
-  el.dataset.hz = String(hz);
-  if (!el.disabled) el.title = bwTitle(hz);   // (a locked VFO's says why)
+  if (!el || (!force && document.activeElement === el)) return;
+  const hz = decBwHz(dec), t = bwKhzText(hz);
+  if (el.value !== t) el.value = t;
+  if (el.dataset.hz !== String(hz)) {
+    el.dataset.hz = String(hz);
+    if (!el.disabled) el.title = bwTitle(hz);   // (a locked VFO's says why)
+  }
 }
-// "12.5" = kHz; "12500 Hz", "12.5k", "1.2 MHz" (comma decimals too) -> Hz
-function bwParseHz(text) {
-  const m = String(text).trim().replace(',', '.').match(/^([0-9]*\.?[0-9]+)\s*(hz|k|khz|m|mhz)?$/i);
-  if (!m) return NaN;
-  const u = (m[2] || 'k').toLowerCase();
-  return parseFloat(m[1]) * (u === 'hz' ? 1 : u[0] === 'm' ? 1e6 : 1e3);
-}
-function bwEdit(id) {
-  const row = $id('dec-bw-row-' + id), inp = $id('dec-bw-in-' + id);
+// a value typed / stepped into the box (its change event): clamped to the
+// limits and applied; empty / not a number = back to the VFO's width
+function bwBoxApply(id, el) {
   const d = decimatorInfo.find(z => z.id === id);
-  if (!row || !inp || !d || inp.disabled) return;
-  inp.value = String(+(decBwHz(d) / 1e3).toFixed(3));
-  row.classList.add('bw-typing');
-  inp.focus();
-  inp.select();
-}
-function bwEditApply(id, text, orig) {
-  const row = $id('dec-bw-row-' + id);
-  if (row) row.classList.remove('bw-typing');
-  if (text === orig) return;
-  const hz = bwParseHz(text);
-  if (!(hz > 0)) return;
-  setDecimatorBandwidthHzFromUI(id, bwClampHz(hz));
+  if (!d) return;
+  const v = parseFloat(el.value);
+  if (!(v > 0)) { bwBoxSync(d, true); return; }
+  const hz = bwClampHz(v * 1e3);
+  if (hz !== decBwHz(d)) setDecimatorBandwidthHzFromUI(id, hz);
+  bwBoxSync(d, true);   // the applied (clamped) width + its tooltip - also while it keeps the focus (arrows)
 }
 
 // Called from the card, a drag's end, a decoder's need ... - updates local
@@ -7065,7 +7039,7 @@ function refreshDecimatorPanelItem(id) {
   }
 
   // Update the bandwidth list (its "custom" entry follows the width)
-  bwSelectSync(dec);
+  bwBoxSync(dec);
 
   // Update info display
   const infoEl = $id('dec-info-' + id);
@@ -7475,16 +7449,12 @@ function updateDecimatorList(info) {
       </div>
       <div class="dec-row" id="dec-bw-row-${dec.id}">
         <label>BW:</label>
-        <select id="dec-bw-${dec.id}" class="dec-bw-sel" onchange="setDecimatorBandwidthHzFromUI(${dec.id}, +this.value)"
-                data-hz="${decBwHz(dec)}" title="${bwTitle(decBwHz(dec))}">${bwOptionsHtml(decBwHz(dec))}</select>
-        <input type="text" class="dec-bw-in" id="dec-bw-in-${dec.id}" inputmode="decimal"
-               title="Any bandwidth: kHz (or with Hz / kHz / MHz), ${bwLabel(BW_MIN_HZ)} - ${bwLabel(BW_MAX_HZ)}. Enter = set, Escape = cancel"
+        <input type="number" class="dec-bw-in" id="dec-bw-${dec.id}" min="1" max="2400" step="any" inputmode="decimal"
+               value="${bwKhzText(decBwHz(dec))}" data-hz="${decBwHz(dec)}" title="${bwTitle(decBwHz(dec))}"
                onkeydown="if(event.key==='Enter'){event.target.blur()}else if(event.key==='Escape'){this.value=this.dataset.orig;event.target.blur()}"
                onfocus="this.dataset.orig=this.value"
-               onblur="bwEditApply(${dec.id}, this.value, this.dataset.orig)">
-        <span class="dec-bw-in-unit">kHz</span>
-        <button type="button" class="btn sm dec-bw-ed" id="dec-bw-ed-${dec.id}" onclick="bwEdit(${dec.id})"
-                title="Type any bandwidth (kHz)">✎</button>
+               onchange="bwBoxApply(${dec.id}, this)">
+        <span class="dec-bw-unit">kHz</span>
       </div>
       <div class="dec-row">
         <label>Demod:</label>
@@ -10509,11 +10479,9 @@ function addTouchHandlers(el, down, move, up) {
         const el = $id(k + d.id);
         if (el && el.disabled !== lock) { el.disabled = lock; el.title = why; }
       }
-      // the bandwidth list + its ✎ (their own tooltips back when unlocked)
-      const bs = $id('dec-bw-' + d.id), be = $id('dec-bw-ed-' + d.id), bi = $id('dec-bw-in-' + d.id);
+      // the bandwidth box (its own tooltip back when unlocked)
+      const bs = $id('dec-bw-' + d.id);
       if (bs && bs.disabled !== lock) { bs.disabled = lock; bs.title = lock ? why : bwTitle(decBwHz(d)); }
-      if (be && be.disabled !== lock) { be.disabled = lock; be.title = lock ? why : 'Type any bandwidth (kHz)'; }
-      if (bi) bi.disabled = lock;
       const fd = $id('dec-freq-' + d.id), fe = $id('dec-freq-ed-' + d.id);
       if (fd && fd.classList.contains('locked') !== lock) { fd.classList.toggle('locked', lock); fd.title = lock ? why : VFD_TIP; }
       if (fe && fe.disabled !== lock) { fe.disabled = lock; fe.title = lock ? why : VFD_ED_TIP; }
