@@ -2557,7 +2557,23 @@ function maxOffsetHz(bwMhz) {
 // slid the bars against the spectrum (the residual jiggle); from the same
 // frame, a bar sits exactly where its VFO is in the displayed spectrum.
 let displayCenterFreq = null;
-function barCenterFreq() { return displayCenterFreq ?? currentCenterFreq; }
+// Local pan: while the user drags the main spectrum - and until a frame from
+// the dragged-to frequency arrives (finishScrollSync) - it is drawn around the
+// dragged centre (specApplyMain), so it follows the mouse at once: the
+// receiver follows a drag 0.1-0.3 s late (heimdall retunes the tuners one by
+// one on Windows). null = around the frame's own centre
+// panSpan1: the 1x window's width when the pan began, kept while it lasts -
+// in wideband scan mode heimdall retunes the tuners one by one, so a frame
+// from the middle of a sweep has a stitched band up to a step wider or
+// narrower, and the display's MHz per pixel (the drag's and the waterfall's
+// mapping) would change from frame to frame
+let panCenterMhz = null, panSpan1 = 0, panSnap = false, panRaf = 0;
+function barCenterFreq() { return panCenterMhz ?? displayCenterFreq ?? currentCenterFreq; }
+// one redraw of the last frame per animation frame while panning
+function panRedraw() {
+  if (panRaf) return;
+  panRaf = requestAnimationFrame(() => { panRaf = 0; if (specMain && fftPlot) applyClip(false); });
+}
 
 // Deferred tuning-bar re-sync after a center-frequency pan. The bars' saved
 // pixel positions can only be converted back to frequencies once an FFT
@@ -2606,6 +2622,15 @@ function finishScrollSync() {
   }
   scrollDragLock = false;
   scrollDragSavedBoxes = null;
+  // the local pan ends: back on the frames' own centre (the target by now; on
+  // the fallback the receiver's - the waterfall's rows follow that move too).
+  // Not under a new drag that started meanwhile
+  if (panCenterMhz !== null && !isScrollDragging) {
+    panCenterMhz = null;
+    panSpan1 = 0;
+    panSnap = true;
+    if (specMain && fftPlot) applyClip(false);
+  }
   drawBox();
 }
 
@@ -2912,6 +2937,48 @@ class WaterfallDisplay {
     }
 
     // Render the updated image data
+    this.ctx.putImageData(this.imageData, 0, 0);
+  }
+
+  // Local pan (specApplyMain / paneWindow): the view moved to the window of
+  // `frequencies` - the history moves with it, so its rows stay under their
+  // frequencies. By the windows' centres; only for the same span within 2.5
+  // points (a zoom keeps the old rows as they are - its steps are 25 %; a
+  // window's first / last point depend on how the frame's bins fall into it:
+  // a point more or less from frame to frame - 0.25 % of a 400-point pane);
+  // whole pixels, the rest carried to the next move
+  panTo(frequencies) {
+    const old = this.lastFrequencies;
+    this.lastFrequencies = frequencies;
+    if (!this.initialized || !this.imageData || old.length < 2 || frequencies.length < 2) return;
+    const span = frequencies[frequencies.length - 1] - frequencies[0];
+    const ospan = old[old.length - 1] - old[0];
+    const tol = Math.min(0.1 * span, Math.max(0.002 * span, 2.5 * span / (frequencies.length - 1)));
+    if (!(span > 0) || Math.abs(span - ospan) > tol) { this.panCarry = 0; return; }
+    const mid = (frequencies[0] + frequencies[frequencies.length - 1]) / 2, omid = (old[0] + old[old.length - 1]) / 2;
+    const px = (omid - mid) / span * this.plotWidth + (this.panCarry || 0);
+    const n = Math.round(px);
+    this.panCarry = px - n;
+    if (n) this.shiftX(n);
+  }
+
+  // The plot area of every row n pixels right (n < 0: left); what comes in is black
+  shiftX(n) {
+    const data = this.imageData.data, rowSize = this.width * 4;
+    const L = Math.max(0, Math.round(this.plotLeft)), W = Math.min(this.width - L, Math.round(this.plotWidth));
+    const m = Math.min(Math.abs(n), W);
+    if (W <= 0 || m <= 0) return;
+    const blank = (o, k) => { for (let i = 0; i < k * 4; i += 4) { data[o + i] = 0; data[o + i + 1] = 0; data[o + i + 2] = 0; data[o + i + 3] = 255; } };
+    for (let y = 0; y < this.height; y++) {
+      const s = y * rowSize + L * 4;
+      if (n > 0) {
+        if (m < W) data.copyWithin(s + m * 4, s, s + (W - m) * 4);
+        blank(s, m);
+      } else {
+        if (m < W) data.copyWithin(s, s + m * 4, s + W * 4);
+        blank(s + (W - m) * 4, m);
+      }
+    }
     this.ctx.putImageData(this.imageData, 0, 0);
   }
 
@@ -4810,6 +4877,13 @@ function pointerMove(s, e) {
 
       currentCenterFreq = newFreq;
       updateFreqDisplay(newFreq, true);  // Force update for user action
+      // the spectrum moves with the mouse now, not when the receiver gets
+      // there (see panCenterMhz); servers without spectrum views: as before
+      if (specMain) {
+        if (panCenterMhz === null) { const [a, b] = specSpan1(specMain); panSpan1 = b - a; }
+        panCenterMhz = newFreq;
+        panRedraw();
+      }
 
       // Throttle frequency updates to reduce RTL-SDR retune commands
       const now = Date.now();
@@ -8457,7 +8531,7 @@ function paneDrawOverlay(p) {
   const HANDLE_H = 24, HANDLE_COLOR = '#c8c0a8';
   for (const d of (decimatorInfo || [])) {
     if ((d.tuner || 0) !== p.ch) continue;
-    const cm = p.freqMhz + (d.freq_offset_hz || 0) / 1e6;
+    const cm = paneCenter(p) + (d.freq_offset_hz || 0) / 1e6;
     if (vfoLocked(d)) {   // fixed-frequency decoder (ADS-B): a line, no bar
       const x = paneX(p, cm);
       if (x >= p.L && x <= p.sw - 4) drawLockedVfoLine(ctx, x, H, d);
@@ -8600,7 +8674,7 @@ function paneDown(p, e) {
   const d = (decimatorInfo || []).find(z => z.id === id);
   if (!d) return;
   if (activeDecimatorId !== id) selectDecimator(id);
-  const cur = (d.tuner || 0) === p.ch ? p.freqMhz + (d.freq_offset_hz || 0) / 1e6 : null;
+  const cur = (d.tuner || 0) === p.ch ? paneCenter(p) + (d.freq_offset_hz || 0) / 1e6 : null;
   paneDrag = {p, id, grab: hit && cur !== null ? paneFreqAt(p, x) - cur : 0, pointerId: e.pointerId};
   try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
   paneMoveVfo(p, d, paneFreqAt(p, x) - paneDrag.grab);
@@ -8649,6 +8723,8 @@ function paneMove(p, e) {
     paneDrag.pending = Math.round(f * 1e6) / 1e6;
     paneShowFreq(p, paneDrag.pending);
     p.holdF = Date.now() + 1500;
+    // the pane moves with the mouse (paneCenter), the frames fill it in
+    if (p.lastFr) { p.panMhz = paneDrag.pending; paneRedraw(p); }
     const now = Date.now();
     if (now - paneDrag.lastSend >= 50) {   // throttle retunes like the main display
       paneDrag.lastSend = now;
@@ -8678,6 +8754,8 @@ function paneUp(p, e) {
   if (dr.moved) {
     // the final position always reaches heimdall (the throttle may have skipped it)
     if (dr.pending !== null && dr.pending !== dr.sent) paneSendFreq(p.ch, dr.pending, false);
+    // the pan holds until a frame from there arrives, at most 1.5 s (specPaneFrame)
+    if (p.panMhz != null) p.panUntil = Date.now() + 1500;
     return;
   }
   // a click: the selected VFO goes there (and onto this tuner)
@@ -8689,7 +8767,7 @@ function paneUp(p, e) {
 function paneMoveVfo(p, d, mhz) {
   const bw = d.bandwidth_mhz || (bwo[d.bandwidth_index || 0] || {}).bandwidth || 0.1;
   const half = Math.max(0, (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2);
-  const off = Math.max(-half, Math.min(half, mhz - p.freqMhz));
+  const off = Math.max(-half, Math.min(half, mhz - paneCenter(p)));
   const moved = (d.tuner || 0) !== p.ch;
   d.freq_offset_hz = off * 1e6;
   d.tuner = p.ch;
@@ -8889,12 +8967,39 @@ function specSpan1(fr) {
 }
 function specApplyMain(newFrame) {
   const fr = specMain;
-  const [lo1, hi1] = specSpan1(fr);
-  const [w0, w1] = zoomWindow(mainZoom, lo1, hi1, fr.center);
+  // panning (panCenterMhz): the window around the dragged centre - the
+  // frame's points stay at their frequencies, where it doesn't reach yet
+  // 0 dB (specWindow); the server is asked for the same window around its
+  // own centre as without the pan (no new FFT_VIEW per mouse move)
+  const c = panCenterMhz ?? fr.center;
+  let [lo1, hi1] = specSpan1(fr);
+  if (panCenterMhz !== null && panSpan1 > 0) { lo1 = c - panSpan1 / 2; hi1 = c + panSpan1 / 2; }
+  const [w0, w1] = zoomWindow(mainZoom, lo1, hi1, c);
   [currentFrequencies, currentMagnitudes] = specWindow(fr, w0, w1);
-  specViewWant(0, w0 - fr.center, w1 - fr.center, specBinsMain());
+  specViewWant(0, w0 - c, w1 - c, specBinsMain());
+  if ((panCenterMhz !== null || panSnap) && waterfall && waterfall.initialized) waterfall.panTo(currentFrequencies);
+  panSnap = false;
   specShowMain(newFrame);
   if (opMode !== 'independent') specShowRes(fr);
+}
+// The centre a pane is drawn around: its tuner's, or while it is panned (as
+// the main display's panCenterMhz) the dragged-to one
+function paneCenter(p) { return p.panMhz ?? p.freqMhz; }
+// Pane p's window of its last frame (specPaneFrame / a pan redraw); snap: the
+// pan just ended - its waterfall's rows follow that move too
+function paneWindow(p, snap) {
+  const fr = p.lastFr;
+  if (!fr) return;
+  const c = p.panMhz ?? fr.center, dc = c - fr.center;
+  const [lo1, hi1] = specSpan1(fr);
+  const [w0, w1] = zoomWindow(p.zoom, lo1 + dc, hi1 + dc, c);
+  [p.freqs, p.mags] = specWindow(fr, w0, w1);
+  specViewWant(p.ch + 1, w0 - c, w1 - c, specBinsPane(p));
+  if (p.panMhz != null || snap) p.wf.panTo(p.freqs);
+}
+function paneRedraw(p) {
+  if (p.panRaf) return;
+  p.panRaf = requestAnimationFrame(() => { p.panRaf = 0; paneWindow(p); paneDrawSpec(p); paneDrawOverlay(p); });
 }
 function specPaneFrame(ch, nch, fr, gd, aa) {
   opHint('independent');
@@ -8904,10 +9009,15 @@ function specPaneFrame(ch, nch, fr, gd, aa) {
   if (!p) return;
   p.freqMhz = fr.center; p.gainDb = gd;
   p.sr = Math.round((fr.bandHi - fr.bandLo) * 1e3) * 1e3;   // Hz (as type 6's)
-  const [lo1, hi1] = specSpan1(fr);
-  const [w0, w1] = zoomWindow(p.zoom, lo1, hi1, p.freqMhz);
-  [p.freqs, p.mags] = specWindow(fr, w0, w1);
-  specViewWant(ch + 1, w0 - p.freqMhz, w1 - p.freqMhz, specBinsPane(p));
+  p.lastFr = fr;
+  // the pan ends once the tuner is there (or gave up) - not while still dragging
+  let snap = false;
+  if (p.panMhz != null && !(paneDrag && paneDrag.p === p && paneDrag.pan) &&
+      (Math.abs(fr.center - p.panMhz) < 0.01 || Date.now() > (p.panUntil || 0))) {
+    p.panMhz = null;
+    snap = true;
+  }
+  paneWindow(p, snap);
   p.wf.addLine(p.freqs, p.mags, noiseLive);
   paneDrawSpec(p);
   paneDrawOverlay(p);

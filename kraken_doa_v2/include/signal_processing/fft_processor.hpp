@@ -50,8 +50,8 @@ public:
     // written under (0 = data not from the shared buffer). If the generation
     // changes while reading, the frame is discarded as possibly overwritten.
     // freq_hz / seq: the channel's frequency in that packet's header and the
-    // packet's number - in wideband scan mode a retuned tuner's average is
-    // shifted with it (0 = not given)
+    // packet's number - a retuned tuner's average is shifted with it (0 = not
+    // given)
     static void process_channel_fft(const std::complex<float>* iq_data, size_t num_samples, int channel,
                                     uint32_t buffer_generation = 0, double freq_hz = 0.0, uint64_t seq = 0);
 

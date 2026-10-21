@@ -290,7 +290,7 @@ Edit `include/config.hpp`:
   `.pfd` class since the top bar queries `.freq-digit` page-wide - plus a gain
   slider; canvas spectrum `paneDrawSpec`, a
   `WaterfallDisplay` each, overlay `paneDrawOverlay` with VFO bars + AI
-  badges - tuning bars in the main display's style: a grab handle centred in the spectrum AND the waterfall section, edge handles; `paneHit` = handle > active VFO's edges > body, the edges drag the bandwidth (snapped like `drawBox`, tooltip), bars are clipped to the plot area and a clipped side has no edge; an FFT squelch is drawn like `drawBox`'s - dashed yellow line at the level inside the bar, on the spectrum, labelled - and is draggable (all modes: `squelchHitMain` / `paneHit` kind 'squelch' within 5 px of the line, highest priority, ns-resize cursor; `squelchSetFromDrag` moves the card slider, sends DEC_SQUELCH_LEVEL at most every 80 ms + the final level, 0-80 dB); pointer handling `paneDown/Move/Up`: a VFO bar drags the VFO, empty spectrum pans the tuner like the main display - throttled TUNER_FREQ every 50 ms, final value on release, the drawn spectrum follows the data, not the drag - and a click without moving places the selected VFO); the top bar's frequency
+  badges - tuning bars in the main display's style: a grab handle centred in the spectrum AND the waterfall section, edge handles; `paneHit` = handle > active VFO's edges > body, the edges drag the bandwidth (snapped like `drawBox`, tooltip), bars are clipped to the plot area and a clipped side has no edge; an FFT squelch is drawn like `drawBox`'s - dashed yellow line at the level inside the bar, on the spectrum, labelled - and is draggable (all modes: `squelchHitMain` / `paneHit` kind 'squelch' within 5 px of the line, highest priority, ns-resize cursor; `squelchSetFromDrag` moves the card slider, sends DEC_SQUELCH_LEVEL at most every 80 ms + the final level, 0-80 dB); pointer handling `paneDown/Move/Up`: a VFO bar drags the VFO, empty spectrum pans the tuner like the main display - throttled TUNER_FREQ every 50 ms, final value on release, the drawn spectrum follows the drag at once (local pan, *Spectrum views*), the frames fill it in - and a click without moving places the selected VFO); the top bar's frequency
   digits and gain (`.not-indep`) are hidden in independent mode - each pane
   has its own (`selTuner` = the highlighted pane; `sendFreqChange` / `sgn`
   still route to TUNER_FREQ / TUNER_GAIN for it), `vfoCenterMhz(dec)` for VFO absolute
@@ -3221,7 +3221,8 @@ Edit `include/config.hpp`:
   After a retune (> 1 kHz) only the step and shape MEASUREMENTS wait 5
   averaging time constants (measured frame interval / alpha, 0.3-4 s); the
   floors follow at once. (6) `FFTProcessor::process_channel_fft` shifts a
-  retuned tuner's average by the move (whole bins, the rest carried; bins
+  retuned tuner's average by the move (every mode since the local pan -
+  *Spectrum views*; whole bins, the rest carried; bins
   the old band didn't hold keep their old values; a move past the band: no
   shift) - the 8091 header frequency of the packet rides `RawDataPacket::
   freq_hz` -> `FFTWorkItem::freq_hz` / `seq` (an older packet processed late
@@ -3250,11 +3251,8 @@ Edit `include/config.hpp`:
   samples under the new header frequency (heimdall's pipeline) - averaged
   in at the new place with weight alpha each. heimdall's wideband scan
   retunes take the drag fast path since 2026-10-21 (Windows 114 -> 74 ms per
-  step on the KrakenSDR - heimdall_v2/CLAUDE.md *Drag retunes*). Not done:
-  the page panning locally while dragging (it waits for frames: the display
-  follows the receiver - 140-210 ms behind in the drag test, modelled on the
-  full path's ~110 ms sweep; the fast path's 40 ms less per step not measured
-  end to end)
+  step on the KrakenSDR - heimdall_v2/CLAUDE.md *Drag retunes*), and the
+  page pans the spectrum locally while dragging (*Spectrum views*)
 - `noise_floors.json` (cwd, gitignored; `{"version":1,"floors":{"0|49.6":
   -27.49,...}}`): loaded at start (`nfloor::load`), written by the FFT
   worker at most every 5 min when a floor moved >= 0.5 dB
@@ -5022,7 +5020,51 @@ Edit `include/config.hpp`:
   `#zoom-res`: the points' spacing ("146 Hz"). A server without views just
   keeps sending type 0 / 6 (it ignores FFT_VIEW silently - checked)
 - Not changed: the waterfall's older rows keep the span they were drawn with
-- Tests (job scratch 46eef211 sp/; fake heimdall `--cw2 100600` = carriers
+  (except while panning, below)
+- LOCAL PAN (2026-10-21, the user's request after the wideband drag work):
+  dragging the main spectrum / waterfall (and a pane in independent mode)
+  moves the drawn spectrum with the mouse at once; it used to move only when
+  frames from the new frequency came - heimdall retunes 0.1-0.3 s behind a
+  drag (Windows: 74 ms per wideband step, 5 tuners one by one), so the
+  grabbed point slid away from the cursor (hundreds of kHz) and caught up
+  in jumps. `panCenterMhz` (pointerMove's scroll drag, specMain servers
+  only): specApplyMain draws the window around it instead of the frame's
+  centre - the frame's points at their own frequencies, 0 dB where it
+  doesn't reach yet (specWindow), the window's width frozen at the drag's
+  start (`panSpan1`: a mid-sweep wideband frame's stitched band is up to a
+  step wider / narrower - with the frame's width the MHz per pixel changed
+  frame to frame, ~60 kHz under the cursor), the FFT_VIEW request the same
+  as without the pan (relative to the centre: no request per move), one
+  redraw per animation frame (`panRedraw`). `barCenterFreq()` = the pan
+  centre while it lasts (VFO bars, locked VFO lines, the waterfall overlay
+  stay on screen as the frozen bars do). It ends in finishScrollSync (a frame
+  centred within 10 kHz of the target, or the 1.5 s fallback; not under a
+  new drag) - `panSnap` lets that last move reach the waterfall too.
+  WaterfallDisplay.panTo / shiftX: the history's plot area moves with the
+  view by the windows' centres (whole pixels, the rest carried; only for the
+  same span within 2.5 points / 0.2 % - zoom changes keep the old rows; a
+  stricter 0.2 %-only check skipped every second shift on a 400-point pane).
+  Panes: `p.panMhz` (paneMove's pan), `paneWindow` (frames + pan redraws,
+  `p.lastFr`), `paneCenter(p)` for the VFO bars, the grab and paneMoveVfo;
+  ends in specPaneFrame (a frame from the target, or 1.5 s after the
+  release). `FFTProcessor::process_channel_fft` shifts a retuned tuner's
+  average in EVERY mode now (was wideband scan only) - without it a pane's
+  rows during a drag were smeared 1-4 px. Not done: servers without views
+  (type 0 / 6 frames) - as before; the retune ghost (a few frames after a
+  retune carry old samples under the new header frequency - heimdall labels
+  at conversion time): rows drawn during a wideband drag show a faint copy
+  one sweep step (~20 px) away
+- Pan tests (job scratch 0d0a7cca: t_pan_ui.py / t_pan_pane.py + cdp.py =
+  headless Chrome over DevTools with real mouse events, run_pan.sh = the
+  page under test served by a test kraken_doa on 48080, fed by fake_wbd.py -
+  heimdall retuning like the Windows one, now with coherent / independent
+  modes): 300 px drags over 1.5 s; the frequency under the cursor vs the one
+  grabbed - wideband old page 211-247 / max 307-354 kHz, new 0.8-1.4 / max
+  2.9-3.3 kHz (8 kHz per pixel); coherent old 86 / 142, new 0.4 / 1.0 kHz
+  (2 kHz per pixel); pane old 26 / 39, new 0.6-0.9 / 2.3 kHz (5 kHz per pixel,
+  outside the 5 px dead zone); the pan ends 0.05-0.2 s after the release;
+  waterfall rows from before the drag at their frequency 100 % (old 0 %),
+  every pane row within 1 px; no page errors
   600 Hz apart at +100 kHz): t_spec.py (protocol, three clients at once,
   wire bytes from the kernel per connection): an old page without
   compression 250 KB/s, an old page with it 109 KB/s (type 0 compressed),
