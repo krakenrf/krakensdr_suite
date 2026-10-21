@@ -885,8 +885,11 @@ decoders `kraken_doa_v2/plugins/`
   plays the decoded voice. P25 IMBE is built in (port of mbelib, ISC); DMR /
   D-STAR / NXDN AMBE use a user-installed mbelib (dlopen, `KRAKEN_MBELIB`), TETRA
   ACELP the user-built ETSI codec programs (`tetra-cdecoder` /
-  `tetra-sdecoder` on PATH or `KRAKEN_TETRA_CODEC_DIR`) - neither is shipped
-  (licensing); README "Digital voice codecs" has the install steps. Docker:
+  `tetra-sdecoder` on PATH or `KRAKEN_TETRA_CODEC_DIR`; Windows also
+  `tetra-*.exe` in the kraken_doa_v2 folder, fed through named pipes - the
+  programs need file names, Windows has no /dev/stdin) - neither is shipped
+  (licensing); README "Digital voice codecs" has the install steps
+  (Windows: WINDOWS.md). Docker:
   files in `docker-data/codecs/` are picked up by the entrypoint. Encrypted
   calls are muted
 - Fed from the VFO's decimated stream (beamformer output when beamforming
@@ -1208,9 +1211,32 @@ of the transmitter's position: `kraken_doa_v2/src/rdf_engine.cpp` (the
 algorithm - an improved version of the KrakenSDR Android app's grid; offline
 comparison `tools/rdf_sim.cpp`) + `src/rdf_mapper.cpp` (GPS track, MUSIC
 frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
+The heat map's grids are windows that SLIDE cell by cell (the coarse one
+with the vehicle, the fine one with the estimate) - no ~7 km re-centring
+jump near the edge any more (2026-10-21); `rdf_grid` carries each window's
+centre / half-width / rotation, drawn by the page's `rdfGridDraw`.
 `RDF:0|1`, `RDF_RANGE_KM:1-50` (persisted), `RDF_RESET:<vfo|-1>[:<talker>]`, `GET_RDF`;
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
+
+**⏯ Log replay (🗺 Map's "Replay", every mode, UI only)** (details:
+`kraken_doa_v2/CLAUDE.md` *⏯ Log replay*): a DoA log of a drive - the
+KrakenSDR Android app's (krakensdr_rdf_android: CSV in all its layouts, by
+field count, or its SQLite `entries` table) or a 📝 DoA Recording of this
+receiver (same formats; its box's 🗺 Replay) - opened in the browser (📂 /
+dropped on the map, an SQLite `-wal` file with it), nothing sent to the
+receiver. A worker (`lrWorkerMain` in kraken_doa.html) reads it - its own
+SQLite reader (+ the WAL's committed pages), no library - and runs the
+mobile DF engine PORTED from `src/rdf_engine.cpp` (keep the two alike:
+`kraken_doa_v2/tools/replay_validate.mjs --cpp` + `tools/rdf_cmp.cpp`)
+fed like rdf_mapper.cpp. The strip at the bottom of the map plays it back
+(0.5-500x, scrub, step, click the track): track, vehicle, the moment's lobe
++ bearing, bearing lines, power dots, the heat map + 95 % ellipse as known
+at that moment (snapshots along the drive), Follow centring the vehicle
+every frame; long pauses shortened. A CSV a
+spreadsheet re-saved (timestamps as 1.68843E+12 = rounded to 2.8 h, padded
+rows, ';' + decimal commas, UTF-16) is read too: times rebuilt from the
+track (`lrRetime`), "The drive took N min" corrects the pace
 
 **📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
@@ -2040,6 +2066,15 @@ automatically:
   `doa_settings.json` or `api_token` slipped through (bypass:
   `git push --no-verify`). Root commits and merge commits (including a
   secret added while resolving a merge) are scanned too.
+- **Voice codecs / binaries** never go to the remote (licensing: the ETSI
+  TETRA codec may not be redistributed, AMBE is DVSI's): `.gitignore`
+  ignores the user-built codec programs / libraries (`cdecoder`,
+  `tetra-*decoder[.exe]`, `libmbe*`), the ETSI zip and osmo-tetra / mbelib
+  checkouts in any folder; the pre-push hook blocks outgoing commits that
+  add one anyway (`git add -f`), any `*.exe` / `*.dll` (everything is built
+  from source) or the ETSI sources. `windows/package.sh` copies a fixed
+  list of files, so a codec next to kraken_doa.exe doesn't reach the
+  package either
 - Filters and hooks are per-clone git config, so `install.sh` registers them
   (`filter.kraken-secrets.*`, `core.hooksPath .githooks`). A clone that never
   ran install.sh silently skips both — run it once after cloning.

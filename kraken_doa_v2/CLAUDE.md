@@ -277,6 +277,29 @@ Edit `include/config.hpp`:
   the VFO's colour (`.dec-item.sel`, `decHighlightSelected`, re-applied after
   every list update; a removed VFO hands the selection to the first). A click
   on empty spectrum places this VFO, and only its edges resize
+- VFO card frequency (the user's request 2026-10-20: wheel-tunable like the
+  top bar; first 14 px, then "double the size" 2026-10-21): digits
+  `G.MMM.kkk.hhh` down to 1 Hz (`.vfd-box` / `.vfd`, 28 px - the top bar's
+  size - in 16 px cells, "MHz" inside the box; a row of its own without a
+  "Freq:" label, 236 of the card's 241 px with the ✎), click the
+  top / bottom half or a wheel notch = +- that digit (`vfdInit` / `vfdStep`,
+  selects the VFO); clamped inside the VFO's band like a typed frequency
+  (coherent: `maxOffsetHz`; independent: its OWN tuner - a typed one may move
+  to another, `paneTuneVfoTo`), never retunes the receiver. Sent at most
+  every 100 ms + the last value (the drags' `setDecimatorFreq` debounce
+  waited for the spin to end), echoes ignored 1.5 s after a step (`vfdHeld`
+  in updateDecimatorList). A wheel gesture stays with what it began on: one
+  that started scrolling the sidebar keeps scrolling when digits slide under
+  the pointer (capture listener, 400 ms of quiet ends a gesture), and a
+  tuning gesture only starts where the pointer last MOVED over the digits
+  with the box still there (`vfdHover`): Chrome scrolls the sidebar for a
+  notch over a part without a blocking wheel handler (the card title) and
+  only then hit-tests it - the very first notch of a scroll landed on the
+  digits now under the pointer and retuned the VFO by 1 GHz (clamped). ✎ swaps in the old text box
+  (`dec-actual-freq-<id>`, Enter / blur = apply, Escape = cancel); locked
+  with the Freq / BW fields by fixed-frequency / `lock_vfo` decoders
+  (`digRenderCards`). Test: job scratch t_vfd.py (headless Chrome over CDP,
+  fake WebSocket, 33 checks) + t_vfd_zoom.py (sidebar zoom 1.8)
 - FFT message type 6 (independent; pages without spectrum views - see
   *Spectrum views* for type 7): `u32 6, u32 nch, f32 avg_alpha, f32
   sample_rate, f32 bin_step`, per tuner `u32 center_hz, f32 gain_db, u32 ds,
@@ -1771,14 +1794,40 @@ Edit `include/config.hpp`:
   cells >= 1e-4 of the peak) -> covariance ellipse (+ a cell's variance),
   50 / 95 % HPD radii, mode mass, `at_edge`
 - `rdf::Solver`: coarse grid 256 x 256 over +-range_km (default 10 -> 78 m
-  cells) with its origin at the first record; re-centred (rebuilt from all
-  records) when the vehicle gets > 0.7 range from it (on a confident
-  estimate, else on the vehicle). Fine grid 128 x 128 around a confident
-  coarse estimate (mode mass > 0.5, not at the edge, r95 < range / 3): half
-  = clamp(4 * r95, 250 m, range / 3), rebuilt from all records when the
-  estimate moves > 0.3 half or the wanted size changes > 1.6x, else updated
-  per record; the estimate comes from the fine grid while its mode isn't at
+  cells), fine grid 128 x 128 around a confident coarse estimate (mode mass
+  > 0.5, not at the edge, r95 < range / 3; half = clamp(4 * r95, 250 m,
+  range / 3)); the estimate comes from the fine grid while its mode isn't at
   its edge. Max 4000 records (then the older half is thinned)
+- SLIDING WINDOWS (the user's request 2026-10-21: "the heatmap moves
+  smoothly as the vehicle moves, rather than in jumps when the vehicle nears
+  the edge"; before, the coarse grid stayed on its first record until the
+  vehicle was 0.7 range out and was then REBUILT around a new centre - a ~7
+  km jump of the heat map, 5 of the user's 20 Android logs had one - and the
+  fine grid was rebuilt each time the estimate moved 0.3 of its size). Each
+  `rdf::Grid` is now a window onto a fixed metric frame (azimuthal
+  equidistant around `lat0 / lon0`; the window centre `cx / cy`, cells at
+  cx - half + (i + 0.5) cell) that `scroll(di, dj, recs, count)`s by WHOLE
+  cells: the cells it keeps keep their sums (exact - their frame
+  coordinates don't change), the column / row bands coming in get every
+  record (`add_rect`); bit-identical to a window built there (scratch
+  t_scroll.cpp, 22 shifts incl. >= n). The coarse window follows the VEHICLE
+  (`follow_coarse`, before each record is added: centred on it, the LAST
+  confident estimate - `pull_` - kept within KEEP_EST 0.7 of the half-width,
+  at most FOLLOW_STEP 2 cells a record or 1.5x what the vehicle moved -
+  never lags it); the fine window follows the ESTIMATE (scrolls; rebuilt
+  only when its size must change > 1.6x or it jumps >= half its width).
+  Past REANCHOR_M 100 km from the frame's origin a window gets a new frame
+  there (the same place on the map). Away from the origin the frame's north
+  isn't true north (meridian convergence: -0.32 deg 47 km east at 37 S):
+  `Grid::north_deg()` -> the grid message's `rot`, the ellipse's `ang` is
+  turned to true north. Cost: each scroll = the band's cells x all records
+  (~records x 15 us on a desktop per cell column); a long drive is CHEAPER
+  than before (no rebuilds: 30 km, 900 records 48.5 -> 17 ms per record),
+  a drive that never left the old 7 km pays the bands (the JS replay:
+  0.7-16 s for the user's logs, ~+10 %; a 2 h 4-rows/s log 26 -> 41 s). The
+  simulator (tools/rdf_sim.cpp, 40 x 5 / 15 min) gives the same errors and
+  95 % hits as before (36 / 40, 40 / 40); the user's logs the same
+  estimates (0-57 m apart)
 - Engine thread (rdf_mapper): owns the solvers; a VFO retuned by more than
   10 kHz starts over (its old session is parked by frequency); records are
   saved to `rdf_session.bin` (cwd, gitignored; "KRDF1" + blocks of freq,
@@ -1788,7 +1837,10 @@ Edit `include/config.hpp`:
   "KRDF2" (each block also carries the talker ID, "" = the VFO; "KRDF1" is
   still read) and every map is keyed VFO + talker (`Key` in rdf_mapper.cpp) Grid messages at most every 2 s per VFO:
   `{"rdf_grid":{vfo, mhz, records, range_km, nats, coarse/fine:{n, cell_m,
-  nw, se, data (b64 u8, row 0 north, 255 * (1 + s (M - Mmax) / 12 nats))},
+  nw, se, c: [lat, lon] (the window's centre), half (m), rot (deg: the
+  true bearing of its "up" - the page's `rdfGridDraw` draws the raster
+  there turned by it; a page from before stretches it between nw and se),
+  data (b64 u8, row 0 north, 255 * (1 + s (M - Mmax) / 12 nats))},
   est:{lat, lon, r50, r95, a, b, ang, mass, edge, off, off_sd}, lines:[[lat,
   lon, bearing, t]] (last 150 records)}}`; `GET_RDF` (page opening the map)
   makes the next push carry every VFO
@@ -1807,7 +1859,8 @@ Edit `include/config.hpp`:
   warnings, measured offset when |off| >= 2 deg and > 2 sd after 20
   records) and the reason frames aren't used (`RDF_STATE`). `rdfDraw` (in
   `mapDrawNow` before the rings): heat canvases (`RDF_LUT` blue..red,
-  transparent below 8 %) stretched between nw / se, bearing lines (1.5x the
+  transparent below 8 %) drawn by `rdfGridDraw` - a square of 2 x half
+  around c, turned by rot (nw / se from an older receiver), bearing lines (1.5x the
   range, older fainter), estimate X + 2.45-sigma (95 %) ellipse (dashed at the
   edge), lobes (radius 0.3 of the map, dashed when held) + the peak line,
   the heading tick. Heat map: the selected VFO's, or in All the only VFO
@@ -1827,6 +1880,176 @@ Edit `include/config.hpp`:
   tone from a hidden transmitter along a driven loop): lobe within 0.2 deg
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
+
+**⏯ Log replay (🗺 Map, UI only, every mode; kraken_doa.html "⏯ LOG REPLAY"):**
+- The user's request (2026-10-20): load and simulate KrakenSDR DoA log files
+  of the Android app (krakensdr_rdf_android - its newer SQLite and its older
+  CSV), plot them on the map, scrub the timeline, replay at various speeds.
+  The receiver's own 📝 DoA Recording (doa_logger.cpp) writes the SAME
+  formats, so it replays too (its box: 🗺 Replay = `replaySelected()`,
+  fetched from `recordings/<name>` like the download). Opened IN THE
+  BROWSER (map button "Replay" -> the strip's 📂, a file / file pair dropped
+  on `#map-pane` - `lrDropInit` -, or that button): nothing goes to the
+  receiver, no command, no route, no library (sql.js etc. would need a CDN
+  or a vendored file + route: the page parses everything itself)
+- Formats (the Android code: `data/log/FastLogParser.kt`, `LogEntry.kt`,
+  `data/log/SqliteLogFormat.kt`, `HeatMap.kt`): CSV without a header, ", "
+  separated (the app's reserved fields "R,R,R,R" without spaces; the
+  server's with), the layout by FIELD COUNT - 6 (ts, lat, lon, gps heading,
+  compass heading, bearing), 8 (+ confidence, power), exactly 373 (2021: ts,
+  lat, lon, gps, compass, bearing, conf, power, freq Hz, antenna, latency,
+  heading mode, 360 spectrum), >= 377 (the DOA_value.html line: ts, bearing,
+  conf, power, freq Hz, antenna, latency, station id, lat, lon, gps heading,
+  compass heading, heading mode, 4 reserved, 360 spectrum - the app's
+  distance-gated rows carry N<count>,X<m>,E<range> there); a line of >= 753
+  fields = several records (a DOA_value.html body whose newlines were lost:
+  split before each "<12-14 digit timestamp>," not after a comma). SQLite:
+  `entries` (ts_ms, decimator_id - the server's VFO, the app's NULL -,
+  bearing_deg, confidence, power_db, freq_hz, antenna, station_id, lat, lon,
+  gps_heading, compass_heading, heading_sensor, spectrum BLOB u8 x
+  spectrum_len scaled spec_min_db .. spec_max_db; the app adds latency +
+  reserved1-4 - ALTER TABLE on a server file, so old rows are short) + `meta`
+  (format_version 1, app krakensdr_rdf_android | kraken_doa_v2). Conventions:
+  epoch ms; the spectrum 360 x 1 deg COUNTER-CLOCKWISE from the array's
+  front, dB above its minimum (clamped -100); the bearing CLOCKWISE from the
+  heading (360 - argmax); compass bearing = heading + bearing, i.e. compass
+  B = spectrum index heading - B; the heading = the compass field in
+  COMPASS mode, else the GPS one (KRAKEN / MANUAL write it into both).
+  Confidence / power scales differ per server generation (only displayed)
+- A log RE-SAVED BY A SPREADSHEET (the user's OneDrive "KrakenSDR Android
+  Logs": 040723-106700-hunt1.csv + its copy, 030823-gsm.csv) is read too
+  (the user's request 2026-10-20, `lrDecodeText` / `lrParseCsv` /
+  `lrRetime`): Excel's General format writes the 13-digit timestamps as
+  1.68843E+12 - 6 significant digits = rounded to 10^7 ms (2.8 h), every row
+  of a drive at one or two "moments" (speed / turn rate came out NaN: no
+  heat map); numbers lose the space after the separator, text keeps it
+  (" UCA"); rows padded to the longest with empty fields (a 2021-layout row
+  then had the newest layout's count - trailing empty fields are dropped
+  before counting: 372 / 373 = 2021, >= 377 newest); European locales ';'
+  + decimal commas; "Unicode text" = UTF-16 (BOM) + tabs; quoted fields.
+  The rounding step comes from the digits kept (`tsStep`; also found when
+  every timestamp is a multiple of >= 10^5 ms and repeats within a signal -
+  re-saved as plain numbers). Times are REBUILT in file order from the track:
+  the clock advances one GPS fix per change of position (the row rate varies
+  20/s .. 1/2.4 s between logs, the fix rate much less: 1.2-2.4 s per fix in
+  the 20 intact logs, median 1.6 = `LR_FIX_MS`); a group of rows at one
+  position longer than the run's median (a stop; several VFOs per fix) takes
+  its share; the pace is fitted where the rounded value steps twice (> 2.8 h
+  logs: a 10 h synthetic drive to 0 s), else assumed; placed next to an
+  intact row (the app appended after the save - only when the run still
+  fits its rounded values: rows appended days later aren't glued on), else
+  on a step of the rounded value (it passes the step's middle there), else
+  centred in its rounding step (time of day +-1.4 h). The strip says so
+  (`.lr-warn`, "≈" on the clock) and "The drive took [N] min" re-times it
+  (worker op 'retime' on the kept text - `L.text`, only for re-timed CSVs;
+  the page keeps the signal, the place on the timeline and the map view).
+  The heat map hardly depends on the pace (its bearings close by distance;
+  speed only gates at 2 m/s and widens the bearing sigma). Checked
+  (scratch t_excel.mjs on 20 intact logs x 4 damaged forms - Excel CSV,
+  ';' + decimal comma, UTF-16 tabs, half damaged): the same rows, positions,
+  bearings; estimates 0-391 m from the originals' (median ~5 m), bearings
+  as many, rebuilt duration 0.66-1.41x the real (median 1.04); 77 / 80 - the
+  misses are kiwi-433-110823 (51 rows, one per 4.6 s: time 3x too short,
+  more rows over the 8 deg/s turn limit, 7 vs 16 bearings, its estimate
+  still 103 m from the original's). t_retime.mjs 14 / 14,
+  tools/replay_validate.mjs has two spreadsheet layouts
+- The worker (`lrWorkerMain`, started from a Blob of its source like the
+  viewshed's; `self.lrTest` exposes it to node):
+  - its own READ-ONLY SQLITE READER (`sqlOpen`: header, table b-trees +
+    overflow chains, index b-trees for WITHOUT ROWID, records incl. int48 /
+    int64, UTF-16 databases, the INTEGER PRIMARY KEY = rowid,
+    `sqlParseCreate` for the column names). A `-wal` file's COMMITTED frames
+    (salts + chained checksums, up to the last commit frame) are laid over
+    the pages: the server's recordings are WAL mode (checkpointed every 30 s
+    + at stop), the app copies its file in DELETE mode. A -wal that breaks
+    the read is dropped (read again without it, `walBad` shown); the page
+    only pairs `x.db-wal` with `x.db` (a WAL names no database - SQLite
+    itself can't tell either)
+  - `lrParse`: rows sorted by time (stable); per row the heading by mode,
+    compass bearing (logged bearing, else 360 - the spectrum's argmax),
+    speed from the TRACK of every row (+-3 s; sparse distance-gated rows:
+    neighbours within 30 s), turn rate from the signal's neighbouring rows
+    (<= 3 s), "dup" = the same spectrum as the signal's previous row (the
+    same DoA frame logged again - the app's poll / the server's held body);
+    signals = frequency (+ VFO); the spectrum kept ONLY as the display lobe
+    (linear 10^(dB/10) min..max -> u8, the live map's scale) + its linear
+    floor `lmin` (the heat map rebuilds the linear spectrum from the two;
+    a Float32 spectrum per row cost 1.4 KB). Arrays go to the page by
+    structured clone (the worker keeps its copy for the heat jobs)
+  - THE MOBILE DF ENGINE PORTED (`RdfGate` / `RdfGrid` / `RdfSolver`,
+    `rdfNorthLobe`; src/rdf_engine.cpp line by line - KEEP THE TWO ALIKE,
+    `tools/replay_validate.mjs --cpp` compares them) and fed like
+    rdf_mapper.cpp feeds it: GPS heading rows only at >= 2 m/s and <= 8
+    deg/s turning (compass / KrakenSDR / manual heading: <= 30 deg/s), sigma
+    hypot(2, GPS 1.5 + 8 / speed | 4), the gate's range from the current
+    estimate (mode mass > 0.5); bearing-only rows (6 / 8 fields) get a
+    Gaussian lobe of hypot(5, heading sigma). `estimate()` leaves out the
+    offset posterior (`offset(e)`: only for snapshots - it was ~40 % of a
+    record's time); estimates / marginals cached per grid version.
+    Measured: ~10-16 ms per record in Chrome / node (0.7-2.6 s for the
+    sample drives, 20-26 s for a 2 h 2-VFO log of 1404 records)
+  - a heat job (`lrHeat`, op 'heat' {job, sig, rangeKm}) runs in 80 ms
+    slices (a newer job / cancel / load gets in between): per record its
+    estimate (`ests`, keyed by the time the window CLOSED - when it was
+    known), and SNAPSHOTS of the coarse + fine rasters (12 nats, row 0
+    north, `RDF_LUT` colours) every max(1 s, duration / 400) - <= ~400 x 80
+    KB; rasters transferred. Progress `pct` + `why` (used / slow / turning /
+    dup / nopos / nohdg / nolobe)
+- Page (globals block: `lrUi` - localStorage `kraken_lr` {speed, follow,
+  track, lines (s: 0 off, 30, 120, 600, -1 all), lobe, heat, power, range
+  km}, rebuilt field by field -, `lr` the log, `lrOpen`, `lrReady`;
+  mapDrawNow -> `lrDraw` (after v2tLobeDraw: heat snapshot <= t, track -
+  driven solid amber, to come dashed on a dark underlay, broken at pauses -,
+  power dots, bearing lines of the window, the estimate's 95 % ellipse +
+  "Replay TX ±r95", the moment's lobe around the vehicle + its bearing to
+  the map's edge) and `lrDrawTop` (the vehicle arrow, over the markers)).
+  Timeline: pauses > `LR_GAP` 60 s take `LR_GAPC` 4 s (`lrAxisOf` /
+  `lrTimeOf`; the Android sample redoubt16sept.csv has a stray 2026 row
+  after a 2022 drive - 3.9 years -> 12 min); playback advances the axis by
+  real time x speed (0.5-500x), redraws <= ~30 fps, pauses when the map is
+  hidden; Follow keeps the vehicle in the middle of the map above the strip
+  every frame (`lrFollow`; it used to re-centre in one jump when the vehicle
+  neared an edge - the user's 2026-10-21 request); a drag of the map (the
+  view moved > 3 px from where Follow put it at the same zoom,
+  `lr.followAt`) turns Follow off, a wheel zoom keeps it. The heat
+  snapshots carry their window (c / half / rot) and are drawn by
+  `rdfGridDraw` like the live map's. A row is shown up to `LR_HOLD` 30 s; the vehicle is
+  interpolated between rows <= 10 s apart. Strip `#map-lr` (bottom, like
+  the path-loss strip; `.map-pane.lr-open` + `--lr-h` = its height lift the
+  DF / marker panels, the status line, the path-loss strip and cap the
+  top-left stack): name / format / signal list, transport (⏮ ⏴ ▶ ⏵, speed,
+  date-time, position / length), layer buttons, ±range, the timeline
+  canvas (`lrTlDraw`: per pixel column the strongest row - height + colour
+  = power over the log's 5-95 % range -, white dots = the bearings that went
+  into the heat map, dashed = a shortened pause, green bar = the heat job's
+  progress, playhead; base layer cached), the moment's row + "Heat map: N of
+  M bearings · TX ±r · distance / bearing from the vehicle", offset when
+  measured. Keys on the strip: Space / k, ← →, Home / End. A click on the
+  track (`lrHit`, 8 px; after markers / decoder points / masts / AI layers)
+  jumps there; ⤢ (fit all) includes the drive; the status line's "No
+  positions yet" hint is left out while the strip is open
+- Tests (job scratch ae566749 lr/; node = Pinokio's v24, MSYS2 g++ for the
+  C++): the SQLite reader vs Python's sqlite3 on 512 B / 4 / 64 KB pages,
+  overflow BLOBs, WITHOUT ROWID, ALTER TABLE, UTF-16, an uncheckpointed WAL
+  (12 / 12); every Android sample CSV (krakensdr_rdf_android root +
+  travelsimulator/) parsed - three drives of the same "redoubt" transmitter
+  (2021 400 MHz, 2021 "home", 2022 416.588 MHz) agree within ~150 m (r95
+  98-187 m); SQLite made from them in both writers' schemas (+ the server's
+  WAL tail) = the CSV's rows, bearings and estimate to 0.0 m; the engine
+  port vs the C++ (cmp_engine / tools/rdf_cmp.cpp) on three real drives:
+  rasters identical (<= 1 step), offsets to 4 decimals, estimates <= 1.3 m
+  (float32 vs double); a synthetic drive around a known transmitter in
+  every layout + COMPASS mode with a garbage GPS field: 4-37 m off
+  (`tools/replay_validate.mjs`, committed); headless Chrome (t_ui.mjs, 35
+  checks, real mouse / keys): the Replay button, file load, fit, the end /
+  mid-drive estimate, play / pause at 50x, timeline drag, ←, Space, a click
+  on the track, the layer buttons + kraken_lr, range, a path-loss strip
+  standing on it, ⤢, a multi-VFO receiver log (signal list, "no heat map:
+  standing still"), a dropped SQLite + -wal pair, a -wal alone, a non-log
+  file, the DoA Recording box's 🗺 Replay, phone width, ✕, reload, damaged
+  localStorage, no page exceptions; t_perf.mjs: a 2 h 2-VFO 149 MB CSV
+  (57,600 rows) loads in 3.3 s, heat in ~26 s, a frame <= ~10 ms with all
+  lines + power dots, 60 MB JS heap
 
 **DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country); `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,ctcss,beacon406,lora,wildlife}`, 🗺 Map 📡 DF panel):**
 - RULE (ID separation, the user's 2026-10-15): every decoder whose signal
@@ -5125,6 +5348,31 @@ Edit `include/config.hpp`:
   (AACH usage marker >= 4, training sequence 1) of one timeslot; after 400 ms
   without traffic, erasure blocks flush the pipes' stdio buffers. Muted for
   60 s after any encrypted MAC-RESOURCE. ~0.5 s extra latency (pipe buffers)
+  Windows (no /dev/stdin there): each program gets two NAMED PIPES as its
+  file names (`\\.\pipe\krakensdr-tetra-<pid>-<n>-<64 random bits>`, one
+  instance, local only, the server end the plugin's; its client checked by
+  process ID - GetNamedPipeClientProcessId - before any data), started
+  through kproc (NUL stdio, no console); three plugin threads (writer ->
+  cdecoder, relay cdecoder -> sdecoder, reader) in overlapped I/O ended by a
+  stop event, so data moves through both programs between slots as on
+  Linux. A program that exits / breaks a pipe: stopped, restarted no sooner
+  than 2 s later (not every slot). The ETSI code needs no change: fopen
+  "rb" / "wb" + sequential fread / fwrite open a pipe like a file (binary).
+  Found as `$KRAKEN_TETRA_CODEC_DIR\{cdecoder,sdecoder}.exe`, else
+  `tetra-{cdecoder,sdecoder}.exe` in the working directory (kraken_doa_v2,
+  where libmbe.dll goes), else on the PATH. Tested 2026-10-20 with
+  stand-in programs that use the same file I/O: byte-exact at real-time
+  pace (~0.47 s to the first audio), only whole frames dropped when flooded
+  (the 64-block cap, as Linux), a codec that dies is restarted, one that
+  hangs doesn't block stop(); and with the real ETSI codec built by the
+  WINDOWS.md steps (MinGW UCRT64, only the system UCRT DLLs; MSYS2's patch
+  needs `--binary` - CRLF sources): 200 random slots and a TTS sentence
+  encoded with scoder + ccoder decode through TetraCodec bit-identical to
+  cdecoder + sdecoder on plain files, and to the Pi's build / pipes
+  (fixed-point code: the same samples on both OSes); the sentence's
+  correlation with the spoken input 0.948 (codec delay 40 samples). ccoder
+  writes a 1 as 0x0081 (129), TetraCodec sends -127 - cdecoder decodes both
+  the same
 - Codec availability: the sidebar box (above), and each voice plugin sets a "Voice codec" fact (e.g.
   "AMBE+2: libmbe.so.1 (mbelib 1.3.0)" / "not installed"), and its voice
   state says "... codec not installed" while someone listens

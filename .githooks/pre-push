@@ -5,7 +5,8 @@
 # tracked. Backstop behind the clean filter (scripts/git-secrets-clean),
 # which sanitizes these automatically at commit time - this hook only fires
 # if the filter was not configured (fresh clone before install.sh) or a
-# secret landed some other way.
+# secret landed some other way. Also blocks binaries and user-built voice
+# codecs (licensing - backstop behind .gitignore, see scan_range).
 #
 # Activated per clone by install.sh:  git config core.hooksPath .githooks
 # Emergency bypass:                   git push --no-verify
@@ -13,6 +14,7 @@
 set -u
 
 fail=0
+codec_fail=0
 
 # Scan the commits selected by the rev-list arguments ("$@", passed as
 # SEPARATE words - e.g. "$sha" --not --remotes) for secrets in changed
@@ -58,6 +60,33 @@ scan_range() {
         done < <(git diff-tree --root -m --no-commit-id --name-only -r -z "$c" -- \
                      '*config.json' '*doa_settings.json' '*settings*.json' \
                      '*api_token' | sort -zu)
+        # Voice codecs are never distributed (the ETSI TETRA codec may not be
+        # redistributed, AMBE is DVSI's): a user-built codec program or
+        # library, the ETSI zip or its sources (osmo-tetra's codec/ folder),
+        # and any Windows exe / DLL - every program of the suite is built from
+        # source, so a committed one is a build output or someone's binary.
+        # Backstop behind .gitignore (a `git add -f` gets past that)
+        while IFS= read -r -d '' f; do
+            git cat-file -e "$c:$f" 2>/dev/null || continue
+            local base="${f##*/}"
+            base="${base,,}"
+            case "$base" in
+                cdecoder|sdecoder|ccoder|scoder|tetra-cdecoder|tetra-sdecoder|\
+                *.exe|*.dll|libmbe.so*|libmbe*.dylib|etsi_tetra_codec.zip|en_30039502*.zip)
+                    echo "BLOCKED: $f is committed in ${c:0:9} - a binary / voice codec file" >&2
+                    echo "         that must not go to the remote (README: Digital voice codecs)." >&2
+                    codec_fail=1
+                    continue
+                    ;;
+            esac
+            case "/${f,,}" in
+                */osmo-tetra/codec/*|*/c-code/cdecoder.c|*/c-code/sdecoder.c|*/c-code/scod_tet.c)
+                    echo "BLOCKED: $f is committed in ${c:0:9} - the ETSI TETRA codec's source" >&2
+                    echo "         may not be redistributed." >&2
+                    codec_fail=1
+                    ;;
+            esac
+        done < <(git diff-tree --root -m --no-commit-id --name-only -r -z "$c" | sort -zu)
     done
     return 0
 }
@@ -83,6 +112,13 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     fi
 done
 
+if [ "$codec_fail" -ne 0 ]; then
+    echo >&2
+    echo "Push aborted: binaries / voice codec files in the outgoing commits." >&2
+    echo "Fix: git rm --cached <file>, then amend / rebase it out of the commit" >&2
+    echo "(.gitignore keeps them out of new commits)." >&2
+    [ "$fail" -ne 0 ] || exit 1
+fi
 if [ "$fail" -ne 0 ]; then
     echo >&2
     echo "Push aborted: station secrets detected in the outgoing commits." >&2
