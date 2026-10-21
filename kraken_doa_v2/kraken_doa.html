@@ -1111,11 +1111,6 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <button onclick="addDecimator()" class="btn primary" style="flex:1">+ Add</button>
           <button onclick="requestDecimatorInfo()" class="btn" style="flex:1">↻ Refresh</button>
         </div>
-        <label style="display:flex;align-items:center;gap:5px;margin-bottom:8px;font-size:12px"
-               title="A VFO can have ANY bandwidth (drag a bar's edge, or ✎ on its card). The receiver decimates by whole numbers, so a width between its efficient sizes runs at the next wider rate - up to 1.25x its width at 300 kHz and below, and 1.2 - 2.4 MHz at the full 2.4 MS/s with a filter (about a third of a Pi 5 core more with 5 antennas). Ticked: dragging, typing and saved frequencies snap to the efficient sizes (each one fills its rate - nothing wasted). This browser only">
-          <input type="checkbox" id="bw-eff-only" onchange="bwSetEffOnly(this.checked)">
-          <span>Efficient bandwidths only</span>
-        </label>
         <div id="decimator-list">
           <!-- Decimator controls will be dynamically added here -->
         </div>
@@ -2618,17 +2613,19 @@ const MIN_BW_MHZ = bwo[MIN_BW_INDEX].bandwidth; // 0.001 MHz
 // the largest divisor of 2.4 MHz whose rate holds it and cuts its filter at
 // the bandwidth (config.hpp / shared_decimator.cpp). A width that fills its
 // rate wastes nothing (BW_EFFICIENT: the 59 rates 2.4 MHz / divisor - every
-// bwo size is one); others run up to 1.25x their width (300 kHz and below),
-// and 1.2 - 2.4 MHz runs a full-rate filter at 2.4 MS/s - the "Efficient
-// bandwidths only" tick (Decimators box, per browser) snaps every width to
-// BW_EFFICIENT. bwo stays the index list of older receivers.
+// bwo size is one; the card's list); others run up to 1.25x their width (300
+// kHz and below), and 1.2 - 2.4 MHz runs a full-rate filter at 2.4 MS/s -
+// the card's tooltip says what a custom width runs at (bwTitle). There is no
+// snapping option: since the real-tap decimator, every width up to 1.2 MHz
+// costs no more than the nearest old size did (the user's call 2026-10-21,
+// which removed the "Efficient bandwidths only" tick). bwo stays the index
+// list of older receivers.
 const BW_SR = 2400000, BW_MIN_HZ = 1000, BW_MAX_HZ = BW_SR;
 const BW_EFFICIENT = (() => {   // ascending Hz
   const a = [];
   for (let d = BW_SR / BW_MIN_HZ; d >= 1; d--) if (BW_SR % d === 0) a.push(BW_SR / d);
   return a;
 })();
-let bwEffOnly = (() => { try { return localStorage.getItem('kraken_bw_eff') === '1'; } catch (e) { return false; } })();
 let bwServerHz = false;   // the receiver takes SET_DECIMATOR_BW_HZ (its decimator_info has bandwidth_hz)
 // a pane VFO's side clipped at the plot border keeps its edge this far inside (paneDrawOverlay)
 const PANE_CLIP_EDGE_PX = 5;
@@ -2642,19 +2639,12 @@ function bwDecimation(hz) {
   return 1;
 }
 function bwRateHz(hz) { return BW_SR / bwDecimation(hz); }
-// the nearest efficient size (log scale) / the narrowest one that holds hz
-function bwNearestEfficient(hz) {
-  hz = bwClampHz(hz);
-  let best = BW_EFFICIENT[0];
-  for (const e of BW_EFFICIENT) if (Math.abs(Math.log(e / hz)) < Math.abs(Math.log(best / hz))) best = e;
-  return best;
-}
+// the narrowest efficient size that holds hz (a decoder's minimum)
 function bwAtLeastEfficient(hz) { return bwRateHz(hz); }
-// a width the user picked (drag, typed): whole Hz, 3 significant figures
-// (a drag step of a pixel is ~0.3 % of a bar), or the nearest efficient size
+// a width dragged with a bar edge: whole Hz, 3 significant figures (a drag
+// step of a pixel is ~0.3 % of a bar)
 function bwUserHz(hz) {
   hz = bwClampHz(hz);
-  if (bwEffOnly) return bwNearestEfficient(hz);
   const step = Math.pow(10, Math.max(0, Math.floor(Math.log10(hz)) - 2));
   return bwClampHz(Math.round(hz / step) * step);
 }
@@ -2677,16 +2667,6 @@ function bwLabel(hz) {
   const t = (v) => String(+v.toFixed(3));
   return hz >= 1e6 ? t(hz / 1e6) + ' MHz' : t(hz / 1e3) + ' kHz';
 }
-function bwSetEffOnly(on) {
-  bwEffOnly = !!on;
-  try { localStorage.setItem('kraken_bw_eff', bwEffOnly ? '1' : '0'); } catch (e) {}
-  const el = $id('bw-eff-only');
-  if (el) el.checked = bwEffOnly;
-  // the VFOs' widths are left as they are (a custom one stays listed as
-  // custom); the next drag / pick / typed width snaps
-  decimatorInfo.forEach(d => refreshDecimatorPanelItem(d.id));
-}
-{ const el = document.getElementById('bw-eff-only'); if (el) el.checked = bwEffOnly; }
 
 // Max tuning-bar offset from center (Hz) for a bar of bwMhz width: half the
 // visible (edge-clipped, wideband-aware) span minus half the bar width.
@@ -7002,7 +6982,7 @@ function bwTitle(hz) {
   return 'Bandwidth ' + bwLabel(hz) + ' (custom): the VFO runs at ' + bwLabel(r).replace('Hz', 'S/s') + ', ' +
     (r / hz).toFixed(2) + 'x its width - the receiver decimates by whole numbers, so everything after it ' +
     '(DoA, audio, decoders) works on the wider rate' + (r === BW_SR ? ', with a filter at the full 2.4 MHz' : '') +
-    '. ‘Efficient bandwidths only’ in this box snaps to the sizes in this list. ✎ = type any width';
+    '. The other sizes in this list fill their rate. ✎ = type any width';
 }
 function bwSelectSync(dec) {
   const el = $id('dec-bw-' + dec.id);
@@ -7035,7 +7015,7 @@ function bwEditApply(id, text, orig) {
   if (text === orig) return;
   const hz = bwParseHz(text);
   if (!(hz > 0)) return;
-  setDecimatorBandwidthHzFromUI(id, bwEffOnly ? bwNearestEfficient(hz) : bwClampHz(hz));
+  setDecimatorBandwidthHzFromUI(id, bwClampHz(hz));
 }
 
 // Called from the card, a drag's end, a decoder's need ... - updates local
@@ -15539,8 +15519,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     // (not on a VFO its decoder holds - ism needs its whole 2.4 MHz)
     if (d && !vfoLocked(d)) {
       if (f.mode && f.mode !== d.demod_mode) setDecimatorDemodMode(d.id, f.mode);
-      if (f.bw > 0) {   // the saved width (the nearest efficient size with "Efficient bandwidths only")
-        const hz = bwEffOnly ? bwNearestEfficient(f.bw) : bwClampHz(f.bw);
+      if (f.bw > 0) {   // the saved width, exactly
+        const hz = bwClampHz(f.bw);
         if (hz !== decBwHz(d)) setDecimatorBandwidthHzFromUI(d.id, hz);
       }
     }

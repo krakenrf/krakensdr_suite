@@ -249,11 +249,13 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   VFOs (fixed / lock_vfo decoders) disable both. Saved frequencies: the
   editor's list = the efficient sizes + an entry's custom width
   (`sfBwSelectSet`), tuning applies the saved width exactly
-- "Efficient bandwidths only" (the Decimators box tick, per browser,
-  localStorage `kraken_bw_eff`, `bwEffOnly`): drags, typed widths and saved
-  frequencies snap to the nearest efficient size (`bwNearestEfficient`, log
-  scale); VFOs keep their width until changed. Asked for by the user "if
-  significant efficiency is lost" - it is, between 1.2 and 2.4 MHz (below)
+- No snapping option: an "Efficient bandwidths only" tick (snap every width
+  to `BW_EFFICIENT`) was built because the request asked for one "if
+  significant efficiency is lost", then REMOVED the same day (the user's
+  call): with the real-tap stages every width up to 1.2 MHz costs no more
+  than the nearest old size did (below); only 1.2 - 2.4 MHz costs more (a
+  full-rate filter, +~33 % of a core with 5 antennas) - the card's tooltip
+  says what a custom width runs at
 - Measured on the Pi 5 (2026-10-21; `tools/decim_bench.cpp`, one core, ns
   per input sample per antenna): old sizes old cccf 10.8-25.1 vs crcf
   9.4-17.7 (mean 1.22x); arbitrary widths 1 kHz - 1.2 MHz cost 0.83-1.24x the
@@ -278,9 +280,9 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   overlay 1.5000 / 0.2508 MHz, the beamformed squelch closed on noise in a
   1.25 MHz VFO and open on the tones, the snapshot's field 12, a restart, an
   older snapshot by index; `t_bw_ui.py` (headless Chromium, real mouse /
-  keys): 23 / 23 - the card list + ✎ (typed kHz / "1.5 MHz" / junk), a
-  main-display edge drag to an arbitrary width the receiver keeps, the
-  tick's snapping (drag + typed), independent mode's 2.4 MHz bar (both
+  keys): 21 / 21 - the card list + ✎ (typed kHz / "1.5 MHz" / junk), a
+  main-display edge drag to an arbitrary width the receiver keeps, no
+  snapping tick, a second drag arbitrary too, independent mode's 2.4 MHz bar (both
   clipped edges grabbable, resize cursor, dragged in and back out, below),
   no page exceptions. A width change at the same rate clears MUSIC's
   accumulator (`last_input_bw_hz_`: the rebuilt filters' restart is no
@@ -974,8 +976,7 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   the decoder (`digSetModeFor`, OFF = `digToggle`; a fixed-frequency plugin
   tunes by itself and ends there; a `lock_vfo` one - ism - puts the VFO on
   its tuner's centre), the demod (`setDecimatorDemodMode`, which sets that
-  mode's usual bandwidth) and the bandwidth (exactly - any width; the
-  nearest efficient size with "Efficient bandwidths only") -
+  mode's usual bandwidth) and the bandwidth (exactly - any width) -
   both skipped on a locked VFO -, then `sfTuneHz` (was mkTune): a VFO
   locked on its tuner's centre (`lock_vfo`) stays at offset 0 and the tuner
   retunes (FREQ: whole kHz; independent: its own tuner); otherwise
@@ -6346,7 +6347,7 @@ sudo perf top
 1. Reduce active channels (process fewer channels)
 2. Narrow the VFOs (a smaller bandwidth = a higher decimation); between 1.2
    and 2.4 MHz a VFO runs a full-rate filter - 1.2 MHz or 2.4 MHz exactly is
-   cheaper ("Efficient bandwidths only")
+   cheaper (the card's list holds the sizes that fill their rate)
 3. Disable DoA processing if not needed: `doa_enabled = false` via WebSocket
 4. Check thread count: Should be ~23-28 threads (expected)
 
