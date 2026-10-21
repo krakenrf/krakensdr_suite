@@ -105,7 +105,8 @@ struct SdrUpdateResult {
 // was applied, see SdrUpdateResult.
 bool update_sdr_settings(uint64_t frequency = 0, int gain = -999, const std::vector<std::unique_ptr<SDRDevice>>& devices = {},
                          SdrUpdateResult* result = nullptr);
-// The end of a drag: update_sdr_settings retunes that follow one another
+// The end of a drag: update_sdr_settings (coherent) and
+// setup_wideband_frequencies (wideband scan) retunes that follow one another
 // within 400 ms (or before this finished the previous one, up to 1 s) take
 // the fork's fast path (rtlsdr_set_center_freq_fast: the
 // R820T's PLL autotune clock stays at 128 kHz); this puts those tuners back

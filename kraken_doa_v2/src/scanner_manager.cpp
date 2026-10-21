@@ -858,13 +858,7 @@ void ScannerManager::resumeScanning() {
     // Without this reset, the scanner would immediately re-lock on the decaying ghost
     uint32_t old_gen = fft_reset_generation.fetch_add(1, std::memory_order_release);
     cout << "FFT reset triggered (gen " << old_gen << " → " << (old_gen + 1) << ") to clear ghost signals" << endl;
-
-    // Also clear wideband FFT buffers directly
-    {
-        lock_guard<mutex> wb_lock(wideband_fft_mutex);
-        fill(wideband_fft_magnitudes.begin(), wideband_fft_magnitudes.end(), -100.0f);
-        fill(wideband_fft_averaged.begin(), wideband_fft_averaged.end(), -100.0f);
-    }
+    // (the wideband scan's stitched spectrum is built from the channels' averages)
 
     // CRITICAL: We're in coherent mode (wideband=false on server).
     // Need to re-enable wideband mode which will reset phase calibration.

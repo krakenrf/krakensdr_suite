@@ -1094,8 +1094,9 @@ void ControlHandler::handle_message_impl(string_view message) {
         averaging_alpha = alpha;
         set_applied("AVG:", alpha, 3);
 
-        // In wideband / independent mode, reset ALL channel FFTs (and the
-        // wideband stitched buffer). Otherwise, only reset the active channel
+        // In wideband / independent mode, reset ALL channel FFTs (the wideband
+        // scan's stitched spectrum is built from them). Otherwise, only reset
+        // the active channel
         bool is_wideband = multi_tuner_mode();
 
         lock_guard<mutex> lock(fft_mutex);
@@ -1110,11 +1111,7 @@ void ControlHandler::handle_message_impl(string_view message) {
                 }
             }
 
-            // Clear wideband stitched averaging buffer (same as scanner retune does)
-            lock_guard<mutex> wb_lock(wideband_fft_mutex);
-            wideband_fft_averaged.clear();
-
-            cout << "FFT averaging reset: All " << channels << " channels + wideband buffer cleared (wideband mode)" << endl;
+            cout << "FFT averaging reset: All " << channels << " channels (wideband / independent mode)" << endl;
         } else {
             // Normal mode: only reset active channel
             if (active_ch < min(channels, MAX_CHANNELS)) {

@@ -50,15 +50,6 @@ static float cached_coh_center_freq = 0;
 static size_t cached_coh_size = 0;
 static int cached_coh_fft_size = 0;
 
-// Normalize FFT data so noise floor = 0dB. Returns the noise floor value.
-static float normalize_to_noise_floor(std::vector<float>& fft_data) {
-    float noise_floor = FFTProcessor::calculate_noise_floor(fft_data);
-    for (float& mag : fft_data) {
-        mag -= noise_floor;
-    }
-    return noise_floor;
-}
-
 // Downsampling of the old-format frames (types 0 / 6 / 4, pages without
 // spectrum views): SPECTRUM_LEGACY_POINTS per tuner band, as the removed
 // "Downsampling" setting's default gave (8 at 16384)
@@ -162,142 +153,97 @@ string MessageBuilders::build_fft_message(SpectrumSnapshot* snap, bool legacy) {
         return legacy ? im.to_string() : string();
     }
 
-    // Handle wideband mode
+    // Wideband scan mode: the tuners' averaged spectra side by side, each
+    // relative to its own floor - the one its VFOs' squelch uses (nfloor: a
+    // tuner whose band a signal from its neighbours fills takes their floor,
+    // so the signal goes on across the boundary instead of dropping to 0 dB
+    // there). Every frame of every tuner is averaged by the FFT workers, as in
+    // coherent mode - no second average here
     if (wideband_active) {
-        lock_guard<mutex> wb_lock(wideband_fft_mutex);
+        // After an averaging reset the tuners hold the reset level until their
+        // first new frame: the pages keep the last spectrum meanwhile (the
+        // single-tuner display below would flash up for a frame)
+        if (!fft_data_valid.load(std::memory_order_acquire)) return string();
 
-        // Stitch all channel FFTs together (wideband SCAN mode only - tuner
-        // frequencies here are true tuner values, always within uint32)
-        std::array<uint32_t, MAX_CHANNELS> tuner_freq_copy;
+        std::array<uint64_t, MAX_CHANNELS> tuner_hz;
         for (int i = 0; i < MAX_CHANNELS; i++) {
-            tuner_freq_copy[i] = static_cast<uint32_t>(tuner_frequencies[i].load());
+            tuner_hz[i] = tuner_frequencies[i].load(std::memory_order_relaxed);
         }
 
-        float min_freq_mhz, max_freq_mhz;
-        // CRITICAL FIX: Stitch from fft_magnitudes (raw FFT), NOT fft_averaged!
-        // fft_averaged has already been averaged at the per-channel level.
-        // If we stitch from that and average again at wideband level, we get DOUBLE averaging.
-        // This causes signals to take 2x longer to converge with high averaging percentages.
-        FFTProcessor::stitch_wideband_fft(
-            fft_magnitudes,  // Use RAW FFT data, not averaged!
-            tuner_freq_copy,
-            channels,
-            wideband_fft_magnitudes,
-            min_freq_mhz,
-            max_freq_mhz
-        );
+        static std::vector<float> normalized_wideband;
+        double f0_hz = 0.0, step_hz = 0.0;
+        if (FFTProcessor::stitch_wideband_fft(fft_averaged, tuner_hz, channels, normalized_wideband,
+                                              f0_hz, step_hz)) {
+            // bin i at min + i / size * (max - min) (the scanner's frequencies,
+            // decimate_and_compress_wideband)
+            const float min_freq_mhz = static_cast<float>(f0_hz / 1e6);
+            const float max_freq_mhz = static_cast<float>(
+                (f0_hz + static_cast<double>(normalized_wideband.size()) * step_hz) / 1e6);
 
-        // If stitching failed (empty result), fall back to normal mode display
-        if (!wideband_fft_magnitudes.empty()) {
-            // CRITICAL: Check if FFT data is valid (not reset values)
-            // After reset, fft_data_valid is set to false. It's set to true when
-            // the FFT processor writes the first valid frame. This prevents us from
-            // consuming the reset with stale/reset data.
-            bool data_is_valid = fft_data_valid.load(std::memory_order_acquire);
-
-            if (!data_is_valid) {
-                // Skip this frame - wait for real FFT data from FFT processor
-                // Don't update wideband_last_reset_gen - preserve reset for next frame
-                // Fall through to normal mode display below
-            } else {
-                // Apply averaging to wideband FFT with generation counter support
-                if (wideband_fft_averaged.size() != wideband_fft_magnitudes.size()) {
-                    wideband_fft_averaged.resize(wideband_fft_magnitudes.size());
-                    std::copy(wideband_fft_magnitudes.begin(), wideband_fft_magnitudes.end(),
-                              wideband_fft_averaged.begin());
-                } else {
-                    // EXPONENTIAL MOVING AVERAGE (EMA) with generation-based reset
-                    // On reset: alpha=1.0 → direct copy of raw FFT to averaged buffer
-                    // This initializes the EMA with the first valid frame's data
-                    uint32_t current_gen = fft_reset_generation.load(std::memory_order_acquire);
-                    uint32_t last_gen = wideband_last_reset_gen.load(std::memory_order_acquire);
-                    bool should_reset = (last_gen < current_gen);
-                    float alpha = should_reset ? 1.0f : averaging_alpha.load();
-
-                    if (should_reset) {
-                        wideband_last_reset_gen.store(current_gen, std::memory_order_release);
-                    }
-
-                    // Apply EMA: alpha=1.0 on reset means fft_averaged = raw (direct copy)
-                    for (size_t i = 0; i < wideband_fft_magnitudes.size(); i++) {
-                        wideband_fft_averaged[i] = alpha * wideband_fft_magnitudes[i] +
-                                                   (1.0f - alpha) * wideband_fft_averaged[i];
+            // Feed normalized FFT data to discrete scanner for signal detection
+            if (scanner_manager.isRunning()) {
+                // Rebuild frequency array only when parameters change
+                size_t wb_size = normalized_wideband.size();
+                if (wb_size != cached_wb_size || min_freq_mhz != cached_wb_min_freq || max_freq_mhz != cached_wb_max_freq) {
+                    cached_wb_size = wb_size;
+                    cached_wb_min_freq = min_freq_mhz;
+                    cached_wb_max_freq = max_freq_mhz;
+                    cached_wideband_freqs.resize(wb_size);
+                    float freq_step_mhz = (max_freq_mhz - min_freq_mhz) / static_cast<float>(wb_size);
+                    for (size_t i = 0; i < wb_size; i++) {
+                        cached_wideband_freqs[i] = min_freq_mhz + (i * freq_step_mhz);
                     }
                 }
-
-                static std::vector<float> normalized_wideband;
-                normalized_wideband = wideband_fft_averaged;
-                normalize_to_noise_floor(normalized_wideband);
-
-                // Feed normalized FFT data to discrete scanner for signal detection
-                if (scanner_manager.isRunning()) {
-                    // Rebuild frequency array only when parameters change
-                    size_t wb_size = normalized_wideband.size();
-                    if (wb_size != cached_wb_size || min_freq_mhz != cached_wb_min_freq || max_freq_mhz != cached_wb_max_freq) {
-                        cached_wb_size = wb_size;
-                        cached_wb_min_freq = min_freq_mhz;
-                        cached_wb_max_freq = max_freq_mhz;
-                        cached_wideband_freqs.resize(wb_size);
-                        float freq_step_mhz = (max_freq_mhz - min_freq_mhz) / static_cast<float>(wb_size);
-                        for (size_t i = 0; i < wb_size; i++) {
-                            cached_wideband_freqs[i] = min_freq_mhz + (i * freq_step_mhz);
-                        }
-                    }
-                    scanner_manager.updateFFTData(normalized_wideband, cached_wideband_freqs);
-                }
-
-                if (snap && normalized_wideband.size() >= 2) {
-                    // bin i at min + i / size * (max - min), as decimate_and_compress_wideband
-                    SpectrumDisplay& d = snap->disp[0];
-                    d.valid = true;
-                    d.f0_hz = static_cast<double>(min_freq_mhz) * 1e6;
-                    d.step_hz = (static_cast<double>(max_freq_mhz) - min_freq_mhz) * 1e6 /
-                                static_cast<double>(normalized_wideband.size());
-                    d.center_hz = (static_cast<double>(min_freq_mhz) + max_freq_mhz) / 2.0 * 1e6;
-                    d.gain_db = ChannelManager::get_gain(0);
-                    d.db = normalized_wideband;
-                    snap->marker = 0xFE;
-                    snap->channels = static_cast<uint8_t>(channels);
-                    snap->avg_alpha = averaging_alpha.load();
-                }
-                if (!legacy) return string();
-
-                // Decimate and compress the wideband FFT (old-format frames)
-                const int wideband_decimation = legacy_fft_decimation();
-                CompressedFFT compressed = FFTProcessor::decimate_and_compress_wideband(
-                    normalized_wideband,
-                    min_freq_mhz,
-                    max_freq_mhz,
-                    wideband_decimation
-                );
-
-                // Build message with compressed wideband data
-                msg.add_value(static_cast<uint32_t>(channels));
-                msg.add_value(uint32_t(1)); // Decimation (not applicable in wideband mode)
-                msg.add_value((min_freq_mhz + max_freq_mhz) / 2.0f); // Center frequency
-                msg.add_value(ChannelManager::get_gain(0)); // Use first channel gain
-                msg.add_value(averaging_alpha.load());
-                msg.add_value(uint32_t(0xFE)); // Special marker for compressed wideband mode (0xFE instead of 0xFF)
-
-                msg.add_value(static_cast<uint32_t>(compressed.frequencies.size()));
-
-                // Add compressed data (frequencies as float32, magnitudes as uint8)
-                msg.add_vector(compressed.frequencies);
-                msg.add_vector(compressed.min_envelope);  // uint8 compressed
-                msg.add_vector(compressed.max_envelope);  // uint8 compressed
-
-                return msg.to_string();
+                scanner_manager.updateFFTData(normalized_wideband, cached_wideband_freqs);
             }
-            // If data_is_reset_values was true, fall through to normal mode display
-        } else {
-            // Stitching failed - fall back to normal mode
-            static int empty_warning_counter = 0;
-            if ((empty_warning_counter++ % 50) == 0) {
-                cerr << "WARNING: Wideband FFT stitching produced empty result! Falling back to single-channel display." << endl;
-                cerr << "  Check that FFT data is available for all channels." << endl;
+
+            if (snap && normalized_wideband.size() >= 2) {
+                SpectrumDisplay& d = snap->disp[0];
+                d.valid = true;
+                d.f0_hz = f0_hz;
+                d.step_hz = step_hz;
+                d.center_hz = f0_hz + static_cast<double>(normalized_wideband.size() - 1) * step_hz / 2.0;
+                d.gain_db = ChannelManager::get_gain(0);
+                d.db = normalized_wideband;
+                snap->marker = 0xFE;
+                snap->channels = static_cast<uint8_t>(channels);
+                snap->avg_alpha = averaging_alpha.load();
             }
-            // Fall through to normal mode processing below
+            if (!legacy) return string();
+
+            // Decimate and compress the wideband FFT (old-format frames)
+            const int wideband_decimation = legacy_fft_decimation();
+            CompressedFFT compressed = FFTProcessor::decimate_and_compress_wideband(
+                normalized_wideband,
+                min_freq_mhz,
+                max_freq_mhz,
+                wideband_decimation
+            );
+
+            // Build message with compressed wideband data
+            msg.add_value(static_cast<uint32_t>(channels));
+            msg.add_value(uint32_t(1)); // Decimation (not applicable in wideband mode)
+            msg.add_value((min_freq_mhz + max_freq_mhz) / 2.0f); // Center frequency
+            msg.add_value(ChannelManager::get_gain(0)); // Use first channel gain
+            msg.add_value(averaging_alpha.load());
+            msg.add_value(uint32_t(0xFE)); // Special marker for compressed wideband mode (0xFE instead of 0xFF)
+
+            msg.add_value(static_cast<uint32_t>(compressed.frequencies.size()));
+
+            // Add compressed data (frequencies as float32, magnitudes as uint8)
+            msg.add_vector(compressed.frequencies);
+            msg.add_vector(compressed.min_envelope);  // uint8 compressed
+            msg.add_vector(compressed.max_envelope);  // uint8 compressed
+
+            return msg.to_string();
         }
+        // Stitching failed - fall back to normal mode
+        static int empty_warning_counter = 0;
+        if ((empty_warning_counter++ % 50) == 0) {
+            cerr << "WARNING: Wideband FFT stitching produced empty result! Falling back to single-channel display." << endl;
+            cerr << "  Check that FFT data is available for all channels." << endl;
+        }
+        // Fall through to normal mode processing below
     }
     
     // Get decimation from first decimator
@@ -818,7 +764,7 @@ bool MessageBuilders::beamformed_spectrum(int decimator_id, BeamformedSpectrum& 
     out.snr_boost_db = stats.estimated_snr_improvement_db;
 
     // Normalize beamformed FFT to noise floor = 0dB
-    // Note: can't use normalize_to_noise_floor() here because FFTProcessor::calculate_noise_floor()
+    // Note: can't use FFTProcessor::calculate_noise_floor() here because it
     // checks against current_fft_size which is the main FFT size, not the beamformed slice size.
     {
         static thread_local vector<float> bf_sorted;
