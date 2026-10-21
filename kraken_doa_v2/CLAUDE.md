@@ -5060,23 +5060,39 @@ Edit `include/config.hpp`:
   as without the pan (relative to the centre: no request per move), one
   redraw per animation frame (`panRedraw`). `barCenterFreq()` = the pan
   centre while it lasts (VFO bars, locked VFO lines, the waterfall overlay
-  stay on screen as the frozen bars do). It ends in finishScrollSync (a frame
-  centred within 10 kHz of the target, or the 1.5 s fallback; not under a
-  new drag) - `panSnap` lets that last move reach the waterfall too.
+  stay on screen as the frozen bars do). A pan draws the last SETTLED frame
+  (`panFr`; a pane its `lastFr`): heimdall labels frames with the wrong
+  frequency while it retunes (coherent: the header changes after ALL tuners,
+  the shown tuner's samples earlier; every mode: samples labelled when
+  converted, the first ones after a retune old) and the averaged spectrum
+  takes them in - drawn at their labels, the signals jumped back and forth
+  by a retune step while dragging (the user's report, 2026-10-21: in the
+  coherent test a fixed carrier sat ~45 kHz / 20 px off for most of a drag,
+  with jumps). Settled (`settledAt`) = the frame's centre is the frequency
+  sent last (`panSentMhz`, set by sendFreqChange; a pane's `p.sentMhz` by
+  paneSendFreq; within 1.5 kHz) and has been since `panSettleMs` ago (60 ms
+  for the old samples + the frames until the earlier ones weigh < 5 % in the
+  average at the frames' alpha: 185 ms at 0.15, 460 ms at 0.05). Other frames
+  during a pan go into neither the spectrum nor the waterfall (it pauses):
+  dragging on, the held picture moves with the mouse; a pause in the drag or
+  the release lets settled frames in. It ends in finishScrollSync with a
+  settled frame from the target (or the fallback, 1.5 s + panSettleMs; not
+  under a new drag) - `panSnap` lets that last move reach the waterfall too.
   WaterfallDisplay.panTo / shiftX: the history's plot area moves with the
   view by the windows' centres (whole pixels, the rest carried; only for the
   same span within 2.5 points / 0.2 % - zoom changes keep the old rows; a
   stricter 0.2 %-only check skipped every second shift on a 400-point pane).
   Panes: `p.panMhz` (paneMove's pan), `paneWindow` (frames + pan redraws,
   `p.lastFr`), `paneCenter(p)` for the VFO bars, the grab and paneMoveVfo;
-  ends in specPaneFrame (a frame from the target, or 1.5 s after the
-  release). `FFTProcessor::process_channel_fft` shifts a retuned tuner's
-  average in EVERY mode now (was wideband scan only) - without it a pane's
-  rows during a drag were smeared 1-4 px. Not done: servers without views
-  (type 0 / 6 frames) - as before; the retune ghost (a few frames after a
-  retune carry old samples under the new header frequency - heimdall labels
-  at conversion time): rows drawn during a wideband drag show a faint copy
-  one sweep step (~20 px) away
+  ends in specPaneFrame (a settled frame from the target, or 1.5 s +
+  panSettleMs after the release). `FFTProcessor::process_channel_fft` shifts
+  a retuned tuner's average in EVERY mode now (was wideband scan only) -
+  without it a pane's rows during a drag were smeared 1-4 px. Not done:
+  servers without views (type 0 / 6 frames) - as before. The cost of the
+  hold: after the release the picture stays still until a settled frame
+  comes (~0.7 s in the test - the sweep in progress, the last one, the
+  settle time; 0.2 s before the hold), and no new spectrum / waterfall rows
+  while dragging on without a pause
 - Pan tests (job scratch 0d0a7cca: t_pan_ui.py / t_pan_pane.py + cdp.py =
   headless Chrome over DevTools with real mouse events, run_pan.sh = the
   page under test served by a test kraken_doa on 48080, fed by fake_wbd.py -
@@ -5087,7 +5103,20 @@ Edit `include/config.hpp`:
   (2 kHz per pixel); pane old 26 / 39, new 0.6-0.9 / 2.3 kHz (5 kHz per pixel,
   outside the 5 px dead zone); the pan ends 0.05-0.2 s after the release;
   waterfall rows from before the drag at their frequency 100 % (old 0 %),
-  every pane row within 1 px; no page errors
+  every pane row within 1 px; no page errors. Those tests checked the
+  mapping under the cursor, not where the signals are DRAWN - t_pan_jit.py /
+  t_pan_pane_jit.py (2026-10-21, after the jumping was reported): a fixed
+  40 kHz carrier's drawn centroid at every mouse move vs where it would be
+  if it moved exactly with the mouse. Coherent (2 kHz per pixel): before the
+  pan median 22-24 px behind, 30 reversals of >= 3 px; the pan 17-24 px off
+  (max 25-36), 0-6 reversals, ~24 px jump after the release; with the hold
+  0.4 px (max 3.3), 0 reversals, <= 1.1 px after the release (2 runs each).
+  Wideband (8 kHz per pixel) and panes (5): sub-pixel with and without the
+  hold in the fake (its retunes label each tuner as it finishes; old samples
+  only 8 ms); pane max 2.2 -> 0.5 px. Waterfall (t_pan_ui.py, the whole
+  history at 600 MHz first - PAN_WAIT=6): every row aligned with the hold,
+  90-97 % without (the drag's rows a step off)
+- Tests (job scratch 46eef211 sp/; fake heimdall `--cw2 100600` = carriers
   600 Hz apart at +100 kHz): t_spec.py (protocol, three clients at once,
   wire bytes from the kernel per connection): an old page without
   compression 250 KB/s, an old page with it 109 KB/s (type 0 compressed),

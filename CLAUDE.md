@@ -746,9 +746,12 @@ ignored); FFT Settings' "Slow link" tick (per browser) asks for half the
 points. Pages that never send `FFT_VIEW` (an open tab from before) keep
 getting the old type 0 / 6 frames at 2048 points per tuner band. Dragging
 the spectrum (main display or an independent-mode pane) pans it locally: it
-follows the mouse at once - the last frame's points at their frequencies,
-the waterfall's history shifted along - and the receiver's frames fill it in
-(heimdall follows a drag 0.1-0.3 s late)
+follows the mouse at once - the last SETTLED frame's points at their
+frequencies, the waterfall's history shifted along - and the receiver's
+frames take over once one sits at the frequency sent last long enough to be
+labelled right and averaged clean (heimdall follows a drag 0.1-0.3 s late
+and mislabels frames while it retunes: drawn at their labels, signals jumped
+back and forth by a retune step)
 
 **Digital voice/data decoders (per VFO)**: engine `kraken_doa_v2/src/digital/`,
 decoders `kraken_doa_v2/plugins/`
