@@ -708,10 +708,15 @@ bandwidth*)**:
   the old sizes). Measured on the Pi 5: up to 1.2 MHz a custom width costs
   what the efficient size at its rate does (the rate <= 1.25x the width at
   300 kHz and below); 1.2 - 2.4 MHz runs at 2.4 MS/s with a full-rate filter
-  (+~33 % of a core with 5 antennas; the card's tooltip says so). The stages
-  use real taps now (crcf: 1.1-1.4x faster than cccf), so kraken_doa uses
-  3-13 % less CPU than before at every old size - no snapping option (an
-  "Efficient bandwidths only" tick was removed the same day, the user's call)
+  (+~15-20 % of a core with 5 antennas over the 2.4 MHz pass-through; the
+  BW box's tooltip says so). The stages are a block FIR on real taps
+  (`SharedDecimator::FirStage`, replacing liquid's firdecim - whose
+  per-sample window pushes were most of its cost): the decimator 3.3x
+  faster than before arbitrary widths, kraken_doa 6-25 % less CPU at every
+  old size (240 kHz 50.1 -> 38.9 % of a core), the same outputs to float
+  rounding. No snapping option (an "Efficient bandwidths only" tick was
+  removed the same day, the user's call). The VFO card's BW is a number box
+  in kHz
 - Supports 2.4 MHz down to 1 kHz bandwidth (the narrow end - 10 kHz to 1 kHz -
   is for weak CW beacons, wildlife tags, fox hunts). MUSIC accumulates across
   blocks (a 1 kHz block is ~7 samples) and caps a frame at ~1 s of samples

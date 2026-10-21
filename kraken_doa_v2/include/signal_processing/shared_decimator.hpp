@@ -64,6 +64,28 @@ public:
         MultiChannelDecimated& operator=(const MultiChannelDecimated&) = default;
     };
 
+    // One decimating low-pass FIR stage: complex samples, real taps. Output
+    // j = the taps' dot product with the L inputs ending at input j * M
+    // (liquid firdecim's alignment). The samples no output has used up yet
+    // stay in its buffer, so it takes any number of samples per call. It
+    // replaced liquid's firdecim_crcf (2026-10-21): that copies every input
+    // sample into its window with a call of its own - ~8.9 ns of the 9.5-13
+    // ns a sample cost on the Pi 5, the multiplies ~0.14 ns each; this
+    // computes each output straight from the buffer: 1.5-3x faster, the same
+    // outputs to float rounding (tools/decim_bench.cpp)
+    struct FirStage {
+        int M = 1;
+        std::vector<float> hr;                    // the taps, reversed
+        std::vector<std::complex<float>> buf;     // history + the samples not used up
+        size_t pos = 0;                           // buf index of the next output's newest sample
+
+        FirStage(int m, const std::vector<float>& taps);
+        void reset();                             // a clean start: zero history (as liquid's window)
+        std::complex<float>* append(size_t n);    // room for n new samples at the end of buf
+        size_t pending() const;                   // outputs the samples in buf give now
+        size_t produce(std::complex<float>* out); // computes them (pending() of them), drops what no later output needs
+    };
+
 private:
     std::mutex init_mutex;  // Guards initialize()/cleanup()
     std::atomic<bool> initialized{false};
@@ -82,41 +104,30 @@ private:
     // the anti-alias filtering adequate at high total factors (the old
     // single stage was capped at 127 taps, which barely filtered anything
     // above factor ~63), and offset-independent filters mean an offset
-    // change only retunes the mixer. Real taps on complex samples (crcf:
-    // half the multiplies of the complex-tap cccf it used before).
+    // change only retunes the mixer. Real taps on complex samples (FirStage;
+    // half the multiplies of the complex-tap cccf it used before). The mixer
+    // writes straight into the first stage's buffer, each stage's outputs
+    // into the next one's: a block that isn't a multiple of a stage's factor
+    // leaves its tail in that stage for the next block (it was a separate
+    // "carry"), so no input sample is dropped and the stream stays
+    // continuous across blocks.
     struct ChannelDecimState {
-        std::vector<firdecim_crcf> stages;   // Cascaded low-pass decimators
-        std::vector<int> stage_factors;      // Per-stage decimation factors
+        std::vector<FirStage> stages;        // Cascaded low-pass decimators (none = the whole band)
         int decimation_factor = 0;           // Total factor (0 = not built)
         int bandwidth_hz = 0;                // The last stage's cut (with the factor)
         float freq_offset_hz = 0.0f;         // Mixer frequency
         std::complex<float> mixer_phase{1.0f, 0.0f};  // Persists across blocks
-        // Already-mixed input samples not yet consumed by the cascade (always
-        // fewer than decimation_factor): a block that isn't a multiple of the
-        // factor leaves its tail here for the next block, so no input sample
-        // is dropped and the stream stays continuous across blocks.
-        std::vector<std::complex<float>> carry;
 
-        // Back to a clean start: mixer phase 1, no carry, empty filter history
+        // Back to a clean start: mixer phase 1, empty filter history, nothing pending
         void resetRuntime() {
             mixer_phase = std::complex<float>(1.0f, 0.0f);
-            carry.clear();
-            for (auto s : stages) {
-                if (s) firdecim_crcf_reset(s);
-            }
+            for (auto& s : stages) s.reset();
         }
-        void destroyStages() {
-            for (auto s : stages) {
-                if (s) firdecim_crcf_destroy(s);
-            }
-            stages.clear();
-            stage_factors.clear();
-        }
-        ~ChannelDecimState() { destroyStages(); }
+        void destroyStages() { stages.clear(); }
     };
     std::vector<std::unique_ptr<ChannelDecimState>> channel_states_;
     // Channel count of the previous decimateMultiChannel block. Coherent
-    // processing needs every channel's mixer phase, carry and filter history
+    // processing needs every channel's mixer phase and filter state (history + pending samples)
     // to be identical; a channel that sat out some blocks (element count
     // 5 -> 4 -> 5, or newly added) would otherwise resume with a stale or
     // fresh state and a fixed phase error vs the others. Only touched by the

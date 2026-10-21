@@ -201,9 +201,23 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   bit-identical taps to before (`exact` in designStages). Gain = each stage's
   1 / (2 cutoff) = 2.4 MHz / bw for every width (= D as before for the
   efficient sizes - the int16 conversions downstream see the same levels).
-  The stages run real taps (`firdecim_crcf`; they were `cccf` with zero
-  imaginary parts - twice the multiplies): 1.10-1.43x faster, outputs within
-  8e-7 of rms (float rounding)
+  The stages are `SharedDecimator::FirStage` (2026-10-21, the user's go
+  after a measured proposal), a BLOCK FIR on real taps: output j = the
+  reversed taps' dot product with the L inputs ending at input j * M
+  (liquid firdecim's alignment), straight from a buffer of history + the
+  samples not used up yet (the interleaved I / Q as floats - two dot
+  products the compiler vectorizes under -Ofast). The mixer writes into the
+  first stage's buffer, each stage's outputs into the next one's; a block
+  that isn't a multiple of a stage's factor leaves its tail in that stage
+  (the separate "carry" and the scratch buffers are gone). It replaced
+  liquid's `firdecim_crcf` (itself the `cccf` with zero imaginary parts the
+  decimator had before arbitrary widths - twice the multiplies): liquid
+  copies EVERY input sample into its window with a call of its own, ~8.9 ns
+  of the 9.5-13 ns a sample cost, while a multiply-accumulate costs ~0.14
+  ns. Same outputs to float rounding (<= 8.2e-7 of rms vs the cccf cascade;
+  the decimator fed blocks of odd lengths - 1, 7, 333, 12345 ... - = the
+  cascade on the whole input). liquid still designs the taps
+  (`liquid_firdes_kaiser`)
 - `decimateMultiChannel(.., bandwidth_hz, offset)` (was the factor): the
   pipeline reads the width ONCE per block; the channel state rebuilds when
   the width changes (`ChannelDecimState::bandwidth_hz`), not only the factor.
@@ -258,23 +272,37 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   significant efficiency is lost", then REMOVED the same day (the user's
   call): with the real-tap stages every width up to 1.2 MHz costs no more
   than the nearest old size did (below); only 1.2 - 2.4 MHz costs more (a
-  full-rate filter, +~33 % of a core with 5 antennas) - the card's tooltip
+  full-rate filter: with the block FIR +~15-20 % of a core with 5 antennas
+  over the 2.4 MHz pass-through, +~30 over 1.2 MHz) - the BW box's tooltip
   says what a custom width runs at
 - Measured on the Pi 5 (2026-10-21; `tools/decim_bench.cpp`, one core, ns
-  per input sample per antenna): old sizes old cccf 10.8-25.1 vs crcf
-  9.4-17.7 (mean 1.22x); arbitrary widths 1 kHz - 1.2 MHz cost 0.83-1.24x the
-  nearest old size (2.2-3.9 % of a core per antenna), 1.2 - 2.4 MHz 24-29 ns
-  (the full-rate filter) vs 0.4 (2.4 MHz pass-through) / 17.7 (1.2 MHz); the
-  rate is <= 1.2x the width from 300 kHz down, <= 1.35x to 1.2 MHz, 1.2-1.9x
-  above. Response: flat +-0.04 dB to 0.4 bw, -6.0 dB at 0.5 bw, -52..-64 dB
-  from 0.6 bw, aliases <= -53 dB, gain 0.00 dB re 2.4 MHz / bw. Whole
-  kraken_doa (test build, fake heimdall, one VFO, DoA on, 5 antennas, % of a
-  core): 240 kHz 46.4 / 250 kHz (rate 300 k) 47.9 / 300 kHz 45.4; 12.5 /
-  13 / 15 kHz 35.4 / 35.3 / 35.6; 1.2 MHz 82.4, 1.25 / 1.5 / 2 MHz 118.3 /
-  117.2 / 112.5, 2.4 MHz 84.5. Before / after at the old sizes (the base
-  commit's build vs this one alternately, two runs each, the old index
-  command): 240 kHz 50.3 -> 47.0, 300 kHz 48.9 -> 45.0, 12 kHz 36.4 -> 35.4,
-  16 kHz 38.0 -> 36.4, 1.2 MHz 87.1 -> 75.8, 2.4 MHz 81.3 -> 80.7 (no filter)
+  per input sample per antenna, the cascade without the mixer): old sizes
+  liquid cccf (the original) 10.7-25.5, liquid crcf 9.4-17.8, block FIR
+  2.6-7.9 (means 13.17 / 10.74 / 3.97: the block FIR 3.3x the original,
+  2.7x the crcf); the mixer ~2.9 more. Arbitrary widths (block FIR): 1 kHz -
+  240 kHz 2.6-4.8, 250 kHz - 1.2 MHz 6.8-9.9 (D = 2-8: one long sharp
+  stage - multiply-bound now; a re-split would help, see below), 1.2 - 2.4
+  MHz 10.3-15.2 (the full-rate filter; liquid crcf 24-29) vs 0.33 (2.4 MHz
+  pass-through) / 8.0 (1.2 MHz); within 0.86-1.2x the nearest old size up
+  to 240 kHz. The rate is <= 1.2x the width from 300 kHz down, <= 1.35x to
+  1.2 MHz, 1.2-1.9x above. Response: flat +-0.04 dB to 0.4 bw, -6.0 dB at
+  0.5 bw, -52..-64 dB from 0.6 bw, aliases <= -53 dB, gain 0.00 dB re 2.4
+  MHz / bw. Whole kraken_doa (test build, fake heimdall, one VFO, DoA on, 5
+  antennas, % of a core; the original / liquid crcf / block FIR builds
+  alternately, two runs each, the old index command): 240 kHz 50.1 / 47.0 /
+  38.9, 300 kHz 49.0 / 45.2 / 41.6, 12 kHz 36.4 / 35.1 / 30.1, 16 kHz 38.5 /
+  36.6 / 30.3, 1.2 MHz 87.4 / 77.0 / 65.6, 2.4 MHz 81.3 / 81.7 / 76.5 (no
+  filter: the mixer's own copy is gone) - the block FIR build 6-25 % below
+  the original at every old size. Custom widths (block FIR build): 250 kHz
+  42.6 (300 kHz 41.5), 13 / 15 kHz 30.3 / 30.2 (12.5 kHz 30.2), 1.25 / 1.5
+  / 2 MHz 100.4 / 96.8 / 95.3 (liquid crcf build 118.3 / 117.2 / 112.5;
+  1.2 MHz 69.7, 2.4 MHz 80.9)
+- Possible next steps (measured / estimated, not done): the mixer as a
+  frequency-translating first stage (taps shifted to the offset, mixing at
+  the decimated rate - most of its ~2.9 ns); halfband stages for factors of
+  2 (half their multiplies); re-splitting D = 2-8 (e.g. 8 -> 4 x 2: ~40 %
+  fewer multiplies at 300 kHz - it gained nothing with liquid's overhead,
+  it would now)
 - Tests (job scratch 415cedbd e2e/, on the Pi: `fake_heimdall_bw.py` = a
   5-element UCA scene, tone A +100 kHz from 60 deg, tone B +125 kHz from
   200 deg; `t_bw.py` against a TEST build on 5808x / 5809x): 24 / 24 -
@@ -6121,18 +6149,15 @@ assumes no NaNs.
 
 ### 2. Decimation Architecture
 
-**Thread-Local Decimators:**
-- Zero allocation per call (thread_local storage)
-- Shared coefficient cache with 95%+ hit rate
-- Pre-reserved buffers (no dynamic allocation in hot path)
-
-**Coefficient Caching:**
-```cpp
-thread_local std::map<...> decimator_cache;  // Per-thread instance
-static std::shared_mutex cache_mutex;        // Multi-reader, single-writer
-```
-
-**Performance:** ~8000 samples/µs per channel
+(The thread-local decimators / coefficient cache this section used to
+describe are long gone.) Per VFO a `SharedDecimator`, per antenna a
+`ChannelDecimState` (it follows the channel, not the pool thread): an
+input-rate mixer writing into a cascade of `FirStage` block FIRs (real
+taps, every output computed straight from the stage's buffer - no
+per-sample window pushes), the antennas in parallel on the decimator's
+`ThreadPool`. Details + measurements: *Arbitrary VFO bandwidth* above
+(`tools/decim_bench.cpp`). Pi 5, one antenna: ~2.6-4.9 ns per input sample
+up to 240 kHz, ~7-8 ns at 300 kHz - 1.2 MHz, plus ~2.9 ns for the mixer.
 
 ### 3. FFT Processing
 

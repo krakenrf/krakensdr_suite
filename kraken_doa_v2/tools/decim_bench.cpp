@@ -4,9 +4,11 @@
 // (as % of a core at 2.4 MS/s), the output rate / bandwidth (what the rest of
 // the pipeline - MUSIC, demodulators, decoders - pays per sample), the gain
 // and the frequency response (tones through the real SharedDecimator).
-//   old  = the cascade before arbitrary bandwidths: complex taps (cccf),
-//          only the BANDWIDTH_OPTIONS sizes
-//   new  = SharedDecimator::designStages on real taps (crcf), any width
+// The same taps (SharedDecimator::designStages) in three implementations:
+//   cccf  = liquid firdecim_cccf, complex taps - the cascade before
+//           arbitrary bandwidths (only the BANDWIDTH_OPTIONS sizes)
+//   crcf  = liquid firdecim_crcf, real taps (the first arbitrary-width build)
+//   block = SharedDecimator::FirStage, the block FIR it runs now
 // Build (from kraken_doa_v2, after `make` built liquid-dsp), one line:
 //   g++ -std=c++20 -Ofast -march=native -Iinclude -isystem liquid-dsp/build-kraken/include
 //       tools/decim_bench.cpp src/signal_processing/shared_decimator.cpp
@@ -28,21 +30,26 @@ namespace {
 
 constexpr size_t BLOCK = 16384;   // one heimdall packet per antenna
 
+enum class Impl { CCCF, CRCF, BLOCK };
+
 struct Cascade {
-    bool complex_taps;
+    Impl impl;
     std::vector<firdecim_crcf> r;
     std::vector<firdecim_cccf> c;
+    std::vector<SharedDecimator::FirStage> blk;
     std::vector<int> fac;
     std::vector<cf> a, b;
-    Cascade(int bw_hz, bool complex_taps_) : complex_taps(complex_taps_) {
+    Cascade(int bw_hz, Impl impl_) : impl(impl_) {
         for (auto& d : SharedDecimator::designStages(bw_hz)) {
             fac.push_back(d.factor);
-            if (complex_taps) {
+            if (impl == Impl::CCCF) {
                 std::vector<liquid_float_complex> h(d.taps.size());
                 for (size_t i = 0; i < h.size(); i++) h[i] = liquid_float_complex{d.taps[i], 0.0f};
                 c.push_back(firdecim_cccf_create(d.factor, h.data(), static_cast<unsigned>(h.size())));
-            } else {
+            } else if (impl == Impl::CRCF) {
                 r.push_back(firdecim_crcf_create(d.factor, d.taps.data(), static_cast<unsigned>(d.taps.size())));
+            } else {
+                blk.emplace_back(d.factor, d.taps);
             }
         }
     }
@@ -56,6 +63,21 @@ struct Cascade {
             out.assign(in, in + n);
             return n;
         }
+        if (impl == Impl::BLOCK) {   // as SharedDecimator::decimateChannel runs them
+            std::copy(in, in + n, blk[0].append(n));
+            for (size_t s = 0; s < blk.size(); s++) {
+                const size_t on = blk[s].pending();
+                cf* dst;
+                if (s + 1 == blk.size()) {
+                    out.resize(on);
+                    dst = out.data();
+                } else {
+                    dst = blk[s + 1].append(on);
+                }
+                blk[s].produce(dst);
+            }
+            return out.size();
+        }
         const cf* src = in;
         size_t cur = n;
         for (size_t s = 0; s < fac.size(); s++) {
@@ -64,7 +86,7 @@ struct Cascade {
             dst.resize(on);
             auto* x = const_cast<liquid_float_complex*>(reinterpret_cast<const liquid_float_complex*>(src));
             auto* y = reinterpret_cast<liquid_float_complex*>(dst.data());
-            if (complex_taps) firdecim_cccf_execute_block(c[s], x, static_cast<unsigned>(on), y);
+            if (impl == Impl::CCCF) firdecim_cccf_execute_block(c[s], x, static_cast<unsigned>(on), y);
             else firdecim_crcf_execute_block(r[s], x, static_cast<unsigned>(on), y);
             src = dst.data();
             cur = on;
@@ -77,9 +99,9 @@ double now_s() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-// ns of cascade time per input sample (whole blocks, D-aligned like the decimator's carry)
-double bench(int bw_hz, bool complex_taps, const std::vector<cf>& x, double secs) {
-    Cascade q(bw_hz, complex_taps);
+// ns of cascade time per input sample (whole blocks, D-aligned)
+double bench(int bw_hz, Impl impl, const std::vector<cf>& x, double secs) {
+    Cascade q(bw_hz, impl);
     const size_t D = static_cast<size_t>(decimation_for_bandwidth(bw_hz));
     const size_t n = x.size() / D * D;
     std::vector<cf> out;
@@ -95,22 +117,55 @@ double bench(int bw_hz, bool complex_taps, const std::vector<cf>& x, double secs
     return (t - t0) * 1e9 / static_cast<double>(done);
 }
 
-// max |new - old| / rms(old) on the same input (efficient sizes: same taps)
-double old_new_diff(int bw_hz, const std::vector<cf>& x) {
-    Cascade o(bw_hz, true), n(bw_hz, false);
+// max |b - a| / rms(a) on the same input (the same taps; D-aligned blocks
+// give both the same outputs per block)
+double diff_rms(int bw_hz, Impl ia, Impl ib, const std::vector<cf>& x) {
+    Cascade qa(bw_hz, ia), qb(bw_hz, ib);
     const size_t D = static_cast<size_t>(decimation_for_bandwidth(bw_hz));
     const size_t len = x.size() / D * D;
-    std::vector<cf> yo, yn;
+    std::vector<cf> ya, yb;
     double md = 0, p = 0;
+    size_t cnt = 0;
     for (int rep = 0; rep < 4; rep++) {
-        o.run(x.data(), len, yo);
-        n.run(x.data(), len, yn);
-        for (size_t i = 0; i < yo.size(); i++) {
-            md = std::max(md, static_cast<double>(std::abs(yo[i] - yn[i])));
-            p += std::norm(yo[i]);
+        qa.run(x.data(), len, ya);
+        qb.run(x.data(), len, yb);
+        if (ya.size() != yb.size()) return 1e9;   // they must line up exactly
+        for (size_t i = 0; i < ya.size(); i++) {
+            md = std::max(md, static_cast<double>(std::abs(ya[i] - yb[i])));
+            p += std::norm(ya[i]);
         }
+        cnt += ya.size();
     }
-    const double rms = std::sqrt(p / std::max<size_t>(1, 4 * yo.size()));
+    const double rms = std::sqrt(p / std::max<size_t>(1, cnt));
+    return rms > 0 ? md / rms : 0;
+}
+
+// SharedDecimator itself (offset 0: no mixer) fed blocks of odd lengths - its
+// stages keep what they haven't used up - vs the liquid crcf cascade on the
+// whole input at once: max |diff| / rms over the common stream (1e9 = the
+// streams differ in length by more than one sample)
+double stream_diff(int bw_hz, const std::vector<cf>& x) {
+    SharedDecimator dec;
+    dec.initialize(1);
+    std::vector<cf> got;
+    const size_t lens[] = {16384, 1000, 7, 333, 4096, 12345, 1, 9999};
+    size_t at = 0;
+    for (int k = 0; at < x.size(); k++) {
+        size_t n = std::min(lens[k % 8], x.size() - at);
+        const cf* p = x.data() + at;
+        auto r = dec.decimateMultiChannel(&p, &n, 1, bw_hz, 0.0f);
+        if (!r.channels.empty()) got.insert(got.end(), r.channels[0].samples.begin(), r.channels[0].samples.end());
+        at += n;
+    }
+    Cascade ref(bw_hz, Impl::CRCF);
+    std::vector<cf> want;
+    const size_t D = static_cast<size_t>(decimation_for_bandwidth(bw_hz));
+    ref.run(x.data(), x.size() / D * D, want);
+    const size_t n = std::min(got.size(), want.size());
+    if (got.size() > want.size() + 1 || want.size() > got.size() + 1) return 1e9;
+    double md = 0, p = 0;
+    for (size_t i = 0; i < n; i++) md = std::max(md, static_cast<double>(std::abs(got[i] - want[i]))), p += std::norm(want[i]);
+    const double rms = std::sqrt(p / std::max<size_t>(1, n));
     return rms > 0 ? md / rms : 0;
 }
 
@@ -151,36 +206,42 @@ int main(int argc, char** argv) {
     std::vector<cf> x(BLOCK * 4);
     for (auto& v : x) v = cf(g(rng), g(rng));
 
-    std::printf("# 1) the old sizes (BANDWIDTH_OPTIONS): old cccf vs new crcf, ns per input sample, %% of a core per antenna\n");
-    std::printf("%10s %5s %9s %9s %7s %7s %6s %10s\n", "bw_Hz", "D", "old_ns", "new_ns", "old_%", "new_%", "speed", "diff/rms");
-    double so = 0, sn = 0;
+    std::cout.setstate(std::ios::failbit);   // SharedDecimator's own log lines
+
+    std::printf("# 1) the old sizes (BANDWIDTH_OPTIONS): ns per input sample per antenna (%% of a core = ns x 0.24)\n");
+    std::printf("%10s %5s %8s %8s %8s %8s %7s %10s %10s\n", "bw_Hz", "D", "cccf", "crcf", "block", "block_%", "speed", "diff/rms",
+                "stream");
+    double sc = 0, sr = 0, sb = 0, worst_diff = 0;
     for (int i = 0; i < NUM_BANDWIDTH_OPTIONS; i++) {
         const int bw = bandwidth_option_hz(i);
-        const double o = bench(bw, true, x, secs), n = bench(bw, false, x, secs);
-        so += o, sn += n;
-        std::printf("%10d %5d %9.3f %9.3f %7.2f %7.2f %5.2fx %10.2e\n", bw, decimation_for_bandwidth(bw), o, n, o * 0.24, n * 0.24, o / n,
-                    old_new_diff(bw, x));
+        const double c = bench(bw, Impl::CCCF, x, secs), r = bench(bw, Impl::CRCF, x, secs), b = bench(bw, Impl::BLOCK, x, secs);
+        sc += c, sr += r, sb += b;
+        const double d1 = diff_rms(bw, Impl::CCCF, Impl::BLOCK, x), d2 = stream_diff(bw, x);
+        worst_diff = std::max({worst_diff, d1, d2});
+        std::printf("%10d %5d %8.3f %8.3f %8.3f %8.2f %6.2fx %10.2e %10.2e\n", bw, decimation_for_bandwidth(bw), c, r, b, b * 0.24, c / b,
+                    d1, d2);
     }
-    std::printf("# mean over the old sizes: old %.3f ns, new %.3f ns (%.2fx)\n\n", so / NUM_BANDWIDTH_OPTIONS, sn / NUM_BANDWIDTH_OPTIONS,
-                so / sn);
+    std::printf("# mean over the old sizes: cccf %.3f ns, crcf %.3f ns, block %.3f ns (%.2fx the cccf, %.2fx the crcf)\n"
+                "# (speed and diff/rms: block vs cccf, the decimator before arbitrary widths; stream: SharedDecimator fed\n"
+                "#  blocks of odd lengths vs the crcf cascade on the whole input) - worst difference %.2e of rms\n\n",
+                sc / NUM_BANDWIDTH_OPTIONS, sr / NUM_BANDWIDTH_OPTIONS, sb / NUM_BANDWIDTH_OPTIONS, sc / sb, sr / sb, worst_diff);
 
-    std::printf("# 2) arbitrary widths (new): cascade cost, output rate / bandwidth, the nearest old size's cost\n");
-    std::printf("%10s %5s %10s %6s %9s %7s %12s %9s %8s\n", "bw_Hz", "D", "rate_Hz", "rate/bw", "new_ns", "new_%", "near_old_Hz", "near_ns",
+    std::printf("# 2) arbitrary widths (block): cascade cost, output rate / bandwidth, the nearest old size's cost\n");
+    std::printf("%10s %5s %10s %6s %9s %7s %12s %9s %8s\n", "bw_Hz", "D", "rate_Hz", "rate/bw", "ns", "%", "near_old_Hz", "near_ns",
                 "cost/old");
     double worst_ratio = 0;
     for (double l = std::log10(1000.0); l <= std::log10(2.4e6) + 1e-9; l += 0.05) {
         const int bw = clamp_bandwidth_hz(std::pow(10.0, l));
         const int D = decimation_for_bandwidth(bw);
-        const double n = bench(bw, false, x, secs);
+        const double n = bench(bw, Impl::BLOCK, x, secs);
         const int near = bandwidth_option_hz(nearest_bandwidth_index(bw));
-        const double nn = bench(near, false, x, secs);
+        const double nn = bench(near, Impl::BLOCK, x, secs);
         const double rate = SAMPLE_RATE / D;
         worst_ratio = std::max(worst_ratio, rate / bw);
         std::printf("%10d %5d %10.0f %6.3f %9.3f %7.2f %12d %9.3f %7.2fx\n", bw, D, rate, rate / bw, n, n * 0.24, near, nn, n / nn);
     }
     std::printf("# worst output rate / bandwidth: %.3f\n\n", worst_ratio);
 
-    std::cout.setstate(std::ios::failbit);   // SharedDecimator's own log lines
     std::printf("# 3) response (dB re SAMPLE_RATE / bandwidth) of a tone f from the VFO centre (the band = +-0.5 bw)\n");
     std::printf("%10s %8s %8s %8s %8s %8s %8s %10s\n", "bw_Hz", "f=0", "0.3bw", "0.4bw", "0.5bw", "0.6bw", "0.8bw", "rate-0.3bw");
     for (int bw : {1000, 1700, 6250, 12500, 15000, 25000, 33333, 100000, 250000, 333333, 1000000, 1500000, 2000000}) {
