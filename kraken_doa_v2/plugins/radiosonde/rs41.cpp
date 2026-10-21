@@ -1,385 +1,441 @@
-// Vaisala RS41 (RS41-SG / -SGP / -SGM): GFSK 4800 baud, NRZ, bytes LSB
-// first, whitened with a 64-byte XOR mask. A frame is 320 bytes (518 with
-// auxiliary data, e.g. an ozone sonde): 8-byte header, 48 bytes of
-// Reed-Solomon parity (two RS(255,231) codewords over the even / odd bytes
-// from offset 56), a frame-type byte, then blocks of id, length, data and a
-// CRC-16/CCITT (little endian):
-//   0x79 status: frame number, serial, battery, one 16-byte fragment of the
-//        calibration table (51 fragments cycle, one per frame)
-//   0x7A measurements: 12 x 24-bit sensor frequencies (temperature, humidity,
-//        humidity-sensor temperature, pressure: each with two references)
-//   0x7C GPS week / time of week, 0x7D raw GPS, 0x7B ECEF position + velocity
-//   0x82 / 0x83 (newer firmware): ECEF + UTC date/time, GNSS satellites
-//   0x7E auxiliary instrument data, 0x76 padding, 0x80 encrypted (RS41-SGM)
-// Temperature, humidity and pressure come from the frequencies through the
-// calibration table (platinum resistor + reference resistors, capacitive
-// humidity sensor with its own temperature and a 7x6 calibration matrix,
-// pressure polynomial on the -SGP).
+// Vaisala RS41 (family "RS41").
 //
-// Protocol and calibration model as documented by the open-source radiosonde
-// community (rs1729/RS "rs41mod", DF9DQ); this is an independent
-// implementation, validated against the radiosonde_auto_rx test recordings.
+// GFSK 4800 bit/s, NRZ, one frame a second; bytes LSB first, whitened with a
+// 64-byte mask by frame byte index. Frame: 8-byte header (the sync), the
+// parity of two interleaved RS(255,231) codewords (frame bytes 8..55), the
+// frame type (56: 0x0F = 320 bytes, 0xF0 = 518 bytes with auxiliary data),
+// then sub-blocks id / length / data / CRC-16 to the end. The status block
+// carries a 16-byte fragment of the 816-byte calibration table (51 fragments,
+// cycling): TX frequency, names, the sensor constants of temperature,
+// humidity and pressure. Facts of the frame layout and the sensor model from
+// ra-firmware (DF9DQ, github.com/einergehtnochrein/ra-firmware); the
+// temperature / humidity / pressure computation below follows its
+// src/rs41/rs41metrology.c closely, under its licence:
+//
+//   Copyright (c) 2017, einergehtnochrein
+//   All rights reserved.
+//
+//   Redistribution and use in source and binary forms, with or without
+//   modification, are permitted provided that the following conditions are
+//   met:
+//   * Redistributions of source code must retain the above copyright notice,
+//     this list of conditions and the following disclaimer.
+//   * Redistributions in binary form must reproduce the above copyright
+//     notice, this list of conditions and the following disclaimer in the
+//     documentation and/or other materials provided with the distribution.
+//   * Neither the name of the copyright holder nor the names of its
+//     contributors may be used to endorse or promote products derived from
+//     this software without specific prior written permission.
+//
+//   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+//   IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+//   THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+//   PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+//   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+//   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+//   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+//   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+//   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+//   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+//   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "rs.hpp"
-#include "sonde.hpp"
+#include "families.hpp"
 
-#include <array>
-#include <cstdio>
-#include <memory>
+#include <algorithm>
+#include <cstring>
 
 namespace sonde {
+
 namespace {
 
-constexpr int FRAME_MAX = 518, FRAME_STD = 320;
-const char* HEADER = "0000100001101101010100111000100001000100011010010100100000011111";
-const uint8_t MASK[64] = {0x96, 0x83, 0x3E, 0x51, 0xB1, 0x49, 0x08, 0x98, 0x32, 0x05, 0x59, 0x0E, 0xF9, 0x44, 0xC6, 0x26,
-                          0x21, 0x60, 0xC2, 0xEA, 0x79, 0x5D, 0x6D, 0xA1, 0x54, 0x69, 0x47, 0x0C, 0xDC, 0xE8, 0x5C, 0xF1,
-                          0xF7, 0x76, 0x82, 0x7F, 0x07, 0x99, 0xA2, 0x2C, 0x93, 0x7C, 0x30, 0x63, 0xF5, 0x10, 0x2E, 0x61,
-                          0xD0, 0xBC, 0xB4, 0xB6, 0x06, 0xAA, 0xF4, 0x23, 0x78, 0x6E, 0x3B, 0xAE, 0xBF, 0x7B, 0x4C, 0xC1};
+const char* RS41_SYNC = "0000100001101101010100111000100001000100011010010100100000011111";
+const uint8_t RS41_HEADER[8] = {0x86, 0x35, 0xF4, 0x40, 0x93, 0xDF, 0x1A, 0x60};
+const uint8_t RS41_WHITEN[64] = {
+    0x96, 0x83, 0x3E, 0x51, 0xB1, 0x49, 0x08, 0x98, 0x32, 0x05, 0x59, 0x0E, 0xF9, 0x44, 0xC6, 0x26,
+    0x21, 0x60, 0xC2, 0xEA, 0x79, 0x5D, 0x6D, 0xA1, 0x54, 0x69, 0x47, 0x0C, 0xDC, 0xE8, 0x5C, 0xF1,
+    0xF7, 0x76, 0x82, 0x7F, 0x07, 0x99, 0xA2, 0x2C, 0x93, 0x7C, 0x30, 0x63, 0xF5, 0x10, 0x2E, 0x61,
+    0xD0, 0xBC, 0xB4, 0xB6, 0x06, 0xAA, 0xF4, 0x23, 0x78, 0x6E, 0x3B, 0xAE, 0xBF, 0x7B, 0x4C, 0xC1};
+constexpr int FRAME_MAX = 518;
+constexpr int NSYM = (FRAME_MAX - 8) * 8;   // 4080: the longest frame after the header
+constexpr int NFRAG = 51;
+constexpr size_t MAX_TABLES = 8;            // calibration tables kept (by serial, least recently heard dropped)
 
-class Rs41 : public Type {
+// one sonde's calibration table
+struct CalTable {
+    std::string serial;
+    uint8_t t[NFRAG * 16] = {};
+    bool have[NFRAG] = {};
+    int n = 0;                              // distinct fragments received
+    int countdown = -2;                     // fragment 50 bytes 0..1 as last received (-2 = never)
+    bool all(int a, int b) const {
+        for (int i = a; i <= b; i++)
+            if (!have[i]) return false;
+        return true;
+    }
+    float f(int off) const { return f32le(t + off); }
+    int16_t s16(int off) const { return static_cast<int16_t>(u16le(t + off)); }
+    std::string text(int off, int n) const {   // printable characters up to a NUL
+        std::string s;
+        for (int i = 0; i < n; i++) {
+            const uint8_t c = t[off + i];
+            if (c == 0) break;
+            if (c >= 0x20 && c <= 0x7E) s += static_cast<char>(c);
+        }
+        return s;
+    }
+};
+
+// saturation vapour pressure with ra-firmware's temperature pre-transform
+double svp_rs41(double t_c) {
+    const double tk = t_c + 273.15;
+    const double tt = -0.4931358 + 1.0046094296 * tk - 1.3746454e-5 * tk * tk + 1.2743214e-8 * tk * tk * tk;
+    return svp_hyland_wexler(tt);
+}
+
+class Rs41 : public Family {
 public:
-    explicit Rs41(double fs) : rs_(0x11D, 0, 1, 24) {
-        FskConfig c;
-        c.baud = 4800;
-        for (const char* p = HEADER; *p; p++) c.sync.push_back(*p == '1');
-        c.max_sync_err = 4;
-        c.frame_syms = (FRAME_MAX - 8) * 8;
-        rx_.init(c, fs);
-        fs_ = fs;
-        rx_.on_frame = [this](const FskFrame& f) { frame(f); };
-        reset();
+    Rs41() {
+        FskParams p;
+        p.rate = 4800;
+        p.sync = RS41_SYNC;
+        p.max_err = 4;
+        p.nsym = NSYM;
+        p.phases = 8;
+        rx_.init(p);
     }
-    void push(const float* narrow, const float*, size_t n, double t0) override {
-        t_ = t0;
-        rx_.clock(t0);
-        for (size_t i = 0; i < n; i++) rx_.push(narrow[i]);
-    }
+
     void reset() override {
         rx_.reset();
+        dup_.reset();
+        last_counter_ = -1;
         serial_.clear();
-        cal_.fill(0);
-        have_.fill(false);
-        last_no_ = -1;
-        last_t0_ = -1e12;
-        last_alt_ = NAN;
-        week_ = -1;
-        freq_khz_ = 0;
-        subtype_.clear();
-        board_.clear();
-        fw_ = 0;
-        bt_ = kt_ = cd_ = -1;
-        bk_ = false;
+        tables_.clear();
+        last_h_ = NAN;
+    }
+
+    void process(const float* narrow, const float*, size_t n, int64_t idx, const Ctx& ctx, std::vector<Record>& out) override {
+        caps_.clear();
+        rx_.process(narrow, n, idx, caps_);
+        for (const auto& c : caps_) decode(c, ctx, out);
     }
 
 private:
-    void frame(const FskFrame& f);
-    bool have(std::initializer_list<int> frags) const {
-        for (int i : frags)
-            if (!have_[i]) return false;
-        return true;
-    }
-    float cf(int off) const { return f32le(&cal_[off]); }
-    double temperature(uint32_t f, uint32_t f1, uint32_t f2, int co, int calt) const;
-    double humidity(uint32_t f, uint32_t f1, uint32_t f2, double t, double th, double p) const;
-    double pressure(uint32_t f, uint32_t f1, uint32_t f2, double tp) const;
-    void status(const uint8_t* d, Frame& o);
-    void meas(const uint8_t* d, Frame& o);
-
     FskRx rx_;
-    ReedSolomon rs_;
-    double fs_ = 48000, t_ = 0;
-    std::string serial_;
-    std::array<uint8_t, 51 * 16> cal_{};
-    std::array<bool, 51> have_{};
-    long last_no_ = -1;
-    double last_t0_ = -1e12, last_alt_ = NAN;
-    int week_ = -1;
-    int freq_khz_ = 0;
-    std::string subtype_, board_, typ_tmp_;
-    int fw_ = 0;
-    long bt_ = -1, kt_ = -1, cd_ = -1;
-    bool bk_ = false;
+    ReedSolomon rs_{0x11D, 0, 1, 24};
+    std::vector<FskCapture> caps_;
+    DupWindow dup_;
+    long long last_counter_ = -1;
+    std::string serial_;                    // the latest serial heard
+    std::list<CalTable> tables_;            // most recently heard first
+    double last_h_ = NAN;                   // the latest valid GPS height
+
+    CalTable& table(const std::string& serial) {
+        for (auto it = tables_.begin(); it != tables_.end(); ++it)
+            if (it->serial == serial) {
+                tables_.splice(tables_.begin(), tables_, it);
+                return tables_.front();
+            }
+        tables_.emplace_front();
+        tables_.front().serial = serial;
+        if (tables_.size() > MAX_TABLES) tables_.pop_back();
+        return tables_.front();
+    }
+
+    void decode(const FskCapture& c, const Ctx& ctx, std::vector<Record>& out) {
+        uint8_t f[FRAME_MAX];
+        std::memcpy(f, RS41_HEADER, 8);
+        for (int j = 0; j < FRAME_MAX - 8; j++) {
+            unsigned v = 0;
+            for (int b = 0; b < 8; b++) v |= (c.sym[static_cast<size_t>(8 * j + b)] > 0 ? 1u : 0u) << b;   // LSB first
+            f[8 + j] = static_cast<uint8_t>(v ^ RS41_WHITEN[(8 + j) & 63]);
+        }
+        // frame length from the type byte (before any correction)
+        const int lo = __builtin_popcount(f[56] & 0x0F), hi = __builtin_popcount(f[56] >> 4);
+        const int len = lo >= hi ? 320 : 518;
+        if (len < FRAME_MAX) std::memset(f + len, 0, static_cast<size_t>(FRAME_MAX - len));
+        // the two Reed-Solomon codewords: x^k = parity byte k, x^(24+i) = byte 56 + 2i + c
+        const int ndata = len == 320 ? 132 : 231;
+        uint8_t cw[2][255];
+        bool ok = true;
+        for (int k = 0; k < 2; k++) {
+            std::memset(cw[k], 0, 255);
+            for (int i = 0; i < 24; i++) cw[k][i] = f[8 + 24 * k + i];
+            for (int i = 0; i < ndata; i++) cw[k][24 + i] = f[56 + 2 * i + k];
+            if (rs_.decode(cw[k], 24 + ndata) < 0) ok = false;
+        }
+        if (ok)
+            for (int k = 0; k < 2; k++) {
+                for (int i = 0; i < 24; i++) f[8 + 24 * k + i] = cw[k][i];
+                for (int i = 0; i < ndata; i++) f[56 + 2 * i + k] = cw[k][24 + i];
+            }
+        // else: the frame as received - every sub-block still has its own CRC
+
+        Record r;
+        r.family = "RS41";
+        int passed = 0;
+        bool have_status = false, have_meas = false, short_meas = false, encrypted = false;
+        int crypto = 0, frag = -1;
+        const uint8_t* meas = nullptr;
+        std::string serial;
+        int sats7b = -1, sats83 = -1;
+        bool pos_ok = false;
+        double ex = 0, ey = 0, ez = 0, vx = 0, vy = 0, vz = 0;
+        for (int p = 57; p + 4 <= len;) {
+            const int id = f[p], L = f[p + 1];
+            if (p + 4 + L > len) break;
+            const uint8_t* d = f + p + 2;
+            const uint16_t crc = u16le(d + L);
+            p += 4 + L;
+            if (crc16_ccitt_false(d, static_cast<size_t>(L)) != crc) continue;
+            passed++;
+            switch (id) {
+                case 0x79:   // status + calibration fragment
+                    if (L < 40) break;
+                    have_status = true;
+                    r.frame = u16le(d);
+                    for (int i = 0; i < 8; i++) {
+                        const uint8_t ch = d[2 + i];
+                        serial += ch >= 0x20 && ch <= 0x7E ? static_cast<char>(ch) : '?';
+                    }
+                    r.batt = d[10] * 0.1;
+                    crypto = d[15];
+                    frag = d[23];
+                    if (frag < NFRAG) {
+                        CalTable& t = table(serial);
+                        if (!t.have[frag]) {
+                            t.have[frag] = true;
+                            t.n++;
+                        }
+                        std::memcpy(t.t + 16 * frag, d + 24, 16);
+                        if (frag == 50) t.countdown = static_cast<int16_t>(u16le(d + 24));
+                    }
+                    break;
+                case 0x7A:   // measurements
+                    if (L < 42) break;
+                    have_meas = true;
+                    short_meas = false;
+                    meas = d;
+                    break;
+                case 0x7F:   // short measurements (RS41-SGM, unencrypted): 3 channels
+                    if (L < 27) break;
+                    if (!have_meas) {
+                        have_meas = true;
+                        short_meas = true;
+                        meas = d;
+                    }
+                    break;
+                case 0x7C: {   // GPS week + time of week
+                    if (L < 6) break;
+                    r.utc = gps_to_unix(u16le(d), u32le(d + 2) / 1000.0);
+                    break;
+                }
+                case 0x7B:   // GPS ECEF position + velocity
+                    if (L < 19) break;
+                    sats7b = d[18];
+                    ex = static_cast<int32_t>(u32le(d)) / 100.0;
+                    ey = static_cast<int32_t>(u32le(d + 4)) / 100.0;
+                    ez = static_cast<int32_t>(u32le(d + 8)) / 100.0;
+                    vx = static_cast<int16_t>(u16le(d + 12)) / 100.0;
+                    vy = static_cast<int16_t>(u16le(d + 14)) / 100.0;
+                    vz = static_cast<int16_t>(u16le(d + 16)) / 100.0;
+                    pos_ok = sats7b > 0;
+                    break;
+                case 0x82: {   // GNSS position + UTC date / time (newer firmware)
+                    if (L < 25) break;
+                    ex = static_cast<int32_t>(u32le(d)) / 100.0;
+                    ey = static_cast<int32_t>(u32le(d + 4)) / 100.0;
+                    ez = static_cast<int32_t>(u32le(d + 8)) / 100.0;
+                    vx = static_cast<int16_t>(u16le(d + 12)) / 100.0;
+                    vy = static_cast<int16_t>(u16le(d + 14)) / 100.0;
+                    vz = static_cast<int16_t>(u16le(d + 16)) / 100.0;
+                    pos_ok = true;
+                    const int y = u16le(d + 18), mo = d[20], dd = d[21], hh = d[22], mi = d[23], ss = d[24];
+                    if (y > 2000 && mo >= 1 && mo <= 12 && dd >= 1 && dd <= 31 && hh < 24 && mi < 60 && ss < 61) {
+                        double s = ss;
+                        if (L > 25 && d[25] < 100) s += d[25] / 100.0;   // hundredths of a second
+                        r.utc = unix_time(y, mo, dd, hh, mi, s);
+                    }
+                    break;
+                }
+                case 0x83: {   // GNSS satellite info
+                    if (L < 41) break;
+                    int k = 0;
+                    for (int i = 25; i <= 40; i++)
+                        if (d[i] & 0x70) k++;
+                    sats83 = k;
+                    break;
+                }
+                case 0x7E: {   // auxiliary instrument data
+                    if (L < 1) break;
+                    const int m = std::min(L, 24);
+                    r.extras.emplace_back("Aux data", hex_upper(d, static_cast<size_t>(m)) + (L > 24 ? "..." : ""));
+                    break;
+                }
+                case 0x78:
+                case 0x80:   // encrypted (RS41-SGM)
+                    encrypted = true;
+                    break;
+                default:
+                    break;
+            }
+        }
+        if (have_status) serial_ = serial;
+        if (!passed || serial_.empty()) return;
+        // the same frame again (another timing phase), or the same counter
+        if (dup_.near(c.pos0, 0.25) || (r.frame >= 0 && r.frame == last_counter_)) return;
+        dup_.accept(c.pos0);
+        if (r.frame >= 0) last_counter_ = r.frame;
+
+        r.serial = serial_;
+        if (encrypted) r.extras.emplace_back("Encrypted", "yes (RS41-SGM: position and PTU not decodable)");
+        const bool sgm = encrypted || (crypto >= 1 && crypto <= 4);
+
+        // position
+        if (pos_ok && (ex != 0 || ey != 0 || ez != 0)) {
+            double la, lo2, h;
+            ecef_to_geodetic(ex, ey, ez, &la, &lo2, &h);
+            if (h > -100 && h < 80000) {
+                r.lat = la;
+                r.lon = lo2;
+                r.alt = h;
+                double e, nn, u;
+                ecef_to_enu_velocity(la, lo2, vx, vy, vz, &e, &nn, &u);
+                speed_dir(e, nn, &r.vh, &r.hdg);
+                r.vv = u;
+                last_h_ = h;
+            }
+        }
+        if (sats7b >= 0) r.sats = sats7b;
+        else if (sats83 >= 0) r.sats = sats83;
+
+        // calibration: names, TX frequency, timers, PTU
+        CalTable& t = table(serial_);
+        std::string variant, board;
+        if (t.have[33] && t.have[34]) variant = t.text(0x218, 10);
+        if (t.have[34]) board = t.text(0x222, 10);
+        r.model = !variant.empty() ? variant : sgm ? "RS41-SGM" : "RS41";
+        if (t.have[0]) r.txf = 400.0 + (u16le(t.t + 0x002) / 64) * 0.01;
+        if (!board.empty()) {
+            const uint32_t fw = t.have[1] ? u32le(t.t + 0x015) : 0;
+            r.extras.emplace_back("Mainboard", board + (fw ? " fw " + std::to_string(fw) : ""));
+        }
+        if (t.have[2]) {
+            const int kill = t.s16(0x027);
+            if (kill != -1) r.extras.emplace_back("Kill timer", std::to_string(kill) + " s");
+        }
+        if (t.have[49]) {
+            const int bt = t.s16(0x316);
+            if (bt > 0)
+                r.extras.emplace_back("Burst timer", std::to_string(bt) + " s" + (t.have[2] && t.t[0x02B] ? " (burst kill on)" : ""));
+        }
+        if (t.n < NFRAG) r.extras.emplace_back("Calibration", std::to_string(t.n) + "/51 fragments");
+        if (t.countdown != -2 && t.countdown != -1) r.countdown = t.countdown;
+        if (have_meas) ptu(r, t, meas, short_meas, sgm);
+
+        set_span(r, c, ctx);
+        if (ctx.raw) r.hex = hex_upper(f, static_cast<size_t>(len));
+        out.push_back(std::move(r));
+    }
+
+    // temperature, humidity, pressure from the measurement block and the table
+    void ptu(Record& r, const CalTable& t, const uint8_t* m, bool short_block, bool sgm) {
+        auto ratio = [&](int ch) -> double {   // normalised reading of channel ch
+            const double v = u24le(m + 9 * ch), lo = u24le(m + 9 * ch + 3), hi = u24le(m + 9 * ch + 6);
+            return hi == lo ? NAN : (v - lo) / (hi - lo);
+        };
+        const bool refs = t.all(3, 4);
+        const double R_lo = t.f(0x03D), R_hi = t.f(0x041), C_lo = t.f(0x045), C_hi = t.f(0x049);
+        double T = NAN, TU = NAN, P = NAN;
+        // air temperature
+        const double r0 = ratio(0);
+        if (refs && t.all(5, 7) && std::isfinite(r0)) {
+            const double R = R_lo + (R_hi - R_lo) * r0;
+            const double x = R * t.f(0x059);
+            const double T0 = t.f(0x04D) + t.f(0x051) * x + t.f(0x055) * x * x;
+            double poly = 0, pw = 1;
+            for (int k = 0; k < 6; k++) {
+                poly += t.f(0x05D + 4 * k) * pw;
+                pw *= T0;
+            }
+            const double v = T0 + poly;
+            if (v > -100 && v < 70) T = v;
+        }
+        // humidity-sensor temperature
+        const double r2 = ratio(2);
+        if (refs && t.all(18, 20) && std::isfinite(r2)) {
+            const double R = R_lo + (R_hi - R_lo) * r2;
+            const double x = R * t.f(0x131);
+            const double v = t.f(0x125) + t.f(0x129) * x + t.f(0x12D) * x * x;
+            if (v > -100 && v < 70) TU = v;
+        }
+        // pressure (RS41-SGP)
+        if (!short_block && !sgm && t.all(37, 42)) {
+            const double r3 = ratio(3);
+            if (std::isfinite(r3) && r3 != 0) {
+                const double tp = static_cast<int16_t>(u16le(m + 38)) / 100.0;
+                auto Pk = [&](int k) { return static_cast<double>(t.f(0x25E + 4 * k)); };
+                double w[6];
+                w[0] = Pk(0) + Pk(7) * tp + Pk(11) * tp * tp + Pk(15) * tp * tp * tp;
+                w[1] = Pk(1) + Pk(8) * tp + Pk(12) * tp * tp + Pk(16) * tp * tp * tp;
+                w[2] = Pk(2) + Pk(9) * tp + Pk(13) * tp * tp + Pk(17) * tp * tp * tp;
+                w[3] = Pk(3) + Pk(10) * tp + Pk(14) * tp * tp;
+                w[4] = Pk(4);
+                w[5] = Pk(5);
+                const double X = Pk(6) / r3;
+                double p = 0, xp = 1;
+                for (int k = 0; k < 6; k++) {
+                    p += w[k] * xp;
+                    xp *= X;
+                }
+                if (p > 0 && p < 1100) P = p;
+            }
+        }
+        // relative humidity
+        const double r1 = ratio(1);
+        if (std::isfinite(T) && std::isfinite(TU) && std::isfinite(r1) && t.all(3, 20) && t.all(42, 46)) {
+            // the humidity model's own sensor temperature
+            double Trh = TU, pw = 1;
+            for (int k = 0; k < 6; k++) {
+                Trh += t.f(0x135 + 4 * k) * pw;
+                pw *= TU;
+            }
+            const double C = C_lo + (C_hi - C_lo) * r1;
+            double Cp = (C / t.f(0x075) - 1) * t.f(0x079);
+            double pr = P;
+            if (!std::isfinite(pr)) pr = std::isfinite(last_h_) ? isa_pressure_hpa(last_h_) : 30.0;
+            const double tau = (Trh - 20) / 180, pi = pr / 1000;
+            double corr = 0, cpi = 1;
+            for (int i = 0; i < 3; i++) {
+                double l = 0, tj = 1;
+                for (int j = 0; j < 4; j++) {
+                    l += t.f(0x2BA + 4 * (4 * i + j)) * tj;
+                    tj *= tau;
+                }
+                const double q = t.f(0x2A6 + 4 * i);
+                corr += l * q * (pi / (1 + q * pi) - cpi / (1 + q));
+                cpi *= Cp;
+            }
+            Cp -= corr;
+            double rh = 0, cj = 1;
+            for (int j = 0; j < 7; j++) {
+                double tk = 1;
+                for (int k = 0; k < 6; k++) {
+                    rh += t.f(0x07D + 4 * (6 * j + k)) * cj * tk;
+                    tk *= tau;
+                }
+                cj *= Cp;
+            }
+            rh *= svp_rs41(TU) / svp_rs41(T);
+            if (std::isfinite(rh)) r.RH = std::clamp(rh, 0.0, 100.0);
+        }
+        r.T = T;
+        r.TU = TU;
+        r.P = P;
+    }
 };
-
-void Rs41::frame(const FskFrame& f) {
-    uint8_t fr[FRAME_MAX] = {0};
-    // header (already matched) + the soft symbols, bytes LSB first, de-whitened
-    for (int i = 0; i < 8; i++) {
-        uint8_t b = 0;
-        for (int k = 0; k < 8; k++) b |= (HEADER[i * 8 + k] == '1') << k;
-        fr[i] = b ^ MASK[i];
-    }
-    for (int i = 8; i < FRAME_MAX; i++) {
-        uint8_t b = 0;
-        for (int k = 0; k < 8; k++) b |= (f.soft[(i - 8) * 8 + k] > 0) << k;
-        fr[i] = b ^ MASK[i % 64];
-    }
-    // frame type: 0x0F standard (320), 0xF0 extended (518) - majority of its bits
-    int ft = 0;
-    for (int i = 0; i < 4; i++) ft += ((fr[56] >> i) & 1) - ((fr[56] >> (i + 4)) & 1);
-    const int len = ft >= 0 ? FRAME_STD : FRAME_MAX;
-    for (int i = len; i < FRAME_MAX; i++) fr[i] = 0;
-
-    // Reed-Solomon over the even and the odd bytes from 56 (parity at 8 / 32)
-    uint8_t cw[2][255];
-    for (int c = 0; c < 2; c++) {
-        std::memset(cw[c], 0, 255);
-        for (int i = 0; i < 24; i++) cw[c][i] = fr[8 + 24 * c + i];
-        for (int i = 0; 56 + 2 * i + c < FRAME_MAX && 24 + i < 255; i++) cw[c][24 + i] = fr[56 + 2 * i + c];
-    }
-    const int e0 = rs_.decode(cw[0]), e1 = rs_.decode(cw[1]);
-    if (e0 >= 0 && e1 >= 0) {
-        for (int c = 0; c < 2; c++) {
-            for (int i = 0; i < 24; i++) fr[8 + 24 * c + i] = cw[c][i];
-            for (int i = 0; 56 + 2 * i + c < len && 24 + i < 255; i++) fr[56 + 2 * i + c] = cw[c][24 + i];
-        }
-    }
-
-    Frame o;
-    o.type = "RS41";
-    o.dc_hz = f.dc_hz;
-    o.t_start = f.t_start;
-    o.t_end = f.t_end;
-    bool any = false, have_pos = false;
-    double ecef[3] = {0, 0, 0}, vel[3] = {0, 0, 0};
-    int pos = 57;
-    while (pos + 4 <= len) {
-        const int id = fr[pos], bl = fr[pos + 1];
-        if (pos + 2 + bl + 2 > len) break;
-        const uint8_t* d = fr + pos + 2;
-        if (u16le(d + bl) != crc16_ccitt(d, bl)) {
-            pos += 2 + bl + 2;
-            continue;   // this block is damaged - the others may still be fine
-        }
-        any = true;
-        switch (id) {
-        case 0x79:   // status
-            if (bl >= 40) status(d, o);
-            break;
-        case 0x7A:   // measurements (PTU)
-            if (bl >= 42) meas(d, o);
-            break;
-        case 0x7C:   // GPS week + time of week
-            if (bl >= 6) {
-                week_ = u16le(d);
-                o.utc = gps_to_utc(week_, u32le(d + 2) / 1000.0);
-            }
-            break;
-        case 0x7B:   // ECEF position (cm) + velocity (cm/s), satellites
-            if (bl >= 19) {
-                for (int k = 0; k < 3; k++) {
-                    ecef[k] = i32le(d + 4 * k) / 100.0;
-                    vel[k] = i16le(d + 12 + 2 * k) / 100.0;
-                }
-                o.sats = d[18];
-                have_pos = true;
-            }
-            break;
-        case 0x82:   // newer firmware: ECEF + UTC date and time
-            if (bl >= 26) {
-                for (int k = 0; k < 3; k++) {
-                    ecef[k] = i32le(d + 4 * k) / 100.0;
-                    vel[k] = i16le(d + 12 + 2 * k) / 100.0;
-                }
-                have_pos = true;
-                const int y = u16le(d + 18), mo = d[20], dd = d[21], h = d[22], mi = d[23];
-                double s = d[24] + (d[25] < 100 ? d[25] / 100.0 : 0);
-                if (y > 2000 && mo >= 1 && mo <= 12) o.utc = utc_seconds(y, mo, dd, h, mi, s);
-            }
-            break;
-        case 0x83: {  // newer firmware: GNSS satellites - status nibbles
-            if (bl >= 41) {
-                int n = 0;
-                for (int j = 0; j < 16; j++) n += ((d[25 + j] & 0xF) != 0) + ((d[25 + j] >> 4) != 0);
-                o.sats = n;
-            }
-            break;
-        }
-        case 0x7E:   // auxiliary instrument (XDATA)
-            o.extra.push_back({"Aux data", hex(d, std::min(bl, 24)) + (bl > 24 ? "..." : "")});
-            break;
-        case 0x80:
-            o.extra.push_back({"Encrypted", "yes (RS41-SGM: position and PTU not decodable)"});
-            if (subtype_.empty()) subtype_ = "RS41-SGM";
-            break;
-        default:
-            break;
-        }
-        pos += 2 + bl + 2;
-    }
-    if (!any || serial_.empty()) return;          // nothing checked out / no status yet
-    // the same frame caught by another timing phase (frames are 1 s apart)
-    if (std::fabs(f.t0 - last_t0_) < 0.25 * fs_) return;
-    if (o.frame_no >= 0 && o.frame_no == last_no_) return;
-    last_t0_ = f.t0;
-    if (o.frame_no >= 0) last_no_ = o.frame_no;
-
-    if (have_pos) {
-        double lat, lon, alt;
-        ecef_to_geo(ecef, &lat, &lon, &alt);
-        if (alt > -1000 && alt < 80000 && (ecef[0] || ecef[1] || ecef[2])) {
-            o.lat = lat; o.lon = lon; o.alt = alt;
-            last_alt_ = alt;
-            double ve, vn, vu;
-            ecef_vel_to_enu(vel, lat, lon, &ve, &vn, &vu);
-            en_to_speed_dir(ve, vn, &o.vh, &o.heading);
-            o.vv = vu;
-        }
-    }
-    o.serial = serial_;
-    o.subtype = subtype_.empty() ? "RS41" : subtype_;
-    if (freq_khz_) o.tx_mhz = freq_khz_ / 1000.0;
-    if (!board_.empty()) o.extra.push_back({"Mainboard", board_ + (fw_ ? " fw " + std::to_string(fw_) : "")});
-    if (cd_ >= 0 && cd_ != 0xFFFF) o.burst_timer = cd_;
-    if (kt_ >= 0 && kt_ != 0xFFFF) o.extra.push_back({"Kill timer", std::to_string(kt_) + " s"});
-    if (bt_ > 0) o.extra.push_back({"Burst timer", std::to_string(bt_) + " s" + (bk_ ? " (burst kill on)" : "")});
-    int ncal = 0;
-    for (bool h : have_) ncal += h;
-    if (ncal < 51) o.extra.push_back({"Calibration", std::to_string(ncal) + "/51 fragments"});
-    if (want_raw) o.raw = hex(fr, len);
-    if (out) out(o);
-}
-
-void Rs41::status(const uint8_t* d, Frame& o) {
-    o.frame_no = u16le(d);
-    std::string sn;
-    for (int i = 2; i < 10; i++) sn += (d[i] >= 0x20 && d[i] < 0x7F) ? static_cast<char>(d[i]) : '?';
-    if (sn != serial_) {   // another sonde: forget the calibration
-        serial_ = sn;
-        cal_.fill(0);
-        have_.fill(false);
-        subtype_.clear(); board_.clear(); typ_tmp_.clear();
-        freq_khz_ = 0; fw_ = 0; bt_ = kt_ = cd_ = -1; bk_ = false;
-        last_no_ = -1;
-    }
-    o.batt = d[10] / 10.0;
-    const int frag = d[23];
-    const uint8_t* c = d + 24;    // the 16 bytes of this calibration fragment
-    if (frag < 51) {
-        if (frag != 0x32) std::memcpy(&cal_[frag * 16], c, 16);   // 0x32 changes (countdown): not part of the table
-        have_[frag] = true;
-        switch (frag) {
-        case 0x00:                 // transmit frequency: 400 MHz + 40 kHz steps (+ 10 kHz fractions)
-            freq_khz_ = 400000 + 40 * c[3] + ((c[2] & 0xC0) * 10) / 64;
-            break;
-        case 0x01:
-            fw_ = c[5] | c[6] << 8;
-            break;
-        case 0x02:
-            kt_ = c[7] | c[8] << 8;
-            bk_ = c[11] != 0;
-            break;
-        case 0x21:                 // sonde type, first 8 characters
-            typ_tmp_.clear();
-            for (int i = 8; i < 16 && c[i]; i++) typ_tmp_ += (c[i] >= 0x20 && c[i] < 0x7F) ? static_cast<char>(c[i]) : '?';
-            break;
-        case 0x22:                 // its 9th character, and the mainboard
-            if (!typ_tmp_.empty()) {
-                if (c[0] >= 0x20 && c[0] < 0x7F) typ_tmp_ += static_cast<char>(c[0]);
-                subtype_ = typ_tmp_;
-            }
-            board_.clear();
-            for (int i = 2; i < 10 && c[i] >= 0x20 && c[i] < 0x7F; i++) board_ += static_cast<char>(c[i]);
-            break;
-        case 0x31:
-            bt_ = c[6] | c[7] << 8;
-            break;
-        case 0x32:
-            cd_ = c[0] | c[1] << 8;
-            break;
-        default:
-            break;
-        }
-    }
-}
-
-// platinum resistor between two reference resistors (Rf1, Rf2 at 0x3D / 0x41)
-double Rs41::temperature(uint32_t f, uint32_t f1, uint32_t f2, int co, int calt) const {
-    if (f2 == f1) return NAN;
-    const double rf1 = cf(61), rf2 = cf(65);
-    const double g = (static_cast<double>(f2) - f1) / (rf2 - rf1);
-    const double rb = (f1 * rf2 - f2 * rf1) / (static_cast<double>(f2) - f1);
-    const double r = (f / g - rb) * cf(calt);
-    return (cf(co) + cf(co + 4) * r + cf(co + 8) * r * r + cf(calt + 4)) * (1 + cf(calt + 8));
-}
-
-// capacitive sensor: capacitance from its frequency between two reference
-// capacitors, a pressure / temperature correction, then the 7x6 matrix in
-// (capacitance, sensor temperature); scaled from the sensor's temperature to
-// the air's
-double Rs41::humidity(uint32_t f, uint32_t f1, uint32_t f2, double t, double th, double p) const {
-    if (f2 == f1) return NAN;
-    const double fh = (static_cast<double>(f) - f1) / (static_cast<double>(f2) - f1);
-    const double cap = cf(69) + (cf(73) - cf(69)) * fh;
-    double cp = (cap / cf(117) - 1) * cf(121);
-    const double tn = (th - 20) / 180;
-    double b[6];
-    b[0] = 1;
-    for (int k = 1; k < 6; k++) b[k] = b[k - 1] * tn;
-    if (p > 0) {
-        const double pb = p / 1000;
-        double cpj = 1, corr = 0;
-        for (int j = 0; j < 3; j++) {
-            const double hp = cf(678 + 4 * j);
-            const double bp = hp * (pb / (1 + hp * pb) - cpj / (1 + hp));
-            double bt = 0;
-            for (int k = 0; k < 4; k++) bt += cf(698 + 4 * (4 * j + k)) * b[k];
-            corr += bp * bt;
-            cpj *= cp;
-        }
-        cp -= corr;
-    }
-    double rh = 0, aj = 1;
-    for (int j = 0; j < 7; j++) {
-        for (int k = 0; k < 6; k++) rh += aj * b[k] * cf(125 + 4 * (6 * j + k));
-        aj *= cp;
-    }
-    rh *= svp_hw(th) / svp_hw(t);
-    return std::max(0.0, std::min(100.0, rh));
-}
-
-// RS41-SGP: polynomial in the normalised frequency and the sensor's temperature
-double Rs41::pressure(uint32_t f, uint32_t f1, uint32_t f2, double tp) const {
-    if (f1 == f2 || f1 == f) return NAN;
-    // coefficient (j, k) of a0^j a1^k: 18 floats from 0x25E, stored by k-major groups
-    double c[25] = {0};
-    const int order[18] = {0, 4, 8, 12, 16, 20, 24, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11};
-    for (int i = 0; i < 18; i++) c[order[i]] = cf(606 + 4 * i);
-    const double a0 = c[24] / ((static_cast<double>(f) - f1) / (static_cast<double>(f2) - f1));
-    double p = 0, a0j = 1;
-    for (int j = 0; j < 6; j++) {
-        double a1k = 1;
-        for (int k = 0; k < 4; k++) {
-            p += a0j * a1k * c[j * 4 + k];
-            a1k *= tp;
-        }
-        a0j *= a0;
-    }
-    return p;
-}
-
-void Rs41::meas(const uint8_t* d, Frame& o) {
-    uint32_t m[12];
-    for (int i = 0; i < 12; i++) m[i] = u24le(d + 3 * i);
-    const bool hr = have({3, 4});
-    double t = NAN, th = NAN, p = NAN;
-    if (hr && have({4, 5, 6})) t = temperature(m[0], m[1], m[2], 77, 89);
-    if (hr && have({0x12, 0x13})) th = temperature(m[6], m[7], m[8], 293, 305);
-    const bool sgp = have({0x21}) && cal_[0x21F] == 'P';
-    if (sgp && have({0x25, 0x26, 0x27, 0x28, 0x29, 0x2A})) p = pressure(m[9], m[10], m[11], i16le(d + 38) / 100.0);
-    if (std::isfinite(t) && t > -100 && t < 70) o.temp = t;
-    if (std::isfinite(th) && th > -100 && th < 70) o.temp_rh = th;
-    if (std::isfinite(p) && p > 0 && p < 1100) o.pressure = p;
-    // humidity: needs the matrix fragments; the pressure (measured, else the
-    // standard atmosphere at the last GPS altitude) corrects it at low pressure
-    const double pc = std::isfinite(o.pressure) ? o.pressure : std::isfinite(last_alt_) ? isa_pressure(last_alt_) : -1;
-    if (std::isfinite(o.temp) && std::isfinite(o.temp_rh) && have({7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E}))
-        o.rh = humidity(m[3], m[4], m[5], o.temp, o.temp_rh, pc);
-}
 
 }  // namespace
 
-std::unique_ptr<Type> make_rs41(double fs) { return std::make_unique<Rs41>(fs); }
+std::unique_ptr<Family> make_rs41() { return std::make_unique<Rs41>(); }
 
 }  // namespace sonde

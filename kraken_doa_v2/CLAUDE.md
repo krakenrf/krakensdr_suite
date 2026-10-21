@@ -3817,50 +3817,60 @@ Edit `include/config.hpp`:
   same lock `kp::Info::whole_band` before the merge (2026-10-15): one name
   now; `--info` "whole_band" still reads as lock_vfo
 
-**Radiosonde (`plugins/radiosonde/`, weather balloons; README.md there):**
-- One plugin, eight families side by side (`sonde::Type` each, sonde.hpp):
-  rs41.cpp, dfm.cpp, m10.cpp (M10 + M20), imet4.cpp (AFSK), imet54.cpp,
-  lms6.cpp, mrz.cpp. 48 kHz in; two channel filters (+-7 kHz: the 2400-4800
-  Bd types; +-12 kHz: M10 / M20 9600 Bd, iMet-4 AFSK) -> FM discriminators
-  shared by all types. min_vfo_rate 24 kHz
-- fsk.cpp `FskRx`: symbol-long moving average (integrate & dump) on the
-  discriminator, NPH timing phases each on a FIXED search grid with its own
-  sync-word shift register (both polarities); a capture runs on its OWN
-  clock with a Gardner loop. (The first version moved the search grid with
-  the timing loop: running on the dead air after a frame it pulled every
-  phase to one instant and the next sync was missed - 94 of 118 RS41 frames.)
-  DC + deviation from the sync's 1s / 0s, soft symbols normalised to +-1.
-  Several phases catch one frame: types drop captures within ~0.3 frame of
-  a decoded one (`last_t0_`)
-- rs.cpp: generic GF(256) Reed-Solomon (BM / Chien / Forney; cw[i] = x^i):
-  RS41 (0x11D, fcr 0, prim 1, 24 roots), LMS6 CCSDS (0x187, 112, 11, 32).
-  LMS6: the known sync bytes 00 58 F3 3F B8 are prepended as perfect symbols
-  so `kp::viterbi_decode` starts in the right encoder state; LMS frames span
-  consecutive blocks (stream of RS data bytes, broken by a failed block / gap)
-- decoder.cpp keeps per sonde (type + serial) the last value of every field
-  (`Frame`, NAN = not in this frame) and publishes at most 1/s: facts (one
-  sonde: the latest), table row, map point kind "balloon" (ttl 3 h; the page
+**Radiosonde (`plugins/radiosonde/`, weather balloons; README.md there) - v2.0, a CLEAN-ROOM rewrite (2026-10-22):**
+- Why: v1.x held code translated from rs1729/RS (GPL-3.0: rs41.cpp's
+  temperature / humidity / pressure and more). A spec writer read v1.x +
+  permitted sources (ra-firmware BSD-3, NOAA's iMet-1-RSB protocol,
+  standards) and wrote a no-code spec; a separate implementer wrote v2.0 from
+  it alone; a similarity audit (winnowing, k 12) against v1.x, rs1729/RS and
+  ra-firmware: no rs1729 expression (<= 4.7 % of fingerprints, all formula
+  lines / plain assignments - v1.x's translated rs41.cpp: 5.8 %). rs41.cpp's
+  PTU and modem.cpp's M10 / M20 sensor code follow ra-firmware's metrology
+  closely: they carry its BSD-3 notice (+ THIRD_PARTY_NOTICES.md text H).
+  NEVER consult rs1729/RS, radiosonde_auto_rx, dxlAPRS or another GPL
+  decoder's code for this plugin
+- Kept on purpose (facts the rs1729 project first published, no code;
+  README *How it was written*): the DFM Steinhart-Hart fit + model rules
+  (ra-firmware's beta model is 2-7 K off from -20 to -80 degC), the M10
+  humidity model, the M20 main air temperature via the M10 network, the M20
+  serial printing (= other decoders' / SondeHub's), iMet-50, LMS6-403-2, LMSX
+- Same public interface as v1.1 (Info, options, facts, table, events, map,
+  talkers, raw, SONDE_DUMP, generator CLI) except the version. Recordings:
+  RS41 119, iMet-4 119, iMet-54 241, LMS6 120, M10 120, M20 120 = v1.1, raw
+  frames byte-identical; DFM 104 (shown from 16.9 s, once the serial is
+  known; v1.1 111 from 9.8 s), MRZ 71 (v1.1 49); MTS01 / noise 0; the scene
+  24 / 24 at 40.0 / 250.0. Values from ra-firmware's maths differ a little
+  (RS41 RH -0.8 %RH, TU 31.0 vs 31.3, M10 / M20 battery +0.05 V, M20 TU
+  20.2 vs 19.8, iMet-4 time +18 s = GMT as sent) - README test table
+- Files: decoder.cpp (plugin, per-sonde state, events, publishing at most
+  every 0.75 s - every record of a sonde sending one per >= 0.8 s),
+  families.hpp, sonde.hpp / sonde_util.cpp (record, geodesy, ISA, humidity
+  helpers), fsk_rx.* (the binary FSK frame receiver), rscode.* (RS
+  GF(256): RS41 + LMS6 CCSDS), rs41.cpp, dfm.cpp, modem.cpp (M10 + M20),
+  imet4.cpp (AFSK), imet54.cpp, lms6.cpp (+ LMSX), mrz.cpp
+- 48 kHz in, min_vfo_rate 24 kHz; per sonde (type + serial) the latest value
+  of every field: facts (one sonde: the latest), table row, map point kind
+  "balloon" (ttl 3 h; the page
   keeps balloon trails 4 h / 4000 points), events: new sonde, standard
   pressure levels passed on the way up (pressure measured or ISA at the GPS
   altitude, "(est.)"), burst (300 m below the maximum > 3 km, descending),
   landed (30 s still after burst). Velocity for types without it from the
   fix 3-10 s back (5+ satellites). freq_error = the frame's DC (AFC)
-- Validated against the radiosonde_auto_rx recordings + the rs1729 decoders
-  as reference (results in the README); `SONDE_DUMP=1 decoder --file ...`
-  prints every frame for such comparisons. The flight logic was tested with
-  a simulated 30 km flight (scratchpad harness including decoder.cpp)
-- Not supported: RS92 (needs ephemeris), 1680 MHz types, Meisei, MTS01.
-  rs1729/RS is GPL-3.0: used as documentation + test reference only
-- DoA per sonde (`Radiosonde::talker`, ID separation): every frame a
+- Tested on the radiosonde_auto_rx recordings (rfhead.net
+  sonde_samples.tar.gz, 96 kHz cf32; results in the README) against v1.1's
+  output; `SONDE_DUMP=1 decoder --file ...` prints every frame. The flight
+  logic was tested with a simulated flight (15 levels, burst, landing)
+- Not supported: RS92 (needs ephemeris), 1680 MHz types, Meisei, MTS01
+- DoA per sonde (ID separation): every frame a
   packet of type + serial, its first <= 0.24 s - see *DoA per talker*
-- Generator in the repo (2026-10-16): `tools/sonde_gen.py` (RS41-SG:
-  GFSK, whitening, the 320-byte block frame with CRCs + the two
-  RS(255,231) codewords - its parity = the recording's -, keyed 0.6 s a
-  second; M20: differential Manchester 9600 Bd, the 70-byte frame + checks,
-  0.17 s a second; positions around the station given at generation time)
-  -> playback `radiosonde-rs41-m20` (RS41 U2410853 at 40 deg, M20
-  512-2-14077 at 250 deg on 403.0 MHz, each in its own part of the
-  second): offline 24 / 24 frames, bearings 40.0 / 250.0
+- Generator `tools/sonde_gen.py` (rewritten with the plugin; the same
+  command line): RS41-SG (GFSK, whitening, the 320-byte block frame with
+  CRCs + the two RS(255,231) codewords, keyed 0.6 s a second) and M20
+  (biphase-mark 9600 Bd, the 70-byte frame + checks, 0.17 s a second);
+  positions around the station given at generation time -> playback
+  `radiosonde-rs41-m20` (RS41 U2410853 at 40 deg, M20 512-2-14077 at 250
+  deg on 403.0 MHz): 24 / 24 frames, bearings 40.0 / 250.0, with the new
+  decoder and with v1.1's
 
 **DME / TACAN (`plugins/dme/`, README.md there):**
 - 2.4 MHz input (`min_vfo_rate` 600 kHz, manual only, talkers). From
@@ -4110,7 +4120,33 @@ Edit `include/config.hpp`:
   (✈ / 🗼, the station's details + METAR, DF error 0.0). CPU 2.1 % of a
   core live (end to end)
 
-**FLARM / OGN (`plugins/flarm/`, README.md there):**
+**FLARM / OGN (`plugins/flarm/`, README.md there) - v2.0, a CLEAN-ROOM rewrite (2026-10-22):**
+- Why: v1.0 had been written with the OGN tracker's source
+  (pjalocha/esp32-ogn-tracker - NO licence) as "documentation" and held its
+  LDPC matrix verbatim. A spec writer read v1.0 + public documents (OGN
+  wiki tracking-protocol page, FLARM FTD-012, nRF905) and wrote a no-code
+  spec; a separate implementer wrote v2.0 from it alone; a similarity audit
+  (winnowing, k 12) against v1.0, the OGN tracker and SoftRF found no
+  third-party expression (0-2.4 % of fingerprints - v1.0's matrix file: 97
+  %). Some likeness to v1.0's own generator / receiver idioms (same model,
+  shared `uat_gen.py` template) - KrakenRF's code, not a licence issue.
+  NEVER consult the OGN tracker / SoftRF / flare / gr-flarm / ogn-rf code
+  for this plugin
+- `ogn_ldpc_matrix.hpp` = the protocol's LDPC(208,160) parity-check matrix:
+  interoperability data (the code every tracker transmits) taken from the
+  OGN tracker (no licence) - same content as v1.0's, hex rows in packet byte
+  order, read by the decoder AND `tools/flarm_gen.py`. Its use rests on it
+  being protocol data; written permission from the OGN tracker's author
+  would settle it
+- Files: decoder.cpp (plugin, band plans / tune, per-aircraft state,
+  outputs), receiver.* (FFT burst detection, arbitration, demodulation, sync
+  search), packet.* (FLARM CRC, OGN LDPC check + min-sum, TEA de-whitening,
+  report decoding)
+- Public interface = v1.0's except the version and one privacy fix: a
+  no-track tracker's verbose event carries no altitude any more (no position
+  element of a stealth tracker anywhere but the raw frame hex). The scene
+  below decodes identically to v1.0 (33 valid, the five talkers 0.0 deg,
+  the relay none); sensitivity = v1.0's at every point
 - Glider / GA collision-avoidance radios: `sample_rate` = `min_vfo_rate`
   2.4 MHz, `lock_vfo`, `tunes` (once, when no plan channel is in the VFO:
   option `band` - auto from the station location -> 868.8 MHz for EU / NZ,
@@ -4135,8 +4171,8 @@ Edit `include/config.hpp`:
   The encrypted 20 bytes (unpublished keys) are NOT decoded - by the
   project's rules (no brute force / reverse engineering of undisclosed
   encryption)
-- OGN (`ogn.cpp`, `ogn_ldpc.h` = the protocol's LDPC(208,160) parity-check
-  matrix): hard check, else normalised min-sum (0.75, 16 iterations, <= 16
+- OGN (packet.cpp, the matrix above): hard check, else normalised min-sum
+  (0.75, 16 iterations, <= 16
   bits changed); header parity checked; TEA (all-zero key, 8 rounds)
   de-whitening; position / status / info decoded (info: personal strings -
   pilot, crew, ICE, pilot ID, task - dropped); `Encrypted` = address only;
@@ -4147,11 +4183,10 @@ Edit `include/config.hpp`:
   Packets; details), map (trackable OGN only), events, raw `FLARM|OGN hex
   MHz dB`; table_keep 30 min
 - Generator `tools/flarm_gen.py` (FLARM: real header + CRC, random bytes
-  for the encrypted part; OGN: real fields, whitening, LDPC from the
-  plugin's matrix by GF(2) elimination - = the tracker's own generator
-  table; relays `same_as`; channels per packet; GFSK BT 0.5);
-  `tools/scene_six.json`
-- Tests (scratch t4/): scene_six (2 FLARM, OGN glider, no-track OGN
+  for the encrypted part; OGN: real fields, whitening, LDPC parity from the
+  matrix file by GF(2) elimination; relays `same_as`; channels per packet;
+  GFSK BT 0.5); `tools/scene_six.json`
+- v1.0 tests (scratch t4/; v2.0 reproduces them): scene_six (2 FLARM, OGN glider, no-track OGN
   paraglider, owner-encrypted OGN, a relay; three packets at the same
   moment on 868.2 / 868.4 / 869.25): offline 44 / 44 packets, 5 talkers
   0.0 deg, the relay none; end to end 0.0 deg (285 / 289 packets with a

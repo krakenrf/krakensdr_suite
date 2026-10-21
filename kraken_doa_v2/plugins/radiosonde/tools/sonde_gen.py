@@ -1,312 +1,319 @@
 #!/usr/bin/env python3
-"""Radiosonde test transmissions with the real frame formats and checks, one
-sonde per run, a frame every second while it climbs:
-
-  rs41  Vaisala RS41-SG: GFSK 4800 bit/s (BT 0.5, +-2.4 kHz), keyed ~0.6 s per
-        second (40 preamble bytes, the 8-byte header); 320-byte frame, bytes
-        LSB first, whitened with the 64-byte mask; blocks 0x79 status (frame
-        number, serial, battery, the calibration fragment of the frame -
-        fragment 0 = the transmit frequency), 0x7A measurements, 0x7C GPS
-        week / time of week, 0x7D raw GPS, 0x7B ECEF position + velocity +
-        satellites, 0x76 padding - each with its CRC-16/CCITT; two
-        Reed-Solomon (255,231) codewords over the even / odd bytes from 56
-        (GF(256) 0x11D, first root alpha^0)
-  m20   Meteomodem M20: 2-FSK 9600 Bd (+-6.5 kHz), Manchester, differentially
-        coded, bytes MSB first, keyed ~0.17 s per second; 70-byte frame
-        (length 0x45, type 0x20): altitude, velocity, time of week, serial,
-        week, latitude / longitude, PTU raw values, the 16-bit frame check
+"""Radiosonde test signal: one sonde's transmissions as complex baseband.
 
   sonde_gen.py OUT.cf32 --type rs41|m20 --serial ID --lat LAT --lon LON
                [--range_km 25] [--az_deg 0] [--alt0 3000] [--climb 5]
                [--seconds 12] [--phase 0] [--freq_mhz 403.0] [--rate 48000]
 
-  --serial  RS41: 8 characters ("U2410853"); M20: "YMM-T-NNNNN" (e.g. "911-2-00269":
-            year digit + month, the type digit, the 5-digit number)
-  --lat / --lon  the STATION (kraken_doa's playback passes its location):
-            the sonde is placed --range_km away at compass bearing --az_deg,
-            climbing from --alt0 m at --climb m/s, drifting 8 m/s east
-  --phase   where in each second its transmission starts (s)
+--lat / --lon are the STATION's position: the sonde starts --range_km away at
+compass bearing --az_deg, climbs from --alt0 m at --climb m/s and drifts east
+at 8 m/s. It sends one frame a second, starting --phase s into each second:
 
-The frame layouts / checks are the decoder's (plugins/radiosonde/rs41.cpp,
-m10.cpp), validated on the radiosonde_auto_rx recordings; the protocol
-descriptions of the open-source radiosonde community (rs1729/RS) as
-documentation. Writes OUT.cf32 (complex baseband, the sonde on 0 Hz) +
-OUT.json. Put several sondes at their own bearings with
-plugins/sdk/tools/uca_scene.py.
+  rs41  Vaisala RS41-SG: GFSK 4800 bit/s (+-2.4 kHz, BT 0.5), a 320-byte frame
+        (status with a calibration fragment, measurements without sensor
+        constants, GPS time and ECEF position, padding), whitened, the two
+        RS(255,231) codewords' parity; --serial is 8 characters
+  m20   Meteomodem M20: 9600 chips/s (+-6.5 kHz, Gaussian BT 1.0), the 70-byte
+        frame in biphase-mark coding with its check; --serial YMM-T-NNNNN
+        (e.g. 911-2-00269)
+
+Writes OUT (complex64 I/Q, the sonde on 0 Hz, no noise) and OUT's name
+without extension + .json = {"rate": RATE}; prints one summary line. numpy;
+scipy only for --rate other than 48000.
 """
 import json
 import math
+import os
 import sys
 
 import numpy as np
 
-RATE = 48000.0
+FS = 48000
+R_SPHERE = 6371008.8
 
-# --- geodesy ------------------------------------------------------------------------
-A_WGS, F_WGS = 6378137.0, 1 / 298.257223563
-E2 = F_WGS * (2 - F_WGS)
+RS41_HEADER_BITS = '0000100001101101010100111000100001000100011010010100100000011111'
+RS41_WHITEN = bytes.fromhex(
+    '96833E51B1490898 3205590EF944C626 2160C2EA795D6DA1 5469470CDCE85CF1'
+    'F776827F0799A22C 937C3063F5102E61 D0BCB4B606AAF423 786E3BAEBF7B4CC1'.replace(' ', ''))
+MODEM_SYNC_CHIPS = '10011001100110010100110010011001'
 
-
-def geo_to_ecef(lat, lon, h):
-    la, lo = math.radians(lat), math.radians(lon)
-    n = A_WGS / math.sqrt(1 - E2 * math.sin(la) ** 2)
-    return ((n + h) * math.cos(la) * math.cos(lo), (n + h) * math.cos(la) * math.sin(lo), (n * (1 - E2) + h) * math.sin(la))
-
-
-def enu_to_ecef_vel(ve, vn, vu, lat, lon):
-    la, lo = math.radians(lat), math.radians(lon)
-    sl, cl, so, co = math.sin(la), math.cos(la), math.sin(lo), math.cos(lo)
-    return (-so * ve - sl * co * vn + cl * co * vu, co * ve - sl * so * vn + cl * so * vu, cl * vn + sl * vu)
+GPS_WEEK = 2440
+GPS_TOW0 = 425700.0          # time of week at t = 0 (2026-10-15 ~22:15 UTC)
 
 
-def destination(lat, lon, az_deg, dist_m):
-    R = 6371008.8
-    d = dist_m / R
-    la, lo, az = math.radians(lat), math.radians(lon), math.radians(az_deg)
-    la2 = math.asin(math.sin(la) * math.cos(d) + math.cos(la) * math.sin(d) * math.cos(az))
-    lo2 = lo + math.atan2(math.sin(az) * math.sin(d) * math.cos(la), math.cos(d) - math.sin(la) * math.sin(la2))
-    return math.degrees(la2), (math.degrees(lo2) + 540) % 360 - 180
-
-
-def track(o, t):
-    """the sonde t seconds into the run: lat, lon, alt, ve, vn, vu"""
-    lat, lon = destination(o['lat'], o['lon'], o['az_deg'], o['range_km'] * 1000)
-    ve, vn, vu = 8.0, 0.0, o['climb']
-    lat2, lon2 = destination(lat, lon, 90.0, ve * t)
-    return lat2, lon2, o['alt0'] + vu * t, ve, vn, vu
-
-
-GPS_WEEK, TOW0 = 2440, 425700.0          # a fixed GPS time (2026-10-16, ~22:15 UTC)
-
-
-# --- RS41 ---------------------------------------------------------------------------
-RS41_HEADER = '0000100001101101010100111000100001000100011010010100100000011111'
-RS41_MASK = [0x96, 0x83, 0x3E, 0x51, 0xB1, 0x49, 0x08, 0x98, 0x32, 0x05, 0x59, 0x0E, 0xF9, 0x44, 0xC6, 0x26,
-             0x21, 0x60, 0xC2, 0xEA, 0x79, 0x5D, 0x6D, 0xA1, 0x54, 0x69, 0x47, 0x0C, 0xDC, 0xE8, 0x5C, 0xF1,
-             0xF7, 0x76, 0x82, 0x7F, 0x07, 0x99, 0xA2, 0x2C, 0x93, 0x7C, 0x30, 0x63, 0xF5, 0x10, 0x2E, 0x61,
-             0xD0, 0xBC, 0xB4, 0xB6, 0x06, 0xAA, 0xF4, 0x23, 0x78, 0x6E, 0x3B, 0xAE, 0xBF, 0x7B, 0x4C, 0xC1]
-
-EXP = [0] * 512
-LOG = [0] * 256
-_x = 1
-for _i in range(255):
-    EXP[_i] = EXP[_i + 255] = _x
-    LOG[_x] = _i
-    _x <<= 1
-    if _x & 0x100:
-        _x ^= 0x11D
-
-
-def gmul(a, b):
-    return EXP[LOG[a] + LOG[b]] if a and b else 0
-
-
-def rs_parity(data, nroots=24):
-    """systematic RS(255, 255-nroots), cw[i] = coefficient of x^i, data at x^nroots..,
-    roots alpha^0 .. alpha^(nroots-1): returns the nroots parity bytes (cw[0..nroots-1])"""
-    g = [1]
-    for j in range(nroots):                      # g(x) *= (x + alpha^j), g[k] = coefficient of x^k
-        r = EXP[j]
-        ng = [0] * (len(g) + 1)
-        for k, c in enumerate(g):
-            ng[k + 1] ^= c
-            ng[k] ^= gmul(c, r)
-        g = ng
-    rem = [0] * (nroots + len(data))
-    for i, d in enumerate(data):
-        rem[nroots + i] = d
-    for p in range(len(rem) - 1, nroots - 1, -1):  # long division from the top power
-        c = rem[p]
-        if c:
-            for k in range(nroots + 1):
-                rem[p - nroots + k] ^= gmul(c, g[k])
-    return rem[:nroots]
-
-
-def crc16(d):
+# --- checks ------------------------------------------------------------------------
+def crc16_ccitt_false(data):
     c = 0xFFFF
-    for b in d:
+    for b in data:
         c ^= b << 8
         for _ in range(8):
             c = ((c << 1) ^ 0x1021) & 0xFFFF if c & 0x8000 else (c << 1) & 0xFFFF
     return c
 
 
-def le(v, n):
-    v = int(v) & ((1 << (8 * n)) - 1)
-    return [(v >> (8 * i)) & 0xFF for i in range(n)]
-
-
-def block(bid, data):
-    return [bid, len(data)] + list(data) + le(crc16(data), 2)
-
-
-def rs41_frame(o, k, t):
-    # frame numbers whose calibration fragments are 45..50, 0, 1 ...: fragment
-    # 0 (the transmit frequency) in the first seconds; the sensor constants
-    # (fragments 3.. ) are not sent (zeros), so no temperature / humidity is
-    # computed from them, like a receiver that has just tuned in
-    fno = 51 * 100 + 45 + k
-    st = [ord(c) for c in (o['serial'] + '        ')[:8]]
-    frag = fno % 51
-    cal = [0] * 16
-    if frag == 0:
-        cal[3] = int(round((o['freq_mhz'] * 1000 - 400000) / 40)) & 0xFF
-    elif frag == 2:
-        cal[7:9] = [0xFF, 0xFF]                  # kill timer off
-    elif frag == 0x32:
-        cal[0:2] = [0xFF, 0xFF]                  # burst countdown off
-    elif frag == 0x21:
-        cal[8:16] = [ord(c) for c in 'RS41-SG\0']
-    if 3 <= frag <= 50 and frag not in (0x21, 0x31, 0x32):
-        cal = [0] * 16
-    status = le(fno, 2) + st + [29, 0, 0, 0, 0, 0, 0x1F, 0, 0, 0x26, 0, 0x03, 0x32, frag] + cal
-    meas = []
-    for f in (0x0AFE21, 0x084C3C, 0x0A1D43, 0x09E0E0, 0x07D2B4, 0x0A8F6A, 0x0A4B12, 0x084C3C, 0x0A1D43, 0, 0, 0):
-        meas += le(f, 3)
-    meas += [0] * 6
-    lat, lon, alt, ve, vn, vu = track(o, t)
-    x, y, z = geo_to_ecef(lat, lon, alt)
-    vx, vy, vz = enu_to_ecef_vel(ve, vn, vu, lat, lon)
-    gps_t = le(GPS_WEEK, 2) + le((TOW0 + t) * 1000, 4) + [0] * 24
-    ecef = le(round(x * 100), 4) + le(round(y * 100), 4) + le(round(z * 100), 4) + le(round(vx * 100), 2) + \
-        le(round(vy * 100), 2) + le(round(vz * 100), 2) + [9, 12, 15]
-    body = [0x0F] + block(0x79, status) + block(0x7A, meas) + block(0x7C, gps_t) + block(0x7D, [0] * 89) + block(0x7B, ecef)
-    body += block(0x76, [0] * (320 - 56 - len(body) - 4))
-    fr = [0] * 8 + [0] * 48 + body
-    assert len(fr) == 320, len(fr)
-    for c in range(2):
-        data = [fr[56 + 2 * i + c] for i in range(132)]
-        par = rs_parity(data)
-        fr[8 + 24 * c:8 + 24 * c + 24] = par
-    bits = [int(b) for b in RS41_HEADER]
-    for i in range(8, 320):
-        b = fr[i] ^ RS41_MASK[i % 64]
-        bits += [(b >> j) & 1 for j in range(8)]                  # LSB first
-    return [0, 1] * 160 + bits                                     # 40 preamble bytes
-
-
-# --- M20 -------------------------------------------------------------------------------
-M10_HEADER = '10011001100110010100110010011001'
-
-
-def m10_check(d):
+def meteomodem_check(data):
+    """The 16-bit Meteomodem frame check (every byte rotated into an LFSR)."""
     c = 0
-    for b in d:
-        c1 = c & 0xFF
-        b = ((b >> 1) | ((b & 1) << 7)) & 0xFF
-        b ^= (b >> 2) & 0xFF
-        t6 = (c & 1) ^ ((c >> 2) & 1) ^ ((c >> 4) & 1)
-        t7 = ((c >> 1) & 1) ^ ((c >> 3) & 1) ^ ((c >> 5) & 1)
-        t = (c & 0x3F) | (t6 << 6) | (t7 << 7)
-        s = (c >> 7) & 0xFF
-        s ^= (s >> 2) & 0xFF
-        c = ((c1 << 8) | ((b ^ t ^ s) & 0xFF)) & 0xFFFF
+    for x in data:
+        r = ((x >> 1) | (x << 7)) & 0xFF
+        r ^= r >> 2
+        bit = [(c >> i) & 1 for i in range(6)]
+        lo = r ^ ((c >> 7) & 0xFF) ^ ((c >> 9) & 0x3F) ^ (c & 0x3F)
+        lo ^= (bit[0] ^ bit[2] ^ bit[4]) << 6
+        lo ^= (bit[1] ^ bit[3] ^ bit[5]) << 7
+        c = ((c & 0xFF) << 8) | (lo & 0xFF)
     return c
 
 
+class ReedSolomon:
+    """Systematic RS encoder over GF(2^8): roots alpha^(fcr + j), alpha = 2."""
+
+    def __init__(self, poly, fcr, nroots):
+        self.exp = [0] * 512
+        self.log = [0] * 256
+        v = 1
+        for i in range(255):
+            self.exp[i] = v
+            self.log[v] = i
+            v <<= 1
+            if v & 0x100:
+                v ^= poly
+        for i in range(255, 512):
+            self.exp[i] = self.exp[i - 255]
+        self.nroots = nroots
+        g = [1]
+        for j in range(nroots):
+            r = self.exp[(fcr + j) % 255]
+            ng = [0] * (len(g) + 1)
+            for k, gk in enumerate(g):      # g(x) * (x - r), g[k] = coefficient of x^k
+                ng[k + 1] ^= gk
+                ng[k] ^= self.mul(gk, r)
+            g = ng
+        self.gen = g
+
+    def mul(self, a, b):
+        return self.exp[self.log[a] + self.log[b]] if a and b else 0
+
+    def parity(self, data):
+        """data[i] = coefficient of x^(nroots + i): returns the nroots parity
+        bytes, parity[k] = coefficient of x^k (= data x^nroots mod g)."""
+        n = self.nroots
+        r = [0] * n
+        for d in reversed(data):
+            fb = d ^ r[n - 1]
+            for k in range(n - 1, 0, -1):
+                r[k] = r[k - 1] ^ self.mul(fb, self.gen[k])
+            r[0] = self.mul(fb, self.gen[0])
+        return r
+
+
+# --- geometry ----------------------------------------------------------------------
+def destination(lat, lon, bearing_deg, dist_m):
+    """Great-circle destination on a sphere."""
+    p1, l1, b = math.radians(lat), math.radians(lon), math.radians(bearing_deg)
+    d = dist_m / R_SPHERE
+    p2 = math.asin(math.sin(p1) * math.cos(d) + math.cos(p1) * math.sin(d) * math.cos(b))
+    l2 = l1 + math.atan2(math.sin(b) * math.sin(d) * math.cos(p1), math.cos(d) - math.sin(p1) * math.sin(p2))
+    return math.degrees(p2), (math.degrees(l2) + 540) % 360 - 180
+
+
+def geodetic_to_ecef(lat, lon, h):
+    a = 6378137.0
+    b = 6356752.314245
+    e2 = 1 - (b * b) / (a * a)
+    p, l = math.radians(lat), math.radians(lon)
+    n = a / math.sqrt(1 - e2 * math.sin(p) ** 2)
+    return ((n + h) * math.cos(p) * math.cos(l), (n + h) * math.cos(p) * math.sin(l), (n * (1 - e2) + h) * math.sin(p))
+
+
+def enu_to_ecef(lat, lon, e, n, u):
+    p, l = math.radians(lat), math.radians(lon)
+    sp, cp, sl, cl = math.sin(p), math.cos(p), math.sin(l), math.cos(l)
+    return (-sl * e - sp * cl * n + cp * cl * u, cl * e - sp * sl * n + cp * sl * u, cp * n + sp * u)
+
+
+class Track:
+    def __init__(self, o):
+        self.lat0, self.lon0 = destination(o['lat'], o['lon'], o['az_deg'], o['range_km'] * 1000)
+        self.alt0, self.climb = o['alt0'], o['climb']
+
+    def at(self, t):
+        lat, lon = destination(self.lat0, self.lon0, 90.0, 8.0 * t)
+        return lat, lon, self.alt0 + self.climb * t
+
+
+# --- frames ------------------------------------------------------------------------
+def le(v, n):
+    return int(v).to_bytes(n, 'little', signed=v < 0)
+
+
 def be(v, n):
-    v = int(v) & ((1 << (8 * n)) - 1)
-    return [(v >> (8 * (n - 1 - i))) & 0xFF for i in range(n)]
+    return int(v).to_bytes(n, 'big', signed=v < 0)
 
 
-def m20_serial(s):
-    ym, ty, num = s.split('-')
-    ym = int(ym)
-    y, m = ym // 100, ym % 100
-    return ((y * 12 + m - 1) & 0x7F) | ((int(ty) - 1) & 7) << 7 | (int(num[-4:]) & 0x1FFF) << 10 | (int(num[:-4] or 0) & 1) << 23
+def rs41_block(bid, data):
+    data = bytes(data)
+    return bytes([bid, len(data)]) + data + crc16_ccitt_false(data).to_bytes(2, 'little')
 
 
-def m20_frame(o, k, t):
-    lat, lon, alt, ve, vn, vu = track(o, t)
-    b = [0] * 70
-    b[0], b[1] = 0x45, 0x20
-    b[2:4] = le(0x58EB, 2)                       # humidity count, temperature ADC (range 2),
-    b[4:6] = le(0x05A4, 2)                       # humidity-sensor NTC: plausible raw values
-    b[6:8] = le(0x01C1, 2)
-    b[8:11] = be(round(alt * 100), 3)
-    b[0x0B:0x0D] = be(round(ve * 100), 2)
-    b[0x0D:0x0F] = be(round(vn * 100), 2)
-    b[0x0F:0x12] = be(int(TOW0 + t), 3)
-    b[0x12:0x15] = le(m20_serial(o['serial']), 3)
-    b[0x15] = 0x4B
-    b[0x16:0x18] = be(m10_check(b[:0x16]), 2)    # the block check over the first 22 bytes
-    b[0x18:0x1A] = be(round(vu * 100), 2)
-    b[0x1A:0x1C] = be(GPS_WEEK, 2)
-    b[0x1C:0x20] = be(round(lat * 1e6), 4)
-    b[0x20:0x24] = be(round(lon * 1e6), 4)
-    b[0x24:0x26] = le(0x3F28, 2)                 # pressure (raw)
-    b[0x26] = 0xD4                               # battery
-    b[0x2F:0x31] = le(0x5472, 2)                 # humidity calibration
-    b[0x43] = 0x04                               # firmware
-    b[0x44:0x46] = be(m10_check(b[:0x44]), 2)
-    # differential Manchester: a data bit 1 = the same Manchester bit as the one before
-    data = []
-    for x in b:
-        data += [(x >> (7 - j)) & 1 for j in range(8)]
-    m, chips = 0, []
-    for d in data:
-        m = m if d else 1 - m
-        chips += [0, 1] if m else [1, 0]
-    return [1, 0] * 48 + [int(c) for c in M10_HEADER] + chips + [1, 0] * 8
+def rs41_frame(o, k, t0, track, rs):
+    counter = 5145 + k
+    frag = counter % 51
+    serial = (o['serial'] + ' ' * 8)[:8].encode('ascii', 'replace')
+    f16 = bytearray(16)
+    if frag == 0:
+        f16[2] = 0
+        f16[3] = round((o['freq_mhz'] * 1000 - 400000) / 40) & 0xFF
+    elif frag == 2:
+        f16[7] = f16[8] = 0xFF                      # flight kill timer off
+    elif frag == 0x32:
+        f16[0] = f16[1] = 0xFF                      # kill countdown inactive
+    elif frag == 0x21:
+        f16[8:16] = b'RS41-SG\0'
+    status = le(counter, 2) + serial + bytes([29]) + bytes.fromhex('0000000000 1F0000260003 32'.replace(' ', '')) + \
+        bytes([frag]) + bytes(f16)
+    meas = b''.join(le(v, 3) for v in (0x0AFE21, 0x084C3C, 0x0A1D43, 0x09E0E0, 0x07D2B4, 0x0A8F6A, 0x0A4B12,
+                                        0x084C3C, 0x0A1D43, 0, 0, 0)) + bytes(6)
+    gpsinfo = le(GPS_WEEK, 2) + le(round((GPS_TOW0 + t0) * 1000), 4) + bytes(24)
+    lat, lon, alt = track.at(t0)
+    x, y, z = geodetic_to_ecef(lat, lon, alt)
+    vx, vy, vz = enu_to_ecef(lat, lon, 8.0, 0.0, o['climb'])
+    pos = b''.join(le(round(v * 100), 4) for v in (x, y, z)) + b''.join(le(round(v * 100), 2) for v in (vx, vy, vz)) + \
+        bytes([9, 12, 15])
+    body = rs41_block(0x79, status) + rs41_block(0x7A, meas) + rs41_block(0x7C, gpsinfo) + \
+        rs41_block(0x7D, bytes(89)) + rs41_block(0x7B, pos)
+    pad = 320 - 57 - len(body) - 4
+    body += rs41_block(0x76, bytes(pad))
+    frame = bytearray(8 + 48) + bytes([0x0F]) + body
+    assert len(frame) == 320, len(frame)
+    for c in range(2):
+        data = [frame[56 + 2 * i + c] for i in range(132)]
+        frame[8 + 24 * c: 32 + 24 * c] = bytes(rs.parity(data))
+    bits = [int(b) for b in '01' * 160] + [int(b) for b in RS41_HEADER_BITS]
+    for i in range(8, 320):
+        v = frame[i] ^ RS41_WHITEN[i % 64]
+        bits += [(v >> b) & 1 for b in range(8)]           # LSB first
+    return bits
 
 
-# --- modulation -------------------------------------------------------------------------
-def fsk(sym, baud, dev, bt):
-    sps = RATE / baud
-    n = int(len(sym) * sps) + 1
-    idx = np.minimum((np.arange(n) / sps).astype(int), len(sym) - 1)
-    f = (2 * np.asarray(sym, float)[idx] - 1) * dev
+def m20_serial_bytes(text):
+    """YMM-T-NNNNN -> B0 B1 B2 (the leading digit of the number in bit 23,
+    the last four digits in bits 10..22)."""
+    p = text.split('-')
+    if len(p) != 3 or len(p[0]) != 3 or len(p[2]) != 5 or not (p[0] + p[1] + p[2]).isdigit():
+        raise SystemExit('--serial for m20: YMM-T-NNNNN, e.g. 911-2-00269')
+    y, mm, t = int(p[0][0]), int(p[0][1:]), int(p[1])
+    d, n = int(p[2][0]), int(p[2][1:])
+    if d > 1 or n > 8191 or not 1 <= mm <= 12 or not 1 <= t <= 8:
+        raise SystemExit('--serial %s cannot be sent by an M20' % text)
+    s = (n << 10) | (d << 23) | ((((t - 1) >> 1) & 3) << 8)
+    b0 = ((y * 12 + mm - 1) & 0x7F) + 128 * ((t - 1) & 1)
+    return bytes([b0, (s >> 8) & 0xFF, (s >> 16) & 0xFF])
+
+
+def m20_frame(o, k, t0, track):
+    f = bytearray(70)
+    lat, lon, alt = track.at(t0)
+    f[0], f[1] = 0x45, 0x20
+    f[2:4] = le(0x58EB, 2)
+    f[4:6] = le(0x05A4, 2)
+    f[6:8] = le(0x01C1, 2)
+    f[8:11] = be(round(alt * 100), 3)
+    f[0x0B:0x0D] = be(round(8.0 * 100), 2)
+    f[0x0D:0x0F] = be(0, 2)
+    f[0x0F:0x12] = be(math.floor(GPS_TOW0 + t0), 3)
+    f[0x12:0x15] = m20_serial_bytes(o['serial'])
+    f[0x15] = (0x4B + k) % 256
+    f[0x16:0x18] = be(meteomodem_check(bytes([22]) + bytes(f[2:22])), 2)
+    f[0x18:0x1A] = be(round(o['climb'] * 100), 2)
+    f[0x1A:0x1C] = be(GPS_WEEK, 2)
+    f[0x1C:0x20] = be(round(lat * 1e6), 4)
+    f[0x20:0x24] = be(round(lon * 1e6), 4)
+    f[0x24:0x26] = le(0x3F28, 2)
+    f[0x26] = 0xD4
+    f[0x2F:0x31] = le(0x5472, 2)
+    f[0x43] = 0x04
+    f[0x44:0x46] = be(meteomodem_check(bytes(f[0:0x44])), 2)
+    chips = '10' * 48 + MODEM_SYNC_CHIPS
+    m = 0
+    for byte in f:
+        for i in range(7, -1, -1):                       # MSB first
+            if not (byte >> i) & 1:
+                m ^= 1                                   # a 0 changes the level, a 1 keeps it
+            chips += '01' if m else '10'
+    chips += '10' * 8
+    return [int(c) for c in chips]
+
+
+# --- modulation ----------------------------------------------------------------------
+def modulate(symbols, rate, dev_hz, bt):
+    sps = FS / rate
+    n = int(math.floor(len(symbols) * sps)) + 1
+    idx = np.minimum((np.arange(n) / sps).astype(int), len(symbols) - 1)
+    f = np.where(np.asarray(symbols)[idx] > 0, dev_hz, -dev_hz).astype(np.float64)
     if bt:
-        s = sps * math.sqrt(math.log(2)) / (2 * math.pi * bt)    # Gaussian filter of BT
-        k = np.arange(-int(4 * s), int(4 * s) + 1)
-        g = np.exp(-k ** 2 / (2 * s * s))
-        f = np.convolve(f, g / g.sum(), 'same')
-    return f
+        sigma = sps * math.sqrt(math.log(2)) / (2 * math.pi * bt)
+        m = int(math.floor(4 * sigma))
+        k = np.exp(-np.arange(-m, m + 1) ** 2 / (2 * sigma * sigma))
+        f = np.convolve(f, k / k.sum(), mode='same')
+    x = np.exp(2j * np.pi * np.cumsum(f) / FS)
+    a = np.ones(n)
+    r = int(0.001 * FS)
+    ramp = np.linspace(0, 1, r, endpoint=False)
+    a[:r] = ramp
+    a[-r:] = ramp[::-1]
+    return x * a
 
 
 def main():
-    a = sys.argv[1:]
-    if not a or a[0].startswith('-'):
+    argv = sys.argv[1:]
+    if not argv or argv[0].startswith('-'):
         print(__doc__)
         sys.exit(2)
-    out = a[0]
+    out = argv[0]
     o = {'type': 'rs41', 'serial': 'U2410853', 'lat': 0.0, 'lon': 0.0, 'range_km': 25.0, 'az_deg': 0.0, 'alt0': 3000.0,
-         'climb': 5.0, 'seconds': 12.0, 'phase': 0.0, 'freq_mhz': 403.0, 'rate': RATE}
-    for i in range(1, len(a), 2):
-        k = a[i].lstrip('-')
-        o[k] = a[i + 1] if k in ('type', 'serial') else float(a[i + 1])
-    n = int(o['seconds'] * RATE)
-    freq = np.zeros(n)
-    amp = np.zeros(n)
-    nfr = 0
-    for k in range(int(o['seconds'])):
+         'climb': 5.0, 'seconds': 12.0, 'phase': 0.0, 'freq_mhz': 403.0, 'rate': 48000.0}
+    rest = argv[1:]
+    if len(rest) % 2:
+        print(__doc__)
+        sys.exit(2)
+    for k, v in zip(rest[0::2], rest[1::2]):
+        key = k.lstrip('-')
+        if not k.startswith('--') or key not in o:
+            print('unknown option %s' % k, file=sys.stderr)
+            sys.exit(2)
+        o[key] = v if key in ('type', 'serial') else float(v)
+    o['type'] = o['type'].lower()
+    if o['type'] not in ('rs41', 'm20'):
+        raise SystemExit('--type rs41 or m20')
+    track = Track(o)
+    total = int(round(o['seconds'] * FS))
+    y = np.zeros(total, dtype=np.complex128)
+    rs = ReedSolomon(0x11D, 0, 24)
+    frames = 0
+    for k in range(int(math.floor(o['seconds']))):
         t0 = k + o['phase']
         if o['type'] == 'rs41':
-            f = fsk(rs41_frame(o, k, t0), 4800.0, 2400.0, 0.5)
+            x = modulate(rs41_frame(o, k, t0, track, rs), 4800, 2400, 0.5)
         else:
-            f = fsk(m20_frame(o, k, t0), 9600.0, 6500.0, 1.0)
-        p = int(round(t0 * RATE))
-        if p + len(f) > n:
+            x = modulate(m20_frame(o, k, t0, track), 9600, 6500, 1.0)
+        s = int(round(t0 * FS))
+        if s < 0 or s + len(x) > total:
             continue
-        freq[p:p + len(f)] = f
-        ramp = np.ones(len(f))
-        r = int(0.001 * RATE)
-        ramp[:r] = np.linspace(0, 1, r)
-        ramp[-r:] = np.linspace(1, 0, r)
-        amp[p:p + len(f)] = ramp
-        nfr += 1
-    x = amp * np.exp(2j * np.pi * np.cumsum(freq) / RATE)
-    if abs(o['rate'] - RATE) > 1e-6:
+        y[s:s + len(x)] += x
+        frames += 1
+    rate = o['rate']
+    if abs(rate - FS) > 1e-6:
         from fractions import Fraction
         from scipy.signal import resample_poly
-        fr = Fraction(o['rate'] / RATE).limit_denominator(1000)
-        x = resample_poly(x, fr.numerator, fr.denominator)
-    x.astype(np.complex64).tofile(out)
-    lat, lon, alt, _, _, _ = track(o, 0)
-    print('%s %s: %d frames, from %.1f km at %.0f deg, %.0f m climbing %.1f m/s' % (
-        o['type'].upper(), o['serial'], nfr, o['range_km'], o['az_deg'], alt, o['climb']))
-    json.dump({'rate': o['rate']}, open(out.rsplit('.', 1)[0] + '.json', 'w'))
+        q = Fraction(rate / FS).limit_denominator(1000)
+        y = resample_poly(y, q.numerator, q.denominator)
+    y.astype(np.complex64).tofile(out)
+    with open(os.path.splitext(out)[0] + '.json', 'w') as fh:
+        json.dump({'rate': rate}, fh)
+    serial = o['serial'] if o['type'] == 'm20' else (o['serial'] + ' ' * 8)[:8]
+    print('%s %s: %d frames, from %.1f km at %.0f deg, %.0f m climbing %.1f m/s'
+          % (o['type'].upper(), serial, frames, o['range_km'], o['az_deg'], o['alt0'], o['climb']))
 
 
 if __name__ == '__main__':

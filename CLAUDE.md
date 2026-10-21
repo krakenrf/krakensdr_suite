@@ -2078,15 +2078,26 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   `/usr/share/doc/krakensdr/`, with `SOURCE.txt` = where the GPL programs'
   source is)
 - OPEN (audit 2026-10-21, waiting for the user's decision): `plugins/ism`
-  follows rtl_433's decoders one by one (GPL-2.0-or-later); `radiosonde`
-  rs41.cpp's temperature / humidity / pressure (+ M10 / DFM constants) are
-  translated from rs1729/RS (GPL-3.0); `flarm/ogn_ldpc.h` is the GPL-2.0
-  esp32-ogn-tracker's matrix verbatim; `cells/lte_tables.hpp` was generated
-  from srsRAN's (AGPL) copy of the 3GPP tables. Don't extend those parts
-  until it's settled. Done in the audit: p25's NID BCH encoder (was
-  Morelos-Zaragoza's non-commercial bch3.c form) and the TETRA scrambler /
-  interleaver / depuncturer (osmo-tetra's form) rewritten from the standards
-  - bit-identical output (all 65536 NIDs, random TETRA blocks)
+  follows rtl_433's decoders one by one (GPL-2.0-or-later);
+  `cells/lte_tables.hpp` was generated from srsRAN's (AGPL) copy of the 3GPP
+  tables. Don't extend those parts until it's settled. Done in the audit:
+  p25's NID BCH encoder (was Morelos-Zaragoza's non-commercial bch3.c form)
+  and the TETRA scrambler / interleaver / depuncturer (osmo-tetra's form)
+  rewritten from the standards - bit-identical output (all 65536 NIDs,
+  random TETRA blocks)
+- CLEAN-ROOM REWRITES (2026-10-22, the user's request): `radiosonde` v2.0
+  (v1.x had code translated from rs1729/RS) and `flarm` v2.0 (v1.0 was built
+  on the unlicensed OGN tracker's source) - spec writer (old code + permitted
+  sources, no code in the spec) -> a separate implementer (spec only) -> a
+  similarity audit vs the old plugin and the third-party code: none of their
+  expression. Remaining third-party content, documented: radiosonde follows
+  ra-firmware's metrology (BSD-3 notice in rs41.cpp / modem.cpp + notices
+  text H) and keeps some facts the rs1729 project first published (numbers,
+  layouts, rules - no code; its README lists them); flarm's
+  `ogn_ldpc_matrix.hpp` is the OGN protocol's LDPC matrix, interoperability
+  data from the unlicensed OGN tracker (permission from its author would
+  settle it). kraken_doa_v2/CLAUDE.md *Radiosonde* / *FLARM / OGN* say how;
+  the specs + audits were job scratch, not in the repo
 
 ## Git Secret Guards
 

@@ -22,6 +22,14 @@ LGPL (glibc on Linux and the GCC runtime are system libraries, see below).
 | mbelib - the IMBE decoder ported to C++ and its tables | `plugins/lib/dig_vocoder.cpp`, `plugins/lib/mbe_tables.hpp` | ISC, text F |
 | DSD - frame deinterleave tables | `plugins/lib/mbe_tables.hpp` | ISC, text F |
 | NTIA/ITS Irregular Terrain Model (ITM) 1.3, ported to JavaScript | `kraken_doa.html` ("📶 ITM" block) | not subject to copyright in the US; NTIA terms, text G |
+| OGN tracker protocol: the LDPC(208,160) parity-check matrix (data only, no code) | `plugins/flarm/ogn_ldpc_matrix.hpp` | interoperability data - the code every OGN tracker transmits; taken from the OGN tracker source (github.com/pjalocha/esp32-ogn-tracker, Pawel Jalocha), which states no licence |
+
+| ra-firmware (DF9DQ's "Ra" radiosonde receiver firmware): the RS41 and M10 / M20 sensor computations follow its metrology code | `plugins/radiosonde/rs41.cpp`, `plugins/radiosonde/modem.cpp` | BSD-3-Clause, text H |
+
+The decoder plugins are written from the published standards and protocol
+descriptions; some protocol facts (frame layouts, constants, calibration
+fits) were first published by other projects' reverse engineering and are
+used as facts, without their code. Each plugin's README lists its sources.
 
 ## 2. Libraries built with or linked into the programs
 
@@ -320,4 +328,38 @@ of injury or damage to property.
 
 Please provide appropriate acknowledgments of NTIA's creation of the software
 in any copies or derivative works of this software.
+```
+
+### H. ra-firmware
+
+```
+BSD 3-Clause License
+
+Copyright (c) 2017, einergehtnochrein
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```

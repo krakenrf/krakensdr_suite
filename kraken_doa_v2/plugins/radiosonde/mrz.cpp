@@ -1,134 +1,121 @@
-// Meteo-Radiy MRZ (MRZ-N1 / MP3-H1): 2-FSK Manchester, 2399 baud (chips
-// "10" = 1, "01" = 0), bytes msb first. Frame: AA BF 35, a sub-frame counter,
-// time of day (h m s), ECEF position (cm) + velocity (cm/s) and satellites -
-// or, in the other layout (bytes 30..31 = FFFF), latitude / longitude
-// (1e-6 deg), altitude (cm), speed and direction - then temperature and
-// humidity (1/100), raw ADC values, a second counter and one 32-bit
-// configuration word (the counter says which: NTC / ADC calibration, the
-// serial in two parts (12, 13), the date (15, DDMMYY)); a CRC-16 (reflected
-// 0xA001, init 0xFFFF) over counter..config.
+// Meteo-Radiy MRZ (family "MRZ").
 //
-// Protocol as documented by the open-source radiosonde community (rs1729/RS
-// "mp3h1mod"); independent implementation, validated against the
-// radiosonde_auto_rx test recording.
+// 2-FSK 2400 chips/s Manchester (bit 1 = chips 10), bytes MSB first: the sync
+// AA BF 35 after an AA preamble, then a 47-byte packet (time, ECEF position +
+// velocity, the sonde's own temperature / humidity / pressure, one of 16
+// calibration words, CRC-16/MODBUS). Packets come ~0.34 s apart, usually each
+// twice. Layout from ra-firmware (DF9DQ, BSD-3-Clause). The sonde is named by
+// calibration words 12 (sonde serial) and 13 (sensor serial).
 
-#include "sonde.hpp"
+#include "families.hpp"
 
-#include <memory>
+#include <cstring>
 
 namespace sonde {
+
 namespace {
 
-const char* HEADER = "100110011001100110011001100110011001" "10101010";
-constexpr int NBYTES = 52;
+const char* MRZ_SYNC = "100110011001100110011010101010100101101001100110";   // Manchester of AA BF 35
+constexpr int NBYTES = 47;
+constexpr int NSYM = NBYTES * 16;
 
-uint16_t crc16_rev(const uint8_t* d, int n) {
-    uint16_t c = 0xFFFF;
-    for (int i = 0; i < n; i++) {
-        c ^= d[i];
-        for (int k = 0; k < 8; k++) c = (c & 1) ? static_cast<uint16_t>((c >> 1) ^ 0xA001) : static_cast<uint16_t>(c >> 1);
-    }
-    return c;
-}
-
-class Mrz : public Type {
+class Mrz : public Family {
 public:
-    explicit Mrz(double fs) : fs_(fs) {
-        FskConfig c;
-        c.baud = 2399;
-        for (const char* p = HEADER; *p; p++) c.sync.push_back(*p == '1');
-        c.max_sync_err = 3;
-        c.frame_syms = 800;
-        rx_.init(c, fs);
-        rx_.on_frame = [this](const FskFrame& f) { frame(f); };
-        reset();
+    Mrz() {
+        FskParams p;
+        p.rate = 2399;
+        p.sync = MRZ_SYNC;
+        p.max_err = 3;
+        p.nsym = NSYM;
+        p.phases = 8;
+        rx_.init(p);
     }
-    void push(const float* narrow, const float*, size_t n, double t0) override {
-        rx_.clock(t0);
-        for (size_t i = 0; i < n; i++) rx_.push(narrow[i]);
-    }
+
     void reset() override {
         rx_.reset();
-        last_t0_ = -1e12;
-        snc_ = snd_ = 0;
-        y_ = mo_ = d_ = 0;
+        dup_.reset();
+        for (auto& h : have_) h = false;
+    }
+
+    void process(const float* narrow, const float*, size_t n, int64_t idx, const Ctx& ctx, std::vector<Record>& out) override {
+        caps_.clear();
+        rx_.process(narrow, n, idx, caps_);
+        for (const auto& c : caps_) {
+            if (dup_.near(c.pos0, 0.3)) continue;
+            if (decode(c, ctx, out)) dup_.accept(c.pos0);
+        }
     }
 
 private:
-    void frame(const FskFrame& f);
     FskRx rx_;
-    double fs_, last_t0_ = -1e12;
-    uint32_t snc_ = 0, snd_ = 0;
-    int y_ = 0, mo_ = 0, d_ = 0;
+    std::vector<FskCapture> caps_;
+    DupWindow dup_;
+    uint32_t word_[16] = {};
+    bool have_[16] = {};
+
+    bool decode(const FskCapture& c, const Ctx& ctx, std::vector<Record>& out) {
+        uint8_t f[3 + NBYTES] = {0xAA, 0xBF, 0x35};
+        uint8_t* p = f + 3;
+        for (int i = 0; i < NBYTES * 8; i++) {
+            const int bit = c.sym[static_cast<size_t>(2 * i)] - c.sym[static_cast<size_t>(2 * i + 1)] > 0 ? 1 : 0;
+            p[i / 8] = static_cast<uint8_t>(p[i / 8] | bit << (7 - i % 8));
+        }
+        if (crc16_modbus(p, 45) != u16le(p + 45)) return false;
+        // the calibration word of this packet (index 1..16 -> word 0..15)
+        const int ci = p[40];
+        if (ci >= 1 && ci <= 16) {
+            const int w = ci - 1;
+            const uint32_t v = u32le(p + 41);
+            if ((w == 12 || w == 13) && have_[w] && word_[w] != v) have_[w == 12 ? 13 : 12] = false;   // another sonde
+            word_[w] = v;
+            have_[w] = true;
+        }
+        if (!have_[12] || !have_[13]) return false;   // no serial yet (the packet counts as decoded)
+        Record r;
+        r.family = "MRZ";
+        r.model = "MRZ";
+        r.serial = std::to_string(word_[12]) + "-" + std::to_string(word_[13]);
+        const int hh = p[1], mm = p[2], ss = p[3];
+        if (hh < 24 && mm < 60 && ss < 61) {
+            const uint32_t dt = word_[15];
+            const int day = static_cast<int>(dt / 10000), mon = static_cast<int>(dt / 100 % 100), yr = 2000 + static_cast<int>(dt % 100);
+            if (have_[15] && yr > 2000 && mon >= 1 && mon <= 12 && day >= 1 && day <= 31)
+                r.utc = unix_time(yr, mon, day, hh, mm, ss);
+            else
+                r.tod = hh * 3600.0 + mm * 60.0 + ss;
+        }
+        r.sats = p[23];
+        const double x = static_cast<int32_t>(u32le(p + 5)) / 100.0, y = static_cast<int32_t>(u32le(p + 9)) / 100.0,
+                     z = static_cast<int32_t>(u32le(p + 13)) / 100.0;
+        if (r.sats > 0 && (x != 0 || y != 0 || z != 0)) {
+            double la, lo, h;
+            ecef_to_geodetic(x, y, z, &la, &lo, &h);
+            if (h > -1000 && h < 80000) {
+                r.lat = la;
+                r.lon = lo;
+                r.alt = h;
+                double e, n, u;
+                ecef_to_enu_velocity(la, lo, static_cast<int16_t>(u16le(p + 17)) / 100.0, static_cast<int16_t>(u16le(p + 19)) / 100.0,
+                                     static_cast<int16_t>(u16le(p + 21)) / 100.0, &e, &n, &u);
+                speed_dir(e, n, &r.vh, &r.hdg);
+                r.vv = u;
+            }
+        }
+        const double t = static_cast<int16_t>(u16le(p + 26)) / 100.0;
+        if (t > -120 && t < 80) r.T = t;
+        const double rh = static_cast<int16_t>(u16le(p + 28)) / 100.0;
+        if (rh >= 0 && rh <= 100) r.RH = rh;
+        const int16_t pr = static_cast<int16_t>(u16le(p + 30));
+        if (pr != -1 && pr > 0) r.P = pr * 0.2;
+        set_span(r, c, ctx);
+        if (ctx.raw) r.hex = hex_upper(f, sizeof f);
+        out.push_back(std::move(r));
+        return true;
+    }
 };
-
-void Mrz::frame(const FskFrame& f) {
-    if (std::fabs(f.t0 - last_t0_) < 0.3 * fs_) return;
-    // bits: the header's 22 (Manchester of its chips), then the frame's
-    uint8_t bits[8 * (NBYTES + 2)] = {0};
-    int nb = 0;
-    for (int i = 0; HEADER[2 * i]; i++) bits[nb++] = HEADER[2 * i] == '1';
-    for (int i = 0; nb < static_cast<int>(sizeof bits) && 2 * i + 1 < f.n; i++) bits[nb++] = f.soft[2 * i] - f.soft[2 * i + 1] > 0;
-    uint8_t b[NBYTES] = {0};
-    for (int i = 0; i < NBYTES; i++)
-        for (int k = 0; k < 8; k++) b[i] = static_cast<uint8_t>(b[i] << 1 | bits[8 + 8 * i + k]);
-    if (b[0] != 0xAA || b[1] != 0xBF || b[2] != 0x35) return;
-    const bool latlon = u16le(b + 30) == 0xFFFF;
-    const int crclen = latlon ? 42 : 45, ofs = latlon ? -3 : 0;
-    if (crc16_rev(b + 3, crclen) != u16le(b + crclen + 3)) return;
-    last_t0_ = f.t0;
-
-    // configuration word of this sub-frame
-    const int sub = b[3] & 0xF;
-    const uint32_t cfg = u32le(b + 44 + ofs);
-    if (sub == 0xC) { if (snc_ && cfg != snc_) snd_ = 0; snc_ = cfg; }
-    if (sub == 0xD) { if (snd_ && cfg != snd_) snc_ = 0; snd_ = cfg; }
-    if (sub == 0xF) { y_ = 2000 + cfg % 100; mo_ = cfg / 100 % 100; d_ = cfg / 10000 % 100; }
-    if (!snc_ || !snd_) return;   // the serial isn't complete yet
-
-    Frame o;
-    o.type = "MRZ";
-    o.subtype = "MRZ";
-    o.dc_hz = f.dc_hz;
-    o.t_start = f.t_start;
-    o.t_end = f.t_end;
-    o.serial = std::to_string(snc_) + "-" + std::to_string(snd_);
-    const int h = b[4], mi = b[5], s = b[6];
-    if (h < 24 && mi < 60 && s < 61) {
-        if (y_ > 2000 && mo_ >= 1 && mo_ <= 12 && d_ >= 1) o.utc = utc_seconds(y_, mo_, d_, h, mi, s);
-        else o.tod = h * 3600 + mi * 60 + s;
-    }
-    if (latlon) {
-        const double lat = i32le(b + 7) * 1e-6, lon = i32le(b + 11) * 1e-6, alt = i32le(b + 15) * 1e-2;
-        if (std::fabs(lat) <= 90 && std::fabs(lon) <= 180 && alt > -1000 && alt < 80000) {
-            o.lat = lat; o.lon = lon; o.alt = alt;
-            o.vh = i16le(b + 19) / 100.0;
-            o.heading = u16le(b + 21) / 100.0;
-        }
-        o.sats = b[23];
-    } else {
-        const double xyz[3] = {i32le(b + 8) / 100.0, i32le(b + 12) / 100.0, i32le(b + 16) / 100.0};
-        double lat, lon, alt;
-        ecef_to_geo(xyz, &lat, &lon, &alt);
-        if (alt > -1000 && alt < 80000 && (xyz[0] || xyz[1] || xyz[2])) {
-            o.lat = lat; o.lon = lon; o.alt = alt;
-            const double v[3] = {i16le(b + 20) / 100.0, i16le(b + 22) / 100.0, i16le(b + 24) / 100.0};
-            double ve, vn, vu;
-            ecef_vel_to_enu(v, lat, lon, &ve, &vn, &vu);
-            en_to_speed_dir(ve, vn, &o.vh, &o.heading);
-            o.vv = vu;
-        }
-        o.sats = b[26];
-    }
-    const double t = i16le(b + 29 + ofs) / 100.0, rh = i16le(b + 31 + ofs) / 100.0;
-    if (t > -120 && t < 80) o.temp = t;
-    if (rh >= 0 && rh <= 100) o.rh = rh;
-    if (want_raw) o.raw = hex(b, crclen + 5);
-    if (out) out(o);
-}
 
 }  // namespace
 
-std::unique_ptr<Type> make_mrz(double fs) { return std::make_unique<Mrz>(fs); }
+std::unique_ptr<Family> make_mrz() { return std::make_unique<Mrz>(); }
 
 }  // namespace sonde
