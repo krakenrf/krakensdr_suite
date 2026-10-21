@@ -43,6 +43,9 @@ public:
         int decimation_used;
         float output_rate_hz;
         float freq_offset_hz;
+        // The bandwidth the block was filtered to (<= output_rate_hz: the
+        // rate is the nearest integer decimation that holds it)
+        int bandwidth_hz = SAMPLE_RATE_HZ;
         // Position of sample 0 in the VFO's decimated stream (DecimatorInstance
         // ::stream_pos, set by the pipeline): MUSIC frames and the digital
         // decoder's talker spans are both counted in it, which is how a
@@ -79,11 +82,13 @@ private:
     // the anti-alias filtering adequate at high total factors (the old
     // single stage was capped at 127 taps, which barely filtered anything
     // above factor ~63), and offset-independent filters mean an offset
-    // change only retunes the mixer.
+    // change only retunes the mixer. Real taps on complex samples (crcf:
+    // half the multiplies of the complex-tap cccf it used before).
     struct ChannelDecimState {
-        std::vector<firdecim_cccf> stages;   // Cascaded low-pass decimators
+        std::vector<firdecim_crcf> stages;   // Cascaded low-pass decimators
         std::vector<int> stage_factors;      // Per-stage decimation factors
         int decimation_factor = 0;           // Total factor (0 = not built)
+        int bandwidth_hz = 0;                // The last stage's cut (with the factor)
         float freq_offset_hz = 0.0f;         // Mixer frequency
         std::complex<float> mixer_phase{1.0f, 0.0f};  // Persists across blocks
         // Already-mixed input samples not yet consumed by the cascade (always
@@ -97,12 +102,12 @@ private:
             mixer_phase = std::complex<float>(1.0f, 0.0f);
             carry.clear();
             for (auto s : stages) {
-                if (s) firdecim_cccf_reset(s);
+                if (s) firdecim_crcf_reset(s);
             }
         }
         void destroyStages() {
             for (auto s : stages) {
-                if (s) firdecim_cccf_destroy(s);
+                if (s) firdecim_crcf_destroy(s);
             }
             stages.clear();
             stage_factors.clear();
@@ -120,7 +125,7 @@ private:
 
     // Current settings
     std::atomic<float> current_freq_offset_hz{0.0f};
-    std::atomic<int> current_bandwidth_index{DEFAULT_BANDWIDTH_INDEX};
+    std::atomic<int> current_bandwidth_hz{bandwidth_option_hz(DEFAULT_BANDWIDTH_INDEX)};
 
     // Statistics
     std::atomic<size_t> total_blocks_processed{0};
@@ -136,35 +141,38 @@ public:
     bool initialize(int num_channels);
     void cleanup();
     
-    // Bandwidth management (per-decimator bandwidth option / decimation factor)
-    void setBandwidthIndex(int index);
-    int getBandwidthIndex() const { return current_bandwidth_index.load(); }
-    int getDecimationFactor() const;
-    float getBandwidthMhz() const;
-    const char* getBandwidthName() const;
-    bool isValidBandwidthIndex(int index) const;
-    
+    // Bandwidth (any whole Hz, VFO_BW_MIN_HZ .. the whole band - config.hpp):
+    // the decimation factor follows from it (decimation_for_bandwidth)
+    void setBandwidthHz(int hz);
+    void setBandwidthIndex(int index) { setBandwidthHz(bandwidth_option_hz(index)); }   // a BANDWIDTH_OPTIONS size
+    int getBandwidthHz() const { return current_bandwidth_hz.load(); }
+    int getDecimationFactor() const { return decimation_for_bandwidth(getBandwidthHz()); }
+    float getBandwidthMhz() const { return getBandwidthHz() / 1e6f; }
+    float getOutputRate() const { return SAMPLE_RATE / getDecimationFactor(); }
+
     // Frequency translation
     void setFrequencyOffset(float offset_hz);
     float getFrequencyOffset() const { return current_freq_offset_hz.load(); }
 
-    // Direct float IQ input methods (efficient - no conversion needed)
+    // Direct float IQ input methods (efficient - no conversion needed).
+    // bandwidth_hz <= 0 = the current one (getBandwidthHz)
     DecimatedData decimateChannel(
-        const std::complex<float>* iq_data, 
+        const std::complex<float>* iq_data,
         size_t num_samples,
-        int channel_id, 
-        int decimation_factor = -1,
+        int channel_id,
+        int bandwidth_hz = -1,
         float freq_offset_hz = 0.0f
     );
-    
+
     // Zero-copy core: the caller guarantees the pointed-to sample arrays
     // stay valid for the duration of the call (processing only reads them).
-    // A null pointer / zero length entry yields an empty result.
+    // A null pointer / zero length entry yields an empty result. Pass the
+    // bandwidth read ONCE per block, so every channel of it is filtered alike
     MultiChannelDecimated decimateMultiChannel(
         const std::complex<float>* const* channel_ptrs,
         const size_t* channel_lens,
         size_t num_channels,
-        int decimation_factor = -1,
+        int bandwidth_hz = -1,
         float freq_offset_hz = 0.0f
     );
 
@@ -172,34 +180,36 @@ public:
     // pointer core; neither copies the sample data
     MultiChannelDecimated decimateMultiChannel(
         const std::vector<std::vector<std::complex<float>>>& channel_data,
-        int decimation_factor = -1,
+        int bandwidth_hz = -1,
         float freq_offset_hz = 0.0f
     );
 
     MultiChannelDecimated decimateMultiChannel(
         std::vector<std::vector<std::complex<float>>>&& channel_data,
-        int decimation_factor = -1,
+        int bandwidth_hz = -1,
         float freq_offset_hz = 0.0f
     );
-    
-    // Get effective bandwidth after decimation
-    float getOutputRate(int decimation_factor = -1) const;
-    float getOutputBandwidth(int decimation_factor = -1) const;
-    
+
     // Statistics
     size_t getBlocksProcessed() const { return total_blocks_processed.load(); }
     size_t getSamplesProcessed() const { return total_samples_processed.load(); }
 
-private:
-    // Ensure the per-channel mixer/stage cascade matches the requested
-    // settings, rebuilding the stages when the decimation factor changed.
-    ChannelDecimState* ensureChannelState(int channel, int decimation_factor, float freq_offset_hz);
-
     // Decompose a total decimation factor into cascaded stage factors
     static std::vector<int> decomposeFactor(int decimation_factor);
 
-    // (Re)build the low-pass stage cascade for the given total factor
-    bool buildStages(ChannelDecimState& st, int decimation_factor);
+    // The cascade's filters for a bandwidth: per stage its factor and real
+    // taps (the decimator, the benchmark and the offline tests share it)
+    struct StageDesign {
+        int factor;
+        std::vector<float> taps;
+    };
+    static std::vector<StageDesign> designStages(int bandwidth_hz);
 
-    const BandwidthOption& getBandwidthOptionSafe(int index) const;
+private:
+    // Ensure the per-channel mixer/stage cascade matches the requested
+    // settings, rebuilding the stages when the bandwidth changed.
+    ChannelDecimState* ensureChannelState(int channel, int bandwidth_hz, float freq_offset_hz);
+
+    // (Re)build the low-pass stage cascade for a bandwidth
+    bool buildStages(ChannelDecimState& st, int bandwidth_hz);
 };

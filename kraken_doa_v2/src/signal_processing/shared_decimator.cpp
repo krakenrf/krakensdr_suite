@@ -29,7 +29,7 @@ bool SharedDecimator::initialize(int num_channels) {
     }
 
     num_channels_initialized = num_channels;
-    current_bandwidth_index = DEFAULT_BANDWIDTH_INDEX;
+    current_bandwidth_hz = bandwidth_option_hz(DEFAULT_BANDWIDTH_INDEX);
 
     // One persistent filter/mixer state per channel (see header comment)
     channel_states_.clear();
@@ -46,7 +46,7 @@ bool SharedDecimator::initialize(int num_channels) {
     cout << "SharedDecimator initialized:" << endl;
     cout << "  Channels: " << num_channels << endl;
     cout << "  ThreadPool size: " << num_channels << " threads" << endl;
-    cout << "  Default bandwidth: " << getBandwidthName() << " (" << getBandwidthMhz() << " MHz)" << endl;
+    cout << "  Default bandwidth: " << getBandwidthHz() << " Hz (decimation " << getDecimationFactor() << ")" << endl;
     cout << "  Multi-stage decimation with input-rate mixer enabled" << endl;
 
     return true;
@@ -63,9 +63,10 @@ void SharedDecimator::cleanup() {
 }
 
 // Decompose a total decimation factor into cascaded stage factors,
-// largest-first, each <= 8. All BANDWIDTH_OPTIONS factors are of the form
-// 2^a * 3^b * 5^c, so this always yields a complete factorization; an
-// unexpected large prime falls back to a single stage.
+// largest-first, each <= 8. Every factor a bandwidth runs at divides 2.4 MHz
+// (2^a * 3^b * 5^c - decimation_for_bandwidth), so this always yields a
+// complete factorization; an unexpected large prime falls back to a single
+// stage.
 std::vector<int> SharedDecimator::decomposeFactor(int decimation_factor) {
     std::vector<int> factors;
     int remaining = decimation_factor;
@@ -86,29 +87,44 @@ std::vector<int> SharedDecimator::decomposeFactor(int decimation_factor) {
     return factors;
 }
 
-bool SharedDecimator::buildStages(ChannelDecimState& st, int decimation_factor) {
-    st.destroyStages();
+std::vector<SharedDecimator::StageDesign> SharedDecimator::designStages(int bandwidth_hz) {
+    bandwidth_hz = clamp_bandwidth_hz(bandwidth_hz);
+    const int decimation_factor = decimation_for_bandwidth(bandwidth_hz);
+    std::vector<StageDesign> out;
 
-    if (decimation_factor <= 1) {
-        return true;  // Pass-through, mixer only
-    }
+    // The bandwidth fills its output rate (bandwidth_is_efficient): the
+    // filters exactly as before arbitrary bandwidths (bandwidth = rate)
+    const bool exact = bandwidth_hz * decimation_factor == SAMPLE_RATE_HZ;
+    if (exact && decimation_factor == 1) return out;   // the whole band: mixer only
 
-    st.stage_factors = decomposeFactor(decimation_factor);
+    // Stages largest-first; a narrower bandwidth than the full rate without
+    // decimation (1.2 - 2.4 MHz) is one stage of factor 1 - a plain filter
+    std::vector<int> factors = decomposeFactor(decimation_factor);
+    if (factors.empty()) factors.push_back(1);
 
     // Per-stage Kaiser low-pass design. At each stage only frequencies that
-    // alias onto the final wanted band (+-0.4 * final_rate, matching the 80%
-    // usable-bandwidth convention) need to be attenuated, so early stages
+    // alias onto the final wanted band (+-0.4 * the bandwidth, matching the
+    // 80% usable-bandwidth convention) need to be attenuated, so early stages
     // get wide transition bands and few taps while the last stage makes the
     // sharp cut at a low rate. This keeps anti-aliasing adequate at ANY
     // total factor - the old single stage was capped at 127 taps, which was
-    // grossly under-dimensioned above factor ~63.
+    // grossly under-dimensioned above factor ~63. The last stage stops from
+    // 0.6 * the bandwidth (-6 dB at its edge): with the bandwidth = the rate
+    // that is where the aliases begin, as it always was; a narrower
+    // bandwidth in a wider rate (the rate holds it - the next divisor of 2.4
+    // MHz) is cut there too, so the VFO passes its bandwidth and no more, and
+    // its gain (each stage 1 / (2 cutoff)) is SAMPLE_RATE / bandwidth for
+    // every width, = D for the efficient sizes.
     const float final_rate = SAMPLE_RATE / static_cast<float>(decimation_factor);
-    const float passband_hz = 0.4f * final_rate;
+    const float bandwidth = exact ? final_rate : static_cast<float>(bandwidth_hz);
+    const float passband_hz = 0.4f * bandwidth;
     float stage_input_rate = SAMPLE_RATE;
 
-    for (int factor : st.stage_factors) {
+    for (size_t s = 0; s < factors.size(); s++) {
+        const int factor = factors[s];
         float stage_output_rate = stage_input_rate / factor;
         float stopband_hz = stage_output_rate - passband_hz;
+        if (s + 1 == factors.size() && !exact) stopband_hz = std::min(stopband_hz, 0.6f * bandwidth);
         float cutoff_norm = 0.5f * (passband_hz + stopband_hz) / stage_input_rate;
         float transition_norm = (stopband_hz - passband_hz) / stage_input_rate;
 
@@ -118,23 +134,27 @@ bool SharedDecimator::buildStages(ChannelDecimState& st, int decimation_factor) 
         taps = std::clamp(taps, 9u, 2047u);
         if ((taps % 2) == 0) taps++;
 
-        vector<float> h(taps);
-        liquid_firdes_kaiser(taps, cutoff_norm, 60.0f, 0.0f, h.data());
+        StageDesign d{factor, vector<float>(taps)};
+        liquid_firdes_kaiser(taps, cutoff_norm, 60.0f, 0.0f, d.taps.data());
+        out.push_back(std::move(d));
+        stage_input_rate = stage_output_rate;
+    }
+    return out;
+}
 
-        vector<liquid_float_complex> hc(taps);
-        for (unsigned int i = 0; i < taps; i++) {
-            hc[i] = liquid_float_complex{h[i], 0.0f};
-        }
+bool SharedDecimator::buildStages(ChannelDecimState& st, int bandwidth_hz) {
+    st.destroyStages();
 
-        firdecim_cccf stage = firdecim_cccf_create(factor, hc.data(), taps);
+    for (auto& d : designStages(bandwidth_hz)) {
+        firdecim_crcf stage = firdecim_crcf_create(d.factor, d.taps.data(), static_cast<unsigned int>(d.taps.size()));
         if (!stage) {
             cerr << "SharedDecimator: failed to create stage decimator (factor "
-                 << factor << ", " << taps << " taps)" << endl;
+                 << d.factor << ", " << d.taps.size() << " taps)" << endl;
             st.destroyStages();
             return false;
         }
         st.stages.push_back(stage);
-        stage_input_rate = stage_output_rate;
+        st.stage_factors.push_back(d.factor);
     }
     return true;
 }
@@ -142,18 +162,21 @@ bool SharedDecimator::buildStages(ChannelDecimState& st, int decimation_factor) 
 // Per-channel state: only one pool task touches a given channel at a time
 // (one task per channel per block, blocks sequential), so no locking needed.
 SharedDecimator::ChannelDecimState* SharedDecimator::ensureChannelState(
-    int channel, int decimation_factor, float freq_offset_hz) {
+    int channel, int bandwidth_hz, float freq_offset_hz) {
 
     ChannelDecimState& st = *channel_states_[channel];
 
-    if (st.decimation_factor != decimation_factor) {
-        // Factor changed - rebuild the cascade. Filter history and mixer
-        // phase are only meaningful for unchanged settings.
-        if (!buildStages(st, decimation_factor)) {
+    if (st.bandwidth_hz != bandwidth_hz) {
+        // Bandwidth (and with it the factor / the filters) changed - rebuild
+        // the cascade. Filter history and mixer phase are only meaningful for
+        // unchanged settings.
+        if (!buildStages(st, bandwidth_hz)) {
             st.decimation_factor = 0;
+            st.bandwidth_hz = 0;
             return nullptr;
         }
-        st.decimation_factor = decimation_factor;
+        st.decimation_factor = decimation_for_bandwidth(bandwidth_hz);
+        st.bandwidth_hz = bandwidth_hz;
         st.freq_offset_hz = freq_offset_hz;
         st.mixer_phase = complex<float>(1.0f, 0.0f);
         st.carry.clear();
@@ -171,63 +194,26 @@ SharedDecimator::ChannelDecimState* SharedDecimator::ensureChannelState(
 
 
 // Bandwidth management methods
-void SharedDecimator::setBandwidthIndex(int index) {
-    if (isValidBandwidthIndex(index)) {
-        current_bandwidth_index = index;
-        cout << "Bandwidth set to: " << getBandwidthName() 
-             << " (" << getBandwidthMhz() << " MHz, decimation=" << getDecimationFactor() << ")" << endl;
-    }
-}
-
-int SharedDecimator::getDecimationFactor() const {
-    return getBandwidthOptionSafe(current_bandwidth_index.load()).decimation_factor;
-}
-
-float SharedDecimator::getBandwidthMhz() const {
-    return getBandwidthOptionSafe(current_bandwidth_index.load()).bandwidth_mhz;
-}
-
-const char* SharedDecimator::getBandwidthName() const {
-    return getBandwidthOptionSafe(current_bandwidth_index.load()).display_name;
-}
-
-bool SharedDecimator::isValidBandwidthIndex(int index) const {
-    return index >= 0 && index < NUM_BANDWIDTH_OPTIONS;
-}
-
-const BandwidthOption& SharedDecimator::getBandwidthOptionSafe(int index) const {
-    if (isValidBandwidthIndex(index)) {
-        return BANDWIDTH_OPTIONS[index];
-    }
-    return BANDWIDTH_OPTIONS[DEFAULT_BANDWIDTH_INDEX];
+void SharedDecimator::setBandwidthHz(int hz) {
+    // (no log line: a bar edge being dragged sets it ~12 times a second; the
+    // control handler logs the applied width)
+    current_bandwidth_hz = clamp_bandwidth_hz(hz);
 }
 
 void SharedDecimator::setFrequencyOffset(float offset_hz) {
     current_freq_offset_hz = offset_hz;
 }
 
-float SharedDecimator::getOutputRate(int decimation_factor) const {
-    if (decimation_factor <= 0) {
-        decimation_factor = getDecimationFactor();
-    }
-    return SAMPLE_RATE / decimation_factor;
-}
-
-float SharedDecimator::getOutputBandwidth(int decimation_factor) const {
-    return getOutputRate(decimation_factor) * 0.8f;
-}
-
 // Per-channel block decimation: input-rate mixer, then the stage cascade
 SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
     const complex<float>* iq_data, size_t num_samples, int channel_id,
-    int decimation_factor, float freq_offset_hz) {
+    int bandwidth_hz, float freq_offset_hz) {
 
     DecimatedData result;
     result.channel_id = channel_id;
 
-    if (decimation_factor <= 0) {
-        decimation_factor = getDecimationFactor();
-    }
+    bandwidth_hz = bandwidth_hz > 0 ? clamp_bandwidth_hz(bandwidth_hz) : getBandwidthHz();
+    const int decimation_factor = decimation_for_bandwidth(bandwidth_hz);
 
     result.decimation_used = decimation_factor;
     result.output_rate_hz = SAMPLE_RATE / decimation_factor;
@@ -239,7 +225,7 @@ SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
     }
 
     // Per-channel persistent mixer/filter state (see ensureChannelState)
-    ChannelDecimState* st = ensureChannelState(channel_id, decimation_factor, freq_offset_hz);
+    ChannelDecimState* st = ensureChannelState(channel_id, bandwidth_hz, freq_offset_hz);
     if (!st) {
         cerr << "SharedDecimator: Failed to build decimator for channel " << channel_id << endl;
         return result;
@@ -295,7 +281,7 @@ SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
     auto run_cascade = [&](const complex<float>* in, size_t n) {
         const size_t base = result.samples.size();
         if (st->stages.empty()) {
-            // Decimation factor 1: mixer-only pass-through
+            // The whole band: mixer-only pass-through
             result.samples.insert(result.samples.end(), in, in + n);
             return;
         }
@@ -316,7 +302,7 @@ SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
                 dst = buf.data();
             }
 
-            firdecim_cccf_execute_block(
+            firdecim_crcf_execute_block(
                 st->stages[s],
                 const_cast<liquid_float_complex*>(
                     reinterpret_cast<const liquid_float_complex*>(cur_src)),
@@ -374,17 +360,17 @@ SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
 // data must stay alive for the duration of this function).
 SharedDecimator::MultiChannelDecimated SharedDecimator::decimateMultiChannel(
     const complex<float>* const* channel_ptrs, const size_t* channel_lens,
-    size_t num_channels, int decimation_factor, float freq_offset_hz) {
+    size_t num_channels, int bandwidth_hz, float freq_offset_hz) {
 
     MultiChannelDecimated result;
 
-    if (decimation_factor <= 0) {
-        decimation_factor = getDecimationFactor();
-    }
+    bandwidth_hz = bandwidth_hz > 0 ? clamp_bandwidth_hz(bandwidth_hz) : getBandwidthHz();
+    const int decimation_factor = decimation_for_bandwidth(bandwidth_hz);
 
     result.decimation_used = decimation_factor;
     result.output_rate_hz = SAMPLE_RATE / decimation_factor;
     result.freq_offset_hz = freq_offset_hz;
+    result.bandwidth_hz = bandwidth_hz;
 
     if (!initialized.load() || num_channels == 0 || !channel_ptrs || !channel_lens) {
         return result;
@@ -422,12 +408,12 @@ SharedDecimator::MultiChannelDecimated SharedDecimator::decimateMultiChannel(
     for (size_t ch = 0; ch < result.num_channels; ch++) {
         const complex<float>* ch_ptr = channel_ptrs[ch];
         antenna_futures[ch] = channel_thread_pool->submit(
-            [this, ch, ch_ptr, min_samples, decimation_factor, freq_offset_hz]() -> DecimatedData {
+            [this, ch, ch_ptr, min_samples, bandwidth_hz, freq_offset_hz]() -> DecimatedData {
                 return decimateChannel(
                     ch_ptr,
                     min_samples,
                     static_cast<int>(ch),
-                    decimation_factor,
+                    bandwidth_hz,
                     freq_offset_hz
                 );
             }
@@ -471,7 +457,7 @@ SharedDecimator::MultiChannelDecimated SharedDecimator::decimateMultiChannel(
 // (The old const& version deep-copied the entire multichannel block.)
 SharedDecimator::MultiChannelDecimated SharedDecimator::decimateMultiChannel(
     const vector<vector<complex<float>>>& channel_data,
-    int decimation_factor, float freq_offset_hz) {
+    int bandwidth_hz, float freq_offset_hz) {
 
     size_t n = min(channel_data.size(), static_cast<size_t>(MAX_CHANNELS));
     const complex<float>* ptrs[MAX_CHANNELS] = {nullptr};
@@ -480,14 +466,14 @@ SharedDecimator::MultiChannelDecimated SharedDecimator::decimateMultiChannel(
         ptrs[ch] = channel_data[ch].data();
         lens[ch] = channel_data[ch].size();
     }
-    return decimateMultiChannel(ptrs, lens, n, decimation_factor, freq_offset_hz);
+    return decimateMultiChannel(ptrs, lens, n, bandwidth_hz, freq_offset_hz);
 }
 
 SharedDecimator::MultiChannelDecimated SharedDecimator::decimateMultiChannel(
     vector<vector<complex<float>>>&& channel_data,
-    int decimation_factor, float freq_offset_hz) {
+    int bandwidth_hz, float freq_offset_hz) {
 
     return decimateMultiChannel(
         static_cast<const vector<vector<complex<float>>>&>(channel_data),
-        decimation_factor, freq_offset_hz);
+        bandwidth_hz, freq_offset_hz);
 }

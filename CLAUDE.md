@@ -696,8 +696,21 @@ Edit `kraken_doa_v2/include/config.hpp`:
   `kraken_doa_v2/include/globals.hpp` returns -1 and is the single choke
   point - see the client CLAUDE.md for the full list of sites it feeds
 
-**Bandwidth Options**:
-- `BANDWIDTH_OPTIONS`: Integer decimation factors with no resampling
+**VFO bandwidth (any width; details: `kraken_doa_v2/CLAUDE.md` *Arbitrary VFO
+bandwidth*)**:
+- ANY whole Hz from 1 kHz to 2.4 MHz (the user's request 2026-10-21; it was
+  the 30 `BANDWIDTH_OPTIONS` sizes): `DecimatorInstance::bandwidth_hz`, WS
+  `SET_DECIMATOR_BW_HZ:id:hz` (`SET_DECIMATOR_BW:id:index` still works), the
+  DECIMATORS snapshot's last field. Still integer decimation only (no
+  resampling): by the largest divisor D of 2.4 MHz whose rate holds the
+  width, the cascade's last stage cut at the width itself
+  (`SharedDecimator::designStages`; gain 2.4 MHz / width, = D as before for
+  the old sizes). Measured on the Pi 5: up to 1.2 MHz a custom width costs
+  what the efficient size at its rate does (the rate <= 1.25x the width at
+  300 kHz and below); 1.2 - 2.4 MHz runs at 2.4 MS/s with a full-rate filter
+  (+~33 % of a core with 5 antennas) - the page's per-browser "Efficient
+  bandwidths only" tick snaps every width to the 59 sizes that fill their
+  rate. The stages use real taps now (crcf: 1.1-1.4x faster than cccf)
 - Supports 2.4 MHz down to 1 kHz bandwidth (the narrow end - 10 kHz to 1 kHz -
   is for weak CW beacons, wildlife tags, fox hunts). MUSIC accumulates across
   blocks (a 1 kHz block is ~7 samples) and caps a frame at ~1 s of samples

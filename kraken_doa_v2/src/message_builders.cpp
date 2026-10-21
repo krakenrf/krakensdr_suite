@@ -557,7 +557,7 @@ string MessageBuilders::build_multi_doa_message() {
             DecimatorData data;
             data.id = decimator_inst->id;
             data.freq_offset_khz = decimator_inst->frequency_offset_hz / 1000.0f;
-            data.bandwidth_index = decimator_inst->bandwidth_index;
+            data.bandwidth_index = nearest_bandwidth_index(decimator_inst->bandwidth_hz.load(std::memory_order_relaxed));
             data.num_angles = num_angles;
             data.array_radius = decimator_inst->music_processor->getArrayRadius();
             data.blocks_processed = decimator_inst->music_processor->getBlocksProcessed();
@@ -843,11 +843,14 @@ string MessageBuilders::build_beamformed_fft_message(const BeamformedSpectrum& b
         point_step_hz = static_cast<double>(SAMPLE_RATE) * legacy_fft_decimation() /
                         std::max(1, current_fft_size.load());
     // Max-pool bins of the overlay (preserves peaks) to that spacing - a power
-    // of two, so the points stay evenly spaced over the band (the page places
-    // point i at centre - bw / 2 + i * bw / n), at least 16 points
+    // of two that divides the bins (a VFO narrower than its rate keeps fewer
+    // than 1024 - a multiple of 8), so the points stay evenly spaced over the
+    // band (the page places point i at centre - bw / 2 + i * bw / n), at
+    // least 16 points
     const double bin_hz = static_cast<double>(bf.bandwidth_mhz) * 1e6 / static_cast<double>(input_size);
     size_t pool = 1;
-    while (pool * 2 * bin_hz <= point_step_hz && input_size / (pool * 2) >= 16) pool *= 2;
+    while (pool * 2 * bin_hz <= point_step_hz && input_size / (pool * 2) >= 16 && input_size % (pool * 2) == 0)
+        pool *= 2;
     const size_t output_size = (input_size + pool - 1) / pool;
 
     BinaryMessage msg;
@@ -925,8 +928,12 @@ string MessageBuilders::build_decimator_info_message() {
         json << "{\"id\":" << info.id
              << ",\"freq_offset_hz\":" << ui_offset_hz  // Send UI-friendly offset
              << ",\"tuner\":" << vfo_tuner
+             // the bandwidth in Hz (any width); the nearest of the old sizes
+             // for pages from before; the decimation it runs at
+             << ",\"bandwidth_hz\":" << info.bandwidth_hz
              << ",\"bandwidth_index\":" << info.bandwidth_index
              << ",\"bandwidth_mhz\":" << info.bandwidth_mhz
+             << ",\"decimation\":" << info.decimation
              << ",\"enabled\":" << (info.enabled ? "true" : "false")
              << ",\"audio\":" << (info.audio_out ? "true" : "false")
              // the old single "Audio Src" (pages from before the speaker toggles)

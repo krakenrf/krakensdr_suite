@@ -733,13 +733,14 @@ void DataReceiver::decimation_processor_thread() {
                             }
                         }
 
-                        // STAGE 1: Decimation. The offset is read ONCE per block
-                        // (the control thread may move the VFO meanwhile), so
-                        // every channel mixes - and is labelled - with the same one.
+                        // STAGE 1: Decimation. The offset and the bandwidth are
+                        // read ONCE per block (the control thread may move the VFO
+                        // meanwhile), so every channel mixes and filters - and is
+                        // labelled - with the same ones.
                         const float block_offset_hz = inst->frequency_offset_hz;
                         result.decimated_data = inst->decimator->decimateMultiChannel(
                             channel_ptrs, channel_lens, input_channels,
-                            inst->decimator->getDecimationFactor(),
+                            inst->decimator->getBandwidthHz(),
                             block_offset_hz
                         );
 
@@ -947,7 +948,8 @@ void DataReceiver::decimation_processor_thread() {
                             result.beamformed_samples.data(),
                             result.beamformed_samples.size(),
                             center_freq_hz,
-                            sample_rate_hz
+                            sample_rate_hz,
+                            static_cast<float>(result.decimated_data.bandwidth_hz)
                         );
                     }
                 }

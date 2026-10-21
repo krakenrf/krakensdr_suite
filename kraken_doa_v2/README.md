@@ -193,7 +193,7 @@ commit and built by `make` as a static library without FFTW / libfec
 | `FFT_SIZE` | `16384` | Default; runtime-selectable in UI |
 | `MAX_CHANNELS` / `DOA_NUM_ELEMENTS` | `5` | Antenna channels |
 | `AUDIO_SAMPLE_RATE` | `48000` | **Must match the browser's native rate** (see console) |
-| `BANDWIDTH_OPTIONS[]` | 2.4 MHz → 1 kHz | Integer decimation only, no resampling |
+| `VFO_BW_MIN_HZ` / `VFO_BW_MAX_HZ` | 1 kHz / 2.4 MHz | A VFO takes any width in between; integer decimation only (by a divisor of 2.4 MHz), no resampling |
 
 For deeper architecture and tuning notes, see `CLAUDE.md`, `OPTIMIZATION_SUMMARY.md`,
 and the root `../CLAUDE.md` (full server + client system).

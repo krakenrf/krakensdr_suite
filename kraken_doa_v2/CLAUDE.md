@@ -179,10 +179,112 @@ Edit `include/config.hpp`:
   positions. ULA and user-entered CUSTOM positions are taken literally and
   are NOT mirrored
 
-**Bandwidth Options:**
-- `BANDWIDTH_OPTIONS[]`: Integer decimation factors (1 to 2400)
-- Range: 2.4 MHz down to 1 kHz (no resampling)
-- `DEFAULT_BANDWIDTH_INDEX`: Initial selection (default 7 = 240 kHz)
+**Arbitrary VFO bandwidth (the user's request 2026-10-21: "choose an arbitrary
+bandwidth, while still keeping the decimation efficient"; config.hpp,
+`src/signal_processing/shared_decimator.cpp`):**
+- A VFO's bandwidth is ANY whole Hz, `VFO_BW_MIN_HZ` 1 kHz .. `VFO_BW_MAX_HZ`
+  2.4 MHz: `DecimatorInstance::bandwidth_hz` (was `bandwidth_index`, an index
+  into the 30 `BANDWIDTH_OPTIONS`), `DecimatorManager::setBandwidthHz` (clamps;
+  `setBandwidthIndex` = an option's Hz). `clamp_bandwidth_hz` /
+  `decimation_for_bandwidth` / `efficient_bandwidth_at_least` /
+  `nearest_bandwidth_index` in config.hpp
+- Decimation stays INTEGER (no resampler - every consumer works on
+  2.4 MHz / D): D = the largest divisor of 2.4 MHz (2^8 3 5^5: 59 of them up
+  to 2400 - `efficient_decimations()`, each a cascade of stages <= 8) whose
+  rate holds the width. `SharedDecimator::designStages(bw)` (static: the
+  decimator, tools/decim_bench.cpp share it): intermediate stages as before
+  (stop = stage rate - 0.4 bw), the LAST stage stops at 0.6 bw (pass 0.4 bw,
+  -6 dB at the bar's edge 0.5 bw) - a width narrower than its rate is cut AT
+  THE WIDTH, so the VFO passes its bandwidth and no more; 1.2 - 2.4 MHz = one
+  stage of factor 1 (a full-rate filter). The width = the rate (an
+  "efficient" size, `bandwidth_is_efficient`: every old option is one) =
+  bit-identical taps to before (`exact` in designStages). Gain = each stage's
+  1 / (2 cutoff) = 2.4 MHz / bw for every width (= D as before for the
+  efficient sizes - the int16 conversions downstream see the same levels).
+  The stages run real taps (`firdecim_crcf`; they were `cccf` with zero
+  imaginary parts - twice the multiplies): 1.10-1.43x faster, outputs within
+  8e-7 of rms (float rounding)
+- `decimateMultiChannel(.., bandwidth_hz, offset)` (was the factor): the
+  pipeline reads the width ONCE per block; the channel state rebuilds when
+  the width changes (`ChannelDecimState::bandwidth_hz`), not only the factor.
+  `MultiChannelDecimated::bandwidth_hz` = the block's width (<= its rate)
+- The beamformed FFT (`process_beamformed_fft(.., bandwidth_hz)`) keeps only
+  the bins within the width (a multiple of 8, `bandwidth_hz` = their span;
+  the overlay message pools by powers of two that divide the count): with
+  the filter's stopband in the rest - 48 % of the bins of a 1.25 MHz VFO at
+  2.4 MS/s - its 10th-percentile noise floor fell 60 dB and the beamformed
+  FFT squelch opened on noise
+- Protocol: `SET_DECIMATOR_BW_HZ:id:hz` (clamped, `set_applied`; a bad value
+  throws = nothing changes), `SET_DECIMATOR_BW:id:index` (older pages /
+  scripts); the echo `{"decimator_bandwidth":{id, bandwidth_index (the
+  nearest option), bandwidth_hz, decimation}}`; `decimator_info[]` carries
+  `bandwidth_hz`, `bandwidth_index` (nearest), `bandwidth_mhz` (= hz / 1e6,
+  was the option's), `decimation`; DEMOD_MODE's reply adds `bandwidth_hz`.
+  The multi-DoA binary message keeps its u32 index (nearest; unused by the
+  page). DECIMATORS snapshot: field 2 = the nearest index (an older
+  kraken_doa reads it), a new LAST field (12) = the width in Hz; a file
+  without it loads by the index. Exact Hz now also from: the web mapper's
+  `vfo_bw_N` (both ways - it was snapped to an option), the discrete
+  scanner's per-frequency kHz, the debug playback's `vfo_bw_khz` (every
+  catalogue value is an old option: unchanged), the AI assistant's
+  `set_vfo` / `add_vfo` `bandwidth_hz`; a decoder's minimum
+  (`min_vfo_rate`) snaps UP to an efficient size
+  (`efficient_bandwidth_at_least` / the page's `bwAtLeastEfficient`: ADS-B's
+  2 MHz = the 2.4 MHz pass-through, not a 2 MHz full-rate filter)
+- Page (kraken_doa.html, the block after `bwo`): `decBwHz(d)` / `decBwMhz(d)`
+  = the ONE way to read a VFO's width (bandwidth_hz, else an older
+  receiver's index); `setDecimatorBandwidthHz` (sends at most every 80 ms +
+  the last value - a bar edge drag; `bwHeld` 1.5 s: the receiver's echoes of
+  earlier steps don't pull the bar back, in `updateDecimatorList` and the
+  `decimator_bandwidth` handler) / `setDecimatorBandwidthHzFromUI`; the old
+  index functions wrap them; an older receiver (no `bandwidth_hz` in its
+  decimator_info, `bwServerHz`) gets the nearest index. Bar edge drags (main
+  display `pointerMove`, panes `paneMove`) give `bwUserHz` = 3 significant
+  figures (a pixel is ~0.3 % of a bar) and keep the offset inside the band as
+  the bar grows; the tooltip adds "(runs at 300 kS/s)" for a custom width.
+  The card's BW row: a list of the 59 `BW_EFFICIENT` sizes (+ the VFO's own
+  width as "(custom)"; tooltip: the rate it runs at, x its width) and ✎ =
+  a typed width (`bwEdit` / `bwEditApply`, `bwParseHz`: kHz, or Hz / k / MHz,
+  comma decimals; Escape = cancel) - the frequency row's pattern; locked
+  VFOs (fixed / lock_vfo decoders) disable both. Saved frequencies: the
+  editor's list = the efficient sizes + an entry's custom width
+  (`sfBwSelectSet`), tuning applies the saved width exactly
+- "Efficient bandwidths only" (the Decimators box tick, per browser,
+  localStorage `kraken_bw_eff`, `bwEffOnly`): drags, typed widths and saved
+  frequencies snap to the nearest efficient size (`bwNearestEfficient`, log
+  scale); VFOs keep their width until changed. Asked for by the user "if
+  significant efficiency is lost" - it is, between 1.2 and 2.4 MHz (below)
+- Measured on the Pi 5 (2026-10-21; `tools/decim_bench.cpp`, one core, ns
+  per input sample per antenna): old sizes old cccf 10.8-25.1 vs crcf
+  9.4-17.7 (mean 1.22x); arbitrary widths 1 kHz - 1.2 MHz cost 0.83-1.24x the
+  nearest old size (2.2-3.9 % of a core per antenna), 1.2 - 2.4 MHz 24-29 ns
+  (the full-rate filter) vs 0.4 (2.4 MHz pass-through) / 17.7 (1.2 MHz); the
+  rate is <= 1.2x the width from 300 kHz down, <= 1.35x to 1.2 MHz, 1.2-1.9x
+  above. Response: flat +-0.04 dB to 0.4 bw, -6.0 dB at 0.5 bw, -52..-64 dB
+  from 0.6 bw, aliases <= -53 dB, gain 0.00 dB re 2.4 MHz / bw. Whole
+  kraken_doa (test build, fake heimdall, one VFO, DoA on, 5 antennas, % of a
+  core): 240 kHz 46.4 / 250 kHz (rate 300 k) 47.9 / 300 kHz 45.4; 12.5 /
+  13 / 15 kHz 35.4 / 35.3 / 35.6; 1.2 MHz 82.4, 1.25 / 1.5 / 2 MHz 118.3 /
+  117.2 / 112.5, 2.4 MHz 84.5. Before / after at the old sizes (the base
+  commit's build vs this one alternately, two runs each, the old index
+  command): 240 kHz 50.3 -> 47.0, 300 kHz 48.9 -> 45.0, 12 kHz 36.4 -> 35.4,
+  16 kHz 38.0 -> 36.4, 1.2 MHz 87.1 -> 75.8, 2.4 MHz 81.3 -> 80.7 (no filter)
+- Tests (job scratch 415cedbd e2e/, on the Pi: `fake_heimdall_bw.py` = a
+  5-element UCA scene, tone A +100 kHz from 60 deg, tone B +125 kHz from
+  200 deg; `t_bw.py` against a TEST build on 5808x / 5809x): 24 / 24 -
+  command / echo / decimator_info, clamps, a bad value, the old index,
+  bearings 60.0 / 200.0 in 26 / 37 / 41 / 10.5 kHz VFOs with the other tone
+  25 kHz away filtered out, both tones in a 77 kHz VFO, the beamformed
+  overlay 1.5000 / 0.2508 MHz, the beamformed squelch closed on noise in a
+  1.25 MHz VFO and open on the tones, the snapshot's field 12, a restart, an
+  older snapshot by index; `t_bw_ui.py` (headless Chromium, real mouse /
+  keys): 23 / 23 - the card list + ✎ (typed kHz / "1.5 MHz" / junk), a
+  main-display edge drag to an arbitrary width the receiver keeps, the
+  tick's snapping (drag + typed), independent mode's 2.4 MHz bar (both
+  clipped edges grabbable, resize cursor, dragged in and back out, below),
+  no page exceptions. A width change at the same rate clears MUSIC's
+  accumulator (`last_input_bw_hz_`: the rebuilt filters' restart is no
+  signal), as a rate change always did
 
 **KrakenSDR Wideband (downconverter) variant:**
 - Run with `--wideband` (heimdall too) - see root `../CLAUDE.md` for the design
@@ -313,7 +415,7 @@ Edit `include/config.hpp`:
   `.pfd` class since the top bar queries `.freq-digit` page-wide - plus a gain
   slider; canvas spectrum `paneDrawSpec`, a
   `WaterfallDisplay` each, overlay `paneDrawOverlay` with VFO bars + AI
-  badges - tuning bars in the main display's style: a grab handle centred in the spectrum AND the waterfall section, edge handles; `paneHit` = handle > active VFO's edges > body, the edges drag the bandwidth (snapped like `drawBox`, tooltip), bars are clipped to the plot area and a clipped side has no edge; an FFT squelch is drawn like `drawBox`'s - dashed yellow line at the level inside the bar, on the spectrum, labelled - and is draggable (all modes: `squelchHitMain` / `paneHit` kind 'squelch' within 5 px of the line, highest priority, ns-resize cursor; `squelchSetFromDrag` moves the card slider, sends DEC_SQUELCH_LEVEL at most every 80 ms + the final level, 0-80 dB); pointer handling `paneDown/Move/Up`: a VFO bar drags the VFO, empty spectrum pans the tuner like the main display - throttled TUNER_FREQ every 50 ms, final value on release, the drawn spectrum follows the data, not the drag - and a click without moving places the selected VFO); the top bar's frequency
+  badges - tuning bars in the main display's style: a grab handle centred in the spectrum AND the waterfall section, edge handles; `paneHit` = handle > active VFO's edges > body, the edges drag the bandwidth (any width like `drawBox`, tooltip), bars are clipped to the plot area and a clipped side keeps its edge `PANE_CLIP_EDGE_PX` 5 px inside the plot border (`bars[].xl / xr`; the drag is relative to where it started, so it resizes alike - until 2026-10-21 a clipped side had none, and a 2.4 MHz VFO, wider than the pane's edge-clipped band, couldn't be resized at all: the user's report); an FFT squelch is drawn like `drawBox`'s - dashed yellow line at the level inside the bar, on the spectrum, labelled - and is draggable (all modes: `squelchHitMain` / `paneHit` kind 'squelch' within 5 px of the line, highest priority, ns-resize cursor; `squelchSetFromDrag` moves the card slider, sends DEC_SQUELCH_LEVEL at most every 80 ms + the final level, 0-80 dB); pointer handling `paneDown/Move/Up`: a VFO bar drags the VFO, empty spectrum pans the tuner like the main display - throttled TUNER_FREQ every 50 ms, final value on release, the drawn spectrum follows the data, not the drag - and a click without moving places the selected VFO); the top bar's frequency
   digits and gain (`.not-indep`) are hidden in independent mode - each pane
   has its own (`selTuner` = the highlighted pane; `sendFreqChange` / `sgn`
   still route to TUNER_FREQ / TUNER_GAIN for it), `vfoCenterMhz(dec)` for VFO absolute
@@ -872,7 +974,8 @@ Edit `include/config.hpp`:
   the decoder (`digSetModeFor`, OFF = `digToggle`; a fixed-frequency plugin
   tunes by itself and ends there; a `lock_vfo` one - ism - puts the VFO on
   its tuner's centre), the demod (`setDecimatorDemodMode`, which sets that
-  mode's usual bandwidth) and the bandwidth (`sfBwIndex`: nearest option) -
+  mode's usual bandwidth) and the bandwidth (exactly - any width; the
+  nearest efficient size with "Efficient bandwidths only") -
   both skipped on a locked VFO -, then `sfTuneHz` (was mkTune): a VFO
   locked on its tuner's centre (`lock_vfo`) stays at offset 0 and the tuner
   retunes (FREQ: whole kHz; independent: its own tuner); otherwise
@@ -5558,7 +5661,7 @@ the internet and writes / changes decoder plugins):
   - control (refused in Read only): `tune` (FREQ / TUNER_FREQ, then waits
     <= 12 s until `MessageBuilders::spectrum_center_hz()` shows it and the
     recalibration ended), `set_gain`, `add_vfo`, `set_vfo` (freq, bandwidth
-    -> nearest option / a decoder's minimum, demod, decoder - fixed-
+    -> any whole Hz / a decoder's minimum (the narrowest efficient size), demod, decoder - fixed-
     frequency and `lock_vfo` decoders handled the way the page does it -,
     squelch, listen, transcribe), `set_decoder_option`, `remove_vfo`,
     `set_doa`, `save_frequency` (SF_SET, id `ai<ms>`). All through
@@ -5948,7 +6051,8 @@ the internet and writes / changes decoder plugins):
   receiver by dispatching normal control commands on the uWS loop
   (`loop->defer` → `ControlHandler::handle_websocket_message`), so sync,
   persistence and heimdall forwarding behave as if a browser sent them.
-  Cloud VFO bandwidths snap to the nearest `BANDWIDTH_OPTIONS` entry;
+  Cloud VFO bandwidths are applied in Hz as they are (`SET_DECIMATOR_BW_HZ`;
+  they snapped to the nearest `BANDWIDTH_OPTIONS` entry until 2026-10-21);
   `vfo_squelch_N` sets the level AND enables that VFO's squelch (the mapper
   assumes squelch is always on)
 - Everything runs on one worker thread started from main(); records are
@@ -6127,10 +6231,13 @@ mallopt(M_ARENA_MAX, 32);  // In main.cpp for 23-28 threads
 
 ### Modifying Bandwidth Options
 
-1. **Config:** Edit `BANDWIDTH_OPTIONS[]` in `include/config.hpp`
-2. **No rebuild needed** for option changes (loaded at runtime)
-3. **Constraints:** Only integer decimation factors (no resampling)
-4. **Range:** Factor must divide `SAMPLE_RATE` evenly
+A VFO takes any width (*Arbitrary VFO bandwidth* above), so there is no list
+to edit for that. `BANDWIDTH_OPTIONS[]` (`include/config.hpp`) is only the
+index list older pages / files / scripts use (`SET_DECIMATOR_BW:id:index`,
+DECIMATORS field 2) - don't reorder it. The limits are `VFO_BW_MIN_HZ` /
+`VFO_BW_MAX_HZ`; the decimation stays integer (no resampling) by a divisor
+of `SAMPLE_RATE_HZ` (`decimation_for_bandwidth`); the page's efficient sizes
+(`BW_EFFICIENT`) are computed the same way - keep the two alike.
 
 ### Updating Web UI
 
@@ -6237,7 +6344,9 @@ sudo perf top
 
 **Solutions:**
 1. Reduce active channels (process fewer channels)
-2. Increase decimation factor: Higher index in `BANDWIDTH_OPTIONS[]`
+2. Narrow the VFOs (a smaller bandwidth = a higher decimation); between 1.2
+   and 2.4 MHz a VFO runs a full-rate filter - 1.2 MHz or 2.4 MHz exactly is
+   cheaper ("Efficient bandwidths only")
 3. Disable DoA processing if not needed: `doa_enabled = false` via WebSocket
 4. Check thread count: Should be ~23-28 threads (expected)
 

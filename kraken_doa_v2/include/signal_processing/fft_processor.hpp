@@ -129,8 +129,12 @@ public:
 
     // Process beamformed IQ data into a decimator's beamformed-FFT slice (out).
     // Uses a shared FFT context (mutex-guarded) since beamformed data has a
-    // different sample rate than the main FFT.
+    // different sample rate than the main FFT. bandwidth_hz (> 0, <= the
+    // rate): only the bins within the VFO's bandwidth are kept - a VFO
+    // narrower than its rate has its filter's stopband in the rest, which
+    // would pull the squelch's noise floor (10th percentile) down.
     static void process_beamformed_fft(BeamformedFFTData& out,
                                         const std::complex<float>* iq_data, size_t num_samples,
-                                        float center_freq_hz, float sample_rate_hz);
+                                        float center_freq_hz, float sample_rate_hz,
+                                        float bandwidth_hz = 0.0f);
 };

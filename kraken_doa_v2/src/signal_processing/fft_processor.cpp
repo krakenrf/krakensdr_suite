@@ -900,7 +900,8 @@ bool FFTProcessor::check_squelch_beamformed(const BeamformedFFTData& bf, float s
 // context is mutex-guarded so this is safe even if called from multiple threads.
 void FFTProcessor::process_beamformed_fft(BeamformedFFTData& out,
                                            const std::complex<float>* iq_data, size_t num_samples,
-                                           float center_freq_hz, float sample_rate_hz) {
+                                           float center_freq_hz, float sample_rate_hz,
+                                           float bandwidth_hz) {
     // Use a fixed FFT size for beamformed data (1024 is good for decimated data)
     constexpr int BEAMFORMED_FFT_SIZE = 1024;
 
@@ -986,10 +987,19 @@ void FFTProcessor::process_beamformed_fft(BeamformedFFTData& out,
     // Lock this decimator's beamformed FFT output mutex
     std::lock_guard<std::mutex> out_lock(out.mutex);
 
+    // The bins within the VFO's bandwidth (all of them when it fills its rate)
+    int kept = BEAMFORMED_FFT_SIZE;
+    if (bandwidth_hz > 0 && bandwidth_hz < sample_rate_hz) {
+        // a multiple of 8: the overlay message max-pools by powers of two
+        kept = static_cast<int>(std::lround(BEAMFORMED_FFT_SIZE * bandwidth_hz / sample_rate_hz / 8.0)) * 8;
+        kept = std::clamp(kept, 16, BEAMFORMED_FFT_SIZE);
+    }
+    const int first = (BEAMFORMED_FFT_SIZE - kept) / 2;
+
     // Resize output vectors if needed
-    if (out.magnitudes.size() != BEAMFORMED_FFT_SIZE) {
-        out.magnitudes.resize(BEAMFORMED_FFT_SIZE);
-        out.averaged.resize(BEAMFORMED_FFT_SIZE);
+    if (out.magnitudes.size() != static_cast<size_t>(kept)) {
+        out.magnitudes.resize(kept);
+        out.averaged.resize(kept);
         std::fill(out.averaged.begin(), out.averaged.end(), -80.0f);
     }
 
@@ -997,20 +1007,21 @@ void FFTProcessor::process_beamformed_fft(BeamformedFFTData& out,
     float alpha = averaging_alpha.load(std::memory_order_relaxed);
 
     // Compute magnitudes with DC centering
-    for (int i = 0; i < BEAMFORMED_FFT_SIZE; i++) {
-        int shifted_idx = (i + BEAMFORMED_FFT_SIZE / 2) & (BEAMFORMED_FFT_SIZE - 1);
+    for (int k = 0; k < kept; k++) {
+        int shifted_idx = (first + k + BEAMFORMED_FFT_SIZE / 2) & (BEAMFORMED_FFT_SIZE - 1);
         float real = bf_fft_out[shifted_idx][0];
         float imag = bf_fft_out[shifted_idx][1];
 
         float power = (real * real + imag * imag) * scale + 1e-15f;
         float db = 10.0f * (std::log2f(power) * log10_of_2);
 
-        out.magnitudes[i] = db;
-        out.averaged[i] = alpha * db + (1.0f - alpha) * out.averaged[i];
+        out.magnitudes[k] = db;
+        out.averaged[k] = alpha * db + (1.0f - alpha) * out.averaged[k];
     }
 
-    // Update metadata
+    // Update metadata (the span of the bins kept: point k sits at
+    // centre - bandwidth / 2 + k * bandwidth / kept, as for the whole rate)
     out.center_freq_hz.store(center_freq_hz, std::memory_order_relaxed);
-    out.bandwidth_hz.store(sample_rate_hz, std::memory_order_relaxed);
+    out.bandwidth_hz.store(sample_rate_hz * kept / BEAMFORMED_FFT_SIZE, std::memory_order_relaxed);
     out.valid.store(true, std::memory_order_release);
 }

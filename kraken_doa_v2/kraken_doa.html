@@ -964,6 +964,12 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 #decimator-list .vfd-ed {padding:1px 5px;margin-left:auto}
 #decimator-list .dec-row.typing .vfd-box, #decimator-list .dec-row.typing .vfd-ed,
 #decimator-list .dec-row:not(.typing) .vfd-in, #decimator-list .dec-row:not(.typing) .vfd-in-unit {display:none}
+/* the BW row: the size list + ✎ (any width, typed in kHz) - as the frequency row */
+#decimator-list .dec-bw-sel {flex:1;min-width:0}
+#decimator-list .dec-bw-in {width:96px;font-family:monospace}
+#decimator-list .dec-bw-ed {padding:1px 5px}
+#decimator-list .dec-row.bw-typing .dec-bw-sel, #decimator-list .dec-row.bw-typing .dec-bw-ed,
+#decimator-list .dec-row:not(.bw-typing) .dec-bw-in, #decimator-list .dec-row:not(.bw-typing) .dec-bw-in-unit {display:none}
 
 /* Scanner in sidebar */
 #scanner-freq-list {max-height:200px;overflow-y:auto;background:#16213e;border:1px solid #0f3460;border-radius:3px;padding:5px}
@@ -1105,6 +1111,11 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <button onclick="addDecimator()" class="btn primary" style="flex:1">+ Add</button>
           <button onclick="requestDecimatorInfo()" class="btn" style="flex:1">↻ Refresh</button>
         </div>
+        <label style="display:flex;align-items:center;gap:5px;margin-bottom:8px;font-size:12px"
+               title="A VFO can have ANY bandwidth (drag a bar's edge, or ✎ on its card). The receiver decimates by whole numbers, so a width between its efficient sizes runs at the next wider rate - up to 1.25x its width at 300 kHz and below, and 1.2 - 2.4 MHz at the full 2.4 MS/s with a filter (about a third of a Pi 5 core more with 5 antennas). Ticked: dragging, typing and saved frequencies snap to the efficient sizes (each one fills its rate - nothing wasted). This browser only">
+          <input type="checkbox" id="bw-eff-only" onchange="bwSetEffOnly(this.checked)">
+          <span>Efficient bandwidths only</span>
+        </label>
         <div id="decimator-list">
           <!-- Decimator controls will be dynamically added here -->
         </div>
@@ -2602,6 +2613,81 @@ const bwo=[
 const MIN_BW_INDEX = bwo.length - 1;
 const MIN_BW_MHZ = bwo[MIN_BW_INDEX].bandwidth; // 0.001 MHz
 
+// VFO BANDWIDTH = any whole Hz from BW_MIN_HZ to the whole 2.4 MHz band
+// (dec.bandwidth_hz; SET_DECIMATOR_BW_HZ:id:hz). The receiver decimates by
+// the largest divisor of 2.4 MHz whose rate holds it and cuts its filter at
+// the bandwidth (config.hpp / shared_decimator.cpp). A width that fills its
+// rate wastes nothing (BW_EFFICIENT: the 59 rates 2.4 MHz / divisor - every
+// bwo size is one); others run up to 1.25x their width (300 kHz and below),
+// and 1.2 - 2.4 MHz runs a full-rate filter at 2.4 MS/s - the "Efficient
+// bandwidths only" tick (Decimators box, per browser) snaps every width to
+// BW_EFFICIENT. bwo stays the index list of older receivers.
+const BW_SR = 2400000, BW_MIN_HZ = 1000, BW_MAX_HZ = BW_SR;
+const BW_EFFICIENT = (() => {   // ascending Hz
+  const a = [];
+  for (let d = BW_SR / BW_MIN_HZ; d >= 1; d--) if (BW_SR % d === 0) a.push(BW_SR / d);
+  return a;
+})();
+let bwEffOnly = (() => { try { return localStorage.getItem('kraken_bw_eff') === '1'; } catch (e) { return false; } })();
+let bwServerHz = false;   // the receiver takes SET_DECIMATOR_BW_HZ (its decimator_info has bandwidth_hz)
+// a pane VFO's side clipped at the plot border keeps its edge this far inside (paneDrawOverlay)
+const PANE_CLIP_EDGE_PX = 5;
+function bwClampHz(hz) {
+  hz = Math.round(+hz);
+  return isFinite(hz) ? Math.max(BW_MIN_HZ, Math.min(BW_MAX_HZ, hz)) : BW_MIN_HZ;
+}
+// the decimation / output rate a width runs at (as the receiver picks it)
+function bwDecimation(hz) {
+  for (let d = Math.floor(BW_SR / bwClampHz(hz)); d > 1; d--) if (BW_SR % d === 0) return d;
+  return 1;
+}
+function bwRateHz(hz) { return BW_SR / bwDecimation(hz); }
+// the nearest efficient size (log scale) / the narrowest one that holds hz
+function bwNearestEfficient(hz) {
+  hz = bwClampHz(hz);
+  let best = BW_EFFICIENT[0];
+  for (const e of BW_EFFICIENT) if (Math.abs(Math.log(e / hz)) < Math.abs(Math.log(best / hz))) best = e;
+  return best;
+}
+function bwAtLeastEfficient(hz) { return bwRateHz(hz); }
+// a width the user picked (drag, typed): whole Hz, 3 significant figures
+// (a drag step of a pixel is ~0.3 % of a bar), or the nearest efficient size
+function bwUserHz(hz) {
+  hz = bwClampHz(hz);
+  if (bwEffOnly) return bwNearestEfficient(hz);
+  const step = Math.pow(10, Math.max(0, Math.floor(Math.log10(hz)) - 2));
+  return bwClampHz(Math.round(hz / step) * step);
+}
+// a VFO's bandwidth (Hz / MHz): bandwidth_hz, else (an older receiver) its index
+function decBwHz(d) {
+  if (!d) return 240000;
+  if (d.bandwidth_hz > 0) return d.bandwidth_hz;
+  const o = bwo[d.bandwidth_index ?? 0];
+  return Math.round((o ? o.bandwidth : (d.bandwidth_mhz || 0.24)) * 1e6);
+}
+function decBwMhz(d) { return decBwHz(d) / 1e6; }
+// the BW index nearest a width (older receivers, SET_DECIMATOR_BW)
+function bwIndexNearest(hz) {
+  let bi = 0;
+  bwo.forEach((b, i) => { if (Math.abs(Math.log(b.bandwidth * 1e6 / hz)) < Math.abs(Math.log(bwo[bi].bandwidth * 1e6 / hz))) bi = i; });
+  return bi;
+}
+// "12.5 kHz" / "1.25 MHz" (up to 3 decimals, trailing zeros dropped)
+function bwLabel(hz) {
+  const t = (v) => String(+v.toFixed(3));
+  return hz >= 1e6 ? t(hz / 1e6) + ' MHz' : t(hz / 1e3) + ' kHz';
+}
+function bwSetEffOnly(on) {
+  bwEffOnly = !!on;
+  try { localStorage.setItem('kraken_bw_eff', bwEffOnly ? '1' : '0'); } catch (e) {}
+  const el = $id('bw-eff-only');
+  if (el) el.checked = bwEffOnly;
+  // the VFOs' widths are left as they are (a custom one stays listed as
+  // custom); the next drag / pick / typed width snaps
+  decimatorInfo.forEach(d => refreshDecimatorPanelItem(d.id));
+}
+{ const el = document.getElementById('bw-eff-only'); if (el) el.checked = bwEffOnly; }
+
 // Max tuning-bar offset from center (Hz) for a bar of bwMhz width: half the
 // visible (edge-clipped, wideband-aware) span minus half the bar width.
 // Single source of truth - this formula was previously copy-pasted ~12 times
@@ -2667,7 +2753,7 @@ function scheduleScrollSync() {
 function resyncOffsetsFromSavedBoxes() {
   if (!scrollDragSavedBoxes) return false;
   decimatorInfo.forEach(dec => {
-    const maxOffset = maxOffsetHz(bwo[dec.bandwidth_index ?? 0].bandwidth);
+    const maxOffset = maxOffsetHz(decBwMhz(dec));
     const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, dec.freq_offset_hz));
     if (clampedOffset !== dec.freq_offset_hz) {
       dec.freq_offset_hz = clampedOffset;
@@ -2698,7 +2784,9 @@ function showBwTooltip(e, bwMhz) {
       'border-radius:4px;padding:3px 8px;font:12px monospace;white-space:nowrap;display:none';
     document.body.appendChild(bwTooltipEl);
   }
-  bwTooltipEl.textContent = bwMhz >= 1 ? bwMhz.toFixed(1) + ' MHz' : Math.round(bwMhz * 1000) + ' kHz';
+  // the width, + the rate it runs at when that's wider (not an efficient size)
+  const hz = Math.round(bwMhz * 1e6), rate = bwRateHz(hz);
+  bwTooltipEl.textContent = bwLabel(hz) + (rate !== hz ? '  (runs at ' + bwLabel(rate).replace('Hz', 'S/s') + ')' : '');
   bwTooltipEl.style.left = (e.clientX + 14) + 'px';
   bwTooltipEl.style.top = (e.clientY - 28) + 'px';
   bwTooltipEl.style.display = 'block';
@@ -3065,7 +3153,7 @@ class WaterfallDisplay {
     decimatorInfo.forEach((dec) => {
       if (vfoLocked(dec)) return;   // drawn as a line above, not grabbable
       const color = typeof getDecimatorColor === 'function' ? getDecimatorColor(dec.id) : '#4169e1';
-      const bwMhz = bwo[dec.bandwidth_index || 0].bandwidth;
+      const bwMhz = decBwMhz(dec);
       const selCenter = centerFreq + (dec.freq_offset_hz / 1000000);
       const freqMin = selCenter - bwMhz / 2;
       const freqMax = selCenter + bwMhz / 2;
@@ -3099,7 +3187,7 @@ class WaterfallDisplay {
         handleColor: handleColor,
         color: color,
         offset_hz: dec.freq_offset_hz,
-        bandwidth_index: dec.bandwidth_index
+        bandwidth_hz: decBwHz(dec)
       });
 
       // Draw translucent box
@@ -4257,15 +4345,6 @@ function toggleSection(header) {
   if(toggle) toggle.textContent = section.classList.contains('collapsed') ? '▶' : '▼';
 }
 
-function findNearestBw(mhz) {
-  let min=Infinity,idx=Math.min(currentBandwidth, MIN_BW_INDEX);
-  for(let i=0;i<=MIN_BW_INDEX;i++) {
-    const d=Math.abs(bwo[i].bandwidth-mhz);
-    if(d<min){min=d;idx=i;}
-  }
-  return idx;
-}
-
 // A locked VFO (its decoder has a fixed frequency - ADS-B - or takes its
 // tuner's whole band - Cell / Digital TV; see vfoLocked):
 // one solid line at its centre with a label, nothing to grab. Used by the
@@ -4487,7 +4566,7 @@ function drawBox() {
       return;
     }
     const color = getDecimatorColor(dec.id);
-    const bw = bwo[dec.bandwidth_index ?? 0].bandwidth;
+    const bw = decBwMhz(dec);
     const selCenter = center + (dec.freq_offset_hz / 1000000); // Convert Hz to MHz
     const minF = selCenter - bw/2;
     const maxF = selCenter + bw/2;
@@ -4527,7 +4606,7 @@ function drawBox() {
       handleColor: handleColor,
       color: color,
       offset_hz: dec.freq_offset_hz,
-      bandwidth_index: dec.bandwidth_index
+      bandwidth_hz: decBwHz(dec)
     });
 
     // Draw box
@@ -4740,7 +4819,7 @@ function centerActiveBarAt(freqMhz) {
   const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
   if (!activeDec || vfoLocked(activeDec)) return false;   // fixed-frequency decoder (ADS-B)
   const newOffsetHz = (freqMhz - barCenterFreq()) * 1000000;  // freqMhz is on the displayed axis
-  const bw = bwo[activeDec.bandwidth_index ?? 0].bandwidth;
+  const bw = decBwMhz(activeDec);
   const maxOffset = maxOffsetHz(bw);
   const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffsetHz));
   setDecimatorFreq(activeDecimatorId, clampedOffset / 1000); // Send in kHz
@@ -4808,7 +4887,7 @@ function pointerDown(s, e) {
         isDraggingEdge = true;
         draggedEdge = edge;
         dragStartX = x;
-        dragStartBandwidth = bwo[box.bandwidth_index ?? 0].bandwidth;
+        dragStartBandwidth = box.bandwidth_hz / 1e6;
         dragStartOffset = box.offset_hz;
         e.preventDefault();
         drawBox();
@@ -4904,18 +4983,23 @@ function pointerMove(s, e) {
 
   if(isDraggingEdge) {
     const df=s.dxToMhz(x-dragStartX);
-    let dbw=draggedEdge==='left'?dragStartBandwidth-df*2:dragStartBandwidth+df*2;
-    dbw=Math.max(MIN_BW_MHZ,Math.min(2.4,dbw));
-    const newBwIdx=Math.min(findNearestBw(dbw), MIN_BW_INDEX);
-    showBwTooltip(e, bwo[newBwIdx].bandwidth);
+    const dbw=draggedEdge==='left'?dragStartBandwidth-df*2:dragStartBandwidth+df*2;
+    // any width (3 significant figures), or the nearest efficient size
+    const newHz = bwUserHz(dbw * 1e6);
+    showBwTooltip(e, newHz / 1e6);
 
     // Find active decimator info
     const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
-    if(activeDec && newBwIdx !== activeDec.bandwidth_index) {
-      setDecimatorBandwidth(activeDecimatorId, newBwIdx);
+    if(activeDec && newHz !== decBwHz(activeDec)) {
+      setDecimatorBandwidthHz(activeDecimatorId, newHz);
       // Update local info
-      activeDec.bandwidth_index = newBwIdx;
-      activeDec.bandwidth_mhz = bwo[newBwIdx].bandwidth;
+      decSetLocalBw(activeDec, newHz);
+      // a wider bar must still fit the band: keep its offset inside
+      const maxOffset = maxOffsetHz(newHz / 1e6);
+      if (Math.abs(activeDec.freq_offset_hz) > maxOffset) {
+        activeDec.freq_offset_hz = Math.sign(activeDec.freq_offset_hz) * maxOffset;
+        setDecimatorFreq(activeDecimatorId, activeDec.freq_offset_hz / 1000);
+      }
       drawBox();
       // Update decimator panel in real-time
       refreshDecimatorPanelItem(activeDecimatorId);
@@ -4930,7 +5014,7 @@ function pointerMove(s, e) {
     // Find active decimator info
     const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
     if(activeDec) {
-      const bw = bwo[activeDec.bandwidth_index ?? 0].bandwidth;
+      const bw = decBwMhz(activeDec);
       const maxOffset = maxOffsetHz(bw);
       const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffset));
 
@@ -6859,30 +6943,117 @@ function setDecimatorFreq(id, offset_khz) {
   }, 100); // 100ms debounce delay
 }
 
-function setDecimatorBandwidth(id, bw_index) {
-  // Clamp to the selectable range
-  bw_index = Math.max(0, Math.min(parseInt(bw_index), MIN_BW_INDEX));
-  send('SET_DECIMATOR_BW:' + id + ':' + bw_index);
+// A VFO's bandwidth in Hz (any width, bwClampHz): sent at most every 80 ms
+// while it keeps changing (a bar edge being dragged) + the last value; the
+// receiver's echoes are ignored for 1.5 s after a local change (bwHeld) so
+// an older value can't pull the bar back mid-drag. An older receiver (no
+// bandwidth_hz in its decimator_info) gets the nearest index.
+const bwPending = {}, bwSendTimer = {}, bwSendAt = {}, bwHeldUntil = {};
+function bwHeld(id) { return (bwHeldUntil[id] || 0) > Date.now(); }
+function setDecimatorBandwidthHz(id, hz) {
+  bwPending[id] = bwClampHz(hz);
+  bwHeldUntil[id] = Date.now() + 1500;
+  if (bwSendTimer[id]) return;
+  const go = () => {
+    bwSendTimer[id] = null;
+    bwSendAt[id] = Date.now();
+    const v = bwPending[id];
+    send(bwServerHz ? 'SET_DECIMATOR_BW_HZ:' + id + ':' + v : 'SET_DECIMATOR_BW:' + id + ':' + bwIndexNearest(v));
+  };
+  const wait = 80 - (Date.now() - (bwSendAt[id] || 0));
+  if (wait <= 0) go();
+  else bwSendTimer[id] = setTimeout(go, wait);
 }
-
-// Called from UI dropdown - updates local state and redraws tuning bar
+// a BANDWIDTH index (bwo) - the callers from before arbitrary widths
+function setDecimatorBandwidth(id, bw_index) {
+  bw_index = Math.max(0, Math.min(parseInt(bw_index), MIN_BW_INDEX));
+  setDecimatorBandwidthHz(id, Math.round(bwo[bw_index].bandwidth * 1e6));
+}
 function setDecimatorBandwidthFromUI(id, bw_index) {
   bw_index = Math.max(0, Math.min(parseInt(bw_index), MIN_BW_INDEX));
-  setDecimatorBandwidth(id, bw_index);
+  setDecimatorBandwidthHzFromUI(id, Math.round(bwo[bw_index].bandwidth * 1e6));
+}
+// the local VFO's bandwidth (before the receiver's echo)
+function decSetLocalBw(dec, hz) {
+  dec.bandwidth_hz = hz;
+  dec.bandwidth_mhz = hz / 1e6;
+  dec.bandwidth_index = bwIndexNearest(hz);
+}
+
+// The card's BW list: every efficient size (widest first), + the VFO's own
+// width when it isn't one ("custom"); the tooltip says what it runs at
+function bwOptionsHtml(hz) {
+  let s = '', placed = false;
+  for (let i = BW_EFFICIENT.length - 1; i >= 0; i--) {
+    const e = BW_EFFICIENT[i];
+    if (!placed && hz > e) {
+      s += `<option value="${hz}" selected>${bwLabel(hz)} (custom)</option>`;
+      placed = true;
+    }
+    if (e === hz) placed = true;
+    s += `<option value="${e}"${e === hz ? ' selected' : ''}>${bwLabel(e)}${e === BW_SR ? ' (full)' : ''}</option>`;
+  }
+  if (!placed) s += `<option value="${hz}" selected>${bwLabel(hz)} (custom)</option>`;
+  return s;
+}
+function bwTitle(hz) {
+  const r = bwRateHz(hz);
+  if (r === hz) return 'Bandwidth ' + bwLabel(hz) + ': an efficient size (it fills its sample rate). ✎ = type any width';
+  return 'Bandwidth ' + bwLabel(hz) + ' (custom): the VFO runs at ' + bwLabel(r).replace('Hz', 'S/s') + ', ' +
+    (r / hz).toFixed(2) + 'x its width - the receiver decimates by whole numbers, so everything after it ' +
+    '(DoA, audio, decoders) works on the wider rate' + (r === BW_SR ? ', with a filter at the full 2.4 MHz' : '') +
+    '. ‘Efficient bandwidths only’ in this box snaps to the sizes in this list. ✎ = type any width';
+}
+function bwSelectSync(dec) {
+  const el = $id('dec-bw-' + dec.id);
+  if (!el || document.activeElement === el) return;
+  const hz = decBwHz(dec);
+  if (el.dataset.hz === String(hz)) return;
+  el.innerHTML = bwOptionsHtml(hz);
+  el.dataset.hz = String(hz);
+  if (!el.disabled) el.title = bwTitle(hz);   // (a locked VFO's says why)
+}
+// "12.5" = kHz; "12500 Hz", "12.5k", "1.2 MHz" (comma decimals too) -> Hz
+function bwParseHz(text) {
+  const m = String(text).trim().replace(',', '.').match(/^([0-9]*\.?[0-9]+)\s*(hz|k|khz|m|mhz)?$/i);
+  if (!m) return NaN;
+  const u = (m[2] || 'k').toLowerCase();
+  return parseFloat(m[1]) * (u === 'hz' ? 1 : u[0] === 'm' ? 1e6 : 1e3);
+}
+function bwEdit(id) {
+  const row = $id('dec-bw-row-' + id), inp = $id('dec-bw-in-' + id);
+  const d = decimatorInfo.find(z => z.id === id);
+  if (!row || !inp || !d || inp.disabled) return;
+  inp.value = String(+(decBwHz(d) / 1e3).toFixed(3));
+  row.classList.add('bw-typing');
+  inp.focus();
+  inp.select();
+}
+function bwEditApply(id, text, orig) {
+  const row = $id('dec-bw-row-' + id);
+  if (row) row.classList.remove('bw-typing');
+  if (text === orig) return;
+  const hz = bwParseHz(text);
+  if (!(hz > 0)) return;
+  setDecimatorBandwidthHzFromUI(id, bwEffOnly ? bwNearestEfficient(hz) : bwClampHz(hz));
+}
+
+// Called from the card, a drag's end, a decoder's need ... - updates local
+// state and redraws the tuning bar
+function setDecimatorBandwidthHzFromUI(id, hz) {
+  hz = bwClampHz(hz);
+  setDecimatorBandwidthHz(id, hz);
 
   // Update local decimator info
   const dec = decimatorInfo.find(d => d.id === id);
-  if (dec) {
-    dec.bandwidth_index = bw_index;
-    dec.bandwidth_mhz = bwo[bw_index].bandwidth;
-  }
+  if (dec) decSetLocalBw(dec, hz);
 
   // Update decimator panel (dropdown, info display)
   refreshDecimatorPanelItem(id);
 
   // If there are saved box positions from a drag, sync the offsets first
   // This ensures the tuning bar stays at its visual position after bandwidth change
-  // (the changed decimator already carries its NEW bandwidth_index for the clamp)
+  // (the changed decimator already carries its NEW bandwidth for the clamp)
   resyncOffsetsFromSavedBoxes();
 
   // Now clear saved box positions so drawBox uses fresh calculated values
@@ -6913,17 +7084,13 @@ function refreshDecimatorPanelItem(id) {
     actualFreqEl.value = actualFreqMhz.toFixed(6);
   }
 
-  // Update bandwidth dropdown selection
-  const bwEl = $id('dec-bw-' + id);
-  if (bwEl && bwEl.value != dec.bandwidth_index) {
-    bwEl.value = dec.bandwidth_index;
-  }
+  // Update the bandwidth list (its "custom" entry follows the width)
+  bwSelectSync(dec);
 
   // Update info display
   const infoEl = $id('dec-info-' + id);
   if (infoEl) {
-    const bwMhz = bwo[dec.bandwidth_index || 0].bandwidth;
-    infoEl.textContent = `Bandwidth: ${bwMhz.toFixed(2)} MHz | ${dec.enabled ? 'Enabled' : 'Disabled'}`;
+    infoEl.textContent = `Bandwidth: ${bwLabel(decBwHz(dec))} | ${dec.enabled ? 'Enabled' : 'Disabled'}`;
   }
 }
 
@@ -6998,14 +7165,13 @@ function setDecimatorDemodMode(id, mode) {
   // starved them)
   if (mode === 'DIGITAL') {
     const need = digMinRateK(dec && dec.digital_mode && dec.digital_mode !== 'OFF' ? dec.digital_mode : 'AUTO') || 24;
-    const have = dec ? ((bwo[dec.bandwidth_index] || {}).bandwidth ?? dec.bandwidth_mhz) * 1000 : 0;
+    const have = dec ? decBwHz(dec) / 1000 : 0;
     if (have + 1e-6 < need) digFixBandwidthFor(id);
     return;
   }
   // Automatically set appropriate bandwidth for the mode
-  // WBFM: 240 kHz (index 7), NBFM/AM: 16 kHz (index 20)
-  const bwIndex = (mode === 'WBFM') ? 7 : 20;
-  setDecimatorBandwidthFromUI(id, bwIndex);
+  // WBFM: 240 kHz, NBFM/AM: 16 kHz
+  setDecimatorBandwidthHzFromUI(id, mode === 'WBFM' ? 240000 : 16000);
 }
 
 function requestDecimatorInfo() {
@@ -7047,7 +7213,7 @@ function handleActualFreqInput(decimatorId, inputValue, focusValue) {
 
   // Get bandwidth for this decimator to calculate max offset
   // Account for edge clipping - visible bandwidth is reduced by currentEdgeClip
-  const bw = bwo[dec.bandwidth_index || 0].bandwidth;
+  const bw = decBwMhz(dec);
   const maxOffset = maxOffsetHz(bw);
 
   // Clamp to valid range
@@ -7113,11 +7279,11 @@ function vfdStep(id, pos, up) {
   if (opMode === 'independent') {
     const p = panes[d.tuner || 0];
     if (!p || !(p.freqMhz > 0)) return;
-    const bw = d.bandwidth_mhz || (bwo[d.bandwidth_index || 0] || {}).bandwidth || 0.1;
+    const bw = decBwMhz(d);
     const half = Math.max(0, (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2) * 1e6;
     off = Math.max(-half, Math.min(half, hz - p.freqMhz * 1e6));
   } else {
-    const max = maxOffsetHz(bwo[d.bandwidth_index || 0].bandwidth);
+    const max = maxOffsetHz(decBwMhz(d));
     off = Math.max(-max, Math.min(max, hz - currentCenterFreq * 1e6));
   }
   const s = vfdTx[id] || (vfdTx[id] = {last: 0, timer: null, hold: 0});
@@ -7216,6 +7382,15 @@ function updateDecimatorList(info) {
     if (!vfdHeld(serverDec.id)) return;
     const localDec = decimatorInfo.find(d => d.id === serverDec.id);
     if (localDec) serverDec.freq_offset_hz = localDec.freq_offset_hz;
+  });
+  // ...and the width of a VFO whose bandwidth this page just changed (a bar
+  // edge being dragged: bwHeld). A receiver that sends bandwidth_hz takes
+  // SET_DECIMATOR_BW_HZ (any width)
+  if (info.some(d => d.bandwidth_hz > 0)) bwServerHz = true;
+  info.forEach(serverDec => {
+    if (!bwHeld(serverDec.id)) return;
+    const localDec = decimatorInfo.find(d => d.id === serverDec.id);
+    if (localDec) decSetLocalBw(serverDec, decBwHz(localDec));
   });
   // In-place update when the panel structure is unchanged: rebuilding the
   // whole list with innerHTML on every decimator_info push destroyed input
@@ -7318,11 +7493,18 @@ function updateDecimatorList(info) {
           ${Array.from({length: Math.max(1, activeNumElements)}, (_, t) => `<option value="${t}" ${t === (dec.tuner || 0) ? 'selected' : ''}>T${t}</option>`).join('')}
         </select>
       </div>
-      <div class="dec-row">
+      <div class="dec-row" id="dec-bw-row-${dec.id}">
         <label>BW:</label>
-        <select id="dec-bw-${dec.id}" onchange="setDecimatorBandwidthFromUI(${dec.id}, this.value)" style="flex:1">
-          ${bwo.slice(0, MIN_BW_INDEX + 1).map((bw, idx) => `<option value="${idx}" ${idx === dec.bandwidth_index ? 'selected' : ''}>${bw.name}</option>`).join('')}
-        </select>
+        <select id="dec-bw-${dec.id}" class="dec-bw-sel" onchange="setDecimatorBandwidthHzFromUI(${dec.id}, +this.value)"
+                data-hz="${decBwHz(dec)}" title="${bwTitle(decBwHz(dec))}">${bwOptionsHtml(decBwHz(dec))}</select>
+        <input type="text" class="dec-bw-in" id="dec-bw-in-${dec.id}" inputmode="decimal"
+               title="Any bandwidth: kHz (or with Hz / kHz / MHz), ${bwLabel(BW_MIN_HZ)} - ${bwLabel(BW_MAX_HZ)}. Enter = set, Escape = cancel"
+               onkeydown="if(event.key==='Enter'){event.target.blur()}else if(event.key==='Escape'){this.value=this.dataset.orig;event.target.blur()}"
+               onfocus="this.dataset.orig=this.value"
+               onblur="bwEditApply(${dec.id}, this.value, this.dataset.orig)">
+        <span class="dec-bw-in-unit">kHz</span>
+        <button type="button" class="btn sm dec-bw-ed" id="dec-bw-ed-${dec.id}" onclick="bwEdit(${dec.id})"
+                title="Type any bandwidth (kHz)">✎</button>
       </div>
       <div class="dec-row">
         <label>Demod:</label>
@@ -7698,11 +7880,15 @@ function connect() {
           else if(msg.decimator_bandwidth) {
             // Bandwidth changed by another client (e.g. the web-mapper bridge);
             // mirror it into the panel + spectrum overlay live.
-            const dec = decimatorInfo.find(d => d.id === msg.decimator_bandwidth.id);
-            if (dec) {
-              dec.bandwidth_index = msg.decimator_bandwidth.bandwidth_index;
-              refreshDecimatorPanelItem(msg.decimator_bandwidth.id);
+            // (not while this page is changing it: an echo of an earlier drag
+            // step would pull the bar back - bwHeld)
+            const mb = msg.decimator_bandwidth;
+            const dec = decimatorInfo.find(d => d.id === mb.id);
+            if (dec && !bwHeld(mb.id)) {
+              decSetLocalBw(dec, mb.bandwidth_hz > 0 ? mb.bandwidth_hz : Math.round(bwo[mb.bandwidth_index ?? 0].bandwidth * 1e6));
+              refreshDecimatorPanelItem(mb.id);
               drawBox();
+              paneDrawAllOverlays();
               digRenderAll();
             }
           }
@@ -7711,16 +7897,11 @@ function connect() {
             // SET_DECIMATOR_DEMOD instead). If bandwidth_index is provided, update the FM decimator's bandwidth selector
             if (msg.demod_mode.bandwidth_index !== undefined) {
               const fmDecId = decimatorInfo.find(decAudioOn)?.id;
-              if (fmDecId !== undefined) {
-                const bwSelect = $id('dec-bw-' + fmDecId);
-                if (bwSelect) {
-                  bwSelect.value = msg.demod_mode.bandwidth_index;
-                }
-                // Update local decimator info
-                const dec = decimatorInfo.find(d => d.id === fmDecId);
-                if (dec) {
-                  dec.bandwidth_index = msg.demod_mode.bandwidth_index;
-                }
+              const dec = decimatorInfo.find(d => d.id === fmDecId);
+              if (dec) {
+                const m = msg.demod_mode;
+                decSetLocalBw(dec, m.bandwidth_hz > 0 ? m.bandwidth_hz : Math.round(bwo[m.bandwidth_index].bandwidth * 1e6));
+                refreshDecimatorPanelItem(dec.id);
               }
             }
           }
@@ -8677,16 +8858,21 @@ function paneDrawOverlay(p) {
       if (x >= p.L && x <= p.sw - 4) drawLockedVfoLine(ctx, x, H, d);
       continue;
     }
-    const bw = (bwo[d.bandwidth_index ?? 0] || {}).bandwidth || d.bandwidth_mhz || 0.1;
+    const bw = decBwMhz(d);
     let x0 = paneX(p, cm - bw / 2), x1 = paneX(p, cm + bw / 2);
-    // clipped to the plot area (zoomed in, a VFO can be partly or wholly
-    // outside it - a clipped side has no edge to grab)
+    // clipped to the plot area (zoomed in, or a VFO wider than the band the
+    // pane shows - 2.4 MHz with the edge clip -, a VFO can be partly or wholly
+    // outside it). A clipped side keeps its edge just inside the plot border
+    // (PANE_CLIP_EDGE_PX, as the main display's at the canvas border): the
+    // edge drag changes the width from where it started, so it resizes
+    // alike - without it a full-width VFO couldn't be resized at all
     const L = p.L, R = p.sw - 4;
     if (x1 < L || x0 > R) continue;
     const clipL = x0 < L, clipR = x1 > R;
     x0 = Math.max(L, x0); x1 = Math.min(R, x1);
     if (x1 - x0 < 8) { const xc = (x0 + x1) / 2; x0 = xc - 4; x1 = xc + 4; }   // MIN_BOX_PX
     const w = x1 - x0;
+    const xl = clipL ? x0 + PANE_CLIP_EDGE_PX : x0, xr = clipR ? x1 - PANE_CLIP_EDGE_PX : x1;   // the edges
     const col = getDecimatorColor(d.id), active = d.id === activeDecimatorId;
     const hv = p.hover && p.hover.id === d.id ? p.hover.kind : null;
     ctx.fillStyle = col + (active ? '4d' : '33');
@@ -8705,15 +8891,15 @@ function paneDrawOverlay(p) {
       ctx.strokeRect(x0, hy, w, HANDLE_H);
       ctx.fillStyle = col;
       const big = active && hv === 'edge';
-      ctx.fillRect(x0 - (big ? 3 : 2), y0 + sh / 2 - (big ? 20 : 15), big ? 6 : 4, big ? 40 : 30);
-      ctx.fillRect(x1 - (big ? 3 : 2), y0 + sh / 2 - (big ? 20 : 15), big ? 6 : 4, big ? 40 : 30);
+      ctx.fillRect(xl - (big ? 3 : 2), y0 + sh / 2 - (big ? 20 : 15), big ? 6 : 4, big ? 40 : 30);
+      ctx.fillRect(xr - (big ? 3 : 2), y0 + sh / 2 - (big ? 20 : 15), big ? 6 : 4, big ? 40 : 30);
       handles.push({y0: hy, y1: hy + HANDLE_H});
     }
     ctx.fillStyle = col;
     ctx.font = '12px monospace';
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-    ctx.fillText('D' + d.id, x0 + 5, 14);
-    p.bars.push({id: d.id, x0, x1, handles, offset_hz: d.freq_offset_hz || 0, bw, clipL, clipR});
+    ctx.fillText('D' + d.id, x0 + 5 + (clipL ? PANE_CLIP_EDGE_PX : 0), 14);
+    p.bars.push({id: d.id, x0, x1, xl, xr, handles, offset_hz: d.freq_offset_hz || 0, bw, clipL, clipR});
     // FFT squelch: dashed yellow line at the level inside the bar, on the
     // spectrum (as drawBox does; the Digital squelch has no level)
     if (squelchIsFft(d)) {
@@ -8764,9 +8950,9 @@ function paneHit(p, x, y) {
   const h = p.bars.find(b => x >= b.x0 && x <= b.x1 && b.handles.some(hd => y >= hd.y0 && y <= hd.y1));
   if (h) return {bar: h, kind: 'handle'};
   const a = p.bars.find(b => b.id === activeDecimatorId);
-  if (a) {
-    if (!a.clipL && Math.abs(x - a.x0) <= 5) return {bar: a, kind: 'edge', edge: 'left'};
-    if (!a.clipR && Math.abs(x - a.x1) <= 5) return {bar: a, kind: 'edge', edge: 'right'};
+  if (a) {   // (a clipped side's edge sits just inside the plot border: xl / xr)
+    if (Math.abs(x - a.xl) <= 5) return {bar: a, kind: 'edge', edge: 'left'};
+    if (Math.abs(x - a.xr) <= 5) return {bar: a, kind: 'edge', edge: 'right'};
   }
   const b = p.bars.find(b => x >= b.x0 && x <= b.x1);
   return b ? {bar: b, kind: 'body'} : null;
@@ -8840,15 +9026,20 @@ function paneMove(p, e) {
   }
   if (paneDrag.edge) {
     const df = (x - paneDrag.x0) * paneDrag.mhzPerPx;
-    let dbw = paneDrag.edge === 'left' ? paneDrag.bw0 - df * 2 : paneDrag.bw0 + df * 2;
-    dbw = Math.max(MIN_BW_MHZ, Math.min(2.4, dbw));
-    const idx = Math.min(findNearestBw(dbw), MIN_BW_INDEX);
-    showBwTooltip(e, bwo[idx].bandwidth);
+    const dbw = paneDrag.edge === 'left' ? paneDrag.bw0 - df * 2 : paneDrag.bw0 + df * 2;
+    // any width (3 significant figures), or the nearest efficient size
+    const hz = bwUserHz(dbw * 1e6);
+    showBwTooltip(e, hz / 1e6);
     const d = (decimatorInfo || []).find(z => z.id === paneDrag.id);
-    if (d && idx !== d.bandwidth_index) {
-      setDecimatorBandwidth(d.id, idx);
-      d.bandwidth_index = idx;
-      d.bandwidth_mhz = bwo[idx].bandwidth;
+    if (d && hz !== decBwHz(d)) {
+      setDecimatorBandwidthHz(d.id, hz);
+      decSetLocalBw(d, hz);
+      // a wider bar must still fit the pane's band: keep its offset inside
+      const half = Math.max(0, (p.sr / 1e6) * currentEdgeClip / 2 - hz / 2e6) * 1e6;
+      if (Math.abs(d.freq_offset_hz || 0) > half) {
+        d.freq_offset_hz = Math.sign(d.freq_offset_hz) * half;
+        setDecimatorFreq(d.id, d.freq_offset_hz / 1000);
+      }
       paneDrawAllOverlays();
       refreshDecimatorPanelItem(d.id);
     }
@@ -8901,7 +9092,7 @@ function paneUp(p, e) {
 
 // Put VFO d at mhz on pane p (clamped into the visible band)
 function paneMoveVfo(p, d, mhz) {
-  const bw = d.bandwidth_mhz || (bwo[d.bandwidth_index || 0] || {}).bandwidth || 0.1;
+  const bw = decBwMhz(d);
   const half = Math.max(0, (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2);
   const off = Math.max(-half, Math.min(half, mhz - p.freqMhz));
   const moved = (d.tuner || 0) !== p.ch;
@@ -8924,7 +9115,7 @@ function paneMoveVfo(p, d, mhz) {
 // (the VFO's own first), else clamped into its own
 function paneTuneVfoTo(d, mhz) {
   const order = [d.tuner || 0, ...panes.map(p => p.ch).filter(c => c !== (d.tuner || 0))];
-  const bw = d.bandwidth_mhz || 0.1;
+  const bw = decBwMhz(d);
   for (const ch of order) {
     const p = panes[ch];
     if (!p || !(p.freqMhz > 0)) continue;
@@ -9899,11 +10090,11 @@ function addTouchHandlers(el, down, move, up) {
   function digApplyFixedTune(id, mode) {
     const p = digFixedPlugin(mode), d = digDec(id);
     if (!p || !d) return;
-    const mhz = p.fixed_freq_hz / 1e6, need = (p.min_vfo_rate || 0) / 1e6;
-    // the narrowest bandwidth option the decoder can use (ADS-B, cells: 2.4 MHz)
-    let bi = 0;
-    bwo.forEach((b, i) => { if (b.bandwidth >= need - 1e-9 && b.bandwidth < bwo[bi].bandwidth) bi = i; });
-    if (d.bandwidth_index !== bi) setDecimatorBandwidthFromUI(id, bi);
+    const mhz = p.fixed_freq_hz / 1e6;
+    // the narrowest efficient size the decoder can use (ADS-B, cells: 2.4 MHz -
+    // the whole band unfiltered, not a 2 MHz filter at the full rate)
+    const hz = bwAtLeastEfficient(p.min_vfo_rate || 0);
+    if (decBwHz(d) !== hz) setDecimatorBandwidthHzFromUI(id, hz);
     // the VFO on its tuner's centre (a queued drag must not land after this)...
     pendingFreqUpdates.delete(id);
     d.freq_offset_hz = 0;
@@ -10230,14 +10421,11 @@ function addTouchHandlers(el, down, move, up) {
     infoRenderDecoder(true);
   }
 
-  // the narrowest bandwidth option at or above the mode's minimum
+  // the narrowest efficient size at or above the mode's minimum
   function digFixBandwidthFor(id) {
     const d = digDec(id);
     if (!d) return;
-    const need = (digMinRateK(d.digital_mode) || 24) / 1000;
-    let idx = -1;
-    bwo.forEach((b, i) => { if (b.bandwidth >= need - 1e-9 && (idx < 0 || b.bandwidth < bwo[idx].bandwidth)) idx = i; });
-    if (idx >= 0) setDecimatorBandwidthFromUI(d.id, idx);
+    setDecimatorBandwidthHzFromUI(d.id, bwAtLeastEfficient((digMinRateK(d.digital_mode) || 24) * 1000));
     digRenderAll();
   }
 
@@ -10337,10 +10525,15 @@ function addTouchHandlers(el, down, move, up) {
       const lock = vfoLocked(d), lp = lock ? digFixedPlugin(d.digital_mode) : null;
       const why = !lock ? '' : lp.fixed_freq_hz > 0 ? digModeLabel(d.digital_mode) + ' sets this VFO\'s frequency and bandwidth'
         : digModeLabel(d.digital_mode) + ' keeps this VFO on its tuner\'s centre with the full bandwidth - tune the receiver instead';
-      for (const k of ['dec-actual-freq-', 'dec-bw-', 'dec-tuner-']) {
+      for (const k of ['dec-actual-freq-', 'dec-tuner-']) {
         const el = $id(k + d.id);
         if (el && el.disabled !== lock) { el.disabled = lock; el.title = why; }
       }
+      // the bandwidth list + its ✎ (their own tooltips back when unlocked)
+      const bs = $id('dec-bw-' + d.id), be = $id('dec-bw-ed-' + d.id), bi = $id('dec-bw-in-' + d.id);
+      if (bs && bs.disabled !== lock) { bs.disabled = lock; bs.title = lock ? why : bwTitle(decBwHz(d)); }
+      if (be && be.disabled !== lock) { be.disabled = lock; be.title = lock ? why : 'Type any bandwidth (kHz)'; }
+      if (bi) bi.disabled = lock;
       const fd = $id('dec-freq-' + d.id), fe = $id('dec-freq-ed-' + d.id);
       if (fd && fd.classList.contains('locked') !== lock) { fd.classList.toggle('locked', lock); fd.title = lock ? why : VFD_TIP; }
       if (fe && fe.disabled !== lock) { fe.disabled = lock; fe.title = lock ? why : VFD_ED_TIP; }
@@ -11232,13 +11425,12 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                 ` onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="digSetOptFor(${id}, this.dataset.key, this.value.trim())"></label>`;
     }
     const needK = digMinRateK(mode);
-    const haveK = d ? ((bwo[d.bandwidth_index] || {}).bandwidth ?? d.bandwidth_mhz) * 1000 : 0;
+    const haveK = d ? decBwHz(d) / 1000 : 0;
     let warn = '';
     if (d && haveK + 1e-6 < needK) {
-      let fix = -1;
-      bwo.forEach((b, i) => { if (b.bandwidth >= needK / 1000 - 1e-9 && (fix < 0 || b.bandwidth < bwo[fix].bandwidth)) fix = i; });
-      warn += `<div class="dig-warn"><span>D${id}: VFO bandwidth ${haveK.toFixed(0)} kHz is too narrow for ${digEsc(digModeLabel(mode))} (needs ${needK} kHz).</span>` +
-              `<button class="btn sm" type="button" onclick="digFixBandwidthFor(${id})">${fix >= 0 ? 'Set ' + +(bwo[fix].bandwidth * 1000).toFixed(1) + ' kHz' : 'Widen'}</button></div>`;
+      const fix = bwAtLeastEfficient(needK * 1000);
+      warn += `<div class="dig-warn"><span>D${id}: VFO bandwidth ${digEsc(bwLabel(haveK * 1000))} is too narrow for ${digEsc(digModeLabel(mode))} (needs ${needK} kHz).</span>` +
+              `<button class="btn sm" type="button" onclick="digFixBandwidthFor(${id})">Set ${digEsc(bwLabel(fix))}</button></div>`;
     }
     const bad = (st && st.plugins || []).filter(x => x.state && x.state !== 'running' && x.state !== 'starting');
     if (bad.length) warn += `<div class="dig-warn" style="display:block">D${id}: ${bad.map(x => digEsc(x.error || (x.name + ': ' + x.state))).join('<br>')}</div>`;
@@ -14827,11 +15019,19 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     return [`${f.name} - ${mkFmtMhz(f.hz)} MHz${c ? ' (' + c.name + ')' : ''}`, sfMeta(f, true), f.notes,
             'Click to tune the selected VFO'].filter(Boolean).join('\n');
   }
-  // the bandwidth option nearest to hz (index into bwo)
-  function sfBwIndex(hz) {
-    let bi = 0;
-    bwo.forEach((b, i) => { if (Math.abs(b.bandwidth * 1e6 - hz) < Math.abs(bwo[bi].bandwidth * 1e6 - hz)) bi = i; });
-    return bi;
+  // the editor's bandwidth list on hz (0 = "Keep the VFO's"): a width that
+  // isn't one of its efficient sizes gets an entry of its own
+  function sfBwSelectSet(hz) {
+    const bs = $id('sf-f-bw');
+    hz = hz > 0 ? bwClampHz(hz) : 0;
+    if (hz && ![...bs.options].some(o => o.value === String(hz))) {
+      const o = document.createElement('option');
+      o.value = String(hz);
+      o.textContent = bwLabel(hz) + ' (custom)';
+      const after = [...bs.options].find(x => +x.value > 0 && +x.value < hz);
+      bs.insertBefore(o, after || null);
+    }
+    bs.value = hz ? String(hz) : '';
   }
   // "118.7", "118,7 MHz", "7150 kHz", "1.09 GHz", "455000 Hz" -> Hz (0 = not a frequency)
   function sfParseHz(t) {
@@ -15061,7 +15261,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const d = decimatorInfo.find(z => z.id === (id ?? activeDecimatorId));
     if (!d) return null;
     return {hz: Math.round((vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6) * 1e4) * 100,   // 100 Hz steps
-            mode: d.demod_mode || '', bw: Math.round(((bwo[d.bandwidth_index ?? 0] || bwo[0]).bandwidth) * 1e6),
+            mode: d.demod_mode || '', bw: decBwHz(d),
             dec: d.digital_mode && d.digital_mode !== 'OFF' ? d.digital_mode : ''};
   }
   // + Add / ☆ Save / map: a new entry, filled in from the selected VFO (pre.vfo
@@ -15085,7 +15285,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     $id('sf-f-mhz').value = f.hz ? mkFmtMhz(f.hz) : '';
     sfDlgFillSelects(f.cat || '', newLoc ? '+new' : (f.loc || ''), f.dec || '', sfHasGain(f) ? f.gain : '');
     $id('sf-f-mode').value = f.mode || '';
-    $id('sf-f-bw').value = f.bw > 0 ? String(Math.round(bwo[sfBwIndex(f.bw)].bandwidth * 1e6)) : '';
+    sfBwSelectSet(f.bw);
     $id('sf-f-tone').value = f.tone || '';
     $id('sf-f-notes').value = f.notes || '';
     $id('sf-f-newcat').value = '';
@@ -15128,11 +15328,11 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       [...sfLocs].sort((a, b) => a.name.localeCompare(b.name)).map(l => `<option value="${l.id}">📍 ${digEsc(l.name)}</option>`).join('') +
       '<option value="+new">+ New location…</option>';
     ls.value = loc === '+new' || sfLoc(loc) ? loc : '';
+    // (rebuilt each time: an earlier entry's custom width doesn't stay listed)
     const bs = $id('sf-f-bw'), bv = bs.value;
-    if (!bs.options.length)
-      bs.innerHTML = '<option value="">Keep the VFO\'s</option>' +
-        bwo.slice(0, MIN_BW_INDEX + 1).map(b => `<option value="${Math.round(b.bandwidth * 1e6)}">${b.name.replace(/ \(.*\)$/, '')}</option>`).join('');
-    bs.value = bv;
+    bs.innerHTML = '<option value="">Keep the VFO\'s</option>' +
+      BW_EFFICIENT.slice().reverse().map(hz => `<option value="${hz}">${bwLabel(hz)}</option>`).join('');
+    sfBwSelectSet(+bv || 0);
     const ds = $id('sf-f-dec');
     let h = '<option value="">Keep the VFO\'s</option><option value="OFF">Off</option><option value="AUTO">Auto detect</option>' +
       [...digPlugins].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))
@@ -15189,7 +15389,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (!v) { sfDlgErr('No VFO - add one in the Decimators box'); return; }
     $id('sf-f-mhz').value = mkFmtMhz(v.hz);
     $id('sf-f-mode').value = v.mode;
-    $id('sf-f-bw').value = String(v.bw);
+    sfBwSelectSet(v.bw);
     $id('sf-f-dec').value = v.dec;
     sfDlgErr('');
   }
@@ -15339,7 +15539,10 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     // (not on a VFO its decoder holds - ism needs its whole 2.4 MHz)
     if (d && !vfoLocked(d)) {
       if (f.mode && f.mode !== d.demod_mode) setDecimatorDemodMode(d.id, f.mode);
-      if (f.bw > 0) { const i = sfBwIndex(f.bw); if (i !== d.bandwidth_index) setDecimatorBandwidthFromUI(d.id, i); }
+      if (f.bw > 0) {   // the saved width (the nearest efficient size with "Efficient bandwidths only")
+        const hz = bwEffOnly ? bwNearestEfficient(f.bw) : bwClampHz(f.bw);
+        if (hz !== decBwHz(d)) setDecimatorBandwidthHzFromUI(d.id, hz);
+      }
     }
     const e2 = sfTuneHz(f.hz, opts);
     if (!e2) gainNow();
@@ -15369,7 +15572,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
     if (sfFixedLock(d)) return `D${d.id} is locked to its decoder's frequency - select another VFO`;
     const centreOnly = vfoLocked(d);
-    const bw = (bwo[d.bandwidth_index || 0] || bwo[0]).bandwidth;
+    const bw = decBwMhz(d);
     if (opMode === 'independent') {
       const own = d.tuner || 0;
       const first = opts.tuner ?? own;
@@ -22714,8 +22917,7 @@ function recRenderVfos() {
     const want = String(st.settings.band_vfo);
     let h = '<option value="-1">The VFO you listen to (the first 🔊)</option>';
     for (const d of list) {
-      const bw = (typeof bwo !== 'undefined' && bwo[d.bandwidth_index]) ? bwo[d.bandwidth_index].bandwidth * 1000 : 0;
-      h += '<option value="' + d.id + '">D' + d.id + ' ' + mhz(d) + ' MHz · ' + (bw >= 1000 ? (bw / 1000) + ' MHz' : bw + ' kHz') + '</option>';
+      h += '<option value="' + d.id + '">D' + d.id + ' ' + mhz(d) + ' MHz · ' + bwLabel(decBwHz(d)) + '</option>';
     }
     if (sel.dataset.html !== h) { sel.dataset.html = h; sel.innerHTML = h; }
     sel.value = want;
