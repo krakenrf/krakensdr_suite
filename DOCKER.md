@@ -260,6 +260,12 @@ services:
   - The runtime stage installs only the Debian packages that own the
     libraries the binaries load, which `ldd` finds at build time, plus
     `openssl` and `usbutils`.
+  - Licences: `/usr/share/doc/krakensdr/` holds the suite's licences, the
+    third-party notices, the licence files of what was built from source and
+    `SOURCE.txt` (`scripts/collect-licenses.sh`); the Debian packages keep
+    theirs in `/usr/share/doc/<package>/`. If you publish the image, publish
+    the source it was built from with it (heimdall and the librtlsdr fork are
+    GPL).
 - **`docker/entrypoint.sh`** runs each app in its own directory under
   `/data`, with the web files linked in. The apps save their state in their
   working directory, so it ends up in `docker-data/`.

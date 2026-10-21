@@ -36,20 +36,25 @@ def u(v, n):
     return [(v >> (n - 1 - i)) & 1 for i in range(n)]
 
 
-def scramble_seq(n, lfsr):
+# scrambling sequence (EN 300 392-2 8.2.5) - as dig_fec.cpp: the term x^k of
+# c(x) = 1 + x + x^2 + x^4 + x^5 + x^7 + x^8 + x^10 + x^11 + x^12 + x^16 +
+# x^22 + x^23 + x^26 + x^32 is cell 32 - k (cell 31 = the latest output bit)
+SCRAMB_TAPS = sum(1 << (32 - k) for k in (1, 2, 4, 5, 7, 8, 10, 11, 12, 16, 22, 23, 26, 32))
+
+
+def scramble_seq(n, state):
     out = []
-    st = lambda x, y: (x >> (32 - y)) & 1
     for _ in range(n):
-        b = (st(lfsr, 32) ^ st(lfsr, 26) ^ st(lfsr, 23) ^ st(lfsr, 22) ^ st(lfsr, 16) ^ st(lfsr, 12) ^ st(lfsr, 11) ^
-             st(lfsr, 10) ^ st(lfsr, 8) ^ st(lfsr, 7) ^ st(lfsr, 5) ^ st(lfsr, 4) ^ st(lfsr, 2) ^ st(lfsr, 1))
-        lfsr = (lfsr >> 1) | (b << 31)
-        out.append(b)
+        s = bin(state & SCRAMB_TAPS).count('1') & 1
+        state = (state >> 1) | (s << 31)
+        out.append(s)
     return out
 
 
 def scramb_init(mcc, mnc, cc):
-    v = (cc & 0x3F) | ((mnc & 0x3FFF) << 6) | ((mcc & 0x3FF) << 20)
-    return ((v << 2) | 3) & 0xFFFFFFFF
+    """the 30-bit extended colour code (MCC 10, MNC 14, colour code 6 bits) + two 1s"""
+    ecc = ((mcc & 0x3FF) << 20) | ((mnc & 0x3FFF) << 6) | (cc & 0x3F)
+    return ((ecc << 2) | 3) & 0xFFFFFFFF
 
 
 def crc16(bits):
@@ -69,11 +74,13 @@ def block(info, n, a, scr):
         reg = (st << 1) | b
         mother += [bin(reg & p).count('1') & 1 for p in polys]
         st = reg & 15
-    P = [0, 1, 2, 5]
-    t3 = [mother[8 * ((j - 1) // 3) + P[j - 3 * ((j - 1) // 3)] - 1] for j in range(1, n + 1)]
+    # rate 2/3: of every 8 mother-code bits the 1st, 2nd and 5th are sent
+    sent = (0, 1, 4)
+    t3 = [mother[8 * (j // 3) + sent[j % 3]] for j in range(n)]
+    # (n, a) block interleaver: bit k (1..n) goes to position 1 + (a k mod n)
     t4 = [0] * n
-    for i in range(1, n + 1):
-        t4[(a * i) % n] = t3[i - 1]
+    for k in range(n):
+        t4[(a * (k + 1)) % n] = t3[k]
     s = scramble_seq(n, scr)
     return [t4[i] ^ s[i] for i in range(n)]
 

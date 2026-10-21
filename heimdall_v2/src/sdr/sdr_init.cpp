@@ -551,7 +551,8 @@ void wideband_set_noise_path(bool noise_on, const std::vector<std::unique_ptr<SD
     // without also switching the RF path leaves the tuners looking at the
     // antennas - the channels then share no common signal and lag/phase
     // calibration can never converge. Patterns ported verbatim from the v1
-    // heimdall_daq_fw wideband branch (rtl_daq.c): GPIO1/2 pick noise vs the
+    // heimdall_daq_fw wideband branch (rtl_daq.c, Copyright (C) 2018-2022
+    // Tamas Peto, Carl Laufer, GPL-3.0-or-later): GPIO1/2 pick noise vs the
     // selected ring, GPIO3-6 are per-ring switch-tree constants.
     rtlsdr_dev_t* ctrl = nullptr;
     for (const auto& device : devices) {

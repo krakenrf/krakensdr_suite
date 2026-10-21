@@ -102,6 +102,13 @@ package; ↻ in the plugin list picks up a new plugin). The package carries no
 speech models: the Voice to Text box downloads them. The build steps the web
 UI shows on a Windows receiver are meant for that source checkout.
 
+The package's `LICENSE.txt` says which licence covers which program;
+`licenses\` holds the suite's licences, the third-party notices, the licence
+files of every library the exes contain (MSYS2's static libraries included)
+and `SOURCE.txt` - where the source of the GPL programs is (heimdall, the
+librtlsdr fork and its tools, libusb). Pass the folder on with the package
+(`scripts/collect-licenses.sh` fills it).
+
 ## What is different from Linux
 
 - **USB**: heimdall reaches the dongles through WinUSB with a few Windows-only

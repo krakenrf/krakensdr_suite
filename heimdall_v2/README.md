@@ -340,5 +340,16 @@ in 2026-10; no system FFT library).
 
 - `CLAUDE.md` — detailed architecture, threading, and coherence-recovery notes.
 - `../kraken_doa_v2/` — the FFT / FM / MUSIC DoA client that consumes port 8091.
-</content>
-</invoke>
+
+## Licence
+
+Copyright (c) 2026 KrakenRF Inc. Heimdall is free software: you can
+redistribute it and/or modify it under the terms of the GNU General Public
+License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version - see `LICENSE`. It is
+distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. Third-party components: `THIRD_PARTY_NOTICES.md`.
+
+The DoA client (`../kraken_doa_v2/`) is a separate program under its own
+licence (`../kraken_doa_v2/LICENSE`).

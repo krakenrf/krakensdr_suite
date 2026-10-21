@@ -5,6 +5,13 @@
 # a pinned copy). librtlsdr is cloned at a pinned commit by the Dockerfile too.
 *
 !docker/
+# licences + notices (scripts/collect-licenses.sh -> /usr/share/doc/krakensdr)
+!LICENSE
+!scripts/collect-licenses.sh
+!heimdall_v2/LICENSE
+!heimdall_v2/THIRD_PARTY_NOTICES.md
+!kraken_doa_v2/LICENSE
+!kraken_doa_v2/THIRD_PARTY_NOTICES.md
 !heimdall_v2/Makefile
 !heimdall_v2/config.h
 !heimdall_v2/index.html
@@ -20,7 +27,6 @@
 !kraken_doa_v2/external/
 !kraken_doa_v2/kraken_doa.html
 !kraken_doa_v2/array_calculator.html
-!kraken_doa_v2/opus-decoder.js
 !kraken_doa_v2/opus-decoder.min.js
 !kraken_doa_v2/plugins/
 kraken_doa_v2/plugins/*/build/

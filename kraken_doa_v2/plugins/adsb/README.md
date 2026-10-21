@@ -219,7 +219,7 @@ its noise nothing; through kraken_doa's debug playback 6 / 6 talkers at
 0.0°.
 
 **Real recording + reference decoder** (2026-10-16; dump1090 - antirez's,
-GPL - built in scratch as the reference, not in this repo):
+BSD-3-Clause - built in scratch as the reference, not in this repo):
 - dump1090's own test capture `testfiles/modes1.bin` (2 MS/s cu8, real
   messages of one aircraft, 4D2023 AMC421): dump1090 217 messages (111
   different); the plugin (resampled to 2.4 MHz) 328 - every one of

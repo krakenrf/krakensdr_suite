@@ -66,21 +66,19 @@ def val(b):
     return v
 
 
-# --- NID: BCH(63,16) (the decoder's shift-register encoder) + parity bit ------------
-NID_G = [1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1,
-         1, 1, 0, 1, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1]
+# --- NID: BCH(63,16) + parity bit -----------------------------------------------------
+# systematic: the 47 parity bits are the remainder of m(x) x^47 divided by the
+# generator polynomial (octal, TIA-102.BAAA) - as p25.cpp's nid_codeword()
+NID_G = 0o6331141367235453
 
 
 def nid_bits(nac, duid):
     m = (nac << 4) | duid
-    data = [(m >> (15 - i)) & 1 for i in range(16)]
-    bb = [0] * 47
-    for i in range(15, -1, -1):
-        fb = data[i] ^ bb[46]
-        for j in range(46, 0, -1):
-            bb[j] = (bb[j - 1] ^ fb) if (fb and NID_G[j]) else bb[j - 1]
-        bb[0] = 1 if (NID_G[0] and fb) else 0
-    cw = bits(m, 16) + bb
+    r = m << 47
+    for i in range(62, 46, -1):
+        if r & (1 << i):
+            r ^= NID_G << (i - 47)
+    cw = bits((m << 47) | r, 63)
     return cw + [sum(cw) & 1]
 
 

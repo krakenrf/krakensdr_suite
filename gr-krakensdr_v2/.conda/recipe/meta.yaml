@@ -88,8 +88,8 @@ about:
   # See https://docs.conda.io/projects/conda-build/en/latest/resources/define-metadata.html#license-file
 
   #home: https://github.com/<FIXME>/gr-krakensdr_v2
-  #license: GPL-3.0-or-later
-  #license_file: LICENSE
+  license: GPL-3.0-or-later
+  license_file: LICENSE
   #summary: GNU Radio krakensdr_v2 module
   #description: >
   #  Short description of the gr-krakensdr_v2 module.

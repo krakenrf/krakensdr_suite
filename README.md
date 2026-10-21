@@ -512,3 +512,23 @@ Such a tool gets none of the restrictions above and no access to the
 receiver's tools; its own configuration decides what it may do. The
 assistant needs the native install (it is not available in Docker). The
 plugins that ship with the suite work in Docker as well.
+
+## Licence
+
+The suite is made of separate programs under different licences (details:
+[`LICENSE`](LICENSE)):
+
+- **KrakenSDR DoA software** (`kraken_doa_v2/`, including its decoder
+  plugins): [KrakenSDR Source Available Licence](kraken_doa_v2/LICENSE) -
+  **free for personal and hobbyist use**; you may use, study, change and share
+  it for that. **Commercial use requires a licence** from KrakenRF Inc. -
+  contact krakenrf@krakensdr.com for details.
+- **Heimdall receiver server** (`heimdall_v2/`) and the **GNU Radio module**
+  (`gr-krakensdr_v2/`): [GNU General Public License v3 or later](heimdall_v2/LICENSE).
+- The build, install and run scripts: MIT.
+
+Third-party components keep their own licences:
+[`kraken_doa_v2/THIRD_PARTY_NOTICES.md`](kraken_doa_v2/THIRD_PARTY_NOTICES.md),
+[`heimdall_v2/THIRD_PARTY_NOTICES.md`](heimdall_v2/THIRD_PARTY_NOTICES.md).
+The Windows package and the Docker image carry every licence text
+(`licenses/`, `/usr/share/doc/krakensdr/`).

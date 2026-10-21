@@ -197,3 +197,12 @@ commit and built by `make` as a static library without FFTW / libfec
 
 For deeper architecture and tuning notes, see `CLAUDE.md`, `OPTIMIZATION_SUMMARY.md`,
 and the root `../CLAUDE.md` (full server + client system).
+
+## Licence
+
+Copyright (c) 2026 KrakenRF Inc. The KrakenSDR DoA software, including its
+decoder plugins, is under the KrakenSDR Source Available Licence (`LICENSE`):
+free for personal and hobbyist use - you may use, study, change and share it
+for that. Commercial use requires a licence from KrakenRF Inc.; contact
+krakenrf@krakensdr.com for details. Third-party components keep their own
+licences: `THIRD_PARTY_NOTICES.md`.

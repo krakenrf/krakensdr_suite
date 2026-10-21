@@ -1,5 +1,11 @@
 # MUSIC DoA Algorithm Reference — kraken_doa_v2 (for GNU Radio port)
 
+> **Licence note:** the code excerpts in this document are quoted from
+> kraken_doa_v2, which is under the KrakenSDR Source Available Licence
+> (`kraken_doa_v2/LICENSE`), as a reference for the port. They are not part of
+> this GNU Radio module and are not licensed under the GPL; the module's own
+> implementation (`lib/doa_music_impl.cc`) is.
+
 All paths relative to `/home/krakenrf/krakensdr_v2/kraken_doa_v2/`. Core file: `src/signal_processing/music_processor.cpp` (impl), `include/signal_processing/music_processor.hpp` (state/config), `include/config.hpp` (constants), `include/globals.hpp` (`uca_angle_sign`), `src/networking/data_receiver.cpp` (feed + gating), `src/signal_processing/shared_decimator.cpp` (pre-MUSIC decimation).
 
 ---

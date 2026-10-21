@@ -2052,6 +2052,42 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
   run (`AI_MCP_PORT`, `KRAKEN_AI_MCP_PORT` overrides it)
 - Connects to server ports 8091 (data) and 8092 (control)
 
+## Licensing (LICENSE)
+
+Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
+- `heimdall_v2/`, `gr-krakensdr_v2/`: GPL-3.0-or-later (`LICENSE` = the GPL
+  text; GPL-2.0-only is impossible - uWebSockets is Apache-2.0)
+- `kraken_doa_v2/` incl. every plugin, `plugins/sdk`, `plugins/lib`: the
+  KrakenSDR Source Available Licence 1.0 (`kraken_doa_v2/LICENSE`): free for
+  personal / hobbyist use, commercial use needs a licence from KrakenRF
+  (krakenrf@krakensdr.com); contributions grant KrakenRF relicensing rights
+  (its section 5, for every part - root LICENSE). Root docs: the same
+  licence. Root build / run / packaging scripts, `docker/`, `windows/`,
+  `scripts/`, `.githooks/`: MIT (they are part of heimdall's GPL
+  corresponding source)
+- RULE for kraken_doa_v2: no GPL / AGPL / LGPL code in it or linked into it
+  (LGPL only as a dynamic system library), and nothing TRANSLATED from GPL
+  code (rtl_433, dump1090 forks, readsb, rs1729/RS, OP25, osmo-tetra,
+  gr-lora*, srsRAN, ...) - such projects are documentation of FACTS and test
+  references only; write from the standards / measurements. Code ported from
+  permissive code keeps its full notice in the file and gets a row (+ the
+  licence text) in `kraken_doa_v2/THIRD_PARTY_NOTICES.md`
+- A new dependency: a row in the app's `THIRD_PARTY_NOTICES.md`; if binaries
+  contain it, its licence file in `scripts/collect-licenses.sh` (run by
+  `windows/package.sh` -> `licenses/` and the Dockerfile ->
+  `/usr/share/doc/krakensdr/`, with `SOURCE.txt` = where the GPL programs'
+  source is)
+- OPEN (audit 2026-10-21, waiting for the user's decision): `plugins/ism`
+  follows rtl_433's decoders one by one (GPL-2.0-or-later); `radiosonde`
+  rs41.cpp's temperature / humidity / pressure (+ M10 / DFM constants) are
+  translated from rs1729/RS (GPL-3.0); `flarm/ogn_ldpc.h` is the GPL-2.0
+  esp32-ogn-tracker's matrix verbatim; `cells/lte_tables.hpp` was generated
+  from srsRAN's (AGPL) copy of the 3GPP tables. Don't extend those parts
+  until it's settled. Done in the audit: p25's NID BCH encoder (was
+  Morelos-Zaragoza's non-commercial bch3.c form) and the TETRA scrambler /
+  interleaver / depuncturer (osmo-tetra's form) rewritten from the standards
+  - bit-identical output (all 65536 NIDs, random TETRA blocks)
+
 ## Git Secret Guards
 
 Station secrets (KrakenPro API key, latitude/longitude) are kept out of git

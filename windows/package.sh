@@ -36,7 +36,7 @@ cp "$ROOT/heimdall_v2/heimdall.exe" "$ROOT/heimdall_v2/index.html" "$OUT/heimdal
 
 # kraken_doa: the exe + the files it serves (Dockerfile COPY list)
 cp "$K/kraken_doa.exe" "$K/kraken_doa.html" "$K/array_calculator.html" \
-   "$K/opus-decoder.js" "$K/opus-decoder.min.js" "$OUT/kraken_doa_v2/"
+   "$K/opus-decoder.min.js" "$OUT/kraken_doa_v2/"
 
 # decoder plugins: the built exe of each, their test-signal catalogues and
 # generators (Debug Playback; they need Python), the codec check, the SDK tools
@@ -81,6 +81,13 @@ for t in rtl_test rtl_eeprom; do
         cp "${MINGW_PREFIX:-/ucrt64}/bin/libusb-1.0.dll" "$OUT/tools/"
     fi
 done
+
+# licences: the suite's own (LICENSE.txt at the top), the third-party notices,
+# the licence files of everything the exes contain (MSYS2's static libraries
+# too) and SOURCE.txt - where the GPL programs' source is (heimdall, the
+# librtlsdr fork and its tools, libusb)
+cp "$ROOT/LICENSE" "$OUT/LICENSE.txt"
+bash "$ROOT/scripts/collect-licenses.sh" "$OUT/licenses" rtlsdr="$ROOT/librtlsdr" uws="$K/uWebSockets"
 
 echo "Packaged $OUT  (heimdall, kraken_doa, $n decoder plugins)"
 

@@ -1,10 +1,24 @@
 // Voice codecs of the digital decoders - see dig_vocoder.hpp.
 //
 // The IMBE decoder below is a port of mbelib's IMBE 7200x4400 path
-// (imbe7200x4400.c, ecc.c, mbelib.c): Copyright (C) 2010 mbelib Author
-// (GPG 0xEA5EFE2C), ISC licence (full notice in mbe_tables.hpp). Changes:
+// (imbe7200x4400.c, ecc.c, mbelib.c; github.com/szechyjs/mbelib). Changes:
 // C++, a per-instance random generator instead of rand() (several decoders
-// run on their own threads), float output scaled to +-1.
+// run on their own threads), float output scaled to +-1. mbelib's notice:
+//
+//   Copyright (C) 2010 mbelib Author
+//   GPG Key ID: 0xEA5EFE2C (9E7A 5527 9CDC EBF7 BF1B  D772 4F98 E863 EA5E FE2C)
+//
+//   Permission to use, copy, modify, and/or distribute this software for any
+//   purpose with or without fee is hereby granted, provided that the above
+//   copyright notice and this permission notice appear in all copies.
+//
+//   THE SOFTWARE IS PROVIDED "AS IS" AND ISC DISCLAIMS ALL WARRANTIES WITH
+//   REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+//   MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL ISC BE LIABLE FOR ANY
+//   SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+//   WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+//   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+//   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 #include "dig_vocoder.hpp"
 #include "mbe_tables.hpp"
