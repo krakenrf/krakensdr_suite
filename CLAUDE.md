@@ -470,15 +470,11 @@ launcher `krakensdr.exe` (repo root, from `windows/krakensdr.cpp`).
   only) doesn't take a frame's centre back into the digits until a frame is
   at the frequency it sent (<= 2 s; not during a playback, which refuses
   FREQ).
-  The page pans the spectrum locally while dragging since 2026-10-21 (it
-  follows the mouse at once, the frames fill it in - kraken_doa_v2/CLAUDE.md
-  *Spectrum views*), and kraken_doa shifts a retuned tuner's average with
-  the move. Not done (a plan exists, worth it only while transfers stay
-  this slow): per-channel capture-time frequencies in the 8091 header (it
-  reports current_frequency, set after ALL tuners, for every channel; and
-  labels samples at conversion time - the first frames after a retune carry
-  old samples under the new frequency), retuning the displayed channel
-  first, an interruptible sweep
+  Not done (a plan exists, worth it only while transfers stay this slow):
+  the page panning the spectrum locally while dragging, per-channel
+  capture-time frequencies in the 8091 header (it reports current_frequency,
+  set after ALL tuners, for every channel), retuning the displayed channel
+  first, an interruptible sweep, an averaging reset on a retune
 - LLP64: `long` is 32-bit on Windows - Hz, epoch ms, byte counts and sample
   counters must be `int64_t` / `long long`, `llround` not `lround`, `stoll`
   not `stol`, `%lld` / PRId64 not `%ld` (fixed suite-wide; keep it that way)
@@ -744,14 +740,7 @@ the max envelope, and go permessage-deflate compressed: a page took ~250
 KB/s before, ~20 KB/s now. The "Downsampling" setting is gone (FFT_DECIMATION
 ignored); FFT Settings' "Slow link" tick (per browser) asks for half the
 points. Pages that never send `FFT_VIEW` (an open tab from before) keep
-getting the old type 0 / 6 frames at 2048 points per tuner band. Dragging
-the spectrum (main display or an independent-mode pane) pans it locally: it
-follows the mouse at once - the last SETTLED frame's points at their
-frequencies, the waterfall's history shifted along - and the receiver's
-frames take over once one sits at the frequency sent last long enough to be
-labelled right and averaged clean (heimdall follows a drag 0.1-0.3 s late
-and mislabels frames while it retunes: drawn at their labels, signals jumped
-back and forth by a retune step)
+getting the old type 0 / 6 frames at 2048 points per tuner band
 
 **Digital voice/data decoders (per VFO)**: engine `kraken_doa_v2/src/digital/`,
 decoders `kraken_doa_v2/plugins/`

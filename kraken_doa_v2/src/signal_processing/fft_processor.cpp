@@ -325,19 +325,20 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
         channel_last_reset_gen[channel] = current_gen;
     }
 
-    // A tuner that retuned (a drag; every mode) keeps its average where it was
-    // in RF - shifted by the move in whole bins, the rest carried to the next
-    // move - instead of drawing the old band moved with the tuner until the
-    // average forgets it (with the page's local pan the spectrum follows the
-    // mouse, and that smear showed). Bins whose frequencies the old band didn't
-    // hold keep their old values (as without the shift; raw frame values there
-    // would pull the floor's percentile down). A move past the whole band:
-    // nothing to keep, averaged as before. A frame of an older packet
-    // processed late (several FFT workers) doesn't move it back
+    // Wideband scan mode: a tuner that retuned (a drag moves all five) keeps
+    // its average where it was in RF - shifted by the move in whole bins, the
+    // rest carried to the next move - instead of drawing the old band moved
+    // with the tuner until the average forgets it. Bins whose frequencies the
+    // old band didn't hold keep their old values (as without the shift; raw
+    // frame values there would pull the floor's percentile down). A move past
+    // the whole band: nothing to keep, averaged as before. A frame of an older
+    // packet processed late (several FFT workers) doesn't move it back
     static double placed_hz[MAX_CHANNELS] = {};
     {
         static uint64_t placed_seq[MAX_CHANNELS] = {};
-        if (freq_hz > 0.0 && seq >= placed_seq[channel]) {
+        const bool wb = wideband_mode_enabled.load(std::memory_order_relaxed);
+        if (!wb) placed_hz[channel] = 0.0;   // the next wideband frame starts afresh
+        if (freq_hz > 0.0 && wb && seq >= placed_seq[channel]) {
             placed_seq[channel] = seq;
             const double bin_hz = static_cast<double>(SAMPLE_RATE) / fft_size;
             const double d = (freq_hz - placed_hz[channel]) / bin_hz;

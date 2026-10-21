@@ -1258,10 +1258,6 @@ void DataReceiver::decimation_processor_thread() {
 
                         FFTWorkItem work_item(current_active, dest, num_samples,
                                               persistent_buffer_generation.load(std::memory_order_relaxed));
-                        if (current_active >= 0 && current_active < MAX_CHANNELS) {
-                            work_item.freq_hz = raw_packet.freq_hz[current_active];   // see process_channel_fft
-                            work_item.seq = raw_packet.seq;
-                        }
 
                         // OPTIMIZATION: ConcurrentQueue is already lock-free, no mutex needed
                         // Removing mutex reduces contention and improves performance by 10-20%
