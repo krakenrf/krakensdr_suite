@@ -1696,7 +1696,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <button type="button" class="btn sm primary" id="sfs-start" onclick="sfsStart()" title="Scan the ticked frequencies: the selected VFO is tuned to each one that is active (its demod, bandwidth, decoder and gain) and heard while it is">▶ Scan</button>
             <button type="button" class="btn sm off" id="sfs-stop" onclick="send('SFSCAN_STOP')" title="Stop scanning (the VFO stays where it is)" style="display:none">■ Stop</button>
             <button type="button" class="btn sm" id="sfs-hold" onclick="sfsHold()" style="display:none">⏸ Hold</button>
-            <button type="button" class="btn sm" id="sfs-skip" onclick="send('SFSCAN_SKIP')" title="Leave this frequency (not taken again until it has gone quiet) - or, with nothing active, go on to the next band" style="display:none">⏭ Skip</button>
+            <button type="button" class="btn sm" id="sfs-skip" onclick="send('SFSCAN_SKIP')" title="Go on to the next active frequency (this one gets its turn again on the next pass through the list) - or, with nothing active, to the next band" style="display:none">⏭ Skip</button>
             <span class="r"><span class="n" id="sfs-n"></span>
             <button type="button" class="btn sm" id="sfs-set-btn" onclick="sfsToggleSet()" title="Scan settings">⚙</button></span>
           </div>
@@ -1705,7 +1705,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <div class="ctrl-row"><label title="A frequency is active when its strongest spectrum bin is this far above the noise floor">Squelch:</label><input type="range" id="sfs-sq" class="slider" min="3" max="40" step="0.5" value="12" oninput="$id('sfs-sq-v').textContent = (+this.value).toFixed(1) + ' dB'" onchange="sfsSet('SQUELCH', this.value)"><span class="sv" id="sfs-sq-v">12.0 dB</span></div>
             <div class="ctrl-row"><label title="How long the VFO stays on a frequency after its transmission ends (for the answer)">Delay:</label><input type="number" id="sfs-hang" min="0" max="60" step="0.5" value="2" onchange="sfsSet('HANG', this.value * 1000)"><span class="u" title="after a transmission ends">s after it ends</span></div>
             <div class="ctrl-row"><label title="With more bands than tuners: how long each band is watched before the next one">Dwell:</label><input type="number" id="sfs-dwell" min="0.5" max="60" step="0.5" value="2" onchange="sfsSet('DWELL', this.value * 1000)"><span class="u">s per band</span></div>
-            <div class="ctrl-row"><label title="Leave a frequency that stays active this long (a stuck carrier) - 0 = no limit">Longest stay:</label><input type="number" id="sfs-max" min="0" max="3600" step="5" value="0" onchange="sfsSet('MAX', this.value * 1000)"><span class="u" title="0 = no limit">s (0 = off)</span></div>
+            <div class="ctrl-row"><label title="Go on to the next active frequency after this long on one that stays active (broadcast stations, a stuck carrier) - it gets its turn again on the next pass. Only clean time counts, not the array's calibration after a retune. 0 = no limit">Longest stay:</label><input type="number" id="sfs-max" min="0" max="3600" step="1" value="0" onchange="sfsSet('MAX', this.value * 1000)"><span class="u" title="0 = no limit">s (0 = off)</span></div>
             <div class="sel">Tick <a href="#" onclick="sfsAll(true);return false" title="Every category (also the frequencies added later)">all</a> · <a href="#" onclick="sfsAll(false);return false" title="Untick everything">none</a></div>
           </div>
         </div>
@@ -14873,7 +14873,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (st.state === 'listen' && st.cur) {
         live = true;
         h = `🔊 <b>${digEsc(st.cur.name)}</b> · ${mkFmtMhz(st.cur.hz)} MHz · ${(+st.cur.db).toFixed(1)} dB · ${sfsDur(st.cur.ms)} → ${vfo}` +
-            (st.hold ? ' · held' : '');
+            (st.cur.heard === false ? ' · muted while the array calibrates' : '') + (st.hold ? ' · held' : '');
       } else {
         h = `Scanning ${plural(st.n || 0)} → ${vfo}` +
             (st.state === 'tune' ? ' · tuning…'

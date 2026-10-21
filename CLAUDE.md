@@ -722,7 +722,12 @@ Edit `kraken_doa_v2/include/config.hpp`:
   time (Dwell each), nothing measured while heimdall recalibrates after a
   retune; independent: a band on every tuner no other VFO is on. Lock = the
   entry's decoder / demod / bandwidth + the VFO's offset (the page's
-  sfTune), heard; Delay after the transmission, Skip / Hold / Longest stay.
+  sfTune), heard; Delay after the transmission, Skip / Hold / Longest stay
+  (clean listening time only). The list goes in PASSES: a frequency left by
+  Skip / Longest stay has had its turn until the next pass (always-on
+  broadcast stations take turns round and round). With each retune the VFO
+  is pre-placed, muted, on the band's first frequency (ready when the array
+  has recalibrated); while the array calibrates a locked VFO is muted.
   Its own commands go through `apply_command` but are NOT saved
   (`sfscan::dispatching()`); the tuning it leaves is saved at stop. A manual
   retune, a mode change, removing its VFO or a playback stop it; refused in

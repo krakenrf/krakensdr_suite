@@ -949,33 +949,53 @@ Edit `include/config.hpp`:
   TUNE -> SETTLE -> WATCH -> LISTEN): SLOTS = the array (coherent: 1, the
   FFT of `active_channel`) or every tuner NO OTHER VFO is on (independent;
   another VFO moving onto a scanned tuner = a new turn without it, none left
-  = stop). A turn gives slot k band (cycle + k) % nb; with more bands than
-  slots the cycle advances by the slot count after DWELL of ready time (not
-  while held). TUNE: a slot whose centre doesn't hold its band gets FREQ: /
-  TUNER_FREQ:, a band's gain GAIN: / TUNER_GAIN: when it differs. SETTLE:
+  = stop). TURNS = the bands in slot-sized blocks (slot k: band cycle + k,
+  none past the last band); a PASS = every turn once, then from the first
+  again. TUNE: a slot whose centre doesn't hold its band gets FREQ: /
+  TUNER_FREQ:, a band's gain GAIN: / TUNER_GAIN: when it differs, and the
+  VFO is PRE-PLACED (`place(.., heard=false)`, muted) on the first retuned
+  band's first entry that hasn't had its turn - in the same go as the
+  retune (the user's idea, 2026-10-22): during the coherent calibration
+  that follows its filters settle / its decoder starts, so it is in place
+  the moment the data is clean (also on the first turn of a run). SETTLE:
   the stream's header frequency (`tuner_frequencies`) within 2 kHz (6 s max,
   else that band is left out this turn: `ok:false`) + 250 ms, then an FFT
   averaging reset (`fft_reset_generation`; independent retunes don't get one
   from heimdall). READY = not `server_retuning` (new global: the header's
   retuning flag - packets are skipped meanwhile, the spectrum is the old
-  band), `fft_data_valid`, 1 s since the last FFT reset (as the continuous
-  scanner) and, coherent, not calibrating: noise source on / within
+  band), `fft_data_valid`, `rebuild_ms()` since the last FFT reset (until
+  the reset's first frame weighs < 5 % in the average, from AVG and the FFT
+  size, + 0.1 s, 0.25-2.5 s: 0.25 s at the defaults - was a fixed 1 s, the
+  continuous scanner's) and, coherent, not calibrating: noise source on / within
   `NOISE_QUIET_MS`, or phase state 0-3 / 6 (WAITING_STABILITY 5 is fine:
   noise off, antennas in) - the phase state alone is ignored after 20 s
   (a heimdall that never settles); KerberosSDR manual mode: noise only.
   WATCH: an entry over the squelch on 2 polls in a row is active (`act`);
-  entries skipped stay out until measured below squelch - 3 dB; the first
-  active one after the last heard (list order, wrapping) is LOCKED: on the
-  uWS loop, as `sfTune` in the page: DIGITAL_MODE (the entry's decoder),
+  entries in `done_` (left by Skip / Longest stay: had their turn this
+  pass) wait; the first other active one after the last heard (list order,
+  wrapping) is LOCKED. Nothing to lock: with more bands than slots the
+  next turn comes AT ONCE when something active here is done (its turn is
+  over - the others' bands next), on Skip, or after DWELL of ready watching
+  (summed over the turn, not restarted per transmission - a busy channel
+  can't hold its band for good), not while held; past the last band = a new
+  pass (`done_` cleared). Every band watched at once: a new pass as soon as
+  all that is active is done. (Was: Skip / Longest stay excluded a
+  frequency until it measured quiet - a broadcast station never does, so
+  after one pass every station was out and the scan cycled its bands with
+  the VFO parked, muted, on the last one: the user's report 2026-10-22.)
+  LOCK / pre-place (`place`), on the uWS loop as `sfTune` in the page: DIGITAL_MODE (the entry's decoder),
   SET_DECIMATOR_DEMOD (+ that demod's usual bandwidth), SET_DECIMATOR_BW
   (the entry's; Digital: widened to the decoder's `min_vfo_rate`, 24 kHz for
   Auto), SET_DECIMATOR_FREQ (offset from the slot's centre; independent
-  `:tuner`), the VFO heard. LISTEN: the entry measured on its slot; over
-  squelch - 3 dB keeps it, not ready (calibration) counts as active; resumes
-  after HANG of quiet, or after MAX (then skipped until quiet); SKIP resumes
-  (skipped until quiet) - in WATCH it advances the turn; HOLD stays (WATCH:
-  no turn advance). Resume mutes the VFO; a plan change while listening
-  re-tunes when it resumes (`need_tune_`)
+  `:tuner`), the VFO heard (pre-placing: muted). LISTEN: the entry measured
+  on its slot; over squelch - 3 dB keeps it, not ready (calibration) counts
+  as active AND MUTES the VFO (the noise source would be heard; heard again
+  the tick the data is clean - status `cur.heard`); resumes after HANG of
+  quiet, or after MAX of CLEAN listening (`listened_ms_`, status `cur.ms` -
+  calibration time used to count: a 2 s stay could pass in noise-source
+  time) -> done; SKIP -> done - in WATCH it advances the turn; HOLD stays
+  (WATCH: no turn advance). Resume mutes the VFO; a plan change while
+  listening re-tunes when it resumes (`need_tune_`)
 - Commands run through `ControlHandler::apply_command` on the uWS loop
   (`loop->defer`, dropped when the run ended - `alive(run id)`), so pages see
   them like a browser's; `sfscan::dispatching()` (set around them) keeps them
@@ -1027,8 +1047,13 @@ Edit `include/config.hpp`:
   obeyed, coherent retunes with the retuning flag, WAITING_STABILITY and a
   noise-source calibration; checks the plan, both bands tuned, the gain
   with its band, lock / VFO / audio / delay / skip / hold / longest stay,
-  list changes, refusals, manual-retune stop, what is saved, independent
-  mode with two bands on two tuners and a VFO taking a tuner),
+  list changes, refusals, manual-retune stop, what is saved, the user's
+  broadcast-FM case - 5 always-on stations in 3 bands, Longest stay 2 s, a
+  1.5 s stability window so a lock straddles the calibration: every station
+  in list order pass after pass, 2 s of clean time each, muted / heard
+  again across the calibration, the VFO pre-placed > 0.8 s before its lock -,
+  independent mode with two bands on two tuners and a VFO taking a tuner;
+  the fake's timing is set over its side port, `{"timing":{"stab":1.5}}`),
   `t_sfscan_ui.py` (the same + the page in a headless Edge with its own
   profile over the DevTools protocol: ticks per row / heading incl. the
   mixed state and -1 / 0 / 1, counts, ▶ / ■ / Hold / Skip, the 🔊 row, the
