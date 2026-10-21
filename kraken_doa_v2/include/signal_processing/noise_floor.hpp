@@ -37,9 +37,11 @@ namespace nfloor {
 
 // FFT worker, once per frame of channel ch, under fft_mutex: this frame's dB
 // spectrum (raw) and the averaged one (avg) - fft_size bins each, DC centred.
-// reset: the averaged spectrum restarted with this frame (retune).
+// reset: the averaged spectrum restarted with this frame (retune). fc_hz: the
+// RF the averaged spectrum's centre bin holds (FFTProcessor's shift of it on a
+// retune; 0 = unknown: the tuner's latest header frequency).
 void on_frame(int ch, const std::vector<float>& raw, const std::vector<float>& avg,
-              int fft_size, bool reset);
+              int fft_size, bool reset, double fc_hz = 0.0);
 
 // The floor to subtract from channel ch's AVERAGED spectrum (dB) - in
 // wideband scan mode the one the stitched spectrum (after shape_db) and the

@@ -334,8 +334,8 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
     // would pull the floor's percentile down). A move past the whole band:
     // nothing to keep, averaged as before. A frame of an older packet
     // processed late (several FFT workers) doesn't move it back
+    static double placed_hz[MAX_CHANNELS] = {};
     {
-        static double placed_hz[MAX_CHANNELS] = {};
         static uint64_t placed_seq[MAX_CHANNELS] = {};
         if (freq_hz > 0.0 && seq >= placed_seq[channel]) {
             placed_seq[channel] = seq;
@@ -383,7 +383,8 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
 
     // The channel's noise floor for this frame (the 0 dB reference of the
     // display, squelch and scanner) - remembered when a signal fills the band
-    nfloor::on_frame(channel, fft_magnitudes[channel], fft_averaged[channel], fft_size, should_reset);
+    nfloor::on_frame(channel, fft_magnitudes[channel], fft_averaged[channel], fft_size, should_reset,
+                     placed_hz[channel]);
 
     // Mark FFT data as valid now that we've written real data
     // This flag prevents build_fft_message from using stale/reset data

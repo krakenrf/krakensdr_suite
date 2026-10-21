@@ -3218,9 +3218,21 @@ Edit `include/config.hpp`:
   1.5 dB - `noise_spread_db()`: 8.2 dB for one frame, x sqrt(alpha / (2 -
   alpha)), 2.27 at 0.15 - every 1 s, points within 3 dB, tau 60 s; FFTs >=
   4096; not persisted) - a 2 dB-steeper tilt is learned within 60 s. (5)
-  After a retune (> 1 kHz) only the step and shape MEASUREMENTS wait 5
-  averaging time constants (measured frame interval / alpha, 0.3-4 s); the
-  floors follow at once. (6) `FFTProcessor::process_channel_fft` shifts a
+  After a retune (> 1 kHz) only the step and shape MEASUREMENTS wait, until
+  the frames from before it weigh < 5 % in the average (`WB_SETTLE_OLD`:
+  ln 0.05 / ln(1 - alpha) frames x the measured frame interval = 3 time
+  constants, 125 ms at alpha 0.15; 30 ms - 4 s); the floors follow at once.
+  It was 5 time constants and at least 300 ms (the user's "speed up the
+  equalization", 2026-10-21): after a jump to where the dongles' gains differ
+  otherwise, the old steps held the tuners apart that long. A retune is when
+  the AVERAGED spectrum moved: `on_frame` gets the RF its centre holds (the
+  shift's `placed_hz`) on every frame (`Place`: before the `EVAL_MS` return),
+  and the steps compare the neighbours at those - a tuner's header frequency
+  (`tuner_frequencies`) changes before its FFT worker moves the average, and
+  a step measured in that moment came from two different bands (with the
+  shorter wait steps are measured during fast drags, and the DVB-T's edges
+  were drawn 0.1-0.5 MHz off in 5 % of the frames). (6)
+  `FFTProcessor::process_channel_fft` shifts a
   retuned tuner's average by the move (every mode since the local pan -
   *Spectrum views*; whole bins, the rest carried; bins
   the old band didn't hold keep their old values; a move past the band: no
@@ -3315,7 +3327,18 @@ Edit `include/config.hpp`:
   version 0.4-3.6 s); its edges drawn within 1.3 kHz of the truth in 95 %
   of the frames during drags (without the shift 100-250 kHz: the old band
   shifted); the display at the new frequency 140-210 ms after the last
-  command in every build (the tuners' sweep + the 50 ms frame tick)
+  command in every build (the tuners' sweep + the 50 ms frame tick). JUMP
+  (t_wb_jump.py + ana_jump.py: fake_wbd.py with the dongles' gains drifting
+  apart 0.2-0.5 dB per 100 MHz; lined up = every tuner's noise and the
+  signal parts within 1.5 dB, 3-frame median): the shorter settle wait
+  (5 % rule) at alpha 0.15 - 293 MHz 0.14-0.31 s (5 time constants / >= 300
+  ms: 0.45), back 300 MHz 0.25-0.61 s, most 0.30 (0.50), 6 / 3 MHz 0.20-0.25
+  s (0.19-0.27); at 0.05 back 300 MHz 0.55-0.59 s (0.91), the rest the same
+  (there the averaging itself is slower than the wait). Drags with it: the
+  first version (header frequencies) drew the DVB-T's edges 139-459 kHz off
+  in 5 % of the fast drag's frames (p95, 3 runs; 300 ms wait 1.3-59 kHz);
+  with the averages' own frequencies 1.2-1.3 kHz, the rest as before (block
+  16.9-18.8 dB over the noise at worst, spread p95 <= 1.9 dB)
 **Digital TV (`plugins/dtv/`, README.md there; ARRAY plugin API):**
 - Plugin id `dtv`, name "Digital TV (DVB-T/T2, ISDB-T, ATSC 1.0/3.0,
   DTMB)", v2.0 - was `sfn` "SFN Separation (..., DAB)" (renamed 2026-10-14;
