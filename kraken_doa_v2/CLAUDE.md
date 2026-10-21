@@ -6201,8 +6201,12 @@ kfft_execute(ctx.plan);
 
 **Hardware atan2f:** Uses ARM NEON internally, faster than any approximation
 ```cpp
-float phase = std::atan2f(q, i);  // Hardware accelerated on ARM
+float phase = std::atan2(q, i);  // float overload; hardware accelerated on ARM
 ```
+Use the `std::` overloads, not the C names: libstdc++ before GCC 14 (Debian
+12's GCC 12) has no `std::log10f` / `std::atan2f` / `std::sqrtf` ... (C89
+functions' `f` forms) - only the C99 ones (`std::log2f`, `std::lrintf`,
+`std::fmaf`).
 
 **Liquid-DSP Resampling:** Multi-stage decimation for 48kHz audio output
 
