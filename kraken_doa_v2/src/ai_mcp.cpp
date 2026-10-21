@@ -46,7 +46,6 @@
 #include "rdf_mapper.hpp"
 #include "saved_freqs.hpp"
 #include "scanner_manager.hpp"
-#include "signal_processing/fft_processor.hpp"
 #include "station_info.hpp"
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
@@ -568,8 +567,7 @@ std::string spectrum_json(const std::vector<float>& db, double f0, double step, 
                  "the bins over min_db (gaps under ~2 kHz joined): each one's centre + width (the part within 20 dB "
                  "of its peak) and its strongest bin, strongest first. Bursty signals (sondes, pagers, LoRa, ADS-B) "
                  "barely show in the average: use hold_s. A 2.4 MHz receiver also shows images / the DC spur of "
-                 "strong signals; the tuner's roll-off is taken off (levels are comparable across the band), but "
-                 "in the outer ~60 kHz signals from beyond the opposite edge can fold in, 20-30 dB down.")
+                 "strong signals; the band edges roll off.")
       << "}";
     return o.str();
 }
@@ -598,13 +596,12 @@ void t_get_spectrum(const Json& a, Reply r) {
         return r(spectrum_json(d.db, d.f0_hz, d.step_hz, d.center_hz, i0, i1, points, thr, tuner, 0, 0), false);
     if (wideband_mode_enabled.load()) return r("Peak hold isn't available in wideband scan mode (use the average)", true);
     // peak hold: the raw spectra of the display's channel, sampled every
-    // 40 ms for hold s, over the averaged spectrum's floor (its 10th
-    // percentile), the tuners' response taken off as in the display
+    // 40 ms for hold s, over the averaged spectrum's floor (its 10th percentile)
     const int ch = s.independent ? tuner : active_channel.load();
     const double f0 = d.f0_hz, step = d.step_hz, center = d.center_hz;
     const int tout = s.independent ? tuner : -1;
     later([=](bool* err) {
-        std::vector<float> mx(static_cast<size_t>(n), -1e9f), raw, avg, shape;
+        std::vector<float> mx(static_cast<size_t>(n), -1e9f), raw, avg;
         const int64_t until = now_ms() + static_cast<int64_t>(hold * 1000);
         int samples = 0;
         while (now_ms() < until) {
@@ -614,12 +611,11 @@ void t_get_spectrum(const Json& a, Reply r) {
                 if (ch < 0 || ch >= static_cast<int>(fft_magnitudes.size()) || ch >= static_cast<int>(fft_averaged.size())) continue;
                 raw = fft_magnitudes[static_cast<size_t>(ch)];
                 avg = fft_averaged[static_cast<size_t>(ch)];
-                shape = FFTProcessor::response_shape(static_cast<int>(raw.size()));
             }
             if (raw.size() != static_cast<size_t>(n) || avg.size() != raw.size()) continue;
             std::nth_element(avg.begin(), avg.begin() + static_cast<long>(avg.size() / 10), avg.end());
             const float floor = avg[avg.size() / 10];
-            for (size_t k = 0; k < raw.size(); k++) mx[k] = std::max(mx[k], raw[k] - floor - shape[k]);
+            for (size_t k = 0; k < raw.size(); k++) mx[k] = std::max(mx[k], raw[k] - floor);
             samples++;
         }
         if (!samples) {

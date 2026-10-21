@@ -30,15 +30,6 @@ constexpr int FFT_SIZE = 16384;
 // SPECTRUM_LEGACY_POINTS per tuner band (= the old default, 16384 / 8)
 constexpr int SPECTRUM_VIEW_MAX_POINTS = 4096;
 constexpr int SPECTRUM_LEGACY_POINTS = 2048;
-// Every spectrum is drawn with the tuners' response (tilt, roll-off - nfloor's
-// shape) taken off, so a tuner band's edges no longer need clipping away: where
-// no other tuner covers them (coherent / independent mode, the two outer ends
-// of the wideband scan) at least this middle fraction of the 2.4 MHz is shown
-// (+-1.14 MHz; edge clip still widens it). Past it the 2.4 MHz sampling folds
-// signals from beyond the opposite edge in (measured on the KrakenSDR: a copy
-// 24-30 dB down 60 kHz in from the edge, 20 dB at the very edge) and the
-// roll-off reaches 8.5 dB. Keep equal to FLAT_SHOW in kraken_doa.html
-constexpr float FLAT_SHOW_FRACTION = 0.95f;
 // Compile-time CEILING on wire/processing channels (matches heimdall's
 // NUM_DEVICES). The count actually in use is the runtime atomic
 // active_num_elements, synced from the 8091 packet header.

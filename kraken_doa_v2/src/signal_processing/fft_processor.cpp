@@ -469,20 +469,16 @@ bool FFTProcessor::stitch_wideband_fft(
     }
     if (count == 0) return false;
 
-    // From the lowest tuner's shown band to the highest's, on the FFT's own
-    // bins: bin i of tuner t is centred on its centre + (i - fft_size / 2) *
-    // bin. Between tuners the boundaries lie half way (they are spaced by the
-    // edge clip); the two outer ends are no other tuner's - shown to at least
-    // FLAT_SHOW_FRACTION of the band, flattened like the rest (+0.38 MHz at
-    // edge clip 0.8)
+    // From the lowest tuner's edge-clipped band to the highest's (the tuners
+    // are spaced by it), on the FFT's own bins: bin i of tuner t is centred on
+    // its centre + (i - fft_size / 2) * bin
     const double bin = static_cast<double>(SAMPLE_RATE) / fft_size;
-    const int outer_bins = std::clamp(
-        static_cast<int>(fft_size * std::max(current_edge_clip.load(), FLAT_SHOW_FRACTION)), 1, fft_size);
-    const int outer_skip = (fft_size - outer_bins) / 2;
+    const int usable_bins = std::max(1, static_cast<int>(fft_size * current_edge_clip.load()));
+    const int skip_bins = (fft_size - usable_bins) / 2;
     const double first = static_cast<double>(tuner_hz[order[0]]);
     const double last = static_cast<double>(tuner_hz[order[count - 1]]);
-    f0_hz = first + (outer_skip - fft_size / 2) * bin;
-    const double end_hz = last + (outer_skip + outer_bins - 1 - fft_size / 2) * bin;
+    f0_hz = first + (skip_bins - fft_size / 2) * bin;
+    const double end_hz = last + (skip_bins + usable_bins - 1 - fft_size / 2) * bin;
     const long long bins = std::llround((end_hz - f0_hz) / bin) + 1;
     // tuners far apart (a mode change on its way): nothing that stitches
     if (bins < 2 || bins > static_cast<long long>(MAX_CHANNELS) * fft_size) return false;
@@ -491,7 +487,10 @@ bool FFTProcessor::stitch_wideband_fft(
 
     // The tuners' common response (tilt, roll-off) taken off: flat across each
     // band and every boundary (the stitch only runs under fft_mutex)
-    const std::vector<float>& shape = response_shape(fft_size);
+    static std::vector<float> shape;
+    static uint32_t shape_ver = 0;
+    nfloor::shape_db(fft_size, shape, &shape_ver);
+    if (shape.size() != static_cast<size_t>(fft_size)) shape.assign(static_cast<size_t>(fft_size), 0.0f);
 
     // Each tuner up to half way to the next one's centre; a gap wider than a
     // tuner's band (none in heimdall's plan) stays at 0 dB
@@ -629,15 +628,6 @@ float FFTProcessor::channel_noise_floor(int channel, const std::vector<float>& f
     float f;
     if (nfloor::floor_db(channel, &f)) return f;
     return ::calculate_noise_floor(fft_data);
-}
-
-const std::vector<float>& FFTProcessor::response_shape(int fft_size) {
-    static std::vector<float> shape;   // under fft_mutex
-    static uint32_t shape_ver = 0;
-    const size_t n = static_cast<size_t>(std::max(fft_size, 0));
-    nfloor::shape_db(fft_size, shape, &shape_ver);
-    if (shape.size() != n) shape.assign(n, 0.0f);
-    return shape;
 }
 
 // Reset all FFT buffers immediately (called on frequency change)
@@ -803,18 +793,14 @@ float FFTProcessor::get_range_peak_db(int channel, float offset_hz, float bandwi
     }
 
     // Find peak magnitude in the specified range, optionally skipping the
-    // bins around DC (residual center spike) - with the tuners' response taken
-    // off, as the spectrum is drawn (a VFO near a band edge read up to 8 dB
-    // lower than its signal on the display)
-    const std::vector<float>& shape = response_shape(fft_size);
+    // bins around DC (residual center spike)
     float peak = -120.0f;
     for (int i = min_bin; i <= max_bin; i++) {
         if (exclude_dc_bins > 0 && std::abs(i - center_bin) <= exclude_dc_bins) {
             continue;
         }
-        const float m = magnitudes[i] - shape[static_cast<size_t>(i)];
-        if (m > peak) {
-            peak = m;
+        if (magnitudes[i] > peak) {
+            peak = magnitudes[i];
         }
     }
 
