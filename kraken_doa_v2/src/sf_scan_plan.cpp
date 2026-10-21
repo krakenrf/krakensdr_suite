@@ -107,45 +107,64 @@ Plan build_plan(std::vector<savedfreq::ScanEntry> entries, double span_hz, uint6
         ok.push_back(std::move(e));
     }
 
-    // bands as [lo, hi] (every VFO inside), grown while they fit the span
+    // bands as [lo, hi] (every VFO inside), grown while they fit `pack`
     struct B {
         double lo, hi;
         bool has_gain;
         double gain;
         std::vector<int> idx;
     };
-    std::vector<B> bs;
-    auto try_add = [&](B& b, int i) {
-        const double h = fit_width_hz(ok[i], vfo_hz, span_hz) / 2.0;
-        const double lo = std::min(b.lo, ok[i].hz - h), hi = std::max(b.hi, ok[i].hz + h);
-        if (hi - lo > span_hz) return false;
-        b.lo = lo;
-        b.hi = hi;
-        b.idx.push_back(i);
-        return true;
-    };
-    auto open = [&](int i) {
-        const double h = fit_width_hz(ok[i], vfo_hz, span_hz) / 2.0;
-        bs.push_back({ok[i].hz - h, ok[i].hz + h, ok[i].has_gain, ok[i].gain, {i}});
-    };
-    // entries that set a gain: per gain, lowest first, a new band when the next doesn't fit
-    std::map<double, int> last_of_gain;   // gain -> its newest band
-    for (int i = 0; i < static_cast<int>(ok.size()); i++) {
-        if (!ok[i].has_gain) continue;
-        auto it = last_of_gain.find(ok[i].gain);
-        if (it == last_of_gain.end() || !try_add(bs[it->second], i)) {
-            open(i);
-            last_of_gain[ok[i].gain] = static_cast<int>(bs.size()) - 1;
+    auto group = [&](double pack) {
+        std::vector<B> bs;
+        auto try_add = [&](B& b, int i) {
+            const double h = fit_width_hz(ok[i], vfo_hz, span_hz) / 2.0;
+            const double lo = std::min(b.lo, ok[i].hz - h), hi = std::max(b.hi, ok[i].hz + h);
+            if (hi - lo > pack) return false;
+            b.lo = lo;
+            b.hi = hi;
+            b.idx.push_back(i);
+            return true;
+        };
+        auto open = [&](int i) {
+            const double h = fit_width_hz(ok[i], vfo_hz, span_hz) / 2.0;
+            bs.push_back({ok[i].hz - h, ok[i].hz + h, ok[i].has_gain, ok[i].gain, {i}});
+        };
+        // entries that set a gain: per gain, lowest first, a new band when the next doesn't fit
+        std::map<double, int> last_of_gain;   // gain -> its newest band
+        for (int i = 0; i < static_cast<int>(ok.size()); i++) {
+            if (!ok[i].has_gain) continue;
+            auto it = last_of_gain.find(ok[i].gain);
+            if (it == last_of_gain.end() || !try_add(bs[it->second], i)) {
+                open(i);
+                last_of_gain[ok[i].gain] = static_cast<int>(bs.size()) - 1;
+            }
         }
-    }
-    // the others: into the first band they fit (any gain), else a band of their own
-    for (int i = 0; i < static_cast<int>(ok.size()); i++) {
-        if (ok[i].has_gain) continue;
-        bool placed = false;
-        for (auto& b : bs) {
-            if (try_add(b, i)) { placed = true; break; }
+        // the others: into the first band they fit (any gain), else a band of their own
+        for (int i = 0; i < static_cast<int>(ok.size()); i++) {
+            if (ok[i].has_gain) continue;
+            bool placed = false;
+            for (auto& b : bs) {
+                if (try_add(b, i)) { placed = true; break; }
+            }
+            if (!placed) open(i);
         }
-        if (!placed) open(i);
+        return bs;
+    };
+    // As few bands as the span allows - but balanced: packed to the full span
+    // the first band took all it could, so its outer entries sat at the very
+    // edges of the tuner's band (where it rolls off) and a middle one next to
+    // DC with no room to move the centre (6 broadcast stations 0.8 MHz apart:
+    // 95.8 at -840 kHz, 96.6 40 kHz from DC). The narrowest packing that still
+    // needs no more bands spreads them evenly (there: pairs, +-400 kHz)
+    std::vector<B> bs = group(span_hz);
+    if (bs.size() > 1) {
+        double lo = 0, hi = span_hz;
+        for (int it = 0; it < 30 && hi - lo > 1000; it++) {
+            const double mid = (lo + hi) / 2;
+            if (group(mid).size() <= bs.size()) hi = mid;
+            else lo = mid;
+        }
+        if (std::vector<B> b2 = group(hi); b2.size() == bs.size()) bs = std::move(b2);
     }
 
     // centres on whole kHz inside the tunable range, clear of the channels

@@ -934,7 +934,12 @@ Edit `include/config.hpp`:
   NBFM / AM 16 kHz, what the page's demod buttons set -, else the VFO's,
   capped at 240 kHz for fitting): entries with a gain - per gain, lowest
   first, a new band when the next doesn't fit; then the rest into the first
-  band they fit (any gain), else bands of their own. Bands lowest centre
+  band they fit (any gain), else bands of their own. BALANCED: the packing
+  width is the narrowest (binary search) that still needs no more bands
+  than the full span - packed to the full span, the user's six broadcast
+  stations 0.8 MHz apart came out {95.8, 96.6, 97.4} with 95.8 at -840 kHz
+  (the tuner band's edge) and 96.6 40 kHz from DC; balanced: three pairs at
+  +-400 kHz (2026-10-22). Bands lowest centre
   first. The CENTRE keeps every channel off DC (`pick_centre`: half its
   channel + `DC_GUARD_HZ` 3 kHz away - the IQ path takes the DC off and an
   RTL-SDR has its spike there: a band of ONE entry centred on it never saw

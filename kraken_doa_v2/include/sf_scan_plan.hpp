@@ -9,7 +9,9 @@
 // tuner's 2.4 MHz (the edge clip), so all of them are watched from the same
 // spectrum and only a change of band retunes. Entries that set a gain only
 // share a band with the same gain (the band's gain is set with its retune);
-// entries without one ("keep the receiver's") join any band they fit in.
+// entries without one ("keep the receiver's") join any band they fit in. As
+// few bands as the span allows, balanced: the narrowest packing that needs no
+// more bands, so entries keep away from the band edges and from DC.
 
 #include "saved_freqs.hpp"
 
