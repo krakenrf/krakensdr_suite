@@ -857,6 +857,29 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 /* the map waiting for a click (the saved-frequency editor's "Pick on map") */
 .map-pick {position:absolute;left:50%;top:44px;transform:translateX(-50%);z-index:7;max-width:calc(100% - 20px);box-sizing:border-box;background:rgba(16,24,44,.96);border:1px solid #ffd54f;border-radius:4px;color:#fff;font-size:12px;padding:6px 10px;display:flex;gap:8px;align-items:center;box-shadow:0 2px 10px rgba(0,0,0,.5)}
 .map-pane.picking #map-canvas {cursor:crosshair}
+/* 🔍 the map search (🔍 MAP SEARCH): the box first under the top-left buttons, its results over the map */
+.map-btn.dis {opacity:.45}
+.map-srch {pointer-events:auto;position:relative;flex:none;width:340px;max-width:100%;background:rgba(16,24,44,.94);border:1px solid #2a4a7a;border-radius:4px;box-sizing:border-box}
+.map-srch-row {display:flex;align-items:center;gap:3px;padding:3px}
+.map-srch input {flex:1;min-width:0;background:#1a1a2e;border:1px solid #2a4a7a;color:#e0e0e0;border-radius:3px;font-size:12px;padding:2px 6px;height:24px;box-sizing:border-box;user-select:text;-webkit-user-select:text}
+.map-srch input:focus {outline:none;border-color:#4fc3f7}
+.map-srch .map-btn {height:24px;min-width:24px;padding:0 5px}
+.map-srch-res {position:absolute;left:-1px;right:-1px;top:100%;margin-top:3px;z-index:2;background:rgba(16,24,44,.97);border:1px solid #4fc3f7;border-radius:4px;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;box-shadow:0 2px 10px rgba(0,0,0,.5);font-size:12px;color:#dbe8ff}
+.map-srch-res:empty {display:none}
+.srch-it {display:flex;gap:7px;align-items:flex-start;padding:5px 8px;cursor:pointer;border-bottom:1px solid #1d2c4a}
+.srch-it:hover {background:#1d3358}
+.srch-it.hl {background:#1a4a7a}
+.srch-it .ic {flex:none;width:18px;text-align:center}
+.srch-it .t {flex:1;min-width:0;display:flex;flex-direction:column}
+.srch-it .n {color:#fff;overflow-wrap:anywhere}
+.srch-it .d {color:#8aa8c7;font-size:11px;overflow-wrap:anywhere}
+.srch-it .k {flex:none;color:#8296b4;font-size:10px;white-space:nowrap;font-variant-numeric:tabular-nums;padding-top:2px}
+.srch-it.onl .n {color:#4fc3f7}
+.srch-msg {padding:5px 8px;color:#8296b4;font-size:11px;line-height:1.4}
+.srch-msg.w {color:#ffcc80}
+.srch-attr {padding:3px 8px;color:#6f87a6;font-size:10px}
+.map-pane.srch-res-open .map-tl {z-index:6}
+.map-pop td.sel {user-select:text;-webkit-user-select:text}
 
 /* 📻 Saved frequencies: sidebar list, categories, editor dialog, toast */
 .sf-count {margin-left:auto;margin-right:6px;font-size:11px;color:#7f9cc0}
@@ -2206,14 +2229,27 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <button type="button" class="map-btn" id="map-lr-btn" onclick="lrToggle()" title="Replay a DoA log of a drive on the map: the KrakenSDR Android app's (.csv / .sqlite) or a 📝 DoA Recording of this receiver - its track, bearings, lobes and the heat map of where the transmitter is, at any speed, back and forth. Read in this browser - nothing is uploaded (or drop the file on the map)">Replay</button>
           </div>
           <div class="map-tl">
+            <!-- 🔍 the search box (🔍 MAP SEARCH) + its results -->
+            <div class="map-srch" id="map-srch" style="display:none">
+              <div class="map-srch-row">
+                <input type="text" id="map-srch-in" placeholder="Place, address, coordinates, grid locator…" autocomplete="off" spellcheck="false" enterkeyhint="search"
+                       title="Coordinates (-36.8485, 174.7622 · 36°50'54.5&quot;S 174°45'43.8&quot;E · S 36 50.908 E 174 45.730), UTM (60H 300477 5919601), MGRS (60HUE0047719600), a grid locator (RF73jd) or a map link (Google, OpenStreetMap, Apple, geo:) go there at once - offline. Your markers and saved frequencies, the decoders' positions, OSM masts and the assistant's map points are listed as you type. Enter searches OpenStreetMap for addresses, cities and places (online)"
+                       oninput="srchInput()" onkeydown="srchKey(event)" onfocus="srchFocus()" onclick="srchFocus()">
+                <button type="button" class="map-btn" onclick="srchGo()" title="Search (Enter)">↵</button>
+                <button type="button" class="map-btn" onclick="srchClear()" title="Clear: the text, the results and the result's pin go, the box closes">✕</button>
+              </div>
+              <div class="map-srch-res" id="map-srch-res" onmousedown="if (event.target.closest('.srch-it')) event.preventDefault()" onclick="srchResClick(event)"></div>
+            </div>
             <div class="map-legend" id="map-legend" style="display:none"></div>
             <div class="map-vs" id="map-vs" style="display:none"></div>
             <div class="map-vs map-ai" id="map-ai" style="display:none"></div>
           </div>
           <div class="map-ctl map-ctl-tr">
+            <button type="button" class="map-btn" id="map-srch-btn" onclick="srchToggle()" title="Search: an address, a city or place (OpenStreetMap, online), coordinates in any usual form, UTM / MGRS, a grid locator, a map link - or your own markers and the decoders' positions">🔍</button>
             <button type="button" class="map-btn" onclick="mapZoomBy(1)" title="Zoom in (mouse wheel / double-click)">+</button>
             <button type="button" class="map-btn" onclick="mapZoomBy(-1)" title="Zoom out">−</button>
-            <button type="button" class="map-btn" onclick="mapCenterStation()" title="Centre on the station (Station Information)">⌖</button>
+            <button type="button" class="map-btn" onclick="mapCenterStation()" title="Home: back to the station (its location in Station Information)">🏠</button>
+            <button type="button" class="map-btn" id="map-tx-btn" onclick="mapGoTx()" title="The estimated transmitter: where the 📡 DF heat map (bearings collected while driving) or a ⏯ replayed drive puts it, with its 95 % region in view. Several estimates shown: press again for the next">🎯</button>
             <button type="button" class="map-btn" onclick="mapFitAll()" title="Show every marker">⤢</button>
           </div>
           <!-- mobile DF (coherent mode): DoA lobes + transmitter heat map (rdf_mapper.cpp) -->
@@ -2419,7 +2455,7 @@ const MAP_TRAIL_BALLOON_MAX = 4000, MAP_TRAIL_BALLOON_S = 4 * 3600;
 const mapState = (() => {
   const d = {on: false, tab: 'map', w: 0, layer: 'street', z: 0, mx: 0.5, my: 0.5, trails: true, masts: false,
              rdfVfo: 'all', rdfTid: '', rdfLobe: true, rdfLines: true, rdfHeat: true, rdfOpen: true,
-             vs: false, vsOpen: true};
+             vs: false, vsOpen: true, srch: false};
   try { return Object.assign(d, JSON.parse(localStorage.getItem('kraken_map') || '{}')); } catch (e) { return d; }
 })();
 const mapPts = new Map();      // "vfo|plugin|id" -> point (server fields + rx time + trail)
@@ -2434,6 +2470,14 @@ let mapTileOk = 0, mapTileErrAt = 0, mapAutoFit = !mapState.z;
 let mapStSel = false, vsSel = null, mapObjDrag = null, mapStLocal = null;
 let mapSaveT = 0, mapFlashT = 0, mapFlashMsg = '';
 if (!['street', 'satellite'].includes(mapState.layer)) mapState.layer = 'street';
+// 🔍 the map search (see 🔍 MAP SEARCH): the text searched, the rows listed
+// (+ the highlighted one, the list shown), OpenStreetMap's rows for srchOnlQ,
+// the status line, the online request running (for which text), the answers
+// kept per text + view, when the last request went out; the result picked =
+// its pin on the map (mapDrawNow -> srchDraw reads it); where 🎯 last went
+let srchQ = '', srchRes = [], srchHl = -1, srchListOn = false, srchOnl = null, srchOnlQ = '',
+    srchMsg = '', srchMsgW = false, srchBusyQ = '', srchSeq = 0, srchLastAt = 0, srchPin = null, srchTxAt = null;
+const srchCache = new Map();
 // 📻 saved frequencies + 📍 map markers (see 📻 SAVED FREQUENCIES / 📍 MAP
 // MARKERS): the backend's lists (categories, locations = the map markers,
 // frequencies); the marker shown in the map panel, the one being edited, the
@@ -12746,9 +12790,10 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     mapSave();
     mapDraw();
   }
+  // 🏠 (and the first view): the station
   function mapCenterStation() {
     mapAutoFit = false;
-    if (mapStation) mapCenterOn(mapStation[0], mapStation[1], Math.max(mapState.z, 8));
+    if (mapStation) { mapStopFollow(); mapCenterOn(mapStation[0], mapStation[1], Math.max(mapState.z, 8)); }
     else mapStatusFlash('No station location - set it in the sidebar (Station Information)');
   }
   // zoom / centre to show every marker (and the station)
@@ -12757,6 +12802,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     for (const p of mapPts.values()) ll.push([p.la, p.lo]);
     for (const m of sfLocs) ll.push([m.lat, m.lon]);
     if (mapStation) ll.push(mapStation);
+    if (srchPin) ll.push([srchPin.lat, srchPin.lon]);   // 🔍 the search result
     if (lrOpen && lr && lr.bb) ll.push(mapUnproj(lr.bb[0], lr.bb[1]), mapUnproj(lr.bb[2], lr.bb[3]));   // ⏯ the replay's drive
     if (!ll.length) { mapStatusFlash('Nothing on the map yet'); return; }
     if (ll.length === 1) { mapCenterOn(ll[0][0], ll[0][1], Math.max(mapState.z, 9)); return; }
@@ -12827,7 +12873,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     mapCv.addEventListener('pointermove', e => {
       if (!ptrs.has(e.pointerId)) {
         const grab = mapObjGrab(e.offsetX, e.offsetY);
-        const over = !grab && !!(mkHit(e.offsetX, e.offsetY) || mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY) ||
+        const over = !grab && !!(mkHit(e.offsetX, e.offsetY) || srchHit(e.offsetX, e.offsetY) || mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY) ||
                                  stHit(e.offsetX, e.offsetY) || vsHit(e.offsetX, e.offsetY) || plHit(e.offsetX, e.offsetY) ||
                                  aimHit(e.offsetX, e.offsetY) || lrHit(e.offsetX, e.offsetY) >= 0);
         mapCv.classList.toggle('over', over);
@@ -12880,16 +12926,17 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
           const mk = mkHit(e.offsetX, e.offsetY);
           sfPickEnd(mk ? {loc: mk} : {ll: mapScreenToLatLon(e.offsetX, e.offsetY)});
         } else if (pan && !moved && !lpFired && e.type === 'pointerup') {
-          // a click: a marker of the user's (its panel), a decoder's point
-          // or an OpenStreetMap mast (popup), or nothing (closes both - an
-          // edit stays open)
+          // a click: a marker of the user's (its panel), the search result's
+          // pin, a decoder's point or an OpenStreetMap mast (popup), or
+          // nothing (closes both - an edit stays open)
           const mk = mkHit(e.offsetX, e.offsetY);
           vsHover(e.offsetX, e.offsetY);   // touch: a tap shows what is in sight there
           // the station / a viewshed point / the link's place: selected (then draggable), anything else: deselected
           const pl = !mk ? plHit(e.offsetX, e.offsetY) : null;
           const st = !mk && !pl && stHit(e.offsetX, e.offsetY), vs = !mk && !st && !pl ? vsHit(e.offsetX, e.offsetY) : null;
           mapSelectObj(st ? 'st' : pl ? 'pl:' + pl : vs);
-          mapSel = mk || st || vs || pl ? null : (mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY) || aimSelectAt(e.offsetX, e.offsetY));
+          mapSel = mk || st || vs || pl ? null : ((srchHit(e.offsetX, e.offsetY) && 'srch') || mapHit(e.offsetX, e.offsetY) ||
+                                                 mastHit(e.offsetX, e.offsetY) || aimSelectAt(e.offsetX, e.offsetY));
           // ⏯ the replay's track (under the markers): the replay goes to that moment
           const lh = mk || st || vs || pl || mapSel ? -1 : lrHit(e.offsetX, e.offsetY);
           if (lh >= 0) lrSeekRow(lh);
@@ -12952,6 +12999,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (vb) vb.classList.toggle('on', !!mapState.vs);
     const lb = $id('map-lr-btn');
     if (lb) lb.classList.toggle('on', !!lrOpen);
+    srchRender();   // 🔍 the box as saved
     vsRender();
     const lg = $id('map-legend');
     if (lg) {
@@ -13412,11 +13460,13 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       }
       c.restore();
     }
+    srchDraw(c);
     lrDrawTop(c);
     mapRenderPopup();
     mkRender();
     vsRender();
     mapRenderStatus();
+    srchTxBtn();
     if (mapState.masts) mastSchedule();
     else mastViewKey = '';   // switched on again: load whatever is missing
   }
@@ -13436,13 +13486,14 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const el = $id('map-pop');
     const mast = mapSel && mapSel.startsWith('osm:') && mastShown() ? mastPts.get(mapSel.slice(4)) : null;
     const aim = mapSel && mapSel.startsWith('ai:') ? aimPopPoint(mapSel) : null;
-    const p = mast || aim || (mapSel ? mapPts.get(mapSel) : null);
+    const sp = mapSel === 'srch' ? srchPopPoint() : null;
+    const p = mast || aim || sp || (mapSel ? mapPts.get(mapSel) : null);
     if (!p || p.sx === undefined || p.sx < 0 || p.sy < 0 || p.sx > mapW || p.sy > mapH) {
       if (el.style.display !== 'none') el.style.display = 'none';
       if (!p) mapSel = null;
       return;
     }
-    const html = mast ? mastPopupHtml(mast) : aim ? aimPopupHtml(aim) : mapPointPopupHtml(p);
+    const html = mast ? mastPopupHtml(mast) : aim ? aimPopupHtml(aim) : sp ? srchPopupHtml(sp) : mapPointPopupHtml(p);
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
     el.style.display = 'block';
     const w = el.offsetWidth, h = el.offsetHeight;
@@ -14483,7 +14534,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
     const live = new Set(m.keys || []);
     for (const k of [...mapPts.keys()]) if (!live.has(k)) mapPts.delete(k);
-    if (mapSel && !mapSel.startsWith('osm:') && !mapSel.startsWith('ai:') && !mapPts.has(mapSel)) mapSel = null;   // (masts, 🤖 AI layers: theirs)
+    if (mapSel && mapSel !== 'srch' && !mapSel.startsWith('osm:') && !mapSel.startsWith('ai:') && !mapPts.has(mapSel)) mapSel = null;   // (masts, 🤖 AI layers, 🔍 the search pin: theirs)
     // first data and no saved view: show the station / the markers
     if (mapAutoFit && mapCv && (mapPts.size || (mapStation && !hadStation))) {
       mapAutoFit = false;
@@ -15837,6 +15888,714 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     mapSel = null;
     mkCreate(m.la, m.lo, mastTitle(t), notes);
     mapDraw();
+  }
+
+  // --- 🔍 MAP SEARCH + 🏠 home / 🎯 transmitter ---------------------------------
+  // 🔍 (the top right-hand button) shows a box under the top-left buttons
+  // (mapState.srch, per browser). What is typed is read on this page first,
+  // OFFLINE, and listed as it is typed: coordinates in the usual forms
+  // (decimal degrees, degrees + decimal minutes, degrees minutes seconds -
+  // signs or N / S / E / W, letters in either order -, UTM, MGRS, a
+  // Maidenhead grid locator, a map link with a position: Google /
+  // OpenStreetMap / Apple / geo:) and the page's own places (📍 markers +
+  // their saved frequencies, the decoders' map points, the assistant's map
+  // points, OSM masts loaded, viewshed sites, the station). Enter (or the 🌐
+  // row) asks OpenStreetMap's Nominatim for addresses, cities and places -
+  // BY THE BROWSER, like the tiles and masts (kraken_doa isn't involved) -
+  // never while typing (its usage policy: no autocomplete, <= 1 request a
+  // second); the answers are kept for the session, the view is a preference
+  // (viewbox, not bounded). A result picked: the map goes there (an area:
+  // fitted) and a pin marks it (srchPin; click = its popup: the position in
+  // every form, distance / bearing from the station, 📍 Add as marker); a
+  // place of the page's own is selected instead (its panel / popup). ✕ in
+  // the box clears the text, the list and the pin.
+  // 🏠 = the station (mapCenterStation). 🎯 = the estimated transmitter: the
+  // ⏯ replay's at the moment shown, then the 📡 DF panel's heat maps (what it
+  // shows) - again = the next one; its 95 % region in view.
+  // State: the globals block (srch*)
+  const SRCH_URL = 'https://nominatim.openstreetmap.org/search';
+  const SRCH_GAP_MS = 1100;   // Nominatim: one request a second at most
+  const SRCH_BANDS = 'CDEFGHJKLMNPQRSTUVWX';   // UTM latitude bands, 8° each from 80° S (X 72-84° N)
+  const SRCH_COLS = ['ABCDEFGH', 'JKLMNPQR', 'STUVWXYZ'];               // MGRS 100 km columns by zone (1-based) % 3
+  const SRCH_ROWS = ['ABCDEFGHJKLMNPQRSTUV', 'FGHJKLMNPQRSTUVABCDE'];   // ... rows: odd / even zones
+  const SRCH_KIND_IC = {aircraft: '✈', ship: '⛴', vehicle: '🚗', balloon: '🎈', person: '🚶', station: '📻', incident: '⚠'};
+
+  // --- coordinates: read + written ---
+  // 36.84846 -> 36°50'54.5"S
+  function srchDms(v, pos, neg) {
+    let t = Math.round(Math.abs(v) * 36000);   // tenths of a second
+    const d = Math.floor(t / 36000);
+    t -= d * 36000;
+    const m = Math.floor(t / 600);
+    t -= m * 600;
+    return `${d}°${String(m).padStart(2, '0')}'${String(Math.floor(t / 10)).padStart(2, '0')}.${t % 10}"${v < 0 ? neg : pos}`;
+  }
+  // Maidenhead locator, 6 characters
+  function srchLocator(lat, lon) {
+    const A = 'ABCDEFGHIJKLMNOPQRSTUVWX';
+    let x = Math.min(359.999999, Math.max(0, lon + 180)), y = Math.min(179.999999, Math.max(0, lat + 90));
+    const f1 = Math.floor(x / 20), f2 = Math.floor(y / 10);
+    x -= f1 * 20; y -= f2 * 10;
+    const s1 = Math.floor(x / 2), s2 = Math.floor(y);
+    x -= s1 * 2; y -= s2;
+    return A[f1] + A[f2] + s1 + s2 + (A[Math.floor(x * 12)] + A[Math.floor(y * 24)]).toLowerCase();
+  }
+  // "RF73kc" (4, 6, 8 or 10 characters) -> its square's centre + size (deg)
+  function srchFromLocator(q) {
+    const u = String(q).trim().toUpperCase();
+    const m = /^[A-R]{2}\d{2}(?:([A-X]{2})(?:(\d{2})([A-X]{2})?)?)?$/.exec(u);
+    if (!m) return null;
+    let w = 2, h = 1;
+    let lon = -180 + (u.charCodeAt(0) - 65) * 20 + +u[2] * 2, lat = -90 + (u.charCodeAt(1) - 65) * 10 + +u[3];
+    if (m[1]) { w /= 24; h /= 24; lon += (u.charCodeAt(4) - 65) * w; lat += (u.charCodeAt(5) - 65) * h; }
+    if (m[2]) { w /= 10; h /= 10; lon += +u[6] * w; lat += +u[7] * h; }
+    if (m[3]) { w /= 24; h /= 24; lon += (u.charCodeAt(8) - 65) * w; lat += (u.charCodeAt(9) - 65) * h; }
+    return {lat: lat + h / 2, lon: lon + w / 2, w, h};
+  }
+  // WGS84 transverse Mercator: Krüger's series to n^6 (Karney 2011), well
+  // under a millimetre within a UTM zone; worked out once
+  function srchTm() {
+    if (srchTm.c) return srchTm.c;
+    const f = 1 / 298.257223563, n = f / (2 - f), n2 = n * n, n3 = n2 * n, n4 = n3 * n, n5 = n4 * n, n6 = n5 * n;
+    return (srchTm.c = {
+      e: Math.sqrt(f * (2 - f)),
+      A: 6378137 / (1 + n) * (1 + n2 / 4 + n4 / 64 + n6 / 256),
+      al: [0, n / 2 - 2 / 3 * n2 + 5 / 16 * n3 + 41 / 180 * n4 - 127 / 288 * n5 + 7891 / 37800 * n6,
+           13 / 48 * n2 - 3 / 5 * n3 + 557 / 1440 * n4 + 281 / 630 * n5 - 1983433 / 1935360 * n6,
+           61 / 240 * n3 - 103 / 140 * n4 + 15061 / 26880 * n5 + 167603 / 181440 * n6,
+           49561 / 161280 * n4 - 179 / 168 * n5 + 6601661 / 7257600 * n6,
+           34729 / 80640 * n5 - 3418889 / 1995840 * n6,
+           212378941 / 319334400 * n6],
+      be: [0, n / 2 - 2 / 3 * n2 + 37 / 96 * n3 - 1 / 360 * n4 - 81 / 512 * n5 + 96199 / 604800 * n6,
+           1 / 48 * n2 + 1 / 15 * n3 - 437 / 1440 * n4 + 46 / 105 * n5 - 1118711 / 3870720 * n6,
+           17 / 480 * n3 - 37 / 840 * n4 - 209 / 4480 * n5 + 5569 / 90720 * n6,
+           4397 / 161280 * n4 - 11 / 504 * n5 - 830251 / 7257600 * n6,
+           4583 / 161280 * n5 - 108847 / 3991680 * n6,
+           20648693 / 638668800 * n6]});
+  }
+  function srchUtmZone(lat, lon) {
+    let z = Math.min(60, Math.floor((lon + 180) / 6) + 1);
+    if (lat >= 56 && lat < 64 && lon >= 3 && lon < 12) z = 32;   // Norway
+    if (lat >= 72 && lat < 84 && lon >= 0 && lon < 42) z = lon < 9 ? 31 : lon < 21 ? 33 : lon < 33 ? 35 : 37;   // Svalbard
+    return z;
+  }
+  // -> {zone, band, E, N, south} (null outside UTM's 80° S - 84° N); zone: forced (MGRS band look-up), else the position's
+  function srchToUtm(lat, lon, zone) {
+    if (!(lat >= -80 && lat <= 84) || !Number.isFinite(lon)) return null;
+    const {e, A, al} = srchTm(), k0 = 0.9996, r = Math.PI / 180;
+    zone = zone || srchUtmZone(lat, lon);
+    const dl = ((lon - ((zone - 1) * 6 - 177)) % 360 + 540) % 360 - 180;
+    const lam = dl * r, tau = Math.tan(lat * r);
+    const sig = Math.sinh(e * Math.atanh(e * tau / Math.sqrt(1 + tau * tau)));
+    const taup = tau * Math.sqrt(1 + sig * sig) - sig * Math.sqrt(1 + tau * tau);
+    const xip = Math.atan2(taup, Math.cos(lam)), etap = Math.asinh(Math.sin(lam) / Math.sqrt(taup * taup + Math.cos(lam) ** 2));
+    let xi = xip, eta = etap;
+    for (let j = 1; j <= 6; j++) {
+      xi += al[j] * Math.sin(2 * j * xip) * Math.cosh(2 * j * etap);
+      eta += al[j] * Math.cos(2 * j * xip) * Math.sinh(2 * j * etap);
+    }
+    return {zone, band: SRCH_BANDS[Math.max(0, Math.min(19, Math.floor(lat / 8 + 10)))],
+            E: 500000 + k0 * A * eta, N: k0 * A * xi + (lat < 0 ? 10000000 : 0), south: lat < 0};
+  }
+  function srchFromUtm(zone, south, E, N) {
+    const {e, A, be} = srchTm(), k0 = 0.9996, d = 180 / Math.PI;
+    const xi = (N - (south ? 10000000 : 0)) / (k0 * A), eta = (E - 500000) / (k0 * A);
+    let xip = xi, etap = eta;
+    for (let j = 1; j <= 6; j++) {
+      xip -= be[j] * Math.sin(2 * j * xi) * Math.cosh(2 * j * eta);
+      etap -= be[j] * Math.cos(2 * j * xi) * Math.sinh(2 * j * eta);
+    }
+    const sh = Math.sinh(etap), cx = Math.cos(xip);
+    const taup = Math.sin(xip) / Math.sqrt(sh * sh + cx * cx), e2 = e * e;
+    let tau = taup;
+    for (let i = 0; i < 10; i++) {   // Newton on tau' (tau)
+      const s = Math.sinh(e * Math.atanh(e * tau / Math.sqrt(1 + tau * tau)));
+      const ti = tau * Math.sqrt(1 + s * s) - s * Math.sqrt(1 + tau * tau);
+      const dt = (taup - ti) / Math.sqrt(1 + ti * ti) * (1 + (1 - e2) * tau * tau) / ((1 - e2) * Math.sqrt(1 + tau * tau));
+      tau += dt;
+      if (Math.abs(dt) < 1e-12) break;
+    }
+    return {lat: Math.atan(tau) * d, lon: ((Math.atan2(sh, cx) * d + (zone - 1) * 6 - 177) % 360 + 540) % 360 - 180};
+  }
+  // MGRS to the metre (truncated, as MGRS is)
+  function srchToMgrs(u) {
+    const E = Math.floor(u.E), N = Math.floor(u.N);
+    const eL = SRCH_COLS[(u.zone - 1) % 3][Math.floor(E / 100000) - 1], nL = SRCH_ROWS[(u.zone - 1) % 2][Math.floor(N / 100000) % 20];
+    if (!eL || !nL) return '';
+    const p5 = v => String(v % 100000).padStart(5, '0');
+    return `${u.zone}${u.band} ${eL}${nL} ${p5(E)} ${p5(N)}`;
+  }
+  // MGRS -> the centre of its square; the row letters repeat every 2000 km:
+  // the repeat whose latitude falls in the band (northings past the pole -
+  // which come out on the far side of it - left out)
+  function srchFromMgrs(zone, band, eL, nL, es, ns) {
+    const col = SRCH_COLS[(zone - 1) % 3].indexOf(eL), row = SRCH_ROWS[(zone - 1) % 2].indexOf(nL), bi = SRCH_BANDS.indexOf(band);
+    if (col < 0 || row < 0 || bi < 0) return null;
+    const cell = Math.pow(10, 5 - es.length), mid = (bi - 10) * 8 + (bi === 19 ? 6 : 4), south = bi < 10;
+    const E = (col + 1) * 100000 + (es ? +es * cell : 0) + cell / 2, n0 = row * 100000 + (ns ? +ns * cell : 0) + cell / 2;
+    let best = null;
+    for (let N = n0; N < 10000000; N += 2000000) {
+      const p = srchFromUtm(zone, south, E, N);
+      if (!best || Math.abs(p.lat - mid) < Math.abs(best.lat - mid)) best = p;
+    }
+    return best && Math.abs(best.lat - mid) <= (bi === 19 ? 7 : 5) ? Object.assign(best, {cell}) : null;
+  }
+  // the zoom that shows a square of `m` metres across about a third of the map
+  function srchZoomFor(lat, m) {
+    const side = Math.max(100, Math.min(mapW || 600, mapH || 400));
+    return Math.max(MAP_MIN_Z, Math.min(17, Math.log2(40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * m / (0.35 * side)))));
+  }
+  // a row for a position typed: [lat, lon] + what it was read as
+  function srchCoordRow(lat, lon, d, more) {
+    return Object.assign({ic: '⌖', n: `${lat.toFixed(6)}, ${lon.toFixed(6)}`, d, lat, lon, coord: true, src: d}, more);
+  }
+
+  // "lat, lon" typed in the usual ways -> rows (none when it isn't one)
+  function srchParseLatLon(q) {
+    let s = (' ' + String(q).toUpperCase() + ' ')
+      .replace(/[′’‘´`]/g, "'").replace(/[″“”]/g, '"').replace(/[º˚]/g, '°').replace(/''/g, '"')
+      .replace(/(^|[^A-Z])(?:LATITUDE|LONGITUDE|LAT|LONG|LON|LNG)(?![A-Z])\s*[:=]?/g, '$1 ')
+      .replace(/(^|[^A-Z])NORTH(?![A-Z])/g, '$1N').replace(/(^|[^A-Z])SOUTH(?![A-Z])/g, '$1S')
+      .replace(/(^|[^A-Z])EAST(?![A-Z])/g, '$1E').replace(/(^|[^A-Z])WEST(?![A-Z])/g, '$1W')
+      .replace(/(^|[^A-Z])DEG(?:REES?)?(?![A-Z])/g, '$1°').replace(/(^|[^A-Z])MIN(?:UTES?)?(?![A-Z])/g, "$1'")
+      .replace(/(^|[^A-Z])SEC(?:ONDS?)?(?![A-Z])/g, '$1"').trim();
+    if (!s) return [];
+    const tok = str => {
+      const out = [], re = /\s*(?:([-+]?\d+(?:\.\d+)?)|([NSEW])|([°'":])|([,\/]))\s*/y;
+      while (re.lastIndex < str.length) {
+        const at = re.lastIndex, m = re.exec(str);
+        if (!m || re.lastIndex === at) return null;
+        out.push(m[1] !== undefined ? {n: m[1]} : m[2] ? {h: m[2]} : m[3] ? {u: m[3]} : {sep: 1});
+      }
+      return out;
+    };
+    // the two coordinates: split at ";" (decimal commas then), a "," or "/",
+    // the hemisphere letters, the second degree sign, or half the numbers -
+    // a single letter between the two belongs to either (36.8 S 174.7 /
+    // 36.8 E174.7): both are tried
+    const cands = [];
+    if (s.includes(';') || /^[-+]?\d+,\d+\s+[-+]?\d+,\d+$/.test(s)) {
+      const parts = s.split(s.includes(';') ? ';' : /\s+/);
+      if (parts.length !== 2) return [];
+      cands.push(parts.map(p => tok(p.replace(/(\d),(\d)/g, '$1.$2').trim())));
+    } else {
+      const t = tok(s);
+      if (!t) return [];
+      const at = f => t.map((x, i) => f(x) ? i : -1).filter(i => i >= 0);
+      const seps = at(x => x.sep), hs = at(x => x.h), nums = at(x => x.n !== undefined), degs = at(x => x.u === '°').map(i => i - 1);
+      const cutAt = c => cands.push([t.slice(0, c), t.slice(c)]);
+      if (seps.length === 1) cands.push([t.slice(0, seps[0]), t.slice(seps[0] + 1)]);
+      else if (seps.length) return [];
+      else if (hs.length === 2) cutAt(hs[0] === 0 ? hs[1] : hs[0] + 1);   // N 36 E 174 / 36 S 174 E
+      else if (hs.length < 2) {
+        const c = degs.length === 2 ? degs[1] : !degs.length && !t.some(x => x.u) && nums.length && nums.length <= 6 && nums.length % 2 === 0 ? nums[nums.length / 2] : -1;
+        if (c < 0) return [];
+        cutAt(c);
+        if (t[c - 1] && t[c - 1].h && c - 1 > 0) cutAt(c - 1);
+      } else return [];
+    }
+    for (const g of cands) {
+      if (g.some(x => !x || !x.length)) continue;
+      const rows = srchLatLonRows(g[0], g[1]);
+      if (rows.length) return rows;
+    }
+    return [];
+  }
+  // the two coordinates' tokens -> rows
+  function srchLatLonRows(g0, g1) {
+    // one coordinate: [letter] degrees [minutes [seconds]] [letter]; the marks
+    // (° ' " or colons) or the order say which number is which
+    const one = g => {
+      let h = null, slot = -1;
+      const v = [];
+      for (let i = 0; i < g.length; i++) {
+        const x = g[i];
+        if (x.h) {
+          if (h || (v.length && i !== g.length - 1)) return null;
+          h = x.h;
+          continue;
+        }
+        if (x.n === undefined) return null;   // a mark without its number
+        const nx = g[i + 1];
+        let k = nx && nx.u && nx.u !== ':' ? {'°': 0, "'": 1, '"': 2}[nx.u] : slot + 1;
+        if (nx && nx.u) i++;
+        if (k <= slot || k > 2) return null;
+        v[k] = x.n;
+        slot = k;
+      }
+      const [d, m, sc] = v;
+      if (d === undefined || /^[-+]/.test(m || '') || /^[-+]/.test(sc || '')) return null;
+      if ((m !== undefined || sc !== undefined) && d.includes('.')) return null;
+      if (sc !== undefined && m !== undefined && m.includes('.')) return null;
+      const fm = m !== undefined ? +m : 0, fs = sc !== undefined ? +sc : 0;
+      if (fm >= 60 || fs >= 60) return null;
+      let val = Math.abs(+d) + fm / 60 + fs / 3600;
+      if (d.startsWith('-') || h === 'S' || h === 'W') val = -val;
+      const last = sc !== undefined ? sc : m !== undefined ? m : d;
+      return {val, h, f: sc !== undefined ? 3 : m !== undefined ? 2 : 1,
+              step: Math.pow(10, -(last.split('.')[1] || '').length) / (sc !== undefined ? 3600 : m !== undefined ? 60 : 1)};
+    };
+    const a = one(g0), b = one(g1);
+    if (!a || !b) return [];
+    const kind = x => x.h === 'N' || x.h === 'S' ? 'lat' : x.h ? 'lon' : '';
+    const ka = kind(a), kb = kind(b);
+    if (ka && ka === kb) return [];
+    const f = Math.max(a.f, b.f), what = f === 3 ? 'Degrees, minutes, seconds' : f === 2 ? 'Degrees, decimal minutes' : 'Decimal degrees';
+    const z = Math.max(5, Math.min(16, Math.log2(360 * 40 / (256 * Math.max(1e-7, Math.min(a.step, b.step))))));
+    const ok = (la, lo) => Math.abs(la.val) <= 90 && Math.abs(lo.val) <= 180;
+    const rows = [];
+    if (ka === 'lon' || kb === 'lat') { if (ok(b, a)) rows.push(srchCoordRow(b.val, a.val, what, {z})); }
+    else if (ka || kb) { if (ok(a, b)) rows.push(srchCoordRow(a.val, b.val, what, {z})); }
+    else {
+      // no letters: latitude first, as usual - or the other way round when only that fits
+      if (ok(a, b)) rows.push(srchCoordRow(a.val, b.val, what, {z}));
+      if (ok(b, a) && (!rows.length || a.val !== b.val)) rows.push(srchCoordRow(b.val, a.val, what + (rows.length ? ', read as longitude, latitude' : ' (longitude, latitude)'), {z}));
+    }
+    return rows;
+  }
+  // UTM ("60H 300870 5919340", letter = band, or N / S = hemisphere) and MGRS ("60HUD0087019340")
+  function srchParseGrid(q) {
+    const s = String(q).toUpperCase().replace(/^\s*(?:UTM|MGRS)\s*:?\s*/, '').trim();
+    const out = [];
+    let m = /^(\d{1,2})\s*([C-HJ-NP-X])\s*([A-HJ-NP-Z])\s*([A-HJ-NP-V])\s*(\d{0,10})\s*(\d{0,5})$/.exec(s);
+    if (m && +m[1] >= 1 && +m[1] <= 60) {
+      let es = m[5], ns = m[6];
+      if (!ns) { ns = es.length % 2 ? null : es.slice(es.length / 2); es = es.slice(0, es.length / 2); }
+      if (ns !== null && es.length === ns.length && es.length <= 5) {
+        const p = srchFromMgrs(+m[1], m[2], m[3], m[4], es, ns);
+        if (p) out.push(srchCoordRow(p.lat, p.lon, `MGRS ${+m[1]}${m[2]} ${m[3]}${m[4]} ${es} ${ns}`.trim() + ` (${p.cell >= 1000 ? p.cell / 1000 + ' km' : p.cell + ' m'} square)`,
+                                     {z: srchZoomFor(p.lat, Math.max(60, p.cell))}));
+      }
+    }
+    m = /^(\d{1,2})\s*([C-HJ-NP-X])\s+(\d{1,7}(?:\.\d+)?)\s*M?\s*E?\s*[\s,]\s*(\d{1,8}(?:\.\d+)?)\s*M?\s*N?$/.exec(s);
+    if (m && +m[1] >= 1 && +m[1] <= 60) {
+      const zone = +m[1], L = m[2], E = +m[3], N = +m[4];
+      if (E > 0 && E < 1000000 && N >= 0 && N <= 10000000) {
+        const row = (south, d) => {
+          const p = srchFromUtm(zone, south, E, N);
+          if (Math.abs(p.lat) <= 84) out.push(srchCoordRow(p.lat, p.lon, `UTM ${zone}${d} ${m[3]} ${m[4]}`, {z: 15}));
+          return p;
+        };
+        if (L === 'S') {
+          // band S (32-40° N) or the southern hemisphere: both when it could be either
+          const p = srchFromUtm(zone, false, E, N);
+          if (p.lat >= 31 && p.lat <= 41) row(false, 'S (band S, north)');
+          row(true, ' south');
+        } else row(SRCH_BANDS.indexOf(L) < 10, L);
+      }
+    }
+    return out;
+  }
+  // a position in a map link: Google (@lat,lon,zoom / q= / ll=), OpenStreetMap (#map= / mlat), Apple, geo:
+  function srchParseLink(q) {
+    const s = String(q).trim();
+    if (!/^(geo:|https?:\/\/|www\.|maps\.)/i.test(s)) return [];
+    const N = '([-+]?\\d+(?:\\.\\d+)?)';
+    const pats = [[`^geo:\\s*${N}\\s*,\\s*${N}`, 0], [`@${N},${N}(?:,(\\d+(?:\\.\\d+)?)z)?`, 3],
+                  [`#map=(\\d+(?:\\.\\d+)?)\\/${N}\\/${N}`, -1], [`[?&]mlat=${N}&mlon=${N}`, 0],
+                  [`[?&](?:q|ll|query|center|daddr|destination|sll|cp)=(?:loc:)?${N}(?:,|%2C|~)\\s*${N}`, 0], [`[?&]lat=${N}&(?:lon|lng)=${N}`, 0]];
+    for (const [p, zi] of pats) {
+      const m = new RegExp(p, 'i').exec(s);
+      if (!m) continue;
+      const v = zi < 0 ? [+m[2], +m[3], +m[1]] : [+m[1], +m[2], zi ? +m[zi] : NaN];
+      if (Math.abs(v[0]) > 90 || Math.abs(v[1]) > 180) continue;
+      return [srchCoordRow(v[0], v[1], 'Map link', {z: Number.isFinite(v[2]) ? Math.max(MAP_MIN_Z, Math.min(19, v[2])) : 15})];
+    }
+    return [];
+  }
+  // everything typed that is a position, in the order it is most likely meant
+  function srchParse(q) {
+    const s = String(q).trim();
+    if (!s) return [];
+    const link = srchParseLink(s);
+    if (link.length) return link;
+    const rows = [...srchParseLatLon(s), ...srchParseGrid(s)];
+    const loc = srchFromLocator(s);
+    if (loc) {
+      const km = loc.h * 111.32;
+      rows.push(srchCoordRow(loc.lat, loc.lon, `Grid locator ${s.trim().slice(0, 2).toUpperCase()}${s.trim().slice(2, 4)}${s.trim().slice(4).toLowerCase()} (${km >= 1 ? km.toFixed(km >= 10 ? 0 : 1) + ' km' : Math.round(km * 1000) + ' m'} square)`,
+                             {z: srchZoomFor(loc.lat, km * 1000), loc4: s.trim().length === 4}));
+    }
+    return rows;
+  }
+
+  // --- the page's own places ---
+  function srchLocal(q) {
+    const words = String(q).toLowerCase().split(/\s+/).filter(Boolean), ql = words.join(' ');
+    if (!words.length) return [];
+    const out = [];
+    const add = (txt, name, row) => {
+      const t = String(txt).toLowerCase();
+      if (!words.every(w => t.includes(w))) return;
+      const nl = String(name).toLowerCase();
+      out.push(Object.assign(row, {own: true, score: nl === ql ? 0 : nl.startsWith(ql) ? 1 : nl.includes(ql) ? 2 : 3}));
+    };
+    const st = mapStationPos(), cs = (($id('station-id') || {}).value || '').trim();
+    if (st) add(`station home receiver ${cs}`, cs || 'station', {ic: '🏠', n: cs ? `Station ${cs}` : 'Station', d: 'This receiver (Station Information)',
+                                                                  lat: st[0], lon: st[1], z: Math.max(mapState.z, 12)});
+    for (const m of sfLocs) {
+      const fq = sfFreqsAt(m.id);
+      add([m.name, m.notes, ...fq.map(f => `${f.name} ${mkFmtMhz(f.hz)} ${f.tone || ''}`)].join(' '), m.name,
+          {ic: '📍', n: m.name, d: 'Your marker' + (fq.length ? ' · ' + fq.slice(0, 3).map(f => `${f.name} ${mkFmtMhz(f.hz)} MHz`).join(', ') + (fq.length > 3 ? ` +${fq.length - 3}` : '') : ''),
+           lat: m.lat, lon: m.lon, z: Math.max(mapState.z, 15), sel: () => mkSelect(m.id)});
+    }
+    for (const [k, p] of mapPts) {
+      const nm = String(p.l || p.i), pn = digShort(digName(p.p));
+      add(`${nm} ${p.i} ${pn} d${p.v}`, nm, {ic: SRCH_KIND_IC[p.k] || '●', n: nm, d: `D${p.v} ${pn}${p.l && p.l !== p.i ? ' · ' + p.i : ''}`,
+                                             lat: p.la, lon: p.lo, z: Math.max(mapState.z, 11), sel: () => { mapSel = k; }});
+    }
+    for (const L of aimLayers) {
+      if (aimUi.hide[L.id]) continue;
+      L.f.forEach((f, i) => {
+        if ((f.g === 'pt' || f.g === 'ci') && f.l)
+          add(`${f.l} ${L.name}`, f.l, {ic: '🤖', n: f.l, d: `The assistant's layer “${L.name}”`, lat: f.c[0], lon: f.c[1], z: Math.max(mapState.z, 13),
+                                         sel: () => { mapSel = `ai:${L.id}:${i}`; }});
+      });
+    }
+    if (mastShown())
+      for (const m of mastPts.values()) {
+        const t = m.tags;
+        if (t.name || t.operator || t.ref)
+          add(`${t.name || ''} ${t.operator || ''} ${t.ref || ''}`, mastTitle(t), {ic: '📡', n: mastTitle(t), d: 'OpenStreetMap mast' + (t.name && t.operator ? ' · ' + t.operator : ''),
+                                                                                lat: m.la, lon: m.lo, z: Math.max(mapState.z, 15), sel: () => { mapSel = 'osm:' + m.k; }});
+      }
+    for (const it of vsState.items)
+      if (!it.st) add(it.name, it.name, {ic: '📶', n: it.name, d: 'Viewshed / path loss site', lat: it.lat, lon: it.lon, z: Math.max(mapState.z, 13)});
+    return out.sort((x, y) => x.score - y.score || x.n.localeCompare(y.n)).slice(0, 8);
+  }
+
+  // --- OpenStreetMap (Nominatim) ---
+  // the view as Nominatim's preferred box (not below zoom 4: the whole
+  // world), at least 0.2° across (zoomed in: the neighbourhood around it)
+  function srchViewbox() {
+    if (!mapCv || !mapW || mapState.z < 4) return '';
+    const W = mapWorld(), hw = Math.max(mapW / 2 / W, 0.1 / 360), hh = Math.max(mapH / 2 / W, 0.1 / 360);
+    const [n, w] = mapUnproj(mapState.mx - hw, mapState.my - hh);
+    const [s, e] = mapUnproj(mapState.mx + hw, mapState.my + hh);
+    const lon = v => Math.max(-180, Math.min(180, v)).toFixed(4);
+    return `${lon(w)},${n.toFixed(4)},${lon(e)},${s.toFixed(4)}`;
+  }
+  function srchOsmRow(r) {
+    const lat = parseFloat(r && r.lat), lon = parseFloat(r && r.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    const dn = String(r.display_name || '').slice(0, 400), name = String(r.name || '').slice(0, 120) || dn.split(',')[0] || `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    const typ = String(r.addresstype || r.type || '').replace(/_/g, ' ').slice(0, 40);
+    const bb = Array.isArray(r.boundingbox) ? r.boundingbox.map(parseFloat) : [];   // [south, north, west, east]
+    const box = bb.length === 4 && bb.every(Number.isFinite) && Math.abs(bb[0]) <= 90 && Math.abs(bb[1]) <= 90 && bb[1] - bb[0] > 0.002 ? bb : null;
+    const osm = /^(node|way|relation)$/.test(r.osm_type) && /^\d{1,15}$/.test(String(r.osm_id)) ? `https://www.openstreetmap.org/${r.osm_type}/${r.osm_id}` : '';
+    return {ic: '🌐', n: name, d: [typ, dn.startsWith(name + ', ') ? dn.slice(name.length + 2) : dn].filter(Boolean).join(' · '),
+            lat, lon, box, z: 17, osm, addr: dn, src: 'OpenStreetMap' + (typ ? ' · ' + typ : ''), onl: true};
+  }
+  async function srchOnline() {
+    const q = srchQ;
+    if (!q) return;
+    // kept per text + where the map is, to the degree (the view box itself
+    // changes with every result picked)
+    const c = mapUnproj(mapState.mx, mapState.my);
+    const vb = srchViewbox(), key = `${q.toLowerCase()}|${vb ? Math.round(c[0]) + ',' + Math.round(c[1]) : ''}`, seq = ++srchSeq;
+    srchListOn = true;
+    if (srchCache.has(key)) { srchGotOnline(q, srchCache.get(key)); return; }
+    srchBusyQ = q;
+    srchMsg = 'Searching OpenStreetMap…';
+    srchMsgW = false;
+    srchRender();
+    const wait = srchLastAt + SRCH_GAP_MS - Date.now();
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    if (seq !== srchSeq) return;   // a newer search, or cleared
+    srchLastAt = Date.now();
+    let res;
+    try {
+      const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 15000);
+      const r = await fetch(`${SRCH_URL}?format=jsonv2&limit=10&q=${encodeURIComponent(q)}${vb ? '&viewbox=' + vb : ''}`, {signal: ctl.signal});
+      clearTimeout(to);
+      if (!r.ok) throw {http: r.status};
+      res = await r.json();
+    } catch (e) {
+      if (seq !== srchSeq) return;
+      srchBusyQ = '';
+      srchMsg = e && e.http ? (e.http === 429 || e.http === 503 ? "OpenStreetMap's search is busy - try again in a minute"
+                                                                : `OpenStreetMap's search answered HTTP ${e.http}`)
+                            : "Can't reach OpenStreetMap's search (no internet?) - coordinates, grid locators and your own places still work";
+      srchMsgW = true;
+      srchRender();
+      return;
+    }
+    if (seq !== srchSeq) return;
+    const rows = (Array.isArray(res) ? res : []).slice(0, 10).map(srchOsmRow).filter(Boolean);
+    if (srchCache.size > 100) srchCache.delete(srchCache.keys().next().value);
+    srchCache.set(key, rows);
+    srchGotOnline(q, rows);
+  }
+  function srchGotOnline(q, rows) {
+    srchBusyQ = '';
+    srchOnlQ = q;
+    srchOnl = rows;
+    srchMsg = rows.length ? '' : `Nothing found at OpenStreetMap for “${q}”`;
+    srchMsgW = !rows.length;
+    if (q !== srchQ) { srchRender(); return; }   // typed on meanwhile
+    srchBuild();
+    // the first place found: there at once (the list stays for the others while the map is wide enough)
+    const i = srchRes.findIndex(r => r.onl);
+    if (i >= 0) srchPick(i, mapW >= 720);
+    else srchRender();
+  }
+
+  // --- the box ---
+  function srchBuild() {
+    const q = srchQ;
+    srchRes = q ? [...srchParse(q), ...srchLocal(q)] : [];
+    if (q.length >= 2) srchRes.push(...(srchOnlQ === q && srchOnl ? srchOnl : [{online: true}]));
+  }
+  function srchToggle(on) {
+    mapState.srch = on === undefined ? !mapState.srch : !!on;
+    mapSave();
+    srchListOn = !!mapState.srch && !!srchQ;
+    srchRender();
+    const i = $id('map-srch-in');
+    if (mapState.srch && i) { i.focus(); i.select(); }
+  }
+  // ✕: the text, the list and the pin go, the box closes
+  function srchClear() {
+    srchQ = srchMsg = srchOnlQ = srchBusyQ = '';
+    srchRes = [];
+    srchOnl = null;
+    srchHl = -1;
+    srchSeq++;
+    srchPinRemove();
+    const i = $id('map-srch-in');
+    if (i) i.value = '';
+    srchToggle(false);
+  }
+  function srchInput() {
+    srchQ = (($id('map-srch-in') || {}).value || '').trim();
+    srchHl = -1;
+    if (srchOnlQ !== srchQ) { srchMsg = ''; srchMsgW = false; }
+    srchListOn = true;
+    srchBuild();
+    srchRender();
+  }
+  function srchFocus() {
+    if (srchQ && !srchListOn) { srchListOn = true; srchRender(); }
+  }
+  function srchKey(e) {
+    if (e.isComposing) return;   // (an input method's Enter)
+    const n = srchRes.length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!srchListOn) srchListOn = true;
+      else if (n) srchHl = e.key === 'ArrowDown' ? (srchHl + 1) % n : srchHl <= 0 ? n - 1 : srchHl - 1;
+      srchRender();
+    } else if (e.key === 'Enter') srchGo();
+    else if (e.key === 'Escape') {
+      if (srchListOn && $id('map-srch-res').innerHTML) { srchListOn = false; srchRender(); }
+      else { e.target.blur(); srchToggle(false); }
+    } else return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
+  // Enter / ↵: the highlighted row; else a position typed (not a 4-character
+  // locator - "AB12" may be a postcode); else a place of the page's own named
+  // exactly so; else OpenStreetMap's first place (asked for if not yet)
+  function srchGo() {
+    if ((($id('map-srch-in') || {}).value || '').trim() !== srchQ) srchInput();
+    if (!srchQ) return;
+    let i = srchHl >= 0 && srchRes[srchHl] ? srchHl : srchRes.findIndex(r => r.coord && !r.loc4);
+    if (i < 0) i = srchRes.findIndex(r => r.own && r.score === 0);
+    if (i < 0) i = srchRes.findIndex(r => r.onl);
+    if (i >= 0) srchPick(i);
+    else srchOnline();
+  }
+  function srchResClick(e) {
+    const it = e.target.closest && e.target.closest('.srch-it');
+    if (it) srchPick(+it.dataset.i);
+  }
+  // keep a replay's Follow from pulling the view back to its vehicle
+  function mapStopFollow() {
+    if (lrOpen && lr && lrUi.follow) { lr.followAt = null; lrSet('follow', false); }
+  }
+  // fit [south, north, west, east] (west > east: across 180°)
+  function srchFitBox(s, n, w, e, zmax) {
+    if (e < w) e += 360;
+    const [x0, y1] = mapProj(s, w), [x1, y0] = mapProj(n, e);
+    const span = Math.max((x1 - x0) / Math.max(1, mapW - 80), (y1 - y0) / Math.max(1, mapH - 110), 1e-12);
+    mapState.z = Math.max(MAP_MIN_Z, Math.min(zmax, Math.log2(1 / (span * 256))));
+    mapState.mx = (x0 + x1) / 2;
+    mapState.mx -= Math.floor(mapState.mx);
+    mapState.my = (y0 + y1) / 2;
+    mapClampView();
+    mapSave();
+    mapDraw();
+  }
+  function srchPick(i, keep) {
+    const r = srchRes[i];
+    if (!r) return;
+    if (r.online) { srchHl = -1; srchOnline(); return; }
+    srchHl = i;
+    mapAutoFit = false;
+    mapStopFollow();
+    if (r.box) srchFitBox(r.box[0], r.box[1], r.box[2], r.box[3], 17);
+    else mapCenterOn(r.lat, r.lon, r.z);
+    if (r.own) {   // a place of the page's own: its own panel / popup
+      srchPinRemove();
+      if (r.sel) r.sel();
+    } else {
+      srchPin = {lat: r.lat, lon: r.lon, n: r.n, src: r.src || '', addr: r.addr || '', osm: r.osm || '', coord: !!r.coord};
+      mapSel = 'srch';
+    }
+    if (!keep) srchListOn = false;
+    srchRender();
+    mapDraw();
+  }
+  function srchRender() {
+    const box = $id('map-srch'), el = $id('map-srch-res');
+    if (!box || !el) return;
+    const on = !!mapState.srch;
+    if (box.style.display !== (on ? 'block' : 'none')) box.style.display = on ? 'block' : 'none';
+    const btn = $id('map-srch-btn');
+    if (btn) btn.classList.toggle('on', on);
+    const msg = srchBusyQ && srchBusyQ === srchQ ? 'Searching OpenStreetMap…' : srchOnlQ === srchQ || srchMsgW ? srchMsg : '';
+    let h = '';
+    if (on && srchListOn && srchQ) {
+      h = srchRes.map((r, i) => {
+        const hl = i === srchHl ? ' hl' : '';
+        if (r.online) return `<div class="srch-it onl${hl}" data-i="${i}"><span class="ic">🌐</span><span class="t"><span class="n">Search OpenStreetMap for “${digEsc(srchQ)}”</span>` +
+                             `<span class="d">addresses, cities and places - online (Enter)</span></span></div>`;
+        let k = '';
+        if (mapStation) {
+          const d = mapDistKm(mapStation[0], mapStation[1], r.lat, r.lon);
+          k = `<span class="k" title="Distance and bearing from the station">${d < 10 ? d.toFixed(1) : Math.round(d)} km ${Math.round(mapBearing(mapStation[0], mapStation[1], r.lat, r.lon))}°</span>`;
+        }
+        return `<div class="srch-it${hl}" data-i="${i}"><span class="ic">${r.ic}</span><span class="t"><span class="n">${digEsc(r.n)}</span>` +
+               `${r.d ? `<span class="d">${digEsc(r.d)}</span>` : ''}</span>${k}</div>`;
+      }).join('');
+      if (msg) h += `<div class="srch-msg${srchMsgW && !srchBusyQ ? ' w' : ''}">${digEsc(msg)}</div>`;
+      if (srchOnlQ === srchQ && srchOnl && srchOnl.length) h += '<div class="srch-attr">Places: © OpenStreetMap contributors (Nominatim)</div>';
+    }
+    if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
+    el.style.maxHeight = Math.max(120, (mapH || 420) - 100) + 'px';
+    const pane = $id('map-pane');
+    if (pane) pane.classList.toggle('srch-res-open', !!h);
+    // the highlighted row in view (the list only - scrollIntoView would move the page too)
+    const hl = el.querySelector('.srch-it.hl');
+    if (hl) {
+      const t = hl.offsetTop, b = t + hl.offsetHeight;
+      if (t < el.scrollTop) el.scrollTop = t;
+      else if (b > el.scrollTop + el.clientHeight) el.scrollTop = b - el.clientHeight;
+    }
+  }
+  // a press elsewhere hides the list (the box stays)
+  document.addEventListener('pointerdown', e => {
+    const b = $id('map-srch');
+    if (srchListOn && b && !b.contains(e.target)) { srchListOn = false; srchRender(); }
+  }, true);
+
+  // --- the pin + its popup ---
+  function srchDraw(c) {
+    const p = srchPin;
+    if (!p) return;
+    const [x, y] = mapLatLonToScreen(p.lat, p.lon);
+    p.sx = x; p.sy = y;
+    if (x < -40 || y < -10 || x > mapW + 300 || y > mapH + 40) return;
+    c.save();
+    c.translate(x, y);
+    c.lineJoin = 'round';
+    if (mapSel === 'srch') {
+      c.beginPath(); c.arc(0, -17, 13, 0, 2 * Math.PI);
+      c.strokeStyle = 'rgba(0,0,0,0.75)'; c.lineWidth = 4; c.stroke();
+      c.strokeStyle = '#fff'; c.lineWidth = 2; c.stroke();
+    }
+    // a pin a little bigger than the markers', in a colour of its own
+    c.fillStyle = '#ff3d00'; c.strokeStyle = 'rgba(0,0,0,0.9)'; c.lineWidth = 1.4;
+    c.beginPath(); c.arc(0, -17, 8.5, 0.8 * Math.PI, 0.2 * Math.PI); c.lineTo(0, 0); c.closePath();
+    c.fill(); c.stroke();
+    c.fillStyle = '#fff';
+    c.beginPath(); c.arc(0, -17, 3.2, 0, 2 * Math.PI); c.fill();
+    const lab = p.n.length > 48 ? p.n.slice(0, 47) + '…' : p.n;
+    c.font = 'bold 12px sans-serif'; c.strokeStyle = 'rgba(0,0,0,0.85)'; c.lineWidth = 3; c.fillStyle = '#ffccbc';
+    c.strokeText(lab, 13, -14); c.fillText(lab, 13, -14);
+    c.restore();
+  }
+  // the pin's head under a screen point
+  function srchHit(x, y) {
+    const p = srchPin;
+    return !!p && p.sx !== undefined && (p.sx - x) ** 2 + (p.sy - 17 - y) ** 2 < 12 * 12;
+  }
+  function srchPopPoint() {
+    if (!srchPin || srchPin.sx === undefined) return null;
+    return {sx: srchPin.sx, sy: srchPin.sy - 17, pin: srchPin};
+  }
+  function srchPopupHtml(p) {
+    const s = p.pin, row = (k, v) => `<tr><td>${k}</td><td class="sel">${v}</td></tr>`;
+    let rows = (s.addr && s.addr !== s.n ? row('Address', digEsc(s.addr)) : '') +
+               row('Position', `${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}`) +
+               row('', `${srchDms(s.lat, 'N', 'S')} ${srchDms(s.lon, 'E', 'W')}`) +
+               row('Grid locator', srchLocator(s.lat, s.lon));
+    const u = srchToUtm(s.lat, s.lon);
+    if (u) rows += row('UTM', `${u.zone}${u.band} ${Math.round(u.E)} ${Math.round(u.N)}`) + row('MGRS', srchToMgrs(u));
+    if (mapStation) {
+      const d = mapDistKm(mapStation[0], mapStation[1], s.lat, s.lon), b = mapBearing(mapStation[0], mapStation[1], s.lat, s.lon);
+      rows += `<tr><td>From station</td><td>${d < 10 ? d.toFixed(2) : d.toFixed(d < 100 ? 1 : 0)} km, ${b.toFixed(0)}°</td></tr>`;
+    }
+    return `<div class="h"><span style="color:#ff3d00">●</span>${digEsc(s.n)}<span class="x" onclick="mapSel=null;mapDraw()">✕</span></div>` +
+           `<div class="s">🔍 ${digEsc(s.src || 'Search result')}</div><table>${rows}</table>` +
+           `<div class="lnk"><button type="button" class="map-btn" onclick="srchToMarker()" title="Make it one of your markers (📍 - a saved location, every browser), to add frequencies and notes">📍 Add as marker</button>` +
+           `<button type="button" class="map-btn" onclick="srchPinRemove()" title="Remove the search result's pin from the map">Remove pin</button>` +
+           (s.osm ? `<a href="${s.osm}" target="_blank" rel="noopener noreferrer">openstreetmap.org ↗</a>` : '') + '</div>';
+  }
+  function srchToMarker() {
+    const s = srchPin;
+    if (!s) return;
+    const notes = [s.addr && s.addr !== s.n ? s.addr : '', s.coord ? s.src : '', s.osm, 'From the map search'].filter(Boolean).join('\n');
+    mapSel = null;
+    mkCreate(s.lat, s.lon, s.coord ? undefined : s.n.slice(0, 80), notes.slice(0, 2000));
+    mapDraw();
+  }
+  function srchPinRemove() {
+    srchPin = null;
+    if (mapSel === 'srch') mapSel = null;
+    mapDraw();
+  }
+
+  // --- 🎯 the estimated transmitter ---
+  // every estimate drawn: the ⏯ replay's at the moment shown (or, before its
+  // first, the drive's last), then those of the 📡 DF panel's heat maps
+  function mapTxEsts() {
+    const out = [];
+    if (lrOpen && lr && lr.heat) {
+      let e = lrEstAt(lr.t), end = false;
+      const all = lr.heat.ests || [];
+      if (!e && all.length) { e = all[all.length - 1]; end = true; }
+      if (e && Number.isFinite(e.lat) && Number.isFinite(e.lon)) out.push({lat: e.lat, lon: e.lon, r95: e.r95, edge: e.edge, name: 'Replay' + (end ? ' (end of the drive)' : '')});
+    }
+    if (opMode === 'coherent' && rdfStatus)
+      for (const mp of rdfShownMaps()) {
+        const G = rdfGrids[mp.key], e = G && G.m.est;
+        if (e && Number.isFinite(e.lat) && Number.isFinite(e.lon)) out.push({lat: e.lat, lon: e.lon, r95: e.r95, edge: e.edge, name: mp.name});
+      }
+    return out;
+  }
+  function srchTxBtn() {
+    const b = $id('map-tx-btn');
+    if (!b) return;
+    const none = !mapTxEsts().length;
+    if (b.classList.contains('dis') !== none) b.classList.toggle('dis', none);
+  }
+  function mapGoTx() {
+    const L = mapTxEsts();
+    if (!L.length) {
+      const other = opMode === 'coherent' && Object.values(rdfGrids).some(G => G && G.m && G.m.est);
+      mapStatusFlash(other ? 'No transmitter estimate for what the 📡 DF panel shows - pick the VFO / radio there that has one'
+                           : 'No transmitter estimate yet: collect bearings while driving (📡 DF panel, coherent mode + GPS), or replay a drive (Replay)');
+      return;
+    }
+    // pressed again with the view where it left it: the next estimate
+    const a = srchTxAt, again = a && a.mx === mapState.mx && a.my === mapState.my && a.z === mapState.z;
+    const i = again ? (a.i + 1) % L.length : 0, e = L[i];
+    mapAutoFit = false;
+    mapStopFollow();
+    mapCenterOn(e.lat, e.lon, srchZoomFor(e.lat, 2 * Math.max(e.r95 > 0 ? e.r95 : 200, 40)));
+    srchTxAt = {i, mx: mapState.mx, my: mapState.my, z: mapState.z};
+    mapStatusFlash(`🎯 ${e.name}: the transmitter, ±${rdfDist(e.r95 || 0)} (95 %)${e.edge ? ' - at the grid edge, it may be outside' : ''}` +
+                   (L.length > 1 ? ` · ${i + 1} of ${L.length}: 🎯 again for the next` : ''));
   }
 
   // --- 👁 VIEWSHED: line of sight over the terrain ---------------------------------

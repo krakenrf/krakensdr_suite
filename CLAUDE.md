@@ -1041,6 +1041,13 @@ DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
   a lat/lon grid with a notice. Opened with the 🗺 Map button under the
   waterfall; a tab next to MUSIC DoA in coherent mode, the whole right pane
   otherwise; resizable; view settings per browser (localStorage)
+- 🔍 Search (2026-10-21; kraken_doa_v2/CLAUDE.md *🔍 Map search*):
+  coordinates in the usual forms, UTM, MGRS, grid locators, map links and
+  the page's own places (markers, decoder points ...) read OFFLINE as typed;
+  addresses / cities from OpenStreetMap Nominatim BY THE BROWSER, only on
+  Enter, <= 1 request a second; a pin with the position in every form + 📍
+  Add as marker. 🏠 = the station (was ⌖), 🎯 = the estimated transmitter
+  (📡 DF heat map / ⏯ replay; again = the next)
 - Shows the positions decoder plugins report (`kp::Host::map_point`: ADS-B
   aircraft, APRS stations, DMR GPS, D-STAR GPS / DPRS) per VFO decoder whose
   "🗺 Plot on map" is ticked in its decoder tab (off by default,
