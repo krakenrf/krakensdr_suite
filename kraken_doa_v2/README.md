@@ -115,7 +115,7 @@ Pipeline (see `src/networking/data_receiver.cpp` for the hot path):
 ```
 TCP 8091 ─► IQ convert (uint8→complex<float>) ─► raw data buffer (bounded, auto-cleanup)
    │
-   ├─► decimation_processor_thread ─► per-decimator decimation (thread-local, cached coeffs)
+   ├─► decimation_processor_thread ─► per-VFO decimation (mixer + planned FIR cascade, per antenna in parallel)
    │        │
    │        ├─► 8× per-channel FFT workers (pffft, per-channel plans, true parallel) ─► spectrum
    │        ├─► fm_processor_thread ─► FM demod + Opus ─► 48 kHz audio
@@ -132,7 +132,9 @@ oversubscription on 4 cores, since most are I/O-bound.
 
 **Key design choices** (details in `OPTIMIZATION_SUMMARY.md`, `CLAUDE.md`):
 - Compiler auto-vectorization for IQ conversion (beats hand-written NEON here).
-- Thread-local decimators with a shared coefficient cache (zero alloc in hot path).
+- Per-VFO decimator: integer decimation only, the cheapest split into stages of 2-8
+  (a cost model of the kernels picks it; halfband stages for 2), the mixer folded into
+  the first stage where that is cheaper, block FIR stages (4 outputs per NEON pass).
 - Per-channel FFT plans: pffft (vendored in `external/pffft`, BSD-style licence,
   NEON) behind `plugins/sdk/kraken_fft.hpp`, the plugins' FFT too - no planning,
   no wisdom file (a `fft_wisdom.dat` from older versions can be deleted).

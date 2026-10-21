@@ -591,7 +591,8 @@ See `heimdall_v2/CLAUDE.md` → *Coherence-Loss Detection and Recovery* and *Pip
 
 **Optimizations** (see OPTIMIZATION_SUMMARY.md):
 - Compiler auto-vectorization for IQ conversion (faster than manual NEON)
-- Thread-local decimators with shared coefficient cache
+- Per-VFO decimator: block FIR stages, split as a cost model finds cheapest
+  (halfband stages, the mixer folded into the first stage)
 - FFT: pffft (vendored `kraken_doa_v2/external/pffft`, BSD-style licence;
   replaced FFTW 2026-10-17) behind `plugins/sdk/kraken_fft.hpp` - also the
   decoder plugins' FFT
@@ -703,18 +704,25 @@ bandwidth*)**:
   `SET_DECIMATOR_BW_HZ:id:hz` (`SET_DECIMATOR_BW:id:index` still works), the
   DECIMATORS snapshot's last field. Still integer decimation only (no
   resampling): by the largest divisor D of 2.4 MHz whose rate holds the
-  width, the cascade's last stage cut at the width itself
-  (`SharedDecimator::designStages`; gain 2.4 MHz / width, = D as before for
-  the old sizes). Measured on the Pi 5: up to 1.2 MHz a custom width costs
-  what the efficient size at its rate does (the rate <= 1.25x the width at
-  300 kHz and below); 1.2 - 2.4 MHz runs at 2.4 MS/s with a full-rate filter
-  (+~15-20 % of a core with 5 antennas over the 2.4 MHz pass-through; the
-  BW box's tooltip says so). The stages are a block FIR on real taps
-  (`SharedDecimator::FirStage`, replacing liquid's firdecim - whose
-  per-sample window pushes were most of its cost): the decimator 3.3x
-  faster than before arbitrary widths, kraken_doa 6-25 % less CPU at every
-  old size (240 kHz 50.1 -> 38.9 % of a core), the same outputs to float
-  rounding. No snapping option (an "Efficient bandwidths only" tick was
+  width, the cascade's last stage cut at the width itself (gain 2.4 MHz /
+  width, = D as before for the old sizes). Measured on the Pi 5: up to 1.2
+  MHz a custom width costs what the efficient size at its rate does (the
+  rate <= 1.25x the width at 300 kHz and below); 1.2 - 2.4 MHz runs at 2.4
+  MS/s with a full-rate filter (+~9 % of a core with 5 antennas over the
+  2.4 MHz pass-through; the BW box's tooltip says so). The stages are block
+  FIRs (`SharedDecimator::FirStage`, replacing liquid's firdecim - whose
+  per-sample window pushes were most of its cost; 4 outputs per NEON
+  pass), split as a cost model of them finds cheapest
+  (`SharedDecimator::planStages`, 2026-10-22: any order of factors 2..8,
+  halfband stages for 2, the mixer folded into the first stage's taps where
+  that is cheaper - measured against every candidate plan of 28 widths, the
+  pick is the fastest or within 2 %): the first block FIR was 3.3x the
+  decimator before arbitrary widths, this 2.0x the first block FIR;
+  kraken_doa against the build before arbitrary widths (measured the day
+  before, same harness) 22-31 % less CPU at every old size but 2.4 MHz (6 %;
+  240 kHz 50.1 -> 35.2 % of a core, 12 kHz 36.4 -> 26.9, 1.2 MHz 87.4 ->
+  60.4), the same response (checked against a double-precision reference of
+  each plan). No snapping option (an "Efficient bandwidths only" tick was
   removed the same day, the user's call). The VFO card's BW is a number box
   in kHz
 - Supports 2.4 MHz down to 1 kHz bandwidth (the narrow end - 10 kHz to 1 kHz -
@@ -1776,11 +1784,15 @@ for (size_t i = 0; i < num_samples; i++) {
 
 ### Decimation (DoA Client)
 
-**Architecture**:
-- Thread-local decimator instances (zero allocation per call)
-- Shared coefficient cache with 95%+ hit rate
-- Pre-reserved buffers to avoid dynamic allocation
-- Integer decimation factors (no resampling)
+**Architecture** (`kraken_doa_v2/src/signal_processing/shared_decimator.cpp`;
+kraken_doa_v2/CLAUDE.md *Arbitrary VFO bandwidth*):
+- Per VFO a `SharedDecimator`, per antenna its own mixer + stage state, the
+  antennas in parallel on a thread pool
+- Integer decimation factors (no resampling), split into stages of 2..8 by
+  `planStages` (a cost model of the kernels; halfband stages, the mixer
+  folded into the first stage where cheaper)
+- Block FIR stages (`FirStage`): every output straight from the stage's
+  buffer, 4 outputs per NEON / SSE pass; buffers grow without zeroing
 
 ## Development Workflow
 
@@ -2011,8 +2023,9 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
 
 **DoA Client**:
 - IQ conversion: Compiler auto-vectorization preferred over manual NEON
-- Decimation: Thread-local instances with shared coefficient cache;
-  liquid-dsp's NEON dot products (built from source - `liquid.mk`)
+- Decimation: the VFO decimator's own block FIR kernels (GCC vector
+  extensions -> NEON); liquid-dsp (built from source - `liquid.mk`, NEON dot
+  products) designs its taps and runs the demodulators' / plugins' filters
 - FFT: pffft (NEON), no planning / wisdom file - see kraken_doa_v2/CLAUDE.md
   *FFT (pffft)*
 

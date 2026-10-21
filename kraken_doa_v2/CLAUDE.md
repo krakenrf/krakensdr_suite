@@ -190,34 +190,81 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   `nearest_bandwidth_index` in config.hpp
 - Decimation stays INTEGER (no resampler - every consumer works on
   2.4 MHz / D): D = the largest divisor of 2.4 MHz (2^8 3 5^5: 59 of them up
-  to 2400 - `efficient_decimations()`, each a cascade of stages <= 8) whose
-  rate holds the width. `SharedDecimator::designStages(bw)` (static: the
-  decimator, tools/decim_bench.cpp share it): intermediate stages as before
-  (stop = stage rate - 0.4 bw), the LAST stage stops at 0.6 bw (pass 0.4 bw,
-  -6 dB at the bar's edge 0.5 bw) - a width narrower than its rate is cut AT
-  THE WIDTH, so the VFO passes its bandwidth and no more; 1.2 - 2.4 MHz = one
-  stage of factor 1 (a full-rate filter). The width = the rate (an
-  "efficient" size, `bandwidth_is_efficient`: every old option is one) =
-  bit-identical taps to before (`exact` in designStages). Gain = each stage's
-  1 / (2 cutoff) = 2.4 MHz / bw for every width (= D as before for the
-  efficient sizes - the int16 conversions downstream see the same levels).
-  The stages are `SharedDecimator::FirStage` (2026-10-21, the user's go
-  after a measured proposal), a BLOCK FIR on real taps: output j = the
-  reversed taps' dot product with the L inputs ending at input j * M
-  (liquid firdecim's alignment), straight from a buffer of history + the
-  samples not used up yet (the interleaved I / Q as floats - two dot
-  products the compiler vectorizes under -Ofast). The mixer writes into the
-  first stage's buffer, each stage's outputs into the next one's; a block
-  that isn't a multiple of a stage's factor leaves its tail in that stage
-  (the separate "carry" and the scratch buffers are gone). It replaced
-  liquid's `firdecim_crcf` (itself the `cccf` with zero imaginary parts the
-  decimator had before arbitrary widths - twice the multiplies): liquid
-  copies EVERY input sample into its window with a call of its own, ~8.9 ns
-  of the 9.5-13 ns a sample cost, while a multiply-accumulate costs ~0.14
-  ns. Same outputs to float rounding (<= 8.2e-7 of rms vs the cccf cascade;
-  the decimator fed blocks of odd lengths - 1, 7, 333, 12345 ... - = the
-  cascade on the whole input). liquid still designs the taps
-  (`liquid_firdes_kaiser`)
+  to 2400 - `efficient_decimations()`) whose rate holds the width.
+  `SharedDecimator::planStages(bw)` (static: the decimator,
+  tools/decim_bench.cpp share it) splits D into stages of 2..8: an
+  intermediate stage stops at its output rate - 0.4 bw (only what aliases
+  onto the wanted +-0.4 bw must go), the LAST stage stops at 0.6 bw (pass
+  0.4 bw, -6 dB at the bar's edge 0.5 bw) - a width narrower than its rate
+  is cut AT THE WIDTH, so the VFO passes its bandwidth and no more; 1.2 -
+  2.4 MHz = one stage of factor 1 (a full-rate filter). Kaiser 60 dB taps
+  (`liquid_firdes_kaiser`; tap count 52 / (14.36 x transition)). Gain =
+  each stage's 1 / (2 cutoff) = 2.4 MHz / bw for every width (= D for the
+  efficient sizes, `bandwidth_is_efficient` - every old option is one: the
+  int16 conversions downstream see the same levels)
+- THE PLAN (2026-10-22, the user's pick of three measured proposals:
+  "re-split D = 2-8 stages, fold the mixer into stage 1, halfband x2
+  stages"): a cost model of the stage kernels (ns per output, fitted on the
+  Pi 5 - job scratch explore/kern2.cpp + plan.py: regular 0.133 x window +
+  1.13 + 0.14 x factor, folded 0.239 x window + 3.03 + 0.14 x factor,
+  halfband = regular on its x phase at factor 1 + 0.3; per input sample the
+  mixer 3.39, the mixer into a halfband's two phases 2.82, the copy a folded
+  stage takes 0.52 - `R_TAP` ... in shared_decimator.cpp) picks the cheapest
+  ORDERED split (memoised over the factor that remains: its input rate
+  follows from it; ties = the larger factor first), per factor-2 stage
+  regular or halfband, and for the first stage where the mixer goes.
+  Measured against EVERY candidate plan of 28 widths (job scratch
+  explore/allplans.cpp: 2-318 plans each, the real FirStage, VFO off
+  centre): the model's pick is the fastest in 22, within 2 % in the other
+  six (mean 0.1 %). It was largest factor first: D = 2-8 then ran ONE long
+  sharp stage at 2.4 MHz (300 kHz: 145 taps at 8:1 - now 4:1 with 25 taps +
+  a halfband 2:1 of 39). `Plan::describe()` = "8F:31 5:23 2h:39" (factor, F
+  = the mixer folded in, h = halfband : taps); `Plan::cost_ns` = the model's
+  estimate (within ~6 % of the measured on average)
+- The stages: `SharedDecimator::FirStage`, a BLOCK FIR (2026-10-21; it
+  replaced liquid's `firdecim_crcf`, itself the `cccf` with zero imaginary
+  parts the decimator had before arbitrary widths - liquid copies EVERY
+  input sample into its window with a call of its own, ~8.9 ns of the
+  9.5-13 ns a sample cost, a multiply-accumulate ~0.14 ns): output j = the
+  taps' dot product with the inputs ending at input j x M (liquid firdecim's
+  alignment), straight from a buffer of history + the samples not used up
+  yet (`SampleBuf`: grows without zeroing, drops from the front). The
+  kernel (2026-10-22): the taps duplicated per I / Q float, padded to a
+  multiple of 4 with leading zeros, FOUR outputs per pass sharing the tap
+  loads, two outputs' sums combined by one shuffle into one store (GCC
+  vector extensions - `__builtin_shufflevector` under clang - -> NEON / SSE;
+  4 outputs per pass 10-20 % faster than 2). The mixer in front writes into
+  the first stage's buffer, each stage's outputs go into the next one's; a
+  block that isn't a multiple of a stage's factor leaves its tail in that
+  stage. Kinds:
+  - regular: real taps
+  - FOLDED (`Plan::fold`, the first stage only): the mixer in the taps -
+    h[k] e^{+jwk} on the RAW input (copied in), each output turned by the
+    mixer's phase at its newest sample (times e^{-jwM} per output,
+    renormalised every 1024): the oscillator runs at the output rate.
+    `FirStage::fold(w)` on every offset change (phase 1 at the next sample,
+    as the mixer restarts; within 1 Hz of the centre: real taps); its
+    history is raw, so it is mixed with the new offset at once (the mixer in
+    front leaves the held samples mixed with the old). Pays where the first
+    stage's taps per input are few: every width up to 240 kHz (factor 5-8
+    first) - ~2 of the ~3.4 ns the mixer cost
+  - HALFBAND (factor 2 cut at a quarter of its input rate: an intermediate
+    factor 2, or the last when the width fills the rate): 4m+3 taps, those
+    at even offsets from the centre set to exactly 0 (the sinc's zeros).
+    The input kept as its two phases (`x` = the outputs' newest samples,
+    `o` = the others), written so by its producer (`take()` -> `Dst` {a,
+    b}: the mixer in front, the copy, or the previous stage's outputs -
+    `put4` shuffles them apart): the x taps a plain FIR at the output rate +
+    the centre tap times o[j] - ~40 % fewer multiply-adds (1.2 MHz with the
+    mixer: 6.98 -> 5.86 ns)
+- Checked (`tools/decim_bench.cpp`, Pi 5): every plan - the 59 efficient
+  sizes + 38 arbitrary widths - fed blocks of odd lengths (1, 2, 3, 7, 333,
+  12345 ...) vs a plain double-precision reference of the same plan (the
+  mixer at the input rate, every stage a full convolution): max |diff| <=
+  5.5e-7 of rms on the centre, <= 6.9e-5 off it (the float mixer's phase
+  over 45k samples); response flat +-0.03 dB to 0.4 bw, -6.0..-6.2 dB at
+  0.5 bw, -52..-72 dB from 0.6 bw, aliases <= -53 dB, the same with the VFO
+  300 kHz off the centre (the folded path)
 - `decimateMultiChannel(.., bandwidth_hz, offset)` (was the factor): the
   pipeline reads the width ONCE per block; the channel state rebuilds when
   the width changes (`ChannelDecimState::bandwidth_hz`), not only the factor.
@@ -272,9 +319,10 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   significant efficiency is lost", then REMOVED the same day (the user's
   call): with the real-tap stages every width up to 1.2 MHz costs no more
   than the nearest old size did (below); only 1.2 - 2.4 MHz costs more (a
-  full-rate filter: with the block FIR +~15-20 % of a core with 5 antennas
-  over the 2.4 MHz pass-through, +~30 over 1.2 MHz) - the BW box's tooltip
-  says what a custom width runs at
+  full-rate filter: since the plans / kernel of 2026-10-22 +~9 % of a core
+  with 5 antennas over the 2.4 MHz pass-through, +~30 over 1.2 MHz; it was
+  +~15-20 with the first block FIR) - the BW box's tooltip says what a
+  custom width runs at
 - Measured on the Pi 5 (2026-10-21; `tools/decim_bench.cpp`, one core, ns
   per input sample per antenna, the cascade without the mixer): old sizes
   liquid cccf (the original) 10.7-25.5, liquid crcf 9.4-17.8, block FIR
@@ -297,12 +345,27 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   42.6 (300 kHz 41.5), 13 / 15 kHz 30.3 / 30.2 (12.5 kHz 30.2), 1.25 / 1.5
   / 2 MHz 100.4 / 96.8 / 95.3 (liquid crcf build 118.3 / 117.2 / 112.5;
   1.2 MHz 69.7, 2.4 MHz 80.9)
-- Possible next steps (measured / estimated, not done): the mixer as a
-  frequency-translating first stage (taps shifted to the offset, mixing at
-  the decimated rate - most of its ~2.9 ns); halfband stages for factors of
-  2 (half their multiplies); re-splitting D = 2-8 (e.g. 8 -> 4 x 2: ~40 %
-  fewer multiplies at 300 kHz - it gained nothing with liquid's overhead,
-  it would now)
+- Measured 2026-10-22 (Pi 5, the plans + folded / halfband stages + the
+  4-output kernel vs the block FIR build above): the decimator
+  (decimateChannel, one antenna, ns per input sample; job scratch
+  explore/cmpbench.cpp, the same file built against both, two runs each)
+  efficient sizes mean 4.35 -> 2.02 on the tuner centre, 6.67 -> 3.31 off
+  it (the mixer included) - 2.0x; <= 240 kHz 2.7-4.9 -> 1.3-2.2 (off
+  centre 5.0-7.3 -> 2.1-3.5), 250 kHz - 1.2 MHz 6.8-9.4 -> 2.3-4.7 (9.1-11.8
+  -> 3.9-7.2), the full-rate widths 12.2-16.0 -> 5.4-7.3 (14.6-18.3 ->
+  7.9-9.8); 2.4 MHz (the mixer alone) 2.97 -> 3.24 (the same loop compiled
+  differently; `__restrict` didn't help and slowed the split mixer, not
+  kept). Whole kraken_doa (as above, the block FIR / this build
+  alternately, two runs each, VFO +100 kHz): 240 kHz 39.0 -> 35.2, 300 kHz
+  41.5 -> 38.2, 12 kHz 30.4 -> 26.9, 16 kHz 30.6 -> 27.4, 1.2 MHz 67.1 ->
+  60.4, 2.4 MHz 77.0 -> 76.6 % of a core; custom widths (one sweep each)
+  250 kHz 43.2 -> 37.7, 13 / 15 kHz 29.5 / 30.0 -> 27.7 / 27.6, 1.25 / 1.5
+  / 2 MHz 103.0 / 100.5 / 98.3 -> 90.6 / 90.2 / 90.2. The decimator is now
+  a small part of a VFO's cost (MUSIC, the FFTs, the IQ conversion are the
+  rest). clang 19 builds the kernels too (`__builtin_shufflevector`): the
+  same checks, the same speed. Not done: a folded halfband first stage
+  (complex taps on the x phase: the model gives ~0.2 ns at best - the
+  mixer into the two phases is already cheaper than the interleaved one)
 - Tests (job scratch 415cedbd e2e/, on the Pi: `fake_heimdall_bw.py` = a
   5-element UCA scene, tone A +100 kHz from 60 deg, tone B +125 kHz from
   200 deg; `t_bw.py` against a TEST build on 5808x / 5809x): 24 / 24 -
@@ -318,9 +381,11 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   receiver keeps (the box follows), no snapping tick, a second drag
   arbitrary too, independent mode's 2.4 MHz bar (both
   clipped edges grabbable, resize cursor, dragged in and back out, below),
-  no page exceptions. A width change at the same rate clears MUSIC's
-  accumulator (`last_input_bw_hz_`: the rebuilt filters' restart is no
-  signal), as a rate change always did
+  no page exceptions. Both again 24 / 24 / 24 / 24 on the plans / folded /
+  halfband build (2026-10-22: the bearings through folded first stages at
+  10 - 41 kHz, 100 kHz off centre, exact). A width change at the same rate
+  clears MUSIC's accumulator (`last_input_bw_hz_`: the rebuilt filters'
+  restart is no signal), as a rate change always did
 
 **KrakenSDR Wideband (downconverter) variant:**
 - Run with `--wideband` (heimdall too) - see root `../CLAUDE.md` for the design
@@ -6151,13 +6216,16 @@ assumes no NaNs.
 
 (The thread-local decimators / coefficient cache this section used to
 describe are long gone.) Per VFO a `SharedDecimator`, per antenna a
-`ChannelDecimState` (it follows the channel, not the pool thread): an
-input-rate mixer writing into a cascade of `FirStage` block FIRs (real
-taps, every output computed straight from the stage's buffer - no
-per-sample window pushes), the antennas in parallel on the decimator's
-`ThreadPool`. Details + measurements: *Arbitrary VFO bandwidth* above
-(`tools/decim_bench.cpp`). Pi 5, one antenna: ~2.6-4.9 ns per input sample
-up to 240 kHz, ~7-8 ns at 300 kHz - 1.2 MHz, plus ~2.9 ns for the mixer.
+`ChannelDecimState` (it follows the channel, not the pool thread): the
+mixer (in front of, or folded into, the first stage) and a cascade of
+`FirStage` block FIRs (every output computed straight from the stage's
+buffer - no per-sample window pushes; regular / folded / halfband), split
+as `planStages` finds cheapest, the antennas in parallel on the
+decimator's `ThreadPool`. Details + measurements: *Arbitrary VFO
+bandwidth* above (`tools/decim_bench.cpp`). Pi 5, one antenna, ns per
+input sample with the VFO off the tuner centre (mixer included): ~2.1-3.5
+up to 240 kHz, ~3.9-7.3 at 250 kHz - 1.2 MHz, 7.9-9.9 for the full-rate
+widths 1.2 - 2.4 MHz, 3.2 for 2.4 MHz (the mixer alone).
 
 ### 3. FFT Processing
 
@@ -6335,7 +6403,7 @@ sudo perf top
 
 **Critical Hot Paths:**
 - `src/utils/iq_converter.cpp:convert()` - IQ conversion (auto-vectorized)
-- `src/signal_processing/shared_decimator.cpp:decimate()` - Thread-local decimation
+- `src/signal_processing/shared_decimator.cpp:decimateChannel()` - a VFO's decimation, per antenna (`FirStage::produce`: the FIR kernels)
 - `src/networking/data_receiver.cpp:data_receiver_thread()` - Main data ingestion
 - `src/networking/data_receiver.cpp:decimation_processor_thread()` - Decimation coordination
 - `src/networking/data_receiver.cpp:fft_processor_thread_per_channel()` - Per-channel FFT workers
