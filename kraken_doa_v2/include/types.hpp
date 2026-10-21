@@ -66,6 +66,8 @@ struct FFTWorkItem {
     // 0 = data not from the shared buffer (no validation possible)
     uint32_t buffer_generation;
     std::chrono::steady_clock::time_point timestamp;
+    double freq_hz = 0.0;   // the channel's frequency in the packet's header (0 = not given)
+    uint64_t seq = 0;       // the packet's number (RawDataPacket::seq)
 
     FFTWorkItem() : channel(0), data(nullptr), num_samples(0), buffer_generation(0) {}
     FFTWorkItem(uint32_t ch, const std::complex<float>* ptr, size_t num, uint32_t gen = 0)

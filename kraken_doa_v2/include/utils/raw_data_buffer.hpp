@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <complex>
 #include "types.hpp"
+#include "config.hpp"
 
 // Raw packet structure for buffering complete TCP packets with pre-converted float IQ data
 struct RawDataPacket {
@@ -18,6 +19,7 @@ struct RawDataPacket {
     uint32_t phase_compensation_state;                  // Phase calibration state from server
     uint32_t noise_source_active;                       // Bias tee / noise source status
     uint64_t seq = 0;                                   // packet number (every parsed packet, skipped ones too)
+    float freq_hz[MAX_CHANNELS] = {};                   // each channel's frequency in this packet's header
     std::chrono::steady_clock::time_point timestamp;
 
     RawDataPacket() : num_channels(0), samples_per_channel(0),
