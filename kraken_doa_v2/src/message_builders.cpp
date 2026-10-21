@@ -58,11 +58,16 @@ static int legacy_fft_decimation() {
 }
 
 // The same for one tuner channel's spectrum: its floor as the squelch sees it
-// - the receiver's remembered floor while a signal fills the band
+// - the receiver's remembered floor while a signal fills the band - and the
+// tuners' response (tilt, roll-off) taken off, as in the wideband scan's
+// stitch: the band is flat to its edges (the page shows FLAT_SHOW_FRACTION of
+// it). The shape is normalised so that the band's 10th percentile - the floor
+// - stays where it was. Under fft_mutex (build_fft_message)
 static void normalize_to_channel_floor(std::vector<float>& fft_data, int channel) {
     const float noise_floor = FFTProcessor::channel_noise_floor(channel, fft_data);
-    for (float& mag : fft_data) {
-        mag -= noise_floor;
+    const std::vector<float>& shape = FFTProcessor::response_shape(static_cast<int>(fft_data.size()));
+    for (size_t i = 0; i < fft_data.size(); i++) {
+        fft_data[i] -= noise_floor + shape[i];
     }
 }
 

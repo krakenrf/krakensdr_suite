@@ -66,8 +66,10 @@ public:
     // ones) side by side on one grid of FFT bins, each frequency from the
     // tuner whose centre is nearest, each flattened by the tuners' common
     // response (nfloor::shape_db) and relative to that tuner's noise floor
-    // (channel_noise_floor). The edge-clipped band of the lowest tuner to the
-    // highest's; bin i at f0_hz + i * step_hz. False = nothing to stitch
+    // (channel_noise_floor). From the lowest tuner's centre - 1.2 MHz x
+    // max(edge clip, FLAT_SHOW_FRACTION) to the highest's + that (the outer
+    // ends are no other tuner's); bin i at f0_hz + i * step_hz. False =
+    // nothing to stitch
     static bool stitch_wideband_fft(
         const std::vector<std::vector<float>>& channel_ffts,
         const std::array<uint64_t, MAX_CHANNELS>& tuner_hz,
@@ -100,6 +102,13 @@ public:
     // signal fills the band (noise_floor.hpp). Measured from fft_data when the
     // channel has no recent frame. Display, squelch and scanner all use it.
     static float channel_noise_floor(int channel, const std::vector<float>& fft_data);
+
+    // The tuners' common response (dB; tilt, roll-off - nfloor::shape_db) at
+    // each bin of an fft_size spectrum, DC centred: taken off every spectrum
+    // drawn (all modes) and every squelch / scanner level, so a signal reads
+    // the same anywhere in a tuner's band. Callers hold fft_mutex (the copy is
+    // shared)
+    static const std::vector<float>& response_shape(int fft_size);
 
     // Reset all FFT buffers immediately (called on frequency change)
     // Clears both raw and averaged buffers to prevent stale data display

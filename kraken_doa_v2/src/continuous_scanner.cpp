@@ -237,6 +237,8 @@ void ContinuousScanner::refreshFFTData() {
     if (ch < 0 || num_channels.load() <= 0) return;
     if (ch >= (int)fft_averaged.size()) return;
     std::vector<float> spec = fft_averaged[ch];
+    // the tuners' response taken off, as the spectrum is drawn
+    const std::vector<float> shape = FFTProcessor::response_shape(static_cast<int>(spec.size()));
     lock.unlock();
 
     float freq = ChannelManager::get_frequency(ch);
@@ -257,7 +259,7 @@ void ContinuousScanner::refreshFFTData() {
             std::nth_element(tmp.begin(), tmp.begin() + idx, tmp.end());
             noise = tmp[idx];
         }
-        for (auto& v : spec) v -= noise;
+        for (size_t i = 0; i < spec.size(); i++) spec[i] -= noise + shape[i];
     }
 
     std::lock_guard<std::mutex> lk(fft_data_mutex_);

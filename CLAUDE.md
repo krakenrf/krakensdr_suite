@@ -1462,7 +1462,16 @@ switching) - each tuner used to be drawn against its own percentile, so such
 a signal dropped to ~0 dB past the boundary (fixed 2026-10-21; a first version
 misjudged real hardware and dropped the signal during drags, see the client
 CLAUDE.md). A retuned tuner's average is shifted with the move, so a drag
-doesn't draw the old band moved along
+doesn't draw the old band moved along. ROLL-OFF COMPENSATION (every mode,
+2026-10-21): that response shape (`FFTProcessor::response_shape`) is taken off
+every spectrum drawn and every FFT squelch / scanner level, so a band is flat
+to its edges and a signal reads the same anywhere in it; where no other tuner
+covers them, at least 95 % of a tuner's band is shown (`FLAT_SHOW_FRACTION`:
++-1.14 MHz in coherent / independent mode instead of the 80 % edge clip, the
+wideband scan's two outer ends - 9.96 instead of 9.6 MHz). Edge clip still
+sets the wideband tuner spacing (the overlap the gain steps need) and the
+continuous scanner's step; past +-1.14 MHz the sampling folds in signals from
+beyond the opposite edge
 
 **✈ Array calibration from ADS-B aircraft (coherent mode)** (details:
 `kraken_doa_v2/CLAUDE.md` *Array calibration*): `kraken_doa_v2/src/array_cal.cpp`.

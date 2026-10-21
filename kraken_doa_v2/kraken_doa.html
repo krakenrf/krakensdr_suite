@@ -1556,7 +1556,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <span class="sv" id="av">85%</span>
         </div>
         <div class="ctrl-row">
-          <label>Edge Clip:</label>
+          <label>Edge Clip:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The spectrum is drawn with the tuners' roll-off taken off, so each tuner's band is shown to 95% (&plusmn;1.14 MHz; past it signals from beyond the other edge fold in) - a higher edge clip shows more. In wideband scan mode it sets the tuners' spacing: neighbours share (1 - clip) x 2.4 MHz, which the level matching between tuners needs; it also sets the continuous scanner's step.</span></span></label>
           <input type="number" id="ecl" value="0.8" min="0.1" max="1.0" step="0.05" style="width:50px">
           <button class="btn sm" onclick="sec()">Set</button>
           <span class="cv" id="cec">80%</span>
@@ -2527,9 +2527,23 @@ const MIN_BW_MHZ = bwo[MIN_BW_INDEX].bandwidth; // 0.001 MHz
 // visible (edge-clipped, wideband-aware) span minus half the bar width.
 // Single source of truth - this formula was previously copy-pasted ~12 times
 // and several copies had drifted (fixed 2.4 MHz span, no edge clip).
-// Stitched wideband-scan span in MHz, for the status text
+// The receiver takes the tuners' response (tilt, roll-off) off every spectrum,
+// so a band's edges no longer need clipping away: where no other tuner covers
+// them - coherent / independent mode, the wideband scan's two outer ends - at
+// least FLAT_SHOW of each tuner's 2.4 MHz is shown (+-1.14 MHz; past it the
+// sampling folds in signals from beyond the opposite edge). Edge clip still
+// widens it, and sets the wideband scan's tuner spacing. = FLAT_SHOW_FRACTION
+// in config.hpp
+const FLAT_SHOW = 0.95;
+function dispClip() { return Math.max(currentEdgeClip, FLAT_SHOW); }
+// Stitched wideband-scan span in MHz: the tuners spaced by the edge clip, the
+// outer ends to dispClip() (FFTProcessor::stitch_wideband_fft)
+function widebandSpanMhz() {
+  return (Math.max(1, activeNumElements) - 1) * 2.4 * currentEdgeClip + 2.4 * dispClip();
+}
+// ... for the status text
 function widebandCoverageMhz() {
-  return (activeNumElements * 2.4 * currentEdgeClip).toFixed(1);
+  return widebandSpanMhz().toFixed(1);
 }
 // Re-show it after the edge clip or tuner count changed mid-scan
 function refreshWidebandCoverage() {
@@ -2544,8 +2558,7 @@ function maxOffsetHz(bwMhz) {
   // 2.4 MHz side by side (FFTProcessor::stitch_wideband_fft). The old fixed
   // 9.6 MHz assumed 5 tuners at 0.8 clip and then clipped it again - too
   // narrow on 5 tuners, past the edge on a 4-tuner KerberosSDR.
-  const tuners = widebandEnabled ? activeNumElements : 1;
-  const visible = tuners * 2.4 * currentEdgeClip;
+  const visible = widebandEnabled ? widebandSpanMhz() : 2.4 * dispClip();
   return Math.max(0, (visible - bwMhz) * 500000);
 }
 
@@ -6585,7 +6598,7 @@ function applyClip(newFrame = false) {
   // stitched from each tuner's edge-clipped centre (FFTProcessor::
   // stitch_wideband_fft), and clipping it again showed only N x 2.4 x clip^2
   // MHz - VFO limits and the coverage text use the full stitched span
-  const pts=widebandEnabled?tp:Math.floor(tp*currentEdgeClip);
+  const pts=widebandEnabled?tp:Math.floor(tp*dispClip());
   const edge=Math.floor((tp-pts)/2);
   currentFrequencies=fullFrequencies.slice(edge,tp-edge);
   currentMagnitudes=fullMagnitudes.slice(edge,tp-edge);
@@ -6965,7 +6978,7 @@ function handleActualFreqInput(decimatorId, inputValue, focusValue) {
   const desiredOffsetHz = (inputFreqMhz - currentCenterFreq) * 1000000;
 
   // Get bandwidth for this decimator to calculate max offset
-  // Account for edge clipping - visible bandwidth is reduced by currentEdgeClip
+  // the visible span (maxOffsetHz: dispClip(), wideband-aware)
   const bw = bwo[dec.bandwidth_index || 0].bandwidth;
   const maxOffset = maxOffsetHz(bw);
 
@@ -8261,8 +8274,8 @@ function indepOnFrame(v, buf) {
     if (!p) continue;
     p.freqMhz = fHz / 1e6; p.gainDb = g; p.sr = sr;
     if (ds < 2) continue;
-    // the middle currentEdgeClip of the band (like the coherent display)
-    const keep = Math.max(2, Math.floor(ds * currentEdgeClip)), edge = Math.floor((ds - keep) / 2);
+    // the middle dispClip() of the band (like the coherent display)
+    const keep = Math.max(2, Math.floor(ds * dispClip())), edge = Math.floor((ds - keep) / 2);
     const f0 = p.freqMhz - sr / 2e6, st = step / 1e6;
     const freqs = new Array(keep), mags = new Array(keep);
     for (let i = 0; i < keep; i++) {
@@ -8688,7 +8701,7 @@ function paneUp(p, e) {
 // Put VFO d at mhz on pane p (clamped into the visible band)
 function paneMoveVfo(p, d, mhz) {
   const bw = d.bandwidth_mhz || (bwo[d.bandwidth_index || 0] || {}).bandwidth || 0.1;
-  const half = Math.max(0, (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2);
+  const half = Math.max(0, (p.sr / 1e6) * dispClip() / 2 - bw / 2);
   const off = Math.max(-half, Math.min(half, mhz - p.freqMhz));
   const moved = (d.tuner || 0) !== p.ch;
   d.freq_offset_hz = off * 1e6;
@@ -8714,7 +8727,7 @@ function paneTuneVfoTo(d, mhz) {
   for (const ch of order) {
     const p = panes[ch];
     if (!p || !(p.freqMhz > 0)) continue;
-    const half = (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2;
+    const half = (p.sr / 1e6) * dispClip() / 2 - bw / 2;
     if (Math.abs(mhz - p.freqMhz) <= half) { paneMoveVfo(p, d, mhz); return; }
   }
   const p = panes[d.tuner || 0];
@@ -8881,10 +8894,10 @@ function specWindow(fr, w0, w1) {
   }
   return [freqs, mags];
 }
-// zoom-1 span of a frame: the middle edge-clip of its band (the wideband
-// scan's stitched band is edge-clipped per tuner already)
+// zoom-1 span of a frame: the middle dispClip() of its band (the wideband
+// scan's stitched band is clipped per tuner already)
 function specSpan1(fr) {
-  const half = (fr.bandHi - fr.bandLo) / 2, mid = (fr.bandHi + fr.bandLo) / 2, k = fr.wb ? 1 : currentEdgeClip;
+  const half = (fr.bandHi - fr.bandLo) / 2, mid = (fr.bandHi + fr.bandLo) / 2, k = fr.wb ? 1 : dispClip();
   return [mid - half * k, mid + half * k];
 }
 function specApplyMain(newFrame) {
@@ -15094,7 +15107,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const first = opts.tuner ?? own;
       const order = [first, own, ...panes.map(p => p.ch)].filter((ch, i, a) => a.indexOf(ch) === i);
       const p = centreOnly ? null : order.map(ch => panes[ch]).find(p => p && p.freqMhz > 0 &&
-        Math.abs(mhz - p.freqMhz) <= (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2);
+        Math.abs(mhz - p.freqMhz) <= (p.sr / 1e6) * dispClip() / 2 - bw / 2);
       if (p) paneMoveVfo(p, d, mhz);
       else {
         pendingFreqUpdates.delete(d.id);   // a queued move must not land after this

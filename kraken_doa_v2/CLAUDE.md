@@ -3256,9 +3256,8 @@ Edit `include/config.hpp`:
   leaves no quiet tuner - drawn as the floor (nothing remembered in this
   mode); a tuner's step to a neighbour it never overlapped quietly is still
   measured (any content works); a response unlike the default shape gives
-  wrong steps until learned (~1 min, partial blends meanwhile); the
-  squelch reads the flattened floor against the unflattened spectrum
-  (<= ~2 dB at the band edges); a few frames after a retune carry old
+  wrong steps until learned (~1 min, partial blends meanwhile); a few
+  frames after a retune carry old
   samples under the new header frequency (heimdall's pipeline) - averaged
   in at the new place with weight alpha each. heimdall's wideband scan
   retunes take the drag fast path since 2026-10-21 (Windows 114 -> 74 ms per
@@ -3267,6 +3266,54 @@ Edit `include/config.hpp`:
   follows the receiver - 140-210 ms behind in the drag test, modelled on the
   full path's ~110 ms sweep; the fast path's 40 ms less per step not measured
   end to end)
+- ROLL-OFF COMPENSATION, every mode (2026-10-21, the user's "adjust the FFT
+  to compensate for the roll-off so we don't need edge clipping"): the
+  common response shape (`FFTProcessor::response_shape(fft_size)` =
+  `nfloor::shape_db`, the default or the learned one; under fft_mutex) is
+  taken off everything that shows or measures a tuner's spectrum - the
+  wideband stitch (as before), the coherent / independent frames
+  (`normalize_to_channel_floor`, message_builders.cpp; the shape keeps the
+  band's 10th percentile - the floor - where it was), the FFT squelch's peak
+  (`get_range_peak_db`: a VFO near an edge read up to 8 dB under its drawn
+  signal - in wideband scan mode ~2 dB before), the continuous scanner's
+  copy (`refreshFFTData`) and the assistant's peak hold (`t_get_spectrum`).
+  Not the beamformed FFT (a VFO's own narrow band). Shown: at least
+  `FLAT_SHOW_FRACTION` 0.95 (config.hpp = FLAT_SHOW in kraken_doa.html) of
+  a tuner's band where no other tuner covers it - coherent / independent
+  mode (page `dispClip()` = max(edge clip, 0.95): specSpan1, the type 0 / 6
+  crops, VFO limits `maxOffsetHz` / the panes', +-1.14 MHz instead of
+  +-0.96 at clip 0.8) and the wideband scan's two outer ends
+  (`stitch_wideband_fft`: 9.96 instead of 9.6 MHz at clip 0.8, 5 tuners;
+  `widebandSpanMhz()` for the VFO limit + coverage text). Edge clip keeps
+  setting the wideband tuner spacing (the overlap the gain steps need) and
+  the continuous scanner's step / usable part; a higher clip still widens
+  the coherent display (1.0 = the whole band); the sidebar's Edge Clip has a
+  help tip saying so. Why 0.95 (measured on the KrakenSDR, the capture of
+  the wideband work): roll-off 1-2 dB at +-0.9 MHz, 3 at +-1.0, 4.5-6 at
+  +-1.07, 7-9 at +-1.12-1.2 (the upper edge steeper); receiver noise stays
+  7-12 dB over the 8-bit quantisation noise at the very edge, so flattening
+  costs <= 0.8 dB of SNR in the outer 50 kHz; the dongles differ by <= 0.3
+  dB inside +-1 MHz, up to 1.5 dB in the last 100 kHz (one shape for all);
+  past +-1.14 MHz the 2.4 MHz sampling folds in what lies beyond the
+  opposite edge - a DVB-T just past an edge showed 28 dB down at the very
+  edge, 32 at 20-60 kHz in, 37 at 60-100, > 40 beyond (vs a true signal
+  there after flattening: 20 / 24 / 30 dB). The downconverter variant uses
+  the default shape (no wideband scan there to learn one) - not measured
+  through its IF chain
+- Roll-off tests (job scratch 0d0a7cca: t_flat.py + run_flat.sh, the test
+  build fed by fake_wbd.py - the measured shape + per-dongle gains on every
+  tuner, +30 dB carriers at -1.10 / -0.60 / +0.05 / +0.60 / +1.10 MHz; one
+  point per FFT bin): coherent noise per 100 kHz over +-1.14 MHz within 0.94
+  dB (2 display steps; before 3.76 - 0 dB at the edges, 3.3 in the middle),
+  the carriers within 1.9 dB (before 8.0: the +-1.10 MHz ones 4-8 dB low);
+  D0 on the +1.10 MHz carrier opens with its FFT squelch 3 dB under the
+  drawn level, stays shut 3 dB over (before and after); wideband 595.02 -
+  604.98 MHz, the outer ends' noise as inside; independent pane as coherent.
+  t_flat_ui.py (headless Chrome): coherent shows +-1.14 MHz, VFO limit (2.28
+  MHz - bw) / 2, edge clip 1.0 = the whole band, wideband 595.02 - 604.98 +
+  coverage "10.0", pane +-1.14, the help tip, no page errors. Unit tests and
+  the drag test as before (alternated with the build before: settle after
+  the 6 MHz jump 0.25-0.61 vs 0.61-0.66 s - run-to-run)
 - `noise_floors.json` (cwd, gitignored; `{"version":1,"floors":{"0|49.6":
   -27.49,...}}`): loaded at start (`nfloor::load`), written by the FFT
   worker at most every 5 min when a floor moved >= 0.5 dB
@@ -5031,7 +5078,9 @@ Edit `include/config.hpp`:
 - Page: `specOnFrame` (header -> `specHeaderSync`, the type-0 header's side
   effects factored out: mode hint, channel, digits, gain / averaging sliders,
   centre) -> main `specMain` + `applyClip` -> `specApplyMain`: `specSpan1`
-  (the edge-clipped band; the wideband scan's isn't clipped again) ->
+  (the middle `dispClip()` = max(edge clip, 0.95) of the band - the receiver
+  takes the roll-off off, *Noise floor*; the wideband scan's isn't clipped
+  again) ->
   `zoomWindow(z, lo1, hi1, centre)` (zoomSlice's rule on absolute MHz, keeps
   z.off inside) -> `specWindow(frame, w0, w1)`: the frame's points in the
   window, padded with 0 dB at its spacing where it doesn't reach (zoomed out,
