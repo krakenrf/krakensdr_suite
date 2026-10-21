@@ -176,6 +176,10 @@ All runtime configuration is in `config.h` at the project root:
 - `ENABLE_BIAS_TEE`: Enable bias-tee on all devices (default 1)
 - `USB_RESET_ON_INIT`: Reset USB on initialization (default 1)
 - Uses ARM NEON vectorization on aarch64, automatically falls back to scalar on x86_64
+- Compiled `-O3 -fno-math-errno -fcx-fortran-rules` + `-mcpu=native` on
+  aarch64 (`-march=native` x86_64; root CLAUDE.md *Compiler flags*). The
+  correlation's whole-array |z| loops use `std::sqrt(std::norm(z))` / a
+  norm compare - `std::abs` of a complex is a `hypotf` call per element
 
 **Coherence / Ingest Robustness:**
 - `RTL_USB_BUF_COUNT`: librtlsdr async USB transfer buffers (default 32 ≈ 218 ms cushion @ 2.4 MSPS; 0 = library default 15). Wider ring = more slack before the RTL2832 FIFO overflows if the reader thread stalls.

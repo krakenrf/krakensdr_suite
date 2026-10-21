@@ -68,7 +68,7 @@ constexpr double META_BURST_S = 0.2;       // processing time per burst for the 
 constexpr double META_CELL_S = 0.1;        // ... and per cell
 
 std::string fmt(const char* f, double v) {
-    char b[64];
+    char b[160];   // the "the VFO sees N % of it ..." note is ~90 characters
     snprintf(b, sizeof b, f, v);
     return b;
 }
