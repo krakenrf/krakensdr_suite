@@ -2610,7 +2610,7 @@ const MIN_BW_MHZ = bwo[MIN_BW_INDEX].bandwidth; // 0.001 MHz
 // the largest divisor of 2.4 MHz whose rate holds it and cuts its filter at
 // the bandwidth (config.hpp / shared_decimator.cpp). A width that fills its
 // rate wastes nothing (BW_EFFICIENT: the 59 rates 2.4 MHz / divisor - every
-// bwo size is one; the card's list); others run up to 1.25x their width (300
+// bwo size is one; the saved-frequency editor's list); others run up to 1.25x their width (300
 // kHz and below), and 1.2 - 2.4 MHz runs a full-rate filter at 2.4 MS/s -
 // the card's tooltip says what a custom width runs at (bwTitle). There is no
 // snapping option: since the real-tap decimator, every width up to 1.2 MHz
