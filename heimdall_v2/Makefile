@@ -31,6 +31,8 @@ SOURCES = $(CORE_SOURCES) $(SDR_SOURCES) $(DSP_SOURCES) $(NET_SOURCES) $(WEB_SOU
 
 # Object files (in build directory)
 BUILD_DIR = build
+# the compiler flags the objects were built with (rule further down)
+FLAGS_STAMP = $(BUILD_DIR)/.flags
 # FFT: pffft, vendored in external/pffft (plain C, BSD-style licence; replaced
 # FFTW 2026-10-17) - the correlation FFTs (src/dsp/fft_plan.cpp)
 PFFFT_OBJECTS = $(BUILD_DIR)/pffft/pffft.o $(BUILD_DIR)/pffft/pffft_common.o
@@ -158,7 +160,12 @@ endif
 RTLSDR_SRCS = $(wildcard $(RTLSDR_DIR)/src/*.c $(RTLSDR_DIR)/src/*.h $(RTLSDR_DIR)/include/*.h)
 
 # C++20 required for uWebSockets
-CFLAGS = -Wall -Wextra -std=c++20 -D_GNU_SOURCE -DUWS_NO_ZLIB
+# -fno-math-errno: sqrt & co. without an errno path (loops with them
+# vectorize); -fcx-fortran-rules: complex * and / without C99's inf / NaN
+# recovery (a __mulsc3 / __divsc3 call that keeps a complex loop - the
+# cross-spectrum - from vectorizing; division keeps its range scaling).
+# Unlike -ffast-math neither touches NaN tests or the order of sums
+CFLAGS = -Wall -Wextra -std=c++20 -D_GNU_SOURCE -DUWS_NO_ZLIB -fno-math-errno -fcx-fortran-rules
 CFLAGS += -I. -Isrc -Isrc/core -Isrc/sdr -Isrc/dsp -Isrc/net -Isrc/web -Iexternal
 CFLAGS += -I$(RTLSDR_DIR)/include   # the fork's headers, never a system rtl-sdr.h
 LDFLAGS = $(RTLSDR_LIB) $(LIBUSB_LIBS) -lpthread -lm -lz
@@ -193,9 +200,6 @@ ifeq ($(WINDOWS),1)
     WIN_MARCH ?= -march=x86-64-v3 -mtune=generic
     CFLAGS += -O3 $(WIN_MARCH) -Wa,-muse-unaligned-vector-move
     PFFFT_CFLAGS += $(WIN_MARCH) -Wa,-muse-unaligned-vector-move
-    # every object depends on this stamp of WIN_MARCH (rule below): another
-    # WIN_MARCH recompiles everything, not only the files that changed
-    WIN_MARCH_STAMP = $(BUILD_DIR)/.win_march
     # Windows 10+ API, windows.h without min/max macros and GDI (its ERROR
     # macro), M_PI & co. under -std=c++20, 64-bit off_t / stat sizes, libuv
     # under uSockets, and the POSIX functions MinGW lacks (win/posix_compat.h,
@@ -206,8 +210,12 @@ ifeq ($(WINDOWS),1)
               -include win/posix_compat.h
     PFFFT_CFLAGS += -DPFFFT_STATIC_DEFINE
 else ifeq ($(ARCH),aarch64)
-    CFLAGS += -O3 -march=armv8-a -mtune=cortex-a72 -ftree-vectorize
-    PFFFT_CFLAGS += -march=armv8-a -mtune=cortex-a72 -DPFFFT_ENABLE_NEON
+    # -mcpu=native: this CPU's instructions AND its tuning (a Pi 5: Cortex-A76,
+    # LSE atomics inline; it was -march=armv8-a -mtune=cortex-a72, the Pi 4's
+    # core). Like kraken_doa and the plugins, the build then runs only on the
+    # kind of CPU it was built on
+    CFLAGS += -O3 -mcpu=native
+    PFFFT_CFLAGS += -mcpu=native -DPFFFT_ENABLE_NEON
 else ifeq ($(ARCH),x86_64)
     CFLAGS += -O3 -march=native -mtune=native
     PFFFT_CFLAGS += -march=native
@@ -266,18 +274,18 @@ $(BUILD_DIR):
 # `all`'s prerequisites (check-deps and the target) otherwise build in
 # PARALLEL, and the link races the uWebSockets clone/build. The fork's static
 # library is order-only here too: its headers must exist before compiling.
-$(BUILD_DIR)/%.o: src/%.cpp $(WIN_MARCH_STAMP) | $(BUILD_DIR) check-uws $(RTLSDR_LIB)
+$(BUILD_DIR)/%.o: src/%.cpp $(FLAGS_STAMP) | $(BUILD_DIR) check-uws $(RTLSDR_LIB)
 	@echo "Compiling $<..."
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -MP -IuWebSockets/src -IuWebSockets/uSockets/src -c $< -o $@
 
-$(BUILD_DIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) $(WIN_MARCH_STAMP) | $(BUILD_DIR)
+$(BUILD_DIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) $(FLAGS_STAMP) | $(BUILD_DIR)
 	@echo "Compiling $<..."
 	@mkdir -p $(dir $@)
 	$(PFFFT_CC) $(PFFFT_CFLAGS) -c $< -o $@
 
 # Windows process setup + manifest resource (see WIN_OBJECTS)
-$(BUILD_DIR)/win/win_init.o: win/win_init.cpp win/posix_compat.h $(WIN_MARCH_STAMP) | $(BUILD_DIR)
+$(BUILD_DIR)/win/win_init.o: win/win_init.cpp win/posix_compat.h $(FLAGS_STAMP) | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -285,20 +293,25 @@ $(BUILD_DIR)/win/app_res.o: win/app.rc win/app.manifest | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	windres --include-dir win -O coff $< -o $@
 
-ifeq ($(WINDOWS),1)
-# The WIN_MARCH the objects were built with. Rewritten (and so newer than
-# every object) only when it differs, e.g. `make WIN_MARCH=-march=x86-64-v2`
-# for a CPU without AVX2: the objects of the default x86-64-v3 build would
-# otherwise stay in the exe and still crash there
-ifneq ($(shell cat $(WIN_MARCH_STAMP) 2>/dev/null),$(strip $(WIN_MARCH)))
-$(WIN_MARCH_STAMP): win-march-changed
+# The compiler flags the objects were built with (every platform). Rewritten
+# (and so newer than every object) only when they differ, so a flags change
+# recompiles everything, not only the files that changed - e.g. `make
+# WIN_MARCH=-march=x86-64-v2` for a CPU without AVX2 (the objects of the
+# default x86-64-v3 build would otherwise stay in the exe and still crash
+# there), or new optimisation flags reaching an existing build
+FLAGS_TEXT = $(strip $(CC) $(CFLAGS) | $(PFFFT_CC) $(PFFFT_CFLAGS))
+ifneq ($(shell cat $(FLAGS_STAMP) 2>/dev/null),$(FLAGS_TEXT))
+$(FLAGS_STAMP): flags-changed
 endif
-$(WIN_MARCH_STAMP):
+$(FLAGS_STAMP):
 	@mkdir -p $(dir $@)
-	@echo '$(strip $(WIN_MARCH))' > $@
+	@echo '$(FLAGS_TEXT)' > $@
 
-.PHONY: win-march-changed rtlsdr-reconfigure
-win-march-changed rtlsdr-reconfigure:
+.PHONY: flags-changed
+flags-changed:
+ifeq ($(WINDOWS),1)
+.PHONY: rtlsdr-reconfigure
+rtlsdr-reconfigure:
 endif
 # forcing prerequisites of the fork's library (every platform, see RTLSDR_FIX_MARK)
 .PHONY: rtlsdr-update rtlsdr-check
