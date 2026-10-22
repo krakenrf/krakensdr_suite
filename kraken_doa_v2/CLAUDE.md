@@ -664,8 +664,15 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   has its own (`selTuner` = the highlighted pane; `sendFreqChange` / `sgn`
   still route to TUNER_FREQ / TUNER_GAIN for it), `vfoCenterMhz(dec)` for VFO absolute
   frequencies, per-pane waterfall auto-range (`computeAutoRange`)
-- Zoom (kraken_doa.html "SPECTRUM ZOOM" block): `{level 1..16, off}` per
-  display - `mainZoom` (coherent / wideband) or each pane's `p.zoom`;
+- Zoom (kraken_doa.html "SPECTRUM ZOOM" block): `{level 1..ZOOM_MAX, off}`
+  per display - `mainZoom` (coherent / wideband) or each pane's `p.zoom`;
+  ZOOM_MAX 32 (16 until 2026-10-22, the user's request; the slider 0-125).
+  Past ~16x a wide plot gets fewer FFT bins (146.5 Hz) than pixels - the
+  spectrum is magnified, not finer (32x on a 1600 px window: a 60 kHz
+  window, 410 points, one per bin), the tuning bars are (~34 Hz a pixel).
+  Test: job scratch e2e/t_zoom32.py (headless Chromium, real wheel events:
+  slider, wheel stops at 32x, the server's frames for the 60 kHz window at
+  one point per bin with the tone in it, a pane to 32x; 12 / 12);
   the server sends each page the window it shows at its plot's width
   (*Spectrum views*, type 7: zoomed in = more detail, same data rate) and
   `zoomWindow()` / `specWindow()` cut / pad the latest frame to it; with a
@@ -679,7 +686,7 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   adds a waterfall line; zoom / zoom slider / edge-clip slider redraw the
   last frame without one (the waterfall just takes the new range for its
   overlay + clicks), and a wheel notch that changes nothing (`zoomWheel`
-  returns false at 1x / 16x) redraws nothing. Every redraw used to push the
+  returns false at 1x / ZOOM_MAX) redraws nothing. Every redraw used to push the
   frame into the waterfall again: it ran 2.5-3.5x fast while zooming
 - Split: `#fp-split` drags the main spectrum height (`kraken_fp_h`,
   localStorage; window resize refits uPlot); each pane's `.tpane-split` sets

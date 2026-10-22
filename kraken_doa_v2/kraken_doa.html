@@ -2107,7 +2107,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         </div>
         <div class="wf-controls" id="wf-controls-bar">
           <label>FFT Y:<input type="range" id="fft-ymax" min="10" max="100" value="60" step="10" oninput="updateFFTYAxis(this.value);sendUI('FFT_Y',this.value)" style="width:50px"><span id="fft-ymax-val">60</span></label>
-          <label title="Spectrum zoom - or use the mouse wheel on the spectrum (in independent mode: the selected pane)">Zoom:<input type="range" id="zoom-sl" min="0" max="100" value="0" oninput="zoomFromSlider(this.value)" style="width:70px"><span id="zoom-val" style="min-width:34px">1.0x</span><span id="zoom-res" title="Spacing of the displayed spectrum points. Zooming in sends the same number of points over less spectrum - more detail, down to the FFT's own bin width, at the same data rate" style="color:#888;margin-left:4px;min-width:44px"></span></label>
+          <label title="Spectrum zoom - or use the mouse wheel on the spectrum (in independent mode: the selected pane)">Zoom:<input type="range" id="zoom-sl" min="0" max="125" value="0" oninput="zoomFromSlider(this.value)" style="width:70px"><span id="zoom-val" style="min-width:34px">1.0x</span><span id="zoom-res" title="Spacing of the displayed spectrum points. Zooming in sends the same number of points over less spectrum - more detail, down to the FFT's own bin width, at the same data rate" style="color:#888;margin-left:4px;min-width:44px"></span></label>
           <span style="color:#555">|</span>
           <label>Speed: <input type="range" id="wf-speed" min="1" max="10" value="5" oninput="updateWaterfallSpeed(this.value);sendUI('WF_SPEED',this.value)"></label>
           <label>Color:
@@ -9183,13 +9183,17 @@ setInterval(() => {
 // ============================================================================
 // SPECTRUM ZOOM (mouse wheel / Zoom slider) + SPECTRUM/WATERFALL SPLIT
 // ----------------------------------------------------------------------------
-// Zoom = {level 1..16, off = window centre - frame centre in MHz}. The data is
+// Zoom = {level 1..ZOOM_MAX, off = window centre - frame centre in MHz}. The data is
 // sliced (zoomSlice) before it reaches the plot and the waterfall, so the
 // spectrum, tuning bars and waterfall share the zoomed range. Coherent /
 // wideband: mainZoom (the main display); independent: each pane's own, the
-// slider shows / sets the selected pane's.
+// slider shows / sets the selected pane's. 32x (was 16, the user's request
+// 2026-10-22): past ~16x a wide plot shows fewer FFT bins (146.5 Hz each)
+// than it has pixels - the spectrum is magnified, not finer; the tuning bars
+// are (a pixel is ~34 Hz at 32x on a 1760 px plot). The slider is log2 x 25:
+// max 125 = 32x
 // ============================================================================
-const ZOOM_MAX = 16;
+const ZOOM_MAX = 32;
 const mainZoom = {level: 1, off: 0};
 function zoomTarget() {
   if (opMode === 'independent') { const p = panes[selTuner]; return p ? {z: p.zoom, center: p.freqMhz} : null; }
