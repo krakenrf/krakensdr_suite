@@ -1317,7 +1317,8 @@ PTYN, RadioText, RT+, eRT, Long PS, clock time, AF, TP / TA, DI, PIN, EON,
 the ODA directory, TMC / DAB / EWS groups; RDS2 streams (66.5 / 71.25 / 76
 kHz, block-synced); the pilot and every MPX subcarrier 20-99 kHz probed - SCA
 FM audio (tones told apart from FSK), FSK data with its bit rate, DARC-like,
-AM; Listen = an SCA's audio (150 us) or the main programme in mono; a talker
+AM; Listen = an SCA's audio (150 us) or the main programme in mono,
+"🔊 Listening" again = back to the VFO's own WBFM (the bandwidth kept); a talker
 packet "PI xxxx" per RDS group (UI kind `broadcast` 🎙). Generator
 `plugins/rds/tools/rds_gen.py`, playback `rds-two-stations`. Checked on a
 real US station's recording (pysdr.org: PI, RT, dynamic PS, a real 67 kHz

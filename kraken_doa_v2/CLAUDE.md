@@ -4822,7 +4822,9 @@ Edit `include/config.hpp`:
 - Audio (`audio` option): auto = the strongest FM-audio SCA else the main
   programme (mono, 75 us), sca / 67 / 92 / other (`sca_khz`); SCA 150 us
   (`deemph`), muted "(no carrier)" 1.5 s after its subcarrier left the
-  spectrum. Voice to Text takes that audio
+  spectrum. Voice to Text takes that audio. "🔊 Listening" again = back to
+  the VFO's WBFM, bandwidth kept (*VFO audio*). kraken_doa's WBFM is mono
+  (no stereo decoder anywhere)
 - Talkers: a packet `PI xxxx` per RDS group with >= 3 good blocks of the
   confirmed station (exact 104 bits, ~0.2 ms - the first biphase bit's
   start), the carrier to the kHz, 200 kHz wide, avg 10 s, keep 30 min.
@@ -5620,8 +5622,20 @@ Edit `include/config.hpp`:
   decimator_info; refreshed in place (not part of updateDecimatorList's
   structure check). The top bar's Audio off dims them (`.mute-all`, said in
   the tooltip); clicking a muted speaker while it is off switches the audio
-  on too. The decoder tab's 🔊 Listen adds the VFO (Digital demod), "🔊
-  Listening" mutes it again. The spectrum title lists the VFOs heard ("D0
+  on too. The decoder tab's 🔊 Listen adds the VFO (Digital demod); "🔊
+  Listening" goes back to the demod it had before Digital, heard or muted
+  as it was then, the bandwidth kept (`digDemodBefore` in the globals
+  block, set by `setDecimatorDemodMode` on entering Digital, localStorage
+  `kraken_dig_demod_before`; nothing remembered - Digital set by another
+  page - = WBFM on a VFO >= 150 kHz, else muted as before:
+  `digListenBack`). It only muted it until 2026-10-22: the RDS plugin's SCA
+  audio had no way back to the station's WBFM but the card's Demod list,
+  which also reset 400 kHz to 240 kHz (the 92 kHz SCA gone). That list
+  (`decDemodPicked`) now keeps the bandwidth too when it goes back to the
+  remembered demod; any other demod gets its usual bandwidth as before
+  (saved frequencies / the assistant call `setDecimatorDemodMode` as
+  before). Test: job scratch 8e472af8 t_listen.py (headless Edge, real
+  clicks, the rds playback on a test build: 35 checks). The spectrum title lists the VFOs heard ("D0
   NBFM, D2 AM"). The recorder's band VFO default reads "The VFO you listen
   to (the first 🔊)"
 - Tests (job scratch 46eef211, test build on 5708x, fake heimdall with FM

@@ -84,7 +84,11 @@ strongest SCA carrying FM audio, else the main programme), main programme
 frequency ("SCA kHz"). SCA audio: FM demodulated, de-emphasis 150 us (the
 SCA standard; option), 3.6 kHz. Muted ("no carrier") once its subcarrier
 is gone. Voice to Text transcribes that audio (an SCA reading service, or
-talk radio).
+talk radio). "🔊 Listening" clicked again goes back to the VFO's own WBFM
+audio (the demod it had before, heard or muted as then, the bandwidth
+kept - a 400 kHz VFO keeps its 92 kHz SCA); so does picking WBFM again in
+the VFO card's Demod list. Note: kraken_doa's WBFM demodulator is mono -
+there is no stereo decoding of the main programme.
 
 ## Signal processing
 
