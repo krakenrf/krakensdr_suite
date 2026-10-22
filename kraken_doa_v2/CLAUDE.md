@@ -5053,7 +5053,8 @@ Edit `include/config.hpp`:
   capture with partial pushes): the list complete between full pushes, one
   order throughout, by name, compass bearings, heading sorts + reverse +
   localStorage, a row still picks its device
-- Built with `-O3` (`plugins/ism/CXXFLAGS`): the front end's per-bin loops
+- Built with `-O3` (every plugin's default since 2026-10-22 - root
+  CLAUDE.md *Compiler flags*; it was ism's own `CXXFLAGS` file): the front end's per-bin loops
   (`__restrict` pointers) vectorise - GCC's -O2 cost model takes no loop
   that needs an epilogue; the output is identical (checked on all 1125
   recordings against the -O2 build, scratchpad scripts/cmp_bin.py). CPU
@@ -5645,8 +5646,10 @@ Edit `include/config.hpp`:
   executable `plugins/<id>/build/decoder` (linked as decoder.tmp, then
   renamed: a running copy keeps its inode). The top Makefile's `plugins`
   target runs it with -k and only warns on failure; CMake has an ALL target.
-  An optional `CXXFLAGS` file in a plugin folder adds compiler flags (last
-  on the command line; ism: -O3)
+  Every plugin and libkrakendig build with `-O3 -fno-math-errno
+  -fcx-fortran-rules` (+ `-mcpu=native` on aarch64 - root CLAUDE.md
+  *Compiler flags*). An optional `CXXFLAGS` file in a plugin folder adds
+  compiler flags (last on the command line; no shipped plugin has one)
 - `decoder --info` (JSON incl. `options` and `options_tsv` - the
   tab-separated copy kraken_doa's flat JSON reader parses; read by
   `PluginRegistry::scan()` at startup, on `PLUGINS_RESCAN` (worker thread,

@@ -52,6 +52,8 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|armv7|arm")
     target_compile_definitions(pffft PRIVATE PFFFT_ENABLE_NEON)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "armv7")
         target_compile_options(pffft PRIVATE -mfpu=neon)
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+        target_compile_options(pffft PRIVATE -mcpu=native)
     endif()
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
     target_compile_options(pffft PRIVATE -march=native)
@@ -242,12 +244,17 @@ if(WIN32)
     target_compile_options(heimdall PRIVATE
         "$<$<COMPILE_LANGUAGE:CXX>:-O3;${HEIMDALL_WIN_MARCH};${HEIMDALL_WIN_ASFLAGS}>")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
-    target_compile_options(heimdall PRIVATE -O3 -march=armv8-a -mtune=cortex-a72 -ftree-vectorize)
+    # this CPU's instructions and tuning (Pi 5: Cortex-A76) - see the Makefile
+    target_compile_options(heimdall PRIVATE -O3 -mcpu=native)
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
     target_compile_options(heimdall PRIVATE -O3 -march=native -mtune=native)
 else()
     target_compile_options(heimdall PRIVATE -O2)
 endif()
+# sqrt & co. without an errno path, complex * / without the C99 NaN-recovery
+# call: both let loops vectorize (see the Makefile's CFLAGS)
+target_compile_options(heimdall PRIVATE
+    "$<$<COMPILE_LANGUAGE:CXX>:-fno-math-errno;-fcx-fortran-rules>")
 
 # Find uSockets object files
 file(GLOB USOCKETS_OBJS "${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/uSockets/*.o")

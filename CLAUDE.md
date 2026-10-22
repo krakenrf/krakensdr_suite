@@ -2007,7 +2007,8 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
 **Heimdall Server**:
 - ARM NEON vectorization for sample processing
 - Automatic fallback to scalar on x86_64
-- Optimized for Raspberry Pi 4 Cortex-A72
+- Built for the CPU it is built on (`-mcpu=native`; was the Pi 4's
+  Cortex-A72) - see *Compiler flags* below
 
 **DoA Client**:
 - IQ conversion: Compiler auto-vectorization preferred over manual NEON
@@ -2015,6 +2016,53 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
   liquid-dsp's NEON dot products (built from source - `liquid.mk`)
 - FFT: pffft (NEON), no planning / wisdom file - see kraken_doa_v2/CLAUDE.md
   *FFT (pffft)*
+
+### Compiler flags (2026-10-22, the user's request: full optimisation on the Pi 5)
+
+- kraken_doa `-Ofast -march=native -mtune=native` (unchanged); heimdall
+  `-O3 -mcpu=native` on aarch64 (was `-march=armv8-a -mtune=cortex-a72` -
+  the Pi 4's core), `-march=native` x86_64; the plugins + libkrakendig
+  `-O3` (was `-O2`) + `-mcpu=native` on aarch64 (`-march=native` alone
+  tunes for a generic ARMv8 core); liquid-dsp / pffft / librtlsdr /
+  whisper.cpp as before (Release / -O3, native). Windows keeps the portable
+  `WIN_MARCH` everywhere
+- heimdall and the plugins: `-fno-math-errno` (sqrt & co. without an errno
+  path - such loops vectorize) and `-fcx-fortran-rules` (std::complex * and /
+  without C99's inf / NaN recovery: GCC keeps a `__mulsc3` / `__divsc3` call
+  in every complex multiply otherwise, and the loop doesn't vectorize -
+  "unsupported control flow"; division keeps its range scaling). NOT
+  `-ffast-math` there: its `-ffinite-math-only` folds `std::isfinite` to
+  true (NaN = unknown in `kp::MapPoint`, see `is_finite_value()`), and its
+  reassociation would change results. `std::abs` of a complex stays a
+  `hypotf` call without fast-math: heimdall's correlation uses
+  `std::sqrt(std::norm(z))` / a norm compare for its whole-array loops
+- A stamp of the compiler flags (`build/.flags`, `plugins/lib/build/.flags`;
+  every platform - it was `WIN_MARCH` on Windows only) recompiles
+  everything when the flags change, so an existing build picks new flags up
+  (kraken_doa's own Makefile still has the Windows-only `WIN_MARCH` stamp)
+- `-mcpu=native` / `-march=native` builds run only on the kind of CPU they
+  were built on (a Pi 5 build on a Pi 4: illegal instruction) - build on
+  the device (install.sh, the Dockerfile do)
+- Measured on the Pi 5 (GCC 14.2, Debian 13; job scratch 63520c26, results
+  in ~/flagtest_527fd2/out on the Pi; A = main, B = these flags):
+  heimdall's correlation per 5-channel set (micro-benchmark, one core)
+  4.25 -> 2.63 ms (-38 %): peak search 1.02 -> 0.49 ms and display
+  magnitudes 1.04 -> 0.10 ms (the norm code), cross-spectrum 1.08 -> 0.94
+  ms (the flags), forward FFTs and the conversion worker's loops unchanged;
+  the same peaks, display values within 3e-8. On the KrakenSDR (2 rounds A /
+  B): the correlation thread while calibrating 46 -> 41-43 % of a core (a
+  pass ~8.6 -> ~7.2 ms with its 10 ms sleep), heimdall 58.5 -> 54-56 %;
+  CONVERGED in 23-28 s either way (the lag servo's slew), forced recal
+  4.6-6.1 s, calibration check OK (|lag| 0.0, |phase| 0.2-0.3 deg), 0
+  coherence events; converged 13.8 vs 14.0 % of a core (3 rounds, ranges
+  overlapping: unchanged). Plugins: all 34 debug-playback test
+  transmissions decoded offline by A and B - outputs identical 34 / 34 (bar
+  timing lines), CPU 41.0 -> 38.1 s (-7 %): lora -12..-23 %, p25 -19 %,
+  adsb -13 %, cells -7 %, dtv -6 %, the rest within +-5 %. Build on the Pi:
+  heimdall 51 -> 41 s, plugins 151 -> 158 s. -O3 found two snprintf
+  truncations (`fmt()` 64-byte buffers in dme and cells: the "not a DME
+  frequency" fact and the cells "the VFO sees N % ..." note were cut off) -
+  fixed
 
 ### Memory Management
 

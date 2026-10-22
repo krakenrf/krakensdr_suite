@@ -83,7 +83,9 @@ static void maybe_run_coherence_monitor(const std::vector<ComplexBuffer>& comple
 
         float peak_mag = 0.0f; int peak_idx = 0; double sum_mag = 0.0;
         for (int i = 0; i < CORRELATION_SIZE; i++) {
-            const float m = std::abs(ctime[i]);
+            // sqrt(norm), not std::abs: that is a hypotf call per element
+            // (overflow-safe, unneeded at these magnitudes) - this vectorizes
+            const float m = std::sqrt(std::norm(ctime[i]));
             sum_mag += m;
             if (m > peak_mag) { peak_mag = m; peak_idx = i; }
         }
@@ -434,8 +436,9 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
         corr_plan->cross_correlate(ref_fft, channel_ffts[ch]);
         auto* correlation_time = corr_plan->get_correlation_time();
         
+        // |a| < |b| as norms: the same order without two hypotf calls per step
         auto max_it = std::max_element(correlation_time, correlation_time + CORRELATION_SIZE,
-                                 [](const auto& a, const auto& b) { return std::abs(a) < std::abs(b); });
+                                 [](const auto& a, const auto& b) { return std::norm(a) < std::norm(b); });
         
         int peak_index = std::distance(correlation_time, max_it);
         ParabolicPeak refined_peak = gaussian_interpolation(correlation_time, peak_index, CORRELATION_SIZE);
@@ -529,7 +532,7 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
         
         std::transform(correlation_time, correlation_time + CORRELATION_SIZE,
                  staged_corr[corr_idx].begin(),
-                 [scale](const auto& val) { return std::abs(val) * scale; });
+                 [scale](const auto& val) { return std::sqrt(std::norm(val)) * scale; });
         
         corr_idx++;
     }

@@ -66,7 +66,9 @@ plugins/
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
-    ├── CXXFLAGS          optional: extra compiler flags for this plugin (e.g. -O3)
+    ├── CXXFLAGS          optional: extra compiler flags for this plugin (e.g.
+    │                     -funroll-loops; the defaults are already -O3
+    │                     -fno-math-errno -fcx-fortran-rules, -mcpu=native on a Pi)
     ├── tools/            test-signal generator (real framing / FEC / CRC, several
     │                     transmitters with their IDs) - see ID separation below
     ├── README.md         what it decodes, ID separation, sources/specs used, test results

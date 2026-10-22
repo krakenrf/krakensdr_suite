@@ -89,7 +89,7 @@ constexpr double REPORT_S = 1.0;
 constexpr double ACTIVE_S = 5.0;                     // a channel without pairs this long is quiet
 
 std::string fmt(const char* f, double v) {
-    char b[64];
+    char b[160];   // the "... is not a DME frequency ..." fact is ~80 characters
     snprintf(b, sizeof b, f, v);
     return b;
 }
