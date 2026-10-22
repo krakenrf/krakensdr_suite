@@ -8,8 +8,9 @@
 // mixer) and off it (the mixer in front / folded into the first stage), the
 // output rate / bandwidth (what the rest of the pipeline - MUSIC,
 // demodulators, decoders - pays per sample), and the decimator fed blocks of
-// odd lengths (1, 7, 333 ... - every stage keeps what it hasn't used up)
-// against a plain double-precision reference of the same plan (the mixer at
+// odd lengths (1, 7, 31, 333, 1025 ... - every stage keeps what it hasn't
+// used up; a first stage filtering straight from the block reaches back into
+// its history) against a plain double-precision reference of the same plan (the mixer at
 // the input rate, every stage a full convolution): max |diff| / rms. Then
 // the frequency response (tones through the real SharedDecimator, with the
 // VFO on the centre and 300 kHz off it).
@@ -101,10 +102,13 @@ double stream_check(int bw_hz, float offset_hz, const std::vector<cf>& x) {
     SharedDecimator dec;
     dec.initialize(1);
     std::vector<cf> got;
-    const size_t lens[] = {16384, 1000, 7, 333, 4096, 12345, 1, 9999, 2, 3};
+    // around typical tap counts (a block shorter than a window: the windows
+    // that reach back into the history) and the 1024-sample chunks
+    const size_t lens[] = {16384, 1000, 7, 333, 4096, 12345, 1, 9999, 2, 3, 30, 31, 63, 64, 65, 145, 146, 1023, 1024, 1025};
+    const size_t nlens = sizeof lens / sizeof lens[0];
     size_t at = 0;
-    for (int k = 0; at < x.size(); k++) {
-        size_t n = std::min(lens[k % 10], x.size() - at);
+    for (size_t k = 0; at < x.size(); k++) {
+        size_t n = std::min(lens[k % nlens], x.size() - at);
         const cf* p = x.data() + at;
         auto r = dec.decimateMultiChannel(&p, &n, 1, bw_hz, offset_hz);
         if (!r.channels.empty()) got.insert(got.end(), r.channels[0].samples.begin(), r.channels[0].samples.end());
@@ -158,7 +162,7 @@ int main(int argc, char** argv) {
     std::normal_distribution<float> g(0.0f, 0.3f);
     std::vector<cf> x(BLOCK * 4);
     for (auto& v : x) v = cf(g(rng), g(rng));
-    std::vector<cf> xs(BLOCK * 2 + 12345);   // the stream checks
+    std::vector<cf> xs(BLOCK * 3);   // the stream checks
     for (auto& v : xs) v = cf(g(rng), g(rng));
 
     std::cout.setstate(std::ios::failbit);   // SharedDecimator's own log lines

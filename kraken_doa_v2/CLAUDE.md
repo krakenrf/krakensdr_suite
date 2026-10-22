@@ -239,7 +239,15 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   stage. A block goes through the whole cascade in CHUNKS of `DECIM_CHUNK`
   1024 input samples (2026-10-22, decimateChannel), so every stage's buffer
   stays a chunk + its history long, in the core's L1 - see the
-  measurements below for why. Kinds:
+  measurements below for why. A regular first stage whose input isn't
+  mixed in front (folded, or the VFO on the tuner centre - not a halfband,
+  which splits its input) filters STRAIGHT FROM the input block
+  (`FirStage::begin_input` / `pending_upto` / `produce_upto` /
+  `end_input`, the user's go 2026-10-22): its history x gets only the
+  block's first L - 1 samples, for the windows that reach back into it,
+  every other window is computed from the block itself (across the chunks
+  in place), and at the end x keeps what the next block's windows reach
+  back to (<= L - 1 + M samples). Kinds:
   - regular: real taps
   - FOLDED (`Plan::fold`, the first stage only): the mixer in the taps -
     h[k] e^{+jwk} on the RAW input (copied in), each output turned by the
@@ -393,11 +401,24 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   narrow VFO ~7 % of a core instead of ~19. decim_bench (hot caches) mean
   1.69 -> 1.59 ns on centre; every check against the reference unchanged
   (<= 7.1e-5 of rms, blocks of 1 - 16384 samples across the chunk edges).
-  What is left with two VFOs (perf, share of the samples / of a core):
+  What was left with two VFOs (perf, share of the samples / of a core):
   `produce` ~24 % / ~7.6 %, the copy into a folded first stage still ~19 %
-  / ~6 % (its source block is cold - filtering straight from it, without
-  the copy, would save most of that: not done), then the spectrum FFT, the
-  IQ conversion of the 5 antennas, the receiver thread
+  / ~6 %. Filtering straight from the block (above) removed the copy
+  completely (perf: no memcpy left) but saved less than its share: the
+  filter now pays the cold read of the block the copy paid (`run` 40 % /
+  ~10.8 % of a core with two VFOs) - chunked / direct, two runs each, % of
+  a core: one VFO 19.0 -> 18.1, two 26.5 -> 25.6, three 32.5 -> 30.7, 240
+  kHz 26.6 -> 26.0, DoA + beamforming 19.4 -> 18.7; decim_bench (hot) mean
+  1.59 -> 1.50 ns on centre, 2.82 -> 2.68 off it; every check against the
+  reference unchanged (7.1e-5 of rms; block lengths now also 30, 31, 63 -
+  65, 145, 146, 1023 - 1025: windows reaching back into the history, the
+  chunk edges). Over the day (the same harness, separate runs): one VFO
+  28.5 -> 18.1, three 66.8 -> 30.7 % of a core. What is left is mostly
+  each VFO's read of every antenna's input (5 x 19.2 MB/s): VFOs sharing
+  one pass over a chunk per antenna (every VFO's first stage while it is
+  in L1) would cut that - a restructure of the pipeline, not done; then
+  the spectrum FFT, the IQ conversion of the 5 antennas, the receiver
+  thread
 - Tests (job scratch 415cedbd e2e/, on the Pi: `fake_heimdall_bw.py` = a
   5-element UCA scene, tone A +100 kHz from 60 deg, tone B +125 kHz from
   200 deg; `t_bw.py` against a TEST build on 5808x / 5809x): 24 / 24 -
@@ -6253,14 +6274,15 @@ mixer (in front of, or folded into, the first stage) and a cascade of
 `FirStage` block FIRs (every output computed straight from the stage's
 buffer - no per-sample window pushes; regular / folded / halfband), split
 as `planStages` finds cheapest, a block through the whole cascade in
-1024-sample chunks (`DECIM_CHUNK`: the buffers stay in L1), the antennas
-in parallel on the decimator's `ThreadPool`. Details + measurements:
+1024-sample chunks (`DECIM_CHUNK`: the buffers stay in L1), a first stage
+whose input isn't mixed in front filtering straight from the block (no
+copy), the antennas in parallel on the decimator's `ThreadPool`. Details + measurements:
 *Arbitrary VFO bandwidth* above (`tools/decim_bench.cpp`). Pi 5, one
 antenna, hot caches, ns per input sample with the VFO off the tuner centre
 (mixer included): ~2.1-3.5 up to 240 kHz, ~3.9-7.3 at 250 kHz - 1.2 MHz,
 7.9-9.9 for the full-rate widths 1.2 - 2.4 MHz, 3.2 for 2.4 MHz (the mixer
 alone). In the live pipeline a 12.5 kHz VFO with DoA and 5 antennas adds
-~7 % of a core to kraken_doa (it was ~19 % before the chunking: memory-
+~6-7 % of a core to kraken_doa (it was ~19 % before the chunking: memory-
 bound, see *Arbitrary VFO bandwidth*).
 
 ### 3. FFT Processing

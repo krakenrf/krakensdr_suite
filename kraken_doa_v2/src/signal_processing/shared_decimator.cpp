@@ -487,26 +487,38 @@ size_t SharedDecimator::FirStage::pending() const {
     return pos < x.n ? (x.n - 1 - pos) / static_cast<size_t>(M) + 1 : 0;
 }
 
+// A regular / folded stage's outputs (a halfband's are in produce: its
+// centre tap reads o)
+void SharedDecimator::FirStage::run(const complex<float>* first, size_t n, Dst out) {
+    if (!n) return;
+    const float* w0 = reinterpret_cast<const float*>(first);
+    const size_t step = 2 * static_cast<size_t>(M);
+    float* a = reinterpret_cast<float*>(out.a);
+    float* b = reinterpret_cast<float*>(out.b);
+    if (folded) {
+        if (b) fir_cplx<true>(g2r.data(), g2i.data(), 2 * L, w0, step, n, ph, ps, a, b);
+        else fir_cplx<false>(g2r.data(), g2i.data(), 2 * L, w0, step, n, ph, ps, a, b);
+    } else {
+        if (b) fir_real<true, false>(t2.data(), 2 * L, w0, step, n, nullptr, 0.0f, a, b);
+        else fir_real<false, false>(t2.data(), 2 * L, w0, step, n, nullptr, 0.0f, a, b);
+    }
+}
+
 void SharedDecimator::FirStage::produce(Dst out) {
     const size_t n = pending();
     const size_t at = pos - (L - 1);   // the next output's window starts at x[at]
-    const float* w0 = reinterpret_cast<const float*>(x.data()) + 2 * at;
-    const size_t step = 2 * (half ? 1 : static_cast<size_t>(M));
-    float* a = reinterpret_cast<float*>(out.a);
-    float* b = reinterpret_cast<float*>(out.b);
-    if (n) {
-        if (folded) {
-            if (b) fir_cplx<true>(g2r.data(), g2i.data(), 2 * L, w0, step, n, ph, ps, a, b);
-            else fir_cplx<false>(g2r.data(), g2i.data(), 2 * L, w0, step, n, ph, ps, a, b);
-        } else if (half) {
+    if (half) {
+        if (n) {
+            const float* w0 = reinterpret_cast<const float*>(x.data()) + 2 * at;
             // o[at + j] = output j's centre sample (o holds cd of history)
             const float* oc = reinterpret_cast<const float*>(o.data()) + 2 * at;
-            if (b) fir_real<true, true>(t2.data(), 2 * L, w0, step, n, oc, hc, a, b);
-            else fir_real<false, true>(t2.data(), 2 * L, w0, step, n, oc, hc, a, b);
-        } else {
-            if (b) fir_real<true, false>(t2.data(), 2 * L, w0, step, n, nullptr, 0.0f, a, b);
-            else fir_real<false, false>(t2.data(), 2 * L, w0, step, n, nullptr, 0.0f, a, b);
+            float* a = reinterpret_cast<float*>(out.a);
+            float* b = reinterpret_cast<float*>(out.b);
+            if (b) fir_real<true, true>(t2.data(), 2 * L, w0, 2, n, oc, hc, a, b);
+            else fir_real<false, true>(t2.data(), 2 * L, w0, 2, n, oc, hc, a, b);
         }
+    } else if (n) {
+        run(x.data() + at, n, out);
     }
     pos += n * (half ? 1 : static_cast<size_t>(M));
     // Keep only what a later output needs: its window's first sample
@@ -516,6 +528,58 @@ void SharedDecimator::FirStage::produce(Dst out) {
     x.drop(k);
     if (half) o.drop(k);
     pos -= k;
+}
+
+// Where the outputs from the k-th one on go (two phases: an odd k swaps them)
+static SharedDecimator::Dst dst_after(SharedDecimator::Dst d, size_t k) {
+    if (!d.b) return {d.a + k, nullptr};
+    if ((k & 1) == 0) return {d.a + k / 2, d.b + k / 2};
+    return {d.b + k / 2, d.a + k / 2 + 1};
+}
+
+void SharedDecimator::FirStage::begin_input(const complex<float>* in, size_t n) {
+    ext = in;
+    ext_n = n;
+    ext_h = x.n;
+    // the windows that start in x reach up to L - 2 samples into the block
+    const size_t b = std::min(n, L - 1);
+    if (b) std::memcpy(static_cast<void*>(x.grow(b)), in, b * sizeof(complex<float>));
+}
+
+size_t SharedDecimator::FirStage::pending_upto(size_t end) const {
+    const size_t last = ext_h + end;   // the stream index after block sample end - 1
+    return pos < last ? (last - 1 - pos) / static_cast<size_t>(M) + 1 : 0;
+}
+
+void SharedDecimator::FirStage::produce_upto(size_t end, Dst out) {
+    const size_t n = pending_upto(end);
+    const size_t m = static_cast<size_t>(M);
+    // first the ones whose window starts in x (newest sample before stream
+    // index ext_h + L - 1 - x holds them whole), then the rest from the block
+    const size_t lim = ext_h + L - 1;
+    const size_t nx = std::min(n, pos < lim ? (lim - 1 - pos) / m + 1 : size_t{0});
+    if (nx) {
+        run(x.data() + (pos - (L - 1)), nx, out);
+        pos += nx * m;
+    }
+    if (n > nx) {
+        run(ext + (pos - (L - 1) - ext_h), n - nx, dst_after(out, nx));
+        pos += (n - nx) * m;
+    }
+}
+
+void SharedDecimator::FirStage::end_input() {
+    // x = the stream from the next output's window on: what x holds of it,
+    // then the rest of the block
+    const size_t start = pos - (L - 1);
+    const size_t b = std::min(ext_n, L - 1);    // the block's samples begin_input put in x
+    x.drop(std::min(start, x.n));
+    const size_t from = start > ext_h ? std::max(b, start - ext_h) : b;
+    if (ext_n > from)
+        std::memcpy(static_cast<void*>(x.grow(ext_n - from)), ext + from, (ext_n - from) * sizeof(complex<float>));
+    pos -= start;
+    ext = nullptr;
+    ext_n = 0;
 }
 
 void SharedDecimator::FirStage::fold(double w) {
@@ -654,15 +718,29 @@ SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
         // VFO more as they shared the memory bandwidth (perf 2026-10-22:
         // one 12.5 kHz VFO with DoA 28 % of a core, three 65 %; chunked 20
         // / 33 %). The outputs are the same - the stages take any length
+        //
+        // A first stage whose input isn't mixed in front (folded, or the VFO
+        // on the tuner centre) filters straight from the block
+        // (FirStage::begin_input): the copy into it was ~19 % of the samples
+        // with two narrow VFOs after the chunking (perf 2026-10-22) - gone,
+        // though the filter now pays most of it, the cold read of the block
+        // (-1 % of a core per VFO). A halfband first stage keeps the copy (it
+        // splits its input into two phases)
+        FirStage& first = st->stages.front();
+        const bool direct = !mix_front && !first.half;
+        if (direct) first.begin_input(iq_data, num_samples);
         result.samples.reserve(num_samples / static_cast<size_t>(decimation_factor) + 2);
         for (size_t at = 0; at < num_samples; at += DECIM_CHUNK) {
             const size_t c = std::min(DECIM_CHUNK, num_samples - at);
-            const Dst dst = st->stages.front().take(c);
-            if (mix_front) mix_into(iq_data + at, c, dst, st->mixer_phase, step);
-            else copy_into(iq_data + at, c, dst);
+            if (!direct) {
+                const Dst dst = first.take(c);
+                if (mix_front) mix_into(iq_data + at, c, dst, st->mixer_phase, step);
+                else copy_into(iq_data + at, c, dst);
+            }
             for (size_t s = 0; s < st->stages.size(); s++) {
                 FirStage& f = st->stages[s];
-                const size_t n = f.pending();
+                const bool from_block = direct && s == 0;
+                const size_t n = from_block ? f.pending_upto(at + c) : f.pending();
                 Dst out;
                 if (s + 1 == st->stages.size()) {
                     const size_t old = result.samples.size();
@@ -671,9 +749,11 @@ SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
                 } else {
                     out = st->stages[s + 1].take(n);
                 }
-                f.produce(out);
+                if (from_block) f.produce_upto(at + c, out);
+                else f.produce(out);
             }
         }
+        if (direct) first.end_input();
     }
 
     result.num_samples = result.samples.size();

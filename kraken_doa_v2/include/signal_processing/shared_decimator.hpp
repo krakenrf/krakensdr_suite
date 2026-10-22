@@ -128,6 +128,25 @@ public:
         size_t pending() const;                   // outputs the samples held give now
         void produce(Dst out);                    // computes them, drops what no later output needs
         void fold(double w);                      // the mixer (w rad per input sample, 0 = none) in the taps
+
+        // Filtering STRAIGHT FROM an input block (a regular first stage
+        // whose input isn't mixed in front - folded, or the VFO on the tuner
+        // centre): the stream = x (the history) + the block. Windows that
+        // start in x are computed from x, which gets the block's first L - 1
+        // samples appended for them; every other window straight from the
+        // block - which isn't copied in. end_input() keeps in x what the
+        // next block's windows reach back to (<= L - 1 + M samples)
+        const std::complex<float>* ext = nullptr; // the block
+        size_t ext_n = 0;                         // its length
+        size_t ext_h = 0;                         // x's samples before it: block sample i = stream index ext_h + i
+        void begin_input(const std::complex<float>* in, size_t n);
+        size_t pending_upto(size_t end) const;    // outputs whose newest sample is before block sample `end`
+        void produce_upto(size_t end, Dst out);   // computes them
+        void end_input();
+
+        // n outputs of a regular / folded stage, the first one's window
+        // starting at `first`, the next ones M samples on each
+        void run(const std::complex<float>* first, size_t n, Dst out);
     };
 
 private:
