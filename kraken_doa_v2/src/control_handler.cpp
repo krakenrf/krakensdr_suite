@@ -2218,7 +2218,8 @@ void ControlHandler::handle_message_impl(string_view message) {
         broadcast(sfscan::status_json());
     }
     else if (message.starts_with("SFSCAN_SQUELCH:") || message.starts_with("SFSCAN_DWELL:") ||
-             message.starts_with("SFSCAN_HANG:") || message.starts_with("SFSCAN_MAX:")) {
+             message.starts_with("SFSCAN_HANG:") || message.starts_with("SFSCAN_MAX:") ||
+             message.starts_with("SFSCAN_MULTI:")) {
         const size_t colon = message.find(':');
         string key(message.substr(7, colon - 7));
         for (auto& ch : key) ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));

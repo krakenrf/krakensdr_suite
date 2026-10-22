@@ -864,6 +864,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .sfs-set .slider {min-width:50px}
 .sfs-set .sv {font-size:12px;min-width:48px;flex:none}
 .sfs-set .u {font-size:10px;color:#8aa8c7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sfs-set .ctrl-row label.sfs-chk {min-width:0;flex:1;font-size:11px;color:#a9c2e0;display:flex;align-items:center;gap:5px;cursor:pointer}
+.sfs-set .ctrl-row label.sfs-chk input {margin:0}
 .sfs-set .sel {font-size:11px;color:#8aa8c7;margin-top:2px}
 .sfs-set .sel a {color:#7cb3f0}
 .sf-row.sfs-act .nm::before {content:'\25CF';color:#ffb74d;margin-right:4px;font-size:9px;vertical-align:1px}
@@ -1696,7 +1698,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <button type="button" class="btn sm primary" id="sfs-start" onclick="sfsStart()" title="Scan the ticked frequencies: the selected VFO is tuned to each one that is active (its demod, bandwidth, decoder and gain) and heard while it is">▶ Scan</button>
             <button type="button" class="btn sm off" id="sfs-stop" onclick="send('SFSCAN_STOP')" title="Stop scanning (the VFO stays where it is)" style="display:none">■ Stop</button>
             <button type="button" class="btn sm" id="sfs-hold" onclick="sfsHold()" style="display:none">⏸ Hold</button>
-            <button type="button" class="btn sm" id="sfs-skip" onclick="send('SFSCAN_SKIP')" title="Go on to the next active frequency (this one gets its turn again on the next pass through the list) - or, with nothing active, to the next band" style="display:none">⏭ Skip</button>
+            <button type="button" class="btn sm" id="sfs-skip" onclick="send('SFSCAN_SKIP')" title="Go on to the next active frequency (this one gets its turn again on the next pass through the list; with one VFO per active frequency: every one listened to) - or, with nothing active, to the next band" style="display:none">⏭ Skip</button>
             <span class="r"><span class="n" id="sfs-n"></span>
             <button type="button" class="btn sm" id="sfs-set-btn" onclick="sfsToggleSet()" title="Scan settings">⚙</button></span>
           </div>
@@ -1706,6 +1708,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <div class="ctrl-row"><label title="How long the VFO stays on a frequency after its transmission ends (for the answer)">Delay:</label><input type="number" id="sfs-hang" min="0" max="60" step="0.5" value="2" onchange="sfsSet('HANG', this.value * 1000)"><span class="u" title="after a transmission ends">s after it ends</span></div>
             <div class="ctrl-row"><label title="With more bands than tuners: how long each band is watched before the next one">Dwell:</label><input type="number" id="sfs-dwell" min="0.5" max="60" step="0.5" value="2" onchange="sfsSet('DWELL', this.value * 1000)"><span class="u">s per band</span></div>
             <div class="ctrl-row"><label title="Go on to the next active frequency after this long on one that stays active (broadcast stations, a stuck carrier) - it gets its turn again on the next pass. Only clean time counts, not the array's calibration after a retune. 0 = no limit">Longest stay:</label><input type="number" id="sfs-max" min="0" max="3600" step="1" value="0" onchange="sfsSet('MAX', this.value * 1000)"><span class="u" title="0 = no limit">s (0 = off)</span></div>
+            <div class="ctrl-row" id="sfs-multi-row"><label title="How many VFOs the scan uses">VFOs:</label><label class="sfs-chk" title="Every frequency active at the same time in the band watched gets a VFO of its own - all heard (🔊) and, with 🗣 Transcribe ticked on the scan's VFO, all transcribed at once. The extra VFOs start as copies of the scan's VFO as it was when the scan started (demod, bandwidth, decoder, squelch, Transcribe), with each frequency's own settings on top. Each one goes when its frequency ends (Delay, Longest stay) and when the scan stops - they are never saved. At most 16 VFOs in all. Off: one VFO, the frequencies take turns"><input type="checkbox" id="sfs-multi" onchange="sfsSet('MULTI', this.checked ? 1 : 0)">one per active frequency</label></div>
             <div class="sel">Tick <a href="#" onclick="sfsAll(true);return false" title="Every category (also the frequencies added later)">all</a> · <a href="#" onclick="sfsAll(false);return false" title="Untick everything">none</a></div>
           </div>
         </div>
@@ -14874,7 +14877,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const lineKey = st => st ? [st.sq, st.run, st.mode, (st.watch || []).map(b => b.ch).join()].join('|') : '';
     const redraw = lineKey(sfsSt) !== lineKey(m);
     sfsSt = m;
-    sfsSqDrag = null;   // the receiver's level from now on
+    // the receiver's level from now on - not while the slider is being
+    // dragged (a status comes every 0.5 s while scanning: the line jumped back
+    // mid-drag) unless the receiver has that level (the release's echo)
+    const sqEl = $id('sfs-sq');
+    if (sfsSqDrag !== null && (document.activeElement !== sqEl || (typeof m.sq === 'number' && Math.abs(m.sq - sfsSqDrag) < 0.01)))
+      sfsSqDrag = null;
     if (m.err && sfsPending) sfFlash('Scan not started: ' + m.err, true);
     else if (was && !m.run && m.msg) sfFlash('Scan stopped: ' + m.msg);
     sfsPending = false;
@@ -14906,10 +14914,16 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       h = st.msg ? `Stopped: ${digEsc(st.msg)}` : cnt ? '' : 'Tick the frequencies to scan - or a whole category in its heading.';
     } else {
       const vfo = `D${st.vfo}`, w = st.watch || [];
-      if (st.state === 'listen' && st.cur) {
+      // every frequency listened to (one VFO per active frequency: several),
+      // each with its VFO - a receiver from before sends cur only
+      const locks = sfsLocks(st);
+      if (st.state === 'listen' && locks.length) {
         live = true;
-        h = `🔊 <b>${digEsc(st.cur.name)}</b> · ${mkFmtMhz(st.cur.hz)} MHz · ${(+st.cur.db).toFixed(1)} dB · ${sfsDur(st.cur.ms)} → ${vfo}` +
-            (st.cur.heard === false ? ' · muted while the array calibrates' : '') + (st.hold ? ' · held' : '');
+        h = locks.map(c => {
+          const v = typeof c.vfo === 'number' && c.vfo >= 0 ? `D${c.vfo}` : c.extra ? 'a new VFO…' : vfo;
+          return `🔊 <b>${digEsc(c.name)}</b> · ${mkFmtMhz(c.hz)} MHz · ${(+c.db).toFixed(1)} dB · ${sfsDur(c.ms)} → ${v}` +
+                 (c.heard === false ? ' · muted while the array calibrates' : '');
+        }).join('<br>') + (st.hold ? ' · held' : '');
       } else {
         h = `Scanning ${plural(st.n || 0)} → ${vfo}` +
             (st.state === 'tune' ? ' · tuning…'
@@ -14935,7 +14949,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const e = $id(id);
       if (typeof st[k] === 'number' && idle(e)) e.value = +(st[k] / 1000).toFixed(1);
     }
+    // one VFO per active frequency (a receiver from before hasn't got it)
+    const mr = $id('sfs-multi-row'), mc = $id('sfs-multi');
+    if (mr) mr.style.display = typeof st.multi === 'boolean' ? '' : 'none';
+    if (mc && typeof st.multi === 'boolean') mc.checked = st.multi;
   }
+  function sfsLocks(st) { return st.locks || (st.cur ? [st.cur] : []); }
   // The scan's squelch on the spectrum while the scan runs: a dotted yellow
   // line across the plot at the level over which the scan calls a frequency
   // active - dB over the noise floor, which is the spectrum's 0 dB. (A VFO's
@@ -14978,14 +14997,15 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const y = bot - lvl / ymax * (bot - top);
     if (y >= top && y <= bot) sfsSqLine(ctx, p.L, p.sw - 4, y, lvl);
   }
-  // the rows: 🔊 the one listened to, a dot on those active now
+  // the rows: 🔊 the ones listened to, a dot on those active now
   function sfsMark() {
-    const st = sfsSt || {}, cur = st.run && st.state === 'listen' && st.cur ? st.cur.id : '';
+    const st = sfsSt || {};
+    const cur = new Set(st.run && st.state === 'listen' ? sfsLocks(st).map(c => c.id) : []);
     const act = new Set(st.run ? st.act || [] : []);
     document.querySelectorAll('#sf-list .sf-row').forEach(r => {
       const id = r.dataset.id;
-      r.classList.toggle('sfs-cur', id === cur);
-      r.classList.toggle('sfs-act', id !== cur && act.has(id));
+      r.classList.toggle('sfs-cur', cur.has(id));
+      r.classList.toggle('sfs-act', !cur.has(id) && act.has(id));
     });
   }
 

@@ -10,11 +10,13 @@
 #include "digital/dig_plugin.hpp"
 #include "digital/dig_report.hpp"
 #include "globals.hpp"
+#include "message_builders.hpp"
 #include "networking/websocket_server.hpp"
 #include "playback.hpp"
 #include "saved_freqs.hpp"
 #include "scanner_manager.hpp"
 #include "sf_scan_plan.hpp"
+#include "signal_processing/audio_mixer.hpp"
 #include "signal_processing/fft_processor.hpp"
 #include "utils/json_escape.hpp"
 
@@ -25,6 +27,8 @@
 #include <condition_variable>
 #include <cstdio>
 #include <iostream>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <sstream>
@@ -35,6 +39,8 @@ extern std::atomic<float> current_edge_clip;   // main.cpp
 
 namespace sfscan {
 namespace {
+
+using DecimatorInstance = DecimatorManager::DecimatorInstance;
 
 constexpr int TICK_MS = 100;
 constexpr int64_t SETTLE_MS = 250;            // the retuned frequency in the stream -> the band is measured
@@ -52,6 +58,7 @@ constexpr int64_t HOLD_RENEW_MS = 1000;
 constexpr int64_t CAL_START_WAIT_MS = 1500;
 constexpr int CONFIRM_TICKS = 2;              // over the squelch on this many polls in a row = active
 constexpr size_t MAX_ACT = 50, MAX_SKIPPED = 50;
+constexpr int VFO_LIMIT = 16;                 // = DecimatorManager::MAX_DECIMATORS (private there)
 
 int64_t now_ms() {
     using namespace std::chrono;
@@ -74,6 +81,7 @@ int64_t rebuild_ms() {
 // settings (persisted by the control handler)
 std::atomic<float> g_squelch{12.0f};
 std::atomic<int> g_dwell{2000}, g_hang{2000}, g_max{0};
+std::atomic<bool> g_multi{false};   // one VFO per active frequency (the scan makes the extra ones)
 
 std::mutex g_life;                 // start / stop
 std::thread g_thread;
@@ -91,6 +99,12 @@ struct Cfg {
     int vfo = -1;
     bool independent = false;
     bool was_heard = false;
+    // the scan VFO's settings at the start: what an extra VFO starts from
+    // (one VFO per active frequency) before the entry's own are applied
+    std::string demod, dec;
+    int bw = -1, sq_method = 0;
+    bool sq_en = false, transcribe = false;
+    float sq_level = 0;
 };
 Cfg g_cfg;   // written by start() before the thread starts, read after stop()'s join
 
@@ -173,12 +187,15 @@ Plan make_plan(int vfo) {
     return build_plan(savedfreq::scan_entries(), span_hz(), lo, hi, vfo_bandwidth_hz(vfo), decoder_why_not);
 }
 
-// Independent mode: the tuners no other VFO is on (lowest first)
+bool is_extra(const DecimatorInstance* p);
+
+// Independent mode: the tuners no other VFO is on (lowest first) - the scan's
+// own extra VFOs (one per active frequency) don't count
 std::vector<int> free_tuners(int vfo) {
     const int n = std::min(active_num_elements.load(), MAX_CHANNELS);
     uint32_t busy = 0;
     for (const auto& d : decimator_manager.getAllDecimators()) {
-        if (!d || d->id == vfo || d->being_deleted.load()) continue;
+        if (!d || d->id == vfo || d->being_deleted.load() || is_extra(d.get())) continue;
         const int t = d->tuner_channel.load();
         if (t >= 0 && t < 32) busy |= 1u << t;
     }
@@ -218,6 +235,112 @@ bool phase_calibrating() {
 
 void broadcast(const std::string& s) { WebSocketServer::broadcast_json_message(s); }
 
+// One VFO per active frequency (g_multi): the VFOs the scan made for the
+// second, third ... active frequency, by a token per lock. Made and removed
+// on the uWS loop, looked up by the scan thread. A VFO is the scan's only
+// while its instance is the one it made: ids are reused (the user may remove
+// one and add another under the same id - that one must never be removed)
+struct Extra {
+    int vfo = -1;                              // -1 = not made yet
+    std::weak_ptr<DecimatorInstance> inst;
+    bool failed = false;                       // couldn't be made (the VFO limit)
+};
+std::mutex g_xmu;
+std::map<uint64_t, Extra> g_extras;
+std::atomic<uint64_t> g_next_tok{0};
+
+// the extra's VFO now: >= 0, -1 = not made yet, -2 = gone (removed by
+// hand), -3 = couldn't be made
+int extra_vfo(uint64_t tok) {
+    Extra x;
+    {
+        std::lock_guard<std::mutex> lk(g_xmu);
+        auto it = g_extras.find(tok);
+        if (it == g_extras.end()) return -2;
+        x = it->second;
+    }
+    if (x.failed) return -3;
+    if (x.vfo < 0) return -1;
+    auto now = decimator_manager.getDecimator(x.vfo);
+    return now && now == x.inst.lock() ? x.vfo : -2;
+}
+
+bool is_extra(const DecimatorInstance* p) {
+    std::lock_guard<std::mutex> lk(g_xmu);
+    for (const auto& kv : g_extras)
+        if (auto s = kv.second.inst.lock(); s && s.get() == p) return true;
+    return false;
+}
+
+// uWS loop: an extra VFO muted (removing the last VFO heard would make
+// another one heard) and removed - by the manager itself, not
+// REMOVE_DECIMATOR: its decimator_removed makes every page reset its audio
+// player, a gap in what the other VFOs play. false = nothing removed
+bool remove_extra(const Extra& x) {
+    if (x.vfo < 0) return false;
+    auto now = decimator_manager.getDecimator(x.vfo);
+    if (!now || now != x.inst.lock()) return false;
+    set_heard(x.vfo, false);
+    if (!decimator_manager.removeDecimator(x.vfo)) return false;
+    audio_mixer.retain(decimator_manager.audioVfoIds());
+    std::cout << "Saved-frequency scan: D" << x.vfo << " removed" << std::endl;
+    return true;
+}
+void drop_extra(uint64_t tok) {
+    Extra x;
+    {
+        std::lock_guard<std::mutex> lk(g_xmu);
+        auto it = g_extras.find(tok);
+        if (it == g_extras.end()) return;
+        x = it->second;
+    }
+    const bool removed = remove_extra(x);
+    {
+        // out of the list only now: till it is gone it is the scan's (free_tuners)
+        std::lock_guard<std::mutex> lk(g_xmu);
+        g_extras.erase(tok);
+    }
+    if (removed) broadcast(MessageBuilders::build_decimator_info_message());
+}
+
+// uWS loop: a new VFO for token tok, set up as the scan VFO was at the start
+// (its demod, bandwidth, decoder, squelch, Transcribe); -1 = the VFO limit
+int make_extra(uint64_t tok, const Cfg& cfg) {
+    const int v = decimator_manager.addDecimator();   // muted, at 0 Hz
+    auto inst = v >= 0 ? decimator_manager.getDecimator(v) : nullptr;
+    {
+        std::lock_guard<std::mutex> lk(g_xmu);
+        Extra& x = g_extras[tok];
+        if (inst) {
+            x.vfo = v;
+            x.inst = inst;
+        } else {
+            x.failed = true;
+        }
+    }
+    if (!inst) {
+        std::cerr << "Saved-frequency scan: no VFO for another active frequency (" << VFO_LIMIT
+                  << " VFOs at most)" << std::endl;
+        return -1;
+    }
+    const std::string s = std::to_string(v);
+    std::vector<std::string> c;
+    if (!cfg.demod.empty()) c.push_back("SET_DECIMATOR_DEMOD:" + s + ":" + cfg.demod);
+    if (cfg.bw >= 0) c.push_back("SET_DECIMATOR_BW:" + s + ":" + std::to_string(cfg.bw));
+    if (!cfg.dec.empty() && cfg.dec != "OFF") c.push_back("DIGITAL_MODE:" + s + ":" + cfg.dec);
+    c.push_back("DEC_SQUELCH_METHOD:" + s + ":" + (cfg.sq_method == 3 ? "DIGITAL" : "FFT"));
+    char lv[64];
+    snprintf(lv, sizeof lv, "DEC_SQUELCH_LEVEL:%d:%.1f", v, cfg.sq_level);
+    c.push_back(lv);
+    c.push_back("DEC_SQUELCH_ENABLE:" + s + ":" + (cfg.sq_en ? "1" : "0"));
+    if (cfg.transcribe) c.push_back("VOICE2TEXT_VFO:" + s + ":1");
+    dispatch(c);
+    std::cout << "Saved-frequency scan: D" << v << " made for another active frequency" << std::endl;
+    // the pages list it (decimator_info - not decimator_added, which resets their audio)
+    broadcast(MessageBuilders::build_decimator_info_message());
+    return v;
+}
+
 // heimdall's calibration hold (hold_calibration): ms > 0 = hold for that
 // long from now, 0 = release - a pending calibration starts at once
 void hold_calibration(int ms) {
@@ -229,7 +352,7 @@ void hold_calibration(int ms) {
 std::string settings_json() {
     std::ostringstream o;
     o << "\"sq\":" << g_squelch.load() << ",\"dwell\":" << g_dwell.load() << ",\"hang\":" << g_hang.load()
-      << ",\"max\":" << g_max.load();
+      << ",\"max\":" << g_max.load() << ",\"multi\":" << (g_multi.load() ? "true" : "false");
     return o.str();
 }
 
@@ -265,6 +388,23 @@ private:
         bool failed = false;   // ... never showed up: not watched this turn
     };
 
+    // A frequency listened to: on the scan's VFO, or (one VFO per active
+    // frequency) on an extra VFO the scan made for it
+    struct Lock {
+        int entry = -1, slot = -1;
+        std::string id;
+        uint64_t tok = 0;           // 0 = the scan's VFO, else the extra VFO's token (g_extras)
+        int vfo = -1;               // the VFO (an extra's: -1 until it is made)
+        int64_t t_active = 0;       // last time over the squelch (or not measurable)
+        int64_t listened_ms = 0;    // clean time on it so far (Longest stay)
+        bool heard = false;         // the VFO heard now (muted while heimdall calibrates)
+        // locked with a calibration pending (right after a retune, the hold
+        // released): muted until it has run (cal_seen: it started)
+        bool cal_wait = false, cal_seen = false;
+        int64_t cal_wait_t = 0;
+        float db = -999;
+    };
+
     void tick();
     void rebuild();
     void tune();
@@ -273,8 +413,14 @@ private:
     void measure();
     void watch();
     void listen();
+    bool primary_locked() const;
+    bool can_lock() const;
+    bool locked(int entry) const;
     void lock(int entry, int slot);
-    void place(const savedfreq::ScanEntry& e, const Slot& s, bool heard);
+    void end_lock(size_t i, bool done);
+    void after_locks();
+    void post_heard(const Lock& l, bool on);
+    void place(const savedfreq::ScanEntry& e, const Slot& s, bool heard, uint64_t tok = 0);
     void resume(bool done);
     void next_turn();
     void hold();
@@ -302,18 +448,9 @@ private:
     // once) - the others go first; a new pass starts them again
     std::set<std::string> done_;
     std::string last_heard_;       // the last one listened to (the next lock starts after it)
-    int cur_ = -1, cur_slot_ = -1; // listening: entry, slot
-    std::string cur_id_;
-    int64_t t_active_ = 0;         // listening: last time it was over the squelch (or not measurable)
-    int64_t listened_ms_ = 0;      // ... clean time on it so far (Longest stay)
-    bool heard_ = false;           // ... the VFO heard now (muted while heimdall calibrates)
-    // ... locked with a calibration pending (right after a retune, the hold
-    // released): muted until it has run (cal_seen_: it started)
-    bool cal_wait_ = false, cal_seen_ = false;
-    int64_t cal_wait_t_ = 0;
+    std::vector<Lock> locks_;      // listening (LISTEN): one, or with g_multi one per active frequency
     bool holding_ = false;         // heimdall's calibration held (searching, coherent)
     int64_t hold_sent_ = 0;
-    float cur_db_ = -999;
     std::vector<std::string> act_;
     int64_t last_status_ = 0;
     std::string last_sent_;
@@ -397,21 +534,23 @@ void Scan::rebuild() {
               << (plan_.bands.size() == 1 ? "" : "s");
     if (!plan_.skipped.empty()) std::cout << " (" << plan_.skipped.size() << " left out)";
     std::cout << std::endl;
-    // the one listened to: still in the list?
-    if (st_ == LISTEN) {
-        cur_ = -1;
-        for (size_t i = 0; i < plan_.entries.size(); i++)
-            if (plan_.entries[i].id == cur_id_) cur_ = static_cast<int>(i);
-        if (cur_ < 0) resume(false);   // no longer scanned
+    // the ones listened to: still in the list? (entry indices are the new plan's)
+    for (size_t i = locks_.size(); i-- > 0;) {
+        int at = -1;
+        for (size_t k = 0; k < plan_.entries.size(); k++)
+            if (plan_.entries[k].id == locks_[i].id) at = static_cast<int>(k);
+        if (at < 0) end_lock(i, false);   // no longer scanned
+        else locks_[i].entry = at;
     }
     if (cycle_ >= static_cast<int>(plan_.bands.size())) cycle_ = 0;
     // a new turn (the slots' bands are plan indices); one that needs no
     // retune costs nothing (tune() keeps a centre that already holds the band).
-    // Listening, the slots keep their tuning (the one listened to is measured
-    // on its slot) and get their new bands when it resumes
+    // Listening, the slots keep their tuning (the ones listened to are
+    // measured on their slots) and get their new bands when it resumes
     for (auto& s : slots_) s.band = -1;
     if (st_ == LISTEN) need_tune_ = true;
     else st_ = TUNE;
+    after_locks();   // none left listening: on with the scan
 }
 
 void Scan::tune() {
@@ -602,14 +741,19 @@ void Scan::watch() {
     }
     if (!act.empty()) {
         // the first after the one heard last (round the list), so two busy
-        // frequencies take turns
+        // frequencies take turns; one VFO per active frequency: every one,
+        // in that order, while there are VFOs to be had
         std::sort(act.begin(), act.end());
         int after = -1;
         for (size_t i = 0; i < plan_.entries.size(); i++)
             if (plan_.entries[i].id == last_heard_) after = static_cast<int>(i);
         auto it = std::find_if(act.begin(), act.end(), [after](const auto& a) { return a.first > after; });
-        if (it == act.end()) it = act.begin();
-        return lock(it->first, it->second);
+        if (it != act.end()) std::rotate(act.begin(), it, act.end());
+        for (const auto& [i, k] : act) {
+            if (!can_lock()) break;   // without g_multi: the first only
+            lock(i, k);
+        }
+        return;
     }
     const int nb = static_cast<int>(plan_.bands.size());
     const int ns = static_cast<int>(slots_.size());
@@ -637,46 +781,130 @@ void Scan::next_turn() {
     st_ = TUNE;
 }
 
+bool Scan::primary_locked() const {
+    for (const auto& l : locks_)
+        if (!l.tok) return true;
+    return false;
+}
+
+// a VFO for one more frequency: the scan's own when it is free, else (one VFO
+// per active frequency) a new one while the receiver has room for it
+bool Scan::can_lock() const {
+    if (!primary_locked()) return true;
+    if (!g_multi.load()) return false;
+    int pending = 0;   // asked for, not made yet
+    for (const auto& l : locks_)
+        if (l.tok && l.vfo < 0) pending++;
+    return static_cast<int>(decimator_manager.getAllDecimators().size()) + pending < VFO_LIMIT;
+}
+
+bool Scan::locked(int entry) const {
+    for (const auto& l : locks_)
+        if (l.entry == entry) return true;
+    return false;
+}
+
 void Scan::lock(int entry, int slot) {
     const auto e = plan_.entries[entry];
     const Slot& s = slots_[slot];
-    cur_ = entry;
-    cur_slot_ = slot;
-    cur_id_ = e.id;
+    Lock l;
+    l.entry = entry;
+    l.slot = slot;
+    l.id = e.id;
+    // the scan's VFO first, then extra ones (can_lock decided there is room)
+    if (primary_locked()) {
+        l.tok = g_next_tok.fetch_add(1) + 1;
+        std::lock_guard<std::mutex> lk(g_xmu);
+        g_extras[l.tok];   // asked for: a stop removes it even if it is made after
+    } else {
+        l.vfo = cfg_.vfo;
+    }
     last_heard_ = e.id;
-    t_active_ = now_ms();
-    listened_ms_ = 0;
+    l.t_active = l.cal_wait_t = now_ms();
     // right after a retune in coherent mode heimdall sits in its cooldown
     // (held): the release starts the calibration - muted until it has run,
     // instead of a moment of audio cut off by the noise source
-    cal_wait_ = !cfg_.independent && !server_kerberos_mode.load(std::memory_order_relaxed) &&
-                scanner_manager.getPhaseState() == 5;   // WAITING_FOR_STABILITY
-    cal_seen_ = false;
-    cal_wait_t_ = t_active_;
-    heard_ = !cal_wait_;
-    cur_db_ = level_[entry];
-    act_.clear();
-    g_listening = true;
-    g_skip = false;
+    l.cal_wait = !cfg_.independent && !server_kerberos_mode.load(std::memory_order_relaxed) &&
+                 scanner_manager.getPhaseState() == 5;   // WAITING_FOR_STABILITY
+    l.heard = !l.cal_wait;
+    l.db = level_[entry];
+    if (st_ != LISTEN) {   // the first one
+        act_.clear();
+        g_skip = false;
+    }
+    locks_.push_back(l);
+    g_listening = primary_locked();
     st_ = LISTEN;
-    std::cout << "Saved-frequency scan: " << e.name << " " << e.hz / 1e6 << " MHz active (" << cur_db_
-              << " dB) -> D" << cfg_.vfo << std::endl;
+    std::cout << "Saved-frequency scan: " << e.name << " " << e.hz / 1e6 << " MHz active (" << l.db << " dB) -> "
+              << (l.tok ? std::string("a VFO of its own") : "D" + std::to_string(cfg_.vfo)) << std::endl;
 
-    place(e, s, heard_);
+    place(e, s, l.heard, l.tok);
     status(true);
+}
+
+// its turn is over (done: until the next pass); an extra VFO goes, the
+// scan's own is muted
+void Scan::end_lock(size_t i, bool done) {
+    if (i >= locks_.size()) return;
+    const Lock l = locks_[i];
+    locks_.erase(locks_.begin() + static_cast<std::ptrdiff_t>(i));
+    if (done) done_.insert(l.id);
+    g_listening = primary_locked();
+    const uint32_t id = id_;
+    const uint64_t tok = l.tok;
+    const int vfo = cfg_.vfo;
+    if (loop) loop->defer([id, tok, vfo] {
+        if (!alive(id)) return;
+        if (tok) drop_extra(tok);
+        else if (!g_listening.load()) set_heard(vfo, false);   // nothing to hear while scanning
+    });
+}
+
+// none left listening: on with the scan (the bands changed while listening -
+// rebuild - : a new turn)
+void Scan::after_locks() {
+    if (st_ != LISTEN || !locks_.empty()) return;
+    std::fill(consec_.begin(), consec_.end(), 0);
+    // (ready_ms_ goes on: Dwell is the turn's watching time)
+    st_ = need_tune_ || slots_.empty() ? TUNE : WATCH;
+    need_tune_ = false;
+    status(true);
+}
+
+void Scan::post_heard(const Lock& l, bool on) {
+    const uint32_t id = id_;
+    const uint64_t tok = l.tok;
+    const int vfo = cfg_.vfo;
+    if (loop) loop->defer([id, tok, vfo, on] {
+        if (!alive(id)) return;
+        if (!tok) {
+            if (g_listening.load()) set_heard(vfo, on);
+        } else if (const int v = extra_vfo(tok); v >= 0) {
+            set_heard(v, on);
+        }
+    });
 }
 
 // On the uWS loop: the VFO the way entry e says (as sfTune in the page:
 // decoder, demod - with its usual bandwidth -, bandwidth, then the frequency
-// on slot s's tuner), heard or muted
-void Scan::place(const savedfreq::ScanEntry& e, const Slot& s, bool heard) {
-    const int vfo = cfg_.vfo, ch = s.ch;
+// on slot s's tuner), heard or muted. tok: an extra VFO, made first
+void apply_entry(int vfo, int ch, bool indep, int64_t centre, const savedfreq::ScanEntry& e, bool heard);
+
+void Scan::place(const savedfreq::ScanEntry& e, const Slot& s, bool heard, uint64_t tok) {
+    const int ch = s.ch;
     const bool indep = cfg_.independent;
     const int64_t centre = s.centre;
     const uint32_t id = id_;
     if (!loop) return;
-    loop->defer([id, vfo, ch, indep, centre, e, heard] {
+    loop->defer([id, tok, cfg = cfg_, ch, indep, centre, e, heard] {
         if (!alive(id)) return;
+        const int vfo = tok ? make_extra(tok, cfg) : cfg.vfo;
+        if (vfo >= 0) apply_entry(vfo, ch, indep, centre, e, heard);
+    });
+}
+
+void apply_entry(int vfo, int ch, bool indep, int64_t centre, const savedfreq::ScanEntry& e, bool heard) {
+    {
         std::string demod, dec;
         int bw = -1;
         for (const auto& d : decimator_manager.getDecimatorInfoList()) {
@@ -721,75 +949,115 @@ void Scan::place(const savedfreq::ScanEntry& e, const Slot& s, bool heard) {
         cmds.push_back(c);
         set_heard(vfo, heard);   // first: a VFO heard first moves the audio channel with it (independent)
         dispatch(cmds);
-    });
+    }
 }
 
 void Scan::listen() {
     const int64_t now = now_ms();
-    if (cur_ < 0 || cur_slot_ < 0 || cur_slot_ >= static_cast<int>(slots_.size())) return resume(false);
     const bool rd = ready();
-    if (cal_wait_) {
-        if (!rd) cal_seen_ = true;   // the calibration runs
-        if ((cal_seen_ && rd) || (!cal_seen_ && now - cal_wait_t_ >= CAL_START_WAIT_MS)) cal_wait_ = false;
-    }
-    const bool clean = rd && !cal_wait_;
-    if (clean) {
-        listened_ms_ += TICK_MS;
-        // only the one listened to, on the tuner it is on
-        const Slot& s = slots_[cur_slot_];
-        const int ch = cfg_.independent ? s.ch : std::clamp(active_channel.load(), 0, MAX_CHANNELS - 1);
-        std::vector<float> spec;
-        float floor_db = 0;
-        if (fft(ch, &spec, &floor_db)) {
-            const auto& e = plan_.entries[cur_];
-            cur_db_ = entry_level(spec, floor_db, static_cast<double>(s.centre), SAMPLE_RATE, e.hz, channel_width_hz(e));
-            if (cur_db_ >= g_squelch.load() - HYST_DB) t_active_ = now;
+    // the extra VFOs: made, or not to be had (the VFO limit), or removed by
+    // the user - that frequency's turn is over this pass (else a new VFO
+    // would be made for it at once)
+    for (size_t i = 0; i < locks_.size();) {
+        if (locks_[i].tok) {
+            const int v = extra_vfo(locks_[i].tok);
+            if (v <= -2) {
+                if (v == -2) std::cout << "Saved-frequency scan: D" << locks_[i].vfo << " removed by hand" << std::endl;
+                end_lock(i, v == -2);
+                continue;
+            }
+            locks_[i].vfo = v;
         }
-    } else {
-        t_active_ = now;   // calibrating / settling / calibration pending: not "gone quiet"
+        i++;
     }
-    // muted while heimdall calibrates (its noise source would be heard) or a
-    // calibration is pending, heard as soon as the data is clean
-    if (clean != heard_) {
-        heard_ = clean;
-        const int vfo = cfg_.vfo;
-        const uint32_t id = id_;
-        if (loop) loop->defer([id, vfo, clean] {
-            if (alive(id) && g_listening.load()) set_heard(vfo, clean);
-        });
+    if (!g_multi.load())   // switched off while listening: the extra VFOs go
+        for (size_t i = locks_.size(); i-- > 0;)
+            if (locks_[i].tok) end_lock(i, false);
+
+    // each slot's spectrum once; a locked entry is measured on the tuner it is on
+    std::vector<int> got(slots_.size(), -1);
+    std::vector<std::vector<float>> spec(slots_.size());
+    std::vector<float> floor_db(slots_.size(), 0.0f);
+    auto level_of = [&](const Lock& l, float* db) {
+        const int k = l.slot;
+        if (k < 0 || k >= static_cast<int>(slots_.size()) || l.entry < 0) return false;
+        if (got[k] < 0) {
+            const int ch = cfg_.independent ? slots_[k].ch : std::clamp(active_channel.load(), 0, MAX_CHANNELS - 1);
+            got[k] = fft(ch, &spec[k], &floor_db[k]) ? 1 : 0;
+        }
+        if (!got[k]) return false;
+        const auto& e = plan_.entries[l.entry];
+        *db = entry_level(spec[k], floor_db[k], static_cast<double>(slots_[k].centre), SAMPLE_RATE, e.hz,
+                          channel_width_hz(e));
+        return true;
+    };
+    for (auto& l : locks_) {
+        if (l.cal_wait) {
+            if (!rd) l.cal_seen = true;   // the calibration runs
+            if ((l.cal_seen && rd) || (!l.cal_seen && now - l.cal_wait_t >= CAL_START_WAIT_MS)) l.cal_wait = false;
+        }
+        const bool clean = rd && !l.cal_wait;
+        if (clean) {
+            l.listened_ms += TICK_MS;
+            float db;
+            if (level_of(l, &db)) {
+                l.db = db;
+                if (db >= g_squelch.load() - HYST_DB) l.t_active = now;
+            }
+        } else {
+            l.t_active = now;   // calibrating / settling / calibration pending: not "gone quiet"
+        }
+        // muted while heimdall calibrates (its noise source would be heard) or
+        // a calibration is pending, heard as soon as the data is clean
+        if (clean != l.heard) {
+            l.heard = clean;
+            post_heard(l, clean);
+        }
     }
+
     if (g_skip.exchange(false)) return resume(true);
     if (g_hold.load()) {
-        t_active_ = now;
-        return;
+        for (auto& l : locks_) l.t_active = now;
+    } else {
+        const int max = g_max.load(), hang = g_hang.load();
+        for (size_t i = locks_.size(); i-- > 0;) {
+            if (max > 0 && locks_[i].listened_ms >= max) {
+                std::cout << "Saved-frequency scan: " << plan_.entries[locks_[i].entry].name << " - longest stay reached"
+                          << std::endl;
+                end_lock(i, true);
+            } else if (now - locks_[i].t_active >= hang) {
+                end_lock(i, false);
+            }
+        }
     }
-    const int max = g_max.load();
-    if (max > 0 && listened_ms_ >= max) {
-        std::cout << "Saved-frequency scan: " << plan_.entries[cur_].name << " - longest stay reached" << std::endl;
-        return resume(true);
+
+    // one VFO per active frequency: the others that become active in the bands
+    // watched get theirs (not those that had their turn this pass)
+    if (g_multi.load() && rd && !locks_.empty()) {
+        measure();
+        act_.clear();
+        std::vector<std::pair<int, int>> fresh;   // (entry, slot)
+        for (int k = 0; k < static_cast<int>(slots_.size()); k++) {
+            const Slot& s = slots_[k];
+            if (s.band < 0 || s.failed) continue;
+            for (int i : plan_.bands[s.band].entries) {
+                if (consec_[i] < CONFIRM_TICKS) continue;
+                if (act_.size() < MAX_ACT) act_.push_back(plan_.entries[i].id);
+                if (!done_.count(plan_.entries[i].id) && !locked(i)) fresh.push_back({i, k});
+            }
+        }
+        for (const auto& [i, k] : fresh) {
+            if (!can_lock()) break;
+            lock(i, k);
+        }
     }
-    if (now - t_active_ >= g_hang.load()) resume(false);
+    after_locks();
 }
 
+// every one listened to has had its turn (done) or is left: on with the scan
 void Scan::resume(bool done) {
-    if (done && !cur_id_.empty()) done_.insert(cur_id_);   // its turn this pass is over
-    cur_ = cur_slot_ = -1;
-    cur_id_.clear();
-    g_listening = false;
-    heard_ = false;
-    cal_wait_ = false;
-    // nothing to hear while scanning
-    const int vfo = cfg_.vfo;
-    const uint32_t id = id_;
-    if (loop) loop->defer([id, vfo] {
-        if (alive(id) && !g_listening.load()) set_heard(vfo, false);
-    });
-    std::fill(consec_.begin(), consec_.end(), 0);
-    // (ready_ms_ goes on: Dwell is the turn's watching time)
-    // the bands changed while listening (rebuild): a new turn
-    st_ = need_tune_ || slots_.empty() ? TUNE : WATCH;
-    need_tune_ = false;
-    status(true);
+    while (!locks_.empty()) end_lock(locks_.size() - 1, done);
+    after_locks();
 }
 
 void Scan::status(bool now_flag) {
@@ -811,17 +1079,26 @@ void Scan::status(bool now_flag) {
           << ",\"n\":" << b.entries.size() << ",\"ok\":" << (s.failed ? "false" : "true") << "}";
         first = false;
     }
-    o << "],\"cur\":";
-    if (st_ == LISTEN && cur_ >= 0) {
-        const auto& e = plan_.entries[cur_];
+    // cur = the first one listened to (pages from before one VFO per active
+    // frequency read only that), locks = every one, with its VFO (-1 = being made)
+    auto lock_json = [&](const Lock& l) {
+        const auto& e = plan_.entries[l.entry];
         char db[32];
-        snprintf(db, sizeof db, "%.1f", cur_db_ > -900 ? cur_db_ : 0.0f);
-        o << "{\"id\":\"" << json_escape(e.id) << "\",\"name\":\"" << json_escape(e.name) << "\",\"hz\":" << e.hz
-          << ",\"db\":" << db << ",\"ms\":" << listened_ms_ << ",\"quiet\":" << (now - t_active_)
-          << ",\"heard\":" << (heard_ ? "true" : "false") << "}";
-    } else {
-        o << "null";
-    }
+        snprintf(db, sizeof db, "%.1f", l.db > -900 ? l.db : 0.0f);
+        std::ostringstream j;
+        j << "{\"id\":\"" << json_escape(e.id) << "\",\"name\":\"" << json_escape(e.name) << "\",\"hz\":" << e.hz
+          << ",\"db\":" << db << ",\"ms\":" << l.listened_ms << ",\"quiet\":" << (now - l.t_active)
+          << ",\"heard\":" << (l.heard ? "true" : "false") << ",\"vfo\":" << l.vfo << ",\"extra\":"
+          << (l.tok ? "true" : "false") << "}";
+        return j.str();
+    };
+    std::vector<const Lock*> ls;
+    if (st_ == LISTEN)
+        for (const auto& l : locks_)
+            if (l.entry >= 0 && l.entry < static_cast<int>(plan_.entries.size())) ls.push_back(&l);
+    o << "],\"cur\":" << (ls.empty() ? std::string("null") : lock_json(*ls.front())) << ",\"locks\":[";
+    for (size_t i = 0; i < ls.size(); i++) o << (i ? "," : "") << lock_json(*ls[i]);
+    o << "]";
     o << ",\"act\":[";
     for (size_t i = 0; i < act_.size(); i++) o << (i ? "," : "") << "\"" << json_escape(act_[i]) << "\"";
     o << "],\"skipped\":[";
@@ -870,7 +1147,24 @@ std::string start(int vfo) {
     if (g_thread.joinable()) g_thread.join();
 
     auto heard = decimator_manager.audioVfoIds();
-    g_cfg = Cfg{vfo, mode == 2, std::find(heard.begin(), heard.end(), vfo) != heard.end()};
+    g_cfg = Cfg{};
+    g_cfg.vfo = vfo;
+    g_cfg.independent = mode == 2;
+    g_cfg.was_heard = std::find(heard.begin(), heard.end(), vfo) != heard.end();
+    for (const auto& d : decimator_manager.getDecimatorInfoList()) {
+        if (d.id != vfo) continue;
+        g_cfg.demod = DecimatorManager::demodModeToString(d.demod_mode);
+        g_cfg.dec = dig::mode_string(static_cast<dig::Mode>(d.digital_mode), d.digital_plugin);
+        g_cfg.bw = d.bandwidth_index;
+        g_cfg.sq_en = d.squelch_enabled;
+        g_cfg.sq_method = d.squelch_method;
+        g_cfg.sq_level = d.squelch_level;
+        g_cfg.transcribe = d.transcribe;
+    }
+    {
+        std::lock_guard<std::mutex> xl(g_xmu);
+        g_extras.clear();
+    }
     g_hold = false;
     g_skip = false;
     g_stop_asked = false;
@@ -898,6 +1192,16 @@ bool stop(const std::string& why) {
     if (g_thread.joinable()) g_thread.join();
     if (!was) return false;
     g_tuner_mask = 0;
+    // the VFOs it made (one per active frequency) go - before the tuning it
+    // leaves is saved: they are never part of the user's setup
+    std::map<uint64_t, Extra> xs;
+    {
+        std::lock_guard<std::mutex> xl(g_xmu);
+        xs.swap(g_extras);
+    }
+    bool removed = false;
+    for (const auto& kv : xs) removed = remove_extra(kv.second) || removed;
+    if (removed) broadcast(MessageBuilders::build_decimator_info_message());
     // heimdall's calibration hold: released - a pending calibration runs now,
     // on the frequency the scan stopped on
     if (!g_cfg.independent) hold_calibration(0);
@@ -941,6 +1245,9 @@ std::string set(const std::string& key, double v, std::string* applied) {
     } else if (key == "max") {
         g_max = static_cast<int>(std::clamp(std::llround(v), 0LL, 3600000LL));
         snprintf(c, sizeof c, "SFSCAN_MAX:%d", g_max.load());
+    } else if (key == "multi") {
+        g_multi = v != 0;
+        snprintf(c, sizeof c, "SFSCAN_MULTI:%d", g_multi.load() ? 1 : 0);
     } else {
         return "unknown setting";
     }

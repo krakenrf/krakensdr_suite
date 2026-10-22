@@ -28,6 +28,16 @@
 // it was before the scan. The scan's own retunes / VFO changes are not saved
 // while it runs (set_on_stop persists the live tuning when it ends).
 //
+// One VFO per active frequency (SFSCAN_MULTI:1): every frequency active at
+// the same time in the band(s) watched is listened to at once - the scan's
+// VFO takes the first, a VFO the scan makes each further one (a copy of the
+// scan VFO as it was at the start: demod, bandwidth, decoder, squelch,
+// Transcribe - then the entry's own settings), so they are all heard,
+// decoded and transcribed together. Each ends on its own (Delay, Longest
+// stay; Skip ends all); a made VFO is removed then and at the stop (never
+// saved). At most DecimatorManager's 16 VFOs; the band changes only when
+// none is listened to any more.
+//
 // Commands (control_handler.cpp, uWS loop), answered to every page with
 // status_json():
 //   SFSCAN_START:<vfo id>   (-1 = the first VFO)
@@ -37,7 +47,7 @@
 //   SFSCAN_SQUELCH:<dB 3-40> | SFSCAN_DWELL:<ms 500-60000> (per band when the
 //   bands take turns) | SFSCAN_HANG:<ms 0-60000> (delay after a transmission)
 //   | SFSCAN_MAX:<ms 0-3600000> (longest stay on one frequency, 0 = no limit)
-//   - persisted settings
+//   | SFSCAN_MULTI:0|1 (one VFO per active frequency) - persisted settings
 
 #include <functional>
 #include <string>
@@ -52,7 +62,7 @@ bool dispatching();                         // uWS loop: one of the scan's own c
 bool uses_tuner(int ch);                    // independent mode: tuner ch is scanned
 void skip();
 void hold(bool on);
-// key squelch | dwell | hang | max: "" = taken (*applied = the command as
+// key squelch | dwell | hang | max | multi: "" = taken (*applied = the command as
 // applied, for the settings file), else why not
 std::string set(const std::string& key, double value, std::string* applied);
 std::string status_json();

@@ -155,6 +155,7 @@ bool write_file_atomic(const char* path, const std::string& data) {
         {"sfscan_dwell_ms",          "SFSCAN_DWELL:",             VType::NUMBER, "2000"},
         {"sfscan_hang_ms",           "SFSCAN_HANG:",              VType::NUMBER, "2000"},
         {"sfscan_max_ms",            "SFSCAN_MAX:",               VType::NUMBER, "0"},
+        {"sfscan_multi",             "SFSCAN_MULTI:",             VType::BOOL,   "0"},
         {"decimators",               "DECIMATORS:",               VType::STRING, "0|0.00,7,WBFM,0,15.00,0,2.00"},
         // Decoder plugins the user excluded from the Digital Decoder's "Auto
         // detect" ("id,id"; empty = every plugin takes part)

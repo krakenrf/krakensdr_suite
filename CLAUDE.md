@@ -733,12 +733,22 @@ Edit `kraken_doa_v2/include/config.hpp`:
   *Calibration hold*): retunes skip the 3 s cooldown + noise-source
   calibration, so bands take turns in well under a second; a lock releases
   it and the calibration starts at once (the VFO muted until it has run).
+  ⚙ "VFOs: one per active frequency" (`SFSCAN_MULTI:`, persisted, off by
+  default; the user's request 2026-10-22, for Voice to Text): every
+  frequency active at once in the band(s) watched is listened to at once -
+  its VFO the first, a VFO the SCAN MAKES each further one (a copy of its VFO
+  as it was at the start: demod, bandwidth, decoder, squelch, Transcribe;
+  then the entry's own settings), each ending on its own (Delay, Longest
+  stay); a made VFO is removed then and at the stop (never saved; made /
+  removed through the manager + a `decimator_info` broadcast - the
+  decimator_added / _removed messages reset every page's audio player); one
+  the user removes = that frequency done this pass; <= 16 VFOs.
   Its own commands go through `apply_command` but are NOT saved
   (`sfscan::dispatching()`); the tuning it leaves is saved at stop. A manual
   retune, a mode change, removing its VFO or a playback stop it; refused in
   wideband mode. WS `SF_SCAN:`, `SFSCAN_START:<vfo>` / `STOP` / `SKIP` /
-  `HOLD:` / `SQUELCH:` / `DWELL:` / `HANG:` / `MAX:` (persisted), `GET_SFSCAN`
-  -> `{"sfscan":{...}}`
+  `HOLD:` / `SQUELCH:` / `DWELL:` / `HANG:` / `MAX:` / `MULTI:` (persisted),
+  `GET_SFSCAN` -> `{"sfscan":{...}}`
 - Discrete scanner: config entries outside the tunable range (R820T, or the
   Wideband variant's span) are refused - the whole load, the previous config
   stays; frequencies go to heimdall as uint64 Hz. heimdall's settle and dwell

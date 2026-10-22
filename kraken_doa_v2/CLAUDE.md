@@ -1031,7 +1031,43 @@ Edit `include/config.hpp`:
   fake heimdall models it (cooldown expiry only when not held, release =
   calibration now, `cal_count`): 0 calibrations across the searched bands
   with a 3 s heimdall cooldown, the release at the lock, the calibration
-  starting at once, heard ~1.5 s after the lock
+  starting at once, heard ~1.5 s after the lock. The per-lock state above
+  (`cal_wait`, `cal_seen`, heard, listened time) lives in each `Lock`
+- ONE VFO PER ACTIVE FREQUENCY (`SFSCAN_MULTI:0|1`, `g_multi`, schema
+  `sfscan_multi`, off by default; the user's request 2026-10-22 "creates as
+  many decimators as there are active signals in one band - for whisper
+  recording etc"): `Scan::locks_` (a `Lock` per frequency listened to; off
+  = at most one, the scan's VFO - the old single-lock behaviour). WATCH
+  locks every active entry (round the list from the last heard) while
+  `can_lock()`: the scan's VFO when free, else a VFO the SCAN MAKES (token
+  `Lock::tok`, `g_extras`: token -> {vfo, weak_ptr to its instance} -
+  ids are reused, so a VFO counts as the scan's only while the manager
+  still holds THAT instance: one the user removed and replaced under the
+  same id is never touched), while the manager's 16 VFOs (`VFO_LIMIT` =
+  its private MAX_DECIMATORS) aren't all taken. LISTEN measures each lock
+  on its slot and, with multi on, the bands watched (`measure()`) - a
+  frequency that becomes active gets its VFO then (not one done this
+  pass). Each lock ends on its own (Delay -> not done, Longest stay ->
+  done; Skip ends all, done); the band moves on only when none is left
+  (`after_locks`). `make_extra` (uWS loop): `addDecimator()` (muted, 0 Hz),
+  then the scan VFO's settings recorded at start (`Cfg::demod / bw / dec /
+  sq_* / transcribe`) through apply_command, then `apply_entry` (the
+  entry's decoder / demod / bandwidth / offset / tuner - shared with the
+  scan's VFO). `drop_extra` / stop(): muted first (removing the last VFO
+  heard makes the first one left heard), `removeDecimator` +
+  `audio_mixer.retain`, out of `g_extras` only after the removal
+  (`free_tuners` skips the scan's own VFOs - independent mode would take
+  one for another VFO on a scanned tuner and start a new turn). Made /
+  removed through the manager with a `decimator_info` broadcast, NOT
+  ADD_ / REMOVE_DECIMATOR: their decimator_added / _removed messages make
+  every page reset its audio player (a gap in what the other VFOs play).
+  A made VFO the user removes (`extra_vfo` -2) = that frequency done this
+  pass (else it got a new VFO at once); one that couldn't be made (-3) =
+  not done. Switching multi off while listening ends the made VFOs' locks.
+  stop() removes them all BEFORE `set_on_stop` saves the VFO snapshot: they
+  are never part of the user's setup. Not followed by the 📼 audio
+  recorder (its VFO list is fixed when it starts); Voice to Text, decoders,
+  DoA, 🔊 work per VFO, so the made ones get them
 - Commands run through `ControlHandler::apply_command` on the uWS loop
   (`loop->defer`, dropped when the run ended - `alive(run id)`), so pages see
   them like a browser's; `sfscan::dispatching()` (set around them) keeps them
@@ -1054,14 +1090,17 @@ Edit `include/config.hpp`:
   `reserve(size() - 1)` threw - the process ended; muting every VFO by hand
   did the same. Fixed there: an empty pass does nothing)
 - Status `{"sfscan":{run, state tune|watch|listen, hold, vfo, mode, n, nb,
-  cycle, ready, watch:[{b,ch,hz,lo,hi,n,ok}], cur:{id,name,hz,db,ms,quiet} |
-  null, act:[ids <= 50], skipped:[{id,name,why} <= 50], nskipped, sq, dwell,
-  hang, max[, msg][, err]}}` to every page: on changes and every 500 ms
-  while running; GET_SFSCAN (page connect). `err` = a refused start (the
+  cycle, ready, watch:[{b,ch,hz,lo,hi,n,ok}], cur:{id,name,hz,db,ms,quiet,
+  heard,vfo,extra} | null, locks:[the same, every one listened to - vfo -1 =
+  being made], act:[ids <= 50], skipped:[{id,name,why} <= 50], nskipped, sq,
+  dwell, hang, max, multi[, msg][, err]}}` to every page: on changes and
+  every 500 ms while running; GET_SFSCAN (page connect). `cur` = the first
+  lock (pages from before `locks` read it). `err` = a refused start (the
   page that pressed ▶ shows it); `msg` = why it stopped. SFSCAN_* are
   `is_query_command`s; SFSCAN_SQUELCH (3-40 dB, 0.5 steps) / DWELL (500-60000
-  ms) / HANG (0-60000) / MAX (0-3600000, 0 = no limit) are saved by the
-  handler (schema `sfscan_*`, defaults 12 dB / 2 s / 2 s / 0)
+  ms) / HANG (0-60000) / MAX (0-3600000, 0 = no limit) / MULTI (0 / 1) are
+  saved by the handler (schema `sfscan_*`, defaults 12 dB / 2 s / 2 s / 0 /
+  off)
 - Page: a tick per row and per category heading (`sfsCatState`: 2 checked,
   1 indeterminate - `data-mixed`, set after innerHTML -, 0); a row's tick
   toggles its effective state (`sfsToggleFreq`: -1 / 0 / 1 by its group), a
@@ -1069,11 +1108,14 @@ Edit `include/config.hpp`:
   preventDefault'ed (no optimistic update - the list's broadcast redraws).
   `#sfs` panel above the categories: ▶ Scan (`sfsStart`, the selected VFO) /
   ■ Stop / ⏸ Hold / ⏭ Skip, "N ticked", ⚙ settings (squelch, delay, dwell,
-  longest stay, tick all / none), the status (`sfsRender`: 🔊 name · MHz ·
-  dB · time → VFO, or "Scanning N frequencies", the watched band(s) +
-  tuners, "N left out" with the reasons as its tooltip). Rows: `.sfs-cur`
-  (🔊, green outline), `.sfs-act` (orange dot) - `sfsMark` after every list
-  render and status. While the scan RUNS its squelch is drawn as a DOTTED
+  longest stay, "VFOs: one per active frequency" - `#sfs-multi`, its row
+  hidden for a receiver without `multi` -, tick all / none), the status
+  (`sfsRender`: a line per frequency listened to, 🔊 name · MHz · dB · time
+  → its VFO ("a new VFO…" while being made) - `sfsLocks(st)` = `locks`, or
+  `cur` from an older receiver -, or "Scanning N frequencies", the watched
+  band(s) + tuners, "N left out" with the reasons as its tooltip). Rows:
+  `.sfs-cur` (🔊, green outline - every one listened to), `.sfs-act` (orange
+  dot) - `sfsMark` after every list render and status. While the scan RUNS its squelch is drawn as a DOTTED
   yellow line across the main spectrum (`sfsDrawSquelch` from drawBox,
   beside the other scanners' cyan / magenta lines; label "📻 Scan N dB") and
   on the independent panes of the tuners it watches (`sfsPaneSquelch` from
@@ -1097,11 +1139,20 @@ Edit `include/config.hpp`:
   again across the calibration, the VFO pre-placed > 0.8 s before its lock -,
   independent mode with two bands on two tuners and a VFO taking a tuner;
   the fake's timing is set over its side port, `{"timing":{"stab":1.5}}`),
+  `t_sfscan_multi.py` (one VFO per active frequency, 35 checks: the setting
+  saved; two active at once - the scan's VFO + a made one at their
+  offsets, the entry's demod / bandwidth, Transcribe + squelch copied, both
+  heard after the calibration, no decimator_added -, a third while
+  listening, one ending after the Delay -> its VFO removed, a made VFO
+  removed by hand -> no new one for its still-active frequency, multi off
+  while listening, stop -> only the scan's VFO saved; independent mode: two
+  on one tuner, the made VFO never taken for a foreign one),
   `t_sfscan_ui.py` (the same + the page in a headless Edge with its own
   profile over the DevTools protocol: ticks per row / heading incl. the
   mixed state and -1 / 0 / 1, counts, ▶ / ■ / Hold / Skip, the 🔊 row, the
-  status + "left out" tooltip, the settings inputs, tick all / none, the
-  editor keeping a tick, no page exceptions). On a Windows PC with the live
+  status + "left out" tooltip, the settings inputs, the multi tick + a
+  status line and 🔊 row per frequency, tick all / none, the editor keeping
+  a tick, no page exceptions). On a Windows PC with the live
   stack running the test build gets its own ports, cwd and exe name (the
   launcher's stale-process sweep), builds through `C:\msys64\usr\bin\bash
   -lc` (Git Bash's runtime loses TMP for gcc)
