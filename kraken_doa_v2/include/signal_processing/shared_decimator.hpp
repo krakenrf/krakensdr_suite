@@ -206,8 +206,8 @@ private:
     std::atomic<size_t> total_blocks_processed{0};
     std::atomic<size_t> total_samples_processed{0};
 
-    // Thread pool for parallel channel decimation
-    std::unique_ptr<ThreadPool> channel_thread_pool;
+    // (The antennas are decimated in parallel on ONE process-wide pool -
+    // decimation_pool() in shared_decimator.cpp - not a pool per VFO)
 
 public:
     SharedDecimator();

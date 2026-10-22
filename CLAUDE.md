@@ -1793,7 +1793,9 @@ for (size_t i = 0; i < num_samples; i++) {
 **Architecture** (`kraken_doa_v2/src/signal_processing/shared_decimator.cpp`;
 kraken_doa_v2/CLAUDE.md *Arbitrary VFO bandwidth*):
 - Per VFO a `SharedDecimator`, per antenna its own mixer + stage state, the
-  antennas in parallel on a thread pool
+  antennas in parallel: antenna 0 on the calling thread, the others on ONE
+  decimation pool shared by every VFO (cores + 1 threads; it was 8 threads
+  per VFO - the same CPU, 51 -> 32 threads with three VFOs)
 - Integer decimation factors (no resampling), split into stages of 2..8 by
   `planStages` (a cost model of the kernels; halfband stages, the mixer
   folded into the first stage where cheaper)

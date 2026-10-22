@@ -1,6 +1,7 @@
 // ============================================
 // src/signal_processing/shared_decimator.cpp
-// HYBRID PARALLELIZATION: Per-antenna threading within SharedDecimator
+// HYBRID PARALLELIZATION: the antennas of a block in parallel, on one
+// decimation pool shared by every VFO (decimation_pool)
 // Per channel: NCO mixer (phase-continuous across blocks; in front of the
 // first stage or folded into it) and a cascade of Kaiser low-pass
 // decimation stages (planStages: the cheapest split of the factor).
@@ -15,6 +16,29 @@
 #include <future>
 
 using namespace std;
+
+namespace {
+
+// ONE pool of decimation threads for every VFO (2026-10-22, the user's go
+// after an estimate). Each SharedDecimator had a pool of its own, of
+// initialize()'s channel count - MAX_CHANNELS 8 threads per VFO, 24 with
+// three VFOs on the Pi 5's 4 cores. decimateMultiChannel runs antenna 0 on
+// the calling thread and the others here; nothing running on this pool
+// waits on it (no deadlock). The cores + 1 threads: on the Pi 5 (user-space
+// cycles, 4 runs each) 5 threads were the better of 4 / 5 with one VFO (12.5
+// kHz 14.4 vs 15.2 % of a core, 240 kHz 21.9 vs 22.7), the per-VFO pools
+// 14.7 / 22.1; with three VFOs all three the same within the runs' spread -
+// the CPU saving a synthetic test promised didn't show live, the bounded
+// thread count stays. Never destroyed: it lives as long as the process, so
+// a VFO pipeline still running while the statics are torn down at exit
+// can't meet a stopped pool
+ThreadPool& decimation_pool() {
+    static ThreadPool* pool =
+        new ThreadPool(std::clamp<unsigned>(std::thread::hardware_concurrency() + 1, 2, MAX_CHANNELS));
+    return *pool;
+}
+
+}  // namespace
 
 SharedDecimator::SharedDecimator() {}
 
@@ -40,14 +64,12 @@ bool SharedDecimator::initialize(int num_channels) {
         channel_states_.push_back(std::make_unique<ChannelDecimState>());
     }
 
-    // Create thread pool for parallel channel decimation
-    channel_thread_pool = std::make_unique<ThreadPool>(num_channels);
+    decimation_pool();   // created with the first decimator, not in the first block
 
     initialized = true;
 
     cout << "SharedDecimator initialized:" << endl;
     cout << "  Channels: " << num_channels << endl;
-    cout << "  ThreadPool size: " << num_channels << " threads" << endl;
     cout << "  Default bandwidth: " << getBandwidthHz() << " Hz (decimation " << getDecimationFactor() << ")" << endl;
     cout << "  Multi-stage decimation, mixer in front of / folded into the first stage" << endl;
 
@@ -55,10 +77,9 @@ bool SharedDecimator::initialize(int num_channels) {
 }
 
 void SharedDecimator::cleanup() {
-    // Destroy thread pool first (waits for all tasks to complete)
-    channel_thread_pool.reset();
-
-    // Safe to drop per-channel state only after the pool is gone
+    // No task of ours is running: decimateMultiChannel waits for its tasks
+    // before it returns, and a VFO's decimator goes only with its last user
+    // (the pipeline holds the instance while it decimates)
     channel_states_.clear();
 
     initialized = false;
@@ -813,12 +834,13 @@ SharedDecimator::MultiChannelDecimated SharedDecimator::decimateMultiChannel(
     // min_samples is the common count.
     result.min_samples = SIZE_MAX;
 
-    // HYBRID PARALLELIZATION: Launch parallel tasks for each antenna using ThreadPool
+    // HYBRID PARALLELIZATION: antennas 1.. on the shared decimation pool,
+    // antenna 0 on this thread meanwhile (it only waited before; one
+    // antenna - FM only, independent mode - never leaves it)
     vector<std::future<DecimatedData>> antenna_futures(result.num_channels);
-
-    for (size_t ch = 0; ch < result.num_channels; ch++) {
+    for (size_t ch = 1; ch < result.num_channels; ch++) {
         const complex<float>* ch_ptr = channel_ptrs[ch];
-        antenna_futures[ch] = channel_thread_pool->submit(
+        antenna_futures[ch] = decimation_pool().submit(
             [this, ch, ch_ptr, min_samples, bandwidth_hz, freq_offset_hz]() -> DecimatedData {
                 return decimateChannel(
                     ch_ptr,
@@ -830,10 +852,18 @@ SharedDecimator::MultiChannelDecimated SharedDecimator::decimateMultiChannel(
             }
         );
     }
+    DecimatedData first;
+    try {
+        first = decimateChannel(channel_ptrs[0], min_samples, 0, bandwidth_hz, freq_offset_hz);
+    } catch (...) {
+        // the pool's tasks use this decimator and the caller's arrays
+        for (size_t ch = 1; ch < result.num_channels; ch++) antenna_futures[ch].wait();
+        throw;
+    }
 
     // Collect results from parallel antenna processing
     for (size_t ch = 0; ch < result.num_channels; ch++) {
-        DecimatedData ch_data = antenna_futures[ch].get();
+        DecimatedData ch_data = ch == 0 ? std::move(first) : antenna_futures[ch].get();
 
         if (ch_data.samples.empty() && min_samples >= static_cast<size_t>(decimation_factor)) {
             cerr << "SharedDecimator: No samples generated for channel " << ch << endl;

@@ -91,8 +91,12 @@ directly.
 - VFO pipelines: with 2+ VFOs, the first runs on the receiver thread and the
   rest on a persistent 3-thread pool (`std::async` used to create an OS thread
   per VFO per packet)
-- ThreadPools: 10 threads (2 decimators × 5 channels each)
-- **Total: ~23-28 threads on 4 cores** (intentional oversubscription for throughput)
+- Decimation: ONE pool shared by every VFO (cores + 1 threads: 5 on the Pi 5;
+  `decimation_pool()` in shared_decimator.cpp - each VFO had its own pool of
+  MAX_CHANNELS 8 threads until 2026-10-22), antenna 0 of a block on the
+  calling thread
+- **Total (Pi 5, measured 2026-10-22): ~29 threads with one VFO, ~32 with
+  three** (51 with three before the shared pool)
 
 ### Key Components
 
@@ -116,7 +120,8 @@ directly.
 - `raw_data_buffer.cpp`: Bounded queue with automatic old data cleanup
 - `ring_buffer.cpp`: Lock-free circular buffers for FFT/audio
 - `system_stats.cpp`: CPU/memory usage tracking
-- `thread_pool.hpp`: Generic thread pool (used by SharedDecimator)
+- `thread_pool.hpp`: Generic thread pool (SharedDecimator's shared
+  decimation pool, the pipeline's VFO pool)
 - `include/utils/json_escape.hpp`: `json_escape()` for every hand-built JSON
   emitter, and `json_find()` - the one flat-object reader (settings file,
   web-mapper cloud messages) - which decodes every JSON escape including
@@ -419,6 +424,24 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   in L1) would cut that - a restructure of the pipeline, not done; then
   the spectrum FFT, the IQ conversion of the 5 antennas, the receiver
   thread
+- Estimated before deciding (the user's question 2026-10-22; job scratch
+  explore/share_exp.cpp: the production decimator, a converter writing
+  fresh 5-antenna blocks, three shapes on the Pi): VFOs sharing one pass
+  per chunk would save ~0.4-0.8 % of a core per extra VFO and nothing for
+  one VFO - the live L2 / L3 refill counters (perf, `run` per VFO) show
+  the extra VFOs already find the input in L3, the case the synthetic
+  test measures; ~half of that (nearly all at 240 kHz) was from ONE
+  thread pool for every VFO instead of one per VFO. Not restructured; the
+  shared pool done (the user's go) - and live it saved NOTHING measurable:
+  user-space cycles (`perf stat -e cycles:u`, frequency-independent - the
+  Pi's ondemand governor made CPU time swing by up to 7 points between
+  runs of one build; job scratch e2e/t_prof_cyc.py), 4 runs each, % of a
+  core at 2.4 GHz, per-VFO pools / shared 4 / shared 5 threads: one 12.5
+  kHz VFO 14.7 / 15.2 / 14.4, three 23.9 / 23.8 / 23.9, three at 240 kHz
+  50.9 / 52.3 / 52.8 (each 47-55 between runs), one at 240 kHz 22.1 / 22.7
+  / 21.9. Kept for the bounded thread count (51 -> 32 with three VFOs; 8
+  more per VFO before), 5 threads (cores + 1) for the single-VFO figures.
+  The raw buffer dropped no packet in any of the day's runs (175 reports)
 - Tests (job scratch 415cedbd e2e/, on the Pi: `fake_heimdall_bw.py` = a
   5-element UCA scene, tone A +100 kHz from 60 deg, tone B +125 kHz from
   200 deg; `t_bw.py` against a TEST build on 5808x / 5809x): 24 / 24 -
@@ -6276,7 +6299,11 @@ buffer - no per-sample window pushes; regular / folded / halfband), split
 as `planStages` finds cheapest, a block through the whole cascade in
 1024-sample chunks (`DECIM_CHUNK`: the buffers stay in L1), a first stage
 whose input isn't mixed in front filtering straight from the block (no
-copy), the antennas in parallel on the decimator's `ThreadPool`. Details + measurements:
+copy), the antennas in parallel - antenna 0 on the calling thread, the
+others on ONE decimation pool shared by every VFO (`decimation_pool()`,
+cores + 1 threads; each VFO had its own pool of 8 until 2026-10-22: 51
+threads with three VFOs, 32 now - CPU the same within the runs' spread, see
+*Arbitrary VFO bandwidth*). Details + measurements:
 *Arbitrary VFO bandwidth* above (`tools/decim_bench.cpp`). Pi 5, one
 antenna, hot caches, ns per input sample with the VFO off the tuner centre
 (mixer included): ~2.1-3.5 up to 240 kHz, ~3.9-7.3 at 250 kHz - 1.2 MHz,
