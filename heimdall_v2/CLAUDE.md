@@ -176,6 +176,10 @@ All runtime configuration is in `config.h` at the project root:
 - `ENABLE_BIAS_TEE`: Enable bias-tee on all devices (default 1)
 - `USB_RESET_ON_INIT`: Reset USB on initialization (default 1)
 - Uses ARM NEON vectorization on aarch64, automatically falls back to scalar on x86_64
+- Compiled `-O3 -fno-math-errno -fcx-fortran-rules` + `-mcpu=native` on
+  aarch64 (`-march=native` x86_64; root CLAUDE.md *Compiler flags*). The
+  correlation's whole-array |z| loops use `std::sqrt(std::norm(z))` / a
+  norm compare - `std::abs` of a complex is a `hypotf` call per element
 
 **Coherence / Ingest Robustness:**
 - `RTL_USB_BUF_COUNT`: librtlsdr async USB transfer buffers (default 32 ≈ 218 ms cushion @ 2.4 MSPS; 0 = library default 15). Wider ring = more slack before the RTL2832 FIFO overflows if the reader thread stalls.
@@ -410,7 +414,30 @@ before N / SDM and 8 kHz after the lock: 2 control transfers per tuner and
 step); the lock is still read on every step. Only when `fast_retune_allowed()`
 (coherent, not `--kerberos` manual cal, no discrete scan, no recovery, no
 downconverter); decided and tuned in one `device_io_mutex` hold; the rollback
-of a failed step is always the full path. `finish_fast_retunes()`
+of a failed step is always the full path. The WIDEBAND SCAN's retunes
+(`setup_wideband_frequencies`: every tuner to its own spread frequency) take
+it the same way (2026-10-21, the user's "dragging in wideband mode is
+laggy"): `drag_step()` = the one decision for both modes, sharing
+`last_drag_retune_ns` (renamed from last_coherent_retune_ns - every retune
+of either mode is the drag's latest, so the watchdog's finish never runs
+inside a wideband drag) and `fast_tune_pending`; `fast_wideband_allowed()`
+(wideband scan, no discrete scan - its hops are seconds apart, flushed and
+settled -, no recovery, no downconverter); a failed wideband drag step goes
+once more on the full path (logged); `finish_fast_retunes` retunes a tuner
+it finds unlocked at its wideband scan frequency when the library lost it.
+Measured on the KrakenSDR (Windows, 5 tuners, 8092 `set_frequency` reply,
+steps 50 ms apart; job scratch 0d0a7cca hw_*): 114.0 -> 74.0 ms median per
+step (max 123 -> 83) for 25 / 100 / 250 kHz steps in the FM band, a drag
+across the 109.5 MHz divider boundary and 100 kHz steps at 595 MHz; the
+first step after a pause and typed jumps stay on the full path (153 / 194-216
+ms both); after every drag all five tuners on their frequencies (status +
+8091 headers), neighbours' spectra lined up bin for bin in their overlaps
+(lag 0 wherever the overlap held a signal, identical to the old build), 0
+coherence events, no failed step, no unlocked tuner; 199 of 204 steps on the
+fast path. Mode switches straight after a drag (tuners pending): wideband ->
+coherent recalibrated and CONVERGED in 25 s, coherent drag -> wideband (the
+spread itself a drag step, 83 ms) and wideband -> independent -> wideband
+with the tuners right and aligned. The Pi (parallel threads) not measured `finish_fast_retunes()`
 (`rtlsdr_finish_tune`: lock read, then 8 kHz) puts the tuners back in the
 full path's resting state - from the coherence watchdog once 400 ms have
 passed without a retune, and from `set_bias_tee_all_devices(true)` in any

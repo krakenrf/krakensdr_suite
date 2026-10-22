@@ -77,7 +77,6 @@ atomic<float> indep_tuner_gain_db[8] = {-999.0f, -999.0f, -999.0f, -999.0f, -999
 static_assert(MAX_CHANNELS <= 8, "indep_tuner_* hold 8 tuners");
 atomic<bool> fm_enabled_before_scanner{false};     // Store FM state before discrete scanner
 atomic<uint32_t> fft_reset_generation{0};          // Generation counter for FFT reset (scanner retune)
-atomic<uint32_t> wideband_last_reset_gen{0};       // Track wideband FFT reset generation
 atomic<bool> fft_data_valid{true};                 // False after reset until first valid FFT frame
 atomic<bool> server_retuning{false};               // heimdall's header: retuning (packets skipped)
 array<atomic<uint64_t>, MAX_CHANNELS> tuner_frequencies;
@@ -88,14 +87,6 @@ atomic<int> wb_variant_mixer_side{WB_SIDE_HIGH};
 atomic<int> wb_variant_array{0};
 atomic<int> wb_variant_lo_current{3};
 atomic<bool> wb_topology_active{false};
-vector<float> wideband_fft_magnitudes;
-vector<float> wideband_fft_averaged;
-mutex wideband_fft_mutex;
-
-// Wideband reference noise floor for coherent mode normalization
-// This is the maximum noise floor from all tuners in wideband mode
-// Used to normalize coherent mode FFT to match wideband display levels
-atomic<float> wideband_reference_noise_floor{-200.0f};  // Start very low (invalid)
 
 TCPClient data_client, control_client;
 

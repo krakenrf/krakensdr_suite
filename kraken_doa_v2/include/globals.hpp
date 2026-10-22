@@ -83,7 +83,6 @@ extern std::atomic<double> indep_tuner_freq_hz[8];
 extern std::atomic<float> indep_tuner_gain_db[8];
 extern std::atomic<bool> fm_enabled_before_scanner;     // Store FM state before discrete scanner
 extern std::atomic<uint32_t> fft_reset_generation;      // Generation counter for FFT reset (scanner retune)
-extern std::atomic<uint32_t> wideband_last_reset_gen;   // Track wideband FFT reset generation
 extern std::atomic<bool> fft_data_valid;                // False after reset until first valid FFT frame
 // heimdall is retuning (the latest packet header's retuning flag): its packets
 // are skipped, so the spectrum still shows the old frequency meanwhile
@@ -136,10 +135,6 @@ extern std::atomic<bool> wb_topology_active;
 inline double uca_angle_sign() {
     return -1.0;
 }
-extern std::vector<float> wideband_fft_magnitudes;  // Stitched wideband FFT
-extern std::vector<float> wideband_fft_averaged;    // Averaged wideband FFT
-extern std::mutex wideband_fft_mutex;
-extern std::atomic<float> wideband_reference_noise_floor;  // Reference noise floor for normalization
 
 extern TCPClient data_client, control_client;
 

@@ -793,7 +793,12 @@ decoders `kraken_doa_v2/plugins/`
   p25, dmr, tetra (downlink), dstar, nxdn (48 and 96), mpt1327 (analogue
   trunking signalling), pocsag, aprs, adsb (1090 MHz; manual only -
   picking it tunes the VFO + tuner to 1090 MHz at 2.4 MHz and draws the VFO
-  as a locked line, `kp::Info::fixed_freq_hz`; `kp::Info::lock_vfo` -
+  as a locked line, `kp::Info::fixed_freq_hz`; v2.0: in coherent mode with
+  DoA on it combines every antenna - `kp::Info::multichannel`, a beam per
+  weak message, overlapping messages separated, each message's own pulse
+  covariance as its DoA - ~6 dB more sensitive with 5 antennas, plus
+  extended bit repair and long CPR pairing; each an option in its tab;
+  `kp::Info::lock_vfo` -
   ism, cells, dtv - locks a 2.4 MHz VFO at its tuner centre the same way
   without tuning), ais (ships, both channels
   161.975 / 162.025 MHz in one 100 kHz VFO on 162.000 MHz; manual only,
@@ -925,8 +930,11 @@ decoders `kraken_doa_v2/plugins/`
   plays the decoded voice. P25 IMBE is built in (port of mbelib, ISC); DMR /
   D-STAR / NXDN AMBE use a user-installed mbelib (dlopen, `KRAKEN_MBELIB`), TETRA
   ACELP the user-built ETSI codec programs (`tetra-cdecoder` /
-  `tetra-sdecoder` on PATH or `KRAKEN_TETRA_CODEC_DIR`) - neither is shipped
-  (licensing); README "Digital voice codecs" has the install steps. Docker:
+  `tetra-sdecoder` on PATH or `KRAKEN_TETRA_CODEC_DIR`; Windows also
+  `tetra-*.exe` in the kraken_doa_v2 folder, fed through named pipes - the
+  programs need file names, Windows has no /dev/stdin) - neither is shipped
+  (licensing); README "Digital voice codecs" has the install steps
+  (Windows: WINDOWS.md). Docker:
   files in `docker-data/codecs/` are picked up by the entrypoint. Encrypted
   calls are muted
 - Fed from the VFO's decimated stream (beamformer output when beamforming
@@ -1081,6 +1089,13 @@ DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
   a lat/lon grid with a notice. Opened with the 🗺 Map button under the
   waterfall; a tab next to MUSIC DoA in coherent mode, the whole right pane
   otherwise; resizable; view settings per browser (localStorage)
+- 🔍 Search (2026-10-21; kraken_doa_v2/CLAUDE.md *🔍 Map search*):
+  coordinates in the usual forms, UTM, MGRS, grid locators, map links and
+  the page's own places (markers, decoder points ...) read OFFLINE as typed;
+  addresses / cities from OpenStreetMap Nominatim BY THE BROWSER, only on
+  Enter, <= 1 request a second; a pin with the position in every form + 📍
+  Add as marker. 🏠 = the station (was ⌖), 🎯 = the estimated transmitter
+  (📡 DF heat map / ⏯ replay; again = the next)
 - Shows the positions decoder plugins report (`kp::Host::map_point`: ADS-B
   aircraft, APRS stations, DMR GPS, D-STAR GPS / DPRS) per VFO decoder whose
   "🗺 Plot on map" is ticked in its decoder tab (off by default,
@@ -1251,9 +1266,32 @@ of the transmitter's position: `kraken_doa_v2/src/rdf_engine.cpp` (the
 algorithm - an improved version of the KrakenSDR Android app's grid; offline
 comparison `tools/rdf_sim.cpp`) + `src/rdf_mapper.cpp` (GPS track, MUSIC
 frames time-aligned to it, distance gate, per-VFO solver, rdf_session.bin).
+The heat map's grids are windows that SLIDE cell by cell (the coarse one
+with the vehicle, the fine one with the estimate) - no ~7 km re-centring
+jump near the edge any more (2026-10-21); `rdf_grid` carries each window's
+centre / half-width / rotation, drawn by the page's `rdfGridDraw`.
 `RDF:0|1`, `RDF_RANGE_KM:1-50` (persisted), `RDF_RESET:<vfo|-1>[:<talker>]`, `GET_RDF`;
 pushes `{"rdf":..}` 2 Hz + `{"rdf_grid":..}` per changed VFO / talker. Right pane
 tab "⊞ Both" shows the MUSIC DoA plots and the map at once
+
+**⏯ Log replay (🗺 Map's "Replay", every mode, UI only)** (details:
+`kraken_doa_v2/CLAUDE.md` *⏯ Log replay*): a DoA log of a drive - the
+KrakenSDR Android app's (krakensdr_rdf_android: CSV in all its layouts, by
+field count, or its SQLite `entries` table) or a 📝 DoA Recording of this
+receiver (same formats; its box's 🗺 Replay) - opened in the browser (📂 /
+dropped on the map, an SQLite `-wal` file with it), nothing sent to the
+receiver. A worker (`lrWorkerMain` in kraken_doa.html) reads it - its own
+SQLite reader (+ the WAL's committed pages), no library - and runs the
+mobile DF engine PORTED from `src/rdf_engine.cpp` (keep the two alike:
+`kraken_doa_v2/tools/replay_validate.mjs --cpp` + `tools/rdf_cmp.cpp`)
+fed like rdf_mapper.cpp. The strip at the bottom of the map plays it back
+(0.5-500x, scrub, step, click the track): track, vehicle, the moment's lobe
++ bearing, bearing lines, power dots, the heat map + 95 % ellipse as known
+at that moment (snapshots along the drive), Follow centring the vehicle
+every frame; long pauses shortened. A CSV a
+spreadsheet re-saved (timestamps as 1.68843E+12 = rounded to 2.8 h, padded
+rows, ';' + decimal commas, UTF-16) is read too: times rebuilt from the
+track (`lrRetime`), "The drive took N min" corrects the pace
 
 **📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
@@ -1499,7 +1537,18 @@ receiver's own floor, remembered per tuner + gain in `noise_floors.json`
 (cwd, gitignored). Coherent mode tells a band-filling signal from a real
 noise rise by two antennas' coherence (receiver noise is independent per
 antenna); independent / wideband scan mode: > 6 dB above = a signal, the
-remembered floor creeping up 1 dB / min while held
+remembered floor creeping up 1 dB / min while held. Wideband scan mode
+(the stitched spectrum) uses no remembered floors: the tuners' common
+response shape (measured on the KrakenSDR, learned on) is taken off, the gain
+steps between neighbours come from the 0.48 MHz their bands share (kept per
+pair of dongles through retunes), and a tuner whose floor stands over the
+quietest one's (gains taken off) is filled by a signal (DVB-T / LTE over
+several tuners) and blends to that floor + its gain (1 -> 3 dB over, no
+switching) - each tuner used to be drawn against its own percentile, so such
+a signal dropped to ~0 dB past the boundary (fixed 2026-10-21; a first version
+misjudged real hardware and dropped the signal during drags, see the client
+CLAUDE.md). A retuned tuner's average is shifted with the move, so a drag
+doesn't draw the old band moved along
 
 **✈ Array calibration from ADS-B aircraft (coherent mode)** (details:
 `kraken_doa_v2/CLAUDE.md` *Array calibration*): `kraken_doa_v2/src/array_cal.cpp`.
@@ -1706,8 +1755,9 @@ The dominant eigenvector of the noise-source data gives each channel's phase
 channel, applied per sample in the conversion hot loop and reported in the
 control-port status JSON as `channel_comp` (`amp_db` is always 0).
 
-**Drag retunes**: coherent retunes close together (a drag, within 400 ms -
-up to 1 s while the previous step isn't finished) use the librtlsdr fork's
+**Drag retunes**: coherent and wideband scan retunes close together (a drag,
+within 400 ms - up to 1 s while the previous step isn't finished; wideband
+scan since 2026-10-21: 114 -> 74 ms per step on Windows) use the librtlsdr fork's
 `rtlsdr_set_center_freq_fast` (PLL autotune clock left at 128 kHz between
 steps, lock still read every step); the coherence watchdog (400 ms quiet)
 and every noise-source switch-on (`set_bias_tee_all_devices(true)`, which
@@ -2005,7 +2055,8 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
 **Heimdall Server**:
 - ARM NEON vectorization for sample processing
 - Automatic fallback to scalar on x86_64
-- Optimized for Raspberry Pi 4 Cortex-A72
+- Built for the CPU it is built on (`-mcpu=native`; was the Pi 4's
+  Cortex-A72) - see *Compiler flags* below
 
 **DoA Client**:
 - IQ conversion: Compiler auto-vectorization preferred over manual NEON
@@ -2013,6 +2064,53 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
   liquid-dsp's NEON dot products (built from source - `liquid.mk`)
 - FFT: pffft (NEON), no planning / wisdom file - see kraken_doa_v2/CLAUDE.md
   *FFT (pffft)*
+
+### Compiler flags (2026-10-22, the user's request: full optimisation on the Pi 5)
+
+- kraken_doa `-Ofast -march=native -mtune=native` (unchanged); heimdall
+  `-O3 -mcpu=native` on aarch64 (was `-march=armv8-a -mtune=cortex-a72` -
+  the Pi 4's core), `-march=native` x86_64; the plugins + libkrakendig
+  `-O3` (was `-O2`) + `-mcpu=native` on aarch64 (`-march=native` alone
+  tunes for a generic ARMv8 core); liquid-dsp / pffft / librtlsdr /
+  whisper.cpp as before (Release / -O3, native). Windows keeps the portable
+  `WIN_MARCH` everywhere
+- heimdall and the plugins: `-fno-math-errno` (sqrt & co. without an errno
+  path - such loops vectorize) and `-fcx-fortran-rules` (std::complex * and /
+  without C99's inf / NaN recovery: GCC keeps a `__mulsc3` / `__divsc3` call
+  in every complex multiply otherwise, and the loop doesn't vectorize -
+  "unsupported control flow"; division keeps its range scaling). NOT
+  `-ffast-math` there: its `-ffinite-math-only` folds `std::isfinite` to
+  true (NaN = unknown in `kp::MapPoint`, see `is_finite_value()`), and its
+  reassociation would change results. `std::abs` of a complex stays a
+  `hypotf` call without fast-math: heimdall's correlation uses
+  `std::sqrt(std::norm(z))` / a norm compare for its whole-array loops
+- A stamp of the compiler flags (`build/.flags`, `plugins/lib/build/.flags`;
+  every platform - it was `WIN_MARCH` on Windows only) recompiles
+  everything when the flags change, so an existing build picks new flags up
+  (kraken_doa's own Makefile still has the Windows-only `WIN_MARCH` stamp)
+- `-mcpu=native` / `-march=native` builds run only on the kind of CPU they
+  were built on (a Pi 5 build on a Pi 4: illegal instruction) - build on
+  the device (install.sh, the Dockerfile do)
+- Measured on the Pi 5 (GCC 14.2, Debian 13; job scratch 63520c26, results
+  in ~/flagtest_527fd2/out on the Pi; A = main, B = these flags):
+  heimdall's correlation per 5-channel set (micro-benchmark, one core)
+  4.25 -> 2.63 ms (-38 %): peak search 1.02 -> 0.49 ms and display
+  magnitudes 1.04 -> 0.10 ms (the norm code), cross-spectrum 1.08 -> 0.94
+  ms (the flags), forward FFTs and the conversion worker's loops unchanged;
+  the same peaks, display values within 3e-8. On the KrakenSDR (2 rounds A /
+  B): the correlation thread while calibrating 46 -> 41-43 % of a core (a
+  pass ~8.6 -> ~7.2 ms with its 10 ms sleep), heimdall 58.5 -> 54-56 %;
+  CONVERGED in 23-28 s either way (the lag servo's slew), forced recal
+  4.6-6.1 s, calibration check OK (|lag| 0.0, |phase| 0.2-0.3 deg), 0
+  coherence events; converged 13.8 vs 14.0 % of a core (3 rounds, ranges
+  overlapping: unchanged). Plugins: all 34 debug-playback test
+  transmissions decoded offline by A and B - outputs identical 34 / 34 (bar
+  timing lines), CPU 41.0 -> 38.1 s (-7 %): lora -12..-23 %, p25 -19 %,
+  adsb -13 %, cells -7 %, dtv -6 %, the rest within +-5 %. Build on the Pi:
+  heimdall 51 -> 41 s, plugins 151 -> 158 s. -O3 found two snprintf
+  truncations (`fmt()` 64-byte buffers in dme and cells: the "not a DME
+  frequency" fact and the cells "the VFO sees N % ..." note were cut off) -
+  fixed
 
 ### Memory Management
 
@@ -2083,6 +2181,15 @@ automatically:
   `doa_settings.json` or `api_token` slipped through (bypass:
   `git push --no-verify`). Root commits and merge commits (including a
   secret added while resolving a merge) are scanned too.
+- **Voice codecs / binaries** never go to the remote (licensing: the ETSI
+  TETRA codec may not be redistributed, AMBE is DVSI's): `.gitignore`
+  ignores the user-built codec programs / libraries (`cdecoder`,
+  `tetra-*decoder[.exe]`, `libmbe*`), the ETSI zip and osmo-tetra / mbelib
+  checkouts in any folder; the pre-push hook blocks outgoing commits that
+  add one anyway (`git add -f`), any `*.exe` / `*.dll` (everything is built
+  from source) or the ETSI sources. `windows/package.sh` copies a fixed
+  list of files, so a codec next to kraken_doa.exe doesn't reach the
+  package either
 - Filters and hooks are per-clone git config, so `install.sh` registers them
   (`filter.kraken-secrets.*`, `core.hooksPath .githooks`). A clone that never
   ran install.sh silently skips both — run it once after cloning.

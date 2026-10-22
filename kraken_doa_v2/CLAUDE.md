@@ -277,6 +277,29 @@ Edit `include/config.hpp`:
   the VFO's colour (`.dec-item.sel`, `decHighlightSelected`, re-applied after
   every list update; a removed VFO hands the selection to the first). A click
   on empty spectrum places this VFO, and only its edges resize
+- VFO card frequency (the user's request 2026-10-20: wheel-tunable like the
+  top bar; first 14 px, then "double the size" 2026-10-21): digits
+  `G.MMM.kkk.hhh` down to 1 Hz (`.vfd-box` / `.vfd`, 28 px - the top bar's
+  size - in 16 px cells, "MHz" inside the box; a row of its own without a
+  "Freq:" label, 236 of the card's 241 px with the ✎), click the
+  top / bottom half or a wheel notch = +- that digit (`vfdInit` / `vfdStep`,
+  selects the VFO); clamped inside the VFO's band like a typed frequency
+  (coherent: `maxOffsetHz`; independent: its OWN tuner - a typed one may move
+  to another, `paneTuneVfoTo`), never retunes the receiver. Sent at most
+  every 100 ms + the last value (the drags' `setDecimatorFreq` debounce
+  waited for the spin to end), echoes ignored 1.5 s after a step (`vfdHeld`
+  in updateDecimatorList). A wheel gesture stays with what it began on: one
+  that started scrolling the sidebar keeps scrolling when digits slide under
+  the pointer (capture listener, 400 ms of quiet ends a gesture), and a
+  tuning gesture only starts where the pointer last MOVED over the digits
+  with the box still there (`vfdHover`): Chrome scrolls the sidebar for a
+  notch over a part without a blocking wheel handler (the card title) and
+  only then hit-tests it - the very first notch of a scroll landed on the
+  digits now under the pointer and retuned the VFO by 1 GHz (clamped). ✎ swaps in the old text box
+  (`dec-actual-freq-<id>`, Enter / blur = apply, Escape = cancel); locked
+  with the Freq / BW fields by fixed-frequency / `lock_vfo` decoders
+  (`digRenderCards`). Test: job scratch t_vfd.py (headless Chrome over CDP,
+  fake WebSocket, 33 checks) + t_vfd_zoom.py (sidebar zoom 1.8)
 - FFT message type 6 (independent; pages without spectrum views - see
   *Spectrum views* for type 7): `u32 6, u32 nch, f32 avg_alpha, f32
   sample_rate, f32 bin_step`, per tuner `u32 center_hz, f32 gain_db, u32 ds,
@@ -569,7 +592,8 @@ Edit `include/config.hpp`:
   On" highlighted / "○ Label: Off", the choice's text without a trailing
   "(...)", the help + "click to turn on / off" as its tooltip; it sends
   DIGITAL_OPT with the other value and shows the echoed state) - dtv's Path
-  separation, adsb's 1-bit repair, dme's DoA per beacon, cells' Cell
+  separation, adsb's Array combining / Overlap separation (its Bit repair
+  is a three-way list since v2.0), dme's DoA per beacon, cells' Cell
   information; other choice lists stay `<select>`s. The settings rows
   (`#info-dec-top`) are rebuilt only while no input / list in them has the
   focus or a mode list is open (`ddOpenSel`); a focused BUTTON doesn't hold
@@ -699,7 +723,8 @@ Edit `include/config.hpp`:
   MAP_MAX_Z 22: past a layer's deepest tiles (`max` 19) those are scaled up
   (z22 ~3 cm/px, 8x); range rings down to 5 m, graticule to 0.00001 deg
   (decimals from the step), drag / wheel
-  / pinch / double-click, +/− ⌖ (station) ⤢ (fit all), Street (OSM
+  / pinch / double-click, 🔍 (search - *🔍 Map search* below) +/− 🏠
+  (station, was ⌖) 🎯 (the estimated transmitter) ⤢ (fit all), Street (OSM
   tile.openstreetmap.org) / Satellite (Esri World_Imagery + the
   World_Boundaries_and_Places label layer), attribution shown. Tiles: cache
   of 400 (LRU), a failed tile retried after 15 s doubling to 5 min, a missing
@@ -756,6 +781,81 @@ Edit `include/config.hpp`:
   fixed + the confirm switch, a viewshed point and a marker's viewshed
   dragged, Esc, a panel edit followed), t_vs_touch.py (tap select, touch
   drag, touch heading)
+
+**🔍 Map search + 🏠 / 🎯 (UI only, kraken_doa.html "🔍 MAP SEARCH"; the user's request 2026-10-21):**
+- 🔍 (top of the right-hand buttons) shows `#map-srch` as the first item of
+  `.map-tl` (under the top-left buttons; `mapState.srch`, localStorage
+  `kraken_map`); the results `#map-srch-res` hang over the map
+  (`.map-pane.srch-res-open` lifts `.map-tl` to z 6). State in the globals
+  block (`srchQ`, `srchRes`, `srchHl`, `srchListOn`, `srchOnl` / `srchOnlQ`,
+  `srchMsg`, `srchBusyQ`, `srchSeq`, `srchLastAt`, `srchCache`, `srchPin`,
+  `srchTxAt`) - mapDrawNow -> `srchDraw` / `srchTxBtn` can run first
+- Read OFFLINE as it is typed (`srchParse`): a map link (`srchParseLink`:
+  Google `@lat,lon,zz` / `q=` / `ll=` / `query=`, OpenStreetMap `#map=` /
+  `mlat`, Apple, `geo:`), lat / lon (`srchParseLatLon` -> `srchLatLonRows`:
+  decimal, degrees + decimal minutes, DMS; ° ' " ′ ″ or colons or the words;
+  signs or N / S / E / W before or after, lon-first when the letters say so;
+  "lat:" / "lon:" words; ";" or "a,b c,d" = decimal commas; split at a
+  ",", "/", the letters, the second °, or half the numbers - a single
+  letter between the two is tried with either; no letters and both fit =
+  two rows, lat, lon first; a text with any other letter isn't one, so
+  addresses never parse), UTM / MGRS (`srchParseGrid`; UTM's "S" = band S
+  (32-40° N) when the northing lands there, else / also the southern
+  hemisphere: both rows; MGRS 0-5 digits, the square's centre, the row
+  letters' 2000 km repeat chosen by the band, none past the pole), a
+  Maidenhead locator (`srchFromLocator`, 4-10 characters). Rows get a zoom
+  from the precision typed (`srchZoomFor`). Transverse Mercator =
+  Krüger's series to n^6 (`srchTm`, `srchToUtm` / `srchFromUtm`; Norway /
+  Svalbard zones), `srchToMgrs` truncates. Then the page's own places
+  (`srchLocal`, every word must match): the station ("home", callsign),
+  📍 markers (name, notes, their frequencies' names / MHz / tones), decoder
+  map points, the assistant's map points, OSM masts (layer on), viewshed
+  sites - picked = selected (`mkSelect`, `mapSel`), no pin
+- OpenStreetMap's Nominatim (`srchOnline`, `SRCH_URL` jsonv2, limit 10,
+  `viewbox` = the view, >= 0.2° across, not bounded; none below zoom 4) BY
+  THE BROWSER, like tiles / masts: only on Enter / the 🌐 row (its usage
+  policy: no autocomplete), >= `SRCH_GAP_MS` 1100 ms apart (a newer search
+  drops the older one's answer - `srchSeq`), kept per text + the view's
+  centre to the degree (`srchCache`, 100); offline / 429 / HTTP errors
+  said in the list (`srchMsg`). Rows (`srchOsmRow`): name, type + address,
+  bounding box (fitted - `srchFitBox`, across 180° too - else zoom 17),
+  the openstreetmap.org link only for a valid type + numeric id; every text
+  escaped. The first place is picked at once (list kept open on a map >= 720
+  px wide); "Places: © OpenStreetMap contributors (Nominatim)"
+- Enter (`srchGo`): the highlighted row (↑ / ↓), else a position typed
+  (not a 4-character locator: "AB12" may be a postcode - Enter asks
+  OpenStreetMap then, the locator stays listed), else an own place named
+  exactly so, else OpenStreetMap's first (asked if not yet). Esc: the list,
+  then the box; a press outside the box hides the list; ✕ (`srchClear`) =
+  text, list and pin gone, box closed
+- The pin (`srchPin`, `srchDraw`: orange #ff3d00, bigger than a marker,
+  its label; `srchHit` in mapInit's click / hover before decoder points,
+  `mapSel` 'srch' -> `srchPopupHtml` in mapRenderPopup; mapOnMessage keeps
+  it selected): address, position decimal / DMS (`srchDms`) / grid locator
+  (`srchLocator`) / UTM / MGRS (selectable text: `td.sel`), distance /
+  bearing from the station, 📍 Add as marker (`srchToMarker` -> mkCreate;
+  a typed position gets "Marker N"), Remove pin. ⤢ includes it
+- 🏠 = `mapCenterStation` (the ⌖ before). 🎯 = `mapGoTx`: `mapTxEsts()` =
+  the ⏯ replay's estimate at the moment shown (`lrEstAt`, before the first:
+  the drive's last) + the 📡 DF panel's shown maps' (`rdfShownMaps`, coherent);
+  the 95 % region (2 x r95) across ~a third of the map; pressed again with
+  the view where it left it = the next (`srchTxAt`); greyed (`.map-btn.dis`)
+  with none, the status line says how to get one (or that the DF panel's
+  pick has none). Jumps stop a replay's Follow (`mapStopFollow`) - it
+  would pull the view back to the vehicle
+- Tests (job scratch aa76cf1b t/): t_parse.mjs (node; the section cut out
+  of the page and run in a vm - 189 checks: ~40 lat / lon forms and ~20
+  non-coordinates, locators, DMS, UTM against pyproj on 3018 points < 1 mm,
+  MGRS against NGA GeoTrans (the `mgrs` package) - forward equal except
+  within 1 mm of a metre boundary (GeoTrans' own sub-mm noise), 3000 MGRS
+  strings at every precision -> square centres within 1 cm -, links);
+  t_ui.mjs (headless Chrome over CDP, page served statically with a UTF-8
+  charset, Nominatim stubbed by a fetch wrapper: 90 checks - box, typed
+  forms, pin + popup, locator Enter, online pick / list / box fit / 180°,
+  request spacing, cache, offline / 429, markup escaped, markers / aircraft /
+  station found, Esc / ✕, 🏠, 🎯 cycling + DF pick, phone width, one REAL
+  Nominatim request, the box left open shown after a reload - the first
+  version only rendered it on a click -, no page exceptions)
 
 **📻 Saved frequencies + 📍 map markers (one feature; `src/saved_freqs.cpp`, UI "📍 MAP MARKERS" + "📻 SAVED FREQUENCIES" in kraken_doa.html):**
 - Model: CATEGORIES {id, name, col #rrggbb}, LOCATIONS {id, name, lat, lon,
@@ -2055,14 +2155,40 @@ Edit `include/config.hpp`:
   cells >= 1e-4 of the peak) -> covariance ellipse (+ a cell's variance),
   50 / 95 % HPD radii, mode mass, `at_edge`
 - `rdf::Solver`: coarse grid 256 x 256 over +-range_km (default 10 -> 78 m
-  cells) with its origin at the first record; re-centred (rebuilt from all
-  records) when the vehicle gets > 0.7 range from it (on a confident
-  estimate, else on the vehicle). Fine grid 128 x 128 around a confident
-  coarse estimate (mode mass > 0.5, not at the edge, r95 < range / 3): half
-  = clamp(4 * r95, 250 m, range / 3), rebuilt from all records when the
-  estimate moves > 0.3 half or the wanted size changes > 1.6x, else updated
-  per record; the estimate comes from the fine grid while its mode isn't at
+  cells), fine grid 128 x 128 around a confident coarse estimate (mode mass
+  > 0.5, not at the edge, r95 < range / 3; half = clamp(4 * r95, 250 m,
+  range / 3)); the estimate comes from the fine grid while its mode isn't at
   its edge. Max 4000 records (then the older half is thinned)
+- SLIDING WINDOWS (the user's request 2026-10-21: "the heatmap moves
+  smoothly as the vehicle moves, rather than in jumps when the vehicle nears
+  the edge"; before, the coarse grid stayed on its first record until the
+  vehicle was 0.7 range out and was then REBUILT around a new centre - a ~7
+  km jump of the heat map, 5 of the user's 20 Android logs had one - and the
+  fine grid was rebuilt each time the estimate moved 0.3 of its size). Each
+  `rdf::Grid` is now a window onto a fixed metric frame (azimuthal
+  equidistant around `lat0 / lon0`; the window centre `cx / cy`, cells at
+  cx - half + (i + 0.5) cell) that `scroll(di, dj, recs, count)`s by WHOLE
+  cells: the cells it keeps keep their sums (exact - their frame
+  coordinates don't change), the column / row bands coming in get every
+  record (`add_rect`); bit-identical to a window built there (scratch
+  t_scroll.cpp, 22 shifts incl. >= n). The coarse window follows the VEHICLE
+  (`follow_coarse`, before each record is added: centred on it, the LAST
+  confident estimate - `pull_` - kept within KEEP_EST 0.7 of the half-width,
+  at most FOLLOW_STEP 2 cells a record or 1.5x what the vehicle moved -
+  never lags it); the fine window follows the ESTIMATE (scrolls; rebuilt
+  only when its size must change > 1.6x or it jumps >= half its width).
+  Past REANCHOR_M 100 km from the frame's origin a window gets a new frame
+  there (the same place on the map). Away from the origin the frame's north
+  isn't true north (meridian convergence: -0.32 deg 47 km east at 37 S):
+  `Grid::north_deg()` -> the grid message's `rot`, the ellipse's `ang` is
+  turned to true north. Cost: each scroll = the band's cells x all records
+  (~records x 15 us on a desktop per cell column); a long drive is CHEAPER
+  than before (no rebuilds: 30 km, 900 records 48.5 -> 17 ms per record),
+  a drive that never left the old 7 km pays the bands (the JS replay:
+  0.7-16 s for the user's logs, ~+10 %; a 2 h 4-rows/s log 26 -> 41 s). The
+  simulator (tools/rdf_sim.cpp, 40 x 5 / 15 min) gives the same errors and
+  95 % hits as before (36 / 40, 40 / 40); the user's logs the same
+  estimates (0-57 m apart)
 - Engine thread (rdf_mapper): owns the solvers; a VFO retuned by more than
   10 kHz starts over (its old session is parked by frequency); records are
   saved to `rdf_session.bin` (cwd, gitignored; "KRDF1" + blocks of freq,
@@ -2072,7 +2198,10 @@ Edit `include/config.hpp`:
   "KRDF2" (each block also carries the talker ID, "" = the VFO; "KRDF1" is
   still read) and every map is keyed VFO + talker (`Key` in rdf_mapper.cpp) Grid messages at most every 2 s per VFO:
   `{"rdf_grid":{vfo, mhz, records, range_km, nats, coarse/fine:{n, cell_m,
-  nw, se, data (b64 u8, row 0 north, 255 * (1 + s (M - Mmax) / 12 nats))},
+  nw, se, c: [lat, lon] (the window's centre), half (m), rot (deg: the
+  true bearing of its "up" - the page's `rdfGridDraw` draws the raster
+  there turned by it; a page from before stretches it between nw and se),
+  data (b64 u8, row 0 north, 255 * (1 + s (M - Mmax) / 12 nats))},
   est:{lat, lon, r50, r95, a, b, ang, mass, edge, off, off_sd}, lines:[[lat,
   lon, bearing, t]] (last 150 records)}}`; `GET_RDF` (page opening the map)
   makes the next push carry every VFO
@@ -2091,7 +2220,8 @@ Edit `include/config.hpp`:
   warnings, measured offset when |off| >= 2 deg and > 2 sd after 20
   records) and the reason frames aren't used (`RDF_STATE`). `rdfDraw` (in
   `mapDrawNow` before the rings): heat canvases (`RDF_LUT` blue..red,
-  transparent below 8 %) stretched between nw / se, bearing lines (1.5x the
+  transparent below 8 %) drawn by `rdfGridDraw` - a square of 2 x half
+  around c, turned by rot (nw / se from an older receiver), bearing lines (1.5x the
   range, older fainter), estimate X + 2.45-sigma (95 %) ellipse (dashed at the
   edge), lobes (radius 0.3 of the map, dashed when held) + the peak line,
   the heading tick. Heat map: the selected VFO's, or in All the only VFO
@@ -2111,6 +2241,176 @@ Edit `include/config.hpp`:
   tone from a hidden transmitter along a driven loop): lobe within 0.2 deg
   of the true bearing, estimate within ~10 m after 26 bearings, VFO select,
   Reset
+
+**⏯ Log replay (🗺 Map, UI only, every mode; kraken_doa.html "⏯ LOG REPLAY"):**
+- The user's request (2026-10-20): load and simulate KrakenSDR DoA log files
+  of the Android app (krakensdr_rdf_android - its newer SQLite and its older
+  CSV), plot them on the map, scrub the timeline, replay at various speeds.
+  The receiver's own 📝 DoA Recording (doa_logger.cpp) writes the SAME
+  formats, so it replays too (its box: 🗺 Replay = `replaySelected()`,
+  fetched from `recordings/<name>` like the download). Opened IN THE
+  BROWSER (map button "Replay" -> the strip's 📂, a file / file pair dropped
+  on `#map-pane` - `lrDropInit` -, or that button): nothing goes to the
+  receiver, no command, no route, no library (sql.js etc. would need a CDN
+  or a vendored file + route: the page parses everything itself)
+- Formats (the Android code: `data/log/FastLogParser.kt`, `LogEntry.kt`,
+  `data/log/SqliteLogFormat.kt`, `HeatMap.kt`): CSV without a header, ", "
+  separated (the app's reserved fields "R,R,R,R" without spaces; the
+  server's with), the layout by FIELD COUNT - 6 (ts, lat, lon, gps heading,
+  compass heading, bearing), 8 (+ confidence, power), exactly 373 (2021: ts,
+  lat, lon, gps, compass, bearing, conf, power, freq Hz, antenna, latency,
+  heading mode, 360 spectrum), >= 377 (the DOA_value.html line: ts, bearing,
+  conf, power, freq Hz, antenna, latency, station id, lat, lon, gps heading,
+  compass heading, heading mode, 4 reserved, 360 spectrum - the app's
+  distance-gated rows carry N<count>,X<m>,E<range> there); a line of >= 753
+  fields = several records (a DOA_value.html body whose newlines were lost:
+  split before each "<12-14 digit timestamp>," not after a comma). SQLite:
+  `entries` (ts_ms, decimator_id - the server's VFO, the app's NULL -,
+  bearing_deg, confidence, power_db, freq_hz, antenna, station_id, lat, lon,
+  gps_heading, compass_heading, heading_sensor, spectrum BLOB u8 x
+  spectrum_len scaled spec_min_db .. spec_max_db; the app adds latency +
+  reserved1-4 - ALTER TABLE on a server file, so old rows are short) + `meta`
+  (format_version 1, app krakensdr_rdf_android | kraken_doa_v2). Conventions:
+  epoch ms; the spectrum 360 x 1 deg COUNTER-CLOCKWISE from the array's
+  front, dB above its minimum (clamped -100); the bearing CLOCKWISE from the
+  heading (360 - argmax); compass bearing = heading + bearing, i.e. compass
+  B = spectrum index heading - B; the heading = the compass field in
+  COMPASS mode, else the GPS one (KRAKEN / MANUAL write it into both).
+  Confidence / power scales differ per server generation (only displayed)
+- A log RE-SAVED BY A SPREADSHEET (the user's OneDrive "KrakenSDR Android
+  Logs": 040723-106700-hunt1.csv + its copy, 030823-gsm.csv) is read too
+  (the user's request 2026-10-20, `lrDecodeText` / `lrParseCsv` /
+  `lrRetime`): Excel's General format writes the 13-digit timestamps as
+  1.68843E+12 - 6 significant digits = rounded to 10^7 ms (2.8 h), every row
+  of a drive at one or two "moments" (speed / turn rate came out NaN: no
+  heat map); numbers lose the space after the separator, text keeps it
+  (" UCA"); rows padded to the longest with empty fields (a 2021-layout row
+  then had the newest layout's count - trailing empty fields are dropped
+  before counting: 372 / 373 = 2021, >= 377 newest); European locales ';'
+  + decimal commas; "Unicode text" = UTF-16 (BOM) + tabs; quoted fields.
+  The rounding step comes from the digits kept (`tsStep`; also found when
+  every timestamp is a multiple of >= 10^5 ms and repeats within a signal -
+  re-saved as plain numbers). Times are REBUILT in file order from the track:
+  the clock advances one GPS fix per change of position (the row rate varies
+  20/s .. 1/2.4 s between logs, the fix rate much less: 1.2-2.4 s per fix in
+  the 20 intact logs, median 1.6 = `LR_FIX_MS`); a group of rows at one
+  position longer than the run's median (a stop; several VFOs per fix) takes
+  its share; the pace is fitted where the rounded value steps twice (> 2.8 h
+  logs: a 10 h synthetic drive to 0 s), else assumed; placed next to an
+  intact row (the app appended after the save - only when the run still
+  fits its rounded values: rows appended days later aren't glued on), else
+  on a step of the rounded value (it passes the step's middle there), else
+  centred in its rounding step (time of day +-1.4 h). The strip says so
+  (`.lr-warn`, "≈" on the clock) and "The drive took [N] min" re-times it
+  (worker op 'retime' on the kept text - `L.text`, only for re-timed CSVs;
+  the page keeps the signal, the place on the timeline and the map view).
+  The heat map hardly depends on the pace (its bearings close by distance;
+  speed only gates at 2 m/s and widens the bearing sigma). Checked
+  (scratch t_excel.mjs on 20 intact logs x 4 damaged forms - Excel CSV,
+  ';' + decimal comma, UTF-16 tabs, half damaged): the same rows, positions,
+  bearings; estimates 0-391 m from the originals' (median ~5 m), bearings
+  as many, rebuilt duration 0.66-1.41x the real (median 1.04); 77 / 80 - the
+  misses are kiwi-433-110823 (51 rows, one per 4.6 s: time 3x too short,
+  more rows over the 8 deg/s turn limit, 7 vs 16 bearings, its estimate
+  still 103 m from the original's). t_retime.mjs 14 / 14,
+  tools/replay_validate.mjs has two spreadsheet layouts
+- The worker (`lrWorkerMain`, started from a Blob of its source like the
+  viewshed's; `self.lrTest` exposes it to node):
+  - its own READ-ONLY SQLITE READER (`sqlOpen`: header, table b-trees +
+    overflow chains, index b-trees for WITHOUT ROWID, records incl. int48 /
+    int64, UTF-16 databases, the INTEGER PRIMARY KEY = rowid,
+    `sqlParseCreate` for the column names). A `-wal` file's COMMITTED frames
+    (salts + chained checksums, up to the last commit frame) are laid over
+    the pages: the server's recordings are WAL mode (checkpointed every 30 s
+    + at stop), the app copies its file in DELETE mode. A -wal that breaks
+    the read is dropped (read again without it, `walBad` shown); the page
+    only pairs `x.db-wal` with `x.db` (a WAL names no database - SQLite
+    itself can't tell either)
+  - `lrParse`: rows sorted by time (stable); per row the heading by mode,
+    compass bearing (logged bearing, else 360 - the spectrum's argmax),
+    speed from the TRACK of every row (+-3 s; sparse distance-gated rows:
+    neighbours within 30 s), turn rate from the signal's neighbouring rows
+    (<= 3 s), "dup" = the same spectrum as the signal's previous row (the
+    same DoA frame logged again - the app's poll / the server's held body);
+    signals = frequency (+ VFO); the spectrum kept ONLY as the display lobe
+    (linear 10^(dB/10) min..max -> u8, the live map's scale) + its linear
+    floor `lmin` (the heat map rebuilds the linear spectrum from the two;
+    a Float32 spectrum per row cost 1.4 KB). Arrays go to the page by
+    structured clone (the worker keeps its copy for the heat jobs)
+  - THE MOBILE DF ENGINE PORTED (`RdfGate` / `RdfGrid` / `RdfSolver`,
+    `rdfNorthLobe`; src/rdf_engine.cpp line by line - KEEP THE TWO ALIKE,
+    `tools/replay_validate.mjs --cpp` compares them) and fed like
+    rdf_mapper.cpp feeds it: GPS heading rows only at >= 2 m/s and <= 8
+    deg/s turning (compass / KrakenSDR / manual heading: <= 30 deg/s), sigma
+    hypot(2, GPS 1.5 + 8 / speed | 4), the gate's range from the current
+    estimate (mode mass > 0.5); bearing-only rows (6 / 8 fields) get a
+    Gaussian lobe of hypot(5, heading sigma). `estimate()` leaves out the
+    offset posterior (`offset(e)`: only for snapshots - it was ~40 % of a
+    record's time); estimates / marginals cached per grid version.
+    Measured: ~10-16 ms per record in Chrome / node (0.7-2.6 s for the
+    sample drives, 20-26 s for a 2 h 2-VFO log of 1404 records)
+  - a heat job (`lrHeat`, op 'heat' {job, sig, rangeKm}) runs in 80 ms
+    slices (a newer job / cancel / load gets in between): per record its
+    estimate (`ests`, keyed by the time the window CLOSED - when it was
+    known), and SNAPSHOTS of the coarse + fine rasters (12 nats, row 0
+    north, `RDF_LUT` colours) every max(1 s, duration / 400) - <= ~400 x 80
+    KB; rasters transferred. Progress `pct` + `why` (used / slow / turning /
+    dup / nopos / nohdg / nolobe)
+- Page (globals block: `lrUi` - localStorage `kraken_lr` {speed, follow,
+  track, lines (s: 0 off, 30, 120, 600, -1 all), lobe, heat, power, range
+  km}, rebuilt field by field -, `lr` the log, `lrOpen`, `lrReady`;
+  mapDrawNow -> `lrDraw` (after v2tLobeDraw: heat snapshot <= t, track -
+  driven solid amber, to come dashed on a dark underlay, broken at pauses -,
+  power dots, bearing lines of the window, the estimate's 95 % ellipse +
+  "Replay TX ±r95", the moment's lobe around the vehicle + its bearing to
+  the map's edge) and `lrDrawTop` (the vehicle arrow, over the markers)).
+  Timeline: pauses > `LR_GAP` 60 s take `LR_GAPC` 4 s (`lrAxisOf` /
+  `lrTimeOf`; the Android sample redoubt16sept.csv has a stray 2026 row
+  after a 2022 drive - 3.9 years -> 12 min); playback advances the axis by
+  real time x speed (0.5-500x), redraws <= ~30 fps, pauses when the map is
+  hidden; Follow keeps the vehicle in the middle of the map above the strip
+  every frame (`lrFollow`; it used to re-centre in one jump when the vehicle
+  neared an edge - the user's 2026-10-21 request); a drag of the map (the
+  view moved > 3 px from where Follow put it at the same zoom,
+  `lr.followAt`) turns Follow off, a wheel zoom keeps it. The heat
+  snapshots carry their window (c / half / rot) and are drawn by
+  `rdfGridDraw` like the live map's. A row is shown up to `LR_HOLD` 30 s; the vehicle is
+  interpolated between rows <= 10 s apart. Strip `#map-lr` (bottom, like
+  the path-loss strip; `.map-pane.lr-open` + `--lr-h` = its height lift the
+  DF / marker panels, the status line, the path-loss strip and cap the
+  top-left stack): name / format / signal list, transport (⏮ ⏴ ▶ ⏵, speed,
+  date-time, position / length), layer buttons, ±range, the timeline
+  canvas (`lrTlDraw`: per pixel column the strongest row - height + colour
+  = power over the log's 5-95 % range -, white dots = the bearings that went
+  into the heat map, dashed = a shortened pause, green bar = the heat job's
+  progress, playhead; base layer cached), the moment's row + "Heat map: N of
+  M bearings · TX ±r · distance / bearing from the vehicle", offset when
+  measured. Keys on the strip: Space / k, ← →, Home / End. A click on the
+  track (`lrHit`, 8 px; after markers / decoder points / masts / AI layers)
+  jumps there; ⤢ (fit all) includes the drive; the status line's "No
+  positions yet" hint is left out while the strip is open
+- Tests (job scratch ae566749 lr/; node = Pinokio's v24, MSYS2 g++ for the
+  C++): the SQLite reader vs Python's sqlite3 on 512 B / 4 / 64 KB pages,
+  overflow BLOBs, WITHOUT ROWID, ALTER TABLE, UTF-16, an uncheckpointed WAL
+  (12 / 12); every Android sample CSV (krakensdr_rdf_android root +
+  travelsimulator/) parsed - three drives of the same "redoubt" transmitter
+  (2021 400 MHz, 2021 "home", 2022 416.588 MHz) agree within ~150 m (r95
+  98-187 m); SQLite made from them in both writers' schemas (+ the server's
+  WAL tail) = the CSV's rows, bearings and estimate to 0.0 m; the engine
+  port vs the C++ (cmp_engine / tools/rdf_cmp.cpp) on three real drives:
+  rasters identical (<= 1 step), offsets to 4 decimals, estimates <= 1.3 m
+  (float32 vs double); a synthetic drive around a known transmitter in
+  every layout + COMPASS mode with a garbage GPS field: 4-37 m off
+  (`tools/replay_validate.mjs`, committed); headless Chrome (t_ui.mjs, 35
+  checks, real mouse / keys): the Replay button, file load, fit, the end /
+  mid-drive estimate, play / pause at 50x, timeline drag, ←, Space, a click
+  on the track, the layer buttons + kraken_lr, range, a path-loss strip
+  standing on it, ⤢, a multi-VFO receiver log (signal list, "no heat map:
+  standing still"), a dropped SQLite + -wal pair, a -wal alone, a non-log
+  file, the DoA Recording box's 🗺 Replay, phone width, ✕, reload, damaged
+  localStorage, no page exceptions; t_perf.mjs: a 2 h 2-VFO 149 MB CSV
+  (57,600 rows) loads in 3.3 s, heat in ~26 s, a frame <= ~10 ms with all
+  lines + power dots, 60 MB JS heap
 
 **DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country); `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,ctcss,beacon406,lora,wildlife}`, 🗺 Map 📡 DF panel):**
 - RULE (ID separation, the user's 2026-10-15): every decoder whose signal
@@ -2307,8 +2607,10 @@ Edit `include/config.hpp`:
   Lobe on), again = Whole signal; "DoA ✓" while picked. It acts on
   pointerdown: the popup is rebuilt every second ("Updated N s ago")
 - Packets (ADS-B per aircraft; `kp::Talker::packet`, wire flags field "p",
-  times sent with 7 decimals): the plugin reports every accepted message
-  of a confirmed aircraft (`talker_packet` in plugins/adsb: start = the
+  times sent with 7 decimals; since adsb v2.0 - every antenna, option
+  `pulse_doa` - each with its own pulse covariance, `kp::Talker::cov`, so
+  the ring below isn't kept for it - see *ADS-B*): the plugin reports every accepted message
+  of a confirmed aircraft (`queue_packet` in plugins/adsb: start = the
   first preamble pulse - mag_ index + timing phase / 5, mapped through
   `abs0_` / `blk_abs_` to host.time() -, end = + (8 + bits) us; offline
   check on a synthetic feed: start within 0.5 sample of the truth, sd
@@ -3408,8 +3710,7 @@ Edit `include/config.hpp`:
   `get_range_peak_db` -> `check_squelch_in_range`) and scanned (continuous
   scanner) relative to ONE floor per channel: `FFTProcessor::
   channel_noise_floor(ch, data)`. It was each caller's own 10th percentile
-  of the centre 80 % of the bins (`calculate_noise_floor`, still used by the
-  wideband scan's stitched spectrum) - a signal wider than the 2.4 MHz
+  of the centre 80 % of the bins (`calculate_noise_floor`) - a signal wider than the 2.4 MHz
   (DVB-T, LTE) fills those bins, so the percentile landed on it: drawn at
   ~0-10 dB (only its edge showed its height) and an FFT squelch inside it
   never opened (the user's report, 2026-10-14)
@@ -3439,17 +3740,127 @@ Edit `include/config.hpp`:
   and only after the last retune. Signal: held once r > ref + 1 dB, ref
   never rises (a day on DVB-T doesn't wear it away); noise: not held, ref
   follows (a real rise - active antenna, interference - is learned at once).
-  Independent / wideband scan mode or no fresh verdict: held when r > ref +
-  6 dB (released < 4), ref creeps up 1 dB a minute while held (a real +10
-  dB rise shows as ~10 dB noise for minutes there)
+  Independent mode or no fresh verdict: held when r > ref + 6 dB (released
+  < 4), ref creeps up 1 dB a minute while held (a real +10 dB rise shows as
+  ~10 dB noise for minutes there)
+- WIDEBAND SCAN MODE (the stitched spectrum; 2026-10-20/21, the user's
+  reports "wideband signals seem to disappear over the boundaries", then
+  "noise floors don't align between tuners, some show a much higher signal
+  level, a tuner's level glitches up and down before settling"): the stitch
+  (`FFTProcessor::stitch_wideband_fft`) normalised every tuner to its own
+  per-frame percentile, so a DVB-T / LTE over several tuners was drawn at
+  full height in the partly covered tuners and at ~0 dB in the ones it
+  filled, and a whole-array second normalisation (`calculate_noise_floor` on
+  the stitched array: the first 13k bins only) shifted everything down when
+  tuner 0 held a signal. Now the stitch is one grid of FFT bins (each
+  frequency from the tuner whose centre is nearest, boundaries half way
+  between the centres; no sort of 65k pairs per tick), each tuner's AVERAGED
+  spectrum minus the common shape (`nfloor::shape_db`) minus
+  `channel_noise_floor(t)` (the floor its VFOs' squelch reads too), built
+  from `fft_averaged` - every frame averaged as in coherent mode; the old
+  second EMA at the 20 Hz tick, its globals (`wideband_fft_magnitudes /
+  _averaged / _mutex`, `wideband_last_reset_gen`,
+  `wideband_reference_noise_floor`) and the second normalisation are gone;
+  while `fft_data_valid` is false the tick sends nothing (the pages keep the
+  last frame - it used to flash the single-tuner display)
+- What the live KrakenSDR showed (a read-only 8091 capture, 593-601 MHz,
+  a DVB-T mux over tuners 3-4): the dongles' noise floors differ by up to
+  4.4 dB at the same gain; every tuner's response has the SAME shape (a
+  ~3.5 dB tilt across the usable band, a slow roll-off below -1 MHz, a steep
+  one above +1 MHz - three quiet tuners within ~0.3 dB); the DVB-T fades ~13
+  dB across a tuner (multipath). A first version (commit bfaa5bf) derived a
+  filled tuner's floor from p10s of 2 % edge windows at the boundaries - on
+  the hardware those sit in the roll-off, 2.4-3.3 dB apart per boundary, so
+  chains of them drew tuners several dB too high - and used the remembered
+  floors (refs, per tuner + gain, frequency-blind: 7-19 dB off there) with
+  the 6 dB rule, which held tuners and drew their noise up to +19 dB. The
+  same capture replayed through it: noise of a tuner jumping 1.9 -> 7.9 dB,
+  the DVB-T 25.0 / 29.6 dB in tuners 3 / 4, up to 7.9 dB of wander
+- Now (`wideband_frame`, `update_step`, `wideband_pass`, under `mu`; no refs
+  used or learned in wideband scan mode - the coherent / independent path is
+  main's, byte for byte): (1) the common SHAPE (`WB_SHAPE_DEFAULT`, 256
+  points over 2.4 MHz, measured on that KrakenSDR = the median of three
+  quiet tuners, 5-point smoothed; GENERATED - shape_default.txt in the job
+  scratch; a hand-typed copy once differed by 3 dB) is taken off every
+  tuner; each tuner's floor f = p10 of its flattened centre 80 %. (2) GAIN
+  STEPS from the OVERLAPS: neighbours (each 2.4 MHz, spaced by edge clip x
+  2.4) share 0.48 MHz; at the same frequencies their flattened averaged
+  spectra differ only by gain, whatever the band holds - the median of the
+  difference over the bins where both responses are > `WB_OVERLAP_MIN_DB`
+  -6 (>= 64 bins; ~2000 at 16384), smoothed `WB_STEP_TAU_S` 1 s. Live:
+  +4.06 / +0.02 between quiet tuners whose floors differ +4.36 / -0.08. A
+  floor raised in one tuner only (overload, its antenna) is in the overlap
+  too: a gain step, so that tuner stays aligned. The median (not a quantile
+  difference) because it compares identical frequencies (DVB-T ripple) and
+  tolerates a station aliasing into one side. A step is the two dongles'
+  gain difference: kept PER PAIR of tuners (`Wb::step[j]`) through retunes,
+  replaced by the next measurement after a move > `WB_STEP_RESET_HZ` 2 MHz.
+  (3) Tuners adjacent by frequency with a step for the pair are linked
+  (also while they don't overlap - see the drag below); along a chain common
+  = min(f - g) = each tuner's receiver floor + g; over = f - g - common, and
+  the floor BLENDS from f (over <= `WB_BLEND_LO_DB` 1: quiet tuners' noise
+  lines up exactly) to common + g (over >= `WB_BLEND_HI_DB` 3: filled by a
+  signal), linearly between - no switching, no state (`Wb::blend`). (4) The
+  shape learned from quiet tuners (blend 0, flattened p50 - p10 < noise's +
+  1.5 dB - `noise_spread_db()`: 8.2 dB for one frame, x sqrt(alpha / (2 -
+  alpha)), 2.27 at 0.15 - every 1 s, points within 3 dB, tau 60 s; FFTs >=
+  4096; not persisted) - a 2 dB-steeper tilt is learned within 60 s. (5)
+  After a retune (> 1 kHz) only the step and shape MEASUREMENTS wait, until
+  the frames from before it weigh < 5 % in the average (`WB_SETTLE_OLD`:
+  ln 0.05 / ln(1 - alpha) frames x the measured frame interval = 3 time
+  constants, 125 ms at alpha 0.15; 30 ms - 4 s); the floors follow at once.
+  It was 5 time constants and at least 300 ms (the user's "speed up the
+  equalization", 2026-10-21): after a jump to where the dongles' gains differ
+  otherwise, the old steps held the tuners apart that long. A retune is when
+  the AVERAGED spectrum moved: `on_frame` gets the RF its centre holds (the
+  shift's `placed_hz`) on every frame (`Place`: before the `EVAL_MS` return),
+  and the steps compare the neighbours at those - a tuner's header frequency
+  (`tuner_frequencies`) changes before its FFT worker moves the average, and
+  a step measured in that moment came from two different bands (with the
+  shorter wait steps are measured during fast drags, and the DVB-T's edges
+  were drawn 0.1-0.5 MHz off in 5 % of the frames). (6)
+  `FFTProcessor::process_channel_fft` shifts a retuned tuner's average by
+  the move (wideband scan mode; whole bins, the rest carried; bins
+  the old band didn't hold keep their old values; a move past the band: no
+  shift) - the 8091 header frequency of the packet rides `RawDataPacket::
+  freq_hz` -> `FFTWorkItem::freq_hz` / `seq` (an older packet processed late
+  by another FFT worker doesn't move it back)
+- DRAGS (2026-10-21, the user's "dragging is laggy and glitchy, it takes
+  time to equalize after a retune"): heimdall's wideband scan retune
+  (`setup_wideband_frequencies`) is the full `rtlsdr_set_center_freq` per
+  tuner - not the coherent drag fast path -, one by one on Windows (~110 ms
+  for 5), each tuner's 8091 header frequency flipping as it finishes, no
+  retuning flag, no cooldown; 8092 coalesces queued `set_frequency`s. The
+  first version froze the fill decisions for the settle time after every
+  retune (renewed by every drag step) and dropped them after 1 MHz: a
+  DVB-T drawn at 0 dB for most of a drag, 0.4-3.6 s to recover. Steps were
+  dropped when a neighbour went out of reach: in a fast drag (~0.5 MHz per
+  sweep) a moved tuner and the next unmoved one are > 2.4 MHz apart for a
+  moment - a chain of tuners all inside the signal, no quiet one, the
+  signal at 0 dB for that frame. And the average kept the old band shifted
+  with the tuner until it decayed
+- Limits: a signal wider than all the tuners (or a rise on every tuner)
+  leaves no quiet tuner - drawn as the floor (nothing remembered in this
+  mode); a tuner's step to a neighbour it never overlapped quietly is still
+  measured (any content works); a response unlike the default shape gives
+  wrong steps until learned (~1 min, partial blends meanwhile); the
+  squelch reads the flattened floor against the unflattened spectrum
+  (<= ~2 dB at the band edges); a few frames after a retune carry old
+  samples under the new header frequency (heimdall's pipeline) - averaged
+  in at the new place with weight alpha each. heimdall's wideband scan
+  retunes take the drag fast path since 2026-10-21 (Windows 114 -> 74 ms per
+  step on the KrakenSDR - heimdall_v2/CLAUDE.md *Drag retunes*). Not done:
+  the page panning locally while dragging (it waits for frames: the display
+  follows the receiver - 140-210 ms behind in the drag test, modelled on the
+  full path's ~110 ms sweep; the fast path's 40 ms less per step not measured
+  end to end)
 - `noise_floors.json` (cwd, gitignored; `{"version":1,"floors":{"0|49.6":
   -27.49,...}}`): loaded at start (`nfloor::load`), written by the FFT
   worker at most every 5 min when a floor moved >= 0.5 dB
   (`maybe_save`) and at shutdown (`save_now`), so a start on DVB-T is right
   at once. Not touched by RESET_SETTINGS
 - Not covered: the beamformed-FFT squelch (beamforming on: its own narrow
-  spectrum's percentile, `check_squelch_beamformed`), the wideband scan's
-  stitched spectrum + discrete scanner
+  spectrum's percentile, `check_squelch_beamformed`)
 - Tests: unit (scratch t_nfloor.cpp, `-DNFLOOR_TEST_CLOCK` = a test clock,
   minutes in no time) - noise = the old floor exactly; coherent +20 dB
   band-filling shown at +20 for 10 min; a +10 dB uncorrelated rise learned
@@ -3466,6 +3877,57 @@ Edit `include/config.hpp`:
   converted for the test), the +10 dB noise at 0 dB after ~1 s (no verdict
   for the first frames after the retune), squelch closed. kraken_doa CPU the
   same (50-55 vs 52 % of a core)
+- Tests, wideband scan (job scratch 0d0a7cca, not in the repo): REPLAY
+  (t_wbreplay.cpp: a live 8091 capture, cap8091.py, through the client's
+  own process_channel_fft + nfloor + stitch at its packet rate, alpha 0.15,
+  60 s): noise 2.15 / 2.18 / 2.10 / 2.35 dB in tuners 0-3 (the last one's
+  only noise beside the DVB-T), the DVB-T 22.4 dB in tuner 3, 22.1 just past
+  the 3 | 4 boundary (tuner 4's 24.3 is the mux's own multipath shape), each
+  level wandering <= 1 dB (alpha 0.15's own noise); the first version on the
+  same replay: see above. UNIT (t_wbfloor.cpp, synthetic 5-tuner spectra
+  with the default shape + per-dongle deviations of +-0.3 dB, the live
+  gains, alpha 0.15 noise; 13 scenarios): noise aligned within 0.05 dB and
+  flat; DVB-T +20 / +5 dB over tuners 1-3 equal in every tuner (<= 0.3 dB),
+  the same after 30 min; a signal ending exactly at a boundary (the quiet
+  tuner not lifted); +6 dB of antenna noise on one tuner; +12 dB on every
+  tuner; carriers on boundaries; an FM-like band (200 kHz stations at +25-45
+  dB over half of it) for 10 min, then gone - still flat; a gain change; a
+  start on the signal; a pan of +1 MHz and back; a 2 dB-steeper response
+  learned in 60 s; coherent mode = the old floor. END TO END (fake_wb.py =
+  heimdall in wideband scan mode on 4809x with the measured shape + gains,
+  t_wb_e2e.py reading type 7 frames in exact-bin windows from a test build
+  on 48080): 20 / 20 - noise 2.35 dB in every tuner, DVB-T 21.2-22.1 dB in
+  all five, ~20 dB over the noise, after a pan too, no tuner's level moving
+  more than 0.47 dB (one display step) over 60 s, carriers on the 4
+  boundaries; the main build 4.24 dB in tuners 1-3. kraken_doa CPU 7.7 vs
+  9.9 s over 91 s (the stitch's sort gone). DRAG (fake_wbd.py = heimdall in
+  wideband scan mode following each retune like the Windows one - tuners
+  one by one, 22 ms each, header per tuner, data 8 ms after it, latest
+  command wins; 16384-sample packets; a 7.6 MHz block 20 dB over the noise
+  fixed in RF; t_wb_drag.py plays drags as WIDEBAND_FREQ steps every 50 ms -
+  600 -> 604 MHz in 50 kHz, back in 100 kHz, a 6 MHz jump, 606 -> 596 MHz in
+  250 kHz = 5 MHz/s - and reads every type 7 frame of the whole band): the
+  block over the noise during drags (median / worst frame) - main 0 / -2.8
+  dB (never shown), the first version 0 / -1.4 dB (gone from 1 MHz into a
+  drag), the blend 19.3 / 17.4 dB but the fast drag -0.5 dB (the chain
+  break), now 19.3-19.8 / 16.5 dB; the tuners inside it within 1.4 dB of
+  each other (p95; fast 1.9; the first version 18 dB); settled (3-frame
+  median within 1 dB) 0 s after a drag, 0.25 s after the jump (first
+  version 0.4-3.6 s); its edges drawn within 1.3 kHz of the truth in 95 %
+  of the frames during drags (without the shift 100-250 kHz: the old band
+  shifted); the display at the new frequency 140-210 ms after the last
+  command in every build (the tuners' sweep + the 50 ms frame tick). JUMP
+  (t_wb_jump.py + ana_jump.py: fake_wbd.py with the dongles' gains drifting
+  apart 0.2-0.5 dB per 100 MHz; lined up = every tuner's noise and the
+  signal parts within 1.5 dB, 3-frame median): the shorter settle wait
+  (5 % rule) at alpha 0.15 - 293 MHz 0.14-0.31 s (5 time constants / >= 300
+  ms: 0.45), back 300 MHz 0.25-0.61 s, most 0.30 (0.50), 6 / 3 MHz 0.20-0.25
+  s (0.19-0.27); at 0.05 back 300 MHz 0.55-0.59 s (0.91), the rest the same
+  (there the averaging itself is slower than the wait). Drags with it: the
+  first version (header frequencies) drew the DVB-T's edges 139-459 kHz off
+  in 5 % of the fast drag's frames (p95, 3 runs; 300 ms wait 1.3-59 kHz);
+  with the averages' own frequencies 1.2-1.3 kHz, the rest as before (block
+  16.9-18.8 dB over the noise at worst, spread p95 <= 1.9 dB)
 **Digital TV (`plugins/dtv/`, README.md there; ARRAY plugin API):**
 - Plugin id `dtv`, name "Digital TV (DVB-T/T2, ISDB-T, ATSC 1.0/3.0,
   DTMB)", v2.0 - was `sfn` "SFN Separation (..., DAB)" (renamed 2026-10-14;
@@ -4876,7 +5338,8 @@ Edit `include/config.hpp`:
   capture with partial pushes): the list complete between full pushes, one
   order throughout, by name, compass bearings, heading sorts + reverse +
   localStorage, a row still picks its device
-- Built with `-O3` (`plugins/ism/CXXFLAGS`): the front end's per-bin loops
+- Built with `-O3` (every plugin's default since 2026-10-22 - root
+  CLAUDE.md *Compiler flags*; it was ism's own `CXXFLAGS` file): the front end's per-bin loops
   (`__restrict` pointers) vectorise - GCC's -O2 cost model takes no loop
   that needs an epilogue; the output is identical (checked on all 1125
   recordings against the -O2 build, scratchpad scripts/cmp_bin.py). CPU
@@ -5024,6 +5487,54 @@ Edit `include/config.hpp`:
   190 of 197 messages (the 6 lost ones overlap another), the CRC = the
   Riddle's KLM1023 frame, every aircraft 0.0 deg, positions 25-120 km at
   their bearings; end to end 6 / 6 at 0.0 deg
+- v2.0 (2026-10-20, the user's request: weaker / more distant aircraft,
+  better error correction, the coherent array - each an option in the
+  decoder tab; README *Every antenna* + its test table):
+  - `kp::Info::multichannel`: in coherent mode with DoA on every antenna
+    (`process_multi`, `xs_` ring beside `mag_`). Option `array` (on): the
+    detector's magnitude = sqrt of the noise-normalised power sum
+    (`g_` / `pn_` per antenna, `set_noise`), gate `GATE_ARRAY` 1.3; what
+    the sum doesn't decode -> `decode_beams`: a preamble >= `ARRAY_RATIO`
+    1.35 x its gaps with the LOOSE gap rule (no gap above the pulses'
+    mean - the strict min-pulse rule lost 40 % of the 5 dB messages) ->
+    MRC weights = principal eigenvector of the preamble pulses'
+    covariance (`array.hpp`: power iteration, solve), strict preamble on
+    the beam, slice -> decision-directed weights from every sliced pulse
+    -> option `separate`: MVDR (target = principal of pulses minus gaps,
+    the window's covariance + one antenna's noise) and `scan_inside` (a
+    second message inside a decoded one, its signature projected out:
+    `decode_null`). Option `pulse_doa`: each packet's `kp::Talker::cov` =
+    its own pulse samples, minus samples of another accepted message's
+    pulses (`acc_`, `dirty`); packets wait in `pk_` until the separation
+    scan after their decode (`flush_packets`) - kraken_doa keeps no
+    stream ring for such a VFO and never drops them for an overlap.
+    Aircraft signature (`Aircraft::sig`, raw antennas, learnt from exact-
+    parity DF17/18 / DF11): repaired messages, repaired replies and DF11
+    with an IID must reach |a^H s|^2 >= `SIG_RHO_MIN` 0.7
+  - `fix` 0 / 1 / 2 (was on / off: a saved 1 = standard, as before):
+    extended = DF17/18 up to 3 of the 12 least certain bits (`search`),
+    DF11 1 anywhere (IID 0) / 1-2 weak with any IID (known AA), replies
+    1-2 of the 8 weakest -> a known aircraft's address at its level
+    (`level_ok` 6 dB) AND content (`reply_consistent`: altitude within
+    1000 ft of the last 2 min / its squawk) - without the content check a
+    sens + extended run made 1 wrong DF20 in 6243
+  - `cpr` (on): pairs up to `PAIR_MAX_MOVE_M` 4 km / ground speed (10-30
+    s; 15 s without a velocity), the dead-reckoned last position
+    (`reference`) the local reference for `REF_AGE_LONG_S` 180 s
+  - `sens` (off): gates 1.35 / 1.2, every timing sliced, one antenna also
+    a preamble >= `RATIO1_SENS` 1.6 with the loose rule
+  - Facts "Antennas" (combined, decoded only with a beam, separated,
+    bearings from pulses; one antenna: says DoA must be on) and "Bit
+    repair"; `ADSB_STATS=1` (offline) prints path / repair counters
+  - Tests (job scratch e4b30c3e t/: mkscene.py + score.py - every decoded
+    message against the truth hex -, trace / pos / track.py): v2.0 with
+    one antenna = v1.0 exactly on every scene (also through digi_test);
+    array: sweep 18 -> 73 %, busy 66 -> 94 %, replies sweep 15 -> 69 % /
+    busy 55 -> 89 %, ~6 dB more sensitive, noise 0, 0 wrong anywhere;
+    numbers in the README. `adsb_gen.py` got `replies` (DF4/5/20/21 per
+    aircraft) and `moving` (scene) - both opt-in, the playback's cache
+    unchanged. digi_test's Windows build line needs src/ai_sandbox.cpp +
+    src/geo_address.cpp now (dig_plugin.cpp calls aisandbox)
 
 **FFT (pffft) - `external/pffft/` + `plugins/sdk/kraken_fft.hpp`, kraken_doa and every plugin:**
 - The user's request (2026-10-17): swap FFTW for pffft (FFTW is GPL-2.0+;
@@ -5112,7 +5623,7 @@ Edit `include/config.hpp`:
   `g_spec_sockets`. Junk is ignored (`is_finite_value`, not std::isfinite:
   -Ofast)
 - Every 50 ms tick `build_fft_message(&snap, legacy)` runs as before (it
-  feeds the scanners and keeps the wideband scan's average) and also copies
+  feeds the scanners and stitches the wideband scan's spectrum) and also copies
   each display's normalized full-resolution spectrum into a
   `SpectrumSnapshot` (centre in exact Hz - `coherent_tuner_hz()` /
   `exact_tuner_hz()`; the old header's float32 MHz is ~30 Hz coarse); the
@@ -5359,6 +5870,31 @@ Edit `include/config.hpp`:
   (AACH usage marker >= 4, training sequence 1) of one timeslot; after 400 ms
   without traffic, erasure blocks flush the pipes' stdio buffers. Muted for
   60 s after any encrypted MAC-RESOURCE. ~0.5 s extra latency (pipe buffers)
+  Windows (no /dev/stdin there): each program gets two NAMED PIPES as its
+  file names (`\\.\pipe\krakensdr-tetra-<pid>-<n>-<64 random bits>`, one
+  instance, local only, the server end the plugin's; its client checked by
+  process ID - GetNamedPipeClientProcessId - before any data), started
+  through kproc (NUL stdio, no console); three plugin threads (writer ->
+  cdecoder, relay cdecoder -> sdecoder, reader) in overlapped I/O ended by a
+  stop event, so data moves through both programs between slots as on
+  Linux. A program that exits / breaks a pipe: stopped, restarted no sooner
+  than 2 s later (not every slot). The ETSI code needs no change: fopen
+  "rb" / "wb" + sequential fread / fwrite open a pipe like a file (binary).
+  Found as `$KRAKEN_TETRA_CODEC_DIR\{cdecoder,sdecoder}.exe`, else
+  `tetra-{cdecoder,sdecoder}.exe` in the working directory (kraken_doa_v2,
+  where libmbe.dll goes), else on the PATH. Tested 2026-10-20 with
+  stand-in programs that use the same file I/O: byte-exact at real-time
+  pace (~0.47 s to the first audio), only whole frames dropped when flooded
+  (the 64-block cap, as Linux), a codec that dies is restarted, one that
+  hangs doesn't block stop(); and with the real ETSI codec built by the
+  WINDOWS.md steps (MinGW UCRT64, only the system UCRT DLLs; MSYS2's patch
+  needs `--binary` - CRLF sources): 200 random slots and a TTS sentence
+  encoded with scoder + ccoder decode through TetraCodec bit-identical to
+  cdecoder + sdecoder on plain files, and to the Pi's build / pipes
+  (fixed-point code: the same samples on both OSes); the sentence's
+  correlation with the spoken input 0.948 (codec delay 40 samples). ccoder
+  writes a 1 as 0x0081 (129), TetraCodec sends -127 - cdecoder decodes both
+  the same
 - Codec availability: the sidebar box (above), and each voice plugin sets a "Voice codec" fact (e.g.
   "AMBE+2: libmbe.so.1 (mbelib 1.3.0)" / "not installed"), and its voice
   state says "... codec not installed" while someone listens
@@ -5395,8 +5931,10 @@ Edit `include/config.hpp`:
   executable `plugins/<id>/build/decoder` (linked as decoder.tmp, then
   renamed: a running copy keeps its inode). The top Makefile's `plugins`
   target runs it with -k and only warns on failure; CMake has an ALL target.
-  An optional `CXXFLAGS` file in a plugin folder adds compiler flags (last
-  on the command line; ism: -O3)
+  Every plugin and libkrakendig build with `-O3 -fno-math-errno
+  -fcx-fortran-rules` (+ `-mcpu=native` on aarch64 - root CLAUDE.md
+  *Compiler flags*). An optional `CXXFLAGS` file in a plugin folder adds
+  compiler flags (last on the command line; no shipped plugin has one)
 - `decoder --info` (JSON incl. `options` and `options_tsv` - the
   tab-separated copy kraken_doa's flat JSON reader parses; read by
   `PluginRegistry::scan()` at startup, on `PLUGINS_RESCAN` (worker thread,
@@ -6027,8 +6565,12 @@ kfft_execute(ctx.plan);
 
 **Hardware atan2f:** Uses ARM NEON internally, faster than any approximation
 ```cpp
-float phase = std::atan2f(q, i);  // Hardware accelerated on ARM
+float phase = std::atan2(q, i);  // float overload; hardware accelerated on ARM
 ```
+Use the `std::` overloads, not the C names: libstdc++ before GCC 14 (Debian
+12's GCC 12) has no `std::log10f` / `std::atan2f` / `std::sqrtf` ... (C89
+functions' `f` forms) - only the C99 ones (`std::log2f`, `std::lrintf`,
+`std::fmaf`).
 
 **Liquid-DSP Resampling:** Multi-stage decimation for 48kHz audio output
 

@@ -158,11 +158,7 @@ Grid::Grid(const Options& o, double lat0, double lon0, double half_m, int n)
     L_.assign(static_cast<size_t>(k_) * n_ * n_, 0.f);
     e_.resize(static_cast<size_t>(n_) * n_);
     nn_.resize(e_.size());
-    for (int j = 0; j < n_; j++)
-        for (int i = 0; i < n_; i++) {
-            e_[j * n_ + i] = static_cast<float>(-half_ + (i + 0.5) * cell_);
-            nn_[j * n_ + i] = static_cast<float>(-half_ + (j + 0.5) * cell_);
-        }
+    place();
     double ls = 0;
     for (double d : o_.offsets_deg) {
         const double sd = std::max(o_.offset_prior_sd_deg, 0.1);
@@ -178,7 +174,21 @@ void Grid::clear() {
     records_ = 0;
 }
 
+void Grid::place() {
+    for (int j = 0; j < n_; j++)
+        for (int i = 0; i < n_; i++) {
+            e_[j * n_ + i] = static_cast<float>(cx_ - half_ + (i + 0.5) * cell_);
+            nn_[j * n_ + i] = static_cast<float>(cy_ - half_ + (j + 0.5) * cell_);
+        }
+}
+
 void Grid::add(const Record& r) {
+    add_rect(r, 0, n_, 0, n_);
+    records_++;
+}
+
+void Grid::add_rect(const Record& r, int i0, int i1, int j0, int j1) {
+    if (i0 >= i1 || j0 >= j1) return;
     // log-likelihood ratio per bin against a uniform bearing
     std::array<float, BINS + 1> ell;
     for (int k = 0; k < BINS; k++)
@@ -198,32 +208,80 @@ void Grid::add(const Record& r) {
     for (int k = 0; k < k_; k++) xoff[k] = static_cast<float>((gamma - o_.offsets_deg[k]) / BIN_DEG);
     const float fer = static_cast<float>(er), fnr = static_cast<float>(nr);
     constexpr float INV_BIN = static_cast<float>(BINS / (2 * PI));
-    for (size_t c = 0; c < cells; c++) {
-        const float dx = e_[c] - fer, dy = nn_[c] - fnr;
-        float* lp = &L_[c];
-        if (dx * dx + dy * dy < near2) {
-            for (int k = 0; k < k_; k++) lp[k * cells] += near_v;
-            continue;
-        }
-        // grid bearing (rad -> bins) + per offset: the lobe at (bearing - offset)
-        const float xb = std::atan2(dx, dy) * INV_BIN;
-        for (int k = 0; k < k_; k++) {
-            float x = xb + xoff[k];
-            x -= BINS * std::floor(x / BINS);
-            int i = static_cast<int>(x);
-            if (i >= BINS) i -= BINS;
-            float v;
-            if (o_.interpolate) {
-                const float f = x - i;
-                v = ell[i] + f * (ell[i + 1] - ell[i]);
-            } else {
-                int j = static_cast<int>(x + 0.5f);
-                v = ell[j >= BINS ? j - BINS : j];
+    for (int j = j0; j < j1; j++)
+        for (size_t c = static_cast<size_t>(j) * n_ + i0, ce = static_cast<size_t>(j) * n_ + i1; c < ce; c++) {
+            const float dx = e_[c] - fer, dy = nn_[c] - fnr;
+            float* lp = &L_[c];
+            if (dx * dx + dy * dy < near2) {
+                for (int k = 0; k < k_; k++) lp[k * cells] += near_v;
+                continue;
             }
-            lp[k * cells] += v;
+            // grid bearing (rad -> bins) + per offset: the lobe at (bearing - offset)
+            const float xb = std::atan2(dx, dy) * INV_BIN;
+            for (int k = 0; k < k_; k++) {
+                float x = xb + xoff[k];
+                x -= BINS * std::floor(x / BINS);
+                int i = static_cast<int>(x);
+                if (i >= BINS) i -= BINS;
+                float v;
+                if (o_.interpolate) {
+                    const float f = x - i;
+                    v = ell[i] + f * (ell[i + 1] - ell[i]);
+                } else {
+                    int jj = static_cast<int>(x + 0.5f);
+                    v = ell[jj >= BINS ? jj - BINS : jj];
+                }
+                lp[k * cells] += v;
+            }
+        }
+}
+
+void Grid::scroll(int di, int dj, const std::vector<Record>& recs, size_t count) {
+    if (!di && !dj) return;
+    const size_t cells = static_cast<size_t>(n_) * n_;
+    // the kept cells move by (-di, -dj); the rest is cleared for the new records' sums
+    if (std::abs(di) >= n_ || std::abs(dj) >= n_) std::fill(L_.begin(), L_.end(), 0.f);
+    else {
+        std::vector<float> plane(cells);
+        for (int k = 0; k < k_; k++) {
+            float* L = &L_[k * cells];
+            std::fill(plane.begin(), plane.end(), 0.f);
+            for (int j = std::max(0, -dj); j < std::min(n_, n_ - dj); j++) {
+                const int i0 = std::max(0, -di), i1 = std::min(n_, n_ - di);
+                std::copy(L + static_cast<size_t>(j + dj) * n_ + i0 + di, L + static_cast<size_t>(j + dj) * n_ + i1 + di,
+                          plane.begin() + static_cast<size_t>(j) * n_ + i0);
+            }
+            std::copy(plane.begin(), plane.end(), L);
         }
     }
-    records_++;
+    cx_ += di * cell_;
+    cy_ += dj * cell_;
+    place();
+    // the cells that came in: a column band (east / west) and a row band (north / south)
+    const int ci0 = di > 0 ? std::max(0, n_ - di) : 0, ci1 = di > 0 ? n_ : std::min(n_, -di);
+    const int rj0 = dj > 0 ? std::max(0, n_ - dj) : 0, rj1 = dj > 0 ? n_ : std::min(n_, -dj);
+    const bool all = std::abs(di) >= n_ || std::abs(dj) >= n_;
+    for (size_t q = 0; q < count && q < recs.size(); q++) {
+        if (all) { add_rect(recs[q], 0, n_, 0, n_); continue; }
+        if (di) add_rect(recs[q], ci0, ci1, 0, n_);
+        // (the row band without the corner the column band already did)
+        if (dj) add_rect(recs[q], di > 0 ? 0 : ci1, di > 0 ? ci0 : n_, rj0, rj1);
+    }
+}
+
+void Grid::centre(double* lat, double* lon) const { from_enu(lat0_, lon0_, cx_, cy_, lat, lon); }
+
+void Grid::corners(double* nw_lat, double* nw_lon, double* se_lat, double* se_lon) const {
+    from_enu(lat0_, lon0_, cx_ - half_, cy_ + half_, nw_lat, nw_lon);
+    from_enu(lat0_, lon0_, cx_ + half_, cy_ - half_, se_lat, se_lon);
+}
+
+double Grid::north_deg() const {
+    double la, lo, la2, lo2;
+    from_enu(lat0_, lon0_, cx_, cy_, &la, &lo);
+    from_enu(lat0_, lon0_, cx_, cy_ + 1000.0, &la2, &lo2);
+    double b = bearing_deg(la, lo, la2, lo2);
+    return b > 180 ? b - 360 : b;
 }
 
 void Grid::marginal(std::vector<float>* m) const {
@@ -306,7 +364,12 @@ Estimate Grid::estimate() const {
     const double l1 = tr / 2 + std::sqrt(std::max(0.0, tr * tr / 4 - det)), l2 = std::max(0.0, tr - l1);
     e.ell_a_m = std::sqrt(l1);
     e.ell_b_m = std::sqrt(l2);
-    e.ell_ang_deg = wrap360(0.5 * std::atan2(2 * cen, cnn - cee) * R2D);   // major axis, CW from grid north
+    // major axis: CW from grid north, + the true bearing of grid north there
+    // (meridian convergence: a window far from the frame's origin is turned)
+    double gla, glo, gla2, glo2;
+    from_enu(lat0_, lon0_, me, mn, &gla, &glo);
+    from_enu(lat0_, lon0_, me, mn + 1000.0, &gla2, &glo2);
+    e.ell_ang_deg = wrap360(0.5 * std::atan2(2 * cen, cnn - cee) * R2D + bearing_deg(gla, glo, gla2, glo2));
     // HPD radii (within the mode)
     std::vector<double> ws;
     ws.reserve(mode.size());
@@ -383,6 +446,9 @@ std::vector<uint8_t> Grid::raster(double nats_range) const {
 namespace {
 constexpr int FINE_N = 128;
 constexpr size_t MAX_RECORDS = 4000;
+constexpr double REANCHOR_M = 100000;   // a window this far from its frame's origin: a new frame there
+constexpr double KEEP_EST = 0.7;        // a confident estimate stays within this much of the coarse half-width
+constexpr int FOLLOW_STEP = 2;          // the coarse window moves at most this many cells a record (or 1.5x the vehicle)
 }
 
 Solver::Solver(Options o, double half_km, int n) : o_(std::move(o)), half_km_(half_km), n_(n) {}
@@ -392,6 +458,7 @@ void Solver::reset() {
     coarse_.reset();
     fine_.reset();
     est_ = {};
+    pull_valid_ = false;
     version_++;
 }
 
@@ -409,6 +476,53 @@ void Solver::refresh_estimate() {
             est_ = f;
         }
     }
+    // the coarse window keeps the last confident estimate in it (follow_coarse)
+    if (est_.valid && est_.mode_mass > 0.5 && !est_.at_edge) {
+        pull_valid_ = true;
+        pull_lat_ = est_.lat;
+        pull_lon_ = est_.lon;
+    }
+}
+
+// The coarse window follows the vehicle (the record r: centred on it), but
+// the last confident estimate is kept within KEEP_EST of the half-width from
+// the centre (else the transmitter could slide out of the grid; the last
+// one, not only while the estimate is confident: a confidence coming and
+// going made the window jump between the two places). It moves at most
+// FOLLOW_STEP cells a record, or 1.5x what the vehicle moved - so it never
+// lags the vehicle, and anything else (a new estimate) is followed over a
+// few records. `count` = the records already in it. Whole cells; past
+// REANCHOR_M from its frame's origin a new frame where the window is
+void Solver::follow_coarse(const Record& r, size_t count, bool limit) {
+    Grid& g = *coarse_;
+    double tx, ty;
+    to_enu(g.lat0(), g.lon0(), r.lat, r.lon, &tx, &ty);
+    if (pull_valid_) {
+        double ex, ey;
+        to_enu(g.lat0(), g.lon0(), pull_lat_, pull_lon_, &ex, &ey);
+        const double dx = tx - ex, dy = ty - ey, d = std::hypot(dx, dy), lim = KEEP_EST * g.half_m();
+        if (d > lim) {
+            tx = ex + dx * lim / d;
+            ty = ey + dy * lim / d;
+        }
+    }
+    int di = static_cast<int>(std::lround((tx - g.cx_m()) / g.cell_m())), dj = static_cast<int>(std::lround((ty - g.cy_m()) / g.cell_m()));
+    if (!di && !dj) return;
+    if (limit) {
+        const double moved = count ? distance_m(recs_[count - 1].lat, recs_[count - 1].lon, r.lat, r.lon) / g.cell_m() : 0;
+        const int step = std::max(FOLLOW_STEP, static_cast<int>(std::ceil(1.5 * moved)));
+        di = std::clamp(di, -step, step);
+        dj = std::clamp(dj, -step, step);
+    }
+    const double ncx = g.cx_m() + di * g.cell_m(), ncy = g.cy_m() + dj * g.cell_m();
+    if (std::hypot(ncx, ncy) > REANCHOR_M) {
+        double la, lo;
+        from_enu(g.lat0(), g.lon0(), ncx, ncy, &la, &lo);
+        coarse_ = std::make_unique<Grid>(o_, la, lo, half_km_ * 1000, n_);
+        for (size_t q = 0; q < count; q++) coarse_->add(recs_[q]);
+        return;
+    }
+    g.scroll(di, dj, recs_, count);
 }
 
 void Solver::update_fine(bool force) {
@@ -422,11 +536,22 @@ void Solver::update_fine(bool force) {
     const double want = std::clamp(4 * c.r95_m, 250.0, ch / 3);
     bool rebuild = force || !fine_;
     if (fine_) {
-        const double moved = distance_m(fine_->lat0(), fine_->lon0(), c.lat, c.lon);
         const double ratio = want / fine_->half_m();
-        if (moved > 0.3 * fine_->half_m() || ratio > 1.6 || ratio < 1 / 1.6) rebuild = true;
+        if (ratio > 1.6 || ratio < 1 / 1.6) rebuild = true;
     }
-    if (!rebuild) return;
+    if (!rebuild) {
+        // the window follows the estimate by whole cells (a jump of half the grid or more: rebuilt there)
+        double ex, ey;
+        to_enu(fine_->lat0(), fine_->lon0(), c.lat, c.lon, &ex, &ey);
+        const int di = static_cast<int>(std::lround((ex - fine_->cx_m()) / fine_->cell_m()));
+        const int dj = static_cast<int>(std::lround((ey - fine_->cy_m()) / fine_->cell_m()));
+        if (!di && !dj) return;
+        const double ncx = fine_->cx_m() + di * fine_->cell_m(), ncy = fine_->cy_m() + dj * fine_->cell_m();
+        if (std::abs(di) < FINE_N / 2 && std::abs(dj) < FINE_N / 2 && std::hypot(ncx, ncy) <= REANCHOR_M) {
+            fine_->scroll(di, dj, recs_, recs_.size());
+            return;
+        }
+    }
     fine_ = std::make_unique<Grid>(o_, c.lat, c.lon, want, FINE_N);
     for (const auto& r : recs_) fine_->add(r);
 }
@@ -434,13 +559,15 @@ void Solver::update_fine(bool force) {
 void Solver::add(const Record& r) {
     recs_.push_back(r);
     if (recs_.size() > MAX_RECORDS) {
-        // thin the older half (every other record) and start over
+        // thin the older half (every other record) and start over - the window where it is
         std::vector<Record> keep;
         const size_t half = recs_.size() / 2;
         for (size_t i = 0; i < recs_.size(); i++)
             if (i >= half || i % 2 == 0) keep.push_back(recs_[i]);
         recs_.swap(keep);
-        rebuild_coarse(coarse_ ? coarse_->lat0() : r.lat, coarse_ ? coarse_->lon0() : r.lon);
+        double la = r.lat, lo = r.lon;
+        if (coarse_) coarse_->centre(&la, &lo);
+        rebuild_coarse(la, lo);
         update_fine(true);
         refresh_estimate();
         version_++;
@@ -448,11 +575,8 @@ void Solver::add(const Record& r) {
     }
     if (!coarse_) {
         rebuild_coarse(r.lat, r.lon);
-    } else if (distance_m(coarse_->lat0(), coarse_->lon0(), r.lat, r.lon) > 0.7 * half_km_ * 1000) {
-        // the vehicle is leaving the grid: re-centre on a confident estimate, else on the vehicle
-        const bool conf = est_.valid && est_.mode_mass > 0.5 && !est_.at_edge;
-        rebuild_coarse(conf ? est_.lat : r.lat, conf ? est_.lon : r.lon);
     } else {
+        follow_coarse(r, recs_.size() - 1);   // (r is not in it yet)
         coarse_->add(r);
     }
     if (fine_) fine_->add(r);
@@ -464,7 +588,9 @@ void Solver::add(const Record& r) {
 void Solver::set_range_km(double half_km) {
     half_km_ = half_km;
     if (!coarse_) return;
-    rebuild_coarse(coarse_->lat0(), coarse_->lon0());
+    double la, lo;
+    coarse_->centre(&la, &lo);
+    rebuild_coarse(la, lo);
     update_fine(true);
     refresh_estimate();
     version_++;
@@ -482,9 +608,14 @@ void Solver::load(std::vector<Record> recs) {
     recs_ = std::move(recs);
     coarse_.reset();
     fine_.reset();
+    pull_valid_ = false;
     if (!recs_.empty()) {
-        rebuild_coarse(recs_.front().lat, recs_.front().lon);
+        // the window where the vehicle was last (and a confident estimate in it - straight there)
+        rebuild_coarse(recs_.back().lat, recs_.back().lon);
         update_fine(true);
+        refresh_estimate();
+        follow_coarse(recs_.back(), recs_.size(), false);
+        update_fine(false);
     }
     refresh_estimate();
     version_++;
