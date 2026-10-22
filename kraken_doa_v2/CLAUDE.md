@@ -236,7 +236,10 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   4 outputs per pass 10-20 % faster than 2). The mixer in front writes into
   the first stage's buffer, each stage's outputs go into the next one's; a
   block that isn't a multiple of a stage's factor leaves its tail in that
-  stage. Kinds:
+  stage. A block goes through the whole cascade in CHUNKS of `DECIM_CHUNK`
+  1024 input samples (2026-10-22, decimateChannel), so every stage's buffer
+  stays a chunk + its history long, in the core's L1 - see the
+  measurements below for why. Kinds:
   - regular: real taps
   - FOLDED (`Plan::fold`, the first stage only): the mixer in the taps -
     h[k] e^{+jwk} on the RAW input (copied in), each output turned by the
@@ -366,6 +369,35 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   same checks, the same speed. Not done: a folded halfband first stage
   (complex taps on the x phase: the model gives ~0.2 ns at best - the
   mixer into the two phases is already cheaper than the interleaved one)
+- Profiled in the live pipeline (2026-10-22, the user's question "any other
+  optimizations for the VFOs?"; perf - `linux-perf`, installed on the Pi
+  with the user's go - on the test build + fake heimdall, job scratch
+  e2e/t_prof.py: phases nothing decimated / one VFO without DoA / with DoA
+  / 2 and 3 VFOs / 240 kHz / beamforming, total + per-thread CPU): a 12.5
+  kHz VFO with DoA and 5 antennas cost ~19 % of a core EACH (1 / 2 / 3
+  VFOs 28 / 47 / 65 %), its decimation 2.6 % of that in decim_bench - in
+  the pipeline the first stage was MEMORY-bound: a memcpy (libc's 64-byte
+  loop; the raw block copied into the folded first stage) was 30-40 % of
+  the samples - 8 % of a core for one VFO, 19 % for two, ~1.5 GB/s (each
+  VFO's 128 KB per antenna per block, written on other cores than the
+  converter's, the VFOs contending) - and `produce` ran at ~5 ns per input
+  sample against 2.2 in decim_bench (reading the 128 KB buffer back
+  cold). Chunking (above) keeps both in L1: measured with 512 / 1024 / 2048
+  / 4096 / 16384 (the old whole block) - 512 and 1024 the same, 2048 +1-2 %
+  of a core, 4096 +2-7, the whole block +8-30. Whole kraken_doa, the
+  previous build (5d3fe16 + 8f4e30c) / this one (chunked cascade + the fast
+  dB, *FFT Processing* below) alternately, two runs each, % of a core:
+  nothing decimated 9.5 -> 7.8 (the fast dB), one VFO without DoA 12.7 ->
+  10.3, one VFO with DoA 28.5 -> 18.5, two 48.7 -> 26.2, three 66.8 ->
+  32.3, 240 kHz 37.1 -> 26.4, DoA + beamforming 28.9 -> 19.1 - an extra
+  narrow VFO ~7 % of a core instead of ~19. decim_bench (hot caches) mean
+  1.69 -> 1.59 ns on centre; every check against the reference unchanged
+  (<= 7.1e-5 of rms, blocks of 1 - 16384 samples across the chunk edges).
+  What is left with two VFOs (perf, share of the samples / of a core):
+  `produce` ~24 % / ~7.6 %, the copy into a folded first stage still ~19 %
+  / ~6 % (its source block is cold - filtering straight from it, without
+  the copy, would save most of that: not done), then the spectrum FFT, the
+  IQ conversion of the 5 antennas, the receiver thread
 - Tests (job scratch 415cedbd e2e/, on the Pi: `fake_heimdall_bw.py` = a
   5-element UCA scene, tone A +100 kHz from 60 deg, tone B +125 kHz from
   200 deg; `t_bw.py` against a TEST build on 5808x / 5809x): 24 / 24 -
@@ -6220,12 +6252,16 @@ describe are long gone.) Per VFO a `SharedDecimator`, per antenna a
 mixer (in front of, or folded into, the first stage) and a cascade of
 `FirStage` block FIRs (every output computed straight from the stage's
 buffer - no per-sample window pushes; regular / folded / halfband), split
-as `planStages` finds cheapest, the antennas in parallel on the
-decimator's `ThreadPool`. Details + measurements: *Arbitrary VFO
-bandwidth* above (`tools/decim_bench.cpp`). Pi 5, one antenna, ns per
-input sample with the VFO off the tuner centre (mixer included): ~2.1-3.5
-up to 240 kHz, ~3.9-7.3 at 250 kHz - 1.2 MHz, 7.9-9.9 for the full-rate
-widths 1.2 - 2.4 MHz, 3.2 for 2.4 MHz (the mixer alone).
+as `planStages` finds cheapest, a block through the whole cascade in
+1024-sample chunks (`DECIM_CHUNK`: the buffers stay in L1), the antennas
+in parallel on the decimator's `ThreadPool`. Details + measurements:
+*Arbitrary VFO bandwidth* above (`tools/decim_bench.cpp`). Pi 5, one
+antenna, hot caches, ns per input sample with the VFO off the tuner centre
+(mixer included): ~2.1-3.5 up to 240 kHz, ~3.9-7.3 at 250 kHz - 1.2 MHz,
+7.9-9.9 for the full-rate widths 1.2 - 2.4 MHz, 3.2 for 2.4 MHz (the mixer
+alone). In the live pipeline a 12.5 kHz VFO with DoA and 5 antennas adds
+~7 % of a core to kraken_doa (it was ~19 % before the chunking: memory-
+bound, see *Arbitrary VFO bandwidth*).
 
 ### 3. FFT Processing
 
@@ -6240,6 +6276,20 @@ widths 1.2 - 2.4 MHz, 3.2 for 2.4 MHz (the mixer alone).
 ctx.plan = kfft_plan_dft_1d(fft_size, ctx.fft_in, ctx.fft_out, KFFT_FORWARD);
 kfft_execute(ctx.plan);
 ```
+
+**Power -> dB per bin (2026-10-22):** `bins_to_db` (fft_processor.cpp: the
+spectrum, the beamformed spectrum; beamformer.cpp's SNR FFT the same) with
+`fast_db10` (`include/utils/fast_log.hpp`: exponent bits + atanh series,
+<= 6e-6 dB from the exact value) on straight runs - the DC-centring wrap is
+done as two runs. The old loop wrapped its index with a mask, so it never
+vectorized: a libm `log2f` per bin, 8.5 ns on the Pi 5 (its comment's
+"hardware log2f / VLOG2" doesn't exist on ARMv8), ~29 % of kraken_doa's CPU
+with no VFO decimated (~2.6 % of a core; per tuner FFT'd, so 5x that in
+independent mode). Now 2.7 ns a bin on the Pi (glibc would vectorize
+std::log2f in the straight loop too: 2.5), 0.39 ns on the dev PC's Ryzen
+(MinGW has no vector log2f: 2.6 there) - one implementation, the same values
+on every platform. `tools/fast_log_test.cpp` (93.6 M values 1e-15 .. 1e6 +
+the three loop shapes timed)
 
 ### 4. FM Demodulation
 

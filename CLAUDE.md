@@ -716,7 +716,12 @@ bandwidth*)**:
   (`SharedDecimator::planStages`, 2026-10-22: any order of factors 2..8,
   halfband stages for 2, the mixer folded into the first stage's taps where
   that is cheaper - measured against every candidate plan of 28 widths, the
-  pick is the fastest or within 2 %): the first block FIR was 3.3x the
+  pick is the fastest or within 2 %), a block through the whole cascade in
+  1024-sample chunks (the stages' buffers stay in L1 - in the live
+  pipeline the first stage was memory-bound: an extra 12.5 kHz VFO with
+  DoA and 5 antennas cost ~19 % of a core, ~7 % chunked; kraken_doa with
+  1 / 2 / 3 such VFOs 28 / 49 / 67 -> 19 / 26 / 32 % of a core, perf-
+  profiled 2026-10-22): the first block FIR was 3.3x the
   decimator before arbitrary widths, this 2.0x the first block FIR;
   kraken_doa against the build before arbitrary widths (measured the day
   before, same harness) 22-31 % less CPU at every old size but 2.4 MHz (6 %;
@@ -1792,7 +1797,10 @@ kraken_doa_v2/CLAUDE.md *Arbitrary VFO bandwidth*):
   `planStages` (a cost model of the kernels; halfband stages, the mixer
   folded into the first stage where cheaper)
 - Block FIR stages (`FirStage`): every output straight from the stage's
-  buffer, 4 outputs per NEON / SSE pass; buffers grow without zeroing
+  buffer, 4 outputs per NEON / SSE pass; buffers grow without zeroing; a
+  block goes through the cascade in 1024-sample chunks (`DECIM_CHUNK`), so
+  the buffers stay in L1 (the whole 128 KB block per antenna made the
+  first stage memory-bound)
 
 ## Development Workflow
 
@@ -2027,7 +2035,9 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
   extensions -> NEON); liquid-dsp (built from source - `liquid.mk`, NEON dot
   products) designs its taps and runs the demodulators' / plugins' filters
 - FFT: pffft (NEON), no planning / wisdom file - see kraken_doa_v2/CLAUDE.md
-  *FFT (pffft)*
+  *FFT (pffft)*; power -> dB per bin with `fast_db10` (`include/utils/
+  fast_log.hpp`) in straight loops that vectorize (the old wrapped-index
+  loop called libm's log2f per bin: ~2.6 % of a core per spectrum)
 
 ### Memory Management
 

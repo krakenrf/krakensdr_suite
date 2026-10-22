@@ -541,6 +541,12 @@ static double mixer_w(float offset_hz) {
     return std::fabs(offset_hz) > 1.0f ? 2.0 * M_PI * offset_hz / SAMPLE_RATE_HZ : 0.0;
 }
 
+// Input samples per pass through the cascade (decimateChannel): 8 KB of
+// complex floats - the chunk + the stages' buffers stay in the core's L1.
+// Pi 5, kraken_doa with 1 / 2 / 3 VFOs (DoA, 5 antennas): 512 and 1024 the
+// same, 2048 +1-2 % of a core, 4096 +2-7, the whole block (16384) +8-30
+static constexpr size_t DECIM_CHUNK = 1024;
+
 // Per-channel state: only one pool task touches a given channel at a time
 // (one task per channel per block, blocks sequential), so no locking needed.
 SharedDecimator::ChannelDecimState* SharedDecimator::ensureChannelState(
@@ -628,34 +634,46 @@ SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
     // phase at every block boundary - an audible buzz on any off-center VFO
     // whose factor doesn't divide the block size.)
     result.samples.clear();
-    Dst dst;
+    const double w = mixer_w(freq_offset_hz);
+    const bool mix_front = w != 0.0 && !st->fold;
+    const complex<float> step(static_cast<float>(std::cos(-w)), static_cast<float>(std::sin(-w)));
     if (st->stages.empty()) {
         result.samples.resize(num_samples);
-        dst.a = result.samples.data();
+        const Dst dst{result.samples.data(), nullptr};
+        if (mix_front) mix_into(iq_data, num_samples, dst, st->mixer_phase, step);
+        else copy_into(iq_data, num_samples, dst);
     } else {
-        dst = st->stages.front().take(num_samples);
-    }
-    const double w = mixer_w(freq_offset_hz);
-    if (w != 0.0 && !(st->fold && !st->stages.empty())) {
-        const complex<float> step(static_cast<float>(std::cos(-w)), static_cast<float>(std::sin(-w)));
-        mix_into(iq_data, num_samples, dst, st->mixer_phase, step);
-    } else {
-        copy_into(iq_data, num_samples, dst);
-    }
-
-    // The cascade: each stage's outputs straight into the next one's
-    // buffer, the last one's into the result
-    for (size_t s = 0; s < st->stages.size(); s++) {
-        FirStage& f = st->stages[s];
-        const size_t n = f.pending();
-        Dst out;
-        if (s + 1 == st->stages.size()) {
-            result.samples.resize(n);
-            out.a = result.samples.data();
-        } else {
-            out = st->stages[s + 1].take(n);
+        // The block in chunks of DECIM_CHUNK samples, each through the whole
+        // cascade: each stage's outputs straight into the next one's
+        // buffer, the last one's appended to the result. The stages' buffers
+        // stay a chunk + their history long, in the core's L1 / L2 - with
+        // the whole block (16384 samples = 128 KB per antenna) every VFO
+        // copied each antenna's block into its first stage and read it back
+        // from memory: in the live pipeline (5 antennas, every VFO's tasks
+        // on other cores) that copy cost more than the filtering, and every
+        // VFO more as they shared the memory bandwidth (perf 2026-10-22:
+        // one 12.5 kHz VFO with DoA 28 % of a core, three 65 %; chunked 20
+        // / 33 %). The outputs are the same - the stages take any length
+        result.samples.reserve(num_samples / static_cast<size_t>(decimation_factor) + 2);
+        for (size_t at = 0; at < num_samples; at += DECIM_CHUNK) {
+            const size_t c = std::min(DECIM_CHUNK, num_samples - at);
+            const Dst dst = st->stages.front().take(c);
+            if (mix_front) mix_into(iq_data + at, c, dst, st->mixer_phase, step);
+            else copy_into(iq_data + at, c, dst);
+            for (size_t s = 0; s < st->stages.size(); s++) {
+                FirStage& f = st->stages[s];
+                const size_t n = f.pending();
+                Dst out;
+                if (s + 1 == st->stages.size()) {
+                    const size_t old = result.samples.size();
+                    result.samples.resize(old + n);
+                    out.a = result.samples.data() + old;
+                } else {
+                    out = st->stages[s + 1].take(n);
+                }
+                f.produce(out);
+            }
         }
-        f.produce(out);
     }
 
     result.num_samples = result.samples.size();

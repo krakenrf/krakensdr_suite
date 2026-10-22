@@ -3,6 +3,7 @@
 #include "signal_processing/noise_floor.hpp"
 #include "globals.hpp"
 #include "config.hpp"
+#include "utils/fast_log.hpp"
 #include <cmath>
 #include <iostream>
 #include <algorithm>
@@ -12,9 +13,20 @@
 // External global for user-adjustable edge clip (defined in main.cpp)
 extern std::atomic<float> current_edge_clip;
 
-// Optimization: Constants for magnitude calculation
 namespace {
-    const float log10_of_2 = 0.30102999566398119521f; // For fast log10 via log2
+    // count FFT bins from src -> dB (power x scale + a 1e-15 floor) into
+    // mag, and their exponential average into avg (alpha 1 = a copy). A
+    // straight loop the compiler vectorizes with fast_db10 (utils/
+    // fast_log.hpp); the callers do the DC-centring wrap as two runs - the
+    // wrapped index (a mask) kept the old loop scalar, a libm log2f per bin
+    void bins_to_db(const kfft_complex* src, int count, float scale, float alpha, float* mag, float* avg) {
+        for (int i = 0; i < count; i++) {
+            const float power = (src[i][0] * src[i][0] + src[i][1] * src[i][1]) * scale + 1e-15f;
+            const float db = fast_db10(power);
+            mag[i] = db;
+            avg[i] = alpha * db + (1.0f - alpha) * avg[i];
+        }
+    }
 
     // Helper: Calculate noise floor from FFT data using 10th percentile method
     // Uses the center 80% of bins to avoid edge rolloff
@@ -325,30 +337,13 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
         channel_last_reset_gen[channel] = current_gen;
     }
 
-    // OPTIMIZATION: Fast magnitude calculation with log2-based dB conversion
-    for (int i = 0; i < fft_size; i++) {
-        // Shift for DC centering
-        // fft_size is validated power-of-2: bitmask instead of per-bin modulo
-        // (integer division inhibited auto-vectorization of this hot loop)
-        int shifted_idx = (i + fft_size/2) & (fft_size - 1);
-        float real = ctx.fft_out[shifted_idx][0];
-        float imag = ctx.fft_out[shifted_idx][1];
-
-        // Use actual_scale which accounts for zero-padding
-        float power = (real * real + imag * imag) * actual_scale + 1e-15f;
-
-        // OPTIMIZATION: Fast log10 using hardware log2f (ARM VLOG2 instruction)
-        // log10(x) = log2(x) * log10(2)
-        // This is ~60% faster than log10f() on ARM
-        float db = 10.0f * (std::log2f(power) * log10_of_2);
-
-        // Store instantaneous and averaged values
-        fft_magnitudes[channel][i] = db;
-
-        // If reset flag is set (alpha=1.0), this becomes: fft_averaged = 1.0 * db + 0.0 * old = db (direct copy)
-        // Otherwise uses normal exponential averaging
-        fft_averaged[channel][i] = alpha * db + (1.0f - alpha) * fft_averaged[channel][i];
-    }
+    // DC-centred: output bin i = FFT bin i + N/2 (mod N), as two straight
+    // runs (actual_scale accounts for zero-padding; alpha 1 on a reset = a
+    // copy into the average)
+    const int half = fft_size / 2;
+    bins_to_db(ctx.fft_out + half, half, actual_scale, alpha, fft_magnitudes[channel].data(), fft_averaged[channel].data());
+    bins_to_db(ctx.fft_out, half, actual_scale, alpha, fft_magnitudes[channel].data() + half,
+               fft_averaged[channel].data() + half);
 
     // The channel's noise floor for this frame (the 0 dB reference of the
     // display, squelch and scanner) - remembered when a signal fills the band
@@ -1006,18 +1001,11 @@ void FFTProcessor::process_beamformed_fft(BeamformedFFTData& out,
     // Get averaging alpha
     float alpha = averaging_alpha.load(std::memory_order_relaxed);
 
-    // Compute magnitudes with DC centering
-    for (int k = 0; k < kept; k++) {
-        int shifted_idx = (first + k + BEAMFORMED_FFT_SIZE / 2) & (BEAMFORMED_FFT_SIZE - 1);
-        float real = bf_fft_out[shifted_idx][0];
-        float imag = bf_fft_out[shifted_idx][1];
-
-        float power = (real * real + imag * imag) * scale + 1e-15f;
-        float db = 10.0f * (std::log2f(power) * log10_of_2);
-
-        out.magnitudes[k] = db;
-        out.averaged[k] = alpha * db + (1.0f - alpha) * out.averaged[k];
-    }
+    // DC-centred: point k = FFT bin first + k + N/2 (mod N), as two straight
+    // runs - up to the wrap, then from bin 0
+    const int k0 = std::min(kept, BEAMFORMED_FFT_SIZE / 2 - first);
+    bins_to_db(bf_fft_out + first + BEAMFORMED_FFT_SIZE / 2, k0, scale, alpha, out.magnitudes.data(), out.averaged.data());
+    bins_to_db(bf_fft_out, kept - k0, scale, alpha, out.magnitudes.data() + k0, out.averaged.data() + k0);
 
     // Update metadata (the span of the bins kept: point k sits at
     // centre - bandwidth / 2 + k * bandwidth / kept, as for the whole rate)
