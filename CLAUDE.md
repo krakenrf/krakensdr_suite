@@ -721,8 +721,10 @@ bandwidth*)**:
   pipeline the first stage was memory-bound: an extra 12.5 kHz VFO with
   DoA and 5 antennas cost ~19 % of a core, ~6-7 % now), a first stage
   whose input isn't mixed in front filtering straight from the input block
-  (no copy into it); kraken_doa with 1 / 2 / 3 such VFOs 28 / 49 / 67 ->
-  18 / 26 / 31 % of a core (perf-profiled 2026-10-22): the first block FIR was 3.3x the
+  (no copy into it), every VFO in one pass over each antenna
+  (`decimateVfos`: three narrow VFOs ~24 -> ~20 % of a core in user-space
+  cycles, one VFO unchanged); kraken_doa with 1 / 2 / 3 such VFOs 28 / 49 / 67 ->
+  18 / 26 / 31 % of a core (perf-profiled 2026-10-22, before the one pass): the first block FIR was 3.3x the
   decimator before arbitrary widths, this 2.0x the first block FIR;
   kraken_doa against the build before arbitrary widths (measured the day
   before, same harness) 22-31 % less CPU at every old size but 2.4 MHz (6 %;
@@ -1792,10 +1794,15 @@ for (size_t i = 0; i < num_samples; i++) {
 
 **Architecture** (`kraken_doa_v2/src/signal_processing/shared_decimator.cpp`;
 kraken_doa_v2/CLAUDE.md *Arbitrary VFO bandwidth*):
-- Per VFO a `SharedDecimator`, per antenna its own mixer + stage state, the
-  antennas in parallel: antenna 0 on the calling thread, the others on ONE
-  decimation pool shared by every VFO (cores + 1 threads; it was 8 threads
-  per VFO - the same CPU, 51 -> 32 threads with three VFOs)
+- Per VFO a `SharedDecimator`, per antenna its own mixer + stage state;
+  every VFO's block in ONE pass per antenna (`SharedDecimator::decimateVfos`,
+  called once per packet by data_receiver.cpp): a task per antenna (per
+  tuner in independent mode) runs each VFO's cascade on a 1024-sample chunk
+  while it is in L1, the first task on the calling thread, the others on
+  ONE decimation pool shared by every VFO (cores + 1 threads; it was 8
+  threads per VFO: 51 -> 32 threads with three VFOs). Bit for bit what each
+  VFO alone gives; three narrow VFOs with DoA ~4 % of a core less, one VFO
+  the same; MUSIC etc. per VFO after the pass
 - Integer decimation factors (no resampling), split into stages of 2..8 by
   `planStages` (a cost model of the kernels; halfband stages, the mixer
   folded into the first stage where cheaper)

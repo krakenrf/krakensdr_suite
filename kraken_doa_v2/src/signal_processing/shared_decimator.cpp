@@ -1,7 +1,8 @@
 // ============================================
 // src/signal_processing/shared_decimator.cpp
-// HYBRID PARALLELIZATION: the antennas of a block in parallel, on one
-// decimation pool shared by every VFO (decimation_pool)
+// The antennas of a block in parallel, on one decimation pool shared by
+// every VFO (decimation_pool); every VFO on an antenna in one pass over it,
+// chunk by chunk (decimateVfos)
 // Per channel: NCO mixer (phase-continuous across blocks; in front of the
 // first stage or folded into it) and a cascade of Kaiser low-pass
 // decimation stages (planStages: the cheapest split of the factor).
@@ -13,6 +14,7 @@
 #include <cmath>
 #include <cstring>
 #include <chrono>
+#include <exception>
 #include <future>
 
 using namespace std;
@@ -22,9 +24,9 @@ namespace {
 // ONE pool of decimation threads for every VFO (2026-10-22, the user's go
 // after an estimate). Each SharedDecimator had a pool of its own, of
 // initialize()'s channel count - MAX_CHANNELS 8 threads per VFO, 24 with
-// three VFOs on the Pi 5's 4 cores. decimateMultiChannel runs antenna 0 on
-// the calling thread and the others here; nothing running on this pool
-// waits on it (no deadlock). The cores + 1 threads: on the Pi 5 (user-space
+// three VFOs on the Pi 5's 4 cores. decimateVfos runs the first input's
+// task on the calling thread and the others here; nothing running on this
+// pool waits on it (no deadlock). The cores + 1 threads: on the Pi 5 (user-space
 // cycles, 4 runs each) 5 threads were the better of 4 / 5 with one VFO (12.5
 // kHz 14.4 vs 15.2 % of a core, 240 kHz 21.9 vs 22.7), the per-VFO pools
 // 14.7 / 22.1; with three VFOs all three the same within the runs' spread -
@@ -682,33 +684,56 @@ void SharedDecimator::setFrequencyOffset(float offset_hz) {
     current_freq_offset_hz = offset_hz;
 }
 
-// Per-channel block decimation: the mixer (or the folded first stage), then
-// the stage cascade
-SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
-    const complex<float>* iq_data, size_t num_samples, int channel_id,
-    int bandwidth_hz, float freq_offset_hz) {
+// One channel of one VFO through a block: begin(), chunk(at) for at = 0,
+// DECIM_CHUNK, ... in order, finish(). decimateChannel runs them back to
+// back; decimateVfos runs the passes of every VFO on one input chunk by
+// chunk, so they all read a chunk while it is in the core's L1. The mixer
+// (or the folded first stage), then the stage cascade
+struct SharedDecimator::ChannelPass {
+    SharedDecimator* dec = nullptr;
+    ChannelDecimState* st = nullptr;          // null: nothing to do (the result stays empty)
+    DecimatedData* out = nullptr;
+    const complex<float>* in = nullptr;
+    size_t n = 0;
+    bool mix_front = false;                   // the mixer in front of the first stage
+    bool direct = false;                      // the first stage filters straight from the block
+    complex<float> step{1.0f, 0.0f};          // the mixer's step per input sample
 
-    DecimatedData result;
+    void begin(SharedDecimator& d, const complex<float>* iq_data, size_t num_samples, int channel_id,
+               int bandwidth_hz, float freq_offset_hz, DecimatedData& result);
+    void chunk(size_t at);                    // input samples [at, at + DECIM_CHUNK) of the block
+    void finish();
+};
+
+void SharedDecimator::ChannelPass::begin(SharedDecimator& d, const complex<float>* iq_data, size_t num_samples,
+                                         int channel_id, int bandwidth_hz, float freq_offset_hz,
+                                         DecimatedData& result) {
+    dec = &d;
+    out = &result;
+    st = nullptr;
+    mix_front = direct = false;
     result.channel_id = channel_id;
 
-    bandwidth_hz = bandwidth_hz > 0 ? clamp_bandwidth_hz(bandwidth_hz) : getBandwidthHz();
+    bandwidth_hz = bandwidth_hz > 0 ? clamp_bandwidth_hz(bandwidth_hz) : d.getBandwidthHz();
     const int decimation_factor = decimation_for_bandwidth(bandwidth_hz);
 
     result.decimation_used = decimation_factor;
     result.output_rate_hz = SAMPLE_RATE / decimation_factor;
     result.freq_offset_hz = freq_offset_hz;
 
-    if (!initialized.load() || channel_id < 0 || channel_id >= num_channels_initialized || !iq_data) {
+    if (!d.initialized.load() || channel_id < 0 || channel_id >= d.num_channels_initialized || !iq_data) {
         cerr << "SharedDecimator: Not initialized, invalid channel, or null data" << endl;
-        return result;
+        return;
     }
 
     // Per-channel persistent mixer/filter state (see ensureChannelState)
-    ChannelDecimState* st = ensureChannelState(channel_id, bandwidth_hz, freq_offset_hz);
+    st = d.ensureChannelState(channel_id, bandwidth_hz, freq_offset_hz);
     if (!st) {
         cerr << "SharedDecimator: Failed to build decimator for channel " << channel_id << endl;
-        return result;
+        return;
     }
+    in = iq_data;
+    n = num_samples;
 
     // The input goes straight into the first stage's buffer - mixed to
     // baseband first unless the mixer is folded into that stage; the whole
@@ -720,13 +745,10 @@ SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
     // whose factor doesn't divide the block size.)
     result.samples.clear();
     const double w = mixer_w(freq_offset_hz);
-    const bool mix_front = w != 0.0 && !st->fold;
-    const complex<float> step(static_cast<float>(std::cos(-w)), static_cast<float>(std::sin(-w)));
+    mix_front = w != 0.0 && !st->fold;
+    step = complex<float>(static_cast<float>(std::cos(-w)), static_cast<float>(std::sin(-w)));
     if (st->stages.empty()) {
-        result.samples.resize(num_samples);
-        const Dst dst{result.samples.data(), nullptr};
-        if (mix_front) mix_into(iq_data, num_samples, dst, st->mixer_phase, step);
-        else copy_into(iq_data, num_samples, dst);
+        result.samples.resize(n);
     } else {
         // The block in chunks of DECIM_CHUNK samples, each through the whole
         // cascade: each stage's outputs straight into the next one's
@@ -748,150 +770,232 @@ SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
         // (-1 % of a core per VFO). A halfband first stage keeps the copy (it
         // splits its input into two phases)
         FirStage& first = st->stages.front();
-        const bool direct = !mix_front && !first.half;
-        if (direct) first.begin_input(iq_data, num_samples);
-        result.samples.reserve(num_samples / static_cast<size_t>(decimation_factor) + 2);
-        for (size_t at = 0; at < num_samples; at += DECIM_CHUNK) {
-            const size_t c = std::min(DECIM_CHUNK, num_samples - at);
-            if (!direct) {
-                const Dst dst = first.take(c);
-                if (mix_front) mix_into(iq_data + at, c, dst, st->mixer_phase, step);
-                else copy_into(iq_data + at, c, dst);
-            }
-            for (size_t s = 0; s < st->stages.size(); s++) {
-                FirStage& f = st->stages[s];
-                const bool from_block = direct && s == 0;
-                const size_t n = from_block ? f.pending_upto(at + c) : f.pending();
-                Dst out;
-                if (s + 1 == st->stages.size()) {
-                    const size_t old = result.samples.size();
-                    result.samples.resize(old + n);
-                    out.a = result.samples.data() + old;
-                } else {
-                    out = st->stages[s + 1].take(n);
-                }
-                if (from_block) f.produce_upto(at + c, out);
-                else f.produce(out);
-            }
-        }
-        if (direct) first.end_input();
+        direct = !mix_front && !first.half;
+        if (direct) first.begin_input(in, n);
+        result.samples.reserve(n / static_cast<size_t>(decimation_factor) + 2);
     }
-
-    result.num_samples = result.samples.size();
-    total_samples_processed.fetch_add(num_samples);
-    total_blocks_processed.fetch_add(1);
-
-    return result;  // NRVO will optimize this
 }
 
-// OPTIMIZED: Multi-channel float IQ input method with precomputed coefficients
-// HYBRID PARALLELIZATION: Per-antenna threading. Zero-copy core - the
-// caller's sample arrays are only read and must outlive the call (all pool
-// futures are collected before returning, so that just means the call site's
-// data must stay alive for the duration of this function).
+void SharedDecimator::ChannelPass::chunk(size_t at) {
+    if (!st || at >= n) return;
+    const size_t c = std::min(DECIM_CHUNK, n - at);
+    std::vector<complex<float>>& res = out->samples;
+    if (st->stages.empty()) {
+        const Dst dst{res.data() + at, nullptr};
+        if (mix_front) mix_into(in + at, c, dst, st->mixer_phase, step);
+        else copy_into(in + at, c, dst);
+        return;
+    }
+    FirStage& first = st->stages.front();
+    if (!direct) {
+        const Dst dst = first.take(c);
+        if (mix_front) mix_into(in + at, c, dst, st->mixer_phase, step);
+        else copy_into(in + at, c, dst);
+    }
+    for (size_t s = 0; s < st->stages.size(); s++) {
+        FirStage& f = st->stages[s];
+        const bool from_block = direct && s == 0;
+        const size_t k = from_block ? f.pending_upto(at + c) : f.pending();
+        Dst dst;
+        if (s + 1 == st->stages.size()) {
+            const size_t old = res.size();
+            res.resize(old + k);
+            dst.a = res.data() + old;
+        } else {
+            dst = st->stages[s + 1].take(k);
+        }
+        if (from_block) f.produce_upto(at + c, dst);
+        else f.produce(dst);
+    }
+}
+
+void SharedDecimator::ChannelPass::finish() {
+    if (!st) return;
+    if (direct) st->stages.front().end_input();
+    out->num_samples = out->samples.size();
+    dec->total_samples_processed.fetch_add(n);
+    dec->total_blocks_processed.fetch_add(1);
+}
+
+// Per-channel block decimation (one channel, the whole block)
+SharedDecimator::DecimatedData SharedDecimator::decimateChannel(
+    const complex<float>* iq_data, size_t num_samples, int channel_id,
+    int bandwidth_hz, float freq_offset_hz) {
+
+    DecimatedData result;
+    ChannelPass pass;
+    pass.begin(*this, iq_data, num_samples, channel_id, bandwidth_hz, freq_offset_hz, result);
+    for (size_t at = 0; at < num_samples; at += DECIM_CHUNK) pass.chunk(at);
+    pass.finish();
+    return result;
+}
+
+// Zero-copy core - the caller's sample arrays are only read and must outlive
+// the call (all pool futures are collected before returning). One VFO's
+// decimateVfos
 SharedDecimator::MultiChannelDecimated SharedDecimator::decimateMultiChannel(
     const complex<float>* const* channel_ptrs, const size_t* channel_lens,
     size_t num_channels, int bandwidth_hz, float freq_offset_hz) {
 
     MultiChannelDecimated result;
+    VfoBlock b;
+    b.decimator = this;
+    b.bandwidth_hz = bandwidth_hz;
+    b.freq_offset_hz = freq_offset_hz;
+    b.out = &result;
+    if (channel_ptrs && channel_lens) {
+        b.num_channels = std::min(num_channels, static_cast<size_t>(MAX_CHANNELS));
+        for (size_t ch = 0; ch < b.num_channels; ch++) {
+            b.ptrs[ch] = channel_ptrs[ch];
+            b.lens[ch] = channel_lens[ch];
+        }
+    }
+    decimateVfos(&b, 1);
+    return result;
+}
 
-    bandwidth_hz = bandwidth_hz > 0 ? clamp_bandwidth_hz(bandwidth_hz) : getBandwidthHz();
-    const int decimation_factor = decimation_for_bandwidth(bandwidth_hz);
+// Every VFO's block in one pass over each input (see the header). The VFOs
+// sharing a chunk is what the restructure of 2026-10-22 (the user's go after
+// an estimate) bought: each VFO's first stage used to read every antenna's
+// block on its own - from L3 at best, the extra VFOs' tasks on other cores
+void SharedDecimator::decimateVfos(VfoBlock* vfos, size_t count) {
+    // One entry per (VFO, channel): its pass and its output
+    struct Entry {
+        ChannelPass pass;
+        DecimatedData data;
+        size_t vfo = 0;
+        int ch = 0;
+        int bw = 0;
+        const complex<float>* in = nullptr;
+        size_t len = 0;
+    };
+    size_t most = 0;
+    for (size_t v = 0; v < count; v++) most += vfos[v].num_channels;
+    std::vector<Entry> entries;
+    entries.reserve(most);   // never moves while the tasks use it
 
-    result.decimation_used = decimation_factor;
-    result.output_rate_hz = SAMPLE_RATE / decimation_factor;
-    result.freq_offset_hz = freq_offset_hz;
-    result.bandwidth_hz = bandwidth_hz;
+    for (size_t v = 0; v < count; v++) {
+        VfoBlock& b = vfos[v];
+        SharedDecimator& d = *b.decimator;
+        MultiChannelDecimated& r = *b.out;
+        r = MultiChannelDecimated();
 
-    if (!initialized.load() || num_channels == 0 || !channel_ptrs || !channel_lens) {
-        return result;
+        const int bw = b.bandwidth_hz > 0 ? clamp_bandwidth_hz(b.bandwidth_hz) : d.getBandwidthHz();
+        const int decimation_factor = decimation_for_bandwidth(bw);
+        r.decimation_used = decimation_factor;
+        r.output_rate_hz = SAMPLE_RATE / decimation_factor;
+        r.freq_offset_hz = b.freq_offset_hz;
+        r.bandwidth_hz = bw;
+
+        if (!d.initialized.load() || b.num_channels == 0) continue;
+
+        // The offset is exactly the caller's, for every channel of the block. (A
+        // fallback to the live current_freq_offset_hz when this was ~0 - re-read
+        // again inside each channel task - let channels of one block mix at
+        // different offsets when a VFO moved off 0 Hz mid-block.)
+        r.num_channels = min(b.num_channels, static_cast<size_t>(d.num_channels_initialized));
+        if (r.num_channels != d.last_num_channels_) {
+            for (auto& s : d.channel_states_) s->resetRuntime();
+            d.last_num_channels_ = r.num_channels;
+        }
+        r.channels.resize(r.num_channels);  // Pre-allocate exact size for parallel writes
+
+        // Find minimum number of samples across channels
+        size_t min_samples = SIZE_MAX;
+        for (size_t ch = 0; ch < r.num_channels; ch++) min_samples = min(min_samples, b.ptrs[ch] ? b.lens[ch] : 0);
+        if (min_samples == 0 || min_samples == SIZE_MAX) continue;
+        // Per-channel output counts come from the channels themselves: with the
+        // samples the stages keep from the block before, a block yields
+        // floor(N/D) or floor(N/D)+1 samples. Every channel gets the same input
+        // length, so their pending samples - and output counts - stay equal;
+        // min_samples is the common count.
+        r.min_samples = SIZE_MAX;
+        for (size_t ch = 0; ch < r.num_channels; ch++) {
+            Entry& e = entries.emplace_back();
+            e.vfo = v;
+            e.ch = static_cast<int>(ch);
+            e.bw = bw;
+            e.in = b.ptrs[ch];
+            e.len = min_samples;
+        }
     }
 
-    // The offset is exactly the caller's, for every channel of the block. (A
-    // fallback to the live current_freq_offset_hz when this was ~0 - re-read
-    // again inside each channel task - let channels of one block mix at
-    // different offsets when a VFO moved off 0 Hz mid-block.)
-    result.num_channels = min(num_channels, static_cast<size_t>(num_channels_initialized));
-    if (result.num_channels != last_num_channels_) {
-        for (size_t ch = 0; ch < channel_states_.size(); ch++) channel_states_[ch]->resetRuntime();
-        last_num_channels_ = result.num_channels;
+    // A task per input array (coherent: an antenna, every VFO on it;
+    // independent: a tuner, the VFOs on it): the first on this thread, the
+    // others on the shared decimation pool; one task - one antenna (FM
+    // only), every VFO on one tuner - never leaves this thread
+    std::vector<const complex<float>*> group_in;
+    std::vector<std::vector<size_t>> groups;
+    for (size_t i = 0; i < entries.size(); i++) {
+        size_t g = 0;
+        while (g < group_in.size() && group_in[g] != entries[i].in) g++;
+        if (g == group_in.size()) {
+            group_in.push_back(entries[i].in);
+            groups.emplace_back();
+        }
+        groups[g].push_back(i);
     }
-    result.channels.resize(result.num_channels);  // Pre-allocate exact size for parallel writes
+    auto run_group = [&entries, vfos](const std::vector<size_t>& idx) {
+        size_t len = 0;
+        for (size_t i : idx) {
+            Entry& e = entries[i];
+            e.pass.begin(*vfos[e.vfo].decimator, e.in, e.len, e.ch, e.bw, vfos[e.vfo].freq_offset_hz, e.data);
+            len = std::max(len, e.len);
+        }
+        for (size_t at = 0; at < len; at += DECIM_CHUNK) {
+            for (size_t i : idx) entries[i].pass.chunk(at);
+        }
+        for (size_t i : idx) entries[i].pass.finish();
+    };
 
-    // Find minimum number of samples across channels
-    size_t min_samples = SIZE_MAX;
-    for (size_t ch = 0; ch < result.num_channels; ch++) {
-        min_samples = min(min_samples, channel_ptrs[ch] ? channel_lens[ch] : 0);
-    }
-
-    if (min_samples == 0 || min_samples == SIZE_MAX) {
-        return result;
-    }
-    // Per-channel output counts come from the channels themselves: with the
-    // samples the stages keep from the block before, a block yields
-    // floor(N/D) or floor(N/D)+1 samples. Every channel gets the same input
-    // length, so their pending samples - and output counts - stay equal;
-    // min_samples is the common count.
-    result.min_samples = SIZE_MAX;
-
-    // HYBRID PARALLELIZATION: antennas 1.. on the shared decimation pool,
-    // antenna 0 on this thread meanwhile (it only waited before; one
-    // antenna - FM only, independent mode - never leaves it)
-    vector<std::future<DecimatedData>> antenna_futures(result.num_channels);
-    for (size_t ch = 1; ch < result.num_channels; ch++) {
-        const complex<float>* ch_ptr = channel_ptrs[ch];
-        antenna_futures[ch] = decimation_pool().submit(
-            [this, ch, ch_ptr, min_samples, bandwidth_hz, freq_offset_hz]() -> DecimatedData {
-                return decimateChannel(
-                    ch_ptr,
-                    min_samples,
-                    static_cast<int>(ch),
-                    bandwidth_hz,
-                    freq_offset_hz
-                );
-            }
-        );
-    }
-    DecimatedData first;
+    std::vector<std::future<void>> tasks;
+    std::exception_ptr err;
     try {
-        first = decimateChannel(channel_ptrs[0], min_samples, 0, bandwidth_hz, freq_offset_hz);
+        tasks.reserve(groups.size());
+        for (size_t g = 1; g < groups.size(); g++) {
+            const std::vector<size_t>* idx = &groups[g];
+            tasks.push_back(decimation_pool().submit([&run_group, idx] { run_group(*idx); }));
+        }
+        if (!groups.empty()) run_group(groups[0]);
     } catch (...) {
-        // the pool's tasks use this decimator and the caller's arrays
-        for (size_t ch = 1; ch < result.num_channels; ch++) antenna_futures[ch].wait();
-        throw;
+        err = std::current_exception();
     }
+    // the pool's tasks use the entries, the VFOs and the callers' arrays
+    for (auto& t : tasks) {
+        try {
+            t.get();
+        } catch (...) {
+            if (!err) err = std::current_exception();
+        }
+    }
+    if (err) std::rethrow_exception(err);
 
-    // Collect results from parallel antenna processing
-    for (size_t ch = 0; ch < result.num_channels; ch++) {
-        DecimatedData ch_data = ch == 0 ? std::move(first) : antenna_futures[ch].get();
-
-        if (ch_data.samples.empty() && min_samples >= static_cast<size_t>(decimation_factor)) {
-            cerr << "SharedDecimator: No samples generated for channel " << ch << endl;
+    // Each VFO's channels into its result (its entries are in channel order)
+    for (Entry& e : entries) {
+        MultiChannelDecimated& r = *vfos[e.vfo].out;
+        if (e.data.samples.empty() && e.len >= static_cast<size_t>(r.decimation_used)) {
+            cerr << "SharedDecimator: No samples generated for channel " << e.ch << endl;
             // Consumers iterate channels[ch].samples[0..min_samples); an
             // empty channel makes the whole block unusable for coherent
             // processing, so mark it as such instead of leaving a stale
             // min_samples that would read past the empty vector
-            result.min_samples = 0;
+            r.min_samples = 0;
             continue;
         }
-
-        if (ch_data.num_samples < result.min_samples) {
-            result.min_samples = ch_data.num_samples;
-        }
-
-        result.channels[ch] = std::move(ch_data);  // Direct assignment to pre-allocated slot
+        if (e.data.num_samples < r.min_samples) r.min_samples = e.data.num_samples;
+        r.channels[static_cast<size_t>(e.ch)] = std::move(e.data);
     }
 
     // Log performance statistics periodically
-    // Shared by every VFO's decimator, which run concurrently: atomic
+    // Shared by every VFO's decimator: atomic
     static std::atomic<size_t> stats_counter{0};
-    if ((stats_counter.fetch_add(1, std::memory_order_relaxed) + 1) % 1000 == 0) {
-        cout << "SharedDecimator performance (hybrid parallel): "
-             << "Blocks: " << getBlocksProcessed() << ", "
-             << "Samples: " << getSamplesProcessed() << endl;
+    for (size_t v = 0; v < count; v++) {
+        if ((stats_counter.fetch_add(1, std::memory_order_relaxed) + 1) % 1000 == 0) {
+            cout << "SharedDecimator performance (hybrid parallel): "
+                 << "Blocks: " << vfos[v].decimator->getBlocksProcessed() << ", "
+                 << "Samples: " << vfos[v].decimator->getSamplesProcessed() << endl;
+        }
     }
-
-    return result;  // NRVO will optimize this
 }
 
 // Vector overloads: only READ the input and delegate to the pointer core.

@@ -88,12 +88,16 @@ directly.
 **Thread Count:**
 - Base workers: 8 threads
 - Per-channel FFT: 8 threads (one per channel)
-- VFO pipelines: with 2+ VFOs, the first runs on the receiver thread and the
-  rest on a persistent 3-thread pool (`std::async` used to create an OS thread
-  per VFO per packet)
+- VFO pipelines (data_receiver.cpp): first every VFO's decimation in ONE pass
+  (`SharedDecimator::decimateVfos`, below), then per VFO its MUSIC / squelch /
+  talker DoA - with 2+ VFOs the first on the receiver thread and the rest on
+  a persistent 3-thread pool (`std::async` used to create an OS thread per
+  VFO per packet); FM only and independent / wideband mode (one channel per
+  VFO, no MUSIC) all inline
 - Decimation: ONE pool shared by every VFO (cores + 1 threads: 5 on the Pi 5;
   `decimation_pool()` in shared_decimator.cpp - each VFO had its own pool of
-  MAX_CHANNELS 8 threads until 2026-10-22), antenna 0 of a block on the
+  MAX_CHANNELS 8 threads until 2026-10-22): a task per input array (an
+  antenna, every VFO on it; a tuner in independent mode), the first on the
   calling thread
 - **Total (Pi 5, measured 2026-10-22): ~29 threads with one VFO, ~32 with
   three** (51 with three before the shared pool)
@@ -421,9 +425,8 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   28.5 -> 18.1, three 66.8 -> 30.7 % of a core. What is left is mostly
   each VFO's read of every antenna's input (5 x 19.2 MB/s): VFOs sharing
   one pass over a chunk per antenna (every VFO's first stage while it is
-  in L1) would cut that - a restructure of the pipeline, not done; then
-  the spectrum FFT, the IQ conversion of the 5 antennas, the receiver
-  thread
+  in L1) would cut that - the restructure below; then the spectrum FFT,
+  the IQ conversion of the 5 antennas, the receiver thread
 - Estimated before deciding (the user's question 2026-10-22; job scratch
   explore/share_exp.cpp: the production decimator, a converter writing
   fresh 5-antenna blocks, three shapes on the Pi): VFOs sharing one pass
@@ -431,8 +434,8 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   one VFO - the live L2 / L3 refill counters (perf, `run` per VFO) show
   the extra VFOs already find the input in L3, the case the synthetic
   test measures; ~half of that (nearly all at 240 kHz) was from ONE
-  thread pool for every VFO instead of one per VFO. Not restructured; the
-  shared pool done (the user's go) - and live it saved NOTHING measurable:
+  thread pool for every VFO instead of one per VFO. First the shared pool
+  (the user's go) - and live it saved NOTHING measurable:
   user-space cycles (`perf stat -e cycles:u`, frequency-independent - the
   Pi's ondemand governor made CPU time swing by up to 7 points between
   runs of one build; job scratch e2e/t_prof_cyc.py), 4 runs each, % of a
@@ -442,6 +445,42 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   / 21.9. Kept for the bounded thread count (51 -> 32 with three VFOs; 8
   more per VFO before), 5 threads (cores + 1) for the single-VFO figures.
   The raw buffer dropped no packet in any of the day's runs (175 reports)
+- THE SHARED PASS (2026-10-22, the user's "do the pipeline restructure
+  now"): `SharedDecimator::decimateVfos(VfoBlock*, n)` takes every VFO's
+  block (its input pointers, the width and offset read once, where its
+  `MultiChannelDecimated` goes): a task per distinct input ARRAY - coherent
+  = an antenna with every VFO on it, independent = a tuner with its VFOs,
+  FM only = the one channel - the first on the calling thread, the others
+  on `decimation_pool()`; each runs its VFOs' `ChannelPass`es (decimateChannel
+  split into begin / chunk(at) / finish, the per-channel state as before)
+  chunk by chunk, every VFO on a 1024-sample chunk while it is in L1.
+  `decimateMultiChannel` = decimateVfos with one VFO (the single-VFO work
+  unchanged: the same calls in the same order). data_receiver.cpp: the
+  inputs of every VFO, ONE decimateVfos, then per VFO its stream position,
+  squelch, MUSIC and talker DoA (`run_pipeline(v)`, the old code after the
+  decimation, moved as it was) - VFO 0 inline + the rest on the 3-thread
+  VFO pool; FM only and independent / wideband (one channel each, MUSIC
+  returns at once) all inline. A VFO's MUSIC no longer starts before every
+  VFO is decimated (the pass is short). Checked: decim_bench section 3 -
+  8 VFOs of every kind (folded, mixer in front, halfband first, the whole
+  band, full-rate filter, two on one antenna alone) x 4 antennas in one
+  pass vs each VFO alone, blocks of 1 - 16384: BIT FOR BIT equal (max diff
+  0, Pi + x86); decim_bench's reference checks and single-channel timings
+  unchanged (7.06e-5 of rms; mean 1.503 / 2.675 ns centre / off); t_bw 24 /
+  24, t_bw_ui 24 / 24, job scratch e2e/t_multi.py 8 / 8 (five VFOs in one
+  pass: 60.0 / 200.0 / 60.0 / 200.0 deg exact, the 1.5 MHz one running;
+  back to one VFO; FM only with three VFOs heard; no decimation errors -
+  the previous build the same). Measured (user-space cycles, % of a core
+  at 2.4 GHz, e2e/t_prof_cyc2.py, the previous build / the shared pass
+  alternately - TWO runs each: the A/B's monitor was stopped half way by a
+  low-memory reap on the dev PC, not re-run): one 12.5 kHz VFO 14.3 / 14.6
+  -> 14.8 / 14.7 (within that phase's 14.2-16.0 spread over the day's
+  builds), three 24.3 / 23.9 -> 20.1 / 20.2 (the earlier builds' 12 runs
+  22.9-24.6), five 30.4 / 30.2 -> 26.6 / 26.3, five at 240 kHz 90.9 /
+  86.4 -> 85.8 / 84.7, one at 240 kHz 22.3 / 21.7 -> 21.9 / 22.2 - ~4
+  points less with 3 or 5 narrow VFOs (more than the estimate's 0.8-1.6
+  with three; why was not measured), one VFO the same. Thread count
+  unchanged (29 / 32)
 - Tests (job scratch 415cedbd e2e/, on the Pi: `fake_heimdall_bw.py` = a
   5-element UCA scene, tone A +100 kHz from 60 deg, tone B +125 kHz from
   200 deg; `t_bw.py` against a TEST build on 5808x / 5809x): 24 / 24 -
@@ -6299,18 +6338,21 @@ buffer - no per-sample window pushes; regular / folded / halfband), split
 as `planStages` finds cheapest, a block through the whole cascade in
 1024-sample chunks (`DECIM_CHUNK`: the buffers stay in L1), a first stage
 whose input isn't mixed in front filtering straight from the block (no
-copy), the antennas in parallel - antenna 0 on the calling thread, the
-others on ONE decimation pool shared by every VFO (`decimation_pool()`,
-cores + 1 threads; each VFO had its own pool of 8 until 2026-10-22: 51
-threads with three VFOs, 32 now - CPU the same within the runs' spread, see
-*Arbitrary VFO bandwidth*). Details + measurements:
+copy), every VFO in ONE pass per antenna (`decimateVfos`: a task per
+antenna - per input array - running each VFO's cascade on a chunk while it
+is in L1; the first task on the calling thread, the others on ONE
+decimation pool shared by every VFO, `decimation_pool()`, cores + 1
+threads; each VFO had its own pool of 8 until 2026-10-22: 51 threads with
+three VFOs, 32 now). Details + measurements:
 *Arbitrary VFO bandwidth* above (`tools/decim_bench.cpp`). Pi 5, one
 antenna, hot caches, ns per input sample with the VFO off the tuner centre
 (mixer included): ~2.1-3.5 up to 240 kHz, ~3.9-7.3 at 250 kHz - 1.2 MHz,
 7.9-9.9 for the full-rate widths 1.2 - 2.4 MHz, 3.2 for 2.4 MHz (the mixer
 alone). In the live pipeline a 12.5 kHz VFO with DoA and 5 antennas adds
 ~6-7 % of a core to kraken_doa (it was ~19 % before the chunking: memory-
-bound, see *Arbitrary VFO bandwidth*).
+bound, see *Arbitrary VFO bandwidth*); in user-space cycles at 2.4 GHz,
+from one to three such VFOs ~2.7 % each with the shared pass (4.8 before),
+from three to five ~3.1 each (the same before).
 
 ### 3. FFT Processing
 
@@ -6506,7 +6548,7 @@ sudo perf top
 
 **Critical Hot Paths:**
 - `src/utils/iq_converter.cpp:convert()` - IQ conversion (auto-vectorized)
-- `src/signal_processing/shared_decimator.cpp:decimateChannel()` - a VFO's decimation, per antenna (`FirStage::produce`: the FIR kernels)
+- `src/signal_processing/shared_decimator.cpp:decimateVfos()` - every VFO's decimation, a task per antenna (`ChannelPass::chunk` per VFO and chunk; `FirStage::produce`: the FIR kernels)
 - `src/networking/data_receiver.cpp:data_receiver_thread()` - Main data ingestion
 - `src/networking/data_receiver.cpp:decimation_processor_thread()` - Decimation coordination
 - `src/networking/data_receiver.cpp:fft_processor_thread_per_channel()` - Per-channel FFT workers

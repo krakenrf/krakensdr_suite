@@ -12,8 +12,10 @@
 // used up; a first stage filtering straight from the block reaches back into
 // its history) against a plain double-precision reference of the same plan (the mixer at
 // the input rate, every stage a full convolution): max |diff| / rms. Then
-// the frequency response (tones through the real SharedDecimator, with the
-// VFO on the centre and 300 kHz off it).
+// several VFOs in one pass over the antennas (decimateVfos) against each
+// VFO alone (must be bit for bit the same), and the frequency response
+// (tones through the real SharedDecimator, with the VFO on the centre and
+// 300 kHz off it).
 // Build (from kraken_doa_v2, after `make` built liquid-dsp), one line:
 //   g++ -std=c++20 -Ofast -march=native -Iinclude -isystem liquid-dsp/build-kraken/include
 //       tools/decim_bench.cpp src/signal_processing/shared_decimator.cpp
@@ -126,6 +128,69 @@ double stream_check(int bw_hz, float offset_hz, const std::vector<cf>& x) {
     return rms > 0 ? md / rms : 0;
 }
 
+// SharedDecimator::decimateVfos (every VFO in one pass over each input,
+// chunk by chunk) against each VFO's own decimateMultiChannel, blocks of odd
+// lengths: 4 antennas, VFOs of every kind - folded, the mixer in front, a
+// halfband first stage, the whole band, a full-rate filter - and two on one
+// antenna alone (independent mode: they share that antenna's task with the
+// others). The largest |difference| of any output sample: 0 = bit for bit
+// (1e9 = a count or a length differs)
+double shared_check(const std::vector<cf>& x) {
+    constexpr size_t NA = 4;
+    struct V {
+        int bw;
+        float off;
+        int ant;   // -1 = every antenna, else that one alone
+    };
+    const V vs[] = {{12500, 100000.0f, -1}, {240000, -300000.0f, -1}, {1200000, 0.0f, -1}, {2400000, 250000.0f, -1},
+                    {1500000, 37000.0f, -1}, {26000, 0.0f, -1}, {33333, 450000.0f, 2}, {1000, -620000.0f, 2}};
+    constexpr size_t NV = sizeof vs / sizeof vs[0];
+    SharedDecimator shared[NV], alone[NV];
+    for (size_t v = 0; v < NV; v++) shared[v].initialize(NA), alone[v].initialize(NA);
+    // the antennas: x from different points (each its own array)
+    constexpr size_t LEN = 3 * BLOCK;
+    std::vector<std::vector<cf>> ant(NA, std::vector<cf>(LEN));
+    for (size_t a = 0; a < NA; a++) {
+        for (size_t i = 0; i < LEN; i++) ant[a][i] = x[(i + a * 5003) % x.size()];
+    }
+    const size_t lens[] = {16384, 1000, 7, 333, 4096, 12345, 1, 1023, 1025, 9999, 2, 64};
+    const size_t nlens = sizeof lens / sizeof lens[0];
+    double worst = 0;
+    size_t at = 0;
+    for (size_t k = 0; at < LEN; k++) {
+        const size_t n = std::min(lens[k % nlens], LEN - at);
+        SharedDecimator::MultiChannelDecimated got[NV];
+        SharedDecimator::VfoBlock blocks[NV];
+        for (size_t v = 0; v < NV; v++) {
+            SharedDecimator::VfoBlock& b = blocks[v];
+            b.decimator = &shared[v];
+            b.bandwidth_hz = vs[v].bw;
+            b.freq_offset_hz = vs[v].off;
+            b.out = &got[v];
+            for (size_t a = 0; a < NA; a++) {
+                if (vs[v].ant >= 0 && static_cast<size_t>(vs[v].ant) != a) continue;
+                b.ptrs[b.num_channels] = ant[a].data() + at;
+                b.lens[b.num_channels] = n;
+                b.num_channels++;
+            }
+        }
+        SharedDecimator::decimateVfos(blocks, NV);
+        for (size_t v = 0; v < NV; v++) {
+            const auto want = alone[v].decimateMultiChannel(blocks[v].ptrs, blocks[v].lens, blocks[v].num_channels,
+                                                            vs[v].bw, vs[v].off);
+            if (want.min_samples != got[v].min_samples || want.channels.size() != got[v].channels.size()) return 1e9;
+            for (size_t c = 0; c < want.channels.size(); c++) {
+                const auto& w = want.channels[c].samples;
+                const auto& g = got[v].channels[c].samples;
+                if (w.size() != g.size()) return 1e9;
+                for (size_t i = 0; i < w.size(); i++) worst = std::max(worst, static_cast<double>(std::abs(w[i] - g[i])));
+            }
+        }
+        at += n;
+    }
+    return worst;
+}
+
 // Gain of a tone f_hz from the VFO centre (the VFO offset_hz from the tuner
 // centre) through the real SharedDecimator, relative to SAMPLE_RATE / bandwidth
 double response_db(int bw_hz, double f_hz, float offset_hz = 0.0f) {
@@ -197,7 +262,10 @@ int main(int argc, char** argv) {
     std::printf("# mean: model %.3f, centre %.3f, offset %.3f ns; worst check %.2e of rms\n\n", sum_m / cnt, sum_c / cnt,
                 sum_o / cnt, worst);
 
-    std::printf("# 3) response (dB re SAMPLE_RATE / bandwidth) of a tone f from the VFO centre (the band = +-0.5 bw)\n");
+    std::printf("# 3) decimateVfos - 8 VFOs, 4 antennas in one pass - vs each VFO alone: max |diff| %.3g (0 = bit for bit)\n\n",
+                shared_check(xs));
+
+    std::printf("# 4) response (dB re SAMPLE_RATE / bandwidth) of a tone f from the VFO centre (the band = +-0.5 bw)\n");
     std::printf("%10s %7s %8s %8s %8s %8s %8s %8s %10s\n", "bw_Hz", "vfo_kHz", "f=0", "0.3bw", "0.4bw", "0.5bw", "0.6bw", "0.8bw",
                 "rate-0.3bw");
     for (int bw : {1000, 1700, 6250, 12500, 15000, 25000, 33333, 100000, 250000, 300000, 333333, 600000, 1000000, 1200000, 1500000,

@@ -265,6 +265,31 @@ public:
         float freq_offset_hz = 0.0f
     );
 
+    // One VFO's block for decimateVfos: its input channels (only read, valid
+    // for the call; a null pointer / zero length = an empty result, as in
+    // decimateMultiChannel), the bandwidth and offset read ONCE for the
+    // block, and where its result goes
+    struct VfoBlock {
+        SharedDecimator* decimator = nullptr;
+        const std::complex<float>* ptrs[MAX_CHANNELS] = {};
+        size_t lens[MAX_CHANNELS] = {};
+        size_t num_channels = 0;
+        int bandwidth_hz = -1;
+        float freq_offset_hz = 0.0f;
+        MultiChannelDecimated* out = nullptr;
+    };
+
+    // Every VFO's block in ONE pass over each input channel (the pipeline,
+    // data_receiver.cpp): a task per distinct input array - antenna or
+    // tuner - the first on the calling thread, the others on the shared
+    // decimation pool; each takes its input in DECIM_CHUNK chunks and runs
+    // every VFO's cascade on a chunk while it is in the core's L1, so the
+    // VFOs read each antenna once between them. Each VFO's result is what
+    // its decimateMultiChannel would give - bit for bit (the same work per
+    // VFO and channel, in the same chunks); decimateMultiChannel is this
+    // with one VFO. The VFOs must be distinct decimators
+    static void decimateVfos(VfoBlock* vfos, size_t count);
+
     // Statistics
     size_t getBlocksProcessed() const { return total_blocks_processed.load(); }
     size_t getSamplesProcessed() const { return total_samples_processed.load(); }
@@ -287,6 +312,10 @@ public:
     static Plan planStages(int bandwidth_hz);
 
 private:
+    // One channel of one VFO through a block: begin, chunk(at) for at = 0,
+    // DECIM_CHUNK ... in order, finish (shared_decimator.cpp)
+    struct ChannelPass;
+
     // Ensure the per-channel mixer/stage cascade matches the requested
     // settings, rebuilding the stages when the bandwidth changed.
     ChannelDecimState* ensureChannelState(int channel, int bandwidth_hz, float freq_offset_hz);
