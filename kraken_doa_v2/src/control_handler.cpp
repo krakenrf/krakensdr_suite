@@ -782,10 +782,14 @@ static void persist_after_sf_scan() {
     char c[48];
     if (independent_mode_enabled.load()) {
         SettingsStore::record("TUNERS:" + tuners_string());
-    } else if (!wideband_mode_enabled.load()) {
-        if (const uint64_t hz = requested_freq_hz.load()) {
-            snprintf(c, sizeof c, "FREQ:%.6f", hz / 1e6);
-            SettingsStore::record(c);
+    } else {
+        // (wideband scan mode: no FREQ, as before - WIDEBAND_FREQ isn't a
+        // saved setting; the gain is)
+        if (!wideband_mode_enabled.load()) {
+            if (const uint64_t hz = requested_freq_hz.load()) {
+                snprintf(c, sizeof c, "FREQ:%.6f", hz / 1e6);
+                SettingsStore::record(c);
+            }
         }
         const float g = ChannelManager::get_gain(active_channel.load());
         snprintf(c, sizeof c, "GAIN:%.1f", g < 0 ? -1.0f : g);
@@ -1051,6 +1055,9 @@ void ControlHandler::handle_message_impl(string_view message) {
             throw CommandRejected("outside the tuner range (24-1766 MHz)");
         }
         const uint64_t freq_hz = static_cast<uint64_t>(llround(freq_mhz * 1e6));
+        // a retune by hand ends a saved-frequency scan (its own come through dispatching)
+        if (sfscan::running() && !sfscan::dispatching() && !g_replaying_settings.load())
+            sfscan::stop("the receiver was retuned by hand");
 
         ChannelManager::set_frequency(freq_hz, active_channel.load(std::memory_order_relaxed));
 

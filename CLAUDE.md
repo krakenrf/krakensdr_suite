@@ -720,7 +720,12 @@ Edit `kraken_doa_v2/include/config.hpp`:
   every entry of a band at once in the averaged FFT (squelch = dB over the
   noise floor) and retunes only between bands. Coherent: one band at a
   time (Dwell each), nothing measured while heimdall recalibrates after a
-  retune; independent: a band on every tuner no other VFO is on. Lock = the
+  retune; independent: a band on every tuner no other VFO is on; wideband
+  scan (the user's question 2026-10-22 - it had been refused for no good
+  reason): one band = heimdall's tuner spread (n tuners side by side, edge
+  clip x 2.4 MHz apart, ~10.8 MHz with 5), each entry on the tuner nearest it
+  and its VFO kept off the seams, retuned with WIDEBAND_FREQ (FREQ would end
+  the mode), no calibration (`sf_scan_plan`'s Layout). Lock = the
   entry's decoder / demod / bandwidth + the VFO's offset (the page's
   sfTune), heard; Delay after the transmission, Skip / Hold / Longest stay
   (clean listening time only). The list goes in PASSES: a frequency left by
@@ -745,8 +750,8 @@ Edit `kraken_doa_v2/include/config.hpp`:
   the user removes = that frequency done this pass; <= 16 VFOs.
   Its own commands go through `apply_command` but are NOT saved
   (`sfscan::dispatching()`); the tuning it leaves is saved at stop. A manual
-  retune, a mode change, removing its VFO or a playback stop it; refused in
-  wideband mode. WS `SF_SCAN:`, `SFSCAN_START:<vfo>` / `STOP` / `SKIP` /
+  retune (FREQ, TUNER_FREQ of a scanned tuner, WIDEBAND_FREQ), a mode change,
+  removing its VFO or a playback stop it. WS `SF_SCAN:`, `SFSCAN_START:<vfo>` / `STOP` / `SKIP` /
   `HOLD:` / `SQUELCH:` / `DWELL:` / `HANG:` / `MAX:` / `MULTI:` (persisted),
   `GET_SFSCAN` -> `{"sfscan":{...}}`
 - Discrete scanner: config entries outside the tunable range (R820T, or the

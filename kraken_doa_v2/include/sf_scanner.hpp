@@ -19,9 +19,13 @@
 //  - independent mode: every tuner no OTHER VFO is on watches a band of its
 //    own (5 tuners = 5 bands at once, no calibration); with more bands than
 //    tuners they take turns
-// Wideband (tuner-spread) mode has the Discrete Scanner instead. Not with the
-// other scanners or a playback. A manual retune (FREQ, or TUNER_FREQ of a
-// scanned tuner) or a mode change stops it; so does removing its VFO.
+//  - wideband scan mode: one band = heimdall's tuner spread (n tuners side
+//    by side, edge clip x 2.4 MHz apart: ~10.8 MHz with 5), each entry
+//    watched on the tuner nearest it (where the receiver puts its VFO) with
+//    its VFO kept off the seams; retuned with WIDEBAND_FREQ, no calibration
+// Not with the other scanners or a playback. A manual retune (FREQ,
+// TUNER_FREQ of a scanned tuner, WIDEBAND_FREQ) or a mode change stops it;
+// so does removing its VFO.
 //
 // While nothing is active its VFO is muted; locked on a frequency it is heard
 // (🔊). Stop leaves the VFO where it is - heard if it was listening, else as

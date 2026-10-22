@@ -962,9 +962,41 @@ Edit `include/config.hpp`:
   Level of an entry = strongest bin in the inner 80 % of its channel (its
   bandwidth, else 180 kHz WBFM / 12.5 kHz) of the averaged FFT, minus the
   channel's noise floor (`FFTProcessor::channel_noise_floor`)
+- WIDEBAND SCAN MODE (the user's question 2026-10-22: "why does this
+  scanner not work in wideband mode? I see no reason why it should not" -
+  there was none: it was refused only because the plan knew one tuner per
+  band): `Layout` = the tuners a band is received with - `single_layout(span)`
+  ({0}, half = span / 2: coherent / independent, exactly the arithmetic from
+  before) or `spread_layout(n, spacing)` = heimdall's setup_wideband_frequencies
+  (tuner k on centre + (k - n / 2) x spacing, integer n / 2; spacing =
+  uint32(SAMPLE_RATE x edge clip) in float maths as there: 2160000 at 0.9;
+  half = spacing / 2). An entry is received on the tuner NEAREST it (lowest
+  on a tie - the receiver's SET_DECIMATOR_FREQ picks a wideband VFO's tuner
+  that way), so its VFO must lie inside THAT tuner's usable part (not across
+  a seam) and its channel off THAT tuner's DC. `pick_centre` searches the
+  centres whose tuners cover the band (every tuner inside the tunable range)
+  for one with every VFO inside its tuner (feasible) and DC-clear, nearest
+  the middle; else the feasible one farthest from DC; else the least
+  overlap. An entry still across a seam at its band's centre is planned
+  again (a band of its own, `SEAM_ROUNDS` 4, then kept). Unit test: the six
+  broadcast stations = 1 band (3 on one tuner), 300 dense entries over 11.2
+  MHz = 3 bands (6 on one tuner), none across a seam. Scanner: one slot (ch
+  -1), the band's centre = tuner n / 2's (`wide_centre_hz` from the stream,
+  whole kHz), retune WIDEBAND_FREQ (FREQ ends wideband mode), SETTLE until
+  EVERY tuner is at centre + its offset (`in_stream`), the VFO pre-placed
+  only then (the receiver picks a wideband VFO's tuner from the tuners'
+  stream frequencies) at its offset from the spread's middle ((first + last
+  tuner) / 2 - tuner n / 2 with an odd count), each entry measured on its
+  nearest tuner's FFT (`entry_tuner`, `Specs` = each tuner's spectrum once
+  per tick), no calibration / hold; the plan is re-made when the edge clip
+  or the tuner count changes (heimdall respaces the tuners). A manual
+  WIDEBAND_FREQ stops it; at stop the gain is saved (no FREQ in wideband, as
+  before). Test: `t_sfscan_wide.py` (the fake spreads its tuners like
+  heimdall)
 - Scanner (`sf_scanner.cpp`, one thread, 100 ms ticks; class `Scan`, state
   TUNE -> SETTLE -> WATCH -> LISTEN): SLOTS = the array (coherent: 1, the
-  FFT of `active_channel`) or every tuner NO OTHER VFO is on (independent;
+  FFT of `active_channel`; wideband: 1, the whole spread) or every tuner NO
+  OTHER VFO is on (independent;
   another VFO moving onto a scanned tuner = a new turn without it, none left
   = stop). TURNS = the bands in slot-sized blocks (slot k: band cycle + k,
   none past the last band); a PASS = every turn once, then from the first
@@ -1078,9 +1110,9 @@ Edit `include/config.hpp`:
   (or TUNERS) + the VFO snapshot: what the scan left is the user's now.
   Shutdown only joins the thread (nothing saved)
 - Stops it: SFSCAN_STOP, a manual FREQ (any mode), TUNER_FREQ of a scanned
-  tuner, OPERATING_MODE to another mode, heimdall switching mode
+  tuner, a manual WIDEBAND_FREQ, OPERATING_MODE to another mode, heimdall switching mode
   (`note_server_mode`), its VFO removed, a playback, the plan left empty
-  (each with `msg`). Refused: wideband mode, a playback, another scanner
+  (each with `msg`). Refused: a playback, another scanner
   running (and the other two refuse while it runs), a VFO its decoder holds,
   nothing scannable. The VFO: the page's selected one (`SFSCAN_START:<id>`,
   -1 / unknown = the first). Muted while scanning, heard while locked; stop
@@ -1139,6 +1171,12 @@ Edit `include/config.hpp`:
   again across the calibration, the VFO pre-placed > 0.8 s before its lock -,
   independent mode with two bands on two tuners and a VFO taking a tuner;
   the fake's timing is set over its side port, `{"timing":{"stab":1.5}}`),
+  `t_sfscan_wide.py` (wideband scan mode, 30 checks: the six stations in
+  one band, every one inside its tuner + off DC, no calibration hold, never
+  out of wideband mode, the VFO on its nearest tuner at the right offset,
+  two VFOs on two tuners with multi, the bands taking turns by
+  WIDEBAND_FREQ, an edge clip change re-planned + respaced, a manual
+  WIDEBAND_FREQ stops it),
   `t_sfscan_multi.py` (one VFO per active frequency, 35 checks: the setting
   saved; two active at once - the scan's VFO + a made one at their
   offsets, the entry's demod / bandwidth, Transcribe + squelch copied, both

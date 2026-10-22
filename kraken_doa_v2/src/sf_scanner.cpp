@@ -98,6 +98,7 @@ std::function<void()> g_on_stop;   // uWS loop only
 struct Cfg {
     int vfo = -1;
     bool independent = false;
+    bool wideband = false;   // wideband scan mode (tuners side by side); neither = coherent
     bool was_heard = false;
     // the scan VFO's settings at the start: what an extra VFO starts from
     // (one VFO per active frequency) before the entry's own are applied
@@ -181,10 +182,20 @@ int64_t vfo_bandwidth_hz(int vfo) {
     return std::llround(get_bandwidth_option(inst ? inst->bandwidth_index.load() : DEFAULT_BANDWIDTH_INDEX).bandwidth_mhz * 1e6);
 }
 
-Plan make_plan(int vfo) {
+// The tuners a band is received with: in wideband scan mode heimdall's tuner
+// spread over the open tuners (setup_wideband_frequencies: spacing = edge clip
+// x sample rate - float maths as there), else one tuner, edge-clipped
+Layout layout_for(bool wideband) {
+    if (!wideband) return single_layout(span_hz());
+    const float clip = std::clamp(current_edge_clip.load(std::memory_order_relaxed), 0.1f, 1.0f);
+    const int n = std::clamp(active_num_elements.load(), 1, MAX_CHANNELS);
+    return spread_layout(n, static_cast<int64_t>(static_cast<uint32_t>(SAMPLE_RATE * clip)));
+}
+
+Plan make_plan(int vfo, const Layout& lay) {
     uint64_t lo, hi;
     tunable_range(&lo, &hi);
-    return build_plan(savedfreq::scan_entries(), span_hz(), lo, hi, vfo_bandwidth_hz(vfo), decoder_why_not);
+    return build_plan(savedfreq::scan_entries(), lay, lo, hi, vfo_bandwidth_hz(vfo), decoder_why_not);
 }
 
 bool is_extra(const DecimatorInstance* p);
@@ -426,13 +437,31 @@ private:
     void hold();
     void status(bool now);
     int64_t stream_hz(const Slot& s) const;
+    int64_t wide_centre_hz() const;
+    bool in_stream(const Slot& s) const;
+    const savedfreq::ScanEntry& first_pick(const Slot& s) const;
     bool fft(int ch, std::vector<float>* spec, float* floor_db) const;
+    bool coherent() const { return !cfg_.independent && !cfg_.wideband; }
+    // the FFT channel an entry of slot s is measured on and that tuner's centre
+    int entry_tuner(const Slot& s, int64_t hz, int64_t* centre) const;
+    // each tuner's averaged spectrum, fetched once per tick
+    struct Specs {
+        int got[MAX_CHANNELS];
+        std::vector<float> spec[MAX_CHANNELS];
+        float floor_db[MAX_CHANNELS];
+        Specs() { std::fill(std::begin(got), std::end(got), -1); }
+    };
+    // an entry's level (dB over the floor) on slot s; -999 = not measurable
+    float level(Specs& sp, const Slot& s, const savedfreq::ScanEntry& e) const;
 
     Cfg cfg_;
     uint32_t id_;
     Plan plan_;
     uint64_t plan_gen_ = ~0ull;
     float plan_clip_ = -1;
+    int plan_tuners_ = -1;         // wideband: the tuner count the layout was made for
+    Layout lay_;                   // the tuners a band is received with (layout_for)
+    bool wide_place_ = false;      // wideband: pre-place the VFO once the stream has the new tuning
     State st_ = TUNE;
     bool need_tune_ = false;       // the plan changed while listening: a new turn when it resumes
     std::vector<Slot> slots_;
@@ -458,7 +487,7 @@ private:
 
 void Scan::run() {
     std::cout << "Saved-frequency scan: started on D" << cfg_.vfo << " ("
-              << (cfg_.independent ? "independent" : "coherent") << " mode)" << std::endl;
+              << (cfg_.independent ? "independent" : cfg_.wideband ? "wideband scan" : "coherent") << " mode)" << std::endl;
     seen_gen_ = fft_reset_generation.load(std::memory_order_acquire);
     while (g_run.load()) {
         {
@@ -479,10 +508,13 @@ void Scan::run() {
 void Scan::tick() {
     // what ends the scan
     if (playback::active()) return request_stop(id_, "a playback started (the receiver can't be tuned)");
-    if (operating_mode_index() != (cfg_.independent ? 2 : 0)) return request_stop(id_, "the operating mode changed");
+    if (operating_mode_index() != (cfg_.independent ? 2 : cfg_.wideband ? 1 : 0))
+        return request_stop(id_, "the operating mode changed");
     if (!decimator_manager.getDecimator(cfg_.vfo)) return request_stop(id_, "its VFO D" + std::to_string(cfg_.vfo) + " was removed");
 
-    if (savedfreq::generation() != plan_gen_ || current_edge_clip.load() != plan_clip_) rebuild();
+    if (savedfreq::generation() != plan_gen_ || current_edge_clip.load() != plan_clip_ ||
+        (cfg_.wideband && std::clamp(active_num_elements.load(), 1, MAX_CHANNELS) != plan_tuners_))
+        rebuild();
     if (plan_.entries.empty()) {
         return request_stop(id_, plan_.skipped.empty() ? "nothing left to scan"
                                                        : "none of the frequencies left can be scanned: " + plan_.skipped[0].why);
@@ -509,7 +541,7 @@ void Scan::tick() {
 // the hold and the calibration starts at once (the user's call 2026-10-22).
 // Not in KerberosSDR manual mode (no automatic calibrations to hold)
 void Scan::hold() {
-    if (cfg_.independent || server_kerberos_mode.load(std::memory_order_relaxed)) return;
+    if (!coherent() || server_kerberos_mode.load(std::memory_order_relaxed)) return;
     const int64_t now = now_ms();
     if (st_ != LISTEN) {
         if (!holding_ || now - hold_sent_ >= HOLD_RENEW_MS) {
@@ -526,7 +558,9 @@ void Scan::hold() {
 void Scan::rebuild() {
     plan_gen_ = savedfreq::generation();
     plan_clip_ = current_edge_clip.load();
-    plan_ = make_plan(cfg_.vfo);
+    plan_tuners_ = std::clamp(active_num_elements.load(), 1, MAX_CHANNELS);
+    lay_ = layout_for(cfg_.wideband);
+    plan_ = make_plan(cfg_.vfo, lay_);
     level_.assign(plan_.entries.size(), -999.0f);
     consec_.assign(plan_.entries.size(), 0);
     std::cout << "Saved-frequency scan: " << plan_.entries.size() << " frequenc"
@@ -558,13 +592,14 @@ void Scan::tune() {
     if (cfg_.independent) {
         chs = free_tuners(cfg_.vfo);
         if (chs.empty()) return request_stop(id_, "every tuner has another VFO on it - free one for the scan");
+    } else if (cfg_.wideband) {
+        chs = {-1};   // every tuner, side by side: one band
     } else {
         chs = {std::clamp(active_channel.load(), 0, MAX_CHANNELS - 1)};
     }
     const int nb = static_cast<int>(plan_.bands.size());
     const int ns = static_cast<int>(chs.size());
     if (nb <= ns) cycle_ = 0;
-    const double span = span_hz();
     const int64_t vfo_hz = vfo_bandwidth_hz(cfg_.vfo);
     std::vector<std::string> cmds;
     slots_.assign(chs.size(), Slot{});
@@ -576,15 +611,18 @@ void Scan::tune() {
         s.band = cycle_ + k;
         const Band& b = plan_.bands[s.band];
         const int64_t now_hz = cfg_.independent ? static_cast<int64_t>(exact_tuner_hz(s.ch))
+                               : cfg_.wideband  ? wide_centre_hz()
                                                 : static_cast<int64_t>(coherent_tuner_hz());
         // a centre that already holds the band stays (a coherent retune recalibrates)
-        const bool move = !band_fits(plan_, s.band, now_hz, span, vfo_hz);
+        const bool move = !band_fits(plan_, s.band, now_hz, lay_, vfo_hz);
         s.centre = move ? b.centre_hz : now_hz;
         s.retuned = move;
         s.seen = !move;
         char c[96];
         if (move) {
+            // (wideband: FREQ would end wideband mode - WIDEBAND_FREQ moves the spread)
             if (cfg_.independent) snprintf(c, sizeof c, "TUNER_FREQ:%d:%.6f", s.ch, b.centre_hz / 1e6);
+            else if (cfg_.wideband) snprintf(c, sizeof c, "WIDEBAND_FREQ:%.6f", b.centre_hz / 1e6);
             else snprintf(c, sizeof c, "FREQ:%.6f", b.centre_hz / 1e6);
             cmds.push_back(c);
         }
@@ -604,14 +642,14 @@ void Scan::tune() {
     // The VFO onto the band's first frequency that hasn't had its turn - its
     // demod / bandwidth / decoder, muted - together with the retune: a
     // coherent retune calibrates for a few seconds, and the VFO is then in
-    // place (filters settled, decoder started) when the data is clean
+    // place (filters settled, decoder started) when the data is clean.
+    // Wideband: once the stream has the new tuning (settle) - the receiver
+    // puts a VFO on the tuner nearest it by the tuners' frequencies there
+    wide_place_ = false;
     for (const auto& s : slots_) {
         if (s.band < 0 || (!s.retuned && !first_tune_)) continue;
-        const auto& ents = plan_.bands[s.band].entries;
-        int pick = ents.front();
-        for (int i : ents)
-            if (!done_.count(plan_.entries[i].id)) { pick = i; break; }
-        place(plan_.entries[pick], s, false);
+        if (cfg_.wideband) wide_place_ = true;
+        else place(first_pick(s), s, false);
         break;
     }
     first_tune_ = false;
@@ -619,8 +657,33 @@ void Scan::tune() {
     st_ = SETTLE;
 }
 
+// the band's first frequency that hasn't had its turn this pass (else its first)
+const savedfreq::ScanEntry& Scan::first_pick(const Slot& s) const {
+    const auto& ents = plan_.bands[s.band].entries;
+    for (int i : ents)
+        if (!done_.count(plan_.entries[i].id)) return plan_.entries[i];
+    return plan_.entries[ents.front()];
+}
+
 int64_t Scan::stream_hz(const Slot& s) const {
     return static_cast<int64_t>(tuner_frequencies[cfg_.independent ? s.ch : 0].load(std::memory_order_relaxed));
+}
+
+// wideband: the spread's centre now (tuner n / 2's, offset 0), whole kHz as
+// the scan tunes it
+int64_t Scan::wide_centre_hz() const {
+    const int k0 = static_cast<int>(lay_.offs.size()) / 2;
+    return std::llround(static_cast<double>(tuner_frequencies[k0].load(std::memory_order_relaxed)) / 1000.0) * 1000;
+}
+
+// the slot's tuning in the stream (wideband: every tuner of the spread)
+bool Scan::in_stream(const Slot& s) const {
+    if (!cfg_.wideband) return std::llabs(stream_hz(s) - s.centre) < 2000;
+    for (size_t k = 0; k < lay_.offs.size() && k < static_cast<size_t>(MAX_CHANNELS); k++) {
+        const int64_t f = static_cast<int64_t>(tuner_frequencies[k].load(std::memory_order_relaxed));
+        if (std::llabs(f - (s.centre + lay_.offs[k])) >= 2000) return false;
+    }
+    return true;
 }
 
 void Scan::settle() {
@@ -631,13 +694,15 @@ void Scan::settle() {
         if (s.band < 0 || !s.retuned) continue;
         any_retuned = true;
         if (!s.seen && !s.failed) {
-            if (std::llabs(stream_hz(s) - s.centre) < 2000) {
+            if (in_stream(s)) {
                 s.seen = true;
                 s.seen_ms = now;
             } else if (now - t_cmd_ > HEADER_TIMEOUT_MS) {
                 s.failed = true;
-                std::cerr << "Saved-frequency scan: tuner " << s.ch << " didn't reach " << s.centre / 1e6
-                          << " MHz - that band is left out this turn" << std::endl;
+                std::cerr << "Saved-frequency scan: "
+                          << (cfg_.wideband ? std::string("the tuners") : "tuner " + std::to_string(s.ch))
+                          << " didn't reach " << s.centre / 1e6 << " MHz - that band is left out this turn"
+                          << std::endl;
             } else {
                 all = false;
             }
@@ -650,6 +715,14 @@ void Scan::settle() {
         // retunes don't reset it; coherent ones do when heimdall finishes)
         fft_reset_generation.fetch_add(1, std::memory_order_release);
         fft_data_valid.store(false, std::memory_order_release);
+    }
+    if (wide_place_) {   // wideband: the VFO onto the band now (tune())
+        wide_place_ = false;
+        for (const auto& s : slots_)
+            if (s.band >= 0 && !s.failed) {
+                place(first_pick(s), s, false);
+                break;
+            }
     }
     std::fill(consec_.begin(), consec_.end(), 0);
     std::fill(level_.begin(), level_.end(), -999.0f);
@@ -665,7 +738,7 @@ bool Scan::ready() {
         hold_until_ = std::max(hold_until_, now + rebuild_ms());
     }
     bool cal = false;
-    if (!cfg_.independent) {
+    if (coherent()) {
         // the noise source on: always calibration. The phase state alone is
         // trusted for CAL_GIVE_UP_MS (a heimdall that never settles must not
         // stop the scan for good)
@@ -702,19 +775,38 @@ bool Scan::fft(int ch, std::vector<float>* spec, float* floor_db) const {
     return *floor_db > -190.0f;
 }
 
+int Scan::entry_tuner(const Slot& s, int64_t hz, int64_t* centre) const {
+    if (cfg_.independent) {
+        *centre = s.centre;
+        return s.ch;
+    }
+    if (cfg_.wideband) {   // the tuner nearest it (where the receiver puts its VFO)
+        const int k = nearest_tuner(lay_, s.centre, hz);
+        *centre = s.centre + lay_.offs[k];
+        return k;
+    }
+    *centre = s.centre;
+    return std::clamp(active_channel.load(), 0, MAX_CHANNELS - 1);
+}
+
+float Scan::level(Specs& sp, const Slot& s, const savedfreq::ScanEntry& e) const {
+    int64_t tc = 0;
+    const int ch = entry_tuner(s, e.hz, &tc);
+    if (ch < 0 || ch >= MAX_CHANNELS) return -999.0f;
+    if (sp.got[ch] < 0) sp.got[ch] = fft(ch, &sp.spec[ch], &sp.floor_db[ch]) ? 1 : 0;
+    if (!sp.got[ch]) return -999.0f;
+    return entry_level(sp.spec[ch], sp.floor_db[ch], static_cast<double>(tc), SAMPLE_RATE, e.hz, channel_width_hz(e));
+}
+
 // every watched entry's level; consec_ counts the polls over the squelch
 void Scan::measure() {
     const float sq = g_squelch.load();
-    std::vector<float> spec;
-    float floor_db = 0;
+    Specs sp;
     for (const auto& s : slots_) {
         if (s.band < 0 || s.failed) continue;
-        const int ch = cfg_.independent ? s.ch : std::clamp(active_channel.load(), 0, MAX_CHANNELS - 1);
-        if (!fft(ch, &spec, &floor_db)) continue;
         for (int i : plan_.bands[s.band].entries) {
-            const auto& e = plan_.entries[i];
-            const float lv = entry_level(spec, floor_db, static_cast<double>(s.centre), SAMPLE_RATE, e.hz,
-                                         channel_width_hz(e));
+            const float lv = level(sp, s, plan_.entries[i]);
+            if (lv <= -900.0f) continue;   // no spectrum (yet)
             level_[i] = lv;
             consec_[i] = lv >= sq ? static_cast<uint8_t>(std::min(consec_[i] + 1, 100)) : 0;
         }
@@ -824,7 +916,7 @@ void Scan::lock(int entry, int slot) {
     // right after a retune in coherent mode heimdall sits in its cooldown
     // (held): the release starts the calibration - muted until it has run,
     // instead of a moment of audio cut off by the noise source
-    l.cal_wait = !cfg_.independent && !server_kerberos_mode.load(std::memory_order_relaxed) &&
+    l.cal_wait = coherent() && !server_kerberos_mode.load(std::memory_order_relaxed) &&
                  scanner_manager.getPhaseState() == 5;   // WAITING_FOR_STABILITY
     l.heard = !l.cal_wait;
     l.db = level_[entry];
@@ -893,7 +985,10 @@ void apply_entry(int vfo, int ch, bool indep, int64_t centre, const savedfreq::S
 void Scan::place(const savedfreq::ScanEntry& e, const Slot& s, bool heard, uint64_t tok) {
     const int ch = s.ch;
     const bool indep = cfg_.independent;
-    const int64_t centre = s.centre;
+    // the receiver takes a wideband VFO's offset from the middle of the spread
+    // ((first + last tuner) / 2 - tuner n / 2's centre with an odd count) and
+    // puts the VFO on the tuner nearest it
+    const int64_t centre = cfg_.wideband ? s.centre + (lay_.offs.front() + lay_.offs.back()) / 2 : s.centre;
     const uint32_t id = id_;
     if (!loop) return;
     loop->defer([id, tok, cfg = cfg_, ch, indep, centre, e, heard] {
@@ -974,22 +1069,12 @@ void Scan::listen() {
         for (size_t i = locks_.size(); i-- > 0;)
             if (locks_[i].tok) end_lock(i, false);
 
-    // each slot's spectrum once; a locked entry is measured on the tuner it is on
-    std::vector<int> got(slots_.size(), -1);
-    std::vector<std::vector<float>> spec(slots_.size());
-    std::vector<float> floor_db(slots_.size(), 0.0f);
+    // each tuner's spectrum once; a locked entry is measured on the tuner it is on
+    Specs sp;
     auto level_of = [&](const Lock& l, float* db) {
-        const int k = l.slot;
-        if (k < 0 || k >= static_cast<int>(slots_.size()) || l.entry < 0) return false;
-        if (got[k] < 0) {
-            const int ch = cfg_.independent ? slots_[k].ch : std::clamp(active_channel.load(), 0, MAX_CHANNELS - 1);
-            got[k] = fft(ch, &spec[k], &floor_db[k]) ? 1 : 0;
-        }
-        if (!got[k]) return false;
-        const auto& e = plan_.entries[l.entry];
-        *db = entry_level(spec[k], floor_db[k], static_cast<double>(slots_[k].centre), SAMPLE_RATE, e.hz,
-                          channel_width_hz(e));
-        return true;
+        if (l.slot < 0 || l.slot >= static_cast<int>(slots_.size()) || l.entry < 0) return false;
+        *db = level(sp, slots_[l.slot], plan_.entries[l.entry]);
+        return *db > -900.0f;
     };
     for (auto& l : locks_) {
         if (l.cal_wait) {
@@ -1067,7 +1152,8 @@ void Scan::status(bool now_flag) {
     std::ostringstream o;
     const char* st = st_ == LISTEN ? "listen" : st_ == WATCH ? "watch" : "tune";
     o << "{\"sfscan\":{\"run\":true,\"state\":\"" << st << "\",\"hold\":" << (g_hold.load() ? "true" : "false")
-      << ",\"vfo\":" << cfg_.vfo << ",\"mode\":\"" << (cfg_.independent ? "independent" : "coherent") << "\""
+      << ",\"vfo\":" << cfg_.vfo << ",\"mode\":\""
+      << (cfg_.independent ? "independent" : cfg_.wideband ? "wideband" : "coherent") << "\""
       << ",\"n\":" << plan_.entries.size() << ",\"nb\":" << plan_.bands.size() << ",\"cycle\":" << cycle_
       << ",\"ready\":" << (st_ == WATCH && now < hold_until_ ? "false" : "true") << ",\"watch\":[";
     bool first = true;
@@ -1129,8 +1215,7 @@ std::string start(int vfo) {
     std::lock_guard<std::mutex> lk(g_life);
     if (g_run.load()) return "the scan is already running";
     if (playback::active()) return "a playback is running - the receiver can't be tuned";
-    const int mode = operating_mode_index();
-    if (mode == 1) return "the saved-frequency scan runs in coherent or independent mode (wideband mode has the Discrete Scanner)";
+    const int mode = operating_mode_index();   // 0 coherent, 1 wideband scan, 2 independent
     if (vfo < 0 || !decimator_manager.getDecimator(vfo)) {
         vfo = -1;
         for (const auto& d : decimator_manager.getDecimatorInfoList()) { vfo = d.id; break; }
@@ -1139,7 +1224,7 @@ std::string start(int vfo) {
     if (const std::string p = vfo_held_by(vfo); !p.empty())
         return "D" + std::to_string(vfo) + " is held by its decoder (" + p + ") - select another VFO";
     if (mode == 2 && free_tuners(vfo).empty()) return "every tuner has another VFO on it - free one for the scan";
-    const Plan plan = make_plan(vfo);
+    const Plan plan = make_plan(vfo, layout_for(mode == 1));
     if (plan.entries.empty()) {
         if (plan.skipped.empty()) return "nothing to scan - tick the frequencies or categories to scan first";
         return "none of the ticked frequencies can be scanned (" + plan.skipped[0].name + ": " + plan.skipped[0].why + ")";
@@ -1150,6 +1235,7 @@ std::string start(int vfo) {
     g_cfg = Cfg{};
     g_cfg.vfo = vfo;
     g_cfg.independent = mode == 2;
+    g_cfg.wideband = mode == 1;
     g_cfg.was_heard = std::find(heard.begin(), heard.end(), vfo) != heard.end();
     for (const auto& d : decimator_manager.getDecimatorInfoList()) {
         if (d.id != vfo) continue;
@@ -1204,7 +1290,7 @@ bool stop(const std::string& why) {
     if (removed) broadcast(MessageBuilders::build_decimator_info_message());
     // heimdall's calibration hold: released - a pending calibration runs now,
     // on the frequency the scan stopped on
-    if (!g_cfg.independent) hold_calibration(0);
+    if (!g_cfg.independent && !g_cfg.wideband) hold_calibration(0);
     // its VFO: heard if it was listening, else as before the scan
     set_heard(g_cfg.vfo, g_listening.load() || g_cfg.was_heard);
     g_listening = false;
