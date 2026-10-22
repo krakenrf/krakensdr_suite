@@ -1,6 +1,10 @@
 # Makefile for KrakenSDR DoA with MUSIC DoA and Raw Data Buffering
 CXX = g++
-CXXFLAGS = -std=c++20 -Ofast -Wall -Wextra -pthread
+# -O3 -ffast-math without -ffinite-math-only (it folds std::isfinite /
+# std::isnan to constants). It was -Ofast = this + -ffinite-math-only +
+# -fallow-store-data-races (stores other threads may race with); the same
+# speed on the Pi 5 - root CLAUDE.md *Compiler flags*
+CXXFLAGS = -std=c++20 -O3 -ffast-math -fno-finite-math-only -Wall -Wextra -pthread
 INCLUDES = -isystem $(LIQUID_INC) -Iinclude -Iplugins/sdk -Iexternal/pffft -IuWebSockets/src -IuWebSockets/uSockets/src -I/usr/include/eigen3
 LDFLAGS = -L/usr/local/lib
 # liquid-dsp: built from source as a static library without FFTW / libfec
@@ -104,10 +108,10 @@ TARGET = kraken_doa.exe
 # linked to a temporary name, then moved: Windows can't overwrite a running
 # exe, MSYS2's mv moves the busy one aside (a rebuild while the stack runs)
 LINK_TMP = .tmp
-# every object depends on this stamp of WIN_MARCH (rule below): another
-# WIN_MARCH recompiles everything, not only the files that changed
-WIN_MARCH_STAMP = $(OBJDIR)/.win_march
 endif
+# every object depends on this stamp of the compiler flags (rule below):
+# other flags recompile everything, not only the files that changed
+FLAGS_STAMP = $(OBJDIR)/.flags
 
 # Source files (updated with IQ converter)
 SIGNAL_PROCESSING_SRCS = \
@@ -280,16 +284,16 @@ endif
 	@echo "Run with: ./$(TARGET)"
 
 # Compile source files and generate dependencies
-$(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(LIQUID_H) $(WIN_MARCH_STAMP) | $(OBJDIRS) $(DEPDIRS) check-uws
+$(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(LIQUID_H) $(FLAGS_STAMP) | $(OBJDIRS) $(DEPDIRS) check-uws
 	@echo "Compiling $<..."
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $(DEPDIR)/$*.d -c $< -o $@
 
-$(OBJDIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) $(WIN_MARCH_STAMP) | $(OBJDIRS)
+$(OBJDIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) $(FLAGS_STAMP) | $(OBJDIRS)
 	@echo "Compiling $<..."
 	$(CC) $(PFFFT_CFLAGS) -c $< -o $@
 
 # Windows process setup + manifest resource (see WIN_OBJS)
-$(OBJDIR)/win/win_init.o: win/win_init.cpp win/posix_compat.h $(WIN_MARCH_STAMP) | $(OBJDIRS)
+$(OBJDIR)/win/win_init.o: win/win_init.cpp win/posix_compat.h $(FLAGS_STAMP) | $(OBJDIRS)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -297,22 +301,23 @@ $(OBJDIR)/win/app_res.o: win/app.rc win/app.manifest | $(OBJDIRS)
 	@mkdir -p $(dir $@)
 	windres --include-dir win -O coff $< -o $@
 
-ifeq ($(WINDOWS),1)
-# The WIN_MARCH the objects were built with. Rewritten (and so newer than
-# every object) only when it differs, e.g. `make WIN_MARCH=-march=x86-64-v2`
-# for a CPU without AVX2: the objects of the default x86-64-v3 build would
-# otherwise stay in the exe and still crash there (liquid.mk rebuilds
-# liquid-dsp itself; plugins/Makefile has a stamp of its own)
-ifneq ($(shell cat $(WIN_MARCH_STAMP) 2>/dev/null),$(strip $(WIN_MARCH)))
-$(WIN_MARCH_STAMP): win-march-changed
+# The flags the objects were built with (CXXFLAGS incl. WIN_MARCH, pffft's).
+# Rewritten (and so newer than every object) only when they differ: a
+# Makefile with other flags (a build from before keeps its old objects
+# otherwise), or on Windows `make WIN_MARCH=-march=x86-64-v2` for a CPU
+# without AVX2 - the objects of the default x86-64-v3 build would stay in the
+# exe and still crash there (liquid.mk rebuilds liquid-dsp itself;
+# plugins/Makefile has a stamp of its own). It was WIN_MARCH on Windows only
+FLAGS_TEXT = $(strip $(CXX) $(CXXFLAGS) | $(CC) $(PFFFT_CFLAGS))
+ifneq ($(shell cat $(FLAGS_STAMP) 2>/dev/null),$(FLAGS_TEXT))
+$(FLAGS_STAMP): flags-changed
 endif
-$(WIN_MARCH_STAMP):
+$(FLAGS_STAMP):
 	@mkdir -p $(dir $@)
-	@echo '$(strip $(WIN_MARCH))' > $@
+	@echo '$(FLAGS_TEXT)' > $@
 
-.PHONY: win-march-changed
-win-march-changed:
-endif
+.PHONY: flags-changed
+flags-changed:
 
 # Include dependency files (only if they exist and we're not cleaning)
 ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)

@@ -2152,7 +2152,8 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
 
 ### Compiler flags (2026-10-22, the user's request: full optimisation on the Pi 5)
 
-- kraken_doa `-Ofast -march=native -mtune=native` (unchanged); heimdall
+- kraken_doa `-O3 -ffast-math -fno-finite-math-only -march=native
+  -mtune=native` (2026-10-23; it was `-Ofast` - below); heimdall
   `-O3 -mcpu=native` on aarch64 (was `-march=armv8-a -mtune=cortex-a72` -
   the Pi 4's core), `-march=native` x86_64; the plugins + libkrakendig
   `-O3` (was `-O2`) + `-mcpu=native` on aarch64 (`-march=native` alone
@@ -2168,11 +2169,36 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
   true (NaN = unknown in `kp::MapPoint`, see `is_finite_value()`), and its
   reassociation would change results. `std::abs` of a complex stays a
   `hypotf` call without fast-math: heimdall's correlation uses
-  `std::sqrt(std::norm(z))` / a norm compare for its whole-array loops
-- A stamp of the compiler flags (`build/.flags`, `plugins/lib/build/.flags`;
-  every platform - it was `WIN_MARCH` on Windows only) recompiles
-  everything when the flags change, so an existing build picks new flags up
-  (kraken_doa's own Makefile still has the Windows-only `WIN_MARCH` stamp)
+  `std::sqrt(std::norm(z))` / a norm compare for its whole-array loops.
+  Measured 2026-10-23 (the user's question): the plugins with `-ffast-math
+  -fno-finite-math-only` decoded 34 / 35 test transmissions identically (one
+  printed time 1 ms off) for 1.8 % less CPU, with `-ffinite-math-only` too
+  32 / 35 changed (adsb altitudes `nan m`, cells found no cell); heimdall's
+  correlation benchmark -1 % - not taken
+- kraken_doa: `-Ofast` (= `-O3 -ffast-math` + `-ffinite-math-only` +
+  `-fallow-store-data-races`) replaced by `-O3 -ffast-math
+  -fno-finite-math-only` (2026-10-23, the user's call): std::isfinite /
+  std::isnan work again - under -Ofast they were constants, and 7 checks
+  were dead (a NaN in `SF_SET` / `SF_LOC_SET` JSON - geo::Json's reader takes
+  `NaN` - passed the range tests, likewise a SigMF's station / track,
+  ai_capture's JSON numbers, rdf_engine's normalisation) - and GCC may no
+  longer add stores other threads race with. `is_finite_value` stays the
+  way (right under any flags). Measured on the Pi 5 (test build + fake
+  heimdall, user-space cycles, % of a core at 2.4 GHz, 3 rounds each;
+  -Ofast / the new flags / strict `-O3 -fno-math-errno -fcx-fortran-rules`):
+  1 VFO 12.5 kHz 14.6 / 14.3 / 18.1, 3 VFOs 20.2 / 20.0 / 23.5, 5 VFOs
+  26.3 / 26.6 / 29.7, 5 x 240 kHz 85.5 / 85.0 / 91.6, 1 x 240 kHz 21.9 /
+  22.0 / 25.1, + beamforming 15.2 / 15.3 / 18.4; the bearings the same in
+  all three. Strict costs ~3.3 points whatever the VFOs (per-packet work).
+  End to end (test build): `SF_LOC_SET` / `SF_SET` with `"lat": NaN` /
+  `"hz": NaN` - the -Ofast build took both (the broadcast list and
+  saved_frequencies.json then held `nan`: invalid JSON), the new one refuses
+  them ("bad position" / "bad frequency"). A build from before recompiles
+  every object once (`obj/.flags`), on the Pi and on Windows
+- A stamp of the compiler flags (`build/.flags`, `plugins/lib/build/.flags`,
+  kraken_doa's `obj/.flags` since 2026-10-23; every platform - it was
+  `WIN_MARCH` on Windows only) recompiles everything when the flags change,
+  so an existing build picks new flags up
 - `-mcpu=native` / `-march=native` builds run only on the kind of CPU they
   were built on (a Pi 5 build on a Pi 4: illegal instruction) - build on
   the device (install.sh, the Dockerfile do)
