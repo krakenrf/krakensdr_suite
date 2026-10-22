@@ -910,6 +910,32 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 /* a VFO is on this frequency (sfMarkActive) */
 .sf-row.on {background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px var(--vfo, #4fc3f7)}
 .sf-row.on .nm {color:#fff;font-weight:bold}
+/* 📻 saved-frequency scan (see 📻 SAVED FREQUENCY SCAN): the ticks, the panel,
+   the frequency listened to (sfs-cur) and those active now (sfs-act) */
+.sf-gh .sfs-ck, .sf-row .sfs-ck {margin:0 0 0 2px;flex:none;cursor:pointer;accent-color:#7cf0a0;align-self:center}
+.sfs {background:#101a2e;border:1px solid #0f3460;border-radius:3px;padding:5px 6px;margin:2px 0 6px}
+.sfs-bar {display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.sfs-bar .r {margin-left:auto;display:flex;gap:4px;align-items:center}
+.sfs-bar .n {font-size:11px;color:#7f9cc0;white-space:nowrap}
+.sfs-status {font-size:11px;color:#a9c2e0;margin-top:4px;line-height:1.45;overflow-wrap:anywhere}
+.sfs-status:empty {display:none}
+.sfs-status.live {color:#7cf0a0}
+.sfs-status .d {color:#8aa8c7}
+.sfs-set {margin-top:4px;border-top:1px solid #0f3460}
+.sfs-set .ctrl-row {margin:5px 0;flex-wrap:nowrap;gap:6px}
+.sfs-set .ctrl-row label {font-size:12px;min-width:76px;flex:none}
+.sfs-set .ctrl-row input[type="number"] {width:54px;font-size:12px;padding:3px 5px}
+.sfs-set .slider {min-width:50px}
+.sfs-set .sv {font-size:12px;min-width:48px;flex:none}
+.sfs-set .u {font-size:10px;color:#8aa8c7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sfs-set .ctrl-row label.sfs-chk {min-width:0;flex:1;font-size:11px;color:#a9c2e0;display:flex;align-items:center;gap:5px;cursor:pointer}
+.sfs-set .ctrl-row label.sfs-chk input {margin:0}
+.sfs-set .sel {font-size:11px;color:#8aa8c7;margin-top:2px}
+.sfs-set .sel a {color:#7cb3f0}
+.sf-row.sfs-act .nm::before {content:'\25CF';color:#ffb74d;margin-right:4px;font-size:9px;vertical-align:1px}
+.sf-row.sfs-cur {background:rgba(124,240,160,.10);box-shadow:inset 0 0 0 1px #7cf0a0}
+.sf-row.sfs-cur .nm {color:#fff;font-weight:bold}
+.sf-row.sfs-cur .nm::before {content:'\1F50A';margin-right:4px;font-size:10px}
 .sf-cats {background:#101a2e;border:1px solid #0f3460;border-radius:3px;padding:6px;margin:4px 0 6px}
 .sf-cat-row {display:flex;gap:4px;align-items:center;margin-bottom:4px;font-size:12px}
 .sf-cat-row:last-child {margin-bottom:0}
@@ -1736,7 +1762,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- 📻 Saved frequencies (saved_freqs.cpp) + the map markers - all modes -->
     <div class="sb-section" id="sf-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📻 Saved Frequencies<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Your list of frequencies, kept on the receiver (every browser sees the same list). <b>Click one to tune</b> the selected VFO to it (also its demod, bandwidth and decoder, when the entry has them); the receiver retunes when it is outside the band shown. Each needs a name and a frequency; a category, a location, demod, bandwidth, decoder, tone / code and notes are optional. Group them in categories (⚙ Categories: add your own, rename, recolour). A frequency with a <b>location</b> appears on the 🗺 map: the marker there lists every frequency saved at that place. Saved frequencies are marked on the spectrum (👁 on a category hides its marks); click a mark to tune. ☆ Save on a VFO card saves that VFO's frequency.</span></span></h3>
+        <h3>📻 Saved Frequencies<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Your list of frequencies, kept on the receiver (every browser sees the same list). <b>Click one to tune</b> the selected VFO to it (also its demod, bandwidth and decoder, when the entry has them); the receiver retunes when it is outside the band shown. Each needs a name and a frequency; a category, a location, demod, bandwidth, decoder, tone / code and notes are optional. Group them in categories (⚙ Categories: add your own, rename, recolour). A frequency with a <b>location</b> appears on the 🗺 map: the marker there lists every frequency saved at that place. Saved frequencies are marked on the spectrum (👁 on a category hides its marks); click a mark to tune. ☆ Save on a VFO card saves that VFO's frequency.<br><br><b>Scan:</b> tick the frequencies to scan - or a whole category with the box in its heading (also the frequencies added to it later; untick single ones to leave them out) - and press ▶ Scan. The selected VFO is tuned to each one that is active, received the way the entry says, and heard while it is (plus the Delay). Coherent mode watches one tuner band at a time (the array recalibrates after each retune); independent mode watches a band on every tuner no other VFO is on.</span></span></h3>
         <span class="sf-count" id="sf-count"></span>
         <span class="sb-toggle">▼</span>
       </div>
@@ -1748,6 +1774,26 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <div class="sf-opts">
           <label title="Mark the saved frequencies on the spectrum"><input type="checkbox" id="sf-spec" onchange="sfSetSpectrum(this.checked)"> Show on spectrum</label>
           <button type="button" class="btn sm" id="sf-cats-btn" onclick="sfToggleCats()" title="Add, rename, recolour or delete categories">⚙ Categories</button>
+        </div>
+        <!-- 📻 the scan (sf_scanner.cpp; see 📻 SAVED FREQUENCY SCAN) -->
+        <div class="sfs" id="sfs">
+          <div class="sfs-bar">
+            <button type="button" class="btn sm primary" id="sfs-start" onclick="sfsStart()" title="Scan the ticked frequencies: the selected VFO is tuned to each one that is active (its demod, bandwidth, decoder and gain) and heard while it is">▶ Scan</button>
+            <button type="button" class="btn sm off" id="sfs-stop" onclick="send('SFSCAN_STOP')" title="Stop scanning (the VFO stays where it is)" style="display:none">■ Stop</button>
+            <button type="button" class="btn sm" id="sfs-hold" onclick="sfsHold()" style="display:none">⏸ Hold</button>
+            <button type="button" class="btn sm" id="sfs-skip" onclick="send('SFSCAN_SKIP')" title="Go on to the next active frequency (this one gets its turn again on the next pass through the list; with one VFO per active frequency: every one listened to) - or, with nothing active, to the next band" style="display:none">⏭ Skip</button>
+            <span class="r"><span class="n" id="sfs-n"></span>
+            <button type="button" class="btn sm" id="sfs-set-btn" onclick="sfsToggleSet()" title="Scan settings">⚙</button></span>
+          </div>
+          <div class="sfs-status" id="sfs-status"></div>
+          <div class="sfs-set" id="sfs-set" style="display:none">
+            <div class="ctrl-row"><label title="A frequency is active when its strongest spectrum bin is this far above the noise floor">Squelch:</label><input type="range" id="sfs-sq" class="slider" min="3" max="40" step="0.5" value="12" oninput="$id('sfs-sq-v').textContent = (+this.value).toFixed(1) + ' dB'; sfsSqPreview(this.value)" onchange="sfsSet('SQUELCH', this.value)"><span class="sv" id="sfs-sq-v">12.0 dB</span></div>
+            <div class="ctrl-row"><label title="How long the VFO stays on a frequency after its transmission ends (for the answer)">Delay:</label><input type="number" id="sfs-hang" min="0" max="60" step="0.5" value="2" onchange="sfsSet('HANG', this.value * 1000)"><span class="u" title="after a transmission ends">s after it ends</span></div>
+            <div class="ctrl-row"><label title="With more bands than tuners: how long each band is watched before the next one">Dwell:</label><input type="number" id="sfs-dwell" min="0.5" max="60" step="0.5" value="2" onchange="sfsSet('DWELL', this.value * 1000)"><span class="u">s per band</span></div>
+            <div class="ctrl-row"><label title="Go on to the next active frequency after this long on one that stays active (broadcast stations, a stuck carrier) - it gets its turn again on the next pass. Only clean time counts, not the array's calibration after a retune. 0 = no limit">Longest stay:</label><input type="number" id="sfs-max" min="0" max="3600" step="1" value="0" onchange="sfsSet('MAX', this.value * 1000)"><span class="u" title="0 = no limit">s (0 = off)</span></div>
+            <div class="ctrl-row" id="sfs-multi-row"><label title="How many VFOs the scan uses">VFOs:</label><label class="sfs-chk" title="Every frequency active at the same time in the band watched gets a VFO of its own - all heard (🔊) and, with 🗣 Transcribe ticked on the scan's VFO, all transcribed at once. The extra VFOs start as copies of the scan's VFO as it was when the scan started (demod, bandwidth, decoder, squelch, Transcribe), with each frequency's own settings on top. Each one goes when its frequency ends (Delay, Longest stay) and when the scan stops - they are never saved. At most 16 VFOs in all. Off: one VFO, the frequencies take turns"><input type="checkbox" id="sfs-multi" onchange="sfsSet('MULTI', this.checked ? 1 : 0)">one per active frequency</label></div>
+            <div class="sel">Tick <a href="#" onclick="sfsAll(true);return false" title="Every category (also the frequencies added later)">all</a> · <a href="#" onclick="sfsAll(false);return false" title="Untick everything">none</a></div>
+          </div>
         </div>
         <div id="sf-cats" class="sf-cats" style="display:none"></div>
         <div id="sf-list" class="sf-list"></div>
@@ -2485,6 +2531,9 @@ const srchCache = new Map();
 // was opened; per browser: spectrum marks on, collapsed / hidden categories
 // (localStorage kraken_sf); the spectrum marks' click targets
 let sfCats = [], sfLocs = [], sfFreqs = [];
+// 📻 the scan list's "Uncategorised" tick, and the scan's status ({"sfscan"});
+// its squelch while the slider is dragged (the spectrum line follows it)
+let sfScanUncat = false, sfsSt = null, sfsSqDrag = null;
 let mkSel = null, mkEdit = null, mkWantEdit = null, mapMenuAt = null;
 const sfUi = (() => {
   const d = {spec: true, col: {}, hide: {}};
@@ -2497,6 +2546,9 @@ const sfUi = (() => {
   return d;
 })();
 let sfSpecRects = [], sfMarkerConsumed = false;
+// the mouse over the main spectrum ('fo' canvas px; null = not over it):
+// drawBox keeps the hand cursor over a saved-frequency tag / AI badge with it
+let fpHover = null;
 // 🗣 Voice to Text (see 🗣 VOICE TO TEXT): the backend's status, the
 // transcripts (oldest first), how many came while the Voice tab wasn't shown
 // (infoRenderTabs reads these - it can run before that section is evaluated)
@@ -4398,6 +4450,9 @@ function drawBox() {
     }
   }
 
+  // 📻 the saved-frequency scan's squelch: dotted yellow (sfsDrawSquelch)
+  sfsDrawSquelch(ctx, w, h);
+
   // Draw beamformed FFT overlays - one per decimator, each in its own color.
   if (beamformingEnabled && window.beamformedFFTs && fftPlot) {
     const yScale = fftPlot.scales.y;
@@ -4470,6 +4525,7 @@ function drawBox() {
   // Hide tuning bar during discrete scanning (only show when LOCKED or not scanning)
   if (scannerRunning && scannerState === 'SCANNING') {
     c.boxes = [];
+    drawBoxTags(c, ctx, w, h);
     return; // Don't draw tuning bars while scanning
   }
 
@@ -4520,6 +4576,9 @@ function drawBox() {
     decimatorInfo.forEach(dec => {
       if (vfoLocked(dec)) drawLockedVfoLine(ctx, u.valToPos(center + dec.freq_offset_hz / 1e6, 'x'), h, dec);
     });
+    // the tags stay while the spectrum is dragged (they follow its data, as
+    // the spectrum does; this path returned before them - they vanished)
+    drawBoxTags(c, ctx, w, h);
     return;  // Skip normal drawing
   }
 
@@ -4685,16 +4744,26 @@ function drawBox() {
     });
   }
 
-  // 📻 Saved frequencies: tags at the top + faint lines (sfDrawSpectrum)
-  sfDrawSpectrum(ctx, w, h);
-
-  // AI assistant: an "AI" badge above every signal it identified
-  aiDrawMarkers(ctx, w);
+  drawBoxTags(c, ctx, w, h);
 
   // Also draw on waterfall overlay
   if (waterfall && waterfall.initialized) {
     waterfall.drawOverlay(decimatorInfo, barCenterFreq(), activeDecimatorId);
   }
+}
+
+// drawBox's top layer, on every path through it: 📻 the saved-frequency tags
+// (sfDrawSpectrum) and the AI assistant's badges above the signals it
+// identified; then the hand cursor while the mouse is on one. drawBox runs
+// with every spectrum frame and sets the cursor from the VFO bars ('default'
+// off them) - the hand, set only on mouse moves, flickered with the arrow
+// ~20 times a second. A tag wins over a VFO bar under it, as for a click
+// (handleDown tests the tags first)
+function drawBoxTags(c, ctx, w, h) {
+  sfDrawSpectrum(ctx, w, h);
+  aiDrawMarkers(ctx, w);
+  if (!fpHover || isDragging || isDraggingEdge || isScrollDragging || squelchDrag) return;
+  if (sfSpecAt(sfSpecRects, fpHover.x, fpHover.y, 3) || aiMarkerAt(fpHover.x, fpHover.y)) c.style.cursor = 'pointer';
 }
 
 
@@ -5112,7 +5181,15 @@ function pointerClick(s, e) {
 }
 
 function handleDown(e) { if (aiMarkerHit(e) || sfMarkerHit(e)) return; pointerDown(fftSurface, e); }
-function handleMove(e) { pointerMove(fftSurface, e); if (!isDragging && !isDraggingEdge && !isScrollDragging && !aiMarkerHover(e)) sfMarkerHover(e); }
+function handleMove(e) {
+  const fo = $id('fo');
+  if (fo) {   // first: pointerMove's redraw keeps the hand over a tag with it (drawBoxTags)
+    const r = fo.getBoundingClientRect();
+    fpHover = {x: e.clientX - r.left, y: e.clientY - r.top};
+  }
+  pointerMove(fftSurface, e);
+  if (!isDragging && !isDraggingEdge && !isScrollDragging && !aiMarkerHover(e)) sfMarkerHover(e);
+}
 function handleUp(e) { pointerUp(fftSurface, e); }
 function handleClick(e) { if (aiMarkerConsumed || sfMarkerConsumed) return; pointerClick(fftSurface, e); }
 function handleWaterfallDown(e) { pointerDown(wfSurface, e); }
@@ -7470,6 +7547,7 @@ function createPlot() {
         c.addEventListener('mouseup',handleUp);
         addTouchHandlers(c,handleDown,handleMove,handleUp);
         c.addEventListener('mouseleave',()=>{
+          fpHover=null;
           // Clear the ACTUAL hover state props (c.ih/c.he were leftovers
           // from an older version - the highlight/cursor used to stay stuck)
           if(c.hoveredBox||c.hoveredEdge||c.hoveredHandle){
@@ -7636,6 +7714,7 @@ function connect() {
     if (mapState.on) setTimeout(() => { send('GET_MAP'); send('GET_RDF'); }, 900);
     // 📻 saved frequencies + map markers (then pushed when they change)
     setTimeout(() => send('GET_SF'), 880);
+    setTimeout(() => send('GET_SFSCAN'), 885);
 
     // Request FFT settings on connection
     setTimeout(() => requestFFTSettings(), 600);
@@ -7685,6 +7764,7 @@ function connect() {
           }
           else if(msg.map) { mapOnMessage(msg.map); }
           else if(msg.savedfreq) { sfOnMessage(msg.savedfreq); }
+          else if(msg.sfscan) { sfsOnMessage(msg.sfscan); }
           else if(msg.incidents) { incOnMessage(msg.incidents); }
           else if(msg.rdf) { rdfOnStatus(msg.rdf, false); }
           else if(msg.rdf_part) { rdfOnStatus(msg.rdf_part, true); }
@@ -8790,7 +8870,9 @@ function paneDrawOverlay(p) {
     ctx.fillText('AI', x, 8);
     p.ai.push({x0: x - 9, x1: x + 9, y0: 2, y1: 13, id: s.id});
   }
-  // 📻 saved frequencies: tags under the AI badges (sfPaneTags)
+  // 📻 the saved-frequency scan's squelch (sfsPaneSquelch), then the
+  // saved frequencies' tags under the AI badges (sfPaneTags)
+  sfsPaneSquelch(ctx, p);
   p.sf = sfPaneTags(ctx, p, span);
 }
 
@@ -14916,6 +14998,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     sfCats = Array.isArray(m.cats) ? m.cats : [];
     sfLocs = Array.isArray(m.locs) ? m.locs : [];
     sfFreqs = Array.isArray(m.freqs) ? m.freqs : [];
+    sfScanUncat = !!m.scan_uncat;
+    if (m.error && m.id === 'sfscan') sfFlash('Scan list not changed: ' + m.error, true);
     // the marker panel: an add / edit refused, the marker this page just
     // added (open it for editing), the shown one deleted
     if (m.error && m.id && (m.id === mkWantEdit || m.id === mkSel)) {
@@ -14947,6 +15031,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (m.error && m.id && m.id === sfCatPending) sfFlash('Category not saved: ' + m.error, true);
     if (m.id === sfCatPending) sfCatPending = null;
     sfRenderList();
+    sfsRender();
     sfRenderCats();
     mkRender();
     mapDraw();
@@ -14982,7 +15067,13 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       if (!g.rows.length) continue;   // empty categories: in ⚙ Categories and the editor
       g.rows.sort((a, b) => a.hz - b.hz);
       const col = !words.length && sfUi.col[g.key], hid = sfUi.hide[g.key];
+      const sc = sfsCatState(g.key);
       h += `<div class="sf-gh" onclick="sfToggleGroup('${g.key}')" title="Show / fold this category">` +
+           `<input type="checkbox" class="sfs-ck"${sc === 2 ? ' checked' : ''}${sc === 1 ? ' data-mixed="1"' : ''} ` +
+           `onclick="event.stopPropagation();event.preventDefault();sfsToggleCat('${g.key}')" ` +
+           `title="${sc === 2 ? 'Scanned - the whole category (also frequencies added to it later). Click: none of it'
+                    : sc === 1 ? 'Partly scanned. Click: the whole category (also frequencies added later)'
+                    : 'Not scanned. Click: scan the whole category (also frequencies added later)'}">` +
            `<span class="caret">${col ? '▶' : '▼'}</span><span class="dot" style="background:${g.col}"></span>` +
            `<span class="n">${digEsc(g.name)}</span><span class="c">${g.rows.length}</span>` +
            `<span class="eye${hid ? ' off' : ''}" onclick="event.stopPropagation();sfToggleHidden('${g.key}')" ` +
@@ -14990,7 +15081,12 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       if (col) continue;
       for (const f of g.rows) {
         const meta = sfMeta(f, true);
+        const on = sfsOn(f), grp = sfsGroupOn(f);
         h += `<div class="sf-row" data-id="${f.id}" data-hz="${f.hz}" onclick="sfTune('${f.id}')" title="${digEsc(sfTip(f))}">` +
+             `<input type="checkbox" class="sfs-ck"${on ? ' checked' : ''} ` +
+             `onclick="event.stopPropagation();event.preventDefault();sfsToggleFreq('${f.id}')" ` +
+             `title="${on ? (grp ? 'Scanned with its category - click to leave it out' : 'Scanned - click to leave it out')
+                         : (grp ? 'Left out of its category\'s scan - click to scan it' : 'Not scanned - click to scan it')}">` +
              `<span class="bar" style="background:${g.col}"></span><div class="main">` +
              `<div class="l1"><span class="nm">${digEsc(f.name)}</span><span class="mhz">${mkFmtMhz(f.hz)}</span></div>` +
              (meta ? `<div class="l2">${digEsc(meta)}</div>` : '') + '</div><span class="act">' +
@@ -15000,7 +15096,13 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
     if (!h) h = sfFreqs.length ? '<div class="sf-empty">Nothing matches the search.</div>'
       : '<div class="sf-empty">No saved frequencies yet. <b>+ Add</b> saves the selected VFO\'s frequency (☆ Save on a VFO card does too); right-click the 🗺 map to save one at a place.</div>';
-    if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; sfMarkActive(true); }
+    if (el.dataset.html !== h) {
+      el.dataset.html = h;
+      el.innerHTML = h;
+      el.querySelectorAll('.sfs-ck[data-mixed]').forEach(c => { c.indeterminate = true; });
+      sfMarkActive(true);
+      sfsMark();
+    }
   }
   // outline the rows a VFO is on (within 500 Hz) in that VFO's colour
   function sfMarkActive(force) {
@@ -15042,6 +15144,201 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     mapAutoFit = false;
     mkSelect(l.id);
     mapCenterOn(l.lat, l.lon, Math.max(mapState.z, 12));
+  }
+
+  // --- 📻 SAVED FREQUENCY SCAN ----------------------------------------------------
+  // The receiver scans (sf_scanner.cpp - it goes on with no page open). What
+  // it scans is part of the list, so every page shows the same ticks: a
+  // category's scan flag takes every frequency in it (also those added
+  // later), sfScanUncat the uncategorised ones; a frequency's scan 1 = on its
+  // own, -1 = left out of its scanned category, 0 = its category decides.
+  // A tick sends SF_SCAN:{freqs, cats, uncat} and shows the result only when
+  // the list comes back (no optimistic updates - the click is undone).
+  // ▶ Scan sends SFSCAN_START with the selected VFO (the one it tunes); its
+  // status comes as {"sfscan":{run, state tune|watch|listen, hold, vfo, mode,
+  // n, nb, watch:[{b,ch,hz,lo,hi,n,ok}], ready, cur:{id,name,hz,db,ms}, act:[ids],
+  // skipped, nskipped, sq, dwell, hang, max, msg, err}} (sfsSt): rows active
+  // now get a dot (sfs-act), the one listened to 🔊 (sfs-cur)
+  let sfsPending = false, sfsSetOpen = false;
+  function sfsGroupOn(f) { const c = sfCat(f.cat); return c ? !!c.scan : sfScanUncat; }
+  function sfsOn(f) { return f.scan === 1 || (f.scan !== -1 && sfsGroupOn(f)); }
+  function sfsRowsOf(key) { return sfFreqs.filter(f => (sfCat(f.cat) ? f.cat : '') === key); }
+  function sfsCount() { return sfFreqs.filter(sfsOn).length; }
+  // a category's tick: 2 = all of it scanned, 1 = some, 0 = none
+  function sfsCatState(key) {
+    const rows = sfsRowsOf(key), on = rows.filter(sfsOn).length;
+    return !on ? 0 : on === rows.length ? 2 : 1;
+  }
+  // all / none of a category: its flag, and its frequencies follow it again
+  function sfsToggleCat(key) {
+    const on = sfsCatState(key) !== 2, freqs = {};
+    for (const f of sfsRowsOf(key)) if (f.scan) freqs[f.id] = 0;
+    const m = {freqs};
+    if (key === '') m.uncat = on; else m.cats = {[key]: on};
+    send('SF_SCAN:' + JSON.stringify(m));
+  }
+  function sfsToggleFreq(id) {
+    const f = sfGet(id);
+    if (!f) return;
+    const g = sfsGroupOn(f);
+    send('SF_SCAN:' + JSON.stringify({freqs: {[id]: sfsOn(f) ? (g ? -1 : 0) : (g ? 0 : 1)}}));
+  }
+  function sfsAll(on) {
+    const m = {freqs: {}, cats: {}, uncat: on};
+    for (const c of sfCats) m.cats[c.id] = on;
+    for (const f of sfFreqs) if (f.scan) m.freqs[f.id] = 0;
+    send('SF_SCAN:' + JSON.stringify(m));
+  }
+  function sfsStart() {
+    if (!(ws && ws.readyState === 1)) { sfFlash('Not connected to the receiver', true); return; }
+    if (!sfsCount()) { sfFlash('Tick the frequencies (or whole categories) to scan first', true); return; }
+    sfsPending = true;
+    send('SFSCAN_START:' + (decimatorInfo.some(d => d.id === activeDecimatorId) ? activeDecimatorId : -1));
+  }
+  function sfsHold() { send('SFSCAN_HOLD:' + (sfsSt && sfsSt.hold ? 0 : 1)); }
+  function sfsSet(key, v) {
+    const x = Number(v);
+    if (Number.isFinite(x)) send('SFSCAN_' + key + ':' + x);
+  }
+  function sfsToggleSet() {
+    sfsSetOpen = !sfsSetOpen;
+    $id('sfs-set').style.display = sfsSetOpen ? '' : 'none';
+  }
+  function sfsOnMessage(m) {
+    const was = !!(sfsSt && sfsSt.run);
+    const lineKey = st => st ? [st.sq, st.run, st.mode, (st.watch || []).map(b => b.ch).join()].join('|') : '';
+    const redraw = lineKey(sfsSt) !== lineKey(m);
+    sfsSt = m;
+    // the receiver's level from now on - not while the slider is being
+    // dragged (a status comes every 0.5 s while scanning: the line jumped back
+    // mid-drag) unless the receiver has that level (the release's echo)
+    const sqEl = $id('sfs-sq');
+    if (sfsSqDrag !== null && (document.activeElement !== sqEl || (typeof m.sq === 'number' && Math.abs(m.sq - sfsSqDrag) < 0.01)))
+      sfsSqDrag = null;
+    if (m.err && sfsPending) sfFlash('Scan not started: ' + m.err, true);
+    else if (was && !m.run && m.msg) sfFlash('Scan stopped: ' + m.msg);
+    sfsPending = false;
+    sfsRender();
+    sfsMark();
+    if (redraw) { drawBox(); paneDrawAllOverlays(); }
+  }
+  function sfsDur(ms) { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+  function sfsRender() {
+    const st = sfsSt || {}, run = !!st.run, cnt = sfsCount();
+    const show = (id, on) => { const e = $id(id); if (e) e.style.display = on ? '' : 'none'; };
+    show('sfs-start', !run);
+    show('sfs-stop', run);
+    show('sfs-hold', run);
+    show('sfs-skip', run);
+    const hb = $id('sfs-hold');
+    if (hb) {
+      hb.textContent = st.hold ? '▶ Resume' : '⏸ Hold';
+      hb.classList.toggle('on', !!st.hold);
+      hb.title = st.hold ? 'Go on scanning' : 'Stay on this frequency (or, with nothing active, on this band) until Resume';
+    }
+    const n = $id('sfs-n');
+    if (n) n.textContent = cnt ? `${cnt} ticked` : '';
+    const el = $id('sfs-status');
+    if (!el) return;
+    let h = '', live = false;
+    const plural = k => `${k} frequenc${k === 1 ? 'y' : 'ies'}`;
+    if (!run) {
+      h = st.msg ? `Stopped: ${digEsc(st.msg)}` : cnt ? '' : 'Tick the frequencies to scan - or a whole category in its heading.';
+    } else {
+      const vfo = `D${st.vfo}`, w = st.watch || [];
+      // every frequency listened to (one VFO per active frequency: several),
+      // each with its VFO - a receiver from before sends cur only
+      const locks = sfsLocks(st);
+      if (st.state === 'listen' && locks.length) {
+        live = true;
+        h = locks.map(c => {
+          const v = typeof c.vfo === 'number' && c.vfo >= 0 ? `D${c.vfo}` : c.extra ? 'a new VFO…' : vfo;
+          return `🔊 <b>${digEsc(c.name)}</b> · ${mkFmtMhz(c.hz)} MHz · ${(+c.db).toFixed(1)} dB · ${sfsDur(c.ms)} → ${v}` +
+                 (c.heard === false ? ' · muted while the array calibrates' : '');
+        }).join('<br>') + (st.hold ? ' · held' : '');
+      } else {
+        h = `Scanning ${plural(st.n || 0)} → ${vfo}` +
+            (st.state === 'tune' ? ' · tuning…'
+              : st.ready === false ? (st.mode === 'coherent' ? ' · waiting for the calibration' : ' · settling') : '') +
+            (st.hold ? ' · held on this band' : '') + ((st.act || []).length ? ` · ${st.act.length} active` : '');
+      }
+      // the bands watched now (several at once on independent tuners)
+      if (w.length) {
+        h += '<div class="d">' + (st.nb > 1 ? `Band${w.length > 1 ? 's' : ''} ${w.map(b => b.b + 1).join(', ')} of ${st.nb}: ` : '') +
+             w.map(b => `${mkFmtMhz(b.lo)}${b.hi !== b.lo ? '–' + mkFmtMhz(b.hi) : ''} MHz` +
+                        (st.mode === 'independent' ? ` (tuner ${b.ch})` : '') + (b.ok === false ? ' ✗' : '')).join(', ') + '</div>';
+      }
+    }
+    if (st.nskipped) h += `<div class="d">${plural(st.nskipped)} left out (hover for why)</div>`;
+    el.innerHTML = h;
+    el.classList.toggle('live', live);
+    el.title = (st.skipped || []).map(x => `${x.name}: ${x.why}`).join('\n');
+    // the settings (not while one is being changed)
+    const idle = e => e && document.activeElement !== e;
+    const sq = $id('sfs-sq');
+    if (typeof st.sq === 'number' && idle(sq)) { sq.value = st.sq; $id('sfs-sq-v').textContent = st.sq.toFixed(1) + ' dB'; }
+    for (const [id, k] of [['sfs-hang', 'hang'], ['sfs-dwell', 'dwell'], ['sfs-max', 'max']]) {
+      const e = $id(id);
+      if (typeof st[k] === 'number' && idle(e)) e.value = +(st[k] / 1000).toFixed(1);
+    }
+    // one VFO per active frequency (a receiver from before hasn't got it)
+    const mr = $id('sfs-multi-row'), mc = $id('sfs-multi');
+    if (mr) mr.style.display = typeof st.multi === 'boolean' ? '' : 'none';
+    if (mc && typeof st.multi === 'boolean') mc.checked = st.multi;
+  }
+  function sfsLocks(st) { return st.locks || (st.cur ? [st.cur] : []); }
+  // The scan's squelch on the spectrum while the scan runs: a dotted yellow
+  // line across the plot at the level over which the scan calls a frequency
+  // active - dB over the noise floor, which is the spectrum's 0 dB. (A VFO's
+  // FFT squelch is the DASHED yellow line inside its bar.) Independent mode:
+  // on the tuners the scan watches. While the slider is dragged it follows it
+  // (sfsSqDrag, in the globals block: drawBox can run before this section)
+  function sfsSqLevel() {
+    if (!(sfsSt && sfsSt.run)) return null;
+    if (sfsSqDrag !== null) return sfsSqDrag;
+    return sfsSt && typeof sfsSt.sq === 'number' ? sfsSt.sq : null;
+  }
+  function sfsSqPreview(v) {
+    sfsSqDrag = +v;
+    if (sfsSt && sfsSt.run) { drawBox(); paneDrawAllOverlays(); }
+  }
+  function sfsSqLine(ctx, x0, x1, y, lvl) {
+    ctx.save();
+    ctx.strokeStyle = '#ffff00';
+    ctx.setLineDash([2, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ffff00';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    const t = `📻 Scan ${(+lvl).toFixed(1)} dB`;
+    ctx.fillText(t, x1 - ctx.measureText(t).width - 5, y - 4);
+    ctx.restore();
+  }
+  function sfsDrawSquelch(ctx, w, h) {
+    const lvl = sfsSqLevel();
+    if (lvl === null || !fftPlot) return;
+    const y = fftPlot.valToPos(lvl, 'y');
+    if (y >= 0 && y <= h) sfsSqLine(ctx, 0, w, y, lvl);
+  }
+  function sfsPaneSquelch(ctx, p) {
+    const lvl = sfsSqLevel();
+    if (lvl === null || !(sfsSt.watch || []).some(b => b.ch === p.ch)) return;
+    const top = 4, bot = p.sh - 14, ymax = fftYMax || 60;   // as the pane's own VFO squelch lines
+    const y = bot - lvl / ymax * (bot - top);
+    if (y >= top && y <= bot) sfsSqLine(ctx, p.L, p.sw - 4, y, lvl);
+  }
+  // the rows: 🔊 the ones listened to, a dot on those active now
+  function sfsMark() {
+    const st = sfsSt || {};
+    const cur = new Set(st.run && st.state === 'listen' ? sfsLocks(st).map(c => c.id) : []);
+    const act = new Set(st.run ? st.act || [] : []);
+    document.querySelectorAll('#sf-list .sf-row').forEach(r => {
+      const id = r.dataset.id;
+      r.classList.toggle('sfs-cur', cur.has(id));
+      r.classList.toggle('sfs-act', !cur.has(id) && act.has(id));
+    });
   }
 
   // --- ⚙ Categories --------------------------------------------------------------

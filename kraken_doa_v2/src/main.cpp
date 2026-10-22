@@ -9,6 +9,7 @@
 #include "decimator_manager.hpp"
 #include "scanner_manager.hpp"
 #include "continuous_scanner.hpp"
+#include "sf_scanner.hpp"
 #include "networking/websocket_server.hpp"
 #include "networking/data_receiver.hpp"
 #include "networking/tcp_client.hpp"
@@ -77,6 +78,7 @@ static_assert(MAX_CHANNELS <= 8, "indep_tuner_* hold 8 tuners");
 atomic<bool> fm_enabled_before_scanner{false};     // Store FM state before discrete scanner
 atomic<uint32_t> fft_reset_generation{0};          // Generation counter for FFT reset (scanner retune)
 atomic<bool> fft_data_valid{true};                 // False after reset until first valid FFT frame
+atomic<bool> server_retuning{false};               // heimdall's header: retuning (packets skipped)
 array<atomic<uint64_t>, MAX_CHANNELS> tuner_frequencies;
 
 // KrakenSDR Wideband (downconverter) variant - set by --wideband at startup
@@ -446,6 +448,9 @@ int main(int argc, char* argv[]) {
     // Stop the continuous scanner first: its thread drives decimators, the
     // FFT processor and the websocket broadcast path, all torn down below.
     // stop() joins the scanner thread and is a no-op if it never ran.
+    // (The saved-frequency scan the same - its thread only: the tuning it
+    // left isn't saved, the settings file keeps the user's)
+    sfscan::shutdown();
     continuous_scanner.stop();
 
     // Stop the gpsd client thread (its socket read has a 2s timeout so the

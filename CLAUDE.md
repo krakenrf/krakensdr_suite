@@ -706,9 +706,54 @@ Edit `kraken_doa_v2/include/config.hpp`:
   draws a VFO at least 8 px wide so a 1 kHz bar stays visible/grabbable
 
 **Scanners**:
-- The discrete (server-side hop) and continuous scanners are mutually
-  exclusive: starting one while the other runs is refused and the browser's
-  button reset
+- The discrete (server-side hop), continuous and saved-frequency scanners
+  are mutually exclusive: starting one while another runs is refused and
+  the browser's button reset
+- 📻 Saved-frequency scanner (`kraken_doa_v2/src/sf_scanner.cpp` +
+  `sf_scan_plan.cpp`; details: `kraken_doa_v2/CLAUDE.md` *Saved-frequency
+  scan*): scans the saved frequencies ticked in the 📻 list - one by one or
+  a whole category (its `scan` flag: also entries added later; a frequency's
+  `scan` -1 leaves it out) - with the page's SELECTED VFO: groups them into
+  tuner bands (all entries whose VFO fits the edge-clipped 2.4 MHz of one
+  centre - a centre kept off every entry's channel: DC is removed / the
+  RTL's spike; entries with a gain only share a band with that gain), watches
+  every entry of a band at once in the averaged FFT (squelch = dB over the
+  noise floor) and retunes only between bands. Coherent: one band at a
+  time (Dwell each), nothing measured while heimdall recalibrates after a
+  retune; independent: a band on every tuner no other VFO is on; wideband
+  scan (the user's question 2026-10-22 - it had been refused for no good
+  reason): one band = heimdall's tuner spread (n tuners side by side, edge
+  clip x 2.4 MHz apart, ~10.8 MHz with 5), each entry on the tuner nearest it
+  and its VFO kept off the seams, retuned with WIDEBAND_FREQ (FREQ would end
+  the mode), no calibration (`sf_scan_plan`'s Layout). Lock = the
+  entry's decoder / demod / bandwidth + the VFO's offset (the page's
+  sfTune), heard; Delay after the transmission, Skip / Hold / Longest stay
+  (clean listening time only). The list goes in PASSES: a frequency left by
+  Skip / Longest stay has had its turn until the next pass (always-on
+  broadcast stations take turns round and round). With each retune the VFO
+  is pre-placed, muted, on the band's first frequency (ready when the array
+  has recalibrated); while the array calibrates a locked VFO is muted.
+  Coherent: while it SEARCHES it holds heimdall's calibration (8092
+  `hold_calibration`, a 3 s lease renewed every second - heimdall_v2/CLAUDE.md
+  *Calibration hold*): retunes skip the 3 s cooldown + noise-source
+  calibration, so bands take turns in well under a second; a lock releases
+  it and the calibration starts at once (the VFO muted until it has run).
+  ⚙ "VFOs: one per active frequency" (`SFSCAN_MULTI:`, persisted, off by
+  default; the user's request 2026-10-22, for Voice to Text): every
+  frequency active at once in the band(s) watched is listened to at once -
+  its VFO the first, a VFO the SCAN MAKES each further one (a copy of its VFO
+  as it was at the start: demod, bandwidth, decoder, squelch, Transcribe;
+  then the entry's own settings), each ending on its own (Delay, Longest
+  stay); a made VFO is removed then and at the stop (never saved; made /
+  removed through the manager + a `decimator_info` broadcast - the
+  decimator_added / _removed messages reset every page's audio player); one
+  the user removes = that frequency done this pass; <= 16 VFOs.
+  Its own commands go through `apply_command` but are NOT saved
+  (`sfscan::dispatching()`); the tuning it leaves is saved at stop. A manual
+  retune (FREQ, TUNER_FREQ of a scanned tuner, WIDEBAND_FREQ), a mode change,
+  removing its VFO or a playback stop it. WS `SF_SCAN:`, `SFSCAN_START:<vfo>` / `STOP` / `SKIP` /
+  `HOLD:` / `SQUELCH:` / `DWELL:` / `HANG:` / `MAX:` / `MULTI:` (persisted),
+  `GET_SFSCAN` -> `{"sfscan":{...}}`
 - Discrete scanner: config entries outside the tunable range (R820T, or the
   Wideband variant's span) are refused - the whole load, the previous config
   stays; frequencies go to heimdall as uint64 Hz. heimdall's settle and dwell
@@ -1027,6 +1072,9 @@ DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
   its gain (when set; independent mode: the VFO's tuner)
 - Spectrum: tags with the names at the top of the main spectrum and the
   independent-mode panes; click = tune
+- ▶ Scan: a tick per entry and per category heading picks what the
+  saved-frequency scanner scans (see *Scanners*), kept in the list itself
+  (`scan` per frequency / category, `scan_uncat`; `SF_SCAN:`)
 - WS `SF_SET:{json}` (+ newcat / newloc made in the same step), `SF_DEL:id`,
   `SF_LOC_SET` / `SF_LOC_DEL` (a location's frequencies stay, unplaced),
   `SF_CAT_SET` / `SF_CAT_DEL` (uncategorises), `GET_SF` ->

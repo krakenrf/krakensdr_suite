@@ -277,6 +277,8 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
 
     // KerberosSDR support mode: manual-calibration workflow state for client UIs.
     status_json << ",\"external_noise\":" << (external_noise_mode.load() ? "true" : "false");
+    // a client's scan holds the calibration (hold_calibration)
+    status_json << ",\"calibration_hold\":" << (calibration_held() ? "true" : "false");
     if (kerberos_mode.load()) {
         status_json << ",\"kerberos_mode\":true"
                     << ",\"kerberos_sw\":" << (kerberos_sw_mode.load() ? "true" : "false")
@@ -934,6 +936,27 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
             }
         }
         return "{\"status\":\"error\",\"message\":\"Invalid delay format\"}";
+    }
+
+    // Calibration hold (the DoA client's saved-frequency scan while it
+    // searches): {"command":"hold_calibration","hold_ms":N} - N > 0 holds
+    // for N ms from now (a lease the client renews), 0 releases it and starts
+    // a pending calibration at once. compensation.hpp
+    if (json_str.find("\"hold_calibration\"") != std::string::npos) {
+        size_t pos = json_str.find("\"hold_ms\":");
+        if (pos != std::string::npos) {
+            pos += 10;
+            size_t end_pos = json_str.find_first_of(",}", pos);
+            if (end_pos != std::string::npos) {
+                const int hold_ms = std::stoi(json_str.substr(pos, end_pos - pos));
+                if (hold_ms >= 0 && hold_ms <= 30000) {
+                    set_calibration_hold(hold_ms);
+                    return "{\"status\":\"success\",\"hold_ms\":" + std::to_string(hold_ms) + "}";
+                }
+                return "{\"status\":\"error\",\"message\":\"hold_ms out of range (0-30000)\"}";
+            }
+        }
+        return "{\"status\":\"error\",\"message\":\"Invalid hold_ms format\"}";
     }
 
     if (json_str.find("\"set_gain\"") != std::string::npos) {
