@@ -859,7 +859,11 @@ decoders `kraken_doa_v2/plugins/`
   FM lines, impulses, carriers. ID separation: a packet per pulse on its
   own 1 kHz channel, DF kind `collar` 🐾, `names` option. kraken_doa:
   packet channels <= 10 kHz in a wide VFO are decimated before the
-  filter - `narrow_cov`).
+  filter - `narrow_cov`) and rds (FM broadcast: RDS / RBDS on 57 kHz,
+  RDS2 streams, the pilot and every SCA subcarrier - FM audio, FSK data,
+  DARC; Listen plays an SCA or the main programme; every antenna combined
+  before the FM discriminator; a DoA per station by its PI - see *📻 RDS /
+  RBDS + SCA plugin* below).
   Plugins learn the VFO's RF from `kp::Host::rf_hz()` (wire RF, 7). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
@@ -992,7 +996,7 @@ DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, ctcss, beacon406, lora, wildlife, dtv and cells (ARRAY
+  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, ctcss, beacon406, lora, wildlife, rds, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags - only
@@ -1245,7 +1249,7 @@ spreadsheet re-saved (timestamps as 1.68843E+12 = rounded to 2.8 h, padded
 rows, ';' + decimal commas, UTF-16) is read too: times rebuilt from the
 track (`lrRetime`), "The drive took N min" corrects the pace
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags, FM broadcast stations by their RDS PI)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a
 coded ID per transmitter, the plugin reports it as a talker and is tested
@@ -1299,6 +1303,26 @@ are summed per transmission and run through MUSIC again
 radio gets its bearing, history and its own mobile DF heat map (rdf_mapper
 keys VFO + talker, rdf_session.bin "KRDF2"); the 🗺 Map's 📡 DF panel picks
 Whole signal / Every radio / one radio and lists the talkers
+
+**📻 RDS / RBDS + SCA plugin** (details: `kraken_doa_v2/plugins/rds/README.md`,
+`kraken_doa_v2/CLAUDE.md` *RDS / RBDS + SCA*): the plugin `rds` ("RDS / RBDS +
+SCA (FM broadcast)", 2026-10-22) on a WBFM VFO (240 kHz for RDS, 300-400 kHz
+for a 92 kHz SCA; the VFO's own rate, wider ones filtered to the channel):
+every antenna combined before the FM discriminator in coherent mode
+(`multichannel`, ~7 dB: RDS at 10 dB CNR with 5 antennas vs 18 dB with one),
+RDS / RBDS groups (biphase BPSK demodulator, block sync + soft burst
+correction, a corrected block's data only when confirmed twice): PI, RBDS
+call sign, country (ECC), PS (dynamic flagged), PTY (RDS / RBDS names) +
+PTYN, RadioText, RT+, eRT, Long PS, clock time, AF, TP / TA, DI, PIN, EON,
+the ODA directory, TMC / DAB / EWS groups; RDS2 streams (66.5 / 71.25 / 76
+kHz, block-synced); the pilot and every MPX subcarrier 20-99 kHz probed - SCA
+FM audio (tones told apart from FSK), FSK data with its bit rate, DARC-like,
+AM; Listen = an SCA's audio (150 us) or the main programme in mono; a talker
+packet "PI xxxx" per RDS group (UI kind `broadcast` 🎙). Generator
+`plugins/rds/tools/rds_gen.py`, playback `rds-two-stations`. Checked on a
+real US station's recording (pysdr.org: PI, RT, dynamic PS, a real 67 kHz
+SCA) and end to end through kraken_doa's debug playback (two stations at
+60.0 / 200.0 deg)
 
 **📶 Digital TV plugin** (details: `kraken_doa_v2/plugins/dtv/README.md`,
 `kraken_doa_v2/CLAUDE.md` *Digital TV*): the plugin `dtv` ("Digital TV
@@ -1432,8 +1456,8 @@ user's settings back; doa_settings.json / heimdall_settings.conf
 untouched), web mapper / decoder log / Voice to Text / incidents / DoA
 recording paused, a red "DEBUG PLAYBACK - not live" banner + spectrum
 overlay. A playback never outruns the pipeline (a busy machine plays it
-slower than real time instead of dropping packets). 32 entries in 25
-catalogues - every decoder has its own (p25, dmr, radiosonde last)
+slower than real time instead of dropping packets). 35 entries in 26
+catalogues - every decoder has its own (p25, dmr, radiosonde, then rds last)
 
 **📼 IQ & audio recorder + playback of recordings (sidebar "📼 IQ & Audio
 Recorder")** (details: `kraken_doa_v2/CLAUDE.md` *📼 IQ & audio recorder*,

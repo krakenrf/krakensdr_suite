@@ -13661,7 +13661,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                         device: ['name', 1], path: ['info', 1], cell: ['info', 1], station: ['dist', 1], sonde: ['dist', 1],
                         site: ['name', 1], navaid: ['name', 1], radar: ['name', 1], interrogator: ['name', 1],
                         gs: ['name', 1], flarm: ['dist', 1], sar: ['heard', 1], collar: ['name', 1], node: ['dist', 1],
-                        talker: ['heard', 1]};
+                        broadcast: ['name', 1], talker: ['heard', 1]};
   const RDF_SORT_KEYS = {
     vfo: t => t.vfo,
     name: t => rdfShortName(t).toLowerCase(),
@@ -13974,15 +13974,16 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   const RDF_PK_KIND = {ais: 'ship', adsb: 'aircraft', dme: 'beacon', ism: 'device', aprs: 'station',
                        radiosonde: 'sonde', tetra: 'site', mpt1327: 'site', ils: 'navaid', radar: 'radar',
                        ssr1030: 'interrogator', uat: 'aircraft', flarm: 'flarm', beacon406: 'sar', lora: 'node',
-                       wildlife: 'collar'};
+                       wildlife: 'collar', rds: 'broadcast'};
   // kinds that report where they are (their decoder's map points, same id):
   // Dist / Δ pos columns, the position check
   const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde', 'gs', 'flarm', 'sar', 'node']);
   // what one of their packets is called
   const RDF_PK_UNIT = {beacon: 'pulse pair', device: 'transmission', site: 'slot', sonde: 'frame', navaid: 'block', radar: 'pulse',
-                       interrogator: 'interrogation', gs: 'frame', sar: 'burst', node: 'frame', collar: 'pulse'};
+                       interrogator: 'interrogation', gs: 'frame', sar: 'burst', node: 'frame', collar: 'pulse',
+                       broadcast: 'group'};
   // how a kind is named in "Every ...", counts and the position check
-  const RDF_KIND_WORD = {flarm: 'aircraft', gs: 'ground station', sar: 'distress beacon'};
+  const RDF_KIND_WORD = {flarm: 'aircraft', gs: 'ground station', sar: 'distress beacon', broadcast: 'broadcast station'};
   function rdfKind(t) {
     // a plugin's spatial talker: a mobile network cell (cells plugin, by
     // its physical cell ID) or a path of a TV signal (dtv plugin with path
@@ -14022,7 +14023,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
     return {ship: '⛴ ', aircraft: '✈ ', beacon: '📡 ', device: '📟 ', path: '📶 ', cell: '📱 ', station: '📻 ',
             sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 ', gs: '🗼 ', tone: '🔔 ', sar: '🆘 ', node: '📶 ',
-            collar: '🐾 '}[k] || '';
+            collar: '🐾 ', broadcast: '🎙 '}[k] || '';
   }
   function rdfKinds(ts) {   // one word for a list of talkers: the common kind, else 'talker'
     const ks = new Set(ts.map(rdfKind));
@@ -14141,6 +14142,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                     sar: ['Beacon ID', 'Status · type · country · ID', 'Bursts'],
                     collar: ['Collar (MHz)', 'Name · ppm · mode', 'Pulses'],
                     node: ['Node', 'Name · packet', 'Frames'],
+                    broadcast: ['Station (PI)', 'Call sign · PS · MHz', 'Groups'],
                     talker: ['ID', 'Info', 'Tx']};
       const head = heads[kinds] || heads.talker;
       // position columns while a listed talker has a reported position (its
