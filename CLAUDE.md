@@ -739,6 +739,13 @@ bandwidth*)**:
   (min 4 snapshots), so narrow bandwidths still give ~1 bearing/s; the
   beamformed FFT collects short blocks until it has 64 samples. The web UI
   draws a VFO at least 8 px wide so a 1 kHz bar stays visible/grabbable
+- VFO tuning step (top bar `Step:`, per browser, 1 Hz - 100 kHz incl. 6.25 /
+  8.33 / 12.5 / 25 kHz; default 1 kHz): a tuning-bar drag or a click on the
+  spectrum / a pane puts the VFO on a multiple of it (its absolute
+  frequency); Shift while dragging = fine, 1/100 of the movement to the Hz.
+  Typed / saved frequencies and the card's digits stay exact. A drag used to
+  move only past 1 kHz, in whole pixels (~1093 Hz). Details:
+  `kraken_doa_v2/CLAUDE.md` *VFO tuning STEP*
 
 **Scanners**:
 - The discrete (server-side hop) and continuous scanners are mutually

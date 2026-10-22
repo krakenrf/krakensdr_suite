@@ -618,6 +618,34 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   with the Freq / BW fields by fixed-frequency / `lock_vfo` decoders
   (`digRenderCards`). Test: job scratch t_vfd.py (headless Chrome over CDP,
   fake WebSocket, 33 checks) + t_vfd_zoom.py (sidebar zoom 1.8)
+- VFO tuning STEP (the user's request 2026-10-22, "a global setting up on
+  the top bar"; kraken_doa.html block "VFO tuning step"): the top bar's
+  `Step:` (`#tb-step` / `#vfo-step`, every mode, moved into the sidebar on
+  mobile like CH / Audio) - 1 / 10 / 100 / 500 Hz, 1 (default) / 2.5 / 5 /
+  6.25 / 8.33 (25/3) / 10 / 12.5 / 25 / 50 / 100 kHz, per browser
+  (localStorage `kraken_vfo_step`, `vfoStepHz`). A tuning-bar drag (main
+  spectrum + waterfall: `pointerMove`; panes: `paneMove`) or a click on the
+  spectrum (`centerActiveBarAt`, the pane click) puts the VFO on a multiple
+  of the step of its ABSOLUTE frequency from 0 Hz (`vfoSnapOffset(centre,
+  offset, max)`: centre = `vfoCenterMhz` / the pane's tuner; the nearest
+  grid point inside the band, else the clamped offset to the Hz). A drag
+  follows the pointer from where it was pressed (it used to move only once
+  the change passed 1 kHz, then restart from there: whole pixels just over
+  1 kHz - ~1093 Hz on a 1760 px plot - and offsets on no round frequency);
+  at 1 Hz it moves pixel by pixel. SHIFT while dragging = fine: 1/100 of
+  the movement (`VFO_FINE`), to the Hz, off the grid - re-anchored where
+  the bar is whenever Shift changes (`dragFine`, `paneDrag.fine / fx /
+  fmhz`). `paneMoveVfo(p, d, mhz, snap)`: 'step' / 'fine' / none - typed
+  (`paneTuneVfoTo`) and saved frequencies, tuner moves and a pane press on
+  the VFO where it is stay exact; the card's digits / ✎ too. Test: job
+  scratch e2e/t_step_ui.py (headless Chromium on the Pi against the test
+  build, real mouse events incl. Shift): 19 / 19 - selector + labels +
+  default, 12.5 kHz drag on the grid with every value sent and the
+  receiver's, 1 Hz = 3 px of frequency, Shift 1/100 off the grid, Shift
+  let go mid-drag back on it, a 25 kHz click, 8.33 kHz grid, the card's 1
+  Hz digit, kept over a reload, pane drag / Shift-drag / typed frequency;
+  t_bw_ui.py 24 / 24 again. The top bar's height unchanged at 1366 / 1920
+  / 2560 px windows (e2e/t_topbar_w.py)
 - FFT message type 6 (independent; pages without spectrum views - see
   *Spectrum views* for type 7): `u32 6, u32 nch, f32 avg_alpha, f32
   sample_rate, f32 bin_step`, per tuner `u32 center_hz, f32 gain_db, u32 ds,

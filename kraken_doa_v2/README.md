@@ -103,7 +103,9 @@ cooldown / scanner).
 | **🔍 Continuous Scanner** | Sweeps for active signals automatically — either within the current bandwidth or across a **wideband MHz range** (e.g. 88–108). Adjustable squelch, dwell, and signal-decay; lists tracked signals as they appear. |
 
 The main area shows the **spectrum + waterfall** (click/drag the tuning bar to set the
-listen frequency; waterfall has speed, colormap, and min/max/auto-range controls) and
+listen frequency - it lands on a multiple of the top bar's **Step**, 1 Hz to 100 kHz;
+hold Shift while dragging to tune finely, to the Hz; waterfall has speed, colormap,
+and min/max/auto-range controls) and
 the **MUSIC DoA panel** (compass-style bearing display, one per active decimator).
 
 ---

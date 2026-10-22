@@ -2060,6 +2060,13 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         </select>
       </div>
       <div class="tb-sep"></div>
+      <!-- VFO tuning step (every mode, per browser): a tuning-bar drag or a
+           click on the spectrum puts the VFO on a multiple of it -->
+      <div class="tb-group" id="tb-step">
+        <span class="tb-label">Step:</span>
+        <select id="vfo-step" onchange="setVfoStep(this.value)" title="VFO tuning step: dragging a tuning bar or clicking the spectrum puts the VFO on a multiple of this - of its frequency, counted from 0 Hz (12.5 kHz: 446.0125, 446.0250 ... MHz). Hold Shift while dragging to tune finely: 1/100 of the movement, to the Hz, off the step. The VFO card's digits and typed or saved frequencies stay exact."></select>
+      </div>
+      <div class="tb-sep"></div>
       <!-- Audio -->
       <div class="tb-group" id="tb-audio">
         <span class="tb-label">Audio:</span>
@@ -2085,7 +2092,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       <div class="spectrum-panel">
         <div class="spectrum-header">
           <span class="title" id="fpt">Channel 0 (WBFM)</span>
-          <span class="hint">Click/drag tuning bar</span>
+          <span class="hint" title="A drag or a click puts the VFO on a multiple of the top bar's Step; hold Shift while dragging to tune finely (1/100 of the movement, to the Hz)">Click/drag tuning bar · Shift = fine</span>
         </div>
         <div class="spectrum-content">
           <div id="pb-overlay"><span id="pb-overlay-k">DEBUG PLAYBACK - not live</span></div>
@@ -4790,15 +4797,68 @@ function inRect(x, y, r) {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
-// Center the active tuning bar on freqMhz (clamped to the visible span).
-// Returns false when there is no active decimator.
+// ---- VFO tuning step (the top bar's "Step", the user's request 2026-10-22) ----
+// A tuning-bar drag or a click on the spectrum (main display, waterfall,
+// independent-mode panes) puts the VFO on a multiple of the step - of its
+// ABSOLUTE frequency from 0 Hz (12.5 kHz: 446.0125, 446.0250 MHz), not of its
+// offset from the tuner centre. A drag follows the pointer from where it
+// started and lands on the grid point nearest it: at a step finer than a
+// pixel it moves pixel by pixel (to the Hz). Shift while dragging = fine:
+// 1/100 of the movement from there on, to the Hz, off the grid. Before, a
+// drag only moved once the change passed 1 kHz, in whole pixels (~1093 Hz on
+// a 1760 px plot). The VFO card's digits, typed and saved frequencies are
+// exact as before. Per browser (localStorage kraken_vfo_step)
+const VFO_STEPS_HZ = [1, 10, 100, 500, 1000, 2500, 5000, 6250, 25000 / 3, 10000, 12500, 25000, 50000, 100000];
+const VFO_FINE = 0.01;   // Shift-drag: this much of the pointer's movement
+let vfoStepHz = 1000;
+let dragFine = false;    // the main display's bar drag is in fine mode (Shift)
+function vfoStepLabel(hz) {
+  if (hz < 1000) return hz + ' Hz';
+  const k = Math.round(hz / 10) / 100;   // 8333.3 Hz -> 8.33
+  return k + ' kHz';
+}
+function vfoStepInit() {
+  try {
+    const v = parseFloat(localStorage.getItem('kraken_vfo_step'));
+    const i = VFO_STEPS_HZ.findIndex(s => Math.abs(s - v) < 1e-6);
+    if (i >= 0) vfoStepHz = VFO_STEPS_HZ[i];
+  } catch (e) {}
+  const sel = $id('vfo-step');
+  if (!sel) return;
+  sel.innerHTML = VFO_STEPS_HZ.map((s, i) => `<option value="${i}">${vfoStepLabel(s)}</option>`).join('');
+  sel.value = String(VFO_STEPS_HZ.indexOf(vfoStepHz));
+}
+function setVfoStep(i) {
+  const s = VFO_STEPS_HZ[parseInt(i)];
+  if (!s) return;
+  vfoStepHz = s;
+  try { localStorage.setItem('kraken_vfo_step', String(s)); } catch (e) {}
+}
+vfoStepInit();
+
+// The offset (Hz from centreMhz, the VFO's tuner / wideband centre) that puts
+// a VFO on the step's grid nearest offHz, within +-maxOff: the grid point
+// inside it when the nearest lies outside, the clamped offset (to the Hz)
+// when no grid point is inside at all
+function vfoSnapOffset(centreMhz, offHz, maxOff, stepHz = vfoStepHz) {
+  const c = Math.round(centreMhz * 1e6);
+  const at = k => Math.round(k * stepHz) - c;
+  let n = Math.round((c + offHz) / stepHz);
+  if (at(n) > maxOff) n = Math.floor((c + maxOff) / stepHz);
+  if (at(n) < -maxOff) n = Math.ceil((c - maxOff) / stepHz);
+  const o = at(n);
+  return Math.abs(o) <= maxOff ? o : Math.max(-maxOff, Math.min(maxOff, Math.round(offHz)));
+}
+
+// Center the active tuning bar on freqMhz (clamped to the visible span, on
+// the VFO step's grid). Returns false when there is no active decimator.
 function centerActiveBarAt(freqMhz) {
   const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
   if (!activeDec || vfoLocked(activeDec)) return false;   // fixed-frequency decoder (ADS-B)
   const newOffsetHz = (freqMhz - barCenterFreq()) * 1000000;  // freqMhz is on the displayed axis
   const bw = decBwMhz(activeDec);
   const maxOffset = maxOffsetHz(bw);
-  const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffsetHz));
+  const clampedOffset = vfoSnapOffset(vfoCenterMhz(activeDec), newOffsetHz, maxOffset);
   setDecimatorFreq(activeDecimatorId, clampedOffset / 1000); // Send in kHz
   activeDec.freq_offset_hz = clampedOffset;
   return true;
@@ -4847,6 +4907,7 @@ function pointerDown(s, e) {
       isDragging = true;
       dragStartX = x;
       dragStartOffset = box.offset_hz;
+      dragFine = e.shiftKey;
       e.preventDefault();
       drawBox();
     };
@@ -4983,23 +5044,26 @@ function pointerMove(s, e) {
     }
     e.preventDefault();
   } else if(isDragging) {
-    const df=s.dxToMhz(x-dragStartX);
-
-    // Calculate new offset
-    const newOffset = dragStartOffset + df * 1000000; // Convert MHz to Hz
-
     // Find active decimator info
     const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
     if(activeDec) {
+      // Shift pressed / released mid-drag: go on from where the bar is now
+      if (e.shiftKey !== dragFine) {
+        dragFine = e.shiftKey;
+        dragStartX = x;
+        dragStartOffset = activeDec.freq_offset_hz;
+      }
+      // the offset under the pointer since the drag (or the Shift change) began
+      const newOffset = dragStartOffset + s.dxToMhz(x - dragStartX) * 1e6 * (dragFine ? VFO_FINE : 1);
       const bw = decBwMhz(activeDec);
       const maxOffset = maxOffsetHz(bw);
-      const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffset));
+      // on the step's grid (Shift: to the Hz)
+      const clampedOffset = dragFine ? Math.max(-maxOffset, Math.min(maxOffset, Math.round(newOffset)))
+                                     : vfoSnapOffset(vfoCenterMhz(activeDec), newOffset, maxOffset);
 
-      if(Math.abs(clampedOffset - activeDec.freq_offset_hz) > 1000) { // Update if > 1kHz change
+      if(clampedOffset !== activeDec.freq_offset_hz) {
         setDecimatorFreq(activeDecimatorId, clampedOffset / 1000); // Send in kHz
         activeDec.freq_offset_hz = clampedOffset;
-        dragStartX = x;
-        dragStartOffset = clampedOffset;
         drawBox();
         // Update decimator panel in real-time
         refreshDecimatorPanelItem(activeDecimatorId);
@@ -8951,9 +9015,13 @@ function paneDown(p, e) {
   if (!d) return;
   if (activeDecimatorId !== id) selectDecimator(id);
   const cur = (d.tuner || 0) === p.ch ? p.freqMhz + (d.freq_offset_hz || 0) / 1e6 : null;
-  paneDrag = {p, id, grab: hit && cur !== null ? paneFreqAt(p, x) - cur : 0, pointerId: e.pointerId};
+  paneDrag = {p, id, grab: hit && cur !== null ? paneFreqAt(p, x) - cur : 0, fine: e.shiftKey, pointerId: e.pointerId};
   try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
-  paneMoveVfo(p, d, paneFreqAt(p, x) - paneDrag.grab);
+  // a VFO grabbed where it is stays put until it is moved; one coming from
+  // another tuner lands on the step's grid
+  paneMoveVfo(p, d, paneFreqAt(p, x) - paneDrag.grab, cur !== null ? undefined : 'step');
+  paneDrag.fx = x;                                          // where a fine (Shift) drag counts from
+  paneDrag.fmhz = p.freqMhz + (d.freq_offset_hz || 0) / 1e6;
   e.preventDefault();
 }
 function paneMove(p, e) {
@@ -9013,7 +9081,20 @@ function paneMove(p, e) {
     return;
   }
   const d = (decimatorInfo || []).find(z => z.id === paneDrag.id);
-  if (d) paneMoveVfo(p, d, paneFreqAt(p, x) - paneDrag.grab);
+  if (!d) return;
+  // Shift pressed / released mid-drag: go on from where the VFO is now
+  const at = p.freqMhz + (d.freq_offset_hz || 0) / 1e6;
+  if (e.shiftKey !== paneDrag.fine) {
+    paneDrag.fine = e.shiftKey;
+    paneDrag.grab = paneFreqAt(p, x) - at;
+    paneDrag.fx = x;
+    paneDrag.fmhz = at;
+  }
+  if (paneDrag.fine) {
+    paneMoveVfo(p, d, paneDrag.fmhz + (paneFreqAt(p, x) - paneFreqAt(p, paneDrag.fx)) * VFO_FINE, 'fine');
+  } else {
+    paneMoveVfo(p, d, paneFreqAt(p, x) - paneDrag.grab, 'step');
+  }
 }
 function paneUp(p, e) {
   if (!paneDrag) return;
@@ -9037,24 +9118,29 @@ function paneUp(p, e) {
   }
   // a click: the selected VFO goes there (and onto this tuner)
   const d = (decimatorInfo || []).find(z => z.id === activeDecimatorId);
-  if (d && !vfoLocked(d) && paneSpan(p)) paneMoveVfo(p, d, paneFreqAt(p, paneXY(e).x));
+  if (d && !vfoLocked(d) && paneSpan(p)) paneMoveVfo(p, d, paneFreqAt(p, paneXY(e).x), 'step');
 }
 
-// Put VFO d at mhz on pane p (clamped into the visible band)
-function paneMoveVfo(p, d, mhz) {
+// Put VFO d at mhz on pane p (clamped into the visible band). snap: 'step' =
+// on the VFO step's grid (a drag / click on the pane), 'fine' = to the Hz
+// (Shift-drag), none = exactly mhz (typed / saved frequencies, tuner moves)
+function paneMoveVfo(p, d, mhz, snap) {
   const bw = decBwMhz(d);
   const half = Math.max(0, (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2);
   const off = Math.max(-half, Math.min(half, mhz - p.freqMhz));
+  let offHz = off * 1e6;
+  if (snap === 'step') offHz = vfoSnapOffset(p.freqMhz, (mhz - p.freqMhz) * 1e6, half * 1e6);
+  else if (snap === 'fine') offHz = Math.max(-half * 1e6, Math.min(half * 1e6, Math.round(offHz)));
   const moved = (d.tuner || 0) !== p.ch;
-  d.freq_offset_hz = off * 1e6;
+  d.freq_offset_hz = offHz;
   d.tuner = p.ch;
   if (moved) {
     pendingFreqUpdates.delete(d.id);   // a queued move on the old tuner must not land after this
-    send('SET_DECIMATOR_FREQ:' + d.id + ':' + (off * 1000).toFixed(3) + ':' + p.ch);
+    send('SET_DECIMATOR_FREQ:' + d.id + ':' + (offHz / 1000).toFixed(3) + ':' + p.ch);
     const ts = $id('dec-tuner-' + d.id);
     if (ts) ts.value = p.ch;
   } else {
-    setDecimatorFreq(d.id, off * 1000);
+    setDecimatorFreq(d.id, offHz / 1000);
   }
   paneDrawAllOverlays();
   refreshDecimatorPanelItem(d.id);
@@ -9474,6 +9560,7 @@ if (mobileLayoutMQ.addEventListener) {
 const MOBILE_RELOCATIONS = [
   {id: 'tb-gain', slot: 'mobile-controls-slot'},
   {id: 'tb-ch', slot: 'mobile-controls-slot'},
+  {id: 'tb-step', slot: 'mobile-controls-slot'},
   {id: 'tb-audio', slot: 'mobile-controls-slot'},
   {id: 'wf-controls-bar', slot: 'mobile-display-slot'},
 ];
