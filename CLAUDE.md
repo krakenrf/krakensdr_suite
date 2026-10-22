@@ -1221,8 +1221,10 @@ or one radio's) probably is, from its signal strength over the terrain
   tables: sigma = location variability, model, EIRP, calibration in
   squares, with the fading - Rician K per cell) in a worker of its own
   (`rgPostMain`) -> coloured by the highest-density regions (50 / 90 / 99
-  %), the distance's quantiles, the most likely spot (the centre of the
-  most probable block). Separate from the viewshed's signal mode (the
+  %), the distance's quantiles, the most likely spot (the mode inside the
+  most likely 1 %, 3 x 3 smoothed - on the deepest red by construction; it
+  was a block's probability centre until 2026-10-22 and could fall outside
+  the core). EIRP / power entered in watts. Separate from the viewshed's signal mode (the
   station stays out of that - the user's call 2026-10-12)
 - Tests: `kraken_doa_v2/tools/range_validate.mjs` (node, offline; incl. a
   Monte Carlo calibration over P.1812: the true place in the 50 / 90 %

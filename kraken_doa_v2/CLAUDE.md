@@ -1701,8 +1701,7 @@ Edit `include/config.hpp`:
   page stays responsive): `init` = the sweep's rings (copies of loss / fad)
   -> each cell's bearing (65536ths) + distance from the station (great
   circle: atan2(|east, north parts|, dot) - the bearing formula's parts
-  have the length sin of the angle), its block of a 128 x 128 grid over
-  the radius, each row's cell area. `post` per cell (no data 65534 / 65535
+  have the length sin of the angle), each row's cell area. `post` per cell (no data 65534 / 65535
   skipped): density = the bearing factor at its bearing x the level's pdf at
   the margin m = base - loss (base = EIRP + G_rx - cable - P_measured) ->
   mass = density x area (the prior: uniform per area within the radius)
@@ -1735,14 +1734,26 @@ Edit `include/config.hpp`:
     the edge (> 0.9 radius), the margins' range (mMin / mMax: no place fits
     when even the strongest place's median is 3 sigma below the level, or
     the weakest 3 sigma above - said; none within the tables -> "empty"),
-    the MOST LIKELY SPOT = the centre of the probability in the most
-    probable block (a single cell's maximum jumped between places of the
-    same loss over terrain - 3 km for a true 5 km in the synthetic test),
-    ms
+    the MOST LIKELY SPOT (the ✕) = the MODE taken INSIDE the core - the
+    cells holding the most likely `CORE_P` 1 % of the probability (at least
+    the top density bin) - as the one whose density averaged over its 3 x 3
+    neighbours (its ring's, with data) is highest: always on the deepest red
+    (st.c <= st.core), one odd cell (a ridge top with just the loss) can't
+    take it. Until 2026-10-22 it was the centre of the probability in the
+    most probable block of a 128 x 128 grid over the radius - a MEAN, not a
+    mode: a block of much moderately likely ground outweighed a smaller,
+    stronger core, and a block's centre fell between bright cells (a lobe
+    crossing it diagonally, bright cells either side of a shadow): the ✕
+    sat outside the core (the user's report; 55 deg on a 60 deg lobe in the
+    Auckland test, 7.93 km beyond its own 95 % distance in the synthetic
+    one). ms
   - the readout leads with the bearing and the distance's quantiles: with
     sigma ~6-9 dB the probability spreads along the lobe (free space: a
-    factor of 2 in distance per sigma), the spot is the mode of a broad
-    distribution
+    factor of 2 in distance per sigma). The ✕ is the most likely spot PER
+    AREA - it can be much nearer than the median distance (Auckland test:
+    703 m vs 4.2 km): the lobe widens with distance, so further out more
+    ground shares the probability, each place a little less likely, together
+    more. Said in the ✕ line's tooltip and the panel's note
 - Live: `rgOnStatus` (from rdfOnStatus, 2 Hz) -> `rgPump` (the sweep's key)
   + `rgPostPump`: one post at a time; a setting / the source changed: after
   0.3 s, the live lobe / level only every `RG_LIVE_MS` 2.5 s (each post is
@@ -1780,7 +1791,9 @@ Edit `include/config.hpp`:
   functions + both workers): the pdf (no fading = the normal pdf to 2e-5;
   Rayleigh 2.51 dB; auto tables integrate to 1), the bearing factor (peak,
   floor eps, peak / floor 548), free space with an exact level (the spot
-  3.8 km at 62 deg for 4 km at 60 deg - one block), the distance's
+  4.03 km at 59.9 deg for 4 km at 60 deg, in the core), the ✕ inside the
+  core in all 40 random estimates over the hills (lobes 2 deg off, levels
+  from the model; all on the lobe), the distance's
   quantiles = an independent posterior in plain loops (worst 2 m), a level
   100 dB too strong (no place fits) / 200 dB too weak (empty), the
   CALIBRATION by Monte Carlo (P.1812 over the synthetic hills, 446 MHz,

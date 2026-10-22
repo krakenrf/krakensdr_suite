@@ -19399,22 +19399,21 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
 
   // ---- the posterior (a worker of its own: a few million cells) ----
   // init: the sweep's rings -> each cell's bearing + distance from the
-  // station (great circle; bearing in 65536ths of a turn), its block of a
-  // BLK x BLK grid over the radius and each row's cell area. post: one
-  // estimate -> per ring a u8 per cell (0 = no data / beyond the 99 %
-  // region; 1..255 = the share of the probability in places at least as
-  // likely, 0..99 %) + the numbers: the most likely place = the centre of
-  // the probability in the most probable block (one cell's maximum jumps
-  // between places of the same loss over terrain), the distance's
-  // quantiles, the margins' range (a level no place fits). self.rgTest for node
+  // station (great circle; bearing in 65536ths of a turn) and each row's
+  // cell area. post: one estimate -> per ring a u8 per cell (0 = no data /
+  // beyond the 99 % region; 1..255 = the share of the probability in places
+  // at least as likely, 0..99 %) + the numbers: the most likely spot (the
+  // mode, inside the most likely CORE_P of the probability - see below),
+  // the distance's quantiles, the margins' range (a level no place fits).
+  // self.rgTest for node
   function rgPostMain() {
-    const RE = 6371000, D2R = Math.PI / 180, NB = 1200, ND = 2000, BLK = 128;
+    const RE = 6371000, D2R = Math.PI / 180, NB = 1200, ND = 2000, CORE_P = 0.01;
     let G = null, KIDX = null;
     function init(I) {
-      const s1 = Math.sin(I.lat * D2R), c1 = Math.cos(I.lat * D2R), lv = [], half = I.rM * 1.05;
+      const s1 = Math.sin(I.lat * D2R), c1 = Math.cos(I.lat * D2R), lv = [];
       for (const l of I.levels) {
         const N = l.N, W = 256 * 2 ** l.z, n = N * N, mpp = 2 * Math.PI * RE / W;
-        const brg = new Uint16Array(n), dist = new Float32Array(n), blk = new Uint16Array(n), area = new Float64Array(N), dens = new Float32Array(n);
+        const brg = new Uint16Array(n), dist = new Float32Array(n), area = new Float64Array(N), dens = new Float32Array(n);
         const sx = new Float64Array(N), cx = new Float64Array(N);   // per column: the longitude difference's sin / cos
         for (let i = 0; i < N; i++) { const d = (((l.gx0 + i + 0.5) / W) * 360 - 180 - I.lon) * D2R; sx[i] = Math.sin(d); cx[i] = Math.cos(d); }
         for (let j = 0; j < N; j++) {
@@ -19428,13 +19427,10 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
             let b = Math.atan2(e, nn) / D2R;
             if (b < 0) b += 360;
             brg[k] = Math.round(b / 360 * 65536) & 65535;
-            const hy = Math.hypot(e, nn), d = dist[k] = RE * Math.atan2(hy, s1 * s2 + c1 * c2 * cx[i]);
-            // its block: east / north of the station (on the ground along the great circle)
-            const bx = hy > 0 ? Math.floor((d * e / hy + half) / (2 * half) * BLK) : BLK / 2, by = hy > 0 ? Math.floor((d * nn / hy + half) / (2 * half) * BLK) : BLK / 2;
-            blk[k] = Math.max(0, Math.min(BLK - 1, by)) * BLK + Math.max(0, Math.min(BLK - 1, bx));
+            dist[k] = RE * Math.atan2(Math.hypot(e, nn), s1 * s2 + c1 * c2 * cx[i]);
           }
         }
-        lv.push({N, z: l.z, gx0: l.gx0, gy0: l.gy0, loss: l.loss, fad: l.fad, brg, dist, blk, area, dens});
+        lv.push({N, z: l.z, gx0: l.gx0, gy0: l.gy0, loss: l.loss, fad: l.fad, brg, dist, area, dens});
       }
       return {key: I.key, lat: I.lat, lon: I.lon, rM: I.rM, lv};
     }
@@ -19444,9 +19440,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     function post(P) {
       const t0 = Date.now(), {ang, base, D, nk, near} = P, idx = nk > 1 ? KIDX : null;
       let Z = 0, dmax = 0, mMin = Infinity, mMax = -Infinity;
-      const dh = new Float64Array(ND), dbin = ND / (G.rM * 1.05), bm = new Float64Array(BLK * BLK);
+      const dh = new Float64Array(ND), dbin = ND / (G.rM * 1.05);
       for (let li = 0; li < G.lv.length; li++) {
-        const l = G.lv[li], N = l.N, loss = l.loss, fad = l.fad, brg = l.brg, dist = l.dist, blk = l.blk, dens = l.dens;
+        const l = G.lv[li], N = l.N, loss = l.loss, fad = l.fad, brg = l.brg, dist = l.dist, dens = l.dens;
         for (let j = 0; j < N; j++) {
           const A = l.area[j];
           for (let i = 0, k = j * N; i < N; i++, k++) {
@@ -19478,7 +19474,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
               const w = d * A;
               Z += w;
               dh[Math.min(ND - 1, Math.floor(dist[k] * dbin))] += w;
-              bm[blk[k]] += w;
               if (d > dmax) dmax = d;
             }
           }
@@ -19499,21 +19494,36 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       let s = 0;
       for (let b = 0; b <= NB; b++) { s += hb[b]; cum[b] = s / Z; }
       cum[NB] = 1;
-      let bb = 0;
-      for (let b = 1; b < BLK * BLK; b++) if (bm[b] > bm[bb]) bb = b;
-      let a50 = 0, a90 = 0, edge = 0, sx = 0, sy = 0, sw = 0;
-      const levels = G.lv.map(l => {
-        const N = l.N, n = N * N, out = new Uint8Array(n);
+      // THE MOST LIKELY SPOT: the mode, taken INSIDE the core - the places
+      // holding the most likely CORE_P of the probability (at least the top
+      // density bin), so the ✕ is always on the deepest red - as the one
+      // whose density averaged over its 3 x 3 neighbours (its ring's, with
+      // data) is highest: one odd cell (a ridge top with just the loss)
+      // can't take it. (Until 2026-10-22 the centre of the probability in
+      // the most probable block of a 128 x 128 grid: a mean, not a mode - it
+      // fell between bright cells or into a block of much moderate ground,
+      // outside the core: the user's report)
+      const cCore = Math.max(CORE_P, cum[0]);
+      let a50 = 0, a90 = 0, edge = 0, sBest = -1, best = null;
+      const levels = G.lv.map((l, li) => {
+        const N = l.N, n = N * N, out = new Uint8Array(n), dens = l.dens;
         for (let k = 0; k < n; k++) {
-          const d = l.dens[k];
+          const d = dens[k];
           if (!(d > 0)) continue;
           const c = cum[Math.min(NB, Math.floor((lmax - Math.log10(d)) * 100))], A = l.area[Math.floor(k / N)];
           if (l.dist[k] > 0.9 * G.rM) edge += d * A;
-          if (l.blk[k] === bb) {   // (the most probable block: the centre of its probability)
-            const b = l.brg[k] * (2 * Math.PI / 65536), w = d * A;
-            sx += w * l.dist[k] * Math.sin(b);
-            sy += w * l.dist[k] * Math.cos(b);
-            sw += w;
+          if (c <= cCore) {
+            const i = k % N, j = (k - i) / N;
+            let sm = 0, sn = 0;
+            for (let dj = -1; dj <= 1; dj++) {
+              if (j + dj < 0 || j + dj >= N) continue;
+              for (let di = -1; di <= 1; di++) {
+                if (i + di < 0 || i + di >= N) continue;
+                const kk = k + dj * N + di;
+                if (l.loss[kk] < 65534) { sm += dens[kk]; sn++; }
+              }
+            }
+            if (sm / sn > sBest) { sBest = sm / sn; best = [li, k, c]; }
           }
           if (c > 0.99) continue;
           out[k] = 1 + Math.round(c / 0.99 * 254);
@@ -19528,13 +19538,12 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         for (let b = 0; b < ND; b++) { c += dh[b]; if (c >= p * Z) return (b + 0.5) / dbin; }
         return G.rM;
       });
-      // the most likely place: that centre, along the great circle from the station
-      const x = sx / sw, y = sy / sw, dd = Math.hypot(x, y), br = (Math.atan2(x, y) / D2R + 360) % 360;
-      const p1 = G.lat * D2R, a = dd / RE, t = br * D2R;
-      const p2 = Math.asin(Math.sin(p1) * Math.cos(a) + Math.cos(p1) * Math.sin(a) * Math.cos(t));
-      const lon = ((G.lon + Math.atan2(Math.sin(t) * Math.sin(a) * Math.cos(p1), Math.cos(a) - Math.sin(p1) * Math.sin(p2)) / D2R + 540) % 360) - 180;
-      return {seq: P.seq, key: G.key, levels, st: {lat: p2 / D2R, lon, d: dd, b: br, q, edge: edge / Z, a50: a50 / 1e6, a90: a90 / 1e6,
-              blk: bm[bb] / Z, mMin, mMax, ms: Date.now() - t0}};
+      // the spot's cell centre (c: the share of the probability in places at least as likely as it)
+      const [li, k, c] = best, l = G.lv[li], W = 256 * 2 ** l.z, i = k % l.N, j = (k - i) / l.N;
+      const lon = (((l.gx0 + i + 0.5) / W) * 360 - 180 + 540) % 360 - 180;
+      const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * (l.gy0 + j + 0.5) / W))) / D2R;
+      return {seq: P.seq, key: G.key, levels, st: {lat, lon, d: l.dist[k], b: l.brg[k] * 360 / 65536, c, core: cCore, q, edge: edge / Z,
+              a50: a50 / 1e6, a90: a90 / 1e6, mMin, mMax, ms: Date.now() - t0}};
     }
     self.rgTest = {init: I => { G = init(I); return G; }, post, setIdx: v => { KIDX = v; }};
     self.onmessage = e => {
@@ -19978,7 +19987,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<div class="map-vs-row rg-sig pl-note"></div></div>` +
       `<div class="map-vs-note">Where the transmitter of the DF panel's selected lobe probably is: the measured level (dBFS - gain + the calibration = dBm at the receiver input) against ` +
       `the path loss from the station to each place (the model over the terrain, with a transmitter at the TX antenna height there) and the lobe's bearing. ` +
-      `Coloured by how likely: the red core is the most likely, out to the 50 / 90 / 99 % regions. Only as good as the EIRP guess and the calibration - calibrate on a ` +
+      `Coloured by how likely: the red core is the most likely, out to the 50 / 90 / 99 % regions; the ✕ is the single most likely spot (per square metre, on the deepest red) - ` +
+      `the median distance can lie further out, as the lobe widens with distance. The transmitter's power and EIRP are entered in watts. Only as good as the EIRP guess and the calibration - calibrate on a ` +
       `known transmitter (right-click it on the map) for absolute levels. Bare terrain: buildings and trees only through the clutter setting.</div></div></div>`;
   }
   function rgCentre() { if (rgEst && rgEst.lat !== undefined) { mapCenterOn(rgEst.lat, rgEst.lon); mapDraw(); } }
@@ -20024,7 +20034,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     vis('.rg-ptx', rgState.txMode === 'ptx');
     vis('.rg-eirp', rgState.txMode === 'eirp');
     vis('.rg-k', rgState.fade === 'auto' || rgState.fade === 'rician');
-    set('.rg-eirpv', `EIRP <b>${plF(rgEirp())} dBm</b> (${rgFmtW(10 ** (rgEirp() / 10) / 1000)})`);
+    // (the entry is in watts; this is what it comes to - for power + antenna, the EIRP)
+    set('.rg-eirpv', rgState.txMode === 'ptx' ? `= EIRP <b>${plF(rgEirp())} dBm</b> (${rgFmtW(10 ** (rgEirp() / 10) / 1000)})`
+                                              : `= <b>${plF(rgEirp())} dBm</b> (${plF(rgEirp() - 30)} dBW)`);
     // the source: what is measured
     const sn = rgSnap();
     let src = '';
@@ -20085,7 +20097,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       // mode of a broad distribution)
       const [q05, q25, q50, q75, q95] = E.q;
       st = `Bearing <b>${plF(E.sn.peak, 0)}°</b> · distance: median <b>${rgKm(q50)}</b>, half the probability <b>${rgKm(q25)} – ${rgKm(q75)}</b>, ` +
-           `90 % ${rgKm(q05)} – ${rgKm(q95)}<br>✕ most likely spot ${rgKm(E.d)} at ${plF(E.b, 0)}° · the 50 % region ${rgArea(E.a50)}, the 90 % ${rgArea(E.a90)}`;
+           `90 % ${rgKm(q05)} – ${rgKm(q95)}<br><span title="The single most likely spot per square metre - always on the deepest red (inside the most likely 1 % of the probability). ` +
+           `It can be nearer than the median distance: the lobe widens with distance, so further out more ground shares the probability - each place a little less likely, together more">` +
+           `✕ most likely spot ${rgKm(E.d)} at ${plF(E.b, 0)}° (the deepest red)</span> · the 50 % region ${rgArea(E.a50)}, the 90 % ${rgArea(E.a90)}`;
       const w = [], sg = E.inp.sigma;
       // no place fits well: even the strongest place's median is 3 sigma below the level (too strong), or the weakest above it
       if (E.mMax < -3 * sg) w.push(`no place fits: stronger than this transmitter would be even next to the station (by ${plF(-E.mMax, 0)} dB, σ ${plF(sg)} dB) - more EIRP, or check the calibration`);

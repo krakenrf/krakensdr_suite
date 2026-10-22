@@ -139,6 +139,12 @@ const post = (S, ang, base, lik, seq = 1) => {
   if (lik.idx) R.setIdx(lik.idx);
   return R.post({seq, key: S.key, ang, base, D: lik.D, nk: lik.nk, near: NEAR});
 };
+// the most likely spot's cell as painted: its share c (the probability in places at
+// least as likely) from the u8 the map draws - inside the core (<= st.core + one u8 step)?
+const spotInCore = (S, r) => {
+  const sc = cellAt(S, r.st.lat, r.st.lon), u = sc ? r.levels[sc.li][sc.k] : 0, c = u ? (u - 1) / 254 * 0.99 : 1;
+  return {ok: !!sc && r.st.c <= r.st.core && c <= r.st.core + 0.99 / 254 + 1e-9, c};
+};
 
 // ---- 1: the level's pdf ----
 {
@@ -180,10 +186,12 @@ const ST = [-36.88, 174.62];
   const sigma = 6, lik = P.rgLik(sigma), sd = 4, ang = P.rgAng(lobeAt(60, 2), sd);
   const r = post(S, ang, c.loss, lik);   // (EIRP + gains - the measured = the true cell's loss: m = 0 there)
   const st = r.st;
-  // (the most likely place = the centre of the most probable block, 2 x 1.05 x 8 km / 128 = 131 m:
-  // the mode of a broad distribution - sigma 6 dB is a factor of 2 in distance in free space)
-  check(!r.empty && Math.abs(st.d - 4000) < 400 && Math.abs(st.b - 60) < 3,
-        `3 free space, exact level: the most likely place ${st.d.toFixed(0)} m at ${st.b.toFixed(1)} deg (true 4000 m, 60 deg); ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  // (the most likely spot = the mode inside the core: with the level exact, the density
+  // peaks where the loss matches on the lobe's peak - 4 km at 60 deg)
+  const sp = spotInCore(S, r);
+  check(!r.empty && Math.abs(st.d - 4000) < 100 && Math.abs(st.b - 60) < 1 && sp.ok,
+        `3 free space, exact level: the most likely spot ${st.d.toFixed(0)} m at ${st.b.toFixed(1)} deg (true 4000 m, 60 deg), ` +
+        `in the core (${(sp.c * 100).toFixed(1)} % <= ${(st.core * 100).toFixed(1)} %); ${((Date.now() - t0) / 1000).toFixed(1)} s`);
   // the same posterior in plain loops: each cell's centre -> distance, bearing; the normal pdf; the area
   const w = [];
   let Z = 0;
@@ -242,9 +250,25 @@ const ST = [-36.88, 174.62];
   rgState.fade = 'auto';
   const la = P.rgLik(sigma), c = cellAt(S, ...dest(ST[0], ST[1], 100, 5000));
   const r = post(S, P.rgAng(lobeAt(100, 3), 4), c.loss, la, 999);
-  check(!r.empty && Number.isFinite(r.st.d) && r.st.q.every(Number.isFinite) && r.st.q[0] < 5000 && 5000 < r.st.q[4],
-        `5 auto fading (K per cell), exact level, P.1812: most likely ${(r.st.d / 1000).toFixed(2)} km at ${r.st.b.toFixed(0)} deg, ` +
+  check(!r.empty && Number.isFinite(r.st.d) && r.st.q.every(Number.isFinite) && r.st.q[0] < 5000 && 5000 < r.st.q[4] && spotInCore(S, r).ok,
+        `5 auto fading (K per cell), exact level, P.1812: most likely ${(r.st.d / 1000).toFixed(2)} km at ${r.st.b.toFixed(0)} deg (in the core), ` +
         `90 % ${(r.st.q[0] / 1000).toFixed(2)} - ${(r.st.q[4] / 1000).toFixed(2)} km (true 5 km, 100 deg)`);
+  // the ✕ is never outside the core (the user's report 2026-10-22: the earlier block centre
+  // could be): transmitters anywhere, their lobes (3 deg wide, 2 deg off), levels from the model
+  rgState.fade = 'none';
+  let bad = 0, nk = 0, offLobe = 0;
+  for (let t = 0; t < 40; t++) {
+    const tb = 360 * rnd(), [tla, tlo] = dest(ST[0], ST[1], tb, 1000 + (S.rM - 1500) * Math.sqrt(rnd()));
+    const tc = cellAt(S, tla, tlo);
+    if (!tc) continue;
+    const rr = post(S, P.rgAng(lobeAt(tb + 4 * (rnd() - 0.5), 3), 4), tc.loss + sigma * gauss(), lik, 2000 + t);
+    if (rr.empty) continue;
+    nk++;
+    if (!spotInCore(S, rr).ok) bad++;
+    if (Math.abs(((rr.st.b - tb + 540) % 360) - 180) > 10) offLobe++;
+  }
+  check(nk > 30 && !bad && offLobe <= 2, `5 the most likely spot inside the core (the deepest red) in all ${nk} estimates (${bad} outside), ` +
+        `on the lobe (within 10 deg of the bearing) in ${nk - offLobe}`);
 }
 // ---- 6: the station's sweep = the transmitter's real direction ----
 // the page's rgSweepMsg: the station is the worker's "Tx" end - envTx = OUR
