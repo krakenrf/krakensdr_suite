@@ -1698,7 +1698,6 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <button type="button" class="btn sm" id="sfs-hold" onclick="sfsHold()" style="display:none">⏸ Hold</button>
             <button type="button" class="btn sm" id="sfs-skip" onclick="send('SFSCAN_SKIP')" title="Go on to the next active frequency (this one gets its turn again on the next pass through the list) - or, with nothing active, to the next band" style="display:none">⏭ Skip</button>
             <span class="r"><span class="n" id="sfs-n"></span>
-            <button type="button" class="btn sm" id="sfs-sqline" onclick="sfsToggleSqLine()">┈ Sq</button>
             <button type="button" class="btn sm" id="sfs-set-btn" onclick="sfsToggleSet()" title="Scan settings">⚙</button></span>
           </div>
           <div class="sfs-status" id="sfs-status"></div>
@@ -2427,11 +2426,10 @@ let sfCats = [], sfLocs = [], sfFreqs = [];
 let sfScanUncat = false, sfsSt = null, sfsSqDrag = null;
 let mkSel = null, mkEdit = null, mkWantEdit = null, mapMenuAt = null;
 const sfUi = (() => {
-  const d = {spec: true, col: {}, hide: {}, sq: false};
+  const d = {spec: true, col: {}, hide: {}};
   try {
     const s = JSON.parse(localStorage.getItem('kraken_sf') || '{}');
     if (typeof s.spec === 'boolean') d.spec = s.spec;
-    if (typeof s.sq === 'boolean') d.sq = s.sq;   // 📻 the scan's squelch line
     if (s.col && typeof s.col === 'object') d.col = s.col;
     if (s.hide && typeof s.hide === 'object') d.hide = s.hide;
   } catch (e) {}
@@ -14848,7 +14846,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   function sfsOnMessage(m) {
     const was = !!(sfsSt && sfsSt.run);
     const lineKey = st => st ? [st.sq, st.run, st.mode, (st.watch || []).map(b => b.ch).join()].join('|') : '';
-    const redraw = sfUi.sq && lineKey(sfsSt) !== lineKey(m);
+    const redraw = lineKey(sfsSt) !== lineKey(m);
     sfsSt = m;
     sfsSqDrag = null;   // the receiver's level from now on
     if (m.err && sfsPending) sfFlash('Scan not started: ' + m.err, true);
@@ -14866,11 +14864,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     show('sfs-stop', run);
     show('sfs-hold', run);
     show('sfs-skip', run);
-    const qb = $id('sfs-sqline');
-    if (qb) {
-      qb.classList.toggle('on', !!sfUi.sq);
-      qb.title = (sfUi.sq ? 'Hide' : 'Show') + " the scan's squelch on the spectrum (dotted yellow line: a frequency over it is active)";
-    }
     const hb = $id('sfs-hold');
     if (hb) {
       hb.textContent = st.hold ? '▶ Resume' : '⏸ Hold';
@@ -14917,20 +14910,20 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (typeof st[k] === 'number' && idle(e)) e.value = +(st[k] / 1000).toFixed(1);
     }
   }
-  // The scan's squelch on the spectrum (┈ Sq, per browser - sfUi.sq): a
-  // dotted yellow line across the plot at the level over which the scan
-  // calls a frequency active - dB over the noise floor, which is the
-  // spectrum's 0 dB. (A VFO's FFT squelch is the DASHED yellow line inside
-  // its bar.) Independent mode: on the tuners the scan watches, every pane
-  // while it is stopped. While the slider is dragged it follows the slider
+  // The scan's squelch on the spectrum while the scan runs: a dotted yellow
+  // line across the plot at the level over which the scan calls a frequency
+  // active - dB over the noise floor, which is the spectrum's 0 dB. (A VFO's
+  // FFT squelch is the DASHED yellow line inside its bar.) Independent mode:
+  // on the tuners the scan watches. While the slider is dragged it follows it
   // (sfsSqDrag, in the globals block: drawBox can run before this section)
   function sfsSqLevel() {
+    if (!(sfsSt && sfsSt.run)) return null;
     if (sfsSqDrag !== null) return sfsSqDrag;
     return sfsSt && typeof sfsSt.sq === 'number' ? sfsSt.sq : null;
   }
   function sfsSqPreview(v) {
     sfsSqDrag = +v;
-    if (sfUi.sq) { drawBox(); paneDrawAllOverlays(); }
+    if (sfsSt && sfsSt.run) { drawBox(); paneDrawAllOverlays(); }
   }
   function sfsSqLine(ctx, x0, x1, y, lvl) {
     ctx.save();
@@ -14948,26 +14941,17 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
   function sfsDrawSquelch(ctx, w, h) {
     const lvl = sfsSqLevel();
-    if (!sfUi.sq || lvl === null || !fftPlot) return;
+    if (lvl === null || !fftPlot) return;
     const y = fftPlot.valToPos(lvl, 'y');
     if (y >= 0 && y <= h) sfsSqLine(ctx, 0, w, y, lvl);
   }
   function sfsPaneSquelch(ctx, p) {
     const lvl = sfsSqLevel();
-    if (!sfUi.sq || lvl === null) return;
-    if (sfsSt && sfsSt.run && sfsSt.mode === 'independent' && !(sfsSt.watch || []).some(b => b.ch === p.ch)) return;
+    if (lvl === null || !(sfsSt.watch || []).some(b => b.ch === p.ch)) return;
     const top = 4, bot = p.sh - 14, ymax = fftYMax || 60;   // as the pane's own VFO squelch lines
     const y = bot - lvl / ymax * (bot - top);
     if (y >= top && y <= bot) sfsSqLine(ctx, p.L, p.sw - 4, y, lvl);
   }
-  function sfsToggleSqLine() {
-    sfUi.sq = !sfUi.sq;
-    sfSaveUi();
-    sfsRender();
-    drawBox();
-    paneDrawAllOverlays();
-  }
-
   // the rows: 🔊 the one listened to, a dot on those active now
   function sfsMark() {
     const st = sfsSt || {}, cur = st.run && st.state === 'listen' && st.cur ? st.cur.id : '';
