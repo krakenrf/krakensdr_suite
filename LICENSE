@@ -28,6 +28,9 @@ The KrakenSDR suite is made of separate programs under different licences:
     plugins/ism/     ISM device decoder (follows     GNU General Public License
                      rtl_433's decoders)             version 2 or later
                                                      (plugins/ism/LICENSE)
+    plugins/flarm/   FLARM / OGN trackers (the OGN   GNU General Public License
+                     parity-check matrix from the    version 3
+                     OGN project's diy-tracker)      (plugins/flarm/LICENSE)
 
   The build, install, run and packaging scripts in the repository root
   (install.sh, install-pi-service.sh, run.sh, run.bat, build_windows.bat,

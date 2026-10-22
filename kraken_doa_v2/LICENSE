@@ -148,8 +148,9 @@ Software. The Software communicates with them over network connections.
 Not part of the Software either: the plugin SDK (the plugins/sdk folder and
 plugins/SDK.md) and the Windows helpers in the win folder, which are under the
 MIT License (plugins/sdk/LICENSE); and every decoder plugin whose folder
-(plugins/<id>) holds a LICENSE file of its own - for example plugins/ism,
-under the GNU General Public License version 2 or later. Such a plugin is a
+(plugins/<id>) holds a LICENSE file of its own - plugins/ism, under the GNU
+General Public License version 2 or later, and plugins/flarm, under the GNU
+General Public License version 3. Such a plugin is a
 separate program: the Software starts it as a process of its own and
 exchanges data with it through pipes, and it is built without the plugin
 library or other parts of the Software. It is licensed only under the terms

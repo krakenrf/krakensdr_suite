@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 KrakenRF Inc. - part of the KrakenSDR `flarm` decoder
+// plugin, licensed under the GNU General Public License version 3 (LICENSE in
+// this folder; README.md "Licence").
+
 // FLARM / OGN packet checks and the OGN tracker protocol's fields (see
 // packet.hpp). Field layout, units and "absent" codes from the OGN wiki's
 // tracking-protocol page; TEA from Wheeler & Needham (1994, public domain);

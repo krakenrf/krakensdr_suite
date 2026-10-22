@@ -10,7 +10,7 @@ every component in their `licenses/` folder.
 No component of kraken_doa, its plugin library (`plugins/lib`) or the plugin
 SDK is under the GPL, AGPL or LGPL (glibc on Linux and the GCC runtime are
 system libraries, see below). One decoder plugin is itself a GPL program,
-built separately from them: `plugins/ism` (section 1a).
+built separately from them: `plugins/ism` and `plugins/flarm` (section 1a).
 
 ## 1. Third-party code in this folder
 
@@ -24,7 +24,6 @@ built separately from them: `plugins/ism` (section 1a).
 | mbelib - the IMBE decoder ported to C++ and its tables | `plugins/lib/dig_vocoder.cpp`, `plugins/lib/mbe_tables.hpp` | ISC, text F |
 | DSD - frame deinterleave tables | `plugins/lib/mbe_tables.hpp` | ISC, text F |
 | NTIA/ITS Irregular Terrain Model (ITM) 1.3, ported to JavaScript | `kraken_doa.html` ("📶 ITM" block) | not subject to copyright in the US; NTIA terms, text G |
-| OGN tracker protocol: the LDPC(208,160) parity-check matrix (data only, no code) | `plugins/flarm/ogn_ldpc_matrix.hpp` | interoperability data - the code every OGN tracker transmits; taken from the OGN tracker source (github.com/pjalocha/esp32-ogn-tracker, Pawel Jalocha), which states no licence |
 | ra-firmware (DF9DQ's "Ra" radiosonde receiver firmware): the RS41 and M10 / M20 sensor computations follow its metrology code | `plugins/radiosonde/rs41.cpp`, `plugins/radiosonde/modem.cpp` | BSD-3-Clause, text H |
 
 The decoder plugins are written from the published standards and protocol
@@ -40,6 +39,7 @@ These are not under the KrakenSDR Source Available Licence (its section 6):
 |---|---|---|
 | The plugin SDK and the Windows process helpers (KrakenRF) - in every plugin | `plugins/sdk/`, `plugins/SDK.md`, `win/` (= `heimdall_v2/win/`) | MIT, `plugins/sdk/LICENSE` |
 | ISM device decoder plugin (KrakenRF), following the device decoders of rtl_433 (github.com/merbanan/rtl_433, Copyright (C) 2012 Benjamin Larsson and the rtl_433 contributors - every file names the decoders it follows and their authors) | `plugins/ism/` | GPL-2.0-or-later, `plugins/ism/LICENSE`. A separate program: kraken_doa runs it as a process of its own; it is built only from its own files, the plugin SDK, pffft and liquid-dsp (`plugins/Makefile` refuses anything else for a plugin with its own `LICENSE`) |
+| FLARM / OGN tracker decoder plugin (KrakenRF), with the OGN protocol's LDPC(208,160) parity-check matrix from the OGN project's glidernet/diy-tracker (`ldpc.cpp`, `LDPC_ParityCheck_n208k160`, by Pawel Jalocha and the OGN project - https://github.com/glidernet/diy-tracker) | `plugins/flarm/` (the matrix: `ogn_ldpc_matrix.hpp`, GPL-3.0-only) | GPL-3.0, `plugins/flarm/LICENSE` (KrakenRF's files GPL-3.0-or-later). A separate program, built like `plugins/ism` |
 
 ## 2. Libraries built with or linked into the programs
 

@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 KrakenRF Inc. - part of the KrakenSDR `flarm` decoder
+// plugin, licensed under the GNU General Public License version 3 (LICENSE in
+// this folder; README.md "Licence").
+
 // FLARM and OGN tracker packets: the collision-avoidance / tracking radios
 // of gliders and light aircraft, 868 MHz (Europe, Africa, New Zealand) and
 // the 902-928 MHz hopping bands.

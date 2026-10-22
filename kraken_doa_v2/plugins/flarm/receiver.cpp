@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 KrakenRF Inc. - part of the KrakenSDR `flarm` decoder
+// plugin, licensed under the GNU General Public License version 3 (LICENSE in
+// this folder; README.md "Licence").
+
 // FLARM / OGN receiver: burst detector + demodulator (see receiver.hpp).
 
 #include "receiver.hpp"

@@ -813,7 +813,9 @@ the KrakenSDR DoA software (KrakenSDR Source Available Licence,
 `kraken_doa_v2/LICENSE`). Put a `LICENSE` file in it (and an SPDX line in
 each of its files, e.g. `// SPDX-License-Identifier: GPL-2.0-or-later`) and
 the plugin is under that licence instead - `plugins/ism` is GPL-2.0-or-later,
-because it follows rtl_433's device decoders.
+because it follows rtl_433's device decoders; `plugins/flarm` is GPL-3.0,
+because its OGN parity-check matrix comes from the OGN project's GPL-3.0
+diy-tracker.
 
 kraken_doa runs every plugin as a process of its own and talks to it only
 through the pipe protocol in `kraken_plugin.hpp`, so a plugin with its own

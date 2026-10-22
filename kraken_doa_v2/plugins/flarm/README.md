@@ -274,9 +274,32 @@ passes `make_testsignal.py --check`, and the entry generates: 144 MB in 3 s).
 - Windows (Hann, Blackman): F. J. Harris, "On the use of windows ...", Proc.
   IEEE 1978. The Gaussian frequency pulse of GFSK: a textbook result.
 - **The LDPC matrix** (`ogn_ldpc_matrix.hpp`) is the OGN protocol's
-  parity-check matrix, used as interoperability data: the code every OGN
-  tracker transmits, taken from the OGN tracker's source
-  (github.com/pjalocha/esp32-ogn-tracker), which carries no licence. It is
-  reproduced as data only (one hex mask per check, in packet byte order); no
+  parity-check matrix, the code every OGN tracker transmits, from the OGN
+  project's [glidernet/diy-tracker](https://github.com/glidernet/diy-tracker)
+  (`ldpc.cpp`, `LDPC_ParityCheck_n208k160`, by Pawel Jalocha and the OGN
+  project; GNU GPL version 3) - see *Licence*. Converted to one hex mask per
+  check in packet byte order (the same 48 rows in the same order); no other
   code of that project is used. The generator's systematic encoder is built
   from it by GF(2) elimination.
+
+## Licence
+
+This plugin is licensed under the **GNU General Public License version 3**
+(GPL-3.0, `LICENSE` in this folder), because its OGN parity-check matrix
+(`ogn_ldpc_matrix.hpp`, GPL-3.0-only) comes from the OGN project's
+glidernet/diy-tracker, licensed GPL-3.0: that repository's matrix is
+identical to the one OGN trackers use, row for row, and its author (Pawel
+Jalocha) committed it there himself. Copyright (C) 2026 KrakenRF Inc. for
+everything else in this folder, which is GPL-3.0-or-later. (Version 1.0
+had taken the same matrix from the author's esp32-ogn-tracker repository,
+which carries no licence.)
+
+The plugin is a separate program from the KrakenSDR DoA software
+(kraken_doa): it is built into its own executable (`build/decoder`), runs as
+its own process and talks to kraken_doa only over the plugin protocol
+(pipes, `plugins/sdk/kraken_plugin.hpp`). It is built only on the plugin SDK
+(`plugins/sdk`, MIT), pffft (BSD-style, `kraken_doa_v2/external/pffft`) and
+liquid-dsp (MIT) - not on `plugins/lib` (`plugins/Makefile` builds a plugin
+with its own `LICENSE` that way). GPL-3.0 code - glidernet/diy-tracker,
+SoftRF - may be used here, with its notices; code without a licence (the
+esp32 / nRF52 / CubeCell OGN tracker repositories) may not.

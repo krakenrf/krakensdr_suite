@@ -2085,7 +2085,13 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   section 6, THIRD_PARTY_NOTICES 1a, SDK.md *Licensing a plugin*, README.
   `plugins/ism` = GPL-2.0-or-later (it follows rtl_433's device decoders;
   every file names the rtl_433 decoders it follows + their authors, README
-  *Licence*) - the first such plugin
+  *Licence*) - the first such plugin. `plugins/flarm` = GPL-3.0 (2026-10-23,
+  the user's call): its OGN LDPC matrix is the one in the OGN project's
+  glidernet/diy-tracker (GPL-3.0; LDPC_ParityCheck_n208k160 identical, 48 / 48
+  rows, committed there by its author Pawel Jalocha himself, after the
+  licence was added) - `ogn_ldpc_matrix.hpp` GPL-3.0-only, KrakenRF's files
+  GPL-3.0-or-later. GPL-3.0 code (diy-tracker, SoftRF) may be used in flarm
+  now, with its notices; the author's unlicensed tracker repos still not
 - RULE for kraken_doa_v2: no GPL / AGPL / LGPL code in it or linked into it
   (LGPL only as a dynamic system library), and nothing TRANSLATED from GPL
   code (rtl_433, dump1090 forks, readsb, rs1729/RS, OP25, osmo-tetra,
@@ -2124,9 +2130,10 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   ra-firmware's metrology (BSD-3 notice in rs41.cpp / modem.cpp + notices
   text H) and keeps some facts the rs1729 project first published (numbers,
   layouts, rules - no code; its README lists them); flarm's
-  `ogn_ldpc_matrix.hpp` is the OGN protocol's LDPC matrix, interoperability
-  data from the unlicensed OGN tracker (permission from its author would
-  settle it). kraken_doa_v2/CLAUDE.md *Radiosonde* / *FLARM / OGN* say how;
+  `ogn_ldpc_matrix.hpp` (the OGN protocol's LDPC matrix, first taken from
+  the unlicensed OGN tracker) is settled since 2026-10-23: the same matrix
+  under GPL-3.0 from glidernet/diy-tracker, flarm a GPL-3.0 plugin (above).
+  kraken_doa_v2/CLAUDE.md *Radiosonde* / *FLARM / OGN* say how;
   the specs + audits were job scratch, not in the repo
 
 ## Git Secret Guards

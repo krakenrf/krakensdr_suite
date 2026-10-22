@@ -530,7 +530,10 @@ The suite is made of separate programs under different licences (details:
 - A **decoder plugin with a `LICENSE` file of its own** is a separate program
   under that licence: the **ISM device decoder** (`kraken_doa_v2/plugins/ism/`,
   following rtl_433's decoders) is under the
-  [GNU General Public License v2 or later](kraken_doa_v2/plugins/ism/LICENSE).
+  [GNU General Public License v2 or later](kraken_doa_v2/plugins/ism/LICENSE),
+  and the **FLARM / OGN tracker decoder** (`kraken_doa_v2/plugins/flarm/`,
+  with the OGN project's parity-check matrix) under the
+  [GNU General Public License v3](kraken_doa_v2/plugins/flarm/LICENSE).
 
 Third-party components keep their own licences:
 [`kraken_doa_v2/THIRD_PARTY_NOTICES.md`](kraken_doa_v2/THIRD_PARTY_NOTICES.md),

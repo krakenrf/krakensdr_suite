@@ -4133,14 +4133,21 @@ Edit `include/config.hpp`:
   third-party expression (0-2.4 % of fingerprints - v1.0's matrix file: 97
   %). Some likeness to v1.0's own generator / receiver idioms (same model,
   shared `uat_gen.py` template) - KrakenRF's code, not a licence issue.
-  NEVER consult the OGN tracker / SoftRF / flare / gr-flarm / ogn-rf code
-  for this plugin
-- `ogn_ldpc_matrix.hpp` = the protocol's LDPC(208,160) parity-check matrix:
-  interoperability data (the code every tracker transmits) taken from the
-  OGN tracker (no licence) - same content as v1.0's, hex rows in packet byte
-  order, read by the decoder AND `tools/flarm_gen.py`. Its use rests on it
-  being protocol data; written permission from the OGN tracker's author
-  would settle it
+  LICENCE since 2026-10-23: GPL-3.0, the plugin's own (`plugins/flarm/
+  LICENSE`, README *Licence*; built without `lib/` like every plugin with a
+  LICENSE). Code under GPL-3.0 or a licence compatible with it (the OGN
+  project's glidernet/diy-tracker, SoftRF, ogn-rf) may be used here now,
+  with its notices; code WITHOUT a licence - the author's esp32 / nRF52 /
+  CubeCell / ogn-tracker / radiolib-ogn repositories - never. Still no
+  decryption of FLARM's payload
+- `ogn_ldpc_matrix.hpp` (GPL-3.0-only) = the protocol's LDPC(208,160)
+  parity-check matrix (the code every tracker transmits) - hex rows in
+  packet byte order, read by the decoder AND `tools/flarm_gen.py`. From the
+  OGN project's glidernet/diy-tracker (`ldpc.cpp`, LDPC_ParityCheck_n208k160:
+  48 / 48 rows identical, in the same order - checked 2026-10-23; GPL-3.0
+  since 2015-06-25, its author Pawel Jalocha committed ldpc.cpp there after
+  that, last in 2017). v1.0 / v2.0 until then had it from the unlicensed
+  esp32-ogn-tracker (same rows)
 - Files: decoder.cpp (plugin, band plans / tune, per-aircraft state,
   outputs), receiver.* (FFT burst detection, arbitration, demodulation, sync
   search), packet.* (FLARM CRC, OGN LDPC check + min-sum, TEA de-whitening,

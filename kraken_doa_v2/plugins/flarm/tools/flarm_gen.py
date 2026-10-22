@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 KrakenRF Inc. - part of the KrakenSDR `flarm` decoder
+# plugin, licensed under the GNU General Public License version 3 (LICENSE in
+# the plugin's folder, plugins/flarm; README.md "Licence").
 """Synthetic FLARM / OGN tracker packets at known bearings on kraken_doa's UCA,
 at 2.4 MHz - test signals for the flarm plugin (decoding, ID separation).
 
