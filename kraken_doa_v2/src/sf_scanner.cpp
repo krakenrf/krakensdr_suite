@@ -18,6 +18,7 @@
 #include "sf_scan_plan.hpp"
 #include "signal_processing/audio_mixer.hpp"
 #include "signal_processing/fft_processor.hpp"
+#include "signal_processing/noise_floor.hpp"
 #include "utils/json_escape.hpp"
 
 #include <algorithm>
@@ -452,7 +453,7 @@ private:
         Specs() { std::fill(std::begin(got), std::end(got), -1); }
     };
     // an entry's level (dB over the floor) on slot s; -999 = not measurable
-    float level(Specs& sp, const Slot& s, const savedfreq::ScanEntry& e) const;
+    float level(Specs& sp, const Slot& s, const savedfreq::ScanEntry& e);
 
     Cfg cfg_;
     uint32_t id_;
@@ -462,6 +463,8 @@ private:
     int plan_tuners_ = -1;         // wideband: the tuner count the layout was made for
     Layout lay_;                   // the tuners a band is received with (layout_for)
     bool wide_place_ = false;      // wideband: pre-place the VFO once the stream has the new tuning
+    std::vector<float> shape_;     // wideband: the tuners' common response (nfloor::shape_db)
+    uint32_t shape_ver_ = 0;
     State st_ = TUNE;
     bool need_tune_ = false;       // the plan changed while listening: a new turn when it resumes
     std::vector<Slot> slots_;
@@ -789,11 +792,23 @@ int Scan::entry_tuner(const Slot& s, int64_t hz, int64_t* centre) const {
     return std::clamp(active_channel.load(), 0, MAX_CHANNELS - 1);
 }
 
-float Scan::level(Specs& sp, const Slot& s, const savedfreq::ScanEntry& e) const {
+float Scan::level(Specs& sp, const Slot& s, const savedfreq::ScanEntry& e) {
     int64_t tc = 0;
     const int ch = entry_tuner(s, e.hz, &tc);
     if (ch < 0 || ch >= MAX_CHANNELS) return -999.0f;
-    if (sp.got[ch] < 0) sp.got[ch] = fft(ch, &sp.spec[ch], &sp.floor_db[ch]) ? 1 : 0;
+    if (sp.got[ch] < 0) {
+        sp.got[ch] = fft(ch, &sp.spec[ch], &sp.floor_db[ch]) ? 1 : 0;
+        // wideband scan mode: the tuners' common response (tilt, roll-off)
+        // taken off as the stitched spectrum does - its floor (nfloor) is that
+        // flattened spectrum's, so this is the level the page shows (and the
+        // scan's squelch line is drawn against)
+        if (sp.got[ch] && cfg_.wideband) {
+            std::vector<float>& v = sp.spec[ch];
+            nfloor::shape_db(static_cast<int>(v.size()), shape_, &shape_ver_);
+            if (shape_.size() == v.size())
+                for (size_t i = 0; i < v.size(); i++) v[i] -= shape_[i];
+        }
+    }
     if (!sp.got[ch]) return -999.0f;
     return entry_level(sp.spec[ch], sp.floor_db[ch], static_cast<double>(tc), SAMPLE_RATE, e.hz, channel_width_hz(e));
 }

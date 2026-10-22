@@ -1088,11 +1088,19 @@ Edit `include/config.hpp`:
   stream frequencies) at its offset from the spread's middle ((first + last
   tuner) / 2 - tuner n / 2 with an odd count), each entry measured on its
   nearest tuner's FFT (`entry_tuner`, `Specs` = each tuner's spectrum once
-  per tick), no calibration / hold; the plan is re-made when the edge clip
-  or the tuner count changes (heimdall respaces the tuners). A manual
-  WIDEBAND_FREQ stops it; at stop the gain is saved (no FREQ in wideband, as
-  before). Test: `t_sfscan_wide.py` (the fake spreads its tuners like
-  heimdall)
+  per tick) with the tuners' common response taken off first
+  (`nfloor::shape_db`, as the stitched spectrum does: its floor -
+  `channel_noise_floor` = nfloor's in wideband mode - is that flattened
+  spectrum's, so the level = what the page shows; measured on the raw
+  spectrum against that floor, plain noise read 15 dB on one tuner after the
+  merge of the wideband alignment, 13396fb, in the test), no calibration /
+  hold; the plan is re-made when the edge clip or the tuner count changes
+  (heimdall respaces the tuners). A manual WIDEBAND_FREQ stops it; at stop
+  the gain is saved (no FREQ in wideband, as before). Test:
+  `t_sfscan_wide.py` (the fake spreads its tuners like heimdall and, in
+  wideband mode, gives them the real response shape - WB_SHAPE_DEFAULT read
+  from noise_floor.cpp: with flat noise the alignment measured gain steps of
+  several dB between tuners and chained them into one tuner's floor)
 - Scanner (`sf_scanner.cpp`, one thread, 100 ms ticks; class `Scan`, state
   TUNE -> SETTLE -> WATCH -> LISTEN): SLOTS = the array (coherent: 1, the
   FFT of `active_channel`; wideband: 1, the whole spread) or every tuner NO
