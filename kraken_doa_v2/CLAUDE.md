@@ -814,9 +814,10 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   `on_map_point`, ttl clamped 10 s..24 h) / MAP_REMOVE -> `Report::map_set /
   map_remove` (key plugin|id, max 2000 per decoder, expired by ttl).
   NaN marks unknown fields: test with `is_finite_value()`
-  (utils/parse_num.hpp), never `std::isfinite` - kraken_doa builds with
-  -Ofast, which folds it to true (a `"h":nan` broke the page's JSON.parse);
-  digi_test (-O2) doesn't show that
+  (utils/parse_num.hpp) - kraken_doa built with -Ofast until 2026-10-23,
+  which folded `std::isfinite` to true (a `"h":nan` broke the page's
+  JSON.parse; digi_test (-O2) didn't show that); its Makefile adds
+  -fno-finite-math-only now, and is_finite_value is right under any flags
 - The protocol receivers live in the plugins (`plugins/<id>/<id>.cpp`), on
   the shared library `plugins/lib/` (libkrakendig.a): `dig_common` (the
   RxContext / Report / Options interface they were written against, mapped
@@ -6074,8 +6075,7 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   bbox / a pane's width x dpr). Transport-level like SUBSCRIBE (never reaches
   the control handler, not persisted, per connection). The first one moves
   the socket off TOPIC_FFT (the shared type 0 / 6 broadcast) into
-  `g_spec_sockets`. Junk is ignored (`is_finite_value`, not std::isfinite:
-  -Ofast)
+  `g_spec_sockets`. Junk is ignored (`is_finite_value`)
 - Every 50 ms tick `build_fft_message(&snap, legacy)` runs as before (it
   feeds the scanners and stitches the wideband scan's spectrum) and also copies
   each display's normalized full-resolution spectrum into a
@@ -6996,8 +6996,8 @@ for (size_t i = 0; i < num_samples; i++) {
 data receiver): each channel's DC offset is an EMA of packet means (k = 0.05
 per ~7 ms packet, corner ~1 Hz), subtracted from every sample. Subtracting
 each packet's OWN mean was a ~150 Hz-wide notch at the centre (it removed a CW
-beacon or AM carrier parked there). The seed is a flag, not NaN: `-Ofast`
-assumes no NaNs.
+beacon or AM carrier parked there). The seed is a flag, not NaN (written for
+the `-Ofast` build of then, which assumed no NaNs).
 
 ### 2. Decimation Architecture
 
