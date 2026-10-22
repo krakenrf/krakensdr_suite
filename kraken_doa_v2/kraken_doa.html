@@ -2553,6 +2553,23 @@ let fpHover = null;
 // transcripts (oldest first), how many came while the Voice tab wasn't shown
 // (infoRenderTabs reads these - it can run before that section is evaluated)
 let v2tStatus = null, v2tList = [], v2tUnseen = 0;
+// The demod a VFO had before it was switched to Digital and whether it was
+// heard (🔊): VFO id -> {demod, audio}. setDecimatorDemodMode keeps it, the
+// decoder tab's "🔊 Listening" and the card's Demod list go back to it. Per
+// browser (localStorage kraken_dig_demod_before)
+const DEMOD_ANALOG = ['WBFM', 'NBFM', 'AM'];
+const digDemodBefore = (() => {
+  const d = {};
+  try {
+    const o = JSON.parse(localStorage.getItem('kraken_dig_demod_before') || '{}');
+    for (const k in (o && typeof o === 'object') ? o : {})
+      if (o[k] && DEMOD_ANALOG.includes(o[k].demod)) d[k] = {demod: o[k].demod, audio: !!o[k].audio};
+  } catch (e) {}
+  return d;
+})();
+function digDemodBeforeSave() {
+  try { localStorage.setItem('kraken_dig_demod_before', JSON.stringify(digDemodBefore)); } catch (e) {}
+}
 // transcripts' DoA lobes shown on the 🗺 map (id -> {L, col, el}) and those
 // asked for (mapDrawNow -> v2tLobeDraw reads them)
 let v2tLobes = new Map(), v2tLobeWant = new Set();
@@ -7097,12 +7114,21 @@ function toggleVfoAudio(id) {
   if (dec) setVfoAudio(id, !decAudioOn(dec));
 }
 
-function setDecimatorDemodMode(id, mode) {
+// keepBw: leave the bandwidth as it is (going back from Digital to the demod
+// the VFO had before it - entering Digital kept the bandwidth)
+function setDecimatorDemodMode(id, mode, keepBw) {
   send('SET_DECIMATOR_DEMOD:' + id + ':' + mode);
 
   // Update local state
   const dec = decimatorInfo.find(d => d.id === id);
   if (dec) {
+    if (mode === 'DIGITAL' && DEMOD_ANALOG.includes(dec.demod_mode)) {
+      digDemodBefore[id] = {demod: dec.demod_mode, audio: decAudioOn(dec)};
+      digDemodBeforeSave();
+    } else if (mode !== 'DIGITAL' && digDemodBefore[id]) {
+      delete digDemodBefore[id];
+      digDemodBeforeSave();
+    }
     dec.demod_mode = mode;
   }
   updatePlotTitle();
@@ -7123,10 +7149,19 @@ function setDecimatorDemodMode(id, mode) {
     if (have + 1e-6 < need) digFixBandwidthFor(id);
     return;
   }
+  if (keepBw) return;
   // Automatically set appropriate bandwidth for the mode
   // WBFM: 240 kHz (index 7), NBFM/AM: 16 kHz (index 20)
   const bwIndex = (mode === 'WBFM') ? 7 : 20;
   setDecimatorBandwidthFromUI(id, bwIndex);
+}
+
+// The card's Demod list: back to the demod the VFO had before Digital keeps
+// the bandwidth (a 400 kHz RDS VFO stays wide enough for its 92 kHz SCA)
+function decDemodPicked(id, mode) {
+  const dec = decimatorInfo.find(d => d.id === id);
+  const before = digDemodBefore[id];
+  setDecimatorDemodMode(id, mode, !!(dec && dec.demod_mode === 'DIGITAL' && before && before.demod === mode));
 }
 
 function requestDecimatorInfo() {
@@ -7447,7 +7482,7 @@ function updateDecimatorList(info) {
       </div>
       <div class="dec-row">
         <label>Demod:</label>
-        <select id="dec-demod-${dec.id}" onchange="setDecimatorDemodMode(${dec.id}, this.value)" style="flex:1">
+        <select id="dec-demod-${dec.id}" onchange="decDemodPicked(${dec.id}, this.value)" style="flex:1">
           <option value="WBFM" ${dec.demod_mode === 'WBFM' ? 'selected' : ''}>WBFM</option>
           <option value="NBFM" ${dec.demod_mode === 'NBFM' ? 'selected' : ''}>NBFM</option>
           <option value="AM" ${dec.demod_mode === 'AM' ? 'selected' : ''}>AM</option>
@@ -10332,16 +10367,35 @@ function addTouchHandlers(el, down, move, up) {
 
   function digSetOptFor(id, key, val) { send('DIGITAL_OPT:' + id + ':' + key + ':' + val); }
 
+  // The demod "🔊 Listening" goes back to: the one the VFO had before
+  // Digital, else WBFM on a VFO as wide as an FM broadcast channel (Digital
+  // set by another page), else none (it is only muted, as before)
+  function digListenBack(d) {
+    const p = digDemodBefore[d.id];
+    if (p) return p.demod;
+    const bwMhz = (bwo[d.bandwidth_index] || {}).bandwidth ?? d.bandwidth_mhz;
+    return bwMhz >= 0.15 ? 'WBFM' : '';
+  }
+
   // Listen: hear this VFO (🔊, with any others heard) with the Digital
-  // demodulator, audio on; while listening: mute it again
+  // demodulator, audio on; while listening: back to the demod it had before
+  // (heard or muted as it was then, the bandwidth kept) - the RDS plugin's
+  // SCA audio back to the station's WBFM
   function digListenFor(id) {
     const d = digDec(id);
     if (!d) return;
     if (decAudioOn(d) && d.demod_mode === 'DIGITAL' && fmEnabled) {
-      setVfoAudio(d.id, false);
+      const p = digDemodBefore[d.id], back = digListenBack(d);
+      if (back) {
+        setDecimatorDemodMode(d.id, back, true);
+        if (p && !p.audio) setVfoAudio(d.id, false);
+      } else {
+        setVfoAudio(d.id, false);
+      }
     } else {
-      if (!decAudioOn(d)) setVfoAudio(d.id, true);
+      // the demod first: it remembers whether the VFO was heard
       if (d.demod_mode !== 'DIGITAL') setDecimatorDemodMode(d.id, 'DIGITAL');
+      if (!decAudioOn(d)) setVfoAudio(d.id, true);
       if (!fmEnabled) tfm();
     }
     setTimeout(digRenderAll, 300);
@@ -11370,6 +11424,11 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (bad.length) warn += `<div class="dig-warn" style="display:block">D${id}: ${bad.map(x => digEsc(x.error || (x.name + ': ' + x.state))).join('<br>')}</div>`;
     const vs = st && st.voice && st.voice.state;
     const hasVoice = digHasVoice(mode, st);
+    const back = d && listening ? digListenBack(d) : '';
+    const listenTip = !listening
+      ? 'Play this VFO\'s decoded audio (digital voice; RDS: an SCA or the main programme): hears it (🔊, with any other VFOs heard) with the Digital demodulator. Click again to go back'
+      : back ? `Hearing this VFO's decoded audio - click to go back to ${back}` + (digDemodBefore[id] && !digDemodBefore[id].audio ? ' (muted, as it was)' : '')
+      : 'Hearing this VFO\'s decoded audio - click to mute it';
     const hasMessages = digHasMessages(mode, st);
     const voice = st && st.detected === 'mpt1327' ? 'MPT1327 voice is analogue: tune a VFO to the granted channel with NBFM'
       : !hasVoice ? '' : (listening ? (vs || 'no voice call') : 'voice not played');
@@ -11377,7 +11436,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     return `<div class="info-dec-settings dig-vfo-row">` +
         `<span class="dig-vfo" style="border-color:${getDecimatorColor(id)}" title="${digEsc(txt)}"><span style="color:${col}">●</span> D${id} · ${digMhzOf(id)} MHz</span>` +
         `<label>Mode: <select class="dig-mode-sel" data-vfo="${id}" onchange="digSetModeFor(${id}, this.value)">${digModeOptions(mode)}</select></label>` +
-        (hasVoice ? `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="${listening ? 'Hearing this VFO\'s decoded digital voice - click to mute it' : 'Play this VFO\'s decoded digital voice: hears it (🔊, with any other VFOs heard) with the Digital demodulator'}">${listening ? '🔊 Listening' : '🔊 Listen'}</button>` : '') +
+        (hasVoice ? `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="${digEsc(listenTip)}">${listening ? '🔊 Listening' : '🔊 Listen'}</button>` : '') +
         (voice ? `<span class="v">${digEsc(voice)}</span>` : '') +
         opts +
         `<label title="Also log the messages a control channel repeats constantly (system broadcasts, Aloha / acknowledgement CSBKs, GPS sentences)"><input type="checkbox" ${o.verbose ? 'checked' : ''} onchange="digSetOptFor(${id}, 'verbose', this.checked ? 1 : 0)"> Log all</label>` +
@@ -13743,7 +13802,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                         device: ['name', 1], path: ['info', 1], cell: ['info', 1], station: ['dist', 1], sonde: ['dist', 1],
                         site: ['name', 1], navaid: ['name', 1], radar: ['name', 1], interrogator: ['name', 1],
                         gs: ['name', 1], flarm: ['dist', 1], sar: ['heard', 1], collar: ['name', 1], node: ['dist', 1],
-                        talker: ['heard', 1]};
+                        broadcast: ['name', 1], talker: ['heard', 1]};
   const RDF_SORT_KEYS = {
     vfo: t => t.vfo,
     name: t => rdfShortName(t).toLowerCase(),
@@ -14056,15 +14115,16 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   const RDF_PK_KIND = {ais: 'ship', adsb: 'aircraft', dme: 'beacon', ism: 'device', aprs: 'station',
                        radiosonde: 'sonde', tetra: 'site', mpt1327: 'site', ils: 'navaid', radar: 'radar',
                        ssr1030: 'interrogator', uat: 'aircraft', flarm: 'flarm', beacon406: 'sar', lora: 'node',
-                       wildlife: 'collar'};
+                       wildlife: 'collar', rds: 'broadcast'};
   // kinds that report where they are (their decoder's map points, same id):
   // Dist / Δ pos columns, the position check
   const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde', 'gs', 'flarm', 'sar', 'node']);
   // what one of their packets is called
   const RDF_PK_UNIT = {beacon: 'pulse pair', device: 'transmission', site: 'slot', sonde: 'frame', navaid: 'block', radar: 'pulse',
-                       interrogator: 'interrogation', gs: 'frame', sar: 'burst', node: 'frame', collar: 'pulse'};
+                       interrogator: 'interrogation', gs: 'frame', sar: 'burst', node: 'frame', collar: 'pulse',
+                       broadcast: 'group'};
   // how a kind is named in "Every ...", counts and the position check
-  const RDF_KIND_WORD = {flarm: 'aircraft', gs: 'ground station', sar: 'distress beacon'};
+  const RDF_KIND_WORD = {flarm: 'aircraft', gs: 'ground station', sar: 'distress beacon', broadcast: 'broadcast station'};
   function rdfKind(t) {
     // a plugin's spatial talker: a mobile network cell (cells plugin, by
     // its physical cell ID) or a path of a TV signal (dtv plugin with path
@@ -14104,7 +14164,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
     return {ship: '⛴ ', aircraft: '✈ ', beacon: '📡 ', device: '📟 ', path: '📶 ', cell: '📱 ', station: '📻 ',
             sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 ', gs: '🗼 ', tone: '🔔 ', sar: '🆘 ', node: '📶 ',
-            collar: '🐾 '}[k] || '';
+            collar: '🐾 ', broadcast: '🎙 '}[k] || '';
   }
   function rdfKinds(ts) {   // one word for a list of talkers: the common kind, else 'talker'
     const ks = new Set(ts.map(rdfKind));
@@ -14223,6 +14283,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                     sar: ['Beacon ID', 'Status · type · country · ID', 'Bursts'],
                     collar: ['Collar (MHz)', 'Name · ppm · mode', 'Pulses'],
                     node: ['Node', 'Name · packet', 'Frames'],
+                    broadcast: ['Station (PI)', 'Call sign · PS · MHz', 'Groups'],
                     talker: ['ID', 'Info', 'Tx']};
       const head = heads[kinds] || heads.talker;
       // position columns while a listed talker has a reported position (its

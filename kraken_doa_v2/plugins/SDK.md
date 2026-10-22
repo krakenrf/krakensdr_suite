@@ -63,6 +63,11 @@ plugins/
 │                         the raw samples, pulse trains (period, modes from the collar's own rate),
 │                         region / vendor profiles (profiles.hpp), coded (Lotek / Motus-style) tags;
 │                         a packet talker per collar on its 1 kHz channel
+├── rds/                  FM broadcast at the VFO's own rate: every antenna combined before the FM
+│                         discriminator (multichannel), RDS / RBDS (biphase BPSK, block sync + soft
+│                         correction, every group type), RDS2 streams, the MPX's subcarriers classified
+│                         (SCA FM audio / FSK data / DARC), SCA or main-programme audio; a packet talker
+│                         per station (PI) per RDS group
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
@@ -573,9 +578,10 @@ scene of several transmitters is too big for uca_scene.py's in-memory
 mixing (5 antennas x 12 s = 2.3 GB complex128): `radar/tools/radar_gen.py`
 writes its scene at known bearings itself, in 0.1 s pieces (so do
 `ssr1030/tools/ssr_gen.py`, `uat/tools/uat_gen.py`, `adsb/tools/adsb_gen.py`,
-`dme/tools/dme_gen.py`, `ism/tools/ism_gen.py` and
+`dme/tools/dme_gen.py`, `ism/tools/ism_gen.py`,
 `flarm/tools/flarm_gen.py` - the last two with simultaneous packets on
-different channels of one VFO).
+different channels of one VFO - and `rds/tools/rds_gen.py`: FM stations,
+also at 480 kHz for an offline test).
 
 **Who transmits, again**: a message ABOUT a transmitter isn't always FROM
 it - UAT's TIS-B / ADS-R messages describe aircraft but are sent by a
