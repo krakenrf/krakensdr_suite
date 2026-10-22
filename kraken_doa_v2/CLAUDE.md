@@ -865,13 +865,25 @@ Edit `include/config.hpp`:
   up on (`paneSendGain`); NOTHING is sent when the gain already is that (a
   gain change recalibrates the array). A toast says what happened (+ the
   gain)
-- Spectrum: `sfDrawSpectrum` (drawBox, before the AI badges) - tags in the
+- Spectrum: `sfDrawSpectrum` (drawBox's `drawBoxTags`, before the AI badges) - tags in the
   category colour from y 18 (under the VFO labels) in up to 3 rows (2 below
   200 px), entries within 3 px share one ("Name +2"), names over 22 chars
   cut; no room = a triangle at the top; a faint dotted line down to the
   bottom (`sfLayoutTags` / `sfDrawTag`). `handleDown` -> `sfMarkerHit` (after
   `aiMarkerHit`) tunes instead of placing the VFO (`sfMarkerConsumed` eats
-  the click), `handleMove` -> `sfMarkerHover` (tooltip + hand). Independent
+  the click), `handleMove` -> `sfMarkerHover` (tooltip + hand).
+  `drawBoxTags` (tags + AI badges) runs on EVERY path through drawBox -
+  the spectrum drag's saved-VFO-bars path (`scrollDragSavedBoxes`, during a
+  drag and until the retune settles) and the discrete scan's used to
+  return before them: the tags vanished while dragging (the user's report
+  2026-10-22). It also keeps the hand cursor over a tag / badge from the
+  mouse's last position (`fpHover`, set first in handleMove, null on
+  mouseleave): drawBox resets the cursor from the VFO bars on every
+  spectrum frame (~20 Hz), and the hand, set only on mouse moves,
+  flickered with the arrow. A tag wins over a VFO bar under it (as the
+  click does). Test (job scratch): t_sftags_ui.py - real mouse events, the
+  committed page 0 / 40 hand samples + 0 / 10 tags during a drag, fixed
+  40 / 40 + 10 / 10. Independent
   panes: `sfPaneTags` from `paneDrawOverlay` (9 px, 2 rows, lines through
   the spectrum part), `p.sf` hit-tested in `paneDown` (tunes with
   `{tuner: p.ch}`) and `paneMove` (title + hand). Hidden categories (👁)

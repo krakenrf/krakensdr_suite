@@ -2436,6 +2436,9 @@ const sfUi = (() => {
   return d;
 })();
 let sfSpecRects = [], sfMarkerConsumed = false;
+// the mouse over the main spectrum ('fo' canvas px; null = not over it):
+// drawBox keeps the hand cursor over a saved-frequency tag / AI badge with it
+let fpHover = null;
 // 🗣 Voice to Text (see 🗣 VOICE TO TEXT): the backend's status, the
 // transcripts (oldest first), how many came while the Voice tab wasn't shown
 // (infoRenderTabs reads these - it can run before that section is evaluated)
@@ -4396,6 +4399,7 @@ function drawBox() {
   // Hide tuning bar during discrete scanning (only show when LOCKED or not scanning)
   if (scannerRunning && scannerState === 'SCANNING') {
     c.boxes = [];
+    drawBoxTags(c, ctx, w, h);
     return; // Don't draw tuning bars while scanning
   }
 
@@ -4446,6 +4450,9 @@ function drawBox() {
     decimatorInfo.forEach(dec => {
       if (vfoLocked(dec)) drawLockedVfoLine(ctx, u.valToPos(center + dec.freq_offset_hz / 1e6, 'x'), h, dec);
     });
+    // the tags stay while the spectrum is dragged (they follow its data, as
+    // the spectrum does; this path returned before them - they vanished)
+    drawBoxTags(c, ctx, w, h);
     return;  // Skip normal drawing
   }
 
@@ -4611,16 +4618,26 @@ function drawBox() {
     });
   }
 
-  // 📻 Saved frequencies: tags at the top + faint lines (sfDrawSpectrum)
-  sfDrawSpectrum(ctx, w, h);
-
-  // AI assistant: an "AI" badge above every signal it identified
-  aiDrawMarkers(ctx, w);
+  drawBoxTags(c, ctx, w, h);
 
   // Also draw on waterfall overlay
   if (waterfall && waterfall.initialized) {
     waterfall.drawOverlay(decimatorInfo, barCenterFreq(), activeDecimatorId);
   }
+}
+
+// drawBox's top layer, on every path through it: 📻 the saved-frequency tags
+// (sfDrawSpectrum) and the AI assistant's badges above the signals it
+// identified; then the hand cursor while the mouse is on one. drawBox runs
+// with every spectrum frame and sets the cursor from the VFO bars ('default'
+// off them) - the hand, set only on mouse moves, flickered with the arrow
+// ~20 times a second. A tag wins over a VFO bar under it, as for a click
+// (handleDown tests the tags first)
+function drawBoxTags(c, ctx, w, h) {
+  sfDrawSpectrum(ctx, w, h);
+  aiDrawMarkers(ctx, w);
+  if (!fpHover || isDragging || isDraggingEdge || isScrollDragging || squelchDrag) return;
+  if (sfSpecAt(sfSpecRects, fpHover.x, fpHover.y, 3) || aiMarkerAt(fpHover.x, fpHover.y)) c.style.cursor = 'pointer';
 }
 
 
@@ -5038,7 +5055,15 @@ function pointerClick(s, e) {
 }
 
 function handleDown(e) { if (aiMarkerHit(e) || sfMarkerHit(e)) return; pointerDown(fftSurface, e); }
-function handleMove(e) { pointerMove(fftSurface, e); if (!isDragging && !isDraggingEdge && !isScrollDragging && !aiMarkerHover(e)) sfMarkerHover(e); }
+function handleMove(e) {
+  const fo = $id('fo');
+  if (fo) {   // first: pointerMove's redraw keeps the hand over a tag with it (drawBoxTags)
+    const r = fo.getBoundingClientRect();
+    fpHover = {x: e.clientX - r.left, y: e.clientY - r.top};
+  }
+  pointerMove(fftSurface, e);
+  if (!isDragging && !isDraggingEdge && !isScrollDragging && !aiMarkerHover(e)) sfMarkerHover(e);
+}
 function handleUp(e) { pointerUp(fftSurface, e); }
 function handleClick(e) { if (aiMarkerConsumed || sfMarkerConsumed) return; pointerClick(fftSurface, e); }
 function handleWaterfallDown(e) { pointerDown(wfSurface, e); }
@@ -7261,6 +7286,7 @@ function createPlot() {
         c.addEventListener('mouseup',handleUp);
         addTouchHandlers(c,handleDown,handleMove,handleUp);
         c.addEventListener('mouseleave',()=>{
+          fpHover=null;
           // Clear the ACTUAL hover state props (c.ih/c.he were leftovers
           // from an older version - the highlight/cursor used to stay stuck)
           if(c.hoveredBox||c.hoveredEdge||c.hoveredHandle){
