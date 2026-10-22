@@ -1037,7 +1037,15 @@ Edit `include/config.hpp`:
   heading's = all / none of it (its rows back to 0); clicks are
   preventDefault'ed (no optimistic update - the list's broadcast redraws).
   `#sfs` panel above the categories: ▶ Scan (`sfsStart`, the selected VFO) /
-  ■ Stop / ⏸ Hold / ⏭ Skip, "N ticked", ⚙ settings (squelch, delay, dwell,
+  ■ Stop / ⏸ Hold / ⏭ Skip, "N ticked", ┈ Sq (the scan's squelch as a
+  DOTTED yellow line across the main spectrum - `sfsDrawSquelch` from
+  drawBox, beside the other scanners' cyan / magenta lines - and on the
+  independent panes the scan watches, every pane while stopped -
+  `sfsPaneSquelch` from paneDrawOverlay; label "📻 Scan N dB"; it follows
+  the squelch slider while dragged, `sfsSqDrag` in the globals block as
+  drawBox can run before the section; per browser `sfUi.sq`, off by
+  default; a VFO's FFT squelch is the DASHED yellow line inside its bar),
+  ⚙ settings (squelch, delay, dwell,
   longest stay, tick all / none), the status (`sfsRender`: 🔊 name · MHz ·
   dB · time → VFO, or "Scanning N frequencies", the watched band(s) +
   tuners, "N left out" with the reasons as its tooltip). Rows: `.sfs-cur`
