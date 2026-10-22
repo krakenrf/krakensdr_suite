@@ -2096,16 +2096,21 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   into such a plugin. Code ported from
   permissive code keeps its full notice in the file and gets a row (+ the
   licence text) in `kraken_doa_v2/THIRD_PARTY_NOTICES.md`
+- The KrakenSDR Android app (krakensdr_rdf_android) is KrakenRF's own (the
+  user, 2026-10-22): its log formats and DF grid ideas, used by mobile DF and
+  the log replay, need no notice
 - A new dependency: a row in the app's `THIRD_PARTY_NOTICES.md`; if binaries
   contain it, its licence file in `scripts/collect-licenses.sh` (run by
   `windows/package.sh` -> `licenses/` and the Dockerfile ->
   `/usr/share/doc/krakensdr/`, with `SOURCE.txt` = where the GPL programs'
   source is)
-- OPEN (audit 2026-10-21, waiting for the user's decision):
-  `cells/lte_tables.hpp` was generated from srsRAN's (AGPL) copy of the 3GPP
-  tables. Don't extend it until it's settled. (`plugins/ism`, which follows
-  rtl_433's decoders one by one, was settled 2026-10-22: GPL-2.0-or-later, its
-  own licence - above.) Done in the audit:
+- Audit 2026-10-21, both findings settled 2026-10-22: `plugins/ism`
+  (follows rtl_433's decoders one by one) = GPL-2.0-or-later, its own licence
+  (above); `cells/lte_tables.hpp` (was srsRAN's AGPL transcription of the
+  3GPP tables) is written by `cells/tools/lte_tables_gen.py` from the 3GPP
+  Word files themselves (TS 36.212 V19.3.0 / 36.213 V19.5.0, every entry
+  equal in the Release 8 versions; srsRAN's values were right - its
+  "corrected" TBS[6][0] 88 back to the standard's 328). Also done in the audit:
   p25's NID BCH encoder (was Morelos-Zaragoza's non-commercial bch3.c form)
   and the TETRA scrambler / interleaver / depuncturer (osmo-tetra's form)
   rewritten from the standards - bit-identical output (all 65536 NIDs,

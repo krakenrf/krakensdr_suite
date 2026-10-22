@@ -3597,9 +3597,12 @@ Edit `include/config.hpp`:
   0.2 s, the cell served longest ago first; read again after 600 s; a
   changed SIB1 value tag clears the SI messages), `lte_info.hpp` (36.101
   band table EARFCN <-> MHz incl. uplink, NR bands, NR-ARFCN, MCC ->
-  country). `lte_tables.hpp` (QPP, TBS, TBS 1C) was generated from srsRAN's
-  copy of the 3GPP tables (QPP pairs checked to be permutations; its
-  TBS[6][0] = 328 corrected to 36.213's 88)
+  country). `lte_tables.hpp` (QPP, TBS, TBS 1C, MCS -> I_TBS) is written by
+  `tools/lte_tables_gen.py` from the 3GPP specifications' Word files (3GPP
+  archive zips; 3gpp.org answers curl's default User-Agent with 403): TS
+  36.212 V19.3.0 / 36.213 V19.5.0, every entry equal in V8.8.0; TBS[6][0] is
+  328 in every release (2026-10-22: it had been "corrected" to 88 from the
+  srsRAN copy the file came from - never read, SI DCI 1A uses N_PRB 2 / 3)
 - Output: table Cell, PCI, Mode, Operator, TAC, eNB / cell, Band, (E)ARFCN,
   Bandwidth, Ports / beams, Power, Above noise, Timing, Spread + every row's
   details (`table_detail`: physical, MIB, downlink, SIB1, its DCI, SI fields

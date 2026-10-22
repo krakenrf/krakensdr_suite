@@ -1,6 +1,8 @@
 #pragma once
 
-// LTE tables (3GPP TS 36.212 / 36.213), generated from the standard's tables:
+// LTE tables taken from the 3GPP specifications (written by
+// tools/lte_tables_gen.py from the specifications' Word files: 3GPP TS
+// 36.212 V19.3.0, TS 36.213 V19.5.0; the tables are unchanged since Release 8):
 //   QPP turbo interleaver parameters (36.212 Table 5.1.3-3)
 //   transport block sizes (36.213 Table 7.1.7.2.1-1, I_TBS 0..26 x N_PRB 1..110)
 //   format 1C transport block sizes (36.213 Table 7.1.7.2.3-1)
@@ -108,7 +110,7 @@ constexpr uint32_t TBS[27][110] = {
         8760, 8760, 8760, 9144, 9144, 9144, 9144, 9528, 9528, 9528, 9528, 9528,
     },
     {
-        88, 176, 256, 392, 504, 600, 712, 808, 936, 1032, 1128, 1224, 1352, 1480,
+        328, 176, 256, 392, 504, 600, 712, 808, 936, 1032, 1128, 1224, 1352, 1480,
         1544, 1672, 1736, 1864, 1992, 2088, 2216, 2280, 2408, 2472, 2600, 2728, 2792, 2984,
         2984, 3112, 3240, 3368, 3496, 3496, 3624, 3752, 3880, 4008, 4136, 4136, 4264, 4392,
         4584, 4584, 4776, 4776, 4968, 4968, 5160, 5160, 5352, 5352, 5544, 5736, 5736, 5992,

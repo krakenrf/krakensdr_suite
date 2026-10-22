@@ -342,7 +342,12 @@ allocation and transport block sizes, 9.1 search spaces), TS 36.321 (5.3.1
 the RV of broadcast transmissions), TS 36.331 (MIB, SIB1, SystemInformation,
 SIB2 - SIB5; unaligned PER - ITU-T X.691), TS 36.101 5.7.3 (bands, EARFCN),
 TS 38.211 (NR: 7.4.2 PSS / SSS, 7.4.3 SS/PBCH block), TS 38.213 4.1, TS
-38.104 5.4 (NR-ARFCN, sync raster, GSCN), ITU-T E.212 (MCC). The QPP and
-transport block size tables (`lte_tables.hpp`) were generated from the
-standard's tables (as transcribed in srsRAN's sources, checked: every QPP
-pair is a permutation; one TBS entry differing from 36.213 corrected).
+38.104 5.4 (NR-ARFCN, sync raster, GSCN), ITU-T E.212 (MCC). The QPP,
+transport block size and MCS tables (`lte_tables.hpp`) are written by
+`tools/lte_tables_gen.py` from the specifications' own Word files (3GPP
+archive: TS 36.212 V19.3.0 Table 5.1.3-3, TS 36.213 V19.5.0 Tables 7.1.7.1-1,
+7.1.7.2.1-1 rows I_TBS 0-26, 7.1.7.2.3-1; every entry equal in the Release 8
+versions V8.8.0). They were first taken from srsRAN's transcription; the
+specifications gave the same values except I_TBS 6 / N_PRB 1, which is 328
+in every release (an earlier "correction" here had put 88 - a column the
+decoder never reads: format 1A for system information uses N_PRB 2 or 3).

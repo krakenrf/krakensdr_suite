@@ -674,7 +674,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .map-status {position:absolute;left:6px;bottom:6px;max-width:70%;background:rgba(22,33,62,.85);color:#b8cbe6;font-size:11px;padding:3px 7px;border-radius:3px;z-index:2;pointer-events:none}
 .map-status:empty {display:none}
 .map-offline {position:absolute;left:50%;top:40px;transform:translateX(-50%);max-width:85%;background:rgba(120,70,0,.9);color:#ffe0b2;font-size:12px;padding:5px 10px;border-radius:4px;z-index:2;pointer-events:none;text-align:center}
-.map-attr {position:absolute;right:0;bottom:0;background:rgba(255,255,255,.7);color:#333;font-size:10px;padding:1px 5px;z-index:2;pointer-events:none}
+.map-attr {position:absolute;right:0;bottom:0;background:rgba(255,255,255,.7);color:#333;font-size:10px;padding:1px 5px;z-index:2}
+.map-attr a {color:#0b57a4;text-decoration:underline}
 .map-pop {position:absolute;z-index:4;min-width:180px;max-width:280px;background:rgba(16,24,44,.96);border:1px solid #4fc3f7;border-radius:4px;color:#dbe8ff;font-size:12px;padding:6px 8px;box-shadow:0 2px 10px rgba(0,0,0,.5)}
 .map-pop .h {font-weight:bold;color:#fff;margin-bottom:3px;display:flex;gap:6px;align-items:baseline}
 .map-pop .h .x {margin-left:auto;cursor:pointer;color:#8aa;font-weight:normal}
@@ -2434,6 +2435,10 @@ const mapState = (() => {
   try { return Object.assign(d, JSON.parse(localStorage.getItem('kraken_map') || '{}')); } catch (e) { return d; }
 })();
 const mapPts = new Map();      // "vfo|plugin|id" -> point (server fields + rx time + trail)
+// OpenStreetMap's attribution (HTML): a link to its copyright page wherever its
+// data shows - tiles, the masts layer, the incident addresses Nominatim found
+// (https://osmfoundation.org/wiki/Licence/Attribution_Guidelines)
+const OSM_ATTR = '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors';
 const mapTiles = new Map();    // url -> {img, st: 'loading'|'ok'|'err', retry, used}
 let mapStation = null;         // [lat, lon] or null
 let mapSel = null;             // key of the point whose popup is open
@@ -9784,6 +9789,7 @@ function addTouchHandlers(el, down, move, up) {
            `📍 Incidents${n ? ' (' + n + ')' : ''}: addresses within <input type="number" id="geo-radius" min="10" max="1000" step="10" value="${r}" style="width:58px"` +
            ` onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="geoSetRadius(this.value)"> km of the station` +
            ` <span class="v">${digEsc(s)}</span>` +
+           (n ? ` <span class="v">· addresses ${OSM_ATTR}</span>` : '') +
            (n ? ` <button class="btn sm" type="button" onclick="if(confirm('Remove every incident?'))send('INCIDENTS_CLEAR')">Clear</button>` : '') +
            `</span></div>`;
   }
@@ -11311,7 +11317,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     // button showed its new state only after a click elsewhere. The focused
     // button gets the focus back (the same one by position)
     const ae = document.activeElement, inTop = ae && topEl.contains(ae);
-    const editing = inTop && (ae.tagName !== 'BUTTON' || (ddOpenSel && topEl.contains(ddOpenSel)));
+    // (a clicked link - the incidents' OpenStreetMap attribution - keeps the focus too)
+    const editing = inTop && ((ae.tagName !== 'BUTTON' && ae.tagName !== 'A') || (ddOpenSel && topEl.contains(ddOpenSel)));
     if (force || (topEl.dataset.html !== top && !editing)) {
       const btns = inTop ? [...topEl.querySelectorAll('button')] : [];
       const bi = btns.indexOf(ae);
@@ -12584,7 +12591,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // whether its points are sent. Per-browser view settings in localStorage.
   const MAP_LAYERS = {
     // max: the deepest tile zoom (beyond it, up to MAP_MAX_Z, its tiles are scaled up)
-    street: {name: 'Street', max: 19, attr: '© OpenStreetMap contributors',
+    street: {name: 'Street', max: 19, attr: OSM_ATTR,   // attr: HTML
              url: (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`},
     satellite: {name: 'Satellite', max: 19, attr: 'Imagery © Esri, Maxar, Earthstar Geographics · labels © Esri',
                 url: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`,
@@ -12969,11 +12976,24 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       if (!lg.innerHTML) lg.innerHTML = Object.values(MAST_CATS).map(c => `<span><i style="background:${c.col}"></i>${c.name}</span>`).join('');
       lg.style.display = mapState.masts ? 'flex' : 'none';
     }
-    const at = $id('map-attr');
-    if (at) at.textContent = MAP_LAYERS[mapState.layer].attr +
-      (mapState.masts && mapState.layer !== 'street' ? ' · masts © OpenStreetMap contributors' : '') +
-      (mapState.vs ? ' · terrain: Mapzen, SRTM, GMTED2010, ETOPO1 & others' : '');
+    mapAttrUpdate();
     if (typeof rdfRenderPanel === 'function') rdfRenderPanel();
+  }
+
+  // the attribution line (bottom right): the layer's, + OpenStreetMap's for
+  // the masts / incident addresses on a layer that isn't OpenStreetMap's, +
+  // the terrain's with the viewshed. Also from every draw - incidents come
+  // with the map pushes; the DOM is only touched when the text changes
+  function mapAttrUpdate() {
+    const at = $id('map-attr');
+    if (!at) return;
+    const osm = [];
+    if (mapState.masts) osm.push('masts');
+    for (const p of mapPts.values()) if (p.k === 'incident') { osm.push('addresses'); break; }
+    const h = MAP_LAYERS[mapState.layer].attr +
+      (osm.length && mapState.layer !== 'street' ? ' · ' + osm.join(' + ') + ' ' + OSM_ATTR : '') +
+      (mapState.vs ? ' · terrain: Mapzen, SRTM, GMTED2010, ETOPO1 &amp; others' : '');
+    if (at.dataset.html !== h) { at.dataset.html = h; at.innerHTML = h; }
   }
 
   function mapResize() {
@@ -13337,6 +13357,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
 
   function mapDrawNow() {
     if (!mapCv || !document.body.classList.contains('rp-map')) return;
+    mapAttrUpdate();
     const c = mapCtx;
     c.setTransform(mapDpr, 0, 0, mapDpr, 0, 0);
     c.fillStyle = mapState.layer === 'satellite' ? '#141a22' : '#1b2330';
