@@ -728,6 +728,11 @@ Edit `kraken_doa_v2/include/config.hpp`:
   broadcast stations take turns round and round). With each retune the VFO
   is pre-placed, muted, on the band's first frequency (ready when the array
   has recalibrated); while the array calibrates a locked VFO is muted.
+  Coherent: while it SEARCHES it holds heimdall's calibration (8092
+  `hold_calibration`, a 3 s lease renewed every second - heimdall_v2/CLAUDE.md
+  *Calibration hold*): retunes skip the 3 s cooldown + noise-source
+  calibration, so bands take turns in well under a second; a lock releases
+  it and the calibration starts at once (the VFO muted until it has run).
   Its own commands go through `apply_command` but are NOT saved
   (`sfscan::dispatching()`); the tuning it leaves is saved at stop. A manual
   retune, a mode change, removing its VFO or a playback stop it; refused in

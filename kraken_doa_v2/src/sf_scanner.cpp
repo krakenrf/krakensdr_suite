@@ -41,6 +41,15 @@ constexpr int64_t SETTLE_MS = 250;            // the retuned frequency in the st
 constexpr int64_t HEADER_TIMEOUT_MS = 6000;   // a retune not seen in the stream by then: that band is left out
 constexpr int64_t CAL_GIVE_UP_MS = 20000;     // phase state "calibrating" without the noise source: ignored after
 constexpr float HYST_DB = 3.0f;               // a frequency stays active down to squelch - this
+// heimdall's calibration HOLD while searching (coherent): a lease renewed
+// every HOLD_RENEW_MS for HOLD_LEASE_MS - a scan that ends without its
+// release (kraken_doa stopped) lets it lapse within the lease
+constexpr int HOLD_LEASE_MS = 3000;
+constexpr int64_t HOLD_RENEW_MS = 1000;
+// a lock with a calibration pending: muted until it has run - unless none
+// starts within this (a heimdall without the hold calibrates after its own
+// cooldown)
+constexpr int64_t CAL_START_WAIT_MS = 1500;
 constexpr int CONFIRM_TICKS = 2;              // over the squelch on this many polls in a row = active
 constexpr size_t MAX_ACT = 50, MAX_SKIPPED = 50;
 
@@ -209,6 +218,14 @@ bool phase_calibrating() {
 
 void broadcast(const std::string& s) { WebSocketServer::broadcast_json_message(s); }
 
+// heimdall's calibration hold (hold_calibration): ms > 0 = hold for that
+// long from now, 0 = release - a pending calibration starts at once
+void hold_calibration(int ms) {
+    char c[64];
+    snprintf(c, sizeof c, "{\"hold_calibration\":{\"hold_ms\":%d}}", ms);
+    ControlHandler::send_control_command(c);
+}
+
 std::string settings_json() {
     std::ostringstream o;
     o << "\"sq\":" << g_squelch.load() << ",\"dwell\":" << g_dwell.load() << ",\"hang\":" << g_hang.load()
@@ -260,6 +277,7 @@ private:
     void place(const savedfreq::ScanEntry& e, const Slot& s, bool heard);
     void resume(bool done);
     void next_turn();
+    void hold();
     void status(bool now);
     int64_t stream_hz(const Slot& s) const;
     bool fft(int ch, std::vector<float>* spec, float* floor_db) const;
@@ -289,6 +307,12 @@ private:
     int64_t t_active_ = 0;         // listening: last time it was over the squelch (or not measurable)
     int64_t listened_ms_ = 0;      // ... clean time on it so far (Longest stay)
     bool heard_ = false;           // ... the VFO heard now (muted while heimdall calibrates)
+    // ... locked with a calibration pending (right after a retune, the hold
+    // released): muted until it has run (cal_seen_: it started)
+    bool cal_wait_ = false, cal_seen_ = false;
+    int64_t cal_wait_t_ = 0;
+    bool holding_ = false;         // heimdall's calibration held (searching, coherent)
+    int64_t hold_sent_ = 0;
     float cur_db_ = -999;
     std::vector<std::string> act_;
     int64_t last_status_ = 0;
@@ -339,7 +363,27 @@ void Scan::tick() {
         case WATCH: watch(); break;
         case LISTEN: listen(); break;
     }
+    hold();
     status(false);
+}
+
+// Coherent mode: while it searches, heimdall's retunes don't recalibrate
+// (hold_calibration - a calibration per band cost ~3.5 s); a lock releases
+// the hold and the calibration starts at once (the user's call 2026-10-22).
+// Not in KerberosSDR manual mode (no automatic calibrations to hold)
+void Scan::hold() {
+    if (cfg_.independent || server_kerberos_mode.load(std::memory_order_relaxed)) return;
+    const int64_t now = now_ms();
+    if (st_ != LISTEN) {
+        if (!holding_ || now - hold_sent_ >= HOLD_RENEW_MS) {
+            hold_calibration(HOLD_LEASE_MS);
+            hold_sent_ = now;
+            holding_ = true;
+        }
+    } else if (holding_) {
+        hold_calibration(0);
+        holding_ = false;
+    }
 }
 
 void Scan::rebuild() {
@@ -602,7 +646,14 @@ void Scan::lock(int entry, int slot) {
     last_heard_ = e.id;
     t_active_ = now_ms();
     listened_ms_ = 0;
-    heard_ = true;
+    // right after a retune in coherent mode heimdall sits in its cooldown
+    // (held): the release starts the calibration - muted until it has run,
+    // instead of a moment of audio cut off by the noise source
+    cal_wait_ = !cfg_.independent && !server_kerberos_mode.load(std::memory_order_relaxed) &&
+                scanner_manager.getPhaseState() == 5;   // WAITING_FOR_STABILITY
+    cal_seen_ = false;
+    cal_wait_t_ = t_active_;
+    heard_ = !cal_wait_;
     cur_db_ = level_[entry];
     act_.clear();
     g_listening = true;
@@ -611,7 +662,7 @@ void Scan::lock(int entry, int slot) {
     std::cout << "Saved-frequency scan: " << e.name << " " << e.hz / 1e6 << " MHz active (" << cur_db_
               << " dB) -> D" << cfg_.vfo << std::endl;
 
-    place(e, s, true);
+    place(e, s, heard_);
     status(true);
 }
 
@@ -676,7 +727,12 @@ void Scan::place(const savedfreq::ScanEntry& e, const Slot& s, bool heard) {
 void Scan::listen() {
     const int64_t now = now_ms();
     if (cur_ < 0 || cur_slot_ < 0 || cur_slot_ >= static_cast<int>(slots_.size())) return resume(false);
-    const bool clean = ready();
+    const bool rd = ready();
+    if (cal_wait_) {
+        if (!rd) cal_seen_ = true;   // the calibration runs
+        if ((cal_seen_ && rd) || (!cal_seen_ && now - cal_wait_t_ >= CAL_START_WAIT_MS)) cal_wait_ = false;
+    }
+    const bool clean = rd && !cal_wait_;
     if (clean) {
         listened_ms_ += TICK_MS;
         // only the one listened to, on the tuner it is on
@@ -690,10 +746,10 @@ void Scan::listen() {
             if (cur_db_ >= g_squelch.load() - HYST_DB) t_active_ = now;
         }
     } else {
-        t_active_ = now;   // calibrating / settling: not "gone quiet"
+        t_active_ = now;   // calibrating / settling / calibration pending: not "gone quiet"
     }
-    // muted while heimdall calibrates (its noise source would be heard),
-    // heard again as soon as the data is clean
+    // muted while heimdall calibrates (its noise source would be heard) or a
+    // calibration is pending, heard as soon as the data is clean
     if (clean != heard_) {
         heard_ = clean;
         const int vfo = cfg_.vfo;
@@ -721,6 +777,7 @@ void Scan::resume(bool done) {
     cur_id_.clear();
     g_listening = false;
     heard_ = false;
+    cal_wait_ = false;
     // nothing to hear while scanning
     const int vfo = cfg_.vfo;
     const uint32_t id = id_;
@@ -841,6 +898,9 @@ bool stop(const std::string& why) {
     if (g_thread.joinable()) g_thread.join();
     if (!was) return false;
     g_tuner_mask = 0;
+    // heimdall's calibration hold: released - a pending calibration runs now,
+    // on the frequency the scan stopped on
+    if (!g_cfg.independent) hold_calibration(0);
     // its VFO: heard if it was listening, else as before the scan
     set_heard(g_cfg.vfo, g_listening.load() || g_cfg.was_heard);
     g_listening = false;

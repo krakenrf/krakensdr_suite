@@ -1001,6 +1001,25 @@ Edit `include/config.hpp`:
   time) -> done; SKIP -> done - in WATCH it advances the turn; HOLD stays
   (WATCH: no turn advance). Resume mutes the VFO; a plan change while
   listening re-tunes when it resumes (`need_tune_`)
+- CALIBRATION HOLD (coherent, not KerberosSDR manual mode; the user's call
+  2026-10-22: "while it's scanning and not found a frequency, turn
+  calibration off; begin it once a signal is found"): `Scan::hold()` after
+  every tick - not listening: heimdall's `hold_calibration` lease (3 s,
+  renewed every 1 s; heimdall_v2/CLAUDE.md *Calibration hold*), so a retune
+  only puts heimdall in WAITING_FOR_STABILITY (spectrum clean, DoA held -
+  READY for the scan) instead of the 3 s cooldown + ~0.5-1 s noise-source
+  calibration per band; a LOCK releases it (`hold_ms` 0: the calibration
+  starts at once); stop() releases it too (the array calibrates where the
+  scan stopped). A lock with the phase state WAITING_FOR_STABILITY (i.e. a
+  calibration now pending) is placed MUTED (`cal_wait_`) until the
+  calibration has run (`cal_seen_` + ready) - heard once, calibrated, DoA
+  valid, instead of a blip cut off by the noise source; no calibration
+  starting within 1.5 s (an older heimdall: unknown command, its own 3 s
+  cooldown) unmutes it. Longest stay counts heard time only. The e2e test's
+  fake heimdall models it (cooldown expiry only when not held, release =
+  calibration now, `cal_count`): 0 calibrations across the searched bands
+  with a 3 s heimdall cooldown, the release at the lock, the calibration
+  starting at once, heard ~1.5 s after the lock
 - Commands run through `ControlHandler::apply_command` on the uWS loop
   (`loop->defer`, dropped when the run ended - `alive(run id)`), so pages see
   them like a browser's; `sfscan::dispatching()` (set around them) keeps them

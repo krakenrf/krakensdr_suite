@@ -378,6 +378,28 @@ and the phases settle within ~20 ms. Runtime override: control port
 runs). The DoA client holds DoA on heimdall's WAITING_FOR_STABILITY state (min
 500 ms) and the noise flag (+250 ms) instead of a fixed 4 s.
 
+**Calibration hold** (control port `{"command":"hold_calibration","hold_ms":N}`,
+`set_calibration_hold()` / `calibration_held()` in compensation.cpp; added
+2026-10-22 for the DoA client's saved-frequency scan, which searches its bands
+with the array uncalibrated and calibrates only where it finds a signal): a
+retune / gain change still enters the cooldown (noise off,
+WAITING_FOR_STABILITY - clients hold DoA, identity compensation) but the lag
+driver doesn't let it expire into `handle_settings_change()` while held, and
+the periodic check stands down (`checkable`, `preempted`). A LEASE: N > 0
+holds for N ms from now (<= 30000; the client renews it every second for
+3 s), so a client that stops renewing - stopped, crashed - lets it lapse and
+the pending calibration runs as usual; N = 0 releases at once and, if a hold
+was in effect, backdates a pending cooldown's `last_frequency_change` by the
+stability delay, so the calibration starts on the lag driver's next tick (~1 s
+to CONVERGED instead of 3.5 s) - a 0 with no hold in effect (lapsed, never
+sent) leaves an ordinary cooldown alone. A coherence recovery is NOT held (it needs the full recal). Status
+JSON `calibration_hold`. Unlike the discrete scanner's deferral (which keeps
+the old compensation and CONVERGED across its hops - fine in wideband mode,
+no DoA) the held state is WAITING_FOR_STABILITY: a coherent client would
+otherwise compute DoA on a calibration from another band. Tested only
+against a simulated heimdall in kraken_doa's e2e test (the real dongles were
+in use) - the paths are the existing cooldown's, plus one gate.
+
 **Drag retunes (fast path, `update_sdr_settings` in sdr_init.cpp)**: a
 coherent retune within `FAST_TUNE_SETTLE_MS` (400 ms) of the previous one, or
 before the previous step's tuners were finished (at most

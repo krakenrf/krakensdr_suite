@@ -359,6 +359,43 @@ void reset_phase_state_locked(PhaseCompensatorState state) {
 
 std::atomic<bool> scanner_cal_deferred{false};
 
+// The calibration hold's end (steady_clock ns, 0 = not held) - see compensation.hpp
+static std::atomic<int64_t> calibration_hold_until_ns{0};
+
+static int64_t steady_ns_now() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+bool calibration_held() {
+    return steady_ns_now() < calibration_hold_until_ns.load(std::memory_order_acquire);
+}
+
+void set_calibration_hold(int hold_ms) {
+    const bool was = calibration_held();
+    if (hold_ms > 0) {
+        hold_ms = std::min(hold_ms, 30000);
+        calibration_hold_until_ns.store(steady_ns_now() + static_cast<int64_t>(hold_ms) * 1000000,
+                                        std::memory_order_release);
+        if (!was) std::cout << "Calibration hold: retunes don't recalibrate (lease " << hold_ms << " ms)" << std::endl;
+        return;
+    }
+    calibration_hold_until_ns.store(0, std::memory_order_release);
+    if (!was || !phase_compensation) return;   // no hold in effect: an ordinary cooldown runs its course
+    std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+    // a cooldown waiting for the hold: expired now - the lag driver starts the
+    // calibration on its next tick
+    if (phase_compensation->state == PhaseCompensatorState::WAITING_FOR_STABILITY &&
+        phase_compensation->cooldown_active) {
+        phase_compensation->last_frequency_change =
+            std::chrono::steady_clock::now() -
+            std::chrono::milliseconds(phase_compensation->stability_delay_override_ms.load());
+        std::cout << "Calibration hold released: calibrating now" << std::endl;
+    } else if (was) {
+        std::cout << "Calibration hold released" << std::endl;
+    }
+}
+
 void recovery_settings_changed_locked(const char* what) {
     if (!recovery_in_progress.load(std::memory_order_acquire)) return;
     const auto st = phase_compensation->state;
@@ -755,7 +792,8 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
     auto preempted = []() {
         return !global_running.load() || recovery_in_progress.load(std::memory_order_acquire) ||
                reconfig_in_progress.load(std::memory_order_acquire) ||
-               discrete_scanner.enabled.load();  // a scan started mid-check
+               discrete_scanner.enabled.load() ||  // a scan started mid-check
+               calibration_held();                 // a client's scan searching
     };
     auto sleep_slice = [&](milliseconds total) {
         const auto deadline = steady_clock::now() + total;
@@ -918,6 +956,7 @@ void periodic_calibration_monitor(CorrelationResult& correlation_result) {
         const bool checkable =
             operating_mode.load() == OperatingMode::COHERENT &&
             !discrete_scanner.enabled.load() &&
+            !calibration_held() &&
             !recovery_in_progress.load(std::memory_order_acquire) &&
             !reconfig_in_progress.load(std::memory_order_acquire) &&
             !force_recalibration.load(std::memory_order_acquire) &&
@@ -1348,8 +1387,10 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
 
                                     int delay_ms = phase_compensation->stability_delay_override_ms.load();
                                     // Never start a calibration while the discrete
-                                    // scanner hops - wait for it to stop.
-                                    if (elapsed >= delay_ms && !discrete_scanner.enabled.load()) {
+                                    // scanner hops - wait for it to stop - nor while
+                                    // a client holds the calibration (its scan
+                                    // searching; a release expires the wait)
+                                    if (elapsed >= delay_ms && !discrete_scanner.enabled.load() && !calibration_held()) {
                                         std::cout << "Frequency stable for " << delay_ms << "ms, starting calibration..." << std::endl;
                                         phase_compensation->cooldown_active = false;
                                         should_start_calibration = true;
