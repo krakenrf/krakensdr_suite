@@ -7528,7 +7528,7 @@ function updateDecimatorList(info) {
         <span id="dec-squelch-val-${dec.id}" style="width:45px;text-align:right;font-size:10px">${squelchLevel} dB</span>
       </div>
       <div class="dec-row" style="display:${squelchEnabled && sqMethod === 'DIGITAL' ? 'flex' : 'none'}" id="dec-squelch-dig-${dec.id}">
-        <span style="font-size:10px;color:#888;line-height:1.35">Opens on frames the decoder confirms (stays open 1.5 s after the last - CTCSS / DCS: 0.35 s); the DoA comes from exactly their samples</span>
+        <span style="font-size:10px;color:#888;line-height:1.35">Opens on frames the decoder confirms (stays open 1.5 s after the last - Analog FM IDs: 0.35 s); the DoA comes from exactly their samples</span>
       </div>
     `;
 
@@ -14124,7 +14124,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                        interrogator: 'interrogation', gs: 'frame', sar: 'burst', node: 'frame', collar: 'pulse',
                        broadcast: 'group'};
   // how a kind is named in "Every ...", counts and the position check
-  const RDF_KIND_WORD = {flarm: 'aircraft', gs: 'ground station', sar: 'distress beacon', broadcast: 'broadcast station'};
+  const RDF_KIND_WORD = {flarm: 'aircraft', gs: 'ground station', sar: 'distress beacon', broadcast: 'broadcast station',
+                         tone: 'analog transmitter'};
   function rdfKind(t) {
     // a plugin's spatial talker: a mobile network cell (cells plugin, by
     // its physical cell ID) or a path of a TV signal (dtv plugin with path
@@ -14133,8 +14134,10 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     // UAT ground stations (their uplinks and the TIS-B / ADS-R traffic they
     // rebroadcast) beside the aircraft
     if (t.pk && t.pl === 'uat' && /^GS /.test(t.tid)) return 'gs';
-    // an analog FM transmitter named by its CTCSS tone / DCS code (ctcss plugin)
-    if (!t.pk && t.pl === 'ctcss') return 'tone';
+    // an analog FM transmitter named by its radio ID (MDC1200 / FleetSync /
+    // selcall / DTMF), else its CTCSS tone / DCS code / tone burst - the
+    // analog_id plugin ("ctcss" until 2026-10-22: an open page from before)
+    if (!t.pk && (t.pl === 'analog_id' || t.pl === 'ctcss')) return 'tone';
     return !t.pk ? 'radio' : RDF_PK_KIND[t.pl] || 'talker';
   }
   // a length in seconds, short (the tone list's Last / Air columns)
@@ -14162,6 +14165,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       const l = t.label || '';
       return /paraglider|hang glider|parachute/.test(l) ? '🪂 ' : /helicopter/.test(l) ? '🚁 ' : /balloon|airship/.test(l) ? '🎈 ' : '✈ ';
     }
+    // analog FM: a radio's own ID 🆔, a selcall / DTMF sequence 🔢, a tone / code / burst 🔔
+    if (k === 'tone')
+      return /^(MDC|FleetSync) /.test(t.tid) ? '🆔 ' : /^(DTMF|ZVEI|DZVEI|CCIR|EEA|EIA|NATEL|MODAT) /.test(t.tid) ? '🔢 ' : '🔔 ';
     return {ship: '⛴ ', aircraft: '✈ ', beacon: '📡 ', device: '📟 ', path: '📶 ', cell: '📱 ', station: '📻 ',
             sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 ', gs: '🗼 ', tone: '🔔 ', sar: '🆘 ', node: '📶 ',
             collar: '🐾 ', broadcast: '🎙 '}[k] || '';
@@ -14271,7 +14277,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       // ones (LoRa nodes had none: head[0] threw - the list stayed empty, and
       // the map wasn't redrawn after a DF push or a panel control (mapSet);
       // only the ID selector showed them)
-      const heads = {radio: ['Radio', 'Talkgroup', 'Tx'], tone: ['Tone / code', 'Measured', 'Tx'],
+      const heads = {radio: ['Radio', 'Talkgroup', 'Tx'], tone: ['ID / tone', 'Signalling · tone', 'Tx'],
                     aircraft: ['Callsign', 'ICAO', 'Pkts'], ship: ['MMSI', 'Name', 'Pkts'],
                     beacon: ['Channel', 'Ident · MHz', 'Pairs'], device: ['Device', 'Reading', 'Tx'],
                     path: ['Path', 'From the main path · power', 'Reports'], cell: ['Cell', 'Technology · PCI · power', 'Reports'],
@@ -14292,7 +14298,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       // empty ones pushed Heard / Tx out of the 380 px panel (LoRa nodes:
       // only Meshtastic POSITION packets carry one)
       const posCols = listed.some(([t, c]) => c && RDF_POS_KINDS.has(rdfKind(t)));
-      // transmitters named by their tone (ctcss): the transmissions' lengths
+      // analog FM transmitters (analog_id: radio IDs / tones): the transmissions' lengths
       const toneCols = ts.some(t => rdfKind(t) === 'tone');
       const [scol, sdir] = rdfSortOf(kinds);
       const th = (col, text, tip) => `<th data-sort="${col}" title="${tip ? digEsc(tip) + ' - ' : ''}Sort by this column (again: reversed)">` +
