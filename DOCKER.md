@@ -91,9 +91,13 @@ The first build compiles everything and takes about 5 minutes on a Pi 5
 (longer on a Pi 4), plus about 10 minutes for Voice to Text's speech-to-text
 engine (whisper.cpp) - `WHISPER=0` in `.env` leaves that out.
 Later builds reuse the dependency layers and only recompile the apps. Build
-the image **on the machine that will run it**: kraken_doa compiles with
-`-march=native`, so an image built on a Pi 5 can crash with "Illegal
-instruction" on a Pi 4.
+the image **on the machine that will run it**: kraken_doa, heimdall and the
+decoder plugins are all compiled for the CPU they are built on
+(`-march=native` / `-mcpu=native` - the Makefiles' flags, the same as a
+native install), so an image built on a Pi 5 can crash with "Illegal
+instruction" on a Pi 4, and an image cross-built on a PC for the Pi isn't
+supported. After updating the sources, run `docker compose build` again:
+the running image keeps the binaries (and compiler flags) it was built with.
 
 The build runs 3 compile jobs. That's right for an 8 GB Pi. On a smaller
 Pi, set `JOBS=2` (4 GB) or `JOBS=1` (2 GB) in `.env`, because each job needs
