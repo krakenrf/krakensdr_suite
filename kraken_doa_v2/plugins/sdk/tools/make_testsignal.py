@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 KrakenRF Inc. - the plugin SDK (plugins/sdk/LICENSE)
 """Debug playback: builds one test transmission of a decoder's catalogue
 (plugins/<id>/tools/testsignals.json) into kraken_doa's playback cache.
 
@@ -131,9 +133,13 @@ def run(argv, work, cache, plugins, log):
             binp = pre
         elif not os.path.exists(binp) or os.path.getmtime(binp) < os.path.getmtime(exe):
             src_dir = os.path.dirname(os.path.dirname(exe))
+            # a plugin with its own LICENSE (plugins/Makefile): the SDK and
+            # pffft only, never the source-available lib/
+            libdir = os.path.join(plugins, 'lib', 'build')
+            libs = ([os.path.join(libdir, 'pffft.o'), os.path.join(libdir, 'pffft_common.o')]
+                    if os.path.exists(os.path.join(src_dir, 'LICENSE')) else [os.path.join(libdir, 'libkrakendig.a')])
             cmd = ['g++', '-std=c++20', '-O2', '-I' + src_dir, '-I' + os.path.join(plugins, 'sdk'),
-                   '-I' + os.path.join(plugins, '..', 'external', 'pffft'), exe,
-                   os.path.join(plugins, 'lib', 'build', 'libkrakendig.a'), '-lm', '-o', binp + '.tmp']
+                   '-I' + os.path.join(plugins, '..', 'external', 'pffft'), exe] + libs + ['-lm', '-o', binp + '.tmp']
             if WINDOWS:
                 if not shutil.which('g++'):
                     fail('%s is not built: run make in kraken_doa_v2/plugins (MSYS2 UCRT64) - it makes %s'

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 KrakenRF Inc. - the plugin SDK (plugins/sdk/LICENSE)
+
 // main() of every decoder plugin executable (linked with the plugin's own
 // sources by plugins/Makefile). Three modes:
 //

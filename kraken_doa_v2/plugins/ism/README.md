@@ -275,6 +275,56 @@ ISM_TRACE=1 plugins/ism/build/decoder --file ...   # the detector's active bins 
 ISM_ROWS=prologue plugins/ism/build/decoder ...    # a protocol's rows (those that call dbg_rows)
 ```
 
-Protocol notes come from rtl_433's documentation (GPL-2.0) - used as a
-protocol reference, and its test recordings (rtl_433_tests) as test data
-only; the implementation is our own.
+The protocol decoders (`p_*.cpp`) and the slicers / checks (`bits.cpp`)
+follow rtl_433's device decoders and helpers (GPL-2.0-or-later),
+re-implemented in C++ for the plugin API - see *Licence* below; rtl_433's
+test recordings (rtl_433_tests) were used as test data.
+
+## Licence
+
+This plugin is licensed under the GNU General Public License version 2 or
+(at your option) any later version (GPL-2.0-or-later, `LICENSE` in this
+folder), because its protocol decoders and its slicers / checks follow the
+device decoders and helpers of [rtl_433](https://github.com/merbanan/rtl_433)
+(GPL-2.0-or-later), re-implemented in C++ for the KrakenSDR plugin API -
+the same frame layouts, checks, field names and slicer semantics. Each
+source file names in its header the rtl_433 files it follows:
+
+| File | rtl_433 source it follows - copyright / credits as written in that file |
+|---|---|
+| `bits.cpp` | `src/bitbuffer.c` - Copyright (C) 2015 Tommy Vestermark<br>`src/bit_util.c` - Copyright (C) 2015 Tommy Vestermark<br>`src/pulse_slicer.c` - Copyright (C) 2015 Tommy Vestermark |
+| `p_acurite.cpp` | `src/devices/acurite.c` - Copyright (c) 2015, Jens Jenson, Helge Weissig, David Ray Thompson, Robert Terzi; Enhanced Acurite-606TX by Boing <dhs.mobil@gmail.com> |
+| `p_bresser.cpp` | `src/devices/bresser_5in1.c` - Copyright (C) 2018 Daniel Krueger; Copyright (C) 2019 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/bresser_6in1.c` - Copyright (C) 2019 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/bresser_7in1.c` - Copyright (C) 2019 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/bresser_3ch.c` - Copyright (C) 2015 Christian W. Zuckschwerdt <zany@triq.net> |
+| `p_energy.cpp` | `src/devices/efergy_e2_classic.c` - Copyright (C) 2015 Robert Högberg <robert.hogberg@gmail.com><br>`src/devices/current_cost.c` - Copyright (C) 2015 Emmanuel Navarro <enavarro222@gmail.com>; CurrentCost EnviR added by Neil Cowburn <git@neilcowburn.com> |
+| `p_fineoffset.cpp` | `src/devices/fineoffset.c` - Copyright (C) 2017 Tommy Vestermark; Enhanced (C) 2019 Christian W. Zuckschwerdt <zany@triq.net>; Added WH51 Soil Moisture Sensor (C) 2019 Marco Di Leo<br>`src/devices/fineoffset_wh1080.c` - rtl_433 contributors<br>`src/devices/fineoffset_wh1050.c` - 2016 Nicola Quiriti ('ovrheat'); Modifications 2016 by Don More; 2023 Bruno OCTAU (ProfBoc75) for TFA 30.3151 FSK<br>`src/devices/ecowitt.c` - Copyright 2019 Google LLC.<br>`src/devices/fineoffset_wn34.c` - Copyright (C) 2022 \@anthyz<br>`src/devices/fineoffset_wh52.c` - Copyright (C) 2026 Andreas Braunlich <andreasbraunlich@gmail.com><br>`src/devices/ambientweather_wh31e.c` - Copyright (C) 2018 Christian W. Zuckschwerdt <zany@triq.net> based on protocol analysis by James Cuff and Michele Clamp, EcoWitt WH40 analysis by Helmut Bachmann, Ecowitt WS68 analysis by Tolip Wen improved by Bruno Octau, EcoWitt WH31B analysis by Michael Turk, EcoWitt WN20 analysis by Ryan Romanchuk. |
+| `p_hideki.cpp` | `src/devices/hideki.c` - rtl_433 contributors |
+| `p_keeloq.cpp` | `src/devices/hcs200.c` - Copyright (C) 2019, 667bdrm<br>`src/devices/hcs361.c` - Copyright (C) 2024 Ethan Halsall<br>`src/devices/hcs362.c` - Copyright (C) 2024 Christian W. Zuckschwerdt <zany@triq.net> |
+| `p_lacrosse.cpp` | `src/devices/lacrosse_tx141x.c` - Copyright (C) 2017 Robert Fraczkiewicz <aromring@gmail.com>; Changes done by Andrew Rivett <veggiefrog@gmail.com>. Copyright is retained by Robert Fraczkiewicz. |
+| `p_lacrosse_it.cpp` | `src/devices/lacrosse_tx35.c` - rtl_433 contributors<br>`src/devices/lacrosse_tx22uit.c` - Copyright (C) 2020 Caz Yokoyama, caz at caztech dot com |
+| `p_oregon.cpp` | `src/devices/oregon_scientific.c` - Copyright (C) 2015 Helge Weissig, Denis Bodor, Tommy Vestermark, Karl Lattimer, deennoo, pclov3r, onlinux, Pasquale Fiorillo.<br>`src/devices/oregon_scientific_v1.c` - rtl_433 contributors<br>`src/devices/oregon_scientific_sl109h.c` - rtl_433 contributors<br>`src/pulse_slicer.c` (the OSv1 slicer: the v1 bits) - Copyright (C) 2015 Tommy Vestermark |
+| `p_remotes.cpp` | `src/devices/fordremote.c` - rtl_433 contributors<br>`src/devices/somfy_rts.c` - Copyright (C) 2020 Matthias Schulz <mschulz@seemoo.tu-darmstadt.de><br>`src/devices/newkaku.c` - rtl_433 contributors<br>`src/devices/nexa.c` - Copyright (C) 2017 Christian Juncker Brædstrup<br>`src/devices/proove.c` - Copyright (C) 2016 Ask Jakobsen, Christian Juncker Brædstrup<br>`src/devices/kerui.c` - Copyright (C) 2016 Karl Lattimer<br>`src/devices/chuango.c` - Copyright (C) 2015 Tommy Vestermark<br>`src/devices/smoke_gs558.c` - Copyright (C) 2017 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/generic_motion.c` - Copyright (C) 2015 Christian W. Zuckschwerdt <zany@triq.net> |
+| `p_security.cpp` | `src/devices/honeywell.c` - Copyright (C) 2016 adam1010; Copyright (C) 2019 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/interlogix.c` - Copyright (C) 2017 Brent Bailey <bailey.brent@gmail.com><br>`src/devices/dsc.c` - Copyright (C) 2015 Tommy Vestermark; Copyright (C) 2015 Robert C. Terzi |
+| `p_tpms.cpp` | `src/devices/tpms_toyota.c` - Copyright (C) 2017 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/tpms_pmv107j.c` - Copyright (C) 2017 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/tpms_ford.c` - Copyright (C) 2017 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/tpms_citroen.c` - Copyright (C) 2017 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/tpms_renault.c` - Copyright (C) 2017 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/tpms_hyundai_vdo.c` - Copyright (C) 2020 Todor Uzunov aka teou, TTiges, 2019 Andreas Spiess, 2017 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/tpms_kia.c` - Copyright (C) 2022 Lasse Mikkel Reinhold, Todor Uzunov aka teou, TTiges, 2019 Andreas Spiess, 2017 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/tpms_elantra2012.c` - Copyright (C) 2019 Kumar Vivek <kv2000in@gmail.com><br>`src/devices/tpms_jansite.c` - Copyright (C) 2019 Andreas Spiess and Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/tpms_jansite_solar.c` - Copyright (C) 2021 Benjamin Larsson; based on code 2019 Andreas Spiess and Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/tpms_abarth124.c` - Copyright (C) TTigges for (VDO Type TG1C via) Abarth 124 Spider TPMS decoded; Protocol similar (and based on) Jansite Solar TPMS by Andreas Spiess and Christian W. Zuckschwerdt; Copyright (C) 2024 Bruno OCTAU (ProfBoc75) Add Shenzhen EGQ Q85 support<br>`src/devices/tpms_truck.c` - Copyright (C) 2021 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/tpms_nissan.c` - Copyright (C) 2021 Alex Wilson <alex.david.wilson@gmail.com><br>`src/devices/schraeder.c` - Copyright (C) 2016 Benjamin Larsson and 2017 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/tpms_bmw.c` - Copyright (C) 2024 Bruno OCTAU (ProfBoc75), \@petrjac, \@Gucioo, Christian W. Zuckschwerdt <christian@zuckschwerdt.org><br>`src/bitbuffer.c` (Manchester decoding: mc(), dmc()) - Copyright (C) 2015 Tommy Vestermark |
+| `p_tpms2.cpp` | `src/devices/schraeder.c` - Copyright (C) 2016 Benjamin Larsson and 2017 Christian W. Zuckschwerdt <zany@triq.net><br>`src/devices/tpms_gm.c` - Copyright (C) 2025 Eric Blevins<br>`src/devices/steelmate.c` - Copyright (C) 2016 Benjamin Larsson; Copyright (C) 2016 John Jore; Copyright (C) 2025 Bruno OCTAU (ProfBoc75) |
+| `p_weather_ook.cpp` | `src/devices/nexus.c` - rtl_433 contributors<br>`src/devices/rubicson.c` - rtl_433 contributors<br>`src/devices/solight_te44.c` - Copyright (C) 2017 Miroslav Oujesky<br>`src/devices/prologue.c` - rtl_433 contributors<br>`src/devices/ambient_weather.c` - contributed by David Ediger; discovered by Ron C. Lewis<br>`src/devices/infactory.c` - Copyright (C) 2017 Sirius Weiß <siriuz@gmx.net>; Copyright (C) 2017 Christian W. Zuckschwerdt <zany@triq.net>; Copyright (C) 2020 Hagen Patzke <hpatzke@gmx.net><br>`src/devices/thermopro_tp12.c` - Copyright (C) 2017 Google Inc.<br>`src/devices/ambientweather_tx8300.c` - Copyright (C) 2018 ionum-projekte and Roger<br>`src/devices/silvercrest.c` - Copyright (C) 2018 Benjamin Larsson |
+
+`frontend.cpp` / `frontend.hpp` (burst detection and demodulation),
+`generic.cpp` (unknown signals), `decoder.cpp` (devices, table, events,
+talker packets) and `p_fixedcode.cpp` (EV1527 / PT2262, written from the
+chips' coding) are KrakenSDR's own code; `ism.hpp` holds the shared types
+and declares `bits.cpp`'s interfaces (its header names `bits.cpp`'s rtl_433
+files). `tools/ism_gen.py` (the test
+transmission) writes the formats of the decoders above (Acurite tower,
+LaCrosse TX141TH-Bv2, Fine Offset WH24, Toyota TPMS). Copyright (C) 2026
+KrakenRF Inc. for the KrakenSDR parts.
+
+The plugin is a separate program from the KrakenSDR DoA software
+(kraken_doa): it is built into its own executable (`build/decoder`), runs
+as its own process and talks to kraken_doa only over the plugin protocol
+(pipes, `plugins/sdk/kraken_plugin.hpp`). It is built only on the plugin
+SDK (`plugins/sdk`, MIT) plus pffft (BSD-style,
+`kraken_doa_v2/external/pffft`) and
+liquid-dsp (MIT) - not on `plugins/lib` (`plugins/Makefile` links a plugin
+with its own `LICENSE` that way). The rtl_433_tests recordings
+(https://github.com/merbanan/rtl_433_tests) were used as test data (see
+*Test results*).

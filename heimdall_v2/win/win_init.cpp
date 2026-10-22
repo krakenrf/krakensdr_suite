@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 KrakenRF Inc. - MIT so that decoder plugins of any licence
+// can link it (licence text: kraken_doa_v2/plugins/sdk/LICENSE, root LICENSE)
+
 // Windows process setup, linked into every .exe of the suite (Windows builds
 // only - the Makefiles add it next to win/app.rc). Runs as the first C++
 // static initializer, before any file is opened:

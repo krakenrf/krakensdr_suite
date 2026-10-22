@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. KrakenSDR's own code (no rtl_433 counterpart).
+
 // ISM band devices (315 / 345 / 433 / 868 / 915 MHz): weather stations and
 // thermometers, tyre pressure sensors, key fobs and remotes, door / motion /
 // smoke sensors, energy meters - the short OOK / FSK bursts of the licence-

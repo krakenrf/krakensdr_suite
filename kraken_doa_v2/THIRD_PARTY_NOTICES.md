@@ -7,14 +7,16 @@ KrakenSDR licence does not apply to them. Binary packages of the suite
 (`windows/package.sh`, the Docker image) carry the complete licence text of
 every component in their `licenses/` folder.
 
-No component of kraken_doa or its decoder plugins is under the GPL, AGPL or
-LGPL (glibc on Linux and the GCC runtime are system libraries, see below).
+No component of kraken_doa, its plugin library (`plugins/lib`) or the plugin
+SDK is under the GPL, AGPL or LGPL (glibc on Linux and the GCC runtime are
+system libraries, see below). One decoder plugin is itself a GPL program,
+built separately from them: `plugins/ism` (section 1a).
 
 ## 1. Third-party code in this folder
 
 | Component | Where | Licence |
 |---|---|---|
-| pffft (marton78 fork, commit aa16fd3) | `external/pffft/` - kraken_doa and every plugin (`libkrakendig.a`) | BSD-style (FFTPACK), text A |
+| pffft (marton78 fork, commit aa16fd3) | `external/pffft/` - kraken_doa and every plugin (`libkrakendig.a`; a plugin with its own licence: pffft's objects) | BSD-style (FFTPACK), text A |
 | moodycamel ConcurrentQueue | `include/concurrentqueue.h` | Simplified BSD or Boost Software License 1.0, text B |
 | uPlot 1.6.30 | inlined at the top of `kraken_doa.html` | MIT, text C |
 | opus-decoder (wasm-audio-decoders) incl. simple-yenc | `opus-decoder.min.js` | MIT, text D |
@@ -23,13 +25,21 @@ LGPL (glibc on Linux and the GCC runtime are system libraries, see below).
 | DSD - frame deinterleave tables | `plugins/lib/mbe_tables.hpp` | ISC, text F |
 | NTIA/ITS Irregular Terrain Model (ITM) 1.3, ported to JavaScript | `kraken_doa.html` ("📶 ITM" block) | not subject to copyright in the US; NTIA terms, text G |
 | OGN tracker protocol: the LDPC(208,160) parity-check matrix (data only, no code) | `plugins/flarm/ogn_ldpc_matrix.hpp` | interoperability data - the code every OGN tracker transmits; taken from the OGN tracker source (github.com/pjalocha/esp32-ogn-tracker, Pawel Jalocha), which states no licence |
-
 | ra-firmware (DF9DQ's "Ra" radiosonde receiver firmware): the RS41 and M10 / M20 sensor computations follow its metrology code | `plugins/radiosonde/rs41.cpp`, `plugins/radiosonde/modem.cpp` | BSD-3-Clause, text H |
 
 The decoder plugins are written from the published standards and protocol
 descriptions; some protocol facts (frame layouts, constants, calibration
 fits) were first published by other projects' reverse engineering and are
 used as facts, without their code. Each plugin's README lists its sources.
+
+## 1a. Parts of this folder under other licences
+
+These are not under the KrakenSDR Source Available Licence (its section 6):
+
+| Part | Where | Licence |
+|---|---|---|
+| The plugin SDK and the Windows process helpers (KrakenRF) - in every plugin | `plugins/sdk/`, `plugins/SDK.md`, `win/` (= `heimdall_v2/win/`) | MIT, `plugins/sdk/LICENSE` |
+| ISM device decoder plugin (KrakenRF), following the device decoders of rtl_433 (github.com/merbanan/rtl_433, Copyright (C) 2012 Benjamin Larsson and the rtl_433 contributors - every file names the decoders it follows and their authors) | `plugins/ism/` | GPL-2.0-or-later, `plugins/ism/LICENSE`. A separate program: kraken_doa runs it as a process of its own; it is built only from its own files, the plugin SDK, pffft and liquid-dsp (`plugins/Makefile` refuses anything else for a plugin with its own `LICENSE`) |
 
 ## 2. Libraries built with or linked into the programs
 

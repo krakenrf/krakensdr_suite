@@ -1,3 +1,49 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The decoders in this file follow rtl_433's
+// (https://github.com/merbanan/rtl_433, GPL-2.0-or-later), re-implemented in
+// C++ for the KrakenSDR plugin API (2026):
+//   src/devices/tpms_toyota.c - Copyright (C) 2017 Christian W. Zuckschwerdt
+//     <zany@triq.net>
+//   src/devices/tpms_pmv107j.c - Copyright (C) 2017 Christian W. Zuckschwerdt
+//     <zany@triq.net>
+//   src/devices/tpms_ford.c - Copyright (C) 2017 Christian W. Zuckschwerdt
+//     <zany@triq.net>
+//   src/devices/tpms_citroen.c - Copyright (C) 2017 Christian W. Zuckschwerdt
+//     <zany@triq.net>
+//   src/devices/tpms_renault.c - Copyright (C) 2017 Christian W. Zuckschwerdt
+//     <zany@triq.net>
+//   src/devices/tpms_hyundai_vdo.c - Copyright (C) 2020 Todor Uzunov aka teou,
+//     TTiges, 2019 Andreas Spiess, 2017 Christian W. Zuckschwerdt
+//     <zany@triq.net>
+//   src/devices/tpms_kia.c - Copyright (C) 2022 Lasse Mikkel Reinhold, Todor
+//     Uzunov aka teou, TTiges, 2019 Andreas Spiess, 2017 Christian W.
+//     Zuckschwerdt <zany@triq.net>
+//   src/devices/tpms_elantra2012.c - Copyright (C) 2019 Kumar Vivek
+//     <kv2000in@gmail.com>
+//   src/devices/tpms_jansite.c - Copyright (C) 2019 Andreas Spiess and
+//     Christian W. Zuckschwerdt <zany@triq.net>
+//   src/devices/tpms_jansite_solar.c - Copyright (C) 2021 Benjamin Larsson;
+//     based on code 2019 Andreas Spiess and Christian W. Zuckschwerdt
+//     <zany@triq.net>
+//   src/devices/tpms_abarth124.c - Copyright (C) TTigges for (VDO Type TG1C
+//     via) Abarth 124 Spider TPMS decoded; Protocol similar (and based on)
+//     Jansite Solar TPMS by Andreas Spiess and Christian W. Zuckschwerdt;
+//     Copyright (C) 2024 Bruno OCTAU (ProfBoc75) Add Shenzhen EGQ Q85 support
+//   src/devices/tpms_truck.c - Copyright (C) 2021 Christian W. Zuckschwerdt
+//     <zany@triq.net>
+//   src/devices/tpms_nissan.c - Copyright (C) 2021 Alex Wilson
+//     <alex.david.wilson@gmail.com>
+//   src/devices/schraeder.c - Copyright (C) 2016 Benjamin Larsson and 2017
+//     Christian W. Zuckschwerdt <zany@triq.net>
+//   src/devices/tpms_bmw.c - Copyright (C) 2024 Bruno OCTAU (ProfBoc75),
+//     \@petrjac, \@Gucioo, Christian W. Zuckschwerdt
+//     <christian@zuckschwerdt.org>
+//   src/bitbuffer.c (Manchester decoding: mc(), dmc()) - Copyright (C) 2015
+//     Tommy Vestermark
+
 // Tyre pressure sensors (TPMS), part 1: the PCM-sliced ones, i.e. NRZ bit
 // streams with Manchester or differential Manchester line coding after a
 // preamble - Toyota (Pacific PMV-C210), Pacific PMV-107J, Ford, Citroen /
@@ -5,8 +51,6 @@
 // Jansite Solar, Abarth 124 Spider (VDO TG1C) / Shenzhen EGQ Q85, unbranded
 // truck SolarTPMS, Nissan, BMW Gen4/5 + Audi pressure alert, Schrader
 // SMD3MA4 / NIS315G3.
-//
-// protocol notes: rtl_433 documentation; own implementation.
 //
 // Conventions: FSK pulse = the higher tone = 1. "mc" below is Manchester
 // over half-bit pairs from a position: "01" -> 1 / "10" -> 0 (or the

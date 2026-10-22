@@ -2057,7 +2057,7 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
 Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
 - `heimdall_v2/`, `gr-krakensdr_v2/`: GPL-3.0-or-later (`LICENSE` = the GPL
   text; GPL-2.0-only is impossible - uWebSockets is Apache-2.0)
-- `kraken_doa_v2/` incl. every plugin, `plugins/sdk`, `plugins/lib`: the
+- `kraken_doa_v2/` incl. its plugins and `plugins/lib`: the
   KrakenSDR Source Available Licence 1.0 (`kraken_doa_v2/LICENSE`): free for
   personal / hobbyist use, commercial use needs a licence from KrakenRF
   (krakenrf@krakensdr.com); contributions grant KrakenRF relicensing rights
@@ -2065,11 +2065,35 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   licence. Root build / run / packaging scripts, `docker/`, `windows/`,
   `scripts/`, `.githooks/`: MIT (they are part of heimdall's GPL
   corresponding source)
+- MIT since 2026-10-22: the plugin SDK (`plugins/sdk/` incl. its tools,
+  `plugins/SDK.md`) and the Windows helpers (`win/` - win_init.cpp,
+  posix_compat.h, app.rc, app.manifest - in BOTH apps, still identical) -
+  `plugins/sdk/LICENSE`, an SPDX line in each file. So a plugin of any
+  licence can link them
+- PER-PLUGIN LICENCES (2026-10-22, the user's request): a plugin folder with
+  a `LICENSE` file is under THAT licence - a separate program (own process,
+  the pipe protocol of kraken_plugin.hpp). `plugins/Makefile`
+  (`own_licence` / `plugin_cxxflags` / `plugin_lib` / `licence_check`): built
+  without `-Ilib` / `-I../include`, linked with pffft's objects instead of
+  `libkrakendig.a`, and the build stops when `-MM` lists a header outside its
+  folder, `sdk/`, `../external/pffft/`, `../win/` (realpath-normalised, so
+  `../lib/x.hpp` is caught); its C++ generators the same (Windows prebuild
+  rule, `make_testsignal.py`). `scripts/collect-licenses.sh` copies
+  `plugins/sdk/LICENSE` + every `plugins/<id>/LICENSE` and lists the GPL
+  ones in SOURCE.txt. The AI assistant may not edit `plugins/*/LICENSE*`
+  (deny rule + its system prompt). Docs: root LICENSE, kraken_doa_v2/LICENSE
+  section 6, THIRD_PARTY_NOTICES 1a, SDK.md *Licensing a plugin*, README.
+  `plugins/ism` = GPL-2.0-or-later (it follows rtl_433's device decoders;
+  every file names the rtl_433 decoders it follows + their authors, README
+  *Licence*) - the first such plugin
 - RULE for kraken_doa_v2: no GPL / AGPL / LGPL code in it or linked into it
   (LGPL only as a dynamic system library), and nothing TRANSLATED from GPL
   code (rtl_433, dump1090 forks, readsb, rs1729/RS, OP25, osmo-tetra,
   gr-lora*, srsRAN, ...) - such projects are documentation of FACTS and test
-  references only; write from the standards / measurements. Code ported from
+  references only; write from the standards / measurements. The ONE
+  exception: a plugin folder with its own `LICENSE` that the GPL code's
+  licence allows (above) - and nothing of `plugins/lib` / kraken_doa may go
+  into such a plugin. Code ported from
   permissive code keeps its full notice in the file and gets a row (+ the
   licence text) in `kraken_doa_v2/THIRD_PARTY_NOTICES.md`
 - A new dependency: a row in the app's `THIRD_PARTY_NOTICES.md`; if binaries
@@ -2077,10 +2101,11 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   `windows/package.sh` -> `licenses/` and the Dockerfile ->
   `/usr/share/doc/krakensdr/`, with `SOURCE.txt` = where the GPL programs'
   source is)
-- OPEN (audit 2026-10-21, waiting for the user's decision): `plugins/ism`
-  follows rtl_433's decoders one by one (GPL-2.0-or-later);
+- OPEN (audit 2026-10-21, waiting for the user's decision):
   `cells/lte_tables.hpp` was generated from srsRAN's (AGPL) copy of the 3GPP
-  tables. Don't extend those parts until it's settled. Done in the audit:
+  tables. Don't extend it until it's settled. (`plugins/ism`, which follows
+  rtl_433's decoders one by one, was settled 2026-10-22: GPL-2.0-or-later, its
+  own licence - above.) Done in the audit:
   p25's NID BCH encoder (was Morelos-Zaragoza's non-commercial bch3.c form)
   and the TETRA scrambler / interleaver / depuncturer (osmo-tetra's form)
   rewritten from the standards - bit-identical output (all 65536 NIDs,

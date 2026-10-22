@@ -1,8 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The decoders in this file follow rtl_433's
+// (https://github.com/merbanan/rtl_433, GPL-2.0-or-later), re-implemented in
+// C++ for the KrakenSDR plugin API (2026):
+//   src/devices/lacrosse_tx35.c - rtl_433 contributors
+//   src/devices/lacrosse_tx22uit.c - Copyright (C) 2020 Caz Yokoyama, caz at
+//     caztech dot com
+
 // LaCrosse "IT+" sensors: TX29-IT / TFA 30.3159.IT / TX25U (17.24 kbit/s),
 // TX35DTH-IT / TFA 30.3155 (9.58 kbit/s), and the TX22U-IT / Technoline
 // TX22-IT multi sensor (8.62 kbit/s; FSK, also an OOK variant).
-//
-// protocol notes: rtl_433 documentation; own implementation.
 
 #include "ism.hpp"
 

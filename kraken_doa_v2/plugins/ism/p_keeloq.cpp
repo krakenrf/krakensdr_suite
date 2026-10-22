@@ -1,7 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The decoders in this file follow rtl_433's
+// (https://github.com/merbanan/rtl_433, GPL-2.0-or-later), re-implemented in
+// C++ for the KrakenSDR plugin API (2026):
+//   src/devices/hcs200.c - Copyright (C) 2019, 667bdrm
+//   src/devices/hcs361.c - Copyright (C) 2024 Ethan Halsall
+//   src/devices/hcs362.c - Copyright (C) 2024 Christian W. Zuckschwerdt
+//     <zany@triq.net>
+
 // Microchip KeeLoq code-hopping encoders: HCS200 / HCS300, HCS361, HCS362 -
 // car and garage remotes (315 / 433 MHz).
-//
-// protocol notes: rtl_433 documentation; own implementation.
 //
 // The code word is sent LSB first: 32-bit encrypted hop code, 28-bit serial,
 // 4 button bits (in the order S3 S0 S1 S2), the low-battery bit, then

@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. KrakenSDR's own code (it does not follow rtl_433's pulse
+// detectors).
+
 #include "frontend.hpp"
 
 #include <algorithm>

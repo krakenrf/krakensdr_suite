@@ -1,8 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The decoders in this file follow rtl_433's
+// (https://github.com/merbanan/rtl_433, GPL-2.0-or-later), re-implemented in
+// C++ for the KrakenSDR plugin API (2026):
+//   src/devices/lacrosse_tx141x.c - Copyright (C) 2017 Robert Fraczkiewicz
+//     <aromring@gmail.com>; Changes done by Andrew Rivett
+//     <veggiefrog@gmail.com>. Copyright is retained by Robert Fraczkiewicz.
+
 // LaCrosse TX141 family: TX141TH-Bv2 (also TFA 30.3221.02 / 30.3249.02, ORIA
 // WA50B), TX141-Bv2, TX141-Bv3 (TX141-Bv4, TFA 30.3243.02), TX141B and the
 // TX141W / TX145wsdth "Breeze" (TFA 30.3222.02 / 30.3251.10).
-//
-// protocol notes: rtl_433 documentation; own implementation.
 //
 // Framing (all members): OOK PWM, bit period ~625 us (TX141W ~730 us); every
 // packet starts with 4 sync pulses (~750-990 us on and off) and the packet

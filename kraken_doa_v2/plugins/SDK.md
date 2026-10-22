@@ -1,5 +1,9 @@
 # KrakenSDR decoder plugins: SDK
 
+<!-- SPDX-License-Identifier: MIT - Copyright (c) 2026 KrakenRF Inc. -->
+This guide and the SDK (`sdk/`) are under the MIT License (`sdk/LICENSE`):
+a plugin may have a licence of its own - see *Licensing a plugin*.
+
 Every decoder in the receiver's **Digital Decoder** (sidebar → 🔐 Digital
 Decoder → Mode) is a plugin - the protocols that ship with the suite (P25,
 DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS, ADS-B) as well as the ones you add.
@@ -723,7 +727,8 @@ libfec (`kraken_doa_v2/liquid.mk`), so its FEC schemes that need libfec
 objects (`fftfilt`, `spgram`, `firpfbch*`, `ofdmframe*`, `qdetector`) run
 on liquid's own, slower FFT. FFTs: `#include "kraken_fft.hpp"`
 (sdk/) - pffft (vendored in `kraken_doa_v2/external/pffft`, BSD-style
-licence) behind FFTW-like plans, linked through `lib/build/libkrakendig.a`:
+licence) behind FFTW-like plans, linked through `lib/build/libkrakendig.a`
+(a plugin with a licence of its own: pffft's objects directly):
 
 ```cpp
 kfft_complex* in  = kfft_alloc_complex(n);   // float[2] per sample (in[i][0] re, [1] im)
@@ -799,6 +804,39 @@ version of the suite.
 Plugins are selected per VFO and that choice is saved with the VFO settings
 (`PLUGIN:<id>`); a receiver without the plugin shows it as missing.
 
+## Licensing a plugin
+
+The SDK - `sdk/` and this guide - and the Windows helpers every plugin links
+(`kraken_doa_v2/win/`) are under the MIT License (`sdk/LICENSE`), so a plugin
+can be under any licence. A plugin folder WITHOUT a `LICENSE` file is part of
+the KrakenSDR DoA software (KrakenSDR Source Available Licence,
+`kraken_doa_v2/LICENSE`). Put a `LICENSE` file in it (and an SPDX line in
+each of its files, e.g. `// SPDX-License-Identifier: GPL-2.0-or-later`) and
+the plugin is under that licence instead - `plugins/ism` is GPL-2.0-or-later,
+because it follows rtl_433's device decoders.
+
+kraken_doa runs every plugin as a process of its own and talks to it only
+through the pipe protocol in `kraken_plugin.hpp`, so a plugin with its own
+licence is a separate program. It is built only from:
+
+- its own files,
+- the SDK (`kraken_plugin.hpp`, `kraken_dsp.hpp`, `kraken_fft.hpp`,
+  `plugin_host.cpp`) and the Windows helpers - MIT,
+- pffft (BSD-style, through `kraken_fft.hpp`) and liquid-dsp (MIT).
+
+`plugins/Makefile` enforces this: such a plugin is compiled without `-Ilib` /
+`-I../include` and linked with pffft's objects instead of
+`lib/build/libkrakendig.a`, and the build stops when one of its sources
+includes a header from anywhere else (`../lib/...` too). Its generators in
+`tools/` are built the same way (`make_testsignal.py`, the Windows prebuild).
+So it can't use `lib/` (dig_common, dig_fec, dig_fsk4, the vocoders ...) -
+and don't copy code from there or from kraken_doa either: that code is under
+the source-available licence. The other way round, code taken or translated
+from a GPL / LGPL project belongs ONLY in such a plugin, under a licence that
+project's licence allows (GPL-2.0-or-later code: GPL-2.0-or-later or
+GPL-3.0-or-later), with its copyright notices kept and the files it follows
+named in each file.
+
 ## The shared library (`lib/`)
 
 The shipped protocol decoders are thin plugins around `lib/` (`p25/decoder.cpp`
@@ -806,7 +844,8 @@ is ~50 lines). Their receivers were written against an `RxContext` /
 `Report` interface; `dig::Bridge` (dig_common.hpp) maps it onto `kp::Host`,
 and `dig::FmFrontEnd` (48 kHz -> 12.5 kHz channel filter -> discriminator in
 Hz) / `dig::RrcFrontEnd` give them their input. Your plugin can use any of it
-(`#include "dig_fec.hpp"` etc.).
+(`#include "dig_fec.hpp"` etc.) - unless it has a licence of its own (above):
+`lib/` is under the KrakenSDR Source Available Licence.
 
 ## Example
 

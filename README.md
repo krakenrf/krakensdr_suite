@@ -519,13 +519,18 @@ The suite is made of separate programs under different licences (details:
 [`LICENSE`](LICENSE)):
 
 - **KrakenSDR DoA software** (`kraken_doa_v2/`, including its decoder
-  plugins): [KrakenSDR Source Available Licence](kraken_doa_v2/LICENSE) -
+  plugins, except as below): [KrakenSDR Source Available Licence](kraken_doa_v2/LICENSE) -
   **free for personal and hobbyist use**; you may use, study, change and share
   it for that. **Commercial use requires a licence** from KrakenRF Inc. -
   contact krakenrf@krakensdr.com for details.
 - **Heimdall receiver server** (`heimdall_v2/`) and the **GNU Radio module**
   (`gr-krakensdr_v2/`): [GNU General Public License v3 or later](heimdall_v2/LICENSE).
-- The build, install and run scripts: MIT.
+- The **plugin SDK** (`kraken_doa_v2/plugins/sdk/`, `plugins/SDK.md`, the
+  Windows helpers in `win/`) and the build, install and run scripts: MIT.
+- A **decoder plugin with a `LICENSE` file of its own** is a separate program
+  under that licence: the **ISM device decoder** (`kraken_doa_v2/plugins/ism/`,
+  following rtl_433's decoders) is under the
+  [GNU General Public License v2 or later](kraken_doa_v2/plugins/ism/LICENSE).
 
 Third-party components keep their own licences:
 [`kraken_doa_v2/THIRD_PARTY_NOTICES.md`](kraken_doa_v2/THIRD_PARTY_NOTICES.md),

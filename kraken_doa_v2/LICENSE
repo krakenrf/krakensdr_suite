@@ -6,10 +6,11 @@ Licence are reserved.
 
 This Licence applies to the KrakenSDR DoA software: everything in the
 kraken_doa_v2 folder of the KrakenSDR suite
-(https://github.com/krakenrf/krakensdr_suite), including its decoder plugins,
-the plugin SDK and plugin library, its web pages, tools, scripts and
-documentation, except where a file or folder says that it is under a
-different licence.
+(https://github.com/krakenrf/krakensdr_suite), including its decoder plugins
+and their plugin library, its web pages, tools, scripts and documentation,
+except where a file or folder says that it is under a different licence (see
+section 6: the plugin SDK, the Windows helpers and the decoder plugins with a
+LICENSE file of their own).
 
 Summary (for convenience only; it is not part of the Licence): personal and
 hobbyist use is free - you may use, study, change and share the Software for
@@ -143,6 +144,16 @@ particular the Heimdall receiver server in the heimdall_v2 folder and the GNU
 Radio module in the gr-krakensdr_v2 folder, both under the GNU General Public
 License version 3 or later) are separate works and are not part of the
 Software. The Software communicates with them over network connections.
+
+Not part of the Software either: the plugin SDK (the plugins/sdk folder and
+plugins/SDK.md) and the Windows helpers in the win folder, which are under the
+MIT License (plugins/sdk/LICENSE); and every decoder plugin whose folder
+(plugins/<id>) holds a LICENSE file of its own - for example plugins/ism,
+under the GNU General Public License version 2 or later. Such a plugin is a
+separate program: the Software starts it as a process of its own and
+exchanges data with it through pipes, and it is built without the plugin
+library or other parts of the Software. It is licensed only under the terms
+in its folder.
 
 Software that You obtain and install separately (for example voice codecs,
 speech-recognition models or an AI assistant) is under its own terms. You are

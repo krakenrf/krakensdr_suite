@@ -30,7 +30,8 @@ Claude Code settings, MCP servers, CLAUDE.md files or memory are loaded):
 - read the kraken_doa_v2 folder (not the API token, the settings file with the
   web-mapper key, the TLS key or this assistant's config), its plugins and
   /usr/include; write only its conversation folder, plugin folders (not
-  plugins/sdk, plugins/lib, the plugins Makefile / SDK.md) and ai/knowledge
+  plugins/sdk, plugins/lib, the plugins Makefile / SDK.md, a plugin's
+  LICENSE) and ai/knowledge
 - shell commands only in Claude Code's sandbox (bwrap + socat): the same
   write limits enforced by the OS, credentials in the home folder unreadable,
   no network. Without the sandbox it gets no shell at all
@@ -460,6 +461,8 @@ def claude_settings(sdir, sandbox):
     # (** matches nothing): make files there are refused by name above, and
     # *.mk files too (a Makefile could include one)
     deny.append("Edit(/" + rule_path(os.path.join(PLUGIN_DIR, "*.mk")) + ")")
+    # a plugin's LICENSE decides its licence and how it is built (plugins/Makefile): the user's call
+    deny.append("Edit(/" + rule_path(os.path.join(PLUGIN_DIR, "*", "LICENSE*")) + ")")
     deny.append(rule("Edit", os.path.join(AI_DIR, "kraken_ai.py"), False))
     deny.append(rule("Edit", os.path.join(AI_DIR, "sigtool.py"), False))
     deny.append(rule("Edit", MEMGUARD))
@@ -589,6 +592,10 @@ FILES AND CODE:
   array radius_m) prints each talker's bearing too. Plugins you change run
   sandboxed (no network, read-only files) when the receiver starts them. After building, tell the user
   to pick it in a VFO's decoder list (or set it yourself with set_vfo).
+- Licensing: write plugin code yourself, from standards, published protocol descriptions and your own
+  measurements. Never copy or translate code from GPL / AGPL / LGPL projects (rtl_433, dump1090,
+  readsb, OP25, osmo-tetra, srsRAN, gr-lora ...): use them only as documentation of facts. A plugin's
+  LICENSE file (SDK.md "Licensing a plugin") is the user's decision - don't create or change one.
 - Signal analysis on captures: {sigtool_help}
   Python 3 + numpy only (no scipy / matplotlib); memory is tight - every Python process has a ceiling
   (MemoryError past it): read long captures in pieces (np.memmap, complex64).

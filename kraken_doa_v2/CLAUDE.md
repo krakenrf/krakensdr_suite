@@ -4732,9 +4732,13 @@ Edit `include/config.hpp`:
   2.4 MHz, a locked line - see *Fixed-frequency decoders*), manual only,
   talkers. Weather stations, TPMS, key fobs / remotes, alarm sensors,
   energy meters: 69 protocol decoders (~140 model names, rtl_433's naming
-  and JSON keys). Protocol notes from rtl_433's documentation (GPL-2.0,
-  documentation + rtl_433_tests recordings as test data only); own
-  implementation. (A 240 kHz variant - the same decoders on a 240 kHz VFO -
+  and JSON keys). LICENCE: GPL-2.0-or-later, its own (`plugins/ism/LICENSE`,
+  2026-10-22) - its decoders follow rtl_433's device decoders (GPL-2.0-or-
+  later) one by one; every file names the rtl_433 decoders it follows and
+  their authors (README *Licence*). Built like every plugin with its own
+  LICENSE: no `lib/`, no kraken_doa headers (root CLAUDE.md *Licensing*) -
+  don't copy code between ism and the source-available plugins / lib in
+  either direction; rtl_433_tests recordings are its test data. (A 240 kHz variant - the same decoders on a 240 kHz VFO -
   existed first; removed 2026-10-12: the full band did everything it did at
   about the same CPU, for ~60 MB more memory)
 - `frontend.cpp`, `FrontEnd(10)` (input = 10 x `ism::FS`, 240 kHz):
@@ -5445,7 +5449,9 @@ Edit `include/config.hpp`:
   renamed: a running copy keeps its inode). The top Makefile's `plugins`
   target runs it with -k and only warns on failure; CMake has an ALL target.
   An optional `CXXFLAGS` file in a plugin folder adds compiler flags (last
-  on the command line; ism: -O3)
+  on the command line; ism: -O3). A `LICENSE` file in a plugin folder = the
+  plugin has a licence of its own: built from its files + the MIT SDK +
+  pffft only, no `lib/` (root CLAUDE.md *Licensing*; ism)
 - `decoder --info` (JSON incl. `options` and `options_tsv` - the
   tab-separated copy kraken_doa's flat JSON reader parses; read by
   `PluginRegistry::scan()` at startup, on `PLUGINS_RESCAN` (worker thread,

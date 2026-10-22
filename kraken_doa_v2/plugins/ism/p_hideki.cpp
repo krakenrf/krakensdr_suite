@@ -1,7 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The decoders in this file follow rtl_433's
+// (https://github.com/merbanan/rtl_433, GPL-2.0-or-later), re-implemented in
+// C++ for the KrakenSDR plugin API (2026):
+//   src/devices/hideki.c - rtl_433 contributors
+
 // Hideki TS04 thermo-hygro, anemometer, rain gauge and thermometer (also sold
 // as TFA, Cresta, Bresser 5CH 7009993), 433.92 MHz.
-//
-// protocol notes: rtl_433 documentation; own implementation.
 //
 // OOK bi-phase (differential Manchester) with 520 us half bits, each package
 // sent 3 times. As sliced (two half-bit symbols = 1, one full-bit symbol = 0)

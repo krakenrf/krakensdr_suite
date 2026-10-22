@@ -163,17 +163,35 @@ CXXFLAGS_ALLOWED = -O0 -O1 -O2 -O3 -Os -Ofast -ffast-math -funroll-loops -fno-ma
                    -fno-tree-vectorize -march=% -mtune=% -mcpu=% -D%
 extra_flags = $(filter $(CXXFLAGS_ALLOWED),$(shell cat $(1)/CXXFLAGS 2>/dev/null))
 
+# plugins/<id>/LICENSE: the plugin is under that licence instead of
+# kraken_doa_v2's (e.g. ism: GPL-2.0-or-later). Such a plugin is built from
+# the MIT plugin SDK (sdk/ + ../win/, sdk/LICENSE), pffft (BSD-style) and
+# liquid-dsp (MIT) only - never lib/ (libkrakendig.a, KrakenRF's source-
+# available library) or kraken_doa's headers (../include): no -Ilib /
+# -I../include, pffft's objects instead of the library, and the build stops
+# when one of its sources includes a header from anywhere else
+own_licence = $(wildcard $(1)/LICENSE)
+plugin_cxxflags = $(if $(call own_licence,$(1)),$(filter-out -Ilib -I../include,$(CXXFLAGS)),$(CXXFLAGS))
+plugin_lib = $(if $(call own_licence,$(1)),$(PFFFT_OBJS),$(LIB_A))
+# $(1) = the plugin, $(2) = its sources: every header they include (-MM, the
+# system ones left out), normalised, must lie in the plugin, sdk/, pffft or ../win/
+licence_check = $(if $(call own_licence,$(1)),@bad=$$($(CXX) $(call plugin_cxxflags,$(1)) -I$(1) -MM $(2) \
+    | tr ' \\' '\n\n' | grep -v -e ':$$' -e '^$$' | xargs -r realpath -m --relative-to=. \
+    | grep -v -E '^($(1)|sdk|\.\./external/pffft|\.\./win)/[^/]'); \
+    if [ -n "$$bad" ]; then echo "plugin $(1) has its own LICENSE - it may include only its own files + the plugin SDK + pffft; not:" $$bad; exit 1; fi)
+
 # Linked to a temporary name and renamed: a running copy (kraken_doa runs
 # the plugin) keeps its old inode, and kraken_doa sees the new mtime and
 # restarts the decoder on it. (Windows can't overwrite a running .exe, but
 # MSYS2's mv moves the busy file aside first; g++ -o x.tmp adds no .exe.)
 .SECONDEXPANSION:
-%/build/decoder$(EXE): $$(wildcard $$*/*.cpp) $$(wildcard $$*/*.hpp) $$(wildcard $$*/*.h) $$(wildcard $$*/CXXFLAGS) $(HOST_OBJ) $(SDK_HDRS) $(LIB_A) $(LIB_HDRS) $(LIQUID_H) $(LIQUID_A) $(WIN_OBJS) $(WIN_MARCH_STAMP)
+%/build/decoder$(EXE): $$(wildcard $$*/*.cpp) $$(wildcard $$*/*.hpp) $$(wildcard $$*/*.h) $$(wildcard $$*/CXXFLAGS) $$(wildcard $$*/LICENSE) $(HOST_OBJ) $(SDK_HDRS) $(LIB_A) $(LIB_HDRS) $(LIQUID_H) $(LIQUID_A) $(WIN_OBJS) $(WIN_MARCH_STAMP)
 	@test -f $*/decoder.cpp || { echo "no plugin '$*' (expected plugins/$*/decoder.cpp)"; exit 1; }
 	@mkdir -p $*/build
-	$(CXX) $(CXXFLAGS) $(call extra_flags,$*) -I$* -o $*/build/decoder.tmp $(wildcard $*/*.cpp) $(HOST_OBJ) $(WIN_OBJS) $(LIB_A) $(LIQUID_A) $(LIBS)
+	$(call licence_check,$*,$(wildcard $*/*.cpp))
+	$(CXX) $(call plugin_cxxflags,$*) $(call extra_flags,$*) -I$* -o $*/build/decoder.tmp $(wildcard $*/*.cpp) $(HOST_OBJ) $(WIN_OBJS) $(call plugin_lib,$*) $(LIQUID_A) $(LIBS)
 	@mv -f $*/build/decoder.tmp $*/build/decoder$(EXE)
-	@echo "built plugin $* -> $*/build/decoder$(EXE)"
+	@echo "built plugin $* -> $*/build/decoder$(EXE)$(if $(call own_licence,$*), (own licence: plugin SDK + pffft only))"
 
 # Windows: the test-signal generators written in C++ (<id>/tools/*.cpp, the
 # Debug Playback steps of sdk/tools/make_testsignal.py) prebuilt with the
@@ -187,9 +205,10 @@ GEN_TARGETS := $(foreach s,$(GEN_SRCS),$(dir $(s))build/$(basename $(notdir $(s)
 GEN_BUILD_DIRS := */tools/build
 gen_plugin = $(firstword $(subst /, ,$(1)))
 all: $(GEN_TARGETS)
-$(GEN_TARGETS): %$(EXE): $$(subst /build/,/,$$*).cpp $$(wildcard $$(call gen_plugin,$$*)/*.hpp $$(call gen_plugin,$$*)/*/*.hpp) $(SDK_HDRS) $(LIB_A) $(LIB_HDRS) $(LIQUID_H) $(LIQUID_A) $(WIN_OBJS) $(WIN_MARCH_STAMP)
+$(GEN_TARGETS): %$(EXE): $$(subst /build/,/,$$*).cpp $$(wildcard $$(call gen_plugin,$$*)/*.hpp $$(call gen_plugin,$$*)/*/*.hpp) $$(wildcard $$(call gen_plugin,$$*)/LICENSE) $(SDK_HDRS) $(LIB_A) $(LIB_HDRS) $(LIQUID_H) $(LIQUID_A) $(WIN_OBJS) $(WIN_MARCH_STAMP)
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -I$(call gen_plugin,$*) -o $@.tmp $< $(WIN_OBJS) $(LIB_A) $(LIQUID_A) $(LIBS)
+	$(call licence_check,$(call gen_plugin,$*),$<)
+	$(CXX) $(call plugin_cxxflags,$(call gen_plugin,$*)) -I$(call gen_plugin,$*) -o $@.tmp $< $(WIN_OBJS) $(call plugin_lib,$(call gen_plugin,$*)) $(LIQUID_A) $(LIBS)
 	@mv -f $@.tmp $@
 	@echo "built generator $< -> $@"
 endif

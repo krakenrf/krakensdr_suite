@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. KrakenSDR's own code, written from the EV1527 / PT2262
+// chips' coding (it does not follow rtl_433's generic_remote.c).
+
 // Fixed-code remotes and sensors: EV1527 / HS1527 / RT1527 (20-bit address +
 // 4 data bits) and PT2262 / SC2262 (12 tri-state digits) - the coding of
 // most cheap 315 / 433 MHz key fobs, door contacts, PIR and water sensors,

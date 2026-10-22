@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 KrakenRF Inc. - MIT so that decoder plugins of any licence
+// can link it (licence text: kraken_doa_v2/plugins/sdk/LICENSE, root LICENSE)
+
 // Windows resources linked into every .exe (windres -> win/app.res.o):
 // the manifest (1 = CREATEPROCESS_MANIFEST_RESOURCE_ID, 24 = RT_MANIFEST).
 // Identical copy in heimdall_v2/win and kraken_doa_v2/win.

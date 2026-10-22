@@ -1,3 +1,24 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The decoders in this file follow rtl_433's
+// (https://github.com/merbanan/rtl_433, GPL-2.0-or-later), re-implemented in
+// C++ for the KrakenSDR plugin API (2026):
+//   src/devices/nexus.c - rtl_433 contributors
+//   src/devices/rubicson.c - rtl_433 contributors
+//   src/devices/solight_te44.c - Copyright (C) 2017 Miroslav Oujesky
+//   src/devices/prologue.c - rtl_433 contributors
+//   src/devices/ambient_weather.c - contributed by David Ediger; discovered by
+//     Ron C. Lewis
+//   src/devices/infactory.c - Copyright (C) 2017 Sirius Weiß <siriuz@gmx.net>;
+//     Copyright (C) 2017 Christian W. Zuckschwerdt <zany@triq.net>; Copyright
+//     (C) 2020 Hagen Patzke <hpatzke@gmx.net>
+//   src/devices/thermopro_tp12.c - Copyright (C) 2017 Google Inc.
+//   src/devices/ambientweather_tx8300.c - Copyright (C) 2018 ionum-projekte
+//     and Roger
+//   src/devices/silvercrest.c - Copyright (C) 2018 Benjamin Larsson
+
 // OOK weather sensors and a remote, one small protocol each:
 //   Nexus (and FreeTec NC-7345, NX-3980, Solight TE82S, TFA 30.3209.02,
 //   Technoline TX9116, Digoo DG-R8H), Nexus sauna sensor, Rubicson (TFA
@@ -6,8 +27,6 @@
 //   F007TH (F012TH, TFA 30.3208.02, SwitchDoc F016TH), inFactory NC-3982
 //   (nor-tec, DAY), ThermoPro TP08 / TP12 / TP20, Ambient Weather TX-8300 /
 //   TFA 30.3211.02, Silvercrest remote.
-//
-// protocol notes: rtl_433 documentation; own implementation.
 
 #include "frontend.hpp"
 #include "ism.hpp"

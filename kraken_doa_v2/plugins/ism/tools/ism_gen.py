@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 KrakenRF Inc.
+# Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+# Public License version 2 or (at your option) any later version - see LICENSE
+# in the plugin's folder (plugins/ism). The encoders below write what the
+# plugin's decoders check, i.e. the formats of the rtl_433 decoders those
+# follow (https://github.com/merbanan/rtl_433, GPL-2.0-or-later; copyright
+# holders: the plugin's README, Licence):
+#   acurite_tower - src/devices/acurite.c
+#   tx141th       - src/devices/lacrosse_tx141x.c
+#   wh24          - src/devices/fineoffset.c
+#   toyota        - src/devices/tpms_toyota.c
+#   crc8(), lfsr_digest8_reflect() - src/bit_util.c (as the plugin's bits.cpp)
+# ev1527 / pt2262 follow the chips' coding (KrakenSDR's own, like the plugin's
+# p_fixedcode.cpp).
 """Synthetic ISM-band devices (433.92 MHz etc.) at known bearings on
 kraken_doa's UCA, at 2.4 MHz - test signals for the ism plugin (decoding,
 the per-device DoA with its channel filtered out of the band).
@@ -10,8 +25,8 @@ Every antenna, sample by sample (antenna 0 first), written in 0.1 s pieces
 OUT.json gets rate, channels, rf_hz, radius_m and the truth (every device's
 talker id as the plugin forms it, bearing, frequency, transmission times).
 
-Devices (the framing / checks the plugin's decoders verify - protocol notes
-from rtl_433's documentation, see the plugin's README):
+Devices (the framing / checks the plugin's decoders verify - the formats of
+the rtl_433 decoders they follow, see the plugin's README):
   ev1527         OOK, clock Te; bit = 4 Te, carrier 3 Te (1) / 1 Te (0); frame
                  = sync (1 Te on, 31 Te off) + 24 bits (20-bit address + 4
                  key bits), repeated; no checksum (two equal frames count).

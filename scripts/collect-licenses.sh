@@ -5,7 +5,10 @@
 # and the Dockerfile):
 #
 #   DEST/LICENSE, DEST/heimdall_v2/, DEST/kraken_doa_v2/
-#                         the suite's own licences + THIRD_PARTY_NOTICES.md
+#                         the suite's own licences + THIRD_PARTY_NOTICES.md;
+#                         kraken_doa_v2/plugins/sdk/LICENSE (the plugin SDK,
+#                         MIT) and kraken_doa_v2/plugins/<id>/LICENSE of every
+#                         decoder plugin under a licence of its own
 #   DEST/third-party/<component>/
 #                         the licence files of what the binaries contain:
 #                         pffft, concurrentqueue and - where their source
@@ -50,6 +53,22 @@ mkdir -p "$DEST/heimdall_v2" "$DEST/kraken_doa_v2" "$DEST/third-party"
 cp "$ROOT/LICENSE" "$DEST/"
 cp "$ROOT/heimdall_v2/LICENSE" "$ROOT/heimdall_v2/THIRD_PARTY_NOTICES.md" "$DEST/heimdall_v2/"
 cp "$ROOT/kraken_doa_v2/LICENSE" "$ROOT/kraken_doa_v2/THIRD_PARTY_NOTICES.md" "$DEST/kraken_doa_v2/"
+# the plugin SDK (MIT: in every plugin) and the plugins with a LICENSE of
+# their own - each is under that licence, not kraken_doa_v2's
+mkdir -p "$DEST/kraken_doa_v2/plugins/sdk"
+cp "$ROOT/kraken_doa_v2/plugins/sdk/LICENSE" "$DEST/kraken_doa_v2/plugins/sdk/"
+GPL_PLUGINS=
+for f in "$ROOT"/kraken_doa_v2/plugins/*/LICENSE; do
+    [[ -f $f ]] || continue
+    id=$(basename "$(dirname "$f")")
+    [[ $id == sdk ]] && continue
+    mkdir -p "$DEST/kraken_doa_v2/plugins/$id"
+    cp "$f" "$DEST/kraken_doa_v2/plugins/$id/"
+    if grep -q 'GNU GENERAL PUBLIC LICENSE' "$f"; then
+        printf -v line '  %-32s%s\n' "decoder plugin $id" "kraken_doa_v2/plugins/$id/ in the suite above, same commit"
+        GPL_PLUGINS+=$line
+    fi
+done
 
 # put NAME FILE... - the FILEs that exist into third-party/NAME/
 put() {
@@ -126,11 +145,26 @@ under those licences. Their complete source code:
   uWebSockets / uSockets          https://github.com/uNetworking/uWebSockets
                                   commit $UWS_REV
   $LIBUSB
+EOF
+if [[ -n $GPL_PLUGINS ]]; then
+    GPL_PLUGINS=${GPL_PLUGINS%$'\n'}
+    cat >> "$DEST/SOURCE.txt" <<EOF
+
+The decoder plugins below are programs of their own under the GNU GPL
+(kraken_doa_v2/plugins/<id>/LICENSE and their files' headers). kraken_doa runs
+each as a separate process; a plugin contains only its own code, the plugin
+SDK (MIT, kraken_doa_v2/plugins/sdk/LICENSE), pffft and liquid-dsp. Their
+complete source code:
+
+$GPL_PLUGINS
+EOF
+fi
+cat >> "$DEST/SOURCE.txt" <<EOF
 
 If you cannot get it there, ask KrakenRF Inc.: krakenrf@krakensdr.com.
 
-The KrakenSDR DoA software (kraken_doa_v2/) is not under the GPL: see
-kraken_doa_v2/LICENSE (free for personal and hobbyist use, commercial use
+The rest of the KrakenSDR DoA software (kraken_doa_v2/) is not under the GPL:
+see kraken_doa_v2/LICENSE (free for personal and hobbyist use, commercial use
 needs a licence from KrakenRF Inc.).
 EOF
 
