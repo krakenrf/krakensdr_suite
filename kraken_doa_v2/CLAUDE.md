@@ -6257,7 +6257,11 @@ the AM audio's lows.
 
 **FM only (DoA and beamforming off):** only the VFOs heard (🔊) run (+ those with a decoder / Transcribe / audio recording), decimating
 only the listened-to channel (squelch reads the main FFT, not decimated data),
-and the receiver converts only that channel.
+and the receiver converts only that channel. None of them (every VFO muted,
+no decoder): nothing is decimated - until 2026-10-22 that empty list took
+the several-VFO branch of the pass (`reserve(size - 1)`: length_error) and
+kraken_doa terminated (found while profiling; the build from before
+arbitrary widths did the same).
 
 ### 5. MUSIC Algorithm
 

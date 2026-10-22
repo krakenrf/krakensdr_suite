@@ -867,7 +867,10 @@ void DataReceiver::decimation_processor_thread() {
             if (active_decimators.size() == 1) {
                 // Common case: run inline instead of spawning an OS thread per packet
                 results.push_back(run_pipeline(active_decimators[0]));
-            } else {
+            } else if (active_decimators.size() > 1) {
+                // (Not with none - FM only and no VFO heard / decoding /
+                // transcribing: reserve(size - 1) threw length_error and
+                // kraken_doa terminated)
                 // Every VFO but the first on a persistent pool, the first
                 // inline here, then one barrier. std::async(launch::async)
                 // created and joined an OS thread per VFO per packet (~146
