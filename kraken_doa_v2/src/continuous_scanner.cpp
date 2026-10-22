@@ -272,7 +272,7 @@ float ContinuousScanner::getScanBandwidthHz() {
     auto decimators = decimator_manager.getAllDecimators();
     for (const auto& d : decimators) {
         if (!d || !d->enabled || d->being_deleted.load()) continue;
-        bw_hz = get_bandwidth_option(d->bandwidth_index).bandwidth_mhz * 1e6f;
+        bw_hz = static_cast<float>(d->bandwidth_hz.load());
         break;  // first usable decimator (D0, the one FM audio follows)
     }
     return std::max(bw_hz, 10000.0f);

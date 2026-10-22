@@ -118,7 +118,8 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // dynamic: "<heard>|<vfo>;<vfo>;..." with each <vfo> =
         // "offset_hz,bw_index,demod,squelch_en,squelch_db,squelch_method (0 FFT /
         // 3 Digital),0 (was the eigenvalue threshold),digital_mode,digital_opts,tuner,
-        // transcribe (0|1, Voice to Text)"
+        // transcribe (0|1, Voice to Text),bandwidth_hz (any width; bw_index = the
+        // nearest BANDWIDTH_OPTIONS size, for an older kraken_doa)"
         // and heard the LIST POSITIONS of the VFOs heard in the live audio
         // (🔊, "0,2"; "-1" = none; was one position, the single Audio Src) - ids
         // are renumbered 0..N-1 across restarts. Built and parsed in

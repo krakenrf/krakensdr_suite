@@ -796,9 +796,7 @@ string build_settings_payload(const string& apikey) {
         double squelch = -120.0;
         if (i < (int)info.size()) {
             vfo_freq = llround(center_hz + info[i].frequency_offset_hz);
-            int bwi = info[i].bandwidth_index;
-            if (bwi >= 0 && bwi < NUM_BANDWIDTH_OPTIONS)
-                bw_hz = (int)lround(BANDWIDTH_OPTIONS[bwi].bandwidth_mhz * 1e6);
+            bw_hz = info[i].bandwidth_hz;
             squelch = info[i].squelch_level;
         }
         js << ",\"vfo_freq_" << i << "\":" << vfo_freq
@@ -812,16 +810,6 @@ string build_settings_payload(const string& apikey) {
 // ---------------------------------------------------------------------------
 // Cloud -> receiver settings application (remote retune)
 // ---------------------------------------------------------------------------
-
-int closest_bandwidth_index(double hz) {
-    int best = 0;
-    double best_diff = 1e18;
-    for (int i = 0; i < NUM_BANDWIDTH_OPTIONS; i++) {
-        double diff = fabs(BANDWIDTH_OPTIONS[i].bandwidth_mhz * 1e6 - hz);
-        if (diff < best_diff) { best_diff = diff; best = i; }
-    }
-    return best;
-}
 
 // Runs ON THE uWS LOOP THREAD (deferred), where control commands normally
 // execute - so sync echo, persistence and heimdall forwarding all behave
@@ -956,13 +944,13 @@ void apply_cloud_settings_on_loop(map<string, string> s, const string& apikey) {
                 cmd("SET_DECIMATOR_FREQ:" + to_string(id) + ":" + fmt_num(offset_khz));
             } catch (const exception&) {}
         }
-        // Bandwidth: the mapper allows any integer Hz, but the receiver only
-        // supports the discrete BANDWIDTH_OPTIONS set - snap to the nearest.
+        // Bandwidth: any integer Hz, as the mapper has it (clamped to the
+        // VFO limits by the command)
         k = "vfo_bw_" + to_string(i);
         if (has(k.c_str())) {
             try {
-                int idx = closest_bandwidth_index(stod_finite(s[k]));
-                cmd("SET_DECIMATOR_BW:" + to_string(id) + ":" + to_string(idx));
+                const int hz = clamp_bandwidth_hz(stod_finite(s[k]));
+                cmd("SET_DECIMATOR_BW_HZ:" + to_string(id) + ":" + to_string(hz));
             } catch (const exception&) {}
         }
         // The web mapper has no squelch on/off toggle - it assumes squelch is

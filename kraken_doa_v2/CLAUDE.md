@@ -88,11 +88,19 @@ directly.
 **Thread Count:**
 - Base workers: 8 threads
 - Per-channel FFT: 8 threads (one per channel)
-- VFO pipelines: with 2+ VFOs, the first runs on the receiver thread and the
-  rest on a persistent 3-thread pool (`std::async` used to create an OS thread
-  per VFO per packet)
-- ThreadPools: 10 threads (2 decimators × 5 channels each)
-- **Total: ~23-28 threads on 4 cores** (intentional oversubscription for throughput)
+- VFO pipelines (data_receiver.cpp): first every VFO's decimation in ONE pass
+  (`SharedDecimator::decimateVfos`, below), then per VFO its MUSIC / squelch /
+  talker DoA - with 2+ VFOs the first on the receiver thread and the rest on
+  a persistent 3-thread pool (`std::async` used to create an OS thread per
+  VFO per packet); FM only and independent / wideband mode (one channel per
+  VFO, no MUSIC) all inline
+- Decimation: ONE pool shared by every VFO (cores + 1 threads: 5 on the Pi 5;
+  `decimation_pool()` in shared_decimator.cpp - each VFO had its own pool of
+  MAX_CHANNELS 8 threads until 2026-10-22): a task per input array (an
+  antenna, every VFO on it; a tuner in independent mode), the first on the
+  calling thread
+- **Total (Pi 5, measured 2026-10-22): ~29 threads with one VFO, ~32 with
+  three** (51 with three before the shared pool)
 
 ### Key Components
 
@@ -116,7 +124,8 @@ directly.
 - `raw_data_buffer.cpp`: Bounded queue with automatic old data cleanup
 - `ring_buffer.cpp`: Lock-free circular buffers for FFT/audio
 - `system_stats.cpp`: CPU/memory usage tracking
-- `thread_pool.hpp`: Generic thread pool (used by SharedDecimator)
+- `thread_pool.hpp`: Generic thread pool (SharedDecimator's shared
+  decimation pool, the pipeline's VFO pool)
 - `include/utils/json_escape.hpp`: `json_escape()` for every hand-built JSON
   emitter, and `json_find()` - the one flat-object reader (settings file,
   web-mapper cloud messages) - which decodes every JSON escape including
@@ -179,10 +188,319 @@ Edit `include/config.hpp`:
   positions. ULA and user-entered CUSTOM positions are taken literally and
   are NOT mirrored
 
-**Bandwidth Options:**
-- `BANDWIDTH_OPTIONS[]`: Integer decimation factors (1 to 2400)
-- Range: 2.4 MHz down to 1 kHz (no resampling)
-- `DEFAULT_BANDWIDTH_INDEX`: Initial selection (default 7 = 240 kHz)
+**Arbitrary VFO bandwidth (the user's request 2026-10-21: "choose an arbitrary
+bandwidth, while still keeping the decimation efficient"; config.hpp,
+`src/signal_processing/shared_decimator.cpp`):**
+- A VFO's bandwidth is ANY whole Hz, `VFO_BW_MIN_HZ` 1 kHz .. `VFO_BW_MAX_HZ`
+  2.4 MHz: `DecimatorInstance::bandwidth_hz` (was `bandwidth_index`, an index
+  into the 30 `BANDWIDTH_OPTIONS`), `DecimatorManager::setBandwidthHz` (clamps;
+  `setBandwidthIndex` = an option's Hz). `clamp_bandwidth_hz` /
+  `decimation_for_bandwidth` / `efficient_bandwidth_at_least` /
+  `nearest_bandwidth_index` in config.hpp
+- Decimation stays INTEGER (no resampler - every consumer works on
+  2.4 MHz / D): D = the largest divisor of 2.4 MHz (2^8 3 5^5: 59 of them up
+  to 2400 - `efficient_decimations()`) whose rate holds the width.
+  `SharedDecimator::planStages(bw)` (static: the decimator,
+  tools/decim_bench.cpp share it) splits D into stages of 2..8: an
+  intermediate stage stops at its output rate - 0.4 bw (only what aliases
+  onto the wanted +-0.4 bw must go), the LAST stage stops at 0.6 bw (pass
+  0.4 bw, -6 dB at the bar's edge 0.5 bw) - a width narrower than its rate
+  is cut AT THE WIDTH, so the VFO passes its bandwidth and no more; 1.2 -
+  2.4 MHz = one stage of factor 1 (a full-rate filter). Kaiser 60 dB taps
+  (`liquid_firdes_kaiser`; tap count 52 / (14.36 x transition)). Gain =
+  each stage's 1 / (2 cutoff) = 2.4 MHz / bw for every width (= D for the
+  efficient sizes, `bandwidth_is_efficient` - every old option is one: the
+  int16 conversions downstream see the same levels)
+- THE PLAN (2026-10-22, the user's pick of three measured proposals:
+  "re-split D = 2-8 stages, fold the mixer into stage 1, halfband x2
+  stages"): a cost model of the stage kernels (ns per output, fitted on the
+  Pi 5 - job scratch explore/kern2.cpp + plan.py: regular 0.133 x window +
+  1.13 + 0.14 x factor, folded 0.239 x window + 3.03 + 0.14 x factor,
+  halfband = regular on its x phase at factor 1 + 0.3; per input sample the
+  mixer 3.39, the mixer into a halfband's two phases 2.82, the copy a folded
+  stage takes 0.52 - `R_TAP` ... in shared_decimator.cpp) picks the cheapest
+  ORDERED split (memoised over the factor that remains: its input rate
+  follows from it; ties = the larger factor first), per factor-2 stage
+  regular or halfband, and for the first stage where the mixer goes.
+  Measured against EVERY candidate plan of 28 widths (job scratch
+  explore/allplans.cpp: 2-318 plans each, the real FirStage, VFO off
+  centre): the model's pick is the fastest in 22, within 2 % in the other
+  six (mean 0.1 %). It was largest factor first: D = 2-8 then ran ONE long
+  sharp stage at 2.4 MHz (300 kHz: 145 taps at 8:1 - now 4:1 with 25 taps +
+  a halfband 2:1 of 39). `Plan::describe()` = "8F:31 5:23 2h:39" (factor, F
+  = the mixer folded in, h = halfband : taps); `Plan::cost_ns` = the model's
+  estimate (within ~6 % of the measured on average)
+- The stages: `SharedDecimator::FirStage`, a BLOCK FIR (2026-10-21; it
+  replaced liquid's `firdecim_crcf`, itself the `cccf` with zero imaginary
+  parts the decimator had before arbitrary widths - liquid copies EVERY
+  input sample into its window with a call of its own, ~8.9 ns of the
+  9.5-13 ns a sample cost, a multiply-accumulate ~0.14 ns): output j = the
+  taps' dot product with the inputs ending at input j x M (liquid firdecim's
+  alignment), straight from a buffer of history + the samples not used up
+  yet (`SampleBuf`: grows without zeroing, drops from the front). The
+  kernel (2026-10-22): the taps duplicated per I / Q float, padded to a
+  multiple of 4 with leading zeros, FOUR outputs per pass sharing the tap
+  loads, two outputs' sums combined by one shuffle into one store (GCC
+  vector extensions - `__builtin_shufflevector` under clang - -> NEON / SSE;
+  4 outputs per pass 10-20 % faster than 2). The mixer in front writes into
+  the first stage's buffer, each stage's outputs go into the next one's; a
+  block that isn't a multiple of a stage's factor leaves its tail in that
+  stage. A block goes through the whole cascade in CHUNKS of `DECIM_CHUNK`
+  1024 input samples (2026-10-22, decimateChannel), so every stage's buffer
+  stays a chunk + its history long, in the core's L1 - see the
+  measurements below for why. A regular first stage whose input isn't
+  mixed in front (folded, or the VFO on the tuner centre - not a halfband,
+  which splits its input) filters STRAIGHT FROM the input block
+  (`FirStage::begin_input` / `pending_upto` / `produce_upto` /
+  `end_input`, the user's go 2026-10-22): its history x gets only the
+  block's first L - 1 samples, for the windows that reach back into it,
+  every other window is computed from the block itself (across the chunks
+  in place), and at the end x keeps what the next block's windows reach
+  back to (<= L - 1 + M samples). Kinds:
+  - regular: real taps
+  - FOLDED (`Plan::fold`, the first stage only): the mixer in the taps -
+    h[k] e^{+jwk} on the RAW input (copied in), each output turned by the
+    mixer's phase at its newest sample (times e^{-jwM} per output,
+    renormalised every 1024): the oscillator runs at the output rate.
+    `FirStage::fold(w)` on every offset change (phase 1 at the next sample,
+    as the mixer restarts; within 1 Hz of the centre: real taps); its
+    history is raw, so it is mixed with the new offset at once (the mixer in
+    front leaves the held samples mixed with the old). Pays where the first
+    stage's taps per input are few: every width up to 240 kHz (factor 5-8
+    first) - ~2 of the ~3.4 ns the mixer cost
+  - HALFBAND (factor 2 cut at a quarter of its input rate: an intermediate
+    factor 2, or the last when the width fills the rate): 4m+3 taps, those
+    at even offsets from the centre set to exactly 0 (the sinc's zeros).
+    The input kept as its two phases (`x` = the outputs' newest samples,
+    `o` = the others), written so by its producer (`take()` -> `Dst` {a,
+    b}: the mixer in front, the copy, or the previous stage's outputs -
+    `put4` shuffles them apart): the x taps a plain FIR at the output rate +
+    the centre tap times o[j] - ~40 % fewer multiply-adds (1.2 MHz with the
+    mixer: 6.98 -> 5.86 ns)
+- Checked (`tools/decim_bench.cpp`, Pi 5): every plan - the 59 efficient
+  sizes + 38 arbitrary widths - fed blocks of odd lengths (1, 2, 3, 7, 333,
+  12345 ...) vs a plain double-precision reference of the same plan (the
+  mixer at the input rate, every stage a full convolution): max |diff| <=
+  5.5e-7 of rms on the centre, <= 6.9e-5 off it (the float mixer's phase
+  over 45k samples); response flat +-0.03 dB to 0.4 bw, -6.0..-6.2 dB at
+  0.5 bw, -52..-72 dB from 0.6 bw, aliases <= -53 dB, the same with the VFO
+  300 kHz off the centre (the folded path)
+- `decimateMultiChannel(.., bandwidth_hz, offset)` (was the factor): the
+  pipeline reads the width ONCE per block; the channel state rebuilds when
+  the width changes (`ChannelDecimState::bandwidth_hz`), not only the factor.
+  `MultiChannelDecimated::bandwidth_hz` = the block's width (<= its rate)
+- The beamformed FFT (`process_beamformed_fft(.., bandwidth_hz)`) keeps only
+  the bins within the width (a multiple of 8, `bandwidth_hz` = their span;
+  the overlay message pools by powers of two that divide the count): with
+  the filter's stopband in the rest - 48 % of the bins of a 1.25 MHz VFO at
+  2.4 MS/s - its 10th-percentile noise floor fell 60 dB and the beamformed
+  FFT squelch opened on noise
+- Protocol: `SET_DECIMATOR_BW_HZ:id:hz` (clamped, `set_applied`; a bad value
+  throws = nothing changes), `SET_DECIMATOR_BW:id:index` (older pages /
+  scripts); the echo `{"decimator_bandwidth":{id, bandwidth_index (the
+  nearest option), bandwidth_hz, decimation}}`; `decimator_info[]` carries
+  `bandwidth_hz`, `bandwidth_index` (nearest), `bandwidth_mhz` (= hz / 1e6,
+  was the option's), `decimation`; DEMOD_MODE's reply adds `bandwidth_hz`.
+  The multi-DoA binary message keeps its u32 index (nearest; unused by the
+  page). DECIMATORS snapshot: field 2 = the nearest index (an older
+  kraken_doa reads it), a new LAST field (12) = the width in Hz; a file
+  without it loads by the index. Exact Hz now also from: the web mapper's
+  `vfo_bw_N` (both ways - it was snapped to an option), the discrete
+  scanner's per-frequency kHz, the debug playback's `vfo_bw_khz` (every
+  catalogue value is an old option: unchanged), the AI assistant's
+  `set_vfo` / `add_vfo` `bandwidth_hz`; a decoder's minimum
+  (`min_vfo_rate`) snaps UP to an efficient size
+  (`efficient_bandwidth_at_least` / the page's `bwAtLeastEfficient`: ADS-B's
+  2 MHz = the 2.4 MHz pass-through, not a 2 MHz full-rate filter)
+- Page (kraken_doa.html, the block after `bwo`): `decBwHz(d)` / `decBwMhz(d)`
+  = the ONE way to read a VFO's width (bandwidth_hz, else an older
+  receiver's index); `setDecimatorBandwidthHz` (sends at most every 80 ms +
+  the last value - a bar edge drag; `bwHeld` 1.5 s: the receiver's echoes of
+  earlier steps don't pull the bar back, in `updateDecimatorList` and the
+  `decimator_bandwidth` handler) / `setDecimatorBandwidthHzFromUI`; the old
+  index functions wrap them; an older receiver (no `bandwidth_hz` in its
+  decimator_info, `bwServerHz`) gets the nearest index. Bar edge drags (main
+  display `pointerMove`, panes `paneMove`) give `bwUserHz` = 3 significant
+  figures (a pixel is ~0.3 % of a bar) and keep the offset inside the band as
+  the bar grows; the tooltip adds "(runs at 300 kS/s)" for a custom width.
+  The card's BW row: ONE number box in kHz (the user's request 2026-10-21 -
+  first it was a list of the 59 `BW_EFFICIENT` sizes + "(custom)" and a ✎
+  text field): `<input type=number id=dec-bw-<id> min 1 max 2400 step any>`;
+  its change event (Enter = blur, leaving it, the spinner / arrow keys - 1
+  kHz steps) -> `bwBoxApply` (clamped; empty / not a number = back to the
+  VFO's width), Escape = the value it had on focus; `bwBoxSync` keeps it on
+  the VFO's width (not while focused, unless forced) and its tooltip
+  (`bwTitle`: what rate the width runs at, x its width); locked VFOs (fixed
+  / lock_vfo decoders) disable it. Saved frequencies: the editor's list =
+  the efficient sizes + an entry's custom width (`sfBwSelectSet`), tuning
+  applies the saved width exactly
+- No snapping option: an "Efficient bandwidths only" tick (snap every width
+  to `BW_EFFICIENT`) was built because the request asked for one "if
+  significant efficiency is lost", then REMOVED the same day (the user's
+  call): with the real-tap stages every width up to 1.2 MHz costs no more
+  than the nearest old size did (below); only 1.2 - 2.4 MHz costs more (a
+  full-rate filter: since the plans / kernel of 2026-10-22 +~9 % of a core
+  with 5 antennas over the 2.4 MHz pass-through, +~30 over 1.2 MHz; it was
+  +~15-20 with the first block FIR) - the BW box's tooltip says what a
+  custom width runs at
+- Measured on the Pi 5 (2026-10-21; `tools/decim_bench.cpp`, one core, ns
+  per input sample per antenna, the cascade without the mixer): old sizes
+  liquid cccf (the original) 10.7-25.5, liquid crcf 9.4-17.8, block FIR
+  2.6-7.9 (means 13.17 / 10.74 / 3.97: the block FIR 3.3x the original,
+  2.7x the crcf); the mixer ~2.9 more. Arbitrary widths (block FIR): 1 kHz -
+  240 kHz 2.6-4.8, 250 kHz - 1.2 MHz 6.8-9.9 (D = 2-8: one long sharp
+  stage - multiply-bound now; a re-split would help, see below), 1.2 - 2.4
+  MHz 10.3-15.2 (the full-rate filter; liquid crcf 24-29) vs 0.33 (2.4 MHz
+  pass-through) / 8.0 (1.2 MHz); within 0.86-1.2x the nearest old size up
+  to 240 kHz. The rate is <= 1.2x the width from 300 kHz down, <= 1.35x to
+  1.2 MHz, 1.2-1.9x above. Response: flat +-0.04 dB to 0.4 bw, -6.0 dB at
+  0.5 bw, -52..-64 dB from 0.6 bw, aliases <= -53 dB, gain 0.00 dB re 2.4
+  MHz / bw. Whole kraken_doa (test build, fake heimdall, one VFO, DoA on, 5
+  antennas, % of a core; the original / liquid crcf / block FIR builds
+  alternately, two runs each, the old index command): 240 kHz 50.1 / 47.0 /
+  38.9, 300 kHz 49.0 / 45.2 / 41.6, 12 kHz 36.4 / 35.1 / 30.1, 16 kHz 38.5 /
+  36.6 / 30.3, 1.2 MHz 87.4 / 77.0 / 65.6, 2.4 MHz 81.3 / 81.7 / 76.5 (no
+  filter: the mixer's own copy is gone) - the block FIR build 6-25 % below
+  the original at every old size. Custom widths (block FIR build): 250 kHz
+  42.6 (300 kHz 41.5), 13 / 15 kHz 30.3 / 30.2 (12.5 kHz 30.2), 1.25 / 1.5
+  / 2 MHz 100.4 / 96.8 / 95.3 (liquid crcf build 118.3 / 117.2 / 112.5;
+  1.2 MHz 69.7, 2.4 MHz 80.9)
+- Measured 2026-10-22 (Pi 5, the plans + folded / halfband stages + the
+  4-output kernel vs the block FIR build above): the decimator
+  (decimateChannel, one antenna, ns per input sample; job scratch
+  explore/cmpbench.cpp, the same file built against both, two runs each)
+  efficient sizes mean 4.35 -> 2.02 on the tuner centre, 6.67 -> 3.31 off
+  it (the mixer included) - 2.0x; <= 240 kHz 2.7-4.9 -> 1.3-2.2 (off
+  centre 5.0-7.3 -> 2.1-3.5), 250 kHz - 1.2 MHz 6.8-9.4 -> 2.3-4.7 (9.1-11.8
+  -> 3.9-7.2), the full-rate widths 12.2-16.0 -> 5.4-7.3 (14.6-18.3 ->
+  7.9-9.8); 2.4 MHz (the mixer alone) 2.97 -> 3.24 (the same loop compiled
+  differently; `__restrict` didn't help and slowed the split mixer, not
+  kept). Whole kraken_doa (as above, the block FIR / this build
+  alternately, two runs each, VFO +100 kHz): 240 kHz 39.0 -> 35.2, 300 kHz
+  41.5 -> 38.2, 12 kHz 30.4 -> 26.9, 16 kHz 30.6 -> 27.4, 1.2 MHz 67.1 ->
+  60.4, 2.4 MHz 77.0 -> 76.6 % of a core; custom widths (one sweep each)
+  250 kHz 43.2 -> 37.7, 13 / 15 kHz 29.5 / 30.0 -> 27.7 / 27.6, 1.25 / 1.5
+  / 2 MHz 103.0 / 100.5 / 98.3 -> 90.6 / 90.2 / 90.2. The decimator is now
+  a small part of a VFO's cost (MUSIC, the FFTs, the IQ conversion are the
+  rest). clang 19 builds the kernels too (`__builtin_shufflevector`): the
+  same checks, the same speed. Not done: a folded halfband first stage
+  (complex taps on the x phase: the model gives ~0.2 ns at best - the
+  mixer into the two phases is already cheaper than the interleaved one)
+- Profiled in the live pipeline (2026-10-22, the user's question "any other
+  optimizations for the VFOs?"; perf - `linux-perf`, installed on the Pi
+  with the user's go - on the test build + fake heimdall, job scratch
+  e2e/t_prof.py: phases nothing decimated / one VFO without DoA / with DoA
+  / 2 and 3 VFOs / 240 kHz / beamforming, total + per-thread CPU): a 12.5
+  kHz VFO with DoA and 5 antennas cost ~19 % of a core EACH (1 / 2 / 3
+  VFOs 28 / 47 / 65 %), its decimation 2.6 % of that in decim_bench - in
+  the pipeline the first stage was MEMORY-bound: a memcpy (libc's 64-byte
+  loop; the raw block copied into the folded first stage) was 30-40 % of
+  the samples - 8 % of a core for one VFO, 19 % for two, ~1.5 GB/s (each
+  VFO's 128 KB per antenna per block, written on other cores than the
+  converter's, the VFOs contending) - and `produce` ran at ~5 ns per input
+  sample against 2.2 in decim_bench (reading the 128 KB buffer back
+  cold). Chunking (above) keeps both in L1: measured with 512 / 1024 / 2048
+  / 4096 / 16384 (the old whole block) - 512 and 1024 the same, 2048 +1-2 %
+  of a core, 4096 +2-7, the whole block +8-30. Whole kraken_doa, the
+  previous build (5d3fe16 + 8f4e30c) / this one (chunked cascade + the fast
+  dB, *FFT Processing* below) alternately, two runs each, % of a core:
+  nothing decimated 9.5 -> 7.8 (the fast dB), one VFO without DoA 12.7 ->
+  10.3, one VFO with DoA 28.5 -> 18.5, two 48.7 -> 26.2, three 66.8 ->
+  32.3, 240 kHz 37.1 -> 26.4, DoA + beamforming 28.9 -> 19.1 - an extra
+  narrow VFO ~7 % of a core instead of ~19. decim_bench (hot caches) mean
+  1.69 -> 1.59 ns on centre; every check against the reference unchanged
+  (<= 7.1e-5 of rms, blocks of 1 - 16384 samples across the chunk edges).
+  What was left with two VFOs (perf, share of the samples / of a core):
+  `produce` ~24 % / ~7.6 %, the copy into a folded first stage still ~19 %
+  / ~6 %. Filtering straight from the block (above) removed the copy
+  completely (perf: no memcpy left) but saved less than its share: the
+  filter now pays the cold read of the block the copy paid (`run` 40 % /
+  ~10.8 % of a core with two VFOs) - chunked / direct, two runs each, % of
+  a core: one VFO 19.0 -> 18.1, two 26.5 -> 25.6, three 32.5 -> 30.7, 240
+  kHz 26.6 -> 26.0, DoA + beamforming 19.4 -> 18.7; decim_bench (hot) mean
+  1.59 -> 1.50 ns on centre, 2.82 -> 2.68 off it; every check against the
+  reference unchanged (7.1e-5 of rms; block lengths now also 30, 31, 63 -
+  65, 145, 146, 1023 - 1025: windows reaching back into the history, the
+  chunk edges). Over the day (the same harness, separate runs): one VFO
+  28.5 -> 18.1, three 66.8 -> 30.7 % of a core. What is left is mostly
+  each VFO's read of every antenna's input (5 x 19.2 MB/s): VFOs sharing
+  one pass over a chunk per antenna (every VFO's first stage while it is
+  in L1) would cut that - the restructure below; then the spectrum FFT,
+  the IQ conversion of the 5 antennas, the receiver thread
+- Estimated before deciding (the user's question 2026-10-22; job scratch
+  explore/share_exp.cpp: the production decimator, a converter writing
+  fresh 5-antenna blocks, three shapes on the Pi): VFOs sharing one pass
+  per chunk would save ~0.4-0.8 % of a core per extra VFO and nothing for
+  one VFO - the live L2 / L3 refill counters (perf, `run` per VFO) show
+  the extra VFOs already find the input in L3, the case the synthetic
+  test measures; ~half of that (nearly all at 240 kHz) was from ONE
+  thread pool for every VFO instead of one per VFO. First the shared pool
+  (the user's go) - and live it saved NOTHING measurable:
+  user-space cycles (`perf stat -e cycles:u`, frequency-independent - the
+  Pi's ondemand governor made CPU time swing by up to 7 points between
+  runs of one build; job scratch e2e/t_prof_cyc.py), 4 runs each, % of a
+  core at 2.4 GHz, per-VFO pools / shared 4 / shared 5 threads: one 12.5
+  kHz VFO 14.7 / 15.2 / 14.4, three 23.9 / 23.8 / 23.9, three at 240 kHz
+  50.9 / 52.3 / 52.8 (each 47-55 between runs), one at 240 kHz 22.1 / 22.7
+  / 21.9. Kept for the bounded thread count (51 -> 32 with three VFOs; 8
+  more per VFO before), 5 threads (cores + 1) for the single-VFO figures.
+  The raw buffer dropped no packet in any of the day's runs (175 reports)
+- THE SHARED PASS (2026-10-22, the user's "do the pipeline restructure
+  now"): `SharedDecimator::decimateVfos(VfoBlock*, n)` takes every VFO's
+  block (its input pointers, the width and offset read once, where its
+  `MultiChannelDecimated` goes): a task per distinct input ARRAY - coherent
+  = an antenna with every VFO on it, independent = a tuner with its VFOs,
+  FM only = the one channel - the first on the calling thread, the others
+  on `decimation_pool()`; each runs its VFOs' `ChannelPass`es (decimateChannel
+  split into begin / chunk(at) / finish, the per-channel state as before)
+  chunk by chunk, every VFO on a 1024-sample chunk while it is in L1.
+  `decimateMultiChannel` = decimateVfos with one VFO (the single-VFO work
+  unchanged: the same calls in the same order). data_receiver.cpp: the
+  inputs of every VFO, ONE decimateVfos, then per VFO its stream position,
+  squelch, MUSIC and talker DoA (`run_pipeline(v)`, the old code after the
+  decimation, moved as it was) - VFO 0 inline + the rest on the 3-thread
+  VFO pool; FM only and independent / wideband (one channel each, MUSIC
+  returns at once) all inline. A VFO's MUSIC no longer starts before every
+  VFO is decimated (the pass is short). Checked: decim_bench section 3 -
+  8 VFOs of every kind (folded, mixer in front, halfband first, the whole
+  band, full-rate filter, two on one antenna alone) x 4 antennas in one
+  pass vs each VFO alone, blocks of 1 - 16384: BIT FOR BIT equal (max diff
+  0, Pi + x86); decim_bench's reference checks and single-channel timings
+  unchanged (7.06e-5 of rms; mean 1.503 / 2.675 ns centre / off); t_bw 24 /
+  24, t_bw_ui 24 / 24, job scratch e2e/t_multi.py 8 / 8 (five VFOs in one
+  pass: 60.0 / 200.0 / 60.0 / 200.0 deg exact, the 1.5 MHz one running;
+  back to one VFO; FM only with three VFOs heard; no decimation errors -
+  the previous build the same). Measured (user-space cycles, % of a core
+  at 2.4 GHz, e2e/t_prof_cyc2.py, the previous build / the shared pass
+  alternately - TWO runs each: the A/B's monitor was stopped half way by a
+  low-memory reap on the dev PC, not re-run): one 12.5 kHz VFO 14.3 / 14.6
+  -> 14.8 / 14.7 (within that phase's 14.2-16.0 spread over the day's
+  builds), three 24.3 / 23.9 -> 20.1 / 20.2 (the earlier builds' 12 runs
+  22.9-24.6), five 30.4 / 30.2 -> 26.6 / 26.3, five at 240 kHz 90.9 /
+  86.4 -> 85.8 / 84.7, one at 240 kHz 22.3 / 21.7 -> 21.9 / 22.2 - ~4
+  points less with 3 or 5 narrow VFOs (more than the estimate's 0.8-1.6
+  with three; why was not measured), one VFO the same. Thread count
+  unchanged (29 / 32)
+- Tests (job scratch 415cedbd e2e/, on the Pi: `fake_heimdall_bw.py` = a
+  5-element UCA scene, tone A +100 kHz from 60 deg, tone B +125 kHz from
+  200 deg; `t_bw.py` against a TEST build on 5808x / 5809x): 24 / 24 -
+  command / echo / decimator_info, clamps, a bad value, the old index,
+  bearings 60.0 / 200.0 in 26 / 37 / 41 / 10.5 kHz VFOs with the other tone
+  25 kHz away filtered out, both tones in a 77 kHz VFO, the beamformed
+  overlay 1.5000 / 0.2508 MHz, the beamformed squelch closed on noise in a
+  1.25 MHz VFO and open on the tones, the snapshot's field 12, a restart, an
+  older snapshot by index; `t_bw_ui.py` (headless Chromium, real mouse /
+  keys): 24 / 24 - the BW number box (typed 26 / 12.5 / 1500 + Enter, the
+  tooltip's rate, letters and Escape change nothing, arrow up = +1 kHz, 5000
+  clamped to 2400), a main-display edge drag to an arbitrary width the
+  receiver keeps (the box follows), no snapping tick, a second drag
+  arbitrary too, independent mode's 2.4 MHz bar (both
+  clipped edges grabbable, resize cursor, dragged in and back out, below),
+  no page exceptions. Both again 24 / 24 / 24 / 24 on the plans / folded /
+  halfband build (2026-10-22: the bearings through folded first stages at
+  10 - 41 kHz, 100 kHz off centre, exact). A width change at the same rate
+  clears MUSIC's accumulator (`last_input_bw_hz_`: the rebuilt filters'
+  restart is no signal), as a rate change always did
 
 **KrakenSDR Wideband (downconverter) variant:**
 - Run with `--wideband` (heimdall too) - see root `../CLAUDE.md` for the design
@@ -300,6 +618,34 @@ Edit `include/config.hpp`:
   with the Freq / BW fields by fixed-frequency / `lock_vfo` decoders
   (`digRenderCards`). Test: job scratch t_vfd.py (headless Chrome over CDP,
   fake WebSocket, 33 checks) + t_vfd_zoom.py (sidebar zoom 1.8)
+- VFO tuning STEP (the user's request 2026-10-22, "a global setting up on
+  the top bar"; kraken_doa.html block "VFO tuning step"): the top bar's
+  `Step:` (`#tb-step` / `#vfo-step`, every mode, moved into the sidebar on
+  mobile like CH / Audio) - 1 / 10 / 100 / 500 Hz, 1 (default) / 2.5 / 5 /
+  6.25 / 8.33 (25/3) / 10 / 12.5 / 25 / 50 / 100 kHz, per browser
+  (localStorage `kraken_vfo_step`, `vfoStepHz`). A tuning-bar drag (main
+  spectrum + waterfall: `pointerMove`; panes: `paneMove`) or a click on the
+  spectrum (`centerActiveBarAt`, the pane click) puts the VFO on a multiple
+  of the step of its ABSOLUTE frequency from 0 Hz (`vfoSnapOffset(centre,
+  offset, max)`: centre = `vfoCenterMhz` / the pane's tuner; the nearest
+  grid point inside the band, else the clamped offset to the Hz). A drag
+  follows the pointer from where it was pressed (it used to move only once
+  the change passed 1 kHz, then restart from there: whole pixels just over
+  1 kHz - ~1093 Hz on a 1760 px plot - and offsets on no round frequency);
+  at 1 Hz it moves pixel by pixel. SHIFT while dragging = fine: 1/100 of
+  the movement (`VFO_FINE`), to the Hz, off the grid - re-anchored where
+  the bar is whenever Shift changes (`dragFine`, `paneDrag.fine / fx /
+  fmhz`). `paneMoveVfo(p, d, mhz, snap)`: 'step' / 'fine' / none - typed
+  (`paneTuneVfoTo`) and saved frequencies, tuner moves and a pane press on
+  the VFO where it is stay exact; the card's digits / ✎ too. Test: job
+  scratch e2e/t_step_ui.py (headless Chromium on the Pi against the test
+  build, real mouse events incl. Shift): 19 / 19 - selector + labels +
+  default, 12.5 kHz drag on the grid with every value sent and the
+  receiver's, 1 Hz = 3 px of frequency, Shift 1/100 off the grid, Shift
+  let go mid-drag back on it, a 25 kHz click, 8.33 kHz grid, the card's 1
+  Hz digit, kept over a reload, pane drag / Shift-drag / typed frequency;
+  t_bw_ui.py 24 / 24 again. The top bar's height unchanged at 1366 / 1920
+  / 2560 px windows (e2e/t_topbar_w.py)
 - FFT message type 6 (independent; pages without spectrum views - see
   *Spectrum views* for type 7): `u32 6, u32 nch, f32 avg_alpha, f32
   sample_rate, f32 bin_step`, per tuner `u32 center_hz, f32 gain_db, u32 ds,
@@ -313,13 +659,20 @@ Edit `include/config.hpp`:
   `.pfd` class since the top bar queries `.freq-digit` page-wide - plus a gain
   slider; canvas spectrum `paneDrawSpec`, a
   `WaterfallDisplay` each, overlay `paneDrawOverlay` with VFO bars + AI
-  badges - tuning bars in the main display's style: a grab handle centred in the spectrum AND the waterfall section, edge handles; `paneHit` = handle > active VFO's edges > body, the edges drag the bandwidth (snapped like `drawBox`, tooltip), bars are clipped to the plot area and a clipped side has no edge; an FFT squelch is drawn like `drawBox`'s - dashed yellow line at the level inside the bar, on the spectrum, labelled - and is draggable (all modes: `squelchHitMain` / `paneHit` kind 'squelch' within 5 px of the line, highest priority, ns-resize cursor; `squelchSetFromDrag` moves the card slider, sends DEC_SQUELCH_LEVEL at most every 80 ms + the final level, 0-80 dB); pointer handling `paneDown/Move/Up`: a VFO bar drags the VFO, empty spectrum pans the tuner like the main display - throttled TUNER_FREQ every 50 ms, final value on release, the drawn spectrum follows the data, not the drag - and a click without moving places the selected VFO); the top bar's frequency
+  badges - tuning bars in the main display's style: a grab handle centred in the spectrum AND the waterfall section, edge handles; `paneHit` = handle > active VFO's edges > body, the edges drag the bandwidth (any width like `drawBox`, tooltip), bars are clipped to the plot area and a clipped side keeps its edge `PANE_CLIP_EDGE_PX` 5 px inside the plot border (`bars[].xl / xr`; the drag is relative to where it started, so it resizes alike - until 2026-10-21 a clipped side had none, and a 2.4 MHz VFO, wider than the pane's edge-clipped band, couldn't be resized at all: the user's report); an FFT squelch is drawn like `drawBox`'s - dashed yellow line at the level inside the bar, on the spectrum, labelled - and is draggable (all modes: `squelchHitMain` / `paneHit` kind 'squelch' within 5 px of the line, highest priority, ns-resize cursor; `squelchSetFromDrag` moves the card slider, sends DEC_SQUELCH_LEVEL at most every 80 ms + the final level, 0-80 dB); pointer handling `paneDown/Move/Up`: a VFO bar drags the VFO, empty spectrum pans the tuner like the main display - throttled TUNER_FREQ every 50 ms, final value on release, the drawn spectrum follows the data, not the drag - and a click without moving places the selected VFO); the top bar's frequency
   digits and gain (`.not-indep`) are hidden in independent mode - each pane
   has its own (`selTuner` = the highlighted pane; `sendFreqChange` / `sgn`
   still route to TUNER_FREQ / TUNER_GAIN for it), `vfoCenterMhz(dec)` for VFO absolute
   frequencies, per-pane waterfall auto-range (`computeAutoRange`)
-- Zoom (kraken_doa.html "SPECTRUM ZOOM" block): `{level 1..16, off}` per
-  display - `mainZoom` (coherent / wideband) or each pane's `p.zoom`;
+- Zoom (kraken_doa.html "SPECTRUM ZOOM" block): `{level 1..ZOOM_MAX, off}`
+  per display - `mainZoom` (coherent / wideband) or each pane's `p.zoom`;
+  ZOOM_MAX 32 (16 until 2026-10-22, the user's request; the slider 0-125).
+  Past ~16x a wide plot gets fewer FFT bins (146.5 Hz) than pixels - the
+  spectrum is magnified, not finer (32x on a 1600 px window: a 60 kHz
+  window, 410 points, one per bin), the tuning bars are (~34 Hz a pixel).
+  Test: job scratch e2e/t_zoom32.py (headless Chromium, real wheel events:
+  slider, wheel stops at 32x, the server's frames for the 60 kHz window at
+  one point per bin with the tone in it, a pane to 32x; 12 / 12);
   the server sends each page the window it shows at its plot's width
   (*Spectrum views*, type 7: zoomed in = more detail, same data rate) and
   `zoomWindow()` / `specWindow()` cut / pad the latest frame to it; with a
@@ -333,7 +686,7 @@ Edit `include/config.hpp`:
   adds a waterfall line; zoom / zoom slider / edge-clip slider redraw the
   last frame without one (the waterfall just takes the new range for its
   overlay + clicks), and a wheel notch that changes nothing (`zoomWheel`
-  returns false at 1x / 16x) redraws nothing. Every redraw used to push the
+  returns false at 1x / ZOOM_MAX) redraws nothing. Every redraw used to push the
   frame into the waterfall again: it ran 2.5-3.5x fast while zooming
 - Split: `#fp-split` drags the main spectrum height (`kraken_fp_h`,
   localStorage; window resize refits uPlot); each pane's `.tpane-split` sets
@@ -948,7 +1301,7 @@ Edit `include/config.hpp`:
   the decoder (`digSetModeFor`, OFF = `digToggle`; a fixed-frequency plugin
   tunes by itself and ends there; a `lock_vfo` one - ism - puts the VFO on
   its tuner's centre), the demod (`setDecimatorDemodMode`, which sets that
-  mode's usual bandwidth) and the bandwidth (`sfBwIndex`: nearest option) -
+  mode's usual bandwidth) and the bandwidth (exactly - any width) -
   both skipped on a locked VFO -, then `sfTuneHz` (was mkTune): a VFO
   locked on its tuner's centre (`lock_vfo`) stays at offset 0 and the tuner
   retunes (FREQ: whole kHz; independent: its own tuner); otherwise
@@ -1141,9 +1494,12 @@ Edit `include/config.hpp`:
   after one pass every station was out and the scan cycled its bands with
   the VFO parked, muted, on the last one: the user's report 2026-10-22.)
   LOCK / pre-place (`place`), on the uWS loop as `sfTune` in the page: DIGITAL_MODE (the entry's decoder),
-  SET_DECIMATOR_DEMOD (+ that demod's usual bandwidth), SET_DECIMATOR_BW
-  (the entry's; Digital: widened to the decoder's `min_vfo_rate`, 24 kHz for
-  Auto), SET_DECIMATOR_FREQ (offset from the slot's centre; independent
+  SET_DECIMATOR_DEMOD (+ that demod's usual bandwidth), SET_DECIMATOR_BW_HZ
+  (the entry's, exactly - any width since the arbitrary VFO bandwidth, merged
+  2026-10-22: the scanner used to snap it to the nearest of the 30 old sizes;
+  Digital: widened to the narrowest efficient size holding the decoder's
+  `min_vfo_rate`, `efficient_bandwidth_at_least` - 24 kHz for Auto; `Cfg::bw`
+  is Hz), SET_DECIMATOR_FREQ (offset from the slot's centre; independent
   `:tuner`), the VFO heard (pre-placing: muted). LISTEN: the entry measured
   on its slot; over squelch - 3 dB keeps it, not ready (calibration) counts
   as active AND MUTES the VFO (the noise source would be heard; heard again
@@ -6192,7 +6548,7 @@ the internet and writes / changes decoder plugins):
   - control (refused in Read only): `tune` (FREQ / TUNER_FREQ, then waits
     <= 12 s until `MessageBuilders::spectrum_center_hz()` shows it and the
     recalibration ended), `set_gain`, `add_vfo`, `set_vfo` (freq, bandwidth
-    -> nearest option / a decoder's minimum, demod, decoder - fixed-
+    -> any whole Hz / a decoder's minimum (the narrowest efficient size), demod, decoder - fixed-
     frequency and `lock_vfo` decoders handled the way the page does it -,
     squelch, listen, transcribe), `set_decoder_option`, `remove_vfo`,
     `set_doa`, `save_frequency` (SF_SET, id `ai<ms>`). All through
@@ -6582,7 +6938,8 @@ the internet and writes / changes decoder plugins):
   receiver by dispatching normal control commands on the uWS loop
   (`loop->defer` → `ControlHandler::handle_websocket_message`), so sync,
   persistence and heimdall forwarding behave as if a browser sent them.
-  Cloud VFO bandwidths snap to the nearest `BANDWIDTH_OPTIONS` entry;
+  Cloud VFO bandwidths are applied in Hz as they are (`SET_DECIMATOR_BW_HZ`;
+  they snapped to the nearest `BANDWIDTH_OPTIONS` entry until 2026-10-21);
   `vfo_squelch_N` sets the level AND enables that VFO's squelch (the mapper
   assumes squelch is always on)
 - Everything runs on one worker thread started from main(); records are
@@ -6644,18 +7001,30 @@ assumes no NaNs.
 
 ### 2. Decimation Architecture
 
-**Thread-Local Decimators:**
-- Zero allocation per call (thread_local storage)
-- Shared coefficient cache with 95%+ hit rate
-- Pre-reserved buffers (no dynamic allocation in hot path)
-
-**Coefficient Caching:**
-```cpp
-thread_local std::map<...> decimator_cache;  // Per-thread instance
-static std::shared_mutex cache_mutex;        // Multi-reader, single-writer
-```
-
-**Performance:** ~8000 samples/µs per channel
+(The thread-local decimators / coefficient cache this section used to
+describe are long gone.) Per VFO a `SharedDecimator`, per antenna a
+`ChannelDecimState` (it follows the channel, not the pool thread): the
+mixer (in front of, or folded into, the first stage) and a cascade of
+`FirStage` block FIRs (every output computed straight from the stage's
+buffer - no per-sample window pushes; regular / folded / halfband), split
+as `planStages` finds cheapest, a block through the whole cascade in
+1024-sample chunks (`DECIM_CHUNK`: the buffers stay in L1), a first stage
+whose input isn't mixed in front filtering straight from the block (no
+copy), every VFO in ONE pass per antenna (`decimateVfos`: a task per
+antenna - per input array - running each VFO's cascade on a chunk while it
+is in L1; the first task on the calling thread, the others on ONE
+decimation pool shared by every VFO, `decimation_pool()`, cores + 1
+threads; each VFO had its own pool of 8 until 2026-10-22: 51 threads with
+three VFOs, 32 now). Details + measurements:
+*Arbitrary VFO bandwidth* above (`tools/decim_bench.cpp`). Pi 5, one
+antenna, hot caches, ns per input sample with the VFO off the tuner centre
+(mixer included): ~2.1-3.5 up to 240 kHz, ~3.9-7.3 at 250 kHz - 1.2 MHz,
+7.9-9.9 for the full-rate widths 1.2 - 2.4 MHz, 3.2 for 2.4 MHz (the mixer
+alone). In the live pipeline a 12.5 kHz VFO with DoA and 5 antennas adds
+~6-7 % of a core to kraken_doa (it was ~19 % before the chunking: memory-
+bound, see *Arbitrary VFO bandwidth*); in user-space cycles at 2.4 GHz,
+from one to three such VFOs ~2.7 % each with the shared pass (4.8 before),
+from three to five ~3.1 each (the same before).
 
 ### 3. FFT Processing
 
@@ -6670,6 +7039,20 @@ static std::shared_mutex cache_mutex;        // Multi-reader, single-writer
 ctx.plan = kfft_plan_dft_1d(fft_size, ctx.fft_in, ctx.fft_out, KFFT_FORWARD);
 kfft_execute(ctx.plan);
 ```
+
+**Power -> dB per bin (2026-10-22):** `bins_to_db` (fft_processor.cpp: the
+spectrum, the beamformed spectrum; beamformer.cpp's SNR FFT the same) with
+`fast_db10` (`include/utils/fast_log.hpp`: exponent bits + atanh series,
+<= 6e-6 dB from the exact value) on straight runs - the DC-centring wrap is
+done as two runs. The old loop wrapped its index with a mask, so it never
+vectorized: a libm `log2f` per bin, 8.5 ns on the Pi 5 (its comment's
+"hardware log2f / VLOG2" doesn't exist on ARMv8), ~29 % of kraken_doa's CPU
+with no VFO decimated (~2.6 % of a core; per tuner FFT'd, so 5x that in
+independent mode). Now 2.7 ns a bin on the Pi (glibc would vectorize
+std::log2f in the straight loop too: 2.5), 0.39 ns on the dev PC's Ryzen
+(MinGW has no vector log2f: 2.6 there) - one implementation, the same values
+on every platform. `tools/fast_log_test.cpp` (93.6 M values 1e-15 .. 1e6 +
+the three loop shapes timed)
 
 ### 4. FM Demodulation
 
@@ -6691,7 +7074,11 @@ the AM audio's lows.
 
 **FM only (DoA and beamforming off):** only the VFOs heard (🔊) run (+ those with a decoder / Transcribe / audio recording), decimating
 only the listened-to channel (squelch reads the main FFT, not decimated data),
-and the receiver converts only that channel.
+and the receiver converts only that channel. None of them (every VFO muted,
+no decoder): nothing is decimated - until 2026-10-22 that empty list took
+the several-VFO branch of the pass (`reserve(size - 1)`: length_error) and
+kraken_doa terminated (found while profiling; the build from before
+arbitrary widths did the same).
 
 ### 5. MUSIC Algorithm
 
@@ -6765,10 +7152,13 @@ mallopt(M_ARENA_MAX, 32);  // In main.cpp for 23-28 threads
 
 ### Modifying Bandwidth Options
 
-1. **Config:** Edit `BANDWIDTH_OPTIONS[]` in `include/config.hpp`
-2. **No rebuild needed** for option changes (loaded at runtime)
-3. **Constraints:** Only integer decimation factors (no resampling)
-4. **Range:** Factor must divide `SAMPLE_RATE` evenly
+A VFO takes any width (*Arbitrary VFO bandwidth* above), so there is no list
+to edit for that. `BANDWIDTH_OPTIONS[]` (`include/config.hpp`) is only the
+index list older pages / files / scripts use (`SET_DECIMATOR_BW:id:index`,
+DECIMATORS field 2) - don't reorder it. The limits are `VFO_BW_MIN_HZ` /
+`VFO_BW_MAX_HZ`; the decimation stays integer (no resampling) by a divisor
+of `SAMPLE_RATE_HZ` (`decimation_for_bandwidth`); the page's efficient sizes
+(`BW_EFFICIENT`) are computed the same way - keep the two alike.
 
 ### Updating Web UI
 
@@ -6834,7 +7224,7 @@ sudo perf top
 
 **Critical Hot Paths:**
 - `src/utils/iq_converter.cpp:convert()` - IQ conversion (auto-vectorized)
-- `src/signal_processing/shared_decimator.cpp:decimate()` - Thread-local decimation
+- `src/signal_processing/shared_decimator.cpp:decimateVfos()` - every VFO's decimation, a task per antenna (`ChannelPass::chunk` per VFO and chunk; `FirStage::produce`: the FIR kernels)
 - `src/networking/data_receiver.cpp:data_receiver_thread()` - Main data ingestion
 - `src/networking/data_receiver.cpp:decimation_processor_thread()` - Decimation coordination
 - `src/networking/data_receiver.cpp:fft_processor_thread_per_channel()` - Per-channel FFT workers
@@ -6875,7 +7265,9 @@ sudo perf top
 
 **Solutions:**
 1. Reduce active channels (process fewer channels)
-2. Increase decimation factor: Higher index in `BANDWIDTH_OPTIONS[]`
+2. Narrow the VFOs (a smaller bandwidth = a higher decimation); between 1.2
+   and 2.4 MHz a VFO runs a full-rate filter - 1.2 MHz or 2.4 MHz exactly is
+   cheaper (the BW box's tooltip says what rate a width runs at)
 3. Disable DoA processing if not needed: `doa_enabled = false` via WebSocket
 4. Check thread count: Should be ~23-28 threads (expected)
 

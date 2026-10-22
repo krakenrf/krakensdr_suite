@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -138,6 +140,20 @@ constexpr int DOA_NUM_SNAPSHOTS = 64;        // Number of snapshots for covarian
 constexpr int DOA_ANGULAR_RESOLUTION = 1;    // Degrees
 constexpr int DOA_NUM_ANGLES = 360;          // Full circle scan
 
+// VFO bandwidth: ANY whole Hz from VFO_BW_MIN_HZ to the whole band. The
+// decimation stays an integer one: by the largest divisor D of the input rate
+// (2.4 MHz = 2^8 * 3 * 5^5 - 59 divisors up to 2400, every one a cascade of
+// stages <= 8) whose output rate SAMPLE_RATE / D still holds the bandwidth;
+// the last stage's low-pass is cut at the bandwidth itself
+// (shared_decimator.cpp). A bandwidth EQUAL to its rate wastes nothing
+// (bandwidth_is_efficient - the BANDWIDTH_OPTIONS below are such sizes);
+// between two of them the rate is at most 1.25x the bandwidth from D = 8 on
+// (300 kHz and narrower), 1.33-2x between 300 kHz and 2.4 MHz.
+constexpr int SAMPLE_RATE_HZ = 2400000;
+constexpr int VFO_BW_MIN_HZ = 1000;
+constexpr int VFO_BW_MAX_HZ = SAMPLE_RATE_HZ;
+constexpr int VFO_MAX_DECIMATION = SAMPLE_RATE_HZ / VFO_BW_MIN_HZ;   // 2400
+
 // Bandwidth Configuration Structure
 struct BandwidthOption {
     int decimation_factor;
@@ -148,7 +164,10 @@ struct BandwidthOption {
         : decimation_factor(dec), bandwidth_mhz(bw), display_name(name) {}
 };
 
-// Available bandwidth options (no resampling, integer decimation only)
+// The bandwidth sizes older pages / saved settings / scripts know by INDEX
+// (SET_DECIMATOR_BW:id:index, DECIMATORS snapshot field 2): each one an
+// efficient size (bandwidth = output rate). A VFO keeps its bandwidth in Hz
+// (DecimatorInstance::bandwidth_hz); its index is the nearest of these.
 constexpr BandwidthOption BANDWIDTH_OPTIONS[] = {
     {1, 2.400f, "2.4 MHz (No decimation)"},
     {2, 1.200f, "1.2 MHz"},
@@ -203,6 +222,44 @@ constexpr const char* SSL_KEY_FILE = "server.key";
 constexpr const char* AUTH_TOKEN_FILE = "api_token";
 
 // Utility functions
+// A requested bandwidth as a VFO bandwidth (whole Hz, within the limits;
+// NaN / <= 0 = the narrowest)
+inline int clamp_bandwidth_hz(double hz) {
+    if (!(hz > 0)) return VFO_BW_MIN_HZ;
+    if (hz >= VFO_BW_MAX_HZ) return VFO_BW_MAX_HZ;
+    return std::max(VFO_BW_MIN_HZ, static_cast<int>(std::llround(hz)));
+}
+
+// The decimation factors that divide the input rate, ascending (1 .. 2400)
+inline const std::vector<int>& efficient_decimations() {
+    static const std::vector<int> d = [] {
+        std::vector<int> v;
+        for (int k = 1; k <= VFO_MAX_DECIMATION; k++)
+            if (SAMPLE_RATE_HZ % k == 0) v.push_back(k);
+        return v;
+    }();
+    return d;
+}
+
+// The decimation a bandwidth runs at: the largest divisor D of the input
+// rate with SAMPLE_RATE / D >= the bandwidth
+inline int decimation_for_bandwidth(int hz) {
+    const int lim = SAMPLE_RATE_HZ / clamp_bandwidth_hz(hz);   // >= 1
+    const auto& d = efficient_decimations();
+    return *(std::upper_bound(d.begin(), d.end(), lim) - 1);
+}
+
+// The bandwidth fills its output rate: nothing decimated is wasted
+inline bool bandwidth_is_efficient(int hz) {
+    return hz >= VFO_BW_MIN_HZ && hz <= VFO_BW_MAX_HZ && SAMPLE_RATE_HZ % hz == 0;
+}
+
+// The narrowest efficient size that holds hz (a decoder's minimum: its VFO
+// gets a whole rate, no filter narrower than it)
+inline int efficient_bandwidth_at_least(int hz) {
+    return SAMPLE_RATE_HZ / decimation_for_bandwidth(hz);
+}
+
 inline int find_bandwidth_index(int decimation_factor) {
     for (int i = 0; i < NUM_BANDWIDTH_OPTIONS; i++) {
         if (BANDWIDTH_OPTIONS[i].decimation_factor == decimation_factor) {
@@ -217,4 +274,22 @@ inline const BandwidthOption& get_bandwidth_option(int index) {
         return BANDWIDTH_OPTIONS[index];
     }
     return BANDWIDTH_OPTIONS[DEFAULT_BANDWIDTH_INDEX];
+}
+
+// The bandwidth (Hz) of a BANDWIDTH_OPTIONS index (out of range: the default)
+inline int bandwidth_option_hz(int index) {
+    return SAMPLE_RATE_HZ / get_bandwidth_option(index).decimation_factor;
+}
+
+// The BANDWIDTH_OPTIONS index nearest a bandwidth (on a log scale) - what a
+// page / file / script from before arbitrary bandwidths knows it as
+inline int nearest_bandwidth_index(double hz) {
+    const double h = clamp_bandwidth_hz(hz);
+    int best = DEFAULT_BANDWIDTH_INDEX;
+    double bd = 1e18;
+    for (int i = 0; i < NUM_BANDWIDTH_OPTIONS; i++) {
+        const double d = std::fabs(std::log(bandwidth_option_hz(i) / h));
+        if (d < bd) bd = d, best = i;
+    }
+    return best;
 }

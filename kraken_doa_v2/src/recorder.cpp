@@ -738,7 +738,8 @@ Need need_locked() {
         } else {
             n.decim = inst->decimator->getDecimationFactor();
             n.rate = FS / std::max(1, n.decim);
-            if (n.decim <= 1 && n.why.empty()) n.why = "VFO D" + std::to_string(n.vfo) + " is 2.4 MHz wide - record the full band instead";
+            if (n.decim <= 1 && n.why.empty())
+                n.why = "VFO D" + std::to_string(n.vfo) + " runs at the full 2.4 MHz (wider than 1.2 MHz) - record the full band instead";
         }
         n.per_file_bps = n.rate * 4;
     } else {
@@ -833,7 +834,7 @@ std::string start_iq_locked() {
     if (s->band) {
         auto inst = decimator_manager.getDecimator(n.vfo);
         s->band_offset_hz = inst->frequency_offset_hz.load();
-        s->band_bw_hz = inst->decimator->getBandwidthMhz() * 1e6;
+        s->band_bw_hz = inst->bandwidth_hz.load();
         s->tuner_hz0 = static_cast<double>(tuner);
     }
     std::string base = clean_name(set.name);

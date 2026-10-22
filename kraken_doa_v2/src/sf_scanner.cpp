@@ -104,7 +104,7 @@ struct Cfg {
     // the scan VFO's settings at the start: what an extra VFO starts from
     // (one VFO per active frequency) before the entry's own are applied
     std::string demod, dec;
-    int bw = -1, sq_method = 0;
+    int bw = -1, sq_method = 0;   // bw: Hz (any width since the arbitrary VFO bandwidth)
     bool sq_en = false, transcribe = false;
     float sq_level = 0;
 };
@@ -180,7 +180,7 @@ double span_hz() {
 
 int64_t vfo_bandwidth_hz(int vfo) {
     auto inst = decimator_manager.getDecimator(vfo);
-    return std::llround(get_bandwidth_option(inst ? inst->bandwidth_index.load() : DEFAULT_BANDWIDTH_INDEX).bandwidth_mhz * 1e6);
+    return inst ? inst->bandwidth_hz.load() : bandwidth_option_hz(DEFAULT_BANDWIDTH_INDEX);
 }
 
 // The tuners a band is received with: in wideband scan mode heimdall's tuner
@@ -338,7 +338,7 @@ int make_extra(uint64_t tok, const Cfg& cfg) {
     const std::string s = std::to_string(v);
     std::vector<std::string> c;
     if (!cfg.demod.empty()) c.push_back("SET_DECIMATOR_DEMOD:" + s + ":" + cfg.demod);
-    if (cfg.bw >= 0) c.push_back("SET_DECIMATOR_BW:" + s + ":" + std::to_string(cfg.bw));
+    if (cfg.bw > 0) c.push_back("SET_DECIMATOR_BW_HZ:" + s + ":" + std::to_string(cfg.bw));
     if (!cfg.dec.empty() && cfg.dec != "OFF") c.push_back("DIGITAL_MODE:" + s + ":" + cfg.dec);
     c.push_back("DEC_SQUELCH_METHOD:" + s + ":" + (cfg.sq_method == 3 ? "DIGITAL" : "FFT"));
     char lv[64];
@@ -1021,7 +1021,7 @@ void apply_entry(int vfo, int ch, bool indep, int64_t centre, const savedfreq::S
             if (d.id != vfo) continue;
             demod = DecimatorManager::demodModeToString(d.demod_mode);
             dec = dig::mode_string(static_cast<dig::Mode>(d.digital_mode), d.digital_plugin);
-            bw = d.bandwidth_index;
+            bw = d.bandwidth_hz;
         }
         if (bw < 0) return;   // gone
         std::vector<std::string> cmds;
@@ -1030,28 +1030,22 @@ void apply_entry(int vfo, int ch, bool indep, int64_t centre, const savedfreq::S
             cmds.push_back("DIGITAL_MODE:" + sid + ":" + e.dec);
             dec = e.dec;
         }
-        int want_bw = -1;
+        int want_bw = -1;   // Hz
         if (!e.mode.empty() && e.mode != demod) {
             cmds.push_back("SET_DECIMATOR_DEMOD:" + sid + ":" + e.mode);
-            if (e.mode == "WBFM") want_bw = 7;                         // 240 kHz (the page's demod buttons)
-            else if (e.mode == "NBFM" || e.mode == "AM") want_bw = 20; // 16 kHz
+            if (e.mode == "WBFM") want_bw = 240000;                        // (the page's demod buttons)
+            else if (e.mode == "NBFM" || e.mode == "AM") want_bw = 16000;
             demod = e.mode;
         }
-        if (e.bw > 0) want_bw = bandwidth_index_for(e.bw);
+        if (e.bw > 0) want_bw = clamp_bandwidth_hz(static_cast<double>(e.bw));   // the entry's own, exactly
         if (demod == "DIGITAL") {
-            // the decoder's minimum (the narrowest option that holds it)
+            // the decoder's minimum: the narrowest efficient size that holds it
+            // (as the page does - efficient_bandwidth_at_least)
             const double need = decoder_need_hz(dec);
-            const int have = want_bw >= 0 ? want_bw : bw;
-            if (get_bandwidth_option(have).bandwidth_mhz * 1e6 + 1 < need) {
-                int best = 0;
-                for (int i = 0; i < NUM_BANDWIDTH_OPTIONS; i++)
-                    if (BANDWIDTH_OPTIONS[i].bandwidth_mhz * 1e6 + 1 >= need &&
-                        BANDWIDTH_OPTIONS[i].bandwidth_mhz < BANDWIDTH_OPTIONS[best].bandwidth_mhz)
-                        best = i;
-                want_bw = best;
-            }
+            const int have = want_bw > 0 ? want_bw : bw;
+            if (have + 1 < need) want_bw = efficient_bandwidth_at_least(static_cast<int>(std::ceil(need)));
         }
-        if (want_bw >= 0 && want_bw != bw) cmds.push_back("SET_DECIMATOR_BW:" + sid + ":" + std::to_string(want_bw));
+        if (want_bw > 0 && want_bw != bw) cmds.push_back("SET_DECIMATOR_BW_HZ:" + sid + ":" + std::to_string(want_bw));
         char c[96];
         const double off_khz = static_cast<double>(e.hz - centre) / 1000.0;
         if (indep) snprintf(c, sizeof c, "SET_DECIMATOR_FREQ:%d:%.3f:%d", vfo, off_khz, ch);
@@ -1256,7 +1250,7 @@ std::string start(int vfo) {
         if (d.id != vfo) continue;
         g_cfg.demod = DecimatorManager::demodModeToString(d.demod_mode);
         g_cfg.dec = dig::mode_string(static_cast<dig::Mode>(d.digital_mode), d.digital_plugin);
-        g_cfg.bw = d.bandwidth_index;
+        g_cfg.bw = d.bandwidth_hz;
         g_cfg.sq_en = d.squelch_enabled;
         g_cfg.sq_method = d.squelch_method;
         g_cfg.sq_level = d.squelch_level;

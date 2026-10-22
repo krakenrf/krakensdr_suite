@@ -682,62 +682,74 @@ void DataReceiver::decimation_processor_thread() {
                 active_decimators.push_back(std::move(inst));
             }
 
-            // Pipelined task per decimator: decimation → MUSIC (no intermediate barrier)
-            // In wideband mode, each decimator gets data from its specific tuner
-            auto run_pipeline =
-                [&raw_packet, wideband_enabled, packet_elements, fm_only, current_active](
-                    const shared_ptr<DecimatorManager::DecimatorInstance>& inst) -> DecimatorManager::ProcessResult {
+            // Each VFO's input channels - pointers straight into raw_packet,
+            // no copies: everything below is done before raw_packet goes out
+            // of scope, and the decimators only read them. Wideband /
+            // independent: 1 channel from the VFO's tuner; FM only: the
+            // listened-to channel; else every active element for MUSIC. The
+            // offset and the bandwidth are read ONCE per block (the control
+            // thread may move the VFO meanwhile), so every channel mixes and
+            // filters - and is labelled - with the same ones.
+            const size_t num_vfos = active_decimators.size();
+            vector<SharedDecimator::VfoBlock> vfo_blocks(num_vfos);
+            vector<DecimatorManager::ProcessResult> results(num_vfos);
+            for (size_t v = 0; v < num_vfos; v++) {
+                const auto& inst = active_decimators[v];
+                DecimatorManager::ProcessResult& r = results[v];
+                r.decimator_id = inst->id;
+                r.audio_out = inst->audio_out.load(std::memory_order_relaxed);
+                r.instance = inst;  // kept for the post-barrier beamforming pass
 
-                    DecimatorManager::ProcessResult result;
-                    result.decimator_id = inst->id;
-                    result.audio_out = inst->audio_out.load(std::memory_order_relaxed);
-                    result.instance = inst;  // kept for the post-barrier beamforming pass
+                SharedDecimator::VfoBlock& b = vfo_blocks[v];
+                b.decimator = inst->decimator.get();
+                b.bandwidth_hz = inst->decimator->getBandwidthHz();
+                b.freq_offset_hz = inst->frequency_offset_hz;
+                b.out = &r.decimated_data;
+                // a channel the packet lacks stays a null entry (an empty result)
+                auto take = [&raw_packet, &b](int ch) {
+                    if (b.num_channels >= static_cast<size_t>(MAX_CHANNELS)) return;
+                    if (ch >= 0 && ch < static_cast<int>(raw_packet.channel_iq_data.size())) {
+                        b.ptrs[b.num_channels] = raw_packet.channel_iq_data[ch].data();
+                        b.lens[b.num_channels] = raw_packet.channel_iq_data[ch].size();
+                    }
+                    b.num_channels++;
+                };
+                if (wideband_enabled) {
+                    take(inst->tuner_channel.load(std::memory_order_relaxed));
+                } else if (fm_only) {
+                    take(current_active);
+                } else {
+                    for (int ch = 0; ch < packet_elements; ch++) take(ch);
+                }
+            }
+
+            // Timed for the dashboard's "decimate" figure: the whole pass up
+            // to the barrier (the decimation + every VFO's MUSIC task).
+            const auto pass_start = steady_clock::now();
+
+            // STAGE 1: every VFO's decimation in ONE pass over each input
+            // channel (SharedDecimator::decimateVfos: the VFOs on an antenna
+            // filter each chunk of it while it is in the core's L1 - each
+            // VFO's own decimateMultiChannel read every antenna's block
+            // again). One VFO: exactly its decimateMultiChannel
+            try {
+                SharedDecimator::decimateVfos(vfo_blocks.data(), num_vfos);
+            } catch (const std::exception& e) {
+                cerr << "Decimation error: " << e.what() << endl;
+                for (auto& r : results) r.decimated_data = SharedDecimator::MultiChannelDecimated();
+            }
+
+            // Per VFO after the decimation: its stream position, squelch,
+            // MUSIC, the per-talker DoA. In wideband / independent mode
+            // (no MUSIC) each decimator got data from its specific tuner
+            auto run_pipeline =
+                [&results, &vfo_blocks, wideband_enabled](size_t v) {
+
+                    DecimatorManager::ProcessResult& result = results[v];
+                    const auto& inst = result.instance;
+                    const float block_offset_hz = vfo_blocks[v].freq_offset_hz;
 
                     try {
-                        // Point at this decimator's input channels directly in
-                        // raw_packet - no copies. Safe because all pipeline
-                        // futures are collected before raw_packet goes out of
-                        // scope, and decimateMultiChannel only reads the data.
-                        // Wideband: 1 channel from this decimator's tuner;
-                        // normal mode: all active elements for MUSIC
-                        // (arrays sized to the DOA_NUM_ELEMENTS ceiling).
-                        const complex<float>* channel_ptrs[DOA_NUM_ELEMENTS] = {nullptr};
-                        size_t channel_lens[DOA_NUM_ELEMENTS] = {0};
-                        size_t input_channels;
-
-                        if (wideband_enabled) {
-                            int tuner_ch = inst->tuner_channel;
-                            if (tuner_ch >= 0 && tuner_ch < static_cast<int>(raw_packet.channel_iq_data.size())) {
-                                channel_ptrs[0] = raw_packet.channel_iq_data[tuner_ch].data();
-                                channel_lens[0] = raw_packet.channel_iq_data[tuner_ch].size();
-                            }
-                            input_channels = 1;
-                        } else if (fm_only) {
-                            if (current_active < static_cast<int>(raw_packet.channel_iq_data.size())) {
-                                channel_ptrs[0] = raw_packet.channel_iq_data[current_active].data();
-                                channel_lens[0] = raw_packet.channel_iq_data[current_active].size();
-                            }
-                            input_channels = 1;
-                        } else {
-                            input_channels = static_cast<size_t>(packet_elements);
-                            for (int ch = 0; ch < packet_elements; ch++) {
-                                if (ch < static_cast<int>(raw_packet.channel_iq_data.size())) {
-                                    channel_ptrs[ch] = raw_packet.channel_iq_data[ch].data();
-                                    channel_lens[ch] = raw_packet.channel_iq_data[ch].size();
-                                }
-                            }
-                        }
-
-                        // STAGE 1: Decimation. The offset is read ONCE per block
-                        // (the control thread may move the VFO meanwhile), so
-                        // every channel mixes - and is labelled - with the same one.
-                        const float block_offset_hz = inst->frequency_offset_hz;
-                        result.decimated_data = inst->decimator->decimateMultiChannel(
-                            channel_ptrs, channel_lens, input_channels,
-                            inst->decimator->getDecimationFactor(),
-                            block_offset_hz
-                        );
-
                         // Restore user-facing offset sign
                         result.decimated_data.freq_offset_hz = block_offset_hz;
                         result.decimated_data.stream_pos =
@@ -746,7 +758,7 @@ void DataReceiver::decimation_processor_thread() {
                             channel_data_out.freq_offset_hz = block_offset_hz;
                         }
 
-                        // STAGE 2: MUSIC (immediately after decimation, no barrier)
+                        // STAGE 2: MUSIC (after the shared decimation pass)
                         // SKIP MUSIC in wideband mode (channels are not phase-coherent)
                         // SKIP MUSIC if per-decimator squelch is enabled but closed (FFT method only)
                         // IMPORTANT: When beamforming is enabled, NEVER squelch MUSIC - it needs
@@ -848,40 +860,27 @@ void DataReceiver::decimation_processor_thread() {
                     } catch (const std::exception& e) {
                         cerr << "Pipeline " << inst->id << " error: " << e.what() << endl;
                     }
-
-                    return result;
                 };
 
-            vector<DecimatorManager::ProcessResult> results;
-            results.reserve(active_decimators.size());
-
-            // Timed for the dashboard's "decimate" figure: the whole pass up
-            // to the barrier (every VFO's decimation + MUSIC task).
-            const auto pass_start = steady_clock::now();
-            if (active_decimators.size() == 1) {
-                // Common case: run inline instead of spawning an OS thread per packet
-                results.push_back(run_pipeline(active_decimators[0]));
-            } else if (active_decimators.size() > 1) {
-                // (none at all - FM / digital only with no VFO heard, e.g. every
-                // VFO muted in independent mode: size() - 1 wrapped and the
-                // reserve below threw, which ended the process)
+            if (num_vfos == 1 || wideband_enabled || fm_only) {
+                // One VFO, or one channel each (MUSIC returns at once on a
+                // block of one channel): inline, no pool
+                for (size_t v = 0; v < num_vfos; v++) run_pipeline(v);
+            } else if (num_vfos > 1) {
                 // Every VFO but the first on a persistent pool, the first
                 // inline here, then one barrier. std::async(launch::async)
                 // created and joined an OS thread per VFO per packet (~146
-                // packets/s). Pool tasks only wait on their decimator's own
-                // channel pool, never on this one, so a queued VFO can't
-                // deadlock it.
+                // packets/s). The tasks wait on no pool, so a queued VFO
+                // can't deadlock it.
                 static ThreadPool vfo_pool(3);
-                vector<future<DecimatorManager::ProcessResult>> pipeline_futures;
-                pipeline_futures.reserve(active_decimators.size() - 1);
-                for (size_t i = 1; i < active_decimators.size(); i++) {
-                    const auto inst = active_decimators[i];
-                    pipeline_futures.push_back(vfo_pool.submit(
-                        [&run_pipeline, inst]() { return run_pipeline(inst); }));
+                vector<future<void>> pipeline_futures;
+                pipeline_futures.reserve(num_vfos - 1);
+                for (size_t v = 1; v < num_vfos; v++) {
+                    pipeline_futures.push_back(vfo_pool.submit([&run_pipeline, v]() { run_pipeline(v); }));
                 }
-                results.push_back(run_pipeline(active_decimators[0]));
+                run_pipeline(0);
                 for (auto& future : pipeline_futures) {
-                    results.push_back(future.get());
+                    future.get();
                 }
             }
             decimator_manager.setLastProcessMs(
@@ -945,7 +944,8 @@ void DataReceiver::decimation_processor_thread() {
                             result.beamformed_samples.data(),
                             result.beamformed_samples.size(),
                             center_freq_hz,
-                            sample_rate_hz
+                            sample_rate_hz,
+                            static_cast<float>(result.decimated_data.bandwidth_hz)
                         );
                     }
                 }

@@ -68,9 +68,6 @@ struct Plan {
 // kHz), else the VFO's present one (vfo_hz)
 int64_t vfo_width_hz(const savedfreq::ScanEntry& e, int64_t vfo_hz);
 
-// The bandwidth option index (config.hpp BANDWIDTH_OPTIONS) nearest hz
-int bandwidth_index_for(int64_t hz);
-
 // The width whose inner part is measured for activity: its bandwidth, else
 // 180 kHz for WBFM, else a 12.5 kHz channel
 int64_t channel_width_hz(const savedfreq::ScanEntry& e);

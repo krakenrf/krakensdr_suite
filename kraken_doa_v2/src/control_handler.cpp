@@ -418,7 +418,9 @@ static void store_for_replay(string_view msg, size_t key_len) {
 // POSITIONS, not ids: ids can become non-contiguous after removals but are
 // renumbered 0..N-1 on the next start. "0,2" = the first and third, "-1" =
 // none (was ONE position - the single "Audio Src": an older kraken_doa reads
-// the first number, "-1" as the first VFO).
+// the first number, "-1" as the first VFO). The bandwidth: field 2 the nearest
+// BANDWIDTH_OPTIONS index (what an older kraken_doa reads), the last field
+// (12) the bandwidth in Hz (arbitrary bandwidths; a file without it: the index).
 static string build_decimator_snapshot() {
     auto info = decimator_manager.getDecimatorInfoList();
     string heard;
@@ -437,7 +439,8 @@ static string build_decimator_snapshot() {
            << dig::mode_string(static_cast<dig::Mode>(d.digital_mode), d.digital_plugin) << ","
            << dig::options_to_string(d.digital_opts) << ",";
         auto inst = decimator_manager.getDecimator(d.id);
-        ss << (inst ? inst->tuner_channel.load() : 0) << "," << (d.transcribe ? 1 : 0);
+        ss << (inst ? inst->tuner_channel.load() : 0) << "," << (d.transcribe ? 1 : 0)
+           << "," << d.bandwidth_hz;
     }
     return ss.str();
 }
@@ -469,6 +472,7 @@ static bool apply_decimator_snapshot(const string& snap) {
         std::string plugin;
         int tuner = 0;
         bool transcribe = false;   // 🗣 Voice to Text
+        int bw_hz = 0;             // the bandwidth in Hz (0 = the index's)
     };
     vector<int> heard_pos;   // list positions of the VFOs heard
     vector<Vfo> vfos;
@@ -506,6 +510,8 @@ static bool apply_decimator_snapshot(const string& snap) {
             if (getline(es, tok, ',') && !tok.empty()) v.tuner = std::clamp(stoi(tok), 0, MAX_CHANNELS - 1);
             // optional (newer files): Voice to Text on this VFO
             if (getline(es, tok, ',')) v.transcribe = tok == "1";
+            // optional (newer files): the bandwidth in Hz (any width)
+            if (getline(es, tok, ',') && !tok.empty()) v.bw_hz = clamp_bandwidth_hz(stof_finite(tok));
             vfos.push_back(v);
         }
     } catch (const exception&) {
@@ -528,7 +534,8 @@ static bool apply_decimator_snapshot(const string& snap) {
         const Vfo& v = vfos[i];
         int id = info[i].id;
         decimator_manager.setFrequencyOffset(id, v.offset_hz);
-        decimator_manager.setBandwidthIndex(id, v.bw_index);
+        if (v.bw_hz > 0) decimator_manager.setBandwidthHz(id, v.bw_hz);
+        else decimator_manager.setBandwidthIndex(id, v.bw_index);
         decimator_manager.setDemodMode(id, v.demod);
         decimator_manager.setSquelchEnabled(id, v.sq_en);
         decimator_manager.setSquelchLevel(id, v.sq_db);
@@ -1227,7 +1234,8 @@ void ControlHandler::handle_message_impl(string_view message) {
         stringstream json;
         json << "{\"demod_mode\":{\"mode\":\"" << mode_name << "\"";
         if (suggested_bandwidth_index >= 0) {
-            json << ",\"bandwidth_index\":" << suggested_bandwidth_index;
+            json << ",\"bandwidth_index\":" << suggested_bandwidth_index
+                 << ",\"bandwidth_hz\":" << bandwidth_option_hz(suggested_bandwidth_index);
         }
         json << "}}";
         broadcast(json.str());
@@ -1247,7 +1255,7 @@ void ControlHandler::handle_message_impl(string_view message) {
 
         // (each VFO heard follows its own rate block by block: audio_mixer)
         if (!all_decimators.empty() && all_decimators.front() && all_decimators.front()->decimator)
-            cout << "Processing bandwidth changed to: " << all_decimators.front()->decimator->getBandwidthName() << endl;
+            cout << "Processing bandwidth changed to: " << all_decimators.front()->decimator->getBandwidthHz() << " Hz" << endl;
 
         cout << "Bandwidth updated for all decimators" << endl;
         record_decimator_snapshot();
@@ -1855,19 +1863,33 @@ void ControlHandler::handle_message_impl(string_view message) {
             }
         }
     }
-    else if (message.starts_with("SET_DECIMATOR_BW:")) {
-        // Format: SET_DECIMATOR_BW:id:bandwidth_index
-        string params = string(message.substr(17));
+    else if (message.starts_with("SET_DECIMATOR_BW:") || message.starts_with("SET_DECIMATOR_BW_HZ:")) {
+        // Format: SET_DECIMATOR_BW_HZ:id:hz (any whole Hz, clamped to
+        // VFO_BW_MIN_HZ .. the whole band) or SET_DECIMATOR_BW:id:index (a
+        // BANDWIDTH_OPTIONS size - older pages / scripts)
+        const bool hz_form = message.starts_with("SET_DECIMATOR_BW_HZ:");
+        string params = string(message.substr(hz_form ? 20 : 17));
         size_t colon_pos = params.find(':');
         if (colon_pos != string::npos) {
             int id = stoi(params.substr(0, colon_pos));
-            int bw_index = stoi(params.substr(colon_pos + 1));
+            int bw_hz = 0;
+            bool ok;
+            if (hz_form) {
+                ok = decimator_manager.setBandwidthHz(id, clamp_bandwidth_hz(stod_finite(params.substr(colon_pos + 1))), &bw_hz);
+            } else {
+                const int bw_index = stoi(params.substr(colon_pos + 1));
+                ok = decimator_manager.setBandwidthIndex(id, bw_index);
+                bw_hz = bandwidth_option_hz(bw_index);
+            }
 
-            if (decimator_manager.setBandwidthIndex(id, bw_index)) {
-                cout << "Decimator " << id << " bandwidth index set to " << bw_index << endl;
+            if (ok) {
+                cout << "Decimator " << id << " bandwidth set to " << bw_hz << " Hz (decimation "
+                     << decimation_for_bandwidth(bw_hz) << ")" << endl;
+                if (hz_form) set_applied("SET_DECIMATOR_BW_HZ:" + to_string(id) + ":", bw_hz, 0);
 
                 stringstream json;
-                json << "{\"decimator_bandwidth\":{\"id\":" << id << ",\"bandwidth_index\":" << bw_index << "}}";
+                json << "{\"decimator_bandwidth\":{\"id\":" << id << ",\"bandwidth_index\":" << nearest_bandwidth_index(bw_hz)
+                     << ",\"bandwidth_hz\":" << bw_hz << ",\"decimation\":" << decimation_for_bandwidth(bw_hz) << "}}";
                 broadcast(json.str());
                 record_decimator_snapshot();
             }

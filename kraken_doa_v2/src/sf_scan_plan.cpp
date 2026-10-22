@@ -225,18 +225,8 @@ int nearest_tuner(const Layout& lay, int64_t centre_hz, int64_t hz) {
     return best;
 }
 
-int bandwidth_index_for(int64_t hz) {
-    int best = 0;
-    for (int i = 1; i < NUM_BANDWIDTH_OPTIONS; i++) {
-        if (std::fabs(BANDWIDTH_OPTIONS[i].bandwidth_mhz * 1e6 - static_cast<double>(hz)) <
-            std::fabs(BANDWIDTH_OPTIONS[best].bandwidth_mhz * 1e6 - static_cast<double>(hz)))
-            best = i;
-    }
-    return best;
-}
-
 int64_t vfo_width_hz(const savedfreq::ScanEntry& e, int64_t vfo_hz) {
-    if (e.bw > 0) return std::llround(get_bandwidth_option(bandwidth_index_for(e.bw)).bandwidth_mhz * 1e6);
+    if (e.bw > 0) return clamp_bandwidth_hz(static_cast<double>(e.bw));   // any width, as the VFO takes it
     if (e.mode == "WBFM") return 240000;
     if (e.mode == "NBFM" || e.mode == "AM") return 16000;
     return vfo_hz;   // DIGITAL keeps the VFO's (widened for its decoder when it locks)

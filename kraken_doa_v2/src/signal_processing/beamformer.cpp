@@ -20,6 +20,7 @@
 #include "signal_processing/beamformer.hpp"
 #include "array_cal.hpp"
 #include "utils/parse_num.hpp"
+#include "utils/fast_log.hpp"
 #include "globals.hpp"
 
 #include <algorithm>
@@ -447,7 +448,7 @@ float Beamformer::computeChannelSNR_FFT(const std::vector<std::complex<float>>& 
     for (int i = 0; i < SNR_FFT_SIZE; i++) {
         const float re = snr_out_[i][0];
         const float im = snr_out_[i][1];
-        snr_db_buffer_[i] = 10.0f * std::log10(re * re + im * im + 1e-15f);
+        snr_db_buffer_[i] = fast_db10(re * re + im * im + 1e-15f);
     }
 
     snr_sorted_buffer_ = snr_db_buffer_;
