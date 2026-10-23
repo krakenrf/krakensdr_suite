@@ -112,6 +112,10 @@ The containers then start automatically at every boot. Don't run the native
 stack (run.sh or its boot service) at the same time. See [DOCKER.md](DOCKER.md)
 for settings, hardware variants and troubleshooting.
 
+Docker does not work on macOS: Docker Desktop runs the containers in a
+Linux virtual machine that can't reach the Mac's USB devices, so heimdall
+finds no dongles. Use the native macOS install below.
+
 Windows 10 / 11 install (native: heimdall.exe, kraken_doa.exe and the decoder
 plugins as ordinary Windows programs):
 
@@ -139,7 +143,8 @@ No driver step (libusb reaches the dongles directly). While the receiver
 runs, the Mac doesn't idle-sleep (the display still may). Voice to Text
 (`make whisper`, or `WHISPER=1 ./install.sh`), the AI assistant (`python3 ai/kraken_ai.py setup`; macOS's
 own sandbox, nothing to install) and the Debug Playback test transmissions
-(`python3 -m pip install --user numpy scipy`) work as below.
+(`python3 -m pip install --user numpy scipy`) work as below. Docker does
+not work on macOS (no USB passthrough to its containers) - use this install.
 
 To Run:
 
