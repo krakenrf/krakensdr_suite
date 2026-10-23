@@ -591,7 +591,8 @@ See `heimdall_v2/CLAUDE.md` → *Coherence-Loss Detection and Recovery* and *Pip
 
 **Optimizations** (see OPTIMIZATION_SUMMARY.md):
 - Compiler auto-vectorization for IQ conversion (faster than manual NEON)
-- Thread-local decimators with shared coefficient cache
+- Per-VFO decimator: block FIR stages, split as a cost model finds cheapest
+  (halfband stages, the mixer folded into the first stage)
 - FFT: pffft (vendored `kraken_doa_v2/external/pffft`, BSD-style licence;
   replaced FFTW 2026-10-17) behind `plugins/sdk/kraken_fft.hpp` - also the
   decoder plugins' FFT
@@ -696,19 +697,105 @@ Edit `kraken_doa_v2/include/config.hpp`:
   `kraken_doa_v2/include/globals.hpp` returns -1 and is the single choke
   point - see the client CLAUDE.md for the full list of sites it feeds
 
-**Bandwidth Options**:
-- `BANDWIDTH_OPTIONS`: Integer decimation factors with no resampling
+**VFO bandwidth (any width; details: `kraken_doa_v2/CLAUDE.md` *Arbitrary VFO
+bandwidth*)**:
+- ANY whole Hz from 1 kHz to 2.4 MHz (the user's request 2026-10-21; it was
+  the 30 `BANDWIDTH_OPTIONS` sizes): `DecimatorInstance::bandwidth_hz`, WS
+  `SET_DECIMATOR_BW_HZ:id:hz` (`SET_DECIMATOR_BW:id:index` still works), the
+  DECIMATORS snapshot's last field. Still integer decimation only (no
+  resampling): by the largest divisor D of 2.4 MHz whose rate holds the
+  width, the cascade's last stage cut at the width itself (gain 2.4 MHz /
+  width, = D as before for the old sizes). Measured on the Pi 5: up to 1.2
+  MHz a custom width costs what the efficient size at its rate does (the
+  rate <= 1.25x the width at 300 kHz and below); 1.2 - 2.4 MHz runs at 2.4
+  MS/s with a full-rate filter (+~9 % of a core with 5 antennas over the
+  2.4 MHz pass-through; the BW box's tooltip says so). The stages are block
+  FIRs (`SharedDecimator::FirStage`, replacing liquid's firdecim - whose
+  per-sample window pushes were most of its cost; 4 outputs per NEON
+  pass), split as a cost model of them finds cheapest
+  (`SharedDecimator::planStages`, 2026-10-22: any order of factors 2..8,
+  halfband stages for 2, the mixer folded into the first stage's taps where
+  that is cheaper - measured against every candidate plan of 28 widths, the
+  pick is the fastest or within 2 %), a block through the whole cascade in
+  1024-sample chunks (the stages' buffers stay in L1 - in the live
+  pipeline the first stage was memory-bound: an extra 12.5 kHz VFO with
+  DoA and 5 antennas cost ~19 % of a core, ~6-7 % now), a first stage
+  whose input isn't mixed in front filtering straight from the input block
+  (no copy into it), every VFO in one pass over each antenna
+  (`decimateVfos`: three narrow VFOs ~24 -> ~20 % of a core in user-space
+  cycles, one VFO unchanged); kraken_doa with 1 / 2 / 3 such VFOs 28 / 49 / 67 ->
+  18 / 26 / 31 % of a core (perf-profiled 2026-10-22, before the one pass): the first block FIR was 3.3x the
+  decimator before arbitrary widths, this 2.0x the first block FIR;
+  kraken_doa against the build before arbitrary widths (measured the day
+  before, same harness) 22-31 % less CPU at every old size but 2.4 MHz (6 %;
+  240 kHz 50.1 -> 35.2 % of a core, 12 kHz 36.4 -> 26.9, 1.2 MHz 87.4 ->
+  60.4), the same response (checked against a double-precision reference of
+  each plan). No snapping option (an "Efficient bandwidths only" tick was
+  removed the same day, the user's call). The VFO card's BW is a number box
+  in kHz
 - Supports 2.4 MHz down to 1 kHz bandwidth (the narrow end - 10 kHz to 1 kHz -
   is for weak CW beacons, wildlife tags, fox hunts). MUSIC accumulates across
   blocks (a 1 kHz block is ~7 samples) and caps a frame at ~1 s of samples
   (min 4 snapshots), so narrow bandwidths still give ~1 bearing/s; the
   beamformed FFT collects short blocks until it has 64 samples. The web UI
   draws a VFO at least 8 px wide so a 1 kHz bar stays visible/grabbable
+- VFO tuning step (top bar `Step:`, per browser, 1 Hz - 100 kHz incl. 6.25 /
+  8.33 / 12.5 / 25 kHz; default 1 kHz): a tuning-bar drag or a click on the
+  spectrum / a pane puts the VFO on a multiple of it (its absolute
+  frequency); Shift while dragging = fine, 1/100 of the movement to the Hz.
+  Typed / saved frequencies and the card's digits stay exact. A drag used to
+  move only past 1 kHz, in whole pixels (~1093 Hz). Details:
+  `kraken_doa_v2/CLAUDE.md` *VFO tuning STEP*
 
 **Scanners**:
-- The discrete (server-side hop) and continuous scanners are mutually
-  exclusive: starting one while the other runs is refused and the browser's
-  button reset
+- The discrete (server-side hop), continuous and saved-frequency scanners
+  are mutually exclusive: starting one while another runs is refused and
+  the browser's button reset
+- 📻 Saved-frequency scanner (`kraken_doa_v2/src/sf_scanner.cpp` +
+  `sf_scan_plan.cpp`; details: `kraken_doa_v2/CLAUDE.md` *Saved-frequency
+  scan*): scans the saved frequencies ticked in the 📻 list - one by one or
+  a whole category (its `scan` flag: also entries added later; a frequency's
+  `scan` -1 leaves it out) - with the page's SELECTED VFO: groups them into
+  tuner bands (all entries whose VFO fits the edge-clipped 2.4 MHz of one
+  centre - a centre kept off every entry's channel: DC is removed / the
+  RTL's spike; entries with a gain only share a band with that gain), watches
+  every entry of a band at once in the averaged FFT (squelch = dB over the
+  noise floor) and retunes only between bands. Coherent: one band at a
+  time (Dwell each), nothing measured while heimdall recalibrates after a
+  retune; independent: a band on every tuner no other VFO is on; wideband
+  scan (the user's question 2026-10-22 - it had been refused for no good
+  reason): one band = heimdall's tuner spread (n tuners side by side, edge
+  clip x 2.4 MHz apart, ~10.8 MHz with 5), each entry on the tuner nearest it
+  and its VFO kept off the seams, retuned with WIDEBAND_FREQ (FREQ would end
+  the mode), no calibration (`sf_scan_plan`'s Layout). Lock = the
+  entry's decoder / demod / bandwidth + the VFO's offset (the page's
+  sfTune), heard; Delay after the transmission, Skip / Hold / Longest stay
+  (clean listening time only). The list goes in PASSES: a frequency left by
+  Skip / Longest stay has had its turn until the next pass (always-on
+  broadcast stations take turns round and round). With each retune the VFO
+  is pre-placed, muted, on the band's first frequency (ready when the array
+  has recalibrated); while the array calibrates a locked VFO is muted.
+  Coherent: while it SEARCHES it holds heimdall's calibration (8092
+  `hold_calibration`, a 3 s lease renewed every second - heimdall_v2/CLAUDE.md
+  *Calibration hold*): retunes skip the 3 s cooldown + noise-source
+  calibration, so bands take turns in well under a second; a lock releases
+  it and the calibration starts at once (the VFO muted until it has run).
+  ⚙ "VFOs: one per active frequency" (`SFSCAN_MULTI:`, persisted, off by
+  default; the user's request 2026-10-22, for Voice to Text): every
+  frequency active at once in the band(s) watched is listened to at once -
+  its VFO the first, a VFO the SCAN MAKES each further one (a copy of its VFO
+  as it was at the start: demod, bandwidth, decoder, squelch, Transcribe;
+  then the entry's own settings), each ending on its own (Delay, Longest
+  stay); a made VFO is removed then and at the stop (never saved; made /
+  removed through the manager + a `decimator_info` broadcast - the
+  decimator_added / _removed messages reset every page's audio player); one
+  the user removes = that frequency done this pass; <= 16 VFOs.
+  Its own commands go through `apply_command` but are NOT saved
+  (`sfscan::dispatching()`); the tuning it leaves is saved at stop. A manual
+  retune (FREQ, TUNER_FREQ of a scanned tuner, WIDEBAND_FREQ), a mode change,
+  removing its VFO or a playback stop it. WS `SF_SCAN:`, `SFSCAN_START:<vfo>` / `STOP` / `SKIP` /
+  `HOLD:` / `SQUELCH:` / `DWELL:` / `HANG:` / `MAX:` / `MULTI:` (persisted),
+  `GET_SFSCAN` -> `{"sfscan":{...}}`
 - Discrete scanner: config entries outside the tunable range (R820T, or the
   Wideband variant's span) are refused - the whole load, the previous config
   stays; frequencies go to heimdall as uint64 Hz. heimdall's settle and dwell
@@ -788,15 +875,26 @@ decoders `kraken_doa_v2/plugins/`
   inside the 2.4 MHz - EU / NZ: tune 868.8 MHz; FLARM by radio ID + bearing
   only, its payload is encrypted and NOT decoded; OGN fully, stealth =
   no-track honoured; a DoA per aircraft on its own channel; manual only,
-  `lock_vfo`, `tunes` once to the band) and ctcss (CTCSS tones / DCS codes
-  under analog FM on a 12-24 kHz VFO: every standard + non-standard tone,
+  `lock_vfo`, `tunes` once to the band) and analog_id ("Analog FM IDs",
+  was `ctcss` - renamed 2026-10-22 when the radio IDs were added, the
+  user's request; saved `PLUGIN:ctcss` VFOs / `ctcss.*` options load as
+  analog_id: everything on analog FM that names a transmitter, on a 12-24
+  kHz VFO: CTCSS tones / DCS codes (every standard + non-standard tone,
   measured to ~0.01 Hz, reverse burst; DCS 23-bit Golay words, normal /
-  inverted, turn-off code - ETSI TS 103 236; each transmission a talker
-  "CTCSS 88.5" / "DCS 023N" from its onset to its end, a DoA per tone;
-  valid spans every 50 ms drive the Digital squelch, `kp::Info::
-  squelch_hold_s` 0.35 s; option "Tone squelch" = only that tone / code
-  opens it and gets talkers; no voice: Voice to Text keeps the analog demod
-  and names the transcript after the tone) and beacon406 (Cospas-Sarsat 406
+  inverted, turn-off code - ETSI TS 103 236), MDC1200 (Motorola unit IDs,
+  PTT ID pre / post, emergency, status, call alert ...; read coherently,
+  convolutional code + CRC), FleetSync / FleetSync II (Kenwood fleet-unit,
+  1200 / 2400 bit/s; read coherently by a Viterbi over the phase), 5-tone
+  selcall (ZVEI1-3 / DZVEI / PZVEI / CCIR / EEA / EIA / NATEL / MODAT), DTMF
+  (talk-off protected) and tone bursts (1750 Hz repeater access); each
+  transmission ONE talker named by the strongest of what it carried -
+  sender ID > selcall / DTMF > tone / code > burst ("MDC 1029", "FleetSync
+  100-1001", "CCIR 12345", "CTCSS 88.5") - from its onset to its end, a
+  DoA per radio; IDs sent at release rename it; valid spans every 50 ms
+  drive the Digital squelch, `kp::Info::squelch_hold_s` 0.35 s; option
+  "ID / tone squelch" = only those IDs / kinds / tones open it and get
+  talkers; no voice: Voice to Text keeps the analog demod and names the
+  transcript after the radio) and beacon406 (Cospas-Sarsat 406
   MHz distress beacons - EPIRB / ELT / PLB / SSAS - on every 406.0-406.1 MHz
   channel of a 100 kHz VFO, manual only, fixed 406.050 MHz: C/S T.001
   first-generation bursts (160 ms carrier + 112 / 144 bits biphase-L at 400
@@ -859,7 +957,11 @@ decoders `kraken_doa_v2/plugins/`
   FM lines, impulses, carriers. ID separation: a packet per pulse on its
   own 1 kHz channel, DF kind `collar` 🐾, `names` option. kraken_doa:
   packet channels <= 10 kHz in a wide VFO are decimated before the
-  filter - `narrow_cov`).
+  filter - `narrow_cov`) and rds (FM broadcast: RDS / RBDS on 57 kHz,
+  RDS2 streams, the pilot and every SCA subcarrier - FM audio, FSK data,
+  DARC; Listen plays an SCA or the main programme; every antenna combined
+  before the FM discriminator; a DoA per station by its PI - see *📻 RDS /
+  RBDS + SCA plugin* below).
   Plugins learn the VFO's RF from `kp::Host::rf_hz()` (wire RF, 7). Each decimator (VFO) runs one
   plugin, or AUTO (every plugin the user left ticked for "Auto detect" in the
   sidebar's plugin list - all by default, `PLUGIN_AUTO:id:0|1`, persisted as
@@ -992,7 +1094,7 @@ DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, ctcss, beacon406, lora, wildlife, dtv and cells (ARRAY
+  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, lora, wildlife, rds, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags - only
@@ -1027,6 +1129,9 @@ DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
   its gain (when set; independent mode: the VFO's tuner)
 - Spectrum: tags with the names at the top of the main spectrum and the
   independent-mode panes; click = tune
+- ▶ Scan: a tick per entry and per category heading picks what the
+  saved-frequency scanner scans (see *Scanners*), kept in the list itself
+  (`scan` per frequency / category, `scan_uncat`; `SF_SCAN:`)
 - WS `SF_SET:{json}` (+ newcat / newloc made in the same step), `SF_DEL:id`,
   `SF_LOC_SET` / `SF_LOC_DEL` (a location's frequencies stay, unplaced),
   `SF_CAT_SET` / `SF_CAT_DEL` (uncategorises), `GET_SF` ->
@@ -1041,6 +1146,13 @@ DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
   a lat/lon grid with a notice. Opened with the 🗺 Map button under the
   waterfall; a tab next to MUSIC DoA in coherent mode, the whole right pane
   otherwise; resizable; view settings per browser (localStorage)
+- 🔍 Search (2026-10-21; kraken_doa_v2/CLAUDE.md *🔍 Map search*):
+  coordinates in the usual forms, UTM, MGRS, grid locators, map links and
+  the page's own places (markers, decoder points ...) read OFFLINE as typed;
+  addresses / cities from OpenStreetMap Nominatim BY THE BROWSER, only on
+  Enter, <= 1 request a second; a pin with the position in every form + 📍
+  Add as marker. 🏠 = the station (was ⌖), 🎯 = the estimated transmitter
+  (📡 DF heat map / ⏯ replay; again = the next)
 - Shows the positions decoder plugins report (`kp::Host::map_point`: ADS-B
   aircraft, APRS stations, DMR GPS, D-STAR GPS / DPRS) per VFO decoder whose
   "🗺 Plot on map" is ticked in its decoder tab (off by default,
@@ -1169,10 +1281,10 @@ leaves it out) with the models in `docker-data/whisper_models/`
   decoder is on and decodes voice (P25 / DMR / D-STAR / NXDN / TETRA vocoder
   output via `dig::set_voice_tap_handler`, with the talker's unit ID /
   talkgroup; cut at talker changes), else - no decoder, or one of no voice
-  (`DigitalDecoder::takes_voice()`: ctcss, pocsag ...) - its analog demod
+  (`DigitalDecoder::takes_voice()`: analog_id, pocsag ...) - its analog demod
   (NBFM / AM / WBFM) of the same stream, cut by its squelch (squelch off: 10
   dB over the noise in the FFT), named after the decoder's talker if it has
-  one (ctcss: "CTCSS 88.5"; `DigitalDecoder::lead_talker`). Bearing during
+  one (analog_id: "MDC 1029", "CTCSS 88.5"; `DigitalDecoder::lead_talker`). Bearing during
   each transmission in coherent mode with DoA on
 - `src/voice2text.cpp`: one worker thread (taps, queue <= 40 / 10 min,
   helper process); the helper (`PluginProcess`, nice 10, one job at a time,
@@ -1238,7 +1350,7 @@ spreadsheet re-saved (timestamps as 1.68843E+12 = rounded to 2.8 h, padded
 rows, ';' + decimal commas, UTF-16) is read too: times rebuilt from the
 track (`lrRetime`), "The drive took N min" corrects the pace
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios - MDC1200 / FleetSync IDs, 5-tone selcall / DTMF, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags, FM broadcast stations by their RDS PI)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a
 coded ID per transmitter, the plugin reports it as a talker and is tested
@@ -1292,6 +1404,27 @@ are summed per transmission and run through MUSIC again
 radio gets its bearing, history and its own mobile DF heat map (rdf_mapper
 keys VFO + talker, rdf_session.bin "KRDF2"); the 🗺 Map's 📡 DF panel picks
 Whole signal / Every radio / one radio and lists the talkers
+
+**📻 RDS / RBDS + SCA plugin** (details: `kraken_doa_v2/plugins/rds/README.md`,
+`kraken_doa_v2/CLAUDE.md` *RDS / RBDS + SCA*): the plugin `rds` ("RDS / RBDS +
+SCA (FM broadcast)", 2026-10-22) on a WBFM VFO (240 kHz for RDS, 300-400 kHz
+for a 92 kHz SCA; the VFO's own rate, wider ones filtered to the channel):
+every antenna combined before the FM discriminator in coherent mode
+(`multichannel`, ~7 dB: RDS at 10 dB CNR with 5 antennas vs 18 dB with one),
+RDS / RBDS groups (biphase BPSK demodulator, block sync + soft burst
+correction, a corrected block's data only when confirmed twice): PI, RBDS
+call sign, country (ECC), PS (dynamic flagged), PTY (RDS / RBDS names) +
+PTYN, RadioText, RT+, eRT, Long PS, clock time, AF, TP / TA, DI, PIN, EON,
+the ODA directory, TMC / DAB / EWS groups; RDS2 streams (66.5 / 71.25 / 76
+kHz, block-synced); the pilot and every MPX subcarrier 20-99 kHz probed - SCA
+FM audio (tones told apart from FSK), FSK data with its bit rate, DARC-like,
+AM; Listen = an SCA's audio (150 us) or the main programme in mono,
+"🔊 Listening" again = back to the VFO's own WBFM (the bandwidth kept); a talker
+packet "PI xxxx" per RDS group (UI kind `broadcast` 🎙). Generator
+`plugins/rds/tools/rds_gen.py`, playback `rds-two-stations`. Checked on a
+real US station's recording (pysdr.org: PI, RT, dynamic PS, a real 67 kHz
+SCA) and end to end through kraken_doa's debug playback (two stations at
+60.0 / 200.0 deg)
 
 **📶 Digital TV plugin** (details: `kraken_doa_v2/plugins/dtv/README.md`,
 `kraken_doa_v2/CLAUDE.md` *Digital TV*): the plugin `dtv` ("Digital TV
@@ -1425,8 +1558,9 @@ user's settings back; doa_settings.json / heimdall_settings.conf
 untouched), web mapper / decoder log / Voice to Text / incidents / DoA
 recording paused, a red "DEBUG PLAYBACK - not live" banner + spectrum
 overlay. A playback never outruns the pipeline (a busy machine plays it
-slower than real time instead of dropping packets). 32 entries in 25
-catalogues - every decoder has its own (p25, dmr, radiosonde last)
+slower than real time instead of dropping packets). 36 entries in 26
+catalogues - every decoder has its own (p25, dmr, radiosonde, then rds,
+then analog_id's `analog-ids-six` last)
 
 **📼 IQ & audio recorder + playback of recordings (sidebar "📼 IQ & Audio
 Recorder")** (details: `kraken_doa_v2/CLAUDE.md` *📼 IQ & audio recorder*,
@@ -1463,7 +1597,7 @@ format: `kraken_doa_v2/SIGMF.md`): `src/recorder.cpp`, `recorder_audio.cpp`,
 `kraken_doa_v2/CLAUDE.md` *Digital squelch*): squelch methods are FFT Peak
 and Digital (the eigenvalue methods were removed - saved values map to
 FFT). Digital opens while the decoder reports valid frames (+1.5 s, or the
-plugin's `kp::Info::squelch_hold_s` - ctcss 0.35 s) and the
+plugin's `kp::Info::squelch_hold_s` - analog_id 0.35 s) and the
 VFO's DoA is published from exactly the confirmed samples
 (`TalkerDoa::set_digital` -> `MUSICProcessor::publishFromCovariance`; MUSIC's
 own frames held) - interference / noise between the frames never reaches
@@ -1482,7 +1616,18 @@ receiver's own floor, remembered per tuner + gain in `noise_floors.json`
 (cwd, gitignored). Coherent mode tells a band-filling signal from a real
 noise rise by two antennas' coherence (receiver noise is independent per
 antenna); independent / wideband scan mode: > 6 dB above = a signal, the
-remembered floor creeping up 1 dB / min while held
+remembered floor creeping up 1 dB / min while held. Wideband scan mode
+(the stitched spectrum) uses no remembered floors: the tuners' common
+response shape (measured on the KrakenSDR, learned on) is taken off, the gain
+steps between neighbours come from the 0.48 MHz their bands share (kept per
+pair of dongles through retunes), and a tuner whose floor stands over the
+quietest one's (gains taken off) is filled by a signal (DVB-T / LTE over
+several tuners) and blends to that floor + its gain (1 -> 3 dB over, no
+switching) - each tuner used to be drawn against its own percentile, so such
+a signal dropped to ~0 dB past the boundary (fixed 2026-10-21; a first version
+misjudged real hardware and dropped the signal during drags, see the client
+CLAUDE.md). A retuned tuner's average is shifted with the move, so a drag
+doesn't draw the old band moved along
 
 **✈ Array calibration from ADS-B aircraft (coherent mode)** (details:
 `kraken_doa_v2/CLAUDE.md` *Array calibration*): `kraken_doa_v2/src/array_cal.cpp`.
@@ -1689,8 +1834,9 @@ The dominant eigenvector of the noise-source data gives each channel's phase
 channel, applied per sample in the conversion hot loop and reported in the
 control-port status JSON as `channel_comp` (`amp_db` is always 0).
 
-**Drag retunes**: coherent retunes close together (a drag, within 400 ms -
-up to 1 s while the previous step isn't finished) use the librtlsdr fork's
+**Drag retunes**: coherent and wideband scan retunes close together (a drag,
+within 400 ms - up to 1 s while the previous step isn't finished; wideband
+scan since 2026-10-21: 114 -> 74 ms per step on Windows) use the librtlsdr fork's
 `rtlsdr_set_center_freq_fast` (PLL autotune clock left at 128 kHz between
 steps, lock still read every step); the coherence watchdog (400 ms quiet)
 and every noise-source switch-on (`set_bias_tee_all_devices(true)`, which
@@ -1757,11 +1903,26 @@ for (size_t i = 0; i < num_samples; i++) {
 
 ### Decimation (DoA Client)
 
-**Architecture**:
-- Thread-local decimator instances (zero allocation per call)
-- Shared coefficient cache with 95%+ hit rate
-- Pre-reserved buffers to avoid dynamic allocation
-- Integer decimation factors (no resampling)
+**Architecture** (`kraken_doa_v2/src/signal_processing/shared_decimator.cpp`;
+kraken_doa_v2/CLAUDE.md *Arbitrary VFO bandwidth*):
+- Per VFO a `SharedDecimator`, per antenna its own mixer + stage state;
+  every VFO's block in ONE pass per antenna (`SharedDecimator::decimateVfos`,
+  called once per packet by data_receiver.cpp): a task per antenna (per
+  tuner in independent mode) runs each VFO's cascade on a 1024-sample chunk
+  while it is in L1, the first task on the calling thread, the others on
+  ONE decimation pool shared by every VFO (cores + 1 threads; it was 8
+  threads per VFO: 51 -> 32 threads with three VFOs). Bit for bit what each
+  VFO alone gives; three narrow VFOs with DoA ~4 % of a core less, one VFO
+  the same; MUSIC etc. per VFO after the pass
+- Integer decimation factors (no resampling), split into stages of 2..8 by
+  `planStages` (a cost model of the kernels; halfband stages, the mixer
+  folded into the first stage where cheaper)
+- Block FIR stages (`FirStage`): every output straight from the stage's
+  buffer, 4 outputs per NEON / SSE pass; buffers grow without zeroing; a
+  block goes through the cascade in 1024-sample chunks (`DECIM_CHUNK`), so
+  the buffers stay in L1 (the whole 128 KB block per antenna made the
+  first stage memory-bound); a first stage whose input isn't mixed in front
+  filters straight from the input block (`FirStage::begin_input`)
 
 ## Development Workflow
 
@@ -1988,14 +2149,91 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
 **Heimdall Server**:
 - ARM NEON vectorization for sample processing
 - Automatic fallback to scalar on x86_64
-- Optimized for Raspberry Pi 4 Cortex-A72
+- Built for the CPU it is built on (`-mcpu=native`; was the Pi 4's
+  Cortex-A72) - see *Compiler flags* below
 
 **DoA Client**:
 - IQ conversion: Compiler auto-vectorization preferred over manual NEON
-- Decimation: Thread-local instances with shared coefficient cache;
-  liquid-dsp's NEON dot products (built from source - `liquid.mk`)
+- Decimation: the VFO decimator's own block FIR kernels (GCC vector
+  extensions -> NEON); liquid-dsp (built from source - `liquid.mk`, NEON dot
+  products) designs its taps and runs the demodulators' / plugins' filters
 - FFT: pffft (NEON), no planning / wisdom file - see kraken_doa_v2/CLAUDE.md
-  *FFT (pffft)*
+  *FFT (pffft)*; power -> dB per bin with `fast_db10` (`include/utils/
+  fast_log.hpp`) in straight loops that vectorize (the old wrapped-index
+  loop called libm's log2f per bin: ~2.6 % of a core per spectrum)
+
+### Compiler flags (2026-10-22, the user's request: full optimisation on the Pi 5)
+
+- kraken_doa `-O3 -ffast-math -fno-finite-math-only -march=native
+  -mtune=native` (2026-10-23; it was `-Ofast` - below); heimdall
+  `-O3 -mcpu=native` on aarch64 (was `-march=armv8-a -mtune=cortex-a72` -
+  the Pi 4's core), `-march=native` x86_64; the plugins + libkrakendig
+  `-O3` (was `-O2`) + `-mcpu=native` on aarch64 (`-march=native` alone
+  tunes for a generic ARMv8 core); liquid-dsp / pffft / librtlsdr /
+  whisper.cpp as before (Release / -O3, native). Windows keeps the portable
+  `WIN_MARCH` everywhere
+- heimdall and the plugins: `-fno-math-errno` (sqrt & co. without an errno
+  path - such loops vectorize) and `-fcx-fortran-rules` (std::complex * and /
+  without C99's inf / NaN recovery: GCC keeps a `__mulsc3` / `__divsc3` call
+  in every complex multiply otherwise, and the loop doesn't vectorize -
+  "unsupported control flow"; division keeps its range scaling). NOT
+  `-ffast-math` there: its `-ffinite-math-only` folds `std::isfinite` to
+  true (NaN = unknown in `kp::MapPoint`, see `is_finite_value()`), and its
+  reassociation would change results. `std::abs` of a complex stays a
+  `hypotf` call without fast-math: heimdall's correlation uses
+  `std::sqrt(std::norm(z))` / a norm compare for its whole-array loops.
+  Measured 2026-10-23 (the user's question): the plugins with `-ffast-math
+  -fno-finite-math-only` decoded 34 / 35 test transmissions identically (one
+  printed time 1 ms off) for 1.8 % less CPU, with `-ffinite-math-only` too
+  32 / 35 changed (adsb altitudes `nan m`, cells found no cell); heimdall's
+  correlation benchmark -1 % - not taken
+- kraken_doa: `-Ofast` (= `-O3 -ffast-math` + `-ffinite-math-only` +
+  `-fallow-store-data-races`) replaced by `-O3 -ffast-math
+  -fno-finite-math-only` (2026-10-23, the user's call): std::isfinite /
+  std::isnan work again - under -Ofast they were constants, and 7 checks
+  were dead (a NaN in `SF_SET` / `SF_LOC_SET` JSON - geo::Json's reader takes
+  `NaN` - passed the range tests, likewise a SigMF's station / track,
+  ai_capture's JSON numbers, rdf_engine's normalisation) - and GCC may no
+  longer add stores other threads race with. `is_finite_value` stays the
+  way (right under any flags). Measured on the Pi 5 (test build + fake
+  heimdall, user-space cycles, % of a core at 2.4 GHz, 3 rounds each;
+  -Ofast / the new flags / strict `-O3 -fno-math-errno -fcx-fortran-rules`):
+  1 VFO 12.5 kHz 14.6 / 14.3 / 18.1, 3 VFOs 20.2 / 20.0 / 23.5, 5 VFOs
+  26.3 / 26.6 / 29.7, 5 x 240 kHz 85.5 / 85.0 / 91.6, 1 x 240 kHz 21.9 /
+  22.0 / 25.1, + beamforming 15.2 / 15.3 / 18.4; the bearings the same in
+  all three. Strict costs ~3.3 points whatever the VFOs (per-packet work).
+  End to end (test build): `SF_LOC_SET` / `SF_SET` with `"lat": NaN` /
+  `"hz": NaN` - the -Ofast build took both (the broadcast list and
+  saved_frequencies.json then held `nan`: invalid JSON), the new one refuses
+  them ("bad position" / "bad frequency"). A build from before recompiles
+  every object once (`obj/.flags`), on the Pi and on Windows
+- A stamp of the compiler flags (`build/.flags`, `plugins/lib/build/.flags`,
+  kraken_doa's `obj/.flags` since 2026-10-23; every platform - it was
+  `WIN_MARCH` on Windows only) recompiles everything when the flags change,
+  so an existing build picks new flags up
+- `-mcpu=native` / `-march=native` builds run only on the kind of CPU they
+  were built on (a Pi 5 build on a Pi 4: illegal instruction) - build on
+  the device (install.sh, the Dockerfile do)
+- Measured on the Pi 5 (GCC 14.2, Debian 13; job scratch 63520c26, results
+  in ~/flagtest_527fd2/out on the Pi; A = main, B = these flags):
+  heimdall's correlation per 5-channel set (micro-benchmark, one core)
+  4.25 -> 2.63 ms (-38 %): peak search 1.02 -> 0.49 ms and display
+  magnitudes 1.04 -> 0.10 ms (the norm code), cross-spectrum 1.08 -> 0.94
+  ms (the flags), forward FFTs and the conversion worker's loops unchanged;
+  the same peaks, display values within 3e-8. On the KrakenSDR (2 rounds A /
+  B): the correlation thread while calibrating 46 -> 41-43 % of a core (a
+  pass ~8.6 -> ~7.2 ms with its 10 ms sleep), heimdall 58.5 -> 54-56 %;
+  CONVERGED in 23-28 s either way (the lag servo's slew), forced recal
+  4.6-6.1 s, calibration check OK (|lag| 0.0, |phase| 0.2-0.3 deg), 0
+  coherence events; converged 13.8 vs 14.0 % of a core (3 rounds, ranges
+  overlapping: unchanged). Plugins: all 34 debug-playback test
+  transmissions decoded offline by A and B - outputs identical 34 / 34 (bar
+  timing lines), CPU 41.0 -> 38.1 s (-7 %): lora -12..-23 %, p25 -19 %,
+  adsb -13 %, cells -7 %, dtv -6 %, the rest within +-5 %. Build on the Pi:
+  heimdall 51 -> 41 s, plugins 151 -> 158 s. -O3 found two snprintf
+  truncations (`fmt()` 64-byte buffers in dme and cells: the "not a DME
+  frequency" fact and the cells "the VFO sees N % ..." note were cut off) -
+  fixed
 
 ### Memory Management
 

@@ -152,7 +152,7 @@ void set_message_handler(MessageHandler h) {
 
 void set_station_location(bool valid, double lat, double lon) {
     std::string t;
-    // is_finite_value, not std::isfinite: kraken_doa builds with -Ofast
+    // is_finite_value, not std::isfinite: right under fast-math flags too
     if (valid && is_finite_value(lat) && is_finite_value(lon) && std::fabs(lat) <= 90 && std::fabs(lon) <= 180) {
         char b[64];
         snprintf(b, sizeof b, "%.6f,%.6f", lat, lon);

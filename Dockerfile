@@ -3,8 +3,10 @@
 # KrakenSDR suite (heimdall + kraken_doa) as one image; docker-compose.yml runs
 # it as two containers. See DOCKER.md.
 #
-# Build ON the device that runs it: kraken_doa compiles with -march=native, so
-# an image built on a Pi 5 can die with "Illegal instruction" on a Pi 4.
+# Build ON the device that runs it: kraken_doa, heimdall and the plugins are
+# compiled for the build CPU (-march=native / -mcpu=native, the Makefiles'
+# flags), so an image built on a Pi 5 can die with "Illegal instruction" on a
+# Pi 4, and a cross-build on a PC isn't supported.
 #
 #   docker compose build             (or: docker build -t krakensdr:local .)
 #   docker compose build --build-arg JOBS=2   # 4 GB Pi; JOBS=1 on 2 GB

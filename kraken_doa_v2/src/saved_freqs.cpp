@@ -4,6 +4,8 @@
 #include "utils/fs_compat.hpp"
 #include "utils/json_escape.hpp"
 
+#include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -24,6 +26,7 @@ constexpr const char* DEFAULT_COL = "#90a4ae";
 
 struct Category {
     std::string id, name, col;
+    bool scan = false;      // the scanner takes every frequency in it
 };
 struct Location {
     std::string id, name, notes;
@@ -40,16 +43,19 @@ struct Freq {
     double gain = 0;        // dB (0.1 steps), -1 = Auto (AGC)
     std::string dec;        // "" (the VFO's) | OFF | AUTO | PLUGIN:<id>
     std::string tone, notes;
+    int scan = 0;           // 1 scanned on its own, -1 left out of its scanned category, 0 its category decides
     int64_t t = 0;
 };
 struct State {
     std::vector<Category> cats;   // in the order they were added
     std::vector<Location> locs;
     std::vector<Freq> freqs;
+    bool scan_uncat = false;      // the scanner takes the frequencies without a category
 };
 
 std::mutex mu;
 State st;
+std::atomic<uint64_t> gen{0};   // bumped by every save (the scanner rebuilds its plan)
 
 int64_t now_ms() {
     using namespace std::chrono;
@@ -135,6 +141,7 @@ bool cat_from_json(const geo::Json& j, Category* c, std::string* err) {
     if (c->name.empty()) { *err = "the category needs a name"; return false; }
     c->col = j.str("col");
     if (!valid_col(c->col)) c->col = DEFAULT_COL;
+    if (const geo::Json* sc = j.get("scan"); sc && sc->type == geo::Json::BOOL) c->scan = sc->b;
     return true;
 }
 
@@ -187,6 +194,9 @@ bool freq_from_json(const geo::Json& j, Freq* f, std::string* err) {
     if (!valid_dec(f->dec)) { *err = "bad decoder"; return false; }
     f->tone = clean(j.str("tone"), MAX_TONE, false);
     f->notes = clean(j.str("notes"), MAX_FREQ_NOTES, true);
+    double sc = 0;
+    if (j.get("scan") && (!num(j, "scan", -1, 1, &sc) || sc != std::round(sc))) { *err = "bad scan flag"; return false; }
+    f->scan = static_cast<int>(sc);
     f->t = stamp(j);
     return true;
 }
@@ -194,7 +204,7 @@ bool freq_from_json(const geo::Json& j, Freq* f, std::string* err) {
 // --- JSON out ---------------------------------------------------------------
 std::string to_json(const Category& c) {
     return "{\"id\":\"" + json_escape(c.id) + "\",\"name\":\"" + json_escape(c.name) + "\",\"col\":\"" +
-           json_escape(c.col) + "\"}";
+           json_escape(c.col) + "\",\"scan\":" + (c.scan ? "true" : "false") + "}";
 }
 std::string to_json(const Location& l) {
     char ll[80];
@@ -210,7 +220,7 @@ std::string to_json(const Freq& f) {
            "\",\"mode\":\"" + json_escape(f.mode) + "\",\"bw\":" + std::to_string(f.bw) + ",\"gain\":" + gain +
            ",\"dec\":\"" +
            json_escape(f.dec) + "\",\"tone\":\"" + json_escape(f.tone) + "\",\"notes\":\"" + json_escape(f.notes) +
-           "\",\"t\":" + std::to_string(f.t) + "}";
+           "\",\"scan\":" + std::to_string(f.scan) + ",\"t\":" + std::to_string(f.t) + "}";
 }
 
 // the three lists as JSON members (message and file), sep between entries
@@ -235,12 +245,14 @@ void save(const State& s) {
     const std::string tmp = std::string(SF_FILE) + ".tmp";
     std::ofstream f(tmp);
     if (f) {
-        f << "{\"version\":2," << lists_json(s, "categories", "locations", "frequencies", ",\n  ") << "}\n";
+        f << "{\"version\":2," << lists_json(s, "categories", "locations", "frequencies", ",\n  ")
+          << ",\"scan_uncat\":" << (s.scan_uncat ? "true" : "false") << "}\n";
         f.close();
     }
     // fs_replace: Windows' rename() refuses an existing target (every change after the first save was lost)
     if (!f || fs_replace(tmp.c_str(), SF_FILE) != 0)
         std::cerr << "Saved frequencies: can't write " << SF_FILE << " - changes are lost at a restart" << std::endl;
+    gen.fetch_add(1, std::memory_order_release);
 }
 
 // Make n the state if it fits (MAX_TOTAL) and save it; under mu
@@ -391,6 +403,8 @@ void load() {
         if (!q.loc.empty() && !find(st.locs, q.loc)) q.loc.clear();
         st.freqs.push_back(std::move(q));
     }
+    if (const geo::Json* u = j.get("scan_uncat"); u && u->type == geo::Json::BOOL) st.scan_uncat = u->b;
+    gen.fetch_add(1, std::memory_order_release);
     std::cout << "Saved frequencies: " << st.freqs.size() << " frequencies, " << st.locs.size() << " locations, "
               << st.cats.size() << " categories loaded" << std::endl;
     if (bad) std::cerr << "Saved frequencies: " << bad << " unreadable entr" << (bad == 1 ? "y" : "ies") << " in "
@@ -417,6 +431,11 @@ bool set_freq(const std::string& json, std::string* id, std::string* err) {
     }
     if (!q.cat.empty() && !find(n.cats, q.cat)) { *err = "that category no longer exists"; return false; }
     if (!q.loc.empty() && !find(n.locs, q.loc)) { *err = "that location no longer exists"; return false; }
+    if (const Freq* o = find(n.freqs, q.id); o && !j.get("scan")) {
+        // the editor doesn't send it: the scan choice stays - but "left out
+        // of its category" means nothing in another one
+        q.scan = (o->scan == -1 && o->cat != q.cat) ? 0 : o->scan;
+    }
     const bool added = !find(n.freqs, q.id);
     if (added && n.freqs.size() >= MAX_FREQS) { *err = "too many frequencies (max " + std::to_string(MAX_FREQS) + ")"; return false; }
     const std::string name = q.name;
@@ -450,6 +469,7 @@ bool set_category(const std::string& json, std::string* id, std::string* err) {
     if (!cat_from_json(j, &c, err)) return false;
     std::lock_guard<std::mutex> lk(mu);
     State n = st;
+    if (const Category* o = find(n.cats, c.id); o && !j.get("scan")) c.scan = o->scan;   // (⚙ Categories doesn't send it)
     return put_cat(n, std::move(c), err) && commit(std::move(n), err);
 }
 
@@ -484,19 +504,72 @@ bool remove_category(const std::string& id) {
     for (size_t i = 0; i < st.cats.size(); i++) {
         if (st.cats[i].id != id) continue;
         st.cats.erase(st.cats.begin() + static_cast<long>(i));
-        for (auto& q : st.freqs)
-            if (q.cat == id) q.cat.clear();
+        for (auto& q : st.freqs) {
+            if (q.cat != id) continue;
+            q.cat.clear();
+            if (q.scan == -1) q.scan = 0;   // left out of a category that is gone
+        }
         save(st);
         return true;
     }
     return false;
 }
 
+bool set_scan(const std::string& json, std::string* err) {
+    geo::Json j;
+    if (json.size() > 256 * 1024 || !geo::json_parse(json, &j) || j.type != geo::Json::OBJ) {
+        *err = "malformed scan list";
+        return false;
+    }
+    const geo::Json* fq = j.get("freqs");
+    const geo::Json* ct = j.get("cats");
+    const geo::Json* un = j.get("uncat");
+    if ((fq && fq->type != geo::Json::OBJ) || (ct && ct->type != geo::Json::OBJ) || (un && un->type != geo::Json::BOOL)) {
+        *err = "malformed scan list";
+        return false;
+    }
+    std::lock_guard<std::mutex> lk(mu);
+    State n = st;
+    // ids that are gone (deleted from another page meanwhile) are skipped
+    if (fq) {
+        for (const auto& [fid, v] : fq->o) {
+            if (v.type != geo::Json::NUM || !(v.n == -1 || v.n == 0 || v.n == 1)) { *err = "bad scan flag"; return false; }
+            if (Freq* q = find(n.freqs, fid)) q->scan = static_cast<int>(v.n);
+        }
+    }
+    if (ct) {
+        for (const auto& [cid, v] : ct->o) {
+            if (v.type != geo::Json::BOOL) { *err = "bad scan flag"; return false; }
+            if (Category* c = find(n.cats, cid)) c->scan = v.b;
+        }
+    }
+    if (un) n.scan_uncat = un->b;
+    return commit(std::move(n), err);
+}
+
+std::vector<ScanEntry> scan_entries() {
+    std::vector<ScanEntry> out;
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        for (const auto& q : st.freqs) {
+            const Category* c = q.cat.empty() ? nullptr : find(st.cats, q.cat);
+            const bool group = c ? c->scan : st.scan_uncat;
+            if (!(q.scan == 1 || (q.scan == 0 && group))) continue;
+            out.push_back({q.id, q.name, q.hz, q.mode, q.bw, q.has_gain, q.gain, q.dec});
+        }
+    }
+    std::stable_sort(out.begin(), out.end(), [](const ScanEntry& a, const ScanEntry& b) { return a.hz < b.hz; });
+    return out;
+}
+
+uint64_t generation() { return gen.load(std::memory_order_acquire); }
+
 std::string message_json(const std::string& error, const std::string& id) {
     std::string s = "{\"savedfreq\":{";
     {
         std::lock_guard<std::mutex> lk(mu);
         s += lists_json(st, "cats", "locs", "freqs", ",");
+        s += std::string(",\"scan_uncat\":") + (st.scan_uncat ? "true" : "false");
     }
     if (!error.empty()) s += ",\"error\":\"" + json_escape(error) + "\",\"id\":\"" + json_escape(id) + "\"";
     s += "}}";

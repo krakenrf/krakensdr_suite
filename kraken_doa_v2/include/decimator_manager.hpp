@@ -28,7 +28,7 @@ public:
         // other threads - atomic, like the squelch fields below (they were
         // plain fields: a data race, i.e. undefined behaviour).
         std::atomic<float> frequency_offset_hz;
-        std::atomic<int> bandwidth_index;
+        std::atomic<int> bandwidth_hz;     // any whole Hz (config.hpp VFO_BW_*); = decimator->getBandwidthHz()
         std::atomic<bool> enabled;
         std::atomic<bool> being_deleted{false};
         std::atomic<int> tuner_channel;  // Tuner this VFO decimates in wideband / independent mode
@@ -80,7 +80,7 @@ public:
             , music_processor(std::make_unique<MUSICProcessor>())
             , beamformer(std::make_unique<Beamformer>())
             , frequency_offset_hz(0.0f)
-            , bandwidth_index(DEFAULT_BANDWIDTH_INDEX)
+            , bandwidth_hz(bandwidth_option_hz(DEFAULT_BANDWIDTH_INDEX))
             , enabled(true)
             , tuner_channel(0)
             , demod_mode(DemodulatorMode::WBFM) {
@@ -165,6 +165,9 @@ public:
 
     // Update decimator parameters
     bool setFrequencyOffset(int id, float offset_hz);
+    // Bandwidth in Hz (clamped to the VFO limits, applied = what it is now),
+    // or a BANDWIDTH_OPTIONS index (older pages / files / scripts)
+    bool setBandwidthHz(int id, int hz, int* applied = nullptr);
     bool setBandwidthIndex(int id, int index);
     bool setEnabled(int id, bool enabled);
     bool setDemodMode(int id, DemodulatorMode mode);
@@ -213,8 +216,10 @@ public:
     struct DecimatorInfo {
         int id;
         float frequency_offset_hz;
-        int bandwidth_index;
-        float bandwidth_mhz;
+        int bandwidth_hz;              // the VFO's bandwidth
+        int bandwidth_index;           // the nearest BANDWIDTH_OPTIONS size (older pages / files)
+        float bandwidth_mhz;           // bandwidth_hz / 1e6
+        int decimation;                // what it runs at: SAMPLE_RATE / decimation >= the bandwidth
         bool enabled;
         bool audio_out;                // 🔊 heard in the live audio
         DemodulatorMode demod_mode;

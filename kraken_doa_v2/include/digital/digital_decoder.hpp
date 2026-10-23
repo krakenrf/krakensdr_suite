@@ -157,10 +157,10 @@ public:
     // The VFO's voice comes from this decoder (Voice to Text, the analog
     // feed): its plugin decodes voice (kp::Info::voice) - in Auto detect the
     // detected one, or, still searching, any it runs. A decoder of no voice
-    // (ctcss, pocsag, adsb...) leaves the VFO's analog demod to Voice to Text
+    // (analog_id, pocsag, adsb...) leaves the VFO's analog demod to Voice to Text
     bool takes_voice() const { return takes_voice_.load(std::memory_order_relaxed); }
     // the lead plugin's talker now (the open one that started first): Voice
-    // to Text names an ANALOG transmission after it (ctcss: "CTCSS 88.5").
+    // to Text names an ANALOG transmission after it (analog_id: "CTCSS 88.5").
     // false = none
     bool lead_talker(std::string* id, std::string* label) const;
     void set_lead_talker(const std::string& id, const std::string& label);   // Engine

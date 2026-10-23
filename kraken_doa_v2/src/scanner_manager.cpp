@@ -770,35 +770,19 @@ void ScannerManager::lockOnSignal(size_t freq_index, float signal_db) {
     }
     cout << "Offset tuning bar centered (all decimator offsets set to 0)" << endl;
 
-    // Find and apply the bandwidth setting from the frequency list
+    // Apply the bandwidth setting from the frequency list (any width)
     // MUST DO THIS BEFORE sending decimator_info to browser!
-    // Convert bandwidth from kHz to MHz for comparison
-    float target_bandwidth_mhz = freq.bandwidth_khz / 1000.0f;
-
-    // Find closest bandwidth option
-    int best_bandwidth_index = DEFAULT_BANDWIDTH_INDEX;
-    float min_bw_diff = 1e9f;
-    for (int i = 0; i < NUM_BANDWIDTH_OPTIONS; i++) {
-        float bw_diff = abs(BANDWIDTH_OPTIONS[i].bandwidth_mhz - target_bandwidth_mhz);
-        if (bw_diff < min_bw_diff) {
-            min_bw_diff = bw_diff;
-            best_bandwidth_index = i;
-        }
-    }
-
-    // Apply bandwidth setting to all decimators
+    const int bw_hz = clamp_bandwidth_hz(freq.bandwidth_khz * 1000.0);
     for (const auto& dec : all_decimators) {
         if (dec && !dec->being_deleted.load(std::memory_order_relaxed)) {
-            decimator_manager.setBandwidthIndex(dec->id, best_bandwidth_index);
+            decimator_manager.setBandwidthHz(dec->id, bw_hz);
         }
     }
-    const auto& selected_bw = BANDWIDTH_OPTIONS[best_bandwidth_index];
-    cout << "Bandwidth set to " << selected_bw.display_name
-         << " (target: " << freq.bandwidth_khz << " kHz)" << endl;
+    cout << "Bandwidth set to " << bw_hz << " Hz (target: " << freq.bandwidth_khz << " kHz)" << endl;
 
     // NOW send updated decimator info to browser with correct offset AND bandwidth
     WebSocketServer::broadcast_json_message(MessageBuilders::build_decimator_info_message());
-    cout << "Decimator info broadcast to browser (offset=0, bandwidth=" << best_bandwidth_index << ")" << endl;
+    cout << "Decimator info broadcast to browser (offset=0, bandwidth=" << bw_hz << " Hz)" << endl;
 
     // Give server time to switch mode, tune, and send first coherent FFT packet
     // This ensures the display will show the centered spectrum when we declare lock complete
@@ -858,13 +842,7 @@ void ScannerManager::resumeScanning() {
     // Without this reset, the scanner would immediately re-lock on the decaying ghost
     uint32_t old_gen = fft_reset_generation.fetch_add(1, std::memory_order_release);
     cout << "FFT reset triggered (gen " << old_gen << " → " << (old_gen + 1) << ") to clear ghost signals" << endl;
-
-    // Also clear wideband FFT buffers directly
-    {
-        lock_guard<mutex> wb_lock(wideband_fft_mutex);
-        fill(wideband_fft_magnitudes.begin(), wideband_fft_magnitudes.end(), -100.0f);
-        fill(wideband_fft_averaged.begin(), wideband_fft_averaged.end(), -100.0f);
-    }
+    // (the wideband scan's stitched spectrum is built from the channels' averages)
 
     // CRITICAL: We're in coherent mode (wideband=false on server).
     // Need to re-enable wideband mode which will reset phase calibration.

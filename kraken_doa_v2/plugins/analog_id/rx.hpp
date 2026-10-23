@@ -3,7 +3,9 @@
 // Sub-audible signalling receiver: FM discriminator -> the 0-300 Hz band at
 // 1200 Hz -> a CTCSS tone detector / tracker and a DCS (134.4 bit/s Golay)
 // receiver. Reports transmissions (the tone / code, where it began, how far
-// it is confirmed, how it ended) as events for decoder.cpp.
+// it is confirmed, how it ended) as events for decoder.cpp. Also hands out
+// the voice-band audio (12 kHz, for sig.cpp's signalling decoders) and the
+// carrier's power history (transmissions an ID burst found).
 
 #include <complex>
 #include <cstdint>
@@ -57,6 +59,21 @@ public:
     bool dump = false;
     struct Bit { uint8_t b; float soft; double jc; };
 
+    // the voice band at 12 kHz (discriminator in Hz, low-passed 3.6 kHz):
+    // filled by process(), taken by the caller; audio_first() = the index of
+    // its first sample since reset
+    std::vector<float> audio;
+    int64_t audio_first() const { return au_n_ - static_cast<int64_t>(audio.size()); }
+    double audio_time(double k) const;     // audio sample k -> host time
+    // the carrier's power in 10 ms bins (82 s kept)
+    double carrier_time(int64_t c) const;  // host time of bin c's centre
+    int64_t carrier_bins() const { return cp_n_; }
+    float carrier_bin(int64_t c) const;    // -1 = not (any more) there
+    float carrier_mean(double t0, double t1) const;   // over the bins in [t0, t1], -1 = none
+    // where the carrier came up before t (back to t_lo): the level of the
+    // 100 ms before t against the bins going back; NAN = no rise found
+    double carrier_rise(double t, double t_lo) const;
+
 private:
     // ---- front end ----
     double t0_ = 0;
@@ -84,6 +101,16 @@ private:
     double cacc_ = 0;
     int cacc_n_ = 0;
     int64_t cblk_n_ = 0;
+    static constexpr int CP_RING = 8192;   // 10 ms bins
+    std::vector<float> cp_;
+    double cp_acc_ = 0;
+    int cp_acc_n_ = 0;
+    int64_t cp_n_ = 0;
+    // the 12 kHz audio path
+    std::vector<float> h_au_, au_ring_;
+    size_t au_pos_ = 0;
+    int au_phase_ = 0;
+    int64_t au_n_ = 0;
     float carrier_avg(int64_t jc, int half) const;   // mean carrier power over jc +- half
     int64_t carrier_onset(int64_t jc, int64_t lo) const;
     std::vector<float> ns_seen_;           // non-standard tones heard (kept across resets: stable ids)

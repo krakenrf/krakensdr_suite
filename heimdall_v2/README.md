@@ -259,6 +259,7 @@ echo '{"command":"set_frequency","frequency":433000000}' | nc localhost 8092
 | `set_gain` | `gain` (dB, `-1`=auto) | Set gain on all channels |
 | `set_rtl_tcp_channel` | `channel` | Choose RTL-TCP source channel |
 | `set_stability_delay` | `delay_ms` | Override retune cooldown |
+| `hold_calibration` | `hold_ms` (0–30000) | Hold the calibration: retunes / gain changes enter the cooldown but don't recalibrate for `hold_ms` from now (a lease to renew); `0` releases and starts a pending calibration at once. Used by the DoA client's saved-frequency scan while it searches |
 | `set_operating_mode` | `mode` (`coherent`/`wideband`/`independent`) | Switch the operating mode (wideband spreads the tuners around the current frequency; coherent retunes all and recalibrates) |
 | `set_independent_tuner` | `channel`, `frequency?` (Hz), `gain?` (dB, `-1`=auto) | Independent mode: tune one tuner / set its gain |
 | `set_wideband_mode` | `enable`, `base_frequency?` | Enter/leave wideband scan mode (older form of `set_operating_mode`) |

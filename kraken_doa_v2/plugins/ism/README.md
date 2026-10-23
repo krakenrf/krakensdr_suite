@@ -201,8 +201,9 @@ same time got each other's bearings.
 CPU (Pi 5): the detector ~4 % of a core; the plugin ~7 % with a few devices
 and 14-17 % in a busy synthetic scene (7 devices, bursts ~40 % of the time;
 the 19 MB/s of samples it receives included). Memory: 32 MB (the 1.75 s
-input ring). Built with `-O3` (`CXXFLAGS` in this folder): the detector's
-per-bin loops vectorise; the output is the same as -O2's. (The plugin first
+input ring). Built with `-O3` (every plugin's default since 2026-10-22; it
+was a `CXXFLAGS` file in this folder): the detector's per-bin loops
+vectorise; the output is the same as -O2's. (The plugin first
 ran at 240 kHz - +-120 kHz around a VFO; the whole band does everything that
 did at about the same CPU, and the 240 kHz version was removed.)
 

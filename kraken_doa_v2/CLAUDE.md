@@ -88,11 +88,19 @@ directly.
 **Thread Count:**
 - Base workers: 8 threads
 - Per-channel FFT: 8 threads (one per channel)
-- VFO pipelines: with 2+ VFOs, the first runs on the receiver thread and the
-  rest on a persistent 3-thread pool (`std::async` used to create an OS thread
-  per VFO per packet)
-- ThreadPools: 10 threads (2 decimators × 5 channels each)
-- **Total: ~23-28 threads on 4 cores** (intentional oversubscription for throughput)
+- VFO pipelines (data_receiver.cpp): first every VFO's decimation in ONE pass
+  (`SharedDecimator::decimateVfos`, below), then per VFO its MUSIC / squelch /
+  talker DoA - with 2+ VFOs the first on the receiver thread and the rest on
+  a persistent 3-thread pool (`std::async` used to create an OS thread per
+  VFO per packet); FM only and independent / wideband mode (one channel per
+  VFO, no MUSIC) all inline
+- Decimation: ONE pool shared by every VFO (cores + 1 threads: 5 on the Pi 5;
+  `decimation_pool()` in shared_decimator.cpp - each VFO had its own pool of
+  MAX_CHANNELS 8 threads until 2026-10-22): a task per input array (an
+  antenna, every VFO on it; a tuner in independent mode), the first on the
+  calling thread
+- **Total (Pi 5, measured 2026-10-22): ~29 threads with one VFO, ~32 with
+  three** (51 with three before the shared pool)
 
 ### Key Components
 
@@ -116,7 +124,8 @@ directly.
 - `raw_data_buffer.cpp`: Bounded queue with automatic old data cleanup
 - `ring_buffer.cpp`: Lock-free circular buffers for FFT/audio
 - `system_stats.cpp`: CPU/memory usage tracking
-- `thread_pool.hpp`: Generic thread pool (used by SharedDecimator)
+- `thread_pool.hpp`: Generic thread pool (SharedDecimator's shared
+  decimation pool, the pipeline's VFO pool)
 - `include/utils/json_escape.hpp`: `json_escape()` for every hand-built JSON
   emitter, and `json_find()` - the one flat-object reader (settings file,
   web-mapper cloud messages) - which decodes every JSON escape including
@@ -179,10 +188,319 @@ Edit `include/config.hpp`:
   positions. ULA and user-entered CUSTOM positions are taken literally and
   are NOT mirrored
 
-**Bandwidth Options:**
-- `BANDWIDTH_OPTIONS[]`: Integer decimation factors (1 to 2400)
-- Range: 2.4 MHz down to 1 kHz (no resampling)
-- `DEFAULT_BANDWIDTH_INDEX`: Initial selection (default 7 = 240 kHz)
+**Arbitrary VFO bandwidth (the user's request 2026-10-21: "choose an arbitrary
+bandwidth, while still keeping the decimation efficient"; config.hpp,
+`src/signal_processing/shared_decimator.cpp`):**
+- A VFO's bandwidth is ANY whole Hz, `VFO_BW_MIN_HZ` 1 kHz .. `VFO_BW_MAX_HZ`
+  2.4 MHz: `DecimatorInstance::bandwidth_hz` (was `bandwidth_index`, an index
+  into the 30 `BANDWIDTH_OPTIONS`), `DecimatorManager::setBandwidthHz` (clamps;
+  `setBandwidthIndex` = an option's Hz). `clamp_bandwidth_hz` /
+  `decimation_for_bandwidth` / `efficient_bandwidth_at_least` /
+  `nearest_bandwidth_index` in config.hpp
+- Decimation stays INTEGER (no resampler - every consumer works on
+  2.4 MHz / D): D = the largest divisor of 2.4 MHz (2^8 3 5^5: 59 of them up
+  to 2400 - `efficient_decimations()`) whose rate holds the width.
+  `SharedDecimator::planStages(bw)` (static: the decimator,
+  tools/decim_bench.cpp share it) splits D into stages of 2..8: an
+  intermediate stage stops at its output rate - 0.4 bw (only what aliases
+  onto the wanted +-0.4 bw must go), the LAST stage stops at 0.6 bw (pass
+  0.4 bw, -6 dB at the bar's edge 0.5 bw) - a width narrower than its rate
+  is cut AT THE WIDTH, so the VFO passes its bandwidth and no more; 1.2 -
+  2.4 MHz = one stage of factor 1 (a full-rate filter). Kaiser 60 dB taps
+  (`liquid_firdes_kaiser`; tap count 52 / (14.36 x transition)). Gain =
+  each stage's 1 / (2 cutoff) = 2.4 MHz / bw for every width (= D for the
+  efficient sizes, `bandwidth_is_efficient` - every old option is one: the
+  int16 conversions downstream see the same levels)
+- THE PLAN (2026-10-22, the user's pick of three measured proposals:
+  "re-split D = 2-8 stages, fold the mixer into stage 1, halfband x2
+  stages"): a cost model of the stage kernels (ns per output, fitted on the
+  Pi 5 - job scratch explore/kern2.cpp + plan.py: regular 0.133 x window +
+  1.13 + 0.14 x factor, folded 0.239 x window + 3.03 + 0.14 x factor,
+  halfband = regular on its x phase at factor 1 + 0.3; per input sample the
+  mixer 3.39, the mixer into a halfband's two phases 2.82, the copy a folded
+  stage takes 0.52 - `R_TAP` ... in shared_decimator.cpp) picks the cheapest
+  ORDERED split (memoised over the factor that remains: its input rate
+  follows from it; ties = the larger factor first), per factor-2 stage
+  regular or halfband, and for the first stage where the mixer goes.
+  Measured against EVERY candidate plan of 28 widths (job scratch
+  explore/allplans.cpp: 2-318 plans each, the real FirStage, VFO off
+  centre): the model's pick is the fastest in 22, within 2 % in the other
+  six (mean 0.1 %). It was largest factor first: D = 2-8 then ran ONE long
+  sharp stage at 2.4 MHz (300 kHz: 145 taps at 8:1 - now 4:1 with 25 taps +
+  a halfband 2:1 of 39). `Plan::describe()` = "8F:31 5:23 2h:39" (factor, F
+  = the mixer folded in, h = halfband : taps); `Plan::cost_ns` = the model's
+  estimate (within ~6 % of the measured on average)
+- The stages: `SharedDecimator::FirStage`, a BLOCK FIR (2026-10-21; it
+  replaced liquid's `firdecim_crcf`, itself the `cccf` with zero imaginary
+  parts the decimator had before arbitrary widths - liquid copies EVERY
+  input sample into its window with a call of its own, ~8.9 ns of the
+  9.5-13 ns a sample cost, a multiply-accumulate ~0.14 ns): output j = the
+  taps' dot product with the inputs ending at input j x M (liquid firdecim's
+  alignment), straight from a buffer of history + the samples not used up
+  yet (`SampleBuf`: grows without zeroing, drops from the front). The
+  kernel (2026-10-22): the taps duplicated per I / Q float, padded to a
+  multiple of 4 with leading zeros, FOUR outputs per pass sharing the tap
+  loads, two outputs' sums combined by one shuffle into one store (GCC
+  vector extensions - `__builtin_shufflevector` under clang - -> NEON / SSE;
+  4 outputs per pass 10-20 % faster than 2). The mixer in front writes into
+  the first stage's buffer, each stage's outputs go into the next one's; a
+  block that isn't a multiple of a stage's factor leaves its tail in that
+  stage. A block goes through the whole cascade in CHUNKS of `DECIM_CHUNK`
+  1024 input samples (2026-10-22, decimateChannel), so every stage's buffer
+  stays a chunk + its history long, in the core's L1 - see the
+  measurements below for why. A regular first stage whose input isn't
+  mixed in front (folded, or the VFO on the tuner centre - not a halfband,
+  which splits its input) filters STRAIGHT FROM the input block
+  (`FirStage::begin_input` / `pending_upto` / `produce_upto` /
+  `end_input`, the user's go 2026-10-22): its history x gets only the
+  block's first L - 1 samples, for the windows that reach back into it,
+  every other window is computed from the block itself (across the chunks
+  in place), and at the end x keeps what the next block's windows reach
+  back to (<= L - 1 + M samples). Kinds:
+  - regular: real taps
+  - FOLDED (`Plan::fold`, the first stage only): the mixer in the taps -
+    h[k] e^{+jwk} on the RAW input (copied in), each output turned by the
+    mixer's phase at its newest sample (times e^{-jwM} per output,
+    renormalised every 1024): the oscillator runs at the output rate.
+    `FirStage::fold(w)` on every offset change (phase 1 at the next sample,
+    as the mixer restarts; within 1 Hz of the centre: real taps); its
+    history is raw, so it is mixed with the new offset at once (the mixer in
+    front leaves the held samples mixed with the old). Pays where the first
+    stage's taps per input are few: every width up to 240 kHz (factor 5-8
+    first) - ~2 of the ~3.4 ns the mixer cost
+  - HALFBAND (factor 2 cut at a quarter of its input rate: an intermediate
+    factor 2, or the last when the width fills the rate): 4m+3 taps, those
+    at even offsets from the centre set to exactly 0 (the sinc's zeros).
+    The input kept as its two phases (`x` = the outputs' newest samples,
+    `o` = the others), written so by its producer (`take()` -> `Dst` {a,
+    b}: the mixer in front, the copy, or the previous stage's outputs -
+    `put4` shuffles them apart): the x taps a plain FIR at the output rate +
+    the centre tap times o[j] - ~40 % fewer multiply-adds (1.2 MHz with the
+    mixer: 6.98 -> 5.86 ns)
+- Checked (`tools/decim_bench.cpp`, Pi 5): every plan - the 59 efficient
+  sizes + 38 arbitrary widths - fed blocks of odd lengths (1, 2, 3, 7, 333,
+  12345 ...) vs a plain double-precision reference of the same plan (the
+  mixer at the input rate, every stage a full convolution): max |diff| <=
+  5.5e-7 of rms on the centre, <= 6.9e-5 off it (the float mixer's phase
+  over 45k samples); response flat +-0.03 dB to 0.4 bw, -6.0..-6.2 dB at
+  0.5 bw, -52..-72 dB from 0.6 bw, aliases <= -53 dB, the same with the VFO
+  300 kHz off the centre (the folded path)
+- `decimateMultiChannel(.., bandwidth_hz, offset)` (was the factor): the
+  pipeline reads the width ONCE per block; the channel state rebuilds when
+  the width changes (`ChannelDecimState::bandwidth_hz`), not only the factor.
+  `MultiChannelDecimated::bandwidth_hz` = the block's width (<= its rate)
+- The beamformed FFT (`process_beamformed_fft(.., bandwidth_hz)`) keeps only
+  the bins within the width (a multiple of 8, `bandwidth_hz` = their span;
+  the overlay message pools by powers of two that divide the count): with
+  the filter's stopband in the rest - 48 % of the bins of a 1.25 MHz VFO at
+  2.4 MS/s - its 10th-percentile noise floor fell 60 dB and the beamformed
+  FFT squelch opened on noise
+- Protocol: `SET_DECIMATOR_BW_HZ:id:hz` (clamped, `set_applied`; a bad value
+  throws = nothing changes), `SET_DECIMATOR_BW:id:index` (older pages /
+  scripts); the echo `{"decimator_bandwidth":{id, bandwidth_index (the
+  nearest option), bandwidth_hz, decimation}}`; `decimator_info[]` carries
+  `bandwidth_hz`, `bandwidth_index` (nearest), `bandwidth_mhz` (= hz / 1e6,
+  was the option's), `decimation`; DEMOD_MODE's reply adds `bandwidth_hz`.
+  The multi-DoA binary message keeps its u32 index (nearest; unused by the
+  page). DECIMATORS snapshot: field 2 = the nearest index (an older
+  kraken_doa reads it), a new LAST field (12) = the width in Hz; a file
+  without it loads by the index. Exact Hz now also from: the web mapper's
+  `vfo_bw_N` (both ways - it was snapped to an option), the discrete
+  scanner's per-frequency kHz, the debug playback's `vfo_bw_khz` (every
+  catalogue value is an old option: unchanged), the AI assistant's
+  `set_vfo` / `add_vfo` `bandwidth_hz`; a decoder's minimum
+  (`min_vfo_rate`) snaps UP to an efficient size
+  (`efficient_bandwidth_at_least` / the page's `bwAtLeastEfficient`: ADS-B's
+  2 MHz = the 2.4 MHz pass-through, not a 2 MHz full-rate filter)
+- Page (kraken_doa.html, the block after `bwo`): `decBwHz(d)` / `decBwMhz(d)`
+  = the ONE way to read a VFO's width (bandwidth_hz, else an older
+  receiver's index); `setDecimatorBandwidthHz` (sends at most every 80 ms +
+  the last value - a bar edge drag; `bwHeld` 1.5 s: the receiver's echoes of
+  earlier steps don't pull the bar back, in `updateDecimatorList` and the
+  `decimator_bandwidth` handler) / `setDecimatorBandwidthHzFromUI`; the old
+  index functions wrap them; an older receiver (no `bandwidth_hz` in its
+  decimator_info, `bwServerHz`) gets the nearest index. Bar edge drags (main
+  display `pointerMove`, panes `paneMove`) give `bwUserHz` = 3 significant
+  figures (a pixel is ~0.3 % of a bar) and keep the offset inside the band as
+  the bar grows; the tooltip adds "(runs at 300 kS/s)" for a custom width.
+  The card's BW row: ONE number box in kHz (the user's request 2026-10-21 -
+  first it was a list of the 59 `BW_EFFICIENT` sizes + "(custom)" and a ✎
+  text field): `<input type=number id=dec-bw-<id> min 1 max 2400 step any>`;
+  its change event (Enter = blur, leaving it, the spinner / arrow keys - 1
+  kHz steps) -> `bwBoxApply` (clamped; empty / not a number = back to the
+  VFO's width), Escape = the value it had on focus; `bwBoxSync` keeps it on
+  the VFO's width (not while focused, unless forced) and its tooltip
+  (`bwTitle`: what rate the width runs at, x its width); locked VFOs (fixed
+  / lock_vfo decoders) disable it. Saved frequencies: the editor's list =
+  the efficient sizes + an entry's custom width (`sfBwSelectSet`), tuning
+  applies the saved width exactly
+- No snapping option: an "Efficient bandwidths only" tick (snap every width
+  to `BW_EFFICIENT`) was built because the request asked for one "if
+  significant efficiency is lost", then REMOVED the same day (the user's
+  call): with the real-tap stages every width up to 1.2 MHz costs no more
+  than the nearest old size did (below); only 1.2 - 2.4 MHz costs more (a
+  full-rate filter: since the plans / kernel of 2026-10-22 +~9 % of a core
+  with 5 antennas over the 2.4 MHz pass-through, +~30 over 1.2 MHz; it was
+  +~15-20 with the first block FIR) - the BW box's tooltip says what a
+  custom width runs at
+- Measured on the Pi 5 (2026-10-21; `tools/decim_bench.cpp`, one core, ns
+  per input sample per antenna, the cascade without the mixer): old sizes
+  liquid cccf (the original) 10.7-25.5, liquid crcf 9.4-17.8, block FIR
+  2.6-7.9 (means 13.17 / 10.74 / 3.97: the block FIR 3.3x the original,
+  2.7x the crcf); the mixer ~2.9 more. Arbitrary widths (block FIR): 1 kHz -
+  240 kHz 2.6-4.8, 250 kHz - 1.2 MHz 6.8-9.9 (D = 2-8: one long sharp
+  stage - multiply-bound now; a re-split would help, see below), 1.2 - 2.4
+  MHz 10.3-15.2 (the full-rate filter; liquid crcf 24-29) vs 0.33 (2.4 MHz
+  pass-through) / 8.0 (1.2 MHz); within 0.86-1.2x the nearest old size up
+  to 240 kHz. The rate is <= 1.2x the width from 300 kHz down, <= 1.35x to
+  1.2 MHz, 1.2-1.9x above. Response: flat +-0.04 dB to 0.4 bw, -6.0 dB at
+  0.5 bw, -52..-64 dB from 0.6 bw, aliases <= -53 dB, gain 0.00 dB re 2.4
+  MHz / bw. Whole kraken_doa (test build, fake heimdall, one VFO, DoA on, 5
+  antennas, % of a core; the original / liquid crcf / block FIR builds
+  alternately, two runs each, the old index command): 240 kHz 50.1 / 47.0 /
+  38.9, 300 kHz 49.0 / 45.2 / 41.6, 12 kHz 36.4 / 35.1 / 30.1, 16 kHz 38.5 /
+  36.6 / 30.3, 1.2 MHz 87.4 / 77.0 / 65.6, 2.4 MHz 81.3 / 81.7 / 76.5 (no
+  filter: the mixer's own copy is gone) - the block FIR build 6-25 % below
+  the original at every old size. Custom widths (block FIR build): 250 kHz
+  42.6 (300 kHz 41.5), 13 / 15 kHz 30.3 / 30.2 (12.5 kHz 30.2), 1.25 / 1.5
+  / 2 MHz 100.4 / 96.8 / 95.3 (liquid crcf build 118.3 / 117.2 / 112.5;
+  1.2 MHz 69.7, 2.4 MHz 80.9)
+- Measured 2026-10-22 (Pi 5, the plans + folded / halfband stages + the
+  4-output kernel vs the block FIR build above): the decimator
+  (decimateChannel, one antenna, ns per input sample; job scratch
+  explore/cmpbench.cpp, the same file built against both, two runs each)
+  efficient sizes mean 4.35 -> 2.02 on the tuner centre, 6.67 -> 3.31 off
+  it (the mixer included) - 2.0x; <= 240 kHz 2.7-4.9 -> 1.3-2.2 (off
+  centre 5.0-7.3 -> 2.1-3.5), 250 kHz - 1.2 MHz 6.8-9.4 -> 2.3-4.7 (9.1-11.8
+  -> 3.9-7.2), the full-rate widths 12.2-16.0 -> 5.4-7.3 (14.6-18.3 ->
+  7.9-9.8); 2.4 MHz (the mixer alone) 2.97 -> 3.24 (the same loop compiled
+  differently; `__restrict` didn't help and slowed the split mixer, not
+  kept). Whole kraken_doa (as above, the block FIR / this build
+  alternately, two runs each, VFO +100 kHz): 240 kHz 39.0 -> 35.2, 300 kHz
+  41.5 -> 38.2, 12 kHz 30.4 -> 26.9, 16 kHz 30.6 -> 27.4, 1.2 MHz 67.1 ->
+  60.4, 2.4 MHz 77.0 -> 76.6 % of a core; custom widths (one sweep each)
+  250 kHz 43.2 -> 37.7, 13 / 15 kHz 29.5 / 30.0 -> 27.7 / 27.6, 1.25 / 1.5
+  / 2 MHz 103.0 / 100.5 / 98.3 -> 90.6 / 90.2 / 90.2. The decimator is now
+  a small part of a VFO's cost (MUSIC, the FFTs, the IQ conversion are the
+  rest). clang 19 builds the kernels too (`__builtin_shufflevector`): the
+  same checks, the same speed. Not done: a folded halfband first stage
+  (complex taps on the x phase: the model gives ~0.2 ns at best - the
+  mixer into the two phases is already cheaper than the interleaved one)
+- Profiled in the live pipeline (2026-10-22, the user's question "any other
+  optimizations for the VFOs?"; perf - `linux-perf`, installed on the Pi
+  with the user's go - on the test build + fake heimdall, job scratch
+  e2e/t_prof.py: phases nothing decimated / one VFO without DoA / with DoA
+  / 2 and 3 VFOs / 240 kHz / beamforming, total + per-thread CPU): a 12.5
+  kHz VFO with DoA and 5 antennas cost ~19 % of a core EACH (1 / 2 / 3
+  VFOs 28 / 47 / 65 %), its decimation 2.6 % of that in decim_bench - in
+  the pipeline the first stage was MEMORY-bound: a memcpy (libc's 64-byte
+  loop; the raw block copied into the folded first stage) was 30-40 % of
+  the samples - 8 % of a core for one VFO, 19 % for two, ~1.5 GB/s (each
+  VFO's 128 KB per antenna per block, written on other cores than the
+  converter's, the VFOs contending) - and `produce` ran at ~5 ns per input
+  sample against 2.2 in decim_bench (reading the 128 KB buffer back
+  cold). Chunking (above) keeps both in L1: measured with 512 / 1024 / 2048
+  / 4096 / 16384 (the old whole block) - 512 and 1024 the same, 2048 +1-2 %
+  of a core, 4096 +2-7, the whole block +8-30. Whole kraken_doa, the
+  previous build (5d3fe16 + 8f4e30c) / this one (chunked cascade + the fast
+  dB, *FFT Processing* below) alternately, two runs each, % of a core:
+  nothing decimated 9.5 -> 7.8 (the fast dB), one VFO without DoA 12.7 ->
+  10.3, one VFO with DoA 28.5 -> 18.5, two 48.7 -> 26.2, three 66.8 ->
+  32.3, 240 kHz 37.1 -> 26.4, DoA + beamforming 28.9 -> 19.1 - an extra
+  narrow VFO ~7 % of a core instead of ~19. decim_bench (hot caches) mean
+  1.69 -> 1.59 ns on centre; every check against the reference unchanged
+  (<= 7.1e-5 of rms, blocks of 1 - 16384 samples across the chunk edges).
+  What was left with two VFOs (perf, share of the samples / of a core):
+  `produce` ~24 % / ~7.6 %, the copy into a folded first stage still ~19 %
+  / ~6 %. Filtering straight from the block (above) removed the copy
+  completely (perf: no memcpy left) but saved less than its share: the
+  filter now pays the cold read of the block the copy paid (`run` 40 % /
+  ~10.8 % of a core with two VFOs) - chunked / direct, two runs each, % of
+  a core: one VFO 19.0 -> 18.1, two 26.5 -> 25.6, three 32.5 -> 30.7, 240
+  kHz 26.6 -> 26.0, DoA + beamforming 19.4 -> 18.7; decim_bench (hot) mean
+  1.59 -> 1.50 ns on centre, 2.82 -> 2.68 off it; every check against the
+  reference unchanged (7.1e-5 of rms; block lengths now also 30, 31, 63 -
+  65, 145, 146, 1023 - 1025: windows reaching back into the history, the
+  chunk edges). Over the day (the same harness, separate runs): one VFO
+  28.5 -> 18.1, three 66.8 -> 30.7 % of a core. What is left is mostly
+  each VFO's read of every antenna's input (5 x 19.2 MB/s): VFOs sharing
+  one pass over a chunk per antenna (every VFO's first stage while it is
+  in L1) would cut that - the restructure below; then the spectrum FFT,
+  the IQ conversion of the 5 antennas, the receiver thread
+- Estimated before deciding (the user's question 2026-10-22; job scratch
+  explore/share_exp.cpp: the production decimator, a converter writing
+  fresh 5-antenna blocks, three shapes on the Pi): VFOs sharing one pass
+  per chunk would save ~0.4-0.8 % of a core per extra VFO and nothing for
+  one VFO - the live L2 / L3 refill counters (perf, `run` per VFO) show
+  the extra VFOs already find the input in L3, the case the synthetic
+  test measures; ~half of that (nearly all at 240 kHz) was from ONE
+  thread pool for every VFO instead of one per VFO. First the shared pool
+  (the user's go) - and live it saved NOTHING measurable:
+  user-space cycles (`perf stat -e cycles:u`, frequency-independent - the
+  Pi's ondemand governor made CPU time swing by up to 7 points between
+  runs of one build; job scratch e2e/t_prof_cyc.py), 4 runs each, % of a
+  core at 2.4 GHz, per-VFO pools / shared 4 / shared 5 threads: one 12.5
+  kHz VFO 14.7 / 15.2 / 14.4, three 23.9 / 23.8 / 23.9, three at 240 kHz
+  50.9 / 52.3 / 52.8 (each 47-55 between runs), one at 240 kHz 22.1 / 22.7
+  / 21.9. Kept for the bounded thread count (51 -> 32 with three VFOs; 8
+  more per VFO before), 5 threads (cores + 1) for the single-VFO figures.
+  The raw buffer dropped no packet in any of the day's runs (175 reports)
+- THE SHARED PASS (2026-10-22, the user's "do the pipeline restructure
+  now"): `SharedDecimator::decimateVfos(VfoBlock*, n)` takes every VFO's
+  block (its input pointers, the width and offset read once, where its
+  `MultiChannelDecimated` goes): a task per distinct input ARRAY - coherent
+  = an antenna with every VFO on it, independent = a tuner with its VFOs,
+  FM only = the one channel - the first on the calling thread, the others
+  on `decimation_pool()`; each runs its VFOs' `ChannelPass`es (decimateChannel
+  split into begin / chunk(at) / finish, the per-channel state as before)
+  chunk by chunk, every VFO on a 1024-sample chunk while it is in L1.
+  `decimateMultiChannel` = decimateVfos with one VFO (the single-VFO work
+  unchanged: the same calls in the same order). data_receiver.cpp: the
+  inputs of every VFO, ONE decimateVfos, then per VFO its stream position,
+  squelch, MUSIC and talker DoA (`run_pipeline(v)`, the old code after the
+  decimation, moved as it was) - VFO 0 inline + the rest on the 3-thread
+  VFO pool; FM only and independent / wideband (one channel each, MUSIC
+  returns at once) all inline. A VFO's MUSIC no longer starts before every
+  VFO is decimated (the pass is short). Checked: decim_bench section 3 -
+  8 VFOs of every kind (folded, mixer in front, halfband first, the whole
+  band, full-rate filter, two on one antenna alone) x 4 antennas in one
+  pass vs each VFO alone, blocks of 1 - 16384: BIT FOR BIT equal (max diff
+  0, Pi + x86); decim_bench's reference checks and single-channel timings
+  unchanged (7.06e-5 of rms; mean 1.503 / 2.675 ns centre / off); t_bw 24 /
+  24, t_bw_ui 24 / 24, job scratch e2e/t_multi.py 8 / 8 (five VFOs in one
+  pass: 60.0 / 200.0 / 60.0 / 200.0 deg exact, the 1.5 MHz one running;
+  back to one VFO; FM only with three VFOs heard; no decimation errors -
+  the previous build the same). Measured (user-space cycles, % of a core
+  at 2.4 GHz, e2e/t_prof_cyc2.py, the previous build / the shared pass
+  alternately - TWO runs each: the A/B's monitor was stopped half way by a
+  low-memory reap on the dev PC, not re-run): one 12.5 kHz VFO 14.3 / 14.6
+  -> 14.8 / 14.7 (within that phase's 14.2-16.0 spread over the day's
+  builds), three 24.3 / 23.9 -> 20.1 / 20.2 (the earlier builds' 12 runs
+  22.9-24.6), five 30.4 / 30.2 -> 26.6 / 26.3, five at 240 kHz 90.9 /
+  86.4 -> 85.8 / 84.7, one at 240 kHz 22.3 / 21.7 -> 21.9 / 22.2 - ~4
+  points less with 3 or 5 narrow VFOs (more than the estimate's 0.8-1.6
+  with three; why was not measured), one VFO the same. Thread count
+  unchanged (29 / 32)
+- Tests (job scratch 415cedbd e2e/, on the Pi: `fake_heimdall_bw.py` = a
+  5-element UCA scene, tone A +100 kHz from 60 deg, tone B +125 kHz from
+  200 deg; `t_bw.py` against a TEST build on 5808x / 5809x): 24 / 24 -
+  command / echo / decimator_info, clamps, a bad value, the old index,
+  bearings 60.0 / 200.0 in 26 / 37 / 41 / 10.5 kHz VFOs with the other tone
+  25 kHz away filtered out, both tones in a 77 kHz VFO, the beamformed
+  overlay 1.5000 / 0.2508 MHz, the beamformed squelch closed on noise in a
+  1.25 MHz VFO and open on the tones, the snapshot's field 12, a restart, an
+  older snapshot by index; `t_bw_ui.py` (headless Chromium, real mouse /
+  keys): 24 / 24 - the BW number box (typed 26 / 12.5 / 1500 + Enter, the
+  tooltip's rate, letters and Escape change nothing, arrow up = +1 kHz, 5000
+  clamped to 2400), a main-display edge drag to an arbitrary width the
+  receiver keeps (the box follows), no snapping tick, a second drag
+  arbitrary too, independent mode's 2.4 MHz bar (both
+  clipped edges grabbable, resize cursor, dragged in and back out, below),
+  no page exceptions. Both again 24 / 24 / 24 / 24 on the plans / folded /
+  halfband build (2026-10-22: the bearings through folded first stages at
+  10 - 41 kHz, 100 kHz off centre, exact). A width change at the same rate
+  clears MUSIC's accumulator (`last_input_bw_hz_`: the rebuilt filters'
+  restart is no signal), as a rate change always did
 
 **KrakenSDR Wideband (downconverter) variant:**
 - Run with `--wideband` (heimdall too) - see root `../CLAUDE.md` for the design
@@ -300,6 +618,34 @@ Edit `include/config.hpp`:
   with the Freq / BW fields by fixed-frequency / `lock_vfo` decoders
   (`digRenderCards`). Test: job scratch t_vfd.py (headless Chrome over CDP,
   fake WebSocket, 33 checks) + t_vfd_zoom.py (sidebar zoom 1.8)
+- VFO tuning STEP (the user's request 2026-10-22, "a global setting up on
+  the top bar"; kraken_doa.html block "VFO tuning step"): the top bar's
+  `Step:` (`#tb-step` / `#vfo-step`, every mode, moved into the sidebar on
+  mobile like CH / Audio) - 1 / 10 / 100 / 500 Hz, 1 (default) / 2.5 / 5 /
+  6.25 / 8.33 (25/3) / 10 / 12.5 / 25 / 50 / 100 kHz, per browser
+  (localStorage `kraken_vfo_step`, `vfoStepHz`). A tuning-bar drag (main
+  spectrum + waterfall: `pointerMove`; panes: `paneMove`) or a click on the
+  spectrum (`centerActiveBarAt`, the pane click) puts the VFO on a multiple
+  of the step of its ABSOLUTE frequency from 0 Hz (`vfoSnapOffset(centre,
+  offset, max)`: centre = `vfoCenterMhz` / the pane's tuner; the nearest
+  grid point inside the band, else the clamped offset to the Hz). A drag
+  follows the pointer from where it was pressed (it used to move only once
+  the change passed 1 kHz, then restart from there: whole pixels just over
+  1 kHz - ~1093 Hz on a 1760 px plot - and offsets on no round frequency);
+  at 1 Hz it moves pixel by pixel. SHIFT while dragging = fine: 1/100 of
+  the movement (`VFO_FINE`), to the Hz, off the grid - re-anchored where
+  the bar is whenever Shift changes (`dragFine`, `paneDrag.fine / fx /
+  fmhz`). `paneMoveVfo(p, d, mhz, snap)`: 'step' / 'fine' / none - typed
+  (`paneTuneVfoTo`) and saved frequencies, tuner moves and a pane press on
+  the VFO where it is stay exact; the card's digits / ✎ too. Test: job
+  scratch e2e/t_step_ui.py (headless Chromium on the Pi against the test
+  build, real mouse events incl. Shift): 19 / 19 - selector + labels +
+  default, 12.5 kHz drag on the grid with every value sent and the
+  receiver's, 1 Hz = 3 px of frequency, Shift 1/100 off the grid, Shift
+  let go mid-drag back on it, a 25 kHz click, 8.33 kHz grid, the card's 1
+  Hz digit, kept over a reload, pane drag / Shift-drag / typed frequency;
+  t_bw_ui.py 24 / 24 again. The top bar's height unchanged at 1366 / 1920
+  / 2560 px windows (e2e/t_topbar_w.py)
 - FFT message type 6 (independent; pages without spectrum views - see
   *Spectrum views* for type 7): `u32 6, u32 nch, f32 avg_alpha, f32
   sample_rate, f32 bin_step`, per tuner `u32 center_hz, f32 gain_db, u32 ds,
@@ -313,13 +659,20 @@ Edit `include/config.hpp`:
   `.pfd` class since the top bar queries `.freq-digit` page-wide - plus a gain
   slider; canvas spectrum `paneDrawSpec`, a
   `WaterfallDisplay` each, overlay `paneDrawOverlay` with VFO bars + AI
-  badges - tuning bars in the main display's style: a grab handle centred in the spectrum AND the waterfall section, edge handles; `paneHit` = handle > active VFO's edges > body, the edges drag the bandwidth (snapped like `drawBox`, tooltip), bars are clipped to the plot area and a clipped side has no edge; an FFT squelch is drawn like `drawBox`'s - dashed yellow line at the level inside the bar, on the spectrum, labelled - and is draggable (all modes: `squelchHitMain` / `paneHit` kind 'squelch' within 5 px of the line, highest priority, ns-resize cursor; `squelchSetFromDrag` moves the card slider, sends DEC_SQUELCH_LEVEL at most every 80 ms + the final level, 0-80 dB); pointer handling `paneDown/Move/Up`: a VFO bar drags the VFO, empty spectrum pans the tuner like the main display - throttled TUNER_FREQ every 50 ms, final value on release, the drawn spectrum follows the data, not the drag - and a click without moving places the selected VFO); the top bar's frequency
+  badges - tuning bars in the main display's style: a grab handle centred in the spectrum AND the waterfall section, edge handles; `paneHit` = handle > active VFO's edges > body, the edges drag the bandwidth (any width like `drawBox`, tooltip), bars are clipped to the plot area and a clipped side keeps its edge `PANE_CLIP_EDGE_PX` 5 px inside the plot border (`bars[].xl / xr`; the drag is relative to where it started, so it resizes alike - until 2026-10-21 a clipped side had none, and a 2.4 MHz VFO, wider than the pane's edge-clipped band, couldn't be resized at all: the user's report); an FFT squelch is drawn like `drawBox`'s - dashed yellow line at the level inside the bar, on the spectrum, labelled - and is draggable (all modes: `squelchHitMain` / `paneHit` kind 'squelch' within 5 px of the line, highest priority, ns-resize cursor; `squelchSetFromDrag` moves the card slider, sends DEC_SQUELCH_LEVEL at most every 80 ms + the final level, 0-80 dB); pointer handling `paneDown/Move/Up`: a VFO bar drags the VFO, empty spectrum pans the tuner like the main display - throttled TUNER_FREQ every 50 ms, final value on release, the drawn spectrum follows the data, not the drag - and a click without moving places the selected VFO); the top bar's frequency
   digits and gain (`.not-indep`) are hidden in independent mode - each pane
   has its own (`selTuner` = the highlighted pane; `sendFreqChange` / `sgn`
   still route to TUNER_FREQ / TUNER_GAIN for it), `vfoCenterMhz(dec)` for VFO absolute
   frequencies, per-pane waterfall auto-range (`computeAutoRange`)
-- Zoom (kraken_doa.html "SPECTRUM ZOOM" block): `{level 1..16, off}` per
-  display - `mainZoom` (coherent / wideband) or each pane's `p.zoom`;
+- Zoom (kraken_doa.html "SPECTRUM ZOOM" block): `{level 1..ZOOM_MAX, off}`
+  per display - `mainZoom` (coherent / wideband) or each pane's `p.zoom`;
+  ZOOM_MAX 32 (16 until 2026-10-22, the user's request; the slider 0-125).
+  Past ~16x a wide plot gets fewer FFT bins (146.5 Hz) than pixels - the
+  spectrum is magnified, not finer (32x on a 1600 px window: a 60 kHz
+  window, 410 points, one per bin), the tuning bars are (~34 Hz a pixel).
+  Test: job scratch e2e/t_zoom32.py (headless Chromium, real wheel events:
+  slider, wheel stops at 32x, the server's frames for the 60 kHz window at
+  one point per bin with the tone in it, a pane to 32x; 12 / 12);
   the server sends each page the window it shows at its plot's width
   (*Spectrum views*, type 7: zoomed in = more detail, same data rate) and
   `zoomWindow()` / `specWindow()` cut / pad the latest frame to it; with a
@@ -333,7 +686,7 @@ Edit `include/config.hpp`:
   adds a waterfall line; zoom / zoom slider / edge-clip slider redraw the
   last frame without one (the waterfall just takes the new range for its
   overlay + clicks), and a wheel notch that changes nothing (`zoomWheel`
-  returns false at 1x / 16x) redraws nothing. Every redraw used to push the
+  returns false at 1x / ZOOM_MAX) redraws nothing. Every redraw used to push the
   frame into the waterfall again: it ran 2.5-3.5x fast while zooming
 - Split: `#fp-split` drags the main spectrum height (`kraken_fp_h`,
   localStorage; window resize refits uPlot); each pane's `.tpane-split` sets
@@ -399,9 +752,9 @@ Edit `include/config.hpp`:
   radiosonde (see *Radiosonde*), dme and ils (see *DME / TACAN* and *ILS /
   VOR / marker*), ism (see *ISM devices*), radar (see *Pulse radar*),
   ssr1030 (see *1030 MHz interrogations*), uat (see *UAT*), flarm (see
-  *FLARM / OGN*), ctcss (see *CTCSS / DCS*), beacon406 (see *406 MHz
+  *FLARM / OGN*), analog_id (see *Analog FM IDs*; was ctcss), beacon406 (see *406 MHz
   distress beacons*), lora (see *LoRa / Meshtastic / LoRaWAN*), wildlife (see
-  *Wildlife collars*), dtv and cells
+  *Wildlife collars*), rds (see *RDS / RBDS + SCA*), dtv and cells
   (ARRAY plugins - see *Digital TV* and *LTE / 5G NR Cell Decoder*)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
   tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by
@@ -461,9 +814,10 @@ Edit `include/config.hpp`:
   `on_map_point`, ttl clamped 10 s..24 h) / MAP_REMOVE -> `Report::map_set /
   map_remove` (key plugin|id, max 2000 per decoder, expired by ttl).
   NaN marks unknown fields: test with `is_finite_value()`
-  (utils/parse_num.hpp), never `std::isfinite` - kraken_doa builds with
-  -Ofast, which folds it to true (a `"h":nan` broke the page's JSON.parse);
-  digi_test (-O2) doesn't show that
+  (utils/parse_num.hpp) - kraken_doa built with -Ofast until 2026-10-23,
+  which folded `std::isfinite` to true (a `"h":nan` broke the page's
+  JSON.parse; digi_test (-O2) didn't show that); its Makefile adds
+  -fno-finite-math-only now, and is_finite_value is right under any flags
 - The protocol receivers live in the plugins (`plugins/<id>/<id>.cpp`), on
   the shared library `plugins/lib/` (libkrakendig.a): `dig_common` (the
   RxContext / Report / Options interface they were written against, mapped
@@ -723,7 +1077,8 @@ Edit `include/config.hpp`:
   MAP_MAX_Z 22: past a layer's deepest tiles (`max` 19) those are scaled up
   (z22 ~3 cm/px, 8x); range rings down to 5 m, graticule to 0.00001 deg
   (decimals from the step), drag / wheel
-  / pinch / double-click, +/− ⌖ (station) ⤢ (fit all), Street (OSM
+  / pinch / double-click, 🔍 (search - *🔍 Map search* below) +/− 🏠
+  (station, was ⌖) 🎯 (the estimated transmitter) ⤢ (fit all), Street (OSM
   tile.openstreetmap.org) / Satellite (Esri World_Imagery + the
   World_Boundaries_and_Places label layer), attribution shown. Tiles: cache
   of 400 (LRU), a failed tile retried after 15 s doubling to 5 min, a missing
@@ -780,6 +1135,81 @@ Edit `include/config.hpp`:
   fixed + the confirm switch, a viewshed point and a marker's viewshed
   dragged, Esc, a panel edit followed), t_vs_touch.py (tap select, touch
   drag, touch heading)
+
+**🔍 Map search + 🏠 / 🎯 (UI only, kraken_doa.html "🔍 MAP SEARCH"; the user's request 2026-10-21):**
+- 🔍 (top of the right-hand buttons) shows `#map-srch` as the first item of
+  `.map-tl` (under the top-left buttons; `mapState.srch`, localStorage
+  `kraken_map`); the results `#map-srch-res` hang over the map
+  (`.map-pane.srch-res-open` lifts `.map-tl` to z 6). State in the globals
+  block (`srchQ`, `srchRes`, `srchHl`, `srchListOn`, `srchOnl` / `srchOnlQ`,
+  `srchMsg`, `srchBusyQ`, `srchSeq`, `srchLastAt`, `srchCache`, `srchPin`,
+  `srchTxAt`) - mapDrawNow -> `srchDraw` / `srchTxBtn` can run first
+- Read OFFLINE as it is typed (`srchParse`): a map link (`srchParseLink`:
+  Google `@lat,lon,zz` / `q=` / `ll=` / `query=`, OpenStreetMap `#map=` /
+  `mlat`, Apple, `geo:`), lat / lon (`srchParseLatLon` -> `srchLatLonRows`:
+  decimal, degrees + decimal minutes, DMS; ° ' " ′ ″ or colons or the words;
+  signs or N / S / E / W before or after, lon-first when the letters say so;
+  "lat:" / "lon:" words; ";" or "a,b c,d" = decimal commas; split at a
+  ",", "/", the letters, the second °, or half the numbers - a single
+  letter between the two is tried with either; no letters and both fit =
+  two rows, lat, lon first; a text with any other letter isn't one, so
+  addresses never parse), UTM / MGRS (`srchParseGrid`; UTM's "S" = band S
+  (32-40° N) when the northing lands there, else / also the southern
+  hemisphere: both rows; MGRS 0-5 digits, the square's centre, the row
+  letters' 2000 km repeat chosen by the band, none past the pole), a
+  Maidenhead locator (`srchFromLocator`, 4-10 characters). Rows get a zoom
+  from the precision typed (`srchZoomFor`). Transverse Mercator =
+  Krüger's series to n^6 (`srchTm`, `srchToUtm` / `srchFromUtm`; Norway /
+  Svalbard zones), `srchToMgrs` truncates. Then the page's own places
+  (`srchLocal`, every word must match): the station ("home", callsign),
+  📍 markers (name, notes, their frequencies' names / MHz / tones), decoder
+  map points, the assistant's map points, OSM masts (layer on), viewshed
+  sites - picked = selected (`mkSelect`, `mapSel`), no pin
+- OpenStreetMap's Nominatim (`srchOnline`, `SRCH_URL` jsonv2, limit 10,
+  `viewbox` = the view, >= 0.2° across, not bounded; none below zoom 4) BY
+  THE BROWSER, like tiles / masts: only on Enter / the 🌐 row (its usage
+  policy: no autocomplete), >= `SRCH_GAP_MS` 1100 ms apart (a newer search
+  drops the older one's answer - `srchSeq`), kept per text + the view's
+  centre to the degree (`srchCache`, 100); offline / 429 / HTTP errors
+  said in the list (`srchMsg`). Rows (`srchOsmRow`): name, type + address,
+  bounding box (fitted - `srchFitBox`, across 180° too - else zoom 17),
+  the openstreetmap.org link only for a valid type + numeric id; every text
+  escaped. The first place is picked at once (list kept open on a map >= 720
+  px wide); "Places: © OpenStreetMap contributors (Nominatim)"
+- Enter (`srchGo`): the highlighted row (↑ / ↓), else a position typed
+  (not a 4-character locator: "AB12" may be a postcode - Enter asks
+  OpenStreetMap then, the locator stays listed), else an own place named
+  exactly so, else OpenStreetMap's first (asked if not yet). Esc: the list,
+  then the box; a press outside the box hides the list; ✕ (`srchClear`) =
+  text, list and pin gone, box closed
+- The pin (`srchPin`, `srchDraw`: orange #ff3d00, bigger than a marker,
+  its label; `srchHit` in mapInit's click / hover before decoder points,
+  `mapSel` 'srch' -> `srchPopupHtml` in mapRenderPopup; mapOnMessage keeps
+  it selected): address, position decimal / DMS (`srchDms`) / grid locator
+  (`srchLocator`) / UTM / MGRS (selectable text: `td.sel`), distance /
+  bearing from the station, 📍 Add as marker (`srchToMarker` -> mkCreate;
+  a typed position gets "Marker N"), Remove pin. ⤢ includes it
+- 🏠 = `mapCenterStation` (the ⌖ before). 🎯 = `mapGoTx`: `mapTxEsts()` =
+  the ⏯ replay's estimate at the moment shown (`lrEstAt`, before the first:
+  the drive's last) + the 📡 DF panel's shown maps' (`rdfShownMaps`, coherent);
+  the 95 % region (2 x r95) across ~a third of the map; pressed again with
+  the view where it left it = the next (`srchTxAt`); greyed (`.map-btn.dis`)
+  with none, the status line says how to get one (or that the DF panel's
+  pick has none). Jumps stop a replay's Follow (`mapStopFollow`) - it
+  would pull the view back to the vehicle
+- Tests (job scratch aa76cf1b t/): t_parse.mjs (node; the section cut out
+  of the page and run in a vm - 189 checks: ~40 lat / lon forms and ~20
+  non-coordinates, locators, DMS, UTM against pyproj on 3018 points < 1 mm,
+  MGRS against NGA GeoTrans (the `mgrs` package) - forward equal except
+  within 1 mm of a metre boundary (GeoTrans' own sub-mm noise), 3000 MGRS
+  strings at every precision -> square centres within 1 cm -, links);
+  t_ui.mjs (headless Chrome over CDP, page served statically with a UTF-8
+  charset, Nominatim stubbed by a fetch wrapper: 90 checks - box, typed
+  forms, pin + popup, locator Enter, online pick / list / box fit / 180°,
+  request spacing, cache, offline / 429, markup escaped, markers / aircraft /
+  station found, Esc / ✕, 🏠, 🎯 cycling + DF pick, phone width, one REAL
+  Nominatim request, the box left open shown after a reload - the first
+  version only rendered it on a click -, no page exceptions)
 
 **📻 Saved frequencies + 📍 map markers (one feature; `src/saved_freqs.cpp`, UI "📍 MAP MARKERS" + "📻 SAVED FREQUENCIES" in kraken_doa.html):**
 - Model: CATEGORIES {id, name, col #rrggbb}, LOCATIONS {id, name, lat, lon,
@@ -872,7 +1302,7 @@ Edit `include/config.hpp`:
   the decoder (`digSetModeFor`, OFF = `digToggle`; a fixed-frequency plugin
   tunes by itself and ends there; a `lock_vfo` one - ism - puts the VFO on
   its tuner's centre), the demod (`setDecimatorDemodMode`, which sets that
-  mode's usual bandwidth) and the bandwidth (`sfBwIndex`: nearest option) -
+  mode's usual bandwidth) and the bandwidth (exactly - any width) -
   both skipped on a locked VFO -, then `sfTuneHz` (was mkTune): a VFO
   locked on its tuner's centre (`lock_vfo`) stays at offset 0 and the tuner
   retunes (FREQ: whole kHz; independent: its own tuner); otherwise
@@ -889,13 +1319,25 @@ Edit `include/config.hpp`:
   up on (`paneSendGain`); NOTHING is sent when the gain already is that (a
   gain change recalibrates the array). A toast says what happened (+ the
   gain)
-- Spectrum: `sfDrawSpectrum` (drawBox, before the AI badges) - tags in the
+- Spectrum: `sfDrawSpectrum` (drawBox's `drawBoxTags`, before the AI badges) - tags in the
   category colour from y 18 (under the VFO labels) in up to 3 rows (2 below
   200 px), entries within 3 px share one ("Name +2"), names over 22 chars
   cut; no room = a triangle at the top; a faint dotted line down to the
   bottom (`sfLayoutTags` / `sfDrawTag`). `handleDown` -> `sfMarkerHit` (after
   `aiMarkerHit`) tunes instead of placing the VFO (`sfMarkerConsumed` eats
-  the click), `handleMove` -> `sfMarkerHover` (tooltip + hand). Independent
+  the click), `handleMove` -> `sfMarkerHover` (tooltip + hand).
+  `drawBoxTags` (tags + AI badges) runs on EVERY path through drawBox -
+  the spectrum drag's saved-VFO-bars path (`scrollDragSavedBoxes`, during a
+  drag and until the retune settles) and the discrete scan's used to
+  return before them: the tags vanished while dragging (the user's report
+  2026-10-22). It also keeps the hand cursor over a tag / badge from the
+  mouse's last position (`fpHover`, set first in handleMove, null on
+  mouseleave): drawBox resets the cursor from the VFO bars on every
+  spectrum frame (~20 Hz), and the hand, set only on mouse moves,
+  flickered with the arrow. A tag wins over a VFO bar under it (as the
+  click does). Test (job scratch): t_sftags_ui.py - real mouse events, the
+  committed page 0 / 40 hand samples + 0 / 10 tags during a drag, fixed
+  40 / 40 + 10 / 10. Independent
   panes: `sfPaneTags` from `paneDrawOverlay` (9 px, 2 rows, lines through
   the spectrum part), `p.sf` hit-tested in `paneDown` (tunes with
   `{tuner: p.ch}`) and `paneMove` (title + hand). Hidden categories (👁)
@@ -933,6 +1375,290 @@ Edit `include/config.hpp`:
   navigation stalls forever before its cookie lookup, waiting on the desktop
   keyring (fetch() from a data: page still works, which makes it look like a
   network problem); when other builds load the Pi, use long CDP timeouts
+
+**📻 Saved-frequency scan (`src/sf_scanner.cpp`, `src/sf_scan_plan.cpp`, UI "📻 SAVED FREQUENCY SCAN" in kraken_doa.html):**
+- What it scans is part of the saved-frequency list (saved_freqs.cpp, so
+  every page shows the same ticks and it survives restarts): a CATEGORY's
+  `scan` (bool) takes every frequency in it - also those added later -,
+  `scan_uncat` (top level of the file / message) the uncategorised ones; a
+  FREQUENCY's `scan` 1 = scanned on its own, -1 = left out even though its
+  category is scanned, 0 = its category decides. `SF_SCAN:{"freqs":{id:-1|0|1},
+  "cats":{id:bool},"uncat":bool}` (any subset; ids gone meanwhile skipped; a
+  bad value refuses the whole command - `{"savedfreq":...,"error","id":"sfscan"}`)
+  -> the whole list to every page like every SF_ command. SF_SET / SF_CAT_SET
+  WITHOUT "scan" keep the entry's (the editor / ⚙ Categories don't send it);
+  a frequency moved to another category, or left without one by SF_CAT_DEL,
+  drops a -1. `savedfreq::scan_entries()` (the effective list, lowest first)
+  and `savedfreq::generation()` (bumped by every save) feed the scanner
+- Plan (`sf_scan_plan.cpp`, no receiver state - tested offline): entries
+  outside the tunable range (R820T, or the Wideband variant's union) or with
+  a decoder that holds its VFO (`fixed_freq_hz` / `lock_vfo` plugins: ADS-B,
+  AIS, ism, cells, dtv, lora, radar ...) are `skipped` with a reason. The rest
+  go into BANDS = one tuner centre (whole kHz, clamped to the range) whose
+  usable span (edge clip x 2.4 MHz) holds every member's VFO (its bandwidth
+  around its frequency: the entry's, else its demod's usual - WBFM 240 kHz,
+  NBFM / AM 16 kHz, what the page's demod buttons set -, else the VFO's,
+  capped at 240 kHz for fitting): entries with a gain - per gain, lowest
+  first, a new band when the next doesn't fit; then the rest into the first
+  band they fit (any gain), else bands of their own. BALANCED: the packing
+  width is the narrowest (binary search) that still needs no more bands
+  than the full span - packed to the full span, the user's six broadcast
+  stations 0.8 MHz apart came out {95.8, 96.6, 97.4} with 95.8 at -840 kHz
+  (the tuner band's edge) and 96.6 40 kHz from DC; balanced: three pairs at
+  +-400 kHz (2026-10-22). Bands lowest centre
+  first. The CENTRE keeps every channel off DC (`pick_centre`: half its
+  channel + `DC_GUARD_HZ` 3 kHz away - the IQ path takes the DC off and an
+  RTL-SDR has its spike there: a band of ONE entry centred on it never saw
+  its carrier, found by the e2e test), the nearest such centre to the middle
+  that still holds every VFO, else (channels every few kHz) the one farthest
+  from them. `band_fits()` = a centre that already holds a band, channels
+  off DC (or the plan's own centre) - no retune.
+  Level of an entry = strongest bin in the inner 80 % of its channel (its
+  bandwidth, else 180 kHz WBFM / 12.5 kHz) of the averaged FFT, minus the
+  channel's noise floor (`FFTProcessor::channel_noise_floor`)
+- WIDEBAND SCAN MODE (the user's question 2026-10-22: "why does this
+  scanner not work in wideband mode? I see no reason why it should not" -
+  there was none: it was refused only because the plan knew one tuner per
+  band): `Layout` = the tuners a band is received with - `single_layout(span)`
+  ({0}, half = span / 2: coherent / independent, exactly the arithmetic from
+  before) or `spread_layout(n, spacing)` = heimdall's setup_wideband_frequencies
+  (tuner k on centre + (k - n / 2) x spacing, integer n / 2; spacing =
+  uint32(SAMPLE_RATE x edge clip) in float maths as there: 2160000 at 0.9;
+  half = spacing / 2). An entry is received on the tuner NEAREST it (lowest
+  on a tie - the receiver's SET_DECIMATOR_FREQ picks a wideband VFO's tuner
+  that way), so its VFO must lie inside THAT tuner's usable part (not across
+  a seam) and its channel off THAT tuner's DC. `pick_centre` searches the
+  centres whose tuners cover the band (every tuner inside the tunable range)
+  for one with every VFO inside its tuner (feasible) and DC-clear, nearest
+  the middle; else the feasible one farthest from DC; else the least
+  overlap. An entry still across a seam at its band's centre is planned
+  again (a band of its own, `SEAM_ROUNDS` 4, then kept). Unit test: the six
+  broadcast stations = 1 band (3 on one tuner), 300 dense entries over 11.2
+  MHz = 3 bands (6 on one tuner), none across a seam. Scanner: one slot (ch
+  -1), the band's centre = tuner n / 2's (`wide_centre_hz` from the stream,
+  whole kHz), retune WIDEBAND_FREQ (FREQ ends wideband mode), SETTLE until
+  EVERY tuner is at centre + its offset (`in_stream`), the VFO pre-placed
+  only then (the receiver picks a wideband VFO's tuner from the tuners'
+  stream frequencies) at its offset from the spread's middle ((first + last
+  tuner) / 2 - tuner n / 2 with an odd count), each entry measured on its
+  nearest tuner's FFT (`entry_tuner`, `Specs` = each tuner's spectrum once
+  per tick) with the tuners' common response taken off first
+  (`nfloor::shape_db`, as the stitched spectrum does: its floor -
+  `channel_noise_floor` = nfloor's in wideband mode - is that flattened
+  spectrum's, so the level = what the page shows; measured on the raw
+  spectrum against that floor, plain noise read 15 dB on one tuner after the
+  merge of the wideband alignment, 13396fb, in the test), no calibration /
+  hold; the plan is re-made when the edge clip or the tuner count changes
+  (heimdall respaces the tuners). A manual WIDEBAND_FREQ stops it; at stop
+  the gain is saved (no FREQ in wideband, as before). Test:
+  `t_sfscan_wide.py` (the fake spreads its tuners like heimdall and, in
+  wideband mode, gives them the real response shape - WB_SHAPE_DEFAULT read
+  from noise_floor.cpp: with flat noise the alignment measured gain steps of
+  several dB between tuners and chained them into one tuner's floor)
+- Scanner (`sf_scanner.cpp`, one thread, 100 ms ticks; class `Scan`, state
+  TUNE -> SETTLE -> WATCH -> LISTEN): SLOTS = the array (coherent: 1, the
+  FFT of `active_channel`; wideband: 1, the whole spread) or every tuner NO
+  OTHER VFO is on (independent;
+  another VFO moving onto a scanned tuner = a new turn without it, none left
+  = stop). TURNS = the bands in slot-sized blocks (slot k: band cycle + k,
+  none past the last band); a PASS = every turn once, then from the first
+  again. TUNE: a slot whose centre doesn't hold its band gets FREQ: /
+  TUNER_FREQ:, a band's gain GAIN: / TUNER_GAIN: when it differs, and the
+  VFO is PRE-PLACED (`place(.., heard=false)`, muted) on the first retuned
+  band's first entry that hasn't had its turn - in the same go as the
+  retune (the user's idea, 2026-10-22): during the coherent calibration
+  that follows its filters settle / its decoder starts, so it is in place
+  the moment the data is clean (also on the first turn of a run). SETTLE:
+  the stream's header frequency (`tuner_frequencies`) within 2 kHz (6 s max,
+  else that band is left out this turn: `ok:false`) + 250 ms, then an FFT
+  averaging reset (`fft_reset_generation`; independent retunes don't get one
+  from heimdall). READY = not `server_retuning` (new global: the header's
+  retuning flag - packets are skipped meanwhile, the spectrum is the old
+  band), `fft_data_valid`, `rebuild_ms()` since the last FFT reset (until
+  the reset's first frame weighs < 5 % in the average, from AVG and the FFT
+  size, + 0.1 s, 0.25-2.5 s: 0.25 s at the defaults - was a fixed 1 s, the
+  continuous scanner's) and, coherent, not calibrating: noise source on / within
+  `NOISE_QUIET_MS`, or phase state 0-3 / 6 (WAITING_STABILITY 5 is fine:
+  noise off, antennas in) - the phase state alone is ignored after 20 s
+  (a heimdall that never settles); KerberosSDR manual mode: noise only.
+  WATCH: an entry over the squelch on 2 polls in a row is active (`act`);
+  entries in `done_` (left by Skip / Longest stay: had their turn this
+  pass) wait; the first other active one after the last heard (list order,
+  wrapping) is LOCKED. Nothing to lock: with more bands than slots the
+  next turn comes AT ONCE when something active here is done (its turn is
+  over - the others' bands next), on Skip, or after DWELL of ready watching
+  (summed over the turn, not restarted per transmission - a busy channel
+  can't hold its band for good), not while held; past the last band = a new
+  pass (`done_` cleared). Every band watched at once: a new pass as soon as
+  all that is active is done. (Was: Skip / Longest stay excluded a
+  frequency until it measured quiet - a broadcast station never does, so
+  after one pass every station was out and the scan cycled its bands with
+  the VFO parked, muted, on the last one: the user's report 2026-10-22.)
+  LOCK / pre-place (`place`), on the uWS loop as `sfTune` in the page: DIGITAL_MODE (the entry's decoder),
+  SET_DECIMATOR_DEMOD (+ that demod's usual bandwidth), SET_DECIMATOR_BW_HZ
+  (the entry's, exactly - any width since the arbitrary VFO bandwidth, merged
+  2026-10-22: the scanner used to snap it to the nearest of the 30 old sizes;
+  Digital: widened to the narrowest efficient size holding the decoder's
+  `min_vfo_rate`, `efficient_bandwidth_at_least` - 24 kHz for Auto; `Cfg::bw`
+  is Hz), SET_DECIMATOR_FREQ (offset from the slot's centre; independent
+  `:tuner`), the VFO heard (pre-placing: muted). LISTEN: the entry measured
+  on its slot; over squelch - 3 dB keeps it, not ready (calibration) counts
+  as active AND MUTES the VFO (the noise source would be heard; heard again
+  the tick the data is clean - status `cur.heard`); resumes after HANG of
+  quiet, or after MAX of CLEAN listening (`listened_ms_`, status `cur.ms` -
+  calibration time used to count: a 2 s stay could pass in noise-source
+  time) -> done; SKIP -> done - in WATCH it advances the turn; HOLD stays
+  (WATCH: no turn advance). Resume mutes the VFO; a plan change while
+  listening re-tunes when it resumes (`need_tune_`)
+- CALIBRATION HOLD (coherent, not KerberosSDR manual mode; the user's call
+  2026-10-22: "while it's scanning and not found a frequency, turn
+  calibration off; begin it once a signal is found"): `Scan::hold()` after
+  every tick - not listening: heimdall's `hold_calibration` lease (3 s,
+  renewed every 1 s; heimdall_v2/CLAUDE.md *Calibration hold*), so a retune
+  only puts heimdall in WAITING_FOR_STABILITY (spectrum clean, DoA held -
+  READY for the scan) instead of the 3 s cooldown + ~0.5-1 s noise-source
+  calibration per band; a LOCK releases it (`hold_ms` 0: the calibration
+  starts at once); stop() releases it too (the array calibrates where the
+  scan stopped). A lock with the phase state WAITING_FOR_STABILITY (i.e. a
+  calibration now pending) is placed MUTED (`cal_wait_`) until the
+  calibration has run (`cal_seen_` + ready) - heard once, calibrated, DoA
+  valid, instead of a blip cut off by the noise source; no calibration
+  starting within 1.5 s (an older heimdall: unknown command, its own 3 s
+  cooldown) unmutes it. Longest stay counts heard time only. The e2e test's
+  fake heimdall models it (cooldown expiry only when not held, release =
+  calibration now, `cal_count`): 0 calibrations across the searched bands
+  with a 3 s heimdall cooldown, the release at the lock, the calibration
+  starting at once, heard ~1.5 s after the lock. The per-lock state above
+  (`cal_wait`, `cal_seen`, heard, listened time) lives in each `Lock`
+- ONE VFO PER ACTIVE FREQUENCY (`SFSCAN_MULTI:0|1`, `g_multi`, schema
+  `sfscan_multi`, off by default; the user's request 2026-10-22 "creates as
+  many decimators as there are active signals in one band - for whisper
+  recording etc"): `Scan::locks_` (a `Lock` per frequency listened to; off
+  = at most one, the scan's VFO - the old single-lock behaviour). WATCH
+  locks every active entry (round the list from the last heard) while
+  `can_lock()`: the scan's VFO when free, else a VFO the SCAN MAKES (token
+  `Lock::tok`, `g_extras`: token -> {vfo, weak_ptr to its instance} -
+  ids are reused, so a VFO counts as the scan's only while the manager
+  still holds THAT instance: one the user removed and replaced under the
+  same id is never touched), while the manager's 16 VFOs (`VFO_LIMIT` =
+  its private MAX_DECIMATORS) aren't all taken. LISTEN measures each lock
+  on its slot and, with multi on, the bands watched (`measure()`) - a
+  frequency that becomes active gets its VFO then (not one done this
+  pass). Each lock ends on its own (Delay -> not done, Longest stay ->
+  done; Skip ends all, done); the band moves on only when none is left
+  (`after_locks`). `make_extra` (uWS loop): `addDecimator()` (muted, 0 Hz),
+  then the scan VFO's settings recorded at start (`Cfg::demod / bw / dec /
+  sq_* / transcribe`) through apply_command, then `apply_entry` (the
+  entry's decoder / demod / bandwidth / offset / tuner - shared with the
+  scan's VFO). `drop_extra` / stop(): muted first (removing the last VFO
+  heard makes the first one left heard), `removeDecimator` +
+  `audio_mixer.retain`, out of `g_extras` only after the removal
+  (`free_tuners` skips the scan's own VFOs - independent mode would take
+  one for another VFO on a scanned tuner and start a new turn). Made /
+  removed through the manager with a `decimator_info` broadcast, NOT
+  ADD_ / REMOVE_DECIMATOR: their decimator_added / _removed messages make
+  every page reset its audio player (a gap in what the other VFOs play).
+  A made VFO the user removes (`extra_vfo` -2) = that frequency done this
+  pass (else it got a new VFO at once); one that couldn't be made (-3) =
+  not done. Switching multi off while listening ends the made VFOs' locks.
+  stop() removes them all BEFORE `set_on_stop` saves the VFO snapshot: they
+  are never part of the user's setup. Not followed by the 📼 audio
+  recorder (its VFO list is fixed when it starts); Voice to Text, decoders,
+  DoA, 🔊 work per VFO, so the made ones get them
+- Commands run through `ControlHandler::apply_command` on the uWS loop
+  (`loop->defer`, dropped when the run ended - `alive(run id)`), so pages see
+  them like a browser's; `sfscan::dispatching()` (set around them) keeps them
+  out of the settings file (the generic record, TUNER_FREQ's TUNERS:, FREQ's
+  independent TUNERS:) and from stopping the scan; `record_decimator_snapshot`
+  skips while it runs (as for the other scanners). At stop `set_on_stop` ->
+  `persist_after_sf_scan` (control_handler.cpp) saves the live FREQ / GAIN
+  (or TUNERS) + the VFO snapshot: what the scan left is the user's now.
+  Shutdown only joins the thread (nothing saved)
+- Stops it: SFSCAN_STOP, a manual FREQ (any mode), TUNER_FREQ of a scanned
+  tuner, a manual WIDEBAND_FREQ, OPERATING_MODE to another mode, heimdall switching mode
+  (`note_server_mode`), its VFO removed, a playback, the plan left empty
+  (each with `msg`). Refused: a playback, another scanner
+  running (and the other two refuse while it runs), a VFO its decoder holds,
+  nothing scannable. The VFO: the page's selected one (`SFSCAN_START:<id>`,
+  -1 / unknown = the first). Muted while scanning, heard while locked; stop
+  keeps it heard if it was listening, else as before the scan. (Muting it
+  in independent mode exposed a crash in data_receiver.cpp's decimation
+  pass: FM / digital only with NO VFO heard left the pass without VFOs and
+  `reserve(size() - 1)` threw - the process ended; muting every VFO by hand
+  did the same. Fixed there: an empty pass does nothing)
+- Status `{"sfscan":{run, state tune|watch|listen, hold, vfo, mode, n, nb,
+  cycle, ready, watch:[{b,ch,hz,lo,hi,n,ok}], cur:{id,name,hz,db,ms,quiet,
+  heard,vfo,extra} | null, locks:[the same, every one listened to - vfo -1 =
+  being made], act:[ids <= 50], skipped:[{id,name,why} <= 50], nskipped, sq,
+  dwell, hang, max, multi[, msg][, err]}}` to every page: on changes and
+  every 500 ms while running; GET_SFSCAN (page connect). `cur` = the first
+  lock (pages from before `locks` read it). `err` = a refused start (the
+  page that pressed ▶ shows it); `msg` = why it stopped. SFSCAN_* are
+  `is_query_command`s; SFSCAN_SQUELCH (3-40 dB, 0.5 steps) / DWELL (500-60000
+  ms) / HANG (0-60000) / MAX (0-3600000, 0 = no limit) / MULTI (0 / 1) are
+  saved by the handler (schema `sfscan_*`, defaults 12 dB / 2 s / 2 s / 0 /
+  off)
+- Page: a tick per row and per category heading (`sfsCatState`: 2 checked,
+  1 indeterminate - `data-mixed`, set after innerHTML -, 0); a row's tick
+  toggles its effective state (`sfsToggleFreq`: -1 / 0 / 1 by its group), a
+  heading's = all / none of it (its rows back to 0); clicks are
+  preventDefault'ed (no optimistic update - the list's broadcast redraws).
+  `#sfs` panel above the categories: ▶ Scan (`sfsStart`, the selected VFO) /
+  ■ Stop / ⏸ Hold / ⏭ Skip, "N ticked", ⚙ settings (squelch, delay, dwell,
+  longest stay, "VFOs: one per active frequency" - `#sfs-multi`, its row
+  hidden for a receiver without `multi` -, tick all / none), the status
+  (`sfsRender`: a line per frequency listened to, 🔊 name · MHz · dB · time
+  → its VFO ("a new VFO…" while being made) - `sfsLocks(st)` = `locks`, or
+  `cur` from an older receiver -, or "Scanning N frequencies", the watched
+  band(s) + tuners, "N left out" with the reasons as its tooltip). Rows:
+  `.sfs-cur` (🔊, green outline - every one listened to), `.sfs-act` (orange
+  dot) - `sfsMark` after every list render and status. While the scan RUNS its squelch is drawn as a DOTTED
+  yellow line across the main spectrum (`sfsDrawSquelch` from drawBox,
+  beside the other scanners' cyan / magenta lines; label "📻 Scan N dB") and
+  on the independent panes of the tuners it watches (`sfsPaneSquelch` from
+  paneDrawOverlay); it follows the squelch slider while dragged (`sfsSqDrag`,
+  globals block - drawBox can run before the section). No show / hide
+  button (the user's call, 2026-10-22: always while scanning, never
+  otherwise). A VFO's FFT squelch is the DASHED yellow line inside its bar
+- Tests (job scratch, not in the repo): `t_sfscan.cpp` (saved_freqs.cpp
+  scan flags - category / single / left out, editor saves keep them,
+  refusals change nothing, reload, category delete - and sf_scan_plan.cpp:
+  bands, gains, range ends, 300 entries, levels), `t_sfscan_e2e.py` (a TEST
+  build - ports 28080/28081/28091/28092, `KRAKEN_AI_MCP_PORT` - fed by
+  `fake_heimdall.py`: synthetic carriers in 8091 packets, the 8092 commands
+  obeyed, coherent retunes with the retuning flag, WAITING_STABILITY and a
+  noise-source calibration; checks the plan, both bands tuned, the gain
+  with its band, lock / VFO / audio / delay / skip / hold / longest stay,
+  list changes, refusals, manual-retune stop, what is saved, the user's
+  broadcast-FM case - 5 always-on stations in 3 bands, Longest stay 2 s, a
+  1.5 s stability window so a lock straddles the calibration: every station
+  in list order pass after pass, 2 s of clean time each, muted / heard
+  again across the calibration, the VFO pre-placed > 0.8 s before its lock -,
+  independent mode with two bands on two tuners and a VFO taking a tuner;
+  the fake's timing is set over its side port, `{"timing":{"stab":1.5}}`),
+  `t_sfscan_wide.py` (wideband scan mode, 30 checks: the six stations in
+  one band, every one inside its tuner + off DC, no calibration hold, never
+  out of wideband mode, the VFO on its nearest tuner at the right offset,
+  two VFOs on two tuners with multi, the bands taking turns by
+  WIDEBAND_FREQ, an edge clip change re-planned + respaced, a manual
+  WIDEBAND_FREQ stops it),
+  `t_sfscan_multi.py` (one VFO per active frequency, 35 checks: the setting
+  saved; two active at once - the scan's VFO + a made one at their
+  offsets, the entry's demod / bandwidth, Transcribe + squelch copied, both
+  heard after the calibration, no decimator_added -, a third while
+  listening, one ending after the Delay -> its VFO removed, a made VFO
+  removed by hand -> no new one for its still-active frequency, multi off
+  while listening, stop -> only the scan's VFO saved; independent mode: two
+  on one tuner, the made VFO never taken for a foreign one),
+  `t_sfscan_ui.py` (the same + the page in a headless Edge with its own
+  profile over the DevTools protocol: ticks per row / heading incl. the
+  mixed state and -1 / 0 / 1, counts, ▶ / ■ / Hold / Skip, the 🔊 row, the
+  status + "left out" tooltip, the settings inputs, the multi tick + a
+  status line and 🔊 row per frequency, tick all / none, the editor keeping
+  a tick, no page exceptions). On a Windows PC with the live
+  stack running the test build gets its own ports, cwd and exe name (the
+  launcher's stale-process sweep), builds through `C:\msys64\usr\bin\bash
+  -lc` (Git Bash's runtime loses TMP for gcc)
 
 **📡 OpenStreetMap masts layer (UI only, kraken_doa.html "📡 OSM MASTS"):**
 - "Masts" button (`mapState.masts`, localStorage like the other view
@@ -2051,7 +2777,7 @@ Edit `include/config.hpp`:
   (57,600 rows) loads in 3.3 s, heat in ~26 s, a frame <= ~10 ms with all
   lines + power dots, 60 MB JS heap
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country); `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,ctcss,beacon406,lora,wildlife}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios (MDC1200 / FleetSync IDs, 5-tone / DTMF, CTCSS tones / DCS codes), 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country), FM broadcast stations (RDS PI); `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,analog_id,beacon406,lora,wildlife,rds}`, 🗺 Map 📡 DF panel):**
 - RULE (ID separation, the user's 2026-10-15): every decoder whose signal
   carries a coded ID per TRANSMITTER reports it as a talker - a core part
   of every such decoder, new ones included. How + how to test:
@@ -2420,17 +3146,23 @@ Edit `include/config.hpp`:
     altitude · type / Pkts", position columns, nearest first;
     `RDF_KIND_WORD` names it "aircraft" in "Every ..." / counts) - see
     *FLARM / OGN*
-  - CTCSS / DCS (`plugins/ctcss`, task 5): an analog FM transmission =
-    a TRANSMISSION talker (`host.talker` / `talker_end`, not packets) named
-    by its sub-audible tone / code ("CTCSS 88.5", "DCS 023N"; label the
-    measured frequency / "023N = 047I"), from the carrier's (or the tone's)
-    onset to its reverse burst / tone off / carrier off, to a few ms; the
-    DoA from the MUSIC frames inside it like a radio's. With the tone
-    squelch option set only that tone gets talkers. UI kind `tone` 🔔
-    (`rdfKind`: not a packet, pl ctcss; "Tone / code / Measured / Tx" + two
-    columns only it has: Last = the latest transmission's length, Air = all
-    of them - TalkerInfo `dur_s` / `air_s` from the spans, status `dur` /
-    `air`, `RDF_SORT_KEYS` dur / air; newest first) - see *CTCSS / DCS*
+  - Analog FM IDs (`plugins/analog_id`, was `plugins/ctcss`, task 5; the
+    radio IDs 2026-10-22): an analog FM transmission = a TRANSMISSION
+    talker (`host.talker` / `talker_end`, not packets) named by the
+    transmitting radio's own ID when one was decoded (MDC1200 unit "MDC
+    1029", FleetSync "FleetSync 100-1001" - radios sharing one CTCSS tone
+    apart), else a 5-tone / DTMF sequence ("CCIR 12345", "DTMF 123"), else
+    its sub-audible tone / code ("CTCSS 88.5", "DCS 023N"), else a tone
+    burst ("Burst 1750"); label what was sent + the tone ("PTT ID · CTCSS
+    88.5"), from the carrier's (or the tone's) onset to its reverse burst /
+    tone off / carrier off, to a few ms; the DoA from the MUSIC frames
+    inside it like a radio's. With the ID / tone squelch option set only
+    those get talkers. UI kind `tone` (`rdfKind`: not a packet, pl
+    analog_id or ctcss; 🆔 / 🔢 / 🔔 by the ID; "ID / tone / Signalling ·
+    tone / Tx" + two columns only it has: Last = the latest transmission's
+    length, Air = all of them - TalkerInfo `dur_s` / `air_s` from the spans,
+    status `dur` / `air`, `RDF_SORT_KEYS` dur / air; newest first) - see
+    *Analog FM IDs*
   - 406 MHz distress beacons (`plugins/beacon406`, task 7): every
     first-generation burst that passed its BCH = a packet of its 15-hex
     beacon ID (the 160 ms carrier + first bits, 0.24 s from the carrier's
@@ -2452,6 +3184,13 @@ Edit `include/config.hpp`:
     `collar` 🐾 ("Collar (MHz) / Name · ppm · mode / Pulses", by name).
     Narrow channels in a wide VFO: `narrow_cov` (Channel filtering below) -
     see *Wildlife collars*
+  - FM broadcast stations (`plugins/rds`, 2026-10-22): every RDS group of
+    the station on air (its PI confirmed, >= 3 good blocks) = a packet `PI
+    xxxx` of its 104 bits (87.6 ms), the FM channel (carrier, 200 kHz),
+    avg_s 10, keep_s 30 min - co-channel stations taking turns (DX, a drive
+    between two transmitters) apart; one network's transmitters share the
+    PI (one talker). UI kind `broadcast` 🎙 ("Station (PI) / Call sign · PS
+    · MHz / Groups", by name) - see *RDS / RBDS + SCA*
   - UI (kraken_doa.html): `RDF_PK_KIND` plugin -> kind (station 📻 aprs,
     sonde 🎈, site 🗼 tetra + mpt1327, navaid 🧭 ils, radar 📡 radar - list
     "Radar / PRF · pulse · scan / Pulses", by name; ship / aircraft /
@@ -2633,11 +3372,13 @@ Edit `include/config.hpp`:
   8091 packets - spectrum, waterfall, VFO, decoder, DoA, the 📡 DF panel.
   Catalogue IN THE PLUGINS: `plugins/<id>/tools/testsignals.json` (a list;
   format + how to add one: plugins/SDK.md *Test transmissions for the debug
-  playback*). 34 entries in 25 catalogues (2026-10-16) - EVERY decoder:
-  ais, aprs, dstar, nxdn, tetra, mpt1327, ils (VOR), ctcss, radar,
+  playback*). 36 entries in 26 catalogues (2026-10-23) - EVERY decoder:
+  ais, aprs, dstar, nxdn, tetra, mpt1327, ils (VOR), analog_id (two: the
+  CTCSS tones + `analog-ids-six`, radio IDs), radar,
   ssr1030, uat, flarm, beacon406, lora (six), wildlife (five), dtv, cells,
   adsb, dme, ism, pocsag, v23_telemetry, p25, dmr, radiosonde (the last
-  three since 2026-10-16 - their earlier tests used public recordings)
+  three since 2026-10-16 - their earlier tests used public recordings),
+  rds (2026-10-22)
 - Generation: `PLAYBACK_GEN:<id>` forks `python3 -I
   plugins/sdk/tools/make_testsignal.py <id> --plugins DIR --cache
   testsignal_cache --lat --lon` (nice 10, own process group; PROGRESS lines
@@ -3072,7 +3813,7 @@ Edit `include/config.hpp`:
   DECODER ON and the decoder decoding voice (`DigitalDecoder::takes_voice()`:
   the lead plugin's `kp::Info::voice`; Auto detect still searching: any of
   its plugins; set by the engine's housekeeping) the decoder's voice; a
-  decoder of NO voice (ctcss, pocsag, adsb ...) leaves the ANALOG path below
+  decoder of NO voice (analog_id, pocsag, adsb ...) leaves the ANALOG path below
   to the VFO, as without one - and names the transcript after the
   decoder's talker (`DigitalDecoder::lead_talker`: the lead plugin's open
   talker that started first, e.g. "CTCSS 88.5" / "88.47 Hz" as from / to;
@@ -3349,8 +4090,7 @@ Edit `include/config.hpp`:
   `get_range_peak_db` -> `check_squelch_in_range`) and scanned (continuous
   scanner) relative to ONE floor per channel: `FFTProcessor::
   channel_noise_floor(ch, data)`. It was each caller's own 10th percentile
-  of the centre 80 % of the bins (`calculate_noise_floor`, still used by the
-  wideband scan's stitched spectrum) - a signal wider than the 2.4 MHz
+  of the centre 80 % of the bins (`calculate_noise_floor`) - a signal wider than the 2.4 MHz
   (DVB-T, LTE) fills those bins, so the percentile landed on it: drawn at
   ~0-10 dB (only its edge showed its height) and an FFT squelch inside it
   never opened (the user's report, 2026-10-14)
@@ -3380,17 +4120,127 @@ Edit `include/config.hpp`:
   and only after the last retune. Signal: held once r > ref + 1 dB, ref
   never rises (a day on DVB-T doesn't wear it away); noise: not held, ref
   follows (a real rise - active antenna, interference - is learned at once).
-  Independent / wideband scan mode or no fresh verdict: held when r > ref +
-  6 dB (released < 4), ref creeps up 1 dB a minute while held (a real +10
-  dB rise shows as ~10 dB noise for minutes there)
+  Independent mode or no fresh verdict: held when r > ref + 6 dB (released
+  < 4), ref creeps up 1 dB a minute while held (a real +10 dB rise shows as
+  ~10 dB noise for minutes there)
+- WIDEBAND SCAN MODE (the stitched spectrum; 2026-10-20/21, the user's
+  reports "wideband signals seem to disappear over the boundaries", then
+  "noise floors don't align between tuners, some show a much higher signal
+  level, a tuner's level glitches up and down before settling"): the stitch
+  (`FFTProcessor::stitch_wideband_fft`) normalised every tuner to its own
+  per-frame percentile, so a DVB-T / LTE over several tuners was drawn at
+  full height in the partly covered tuners and at ~0 dB in the ones it
+  filled, and a whole-array second normalisation (`calculate_noise_floor` on
+  the stitched array: the first 13k bins only) shifted everything down when
+  tuner 0 held a signal. Now the stitch is one grid of FFT bins (each
+  frequency from the tuner whose centre is nearest, boundaries half way
+  between the centres; no sort of 65k pairs per tick), each tuner's AVERAGED
+  spectrum minus the common shape (`nfloor::shape_db`) minus
+  `channel_noise_floor(t)` (the floor its VFOs' squelch reads too), built
+  from `fft_averaged` - every frame averaged as in coherent mode; the old
+  second EMA at the 20 Hz tick, its globals (`wideband_fft_magnitudes /
+  _averaged / _mutex`, `wideband_last_reset_gen`,
+  `wideband_reference_noise_floor`) and the second normalisation are gone;
+  while `fft_data_valid` is false the tick sends nothing (the pages keep the
+  last frame - it used to flash the single-tuner display)
+- What the live KrakenSDR showed (a read-only 8091 capture, 593-601 MHz,
+  a DVB-T mux over tuners 3-4): the dongles' noise floors differ by up to
+  4.4 dB at the same gain; every tuner's response has the SAME shape (a
+  ~3.5 dB tilt across the usable band, a slow roll-off below -1 MHz, a steep
+  one above +1 MHz - three quiet tuners within ~0.3 dB); the DVB-T fades ~13
+  dB across a tuner (multipath). A first version (commit bfaa5bf) derived a
+  filled tuner's floor from p10s of 2 % edge windows at the boundaries - on
+  the hardware those sit in the roll-off, 2.4-3.3 dB apart per boundary, so
+  chains of them drew tuners several dB too high - and used the remembered
+  floors (refs, per tuner + gain, frequency-blind: 7-19 dB off there) with
+  the 6 dB rule, which held tuners and drew their noise up to +19 dB. The
+  same capture replayed through it: noise of a tuner jumping 1.9 -> 7.9 dB,
+  the DVB-T 25.0 / 29.6 dB in tuners 3 / 4, up to 7.9 dB of wander
+- Now (`wideband_frame`, `update_step`, `wideband_pass`, under `mu`; no refs
+  used or learned in wideband scan mode - the coherent / independent path is
+  main's, byte for byte): (1) the common SHAPE (`WB_SHAPE_DEFAULT`, 256
+  points over 2.4 MHz, measured on that KrakenSDR = the median of three
+  quiet tuners, 5-point smoothed; GENERATED - shape_default.txt in the job
+  scratch; a hand-typed copy once differed by 3 dB) is taken off every
+  tuner; each tuner's floor f = p10 of its flattened centre 80 %. (2) GAIN
+  STEPS from the OVERLAPS: neighbours (each 2.4 MHz, spaced by edge clip x
+  2.4) share 0.48 MHz; at the same frequencies their flattened averaged
+  spectra differ only by gain, whatever the band holds - the median of the
+  difference over the bins where both responses are > `WB_OVERLAP_MIN_DB`
+  -6 (>= 64 bins; ~2000 at 16384), smoothed `WB_STEP_TAU_S` 1 s. Live:
+  +4.06 / +0.02 between quiet tuners whose floors differ +4.36 / -0.08. A
+  floor raised in one tuner only (overload, its antenna) is in the overlap
+  too: a gain step, so that tuner stays aligned. The median (not a quantile
+  difference) because it compares identical frequencies (DVB-T ripple) and
+  tolerates a station aliasing into one side. A step is the two dongles'
+  gain difference: kept PER PAIR of tuners (`Wb::step[j]`) through retunes,
+  replaced by the next measurement after a move > `WB_STEP_RESET_HZ` 2 MHz.
+  (3) Tuners adjacent by frequency with a step for the pair are linked
+  (also while they don't overlap - see the drag below); along a chain common
+  = min(f - g) = each tuner's receiver floor + g; over = f - g - common, and
+  the floor BLENDS from f (over <= `WB_BLEND_LO_DB` 1: quiet tuners' noise
+  lines up exactly) to common + g (over >= `WB_BLEND_HI_DB` 3: filled by a
+  signal), linearly between - no switching, no state (`Wb::blend`). (4) The
+  shape learned from quiet tuners (blend 0, flattened p50 - p10 < noise's +
+  1.5 dB - `noise_spread_db()`: 8.2 dB for one frame, x sqrt(alpha / (2 -
+  alpha)), 2.27 at 0.15 - every 1 s, points within 3 dB, tau 60 s; FFTs >=
+  4096; not persisted) - a 2 dB-steeper tilt is learned within 60 s. (5)
+  After a retune (> 1 kHz) only the step and shape MEASUREMENTS wait, until
+  the frames from before it weigh < 5 % in the average (`WB_SETTLE_OLD`:
+  ln 0.05 / ln(1 - alpha) frames x the measured frame interval = 3 time
+  constants, 125 ms at alpha 0.15; 30 ms - 4 s); the floors follow at once.
+  It was 5 time constants and at least 300 ms (the user's "speed up the
+  equalization", 2026-10-21): after a jump to where the dongles' gains differ
+  otherwise, the old steps held the tuners apart that long. A retune is when
+  the AVERAGED spectrum moved: `on_frame` gets the RF its centre holds (the
+  shift's `placed_hz`) on every frame (`Place`: before the `EVAL_MS` return),
+  and the steps compare the neighbours at those - a tuner's header frequency
+  (`tuner_frequencies`) changes before its FFT worker moves the average, and
+  a step measured in that moment came from two different bands (with the
+  shorter wait steps are measured during fast drags, and the DVB-T's edges
+  were drawn 0.1-0.5 MHz off in 5 % of the frames). (6)
+  `FFTProcessor::process_channel_fft` shifts a retuned tuner's average by
+  the move (wideband scan mode; whole bins, the rest carried; bins
+  the old band didn't hold keep their old values; a move past the band: no
+  shift) - the 8091 header frequency of the packet rides `RawDataPacket::
+  freq_hz` -> `FFTWorkItem::freq_hz` / `seq` (an older packet processed late
+  by another FFT worker doesn't move it back)
+- DRAGS (2026-10-21, the user's "dragging is laggy and glitchy, it takes
+  time to equalize after a retune"): heimdall's wideband scan retune
+  (`setup_wideband_frequencies`) is the full `rtlsdr_set_center_freq` per
+  tuner - not the coherent drag fast path -, one by one on Windows (~110 ms
+  for 5), each tuner's 8091 header frequency flipping as it finishes, no
+  retuning flag, no cooldown; 8092 coalesces queued `set_frequency`s. The
+  first version froze the fill decisions for the settle time after every
+  retune (renewed by every drag step) and dropped them after 1 MHz: a
+  DVB-T drawn at 0 dB for most of a drag, 0.4-3.6 s to recover. Steps were
+  dropped when a neighbour went out of reach: in a fast drag (~0.5 MHz per
+  sweep) a moved tuner and the next unmoved one are > 2.4 MHz apart for a
+  moment - a chain of tuners all inside the signal, no quiet one, the
+  signal at 0 dB for that frame. And the average kept the old band shifted
+  with the tuner until it decayed
+- Limits: a signal wider than all the tuners (or a rise on every tuner)
+  leaves no quiet tuner - drawn as the floor (nothing remembered in this
+  mode); a tuner's step to a neighbour it never overlapped quietly is still
+  measured (any content works); a response unlike the default shape gives
+  wrong steps until learned (~1 min, partial blends meanwhile); the
+  squelch reads the flattened floor against the unflattened spectrum
+  (<= ~2 dB at the band edges); a few frames after a retune carry old
+  samples under the new header frequency (heimdall's pipeline) - averaged
+  in at the new place with weight alpha each. heimdall's wideband scan
+  retunes take the drag fast path since 2026-10-21 (Windows 114 -> 74 ms per
+  step on the KrakenSDR - heimdall_v2/CLAUDE.md *Drag retunes*). Not done:
+  the page panning locally while dragging (it waits for frames: the display
+  follows the receiver - 140-210 ms behind in the drag test, modelled on the
+  full path's ~110 ms sweep; the fast path's 40 ms less per step not measured
+  end to end)
 - `noise_floors.json` (cwd, gitignored; `{"version":1,"floors":{"0|49.6":
   -27.49,...}}`): loaded at start (`nfloor::load`), written by the FFT
   worker at most every 5 min when a floor moved >= 0.5 dB
   (`maybe_save`) and at shutdown (`save_now`), so a start on DVB-T is right
   at once. Not touched by RESET_SETTINGS
 - Not covered: the beamformed-FFT squelch (beamforming on: its own narrow
-  spectrum's percentile, `check_squelch_beamformed`), the wideband scan's
-  stitched spectrum + discrete scanner
+  spectrum's percentile, `check_squelch_beamformed`)
 - Tests: unit (scratch t_nfloor.cpp, `-DNFLOOR_TEST_CLOCK` = a test clock,
   minutes in no time) - noise = the old floor exactly; coherent +20 dB
   band-filling shown at +20 for 10 min; a +10 dB uncorrelated rise learned
@@ -3407,6 +4257,57 @@ Edit `include/config.hpp`:
   converted for the test), the +10 dB noise at 0 dB after ~1 s (no verdict
   for the first frames after the retune), squelch closed. kraken_doa CPU the
   same (50-55 vs 52 % of a core)
+- Tests, wideband scan (job scratch 0d0a7cca, not in the repo): REPLAY
+  (t_wbreplay.cpp: a live 8091 capture, cap8091.py, through the client's
+  own process_channel_fft + nfloor + stitch at its packet rate, alpha 0.15,
+  60 s): noise 2.15 / 2.18 / 2.10 / 2.35 dB in tuners 0-3 (the last one's
+  only noise beside the DVB-T), the DVB-T 22.4 dB in tuner 3, 22.1 just past
+  the 3 | 4 boundary (tuner 4's 24.3 is the mux's own multipath shape), each
+  level wandering <= 1 dB (alpha 0.15's own noise); the first version on the
+  same replay: see above. UNIT (t_wbfloor.cpp, synthetic 5-tuner spectra
+  with the default shape + per-dongle deviations of +-0.3 dB, the live
+  gains, alpha 0.15 noise; 13 scenarios): noise aligned within 0.05 dB and
+  flat; DVB-T +20 / +5 dB over tuners 1-3 equal in every tuner (<= 0.3 dB),
+  the same after 30 min; a signal ending exactly at a boundary (the quiet
+  tuner not lifted); +6 dB of antenna noise on one tuner; +12 dB on every
+  tuner; carriers on boundaries; an FM-like band (200 kHz stations at +25-45
+  dB over half of it) for 10 min, then gone - still flat; a gain change; a
+  start on the signal; a pan of +1 MHz and back; a 2 dB-steeper response
+  learned in 60 s; coherent mode = the old floor. END TO END (fake_wb.py =
+  heimdall in wideband scan mode on 4809x with the measured shape + gains,
+  t_wb_e2e.py reading type 7 frames in exact-bin windows from a test build
+  on 48080): 20 / 20 - noise 2.35 dB in every tuner, DVB-T 21.2-22.1 dB in
+  all five, ~20 dB over the noise, after a pan too, no tuner's level moving
+  more than 0.47 dB (one display step) over 60 s, carriers on the 4
+  boundaries; the main build 4.24 dB in tuners 1-3. kraken_doa CPU 7.7 vs
+  9.9 s over 91 s (the stitch's sort gone). DRAG (fake_wbd.py = heimdall in
+  wideband scan mode following each retune like the Windows one - tuners
+  one by one, 22 ms each, header per tuner, data 8 ms after it, latest
+  command wins; 16384-sample packets; a 7.6 MHz block 20 dB over the noise
+  fixed in RF; t_wb_drag.py plays drags as WIDEBAND_FREQ steps every 50 ms -
+  600 -> 604 MHz in 50 kHz, back in 100 kHz, a 6 MHz jump, 606 -> 596 MHz in
+  250 kHz = 5 MHz/s - and reads every type 7 frame of the whole band): the
+  block over the noise during drags (median / worst frame) - main 0 / -2.8
+  dB (never shown), the first version 0 / -1.4 dB (gone from 1 MHz into a
+  drag), the blend 19.3 / 17.4 dB but the fast drag -0.5 dB (the chain
+  break), now 19.3-19.8 / 16.5 dB; the tuners inside it within 1.4 dB of
+  each other (p95; fast 1.9; the first version 18 dB); settled (3-frame
+  median within 1 dB) 0 s after a drag, 0.25 s after the jump (first
+  version 0.4-3.6 s); its edges drawn within 1.3 kHz of the truth in 95 %
+  of the frames during drags (without the shift 100-250 kHz: the old band
+  shifted); the display at the new frequency 140-210 ms after the last
+  command in every build (the tuners' sweep + the 50 ms frame tick). JUMP
+  (t_wb_jump.py + ana_jump.py: fake_wbd.py with the dongles' gains drifting
+  apart 0.2-0.5 dB per 100 MHz; lined up = every tuner's noise and the
+  signal parts within 1.5 dB, 3-frame median): the shorter settle wait
+  (5 % rule) at alpha 0.15 - 293 MHz 0.14-0.31 s (5 time constants / >= 300
+  ms: 0.45), back 300 MHz 0.25-0.61 s, most 0.30 (0.50), 6 / 3 MHz 0.20-0.25
+  s (0.19-0.27); at 0.05 back 300 MHz 0.55-0.59 s (0.91), the rest the same
+  (there the averaging itself is slower than the wait). Drags with it: the
+  first version (header frequencies) drew the DVB-T's edges 139-459 kHz off
+  in 5 % of the fast drag's frames (p95, 3 runs; 300 ms wait 1.3-59 kHz);
+  with the averages' own frequencies 1.2-1.3 kHz, the rest as before (block
+  16.9-18.8 dB over the noise at worst, spread p95 <= 1.9 dB)
 **Digital TV (`plugins/dtv/`, README.md there; ARRAY plugin API):**
 - Plugin id `dtv`, name "Digital TV (DVB-T/T2, ISDB-T, ATSC 1.0/3.0,
   DTMB)", v2.0 - was `sfn` "SFN Separation (..., DAB)" (renamed 2026-10-14;
@@ -3736,7 +4637,7 @@ Edit `include/config.hpp`:
   reported a valid frame within `DIGITAL_SQUELCH_HOLD_MS` 1.5 s - or the
   plugin's own hold, `kp::Info::squelch_hold_s` (`--info`
   "squelch_hold_s", `PluginInfo::squelch_hold_s`, the engine's
-  `hold_ms_by_`; ctcss 0.35 s: it reports a valid span every 50 ms while a
+  `hold_ms_by_`; analog_id 0.35 s: it reports a valid span every 50 ms while a
   tone is there, and 1.5 s would pass 1.5 s of noise after every
   transmission) (`digitalSquelchOpen` -> `DigitalDecoder::squelch_open`,
   the engine's `last_valid_by_` per plugin) - the pipeline's squelch_open,
@@ -4209,12 +5110,82 @@ Edit `include/config.hpp`:
   a periodic narrow-FSK device near 868.166 MHz every 16 s and the
   calibration noise demodulated, nothing reported; 2.6 % of a core
 
-**CTCSS / DCS (`plugins/ctcss/`, README.md there):**
-- The sub-audible signalling under analog FM (ETSI TS 103 236: tones,
+**Analog FM IDs (`plugins/analog_id/`, README.md there; was `ctcss` "CTCSS / DCS" until 2026-10-22):**
+- The user's request (2026-10-22): radio IDs on analog FM - MDC1200,
+  FleetSync, 5-tone selcall (ZVEI / CCIR / EEA), DTMF, 1750 Hz - as part of
+  the CTCSS plugin, renamed for "IDs on analog signals". id `analog_id`,
+  name "Analog FM IDs (CTCSS / DCS, MDC1200, FleetSync, 5-tone, DTMF, 1750
+  Hz)", v2.0. The old id is mapped (`dig::renamed_plugin`, now exported
+  from dig_report.cpp: `ctcss` -> `analog_id`, like `sfn` -> `dtv`): saved
+  `PLUGIN:ctcss` VFOs, `ctcss.*` options, AUTO_DETECT_OFF; `PluginRegistry::
+  scan()` skips a renamed id's folder without sources (an old checkout's
+  gitignored `plugins/ctcss/build/` would run next to analog_id). UI:
+  `rdfKind` maps pl `analog_id` (and `ctcss`) to kind `tone`, `rdfIcon` 🆔
+  MDC / FleetSync, 🔢 selcall / DTMF, 🔔 tone / code / burst; "Every analog
+  transmitter"
+- In-band signalling (`sig.hpp/.cpp`, `asig::Sig`) on the 12 kHz audio
+  `rx.cpp` now also puts out (5 kHz low-pass, `audio_time(k)` = its RF
+  time): FFSK by sliding one-bit complex correlators (1200 / 1800 Hz at 1200
+  bit/s, 1200 / 2400 at 2400, on a 300 Hz high-pass), sync search at every
+  sample with a BALANCED decision threshold (g = sqrt(r_b / r_a) from the
+  crosstalk on the sync's own bits - scaling each tone by its level read a
+  live MDC sync 20 / 39 wrong); MDC1200 (`mdc.hpp`: XOR-precoded MSK read
+  COHERENTLY - the phase at bit i + 1's start = data bit i -, 7 x 16
+  interleave, convolutional code's single errors by syndrome majority,
+  CRC-16, double packets 0x35 / 0x55, an op table: PTT ID pre / post,
+  emergency, status, message, call alert, radio check, inhibit ...); FleetSync
+  (`fleetsync.hpp`, namespace `fleetsync` - `fsync` collided with POSIX
+  fsync(): 64-bit blocks, CRC, fleet = byte + 99, unit 12 bits + 999,
+  FleetSync II = 4 BCH(15,7) nibbles per 16 bits; read COHERENTLY first - a
+  2-state Viterbi over the phase parity the bits before leave (1200 Hz at
+  2400 bit/s / 1800 Hz at 1200 bit/s turn pi per bit), references from the
+  sync's 32 bits - then by tone; 2-4 dB more sensitive, and the real 2400
+  bit/s recording decodes at every sampling phase instead of 1 in 5);
+  tones (512-point FFT of 20 ms every 5 ms): selcall (`selcall.hpp`: the
+  Midian tables of ZVEI1-3 / PZVEI / DZVEI / PDZVEI / CCIR1-2 / PCCIR / EEA /
+  EIA / NATEL / MODAT with priors - ZVEI and DZVEI share tones, auto = the
+  common reading + the other as `alt`, option `selcall` picks one; runs of 4+
+  steady tones, repeats as E, consecutive identical symbols refused), DTMF
+  (talk-off protection: frequencies within 1.8 %, still within 0.6 %, >= 4
+  frames, a lone digit >= 8, the pair >= 75 % of the band, voice harmonic
+  families refused), steady bursts (1600-2550 Hz on the 50 Hz grid, >= 0.25
+  s - 1750 Hz; other steady tones >= 0.5 s as "tone" events)
+- `decoder.cpp` (`AnalogIdDecoder`): ONE transmission at a time, opened by a
+  tone / code (backdated) or an ID (from the carrier's rise in its 10 ms
+  history), ended by the tone tracker / DCS / carrier (< 0.4 of its level 30
+  ms); named in order sender ID (MDC / FleetSync, at once) > selcall / DTMF >
+  tone / code > burst, waiting HOLD_SHORT 1.6 s - HOLD_LONG 4.2 s once IDs
+  were heard on the channel (post-IDs come at the release; TalkerDoa keeps
+  frames 6 s) - an ID up to LATE_ID 0.8 s after the end still belongs to it;
+  a sender ID decoded later renames the spans not reported yet; another
+  sender's ID inside one carrier (repeater output) starts a new
+  transmission. Console commands name the radio they ADDRESS: no talker.
+  Options `squelch` "ID / tone squelch" (tones / codes + `MDC 1029`,
+  `FleetSync 100-1001`, `CCIR 12345`, `DTMF 123`, `Burst 1750`, kinds),
+  `ids` (all / tone = the old naming), `selcall`, `min_dev`, `nonstd`.
+  Table "ID / tone, Type, Details, With, Deviation, Tx, Last, Air time,
+  Ending" + details, facts, events, raw. Offline env `CTCSS_DUMP`,
+  `ANALOG_ID_DUMP`, `ANALOG_ID_AUDIO=<file>` (the 12 kHz audio)
+- Generator `tools/analog_gen.py` (was `ctcss_gen.py`, old options kept) +
+  `--mdc`, `--fleetsync` (`--fs-baud`, `--fs2`), `--selcall`, `--dtmf`,
+  `--burst`, `--sig-at pre|post|both`, `--sig-preemph`, `--sig-baud-err`,
+  `--audio-u8` (8 kHz for reference decoders); playback entries
+  `ctcss-four-tones` and `analog-ids-six` (MDC 1234 / MDC 2002 on one CTCSS
+  tone, FleetSync, CCIR, DTMF, 1750 Hz at six bearings)
+- Tests (job scratch 9ee43aa0, numbers in the README): the generator against
+  Kaufman's GPL MDC / FleetSync decoders (scratch oracle only, never in the
+  repo); 40 / 40 synthetic cases (ids + spans); CTCSS / DCS A/B against the
+  old plugin 46 / 46 identical; false alarms 2 in 50 min of voice, 0 on
+  noise; scene analog-ids-six every talker exact (offline, 5 antennas);
+  real recordings: Wikipedia MDC1200 1029 x 3 (= the reference), sigidwiki
+  FleetSync 1200 + 2400 bit/s BOT / EOT 167-1002, ZVEI 12345 off air, CCIR
+  04221, DTMF sequences, Whelen 461####333
+- (Below: the CTCSS / DCS part, unchanged from the `ctcss` plugin.) The
+  sub-audible signalling under analog FM (ETSI TS 103 236: tones,
   DCS codeword, polarity, the 83 codes' bit patterns): `sample_rate` 24
   kHz (= the 24 kHz VFO, no resampling), `min_vfo_rate` 12 kHz, talkers,
-  NOT manual only (in Auto detect an analog channel with a tone shows as
-  this plugin; without one it reports nothing), no voice
+  NOT manual only (in Auto detect an analog channel with a tone or an ID
+  shows as this plugin; without one it reports nothing), no voice
 - `rx.cpp`: channel filter +-7.5 kHz, discriminator, 24 kHz -> 2400 -> 1200
   Hz; a 45 Hz high-passed stream (CTCSS), a 130-290 Hz low-passed one (DCS)
   and the carrier power aligned with them. CTCSS: 2048-point FFT of the last
@@ -4257,7 +5228,7 @@ Edit `include/config.hpp`:
   `DigitalDecoder::takes_voice()` / `lead_talker()` (Voice to Text's analog
   fallback + naming, see *Voice to Text*), TalkerInfo `dur_s` / `air_s`
   (status `dur` / `air`), UI kind `tone` (see *DoA per talker*)
-- Generator `tools/ctcss_gen.py` (one transmitter: keyed spans, real or
+- Generator `tools/analog_gen.py` (was `ctcss_gen.py`; one transmitter: keyed spans, real or
   synthetic speech through a TX audio chain, CTCSS + reverse burst / DCS +
   turn-off, tolerances, narrow, de-emphasis, offset, noise); scenes with
   `plugins/sdk/tools/uca_scene.py`
@@ -4567,6 +5538,88 @@ Edit `include/config.hpp`:
   MHz (ANZ default channels) + 25 s at 922.977: no frame (first version -
   its chain could not have decoded one). No real Meshtastic packet yet
 
+**RDS / RBDS + SCA (`plugins/rds/`, README.md there; the user's request 2026-10-22):**
+- FM broadcast subcarriers: `sample_rate` 0 (the VFO's own rate: 240 kHz
+  for RDS, 300-400 kHz for a 92 kHz SCA; > 480 kHz decimated, 300-480 kHz
+  channel-filtered +-120 / 175 kHz by the plugin), `min_vfo_rate` 150 kHz,
+  `voice`, `talkers`, `multichannel` (every antenna combined BEFORE the
+  discriminator: main eigenvector of the covariance, 0.25 s, interpolated
+  per sample, phase-aligned - `mpx.cpp` `Combiner`; option `array`, VFO <=
+  480 kHz), NOT manual only (nothing without RDS)
+- Discriminator (polynomial atan2) -> MPX in Hz -> the RDS band 54-79 kHz
+  as ONE complex stream (66.5 kHz centre, a polyphase decimator to >= 48
+  kHz: `Band` in decoder.cpp) for RDS and the RDS2 streams 66.5 / 71.25 /
+  76 kHz; `rds_demod.hpp` `RdsDemod`: mix (table `Mixer` - the frequencies
+  repeat within <= 8192 samples), msresamp to 19 kHz (8 per half-symbol;
+  its delay MEASURED at init - `msresamp_crcf_get_delay` was ~1 ms off,
+  `measured_delay`), RRC roll-off 1, Gardner (phase-free; the loop
+  integrator's sign was wrong first: it ran to its clamp), Costas ~10 Hz,
+  biphase pairing, differential decoding with soft values + the bit's MPX
+  time. `rds_block.hpp` `BlockSync`: w mod g == offset (A 0FC, B 198, C
+  168, C' 350, D 1B4 - checked against the EN 50067 parity matrix on 10000
+  blocks), 3-pulse sync, burst <= 3 bits only among the 6 weakest bits,
+  else 1-3 of the 5 weakest flipped; lost at 40 / 50, slip recovery;
+  `generation()` per acquisition. `rds_station.cpp` `GroupDecoder`: every
+  group type (0A/B PS TA MS DI AF, 1A ECC / language / TMC / EWS ids + PIN,
+  2A/B RT, 3A ODA directory, 4A CT, 10A PTYN, 14A/B EON, 15A Long PS, 15B,
+  ODAs RT+ 4BD7 / eRT 6552 / TMC / DAB 0093), per PI (`Station`, <= 64);
+  RULES: a corrected block's data only with a second identical copy
+  (`SegText::put`, `confirm`), a group with < 2 good blocks unused (random
+  words pass an offset check 1 in 1024 - a lone block B in a gap between
+  stations gave a false PTY), a new PI after 3 groups in a row (2 first)
+  with one uncorrected, a PI-less group the station's only <= 0.25 s after
+  one WITH its PI (a PI-less group extending that let the next station's
+  first groups into the old one's data), PS complete = all four segments
+  confirmed since one changed (in order was too strict for weak signals),
+  dynamic PS = 3+ PSs a minute; `Stream::there()` = synced + 3 groups with
+  3+ good blocks this sync generation (a false sync - a phantom RDS2
+  stream - gives none). PTY names RDS / RBDS (option `pty`; auto = ECC US /
+  CA / MX, else the station location in North America); RBDS call sign from
+  the PI; tables `rds_tables.hpp` (EN 50067 / NRSC-4-B as compiled by
+  redsea, ISC - notice there)
+- RDS2 streams: decoded (not via the spectrum - too weak) 4 s every 30 s
+  and on a station change while RDS decodes, kept while synced; only
+  counted (groups, block errors)
+- Subcarriers (`mpx.cpp`): `MpxSpectrum` (0.8 s, every other frame), floor
+  = 20th percentile +-16 kHz, regions >= 5 dB / >= 3 kHz / peak >= 7 dB in
+  20 (stereo: 54) - 99 kHz minus pilot / 38 kHz / synced RDS / RDS2;
+  twins (< 2.5 kHz gap, within 6 dB, <= 24 kHz) merged (wide FSK's two
+  tones), a stronger neighbour's skirt (12 dB down within 2.5 kHz) dropped;
+  matched to the tracked ones by band overlap; `probe_subcarrier` on 0.5 s
+  of the MPX ring (new ones at once, then every 30 s): envelope CV -> FM /
+  not; FM: clock line of the squared derivative (bit rate), kurtosis, a
+  few lines holding > 50 % of the deviation's power = tones (audio - a
+  tone's derivative has a line at 2f, which read as FSK), dev / carrier;
+  else RDS2-shaped / DARC-like / AM. Gone after 10 s
+- Audio (`audio` option): auto = the strongest FM-audio SCA else the main
+  programme (mono, 75 us), sca / 67 / 92 / other (`sca_khz`); SCA 150 us
+  (`deemph`), muted "(no carrier)" 1.5 s after its subcarrier left the
+  spectrum. Voice to Text takes that audio. "🔊 Listening" again = back to
+  the VFO's WBFM, bandwidth kept (*VFO audio*). kraken_doa's WBFM is mono
+  (no stereo decoder anywhere)
+- Talkers: a packet `PI xxxx` per RDS group with >= 3 good blocks of the
+  confirmed station (exact 104 bits, ~0.2 ms - the first biphase bit's
+  start), the carrier to the kHz, 200 kHz wide, avg 10 s, keep 30 min.
+  UI kind `broadcast` 🎙 (`RDF_PK_KIND` rds, heads Station (PI) / Call sign
+  · PS · MHz / Groups, by name, unit group, "Every broadcast station")
+- Generator `tools/rds_gen.py` (real groups, stereo, SCA FM / FSK, RDS2,
+  stations at bearings / times, 480 kHz x an integer, cf32 / cu8, pieces);
+  playback `rds-two-stations` (`tools/scene_two.json`: RDS NZ station at 60
+  deg, RBDS "KRKN" = PI 3DF5 at 200 deg, taking turns)
+- Tests (job scratch 8e472af8, numbers in the README): every field; two
+  stations 60.0 / 200.0 deg offline and END TO END (this PC's kraken_doa.exe
+  from a scratch cwd with `KRAKEN_PLUGIN_DIR`, playback over the WebSocket:
+  DF status exact, "5 combined", Listen -> SCA, no spurious events in 150
+  s); 2.4 MHz input; RDS2; sensitivity one antenna full at 18 dB CNR, five
+  combined at 10 dB (~7 dB gain); noise nothing; a REAL station (pysdr.org's
+  99.5 MHz recording: PI 571D, RT, dynamic PS, a real 67 kHz SCA with
+  speech-like audio); CPU 0.9 % (240 kHz) / 1.7 % (480 kHz) / 2.1 % (5
+  antennas) of real time on this PC; Linux x86_64 / aarch64 syntax-clean
+  (zig). Not done: TMC events, RDS2 groups, DARC / SCA data payloads, HD
+  Radio, stereo decoding. Note for tests on Windows: kraken_doa.exe
+  chdir's to its own folder when the cwd has no kraken_doa.html - copy the
+  page into a scratch cwd or it runs in the checkout
+
 **Wildlife collars (`plugins/wildlife/`, README.md there):**
 - Wildlife tracking transmitters anywhere in VHF / UHF, in any country
   (pulsed CW: mammal / livestock collars, bird / bat tags, Lotek /
@@ -4866,7 +5919,8 @@ Edit `include/config.hpp`:
   capture with partial pushes): the list complete between full pushes, one
   order throughout, by name, compass bearings, heading sorts + reverse +
   localStorage, a row still picks its device
-- Built with `-O3` (`plugins/ism/CXXFLAGS`): the front end's per-bin loops
+- Built with `-O3` (every plugin's default since 2026-10-22 - root
+  CLAUDE.md *Compiler flags*; it was ism's own `CXXFLAGS` file): the front end's per-bin loops
   (`__restrict` pointers) vectorise - GCC's -O2 cost model takes no loop
   that needs an epilogue; the output is identical (checked on all 1125
   recordings against the -O2 build, scratchpad scripts/cmp_bin.py). CPU
@@ -5095,7 +6149,7 @@ Edit `include/config.hpp`:
   executing thread (it owns its scratch)
 - Ported: fft_processor (per-channel spectra, beamformed FFT), beamformer
   (SNR FFT, FD-DAS 256 forward / inverse), plugins beacon406, cells
-  (dsp_util Fft + tools/cell_gen), ctcss (r2c), dme, dtv (dsp_util Fft),
+  (dsp_util Fft + tools/cell_gen), analog_id (r2c), dme, dtv (dsp_util Fft),
   flarm, ils (incl. r2c), ism, lora (channelizer, phy, search, decoder),
   wildlife; `sdk/tools/make_testsignal.py` compiles .cpp generators with
   `-I../external/pffft` + libkrakendig.a. heimdall_v2 followed the same day
@@ -5147,10 +6201,9 @@ Edit `include/config.hpp`:
   bbox / a pane's width x dpr). Transport-level like SUBSCRIBE (never reaches
   the control handler, not persisted, per connection). The first one moves
   the socket off TOPIC_FFT (the shared type 0 / 6 broadcast) into
-  `g_spec_sockets`. Junk is ignored (`is_finite_value`, not std::isfinite:
-  -Ofast)
+  `g_spec_sockets`. Junk is ignored (`is_finite_value`)
 - Every 50 ms tick `build_fft_message(&snap, legacy)` runs as before (it
-  feeds the scanners and keeps the wideband scan's average) and also copies
+  feeds the scanners and stitches the wideband scan's spectrum) and also copies
   each display's normalized full-resolution spectrum into a
   `SpectrumSnapshot` (centre in exact Hz - `coherent_tuner_hz()` /
   `exact_tuner_hz()`; the old header's float32 MHz is ~30 Hz coarse); the
@@ -5344,8 +6397,20 @@ Edit `include/config.hpp`:
   decimator_info; refreshed in place (not part of updateDecimatorList's
   structure check). The top bar's Audio off dims them (`.mute-all`, said in
   the tooltip); clicking a muted speaker while it is off switches the audio
-  on too. The decoder tab's 🔊 Listen adds the VFO (Digital demod), "🔊
-  Listening" mutes it again. The spectrum title lists the VFOs heard ("D0
+  on too. The decoder tab's 🔊 Listen adds the VFO (Digital demod); "🔊
+  Listening" goes back to the demod it had before Digital, heard or muted
+  as it was then, the bandwidth kept (`digDemodBefore` in the globals
+  block, set by `setDecimatorDemodMode` on entering Digital, localStorage
+  `kraken_dig_demod_before`; nothing remembered - Digital set by another
+  page - = WBFM on a VFO >= 150 kHz, else muted as before:
+  `digListenBack`). It only muted it until 2026-10-22: the RDS plugin's SCA
+  audio had no way back to the station's WBFM but the card's Demod list,
+  which also reset 400 kHz to 240 kHz (the 92 kHz SCA gone). That list
+  (`decDemodPicked`) now keeps the bandwidth too when it goes back to the
+  remembered demod; any other demod gets its usual bandwidth as before
+  (saved frequencies / the assistant call `setDecimatorDemodMode` as
+  before). Test: job scratch 8e472af8 t_listen.py (headless Edge, real
+  clicks, the rds playback on a test build: 35 checks). The spectrum title lists the VFOs heard ("D0
   NBFM, D2 AM"). The recorder's band VFO default reads "The VFO you listen
   to (the first 🔊)"
 - Tests (job scratch 46eef211, test build on 5708x, fake heimdall with FM
@@ -5458,10 +6523,13 @@ Edit `include/config.hpp`:
   executable `plugins/<id>/build/decoder` (linked as decoder.tmp, then
   renamed: a running copy keeps its inode). The top Makefile's `plugins`
   target runs it with -k and only warns on failure; CMake has an ALL target.
-  An optional `CXXFLAGS` file in a plugin folder adds compiler flags (last
-  on the command line; ism: -O3). A `LICENSE` file in a plugin folder = the
-  plugin has a licence of its own: built from its files + the MIT SDK +
-  pffft only, no `lib/` (root CLAUDE.md *Licensing*; ism)
+  Every plugin and libkrakendig build with `-O3 -fno-math-errno
+  -fcx-fortran-rules` (+ `-mcpu=native` on aarch64 - root CLAUDE.md
+  *Compiler flags*). An optional `CXXFLAGS` file in a plugin folder adds
+  compiler flags (last on the command line; no shipped plugin has one). A
+  `LICENSE` file in a plugin folder = the plugin has a licence of its own:
+  built from its files + the MIT SDK + pffft only, no `lib/` (root
+  CLAUDE.md *Licensing*; ism, flarm)
 - `decoder --info` (JSON incl. `options` and `options_tsv` - the
   tab-separated copy kraken_doa's flat JSON reader parses; read by
   `PluginRegistry::scan()` at startup, on `PLUGINS_RESCAN` (worker thread,
@@ -5609,7 +6677,7 @@ the internet and writes / changes decoder plugins):
   - control (refused in Read only): `tune` (FREQ / TUNER_FREQ, then waits
     <= 12 s until `MessageBuilders::spectrum_center_hz()` shows it and the
     recalibration ended), `set_gain`, `add_vfo`, `set_vfo` (freq, bandwidth
-    -> nearest option / a decoder's minimum, demod, decoder - fixed-
+    -> any whole Hz / a decoder's minimum (the narrowest efficient size), demod, decoder - fixed-
     frequency and `lock_vfo` decoders handled the way the page does it -,
     squelch, listen, transcribe), `set_decoder_option`, `remove_vfo`,
     `set_doa`, `save_frequency` (SF_SET, id `ai<ms>`). All through
@@ -5999,7 +7067,8 @@ the internet and writes / changes decoder plugins):
   receiver by dispatching normal control commands on the uWS loop
   (`loop->defer` → `ControlHandler::handle_websocket_message`), so sync,
   persistence and heimdall forwarding behave as if a browser sent them.
-  Cloud VFO bandwidths snap to the nearest `BANDWIDTH_OPTIONS` entry;
+  Cloud VFO bandwidths are applied in Hz as they are (`SET_DECIMATOR_BW_HZ`;
+  they snapped to the nearest `BANDWIDTH_OPTIONS` entry until 2026-10-21);
   `vfo_squelch_N` sets the level AND enables that VFO's squelch (the mapper
   assumes squelch is always on)
 - Everything runs on one worker thread started from main(); records are
@@ -6056,23 +7125,35 @@ for (size_t i = 0; i < num_samples; i++) {
 data receiver): each channel's DC offset is an EMA of packet means (k = 0.05
 per ~7 ms packet, corner ~1 Hz), subtracted from every sample. Subtracting
 each packet's OWN mean was a ~150 Hz-wide notch at the centre (it removed a CW
-beacon or AM carrier parked there). The seed is a flag, not NaN: `-Ofast`
-assumes no NaNs.
+beacon or AM carrier parked there). The seed is a flag, not NaN (written for
+the `-Ofast` build of then, which assumed no NaNs).
 
 ### 2. Decimation Architecture
 
-**Thread-Local Decimators:**
-- Zero allocation per call (thread_local storage)
-- Shared coefficient cache with 95%+ hit rate
-- Pre-reserved buffers (no dynamic allocation in hot path)
-
-**Coefficient Caching:**
-```cpp
-thread_local std::map<...> decimator_cache;  // Per-thread instance
-static std::shared_mutex cache_mutex;        // Multi-reader, single-writer
-```
-
-**Performance:** ~8000 samples/µs per channel
+(The thread-local decimators / coefficient cache this section used to
+describe are long gone.) Per VFO a `SharedDecimator`, per antenna a
+`ChannelDecimState` (it follows the channel, not the pool thread): the
+mixer (in front of, or folded into, the first stage) and a cascade of
+`FirStage` block FIRs (every output computed straight from the stage's
+buffer - no per-sample window pushes; regular / folded / halfband), split
+as `planStages` finds cheapest, a block through the whole cascade in
+1024-sample chunks (`DECIM_CHUNK`: the buffers stay in L1), a first stage
+whose input isn't mixed in front filtering straight from the block (no
+copy), every VFO in ONE pass per antenna (`decimateVfos`: a task per
+antenna - per input array - running each VFO's cascade on a chunk while it
+is in L1; the first task on the calling thread, the others on ONE
+decimation pool shared by every VFO, `decimation_pool()`, cores + 1
+threads; each VFO had its own pool of 8 until 2026-10-22: 51 threads with
+three VFOs, 32 now). Details + measurements:
+*Arbitrary VFO bandwidth* above (`tools/decim_bench.cpp`). Pi 5, one
+antenna, hot caches, ns per input sample with the VFO off the tuner centre
+(mixer included): ~2.1-3.5 up to 240 kHz, ~3.9-7.3 at 250 kHz - 1.2 MHz,
+7.9-9.9 for the full-rate widths 1.2 - 2.4 MHz, 3.2 for 2.4 MHz (the mixer
+alone). In the live pipeline a 12.5 kHz VFO with DoA and 5 antennas adds
+~6-7 % of a core to kraken_doa (it was ~19 % before the chunking: memory-
+bound, see *Arbitrary VFO bandwidth*); in user-space cycles at 2.4 GHz,
+from one to three such VFOs ~2.7 % each with the shared pass (4.8 before),
+from three to five ~3.1 each (the same before).
 
 ### 3. FFT Processing
 
@@ -6088,12 +7169,30 @@ ctx.plan = kfft_plan_dft_1d(fft_size, ctx.fft_in, ctx.fft_out, KFFT_FORWARD);
 kfft_execute(ctx.plan);
 ```
 
+**Power -> dB per bin (2026-10-22):** `bins_to_db` (fft_processor.cpp: the
+spectrum, the beamformed spectrum; beamformer.cpp's SNR FFT the same) with
+`fast_db10` (`include/utils/fast_log.hpp`: exponent bits + atanh series,
+<= 6e-6 dB from the exact value) on straight runs - the DC-centring wrap is
+done as two runs. The old loop wrapped its index with a mask, so it never
+vectorized: a libm `log2f` per bin, 8.5 ns on the Pi 5 (its comment's
+"hardware log2f / VLOG2" doesn't exist on ARMv8), ~29 % of kraken_doa's CPU
+with no VFO decimated (~2.6 % of a core; per tuner FFT'd, so 5x that in
+independent mode). Now 2.7 ns a bin on the Pi (glibc would vectorize
+std::log2f in the straight loop too: 2.5), 0.39 ns on the dev PC's Ryzen
+(MinGW has no vector log2f: 2.6 there) - one implementation, the same values
+on every platform. `tools/fast_log_test.cpp` (93.6 M values 1e-15 .. 1e6 +
+the three loop shapes timed)
+
 ### 4. FM Demodulation
 
 **Hardware atan2f:** Uses ARM NEON internally, faster than any approximation
 ```cpp
-float phase = std::atan2f(q, i);  // Hardware accelerated on ARM
+float phase = std::atan2(q, i);  // float overload; hardware accelerated on ARM
 ```
+Use the `std::` overloads, not the C names: libstdc++ before GCC 14 (Debian
+12's GCC 12) has no `std::log10f` / `std::atan2f` / `std::sqrtf` ... (C89
+functions' `f` forms) - only the C99 ones (`std::log2f`, `std::lrintf`,
+`std::fmaf`).
 
 **Liquid-DSP Resampling:** Multi-stage decimation for 48kHz audio output
 
@@ -6104,7 +7203,11 @@ the AM audio's lows.
 
 **FM only (DoA and beamforming off):** only the VFOs heard (🔊) run (+ those with a decoder / Transcribe / audio recording), decimating
 only the listened-to channel (squelch reads the main FFT, not decimated data),
-and the receiver converts only that channel.
+and the receiver converts only that channel. None of them (every VFO muted,
+no decoder): nothing is decimated - until 2026-10-22 that empty list took
+the several-VFO branch of the pass (`reserve(size - 1)`: length_error) and
+kraken_doa terminated (found while profiling; the build from before
+arbitrary widths did the same).
 
 ### 5. MUSIC Algorithm
 
@@ -6178,10 +7281,13 @@ mallopt(M_ARENA_MAX, 32);  // In main.cpp for 23-28 threads
 
 ### Modifying Bandwidth Options
 
-1. **Config:** Edit `BANDWIDTH_OPTIONS[]` in `include/config.hpp`
-2. **No rebuild needed** for option changes (loaded at runtime)
-3. **Constraints:** Only integer decimation factors (no resampling)
-4. **Range:** Factor must divide `SAMPLE_RATE` evenly
+A VFO takes any width (*Arbitrary VFO bandwidth* above), so there is no list
+to edit for that. `BANDWIDTH_OPTIONS[]` (`include/config.hpp`) is only the
+index list older pages / files / scripts use (`SET_DECIMATOR_BW:id:index`,
+DECIMATORS field 2) - don't reorder it. The limits are `VFO_BW_MIN_HZ` /
+`VFO_BW_MAX_HZ`; the decimation stays integer (no resampling) by a divisor
+of `SAMPLE_RATE_HZ` (`decimation_for_bandwidth`); the page's efficient sizes
+(`BW_EFFICIENT`) are computed the same way - keep the two alike.
 
 ### Updating Web UI
 
@@ -6247,7 +7353,7 @@ sudo perf top
 
 **Critical Hot Paths:**
 - `src/utils/iq_converter.cpp:convert()` - IQ conversion (auto-vectorized)
-- `src/signal_processing/shared_decimator.cpp:decimate()` - Thread-local decimation
+- `src/signal_processing/shared_decimator.cpp:decimateVfos()` - every VFO's decimation, a task per antenna (`ChannelPass::chunk` per VFO and chunk; `FirStage::produce`: the FIR kernels)
 - `src/networking/data_receiver.cpp:data_receiver_thread()` - Main data ingestion
 - `src/networking/data_receiver.cpp:decimation_processor_thread()` - Decimation coordination
 - `src/networking/data_receiver.cpp:fft_processor_thread_per_channel()` - Per-channel FFT workers
@@ -6288,7 +7394,9 @@ sudo perf top
 
 **Solutions:**
 1. Reduce active channels (process fewer channels)
-2. Increase decimation factor: Higher index in `BANDWIDTH_OPTIONS[]`
+2. Narrow the VFOs (a smaller bandwidth = a higher decimation); between 1.2
+   and 2.4 MHz a VFO runs a full-rate filter - 1.2 MHz or 2.4 MHz exactly is
+   cheaper (the BW box's tooltip says what rate a width runs at)
 3. Disable DoA processing if not needed: `doa_enabled = false` via WebSocket
 4. Check thread count: Should be ~23-28 threads (expected)
 

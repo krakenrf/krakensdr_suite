@@ -1,0 +1,47 @@
+[
+{
+ "id": "rds-two-stations",
+ "title": "RDS / SCA: two FM stations taking turns on 98.5 MHz",
+ "description": "tools/scene_two.json at 2.4 MHz, 12 s looped, the stations 400 kHz off the tuner centre: 'Kraken FM' (RDS, PI 9201, New Zealand ECC: PS, RadioText + RT+ title / artist, PTY Pop music + PTYN, clock time UTC+13, AF list, EON, Long PS, a TA, a 67 kHz SCA playing a C-E-G tone sequence) at 60 deg for 0.3-5.8 s, then 'KRKN' (RBDS, the PI = call sign KRKN, US ECC: PS, RadioText, PTY Talk, a 92 kHz FSK data SCA at 4800 bit/s, an RDS2 data stream on 66.5 kHz) at 200 deg for 6.2-11.7 s. Expect a talker per PI at those bearings (PI 9201 / PI 3DF5), both stations in the decoder table, the subcarriers in the facts; Listen plays the SCA tones while Kraken FM is on air.",
+ "rf_hz": 98500000.0,
+ "tuner_offset_hz": 400000,
+ "seconds": 12,
+ "vfo": {
+  "bw_khz": 400,
+  "demod": "WBFM"
+ },
+ "files": {
+  "scene.json": {
+   "$from": "{tools}/scene_two.json"
+  }
+ },
+ "steps": [
+  [
+   "{tools}/rds_gen.py",
+   "scene.json",
+   "out.cu8"
+  ]
+ ],
+ "output": "out.cu8",
+ "expect": [
+  {
+   "tid": "PI 9201",
+   "bearing": 60
+  },
+  {
+   "tid": "PI 3DF5",
+   "bearing": 200
+  },
+  {
+   "event": "PS: \"KRAKEN\""
+  },
+  {
+   "event": "Subcarrier 67.0 kHz SCA (FM audio)"
+  },
+  {
+   "event": "RDS2 data stream 1"
+  }
+ ],
+ "tol_deg": 5
+}
+]

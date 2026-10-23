@@ -66,9 +66,10 @@ static void for_each_tuner(size_t n, F&& fn) {
 #endif
 }
 
-// Drag retunes (the fork's rtlsdr_set_center_freq_fast): a coherent retune
-// while a drag is open - within FAST_TUNE_SETTLE_MS of the previous retune,
-// or its tuners not finished yet (at most FAST_TUNE_DRAG_WINDOW_MS) - keeps
+// Drag retunes (the fork's rtlsdr_set_center_freq_fast): a coherent or
+// wideband scan retune while a drag is open - within FAST_TUNE_SETTLE_MS of
+// the previous retune, or its tuners not finished yet (at most
+// FAST_TUNE_DRAG_WINDOW_MS) - keeps
 // the R820T's PLL autotune clock at 128 kHz. The full path switches it to
 // 128 kHz before N / SDM and back to 8 kHz after the lock: 2 of the control
 // transfers a drag step costs per tuner (5 on Windows, 6 on Linux - its
@@ -91,9 +92,10 @@ static void for_each_tuner(size_t n, F&& fn) {
 static constexpr int FAST_TUNE_FLAGS = RTLSDR_TUNE_KEEP_AUTOTUNE;
 static constexpr int64_t FAST_TUNE_DRAG_WINDOW_MS = 1000;
 static constexpr int64_t FAST_TUNE_SETTLE_MS = 400;
-// a tuner may be in the drag state; both under device_io_mutex
+// a tuner may be in the drag state; the last coherent / wideband scan
+// retune - both written under device_io_mutex
 static std::atomic<bool> fast_tune_pending{false};
-static std::atomic<int64_t> last_coherent_retune_ns{0};
+static std::atomic<int64_t> last_drag_retune_ns{0};
 
 static int64_t steady_now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -107,6 +109,27 @@ static bool fast_retune_allowed() {
     return operating_mode.load() == OperatingMode::COHERENT && !kerberos_manual_cal_only() &&
            !discrete_scanner.enabled.load() && !recovery_in_progress.load(std::memory_order_acquire) &&
            !downconverter.enabled.load();
+}
+
+// The wideband scan's drag steps (setup_wideband_frequencies): no calibration
+// runs there, so only the discrete scanner's hops (seconds apart, each
+// flushed and settled) and a recovery keep the full path
+static bool fast_wideband_allowed() {
+    return operating_mode.load() == OperatingMode::WIDEBAND_SCAN && !discrete_scanner.enabled.load() &&
+           !recovery_in_progress.load(std::memory_order_acquire) && !downconverter.enabled.load();
+}
+
+// A drag step: decided under device_io_mutex, which the caller holds. Every
+// retune counts as the drag's latest (the watchdog's finish waits for 400 ms
+// without one); a fast one leaves its tuners pending
+static bool drag_step(bool allowed) {
+    const int64_t now = steady_now_ns();
+    const int64_t since = now - last_drag_retune_ns.load();
+    const bool fast = allowed && since < FAST_TUNE_DRAG_WINDOW_MS * 1000000 &&
+                      (since < FAST_TUNE_SETTLE_MS * 1000000 || fast_tune_pending.load(std::memory_order_acquire));
+    last_drag_retune_ns.store(now);
+    if (fast) fast_tune_pending.store(true, std::memory_order_release);
+    return fast;
 }
 #endif
 
@@ -126,24 +149,28 @@ void finish_fast_retunes(const std::vector<std::unique_ptr<SDRDevice>>& devices,
     std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
     // re-checked under the lock: a retune or another finish may have run
     if (!fast_tune_pending.load(std::memory_order_acquire)) return;
-    if (only_if_quiet && steady_now_ns() - last_coherent_retune_ns.load() < FAST_TUNE_SETTLE_MS * 1000000)
+    if (only_if_quiet && steady_now_ns() - last_drag_retune_ns.load() < FAST_TUNE_SETTLE_MS * 1000000)
         return;
     fast_tune_pending.store(false, std::memory_order_release);
 
     // 0 = done (no transfer for a tuner a full tune finished already); else
     // not locked / I/O error: that tuner again on the full path (lock check,
     // VCO current bump), retried once - at its own frequency (a mode switch
-    // may have come in between), the array's if a failed tune left it none
+    // may have come in between), the array's / its place in the wideband
+    // scan if a failed tune left it none
     std::vector<int> rc(devices.size(), 0);
     std::vector<char> fixed(devices.size(), 1);
-    const uint32_t array_f = (operating_mode.load() == OperatingMode::COHERENT && !downconverter.enabled.load())
+    const OperatingMode mode = operating_mode.load();
+    const uint32_t array_f = (mode == OperatingMode::COHERENT && !downconverter.enabled.load())
                                  ? static_cast<uint32_t>(current_frequency.load()) : 0;
-    for_each_tuner(devices.size(), [&devices, &rc, &fixed, array_f](size_t i) {
+    const bool scan = mode == OperatingMode::WIDEBAND_SCAN;
+    for_each_tuner(devices.size(), [&devices, &rc, &fixed, array_f, scan](size_t i) {
         if (!devices[i] || !devices[i]->dev) return;
         rtlsdr_dev_t* dev = devices[i]->dev;
         rc[i] = rtlsdr_finish_tune(dev);
         if (rc[i] == 0) return;
-        const uint32_t f = rtlsdr_get_center_freq(dev) ? rtlsdr_get_center_freq(dev) : array_f;
+        const uint32_t f = rtlsdr_get_center_freq(dev) ? rtlsdr_get_center_freq(dev)
+                           : scan ? wideband_config.get_tuner_frequency(devices[i]->index) : array_f;
         fixed[i] = f != 0 && (rtlsdr_set_center_freq(dev, f) >= 0 || rtlsdr_set_center_freq(dev, f) >= 0);
     });
     bool lost = false;
@@ -843,15 +870,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
     // takes this mutex and finishes them first.
     bool fast = false;
 #ifdef RTLSDR_TUNE_KEEP_AUTOTUNE
-    if (tune_tuners && !independent) {
-        const int64_t now = steady_now_ns();
-        const int64_t since = now - last_coherent_retune_ns.load();
-        // a drag still open: the previous step's tuners not finished yet
-        fast = fast_retune_allowed() && since < FAST_TUNE_DRAG_WINDOW_MS * 1000000 &&
-               (since < FAST_TUNE_SETTLE_MS * 1000000 || fast_tune_pending.load(std::memory_order_acquire));
-        last_coherent_retune_ns.store(now);
-        if (fast) fast_tune_pending.store(true, std::memory_order_release);
-    }
+    if (tune_tuners && !independent) fast = drag_step(fast_retune_allowed());
 #endif
 
     // Apply to every open tuner in parallel - each RTL-SDR has independent PLL
@@ -1369,17 +1388,33 @@ void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::
         target_freqs[i] = static_cast<uint32_t>(base_frequency + (offset_from_center * usable_bandwidth));
     }
 
+    // A drag step takes the fast path, as a coherent drag does (see
+    // FAST_TUNE_FLAGS; finished the same way - the coherence watchdog 400 ms
+    // after the last step, or the noise-source switch-on of a calibration
+    // after returning to coherent). Decided under device_io_mutex (held above)
+    bool fast = false;
+#ifdef RTLSDR_TUNE_KEEP_AUTOTUNE
+    fast = drag_step(fast_wideband_allowed());
+#endif
+
     // Tune all devices in PARALLEL - critical for responsive drag-to-tune
     // Each RTL-SDR has independent PLL, so parallel tuning reduces total time
     // from N*latency (~500ms) to max(latency) (~100ms)
     // (Windows: one by one, see for_each_tuner)
     std::vector<char> results(num_tuners, 0);  // char: see init_results
+    std::vector<char> fell_back(num_tuners, 0);
 
-    for_each_tuner(static_cast<size_t>(num_tuners), [&target_freqs, &devices, &results](size_t ui) {
+    for_each_tuner(static_cast<size_t>(num_tuners), [&target_freqs, &devices, &results, &fell_back, fast](size_t ui) {
         const int i = static_cast<int>(ui);
         for (const auto& device : devices) {
             if (device && device->index == i && device->dev) {
-                if (rtlsdr_set_center_freq(device->dev, target_freqs[i]) == 0) {
+                int rc = retune_tuner(device->dev, target_freqs[i], fast);
+                // a failed drag step (PLL not locked / I/O): the full path once
+                if (rc < 0 && fast) {
+                    fell_back[i] = 1;
+                    rc = rtlsdr_set_center_freq(device->dev, target_freqs[i]);
+                }
+                if (rc == 0) {
                     wideband_config.set_tuner_frequency(i, target_freqs[i]);
                     results[i] = true;
                 }
@@ -1387,6 +1422,10 @@ void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::
             }
         }
     });
+    for (int i = 0; i < num_tuners; i++)
+        if (fell_back[i])
+            std::cerr << "Wideband: channel " << i << " drag step to " << target_freqs[i] / 1e6 << " MHz failed - "
+                      << (results[i] ? "retuned on the full path" : "full retune FAILED too") << std::endl;
 
     // Log results
     int success_count = 0;
@@ -1394,7 +1433,8 @@ void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::
         if (results[i]) success_count++;
     }
 
-    std::cout << "Wideband: " << success_count << "/" << num_tuners << " tuners configured in parallel" << std::endl;
+    std::cout << "Wideband: " << success_count << "/" << num_tuners << " tuners configured"
+              << (fast ? " (drag step)" : "") << std::endl;
     std::cout << "Wideband: Total coverage = " << (num_tuners * usable_bandwidth) / 1e6 << " MHz" << std::endl;
 }
 

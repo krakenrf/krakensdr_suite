@@ -1,0 +1,78 @@
+[
+{
+ "id": "ctcss-four-tones",
+ "title": "CTCSS / DCS: four FM transmitters on one channel",
+ "description": "Analog FM on 145.05 MHz with synthetic speech: CTCSS 88.5 Hz (60 deg), 123.0 Hz with a 120 deg reverse burst (200 deg), DCS 023N (300 deg), and 151.4 Hz (140 deg, +6 dB) keying over the end of another one (capture). Expect tone talkers at those bearings (151.4 a few degrees off while both carriers are on).",
+ "rf_hz": 145050000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 20,
+ "vfo": {
+  "bw_khz": 24,
+  "demod": "NBFM"
+ },
+ "steps": [
+  ["{tools}/analog_gen.py", "tx1.cf32", "--seconds", "20", "--tx", "0.5:4.5,11:13.5", "--ctcss", "88.5", "--seed", "1"],
+  ["{tools}/analog_gen.py", "tx2.cf32", "--seconds", "20", "--tx", "4.8:8,14:17.5", "--ctcss", "123.0", "--tail", "reverse120", "--seed", "2"],
+  ["{tools}/analog_gen.py", "tx3.cf32", "--seconds", "20", "--tx", "8.3:10.6", "--dcs", "023N", "--seed", "3"],
+  ["{tools}/analog_gen.py", "tx4.cf32", "--seconds", "20", "--tx", "16.5:19.5", "--ctcss", "151.4", "--seed", "4"]
+ ],
+ "scene": {
+  "rate": 48000,
+  "snr_db": 20,
+  "seed": 3,
+  "sources": [
+   {"name": "CTCSS 88.5", "file": "tx1.cf32", "rate": 48000, "at": 0, "bearing": 60},
+   {"name": "CTCSS 123.0", "file": "tx2.cf32", "rate": 48000, "at": 0, "bearing": 200},
+   {"name": "DCS 023N", "file": "tx3.cf32", "rate": 48000, "at": 0, "bearing": 300},
+   {"name": "CTCSS 151.4", "file": "tx4.cf32", "rate": 48000, "at": 0, "bearing": 140, "gain_db": 6}
+  ]
+ },
+ "expect": [
+  {"tid": "CTCSS 88.5", "bearing": 60},
+  {"tid": "CTCSS 123.0", "bearing": 200},
+  {"tid": "DCS 023N", "bearing": 300},
+  {"tid": "CTCSS 151.4", "bearing": 140, "tol": 10}
+ ]
+},
+{
+ "id": "analog-ids-six",
+ "title": "Radio IDs on analog FM: MDC1200, FleetSync, 5-tone, DTMF, 1750 Hz",
+ "description": "A 155.5 MHz business channel with synthetic speech: MDC1200 unit 1234 (PTT ID at key-up, CTCSS 88.5, 60 deg) and unit 2002 (PTT ID at release, the SAME CTCSS 88.5, 200 deg) - two radios one tone, apart by their IDs -, FleetSync fleet 100 unit 1001 (no tone, 300 deg), a CCIR-1 selcall 12345 (DCS 023N, 140 deg), a DTMF ANI 4455* (CTCSS 123.0, 20 deg) and a 1750 Hz tone burst (250 deg). Expect a talker per radio at those bearings.",
+ "rf_hz": 155500000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 28,
+ "vfo": {
+  "bw_khz": 24,
+  "demod": "NBFM"
+ },
+ "steps": [
+  ["{tools}/analog_gen.py", "mdc1.cf32", "--seconds", "28", "--tx", "0.5:3.5,13:15.6", "--ctcss", "88.5", "--mdc", "01:80:1234", "--seed", "21"],
+  ["{tools}/analog_gen.py", "mdc2.cf32", "--seconds", "28", "--tx", "3.9:6.9,16:19", "--ctcss", "88.5", "--mdc", "01:00:2002", "--sig-at", "post", "--seed", "22"],
+  ["{tools}/analog_gen.py", "fs.cf32", "--seconds", "28", "--tx", "7.3:9.8", "--fleetsync", "100-1001", "--seed", "23"],
+  ["{tools}/analog_gen.py", "sel.cf32", "--seconds", "28", "--tx", "10.2:12.6", "--dcs", "023N", "--selcall", "CCIR1:12345", "--seed", "24"],
+  ["{tools}/analog_gen.py", "dtmf.cf32", "--seconds", "28", "--tx", "19.4:22.4", "--ctcss", "123.0", "--dtmf", "4455*", "--seed", "25"],
+  ["{tools}/analog_gen.py", "burst.cf32", "--seconds", "28", "--tx", "22.8:25.4", "--burst", "1750", "--seed", "26"]
+ ],
+ "scene": {
+  "rate": 48000,
+  "snr_db": 20,
+  "seed": 7,
+  "sources": [
+   {"name": "MDC 1234", "file": "mdc1.cf32", "rate": 48000, "at": 0, "bearing": 60},
+   {"name": "MDC 2002", "file": "mdc2.cf32", "rate": 48000, "at": 0, "bearing": 200},
+   {"name": "FleetSync 100-1001", "file": "fs.cf32", "rate": 48000, "at": 0, "bearing": 300},
+   {"name": "CCIR 12345", "file": "sel.cf32", "rate": 48000, "at": 0, "bearing": 140},
+   {"name": "DTMF 4455*", "file": "dtmf.cf32", "rate": 48000, "at": 0, "bearing": 20},
+   {"name": "Burst 1750", "file": "burst.cf32", "rate": 48000, "at": 0, "bearing": 250}
+  ]
+ },
+ "expect": [
+  {"tid": "MDC 1234", "bearing": 60},
+  {"tid": "MDC 2002", "bearing": 200},
+  {"tid": "FleetSync 100-1001", "bearing": 300},
+  {"tid": "CCIR 12345", "bearing": 140},
+  {"tid": "DTMF 4455*", "bearing": 20},
+  {"tid": "Burst 1750", "bearing": 250}
+ ]
+}
+]

@@ -23,9 +23,21 @@
 //   SF_LOC_DEL:<id>                    location (its frequencies stay, unplaced)
 //   SF_CAT_SET:{"id","name","col"}     category create / replace
 //   SF_CAT_DEL:<id>                    category (its frequencies: uncategorised)
+//   SF_SCAN:{"freqs":{"<id>":-1|0|1,..},"cats":{"<id>":true|false,..},"uncat":true|false}
+//                                      what the 📻 scanner scans (sf_scanner.hpp), any
+//                                      subset of the three; ids no longer there are skipped
 //   GET_SF
+//
+// The scan list: a category's `scan` takes every frequency in it (also those
+// added later), `scan_uncat` the uncategorised ones; a frequency's `scan` 1 =
+// scanned on its own, -1 = left out even when its category is scanned, 0 =
+// its category decides. SF_SET / SF_CAT_SET without "scan" keep the entry's
+// (the editor doesn't send it); a frequency moved to another category (or
+// left without one by SF_CAT_DEL) drops a -1.
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace savedfreq {
 
@@ -50,11 +62,25 @@ bool set_category(const std::string& json, std::string* id, std::string* err);
 bool remove_freq(const std::string& id);       // false = no such entry
 bool remove_location(const std::string& id);
 bool remove_category(const std::string& id);
+bool set_scan(const std::string& json, std::string* err);   // SF_SCAN
 
-// {"savedfreq":{"cats":[{id,name,col}],"locs":[{id,name,lat,lon,notes,t}],
-//  "freqs":[{id,name,hz,cat,loc,mode,bw,gain,dec,tone,notes,t}]   gain: null =
-//  keep the receiver's, -1 = Auto (AGC), else dB
+// {"savedfreq":{"cats":[{id,name,col,scan}],"locs":[{id,name,lat,lon,notes,t}],
+//  "freqs":[{id,name,hz,cat,loc,mode,bw,gain,dec,tone,notes,scan,t}],"scan_uncat":bool
+//  gain: null = keep the receiver's, -1 = Auto (AGC), else dB
 //  [,"error":"..","id":".."]}}
 std::string message_json(const std::string& error = "", const std::string& id = "");
+
+// A frequency the scan list takes (see above), how to receive it
+struct ScanEntry {
+    std::string id, name;
+    int64_t hz = 0;
+    std::string mode;       // "" = the VFO's | WBFM | NBFM | AM | DIGITAL
+    int64_t bw = 0;         // Hz, 0 = the VFO's
+    bool has_gain = false;  // false = keep the receiver's
+    double gain = 0;        // dB, -1 = Auto (AGC)
+    std::string dec;        // "" = the VFO's | OFF | AUTO | PLUGIN:<id>
+};
+std::vector<ScanEntry> scan_entries();   // lowest frequency first
+uint64_t generation();                   // changes with every change of the lists
 
 }  // namespace savedfreq

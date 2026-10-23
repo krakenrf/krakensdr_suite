@@ -82,7 +82,8 @@ restrict heavy or commercial use - check them before using the software in a
 commercial product or service.
 
 - **OpenStreetMap** map tiles (tile.openstreetmap.org), the Overpass API
-  (masts layer) and Nominatim (incident address search): data © OpenStreetMap
+  (masts layer) and Nominatim (incident address search, the map's search
+  box - one request a second, sent on Enter only): data © OpenStreetMap
   contributors, available under the Open Database License (ODbL) -
   https://www.openstreetmap.org/copyright. Usage policies:
   https://operations.osmfoundation.org/policies/

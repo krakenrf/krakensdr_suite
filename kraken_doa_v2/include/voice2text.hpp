@@ -55,10 +55,10 @@ void vfo_changed(int vfo, bool on);
 
 // --- audio in ---
 // Decimation pass: a VFO with Transcribe on and no digital decoder of voice
-// (none, or one like ctcss / pocsag) - its decimated samples (beamformer
+// (none, or one like analog_id / pocsag) - its decimated samples (beamformer
 // output when beamforming ran, else the listened-to channel), RF centre,
 // demod, and whether its squelch is open for this block. tid / tlabel: the
-// decoder's talker now (ctcss: "CTCSS 88.5" - the transcript is named after
+// decoder's talker now (analog_id: "CTCSS 88.5" - the transcript is named after
 // it, another one taking over splits it), "" = none. Copies, never blocks
 // (queue capped at ~2 s per VFO).
 void feed_analog(int vfo, const std::complex<float>* x, size_t n, float rate_hz, double rf_hz,

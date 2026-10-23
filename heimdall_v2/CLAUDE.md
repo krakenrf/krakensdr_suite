@@ -176,6 +176,10 @@ All runtime configuration is in `config.h` at the project root:
 - `ENABLE_BIAS_TEE`: Enable bias-tee on all devices (default 1)
 - `USB_RESET_ON_INIT`: Reset USB on initialization (default 1)
 - Uses ARM NEON vectorization on aarch64, automatically falls back to scalar on x86_64
+- Compiled `-O3 -fno-math-errno -fcx-fortran-rules` + `-mcpu=native` on
+  aarch64 (`-march=native` x86_64; root CLAUDE.md *Compiler flags*). The
+  correlation's whole-array |z| loops use `std::sqrt(std::norm(z))` / a
+  norm compare - `std::abs` of a complex is a `hypotf` call per element
 
 **Coherence / Ingest Robustness:**
 - `RTL_USB_BUF_COUNT`: librtlsdr async USB transfer buffers (default 32 ≈ 218 ms cushion @ 2.4 MSPS; 0 = library default 15). Wider ring = more slack before the RTL2832 FIFO overflows if the reader thread stalls.
@@ -378,6 +382,28 @@ and the phases settle within ~20 ms. Runtime override: control port
 runs). The DoA client holds DoA on heimdall's WAITING_FOR_STABILITY state (min
 500 ms) and the noise flag (+250 ms) instead of a fixed 4 s.
 
+**Calibration hold** (control port `{"command":"hold_calibration","hold_ms":N}`,
+`set_calibration_hold()` / `calibration_held()` in compensation.cpp; added
+2026-10-22 for the DoA client's saved-frequency scan, which searches its bands
+with the array uncalibrated and calibrates only where it finds a signal): a
+retune / gain change still enters the cooldown (noise off,
+WAITING_FOR_STABILITY - clients hold DoA, identity compensation) but the lag
+driver doesn't let it expire into `handle_settings_change()` while held, and
+the periodic check stands down (`checkable`, `preempted`). A LEASE: N > 0
+holds for N ms from now (<= 30000; the client renews it every second for
+3 s), so a client that stops renewing - stopped, crashed - lets it lapse and
+the pending calibration runs as usual; N = 0 releases at once and, if a hold
+was in effect, backdates a pending cooldown's `last_frequency_change` by the
+stability delay, so the calibration starts on the lag driver's next tick (~1 s
+to CONVERGED instead of 3.5 s) - a 0 with no hold in effect (lapsed, never
+sent) leaves an ordinary cooldown alone. A coherence recovery is NOT held (it needs the full recal). Status
+JSON `calibration_hold`. Unlike the discrete scanner's deferral (which keeps
+the old compensation and CONVERGED across its hops - fine in wideband mode,
+no DoA) the held state is WAITING_FOR_STABILITY: a coherent client would
+otherwise compute DoA on a calibration from another band. Tested only
+against a simulated heimdall in kraken_doa's e2e test (the real dongles were
+in use) - the paths are the existing cooldown's, plus one gate.
+
 **Drag retunes (fast path, `update_sdr_settings` in sdr_init.cpp)**: a
 coherent retune within `FAST_TUNE_SETTLE_MS` (400 ms) of the previous one, or
 before the previous step's tuners were finished (at most
@@ -388,7 +414,30 @@ before N / SDM and 8 kHz after the lock: 2 control transfers per tuner and
 step); the lock is still read on every step. Only when `fast_retune_allowed()`
 (coherent, not `--kerberos` manual cal, no discrete scan, no recovery, no
 downconverter); decided and tuned in one `device_io_mutex` hold; the rollback
-of a failed step is always the full path. `finish_fast_retunes()`
+of a failed step is always the full path. The WIDEBAND SCAN's retunes
+(`setup_wideband_frequencies`: every tuner to its own spread frequency) take
+it the same way (2026-10-21, the user's "dragging in wideband mode is
+laggy"): `drag_step()` = the one decision for both modes, sharing
+`last_drag_retune_ns` (renamed from last_coherent_retune_ns - every retune
+of either mode is the drag's latest, so the watchdog's finish never runs
+inside a wideband drag) and `fast_tune_pending`; `fast_wideband_allowed()`
+(wideband scan, no discrete scan - its hops are seconds apart, flushed and
+settled -, no recovery, no downconverter); a failed wideband drag step goes
+once more on the full path (logged); `finish_fast_retunes` retunes a tuner
+it finds unlocked at its wideband scan frequency when the library lost it.
+Measured on the KrakenSDR (Windows, 5 tuners, 8092 `set_frequency` reply,
+steps 50 ms apart; job scratch 0d0a7cca hw_*): 114.0 -> 74.0 ms median per
+step (max 123 -> 83) for 25 / 100 / 250 kHz steps in the FM band, a drag
+across the 109.5 MHz divider boundary and 100 kHz steps at 595 MHz; the
+first step after a pause and typed jumps stay on the full path (153 / 194-216
+ms both); after every drag all five tuners on their frequencies (status +
+8091 headers), neighbours' spectra lined up bin for bin in their overlaps
+(lag 0 wherever the overlap held a signal, identical to the old build), 0
+coherence events, no failed step, no unlocked tuner; 199 of 204 steps on the
+fast path. Mode switches straight after a drag (tuners pending): wideband ->
+coherent recalibrated and CONVERGED in 25 s, coherent drag -> wideband (the
+spread itself a drag step, 83 ms) and wideband -> independent -> wideband
+with the tuners right and aligned. The Pi (parallel threads) not measured `finish_fast_retunes()`
 (`rtlsdr_finish_tune`: lock read, then 8 kHz) puts the tuners back in the
 full path's resting state - from the coherence watchdog once 400 ms have
 passed without a retune, and from `set_bias_tee_all_devices(true)` in any

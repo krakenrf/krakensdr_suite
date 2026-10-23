@@ -869,6 +869,30 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 /* the map waiting for a click (the saved-frequency editor's "Pick on map") */
 .map-pick {position:absolute;left:50%;top:44px;transform:translateX(-50%);z-index:7;max-width:calc(100% - 20px);box-sizing:border-box;background:rgba(16,24,44,.96);border:1px solid #ffd54f;border-radius:4px;color:#fff;font-size:12px;padding:6px 10px;display:flex;gap:8px;align-items:center;box-shadow:0 2px 10px rgba(0,0,0,.5)}
 .map-pane.picking #map-canvas {cursor:crosshair}
+/* 🔍 the map search (🔍 MAP SEARCH): the box first under the top-left buttons, its results over the map */
+.map-btn.dis {opacity:.45}
+.map-srch {pointer-events:auto;position:relative;flex:none;width:340px;max-width:100%;background:rgba(16,24,44,.94);border:1px solid #2a4a7a;border-radius:4px;box-sizing:border-box}
+.map-srch-row {display:flex;align-items:center;gap:3px;padding:3px}
+.map-srch input {flex:1;min-width:0;background:#1a1a2e;border:1px solid #2a4a7a;color:#e0e0e0;border-radius:3px;font-size:12px;padding:2px 6px;height:24px;box-sizing:border-box;user-select:text;-webkit-user-select:text}
+.map-srch input:focus {outline:none;border-color:#4fc3f7}
+.map-srch .map-btn {height:24px;min-width:24px;padding:0 5px}
+.map-srch-res {position:absolute;left:-1px;right:-1px;top:100%;margin-top:3px;z-index:2;background:rgba(16,24,44,.97);border:1px solid #4fc3f7;border-radius:4px;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;box-shadow:0 2px 10px rgba(0,0,0,.5);font-size:12px;color:#dbe8ff}
+.map-srch-res:empty {display:none}
+.srch-it {display:flex;gap:7px;align-items:flex-start;padding:5px 8px;cursor:pointer;border-bottom:1px solid #1d2c4a}
+.srch-it:hover {background:#1d3358}
+.srch-it.hl {background:#1a4a7a}
+.srch-it .ic {flex:none;width:18px;text-align:center}
+.srch-it .t {flex:1;min-width:0;display:flex;flex-direction:column}
+.srch-it .n {color:#fff;overflow-wrap:anywhere}
+.srch-it .d {color:#8aa8c7;font-size:11px;overflow-wrap:anywhere}
+.srch-it .k {flex:none;color:#8296b4;font-size:10px;white-space:nowrap;font-variant-numeric:tabular-nums;padding-top:2px}
+.srch-it.onl .n {color:#4fc3f7}
+.srch-msg {padding:5px 8px;color:#8296b4;font-size:11px;line-height:1.4}
+.srch-msg.w {color:#ffcc80}
+.srch-attr {padding:3px 8px;color:#6f87a6;font-size:10px}
+.srch-attr a {color:#8fb3e0}
+.map-pane.srch-res-open .map-tl {z-index:6}
+.map-pop td.sel {user-select:text;-webkit-user-select:text}
 
 /* 📻 Saved frequencies: sidebar list, categories, editor dialog, toast */
 .sf-count {margin-left:auto;margin-right:6px;font-size:11px;color:#7f9cc0}
@@ -899,6 +923,32 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 /* a VFO is on this frequency (sfMarkActive) */
 .sf-row.on {background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px var(--vfo, #4fc3f7)}
 .sf-row.on .nm {color:#fff;font-weight:bold}
+/* 📻 saved-frequency scan (see 📻 SAVED FREQUENCY SCAN): the ticks, the panel,
+   the frequency listened to (sfs-cur) and those active now (sfs-act) */
+.sf-gh .sfs-ck, .sf-row .sfs-ck {margin:0 0 0 2px;flex:none;cursor:pointer;accent-color:#7cf0a0;align-self:center}
+.sfs {background:#101a2e;border:1px solid #0f3460;border-radius:3px;padding:5px 6px;margin:2px 0 6px}
+.sfs-bar {display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.sfs-bar .r {margin-left:auto;display:flex;gap:4px;align-items:center}
+.sfs-bar .n {font-size:11px;color:#7f9cc0;white-space:nowrap}
+.sfs-status {font-size:11px;color:#a9c2e0;margin-top:4px;line-height:1.45;overflow-wrap:anywhere}
+.sfs-status:empty {display:none}
+.sfs-status.live {color:#7cf0a0}
+.sfs-status .d {color:#8aa8c7}
+.sfs-set {margin-top:4px;border-top:1px solid #0f3460}
+.sfs-set .ctrl-row {margin:5px 0;flex-wrap:nowrap;gap:6px}
+.sfs-set .ctrl-row label {font-size:12px;min-width:76px;flex:none}
+.sfs-set .ctrl-row input[type="number"] {width:54px;font-size:12px;padding:3px 5px}
+.sfs-set .slider {min-width:50px}
+.sfs-set .sv {font-size:12px;min-width:48px;flex:none}
+.sfs-set .u {font-size:10px;color:#8aa8c7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sfs-set .ctrl-row label.sfs-chk {min-width:0;flex:1;font-size:11px;color:#a9c2e0;display:flex;align-items:center;gap:5px;cursor:pointer}
+.sfs-set .ctrl-row label.sfs-chk input {margin:0}
+.sfs-set .sel {font-size:11px;color:#8aa8c7;margin-top:2px}
+.sfs-set .sel a {color:#7cb3f0}
+.sf-row.sfs-act .nm::before {content:'\25CF';color:#ffb74d;margin-right:4px;font-size:9px;vertical-align:1px}
+.sf-row.sfs-cur {background:rgba(124,240,160,.10);box-shadow:inset 0 0 0 1px #7cf0a0}
+.sf-row.sfs-cur .nm {color:#fff;font-weight:bold}
+.sf-row.sfs-cur .nm::before {content:'\1F50A';margin-right:4px;font-size:10px}
 .sf-cats {background:#101a2e;border:1px solid #0f3460;border-radius:3px;padding:6px;margin:4px 0 6px}
 .sf-cat-row {display:flex;gap:4px;align-items:center;margin-bottom:4px;font-size:12px}
 .sf-cat-row:last-child {margin-bottom:0}
@@ -976,6 +1026,9 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 #decimator-list .vfd-ed {padding:1px 5px;margin-left:auto}
 #decimator-list .dec-row.typing .vfd-box, #decimator-list .dec-row.typing .vfd-ed,
 #decimator-list .dec-row:not(.typing) .vfd-in, #decimator-list .dec-row:not(.typing) .vfd-in-unit {display:none}
+/* the BW row: one number box in kHz (any width) */
+#decimator-list .dec-bw-in {flex:1;min-width:0;font-family:monospace}
+#decimator-list .dec-bw-unit {color:#888;font-size:12px}
 
 /* Scanner in sidebar */
 #scanner-freq-list {max-height:200px;overflow-y:auto;background:#16213e;border:1px solid #0f3460;border-radius:3px;padding:5px}
@@ -1725,7 +1778,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- 📻 Saved frequencies (saved_freqs.cpp) + the map markers - all modes -->
     <div class="sb-section" id="sf-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📻 Saved Frequencies<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Your list of frequencies, kept on the receiver (every browser sees the same list). <b>Click one to tune</b> the selected VFO to it (also its demod, bandwidth and decoder, when the entry has them); the receiver retunes when it is outside the band shown. Each needs a name and a frequency; a category, a location, demod, bandwidth, decoder, tone / code and notes are optional. Group them in categories (⚙ Categories: add your own, rename, recolour). A frequency with a <b>location</b> appears on the 🗺 map: the marker there lists every frequency saved at that place. Saved frequencies are marked on the spectrum (👁 on a category hides its marks); click a mark to tune. ☆ Save on a VFO card saves that VFO's frequency.</span></span></h3>
+        <h3>📻 Saved Frequencies<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Your list of frequencies, kept on the receiver (every browser sees the same list). <b>Click one to tune</b> the selected VFO to it (also its demod, bandwidth and decoder, when the entry has them); the receiver retunes when it is outside the band shown. Each needs a name and a frequency; a category, a location, demod, bandwidth, decoder, tone / code and notes are optional. Group them in categories (⚙ Categories: add your own, rename, recolour). A frequency with a <b>location</b> appears on the 🗺 map: the marker there lists every frequency saved at that place. Saved frequencies are marked on the spectrum (👁 on a category hides its marks); click a mark to tune. ☆ Save on a VFO card saves that VFO's frequency.<br><br><b>Scan:</b> tick the frequencies to scan - or a whole category with the box in its heading (also the frequencies added to it later; untick single ones to leave them out) - and press ▶ Scan. The selected VFO is tuned to each one that is active, received the way the entry says, and heard while it is (plus the Delay). Coherent mode watches one tuner band at a time (the array recalibrates after each retune); independent mode watches a band on every tuner no other VFO is on.</span></span></h3>
         <span class="sf-count" id="sf-count"></span>
         <span class="sb-toggle">▼</span>
       </div>
@@ -1737,6 +1790,26 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <div class="sf-opts">
           <label title="Mark the saved frequencies on the spectrum"><input type="checkbox" id="sf-spec" onchange="sfSetSpectrum(this.checked)"> Show on spectrum</label>
           <button type="button" class="btn sm" id="sf-cats-btn" onclick="sfToggleCats()" title="Add, rename, recolour or delete categories">⚙ Categories</button>
+        </div>
+        <!-- 📻 the scan (sf_scanner.cpp; see 📻 SAVED FREQUENCY SCAN) -->
+        <div class="sfs" id="sfs">
+          <div class="sfs-bar">
+            <button type="button" class="btn sm primary" id="sfs-start" onclick="sfsStart()" title="Scan the ticked frequencies: the selected VFO is tuned to each one that is active (its demod, bandwidth, decoder and gain) and heard while it is">▶ Scan</button>
+            <button type="button" class="btn sm off" id="sfs-stop" onclick="send('SFSCAN_STOP')" title="Stop scanning (the VFO stays where it is)" style="display:none">■ Stop</button>
+            <button type="button" class="btn sm" id="sfs-hold" onclick="sfsHold()" style="display:none">⏸ Hold</button>
+            <button type="button" class="btn sm" id="sfs-skip" onclick="send('SFSCAN_SKIP')" title="Go on to the next active frequency (this one gets its turn again on the next pass through the list; with one VFO per active frequency: every one listened to) - or, with nothing active, to the next band" style="display:none">⏭ Skip</button>
+            <span class="r"><span class="n" id="sfs-n"></span>
+            <button type="button" class="btn sm" id="sfs-set-btn" onclick="sfsToggleSet()" title="Scan settings">⚙</button></span>
+          </div>
+          <div class="sfs-status" id="sfs-status"></div>
+          <div class="sfs-set" id="sfs-set" style="display:none">
+            <div class="ctrl-row"><label title="A frequency is active when its strongest spectrum bin is this far above the noise floor">Squelch:</label><input type="range" id="sfs-sq" class="slider" min="3" max="40" step="0.5" value="12" oninput="$id('sfs-sq-v').textContent = (+this.value).toFixed(1) + ' dB'; sfsSqPreview(this.value)" onchange="sfsSet('SQUELCH', this.value)"><span class="sv" id="sfs-sq-v">12.0 dB</span></div>
+            <div class="ctrl-row"><label title="How long the VFO stays on a frequency after its transmission ends (for the answer)">Delay:</label><input type="number" id="sfs-hang" min="0" max="60" step="0.5" value="2" onchange="sfsSet('HANG', this.value * 1000)"><span class="u" title="after a transmission ends">s after it ends</span></div>
+            <div class="ctrl-row"><label title="With more bands than tuners: how long each band is watched before the next one">Dwell:</label><input type="number" id="sfs-dwell" min="0.5" max="60" step="0.5" value="2" onchange="sfsSet('DWELL', this.value * 1000)"><span class="u">s per band</span></div>
+            <div class="ctrl-row"><label title="Go on to the next active frequency after this long on one that stays active (broadcast stations, a stuck carrier) - it gets its turn again on the next pass. Only clean time counts, not the array's calibration after a retune. 0 = no limit">Longest stay:</label><input type="number" id="sfs-max" min="0" max="3600" step="1" value="0" onchange="sfsSet('MAX', this.value * 1000)"><span class="u" title="0 = no limit">s (0 = off)</span></div>
+            <div class="ctrl-row" id="sfs-multi-row"><label title="How many VFOs the scan uses">VFOs:</label><label class="sfs-chk" title="Every frequency active at the same time in the band watched gets a VFO of its own - all heard (🔊) and, with 🗣 Transcribe ticked on the scan's VFO, all transcribed at once. The extra VFOs start as copies of the scan's VFO as it was when the scan started (demod, bandwidth, decoder, squelch, Transcribe), with each frequency's own settings on top. Each one goes when its frequency ends (Delay, Longest stay) and when the scan stops - they are never saved. At most 16 VFOs in all. Off: one VFO, the frequencies take turns"><input type="checkbox" id="sfs-multi" onchange="sfsSet('MULTI', this.checked ? 1 : 0)">one per active frequency</label></div>
+            <div class="sel">Tick <a href="#" onclick="sfsAll(true);return false" title="Every category (also the frequencies added later)">all</a> · <a href="#" onclick="sfsAll(false);return false" title="Untick everything">none</a></div>
+          </div>
         </div>
         <div id="sf-cats" class="sf-cats" style="display:none"></div>
         <div id="sf-list" class="sf-list"></div>
@@ -2069,6 +2142,13 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         </select>
       </div>
       <div class="tb-sep"></div>
+      <!-- VFO tuning step (every mode, per browser): a tuning-bar drag or a
+           click on the spectrum puts the VFO on a multiple of it -->
+      <div class="tb-group" id="tb-step">
+        <span class="tb-label">Step:</span>
+        <select id="vfo-step" onchange="setVfoStep(this.value)" title="VFO tuning step: dragging a tuning bar or clicking the spectrum puts the VFO on a multiple of this - of its frequency, counted from 0 Hz (12.5 kHz: 446.0125, 446.0250 ... MHz). Hold Shift while dragging to tune finely: 1/100 of the movement, to the Hz, off the step. The VFO card's digits and typed or saved frequencies stay exact."></select>
+      </div>
+      <div class="tb-sep"></div>
       <!-- Audio -->
       <div class="tb-group" id="tb-audio">
         <span class="tb-label">Audio:</span>
@@ -2094,7 +2174,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       <div class="spectrum-panel">
         <div class="spectrum-header">
           <span class="title" id="fpt">Channel 0 (WBFM)</span>
-          <span class="hint">Click/drag tuning bar</span>
+          <span class="hint" title="A drag or a click puts the VFO on a multiple of the top bar's Step; hold Shift while dragging to tune finely (1/100 of the movement, to the Hz)">Click/drag tuning bar · Shift = fine</span>
         </div>
         <div class="spectrum-content">
           <div id="pb-overlay"><span id="pb-overlay-k">DEBUG PLAYBACK - not live</span></div>
@@ -2109,7 +2189,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         </div>
         <div class="wf-controls" id="wf-controls-bar">
           <label>FFT Y:<input type="range" id="fft-ymax" min="10" max="100" value="60" step="10" oninput="updateFFTYAxis(this.value);sendUI('FFT_Y',this.value)" style="width:50px"><span id="fft-ymax-val">60</span></label>
-          <label title="Spectrum zoom - or use the mouse wheel on the spectrum (in independent mode: the selected pane)">Zoom:<input type="range" id="zoom-sl" min="0" max="100" value="0" oninput="zoomFromSlider(this.value)" style="width:70px"><span id="zoom-val" style="min-width:34px">1.0x</span><span id="zoom-res" title="Spacing of the displayed spectrum points. Zooming in sends the same number of points over less spectrum - more detail, down to the FFT's own bin width, at the same data rate" style="color:#888;margin-left:4px;min-width:44px"></span></label>
+          <label title="Spectrum zoom - or use the mouse wheel on the spectrum (in independent mode: the selected pane)">Zoom:<input type="range" id="zoom-sl" min="0" max="125" value="0" oninput="zoomFromSlider(this.value)" style="width:70px"><span id="zoom-val" style="min-width:34px">1.0x</span><span id="zoom-res" title="Spacing of the displayed spectrum points. Zooming in sends the same number of points over less spectrum - more detail, down to the FFT's own bin width, at the same data rate" style="color:#888;margin-left:4px;min-width:44px"></span></label>
           <span style="color:#555">|</span>
           <label>Speed: <input type="range" id="wf-speed" min="1" max="10" value="5" oninput="updateWaterfallSpeed(this.value);sendUI('WF_SPEED',this.value)"></label>
           <label>Color:
@@ -2218,14 +2298,27 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <button type="button" class="map-btn" id="map-lr-btn" onclick="lrToggle()" title="Replay a DoA log of a drive on the map: the KrakenSDR Android app's (.csv / .sqlite) or a 📝 DoA Recording of this receiver - its track, bearings, lobes and the heat map of where the transmitter is, at any speed, back and forth. Read in this browser - nothing is uploaded (or drop the file on the map)">Replay</button>
           </div>
           <div class="map-tl">
+            <!-- 🔍 the search box (🔍 MAP SEARCH) + its results -->
+            <div class="map-srch" id="map-srch" style="display:none">
+              <div class="map-srch-row">
+                <input type="text" id="map-srch-in" placeholder="Place, address, coordinates, grid locator…" autocomplete="off" spellcheck="false" enterkeyhint="search"
+                       title="Coordinates (-36.8485, 174.7622 · 36°50'54.5&quot;S 174°45'43.8&quot;E · S 36 50.908 E 174 45.730), UTM (60H 300477 5919601), MGRS (60HUE0047719600), a grid locator (RF73jd) or a map link (Google, OpenStreetMap, Apple, geo:) go there at once - offline. Your markers and saved frequencies, the decoders' positions, OSM masts and the assistant's map points are listed as you type. Enter searches OpenStreetMap for addresses, cities and places (online)"
+                       oninput="srchInput()" onkeydown="srchKey(event)" onfocus="srchFocus()" onclick="srchFocus()">
+                <button type="button" class="map-btn" onclick="srchGo()" title="Search (Enter)">↵</button>
+                <button type="button" class="map-btn" onclick="srchClear()" title="Clear: the text, the results and the result's pin go, the box closes">✕</button>
+              </div>
+              <div class="map-srch-res" id="map-srch-res" onmousedown="if (event.target.closest('.srch-it')) event.preventDefault()" onclick="srchResClick(event)"></div>
+            </div>
             <div class="map-legend" id="map-legend" style="display:none"></div>
             <div class="map-vs" id="map-vs" style="display:none"></div>
             <div class="map-vs map-ai" id="map-ai" style="display:none"></div>
           </div>
           <div class="map-ctl map-ctl-tr">
+            <button type="button" class="map-btn" id="map-srch-btn" onclick="srchToggle()" title="Search: an address, a city or place (OpenStreetMap, online), coordinates in any usual form, UTM / MGRS, a grid locator, a map link - or your own markers and the decoders' positions">🔍</button>
             <button type="button" class="map-btn" onclick="mapZoomBy(1)" title="Zoom in (mouse wheel / double-click)">+</button>
             <button type="button" class="map-btn" onclick="mapZoomBy(-1)" title="Zoom out">−</button>
-            <button type="button" class="map-btn" onclick="mapCenterStation()" title="Centre on the station (Station Information)">⌖</button>
+            <button type="button" class="map-btn" onclick="mapCenterStation()" title="Home: back to the station (its location in Station Information)">🏠</button>
+            <button type="button" class="map-btn" id="map-tx-btn" onclick="mapGoTx()" title="The estimated transmitter: where the 📡 DF heat map (bearings collected while driving) or a ⏯ replayed drive puts it, with its 95 % region in view. Several estimates shown: press again for the next">🎯</button>
             <button type="button" class="map-btn" onclick="mapFitAll()" title="Show every marker">⤢</button>
           </div>
           <!-- mobile DF (coherent mode): DoA lobes + transmitter heat map (rdf_mapper.cpp) -->
@@ -2431,7 +2524,7 @@ const MAP_TRAIL_BALLOON_MAX = 4000, MAP_TRAIL_BALLOON_S = 4 * 3600;
 const mapState = (() => {
   const d = {on: false, tab: 'map', w: 0, layer: 'street', z: 0, mx: 0.5, my: 0.5, trails: true, masts: false,
              rdfVfo: 'all', rdfTid: '', rdfLobe: true, rdfLines: true, rdfHeat: true, rdfOpen: true,
-             vs: false, vsOpen: true};
+             vs: false, vsOpen: true, srch: false};
   try { return Object.assign(d, JSON.parse(localStorage.getItem('kraken_map') || '{}')); } catch (e) { return d; }
 })();
 const mapPts = new Map();      // "vfo|plugin|id" -> point (server fields + rx time + trail)
@@ -2450,6 +2543,14 @@ let mapTileOk = 0, mapTileErrAt = 0, mapAutoFit = !mapState.z;
 let mapStSel = false, vsSel = null, mapObjDrag = null, mapStLocal = null;
 let mapSaveT = 0, mapFlashT = 0, mapFlashMsg = '';
 if (!['street', 'satellite'].includes(mapState.layer)) mapState.layer = 'street';
+// 🔍 the map search (see 🔍 MAP SEARCH): the text searched, the rows listed
+// (+ the highlighted one, the list shown), OpenStreetMap's rows for srchOnlQ,
+// the status line, the online request running (for which text), the answers
+// kept per text + view, when the last request went out; the result picked =
+// its pin on the map (mapDrawNow -> srchDraw reads it); where 🎯 last went
+let srchQ = '', srchRes = [], srchHl = -1, srchListOn = false, srchOnl = null, srchOnlQ = '',
+    srchMsg = '', srchMsgW = false, srchBusyQ = '', srchSeq = 0, srchLastAt = 0, srchPin = null, srchTxAt = null;
+const srchCache = new Map();
 // 📻 saved frequencies + 📍 map markers (see 📻 SAVED FREQUENCIES / 📍 MAP
 // MARKERS): the backend's lists (categories, locations = the map markers,
 // frequencies); the marker shown in the map panel, the one being edited, the
@@ -2457,6 +2558,9 @@ if (!['street', 'satellite'].includes(mapState.layer)) mapState.layer = 'street'
 // was opened; per browser: spectrum marks on, collapsed / hidden categories
 // (localStorage kraken_sf); the spectrum marks' click targets
 let sfCats = [], sfLocs = [], sfFreqs = [];
+// 📻 the scan list's "Uncategorised" tick, and the scan's status ({"sfscan"});
+// its squelch while the slider is dragged (the spectrum line follows it)
+let sfScanUncat = false, sfsSt = null, sfsSqDrag = null;
 let mkSel = null, mkEdit = null, mkWantEdit = null, mapMenuAt = null;
 const sfUi = (() => {
   const d = {spec: true, col: {}, hide: {}};
@@ -2469,10 +2573,30 @@ const sfUi = (() => {
   return d;
 })();
 let sfSpecRects = [], sfMarkerConsumed = false;
+// the mouse over the main spectrum ('fo' canvas px; null = not over it):
+// drawBox keeps the hand cursor over a saved-frequency tag / AI badge with it
+let fpHover = null;
 // 🗣 Voice to Text (see 🗣 VOICE TO TEXT): the backend's status, the
 // transcripts (oldest first), how many came while the Voice tab wasn't shown
 // (infoRenderTabs reads these - it can run before that section is evaluated)
 let v2tStatus = null, v2tList = [], v2tUnseen = 0;
+// The demod a VFO had before it was switched to Digital and whether it was
+// heard (🔊): VFO id -> {demod, audio}. setDecimatorDemodMode keeps it, the
+// decoder tab's "🔊 Listening" and the card's Demod list go back to it. Per
+// browser (localStorage kraken_dig_demod_before)
+const DEMOD_ANALOG = ['WBFM', 'NBFM', 'AM'];
+const digDemodBefore = (() => {
+  const d = {};
+  try {
+    const o = JSON.parse(localStorage.getItem('kraken_dig_demod_before') || '{}');
+    for (const k in (o && typeof o === 'object') ? o : {})
+      if (o[k] && DEMOD_ANALOG.includes(o[k].demod)) d[k] = {demod: o[k].demod, audio: !!o[k].audio};
+  } catch (e) {}
+  return d;
+})();
+function digDemodBeforeSave() {
+  try { localStorage.setItem('kraken_dig_demod_before', JSON.stringify(digDemodBefore)); } catch (e) {}
+}
 // transcripts' DoA lobes shown on the 🗺 map (id -> {L, col, el}) and those
 // asked for (mapDrawNow -> v2tLobeDraw reads them)
 let v2tLobes = new Map(), v2tLobeWant = new Set();
@@ -2618,6 +2742,66 @@ const bwo=[
 const MIN_BW_INDEX = bwo.length - 1;
 const MIN_BW_MHZ = bwo[MIN_BW_INDEX].bandwidth; // 0.001 MHz
 
+// VFO BANDWIDTH = any whole Hz from BW_MIN_HZ to the whole 2.4 MHz band
+// (dec.bandwidth_hz; SET_DECIMATOR_BW_HZ:id:hz). The receiver decimates by
+// the largest divisor of 2.4 MHz whose rate holds it and cuts its filter at
+// the bandwidth (config.hpp / shared_decimator.cpp). A width that fills its
+// rate wastes nothing (BW_EFFICIENT: the 59 rates 2.4 MHz / divisor - every
+// bwo size is one; the saved-frequency editor's list); others run up to 1.25x their width (300
+// kHz and below), and 1.2 - 2.4 MHz runs a full-rate filter at 2.4 MS/s -
+// the card's tooltip says what a custom width runs at (bwTitle). There is no
+// snapping option: since the real-tap decimator, every width up to 1.2 MHz
+// costs no more than the nearest old size did (the user's call 2026-10-21,
+// which removed the "Efficient bandwidths only" tick). bwo stays the index
+// list of older receivers.
+const BW_SR = 2400000, BW_MIN_HZ = 1000, BW_MAX_HZ = BW_SR;
+const BW_EFFICIENT = (() => {   // ascending Hz
+  const a = [];
+  for (let d = BW_SR / BW_MIN_HZ; d >= 1; d--) if (BW_SR % d === 0) a.push(BW_SR / d);
+  return a;
+})();
+let bwServerHz = false;   // the receiver takes SET_DECIMATOR_BW_HZ (its decimator_info has bandwidth_hz)
+// a pane VFO's side clipped at the plot border keeps its edge this far inside (paneDrawOverlay)
+const PANE_CLIP_EDGE_PX = 5;
+function bwClampHz(hz) {
+  hz = Math.round(+hz);
+  return isFinite(hz) ? Math.max(BW_MIN_HZ, Math.min(BW_MAX_HZ, hz)) : BW_MIN_HZ;
+}
+// the decimation / output rate a width runs at (as the receiver picks it)
+function bwDecimation(hz) {
+  for (let d = Math.floor(BW_SR / bwClampHz(hz)); d > 1; d--) if (BW_SR % d === 0) return d;
+  return 1;
+}
+function bwRateHz(hz) { return BW_SR / bwDecimation(hz); }
+// the narrowest efficient size that holds hz (a decoder's minimum)
+function bwAtLeastEfficient(hz) { return bwRateHz(hz); }
+// a width dragged with a bar edge: whole Hz, 3 significant figures (a drag
+// step of a pixel is ~0.3 % of a bar)
+function bwUserHz(hz) {
+  hz = bwClampHz(hz);
+  const step = Math.pow(10, Math.max(0, Math.floor(Math.log10(hz)) - 2));
+  return bwClampHz(Math.round(hz / step) * step);
+}
+// a VFO's bandwidth (Hz / MHz): bandwidth_hz, else (an older receiver) its index
+function decBwHz(d) {
+  if (!d) return 240000;
+  if (d.bandwidth_hz > 0) return d.bandwidth_hz;
+  const o = bwo[d.bandwidth_index ?? 0];
+  return Math.round((o ? o.bandwidth : (d.bandwidth_mhz || 0.24)) * 1e6);
+}
+function decBwMhz(d) { return decBwHz(d) / 1e6; }
+// the BW index nearest a width (older receivers, SET_DECIMATOR_BW)
+function bwIndexNearest(hz) {
+  let bi = 0;
+  bwo.forEach((b, i) => { if (Math.abs(Math.log(b.bandwidth * 1e6 / hz)) < Math.abs(Math.log(bwo[bi].bandwidth * 1e6 / hz))) bi = i; });
+  return bi;
+}
+// "12.5 kHz" / "1.25 MHz" (up to 3 decimals, trailing zeros dropped)
+function bwLabel(hz) {
+  const t = (v) => String(+v.toFixed(3));
+  return hz >= 1e6 ? t(hz / 1e6) + ' MHz' : t(hz / 1e3) + ' kHz';
+}
+
 // Max tuning-bar offset from center (Hz) for a bar of bwMhz width: half the
 // visible (edge-clipped, wideband-aware) span minus half the bar width.
 // Single source of truth - this formula was previously copy-pasted ~12 times
@@ -2683,7 +2867,7 @@ function scheduleScrollSync() {
 function resyncOffsetsFromSavedBoxes() {
   if (!scrollDragSavedBoxes) return false;
   decimatorInfo.forEach(dec => {
-    const maxOffset = maxOffsetHz(bwo[dec.bandwidth_index ?? 0].bandwidth);
+    const maxOffset = maxOffsetHz(decBwMhz(dec));
     const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, dec.freq_offset_hz));
     if (clampedOffset !== dec.freq_offset_hz) {
       dec.freq_offset_hz = clampedOffset;
@@ -2714,7 +2898,9 @@ function showBwTooltip(e, bwMhz) {
       'border-radius:4px;padding:3px 8px;font:12px monospace;white-space:nowrap;display:none';
     document.body.appendChild(bwTooltipEl);
   }
-  bwTooltipEl.textContent = bwMhz >= 1 ? bwMhz.toFixed(1) + ' MHz' : Math.round(bwMhz * 1000) + ' kHz';
+  // the width, + the rate it runs at when that's wider (not an efficient size)
+  const hz = Math.round(bwMhz * 1e6), rate = bwRateHz(hz);
+  bwTooltipEl.textContent = bwLabel(hz) + (rate !== hz ? '  (runs at ' + bwLabel(rate).replace('Hz', 'S/s') + ')' : '');
   bwTooltipEl.style.left = (e.clientX + 14) + 'px';
   bwTooltipEl.style.top = (e.clientY - 28) + 'px';
   bwTooltipEl.style.display = 'block';
@@ -3081,7 +3267,7 @@ class WaterfallDisplay {
     decimatorInfo.forEach((dec) => {
       if (vfoLocked(dec)) return;   // drawn as a line above, not grabbable
       const color = typeof getDecimatorColor === 'function' ? getDecimatorColor(dec.id) : '#4169e1';
-      const bwMhz = bwo[dec.bandwidth_index || 0].bandwidth;
+      const bwMhz = decBwMhz(dec);
       const selCenter = centerFreq + (dec.freq_offset_hz / 1000000);
       const freqMin = selCenter - bwMhz / 2;
       const freqMax = selCenter + bwMhz / 2;
@@ -3115,7 +3301,7 @@ class WaterfallDisplay {
         handleColor: handleColor,
         color: color,
         offset_hz: dec.freq_offset_hz,
-        bandwidth_index: dec.bandwidth_index
+        bandwidth_hz: decBwHz(dec)
       });
 
       // Draw translucent box
@@ -4273,15 +4459,6 @@ function toggleSection(header) {
   if(toggle) toggle.textContent = section.classList.contains('collapsed') ? '▶' : '▼';
 }
 
-function findNearestBw(mhz) {
-  let min=Infinity,idx=Math.min(currentBandwidth, MIN_BW_INDEX);
-  for(let i=0;i<=MIN_BW_INDEX;i++) {
-    const d=Math.abs(bwo[i].bandwidth-mhz);
-    if(d<min){min=d;idx=i;}
-  }
-  return idx;
-}
-
 // A locked VFO (its decoder has a fixed frequency - ADS-B - or takes its
 // tuner's whole band - Cell / Digital TV; see vfoLocked):
 // one solid line at its centre with a label, nothing to grab. Used by the
@@ -4370,6 +4547,9 @@ function drawBox() {
     }
   }
 
+  // 📻 the saved-frequency scan's squelch: dotted yellow (sfsDrawSquelch)
+  sfsDrawSquelch(ctx, w, h);
+
   // Draw beamformed FFT overlays - one per decimator, each in its own color.
   if (beamformingEnabled && window.beamformedFFTs && fftPlot) {
     const yScale = fftPlot.scales.y;
@@ -4442,6 +4622,7 @@ function drawBox() {
   // Hide tuning bar during discrete scanning (only show when LOCKED or not scanning)
   if (scannerRunning && scannerState === 'SCANNING') {
     c.boxes = [];
+    drawBoxTags(c, ctx, w, h);
     return; // Don't draw tuning bars while scanning
   }
 
@@ -4492,6 +4673,9 @@ function drawBox() {
     decimatorInfo.forEach(dec => {
       if (vfoLocked(dec)) drawLockedVfoLine(ctx, u.valToPos(center + dec.freq_offset_hz / 1e6, 'x'), h, dec);
     });
+    // the tags stay while the spectrum is dragged (they follow its data, as
+    // the spectrum does; this path returned before them - they vanished)
+    drawBoxTags(c, ctx, w, h);
     return;  // Skip normal drawing
   }
 
@@ -4503,7 +4687,7 @@ function drawBox() {
       return;
     }
     const color = getDecimatorColor(dec.id);
-    const bw = bwo[dec.bandwidth_index ?? 0].bandwidth;
+    const bw = decBwMhz(dec);
     const selCenter = center + (dec.freq_offset_hz / 1000000); // Convert Hz to MHz
     const minF = selCenter - bw/2;
     const maxF = selCenter + bw/2;
@@ -4543,7 +4727,7 @@ function drawBox() {
       handleColor: handleColor,
       color: color,
       offset_hz: dec.freq_offset_hz,
-      bandwidth_index: dec.bandwidth_index
+      bandwidth_hz: decBwHz(dec)
     });
 
     // Draw box
@@ -4657,16 +4841,26 @@ function drawBox() {
     });
   }
 
-  // 📻 Saved frequencies: tags at the top + faint lines (sfDrawSpectrum)
-  sfDrawSpectrum(ctx, w, h);
-
-  // AI assistant: an "AI" badge above every signal it identified
-  aiDrawMarkers(ctx, w);
+  drawBoxTags(c, ctx, w, h);
 
   // Also draw on waterfall overlay
   if (waterfall && waterfall.initialized) {
     waterfall.drawOverlay(decimatorInfo, barCenterFreq(), activeDecimatorId);
   }
+}
+
+// drawBox's top layer, on every path through it: 📻 the saved-frequency tags
+// (sfDrawSpectrum) and the AI assistant's badges above the signals it
+// identified; then the hand cursor while the mouse is on one. drawBox runs
+// with every spectrum frame and sets the cursor from the VFO bars ('default'
+// off them) - the hand, set only on mouse moves, flickered with the arrow
+// ~20 times a second. A tag wins over a VFO bar under it, as for a click
+// (handleDown tests the tags first)
+function drawBoxTags(c, ctx, w, h) {
+  sfDrawSpectrum(ctx, w, h);
+  aiDrawMarkers(ctx, w);
+  if (!fpHover || isDragging || isDraggingEdge || isScrollDragging || squelchDrag) return;
+  if (sfSpecAt(sfSpecRects, fpHover.x, fpHover.y, 3) || aiMarkerAt(fpHover.x, fpHover.y)) c.style.cursor = 'pointer';
 }
 
 
@@ -4750,15 +4944,68 @@ function inRect(x, y, r) {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
-// Center the active tuning bar on freqMhz (clamped to the visible span).
-// Returns false when there is no active decimator.
+// ---- VFO tuning step (the top bar's "Step", the user's request 2026-10-22) ----
+// A tuning-bar drag or a click on the spectrum (main display, waterfall,
+// independent-mode panes) puts the VFO on a multiple of the step - of its
+// ABSOLUTE frequency from 0 Hz (12.5 kHz: 446.0125, 446.0250 MHz), not of its
+// offset from the tuner centre. A drag follows the pointer from where it
+// started and lands on the grid point nearest it: at a step finer than a
+// pixel it moves pixel by pixel (to the Hz). Shift while dragging = fine:
+// 1/100 of the movement from there on, to the Hz, off the grid. Before, a
+// drag only moved once the change passed 1 kHz, in whole pixels (~1093 Hz on
+// a 1760 px plot). The VFO card's digits, typed and saved frequencies are
+// exact as before. Per browser (localStorage kraken_vfo_step)
+const VFO_STEPS_HZ = [1, 10, 100, 500, 1000, 2500, 5000, 6250, 25000 / 3, 10000, 12500, 25000, 50000, 100000];
+const VFO_FINE = 0.01;   // Shift-drag: this much of the pointer's movement
+let vfoStepHz = 1000;
+let dragFine = false;    // the main display's bar drag is in fine mode (Shift)
+function vfoStepLabel(hz) {
+  if (hz < 1000) return hz + ' Hz';
+  const k = Math.round(hz / 10) / 100;   // 8333.3 Hz -> 8.33
+  return k + ' kHz';
+}
+function vfoStepInit() {
+  try {
+    const v = parseFloat(localStorage.getItem('kraken_vfo_step'));
+    const i = VFO_STEPS_HZ.findIndex(s => Math.abs(s - v) < 1e-6);
+    if (i >= 0) vfoStepHz = VFO_STEPS_HZ[i];
+  } catch (e) {}
+  const sel = $id('vfo-step');
+  if (!sel) return;
+  sel.innerHTML = VFO_STEPS_HZ.map((s, i) => `<option value="${i}">${vfoStepLabel(s)}</option>`).join('');
+  sel.value = String(VFO_STEPS_HZ.indexOf(vfoStepHz));
+}
+function setVfoStep(i) {
+  const s = VFO_STEPS_HZ[parseInt(i)];
+  if (!s) return;
+  vfoStepHz = s;
+  try { localStorage.setItem('kraken_vfo_step', String(s)); } catch (e) {}
+}
+vfoStepInit();
+
+// The offset (Hz from centreMhz, the VFO's tuner / wideband centre) that puts
+// a VFO on the step's grid nearest offHz, within +-maxOff: the grid point
+// inside it when the nearest lies outside, the clamped offset (to the Hz)
+// when no grid point is inside at all
+function vfoSnapOffset(centreMhz, offHz, maxOff, stepHz = vfoStepHz) {
+  const c = Math.round(centreMhz * 1e6);
+  const at = k => Math.round(k * stepHz) - c;
+  let n = Math.round((c + offHz) / stepHz);
+  if (at(n) > maxOff) n = Math.floor((c + maxOff) / stepHz);
+  if (at(n) < -maxOff) n = Math.ceil((c - maxOff) / stepHz);
+  const o = at(n);
+  return Math.abs(o) <= maxOff ? o : Math.max(-maxOff, Math.min(maxOff, Math.round(offHz)));
+}
+
+// Center the active tuning bar on freqMhz (clamped to the visible span, on
+// the VFO step's grid). Returns false when there is no active decimator.
 function centerActiveBarAt(freqMhz) {
   const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
   if (!activeDec || vfoLocked(activeDec)) return false;   // fixed-frequency decoder (ADS-B)
   const newOffsetHz = (freqMhz - barCenterFreq()) * 1000000;  // freqMhz is on the displayed axis
-  const bw = bwo[activeDec.bandwidth_index ?? 0].bandwidth;
+  const bw = decBwMhz(activeDec);
   const maxOffset = maxOffsetHz(bw);
-  const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffsetHz));
+  const clampedOffset = vfoSnapOffset(vfoCenterMhz(activeDec), newOffsetHz, maxOffset);
   setDecimatorFreq(activeDecimatorId, clampedOffset / 1000); // Send in kHz
   activeDec.freq_offset_hz = clampedOffset;
   return true;
@@ -4807,6 +5054,7 @@ function pointerDown(s, e) {
       isDragging = true;
       dragStartX = x;
       dragStartOffset = box.offset_hz;
+      dragFine = e.shiftKey;
       e.preventDefault();
       drawBox();
     };
@@ -4824,7 +5072,7 @@ function pointerDown(s, e) {
         isDraggingEdge = true;
         draggedEdge = edge;
         dragStartX = x;
-        dragStartBandwidth = bwo[box.bandwidth_index ?? 0].bandwidth;
+        dragStartBandwidth = box.bandwidth_hz / 1e6;
         dragStartOffset = box.offset_hz;
         e.preventDefault();
         drawBox();
@@ -4920,41 +5168,49 @@ function pointerMove(s, e) {
 
   if(isDraggingEdge) {
     const df=s.dxToMhz(x-dragStartX);
-    let dbw=draggedEdge==='left'?dragStartBandwidth-df*2:dragStartBandwidth+df*2;
-    dbw=Math.max(MIN_BW_MHZ,Math.min(2.4,dbw));
-    const newBwIdx=Math.min(findNearestBw(dbw), MIN_BW_INDEX);
-    showBwTooltip(e, bwo[newBwIdx].bandwidth);
+    const dbw=draggedEdge==='left'?dragStartBandwidth-df*2:dragStartBandwidth+df*2;
+    // any width (3 significant figures), or the nearest efficient size
+    const newHz = bwUserHz(dbw * 1e6);
+    showBwTooltip(e, newHz / 1e6);
 
     // Find active decimator info
     const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
-    if(activeDec && newBwIdx !== activeDec.bandwidth_index) {
-      setDecimatorBandwidth(activeDecimatorId, newBwIdx);
+    if(activeDec && newHz !== decBwHz(activeDec)) {
+      setDecimatorBandwidthHz(activeDecimatorId, newHz);
       // Update local info
-      activeDec.bandwidth_index = newBwIdx;
-      activeDec.bandwidth_mhz = bwo[newBwIdx].bandwidth;
+      decSetLocalBw(activeDec, newHz);
+      // a wider bar must still fit the band: keep its offset inside
+      const maxOffset = maxOffsetHz(newHz / 1e6);
+      if (Math.abs(activeDec.freq_offset_hz) > maxOffset) {
+        activeDec.freq_offset_hz = Math.sign(activeDec.freq_offset_hz) * maxOffset;
+        setDecimatorFreq(activeDecimatorId, activeDec.freq_offset_hz / 1000);
+      }
       drawBox();
       // Update decimator panel in real-time
       refreshDecimatorPanelItem(activeDecimatorId);
     }
     e.preventDefault();
   } else if(isDragging) {
-    const df=s.dxToMhz(x-dragStartX);
-
-    // Calculate new offset
-    const newOffset = dragStartOffset + df * 1000000; // Convert MHz to Hz
-
     // Find active decimator info
     const activeDec = decimatorInfo.find(d => d.id === activeDecimatorId);
     if(activeDec) {
-      const bw = bwo[activeDec.bandwidth_index ?? 0].bandwidth;
+      // Shift pressed / released mid-drag: go on from where the bar is now
+      if (e.shiftKey !== dragFine) {
+        dragFine = e.shiftKey;
+        dragStartX = x;
+        dragStartOffset = activeDec.freq_offset_hz;
+      }
+      // the offset under the pointer since the drag (or the Shift change) began
+      const newOffset = dragStartOffset + s.dxToMhz(x - dragStartX) * 1e6 * (dragFine ? VFO_FINE : 1);
+      const bw = decBwMhz(activeDec);
       const maxOffset = maxOffsetHz(bw);
-      const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, newOffset));
+      // on the step's grid (Shift: to the Hz)
+      const clampedOffset = dragFine ? Math.max(-maxOffset, Math.min(maxOffset, Math.round(newOffset)))
+                                     : vfoSnapOffset(vfoCenterMhz(activeDec), newOffset, maxOffset);
 
-      if(Math.abs(clampedOffset - activeDec.freq_offset_hz) > 1000) { // Update if > 1kHz change
+      if(clampedOffset !== activeDec.freq_offset_hz) {
         setDecimatorFreq(activeDecimatorId, clampedOffset / 1000); // Send in kHz
         activeDec.freq_offset_hz = clampedOffset;
-        dragStartX = x;
-        dragStartOffset = clampedOffset;
         drawBox();
         // Update decimator panel in real-time
         refreshDecimatorPanelItem(activeDecimatorId);
@@ -5084,7 +5340,15 @@ function pointerClick(s, e) {
 }
 
 function handleDown(e) { if (aiMarkerHit(e) || sfMarkerHit(e)) return; pointerDown(fftSurface, e); }
-function handleMove(e) { pointerMove(fftSurface, e); if (!isDragging && !isDraggingEdge && !isScrollDragging && !aiMarkerHover(e)) sfMarkerHover(e); }
+function handleMove(e) {
+  const fo = $id('fo');
+  if (fo) {   // first: pointerMove's redraw keeps the hand over a tag with it (drawBoxTags)
+    const r = fo.getBoundingClientRect();
+    fpHover = {x: e.clientX - r.left, y: e.clientY - r.top};
+  }
+  pointerMove(fftSurface, e);
+  if (!isDragging && !isDraggingEdge && !isScrollDragging && !aiMarkerHover(e)) sfMarkerHover(e);
+}
 function handleUp(e) { pointerUp(fftSurface, e); }
 function handleClick(e) { if (aiMarkerConsumed || sfMarkerConsumed) return; pointerClick(fftSurface, e); }
 function handleWaterfallDown(e) { pointerDown(wfSurface, e); }
@@ -6875,30 +7139,94 @@ function setDecimatorFreq(id, offset_khz) {
   }, 100); // 100ms debounce delay
 }
 
-function setDecimatorBandwidth(id, bw_index) {
-  // Clamp to the selectable range
-  bw_index = Math.max(0, Math.min(parseInt(bw_index), MIN_BW_INDEX));
-  send('SET_DECIMATOR_BW:' + id + ':' + bw_index);
+// A VFO's bandwidth in Hz (any width, bwClampHz): sent at most every 80 ms
+// while it keeps changing (a bar edge being dragged) + the last value; the
+// receiver's echoes are ignored for 1.5 s after a local change (bwHeld) so
+// an older value can't pull the bar back mid-drag. An older receiver (no
+// bandwidth_hz in its decimator_info) gets the nearest index.
+const bwPending = {}, bwSendTimer = {}, bwSendAt = {}, bwHeldUntil = {};
+function bwHeld(id) { return (bwHeldUntil[id] || 0) > Date.now(); }
+function setDecimatorBandwidthHz(id, hz) {
+  bwPending[id] = bwClampHz(hz);
+  bwHeldUntil[id] = Date.now() + 1500;
+  if (bwSendTimer[id]) return;
+  const go = () => {
+    bwSendTimer[id] = null;
+    bwSendAt[id] = Date.now();
+    const v = bwPending[id];
+    send(bwServerHz ? 'SET_DECIMATOR_BW_HZ:' + id + ':' + v : 'SET_DECIMATOR_BW:' + id + ':' + bwIndexNearest(v));
+  };
+  const wait = 80 - (Date.now() - (bwSendAt[id] || 0));
+  if (wait <= 0) go();
+  else bwSendTimer[id] = setTimeout(go, wait);
 }
-
-// Called from UI dropdown - updates local state and redraws tuning bar
+// a BANDWIDTH index (bwo) - the callers from before arbitrary widths
+function setDecimatorBandwidth(id, bw_index) {
+  bw_index = Math.max(0, Math.min(parseInt(bw_index), MIN_BW_INDEX));
+  setDecimatorBandwidthHz(id, Math.round(bwo[bw_index].bandwidth * 1e6));
+}
 function setDecimatorBandwidthFromUI(id, bw_index) {
   bw_index = Math.max(0, Math.min(parseInt(bw_index), MIN_BW_INDEX));
-  setDecimatorBandwidth(id, bw_index);
+  setDecimatorBandwidthHzFromUI(id, Math.round(bwo[bw_index].bandwidth * 1e6));
+}
+// the local VFO's bandwidth (before the receiver's echo)
+function decSetLocalBw(dec, hz) {
+  dec.bandwidth_hz = hz;
+  dec.bandwidth_mhz = hz / 1e6;
+  dec.bandwidth_index = bwIndexNearest(hz);
+}
+
+// The card's BW box: a number in kHz (1 - 2400, any decimals down to 1 Hz);
+// Enter / leaving it applies, Escape cancels, the arrows step 1 kHz. Its
+// tooltip says what rate the width runs at
+function bwKhzText(hz) { return String(+(hz / 1e3).toFixed(3)); }
+function bwTitle(hz) {
+  const r = bwRateHz(hz);
+  const how = ' Any width 1 - 2400 kHz: type it (Enter = set, Escape = cancel) or use the arrows (1 kHz steps).';
+  if (r === hz) return 'Bandwidth ' + bwLabel(hz) + ': fills its sample rate (nothing decimated is wasted).' + how;
+  return 'Bandwidth ' + bwLabel(hz) + ': the VFO runs at ' + bwLabel(r).replace('Hz', 'S/s') + ', ' +
+    (r / hz).toFixed(2) + 'x its width - the receiver decimates by whole numbers, so everything after it ' +
+    '(DoA, audio, decoders) works on the wider rate' + (r === BW_SR ? ', with a filter at the full 2.4 MHz' : '') + '.' + how;
+}
+// the box shows the VFO's width (not while it is being typed in, unless forced)
+function bwBoxSync(dec, force) {
+  const el = $id('dec-bw-' + dec.id);
+  if (!el || (!force && document.activeElement === el)) return;
+  const hz = decBwHz(dec), t = bwKhzText(hz);
+  if (el.value !== t) el.value = t;
+  if (el.dataset.hz !== String(hz)) {
+    el.dataset.hz = String(hz);
+    if (!el.disabled) el.title = bwTitle(hz);   // (a locked VFO's says why)
+  }
+}
+// a value typed / stepped into the box (its change event): clamped to the
+// limits and applied; empty / not a number = back to the VFO's width
+function bwBoxApply(id, el) {
+  const d = decimatorInfo.find(z => z.id === id);
+  if (!d) return;
+  const v = parseFloat(el.value);
+  if (!(v > 0)) { bwBoxSync(d, true); return; }
+  const hz = bwClampHz(v * 1e3);
+  if (hz !== decBwHz(d)) setDecimatorBandwidthHzFromUI(id, hz);
+  bwBoxSync(d, true);   // the applied (clamped) width + its tooltip - also while it keeps the focus (arrows)
+}
+
+// Called from the card, a drag's end, a decoder's need ... - updates local
+// state and redraws the tuning bar
+function setDecimatorBandwidthHzFromUI(id, hz) {
+  hz = bwClampHz(hz);
+  setDecimatorBandwidthHz(id, hz);
 
   // Update local decimator info
   const dec = decimatorInfo.find(d => d.id === id);
-  if (dec) {
-    dec.bandwidth_index = bw_index;
-    dec.bandwidth_mhz = bwo[bw_index].bandwidth;
-  }
+  if (dec) decSetLocalBw(dec, hz);
 
   // Update decimator panel (dropdown, info display)
   refreshDecimatorPanelItem(id);
 
   // If there are saved box positions from a drag, sync the offsets first
   // This ensures the tuning bar stays at its visual position after bandwidth change
-  // (the changed decimator already carries its NEW bandwidth_index for the clamp)
+  // (the changed decimator already carries its NEW bandwidth for the clamp)
   resyncOffsetsFromSavedBoxes();
 
   // Now clear saved box positions so drawBox uses fresh calculated values
@@ -6929,17 +7257,13 @@ function refreshDecimatorPanelItem(id) {
     actualFreqEl.value = actualFreqMhz.toFixed(6);
   }
 
-  // Update bandwidth dropdown selection
-  const bwEl = $id('dec-bw-' + id);
-  if (bwEl && bwEl.value != dec.bandwidth_index) {
-    bwEl.value = dec.bandwidth_index;
-  }
+  // Update the bandwidth list (its "custom" entry follows the width)
+  bwBoxSync(dec);
 
   // Update info display
   const infoEl = $id('dec-info-' + id);
   if (infoEl) {
-    const bwMhz = bwo[dec.bandwidth_index || 0].bandwidth;
-    infoEl.textContent = `Bandwidth: ${bwMhz.toFixed(2)} MHz | ${dec.enabled ? 'Enabled' : 'Disabled'}`;
+    infoEl.textContent = `Bandwidth: ${bwLabel(decBwHz(dec))} | ${dec.enabled ? 'Enabled' : 'Disabled'}`;
   }
 }
 
@@ -6992,12 +7316,21 @@ function toggleVfoAudio(id) {
   if (dec) setVfoAudio(id, !decAudioOn(dec));
 }
 
-function setDecimatorDemodMode(id, mode) {
+// keepBw: leave the bandwidth as it is (going back from Digital to the demod
+// the VFO had before it - entering Digital kept the bandwidth)
+function setDecimatorDemodMode(id, mode, keepBw) {
   send('SET_DECIMATOR_DEMOD:' + id + ':' + mode);
 
   // Update local state
   const dec = decimatorInfo.find(d => d.id === id);
   if (dec) {
+    if (mode === 'DIGITAL' && DEMOD_ANALOG.includes(dec.demod_mode)) {
+      digDemodBefore[id] = {demod: dec.demod_mode, audio: decAudioOn(dec)};
+      digDemodBeforeSave();
+    } else if (mode !== 'DIGITAL' && digDemodBefore[id]) {
+      delete digDemodBefore[id];
+      digDemodBeforeSave();
+    }
     dec.demod_mode = mode;
   }
   updatePlotTitle();
@@ -7014,14 +7347,22 @@ function setDecimatorDemodMode(id, mode) {
   // starved them)
   if (mode === 'DIGITAL') {
     const need = digMinRateK(dec && dec.digital_mode && dec.digital_mode !== 'OFF' ? dec.digital_mode : 'AUTO') || 24;
-    const have = dec ? ((bwo[dec.bandwidth_index] || {}).bandwidth ?? dec.bandwidth_mhz) * 1000 : 0;
+    const have = dec ? decBwHz(dec) / 1000 : 0;
     if (have + 1e-6 < need) digFixBandwidthFor(id);
     return;
   }
+  if (keepBw) return;
   // Automatically set appropriate bandwidth for the mode
-  // WBFM: 240 kHz (index 7), NBFM/AM: 16 kHz (index 20)
-  const bwIndex = (mode === 'WBFM') ? 7 : 20;
-  setDecimatorBandwidthFromUI(id, bwIndex);
+  // WBFM: 240 kHz, NBFM/AM: 16 kHz
+  setDecimatorBandwidthHzFromUI(id, mode === 'WBFM' ? 240000 : 16000);
+}
+
+// The card's Demod list: back to the demod the VFO had before Digital keeps
+// the bandwidth (a 400 kHz RDS VFO stays wide enough for its 92 kHz SCA)
+function decDemodPicked(id, mode) {
+  const dec = decimatorInfo.find(d => d.id === id);
+  const before = digDemodBefore[id];
+  setDecimatorDemodMode(id, mode, !!(dec && dec.demod_mode === 'DIGITAL' && before && before.demod === mode));
 }
 
 function requestDecimatorInfo() {
@@ -7063,7 +7404,7 @@ function handleActualFreqInput(decimatorId, inputValue, focusValue) {
 
   // Get bandwidth for this decimator to calculate max offset
   // Account for edge clipping - visible bandwidth is reduced by currentEdgeClip
-  const bw = bwo[dec.bandwidth_index || 0].bandwidth;
+  const bw = decBwMhz(dec);
   const maxOffset = maxOffsetHz(bw);
 
   // Clamp to valid range
@@ -7129,11 +7470,11 @@ function vfdStep(id, pos, up) {
   if (opMode === 'independent') {
     const p = panes[d.tuner || 0];
     if (!p || !(p.freqMhz > 0)) return;
-    const bw = d.bandwidth_mhz || (bwo[d.bandwidth_index || 0] || {}).bandwidth || 0.1;
+    const bw = decBwMhz(d);
     const half = Math.max(0, (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2) * 1e6;
     off = Math.max(-half, Math.min(half, hz - p.freqMhz * 1e6));
   } else {
-    const max = maxOffsetHz(bwo[d.bandwidth_index || 0].bandwidth);
+    const max = maxOffsetHz(decBwMhz(d));
     off = Math.max(-max, Math.min(max, hz - currentCenterFreq * 1e6));
   }
   const s = vfdTx[id] || (vfdTx[id] = {last: 0, timer: null, hold: 0});
@@ -7232,6 +7573,15 @@ function updateDecimatorList(info) {
     if (!vfdHeld(serverDec.id)) return;
     const localDec = decimatorInfo.find(d => d.id === serverDec.id);
     if (localDec) serverDec.freq_offset_hz = localDec.freq_offset_hz;
+  });
+  // ...and the width of a VFO whose bandwidth this page just changed (a bar
+  // edge being dragged: bwHeld). A receiver that sends bandwidth_hz takes
+  // SET_DECIMATOR_BW_HZ (any width)
+  if (info.some(d => d.bandwidth_hz > 0)) bwServerHz = true;
+  info.forEach(serverDec => {
+    if (!bwHeld(serverDec.id)) return;
+    const localDec = decimatorInfo.find(d => d.id === serverDec.id);
+    if (localDec) decSetLocalBw(serverDec, decBwHz(localDec));
   });
   // In-place update when the panel structure is unchanged: rebuilding the
   // whole list with innerHTML on every decimator_info push destroyed input
@@ -7334,15 +7684,18 @@ function updateDecimatorList(info) {
           ${Array.from({length: Math.max(1, activeNumElements)}, (_, t) => `<option value="${t}" ${t === (dec.tuner || 0) ? 'selected' : ''}>T${t}</option>`).join('')}
         </select>
       </div>
-      <div class="dec-row">
+      <div class="dec-row" id="dec-bw-row-${dec.id}">
         <label>BW:</label>
-        <select id="dec-bw-${dec.id}" onchange="setDecimatorBandwidthFromUI(${dec.id}, this.value)" style="flex:1">
-          ${bwo.slice(0, MIN_BW_INDEX + 1).map((bw, idx) => `<option value="${idx}" ${idx === dec.bandwidth_index ? 'selected' : ''}>${bw.name}</option>`).join('')}
-        </select>
+        <input type="number" class="dec-bw-in" id="dec-bw-${dec.id}" min="1" max="2400" step="any" inputmode="decimal"
+               value="${bwKhzText(decBwHz(dec))}" data-hz="${decBwHz(dec)}" title="${bwTitle(decBwHz(dec))}"
+               onkeydown="if(event.key==='Enter'){event.target.blur()}else if(event.key==='Escape'){this.value=this.dataset.orig;event.target.blur()}"
+               onfocus="this.dataset.orig=this.value"
+               onchange="bwBoxApply(${dec.id}, this)">
+        <span class="dec-bw-unit">kHz</span>
       </div>
       <div class="dec-row">
         <label>Demod:</label>
-        <select id="dec-demod-${dec.id}" onchange="setDecimatorDemodMode(${dec.id}, this.value)" style="flex:1">
+        <select id="dec-demod-${dec.id}" onchange="decDemodPicked(${dec.id}, this.value)" style="flex:1">
           <option value="WBFM" ${dec.demod_mode === 'WBFM' ? 'selected' : ''}>WBFM</option>
           <option value="NBFM" ${dec.demod_mode === 'NBFM' ? 'selected' : ''}>NBFM</option>
           <option value="AM" ${dec.demod_mode === 'AM' ? 'selected' : ''}>AM</option>
@@ -7388,7 +7741,7 @@ function updateDecimatorList(info) {
         <span id="dec-squelch-val-${dec.id}" style="width:45px;text-align:right;font-size:10px">${squelchLevel} dB</span>
       </div>
       <div class="dec-row" style="display:${squelchEnabled && sqMethod === 'DIGITAL' ? 'flex' : 'none'}" id="dec-squelch-dig-${dec.id}">
-        <span style="font-size:10px;color:#888;line-height:1.35">Opens on frames the decoder confirms (stays open 1.5 s after the last - CTCSS / DCS: 0.35 s); the DoA comes from exactly their samples</span>
+        <span style="font-size:10px;color:#888;line-height:1.35">Opens on frames the decoder confirms (stays open 1.5 s after the last - Analog FM IDs: 0.35 s); the DoA comes from exactly their samples</span>
       </div>
     `;
 
@@ -7442,6 +7795,7 @@ function createPlot() {
         c.addEventListener('mouseup',handleUp);
         addTouchHandlers(c,handleDown,handleMove,handleUp);
         c.addEventListener('mouseleave',()=>{
+          fpHover=null;
           // Clear the ACTUAL hover state props (c.ih/c.he were leftovers
           // from an older version - the highlight/cursor used to stay stuck)
           if(c.hoveredBox||c.hoveredEdge||c.hoveredHandle){
@@ -7608,6 +7962,7 @@ function connect() {
     if (mapState.on) setTimeout(() => { send('GET_MAP'); send('GET_RDF'); }, 900);
     // 📻 saved frequencies + map markers (then pushed when they change)
     setTimeout(() => send('GET_SF'), 880);
+    setTimeout(() => send('GET_SFSCAN'), 885);
 
     // Request FFT settings on connection
     setTimeout(() => requestFFTSettings(), 600);
@@ -7657,6 +8012,7 @@ function connect() {
           }
           else if(msg.map) { mapOnMessage(msg.map); }
           else if(msg.savedfreq) { sfOnMessage(msg.savedfreq); }
+          else if(msg.sfscan) { sfsOnMessage(msg.sfscan); }
           else if(msg.incidents) { incOnMessage(msg.incidents); }
           else if(msg.rdf) { rdfOnStatus(msg.rdf, false); }
           else if(msg.rdf_part) { rdfOnStatus(msg.rdf_part, true); }
@@ -7714,11 +8070,15 @@ function connect() {
           else if(msg.decimator_bandwidth) {
             // Bandwidth changed by another client (e.g. the web-mapper bridge);
             // mirror it into the panel + spectrum overlay live.
-            const dec = decimatorInfo.find(d => d.id === msg.decimator_bandwidth.id);
-            if (dec) {
-              dec.bandwidth_index = msg.decimator_bandwidth.bandwidth_index;
-              refreshDecimatorPanelItem(msg.decimator_bandwidth.id);
+            // (not while this page is changing it: an echo of an earlier drag
+            // step would pull the bar back - bwHeld)
+            const mb = msg.decimator_bandwidth;
+            const dec = decimatorInfo.find(d => d.id === mb.id);
+            if (dec && !bwHeld(mb.id)) {
+              decSetLocalBw(dec, mb.bandwidth_hz > 0 ? mb.bandwidth_hz : Math.round(bwo[mb.bandwidth_index ?? 0].bandwidth * 1e6));
+              refreshDecimatorPanelItem(mb.id);
               drawBox();
+              paneDrawAllOverlays();
               digRenderAll();
             }
           }
@@ -7727,16 +8087,11 @@ function connect() {
             // SET_DECIMATOR_DEMOD instead). If bandwidth_index is provided, update the FM decimator's bandwidth selector
             if (msg.demod_mode.bandwidth_index !== undefined) {
               const fmDecId = decimatorInfo.find(decAudioOn)?.id;
-              if (fmDecId !== undefined) {
-                const bwSelect = $id('dec-bw-' + fmDecId);
-                if (bwSelect) {
-                  bwSelect.value = msg.demod_mode.bandwidth_index;
-                }
-                // Update local decimator info
-                const dec = decimatorInfo.find(d => d.id === fmDecId);
-                if (dec) {
-                  dec.bandwidth_index = msg.demod_mode.bandwidth_index;
-                }
+              const dec = decimatorInfo.find(d => d.id === fmDecId);
+              if (dec) {
+                const m = msg.demod_mode;
+                decSetLocalBw(dec, m.bandwidth_hz > 0 ? m.bandwidth_hz : Math.round(bwo[m.bandwidth_index].bandwidth * 1e6));
+                refreshDecimatorPanelItem(dec.id);
               }
             }
           }
@@ -8693,16 +9048,21 @@ function paneDrawOverlay(p) {
       if (x >= p.L && x <= p.sw - 4) drawLockedVfoLine(ctx, x, H, d);
       continue;
     }
-    const bw = (bwo[d.bandwidth_index ?? 0] || {}).bandwidth || d.bandwidth_mhz || 0.1;
+    const bw = decBwMhz(d);
     let x0 = paneX(p, cm - bw / 2), x1 = paneX(p, cm + bw / 2);
-    // clipped to the plot area (zoomed in, a VFO can be partly or wholly
-    // outside it - a clipped side has no edge to grab)
+    // clipped to the plot area (zoomed in, or a VFO wider than the band the
+    // pane shows - 2.4 MHz with the edge clip -, a VFO can be partly or wholly
+    // outside it). A clipped side keeps its edge just inside the plot border
+    // (PANE_CLIP_EDGE_PX, as the main display's at the canvas border): the
+    // edge drag changes the width from where it started, so it resizes
+    // alike - without it a full-width VFO couldn't be resized at all
     const L = p.L, R = p.sw - 4;
     if (x1 < L || x0 > R) continue;
     const clipL = x0 < L, clipR = x1 > R;
     x0 = Math.max(L, x0); x1 = Math.min(R, x1);
     if (x1 - x0 < 8) { const xc = (x0 + x1) / 2; x0 = xc - 4; x1 = xc + 4; }   // MIN_BOX_PX
     const w = x1 - x0;
+    const xl = clipL ? x0 + PANE_CLIP_EDGE_PX : x0, xr = clipR ? x1 - PANE_CLIP_EDGE_PX : x1;   // the edges
     const col = getDecimatorColor(d.id), active = d.id === activeDecimatorId;
     const hv = p.hover && p.hover.id === d.id ? p.hover.kind : null;
     ctx.fillStyle = col + (active ? '4d' : '33');
@@ -8721,15 +9081,15 @@ function paneDrawOverlay(p) {
       ctx.strokeRect(x0, hy, w, HANDLE_H);
       ctx.fillStyle = col;
       const big = active && hv === 'edge';
-      ctx.fillRect(x0 - (big ? 3 : 2), y0 + sh / 2 - (big ? 20 : 15), big ? 6 : 4, big ? 40 : 30);
-      ctx.fillRect(x1 - (big ? 3 : 2), y0 + sh / 2 - (big ? 20 : 15), big ? 6 : 4, big ? 40 : 30);
+      ctx.fillRect(xl - (big ? 3 : 2), y0 + sh / 2 - (big ? 20 : 15), big ? 6 : 4, big ? 40 : 30);
+      ctx.fillRect(xr - (big ? 3 : 2), y0 + sh / 2 - (big ? 20 : 15), big ? 6 : 4, big ? 40 : 30);
       handles.push({y0: hy, y1: hy + HANDLE_H});
     }
     ctx.fillStyle = col;
     ctx.font = '12px monospace';
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-    ctx.fillText('D' + d.id, x0 + 5, 14);
-    p.bars.push({id: d.id, x0, x1, handles, offset_hz: d.freq_offset_hz || 0, bw, clipL, clipR});
+    ctx.fillText('D' + d.id, x0 + 5 + (clipL ? PANE_CLIP_EDGE_PX : 0), 14);
+    p.bars.push({id: d.id, x0, x1, xl, xr, handles, offset_hz: d.freq_offset_hz || 0, bw, clipL, clipR});
     // FFT squelch: dashed yellow line at the level inside the bar, on the
     // spectrum (as drawBox does; the Digital squelch has no level)
     if (squelchIsFft(d)) {
@@ -8762,7 +9122,9 @@ function paneDrawOverlay(p) {
     ctx.fillText('AI', x, 8);
     p.ai.push({x0: x - 9, x1: x + 9, y0: 2, y1: 13, id: s.id});
   }
-  // 📻 saved frequencies: tags under the AI badges (sfPaneTags)
+  // 📻 the saved-frequency scan's squelch (sfsPaneSquelch), then the
+  // saved frequencies' tags under the AI badges (sfPaneTags)
+  sfsPaneSquelch(ctx, p);
   p.sf = sfPaneTags(ctx, p, span);
 }
 
@@ -8780,9 +9142,9 @@ function paneHit(p, x, y) {
   const h = p.bars.find(b => x >= b.x0 && x <= b.x1 && b.handles.some(hd => y >= hd.y0 && y <= hd.y1));
   if (h) return {bar: h, kind: 'handle'};
   const a = p.bars.find(b => b.id === activeDecimatorId);
-  if (a) {
-    if (!a.clipL && Math.abs(x - a.x0) <= 5) return {bar: a, kind: 'edge', edge: 'left'};
-    if (!a.clipR && Math.abs(x - a.x1) <= 5) return {bar: a, kind: 'edge', edge: 'right'};
+  if (a) {   // (a clipped side's edge sits just inside the plot border: xl / xr)
+    if (Math.abs(x - a.xl) <= 5) return {bar: a, kind: 'edge', edge: 'left'};
+    if (Math.abs(x - a.xr) <= 5) return {bar: a, kind: 'edge', edge: 'right'};
   }
   const b = p.bars.find(b => x >= b.x0 && x <= b.x1);
   return b ? {bar: b, kind: 'body'} : null;
@@ -8831,9 +9193,13 @@ function paneDown(p, e) {
   if (!d) return;
   if (activeDecimatorId !== id) selectDecimator(id);
   const cur = (d.tuner || 0) === p.ch ? p.freqMhz + (d.freq_offset_hz || 0) / 1e6 : null;
-  paneDrag = {p, id, grab: hit && cur !== null ? paneFreqAt(p, x) - cur : 0, pointerId: e.pointerId};
+  paneDrag = {p, id, grab: hit && cur !== null ? paneFreqAt(p, x) - cur : 0, fine: e.shiftKey, pointerId: e.pointerId};
   try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
-  paneMoveVfo(p, d, paneFreqAt(p, x) - paneDrag.grab);
+  // a VFO grabbed where it is stays put until it is moved; one coming from
+  // another tuner lands on the step's grid
+  paneMoveVfo(p, d, paneFreqAt(p, x) - paneDrag.grab, cur !== null ? undefined : 'step');
+  paneDrag.fx = x;                                          // where a fine (Shift) drag counts from
+  paneDrag.fmhz = p.freqMhz + (d.freq_offset_hz || 0) / 1e6;
   e.preventDefault();
 }
 function paneMove(p, e) {
@@ -8856,15 +9222,20 @@ function paneMove(p, e) {
   }
   if (paneDrag.edge) {
     const df = (x - paneDrag.x0) * paneDrag.mhzPerPx;
-    let dbw = paneDrag.edge === 'left' ? paneDrag.bw0 - df * 2 : paneDrag.bw0 + df * 2;
-    dbw = Math.max(MIN_BW_MHZ, Math.min(2.4, dbw));
-    const idx = Math.min(findNearestBw(dbw), MIN_BW_INDEX);
-    showBwTooltip(e, bwo[idx].bandwidth);
+    const dbw = paneDrag.edge === 'left' ? paneDrag.bw0 - df * 2 : paneDrag.bw0 + df * 2;
+    // any width (3 significant figures), or the nearest efficient size
+    const hz = bwUserHz(dbw * 1e6);
+    showBwTooltip(e, hz / 1e6);
     const d = (decimatorInfo || []).find(z => z.id === paneDrag.id);
-    if (d && idx !== d.bandwidth_index) {
-      setDecimatorBandwidth(d.id, idx);
-      d.bandwidth_index = idx;
-      d.bandwidth_mhz = bwo[idx].bandwidth;
+    if (d && hz !== decBwHz(d)) {
+      setDecimatorBandwidthHz(d.id, hz);
+      decSetLocalBw(d, hz);
+      // a wider bar must still fit the pane's band: keep its offset inside
+      const half = Math.max(0, (p.sr / 1e6) * currentEdgeClip / 2 - hz / 2e6) * 1e6;
+      if (Math.abs(d.freq_offset_hz || 0) > half) {
+        d.freq_offset_hz = Math.sign(d.freq_offset_hz) * half;
+        setDecimatorFreq(d.id, d.freq_offset_hz / 1000);
+      }
       paneDrawAllOverlays();
       refreshDecimatorPanelItem(d.id);
     }
@@ -8888,7 +9259,20 @@ function paneMove(p, e) {
     return;
   }
   const d = (decimatorInfo || []).find(z => z.id === paneDrag.id);
-  if (d) paneMoveVfo(p, d, paneFreqAt(p, x) - paneDrag.grab);
+  if (!d) return;
+  // Shift pressed / released mid-drag: go on from where the VFO is now
+  const at = p.freqMhz + (d.freq_offset_hz || 0) / 1e6;
+  if (e.shiftKey !== paneDrag.fine) {
+    paneDrag.fine = e.shiftKey;
+    paneDrag.grab = paneFreqAt(p, x) - at;
+    paneDrag.fx = x;
+    paneDrag.fmhz = at;
+  }
+  if (paneDrag.fine) {
+    paneMoveVfo(p, d, paneDrag.fmhz + (paneFreqAt(p, x) - paneFreqAt(p, paneDrag.fx)) * VFO_FINE, 'fine');
+  } else {
+    paneMoveVfo(p, d, paneFreqAt(p, x) - paneDrag.grab, 'step');
+  }
 }
 function paneUp(p, e) {
   if (!paneDrag) return;
@@ -8912,24 +9296,29 @@ function paneUp(p, e) {
   }
   // a click: the selected VFO goes there (and onto this tuner)
   const d = (decimatorInfo || []).find(z => z.id === activeDecimatorId);
-  if (d && !vfoLocked(d) && paneSpan(p)) paneMoveVfo(p, d, paneFreqAt(p, paneXY(e).x));
+  if (d && !vfoLocked(d) && paneSpan(p)) paneMoveVfo(p, d, paneFreqAt(p, paneXY(e).x), 'step');
 }
 
-// Put VFO d at mhz on pane p (clamped into the visible band)
-function paneMoveVfo(p, d, mhz) {
-  const bw = d.bandwidth_mhz || (bwo[d.bandwidth_index || 0] || {}).bandwidth || 0.1;
+// Put VFO d at mhz on pane p (clamped into the visible band). snap: 'step' =
+// on the VFO step's grid (a drag / click on the pane), 'fine' = to the Hz
+// (Shift-drag), none = exactly mhz (typed / saved frequencies, tuner moves)
+function paneMoveVfo(p, d, mhz, snap) {
+  const bw = decBwMhz(d);
   const half = Math.max(0, (p.sr / 1e6) * currentEdgeClip / 2 - bw / 2);
   const off = Math.max(-half, Math.min(half, mhz - p.freqMhz));
+  let offHz = off * 1e6;
+  if (snap === 'step') offHz = vfoSnapOffset(p.freqMhz, (mhz - p.freqMhz) * 1e6, half * 1e6);
+  else if (snap === 'fine') offHz = Math.max(-half * 1e6, Math.min(half * 1e6, Math.round(offHz)));
   const moved = (d.tuner || 0) !== p.ch;
-  d.freq_offset_hz = off * 1e6;
+  d.freq_offset_hz = offHz;
   d.tuner = p.ch;
   if (moved) {
     pendingFreqUpdates.delete(d.id);   // a queued move on the old tuner must not land after this
-    send('SET_DECIMATOR_FREQ:' + d.id + ':' + (off * 1000).toFixed(3) + ':' + p.ch);
+    send('SET_DECIMATOR_FREQ:' + d.id + ':' + (offHz / 1000).toFixed(3) + ':' + p.ch);
     const ts = $id('dec-tuner-' + d.id);
     if (ts) ts.value = p.ch;
   } else {
-    setDecimatorFreq(d.id, off * 1000);
+    setDecimatorFreq(d.id, offHz / 1000);
   }
   paneDrawAllOverlays();
   refreshDecimatorPanelItem(d.id);
@@ -8940,7 +9329,7 @@ function paneMoveVfo(p, d, mhz) {
 // (the VFO's own first), else clamped into its own
 function paneTuneVfoTo(d, mhz) {
   const order = [d.tuner || 0, ...panes.map(p => p.ch).filter(c => c !== (d.tuner || 0))];
-  const bw = d.bandwidth_mhz || 0.1;
+  const bw = decBwMhz(d);
   for (const ch of order) {
     const p = panes[ch];
     if (!p || !(p.freqMhz > 0)) continue;
@@ -8972,13 +9361,17 @@ setInterval(() => {
 // ============================================================================
 // SPECTRUM ZOOM (mouse wheel / Zoom slider) + SPECTRUM/WATERFALL SPLIT
 // ----------------------------------------------------------------------------
-// Zoom = {level 1..16, off = window centre - frame centre in MHz}. The data is
+// Zoom = {level 1..ZOOM_MAX, off = window centre - frame centre in MHz}. The data is
 // sliced (zoomSlice) before it reaches the plot and the waterfall, so the
 // spectrum, tuning bars and waterfall share the zoomed range. Coherent /
 // wideband: mainZoom (the main display); independent: each pane's own, the
-// slider shows / sets the selected pane's.
+// slider shows / sets the selected pane's. 32x (was 16, the user's request
+// 2026-10-22): past ~16x a wide plot shows fewer FFT bins (146.5 Hz each)
+// than it has pixels - the spectrum is magnified, not finer; the tuning bars
+// are (a pixel is ~34 Hz at 32x on a 1760 px plot). The slider is log2 x 25:
+// max 125 = 32x
 // ============================================================================
-const ZOOM_MAX = 16;
+const ZOOM_MAX = 32;
 const mainZoom = {level: 1, off: 0};
 function zoomTarget() {
   if (opMode === 'independent') { const p = panes[selTuner]; return p ? {z: p.zoom, center: p.freqMhz} : null; }
@@ -9349,6 +9742,7 @@ if (mobileLayoutMQ.addEventListener) {
 const MOBILE_RELOCATIONS = [
   {id: 'tb-gain', slot: 'mobile-controls-slot'},
   {id: 'tb-ch', slot: 'mobile-controls-slot'},
+  {id: 'tb-step', slot: 'mobile-controls-slot'},
   {id: 'tb-audio', slot: 'mobile-controls-slot'},
   {id: 'wf-controls-bar', slot: 'mobile-display-slot'},
 ];
@@ -9916,11 +10310,11 @@ function addTouchHandlers(el, down, move, up) {
   function digApplyFixedTune(id, mode) {
     const p = digFixedPlugin(mode), d = digDec(id);
     if (!p || !d) return;
-    const mhz = p.fixed_freq_hz / 1e6, need = (p.min_vfo_rate || 0) / 1e6;
-    // the narrowest bandwidth option the decoder can use (ADS-B, cells: 2.4 MHz)
-    let bi = 0;
-    bwo.forEach((b, i) => { if (b.bandwidth >= need - 1e-9 && b.bandwidth < bwo[bi].bandwidth) bi = i; });
-    if (d.bandwidth_index !== bi) setDecimatorBandwidthFromUI(id, bi);
+    const mhz = p.fixed_freq_hz / 1e6;
+    // the narrowest efficient size the decoder can use (ADS-B, cells: 2.4 MHz -
+    // the whole band unfiltered, not a 2 MHz filter at the full rate)
+    const hz = bwAtLeastEfficient(p.min_vfo_rate || 0);
+    if (decBwHz(d) !== hz) setDecimatorBandwidthHzFromUI(id, hz);
     // the VFO on its tuner's centre (a queued drag must not land after this)...
     pendingFreqUpdates.delete(id);
     d.freq_offset_hz = 0;
@@ -10223,16 +10617,34 @@ function addTouchHandlers(el, down, move, up) {
 
   function digSetOptFor(id, key, val) { send('DIGITAL_OPT:' + id + ':' + key + ':' + val); }
 
+  // The demod "🔊 Listening" goes back to: the one the VFO had before
+  // Digital, else WBFM on a VFO as wide as an FM broadcast channel (Digital
+  // set by another page), else none (it is only muted, as before)
+  function digListenBack(d) {
+    const p = digDemodBefore[d.id];
+    if (p) return p.demod;
+    return decBwMhz(d) >= 0.15 ? 'WBFM' : '';
+  }
+
   // Listen: hear this VFO (🔊, with any others heard) with the Digital
-  // demodulator, audio on; while listening: mute it again
+  // demodulator, audio on; while listening: back to the demod it had before
+  // (heard or muted as it was then, the bandwidth kept) - the RDS plugin's
+  // SCA audio back to the station's WBFM
   function digListenFor(id) {
     const d = digDec(id);
     if (!d) return;
     if (decAudioOn(d) && d.demod_mode === 'DIGITAL' && fmEnabled) {
-      setVfoAudio(d.id, false);
+      const p = digDemodBefore[d.id], back = digListenBack(d);
+      if (back) {
+        setDecimatorDemodMode(d.id, back, true);
+        if (p && !p.audio) setVfoAudio(d.id, false);
+      } else {
+        setVfoAudio(d.id, false);
+      }
     } else {
-      if (!decAudioOn(d)) setVfoAudio(d.id, true);
+      // the demod first: it remembers whether the VFO was heard
       if (d.demod_mode !== 'DIGITAL') setDecimatorDemodMode(d.id, 'DIGITAL');
+      if (!decAudioOn(d)) setVfoAudio(d.id, true);
       if (!fmEnabled) tfm();
     }
     setTimeout(digRenderAll, 300);
@@ -10247,14 +10659,11 @@ function addTouchHandlers(el, down, move, up) {
     infoRenderDecoder(true);
   }
 
-  // the narrowest bandwidth option at or above the mode's minimum
+  // the narrowest efficient size at or above the mode's minimum
   function digFixBandwidthFor(id) {
     const d = digDec(id);
     if (!d) return;
-    const need = (digMinRateK(d.digital_mode) || 24) / 1000;
-    let idx = -1;
-    bwo.forEach((b, i) => { if (b.bandwidth >= need - 1e-9 && (idx < 0 || b.bandwidth < bwo[idx].bandwidth)) idx = i; });
-    if (idx >= 0) setDecimatorBandwidthFromUI(d.id, idx);
+    setDecimatorBandwidthHzFromUI(d.id, bwAtLeastEfficient((digMinRateK(d.digital_mode) || 24) * 1000));
     digRenderAll();
   }
 
@@ -10354,10 +10763,13 @@ function addTouchHandlers(el, down, move, up) {
       const lock = vfoLocked(d), lp = lock ? digFixedPlugin(d.digital_mode) : null;
       const why = !lock ? '' : lp.fixed_freq_hz > 0 ? digModeLabel(d.digital_mode) + ' sets this VFO\'s frequency and bandwidth'
         : digModeLabel(d.digital_mode) + ' keeps this VFO on its tuner\'s centre with the full bandwidth - tune the receiver instead';
-      for (const k of ['dec-actual-freq-', 'dec-bw-', 'dec-tuner-']) {
+      for (const k of ['dec-actual-freq-', 'dec-tuner-']) {
         const el = $id(k + d.id);
         if (el && el.disabled !== lock) { el.disabled = lock; el.title = why; }
       }
+      // the bandwidth box (its own tooltip back when unlocked)
+      const bs = $id('dec-bw-' + d.id);
+      if (bs && bs.disabled !== lock) { bs.disabled = lock; bs.title = lock ? why : bwTitle(decBwHz(d)); }
       const fd = $id('dec-freq-' + d.id), fe = $id('dec-freq-ed-' + d.id);
       if (fd && fd.classList.contains('locked') !== lock) { fd.classList.toggle('locked', lock); fd.title = lock ? why : VFD_TIP; }
       if (fe && fe.disabled !== lock) { fe.disabled = lock; fe.title = lock ? why : VFD_ED_TIP; }
@@ -11249,18 +11661,22 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                 ` onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="digSetOptFor(${id}, this.dataset.key, this.value.trim())"></label>`;
     }
     const needK = digMinRateK(mode);
-    const haveK = d ? ((bwo[d.bandwidth_index] || {}).bandwidth ?? d.bandwidth_mhz) * 1000 : 0;
+    const haveK = d ? decBwHz(d) / 1000 : 0;
     let warn = '';
     if (d && haveK + 1e-6 < needK) {
-      let fix = -1;
-      bwo.forEach((b, i) => { if (b.bandwidth >= needK / 1000 - 1e-9 && (fix < 0 || b.bandwidth < bwo[fix].bandwidth)) fix = i; });
-      warn += `<div class="dig-warn"><span>D${id}: VFO bandwidth ${haveK.toFixed(0)} kHz is too narrow for ${digEsc(digModeLabel(mode))} (needs ${needK} kHz).</span>` +
-              `<button class="btn sm" type="button" onclick="digFixBandwidthFor(${id})">${fix >= 0 ? 'Set ' + +(bwo[fix].bandwidth * 1000).toFixed(1) + ' kHz' : 'Widen'}</button></div>`;
+      const fix = bwAtLeastEfficient(needK * 1000);
+      warn += `<div class="dig-warn"><span>D${id}: VFO bandwidth ${digEsc(bwLabel(haveK * 1000))} is too narrow for ${digEsc(digModeLabel(mode))} (needs ${needK} kHz).</span>` +
+              `<button class="btn sm" type="button" onclick="digFixBandwidthFor(${id})">Set ${digEsc(bwLabel(fix))}</button></div>`;
     }
     const bad = (st && st.plugins || []).filter(x => x.state && x.state !== 'running' && x.state !== 'starting');
     if (bad.length) warn += `<div class="dig-warn" style="display:block">D${id}: ${bad.map(x => digEsc(x.error || (x.name + ': ' + x.state))).join('<br>')}</div>`;
     const vs = st && st.voice && st.voice.state;
     const hasVoice = digHasVoice(mode, st);
+    const back = d && listening ? digListenBack(d) : '';
+    const listenTip = !listening
+      ? 'Play this VFO\'s decoded audio (digital voice; RDS: an SCA or the main programme): hears it (🔊, with any other VFOs heard) with the Digital demodulator. Click again to go back'
+      : back ? `Hearing this VFO's decoded audio - click to go back to ${back}` + (digDemodBefore[id] && !digDemodBefore[id].audio ? ' (muted, as it was)' : '')
+      : 'Hearing this VFO\'s decoded audio - click to mute it';
     const hasMessages = digHasMessages(mode, st);
     const voice = st && st.detected === 'mpt1327' ? 'MPT1327 voice is analogue: tune a VFO to the granted channel with NBFM'
       : !hasVoice ? '' : (listening ? (vs || 'no voice call') : 'voice not played');
@@ -11268,7 +11684,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     return `<div class="info-dec-settings dig-vfo-row">` +
         `<span class="dig-vfo" style="border-color:${getDecimatorColor(id)}" title="${digEsc(txt)}"><span style="color:${col}">●</span> D${id} · ${digMhzOf(id)} MHz</span>` +
         `<label>Mode: <select class="dig-mode-sel" data-vfo="${id}" onchange="digSetModeFor(${id}, this.value)">${digModeOptions(mode)}</select></label>` +
-        (hasVoice ? `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="${listening ? 'Hearing this VFO\'s decoded digital voice - click to mute it' : 'Play this VFO\'s decoded digital voice: hears it (🔊, with any other VFOs heard) with the Digital demodulator'}">${listening ? '🔊 Listening' : '🔊 Listen'}</button>` : '') +
+        (hasVoice ? `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="${digEsc(listenTip)}">${listening ? '🔊 Listening' : '🔊 Listen'}</button>` : '') +
         (voice ? `<span class="v">${digEsc(voice)}</span>` : '') +
         opts +
         `<label title="Also log the messages a control channel repeats constantly (system broadcasts, Aloha / acknowledgement CSBKs, GPS sentences)"><input type="checkbox" ${o.verbose ? 'checked' : ''} onchange="digSetOptFor(${id}, 'verbose', this.checked ? 1 : 0)"> Log all</label>` +
@@ -12764,9 +13180,10 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     mapSave();
     mapDraw();
   }
+  // 🏠 (and the first view): the station
   function mapCenterStation() {
     mapAutoFit = false;
-    if (mapStation) mapCenterOn(mapStation[0], mapStation[1], Math.max(mapState.z, 8));
+    if (mapStation) { mapStopFollow(); mapCenterOn(mapStation[0], mapStation[1], Math.max(mapState.z, 8)); }
     else mapStatusFlash('No station location - set it in the sidebar (Station Information)');
   }
   // zoom / centre to show every marker (and the station)
@@ -12775,6 +13192,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     for (const p of mapPts.values()) ll.push([p.la, p.lo]);
     for (const m of sfLocs) ll.push([m.lat, m.lon]);
     if (mapStation) ll.push(mapStation);
+    if (srchPin) ll.push([srchPin.lat, srchPin.lon]);   // 🔍 the search result
     if (lrOpen && lr && lr.bb) ll.push(mapUnproj(lr.bb[0], lr.bb[1]), mapUnproj(lr.bb[2], lr.bb[3]));   // ⏯ the replay's drive
     if (!ll.length) { mapStatusFlash('Nothing on the map yet'); return; }
     if (ll.length === 1) { mapCenterOn(ll[0][0], ll[0][1], Math.max(mapState.z, 9)); return; }
@@ -12845,7 +13263,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     mapCv.addEventListener('pointermove', e => {
       if (!ptrs.has(e.pointerId)) {
         const grab = mapObjGrab(e.offsetX, e.offsetY);
-        const over = !grab && !!(mkHit(e.offsetX, e.offsetY) || mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY) ||
+        const over = !grab && !!(mkHit(e.offsetX, e.offsetY) || srchHit(e.offsetX, e.offsetY) || mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY) ||
                                  stHit(e.offsetX, e.offsetY) || vsHit(e.offsetX, e.offsetY) || plHit(e.offsetX, e.offsetY) ||
                                  aimHit(e.offsetX, e.offsetY) || lrHit(e.offsetX, e.offsetY) >= 0);
         mapCv.classList.toggle('over', over);
@@ -12898,16 +13316,17 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
           const mk = mkHit(e.offsetX, e.offsetY);
           sfPickEnd(mk ? {loc: mk} : {ll: mapScreenToLatLon(e.offsetX, e.offsetY)});
         } else if (pan && !moved && !lpFired && e.type === 'pointerup') {
-          // a click: a marker of the user's (its panel), a decoder's point
-          // or an OpenStreetMap mast (popup), or nothing (closes both - an
-          // edit stays open)
+          // a click: a marker of the user's (its panel), the search result's
+          // pin, a decoder's point or an OpenStreetMap mast (popup), or
+          // nothing (closes both - an edit stays open)
           const mk = mkHit(e.offsetX, e.offsetY);
           vsHover(e.offsetX, e.offsetY);   // touch: a tap shows what is in sight there
           // the station / a viewshed point / the link's place: selected (then draggable), anything else: deselected
           const pl = !mk ? plHit(e.offsetX, e.offsetY) : null;
           const st = !mk && !pl && stHit(e.offsetX, e.offsetY), vs = !mk && !st && !pl ? vsHit(e.offsetX, e.offsetY) : null;
           mapSelectObj(st ? 'st' : pl ? 'pl:' + pl : vs);
-          mapSel = mk || st || vs || pl ? null : (mapHit(e.offsetX, e.offsetY) || mastHit(e.offsetX, e.offsetY) || aimSelectAt(e.offsetX, e.offsetY));
+          mapSel = mk || st || vs || pl ? null : ((srchHit(e.offsetX, e.offsetY) && 'srch') || mapHit(e.offsetX, e.offsetY) ||
+                                                 mastHit(e.offsetX, e.offsetY) || aimSelectAt(e.offsetX, e.offsetY));
           // ⏯ the replay's track (under the markers): the replay goes to that moment
           const lh = mk || st || vs || pl || mapSel ? -1 : lrHit(e.offsetX, e.offsetY);
           if (lh >= 0) lrSeekRow(lh);
@@ -12970,6 +13389,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (vb) vb.classList.toggle('on', !!mapState.vs);
     const lb = $id('map-lr-btn');
     if (lb) lb.classList.toggle('on', !!lrOpen);
+    srchRender();   // 🔍 the box as saved
     vsRender();
     const lg = $id('map-legend');
     if (lg) {
@@ -13444,11 +13864,13 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       }
       c.restore();
     }
+    srchDraw(c);
     lrDrawTop(c);
     mapRenderPopup();
     mkRender();
     vsRender();
     mapRenderStatus();
+    srchTxBtn();
     if (mapState.masts) mastSchedule();
     else mastViewKey = '';   // switched on again: load whatever is missing
   }
@@ -13468,13 +13890,14 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const el = $id('map-pop');
     const mast = mapSel && mapSel.startsWith('osm:') && mastShown() ? mastPts.get(mapSel.slice(4)) : null;
     const aim = mapSel && mapSel.startsWith('ai:') ? aimPopPoint(mapSel) : null;
-    const p = mast || aim || (mapSel ? mapPts.get(mapSel) : null);
+    const sp = mapSel === 'srch' ? srchPopPoint() : null;
+    const p = mast || aim || sp || (mapSel ? mapPts.get(mapSel) : null);
     if (!p || p.sx === undefined || p.sx < 0 || p.sy < 0 || p.sx > mapW || p.sy > mapH) {
       if (el.style.display !== 'none') el.style.display = 'none';
       if (!p) mapSel = null;
       return;
     }
-    const html = mast ? mastPopupHtml(mast) : aim ? aimPopupHtml(aim) : mapPointPopupHtml(p);
+    const html = mast ? mastPopupHtml(mast) : aim ? aimPopupHtml(aim) : sp ? srchPopupHtml(sp) : mapPointPopupHtml(p);
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
     el.style.display = 'block';
     const w = el.offsetWidth, h = el.offsetHeight;
@@ -13642,7 +14065,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                         device: ['name', 1], path: ['info', 1], cell: ['info', 1], station: ['dist', 1], sonde: ['dist', 1],
                         site: ['name', 1], navaid: ['name', 1], radar: ['name', 1], interrogator: ['name', 1],
                         gs: ['name', 1], flarm: ['dist', 1], sar: ['heard', 1], collar: ['name', 1], node: ['dist', 1],
-                        talker: ['heard', 1]};
+                        broadcast: ['name', 1], talker: ['heard', 1]};
   const RDF_SORT_KEYS = {
     vfo: t => t.vfo,
     name: t => rdfShortName(t).toLowerCase(),
@@ -13955,15 +14378,17 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   const RDF_PK_KIND = {ais: 'ship', adsb: 'aircraft', dme: 'beacon', ism: 'device', aprs: 'station',
                        radiosonde: 'sonde', tetra: 'site', mpt1327: 'site', ils: 'navaid', radar: 'radar',
                        ssr1030: 'interrogator', uat: 'aircraft', flarm: 'flarm', beacon406: 'sar', lora: 'node',
-                       wildlife: 'collar'};
+                       wildlife: 'collar', rds: 'broadcast'};
   // kinds that report where they are (their decoder's map points, same id):
   // Dist / Δ pos columns, the position check
   const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde', 'gs', 'flarm', 'sar', 'node']);
   // what one of their packets is called
   const RDF_PK_UNIT = {beacon: 'pulse pair', device: 'transmission', site: 'slot', sonde: 'frame', navaid: 'block', radar: 'pulse',
-                       interrogator: 'interrogation', gs: 'frame', sar: 'burst', node: 'frame', collar: 'pulse'};
+                       interrogator: 'interrogation', gs: 'frame', sar: 'burst', node: 'frame', collar: 'pulse',
+                       broadcast: 'group'};
   // how a kind is named in "Every ...", counts and the position check
-  const RDF_KIND_WORD = {flarm: 'aircraft', gs: 'ground station', sar: 'distress beacon'};
+  const RDF_KIND_WORD = {flarm: 'aircraft', gs: 'ground station', sar: 'distress beacon', broadcast: 'broadcast station',
+                         tone: 'analog transmitter'};
   function rdfKind(t) {
     // a plugin's spatial talker: a mobile network cell (cells plugin, by
     // its physical cell ID) or a path of a TV signal (dtv plugin with path
@@ -13972,8 +14397,10 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     // UAT ground stations (their uplinks and the TIS-B / ADS-R traffic they
     // rebroadcast) beside the aircraft
     if (t.pk && t.pl === 'uat' && /^GS /.test(t.tid)) return 'gs';
-    // an analog FM transmitter named by its CTCSS tone / DCS code (ctcss plugin)
-    if (!t.pk && t.pl === 'ctcss') return 'tone';
+    // an analog FM transmitter named by its radio ID (MDC1200 / FleetSync /
+    // selcall / DTMF), else its CTCSS tone / DCS code / tone burst - the
+    // analog_id plugin ("ctcss" until 2026-10-22: an open page from before)
+    if (!t.pk && (t.pl === 'analog_id' || t.pl === 'ctcss')) return 'tone';
     return !t.pk ? 'radio' : RDF_PK_KIND[t.pl] || 'talker';
   }
   // a length in seconds, short (the tone list's Last / Air columns)
@@ -14001,9 +14428,12 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       const l = t.label || '';
       return /paraglider|hang glider|parachute/.test(l) ? '🪂 ' : /helicopter/.test(l) ? '🚁 ' : /balloon|airship/.test(l) ? '🎈 ' : '✈ ';
     }
+    // analog FM: a radio's own ID 🆔, a selcall / DTMF sequence 🔢, a tone / code / burst 🔔
+    if (k === 'tone')
+      return /^(MDC|FleetSync) /.test(t.tid) ? '🆔 ' : /^(DTMF|ZVEI|DZVEI|CCIR|EEA|EIA|NATEL|MODAT) /.test(t.tid) ? '🔢 ' : '🔔 ';
     return {ship: '⛴ ', aircraft: '✈ ', beacon: '📡 ', device: '📟 ', path: '📶 ', cell: '📱 ', station: '📻 ',
             sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 ', gs: '🗼 ', tone: '🔔 ', sar: '🆘 ', node: '📶 ',
-            collar: '🐾 '}[k] || '';
+            collar: '🐾 ', broadcast: '🎙 '}[k] || '';
   }
   function rdfKinds(ts) {   // one word for a list of talkers: the common kind, else 'talker'
     const ks = new Set(ts.map(rdfKind));
@@ -14110,7 +14540,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       // ones (LoRa nodes had none: head[0] threw - the list stayed empty, and
       // the map wasn't redrawn after a DF push or a panel control (mapSet);
       // only the ID selector showed them)
-      const heads = {radio: ['Radio', 'Talkgroup', 'Tx'], tone: ['Tone / code', 'Measured', 'Tx'],
+      const heads = {radio: ['Radio', 'Talkgroup', 'Tx'], tone: ['ID / tone', 'Signalling · tone', 'Tx'],
                     aircraft: ['Callsign', 'ICAO', 'Pkts'], ship: ['MMSI', 'Name', 'Pkts'],
                     beacon: ['Channel', 'Ident · MHz', 'Pairs'], device: ['Device', 'Reading', 'Tx'],
                     path: ['Path', 'From the main path · power', 'Reports'], cell: ['Cell', 'Technology · PCI · power', 'Reports'],
@@ -14122,6 +14552,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                     sar: ['Beacon ID', 'Status · type · country · ID', 'Bursts'],
                     collar: ['Collar (MHz)', 'Name · ppm · mode', 'Pulses'],
                     node: ['Node', 'Name · packet', 'Frames'],
+                    broadcast: ['Station (PI)', 'Call sign · PS · MHz', 'Groups'],
                     talker: ['ID', 'Info', 'Tx']};
       const head = heads[kinds] || heads.talker;
       // position columns while a listed talker has a reported position (its
@@ -14130,7 +14561,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       // empty ones pushed Heard / Tx out of the 380 px panel (LoRa nodes:
       // only Meshtastic POSITION packets carry one)
       const posCols = listed.some(([t, c]) => c && RDF_POS_KINDS.has(rdfKind(t)));
-      // transmitters named by their tone (ctcss): the transmissions' lengths
+      // analog FM transmitters (analog_id: radio IDs / tones): the transmissions' lengths
       const toneCols = ts.some(t => rdfKind(t) === 'tone');
       const [scol, sdir] = rdfSortOf(kinds);
       const th = (col, text, tip) => `<th data-sort="${col}" title="${tip ? digEsc(tip) + ' - ' : ''}Sort by this column (again: reversed)">` +
@@ -14515,7 +14946,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
     const live = new Set(m.keys || []);
     for (const k of [...mapPts.keys()]) if (!live.has(k)) mapPts.delete(k);
-    if (mapSel && !mapSel.startsWith('osm:') && !mapSel.startsWith('ai:') && !mapPts.has(mapSel)) mapSel = null;   // (masts, 🤖 AI layers: theirs)
+    if (mapSel && mapSel !== 'srch' && !mapSel.startsWith('osm:') && !mapSel.startsWith('ai:') && !mapPts.has(mapSel)) mapSel = null;   // (masts, 🤖 AI layers, 🔍 the search pin: theirs)
     // first data and no saved view: show the station / the markers
     if (mapAutoFit && mapCv && (mapPts.size || (mapStation && !hadStation))) {
       mapAutoFit = false;
@@ -14859,11 +15290,19 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     return [`${f.name} - ${mkFmtMhz(f.hz)} MHz${c ? ' (' + c.name + ')' : ''}`, sfMeta(f, true), f.notes,
             'Click to tune the selected VFO'].filter(Boolean).join('\n');
   }
-  // the bandwidth option nearest to hz (index into bwo)
-  function sfBwIndex(hz) {
-    let bi = 0;
-    bwo.forEach((b, i) => { if (Math.abs(b.bandwidth * 1e6 - hz) < Math.abs(bwo[bi].bandwidth * 1e6 - hz)) bi = i; });
-    return bi;
+  // the editor's bandwidth list on hz (0 = "Keep the VFO's"): a width that
+  // isn't one of its efficient sizes gets an entry of its own
+  function sfBwSelectSet(hz) {
+    const bs = $id('sf-f-bw');
+    hz = hz > 0 ? bwClampHz(hz) : 0;
+    if (hz && ![...bs.options].some(o => o.value === String(hz))) {
+      const o = document.createElement('option');
+      o.value = String(hz);
+      o.textContent = bwLabel(hz) + ' (custom)';
+      const after = [...bs.options].find(x => +x.value > 0 && +x.value < hz);
+      bs.insertBefore(o, after || null);
+    }
+    bs.value = hz ? String(hz) : '';
   }
   // "118.7", "118,7 MHz", "7150 kHz", "1.09 GHz", "455000 Hz" -> Hz (0 = not a frequency)
   function sfParseHz(t) {
@@ -14897,6 +15336,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     sfCats = Array.isArray(m.cats) ? m.cats : [];
     sfLocs = Array.isArray(m.locs) ? m.locs : [];
     sfFreqs = Array.isArray(m.freqs) ? m.freqs : [];
+    sfScanUncat = !!m.scan_uncat;
+    if (m.error && m.id === 'sfscan') sfFlash('Scan list not changed: ' + m.error, true);
     // the marker panel: an add / edit refused, the marker this page just
     // added (open it for editing), the shown one deleted
     if (m.error && m.id && (m.id === mkWantEdit || m.id === mkSel)) {
@@ -14928,6 +15369,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (m.error && m.id && m.id === sfCatPending) sfFlash('Category not saved: ' + m.error, true);
     if (m.id === sfCatPending) sfCatPending = null;
     sfRenderList();
+    sfsRender();
     sfRenderCats();
     mkRender();
     mapDraw();
@@ -14963,7 +15405,13 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       if (!g.rows.length) continue;   // empty categories: in ⚙ Categories and the editor
       g.rows.sort((a, b) => a.hz - b.hz);
       const col = !words.length && sfUi.col[g.key], hid = sfUi.hide[g.key];
+      const sc = sfsCatState(g.key);
       h += `<div class="sf-gh" onclick="sfToggleGroup('${g.key}')" title="Show / fold this category">` +
+           `<input type="checkbox" class="sfs-ck"${sc === 2 ? ' checked' : ''}${sc === 1 ? ' data-mixed="1"' : ''} ` +
+           `onclick="event.stopPropagation();event.preventDefault();sfsToggleCat('${g.key}')" ` +
+           `title="${sc === 2 ? 'Scanned - the whole category (also frequencies added to it later). Click: none of it'
+                    : sc === 1 ? 'Partly scanned. Click: the whole category (also frequencies added later)'
+                    : 'Not scanned. Click: scan the whole category (also frequencies added later)'}">` +
            `<span class="caret">${col ? '▶' : '▼'}</span><span class="dot" style="background:${g.col}"></span>` +
            `<span class="n">${digEsc(g.name)}</span><span class="c">${g.rows.length}</span>` +
            `<span class="eye${hid ? ' off' : ''}" onclick="event.stopPropagation();sfToggleHidden('${g.key}')" ` +
@@ -14971,7 +15419,12 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       if (col) continue;
       for (const f of g.rows) {
         const meta = sfMeta(f, true);
+        const on = sfsOn(f), grp = sfsGroupOn(f);
         h += `<div class="sf-row" data-id="${f.id}" data-hz="${f.hz}" onclick="sfTune('${f.id}')" title="${digEsc(sfTip(f))}">` +
+             `<input type="checkbox" class="sfs-ck"${on ? ' checked' : ''} ` +
+             `onclick="event.stopPropagation();event.preventDefault();sfsToggleFreq('${f.id}')" ` +
+             `title="${on ? (grp ? 'Scanned with its category - click to leave it out' : 'Scanned - click to leave it out')
+                         : (grp ? 'Left out of its category\'s scan - click to scan it' : 'Not scanned - click to scan it')}">` +
              `<span class="bar" style="background:${g.col}"></span><div class="main">` +
              `<div class="l1"><span class="nm">${digEsc(f.name)}</span><span class="mhz">${mkFmtMhz(f.hz)}</span></div>` +
              (meta ? `<div class="l2">${digEsc(meta)}</div>` : '') + '</div><span class="act">' +
@@ -14981,7 +15434,13 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
     if (!h) h = sfFreqs.length ? '<div class="sf-empty">Nothing matches the search.</div>'
       : '<div class="sf-empty">No saved frequencies yet. <b>+ Add</b> saves the selected VFO\'s frequency (☆ Save on a VFO card does too); right-click the 🗺 map to save one at a place.</div>';
-    if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; sfMarkActive(true); }
+    if (el.dataset.html !== h) {
+      el.dataset.html = h;
+      el.innerHTML = h;
+      el.querySelectorAll('.sfs-ck[data-mixed]').forEach(c => { c.indeterminate = true; });
+      sfMarkActive(true);
+      sfsMark();
+    }
   }
   // outline the rows a VFO is on (within 500 Hz) in that VFO's colour
   function sfMarkActive(force) {
@@ -15023,6 +15482,201 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     mapAutoFit = false;
     mkSelect(l.id);
     mapCenterOn(l.lat, l.lon, Math.max(mapState.z, 12));
+  }
+
+  // --- 📻 SAVED FREQUENCY SCAN ----------------------------------------------------
+  // The receiver scans (sf_scanner.cpp - it goes on with no page open). What
+  // it scans is part of the list, so every page shows the same ticks: a
+  // category's scan flag takes every frequency in it (also those added
+  // later), sfScanUncat the uncategorised ones; a frequency's scan 1 = on its
+  // own, -1 = left out of its scanned category, 0 = its category decides.
+  // A tick sends SF_SCAN:{freqs, cats, uncat} and shows the result only when
+  // the list comes back (no optimistic updates - the click is undone).
+  // ▶ Scan sends SFSCAN_START with the selected VFO (the one it tunes); its
+  // status comes as {"sfscan":{run, state tune|watch|listen, hold, vfo, mode,
+  // n, nb, watch:[{b,ch,hz,lo,hi,n,ok}], ready, cur:{id,name,hz,db,ms}, act:[ids],
+  // skipped, nskipped, sq, dwell, hang, max, msg, err}} (sfsSt): rows active
+  // now get a dot (sfs-act), the one listened to 🔊 (sfs-cur)
+  let sfsPending = false, sfsSetOpen = false;
+  function sfsGroupOn(f) { const c = sfCat(f.cat); return c ? !!c.scan : sfScanUncat; }
+  function sfsOn(f) { return f.scan === 1 || (f.scan !== -1 && sfsGroupOn(f)); }
+  function sfsRowsOf(key) { return sfFreqs.filter(f => (sfCat(f.cat) ? f.cat : '') === key); }
+  function sfsCount() { return sfFreqs.filter(sfsOn).length; }
+  // a category's tick: 2 = all of it scanned, 1 = some, 0 = none
+  function sfsCatState(key) {
+    const rows = sfsRowsOf(key), on = rows.filter(sfsOn).length;
+    return !on ? 0 : on === rows.length ? 2 : 1;
+  }
+  // all / none of a category: its flag, and its frequencies follow it again
+  function sfsToggleCat(key) {
+    const on = sfsCatState(key) !== 2, freqs = {};
+    for (const f of sfsRowsOf(key)) if (f.scan) freqs[f.id] = 0;
+    const m = {freqs};
+    if (key === '') m.uncat = on; else m.cats = {[key]: on};
+    send('SF_SCAN:' + JSON.stringify(m));
+  }
+  function sfsToggleFreq(id) {
+    const f = sfGet(id);
+    if (!f) return;
+    const g = sfsGroupOn(f);
+    send('SF_SCAN:' + JSON.stringify({freqs: {[id]: sfsOn(f) ? (g ? -1 : 0) : (g ? 0 : 1)}}));
+  }
+  function sfsAll(on) {
+    const m = {freqs: {}, cats: {}, uncat: on};
+    for (const c of sfCats) m.cats[c.id] = on;
+    for (const f of sfFreqs) if (f.scan) m.freqs[f.id] = 0;
+    send('SF_SCAN:' + JSON.stringify(m));
+  }
+  function sfsStart() {
+    if (!(ws && ws.readyState === 1)) { sfFlash('Not connected to the receiver', true); return; }
+    if (!sfsCount()) { sfFlash('Tick the frequencies (or whole categories) to scan first', true); return; }
+    sfsPending = true;
+    send('SFSCAN_START:' + (decimatorInfo.some(d => d.id === activeDecimatorId) ? activeDecimatorId : -1));
+  }
+  function sfsHold() { send('SFSCAN_HOLD:' + (sfsSt && sfsSt.hold ? 0 : 1)); }
+  function sfsSet(key, v) {
+    const x = Number(v);
+    if (Number.isFinite(x)) send('SFSCAN_' + key + ':' + x);
+  }
+  function sfsToggleSet() {
+    sfsSetOpen = !sfsSetOpen;
+    $id('sfs-set').style.display = sfsSetOpen ? '' : 'none';
+  }
+  function sfsOnMessage(m) {
+    const was = !!(sfsSt && sfsSt.run);
+    const lineKey = st => st ? [st.sq, st.run, st.mode, (st.watch || []).map(b => b.ch).join()].join('|') : '';
+    const redraw = lineKey(sfsSt) !== lineKey(m);
+    sfsSt = m;
+    // the receiver's level from now on - not while the slider is being
+    // dragged (a status comes every 0.5 s while scanning: the line jumped back
+    // mid-drag) unless the receiver has that level (the release's echo)
+    const sqEl = $id('sfs-sq');
+    if (sfsSqDrag !== null && (document.activeElement !== sqEl || (typeof m.sq === 'number' && Math.abs(m.sq - sfsSqDrag) < 0.01)))
+      sfsSqDrag = null;
+    if (m.err && sfsPending) sfFlash('Scan not started: ' + m.err, true);
+    else if (was && !m.run && m.msg) sfFlash('Scan stopped: ' + m.msg);
+    sfsPending = false;
+    sfsRender();
+    sfsMark();
+    if (redraw) { drawBox(); paneDrawAllOverlays(); }
+  }
+  function sfsDur(ms) { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+  function sfsRender() {
+    const st = sfsSt || {}, run = !!st.run, cnt = sfsCount();
+    const show = (id, on) => { const e = $id(id); if (e) e.style.display = on ? '' : 'none'; };
+    show('sfs-start', !run);
+    show('sfs-stop', run);
+    show('sfs-hold', run);
+    show('sfs-skip', run);
+    const hb = $id('sfs-hold');
+    if (hb) {
+      hb.textContent = st.hold ? '▶ Resume' : '⏸ Hold';
+      hb.classList.toggle('on', !!st.hold);
+      hb.title = st.hold ? 'Go on scanning' : 'Stay on this frequency (or, with nothing active, on this band) until Resume';
+    }
+    const n = $id('sfs-n');
+    if (n) n.textContent = cnt ? `${cnt} ticked` : '';
+    const el = $id('sfs-status');
+    if (!el) return;
+    let h = '', live = false;
+    const plural = k => `${k} frequenc${k === 1 ? 'y' : 'ies'}`;
+    if (!run) {
+      h = st.msg ? `Stopped: ${digEsc(st.msg)}` : cnt ? '' : 'Tick the frequencies to scan - or a whole category in its heading.';
+    } else {
+      const vfo = `D${st.vfo}`, w = st.watch || [];
+      // every frequency listened to (one VFO per active frequency: several),
+      // each with its VFO - a receiver from before sends cur only
+      const locks = sfsLocks(st);
+      if (st.state === 'listen' && locks.length) {
+        live = true;
+        h = locks.map(c => {
+          const v = typeof c.vfo === 'number' && c.vfo >= 0 ? `D${c.vfo}` : c.extra ? 'a new VFO…' : vfo;
+          return `🔊 <b>${digEsc(c.name)}</b> · ${mkFmtMhz(c.hz)} MHz · ${(+c.db).toFixed(1)} dB · ${sfsDur(c.ms)} → ${v}` +
+                 (c.heard === false ? ' · muted while the array calibrates' : '');
+        }).join('<br>') + (st.hold ? ' · held' : '');
+      } else {
+        h = `Scanning ${plural(st.n || 0)} → ${vfo}` +
+            (st.state === 'tune' ? ' · tuning…'
+              : st.ready === false ? (st.mode === 'coherent' ? ' · waiting for the calibration' : ' · settling') : '') +
+            (st.hold ? ' · held on this band' : '') + ((st.act || []).length ? ` · ${st.act.length} active` : '');
+      }
+      // the bands watched now (several at once on independent tuners)
+      if (w.length) {
+        h += '<div class="d">' + (st.nb > 1 ? `Band${w.length > 1 ? 's' : ''} ${w.map(b => b.b + 1).join(', ')} of ${st.nb}: ` : '') +
+             w.map(b => `${mkFmtMhz(b.lo)}${b.hi !== b.lo ? '–' + mkFmtMhz(b.hi) : ''} MHz` +
+                        (st.mode === 'independent' ? ` (tuner ${b.ch})` : '') + (b.ok === false ? ' ✗' : '')).join(', ') + '</div>';
+      }
+    }
+    if (st.nskipped) h += `<div class="d">${plural(st.nskipped)} left out (hover for why)</div>`;
+    el.innerHTML = h;
+    el.classList.toggle('live', live);
+    el.title = (st.skipped || []).map(x => `${x.name}: ${x.why}`).join('\n');
+    // the settings (not while one is being changed)
+    const idle = e => e && document.activeElement !== e;
+    const sq = $id('sfs-sq');
+    if (typeof st.sq === 'number' && idle(sq)) { sq.value = st.sq; $id('sfs-sq-v').textContent = st.sq.toFixed(1) + ' dB'; }
+    for (const [id, k] of [['sfs-hang', 'hang'], ['sfs-dwell', 'dwell'], ['sfs-max', 'max']]) {
+      const e = $id(id);
+      if (typeof st[k] === 'number' && idle(e)) e.value = +(st[k] / 1000).toFixed(1);
+    }
+    // one VFO per active frequency (a receiver from before hasn't got it)
+    const mr = $id('sfs-multi-row'), mc = $id('sfs-multi');
+    if (mr) mr.style.display = typeof st.multi === 'boolean' ? '' : 'none';
+    if (mc && typeof st.multi === 'boolean') mc.checked = st.multi;
+  }
+  function sfsLocks(st) { return st.locks || (st.cur ? [st.cur] : []); }
+  // The scan's squelch on the spectrum while the scan runs: a dotted yellow
+  // line across the plot at the level over which the scan calls a frequency
+  // active - dB over the noise floor, which is the spectrum's 0 dB. (A VFO's
+  // FFT squelch is the DASHED yellow line inside its bar.) Independent mode:
+  // on the tuners the scan watches. While the slider is dragged it follows it
+  // (sfsSqDrag, in the globals block: drawBox can run before this section)
+  function sfsSqLevel() {
+    if (!(sfsSt && sfsSt.run)) return null;
+    if (sfsSqDrag !== null) return sfsSqDrag;
+    return sfsSt && typeof sfsSt.sq === 'number' ? sfsSt.sq : null;
+  }
+  function sfsSqPreview(v) {
+    sfsSqDrag = +v;
+    if (sfsSt && sfsSt.run) { drawBox(); paneDrawAllOverlays(); }
+  }
+  function sfsSqLine(ctx, x0, x1, y, lvl) {
+    ctx.save();
+    ctx.strokeStyle = '#ffff00';
+    ctx.setLineDash([2, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ffff00';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    const t = `📻 Scan ${(+lvl).toFixed(1)} dB`;
+    ctx.fillText(t, x1 - ctx.measureText(t).width - 5, y - 4);
+    ctx.restore();
+  }
+  function sfsDrawSquelch(ctx, w, h) {
+    const lvl = sfsSqLevel();
+    if (lvl === null || !fftPlot) return;
+    const y = fftPlot.valToPos(lvl, 'y');
+    if (y >= 0 && y <= h) sfsSqLine(ctx, 0, w, y, lvl);
+  }
+  function sfsPaneSquelch(ctx, p) {
+    const lvl = sfsSqLevel();
+    if (lvl === null || !(sfsSt.watch || []).some(b => b.ch === p.ch)) return;
+    const top = 4, bot = p.sh - 14, ymax = fftYMax || 60;   // as the pane's own VFO squelch lines
+    const y = bot - lvl / ymax * (bot - top);
+    if (y >= top && y <= bot) sfsSqLine(ctx, p.L, p.sw - 4, y, lvl);
+  }
+  // the rows: 🔊 the ones listened to, a dot on those active now
+  function sfsMark() {
+    const st = sfsSt || {};
+    const cur = new Set(st.run && st.state === 'listen' ? sfsLocks(st).map(c => c.id) : []);
+    const act = new Set(st.run ? st.act || [] : []);
+    document.querySelectorAll('#sf-list .sf-row').forEach(r => {
+      const id = r.dataset.id;
+      r.classList.toggle('sfs-cur', cur.has(id));
+      r.classList.toggle('sfs-act', !cur.has(id) && act.has(id));
+    });
   }
 
   // --- ⚙ Categories --------------------------------------------------------------
@@ -15093,7 +15747,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const d = decimatorInfo.find(z => z.id === (id ?? activeDecimatorId));
     if (!d) return null;
     return {hz: Math.round((vfoCenterMhz(d) + (d.freq_offset_hz || 0) / 1e6) * 1e4) * 100,   // 100 Hz steps
-            mode: d.demod_mode || '', bw: Math.round(((bwo[d.bandwidth_index ?? 0] || bwo[0]).bandwidth) * 1e6),
+            mode: d.demod_mode || '', bw: decBwHz(d),
             dec: d.digital_mode && d.digital_mode !== 'OFF' ? d.digital_mode : ''};
   }
   // + Add / ☆ Save / map: a new entry, filled in from the selected VFO (pre.vfo
@@ -15117,7 +15771,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     $id('sf-f-mhz').value = f.hz ? mkFmtMhz(f.hz) : '';
     sfDlgFillSelects(f.cat || '', newLoc ? '+new' : (f.loc || ''), f.dec || '', sfHasGain(f) ? f.gain : '');
     $id('sf-f-mode').value = f.mode || '';
-    $id('sf-f-bw').value = f.bw > 0 ? String(Math.round(bwo[sfBwIndex(f.bw)].bandwidth * 1e6)) : '';
+    sfBwSelectSet(f.bw);
     $id('sf-f-tone').value = f.tone || '';
     $id('sf-f-notes').value = f.notes || '';
     $id('sf-f-newcat').value = '';
@@ -15160,11 +15814,11 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       [...sfLocs].sort((a, b) => a.name.localeCompare(b.name)).map(l => `<option value="${l.id}">📍 ${digEsc(l.name)}</option>`).join('') +
       '<option value="+new">+ New location…</option>';
     ls.value = loc === '+new' || sfLoc(loc) ? loc : '';
+    // (rebuilt each time: an earlier entry's custom width doesn't stay listed)
     const bs = $id('sf-f-bw'), bv = bs.value;
-    if (!bs.options.length)
-      bs.innerHTML = '<option value="">Keep the VFO\'s</option>' +
-        bwo.slice(0, MIN_BW_INDEX + 1).map(b => `<option value="${Math.round(b.bandwidth * 1e6)}">${b.name.replace(/ \(.*\)$/, '')}</option>`).join('');
-    bs.value = bv;
+    bs.innerHTML = '<option value="">Keep the VFO\'s</option>' +
+      BW_EFFICIENT.slice().reverse().map(hz => `<option value="${hz}">${bwLabel(hz)}</option>`).join('');
+    sfBwSelectSet(+bv || 0);
     const ds = $id('sf-f-dec');
     let h = '<option value="">Keep the VFO\'s</option><option value="OFF">Off</option><option value="AUTO">Auto detect</option>' +
       [...digPlugins].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))
@@ -15221,7 +15875,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (!v) { sfDlgErr('No VFO - add one in the Decimators box'); return; }
     $id('sf-f-mhz').value = mkFmtMhz(v.hz);
     $id('sf-f-mode').value = v.mode;
-    $id('sf-f-bw').value = String(v.bw);
+    sfBwSelectSet(v.bw);
     $id('sf-f-dec').value = v.dec;
     sfDlgErr('');
   }
@@ -15371,7 +16025,10 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     // (not on a VFO its decoder holds - ism needs its whole 2.4 MHz)
     if (d && !vfoLocked(d)) {
       if (f.mode && f.mode !== d.demod_mode) setDecimatorDemodMode(d.id, f.mode);
-      if (f.bw > 0) { const i = sfBwIndex(f.bw); if (i !== d.bandwidth_index) setDecimatorBandwidthFromUI(d.id, i); }
+      if (f.bw > 0) {   // the saved width, exactly
+        const hz = bwClampHz(f.bw);
+        if (hz !== decBwHz(d)) setDecimatorBandwidthHzFromUI(d.id, hz);
+      }
     }
     const e2 = sfTuneHz(f.hz, opts);
     if (!e2) gainNow();
@@ -15401,7 +16058,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
     if (sfFixedLock(d)) return `D${d.id} is locked to its decoder's frequency - select another VFO`;
     const centreOnly = vfoLocked(d);
-    const bw = (bwo[d.bandwidth_index || 0] || bwo[0]).bandwidth;
+    const bw = decBwMhz(d);
     if (opMode === 'independent') {
       const own = d.tuner || 0;
       const first = opts.tuner ?? own;
@@ -15869,6 +16526,714 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     mapSel = null;
     mkCreate(m.la, m.lo, mastTitle(t), notes);
     mapDraw();
+  }
+
+  // --- 🔍 MAP SEARCH + 🏠 home / 🎯 transmitter ---------------------------------
+  // 🔍 (the top right-hand button) shows a box under the top-left buttons
+  // (mapState.srch, per browser). What is typed is read on this page first,
+  // OFFLINE, and listed as it is typed: coordinates in the usual forms
+  // (decimal degrees, degrees + decimal minutes, degrees minutes seconds -
+  // signs or N / S / E / W, letters in either order -, UTM, MGRS, a
+  // Maidenhead grid locator, a map link with a position: Google /
+  // OpenStreetMap / Apple / geo:) and the page's own places (📍 markers +
+  // their saved frequencies, the decoders' map points, the assistant's map
+  // points, OSM masts loaded, viewshed sites, the station). Enter (or the 🌐
+  // row) asks OpenStreetMap's Nominatim for addresses, cities and places -
+  // BY THE BROWSER, like the tiles and masts (kraken_doa isn't involved) -
+  // never while typing (its usage policy: no autocomplete, <= 1 request a
+  // second); the answers are kept for the session, the view is a preference
+  // (viewbox, not bounded). A result picked: the map goes there (an area:
+  // fitted) and a pin marks it (srchPin; click = its popup: the position in
+  // every form, distance / bearing from the station, 📍 Add as marker); a
+  // place of the page's own is selected instead (its panel / popup). ✕ in
+  // the box clears the text, the list and the pin.
+  // 🏠 = the station (mapCenterStation). 🎯 = the estimated transmitter: the
+  // ⏯ replay's at the moment shown, then the 📡 DF panel's heat maps (what it
+  // shows) - again = the next one; its 95 % region in view.
+  // State: the globals block (srch*)
+  const SRCH_URL = 'https://nominatim.openstreetmap.org/search';
+  const SRCH_GAP_MS = 1100;   // Nominatim: one request a second at most
+  const SRCH_BANDS = 'CDEFGHJKLMNPQRSTUVWX';   // UTM latitude bands, 8° each from 80° S (X 72-84° N)
+  const SRCH_COLS = ['ABCDEFGH', 'JKLMNPQR', 'STUVWXYZ'];               // MGRS 100 km columns by zone (1-based) % 3
+  const SRCH_ROWS = ['ABCDEFGHJKLMNPQRSTUV', 'FGHJKLMNPQRSTUVABCDE'];   // ... rows: odd / even zones
+  const SRCH_KIND_IC = {aircraft: '✈', ship: '⛴', vehicle: '🚗', balloon: '🎈', person: '🚶', station: '📻', incident: '⚠'};
+
+  // --- coordinates: read + written ---
+  // 36.84846 -> 36°50'54.5"S
+  function srchDms(v, pos, neg) {
+    let t = Math.round(Math.abs(v) * 36000);   // tenths of a second
+    const d = Math.floor(t / 36000);
+    t -= d * 36000;
+    const m = Math.floor(t / 600);
+    t -= m * 600;
+    return `${d}°${String(m).padStart(2, '0')}'${String(Math.floor(t / 10)).padStart(2, '0')}.${t % 10}"${v < 0 ? neg : pos}`;
+  }
+  // Maidenhead locator, 6 characters
+  function srchLocator(lat, lon) {
+    const A = 'ABCDEFGHIJKLMNOPQRSTUVWX';
+    let x = Math.min(359.999999, Math.max(0, lon + 180)), y = Math.min(179.999999, Math.max(0, lat + 90));
+    const f1 = Math.floor(x / 20), f2 = Math.floor(y / 10);
+    x -= f1 * 20; y -= f2 * 10;
+    const s1 = Math.floor(x / 2), s2 = Math.floor(y);
+    x -= s1 * 2; y -= s2;
+    return A[f1] + A[f2] + s1 + s2 + (A[Math.floor(x * 12)] + A[Math.floor(y * 24)]).toLowerCase();
+  }
+  // "RF73kc" (4, 6, 8 or 10 characters) -> its square's centre + size (deg)
+  function srchFromLocator(q) {
+    const u = String(q).trim().toUpperCase();
+    const m = /^[A-R]{2}\d{2}(?:([A-X]{2})(?:(\d{2})([A-X]{2})?)?)?$/.exec(u);
+    if (!m) return null;
+    let w = 2, h = 1;
+    let lon = -180 + (u.charCodeAt(0) - 65) * 20 + +u[2] * 2, lat = -90 + (u.charCodeAt(1) - 65) * 10 + +u[3];
+    if (m[1]) { w /= 24; h /= 24; lon += (u.charCodeAt(4) - 65) * w; lat += (u.charCodeAt(5) - 65) * h; }
+    if (m[2]) { w /= 10; h /= 10; lon += +u[6] * w; lat += +u[7] * h; }
+    if (m[3]) { w /= 24; h /= 24; lon += (u.charCodeAt(8) - 65) * w; lat += (u.charCodeAt(9) - 65) * h; }
+    return {lat: lat + h / 2, lon: lon + w / 2, w, h};
+  }
+  // WGS84 transverse Mercator: Krüger's series to n^6 (Karney 2011), well
+  // under a millimetre within a UTM zone; worked out once
+  function srchTm() {
+    if (srchTm.c) return srchTm.c;
+    const f = 1 / 298.257223563, n = f / (2 - f), n2 = n * n, n3 = n2 * n, n4 = n3 * n, n5 = n4 * n, n6 = n5 * n;
+    return (srchTm.c = {
+      e: Math.sqrt(f * (2 - f)),
+      A: 6378137 / (1 + n) * (1 + n2 / 4 + n4 / 64 + n6 / 256),
+      al: [0, n / 2 - 2 / 3 * n2 + 5 / 16 * n3 + 41 / 180 * n4 - 127 / 288 * n5 + 7891 / 37800 * n6,
+           13 / 48 * n2 - 3 / 5 * n3 + 557 / 1440 * n4 + 281 / 630 * n5 - 1983433 / 1935360 * n6,
+           61 / 240 * n3 - 103 / 140 * n4 + 15061 / 26880 * n5 + 167603 / 181440 * n6,
+           49561 / 161280 * n4 - 179 / 168 * n5 + 6601661 / 7257600 * n6,
+           34729 / 80640 * n5 - 3418889 / 1995840 * n6,
+           212378941 / 319334400 * n6],
+      be: [0, n / 2 - 2 / 3 * n2 + 37 / 96 * n3 - 1 / 360 * n4 - 81 / 512 * n5 + 96199 / 604800 * n6,
+           1 / 48 * n2 + 1 / 15 * n3 - 437 / 1440 * n4 + 46 / 105 * n5 - 1118711 / 3870720 * n6,
+           17 / 480 * n3 - 37 / 840 * n4 - 209 / 4480 * n5 + 5569 / 90720 * n6,
+           4397 / 161280 * n4 - 11 / 504 * n5 - 830251 / 7257600 * n6,
+           4583 / 161280 * n5 - 108847 / 3991680 * n6,
+           20648693 / 638668800 * n6]});
+  }
+  function srchUtmZone(lat, lon) {
+    let z = Math.min(60, Math.floor((lon + 180) / 6) + 1);
+    if (lat >= 56 && lat < 64 && lon >= 3 && lon < 12) z = 32;   // Norway
+    if (lat >= 72 && lat < 84 && lon >= 0 && lon < 42) z = lon < 9 ? 31 : lon < 21 ? 33 : lon < 33 ? 35 : 37;   // Svalbard
+    return z;
+  }
+  // -> {zone, band, E, N, south} (null outside UTM's 80° S - 84° N); zone: forced (MGRS band look-up), else the position's
+  function srchToUtm(lat, lon, zone) {
+    if (!(lat >= -80 && lat <= 84) || !Number.isFinite(lon)) return null;
+    const {e, A, al} = srchTm(), k0 = 0.9996, r = Math.PI / 180;
+    zone = zone || srchUtmZone(lat, lon);
+    const dl = ((lon - ((zone - 1) * 6 - 177)) % 360 + 540) % 360 - 180;
+    const lam = dl * r, tau = Math.tan(lat * r);
+    const sig = Math.sinh(e * Math.atanh(e * tau / Math.sqrt(1 + tau * tau)));
+    const taup = tau * Math.sqrt(1 + sig * sig) - sig * Math.sqrt(1 + tau * tau);
+    const xip = Math.atan2(taup, Math.cos(lam)), etap = Math.asinh(Math.sin(lam) / Math.sqrt(taup * taup + Math.cos(lam) ** 2));
+    let xi = xip, eta = etap;
+    for (let j = 1; j <= 6; j++) {
+      xi += al[j] * Math.sin(2 * j * xip) * Math.cosh(2 * j * etap);
+      eta += al[j] * Math.cos(2 * j * xip) * Math.sinh(2 * j * etap);
+    }
+    return {zone, band: SRCH_BANDS[Math.max(0, Math.min(19, Math.floor(lat / 8 + 10)))],
+            E: 500000 + k0 * A * eta, N: k0 * A * xi + (lat < 0 ? 10000000 : 0), south: lat < 0};
+  }
+  function srchFromUtm(zone, south, E, N) {
+    const {e, A, be} = srchTm(), k0 = 0.9996, d = 180 / Math.PI;
+    const xi = (N - (south ? 10000000 : 0)) / (k0 * A), eta = (E - 500000) / (k0 * A);
+    let xip = xi, etap = eta;
+    for (let j = 1; j <= 6; j++) {
+      xip -= be[j] * Math.sin(2 * j * xi) * Math.cosh(2 * j * eta);
+      etap -= be[j] * Math.cos(2 * j * xi) * Math.sinh(2 * j * eta);
+    }
+    const sh = Math.sinh(etap), cx = Math.cos(xip);
+    const taup = Math.sin(xip) / Math.sqrt(sh * sh + cx * cx), e2 = e * e;
+    let tau = taup;
+    for (let i = 0; i < 10; i++) {   // Newton on tau' (tau)
+      const s = Math.sinh(e * Math.atanh(e * tau / Math.sqrt(1 + tau * tau)));
+      const ti = tau * Math.sqrt(1 + s * s) - s * Math.sqrt(1 + tau * tau);
+      const dt = (taup - ti) / Math.sqrt(1 + ti * ti) * (1 + (1 - e2) * tau * tau) / ((1 - e2) * Math.sqrt(1 + tau * tau));
+      tau += dt;
+      if (Math.abs(dt) < 1e-12) break;
+    }
+    return {lat: Math.atan(tau) * d, lon: ((Math.atan2(sh, cx) * d + (zone - 1) * 6 - 177) % 360 + 540) % 360 - 180};
+  }
+  // MGRS to the metre (truncated, as MGRS is)
+  function srchToMgrs(u) {
+    const E = Math.floor(u.E), N = Math.floor(u.N);
+    const eL = SRCH_COLS[(u.zone - 1) % 3][Math.floor(E / 100000) - 1], nL = SRCH_ROWS[(u.zone - 1) % 2][Math.floor(N / 100000) % 20];
+    if (!eL || !nL) return '';
+    const p5 = v => String(v % 100000).padStart(5, '0');
+    return `${u.zone}${u.band} ${eL}${nL} ${p5(E)} ${p5(N)}`;
+  }
+  // MGRS -> the centre of its square; the row letters repeat every 2000 km:
+  // the repeat whose latitude falls in the band (northings past the pole -
+  // which come out on the far side of it - left out)
+  function srchFromMgrs(zone, band, eL, nL, es, ns) {
+    const col = SRCH_COLS[(zone - 1) % 3].indexOf(eL), row = SRCH_ROWS[(zone - 1) % 2].indexOf(nL), bi = SRCH_BANDS.indexOf(band);
+    if (col < 0 || row < 0 || bi < 0) return null;
+    const cell = Math.pow(10, 5 - es.length), mid = (bi - 10) * 8 + (bi === 19 ? 6 : 4), south = bi < 10;
+    const E = (col + 1) * 100000 + (es ? +es * cell : 0) + cell / 2, n0 = row * 100000 + (ns ? +ns * cell : 0) + cell / 2;
+    let best = null;
+    for (let N = n0; N < 10000000; N += 2000000) {
+      const p = srchFromUtm(zone, south, E, N);
+      if (!best || Math.abs(p.lat - mid) < Math.abs(best.lat - mid)) best = p;
+    }
+    return best && Math.abs(best.lat - mid) <= (bi === 19 ? 7 : 5) ? Object.assign(best, {cell}) : null;
+  }
+  // the zoom that shows a square of `m` metres across about a third of the map
+  function srchZoomFor(lat, m) {
+    const side = Math.max(100, Math.min(mapW || 600, mapH || 400));
+    return Math.max(MAP_MIN_Z, Math.min(17, Math.log2(40075016.686 * Math.cos(lat * Math.PI / 180) / (256 * m / (0.35 * side)))));
+  }
+  // a row for a position typed: [lat, lon] + what it was read as
+  function srchCoordRow(lat, lon, d, more) {
+    return Object.assign({ic: '⌖', n: `${lat.toFixed(6)}, ${lon.toFixed(6)}`, d, lat, lon, coord: true, src: d}, more);
+  }
+
+  // "lat, lon" typed in the usual ways -> rows (none when it isn't one)
+  function srchParseLatLon(q) {
+    let s = (' ' + String(q).toUpperCase() + ' ')
+      .replace(/[′’‘´`]/g, "'").replace(/[″“”]/g, '"').replace(/[º˚]/g, '°').replace(/''/g, '"')
+      .replace(/(^|[^A-Z])(?:LATITUDE|LONGITUDE|LAT|LONG|LON|LNG)(?![A-Z])\s*[:=]?/g, '$1 ')
+      .replace(/(^|[^A-Z])NORTH(?![A-Z])/g, '$1N').replace(/(^|[^A-Z])SOUTH(?![A-Z])/g, '$1S')
+      .replace(/(^|[^A-Z])EAST(?![A-Z])/g, '$1E').replace(/(^|[^A-Z])WEST(?![A-Z])/g, '$1W')
+      .replace(/(^|[^A-Z])DEG(?:REES?)?(?![A-Z])/g, '$1°').replace(/(^|[^A-Z])MIN(?:UTES?)?(?![A-Z])/g, "$1'")
+      .replace(/(^|[^A-Z])SEC(?:ONDS?)?(?![A-Z])/g, '$1"').trim();
+    if (!s) return [];
+    const tok = str => {
+      const out = [], re = /\s*(?:([-+]?\d+(?:\.\d+)?)|([NSEW])|([°'":])|([,\/]))\s*/y;
+      while (re.lastIndex < str.length) {
+        const at = re.lastIndex, m = re.exec(str);
+        if (!m || re.lastIndex === at) return null;
+        out.push(m[1] !== undefined ? {n: m[1]} : m[2] ? {h: m[2]} : m[3] ? {u: m[3]} : {sep: 1});
+      }
+      return out;
+    };
+    // the two coordinates: split at ";" (decimal commas then), a "," or "/",
+    // the hemisphere letters, the second degree sign, or half the numbers -
+    // a single letter between the two belongs to either (36.8 S 174.7 /
+    // 36.8 E174.7): both are tried
+    const cands = [];
+    if (s.includes(';') || /^[-+]?\d+,\d+\s+[-+]?\d+,\d+$/.test(s)) {
+      const parts = s.split(s.includes(';') ? ';' : /\s+/);
+      if (parts.length !== 2) return [];
+      cands.push(parts.map(p => tok(p.replace(/(\d),(\d)/g, '$1.$2').trim())));
+    } else {
+      const t = tok(s);
+      if (!t) return [];
+      const at = f => t.map((x, i) => f(x) ? i : -1).filter(i => i >= 0);
+      const seps = at(x => x.sep), hs = at(x => x.h), nums = at(x => x.n !== undefined), degs = at(x => x.u === '°').map(i => i - 1);
+      const cutAt = c => cands.push([t.slice(0, c), t.slice(c)]);
+      if (seps.length === 1) cands.push([t.slice(0, seps[0]), t.slice(seps[0] + 1)]);
+      else if (seps.length) return [];
+      else if (hs.length === 2) cutAt(hs[0] === 0 ? hs[1] : hs[0] + 1);   // N 36 E 174 / 36 S 174 E
+      else if (hs.length < 2) {
+        const c = degs.length === 2 ? degs[1] : !degs.length && !t.some(x => x.u) && nums.length && nums.length <= 6 && nums.length % 2 === 0 ? nums[nums.length / 2] : -1;
+        if (c < 0) return [];
+        cutAt(c);
+        if (t[c - 1] && t[c - 1].h && c - 1 > 0) cutAt(c - 1);
+      } else return [];
+    }
+    for (const g of cands) {
+      if (g.some(x => !x || !x.length)) continue;
+      const rows = srchLatLonRows(g[0], g[1]);
+      if (rows.length) return rows;
+    }
+    return [];
+  }
+  // the two coordinates' tokens -> rows
+  function srchLatLonRows(g0, g1) {
+    // one coordinate: [letter] degrees [minutes [seconds]] [letter]; the marks
+    // (° ' " or colons) or the order say which number is which
+    const one = g => {
+      let h = null, slot = -1;
+      const v = [];
+      for (let i = 0; i < g.length; i++) {
+        const x = g[i];
+        if (x.h) {
+          if (h || (v.length && i !== g.length - 1)) return null;
+          h = x.h;
+          continue;
+        }
+        if (x.n === undefined) return null;   // a mark without its number
+        const nx = g[i + 1];
+        let k = nx && nx.u && nx.u !== ':' ? {'°': 0, "'": 1, '"': 2}[nx.u] : slot + 1;
+        if (nx && nx.u) i++;
+        if (k <= slot || k > 2) return null;
+        v[k] = x.n;
+        slot = k;
+      }
+      const [d, m, sc] = v;
+      if (d === undefined || /^[-+]/.test(m || '') || /^[-+]/.test(sc || '')) return null;
+      if ((m !== undefined || sc !== undefined) && d.includes('.')) return null;
+      if (sc !== undefined && m !== undefined && m.includes('.')) return null;
+      const fm = m !== undefined ? +m : 0, fs = sc !== undefined ? +sc : 0;
+      if (fm >= 60 || fs >= 60) return null;
+      let val = Math.abs(+d) + fm / 60 + fs / 3600;
+      if (d.startsWith('-') || h === 'S' || h === 'W') val = -val;
+      const last = sc !== undefined ? sc : m !== undefined ? m : d;
+      return {val, h, f: sc !== undefined ? 3 : m !== undefined ? 2 : 1,
+              step: Math.pow(10, -(last.split('.')[1] || '').length) / (sc !== undefined ? 3600 : m !== undefined ? 60 : 1)};
+    };
+    const a = one(g0), b = one(g1);
+    if (!a || !b) return [];
+    const kind = x => x.h === 'N' || x.h === 'S' ? 'lat' : x.h ? 'lon' : '';
+    const ka = kind(a), kb = kind(b);
+    if (ka && ka === kb) return [];
+    const f = Math.max(a.f, b.f), what = f === 3 ? 'Degrees, minutes, seconds' : f === 2 ? 'Degrees, decimal minutes' : 'Decimal degrees';
+    const z = Math.max(5, Math.min(16, Math.log2(360 * 40 / (256 * Math.max(1e-7, Math.min(a.step, b.step))))));
+    const ok = (la, lo) => Math.abs(la.val) <= 90 && Math.abs(lo.val) <= 180;
+    const rows = [];
+    if (ka === 'lon' || kb === 'lat') { if (ok(b, a)) rows.push(srchCoordRow(b.val, a.val, what, {z})); }
+    else if (ka || kb) { if (ok(a, b)) rows.push(srchCoordRow(a.val, b.val, what, {z})); }
+    else {
+      // no letters: latitude first, as usual - or the other way round when only that fits
+      if (ok(a, b)) rows.push(srchCoordRow(a.val, b.val, what, {z}));
+      if (ok(b, a) && (!rows.length || a.val !== b.val)) rows.push(srchCoordRow(b.val, a.val, what + (rows.length ? ', read as longitude, latitude' : ' (longitude, latitude)'), {z}));
+    }
+    return rows;
+  }
+  // UTM ("60H 300870 5919340", letter = band, or N / S = hemisphere) and MGRS ("60HUD0087019340")
+  function srchParseGrid(q) {
+    const s = String(q).toUpperCase().replace(/^\s*(?:UTM|MGRS)\s*:?\s*/, '').trim();
+    const out = [];
+    let m = /^(\d{1,2})\s*([C-HJ-NP-X])\s*([A-HJ-NP-Z])\s*([A-HJ-NP-V])\s*(\d{0,10})\s*(\d{0,5})$/.exec(s);
+    if (m && +m[1] >= 1 && +m[1] <= 60) {
+      let es = m[5], ns = m[6];
+      if (!ns) { ns = es.length % 2 ? null : es.slice(es.length / 2); es = es.slice(0, es.length / 2); }
+      if (ns !== null && es.length === ns.length && es.length <= 5) {
+        const p = srchFromMgrs(+m[1], m[2], m[3], m[4], es, ns);
+        if (p) out.push(srchCoordRow(p.lat, p.lon, `MGRS ${+m[1]}${m[2]} ${m[3]}${m[4]} ${es} ${ns}`.trim() + ` (${p.cell >= 1000 ? p.cell / 1000 + ' km' : p.cell + ' m'} square)`,
+                                     {z: srchZoomFor(p.lat, Math.max(60, p.cell))}));
+      }
+    }
+    m = /^(\d{1,2})\s*([C-HJ-NP-X])\s+(\d{1,7}(?:\.\d+)?)\s*M?\s*E?\s*[\s,]\s*(\d{1,8}(?:\.\d+)?)\s*M?\s*N?$/.exec(s);
+    if (m && +m[1] >= 1 && +m[1] <= 60) {
+      const zone = +m[1], L = m[2], E = +m[3], N = +m[4];
+      if (E > 0 && E < 1000000 && N >= 0 && N <= 10000000) {
+        const row = (south, d) => {
+          const p = srchFromUtm(zone, south, E, N);
+          if (Math.abs(p.lat) <= 84) out.push(srchCoordRow(p.lat, p.lon, `UTM ${zone}${d} ${m[3]} ${m[4]}`, {z: 15}));
+          return p;
+        };
+        if (L === 'S') {
+          // band S (32-40° N) or the southern hemisphere: both when it could be either
+          const p = srchFromUtm(zone, false, E, N);
+          if (p.lat >= 31 && p.lat <= 41) row(false, 'S (band S, north)');
+          row(true, ' south');
+        } else row(SRCH_BANDS.indexOf(L) < 10, L);
+      }
+    }
+    return out;
+  }
+  // a position in a map link: Google (@lat,lon,zoom / q= / ll=), OpenStreetMap (#map= / mlat), Apple, geo:
+  function srchParseLink(q) {
+    const s = String(q).trim();
+    if (!/^(geo:|https?:\/\/|www\.|maps\.)/i.test(s)) return [];
+    const N = '([-+]?\\d+(?:\\.\\d+)?)';
+    const pats = [[`^geo:\\s*${N}\\s*,\\s*${N}`, 0], [`@${N},${N}(?:,(\\d+(?:\\.\\d+)?)z)?`, 3],
+                  [`#map=(\\d+(?:\\.\\d+)?)\\/${N}\\/${N}`, -1], [`[?&]mlat=${N}&mlon=${N}`, 0],
+                  [`[?&](?:q|ll|query|center|daddr|destination|sll|cp)=(?:loc:)?${N}(?:,|%2C|~)\\s*${N}`, 0], [`[?&]lat=${N}&(?:lon|lng)=${N}`, 0]];
+    for (const [p, zi] of pats) {
+      const m = new RegExp(p, 'i').exec(s);
+      if (!m) continue;
+      const v = zi < 0 ? [+m[2], +m[3], +m[1]] : [+m[1], +m[2], zi ? +m[zi] : NaN];
+      if (Math.abs(v[0]) > 90 || Math.abs(v[1]) > 180) continue;
+      return [srchCoordRow(v[0], v[1], 'Map link', {z: Number.isFinite(v[2]) ? Math.max(MAP_MIN_Z, Math.min(19, v[2])) : 15})];
+    }
+    return [];
+  }
+  // everything typed that is a position, in the order it is most likely meant
+  function srchParse(q) {
+    const s = String(q).trim();
+    if (!s) return [];
+    const link = srchParseLink(s);
+    if (link.length) return link;
+    const rows = [...srchParseLatLon(s), ...srchParseGrid(s)];
+    const loc = srchFromLocator(s);
+    if (loc) {
+      const km = loc.h * 111.32;
+      rows.push(srchCoordRow(loc.lat, loc.lon, `Grid locator ${s.trim().slice(0, 2).toUpperCase()}${s.trim().slice(2, 4)}${s.trim().slice(4).toLowerCase()} (${km >= 1 ? km.toFixed(km >= 10 ? 0 : 1) + ' km' : Math.round(km * 1000) + ' m'} square)`,
+                             {z: srchZoomFor(loc.lat, km * 1000), loc4: s.trim().length === 4}));
+    }
+    return rows;
+  }
+
+  // --- the page's own places ---
+  function srchLocal(q) {
+    const words = String(q).toLowerCase().split(/\s+/).filter(Boolean), ql = words.join(' ');
+    if (!words.length) return [];
+    const out = [];
+    const add = (txt, name, row) => {
+      const t = String(txt).toLowerCase();
+      if (!words.every(w => t.includes(w))) return;
+      const nl = String(name).toLowerCase();
+      out.push(Object.assign(row, {own: true, score: nl === ql ? 0 : nl.startsWith(ql) ? 1 : nl.includes(ql) ? 2 : 3}));
+    };
+    const st = mapStationPos(), cs = (($id('station-id') || {}).value || '').trim();
+    if (st) add(`station home receiver ${cs}`, cs || 'station', {ic: '🏠', n: cs ? `Station ${cs}` : 'Station', d: 'This receiver (Station Information)',
+                                                                  lat: st[0], lon: st[1], z: Math.max(mapState.z, 12)});
+    for (const m of sfLocs) {
+      const fq = sfFreqsAt(m.id);
+      add([m.name, m.notes, ...fq.map(f => `${f.name} ${mkFmtMhz(f.hz)} ${f.tone || ''}`)].join(' '), m.name,
+          {ic: '📍', n: m.name, d: 'Your marker' + (fq.length ? ' · ' + fq.slice(0, 3).map(f => `${f.name} ${mkFmtMhz(f.hz)} MHz`).join(', ') + (fq.length > 3 ? ` +${fq.length - 3}` : '') : ''),
+           lat: m.lat, lon: m.lon, z: Math.max(mapState.z, 15), sel: () => mkSelect(m.id)});
+    }
+    for (const [k, p] of mapPts) {
+      const nm = String(p.l || p.i), pn = digShort(digName(p.p));
+      add(`${nm} ${p.i} ${pn} d${p.v}`, nm, {ic: SRCH_KIND_IC[p.k] || '●', n: nm, d: `D${p.v} ${pn}${p.l && p.l !== p.i ? ' · ' + p.i : ''}`,
+                                             lat: p.la, lon: p.lo, z: Math.max(mapState.z, 11), sel: () => { mapSel = k; }});
+    }
+    for (const L of aimLayers) {
+      if (aimUi.hide[L.id]) continue;
+      L.f.forEach((f, i) => {
+        if ((f.g === 'pt' || f.g === 'ci') && f.l)
+          add(`${f.l} ${L.name}`, f.l, {ic: '🤖', n: f.l, d: `The assistant's layer “${L.name}”`, lat: f.c[0], lon: f.c[1], z: Math.max(mapState.z, 13),
+                                         sel: () => { mapSel = `ai:${L.id}:${i}`; }});
+      });
+    }
+    if (mastShown())
+      for (const m of mastPts.values()) {
+        const t = m.tags;
+        if (t.name || t.operator || t.ref)
+          add(`${t.name || ''} ${t.operator || ''} ${t.ref || ''}`, mastTitle(t), {ic: '📡', n: mastTitle(t), d: 'OpenStreetMap mast' + (t.name && t.operator ? ' · ' + t.operator : ''),
+                                                                                lat: m.la, lon: m.lo, z: Math.max(mapState.z, 15), sel: () => { mapSel = 'osm:' + m.k; }});
+      }
+    for (const it of vsState.items)
+      if (!it.st) add(it.name, it.name, {ic: '📶', n: it.name, d: 'Viewshed / path loss site', lat: it.lat, lon: it.lon, z: Math.max(mapState.z, 13)});
+    return out.sort((x, y) => x.score - y.score || x.n.localeCompare(y.n)).slice(0, 8);
+  }
+
+  // --- OpenStreetMap (Nominatim) ---
+  // the view as Nominatim's preferred box (not below zoom 4: the whole
+  // world), at least 0.2° across (zoomed in: the neighbourhood around it)
+  function srchViewbox() {
+    if (!mapCv || !mapW || mapState.z < 4) return '';
+    const W = mapWorld(), hw = Math.max(mapW / 2 / W, 0.1 / 360), hh = Math.max(mapH / 2 / W, 0.1 / 360);
+    const [n, w] = mapUnproj(mapState.mx - hw, mapState.my - hh);
+    const [s, e] = mapUnproj(mapState.mx + hw, mapState.my + hh);
+    const lon = v => Math.max(-180, Math.min(180, v)).toFixed(4);
+    return `${lon(w)},${n.toFixed(4)},${lon(e)},${s.toFixed(4)}`;
+  }
+  function srchOsmRow(r) {
+    const lat = parseFloat(r && r.lat), lon = parseFloat(r && r.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    const dn = String(r.display_name || '').slice(0, 400), name = String(r.name || '').slice(0, 120) || dn.split(',')[0] || `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    const typ = String(r.addresstype || r.type || '').replace(/_/g, ' ').slice(0, 40);
+    const bb = Array.isArray(r.boundingbox) ? r.boundingbox.map(parseFloat) : [];   // [south, north, west, east]
+    const box = bb.length === 4 && bb.every(Number.isFinite) && Math.abs(bb[0]) <= 90 && Math.abs(bb[1]) <= 90 && bb[1] - bb[0] > 0.002 ? bb : null;
+    const osm = /^(node|way|relation)$/.test(r.osm_type) && /^\d{1,15}$/.test(String(r.osm_id)) ? `https://www.openstreetmap.org/${r.osm_type}/${r.osm_id}` : '';
+    return {ic: '🌐', n: name, d: [typ, dn.startsWith(name + ', ') ? dn.slice(name.length + 2) : dn].filter(Boolean).join(' · '),
+            lat, lon, box, z: 17, osm, addr: dn, src: 'OpenStreetMap' + (typ ? ' · ' + typ : ''), onl: true};
+  }
+  async function srchOnline() {
+    const q = srchQ;
+    if (!q) return;
+    // kept per text + where the map is, to the degree (the view box itself
+    // changes with every result picked)
+    const c = mapUnproj(mapState.mx, mapState.my);
+    const vb = srchViewbox(), key = `${q.toLowerCase()}|${vb ? Math.round(c[0]) + ',' + Math.round(c[1]) : ''}`, seq = ++srchSeq;
+    srchListOn = true;
+    if (srchCache.has(key)) { srchGotOnline(q, srchCache.get(key)); return; }
+    srchBusyQ = q;
+    srchMsg = 'Searching OpenStreetMap…';
+    srchMsgW = false;
+    srchRender();
+    const wait = srchLastAt + SRCH_GAP_MS - Date.now();
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    if (seq !== srchSeq) return;   // a newer search, or cleared
+    srchLastAt = Date.now();
+    let res;
+    try {
+      const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 15000);
+      const r = await fetch(`${SRCH_URL}?format=jsonv2&limit=10&q=${encodeURIComponent(q)}${vb ? '&viewbox=' + vb : ''}`, {signal: ctl.signal});
+      clearTimeout(to);
+      if (!r.ok) throw {http: r.status};
+      res = await r.json();
+    } catch (e) {
+      if (seq !== srchSeq) return;
+      srchBusyQ = '';
+      srchMsg = e && e.http ? (e.http === 429 || e.http === 503 ? "OpenStreetMap's search is busy - try again in a minute"
+                                                                : `OpenStreetMap's search answered HTTP ${e.http}`)
+                            : "Can't reach OpenStreetMap's search (no internet?) - coordinates, grid locators and your own places still work";
+      srchMsgW = true;
+      srchRender();
+      return;
+    }
+    if (seq !== srchSeq) return;
+    const rows = (Array.isArray(res) ? res : []).slice(0, 10).map(srchOsmRow).filter(Boolean);
+    if (srchCache.size > 100) srchCache.delete(srchCache.keys().next().value);
+    srchCache.set(key, rows);
+    srchGotOnline(q, rows);
+  }
+  function srchGotOnline(q, rows) {
+    srchBusyQ = '';
+    srchOnlQ = q;
+    srchOnl = rows;
+    srchMsg = rows.length ? '' : `Nothing found at OpenStreetMap for “${q}”`;
+    srchMsgW = !rows.length;
+    if (q !== srchQ) { srchRender(); return; }   // typed on meanwhile
+    srchBuild();
+    // the first place found: there at once (the list stays for the others while the map is wide enough)
+    const i = srchRes.findIndex(r => r.onl);
+    if (i >= 0) srchPick(i, mapW >= 720);
+    else srchRender();
+  }
+
+  // --- the box ---
+  function srchBuild() {
+    const q = srchQ;
+    srchRes = q ? [...srchParse(q), ...srchLocal(q)] : [];
+    if (q.length >= 2) srchRes.push(...(srchOnlQ === q && srchOnl ? srchOnl : [{online: true}]));
+  }
+  function srchToggle(on) {
+    mapState.srch = on === undefined ? !mapState.srch : !!on;
+    mapSave();
+    srchListOn = !!mapState.srch && !!srchQ;
+    srchRender();
+    const i = $id('map-srch-in');
+    if (mapState.srch && i) { i.focus(); i.select(); }
+  }
+  // ✕: the text, the list and the pin go, the box closes
+  function srchClear() {
+    srchQ = srchMsg = srchOnlQ = srchBusyQ = '';
+    srchRes = [];
+    srchOnl = null;
+    srchHl = -1;
+    srchSeq++;
+    srchPinRemove();
+    const i = $id('map-srch-in');
+    if (i) i.value = '';
+    srchToggle(false);
+  }
+  function srchInput() {
+    srchQ = (($id('map-srch-in') || {}).value || '').trim();
+    srchHl = -1;
+    if (srchOnlQ !== srchQ) { srchMsg = ''; srchMsgW = false; }
+    srchListOn = true;
+    srchBuild();
+    srchRender();
+  }
+  function srchFocus() {
+    if (srchQ && !srchListOn) { srchListOn = true; srchRender(); }
+  }
+  function srchKey(e) {
+    if (e.isComposing) return;   // (an input method's Enter)
+    const n = srchRes.length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!srchListOn) srchListOn = true;
+      else if (n) srchHl = e.key === 'ArrowDown' ? (srchHl + 1) % n : srchHl <= 0 ? n - 1 : srchHl - 1;
+      srchRender();
+    } else if (e.key === 'Enter') srchGo();
+    else if (e.key === 'Escape') {
+      if (srchListOn && $id('map-srch-res').innerHTML) { srchListOn = false; srchRender(); }
+      else { e.target.blur(); srchToggle(false); }
+    } else return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
+  // Enter / ↵: the highlighted row; else a position typed (not a 4-character
+  // locator - "AB12" may be a postcode); else a place of the page's own named
+  // exactly so; else OpenStreetMap's first place (asked for if not yet)
+  function srchGo() {
+    if ((($id('map-srch-in') || {}).value || '').trim() !== srchQ) srchInput();
+    if (!srchQ) return;
+    let i = srchHl >= 0 && srchRes[srchHl] ? srchHl : srchRes.findIndex(r => r.coord && !r.loc4);
+    if (i < 0) i = srchRes.findIndex(r => r.own && r.score === 0);
+    if (i < 0) i = srchRes.findIndex(r => r.onl);
+    if (i >= 0) srchPick(i);
+    else srchOnline();
+  }
+  function srchResClick(e) {
+    const it = e.target.closest && e.target.closest('.srch-it');
+    if (it) srchPick(+it.dataset.i);
+  }
+  // keep a replay's Follow from pulling the view back to its vehicle
+  function mapStopFollow() {
+    if (lrOpen && lr && lrUi.follow) { lr.followAt = null; lrSet('follow', false); }
+  }
+  // fit [south, north, west, east] (west > east: across 180°)
+  function srchFitBox(s, n, w, e, zmax) {
+    if (e < w) e += 360;
+    const [x0, y1] = mapProj(s, w), [x1, y0] = mapProj(n, e);
+    const span = Math.max((x1 - x0) / Math.max(1, mapW - 80), (y1 - y0) / Math.max(1, mapH - 110), 1e-12);
+    mapState.z = Math.max(MAP_MIN_Z, Math.min(zmax, Math.log2(1 / (span * 256))));
+    mapState.mx = (x0 + x1) / 2;
+    mapState.mx -= Math.floor(mapState.mx);
+    mapState.my = (y0 + y1) / 2;
+    mapClampView();
+    mapSave();
+    mapDraw();
+  }
+  function srchPick(i, keep) {
+    const r = srchRes[i];
+    if (!r) return;
+    if (r.online) { srchHl = -1; srchOnline(); return; }
+    srchHl = i;
+    mapAutoFit = false;
+    mapStopFollow();
+    if (r.box) srchFitBox(r.box[0], r.box[1], r.box[2], r.box[3], 17);
+    else mapCenterOn(r.lat, r.lon, r.z);
+    if (r.own) {   // a place of the page's own: its own panel / popup
+      srchPinRemove();
+      if (r.sel) r.sel();
+    } else {
+      srchPin = {lat: r.lat, lon: r.lon, n: r.n, src: r.src || '', addr: r.addr || '', osm: r.osm || '', coord: !!r.coord};
+      mapSel = 'srch';
+    }
+    if (!keep) srchListOn = false;
+    srchRender();
+    mapDraw();
+  }
+  function srchRender() {
+    const box = $id('map-srch'), el = $id('map-srch-res');
+    if (!box || !el) return;
+    const on = !!mapState.srch;
+    if (box.style.display !== (on ? 'block' : 'none')) box.style.display = on ? 'block' : 'none';
+    const btn = $id('map-srch-btn');
+    if (btn) btn.classList.toggle('on', on);
+    const msg = srchBusyQ && srchBusyQ === srchQ ? 'Searching OpenStreetMap…' : srchOnlQ === srchQ || srchMsgW ? srchMsg : '';
+    let h = '';
+    if (on && srchListOn && srchQ) {
+      h = srchRes.map((r, i) => {
+        const hl = i === srchHl ? ' hl' : '';
+        if (r.online) return `<div class="srch-it onl${hl}" data-i="${i}"><span class="ic">🌐</span><span class="t"><span class="n">Search OpenStreetMap for “${digEsc(srchQ)}”</span>` +
+                             `<span class="d">addresses, cities and places - online (Enter)</span></span></div>`;
+        let k = '';
+        if (mapStation) {
+          const d = mapDistKm(mapStation[0], mapStation[1], r.lat, r.lon);
+          k = `<span class="k" title="Distance and bearing from the station">${d < 10 ? d.toFixed(1) : Math.round(d)} km ${Math.round(mapBearing(mapStation[0], mapStation[1], r.lat, r.lon))}°</span>`;
+        }
+        return `<div class="srch-it${hl}" data-i="${i}"><span class="ic">${r.ic}</span><span class="t"><span class="n">${digEsc(r.n)}</span>` +
+               `${r.d ? `<span class="d">${digEsc(r.d)}</span>` : ''}</span>${k}</div>`;
+      }).join('');
+      if (msg) h += `<div class="srch-msg${srchMsgW && !srchBusyQ ? ' w' : ''}">${digEsc(msg)}</div>`;
+      if (srchOnlQ === srchQ && srchOnl && srchOnl.length) h += '<div class="srch-attr">Places: ' + OSM_ATTR + ' (Nominatim)</div>';
+    }
+    if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
+    el.style.maxHeight = Math.max(120, (mapH || 420) - 100) + 'px';
+    const pane = $id('map-pane');
+    if (pane) pane.classList.toggle('srch-res-open', !!h);
+    // the highlighted row in view (the list only - scrollIntoView would move the page too)
+    const hl = el.querySelector('.srch-it.hl');
+    if (hl) {
+      const t = hl.offsetTop, b = t + hl.offsetHeight;
+      if (t < el.scrollTop) el.scrollTop = t;
+      else if (b > el.scrollTop + el.clientHeight) el.scrollTop = b - el.clientHeight;
+    }
+  }
+  // a press elsewhere hides the list (the box stays)
+  document.addEventListener('pointerdown', e => {
+    const b = $id('map-srch');
+    if (srchListOn && b && !b.contains(e.target)) { srchListOn = false; srchRender(); }
+  }, true);
+
+  // --- the pin + its popup ---
+  function srchDraw(c) {
+    const p = srchPin;
+    if (!p) return;
+    const [x, y] = mapLatLonToScreen(p.lat, p.lon);
+    p.sx = x; p.sy = y;
+    if (x < -40 || y < -10 || x > mapW + 300 || y > mapH + 40) return;
+    c.save();
+    c.translate(x, y);
+    c.lineJoin = 'round';
+    if (mapSel === 'srch') {
+      c.beginPath(); c.arc(0, -17, 13, 0, 2 * Math.PI);
+      c.strokeStyle = 'rgba(0,0,0,0.75)'; c.lineWidth = 4; c.stroke();
+      c.strokeStyle = '#fff'; c.lineWidth = 2; c.stroke();
+    }
+    // a pin a little bigger than the markers', in a colour of its own
+    c.fillStyle = '#ff3d00'; c.strokeStyle = 'rgba(0,0,0,0.9)'; c.lineWidth = 1.4;
+    c.beginPath(); c.arc(0, -17, 8.5, 0.8 * Math.PI, 0.2 * Math.PI); c.lineTo(0, 0); c.closePath();
+    c.fill(); c.stroke();
+    c.fillStyle = '#fff';
+    c.beginPath(); c.arc(0, -17, 3.2, 0, 2 * Math.PI); c.fill();
+    const lab = p.n.length > 48 ? p.n.slice(0, 47) + '…' : p.n;
+    c.font = 'bold 12px sans-serif'; c.strokeStyle = 'rgba(0,0,0,0.85)'; c.lineWidth = 3; c.fillStyle = '#ffccbc';
+    c.strokeText(lab, 13, -14); c.fillText(lab, 13, -14);
+    c.restore();
+  }
+  // the pin's head under a screen point
+  function srchHit(x, y) {
+    const p = srchPin;
+    return !!p && p.sx !== undefined && (p.sx - x) ** 2 + (p.sy - 17 - y) ** 2 < 12 * 12;
+  }
+  function srchPopPoint() {
+    if (!srchPin || srchPin.sx === undefined) return null;
+    return {sx: srchPin.sx, sy: srchPin.sy - 17, pin: srchPin};
+  }
+  function srchPopupHtml(p) {
+    const s = p.pin, row = (k, v) => `<tr><td>${k}</td><td class="sel">${v}</td></tr>`;
+    let rows = (s.addr && s.addr !== s.n ? row('Address', digEsc(s.addr)) : '') +
+               row('Position', `${s.lat.toFixed(6)}, ${s.lon.toFixed(6)}`) +
+               row('', `${srchDms(s.lat, 'N', 'S')} ${srchDms(s.lon, 'E', 'W')}`) +
+               row('Grid locator', srchLocator(s.lat, s.lon));
+    const u = srchToUtm(s.lat, s.lon);
+    if (u) rows += row('UTM', `${u.zone}${u.band} ${Math.round(u.E)} ${Math.round(u.N)}`) + row('MGRS', srchToMgrs(u));
+    if (mapStation) {
+      const d = mapDistKm(mapStation[0], mapStation[1], s.lat, s.lon), b = mapBearing(mapStation[0], mapStation[1], s.lat, s.lon);
+      rows += `<tr><td>From station</td><td>${d < 10 ? d.toFixed(2) : d.toFixed(d < 100 ? 1 : 0)} km, ${b.toFixed(0)}°</td></tr>`;
+    }
+    return `<div class="h"><span style="color:#ff3d00">●</span>${digEsc(s.n)}<span class="x" onclick="mapSel=null;mapDraw()">✕</span></div>` +
+           `<div class="s">🔍 ${digEsc(s.src || 'Search result')}</div><table>${rows}</table>` +
+           `<div class="lnk"><button type="button" class="map-btn" onclick="srchToMarker()" title="Make it one of your markers (📍 - a saved location, every browser), to add frequencies and notes">📍 Add as marker</button>` +
+           `<button type="button" class="map-btn" onclick="srchPinRemove()" title="Remove the search result's pin from the map">Remove pin</button>` +
+           (s.osm ? `<a href="${s.osm}" target="_blank" rel="noopener noreferrer">openstreetmap.org ↗</a>` : '') + '</div>';
+  }
+  function srchToMarker() {
+    const s = srchPin;
+    if (!s) return;
+    const notes = [s.addr && s.addr !== s.n ? s.addr : '', s.coord ? s.src : '', s.osm, 'From the map search'].filter(Boolean).join('\n');
+    mapSel = null;
+    mkCreate(s.lat, s.lon, s.coord ? undefined : s.n.slice(0, 80), notes.slice(0, 2000));
+    mapDraw();
+  }
+  function srchPinRemove() {
+    srchPin = null;
+    if (mapSel === 'srch') mapSel = null;
+    mapDraw();
+  }
+
+  // --- 🎯 the estimated transmitter ---
+  // every estimate drawn: the ⏯ replay's at the moment shown (or, before its
+  // first, the drive's last), then those of the 📡 DF panel's heat maps
+  function mapTxEsts() {
+    const out = [];
+    if (lrOpen && lr && lr.heat) {
+      let e = lrEstAt(lr.t), end = false;
+      const all = lr.heat.ests || [];
+      if (!e && all.length) { e = all[all.length - 1]; end = true; }
+      if (e && Number.isFinite(e.lat) && Number.isFinite(e.lon)) out.push({lat: e.lat, lon: e.lon, r95: e.r95, edge: e.edge, name: 'Replay' + (end ? ' (end of the drive)' : '')});
+    }
+    if (opMode === 'coherent' && rdfStatus)
+      for (const mp of rdfShownMaps()) {
+        const G = rdfGrids[mp.key], e = G && G.m.est;
+        if (e && Number.isFinite(e.lat) && Number.isFinite(e.lon)) out.push({lat: e.lat, lon: e.lon, r95: e.r95, edge: e.edge, name: mp.name});
+      }
+    return out;
+  }
+  function srchTxBtn() {
+    const b = $id('map-tx-btn');
+    if (!b) return;
+    const none = !mapTxEsts().length;
+    if (b.classList.contains('dis') !== none) b.classList.toggle('dis', none);
+  }
+  function mapGoTx() {
+    const L = mapTxEsts();
+    if (!L.length) {
+      const other = opMode === 'coherent' && Object.values(rdfGrids).some(G => G && G.m && G.m.est);
+      mapStatusFlash(other ? 'No transmitter estimate for what the 📡 DF panel shows - pick the VFO / radio there that has one'
+                           : 'No transmitter estimate yet: collect bearings while driving (📡 DF panel, coherent mode + GPS), or replay a drive (Replay)');
+      return;
+    }
+    // pressed again with the view where it left it: the next estimate
+    const a = srchTxAt, again = a && a.mx === mapState.mx && a.my === mapState.my && a.z === mapState.z;
+    const i = again ? (a.i + 1) % L.length : 0, e = L[i];
+    mapAutoFit = false;
+    mapStopFollow();
+    mapCenterOn(e.lat, e.lon, srchZoomFor(e.lat, 2 * Math.max(e.r95 > 0 ? e.r95 : 200, 40)));
+    srchTxAt = {i, mx: mapState.mx, my: mapState.my, z: mapState.z};
+    mapStatusFlash(`🎯 ${e.name}: the transmitter, ±${rdfDist(e.r95 || 0)} (95 %)${e.edge ? ' - at the grid edge, it may be outside' : ''}` +
+                   (L.length > 1 ? ` · ${i + 1} of ${L.length}: 🎯 again for the next` : ''));
   }
 
   // --- 👁 VIEWSHED: line of sight over the terrain ---------------------------------
@@ -22746,8 +24111,7 @@ function recRenderVfos() {
     const want = String(st.settings.band_vfo);
     let h = '<option value="-1">The VFO you listen to (the first 🔊)</option>';
     for (const d of list) {
-      const bw = (typeof bwo !== 'undefined' && bwo[d.bandwidth_index]) ? bwo[d.bandwidth_index].bandwidth * 1000 : 0;
-      h += '<option value="' + d.id + '">D' + d.id + ' ' + mhz(d) + ' MHz · ' + (bw >= 1000 ? (bw / 1000) + ' MHz' : bw + ' kHz') + '</option>';
+      h += '<option value="' + d.id + '">D' + d.id + ' ' + mhz(d) + ' MHz · ' + bwLabel(decBwHz(d)) + '</option>';
     }
     if (sel.dataset.html !== h) { sel.dataset.html = h; sel.innerHTML = h; }
     sel.value = want;

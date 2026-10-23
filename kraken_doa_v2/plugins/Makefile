@@ -11,7 +11,14 @@
 
 CXX ?= g++
 CC ?= gcc
-CXXFLAGS = -std=c++20 -O2 -Wall -Wextra -Wno-missing-field-initializers -pthread -Isdk -Ilib -I../external/pffft -isystem $(LIQUID_INC)
+# -O3: GCC's -O2 vectorizes only loops that need no epilogue (most DSP loops
+# do). -fno-math-errno: sqrt & co. without an errno path (loops with them
+# vectorize); -fcx-fortran-rules: kp::cf (std::complex<float>) * and /
+# without C99's inf / NaN recovery - a __mulsc3 / __divsc3 call that keeps
+# every mixer / dechirp / filter loop on complex samples from vectorizing
+# (division keeps its range scaling). NOT -ffast-math: its finite-math part
+# folds std::isfinite to true, and NaN marks unknown fields (kp::MapPoint)
+CXXFLAGS = -std=c++20 -O3 -fno-math-errno -fcx-fortran-rules -Wall -Wextra -Wno-missing-field-initializers -pthread -Isdk -Ilib -I../external/pffft -isystem $(LIQUID_INC)
 # + $(LIQUID_A): liquid-dsp built from source, static, without FFTW / libfec
 # (../liquid.mk; built here too when kraken_doa's make hasn't yet)
 LIBS = -lm -ldl
@@ -21,6 +28,9 @@ LIBS = -lm -ldl
 # told about NEON
 PFFFT_DIR := ../external/pffft
 PFFFT_CFLAGS = -O3 -Wno-unused-parameter
+
+# the compiler flags everything was built with (rule further down)
+FLAGS_STAMP := lib/build/.flags
 
 # Windows (MSYS2 UCRT64 / MinGW-w64, see ../../WINDOWS.md): <dir>/build/decoder.exe,
 # the same flags as kraken_doa_v2/Makefile's WINDOWS section, static exes
@@ -37,19 +47,18 @@ CXXFLAGS += -I../include $(WIN_MARCH) $(WIN_ASFLAGS) -D_WIN32_WINNT=0x0A00 -DWIN
 PFFFT_CFLAGS += $(WIN_MARCH) $(WIN_ASFLAGS) -DPFFFT_STATIC_DEFINE
 # dlfcn-win32 gives dlopen() for the mbelib DLL (dig_vocoder.cpp)
 LIBS = -static -lm -ldl -lws2_32 -lwinmm -lbcrypt -luser32 -ladvapi32
-# everything compiled depends on this stamp of WIN_MARCH (rule below):
-# another WIN_MARCH recompiles everything, not only the files that changed
-WIN_MARCH_STAMP := lib/build/.win_march
 endif
 
 ARCH := $(shell uname -m)
 ifeq ($(WINDOWS),1)
-else ifneq ($(filter aarch64 armv7l x86_64,$(ARCH)),)
+else ifeq ($(ARCH),aarch64)
+    # -mcpu=native: this CPU's instructions AND its tuning (-march=native alone
+    # tunes for a generic ARMv8 core, not the Pi 5's Cortex-A76)
+    CXXFLAGS += -mcpu=native
+    PFFFT_CFLAGS += -mcpu=native -DPFFFT_ENABLE_NEON
+else ifneq ($(filter armv7l x86_64,$(ARCH)),)
     CXXFLAGS += -march=native
     PFFFT_CFLAGS += -march=native
-endif
-ifeq ($(ARCH),aarch64)
-    PFFFT_CFLAGS += -DPFFFT_ENABLE_NEON
 endif
 ifeq ($(ARCH),armv7l)
     PFFFT_CFLAGS += -mfpu=neon -DPFFFT_ENABLE_NEON
@@ -94,30 +103,30 @@ all: $(TARGETS) $(CODECS)
 LIQUID_ROOT := ..
 include ../liquid.mk
 
-$(CODECS): lib/tools/codecs.cpp $(LIB_A) $(LIB_HDRS) $(LIQUID_H) $(LIQUID_A) $(WIN_OBJS) $(WIN_MARCH_STAMP)
+$(CODECS): lib/tools/codecs.cpp $(LIB_A) $(LIB_HDRS) $(LIQUID_H) $(LIQUID_A) $(WIN_OBJS) $(FLAGS_STAMP)
 	$(CXX) $(CXXFLAGS) -o $@.tmp $< $(WIN_OBJS) $(LIB_A) $(LIQUID_A) $(LIBS)
 	@mv -f $@.tmp $@
 
 list:
 	@echo $(PLUGINS)
 
-$(HOST_OBJ): sdk/plugin_host.cpp $(SDK_HDRS) $(LIQUID_H) $(WIN_MARCH_STAMP)
+$(HOST_OBJ): sdk/plugin_host.cpp $(SDK_HDRS) $(LIQUID_H) $(FLAGS_STAMP)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-lib/build/%.o: lib/%.cpp $(LIB_HDRS) $(SDK_HDRS) $(LIQUID_H) $(WIN_MARCH_STAMP)
+lib/build/%.o: lib/%.cpp $(LIB_HDRS) $(SDK_HDRS) $(LIQUID_H) $(FLAGS_STAMP)
 	@mkdir -p lib/build
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-lib/build/kproc.o: $(KPROC_SRC) ../include/utils/process.hpp $(WIN_MARCH_STAMP)
+lib/build/kproc.o: $(KPROC_SRC) ../include/utils/process.hpp $(FLAGS_STAMP)
 	@mkdir -p lib/build
 	$(CXX) $(CXXFLAGS) -I../include -c $< -o $@
 
-lib/build/fs_compat.o: ../src/utils/fs_compat.cpp ../include/utils/fs_compat.hpp $(WIN_MARCH_STAMP)
+lib/build/fs_compat.o: ../src/utils/fs_compat.cpp ../include/utils/fs_compat.hpp $(FLAGS_STAMP)
 	@mkdir -p lib/build
 	$(CXX) $(CXXFLAGS) -I../include -c $< -o $@
 
-sdk/build/win_init.o: ../win/win_init.cpp ../win/posix_compat.h $(WIN_MARCH_STAMP)
+sdk/build/win_init.o: ../win/win_init.cpp ../win/posix_compat.h $(FLAGS_STAMP)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -126,28 +135,30 @@ sdk/build/app_res.o: ../win/app.rc ../win/app.manifest
 	windres --include-dir ../win -O coff $< -o $@
 
 PFFFT_HDRS := $(PFFFT_DIR)/pffft.h $(PFFFT_DIR)/pffft_priv_impl.h $(wildcard $(PFFFT_DIR)/simd/*.h)
-lib/build/pffft.o: $(PFFFT_DIR)/pffft.c $(PFFFT_HDRS) $(WIN_MARCH_STAMP)
+lib/build/pffft.o: $(PFFFT_DIR)/pffft.c $(PFFFT_HDRS) $(FLAGS_STAMP)
 	@mkdir -p lib/build
 	$(CC) $(PFFFT_CFLAGS) -c $< -o $@
-lib/build/pffft_common.o: $(PFFFT_DIR)/pffft_common.c $(PFFFT_HDRS) $(WIN_MARCH_STAMP)
+lib/build/pffft_common.o: $(PFFFT_DIR)/pffft_common.c $(PFFFT_HDRS) $(FLAGS_STAMP)
 	@mkdir -p lib/build
 	$(CC) $(PFFFT_CFLAGS) -c $< -o $@
 
-ifeq ($(WINDOWS),1)
-# The WIN_MARCH the plugins were built with. Rewritten (and so newer than
-# everything built) only when it differs, e.g. `make WIN_MARCH=-march=x86-64-v2`
-# for a CPU without AVX2: objects of the default x86-64-v3 build would
-# otherwise stay in the exes and still crash there
-ifneq ($(shell cat $(WIN_MARCH_STAMP) 2>/dev/null),$(strip $(WIN_MARCH)))
-$(WIN_MARCH_STAMP): win-march-changed
+# The compiler flags the plugins were built with (every platform). Rewritten
+# (and so newer than everything built) only when they differ, so a flags
+# change rebuilds everything, not only what changed - e.g. `make
+# WIN_MARCH=-march=x86-64-v2` for a CPU without AVX2 (objects of the default
+# x86-64-v3 build would otherwise stay in the exes and still crash there), or
+# new optimisation flags reaching an existing build. A plugin's own CXXFLAGS
+# file is a prerequisite of that plugin instead
+FLAGS_TEXT = $(strip $(CXX) $(CXXFLAGS) | $(CC) $(PFFFT_CFLAGS))
+ifneq ($(shell cat $(FLAGS_STAMP) 2>/dev/null),$(FLAGS_TEXT))
+$(FLAGS_STAMP): flags-changed
 endif
-$(WIN_MARCH_STAMP):
+$(FLAGS_STAMP):
 	@mkdir -p $(dir $@)
-	@echo '$(strip $(WIN_MARCH))' > $@
+	@echo '$(FLAGS_TEXT)' > $@
 
-.PHONY: win-march-changed
-win-march-changed:
-endif
+.PHONY: flags-changed
+flags-changed:
 
 $(LIB_A): $(LIB_OBJS)
 	@rm -f $@
@@ -185,7 +196,7 @@ licence_check = $(if $(call own_licence,$(1)),@bad=$$($(CXX) $(call plugin_cxxfl
 # restarts the decoder on it. (Windows can't overwrite a running .exe, but
 # MSYS2's mv moves the busy file aside first; g++ -o x.tmp adds no .exe.)
 .SECONDEXPANSION:
-%/build/decoder$(EXE): $$(wildcard $$*/*.cpp) $$(wildcard $$*/*.hpp) $$(wildcard $$*/*.h) $$(wildcard $$*/CXXFLAGS) $$(wildcard $$*/LICENSE) $(HOST_OBJ) $(SDK_HDRS) $(LIB_A) $(LIB_HDRS) $(LIQUID_H) $(LIQUID_A) $(WIN_OBJS) $(WIN_MARCH_STAMP)
+%/build/decoder$(EXE): $$(wildcard $$*/*.cpp) $$(wildcard $$*/*.hpp) $$(wildcard $$*/*.h) $$(wildcard $$*/CXXFLAGS) $$(wildcard $$*/LICENSE) $(HOST_OBJ) $(SDK_HDRS) $(LIB_A) $(LIB_HDRS) $(LIQUID_H) $(LIQUID_A) $(WIN_OBJS) $(FLAGS_STAMP)
 	@test -f $*/decoder.cpp || { echo "no plugin '$*' (expected plugins/$*/decoder.cpp)"; exit 1; }
 	@mkdir -p $*/build
 	$(call licence_check,$*,$(wildcard $*/*.cpp))
@@ -205,7 +216,7 @@ GEN_TARGETS := $(foreach s,$(GEN_SRCS),$(dir $(s))build/$(basename $(notdir $(s)
 GEN_BUILD_DIRS := */tools/build
 gen_plugin = $(firstword $(subst /, ,$(1)))
 all: $(GEN_TARGETS)
-$(GEN_TARGETS): %$(EXE): $$(subst /build/,/,$$*).cpp $$(wildcard $$(call gen_plugin,$$*)/*.hpp $$(call gen_plugin,$$*)/*/*.hpp) $$(wildcard $$(call gen_plugin,$$*)/LICENSE) $(SDK_HDRS) $(LIB_A) $(LIB_HDRS) $(LIQUID_H) $(LIQUID_A) $(WIN_OBJS) $(WIN_MARCH_STAMP)
+$(GEN_TARGETS): %$(EXE): $$(subst /build/,/,$$*).cpp $$(wildcard $$(call gen_plugin,$$*)/*.hpp $$(call gen_plugin,$$*)/*/*.hpp) $$(wildcard $$(call gen_plugin,$$*)/LICENSE) $(SDK_HDRS) $(LIB_A) $(LIB_HDRS) $(LIQUID_H) $(LIQUID_A) $(WIN_OBJS) $(FLAGS_STAMP)
 	@mkdir -p $(dir $@)
 	$(call licence_check,$(call gen_plugin,$*),$<)
 	$(CXX) $(call plugin_cxxflags,$(call gen_plugin,$*)) -I$(call gen_plugin,$*) -o $@.tmp $< $(WIN_OBJS) $(call plugin_lib,$(call gen_plugin,$*)) $(LIQUID_A) $(LIBS)

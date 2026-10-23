@@ -53,8 +53,11 @@ plugins/
 │                         Reed-Solomon GF(256), FIS-B headers / DLAC text; TIS-B = the ground station's
 ├── flarm/                FLARM (ID + bearing only: encrypted payload) / OGN trackers (LDPC soft
 │                         decoding, TEA de-whitening, stealth honoured) on every channel in the 2.4 MHz
-├── ctcss/                CTCSS tones / DCS codes under analog FM (FFT search + narrowband tracker,
-│                         Golay DCS words): a transmission talker per tone, tone squelch, no voice
+├── analog_id/            Radio IDs on analog FM (was ctcss/): CTCSS tones / DCS codes (FFT search +
+│                         narrowband tracker, Golay DCS words) and the in-band ID bursts - MDC1200
+│                         (coherent MSK), FleetSync 1200 / 2400 / II, 5-tone selcall, DTMF, tone
+│                         bursts; a transmission talker named by the radio's ID, else its tone;
+│                         ID / tone squelch, no voice
 ├── beacon406/            406 MHz distress beacons (Cospas-Sarsat): bursts on every channel of a 100 kHz
 │                         VFO, biphase-L demodulator, BCH syndrome tables, every protocol; a packet
 │                         talker per 15-hex ID on its own channel; distress vs self-test
@@ -67,10 +70,17 @@ plugins/
 │                         the raw samples, pulse trains (period, modes from the collar's own rate),
 │                         region / vendor profiles (profiles.hpp), coded (Lotek / Motus-style) tags;
 │                         a packet talker per collar on its 1 kHz channel
+├── rds/                  FM broadcast at the VFO's own rate: every antenna combined before the FM
+│                         discriminator (multichannel), RDS / RBDS (biphase BPSK, block sync + soft
+│                         correction, every group type), RDS2 streams, the MPX's subcarriers classified
+│                         (SCA FM audio / FSK data / DARC), SCA or main-programme audio; a packet talker
+│                         per station (PI) per RDS group
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
-    ├── CXXFLAGS          optional: extra compiler flags for this plugin (e.g. -O3)
+    ├── CXXFLAGS          optional: extra compiler flags for this plugin (e.g.
+    │                     -funroll-loops; the defaults are already -O3
+    │                     -fno-math-errno -fcx-fortran-rules, -mcpu=native on a Pi)
     ├── tools/            test-signal generator (real framing / FEC / CRC, several
     │                     transmitters with their IDs) - see ID separation below
     ├── README.md         what it decodes, ID separation, sources/specs used, test results
@@ -412,8 +422,8 @@ take in what proved it (the sync word, a preamble); keep it under 3 s.
 Talker spans and packets (`host.talker`) count as confirmed samples too.
 The squelch stays open 1.5 s after the last valid frame - right for frames
 a few hundred ms apart; a decoder of a continuous signal that reports short
-pieces (ctcss: every 50 ms while the tone is there) sets
-`.squelch_hold_s` (ctcss 0.35), so the squelch closes soon after the
+pieces (analog_id: every 50 ms while the tone is there) sets
+`.squelch_hold_s` (analog_id 0.35), so the squelch closes soon after the
 signal ends instead of passing 1.5 s of noise after every transmission.
 The shipped plugins: the lib protocols report through
 `RxContext::valid_at` (`dig::report_valid(ctx, mode, start, end)` with the
@@ -518,10 +528,14 @@ mixed from all of them. Every new decoder of such a signal does this.
   sample indexes (`dig::Bridge::clock(rate)` maps them; tetra, mpt1327).
 - **Transmissions** (`host.talker` / `talker_end`) for voice calls: the
   frame boundaries of the call, a new id ending the previous one. Also for
-  an analog transmitter named by its sub-audible tone (ctcss: `CTCSS 88.5`
-  from the carrier's / tone's onset to its reverse burst / end) - such a
-  plugin decodes no voice (`.voice` false), so Voice to Text transcribes the
-  VFO's analog audio and names each transcript after its talker.
+  an analog transmitter named by its radio ID or sub-audible tone
+  (analog_id: `MDC 1234` / `CTCSS 88.5` from the carrier's / tone's onset to
+  its reverse burst / end) - such a plugin decodes no voice (`.voice`
+  false), so Voice to Text transcribes the VFO's analog audio and names
+  each transcript after its talker. A talker whose ID is only known later
+  (a post-ID at the end of the transmission) can be reported then, from the
+  transmission's start: the host keeps DoA frames no span claims for 6 s
+  (`FRAME_WAIT_S`), so report it within ~5 s of the start.
 - **The channel**: `freq_hz` / `bw_hz` of the transmitter inside the VFO
   (Hz from your input's 0 Hz - after the host's AFC, so a decoder whose
   `freq_error` centres the signal gives 0) - kraken_doa filters exactly that
@@ -575,9 +589,10 @@ scene of several transmitters is too big for uca_scene.py's in-memory
 mixing (5 antennas x 12 s = 2.3 GB complex128): `radar/tools/radar_gen.py`
 writes its scene at known bearings itself, in 0.1 s pieces (so do
 `ssr1030/tools/ssr_gen.py`, `uat/tools/uat_gen.py`, `adsb/tools/adsb_gen.py`,
-`dme/tools/dme_gen.py`, `ism/tools/ism_gen.py` and
+`dme/tools/dme_gen.py`, `ism/tools/ism_gen.py`,
 `flarm/tools/flarm_gen.py` - the last two with simultaneous packets on
-different channels of one VFO).
+different channels of one VFO - and `rds/tools/rds_gen.py`: FM stations,
+also at 480 kHz for an offline test).
 
 **Who transmits, again**: a message ABOUT a transmitter isn't always FROM
 it - UAT's TIS-B / ADS-R messages describe aircraft but are sent by a

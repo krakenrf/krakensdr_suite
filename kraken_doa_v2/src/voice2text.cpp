@@ -970,7 +970,7 @@ void Worker::scan_vfos(int64_t t) {
     for (const auto& inst : decimator_manager.getAllDecimators()) {
         if (!inst || inst->being_deleted.load(std::memory_order_relaxed)) continue;
         if (!inst->transcribe.load(std::memory_order_relaxed)) continue;
-        // the decoder's voice - unless it decodes none (ctcss, pocsag...):
+        // the decoder's voice - unless it decodes none (analog_id, pocsag...):
         // then the VFO's analog demod, as without a decoder
         bool dig = inst->digital_mode.load(std::memory_order_relaxed) != 0;
         if (dig) {

@@ -118,7 +118,8 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // dynamic: "<heard>|<vfo>;<vfo>;..." with each <vfo> =
         // "offset_hz,bw_index,demod,squelch_en,squelch_db,squelch_method (0 FFT /
         // 3 Digital),0 (was the eigenvalue threshold),digital_mode,digital_opts,tuner,
-        // transcribe (0|1, Voice to Text)"
+        // transcribe (0|1, Voice to Text),bandwidth_hz (any width; bw_index = the
+        // nearest BANDWIDTH_OPTIONS size, for an older kraken_doa)"
         // and heard the LIST POSITIONS of the VFOs heard in the live audio
         // (🔊, "0,2"; "-1" = none; was one position, the single Audio Src) - ids
         // are renumbered 0..N-1 across restarts. Built and parsed in
@@ -147,6 +148,15 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // half-width of the grid (km)
         {"rdf_enabled",              "RDF:",                      VType::BOOL,   "1"},
         {"rdf_range_km",             "RDF_RANGE_KM:",             VType::NUMBER, "10"},
+        // 📻 Saved-frequency scan (sf_scanner.hpp): squelch (dB over the
+        // noise floor), dwell per band, delay after a transmission, longest
+        // stay on one frequency (0 = no limit) - ms. What it scans is kept
+        // with the saved frequencies (saved_frequencies.json)
+        {"sfscan_squelch_db",        "SFSCAN_SQUELCH:",           VType::NUMBER, "12.0"},
+        {"sfscan_dwell_ms",          "SFSCAN_DWELL:",             VType::NUMBER, "2000"},
+        {"sfscan_hang_ms",           "SFSCAN_HANG:",              VType::NUMBER, "2000"},
+        {"sfscan_max_ms",            "SFSCAN_MAX:",               VType::NUMBER, "0"},
+        {"sfscan_multi",             "SFSCAN_MULTI:",             VType::BOOL,   "0"},
         {"decimators",               "DECIMATORS:",               VType::STRING, "0|0.00,7,WBFM,0,15.00,0,2.00"},
         // Decoder plugins the user excluded from the Digital Decoder's "Auto
         // detect" ("id,id"; empty = every plugin takes part)

@@ -46,6 +46,21 @@ bool process_channel_lag_compensation(int channel, float lag);
 // gain, start_scanner interrupting one): run by the lag driver once the scan
 // stops - a calibration can't converge across hops.
 extern std::atomic<bool> scanner_cal_deferred;
+
+// Calibration HOLD (control port `hold_calibration`, the DoA client's
+// saved-frequency scan while it searches): a retune / gain change still
+// enters the cooldown (noise off, WAITING_FOR_STABILITY - clients hold DoA)
+// but the cooldown doesn't expire into a calibration, and the periodic check
+// stands down, so the array hops between bands without calibrating each one.
+// A LEASE: hold_ms > 0 holds until that many ms from now (renewed by the
+// client; a client that stops renewing - stopped, crashed - lets it lapse
+// and the pending calibration runs as usual); 0 releases at once, and the
+// cooldown the hold kept pending is taken as expired: the calibration starts
+// on the lag driver's next tick (a signal was found - its DoA wants it now;
+// a 0 with no hold in effect leaves an ordinary cooldown alone). A coherence
+// recovery is not held (it needs the full recalibration).
+void set_calibration_hold(int hold_ms);
+bool calibration_held();
 void reset_lag_compensation_all_channels();
 
 // Coherence recovery: full flush + recalibration triggered after a detected

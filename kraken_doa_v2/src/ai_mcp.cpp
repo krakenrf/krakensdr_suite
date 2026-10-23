@@ -252,7 +252,7 @@ std::vector<Vfo> vfos() {
             if (auto inst = decimator_manager.getDecimator(d.id)) v.tuner = inst->tuner_channel.load();
         v.center = tuner_center_hz(v.tuner);
         v.hz = v.center + d.frequency_offset_hz;
-        v.bw = d.bandwidth_mhz * 1e6;
+        v.bw = d.bandwidth_hz;
         out.push_back(v);
     }
     return out;
@@ -1131,27 +1131,13 @@ std::string cmd(const std::string& c) {
 
 std::string mhz(double hz) { return num(hz / 1e6, 6); }
 
-// the bandwidth option for hz (options run from 2.4 MHz down): at_least =
-// the narrowest >= hz (a decoder's minimum), else the nearest (log scale)
-int bw_index_for(double hz, bool at_least) {
-    int best = 0;
-    double bd = 1e9;
-    for (int i = 0; i < NUM_BANDWIDTH_OPTIONS; i++) {
-        const double b = BANDWIDTH_OPTIONS[i].bandwidth_mhz * 1e6;
-        if (at_least) {
-            if (b >= hz * 0.999) best = i;
-        } else if (const double dd = std::fabs(std::log(b / std::max(hz, 1.0))); dd < bd) {
-            bd = dd;
-            best = i;
-        }
-    }
-    return best;
-}
-
+// a VFO's bandwidth: at_least = a decoder's minimum - the narrowest efficient
+// size that holds it (as the web UI picks one), else hz itself (any whole Hz
+// within the VFO limits)
 std::string set_bw(int id, double hz, double* applied = nullptr, bool at_least = true) {
-    const int idx = bw_index_for(hz, at_least);
-    if (applied) *applied = BANDWIDTH_OPTIONS[idx].bandwidth_mhz * 1e6;
-    return cmd("SET_DECIMATOR_BW:" + std::to_string(id) + ":" + std::to_string(idx));
+    const int bw = at_least ? efficient_bandwidth_at_least(clamp_bandwidth_hz(hz)) : clamp_bandwidth_hz(hz);
+    if (applied) *applied = bw;
+    return cmd("SET_DECIMATOR_BW_HZ:" + std::to_string(id) + ":" + std::to_string(bw));
 }
 
 std::string move_vfo(int id, double hz) {
@@ -1236,7 +1222,9 @@ std::string apply_vfo_args(int id, const Json& a, bool skip_freq, std::vector<st
         double bw = 0;
         e = set_bw(id, num_arg(a, "bandwidth_hz", 12500), &bw, false);
         if (!e.empty()) return e;
-        if (std::fabs(bw - num_arg(a, "bandwidth_hz", 0)) > 1) notes.push_back("bandwidth set to the nearest option, " + num(bw, 0) + " Hz");
+        if (std::fabs(bw - num_arg(a, "bandwidth_hz", 0)) > 1) notes.push_back("bandwidth limited to " + num(bw, 0) + " Hz (" +
+                                                                               std::to_string(VFO_BW_MIN_HZ) + " - " +
+                                                                               std::to_string(VFO_BW_MAX_HZ) + ")");
     }
     if (has(a, "freq_hz") && !skip_freq) {
         if (locked) notes.push_back("freq_hz ignored: the decoder holds the VFO on the tuner's centre");
@@ -1639,14 +1627,14 @@ std::vector<Tool>& tools() {
         {"add_vfo", "Add a VFO",
          "Adds a VFO at freq_hz (inside the band shown) with an optional bandwidth, demod (NBFM | WBFM | AM | DIGITAL) "
          "and decoder (a plugin id from list_decoders, 'auto' or 'off'); listen = play its audio. Returns its number.",
-         OBJ(NUMP("freq_hz", "Hz") "," NUMP("bandwidth_hz", "Hz (nearest option)") "," STRP("demod", "NBFM | WBFM | AM | DIGITAL")
+         OBJ(NUMP("freq_hz", "Hz") "," NUMP("bandwidth_hz", "Hz, any whole Hz 1000 - 2400000") "," STRP("demod", "NBFM | WBFM | AM | DIGITAL")
                  "," STRP("decoder", "plugin id | auto | off") "," BOOLP("listen", "hear it") "," BOOLP("transcribe", "Voice to Text"),
              REQ("\"freq_hz\"")),
          true, false, t_add_vfo},
         {"set_vfo", "Change a VFO",
          "Changes a VFO: frequency, bandwidth, demod, decoder (plugin id | auto | off), squelch (on/off, squelch_db "
          "above the floor, squelch_method FFT | DIGITAL - Digital opens on decoded frames), listen, transcribe.",
-         OBJ(INTP("vfo", "VFO number") "," NUMP("freq_hz", "Hz") "," NUMP("bandwidth_hz", "Hz") "," STRP("demod", "NBFM | WBFM | AM | DIGITAL")
+         OBJ(INTP("vfo", "VFO number") "," NUMP("freq_hz", "Hz") "," NUMP("bandwidth_hz", "Hz, any whole Hz 1000 - 2400000") "," STRP("demod", "NBFM | WBFM | AM | DIGITAL")
                  "," STRP("decoder", "plugin id | auto | off") "," BOOLP("squelch", "on / off") "," NUMP("squelch_db", "dB 0-80")
                  "," STRP("squelch_method", "FFT | DIGITAL") "," BOOLP("listen", "hear it") "," BOOLP("transcribe", "Voice to Text"),
              REQ("\"vfo\"")),

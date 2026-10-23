@@ -18,6 +18,7 @@
 #include "message_builders.hpp"
 #include "incidents.hpp"
 #include "saved_freqs.hpp"
+#include "sf_scanner.hpp"
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
 #include "array_cal.hpp"
@@ -324,6 +325,7 @@ static bool is_query_command(string_view msg) {
            msg.starts_with("AI_") ||           // AI assistant: results come as ai_event / ai_state
            msg.starts_with("PLUGIN") ||        // plugins: own broadcasts
            msg.starts_with("SF_") ||           // 📻 saved frequencies + map markers: {"savedfreq":...} broadcasts
+           msg.starts_with("SFSCAN_") ||       // 📻 saved-frequency scan: {"sfscan":...} broadcasts (saves its settings itself)
            msg.starts_with("ARRAY_CAL") ||     // ✈ array calibration: {"array_cal":...} broadcasts
            msg.starts_with("RECORDER_") ||     // 📼 recorder: {"recorder":...} / {"recordings":...} broadcasts
            msg.starts_with("AUDIO_VFO:") ||    // 🔊 VFOs heard: decimator_info broadcasts
@@ -416,7 +418,9 @@ static void store_for_replay(string_view msg, size_t key_len) {
 // POSITIONS, not ids: ids can become non-contiguous after removals but are
 // renumbered 0..N-1 on the next start. "0,2" = the first and third, "-1" =
 // none (was ONE position - the single "Audio Src": an older kraken_doa reads
-// the first number, "-1" as the first VFO).
+// the first number, "-1" as the first VFO). The bandwidth: field 2 the nearest
+// BANDWIDTH_OPTIONS index (what an older kraken_doa reads), the last field
+// (12) the bandwidth in Hz (arbitrary bandwidths; a file without it: the index).
 static string build_decimator_snapshot() {
     auto info = decimator_manager.getDecimatorInfoList();
     string heard;
@@ -435,7 +439,8 @@ static string build_decimator_snapshot() {
            << dig::mode_string(static_cast<dig::Mode>(d.digital_mode), d.digital_plugin) << ","
            << dig::options_to_string(d.digital_opts) << ",";
         auto inst = decimator_manager.getDecimator(d.id);
-        ss << (inst ? inst->tuner_channel.load() : 0) << "," << (d.transcribe ? 1 : 0);
+        ss << (inst ? inst->tuner_channel.load() : 0) << "," << (d.transcribe ? 1 : 0)
+           << "," << d.bandwidth_hz;
     }
     return ss.str();
 }
@@ -448,7 +453,7 @@ static void record_decimator_snapshot() {
     // While a scanner runs, the live VFO set is the scan's (offsets, VFOs heard,
     // bandwidths it moved) - saving it made the scan state the user's setup
     // after a restart. Edits made during a scan are therefore not persisted.
-    if (scanner_manager.isRunning() || continuous_scanner.isRunning()) return;
+    if (scanner_manager.isRunning() || continuous_scanner.isRunning() || sfscan::running()) return;
     SettingsStore::record("DECIMATORS:" + build_decimator_snapshot());
 }
 
@@ -467,6 +472,7 @@ static bool apply_decimator_snapshot(const string& snap) {
         std::string plugin;
         int tuner = 0;
         bool transcribe = false;   // 🗣 Voice to Text
+        int bw_hz = 0;             // the bandwidth in Hz (0 = the index's)
     };
     vector<int> heard_pos;   // list positions of the VFOs heard
     vector<Vfo> vfos;
@@ -504,6 +510,8 @@ static bool apply_decimator_snapshot(const string& snap) {
             if (getline(es, tok, ',') && !tok.empty()) v.tuner = std::clamp(stoi(tok), 0, MAX_CHANNELS - 1);
             // optional (newer files): Voice to Text on this VFO
             if (getline(es, tok, ',')) v.transcribe = tok == "1";
+            // optional (newer files): the bandwidth in Hz (any width)
+            if (getline(es, tok, ',') && !tok.empty()) v.bw_hz = clamp_bandwidth_hz(stof_finite(tok));
             vfos.push_back(v);
         }
     } catch (const exception&) {
@@ -526,7 +534,8 @@ static bool apply_decimator_snapshot(const string& snap) {
         const Vfo& v = vfos[i];
         int id = info[i].id;
         decimator_manager.setFrequencyOffset(id, v.offset_hz);
-        decimator_manager.setBandwidthIndex(id, v.bw_index);
+        if (v.bw_hz > 0) decimator_manager.setBandwidthHz(id, v.bw_hz);
+        else decimator_manager.setBandwidthIndex(id, v.bw_index);
         decimator_manager.setDemodMode(id, v.demod);
         decimator_manager.setSquelchEnabled(id, v.sq_en);
         decimator_manager.setSquelchLevel(id, v.sq_db);
@@ -773,6 +782,29 @@ static void send_independent_tuner(int ch) {
     ControlHandler::send_control_command(o.str());
 }
 
+// 📻 A saved-frequency scan ended: what it left tuned is the user's now (its
+// retunes, gains and VFO changes weren't saved while it ran - sfscan::dispatching)
+static void persist_after_sf_scan() {
+    if (g_replaying_settings.load()) return;
+    char c[48];
+    if (independent_mode_enabled.load()) {
+        SettingsStore::record("TUNERS:" + tuners_string());
+    } else {
+        // (wideband scan mode: no FREQ, as before - WIDEBAND_FREQ isn't a
+        // saved setting; the gain is)
+        if (!wideband_mode_enabled.load()) {
+            if (const uint64_t hz = requested_freq_hz.load()) {
+                snprintf(c, sizeof c, "FREQ:%.6f", hz / 1e6);
+                SettingsStore::record(c);
+            }
+        }
+        const float g = ChannelManager::get_gain(active_channel.load());
+        snprintf(c, sizeof c, "GAIN:%.1f", g < 0 ? -1.0f : g);
+        SettingsStore::record(c);
+    }
+    record_decimator_snapshot();
+}
+
 void ControlHandler::note_server_mode(int mode) {
     static std::atomic<bool> pending{false};
     if (mode == operating_mode_index()) return;
@@ -790,6 +822,7 @@ void ControlHandler::note_server_mode(int mode) {
                 indep_tuner_freq_hz[i] = static_cast<double>(tuner_frequencies[i].load());
         }
         if (mode != 1 && scanner_manager.isRunning()) scanner_manager.stop();
+        if (sfscan::running()) sfscan::stop(string("heimdall switched to ") + mode_name(mode) + " mode");
         apply_operating_mode_state(mode);
         SettingsStore::record(string("OPERATING_MODE:") + mode_name(mode));
     });
@@ -886,6 +919,8 @@ void ControlHandler::handle_message_impl(string_view message) {
             cout << "Manual retune: stopping the discrete scanner" << endl;
             scanner_manager.stop();
         }
+        if (sfscan::running() && !sfscan::dispatching() && !g_replaying_settings.load())
+            sfscan::stop("the receiver was retuned by hand");
         if (wideband_mode_enabled.load(std::memory_order_relaxed)) {
             cout << "Disabling wideband mode before manual frequency retune (prevents bias-tee staying active)" << endl;
 
@@ -898,7 +933,7 @@ void ControlHandler::handle_message_impl(string_view message) {
         // set_frequency does the same); the mode stays
         if (independent_mode_enabled.load(std::memory_order_relaxed)) {
             for (int i = 0; i < MAX_CHANNELS; i++) indep_tuner_freq_hz[i] = static_cast<double>(freq_hz);
-            if (!g_replaying_settings.load()) SettingsStore::record("TUNERS:" + tuners_string());
+            if (!g_replaying_settings.load() && !sfscan::dispatching()) SettingsStore::record("TUNERS:" + tuners_string());
             broadcast(build_operating_mode_json());
         }
 
@@ -1027,6 +1062,9 @@ void ControlHandler::handle_message_impl(string_view message) {
             throw CommandRejected("outside the tuner range (24-1766 MHz)");
         }
         const uint64_t freq_hz = static_cast<uint64_t>(llround(freq_mhz * 1e6));
+        // a retune by hand ends a saved-frequency scan (its own come through dispatching)
+        if (sfscan::running() && !sfscan::dispatching() && !g_replaying_settings.load())
+            sfscan::stop("the receiver was retuned by hand");
 
         ChannelManager::set_frequency(freq_hz, active_channel.load(std::memory_order_relaxed));
 
@@ -1094,8 +1132,9 @@ void ControlHandler::handle_message_impl(string_view message) {
         averaging_alpha = alpha;
         set_applied("AVG:", alpha, 3);
 
-        // In wideband / independent mode, reset ALL channel FFTs (and the
-        // wideband stitched buffer). Otherwise, only reset the active channel
+        // In wideband / independent mode, reset ALL channel FFTs (the wideband
+        // scan's stitched spectrum is built from them). Otherwise, only reset
+        // the active channel
         bool is_wideband = multi_tuner_mode();
 
         lock_guard<mutex> lock(fft_mutex);
@@ -1110,11 +1149,7 @@ void ControlHandler::handle_message_impl(string_view message) {
                 }
             }
 
-            // Clear wideband stitched averaging buffer (same as scanner retune does)
-            lock_guard<mutex> wb_lock(wideband_fft_mutex);
-            wideband_fft_averaged.clear();
-
-            cout << "FFT averaging reset: All " << channels << " channels + wideband buffer cleared (wideband mode)" << endl;
+            cout << "FFT averaging reset: All " << channels << " channels (wideband / independent mode)" << endl;
         } else {
             // Normal mode: only reset active channel
             if (active_ch < min(channels, MAX_CHANNELS)) {
@@ -1199,7 +1234,8 @@ void ControlHandler::handle_message_impl(string_view message) {
         stringstream json;
         json << "{\"demod_mode\":{\"mode\":\"" << mode_name << "\"";
         if (suggested_bandwidth_index >= 0) {
-            json << ",\"bandwidth_index\":" << suggested_bandwidth_index;
+            json << ",\"bandwidth_index\":" << suggested_bandwidth_index
+                 << ",\"bandwidth_hz\":" << bandwidth_option_hz(suggested_bandwidth_index);
         }
         json << "}}";
         broadcast(json.str());
@@ -1219,7 +1255,7 @@ void ControlHandler::handle_message_impl(string_view message) {
 
         // (each VFO heard follows its own rate block by block: audio_mixer)
         if (!all_decimators.empty() && all_decimators.front() && all_decimators.front()->decimator)
-            cout << "Processing bandwidth changed to: " << all_decimators.front()->decimator->getBandwidthName() << endl;
+            cout << "Processing bandwidth changed to: " << all_decimators.front()->decimator->getBandwidthHz() << " Hz" << endl;
 
         cout << "Bandwidth updated for all decimators" << endl;
         record_decimator_snapshot();
@@ -1827,19 +1863,33 @@ void ControlHandler::handle_message_impl(string_view message) {
             }
         }
     }
-    else if (message.starts_with("SET_DECIMATOR_BW:")) {
-        // Format: SET_DECIMATOR_BW:id:bandwidth_index
-        string params = string(message.substr(17));
+    else if (message.starts_with("SET_DECIMATOR_BW:") || message.starts_with("SET_DECIMATOR_BW_HZ:")) {
+        // Format: SET_DECIMATOR_BW_HZ:id:hz (any whole Hz, clamped to
+        // VFO_BW_MIN_HZ .. the whole band) or SET_DECIMATOR_BW:id:index (a
+        // BANDWIDTH_OPTIONS size - older pages / scripts)
+        const bool hz_form = message.starts_with("SET_DECIMATOR_BW_HZ:");
+        string params = string(message.substr(hz_form ? 20 : 17));
         size_t colon_pos = params.find(':');
         if (colon_pos != string::npos) {
             int id = stoi(params.substr(0, colon_pos));
-            int bw_index = stoi(params.substr(colon_pos + 1));
+            int bw_hz = 0;
+            bool ok;
+            if (hz_form) {
+                ok = decimator_manager.setBandwidthHz(id, clamp_bandwidth_hz(stod_finite(params.substr(colon_pos + 1))), &bw_hz);
+            } else {
+                const int bw_index = stoi(params.substr(colon_pos + 1));
+                ok = decimator_manager.setBandwidthIndex(id, bw_index);
+                bw_hz = bandwidth_option_hz(bw_index);
+            }
 
-            if (decimator_manager.setBandwidthIndex(id, bw_index)) {
-                cout << "Decimator " << id << " bandwidth index set to " << bw_index << endl;
+            if (ok) {
+                cout << "Decimator " << id << " bandwidth set to " << bw_hz << " Hz (decimation "
+                     << decimation_for_bandwidth(bw_hz) << ")" << endl;
+                if (hz_form) set_applied("SET_DECIMATOR_BW_HZ:" + to_string(id) + ":", bw_hz, 0);
 
                 stringstream json;
-                json << "{\"decimator_bandwidth\":{\"id\":" << id << ",\"bandwidth_index\":" << bw_index << "}}";
+                json << "{\"decimator_bandwidth\":{\"id\":" << id << ",\"bandwidth_index\":" << nearest_bandwidth_index(bw_hz)
+                     << ",\"bandwidth_hz\":" << bw_hz << ",\"decimation\":" << decimation_for_bandwidth(bw_hz) << "}}";
                 broadcast(json.str());
                 record_decimator_snapshot();
             }
@@ -2157,6 +2207,57 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message == "GET_SF") {
         broadcast(savedfreq::message_json());   // a page connecting
     }
+    else if (message.starts_with("SF_SCAN:")) {
+        // what the scan takes: frequencies / categories ticked (saved_freqs.hpp)
+        string err;
+        const bool ok = savedfreq::set_scan(string(message.substr(8)), &err);
+        broadcast(savedfreq::message_json(ok ? "" : err, "sfscan"));
+        if (!ok) throw CommandRejected(err);
+    }
+    // 📻 Saved-frequency scan (sf_scanner.hpp): every change answered to every
+    // page with its status; refusals carry "err" (the page that asked shows it)
+    else if (message.starts_with("SFSCAN_START")) {
+        const int vfo = message.size() > 13 ? parse_int(message, 13) : -1;
+        string why = scanner_manager.isRunning()       ? "stop the discrete scanner first"
+                     : continuous_scanner.isRunning()  ? "stop the continuous scanner first"
+                                                       : "";
+        if (why.empty()) {
+            sfscan::set_on_stop(persist_after_sf_scan);
+            why = sfscan::start(vfo);
+        }
+        if (!why.empty()) {
+            string st = sfscan::status_json();
+            st.insert(st.size() - 2, ",\"err\":\"" + json_escape(why) + "\"");
+            broadcast(st);
+            throw CommandRejected(why);
+        }
+        broadcast(sfscan::status_json());
+    }
+    else if (message == "SFSCAN_STOP") {
+        if (!sfscan::stop("")) broadcast(sfscan::status_json());   // (a stop tells the pages itself)
+    }
+    else if (message == "SFSCAN_SKIP") {
+        sfscan::skip();
+    }
+    else if (message.starts_with("SFSCAN_HOLD:")) {
+        sfscan::hold(parse_bool(message.substr(12)));
+        broadcast(sfscan::status_json());
+    }
+    else if (message.starts_with("SFSCAN_SQUELCH:") || message.starts_with("SFSCAN_DWELL:") ||
+             message.starts_with("SFSCAN_HANG:") || message.starts_with("SFSCAN_MAX:") ||
+             message.starts_with("SFSCAN_MULTI:")) {
+        const size_t colon = message.find(':');
+        string key(message.substr(7, colon - 7));
+        for (auto& ch : key) ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+        string applied;
+        const string why = sfscan::set(key, parse_double(message, colon + 1), &applied);
+        if (!why.empty()) throw CommandRejected(why);
+        if (!g_replaying_settings.load()) SettingsStore::record(applied);
+        broadcast(sfscan::status_json());
+    }
+    else if (message == "GET_SFSCAN") {
+        broadcast(sfscan::status_json());   // a page connecting
+    }
     // ✈ Array calibration from ADS-B aircraft (array_cal.hpp; array_cal.json, not
     // the settings file). Collecting is not remembered across restarts (the
     // packets aren't either)
@@ -2243,6 +2344,7 @@ void ControlHandler::handle_message_impl(string_view message) {
             cout << "Leaving coherent mode: stopping the continuous scanner" << endl;
             continuous_scanner.stop();
         }
+        if (mode != operating_mode_index() && sfscan::running()) sfscan::stop(string("the mode changed to ") + mode_name(mode));
         const bool was_coherent = operating_mode_index() == 0;
         ControlHandler::apply_operating_mode_state(mode);   // parks / restores DoA, tells browsers
         send_control_command(string("{\"set_operating_mode\":{\"mode\":\"") + mode_name(mode) + "\"}}");
@@ -2278,6 +2380,8 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (is_freq) {
             if (!(v * 1e6 >= RTL_TUNER_MIN_HZ && v * 1e6 <= RTL_TUNER_MAX_HZ))
                 throw CommandRejected("outside the tuner range (24-1766 MHz)");
+            if (sfscan::uses_tuner(ch) && !sfscan::dispatching())
+                sfscan::stop("tuner " + to_string(ch) + " was retuned by hand");
             const double hz = static_cast<double>(llround(v * 1e6));
             indep_tuner_freq_hz[ch] = hz;
             ChannelManager::set_frequency(static_cast<float>(hz), ch);
@@ -2291,7 +2395,7 @@ void ControlHandler::handle_message_impl(string_view message) {
             o << "{\"set_independent_tuner\":{\"channel\":" << ch << ",\"gain\":" << g << "}}";
             send_control_command(o.str());
         }
-        SettingsStore::record("TUNERS:" + tuners_string());
+        if (!sfscan::dispatching()) SettingsStore::record("TUNERS:" + tuners_string());
         broadcast(build_operating_mode_json());
     }
     else if (message.starts_with("TUNERS:")) {
@@ -2348,9 +2452,9 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("SCANNER_START")) {
         // Start discrete scanner. Not alongside the continuous scanner: both
         // retune the array and drive the VFOs, and fought over them.
-        if (continuous_scanner.isRunning()) {
+        if (continuous_scanner.isRunning() || sfscan::running()) {
             broadcast("{\"scanner_stopped\":true}");  // resets the browser's Start button
-            throw CommandRejected("stop the continuous scanner first");
+            throw CommandRejected(sfscan::running() ? "stop the saved-frequency scan first" : "stop the continuous scanner first");
         }
         if (!scanner_manager.start()) {
             // The browser switched its button to "running" already: tell
@@ -2376,6 +2480,10 @@ void ControlHandler::handle_message_impl(string_view message) {
     }
     // Continuous Scanner Commands
     else if (message.starts_with("CONTINUOUS_SCANNER_START")) {
+        if (sfscan::running()) {
+            broadcast("{\"continuous_scanner\":{\"state\":\"stopped\",\"error\":\"stop the saved-frequency scan first\"}}");
+            throw CommandRejected("stop the saved-frequency scan first");
+        }
         if (scanner_manager.isRunning()) {
             broadcast("{\"continuous_scanner\":{\"state\":\"stopped\",\"error\":\"stop the discrete scanner first\"}}");
             throw CommandRejected("stop the discrete scanner first");
@@ -2657,7 +2765,7 @@ string ControlHandler::apply_command(string_view message) {
             }
             // Persist remembered settings to disk (the schema decides which;
             // skipped while we are replaying the saved file ourselves).
-            if (!g_replaying_settings.load()) {
+            if (!g_replaying_settings.load() && !sfscan::dispatching()) {
                 SettingsStore::record(applied);
             }
             broadcast(make_sync_cmd_json(sync_msg));

@@ -101,9 +101,12 @@ cooldown / scanner).
 | **📊 FFT Settings** | FFT **size** (1024–65536): bigger = finer detail when zoomed in, more CPU. The spectrum is sent at about one point per pixel of the plot (zoomed in: more detail, same data); **Slow link** halves that for a slow connection (per browser). Shows the points sent. |
 | **📻 Scanner** | Discrete frequency-list scanner (needs wideband mode). Load/save/new scan files, per-frequency enable, squelch, dwell time; locks onto and reports active frequencies. Start / Next controls. |
 | **🔍 Continuous Scanner** | Sweeps for active signals automatically — either within the current bandwidth or across a **wideband MHz range** (e.g. 88–108). Adjustable squelch, dwell, and signal-decay; lists tracked signals as they appear. |
+| **📻 Saved Frequencies ▶ Scan** | Scans the saved frequencies you tick — one by one, or a whole category (also entries added to it later). The selected VFO goes to each active one with its demod / bandwidth / decoder / gain and is heard while it is (+ Delay). Every frequency in a tuner band is watched at once; coherent mode takes the bands in turn (recalibrating after each retune), independent mode watches a band on every free tuner, wideband mode one band as wide as the tuner spread (~10.8 MHz). Skip, Hold, Squelch, Dwell, Longest stay; "one VFO per active frequency" hears / transcribes everything active in the band at once (the extra VFOs are made and removed by the scan). Coherent, wideband or independent mode. |
 
 The main area shows the **spectrum + waterfall** (click/drag the tuning bar to set the
-listen frequency; waterfall has speed, colormap, and min/max/auto-range controls) and
+listen frequency - it lands on a multiple of the top bar's **Step**, 1 Hz to 100 kHz;
+hold Shift while dragging to tune finely, to the Hz; waterfall has speed, colormap,
+and min/max/auto-range controls) and
 the **MUSIC DoA panel** (compass-style bearing display, one per active decimator).
 
 ---
@@ -115,7 +118,7 @@ Pipeline (see `src/networking/data_receiver.cpp` for the hot path):
 ```
 TCP 8091 ─► IQ convert (uint8→complex<float>) ─► raw data buffer (bounded, auto-cleanup)
    │
-   ├─► decimation_processor_thread ─► per-decimator decimation (thread-local, cached coeffs)
+   ├─► decimation_processor_thread ─► per-VFO decimation (mixer + planned FIR cascade, per antenna in parallel)
    │        │
    │        ├─► 8× per-channel FFT workers (pffft, per-channel plans, true parallel) ─► spectrum
    │        ├─► fm_processor_thread ─► FM demod + Opus ─► 48 kHz audio
@@ -132,7 +135,9 @@ oversubscription on 4 cores, since most are I/O-bound.
 
 **Key design choices** (details in `OPTIMIZATION_SUMMARY.md`, `CLAUDE.md`):
 - Compiler auto-vectorization for IQ conversion (beats hand-written NEON here).
-- Thread-local decimators with a shared coefficient cache (zero alloc in hot path).
+- Per-VFO decimator: integer decimation only, the cheapest split into stages of 2-8
+  (a cost model of the kernels picks it; halfband stages for 2), the mixer folded into
+  the first stage where that is cheaper, block FIR stages (4 outputs per NEON pass).
 - Per-channel FFT plans: pffft (vendored in `external/pffft`, BSD-style licence,
   NEON) behind `plugins/sdk/kraken_fft.hpp`, the plugins' FFT too - no planning,
   no wisdom file (a `fft_wisdom.dat` from older versions can be deleted).
@@ -193,7 +198,7 @@ commit and built by `make` as a static library without FFTW / libfec
 | `FFT_SIZE` | `16384` | Default; runtime-selectable in UI |
 | `MAX_CHANNELS` / `DOA_NUM_ELEMENTS` | `5` | Antenna channels |
 | `AUDIO_SAMPLE_RATE` | `48000` | **Must match the browser's native rate** (see console) |
-| `BANDWIDTH_OPTIONS[]` | 2.4 MHz → 1 kHz | Integer decimation only, no resampling |
+| `VFO_BW_MIN_HZ` / `VFO_BW_MAX_HZ` | 1 kHz / 2.4 MHz | A VFO takes any width in between; integer decimation only (by a divisor of 2.4 MHz), no resampling |
 
 For deeper architecture and tuning notes, see `CLAUDE.md`, `OPTIMIZATION_SUMMARY.md`,
 and the root `../CLAUDE.md` (full server + client system).

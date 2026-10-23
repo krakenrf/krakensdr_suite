@@ -36,10 +36,9 @@ void DecimatorManager::initialize(int num_channels, int initial_decimators) {
     for (int i = 0; i < initial_decimators; ++i) {
         auto instance = std::make_shared<DecimatorInstance>(next_id++);
         instance->decimator->initialize(num_channels);
-        instance->decimator->setBandwidthIndex(instance->bandwidth_index);
-        std::cout << "Decimator " << instance->id << " initialized: bandwidth_index=" << instance->bandwidth_index
-                  << ", decimation=" << instance->decimator->getDecimationFactor()
-                  << ", bandwidth=" << instance->decimator->getBandwidthMhz() << " MHz" << std::endl;
+        instance->decimator->setBandwidthHz(instance->bandwidth_hz);
+        std::cout << "Decimator " << instance->id << " initialized: bandwidth=" << instance->bandwidth_hz
+                  << " Hz, decimation=" << instance->decimator->getDecimationFactor() << std::endl;
         // MUSICProcessor and Beamformer initialize automatically in constructor
         applyBeamformingConfig(instance);
         decimators.push_back(std::move(instance));
@@ -110,8 +109,8 @@ int DecimatorManager::addDecimator() {
         const auto& reference = decimators[0];
         if (reference) {
             // Copy bandwidth setting
-            instance->bandwidth_index = reference->bandwidth_index.load();
-            instance->decimator->setBandwidthIndex(reference->bandwidth_index);
+            instance->bandwidth_hz = reference->bandwidth_hz.load();
+            instance->decimator->setBandwidthHz(reference->bandwidth_hz);
 
             // DO NOT copy frequency offset - new decimators start at 0 Hz (center)
             // User will position them via UI
@@ -154,13 +153,13 @@ int DecimatorManager::addDecimator() {
     applyBeamformingConfig(instance);
 
     float new_offset = instance->frequency_offset_hz;
-    int new_bw_idx = instance->bandwidth_index;
+    int new_bw_hz = instance->bandwidth_hz;
 
     decimators.push_back(std::move(instance));
 
     std::cout << "Added new decimator with ID " << new_id
               << " (offset=" << (new_offset / 1000.0f) << " kHz, "
-              << "bw_idx=" << new_bw_idx << ")" << std::endl;
+              << "bandwidth=" << new_bw_hz << " Hz)" << std::endl;
     return new_id;
 }
 
@@ -278,19 +277,23 @@ bool DecimatorManager::setFrequencyOffset(int id, float offset_hz) {
     return false;
 }
 
+bool DecimatorManager::setBandwidthHz(int id, int hz, int* applied) {
+    auto decimator = getDecimator(id);
+    if (!decimator) return false;
+    const int bw = clamp_bandwidth_hz(hz);
+    decimator->bandwidth_hz = bw;
+    decimator->decimator->setBandwidthHz(bw);
+    if (applied) *applied = bw;
+    return true;
+}
+
 bool DecimatorManager::setBandwidthIndex(int id, int index) {
     if (index < 0 || index >= NUM_BANDWIDTH_OPTIONS) {
         std::cerr << "DecimatorManager: rejecting out-of-range bandwidth index "
                   << index << std::endl;
         return false;
     }
-    auto decimator = getDecimator(id);
-    if (decimator) {
-        decimator->bandwidth_index = index;
-        decimator->decimator->setBandwidthIndex(index);
-        return true;
-    }
-    return false;
+    return setBandwidthHz(id, bandwidth_option_hz(index));
 }
 
 bool DecimatorManager::setEnabled(int id, bool enabled) {
@@ -542,8 +545,10 @@ std::vector<DecimatorManager::DecimatorInfo> DecimatorManager::getDecimatorInfoL
         DecimatorInfo info;
         info.id = inst->id;
         info.frequency_offset_hz = inst->frequency_offset_hz;
-        info.bandwidth_index = inst->bandwidth_index;
-        info.bandwidth_mhz = inst->decimator->getBandwidthMhz();
+        info.bandwidth_hz = inst->bandwidth_hz.load(std::memory_order_relaxed);
+        info.bandwidth_index = nearest_bandwidth_index(info.bandwidth_hz);
+        info.bandwidth_mhz = info.bandwidth_hz / 1e6f;
+        info.decimation = decimation_for_bandwidth(info.bandwidth_hz);
         info.enabled = inst->enabled;
         info.audio_out = inst->audio_out.load(std::memory_order_relaxed);
         info.demod_mode = inst->demod_mode;
