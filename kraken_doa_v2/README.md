@@ -208,6 +208,8 @@ and the root `../CLAUDE.md` (full server + client system).
 Copyright (c) 2026 KrakenRF Inc. The KrakenSDR DoA software, including its
 decoder plugins, is under the KrakenSDR Source Available Licence (`LICENSE`):
 free for personal and hobbyist use - you may use, study, change and share it
-for that. Commercial use requires a licence from KrakenRF Inc.; contact
-krakenrf@krakensdr.com for details. Third-party components keep their own
-licences: `THIRD_PARTY_NOTICES.md`.
+for that. Organisations may evaluate it free for up to 90 days (testing it,
+not yet relying on it in their work). Deploying it, and any other commercial
+use, requires a licence from KrakenRF Inc. (standard terms:
+`COMMERCIAL_TERMS.md`); contact krakenrf@krakensdr.com for details.
+Third-party components keep their own licences: `THIRD_PARTY_NOTICES.md`.

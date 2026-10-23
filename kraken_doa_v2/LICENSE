@@ -14,9 +14,14 @@ LICENSE file of their own).
 
 Summary (for convenience only; it is not part of the Licence): personal and
 hobbyist use is free - you may use, study, change and share the Software for
-those purposes, free of charge, under this Licence. Commercial use, and any
-other use not allowed here, needs a separate licence from KrakenRF Inc.
-Contact krakenrf@krakensdr.com for details.
+those purposes, free of charge, under this Licence. A company or other
+organisation may also evaluate the Software free of charge for up to 90
+days, to find out whether it meets its needs: it may test it, but not yet
+rely on it for its real work. Deploying the Software - using it in
+operations, relying on or acting on its results in your work, or using it to
+provide a product or service - and any other commercial use needs a
+separate licence from KrakenRF Inc. Contact krakenrf@krakensdr.com for
+details.
 
 
 1. Definitions
@@ -40,15 +45,44 @@ experimentation), without any anticipated commercial application, by an
 individual, or by a non-profit club or association of hobbyists (such as an
 amateur radio club) for its members' hobby activities.
 
-"Permitted Use" means Personal Use and Hobbyist Use.
+"Evaluation Use" means use of the Software by or for an organisation, or by
+an individual with a commercial application in mind, only to find out
+whether the Software meets their needs before they take a Commercial
+Licence, where all of the following apply:
+
+  (a) the use is testing: installing and setting up the Software, trying its
+      features, measuring its performance, trials with test transmissions,
+      known transmitters or recordings, running it alongside the
+      organisation's existing equipment to compare results, and reporting the
+      evaluation's findings within the organisation to decide whether to take
+      a licence;
+  (b) nothing depends on it: the Software is not used operationally - its
+      results are not acted on, relied on or passed on in the organisation's
+      work (for example to locate, track, monitor, identify or take action
+      against a real transmitter, vehicle or person, or in any safety,
+      security, emergency, enforcement or investigative task), and it is not
+      used to provide any product or service or to earn revenue;
+  (c) it is used only by the organisation's own employees and contractors;
+      and
+  (d) it lasts no longer than 90 days from the day the organisation first
+      uses the Software (the "Evaluation Period"), or longer if the Licensor
+      agrees in writing. The Evaluation Period does not start again when the
+      Software is installed again or updated, or when other people of the
+      same organisation evaluate it.
+
+"Permitted Use" means Personal Use, Hobbyist Use and Evaluation Use.
+
+"Commercial Licence" means a licence for Commercial Use granted by the
+Licensor in writing (see section 4).
 
 "Commercial Use" means any use of the Software that is not Permitted Use. It
 includes, for example:
 
   (a) use by or on behalf of a company, business, government body, military,
       police or other organisation (other than a hobby club as described
-      above), including use by its employees, contractors or volunteers in
-      the course of their work or duties for it;
+      above, and other than Evaluation Use), including use by its
+      employees, contractors or volunteers in the course of their work or
+      duties for it;
   (b) use in the course of any trade, profession or paid work, or to provide
       any product or service, paid or not, such as consulting, surveying,
       spectrum monitoring, direction-finding, signal detection or tracking
@@ -57,9 +91,17 @@ includes, for example:
       selling or renting hardware or software that includes it or has it
       installed;
   (d) making the Software or its functions available to others as a hosted,
-      cloud or network service; and
+      cloud or network service;
   (e) using the Software in the development, testing, demonstration or
-      support of a commercial product or service.
+      support of a commercial product or service (other than Evaluation Use
+      of the Software itself); and
+  (f) deployment: using the Software operationally in any of the ways
+      paragraph (b) of Evaluation Use excludes, at any time - also during
+      the Evaluation Period - or continuing to use it for an organisation
+      after its Evaluation Period ends.
+
+Use that meets every condition of Evaluation Use is not Commercial Use, even
+where one of the examples above would otherwise describe it.
 
 "Third-Party Components" means software, data and other material in or used
 by the Software that the Licensor does not own and that is licensed under its
@@ -100,11 +142,15 @@ When You distribute the Software or a Modified Version, You must:
 4. Commercial use and other uses
 
 This Licence does not permit Commercial Use, or any other use that is not
-Permitted Use. That use requires a separate written licence from the
-Licensor. For details, contact:
+Permitted Use. That use requires a Commercial Licence from the Licensor. An
+organisation evaluating the Software needs one as soon as it starts to use
+the Software operationally, and at the latest when its Evaluation Period
+ends. For details, contact:
 
     krakenrf@krakensdr.com
 
+A Commercial Licence includes the Licensor's standard commercial terms
+(COMMERCIAL_TERMS.md in the kraken_doa_v2 folder) unless it says otherwise.
 A separate licence agreed in writing with the Licensor takes precedence over
 this Licence for the licensee who agreed to it.
 
@@ -191,8 +237,8 @@ give permission to receive, decode or use any transmission.
 
 If You breach this Licence, Your licence ends automatically. If it is Your
 first breach and You stop and fix it within 30 days after the Licensor
-notifies You of it, Your licence is reinstated. Sections 5, 9, 11, 12 and 13
-continue to apply after this Licence ends.
+notifies You of it, Your licence is reinstated. Sections 5, 9, 11, 12, 13
+and 14 continue to apply after this Licence ends.
 
 
 11. No warranty
@@ -217,7 +263,24 @@ SUCH DAMAGES. WHERE LIABILITY CANNOT BE EXCLUDED BY LAW, IT IS LIMITED TO
 THE AMOUNT YOU PAID FOR THE SOFTWARE UNDER THIS LICENCE, IF ANY.
 
 
-13. General
+13. Consumer law and business use
+
+Nothing in this Licence excludes, restricts or modifies any guarantee,
+condition, right or remedy that a law gives You and that cannot lawfully be
+excluded, restricted or modified - for example under the Consumer Guarantees
+Act 1993 (New Zealand), the Australian Consumer Law or the consumer law of
+the country where You live. Sections 11 and 12 apply to You only as far as
+that law allows; where it allows the Licensor's liability to be limited
+rather than excluded, it is limited as section 12 says.
+
+If You use the Software for the purposes of a business (including Evaluation
+Use), You agree that, to the extent permitted by section 43 of the Consumer
+Guarantees Act 1993 (New Zealand), the provisions of that Act do not apply,
+and that it is fair and reasonable for You and the Licensor to be bound by
+this section.
+
+
+14. General
 
 If any provision of this Licence is held unenforceable, it is changed only as
 far as needed to make it enforceable, and the rest of the Licence continues

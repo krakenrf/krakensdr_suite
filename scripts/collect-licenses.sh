@@ -52,7 +52,8 @@ done
 mkdir -p "$DEST/heimdall_v2" "$DEST/kraken_doa_v2" "$DEST/third-party"
 cp "$ROOT/LICENSE" "$DEST/"
 cp "$ROOT/heimdall_v2/LICENSE" "$ROOT/heimdall_v2/THIRD_PARTY_NOTICES.md" "$DEST/heimdall_v2/"
-cp "$ROOT/kraken_doa_v2/LICENSE" "$ROOT/kraken_doa_v2/THIRD_PARTY_NOTICES.md" "$DEST/kraken_doa_v2/"
+cp "$ROOT/kraken_doa_v2/LICENSE" "$ROOT/kraken_doa_v2/THIRD_PARTY_NOTICES.md" "$ROOT/kraken_doa_v2/COMMERCIAL_TERMS.md" \
+   "$DEST/kraken_doa_v2/"
 # the plugin SDK (MIT: in every plugin) and the plugins with a LICENSE of
 # their own - each is under that licence, not kraken_doa_v2's
 mkdir -p "$DEST/kraken_doa_v2/plugins/sdk"
@@ -164,8 +165,9 @@ cat >> "$DEST/SOURCE.txt" <<EOF
 If you cannot get it there, ask KrakenRF Inc.: krakenrf@krakensdr.com.
 
 The rest of the KrakenSDR DoA software (kraken_doa_v2/) is not under the GPL:
-see kraken_doa_v2/LICENSE (free for personal and hobbyist use, commercial use
-needs a licence from KrakenRF Inc.).
+see kraken_doa_v2/LICENSE (free for personal and hobbyist use and for a 90-day
+evaluation; deployment and other commercial use need a licence from KrakenRF
+Inc., with kraken_doa_v2/COMMERCIAL_TERMS.md).
 EOF
 
 echo "Licences collected in $DEST"

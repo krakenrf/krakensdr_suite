@@ -41,8 +41,11 @@ The KrakenSDR suite is made of separate programs under different licences:
   WINDOWS.md, CLAUDE.md)                             KrakenSDR Source Available
                                                      Licence 1.0
 
-The KrakenSDR DoA software is free for personal and hobbyist use. Commercial
-use needs a licence from KrakenRF Inc. - contact krakenrf@krakensdr.com.
+The KrakenSDR DoA software is free for personal and hobbyist use, and
+organisations may evaluate it free of charge for up to 90 days (testing, not
+yet relying on it in their work). Deploying it and other commercial use need
+a licence from KrakenRF Inc. - contact krakenrf@krakensdr.com. Commercial
+licences include kraken_doa_v2/COMMERCIAL_TERMS.md.
 
 The programs communicate with each other over network connections (TCP ports
 8091 / 8092); each one is used and distributed under its own licence. Files
