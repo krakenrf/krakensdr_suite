@@ -583,7 +583,7 @@ FILES AND CODE:
 - Your folder {sdir} (current directory) is yours: scratch scripts, notes, captures. {knowledge} holds
   the user's reference files (you may add notes there).
 - Decoder plugins: you may write or improve plugins in {plugins}/<id>/ - read {plugins}/SDK.md first
-  (the API and rules) and an example ({plugins}/pocsag/decoder.cpp); {plugins}/lib/ is a shared library
+  (the API and rules) and an example ({plugins}/pagers/ - decoder.cpp + pocsag.hpp); {plugins}/lib/ is a shared library
   you may use. {plugins}/sdk/, {plugins}/lib/ and the plugins Makefile / SDK.md are part of the receiver:
   read-only. Build: make -C {plugins} -f Makefile PLUGIN=<id> (at most -j2: the receiver runs on this
   computer). Test: {plugins}/<id>/build/decoder

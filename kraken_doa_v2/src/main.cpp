@@ -309,7 +309,7 @@ int main(int argc, char* argv[]) {
     // settings replay / from the web UI sidebar).
     web_mapper.start();
 
-    // Incident map: addresses in decoder text messages (POCSAG), looked up
+    // Incident map: addresses in decoder text messages (POCSAG / FLEX pages), looked up
     // online (OpenStreetMap Nominatim) -> 🗺 Map
     incidents::start();
 

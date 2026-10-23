@@ -1029,7 +1029,7 @@ void DataReceiver::decimation_processor_thread() {
 
             // 🗣 Voice to Text: VFOs with Transcribe on and no digital decoder
             // of voice (one that decodes voice sends it through the decoder's
-            // voice tap; analog_id / pocsag / adsb ... decode none: the analog
+            // voice tap; analog_id / pagers / adsb ... decode none: the analog
             // demod then, named after the decoder's talker - the CTCSS tone /
             // DCS code) - the same stream, demodulated in voice2text.cpp with
             // the VFO's demod. Cut into transmissions by the VFO's squelch;

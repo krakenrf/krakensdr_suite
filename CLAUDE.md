@@ -833,7 +833,7 @@ getting the old type 0 / 6 frames at 2048 points per tuner band
 decoders `kraken_doa_v2/plugins/`
 - EVERY decoder is a plugin (out-of-process, see *Decoder plugins* below):
   p25, dmr, tetra (downlink), dstar, nxdn (48 and 96), mpt1327 (analogue
-  trunking signalling), pocsag, aprs, adsb (1090 MHz; manual only -
+  trunking signalling), pagers (POCSAG + FLEX; was pocsag), aprs, adsb (1090 MHz; manual only -
   picking it tunes the VFO + tuner to 1090 MHz at 2.4 MHz and draws the VFO
   as a locked line, `kp::Info::fixed_freq_hz`; v2.0: in coherent mode with
   DoA on it combines every antenna - `kp::Info::multichannel`, a beam per
@@ -1100,7 +1100,7 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
   connection open after a reconnect). A
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
-  tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
+  tetra, dstar, nxdn, mpt1327, pagers (POCSAG + FLEX), aprs (written by the AI
   Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, lora, wildlife, rds, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
@@ -1252,11 +1252,11 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
   UI-only (kraken_doa.html "📶 PATH LOSS"; the engine lives in the viewshed
   worker); settings per browser (localStorage `kraken_pl`). DroneRanger
   (the user's reference) only has free space + a line-of-sight check
-- Incident map: text messages from plugins (`kp::Host::message`, POCSAG
-  pages) -> street address found in the text -> looked up ONLINE in
+- Incident map: text messages from plugins (`kp::Host::message`, POCSAG /
+  FLEX pages) -> street address found in the text -> looked up ONLINE in
   OpenStreetMap Nominatim (no downloaded map data) within `GEO_RADIUS_KM`
-  of the station (POCSAG tab, default 300, persisted) -> incidents (map
-  markers + the POCSAG tab's table; the same address on several VFOs = one
+  of the station (Pagers tab, default 300, persisted) -> incidents (map
+  markers + the Pagers tab's table; the same address on several VFOs = one
   incident listing them; kept 24 h, incidents.tsv). Code:
   `kraken_doa_v2/src/incidents.cpp`, `geo_address.cpp`, `geo_http.cpp`
 
@@ -1288,7 +1288,7 @@ leaves it out) with the models in `docker-data/whisper_models/`
   decoder is on and decodes voice (P25 / DMR / D-STAR / NXDN / TETRA vocoder
   output via `dig::set_voice_tap_handler`, with the talker's unit ID /
   talkgroup; cut at talker changes), else - no decoder, or one of no voice
-  (`DigitalDecoder::takes_voice()`: analog_id, pocsag ...) - its analog demod
+  (`DigitalDecoder::takes_voice()`: analog_id, pagers ...) - its analog demod
   (NBFM / AM / WBFM) of the same stream, cut by its squelch (squelch off: 10
   dB over the noise in the FFT), named after the decoder's talker if it has
   one (analog_id: "MDC 1029", "CTCSS 88.5"; `DigitalDecoder::lead_talker`). Bearing during
@@ -1369,7 +1369,7 @@ transmitter (source, or the digipeater marked "*"); radiosonde: type +
 serial per frame; TETRA: the cell (MCC-MNC + colour code) per decoded
 slot; MPT1327: the control channel's site (SYS); ILS / VOR: the Morse
 ident (packets, `kp::Talker::packet`, each in its channel). Not applicable
-(README says why): POCSAG (RIC = recipient), v23_telemetry, dtv (SFN
+(README says why): pagers (POCSAG / FLEX: the RIC / capcode = recipient), v23_telemetry, dtv (SFN
 copies identical: by delay), iMet-4 (no serial). A decoder plugin that knows who
 transmits reports it (`kp::Host::talker` / `talker_end`, `Info::talkers`,
 with the frames' exact sample times; `kp::Talker::channel` for concurrent
@@ -1432,6 +1432,32 @@ packet "PI xxxx" per RDS group (UI kind `broadcast` 🎙). Generator
 real US station's recording (pysdr.org: PI, RT, dynamic PS, a real 67 kHz
 SCA) and end to end through kraken_doa's debug playback (two stations at
 60.0 / 200.0 deg)
+
+**📟 Pagers plugin (POCSAG + FLEX)** (details:
+`kraken_doa_v2/plugins/pagers/README.md`, `kraken_doa_v2/CLAUDE.md`
+*Pagers*): the plugin `pagers` ("Pagers (POCSAG + FLEX)", was `pocsag` -
+renamed 2026-10-23 when FLEX was added, the user's request; saved
+`PLUGIN:pocsag` VFOs / `pocsag.*` options / Auto detect entries load as
+pagers, `dig::renamed_plugin`) decodes POCSAG (512 / 1200 / 2400 bit/s, as
+before - byte for byte the old plugin's pages, events now start "POCSAG ")
+and Motorola FLEX (1600/2, 3200/2, 3200/4, 6400/4, any frame) on one FM
+front end, no setting. FLEX: short + long capcodes (the MC68175 data
+sheet's conversions), alphanumeric / numeric / tone only / short message /
+binary / secure pages, fragments put together, group calls (temporary
+addresses: the message names the pagers told to listen), date / time;
+every check of the format (4-bit word checks, fragment / numeric checks,
+signature). Written from Motorola's MC68175 data sheet + the FLEX patent's
+sync patterns (Jelmer Bruijn's write-up) - no other decoder's code;
+conventions (bit order, polarity: 1 = lower frequency, 4-level mapping)
+confirmed on a real 6400/4 recording (sigidwiki, 39 pages, every check
+right). Receiver: sync 1 hunted every quarter bit on the smoothed
+discriminator (64 bits; no clock loop - it lost frames after a key-up / an
+idle frame), the next frame looked for where the last one's grid ends
+(frames are back to back), data on the sync's symbol grid with the timing
+followed per block from level changes only, damaged-block rules so no page
+lands on a wrong capcode. Generator `plugins/pagers/tools/flex_gen.py`,
+playback `flex-four-speeds`; cross-checked with multimon-ng (GPL, scratch
+only) both ways
 
 **📶 Digital TV plugin** (details: `kraken_doa_v2/plugins/dtv/README.md`,
 `kraken_doa_v2/CLAUDE.md` *Digital TV*): the plugin `dtv` ("Digital TV
@@ -1552,7 +1578,7 @@ decoded); coexists with dme (6X interrogations on 1030 MHz)
 multi-antenna test transmission (known IDs + bearings) played through the
 real pipeline in place of heimdall's 8091 stream - spectrum, VFO, decoder,
 DoA, 📡 DF panel, a Check of the bearings (talkers; for decoders without
-transmitter IDs - pocsag, v23_telemetry - the VFO's own DoA with the
+transmitter IDs - pagers, v23_telemetry - the VFO's own DoA with the
 Digital squelch, and decoded events). Catalogue per plugin in
 `plugins/<id>/tools/testsignals.json` (how to add one: plugins/SDK.md),
 generated on demand by `plugins/sdk/tools/make_testsignal.py` into
@@ -1565,9 +1591,9 @@ user's settings back; doa_settings.json / heimdall_settings.conf
 untouched), web mapper / decoder log / Voice to Text / incidents / DoA
 recording paused, a red "DEBUG PLAYBACK - not live" banner + spectrum
 overlay. A playback never outruns the pipeline (a busy machine plays it
-slower than real time instead of dropping packets). 36 entries in 26
+slower than real time instead of dropping packets). 37 entries in 26
 catalogues - every decoder has its own (p25, dmr, radiosonde, then rds,
-then analog_id's `analog-ids-six` last)
+then analog_id's `analog-ids-six`, then pagers' `flex-four-speeds` last)
 
 **📼 IQ & audio recorder + playback of recordings (sidebar "📼 IQ & Audio
 Recorder")** (details: `kraken_doa_v2/CLAUDE.md` *📼 IQ & audio recorder*,

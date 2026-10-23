@@ -3,7 +3,7 @@
 // Digital voice/data decoder attached to ONE decimator (VFO).
 //
 // Every decoder is a plugin (plugins/<id>/, dig_plugin.hpp) - the protocols
-// that ship with the suite (P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG,
+// that ship with the suite (P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG / FLEX,
 // APRS) as well as ones written by hand or by the AI assistant. The
 // decimation pipeline pushes this VFO's decimated samples (the listened-to
 // channel, or the beamformer output when beamforming runs) with push(); a
@@ -157,7 +157,7 @@ public:
     // The VFO's voice comes from this decoder (Voice to Text, the analog
     // feed): its plugin decodes voice (kp::Info::voice) - in Auto detect the
     // detected one, or, still searching, any it runs. A decoder of no voice
-    // (analog_id, pocsag, adsb...) leaves the VFO's analog demod to Voice to Text
+    // (analog_id, pagers, adsb...) leaves the VFO's analog demod to Voice to Text
     bool takes_voice() const { return takes_voice_.load(std::memory_order_relaxed); }
     // the lead plugin's talker now (the open one that started first): Voice
     // to Text names an ANALOG transmission after it (analog_id: "CTCSS 88.5").

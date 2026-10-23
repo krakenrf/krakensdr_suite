@@ -4,7 +4,7 @@
 # kraken_doa_v2 (`make` builds the plugins too) or directly:
 #
 #   make -C plugins                 # all plugins
-#   make -C plugins PLUGIN=pocsag   # one plugin
+#   make -C plugins PLUGIN=pagers   # one plugin
 #   make -C plugins clean
 #
 # Never more than -j3 on a Raspberry Pi (see kraken_doa_v2/CLAUDE.md).

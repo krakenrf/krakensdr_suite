@@ -281,7 +281,7 @@ services:
   - Empty variables from compose are removed, because the apps treat an
     empty variable as set.
   - The decoder plugins in `kraken_doa_v2/plugins/` (all the decoders: P25,
-    DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS) are built
+    DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG / FLEX, APRS) are built
     into the image, and kraken_doa finds them through `KRAKEN_PLUGIN_DIR`.
     The AI assistant is not available in Docker (its panel stays hidden):
     the image has no LLM CLI and no compiler. Create plugins on a native
