@@ -528,7 +528,7 @@ The suite is made of separate programs under different licences (details:
 - **KrakenSDR DoA software** (`kraken_doa_v2/`, including its decoder
   plugins, except as below): [KrakenSDR Source Available Licence](kraken_doa_v2/LICENSE) -
   **free for personal and hobbyist use**; you may use, study, change and share
-  it for that. **Organisations may evaluate it free for up to 90 days** - test
+  it for that. **Organisations may evaluate it free for up to 180 days** - test
   it and compare it with their equipment, but not yet rely on it in their
   work. **Deploying it, and any other commercial use, requires a licence**
   from KrakenRF Inc. ([standard terms](kraken_doa_v2/COMMERCIAL_TERMS.md)) -

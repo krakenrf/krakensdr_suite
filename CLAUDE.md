@@ -2298,10 +2298,11 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
 - `kraken_doa_v2/` incl. its plugins and `plugins/lib`: the
   KrakenSDR Source Available Licence 1.0 (`kraken_doa_v2/LICENSE`): free for
   personal / hobbyist use and EVALUATION (2026-10-23, the user's request:
-  an organisation may test it free for 90 days - trials, test / known
-  transmitters, side-by-side comparisons - as long as nothing depends on it;
-  acting on / relying on its results, providing a service with it, or going
-  past the 90 days = "deployment" = Commercial Use, item (f)), commercial use
+  an organisation may test it free for 180 days - the user's call, it was
+  90 - trials, test / known transmitters, side-by-side comparisons - as long
+  as nothing depends on it; acting on / relying on its results, providing a
+  service with it, or going past the 180 days = "deployment" = Commercial
+  Use, item (f)), commercial use
   needs a licence from KrakenRF (krakenrf@krakensdr.com) that includes
   `kraken_doa_v2/COMMERCIAL_TERMS.md` (the B2B terms: 90-day limited
   warranty - fix / replace / refund -, as-is otherwise, no safety-critical

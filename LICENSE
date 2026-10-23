@@ -42,7 +42,7 @@ The KrakenSDR suite is made of separate programs under different licences:
                                                      Licence 1.0
 
 The KrakenSDR DoA software is free for personal and hobbyist use, and
-organisations may evaluate it free of charge for up to 90 days (testing, not
+organisations may evaluate it free of charge for up to 180 days (testing, not
 yet relying on it in their work). Deploying it and other commercial use need
 a licence from KrakenRF Inc. - contact krakenrf@krakensdr.com. Commercial
 licences include kraken_doa_v2/COMMERCIAL_TERMS.md.
