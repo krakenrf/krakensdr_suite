@@ -532,7 +532,7 @@ The suite is made of separate programs under different licences (details:
   it and compare it with their equipment, but not yet rely on it in their
   work. **Deploying it, and any other commercial use, requires a licence**
   from KrakenRF Inc. ([standard terms](kraken_doa_v2/COMMERCIAL_TERMS.md)) -
-  contact krakenrf@krakensdr.com for details.
+  contact thekraken@krakenrf.com for details.
 - **Heimdall receiver server** (`heimdall_v2/`) and the **GNU Radio module**
   (`gr-krakensdr_v2/`): [GNU General Public License v3 or later](heimdall_v2/LICENSE).
 - The **plugin SDK** (`kraken_doa_v2/plugins/sdk/`, `plugins/SDK.md`, the

@@ -162,7 +162,7 @@ EOF
 fi
 cat >> "$DEST/SOURCE.txt" <<EOF
 
-If you cannot get it there, ask KrakenRF Inc.: krakenrf@krakensdr.com.
+If you cannot get it there, ask KrakenRF Inc.: thekraken@krakenrf.com.
 
 The rest of the KrakenSDR DoA software (kraken_doa_v2/) is not under the GPL:
 see kraken_doa_v2/LICENSE (free for personal and hobbyist use and for a 180-day

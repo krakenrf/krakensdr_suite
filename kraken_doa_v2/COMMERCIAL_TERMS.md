@@ -157,4 +157,4 @@ about it. If a provision is held unenforceable, it is changed only as far as
 needed to make it enforceable, and the rest continues to apply. Not
 enforcing a provision is not a waiver of it.
 
-Contact: krakenrf@krakensdr.com
+Contact: thekraken@krakenrf.com

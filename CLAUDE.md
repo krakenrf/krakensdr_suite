@@ -2303,7 +2303,7 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   as nothing depends on it; acting on / relying on its results, providing a
   service with it, or going past the 180 days = "deployment" = Commercial
   Use, item (f)), commercial use
-  needs a licence from KrakenRF (krakenrf@krakensdr.com) that includes
+  needs a licence from KrakenRF (thekraken@krakenrf.com) that includes
   `kraken_doa_v2/COMMERCIAL_TERMS.md` (the B2B terms: 90-day limited
   warranty - fix / replace / refund -, as-is otherwise, no safety-critical
   use, liability capped at 12 months' fees + no consequential loss, CGA s 43

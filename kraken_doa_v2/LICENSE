@@ -20,7 +20,7 @@ days, to find out whether it meets its needs: it may test it, but not yet
 rely on it for its real work. Deploying the Software - using it in
 operations, relying on or acting on its results in your work, or using it to
 provide a product or service - and any other commercial use needs a
-separate licence from KrakenRF Inc. Contact krakenrf@krakensdr.com for
+separate licence from KrakenRF Inc. Contact thekraken@krakenrf.com for
 details.
 
 
@@ -147,7 +147,7 @@ organisation evaluating the Software needs one as soon as it starts to use
 the Software operationally, and at the latest when its Evaluation Period
 ends. For details, contact:
 
-    krakenrf@krakensdr.com
+    thekraken@krakenrf.com
 
 A Commercial Licence includes the Licensor's standard commercial terms
 (COMMERCIAL_TERMS.md in the kraken_doa_v2 folder) unless it says otherwise.
