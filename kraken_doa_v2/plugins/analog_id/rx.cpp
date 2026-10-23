@@ -55,6 +55,9 @@ constexpr int TRK_HALF = TRK_TAPS / 2;
 constexpr int DCS_TAPS = 41;
 constexpr int DCS_DELAY = DCS_TAPS / 2;
 constexpr int D_IN = 20 + 40 + 15 * 10;  // input-sample delay of the sub-audio stream (channel + A + B)
+constexpr int AU_TAPS = 63;              // 24 kHz -> 12 kHz audio low-pass
+constexpr double D_AU = 20.5 + (AU_TAPS - 1) / 2;   // its input-sample delay (channel + discriminator + low-pass)
+constexpr int CP_BLK = 12;               // carrier blocks (20 input samples) per 10 ms bin
 constexpr double BIN_HZ = FS_SUB / NFFT;
 constexpr float SNR_MIN_DB = 13.0f;
 constexpr float PURITY_MIN = 0.55f;
@@ -82,6 +85,9 @@ Rx::Rx() {
     h_b_ = kp::fir_lowpass(31, 560, 2400);
     h_dcs_ = kp::fir_lowpass(DCS_TAPS, 210, static_cast<float>(FS_SUB));
     h_trk_ = kp::fir_lowpass(TRK_TAPS, 35, static_cast<float>(FS_SUB));
+    h_au_ = kp::fir_lowpass(AU_TAPS, 5000, static_cast<float>(FS_IN));   // 2400 bit/s FFSK reaches ~4.8 kHz
+    au_ring_.assign(2 * h_au_.size(), 0.0f);
+    cp_.assign(CP_RING, -1.0f);
     {
         double s1 = 0, s2 = 0;
         for (float v : h_trk_) {
@@ -138,6 +144,15 @@ void Rx::reset(double t0) {
     cacc_ = 0;
     cacc_n_ = 0;
     cblk_n_ = 0;
+    std::fill(cp_.begin(), cp_.end(), -1.0f);
+    cp_acc_ = 0;
+    cp_acc_n_ = 0;
+    cp_n_ = 0;
+    std::fill(au_ring_.begin(), au_ring_.end(), 0.0f);
+    au_pos_ = 0;
+    au_phase_ = 0;
+    au_n_ = 0;
+    audio.clear();
     cl_ref_ = 0;
     cl_low_ = 0;
     d_name_ = DcsName{};
@@ -198,6 +213,44 @@ int64_t Rx::carrier_onset(int64_t jc0, int64_t lo) const {
 
 double Rx::time_of(double j) const { return t0_ + (j * DECIM + (DECIM - 1) - D_IN) / FS_IN; }
 
+double Rx::audio_time(double k) const { return t0_ + (2 * k + 1 - D_AU) / FS_IN; }
+
+// bin c = carrier blocks 12c .. 12c + 11 = channel output of input samples
+// 240c .. 240c + 239 (its 41-tap filter: 20 samples late)
+double Rx::carrier_time(int64_t c) const { return t0_ + (240.0 * static_cast<double>(c) + 120 - 20) / FS_IN; }
+
+float Rx::carrier_bin(int64_t c) const {
+    if (c < 0 || c >= cp_n_ || c < cp_n_ - CP_RING) return -1;
+    return cp_[c & (CP_RING - 1)];
+}
+
+float Rx::carrier_mean(double t0, double t1) const {
+    const double c0 = (t0 - t0_) * FS_IN / 240.0 - 100.0 / 240, c1 = (t1 - t0_) * FS_IN / 240.0 - 100.0 / 240;
+    double s = 0;
+    int n = 0;
+    for (int64_t c = static_cast<int64_t>(std::ceil(c0)); c <= static_cast<int64_t>(std::floor(c1)); c++) {
+        const float v = carrier_bin(c);
+        if (v < 0) continue;
+        s += v;
+        n++;
+    }
+    return n ? static_cast<float>(s / n) : -1.0f;
+}
+
+double Rx::carrier_rise(double t, double t_lo) const {
+    const float ref = carrier_mean(t - 0.1, t);
+    if (!(ref > 0)) return NAN;
+    int64_t c = static_cast<int64_t>(std::floor((t - t0_) * FS_IN / 240.0 - 100.0 / 240)) - 10;
+    for (; carrier_bin(c) >= 0 && carrier_time(c) >= t_lo; c--) {
+        if (carrier_bin(c) < 0.5f * ref && carrier_bin(c - 1) >= 0 && carrier_bin(c - 1) < 0.5f * ref) {
+            // the first bin back up at half the level
+            while (carrier_bin(c) >= 0 && carrier_bin(c) < 0.5f * ref && carrier_time(c) < t) c++;
+            return carrier_time(c) - 0.005;
+        }
+    }
+    return NAN;
+}
+
 // ---------------------------------------------------------------------------
 // front end
 void Rx::process(const kp::cf* x, size_t n) {
@@ -216,6 +269,13 @@ void Rx::process(const kp::cf* x, size_t n) {
         if (++cacc_n_ == DECIM) {   // one carrier power per 20 input samples
             cblk_[cblk_n_ & 63] = static_cast<float>(cacc_ / DECIM);
             cblk_n_++;
+            cp_acc_ += cacc_ / DECIM;
+            if (++cp_acc_n_ == CP_BLK) {   // and per 10 ms
+                cp_[cp_n_ & (CP_RING - 1)] = static_cast<float>(cp_acc_ / CP_BLK);
+                cp_n_++;
+                cp_acc_ = 0;
+                cp_acc_n_ = 0;
+            }
             cacc_ = 0;
             cacc_n_ = 0;
         }
@@ -224,6 +284,18 @@ void Rx::process(const kp::cf* x, size_t n) {
         float hz = 0;
         if (std::norm(d) > 1e-30f) hz = std::atan2(d.imag(), d.real()) * static_cast<float>(FS_IN / (2 * PI));
         if (p.invert) hz = -hz;
+        // the voice band at 12 kHz
+        {
+            const size_t nu = h_au_.size();
+            au_ring_[au_pos_] = au_ring_[au_pos_ + nu] = hz;
+            const float* uend = &au_ring_[au_pos_ + nu];
+            au_pos_ = au_pos_ + 1 == nu ? 0 : au_pos_ + 1;
+            if (++au_phase_ == 2) {
+                au_phase_ = 0;
+                audio.push_back(fir_ring(uend, h_au_));
+                au_n_++;
+            }
+        }
         a_ring_[a_pos_] = a_ring_[a_pos_ + na] = hz;
         const float* aend = &a_ring_[a_pos_ + na];
         a_pos_ = a_pos_ + 1 == na ? 0 : a_pos_ + 1;

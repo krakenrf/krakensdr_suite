@@ -37,8 +37,9 @@ std::string mode_string(Mode m, const std::string& plugin_id) {
 }
 
 // plugins that were renamed: saved settings still name the old id
-static std::string renamed_plugin(const std::string& id) {
-    if (id == "sfn") return "dtv";   // SFN Separation -> Digital TV (2026-10)
+std::string renamed_plugin(const std::string& id) {
+    if (id == "sfn") return "dtv";            // SFN Separation -> Digital TV (2026-10)
+    if (id == "ctcss") return "analog_id";    // CTCSS / DCS -> Analog FM IDs (2026-10-22)
     return id;
 }
 

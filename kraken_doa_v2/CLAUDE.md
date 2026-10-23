@@ -752,7 +752,7 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   radiosonde (see *Radiosonde*), dme and ils (see *DME / TACAN* and *ILS /
   VOR / marker*), ism (see *ISM devices*), radar (see *Pulse radar*),
   ssr1030 (see *1030 MHz interrogations*), uat (see *UAT*), flarm (see
-  *FLARM / OGN*), ctcss (see *CTCSS / DCS*), beacon406 (see *406 MHz
+  *FLARM / OGN*), analog_id (see *Analog FM IDs*; was ctcss), beacon406 (see *406 MHz
   distress beacons*), lora (see *LoRa / Meshtastic / LoRaWAN*), wildlife (see
   *Wildlife collars*), rds (see *RDS / RBDS + SCA*), dtv and cells
   (ARRAY plugins - see *Digital TV* and *LTE / 5G NR Cell Decoder*)
@@ -2777,7 +2777,7 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   (57,600 rows) loads in 3.3 s, heat in ~26 s, a frame <= ~10 ms with all
   lines + power dots, 60 MB JS heap
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country), FM broadcast stations (RDS PI); `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,ctcss,beacon406,lora,wildlife,rds}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios (MDC1200 / FleetSync IDs, 5-tone / DTMF, CTCSS tones / DCS codes), 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country), FM broadcast stations (RDS PI); `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,analog_id,beacon406,lora,wildlife,rds}`, 🗺 Map 📡 DF panel):**
 - RULE (ID separation, the user's 2026-10-15): every decoder whose signal
   carries a coded ID per TRANSMITTER reports it as a talker - a core part
   of every such decoder, new ones included. How + how to test:
@@ -3146,17 +3146,23 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
     altitude · type / Pkts", position columns, nearest first;
     `RDF_KIND_WORD` names it "aircraft" in "Every ..." / counts) - see
     *FLARM / OGN*
-  - CTCSS / DCS (`plugins/ctcss`, task 5): an analog FM transmission =
-    a TRANSMISSION talker (`host.talker` / `talker_end`, not packets) named
-    by its sub-audible tone / code ("CTCSS 88.5", "DCS 023N"; label the
-    measured frequency / "023N = 047I"), from the carrier's (or the tone's)
-    onset to its reverse burst / tone off / carrier off, to a few ms; the
-    DoA from the MUSIC frames inside it like a radio's. With the tone
-    squelch option set only that tone gets talkers. UI kind `tone` 🔔
-    (`rdfKind`: not a packet, pl ctcss; "Tone / code / Measured / Tx" + two
-    columns only it has: Last = the latest transmission's length, Air = all
-    of them - TalkerInfo `dur_s` / `air_s` from the spans, status `dur` /
-    `air`, `RDF_SORT_KEYS` dur / air; newest first) - see *CTCSS / DCS*
+  - Analog FM IDs (`plugins/analog_id`, was `plugins/ctcss`, task 5; the
+    radio IDs 2026-10-22): an analog FM transmission = a TRANSMISSION
+    talker (`host.talker` / `talker_end`, not packets) named by the
+    transmitting radio's own ID when one was decoded (MDC1200 unit "MDC
+    1029", FleetSync "FleetSync 100-1001" - radios sharing one CTCSS tone
+    apart), else a 5-tone / DTMF sequence ("CCIR 12345", "DTMF 123"), else
+    its sub-audible tone / code ("CTCSS 88.5", "DCS 023N"), else a tone
+    burst ("Burst 1750"); label what was sent + the tone ("PTT ID · CTCSS
+    88.5"), from the carrier's (or the tone's) onset to its reverse burst /
+    tone off / carrier off, to a few ms; the DoA from the MUSIC frames
+    inside it like a radio's. With the ID / tone squelch option set only
+    those get talkers. UI kind `tone` (`rdfKind`: not a packet, pl
+    analog_id or ctcss; 🆔 / 🔢 / 🔔 by the ID; "ID / tone / Signalling ·
+    tone / Tx" + two columns only it has: Last = the latest transmission's
+    length, Air = all of them - TalkerInfo `dur_s` / `air_s` from the spans,
+    status `dur` / `air`, `RDF_SORT_KEYS` dur / air; newest first) - see
+    *Analog FM IDs*
   - 406 MHz distress beacons (`plugins/beacon406`, task 7): every
     first-generation burst that passed its BCH = a packet of its 15-hex
     beacon ID (the 160 ms carrier + first bits, 0.24 s from the carrier's
@@ -3366,8 +3372,9 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   8091 packets - spectrum, waterfall, VFO, decoder, DoA, the 📡 DF panel.
   Catalogue IN THE PLUGINS: `plugins/<id>/tools/testsignals.json` (a list;
   format + how to add one: plugins/SDK.md *Test transmissions for the debug
-  playback*). 35 entries in 26 catalogues (2026-10-22) - EVERY decoder:
-  ais, aprs, dstar, nxdn, tetra, mpt1327, ils (VOR), ctcss, radar,
+  playback*). 36 entries in 26 catalogues (2026-10-23) - EVERY decoder:
+  ais, aprs, dstar, nxdn, tetra, mpt1327, ils (VOR), analog_id (two: the
+  CTCSS tones + `analog-ids-six`, radio IDs), radar,
   ssr1030, uat, flarm, beacon406, lora (six), wildlife (five), dtv, cells,
   adsb, dme, ism, pocsag, v23_telemetry, p25, dmr, radiosonde (the last
   three since 2026-10-16 - their earlier tests used public recordings),
@@ -3806,7 +3813,7 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   DECODER ON and the decoder decoding voice (`DigitalDecoder::takes_voice()`:
   the lead plugin's `kp::Info::voice`; Auto detect still searching: any of
   its plugins; set by the engine's housekeeping) the decoder's voice; a
-  decoder of NO voice (ctcss, pocsag, adsb ...) leaves the ANALOG path below
+  decoder of NO voice (analog_id, pocsag, adsb ...) leaves the ANALOG path below
   to the VFO, as without one - and names the transcript after the
   decoder's talker (`DigitalDecoder::lead_talker`: the lead plugin's open
   talker that started first, e.g. "CTCSS 88.5" / "88.47 Hz" as from / to;
@@ -4627,7 +4634,7 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   reported a valid frame within `DIGITAL_SQUELCH_HOLD_MS` 1.5 s - or the
   plugin's own hold, `kp::Info::squelch_hold_s` (`--info`
   "squelch_hold_s", `PluginInfo::squelch_hold_s`, the engine's
-  `hold_ms_by_`; ctcss 0.35 s: it reports a valid span every 50 ms while a
+  `hold_ms_by_`; analog_id 0.35 s: it reports a valid span every 50 ms while a
   tone is there, and 1.5 s would pass 1.5 s of noise after every
   transmission) (`digitalSquelchOpen` -> `DigitalDecoder::squelch_open`,
   the engine's `last_valid_by_` per plugin) - the pipeline's squelch_open,
@@ -5058,12 +5065,82 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   a periodic narrow-FSK device near 868.166 MHz every 16 s and the
   calibration noise demodulated, nothing reported; 2.6 % of a core
 
-**CTCSS / DCS (`plugins/ctcss/`, README.md there):**
-- The sub-audible signalling under analog FM (ETSI TS 103 236: tones,
+**Analog FM IDs (`plugins/analog_id/`, README.md there; was `ctcss` "CTCSS / DCS" until 2026-10-22):**
+- The user's request (2026-10-22): radio IDs on analog FM - MDC1200,
+  FleetSync, 5-tone selcall (ZVEI / CCIR / EEA), DTMF, 1750 Hz - as part of
+  the CTCSS plugin, renamed for "IDs on analog signals". id `analog_id`,
+  name "Analog FM IDs (CTCSS / DCS, MDC1200, FleetSync, 5-tone, DTMF, 1750
+  Hz)", v2.0. The old id is mapped (`dig::renamed_plugin`, now exported
+  from dig_report.cpp: `ctcss` -> `analog_id`, like `sfn` -> `dtv`): saved
+  `PLUGIN:ctcss` VFOs, `ctcss.*` options, AUTO_DETECT_OFF; `PluginRegistry::
+  scan()` skips a renamed id's folder without sources (an old checkout's
+  gitignored `plugins/ctcss/build/` would run next to analog_id). UI:
+  `rdfKind` maps pl `analog_id` (and `ctcss`) to kind `tone`, `rdfIcon` 🆔
+  MDC / FleetSync, 🔢 selcall / DTMF, 🔔 tone / code / burst; "Every analog
+  transmitter"
+- In-band signalling (`sig.hpp/.cpp`, `asig::Sig`) on the 12 kHz audio
+  `rx.cpp` now also puts out (5 kHz low-pass, `audio_time(k)` = its RF
+  time): FFSK by sliding one-bit complex correlators (1200 / 1800 Hz at 1200
+  bit/s, 1200 / 2400 at 2400, on a 300 Hz high-pass), sync search at every
+  sample with a BALANCED decision threshold (g = sqrt(r_b / r_a) from the
+  crosstalk on the sync's own bits - scaling each tone by its level read a
+  live MDC sync 20 / 39 wrong); MDC1200 (`mdc.hpp`: XOR-precoded MSK read
+  COHERENTLY - the phase at bit i + 1's start = data bit i -, 7 x 16
+  interleave, convolutional code's single errors by syndrome majority,
+  CRC-16, double packets 0x35 / 0x55, an op table: PTT ID pre / post,
+  emergency, status, message, call alert, radio check, inhibit ...); FleetSync
+  (`fleetsync.hpp`, namespace `fleetsync` - `fsync` collided with POSIX
+  fsync(): 64-bit blocks, CRC, fleet = byte + 99, unit 12 bits + 999,
+  FleetSync II = 4 BCH(15,7) nibbles per 16 bits; read COHERENTLY first - a
+  2-state Viterbi over the phase parity the bits before leave (1200 Hz at
+  2400 bit/s / 1800 Hz at 1200 bit/s turn pi per bit), references from the
+  sync's 32 bits - then by tone; 2-4 dB more sensitive, and the real 2400
+  bit/s recording decodes at every sampling phase instead of 1 in 5);
+  tones (512-point FFT of 20 ms every 5 ms): selcall (`selcall.hpp`: the
+  Midian tables of ZVEI1-3 / PZVEI / DZVEI / PDZVEI / CCIR1-2 / PCCIR / EEA /
+  EIA / NATEL / MODAT with priors - ZVEI and DZVEI share tones, auto = the
+  common reading + the other as `alt`, option `selcall` picks one; runs of 4+
+  steady tones, repeats as E, consecutive identical symbols refused), DTMF
+  (talk-off protection: frequencies within 1.8 %, still within 0.6 %, >= 4
+  frames, a lone digit >= 8, the pair >= 75 % of the band, voice harmonic
+  families refused), steady bursts (1600-2550 Hz on the 50 Hz grid, >= 0.25
+  s - 1750 Hz; other steady tones >= 0.5 s as "tone" events)
+- `decoder.cpp` (`AnalogIdDecoder`): ONE transmission at a time, opened by a
+  tone / code (backdated) or an ID (from the carrier's rise in its 10 ms
+  history), ended by the tone tracker / DCS / carrier (< 0.4 of its level 30
+  ms); named in order sender ID (MDC / FleetSync, at once) > selcall / DTMF >
+  tone / code > burst, waiting HOLD_SHORT 1.6 s - HOLD_LONG 4.2 s once IDs
+  were heard on the channel (post-IDs come at the release; TalkerDoa keeps
+  frames 6 s) - an ID up to LATE_ID 0.8 s after the end still belongs to it;
+  a sender ID decoded later renames the spans not reported yet; another
+  sender's ID inside one carrier (repeater output) starts a new
+  transmission. Console commands name the radio they ADDRESS: no talker.
+  Options `squelch` "ID / tone squelch" (tones / codes + `MDC 1029`,
+  `FleetSync 100-1001`, `CCIR 12345`, `DTMF 123`, `Burst 1750`, kinds),
+  `ids` (all / tone = the old naming), `selcall`, `min_dev`, `nonstd`.
+  Table "ID / tone, Type, Details, With, Deviation, Tx, Last, Air time,
+  Ending" + details, facts, events, raw. Offline env `CTCSS_DUMP`,
+  `ANALOG_ID_DUMP`, `ANALOG_ID_AUDIO=<file>` (the 12 kHz audio)
+- Generator `tools/analog_gen.py` (was `ctcss_gen.py`, old options kept) +
+  `--mdc`, `--fleetsync` (`--fs-baud`, `--fs2`), `--selcall`, `--dtmf`,
+  `--burst`, `--sig-at pre|post|both`, `--sig-preemph`, `--sig-baud-err`,
+  `--audio-u8` (8 kHz for reference decoders); playback entries
+  `ctcss-four-tones` and `analog-ids-six` (MDC 1234 / MDC 2002 on one CTCSS
+  tone, FleetSync, CCIR, DTMF, 1750 Hz at six bearings)
+- Tests (job scratch 9ee43aa0, numbers in the README): the generator against
+  Kaufman's GPL MDC / FleetSync decoders (scratch oracle only, never in the
+  repo); 40 / 40 synthetic cases (ids + spans); CTCSS / DCS A/B against the
+  old plugin 46 / 46 identical; false alarms 2 in 50 min of voice, 0 on
+  noise; scene analog-ids-six every talker exact (offline, 5 antennas);
+  real recordings: Wikipedia MDC1200 1029 x 3 (= the reference), sigidwiki
+  FleetSync 1200 + 2400 bit/s BOT / EOT 167-1002, ZVEI 12345 off air, CCIR
+  04221, DTMF sequences, Whelen 461####333
+- (Below: the CTCSS / DCS part, unchanged from the `ctcss` plugin.) The
+  sub-audible signalling under analog FM (ETSI TS 103 236: tones,
   DCS codeword, polarity, the 83 codes' bit patterns): `sample_rate` 24
   kHz (= the 24 kHz VFO, no resampling), `min_vfo_rate` 12 kHz, talkers,
-  NOT manual only (in Auto detect an analog channel with a tone shows as
-  this plugin; without one it reports nothing), no voice
+  NOT manual only (in Auto detect an analog channel with a tone or an ID
+  shows as this plugin; without one it reports nothing), no voice
 - `rx.cpp`: channel filter +-7.5 kHz, discriminator, 24 kHz -> 2400 -> 1200
   Hz; a 45 Hz high-passed stream (CTCSS), a 130-290 Hz low-passed one (DCS)
   and the carrier power aligned with them. CTCSS: 2048-point FFT of the last
@@ -5106,7 +5183,7 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   `DigitalDecoder::takes_voice()` / `lead_talker()` (Voice to Text's analog
   fallback + naming, see *Voice to Text*), TalkerInfo `dur_s` / `air_s`
   (status `dur` / `air`), UI kind `tone` (see *DoA per talker*)
-- Generator `tools/ctcss_gen.py` (one transmitter: keyed spans, real or
+- Generator `tools/analog_gen.py` (was `ctcss_gen.py`; one transmitter: keyed spans, real or
   synthetic speech through a TX audio chain, CTCSS + reverse burst / DCS +
   turn-off, tolerances, narrow, de-emphasis, offset, noise); scenes with
   `plugins/sdk/tools/uca_scene.py`
@@ -6023,7 +6100,7 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   executing thread (it owns its scratch)
 - Ported: fft_processor (per-channel spectra, beamformed FFT), beamformer
   (SNR FFT, FD-DAS 256 forward / inverse), plugins beacon406, cells
-  (dsp_util Fft + tools/cell_gen), ctcss (r2c), dme, dtv (dsp_util Fft),
+  (dsp_util Fft + tools/cell_gen), analog_id (r2c), dme, dtv (dsp_util Fft),
   flarm, ils (incl. r2c), ism, lora (channelizer, phy, search, decoder),
   wildlife; `sdk/tools/make_testsignal.py` compiles .cpp generators with
   `-I../external/pffft` + libkrakendig.a. heimdall_v2 followed the same day

@@ -875,15 +875,26 @@ decoders `kraken_doa_v2/plugins/`
   inside the 2.4 MHz - EU / NZ: tune 868.8 MHz; FLARM by radio ID + bearing
   only, its payload is encrypted and NOT decoded; OGN fully, stealth =
   no-track honoured; a DoA per aircraft on its own channel; manual only,
-  `lock_vfo`, `tunes` once to the band) and ctcss (CTCSS tones / DCS codes
-  under analog FM on a 12-24 kHz VFO: every standard + non-standard tone,
+  `lock_vfo`, `tunes` once to the band) and analog_id ("Analog FM IDs",
+  was `ctcss` - renamed 2026-10-22 when the radio IDs were added, the
+  user's request; saved `PLUGIN:ctcss` VFOs / `ctcss.*` options load as
+  analog_id: everything on analog FM that names a transmitter, on a 12-24
+  kHz VFO: CTCSS tones / DCS codes (every standard + non-standard tone,
   measured to ~0.01 Hz, reverse burst; DCS 23-bit Golay words, normal /
-  inverted, turn-off code - ETSI TS 103 236; each transmission a talker
-  "CTCSS 88.5" / "DCS 023N" from its onset to its end, a DoA per tone;
-  valid spans every 50 ms drive the Digital squelch, `kp::Info::
-  squelch_hold_s` 0.35 s; option "Tone squelch" = only that tone / code
-  opens it and gets talkers; no voice: Voice to Text keeps the analog demod
-  and names the transcript after the tone) and beacon406 (Cospas-Sarsat 406
+  inverted, turn-off code - ETSI TS 103 236), MDC1200 (Motorola unit IDs,
+  PTT ID pre / post, emergency, status, call alert ...; read coherently,
+  convolutional code + CRC), FleetSync / FleetSync II (Kenwood fleet-unit,
+  1200 / 2400 bit/s; read coherently by a Viterbi over the phase), 5-tone
+  selcall (ZVEI1-3 / DZVEI / PZVEI / CCIR / EEA / EIA / NATEL / MODAT), DTMF
+  (talk-off protected) and tone bursts (1750 Hz repeater access); each
+  transmission ONE talker named by the strongest of what it carried -
+  sender ID > selcall / DTMF > tone / code > burst ("MDC 1029", "FleetSync
+  100-1001", "CCIR 12345", "CTCSS 88.5") - from its onset to its end, a
+  DoA per radio; IDs sent at release rename it; valid spans every 50 ms
+  drive the Digital squelch, `kp::Info::squelch_hold_s` 0.35 s; option
+  "ID / tone squelch" = only those IDs / kinds / tones open it and get
+  talkers; no voice: Voice to Text keeps the analog demod and names the
+  transcript after the radio) and beacon406 (Cospas-Sarsat 406
   MHz distress beacons - EPIRB / ELT / PLB / SSAS - on every 406.0-406.1 MHz
   channel of a 100 kHz VFO, manual only, fixed 406.050 MHz: C/S T.001
   first-generation bursts (160 ms carrier + 112 / 144 bits biphase-L at 400
@@ -1083,7 +1094,7 @@ DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pocsag, aprs (written by the AI
-  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, ctcss, beacon406, lora, wildlife, rds, dtv and cells (ARRAY
+  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, lora, wildlife, rds, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags - only
@@ -1270,10 +1281,10 @@ leaves it out) with the models in `docker-data/whisper_models/`
   decoder is on and decodes voice (P25 / DMR / D-STAR / NXDN / TETRA vocoder
   output via `dig::set_voice_tap_handler`, with the talker's unit ID /
   talkgroup; cut at talker changes), else - no decoder, or one of no voice
-  (`DigitalDecoder::takes_voice()`: ctcss, pocsag ...) - its analog demod
+  (`DigitalDecoder::takes_voice()`: analog_id, pocsag ...) - its analog demod
   (NBFM / AM / WBFM) of the same stream, cut by its squelch (squelch off: 10
   dB over the noise in the FFT), named after the decoder's talker if it has
-  one (ctcss: "CTCSS 88.5"; `DigitalDecoder::lead_talker`). Bearing during
+  one (analog_id: "MDC 1029", "CTCSS 88.5"; `DigitalDecoder::lead_talker`). Bearing during
   each transmission in coherent mode with DoA on
 - `src/voice2text.cpp`: one worker thread (taps, queue <= 40 / 10 min,
   helper process); the helper (`PluginProcess`, nice 10, one job at a time,
@@ -1339,7 +1350,7 @@ spreadsheet re-saved (timestamps as 1.68843E+12 = rounded to 2.8 h, padded
 rows, ';' + decimal commas, UTF-16) is read too: times rebuilt from the
 track (`lrRetime`), "The drive took N min" corrects the pace
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags, FM broadcast stations by their RDS PI)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios - MDC1200 / FleetSync IDs, 5-tone selcall / DTMF, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags, FM broadcast stations by their RDS PI)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a
 coded ID per transmitter, the plugin reports it as a talker and is tested
@@ -1547,8 +1558,9 @@ user's settings back; doa_settings.json / heimdall_settings.conf
 untouched), web mapper / decoder log / Voice to Text / incidents / DoA
 recording paused, a red "DEBUG PLAYBACK - not live" banner + spectrum
 overlay. A playback never outruns the pipeline (a busy machine plays it
-slower than real time instead of dropping packets). 35 entries in 26
-catalogues - every decoder has its own (p25, dmr, radiosonde, then rds last)
+slower than real time instead of dropping packets). 36 entries in 26
+catalogues - every decoder has its own (p25, dmr, radiosonde, then rds,
+then analog_id's `analog-ids-six` last)
 
 **📼 IQ & audio recorder + playback of recordings (sidebar "📼 IQ & Audio
 Recorder")** (details: `kraken_doa_v2/CLAUDE.md` *📼 IQ & audio recorder*,
@@ -1585,7 +1597,7 @@ format: `kraken_doa_v2/SIGMF.md`): `src/recorder.cpp`, `recorder_audio.cpp`,
 `kraken_doa_v2/CLAUDE.md` *Digital squelch*): squelch methods are FFT Peak
 and Digital (the eigenvalue methods were removed - saved values map to
 FFT). Digital opens while the decoder reports valid frames (+1.5 s, or the
-plugin's `kp::Info::squelch_hold_s` - ctcss 0.35 s) and the
+plugin's `kp::Info::squelch_hold_s` - analog_id 0.35 s) and the
 VFO's DoA is published from exactly the confirmed samples
 (`TalkerDoa::set_digital` -> `MUSICProcessor::publishFromCovariance`; MUSIC's
 own frames held) - interference / noise between the frames never reaches

@@ -100,6 +100,9 @@ void PluginRegistry::scan() {
             pi.exe = kproc::exe_path(pdir + "/build/decoder");
             const bool has_src = access((pdir + "/decoder.cpp").c_str(), R_OK) == 0;
             if (!has_src && !is_exe(pi.exe)) continue;
+            // a renamed plugin's old folder: an update moved its sources, the
+            // (gitignored) build stayed behind - it would run next to the new one
+            if (!has_src && dig::renamed_plugin(id) != id) continue;
             // newest source file
             int64_t src_mtime = 0;
             if (DIR* sd = opendir(pdir.c_str())) {
@@ -224,7 +227,7 @@ void PluginRegistry::set_auto_off(const std::string& comma_list) {
     std::stringstream ss(comma_list);
     std::string id;
     while (std::getline(ss, id, ','))
-        if (valid_id(id)) off.insert(id);   // ids of plugins not installed here are kept
+        if (valid_id(id)) off.insert(dig::renamed_plugin(id));   // ids of plugins not installed here are kept
     std::lock_guard<std::mutex> lk(mu_);
     if (off != auto_off_) {
         auto_off_ = std::move(off);
