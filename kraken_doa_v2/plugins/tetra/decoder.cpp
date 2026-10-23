@@ -35,6 +35,7 @@ private:
 
 KRAKEN_PLUGIN(TetraPlugin, {.id = "tetra",
                             .name = "TETRA",
+                            .category = "Two-way radio",
                             .description = "TETRA downlink (base station, 25 kHz). Network (MCC / MNC), colour code, location "
                                            "area, carrier, services, timeslot usage, call set-up and addresses. Voice: ACELP "
                                            "(ETSI codec, README \"Digital voice codecs\"). Bandwidth 24 kHz or more.",

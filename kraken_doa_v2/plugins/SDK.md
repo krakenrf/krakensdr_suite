@@ -127,6 +127,7 @@ public:
 
 KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
                           .name = "My decoder",           // shown in the mode list
+                          .category = "Two-way radio",    // its group in the mode list (below)
                           .description = "one line",      // the panel's help text
                           .version = "1.0",
                           .sample_rate = 48000,           // rate process() receives (0 = the VFO's own)
@@ -147,6 +148,14 @@ KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
 
 The fields of `kp::Info` must be given **in this order** (C++20 designated
 initializers); any of them can be left out.
+
+**Category**: the heading the decoder is listed under in the mode lists
+(VFO card, decoder tab, saved-frequency editor). The shipped plugins use
+`Two-way radio`, `Aviation`, `Marine & distress`, `Paging & packet`,
+`ISM & IoT`, `Telemetry & tracking` and `Broadcast & cellular` (listed in
+that order); pick one of them where it fits - case doesn't matter - or a
+name of your own (listed after those, by name). Without one the plugin is
+listed under `Other`, last.
 
 **Options** (`kp::Option`: key, label, default, choices, help) are the
 decoder's own settings. The panel shows them while the plugin is selected (in

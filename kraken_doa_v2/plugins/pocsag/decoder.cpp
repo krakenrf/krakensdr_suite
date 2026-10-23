@@ -304,6 +304,7 @@ private:
 
 KRAKEN_PLUGIN(Pocsag, {.id = "pocsag",
                        .name = "POCSAG",
+                       .category = "Paging & packet",
                        .description = "POCSAG pagers, 512/1200/2400 bit/s (numeric + alphanumeric)",
                        .version = "1.0",
                        .sample_rate = FS,

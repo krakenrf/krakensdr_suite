@@ -1640,6 +1640,7 @@ private:
 
 KRAKEN_PLUGIN(Adsb, {.id = "adsb",
                      .name = "ADS-B (1090 MHz)",
+                     .category = "Aviation",
                      .description = "ADS-B / Mode S aircraft on 1090 MHz: callsign, position, altitude, speed, squawk - "
                                     "picking it tunes the VFO and its tuner to 1090 MHz at 2.4 MHz; aircraft appear on the 🗺 Map",
                      .version = "2.0",

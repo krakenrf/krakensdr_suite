@@ -28,6 +28,7 @@ struct PluginOption {
 
 struct PluginInfo {
     std::string id, name, description, version, author;
+    std::string category;         // kp::Info::category: the mode list's group ("" = Other)
     std::string exe;              // plugins/<id>/build/decoder (decoder.exe on Windows)
     double sample_rate = 48000;   // complex input rate the plugin wants (0 = the VFO's own)
     double min_vfo_rate = 12500;

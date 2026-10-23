@@ -970,7 +970,15 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   (`.dd-btn`) after it + a pop-up list (`.dd-pop`, in body, zoomed like the
   sidebar when the button is in it); an option "Name (details)"
   (`ddSplit`) shows the name with the details on a smaller second line, in
-  the button and the list. Code that sets `sel.value` calls `ddSync(sel)`
+  the button and the list. The plugins are listed in GROUPS (the user's
+  request 2026-10-23; `digGroups`, also the saved-frequency editor's
+  decoder list): one `<optgroup>` - a heading in the pop-up - per
+  `kp::Info::category` (`--info` / plugin list `category`, case ignored),
+  the shipped groups in a fixed order (Two-way radio, Aviation, Marine &
+  distress, Paging & packet, ISM & IoT, Telemetry & tracking, Broadcast &
+  cellular), other categories after them by name, none = Other last, each
+  group by name; only plugins without one (built before categories) = the
+  old single "Decoders" group. Code that sets `sel.value` calls `ddSync(sel)`
   (`digFillSelect` and the tab rebuild do); `digFillSelect` leaves the value
   alone while that list is open (`ddOpenSel`). Keyboard: arrows / Home /
   End / Enter / Escape / Tab; a press elsewhere, a scroll or a resize closes

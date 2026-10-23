@@ -434,6 +434,7 @@ private:
 
 KRAKEN_PLUGIN(Radiosonde, {.id = "radiosonde",
                            .name = "Radiosonde",
+                           .category = "Telemetry & tracking",
                            .description = "Weather balloon sondes (400-406 MHz): Vaisala RS41, Graw DFM, Meteomodem M10 / M20, "
                                           "iMet-4 / iMet-54, LMS6, MRZ - position, altitude, temperature, humidity, pressure, wind",
                            .version = "2.0",

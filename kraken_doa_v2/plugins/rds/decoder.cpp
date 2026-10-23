@@ -989,6 +989,7 @@ private:
 KRAKEN_PLUGIN(RdsDecoder,
               {.id = "rds",
                .name = "RDS / RBDS + SCA (FM broadcast)",
+               .category = "Broadcast & cellular",
                .description = "Wideband FM broadcast subcarriers: RDS / RBDS on 57 kHz (PI, call sign, PS, programme "
                               "type, RadioText, RT+, eRT, Long PS, clock time, alternative frequencies, country, EON, "
                               "ODAs / TMC / DAB links), RDS2 streams, the pilot and every SCA subcarrier (FM audio - "

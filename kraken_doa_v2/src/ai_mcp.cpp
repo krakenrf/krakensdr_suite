@@ -845,6 +845,7 @@ void t_list_decoders(const Json&, Reply r) {
         const auto& p = list[i];
         o << (i ? "," : "") << "{\"id\":" << q(p.id) << ",\"name\":" << q(p.name) << ",\"description\":" << q(p.description)
           << ",\"built\":" << (p.built ? "true" : "false") << ",\"min_vfo_bandwidth_hz\":" << num(p.min_vfo_rate, 0);
+        if (!p.category.empty()) o << ",\"category\":" << q(p.category);
         if (p.fixed_freq_hz > 0) o << ",\"fixed_freq_hz\":" << num(p.fixed_freq_hz, 0);
         if (p.lock_vfo) o << ",\"whole_band\":true";
         if (p.manual_only) o << ",\"manual_only\":true";

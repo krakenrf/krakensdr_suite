@@ -969,7 +969,8 @@ decoders `kraken_doa_v2/plugins/`
   needing a VFO > 2x wider; the
   one whose frames pass FEC/CRC wins). Any
   number of VFOs decode at once: a "Digital decoder" tick + mode list on each
-  VFO card (Decimators box), one tab per decoder mode (plugin - all of them, always, also unused ones) in the
+  VFO card (Decimators box; the list grouped by `kp::Info::category` - Two-way
+  radio, Aviation, Marine & distress, ... - plugins/SDK.md), one tab per decoder mode (plugin - all of them, always, also unused ones) in the
   panel under the waterfall - every VFO running that mode in it: a settings
   row each, merged tables / incidents with VFO + MHz columns, one merged
   event log (a VFO switched to another mode or removed leaves its lines in

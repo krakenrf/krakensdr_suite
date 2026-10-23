@@ -675,6 +675,7 @@ private:
 
 KRAKEN_PLUGIN(Ils, {.id = "ils",
                     .name = "ILS / VOR / marker",
+                    .category = "Aviation",
                     .description = "Aviation navigation aids: ILS localizer (108-112 MHz) and glide slope (329-335 MHz) - "
                                    "course / glide path deviation (DDM), two-carrier systems; VOR (108-118 MHz) - radial; "
                                    "marker beacons (75 MHz); Morse idents; the paired glide slope / DME channel. A 48 kHz VFO "

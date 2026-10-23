@@ -611,6 +611,7 @@ private:
 KRAKEN_PLUGIN(FlarmDecoder,
               {.id = "flarm",
                .name = "FLARM / OGN trackers (868 / 915 MHz)",
+               .category = "Aviation",
                .description = "Glider / light aircraft collision avoidance radios: FLARM (shown by its radio ID and "
                               "bearing - its position is encrypted and not decoded) and OGN trackers (open protocol: "
                               "position, altitude, climb, aircraft type, registration). The VFO sits on its tuner's "

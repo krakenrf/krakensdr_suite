@@ -428,6 +428,7 @@ private:
 
 KRAKEN_PLUGIN(Beacon406, {.id = "beacon406",
                           .name = "406 MHz distress beacons (EPIRB / ELT / PLB)",
+                          .category = "Marine & distress",
                           .description = "Cospas-Sarsat 406 MHz beacons on every 406.0-406.1 MHz channel: distress "
                                          "alerts vs self-tests, 15-hex beacon ID, country, type, MMSI / aircraft "
                                          "address / serial / call sign, the encoded position on the 🗺 Map, a DoA per "

@@ -470,6 +470,7 @@ private:
 
 KRAKEN_PLUGIN(V23Telemetry, {.id = "v23_telemetry",
                              .name = "V.23 AFSK telemetry",
+                             .category = "Telemetry & tracking",
                              .description = "1200 bit/s V.23 AFSK (1300/2100 Hz) async telemetry packets: FF..00 L payload CRC-16, shown as hex",
                              .version = "1.0",
                              .sample_rate = FS,

@@ -783,6 +783,7 @@ private:
 KRAKEN_PLUGIN(AnalogIdDecoder,
               {.id = "analog_id",
                .name = "Analog FM IDs (CTCSS / DCS, MDC1200, FleetSync, 5-tone, DTMF, 1750 Hz)",
+               .category = "Two-way radio",
                .description = "Who is transmitting on an analog FM channel: the sub-audible tone (CTCSS, measured to "
                               "0.01 Hz, reverse burst) or code (DCS), and the radios' ID bursts - MDC1200 unit IDs, "
                               "FleetSync fleet-unit IDs (1200 / 2400 bit/s), 5-tone selcall (ZVEI, CCIR, EEA, EIA ...), "

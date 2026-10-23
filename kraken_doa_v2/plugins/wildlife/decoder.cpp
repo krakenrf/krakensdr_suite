@@ -1188,6 +1188,7 @@ private:
 
 KRAKEN_PLUGIN(Wildlife, {.id = "wildlife",
                          .name = "Wildlife tracking collars / tags (pulsed VHF / UHF)",
+                         .category = "Telemetry & tracking",
                          .description = "Wildlife radio-tracking transmitters (collars and tags on mammals, birds, bats ...): "
                                         "pulsed CW anywhere in the VFO, in any country - a 2.4 MHz VFO surveys a band, a "
                                         "narrow one follows one collar. Per collar: frequency to a few Hz, ppm, pulse, mode "

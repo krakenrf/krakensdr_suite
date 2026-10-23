@@ -541,6 +541,7 @@ private:
 KRAKEN_PLUGIN(IsmDecoder,
               {.id = "ism",
                .name = "ISM devices (433 MHz etc.)",
+               .category = "ISM & IoT",
                .description = "Weather stations and thermometers, tyre pressure sensors (TPMS), key fobs and remotes, "
                               "door / motion / smoke sensors and energy meters on 315 / 345 / 433 / 868 / 915 MHz "
                               "(OOK and FSK) anywhere in the 2.4 MHz the tuner receives: the VFO sits on the tuner's "

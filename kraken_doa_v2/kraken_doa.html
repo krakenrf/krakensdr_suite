@@ -248,6 +248,7 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .dd-d {display:block;font-size:10.5px;color:#8fa3bf;white-space:normal;overflow-wrap:anywhere}
 .dd-pop {position:fixed;z-index:10050;background:#10101e;border:1px solid #1f5a99;border-radius:3px;box-shadow:0 6px 18px rgba(0,0,0,.55);overflow:auto;padding:2px 0;font-size:12px;color:#e0e0e0;scrollbar-color:#2a3858 #141428;scrollbar-width:thin}
 .dd-grp {padding:4px 8px 2px;color:#7cb3f0;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em}
+.dd-grp:not(:first-child) {margin-top:3px;border-top:1px solid #23304d;padding-top:6px}
 .dd-it {padding:4px 10px 4px 12px;cursor:pointer;line-height:1.25;border-left:2px solid transparent}
 .dd-it.cur {border-left-color:#4fc3f7}
 .dd-it.hl {background:#1a4a7a}
@@ -10409,12 +10410,34 @@ function addTouchHandlers(el, down, move, up) {
   function digModeOf(id) { const d = digDec(id); return d && d.digital_mode ? d.digital_mode : 'OFF'; }
   function digActiveIds() { return decimatorInfo.filter(d => d.digital_mode && d.digital_mode !== 'OFF').map(d => d.id); }
 
-  // <option>s: Auto detect + the built plugins (+ one this receiver lacks)
+  // The plugins in their groups (kp::Info::category, case ignored; none =
+  // "Other"): [[heading, plugins by name]] - the shipped plugins' groups in
+  // this order, other groups after them by name, Other last. Only one group
+  // and it is Other (plugins built before categories): headed "Decoders"
+  function digGroups(list) {
+    const shipped = ['Two-way radio', 'Aviation', 'Marine & distress', 'Paging & packet',
+                     'ISM & IoT', 'Telemetry & tracking', 'Broadcast & cellular'];
+    const order = shipped.map(s => s.toLowerCase());
+    const by = new Map();
+    for (const p of list) {
+      let head = String(p.category || '').trim() || 'Other';
+      const k = head.toLowerCase();
+      if (order.includes(k)) head = shipped[order.indexOf(k)];
+      if (!by.has(k)) by.set(k, [head, []]);
+      by.get(k)[1].push(p);
+    }
+    const rank = k => k === 'other' ? order.length + 1 : order.includes(k) ? order.indexOf(k) : order.length;
+    const groups = [...by.entries()].sort(([a], [b]) => (rank(a) - rank(b)) || a.localeCompare(b)).map(e => e[1]);
+    for (const g of groups) g[1].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+    if (groups.length === 1 && groups[0][0] === 'Other') groups[0][0] = 'Decoders';
+    return groups;
+  }
+  // <option>s: Auto detect + the built plugins by group (+ one this receiver lacks)
   function digModeOptions(cur) {
-    const built = digPlugins.filter(p => p.built).sort((a, b) => a.name.localeCompare(b.name));
+    const built = digPlugins.filter(p => p.built);
     let html = '<option value="AUTO">Auto detect</option>';
-    if (built.length)
-      html += '<optgroup label="Decoders">' + built.map(p =>
+    for (const [head, list] of digGroups(built))
+      html += `<optgroup label="${digEsc(head)}">` + list.map(p =>
         `<option value="PLUGIN:${digEsc(p.id)}" title="${digEsc(p.description || '')}">${digEsc(p.name)}</option>`).join('') + '</optgroup>';
     if (cur && cur.startsWith('PLUGIN:') && !built.some(p => 'PLUGIN:' + p.id === cur))
       html += `<option value="${digEsc(cur)}">${digEsc(cur.slice(7))} (not installed)</option>`;
@@ -15879,8 +15902,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     sfBwSelectSet(+bv || 0);
     const ds = $id('sf-f-dec');
     let h = '<option value="">Keep the VFO\'s</option><option value="OFF">Off</option><option value="AUTO">Auto detect</option>' +
-      [...digPlugins].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))
-        .map(p => `<option value="PLUGIN:${digEsc(p.id)}">${digEsc(p.name || p.id)}</option>`).join('');
+      digGroups(digPlugins).map(([head, list]) => `<optgroup label="${digEsc(head)}">` +
+        list.map(p => `<option value="PLUGIN:${digEsc(p.id)}">${digEsc(p.name || p.id)}</option>`).join('') + '</optgroup>').join('');
     if (dec.startsWith('PLUGIN:') && !digPlugin(digModePlugin(dec)))
       h += `<option value="${digEsc(dec)}">${digEsc(digModePlugin(dec))} (not on this receiver)</option>`;
     ds.innerHTML = h;
