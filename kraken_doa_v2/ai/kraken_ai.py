@@ -40,6 +40,11 @@ Claude Code settings, MCP servers, CLAUDE.md files or memory are loaded):
 kraken_doa runs every plugin the assistant changed in a bwrap sandbox too
 (ai_sandbox.cpp).
 
+macOS: Claude Code's sandbox is the system's own (Seatbelt - no bwrap / socat
+needed), and kraken_doa runs the plugins the assistant changed under
+sandbox-exec with the same rules. Credential stores in ~/Library are
+unreadable for the shell too.
+
 Windows: Claude Code has no sandbox there, so the agent never gets a shell
 (it answers, reads / edits files within the rules above, uses the web and the
 receiver's tools - no builds, no scripts), and kraken_doa doesn't run a plugin
@@ -71,6 +76,7 @@ MEMGUARD = os.path.join(AI_DIR, "memguard")
 SANDBOXED_LIST = os.path.join(STATE_DIR, "sandboxed_plugins.json")
 HOME = os.path.expanduser("~")
 WINDOWS = os.name == "nt"
+MACOS = sys.platform == "darwin"
 ACTIVITY_MAX = 4 << 20   # activity.jsonl stops growing here
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,63}$")
@@ -91,6 +97,12 @@ SECRETS = ["api_token", "doa_settings.json", "server.key", "ai/ai_config.json", 
            "noise_floors.json", "rdf_session.bin"]
 HOME_SECRETS = [".claude", ".claude.json", ".ssh", ".gnupg", ".config", ".local/share", ".netrc", ".git-credentials",
                 ".aws", ".docker", ".pki", ".mozilla", ".bash_history", ".python_history", ".lesshst", ".viminfo"]
+if MACOS:
+    # the Mac's own stores: keychain files, browsers' and apps' data (cookies,
+    # saved logins), mail / messages, and zsh's history (its default shell)
+    HOME_SECRETS += ["Library/Keychains", "Library/Cookies", "Library/Application Support", "Library/Safari",
+                     "Library/Mail", "Library/Messages", "Library/Containers", "Library/Group Containers",
+                     "Library/Accounts", ".zsh_history", ".zsh_sessions"]
 # plugin infrastructure: core files of the receiver. GNUmakefile / makefile:
 # make reads them BEFORE Makefile (a top-level file there would replace the
 # plugins build the next time the user runs make - the main Makefile also
@@ -199,7 +211,7 @@ if WINDOWS:
 # What the messages below tell the user to run, and where: on the Pi, or on
 # the Windows PC itself (python.org's Python is started with its py launcher,
 # Claude Code is installed from PowerShell)
-HERE = "on this PC" if WINDOWS else "on the Pi"
+HERE = "on this PC" if WINDOWS else "on this Mac" if MACOS else "on the Pi"
 SETUP_CMD = "py -3 ai/kraken_ai.py setup" if WINDOWS else "python3 ai/kraken_ai.py setup"
 TRUST_CMD = "py -3 ai/kraken_ai.py trust" if WINDOWS else "python3 ai/kraken_ai.py trust"
 CLAUDE_INSTALL = ("    irm https://claude.ai/install.ps1 | iex      (in PowerShell)" if WINDOWS
@@ -410,11 +422,30 @@ def session_save(sdir, s):
     replace_file(tmp, os.path.join(sdir, "session.json"))
 
 
+def system_includes():
+    """The system headers the agent may read: /usr/include; macOS: the SDK's
+    (there is no /usr/include) and Homebrew's"""
+    if not MACOS:
+        return ["/usr/include"]
+    dirs = []
+    try:
+        sdk = subprocess.run(["xcrun", "--show-sdk-path"], capture_output=True, text=True, timeout=10).stdout.strip()
+        if sdk:
+            dirs.append(os.path.join(sdk, "usr", "include"))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return dirs + [d for d in ("/usr/local/include", "/opt/homebrew/include") if os.path.isdir(d)]
+
+
 def sandbox_status():
     """Claude Code's sandbox for the agent's shell commands needs bubblewrap +
-    socat (Linux); there is none on Windows"""
+    socat (Linux), the system's sandbox-exec on macOS; there is none on Windows"""
     if WINDOWS:
         return False, "Claude Code has no sandbox on Windows"
+    if MACOS:
+        if not os.access("/usr/bin/sandbox-exec", os.X_OK):
+            return False, "/usr/bin/sandbox-exec is missing"
+        return True, ""
     missing = [p for p, exe in (("bubblewrap", "bwrap"), ("socat", "socat")) if not shutil.which(exe)]
     if missing:
         return False, "not installed: " + ", ".join(missing) + " (sudo apt install " + " ".join(missing) + ")"
@@ -444,7 +475,7 @@ def rule(kind, path, tree=True):
 
 def claude_settings(sdir, sandbox):
     # (Windows: no /usr/include - and no shell to build with anyway)
-    readable = [KRAKEN_DIR, PLUGIN_DIR, sdir, KNOWLEDGE] + ([] if WINDOWS else ["/usr/include"])
+    readable = [KRAKEN_DIR, PLUGIN_DIR, sdir, KNOWLEDGE] + ([] if WINDOWS else system_includes())
     allow = []
     for d in readable:
         allow += [rule("Read", d), rule("Grep", d), rule("Glob", d)]
@@ -614,6 +645,8 @@ def system_prompt(sdir, sandbox_ok, sandbox_why):
                       sigtool_help=sigtool_help(), shell=shell)
     if WINDOWS:
         s = s.replace("on a Raspberry Pi 5 (kraken_doa_v2 + heimdall)", "on a Windows PC (kraken_doa_v2 + heimdall)")
+    elif MACOS:
+        s = s.replace("on a Raspberry Pi 5 (kraken_doa_v2 + heimdall)", "on a Mac (kraken_doa_v2 + heimdall)")
     return s
 
 
@@ -1025,7 +1058,8 @@ def cmd_setup(a):
             return 1
         print("Using command:", " ".join(cfg["command"]))
     sok, why = sandbox_status()
-    print("\nSandbox for the assistant's shell commands: " + ("OK (bubblewrap + socat)" if sok else why))
+    print("\nSandbox for the assistant's shell commands: " +
+          (("OK (macOS sandbox)" if MACOS else "OK (bubblewrap + socat)") if sok else why))
     if WINDOWS:
         print("  Plugins it changes don't run at all on Windows (no sandbox for them either) until you check them")
         print("  and run: " + TRUST_CMD + " <id>")
@@ -1103,7 +1137,7 @@ def write_sandboxed(ids):
                     "py -3 ai/kraken_ai.py trust <id> takes one off")
         else:
             note = ("plugins the AI assistant changed - kraken_doa runs them "
-                    "sandboxed (bwrap). python3 ai/kraken_ai.py trust <id> takes one off")
+                    f"sandboxed ({'sandbox-exec' if MACOS else 'bwrap'}). python3 ai/kraken_ai.py trust <id> takes one off")
         json.dump({"plugins": sorted(set(ids)), "note": note}, f)
     replace_file(tmp, SANDBOXED_LIST)
 

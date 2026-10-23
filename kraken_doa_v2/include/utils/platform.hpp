@@ -93,10 +93,11 @@ std::string host_name();
 std::string host_fqdn();
 
 // Windows: keep the PC from sleeping while the receiver runs (sleep stops
-// the USB streams); ends with the process. No-op on Linux.
+// the USB streams); ends with the process. macOS: an IOKit assertion
+// against idle sleep, the same. No-op on Linux.
 void keep_system_awake();
 
-// "windows" or "linux": the web UIs show the matching instructions
+// "windows", "linux" or "macos": the web UIs show the matching instructions
 // (status JSON "platform").
 const char* os_name();
 

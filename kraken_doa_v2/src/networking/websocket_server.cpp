@@ -32,7 +32,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <array>
+#include <cctype>
 #include <charconv>
+#include <type_traits>
 #include <iomanip>
 #include <cstdlib>
 #include <iterator>
@@ -239,8 +241,22 @@ void handle_fft_view(WS* ws, string_view args) {
     uint32_t seq = 0, bins = 0;
     double lo = 0, hi = 0;
     auto num = [](string_view t, auto& v) {
-        auto r = std::from_chars(t.data(), t.data() + t.size(), v);
-        return r.ec == std::errc() && r.ptr == t.data() + t.size();
+#if !defined(__cpp_lib_to_chars)
+        // a libc++ without floating-point from_chars (Apple clang < 15):
+        // strtod on a copy, the whole field, no leading space / sign games
+        if constexpr (std::is_floating_point_v<std::remove_reference_t<decltype(v)>>) {
+            if (t.empty() || t.size() > 64 || !(std::isdigit(static_cast<unsigned char>(t[0])) || t[0] == '-' || t[0] == '.'))
+                return false;
+            const std::string s(t);
+            char* end = nullptr;
+            v = std::strtod(s.c_str(), &end);
+            return end == s.c_str() + s.size();
+        } else
+#endif
+        {
+            auto r = std::from_chars(t.data(), t.data() + t.size(), v);
+            return r.ec == std::errc() && r.ptr == t.data() + t.size();
+        }
     };
     if (!num(f[0], disp) || !num(f[1], seq) || !num(f[2], lo) || !num(f[3], hi) || !num(f[4], bins)) return;
     // is_finite_value, not std::isfinite: -Ofast folds that to true
@@ -506,10 +522,10 @@ string WebSocketServer::load_html_content() {
 }
 
 void WebSocketServer::verify_ssl_certificates() {
-#ifdef _WIN32
-    // Windows has no install step (install.sh makes the pair with the
-    // openssl CLI on Linux) and no openssl.exe: a missing pair is made here,
-    // in-process - the same kind, self-signed for 10 years
+#if defined(_WIN32) || defined(__APPLE__)
+    // Windows / macOS have no install step (install.sh makes the pair with
+    // the openssl CLI on Linux; Windows has no openssl.exe): a missing pair
+    // is made here, in-process - the same kind, self-signed for 10 years
     {
         bool created = false;
         string err;
@@ -528,7 +544,7 @@ void WebSocketServer::verify_ssl_certificates() {
         // listen-failure path below for why).
         StatusDashboard::end();
         cerr << "ERROR: Cannot read SSL certificate files" << endl;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
         cerr << "kraken_doa makes " << SSL_CERT_FILE << " + " << SSL_KEY_FILE
              << " when they are missing - check that its folder is writable" << endl;
 #else

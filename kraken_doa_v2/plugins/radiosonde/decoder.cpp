@@ -262,7 +262,8 @@ private:
         bool cal = false;
         for (const auto& [k, v] : r.extras) {
             if (k == "Calibration") cal = true;
-            auto it = std::find_if(m.extras.begin(), m.extras.end(), [&](const auto& e) { return e.first == k; });
+            // k by name, not captured: clang < 16 can't capture a structured binding
+            auto it = std::find_if(m.extras.begin(), m.extras.end(), [&key = k](const auto& e) { return e.first == key; });
             if (it != m.extras.end()) it->second = v;
             else m.extras.emplace_back(k, v);
         }

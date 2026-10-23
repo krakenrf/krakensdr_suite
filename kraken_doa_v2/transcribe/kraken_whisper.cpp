@@ -404,7 +404,12 @@ int serve(Opts o, const std::string& model) {
     ready += std::string("\0multilingual=", 14) + (g_multilingual ? "1" : "0");
     ready += std::string("\0vad=", 5) + (g_vad ? "1" : "0");
     ready += std::string("\0version=", 9) + whisper_version();
+    // the system line the sidebar box shows: which processor whisper runs on first
+#ifdef KRAKEN_WHISPER_GPU
+    ready += std::string("\0system=", 8) + "GPU on | " + whisper_print_system_info();
+#else
     ready += std::string("\0system=", 8) + whisper_print_system_info();
+#endif
     send(wire::READY, ready);
     std::vector<char> buf;
     std::vector<float> pcm;
@@ -541,7 +546,15 @@ int main(int argc, char** argv) {
     whisper_log_set(quiet_log, nullptr);
 
     whisper_context_params cp = whisper_context_default_params();
+    // the GPU only when the build asked for it (setup.sh WHISPER_GPU -> CMake
+    // KRAKEN_WHISPER_GPU: Metal on Apple Silicon by default); CPU otherwise.
+    // nice 10 above doesn't reach the GPU - but there whisper leaves the CPU
+    // cores to the receiver's DSP
+#ifdef KRAKEN_WHISPER_GPU
+    cp.use_gpu = true;
+#else
     cp.use_gpu = false;
+#endif
     g_ctx = whisper_init_from_file_with_params(model.c_str(), cp);
     if (!g_ctx) {
         const std::string e = "cannot load the model " + model;

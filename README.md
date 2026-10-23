@@ -125,6 +125,22 @@ run.bat                                # starts both apps (run.bat stop stops th
 Each tuner needs the WinUSB driver once (Zadig). See [WINDOWS.md](WINDOWS.md)
 for the driver step, options and troubleshooting.
 
+macOS install (Intel, tested on macOS 12 with Apple clang 14; needs the
+Xcode command line tools and [Homebrew](https://brew.sh)):
+
+```
+git clone https://github.com/krakenrf/krakensdr_suite
+cd krakensdr_suite
+./install.sh                           # Homebrew packages, the librtlsdr fork, both apps
+./run.sh                               # both apps in a tmux split, as on the Pi
+```
+
+No driver step (libusb reaches the dongles directly). While the receiver
+runs, the Mac doesn't idle-sleep (the display still may). Voice to Text
+(`make whisper`, or `WHISPER=1 ./install.sh`), the AI assistant (`python3 ai/kraken_ai.py setup`; macOS's
+own sandbox, nothing to install) and the Debug Playback test transmissions
+(`python3 -m pip install --user numpy scipy`) work as below.
+
 To Run:
 
 Simply use the command:
@@ -237,6 +253,11 @@ whisper.cpp at a tested version) and downloads the default model (base.en,
 restart is needed: tick "🗣 Transcribe" on a VFO. `./install.sh` does it too
 when run as `WHISPER=1 ./install.sh`; after that, `make` keeps the helper up
 to date.
+
+On a Mac with Apple Silicon the helper runs on the GPU (Metal), which
+leaves the CPU to the receiver; elsewhere on the CPU. `make whisper
+WHISPER_GPU=off` (or `on`, macOS only) forces it either way - the choice is
+kept for later builds.
 
 Other models: pick one in the sidebar box's download list and press "⬇ Get",
 or on the receiver `transcribe/setup.sh --models-only small.en`
@@ -482,13 +503,13 @@ What it can and can't do:
   Makefile) and `ai/knowledge/`. None of your own Claude Code settings, MCP
   servers, CLAUDE.md files or memory are loaded into it.
 - Its shell commands run in Claude Code's sandbox (`bubblewrap` + `socat`,
-  installed by `install.sh`): the same write limits enforced by the
+  installed by `install.sh`; on a Mac the system's own sandbox): the same write limits enforced by the
   operating system, the credentials in your home folder unreadable, and no
   network. Without the sandbox it has no shell: it still answers, looks
   things up and controls the receiver, but can't build plugins or run
   scripts (the panel says so).
-- A plugin it changed is run by the receiver in a sandbox too (`bwrap`:
-  read-only files, no network) - also the shipped plugins, which it may
+- A plugin it changed is run by the receiver in a sandbox too (`bwrap`; on
+  a Mac `sandbox-exec`: read-only files, no network) - also the shipped plugins, which it may
   improve. `python3 ai/kraken_ai.py sandboxed` lists them; after checking
   what it changed, `python3 ai/kraken_ai.py trust <id>` runs one normally
   again.
@@ -536,7 +557,7 @@ The suite is made of separate programs under different licences (details:
 - **Heimdall receiver server** (`heimdall_v2/`) and the **GNU Radio module**
   (`gr-krakensdr_v2/`): [GNU General Public License v3 or later](heimdall_v2/LICENSE).
 - The **plugin SDK** (`kraken_doa_v2/plugins/sdk/`, `plugins/SDK.md`, the
-  Windows helpers in `win/`) and the build, install and run scripts: MIT.
+  Windows / macOS helpers in `win/` and `mac/`) and the build, install and run scripts: MIT.
 - A **decoder plugin with a `LICENSE` file of its own** is a separate program
   under that licence: the **ISM device decoder** (`kraken_doa_v2/plugins/ism/`,
   following rtl_433's decoders) is under the

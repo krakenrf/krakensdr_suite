@@ -395,7 +395,7 @@ run_headless() {
     # NOTE: hpid/kpid are intentionally NOT 'local' - the EXIT-trap cleanup runs
     # after this function returns (e.g. when Heimdall dies) and must still see
     # them to kill the client. As locals they would be out of scope by then.
-    hpid=""; kpid=""; stopping=0
+    hpid=""; kpid=""; tpid=""; stopping=0
     mkdir -p "$LOG_DIR"
     cleanup() {
         stopping=1  # a requested stop: heimdall ending now is not a crash
@@ -403,6 +403,8 @@ run_headless() {
         say "Shutting down..."
         [[ -n "$kpid" ]] && kill "$kpid" 2>/dev/null || true
         [[ -n "$hpid" ]] && kill "$hpid" 2>/dev/null || true
+        # the log follower (macOS: it doesn't end with heimdall by itself)
+        [[ -n "$tpid" ]] && kill "$tpid" 2>/dev/null || true
         # Grace period, then hard-kill any straggler so a child that ignores
         # SIGTERM can't hang shutdown (SIGKILL can't be trapped -> wait returns).
         for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -462,8 +464,19 @@ run_headless() {
     say "${GRN}Stack is up.${RST} Logs are errors-only (HEIMDALL_VERBOSE_LOG=1 /"
     say "KRAKEN_DOA_VERBOSE_LOG=1 for full output). Press ${BOLD}Ctrl+C${RST} to stop everything."
     echo "-------------------------------------------------------------------------------"
-    tail -n 0 -F --pid="$hpid" "$hlog" "$klog" &
-    wait "$!" 2>/dev/null || true
+    if [[ "$(uname -s)" == Darwin ]]; then
+        # BSD tail has no --pid: follow the logs until heimdall ends
+        # (disowned: its end is no "Terminated" job notice)
+        tail -n 0 -F "$hlog" "$klog" &
+        tpid=$!
+        disown "$tpid" 2>/dev/null
+        while kill -0 "$hpid" 2>/dev/null; do sleep 1; done
+        kill "$tpid" 2>/dev/null
+        tpid=""
+    else
+        tail -n 0 -F --pid="$hpid" "$hlog" "$klog" &
+        wait "$!" 2>/dev/null || true
+    fi
     # Heimdall ended. Pass its status on (it exits 0 after a clean signal
     # shutdown, 1 on a startup failure, 128+N when killed by signal N): this
     # used to return 0 even after a crash, so a container restart policy or

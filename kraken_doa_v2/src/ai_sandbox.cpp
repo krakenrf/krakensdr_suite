@@ -33,7 +33,49 @@ bool g_loaded = false;
 std::atomic<bool> g_turn{false};
 std::atomic<int64_t> g_turn_start_ms{0};
 
-#ifndef _WIN32
+#ifdef __APPLE__
+// macOS: the kernel's sandbox (Seatbelt) through sandbox-exec, with a profile
+// made per call (what Claude Code's own sandbox uses there). Deprecated as a
+// command but present on every macOS release so far
+constexpr const char* SANDBOX_EXEC = "/usr/bin/sandbox-exec";
+
+// a string literal of the profile language (SBPL): "..." with \ and \" escaped
+std::string sbpl_str(const std::string& v) {
+    std::string o = "\"";
+    for (char c : v) {
+        if (c == '"' || c == '\\') o += '\\';
+        o += c;
+    }
+    return o + "\"";
+}
+
+// bwrap's --tmpfs /tmp: a private temporary folder, one per kraken_doa run
+// (made on first use, mode 0700), handed to the program as TMPDIR - the shared
+// /tmp itself stays read-only
+std::string private_tmp() {
+    static const std::string d = [] {
+        char t[] = "/private/tmp/kraken_sandbox.XXXXXX";
+        return mkdtemp(t) ? std::string(t) : std::string();
+    }();
+    return d;
+}
+
+// everything readable, nothing writable but rw + the private TMPDIR + the
+// usual devices, no network (Unix sockets included), no signals to other
+// processes (bwrap: --unshare-net / --unshare-ipc; its own session there)
+std::string sbpl_profile(const std::vector<std::string>& rw) {
+    std::string p = "(version 1)\n(allow default)\n(deny network*)\n(deny file-write*)\n"
+                    "(allow file-write* (literal \"/dev/null\") (literal \"/dev/zero\") (literal \"/dev/tty\")"
+                    " (literal \"/dev/dtracehelper\") (regex #\"^/dev/fd/\"))\n";
+    std::vector<std::string> dirs = rw;
+    if (!private_tmp().empty()) dirs.push_back(private_tmp());
+    for (const auto& d : dirs)
+        if (!d.empty()) p += "(allow file-write* (subpath " + sbpl_str(d) + "))\n";
+    p += "(deny signal)\n(allow signal (target self))\n(allow signal (target children))\n"
+         "(deny ipc-posix-shm-write-create)\n";
+    return p;
+}
+#elif !defined(_WIN32)
 std::string bwrap_path() {
     static const std::string p = [] {
         for (const char* c : {"/usr/bin/bwrap", "/bin/bwrap", "/usr/local/bin/bwrap"})
@@ -93,6 +135,9 @@ void save_locked() {
 #ifdef _WIN32
     s += "],\"note\":\"plugins the AI assistant changed - kraken_doa doesn't run them (Windows has no sandbox). "
          "py -3 ai/kraken_ai.py trust <id> takes one off\"}\n";
+#elif defined(__APPLE__)
+    s += "],\"note\":\"plugins the AI assistant changed - kraken_doa runs them sandboxed (sandbox-exec). "
+         "python3 ai/kraken_ai.py trust <id> takes one off\"}\n";
 #else
     s += "],\"note\":\"plugins the AI assistant changed - kraken_doa runs them sandboxed (bwrap). "
          "python3 ai/kraken_ai.py trust <id> takes one off\"}\n";
@@ -179,6 +224,16 @@ std::string real(const std::string& p) {
 bool available() {
 #ifdef _WIN32
     return false;   // no bwrap on Windows (NO_SANDBOX_FIX)
+#elif defined(__APPLE__)
+    static const bool ok = [] {
+        if (access(SANDBOX_EXEC, X_OK) != 0) return false;
+        std::string out;
+        kproc::ExitStatus st;
+        dig::run_and_capture({SANDBOX_EXEC, "-p", sbpl_profile({}), "/usr/bin/true"}, 5000, &out, &st);
+        if (!st.ok()) std::cerr << "AI assistant: sandbox-exec does not work here - plugins it changed won't run" << std::endl;
+        return st.ok();
+    }();
+    return ok;
 #else
     static const bool ok = [] {
         const std::string b = bwrap_path();
@@ -296,6 +351,16 @@ std::vector<std::string> wrap(const std::vector<std::string>& argv, const std::v
     (void)argv;
     (void)rw;
     return {};   // nothing to wrap it in: the callers refuse (NO_SANDBOX_FIX)
+#elif defined(__APPLE__)
+    if (!available() || argv.empty()) return {};
+    std::vector<std::string> dirs;
+    for (const auto& d : rw) {
+        const std::string r = real(d);
+        if (!r.empty()) dirs.push_back(r);
+    }
+    std::vector<std::string> w = {SANDBOX_EXEC, "-p", sbpl_profile(dirs), "/usr/bin/env", "TMPDIR=" + private_tmp() + "/"};
+    w.insert(w.end(), argv.begin(), argv.end());
+    return w;
 #else
     if (!available() || argv.empty()) return {};
     std::vector<std::string> w = {bwrap_path(), "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",

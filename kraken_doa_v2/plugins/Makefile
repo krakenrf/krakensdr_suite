@@ -18,7 +18,8 @@ CC ?= gcc
 # every mixer / dechirp / filter loop on complex samples from vectorizing
 # (division keeps its range scaling). NOT -ffast-math: its finite-math part
 # folds std::isfinite to true, and NaN marks unknown fields (kp::MapPoint)
-CXXFLAGS = -std=c++20 -O3 -fno-math-errno -fcx-fortran-rules -Wall -Wextra -Wno-missing-field-initializers -pthread -Isdk -Ilib -I../external/pffft -isystem $(LIQUID_INC)
+CX_RULES = -fcx-fortran-rules
+CXXFLAGS = -std=c++20 -O3 -fno-math-errno $(CX_RULES) -Wall -Wextra -Wno-missing-field-initializers -pthread -Isdk -Ilib -I../external/pffft -isystem $(LIQUID_INC)
 # + $(LIQUID_A): liquid-dsp built from source, static, without FFTW / libfec
 # (../liquid.mk; built here too when kraken_doa's make hasn't yet)
 LIBS = -lm -ldl
@@ -49,13 +50,38 @@ PFFFT_CFLAGS += $(WIN_MARCH) $(WIN_ASFLAGS) -DPFFFT_STATIC_DEFINE
 LIBS = -static -lm -ldl -lws2_32 -lwinmm -lbcrypt -luser32 -ladvapi32
 endif
 
+# macOS (Apple clang, see ../Makefile's MACOS): no -fcx-fortran-rules (GCC
+# only), the shims of ../mac/posix_compat.h, and the licence check's path
+# normalising without GNU realpath / xargs -r
+MACOS := $(if $(filter Darwin,$(shell uname -s)),1,)
+NORMALIZE_PATHS = xargs -r realpath -m --relative-to=.
+ifeq ($(MACOS),1)
+CX_RULES =
+CXXFLAGS += -include ../mac/posix_compat.h
+NORMALIZE_PATHS = python3 -c 'import os, sys; [print(os.path.relpath(os.path.realpath(l.strip()))) for l in sys.stdin if l.strip()]'
+endif
+
 ARCH := $(shell uname -m)
+# macOS on Apple Silicon says arm64 (Linux: aarch64) - the same 64-bit ARM
+# with NEON. `override`: also when ARCH=arm64 is given on the command line
+ifeq ($(ARCH),arm64)
+override ARCH := aarch64
+endif
+# the aarch64 CPU flag: this CPU (-mcpu=native) - except on macOS, where
+# older Apple clang rejects "native" on arm64 and its default target is
+# already the M1 (NEON, dot product, fp16); `make MAC_CPU=-mcpu=apple-m2`
+# for a newer chip's extras
+MAC_CPU ?=
+AARCH64_CPU = -mcpu=native
+ifeq ($(MACOS),1)
+AARCH64_CPU = $(MAC_CPU)
+endif
 ifeq ($(WINDOWS),1)
 else ifeq ($(ARCH),aarch64)
     # -mcpu=native: this CPU's instructions AND its tuning (-march=native alone
     # tunes for a generic ARMv8 core, not the Pi 5's Cortex-A76)
-    CXXFLAGS += -mcpu=native
-    PFFFT_CFLAGS += -mcpu=native -DPFFFT_ENABLE_NEON
+    CXXFLAGS += $(AARCH64_CPU)
+    PFFFT_CFLAGS += $(AARCH64_CPU) -DPFFFT_ENABLE_NEON
 else ifneq ($(filter armv7l x86_64,$(ARCH)),)
     CXXFLAGS += -march=native
     PFFFT_CFLAGS += -march=native
@@ -185,10 +211,10 @@ own_licence = $(wildcard $(1)/LICENSE)
 plugin_cxxflags = $(if $(call own_licence,$(1)),$(filter-out -Ilib -I../include,$(CXXFLAGS)),$(CXXFLAGS))
 plugin_lib = $(if $(call own_licence,$(1)),$(PFFFT_OBJS),$(LIB_A))
 # $(1) = the plugin, $(2) = its sources: every header they include (-MM, the
-# system ones left out), normalised, must lie in the plugin, sdk/, pffft or ../win/
+# system ones left out), normalised, must lie in the plugin, sdk/, pffft, ../win/ or ../mac/
 licence_check = $(if $(call own_licence,$(1)),@bad=$$($(CXX) $(call plugin_cxxflags,$(1)) -I$(1) -MM $(2) \
-    | tr ' \\' '\n\n' | grep -v -e ':$$' -e '^$$' | xargs -r realpath -m --relative-to=. \
-    | grep -v -E '^($(1)|sdk|\.\./external/pffft|\.\./win)/[^/]'); \
+    | tr ' \\' '\n\n' | grep -v -e ':$$' -e '^$$' | $(NORMALIZE_PATHS) \
+    | grep -v -E '^($(1)|sdk|\.\./external/pffft|\.\./win|\.\./mac)/[^/]'); \
     if [ -n "$$bad" ]; then echo "plugin $(1) has its own LICENSE - it may include only its own files + the plugin SDK + pffft; not:" $$bad; exit 1; fi)
 
 # Linked to a temporary name and renamed: a running copy (kraken_doa runs

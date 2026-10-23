@@ -63,6 +63,7 @@ import time
 
 ID_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,47}$')
 WINDOWS = os.name == 'nt'
+MACOS = sys.platform == 'darwin'
 
 
 def catalogues(plugins):
@@ -115,8 +116,11 @@ def run(argv, work, cache, plugins, log):
         # Windows: UTF-8 mode, as kraken_doa runs this script (open() and the
         # pipes default to the ANSI code page there; -E ignores PYTHONUTF8),
         # and -E instead of -I: -I also hides the user site-packages, where
-        # the Microsoft Store Python's pip installs numpy + scipy
-        argv = ([sys.executable, '-X', 'utf8', '-E'] if WINDOWS else [sys.executable, '-I']) + argv
+        # the Microsoft Store Python's pip installs numpy + scipy (macOS:
+        # likewise - Apple's python3 has no writable site-packages, pip
+        # installs with --user)
+        argv = ([sys.executable, '-X', 'utf8', '-E'] if WINDOWS else
+                [sys.executable, '-E'] if MACOS else [sys.executable, '-I']) + argv
     elif exe.endswith('.cpp'):
         name = os.path.splitext(os.path.basename(exe))[0]
         bindir = os.path.join(cache, '.bin')
@@ -157,6 +161,9 @@ def run(argv, work, cache, plugins, log):
                 cmd.insert(cmd.index(exe) + 1, os.path.join(win, 'win_init.cpp'))
                 k = cmd.index('-lm') + 1
                 cmd[k:k] = ['-static', '-lws2_32', '-lwinmm']
+            elif MACOS:
+                # the plugins' macOS shims (plugins/Makefile: -include ../mac/posix_compat.h)
+                cmd[1:1] = ['-include', os.path.join(plugins, '..', 'mac', 'posix_compat.h')]
             r = subprocess.run(cmd, cwd=work, stdout=log, stderr=subprocess.STDOUT)
             if r.returncode != 0:
                 fail('compiling %s failed (see %s)' % (os.path.basename(exe), log.name))

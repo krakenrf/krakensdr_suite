@@ -34,10 +34,10 @@ Downconverter downconverter;
 // resolution (upstream's UI truncated to whole MHz before scaling).
 namespace {
 
-constexpr uint16_t MORFEUS_VID = 0x10C4;   // Silicon Labs
-constexpr uint16_t MORFEUS_PID = 0xEAC9;   // USBXpress (moRFeus)
+[[maybe_unused]] constexpr uint16_t MORFEUS_VID = 0x10C4;   // Silicon Labs
+[[maybe_unused]] constexpr uint16_t MORFEUS_PID = 0xEAC9;   // USBXpress (moRFeus)
 
-constexpr uint8_t MRF_SET  = 119;  // 'w'
+[[maybe_unused]] constexpr uint8_t MRF_SET  = 119;  // 'w'
 constexpr uint8_t FUNC_FREQUENCY = 129;    // value = Hz
 constexpr uint8_t FUNC_CURRENT   = 131;    // LO output drive current, 0..7
 // Stock-moRFeus function 130 (mixer/generator mode) is deliberately NOT used:

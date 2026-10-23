@@ -16,6 +16,11 @@
 // read-only filesystem, no network, a private /tmp. `python3 ai/kraken_ai.py
 // trust <id>` (on the Pi) takes one off the list.
 //
+// macOS: sandbox-exec (the kernel's Seatbelt sandbox) with a profile of the
+// same rules - read-only filesystem but the folders given, no network, a
+// private TMPDIR (macOS can't give a private /tmp: the shared one is
+// read-only there), no signals to other processes.
+//
 // Windows has no bwrap (and no other sandbox here): available() is false, so
 // a plugin on the list doesn't run at all until the user trusts it (`py -3
 // ai/kraken_ai.py trust <id>` on the PC); the list is kept the same way, by
@@ -30,7 +35,8 @@
 
 namespace aisandbox {
 
-// bwrap is installed and works here (checked once); always false on Windows
+// bwrap (macOS: sandbox-exec) is installed and works here (checked once);
+// always false on Windows
 bool available();
 
 // How to get going when something must run sandboxed and can't be - the end
@@ -38,6 +44,10 @@ bool available();
 #ifdef _WIN32
 inline constexpr const char* NO_SANDBOX_FIX =
     "Windows has none: check what the assistant changed, then run in kraken_doa_v2: py -3 ai/kraken_ai.py trust <id>";
+#elif defined(__APPLE__)
+inline constexpr const char* NO_SANDBOX_FIX =
+    "/usr/bin/sandbox-exec is missing or refused to run - check what the assistant changed, then run in "
+    "kraken_doa_v2: python3 ai/kraken_ai.py trust <id>";
 #else
 inline constexpr const char* NO_SANDBOX_FIX = "install bubblewrap (bwrap)";
 #endif
@@ -57,8 +67,8 @@ void turn_finished();
 // start is in ai/state/turn) is finished now
 void recover();
 
-// argv wrapped in bwrap (rw = folders it may write besides a private /tmp);
-// empty when bwrap isn't available (always on Windows)
+// argv wrapped in bwrap / sandbox-exec (rw = folders it may write besides a
+// private /tmp); empty when there is no sandbox (always on Windows)
 std::vector<std::string> wrap(const std::vector<std::string>& argv, const std::vector<std::string>& rw = {});
 
 std::string list_json();   // ["id", ...]

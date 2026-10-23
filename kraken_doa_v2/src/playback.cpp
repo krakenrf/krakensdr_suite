@@ -867,8 +867,9 @@ std::string start_gen(const std::string& id) {
     kproc::SpawnOptions o;
     // python3 -I tool ... (Windows: the interpreter kproc found, in UTF-8 mode,
     // with -E instead of -I: -I also hides the user site-packages, where the
-    // Microsoft Store Python's pip installs numpy + scipy)
-#ifdef _WIN32
+    // Microsoft Store Python's pip installs numpy + scipy; macOS the same -
+    // Apple's python3 has no writable site-packages, pip installs with --user)
+#if defined(_WIN32) || defined(__APPLE__)
     const char* const isolate = "-E";
 #else
     const char* const isolate = "-I";
