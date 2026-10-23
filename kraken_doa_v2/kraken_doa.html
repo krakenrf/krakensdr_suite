@@ -4008,69 +4008,127 @@ class AudioEngine {
     }
   }
   async setupWorklet() {
+    // The jitter buffer. It used to keep every burst it was handed: packets
+    // that came in a bunch (a busy page decoding late, the network, the
+    // receiver catching up after its CPU was busy) stayed queued for good,
+    // up to 10 s, and the audio lagged the spectrum until a reload. Now the
+    // least it held over each 3 s window (LAT_WIN) is time it never needed:
+    // above floor + LAT_SLACK it is dropped down to the floor, crossfaded
+    // over one 128-sample quantum; more than 2 s ahead is dropped at once.
+    // The floor adapts to the feed: an underrun caused by a STALL in the
+    // packets' arrival (a gap > 120 ms - not a sound card a little faster
+    // than the receiver's clock, nor a stream stopped for seconds) raises it
+    // 50 ms, a second stall within a minute straight to that gap (max 1 s);
+    // each calm minute gives 25 ms back (to 150 ms). A Float32Array ring,
+    // not an Array: splice(0,128) moved the whole queue every quantum.
     const code=`
+      const S=x=>Math.round(sampleRate*x);
+      const BASE=S(0.15),FLOOR_MAX=S(1),FLOOR_UP=S(0.05),FLOOR_DOWN=S(0.025);
+      const START_EXTRA=S(0.05),LAT_SLACK=S(0.1),FAR=S(2),LAT_WIN=3;
+      const STALL=0.12,STOPPED=5,AGAIN=60;
       class AudioProcessor extends AudioWorkletProcessor {
         constructor(){
           super();
-          this.q=[];
+          this.cap=1<<18;                       // 5.5 s
+          this.buf=new Float32Array(this.cap);
+          this.rp=0;this.wp=0;this.n=0;
+          this.xa=null;
+          this.floor=BASE;
           this.buffering=true;
-          this.bufferTarget=sampleRate*0.2; // 200ms initial buffer
-          this.minBuffer=sampleRate*0.05;    // 50ms minimum buffer (never drain below this)
+          this.fadeIn=false;
+          this.dryAt=-1;                        // currentTime it ran dry
+          this.lastArr=-1;                      // currentTime of the last packet
+          this.gapMax=0;                        // longest arrival gap since dryAt
+          this.lastStall=-1;                    // currentTime of the last stall
+          this.calmSince=currentTime;           // last underrun / floor step
+          this.winMin=Infinity;this.winN=0;
+          this.trimNow=false;
           this.underrunCount=0;
           this.port.onmessage=e=>this.handleMsg(e);
         }
+        push(s){
+          let off=0,len=s.length;
+          if(len>this.cap){off=len-this.cap;len=this.cap;}
+          const over=this.n+len-this.cap;       // full: the oldest go
+          if(over>0)this.drop(over);
+          const w=this.wp,first=Math.min(len,this.cap-w);
+          this.buf.set(s.subarray(off,off+first),w);
+          if(first<len)this.buf.set(s.subarray(off+first,off+len),0);
+          this.wp=(w+len)%this.cap;this.n+=len;
+        }
+        take(dst,k){                            // k <= n, k <= dst.length
+          const r=this.rp,first=Math.min(k,this.cap-r);
+          dst.set(this.buf.subarray(r,r+first));
+          if(first<k)dst.set(this.buf.subarray(0,k-first),first);
+          this.rp=(r+k)%this.cap;this.n-=k;
+        }
+        drop(k){this.rp=(this.rp+k)%this.cap;this.n-=k;}
+        winReset(){this.winMin=Infinity;this.winN=0;}
         handleMsg(e){
           const{type,data}=e.data;
           if(type==='audioData'){
-            // Plain loop: push(...arr) throws on very large decoded frames
-            // (argument-count limit)
-            for(let i=0;i<data.samples.length;i++)this.q.push(data.samples[i]);
-
-            // Start playback once we have enough buffered
-            if(this.buffering && this.q.length >= this.bufferTarget) {
-              this.buffering=false;
+            const now=currentTime;
+            if(this.dryAt>=0 && this.lastArr>=0)this.gapMax=Math.max(this.gapMax,now-this.lastArr);
+            this.lastArr=now;
+            this.push(data.samples);
+            if(this.buffering && this.n>=this.floor+START_EXTRA){
+              this.buffering=false;this.fadeIn=true;
+              const g=this.gapMax;
+              if(this.dryAt>=0 && g>STALL && g<STOPPED && this.floor<FLOOR_MAX){
+                const again=this.lastStall>=0 && now-this.lastStall<AGAIN;
+                this.floor=Math.min(FLOOR_MAX,Math.max(this.floor+FLOOR_UP,again?S(g):0));
+                this.lastStall=now;
+                console.warn('AudioWorklet: the feed stalled '+Math.round(g*1000)+' ms - keeping '+Math.round(this.floor*1000/sampleRate)+' ms in hand from now on');
+              }
+              this.dryAt=-1;this.gapMax=0;this.calmSince=now;this.winReset();
             }
-
-            // Limit max queue size
-            if(this.q.length>sampleRate*10) {
-              this.q.splice(0,this.q.length-sampleRate*2);
-            }
+            if(!this.buffering && this.n>this.floor+FAR)this.trimNow=true;
           }
           else if(type==='reset'){
-            // Reset audio worklet state
-            this.q=[];
-            this.buffering=true;
-            this.underrunCount=0;
+            this.rp=this.wp;this.n=0;
+            this.buffering=true;this.dryAt=-1;this.gapMax=0;this.trimNow=false;
+            this.underrunCount=0;this.winReset();
           }
         }
         process(i,o){
           const out=o[0];if(!out||!out[0])return true;
-          const ch=out[0];
-
-          // During initial buffering, output silence
-          if(this.buffering) {
-            ch.fill(0);
+          const ch=out[0],q=ch.length;
+          if(this.buffering){ch.fill(0);return true;}
+          if(this.n<q){
+            // ran dry: what is left, faded out, then buffer again
+            const k=this.n;
+            this.take(ch,k);
+            for(let j=0;j<k;j++)ch[j]*=(k-j)/k;
+            ch.fill(0,k);
+            this.buffering=true;this.dryAt=currentTime;
+            if(this.underrunCount++%10===0)
+              console.warn('AudioWorklet UNDERRUN #'+this.underrunCount+', buffering again...');
             return true;
           }
-
-          // Check for underrun (queue too small)
-          if(this.q.length < this.minBuffer) {
-            this.underrunCount++;
-            if(this.underrunCount % 10 === 1) {
-              console.warn('AudioWorklet UNDERRUN! Queue=' + this.q.length + ' (need ' + this.minBuffer + '), buffering again...');
+          if(this.n<this.winMin)this.winMin=this.n;
+          let cut=0;
+          if(this.trimNow){
+            cut=this.n-this.floor;this.trimNow=false;this.winReset();
+          } else if(++this.winN*q>=LAT_WIN*sampleRate){
+            if(this.winMin>this.floor+LAT_SLACK)cut=this.winMin-this.floor;
+            this.winReset();
+            if(this.floor>BASE && currentTime-this.calmSince>60){
+              this.floor=Math.max(BASE,this.floor-FLOOR_DOWN);this.calmSince=currentTime;
             }
-            // Re-enable buffering to avoid glitches
-            this.buffering=true;
-            ch.fill(0);
-            return true;
           }
-
-          // Normal playback: drain queue in one bulk splice. Per-sample
-          // shift() is O(queue length) PER SAMPLE on the realtime audio
-          // thread - millions of element moves per 128-sample quantum.
-          const chunk=this.q.splice(0,ch.length);
-          for(let i=0;i<chunk.length;i++)ch[i]=chunk[i];
-          if(chunk.length<ch.length)ch.fill(0,chunk.length);
+          if(cut>=q){
+            // n - cut >= floor > q: from the first quantum of what goes
+            // into what follows it
+            if(!this.xa||this.xa.length!==q)this.xa=new Float32Array(q);
+            this.take(this.xa,q);
+            this.drop(cut-q);
+            this.take(ch,q);
+            for(let j=0;j<q;j++){const t=(j+0.5)/q;ch[j]=this.xa[j]*(1-t)+ch[j]*t;}
+            console.log('AudioWorklet: '+Math.round(cut*1000/sampleRate)+' ms of late audio dropped');
+          } else {
+            this.take(ch,q);
+          }
+          if(this.fadeIn){for(let j=0;j<q;j++)ch[j]*=(j+0.5)/q;this.fadeIn=false;}
           return true;
         }
       }

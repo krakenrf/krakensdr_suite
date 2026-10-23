@@ -38,15 +38,32 @@ size_t AudioRingBuffer::write(const float* samples, size_t count) {
     return to_write;
 }
 
-void AudioRingBuffer::read(float* output, size_t count) {
-    if (count == 0) return;
-
-    total_reads.fetch_add(1);
-
-    // A pending clear() drops everything written so far (consumer side only)
+// A pending clear() drops everything written so far (consumer side only)
+void AudioRingBuffer::apply_flush() {
     if (flush_requested.exchange(false, std::memory_order_acq_rel)) {
         read_pos.store(write_pos.load(std::memory_order_acquire), std::memory_order_release);
     }
+}
+
+size_t AudioRingBuffer::readable() {
+    apply_flush();
+    return available();
+}
+
+size_t AudioRingBuffer::skip(size_t count) {
+    apply_flush();
+    const size_t current_read = read_pos.load(std::memory_order_acquire);
+    const size_t n = std::min(count, available());
+    read_pos.store((current_read + n) & size_mask, std::memory_order_release);
+    return n;
+}
+
+size_t AudioRingBuffer::read(float* output, size_t count) {
+    if (count == 0) return 0;
+
+    total_reads.fetch_add(1);
+
+    apply_flush();
 
     size_t current_write = write_pos.load(std::memory_order_acquire);
     size_t current_read = read_pos.load(std::memory_order_acquire);
@@ -78,4 +95,5 @@ void AudioRingBuffer::read(float* output, size_t count) {
     }
 
     read_pos.store((current_read + to_read) & size_mask, std::memory_order_release);
+    return to_read;
 }

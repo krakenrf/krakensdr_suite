@@ -898,17 +898,17 @@ void WebSocketServer::web_server_main() {
                     }
                 }, 50, 50);
                 
-                int audio_timer_ms = static_cast<int>(round(AUDIO_PACKET_TIME_MS));
-#ifdef _WIN32
-                // Windows: libuv (uSockets' event loop there) re-arms a
-                // repeating timer from the moment it ran, so late wake-ups add
-                // up (Linux's timerfd doesn't drift): one packet per 40 ms tick
-                // went out ~1 % slower than the mixer filled (17 % without 1 ms
-                // timers), its buffer overran and the audio dropped out. The
-                // timer ticks at half the period instead and each tick sends
-                // the packets due by the steady clock.
-                audio_timer_ms = std::max(1, audio_timer_ms / 2);
-#endif
+                // The timer ticks at half the packet period and each tick
+                // sends the packets due by the steady clock. One packet per
+                // 40 ms tick ran slower than the mixer filled on BOTH
+                // platforms: Windows' libuv re-arms a repeating timer from the
+                // moment it ran, so late wake-ups add up (~1 %, 17 % without
+                // 1 ms timers - the buffer overran, the audio dropped out);
+                // Linux's timerfd doesn't drift, but uSockets reads its
+                // expiration count and runs the callback ONCE - every tick a
+                // busy loop missed (high CPU) was a packet never sent, so the
+                // mixer's buffers fell that much further behind for good
+                const int audio_timer_ms = std::max(1, static_cast<int>(round(AUDIO_PACKET_TIME_MS)) / 2);
                 us_timer_set(audio_timer, [](struct us_timer_t* /*timer*/) {
                     if (!global_ssl_app) return;
 
@@ -916,16 +916,16 @@ void WebSocketServer::web_server_main() {
                         return;
                     }
 
-                    int packets = 1;
-#ifdef _WIN32
                     static int64_t due_us = 0;
                     const int64_t now_us = chrono::duration_cast<chrono::microseconds>(
                         chrono::steady_clock::now().time_since_epoch()).count();
                     const int64_t period_us = static_cast<int64_t>(AUDIO_PACKET_TIME_MS * 1000.0f);
-                    // first tick, back from a stall or from FM off: no burst of old packets
+                    // first tick, back from a stall or from FM off: no burst of
+                    // old packets (what the mixer holds meanwhile is trimmed -
+                    // get_audio_buffer's latency control)
                     if (due_us == 0 || now_us - due_us > 200000) due_us = now_us;
+                    int packets;
                     for (packets = 0; packets < 3 && due_us <= now_us; packets++) due_us += period_us;
-#endif
                     for (int i = 0; i < packets; i++) {
                         auto audio_message = MessageBuilders::build_audio_message();
                         if (!audio_message.empty()) {
