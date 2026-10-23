@@ -9,7 +9,7 @@
 // Types (each can be switched off): "event" (a decoder's log line), "message"
 // (a text message, e.g. a pager text: from + text), "position" (a map point:
 // id, label, kind, lat, lon, alt_m, kmh, hdg - at most one per object every
-// pos_interval_s), "raw" (raw frames: ADS-B Mode S hex, APRS TNC2, POCSAG
+// pos_interval_s), "raw" (raw frames: ADS-B Mode S hex, APRS TNC2, POCSAG / FLEX
 // codewords), "incident" (an address found in a message, incidents.cpp),
 // "voice" (a transcript of what was said - voice2text.cpp: text, src, dur,
 // conf, from / to (talker), doa / brg, clip; t = when the transmission began).

@@ -6,7 +6,7 @@ a plugin may have a licence of its own - see *Licensing a plugin*.
 
 Every decoder in the receiver's **Digital Decoder** (sidebar → 🔐 Digital
 Decoder → Mode) is a plugin - the protocols that ship with the suite (P25,
-DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS, ADS-B) as well as the ones you add.
+DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG / FLEX pagers, APRS, ADS-B) as well as the ones you add.
 Plugins are written by hand or by the **🤖 AI assistant** (the web UI's
 right-hand column), which has an LLM agent capture and analyse a signal, then
 write, build and test a plugin for it - in Claude Code's sandbox; the receiver
@@ -36,7 +36,7 @@ plugins/
 │                         radar_pri / radar_scan (PRI patterns, antenna scan / main
 │                         beam - radar, ssr1030)
 ├── p25/ dmr/ tetra/ dstar/ nxdn/ mpt1327/   the shipped protocol decoders
-├── pocsag/ aprs/         more shipped decoders (APRS was written by the AI lab)
+├── pagers/ aprs/         more shipped decoders (POCSAG + FLEX; APRS was written by the AI lab)
 ├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points; multichannel: every
 │                         antenna combined, per-message MRC / MVDR beams, its own pulse covariances
 ├── radiosonde/           weather balloon sondes (RS41, DFM, M10/M20, iMet-4/-54, LMS6, MRZ):
@@ -279,8 +279,9 @@ events, text messages and map points are logged without any code in the
 plugin. Raw frames are the one thing to add: while `host.raw_wanted()` is
 true, pass each frame that passed its checks to `host.raw(text)` - one line,
 printable, compact (hex for binary frames, e.g. ADS-B `"8D4840D6... -14.8"`
-= the Mode S message + level in dB; APRS the TNC2 packet; POCSAG "RIC n
-F<f> <baud>" + the message codewords). Check `raw_wanted()` first: building
+= the Mode S message + level in dB; APRS the TNC2 packet; pagers "POCSAG
+RIC n F<f> <baud>" + the message codewords, "FLEX <speed> <cycle.frame>
+<phase> capcode n V<type>" + the vector and message words). Check `raw_wanted()` first: building
 the text costs CPU and it is usually off. The offline test prints raw frames
 with `--raw`. Map points are logged with their `info` lines (as a JSON
 object), so put every detail worth keeping there ("Squawk: 7700"). Start
@@ -428,8 +429,8 @@ signal ends instead of passing 1.5 s of noise after every transmission.
 The shipped plugins: the lib protocols report through
 `RxContext::valid_at` (`dig::report_valid(ctx, mode, start, end)` with the
 receiver's own sample indexes; `Bridge::clock(rate)` + `restart_clock()`
-map them - `Bridge::talkers(rate)` includes it), pocsag reports each synced
-batch, aprs / v23_telemetry each frame from its length, radiosonde each
+map them - `Bridge::talkers(rate)` includes it), pagers reports each synced
+POCSAG batch and each FLEX block, aprs / v23_telemetry each frame from its length, radiosonde each
 frame from its FSK receiver (`FskRx::clock`). `decoder --file` counts
 them ("valid frames with their samples: N, covering X s"; each one with
 `--verbose`).
@@ -515,8 +516,8 @@ mixed from all of them. Every new decoder of such a signal does this.
   not a sender further back or a recipient: an APRS frame repeated by a
   digipeater is the digipeater's (the last path entry marked repeated - "*";
   an alias-only repeat names nobody: no talker), a repeater output carries
-  every radio at the repeater's bearing, a pager's RIC is the recipient
-  (POCSAG: no talker). A downlink's base station is its cell / site (TETRA
+  every radio at the repeater's bearing, a pager's RIC / capcode is the
+  recipient (POCSAG / FLEX: no talker). A downlink's base station is its cell / site (TETRA
   MCC-MNC + colour code, the MPT1327 SYS); a signal with no ID of its own
   (iMet-4 sondes) gets none - one talker would merge every such transmitter.
 - **Packets** (`t.packet = true`) for bursts: one call per frame that passed
@@ -582,7 +583,7 @@ at KNOWN bearings:
 Examples: `aprs/tools/aprs_gen.py`, `ais/tools/ais_gen.py`,
 `dstar/tools/dstar_gen.py`, `nxdn/tools/nxdn_gen.py`, `tetra/tools/tetra_gen.py`,
 `mpt1327/tools/mpt1327_gen.py`, `ils/tools/ils_gen.py`,
-`pocsag/tools/pocsag_gen.py`, `v23_telemetry/tools/v23_gen.py`,
+`pagers/tools/pocsag_gen.py`, `pagers/tools/flex_gen.py`, `v23_telemetry/tools/v23_gen.py`,
 `p25/tools/p25_gen.py`, `dmr/tools/dmr_gen.py`,
 `radiosonde/tools/sonde_gen.py`; a 2.4 MHz
 scene of several transmitters is too big for uca_scene.py's in-memory
@@ -669,7 +670,7 @@ least recently played go).
   ANT0), like everywhere in the scenes. `expect`: per transmitter its
   talker `tid` (exact) and bearing, or only a bearing (any talker within
   tolerance - radars, DTV paths); `tol` per row overrides `tol_deg`
-  (default 5). A decoder whose signal names no transmitter (pocsag,
+  (default 5). A decoder whose signal names no transmitter (pagers,
   v23_telemetry) checks `{"vfo": 0, "bearing": B}` - the VFO's own DoA
   (its MUSIC plot; put `DEC_SQUELCH_METHOD:0:DIGITAL` +
   `DEC_SQUELCH_ENABLE:0:1` in `commands`, so it comes from the decoded
@@ -793,12 +794,12 @@ resamples to your `sample_rate` exactly like the live path and feeds it in
 summary:
 
 ```
-=== POCSAG summary ===
+=== Pagers (POCSAG + FLEX) summary ===
 input: 6.16 s, decode time 0.05 s (0.8% of real time)
 VALID FRAMES: 5 (first at 1.400 s)
 events: 5
 facts:
-  Bit rate               2400 bit/s
+  POCSAG                 2400 bit/s, deviation 4.5 kHz
   ...
 ```
 
@@ -883,9 +884,12 @@ Morse idents (`lib/navaid.hpp`), talker packets for a DoA per beacon.
 `plugins/ils/`: ILS / VOR / marker beacons - AM tone depths, the VOR radial
 from two 30 Hz phases, block-wise FFT processing.
 
-`plugins/pocsag/decoder.cpp`: POCSAG pagers (2-FSK, 512/1200/2400 bit/s
-demodulated in parallel, BCH(31,21) correction with a parity check against
-miscorrection, numeric and alphanumeric messages). The protocol plugins (`p25/`,
+`plugins/pagers/`: pagers - `pocsag.hpp` POCSAG (2-FSK, 512/1200/2400
+bit/s demodulated in parallel, BCH(31,21) correction with a parity check
+against miscorrection, numeric and alphanumeric messages) and `flex.cpp`
+FLEX (1600 / 3200 / 6400 bit/s, 2- and 4-level FSK, interleaved blocks,
+fragmented messages; a symbol grid from the sync, timing followed per
+block) on one front end (`decoder.cpp`). The protocol plugins (`p25/`,
 `dmr/`, `nxdn/`, `dstar/`, `tetra/`, `mpt1327/`) show more advanced
 techniques: 4FSK sync correlation, soft-decision Viterbi, Reed-Solomon,
 interleaving, TDMA burst handling, vocoders; `aprs/` an AFSK modem with

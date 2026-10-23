@@ -28,7 +28,7 @@ std::string mode_string(Mode m, const std::string& plugin_id);
 bool parse_mode_string(const std::string& s, Mode* m, std::string* plugin_id);
 bool valid_plugin_id(const std::string& id);   // [a-z0-9_-]{1,32}, not "sdk"
 // A plugin's id now when it was renamed (saved settings name the old one:
-// "sfn" -> "dtv", "ctcss" -> "analog_id"), else the id itself
+// "sfn" -> "dtv", "ctcss" -> "analog_id", "pocsag" -> "pagers"), else the id itself
 std::string renamed_plugin(const std::string& id);
 
 // Options of one VFO's decoder (sidebar settings)

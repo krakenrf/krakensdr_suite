@@ -1901,7 +1901,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- Decoder Logging (decoder_log.cpp) - all modes -->
     <div class="sb-section" id="declog-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🗂 Decoder Logging<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Saves what the <b>digital decoders</b> report (every VFO with a decoder on) to files <b>on this device's disk</b>: one JSON Lines file per day (<code>decoders-YYYY-MM-DD.jsonl</code>). At midnight the day's file is closed and gzipped; days older than <b>Keep</b> are deleted (only these files - nothing else in the folder). To spare the <span class="os-lin">SD card</span><span class="os-win">disk</span> the records are collected in memory and written every few seconds; writing pauses when less than 100 MB is free. Raw frames (ADS-B, APRS, POCSAG) can be large - ADS-B near an airport is roughly 100-300 MB a day before gzip.</span></span></h3>
+        <h3>🗂 Decoder Logging<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Saves what the <b>digital decoders</b> report (every VFO with a decoder on) to files <b>on this device's disk</b>: one JSON Lines file per day (<code>decoders-YYYY-MM-DD.jsonl</code>). At midnight the day's file is closed and gzipped; days older than <b>Keep</b> are deleted (only these files - nothing else in the folder). To spare the <span class="os-lin">SD card</span><span class="os-win">disk</span> the records are collected in memory and written every few seconds; writing pauses when less than 100 MB is free. Raw frames (ADS-B, APRS, POCSAG / FLEX pagers) can be large - ADS-B near an airport is roughly 100-300 MB a day before gzip.</span></span></h3>
         <span class="sb-toggle">▼</span>
       </div>
       <div class="sb-content">
@@ -1913,10 +1913,10 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <div style="font-size:12px;color:#7cb3f0;font-weight:bold;margin:6px 0 2px">What to log</div>
         <div id="dl-types" style="font-size:12px;color:#c8d6e5;line-height:1.9">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Each decoder's event log lines (calls, talkgroups, new aircraft, ...)"><input type="checkbox" data-t="event" onchange="dlSetTypes()"> Events</label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Text messages, e.g. POCSAG alphanumeric pages (sender + text)"><input type="checkbox" data-t="message" onchange="dlSetTypes()"> Text messages</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Text messages, e.g. POCSAG / FLEX alphanumeric pages (sender + text)"><input type="checkbox" data-t="message" onchange="dlSetTypes()"> Text messages</label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Positions the decoders put on the map (aircraft, APRS stations, DMR / D-STAR GPS)"><input type="checkbox" data-t="position" onchange="dlSetTypes()"> Positions, each object every
             <input type="number" id="dl-pos-s" min="1" max="3600" value="10" style="width:52px" onclick="event.stopPropagation()" onchange="dlSetPosS()"> s</label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Raw frames: ADS-B Mode S messages (hex + level), APRS packets (TNC2), POCSAG codewords"><input type="checkbox" data-t="raw" onchange="dlSetTypes()"> Raw frames <span style="color:#8aa8c7">(large)</span></label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Raw frames: ADS-B Mode S messages (hex + level), APRS packets (TNC2), POCSAG / FLEX codewords"><input type="checkbox" data-t="raw" onchange="dlSetTypes()"> Raw frames <span style="color:#8aa8c7">(large)</span></label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Addresses found in pager messages (incident map)"><input type="checkbox" data-t="incident" onchange="dlSetTypes()"> Incidents</label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="What was said on the VFOs with 🗣 Transcribe ticked (Voice to Text): the text, talker, bearing"><input type="checkbox" data-t="voice" onchange="dlSetTypes()"> Voice transcripts</label>
         </div>
@@ -7761,7 +7761,7 @@ function updateDecimatorList(info) {
         </select>
       </div>
       <div class="dec-row" style="border-top:1px solid #444;padding-top:6px;margin-top:4px">
-        <label style="display:flex;align-items:center;gap:4px" title="Decode the digital signal in this VFO (P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS, ... - any decoder plugin). Several VFOs can decode at once; each gets a tab in the panel under the waterfall.">
+        <label style="display:flex;align-items:center;gap:4px" title="Decode the digital signal in this VFO (P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG / FLEX pagers, APRS, ... - any decoder plugin). Several VFOs can decode at once; each gets a tab in the panel under the waterfall.">
           <input type="checkbox" id="dec-dig-en-${dec.id}" onchange="digToggle(${dec.id}, this.checked)">
           <span>Digital decoder</span>
         </label>
@@ -10161,8 +10161,8 @@ function addTouchHandlers(el, down, move, up) {
   // searching. A tab shows every VFO running that mode: a settings row each,
   // their status + facts, the plugin's tables merged with VFO / MHz columns,
   // the incidents its messages produced, and one event log of all of them
-  // (events carry their plugin id, so a VFO switched from POCSAG to DMR keeps
-  // its POCSAG lines in the POCSAG tab). The backend pushes {"digital":[...]}
+  // (events carry their plugin id, so a VFO switched from Pagers to DMR keeps
+  // its pager lines in the Pagers tab). The backend pushes {"digital":[...]}
   // at 4 Hz for every VFO with a decoder on, carrying only the events logged
   // since its previous push; a VFO's whole log is asked for (DIGITAL_HISTORY)
   // when its decoder is first seen. Events are kept per VFO and de-duplicated
@@ -10213,13 +10213,13 @@ function addTouchHandlers(el, down, move, up) {
     return !!(digPlugin(digModePlugin(mode)) || {}).voice;
   }
 
-  // Does the decoder send text messages (kp::Info::messages - POCSAG)? Their
+  // Does the decoder send text messages (kp::Info::messages - pagers)? Their
   // street addresses become incidents (kraken_doa incidents.cpp)
   function digHasMessages(mode, st) {
     if (mode === 'AUTO') return !!(st && st.detected && (digPlugin(st.detected) || {}).messages);
     return !!(digPlugin(digModePlugin(mode)) || {}).messages;
   }
-  // The incident row of a messages plugin's tab (POCSAG): the search radius
+  // The incident row of a messages plugin's tab (Pagers): the search radius
   // around the station (GEO_RADIUS_KM, one for the receiver), the lookup
   // state, Clear
   let geoStatus = null;
