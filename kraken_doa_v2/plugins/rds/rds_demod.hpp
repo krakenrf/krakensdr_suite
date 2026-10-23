@@ -281,7 +281,11 @@ private:
             const float dev = std::fabs(re) - amp_;
             sig_ += 0.005f * (re * re - sig_);
             noi_ += 0.005f * (dev * dev + r.imag() * r.imag() - noi_);
-            // biphase: a bit is (first half - second half) / 2 at the right pairing
+            // biphase: a bit is (first half - second half) / 2 at the right
+            // pairing - chosen as redsea's BiphaseDecoder chooses it (the
+            // pairing with the larger sum of |differences| over 128
+            // half-symbols; subcarrier.cc, Oona Räisänen, MIT / ISC - the
+            // notice is in rds_tables.hpp), here with hysteresis
             const float d = 0.5f * (prev_re_ - re);
             epar_[k_ & 1] += std::fabs(d);
             if ((k_ & 127) == 127) {

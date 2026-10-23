@@ -131,26 +131,18 @@ def mdc_audio(bits, rate, baud, ph0=0.0):
 
 
 # --- FleetSync --------------------------------------------------------------
-def fs_check(w1, w2):
-    sr, par = 0, 0
-    for b in range(48):
-        cur = (w1 >> (31 - b)) & 1 if b < 32 else (w2 >> (63 - b)) & 1
-        par ^= cur
-        if cur ^ ((sr >> 15) & 1):
-            sr ^= 0x6815
-        sr = (sr << 1) & 0xFFFFFFFF
-    for b in range(48, 63):
-        par ^= (w2 >> (63 - b)) & 1
-    return ((sr ^ 0x0002) + par) & 0xFFFF
-
-
-def fs_block(d6):
-    w1 = (d6[0] << 24) | (d6[1] << 16) | (d6[2] << 8) | d6[3]
-    w2 = (d6[4] << 24) | (d6[5] << 16)
-    w2 |= fs_check(w1, w2) & 0xFFFE
-    if fs_check(w1, w2) != (w2 & 0xFFFF):
-        w2 |= 1
-    return w1, w2
+def fs_codeword(d6):
+    """6 data bytes -> the 64-bit block, an MPT 1327 codeword (as
+    plugins/mpt1327/tools/mpt1327_gen.py builds them): the 48 data bits, the
+    BCH(63,48) check bits (g = 0xE815) with the last one inverted, an even
+    parity bit"""
+    info = int.from_bytes(bytes(d6), 'big')
+    r = info << 15
+    for i in range(62, 14, -1):
+        if (r >> i) & 1:
+            r ^= 0xE815 << (i - 15)
+    cw = (info << 16) | (((r ^ 1) & 0x7FFF) << 1)
+    return cw | (bin(cw).count('1') & 1)
 
 
 def bch15_syndrome(w):
@@ -183,18 +175,19 @@ def fs_bits(data, fs2=False, preamble=48):
     bits = [1 - (i & 1) for i in range(preamble)]
     bits += [(0x23EB >> (15 - i)) & 1 for i in range(16)]
 
-    def word_bits(w1, w2):
-        return [(w1 >> (31 - i)) & 1 for i in range(32)] + [(w2 >> (31 - i)) & 1 for i in range(32)]
     for k in range(0, len(data), 6):
-        w1, w2 = fs_block(data[k:k + 6])
+        cw = fs_codeword(data[k:k + 6])
         if not fs2:
-            bits += word_bits(w1, w2)
+            bits += [(cw >> (63 - i)) & 1 for i in range(64)]
             continue
-        # FleetSync II: each 16 bits of the block = 4 nibbles = 4 BCH(15,7) words
-        for half in ((w1 >> 16) & 0xFFFF, w1 & 0xFFFF, (w2 >> 16) & 0xFFFF, w2 & 0xFFFF):
-            n = [(half >> s) & 0xF for s in (12, 8, 4, 0)]
-            c = [bch15_nibble(x) for x in n]
-            bits += word_bits((c[1] << 16) | c[0], (c[3] << 16) | c[2])
+        # FleetSync II: each 16-bit quarter of the block (bits 63..48 first) ->
+        # its 4 nibbles, each a BCH(15,7) codeword in a 16-bit field; the
+        # fields go on air in pairs, the second of each pair first
+        for q in range(4):
+            quarter = (cw >> (48 - 16 * q)) & 0xFFFF
+            code = [bch15_nibble((quarter >> (12 - 4 * n)) & 0xF) for n in range(4)]
+            for n in (1, 0, 3, 2):
+                bits += [(code[n] >> (15 - b)) & 1 for b in range(16)]
     return bits
 
 

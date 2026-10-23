@@ -25,11 +25,13 @@ built separately from them: `plugins/ism` and `plugins/flarm` (section 1a).
 | DSD - frame deinterleave tables | `plugins/lib/mbe_tables.hpp` | ISC, text F |
 | NTIA/ITS Irregular Terrain Model (ITM) 1.3, ported to JavaScript | `kraken_doa.html` ("📶 ITM" block) | not subject to copyright in the US; NTIA terms, text G |
 | ra-firmware (DF9DQ's "Ra" radiosonde receiver firmware): the RS41 and M10 / M20 sensor computations follow its metrology code | `plugins/radiosonde/rs41.cpp`, `plugins/radiosonde/modem.cpp` | BSD-3-Clause, text H |
+| redsea (Oona Räisänen's RDS decoder, github.com/windytan/redsea, commit 7555c9f): the RDS / RBDS lookup tables (character set, PTY names, countries, languages, ODA names, RT+ types, call signs) follow its tables.cc / rdsstring.cc, `rbds_callsign()` its getCallsignFromPI(); two design ideas credited in place (block-sync conditions, biphase pairing) | `plugins/rds/rds_tables.hpp` (+ credits in `rds_block.hpp`, `rds_demod.hpp`) | MIT (the project), ISC (those files' headers), text I |
 
 The decoder plugins are written from the published standards and protocol
 descriptions; some protocol facts (frame layouts, constants, calibration
 fits) were first published by other projects' reverse engineering and are
-used as facts, without their code. Each plugin's README lists its sources.
+used as facts, without their code - except where a row above names the
+project. Each plugin's README lists its sources.
 
 ## 1a. Parts of this folder under other licences
 
@@ -373,4 +375,47 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### I. redsea
+
+The project's licence (LICENSE, MIT):
+
+```
+Copyright (c) 2007-2016 Oona Räisänen OH2EIQ
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+The header of src/tables.cc and src/text/rdsstring.cc (ISC):
+
+```
+Copyright (c) Oona Räisänen
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```

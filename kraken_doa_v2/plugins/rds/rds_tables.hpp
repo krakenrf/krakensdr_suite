@@ -6,13 +6,38 @@
 // (RDS Forum ODA list), RadioText+ content types (RDS Forum R06/040_1) and
 // the North American call-sign rules (NRSC-4-B Annex D).
 //
-// The table data follow the compilation in redsea by Oona Raisanen
+// The table data follow the compilation in redsea by Oona Räisänen
 // (https://github.com/windytan/redsea, src/tables.cc and
-// src/text/rdsstring.cc, ISC licence):
-//   Copyright (c) Oona Raisanen
+// src/text/rdsstring.cc), and rbds_callsign() follows redsea's
+// getCallsignFromPI() (tables.cc) step by step. redsea's licence (its
+// LICENSE file, MIT):
+//   Copyright (c) 2007-2016 Oona Räisänen OH2EIQ
+//
+//   Permission is hereby granted, free of charge, to any person obtaining a
+//   copy of this software and associated documentation files (the
+//   "Software"), to deal in the Software without restriction, including
+//   without limitation the rights to use, copy, modify, merge, publish,
+//   distribute, sublicense, and/or sell copies of the Software, and to permit
+//   persons to whom the Software is furnished to do so, subject to the
+//   following conditions:
+//
+//   The above copyright notice and this permission notice shall be included
+//   in all copies or substantial portions of the Software.
+//
+//   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+//   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+//   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+//   NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+//   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+//   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+//   USE OR OTHER DEALINGS IN THE SOFTWARE.
+// and the header of those two files (ISC):
+//   Copyright (c) Oona Räisänen
+//
 //   Permission to use, copy, modify, and/or distribute this software for any
 //   purpose with or without fee is hereby granted, provided that the above
 //   copyright notice and this permission notice appear in all copies.
+//
 //   THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
 //   WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
 //   MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
@@ -20,7 +45,7 @@
 //   WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 //   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 //   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-// The code below is this plugin's own.
+// The rest of this file is the plugin's own code.
 
 #include <cstdint>
 #include <string>
@@ -224,7 +249,8 @@ inline const char* rtplus_type(int t) {
 
 // Call sign of a North American (RBDS) station from its PI (NRSC-4-B Annex
 // D): K / W + three letters, the three-letter calls, nationally linked
-// networks. "" when the PI isn't a call-sign PI
+// networks. "" when the PI isn't a call-sign PI. After redsea's
+// getCallsignFromPI() (MIT / ISC - the notice at the top of this file)
 inline std::string rbds_callsign(uint16_t pi) {
     struct C { uint16_t pi; const char* c; };
     static const C THREE[] = {

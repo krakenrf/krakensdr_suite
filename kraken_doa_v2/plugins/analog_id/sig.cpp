@@ -437,7 +437,7 @@ int Sig::run_fs(Job& j) {
     // each tone's phase step per bit in units of pi (mod 2): tone a = bit 1
     const int step_a = j.kind == 1 ? 0 : 1, step_b = j.kind == 1 ? 1 : 0;
     auto sgn = [](int64_t v) { return (v & 1) ? -1.0f : 1.0f; };
-    if (j.block == 0 && j.msg.bytes.empty() && j.fs2_state == 0) {
+    if (j.block == 0 && j.msg.bytes.empty() && j.fs2_n == 0) {
         if (!f.has(j.e0 - (fleetsync::SYNC_BITS + 1) * L)) return 1;
         if (std::fabs(static_cast<double>(j.sync_end) - last_fs_k_) < 10.0 * L) return 1;   // the same burst again
         if (j.nref == 0) {
@@ -587,12 +587,12 @@ int Sig::run_fs(Job& j) {
         for (int k = 0; k < 64; k++) idx[k] = k;
         std::partial_sort(idx, idx + 4, idx + 64, [&](int a, int b) { return rel[a] < rel[b]; });
         auto check1 = [&](uint64_t& x) {
-            if (fleetsync::block_ok(static_cast<uint32_t>(x >> 32), static_cast<uint32_t>(x))) return true;
+            if (fleetsync::block_ok(x)) return true;
             const int ones = std::popcount(x);
             if (ones < 6 || ones > 58) return false;
             for (int t = 0; t < 4; t++) {
                 const uint64_t xx = x ^ (1ULL << (63 - idx[t]));
-                if (fleetsync::block_ok(static_cast<uint32_t>(xx >> 32), static_cast<uint32_t>(xx))) {
+                if (fleetsync::block_ok(xx)) {
                     x = xx;
                     return true;
                 }
@@ -601,10 +601,10 @@ int Sig::run_fs(Job& j) {
         };
         bool ok = false;
         uint64_t used = wc;
-        if (j.fs2_state == 0) {
+        if (j.fs2_n == 0) {
             uint64_t x = wc;
-            if (fleetsync::block_ok(static_cast<uint32_t>(x >> 32), static_cast<uint32_t>(x))) ok = true;
-            else if ((x = w, fleetsync::block_ok(static_cast<uint32_t>(x >> 32), static_cast<uint32_t>(x)))) ok = true;
+            if (fleetsync::block_ok(x)) ok = true;
+            else if ((x = w, fleetsync::block_ok(x))) ok = true;
             else if ((x = wc, check1(x))) ok = true;
             else if ((x = w, check1(x))) ok = true;
             if (ok) used = x;
@@ -630,44 +630,41 @@ int Sig::run_fs(Job& j) {
                     static_cast<unsigned long long>(wc), static_cast<unsigned long long>(w), ok ? " ok" : "");
         if (ok) {
             follow(used, true);
-            const uint32_t w1 = static_cast<uint32_t>(used >> 32), w2 = static_cast<uint32_t>(used);
-            for (int s = 24; s >= 0; s -= 8) j.msg.bytes.push_back(static_cast<uint8_t>(w1 >> s));
-            j.msg.bytes.push_back(static_cast<uint8_t>(w2 >> 24));
-            j.msg.bytes.push_back(static_cast<uint8_t>(w2 >> 16));
+            fleetsync::append_data(used, j.msg.bytes);
             j.block++;
             continue;
         }
-        // FleetSync II: four BCH(15,7) words, a nibble each (the coherent
-        // word, else the tone word)
-        auto bch4 = [](uint64_t x, int* c) {
-            const uint32_t w1 = static_cast<uint32_t>(x >> 32), w2 = static_cast<uint32_t>(x);
-            c[0] = fleetsync::bch15_repair(w1 & 0xFFFF);
-            c[1] = fleetsync::bch15_repair(w1 >> 16);
-            c[2] = fleetsync::bch15_repair(w2 & 0xFFFF);
-            c[3] = fleetsync::bch15_repair(w2 >> 16);
-            return c[0] >= 0 && c[1] >= 0 && c[2] >= 0 && c[3] >= 0;
+        // FleetSync II: every 64 bits on air are four 16-bit fields, each a
+        // BCH(15,7) codeword carrying one nibble (bits 11..8); the fields go
+        // on air in pairs, the second of each pair first (air order: nibble
+        // 1, 0, 3, 2). The 4 nibbles make one 16-bit quarter of a FleetSync
+        // block, 4 such words the whole block (first quarter = bits 63..48).
+        // The coherent word, else the tone word
+        auto quarter_of = [](uint64_t x, uint16_t* q) {
+            uint32_t v = 0;
+            for (int nibble = 0; nibble < 4; nibble++) {
+                const int field = nibble ^ 1;   // its place in air order
+                const int cw = fleetsync::bch15_repair(static_cast<uint32_t>(x >> (48 - 16 * field)) & 0xFFFF);
+                if (cw < 0) return false;
+                v = (v << 4) | ((static_cast<uint32_t>(cw) >> 8) & 0xF);
+            }
+            *q = static_cast<uint16_t>(v);
+            return true;
         };
-        int c[4];
-        if (bch4(wc, c)) used = wc;
-        else if (bch4(w, c)) used = w;
+        uint16_t q = 0;
+        if (quarter_of(wc, &q)) used = wc;
+        else if (quarter_of(w, &q)) used = w;
         else return finish();
         follow(used, false);
-        const uint32_t nib = (uint32_t((c[0] >> 8) & 0xF) << 12) | (uint32_t((c[1] >> 8) & 0xF) << 8) |
-                             (uint32_t((c[2] >> 8) & 0xF) << 4) | uint32_t((c[3] >> 8) & 0xF);
-        switch (j.fs2_state) {
-        case 0: j.fs2w1 = nib << 16; break;
-        case 1: j.fs2w1 |= nib; break;
-        case 2: j.fs2w2 = nib << 16; break;
-        default:
-            j.fs2w2 |= nib;
-            if (!fleetsync::block_ok(j.fs2w1, j.fs2w2)) return finish();
-            for (int s = 24; s >= 0; s -= 8) j.msg.bytes.push_back(static_cast<uint8_t>(j.fs2w1 >> s));
-            j.msg.bytes.push_back(static_cast<uint8_t>(j.fs2w2 >> 24));
-            j.msg.bytes.push_back(static_cast<uint8_t>(j.fs2w2 >> 16));
+        j.fs2_q[j.fs2_n++] = q;
+        if (j.fs2_n == 4) {
+            uint64_t blk = 0;
+            for (const uint16_t part : j.fs2_q) blk = (blk << 16) | part;
+            j.fs2_n = 0;
+            if (!fleetsync::block_ok(blk)) return finish();
+            fleetsync::append_data(blk, j.msg.bytes);
             j.msg.fs2 = true;
-            break;
         }
-        j.fs2_state = (j.fs2_state + 1) & 3;
         j.block++;
     }
     return finish();

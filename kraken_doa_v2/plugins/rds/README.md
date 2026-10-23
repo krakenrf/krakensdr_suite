@@ -225,5 +225,11 @@ HD Radio / IBOC detection, stereo (L-R) decoding.
 
 The tables (RDS character set, PTY names, countries, languages, ODA names,
 RT+ types, RBDS call signs) follow EN 50067 / NRSC-4-B as compiled by
-redsea (Oona Raisanen, ISC licence - the notice is in `rds_tables.hpp`);
-the code is this plugin's own.
+redsea (Oona Räisänen; MIT, its files ISC - both notices are in
+`rds_tables.hpp`), and the RBDS call-sign rules (`rbds_callsign()`) follow
+redsea's `getCallsignFromPI()`. Two design ideas are redsea's too, credited
+where they are used: the block-sync conditions (`rds_block.hpp`) and the
+biphase pairing choice (`rds_demod.hpp`). Everything else is this plugin's
+own code (a licence audit of 2026-10-23 compared it with redsea, gr-rds,
+SDR++, SDRangel and other RDS decoders: no GPL code, nothing else of
+redsea's).

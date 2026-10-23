@@ -5135,8 +5135,13 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   CRC-16, double packets 0x35 / 0x55, an op table: PTT ID pre / post,
   emergency, status, message, call alert, radio check, inhibit ...); FleetSync
   (`fleetsync.hpp`, namespace `fleetsync` - `fsync` collided with POSIX
-  fsync(): 64-bit blocks, CRC, fleet = byte + 99, unit 12 bits + 999,
-  FleetSync II = 4 BCH(15,7) nibbles per 16 bits; read COHERENTLY first - a
+  fsync(): 64-bit blocks = MPT 1327 codewords - `block_ok(uint64_t)` is the
+  BCH(63,48) 0xE815 + inverted last check bit + even parity check of the
+  mpt1327 plugin's `cw_ok` (LICENCE: since 2026-10-23 - the first check
+  restated the GPL fsync decoder's `_fsync_crc` too closely; never write it
+  from Kaufman's code again: same results on 2.5 M words), fleet = byte +
+  99, unit 12 bits + 999, FleetSync II = 4 BCH(15,7) nibbles per 16 bits
+  (fields on air in swapped pairs, collected as 4 quarters `fs2_q`); read COHERENTLY first - a
   2-state Viterbi over the phase parity the bits before leave (1200 Hz at
   2400 bit/s / 1800 Hz at 1200 bit/s turn pi per bit), references from the
   sync's 32 bits - then by tone; 2-4 dB more sensitive, and the real 2400
@@ -5576,7 +5581,11 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   stream - gives none). PTY names RDS / RBDS (option `pty`; auto = ECC US /
   CA / MX, else the station location in North America); RBDS call sign from
   the PI; tables `rds_tables.hpp` (EN 50067 / NRSC-4-B as compiled by
-  redsea, ISC - notice there)
+  redsea - Oona Räisänen, MIT, its files ISC: both notices there + a row /
+  text I in THIRD_PARTY_NOTICES; `rbds_callsign()` follows redsea's
+  getCallsignFromPI(), the block-sync conditions and the biphase pairing
+  choice are redsea's ideas, credited in place - licence audit 2026-10-23:
+  no GPL code, nothing else of redsea's)
 - RDS2 streams: decoded (not via the spectrum - too weak) 4 s every 30 s
   and on a station change while RDS decodes, kept while synced; only
   counted (groups, block errors)

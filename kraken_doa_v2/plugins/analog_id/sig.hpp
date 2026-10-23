@@ -100,8 +100,9 @@ private:
         int block = 0;
         float ga = 1, gb = 1;
         fleetsync::Message msg;
-        int fs2_state = 0;
-        uint32_t fs2w1 = 0, fs2w2 = 0;
+        // FleetSync II: the 16-bit quarters of the block being collected
+        int fs2_n = 0;
+        uint16_t fs2_q[4] = {};
         double ka = 0;
         float dev = 0;
         // FleetSync coherent reading: the expected correlator output of

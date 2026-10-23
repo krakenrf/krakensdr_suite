@@ -2359,6 +2359,19 @@ Set up 2026-10-21 (the user's request): the root `LICENSE` maps the parts.
   and the TETRA scrambler / interleaver / depuncturer (osmo-tetra's form)
   rewritten from the standards - bit-identical output (all 65536 NIDs,
   random TETRA blocks)
+- Audit of main's additions (2026-10-23, merged into worktree-licensing;
+  token-level similarity against the open-source decoders + table checks,
+  job scratch): `analog_id` (MDC1200 / FleetSync / selcall / DTMF / 1750 Hz)
+  - its FleetSync block check (+ the generator's) restated Matthew Kaufman's
+  GPL-2.0 `_fsync_crc` and the payload / FleetSync II assembly echoed its
+  structure: rewritten as the MPT 1327 codeword check (the mpt1327 plugin's)
+  and with arithmetic of their own, bit-identical results (2.5 M words, 6000
+  generator streams, both catalogue scenes + 4 FleetSync variants); MDC1200,
+  selcall, DTMF, bursts = own / facts. `rds`: no GPL code; redsea (MIT /
+  ISC) behind its tables + call-sign rules got its full notices, a
+  THIRD_PARTY_NOTICES row + text I and credits for two design ideas. Map
+  search: Nominatim on Enter only (its usage policy), credit linked like the
+  other OSM credits
 - CLEAN-ROOM REWRITES (2026-10-22, the user's request): `radiosonde` v2.0
   (v1.x had code translated from rs1729/RS) and `flarm` v2.0 (v1.0 was built
   on the unlicensed OGN tracker's source) - spec writer (old code + permitted

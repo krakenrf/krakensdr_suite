@@ -1,9 +1,10 @@
 #pragma once
 
 // MDC1200 packet coding (Motorola's PTT ID / status / emergency signalling).
-// The format as the public decoders document it (Matthew Kaufman's GPL
-// mdc-encode-decode - read as documentation, not copied - the OneOfEleven
-// UV-K5 firmware's opcode list, sdrtrunk's field names):
+// The format as the public decoders document it (Matthew Kaufman's
+// mdc-encode-decode and sdrtrunk, both GPL - read as documentation of the
+// format's facts only, no code of theirs is used - and the opcode list of the
+// OneOfEleven UV-K5 firmware, Apache-2.0):
 //
 //   1200 bit/s MSK, XOR-precoded: a bit that differs from the one before is
 //   one and a half cycles of 1800 Hz, an equal one one cycle of 1200 Hz.
@@ -32,21 +33,6 @@ inline uint16_t crc(const uint8_t* p, int n) {
         for (int b = 0; b < 8; b++) c = (c & 1) ? static_cast<uint16_t>((c >> 1) ^ 0x8408) : static_cast<uint16_t>(c >> 1);
     }
     return static_cast<uint16_t>(c ^ 0xFFFF);
-}
-
-// 7 data bytes -> the 14 coded bytes (data + parity), before interleaving
-inline void encode_block(const uint8_t d7[7], uint8_t out14[14]) {
-    int sr = 0;   // shift register of data bits (bit 0 = newest)
-    for (int i = 0; i < 7; i++) {
-        out14[i] = d7[i];
-        uint8_t p = 0;
-        for (int j = 0; j < 8; j++) {
-            sr = ((sr << 1) | ((d7[i] >> j) & 1)) & 0x7F;
-            const int b = (sr ^ (sr >> 2) ^ (sr >> 5) ^ (sr >> 6)) & 1;
-            p |= static_cast<uint8_t>(b << j);
-        }
-        out14[7 + i] = p;
-    }
 }
 
 // transmitted bit order: coded bit t (byte t / 8, bit t % 8 LSB first) is

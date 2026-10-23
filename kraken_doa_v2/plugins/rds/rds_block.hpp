@@ -157,7 +157,10 @@ private:
         }
     }
 
-    // three offset words in order at 26-bit spacing (<= 6 blocks apart)
+    // three offset words in order at 26-bit spacing (<= 6 blocks apart) -
+    // the same conditions as redsea's SyncPulse::couldFollow /
+    // isSequenceFound (block_sync.cc; Oona Räisänen, MIT / ISC - the notice is
+    // in rds_tables.hpp), in code of this plugin's own
     bool find_sequence(int k) {
         const uint64_t bit = nbits_;
         bool found = false;

@@ -92,13 +92,16 @@ sdrtrunk's field names:
 
 ### FleetSync (`fleetsync.hpp`)
 
-From Kaufman's fsync decoder and sdrtrunk's FleetSync classes (both GPL, read
-as documentation):
+The field layout as Kaufman's fsync decoder and sdrtrunk's FleetSync classes
+(both GPL) document it - read as documentation of the format's facts only;
+no code of theirs is used:
 
 - FFSK without precoding: a 1 = 1200 Hz, a 0 = 1800 Hz (1200 bit/s) or
   2400 Hz (2400 bit/s). Preamble 1010..., sync `23EB` (also `052B`), then
-  64-bit blocks: 48 data bits, a 15-bit CRC (the 0x6815 shift register) and an
-  even parity bit. A message = the blocks that check, back to back (ANI /
+  64-bit blocks, each an **MPT 1327 codeword**: 48 data bits, the 15 check
+  bits of MPT 1327's BCH(63,48) code (g = 0xE815) with the last one inverted,
+  and an even parity bit - the check of the `mpt1327` plugin, which was
+  written from MPT 1327 itself. A message = the blocks that check, back to back (ANI /
   status: one; another fleet: two; data: more). One error among a block's 4
   least certain bits is corrected - not in a nearly constant word (< 6 bits
   of either value): a steady 1200 Hz stretch of voice after a chance sync
@@ -113,10 +116,14 @@ as documentation):
   (1000-4999). The talker = the sender, `FleetSync 100-1001`.
 - **FleetSync II**: each 16 bits of a block are sent as 4 nibbles in 4
   BCH(15,7) codewords (x^8 + x^4 + x^2 + x + 1 with bit 14 = x^0 - the
-  reciprocal of BCH(15,7)'s usual generator; one error corrected each), 4
-  blocks per FleetSync block - laid out as Kaufman's decoder reads them (no
-  real FleetSync II recording found: synthetic + the reference only).
-- Data / GPS payloads (type 0x42) are shown as text when printable; GPS
+  reciprocal of BCH(15,7)'s usual generator; one error corrected each), the
+  four 16-bit fields of each 64 bits on air in pairs, the second of each
+  pair first; 4 such 64-bit words per FleetSync block - the layout as the
+  public decoders read it (no real FleetSync II recording found: synthetic
+  + the reference only).
+- Data / GPS payloads (type 0x42) are shown as text when printable (length
+  in bytes 9-10, the text from the third block on, each block last byte
+  first - the decoders' reading, not confirmed on a real radio); GPS
   positions are not decoded (no verified layout).
 
 ### 5-tone selcall (`selcall.hpp`)
@@ -403,7 +410,13 @@ periodic-family rule.
   tones, DTMF) - via sigidwiki.
 - Matthew Kaufman, mdc-encode-decode and fsync-encode-decode (GPL-2.0;
   russinnes/fsync-mdc1200-decode): read for the MDC1200 / FleetSync formats
-  and built in the job scratch as a test oracle - no code copied.
+  and built in the job scratch as a test oracle - no code of them is used.
+  (A licence audit of 2026-10-23 found the first FleetSync block check and
+  generator - the plugin's own lines - restating that decoder's CRC routine
+  too closely; both were rewritten as the MPT 1327 codeword check above, and
+  the payload / FleetSync II assembly with arithmetic of their own.)
+- MPT 1327 (the codeword format: BCH(63,48) + parity) - as in the `mpt1327`
+  plugin.
 - OneOfEleven uv-k5-firmware-custom `mdc1200.h` (Apache-2.0): the MDC1200
   opcode list. sdrtrunk (GPL-3.0) MDCMessage / Fleetsync2Message: field names
   and FleetSync flags (documentation only).
