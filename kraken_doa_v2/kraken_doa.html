@@ -46,6 +46,7 @@ body.sb-resizing {cursor:col-resize;user-select:none}
    light default (Chromium would drop its 8 px styling for these, hence @supports) */
 @supports not selector(::-webkit-scrollbar) {
   .sidebar,.doa-panel,.doa-content {scrollbar-width:thin;scrollbar-color:#0f3460 #1a1a2e}
+  .info-tab-list {scrollbar-width:thin;scrollbar-color:#2a3858 #16213e}
 }
 
 /* Sidebar sections */
@@ -219,6 +220,16 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .info-row:first-child {margin:0 0 4px 0}
 .info-row input[type="text"] {flex:1;min-width:0;background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:4px 6px;border-radius:3px;font-size:12px}
 .info-tab-list {display:flex;gap:4px;flex-wrap:nowrap;overflow-x:auto;min-width:0;max-width:70%}
+/* position: Safari painted the strip (its own scrolling layer) where it was
+   before the panel was resized - over the waterfall's buttons - until the
+   next repaint. The scrollbar always shown: macOS hides overlay scrollbars
+   until a scroll, and a mouse wheel can't scroll sideways (wheel handler in
+   the panel's setup) */
+.info-tab-list {position:relative;padding-bottom:2px}
+.info-tab-list::-webkit-scrollbar {height:6px}
+.info-tab-list::-webkit-scrollbar-track {background:#16213e}
+.info-tab-list::-webkit-scrollbar-thumb {background:#2a3858;border-radius:3px}
+.info-tab-list::-webkit-scrollbar-thumb:hover {background:#1a4a7a}
 .info-tab {white-space:nowrap}
 .info-dec-cols {flex:1;display:flex;gap:8px;min-height:0;overflow:hidden}
 .dig-table-wrap {flex:1.4 1 0;min-height:60px;overflow:auto;border:1px solid #0f3460;border-radius:3px;background:#10101e;margin:4px 0;scrollbar-color:#2a3858 #141428;scrollbar-width:thin}
@@ -458,7 +469,7 @@ body:not(.ai-dk-col) .ai-strip {display:none !important}
 .top-bar .tb-slider {width:80px;height:5px;-webkit-appearance:none;background:#0f3460;outline:none;border-radius:2px}
 .top-bar .tb-slider::-webkit-slider-thumb {-webkit-appearance:none;width:14px;height:14px;background:#1976d2;cursor:pointer;border-radius:50%}
 .top-bar .tb-vol {font-size:13px;color:#7cb3f0;min-width:32px}
-.top-bar .hw-stats {margin-left:auto;font-size:12px;color:#8aa8c7;white-space:nowrap;font-family:'Consolas','Monaco','Courier New',monospace;padding:0 8px;
+.top-bar .hw-stats {margin-left:auto;font-size:12px;color:#8aa8c7;white-space:nowrap;font-family:'Consolas',ui-monospace,'Menlo','Monaco','Courier New',monospace;padding:0 8px;
   min-width:31ch;text-align:right}  /* fixed width: changing digits must not re-wrap the bar */
 .top-bar .status-badges {display:flex;gap:6px}
 .top-bar .status-badge {font-size:14px;padding:5px 12px;border-radius:4px;background:#2d4059;color:#fff;font-weight:500;text-align:center;white-space:nowrap}
@@ -474,12 +485,15 @@ body:not(.ai-dk-col) .ai-strip {display:none !important}
 .top-bar.cal-calibrated {background:linear-gradient(to bottom, #1a4a1a 0%, #0d2d0d 100%);border-bottom-color:#2e7d32}
 .top-bar.cal-cooldown {background:linear-gradient(to bottom, #4a2800 0%, #331c00 100%);border-bottom-color:#bf360c}
 
-/* SDR#-style frequency selector */
+/* SDR#-style frequency selector. The digits: Consolas (Windows), SF Mono
+   (ui-monospace: Apple's browsers) at semibold - Monaco, the Mac's old
+   fallback here, has no bold, and Safari's synthesized bold came out smeared
+   and too thick; 600 = Consolas' / DejaVu Sans Mono's bold elsewhere */
 .freq-selector {display:flex;align-items:center;background:#0a0a15;border:1px solid #0f3460;border-radius:4px;padding:4px 8px;user-select:none}
 .freq-digit {
-  font-family:'Consolas','Monaco','Courier New',monospace;
+  font-family:'Consolas',ui-monospace,'Menlo','Monaco','Courier New',monospace;
   font-size:28px;
-  font-weight:bold;
+  font-weight:600;
   color:#4fc3f7;
   width:20px;
   height:40px;
@@ -514,11 +528,11 @@ body:not(.ai-dk-col) .ai-strip {display:none !important}
 .freq-digit.hover-top .hover-upper {opacity:1}
 .freq-digit.hover-bottom .hover-lower {opacity:1}
 .freq-sep {
-  font-family:'Consolas','Monaco','Courier New',monospace;
+  font-family:'Consolas',ui-monospace,'Menlo','Monaco','Courier New',monospace;
   font-size:28px;
   color:#1a4a7a;
   padding:0 2px;
-  font-weight:bold;
+  font-weight:600;
 }
 .freq-label {
   font-size:14px;
@@ -1013,13 +1027,13 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
    swaps in the text box to type one (vfdInit). A row of its own: at this
    size there's no room for a "Freq:" label in the 290 px sidebar */
 #decimator-list .vfd-box {display:inline-flex;align-items:center;background:#0a0a15;border:1px solid #0f3460;border-radius:3px;padding:0 3px;
-  user-select:none;font-family:'Consolas','Monaco','Courier New',monospace}
-#decimator-list .vfd {font-size:28px;font-weight:bold;width:16px;text-align:center;color:#4fc3f7;cursor:pointer;line-height:36px}
+  user-select:none;font-family:'Consolas',ui-monospace,'Menlo','Monaco','Courier New',monospace}
+#decimator-list .vfd {font-size:28px;font-weight:600;width:16px;text-align:center;color:#4fc3f7;cursor:pointer;line-height:36px}
 #decimator-list .vfd.lead {color:#2c4a63}
 #decimator-list .vfd:hover {color:#81d4fa}
 #decimator-list .vfd.hover-top {background:linear-gradient(to bottom,rgba(79,195,247,0.28) 50%,transparent 50%)}
 #decimator-list .vfd.hover-bottom {background:linear-gradient(to top,rgba(79,195,247,0.28) 50%,transparent 50%)}
-#decimator-list .vfd-sep {color:#1a4a7a;font-size:24px;font-weight:bold;width:5px;text-align:center}
+#decimator-list .vfd-sep {color:#1a4a7a;font-size:24px;font-weight:600;width:5px;text-align:center}
 #decimator-list .vfd-unit {color:#666;font-size:10px;margin-left:3px;font-family:sans-serif}
 #decimator-list .vfd-box.locked {opacity:.5}
 #decimator-list .vfd-box.locked .vfd {cursor:not-allowed;background:none}
@@ -11685,6 +11699,14 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
             (v2tRec ? '<span style="color:#ef5350">&#9679;</span> ' : '') + '🗣 Voice' +
             (v2tUnseen && infoTab !== 'voice' ? ` <span class="v2t-new">${v2tUnseen}</span>` : '') + '</button>';
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+    // a newly selected tab scrolled into the strip (only on a change - the
+    // strip stays where the user scrolled it otherwise)
+    if (el.dataset.sel !== infoTab) {
+      el.dataset.sel = infoTab;
+      const s = el.querySelector('.sel');
+      if (s && (s.offsetLeft < el.scrollLeft || s.offsetLeft + s.offsetWidth > el.scrollLeft + el.clientWidth))
+        el.scrollLeft = Math.max(0, s.offsetLeft - 8);
+    }
   }
 
   // One VFO's settings row in a tab: VFO + state, mode, Listen, the plugin's
@@ -11880,6 +11902,13 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     setTimeout(() => {
       const h = $id('info-resize');
       if (!h) return;
+      // the tab strip: a mouse wheel (vertical) scrolls it sideways
+      const tl = $id('info-tab-list');
+      if (tl) tl.addEventListener('wheel', e => {
+        if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || tl.scrollWidth <= tl.clientWidth) return;
+        tl.scrollLeft += e.deltaY;
+        e.preventDefault();
+      }, {passive: false});
       h.addEventListener('mousedown', e => { down(e.clientY); e.preventDefault(); });
       window.addEventListener('mousemove', e => move(e.clientY));
       window.addEventListener('mouseup', up);
