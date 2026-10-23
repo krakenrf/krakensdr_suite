@@ -152,9 +152,10 @@ bool write_file(const std::string& path, const std::string& data) {
 }
 
 uint64_t mem_available() {
-#ifdef _WIN32
-    // no /proc/meminfo: GlobalMemoryStatusEx's available physical memory
-    // (without it the memory buffer fell to its 64 MB floor)
+#if defined(_WIN32) || defined(__APPLE__)
+    // no /proc/meminfo: GlobalMemoryStatusEx's available physical memory /
+    // the Mach VM statistics (without it the memory buffer fell to its 64 MB
+    // floor)
     return fs_mem_available();
 #else
     std::ifstream f("/proc/meminfo");

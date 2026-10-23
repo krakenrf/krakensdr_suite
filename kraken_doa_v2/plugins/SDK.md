@@ -791,6 +791,12 @@ else POSIX-only (fork, pipes, signals other than INT / TERM, `/dev/...` paths)
 needs an `#ifdef _WIN32` branch, and `long` is 32-bit there (LLP64): Hz,
 sample counts and times are `int64_t`, printed with `%lld` / PRId64.
 
+**macOS** (Apple clang + Homebrew, see the root CLAUDE.md *macOS*): the same
+commands; the Makefile force-includes `kraken_doa_v2/mac/posix_compat.h`
+(pipe2, fdatasync, `st_mtim`, std::bit_cast for older libc++ ...). Apple
+clang 14 (macOS 12) can't capture a structured binding in a lambda - name it
+in the capture (`[&key = k]`).
+
 `--rf HZ` is the RF at the recording's centre (`host.rf_hz()` = it +
 `--offset`); `ai/sigtool.py` captures carry it in their `.json` sidecar
 (`rf_hz`), which is used when `--rf` isn't given.
@@ -831,8 +837,8 @@ Plugins are selected per VFO and that choice is saved with the VFO settings
 
 ## Licensing a plugin
 
-The SDK - `sdk/` and this guide - and the Windows helpers every plugin links
-(`kraken_doa_v2/win/`) are under the MIT License (`sdk/LICENSE`), so a plugin
+The SDK - `sdk/` and this guide - and the Windows / macOS helpers every plugin
+links (`kraken_doa_v2/win/`, `kraken_doa_v2/mac/`) are under the MIT License (`sdk/LICENSE`), so a plugin
 can be under any licence. A plugin folder WITHOUT a `LICENSE` file is part of
 the KrakenSDR DoA software (KrakenSDR Source Available Licence,
 `kraken_doa_v2/LICENSE`). Put a `LICENSE` file in it (and an SPDX line in

@@ -80,12 +80,16 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
 #else
     // Optional CPU pinning. Off by default (cpu < 0): real isolation needs
     // isolcpus on the kernel cmdline, which we can't assume on an arbitrary Pi.
+#ifdef __APPLE__
+    if (cpu >= 0) ok = false;  // macOS has no CPU pinning (affinity tags are hints only)
+#else
     if (cpu >= 0) {
         cpu_set_t set;
         CPU_ZERO(&set);
         CPU_SET(cpu, &set);
         if (pthread_setaffinity_np(self, sizeof(set), &set) != 0) ok = false;
     }
+#endif
 
     // SCHED_RR (round-robin), NOT SCHED_FIFO. We run up to NUM_DEVICES (5) USB
     // reader threads at the SAME priority on a 4-core Pi. Under SCHED_FIFO equal

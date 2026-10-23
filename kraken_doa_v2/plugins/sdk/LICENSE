@@ -4,7 +4,9 @@ This licence covers the plugin SDK: the files in this folder
 (kraken_plugin.hpp, kraken_dsp.hpp, kraken_fft.hpp, plugin_host.cpp,
 tools/), the plugin guide kraken_doa_v2/plugins/SDK.md, and the Windows
 helpers every plugin executable is built with (kraken_doa_v2/win/win_init.cpp,
-posix_compat.h, app.rc, app.manifest - identical copies in heimdall_v2/win).
+posix_compat.h, app.rc, app.manifest - identical copies in heimdall_v2/win)
+and the macOS one (kraken_doa_v2/mac/posix_compat.h - identical copy in
+heimdall_v2/mac).
 It is permissive so that decoder plugins can carry any licence of their own
 (see SDK.md "Licensing a plugin"). The rest of the KrakenSDR DoA software is
 under the KrakenSDR Source Available Licence (kraken_doa_v2/LICENSE).

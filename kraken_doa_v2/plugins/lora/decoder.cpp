@@ -53,7 +53,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdarg>
-#include <malloc.h>
+#ifndef __APPLE__
+#include <malloc.h>   // mallopt (glibc); macOS has <malloc/malloc.h>
+#endif
 #include <time.h>
 #include <map>
 #include <memory>

@@ -54,6 +54,10 @@ LIQUID_PATCH = sed -i -e 's|COMMAND $${CMAKE_CURRENT_SOURCE_DIR}/scripts/version
 	-e 's|target_link_libraries($${LIBNAME} c m)|target_link_libraries($${LIBNAME} m)|' $(LIQUID_DIR)/CMakeLists.txt
 else ifeq ($(LIQUID_ARCH),armv7l)
 LIQUID_CFLAGS ?= -march=native -mfpu=neon
+else ifeq ($(LIQUID_ARCH),arm64)
+# macOS on Apple Silicon: Apple clang's default target (the M1; older Apple
+# clang rejects -march=native on arm64) - MAC_CPU as in the Makefiles
+LIQUID_CFLAGS ?= $(MAC_CPU)
 else ifneq ($(filter aarch64 x86_64,$(LIQUID_ARCH)),)
 LIQUID_CFLAGS ?= -march=native
 endif

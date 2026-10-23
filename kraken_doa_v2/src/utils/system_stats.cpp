@@ -13,7 +13,7 @@ using namespace chrono;
 
 // Read CPU temperature from thermal zone
 static float read_cpu_temp() {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     // no /sys on Windows and no unprivileged temperature source: -1 = "n/a"
     // (the web UI hides it, the dashboard prints n/a)
     return platform::cpu_temperature_c();
@@ -49,9 +49,9 @@ static float read_cpu_usage() {
     }
     last_sample = now;
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     // No /proc/stat: GetSystemTimes' idle and kernel + user counters (100 ns
-    // units, all CPUs together) - the same idle / total ratio
+    // units, all CPUs together) / the Mach CPU ticks - the same idle / total ratio
     uint64_t idle_100ns = 0, total_100ns = 0;
     if (!platform::cpu_times(&idle_100ns, &total_100ns)) return 0.0f;
     long long total = static_cast<long long>(total_100ns);
@@ -87,9 +87,10 @@ static float read_cpu_usage() {
 
 // Read RAM usage from /proc/meminfo
 static void read_ram_usage(float& used_mb, float& total_mb) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     // No /proc/meminfo: GlobalMemoryStatusEx - its available physical memory
-    // (free + standby lists) is what Linux's MemAvailable counts
+    // (free + standby lists) is what Linux's MemAvailable counts; macOS: the
+    // Mach VM statistics (platform::mem_info)
     uint64_t total_b = 0, avail_b = 0;
     if (!platform::mem_info(&total_b, &avail_b)) { used_mb = 0; total_mb = 0; return; }
     total_mb = static_cast<float>(total_b) / (1024.0f * 1024.0f);

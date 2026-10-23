@@ -1,5 +1,5 @@
 #pragma once
-// Socket portability: BSD sockets (Linux) <-> Winsock 2 (Windows). Header-only;
+// Socket portability: BSD sockets (Linux, macOS) <-> Winsock 2 (Windows). Header-only;
 // the SAME file in heimdall_v2/src/core/ and kraken_doa_v2/include/utils/ - keep the two
 // identical (each app builds on its own).
 //
@@ -425,15 +425,62 @@ inline bool sock_fits_fd_set(int fd, int sockets_in_set) {
 #include <sys/types.h>
 #include <unistd.h>
 
+#ifdef __APPLE__
+// macOS: no SOCK_CLOEXEC / SOCK_NONBLOCK type flags, no accept4(), no
+// MSG_NOSIGNAL - the flags are interpreted (and removed) by sock_socket /
+// sock_accept4 as on Windows, and every socket made there gets SO_NOSIGPIPE
+// (a send to a closed peer fails with EPIPE instead of killing the process).
+// TCP_KEEPALIVE is macOS's name for TCP_KEEPIDLE.
+#ifndef SOCK_CLOEXEC
+#define SOCK_CLOEXEC 0x02000000
+#endif
+#ifndef SOCK_NONBLOCK
+#define SOCK_NONBLOCK 0x04000000
+#endif
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+#ifndef TCP_KEEPIDLE
+#define TCP_KEEPIDLE TCP_KEEPALIVE
+#endif
+// accepted = from accept(): BSD hands it the listener's O_NONBLOCK, Linux
+// doesn't - cleared unless SOCK_NONBLOCK asks for it
+inline int sock_apply_flags(int fd, int flags, bool accepted = false) {
+    if (fd < 0) return fd;
+    if (flags & SOCK_CLOEXEC) fcntl(fd, F_SETFD, FD_CLOEXEC);
+    if ((flags & SOCK_NONBLOCK) || accepted) {
+        const int fl = fcntl(fd, F_GETFL);
+        fcntl(fd, F_SETFL, (flags & SOCK_NONBLOCK) ? (fl | O_NONBLOCK) : (fl & ~O_NONBLOCK));
+    }
+    int on = 1;
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
+    return fd;
+}
+#endif
+
 inline bool sock_startup() { return true; }
+#ifdef __APPLE__
+inline int sock_socket(int domain, int type, int protocol) {
+    const int flags = type & (SOCK_CLOEXEC | SOCK_NONBLOCK);
+    return sock_apply_flags(::socket(domain, type & ~flags, protocol), flags);
+}
+#else
 inline int sock_socket(int domain, int type, int protocol) { return ::socket(domain, type, protocol); }
+#endif
 inline int sock_close(int fd) { return ::close(fd); }
 inline bool sock_set_nonblocking(int fd, bool on = true) {
     const int fl = fcntl(fd, F_GETFL);
     return fl >= 0 && fcntl(fd, F_SETFL, on ? (fl | O_NONBLOCK) : (fl & ~O_NONBLOCK)) >= 0;
 }
+#ifdef __APPLE__
+inline int sock_accept(int fd, sockaddr* addr, socklen_t* len) { return sock_apply_flags(::accept(fd, addr, len), 0, true); }
+inline int sock_accept4(int fd, sockaddr* addr, socklen_t* len, int flags) {
+    return sock_apply_flags(::accept(fd, addr, len), flags, true);
+}
+#else
 inline int sock_accept(int fd, sockaddr* addr, socklen_t* len) { return ::accept(fd, addr, len); }
 inline int sock_accept4(int fd, sockaddr* addr, socklen_t* len, int flags) { return ::accept4(fd, addr, len, flags); }
+#endif
 inline int sock_bind(int fd, const sockaddr* addr, socklen_t len) { return ::bind(fd, addr, len); }
 inline int sock_listen(int fd, int backlog) { return ::listen(fd, backlog); }
 inline int sock_connect(int fd, const sockaddr* addr, socklen_t len) { return ::connect(fd, addr, len); }

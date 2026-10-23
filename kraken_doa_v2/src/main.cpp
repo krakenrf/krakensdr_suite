@@ -36,7 +36,9 @@
 #include <thread>
 #include <chrono>
 #include <iomanip>
-#include <malloc.h>
+#ifndef __APPLE__
+#include <malloc.h>   // mallopt (glibc); macOS has <malloc/malloc.h>
+#endif
 #include <cstring>
 #include <cstdlib>
 #include <csignal>

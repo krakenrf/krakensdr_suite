@@ -17,6 +17,17 @@ TARGET = heimdall.exe
 LINK_TMP = .tmp
 endif
 
+# macOS (Apple clang + Homebrew: eigen, openssl@3, libusb, cmake, pkg-config -
+# `make deps-macos`): the Linux build plus the shims of mac/posix_compat.h
+# (force-included) and Homebrew's keg-only OpenSSL. Everything macOS-specific
+# is under MACOS.
+MACOS := $(if $(filter Darwin,$(shell uname -s)),1,)
+ifeq ($(MACOS),1)
+# one deployment target for everything (this macOS version, as CMake picks
+# it for librtlsdr / liquid-dsp): no "built for newer macOS" link warnings
+export MACOSX_DEPLOYMENT_TARGET ?= $(shell sw_vers -productVersion | cut -d. -f1-2)
+endif
+
 # Source files organized by module
 CORE_SOURCES = src/core/utils.cpp src/core/settings.cpp src/core/forward_comp.cpp src/core/status_dashboard.cpp \
                src/core/platform.cpp src/core/fs_compat.cpp
@@ -181,8 +192,31 @@ endif
 # Add SSL if available (optional for uWebSockets)
 LDFLAGS += -lssl -lcrypto
 
+# macOS: Apple clang has no -fcx-fortran-rules (GCC only); OpenSSL from
+# Homebrew is keg-only (not in the default search paths)
+ifeq ($(MACOS),1)
+    CFLAGS := $(filter-out -fcx-fortran-rules,$(CFLAGS)) -include mac/posix_compat.h
+    OPENSSL_PREFIX := $(or $(shell brew --prefix openssl@3 2>/dev/null),/usr/local/opt/openssl@3)
+    CFLAGS += -I$(OPENSSL_PREFIX)/include
+    LDFLAGS += -L$(OPENSSL_PREFIX)/lib -framework IOKit -framework CoreFoundation
+endif
+
 # Architecture detection
 ARCH := $(shell uname -m)
+# macOS on Apple Silicon says arm64 (Linux: aarch64) - the same 64-bit ARM
+# with NEON. `override`: also when ARCH=arm64 is given on the command line
+ifeq ($(ARCH),arm64)
+override ARCH := aarch64
+endif
+# the aarch64 CPU flag: this CPU (-mcpu=native) - except on macOS, where
+# older Apple clang rejects "native" on arm64 and its default target is
+# already the M1 (NEON, dot product, fp16); `make MAC_CPU=-mcpu=apple-m2`
+# for a newer chip's extras
+MAC_CPU ?=
+AARCH64_CPU = -mcpu=native
+ifeq ($(MACOS),1)
+AARCH64_CPU = $(MAC_CPU)
+endif
 
 # pffft is C (CC above is g++): built with gcc, its SIMD named explicitly on
 # ARM - without -DPFFFT_ENABLE_NEON it silently builds its scalar code
@@ -214,8 +248,8 @@ else ifeq ($(ARCH),aarch64)
     # LSE atomics inline; it was -march=armv8-a -mtune=cortex-a72, the Pi 4's
     # core). Like kraken_doa and the plugins, the build then runs only on the
     # kind of CPU it was built on
-    CFLAGS += -O3 -mcpu=native
-    PFFFT_CFLAGS += -mcpu=native -DPFFFT_ENABLE_NEON
+    CFLAGS += -O3 $(AARCH64_CPU)
+    PFFFT_CFLAGS += $(AARCH64_CPU) -DPFFFT_ENABLE_NEON
 else ifeq ($(ARCH),x86_64)
     CFLAGS += -O3 -march=native -mtune=native
     PFFFT_CFLAGS += -march=native
@@ -425,6 +459,10 @@ deps-arch:
 	    make \
 	    openssl
 
+# For macOS (Homebrew)
+deps-macos:
+	brew install cmake libusb eigen openssl@3 pkg-config
+
 # Clean build artifacts
 clean:
 	rm -f $(TARGET)
@@ -514,6 +552,7 @@ help:
 	@echo "  deps             - Install system dependencies (Debian/Ubuntu)"
 	@echo "  deps-fedora      - Install dependencies for Fedora/RHEL"
 	@echo "  deps-arch        - Install dependencies for Arch Linux"
+	@echo "  deps-macos       - Install dependencies for macOS (Homebrew)"
 	@echo "  clean            - Remove build artifacts"
 	@echo "  distclean        - Remove everything including uWebSockets"
 	@echo "  rebuild          - Clean and rebuild"
@@ -538,4 +577,4 @@ help:
 	@echo "Modules: $(words $(SOURCES)) source files"
 	@echo ""
 
-.PHONY: all check-deps check-uws check-eigen install-uws deps deps-fedora deps-arch clean distclean rebuild run status debug help
+.PHONY: all check-deps check-uws check-eigen install-uws deps deps-fedora deps-arch deps-macos clean distclean rebuild run status debug help

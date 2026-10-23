@@ -47,14 +47,54 @@ ifeq ($(WINDOWS),1)
            -lws2_32 -lcrypt32 -lbcrypt -lgdi32 -luser32 -ladvapi32 -lwinmm
 endif
 
+# macOS (Apple clang + Homebrew: eigen, openssl@3, opus, cmake, pkg-config -
+# `make deps-macos`): the Linux build plus the shims of mac/posix_compat.h
+# (force-included) and Homebrew's include / library paths (OpenSSL is
+# keg-only). Everything macOS-specific is under MACOS (plugins/Makefile and
+# liquid.mk too)
+MACOS := $(if $(filter Darwin,$(shell uname -s)),1,)
+ifeq ($(MACOS),1)
+# one deployment target for everything (this macOS version, as CMake picks
+# it for librtlsdr / liquid-dsp): no "built for newer macOS" link warnings
+export MACOSX_DEPLOYMENT_TARGET ?= $(shell sw_vers -productVersion | cut -d. -f1-2)
+endif
+ifeq ($(MACOS),1)
+    BREW_PREFIX := $(or $(shell brew --prefix 2>/dev/null),/usr/local)
+    OPENSSL_PREFIX := $(or $(shell brew --prefix openssl@3 2>/dev/null),$(BREW_PREFIX)/opt/openssl@3)
+    CXXFLAGS += -include mac/posix_compat.h
+    INCLUDES += -I$(BREW_PREFIX)/include/eigen3 -I$(OPENSSL_PREFIX)/include -I$(BREW_PREFIX)/include
+    LDFLAGS = -L$(OPENSSL_PREFIX)/lib -L$(BREW_PREFIX)/lib
+    # platform.cpp's keep_system_awake (an IOKit power assertion)
+    LIBS += -framework IOKit -framework CoreFoundation
+endif
+
 # Detect ARM architecture for NEON optimizations
 ARCH := $(shell uname -m)
+# macOS on Apple Silicon says arm64 (Linux: aarch64) - the same 64-bit ARM
+# with NEON. `override`: also when ARCH=arm64 is given on the command line
+ifeq ($(ARCH),arm64)
+override ARCH := aarch64
+endif
+# the aarch64 CPU flag: this CPU (-mcpu=native) - except on macOS, where
+# older Apple clang rejects "native" on arm64 and its default target is
+# already the M1 (NEON, dot product, fp16); `make MAC_CPU=-mcpu=apple-m2`
+# for a newer chip's extras
+MAC_CPU ?=
+AARCH64_CPU = -mcpu=native
+ifeq ($(MACOS),1)
+AARCH64_CPU = $(MAC_CPU)
+endif
 ifeq ($(WINDOWS),1)
     CXXFLAGS += $(WIN_MARCH) $(WIN_ASFLAGS) $(WIN_DEFS) -DLIBUS_USE_LIBUV -include win/posix_compat.h
     $(info Windows build (MinGW-w64): $(WIN_MARCH))
 else ifeq ($(ARCH),aarch64)
-    # ARM 64-bit (Raspberry Pi 4/5, etc.)
+    # ARM 64-bit (Raspberry Pi 4/5, etc.; Apple Silicon: AARCH64_CPU above)
+ifeq ($(MACOS),1)
+    CXXFLAGS += $(AARCH64_CPU)
+    PFFFT_CFLAGS := $(filter-out -march=native,$(PFFFT_CFLAGS)) $(AARCH64_CPU)
+else
     CXXFLAGS += -march=native -mtune=native
+endif
     PFFFT_CFLAGS += -DPFFFT_ENABLE_NEON
     $(info Detected ARM64 architecture - NEON optimizations will be enabled)
 else ifeq ($(ARCH),armv7l)
@@ -206,7 +246,7 @@ DEPS = $(ALL_SRCS:$(SRCDIR)/%.cpp=$(DEPDIR)/%.d)
 OBJDIRS = $(OBJDIR) $(OBJDIR)/signal_processing $(OBJDIR)/networking $(OBJDIR)/digital $(OBJDIR)/utils $(OBJDIR)/pffft
 DEPDIRS = $(DEPDIR) $(DEPDIR)/signal_processing $(DEPDIR)/networking $(DEPDIR)/digital $(DEPDIR)/utils
 
-.PHONY: all clean distclean install deps check-uws debug help print-% run status plugins whisper whisper-update
+.PHONY: all clean distclean install deps deps-macos check-uws debug help print-% run status plugins whisper whisper-update
 
 # Default target
 all: check-uws $(OBJDIRS) $(DEPDIRS) $(TARGET) plugins whisper-update
@@ -218,6 +258,8 @@ include liquid.mk
 # is opt-in: `make whisper` = transcribe/setup.sh (clone the pinned whisper.cpp,
 # build, download the default model). Once set up, every `make` keeps it up
 # to date (a failure only warns - kraken_doa runs without it).
+# `make whisper WHISPER_GPU=auto|on|off`: Metal on Apple Silicon by default
+# (transcribe/setup.sh; the choice is remembered for later builds)
 whisper:
 	@transcribe/setup.sh
 
@@ -242,6 +284,9 @@ plugins: $(LIQUID_A)
 USOCKETS_FLAGS = WITH_OPENSSL=1
 ifeq ($(WINDOWS),1)
 USOCKETS_FLAGS = WITH_OPENSSL=1 WITH_LIBUV=1 WITH_LTO=0 CC=gcc CXX=g++
+endif
+ifeq ($(MACOS),1)
+USOCKETS_FLAGS += CFLAGS=-I$(OPENSSL_PREFIX)/include CXXFLAGS=-I$(OPENSSL_PREFIX)/include
 endif
 check-uws:
 	@if [ ! -d uWebSockets ]; then \
@@ -344,6 +389,10 @@ deps:
 	sudo apt-get install -y libssl-dev libz-dev libsqlite3-dev
 	@echo "System dependencies installed!"
 	@echo "uWebSockets and liquid-dsp will be fetched and built locally when you run 'make'"
+
+# macOS (Homebrew)
+deps-macos:
+	brew install cmake pkg-config eigen openssl@3 opus
 
 # Install target (optional system-wide installation)
 install: $(TARGET)

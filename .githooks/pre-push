@@ -68,8 +68,12 @@ scan_range() {
         # Backstop behind .gitignore (a `git add -f` gets past that)
         while IFS= read -r -d '' f; do
             git cat-file -e "$c:$f" 2>/dev/null || continue
-            local base="${f##*/}"
-            base="${base,,}"
+            # lower case with tr, not ${f,,}: macOS's bash is 3.2, where that
+            # is a "bad substitution" that ended the scan - and the push went
+            # ahead unscanned
+            local lf
+            lf=$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')
+            local base="${lf##*/}"
             case "$base" in
                 cdecoder|sdecoder|ccoder|scoder|tetra-cdecoder|tetra-sdecoder|\
                 *.exe|*.dll|libmbe.so*|libmbe*.dylib|etsi_tetra_codec.zip|en_30039502*.zip)
@@ -79,7 +83,7 @@ scan_range() {
                     continue
                     ;;
             esac
-            case "/${f,,}" in
+            case "/$lf" in
                 */osmo-tetra/codec/*|*/c-code/cdecoder.c|*/c-code/sdecoder.c|*/c-code/scod_tet.c)
                     echo "BLOCKED: $f is committed in ${c:0:9} - the ETSI TETRA codec's source" >&2
                     echo "         may not be redistributed." >&2

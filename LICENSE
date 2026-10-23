@@ -22,6 +22,8 @@ The KrakenSDR suite is made of separate programs under different licences:
   kraken_doa_v2/plugins/SDK.md, and the Windows      (kraken_doa_v2/plugins/sdk/
   process helpers every program of the suite         LICENSE)
   links (kraken_doa_v2/win/ and heimdall_v2/win/)
+  + the macOS shims (kraken_doa_v2/mac/ and
+  heimdall_v2/mac/)
 
   A decoder plugin folder kraken_doa_v2/plugins/<id>/ that holds a LICENSE
   file of its own is under that licence:
