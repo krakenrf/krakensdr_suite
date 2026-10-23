@@ -55,6 +55,7 @@ private:
 
 KRAKEN_PLUGIN(Pagers, {.id = "pagers",
                        .name = "Pagers (POCSAG + FLEX)",
+                       .category = "Paging & packet",
                        .description = "Pager messages: POCSAG 512/1200/2400 bit/s and FLEX 1600/3200/6400 bit/s "
                                       "(numeric, alphanumeric, tone only, binary)",
                        .version = "2.0",

@@ -198,6 +198,11 @@ struct ArrayBlock {
 struct Info {
     const char* id = "";            // directory name: [a-z0-9_-], <= 32 chars
     const char* name = "";          // shown in the mode list, e.g. "POCSAG"
+    // the mode list's group heading, e.g. "Aviation" (case doesn't matter;
+    // "" = "Other"). The shipped plugins use Two-way radio, Aviation, Marine
+    // & distress, Paging & packet, ISM & IoT, Telemetry & tracking,
+    // Broadcast & cellular - plugins/SDK.md
+    const char* category = "";
     const char* description = "";   // one line (the panel's help text)
     const char* version = "1.0";
     // complex input rate process() gets (Hz). 0 = the VFO's own rate, whatever

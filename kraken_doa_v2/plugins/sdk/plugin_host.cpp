@@ -97,6 +97,7 @@ std::string jesc(const std::string& s) {
 int print_info() {
     kp::Info i = kp_plugin_info();
     std::cout << "{\"api\":1,\"id\":\"" << jesc(i.id) << "\",\"name\":\"" << jesc(i.name)
+              << "\",\"category\":\"" << jesc(i.category)
               << "\",\"description\":\"" << jesc(i.description) << "\",\"version\":\"" << jesc(i.version)
               << "\",\"author\":\"" << jesc(i.author) << "\",\"sample_rate\":" << i.sample_rate
               << ",\"min_vfo_rate\":" << i.min_vfo_rate << ",\"map\":" << (i.map ? "true" : "false")

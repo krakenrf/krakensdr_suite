@@ -996,6 +996,7 @@ private:
 
 KRAKEN_PLUGIN(Dme, {.id = "dme",
                     .name = "DME / TACAN",
+                    .category = "Aviation",
                     .description = "DME and TACAN beacons (962-1213 MHz): every DME channel in the VFO's band - "
                                    "Morse ident, channel and its VOR / ILS pairing, X / Y mode, pulse spacing / width, "
                                    "pairs per second, the carrier's exact frequency, TACAN bearing; aircraft "

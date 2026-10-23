@@ -1138,6 +1138,7 @@ private:
 KRAKEN_PLUGIN(RadarDecoder,
               {.id = "radar",
                .name = "Pulse radar (L-band ATC / surveillance)",
+               .category = "Aviation",
                .description = "Pulsed radars in the 2.4 MHz the tuner receives - airport and en-route surveillance radars "
                               "(1215-1400 MHz), wind profilers and other pulse radars: each radar's pulses (width, "
                               "frequency, linear FM chirp), PRF and PRI pattern (stagger, blocks, jitter, switching PRI "

@@ -136,6 +136,7 @@ void PluginRegistry::scan() {
                     std::string v;
                     if (json_find(js, "id", v) && v != id) pi.error = "id mismatch: the source says \"" + v + "\"";
                     if (json_find(js, "name", v) && !v.empty()) pi.name = v;
+                    if (json_find(js, "category", v)) pi.category = v;
                     if (json_find(js, "description", v)) pi.description = v;
                     if (json_find(js, "version", v)) pi.version = v;
                     if (json_find(js, "author", v)) pi.author = v;
@@ -249,6 +250,7 @@ std::string PluginRegistry::list_json() const {
     for (size_t i = 0; i < l.size(); i++) {
         const auto& p = l[i];
         o << (i ? "," : "") << "{\"id\":\"" << json_escape(p.id) << "\",\"name\":\"" << json_escape(p.name)
+          << "\",\"category\":\"" << json_escape(p.category)
           << "\",\"description\":\"" << json_escape(p.description) << "\",\"version\":\"" << json_escape(p.version)
           << "\",\"author\":\"" << json_escape(p.author) << "\",\"sample_rate\":" << p.sample_rate
           << ",\"min_vfo_rate\":" << p.min_vfo_rate << ",\"auto\":" << (p.auto_detect ? "true" : "false")

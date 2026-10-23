@@ -47,6 +47,7 @@ private:
 
 KRAKEN_PLUGIN(P25Plugin, {.id = "p25",
                           .name = "P25",
+                          .category = "Two-way radio",
                           .description = "P25 Phase 1 (C4FM / CQPSK, 12.5 kHz). Control channels: system, site, neighbours "
                                          "and channel grants. Voice channels: talkgroup, unit ID, encryption. Voice: IMBE "
                                          "(built in). Bandwidth 12-24 kHz.",

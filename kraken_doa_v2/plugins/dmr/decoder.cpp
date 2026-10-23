@@ -49,6 +49,7 @@ private:
 
 KRAKEN_PLUGIN(DmrPlugin, {.id = "dmr",
                           .name = "DMR",
+                          .category = "Two-way radio",
                           .description = "DMR Tier II / III (12.5 kHz, 2 timeslots). Colour code, talkgroups and radio IDs "
                                          "per slot, CSBK control messages, privacy flags. Voice: AMBE+2 (mbelib, README "
                                          "\"Digital voice codecs\"). Bandwidth 12-24 kHz.",
