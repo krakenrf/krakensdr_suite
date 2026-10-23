@@ -520,20 +520,73 @@ void FMDemodulatorRobust::add_audio_samples(const std::vector<float>& samples) {
     if (!initial_fill_complete.load()) {
         if (audio_ring_buffer.available() >= INITIAL_FILL_TARGET) {
             initial_fill_complete = true;
-            std::cout << "Audio buffer initial fill complete" << std::endl;
+            // once: it buffers again after every underrun (a retune's gap)
+            if (!first_fill_logged_.exchange(true))
+                std::cout << "Audio buffer initial fill complete" << std::endl;
         }
     }
 }
 
 std::vector<float> FMDemodulatorRobust::get_audio_buffer(size_t requested_samples) {
-    std::vector<float> result(requested_samples);
+    std::vector<float> result(requested_samples, 0.0f);
 
     if (!processing_enabled.load() || !initial_fill_complete.load()) {
-        std::fill(result.begin(), result.end(), 0.0f);
+        // (re)buffering: the latency window starts with the playback
+        lat_min_ = SIZE_MAX;
+        lat_reads_ = 0;
+        fade_in_ = true;
         return result;
     }
 
-    audio_ring_buffer.read(result.data(), requested_samples);
+    const size_t avail = audio_ring_buffer.readable();
+    if (avail < requested_samples) {
+        // Underrun: what is left, faded out, then INITIAL_FILL_TARGET again
+        // before playing on - left playing at the empty edge, every later
+        // dip of the feed was another gap (got: the FM thread may have
+        // written more since readable())
+        const size_t got = audio_ring_buffer.read(result.data(), requested_samples);
+        for (size_t i = 0; i < got; i++)
+            result[i] *= static_cast<float>(got - i) / static_cast<float>(got);
+        initial_fill_complete = false;
+        return result;
+    }
+
+    // Latency control: the least the ring held before a read over the
+    // window is time it never needed
+    lat_min_ = std::min(lat_min_, avail);
+    size_t drop = 0;
+    if (++lat_reads_ >= AUDIO_TRIM_WINDOW_READS) {
+        if (lat_min_ > static_cast<size_t>(AUDIO_TRIM_ABOVE))
+            drop = lat_min_ - static_cast<size_t>(INITIAL_FILL_TARGET);
+        lat_min_ = SIZE_MAX;
+        lat_reads_ = 0;
+    }
+
+    const size_t nf = std::min<size_t>(AUDIO_FADE_SAMPLES, requested_samples);
+    if (drop >= nf && nf > 0) {
+        // Drop the late audio, crossfading from its first samples into what
+        // follows it (avail >= drop + requested_samples: drop <= lat_min_ -
+        // INITIAL_FILL_TARGET)
+        xfade_.resize(nf);
+        audio_ring_buffer.read(xfade_.data(), nf);
+        audio_ring_buffer.skip(drop - nf);
+        audio_ring_buffer.read(result.data(), requested_samples);
+        for (size_t i = 0; i < nf; i++) {
+            const float t = (static_cast<float>(i) + 0.5f) / static_cast<float>(nf);
+            result[i] = xfade_[i] * (1.0f - t) + result[i] * t;
+        }
+        const size_t ms_per = static_cast<size_t>(AUDIO_SAMPLE_RATE) / 1000;
+        std::cout << "Audio: " << drop / ms_per << " ms of late audio dropped (the buffer held >= "
+                  << (drop + INITIAL_FILL_TARGET) / ms_per << " ms for 2 s)" << std::endl;
+    } else {
+        audio_ring_buffer.read(result.data(), requested_samples);
+    }
+
+    if (fade_in_) {
+        for (size_t i = 0; i < nf; i++)
+            result[i] *= (static_cast<float>(i) + 0.5f) / static_cast<float>(nf);
+        fade_in_ = false;
+    }
     return result;
 }
 

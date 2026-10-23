@@ -35,7 +35,16 @@ class AudioRingBuffer : public RingBufferBase<float> {
 public:
     AudioRingBuffer(size_t size);
     size_t write(const float* samples, size_t count);
-    void read(float* output, size_t count);
+    // count samples, zero-filled past what there was; returns what there was
+    size_t read(float* output, size_t count);
+    // Consumer side (the reader's thread) only, like read(): what a read can
+    // take now (a pending clear() applied first), and dropping up to count of
+    // the oldest unread samples (returns how many went)
+    size_t readable();
+    size_t skip(size_t count);
+
+private:
+    void apply_flush();
 };
 
 // Template implementations

@@ -1005,7 +1005,14 @@ heard has its own demodulator + jitter buffer in
 `kraken_doa_v2/src/signal_processing/audio_mixer.cpp`; the audio timer sums
 them (soft-limited) into the one Opus stream the page plays. WS
 `AUDIO_VFO:<id>:0|1` (`SET_FM_DECIMATOR:<id>` = only that VFO), saved in the
-DECIMATORS snapshot head as list positions ("0,2", "-1" = none)
+DECIMATORS snapshot head as list positions ("0,2", "-1" = none). LATENCY
+CONTROL (2026-10-23 - after a CPU spike the audio stayed late against the
+spectrum for good): the audio timer sends the packets due by the steady
+clock on every platform (Linux's uSockets ran one callback for any number
+of missed timerfd ticks), and both jitter buffers - each VFO's ring and the
+page's AudioWorklet - drop what they held beyond their floor for a whole
+window (2 s / 3 s; 0.1 s / 0.15-1 s floors, the page's adapting to feed
+stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
 
 **Web Mapper output (built-in)**:
 - The DoA client streams legacy "doapost" records to the KrakenSDR web mapper

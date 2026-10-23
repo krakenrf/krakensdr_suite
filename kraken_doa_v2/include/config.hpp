@@ -209,7 +209,16 @@ constexpr int DEFAULT_BANDWIDTH_INDEX = 7;  // 240 kHz (decimation 10)
 // Computed constants
 constexpr float AUDIO_PACKET_TIME_MS = (AUDIO_SAMPLES_PER_PACKET * 1000.0f) / AUDIO_SAMPLE_RATE;
 constexpr int AUDIO_RING_BUFFER_SIZE = AUDIO_SAMPLE_RATE * 1; // 1 second
-constexpr int INITIAL_FILL_TARGET = AUDIO_SAMPLE_RATE / 10;   // 0.1 seconds
+constexpr int INITIAL_FILL_TARGET = AUDIO_SAMPLE_RATE / 10;   // 0.1 seconds (also after an underrun)
+// Live audio latency (FMDemodulatorRobust::get_audio_buffer): a VFO's ring
+// that held more than AUDIO_TRIM_ABOVE before EVERY read of a window of
+// AUDIO_TRIM_WINDOW_READS packets (2 s) holds audio that is only late - a
+// busy moment's backlog, or the receiver's clock a little faster than the
+// audio timer's - and drops it down to INITIAL_FILL_TARGET (crossfaded over
+// AUDIO_FADE_SAMPLES). Left alone it stayed late for good
+constexpr int AUDIO_TRIM_ABOVE = INITIAL_FILL_TARGET * 2;       // 0.2 s
+constexpr int AUDIO_TRIM_WINDOW_READS = 50;                     // x 40 ms
+constexpr int AUDIO_FADE_SAMPLES = AUDIO_SAMPLE_RATE / 200;     // 5 ms
 
 // File Configuration
 constexpr const char* HTML_FILE = "kraken_doa.html";

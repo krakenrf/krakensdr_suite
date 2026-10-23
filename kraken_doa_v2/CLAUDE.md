@@ -6364,6 +6364,45 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   clicks, the rds playback on a test build: 35 checks). The spectrum title lists the VFOs heard ("D0
   NBFM, D2 AM"). The recorder's band VFO default reads "The VFO you listen
   to (the first 🔊)"
+- LATENCY CONTROL (2026-10-23, the user's report: "when CPU usage is high
+  the audio starts to lag ... and never recovers" - heard late against the
+  spectrum for good). Three buffers only ever grew: (1) each channel's
+  48 kHz ring (`FMDemodulatorRobust`, 1.36 s) - a stalled FM thread made it
+  underrun, the backlog then came in a burst and stayed; full, `write`
+  drops the NEWEST samples, so it stayed 1.36 s late; (2) the audio timer
+  on Linux: uSockets reads the timerfd's expiration count and runs the
+  callback ONCE, so every 40 ms tick a busy loop missed was a packet never
+  sent (the ring grew by it); (3) the page's worklet queue (kept up to
+  10 s; packets arrive in bursts whenever the page's main thread - which
+  decodes the Opus - is busy, or the network hiccups). Fixes: the timer
+  ticks at 20 ms and sends the packets due by the steady clock on EVERY
+  platform (was Windows only; <= 3 per tick, a clock > 200 ms late
+  restarts); `get_audio_buffer`: a ring that held more than
+  `AUDIO_TRIM_ABOVE` 0.2 s before every read of a 2 s window
+  (`AUDIO_TRIM_WINDOW_READS` 50) drops down to `INITIAL_FILL_TARGET` 0.1 s,
+  crossfaded over 5 ms (`AudioRingBuffer::skip` / `readable`, consumer
+  side; stdout "Audio: N ms of late audio dropped"), and an underrun plays
+  what is left faded out and buffers 0.1 s again (it used to play on at the
+  empty edge - a gap at every dip); the worklet (kraken_doa.html
+  `setupWorklet`): a Float32Array ring (5.5 s; `splice(0,128)` of an Array
+  moved the whole queue every quantum) with the same rule - the least it
+  held over 3 s above floor + 0.1 s is dropped to the floor (crossfaded over
+  one quantum), > 2 s ahead at once; the floor (150 ms) adapts to STALLS in
+  the packets' arrival (an underrun after an arrival gap > 120 ms and < 5
+  s: +50 ms, a second within 60 s straight to that gap, max 1 s; -25 ms per
+  calm minute) - not to a sound card a little faster than the receiver's
+  clock. Measured (job scratch b2542a52: `t_ring.cpp` = the real
+  fm_demodulator / ring_buffer in virtual time, the old and the new
+  sources; `gen_worklet_test.py` = both pages' worklet code in headless
+  Chrome under the same scenarios + the new one in a real
+  OfflineAudioContext): server ring old / new, latency at the end - FM
+  thread stalled 0.8 s 796 / 100 ms, timer loop busy 0.5 s 599 / 100 ms,
+  receiver clock +0.2 % 357 ms and growing / <= 207 ms, -0.2 % 303 gap
+  packets / 2 rebuffers, steady and 60 ms jitter identical (117 / 114 ms,
+  no trims); worklet old / new - page busy 1.5 s 1517 / 237 ms, tab frozen
+  6 s 6037 / 117 ms, sound card 0.1 % slow 479 ms growing / <= 291 ms,
+  periodic 300 / 700 ms network stalls the old one's latency after 3 gaps
+  (old: 1 gap), steady identical (197 ms)
 - Tests (job scratch 46eef211, test build on 5708x, fake heimdall with FM
   tones 1 kHz at -300 kHz and 2.5 kHz at +500 kHz - `--f2 / --tone2`):
   t_ma.py decodes the real Opus stream (libopus via ctypes) and measures
