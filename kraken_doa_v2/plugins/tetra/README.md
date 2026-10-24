@@ -9,7 +9,7 @@ Decoded: BSCH (MCC, MNC, colour code, TDMA time), BNCH SYSINFO (main carrier,
 location area, services), AACH (timeslot usage), the MAC-RESOURCE headers of
 the control channel (addresses, clear MM / CMCE PDU types). Voice: ACELP
 through the user-built ETSI codec (README "Digital voice codecs"); calls with
-air-interface encryption are muted. Details: `kraken_doa_v2/CLAUDE.md`.
+air-interface encryption are muted. Details: `kraken_doa_v2/docs/dev/digital-decoders.md`.
 
 ## ID separation (DoA per cell)
 The downlink is the base station's, so its identity is the CELL: id

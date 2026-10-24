@@ -791,7 +791,7 @@ else POSIX-only (fork, pipes, signals other than INT / TERM, `/dev/...` paths)
 needs an `#ifdef _WIN32` branch, and `long` is 32-bit there (LLP64): Hz,
 sample counts and times are `int64_t`, printed with `%lld` / PRId64.
 
-**macOS** (Apple clang + Homebrew, see the root CLAUDE.md *macOS*): the same
+**macOS** (Apple clang + Homebrew, see docs/dev/macos.md): the same
 commands; the Makefile force-includes `kraken_doa_v2/mac/posix_compat.h`
 (pipe2, fdatasync, `st_mtim`, std::bit_cast for older libc++ ...). Apple
 clang 14 (macOS 12) can't capture a structured binding in a lambda - name it

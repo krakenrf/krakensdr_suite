@@ -133,7 +133,7 @@ receiver → decimation processor → 8 FFT workers → FM processor → web ser
 DoA HTTP server (8081) → status monitor. ~23–28 threads total — intentional
 oversubscription on 4 cores, since most are I/O-bound.
 
-**Key design choices** (details in `OPTIMIZATION_SUMMARY.md`, `CLAUDE.md`):
+**Key design choices** (details in `OPTIMIZATION_SUMMARY.md`, `CLAUDE.md`, `docs/dev/`):
 - Compiler auto-vectorization for IQ conversion (beats hand-written NEON here).
 - Per-VFO decimator: integer decimation only, the cheapest split into stages of 2-8
   (a cost model of the kernels picks it; halfband stages for 2), the mixer folded into
@@ -200,8 +200,8 @@ commit and built by `make` as a static library without FFTW / libfec
 | `AUDIO_SAMPLE_RATE` | `48000` | **Must match the browser's native rate** (see console) |
 | `VFO_BW_MIN_HZ` / `VFO_BW_MAX_HZ` | 1 kHz / 2.4 MHz | A VFO takes any width in between; integer decimation only (by a divisor of 2.4 MHz), no resampling |
 
-For deeper architecture and tuning notes, see `CLAUDE.md`, `OPTIMIZATION_SUMMARY.md`,
-and the root `../CLAUDE.md` (full server + client system).
+For deeper architecture and tuning notes, see `CLAUDE.md` (rules), `docs/dev/` (one file per feature), `OPTIMIZATION_SUMMARY.md`,
+and `../docs/dev/suite-reference.md` (full server + client system).
 
 ## Licence
 

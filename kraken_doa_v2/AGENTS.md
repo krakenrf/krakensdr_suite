@@ -1,37 +1,53 @@
-# Repository Guidelines
+# AGENTS.md
 
-## Project Structure & Module Organization
-- `src/` holds runtime networking, signal-processing pipelines, and the entrypoint in `main.cpp`.
-- `include/` contains the public headers; keep synchronization notes near shared data declarations.
-- `uWebSockets/` is a vendored dependency; treat it as read-only.
-- `kraken_doa/` plus `kraken_doa.html` power the browser UI; align protocol updates with `src/message_builders.cpp`.
-- TLS material lives in `server.crt` and `server.key`; replace for non-lab deployments.
+Guidance for AI coding agents working in `kraken_doa_v2/` (the KrakenSDR DoA
+client). The full rules are in the CLAUDE.md files; they apply to every
+agent, not only Claude. Read them before changing code:
 
-## Build, Test, and Development Commands
-- `make deps` installs required packages and fetches `uWebSockets/`.
-- `make` or `make -j` produces the optimized `kraken_doa` binary in the repo root.
-- `make run` builds if needed and launches `./kraken_doa`.
-- `make debug` adds symbols for `gdb ./kraken_doa`.
-- `make test-build` performs dependency and compile checks.
-- `make clean` drops `obj/`, `dep/`, and the binary.
+- `../CLAUDE.md`: suite-wide rules (portability, licensing, secrets,
+  numerics, logging) and the build / run commands.
+- `CLAUDE.md`: kraken_doa's rules, the command path, how changes are
+  tested, and an index of the feature notes.
+- `docs/dev/<topic>.md`: one file per feature (design, decisions, earlier
+  bugs). Read the one for the feature you are changing.
 
-## Coding Style & Naming Conventions
-- Target C++20, 4-space indentation, minimal `auto`, and trailing commas only where standard.
-- Use PascalCase for types and snake_case for functions/variables (`initialize_persistent_buffer`).
-- Keep modules grouped under `networking/`, `signal_processing/`, and `utils/`; declare new worker threads alongside other globals in `src/main.cpp`.
-- Protect shared state with the existing mutexes and favor RAII over raw pointers.
+## The essentials
 
-## Testing Guidelines
-- Rely on `make test-build` for quick regression coverage until automated tests exist.
-- For runtime checks, run `./kraken_doa` and load `kraken_doa.html` via HTTPS on `WEB_PORT`, confirming FFT, DoA, and FM respond to channel changes.
-- When extending DSP paths, gate temporary logging behind the `DEBUG_*` macros and record manual validation in `notes.txt`.
+- Build with `make` (also builds liquid-dsp and every decoder plugin). On a
+  Raspberry Pi use at most `-j3`: `make -j` or `-j4` can crash it.
+  `make test-build` runs the quick source and dependency checks.
+- `kraken_doa.html` is read at runtime: edit it and reload the browser, no
+  rebuild.
+- Control commands run only on the uWebSockets loop thread; from any other
+  thread, post them with `loop->defer`.
+- No GPL / AGPL / LGPL code in `kraken_doa_v2/`, and nothing translated from
+  it (a plugin folder with its own `LICENSE` is the one exception - see
+  `../CLAUDE.md`).
+- Never commit `doa_settings.json`, `api_token`, `server.key` /
+  `server.crt`, voice codecs, or binaries. The git pre-push hook checks for
+  them once `../install.sh` has registered it.
+- Treat `uWebSockets/`, `liquid-dsp/` and `external/pffft/` as read-only:
+  they are pinned or vendored.
 
-## Commit & Pull Request Guidelines
-- Follow history conventions: concise, present-tense subjects under ~72 characters (`add second decimator`).
-- Rebase before a PR, describe behavior changes and validation steps, and link issue IDs.
-- Attach screenshots or bandwidth/latency metrics when altering UI or performance.
+## Code style
 
-## Security & Configuration Tips
-- Adjust defaults in `include/config.hpp`; never commit secrets.
-- Regenerate TLS assets with `openssl req -new -x509 ...` before production distribution.
-- Audit thread entry points for exception safety so long-lived workers remain alive.
+- C++20, 4-space indentation, PascalCase types, snake_case functions and
+  variables. Match the surrounding code's idiom and comment density.
+- Protect shared state with the existing mutexes and atomics; prefer RAII.
+- Hz, epoch milliseconds, byte and sample counts are 64-bit (`long` is
+  32-bit on Windows).
+
+## Testing
+
+There is no automated suite in the repo. Follow `CLAUDE.md` *Testing a
+change*: a test build on its own ports and in its own folder, a fake
+heimdall that streams synthetic IQ, and headless Chromium with real mouse
+and key events for the page. Never test against the live receiver's ports
+or settings.
+
+## Commits
+
+Subject `area: what changed`, in the present tense (for example `pagers:
+FLEX pages added to the POCSAG plugin`, `Web UI: Safari fixes - decoder tab
+strip`); the body says why and how the change was checked. Include
+screenshots or CPU / latency figures for UI or performance changes.

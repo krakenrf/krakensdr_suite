@@ -29,4 +29,4 @@ N = 2^a 3^b 5^c that are multiples of 16 (complex) / 32 (real), 16-byte
 aligned buffers, and orders its output its own way.
 
 To update: copy the same files from a newer commit, then run the checks in
-`kraken_doa_v2/CLAUDE.md` *FFT (pffft)*.
+`kraken_doa_v2/docs/dev/fft-pffft.md`.

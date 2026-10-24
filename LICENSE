@@ -40,7 +40,7 @@ The KrakenSDR suite is made of separate programs under different licences:
   .githooks/                                         MIT License (below)
 
   The documentation in the repository root (README.md, DOCKER.md,
-  WINDOWS.md, CLAUDE.md)                             KrakenSDR Source Available
+  WINDOWS.md, CLAUDE.md) and in docs/                KrakenSDR Source Available
                                                      Licence 1.0
 
 The KrakenSDR DoA software is free for personal and hobbyist use, and
