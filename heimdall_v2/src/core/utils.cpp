@@ -111,6 +111,18 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
         struct sched_param param;
         std::memset(&param, 0, sizeof(param));
         param.sched_priority = std::min(std::max(rt_priority, pmin), pmax);
+#ifdef __APPLE__
+        // macOS has ONE priority scale (15..47 for SCHED_RR, as for normal
+        // threads) and a normal thread runs at 31 - Linux's SCHED_RR 15 / 20
+        // landed BELOW every ordinary thread there, in the tiers macOS treats
+        // as utility / background work (20 = QOS_CLASS_UTILITY): the drain
+        // fell behind under load (L1 overflow) and the USB readers, which
+        // resubmit the transfers, could be held off long enough for the
+        // RTL2832's FIFO to drop 188-byte packets - silent 94-sample slips.
+        // Mapped above the default and the user-initiated tier (37):
+        // RT_PRIO_USB_READER 20 -> 41, RT_PRIO_SAMPLE_DRAIN 15 -> 39 (order kept)
+        param.sched_priority = std::min(pmax, 32 + (rt_priority * 9 + 10) / 20);
+#endif
         const int rc = pthread_setschedparam(self, SCHED_RR, &param);
         if (rc != 0) {
             // Almost always EPERM: running without rtprio limits or CAP_SYS_NICE.

@@ -576,12 +576,19 @@ Apple Silicon Mac.
   `MACOSX_DEPLOYMENT_TARGET` exported (this macOS's version) so CMake's
   librtlsdr / liquid-dsp and the apps agree. The plugins' licence check
   normalises paths with python3 (no GNU `realpath -m` / `xargs -r`)
-- OPEN: lag slips that are exact multiples of 94 samples (36 / 43 / 137 x
-  94 - whole 188-byte packets the RTL2832 drops on a FIFO overflow, the
-  Windows RAW_IO signature above) seen on that MacBook Air without system
-  sleep, one right after the display slept; caught by the periodic check and
-  recovered. Cause not yet established (USB power management, CPU load on a
-  dual-core, or darwin libusb's transfer queueing)
+- Lag slips of exact multiples of 94 samples (whole 188-byte packets the
+  RTL2832 drops on a FIFO overflow, the Windows RAW_IO signature above) -
+  FIXED 2026-10-24 (heimdall `set_thread_realtime`, `__APPLE__`): macOS has
+  ONE priority scale (SCHED_RR 15..47, a normal thread at 31), so Linux's
+  RT_PRIO_USB_READER 20 / RT_PRIO_SAMPLE_DRAIN 15 put the USB readers and
+  the drain BELOW every ordinary thread, in the utility / background tiers
+  macOS defers when idle. Mapped to 41 / 39 (`32 + (p*9+10)/20`, order
+  kept). Before, on the MacBook Air: overnight idle with the display off
+  the channels drifted 511-1716 x 94 samples apart (+ one 512-sample USB
+  packet), and 3 min with every core busy gave 10 "L1 overflow" coherence
+  events; after: the same load 0, and a 7 h soak (6.5 h display off,
+  noise source on, every channel cross-correlated against ch0 every 2 s)
+  0 slips, 0 coherence events
 - run.sh (`brew install tmux`): bash 3.2 and the BSD tools work as they are
   (pgrep -g / -f, ps -o pgid); only headless mode's `tail --pid` is GNU -
   on Darwin the log follower is killed when heimdall ends (disowned: no job
