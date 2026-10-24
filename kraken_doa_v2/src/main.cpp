@@ -28,6 +28,7 @@
 #include "voice2text.hpp"
 #include "decoder_log.hpp"
 #include "rdf_mapper.hpp"
+#include "vfo_level.hpp"
 #include "array_cal.hpp"
 #include "recorder.hpp"
 #include "digital/dig_plugin.hpp"
@@ -334,6 +335,10 @@ int main(int argc, char* argv[]) {
     // whisper helper only runs while one does)
     v2t::start();
 
+    // 📏 Each VFO's received level (dBFS + the gain), every mode: the page's
+    // hover readout on a VFO and the range estimate (rdf_mapper reads it)
+    vlvl::start();
+
     // Mobile DF on the map: DoA lobes + the transmitter heat map (coherent mode)
     rdfmap::start();
 
@@ -475,6 +480,7 @@ int main(int argc, char* argv[]) {
     v2t::stop();       // before the decoder log's last write
     declog::stop();
     rdfmap::stop();
+    vlvl::stop();
     array_cal::stop();
 
     // Signal all condition variables for shutdown

@@ -1201,13 +1201,18 @@ leaves it out) with the models in `docker-data/whisper_models/`
 strength*): "Range" in the 📡 DF panel's header -> a panel (top left) + a
 heat map of where the transmitter of the DF panel's selected lobe (a VFO's,
 or one radio's) probably is, from its signal strength over the terrain
-- kraken_doa: each VFO's received level in `{"rdf"}` (vfos / talkers
-  `lvl`: dbfs, noise, total, gain, age, n) - `rdf_mapper.cpp` samples
-  `FFTProcessor::band_power` (the VFO band in the FFT channel's latest RAW
-  frame, Parseval, the Hamming window's 0.3974 taken out, the band's noise -
-  `nfloor::bin_noise_db`, the frame's 10th percentile + 9.77 dB - taken
-  out) every 100 ms while it is above the noise (and the squelch open),
-  averaged in power; a talker gets it while it alone transmits on its VFO
+- kraken_doa: each VFO's received level (`lvl`: dbfs, noise, total, gain,
+  age, n) in `{"rdf"}` (vfos / talkers) and system_status
+  `decimator_squelch[]` - `src/vfo_level.cpp` (every VFO, EVERY mode, its
+  own tuner + gain) samples `FFTProcessor::band_power` (the VFO band in the
+  tuner's latest RAW FFT frame, Parseval, the Hamming window's 0.3974 taken
+  out, the band's noise - `nfloor::bin_noise_db`, the frame's 10th
+  percentile + 9.77 dB - taken out) every 100 ms while it is above the
+  noise (and the squelch open), averaged in power; rdf_mapper hands a
+  moment to a talker while it alone transmits on its VFO
+- Mouseover a VFO's bar (spectrum, waterfall, independent panes; every
+  mode): its dBFS, SNR in its band and dBm (the range panel's calibration),
+  gain, calibrated or not (`vfoLvlHover`, `.vfo-lvl-tip`)
 - page (`kraken_doa.html` "📏 RANGE", settings `rgState`, localStorage
   `kraken_rg`): dBm = dBFS - gain + calibration (nominal -23 dB +- 6;
   "Known level…", "Known transmitter…" = right-click its place, its path

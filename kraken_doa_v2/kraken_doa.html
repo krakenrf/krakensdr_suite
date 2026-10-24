@@ -751,6 +751,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .pl-lk {display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px;border-top:1px solid #2a4a7a;padding-top:4px}
 .pl-lk .nm {font-weight:bold;color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px}
 .pl-lk .map-btn {height:20px;padding:0 5px;font-size:11px;margin-left:auto}
+/* 📏 a VFO's level next to the mouse over its bar (vfoLvlRender) */
+.vfo-lvl-tip {position:fixed;z-index:10000;pointer-events:none;display:none;background:rgba(16,24,44,.95);border:1px solid #2a4a7a;border-radius:4px;padding:4px 8px;font:11px sans-serif;color:#dbe8ff;line-height:1.45;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.5)}
 /* 📏 range from signal strength (📏 RANGE) - the viewshed / path loss panels' look */
 .map-rg {flex:0 1 auto}
 .map-rg .rg-src {margin-top:4px;line-height:1.45}
@@ -2670,6 +2672,65 @@ function showBwTooltip(e, bwMhz) {
 }
 function hideBwTooltip() {
   if (bwTooltipEl) bwTooltipEl.style.display = 'none';
+}
+
+// 📏 Each VFO's received level (system_status decimator_squelch[].lvl -
+// vfo_level.cpp: {dbfs, noise, total, gain, age, n}) and its readout next to
+// the mouse over the VFO's bar - main spectrum, waterfall, independent
+// panes: dBFS (the band's signal without its noise; 0 = a full-scale complex
+// tone), the SNR in the VFO's band, dBm by the 📏 range panel's calibration
+// (dBm = dBFS - gain + rgState.cal). Updated live while shown
+let vfoLvl = {}, vfoLvlTipEl = null, vfoLvlTip = null;   // (vfoLvlTip: {id, cx, cy} while shown)
+function vfoLvlNote(list) {
+  const now = Date.now(), m = {};
+  for (const sq of list || []) if (sq && sq.lvl) m[sq.id] = Object.assign({at: now}, sq.lvl);
+  vfoLvl = m;
+  if (vfoLvlTip) vfoLvlRender();
+}
+function vfoLvlHtml(id) {
+  const dec = (decimatorInfo || []).find(d => d.id === id), L = vfoLvl[id];
+  const bw = dec ? (dec.bandwidth_mhz || (bwo[dec.bandwidth_index || 0] || {}).bandwidth || 0) : 0;
+  const bwTxt = bw >= 1 ? bw.toFixed(1) + ' MHz' : bw >= 0.001 ? +(bw * 1000).toFixed(1) + ' kHz' : '';
+  let h = `<b style="color:${getDecimatorColor(id)}">D${id}</b>` +
+          (dec ? ` · ${(vfoCenterMhz(dec) + dec.freq_offset_hz / 1e6).toFixed(4)} MHz` : '') + (bwTxt ? ` · ${bwTxt}` : '');
+  if (!L) return h + '<br><span style="color:#8296b4">no level yet: measured while its signal is above the noise in its band' +
+                     (dec && dec.squelch_enabled ? ' and its squelch is open' : '') + '</span>';
+  const age = L.age + (Date.now() - L.at) / 1000;
+  h += `<br><b>${L.dbfs.toFixed(1)} dBFS</b> · SNR ${(L.dbfs - L.noise).toFixed(1)} dB`;
+  if (L.gain < 0) h += '<br><span style="color:#ffcc80">dBm: the tuner AGC is on - its gain isn\'t known</span>';
+  else h += ` · <b>${(L.dbfs - L.gain + rgState.cal).toFixed(1)} dBm</b><br><span style="color:#8296b4">gain ${L.gain.toFixed(1)} dB · ` +
+            (rgState.calHow ? `calibrated (± ${rgState.sigC} dB)` : `nominal calibration (± ${rgState.sigC} dB)`) + '</span>';
+  if (L.total > -8) h += `<br><span style="color:#ffcc80">⚠ near full scale (${L.total.toFixed(1)} dBFS in the tuner's band): reads low - lower the gain</span>`;
+  if (age > 2) h += `<br><span style="color:#8296b4">last heard ${age < 90 ? age.toFixed(0) + ' s' : (age / 60).toFixed(0) + ' min'} ago</span>`;
+  return h;
+}
+function vfoLvlRender() {
+  if (!vfoLvlTip) return;
+  if (!vfoLvlTipEl) {
+    vfoLvlTipEl = document.createElement('div');
+    vfoLvlTipEl.className = 'vfo-lvl-tip';
+    document.body.appendChild(vfoLvlTipEl);
+  }
+  const h = vfoLvlHtml(vfoLvlTip.id);
+  if (vfoLvlTipEl.dataset.html !== h) { vfoLvlTipEl.dataset.html = h; vfoLvlTipEl.innerHTML = h; }
+  vfoLvlTipEl.style.display = 'block';
+  // beside the pointer, kept on the screen
+  const w = vfoLvlTipEl.offsetWidth, ht = vfoLvlTipEl.offsetHeight;
+  vfoLvlTipEl.style.left = Math.max(4, Math.min(window.innerWidth - w - 4, vfoLvlTip.cx + 16)) + 'px';
+  vfoLvlTipEl.style.top = Math.max(4, Math.min(window.innerHeight - ht - 4, vfoLvlTip.cy + 18)) + 'px';
+}
+function vfoLvlShow(id, e) { vfoLvlTip = {id, cx: e.clientX, cy: e.clientY}; vfoLvlRender(); }
+function vfoLvlHide() {
+  vfoLvlTip = null;
+  if (vfoLvlTipEl) vfoLvlTipEl.style.display = 'none';
+}
+// over a bar of c (the spectrum's / waterfall's overlay: c.boxes) - not while
+// dragging, nor over a marker with a tip of its own
+function vfoLvlHover(e, c, other) {
+  if (other || isDragging || isDraggingEdge || isScrollDragging || squelchDrag || !c || !c.boxes) { vfoLvlHide(); return; }
+  const r = c.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  const box = c.boxes.find(b => inRect(x, y, b));
+  if (box) vfoLvlShow(box.id, e); else vfoLvlHide();
 }
 // Safety net: always hide when the mouse button is released anywhere
 window.addEventListener('mouseup', hideBwTooltip);
@@ -5033,11 +5094,16 @@ function pointerClick(s, e) {
 }
 
 function handleDown(e) { if (aiMarkerHit(e) || sfMarkerHit(e)) return; pointerDown(fftSurface, e); }
-function handleMove(e) { pointerMove(fftSurface, e); if (!isDragging && !isDraggingEdge && !isScrollDragging && !aiMarkerHover(e)) sfMarkerHover(e); }
+function handleMove(e) {
+  pointerMove(fftSurface, e);
+  let mk = false;   // (over a marker with a tip of its own: no 📏 level readout)
+  if (!isDragging && !isDraggingEdge && !isScrollDragging) mk = aiMarkerHover(e) || sfMarkerHover(e);
+  vfoLvlHover(e, $id('fo'), mk);
+}
 function handleUp(e) { pointerUp(fftSurface, e); }
 function handleClick(e) { if (aiMarkerConsumed || sfMarkerConsumed) return; pointerClick(fftSurface, e); }
 function handleWaterfallDown(e) { pointerDown(wfSurface, e); }
-function handleWaterfallMove(e) { pointerMove(wfSurface, e); }
+function handleWaterfallMove(e) { pointerMove(wfSurface, e); vfoLvlHover(e, $id('wf-overlay')); }
 function handleWaterfallUp(e) { pointerUp(wfSurface, e); }
 function handleWaterfallClick(e) { pointerClick(wfSurface, e); }
 
@@ -7256,6 +7322,7 @@ function createPlot() {
         c.addEventListener('mouseup',handleUp);
         addTouchHandlers(c,handleDown,handleMove,handleUp);
         c.addEventListener('mouseleave',()=>{
+          vfoLvlHide();
           // Clear the ACTUAL hover state props (c.ih/c.he were leftovers
           // from an older version - the highlight/cursor used to stay stuck)
           if(c.hoveredBox||c.hoveredEdge||c.hoveredHandle){
@@ -7295,6 +7362,7 @@ function initWaterfall(plot) {
     wfOverlay.addEventListener('mousemove', handleWaterfallMove);
     wfOverlay.addEventListener('mouseup', handleWaterfallUp);
     wfOverlay.addEventListener('mouseleave', () => {
+      vfoLvlHide();
       if (wfOverlay.hoveredHandle !== null || wfOverlay.hoveredEdge || wfOverlay.hoveredBox) {
         wfOverlay.hoveredHandle = null;
         wfOverlay.hoveredEdge = null;
@@ -8159,7 +8227,7 @@ function panesBuild(n) {
     ov.addEventListener('pointermove', e => paneMove(p, e));
     ov.addEventListener('pointerup', e => paneUp(p, e));
     ov.addEventListener('pointercancel', e => paneUp(p, e));
-    ov.addEventListener('pointerleave', () => { if (p.hover) { p.hover = null; paneDrawOverlay(p); } });
+    ov.addEventListener('pointerleave', () => { vfoLvlHide(); if (p.hover) { p.hover = null; paneDrawOverlay(p); } });
     panes.push(p);
   }
   panesResize();
@@ -8661,8 +8729,11 @@ function paneMove(p, e) {
     const sft = sfSpecAt(p.sf || [], x, paneXY(e).y, 2), tip = sft ? sfTagTip(sft) : '';
     if (e.currentTarget.title !== tip) e.currentTarget.title = tip;
     if (sft) e.currentTarget.style.cursor = 'pointer';
+    // 📏 the level readout over a VFO's bar (not over a tag, nor its squelch line)
+    if (ht && !sft && ht.kind !== 'squelch') vfoLvlShow(ht.bar.id, e); else vfoLvlHide();
     return;
   }
+  vfoLvlHide();
   if (paneDrag.squelch !== undefined) {
     const top = 4, bot = p.sh - 14, ymax = fftYMax || 60;
     squelchSetFromDrag(paneDrag.squelch, (bot - paneXY(e).y) / (bot - top) * ymax);
@@ -20911,6 +20982,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     // Update per-decimator squelch status from backend
     if (status.decimator_squelch && Array.isArray(status.decimator_squelch)) {
       let estSources = -1;  // auto source estimate (from the first decimator reporting one)
+      vfoLvlNote(status.decimator_squelch);   // (📏 each VFO's level: the hover readout)
       status.decimator_squelch.forEach(sq => {
         updateDecimatorSquelchStatus(sq.id, sq.open);
         if (estSources < 0 && sq.est_sources !== undefined && sq.est_sources >= 0) {

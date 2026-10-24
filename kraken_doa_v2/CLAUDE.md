@@ -1627,7 +1627,7 @@ Edit `include/config.hpp`:
   back, viewshed off / on, ✕, a link from line of sight mode, the selected
   site, a removed site's link, reload, damaged localStorage, no exceptions
 
-**📏 Range from signal strength (🗺 Map, coherent mode; kraken_doa.html "📏 RANGE", `rdf_mapper.cpp` lvl, `FFTProcessor::band_power`):**
+**📏 Range from signal strength (🗺 Map, coherent mode; kraken_doa.html "📏 RANGE", `vfo_level.cpp` + `rdf_mapper.cpp` lvl, `FFTProcessor::band_power`) + each VFO's level on mouseover (every mode):**
 - The user's request (2026-10-20): from ONE DoA lobe + the received level +
   an estimate of the transmitter's EIRP and our antenna gain, a heat map of
   where the transmitter probably is - with the terrain through ITU-R P.1812
@@ -1637,10 +1637,14 @@ Edit `include/config.hpp`:
   under the DF lobes). The source = the DF panel's selection (`rgSource`):
   one radio (a talker), else the selected VFO (all: the sidebar's selected
   one with a lobe, else the first with a lobe and a level)
-- THE LEVEL (server): `rdf_mapper.cpp` sampler, every 100 ms per VFO
-  (coherent, DoA on, not while `doa_is_calibrating`): its squelch open (or
-  off) -> `FFTProcessor::band_power(active_channel, offset, the VFO's
-  bandwidth, 2 DC bins out)` = the band's bins of the FFT channel's LATEST
+- THE LEVEL (server): `src/vfo_level.cpp` (`vlvl::`, its own thread, every
+  `SAMPLE_MS` 100 ms, EVERY VFO in EVERY operating mode - until 2026-10-24
+  it was rdf_mapper's, coherent + DoA only; the hover readout below needs it
+  everywhere), not while `doa_is_calibrating`: its squelch open (or off) ->
+  `FFTProcessor::band_power(its tuner - coherent: active_channel, independent
+  / wideband scan: its tuner_channel -, offset, the VFO's bandwidth, 2 DC
+  bins out)`, with that tuner's gain (`ChannelManager::get_gain`) = the
+  band's bins of the tuner's LATEST
   RAW frame (`fft_magnitudes`, not the dB-averaged spectrum - a log average
   reads noise-like signals 2.5 dB low) summed in power, by Parseval / the
   Hamming window's mean w^2 0.3974 (+4.01 dB) = absolute: 1 = a full-scale
@@ -1650,22 +1654,42 @@ Edit `include/config.hpp`:
   over its 10th percentile -, or the remembered receiver floor while a
   signal fills the band). A moment counts while the signal is above the
   band's noise (sig > noise: TDMA's empty slots, squelch-less silence don't
-  pull it down), averaged in power (`Lvl::add`: the first ones' mean, then
-  EMA 0.2 ~ 0.5 s; a gap > 3 s or another gain starts afresh; held after,
-  its age sent; reset on a retune > 10 kHz). A TALKER gets the VFO's moment
-  while it is the only active non-packet, non-spatial talker on that VFO
-  (packet talkers - aircraft, ships - and spatial ones share the band: no
-  level). `{"rdf"}` vfos / talkers (`common()`): `lvl: {dbfs (the signal
-  without the noise), noise (the band's), total (the whole frame: ADC
-  load - summed by the FFT loop itself, `channel_frame_power`, so
-  band_power only reads the band's bins under fft_mutex), gain (dB, -1
-  AGC), age (s), n}` when known
+  pull it down), averaged in power (`vlvl::Level::add`: the first ones'
+  mean, then EMA 0.2 ~ 0.5 s; a gap > 3 s or another gain starts afresh;
+  held after, its age sent; reset on a retune > 10 kHz). `vlvl::level()` =
+  the average, `vlvl::moment()` = the latest moment with a growing `seq`.
+  rdf_mapper takes a VFO's level from it, and hands each NEW moment (by seq)
+  to a TALKER while it is the only active non-packet, non-spatial talker on
+  that VFO (packet talkers - aircraft, ships - and spatial ones share the
+  band: no level). Sent as `lvl: {dbfs (the signal without the noise),
+  noise (the band's), total (the whole tuner band: ADC load - summed by the
+  FFT loop itself, `channel_frame_power`, so band_power only reads the
+  band's bins under fft_mutex), gain (dB, -1 AGC), age (s), n}`
+  (`vlvl::write_json`) in `{"rdf"}` vfos / talkers and in system_status
+  `decimator_squelch[]` (every page, 2 Hz)
   Checked (scratch t_bandpower.cpp, the real `process_channel_fft` + pffft +
   nfloor with stubs, MinGW): a bin-centred tone -30 dBFS -> -29.96, between
   bins -50 -> -50.29, NBFM -45 (3 kHz deviation) -> -44.86, an 8 kHz
   64-tone signal -55 -> -54.69, a tone at SNR -2 dB in the band -62 ->
   -61.91; the band's noise within 0.15 dB of the truth in all, the whole
   frame (signal + noise) within 0.1 dB
+- THE HOVER READOUT (the user's request 2026-10-24, every mode): the mouse
+  over a VFO's bar - main spectrum (`handleMove` -> `vfoLvlHover(e,
+  $id('fo'))`, `c.boxes`), waterfall (`handleWaterfallMove`, the overlay's
+  boxes), independent panes (`paneMove`, `paneHit` - not on a squelch line
+  or a saved-frequency tag; not while dragging, nor over an AI / saved
+  frequency marker on the spectrum) - shows beside the pointer
+  (`.vfo-lvl-tip`, `vfoLvlRender`, kept on screen): "D0 · MHz · bandwidth",
+  dBFS · SNR (the VFO's band: signal over the band's noise) · dBm (dBFS -
+  gain + the 📏 range panel's calibration `rgState.cal`), the gain and
+  whether calibrated (± sigC), ⚠ near full scale (total > -8 dBFS), "last
+  heard N s ago" (age > 2 s), "the tuner AGC is on" (no dBm), "no level
+  yet" before a moment. `vfoLvl` from system_status (`vfoLvlNote` in
+  updateSystemStatus); updated live while shown. Checked (scratch
+  ui_hover.mjs, headless Chrome, real mouse moves over the bar drawn from a
+  fake VFO list + spectrum frame): no level yet, live update, the
+  calibration applied, AGC / full scale / age, the status handler, the
+  waterfall bar, hidden off the bar / away, no exceptions
 - dBm (page): dBFS - the tuner gain (the moment's, from the server) + the
   CALIBRATION `rgState.cal` (dB, +- `sigC`). Not a noise-floor (kTB + NF)
   conversion: the dev PC's noise_floors.json (49.6 dB -46.7, 25.4 dB -56.5,

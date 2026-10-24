@@ -173,6 +173,7 @@ APP_SRCS = \
 	$(SRCDIR)/decoder_log.cpp \
 	$(SRCDIR)/rdf_engine.cpp \
 	$(SRCDIR)/rdf_mapper.cpp \
+	$(SRCDIR)/vfo_level.cpp \
 	$(SRCDIR)/talker_doa.cpp \
 	$(SRCDIR)/array_cal.cpp \
 	$(SRCDIR)/voice2text.cpp \
