@@ -1214,7 +1214,11 @@ or one radio's) probably is, from its signal strength over the terrain
   mode): its dBFS, SNR in its band and dBm (the range panel's calibration),
   gain, calibrated or not (`vfoLvlHover`, `.vfo-lvl-tip`)
 - page (`kraken_doa.html` "📏 RANGE", settings `rgState`, localStorage
-  `kraken_rg`): dBm = dBFS - gain + calibration (nominal -23 dB +- 6;
+  `kraken_rg`): dBm = dBFS - gain + C (`rgCal`: a NOMINAL model from
+  published R820T / R820T2 level measurements - by the gain setting, -14.5
+  at 0 dB, ~-19 at 12-37 dB, -16 at 49.6, + the gain's roll-off above ~1
+  GHz; +- 3 dB, more at the band's ends; checked against the 14 source
+  points in tools/range_validate.mjs - plus a correction from a calibration;
   "Known level…", "Known transmitter…" = right-click its place, its path
   loss to the station by the model); the user's EIRP guess (power +
   antenna - cable, or EIRP; presets) + our antenna -> the loss the signal
@@ -1234,7 +1238,8 @@ or one radio's) probably is, from its signal strength over the terrain
 - Tests: `kraken_doa_v2/tools/range_validate.mjs` (node, offline; incl. a
   Monte Carlo calibration over P.1812: the true place in the 50 / 90 %
   regions 50 / 91 % of the time; the station's sweep = links from the
-  transmitter's cells, 0.03 dB median); band_power through the real FFT path
+  transmitter's cells, 0.03 dB median; the nominal calibration vs 14
+  published R820T points: rms 1.8 dB); band_power through the real FFT path
   (scratch: tones, NBFM, multitone, SNR -2 dB - within 0.3 dB)
 
 **📡 Mobile DF on the map (coherent mode)** (details: `kraken_doa_v2/CLAUDE.md`

@@ -2507,12 +2507,13 @@ let plWorker = null, plJob = null, plSeq = 0, plRes = null, plFail = '', plSel =
 // uncertainties; the sweep worker / job / result, the estimate
 const rgState = (() => {
   const d = {on: false, open: true, cfg: true, set: false, txMode: 'ptx', ptx: 5, gt: 0, lt: 0, eirp: 5, sigE: 3, txH: 1.5, envTx: 3,
-             gr: 0, lr: 1, stH: null, envRx: 3, cal: -23, sigC: 6, calHow: '', calF: 0, calTx: null,
+             gr: 0, lr: 1, stH: null, envRx: 3, calOff: 0, sigC: 3, calHow: '', calF: 0, calG: 0, calTx: null,
              model: 'p1812', pol: 'v', r: 30, fade: 'auto', K: 6, sigL: null, sigM: 4, bsd: null};
   try {
     const s = JSON.parse(localStorage.getItem('kraken_rg') || '{}'), num = (v, lo, hi, def) => typeof v === 'number' && v >= lo && v <= hi ? v : def;
     for (const [k, lo, hi] of [['ptx', 1e-6, 1e7], ['gt', -30, 60], ['lt', 0, 60], ['eirp', 1e-6, 1e8], ['sigE', 0, 30], ['txH', 0.5, 3000],
-                               ['envTx', 0, 5], ['gr', -30, 60], ['lr', 0, 60], ['envRx', 0, 5], ['cal', -200, 200], ['sigC', 0, 30], ['calF', 0, 20000],
+                               ['envTx', 0, 5], ['gr', -30, 60], ['lr', 0, 60], ['envRx', 0, 5], ['calOff', -60, 60], ['sigC', 0, 30], ['calF', 0, 20000],
+                               ['calG', -1, 60],
                                ['r', 1, 300], ['K', -20, 40], ['sigM', 0, 30]]) d[k] = num(s[k], lo, hi, d[k]);
     for (const [k, hi] of [['stH', 3000], ['sigL', 30], ['bsd', 90]]) if (s[k] !== null && s[k] !== undefined) d[k] = num(s[k], 0, hi, null);   // (null = automatic)
     for (const k of ['on', 'open', 'cfg', 'set']) if (typeof s[k] === 'boolean') d[k] = s[k];
@@ -2530,6 +2531,51 @@ const rgState = (() => {
 let rgWorker = null, rgJob = null, rgSeq = 0, rgRes = null, rgFail = null, rgCalJob = null, rgCalMsg = '',
     rgPostW = null, rgPostBusy = false, rgPostAt = 0, rgPostT = 0, rgPostSeq = 0, rgPostKidx = '',
     rgEst = null, rgLast = null, rgHovAt = null, rgOff = null, rgLevelKnown = false, rgReady = false;
+// 📏 the receiver's calibration: dBm at its input = dBFS - tuner gain + C.
+// NOMINAL C from published R820T / R820T2 measurements (stock librtlsdr's
+// manual gain = our fixed IF VGA step 8), converted to our dBFS (0 = a
+// full-scale complex tone) - kraken_doa_v2/CLAUDE.md *Range from signal
+// strength*: a calibrated generator into 6 dongles at 895 MHz, gain 0
+// (WPI 2016: -14.7, spread 2.4 dB); ADC overload points vs gain at 144 MHz
+// (N8UR, power-meter-checked generator: -15 / -20.5 / -21.1 / -19.8 / -17.4
+// at 0 / 12.5 / 22.9 / 37.2 / 49.6 dB); max-gain overload / saturation
+// (HB9AJG -14.4 at 145, -20.4 at 435 MHz; J. Adams -15.4); calibrated tones
+// at 915 MHz (J. Clark: -15...-18 at 0 dB, -18.3...-19.3 at 19.7 dB); the
+// gain table's error per step (Simon: 43.9 and 44.5 dB "identical"). C BY
+// THE GAIN SETTING (the table reads high mid-range) + the gain's FREQUENCY
+// roll-off (above ~1 GHz; a little below 50 MHz). Sigma 3 dB (unit to unit,
+// the sources' spread), more at the band's ends. Our own floor at 49.6 dB
+// with C -16: a system noise figure ~11 dB (the literature: 3.5-13 dB at
+// max gain, + man-made noise indoors). Until 2026-10-24 a single -23 dB
+// guessed from that floor with a 5 dB noise figure - ~7 dB too low (0 dBFS
+// at -72.6 dBm at 49.6 dB; the measured overload is -64 to -70 dBm)
+// A calibration (known level / known transmitter / entered) is a
+// CORRECTION on top of the model (rgState.calOff, set at calG dB / calF
+// MHz): the model's gain / frequency shape carries it elsewhere
+const RG_CAL_G = [[0, -14.5], [4, -17], [12.5, -19], [23, -19.5], [37, -19], [49.6, -16]];   // [gain dB, C]
+const RG_CAL_F = [[24, 2, 2.5], [50, 0, 0], [900, 0, 0], [1000, 1, 1], [1200, 3, 2], [1400, 6, 3], [1500, 9.5, 4],
+                  [1600, 12, 5], [1766, 15, 6]];   // [MHz, + dB (less gain), + sigma (dB, in squares)]
+const RG_CAL_SD = 3;
+function rgInterp(T, x, col) {
+  if (!(x > T[0][0])) return T[0][col];
+  for (let i = 1; i < T.length; i++)
+    if (x <= T[i][0]) return T[i - 1][col] + (T[i][col] - T[i - 1][col]) * (x - T[i - 1][0]) / (T[i][0] - T[i - 1][0]);
+  return T[T.length - 1][col];
+}
+// the nominal C at a gain (dB; the AGC's -1: the top setting's) and frequency (MHz), its sigma
+function rgCalNom(g, f) { return rgInterp(RG_CAL_G, g < 0 ? 49.6 : g, 1) + rgInterp(RG_CAL_F, f, 1); }
+function rgCalNomSd(f) { return Math.hypot(RG_CAL_SD, rgInterp(RG_CAL_F, f, 2)); }
+// the C in use and its sigma: the nominal + the correction; calibrated: the
+// calibration's own sigma, + the model's shape (1.5 dB, and the frequency
+// terms' difference) when used away from where it was set (gain > 3 dB,
+// frequency > 15 % off)
+function rgCal(g, f) { return rgCalNom(g, f) + rgState.calOff; }
+function rgCalSd(g, f) {
+  const s = rgState;
+  if (!s.calHow) return rgCalNomSd(f);
+  const away = (s.calF > 0 && Math.abs(Math.log(f / s.calF)) > 0.14) || Math.abs((g < 0 ? 49.6 : g) - s.calG) > 3;
+  return away ? Math.hypot(s.sigC, 1.5, rgInterp(RG_CAL_F, f, 2) - rgInterp(RG_CAL_F, s.calF || f, 2)) : s.sigC;
+}
 
 const bwo=[
   {decimation:1,bandwidth:2.4,name:"2.4 MHz (No decimation)"},
@@ -2679,7 +2725,8 @@ function hideBwTooltip() {
 // the mouse over the VFO's bar - main spectrum, waterfall, independent
 // panes: dBFS (the band's signal without its noise; 0 = a full-scale complex
 // tone), the SNR in the VFO's band, dBm by the 📏 range panel's calibration
-// (dBm = dBFS - gain + rgState.cal). Updated live while shown
+// (dBm = dBFS - gain + rgCal(gain, MHz): the nominal from published R820T
+// data + the user's correction). Updated live while shown
 let vfoLvl = {}, vfoLvlTipEl = null, vfoLvlTip = null;   // (vfoLvlTip: {id, cx, cy} while shown)
 function vfoLvlNote(list) {
   const now = Date.now(), m = {};
@@ -2691,15 +2738,18 @@ function vfoLvlHtml(id) {
   const dec = (decimatorInfo || []).find(d => d.id === id), L = vfoLvl[id];
   const bw = dec ? (dec.bandwidth_mhz || (bwo[dec.bandwidth_index || 0] || {}).bandwidth || 0) : 0;
   const bwTxt = bw >= 1 ? bw.toFixed(1) + ' MHz' : bw >= 0.001 ? +(bw * 1000).toFixed(1) + ' kHz' : '';
-  let h = `<b style="color:${getDecimatorColor(id)}">D${id}</b>` +
-          (dec ? ` · ${(vfoCenterMhz(dec) + dec.freq_offset_hz / 1e6).toFixed(4)} MHz` : '') + (bwTxt ? ` · ${bwTxt}` : '');
+  const mhz = dec ? vfoCenterMhz(dec) + dec.freq_offset_hz / 1e6 : 0;
+  let h = `<b style="color:${getDecimatorColor(id)}">D${id}</b>` + (dec ? ` · ${mhz.toFixed(4)} MHz` : '') + (bwTxt ? ` · ${bwTxt}` : '');
   if (!L) return h + '<br><span style="color:#8296b4">no level yet: measured while its signal is above the noise in its band' +
                      (dec && dec.squelch_enabled ? ' and its squelch is open' : '') + '</span>';
   const age = L.age + (Date.now() - L.at) / 1000;
   h += `<br><b>${L.dbfs.toFixed(1)} dBFS</b> · SNR ${(L.dbfs - L.noise).toFixed(1)} dB`;
   if (L.gain < 0) h += '<br><span style="color:#ffcc80">dBm: the tuner AGC is on - its gain isn\'t known</span>';
-  else h += ` · <b>${(L.dbfs - L.gain + rgState.cal).toFixed(1)} dBm</b><br><span style="color:#8296b4">gain ${L.gain.toFixed(1)} dB · ` +
-            (rgState.calHow ? `calibrated (± ${rgState.sigC} dB)` : `nominal calibration (± ${rgState.sigC} dB)`) + '</span>';
+  else {
+    const f = mhz || 100, c = rgCal(L.gain, f), sd = rgCalSd(L.gain, f);
+    h += ` · <b>${(L.dbfs - L.gain + c).toFixed(1)} dBm</b><br><span style="color:#8296b4">gain ${L.gain.toFixed(1)} dB · ` +
+         (rgState.calHow ? `calibrated` : `nominal (published R820T data)`) + ` ± ${sd.toFixed(1)} dB</span>`;
+  }
   if (L.total > -8) h += `<br><span style="color:#ffcc80">⚠ near full scale (${L.total.toFixed(1)} dBFS in the tuner's band): reads low - lower the gain</span>`;
   if (age > 2) h += `<br><span style="color:#8296b4">last heard ${age < 90 ? age.toFixed(0) + ' s' : (age / 60).toFixed(0) + ' min'} ago</span>`;
   return h;
@@ -19309,10 +19359,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // layer and settings (rgState): the viewshed's signal mode stays without
   // the station (the user's call 2026-10-12 - that is about coverage)
   const RG_EPS = 0.05, RG_ALPHA = 1, RG_NEAR_M = 30, RG_BASE_SD = 2;   // (rdf_engine.hpp Options - alpha 1: one record; rdf_mapper.cpp BASE_SIGMA_DEG)
-  // the uncalibrated receiver: a KrakenSDR's own noise at 49.6 dB gain (the
-  // dev PC's noise_floors.json: -46.7 -> -32.9 dBFS over the 2.4 MHz) taken
-  // as kTB + a 5 dB noise figure (-105.2 dBm): dBm = dBFS - 49.6 - 22.7
-  const RG_CAL_NOMINAL = -23, RG_CAL_NOMINAL_SD = 6;
+  // (the receiver's calibration - the nominal model from published R820T
+  // data + the user's correction - is in the globals block: rgCal / rgCalSd)
   const RG_PRESETS = [
     ['Handheld radio: 5 W, -3 dBi, 1.5 m', {txMode: 'ptx', ptx: 5, gt: -3, lt: 0, txH: 1.5, sigE: 4}],
     ['PMR446 / FRS: 0.5 W ERP, 1.5 m', {txMode: 'eirp', eirp: 0.82, txH: 1.5, sigE: 4}],
@@ -19340,7 +19388,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const env = rgState.envTx, K = env <= 2 ? 0.5 : rgState.txH >= PL_ENV_R[env] ? 1.0 : 1.2;
     return K + 1.3 * Math.log10(f);
   }
-  function rgSigma(f) { const s = rgState; return Math.hypot(rgSigmaL(f), s.sigM, s.sigE, s.sigC); }
+  function rgSigma(f, g) { const s = rgState; return Math.hypot(rgSigmaL(f), s.sigM, s.sigE, rgCalSd(g, f)); }
   // the bearing's uncertainty (deg): the setting, else as mobile DF's frames
   // (2 deg + the heading's: compass 4, else 1.5 + 8 / speed - a static
   // location counts as a slow GPS course, 5.5)
@@ -19394,7 +19442,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                                : sn.key.endsWith('|') ? 'No level yet: it is measured while the signal is above the noise in the VFO\'s band (its squelch open)'
                                : 'No level for this radio yet: it is measured while it is the only one transmitting on its VFO'};
     if (L.gain < 0) return {why: 'The tuner AGC is on: its gain isn\'t known, so the level can\'t be turned into dBm - set a fixed gain'};
-    const prx = L.dbfs - L.gain + rgState.cal, sigma = rgSigma(sn.mhz);
+    const prx = L.dbfs - L.gain + rgCal(L.gain, sn.mhz), sigma = rgSigma(sn.mhz, L.gain);
     return {ok: true, prx, sigma, base: rgEirp() + rgState.gr - rgState.lr - prx, snr: L.dbfs - L.noise};
   }
 
@@ -19730,7 +19778,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const sd = rgBsd(sn), lik = rgLik(inp.sigma), ang = rgAng(sn.lobe, sd);
     if (!ang) return;
     // (setKey: what the user set + the source; the rest: the live lobe and level)
-    const setKey = [rgRes.key, sn.key, rgEirp().toFixed(2), rgState.gr, rgState.lr, rgState.cal, sd.toFixed(2), inp.sigma.toFixed(3), rgState.fade, rgState.K].join('|');
+    const setKey = [rgRes.key, sn.key, rgEirp().toFixed(2), rgState.gr, rgState.lr, rgState.calOff, rgState.calHow, sd.toFixed(2), inp.sigma.toFixed(3), rgState.fade, rgState.K].join('|');
     const ikey = setKey + '|' + sn.lobe + '|' + inp.base.toFixed(2);
     if (ikey === rgPostKey) return;
     const wait = rgPostAt + (setKey !== rgPostSetKey ? 300 : RG_LIVE_MS) - Date.now();
@@ -19873,7 +19921,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
 
   // ---- calibration: dBm = dBFS - gain + cal ----
   function rgCalNominal() {
-    Object.assign(rgState, {cal: RG_CAL_NOMINAL, sigC: RG_CAL_NOMINAL_SD, calHow: '', calF: 0});
+    Object.assign(rgState, {calOff: 0, sigC: RG_CAL_SD, calHow: '', calF: 0, calG: 0});
     rgCalMsg = '';
     rgSave();
     rgChanged();
@@ -19884,8 +19932,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const el = document.querySelector('#map-rg .rg-klv'), v = el ? Number(el.value) : NaN, sn = rgSnap();
     if (!(el && el.value !== '' && Number.isFinite(v) && v > -200 && v < 50)) { rgCalMsg = '⚠ enter the level the receiver gets (dBm)'; rgRender(); return; }
     if (!sn || !sn.lvl || sn.lvl.gain < 0) { rgCalMsg = '⚠ no level measured for the selected signal (or the AGC is on)'; rgRender(); return; }
-    rgState.cal = +(v - (sn.lvl.dbfs - sn.lvl.gain)).toFixed(1);
-    Object.assign(rgState, {sigC: 1.5, calHow: `a known level: ${plF(v)} dBm`, calF: sn.mhz});
+    // (a correction on the nominal model at this gain + frequency)
+    rgState.calOff = +(v - (sn.lvl.dbfs - sn.lvl.gain) - rgCalNom(sn.lvl.gain, sn.mhz)).toFixed(1);
+    Object.assign(rgState, {sigC: 1.5, calHow: `a known level: ${plF(v)} dBm`, calF: sn.mhz, calG: sn.lvl.gain});
     rgCalMsg = `Set: ${plF(sn.lvl.dbfs)} dBFS at ${plF(sn.lvl.gain)} dB gain = ${plF(v)} dBm`;
     rgUiKl = false;
     rgSave();
@@ -19938,7 +19987,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       if (Lm === null) rgCalMsg = '⚠ Longley-Rice: ' + plItmErr(r.itm.err);
       else {
         const L = Lm + r.clut.a + r.clut.b, exp = rgDbm(job.eirp) - L + rgState.gr - rgState.lr;
-        rgState.cal = +(exp - (job.lvl.dbfs - job.lvl.gain)).toFixed(1);
+        rgState.calOff = +(exp - (job.lvl.dbfs - job.lvl.gain) - rgCalNom(job.lvl.gain, job.mhz)).toFixed(1);
+        rgState.calG = job.lvl.gain;
         // (the prediction itself is uncertain: the location variability + the model's error)
         rgState.sigC = +Math.hypot(rgSigmaL(job.mhz), rgState.sigM).toFixed(1);
         rgState.calHow = `a known transmitter ${plF(job.d)} km away: ${plF(L)} dB (${PL_MODELS[mdl]}) → ${plF(exp)} dBm expected`;
@@ -19968,11 +20018,15 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   }
   function rgSet(k, v) {
     const n = Number(v), lim = {ptx: [1e-6, 1e7], gt: [-30, 60], lt: [0, 60], eirp: [1e-6, 1e8], sigE: [0, 30], txH: [0.5, 3000], gr: [-30, 60],
-                                lr: [0, 60], cal: [-200, 200], sigC: [0, 30], r: [1, 300], K: [-20, 40], sigM: [0, 30]}[k];
+                                lr: [0, 60], calOff: [-60, 60], sigC: [0, 30], r: [1, 300], K: [-20, 40], sigM: [0, 30]}[k];
     if (lim) {
       if (!(v !== '' && Number.isFinite(n) && n >= lim[0] && n <= lim[1])) { rgRender(true); return; }
       rgState[k] = n;
-      if (k === 'cal') { rgState.calHow = 'entered'; rgState.calF = 0; }
+      if (k === 'calOff') {   // (a correction typed in: at the selected signal's gain + frequency)
+        const sn = rgSnap();
+        Object.assign(rgState, {calHow: n || rgState.calHow ? 'a correction entered by hand' : '', calF: sn ? sn.mhz : 0,
+                                calG: sn && sn.lvl ? Math.max(0, sn.lvl.gain) : 49.6});
+      }
     } else if (['stH', 'sigL', 'bsd'].includes(k)) {
       const hi = {stH: 3000, sigL: 30, bsd: 90}[k];
       if (v === '' || v === null) rgState[k] = null;
@@ -20032,12 +20086,13 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `<label>cable ${num('lr', 40, '0.5', 'Feed line + connector loss between our antenna and the KrakenSDR (dB)')} dB</label></div>` +
       `<div class="map-vs-row"><span class="pl-l"></span><label>${txt('stH', 44, 'Our antenna\'s height above the ground (m); empty = the viewshed station\'s antenna height, else 5 m')} m above ground</label>` +
       `${sel('envRx', envs, 'Our surroundings (ITU-R P.2108 clutter)')}</div>` +
-      `<div class="map-vs-row"><span class="pl-l">Calibration</span><label title="The receiver's calibration: dBm at its input = the level in dBFS - the tuner gain + this">dBm = dBFS − gain ${num('cal', 56, '0.1', 'dBm at the receiver input = dBFS - tuner gain (dB) + this (dB)')} dB</label>` +
-      `<label title="How far off the calibration may be (dB, one standard deviation): widens the range">± ${num('sigC', 40, '0.5', 'Uncertainty of the calibration (dB, 1 sigma)')} dB</label></div>` +
+      `<div class="map-vs-row"><span class="pl-l">Calibration</span><span class="rg-calc" title="dBm at the receiver input = dBFS - the tuner gain + C. C = the nominal from published R820T / R820T2 measurements (it depends on the gain setting and the frequency) + your correction"></span></div>` +
+      `<div class="map-vs-row"><span class="pl-l"></span><label title="Added to the nominal C - set by Known level / Known transmitter below, or typed">correction ${num('calOff', 52, '0.1', 'dB added to the nominal calibration')} dB</label>` +
+      `<label class="rg-sigc" title="How far off your calibration may be (dB, one standard deviation): widens the range">± ${num('sigC', 40, '0.5', 'Uncertainty of your calibration (dB, 1 sigma)')} dB</label></div>` +
       `<div class="map-vs-row rg-calh pl-note"></div>` +
       `<div class="map-vs-row rg-calb"><span class="pl-l"></span><button type="button" class="map-btn" onclick="rgUiKl=!rgUiKl;rgRender(true)" title="You know the level the selected signal arrives with at the receiver input (a signal generator through an attenuator, a calibrated meter)">Known level…</button>` +
       `<button type="button" class="map-btn" onclick="rgUiKt=!rgUiKt;rgRender(true);mapDraw()" title="A transmitter whose place and EIRP you know (a repeater, a broadcast station from a licence register): its path loss to the station by the model says what level it should arrive with">Known transmitter…</button>` +
-      `<button type="button" class="map-btn" onclick="rgCalNominal()" title="Back to the uncalibrated figure: ${RG_CAL_NOMINAL} dB ± ${RG_CAL_NOMINAL_SD} dB (a KrakenSDR's own noise at 49.6 dB gain taken as a 5 dB noise figure)">Nominal</button></div>` +
+      `<button type="button" class="map-btn" onclick="rgCalNominal()" title="Back to the nominal calibration from published R820T / R820T2 measurements (no correction): C -14.5 dB at gain 0, about -19 at 12-37 dB, -16 at 49.6 dB, less gain above ~1 GHz; ± ${RG_CAL_SD} dB">Nominal</button></div>` +
       `<div class="map-vs-row rg-kl"><span class="pl-l"></span><label>the signal is <input type="number" class="rg-klv" style="width:60px" step="0.1" title="The level the selected signal arrives with at the receiver input (dBm)" onkeydown="if(event.key==='Enter')rgCalLevel()"> dBm at the input</label>` +
       `<button type="button" class="map-btn" onclick="rgCalLevel()">Set</button></div>` +
       `<div class="map-vs-row rg-kt"><span class="pl-l"></span><span class="rg-ktd pl-note"></span></div>` +
@@ -20115,15 +20170,21 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     else {
       const L = sn.lvl, age = L ? L.age + (sn.held ? (Date.now() - sn.t) / 1000 : 0) : 0;
       src = `<span style="color:${sn.col}">■</span> <b>${digEsc(sn.name)}</b> · ${sn.mhz.toFixed(4)} MHz · lobe ${plF(sn.peak, 0)}°`;
-      if (L && L.gain >= 0) src += ` · ${plF(L.dbfs)} dBFS at ${plF(L.gain)} dB → <b>${plF(L.dbfs - L.gain + rgState.cal)} dBm</b> · SNR ${plF(L.dbfs - L.noise, 0)} dB`;
+      if (L && L.gain >= 0) src += ` · ${plF(L.dbfs)} dBFS at ${plF(L.gain)} dB → <b>${plF(L.dbfs - L.gain + rgCal(L.gain, sn.mhz))} dBm</b> · SNR ${plF(L.dbfs - L.noise, 0)} dB`;
       if (sn.held || age > 3) src += ` <span class="w">(${sn.held ? 'held, ' : ''}level ${age < 90 ? age.toFixed(0) + ' s' : (age / 60).toFixed(0) + ' min'} old)</span>`;
     }
     set('.rg-src', src);
     // the calibration
     const s = rgState;
-    set('.rg-calh', s.calHow ? `calibrated from ${digEsc(s.calHow)}${s.calF ? ` at ${plF(s.calF, 3)} MHz` : ''}` +
-                    (s.calF && sn && Math.abs(Math.log2(sn.mhz / s.calF)) > 0.5 ? ' <span class="w">- far from this frequency: the tuner\'s gain differs</span>' : '')
-                  : `<span class="w">uncalibrated: the nominal ${RG_CAL_NOMINAL} dB (± ${RG_CAL_NOMINAL_SD} dB)${s.cal !== RG_CAL_NOMINAL ? ' - changed' : ''}</span>`);
+    // C in use here (the selected signal's gain + frequency; without one: 49.6 dB, 146 MHz)
+    const cg = sn && sn.lvl && sn.lvl.gain >= 0 ? sn.lvl.gain : 49.6, cf = sn ? sn.mhz : 146;
+    const cNom = rgCalNom(cg, cf), cSd = rgCalSd(cg, cf);
+    set('.rg-calc', `dBm = dBFS − gain + C, C = <b>${plF(cNom + s.calOff)} dB</b> ± ${plF(cSd)} ` +
+                    `<span class="pl-note">(nominal ${plF(cNom)} at ${plF(cg)} dB, ${plF(cf, cf < 100 ? 1 : 0)} MHz${s.calOff ? `, ${plSgn(s.calOff)} correction` : ''})</span>`);
+    vis('.rg-sigc', !!s.calHow);
+    set('.rg-calh', s.calHow ? `calibrated from ${digEsc(s.calHow)}${s.calF ? ` at ${plF(s.calF, 3)} MHz, ${plF(s.calG)} dB gain` : ''}` +
+                    (s.calF && sn && Math.abs(Math.log2(sn.mhz / s.calF)) > 0.5 ? ' <span class="w">- far from this frequency: the model\'s gain roll-off carries it, less surely</span>' : '')
+                  : `<span class="w">uncalibrated: the nominal from published R820T measurements, ± ${plF(cSd)} dB - calibrate on a known transmitter for better</span>`);
     vis('.rg-kl', rgUiKl);
     vis('.rg-kt', rgUiKt);
     vis('.rg-kt2', rgUiKt && !!s.calTx);
@@ -20142,7 +20203,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     vis('.rg-calm', !!rgCalMsg);
     // the uncertainty in total
     const f = sn ? sn.mhz : 146;
-    set('.rg-sig', `in total σ <b>${plF(rgSigma(f))} dB</b> (location ${plF(rgSigmaL(f))}, model ${plF(s.sigM)}, EIRP ${plF(s.sigE)}, calibration ${plF(s.sigC)})` +
+    set('.rg-sig', `in total σ <b>${plF(rgSigma(f, cg))} dB</b> (location ${plF(rgSigmaL(f))}, model ${plF(s.sigM)}, EIRP ${plF(s.sigE)}, calibration ${plF(rgCalSd(cg, f))})` +
                    (sn ? ` + fading · bearing σ ${plF(rgBsd(sn))}°` : ''));
     // the sweep
     let job = '';
@@ -20179,7 +20240,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       const L = E.sn.lvl;
       if (E.inp.snr < 6) w.push(`weak (SNR ${plF(E.inp.snr, 0)} dB): the level reads high, the range short`);
       if (L.total > -8) w.push(`the receiver is near full scale (${plF(L.total)} dBFS in the band): the level may read low - lower the gain`);
-      if (!s.calHow) w.push('uncalibrated: absolute levels ± ' + RG_CAL_NOMINAL_SD + ' dB');
+      if (!s.calHow) w.push(`uncalibrated: absolute levels ± ${plF(rgCalNomSd(E.sn.mhz))} dB (the nominal from published R820T data)`);
       if (E.sn.held) w.push('held: the signal ended');
       if (w.length) st += '<br><span class="w">⚠ ' + w.join('<br>⚠ ') + '</span>';
     } else if (sn && rgRes && !rgJob) st = 'working out…';

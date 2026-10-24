@@ -1690,22 +1690,56 @@ Edit `include/config.hpp`:
   fake VFO list + spectrum frame): no level yet, live update, the
   calibration applied, AGC / full scale / age, the status handler, the
   waterfall bar, hidden off the bar / away, no exceptions
-- dBm (page): dBFS - the tuner gain (the moment's, from the server) + the
-  CALIBRATION `rgState.cal` (dB, +- `sigC`). Not a noise-floor (kTB + NF)
-  conversion: the dev PC's noise_floors.json (49.6 dB -46.7, 25.4 dB -56.5,
-  20.7 dB -58.7) drops ~10 dB for 24 dB less gain - below the top gains the
-  floor is the IF / ADC noise, not the antenna's. Nominal (`RG_CAL_NOMINAL`
-  -23 dB, +- 6): the dev PC's floor at 49.6 dB (-32.9 dBFS over the 2.4
-  MHz) taken as kTB + a 5 dB noise figure (-105.2 dBm). Calibrate:
-  "Known level…" (`rgCalLevel`: the selected signal arrives with X dBm ->
-  cal = X - (dbfs - gain), +- 1.5 dB) or "Known transmitter…" (right-click
-  its place -> "📏 Known transmitter here" `rgMenuItem` / `rgCalTxAt`,
+- dBm (page, the range panel AND the hover readout): dBFS - the tuner gain
+  (the moment's, from the server) + C = `rgCal(gain, MHz)` (globals block):
+  the NOMINAL model + the user's correction `rgState.calOff`. Not a
+  noise-floor (kTB + NF) conversion: the dev PC's noise_floors.json (49.6
+  dB -46.7, 25.4 dB -56.5, 20.7 dB -58.7) drops ~10 dB for 24 dB less gain
+  - below the top gains the floor is the IF / ADC noise, not the antenna's.
+  THE NOMINAL (`rgCalNom`, `RG_CAL_G` x `RG_CAL_F`, sigma `rgCalNomSd`;
+  the user's question 2026-10-24 - until then a single -23 dB +- 6 guessed
+  from that floor as kTB + a 5 dB noise figure, ~7 dB too low: it put 0
+  dBFS at -72.6 dBm at 49.6 dB, the measured overload is -64 to -70 dBm):
+  published R820T / R820T2 level measurements (stock librtlsdr's manual
+  gain = our fixed IF VGA step 8), converted to our dBFS (0 = a full-scale
+  complex tone; an overload / clip point = 0 dBFS) - research in job
+  3cc78a36:
+  | source | f MHz | gain dB | -> C |
+  |---|---|---|---|
+  | WPI MQP 2016 Table 6 (6 dongles, Agilent N5181A; 20.4-26.9 GNU Radio magnitude / V rms) | 895 | 0 | -13.2 ... -15.6, mean -14.7 |
+  | N8UR, osmocom-sdr 2018-03 (HP 8642A + power meter; first spur = overload) | 144 | 0 / 12.5 / 22.9 / 37.2 / 49.6 | -15 / -20.5 / -21.1 / -19.8 / -17.4 |
+  | HB9AJG 2013 (R820T, SDR#, overload) | 145 / 435 | max | -14.4 / -20.4 |
+  | J. Adams 2016 (NooElec R820T2, -1 dB saturation ~-65 dBm) | - | 49.6 | -15.4 |
+  | J. Clark 2023 (Signal Hound-checked levels, SDR# dBFS) | 915 | 0 / 19.7 | -15...-18 / -18.3, -19.3 |
+  | Simon 2014 (gain table check, relative): 43.9 and 44.5 dB "identical", mid steps +1...+3.5 dB over nominal | 141 / 1000 | all | shape |
+  -> C by the gain setting [0 -14.5, 4 -17, 12.5 -19, 23 -19.5, 37 -19,
+  49.6 -16] (the table reads high mid-range) + the gain's frequency
+  roll-off [24 MHz +2, 50-900 0, 1000 +1, 1200 +3, 1400 +6, 1500 +9.5, 1600
+  +12, 1766 +15] (WPI's 6-unit sweep, Simon's max-gain sweep, a "10 dB
+  down at 1.5 GHz vs 300 MHz" report); sigma 3 dB (unit to unit ~1.2, the
+  sources' spread) + 0 ... 6 more toward the band's ends. Against the 14
+  points: mean -0.9, rms 1.8, worst -4.4 dB (HB9AJG 435 MHz), all within 2
+  sigma (tools/range_validate.mjs 7). With C -16 the dev PC's floor at 49.6
+  dB means a system noise figure ~11 dB (published at max gain: 3.5 - 13;
+  indoors man-made noise adds). The KrakenSDR's own front end (noise-source
+  switch, bias tee) isn't characterised: +0 ... +1 dB more loss likely. The
+  AGC's -1: the top setting's C
+  A CALIBRATION is a correction on the model (`calOff`, set at `calG` dB /
+  `calF` MHz; `sigC` its own +-): "Known level…" (`rgCalLevel`: the
+  selected signal arrives with X dBm -> calOff = X - (dbfs - gain) -
+  rgCalNom(gain, f), +- 1.5 dB), "Known transmitter…" (right-click its
+  place -> "📏 Known transmitter here" `rgMenuItem` / `rgCalTxAt`,
   `rgState.calTx` {lat, lon, h, eirp W}; `rgCalTx` = a LINK job on the range
   worker from it to the station (our antenna height), the model's loss +
-  P.2108 -> the level expected = EIRP - L + G - cable -> cal; +- sqrt(sigma_L^2
-  + model^2), the prediction's own spread). `calHow` / `calF` shown; far
-  (> 1.4x) from calF: a warning (the tuner's gain changes with frequency).
-  The tuner AGC (gain -1): no dBm, said
+  P.2108 -> the level expected = EIRP - L + G - cable -> calOff; +-
+  sqrt(sigma_L^2 + model^2), the prediction's own spread), or typed (the
+  "correction" field; "Nominal" = 0). `rgCalSd`: calibrated = sigC, away
+  from where it was set (gain > 3 dB or frequency > 15 % off) + the
+  model's shape (1.5 dB and the frequency terms' difference, in squares).
+  The panel's calibration row: "dBm = dBFS - gain + C, C = x dB +- y
+  (nominal z at g dB, f MHz, + correction)"; the ± field only once
+  calibrated; far (> 1.4x) from calF: a note. The tuner AGC (gain -1): no
+  dBm, said
 - THE SWEEP: the viewshed worker's signal sweep (`vsWorkerMain` -> runJob /
   runSignal / plSweep, UNCHANGED) on an instance of its own (`rgWorker`;
   also its calibration links) with the STATION as the worker's "Tx" end
@@ -1809,7 +1843,8 @@ Edit `include/config.hpp`:
 - Limits: one antenna's level (the FFT channel; no array gain), the bare
   terrain + P.2108 clutter (buildings / trees otherwise not in the data),
   the median models (no ducting), the EIRP is a guess - its +- widens the
-  range; the uncalibrated level +- 6 dB; a packet talker has no level
+  range; the uncalibrated level +- 3 dB (VHF / UHF; up to ~6.7 at the
+  band's top end); a packet talker has no level
 - Tests: committed `tools/range_validate.mjs` (node 20+, offline - the
   synthetic terrain of pathloss_validate.mjs through fetch, the page's own
   functions + both workers): the pdf (no fading = the normal pdf to 2e-5;
@@ -1832,7 +1867,11 @@ Edit `include/config.hpp`:
   button, the panel, the sweep (P.1812 30 km, 6.4 s) + estimate (108 ms),
   heat colours along the lobe, the folds (saved), hover, a known level (-80
   dBm -> cal -8), a known transmitter (5 km, 100 W, 40 m: P.1812 137.0 dB
-  -> cal -16 +- 6.1), the menu item, AGC, held, off, no exceptions
+  -> correction +7 on the nominal, C -9.0, +- 6.1; a known level of -80
+  dBm -> correction +15 on the nominal -16), the calibration row (C = -16.0
+  +- 3.0, nominal at 49.6 dB / 446 MHz), the ± growing away from the
+  calibration's gain / frequency, the menu item, AGC, held, off, no
+  exceptions
 
 **Incident map (`src/incidents.cpp`, `geo_address.cpp`, `geo_http.cpp`):**
 - Plugins send free-text messages with `host.message(from, text)`

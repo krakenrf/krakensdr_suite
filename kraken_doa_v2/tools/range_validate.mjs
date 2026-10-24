@@ -20,6 +20,8 @@
 // 6 the station's sweep (the station as the worker's "Tx" end, the clutter
 //   roles swapped as the page's rgSweepMsg) = links from the transmitter's
 //   cells to the station, the clutter at its true ends
+// 7 the nominal calibration (RG_CAL_G / RG_CAL_F) vs the published R820T /
+//   R820T2 level measurements it was made from
 import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
@@ -299,6 +301,33 @@ const ST = [-36.88, 174.62];
   const med = diffs[Math.floor(diffs.length / 2)], p90 = diffs[Math.floor(diffs.length * 0.9)];
   check(diffs.length >= 20 && med < 1.5 && clutTx > 5, `6 the station's sweep vs links from the transmitter's cells to the station (P.1812 + P.2108, the TX in urban ` +
         `clutter - up to ${clutTx.toFixed(1)} dB of it): |diff| median ${med.toFixed(2)}, p90 ${p90.toFixed(2)} dB (${diffs.length})`);
+}
+// ---- 7: the nominal calibration vs the published R820T / R820T2 data ----
+// (C in dBm = dBFS - gain + C, converted to our dBFS: 0 = a full-scale complex
+// tone; clip / overload points taken as 0 dBFS). Sources: WPI MQP 2016 Table
+// 6 (6 dongles, Agilent N5181A, 895 MHz, gain 0: magnitude per volt 20.4 -
+// 26.9 -> C -13.2 ... -15.6, mean -14.7); N8UR (osmocom-sdr 2018-03, HP
+// 8642A + power meter, 144 MHz: first spur at -15 / -33 / -44 / -57 / -67
+// dBm at 0 / 12.5 / 22.9 / 37.2 / 49.6 dB); HB9AJG 2013 (R820T, overload at
+// max gain ~-64 dBm at 145 MHz, ~-70 at 435); J. Adams 2016 (NooElec
+// R820T2, saturation ~-65 dBm at 49.6); J. Clark 2023 (915 MHz, Signal
+// Hound-checked levels in SDR# dBFS)
+{
+  const c0 = name => { const a = H.indexOf(`\nfunction ${name}(`); if (a < 0) throw new Error('no function ' + name); return H.slice(a + 1, H.indexOf('\n}\n', a) + 3); };
+  // (a const up to its first ';' and the rest of that line - a comment)
+  const k0 = name => { const m = new RegExp(`\\nconst ${name} = [\\s\\S]*?;[^\\n]*\\n`).exec(H); if (!m) throw new Error('no const ' + name); return m[0]; };
+  const M = new Function(`${k0('RG_CAL_G')}${k0('RG_CAL_F')}${k0('RG_CAL_SD')}${c0('rgInterp')}\n${c0('rgCalNom')}\n${c0('rgCalNomSd')}\nreturn {rgCalNom, rgCalNomSd};`)();
+  const pts = [   // [gain dB, MHz, C, source]
+    [0, 895, -14.7, 'WPI mean'], [0, 144, -15, 'N8UR'], [12.5, 144, -20.5, 'N8UR'], [22.9, 144, -21.1, 'N8UR'], [37.2, 144, -19.8, 'N8UR'],
+    [49.6, 144, -17.4, 'N8UR'], [49.6, 145, -14.4, 'HB9AJG'], [49.6, 435, -20.4, 'HB9AJG'], [49.6, 145, -15.4, 'Adams'],
+    [0, 915, -15, 'Clark'], [0, 915, -15, 'Clark'], [0, 915, -18, 'Clark'], [19.7, 915, -18.3, 'Clark'], [19.7, 915, -19.3, 'Clark']];
+  const res = pts.map(([g, f, c]) => c - M.rgCalNom(g, f)), z = pts.map(([g, f, c], i) => res[i] / M.rgCalNomSd(f));
+  const mean = res.reduce((a, b) => a + b, 0) / res.length, rms = Math.sqrt(res.reduce((a, b) => a + b * b, 0) / res.length);
+  const worst = res.reduce((a, b) => Math.abs(b) > Math.abs(a) ? b : a, 0);
+  check(Math.abs(mean) < 1.5 && rms < 2.5 && z.every(v => Math.abs(v) < 2),
+        `7 the nominal calibration vs ${pts.length} published points: mean ${mean.toFixed(2)}, rms ${rms.toFixed(2)}, worst ${worst.toFixed(1)} dB ` +
+        `(${pts[res.indexOf(worst)][3]}), all within 2 sigma; C(49.6 dB, 146 MHz) ${M.rgCalNom(49.6, 146).toFixed(1)}, C(0, 895) ` +
+        `${M.rgCalNom(0, 895).toFixed(1)}, C(49.6, 1400) ${M.rgCalNom(49.6, 1400).toFixed(1)} +- ${M.rgCalNomSd(1400).toFixed(1)}`);
 }
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');
 process.exit(fails ? 1 : 0);
