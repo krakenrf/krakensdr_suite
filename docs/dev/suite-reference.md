@@ -733,7 +733,10 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
 
 **🗺 Map (right-hand pane)** (details: `kraken_doa_v2/CLAUDE.md` *Map*):
 - Street (OpenStreetMap) / satellite (Esri World Imagery) map drawn by the
-  page itself (no map library, no CDN): without internet it keeps working on
+  page itself - or the tiles of Mapbox, Google Maps, Azure Maps, MapTiler,
+  Thunderforest, Stadia Maps, HERE or a custom XYZ URL with the user's own
+  API key (⚙ Settings in the top bar, per browser; `kraken_doa_v2/docs/dev/map.md`)
+  (no map library, no CDN): without internet it keeps working on
   a lat/lon grid with a notice. Opened with the 🗺 Map button under the
   waterfall; a tab next to MUSIC DoA in coherent mode, the whole right pane
   otherwise; resizable; view settings per browser (localStorage)
