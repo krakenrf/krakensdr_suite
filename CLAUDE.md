@@ -12,8 +12,8 @@ measurements and decisions; when they disagree with the code, the code wins.
 
 | Area | Read |
 |---|---|
-| heimdall internals: calibration state machines, coherence recovery, pipeline, operating modes, drag retunes, calibration hold | `heimdall_v2/CLAUDE.md` |
-| kraken_doa: every client feature, web UI, decoders (index below) | `kraken_doa_v2/CLAUDE.md` |
+| heimdall: rules and invariants, then the internals (calibration, coherence recovery, pipeline, operating modes, drag retunes, calibration hold) | `heimdall_v2/CLAUDE.md`, then `heimdall_v2/docs/dev/` |
+| kraken_doa: rules, the command path, testing; then one file per feature (index below) | `kraken_doa_v2/CLAUDE.md`, then `kraken_doa_v2/docs/dev/<topic>.md` |
 | Writing, testing and licensing a decoder plugin | `kraken_doa_v2/plugins/SDK.md`, `kraken_doa_v2/plugins/<id>/README.md` |
 | run.sh / install.sh internals, Docker, logging, network access checks, git secret guards | `docs/dev/run-and-deploy.md` |
 | Windows port; the librtlsdr fork (WinUSB fixes, fast retunes, USB transfer counts) | `docs/dev/windows.md`, `docs/dev/librtlsdr-fork.md` |
@@ -98,7 +98,7 @@ noise source, switched only through `set_bias_tee_all_devices()`
 one function.
 
 Calibration decisions, settled by measurement (don't reopen them without new
-measurements; reasons in `heimdall_v2/CLAUDE.md`):
+measurements; reasons in `heimdall_v2/docs/dev/calibration.md`):
 - Lag: a proportional servo on the sample-clock correction register only
   (`rtlsdr_set_sample_freq_correction_f`; the tuner LO is untouched),
   MEASURING -> SERVOING -> CONVERGED (within +-0.02 samples).
@@ -162,28 +162,29 @@ bits are flags (0x100 KerberosSDR manual mode, 0x200 calibration stale,
 
 ## Client feature index
 
-Each is a bold-headed topic in `kraken_doa_v2/CLAUDE.md` - grep for the name
-rather than reading the whole file. Decoders also have
+One file per feature in `kraken_doa_v2/docs/dev/` (the full index is at
+the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
 `kraken_doa_v2/plugins/<id>/README.md`.
 
-- Spectrum: *Spectrum views* (`FFT_VIEW:`, message type 7), *Noise floor*
-- VFOs: *Arbitrary VFO bandwidth* (1 kHz - 2.4 MHz), *🔊 VFO audio*,
-  *VFO tuning STEP*
-- Decoders (every decoder is a plugin): *Decoder plugins*, *Digital voice*,
-  *Digital squelch*, *DoA per talker*, *Fixed-frequency decoders*, and one
-  topic per plugin (ADS-B, AIS, ISM, LoRa, Pagers, RDS, Radiosonde,
-  FLARM / OGN, Digital TV, LTE / 5G NR, Pulse radar, 1030 MHz, UAT, DME,
-  ILS / VOR, Analog FM IDs, 406 MHz, Wildlife)
-- Scanning: *📻 Saved-frequency scan* (the discrete, continuous and
-  saved-frequency scanners are mutually exclusive), *📻 Saved frequencies*
-- Map: *🗺 Map*, *🔍 Map search*, *📡 OpenStreetMap masts layer*,
-  *👁 Viewshed*, *📶 Path loss*, *Incident map*, *Mobile direction finding*,
-  *⏯ Log replay*
-- Recording and playback: *📼 IQ & audio recorder* (`SIGMF.md`),
-  *🧪 Debug playback*, *Decoder data log*, *🗣 Voice to Text*
-- Other: *🤖 AI assistant*, *Web Mapper output*, *✈ Array calibration*
-  (experimental), *Antenna array calculator*, *Operating modes*,
-  *KrakenSDR Wideband (downconverter) variant*, *FFT (pffft)*, *liquid-dsp*
+- Spectrum: `spectrum-views.md` (`FFT_VIEW:`, message type 7),
+  `noise-floor.md`
+- VFOs: `vfo-bandwidth.md` (any width 1 kHz - 2.4 MHz, the decimator),
+  `vfo-audio.md`, `operating-modes.md` (also VFO cards, the tuning step,
+  zoom)
+- Decoders (every decoder is a plugin): `decoder-plugins.md`,
+  `digital-decoders.md`, `digital-voice.md`, `digital-squelch.md`,
+  `doa-per-talker.md`, `fixed-frequency-decoders.md`, and
+  `plugin-<id>.md` per plugin
+- Scanning: `saved-frequency-scan.md` (the discrete, continuous and
+  saved-frequency scanners are mutually exclusive), `saved-frequencies.md`
+- Map: `map.md`, `map-search.md`, `station-on-map.md`, `osm-masts.md`,
+  `viewshed.md`, `path-loss.md`, `incident-map.md`, `mobile-df.md`,
+  `log-replay.md`
+- Recording and playback: `recorder.md` (`SIGMF.md`), `debug-playback.md`,
+  `decoder-log.md`, `voice-to-text.md`
+- Other: `ai-assistant.md`, `web-mapper.md`, `array-calibration.md`
+  (experimental), `array-calculator.md`, `wideband-variant.md`,
+  `fft-pffft.md`, `liquid-dsp.md`
 
 ## Rules
 
@@ -325,4 +326,7 @@ use the native install. CMakeLists.txt and the boot service aren't ported.
 
 Keep it under ~25k characters (Claude Code warns at 40k). Add a rule or fact
 here only if most sessions need it; put details, measurements and history in
-the component `CLAUDE.md` files or `docs/dev/`, and link them from here.
+the component `CLAUDE.md` files or `docs/dev/`, and link them from here. The
+same holds for `heimdall_v2/CLAUDE.md` and `kraken_doa_v2/CLAUDE.md` (loaded
+whenever work touches those folders): rules there, a feature's design,
+measurements and test history in that folder's `docs/dev/`.

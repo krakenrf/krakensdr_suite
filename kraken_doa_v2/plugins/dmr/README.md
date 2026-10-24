@@ -29,7 +29,7 @@ repeater output every radio's bearing is the repeater's, in direct mode
 ## Tests
 
 - Real recordings: dsd-samples dmr_1 / dmr_2 (MS) and dsdcc dmr_it_8 (BS
-  slot 2), FM-modulated to cf32 - see kraken_doa_v2/CLAUDE.md *DoA per talker*.
+  slot 2), FM-modulated to cf32 - see kraken_doa_v2/docs/dev/doa-per-talker.md.
 - Generator `tools/dmr_gen.py` (BS: continuous CACH + bursts, both
   timeslots, idle bursts; DMO: one timeslot, ramped bursts; voice LC header,
   superframes with EMB + embedded LC, terminator; placeholder AMBE+2 frames
@@ -39,7 +39,7 @@ repeater output every radio's bearing is the repeater's, in direct mode
   3100011 (direct, TS1, 60 deg) and 3100012 (direct, TS2, 200 deg). Offline
   (20 dB SNR): every burst decoded (burst A carries no checked signalling,
   so it isn't counted as a valid frame), bearings 300.0 / 300.0 / 60.0 /
-  200.0 deg; end to end: kraken_doa_v2/CLAUDE.md *Debug playback*.
+  200.0 deg; end to end: kraken_doa_v2/docs/dev/debug-playback.md.
 - Generator through an independent decoder (2026-10-16): dsdcc's
   `dsdccx` (f4exb, GPL - built in scratch, run only), the generator's
   output FM-demodulated to 48 kHz at 25 dB SNR: the repeater (BS) call

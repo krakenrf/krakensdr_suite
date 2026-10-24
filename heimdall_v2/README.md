@@ -339,7 +339,7 @@ in 2026-10; no system FFT library).
 
 ## Further reading
 
-- `CLAUDE.md` — detailed architecture, threading, and coherence-recovery notes.
+- `CLAUDE.md` (rules and invariants) and `docs/dev/` — detailed architecture, threading, calibration and coherence-recovery notes.
 - `../kraken_doa_v2/` — the FFT / FM / MUSIC DoA client that consumes port 8091.
 
 ## Licence

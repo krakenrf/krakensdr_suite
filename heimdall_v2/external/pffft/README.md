@@ -30,5 +30,5 @@ as it is (complex: a multiple of 16 of the form 2^a 3^b 5^c). Output order
 and scaling are FFTW's: natural bin order, unscaled in both directions.
 
 To update: copy the same files from a newer commit into BOTH copies, then
-run the checks in `kraken_doa_v2/CLAUDE.md` *FFT (pffft)* and
-`heimdall_v2/CLAUDE.md` *FFT (pffft)*.
+run the checks in `kraken_doa_v2/docs/dev/fft-pffft.md` and
+`heimdall_v2/docs/dev/fft-pffft.md`.
