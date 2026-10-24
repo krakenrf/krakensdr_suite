@@ -60,7 +60,9 @@ startup by `html_loader.cpp`.
   `rtl_tcp_server.cpp` (1234). `src/web/web_server.cpp`: 8070.
 
 Threads: one USB reader per dongle and the sample drain (SCHED_RR when the
-process may), the conversion worker (normal priority), the correlation
+process may; macOS has a single priority scale, so `set_thread_realtime`
+maps `RT_PRIO_*` above normal threads there - below them the RTL2832 drops
+packets), the conversion worker (normal priority), the correlation
 processor, one compensation thread per non-reference channel, the coherence
 watchdog, the status broadcaster, the TCP servers, and the uWS loop on the
 main thread.
