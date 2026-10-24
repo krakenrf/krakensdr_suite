@@ -157,6 +157,17 @@ automatically:
   `doa_settings.json` or `api_token` slipped through (bypass:
   `git push --no-verify`). Root commits and merge commits (including a
   secret added while resolving a merge) are scanned too.
+- **Map provider API keys** (the web UI's ⚙ Settings: Google, Mapbox,
+  Azure, MapTiler, ...) live only in the browser's localStorage, never in a
+  file of the tree. The pre-push hook still blocks any outgoing commit that
+  ADDS one to any file (`MAP_KEY_RE`: a Google `AIza…` key, a Mapbox
+  `pk.` / `sk.` / `tk.eyJ…` token, a key in a URL query -
+  `access_token=` / `apikey=` / `api_key=` / `subscription-key=` / `key=`
+  with 20+ key characters - or a pasted `kraken_map_prov` localStorage
+  value). Only added lines count, so a key already on the remote doesn't
+  block the push that deletes it; `${c.k}` / `{key}` templates don't match.
+  A key that was ever pushed must be revoked at the provider, since removing
+  it from history doesn't make it secret again.
 - **Voice codecs / binaries** never go to the remote (licensing: the ETSI
   TETRA codec may not be redistributed, AMBE is DVSI's): `.gitignore`
   ignores the user-built codec programs / libraries (`cdecoder`,

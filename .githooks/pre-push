@@ -6,7 +6,8 @@
 # which sanitizes these automatically at commit time - this hook only fires
 # if the filter was not configured (fresh clone before install.sh) or a
 # secret landed some other way. Also blocks binaries and user-built voice
-# codecs (licensing - backstop behind .gitignore, see scan_range).
+# codecs (licensing - backstop behind .gitignore, see scan_range), and map
+# provider API keys added to ANY file (MAP_KEY_RE).
 #
 # Activated per clone by install.sh:  git config core.hooksPath .githooks
 # Emergency bypass:                   git push --no-verify
@@ -15,6 +16,17 @@ set -u
 
 fail=0
 codec_fail=0
+mapkey_fail=0
+
+# Map provider API keys (the web UI's ⚙ Settings): a Google key (AIza...), a
+# Mapbox token (pk. / sk. / tk.eyJ...), a key in a tile URL's query
+# (?access_token= &apikey= &api_key= &subscription-key= &key= with 20+ key
+# characters - "${c.k}" / "{key}" templates don't match), or the page's
+# localStorage kraken_map_prov {"keys":{"mapbox":"..."}} pasted somewhere
+MAP_KEY_RE='AIza[0-9A-Za-z_-]{35}'
+MAP_KEY_RE+='|[pst]k\.eyJ[0-9A-Za-z_-]{20,}\.[0-9A-Za-z_-]{10,}'
+MAP_KEY_RE+='|[?&](access_token|[Aa][Pp][Ii]_?[Kk][Ee][Yy]|subscription-key|key)=[0-9A-Za-z_-]{20,}'
+MAP_KEY_RE+='|"keys"[[:space:]]*:[[:space:]]*[{][^}]*"(mapbox|google|azure|maptiler|thunderforest|stadia|here|custom)"[[:space:]]*:[[:space:]]*"[^"]{8,}"'
 
 # Scan the commits selected by the rev-list arguments ("$@", passed as
 # SEPARATE words - e.g. "$sha" --not --remotes) for secrets in changed
@@ -91,6 +103,26 @@ scan_range() {
                     ;;
             esac
         done < <(git diff-tree --root -m --no-commit-id --name-only -r -z "$c" | sort -zu)
+        # Map provider API keys: the page keeps them in the browser's
+        # localStorage, never in a file - this catches one pasted into code,
+        # a doc, a test, a settings or HAR dump. Every file, but only the
+        # lines the commit ADDS, so content already on the remote can't
+        # block a push. The path comes from "diff --git"; "+++" counts as a
+        # file header only before the first hunk (an added line "++ x" is
+        # content). Binary files show no lines.
+        local hits
+        hits=$(git diff-tree --root -m -p -r -U0 --no-color --no-ext-diff --no-textconv "$c" 2>/dev/null |
+            awk '/^diff --git /{f=$0; sub(/^diff --git a\//, "", f); n=index(f, " b/"); if (n) f=substr(f, n+3); hdr=1; next}
+                 /^@@/{hdr=0; next}
+                 hdr{next}
+                 /^\+/{print f "\t" substr($0, 2)}' |
+            grep -E -- "$MAP_KEY_RE" | cut -f1 | sort -u)
+        if [ -n "$hits" ]; then
+            while IFS= read -r f; do
+                echo "BLOCKED: a map provider API key (Google / Mapbox / Azure / ...) in $f at commit ${c:0:9}." >&2
+            done <<< "$hits"
+            mapkey_fail=1
+        fi
     done
     return 0
 }
@@ -121,6 +153,14 @@ if [ "$codec_fail" -ne 0 ]; then
     echo "Push aborted: binaries / voice codec files in the outgoing commits." >&2
     echo "Fix: git rm --cached <file>, then amend / rebase it out of the commit" >&2
     echo "(.gitignore keeps them out of new commits)." >&2
+    [ "$fail" -ne 0 ] || [ "$mapkey_fail" -ne 0 ] || exit 1
+fi
+if [ "$mapkey_fail" -ne 0 ]; then
+    echo >&2
+    echo "Push aborted: a map provider API key is in the outgoing commits." >&2
+    echo "Keys belong in the web UI's ⚙ Settings (kept in the browser), never in a file." >&2
+    echo "Fix: remove it, then amend / rebase the commit that added it - and revoke the" >&2
+    echo "key at the provider if it was ever pushed anywhere." >&2
     [ "$fail" -ne 0 ] || exit 1
 fi
 if [ "$fail" -ne 0 ]; then

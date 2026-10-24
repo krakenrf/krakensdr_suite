@@ -86,7 +86,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   The key is only in the tile URLs the browser fetches; it never reaches
   kraken_doa, `doa_settings.json` or other browsers. Referrer / origin
   restrictions on a key must allow the page's address (the dialog shows
-  `location.origin`).
+  `location.origin`). Git backstop: `.githooks/pre-push` blocks a push
+  that adds a map key to any file (`docs/dev/run-and-deploy.md`, *Git
+  Secret Guards*) - keep real keys out of tests and docs.
 - Code: `MAP_PROVIDERS` (map section) - each provider's `layers` (Street /
   Satellite / Terrain / Dark ...; the keys are shared, so `mapState.layer`
   keeps "satellite" across providers and a provider without it shows its
