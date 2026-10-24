@@ -201,7 +201,7 @@ commit and built by `make` as a static library without FFTW / libfec
 | `VFO_BW_MIN_HZ` / `VFO_BW_MAX_HZ` | 1 kHz / 2.4 MHz | A VFO takes any width in between; integer decimation only (by a divisor of 2.4 MHz), no resampling |
 
 For deeper architecture and tuning notes, see `CLAUDE.md`, `OPTIMIZATION_SUMMARY.md`,
-and the root `../CLAUDE.md` (full server + client system).
+and `../docs/dev/suite-reference.md` (full server + client system).
 
 ## Licence
 

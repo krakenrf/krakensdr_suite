@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This directory contains the **Heimdall DoA Client** - an FFT viewer and MUSIC Direction of Arrival processor for RTL-SDR systems. This client connects to the Heimdall Server (in `../heimdall_v2/`) to receive multi-channel IQ data and performs real-time signal processing.
 
-**IMPORTANT:** For complete system architecture, see `../CLAUDE.md` (root-level documentation covering both server and client).
+Suite-wide rules are in `../CLAUDE.md`; the long-form overview of the whole system (server + client) is `../docs/dev/suite-reference.md`.
 
 ## Build Commands
 
@@ -503,7 +503,7 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   restart is no signal), as a rate change always did
 
 **KrakenSDR Wideband (downconverter) variant:**
-- Run with `--wideband` (heimdall too) - see root `../CLAUDE.md` for the design
+- Run with `--wideband` (heimdall too) - see `../docs/dev/suite-reference.md` *KrakenSDR Wideband (Downconverter) Variant* for the design
 - `WB_VARIANT_IF_HZ` (1268 MHz), `WB_LO_MIN_HZ`/`WB_LO_MAX_HZ`: must match
   `heimdall_v2/config.h`; give the UI its RF limits and the LO readout
 - Mixer side FOLLOWS THE FREQUENCY: the FREQ handler auto-selects when the
@@ -5910,7 +5910,7 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   2026-10-22) - its decoders follow rtl_433's device decoders (GPL-2.0-or-
   later) one by one; every file names the rtl_433 decoders it follows and
   their authors (README *Licence*). Built like every plugin with its own
-  LICENSE: no `lib/`, no kraken_doa headers (root CLAUDE.md *Licensing*) -
+  LICENSE: no `lib/`, no kraken_doa headers (docs/dev/licensing.md) -
   don't copy code between ism and the source-available plugins / lib in
   either direction; rtl_433_tests recordings are its test data. (A 240 kHz variant - the same decoders on a 240 kHz VFO -
   existed first; removed 2026-10-12: the full band did everything it did at
@@ -6030,8 +6030,8 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   capture with partial pushes): the list complete between full pushes, one
   order throughout, by name, compass bearings, heading sorts + reverse +
   localStorage, a row still picks its device
-- Built with `-O3` (every plugin's default since 2026-10-22 - root
-  CLAUDE.md *Compiler flags*; it was ism's own `CXXFLAGS` file): the front end's per-bin loops
+- Built with `-O3` (every plugin's default since 2026-10-22 - see
+  docs/dev/compiler-flags.md; it was ism's own `CXXFLAGS` file): the front end's per-bin loops
   (`__restrict` pointers) vectorise - GCC's -O2 cost model takes no loop
   that needs an epilogue; the output is identical (checked on all 1125
   recordings against the -O2 build, scratchpad scripts/cmp_bin.py). CPU
@@ -6674,12 +6674,12 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   renamed: a running copy keeps its inode). The top Makefile's `plugins`
   target runs it with -k and only warns on failure; CMake has an ALL target.
   Every plugin and libkrakendig build with `-O3 -fno-math-errno
-  -fcx-fortran-rules` (+ `-mcpu=native` on aarch64 - root CLAUDE.md
-  *Compiler flags*). An optional `CXXFLAGS` file in a plugin folder adds
+  -fcx-fortran-rules` (+ `-mcpu=native` on aarch64 - see
+  docs/dev/compiler-flags.md). An optional `CXXFLAGS` file in a plugin folder adds
   compiler flags (last on the command line; no shipped plugin has one). A
   `LICENSE` file in a plugin folder = the plugin has a licence of its own:
-  built from its files + the MIT SDK + pffft only, no `lib/` (root
-  CLAUDE.md *Licensing*; ism, flarm)
+  built from its files + the MIT SDK + pffft only, no `lib/` (see
+  docs/dev/licensing.md; ism, flarm)
 - `decoder --info` (JSON incl. `options` and `options_tsv` - the
   tab-separated copy kraken_doa's flat JSON reader parses; read by
   `PluginRegistry::scan()` at startup, on `PLUGINS_RESCAN` (worker thread,
@@ -7646,7 +7646,7 @@ make deps  # Ubuntu/Debian
 
 - `OPTIMIZATION_SUMMARY.md`: Detailed performance analysis and benchmark results
 - `AGENTS.md`: Development workflow and contribution guidelines
-- `../CLAUDE.md`: Root-level documentation covering full Heimdall v2 system
+- `../CLAUDE.md`: suite-wide rules; `../docs/dev/`: the long-form suite notes (suite-reference.md, run-and-deploy.md, windows.md, librtlsdr-fork.md, macos.md, compiler-flags.md, licensing.md)
 - `../heimdall_v2/CLAUDE.md`: Heimdall server architecture
 - `Makefile`: Build system reference (see `make help`)
 

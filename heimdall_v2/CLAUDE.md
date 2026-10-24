@@ -177,7 +177,7 @@ All runtime configuration is in `config.h` at the project root:
 - `USB_RESET_ON_INIT`: Reset USB on initialization (default 1)
 - Uses ARM NEON vectorization on aarch64, automatically falls back to scalar on x86_64
 - Compiled `-O3 -fno-math-errno -fcx-fortran-rules` + `-mcpu=native` on
-  aarch64 (`-march=native` x86_64; root CLAUDE.md *Compiler flags*). The
+  aarch64 (`-march=native` x86_64; docs/dev/compiler-flags.md). The
   correlation's whole-array |z| loops use `std::sqrt(std::norm(z))` / a
   norm compare - `std::abs` of a complex is a `hypotf` call per element
 
@@ -456,7 +456,7 @@ finish + the next 128 kHz write would cost more than it saves.
 passed: it saved only a drag's first step (72.7 -> 61.7 ms, measured with an
 earlier library), later steps cost the same. Measured 2026-10-19 (5
 streaming tuners, 40 steps of 25 kHz 50 ms apart, 8092 `set_frequency`
-reply; library details root CLAUDE.md *Windows*):
+reply; library details docs/dev/librtlsdr-fork.md):
 - Windows (one by one): first step 112.8 ms (full path, 5 transfers per
   tuner), step 2 writes 128 kHz once (4), later steps 74.0 ms median (3: `R5`
   register 4, `W15+2` N / SDM, `R3` lock; fast path off 114.0 ms, 5); the
@@ -505,8 +505,8 @@ reply; library details root CLAUDE.md *Windows*):
   next I2C write fail with PIPE on every dongle; the full-path rollback
   restored the previous settings without a coherence loss, but the reply
   said `{"status":"success","frequency":<new>}`. Both FIXED: the library's
-  stall retry now runs on Linux too and recovered every such write (root
-  CLAUDE.md *Windows*), and a change that still fails replies an error with
+  stall retry now runs on Linux too and recovered every such write (see
+  docs/dev/librtlsdr-fork.md), and a change that still fails replies an error with
   the PREVIOUS value (`SdrUpdateResult`, the optional out-parameter of
   update_sdr_settings; its bool still means "hardware written,
   recalibrate"): set_frequency / set_gain answer
@@ -813,7 +813,7 @@ The fork's retune changes in 578b43d, on top of 00606c0 (skip-unchanged
 register writes, one N / SDM write, the I2C repeater left on,
 `rtlsdr_set_center_freq_fast` / `rtlsdr_finish_tune`, the stalled control
 OUT retry) apply on every platform and to the installed `rtl_*`
-tools too (only fewer USB transfers for them): root CLAUDE.md *Windows*,
+tools too (only fewer USB transfers for them): docs/dev/librtlsdr-fork.md,
 *Drag retunes* above.
 `init_rtlsdr_device()` fails a channel whose sample rate, center frequency or
 USB buffer reset can't be set (a silently mistuned dongle breaks coherence);

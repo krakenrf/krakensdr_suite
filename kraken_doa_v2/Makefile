@@ -3,7 +3,7 @@ CXX = g++
 # -O3 -ffast-math without -ffinite-math-only (it folds std::isfinite /
 # std::isnan to constants). It was -Ofast = this + -ffinite-math-only +
 # -fallow-store-data-races (stores other threads may race with); the same
-# speed on the Pi 5 - root CLAUDE.md *Compiler flags*
+# speed on the Pi 5 - docs/dev/compiler-flags.md
 CXXFLAGS = -std=c++20 -O3 -ffast-math -fno-finite-math-only -Wall -Wextra -pthread
 INCLUDES = -isystem $(LIQUID_INC) -Iinclude -Iplugins/sdk -Iexternal/pffft -IuWebSockets/src -IuWebSockets/uSockets/src -I/usr/include/eigen3
 LDFLAGS = -L/usr/local/lib
