@@ -6,7 +6,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cstring>  // For memcpy
-#include <cmath>    // lroundf
+#include <cmath>    // std::trunc
 
 RtlTcpServer::BufferNode::BufferNode(const uint8_t* buf, size_t len) : data(buf, buf + len), next(nullptr) {}
 
@@ -123,20 +123,27 @@ void RtlTcpServer::broadcast_data(const std::vector<ComplexBuffer>& channel_data
     if (samples.empty()) return;
     
     // Convert complex float to rtl_tcp uint8 IQ format
-    std::vector<uint8_t> rtl_tcp_data;
-    rtl_tcp_data.reserve(samples.size() * 2);
-    
+    std::vector<uint8_t> rtl_tcp_data(samples.size() * 2);
+
     // Use conservative scaling to prevent overloading
     constexpr float scale_factor = 80.0f;
-    
-    for (const auto& sample : samples) {
-        // Clamp and convert to uint8 (0-255, 127.5 = zero). Rounded: the int
-        // cast truncated, a -0.5 LSB DC bias on the stream.
-        int i_val = static_cast<int>(lroundf(sample.real() * scale_factor + 127.5f));
-        int q_val = static_cast<int>(lroundf(sample.imag() * scale_factor + 127.5f));
-        
-        rtl_tcp_data.push_back(static_cast<uint8_t>(clamp(i_val, 0, 255)));
-        rtl_tcp_data.push_back(static_cast<uint8_t>(clamp(q_val, 0, 255)));
+
+    // Clamp and convert to uint8 (0-255, 127.5 = zero). Rounded, not
+    // truncated: the int cast was a -0.5 LSB DC bias on the stream. I and Q
+    // alike over the interleaved floats, into space sized once, as on 8091
+    // (lroundf + a push_back per byte kept it scalar). Half away from zero
+    // for v >= 0 (below 0 clamps to 0 either way): the same byte as
+    // the old clamp((int)lroundf(v), 0, 255) for every non-NaN v in int's
+    // range (checked over every float input; beyond it the old cast wrapped,
+    // this clamps).
+    const size_t n = rtl_tcp_data.size();
+    const float* __restrict src = reinterpret_cast<const float*>(samples.data());
+    uint8_t* __restrict dst = rtl_tcp_data.data();
+    for (size_t k = 0; k < n; k++) {
+        const float v = src[k] * scale_factor + 127.5f;
+        const float t = std::trunc(v);
+        const float r = (v - t >= 0.5f) ? t + 1.0f : t;
+        dst[k] = static_cast<uint8_t>(static_cast<int>(clamp(r, 0.0f, 255.0f)));
     }
     
     // Add to buffer queue (like original rtl_tcp.c callback)

@@ -258,39 +258,60 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
         const Complex* __restrict x = tmp.data();
         Complex* __restrict y = fir_out.data();
 
-        // Head: taps reach into the previous chunk's tail
+        // Over the interleaved floats (real taps, so I and Q filter alike:
+        // float k's tap n is float k - 2n). Written on floats because clang
+        // doesn't vectorize the std::complex form (6x slower on macOS), and as
+        // an explicit fmaf chain, tap 0 first: heimdall builds with -std=c++20,
+        // where GCC doesn't contract a*b+c (-ffp-contract=off), so only fmaf
+        // gets the fused multiply-add (NEON fmla, AVX2 vfmadd) into the
+        // vectorized loop. No longer bit-identical to the old std::complex
+        // loop (a rounding per multiply): the two differ by at most ~2.5 ulp
+        // of sum |h[n] x[n]| (rounding level, the new one slightly closer to
+        // exact), which a fractional-delay trim can't see. Without hardware
+        // FMA (armv7 without VFPv4, x86 before Haswell) fmaf would be a libm
+        // call per tap, so there it stays a multiply and an add (and
+        // bit-identical to the old loop).
+        const float* __restrict xf = reinterpret_cast<const float*>(x);
+        float* __restrict yf = reinterpret_cast<float*>(y);
+        const float h0 = h[0], h1 = h[1], h2 = h[2], h3 = h[3];
+        const float h4 = h[4], h5 = h[5], h6 = h[6], h7 = h[7];
+        const auto mac = [](float hn, float xn, float a) {
+#if defined(__FMA__) || defined(__ARM_FEATURE_FMA)
+            return std::fmaf(hn, xn, a);
+#else
+            return a + hn * xn;
+#endif
+        };
+
+        // Head: taps reach into the previous chunk's tail (the same
+        // arithmetic as the body, the input float before x[0] read from it)
         const int head = std::min(7, count);
-        for (int i = 0; i < head; i++) {
-            Complex acc(0.0f, 0.0f);
-            for (int n = 0; n < 8; n++) {
-                const int j = i - n;
-                acc += h[n] * ((j >= 0) ? x[j] : tail[7 + j]);
-            }
-            y[i] = acc;
-        }
-        // Body: pure convolution over the interleaved floats (real taps, so I
-        // and Q filter alike: float k's tap n is float k - 2n). Written on
-        // floats because clang doesn't vectorize the std::complex form (6x
-        // slower on macOS); one statement per multiply and per add, in the
-        // std::complex loop's order, so no FMA is contracted and the output
-        // stays bit-identical to it.
         {
-            const float* __restrict xf = reinterpret_cast<const float*>(x);
-            float* __restrict yf = reinterpret_cast<float*>(y);
-            const float h0 = h[0], h1 = h[1], h2 = h[2], h3 = h[3];
-            const float h4 = h[4], h5 = h[5], h6 = h[6], h7 = h[7];
-            for (int k = 2 * head; k < 2 * count; k++) {
-                float a = 0.0f, m;
-                m = h0 * xf[k];      a += m;
-                m = h1 * xf[k - 2];  a += m;
-                m = h2 * xf[k - 4];  a += m;
-                m = h3 * xf[k - 6];  a += m;
-                m = h4 * xf[k - 8];  a += m;
-                m = h5 * xf[k - 10]; a += m;
-                m = h6 * xf[k - 12]; a += m;
-                m = h7 * xf[k - 14]; a += m;
+            const float* tf = reinterpret_cast<const float*>(tail.data());
+            const auto in = [&](int j) { return (j >= 0) ? xf[j] : tf[14 + j]; };
+            for (int k = 0; k < 2 * head; k++) {
+                float a = h0 * xf[k];
+                a = mac(h1, in(k - 2),  a);
+                a = mac(h2, in(k - 4),  a);
+                a = mac(h3, in(k - 6),  a);
+                a = mac(h4, in(k - 8),  a);
+                a = mac(h5, in(k - 10), a);
+                a = mac(h6, in(k - 12), a);
+                a = mac(h7, in(k - 14), a);
                 yf[k] = a;
             }
+        }
+        // Body: pure convolution
+        for (int k = 2 * head; k < 2 * count; k++) {
+            float a = h0 * xf[k];
+            a = mac(h1, xf[k - 2],  a);
+            a = mac(h2, xf[k - 4],  a);
+            a = mac(h3, xf[k - 6],  a);
+            a = mac(h4, xf[k - 8],  a);
+            a = mac(h5, xf[k - 10], a);
+            a = mac(h6, xf[k - 12], a);
+            a = mac(h7, xf[k - 14], a);
+            yf[k] = a;
         }
         // Save the last 7 input samples for the next chunk
         if (count >= 7) {

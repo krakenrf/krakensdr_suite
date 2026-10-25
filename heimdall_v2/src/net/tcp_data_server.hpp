@@ -3,6 +3,7 @@
 #include "../core/types.hpp"
 #include "tcp_common.hpp"
 #include <vector>
+#include <cstdint>
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -15,6 +16,9 @@ private:
     std::mutex clients_mutex;
     std::thread server_thread;
     std::atomic<bool> running{true};
+    // broadcast_data's packet, reused (its capacity persists); guarded by
+    // clients_mutex
+    std::vector<uint8_t> packet_buf;
     
     void accept_loop();
     

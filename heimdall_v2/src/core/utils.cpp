@@ -110,7 +110,6 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
         const int pmax = sched_get_priority_max(SCHED_RR);
         struct sched_param param;
         std::memset(&param, 0, sizeof(param));
-        param.sched_priority = std::min(std::max(rt_priority, pmin), pmax);
 #ifdef __APPLE__
         // macOS has ONE priority scale (15..47 for SCHED_RR, as for normal
         // threads) and a normal thread runs at 31 - Linux's SCHED_RR 15 / 20
@@ -121,19 +120,27 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
         // RTL2832's FIFO to drop 188-byte packets - silent 94-sample slips.
         // Mapped above the default and the user-initiated tier (37):
         // RT_PRIO_USB_READER 20 -> 41, RT_PRIO_SAMPLE_DRAIN 15 -> 39 (order kept)
-        param.sched_priority = std::min(pmax, 32 + (rt_priority * 9 + 10) / 20);
+        param.sched_priority = std::max(pmin, std::min(pmax, 32 + (rt_priority * 9 + 10) / 20));
+#else
+        param.sched_priority = std::min(std::max(rt_priority, pmin), pmax);
 #endif
         const int rc = pthread_setschedparam(self, SCHED_RR, &param);
         if (rc != 0) {
-            // Almost always EPERM: running without rtprio limits or CAP_SYS_NICE.
+            // Linux: almost always EPERM - no rtprio limits or CAP_SYS_NICE.
+            // (macOS lets an ordinary user set SCHED_RR in this range.)
             // Not fatal - fall back to the default scheduler. Warn once.
             static bool warned = false;
             if (!warned) {
                 std::cerr << "Thread '" << (name ? name : "?")
                           << "': SCHED_RR unavailable (" << std::strerror(rc)
+#ifdef __APPLE__
+                          << "); running at normal priority - USB keep-up under load may suffer."
+#else
                           << "); running at normal priority. For best USB keep-up under load, "
                              "grant CAP_SYS_NICE or set RLIMIT_RTPRIO "
-                             "(/etc/security/limits.conf: '<user> - rtprio 30')." << std::endl;
+                             "(/etc/security/limits.conf: '<user> - rtprio 30')."
+#endif
+                          << std::endl;
                 warned = true;
             }
             ok = false;

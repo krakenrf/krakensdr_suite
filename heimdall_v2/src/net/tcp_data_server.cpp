@@ -105,9 +105,25 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
     // Header: magic(4) + channels(4) + samples(4) + phase_state(4) + noise_source(4) +
     //         freq_change_counter(4) + current_group_index(4) + retuning_in_progress(4) + per-channel(8*N)
     size_t header_size = 32 + (num_channels * 8);  // Basic header + status + scanner fields + retuning flag + per-channel freq/gain
+    const size_t expected_size = header_size + static_cast<size_t>(num_channels) * expected_samples * 2;
 
-    std::vector<uint8_t> packet;
-    packet.reserve(header_size + channel_data.size() * expected_samples * 2);
+    // The packet is a member reused across broadcasts (~164 KB at 5 channels,
+    // ~150 per second), touched only here under clients_mutex. At a steady
+    // size the resize is a no-op: no malloc, and no zero-fill of bytes the
+    // header and channel writes below overwrite anyway. Written by offset.
+    std::vector<uint8_t>& packet = packet_buf;
+    packet.resize(expected_size);
+    size_t off = 0;
+    auto put_u32_be = [&](uint32_t value) {
+        packet[off++] = static_cast<uint8_t>(value >> 24);
+        packet[off++] = static_cast<uint8_t>(value >> 16);
+        packet[off++] = static_cast<uint8_t>(value >> 8);
+        packet[off++] = static_cast<uint8_t>(value);
+    };
+    auto put_f32 = [&](float value) {  // host byte order, as before
+        std::memcpy(packet.data() + off, &value, sizeof(float));
+        off += sizeof(float);
+    };
 
     // Basic Header: magic, num_channels, num_samples
     uint32_t magic = TCP_MAGIC;
@@ -162,9 +178,9 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
     }
 
     // Build basic header
-    append_big_endian(packet, magic);
-    append_big_endian(packet, num_channels);
-    append_big_endian(packet, num_samples);
+    put_u32_be(magic);
+    put_u32_be(num_channels);
+    put_u32_be(num_samples);
 
     // Add phase compensation state and noise source status
     // This allows client to know when calibration is in progress.
@@ -186,8 +202,8 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
     if (independent) phase_state_value |= 0x800u;
     uint32_t noise_source_active = bias_tee_enabled.load() ? 1 : 0;
 
-    append_big_endian(packet, phase_state_value);
-    append_big_endian(packet, noise_source_active);
+    put_u32_be(phase_state_value);
+    put_u32_be(noise_source_active);
 
     // Add discrete scanner fields (server-side scanner implementation)
     // These values come from the global discrete_scanner state
@@ -195,9 +211,9 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
     uint32_t current_group_index = discrete_scanner.current_group_index.load(std::memory_order_acquire);
     uint32_t retuning_in_progress = discrete_scanner.retuning_in_progress.load(std::memory_order_acquire) ? 1 : 0;
 
-    append_big_endian(packet, frequency_change_counter);
-    append_big_endian(packet, current_group_index);
-    append_big_endian(packet, retuning_in_progress);
+    put_u32_be(frequency_change_counter);
+    put_u32_be(current_group_index);
+    put_u32_be(retuning_in_progress);
 
     // Add per-channel frequency and gain
     // In wideband mode, each tuner has a different frequency
@@ -210,15 +226,13 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
             ch_frequency_hz = static_cast<float>(current_frequency.load());
         }
 
-        packet.insert(packet.end(), reinterpret_cast<const uint8_t*>(&ch_frequency_hz),
-                      reinterpret_cast<const uint8_t*>(&ch_frequency_hz) + sizeof(float));
+        put_f32(ch_frequency_hz);
         float ch_gain_db = gain_db;
         if (independent) {
             const int g = wideband_config.get_tuner_gain(ch);
             ch_gain_db = (g == -1) ? -1.0f : g / 10.0f;
         }
-        packet.insert(packet.end(), reinterpret_cast<const uint8_t*>(&ch_gain_db),
-                      reinterpret_cast<const uint8_t*>(&ch_gain_db) + sizeof(float));
+        put_f32(ch_gain_db);
     }
     
     // Convert complex samples back to interleaved uint8 IQ
@@ -236,16 +250,15 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
             // rounding is roundf's, half away from zero, for v >= 0 (below 0
             // clamps to 0 either way) - the same byte as
             // clamp(roundf(v), 0, 255) for every non-NaN float (checked).
-            const size_t at = packet.size();
-            packet.resize(at + 2 * expected_samples);
             const float* __restrict src = reinterpret_cast<const float*>(channel_data[ch].data());
-            uint8_t* __restrict dst = packet.data() + at;
+            uint8_t* __restrict dst = packet.data() + off;
             for (size_t k = 0; k < 2 * expected_samples; k++) {
                 const float v = src[k] * 127.5f + 127.5f;
                 const float t = std::trunc(v);
                 const float r = (v - t >= 0.5f) ? t + 1.0f : t;
                 dst[k] = static_cast<uint8_t>(static_cast<int>(clamp(r, 0.0f, 255.0f)));
             }
+            off += 2 * expected_samples;
         } else {
             // Channel data is missing or wrong size - send zeros (reuses the
             // 5s warn throttle above: same root cause, same per-broadcast rate)
@@ -253,18 +266,15 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
                 last_size_warn = std::chrono::steady_clock::now();
                 std::cerr << "ERROR: Channel " << ch << " has invalid data, sending zeros" << std::endl;
             }
-            for (uint32_t s = 0; s < num_samples; s++) {
-                packet.push_back(128);  // Zero I
-                packet.push_back(128);  // Zero Q
-            }
+            std::fill_n(packet.data() + off, 2 * static_cast<size_t>(num_samples), uint8_t{128});  // zero I and Q
+            off += 2 * static_cast<size_t>(num_samples);
         }
     }
     
-    // Verify packet size
-    size_t expected_size = header_size + num_channels * num_samples * 2;  // Dynamic header size + data
-    if (packet.size() != expected_size) {
+    // Verify packet size (everything written: header and every channel)
+    if (off != expected_size) {
         std::cerr << "ERROR: Packet size mismatch! Expected " << expected_size 
-             << " got " << packet.size() << std::endl;
+             << " got " << off << std::endl;
     }
     
     // Send to all connected clients. The sockets are non-blocking and a packet
