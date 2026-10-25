@@ -793,7 +793,10 @@ sample counts and times are `int64_t`, printed with `%lld` / PRId64.
 
 **macOS** (Apple clang + Homebrew, see docs/dev/macos.md): the same
 commands; the Makefile force-includes `kraken_doa_v2/mac/posix_compat.h`
-(pipe2, fdatasync, `st_mtim`, std::bit_cast for older libc++ ...). Apple
+(pipe2, fdatasync, `st_mtim`, std::bit_cast for older libc++ ...) and
+`kraken_doa_v2/mac/fast_complex.h`, which makes `std::complex` `*`, `*=`
+and `std::norm` as fast as GCC's `-fcx-fortran-rules` on Linux - write
+complex arithmetic normally, no helper needed. Apple
 clang 14 (macOS 12) can't capture a structured binding in a lambda - name it
 in the capture (`[&key = k]`).
 

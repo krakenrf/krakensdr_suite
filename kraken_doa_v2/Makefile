@@ -49,9 +49,10 @@ endif
 
 # macOS (Apple clang + Homebrew: eigen, openssl@3, opus, cmake, pkg-config -
 # `make deps-macos`): the Linux build plus the shims of mac/posix_compat.h
-# (force-included) and Homebrew's include / library paths (OpenSSL is
-# keg-only). Everything macOS-specific is under MACOS (plugins/Makefile and
-# liquid.mk too)
+# and mac/fast_complex.h (std::complex * / norm without libc++'s inf / NaN
+# recovery; both force-included) and Homebrew's include / library paths
+# (OpenSSL is keg-only). Everything macOS-specific is under MACOS
+# (plugins/Makefile and liquid.mk too)
 MACOS := $(if $(filter Darwin,$(shell uname -s)),1,)
 ifeq ($(MACOS),1)
 # one deployment target for everything (this macOS version, as CMake picks
@@ -61,7 +62,7 @@ endif
 ifeq ($(MACOS),1)
     BREW_PREFIX := $(or $(shell brew --prefix 2>/dev/null),/usr/local)
     OPENSSL_PREFIX := $(or $(shell brew --prefix openssl@3 2>/dev/null),$(BREW_PREFIX)/opt/openssl@3)
-    CXXFLAGS += -include mac/posix_compat.h
+    CXXFLAGS += -include mac/posix_compat.h -include mac/fast_complex.h
     INCLUDES += -I$(BREW_PREFIX)/include/eigen3 -I$(OPENSSL_PREFIX)/include -I$(BREW_PREFIX)/include
     LDFLAGS = -L$(OPENSSL_PREFIX)/lib -L$(BREW_PREFIX)/lib
     # platform.cpp's keep_system_awake (an IOKit power assertion)

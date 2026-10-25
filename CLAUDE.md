@@ -207,7 +207,8 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   their Linux meaning.
 - Keep shared copies identical in both apps: `host_check.hpp`,
   `log_sanitize.hpp`, `net_compat.hpp`, `platform.*` and `fs_compat.*` (only
-  the include path differs), `win/`, `mac/posix_compat.h`,
+  the include path differs), `win/`, `mac/` (`posix_compat.h`,
+  `fast_complex.h`),
   `external/pffft/`. Also keep equal: `UWS_COMMIT` in both Makefiles and the
   Dockerfile; the `WB_*` constants in both config files;
   `src/rdf_engine.cpp` and its JavaScript port in kraken_doa.html (check with
@@ -220,6 +221,12 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   `-O3 -ffast-math -fno-finite-math-only`; heimdall and the plugins use
   `-O3 -fno-math-errno -fcx-fortran-rules` without fast-math. Use
   `is_finite_value()` for finiteness checks.
+- Apple clang has no `-fcx-fortran-rules`, and libc++ puts its inf / NaN
+  recovery in the `<complex>` code itself, so on macOS the force-included
+  `mac/fast_complex.h` supplies `std::complex` `*`, `*=` and `norm` without
+  it (~20 % of the plugins' and kraken_doa's CPU). It uses overloads, not
+  specializations, because libc++ 16+ can't take a specialization;
+  `docs/dev/macos.md` has the details.
 
 ### Runtime files, logging, web security
 - Every runtime file path is cwd-relative (Docker runs each app in
@@ -318,8 +325,8 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   there, and a plugin it changed doesn't run until trusted.
 
 **macOS** (`docs/dev/macos.md`): the same Makefiles (`MACOS`), Homebrew in
-place of apt, compatible with Apple clang 14 (no `-fcx-fortran-rules`, no
-floating-point `std::from_chars`). Docker can't pass USB through on macOS -
+place of apt, compatible with Apple clang 14 (no `-fcx-fortran-rules` -
+`mac/fast_complex.h` stands in -, no floating-point `std::from_chars`). Docker can't pass USB through on macOS -
 use the native install. CMakeLists.txt and the boot service aren't ported.
 
 ## Maintaining this file

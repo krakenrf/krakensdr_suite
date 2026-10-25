@@ -25,6 +25,10 @@ the component files win.
   reassociation would change results. `std::abs` of a complex stays a
   `hypotf` call without fast-math: heimdall's correlation uses
   `std::sqrt(std::norm(z))` / a norm compare for its whole-array loops.
+  macOS: Apple clang has no `-fcx-fortran-rules`, and libc++ writes the
+  recovery into `<complex>` itself; `mac/fast_complex.h` (force-included)
+  supplies `*`, `*=` and `norm` without it - `macos.md`, *std::complex
+  arithmetic*
   Measured 2026-10-23 (the user's question): the plugins with `-ffast-math
   -fno-finite-math-only` decoded 34 / 35 test transmissions identically (one
   printed time 1 ms off) for 1.8 % less CPU, with `-ffinite-math-only` too
