@@ -31,6 +31,7 @@ every session needs and points here.
 | `overview.md` | Overview: build, architecture, threads, components |
 | `patch-3d-topology.md` | Patch / 3D topology |
 | `path-loss.md` | Path loss (the viewshed's Signal mode) |
+| `plugin-acars.md` | ACARS (VHF) plugin |
 | `plugin-adsb.md` | ADS-B plugin |
 | `plugin-ais.md` | AIS plugin |
 | `plugin-analog-id.md` | Analog FM IDs plugin |

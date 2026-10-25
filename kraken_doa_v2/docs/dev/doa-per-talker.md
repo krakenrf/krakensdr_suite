@@ -6,7 +6,7 @@ loaded automatically. *Italic* topic names refer to the other files in this
 folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 "above" / "below" meant elsewhere in the old file.
 
-**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios (MDC1200 / FleetSync IDs, 5-tone / DTMF, CTCSS tones / DCS codes), 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country), FM broadcast stations (RDS PI); `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,analog_id,beacon406,lora,wildlife,rds}`, 🗺 Map 📡 DF panel):**
+**DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios (MDC1200 / FleetSync IDs, 5-tone / DTMF, CTCSS tones / DCS codes), 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs, wildlife collars / coded tags (any country), FM broadcast stations (RDS PI), ACARS aircraft / ground stations; `src/talker_doa.cpp`, `plugins/{p25,dmr,nxdn,dstar,adsb,ais,dme,ism,aprs,radiosonde,tetra,mpt1327,ils,radar,ssr1030,uat,flarm,analog_id,beacon406,lora,wildlife,rds,acars}`, 🗺 Map 📡 DF panel):**
 - RULE (ID separation, the user's 2026-10-15): every decoder whose signal
   carries a coded ID per TRANSMITTER reports it as a talker - a core part
   of every such decoder, new ones included. How + how to test:
@@ -420,6 +420,14 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     between two transmitters) apart; one network's transmitters share the
     PI (one talker). UI kind `broadcast` 🎙 ("Station (PI) / Call sign · PS
     · MHz / Groups", by name) - see *RDS / RBDS + SCA*
+  - ACARS (`plugins/acars`, 2026-10-25): every downlink block that passed
+    its BCS = a packet of the aircraft's registration (the block's last
+    <= 0.24 s to the end of its BCS), `freq_hz` = the block's measured AM
+    carrier, `bw_hz` 7 kHz, avg_s 10, keep_s 30 min; label = flight ID.
+    Uplinks name the aircraft they are for, not their station: no talker -
+    except squitters (label SQ), which name the ground station: `GS <IATA>`.
+    UI kind `aircraft` ✈ (`RDF_PK_KIND` acars), `gs` 🗼 for `GS ` ids (as
+    uat) - see *ACARS*
   - UI (kraken_doa.html): `RDF_PK_KIND` plugin -> kind (station 📻 aprs,
     sonde 🎈, site 🗼 tetra + mpt1327, navaid 🧭 ils, radar 📡 radar - list
     "Radar / PRF · pulse · scan / Pulses", by name; ship / aircraft /

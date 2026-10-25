@@ -685,7 +685,7 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
   crash is reported and restarted with a back-off; a
   rebuild (atomic rename) restarts running decoders. Shipped: p25, dmr,
   tetra, dstar, nxdn, mpt1327, pagers (POCSAG + FLEX), aprs (written by the AI
-  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, lora, wildlife, rds, dtv and cells (ARRAY
+  Signal Lab, the assistant's predecessor), adsb, ais, radiosonde, dme, ils, ism, radar, ssr1030, uat, flarm, analog_id, beacon406, lora, wildlife, rds, acars, dtv and cells (ARRAY
   plugins: every antenna's samples, see *Digital TV* / *LTE / 5G NR Cell
   Decoder* below; both read the signals' own broadcast information). A
   plugin folder may also hold `CXXFLAGS` (extra compiler flags - only
@@ -941,7 +941,7 @@ spreadsheet re-saved (timestamps as 1.68843E+12 = rounded to 2.8 h, padded
 rows, ';' + decimal commas, UTF-16) is read too: times rebuilt from the
 track (`lrRetime`), "The drive took N min" corrects the pace
 
-**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios - MDC1200 / FleetSync IDs, 5-tone selcall / DTMF, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags, FM broadcast stations by their RDS PI)** (details:
+**📡 DoA per talker (P25 / DMR / NXDN unit IDs, D-STAR callsigns, ADS-B aircraft, AIS ships, DME beacons, ISM devices, APRS stations, radiosondes, TETRA cells, MPT1327 sites, VOR / ILS idents, pulse radars, 1030 MHz interrogators, UAT aircraft / ground stations, FLARM / OGN aircraft, analog FM radios - MDC1200 / FleetSync IDs, 5-tone selcall / DTMF, CTCSS tones / DCS codes, 406 MHz distress beacons, LoRa / Meshtastic nodes / LoRaWAN DevAddrs / gateways / off-plan LoRa transmitters, wildlife collars / tags, FM broadcast stations by their RDS PI, ACARS aircraft / ground stations)** (details:
 `kraken_doa_v2/CLAUDE.md` *DoA per talker*). **ID separation is a core part
 of every decoder** (the user's rule, 2026-10-15): if the signal carries a
 coded ID per transmitter, the plugin reports it as a talker and is tested

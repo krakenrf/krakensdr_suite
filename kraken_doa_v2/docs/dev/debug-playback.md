@@ -12,8 +12,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   8091 packets - spectrum, waterfall, VFO, decoder, DoA, the 📡 DF panel.
   Catalogue IN THE PLUGINS: `plugins/<id>/tools/testsignals.json` (a list;
   format + how to add one: plugins/SDK.md *Test transmissions for the debug
-  playback*). 36 entries in 26 catalogues (2026-10-23) - EVERY decoder:
-  ais, aprs, dstar, nxdn, tetra, mpt1327, ils (VOR), analog_id (two: the
+  playback*). 38 entries in 27 catalogues (2026-10-25) - EVERY decoder:
+  acars, ais, aprs, dstar, nxdn, tetra, mpt1327, ils (VOR), analog_id (two: the
   CTCSS tones + `analog-ids-six`, radio IDs), radar,
   ssr1030, uat, flarm, beacon406, lora (six), wildlife (five), dtv, cells,
   adsb, dme, ism, pocsag, v23_telemetry, p25, dmr, radiosonde (the last

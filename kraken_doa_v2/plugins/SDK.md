@@ -49,6 +49,9 @@ plugins/
 ├── ssr1030/              1030 MHz interrogations (SSR / Mode S / TCAS): Mode S DPSK at 0.6
 │                         samples per chip by a sequence estimator against the receiver's
 │                         measured response; interrogators told apart by train / level / code
+├── acars/                VHF ACARS (ARINC 618): 2400 bit/s MSK on AM, NRZI detected coherently against a
+│                         2400 Hz reference, odd parity + CRC-16 BCS with soft-decision repair; a packet
+│                         talker per aircraft (registration), ground stations from their squitters
 ├── uat/                  978 MHz UAT (US ADS-B + ground uplink): CPFSK at 2.3 samples per bit,
 │                         Reed-Solomon GF(256), FIS-B headers / DLAC text; TIS-B = the ground station's
 ├── flarm/                FLARM (ID + bearing only: encrypted payload) / OGN trackers (LDPC soft

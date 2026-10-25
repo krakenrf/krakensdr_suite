@@ -193,7 +193,7 @@ the job's scratch directory (not committed). The established setup:
 | Decoder plugins (process model, registry); digital voice (codecs) | `decoder-plugins.md`, `digital-voice.md` |
 | Digital squelch; fixed-frequency decoders | `digital-squelch.md`, `fixed-frequency-decoders.md` |
 | DoA per talker (ID separation, packets, covariances) | `doa-per-talker.md` |
-| Plugins: ADS-B, AIS, ISM, LoRa, Pagers, RDS, Radiosonde, FLARM / OGN, Digital TV, LTE / 5G NR, Pulse radar, 1030 MHz, UAT, DME, ILS / VOR, Analog FM IDs, 406 MHz, Wildlife | `plugin-adsb.md`, `plugin-ais.md`, `plugin-ism.md`, `plugin-lora.md`, `plugin-pagers.md`, `plugin-rds.md`, `plugin-radiosonde.md`, `plugin-flarm.md`, `plugin-dtv.md`, `plugin-cells.md`, `plugin-radar.md`, `plugin-ssr1030.md`, `plugin-uat.md`, `plugin-dme.md`, `plugin-ils.md`, `plugin-analog-id.md`, `plugin-beacon406.md`, `plugin-wildlife.md` |
+| Plugins: ACARS, ADS-B, AIS, ISM, LoRa, Pagers, RDS, Radiosonde, FLARM / OGN, Digital TV, LTE / 5G NR, Pulse radar, 1030 MHz, UAT, DME, ILS / VOR, Analog FM IDs, 406 MHz, Wildlife | `plugin-acars.md`, `plugin-adsb.md`, `plugin-ais.md`, `plugin-ism.md`, `plugin-lora.md`, `plugin-pagers.md`, `plugin-rds.md`, `plugin-radiosonde.md`, `plugin-flarm.md`, `plugin-dtv.md`, `plugin-cells.md`, `plugin-radar.md`, `plugin-ssr1030.md`, `plugin-uat.md`, `plugin-dme.md`, `plugin-ils.md`, `plugin-analog-id.md`, `plugin-beacon406.md`, `plugin-wildlife.md` |
 | Map pane and decoder map points | `map.md` |
 | Station on the map; map search | `station-on-map.md`, `map-search.md` |
 | Saved frequencies and map markers | `saved-frequencies.md` |
