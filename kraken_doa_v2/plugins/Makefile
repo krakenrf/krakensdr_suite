@@ -51,13 +51,14 @@ LIBS = -static -lm -ldl -lws2_32 -lwinmm -lbcrypt -luser32 -ladvapi32
 endif
 
 # macOS (Apple clang, see ../Makefile's MACOS): no -fcx-fortran-rules (GCC
-# only), the shims of ../mac/posix_compat.h, and the licence check's path
-# normalising without GNU realpath / xargs -r
+# only - ../mac/fast_complex.h takes libc++'s inf / NaN recovery out of
+# std::complex * and norm instead), the shims of ../mac/posix_compat.h, and
+# the licence check's path normalising without GNU realpath / xargs -r
 MACOS := $(if $(filter Darwin,$(shell uname -s)),1,)
 NORMALIZE_PATHS = xargs -r realpath -m --relative-to=.
 ifeq ($(MACOS),1)
 CX_RULES =
-CXXFLAGS += -include ../mac/posix_compat.h
+CXXFLAGS += -include ../mac/posix_compat.h -include ../mac/fast_complex.h
 NORMALIZE_PATHS = python3 -c 'import os, sys; [print(os.path.relpath(os.path.realpath(l.strip()))) for l in sys.stdin if l.strip()]'
 endif
 

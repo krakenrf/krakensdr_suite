@@ -146,7 +146,9 @@ Persistence (`heimdall_settings.conf`)
   (`persisted_num_elements`), never from `-n` or `--kerberos`.
 
 Performance
-- Flags `-O3 -fno-math-errno -fcx-fortran-rules`, no fast-math. For array
+- Flags `-O3 -fno-math-errno -fcx-fortran-rules`, no fast-math (on macOS
+  the force-included `mac/fast_complex.h` replaces `-fcx-fortran-rules`;
+  see `../docs/dev/macos.md`). For array
   magnitudes use `std::sqrt(std::norm(z))` or compare norms: `std::abs` of a
   complex is a `hypotf` call per element.
 - pffft: forward transforms in place, one scratch buffer per thread

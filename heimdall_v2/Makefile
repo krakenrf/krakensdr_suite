@@ -192,10 +192,11 @@ endif
 # Add SSL if available (optional for uWebSockets)
 LDFLAGS += -lssl -lcrypto
 
-# macOS: Apple clang has no -fcx-fortran-rules (GCC only); OpenSSL from
-# Homebrew is keg-only (not in the default search paths)
+# macOS: Apple clang has no -fcx-fortran-rules (GCC only) - mac/fast_complex.h
+# takes libc++'s inf / NaN recovery out of std::complex * and norm instead;
+# OpenSSL from Homebrew is keg-only (not in the default search paths)
 ifeq ($(MACOS),1)
-    CFLAGS := $(filter-out -fcx-fortran-rules,$(CFLAGS)) -include mac/posix_compat.h
+    CFLAGS := $(filter-out -fcx-fortran-rules,$(CFLAGS)) -include mac/posix_compat.h -include mac/fast_complex.h
     OPENSSL_PREFIX := $(or $(shell brew --prefix openssl@3 2>/dev/null),/usr/local/opt/openssl@3)
     CFLAGS += -I$(OPENSSL_PREFIX)/include
     LDFLAGS += -L$(OPENSSL_PREFIX)/lib -framework IOKit -framework CoreFoundation

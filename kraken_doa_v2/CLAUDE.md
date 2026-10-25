@@ -24,7 +24,9 @@ make -C plugins PLUGIN=<id>    # one plugin (a plugin that fails to compile only
 - At most `-j3` on a Pi. Stale header dependencies after big header
   changes: `make distclean && make`.
 - Flags `-O3 -ffast-math -fno-finite-math-only -march=native`; `obj/.flags`
-  rebuilds everything when they change.
+  rebuilds everything when they change. On macOS `mac/fast_complex.h` is
+  force-included into kraken_doa and the plugins (`std::complex` `*` / `*=`
+  / `norm` without libc++'s inf / NaN recovery; `../docs/dev/macos.md`).
 - `kraken_doa.html` (and `array_calculator.html`) are read per request:
   edit, then hard-reload the browser. New HTTP routes need a rebuild.
 
