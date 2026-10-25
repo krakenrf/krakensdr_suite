@@ -88,7 +88,10 @@ followed without 180° jumps; the ambiguity is the sync's polarity) -> sign
 wrong decision costs one bit, not the rest of the block, as deciding the
 tones one by one and integrating them would. Sync: the 40 bits `+` `*` SYN
 SYN SOH, <= 4 bit errors, either polarity. Characters are collected until
-a suffix (ETX / ETB, also one bit off) is followed by a matching BCS.
+a suffix (ETX / ETB, also one bit off) is followed by a matching BCS. The
+block's fields (registration, label names, message number / flight ID,
+squitters) are read by `plugins/lib/acars_msg.hpp`, which the vdl2 plugin
+uses for ACARS over AVLC too.
 
 ## Sources / specifications
 - Block layout, character format, uplink / downlink field values,
@@ -114,8 +117,8 @@ a suffix (ETX / ETB, also one bit off) is followed by a matching BCS.
 | the same through kraken_doa (debug playback, a TEST build on moved ports) | the same events, talkers 40.0 / 165.0 / 290.0 / 230.0°, playback 8 % of a core |
 
 ## Limitations
-- VHF ACARS only: no VDL Mode 2 (31.5 kbit/s D8PSK on 136.725-136.975
-  MHz), no HFDL, no satellite ACARS.
+- The 2400 bit/s VHF link only; ACARS over VDL Mode 2 is the vdl2
+  plugin's; no HFDL, no satellite ACARS.
 - Message contents are shown as text; the airline / avionics formats
   inside (positions in label 16 / H1 reports, OOOI events, weather ...)
   aren't parsed, and there are no map points.

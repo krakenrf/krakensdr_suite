@@ -14488,7 +14488,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   const RDF_PK_KIND = {ais: 'ship', adsb: 'aircraft', dme: 'beacon', ism: 'device', aprs: 'station',
                        radiosonde: 'sonde', tetra: 'site', mpt1327: 'site', ils: 'navaid', radar: 'radar',
                        ssr1030: 'interrogator', uat: 'aircraft', flarm: 'flarm', beacon406: 'sar', lora: 'node',
-                       wildlife: 'collar', rds: 'broadcast', acars: 'aircraft'};
+                       wildlife: 'collar', rds: 'broadcast', acars: 'aircraft', vdl2: 'aircraft'};
   // kinds that report where they are (their decoder's map points, same id):
   // Dist / Δ pos columns, the position check
   const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde', 'gs', 'flarm', 'sar', 'node']);
@@ -14505,8 +14505,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     // separation, by delay: a reflection, or another SFN transmitter)
     if (t.sp) return t.pl === 'cells' ? 'cell' : 'path';
     // UAT ground stations (their uplinks and the TIS-B / ADS-R traffic they
-    // rebroadcast) and ACARS ground stations (their squitters) beside the aircraft
-    if (t.pk && (t.pl === 'uat' || t.pl === 'acars') && /^GS /.test(t.tid)) return 'gs';
+    // rebroadcast), ACARS ground stations (their squitters) and VDL2 ground
+    // stations (their own bursts) beside the aircraft
+    if (t.pk && (t.pl === 'uat' || t.pl === 'acars' || t.pl === 'vdl2') && /^GS /.test(t.tid)) return 'gs';
     // an analog FM transmitter named by its radio ID (MDC1200 / FleetSync /
     // selcall / DTMF), else its CTCSS tone / DCS code / tone burst - the
     // analog_id plugin ("ctcss" until 2026-10-22: an open page from before)

@@ -29,12 +29,12 @@
 // magnitude = its reliability. Characters with a parity error are repaired
 // by flipping their least reliable bits until the BCS matches.
 
+#include "acars_msg.hpp"
 #include "kraken_dsp.hpp"
 #include "kraken_plugin.hpp"
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -54,7 +54,9 @@ constexpr int MAX_TEXT = 220;
 constexpr int MAX_CHARS = HDR + MAX_TEXT + 1 + 2 + 4;   // + suffix + BCS, a little margin
 constexpr int MAX_BAD = 4;     // parity errors repaired per block (a few CRC trials each)
 constexpr uint8_t ETX = 0x83, ETB = 0x97;   // on air, with the odd parity bit
-constexpr uint8_t SOH = 0x01, STX = 0x02, NAK = 0x15, DEL = 0x7F;
+constexpr uint8_t SOH = 0x01;
+using acars::DEL;
+using acars::NAK;
 
 uint16_t crc_kermit(const uint8_t* p, int n) {
     static const std::array<uint16_t, 256> tab = [] {
@@ -85,15 +87,6 @@ uint64_t sync_pattern() {
 }
 constexpr uint64_t MASK40 = (1ull << 40) - 1;
 constexpr int SYNC_ERRS = 4;
-
-// One received block that passed its BCS (characters without parity)
-struct Block {
-    char mode = 0, ack = 0, bid = 0;
-    std::string addr, label, text;
-    bool etb = false;    // ETB: more blocks of the message follow
-    bool down = false;   // downlink (aircraft -> ground): a digit block ID
-    int repaired = 0;    // bits repaired
-};
 
 class Acars : public kp::Decoder {
 public:
@@ -294,92 +287,17 @@ private:
                 }
         }
         if (!ok) return false;
-        Block b;
-        b.mode = static_cast<char>(c[0] & 0x7F);
-        for (int i = 1; i <= 7; i++) b.addr += static_cast<char>(c[i] & 0x7F);
-        b.ack = static_cast<char>(c[8] & 0x7F);
-        b.label = {static_cast<char>(c[9] & 0x7F), static_cast<char>(c[10] & 0x7F)};
-        b.bid = static_cast<char>(c[11] & 0x7F);
-        if ((c[12] & 0x7F) == STX)
-            for (int i = HDR; i < e; i++) b.text += static_cast<char>(c[i] & 0x7F);
-        b.etb = suffix == ETB;
-        b.down = b.bid >= '0' && b.bid <= '9';
-        b.repaired = fixed;
+        acars::Block b;
+        acars::parse(c.data(), e + 1, b);
         // the block's samples: from '+' (the sync that proved it) to the end
         // of the BCS; the carrier offset of this transmitter
         const double end = sym_t_;
         const float off = std::arg(cacc_) * static_cast<float>(FS / (2 * M_PI));
-        on_block(b, f_start_, end, off);
+        on_block(b, fixed, f_start_, end, off);
         return true;
     }
 
     // --- reporting ---------------------------------------------------------
-
-    static std::string trim_addr(const std::string& a) {
-        size_t i = 0;
-        while (i < a.size() && (a[i] == '.' || a[i] == ' ' || a[i] == '\0')) i++;
-        std::string r = a.substr(i);
-        while (!r.empty() && (r.back() == ' ' || r.back() == '\0')) r.pop_back();
-        return kp::printable(r);
-    }
-    // a label as it is usually written: "_d" for the general response _DEL
-    static std::string label_text(const std::string& l) {
-        if (l.size() == 2 && l[0] == '_' && l[1] == DEL) return "_d";
-        return kp::printable(l);
-    }
-    static const char* label_name(const std::string& l) {
-        if (l.size() == 2 && l[0] == '_' && l[1] == DEL) return "general response";
-        if (l == "Q0") return "link test";
-        if (l == "SQ") return "squitter";
-        if (l == "SA") return "media advisory";
-        if (l == "H1") return "message to / from terminal";
-        return "";
-    }
-    // message text for one line: CR / LF as spaces, other controls escaped
-    static std::string one_line(const std::string& s) {
-        std::string r;
-        for (char ch : s) {
-            if (ch == '\r' || ch == '\n') {
-                if (!r.empty() && r.back() != ' ') r += ' ';
-            } else {
-                r += ch;
-            }
-        }
-        while (!r.empty() && r.back() == ' ') r.pop_back();
-        return kp::printable(r);
-    }
-    // a downlink's text starts with the message sequence number (letter,
-    // two digits, block letter: "M01A") and the flight ID (6: "BA0123")
-    static bool split_downlink(const std::string& t, std::string& msn, std::string& flight, std::string& body) {
-        if (t.size() < 10) return false;
-        auto al = [](char c) { return std::isupper(static_cast<unsigned char>(c)) != 0; };
-        auto dg = [](char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0; };
-        if (!al(t[0]) || !dg(t[1]) || !dg(t[2]) || !al(t[3])) return false;
-        for (int i = 4; i < 10; i++)
-            if (!(al(t[i]) || dg(t[i]) || t[i] == ' ')) return false;
-        msn = t.substr(0, 4);
-        flight = t.substr(4, 6);
-        while (!flight.empty() && flight.back() == ' ') flight.pop_back();
-        size_t k = 0;
-        while (k < flight.size() && flight[k] == ' ') k++;
-        flight = flight.substr(k);
-        body = t.substr(10);
-        return true;
-    }
-    // a ground station's squitter (label SQ): version (2 digits), 'X', the
-    // network (A = ARINC, S = SITA), the station's IATA airport code
-    static bool squitter(const Block& b, std::string& net, std::string& iata) {
-        const std::string& t = b.text;
-        if (b.label != "SQ" || t.size() < 7) return false;
-        if (!std::isdigit(static_cast<unsigned char>(t[0])) || !std::isdigit(static_cast<unsigned char>(t[1])) || t[2] != 'X')
-            return false;
-        if (t[3] != 'A' && t[3] != 'S') return false;
-        for (int i = 4; i < 7; i++)
-            if (!std::isupper(static_cast<unsigned char>(t[i]))) return false;
-        net = t[3] == 'A' ? "ARINC" : "SITA";
-        iata = t.substr(4, 3);
-        return true;
-    }
 
     void talker(const std::string& id, const std::string& label, double start, double end, float off) {
         kp::Talker t;
@@ -396,19 +314,20 @@ private:
         host.talker(t);
     }
 
-    void on_block(const Block& b, double start, double end, float off) {
+    // repaired: bits repaired by the parity / BCS search
+    void on_block(const acars::Block& b, int repaired, double start, double end, float off) {
         host.valid(start, end);
         blocks_++;
-        if (b.repaired) repaired_blocks_++;
+        if (repaired) repaired_blocks_++;
         (b.down ? downs_ : ups_)++;
 
-        const std::string reg = trim_addr(b.addr);
-        const std::string lab = label_text(b.label);
-        const char* lname = label_name(b.label);
+        const std::string reg = acars::registration(b.addr);
+        const std::string lab = acars::label_text(b.label);
+        const char* lname = acars::label_name(b.label);
         std::string msn, flight, body = b.text;
-        if (b.down) split_downlink(b.text, msn, flight, body);
+        if (b.down) acars::split_downlink(b.text, msn, flight, body);
         std::string net, iata;
-        const bool sq = !b.down && squitter(b, net, iata);
+        const bool sq = !b.down && acars::squitter(b, net, iata);
 
         // ID separation: a downlink is the aircraft's transmission (its
         // registration); an uplink the ground station's, which names itself
@@ -433,10 +352,10 @@ private:
         if (b.bid > ' ' && b.bid < DEL) ev += std::string(" · blk ") + b.bid;
         if (b.ack != NAK && b.ack > ' ' && b.ack < DEL) ev += std::string(" · ack ") + b.ack;
         if (!msn.empty()) ev += " · " + msn;
-        const std::string txt = one_line(body);
+        const std::string txt = acars::one_line(body);
         if (!txt.empty()) ev += ": " + txt;
         if (b.etb) ev += " …";
-        if (b.repaired) ev += " (" + std::to_string(b.repaired) + (b.repaired == 1 ? " bit" : " bits") + " repaired)";
+        if (repaired) ev += " (" + std::to_string(repaired) + (repaired == 1 ? " bit" : " bits") + " repaired)";
         // blocks without text (acknowledgements) only with "Log all messages";
         // a retransmission (no acknowledgement came) once in 30 s
         if (!b.text.empty() || host.verbose()) host.event(ev, 30);
@@ -462,7 +381,7 @@ private:
         host.fact("Last text", txt.empty() ? "-" : txt.substr(0, 200));
     }
 
-    void row(const std::string& key, const Block& b, const std::string& flight, const std::string& lab,
+    void row(const std::string& key, const acars::Block& b, const std::string& flight, const std::string& lab,
              const std::string& txt, float off) {
         Row& r = rows_[key];
         r.blocks++;
@@ -483,7 +402,7 @@ private:
 
     // A message of several blocks (ETB on all but the last): put together
     // and reported whole when its last block (ETX) arrives
-    void multi_block(const Block& b, const std::string& reg, const std::string& flight, const std::string& body) {
+    void multi_block(const acars::Block& b, const std::string& reg, const std::string& flight, const std::string& body) {
         const double t = host.time();
         for (auto it = pending_.begin(); it != pending_.end();)
             it = t - it->second.t > 120 ? pending_.erase(it) : std::next(it);
@@ -507,8 +426,8 @@ private:
         p.text += body;
         p.blocks++;
         std::string ev = std::string(b.down ? "↓ " : "↑ ") + (reg.empty() ? std::string("(all)") : reg) +
-                         (p.flight.empty() ? "" : " " + kp::printable(p.flight)) + " · " + label_text(p.label) +
-                         " · message of " + std::to_string(p.blocks) + " blocks: " + one_line(p.text);
+                         (p.flight.empty() ? "" : " " + kp::printable(p.flight)) + " · " + acars::label_text(p.label) +
+                         " · message of " + std::to_string(p.blocks) + " blocks: " + acars::one_line(p.text);
         host.event(ev, 30);
     }
 };

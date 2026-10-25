@@ -34,7 +34,8 @@ plugins/
 │                         (P25/DMR 4FSK sync), dig_vocoder (IMBE, mbelib AMBE,
 │                         TETRA ACELP), dig_common (front ends, the Bridge below),
 │                         radar_pri / radar_scan (PRI patterns, antenna scan / main
-│                         beam - radar, ssr1030)
+│                         beam - radar, ssr1030), acars_msg.hpp (ACARS block fields -
+│                         acars, vdl2)
 ├── p25/ dmr/ tetra/ dstar/ nxdn/ mpt1327/   the shipped protocol decoders
 ├── pagers/ aprs/         more shipped decoders (POCSAG + FLEX; APRS was written by the AI lab)
 ├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points; multichannel: every
@@ -52,6 +53,10 @@ plugins/
 ├── acars/                VHF ACARS (ARINC 618): 2400 bit/s MSK on AM, NRZI detected coherently against a
 │                         2400 Hz reference, odd parity + CRC-16 BCS with soft-decision repair; a packet
 │                         talker per aircraft (registration), ground stations from their squitters
+├── vdl2/                 VDL Mode 2 (136.x MHz): D8PSK bursts, unique word correlator, coherent + differential
+│                         demodulators side by side, descrambler, header FEC, RS(255,249) errors + erasures
+│                         (rs.cpp), HDLC / AVLC, ACARS over AVLC, ground station XID (map); a packet talker
+│                         per burst = its sender's address (aircraft ICAO hex, ground station)
 ├── uat/                  978 MHz UAT (US ADS-B + ground uplink): CPFSK at 2.3 samples per bit,
 │                         Reed-Solomon GF(256), FIS-B headers / DLAC text; TIS-B = the ground station's
 ├── flarm/                FLARM (ID + bearing only: encrypted payload) / OGN trackers (LDPC soft

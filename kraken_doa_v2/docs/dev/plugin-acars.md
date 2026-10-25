@@ -45,6 +45,10 @@ this folder (index: `README.md` here, or the table in
 - Multi-block: key direction + address + label; ETB blocks appended (a
   repeated block ID once), the ETX block emits "message of N blocks";
   pending messages dropped after 120 s without a block
+- The block's fields (`acars::Block`, registration, label names, MSN /
+  flight split, squitter) live in `plugins/lib/acars_msg.hpp` (header
+  only), shared with the vdl2 plugin's ACARS over AVLC (*VDL Mode 2*);
+  the refactor was re-tested with every test below (identical results)
 - Tests (2026-10-25, scratch; README has the table): the real recording 5 /
   5; 20 synthetic downlinks 20 / 20 down to 12 dB C/N in 12.5 kHz, 16 at
   6 dB; 120 s noise 0 events; `acars-three-aircraft` offline 40.1 / 165.0
@@ -52,5 +56,6 @@ this folder (index: `README.md` here, or the table in
   2808x / 2809x, cache made by make_testsignal.py) 40.0 / 165.0 / 290.0 /
   230.0°, every event incl. the two-block message. CPU 0.2-0.4 % of real
   time on x86-64 (not measured on a Pi)
-- Not done: VDL Mode 2, HFDL, message-content parsing (positions in label
-  16 / H1, OOOI), squitter positions (format not published)
+- Not done: HFDL, message-content parsing (positions in label 16 / H1,
+  OOOI), squitter positions (format not published). VDL Mode 2: the vdl2
+  plugin (*VDL Mode 2*)

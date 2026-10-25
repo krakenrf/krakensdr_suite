@@ -49,6 +49,7 @@ every session needs and points here.
 | `plugin-rds.md` | RDS / RBDS + SCA plugin |
 | `plugin-ssr1030.md` | 1030 MHz interrogations plugin |
 | `plugin-uat.md` | UAT plugin |
+| `plugin-vdl2.md` | VDL Mode 2 plugin |
 | `plugin-wildlife.md` | Wildlife collars plugin |
 | `recorder.md` | IQ & audio recorder and playback of recordings |
 | `reference.md` | Hot paths, development tasks, key files, common issues, testing, dependencies |
