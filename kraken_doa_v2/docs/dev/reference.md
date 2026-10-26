@@ -149,10 +149,45 @@ arbitrary widths did the same).
 - Bitmask indexing (no modulo)
 - Overlap processing for temporal smoothing
 
-**Performance:** 256 snapshots, 5 channels → 8-12ms total
+**Performance:** 256 snapshots, 5 channels → 8-12ms total (old Pi 4
+figure; see the 2026-10-26 pass below)
+
+**Frame path (2026-10-26, performance pass):** the accumulator is one
+contiguous `complex<float>` row per element (it was a `complex<double>`
+MatrixXcd filled with a strided per-sample loop); a frame's snapshots are
+summed into the covariance straight from it (`covAccumulate`: double sums,
+the element count a template parameter so the pair loops vectorize; each
+stretch between snapshot boundaries once, times the number of snapshots
+holding it - the 1/4 overlaps were summed twice) instead of being copied
+into a matrix each (a heap allocation per snapshot), then all into one
+combined matrix, for Eigen's rankUpdate. The noise-subspace projection is a
+blocked real-arithmetic loop over planar steering vectors cached with them
+(`noiseProjection`, also the talker path and the 3D grid, whose 4 MB
+E^H S temporary per frame is gone). Measured on a 2015 MacBook Air
+(i5-5350U, Apple clang 14, the app's flags), 5-element UCA, one VFO:
+240 kHz 3.5 -> 0.5 % of a core (480 -> 70 us a frame, ~7x), 12.5 kHz 0.17
+-> 0.03 %, 2.4 MHz 16.3 -> 2.2 % (7.4x), a 3D custom array at 240 kHz 24.2
+-> 8.3 %. Same results: covariance within 1.4e-15, eigenvalues 2e-12,
+pseudospectrum 2e-13 (relative), bearings and eigenvalue ratio identical,
+1 and 2 sources, 0 / 10 / 30 dB SNR (synthetic scenes, HEAD vs new on the
+same samples). `-ffp-contract=off` vs the app's flags: no measurable
+difference. Pi / Windows not measured. Tested, not taken: a fixed-max-size
+(8 x 8) eigensolver (2-5 % of a ~4.7 us solve), explicit `std::fma` in the
+covariance loop (2.8x slower: one dependency chain), float accumulation
+(the noise eigenvalues need the double sums).
+
+**Beamformer (2026-10-26):** the delay-and-sum / MVDR output loop
+(`combineChannels`: weights to plain arrays, element loop unrolled per
+element count) and the MVDR covariance (a loop per element pair instead of a
+per-sample Eigen outer product): delay-and-sum 2.4x at 240 kHz (22 -> 9 us a
+block) and 3.4x at 2.4 MHz (214 -> 63 us), MVDR 6.2x / 4.0x, outputs
+bit-identical on the test blocks (same 2015 MacBook Air; Pi / Windows not
+measured). Float accumulation would be 1.6x faster again but not
+bit-identical (up to 7e-6 relative) - not taken.
 
 **Frame size cap:** `snapshot_length x num_snapshots` <= `MAX_FRAME_SAMPLES`
-(65536). Every MUSIC buffer is complex<double> and scales with it - the old
+(65536). The accumulator scales with it (complex<float> since 2026-10-26;
+complex<double> before, plus two copies of every frame) - the old
 2048 x 128 maximum was ~200 MB per VFO. `setConfig` lowers num_snapshots to
 fit; the MUSIC_SNAPSHOT_LENGTH handler echoes the lowered count
 (MUSIC_NUM_SNAPSHOTS) so browsers and the settings file follow.

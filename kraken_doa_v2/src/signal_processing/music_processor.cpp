@@ -14,6 +14,119 @@
 using namespace std;
 using namespace Eigen;
 
+namespace {
+
+// Covariance sums of one stretch of samples: re[idx] + i im[idx] +=
+// sum_i x_a[i] conj(x_b[i]) for every a <= b (idx row by row through the
+// upper triangle), x_k = element k's n consecutive samples. In double like
+// the Eigen rankUpdate it replaces (a product of two floats is exact in
+// double: only the summation order differs, ~1e-16). Pieces of PIECE samples
+// go to planar double first; then one row a at a time with every b >= a in
+// the same sample loop - M is a template parameter, so the b loop unrolls into
+// 2 (M - a) independent accumulators the compiler vectorizes over i (a loop
+// per pair was latency-bound on its one accumulator chain). 2026-10-26.
+template <int M>
+void covAccumulateT(const std::complex<float>* const* x, size_t n, double* re, double* im) {
+    constexpr size_t PIECE = 128;   // M x 128 x 16 B: in L1 (10 KB at M = 5)
+    alignas(64) double xr[M][PIECE], xi[M][PIECE];
+    for (size_t o = 0; o < n; o += PIECE) {
+        const size_t len = std::min(PIECE, n - o);
+        for (int k = 0; k < M; k++) {
+            const float* p = reinterpret_cast<const float*>(x[k] + o);
+            for (size_t i = 0; i < len; i++) {
+                xr[k][i] = p[2 * i];
+                xi[k][i] = p[2 * i + 1];
+            }
+        }
+        int idx = 0;
+        for (int a = 0; a < M; a++) {
+            double sr[M] = {}, si[M] = {};
+            for (size_t i = 0; i < len; i++) {
+                const double ar = xr[a][i], ai = xi[a][i];
+                for (int b = a; b < M; b++) {
+                    sr[b] += ar * xr[b][i] + ai * xi[b][i];
+                    si[b] += ai * xr[b][i] - ar * xi[b][i];
+                }
+            }
+            for (int b = a; b < M; b++, idx++) {
+                re[idx] += sr[b];
+                im[idx] += si[b];
+            }
+        }
+    }
+}
+
+void covAccumulate(int M, const std::complex<float>* const* x, size_t n, double* re, double* im) {
+    static_assert(DOA_NUM_ELEMENTS <= 8, "covAccumulate: add the instantiations up to DOA_NUM_ELEMENTS");
+    switch (M) {
+        case 2: covAccumulateT<2>(x, n, re, im); break;
+        case 3: covAccumulateT<3>(x, n, re, im); break;
+        case 4: covAccumulateT<4>(x, n, re, im); break;
+        case 5: covAccumulateT<5>(x, n, re, im); break;
+        case 6: covAccumulateT<6>(x, n, re, im); break;
+        case 7: covAccumulateT<7>(x, n, re, im); break;
+        case 8: covAccumulateT<8>(x, n, re, im); break;
+        default: break;
+    }
+}
+
+// MUSIC's noise-subspace projection out[j] = sum_k |e_k^H a_j|^2 over the
+// first d columns e_k of V (the noise eigenvectors) and K steering vectors
+// a_j, planar (element m of a_j at re / im[m * K + j]). Was E^H S with Eigen
+// (a d x K matrix, the 3D grid's 4 MB allocated every frame) and a colwise
+// squaredNorm; blocks of B angles keep their steering in L1 across the d
+// eigenvectors, the element loop unrolls (M template) and the angle loop
+// vectorizes. The same sums in another order: ~1e-13 relative on the
+// pseudospectrum. 2026-10-26.
+template <int M>
+void noiseProjectionT(const Eigen::MatrixXcd& V, int d, const double* re, const double* im, int K, double* out) {
+    constexpr int B = 64;
+    double er[M][M], ei[M][M];   // [k][m]: conj(e_k) applied below
+    for (int k = 0; k < d; k++)
+        for (int m = 0; m < M; m++) {
+            er[k][m] = V(m, k).real();
+            ei[k][m] = V(m, k).imag();
+        }
+    for (int j0 = 0; j0 < K; j0 += B) {
+        const int n = std::min(B, K - j0);
+        double acc[B] = {};
+        for (int k = 0; k < d; k++) {
+            for (int j = 0; j < n; j++) {
+                double cr = 0.0, ci = 0.0;
+                for (int m = 0; m < M; m++) {
+                    const size_t at = static_cast<size_t>(m) * static_cast<size_t>(K) + static_cast<size_t>(j0 + j);
+                    cr += er[k][m] * re[at] + ei[k][m] * im[at];
+                    ci += er[k][m] * im[at] - ei[k][m] * re[at];
+                }
+                acc[j] += cr * cr + ci * ci;
+            }
+        }
+        for (int j = 0; j < n; j++) out[j0 + j] = acc[j];
+    }
+}
+
+void noiseProjection(const Eigen::MatrixXcd& V, int d, const std::vector<double>& re, const std::vector<double>& im,
+                     int K, double* out) {
+    const int M = static_cast<int>(V.rows());
+    d = std::clamp(d, 0, M);
+    if (re.size() < static_cast<size_t>(M) * static_cast<size_t>(K) || im.size() < re.size()) {
+        std::fill(out, out + K, 0.0);
+        return;
+    }
+    switch (M) {
+        case 2: noiseProjectionT<2>(V, d, re.data(), im.data(), K, out); break;
+        case 3: noiseProjectionT<3>(V, d, re.data(), im.data(), K, out); break;
+        case 4: noiseProjectionT<4>(V, d, re.data(), im.data(), K, out); break;
+        case 5: noiseProjectionT<5>(V, d, re.data(), im.data(), K, out); break;
+        case 6: noiseProjectionT<6>(V, d, re.data(), im.data(), K, out); break;
+        case 7: noiseProjectionT<7>(V, d, re.data(), im.data(), K, out); break;
+        case 8: noiseProjectionT<8>(V, d, re.data(), im.data(), K, out); break;
+        default: std::fill(out, out + K, 0.0); break;
+    }
+}
+
+}  // namespace
+
 MUSICProcessor::MUSICProcessor() : current_topology(ArrayTopology::UCA), pseudospectrum(DOA_NUM_ANGLES) {
     
     try {
@@ -39,12 +152,10 @@ MUSICProcessor::MUSICProcessor() : current_topology(ArrayTopology::UCA), pseudos
         accumulator_.global_sample_index = 0;
         
         // Pre-allocate working matrices to avoid repeated allocations
-        snapshot_working_matrix_.resize(num_elements_, config_.snapshot_length);
         correlation_matrix_.resize(num_elements_, num_elements_);
-        combined_snapshots_.resize(num_elements_, config_.num_snapshots * config_.snapshot_length);
-        
+
         // Initialize snapshot manager
-        snapshot_mgr_.snapshots.reserve(config_.num_snapshots);
+        snapshot_mgr_.count = 0;
         snapshot_mgr_.snapshots_ready = false;
         
         // Pre-calculate steering vectors using UCA as default
@@ -105,14 +216,7 @@ void MUSICProcessor::setConfig(const MUSICConfig& config) {
         accumulator_.total_samples = 0;
         accumulator_.global_sample_index = 0;
         
-        // Resize working matrices
-        snapshot_working_matrix_.resize(num_elements_, config_.snapshot_length);
-        
-        size_t max_combined_samples = config_.num_snapshots * config_.snapshot_length;
-        combined_snapshots_.resize(num_elements_, max_combined_samples);
-        
-        snapshot_mgr_.snapshots.clear();
-        snapshot_mgr_.snapshots.reserve(config_.num_snapshots);
+        snapshot_mgr_.count = 0;
         snapshot_mgr_.snapshots_ready = false;
 
         covariance_avg_valid_ = false;  // snapshot statistics changed
@@ -158,11 +262,9 @@ void MUSICProcessor::syncElementCount() {
         accumulator_.total_samples = 0;
         accumulator_.global_sample_index = 0;
 
-        snapshot_working_matrix_.resize(num_elements_, config_.snapshot_length);
         correlation_matrix_.resize(num_elements_, num_elements_);
-        combined_snapshots_.resize(num_elements_, config_.num_snapshots * config_.snapshot_length);
 
-        snapshot_mgr_.snapshots.clear();
+        snapshot_mgr_.count = 0;
         snapshot_mgr_.snapshots_ready = false;
     }
 
@@ -306,7 +408,8 @@ bool MUSICProcessor::processDecimatedIQ(SharedDecimator::MultiChannelDecimated&&
 void MUSICProcessor::addToAccumulatorOptimized(const SharedDecimator::MultiChannelDecimated& decimated_data) {
     lock_guard<mutex> lock(accumulator_.buffer_mutex);
     
-    if (accumulator_.buffer.rows() != num_elements_ || accumulator_.buffer.cols() == 0) {
+    if (accumulator_.buffer_size == 0 ||
+        accumulator_.buffer.size() != static_cast<size_t>(num_elements_) * accumulator_.buffer_size) {
         cout << "ERROR: Accumulator buffer not properly initialized" << endl;
         return;
     }
@@ -324,27 +427,22 @@ void MUSICProcessor::addToAccumulatorOptimized(const SharedDecimator::MultiChann
     size_t chunk1_size = min(new_sample_count, accumulator_.buffer_size - write_idx);
     size_t chunk2_size = new_sample_count - chunk1_size;
     
-    // First chunk (no wrap-around) - use move semantics where possible
+    // First chunk (no wrap-around): each element's row is contiguous
     for (int ch = 0; ch < num_elements_; ch++) {
-        auto& channel = decimated_data.channels[ch];  // Non-const reference since we own the data
-        const std::complex<float>* src_ptr = channel.samples.data();
-        
-        for (size_t i = 0; i < chunk1_size && i < channel.samples.size(); i++) {
-            accumulator_.buffer(ch, write_idx + i) = src_ptr[i];
-        }
+        const auto& channel = decimated_data.channels[ch];
+        std::complex<float>* row = accumulator_.buffer.data() + static_cast<size_t>(ch) * accumulator_.buffer_size;
+        const size_t n1 = min(chunk1_size, channel.samples.size());
+        std::copy_n(channel.samples.data(), n1, row + write_idx);
     }
-    
+
     // Second chunk (wrapped around to beginning)
     if (chunk2_size > 0) {
         for (int ch = 0; ch < num_elements_; ch++) {
-            auto& channel = decimated_data.channels[ch];
+            const auto& channel = decimated_data.channels[ch];
             if (chunk1_size < channel.samples.size()) {
-                const std::complex<float>* src_ptr = channel.samples.data() + chunk1_size;
-                
-                size_t copy_size = min(chunk2_size, channel.samples.size() - chunk1_size);
-                for (size_t i = 0; i < copy_size; i++) {
-                    accumulator_.buffer(ch, i) = src_ptr[i];
-                }
+                std::complex<float>* row = accumulator_.buffer.data() + static_cast<size_t>(ch) * accumulator_.buffer_size;
+                const size_t copy_size = min(chunk2_size, channel.samples.size() - chunk1_size);
+                std::copy_n(channel.samples.data() + chunk1_size, copy_size, row);
             }
         }
     }
@@ -415,32 +513,45 @@ bool MUSICProcessor::extractSnapshotsOptimized() {
         return false;
     }
     
-    snapshot_mgr_.snapshots.clear();
-    snapshot_mgr_.snapshots.reserve(config_.num_snapshots);
-
+    // The frame's snapshots go straight from the accumulator into the
+    // covariance sums (each one as before: overlapping samples count twice).
+    // They used to be copied into a matrix each, then all into one combined
+    // matrix, in complex<double>, for Eigen's rankUpdate - most of MUSIC's
+    // time went into those copies (2026-10-26)
+    std::fill(cov_re_.begin(), cov_re_.end(), 0.0);
+    std::fill(cov_im_.begin(), cov_im_.end(), 0.0);
+    cov_cols_ = 0;
+    size_t count = 0;
     size_t start_offset = 0;
-    
-    // Pre-check if working matrix needs resizing (do once, not in loop)
-    if (snapshot_working_matrix_.rows() != num_elements_ || 
-        snapshot_working_matrix_.cols() != static_cast<Eigen::Index>(snap_len)) {
-        snapshot_working_matrix_.resize(num_elements_, snap_len);
-    }
-    
     for (size_t snap = 0; snap < config_.num_snapshots; snap++) {
         if (start_offset + snap_len > accumulator_.samples_available) {
             break;
         }
-        
-        // Use optimized snapshot extraction
-        getSnapshotWindowOptimized(start_offset, snapshot_working_matrix_);
-        snapshot_mgr_.snapshots.emplace_back(snapshot_working_matrix_);
+        count++;
         start_offset += step_size;
     }
-    
-    snapshot_mgr_.snapshots_ready = (snapshot_mgr_.snapshots.size() >= min_snaps);
-    
-    if (snapshot_mgr_.snapshots_ready && snapshot_mgr_.snapshots.size() > 0) {
-        size_t consumed_samples = step_size * (snapshot_mgr_.snapshots.size() - 1) + snap_len;
+    snapshot_mgr_.count = count;
+    snapshot_mgr_.snapshots_ready = (count >= min_snaps);
+
+    if (snapshot_mgr_.snapshots_ready && count > 0) {
+        // Sum of the snapshots' covariances = each stretch between snapshot
+        // boundaries once, times the number of snapshots holding it (the
+        // overlaps - a quarter of every snapshot by default - were summed
+        // twice). Merge-walk of the starts j * step and ends j * step + len.
+        const size_t none = ~static_cast<size_t>(0);
+        size_t pos = 0, next_start = 0, next_end = 0;
+        int weight = 0;
+        while (next_end < count) {
+            const size_t s_at = next_start < count ? next_start * step_size : none;
+            const size_t e_at = next_end * step_size + snap_len;
+            const size_t at = min(s_at, e_at);
+            if (weight > 0 && at > pos) accumulateRange(pos, at - pos, weight);
+            pos = at;
+            while (next_start < count && next_start * step_size == pos) { weight++; next_start++; }
+            while (next_end < count && next_end * step_size + snap_len == pos) { weight--; next_end++; }
+        }
+        cov_cols_ = count * snap_len;   // samples summed, overlaps counted twice (as before)
+        size_t consumed_samples = step_size * (count - 1) + snap_len;
         consumed_samples = min(consumed_samples, accumulator_.samples_available);
         // the frame's samples in the VFO stream (the oldest ones are consumed)
         const size_t oldest = accumulator_.global_sample_index - accumulator_.samples_available;
@@ -452,127 +563,52 @@ bool MUSICProcessor::extractSnapshotsOptimized() {
     return snapshot_mgr_.snapshots_ready;
 }
 
-void MUSICProcessor::getSnapshotWindowOptimized(size_t start_offset, MatrixXcd& output) {
-    // OPTIMIZATION: Use bit masking and block copying to minimize per-sample operations
-    
+void MUSICProcessor::accumulateRange(size_t start_offset, size_t len, int weight) {
     const size_t mask = accumulator_.buffer_size_mask;
-    
-    // Calculate starting position using bit mask
-    size_t oldest_sample_idx = (accumulator_.write_index + accumulator_.buffer_size - 
-                               accumulator_.samples_available) & mask;
-    size_t start_idx = (oldest_sample_idx + start_offset) & mask;
-    
-    // Check if we can do a contiguous copy
-    size_t contiguous_samples = min(eff_snapshot_len_, 
-                                   accumulator_.buffer_size - start_idx);
-    
-    if (contiguous_samples == eff_snapshot_len_) {
-        // Fast path: All data is contiguous, copy entire block at once
-        for (int ch = 0; ch < num_elements_; ch++) {
-            output.row(ch) = accumulator_.buffer.block(ch, start_idx, 1, eff_snapshot_len_);
-        }
-    } else {
-        // Slow path: Data wraps around, need two copies
-        size_t wrap_samples = eff_snapshot_len_ - contiguous_samples;
-        
-        for (int ch = 0; ch < num_elements_; ch++) {
-            // Copy first part (from start_idx to end of buffer)
-            output.block(ch, 0, 1, contiguous_samples) = 
-                accumulator_.buffer.block(ch, start_idx, 1, contiguous_samples);
-            
-            // Copy second part (from beginning of buffer)
-            output.block(ch, contiguous_samples, 1, wrap_samples) = 
-                accumulator_.buffer.block(ch, 0, 1, wrap_samples);
-        }
+    const size_t oldest_sample_idx = (accumulator_.write_index + accumulator_.buffer_size -
+                                      accumulator_.samples_available) & mask;
+    const size_t start_idx = (oldest_sample_idx + start_offset) & mask;
+    // at most two contiguous pieces: to the end of the ring, then from its start
+    const size_t first = min(len, accumulator_.buffer_size - start_idx);
+    const std::complex<float>* x[DOA_NUM_ELEMENTS];
+    std::array<double, DOA_NUM_ELEMENTS * (DOA_NUM_ELEMENTS + 1) / 2> re{}, im{};
+    for (int ch = 0; ch < num_elements_; ch++)
+        x[ch] = accumulator_.buffer.data() + static_cast<size_t>(ch) * accumulator_.buffer_size + start_idx;
+    covAccumulate(num_elements_, x, first, re.data(), im.data());
+    if (first < len) {
+        for (int ch = 0; ch < num_elements_; ch++)
+            x[ch] = accumulator_.buffer.data() + static_cast<size_t>(ch) * accumulator_.buffer_size;
+        covAccumulate(num_elements_, x, len - first, re.data(), im.data());
+    }
+    const double w = static_cast<double>(weight);
+    for (size_t i = 0; i < re.size(); i++) {
+        cov_re_[i] += w * re[i];
+        cov_im_[i] += w * im[i];
     }
 }
 
 
 
 bool MUSICProcessor::processSnapshotCollectionOptimized() {
-    if (!snapshot_mgr_.snapshots_ready || snapshot_mgr_.snapshots.empty()) {
+    if (!snapshot_mgr_.snapshots_ready || snapshot_mgr_.count == 0) {
         return false;
     }
-    
+
     // Double-check we're still enabled (config might have changed)
     if (!processing_enabled) {
         return false;
     }
-    
-    // Start timing measurement
-    //startTiming();
-    
-    // Calculate total samples needed and validate all snapshots
-    size_t total_samples = 0;
-    size_t expected_snapshot_length = eff_snapshot_len_;  // see extractSnapshotsOptimized
-    
-    for (const auto& snapshot : snapshot_mgr_.snapshots) {
-        if (snapshot.rows() != num_elements_) {
-            cout << "ERROR: Snapshot has wrong number of rows: " << snapshot.rows() 
-                 << " expected: " << num_elements_ << endl;
-            //endTiming();
-            return false;
-        }
-        
-        if (snapshot.cols() != static_cast<Eigen::Index>(expected_snapshot_length)) {
-            cout << "ERROR: Snapshot has wrong length: " << snapshot.cols() 
-                 << " expected: " << expected_snapshot_length << endl;
-            //endTiming();
-            return false;
-        }
-        
-        total_samples += snapshot.cols();
-    }
-    
-    // Ensure we have valid snapshots
-    if (total_samples == 0) {
-        cout << "ERROR: No valid snapshot data" << endl;
-        //endTiming();
-        return false;
-    }
-    
-    // Verify combined matrix can handle the data
-    if (combined_snapshots_.rows() != num_elements_ || 
-        combined_snapshots_.cols() < static_cast<Eigen::Index>(total_samples)) {
-        // Resize if needed
-        combined_snapshots_.resize(num_elements_, total_samples);
-    }
-    
-    // Copy snapshots to combined matrix with extra validation
-    size_t col_offset = 0;
-    for (const auto& snapshot : snapshot_mgr_.snapshots) {
-        size_t snap_cols = snapshot.cols();
-        
-        // Final bounds check before block operation
-        if (col_offset + snap_cols > total_samples || 
-            col_offset + snap_cols > static_cast<size_t>(combined_snapshots_.cols())) {
-            cout << "ERROR: Block operation would exceed bounds: " 
-                 << "offset=" << col_offset << ", cols=" << snap_cols 
-                 << ", total=" << total_samples 
-                 << ", matrix_cols=" << combined_snapshots_.cols() << endl;
-            //endTiming();
-            return false;
-        }
-        
-        // Safe block copy
-        combined_snapshots_.block(0, col_offset, num_elements_, snap_cols) = snapshot;
-        col_offset += snap_cols;
-    }
-    
-    // Use only the actual data portion
-    auto data_view = combined_snapshots_.leftCols(total_samples);
 
-    // Verify data view is valid
-    if (data_view.rows() != num_elements_ || data_view.cols() != static_cast<Eigen::Index>(total_samples)) {
-        cout << "ERROR: Invalid data view dimensions: " << data_view.rows() << "x" << data_view.cols() << endl;
-        //endTiming();
+    // the covariance sums were taken by extractSnapshotsOptimized
+    if (cov_cols_ == 0) {
+        cout << "ERROR: No valid snapshot data" << endl;
         return false;
     }
 
     frame_published_ = true;
 
-    // Compute correlation matrix using optimized BLAS operations
-    computeCorrelationMatrixOptimized(data_view);
+    // The frame's covariance from the sums
+    computeCorrelationMatrixOptimized();
 
     // Run MUSIC algorithm (use 2D version for 3D arrays)
     if (current_topology == ArrayTopology::CUSTOM && is_3d_array_) {
@@ -592,35 +628,37 @@ bool MUSICProcessor::processSnapshotCollectionOptimized() {
     // Update statistics
     {
         lock_guard<mutex> lock(stats_mutex_);
-        stats_.snapshots_processed += snapshot_mgr_.snapshots.size();
+        stats_.snapshots_processed += snapshot_mgr_.count;
     }
     
     return true;
 }
 
-void MUSICProcessor::computeCorrelationMatrixOptimized(const MatrixXcd& X) {
-    int M = X.rows();  // Number of elements (full array)
-    int N = X.cols();  // Number of samples
-
-    if (N == 0) {
-        correlation_matrix_.setZero(M, M);
-        return;
-    }
+void MUSICProcessor::computeCorrelationMatrixOptimized() {
+    const int M = num_elements_;
+    const size_t N = cov_cols_;   // samples summed
 
     // Ensure correlation matrix is right size
     if (correlation_matrix_.rows() != M || correlation_matrix_.cols() != M) {
         correlation_matrix_.resize(M, M);
     }
 
-    // Standard covariance: Use Eigen's selfadjointView with rankUpdate
-    // This is specifically optimized for R = X * X^H and uses BLAS syrk/herk
-    double scale = 1.0 / static_cast<double>(N);
-    correlation_matrix_.setZero();
-    correlation_matrix_.selfadjointView<Eigen::Lower>().rankUpdate(X, scale);
+    if (N == 0) {
+        correlation_matrix_.setZero();
+        return;
+    }
 
-    // Copy lower triangle to upper for consistency (selfadjointView only fills lower)
-    correlation_matrix_.triangularView<Eigen::StrictlyUpper>() =
-        correlation_matrix_.triangularView<Eigen::StrictlyLower>().adjoint();
+    // R = X X^H / N from the sums of x_a conj(x_b) (a <= b; the lower
+    // triangle is their conjugate, the diagonal real)
+    const double scale = 1.0 / static_cast<double>(N);
+    int idx = 0;
+    for (int a = 0; a < M; a++) {
+        for (int b = a; b < M; b++, idx++) {
+            const std::complex<double> v(cov_re_[idx] * scale, a == b ? 0.0 : cov_im_[idx] * scale);
+            correlation_matrix_(a, b) = v;
+            correlation_matrix_(b, a) = std::conj(v);
+        }
+    }
 
     // Forward-backward averaging: R_fb = (R + J*conj(R)*J)/2, where J is the
     // exchange (flip) matrix - J*conj(R)*J is conj(R) reversed in both
@@ -629,8 +667,8 @@ void MUSICProcessor::computeCorrelationMatrixOptimized(const MatrixXcd& X) {
     // array, hence restricted to ULA: on a UCA, conjugation maps arrivals to
     // their antipodes and would create 180-degree ghost peaks.
     if (fb_averaging_enabled_ && current_topology == ArrayTopology::ULA) {
-        Eigen::MatrixXcd flipped = correlation_matrix_.conjugate().reverse();
-        correlation_matrix_ = 0.5 * (correlation_matrix_ + flipped);
+        fb_flipped_ = correlation_matrix_.conjugate().reverse();   // member: no allocation per frame
+        correlation_matrix_ = 0.5 * (correlation_matrix_ + fb_flipped_);
     }
 
     // Normalize by trace so the matrix is scale-invariant. Done before the
@@ -730,26 +768,10 @@ void MUSICProcessor::computeMUSICSpectrumOptimized() {
         return;
     }
 
-    // Extract noise subspace (smallest eigenvalues are first)
-    // Use leftCols() for efficient column extraction
-    auto E = eigenvectors.leftCols(noise_dimension);
-
-    // Use element-space steering vectors (M × 360)
-    const MatrixXcd& S = steering_vectors;
-
-    // OPTIMIZATION: Pre-allocated matrix with .noalias() for faster multiplication
-    // Ensure EH_S_working_ is sized correctly
-    if (EH_S_working_.rows() != noise_dimension || EH_S_working_.cols() != num_angles_) {
-        EH_S_working_.resize(noise_dimension, num_angles_);
-    }
-
-    // Pre-compute E^H * S for all angles at once
-    // Use .noalias() since we know there's no aliasing
-    EH_S_working_.noalias() = E.adjoint() * S;
-
-    // OPTIMIZATION: Vectorized pseudospectrum computation (ARM NEON)
-    // Two-step computation to avoid expression template overhead
-    pseudospectrum.noalias() = EH_S_working_.colwise().squaredNorm();
+    // Noise subspace (smallest eigenvalues first) against the steering
+    // vectors (M x 360): sum_k |e_k^H a|^2 per angle
+    if (pseudospectrum.size() != num_angles_) pseudospectrum.resize(num_angles_);
+    noiseProjection(eigenvectors, noise_dimension, steer_re_, steer_im_, num_angles_, pseudospectrum.data());
 
     // Apply threshold and inversion using array operations
     const double threshold = 1e-15;
@@ -771,7 +793,7 @@ void MUSICProcessor::clearAccumulatorLocked() {
     accumulator_.write_index = 0;
     accumulator_.samples_available = 0;
     acc_pos_.clear();
-    snapshot_mgr_.snapshots.clear();
+    snapshot_mgr_.count = 0;
     snapshot_mgr_.snapshots_ready = false;
 }
 
@@ -1290,6 +1312,14 @@ void MUSICProcessor::updateSteeringVectors() {
 
             steering_vectors.col(angle_idx) = steering_vector;
         }
+        steer_re_.resize(static_cast<size_t>(M) * static_cast<size_t>(num_angles_));
+        steer_im_.resize(steer_re_.size());
+        for (int elem = 0; elem < M; elem++)
+            for (int angle_idx = 0; angle_idx < num_angles_; angle_idx++) {
+                const size_t at = static_cast<size_t>(elem) * static_cast<size_t>(num_angles_) + static_cast<size_t>(angle_idx);
+                steer_re_[at] = steering_vectors(elem, angle_idx).real();
+                steer_im_[at] = steering_vectors(elem, angle_idx).imag();
+            }
 
         steering_vectors_valid = true;
 
@@ -1624,7 +1654,9 @@ void MUSICProcessor::updateSteeringVectors2D() {
 
         // Compute 2D steering vectors
         int total_angles = num_angles_ * num_elevation_angles_;
-        steering_vectors_2d_.resize(M, total_angles);
+        steer2d_re_.assign(static_cast<size_t>(M) * static_cast<size_t>(total_angles), 0.0);
+        steer2d_im_.assign(steer2d_re_.size(), 0.0);
+        steering_2d_m_ = M;
 
         cout << "Computing 2D steering vectors: " << num_angles_ << " azimuth x "
              << num_elevation_angles_ << " elevation = " << total_angles << " total" << endl;
@@ -1673,7 +1705,11 @@ void MUSICProcessor::updateSteeringVectors2D() {
                     sv /= norm;
                 }
 
-                steering_vectors_2d_.col(col_idx) = sv;
+                for (int elem = 0; elem < M; elem++) {
+                    const size_t at = static_cast<size_t>(elem) * static_cast<size_t>(total_angles) + static_cast<size_t>(col_idx);
+                    steer2d_re_[at] = sv(elem).real();
+                    steer2d_im_[at] = sv(elem).imag();
+                }
             }
         }
 
@@ -1757,16 +1793,12 @@ void MUSICProcessor::computeMUSICSpectrum2D() {
         return;
     }
 
-    // Extract noise subspace
-    auto E = eigenvectors.leftCols(noise_dimension);
-
-    // Compute 2D pseudospectrum
-    int total_angles = num_angles_ * num_elevation_angles_;
-    VectorXd spectrum_2d(total_angles);
-
-    // E^H * S_2d for all 2D angles
-    MatrixXcd EH_S_2d = E.adjoint() * steering_vectors_2d_;
-    spectrum_2d = EH_S_2d.colwise().squaredNorm();
+    // 2D pseudospectrum: the noise subspace against every azimuth x elevation
+    // steering vector (a member: no 4 MB E^H S temporary per frame any more)
+    const int total_angles = num_angles_ * num_elevation_angles_;
+    if (spectrum_2d_.size() != total_angles) spectrum_2d_.resize(total_angles);
+    VectorXd& spectrum_2d = spectrum_2d_;
+    noiseProjection(eigenvectors, noise_dimension, steer2d_re_, steer2d_im_, total_angles, spectrum_2d.data());
 
     // Apply threshold and inversion
     const double threshold = 1e-15;
@@ -1845,16 +1877,17 @@ bool MUSICProcessor::publishFromCovariance(const Eigen::MatrixXcd& R) {
     const int M = num_elements_;
     if (M < 2 || R.rows() != M || R.cols() != M || num_angles_ <= 0) return false;
     const bool use_2d = current_topology == ArrayTopology::CUSTOM && is_3d_array_ && steering_vectors_2d_valid_ &&
-                        steering_vectors_2d_.rows() == M;
+                        steering_2d_m_ == M;
     if (!use_2d && (!steering_vectors_valid || steering_vectors.rows() != M)) return false;
     SelfAdjointEigenSolver<MatrixXcd> es(R);
     if (es.info() != Success) return false;
     // signal subspace as the live frames choose it (without their hysteresis)
     const int k = auto_num_sources_ ? estimateNumSources(es.eigenvalues()) : num_signal_sources_;
     const int signal_dimension = max(1, min(k, M - 1));
-    const auto E = es.eigenvectors().leftCols(M - signal_dimension);
+    const int noise_dimension = M - signal_dimension;
     if (use_2d) {
-        VectorXd s2 = (E.adjoint() * steering_vectors_2d_).colwise().squaredNorm();
+        VectorXd s2(num_angles_ * num_elevation_angles_);
+        noiseProjection(es.eigenvectors(), noise_dimension, steer2d_re_, steer2d_im_, static_cast<int>(s2.size()), s2.data());
         s2 = s2.cwiseMax(1e-15).cwiseInverse();
         if (custom_output_mode_ != ULAOutputMode::BOTH)
             for (int az = 0; az < num_angles_; az++)
@@ -1867,7 +1900,8 @@ bool MUSICProcessor::publishFromCovariance(const Eigen::MatrixXcd& R) {
         marginalizeSpectrums(s2);
         pseudospectrum = azimuth_pseudospectrum_;
     } else {
-        pseudospectrum = (E.adjoint() * steering_vectors).colwise().squaredNorm();
+        if (pseudospectrum.size() != num_angles_) pseudospectrum.resize(num_angles_);
+        noiseProjection(es.eigenvectors(), noise_dimension, steer_re_, steer_im_, num_angles_, pseudospectrum.data());
         pseudospectrum = pseudospectrum.cwiseMax(1e-15).cwiseInverse();
     }
     applyOutputTransforms();
@@ -1884,7 +1918,7 @@ bool MUSICProcessor::spectrumFromCovariance(const Eigen::MatrixXcd& R, Eigen::Ve
     const int M = num_elements_;
     if (M < 2 || R.rows() != M || R.cols() != M || num_angles_ <= 0) return false;
     const bool use_2d = current_topology == ArrayTopology::CUSTOM && is_3d_array_ && steering_vectors_2d_valid_ &&
-                        steering_vectors_2d_.rows() == M;
+                        steering_2d_m_ == M;
     if (!use_2d && (!steering_vectors_valid || steering_vectors.rows() != M)) return false;
 
     SelfAdjointEigenSolver<MatrixXcd> es(R);
@@ -1892,11 +1926,12 @@ bool MUSICProcessor::spectrumFromCovariance(const Eigen::MatrixXcd& R, Eigen::Ve
     // signal subspace as the live frames choose it (without their hysteresis)
     const int k = sources > 0 ? sources : auto_num_sources_ ? estimateNumSources(es.eigenvalues()) : num_signal_sources_;
     const int signal_dimension = max(1, min(k, M - 1));
-    const auto E = es.eigenvectors().leftCols(M - signal_dimension);
+    const int noise_dimension = M - signal_dimension;
 
     VectorXd out;
     if (use_2d) {
-        VectorXd s2 = (E.adjoint() * steering_vectors_2d_).colwise().squaredNorm();
+        VectorXd s2(num_angles_ * num_elevation_angles_);
+        noiseProjection(es.eigenvectors(), noise_dimension, steer2d_re_, steer2d_im_, static_cast<int>(s2.size()), s2.data());
         s2 = s2.cwiseMax(1e-15).cwiseInverse();
         if (custom_output_mode_ != ULAOutputMode::BOTH)
             for (int az = 0; az < num_angles_; az++)
@@ -1905,7 +1940,8 @@ bool MUSICProcessor::spectrumFromCovariance(const Eigen::MatrixXcd& R, Eigen::Ve
         out.resize(num_angles_);
         for (int az = 0; az < num_angles_; az++) out(az) = s2.segment(az * num_elevation_angles_, num_elevation_angles_).maxCoeff();
     } else {
-        out = (E.adjoint() * steering_vectors).colwise().squaredNorm();
+        out.resize(num_angles_);
+        noiseProjection(es.eigenvectors(), noise_dimension, steer_re_, steer_im_, num_angles_, out.data());
         out = out.cwiseMax(1e-15).cwiseInverse();
     }
     float residual = 0.0f;

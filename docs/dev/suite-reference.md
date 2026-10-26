@@ -1748,6 +1748,12 @@ Both applications automatically detect ARM architecture and enable NEON optimiza
   *FFT (pffft)*; power -> dB per bin with `fast_db10` (`include/utils/
   fast_log.hpp`) in straight loops that vectorize (the old wrapped-index
   loop called libm's log2f per bin: ~2.6 % of a core per spectrum)
+- MUSIC / beamforming / talker DoA (2026-10-26): plain loops with the
+  element count as a template parameter, vectorized by the compiler - the
+  frame covariance straight from a complex<float> accumulator, the
+  noise-subspace projection over cached planar steering vectors, the
+  beamformer's combine loop, talker_doa's rings; MUSIC ~7x less CPU, same
+  bearings (kraken_doa_v2/docs/dev/reference.md *MUSIC Algorithm*)
 
 ### Compiler flags
 

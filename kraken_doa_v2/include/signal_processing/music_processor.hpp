@@ -29,10 +29,12 @@ public:
     
     // Configuration
     void setConfig(const MUSICConfig& config);
-    // Cap on snapshot_length x num_snapshots (samples per frame). Every buffer
-    // scales with it in complex<double> - at the old 2048 x 128 maximum about
-    // 200 MB per VFO - while an <=8-element covariance gains nothing from
-    // 262k-sample frames. setConfig enforces it (num_snapshots gives way).
+    // Cap on snapshot_length x num_snapshots (samples per frame). The
+    // accumulator scales with it (complex<float> per element since
+    // 2026-10-26; complex<double> plus two copies of the frame before - at the
+    // old 2048 x 128 maximum about 200 MB per VFO) while an <=8-element
+    // covariance gains nothing from 262k-sample frames. setConfig enforces it
+    // (num_snapshots gives way).
     static constexpr size_t MAX_FRAME_SAMPLES = 65536;
     static size_t accumulatorSamplesFor(const MUSICConfig& cfg);
     // The array offset the CURRENT (published) spectrum was rotated by - not
@@ -364,8 +366,6 @@ private:
         auto_k_streak_ = 0;
     }
 
-    float DOA_inter_elem_space = 0.5f;
-
     // Custom element positions (for CUSTOM topology)
     std::array<ElementPosition, DOA_NUM_ELEMENTS> custom_positions_;
     bool custom_positions_valid_ = false;
@@ -376,9 +376,13 @@ private:
     int num_elevation_angles_ = 181;           // -90 to +90 degrees at 1 degree resolution
     float elevation_resolution_ = 1.0f;        // Degrees per elevation step
 
-    // 2D steering vectors: M x (num_azimuth * num_elevation)
-    Eigen::MatrixXcd steering_vectors_2d_;
+    // 2D steering vectors, M x (num_azimuth * num_elevation), planar like
+    // steer_re_ / steer_im_ below (element m, column j at [m * columns + j]);
+    // steering_2d_m_ = their element count
+    std::vector<double> steer2d_re_, steer2d_im_;
+    int steering_2d_m_ = 0;
     bool steering_vectors_2d_valid_ = false;
+    Eigen::VectorXd spectrum_2d_;               // the frame's 2D pseudospectrum (kept: 0.5 MB)
 
     // Separate spectrums for 2D MUSIC
     Eigen::VectorXd azimuth_pseudospectrum_;    // Marginalized over elevation
@@ -390,7 +394,11 @@ private:
 
     // Optimized circular buffer accumulator
     struct OptimizedAccumulator {
-        Eigen::MatrixXcd buffer;                     // Pre-allocated circular buffer
+        // Pre-allocated circular buffer, one row per element: element k's
+        // sample j at buffer[k * buffer_size + j]. complex<float> - what the
+        // decimator delivers, so nothing is lost (it was complex<double>,
+        // filled with a strided per-sample loop)
+        std::vector<std::complex<float>> buffer;
         size_t write_index = 0;                      // Current write position
         size_t samples_available = 0;                // Available samples for processing
         size_t buffer_size_mask = 0;                 // Mask for fast modulo (size - 1)
@@ -418,32 +426,38 @@ private:
             // Round up to next power of 2 for efficient masking
             buffer_size = nextPowerOf2(requested_size);
             buffer_size_mask = buffer_size - 1;
-            buffer.resize(num_channels, buffer_size);
-            buffer.setZero();
+            buffer.assign(static_cast<size_t>(num_channels) * buffer_size, std::complex<float>{});
             write_index = 0;
             samples_available = 0;
         }
     } accumulator_;
 
     
-    // Snapshot management
+    // Snapshot management: the frame's snapshots are summed into the
+    // covariance straight from the accumulator (extractSnapshotsOptimized) -
+    // no copies of them. cov_re_ / cov_im_: sum over every snapshot sample of
+    // x_a conj(x_b), upper triangle (a <= b) row by row; cov_cols_ = the
+    // number of samples summed (snapshots x length, overlaps counted twice)
     struct SnapshotManager {
-        std::vector<Eigen::MatrixXcd> snapshots;     // Current snapshot collection
+        size_t count = 0;                            // snapshots in the current frame
         bool snapshots_ready = false;
     } snapshot_mgr_;
-    
+    std::array<double, DOA_NUM_ELEMENTS * (DOA_NUM_ELEMENTS + 1) / 2> cov_re_{}, cov_im_{};
+    size_t cov_cols_ = 0;
+
     // Pre-allocated working matrices to avoid repeated allocations
-    Eigen::MatrixXcd snapshot_working_matrix_;       // Working space for snapshot extraction
     Eigen::MatrixXcd correlation_matrix_;            // Pre-allocated correlation matrix
-    Eigen::MatrixXcd combined_snapshots_;            // Combined snapshot data
-    Eigen::MatrixXcd EH_S_working_;                  // Pre-allocated for noise subspace projection
+    Eigen::MatrixXcd fb_flipped_;                    // forward-backward averaging scratch
+
 
     // Pre-allocated eigensolver to avoid repeated construction
     std::unique_ptr<Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd>> eigensolver_;
     bool eigensolver_initialized_ = false;
     
-    // Steering vectors
+    // Steering vectors (M x num_angles_), and the same planar for
+    // noiseProjection: element m, angle j at steer_re_ / steer_im_[m * num_angles_ + j]
     Eigen::MatrixXcd steering_vectors;
+    std::vector<double> steer_re_, steer_im_;
     bool steering_vectors_valid = false;
     
     // Output spectrum
@@ -486,10 +500,14 @@ private:
     // Private methods - Optimized accumulation (read-only input)
     void addToAccumulatorOptimized(const SharedDecimator::MultiChannelDecimated& decimated_data);
     bool extractSnapshotsOptimized();
-    void getSnapshotWindowOptimized(size_t start_offset, Eigen::MatrixXcd& output);
-    
+    // add weight x the covariance sums of the len samples starting
+    // start_offset after the oldest one to cov_re_ / cov_im_ (caller holds
+    // accumulator_.buffer_mutex)
+    void accumulateRange(size_t start_offset, size_t len, int weight);
+
     // Private methods - Optimized MUSIC processing with timing
-    void computeCorrelationMatrixOptimized(const Eigen::MatrixXcd& X);
+    // the frame's covariance from cov_re_ / cov_im_ / cov_cols_
+    void computeCorrelationMatrixOptimized();
     void computeMUSICSpectrumOptimized();
     bool processSnapshotCollectionOptimized();
 

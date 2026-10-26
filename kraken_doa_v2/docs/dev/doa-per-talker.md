@@ -276,7 +276,15 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   = fs / (16 bw) samples, then the Hamming sinc at fs / D (<= WIDE_MAX_OUT
   outputs) - no existing plugin's channel is that narrow. The
   16-bit ring costs less per sample than the chunk ring (3.6 vs 7.8 % of a
-  Pi 5 core, scratchpad bench/ring_bench). Why (scratchpad e2e/ab.sh, 7
+  Pi 5 core, scratchpad bench/ring_bench). 2026-10-26 (performance pass):
+  `add_block`'s loops take the antenna count as a template parameter
+  (`chunkCovT` / `storeWideT` / `storeRawT`): at 2.4 MHz x 5 antennas the
+  chunk ring 6.7 -> 3.4 % of a core, the 16-bit ring 5.4 -> 2.6 %, the
+  float ring (240 kHz) 1.3x, on a 2015 MacBook Air (Pi / Windows not
+  measured). The rings are bit-identical; the chunk ring now sums each pair
+  over the chunk's samples (the same float sums in another order - closer
+  to a double reference, 1.5e-7 vs 3.9e-7 of sqrt(R_aa R_bb)), packet
+  covariances within 1.1e-8, bearings identical. Why (scratchpad e2e/ab.sh, 7
   devices across the 2.4 MHz, transmissions overlapping): filtered 7/7
   bearings exact in every run, whole band 5-6/7 (Schrader read the
   LaCrosse's 90 deg, a fob 96 deg) at the same kraken_doa CPU (~130 %).
