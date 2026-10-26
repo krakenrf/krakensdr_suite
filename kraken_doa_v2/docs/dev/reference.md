@@ -510,3 +510,19 @@ make deps  # Ubuntu/Debian
 - **8091**: TCP data server (multi-channel IQ streaming)
 - **8092**: TCP control server (JSON commands)
 - **1234**: RTL-TCP server (rtl_tcp compatible)
+
+**End to end, before vs after the 2026-10-26 performance pass** (job
+scratch 66074be2 e2e/: two TEST builds on moved ports - main d785e1b and
+the branch at dc095b1 - fed by a fake heimdall streaming 5 channels x
+16384 samples at 146.5 packets/s: a clockwise UCA, R = 250 mm, a CW tone
+at +200 kHz from a 60 deg bearing, a 10 dB weaker one at -500 kHz from
+200 deg, noise 0.2 FS; bearings from the type-3 pseudospectrum, CPU =
+user + sys over 60 s after 15 s settling, 5 alternating rounds each, a
+2015 MacBook Air i5-5350U, Apple clang 14). Process CPU, % of a core,
+old -> new: one 12.5 kHz NBFM VFO with DoA 31.8 -> 30.2 (-5 %), a 240 kHz
+WBFM VFO 45.3 -> 37.0 (-18 %), a 2.4 MHz VFO at +100 kHz 111.4 -> 56.3
+(-49 %), 12.5 kHz + delay-and-sum beamforming 32.5 -> 30.6 (-6 %). The
+same MUSIC frame and message counts per window, the same bearing to
+0.01 deg (59.997 / 59.993 / 59.76 - the last biased by the second tone
+inside the wide VFO with 1 source set - identical in both builds), stderr
+empty, no drops. Pi / Windows not measured.
