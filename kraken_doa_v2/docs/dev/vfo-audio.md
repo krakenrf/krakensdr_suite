@@ -121,4 +121,21 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   to the title, no radio buttons, title, another client's change followed,
   audio-off dimming + click-to-hear, Listen, an older receiver's
   is_fm_source - 22 / 22
+- FM WITHOUT THE RF AGC (2026-10-26, performance pass;
+  `fm_demodulator.cpp` process_decimated_samples): the WBFM / NBFM
+  discriminator ran liquid's `agc_crcf` on every sample first (an expf +
+  logf inside, the gain clamp after). It only scaled each sample by a
+  positive gain, and the phase step's angle doesn't depend on that
+  (atan2(k y, k x) = atan2(y, x)), so it did nothing for FM audio - but it
+  was ~80 % of the loop. Removed from the FM path (AM keeps it: its
+  envelope needs it; `recreateFilters` builds the AGC per mode). A 2015
+  MacBook Air (i5-5350U, Apple clang 14; job scratch doa-dsp/fmagc.cpp,
+  the old and new loops, median of 9): WBFM 240 kS/s 59 -> 10 ns a sample
+  (~1.2 % of a core per heard WBFM VFO), with 90 dB bursts 65 -> 14, NBFM
+  59 -> 12; the discriminator's output within 1.1e-6 (peak 0.8-2.5:
+  rounding), the 48 kHz audio after msresamp within 5e-7. Pi / Windows not
+  measured. The rest of a WBFM VFO's audio there (doa-dsp/fmbench.cpp, ns
+  per input sample): atan2 10.9, msresamp 240k -> 48k 46 (~1.1 % of a
+  core - the documented 8 ms per audio second on the Pi), de-emphasis + DC
+  blocker 8.9 per input sample - not changed
 

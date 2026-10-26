@@ -95,7 +95,11 @@ namespace {
 // a regular stage's output R_TAP x window + R_OUT + R_M x factor, a folded
 // one's (complex taps) C_..., a halfband's the regular one at factor 1 on
 // its x phase + the centre tap; per input sample the mixer in front (one
-// run / a halfband's two phases), or the plain copy a folded stage takes
+// run / a halfband's two phases), or the plain copy a folded stage takes.
+// MIX_NS / MIX_SPLIT_NS were fitted to the per-sample phasor mixer before
+// mix_into's table (2026-10-26, ~3-4x faster): kept until refitted on the
+// Pi - lowered, they move every folded plan to the mixer in front, which was
+// slower at 12.5 / 240 kHz on x86 (docs/dev/vfo-bandwidth.md)
 constexpr double R_TAP = 0.1328, R_OUT = 1.134, R_M = 0.143;
 constexpr double C_TAP = 0.2394, C_OUT = 3.033, C_M = 0.137;
 constexpr double HB_CENTRE = 0.3;
@@ -390,36 +394,66 @@ void fir_cplx(const float* gr, const float* gi, size_t nf, const float* w0, size
     ph = p;
 }
 
-// The VFO's mixer at the input rate: x down by the oscillator (phase, times
-// step per sample) into d. Its phase persists across blocks - a phase step
-// at a block boundary is audible as clicks in FM and contaminates MUSIC
-// snapshots that span blocks
-void mix_into(const cf* x, size_t n, SharedDecimator::Dst d, cf& phase, cf step) {
-    cf p = phase;
-    if (!d.b) {
-        for (size_t i = 0; i < n; i++) {
-            d.a[i] = x[i] * p;
-            p *= step;
-            if ((i & 0x3FF) == 0x3FF) p /= std::abs(p);   // no magnitude drift
+// The VFO's mixer at the input rate: x down by the oscillator into d. Its
+// phase persists across blocks - a phase step at a block boundary is audible
+// as clicks in FM and contaminates MUSIC snapshots that span blocks.
+// (2026-10-26) The oscillator for up to MIX_PIECE samples at a time in a
+// table, OSC_LANES interleaved lanes started from the double phase (sample i
+// = sample i - OSC_LANES times e^{-jw OSC_LANES}: dependence distance 8, so
+// both loops vectorize), then x times the table. It was one phasor times
+// e^{-jw} per sample, renormalised every 1024 - a loop-carried complex
+// multiply, latency-bound (~3.4 ns a sample on the Pi 5): 3.5-4x faster
+// plain, 2.7x into a halfband's two phases on a 2015 MacBook Air, and
+// more accurate - the phase is exact in double at every 1024 samples, the
+// old float phasor drifted (max |err| 1.4e-4 vs 5.7e-6 of rms over 786k
+// samples)
+constexpr size_t MIX_PIECE = 1024;
+constexpr size_t OSC_LANES = SharedDecimator::OSC_LANES;
+
+void mix_into(const cf* x, size_t n, SharedDecimator::Dst d, SharedDecimator::Oscillator& m) {
+    float osr[MIX_PIECE], osi[MIX_PIECE];
+    const float kr = m.kr, ki = m.ki;
+    for (size_t at = 0; at < n; at += MIX_PIECE) {
+        const size_t c = std::min(MIX_PIECE, n - at);
+        const double ph = at ? std::remainder(m.phase - m.w * static_cast<double>(at), 2.0 * M_PI) : m.phase;
+        const float c0 = static_cast<float>(std::cos(ph)), s0 = static_cast<float>(std::sin(ph));
+        const size_t lanes = std::min(OSC_LANES, c);
+        for (size_t l = 0; l < lanes; l++) {
+            osr[l] = c0 * m.sr[l] - s0 * m.si[l];
+            osi[l] = c0 * m.si[l] + s0 * m.sr[l];
         }
-    } else {
-        size_t i = 0, k = 0;
-        for (; i + 2 <= n; i += 2, k++) {
-            d.a[k] = x[i] * p;
-            p *= step;
-            d.b[k] = x[i + 1] * p;
-            p *= step;
-            if ((i & 0x3FE) == 0x3FE) p /= std::abs(p);
+        for (size_t i = OSC_LANES; i < c; i++) {
+            osr[i] = osr[i - OSC_LANES] * kr - osi[i - OSC_LANES] * ki;
+            osi[i] = osr[i - OSC_LANES] * ki + osi[i - OSC_LANES] * kr;
         }
-        if (i < n) {
-            d.a[k] = x[i] * p;
-            p *= step;
+        const float* in = reinterpret_cast<const float*>(x + at);
+        if (!d.b) {
+            float* o = reinterpret_cast<float*>(d.a + at);
+            for (size_t i = 0; i < c; i++) {
+                const float re = in[2 * i], im = in[2 * i + 1];
+                o[2 * i] = re * osr[i] - im * osi[i];
+                o[2 * i + 1] = re * osi[i] + im * osr[i];
+            }
+        } else {
+            // the 1st, 3rd ... sample to a, the 2nd, 4th ... to b (at is even)
+            float* oa = reinterpret_cast<float*>(d.a + at / 2);
+            float* ob = reinterpret_cast<float*>(d.b + at / 2);
+            size_t k = 0;
+            for (; 2 * k + 1 < c; k++) {
+                const float re = in[4 * k], im = in[4 * k + 1], re2 = in[4 * k + 2], im2 = in[4 * k + 3];
+                oa[2 * k] = re * osr[2 * k] - im * osi[2 * k];
+                oa[2 * k + 1] = re * osi[2 * k] + im * osr[2 * k];
+                ob[2 * k] = re2 * osr[2 * k + 1] - im2 * osi[2 * k + 1];
+                ob[2 * k + 1] = re2 * osi[2 * k + 1] + im2 * osr[2 * k + 1];
+            }
+            if (2 * k < c) {
+                const float re = in[4 * k], im = in[4 * k + 1];
+                oa[2 * k] = re * osr[2 * k] - im * osi[2 * k];
+                oa[2 * k + 1] = re * osi[2 * k] + im * osr[2 * k];
+            }
         }
     }
-    // Normalize before saving so drift can't compound over blocks
-    const float mag = std::abs(p);
-    if (mag > 0.0f) p /= mag;
-    phase = p;
+    m.phase = std::remainder(m.phase - m.w * static_cast<double>(n), 2.0 * M_PI);
 }
 
 void copy_into(const cf* x, size_t n, SharedDecimator::Dst d) {
@@ -628,6 +662,17 @@ static double mixer_w(float offset_hz) {
     return std::fabs(offset_hz) > 1.0f ? 2.0 * M_PI * offset_hz / SAMPLE_RATE_HZ : 0.0;
 }
 
+void SharedDecimator::Oscillator::set(double w_rad) {
+    w = w_rad;
+    phase = 0.0;
+    for (size_t l = 0; l < OSC_LANES; l++) {
+        sr[l] = static_cast<float>(std::cos(-w * static_cast<double>(l)));
+        si[l] = static_cast<float>(std::sin(-w * static_cast<double>(l)));
+    }
+    kr = static_cast<float>(std::cos(-w * static_cast<double>(OSC_LANES)));
+    ki = static_cast<float>(std::sin(-w * static_cast<double>(OSC_LANES)));
+}
+
 // Input samples per pass through the cascade (decimateChannel): 8 KB of
 // complex floats - the chunk + the stages' buffers stay in the core's L1.
 // Pi 5, kraken_doa with 1 / 2 / 3 VFOs (DoA, 5 antennas): 512 and 1024 the
@@ -653,7 +698,7 @@ SharedDecimator::ChannelDecimState* SharedDecimator::ensureChannelState(
         st.decimation_factor = decimation_for_bandwidth(bandwidth_hz);
         st.bandwidth_hz = bandwidth_hz;
         st.freq_offset_hz = freq_offset_hz;
-        st.mixer_phase = complex<float>(1.0f, 0.0f);
+        st.mixer.set(mixer_w(freq_offset_hz));
         if (st.fold) st.stages.front().fold(mixer_w(freq_offset_hz));
     } else if (fabs(st.freq_offset_hz - freq_offset_hz) > 0.1f) {
         // Offset changed: the low-pass stages are offset-independent, so
@@ -666,7 +711,7 @@ SharedDecimator::ChannelDecimState* SharedDecimator::ensureChannelState(
         // history is mixed with the new offset) - the stream stays
         // sample-continuous.
         st.freq_offset_hz = freq_offset_hz;
-        st.mixer_phase = complex<float>(1.0f, 0.0f);
+        st.mixer.set(mixer_w(freq_offset_hz));
         if (st.fold) st.stages.front().fold(mixer_w(freq_offset_hz));
     }
     return &st;
@@ -697,7 +742,6 @@ struct SharedDecimator::ChannelPass {
     size_t n = 0;
     bool mix_front = false;                   // the mixer in front of the first stage
     bool direct = false;                      // the first stage filters straight from the block
-    complex<float> step{1.0f, 0.0f};          // the mixer's step per input sample
 
     void begin(SharedDecimator& d, const complex<float>* iq_data, size_t num_samples, int channel_id,
                int bandwidth_hz, float freq_offset_hz, DecimatedData& result);
@@ -744,9 +788,9 @@ void SharedDecimator::ChannelPass::begin(SharedDecimator& d, const complex<float
     // phase at every block boundary - an audible buzz on any off-center VFO
     // whose factor doesn't divide the block size.)
     result.samples.clear();
-    const double w = mixer_w(freq_offset_hz);
-    mix_front = w != 0.0 && !st->fold;
-    step = complex<float>(static_cast<float>(std::cos(-w)), static_cast<float>(std::sin(-w)));
+    // (the oscillator's frequency: the offset of the last change of more than
+    // 0.1 Hz - ensureChannelState - as the folded taps')
+    mix_front = st->mixer.w != 0.0 && !st->fold;
     if (st->stages.empty()) {
         result.samples.resize(n);
     } else {
@@ -782,14 +826,14 @@ void SharedDecimator::ChannelPass::chunk(size_t at) {
     std::vector<complex<float>>& res = out->samples;
     if (st->stages.empty()) {
         const Dst dst{res.data() + at, nullptr};
-        if (mix_front) mix_into(in + at, c, dst, st->mixer_phase, step);
+        if (mix_front) mix_into(in + at, c, dst, st->mixer);
         else copy_into(in + at, c, dst);
         return;
     }
     FirStage& first = st->stages.front();
     if (!direct) {
         const Dst dst = first.take(c);
-        if (mix_front) mix_into(in + at, c, dst, st->mixer_phase, step);
+        if (mix_front) mix_into(in + at, c, dst, st->mixer);
         else copy_into(in + at, c, dst);
     }
     for (size_t s = 0; s < st->stages.size(); s++) {

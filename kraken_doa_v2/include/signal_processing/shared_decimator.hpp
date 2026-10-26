@@ -149,6 +149,21 @@ public:
         void run(const std::complex<float>* first, size_t n, Dst out);
     };
 
+    // The VFO's mixer in front of the first stage: e^{j phase} at the next
+    // input sample, times e^{-jw} per sample. Its phase is kept in double and
+    // the oscillator is made per call in OSC_LANES interleaved lanes (sample
+    // i = sample i - OSC_LANES times e^{-jw OSC_LANES}: a loop the vectorizer
+    // handles - a single phasor times e^{-jw} per sample is a loop-carried
+    // complex multiply, latency-bound; shared_decimator.cpp mix_into)
+    static constexpr size_t OSC_LANES = 8;
+    struct Oscillator {
+        double w = 0.0;                           // rad per input sample (the mixer turns by -w)
+        double phase = 0.0;                       // at the next input sample, in [-pi, pi]
+        float sr[OSC_LANES] = {}, si[OSC_LANES] = {};   // e^{-jwl}, l = 0 .. OSC_LANES - 1
+        float kr = 1.0f, ki = 0.0f;               // e^{-jw OSC_LANES}
+        void set(double w_rad);                   // a new frequency (phase 0 at the next sample)
+    };
+
 private:
     std::mutex init_mutex;  // Guards initialize()/cleanup()
     std::atomic<bool> initialized{false};
@@ -180,11 +195,11 @@ private:
         int decimation_factor = 0;           // Total factor (0 = not built)
         int bandwidth_hz = 0;                // The last stage's cut (with the factor)
         float freq_offset_hz = 0.0f;         // Mixer frequency
-        std::complex<float> mixer_phase{1.0f, 0.0f};  // Persists across blocks (the mixer in front)
+        Oscillator mixer;                    // The mixer in front (its phase persists across blocks)
 
-        // Back to a clean start: mixer phase 1, empty filter history, nothing pending
+        // Back to a clean start: mixer phase 0, empty filter history, nothing pending
         void resetRuntime() {
-            mixer_phase = std::complex<float>(1.0f, 0.0f);
+            mixer.phase = 0.0;
             for (auto& s : stages) s.reset();
         }
         void destroyStages() { stages.clear(); }

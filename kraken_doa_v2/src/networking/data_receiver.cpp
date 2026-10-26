@@ -37,6 +37,7 @@
 #include <sstream>
 #include <array>
 #include <future>
+#include <mutex>
 #include <cerrno>
 
 using namespace std;
@@ -49,6 +50,36 @@ RawDataBuffer raw_data_buffer(150, 2048, milliseconds(10000));
 // debug playback: packets waiting for the pipeline before the next is read
 // (~110 ms at 2.4 MHz; data_receiver_thread)
 constexpr size_t PLAYBACK_MAX_QUEUED = 16;
+
+// The packets' per-antenna sample arrays, handed back by the decimation
+// thread when it is done with a packet and reused by the receiver for the
+// next one (2026-10-26): a new RawDataPacket's resize() was a 128 KB malloc +
+// zero fill per antenna per packet (~94 MB/s of memset with 5 antennas, the
+// pages faulted in again when the allocator gives them back) before the
+// conversion overwrote it - a third of the conversion's time on a 2015
+// MacBook Air. At most IQ_POOL_MAX arrays wait here (4 packets' worth); the
+// rest are freed as before
+namespace {
+constexpr size_t IQ_POOL_MAX = 4 * MAX_CHANNELS;
+std::mutex iq_pool_mutex;
+std::vector<std::vector<std::complex<float>>> iq_pool;
+
+std::vector<std::complex<float>> take_iq_vector() {
+    std::lock_guard<std::mutex> lk(iq_pool_mutex);
+    if (iq_pool.empty()) return {};
+    std::vector<std::complex<float>> v = std::move(iq_pool.back());
+    iq_pool.pop_back();
+    return v;
+}
+
+void recycle_iq_vectors(RawDataPacket& p) {
+    std::lock_guard<std::mutex> lk(iq_pool_mutex);
+    for (auto& v : p.channel_iq_data) {
+        if (v.capacity() == 0 || iq_pool.size() >= IQ_POOL_MAX) continue;
+        iq_pool.push_back(std::move(v));
+    }
+}
+}  // namespace
 
 // Queue for decimated FM data: one item per VFO heard (🔊) per block
 struct DecimatedFMWorkItem {
@@ -490,9 +521,12 @@ void DataReceiver::data_receiver_thread() {
 
                 // OPTIMIZATION: Batch convert all needed channels with optimized NEON
                 if (num_channels_to_convert > 0) {
-                    // Pre-allocate exact sizes for channels marked for conversion
+                    // Sizes for the channels marked for conversion: an array
+                    // of an earlier packet (take_iq_vector - already this
+                    // size: no allocation, no zero fill), else a new one
                     for (int ch = 0; ch < MAX_CHANNELS; ch++) {
                         if (channels_to_convert[ch]) {
+                            raw_packet.channel_iq_data[ch] = take_iq_vector();
                             raw_packet.channel_iq_data[ch].resize(samples);
                         }
                     }
@@ -561,6 +595,13 @@ void DataReceiver::decimation_processor_thread() {
             }
             continue;
         }
+        // However this iteration ends, the sample arrays go back to the
+        // receiver (iq_pool): nothing below keeps a pointer into them past
+        // it (the VFO pipelines are joined, the FFT works on its own copy)
+        struct RecycleArrays {
+            RawDataPacket& p;
+            ~RecycleArrays() { recycle_iq_vectors(p); }
+        } recycle_arrays{raw_packet};
 
         if (raw_packet.is_stale(milliseconds(1500))) {
             global_stats.increment_errors(thread_idx);

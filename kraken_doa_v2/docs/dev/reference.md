@@ -36,6 +36,27 @@ each packet's OWN mean was a ~150 Hz-wide notch at the centre (it removed a CW
 beacon or AM carrier parked there). The seed is a flag, not NaN (written for
 the `-Ofast` build of then, which assumed no NaNs).
 
+**The packet's arrays are reused** (2026-10-26, performance pass;
+`data_receiver.cpp` `take_iq_vector` / `recycle_iq_vectors`): every packet
+was a new `RawDataPacket` whose per-antenna `resize(16384)` meant a 128 KB
+malloc + zero fill (5 antennas: ~94 MB/s of memset, the pages faulted in
+again whenever the allocator returns them) before the conversion overwrote
+it. The decimation thread now hands the arrays back when it is done with a
+packet (a guard at the top of its loop - nothing keeps a pointer into them:
+the VFO pipelines are joined, the FFT copies its channel); the receiver
+takes them for the next one (at most 4 packets' worth wait). A 2015
+MacBook Air (i5-5350U, Apple clang 14; job scratch doa-dsp/convbench.cpp,
+pktbench.cpp, median of 9): conversion + allocation 1.27 -> 0.84 ns per
+antenna sample on one thread; the receiver + decimation threads (the
+arrays freed on the other thread, as live) 1.88 -> 1.37 - ~0.5 ns x 12
+MS/s = ~0.6 % of a core with 5 antennas. Same samples (the conversion is
+unchanged). Pi (glibc: 128 KB is the mmap threshold, freed on another
+thread) / Windows not measured. Not taken: an integer sum for the DC
+mean (bit-identical, 0.84 -> 0.82 ns: noise); per-packet breakdown here
+(doa-dsp/fftbench.cpp, µs per packet: conversion of 5 antennas 89, the copy
+into the FFT buffer 15, window 22, pffft 16384 151, dB + average 29, the
+noise floor's percentiles 43 averaged).
+
 ### 2. Decimation Architecture
 
 (The thread-local decimators / coefficient cache this section used to

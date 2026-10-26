@@ -387,22 +387,15 @@ void FMDemodulatorRobust::process_decimated_samples(
             gain = current_rate / (2.0f * M_PI * deviation_hz);
         }
 
-        // Process samples with optimized algorithm (complex multiply method)
+        // Process samples with optimized algorithm (complex multiply method).
+        // No RF AGC here (2026-10-26): it only scaled each sample by a
+        // positive gain, and the phase step's angle doesn't depend on that
+        // (atan2(k y, k x) = atan2(y, x), k > 0) - but its liquid call (an
+        // expf + logf per sample) was ~80 % of this loop: 59 -> 10 ns a
+        // sample on a 2015 MacBook Air (~1.2 % of a core per 240 kS/s WBFM
+        // VFO), the discriminator's output the same within 1.1e-6 (rounding).
+        // rf_agc is AM's (recreateFilters builds it per mode)
         for (const auto& sample : decimated_samples) {
-            // Apply RF AGC (still using liquid-dsp for RF stage)
-            liquid_float_complex liq_sample{sample.real(), sample.imag()};
-            liquid_float_complex agc_output;
-            agc_crcf_execute(rf_agc, liq_sample, &agc_output);
-
-            // Clamp AGC gain to prevent oscillation after calibration
-            // The liquid-dsp AGC can oscillate between 0 and 1000000 with high-power transients
-            float current_agc_gain = agc_crcf_get_gain(rf_agc);
-            constexpr float MIN_AGC_GAIN = 0.1f;
-            constexpr float MAX_AGC_GAIN = 100.0f;
-            if (current_agc_gain < MIN_AGC_GAIN || current_agc_gain > MAX_AGC_GAIN) {
-                agc_crcf_set_gain(rf_agc, std::clamp(current_agc_gain, MIN_AGC_GAIN, MAX_AGC_GAIN));
-            }
-
             // Quadrature discriminator: the phase step is the angle of
             // s[n] * conj(s[n-1]), already in (-pi, pi] (no unwrap), taken
             // with an exact atan2f. The former linear arctangent fit was off
@@ -411,7 +404,7 @@ void FMDemodulatorRobust::process_decimated_samples(
             // distortion. atan2f costs ~23 ns/sample on a Pi 4 (0.55% of one
             // core at the 240 kS/s WBFM rate), so the approximation bought
             // nothing worth that.
-            const std::complex<float> cur(agc_output.real(), agc_output.imag());
+            const std::complex<float> cur = sample;
             const std::complex<float> step = cur * std::conj(prev_sample);
             const float phase_diff = std::atan2(step.imag(), step.real());
             prev_sample = cur;

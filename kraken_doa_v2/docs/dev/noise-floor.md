@@ -229,3 +229,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   in 5 % of the fast drag's frames (p95, 3 runs; 300 ms wait 1.3-59 kHz);
   with the averages' own frequencies 1.2-1.3 kHz, the rest as before (block
   16.9-18.8 dB over the noise at worst, spread p95 <= 1.9 dB)
+- Tested, not taken (2026-10-26, performance pass; job scratch
+  doa-dsp/p10bench.cpp, a 2015 MacBook Air): `p10` (a copy + nth_element
+  over 13107 bins, twice per 50 ms evaluation) as an exact select from a
+  sample's bracket (every 16th bin's nth_element gives lo / hi around the
+  rank, one pass counts below lo and keeps [lo, hi], nth_element on those)
+  - the same value on 48 test spectra, ~100 -> 55-75 µs (1.5-1.8x, noisy),
+  but ~0.2 % of a core: not worth the code

@@ -16,8 +16,9 @@
 // VFO alone (must be bit for bit the same), and the frequency response
 // (tones through the real SharedDecimator, with the VFO on the centre and
 // 300 kHz off it).
-// Build (from kraken_doa_v2, after `make` built liquid-dsp), one line:
-//   g++ -std=c++20 -Ofast -march=native -Iinclude -isystem liquid-dsp/build-kraken/include
+// Build (from kraken_doa_v2, after `make` built liquid-dsp; kraken_doa's
+// flags - on macOS add -include mac/posix_compat.h -include mac/fast_complex.h), one line:
+//   g++ -std=c++20 -O3 -ffast-math -fno-finite-math-only -march=native -Iinclude -isystem liquid-dsp/build-kraken/include
 //       tools/decim_bench.cpp src/signal_processing/shared_decimator.cpp
 //       liquid-dsp/build-kraken/libliquid.a -lpthread -o decim_bench
 // Run: taskset -c 3 ./decim_bench [seconds per measurement, default 0.3]
@@ -64,8 +65,10 @@ double bench(int bw_hz, float offset_hz, const std::vector<cf>& x, double secs) 
     return (t - t0) * 1e9 / static_cast<double>(done);
 }
 
-// The mixer's rad per input sample as the decimator realises it: its float
-// step (in front), or the folded stage's float step per output / its factor
+// The mixer's rad per input sample as the decimator realises it: exact in
+// front (its phase is kept in double - SharedDecimator::Oscillator, since
+// 2026-10-26; it was a float step), or the folded stage's float step per
+// output / its factor
 double realised_w(const SharedDecimator::Plan& p, float offset_hz) {
     if (std::fabs(offset_hz) <= 1.0f) return 0.0;
     const double w = 2.0 * M_PI * offset_hz / SAMPLE_RATE_HZ;
@@ -74,8 +77,7 @@ double realised_w(const SharedDecimator::Plan& p, float offset_hz) {
         const cf ps(static_cast<float>(std::cos(-w * M)), static_cast<float>(std::sin(-w * M)));
         return -std::arg(cd(ps.real(), ps.imag())) / M;
     }
-    const cf s(static_cast<float>(std::cos(-w)), static_cast<float>(std::sin(-w)));
-    return -std::arg(cd(s.real(), s.imag()));
+    return w;
 }
 
 // The plan's cascade in double precision on the whole input: the mixer at

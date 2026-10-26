@@ -319,4 +319,41 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   10 - 41 kHz, 100 kHz off centre, exact). A width change at the same rate
   clears MUSIC's accumulator (`last_input_bw_hz_`: the rebuilt filters'
   restart is no signal), as a rate change always did
+- THE MIXER AS A TABLE (2026-10-26, performance pass; `mix_into`,
+  `SharedDecimator::Oscillator`): the mixer in front of the first stage
+  (widths above ~240 kHz off the tuner centre, the whole band, a halfband
+  first stage) was one float phasor times e^{-jw} per sample - a
+  loop-carried complex multiply, latency-bound (`MIX_NS` 3.39 ns on the Pi
+  5). Now its phase is kept in double and per call (<= 1024 samples) the
+  oscillator is made in a table in 8 interleaved lanes (sample i = sample
+  i - 8 times e^{-8jw}: dependence distance 8, a plain loop both
+  vectorizers handle), then x times the table. On a 2015 MacBook Air
+  (i5-5350U, Apple clang 14; job scratch doa-dsp/mixbench.cpp, interleaved,
+  median of 9): the mixer 4.6-4.8 -> 1.1-1.4 ns a sample (3.5-4x), into a
+  halfband's two phases 4.1 -> 1.5 (2.7x); the pipeline's `decimateVfos`
+  (doa-dsp/ab_decim: 5 antennas x 16384, process CPU, two runs of 7) 2.4
+  MHz +250 kHz 6.0-6.3 -> 2.3-3.1 ns per antenna sample, 1.2 MHz 7.8-8.8
+  -> 5.3-6.3, 1.5 MHz 12.7-15.4 -> 8.7-11.2; the folded plans (<= 240 kHz)
+  unchanged, bit for bit. More accurate - the phase is exact at every call,
+  the float phasor drifted (vs a double reference over 786k samples 1.4e-4
+  -> 5.7e-6 of rms; `decim_bench`'s worst check 6.9e-5 -> 1.2e-5 of rms,
+  its reference now the exact w for a mixer in front); the response table
+  identical, decimateVfos still bit for bit. The absolute phase differs
+  from the old mixer's by that drift (up to 3e-2 of rms after 786k samples
+  of a 2.4 MHz VFO); every channel of a VFO runs the same arithmetic, so
+  their relative phases are as before. Pi / Windows not measured (the old
+  loop is latency-bound on the A76 as well). NOT changed: the plan's cost
+  model (`MIX_NS` / `MIX_SPLIT_NS`, fitted to the old mixer) - with a cheap
+  mixer every folded plan moves to the mixer in front, which on the
+  MacBook was 5-15 % SLOWER at 12.5 / 240 kHz (the folded stage filtering
+  straight from the block saves a pass): refit on the Pi before changing
+  it. FMA (`-mno-fma` vs the build's own; Apple clang's `-ffast-math`
+  contracts even with `-ffp-contract=off` after it - the same FMA count):
+  the narrow plans' FIR kernels 1.3x faster with FMAs (12.5 / 240 kHz 4.9
+  / 4.7 -> 3.5 / 3.6 ns), the mixer and the full band unchanged. GCC contracts
+  `a*b+c` by default in C++ (its `-ffp-contract=off` default is for ISO C
+  only - the GCC manual), so the Pi build should already have them in
+  `fir_real` / `fir_cplx`; `objdump -d obj/shared_decimator.o | grep -c
+  fmla` on the Pi confirms it (0 would make explicit FMAs there worth ~30 %
+  of the narrow VFOs' decimation)
 
