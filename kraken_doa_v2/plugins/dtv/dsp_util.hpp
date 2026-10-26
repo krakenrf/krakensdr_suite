@@ -104,36 +104,81 @@ public:
     void run(const cf* x, size_t n, std::vector<cf>* out) const {
         const size_t nout = static_cast<size_t>(std::floor((static_cast<double>(n) - 1) / step_)) + 1;
         out->resize(nout);
-        for (size_t i = 0; i < nout; i++) {
-            const double p = static_cast<double>(i) * step_;
-            const long ip = static_cast<long>(std::floor(p));
-            const double frac = p - static_cast<double>(ip);
-            const int ph = static_cast<int>(std::lround(frac * PHASES));
-            const float* h = table_.data() + static_cast<size_t>(ph) * TAPS;
-            float re = 0, im = 0;
-            const long k0 = ip - (TAPS / 2 - 1);
-            if (k0 >= 0 && k0 + TAPS <= static_cast<long>(n)) {
-                // interior: no bounds checks (vectorises)
-                const float* xf = reinterpret_cast<const float*>(x + k0);
-                for (int k = 0; k < TAPS; k++) {
-                    re += xf[2 * k] * h[k];
-                    im += xf[2 * k + 1] * h[k];
-                }
-            } else {
-                for (int k = 0; k < TAPS; k++) {
-                    const long j = k0 + k;
-                    if (j < 0 || j >= static_cast<long>(n)) continue;
-                    re += x[j].real() * h[k];
-                    im += x[j].imag() * h[k];
-                }
+        cf* o = out->data();
+        size_t i = 0;
+        // interior outputs four at a time: eight independent sums (one output's
+        // re / im were two serial chains of 24 multiply-adds - ~1.4x faster),
+        // each over the taps in the same order as one at a time
+        for (; i + 4 <= nout; i += 4) {
+            long k0[4];
+            const float* h[4];
+            for (int q = 0; q < 4; q++) tap(i + static_cast<size_t>(q), &k0[q], &h[q]);
+            if (k0[0] < 0 || k0[3] + TAPS > static_cast<long>(n)) {
+                for (int q = 0; q < 4; q++) o[i + static_cast<size_t>(q)] = one(x, n, k0[q], h[q]);
+                continue;
             }
-            (*out)[i] = cf(re, im);
+            const float* x0 = reinterpret_cast<const float*>(x + k0[0]);
+            const float* x1 = reinterpret_cast<const float*>(x + k0[1]);
+            const float* x2 = reinterpret_cast<const float*>(x + k0[2]);
+            const float* x3 = reinterpret_cast<const float*>(x + k0[3]);
+            float r0 = 0, m0 = 0, r1 = 0, m1 = 0, r2 = 0, m2 = 0, r3 = 0, m3 = 0;
+            for (int k = 0; k < TAPS; k++) {
+                r0 += x0[2 * k] * h[0][k];
+                m0 += x0[2 * k + 1] * h[0][k];
+                r1 += x1[2 * k] * h[1][k];
+                m1 += x1[2 * k + 1] * h[1][k];
+                r2 += x2[2 * k] * h[2][k];
+                m2 += x2[2 * k + 1] * h[2][k];
+                r3 += x3[2 * k] * h[3][k];
+                m3 += x3[2 * k + 1] * h[3][k];
+            }
+            o[i] = cf(r0, m0);
+            o[i + 1] = cf(r1, m1);
+            o[i + 2] = cf(r2, m2);
+            o[i + 3] = cf(r3, m3);
+        }
+        for (; i < nout; i++) {
+            long k0;
+            const float* h;
+            tap(i, &k0, &h);
+            o[i] = one(x, n, k0, h);
         }
     }
     double step() const { return step_; }
 
 private:
     static constexpr int PHASES = 256, TAPS = 24;
+    // output i: its first input sample and its phase's taps
+    void tap(size_t i, long* k0, const float** h) const {
+        const double p = static_cast<double>(i) * step_;
+        const long ip = static_cast<long>(std::floor(p));
+        const double frac = p - static_cast<double>(ip);
+        // lround(frac PHASES) (>= 0: half away from zero) without the libm
+        // call; x - its integer part is exact
+        const double xr = frac * PHASES;
+        const long xi = static_cast<long>(xr);
+        const int ph = static_cast<int>(xi + (xr - static_cast<double>(xi) >= 0.5 ? 1 : 0));
+        *h = table_.data() + static_cast<size_t>(ph) * TAPS;
+        *k0 = ip - (TAPS / 2 - 1);
+    }
+    static cf one(const cf* x, size_t n, long k0, const float* h) {
+        float re = 0, im = 0;
+        if (k0 >= 0 && k0 + TAPS <= static_cast<long>(n)) {
+            const float* xf = reinterpret_cast<const float*>(x + k0);
+            for (int k = 0; k < TAPS; k++) {
+                re += xf[2 * k] * h[k];
+                im += xf[2 * k + 1] * h[k];
+            }
+        } else {
+            for (int k = 0; k < TAPS; k++) {
+                const long j = k0 + k;
+                if (j < 0 || j >= static_cast<long>(n)) continue;
+                re += x[j].real() * h[k];
+                im += x[j].imag() * h[k];
+            }
+        }
+        return cf(re, im);
+    }
     double step_;
     std::vector<float> table_;
 };

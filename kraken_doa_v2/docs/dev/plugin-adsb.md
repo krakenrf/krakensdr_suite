@@ -107,4 +107,14 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     aircraft) and `moving` (scene) - both opt-in, the playback's cache
     unchanged. digi_test's Windows build line needs src/ai_sandbox.cpp +
     src/geo_address.cpp now (dig_plugin.cpp calls aisandbox)
-
+- Performance pass (2026-10-26; a 2015 MacBook Air i5-5350U, Apple
+  clang 14; Pi / Windows not measured):
+  `process_multi`'s per-sample loop over the antennas (keep the samples,
+  the weighted power sum's magnitude, each antenna's lowest 512-sample
+  power) is `sum_block<M>` - the antenna count a template parameter, the
+  antennas' pointers and weights in locals: m = 5, 16384-sample chunks
+  ~1.4-1.5x (e.g. 24.6 -> 16.3 ns per input sample), bit-identical with
+  Apple clang (not with `-ffp-contract=fast`: rounding only). Tested, not
+  taken: the same as passes per antenna (power, sum, minima: 0.5-0.65x -
+  the block no longer fits L2). `adsb-six-aircraft` identical; offline
+  user CPU without the bearings 0.57 -> 0.49 s (-15 %)

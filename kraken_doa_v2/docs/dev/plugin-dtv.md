@@ -156,4 +156,13 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   table / DF panel picks; t_dtv_ui.py: `PLUGIN:sfn` -> dtv, the Path
   separation button (Off by default, On / Off by the echo), the echo
   profile's tooltip, cells' "Cell information" button
-
+- Performance pass (2026-10-26; a 2015 MacBook Air i5-5350U, Apple
+  clang 14; Pi / Windows not measured):
+  `sfn::Resampler::run` (dsp_util.hpp, ~20 % of the plugin's CPU) computes
+  interior outputs four at a time (eight independent 24-tap sums, each in
+  the old order) and rounds the phase without the `lround` libm call (the
+  same value: x - its integer part is exact): 9.7 -> 6.3 ms per 0.1 s
+  burst (1.4-1.5x), bit-identical (also with `-ffp-contract=fast`);
+  `dtv-dvbt-paths` identical, offline 2.20 -> 2.05 s (-7 %). Not done: `is_pilot` (a virtual call per
+  carrier in `find_offset`, ~11 % of the plugin) could be a table per
+  pattern phase

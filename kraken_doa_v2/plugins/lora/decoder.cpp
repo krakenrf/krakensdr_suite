@@ -681,13 +681,20 @@ private:
             xhist_.assign(static_cast<size_t>(H) * NF, 0);
             xscale_.assign(static_cast<size_t>(H), 0.f);
         }
-        const float* x = &X[0][0];
+        const float* __restrict x = &X[0][0];
+        // the peak as 8 partial maxima (exact in any order; one running
+        // maximum was a serial chain the compilers don't vectorise)
+        float m8[8] = {};
+        for (int i = 0; i < NF; i += 8)
+            for (int j = 0; j < 8; j++) m8[j] = std::max(m8[j], std::fabs(x[i + j]));
         float mx = 0;
-        for (int i = 0; i < NF; i++) mx = std::max(mx, std::fabs(x[i]));
+        for (float v : m8) mx = std::max(mx, v);
         const int slot = static_cast<int>(front_.blocks % H);
         const float sc = mx > 0 ? 32767.f / mx : 1.f;
-        int16_t* d = &xhist_[static_cast<size_t>(slot) * NF];
-        for (int i = 0; i < NF; i++) d[i] = static_cast<int16_t>(std::lrintf(x[i] * sc));
+        int16_t* __restrict d = &xhist_[static_cast<size_t>(slot) * NF];
+        // rounded to nearest (even) as lrintf did - |x sc| <= 32767; nearbyint
+        // vectorises, the lrintf call didn't
+        for (int i = 0; i < NF; i++) d[i] = static_cast<int16_t>(static_cast<int>(std::nearbyint(x[i] * sc)));
         xscale_[static_cast<size_t>(slot)] = 1.f / sc;
         hist_n_ = std::min(hist_n_ + 1, H);
     }

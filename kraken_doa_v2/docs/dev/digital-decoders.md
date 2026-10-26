@@ -317,4 +317,20 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   channel) and DMR Tier III here, and on recordings for TETRA, D-STAR, DMR,
   NXDN, MPT1327 and P25 (regression of 33 checks incl. voice passes through
   the plugins)
-
+- Performance pass (2026-10-26; a 2015 MacBook Air i5-5350U, Apple
+  clang 14; Pi / Windows not measured):
+  `dig::Fsk4Receiver` (plugins/lib/dig_fsk4.cpp, P25 and DMR) filters a
+  whole block first - the RRC tap by tap over the block (vectorises, each
+  output's sum in the old order) and only with DMR on (the P25 plugin
+  computed it for nothing) - then correlates the sync words for every
+  sample of the block with the k loops outermost (vectorises across
+  samples, each sample's sums in the old order) and runs the peak search
+  sample by sample as before (P25 before DMR): P25 13.7 -> 1.9 ms per
+  second of 48 kHz (7x), DMR 18.0 -> 4.0 ms (4.5x); every sink call
+  (sync position, scale, centre, symbols) identical on a 30 s synthetic
+  discriminator with clicks, at 333 / 480 / 4096-sample blocks, also with
+  `-ffp-contract=fast`; p25 / dmr test transmissions identical, offline
+  user CPU (with the host's file reading) p25 -39 %, dmr -42 %. Engine:
+  the AFC mixer's std::polar per sample (only while a correction is
+  applied) costs ~0.5 ms per second at 48 kHz - a recursive phasor would
+  save ~0.3 ms: not taken

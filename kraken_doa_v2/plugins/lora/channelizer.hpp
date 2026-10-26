@@ -90,6 +90,9 @@ struct Chan {
     std::complex<double> blk_ph{1, 0}, blk_rot{1, 0};   // the carrier's phase at each block start
     std::complex<double> nco{1, 0}, nco_rot{1, 0};      // residual (off-grid) offset, at the output rate
     int renorm = 0;
+    std::vector<int> src_;            // per output bin (FFT order): the front end's bin
+    std::vector<float> ph_;           // per output sample of a block: the residual offset's phasor (re, im)
+    std::complex<double> ovl_rot_{1, 0};   // the carrier's phase at the overlap's start vs the block start
     ~Chan() { release(); }
     void release() {
         if (plan) kfft_destroy_plan(plan);
@@ -115,6 +118,13 @@ struct Chan {
             double g = f <= a ? 1.0 : f >= b ? 0.0 : 0.5 * (1 + std::cos(M_PI * (f - a) / (b - a)));
             G[static_cast<size_t>(m)] = static_cast<float>(g / NFFT);   // the FFT is unnormalised
         }
+        src_.resize(static_cast<size_t>(M));
+        for (int m = 0; m < M; m++) {
+            const int mm = m < M / 2 ? m : m - M;
+            src_[static_cast<size_t>(m)] = ((k0 + mm) % NFFT + NFFT) % NFFT;
+        }
+        ph_.resize(2 * static_cast<size_t>(M));
+        ovl_rot_ = OVL ? std::polar(1.0, -2 * M_PI * static_cast<double>(k0) * (-OVL) / NFFT) : 1.0;
         Y = kfft_alloc_complex(M);
         y = kfft_alloc_complex(M);
         plan = kfft_plan_dft_1d(M, Y, y, KFFT_BACKWARD);
@@ -126,22 +136,45 @@ struct Chan {
     }
     // one block of the front end -> HOP x M / NFFT output samples
     void block(const kfft_complex* X, std::vector<cf>& out) {
+        // the channel's bins (src_: the front end's bin of each, FFT order)
+        // through the channel's response
+        const int* __restrict src = src_.data();
+        const float* __restrict g = G.data();
+        const float* __restrict xf = &X[0][0];
+        float* __restrict yf = &Y[0][0];
         for (int m = 0; m < M; m++) {
-            const int mm = m < M / 2 ? m : m - M;
-            const int k = ((k0 + mm) % NFFT + NFFT) % NFFT;
-            const float g = G[static_cast<size_t>(m)];
-            Y[m][0] = X[k][0] * g;
-            Y[m][1] = X[k][1] * g;
+            yf[2 * m] = xf[2 * src[m]] * g[m];
+            yf[2 * m + 1] = xf[2 * src[m] + 1] * g[m];
         }
         kfft_execute(plan);
         // the IFFT's time origin is the block start: rotate by the carrier's
         // phase there (as a mixer running since the first sample would)
-        const std::complex<double> bp = blk_ph * (OVL ? std::polar(1.0, -2 * M_PI * static_cast<double>(k0) * (-OVL) / NFFT) : 1.0);
-        const cf bpf(static_cast<float>(bp.real()), static_cast<float>(bp.imag()));
-        for (int j = keep0; j < M; j++) {
-            const cf v = cf(y[j][0], y[j][1]) * bpf;
-            out.push_back(v * cf(static_cast<float>(nco.real()), static_cast<float>(nco.imag())));
+        const std::complex<double> bp = blk_ph * ovl_rot_;
+        const float br = static_cast<float>(bp.real()), bi = static_cast<float>(bp.imag());
+        // the residual (off-grid) offset's phasor per output sample: a
+        // recursion in double (serial), kept apart from the products below
+        const int cnt = M - keep0;
+        float* __restrict ph = ph_.data();
+        for (int j = 0; j < cnt; j++) {
+            ph[2 * j] = static_cast<float>(nco.real());
+            ph[2 * j + 1] = static_cast<float>(nco.imag());
             nco *= nco_rot;
+        }
+        // out = (y x bp) x phasor, written out as std::complex's (ac - bd,
+        // ad + bc) in real arithmetic, which vectorises (the std::complex
+        // loop with push_back didn't); with Apple clang bit-identical to it
+        const size_t base = out.size();
+        out.resize(base + static_cast<size_t>(cnt));
+        float* __restrict o = reinterpret_cast<float*>(out.data() + base);
+        const float* __restrict yy = &y[keep0][0];
+        for (int j = 0; j < cnt; j++) {
+            const float a = yy[2 * j], b = yy[2 * j + 1];
+            const float ac = a * br, bd = b * bi, ad = a * bi, bc = b * br;
+            const float vr = ac - bd, vi = ad + bc;
+            const float c = ph[2 * j], d = ph[2 * j + 1];
+            const float vc = vr * c, wd = vi * d, vd = vr * d, wc = vi * c;
+            o[2 * j] = vc - wd;
+            o[2 * j + 1] = vd + wc;
         }
         blk_ph *= blk_rot;
         if (++renorm == 64) {

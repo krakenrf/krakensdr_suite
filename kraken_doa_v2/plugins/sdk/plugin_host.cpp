@@ -1078,6 +1078,25 @@ struct BearingIn {
     int m = 1;
     double rate = 0, start = 0, offset = 0, band = 0, delay_s = 0, uca_r = 0, lambda = NAN;
 };
+// the channel filter (centred, nt taps h) at sample o of every one of M antennas: their sums side by
+// side (independent chains in registers; each over the taps in order, as std::complex's h * x then +=)
+template <int M>
+void fir_antennas(const std::vector<std::vector<std::complex<double>>>& x, const double* h, int nt, size_t o,
+                  std::complex<double>* y) {
+    const double* xs[M];
+    double vr[M] = {}, vi[M] = {};
+    for (int k = 0; k < M; k++) xs[k] = reinterpret_cast<const double*>(x[static_cast<size_t>(k)].data() + o);
+    for (int j = 0; j < nt; j++) {
+        const double hj = h[j];
+        for (int k = 0; k < M; k++) {
+            const double pr = hj * xs[k][-2 * j], pi = hj * xs[k][-2 * j + 1];
+            vr[k] += pr;
+            vi[k] += pi;
+        }
+    }
+    for (int k = 0; k < M; k++) y[k] = {vr[k], vi[k]};
+}
+
 void talker_bearings(const BearingIn& in, const TestHost& host) {
     constexpr double GUARD_S = 0.04, MAX_PACKET_S = 0.25;
     struct Seg { std::string id, label; double a, b, freq, bw; bool packet; const std::vector<std::complex<double>>* cov = nullptr; };
@@ -1197,12 +1216,21 @@ void talker_bearings(const BearingIn& in, const TestHost& host) {
             }
             for (int64_t i = c0; i < c1; i++) {
                 const size_t o = static_cast<size_t>(i - r0 + half);
-                for (int k = 0; k < m; k++) {
-                    if (!filt) { y[static_cast<size_t>(k)] = x[static_cast<size_t>(k)][o]; continue; }
-                    std::complex<double> v = 0;
-                    const auto& xk = x[static_cast<size_t>(k)];
-                    for (int j = 0; j < nt; j++) v += h[static_cast<size_t>(j)] * xk[o - static_cast<size_t>(j)];
-                    y[static_cast<size_t>(k)] = v;
+                if (!filt) {
+                    for (int k = 0; k < m; k++) y[static_cast<size_t>(k)] = x[static_cast<size_t>(k)][o];
+                } else {
+                    // every antenna's sum at once (offline only: was ~2/3 of the
+                    // ism test's CPU as one antenna after another)
+                    switch (m) {
+                        case 1: fir_antennas<1>(x, h.data(), nt, o, y.data()); break;
+                        case 2: fir_antennas<2>(x, h.data(), nt, o, y.data()); break;
+                        case 3: fir_antennas<3>(x, h.data(), nt, o, y.data()); break;
+                        case 4: fir_antennas<4>(x, h.data(), nt, o, y.data()); break;
+                        case 5: fir_antennas<5>(x, h.data(), nt, o, y.data()); break;
+                        case 6: fir_antennas<6>(x, h.data(), nt, o, y.data()); break;
+                        case 7: fir_antennas<7>(x, h.data(), nt, o, y.data()); break;
+                        default: fir_antennas<8>(x, h.data(), nt, o, y.data()); break;
+                    }
                 }
                 for (int a = 0; a < m; a++)
                     for (int b = 0; b < m; b++) R[static_cast<size_t>(a * m + b)] += y[static_cast<size_t>(a)] * std::conj(y[static_cast<size_t>(b)]);

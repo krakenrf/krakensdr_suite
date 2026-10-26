@@ -225,4 +225,23 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   symbol; GPL projects used as documentation only. Live 10 min at 919.750
   MHz (ANZ default channels) + 25 s at 922.977: no frame (first version -
   its chain could not have decoded one). No real Meshtastic packet yet
-
+- Performance pass (2026-10-26; a 2015 MacBook Air i5-5350U, Apple
+  clang 14; Pi / Windows not measured;
+  benchmarks in the job's scratch `plugins/bench/lora/`): `Chan::block`
+  (channelizer.hpp) takes each output bin's front-end bin from a table made
+  in `init()` (two integer modulos per bin before), keeps the residual
+  offset's double recursion apart from the products and writes
+  (y x bp) x phasor as std::complex's (ac - bd, ad + bc) in real
+  arithmetic into the resized output (a std::complex loop with push_back
+  before, not vectorised): 11 channels of an AU915 window 104 -> 69 ms per
+  second of input (1.3-1.5x over runs), bit-identical with Apple clang.
+  `keep_history` (the search's int16 copy of every front-end block): the
+  peak as 8 partial maxima and the rounding with std::nearbyint (the same
+  values as lrintf, which wasn't vectorised): 13.8 -> 2.6 ms per second,
+  bit-identical. All six lora test transmissions decode identically;
+  offline user CPU (medians of 3-5, interleaved) -8 to -14 % each.
+  Tested, not taken: the residual phasor from a table of rot^j (not
+  bit-identical; no gain over the split recursion). With
+  `-ffp-contract=fast` (GCC's C++ default) the channelizer is no longer
+  bit-identical to the old code (rounding only); old and new built so
+  still decode every test transmission of the changed plugins identically

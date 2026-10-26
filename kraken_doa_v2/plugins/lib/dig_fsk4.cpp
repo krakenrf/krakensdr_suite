@@ -73,13 +73,13 @@ Fsk4Receiver::Fsk4Receiver(Fsk4Sink& sink, bool p25, bool dmr) : sink_(sink), en
     float s = 0;
     for (float v : rrc_taps_) s += v;
     for (float& v : rrc_taps_) v /= s;
-    rrc_hist_.assign(rrc_taps_.size(), 0.0f);
+    rrc_x_.assign(rrc_taps_.size() - 1, 0.0f);
 }
 
 void Fsk4Receiver::reset() {
     bp_ = SampleBuf();
     bd_ = SampleBuf();
-    std::fill(rrc_hist_.begin(), rrc_hist_.end(), 0.0f);
+    rrc_x_.assign(rrc_taps_.size() - 1, 0.0f);
     std::fill(std::begin(box_hist_), std::end(box_hist_), 0.0f);
     box_sum_ = 0;
     pk_p25_ = Peak();
@@ -90,24 +90,65 @@ void Fsk4Receiver::reset() {
     sink_.reset();
 }
 
-void Fsk4Receiver::correlate(SampleBuf& b, std::vector<Pattern>& pats, Peak& pk, Mode proto) {
-    const int64_t n = b.end() - 1;
-    const int64_t first = n - static_cast<int64_t>(SYNC_SYMS - 1) * SPS;
-    if (first < b.begin()) return;
-    float w[SYNC_SYMS];
-    float m = 0;
-    for (int k = 0; k < SYNC_SYMS; k++) { w[k] = b.at(first + k * SPS); m += w[k]; }
-    m /= SYNC_SYMS;
-    float e = 0;
-    for (int k = 0; k < SYNC_SYMS; k++) { w[k] -= m; e += w[k] * w[k]; }
+void Fsk4Receiver::correlate_block(const SampleBuf& b, const std::vector<Pattern>& pats, int64_t n0, size_t cnt,
+                                   Corr& out) {
+    // sample n's window: its last 24 symbols, b[n - 23 SPS + k SPS]
+    constexpr int64_t SPAN = static_cast<int64_t>(SYNC_SYMS - 1) * SPS;
+    const size_t np = pats.size();
+    out.n0 = n0;
+    out.cnt = cnt;
+    out.skip = static_cast<size_t>(std::clamp<int64_t>(b.begin() + SPAN - n0, 0, static_cast<int64_t>(cnt)));
+    out.e.resize(cnt);
+    out.c.resize(np * cnt);
+    const size_t len = cnt - out.skip;
+    if (!len) return;
+    // per sample j: mean, energy and every pattern's correlation of the window
+    // with its mean taken off - the k loops outermost (vectorise across the
+    // samples), each sample's sums over k in the same order as one
+    // sample at a time
+    const float* __restrict w = b.ptr(n0 + static_cast<int64_t>(out.skip) - SPAN);
+    float* __restrict e = out.e.data() + out.skip;
+    m_.resize(len);
+    float* __restrict m = m_.data();
+    std::fill(m, m + len, 0.0f);
+    for (int k = 0; k < SYNC_SYMS; k++) {
+        const float* __restrict x = w + k * SPS;
+        for (size_t j = 0; j < len; j++) m[j] += x[j];
+    }
+    for (size_t j = 0; j < len; j++) m[j] /= SYNC_SYMS;
+    std::fill(e, e + len, 0.0f);
+    for (int k = 0; k < SYNC_SYMS; k++) {
+        const float* __restrict x = w + k * SPS;
+        for (size_t j = 0; j < len; j++) {
+            const float v = x[j] - m[j];
+            e[j] += v * v;
+        }
+    }
+    for (size_t p = 0; p < np; p++) {
+        float* __restrict c = out.c.data() + p * cnt + out.skip;
+        const float* t = pats[p].t.data();
+        std::fill(c, c + len, 0.0f);
+        for (int k = 0; k < SYNC_SYMS; k++) {
+            const float* __restrict x = w + k * SPS;
+            const float tk = t[k];
+            for (size_t j = 0; j < len; j++) {
+                const float v = x[j] - m[j];
+                c[j] += tk * v;
+            }
+        }
+    }
+}
+
+void Fsk4Receiver::peak(const Corr& cr, size_t j, size_t np, Peak& pk, Mode proto) {
+    if (j < cr.skip) return;   // no full window yet
+    const float e = cr.e[j];
     if (e < 1e-3f) return;
+    const int64_t n = cr.n0 + static_cast<int64_t>(j);
     const float inv = 1.0f / std::sqrt(e);
     float best = 0;
     int best_pat = 0;
-    for (size_t p = 0; p < pats.size(); p++) {
-        float c = 0;
-        const float* t = pats[p].t.data();
-        for (int k = 0; k < SYNC_SYMS; k++) c += t[k] * w[k];
+    for (size_t p = 0; p < np; p++) {
+        float c = cr.c[p * cr.cnt + j];
         c *= inv;
         if (std::fabs(c) > std::fabs(best)) { best = c; best_pat = static_cast<int>(p); }
     }
@@ -231,26 +272,49 @@ void Fsk4Receiver::run_jobs() {
 
 void Fsk4Receiver::process(const float* d, size_t n) {
     const size_t nt = rrc_taps_.size();
+    const int64_t n0 = bp_.end();   // this block's first sample
+    // the input, discriminator spikes (noise clicks) limited to +-6 kHz,
+    // after the RRC's history
+    rrc_x_.resize(nt - 1 + n);
+    float* __restrict xc = rrc_x_.data() + (nt - 1);
     for (size_t i = 0; i < n; i++) {
         float x = d[i];
-        // limit discriminator spikes (noise clicks) to +-6 kHz
         if (x > 6000.0f) x = 6000.0f;
         if (x < -6000.0f) x = -6000.0f;
+        xc[i] = x;
+    }
+    // P25: the boxcar (integrate and dump: a running sum)
+    for (size_t i = 0; i < n; i++) {
+        const float x = xc[i];
         box_sum_ += x - box_hist_[box_pos_];
         box_hist_[box_pos_] = x;
         box_pos_ = (box_pos_ + 1) % SPS;
         bp_.push(box_sum_ / SPS);
-        rrc_hist_[rrc_pos_] = x;
-        float acc = 0;
-        size_t p = rrc_pos_;
+    }
+    // DMR: the RRC over the block, tap by tap (vectorises across the outputs;
+    // each output's sum over the taps in the same order as before, newest
+    // sample first). Only with DMR on - the P25 plugin never used it
+    if (en_dmr_) {
+        rrc_y_.assign(n, 0.0f);
+        float* __restrict y = rrc_y_.data();
+        const float* xs = rrc_x_.data() + (nt - 1);
         for (size_t k = 0; k < nt; k++) {
-            acc += rrc_taps_[k] * rrc_hist_[p];
-            p = p == 0 ? nt - 1 : p - 1;
+            const float h = rrc_taps_[k];
+            const float* __restrict xk = xs - k;
+            for (size_t i = 0; i < n; i++) y[i] += h * xk[i];
         }
-        rrc_pos_ = (rrc_pos_ + 1) % nt;
-        bd_.push(acc);
-        if (en_p25_) correlate(bp_, pats_p25_, pk_p25_, Mode::P25);
-        if (en_dmr_) correlate(bd_, pats_dmr_, pk_dmr_, Mode::DMR);
+        for (size_t i = 0; i < n; i++) bd_.push(y[i]);
+    }
+    // the RRC's history for the next block
+    std::copy(rrc_x_.end() - static_cast<long>(nt - 1), rrc_x_.end(), rrc_x_.begin());
+    rrc_x_.resize(nt - 1);
+    // the sync correlations, then the peak search sample by sample (P25
+    // before DMR at each sample, as before)
+    if (en_p25_) correlate_block(bp_, pats_p25_, n0, n, corr_p25_);
+    if (en_dmr_) correlate_block(bd_, pats_dmr_, n0, n, corr_dmr_);
+    for (size_t j = 0; j < n; j++) {
+        if (en_p25_) peak(corr_p25_, j, pats_p25_.size(), pk_p25_, Mode::P25);
+        if (en_dmr_) peak(corr_dmr_, j, pats_dmr_.size(), pk_dmr_, Mode::DMR);
     }
     run_jobs();
     // keep the history short; never drop samples a pending job still needs

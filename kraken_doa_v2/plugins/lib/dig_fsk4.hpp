@@ -37,9 +37,10 @@ public:
 private:
     Fsk4Sink& sink_;
     bool en_p25_ = true, en_dmr_ = true;
-    SampleBuf bp_, bd_;             // P25 (boxcar) / DMR (RRC) filtered
-    std::vector<float> rrc_taps_, rrc_hist_;
-    size_t rrc_pos_ = 0;
+    SampleBuf bp_, bd_;             // P25 (boxcar) / DMR (RRC) filtered (bd_ only with DMR on)
+    std::vector<float> rrc_taps_;
+    std::vector<float> rrc_x_;      // the RRC's input: the last taps - 1 clipped samples, then the block's
+    std::vector<float> rrc_y_;      // ... its output for the block
     float box_hist_[10] = {0};
     float box_sum_ = 0;
     int box_pos_ = 0;
@@ -54,7 +55,18 @@ private:
     SymSrc dmr_last_src_;
     int dmr_period_ = 144;
     bool dmr_confirmed_ = false;    // the followed burst sequence's last bursts checked out
-    void correlate(SampleBuf& b, std::vector<Pattern>& pats, Peak& pk, Mode proto);
+    // the sync correlation of samples [n0, n0 + cnt) of b, every pattern (block: vectorises across
+    // samples; each one's sums in the same order as one at a time)
+    struct Corr {
+        int64_t n0 = 0;
+        size_t skip = 0, cnt = 0;   // the first `skip` samples have no full sync window yet
+        std::vector<float> e, c;    // per sample: energy; correlation with pattern p at c[p * cnt + j]
+    };
+    Corr corr_p25_, corr_dmr_;
+    std::vector<float> m_;          // correlate_block: per sample, its window's mean
+    void correlate_block(const SampleBuf& b, const std::vector<Pattern>& pats, int64_t n0, size_t cnt, Corr& out);
+    // the peak search at sample j of the block (on_sync for a finished peak)
+    void peak(const Corr& cr, size_t j, size_t np, Peak& pk, Mode proto);
     void on_sync(Mode proto, int pat, int64_t sync_end, float corr_sign);
     void run_jobs();
 };

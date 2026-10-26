@@ -119,4 +119,22 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   its tail, fixed). Not done: radar / ssr1030 / dtv / cells generators vs
   the live captures (their generators were built from those captures'
   measurements; no independent reference)
-
+- Performance pass (2026-10-26; a 2015 MacBook Air i5-5350U, Apple
+  clang 14; Pi / Windows not measured):
+  the offline host's per-talker bearings (`talker_bearings`, plugin_host.cpp)
+  filter every antenna's channel at once (`fir_antennas<M>`: independent
+  sums in registers, each over the taps in order, the products as before):
+  `ism-six-devices` offline 10.8 -> 5.7 s, bearings identical - offline
+  only. All 37 test transmissions decode identically (bar timing lines);
+  offline user CPU of 36 of them (rds aside: offline it runs at 2.4 MHz)
+  41.4 -> 33.9 s (-18 %, medians of 3 interleaved; job scratch
+  `plugins/scripts/ab.py`).
+  Tested, not taken: the live host's SAMPLES_MC deinterleave with the
+  antenna count as a template / converted in one pass then gathered
+  (~3 ns per antenna sample either way, within the noise). Measured with
+  `-ffp-contract=fast`: the micro-benchmarks' speed within +-10 % of the
+  default (clang contracts within a statement), adsb's and lora's new
+  loops then no longer bit-identical to the old ones (rounding); HEAD and
+  the new plugins both built with it decode the 11 test transmissions of
+  adsb, lora, ism, dtv, p25 and dmr identically (the flag itself moves one
+  lora "peak/mean" figure, 1994 -> 1998)

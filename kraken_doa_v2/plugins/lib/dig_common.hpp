@@ -167,6 +167,8 @@ public:
     int64_t begin() const { return base_; }
     int64_t end() const { return base_ + static_cast<int64_t>(buf_.size()); }
     bool has(int64_t abs) const { return abs >= base_ && abs < end(); }
+    // the samples from abs on, contiguous (abs held)
+    const float* ptr(int64_t abs) const { return buf_.data() + (abs - base_); }
     void trim_before(int64_t abs);
 private:
     std::vector<float> buf_;

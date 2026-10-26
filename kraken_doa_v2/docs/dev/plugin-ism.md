@@ -190,4 +190,13 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   device 0.0 deg off, every transmission in its history right; the unknown
   device too (`run_e2e.sh scene2.json 70 --plugin ism --bw 0`; first run
   with the 240 kHz version, the same with the full band)
-
+- Performance pass (2026-10-26; a 2015 MacBook Air i5-5350U, Apple
+  clang 14; Pi / Windows not measured):
+  `make_segment`'s decimating low-pass (321 taps at every D-th sample)
+  computes four outputs at a time (eight independent sums, each over the
+  taps in the old order): ~600 -> 163 ns per output (3.7x), bit-identical
+  (also with `-ffp-contract=fast`); `filter()` runs tap by tap over all
+  outputs (vectorises, the same order per output). Decodes identical;
+  offline without the bearings 1.79 -> 1.68 s per 6 s of 2.4 MHz x 5
+  antennas (-6 %). Most of `ism-six-devices`' offline CPU (9.9 s) was the
+  test host's per-talker bearings, now 5.1 s (see *Decoder plugins*)
