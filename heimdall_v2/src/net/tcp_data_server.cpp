@@ -241,7 +241,7 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
         if (ch < channel_data.size() && channel_data[ch].size() == expected_samples) {
             // Channel has correct data.
             // Convert float (-1 to +1) back to uint8 with the exact inverse
-            // of every decoder (heimdall's iq_lut, the DoA client, the GR
+            // of every decoder (heimdall's own conversion, the DoA client, the GR
             // source: (u - 127.5) / 127.5), so a code round-trips unchanged.
             // (x*127 + 128 mapped zero to 128 = +0.5 LSB: an identical DC
             // term on every channel, and merged codes 127/128.)

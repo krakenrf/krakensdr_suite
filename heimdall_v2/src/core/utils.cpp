@@ -1,6 +1,5 @@
 #include "utils.hpp"
 #include "config.hpp"
-#include <array>
 #include <pthread.h>
 #include <sched.h>
 #include <cstring>
@@ -148,16 +147,6 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
     }
 #endif
     return ok;
-}
-
-const float* iq_lut() {
-    static constexpr std::array<float, 256> lut = [] {
-        std::array<float, 256> v{};
-        for (size_t i = 0; i < v.size(); ++i)
-            v[i] = (static_cast<float>(i) - 127.5f) * SCALE;
-        return v;
-    }();
-    return lut.data();
 }
 
 // Length of the valid UTF-8 sequence starting at s[i], or 0 if it is invalid.

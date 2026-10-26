@@ -33,9 +33,6 @@ constexpr T clamp(T value, T min_val, T max_val) {
 using steady_clock = std::chrono::steady_clock;
 using milliseconds = std::chrono::milliseconds;
 
-// IQ conversion lookup table
-const float* iq_lut();
-
 // UTF-8. Browsers close a WebSocket that receives a TEXT frame with invalid
 // UTF-8, so every client-supplied string that is echoed back out must be
 // valid. utf8_valid: strict (no overlongs, surrogates or > U+10FFFF).

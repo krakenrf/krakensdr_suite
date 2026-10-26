@@ -8,6 +8,7 @@
 #include "../net/rtl_tcp_server.hpp"   // Need full definition to call methods
 #include <iostream>
 #include <algorithm>
+#include <cstring>
 #include <mutex>
 
 // Global L2 buffer
@@ -194,32 +195,12 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
     }
 
     const Complex comp = st.comp[channel];  // phase vector x forward comp (per set)
-
-    static thread_local ComplexBuffer tmp;
-    tmp.resize(count);
-
-    const uint8_t* __restrict p   = samples;
-    Complex*      __restrict dst  = tmp.data();
-    const float*  __restrict lut  = iq_lut();
-
     const float cr = comp.real();
     const float ci = comp.imag();
 
     // High-side spectral inversion: negate Q. One multiply per sample, folded
     // into the auto-vectorized loop.
     const float qs = st.spectral_inversion ? -1.0f : 1.0f;
-
-    for (int i = 0; i < count; ++i) {
-        const float I = lut[p[0]];
-        const float Q = qs * lut[p[1]];
-
-        // Complex multiply: (I + jQ) * (cr + jci)
-        const float re = std::fmaf(I, cr, -Q * ci); // I*cr - Q*ci
-        const float im = std::fmaf(I, ci,  Q * cr); // I*ci + Q*cr
-
-        dst[i] = Complex{re, im};
-        p += 2;
-    }
 
     // Software fractional-delay FIR (8-tap windowed sinc, group delay 3+d).
     // Runs on EVERY channel so they all share the same base group delay; the
@@ -255,24 +236,6 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
 
         const auto& h = dev->frac_coeff;
         auto& tail = dev->frac_tail;
-        const Complex* __restrict x = tmp.data();
-        Complex* __restrict y = fir_out.data();
-
-        // Over the interleaved floats (real taps, so I and Q filter alike:
-        // float k's tap n is float k - 2n). Written on floats because clang
-        // doesn't vectorize the std::complex form (6x slower on macOS), and as
-        // an explicit fmaf chain, tap 0 first: heimdall builds with -std=c++20,
-        // where GCC doesn't contract a*b+c (-ffp-contract=off), so only fmaf
-        // gets the fused multiply-add (NEON fmla, AVX2 vfmadd) into the
-        // vectorized loop. No longer bit-identical to the old std::complex
-        // loop (a rounding per multiply): the two differ by at most ~2.5 ulp
-        // of sum |h[n] x[n]| (rounding level, the new one slightly closer to
-        // exact), which a fractional-delay trim can't see. Without hardware
-        // FMA (armv7 without VFPv4, x86 before Haswell) fmaf would be a libm
-        // call per tap, so there it stays a multiply and an add (and
-        // bit-identical to the old loop).
-        const float* __restrict xf = reinterpret_cast<const float*>(x);
-        float* __restrict yf = reinterpret_cast<float*>(y);
         const float h0 = h[0], h1 = h[1], h2 = h[2], h3 = h[3];
         const float h4 = h[4], h5 = h[5], h6 = h[6], h7 = h[7];
         const auto mac = [](float hn, float xn, float a) {
@@ -283,40 +246,71 @@ void samples_to_complex_with_compensation(const uint8_t* samples, int count, int
 #endif
         };
 
-        // Head: taps reach into the previous chunk's tail (the same
-        // arithmetic as the body, the input float before x[0] read from it)
-        const int head = std::min(7, count);
-        {
-            const float* tf = reinterpret_cast<const float*>(tail.data());
-            const auto in = [&](int j) { return (j >= 0) ? xf[j] : tf[14 + j]; };
-            for (int k = 0; k < 2 * head; k++) {
-                float a = h0 * xf[k];
-                a = mac(h1, in(k - 2),  a);
-                a = mac(h2, in(k - 4),  a);
-                a = mac(h3, in(k - 6),  a);
-                a = mac(h4, in(k - 8),  a);
-                a = mac(h5, in(k - 10), a);
-                a = mac(h6, in(k - 12), a);
-                a = mac(h7, in(k - 14), a);
-                yf[k] = a;
+        // One pass in blocks of CB samples (2026-10-26; was a whole-chunk
+        // pass into a 128 KB intermediate and a second pass for the FIR, a
+        // memory round trip per sample): each block is converted into `buf`
+        // behind the previous 7 samples (the FIR's history - at the start the
+        // last chunk's tail), the FIR reads it there, and the block's last 7
+        // samples become the next block's history. 1.7-1.9x faster with the
+        // conversion below (docs/dev/architecture.md), output bit-identical.
+        constexpr int CB = 256;
+        alignas(64) float buf[2 * (7 + CB)];
+        std::memcpy(buf, tail.data(), 7 * sizeof(Complex));
+        float* __restrict yf = reinterpret_cast<float*>(fir_out.data());
+        for (int b = 0; b < count; b += CB) {
+            const int n = std::min(CB, count - b);
+
+            // uint8 IQ -> float, times the phase vector. (u - 127.5) / 127.5
+            // as arithmetic, not a 256-entry table: the same two float
+            // operations the table was built with (so the same values), and
+            // unlike table lookups it vectorizes.
+            {
+                const uint8_t* __restrict p = samples + 2 * b;
+                float* __restrict xb = buf + 14;
+                for (int i = 0; i < n; ++i) {
+                    const float I = (static_cast<float>(p[2 * i]) - 127.5f) * SCALE;
+                    const float Q = qs * ((static_cast<float>(p[2 * i + 1]) - 127.5f) * SCALE);
+
+                    // Complex multiply: (I + jQ) * (cr + jci)
+                    xb[2 * i]     = std::fmaf(I, cr, -Q * ci);  // I*cr - Q*ci
+                    xb[2 * i + 1] = std::fmaf(I, ci,  Q * cr);  // I*ci + Q*cr
+                }
             }
-        }
-        // Body: pure convolution
-        for (int k = 2 * head; k < 2 * count; k++) {
-            float a = h0 * xf[k];
-            a = mac(h1, xf[k - 2],  a);
-            a = mac(h2, xf[k - 4],  a);
-            a = mac(h3, xf[k - 6],  a);
-            a = mac(h4, xf[k - 8],  a);
-            a = mac(h5, xf[k - 10], a);
-            a = mac(h6, xf[k - 12], a);
-            a = mac(h7, xf[k - 14], a);
-            yf[k] = a;
+
+            // The FIR over the interleaved floats (real taps, so I and Q
+            // filter alike: float k's tap n is float k - 2n; xf[-14..-1] is
+            // the history). Written on floats because clang doesn't vectorize
+            // the std::complex form (6x slower on macOS), and as an explicit
+            // fmaf chain, tap 0 first: clang contracts a*b+c only within one
+            // statement, so on macOS the explicit fmaf is what gets the fused
+            // multiply-add (AVX2 vfmadd, NEON fmla) into the vectorized loop;
+            // GCC already contracts across statements in C++ (its default
+            // there is -ffp-contract=fast). No longer bit-identical to the old
+            // std::complex loop (a rounding per multiply): the two differ by
+            // at most ~2.5 ulp of sum |h[n] x[n]| (rounding level, the new
+            // one slightly closer to exact), which a fractional-delay trim
+            // can't see. Without hardware FMA (armv7 without VFPv4, x86
+            // before Haswell) fmaf would be a libm call per tap, so there it
+            // stays a multiply and an add (and bit-identical to the old loop).
+            {
+                const float* __restrict xf = buf + 14;
+                float* __restrict yb = yf + 2 * b;
+                for (int k = 0; k < 2 * n; k++) {
+                    float a = h0 * xf[k];
+                    a = mac(h1, xf[k - 2],  a);
+                    a = mac(h2, xf[k - 4],  a);
+                    a = mac(h3, xf[k - 6],  a);
+                    a = mac(h4, xf[k - 8],  a);
+                    a = mac(h5, xf[k - 10], a);
+                    a = mac(h6, xf[k - 12], a);
+                    a = mac(h7, xf[k - 14], a);
+                    yb[k] = a;
+                }
+            }
+            std::memmove(buf, buf + 2 * n, 14 * sizeof(float));  // last 7 samples -> history
         }
         // Save the last 7 input samples for the next chunk
-        if (count >= 7) {
-            for (int t = 0; t < 7; t++) tail[t] = x[count - 7 + t];
-        }
+        if (count >= 7) std::memcpy(tail.data(), buf, 7 * sizeof(Complex));
     }
 
     // ---- Optional per-bin phase-equalizer FIR (final stage) ----

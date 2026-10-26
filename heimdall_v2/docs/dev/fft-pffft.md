@@ -43,4 +43,10 @@ names refer to sections of the other files in this folder (index:
   either way (the lag servo's slew, not the FFT). Once CONVERGED the
   correlation FFT is off: 12.5-14.2 % of a core for both (conversion worker +
   USB readers) - pffft changes nothing there
-
+- Tested, not taken (2026-10-26, a 2015 MacBook Air i5-5350U, Apple clang
+  14): pffft's unordered transforms (`pffft_transform`, internal order) are
+  13 % faster per 32768-point transform than `pffft_transform_ordered`
+  (240 vs 276 us), but the lag fit, the per-bin calibration and the
+  coherence monitor need natural-order spectra, and the conjugate product
+  would have to be written for pffft's SIMD-width-dependent internal
+  layout - ~5 % of a correlation pass for a fragile change

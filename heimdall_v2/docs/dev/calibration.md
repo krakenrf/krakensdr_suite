@@ -44,6 +44,37 @@ the **register-only** actuator `rtlsdr_set_sample_freq_correction_f()`
   in ~25 s; −10,635 under full CPU load converged monotonically, zero
   coherence events.
 
+**Correlation pass arithmetic (2026-10-26)**: the sub-sample lag fit
+(`refine_lag_from_phase_ramp()` in correlation.cpp: integer derotation,
+constant phase removed, |S|^2-weighted LS slope of the cross-spectrum phase
+vs physical frequency) was 3/4 of a correlation pass - a double `atan2`
+and a serial `complex<double>` rotation per bin, 32768 bins x 4 channels.
+Same estimator, new arithmetic: the derotation phase is reduced mod 2pi
+exactly in integers, the constant phase is the correlation trace at lag m
+(the inverse transform of the cross-spectrum there - no sum), `atan2` is a
+vectorized polynomial (`atan2_poly`, |error| <= 3.2e-7 rad, ~1 ulp of pi),
+and the sums run per 256-bin block as float terms summed pairwise, the
+blocks in double. The peak search and the display trace share one norm
+pass (`norms_and_peak`: integer max over the norms' bit patterns, then the
+first bin holding it - the same bin as before), and the eigen covariance
+uses Eigen's SIMD dot instead of a float running sum. Micro-benchmark
+(job scratch 66074be2 heimdall/corr: the old and new pass on synthetic
+5-channel noise-source scenes; a 2015 MacBook Air i5-5350U, Apple clang 14,
+heimdall's flags, one core, median of 9 x 40 sets): per 5-channel set lag
+fit 4.38 -> 0.87 ms (5.0x), peak search 0.25 -> 0.15 ms, display 0.11 ->
+0.09 ms, eigen covariance + solve 0.52 -> 0.19 ms, the whole pass 9.2 ->
+5.2 ms (1.8x; the 5 forward + 4 inverse 32768-point FFTs, 3.7 ms, are now
+most of it). Equivalence over 800 random channel-sets (lags 0-3000,
+fractions, SNR -16..+30 dB): lags within 2.4e-7 samples, the same Gaussian
+fallback decisions, peak bins, scales and display values bit-identical;
+eigen phases within 0.036 deg of the old ones, which is the old float
+running sum's error (old 0.036 deg, new 0.0013 deg from a double-precision
+reference). `-ffp-contract=fast` changed nothing measurable. Pi / Windows
+not measured; the work removed is libm calls and serial dependency
+chains, so the Pi should gain similarly during calibration (the
+correlation thread was 41-46 % of a Pi 5 core then; once CONVERGED the
+FFT is off and this pass doesn't run).
+
 **Why not timed "bursts" on the PLL path** (`rtlsdr_set_freq_correction`,
 the historical approach — code removed July 2026): that call retunes the
 tuner LO by ppm×RF (10 kHz at 100 ppm/100 MHz), which destroys the

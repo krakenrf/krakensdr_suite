@@ -6,6 +6,8 @@
 #include "../core/utils.hpp"
 #include "../core/buffer_pool.hpp"
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <algorithm>
 #include <iostream>
 #include <array>
@@ -247,17 +249,16 @@ bool calculate_phase_amplitude_calibration_eigen(
     Eigen::MatrixXcf Rxx = Eigen::MatrixXcf::Zero(num_channels, num_channels);
 
     // Build the correlation matrix - lower triangle only: Rxx is Hermitian
-    // and SelfAdjointEigenSolver reads just that half
+    // and SelfAdjointEigenSolver reads just that half. Each entry is
+    // sum(x_i * conj(x_j)) = x_j.dot(x_i) (Eigen conjugates the first
+    // operand): Eigen's dot runs in SIMD partial sums (SSE / AVX / NEON),
+    // which a plain running sum can't without -ffast-math - 2.3x faster
+    // than that loop, and closer to a double-precision sum
     for (int i = 0; i < num_channels; i++) {
+        const Eigen::Map<const Eigen::VectorXcf> xi(complex_set[i].data(), static_cast<Eigen::Index>(num_samples));
         for (int j = 0; j <= i; j++) {
-            std::complex<float> sum(0.0f, 0.0f);
-            
-            // Calculate dot product: sum(x_i * conj(x_j))
-            for (size_t k = 0; k < num_samples; k++) {
-                sum += complex_set[i][k] * std::conj(complex_set[j][k]);
-            }
-            
-            Rxx(i, j) = sum / static_cast<float>(num_samples);
+            const Eigen::Map<const Eigen::VectorXcf> xj(complex_set[j].data(), static_cast<Eigen::Index>(num_samples));
+            Rxx(i, j) = xj.dot(xi) / static_cast<float>(num_samples);
         }
     }
     
@@ -312,6 +313,168 @@ bool calculate_phase_amplitude_calibration_eigen(
         amplitudes[ch] = amplitude;
     }
     return true;
+}
+
+// trace[k] = |c[k]|^2; returns the first bin of the largest (as the old
+// std::max_element over norms did), NaN bins skipped. The maximum is taken
+// on the bit patterns: a norm is +0 or positive, and non-negative floats
+// order like their bits read as integers - an integer max reduction
+// vectorizes, a float one doesn't without -ffast-math. Then the first bin
+// holding that value (a short scalar scan).
+static int norms_and_peak(const std::complex<float>* __restrict c, float* __restrict trace, int n) {
+    uint32_t max_bits = 0;
+    for (int k = 0; k < n; k++) {
+        const float v = std::norm(c[k]);
+        trace[k] = v;
+        uint32_t bits;
+        std::memcpy(&bits, &v, sizeof bits);
+        bits = (bits > 0x7F800000u) ? 0u : bits;  // NaN -> +0, never the peak
+        max_bits = std::max(max_bits, bits);
+    }
+    float max_val;
+    std::memcpy(&max_val, &max_bits, sizeof max_val);
+    for (int k = 0; k < n; k++) {
+        if (trace[k] == max_val) return k;
+    }
+    return 0;
+}
+
+// atan2 as plain arithmetic the compilers vectorize (std::atan2 is a libm
+// call per bin, and the lag fit takes one per bin per channel - 3/4 of the
+// correlation pass before 2026-10-26). |error| <= 3.2e-7 rad (~1 ulp of pi;
+// the polynomial alone 6e-9, the rest is float rounding): atan(t) = t P(t^2)
+// on [0, 1], minimax coefficients fitted for this (Lawson), then the octant /
+// quadrant reflections. atan2(0, 0) = 0; NaN in, NaN out.
+static inline float atan2_poly(float y, float x) {
+    const float ax = std::fabs(x), ay = std::fabs(y);
+    const float mx = std::max(ax, ay), mn = std::min(ax, ay);
+    const float t = (mx > 0.0f) ? mn / mx : 0.0f;
+    const float z = t * t;
+    float p = 2.456725109e-03f;
+    p = p * z - 1.440136041e-02f;
+    p = p * z + 3.978122771e-02f;
+    p = p * z - 7.234857976e-02f;
+    p = p * z + 1.049894616e-01f;
+    p = p * z - 1.416122913e-01f;
+    p = p * z + 1.998590678e-01f;
+    p = p * z - 3.333259821e-01f;
+    p = p * z + 9.999998808e-01f;
+    float r = p * t;
+    r = (ay > ax) ? 1.57079637f - r : r;
+    r = (x < 0.0f) ? 3.14159274f - r : r;
+    return (y < 0.0f) ? -r : r;
+}
+
+// Refine the lag from the cross-spectrum phase ramp. A lag L puts a phase of
+// -2*pi*k*(L - CS/2)/CS on bin k (the CS/2 comes from the reference's
+// half-buffer offset). Derotate by the coarse peak estimate so the residual
+// ramp is small and wrap-free, then fit it with weighted least squares
+// across the whole band: the slope leverage of the full 2.4 MHz span gives
+// ~1e-3 sample precision, and |S|^2 weights make faded bins (garbage phase)
+// harmless. Adjacent-bin product schemes (tried first) fail here: the
+// per-bin delay phase is ~1e-5 rad, so either weight fluctuations or faded
+// bins swamp it with noise.
+//
+// Arithmetic (2026-10-26, 4.5x faster, the same lags to 3e-7 samples - see
+// docs/dev/calibration.md): the derotation phase is reduced mod 2*pi exactly
+// in integers instead of a running complex<double> rotation, the constant
+// phase is read off the correlation trace instead of summed, atan2 is
+// atan2_poly, and the sums are taken per block of bins as float terms
+// summed pairwise (element-wise adds, which vectorize), the blocks in double.
+static float refine_lag_from_phase_ramp(const std::complex<float>* __restrict cross_spec,
+                                        const std::complex<float>* correlation_time, float lag) {
+    constexpr int CS = CORRELATION_SIZE;
+    constexpr int B = 256;  // bins per block: the block's terms stay in L1
+    static_assert((CS & (CS - 1)) == 0 && CS % (2 * B) == 0,
+                  "lag fit: CORRELATION_SIZE must be a power of two and a multiple of 2 x 256 (the index masks)");
+
+    // Weight cap so a few very strong bins can't dominate the fit
+    double pow_part[8] = {};
+    for (int k = 0; k < CS; k += 8) {
+        for (int l = 0; l < 8; l++) pow_part[l] += static_cast<double>(std::norm(cross_spec[k + l]));
+    }
+    double pow_sum = 0.0;
+    for (double p : pow_part) pow_sum += p;
+    const float w_cap = static_cast<float>(4.0 * pow_sum / CS);
+
+    // Derotate by the INTEGER part of the coarse lag (the DFT shift theorem
+    // in bin index k is exact only for integer shifts): bin k turns by
+    // 2*pi*(m - CS/2)*k/CS, i.e. ((m - CS/2)*k mod CS) steps of 2*pi/CS,
+    // exact in (unsigned, wrapping) integer arithmetic. The remaining
+    // FRACTIONAL delay rotates the phase along PHYSICAL frequency, which in
+    // FFT bin order is a V: +slope for k<CS/2, -slope for the
+    // negative-frequency upper half. Fitting against bin index instead of
+    // physical frequency (the original bug) makes the fit collapse onto
+    // bogus fixed points.
+    const int m = static_cast<int>(std::lround(lag));
+    const unsigned rot_step = static_cast<unsigned>(m - CS / 2);
+    constexpr float bin_rad = static_cast<float>(2.0 * M_PI / CS);
+    constexpr float pi_f = static_cast<float>(M_PI);
+    constexpr float two_pi_f = static_cast<float>(2.0 * M_PI);
+
+    // The CONSTANT inter-channel phase (random tuner PLL phase at startup)
+    // must be removed before fitting, or channels whose constant phase sits
+    // near +/-pi wrap and corrupt the slope. It is the phase of the
+    // derotated spectrum's sum, sum_k S[k] e^{+i 2pi (m - CS/2) k / CS} - the
+    // inverse transform of S at (m - CS/2) mod CS: the correlation trace at
+    // lag m, already computed.
+    const std::complex<float> c0 = correlation_time[(m + CS / 2) & (CS - 1)];
+    const float phi0 = static_cast<float>(std::atan2(static_cast<double>(c0.imag()),
+                                                     static_cast<double>(c0.real())));
+
+    // Weighted LS fit of the residual phase vs PHYSICAL frequency
+    alignas(64) float terms[5][B];
+    float* __restrict t_w = terms[0];
+    float* __restrict t_wk = terms[1];
+    float* __restrict t_wp = terms[2];
+    float* __restrict t_wkk = terms[3];
+    float* __restrict t_wkp = terms[4];
+    double sw = 0.0, swk = 0.0, swp = 0.0, swkk = 0.0, swkp = 0.0;
+    for (int b = 0; b < CS; b += B) {
+        const int f0 = (b < CS / 2) ? b : b - CS;  // physical frequency of bin b
+        for (int i = 0; i < B; i++) {
+            const int k = b + i;
+            const float w = std::min(std::norm(cross_spec[k]), w_cap);
+            const unsigned j = (rot_step * static_cast<unsigned>(k)) & (CS - 1);
+            float psi = atan2_poly(cross_spec[k].imag(), cross_spec[k].real()) +
+                        (static_cast<float>(j) * bin_rad - phi0);  // in [-2pi, 4pi)
+            psi = (psi > pi_f) ? psi - two_pi_f : psi;
+            psi = (psi > pi_f) ? psi - two_pi_f : psi;
+            psi = (psi < -pi_f) ? psi + two_pi_f : psi;
+            const float fk = static_cast<float>(f0 + i);
+            const float wf = w * fk;
+            t_w[i] = w;
+            t_wk[i] = wf;
+            t_wp[i] = w * psi;
+            t_wkk[i] = wf * fk;
+            t_wkp[i] = wf * psi;
+        }
+        for (int len = B / 2; len >= 8; len /= 2) {
+            for (int i = 0; i < len; i++) {
+                t_w[i] += t_w[i + len];
+                t_wk[i] += t_wk[i + len];
+                t_wp[i] += t_wp[i + len];
+                t_wkk[i] += t_wkk[i + len];
+                t_wkp[i] += t_wkp[i + len];
+            }
+        }
+        for (int i = 0; i < 8; i++) {
+            sw += t_w[i]; swk += t_wk[i]; swp += t_wp[i]; swkk += t_wkk[i]; swkp += t_wkp[i];
+        }
+    }
+
+    const double denom = swkk - swk * swk / std::max(sw, 1e-30);
+    if (sw > 0.0 && denom > 0.0) {
+        const double slope = (swkp - swk * swp / sw) / denom;
+        const float delta = static_cast<float>(-slope * CS / (2.0 * M_PI));
+        // The residual is relative to the integer peak m; it must be
+        // sub-sample if the peak was right - otherwise keep the Gaussian
+        // estimate (weak/odd signal)
+        if (std::abs(delta) < 0.75f) {
+            lag = static_cast<float>(m) + delta;
+        }
+    }
+    return lag;
 }
 
 void process_correlations(CorrelationResult& correlation_result, FFTProcessingControl& fft_control) {
@@ -436,104 +599,23 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
         corr_plan->cross_correlate(ref_fft, channel_ffts[ch]);
         auto* correlation_time = corr_plan->get_correlation_time();
         
-        // |a| < |b| as norms: the same order without two hypotf calls per step
-        auto max_it = std::max_element(correlation_time, correlation_time + CORRELATION_SIZE,
-                                 [](const auto& a, const auto& b) { return std::norm(a) < std::norm(b); });
-        
-        int peak_index = std::distance(correlation_time, max_it);
+        // |c|^2 into the display trace (its square root is taken below, once
+        // the peak sets the scale) and the peak bin, in one pass
+        float* trace = staged_corr[corr_idx].data();
+        const int peak_index = norms_and_peak(correlation_time, trace, CORRELATION_SIZE);
         ParabolicPeak refined_peak = gaussian_interpolation(correlation_time, peak_index, CORRELATION_SIZE);
 
         float lag = refined_peak.refined_index - static_cast<float>(CORRELATION_SIZE / 2);
 
-        // Refine the lag from the cross-spectrum phase ramp. A lag L puts a
-        // phase of -2*pi*k*(L - CS/2)/CS on bin k (the CS/2 comes from the
-        // reference's half-buffer offset). Derotate by the coarse peak
-        // estimate so the residual ramp is small and wrap-free, then fit it
-        // with weighted least squares across the whole band: the slope
-        // leverage of the full 2.4 MHz span gives ~1e-3 sample precision,
-        // and |S|^2 weights make faded bins (garbage phase) harmless.
-        // Adjacent-bin product schemes (tried first) fail here: the per-bin
-        // delay phase is ~1e-5 rad, so either weight fluctuations or faded
-        // bins swamp it with noise.
-        {
-            const auto* cross_spec = corr_plan->get_correlation_freq();
-
-            // Weight cap so a few very strong bins can't dominate the fit
-            double pow_sum = 0.0;
-            for (int k = 0; k < CORRELATION_SIZE; k++) {
-                pow_sum += std::norm(cross_spec[k]);
-            }
-            const double w_cap = 4.0 * pow_sum / CORRELATION_SIZE;
-
-            // Derotate by the INTEGER part of the coarse lag (the DFT shift
-            // theorem in bin index k is exact only for integer shifts). The
-            // remaining FRACTIONAL delay rotates the phase along PHYSICAL
-            // frequency, which in FFT bin order is a V: +slope for k<CS/2,
-            // -slope for the negative-frequency upper half. Fitting against
-            // bin index instead of physical frequency (the original bug)
-            // makes the fit collapse onto bogus fixed points.
-            const int m = static_cast<int>(std::lround(lag));
-            const double step = 2.0 * M_PI *
-                (static_cast<double>(m) - CORRELATION_SIZE / 2) / CORRELATION_SIZE;
-            const std::complex<double> rot_step(std::cos(step), std::sin(step));
-            std::complex<double> rot(1.0, 0.0);
-
-            // Pass 1: integer derotation + find the CONSTANT inter-channel
-            // phase (random tuner PLL phase at startup). It must be removed
-            // before fitting or channels whose constant phase sits near
-            // +/-pi wrap in atan2 and corrupt the slope.
-            static thread_local std::vector<std::complex<float>> zbuf;
-            zbuf.resize(CORRELATION_SIZE);
-            std::complex<double> mean_acc(0.0, 0.0);
-            for (int k = 0; k < CORRELATION_SIZE; k++) {
-                const std::complex<double> z = std::complex<double>(cross_spec[k]) * rot;
-                rot *= rot_step;
-                if ((k & 0x3FF) == 0x3FF) rot /= std::abs(rot);  // fight drift
-                zbuf[k] = std::complex<float>(z);
-                mean_acc += z;
-            }
-            const double phi0 = (std::abs(mean_acc) > 0.0) ? std::arg(mean_acc) : 0.0;
-            const std::complex<float> deph(static_cast<float>(std::cos(-phi0)),
-                                           static_cast<float>(std::sin(-phi0)));
-
-            // Pass 2: weighted LS fit of residual phase vs PHYSICAL frequency
-            double sw = 0.0, swk = 0.0, swp = 0.0, swkk = 0.0, swkp = 0.0;
-            for (int k = 0; k < CORRELATION_SIZE; k++) {
-                const std::complex<float> z = zbuf[k] * deph;
-                const double w = std::min(static_cast<double>(std::norm(z)), w_cap);
-                const double psi = std::atan2(z.imag(), z.real());
-                const double fk = (k < CORRELATION_SIZE / 2)
-                    ? static_cast<double>(k)
-                    : static_cast<double>(k - CORRELATION_SIZE);
-                sw += w; swk += w * fk; swp += w * psi;
-                swkk += w * fk * fk; swkp += w * fk * psi;
-            }
-
-            const double denom = swkk - swk * swk / std::max(sw, 1e-30);
-            if (sw > 0.0 && denom > 0.0) {
-                const double slope = (swkp - swk * swp / sw) / denom;
-                const float delta = static_cast<float>(-slope * CORRELATION_SIZE / (2.0 * M_PI));
-
-
-                // The residual is relative to the integer peak m; it must be
-                // sub-sample if the peak was right - otherwise keep the
-                // Gaussian estimate (weak/odd signal)
-                if (std::abs(delta) < 0.75f) {
-                    lag = static_cast<float>(m) + delta;
-                }
-            }
-        }
-        
+        lag = refine_lag_from_phase_ramp(corr_plan->get_correlation_freq(), correlation_time, lag);
         current_lags[ch] = lag;
-        
-        // Store correlation data at the correct index
+
+        // Store correlation data at the correct index: the trace holds the
+        // norms, now magnitudes relative to the peak
         staged_scale[corr_idx] = refined_peak.refined_magnitude;
         float scale = refined_peak.refined_magnitude > 0 ? 1.0f / refined_peak.refined_magnitude : 1.0f;
-        
-        std::transform(correlation_time, correlation_time + CORRELATION_SIZE,
-                 staged_corr[corr_idx].begin(),
-                 [scale](const auto& val) { return std::sqrt(std::norm(val)) * scale; });
-        
+        for (int k = 0; k < CORRELATION_SIZE; k++) trace[k] = std::sqrt(trace[k]) * scale;
+
         corr_idx++;
     }
     
