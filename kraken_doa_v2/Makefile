@@ -199,6 +199,7 @@ APP_SRCS = \
 	$(SRCDIR)/main.cpp \
 	$(SRCDIR)/station_info.cpp \
 	$(SRCDIR)/doa_logger.cpp \
+	$(SRCDIR)/wb_board.cpp \
 	$(SRCDIR)/channel_manager.cpp \
 	$(SRCDIR)/control_handler.cpp \
 	$(SRCDIR)/settings_store.cpp \

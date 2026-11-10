@@ -1147,6 +1147,13 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
   #fp {height:150px}
   #wf-container {height:110px}
 }
+/* Wideband board telemetry card */
+.wb-grid { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; font-size:12px; line-height:1.6; }
+.wb-k { color:#777; }
+.wb-v { color:#cfd8dc; font-variant-numeric:tabular-nums; }
+.wb-v .warn { color:#ff9800; font-weight:bold; }
+.wb-v .alarm { color:#ef5350; font-weight:bold; }
+.wb-v .stale { color:#777; }
 </style>
 </head>
 <body class="ai-dk-off">
@@ -1483,6 +1490,26 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <span id="get-gps-status" style="font-size:10px;color:#888"></span>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- KrakenSDR Wideband board telemetry (heimdall --wideband; hidden otherwise) -->
+    <div class="sb-section" id="wb-section" style="display:none">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>🔌 Wideband Board<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The downconverter board's own sensors, read by heimdall once a second: input voltage and current (INA219, measured before the eFuse), board temperature and humidity (SHT40 on Testunit_3v2, Si7020 on 3v0), the LO as set and as read back from the board, firmware and board revision. Orange = warning, red = alarm; an alarm clears 30 s after the value is back in range. Grey = no fresh reading. Logged to wb_logs/ (wb_telemetry.csv every 10 s, wb_events.csv on every change). Testunit_3v0 cannot measure above 3.2 A.</span></span></h3>
+        <span class="sb-toggle">▼</span>
+      </div>
+      <div class="sb-content">
+        <div id="wb-fw-warn" style="display:none;font-size:12px;color:#ffd9a0;background:#3a2a10;border:1px solid #b3822c;border-radius:4px;padding:4px 6px;margin-bottom:6px"></div>
+        <div class="wb-grid" id="wb-grid">
+          <span class="wb-k">Input</span><span class="wb-v" id="wb-power">–</span>
+          <span class="wb-k">Board</span><span class="wb-v" id="wb-env">–</span>
+          <span class="wb-k">LO</span><span class="wb-v" id="wb-lo">–</span>
+          <span class="wb-k">Hardware</span><span class="wb-v" id="wb-hw">–</span>
+          <span class="wb-k">Firmware</span><span class="wb-v" id="wb-fw">–</span>
+        </div>
+        <canvas id="wb-trend" width="280" height="76" style="width:100%;height:76px;margin-top:6px;background:#0d1520;border-radius:4px"></canvas>
+        <div style="font-size:10px;color:#777;display:flex;justify-content:space-between"><span><span style="color:#4fc3f7">■</span> current (A)</span><span>last hour</span><span><span style="color:#ffb74d">■</span> temperature (°C)</span></div>
       </div>
     </div>
 
@@ -2080,6 +2107,9 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- KerberosSDR manual-calibration banner (hidden unless heimdall runs --kerberos) -->
     <div id="kerberos-banner" style="display:none;padding:8px 12px;font-weight:bold;font-size:13px;
          border-bottom:1px solid #b33;background:#3a1515;color:#ffb3b3;"></div>
+    <!-- KrakenSDR Wideband board: firmware too old / board alarm (hidden otherwise) -->
+    <div id="wb-banner" style="display:none;padding:6px 12px;font-weight:bold;font-size:13px;
+         border-bottom:1px solid #b3822c;background:#3a2a10;color:#ffd9a0;cursor:pointer" onclick="wbOpenSection()"></div>
     <!-- Top Bar -->
     <div class="top-bar">
       <!-- Hamburger (mobile only) -->
@@ -2173,6 +2203,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       </div>
       <!-- Hardware Stats -->
       <span class="hw-stats" id="hw-stats"></span>
+      <!-- Wideband board telemetry chip (heimdall --wideband only) -->
+      <span class="hw-stats" id="wb-chip" style="display:none;cursor:pointer" title="Wideband board (click for details)" onclick="wbOpenSection()"></span>
       <!-- Status Badges (pushed to right) -->
       <div class="status-badges">
         <span class="status-badge" id="status-connection" style="background:#b71c1c">Disconnected</span>
@@ -23458,6 +23490,156 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     recRender();
   }
 
+  // ---- KrakenSDR Wideband board telemetry (system_status.wb_telemetry) ----
+  // heimdall's "downconverter" object: fw {date, build, telemetry_ok, set_cmd},
+  // telemetry {revision, vin_v, iin_a, iin_saturated, temp_c, rh_pct,
+  // lo_hz_read, stale, alarms {iin, vin, temp, rh, sensor}, ...}, age_s.
+  const wbTrend = [];            // {t, i, temp}, one point per 10 s, one hour
+  let wbLastTrend = 0;
+  function wbOpenSection() {
+    const sec = $id('wb-section');
+    if (!sec) return;
+    if (typeof mobileLayoutMQ !== 'undefined' && mobileLayoutMQ.matches) toggleSidebar(true);
+    if (sec.classList.contains('collapsed')) toggleSection(sec.querySelector('.sb-header'));
+    sec.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  }
+  function wbSpan(text, level, stale) {
+    const cls = stale ? 'stale' : (level === 'alarm' ? 'alarm' : level === 'warn' ? 'warn' : '');
+    return cls ? '<span class="' + cls + '">' + text + '</span>' : text;
+  }
+  function wbAgo(ts) {
+    if (!ts) return '';
+    const s = Math.max(0, Date.now() / 1000 - ts);
+    return s < 90 ? Math.round(s) + ' s ago' : Math.round(s / 60) + ' min ago';
+  }
+  function updateWbTelemetry(wb) {
+    const sec = $id('wb-section'), chip = $id('wb-chip'), banner = $id('wb-banner');
+    if (!sec) return;
+    if (!wb) {
+      sec.style.display = 'none';
+      if (chip) chip.style.display = 'none';
+      if (banner) banner.style.display = 'none';
+      return;
+    }
+    sec.style.display = '';
+    const fw = wb.fw || {}, t = wb.telemetry || {}, al = t.alarms || {};
+    const fwText = fw.date > 0 ? 'fw' + fw.date + (fw.build ? '.' + fw.build : '') : (fw.date === 0 ? 'older than fw20261109' : 'no reply');
+    $id('wb-fw').innerHTML = fwText + (fw.set_cmd === 'w' ? ' <span class="alarm">tunes with Flash save</span>' : '') +
+                             (fw.no_reply ? ' <span class="stale">(' + fw.no_reply + ' unanswered)</span>' : '');
+    const lo = wb.lo_hz ? (wb.lo_hz / 1e6).toFixed(3) + ' MHz' : '–';
+    const loRead = t.lo_hz_read ? (t.lo_hz_read === wb.lo_hz ? ' ✓' : ' <span class="warn">board: ' + (t.lo_hz_read / 1e6).toFixed(3) + ' MHz</span>') : '';
+    const rings = ['outer', 'center', 'inner'];
+    $id('wb-lo').innerHTML = lo + loRead + ' <span class="stale">' + (wb.side || '') + ' side, ' + (rings[wb.array] || '') + ' ring</span>';
+
+    const fwWarn = $id('wb-fw-warn');
+    if (!t.enabled) {
+      fwWarn.textContent = '⚠ Board telemetry disabled: ' + (t.reason || 'firmware too old') + '.';
+      fwWarn.style.display = '';
+      $id('wb-power').textContent = '–';
+      $id('wb-env').textContent = '–';
+      $id('wb-hw').textContent = '–';
+      if (chip) chip.style.display = 'none';
+      if (banner) {
+        banner.textContent = '⚠ Wideband board firmware too old - telemetry disabled. Update the board to fw20261110.3 (USB bootloader).';
+        banner.style.background = '#3a2a10';
+        banner.style.color = '#ffd9a0';
+        banner.style.display = 'block';
+      }
+      return;
+    }
+    fwWarn.style.display = t.shunt_consistent === false ? '' : 'none';
+    if (t.shunt_consistent === false) fwWarn.textContent = '⚠ The R6 shunt voltage does not fit the detected board revision: reworked or mixed board? The current reading may be off by 10×.';
+
+    const ps = !!t.power_stale, es = !!t.env_stale;
+    if (t.vin_v !== undefined) {
+      const cur = t.iin_saturated ? '&gt; 3.2 A' : t.iin_a.toFixed(2) + ' A';
+      $id('wb-power').innerHTML = wbSpan(t.vin_v.toFixed(2) + ' V', al.vin, ps) + ' · ' + wbSpan(cur, al.iin, ps) +
+        ' · ' + wbSpan((t.vin_v * t.iin_a).toFixed(1) + ' W', '', ps) + (ps ? ' <span class="stale">(' + wbAgo(t.power_ts) + ')</span>' : '');
+    } else {
+      $id('wb-power').innerHTML = '<span class="stale">no reading yet</span>';
+    }
+    if (t.temp_c !== undefined) {
+      $id('wb-env').innerHTML = wbSpan(t.temp_c.toFixed(1) + ' °C', al.temp, es) + ' · ' + wbSpan(t.rh_pct.toFixed(0) + ' %RH', al.rh, es) +
+        (es ? ' <span class="stale">(' + wbAgo(t.env_ts) + ')</span>' : '');
+    } else {
+      $id('wb-env').innerHTML = '<span class="stale">' + (t.sensor ? 'no reading yet' : 'no humidity sensor answers') + '</span>';
+    }
+    const rev = t.revision && t.revision !== 'unknown' ? 'Testunit_' + t.revision : 'revision unknown';
+    $id('wb-hw').innerHTML = rev + ' <span class="stale">' + (t.sensor || 'no RH sensor') + ', R6 ' + (t.r_shunt_mohm || '?') + ' mΩ' +
+                             (t.errors ? ', ' + t.errors + ' read errors' : '') + '</span>';
+
+    // worst alarm -> chip colour + banner
+    const levels = [al.iin, al.vin, al.temp, al.rh, al.sensor];
+    const worst = levels.includes('alarm') ? 'alarm' : levels.includes('warn') ? 'warn' : 'ok';
+    if (chip) {
+      const parts = [];
+      if (t.vin_v !== undefined) parts.push(t.vin_v.toFixed(2) + 'V', t.iin_saturated ? '>3.2A' : t.iin_a.toFixed(2) + 'A');
+      if (t.temp_c !== undefined) parts.push(t.temp_c.toFixed(0) + '°C');
+      chip.textContent = 'WB ' + parts.join(' ');
+      chip.style.color = worst === 'alarm' ? '#ef5350' : worst === 'warn' ? '#ff9800' : (t.stale ? '#777' : '#8aa8c7');
+      chip.style.display = '';
+    }
+    if (banner) {
+      const names = {iin: 'input current', vin: 'input voltage', temp: 'board temperature', rh: 'humidity', sensor: 'sensor readings stale'};
+      const bad = Object.keys(names).filter(k => al[k] === 'alarm' || al[k] === 'warn');
+      if (bad.length) {
+        banner.textContent = (worst === 'alarm' ? '🚨 Wideband board ALARM: ' : '⚠ Wideband board warning: ') +
+                             bad.map(k => names[k] + (al[k] === 'alarm' ? ' (alarm)' : '')).join(', ') + ' - click for details';
+        banner.style.background = worst === 'alarm' ? '#3a1515' : '#3a2a10';
+        banner.style.color = worst === 'alarm' ? '#ffb3b3' : '#ffd9a0';
+        banner.style.display = 'block';
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
+    // one-hour trend (memory only; the long history is in wb_logs/)
+    const now = Date.now() / 1000;
+    if (now - wbLastTrend >= 10 && (t.iin_a !== undefined || t.temp_c !== undefined) && !t.stale) {
+      wbLastTrend = now;
+      wbTrend.push({t: now, i: t.iin_a, temp: t.temp_c});
+      while (wbTrend.length && wbTrend[0].t < now - 3600) wbTrend.shift();
+    }
+    wbDrawTrend();
+  }
+  function wbDrawTrend() {
+    const c = $id('wb-trend');
+    if (!c || !c.offsetParent) return;
+    const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+    if (c.width !== Math.round(w * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    g.strokeStyle = '#1e2a38';
+    for (let k = 1; k < 4; k++) { g.beginPath(); g.moveTo(0, h * k / 4); g.lineTo(w, h * k / 4); g.stroke(); }
+    if (wbTrend.length < 2) {
+      g.fillStyle = '#555'; g.font = '11px sans-serif'; g.fillText('collecting…', 8, h / 2 + 4);
+      return;
+    }
+    const now = Date.now() / 1000, x = p => w - (now - p.t) / 3600 * w;
+    const series = (key, color, unit, alignRight) => {
+      const v = wbTrend.map(p => p[key]).filter(q => q !== undefined && q !== null);
+      if (!v.length) return;
+      let lo = Math.min(...v), hi = Math.max(...v);
+      const pad = Math.max((hi - lo) * 0.15, key === 'i' ? 0.05 : 0.5);
+      lo -= pad; hi += pad;
+      const y = q => h - 4 - (q - lo) / (hi - lo) * (h - 8);
+      g.strokeStyle = color; g.lineWidth = 1.5; g.beginPath();
+      let started = false;
+      for (const p of wbTrend) {
+        if (p[key] === undefined || p[key] === null) continue;
+        if (!started) { g.moveTo(x(p), y(p[key])); started = true; } else g.lineTo(x(p), y(p[key]));
+      }
+      g.stroke();
+      g.fillStyle = color; g.font = '10px sans-serif';
+      const top = (key === 'i' ? hi.toFixed(2) : hi.toFixed(0)) + unit, bot = (key === 'i' ? lo.toFixed(2) : lo.toFixed(0)) + unit;
+      g.fillText(top, alignRight ? w - g.measureText(top).width - 3 : 3, 11);
+      g.fillText(bot, alignRight ? w - g.measureText(bot).width - 3 : 3, h - 3);
+    };
+    series('i', '#4fc3f7', ' A', false);
+    series('temp', '#ffb74d', ' °C', true);
+  }
+
   function updateSystemStatus(status) {
     setServerOs(status.platform || (status.hw && status.hw.os), status.source_tree);
     // KerberosSDR manual-calibration warnings (heimdall --kerberos). The
@@ -23510,6 +23692,9 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
         el.innerHTML = parts.join(' \u2502 ');
       }
     }
+
+    // Wideband board telemetry (absent unless heimdall runs --wideband)
+    updateWbTelemetry(status.wb_telemetry);
 
     // Update GPS status panel
     if (status.gps) updateGpsStatus(status.gps);

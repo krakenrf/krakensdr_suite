@@ -1,3 +1,4 @@
+#include "wb_board.hpp"
 #include "utils/platform.hpp"
 #include "message_builders.hpp"
 #include "globals.hpp"
@@ -623,6 +624,10 @@ string MessageBuilders::build_system_status_message() {
              << ",\"est_sources\":" << est_sources << "}";
     }
     json << "]";
+
+    // KrakenSDR Wideband board: heimdall's "downconverter" object (fw, LO,
+    // telemetry with alarm states) as received, plus its age (wb_board.cpp)
+    if (const std::string wb = wb_board_json(); !wb.empty()) json << ",\"wb_telemetry\":" << wb;
 
     // Include hardware stats (CPU temp, CPU usage, RAM)
     auto hw = get_hardware_stats();
