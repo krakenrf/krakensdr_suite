@@ -473,7 +473,16 @@ body:not(.ai-dk-col) .ai-strip {display:none !important}
 .top-bar .hw-stats {margin-left:auto;font-size:12px;color:#8aa8c7;white-space:nowrap;font-family:'Consolas',ui-monospace,'Menlo','Monaco','Courier New',monospace;padding:0 8px;
   min-width:31ch;text-align:right}  /* fixed width: changing digits must not re-wrap the bar */
 /* Telemetry fields: one for the computer running the software, one for the Wideband board */
-.top-bar .tele-group {margin-left:auto;display:flex;gap:8px;align-items:center}
+/* The telemetry stays pinned to the right edge: it comes last (order) and the
+   status badges, whose text changes all the time, sit to its left with fixed
+   widths - a badge that changes or hides must not push anything around. */
+.top-bar .tele-group {margin-left:auto;order:99;display:flex;gap:8px;align-items:center}
+.top-bar .status-badges {margin-left:0}
+.top-bar #status-connection {min-width:104px}
+.top-bar #status-mode {min-width:86px}
+.top-bar #status-calibration {min-width:170px}   /* "Verifying (Noise On)" */
+.top-bar #status-cooldown {min-width:108px}
+.top-bar #status-scanner {min-width:52px}
 .top-bar .tele-chip {margin-left:0;min-width:0;display:inline-flex;align-items:center;gap:7px;padding:3px 9px 3px 0;
   border:1px solid #2c4a6e;border-radius:6px;background:rgba(8,18,32,.55);line-height:1.3}
 .top-bar .tele-chip .tele-lbl {font-family:Arial,sans-serif;font-size:10px;font-weight:bold;letter-spacing:.6px;text-transform:uppercase;
@@ -1101,6 +1110,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
   .top-bar .tb-sep {display:none}
   .top-bar .hw-stats {display:none}
   .top-bar .status-badge {font-size:11px;padding:3px 8px}
+  .top-bar .status-badges .status-badge {min-width:0 !important}
+  .top-bar #status-cooldown[style*="hidden"] {display:none}
   .top-bar .status-badges {flex-wrap:wrap}
   .spectrum-header .hint {display:none}
   .wf-controls select {max-width:120px}
@@ -2222,7 +2233,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <span class="status-badge" id="status-connection" style="background:#b71c1c">Disconnected</span>
         <span class="status-badge" id="status-mode">Coherent</span>
         <span class="status-badge" id="status-calibration">Calibrating</span>
-        <span class="status-badge" id="status-cooldown" style="display:none">Cooldown</span>
+        <span class="status-badge" id="status-cooldown" style="visibility:hidden">Cooldown</span>
         <span class="status-badge" id="status-scanner">Idle</span>
       </div>
     </div>
@@ -23759,11 +23770,11 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
           if (!cooldownTickTimer) cooldownTickTimer = setInterval(updateCooldownBadge, 200);
         }
         updateCooldownBadge();
-        cooldownEl.style.display = 'inline-block';
+        cooldownEl.style.visibility = 'visible';   // hidden, not removed: the row must not reflow
       } else {
         cooldownEndTime = null;
         if (cooldownTickTimer) { clearInterval(cooldownTickTimer); cooldownTickTimer = null; }
-        cooldownEl.style.display = 'none';
+        cooldownEl.style.visibility = 'hidden';
       }
     }
 
