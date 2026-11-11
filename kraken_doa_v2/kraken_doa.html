@@ -472,6 +472,14 @@ body:not(.ai-dk-col) .ai-strip {display:none !important}
 .top-bar .tb-vol {font-size:13px;color:#7cb3f0;min-width:32px}
 .top-bar .hw-stats {margin-left:auto;font-size:12px;color:#8aa8c7;white-space:nowrap;font-family:'Consolas',ui-monospace,'Menlo','Monaco','Courier New',monospace;padding:0 8px;
   min-width:31ch;text-align:right}  /* fixed width: changing digits must not re-wrap the bar */
+/* Telemetry fields: one for the computer running the software, one for the Wideband board */
+.top-bar .tele-group {margin-left:auto;display:flex;gap:8px;align-items:center}
+.top-bar .tele-chip {margin-left:0;min-width:0;display:inline-flex;align-items:center;gap:7px;padding:3px 9px 3px 0;
+  border:1px solid #2c4a6e;border-radius:6px;background:rgba(8,18,32,.55);line-height:1.3}
+.top-bar .tele-chip .tele-lbl {font-family:Arial,sans-serif;font-size:10px;font-weight:bold;letter-spacing:.6px;text-transform:uppercase;
+  color:#cfe0f5;background:#22395a;padding:4px 7px;margin:-3px 0;border-radius:5px 0 0 5px}
+.top-bar #hw-stats {min-width:25ch;text-align:left}
+.top-bar #wb-chip-val {min-width:18ch;text-align:left}
 .top-bar .status-badges {display:flex;gap:6px}
 .top-bar .status-badge {font-size:14px;padding:5px 12px;border-radius:4px;background:#2d4059;color:#fff;font-weight:500;text-align:center;white-space:nowrap}
 .top-bar .gain-group {gap:8px}
@@ -2202,9 +2210,13 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <span class="tb-vol" id="vv">50%</span>
       </div>
       <!-- Hardware Stats -->
-      <span class="hw-stats" id="hw-stats"></span>
-      <!-- Wideband board telemetry chip (heimdall --wideband only) -->
-      <span class="hw-stats" id="wb-chip" style="display:none;cursor:pointer" title="Wideband board (click for details)" onclick="wbOpenSection()"></span>
+      <span class="tele-group">
+        <span class="hw-stats tele-chip" id="hw-chip" style="display:none" title="The computer running this software: CPU temperature, CPU load, memory">
+          <span class="tele-lbl" id="hw-lbl">Host</span><span id="hw-stats"></span></span>
+        <!-- Wideband board telemetry (heimdall --wideband only) -->
+        <span class="hw-stats tele-chip" id="wb-chip" style="display:none;cursor:pointer" title="Wideband board: supply voltage, supply current, board temperature (click for details)" onclick="wbOpenSection()">
+          <span class="tele-lbl">WB board</span><span id="wb-chip-val"></span></span>
+      </span>
       <!-- Status Badges (pushed to right) -->
       <div class="status-badges">
         <span class="status-badge" id="status-connection" style="background:#b71c1c">Disconnected</span>
@@ -3535,16 +3547,13 @@ function computeAutoRange(magnitudes) {
 
   // Set max to show peaks with some headroom
   // Ensure at least 30dB dynamic range for good color spread
-  const minDynamicRange = 30;
+  const minDynamicRange = 40;
   let newMax = Math.ceil(peak + 5);
 
-  // If data range is less than our minimum, expand the range
-  if (newMax - newMin < minDynamicRange) {
-    // Center the range around the data
-    const center = (noiseFloor + peak) / 2;
-    newMin = Math.floor(center - minDynamicRange / 2);
-    newMax = Math.ceil(center + minDynamicRange / 2);
-  }
+  // Less than that in the data (a quiet band, nothing but noise): extend the
+  // range UPWARDS. Centring it on the data put the noise floor in the middle
+  // of the colour scale - an empty band showed as a solid orange/red sheet.
+  if (newMax - newMin < minDynamicRange) newMax = newMin + minDynamicRange;
 
   // Round to nice 5 dB steps
   newMin = Math.floor(newMin / 5) * 5;
@@ -23575,7 +23584,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
       const parts = [];
       if (t.vin_v !== undefined) parts.push(t.vin_v.toFixed(2) + 'V', t.iin_saturated ? '>3.2A' : t.iin_a.toFixed(2) + 'A');
       if (t.temp_c !== undefined) parts.push(t.temp_c.toFixed(0) + '°C');
-      chip.textContent = 'WB ' + parts.join(' ');
+      $id('wb-chip-val').textContent = parts.join(' \u2502 ');
       chip.style.color = worst === 'alarm' ? '#ef5350' : worst === 'warn' ? '#ff9800' : (t.stale ? '#777' : '#8aa8c7');
       chip.style.display = '';
     }
@@ -23690,6 +23699,11 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
         parts.push('CPU ' + h.cpu_pct.toFixed(0) + '%');
         parts.push('RAM ' + (h.ram_used/1024).toFixed(1) + '/' + (h.ram_total/1024).toFixed(1) + 'G');
         el.innerHTML = parts.join(' \u2502 ');
+        // name the computer: "RPi 5" on a Raspberry Pi, "Host" elsewhere
+        const m = /Raspberry Pi (?:Compute Module )?(\d+)/.exec(h.model || '');
+        $id('hw-lbl').textContent = m ? 'RPi ' + m[1] : 'Host';
+        $id('hw-chip').title = (h.model ? h.model + ' - ' : '') + 'the computer running this software: CPU temperature, CPU load, memory';
+        $id('hw-chip').style.display = '';
       }
     }
 

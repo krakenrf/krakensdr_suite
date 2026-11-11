@@ -636,6 +636,7 @@ string MessageBuilders::build_system_status_message() {
     json << ",\"cpu_pct\":" << fixed << setprecision(1) << hw.cpu_usage_pct;
     json << ",\"ram_used\":" << fixed << setprecision(0) << hw.ram_used_mb;
     json << ",\"ram_total\":" << fixed << setprecision(0) << hw.ram_total_mb;
+    if (!hw.model.empty()) json << ",\"model\":\"" << hw.model << "\"";   // e.g. "Raspberry Pi 5 Model B Rev 1.1"
     json << "}";
 
     // Include GPS status (from gpsd). Field names lat/lon/heading/speed/timestamp
