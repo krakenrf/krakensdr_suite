@@ -113,6 +113,11 @@ struct ChannelCompensation {
     // Throttle for the locked-channel drift warning (per channel: touched only
     // by this channel's lag thread, under compensation_mutex)
     std::chrono::steady_clock::time_point last_drift_warning;
+    // Locked-channel sample-slip detector (see the CONVERGED case of
+    // process_channel_lag_compensation): consecutive noise-source readings
+    // that agree on a lag of half a sample or more, and the last such lag.
+    int locked_slip_count = 0;
+    float locked_slip_lag = 0.0f;
 };
 
 struct PhaseCompensationData {
