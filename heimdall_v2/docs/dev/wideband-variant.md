@@ -48,7 +48,7 @@ names refer to sections of the other files in this folder (index:
   (10 mOhm: 4-35 mV, 100 mOhm: 40-350 mV) like the manufacturing test;
   `WB_R_SHUNT_MOHM` forces R6. The INA219 saturates at 320 mV (3.2 A on
   3v0): `iin_saturated`. Alarms (hysteresis, a level clears after 30 s back
-  in range): current > 3.0 A warn / > 3.25 A alarm (3v0: saturated = alarm),
+  in range): current > 3.3 A warn / > 3.6 A alarm (3v0: the INA219 saturates at 3.2 A, saturated = alarm, no warn level),
   voltage < 4.6 / < 4.4 V, temperature > 60 / > 70 C, humidity > 80 % warn,
   3 failed reads in a row = stale. Status JSON `downconverter.fw` and
   `downconverter.telemetry` (`downconverter_status_json_fields()`), one line on

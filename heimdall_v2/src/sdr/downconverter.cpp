@@ -554,12 +554,14 @@ std::string fmt(double v, int prec) {
 
 void evaluate_alarms(Telemetry& t) {
     const auto now = Clock::now();
-    // input current: 3v0's INA219 saturates at 3.2 A, so there the alarm is "saturated"
+    // input current: about 2.8 A idle and 3.0 A with the noise source on (every
+    // calibration), so warn from 3.3 A and alarm from 3.6 A. 3v0's INA219
+    // saturates at 3.2 A: no warn level there, the alarm is "saturated".
     if (t.power_ts > 0) {
         auto lvl = [&](double h) {
             if (t.iin_saturated) return Level::ALARM;
-            if (t.revision != "3v0" && t.iin_a > 3.25 - h) return Level::ALARM;
-            return t.iin_a > 3.0 - h ? Level::WARN : Level::OK;
+            if (t.revision != "3v0" && t.iin_a > 3.6 - h) return Level::ALARM;
+            return t.iin_a > 3.3 - h ? Level::WARN : Level::OK;
         };
         if (t.a_iin.update(lvl(0), lvl(0.1), now)) log_alarm("input current", t.a_iin, fmt(t.iin_a, 2) + " A");
         auto vl = [&](double h) {
