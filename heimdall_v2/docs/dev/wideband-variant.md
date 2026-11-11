@@ -98,3 +98,9 @@ names refer to sections of the other files in this folder (index:
   needs the librtlsdr fork with `rtlsdr_set_bias_tee_gpio` (the `librtlsdr/`
   source tree at the repo root, linked statically - see *Dependencies*).
 
+
+## Start-up side selection, web UI and USB loss
+
+- Start-up applies the saved center frequency with the same side rule as a retune: the current side if it reaches the RF, otherwise the automatic one (below side above 4132 MHz).
+- The web UI (port 8070) shows a `Wideband` badge and a board card fed by `STATE.downconverter` (the same object as `get_status` `downconverter`); the antenna bias-tee block is hidden.
+- If every USB reader of the running pipeline ends (the board's on-board USB2517 hub dropped off the bus, cable glitch), heimdall exits with status 1 and `run.sh` restarts it. The LO is not saved to the MCU Flash on that exit.

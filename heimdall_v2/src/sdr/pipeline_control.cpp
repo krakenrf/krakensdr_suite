@@ -24,6 +24,15 @@
 std::atomic<bool> pipeline_running{false};
 std::atomic<bool> reconfig_in_progress{false};
 
+// USB readers of the running pipeline: started / ended on their own (stream
+// died and was not, or could not be, restarted). Once EVERY reader is down
+// nothing can come back without new handles - e.g. the Wideband board's
+// on-board hub dropped off the bus and re-enumerated - so heimdall exits with
+// status 1 and its supervisor (run.sh / krakensdr.exe) restarts it. A partial
+// loss keeps running on the remaining channels as before.
+static std::atomic<int> usb_readers_started{0};
+static std::atomic<int> usb_readers_down{0};
+
 // Globals owned by main.cpp
 extern std::unique_ptr<TcpDataServer> tcp_data_server;
 extern std::unique_ptr<RtlTcpServer> rtl_tcp_server;
@@ -118,10 +127,13 @@ void start_pipeline_threads() {
     // the single most latency-critical thread: if it is preempted longer than
     // the USB ring holds (~218 ms with RTL_USB_BUF_COUNT), the RTL2832 FIFO
     // overflows and samples are silently lost. Give it realtime priority.
+    usb_readers_started.store(0, std::memory_order_release);
+    usb_readers_down.store(0, std::memory_order_release);
     for (int i = 0; i < num_elements; i++) {
         SDRDevice* dev_ptr = devices[i].get();
         if (!dev_ptr || !dev_ptr->dev) continue;
         dev_ptr->running = true;
+        usb_readers_started.fetch_add(1, std::memory_order_acq_rel);
         dev_ptr->async_exited.store(false, std::memory_order_release);
         const int device_index = i;
         dev_ptr->async_thread = std::thread([dev_ptr, device_index]() {
@@ -141,6 +153,19 @@ void start_pipeline_threads() {
                 rtlsdr_read_async(dev_ptr->dev, rtlsdr_callback, dev_ptr, RTL_USB_BUF_COUNT, NUM_SAMPLES * 2);
             }
 #endif
+            // Ended without a stop request: this channel is down for good.
+            if (dev_ptr->running && pipeline_running.load(std::memory_order_acquire) && global_running.load()) {
+                const int down = usb_readers_down.fetch_add(1, std::memory_order_acq_rel) + 1;
+                const int started = usb_readers_started.load(std::memory_order_acquire);
+                std::cerr << "Channel " << device_index << " (Serial " << dev_ptr->serial_number
+                          << "): USB stream ended (" << down << " of " << started << " channels down)" << std::endl;
+                if (down >= started) {
+                    std::cerr << "All USB streams are down (receiver unplugged or its USB hub re-enumerated) - "
+                                 "exiting with status 1 so the supervisor restarts heimdall" << std::endl;
+                    fatal_exit = true;
+                    global_running = false;
+                }
+            }
             dev_ptr->async_exited.store(true, std::memory_order_release);
         });
     }

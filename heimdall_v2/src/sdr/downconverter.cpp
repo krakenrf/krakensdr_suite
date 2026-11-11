@@ -1,4 +1,5 @@
 #include "downconverter.hpp"
+#include "../core/types.hpp"  // fatal_exit
 #include "../../config.h"
 
 #include <algorithm>
@@ -898,7 +899,11 @@ bool downconverter_init(uint64_t initial_rf_hz) {
     // board's LO output is always on; the stock-moRFeus generator-mode
     // command is not sent (unimplemented there).
     if (!downconverter_set_current(WB_LO_CURRENT)) return false;
-    if (!downconverter_apply_rf(initial_rf_hz)) return false;
+    // Startup follows the same rule as a retune: keep the default side when it
+    // reaches the RF, otherwise auto-select (e.g. below side above 4132 MHz).
+    if (!downconverter_rf_valid(initial_rf_hz, downconverter.side.load())) {
+        if (!downconverter_set_side(downconverter_auto_side(initial_rf_hz), initial_rf_hz)) return false;
+    } else if (!downconverter_apply_rf(initial_rf_hz)) return false;
 
     if (fw_date.load() >= WB_MIN_SENSOR_FW) start_poller();
     std::cout << "Downconverter: ready - tuners parked at IF, retunes reprogram the LO ('s', no Flash save)"
@@ -912,7 +917,9 @@ bool downconverter_init(uint64_t initial_rf_hz) {
 void downconverter_close() {
     poller_stop = true;
     std::lock_guard<std::mutex> lock(mrf_mutex);
-    if (WB_SAVE_LO_ON_EXIT && hid_is_open() && fw_date.load() >= WB_MIN_SENSOR_FW) {
+    // Not after a fatal exit: the supervisor restarts heimdall then, possibly
+    // in a loop while the receiver stays away - no Flash write per attempt.
+    if (WB_SAVE_LO_ON_EXIT && !fatal_exit.load() && hid_is_open() && fw_date.load() >= WB_MIN_SENSOR_FW) {
         const uint64_t lo = downconverter.lo_hz.load();
         if (lo) query_locked(CMD_SAVE, FUNC_FREQUENCY, lo, nullptr, WB_HID_REPLY_MS);
         query_locked(CMD_SAVE, FUNC_CURRENT, static_cast<uint64_t>(downconverter.lo_current.load()), nullptr,
