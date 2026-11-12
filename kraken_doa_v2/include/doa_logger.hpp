@@ -24,13 +24,15 @@ struct sqlite3_stmt;
 
 // One bearing line for one decimator at one instant. Mirrors a DOA_value.html row.
 struct DoaRecord {
-    int64_t  timestamp_ms = 0;     // capture time (system_clock) — the written timestamp
-    int64_t  source_stamp_ms = 0;  // MUSIC frame stamp — dedup key only, never written
+    int64_t  timestamp_ms = 0;     // capture time; internal logging/record provenance
+    // Android Doppler compatibility adjustment (2026): keep source-frame identity.
+    int64_t  source_stamp_ms = 0;  // MUSIC frame stamp — legacy freshness + dedup key
     int      decimator_id = 0;
     float    app_bearing = 0;      // 360 - bearing, wrapped to [0,360); sub-degree
                                    // (parabolic-interpolated peak), as in DOA_value.html
     double   confidence = 0.0;
-    double   power_db = 0.0;
+    double   power_db = 0.0;          // Internal MUSIC eigenvalue-derived metric
+    double   legacy_power_db = -100.0; // Legacy Android RF-like peak [-100, 0] dB
     uint64_t freq_hz = 0;
     std::string antenna;           // "UCA" / "ULA" / "Custom"
     std::string station_id_csv;    // comma/newline-stripped callsign
