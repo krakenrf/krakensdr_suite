@@ -11,8 +11,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 - `WB_VARIANT_IF_HZ` (1268 MHz), `WB_LO_MIN_HZ`/`WB_LO_MAX_HZ`: must match
   `heimdall_v2/config.h`; give the UI its RF limits and the LO readout
 - Mixer side FOLLOWS THE FREQUENCY: the FREQ handler auto-selects when the
-  current side can't reach the RF (`wb_auto_side`: high <= 4132 MHz, below
-  above) and records/broadcasts the change; heimdall applies the same rule
+  current side can't reach the RF or the retune crosses
+  `WB_SIDE_CROSSOVER_HZ` (`wb_side_for_retune`; `wb_auto_side`: high below
+  2200 MHz, below from it up - the high side loses conversion gain as its LO
+  climbs) and records/broadcasts the change; heimdall applies the same rule
   on its own retunes. `MIXER_SIDE:high|low|below` is a manual override for
   RFs several sides can reach (image dodging) - rejected (and the persisted
   value restored) when the side can't reach the current RF; the UI greys

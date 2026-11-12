@@ -14,12 +14,14 @@
 // side (Mix High/Low/Below in the web UI) places around the IF:
 //
 //   high:  LO = IF + RF  (difference product LO - RF lands at the IF,
-//          spectrum arrives mirrored; corrected in software), RF 24-4132 MHz
+//          spectrum arrives mirrored; corrected in software), RF 24-4132 MHz (picked
+//          automatically below WB_SIDE_CROSSOVER_HZ)
 //   low:   LO = IF - RF  (sum product LO + RF lands at the IF, upright),
 //          RF 24-1183 MHz
 //   below: LO = RF - IF  (LO below the RF; difference product RF - LO lands
 //          at the IF, upright), RF 1353-6668 MHz - the only side that
-//          reaches past the synthesizer ceiling, up to IF + LO_MAX
+//          reaches past the synthesizer ceiling, up to IF + LO_MAX (picked
+//          automatically from WB_SIDE_CROSSOVER_HZ up)
 //
 // For any LO both RF = LO - IF and RF = LO + IF fold into the IF; the side
 // choice decides which is the wanted signal and which the image (2*IF away).
@@ -82,10 +84,16 @@ bool downconverter_rf_valid(uint64_t rf_hz, MixerSide side);
 // the requested RF.
 void downconverter_rf_union_range(uint64_t& min_hz, uint64_t& max_hz);
 
-// Preferred side for an RF the current side can't reach: high covers
-// everything up to its ceiling (low is a strict subset of high's range),
-// below covers the rest.
+// Preferred side for an RF: high below WB_SIDE_CROSSOVER_HZ, below from it
+// up (the high side's conversion gain falls off as its LO climbs; low is a
+// strict subset of high's range and only ever a manual choice).
 MixerSide downconverter_auto_side(uint64_t rf_hz);
+
+// Side for a retune from prev_rf_hz to rf_hz: the current side (it may be a
+// manual choice) as long as it reaches the RF and the retune stays on one
+// side of WB_SIDE_CROSSOVER_HZ; the preferred side when it cannot reach the
+// RF or the retune crosses the crossover.
+MixerSide downconverter_side_for_retune(MixerSide current, uint64_t prev_rf_hz, uint64_t rf_hz);
 
 // Antenna ring dictated by the RF: 0 = outer (< WB_RING_CENTER_MIN_HZ),
 // 1 = center (< WB_RING_INNER_MIN_HZ), 2 = inner.

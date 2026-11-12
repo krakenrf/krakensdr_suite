@@ -70,6 +70,13 @@
 #define WB_VARIANT_IF_HZ    1268000000ULL  // fixed IF the tuners are parked at
 #define WB_LO_MIN_HZ        85000000ULL    // synthesizer LO limits (moRFeus-class)
 #define WB_LO_MAX_HZ        5400000000ULL
+// Automatic mixer side: high below this RF, below from it up. Measured on the
+// 3v0 board (common CW into all five inputs, same RF on both sides): the high
+// side loses conversion gain as its LO climbs - 16 dB behind the below side at
+// 2300 MHz (LO 3568), 38 dB at 3600, no usable signal from 3900 (LO > 5.1
+// GHz) - while the below side is level with it or better from 1700 MHz up.
+// Must match the client's WB_SIDE_CROSSOVER_HZ.
+#define WB_SIDE_CROSSOVER_HZ 2200000000ULL
 #define WB_LO_CURRENT       3              // default LO output drive current (0-7),
                                            // runtime-adjustable from the client UI
 #define WB_RF_MIN_HZ        24000000ULL    // lowest RF the front end usefully passes

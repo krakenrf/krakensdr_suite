@@ -761,11 +761,12 @@ bool wideband_retune_rf(uint64_t rf_hz, const std::vector<std::unique_ptr<SDRDev
     std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
     // Mixer side follows the frequency: keep the current side (it may be a
     // user preference, e.g. low for image dodging) as long as it can reach
-    // the RF, otherwise auto-select.
+    // the RF and the retune stays on one side of WB_SIDE_CROSSOVER_HZ,
+    // otherwise auto-select (current_frequency is still the RF being left).
     // The side is committed only once the LO write succeeds, so a failed
     // retune leaves side, LO and spectral-inversion correction consistent.
-    if (!downconverter_rf_valid(rf_hz, downconverter.side.load())) {
-        const MixerSide side = downconverter_auto_side(rf_hz);
+    const MixerSide side = downconverter_side_for_retune(downconverter.side.load(), current_frequency.load(), rf_hz);
+    if (side != downconverter.side.load()) {
         if (!downconverter_set_side(side, rf_hz)) return false;
         std::cout << "Wideband: mixer side auto-selected " << mixer_side_name(side)
                   << " for RF " << rf_hz / 1e6 << " MHz" << std::endl;

@@ -1305,8 +1305,10 @@ with `--wideband` (`-w`) on BOTH apps, or `./run.sh --wideband` for the stack.
   `LO = IF - RF` (RF 24-1183 MHz, upright) or below `LO = RF - IF` (LO under
   the RF, RF 1353-6668 MHz, upright - the only side past 4.1 GHz). Every
   retune runs `wideband_retune_rf()` (heimdall sdr_init.cpp): keeps the
-  current side if it can reach the RF, else auto-selects (high up to its
-  ceiling, below above it). Manual override where several sides reach the
+  current side if it can reach the RF and the retune stays on one side of
+  `WB_SIDE_CROSSOVER_HZ` (2200 MHz), else auto-selects (high below the
+  crossover, below from it up - the high side loses conversion gain as its
+  LO climbs). Manual override where several sides reach the
   RF (image dodging): client `MIXER_SIDE:high|low|below` -> heimdall
   `set_mixer_side`, which REJECTS a side that can't reach the current RF
   (the UI greys those buttons out). Side changes trigger the normal retune

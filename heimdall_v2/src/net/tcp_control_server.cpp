@@ -759,7 +759,9 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
     // low (LO = IF - RF) is upright but caps the RF below the IF; below
     // (LO = RF - IF) is upright and the only side past 4132 MHz (up to
     // 6668 MHz). The side normally follows the frequency automatically
-    // (wideband_retune_rf); this override only accepts sides that can reach
+    // (wideband_retune_rf: high below WB_SIDE_CROSSOVER_HZ, below from it up,
+    // re-applied when a retune crosses that frequency); this override only
+    // accepts sides that can reach
     // the CURRENT RF - the client UI greys the others out.
     if (json_str.find("\"set_mixer_side\"") != std::string::npos) {
         if (!downconverter.enabled.load()) {
