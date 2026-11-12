@@ -88,7 +88,7 @@ struct Fix {
 
 // 📏 the received level (the page's range from signal strength, kraken_doa.html
 // "📏 RANGE"): a VFO's from vfo_level.cpp (every VFO, every mode); a talker
-// takes the VFO's moments while it is the only one transmitting there
+// takes the VFO's moments that lie inside its own transmission
 using Lvl = vlvl::Level;
 
 // --- shared state (mu) --------------------------------------------------------
@@ -192,8 +192,19 @@ struct SVfo {
     int64_t last_stamp = 0;
     double freq = 0;
     Lvl lvl;                 // a talker's (a VFO's comes from vfo_level)
-    uint64_t lvl_seq = 0;    // a VFO's: the vfo_level moment last handed to its talkers
+    uint64_t lvl_seq = 0;    // a VFO's: the vfo_level moment last taken for its talkers
+    std::deque<vlvl::Moment> lvl_wait;   // a VFO's: its moments until the decoder says whose they are
 };
+
+// 📏 a VFO moment goes to the talker whose transmission holds its stream
+// position +- LVL_GUARD_S (the spans' edge precision, as TalkerDoa's frames,
+// + the FFT frame vs the decimated stream: a few 6.8 ms packets apart, the
+// decimator's delay), once an open span has been reported LVL_SETTLE_S past
+// it (P25 / DMR / NXDN name their radio every 320-360 ms superframe); not
+// decided in FRAME_WAIT_S: dropped
+constexpr double LVL_GUARD_S = 0.15;
+constexpr double LVL_SETTLE_S = 0.5;
+constexpr int64_t LVL_WAIT_MS = static_cast<int64_t>(tdoa::FRAME_WAIT_S * 1000);
 
 // position / heading at time t from the track (false: no usable fix then)
 bool fix_at(const std::deque<Fix>& tr, int64_t t, Fix* out, double* yaw_dps) {
@@ -390,6 +401,7 @@ void sampler() {
                 s.freq = freq;
                 s.gate.reset();
                 s.lvl = Lvl{};
+                s.lvl_wait.clear();
                 push({first ? Job::HELLO : Job::RESET, k, freq, {}});
             }
             return s;
@@ -423,12 +435,17 @@ void sampler() {
                 d.frames = s.gate.frames();
                 d.gate = s.gate.gate_m();
                 d.moved = s.gate.moved_m();
-                // 📏 its level (vfo_level.cpp) and a moment counted since the last tick (its talkers')
+                // 📏 its level (vfo_level.cpp); a moment counted since the last tick
+                // waits for its talker (below)
                 vlvl::Level vl;
                 if (vlvl::level(id, &vl)) d.lvl = vl;
                 vlvl::Moment mo;
-                const bool lvl_now = vlvl::moment(id, &mo) && mo.seq != s.lvl_seq;
-                if (lvl_now) s.lvl_seq = mo.seq;
+                const int64_t lvl_t = vlvl::now_ms();
+                if (vlvl::moment(id, &mo) && mo.seq != s.lvl_seq) {
+                    s.lvl_seq = mo.seq;
+                    s.lvl_wait.push_back(mo);
+                }
+                while (!s.lvl_wait.empty() && lvl_t - s.lvl_wait.front().t > LVL_WAIT_MS) s.lvl_wait.pop_front();
                 disp.push_back(std::move(d));
                 const size_t vfo_disp = disp.size() - 1;
 
@@ -527,14 +544,25 @@ void sampler() {
                 }
                 talker_frames(tframes);
                 auto snap = td->snapshot();
-                // 📏 the VFO's level this tick is a talker's while it is the only one
-                // transmitting (not a packet or spatial talker: those share the moment)
-                if (lvl_now) {
-                    const tdoa::TalkerInfo* one = nullptr;
-                    int on_air = 0;
-                    for (const auto& ti : snap)
-                        if (ti.active && !ti.packet && !ti.spatial) { one = &ti; on_air++; }
-                    if (on_air == 1) follow(Key{id, one->id}, freq).lvl.add(mo.t, mo.sig, mo.noise, mo.total, mo.gain);
+                // 📏 the VFO's moments: a talker's when they lie inside its own
+                // transmission, no one else's touching them (spans only: packet /
+                // spatial talkers share the band - no level). By stream position,
+                // not by who is `active` now - that lags the air by the decoder's
+                // latency and stays up to ACTIVE_MS, so a radio keying up right
+                // after another one ended was averaged into the other's level
+                for (auto it = s.lvl_wait.begin(); it != s.lvl_wait.end();) {
+                    const vlvl::Moment& m = *it;
+                    const uint64_t g = static_cast<uint64_t>(LVL_GUARD_S * m.rate);
+                    std::string tid;
+                    const int who = m.pos > g ? td->talker_at(m.pos - g, m.pos + g, static_cast<uint64_t>(LVL_SETTLE_S * m.rate),
+                                                              lvl_t - m.t, &tid)
+                                              : -1;
+                    if (who == 0) {   // not known yet
+                        ++it;
+                        continue;
+                    }
+                    if (who == 1) follow(Key{id, tid}, freq).lvl.add(m.t, m.sig, m.noise, m.total, m.gain);
+                    it = s.lvl_wait.erase(it);
                 }
                 for (auto& ti : snap) add_talker(std::move(ti));
             }

@@ -1642,8 +1642,13 @@ Edit `include/config.hpp`:
   it was rdf_mapper's, coherent + DoA only; the hover readout below needs it
   everywhere), not while `doa_is_calibrating`: its squelch open (or off) ->
   `FFTProcessor::band_power(its tuner - coherent: active_channel, independent
-  / wideband scan: its tuner_channel -, offset, the VFO's bandwidth, 2 DC
-  bins out)`, with that tuner's gain (`ChannelManager::get_gain`) = the
+  / wideband scan: its tuner_channel -, offset, the VFO's bandwidth, NO DC
+  bins out)` (as the FFT squelch: the DC offset is tracked out before the
+  FFT - `convert_uint8_to_complex_float_tracked_dc` - and with +-2 bins
+  left out, as until the review of 2026-11-12, a carrier tuned onto the
+  tuner centre - a CW beacon, AM, a saved-frequency tune - was dropped from
+  its own level: a 1 kHz VFO read 9-11 dB low or got none), with that
+  tuner's gain (`ChannelManager::get_gain`) = the
   band's bins of the tuner's LATEST
   RAW frame (`fft_magnitudes`, not the dB-averaged spectrum - a log average
   reads noise-like signals 2.5 dB low) summed in power, by Parseval / the
@@ -1653,15 +1658,48 @@ Edit `include/config.hpp`:
   size) as nfloor keeps it, -10 log10(N) + 9.773 dB - an exponential's mean
   over its 10th percentile -, or the remembered receiver floor while a
   signal fills the band). A moment counts while the signal is above the
-  band's noise (sig > noise: TDMA's empty slots, squelch-less silence don't
-  pull it down), averaged in power (`vlvl::Level::add`: the first ones'
+  band's noise (TDMA's empty slots, squelch-less silence don't pull it
+  down): `bp.sig > bp.thresh` = BOTH 2x the band's noise (a few dB of
+  ripple across the tuner band) AND the noise's own upper quantile for the
+  band's bins at ~1e-5 per sample (`noise_quantile` in fft_processor.cpp).
+  Plain "sig > noise" (until 2026-11-12) isn't a test for a few bins: a 1
+  kHz VFO (7 bins at FFT 16384, ONE at 1024) on pure noise passed 3.5-14 %
+  of samples - a silent VFO got a level. The quantile: the n bins' sum as
+  a Gamma of shape n_eff = n^2 / Var(sum), Var from the Hamming window's
+  own bin-to-bin power correlation (0.39 / 0.018 at 1 / 2 bins; zero
+  padding - `channel_frame_samples` - spreads it further), by
+  Wilson-Hilferty (on the safe side for shapes 1-200, checked against the
+  exact tail) with Z for 4e-6 (the correlated sum's tail measured ~2x the
+  moment-matched Gamma's) and the noise estimate's own error folded in
+  (nfloor's percentile: 11 % at FFT 1024, 2.8 % at 16384). Measured, noise
+  only (scratch t_bp2.cpp, 0.2-9.6 M samples per case): <= 1.1e-5 at FFT
+  1024 / 16384 / 65536 zero-padded x4, 1 / 3 / 12.5 kHz, at and off the
+  centre (before: up to 1.4e-1). THE COST: a narrow VFO needs more SNR for
+  a moment - 1 kHz at FFT 16384 passes 99.9 % at +10 dB band SNR, 46 % at
+  +6 (those reading +1.2 dB high: only the moments the noise added to
+  pass), 5 % at +3 (+3.6 dB); 12.5 kHz as before (99.9 % at +3). The range
+  panel warns "weak" below 10 dB. No consecutive-sample rule (short bursts
+  keep their level). Averaged in power (`vlvl::Level::add`: the first ones'
   mean, then EMA 0.2 ~ 0.5 s; a gap > 3 s or another gain starts afresh;
   held after, its age sent; reset on a retune > 10 kHz). `vlvl::level()` =
-  the average, `vlvl::moment()` = the latest moment with a growing `seq`.
-  rdf_mapper takes a VFO's level from it, and hands each NEW moment (by seq)
-  to a TALKER while it is the only active non-packet, non-spatial talker on
-  that VFO (packet talkers - aircraft, ships - and spatial ones share the
-  band: no level). Sent as `lvl: {dbfs (the signal without the noise),
+  the average, `vlvl::moment()` = the latest moment with a growing `seq`,
+  its VFO stream position (`pos`, DecimatorInstance::stream_pos) and rate.
+  rdf_mapper takes a VFO's level from it; A TALKER's level = the VFO's
+  moments that lie INSIDE ITS OWN TRANSMISSION by stream position, as its
+  MUSIC frames are matched (`TalkerDoa::talker_at(pos -+ LVL_GUARD_S 0.15
+  s, settle LVL_SETTLE_S 0.5 s)` on the spans: 1 = one named span holds
+  it, none other touches it, closed or already reported 0.5 s past it - P25
+  extends the old radio's span over a new radio's first frames until its
+  LDU1 names it; 0 = wait - no span yet / "?" / a slot's channel hold; -1 =
+  two spans or across a span's edge: dropped). Each new moment waits in the
+  VFO's `lvl_wait` (<= FRAME_WAIT_S 6 s). Until 2026-11-12 the moment went
+  to the one talker flagged `active` at that tick - `active` lags the air
+  by the decoder's latency and stays up to ACTIVE_MS: a radio keying up
+  right after another was averaged into the other's level. Now a talker's
+  level comes ~0.65 s + the decoder's latency late and leaves out 0.15 s at
+  each end of a transmission; not measured live (reasoned against
+  talker_doa.cpp / p25.cpp). Packet talkers - aircraft, ships - and spatial
+  ones have no spans: no level. Sent as `lvl: {dbfs (the signal without the noise),
   noise (the band's), total (the whole tuner band: ADC load - summed by the
   FFT loop itself, `channel_frame_power`, so band_power only reads the
   band's bins under fft_mutex), gain (dB, -1 AGC), age (s), n}`
@@ -1748,12 +1786,25 @@ Edit `include/config.hpp`:
   link both ways in pathloss_validate.mjs) and a transmitter at the TX
   antenna height (`rgState.txH`, above ground) in every cell; radius
   `rgState.r` (default 30, <= 300 km), `vsPlan` rings, k 4/3, helpers as
-  the viewshed's (`vsPar`). Key (`rgKey` = JSON of `rgSweepMsg`): the
-  station rounded to 1e-4 deg, our antenna height (`rgStH`: the setting,
-  else the viewshed station's, else 5 m), the radius, f to 3 significant
-  digits (0.3 %: < 0.03 dB), the model, polarization, both clutters, N0 /
-  ITM's climate + ground (the 📶 Signal settings'). One job at a time, a
-  newer key cancels it. The viewshed's signal mode is untouched (the
+  the viewshed's (`vsPar`). The job (`rgSweepMsg`): its ORIGIN (the
+  station rounded to 1e-4 deg) + the settings (`rgSKey`: our antenna
+  height - `rgStH`: the setting, else the viewshed station's, else 5 m -,
+  the radius, f to 3 significant digits (0.3 %: < 0.03 dB), the model,
+  polarization, both clutters, N0 / ITM's climate + ground - the 📶 Signal
+  settings'). One job at a time, only while the map is shown
+  (`rgMapShown`); a settings change cancels it at once. THE ORIGIN FOLLOWS
+  THE STATION WITH HYSTERESIS (`rgFits`, the review of 2026-11-12: the key
+  held the live rounded position and any change cancelled the sweep -
+  driving at 10 m/s it changed every second while a sweep takes 6-20 s, so
+  no estimate ever came, and parked GPS jitter threw results away): a
+  static location exactly and at once (cancelling); a GPS / compass
+  station's only once it is beyond `rgTolM()` = max(`RG_ORG_M` 30 m,
+  `RG_ORG_FR` 0.5 % of the radius), at most every `RG_ORG_MS` 30 s from the
+  last sweep's start (as `vsFollowStation`), and a running sweep is never
+  cancelled for it; estimates keep coming from the last sweep while the
+  station is within `RG_ORG_USE` 10 x that of its origin, the panel saying
+  "↻ worked out N m back - updating…" (not for a held estimate). The
+  viewshed's signal mode is untouched (the
   station stays out of it - the user's call 2026-10-12 was about coverage)
 - THE POSTERIOR (a worker of its own, `rgPostMain` - a few million cells; the
   page stays responsive): `init` = the sweep's rings (copies of loss / fad)
@@ -1776,10 +1827,17 @@ Edit `include/config.hpp`:
     hypot(sigma_L (P.1546 for the TRANSMITTER's end: 0.5 / 1.0 / 1.2 + 1.3
     log f by its clutter + height, `rgSigmaL`), model error `sigM` (4), the
     EIRP's `sigE`, the calibration's `sigC`) with the fading around it:
-    auto = Rician whose K follows the path per cell (`rgKeffQ` = plKeff with
-    this panel's K; the tables per K level + idx[fadQ] as plRelSet), or
+    auto = Rician whose K follows the path per cell - the 📶 path loss's
+    OWN helpers with this panel's settings: `plRelSet(sigma, rgState)`,
+    `plKeff / plKeffQ(.., K)`, `plAutoFade / plFading(.., s)` take the
+    settings as a parameter defaulting to plState (the range's copies -
+    rgKeffQ, rgLik's table code, rgKm = vsFmtM - were removed 2026-11-12;
+    plRelSet's idx cache is per K, `plKidxs`, so the two K don't evict each
+    other; the path loss's tables bit-identical before / after, scratch
+    pl_baseline.mjs, 8 settings) -, or
     Rician / Rayleigh / none (a moving transmitter averaged it out). Sent as
-    nk x 481 values every 0.25 dB from -50 dB; idx (65536) once per K
+    nk x 481 values every 0.25 dB from -50 dB; idx (65536) once per K;
+    `rgLik` cached by sigma / fade / K / model
   - the HIGHEST-DENSITY REGIONS: the mass by density (0.01 decade bins over
     12 decades) summed from the top -> each cell's c = the share of the
     probability in places at least as likely -> u8 1 + c / 0.99 x 254 (0 =
@@ -1816,17 +1874,29 @@ Edit `include/config.hpp`:
   + `rgPostPump`: one post at a time; a setting / the source changed: after
   0.3 s, the live lobe / level only every `RG_LIVE_MS` 2.5 s (each post is
   ~0.1 s on the dev PC at 30 km, 4 rings - several times that in a Pi's
-  browser); not while the map isn't shown. The snapshot (`rgSnap`): the
-  source's lobe + level + where the station was; the lobe gone -> the last
-  one HELD (said, with the level's age) until Clear (`rgClear`) or a new
-  one. Hover (`rgHover` from vsHover): the region %, distance / bearing,
+  browser); not while the map isn't shown (`rpApply` draws the map when it
+  shows again, so the sweep starts then). `rgPostPump` works out its key
+  from cheap inputs first - `rgAng` / `rgLik` only for a post that goes out
+  (rgDraw pumps on every map draw). The snapshot (`rgSnap`): the
+  source's lobe + level + where the station was - LIVE only while the level
+  is fresh (its age now < `RG_FRESH_S` 2.75 s; the server starts a new
+  average after 3 s): with the squelch off MUSIC keeps publishing lobes on
+  noise after the transmitter stopped, and estimates from a random bearing +
+  the old level made the map jump. The lobe gone or the level old -> the
+  last fresh one HELD (said, with the level's age) until Clear (`rgClear`)
+  or a new one; never a fresh level: "No level yet…" / "No recent level…".
+  The DF selection moved to another source (`rgSrcSet` -> `rgDrop`): the
+  held snapshot, the estimate and the painted result go (the sweep stays),
+  and the post in flight is ignored when it comes (`rgPostReq = null`; it
+  only releases rgPostBusy) - Clear too, which a reply in flight used to
+  undo. Hover (`rgHover` from vsHover): the region %, distance / bearing,
   the cell's loss and the median level a transmitter there would give vs
   the measured. Map: the radius dashed (faint once painted), ✕ "TX? x km"
   at the spot, the known transmitter (yellow square) while calibrating
 - Panel (`rgPanelBuild`, `rgRender` - from mapDrawNow / mapUpdateControls /
   rgOnStatus, innerHTML only when changed): the source line (dBFS at gain
   -> dBm, SNR, held), the sweep's status, the readout + warnings (edge > 5
-  %, SNR < 6 dB: reads high, total > -8 dBFS: near full scale - lower the
+  %, SNR < 10 dB: may read high, total > -8 dBFS: near full scale - lower the
   gain, uncalibrated, held, no place fits), legend, ◎ / Clear, hover, then
   the fold "Transmitter, our antenna, calibration, model" (`rgState.cfg`,
   open the first time: the map is narrow - the readout first): power +
@@ -1844,7 +1914,15 @@ Edit `include/config.hpp`:
   terrain + P.2108 clutter (buildings / trees otherwise not in the data),
   the median models (no ducting), the EIRP is a guess - its +- widens the
   range; the uncalibrated level +- 3 dB (VHF / UHF; up to ~6.7 at the
-  band's top end); a packet talker has no level
+  band's top end); a packet talker has no level. THE DOWNCONVERTER VARIANT
+  (`wbVariant.enabled`, the review of 2026-11-12): the tuner sits at the IF
+  whatever the RF, so the nominal's frequency term is the IF's
+  (`rgTunerMhz`; at 1268 MHz +4.0 dB: C -12.0 at 49.6 dB - it was the RF's:
+  ~4 dB off at 400 MHz, ~10 at 3 GHz), and the mixer's conversion loss +
+  the front end before it aren't known: `RG_CAL_DC_SD` 6 dB more in squares
+  (+- 7.1), said in the hover, the calibration row and the warnings
+  ("downconverter: its conversion loss isn't in the nominal - calibrate");
+  `rgCalSd`'s "away" test keeps the RF (the conversion loss changes with it)
 - Tests: committed `tools/range_validate.mjs` (node 20+, offline - the
   synthetic terrain of pathloss_validate.mjs through fetch, the page's own
   functions + both workers): the pdf (no fading = the normal pdf to 2e-5;
@@ -1871,7 +1949,22 @@ Edit `include/config.hpp`:
   dBm -> correction +15 on the nominal -16), the calibration row (C = -16.0
   +- 3.0, nominal at 49.6 dB / 446 MHz), the ± growing away from the
   calibration's gain / frequency, the menu item, AGC, held, off, no
-  exceptions
+  exceptions. The review's fixes (2026-11-12, two Opus workers; scratch
+  ui_fix.mjs on harness.mjs, 23 checks in headless Chrome - counts by
+  DevTools breakpoints): a GPS station stepping 15 m per push = one sweep,
+  never cancelled, the estimate after 7 s "worked out 195 m back", the next
+  sweep 30 s after the first, 9 estimates between, parked +-12 m jitter no
+  new sweep, a static move a new sweep at once (a second one cancels);
+  lobes turning while the level ages 3-10.5 s = 0 posts, "held", a fresh
+  level resumes; Clear with a post in flight stays cleared; another source
+  selected = nothing shown, back = its estimate again; 30 map draws + 4
+  identical pushes = 0 rgLik / rgAng / posts, a moved lobe exactly 1; no
+  sweep behind the MUSIC DoA tab, one when the map shows; the downconverter
+  nominal at RF 400 / 3000 MHz (C -12.0 +- 7.1, said) in the panel and the
+  hover; range_validate.mjs 7 (the variant: the IF's term at any RF);
+  pl_baseline.mjs (the path loss's tables unchanged); t_bp2.cpp (the level:
+  the centre carrier, the noise-only false rates, the sensitivity).
+  `tools/range_validate.mjs` extracts the shared pl* helpers now
 
 **Incident map (`src/incidents.cpp`, `geo_address.cpp`, `geo_http.cpp`):**
 - Plugins send free-text messages with `host.message(from, text)`

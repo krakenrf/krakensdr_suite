@@ -1001,6 +1001,31 @@ void TalkerDoa::take_cal(std::vector<CalPacket>* out) {
     out->swap(cal_);
 }
 
+int TalkerDoa::talker_at(uint64_t a, uint64_t b, uint64_t settle, int64_t age_ms, std::string* id) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    const Span* inside = nullptr;
+    const std::string* who = nullptr;
+    bool two = false, may_extend = false;
+    for (const auto& s : spans_) {
+        const bool touches = a < s.end && b > s.start;
+        const bool extend = !s.closed && a >= s.start && b > s.end;   // could still end up inside
+        if (!touches && !extend) continue;
+        if (who && *who != s.id) two = true;
+        who = &s.id;
+        if (s.start <= a && b <= s.end) inside = &s;
+        if (extend) may_extend = true;
+    }
+    if (two) return -1;
+    if (inside) {
+        if (unnamed_talker(inside->id) || (!inside->closed && inside->end < b + settle) ||
+            (inside->channel != 0 && age_ms < CHANNEL_HOLD_MS))
+            return 0;
+        *id = inside->id;
+        return 1;
+    }
+    return !who || may_extend ? 0 : -1;
+}
+
 std::vector<TalkerInfo> TalkerDoa::snapshot() const {
     const int64_t t = now_ms();
     std::lock_guard<std::mutex> lk(mu_);

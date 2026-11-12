@@ -24,10 +24,11 @@
 // latest transmission. A talker's solver is created with its first record;
 // at most MAX_TALKER_MAPS are kept in memory (the stalest one is parked).
 //
-// 📏 Each VFO's (and a talker's, while it alone transmits on its VFO)
-// received level for the page's range from signal strength: the VFO band in
-// the FFT channel's latest frame (FFTProcessor::band_power, dBFS), sampled
-// while the signal is above the band's noise, averaged in power, with the
+// 📏 Each VFO's (and a talker's: the VFO's moments inside its own
+// transmission, TalkerDoa::talker_at) received level for the page's range
+// from signal strength: the VFO band in the FFT channel's latest frame
+// (FFTProcessor::band_power, dBFS, vfo_level.cpp), sampled while the signal
+// is above the band's noise, averaged in power, with the
 // tuner gain of the moment - "lvl" in the status.
 //
 // Settings (persisted): RDF:0|1 (collect, default on), RDF_RANGE_KM:1-50

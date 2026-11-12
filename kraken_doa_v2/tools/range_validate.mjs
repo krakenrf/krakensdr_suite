@@ -21,7 +21,8 @@
 //   roles swapped as the page's rgSweepMsg) = links from the transmitter's
 //   cells to the station, the clutter at its true ends
 // 7 the nominal calibration (RG_CAL_G / RG_CAL_F) vs the published R820T /
-//   R820T2 level measurements it was made from
+//   R820T2 level measurements it was made from; on the Wideband downconverter
+//   variant the IF's frequency term whatever the RF, a wider sigma
 import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
@@ -40,13 +41,14 @@ const fnSrc = name => {
 };
 const [, EPS, ALPHA, NEAR] = H.match(/const RG_EPS = ([\d.]+), RG_ALPHA = ([\d.]+), RG_NEAR_M = (\d+)/).map(Number);
 
-// ---- the page's functions (the settings they read: rgState) ----
+// ---- the page's functions (the settings they read: rgState; the 📶 path
+// loss's helpers take them as a parameter - plState is only their default) ----
 const rgState = {fade: 'none', K: 6, model: 'p1812'};
 const P = new Function('rgState', `
-  const plFadeTabs = new Map(), plRelCache = new Map();
-  let rgKidx = null, rgKidxKey = '';
+  const plFadeTabs = new Map(), plRelCache = new Map(), plKidxs = new Map(), plState = {fade: 'auto', K: 6, model: 'p1812'};
+  let rgLikC = null;
   const RG_EPS = ${EPS}, RG_ALPHA = ${ALPHA};
-  ${['plI0e', 'plFadeTab', 'plFadeCdfDb', 'plPhi', 'plOutage', 'plRelLut', 'rgKeffQ', 'rgAutoFade', 'rgLik', 'rgAng', 'rdfB64'].map(fnSrc).join('\n')}
+  ${['plI0e', 'plFadeTab', 'plFadeCdfDb', 'plPhi', 'plOutage', 'plRelLut', 'plKeff', 'plAutoFade', 'plFading', 'plKeffQ', 'plRelSet', 'rgLik', 'rgAng', 'rdfB64'].map(fnSrc).join('\n')}
   return {rgLik, rgAng};`)(rgState);
 
 // ---- synthetic terrain, served as terrarium PNGs through fetch (as pathloss_validate.mjs) ----
@@ -313,10 +315,12 @@ const ST = [-36.88, 174.62];
 // R820T2, saturation ~-65 dBm at 49.6); J. Clark 2023 (915 MHz, Signal
 // Hound-checked levels in SDR# dBFS)
 {
-  const c0 = name => { const a = H.indexOf(`\nfunction ${name}(`); if (a < 0) throw new Error('no function ' + name); return H.slice(a + 1, H.indexOf('\n}\n', a) + 3); };
-  // (a const up to its first ';' and the rest of that line - a comment)
-  const k0 = name => { const m = new RegExp(`\\nconst ${name} = [\\s\\S]*?;[^\\n]*\\n`).exec(H); if (!m) throw new Error('no const ' + name); return m[0]; };
-  const M = new Function(`${k0('RG_CAL_G')}${k0('RG_CAL_F')}${k0('RG_CAL_SD')}${c0('rgInterp')}\n${c0('rgCalNom')}\n${c0('rgCalNomSd')}\nreturn {rgCalNom, rgCalNomSd};`)();
+  // (the globals block's calibration: from RG_CAL_G to the end of rgCalSd, with the
+  // downconverter variant's state (wbVariant) and the settings (rgState) given)
+  const a0 = H.indexOf('\nconst RG_CAL_G = '), a1 = H.indexOf('\n}\n', H.indexOf('\nfunction rgCalSd(')) + 3;
+  if (a0 < 0 || a1 < a0) throw new Error('no calibration block');
+  const wb = {enabled: false, ifHz: 1268e6}, cs = {calHow: '', calOff: 0, calF: 0, calG: 0, sigC: 3};
+  const M = new Function('wbVariant', 'rgState', H.slice(a0 + 1, a1) + '\nreturn {rgCalNom, rgCalNomSd, rgCalSd, RG_CAL_DC_SD};')(wb, cs);
   const pts = [   // [gain dB, MHz, C, source]
     [0, 895, -14.7, 'WPI mean'], [0, 144, -15, 'N8UR'], [12.5, 144, -20.5, 'N8UR'], [22.9, 144, -21.1, 'N8UR'], [37.2, 144, -19.8, 'N8UR'],
     [49.6, 144, -17.4, 'N8UR'], [49.6, 145, -14.4, 'HB9AJG'], [49.6, 435, -20.4, 'HB9AJG'], [49.6, 145, -15.4, 'Adams'],
@@ -328,6 +332,22 @@ const ST = [-36.88, 174.62];
         `7 the nominal calibration vs ${pts.length} published points: mean ${mean.toFixed(2)}, rms ${rms.toFixed(2)}, worst ${worst.toFixed(1)} dB ` +
         `(${pts[res.indexOf(worst)][3]}), all within 2 sigma; C(49.6 dB, 146 MHz) ${M.rgCalNom(49.6, 146).toFixed(1)}, C(0, 895) ` +
         `${M.rgCalNom(0, 895).toFixed(1)}, C(49.6, 1400) ${M.rgCalNom(49.6, 1400).toFixed(1)} +- ${M.rgCalNomSd(1400).toFixed(1)}`);
+  // the Wideband downconverter variant: every tuner at the IF (1268 MHz) - the frequency
+  // term is the IF's whatever the RF, the sigma wider by the unknown conversion loss
+  const ifC = M.rgCalNom(49.6, 1268), ifSd = M.rgCalNomSd(1268), rf400 = M.rgCalNom(49.6, 400);
+  wb.enabled = true;
+  const dc = [24, 400, 1268, 3000, 6000].map(f => [M.rgCalNom(49.6, f), M.rgCalNomSd(f)]);
+  const dcOk = dc.every(([c, sd]) => Math.abs(c - ifC) < 1e-9 && Math.abs(sd - Math.hypot(ifSd, M.RG_CAL_DC_SD)) < 1e-9);
+  // calibrated at 400 MHz: away in RF (the conversion loss changes) but no roll-off difference (the tuner stays at the IF)
+  Object.assign(cs, {calHow: 'test', calF: 400, calG: 49.6, sigC: 1.5});
+  const sdDcAway = M.rgCalSd(49.6, 3000), sdDcHere = M.rgCalSd(49.6, 410);
+  wb.enabled = false;
+  const sdAway = M.rgCalSd(49.6, 3000);
+  Object.assign(cs, {calHow: '', calF: 0, calG: 0, sigC: 3});
+  check(dcOk && Math.abs(rf400 - M.rgCalNom(49.6, 400)) < 1e-9 && ifSd > 3 && Math.abs(sdDcAway - Math.hypot(1.5, 1.5)) < 1e-9 && sdDcHere === 1.5 && sdAway > sdDcAway + 3,
+        `7 the downconverter variant: C(49.6 dB) ${dc[1][0].toFixed(2)} at RF 24 / 400 / 1268 / 3000 / 6000 MHz = the IF's ${ifC.toFixed(2)} (without it at 400 MHz ` +
+        `${rf400.toFixed(1)}), +- ${dc[1][1].toFixed(2)} = hypot(${ifSd.toFixed(2)}, ${M.RG_CAL_DC_SD}); calibrated at 400 MHz: at 3000 MHz +- ${sdDcAway.toFixed(2)} (no roll-off term; ` +
+        `without the variant ${sdAway.toFixed(2)}), at 410 MHz ${sdDcHere}`);
 }
 console.log(fails ? `${fails} FAILED` : 'ALL PASS');
 process.exit(fails ? 1 : 0);

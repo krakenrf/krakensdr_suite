@@ -19,6 +19,46 @@ namespace {
     // 📏 each channel's latest frame: the sum of its bins' power (the scale's
     // units, the window in it) - band_power's ADC load. Under fft_mutex
     float channel_frame_power[MAX_CHANNELS] = {};
+    // ... and the samples in it (fewer than the FFT size = zero-padded: the
+    // bins are correlated further apart - band_power's noise quantile)
+    int channel_frame_samples[MAX_CHANNELS] = {};
+
+    // 📏 the band power a band of n raw bins must exceed to be a signal, as a
+    // multiple of its mean noise: the noise's own upper quantile for a false
+    // alarm probability of ~1e-5 per sample (10 / s: one false moment in ~3 h).
+    // A raw bin's power is exponential, n of them sum to ~Gamma - shape
+    // n_eff < n, from the sum's variance: neighbouring Hamming bins are
+    // correlated (power rho 0.39 / 0.018 at 1 / 2 bins; zero-padded by `pad`
+    // the window's w^2 spectrum is sampled pad times finer). The quantile by
+    // Wilson-Hilferty (normal in the cube root; above the exact Gamma's for
+    // shapes 1-10), Z for 4e-6: the correlated sum's tail is heavier than the
+    // moment-matched Gamma's - twice the false moments at 3-80 bins (measured,
+    // the true noise). Plus the mean noise's own error: nfloor's 10th
+    // percentile of 0.8 fft / pad independent bins, sd sqrt(0.09 / M) /
+    // (0.9 x 0.1054) relative - 11 % at FFT 1024 (3x the false moments
+    // without it), 2.8 % at 16384 - in the cube root's spread
+    double noise_quantile(int n, double pad, int fft_size) {
+        auto sinc = [](double x) { return std::fabs(x) < 1e-9 ? 1.0 : std::sin(M_PI * x) / (M_PI * x); };
+        // w^2 = 0.3974 - 0.4968 cos + 0.1058 cos 2x over the frame: its spectrum
+        // at f resolution bins
+        auto w2 = [&](double f) {
+            return 0.3974 * sinc(f) + 0.2484 * (sinc(f - 1) + sinc(f + 1)) + 0.0529 * (sinc(f - 2) + sinc(f + 2));
+        };
+        double var = n;   // in mean^2: n + 2 sum (n - d) rho(d)
+        const int dmax = std::min(n - 1, static_cast<int>(std::ceil(4 * pad)));
+        for (int d = 1; d <= dmax; d++) {
+            const double r = w2(d / pad) / 0.3974;
+            var += 2.0 * (n - d) * r * r;
+        }
+        const double k = static_cast<double>(n) * n / var;
+        constexpr double Z = 4.4654;   // the normal's 1 - 4e-6 quantile
+        const double m = 1 - 1 / (9 * k), v = 1 / (9 * k);   // the cube root's mean / variance
+        const double s = 3.164 * std::sqrt(pad / (0.8 * fft_size));
+        // y = m + Z sqrt(v + y^2 s^2 / 9): the estimate's error scales the quantile
+        const double a = Z * Z * s * s / 9;
+        const double y = (m + std::sqrt(a * m * m + (1 - a) * Z * Z * v)) / (1 - a);
+        return y * y * y;
+    }
 
     // Helper: Calculate noise floor from FFT data using 10th percentile method
     // Uses the center 80% of bins to avoid edge rolloff
@@ -356,6 +396,7 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
         fft_averaged[channel][i] = alpha * db + (1.0f - alpha) * fft_averaged[channel][i];
     }
     channel_frame_power[channel] = frame_power;
+    channel_frame_samples[channel] = static_cast<int>(max_samples);
 
     // The channel's noise floor for this frame (the 0 dB reference of the
     // display, squelch and scanner) - remembered when a signal fills the band
@@ -885,6 +926,10 @@ bool FFTProcessor::band_power(int channel, float offset_hz, float bandwidth_hz, 
     const double noise = in_band * std::pow(10.0, noise_db / 10.0);
     out->sig = (band - noise) / WIN_POWER;
     out->noise = noise / WIN_POWER;
+    // (the bins left out: the rest's quantile, scaled up with them)
+    const int samples = channel_frame_samples[channel];
+    const double pad = samples > 0 && samples < fft_size ? static_cast<double>(fft_size) / samples : 1.0;
+    out->thresh = out->noise * std::max(1.0, noise_quantile(used, pad, fft_size) - 1.0);
     out->total = channel_frame_power[channel] / WIN_POWER;
     out->bins = in_band;
     return true;

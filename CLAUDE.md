@@ -1207,9 +1207,15 @@ or one radio's) probably is, from its signal strength over the terrain
   own tuner + gain) samples `FFTProcessor::band_power` (the VFO band in the
   tuner's latest RAW FFT frame, Parseval, the Hamming window's 0.3974 taken
   out, the band's noise - `nfloor::bin_noise_db`, the frame's 10th
-  percentile + 9.77 dB - taken out) every 100 ms while it is above the
-  noise (and the squelch open), averaged in power; rdf_mapper hands a
-  moment to a talker while it alone transmits on its VFO
+  percentile + 9.77 dB - taken out; the tuner-centre bins included) every
+  100 ms while it is above the noise - 2x it AND the noise's own ~1e-5
+  quantile for the band's bins (`BandPower::thresh`: a 1 kHz VFO needs
+  ~+10 dB SNR for a level on every sample; "sig > noise" alone gave silent
+  narrow VFOs a level) - and the squelch open, averaged in power; a talker
+  gets the VFO's moments that lie inside its own transmission by stream
+  position (`TalkerDoa::talker_at`, as its MUSIC frames - not "the one
+  active now", which mixed a radio keying up right after another into its
+  level)
 - Mouseover a VFO's bar (spectrum, waterfall, independent panes; every
   mode): its dBFS, SNR in its band and dBm (the range panel's calibration),
   gain, calibrated or not (`vfoLvlHover`, `.vfo-lvl-tip`)
@@ -1233,7 +1239,16 @@ or one radio's) probably is, from its signal strength over the terrain
   %), the distance's quantiles, the most likely spot (the mode inside the
   most likely 1 %, 3 x 3 smoothed - on the deepest red by construction; it
   was a block's probability centre until 2026-10-22 and could fall outside
-  the core). EIRP / power entered in watts. Separate from the viewshed's signal mode (the
+  the core). EIRP / power entered in watts. The sweep's origin follows a
+  GPS station with hysteresis (max(30 m, 0.5 % of the radius), at most
+  every 30 s, a running sweep never cancelled for it - a static one exactly
+  and at once); an estimate only from a FRESH level (< 2.75 s old, else the
+  last one held); another DF source selected or Clear drops the estimate
+  (and the post in flight); sweeps / posts only while the map shows; the
+  fading tables are the path loss's own helpers (`plRelSet(sigma,
+  rgState)`); on the downconverter variant the nominal's frequency term is
+  the IF's + 6 dB more sigma (conversion loss unknown) - all from the
+  review of 2026-11-12. Separate from the viewshed's signal mode (the
   station stays out of that - the user's call 2026-10-12)
 - Tests: `kraken_doa_v2/tools/range_validate.mjs` (node, offline; incl. a
   Monte Carlo calibration over P.1812: the true place in the 50 / 90 %

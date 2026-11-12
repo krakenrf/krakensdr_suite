@@ -238,6 +238,16 @@ public:
     // (and, with the Digital squelch, publishes the VFO's DoA on mp)
     void update(MUSICProcessor& mp, std::vector<TalkerFrame>* out);
     std::vector<TalkerInfo> snapshot() const;
+    // 📏 whose transmission the stream samples [a, b) are (a VFO level moment,
+    // rdf_mapper.cpp), by the spans as frames are matched: 1 = one named
+    // talker's span holds them and no other span touches them (*id) - closed,
+    // or open and already reported `settle` samples past b (a radio's next
+    // link control came since: P25 extends the old talker's span over a new
+    // radio's first frames until its LDU1 names it); 0 = not known yet (no
+    // span there yet, one may still grow over them / its radio isn't named /
+    // a channel != 0 for CHANNEL_HOLD_MS - age_ms = how old they are); -1 =
+    // no single talker (two spans, or across a span's start / end)
+    int talker_at(uint64_t a, uint64_t b, uint64_t settle, int64_t age_ms, std::string* id) const;
     PacketStats packet_stats() const;
     // the packets with a position committed since the last call (only while
     // the array calibration collects)

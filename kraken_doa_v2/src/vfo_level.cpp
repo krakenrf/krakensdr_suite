@@ -74,12 +74,16 @@ void sample() {
             if (v.freq != 0 && std::fabs(freq - v.freq) > RETUNE_HZ) v.lvl = Level{};
             v.freq = freq;
             FFTProcessor::BandPower bp;
+            // no DC bins left out (as the FFT squelch): the DC offset is tracked
+            // out before the FFT, and a carrier tuned onto the centre (a CW
+            // beacon, AM) is the signal itself
             if (ok && (!dec->squelch_enabled.load() || dec->squelch_open.load()) &&
-                FFTProcessor::band_power(ch, off, dec->decimator->getBandwidthMhz() * 1e6f, 2, &bp) &&
-                bp.sig > bp.noise) {
+                FFTProcessor::band_power(ch, off, dec->decimator->getBandwidthMhz() * 1e6f, 0, &bp) &&
+                bp.sig > bp.thresh) {
                 const float gain = ChannelManager::get_gain(ch);
                 v.lvl.add(t, bp.sig, bp.noise, bp.total, gain);
-                v.mo = Moment{bp.sig, bp.noise, bp.total, gain, t, v.mo.seq + 1};
+                v.mo = Moment{bp.sig, bp.noise, bp.total, gain, t, v.mo.seq + 1,
+                              dec->stream_pos.load(std::memory_order_relaxed), dec->decimator->getOutputRate()};
             }
             seen[dec->id] = v;
         }

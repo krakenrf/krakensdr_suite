@@ -128,9 +128,12 @@ public:
     // window's power (Hamming, 0.3974) taken out. sig = the band minus its
     // noise (nfloor::bin_noise_db per bin; <= 0 when nothing is above it),
     // noise = the band's noise, total = the whole frame (the ADC's load).
+    // thresh = what sig must exceed to be a signal: 2x the noise (a few dB of
+    // ripple across the tuner band) and the noise's own 1e-5 upper quantile
+    // for this many bins (a narrow band's noise alone passes 2x often).
     // The bins +-exclude_dc_bins around the centre are left out and the
     // band's sum scaled up for them. False without a recent frame.
-    struct BandPower { double sig = 0, noise = 0, total = 0; int bins = 0; };
+    struct BandPower { double sig = 0, noise = 0, total = 0, thresh = 0; int bins = 0; };
     static bool band_power(int channel, float offset_hz, float bandwidth_hz, int exclude_dc_bins, BandPower* out);
 
     // Check squelch on one decimator's beamformed FFT data.

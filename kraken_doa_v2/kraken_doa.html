@@ -2562,19 +2562,30 @@ function rgInterp(T, x, col) {
     if (x <= T[i][0]) return T[i - 1][col] + (T[i][col] - T[i - 1][col]) * (x - T[i - 1][0]) / (T[i][0] - T[i - 1][0]);
   return T[T.length - 1][col];
 }
-// the nominal C at a gain (dB; the AGC's -1: the top setting's) and frequency (MHz), its sigma
-function rgCalNom(g, f) { return rgInterp(RG_CAL_G, g < 0 ? 49.6 : g, 1) + rgInterp(RG_CAL_F, f, 1); }
-function rgCalNomSd(f) { return Math.hypot(RG_CAL_SD, rgInterp(RG_CAL_F, f, 2)); }
+// The KrakenSDR Wideband (downconverter) variant parks every tuner at its IF
+// (wbVariant.ifHz, 1268 MHz): the gain's frequency roll-off is the IF's,
+// whatever the RF. The mixer's conversion loss and the front end before it
+// aren't characterised: RG_CAL_DC_SD more (in squares) on the nominal there
+const RG_CAL_DC_SD = 6;
+function rgCalDc() { return !!wbVariant.enabled; }
+// the tuner's frequency (MHz) for an RF (MHz)
+function rgTunerMhz(f) { return rgCalDc() ? wbVariant.ifHz / 1e6 : f; }
+// the nominal C at a gain (dB; the AGC's -1: the top setting's) and RF (MHz), its sigma
+function rgCalNom(g, f) { return rgInterp(RG_CAL_G, g < 0 ? 49.6 : g, 1) + rgInterp(RG_CAL_F, rgTunerMhz(f), 1); }
+function rgCalNomSd(f) { return Math.hypot(RG_CAL_SD, rgInterp(RG_CAL_F, rgTunerMhz(f), 2), rgCalDc() ? RG_CAL_DC_SD : 0); }
+// (the user's words for the nominal on the downconverter variant)
+const RG_CAL_DC_TXT = 'downconverter: its conversion loss isn\'t in the nominal - calibrate';
 // the C in use and its sigma: the nominal + the correction; calibrated: the
 // calibration's own sigma, + the model's shape (1.5 dB, and the frequency
 // terms' difference) when used away from where it was set (gain > 3 dB,
-// frequency > 15 % off)
+// RF > 15 % off - the RF also on the downconverter variant: its conversion
+// loss changes with it; the frequency terms are the tuner's, 0 there)
 function rgCal(g, f) { return rgCalNom(g, f) + rgState.calOff; }
 function rgCalSd(g, f) {
   const s = rgState;
   if (!s.calHow) return rgCalNomSd(f);
   const away = (s.calF > 0 && Math.abs(Math.log(f / s.calF)) > 0.14) || Math.abs((g < 0 ? 49.6 : g) - s.calG) > 3;
-  return away ? Math.hypot(s.sigC, 1.5, rgInterp(RG_CAL_F, f, 2) - rgInterp(RG_CAL_F, s.calF || f, 2)) : s.sigC;
+  return away ? Math.hypot(s.sigC, 1.5, rgInterp(RG_CAL_F, rgTunerMhz(f), 2) - rgInterp(RG_CAL_F, rgTunerMhz(s.calF || f), 2)) : s.sigC;
 }
 
 const bwo=[
@@ -2748,7 +2759,8 @@ function vfoLvlHtml(id) {
   else {
     const f = mhz || 100, c = rgCal(L.gain, f), sd = rgCalSd(L.gain, f);
     h += ` · <b>${(L.dbfs - L.gain + c).toFixed(1)} dBm</b><br><span style="color:#8296b4">gain ${L.gain.toFixed(1)} dB · ` +
-         (rgState.calHow ? `calibrated` : `nominal (published R820T data)`) + ` ± ${sd.toFixed(1)} dB</span>`;
+         (rgState.calHow ? `calibrated` : `nominal (published R820T data)`) + ` ± ${sd.toFixed(1)} dB</span>` +
+         (!rgState.calHow && rgCalDc() ? `<br><span style="color:#ffcc80">${RG_CAL_DC_TXT}</span>` : '');
   }
   if (L.total > -8) h += `<br><span style="color:#ffcc80">⚠ near full scale (${L.total.toFixed(1)} dBFS in the tuner's band): reads low - lower the gain</span>`;
   if (age > 2) h += `<br><span style="color:#8296b4">last heard ${age < 90 ? age.toFixed(0) + ' s' : (age / 60).toFixed(0) + ' min'} ago</span>`;
@@ -12527,7 +12539,8 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const btn = $id('map-btn');
     if (btn) btn.classList.toggle('on', mapState.on);
     rpApplyWidth();
-    if (showMap) { mapInit(); mapResize(); }
+    // (shown again: draw it now - nothing drew while it was hidden, and the 📏 range's sweep starts from rgDraw)
+    if (showMap) { mapInit(); mapResize(); if (changed) mapDraw(); }
     if (changed) setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
   }
   // Both: the DoA part's height (mapState.dh px, 0 = default 42 %)
@@ -18470,20 +18483,22 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // - TROPOSCATTER (Rayleigh) taking over far beyond the horizon: K = Kt
   //   (1 - w) / (1 + Kt w), w = its share of the power (from Lbs - Lbd)
   // terr, dts (dB): Lbull - Lbulls, Lbs - Lbd - from P.1812 with either
-  // terrain model (the worker's fadQ, the link's p1812); free space: K
-  function plKeff(terr, dts) {
-    const Kt = 10 ** ((plState.K - Math.max(0, terr)) / 10), w = 1 / (1 + 10 ** (dts / 10));
+  // terrain model (the worker's fadQ, the link's p1812); free space: K.
+  // K (dB, a clear path's) and the settings s ({fade, K, model}): the 📶
+  // path loss's own unless given (the 📏 range has its own)
+  function plKeff(terr, dts, K = plState.K) {
+    const Kt = 10 ** ((K - Math.max(0, terr)) / 10), w = 1 / (1 + 10 ** (dts / 10));
     return Kt * (1 - w) / (1 + Kt * w);
   }
-  function plAutoFade() { return plState.fade === 'auto' && plState.model !== 'fs'; }
-  function plFading(terr, dts) {
-    const f = plState.fade;
+  function plAutoFade(s = plState) { return s.fade === 'auto' && s.model !== 'fs'; }
+  function plFading(terr, dts, s = plState) {
+    const f = s.fade;
     if (f === 'none') return ['none', 0];
     if (f === 'rayleigh') return ['rayleigh', 0];
-    return ['rician', plAutoFade() ? plKeff(terr, dts) : 10 ** (plState.K / 10)];
+    return ['rician', plAutoFade(s) ? plKeff(terr, dts, s.K) : 10 ** (s.K / 10)];
   }
   // a cell's fadQ (the worker's: terrain 0.25 dB << 8 | Lbs - Lbd + 32 in 0.25 dB) -> K linear
-  function plKeffQ(v) { return plKeff((v >> 8) / 4, (v & 255) === 255 ? 99 : (v & 255) / 4 - 32); }
+  function plKeffQ(v, K = plState.K) { return plKeff((v >> 8) / 4, (v & 255) === 255 ? 99 : (v & 255) / 4 - 32, K); }
   // I0(z) e^-z (Abramowitz & Stegun 9.8.1 / 9.8.2, |error| < 2e-7)
   function plI0e(z) {
     if (z < 3.75) {
@@ -18576,20 +18591,24 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // the coverage's tables for a sigma: fixed fading one; auto (K per cell)
   // one per K level - Rayleigh at -20 dB, Rician up to the setting (<= 30
   // dB) in <= 1 dB steps - with idx[fadQ] = a cell's place between them
-  // (plRelK interpolates: a smooth K, no bands)
-  let plKidxKey = '', plKidx = null;
-  function plRelSet(sigma) {
-    if (!plAutoFade()) { const [kind, K] = plFading(0, 99); return {tabs: [plRelLut(sigma, kind, K)], idx: null}; }
-    const lo = -20, hi = Math.min(30, plState.K), n = hi > lo ? Math.ceil(hi - lo) : 0, step = n ? (hi - lo) / n : 1, tabs = [];
+  // (plRelK interpolates: a smooth K, no bands). s: the settings ({fade, K,
+  // model}) - the 📶 path loss's unless given (the 📏 range's); the idx is
+  // cached per K (ikey), so the two settings' K don't throw each other's out
+  const plKidxs = new Map();
+  function plRelSet(sigma, s = plState) {
+    if (!plAutoFade(s)) { const [kind, K] = plFading(0, 99, s); return {tabs: [plRelLut(sigma, kind, K)], idx: null, ikey: ''}; }
+    const lo = -20, hi = Math.min(30, s.K), n = hi > lo ? Math.ceil(hi - lo) : 0, step = n ? (hi - lo) / n : 1, tabs = [];
     for (let i = 0; i <= n; i++) tabs.push(i ? plRelLut(sigma, 'rician', 10 ** ((lo + i * step) / 10)) : plRelLut(sigma, 'rayleigh', 0));
-    if (!n) return {tabs, idx: null};
-    const key = `${plState.K}`;
-    if (plKidxKey !== key) {
-      plKidx = new Float32Array(65536);
-      for (let v = 0; v < 65536; v++) plKidx[v] = Math.max(0, Math.min(n, (10 * Math.log10(plKeffQ(v)) - lo) / step));
-      plKidxKey = key;
+    if (!n) return {tabs, idx: null, ikey: ''};
+    const ikey = `${s.K}`;
+    let idx = plKidxs.get(ikey);
+    if (!idx) {
+      idx = new Float32Array(65536);
+      for (let v = 0; v < 65536; v++) idx[v] = Math.max(0, Math.min(n, (10 * Math.log10(plKeffQ(v, s.K)) - lo) / step));
+      if (plKidxs.size >= 4) plKidxs.delete(plKidxs.keys().next().value);   // (256 KB each)
+      plKidxs.set(ikey, idx);
     }
-    return {tabs, idx: plKidx};
+    return {tabs, idx, ikey};
   }
   function plRelK(rs, v, m) {
     const t = rs.tabs;
@@ -19370,7 +19389,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
   // the colours: by the share of the probability in places at least as
   // likely (0 = the most likely place .. 0.99 - beyond: transparent)
   const RG_STOPS = [[0, '#ff1e14'], [0.2, '#ff8c00'], [0.5, '#ffe600'], [0.75, '#3ddc4b'], [0.9, '#00c8e6'], [0.99, '#2a4bd7']];
-  let rgUiKl = false, rgUiKt = false, rgPostKey = '', rgPostReq = null, rgPostFailKey = '', rgLutA = null;
+  let rgUiKl = false, rgUiKt = false, rgPostKey = '', rgPostSetKey = '', rgPostReq = null, rgPostFailKey = '', rgLutA = null, rgSrcKey = null, rgLikC = null;
 
   function rgSave() { try { localStorage.setItem('kraken_rg', JSON.stringify(rgState)); } catch (e) {} }
   const rgDbm = w => 10 * Math.log10(w * 1000);
@@ -19414,16 +19433,48 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
                 lobe: v.lobe, peak: v.peak, lvl: v.lvl || null, pk: false} : null;
   }
   // what the estimate is made from: the source's lobe + level now, with
-  // where the station is - or the last ones it had (held: the signal ended)
+  // where the station is - or the last ones it had (held: the signal ended).
+  // LIVE only while its level is fresh (its age now under RG_FRESH_S - the
+  // server starts a new average after a 3 s gap): with the squelch off MUSIC
+  // keeps publishing lobes on the noise after the transmitter stopped while
+  // the level stays held, and every RG_LIVE_MS an estimate from a random
+  // noise bearing + the old level made the map jump around. Otherwise the
+  // last fresh one is HELD, as when the lobe is gone; with none (no level
+  // yet, a packet talker, only an old level) the snapshot says why (rgInputs)
+  const RG_FRESH_S = 2.75;
+  // ms since the {"rdf"} came; a level's age now (s: its age when sent + that)
+  function rgSinceMs() { return rdfStatusT ? Math.max(0, performance.now() - rdfStatusT) : 0; }
+  function rgLvlAge(L) { return L.age + rgSinceMs() / 1000; }
+  function rgAgeTxt(a) { return a < 90 ? a.toFixed(0) + ' s' : (a / 60).toFixed(0) + ' min'; }
   function rgSnap() {
     const s = rgSource(), st = rdfStatus && rdfStatus.station;
+    if (s) rgSrcSet(s.key);
     if (s && s.lobe && st && s.mhz > 0) {
-      rgLast = {key: s.key, name: s.name, col: s.col, mhz: s.mhz, lobe: s.lobe, peak: s.peak, lvl: s.lvl, pk: s.pk,
-                lat: st.lat, lon: st.lon, src: st.src, spd: st.spd, t: Date.now()};
-      return Object.assign({held: false}, rgLast);
+      const cur = {key: s.key, name: s.name, col: s.col, mhz: s.mhz, lobe: s.lobe, peak: s.peak, lvl: s.lvl, pk: s.pk,
+                   lat: st.lat, lon: st.lon, src: st.src, spd: st.spd, t: Date.now() - rgSinceMs()};   // (t: when the level was L.age old)
+      if (s.lvl && rgLvlAge(s.lvl) < RG_FRESH_S) { rgLast = cur; return Object.assign({held: false}, cur); }
+      if (!rgLast) return Object.assign({held: false, stale: !!s.lvl}, cur);
     }
     if (rgLast && (!s || rgLast.key === s.key)) return Object.assign({held: true}, rgLast);
     return null;
+  }
+  // the DF panel's selection moved to another source: what was worked out for
+  // the previous one goes - its held lobe, the estimate, the painted result
+  // (the sweep stays: it is the station's) - and the post in flight is ignored
+  function rgSrcSet(key) {
+    if (key === rgSrcKey) return;
+    const had = rgSrcKey !== null;
+    rgSrcKey = key;
+    if (had) rgDrop();
+  }
+  function rgDrop() {
+    const shown = !!(rgRes && rgRes.shown) || !!rgEst;
+    rgLast = null;
+    rgEst = null;
+    rgPostReq = null;   // (its reply only releases rgPostBusy)
+    rgPostKey = rgPostSetKey = '';
+    if (rgRes) rgRes.shown = false;
+    if (shown) mapDraw();
   }
   // why there is nothing to work with (the source line)
   function rgNoSource() {
@@ -19441,15 +19492,18 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (!L) return {why: sn.pk ? 'No level for a packet decoder\'s radios (aircraft, ships...): their packets share the VFO\'s band'
                                : sn.key.endsWith('|') ? 'No level yet: it is measured while the signal is above the noise in the VFO\'s band (its squelch open)'
                                : 'No level for this radio yet: it is measured while it is the only one transmitting on its VFO'};
+    if (sn.stale) return {why: `No recent level (last heard ${rgAgeTxt(rgLvlAge(L))} ago): the estimate waits for the signal - it needs the level while the lobe is measured`};
     if (L.gain < 0) return {why: 'The tuner AGC is on: its gain isn\'t known, so the level can\'t be turned into dBm - set a fixed gain'};
     const prx = L.dbfs - L.gain + rgCal(L.gain, sn.mhz), sigma = rgSigma(sn.mhz, L.gain);
     return {ok: true, prx, sigma, base: rgEirp() + rgState.gr - rgState.lr - prx, snr: L.dbfs - L.noise};
   }
 
   // ---- the station's sweep (the viewshed worker's code, an instance of its own) ----
-  // the job: the station (rounded to ~10 m) with our antenna, the radius,
-  // the signal message (the worker's "Tx" end = the station: our clutter
-  // there, the transmitter's in the cells) - its JSON is the result's key
+  // the job: its origin (the station, rounded to ~10 m) with our antenna,
+  // the radius, the signal message (the worker's "Tx" end = the station: our
+  // clutter there, the transmitter's in the cells) - its JSON is the
+  // result's key (the posterior worker's), without the origin the settings'
+  // (skey: a change there cancels a running sweep at once)
   function rgSweepMsg(sn) {
     const s = rgState, f = Number(sn.mhz.toPrecision(3));   // (0.3 %: < 0.03 dB of loss)
     const sig = {f, tgt: s.txH, amsl: false, pol: s.pol === 'h' ? 0 : 1, N0: plState.N0, envTx: s.envRx, envRx: s.envTx,
@@ -19457,7 +19511,28 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     if (s.model === 'itm') { const g = PL_GROUNDS[plState.ground]; Object.assign(sig, {climate: plState.climate, eps: g[1], sigma: g[2]}); }
     return {lat: +sn.lat.toFixed(4), lon: +sn.lon.toFixed(4), h: rgStH(), r: s.r, sig};
   }
-  function rgKey(sn) { return sn ? JSON.stringify(rgSweepMsg(sn)) : ''; }
+  function rgSKey(sn) { const m = rgSweepMsg(sn); return JSON.stringify([m.h, m.r, m.sig]); }
+  // THE ORIGIN follows the station with hysteresis: a static location (typed,
+  // dragged on the map) exactly and at once (a running sweep is cancelled);
+  // a GPS / compass station's only once it is more than rgTolM() from it
+  // (RG_ORG_M, or RG_ORG_FR of the radius), at most every RG_ORG_MS (as the
+  // viewshed's vsFollowStation) - and its running sweep is never cancelled
+  // for it: driving at 10 m/s the rounded position changed every second
+  // while a P.1812 sweep takes 6-20 s (no estimate ever came), and parked GPS
+  // jitter across a rounding boundary threw a result away. Its estimates
+  // keep coming from the last sweep while the station is within RG_ORG_USE
+  // x that of its origin (the panel says how far back it was worked out)
+  const RG_ORG_M = 30, RG_ORG_FR = 0.005, RG_ORG_MS = 30000, RG_ORG_USE = 10;
+  function rgTolM() { return Math.max(RG_ORG_M, RG_ORG_FR * rgState.r * 1000); }
+  function rgOrgM(o, p) { return mapDistKm(o.lat, o.lon, p.lat, p.lon) * 1000; }
+  // a sweep / job / failure (o: its skey + origin) serves the snapshot's station (lim: x the tolerance)
+  function rgFits(o, sn, lim = 1) {
+    if (!o || o.skey !== rgSKey(sn)) return false;
+    if (sn.src === 'static') return o.lat === +sn.lat.toFixed(4) && o.lon === +sn.lon.toFixed(4);
+    return rgOrgM(o, sn) <= lim * rgTolM();
+  }
+  // the estimates (the posterior, its sweeps) only while the map is shown - not behind the MUSIC DoA tab
+  function rgMapShown() { return mapState.on && document.body.classList.contains('rp-map'); }
   function rgWorkerStart() {
     if (rgWorker) return true;
     try {
@@ -19468,28 +19543,31 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       e.preventDefault();
       rgWorker.terminate();
       rgWorker = null;
-      rgFail = {key: rgJob ? rgJob.key : '', msg: 'failed: ' + (e.message || 'worker error')};
+      rgFail = Object.assign(rgJob ? {key: rgJob.key, skey: rgJob.skey, lat: rgJob.lat, lon: rgJob.lon} : {key: ''}, {msg: 'failed: ' + (e.message || 'worker error')});
       rgJob = rgCalJob = null;
       rgRender();
     };
     return true;
   }
-  // one sweep at a time; a newer key cancels the running one (the station
-  // moved, a setting changed)
+  // one sweep at a time, only while the map is shown; a setting changed (or
+  // a static station moved) cancels the running one, a GPS station moving
+  // doesn't - it ends, its estimate shows, then the next starts if due
   function rgPump() {
-    if (!rgReady || !rgState.on || !mapState.on) return;
+    if (!rgReady || !rgState.on || !rgMapShown()) return;
     const sn = rgSnap();
     if (!sn) return;
-    const key = rgKey(sn);
-    if (rgRes && rgRes.key === key) { rgPostPump(); return; }
+    const skey = rgSKey(sn);
     if (rgJob) {
-      if (rgJob.key !== key && !rgJob.cancel) { rgJob.cancel = true; rgWorker.postMessage({cancel: rgJob.job}); }
+      if (!rgJob.cancel && (rgJob.skey !== skey || (sn.src === 'static' && !rgFits(rgJob, sn)))) { rgJob.cancel = true; rgWorker.postMessage({cancel: rgJob.job}); }
       return;
     }
-    if (rgFail && rgFail.key === key) return;
+    if (rgRes && rgFits(rgRes, sn)) { rgPostPump(); return; }
+    if (rgFail && rgFits(rgFail, sn)) return;
+    // (a GPS station's next origin at most every RG_ORG_MS: the last sweep's estimates meanwhile)
+    if (rgRes && sn.src !== 'static' && rgRes.skey === skey && Date.now() - rgRes.t0 < RG_ORG_MS) { rgPostPump(); return; }
     if (!rgWorkerStart()) { rgRender(); return; }
     const m = rgSweepMsg(sn);
-    rgJob = {job: ++rgSeq, key, prog: null, m};
+    rgJob = {job: ++rgSeq, key: JSON.stringify(m), skey, lat: m.lat, lon: m.lon, t0: Date.now(), prog: null, m};
     rgWorker.postMessage({job: rgJob.job, lat: m.lat, lon: m.lon, h: m.h, amsl: false, k: 4 / 3, levels: vsPlan(m.lat, m.r * 1000),
                           sig: m.sig, par: vsPar === null ? undefined : vsPar});
     rgRender();
@@ -19501,9 +19579,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     const job = rgJob;
     rgJob = null;
     if (m.error) {
-      if (m.error !== 'cancelled') rgFail = {key: job.key, msg: m.error};
+      if (m.error !== 'cancelled') rgFail = {key: job.key, skey: job.skey, lat: job.lat, lon: job.lon, msg: m.error};
     } else {
-      rgRes = {key: job.key, lat: job.m.lat, lon: job.m.lon, r: job.m.r, f: job.m.sig.f, model: job.m.sig.model, ms: m.ms, tiles: m.tiles,
+      rgRes = {key: job.key, skey: job.skey, t0: job.t0, lat: job.m.lat, lon: job.m.lon, r: job.m.r, f: job.m.sig.f, model: job.m.sig.model, ms: m.ms, tiles: m.tiles,
                workers: (m.sig && m.sig.workers) || 1, ready: false, shown: false,
                levels: m.levels.map(l => ({z: l.z, N: l.N, gx0: l.gx0, gy0: l.gy0, cell: l.cell, loss: new Uint16Array(l.loss),
                                            fad: new Uint16Array(l.fad), rank: null, cv: null, cx: null}))};
@@ -19723,66 +19801,50 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     for (let k = 0; k < n; k++) out[k] = Math.pow((1 - RG_EPS) * (tot > 0 ? v[k] / tot : 1 / n) * n + RG_EPS, RG_ALPHA);
     return out;
   }
-  // the fading per cell (auto): the 📶 path loss's plKeff with this panel's K
-  function rgKeffQ(v) {
-    const terr = (v >> 8) / 4, dts = (v & 255) === 255 ? 99 : (v & 255) / 4 - 32;
-    const Kt = 10 ** ((rgState.K - Math.max(0, terr)) / 10), w = 1 / (1 + 10 ** (dts / 10));
-    return Kt * (1 - w) / (1 + Kt * w);
-  }
-  function rgAutoFade() { return rgState.fade === 'auto' && rgState.model !== 'fs'; }
-  // the level's pdf (per dB of margin) = the reliability's slope: per K
-  // level as plRelSet (Rayleigh at -20 dB, Rician to the setting <= 30 dB in
-  // <= 1 dB steps) + idx[fadQ] (a cell's place between them; ikey says when it changed)
-  let rgKidx = null, rgKidxKey = '';
+  // the level's pdf (per dB of margin) = the slope of the 📶 path loss's
+  // reliability tables - plRelSet with this panel's fading / K / model:
+  // fixed fading one table; auto one per K level (Rayleigh at -20 dB,
+  // Rician to the setting <= 30 dB in <= 1 dB steps) + idx[fadQ] (a cell's
+  // place between them; ikey says when it changed). Cached by what it
+  // depends on (up to 51 x 481 values)
   function rgLik(sigma) {
-    const tabs = [];
-    let idx = null, ikey = '';
-    if (!rgAutoFade()) {
-      const f = rgState.fade, kind = f === 'none' ? 'none' : f === 'rayleigh' ? 'rayleigh' : 'rician';
-      tabs.push(plRelLut(sigma, kind, kind === 'rician' ? 10 ** (rgState.K / 10) : 0));
-    } else {
-      const lo = -20, hi = Math.min(30, rgState.K), n = hi > lo ? Math.ceil(hi - lo) : 0, step = n ? (hi - lo) / n : 1;
-      for (let i = 0; i <= n; i++) tabs.push(i ? plRelLut(sigma, 'rician', 10 ** ((lo + i * step) / 10)) : plRelLut(sigma, 'rayleigh', 0));
-      if (n) {
-        ikey = String(rgState.K);
-        if (rgKidxKey !== ikey) {
-          rgKidx = new Float32Array(65536);
-          for (let v = 0; v < 65536; v++) rgKidx[v] = Math.max(0, Math.min(n, (10 * Math.log10(rgKeffQ(v)) - lo) / step));
-          rgKidxKey = ikey;
-        }
-        idx = rgKidx;
-      }
-    }
-    const D = new Float32Array(481 * tabs.length);
-    tabs.forEach((t, o) => { for (let i = 1; i < 480; i++) D[o * 481 + i] = Math.max(0, (t[i + 1] - t[i - 1]) / 0.5); });
-    return {D, nk: tabs.length, idx, ikey};
+    const s = rgState, key = `${sigma.toFixed(3)}|${s.fade}|${s.K}|${s.model}`;
+    if (rgLikC && rgLikC.key === key) return rgLikC.v;
+    const rs = plRelSet(sigma, s), D = new Float32Array(481 * rs.tabs.length);
+    rs.tabs.forEach((t, o) => { for (let i = 1; i < 480; i++) D[o * 481 + i] = Math.max(0, (t[i + 1] - t[i - 1]) / 0.5); });
+    rgLikC = {key, v: {D, nk: rs.tabs.length, idx: rs.idx, ikey: rs.ikey}};
+    return rgLikC.v;
   }
   // the next estimate (one at a time; only when something it depends on
   // changed): a setting / the source at once (0.3 s), the live lobe and
   // level at most every RG_LIVE_MS - each is a pass over a few million
-  // cells (a Pi's browser); not while the map isn't shown
+  // cells (a Pi's browser); not while the map isn't shown. The key first,
+  // from cheap inputs: the tables and the blurred lobe only for a post that
+  // goes out (rgDraw pumps on every map draw - every pan frame)
   const RG_LIVE_MS = 2500;
-  let rgPostSetKey = '';
   function rgPostPump() {
     clearTimeout(rgPostT);
-    if (!rgReady || !rgState.on || !rgRes || rgPostBusy || !document.body.classList.contains('rp-map')) return;
+    if (!rgReady || !rgState.on || !rgRes || rgPostBusy || !rgMapShown()) return;
     if (!rgRes.ready) { if (rgPostFailKey !== rgRes.key) rgPostInit(); return; }
     const sn = rgSnap();
-    if (!sn || rgKey(sn) !== rgRes.key) return;
+    // (the sweep for these settings from where the station is - a GPS one's within RG_ORG_USE x the tolerance while the next is worked out)
+    if (!sn || !rgFits(rgRes, sn, RG_ORG_USE)) return;
     const inp = rgInputs(sn);
     if (!inp.ok) {
       if (!rgEst || rgEst.why !== inp.why) { rgEst = {why: inp.why}; rgRes.shown = false; rgRender(); mapDraw(); }
       rgPostKey = '';
       return;
     }
-    const sd = rgBsd(sn), lik = rgLik(inp.sigma), ang = rgAng(sn.lobe, sd);
-    if (!ang) return;
+    const sd = rgBsd(sn);
     // (setKey: what the user set + the source; the rest: the live lobe and level)
     const setKey = [rgRes.key, sn.key, rgEirp().toFixed(2), rgState.gr, rgState.lr, rgState.calOff, rgState.calHow, sd.toFixed(2), inp.sigma.toFixed(3), rgState.fade, rgState.K].join('|');
     const ikey = setKey + '|' + sn.lobe + '|' + inp.base.toFixed(2);
     if (ikey === rgPostKey) return;
     const wait = rgPostAt + (setKey !== rgPostSetKey ? 300 : RG_LIVE_MS) - Date.now();
     if (wait > 0) { rgPostT = setTimeout(rgPostPump, wait); return; }
+    const ang = rgAng(sn.lobe, sd);
+    if (!ang) { rgPostKey = ikey; return; }   // (not a lobe: not again until it changes)
+    const lik = rgLik(inp.sigma);
     rgPostAt = Date.now();
     rgPostBusy = true;
     rgPostKey = ikey;
@@ -19891,7 +19953,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
         c.moveTo(x - 7, y - 7); c.lineTo(x + 7, y + 7); c.moveTo(x + 7, y - 7); c.lineTo(x - 7, y + 7);
         c.stroke();
       }
-      const lab = `TX? ${rgKm(rgEst.d)}`;
+      const lab = `TX? ${vsFmtM(rgEst.d)}`;
       c.font = 'bold 11px sans-serif';
       c.lineJoin = 'round';
       c.lineWidth = 3;
@@ -20118,11 +20180,9 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       `known transmitter (right-click it on the map) for absolute levels. Bare terrain: buildings and trees only through the clutter setting.</div></div></div>`;
   }
   function rgCentre() { if (rgEst && rgEst.lat !== undefined) { mapCenterOn(rgEst.lat, rgEst.lon); mapDraw(); } }
+  // (an estimate in flight is ignored when it comes - it would bring the cleared one back)
   function rgClear() {
-    rgLast = null;
-    rgEst = null;
-    if (rgRes) rgRes.shown = false;
-    rgPostKey = '';
+    rgDrop();
     rgRender(true);
     mapDraw();
   }
@@ -20132,7 +20192,6 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
            `<div class="pl-leg-t"><span style="left:0">most likely</span><span style="left:${pos(0.5)}%;transform:translateX(-50%)">50 %</span>` +
            `<span style="left:${pos(0.9)}%;transform:translateX(-100%)">90 %│</span><span style="right:0">99 %</span></div>`;
   }
-  const rgKm = m => m >= 10000 ? (m / 1000).toFixed(0) + ' km' : m >= 1000 ? (m / 1000).toFixed(1) + ' km' : Math.round(m) + ' m';
   function rgRender(force) {
     const el = $id('map-rg');
     if (!el || !rgReady) return;
@@ -20168,23 +20227,26 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     let src = '';
     if (!sn) src = `<span class="w">${rgNoSource()}</span>`;
     else {
-      const L = sn.lvl, age = L ? L.age + (sn.held ? (Date.now() - sn.t) / 1000 : 0) : 0;
+      const L = sn.lvl, age = !L ? 0 : sn.held ? L.age + (Date.now() - sn.t) / 1000 : rgLvlAge(L);
       src = `<span style="color:${sn.col}">■</span> <b>${digEsc(sn.name)}</b> · ${sn.mhz.toFixed(4)} MHz · lobe ${plF(sn.peak, 0)}°`;
       if (L && L.gain >= 0) src += ` · ${plF(L.dbfs)} dBFS at ${plF(L.gain)} dB → <b>${plF(L.dbfs - L.gain + rgCal(L.gain, sn.mhz))} dBm</b> · SNR ${plF(L.dbfs - L.noise, 0)} dB`;
-      if (sn.held || age > 3) src += ` <span class="w">(${sn.held ? 'held, ' : ''}level ${age < 90 ? age.toFixed(0) + ' s' : (age / 60).toFixed(0) + ' min'} old)</span>`;
+      if (sn.held || age > 3) src += ` <span class="w">(${sn.held ? 'held, ' : ''}level ${rgAgeTxt(age)} old)</span>`;
     }
     set('.rg-src', src);
     // the calibration
     const s = rgState;
     // C in use here (the selected signal's gain + frequency; without one: 49.6 dB, 146 MHz)
     const cg = sn && sn.lvl && sn.lvl.gain >= 0 ? sn.lvl.gain : 49.6, cf = sn ? sn.mhz : 146;
-    const cNom = rgCalNom(cg, cf), cSd = rgCalSd(cg, cf);
+    const cNom = rgCalNom(cg, cf), cSd = rgCalSd(cg, cf), dc = rgCalDc();
+    // (the downconverter variant: the tuner sits at the IF - the nominal's frequency term is the IF's)
     set('.rg-calc', `dBm = dBFS − gain + C, C = <b>${plF(cNom + s.calOff)} dB</b> ± ${plF(cSd)} ` +
-                    `<span class="pl-note">(nominal ${plF(cNom)} at ${plF(cg)} dB, ${plF(cf, cf < 100 ? 1 : 0)} MHz${s.calOff ? `, ${plSgn(s.calOff)} correction` : ''})</span>`);
+                    `<span class="pl-note">(nominal ${plF(cNom)} at ${plF(cg)} dB, ${plF(cf, cf < 100 ? 1 : 0)} MHz` +
+                    `${dc ? ` - the tuner at the IF, ${plF(rgTunerMhz(cf), 0)} MHz` : ''}${s.calOff ? `, ${plSgn(s.calOff)} correction` : ''})</span>`);
     vis('.rg-sigc', !!s.calHow);
     set('.rg-calh', s.calHow ? `calibrated from ${digEsc(s.calHow)}${s.calF ? ` at ${plF(s.calF, 3)} MHz, ${plF(s.calG)} dB gain` : ''}` +
                     (s.calF && sn && Math.abs(Math.log2(sn.mhz / s.calF)) > 0.5 ? ' <span class="w">- far from this frequency: the model\'s gain roll-off carries it, less surely</span>' : '')
-                  : `<span class="w">uncalibrated: the nominal from published R820T measurements, ± ${plF(cSd)} dB - calibrate on a known transmitter for better</span>`);
+                  : `<span class="w">uncalibrated: the nominal from published R820T measurements, ± ${plF(cSd)} dB - ` +
+                    `${dc ? RG_CAL_DC_TXT : 'calibrate on a known transmitter for better'}</span>`);
     vis('.rg-kl', rgUiKl);
     vis('.rg-kt', rgUiKt);
     vis('.rg-kt2', rgUiKt && !!s.calTx);
@@ -20209,7 +20271,7 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
     let job = '';
     if (rgJob) job = Array.isArray(rgJob.prog) && rgJob.prog[0] === 'sig' ? `path loss ${rgJob.prog[1]} %…` :
                      Array.isArray(rgJob.prog) ? `loading terrain ${rgJob.prog[0]}/${rgJob.prog[1]}…` : 'working out the path loss…';
-    else if (rgFail && sn && rgFail.key === rgKey(sn)) job = `<span class="e">⚠ ${digEsc(rgFail.msg)}</span>`;
+    else if (rgFail && sn && rgFits(rgFail, sn)) job = `<span class="e">⚠ ${digEsc(rgFail.msg)}</span>`;
     else if (rgRes) job = `${PL_MODELS[rgRes.model]} at ${plF(rgRes.f, 0)} MHz, ${rgRes.r} km, ${(rgRes.ms / 1000).toFixed(1)} s` +
                           (rgEst && rgEst.ms !== undefined ? ` · estimate ${rgEst.ms} ms` : '');
     set('.rg-job', job);
@@ -20228,21 +20290,27 @@ sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder`},
       // probability is spread along the lobe - the most likely spot is the
       // mode of a broad distribution)
       const [q05, q25, q50, q75, q95] = E.q;
-      st = `Bearing <b>${plF(E.sn.peak, 0)}°</b> · distance: median <b>${rgKm(q50)}</b>, half the probability <b>${rgKm(q25)} – ${rgKm(q75)}</b>, ` +
-           `90 % ${rgKm(q05)} – ${rgKm(q95)}<br><span title="The single most likely spot per square metre - always on the deepest red (inside the most likely 1 % of the probability). ` +
+      st = `Bearing <b>${plF(E.sn.peak, 0)}°</b> · distance: median <b>${vsFmtM(q50)}</b>, half the probability <b>${vsFmtM(q25)} – ${vsFmtM(q75)}</b>, ` +
+           `90 % ${vsFmtM(q05)} – ${vsFmtM(q95)}<br><span title="The single most likely spot per square metre - always on the deepest red (inside the most likely 1 % of the probability). ` +
            `It can be nearer than the median distance: the lobe widens with distance, so further out more ground shares the probability - each place a little less likely, together more">` +
-           `✕ most likely spot ${rgKm(E.d)} at ${plF(E.b, 0)}° (the deepest red)</span> · the 50 % region ${rgArea(E.a50)}, the 90 % ${rgArea(E.a90)}`;
+           `✕ most likely spot ${vsFmtM(E.d)} at ${plF(E.b, 0)}° (the deepest red)</span> · the 50 % region ${rgArea(E.a50)}, the 90 % ${rgArea(E.a90)}`;
       const w = [], sg = E.inp.sigma;
       // no place fits well: even the strongest place's median is 3 sigma below the level (too strong), or the weakest above it
       if (E.mMax < -3 * sg) w.push(`no place fits: stronger than this transmitter would be even next to the station (by ${plF(-E.mMax, 0)} dB, σ ${plF(sg)} dB) - more EIRP, or check the calibration`);
       else if (E.mMin > 3 * sg) w.push(`no place fits: weaker than anywhere within the radius (by ${plF(E.mMin, 0)} dB, σ ${plF(sg)} dB) - a larger radius, less EIRP, or check the calibration`);
       if (E.edge > 0.05) w.push(`${Math.round(E.edge * 100)} % of the probability is at the edge of the ${rgRes.r} km radius - it may be further: a larger radius`);
       const L = E.sn.lvl;
-      if (E.inp.snr < 6) w.push(`weak (SNR ${plF(E.inp.snr, 0)} dB): the level reads high, the range short`);
+      // (below ~10 dB only the moments the noise added to pass the level's significance test - a
+      // narrow VFO's most: 1 kHz reads +1.2 dB at 6 dB, +3.6 at 3 dB)
+      if (E.inp.snr < 10) w.push(`weak (SNR ${plF(E.inp.snr, 0)} dB): the level may read high, the range short`);
       if (L.total > -8) w.push(`the receiver is near full scale (${plF(L.total)} dBFS in the band): the level may read low - lower the gain`);
-      if (!s.calHow) w.push(`uncalibrated: absolute levels ± ${plF(rgCalNomSd(E.sn.mhz))} dB (the nominal from published R820T data)`);
+      if (!s.calHow) w.push(`uncalibrated: absolute levels ± ${plF(rgCalNomSd(E.sn.mhz))} dB (the nominal from published R820T data${rgCalDc() ? '; ' + RG_CAL_DC_TXT : ''})`);
       if (E.sn.held) w.push('held: the signal ended');
       if (w.length) st += '<br><span class="w">⚠ ' + w.join('<br>⚠ ') + '</span>';
+      // (a GPS station has moved on from the sweep's origin: the next sweep is worked out / due -
+      // not for a held estimate: it stays where the signal was heard, no sweep follows)
+      const p = rdfStatus && rdfStatus.station, dm = p && rgRes && !E.sn.held ? rgOrgM(rgRes, p) : 0;
+      if (dm > rgTolM()) st += `<br><span class="w rg-back">↻ worked out ${vsFmtM(dm)} back - updating…</span>`;
     } else if (sn && rgRes && !rgJob) st = 'working out…';
     set('.rg-st', st);
     set('.rg-leg', rgRes && rgRes.shown ? rgLegendHtml() : '');
