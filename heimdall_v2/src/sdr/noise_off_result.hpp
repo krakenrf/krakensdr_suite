@@ -5,6 +5,7 @@
 // A successful librtlsdr call acknowledges a driver write, NOT measured voltage.
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -14,6 +15,7 @@ enum class NoiseOffOutcome : std::uint8_t {
     UNSUPPORTED_PATH,
     INVALID_ACTIVE_COUNT,
     MISSING_RECEIVER,
+    UNEXPECTED_OPEN_RECEIVER,
     DRIVER_WRITE_FAILED
 };
 
@@ -26,10 +28,13 @@ struct NoiseOffChannelReceipt {
 struct NoiseOffReceipt {
     NoiseOffOutcome outcome = NoiseOffOutcome::INVALID_ACTIVE_COUNT;
     int active_count = 0;
+    std::size_t unexpected_open_receivers = 0;
     std::vector<NoiseOffChannelReceipt> channels;
 
     bool all_acknowledged() const noexcept {
         return outcome == NoiseOffOutcome::ALL_ACKNOWLEDGED &&
+               active_count >= 2 &&
+               unexpected_open_receivers == 0 &&
                static_cast<int>(channels.size()) == active_count;
     }
 };
@@ -39,7 +44,8 @@ inline const char* noise_off_outcome_name(NoiseOffOutcome value) noexcept {
         case NoiseOffOutcome::ALL_ACKNOWLEDGED: return "all_gpio0_off_writes_acknowledged";
         case NoiseOffOutcome::UNSUPPORTED_PATH: return "unsupported_noise_source_path";
         case NoiseOffOutcome::INVALID_ACTIVE_COUNT: return "invalid_active_receiver_count";
-        case NoiseOffOutcome::MISSING_RECEIVER: return "missing_or_unexpected_receiver";
+        case NoiseOffOutcome::MISSING_RECEIVER: return "missing_or_wrong_identity_receiver";
+        case NoiseOffOutcome::UNEXPECTED_OPEN_RECEIVER: return "unexpected_open_receiver_outside_active_set";
         case NoiseOffOutcome::DRIVER_WRITE_FAILED: return "gpio0_off_write_failed";
     }
     return "unknown";
@@ -87,6 +93,37 @@ NoiseOffReceipt checked_standard_noise_off(
                      failed ? NoiseOffOutcome::DRIVER_WRITE_FAILED :
                               NoiseOffOutcome::ALL_ACKNOWLEDGED;
     return report;
+}
+
+// A receiver handle left open outside the active coherent set could still
+// have an energized GPIO0. Record that violation without discarding the
+// individual receipts from the active receivers, all of which were attempted.
+inline void record_unexpected_open_receivers(
+        NoiseOffReceipt& receipt, std::size_t extra_open) noexcept {
+    // This evidence is monotonic within one receipt. A later zero count
+    // cannot turn an earlier unknown live handle into a successful OFF.
+    if (extra_open) {
+        receipt.unexpected_open_receivers += extra_open;
+        receipt.outcome = NoiseOffOutcome::UNEXPECTED_OPEN_RECEIVER;
+    }
+}
+
+// Keep the verified write outcome and the terminal state publication under
+// the SAME device-I/O lock. The phase state lock is owned by the caller and
+// must be outermost; callbacks must not acquire a second lock or block.
+// This covers the instant of terminal publication, NOT future manual noise
+// enables or the broader R4 lifecycle-admission boundary.
+template <class IoMutex, class WriteOff, class Publish, class Refuse>
+NoiseOffReceipt guarded_noise_off_terminal(
+        IoMutex& io, WriteOff&& write_off,
+        Publish&& publish, Refuse&& refuse) {
+    std::lock_guard<IoMutex> guard(io);
+    auto receipt = std::forward<WriteOff>(write_off)();
+    if (receipt.all_acknowledged())
+        std::forward<Publish>(publish)();
+    else
+        std::forward<Refuse>(refuse)(receipt);
+    return receipt;
 }
 
 // Sequential mock/test default; the production caller supplies its

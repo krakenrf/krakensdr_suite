@@ -653,7 +653,7 @@ NoiseOffReceipt set_standard_internal_noise_off_checked(
 
     const std::size_t max_expected =
         std::min(expected_serials.size(), static_cast<std::size_t>(NUM_DEVICES));
-    const auto result = checked_standard_noise_off(
+    auto result = checked_standard_noise_off(
         count, max_expected, devices.size(),
         [](std::size_t n, auto&& each) {
             for_each_tuner(n, each);  // parallel on Linux, serial on WinUSB
@@ -668,13 +668,25 @@ NoiseOffReceipt set_standard_internal_noise_off_checked(
             return rtlsdr_set_bias_tee(device->dev, 0);
         });
 
+    // Extra active handles are not covered by the requested coherent count:
+    // even if all selected GPIO writes succeed, the array is not confirmed OFF.
+    // Read topology while device_io_mutex is held; never skip the active writes.
+    if (count >= 2 && static_cast<std::size_t>(count) <= devices.size()) {
+        std::size_t unexpected = 0;
+        for (std::size_t i = static_cast<std::size_t>(count); i < devices.size(); ++i)
+            if (devices[i] && devices[i]->dev) ++unexpected;
+        record_unexpected_open_receivers(result, unexpected);
+    }
+
     if (result.all_acknowledged()) {
         bias_tee_enabled.store(false, std::memory_order_release);
         std::cout << "Noise GPIO0 OFF: acknowledged on all " << count
                   << " active standard receivers" << std::endl;
     } else {
         std::cerr << "Noise GPIO0 OFF: not confirmed ("
-                  << noise_off_outcome_name(result.outcome) << ")" << std::endl;
+                  << noise_off_outcome_name(result.outcome) << ")"
+                  << ", unexpected open outside set="
+                  << result.unexpected_open_receivers << std::endl;
         for (const auto& channel : result.channels) {
             if (!channel.present || channel.driver_rc != 0) {
                 std::cerr << "  slot " << channel.slot << ": "

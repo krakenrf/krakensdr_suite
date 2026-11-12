@@ -1,8 +1,10 @@
 // No RTL hardware: exercise the same GPIO0 OFF receipt used by calibration.
 #include "../src/sdr/noise_off_result.hpp"
 #include <array>
+#include <atomic>
 #include <cstdlib>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <thread>
 #include <vector>
@@ -109,6 +111,109 @@ int main() {
             [](std::size_t) -> std::optional<int> { return 0; });
         expect(r.outcome == O::MISSING_RECEIVER && !r.all_acknowledged(),
                "incomplete executor is never reported as successful");
+    }
+    // M3B: an extra OPEN handle outside the selected coherent set can retain
+    // energized GPIO0. All selected channels' ACKs are insufficient.
+    {
+        auto r = checked_standard_noise_off(5, 8, 8,
+            [](std::size_t) -> std::optional<int> { return 0; });
+        expect(r.all_acknowledged(), "precondition: selected channels acknowledged");
+        record_unexpected_open_receivers(r, 1);
+        expect(!r.all_acknowledged() && r.outcome == O::UNEXPECTED_OPEN_RECEIVER,
+               "unexpected sixth live handle refuses success");
+        expect(r.unexpected_open_receivers == 1 && r.channels.size() == 5,
+               "unexpected live handle retains five receipts");
+        record_unexpected_open_receivers(r, 0);
+        expect(!r.all_acknowledged(), "a prior topology fault cannot be erased");
+        auto fresh = checked_standard_noise_off(5, 8, 8,
+            [](std::size_t) -> std::optional<int> { return 0; });
+        expect(fresh.all_acknowledged(), "fresh all-ACK with no extras may pass");
+    }
+    {
+        NoiseOffReceipt fabricated;
+        fabricated.outcome = O::ALL_ACKNOWLEDGED;
+        expect(!fabricated.all_acknowledged(), "fabricated empty receipt must fail");
+    }
+    // Exercise the same guarded terminal helper used by production: exact
+    // one publish OR refuse callback for every 5-receiver failure combination.
+    for (int pattern = 0; pattern < 243; ++pattern) {
+        std::array<int,5> state{};
+        int k = pattern;
+        bool bad = false;
+        for (int ch = 0; ch < 5; ++ch) {
+            state[ch] = k % 3; k /= 3; bad |= state[ch] != 0;
+        }
+        std::recursive_mutex io;
+        bool converged = true, fir_ready = true, calibration_complete = true;
+        bool recovery_active = true;
+        int publish_count = 0, refuse_count = 0;
+        auto receipt = guarded_noise_off_terminal(io,
+            [&]() {
+                return checked_standard_noise_off(5, 8, 5,
+                    [&](std::size_t i) -> std::optional<int> {
+                        return state[i] == 2 ? std::nullopt :
+                               std::optional<int>{state[i] == 1 ? -7 : 0};
+                    });
+            },
+            [&]() {
+                ++publish_count;
+                converged = true;
+                calibration_complete = true;
+                recovery_active = false;
+            },
+            [&](const NoiseOffReceipt&) {
+                ++refuse_count;
+                converged = false;
+                fir_ready = false;
+                calibration_complete = false;
+                recovery_active = false;
+            });
+        expect(receipt.all_acknowledged() == !bad, "receipt matches fault pattern");
+        expect((publish_count == 1) == !bad && (refuse_count == 1) == bad,
+               "exactly one terminal outcome");
+        expect(converged == !bad && calibration_complete == !bad,
+               "no false calibration-success latch");
+        expect(!bad || !fir_ready, "OFF failure clears FIR readiness");
+        expect(!recovery_active, "terminal closes recovery");
+    }
+    // The checked OFF write and CONVERGED publication share device_io_mutex.
+    // A direct BIAS_TEE_ENABLE contender cannot enter between those actions,
+    // although the command can re-enable noise AFTER publication (R4 open).
+    {
+        std::recursive_mutex io;
+        std::atomic<bool> write_started{false}, contender_trying{false};
+        std::atomic<bool> published{false}, interleaved{false};
+        bool noise_on = true, saw_off_at_publish = false;
+        std::thread direct_enable([&] {
+            while (!write_started.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            contender_trying.store(true, std::memory_order_release);
+            std::lock_guard<std::recursive_mutex> lock(io);
+            if (!published.load(std::memory_order_acquire))
+                interleaved.store(true, std::memory_order_release);
+            noise_on = true;
+        });
+        const auto receipt = guarded_noise_off_terminal(io,
+            [&]() -> NoiseOffReceipt {
+                write_started.store(true, std::memory_order_release);
+                while (!contender_trying.load(std::memory_order_acquire))
+                    std::this_thread::yield();
+                noise_on = false;
+                return checked_standard_noise_off(5, 8, 5,
+                    [](std::size_t) -> std::optional<int> { return 0; });
+            },
+            [&]() {
+                saw_off_at_publish = !noise_on;
+                published.store(true, std::memory_order_release);
+            },
+            [&](const NoiseOffReceipt&) {
+                expect(false, "all-ACK should not refuse");
+            });
+        direct_enable.join();
+        expect(receipt.all_acknowledged(), "contended receipt still ACK");
+        expect(saw_off_at_publish && !interleaved.load(),
+               "no re-enable BETWEEN GPIO write and CONVERGED publication");
+        expect(noise_on, "future manual noise-enable remains outside M3B guard");
     }
     NoiseOffReceipt unsupported;
     unsupported.outcome = O::UNSUPPORTED_PATH;
