@@ -41,6 +41,13 @@
 #include <iterator>
 #include <algorithm>
 #include <thread>
+#include <atomic>
+#include <cstring>
+#ifndef _WIN32
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 #include <functional>
 #include <memory>
 #include <vector>
@@ -584,6 +591,23 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                ->writeHeader("Cache-Control", "no-cache")  // Disable cache during debugging
                ->end(js_content);
         })
+        .get("/krakensdr.crt", [](auto* res, auto* /*req*/) {
+            // This server's own certificate (public by nature: every TLS
+            // handshake sends it), offered as a download so a browser or phone
+            // can be told to trust it. No token: it is needed before the page
+            // can be opened without a warning.
+            ifstream file(SSL_CERT_FILE, ios::binary);
+            if (!file.is_open()) {
+                res->writeStatus("404 Not Found")->end("certificate not found");
+                return;
+            }
+            stringstream buffer;
+            buffer << file.rdbuf();
+            res->writeHeader("Content-Type", "application/x-x509-ca-cert")
+               ->writeHeader("Content-Disposition", "attachment; filename=\"krakensdr.crt\"")
+               ->writeHeader("Cache-Control", "no-store")
+               ->end(buffer.str());
+        })
         .get("/array_calculator.html", [](auto* res, auto* /*req*/) {
             // Antenna array calculator (opened from the MUSIC DoA panel):
             // a static page, read from disk on each request like the main UI
@@ -709,7 +733,8 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
         .get("/wb_telemetry/history", [](auto* res, auto* req) {
             if (!request_allowed(req)) { refuse_request(res, req); return; }
             // Wideband board telemetry sheet: the logged history of the last
-            // ?range= seconds as JSON (wb_board_history_json). The log files
+            // ?range= seconds as JSON (wb_board_history_json; ?src=host: the
+            // computer's own log instead of the board's). The log files
             // are read on a worker thread - a month of rows takes a while on a
             // Pi and must not stall the spectrum stream on the uWS loop.
             if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
@@ -717,10 +742,11 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 return;
             }
             const long range = strtol(std::string(req->getQuery("range")).c_str(), nullptr, 10);
+            const bool host = req->getQuery("src") == "host";   // the computer, not the Wideband board
             auto aborted = std::make_shared<bool>(false);
             res->onAborted([aborted]() { *aborted = true; });
-            std::thread([res, aborted, range]() {
-                std::string body = wb_board_history_json(range > 0 ? range : 3600);
+            std::thread([res, aborted, range, host]() {
+                std::string body = wb_board_history_json(range > 0 ? range : 3600, host);
                 if (!loop) return;
                 loop->defer([res, aborted, body = std::move(body)]() {
                     if (*aborted) return;
@@ -736,11 +762,12 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 return;
             }
             const long range = strtol(std::string(req->getQuery("range")).c_str(), nullptr, 10);
+            const bool host = req->getQuery("src") == "host";   // the computer, not the Wideband board
             auto aborted = std::make_shared<bool>(false);
             res->onAborted([aborted]() { *aborted = true; });
-            std::thread([res, aborted, range]() {
+            std::thread([res, aborted, range, host]() {
                 std::string name;
-                std::string path = wb_board_export_csv(range > 0 ? range : 3600, &name);
+                std::string path = wb_board_export_csv(range > 0 ? range : 3600, &name, host);
                 if (!loop) return;
                 loop->defer([res, aborted, path = std::move(path), name = std::move(name)]() {
                     if (*aborted) return;
@@ -902,6 +929,87 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
     });
 }
 
+// --- http:// typed on the HTTPS port ----------------------------------------
+// The web UI is HTTPS only (the browser needs a secure page for audio and the
+// microphone), and a TLS listener answers plain HTTP by dropping the
+// connection: http://receiver:8080 showed an empty page. Every accepted
+// connection is therefore held back (uSockets' pre-open hook) until its first
+// byte arrives: a TLS handshake (0x16) is handed to the HTTPS app unchanged,
+// anything else gets a redirect to the same address over https.
+namespace {
+
+#ifdef _WIN32
+using sniff_fd = SOCKET;
+inline void sniff_close(sniff_fd fd) { closesocket(fd); }
+inline int sniff_wait(sniff_fd fd, int ms) { WSAPOLLFD p{fd, POLLRDNORM, 0}; return WSAPoll(&p, 1, ms); }
+#else
+using sniff_fd = int;
+inline void sniff_close(sniff_fd fd) { ::close(fd); }
+inline int sniff_wait(sniff_fd fd, int ms) { struct pollfd p{fd, POLLIN, 0}; return ::poll(&p, 1, ms); }
+#endif
+
+std::atomic<int> sniffers{0};
+
+void redirect_to_https(sniff_fd fd) {
+    // the request head: a few hundred bytes, normally in the first segment
+    std::string req;
+    char buf[2048];
+    for (int tries = 0; tries < 10 && req.find("\r\n\r\n") == std::string::npos && req.size() < 8192; tries++) {
+        if (sniff_wait(fd, 300) <= 0) break;
+        const int n = static_cast<int>(recv(fd, buf, sizeof(buf), 0));
+        if (n <= 0) break;
+        req.append(buf, static_cast<size_t>(n));
+    }
+    // "GET /path HTTP/1.1" and "Host: name:port" - only harmless characters go into the Location header
+    auto clean = [](const std::string& s, const char* extra) {
+        if (s.empty() || s.size() > 1024) return false;
+        for (unsigned char c : s) if (!(std::isalnum(c) || std::strchr(extra, c))) return false;
+        return true;
+    };
+    std::string path = "/", host;
+    const size_t sp1 = req.find(' '), sp2 = sp1 == std::string::npos ? sp1 : req.find(' ', sp1 + 1);
+    if (sp2 != std::string::npos && sp2 < req.find('\r')) path = req.substr(sp1 + 1, sp2 - sp1 - 1);
+    if (!clean(path, "/-._~%?&=+#,;:@!*'()") || path[0] != '/') path = "/";
+    for (size_t at = req.find("\r\n"); at != std::string::npos; at = req.find("\r\n", at + 2)) {
+        if (req.size() >= at + 8 && (req[at + 2] | 0x20) == 'h' && (req[at + 3] | 0x20) == 'o' && (req[at + 4] | 0x20) == 's' &&
+            (req[at + 5] | 0x20) == 't' && req[at + 6] == ':') {
+            const size_t b = req.find_first_not_of(" \t", at + 7), e = req.find('\r', at + 2);
+            if (b != std::string::npos && e != std::string::npos && b < e) host = req.substr(b, e - b);
+            break;
+        }
+    }
+    std::string resp;
+    if (clean(host, ".-:[]")) {
+        resp = "HTTP/1.1 301 Moved Permanently\r\nLocation: https://" + host + path +
+               "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    } else {
+        const std::string body = "This page is served over HTTPS: open https://<this address>:" + std::to_string(WEB_PORT) + "/\n";
+        resp = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: " + std::to_string(body.size()) +
+               "\r\nConnection: close\r\n\r\n" + body;
+    }
+    send(fd, resp.data(), static_cast<int>(resp.size()), 0);
+    sniff_close(fd);
+}
+
+// Runs on its own short-lived thread: the first byte can take a moment.
+void sniff_first_byte(sniff_fd fd, std::string ip) {
+    unsigned char first = 0;
+    const bool got = sniff_wait(fd, 10000) > 0 && recv(fd, reinterpret_cast<char*>(&first), 1, MSG_PEEK) == 1;
+    if (got && first != 0x16 && first != 0x80) {          // not a TLS record (0x80: an SSLv2-style hello)
+        redirect_to_https(fd);
+    } else if (got && loop) {
+        loop->defer([fd, ip = std::move(ip)]() {
+            if (global_ssl_app) global_ssl_app->adoptSocket(fd, ip);
+            else sniff_close(fd);
+        });
+    } else {
+        sniff_close(fd);                                   // nothing came (a port scan, a preconnect)
+    }
+    sniffers.fetch_sub(1, std::memory_order_acq_rel);
+}
+
+}  // namespace
+
 void WebSocketServer::web_server_main() {
     verify_ssl_certificates();
     
@@ -912,6 +1020,14 @@ void WebSocketServer::web_server_main() {
         // process (another kraken_doa, or kraken_pr) bind the same port
         // silently - the kernel then splits incoming connections randomly
         // between the processes. Fail loudly instead.
+        // http:// on this port is redirected to https:// (sniff_first_byte);
+        // with too many connections undecided, new ones go straight to TLS.
+        ssl_app.preOpen([](struct us_socket_context_t*, LIBUS_SOCKET_DESCRIPTOR fd, char* ip, int ip_len) -> LIBUS_SOCKET_DESCRIPTOR {
+            if (sniffers.load(std::memory_order_acquire) >= 64) return fd;
+            sniffers.fetch_add(1, std::memory_order_acq_rel);
+            std::thread(sniff_first_byte, static_cast<sniff_fd>(fd), std::string(ip, ip + ip_len)).detach();
+            return fd + 1;   // "not adopted here": adoptSocket() follows once it is known to be TLS
+        });
         ssl_app.listen(WEB_PORT, LIBUS_LISTEN_EXCLUSIVE_PORT, [](auto* listen_socket) {
             if (listen_socket) {
                 cout << "HTTPS server listening on port " << WEB_PORT << endl;

@@ -374,6 +374,13 @@ fi
 # --- sanity checks ----------------------------------------------------------
 [[ -x "$HEIMDALL_DIR/heimdall" ]] || die "heimdall not built. Run ${BOLD}${SCRIPT_DIR}/install.sh${RST} first."
 [[ -x "$KRAKEN_DIR/kraken_doa" ]] || die "kraken_doa not built. Run ${BOLD}${SCRIPT_DIR}/install.sh${RST} first."
+# Web UI certificate: renewed here when it is about to expire or the host was
+# renamed (otherwise left alone - see scripts/make-cert.sh). Never fatal.
+if [[ -x "$SCRIPT_DIR/scripts/make-cert.sh" ]]; then
+    case "$("$SCRIPT_DIR/scripts/make-cert.sh" "$KRAKEN_DIR" 2>/dev/null | tail -n 1)" in
+    created|renewed) warn "Web UI certificate was renewed - browsers that trusted the old one need the new one (dashboard: Telemetry sheet -> HTTPS certificate)." ;;
+    esac
+fi
 command -v python3 >/dev/null 2>&1 || die "python3 is required for convergence detection."
 
 # Clear out a previous stack before starting a new one: a live session is

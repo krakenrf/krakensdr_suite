@@ -645,6 +645,9 @@ string MessageBuilders::build_system_status_message() {
     json << ",\"ram_used\":" << fixed << setprecision(0) << hw.ram_used_mb;
     json << ",\"ram_total\":" << fixed << setprecision(0) << hw.ram_total_mb;
     if (!hw.model.empty()) json << ",\"model\":\"" << hw.model << "\"";   // e.g. "Raspberry Pi 5 Model B Rev 1.1"
+    // storage, alarm levels and the log settings; also writes the host log (wb_board.hpp)
+    host_log_tick(hw.cpu_temp_c, hw.cpu_usage_pct, hw.ram_used_mb, hw.ram_total_mb);
+    json << host_log_json_fields();
     json << "}";
 
     // Include GPS status (from gpsd). Field names lat/lon/heading/speed/timestamp
