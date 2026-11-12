@@ -64,6 +64,9 @@ constexpr uint64_t WB_VARIANT_IF_HZ = 1268000000ULL;
 constexpr uint64_t WB_LO_MIN_HZ = 85000000ULL;      // moRFeus synthesizer span
 constexpr uint64_t WB_LO_MAX_HZ = 5400000000ULL;
 constexpr uint64_t WB_RF_MIN_HZ = 24000000ULL;      // front-end floor
+// Automatic mixer side: high below this RF, below from it up (the high side
+// loses conversion gain as its LO climbs - see heimdall_v2/config.h)
+constexpr uint64_t WB_SIDE_CROSSOVER_HZ = 2200000000ULL;
 
 enum WbMixerSide : int { WB_SIDE_HIGH = 0, WB_SIDE_LOW = 1, WB_SIDE_BELOW = 2 };
 
@@ -105,11 +108,20 @@ inline bool wb_side_valid(int side, uint64_t rf_hz) {
     return rf_hz >= min_hz && rf_hz <= max_hz;
 }
 
-// Preferred side when the current one can't reach the RF: high covers
-// everything up to its ceiling (low's range is a strict subset of high's),
-// below covers the rest. Must match heimdall's downconverter_auto_side().
+// Preferred side for an RF: high below WB_SIDE_CROSSOVER_HZ, below from it
+// up (low's range is a strict subset of high's and only ever a manual
+// choice). Must match heimdall's downconverter_auto_side().
 inline int wb_auto_side(uint64_t rf_hz) {
-    return rf_hz <= WB_LO_MAX_HZ - WB_VARIANT_IF_HZ ? WB_SIDE_HIGH : WB_SIDE_BELOW;
+    return rf_hz < WB_SIDE_CROSSOVER_HZ ? WB_SIDE_HIGH : WB_SIDE_BELOW;
+}
+
+// Side for a retune from prev_rf_hz to rf_hz: the current side (it may be a
+// manual choice) while it reaches the RF and the retune stays on one side of
+// the crossover, the preferred side otherwise. Must match heimdall's
+// downconverter_side_for_retune().
+inline int wb_side_for_retune(int current, uint64_t prev_rf_hz, uint64_t rf_hz) {
+    const bool crossed = (prev_rf_hz < WB_SIDE_CROSSOVER_HZ) != (rf_hz < WB_SIDE_CROSSOVER_HZ);
+    return (crossed || !wb_side_valid(current, rf_hz)) ? wb_auto_side(rf_hz) : current;
 }
 
 // Antenna ring auto-selection: the Wideband hardware's three concentric

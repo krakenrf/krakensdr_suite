@@ -938,6 +938,7 @@ void ControlHandler::handle_message_impl(string_view message) {
             broadcast(build_operating_mode_json());
         }
 
+        const uint64_t prev_freq_hz = requested_freq_hz.load(std::memory_order_relaxed);  // 0 before the first retune
         requested_freq_hz.store(freq_hz, std::memory_order_relaxed);
         ChannelManager::set_frequency(static_cast<float>(freq_hz), active_channel.load(std::memory_order_relaxed));
 
@@ -955,8 +956,8 @@ void ControlHandler::handle_message_impl(string_view message) {
             bool changed = false;
 
             int side = wb_variant_mixer_side.load(std::memory_order_relaxed);
-            if (!wb_side_valid(side, freq_hz)) {
-                side = wb_auto_side(freq_hz);
+            if (const int want = wb_side_for_retune(side, prev_freq_hz, freq_hz); want != side) {
+                side = want;
                 wb_variant_mixer_side = side;
                 string side_cmd = string("MIXER_SIDE:") + wb_mixer_side_name(side);
                 SettingsStore::record(side_cmd);
