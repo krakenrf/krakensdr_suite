@@ -47,6 +47,13 @@ bool doa_is_calibrating() {
     return scanner_manager.isNoiseRecentlyActive();
 }
 
+float vfo_power_dbfs(int tuner_channel, float offset_hz, int bandwidth_hz) {
+    const int ch = multi_tuner_mode() ? tuner_channel : active_channel.load(std::memory_order_relaxed);
+    return std::clamp(FFTProcessor::get_peak_magnitude_in_range(ch, offset_hz,
+                                                                static_cast<float>(bandwidth_hz)),
+                      -100.0f, 0.0f);
+}
+
 std::vector<DoaRecord> capture_doa_records() {
     std::vector<DoaRecord> out;
 
@@ -81,15 +88,12 @@ std::vector<DoaRecord> capture_doa_records() {
         float eigen_ratio = dec->music_processor->getEigenvalueRatio();
         float power_db = 10.0f * std::log10(std::max(eigen_ratio, 0.001f));
 
-        // Android Doppler compatibility adjustment (2026):
-        // The legacy Android audio maps field 4 to RF-like peak power, not
-        // the internal MUSIC eigenvalue ratio. Measure only this VFO passband.
+        // Field 4 is the passband's peak in dBFS (V1's value; the Android app
+        // maps it to its tone and power trend), not the eigenvalue ratio
         const int active_ch = active_channel.load();
-        const float bandwidth_hz = static_cast<float>(dec->bandwidth_hz.load());
-        const float legacy_power_db = std::clamp(
-            FFTProcessor::get_peak_magnitude_in_range(
-                active_ch, dec->frequency_offset_hz, bandwidth_hz),
-            -100.0f, 0.0f);
+        const float legacy_power_db = vfo_power_dbfs(
+            dec->tuner_channel.load(std::memory_order_relaxed), dec->frequency_offset_hz,
+            dec->bandwidth_hz.load(std::memory_order_relaxed));
 
         float center_freq = ChannelManager::get_frequency(active_ch);
         float freq_hz = center_freq + dec->frequency_offset_hz;

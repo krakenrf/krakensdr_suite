@@ -619,9 +619,17 @@ string MessageBuilders::build_system_status_message() {
         int est_sources = -1;    // -1 = auto mode off / no estimate
         auto decimator = decimator_manager.getDecimator(info.id);
         if (decimator && decimator->music_processor) est_sources = decimator->music_processor->getEstimatedNumSources();
+        // power_dbfs: DOA_value.html field 4 for the app's V2 connection
+        // (vfo_power_dbfs; added 2026-11, older clients ignore it)
+        char power[16] = "-100.0";
+        if (decimator)
+            std::snprintf(power, sizeof(power), "%.1f",
+                          vfo_power_dbfs(decimator->tuner_channel.load(std::memory_order_relaxed),
+                                         info.frequency_offset_hz, info.bandwidth_hz));
         json << "{\"id\":" << info.id
              << ",\"open\":" << (info.squelch_open ? "true" : "false")
-             << ",\"est_sources\":" << est_sources << "}";
+             << ",\"est_sources\":" << est_sources
+             << ",\"power_dbfs\":" << power << "}";
     }
     json << "]";
 

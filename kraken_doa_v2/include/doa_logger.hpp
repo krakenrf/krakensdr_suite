@@ -46,6 +46,15 @@ struct DoaRecord {
 // bearings computed then are garbage and must not be logged/served.
 bool doa_is_calibrating();
 
+// A VFO's received power as V1 and the Android app report it ("power"): the
+// peak of the averaged FFT across the VFO passband in dBFS, clamped to
+// [-100, 0] (-100 also = no FFT data yet). Read from the FFT of the VFO's
+// tuner - the active channel in coherent mode, its own tuner_channel in
+// wideband scan / independent mode, as the FFT squelch does. The one source
+// for DOA_value.html field 4 and system_status decimator_squelch[].power_dbfs
+// (the app's V2 connection), so both connection methods report one scale.
+float vfo_power_dbfs(int tuner_channel, float offset_hz, int bandwidth_hz);
+
 // Snapshot the current bearing rows for all enabled decimators. Caller must
 // have already checked doa_is_calibrating() (returns rows regardless).
 std::vector<DoaRecord> capture_doa_records();
