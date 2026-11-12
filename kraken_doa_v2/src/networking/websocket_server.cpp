@@ -10,6 +10,7 @@
 #include "control_handler.hpp"
 #include "message_builders.hpp"
 #include "decoder_log.hpp"
+#include "wb_board.hpp"
 #include "rdf_mapper.hpp"
 #include "array_cal.hpp"
 #include "voice2text.hpp"
@@ -39,6 +40,7 @@
 #include <cstdlib>
 #include <iterator>
 #include <algorithm>
+#include <thread>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -703,6 +705,49 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                     });
                 }
             });
+        })
+        .get("/wb_telemetry/history", [](auto* res, auto* req) {
+            if (!request_allowed(req)) { refuse_request(res, req); return; }
+            // Wideband board telemetry sheet: the logged history of the last
+            // ?range= seconds as JSON (wb_board_history_json). The log files
+            // are read on a worker thread - a month of rows takes a while on a
+            // Pi and must not stall the spectrum stream on the uWS loop.
+            if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
+                res->writeStatus("401 Unauthorized")->end("Access token required");
+                return;
+            }
+            const long range = strtol(std::string(req->getQuery("range")).c_str(), nullptr, 10);
+            auto aborted = std::make_shared<bool>(false);
+            res->onAborted([aborted]() { *aborted = true; });
+            std::thread([res, aborted, range]() {
+                std::string body = wb_board_history_json(range > 0 ? range : 3600);
+                if (!loop) return;
+                loop->defer([res, aborted, body = std::move(body)]() {
+                    if (*aborted) return;
+                    res->writeHeader("Content-Type", "application/json")->writeHeader("Cache-Control", "no-store")->end(body);
+                });
+            }).detach();
+        })
+        .get("/wb_telemetry/export.csv", [](auto* res, auto* req) {
+            if (!request_allowed(req)) { refuse_request(res, req); return; }
+            // ... and the logged rows of that range as a CSV download
+            if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
+                res->writeStatus("401 Unauthorized")->end("Access token required");
+                return;
+            }
+            const long range = strtol(std::string(req->getQuery("range")).c_str(), nullptr, 10);
+            auto aborted = std::make_shared<bool>(false);
+            res->onAborted([aborted]() { *aborted = true; });
+            std::thread([res, aborted, range]() {
+                std::string name;
+                std::string path = wb_board_export_csv(range > 0 ? range : 3600, &name);
+                if (!loop) return;
+                loop->defer([res, aborted, path = std::move(path), name = std::move(name)]() {
+                    if (*aborted) return;
+                    if (path.empty()) { res->writeStatus("500 Internal Server Error")->end("Cannot write the export file"); return; }
+                    stream_download(res, path, name);
+                });
+            }).detach();
         })
         .get("/voice_clip/*", [](auto* res, auto* req) {
             if (!request_allowed(req)) { refuse_request(res, req); return; }

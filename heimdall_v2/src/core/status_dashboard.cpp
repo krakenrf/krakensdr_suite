@@ -493,6 +493,12 @@ void render() {
                                                                 : "LOW")
               << col::DIM << "  IF " << col::RST << f3(WB_VARIANT_IF_HZ / 1e6) << " MHz";
             add(w.str());
+            const std::string tl = downconverter_telemetry_line();
+            if (!tl.empty()) {
+                ostringstream b;
+                b << label("WB BOARD") << tl;
+                add(b.str());
+            }
         }
     }
 

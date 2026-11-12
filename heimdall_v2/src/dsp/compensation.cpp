@@ -1215,7 +1215,46 @@ bool process_channel_lag_compensation(int channel, float lag) {
             std::cout << "Channel " << channel << " servo engaged (lag=" << lag << ")" << std::endl;
             break;
             
-        case LagCompensatorState::CONVERGED:
+        case LagCompensatorState::CONVERGED: {
+            // A locked channel that lost samples on the USB side (RTL2832 FIFO
+            // overflow: whole 512-sample blocks, invisible to the callbacks)
+            // is off by that many samples from then on. The lag stays locked,
+            // so every later phase calibration - gain change, retune - solved
+            // against a noise source that no longer correlates on this channel
+            // and "converged" on a random phase, without any sign of it; only
+            // the periodic check (every few minutes, and restarted by each
+            // settings change) could notice. Catch it where it is measurable:
+            // while a phase calibration measures on the noise source, where a
+            // healthy locked channel reads a lag within a few hundredths of a
+            // sample. A small slip reads its size every time; a large one
+            // (beyond the correlation window) reads a different large value
+            // each time - so the readings need not agree. The stages of a
+            // phase calibration last a reading or two each: two consecutive
+            // readings of half a sample or more start the full flush +
+            // lag/phase recovery.
+            bool measuring = false;
+            if (bias_tee_enabled.load(std::memory_order_acquire) && !recovery_in_progress.load(std::memory_order_acquire)) {
+                // nonblocking: compensation_mutex is held here, and the phase
+                // machine takes state_mutex before the device locks
+                if (auto st = get_phase_compensation_state_nonblocking())
+                    // any stage of a running phase calibration, past the cooldown
+                    // (whose sets may still hold pre-noise antenna samples)
+                    measuring = *st != PhaseCompensatorState::CONVERGED &&
+                                *st != PhaseCompensatorState::WAITING_FOR_STABILITY &&
+                                *st != PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION;
+            }
+            if (measuring && std::abs(lag) >= 0.5f) {
+                comp.locked_slip_lag = lag;
+                if (++comp.locked_slip_count >= 2) {
+                    comp.locked_slip_count = 0;
+                    std::cerr << "Channel " << channel << ": locked lag is off by " << lag
+                              << " samples on the noise source (samples were lost on this channel)" << std::endl;
+                    signal_coherence_lost("locked channel lost sample alignment");
+                }
+            } else if (measuring) {
+                comp.locked_slip_count = 0;
+            }
+
             // If initial calibration is complete, always stay converged
             if (device->compensation.initial_calibration_complete) return true;
 
@@ -1233,6 +1272,7 @@ bool process_channel_lag_compensation(int channel, float lag) {
                 }
             }
             return true;
+        }
     }
     
     return false;

@@ -1,3 +1,4 @@
+#include "wb_board.hpp"
 #include "utils/platform.hpp"
 #include "message_builders.hpp"
 #include "globals.hpp"
@@ -624,6 +625,10 @@ string MessageBuilders::build_system_status_message() {
     }
     json << "]";
 
+    // KrakenSDR Wideband board: heimdall's "downconverter" object (fw, LO,
+    // telemetry with alarm states) as received, plus its age (wb_board.cpp)
+    if (const std::string wb = wb_board_json(); !wb.empty()) json << ",\"wb_telemetry\":" << wb;
+
     // Include hardware stats (CPU temp, CPU usage, RAM)
     auto hw = get_hardware_stats();
     json << ",\"hw\":{";
@@ -631,6 +636,7 @@ string MessageBuilders::build_system_status_message() {
     json << ",\"cpu_pct\":" << fixed << setprecision(1) << hw.cpu_usage_pct;
     json << ",\"ram_used\":" << fixed << setprecision(0) << hw.ram_used_mb;
     json << ",\"ram_total\":" << fixed << setprecision(0) << hw.ram_total_mb;
+    if (!hw.model.empty()) json << ",\"model\":\"" << hw.model << "\"";   // e.g. "Raspberry Pi 5 Model B Rev 1.1"
     json << "}";
 
     // Include GPS status (from gpsd). Field names lat/lon/heading/speed/timestamp

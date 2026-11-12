@@ -202,6 +202,11 @@ bool write_file_atomic(const char* path, const std::string& data) {
         // the target filename is transient and not persisted)
         {"log_interval_sec",         "LOG_INTERVAL:",             VType::NUMBER, "1"},
         {"log_format",               "LOG_FORMAT:",               VType::STRING, "sqlite"},
+        // Wideband board telemetry log (wb_board.hpp): on/off, seconds between
+        // rows, days kept
+        {"wb_log_enabled",           "WB_LOG_ENABLE:",            VType::BOOL,   "1"},
+        {"wb_log_period_sec",        "WB_LOG_PERIOD:",            VType::NUMBER, "10"},
+        {"wb_log_keep_days",         "WB_LOG_KEEP:",              VType::NUMBER, "30"},
         // Spectrum / waterfall display preferences (UI:* keys)
         {"doa_convention",           "UI:DOA_CONV:",              VType::STRING, "compass"},
         {"waterfall_fft_ymax",       "UI:FFT_Y:",                 VType::NUMBER, "60"},

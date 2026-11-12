@@ -297,6 +297,10 @@ void discrete_scanner_thread() {
 // close the dongles so they are clean for the next run. The workers only touch
 // device QUEUES, never the librtlsdr handle, so closing here can't race them.
 static void release_hardware() {
+    // Wideband board MCU first: it takes a few ms, saves the last LO as the
+    // power-on default (one Flash write per clean exit, none per retune) and
+    // stops the telemetry poller.
+    if (downconverter.enabled.load()) downconverter_close();
     // An element-count reconfiguration holds settings_mutex from closing the
     // handles until its new USB readers are running: wait for it, or this
     // closed handles a just-started reader was entering rtlsdr_read_async with

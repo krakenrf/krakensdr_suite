@@ -295,6 +295,7 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
                     << "\"lo_hz\":" << downconverter.lo_hz.load() << ","
                     << "\"array\":" << downconverter.array_select.load() << ","
                     << "\"lo_current\":" << downconverter.lo_current.load()
+                    << downconverter_status_json_fields()   // board fw + telemetry
                     << "}";
     }
 
