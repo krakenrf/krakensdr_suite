@@ -633,6 +633,66 @@ static bool set_external_noise_power(bool on, const std::vector<std::unique_ptr<
     return false;
 }
 
+// Checked standard-board GPIO0 OFF is deliberately distinct from the
+// all-modes legacy noise switcher: external noise, Wideband RF switches and
+// Kerberos GPIOs require different hardware confirmation contracts.
+// Callers must not publish a successful calibration from a failed receipt.
+NoiseOffReceipt set_standard_internal_noise_off_checked(
+        const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+    std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
+    const int count = active_num_elements.load(std::memory_order_acquire);
+    NoiseOffReceipt unsupported;
+    unsupported.outcome = NoiseOffOutcome::UNSUPPORTED_PATH;
+    unsupported.active_count = count;
+#if ENABLE_BIAS_TEE
+    if (operating_mode.load(std::memory_order_acquire) != OperatingMode::COHERENT ||
+        kerberos_mode.load(std::memory_order_acquire) ||
+        downconverter.enabled.load(std::memory_order_acquire) ||
+        external_noise_mode.load(std::memory_order_acquire))
+        return unsupported;
+
+    const std::size_t max_expected =
+        std::min(expected_serials.size(), static_cast<std::size_t>(NUM_DEVICES));
+    const auto result = checked_standard_noise_off(
+        count, max_expected, devices.size(),
+        [](std::size_t n, auto&& each) {
+            for_each_tuner(n, each);  // parallel on Linux, serial on WinUSB
+        },
+        [&](std::size_t i) -> std::optional<int> {
+            const auto& device = devices[i];
+            if (!device || !device->dev ||
+                !device->init_success.load(std::memory_order_acquire) ||
+                device->index != static_cast<int>(i) ||
+                device->serial_number != expected_serials[i])
+                return std::nullopt;
+            return rtlsdr_set_bias_tee(device->dev, 0);
+        });
+
+    if (result.all_acknowledged()) {
+        bias_tee_enabled.store(false, std::memory_order_release);
+        std::cout << "Noise GPIO0 OFF: acknowledged on all " << count
+                  << " active standard receivers" << std::endl;
+    } else {
+        std::cerr << "Noise GPIO0 OFF: not confirmed ("
+                  << noise_off_outcome_name(result.outcome) << ")" << std::endl;
+        for (const auto& channel : result.channels) {
+            if (!channel.present || channel.driver_rc != 0) {
+                std::cerr << "  slot " << channel.slot << ": "
+                          << (channel.present ? "driver rc " +
+                                  std::to_string(channel.driver_rc)
+                                              : "handle/identity unavailable")
+                          << std::endl;
+            }
+        }
+        // Keep bias_tee_enabled as-is: a request is not evidence of OFF.
+    }
+    return result;
+#else
+    (void)devices;
+    return unsupported;  // GPIO0 is disabled at compile time; no write receipt.
+#endif
+}
+
 void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
     std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
     // Every calibration switches the noise source on through here (cooldown

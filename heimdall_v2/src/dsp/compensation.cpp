@@ -3,6 +3,7 @@
 #include "../sdr/sdr_device.hpp"
 #include "../sdr/sdr_pipeline.hpp"
 #include "../sdr/sdr_init.hpp"
+#include "../sdr/downconverter.hpp"
 #include "../sdr/pipeline_control.hpp"
 #include "../core/config.hpp"
 #include <algorithm>
@@ -23,6 +24,43 @@ extern void clear_l1_buffer();
 // turn off the noise-source bias-tee, and auto-disable FFT. Assumes the caller
 // holds phase_compensation->state_mutex.
 static void complete_phase_calibration_locked() {
+    // The standard internal GPIO0 path must acknowledge OFF on *every active*
+    // receiver before publishing CONVERGED. The other board paths retain the
+    // legacy switch sequence until their separate GPIO contracts are designed.
+    // Compensator state_mutex is already held here; device_io_mutex is inner.
+#if ENABLE_BIAS_TEE
+    const bool standard_internal =
+        operating_mode.load(std::memory_order_acquire) == OperatingMode::COHERENT &&
+        !kerberos_mode.load(std::memory_order_acquire) &&
+        !downconverter.enabled.load(std::memory_order_acquire) &&
+        !external_noise_mode.load(std::memory_order_acquire);
+    if (standard_internal) {
+        const auto receipt = set_standard_internal_noise_off_checked(devices);
+        if (!receipt.all_acknowledged()) {
+            // An OFF request is not an OFF acknowledgement. Never publish
+            // convergence, calibration-complete latches or per-bin FIR readiness
+            // while the physical noise source state is unknown.
+            reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION);
+            for (const auto& device : devices)
+                if (device) device->compensation.initial_calibration_complete.store(
+                    false, std::memory_order_release);
+            {
+                std::lock_guard<std::mutex> fft_lock(fft_control.control_mutex);
+                fft_control.fft_enabled = false;
+                fft_control.auto_disabled = true;
+                fft_control.user_override = false;
+            }
+            l2_raw_cap.store(L2_RAW_MAX, std::memory_order_relaxed);
+            recovery_in_progress.store(false, std::memory_order_release);
+            std::cerr << "Phase: convergence REFUSED: standard noise GPIO0 OFF "
+                      << noise_off_outcome_name(receipt.outcome)
+                      << "; calibration halted, receiver state requires review"
+                      << std::endl;
+            return;
+        }
+    }
+#endif
+
     phase_compensation->state = PhaseCompensatorState::CONVERGED;
     phase_compensation->per_bin_measured = true;
     // Clears any in-flight coherence recovery: reconvergence ends the recal that
@@ -41,7 +79,10 @@ static void complete_phase_calibration_locked() {
     // A fresh convergence supersedes any stale-calibration flag (--kerberos).
     kerberos_cal_stale.store(false, std::memory_order_release);
 
-    set_bias_tee_all_devices(false, devices);
+#if ENABLE_BIAS_TEE
+    if (!standard_internal)
+#endif
+        set_bias_tee_all_devices(false, devices);
 
     std::lock_guard<std::mutex> fft_lock(fft_control.control_mutex);
     fft_control.fft_enabled = false;
@@ -1552,8 +1593,12 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                             const bool timed_out = elapsed > 15;
 
                             if (design_ok) {
-                                per_bin_cal.ready.store(true, std::memory_order_release);
                                 complete_phase_calibration_locked();
+                                // A GPIO0 OFF failure refuses convergence. Do not
+                                // expose the newly designed FIR until the noise
+                                // shutdown and terminal state both succeeded.
+                                if (phase_compensation->state == PhaseCompensatorState::CONVERGED)
+                                    per_bin_cal.ready.store(true, std::memory_order_release);
                             } else if (!enabled || !fft_on || timed_out) {
                                 std::cout << "Per-bin: finishing without equalizer (enabled=" << enabled
                                           << ", fft_on=" << fft_on << ", timed_out=" << timed_out << ")" << std::endl;
