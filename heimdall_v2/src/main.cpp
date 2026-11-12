@@ -513,6 +513,12 @@ int main(int argc, char* argv[]) {
     std::cout.rdbuf(&san_out);
     std::cerr.rdbuf(&san_err);
 
+    // Lock the process's memory (core/utils, Linux only, best-effort like the
+    // threads' SCHED_RR): before the dongles open and the USB reader / drain
+    // threads start, so no page they touch can be swapped out under them.
+    // MCL_FUTURE covers everything allocated after this call.
+    lock_process_memory();
+
     // Load persisted runtime settings (e.g. per-bin EQ toggle, web-UI element
     // count) before any calibration starts, so a remembered "on" builds the
     // equalizer on the very first calibration.

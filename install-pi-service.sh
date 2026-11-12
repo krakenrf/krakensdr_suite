@@ -147,6 +147,11 @@ ExecStop=$(sd_quote "$RUN_SH") stop
 # limits.conf entry only applies to PAM logins, not to systemd services, so
 # without this they silently ran at normal priority in the boot service.
 LimitRTPRIO=30
+# Locked-memory limit for heimdall's mlockall (keeps the pages those threads
+# use in RAM). heimdall locks only with an unlimited limit (a finite one would
+# make later allocations fail once reached); without it it logs once and runs
+# as before. Same limits.conf caveat as above.
+LimitMEMLOCK=infinity
 # Covers the tmux server itself; the apps inside it are restarted by run.sh's
 # supervisor if they crash (a dead pane never ended the unit's main process).
 Restart=on-failure

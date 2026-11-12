@@ -22,6 +22,17 @@ void append_big_endian(std::vector<uint8_t>& vec, uint32_t value);
 // RT_PRIO_USB_READER, NORMAL below; reverted when the thread ends.
 bool set_thread_realtime(const char* name, int rt_priority, int cpu = -1);
 
+// Memory locking (best-effort, Linux only), the companion of
+// set_thread_realtime: mlockall(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT), so a
+// page the process has touched is never swapped out or reclaimed and a
+// realtime thread can't stall on faulting it back in. Call once, early on the
+// main thread. Attempted only when the RLIMIT_MEMLOCK soft limit is (or can be
+// raised to) unlimited: under MCL_FUTURE every later mapping counts against a
+// finite limit, and once it is reached malloc / mmap / thread creation fail.
+// Returns true if memory is locked; otherwise logs one line to stderr and the
+// process runs exactly as without it. No-op (false, silent) on Windows / macOS.
+bool lock_process_memory();
+
 // Math utilities
 template<typename T>
 constexpr T clamp(T value, T min_val, T max_val) {

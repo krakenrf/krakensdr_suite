@@ -327,6 +327,13 @@ reboots regardless of USB enumeration order.
 process is granted it; otherwise they log once and run at normal priority. To enable,
 add `<user> - rtprio 30` to `/etc/security/limits.conf` or grant `CAP_SYS_NICE`.
 
+**Memory locking (optional, Linux):** at startup heimdall locks its memory in RAM
+(`mlockall` with `MCL_ONFAULT`: only pages it touches), so the realtime threads don't
+stall on a swapped-out page. It does so only when the locked-memory limit is unlimited;
+otherwise it logs once and runs as before. To enable, add `<user> - memlock unlimited`
+to `/etc/security/limits.conf` (`LimitMEMLOCK=infinity` in a systemd unit). install.sh
+and `install-pi-service.sh` set both limits.
+
 ---
 
 ## Dependencies

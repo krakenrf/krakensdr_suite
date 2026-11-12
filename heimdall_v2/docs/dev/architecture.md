@@ -78,7 +78,7 @@ Provides fundamental types and utilities shared across all modules.
 **Key Files:**
 - `config.hpp`: Wraps config.h constants, includes NUM_DEVICES, ports
 - `types.hpp`: Type aliases (Complex, ComplexBuffer), enums (LagCompensatorState, PhaseCompensatorState), structs (CorrelationResult, PhaseCompensationData, ChannelCompensation)
-- `utils.{hpp,cpp}`: Endian conversion, clamping, IQ LUT, `set_thread_realtime()` (best-effort SCHED_RR)
+- `utils.{hpp,cpp}`: Endian conversion, clamping, IQ LUT, `set_thread_realtime()` (best-effort SCHED_RR), `lock_process_memory()` (best-effort `mlockall`, Linux)
 - `buffer_pool.hpp`: Lock-free buffer pool (`acquire`/`try_acquire`/`release`) used for the alloc-free callback and L2/L2-raw recycling
 - `logging.hpp`: LOG_I(), LOG_W(), LOG_E() macros
 
@@ -204,6 +204,7 @@ loss under high CPU load.
 - Atomic flags: `global_running`, `current_frequency`, `current_gain`, `bias_tee_enabled`, `rtl_tcp_channel`, plus coherence flags `coherence_lost`, `recovery_in_progress`, `coherence_event_count`
 - **Queue size counter rule (important):** `l1_buffer_size`, `l2_buffer_size`, `l2_raw_buffer_size` are maintained ONLY by matched `fetch_add` (on enqueue) / `fetch_sub` (on every dequeue). Never `store(0)` them — a store races concurrent producers/consumers and can leave a phantom item whose later `fetch_sub` underflows the `size_t` to `SIZE_MAX` (which permanently wedges the L1-full / staging-depth checks).
 - **Thread scheduling:** `set_thread_realtime()` (core/utils) raises the USB readers and sample drain to SCHED_RR (round-robin, so equal-priority readers can't lock each other out). Best-effort: with no `CAP_SYS_NICE`/`rtprio` privilege it logs once and runs at normal priority.
+- **Memory locking:** `lock_process_memory()` (core/utils, called once from `main()` before the dongles open) locks the process's memory with `mlockall(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT)` so those threads don't stall on a swapped-out page. Linux only, and only with an unlimited `RLIMIT_MEMLOCK` (see Configuration); otherwise it logs once and heimdall runs as before.
 
 ### Pipeline Decoupling (L1 → L2-raw → L2)
 
@@ -258,6 +259,7 @@ The time-critical L1 drain (`sample_processor`) is separated from the heavy IQ c
 - **Lag servo ringing / slow convergence**: gain auto-derates with the measured update period (CPU load lengthens feedback delay); tune `ChannelCompensation::servo_gain` / `servo_max_counts` in types.hpp
 - **Frequent coherence recoveries / `!! COHERENCE LOST` logs**: the ingest is dropping under load. Watch `coherence_events` / `recovering` in the control-port status. Causes: CPU overload (the conversion worker or correlation can't keep up), USB/power issues, or a flaky dongle. Grant realtime scheduling (see Configuration), reduce active channels, or check USB. A recovery that wedges is aborted after 120 s (noise source switched off).
 - **Realtime priority not taking effect**: `set_thread_realtime` logs once if it lacks privilege; add `rtprio` to limits.conf or grant `CAP_SYS_NICE`. The app runs correctly at normal priority either way.
+- **"Memory locking unavailable" at startup**: the locked-memory limit isn't unlimited. Add `<user> - memlock unlimited` to limits.conf (new login needed), `LimitMEMLOCK=infinity` to a systemd unit, or `ulimits: memlock: -1` in Docker. heimdall runs correctly without it.
 
 ## Dependencies
 

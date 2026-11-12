@@ -40,7 +40,8 @@ startup by `html_loader.cpp`.
   `PhaseCompensationData`, `ChannelCompensation`, `OperatingMode`),
   `config.hpp` (wraps `config.h`; `kerberos_manual_cal_only()`,
   `external_noise_mode`), `buffer_pool.hpp`, `atomic_complex.hpp`,
-  `logging.hpp` (`LOG_I/W/E`), `utils` (`set_thread_realtime()`), and the
+  `logging.hpp` (`LOG_I/W/E`), `utils` (`set_thread_realtime()`,
+  `lock_process_memory()`), and the
   copies shared with kraken_doa (`net_compat.hpp`, `platform.*`,
   `fs_compat.*`, `host_check.hpp`, `log_sanitize.hpp`).
 - `src/sdr/`: `sdr_device.cpp` (L1 buffers, the RTL callback), `sdr_init.cpp`

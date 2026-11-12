@@ -62,7 +62,9 @@ git secret guards.
   before the dongles open, so a crash restart comes back where the array was
   (scanner hops are not saved)
 - Boot service (`install-pi-service.sh`): `Type=forking`, `ExecStop=run.sh
-  stop`, `LimitRTPRIO=30` (realtime USB threads), `Restart=on-failure`.
+  stop`, `LimitRTPRIO=30` (realtime USB threads), `LimitMEMLOCK=infinity`
+  (heimdall's `mlockall`), `Restart=on-failure`. install.sh grants the same
+  two (`rtprio 30`, `memlock unlimited`) in limits.conf for login sessions.
 
 ## Docker (DOCKER.md)
 
@@ -73,7 +75,8 @@ git secret guards.
   `restart: unless-stopped` = autostart at boot) + `docker/entrypoint.sh`
 - USB passthrough: `/dev/bus/usb` bind-mounted + `device_cgroup_rules: c
   189:* rmw` (follows re-enumeration after heimdall's USB reset / a replug,
-  unlike `devices:`); `ulimits: rtprio: 30` for the SCHED_RR threads
+  unlike `devices:`); `ulimits: rtprio: 30` for the SCHED_RR threads,
+  `memlock: -1` for heimdall's `mlockall`
 - Each app runs with cwd `/data/<app>` (= `docker-data/<app>` on the host),
   web files symlinked in - every runtime file path in both apps is
   cwd-relative, so a new persisted file lands in the volume automatically; a
