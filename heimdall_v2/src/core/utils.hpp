@@ -32,6 +32,8 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu = -1);
 // Returns true if memory is locked; otherwise logs one line to stderr and the
 // process runs exactly as without it. No-op (false, silent) on Windows / macOS.
 bool lock_process_memory();
+// Whether lock_process_memory() locked the memory (the dashboard's "memlock").
+bool memory_locked();
 
 // Math utilities
 template<typename T>

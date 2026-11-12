@@ -4,6 +4,7 @@
 #include "core/config.hpp"
 #include "core/log_sanitize.hpp"
 #include "core/platform.hpp"
+#include "core/utils.hpp"
 #include "sdr/sdr_device.hpp"
 #include "sdr/sdr_pipeline.hpp"
 #include "sdr/downconverter.hpp"
@@ -651,7 +652,15 @@ void render() {
           << col::DIM << "cpu " << col::RST << uc << f1(hw.cpu) << "%" << col::RST
           << col::DIM << "  temp " << col::RST << tc
           << (hw.temp < 0 ? string("n/a") : f1(hw.temp) + "\xc2\xb0" + "C") << col::RST
-          << col::DIM << "  ram " << col::RST << (long)hw.ram_used << "/" << (long)hw.ram_total << "MB";
+          << col::DIM << "  ram " << col::RST << (long)hw.ram_used << "/" << (long)hw.ram_total << "MB"
+          // mlockall (core/utils): off = no unlimited memlock limit (yellow:
+          // heimdall runs, its pages can be swapped); Linux only
+          << col::DIM << "  memlock " << col::RST
+#ifdef __linux__
+          << (memory_locked() ? string(col::GRN) + "on" + col::RST : string(col::YEL) + "off" + col::RST);
+#else
+          << col::DIM << "n/a" << col::RST;
+#endif
         add(o.str());
     }
 

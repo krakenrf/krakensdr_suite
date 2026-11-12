@@ -1,6 +1,7 @@
 #include "utils.hpp"
 #include "config.hpp"
 #include <array>
+#include <atomic>
 #include <pthread.h>
 #include <sched.h>
 #include <cstring>
@@ -169,6 +170,9 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
 // Docker container or a user namespace has no CAP_IPC_LOCK, so the limit still
 // applies). A process with CAP_IPC_LOCK but not CAP_SYS_RESOURCE and a finite
 // limit is skipped, although it could lock - grant it the limit instead.
+namespace { std::atomic<bool> g_memory_locked{false}; }
+bool memory_locked() { return g_memory_locked.load(std::memory_order_relaxed); }
+
 bool lock_process_memory() {
 #ifdef __linux__
     const auto report = [](const std::string& why, const char* fix) {
@@ -202,6 +206,7 @@ bool lock_process_memory() {
                err == EINVAL ? "MCL_ONFAULT needs Linux 4.4 or later." : limit_fix);
         return false;
     }
+    g_memory_locked.store(true, std::memory_order_relaxed);
     std::cout << "Memory locked (mlockall, on fault): pages in use stay in RAM" << std::endl;
     return true;
 #else
