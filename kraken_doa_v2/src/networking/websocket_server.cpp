@@ -1108,10 +1108,11 @@ void WebSocketServer::doa_http_server_thread() {
                     res->writeStatus("403 Forbidden")->end("request refused");
                     return;
                 }
-                // Last fully-computed payload, served verbatim while a retune
-                // calibration is in progress. Confined to this thread's event
-                // loop (the only place this handler runs), so no lock needed.
+                // Android Doppler compatibility adjustment (2026):
+                // Retain a complete message per source-frame set, not per HTTP poll.
+                // This handler owns its cache on the same event-loop thread.
                 static std::string last_good_message;
+                static std::string last_source_key;
 
                 // "Retune calibration in progress": while the server retunes it
                 // pulses the noise source, and bearings computed on that injected
@@ -1129,20 +1130,28 @@ void WebSocketServer::doa_http_server_thread() {
                     return;
                 }
 
-                // Build the body from the shared capture/format helpers so the
-                // served CSV stays byte-identical to what the logger writes.
-                std::string message;
-                for (const DoaRecord& rec : capture_doa_records()) {
-                    message += format_doa_csv_line(rec);
+                // Rebuild the whole legacy CSV only if a MUSIC source frame
+                // changes; different HTTP polls must not invent measurements.
+                auto records = capture_doa_records();
+                std::string source_key;
+                for (const DoaRecord& rec : records) {
+                    const int64_t stamp = rec.source_stamp_ms > 0
+                        ? rec.source_stamp_ms : rec.timestamp_ms;
+                    source_key += std::to_string(rec.decimator_id) + ":" +
+                                  std::to_string(stamp) + ";";
                 }
-
-                // Calibration is settled here: this is a trustworthy frame, so
-                // remember it as the value to hold during the next retune cycle.
-                last_good_message = message;
+                if (last_good_message.empty() || source_key != last_source_key) {
+                    std::string message;
+                    for (const DoaRecord& rec : records) {
+                        message += format_doa_csv_line(rec);
+                    }
+                    last_good_message = std::move(message);
+                    last_source_key = std::move(source_key);
+                }
 
                 res->writeHeader("Content-Type", "text/html; charset=utf-8")
                    ->writeHeader("Cache-Control", "no-cache, no-store, must-revalidate")
-                   ->end(message);
+                   ->end(last_good_message);
             })
             .get("/*", [](auto* res, auto* /*req*/) {
                 res->writeStatus("404 Not Found")->end("Not found");
