@@ -1266,8 +1266,88 @@ static void park_stale_servo(int channel) {
     comp.state = LagCompensatorState::MEASURING;
 }
 
+// Lag check during a phase recalibration. A retune / gain change recalibrates
+// phase only and keeps every lag machine CONVERGED, and a CONVERGED lag machine
+// ignores its readings - so a sample slip since the lag was acquired (the
+// RTL2832U FIFO drops whole 188-byte TS packets = multiples of 94 samples when
+// its bulk reads run dry, invisible on the USB bus) survived the recal, which
+// still reached CONVERGED on a misaligned array. The recal runs on the noise
+// source, so its lag readings are as good as an acquisition's: a channel off by
+// more than PERIODIC_RECAL_LAG_THRESHOLD on RECAL_LAG_BAD_READINGS consecutive
+// settled readings goes back to the servo, and the phase stage waits for it
+// (WAITING_FOR_LAG_COMPLETION -> MEASURING_INITIAL_PHASE). A channel within
+// tolerance is left alone. Returns the updated consecutive-bad count.
+static constexpr int RECAL_LAG_BAD_READINGS = 2;
+
+static int check_lag_during_phase_recal(int channel, float lag, int bad_count,
+                                        CorrelationResult& correlation_result) {
+    if (!phase_compensation || operating_mode.load() != OperatingMode::COHERENT ||
+        !bias_tee_enabled.load(std::memory_order_acquire)) return 0;
+
+    PhaseCompensatorState st;
+    {
+        std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+        st = phase_compensation->state;
+    }
+    if (st != PhaseCompensatorState::MEASURING_INITIAL_PHASE &&
+        st != PhaseCompensatorState::APPLYING_COMPENSATION &&
+        st != PhaseCompensatorState::VERIFYING_CONVERGENCE &&
+        st != PhaseCompensatorState::MEASURING_PER_BIN) return 0;
+
+    // Same settle gate as the phase measurement: readings from before the noise
+    // source reached the stream correlate the antenna signals, not the array
+    const long long since_noise_on_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count() -
+        phase_compensation->noise_on_ns.load(std::memory_order_relaxed);
+    if (since_noise_on_ns < static_cast<long long>(PhaseCompensationData::NOISE_SETTLE_MS) * 1000000LL)
+        return 0;
+
+    if (!(std::abs(lag) > PERIODIC_RECAL_LAG_THRESHOLD)) return 0;
+    if (++bad_count < RECAL_LAG_BAD_READINGS) return bad_count;
+
+    auto device_it = std::find_if(devices.begin(), devices.end(),
+        [channel](const auto& dev) { return dev && dev->index == channel; });
+    if (device_it == devices.end()) return 0;
+    auto& device = *device_it;
+    {
+        std::lock_guard<std::mutex> lock(device->compensation_mutex);
+        auto& comp = device->compensation;
+        if (comp.state != LagCompensatorState::CONVERGED) return 0;  // already acquiring
+        // MEASURING re-engages the servo (zeroes the register, which a
+        // CONVERGED channel holds at 0 anyway) on the next fresh reading
+        comp.state = LagCompensatorState::MEASURING;
+        comp.zero_lag_count = 0;
+        comp.lag_compensation_locked = false;
+        comp.frac_delay = 0.0f;
+        comp.initial_calibration_complete = false;
+    }
+    {
+        // The phase driver reads channel_states, which the correlation thread
+        // refreshes only with its next set: without this, a stale CONVERGED
+        // entry let WAITING_FOR_LAG_COMPLETION pass straight back to measuring
+        std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
+        correlation_result.channel_states[channel] = LagCompensatorState::MEASURING;
+    }
+    {
+        std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+        const auto now_st = phase_compensation->state;
+        if (now_st == PhaseCompensatorState::MEASURING_INITIAL_PHASE ||
+            now_st == PhaseCompensatorState::APPLYING_COMPENSATION ||
+            now_st == PhaseCompensatorState::VERIFYING_CONVERGENCE ||
+            now_st == PhaseCompensatorState::MEASURING_PER_BIN) {
+            reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION);
+        }
+    }
+    std::cerr << "Channel " << channel << ": lag " << lag
+              << " samples during the phase recalibration (sample slip) - re-acquiring its lag"
+              << std::endl;
+    return 0;
+}
+
 void channel_lag_compensation_processor(int channel, CorrelationResult& correlation_result) {
     std::cout << "Starting lag compensation for channel " << channel << std::endl;
+    int recal_lag_bad = 0;  // consecutive out-of-tolerance readings (check_lag_during_phase_recal)
 
     uint64_t last_processed_sequence = 0;
     auto last_fresh = std::chrono::steady_clock::now();
@@ -1363,8 +1443,12 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                 // If FFT is enabled, continue with compensation processing for monitoring
             }
             
-            if (fresh) process_channel_lag_compensation(channel, *current_lag);
-            
+            if (fresh) {
+                recal_lag_bad = check_lag_during_phase_recal(channel, *current_lag, recal_lag_bad,
+                                                             correlation_result);
+                process_channel_lag_compensation(channel, *current_lag);
+            }
+
             if (channel == (REF_CHANNEL == 0 ? 1 : 0)) {
                 if (auto current_state = get_phase_compensation_state()) {
                     switch (*current_state) {
