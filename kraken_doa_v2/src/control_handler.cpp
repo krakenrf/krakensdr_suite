@@ -1,4 +1,5 @@
 #include "control_handler.hpp"
+#include "wb_board.hpp"
 #include "playback.hpp"
 #include "recorder.hpp"
 #include "globals.hpp"
@@ -2242,6 +2243,26 @@ void ControlHandler::handle_message_impl(string_view message) {
     else if (message.starts_with("SFSCAN_HOLD:")) {
         sfscan::hold(parse_bool(message.substr(12)));
         broadcast(sfscan::status_json());
+    }
+    // Wideband board telemetry log (wb_board.cpp): on/off, seconds between
+    // rows, days kept. The values in force ride system_status
+    // (wb_telemetry.logging), so every browser shows them.
+    else if (message.starts_with("WB_LOG_ENABLE:") || message.starts_with("WB_LOG_PERIOD:") ||
+             message.starts_with("WB_LOG_KEEP:")) {
+        const size_t colon = message.find(':');
+        const double v = parse_double(message, colon + 1);
+        if (!std::isfinite(v)) throw CommandRejected("a number is required");
+        string applied;
+        if (message.starts_with("WB_LOG_ENABLE:")) {
+            wb_board_set_log_enabled(v != 0);
+            applied = string("WB_LOG_ENABLE:") + (v != 0 ? "1" : "0");
+        } else if (message.starts_with("WB_LOG_PERIOD:")) {
+            applied = "WB_LOG_PERIOD:" + to_string(wb_board_set_log_period(static_cast<int>(std::clamp(v, 1.0, 3600.0))));
+        } else {
+            applied = "WB_LOG_KEEP:" + to_string(wb_board_set_log_keep_days(static_cast<int>(std::clamp(v, 1.0, 365.0))));
+        }
+        if (!g_replaying_settings.load()) SettingsStore::record(applied);
+        cout << "Wideband board log: " << applied << endl;
     }
     else if (message.starts_with("SFSCAN_SQUELCH:") || message.starts_with("SFSCAN_DWELL:") ||
              message.starts_with("SFSCAN_HANG:") || message.starts_with("SFSCAN_MAX:") ||

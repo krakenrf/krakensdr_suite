@@ -472,6 +472,23 @@ body:not(.ai-dk-col) .ai-strip {display:none !important}
 .top-bar .tb-vol {font-size:13px;color:#7cb3f0;min-width:32px}
 .top-bar .hw-stats {margin-left:auto;font-size:12px;color:#8aa8c7;white-space:nowrap;font-family:'Consolas',ui-monospace,'Menlo','Monaco','Courier New',monospace;padding:0 8px;
   min-width:31ch;text-align:right}  /* fixed width: changing digits must not re-wrap the bar */
+/* Telemetry fields: one for the computer running the software, one for the Wideband board */
+/* The telemetry stays pinned to the right edge: it comes last (order) and the
+   status badges, whose text changes all the time, sit to its left with fixed
+   widths - a badge that changes or hides must not push anything around. */
+.top-bar .tele-group {margin-left:auto;order:99;display:flex;gap:8px;align-items:center}
+.top-bar .status-badges {margin-left:0}
+.top-bar #status-connection {min-width:104px}
+.top-bar #status-mode {min-width:86px}
+.top-bar #status-calibration {min-width:170px}   /* "Verifying (Noise On)" */
+.top-bar #status-cooldown {min-width:108px}
+.top-bar #status-scanner {min-width:52px}
+.top-bar .tele-chip {margin-left:0;min-width:0;display:inline-flex;align-items:center;gap:7px;padding:3px 9px 3px 0;
+  border:1px solid #2c4a6e;border-radius:6px;background:rgba(8,18,32,.55);line-height:1.3}
+.top-bar .tele-chip .tele-lbl {font-family:Arial,sans-serif;font-size:10px;font-weight:bold;letter-spacing:.6px;text-transform:uppercase;
+  color:#cfe0f5;background:#22395a;padding:4px 7px;margin:-3px 0;border-radius:5px 0 0 5px}
+.top-bar #hw-stats {min-width:25ch;text-align:left}
+.top-bar #wb-chip-val {min-width:18ch;text-align:left}
 .top-bar .status-badges {display:flex;gap:6px}
 .top-bar .status-badge {font-size:14px;padding:5px 12px;border-radius:4px;background:#2d4059;color:#fff;font-weight:500;text-align:center;white-space:nowrap}
 .top-bar .gain-group {gap:8px}
@@ -1093,6 +1110,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
   .top-bar .tb-sep {display:none}
   .top-bar .hw-stats {display:none}
   .top-bar .status-badge {font-size:11px;padding:3px 8px}
+  .top-bar .status-badges .status-badge {min-width:0 !important}
+  .top-bar #status-cooldown[style*="hidden"] {display:none}
   .top-bar .status-badges {flex-wrap:wrap}
   .spectrum-header .hint {display:none}
   .wf-controls select {max-width:120px}
@@ -1147,6 +1166,42 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
   #fp {height:150px}
   #wf-container {height:110px}
 }
+/* Wideband board telemetry card */
+.wb-grid { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; font-size:12px; line-height:1.6; }
+.wb-k { color:#777; }
+.wb-v { color:#cfd8dc; font-variant-numeric:tabular-nums; }
+.wb-v .warn { color:#ff9800; font-weight:bold; }
+.wb-v .alarm { color:#ef5350; font-weight:bold; }
+.wb-v .stale { color:#777; }
+/* Wideband board telemetry sheet */
+.wb-sheet {width:1120px;max-width:100%;max-height:100%;overflow-y:auto;background:#121a30;border:1px solid #4fc3f7;border-radius:6px;box-shadow:0 6px 30px rgba(0,0,0,.6);color:#dbe8ff;font-size:12px;padding:12px 14px;box-sizing:border-box}
+.wb-sheet-h {display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.wb-sheet-h .ttl {font-weight:bold;font-size:15px}
+.wb-sheet-h .x {margin-left:auto;cursor:pointer;color:#8aa;font-size:18px;padding:0 6px;line-height:1}
+.wb-seg {display:inline-flex;border:1px solid #2a4a7a;border-radius:5px;overflow:hidden}
+.wb-seg button {background:#16223c;color:#b9cbe6;border:0;border-right:1px solid #2a4a7a;padding:5px 14px;font-size:12px;cursor:pointer}
+.wb-seg button:last-child {border-right:0}
+.wb-seg button.sel {background:#1565c0;color:#fff;font-weight:bold}
+.wb-now {display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px}
+.wb-tile {background:#0f1a30;border:1px solid #1d3a62;border-radius:5px;padding:6px 9px}
+.wb-tile .k {color:#7f9cc0;font-size:11px}
+.wb-tile .n {font-size:20px;font-weight:bold;font-variant-numeric:tabular-nums;color:#eaf2ff;line-height:1.25}
+.wb-tile .r {color:#8aa8c7;font-size:11px;font-variant-numeric:tabular-nums}
+.wb-tile.warn {border-color:#ff9800}.wb-tile.alarm {border-color:#ef5350}
+.wb-charts {display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.wb-chart {background:#0d1520;border:1px solid #1d3a62;border-radius:5px;padding:6px 6px 2px;min-width:0}
+.wb-chart .ct {display:flex;justify-content:space-between;color:#b9cbe6;font-size:12px;padding:0 4px 2px}
+.wb-chart .ct b {color:#eaf2ff}
+.wb-chart .u-legend {display:none}
+.wb-chart .empty {color:#777;text-align:center;padding:60px 0}
+.wb-sheet .sec {margin-top:10px;background:#0f1a30;border:1px solid #1d3a62;border-radius:5px;padding:7px 10px}
+.wb-sheet .sec h4 {margin:0 0 5px;font-size:12px;color:#9fc4f5}
+.wb-sheet .row {display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.wb-sheet select {background:#1a1a2e;border:1px solid #2a4a7a;color:#e0e0e0;border-radius:3px;font-size:12px;padding:3px 6px}
+.wb-sheet .info {color:#8aa8c7;font-size:11px}
+.wb-ev {max-height:132px;overflow-y:auto;font-family:'Consolas',ui-monospace,monospace;font-size:11px;line-height:1.5}
+.wb-ev .t {color:#7f9cc0}.wb-ev .warn {color:#ff9800}.wb-ev .alarm {color:#ef5350}
+@media (max-width:820px) {.wb-charts {grid-template-columns:1fr}.wb-now {grid-template-columns:1fr 1fr}}
 </style>
 </head>
 <body class="ai-dk-off">
@@ -1483,6 +1538,27 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <span id="get-gps-status" style="font-size:10px;color:#888"></span>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- KrakenSDR Wideband board telemetry (heimdall --wideband; hidden otherwise) -->
+    <div class="sb-section" id="wb-section" style="display:none">
+      <div class="sb-header" onclick="toggleSection(this)">
+        <h3>🔌 Wideband Board<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The downconverter board's own sensors, read by heimdall once a second: input voltage and current (INA219, measured before the eFuse), board temperature and humidity (SHT40 on Testunit_3v2, Si7020 on 3v0), the LO as set and as read back from the board, firmware and board revision. Orange = warning, red = alarm; an alarm clears 30 s after the value is back in range. Grey = no fresh reading. Logged to wb_logs/ (wb_telemetry.csv every 10 s, wb_events.csv on every change). Testunit_3v0 cannot measure above 3.2 A.</span></span></h3>
+        <span class="sb-toggle">▼</span>
+      </div>
+      <div class="sb-content">
+        <div id="wb-fw-warn" style="display:none;font-size:12px;color:#ffd9a0;background:#3a2a10;border:1px solid #b3822c;border-radius:4px;padding:4px 6px;margin-bottom:6px"></div>
+        <div class="wb-grid" id="wb-grid">
+          <span class="wb-k">Input</span><span class="wb-v" id="wb-power">–</span>
+          <span class="wb-k">Board</span><span class="wb-v" id="wb-env">–</span>
+          <span class="wb-k">LO</span><span class="wb-v" id="wb-lo">–</span>
+          <span class="wb-k">Hardware</span><span class="wb-v" id="wb-hw">–</span>
+          <span class="wb-k">Firmware</span><span class="wb-v" id="wb-fw">–</span>
+        </div>
+        <canvas id="wb-trend" width="280" height="76" style="width:100%;height:76px;margin-top:6px;background:#0d1520;border-radius:4px"></canvas>
+        <div style="font-size:10px;color:#777;display:flex;justify-content:space-between"><span><span style="color:#4fc3f7">■</span> current (A)</span><span>last hour</span><span><span style="color:#ffb74d">■</span> temperature (°C)</span></div>
+        <button class="btn" style="width:100%;margin-top:6px" onclick="wbSheetOpen()">📈 Telemetry history, log &amp; CSV</button>
       </div>
     </div>
 
@@ -2080,6 +2156,9 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- KerberosSDR manual-calibration banner (hidden unless heimdall runs --kerberos) -->
     <div id="kerberos-banner" style="display:none;padding:8px 12px;font-weight:bold;font-size:13px;
          border-bottom:1px solid #b33;background:#3a1515;color:#ffb3b3;"></div>
+    <!-- KrakenSDR Wideband board: firmware too old / board alarm (hidden otherwise) -->
+    <div id="wb-banner" style="display:none;padding:6px 12px;font-weight:bold;font-size:13px;
+         border-bottom:1px solid #b3822c;background:#3a2a10;color:#ffd9a0;cursor:pointer" onclick="wbOpenSection()"></div>
     <!-- Top Bar -->
     <div class="top-bar">
       <!-- Hamburger (mobile only) -->
@@ -2172,13 +2251,19 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <span class="tb-vol" id="vv">50%</span>
       </div>
       <!-- Hardware Stats -->
-      <span class="hw-stats" id="hw-stats"></span>
+      <span class="tele-group">
+        <span class="hw-stats tele-chip" id="hw-chip" style="display:none" title="The computer running this software: CPU temperature, CPU load, memory">
+          <span class="tele-lbl" id="hw-lbl">Host</span><span id="hw-stats"></span></span>
+        <!-- Wideband board telemetry (heimdall --wideband only) -->
+        <span class="hw-stats tele-chip" id="wb-chip" style="display:none;cursor:pointer" title="Wideband board: supply voltage, supply current, board temperature (click for the history charts, the log settings and the CSV download)" onclick="wbSheetOpen()">
+          <span class="tele-lbl">WB board</span><span id="wb-chip-val"></span></span>
+      </span>
       <!-- Status Badges (pushed to right) -->
       <div class="status-badges">
         <span class="status-badge" id="status-connection" style="background:#b71c1c">Disconnected</span>
         <span class="status-badge" id="status-mode">Coherent</span>
         <span class="status-badge" id="status-calibration">Calibrating</span>
-        <span class="status-badge" id="status-cooldown" style="display:none">Cooldown</span>
+        <span class="status-badge" id="status-cooldown" style="visibility:hidden">Cooldown</span>
         <span class="status-badge" id="status-scanner">Idle</span>
       </div>
     </div>
@@ -3503,16 +3588,13 @@ function computeAutoRange(magnitudes) {
 
   // Set max to show peaks with some headroom
   // Ensure at least 30dB dynamic range for good color spread
-  const minDynamicRange = 30;
+  const minDynamicRange = 40;
   let newMax = Math.ceil(peak + 5);
 
-  // If data range is less than our minimum, expand the range
-  if (newMax - newMin < minDynamicRange) {
-    // Center the range around the data
-    const center = (noiseFloor + peak) / 2;
-    newMin = Math.floor(center - minDynamicRange / 2);
-    newMax = Math.ceil(center + minDynamicRange / 2);
-  }
+  // Less than that in the data (a quiet band, nothing but noise): extend the
+  // range UPWARDS. Centring it on the data put the noise floor in the middle
+  // of the colour scale - an empty band showed as a solid orange/red sheet.
+  if (newMax - newMin < minDynamicRange) newMax = newMin + minDynamicRange;
 
   // Round to nice 5 dB steps
   newMin = Math.floor(newMin / 5) * 5;
@@ -23459,6 +23541,339 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     recRender();
   }
 
+  // ---- KrakenSDR Wideband board telemetry (system_status.wb_telemetry) ----
+  // heimdall's "downconverter" object: fw {date, build, telemetry_ok, set_cmd},
+  // telemetry {revision, vin_v, iin_a, iin_saturated, temp_c, rh_pct,
+  // lo_hz_read, stale, alarms {iin, vin, temp, rh, sensor}, ...}, age_s.
+  const wbTrend = [];            // {t, i, temp}, one point per 10 s, one hour
+  let wbLastTrend = 0;
+  function wbOpenSection() {
+    const sec = $id('wb-section');
+    if (!sec) return;
+    if (typeof mobileLayoutMQ !== 'undefined' && mobileLayoutMQ.matches) toggleSidebar(true);
+    if (sec.classList.contains('collapsed')) toggleSection(sec.querySelector('.sb-header'));
+    sec.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  }
+  function wbSpan(text, level, stale) {
+    const cls = stale ? 'stale' : (level === 'alarm' ? 'alarm' : level === 'warn' ? 'warn' : '');
+    return cls ? '<span class="' + cls + '">' + text + '</span>' : text;
+  }
+  function wbAgo(ts) {
+    if (!ts) return '';
+    const s = Math.max(0, Date.now() / 1000 - ts);
+    return s < 90 ? Math.round(s) + ' s ago' : Math.round(s / 60) + ' min ago';
+  }
+  // ---- Telemetry sheet: history charts (1 h / 24 h / 7 d / 30 d), log settings, CSV download ----
+  // Data: GET wb_telemetry/history?range=<s> (wb_board_history_json: <= ~600
+  // buckets of min / mean / max). The live tiles follow system_status.
+  const WB_RANGES = [['1 h', 3600], ['24 h', 86400], ['7 days', 604800], ['30 days', 2592000]];
+  const WB_CHARTS = [['iin', 'Input current', 'A', '#4fc3f7', 2], ['vin', 'Input voltage', 'V', '#81c784', 2],
+                     ['temp', 'Board temperature', '°C', '#ffb74d', 1], ['rh', 'Relative humidity', '%RH', '#ba68c8', 1]];
+  let wbSheetRange = 3600, wbSheetTimer = null, wbSheetPlots = [], wbSheetLast = null, wbLatest = null;
+  function wbSheetOpen() {
+    if ($id('wb-sheet-bg')) return;
+    const bg = document.createElement('div');
+    bg.className = 'sf-dlg-bg'; bg.id = 'wb-sheet-bg';
+    bg.innerHTML =
+      '<div class="wb-sheet" role="dialog" aria-label="Wideband board telemetry">' +
+        '<div class="wb-sheet-h"><span class="ttl">🔌 Wideband board telemetry</span>' +
+          '<span class="wb-seg" id="wb-sheet-seg">' + WB_RANGES.map(r => '<button data-r="' + r[1] + '">' + r[0] + '</button>').join('') + '</span>' +
+          '<span class="info" id="wb-sheet-note"></span><span class="x" title="Close" onclick="wbSheetClose()">✕</span></div>' +
+        '<div class="wb-now" id="wb-sheet-now"></div>' +
+        '<div class="wb-charts" id="wb-sheet-charts">' + WB_CHARTS.map(c =>
+          '<div class="wb-chart"><div class="ct"><span>' + c[1] + ' (' + c[2] + ')</span><span id="wb-st-' + c[0] + '"></span></div><div id="wb-pl-' + c[0] + '"></div></div>').join('') + '</div>' +
+        '<div class="sec"><h4>Logging</h4><div class="row">' +
+          '<label><input type="checkbox" id="wb-log-en" onchange="send(\'WB_LOG_ENABLE:\' + (this.checked ? 1 : 0))"> Log to the SD card</label>' +
+          '<label>One row every <select id="wb-log-per" onchange="send(\'WB_LOG_PERIOD:\' + this.value)">' +
+            [[1, '1 s'], [5, '5 s'], [10, '10 s'], [30, '30 s'], [60, '1 min'], [300, '5 min']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select></label>' +
+          '<label>Keep <select id="wb-log-keep" onchange="send(\'WB_LOG_KEEP:\' + this.value)">' +
+            [[7, '7 days'], [30, '30 days'], [90, '90 days'], [365, '1 year']].map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select></label>' +
+          '<span style="flex:1"></span>' +
+          '<button class="btn primary" id="wb-csv-btn" onclick="wbSheetCsv()">⬇ Download CSV (<span id="wb-csv-span">1 h</span>)</button></div>' +
+          '<div class="info" id="wb-log-info" style="margin-top:4px"></div></div>' +
+        '<div class="sec"><h4>Events in this range</h4><div class="wb-ev" id="wb-sheet-ev"></div></div>' +
+      '</div>';
+    bg.addEventListener('mousedown', e => { if (e.target === bg) wbSheetClose(); });
+    document.body.appendChild(bg);
+    $id('wb-sheet-seg').addEventListener('click', e => { const r = e.target && e.target.dataset && e.target.dataset.r; if (r) wbSheetSetRange(+r); });
+    document.addEventListener('keydown', wbSheetKey);
+    window.addEventListener('resize', wbSheetResize);
+    wbSheetLive();
+    wbSheetSetRange(wbSheetRange);
+  }
+  function wbSheetKey(e) { if (e.key === 'Escape') wbSheetClose(); }
+  function wbSheetClose() {
+    const bg = $id('wb-sheet-bg');
+    if (!bg) return;
+    if (wbSheetTimer) { clearInterval(wbSheetTimer); wbSheetTimer = null; }
+    wbSheetPlots.forEach(p => p.destroy()); wbSheetPlots = [];
+    document.removeEventListener('keydown', wbSheetKey);
+    window.removeEventListener('resize', wbSheetResize);
+    bg.remove();
+  }
+  function wbSheetSetRange(r) {
+    wbSheetRange = r;
+    document.querySelectorAll('#wb-sheet-seg button').forEach(b => b.classList.toggle('sel', +b.dataset.r === r));
+    $id('wb-csv-span').textContent = (WB_RANGES.find(x => x[1] === r) || WB_RANGES[0])[0];
+    if (wbSheetTimer) clearInterval(wbSheetTimer);
+    wbSheetTimer = setInterval(wbSheetLoad, r <= 3600 ? 20000 : 120000);   // the newest bucket fills in
+    wbSheetLoad();
+  }
+  async function wbSheetLoad() {
+    const want = wbSheetRange, note = $id('wb-sheet-note');
+    if (!note) return;
+    try {
+      const token = storedToken();
+      const r = await fetch('wb_telemetry/history?range=' + want, {cache: 'no-store', headers: token ? {'X-Kraken-Token': token} : {}});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const h = await r.json();
+      if (want !== wbSheetRange || !$id('wb-sheet-bg')) return;   // the range changed / the sheet closed meanwhile
+      wbSheetLast = h;
+      wbSheetDraw(h);
+      note.textContent = h.rows ? h.rows.toLocaleString() + ' logged rows, one point per ' + wbDur(h.bucket_s) : 'nothing logged in this range yet';
+    } catch (e) {
+      note.textContent = 'Cannot load the history: ' + (e && e.message ? e.message : e);
+    }
+  }
+  function wbEsc(s) { return String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c])); }
+  function wbDur(s) { return s < 60 ? s + ' s' : s < 3600 ? Math.round(s / 60) + ' min' : (s / 3600).toFixed(s % 3600 ? 1 : 0) + ' h'; }
+  function wbSheetWidth(id) { const el = $id(id); return Math.max(240, Math.floor(el.parentElement.clientWidth - 14)); }
+  function wbSheetResize() { wbSheetPlots.forEach(p => p.setSize({width: wbSheetWidth(p.root.parentElement.id), height: 190})); }
+  function wbSheetDraw(h) {
+    wbSheetPlots.forEach(p => p.destroy()); wbSheetPlots = [];
+    const day = h.range_s > 86400;
+    for (const [key, , unit, color, dec] of WB_CHARTS) {
+      const host = $id('wb-pl-' + key), st = $id('wb-st-' + key);
+      host.innerHTML = '';
+      const [mn, av, mx] = h[key];
+      const vals = av.filter(v => v !== null);
+      if (!vals.length) { host.innerHTML = '<div class="empty">no data</div>'; st.textContent = ''; continue; }
+      const lo = Math.min(...mn.filter(v => v !== null)), hi = Math.max(...mx.filter(v => v !== null));
+      const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+      st.innerHTML = 'min <b>' + lo.toFixed(dec) + '</b> · avg <b>' + mean.toFixed(dec) + '</b> · max <b>' + hi.toFixed(dec) + '</b> ' + unit;
+      const pad = Math.max((hi - lo) * 0.15, key === 'vin' ? 0.02 : key === 'iin' ? 0.05 : 0.5);
+      const fmtT = ts => { const d = new Date(ts * 1000); const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+                           return day ? (d.getMonth() + 1) + '/' + d.getDate() + (h.range_s <= 604800 ? ' ' + hm : '') : hm; };
+      const axis = {stroke: '#8aa8c7', font: '11px Arial', grid: {stroke: '#1f2c44', width: 1}, ticks: {stroke: '#1f2c44', width: 1}};
+      const tip = document.createElement('div');
+      tip.style.cssText = 'position:absolute;display:none;pointer-events:none;z-index:5;background:#0d3c61;border:1px solid #1565c0;color:#e8f2ff;border-radius:4px;padding:3px 7px;font-size:11px;white-space:nowrap';
+      const plot = new uPlot({
+        width: wbSheetWidth('wb-pl-' + key), height: 190, legend: {show: false},
+        cursor: {y: false, points: {size: 7, fill: color}},
+        scales: {x: {time: true}, y: {range: [lo - pad, hi + pad]}},
+        axes: [Object.assign({values: (u, sp) => sp.map(fmtT), space: 70}, axis),
+               Object.assign({size: 52, values: (u, sp) => sp.map(v => v.toFixed(dec))}, axis)],
+        series: [{}, {stroke: 'transparent', points: {show: false}},
+                 {stroke: color, width: 1.6, spanGaps: false, points: {show: vals.length < 40, size: 4, fill: color}},
+                 {stroke: 'transparent', points: {show: false}}],
+        bands: [{series: [3, 1], fill: color + '33'}],
+        hooks: {setCursor: [u => {
+          const i = u.cursor.idx;
+          if (i == null || av[i] == null) { tip.style.display = 'none'; return; }
+          const d = new Date(h.t[i] * 1000);
+          tip.innerHTML = d.toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) + ' &nbsp; <b>' + av[i].toFixed(dec) + ' ' + unit + '</b>' +
+                          (mx[i] - mn[i] > 0 ? ' &nbsp;(' + mn[i].toFixed(dec) + ' – ' + mx[i].toFixed(dec) + ')' : '');
+          tip.style.display = 'block';
+          const x = u.cursor.left + u.over.offsetLeft;
+          tip.style.left = Math.min(Math.max(0, x + 10), u.root.clientWidth - tip.offsetWidth - 2) + 'px';
+          tip.style.top = (u.over.offsetTop + 4) + 'px';
+        }]},
+      }, [h.t, mn, av, mx], host);
+      plot.root.style.position = 'relative';
+      plot.root.appendChild(tip);
+      plot.over.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+      wbSheetPlots.push(plot);
+    }
+    const ev = $id('wb-sheet-ev');
+    ev.innerHTML = h.events.length ? h.events.slice().reverse().map(e => {
+      const cls = /alarm$/.test(e.d.split(' ')[0]) || e.d.startsWith('alarm') ? 'alarm' : e.d.startsWith('warn') || e.d.startsWith('lost') ? 'warn' : '';
+      return '<div><span class="t">' + new Date(e.t * 1000).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'}) +
+             '</span> &nbsp;' + wbEsc(e.e.replace(/^alarm_/, '').replace(/_/g, ' ')) + ': <span class="' + cls + '">' + wbEsc(e.d) + '</span></div>'; }).join('')
+      : '<span class="info">none</span>';
+    const lg = h.log || {};
+    $id('wb-log-info').textContent = 'On the SD card: ' + ((lg.bytes || 0) / 1048576).toFixed(1) + ' MB in ' + (lg.files || 0) + ' file' + (lg.files === 1 ? '' : 's') +
+      (lg.oldest ? ', from ' + lg.oldest : '') + ' (wb_logs/, one file per day; older days are deleted).';
+  }
+  // live tiles + the log settings in force (every status message while the sheet is open)
+  function wbSheetLive() {
+    const box = $id('wb-sheet-now');
+    if (!box || !wbLatest) return;
+    const t = wbLatest.telemetry || {}, al = t.alarms || {}, n = v => typeof v === 'number';
+    const tile = (k, v, sub, lvl) => '<div class="wb-tile ' + (lvl === 'alarm' || lvl === 'warn' ? lvl : '') + '"><div class="k">' + k + '</div><div class="n">' + v + '</div><div class="r">' + sub + '</div></div>';
+    box.innerHTML =
+      tile('Input current', n(t.iin_a) ? (t.iin_saturated ? '&gt; 3.2' : t.iin_a.toFixed(2)) + ' A' : '–', n(t.iin_a) && n(t.vin_v) ? (t.iin_a * t.vin_v).toFixed(1) + ' W' : '', al.iin) +
+      tile('Input voltage', n(t.vin_v) ? t.vin_v.toFixed(2) + ' V' : '–', 'before the eFuse', al.vin) +
+      tile('Board temperature', n(t.temp_c) ? t.temp_c.toFixed(1) + ' °C' : '–', t.sensor || '', al.temp) +
+      tile('Relative humidity', n(t.rh_pct) ? t.rh_pct.toFixed(0) + ' %' : '–', (t.revision ? 'Testunit_' + t.revision : '') + (wbLatest.fw && wbLatest.fw.date ? ' · fw' + wbLatest.fw.date + '.' + (wbLatest.fw.build || 0) : ''), al.rh);
+    const lg = wbLatest.logging;
+    if (lg) {
+      const en = $id('wb-log-en'), per = $id('wb-log-per'), keep = $id('wb-log-keep');
+      const setSel = (el, v) => { if (document.activeElement === el) return;
+        if (![...el.options].some(o => +o.value === v)) el.add(new Option(v + (el === per ? ' s' : ' days'), v));
+        el.value = v; };
+      if (document.activeElement !== en) en.checked = !!lg.enabled;
+      setSel(per, lg.period_s); setSel(keep, lg.keep_days);
+      per.disabled = keep.disabled = !lg.enabled;
+    }
+  }
+  async function wbSheetCsv() {
+    const btn = $id('wb-csv-btn'), note = $id('wb-sheet-note');
+    btn.disabled = true;
+    try {
+      const token = storedToken();
+      const r = await fetch('wb_telemetry/export.csv?range=' + wbSheetRange, {cache: 'no-store', headers: token ? {'X-Kraken-Token': token} : {}});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const m = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '');
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement('a');
+      a.href = url; a.download = m ? m[1] : 'wb_telemetry.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      if (note) note.textContent = 'CSV download failed: ' + (e && e.message ? e.message : e);
+    }
+    btn.disabled = false;
+  }
+
+  let wbHashOpened = false;
+  function updateWbTelemetry(wb) {
+    wbLatest = wb || null;
+    wbSheetLive();
+    // https://<receiver>:8080/#wb-telemetry opens the sheet directly (a bookmark)
+    // (#wb-telemetry=86400 with that range in seconds)
+    const wbHash = /^#wb-telemetry(?:=(\d+))?$/.exec(location.hash);
+    if (wb && !wbHashOpened && wbHash) {
+      wbHashOpened = true;
+      if (wbHash[1] && WB_RANGES.some(r => r[1] === +wbHash[1])) wbSheetRange = +wbHash[1];
+      wbSheetOpen();
+    }
+    const sec = $id('wb-section'), chip = $id('wb-chip'), banner = $id('wb-banner');
+    if (!sec) return;
+    if (!wb) {
+      sec.style.display = 'none';
+      if (chip) chip.style.display = 'none';
+      if (banner) banner.style.display = 'none';
+      return;
+    }
+    sec.style.display = '';
+    const fw = wb.fw || {}, t = wb.telemetry || {}, al = t.alarms || {};
+    const fwText = fw.date > 0 ? 'fw' + fw.date + (fw.build ? '.' + fw.build : '') : (fw.date === 0 ? 'older than fw20261109' : 'no reply');
+    $id('wb-fw').innerHTML = fwText + (fw.set_cmd === 'w' ? ' <span class="alarm">tunes with Flash save</span>' : '') +
+                             (fw.no_reply ? ' <span class="stale">(' + fw.no_reply + ' unanswered)</span>' : '');
+    const lo = wb.lo_hz ? (wb.lo_hz / 1e6).toFixed(3) + ' MHz' : '–';
+    const loRead = t.lo_hz_read ? (t.lo_hz_read === wb.lo_hz ? ' ✓' : ' <span class="warn">board: ' + (t.lo_hz_read / 1e6).toFixed(3) + ' MHz</span>') : '';
+    const rings = ['outer', 'center', 'inner'];
+    $id('wb-lo').innerHTML = lo + loRead + ' <span class="stale">' + (wb.side || '') + ' side, ' + (rings[wb.array] || '') + ' ring</span>';
+
+    const fwWarn = $id('wb-fw-warn');
+    if (!t.enabled) {
+      fwWarn.textContent = '⚠ Board telemetry disabled: ' + (t.reason || 'firmware too old') + '.';
+      fwWarn.style.display = '';
+      $id('wb-power').textContent = '–';
+      $id('wb-env').textContent = '–';
+      $id('wb-hw').textContent = '–';
+      if (chip) chip.style.display = 'none';
+      if (banner) {
+        banner.textContent = '⚠ Wideband board firmware too old - telemetry disabled. Update the board to fw20261110.3 (USB bootloader).';
+        banner.style.background = '#3a2a10';
+        banner.style.color = '#ffd9a0';
+        banner.style.display = 'block';
+      }
+      return;
+    }
+    fwWarn.style.display = t.shunt_consistent === false ? '' : 'none';
+    if (t.shunt_consistent === false) fwWarn.textContent = '⚠ The R6 shunt voltage does not fit the detected board revision: reworked or mixed board? The current reading may be off by 10×.';
+
+    const ps = !!t.power_stale, es = !!t.env_stale;
+    if (t.vin_v !== undefined) {
+      const cur = t.iin_saturated ? '&gt; 3.2 A' : t.iin_a.toFixed(2) + ' A';
+      $id('wb-power').innerHTML = wbSpan(t.vin_v.toFixed(2) + ' V', al.vin, ps) + ' · ' + wbSpan(cur, al.iin, ps) +
+        ' · ' + wbSpan((t.vin_v * t.iin_a).toFixed(1) + ' W', '', ps) + (ps ? ' <span class="stale">(' + wbAgo(t.power_ts) + ')</span>' : '');
+    } else {
+      $id('wb-power').innerHTML = '<span class="stale">no reading yet</span>';
+    }
+    if (t.temp_c !== undefined) {
+      $id('wb-env').innerHTML = wbSpan(t.temp_c.toFixed(1) + ' °C', al.temp, es) + ' · ' + wbSpan(t.rh_pct.toFixed(0) + ' %RH', al.rh, es) +
+        (es ? ' <span class="stale">(' + wbAgo(t.env_ts) + ')</span>' : '');
+    } else {
+      $id('wb-env').innerHTML = '<span class="stale">' + (t.sensor ? 'no reading yet' : 'no humidity sensor answers') + '</span>';
+    }
+    const rev = t.revision && t.revision !== 'unknown' ? 'Testunit_' + t.revision : 'revision unknown';
+    $id('wb-hw').innerHTML = rev + ' <span class="stale">' + (t.sensor || 'no RH sensor') + ', R6 ' + (t.r_shunt_mohm || '?') + ' mΩ' +
+                             (t.errors ? ', ' + t.errors + ' read errors' : '') + '</span>';
+
+    // worst alarm -> chip colour + banner
+    const levels = [al.iin, al.vin, al.temp, al.rh, al.sensor];
+    const worst = levels.includes('alarm') ? 'alarm' : levels.includes('warn') ? 'warn' : 'ok';
+    if (chip) {
+      const parts = [];
+      if (t.vin_v !== undefined) parts.push(t.vin_v.toFixed(2) + 'V', t.iin_saturated ? '>3.2A' : t.iin_a.toFixed(2) + 'A');
+      if (t.temp_c !== undefined) parts.push(t.temp_c.toFixed(0) + '°C');
+      $id('wb-chip-val').textContent = parts.join(' \u2502 ');
+      chip.style.color = worst === 'alarm' ? '#ef5350' : worst === 'warn' ? '#ff9800' : (t.stale ? '#777' : '#8aa8c7');
+      chip.style.display = '';
+    }
+    if (banner) {
+      const names = {iin: 'input current', vin: 'input voltage', temp: 'board temperature', rh: 'humidity', sensor: 'sensor readings stale'};
+      const bad = Object.keys(names).filter(k => al[k] === 'alarm' || al[k] === 'warn');
+      if (bad.length) {
+        banner.textContent = (worst === 'alarm' ? '🚨 Wideband board ALARM: ' : '⚠ Wideband board warning: ') +
+                             bad.map(k => names[k] + (al[k] === 'alarm' ? ' (alarm)' : '')).join(', ') + ' - click for details';
+        banner.style.background = worst === 'alarm' ? '#3a1515' : '#3a2a10';
+        banner.style.color = worst === 'alarm' ? '#ffb3b3' : '#ffd9a0';
+        banner.style.display = 'block';
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
+    // one-hour trend (memory only; the long history is in wb_logs/)
+    const now = Date.now() / 1000;
+    if (now - wbLastTrend >= 10 && (t.iin_a !== undefined || t.temp_c !== undefined) && !t.stale) {
+      wbLastTrend = now;
+      wbTrend.push({t: now, i: t.iin_a, temp: t.temp_c});
+      while (wbTrend.length && wbTrend[0].t < now - 3600) wbTrend.shift();
+    }
+    wbDrawTrend();
+  }
+  function wbDrawTrend() {
+    const c = $id('wb-trend');
+    if (!c || !c.offsetParent) return;
+    const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+    if (c.width !== Math.round(w * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    g.strokeStyle = '#1e2a38';
+    for (let k = 1; k < 4; k++) { g.beginPath(); g.moveTo(0, h * k / 4); g.lineTo(w, h * k / 4); g.stroke(); }
+    if (wbTrend.length < 2) {
+      g.fillStyle = '#555'; g.font = '11px sans-serif'; g.fillText('collecting…', 8, h / 2 + 4);
+      return;
+    }
+    const now = Date.now() / 1000, x = p => w - (now - p.t) / 3600 * w;
+    const series = (key, color, unit, alignRight) => {
+      const v = wbTrend.map(p => p[key]).filter(q => q !== undefined && q !== null);
+      if (!v.length) return;
+      let lo = Math.min(...v), hi = Math.max(...v);
+      const pad = Math.max((hi - lo) * 0.15, key === 'i' ? 0.05 : 0.5);
+      lo -= pad; hi += pad;
+      const y = q => h - 4 - (q - lo) / (hi - lo) * (h - 8);
+      g.strokeStyle = color; g.lineWidth = 1.5; g.beginPath();
+      let started = false;
+      for (const p of wbTrend) {
+        if (p[key] === undefined || p[key] === null) continue;
+        if (!started) { g.moveTo(x(p), y(p[key])); started = true; } else g.lineTo(x(p), y(p[key]));
+      }
+      g.stroke();
+      g.fillStyle = color; g.font = '10px sans-serif';
+      const top = (key === 'i' ? hi.toFixed(2) : hi.toFixed(0)) + unit, bot = (key === 'i' ? lo.toFixed(2) : lo.toFixed(0)) + unit;
+      g.fillText(top, alignRight ? w - g.measureText(top).width - 3 : 3, 11);
+      g.fillText(bot, alignRight ? w - g.measureText(bot).width - 3 : 3, h - 3);
+    };
+    series('i', '#4fc3f7', ' A', false);
+    series('temp', '#ffb74d', ' °C', true);
+  }
+
   function updateSystemStatus(status) {
     setServerOs(status.platform || (status.hw && status.hw.os), status.source_tree);
     // KerberosSDR manual-calibration warnings (heimdall --kerberos). The
@@ -23509,8 +23924,16 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
         parts.push('CPU ' + h.cpu_pct.toFixed(0) + '%');
         parts.push('RAM ' + (h.ram_used/1024).toFixed(1) + '/' + (h.ram_total/1024).toFixed(1) + 'G');
         el.innerHTML = parts.join(' \u2502 ');
+        // name the computer: "RPi 5" on a Raspberry Pi, "Host" elsewhere
+        const m = /Raspberry Pi (?:Compute Module )?(\d+)/.exec(h.model || '');
+        $id('hw-lbl').textContent = m ? 'RPi ' + m[1] : 'Host';
+        $id('hw-chip').title = (h.model ? h.model + ' - ' : '') + 'the computer running this software: CPU temperature, CPU load, memory';
+        $id('hw-chip').style.display = '';
       }
     }
+
+    // Wideband board telemetry (absent unless heimdall runs --wideband)
+    updateWbTelemetry(status.wb_telemetry);
 
     // Update GPS status panel
     if (status.gps) updateGpsStatus(status.gps);
@@ -23561,11 +23984,11 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
           if (!cooldownTickTimer) cooldownTickTimer = setInterval(updateCooldownBadge, 200);
         }
         updateCooldownBadge();
-        cooldownEl.style.display = 'inline-block';
+        cooldownEl.style.visibility = 'visible';   // hidden, not removed: the row must not reflow
       } else {
         cooldownEndTime = null;
         if (cooldownTickTimer) { clearInterval(cooldownTickTimer); cooldownTickTimer = null; }
-        cooldownEl.style.display = 'none';
+        cooldownEl.style.visibility = 'hidden';
       }
     }
 

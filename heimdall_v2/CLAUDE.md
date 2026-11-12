@@ -112,7 +112,8 @@ Calibration
 - A retune / gain / mixer-side / ring change goes through
   `update_sdr_settings()` and the cooldown (`STABILITY_DELAY_MS` 3 s, a
   debounce kept on purpose) -> noise on -> `NOISE_SETTLE_MS` -> snapshots ->
-  verify. A change during a recovery restarts its phase stage; the discrete
+  verify, phase only - but a channel whose lag reads > 1 sample during it is
+  re-acquired by the servo (`check_lag_during_phase_recal`). A change during a recovery restarts its phase stage; the discrete
   scanner defers calibration (`scanner_cal_deferred`); `hold_calibration` is
   a lease, and a coherence recovery is never held.
 - The lag servo writes only the sample-clock register

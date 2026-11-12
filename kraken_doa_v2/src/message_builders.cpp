@@ -1,3 +1,4 @@
+#include "wb_board.hpp"
 #include "utils/platform.hpp"
 #include "message_builders.hpp"
 #include "globals.hpp"
@@ -618,11 +619,23 @@ string MessageBuilders::build_system_status_message() {
         int est_sources = -1;    // -1 = auto mode off / no estimate
         auto decimator = decimator_manager.getDecimator(info.id);
         if (decimator && decimator->music_processor) est_sources = decimator->music_processor->getEstimatedNumSources();
+        // power_dbfs: DOA_value.html field 4 for the app's V2 connection
+        // (vfo_power_dbfs; added 2026-11, older clients ignore it)
+        char power[16] = "-100.0";
+        if (decimator)
+            std::snprintf(power, sizeof(power), "%.1f",
+                          vfo_power_dbfs(decimator->tuner_channel.load(std::memory_order_relaxed),
+                                         info.frequency_offset_hz, info.bandwidth_hz));
         json << "{\"id\":" << info.id
              << ",\"open\":" << (info.squelch_open ? "true" : "false")
-             << ",\"est_sources\":" << est_sources << "}";
+             << ",\"est_sources\":" << est_sources
+             << ",\"power_dbfs\":" << power << "}";
     }
     json << "]";
+
+    // KrakenSDR Wideband board: heimdall's "downconverter" object (fw, LO,
+    // telemetry with alarm states) as received, plus its age (wb_board.cpp)
+    if (const std::string wb = wb_board_json(); !wb.empty()) json << ",\"wb_telemetry\":" << wb;
 
     // Include hardware stats (CPU temp, CPU usage, RAM)
     auto hw = get_hardware_stats();
@@ -631,6 +644,7 @@ string MessageBuilders::build_system_status_message() {
     json << ",\"cpu_pct\":" << fixed << setprecision(1) << hw.cpu_usage_pct;
     json << ",\"ram_used\":" << fixed << setprecision(0) << hw.ram_used_mb;
     json << ",\"ram_total\":" << fixed << setprecision(0) << hw.ram_total_mb;
+    if (!hw.model.empty()) json << ",\"model\":\"" << hw.model << "\"";   // e.g. "Raspberry Pi 5 Model B Rev 1.1"
     json << "}";
 
     // Include GPS status (from gpsd). Field names lat/lon/heading/speed/timestamp

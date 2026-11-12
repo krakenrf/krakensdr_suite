@@ -140,7 +140,7 @@ are decimal; booleans are `1`/`0` unless noted.
 |---|---|
 | `ADD_DECIMATOR` | Add a decimator. |
 | `REMOVE_DECIMATOR:<id>` | Remove decimator by id. |
-| `SET_DECIMATOR_FREQ:<id>:<Hz>` | Set a decimator's frequency offset. |
+| `SET_DECIMATOR_FREQ:<id>:<kHz>` | Set a decimator's frequency offset from the center (kHz, float). |
 | `SET_DECIMATOR_BW:<id>:<idx>` | Set a decimator's bandwidth (index into `BANDWIDTH_OPTIONS`). |
 | `SET_DECIMATOR_DEMOD:<id>:<mode>` | Set a decimator's demod mode. |
 | `SET_FM_DECIMATOR:<id>` | Choose which decimator feeds FM audio. |
@@ -338,7 +338,12 @@ Delivered on the always-on control channel:
   re-apply to your UI to stay in sync.
 - `{"scanner_sync":{...}}`, `{"doa_state":{"enabled":bool}}` — state pushes.
 - `{"system_status":{...}}` (~2/s) — `hw` (cpu_temp, cpu_pct, ram), squelch
-  state (`decimator_squelch[]` with per-decimator `open`, `eigen_ratio`, `eigen_peak` — 5 s peak hold — `eigen_thr` effective threshold, `est_sources`), `beamforming_status`, phase state, etc.
+  state (`decimator_squelch[]` with per-decimator `id`, `open`, `est_sources` and
+  `power_dbfs` — the VFO passband's FFT peak in dBFS, clamped to [-100, 0], the
+  same value as field 4 of `DOA_value.html`; the "power" for a client's signal
+  strength readout. `eigen_ratio` / `eigen_peak` / `eigen_thr` were dropped
+  2026-10-10 with the eigenvalue squelch methods), `beamforming_status`, phase
+  state, etc.
 - `{"decimator_info":[...]}` — reply to `GET_DECIMATOR_INFO`.
 
 ---

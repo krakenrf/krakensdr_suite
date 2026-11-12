@@ -116,8 +116,26 @@ static void read_ram_usage(float& used_mb, float& total_mb) {
 #endif
 }
 
+// Board model from the device tree, read once. Only printable ASCII without
+// quote / backslash is kept: the string goes into the status JSON as is.
+static const std::string& board_model() {
+    static const std::string model = [] {
+        std::string m;
+#ifndef _WIN32
+        std::ifstream f("/proc/device-tree/model");
+        std::string raw;
+        if (f && std::getline(f, raw, '\0')) {
+            for (char c : raw) if (c >= 32 && c < 127 && c != '"' && c != '\\' && m.size() < 80) m += c;
+        }
+#endif
+        return m;
+    }();
+    return model;
+}
+
 HardwareStats get_hardware_stats() {
     HardwareStats stats;
+    stats.model = board_model();
     stats.cpu_temp_c = read_cpu_temp();
     stats.cpu_usage_pct = read_cpu_usage();
     read_ram_usage(stats.ram_used_mb, stats.ram_total_mb);

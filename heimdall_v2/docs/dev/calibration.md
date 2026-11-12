@@ -88,6 +88,25 @@ and the phases settle within ~20 ms. Runtime override: control port
 runs). The DoA client holds DoA on heimdall's WAITING_FOR_STABILITY state (min
 500 ms) and the noise flag (+250 ms) instead of a fixed 4 s.
 
+**Lag check during the phase recal** (`check_lag_during_phase_recal()` in
+compensation.cpp, added 2026-11-12): a retune / gain change recalibrates
+phase only and keeps every lag machine CONVERGED, and a CONVERGED lag machine
+ignores its readings - so a sample slip since the lag was acquired survived
+the recal, which then reached CONVERGED on a misaligned array (seen as lag
+jumps of exact multiples of 94 samples: the RTL2832U FIFO drops whole
+188-byte TS packets when its bulk reads run dry, see
+`../../../docs/dev/librtlsdr-fork.md`; reported from the field with no
+tuner operation in between, CONVERGED shown, fixed by a manual lag reset).
+Now, while a phase stage runs on the settled noise source (same
+`NOISE_SETTLE_MS` gate), a channel whose |lag| exceeds
+`PERIODIC_RECAL_LAG_THRESHOLD` (1 sample) on 2 consecutive readings goes back
+to MEASURING (servo) and the phase stage to WAITING_FOR_LAG_COMPLETION; channels
+within tolerance are untouched, so an aligned array recalibrates exactly as
+before. The servo pulls a few hundred samples back in ~1-3 s (up to ~858
+samples/s). Between retunes the 5-minute check (|lag| > 1 sample -> full
+recal) remains the only lag check. Not yet verified on hardware with a real
+slip.
+
 **Calibration hold** (control port `{"command":"hold_calibration","hold_ms":N}`,
 `set_calibration_hold()` / `calibration_held()` in compensation.cpp; added
 2026-10-22 for the DoA client's saved-frequency scan, which searches its bands

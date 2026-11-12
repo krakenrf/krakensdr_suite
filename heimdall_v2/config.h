@@ -74,6 +74,20 @@
                                            // runtime-adjustable from the client UI
 #define WB_RF_MIN_HZ        24000000ULL    // lowest RF the front end usefully passes
 
+// Board MCU (EFM8 behind the moRFeus VID/PID, fw-krakendown). Retunes use
+// 's' (RAM only); 'w' also saves to the MCU Flash (8-page ring, ~160k saves
+// in the board's life) and is sent only at a clean exit, once, so the board
+// powers up at the last LO. 0 disables that save.
+#define WB_SAVE_LO_ON_EXIT  1
+#define WB_HID_REPLY_MS     100            // reply timeout per HID command
+// Board telemetry (INA219 input current / voltage, SHT4x or Si7020 temperature
+// and humidity), polled only on firmware >= WB_MIN_SENSOR_FW: older
+// firmware rewrote its Flash on every read.
+#define WB_MIN_SENSOR_FW    20261109
+#define WB_MIN_SI70XX_FW    20261110       // Si7020 (Testunit_3v0) driver
+#define WB_TELEMETRY_PERIOD_MS 1000
+#define WB_R_SHUNT_MOHM     0              // R6: 0 = auto (3v0 100, 3v2 10 mOhm)
+
 // Antenna ring auto-selection: the three concentric rings are frequency-
 // scaled copies of the array, picked by the tuned RF (outer below CENTER_MIN,
 // center below INNER_MIN, inner above). Must match the client's constants.
