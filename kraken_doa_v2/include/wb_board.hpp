@@ -40,9 +40,23 @@ int wb_board_set_log_keep_days(int days);    // 1 .. 365
 // at most ~600 buckets (min / mean / max per bucket of voltage, current,
 // temperature, humidity; null where nothing was logged), the events in that
 // range and the size of the log. Reads the files: call it off the uWS loop.
-std::string wb_board_history_json(long range_s);
+std::string wb_board_history_json(long range_s, bool host = false);
 
 // The logged rows of the last `range_s` seconds as one CSV file in wb_logs/
 // (a temporary export file, removed by a later export). Returns its path, ""
 // if nothing could be written; *download_name gets a name for the browser.
-std::string wb_board_export_csv(long range_s, std::string* download_name);
+std::string wb_board_export_csv(long range_s, std::string* download_name, bool host = false);
+
+// The computer itself, logged the same way (host = true above reads this log):
+//   host_logs/host_telemetry_YYYYMMDD.csv  CPU temperature and load, memory
+//                             used / total, free / total space of the drive the
+//                             logs are on, the Raspberry Pi's throttling flags
+//   host_logs/host_events.csv alarm changes: temperature (warn 75 C, alarm
+//                             82 C), memory (85 % / 95 % used), storage (under
+//                             10 % or 2 GB / under 3 % or 500 MB free),
+//                             under-voltage or throttling reported by the Pi
+// with the same on/off, period and days-kept settings as the board's log.
+// Call with every hardware-stats reading (it rate-limits itself); the fields
+// go into system_status.hw (",\"disk_free_mb\":...", alarms, logging).
+void host_log_tick(double temp_c, double cpu_pct, double ram_used_mb, double ram_total_mb);
+std::string host_log_json_fields();

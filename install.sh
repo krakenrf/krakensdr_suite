@@ -278,21 +278,17 @@ fi
 # kraken_doa serves HTTPS/WSS on port 8080 and loads server.crt/server.key from
 # its working directory (SSL_CERT_FILE/SSL_KEY_FILE in include/config.hpp).
 install_kraken_certs() {
-    local crt="$KRAKEN_DIR/server.crt" key="$KRAKEN_DIR/server.key"
-    if [[ -s "$crt" && -s "$key" ]]; then
-        # The files existing is not enough: the cert must actually belong to
-        # the key, or the web server's SSL context (and its listen) fails.
-        if [[ "$(openssl x509 -noout -pubkey -in "$crt" 2>/dev/null)" == \
-              "$(openssl pkey -in "$key" -pubout 2>/dev/null)" ]]; then
-            ok "SSL certificate already present: kraken_doa_v2/server.crt"
-            return
-        fi
-        warn "server.crt does not match server.key - regenerating the pair"
+    # scripts/make-cert.sh keeps a good certificate (so a browser that was told
+    # to trust it stays happy) and writes one with the host's names otherwise.
+    local state
+    if state="$("$SCRIPT_DIR/scripts/make-cert.sh" "$KRAKEN_DIR")"; then
+        case "${state##*$'\n'}" in
+        kept) ok "SSL certificate already present: kraken_doa_v2/server.crt" ;;
+        *)    ok "SSL certificate ${state##*$'\n'}: kraken_doa_v2/server.crt (self-signed, names this host, 825 days)" ;;
+        esac
+    else
+        warn "could not create kraken_doa_v2/server.crt - the DoA client web UI needs it"
     fi
-    say "Generating self-signed SSL certificate for the DoA client web UI"
-    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-        -keyout "$key" -out "$crt" -subj "/CN=krakensdr" 2>/dev/null
-    ok "Created kraken_doa_v2/server.crt + server.key (self-signed, 10 years)"
 }
 install_kraken_certs
 
