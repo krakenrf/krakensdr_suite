@@ -1,0 +1,299 @@
+--- a/src/librtlsdr.c
++++ b/src/librtlsdr.c
+@@ -215,7 +215,20 @@
+ #define ENBALE_R820T_HARM_OPT	1
+ #define ENABLE_VCO_OPTIONS		1
+ 
++/* usbfs zero-copy transfer buffers (Linux). Off since d8ececb ("sync errors",
++ * cause not recorded); see the zero-copy investigation before enabling. */
++#ifndef ENABLE_ZEROCOPY
+ #define ENABLE_ZEROCOPY 0
++#endif
++/* Linux zero-copy build: the buffers are mapped once per handle and kept
++ * until rtlsdr_close (map once), see _rtlsdr_alloc_async_buffers(). Every
++ * other build compiles exactly the code it had before. */
++#if defined (__linux__) && LIBUSB_API_VERSION >= 0x01000105 && ENABLE_ZEROCOPY
++#define ZEROCOPY_BUILD 1
++static int _rtlsdr_free_async_buffers(rtlsdr_dev_t *dev);
++#else
++#define ZEROCOPY_BUILD 0
++#endif
+ 
+ 
+ /* activate/use RTL's IF AGC control .. from  https://github.com/old-dab/rtlsdr
+@@ -324,6 +337,13 @@
+ 	volatile enum rtlsdr_async_status async_status;
+ 	int async_cancel;
+ 	int use_zerocopy;
++#if ZEROCOPY_BUILD
++	/* map once: geometry of the zero-copy buffers kept between streams
++	 * (0 = none kept), and the transfers submitted and not yet finished */
++	uint32_t zc_buf_num;
++	uint32_t zc_buf_len;
++	int zc_inflight;
++#endif
+ 	/* rtl demod context */
+ 	uint32_t rate; /* Hz */
+ 	uint32_t rtl_xtal; /* Hz */
+@@ -3698,6 +3718,13 @@
+ 		rtlsdr_deinit_baseband(dev);
+ 	}
+ 
++#if ZEROCOPY_BUILD
++	/* map once: the zero-copy buffers kept since the last stream (a stream
++	 * still running on a lost device frees its own when it ends) */
++	if (RTLSDR_INACTIVE == dev->async_status)
++		_rtlsdr_free_async_buffers(dev);
++#endif
++
+ 	softagc_uninit(dev);
+ 	pthread_mutex_destroy(&dev->cs_mutex);
+ 
+@@ -4046,6 +4073,12 @@
+ 			if (libusb_submit_transfer(xfer) != 0)
+ 				InterlockedDecrement(&dev->xfer_inflight);
+ 		}
++#elif ZEROCOPY_BUILD
++		/* not while cancelling: the transfers are kept for the next
++		 * stream, so every one must have finished when it ends */
++		if (RTLSDR_RUNNING != dev->async_status ||
++		    libusb_submit_transfer(xfer) != 0)
++			__atomic_fetch_sub(&dev->zc_inflight, 1, __ATOMIC_SEQ_CST);
+ #else
+ 		libusb_submit_transfer(xfer); /* resubmit transfer */
+ #endif
+@@ -4069,6 +4102,9 @@
+ #ifdef _WIN32
+ 	/* last: once it reaches 0 the cancel path frees xfer and its buffer */
+ 	InterlockedDecrement(&dev->xfer_inflight);
++#elif ZEROCOPY_BUILD
++	if (LIBUSB_TRANSFER_COMPLETED != xfer->status) /* not resubmitted */
++		__atomic_fetch_sub(&dev->zc_inflight, 1, __ATOMIC_SEQ_CST);
+ #endif
+ }
+ 
+@@ -4094,6 +4130,26 @@
+ 	if (!dev)
+ 		return -1;
+ 
++#if ZEROCOPY_BUILD
++	/* map once: reuse the zero-copy buffers kept since an earlier stream
++	 * or rtlsdr_prealloc_async() - mapping them takes time on the start
++	 * path, and the RTL2832 FIFO overflows meanwhile */
++	if (dev->xfer && dev->xfer_buf && dev->use_zerocopy) {
++		uint32_t num = dev->xfer_buf_num, len = dev->xfer_buf_len;
++
++		if (dev->zc_buf_num == num && dev->zc_buf_len == len)
++			return 0;
++		/* other geometry: free the kept ones (with their own) first */
++		dev->xfer_buf_num = dev->zc_buf_num;
++		dev->xfer_buf_len = dev->zc_buf_len;
++		_rtlsdr_free_async_buffers(dev);
++		dev->xfer_buf_num = num;
++		dev->xfer_buf_len = len;
++	}
++	dev->zc_buf_num = 0;
++	dev->zc_buf_len = 0;
++#endif
++
+ 	if (!dev->xfer) {
+ 		dev->xfer = malloc(dev->xfer_buf_num *
+ 					 sizeof(struct libusb_transfer *));
+@@ -4115,6 +4171,18 @@
+ 	for (i = 0; i < dev->xfer_buf_num; ++i) {
+ 		dev->xfer_buf[i] = libusb_dev_mem_alloc(dev->devh, dev->xfer_buf_len);
+ 
++		/* upstream f68bb2f: a kernel whose usbfs mmap() maps the wrong
++		 * pages hands back memory that is not the zeroed DMA buffer -
++		 * the samples would then be garbage. Fall back to user space. */
++		if (dev->xfer_buf[i] && (dev->xfer_buf[i][0] ||
++		    memcmp(dev->xfer_buf[i], dev->xfer_buf[i] + 1, dev->xfer_buf_len - 1))) {
++			fprintf(stderr, "Detected Kernel usbfs mmap() bug, falling back to buffers in userspace\n");
++			libusb_dev_mem_free(dev->devh, dev->xfer_buf[i], dev->xfer_buf_len);
++			dev->xfer_buf[i] = NULL;
++			dev->use_zerocopy = 0;
++			break;
++		}
++
+ 		if (!dev->xfer_buf[i]) {
+ 			fprintf(stderr, "Failed to allocate zero-copy "
+ 					"buffer for transfer %d\nFalling "
+@@ -4133,10 +4201,18 @@
+ 				libusb_dev_mem_free(dev->devh,
+ 						    dev->xfer_buf[i],
+ 						    dev->xfer_buf_len);
++			dev->xfer_buf[i] = NULL;
+ 		}
+ 	}
+ #endif
+ 
++#if ZEROCOPY_BUILD
++	if (dev->use_zerocopy) {
++		dev->zc_buf_num = dev->xfer_buf_num;
++		dev->zc_buf_len = dev->xfer_buf_len;
++	}
++#endif
++
+ 	/* no zero-copy available, allocate buffers in userspace */
+ 	if (!dev->use_zerocopy) {
+ 		fprintf(stderr, "Allocating %d (non-zero-copy) user-space buffers\n", dev->xfer_buf_num);
+@@ -4187,6 +4263,10 @@
+ 		free(dev->xfer_buf);
+ 		dev->xfer_buf = NULL;
+ 	}
++#if ZEROCOPY_BUILD
++	dev->zc_buf_num = 0;
++	dev->zc_buf_len = 0;
++#endif
+ 
+ 	return 0;
+ }
+@@ -4199,6 +4279,9 @@
+ 	struct timeval tv = { 1, 0 };
+ 	struct timeval zerotv = { 0, 0 };
+ 	enum rtlsdr_async_status next_status = RTLSDR_INACTIVE;
++#if ZEROCOPY_BUILD
++	int zc_submit_failed = 0;
++#endif
+ #ifdef _WIN32
+ 	int submit_err = 0;
+ #if defined(LIBUSB_API_VERSION) && LIBUSB_API_VERSION >= 0x0100010C
+@@ -4244,6 +4327,9 @@
+ 		dev->xfer_buf_len = DEFAULT_BUF_LENGTH;
+ 
+ 	_rtlsdr_alloc_async_buffers(dev);
++#if ZEROCOPY_BUILD
++	dev->zc_inflight = 0;
++#endif
+ #ifdef _WIN32
+ 	dev->xfer_inflight = 0;
+ 	/* WinUSB's default pipe policy hands the queued reads to the host
+@@ -4266,6 +4352,11 @@
+ #endif
+ 
+ 	for(i = 0; i < dev->xfer_buf_num; ++i) {
++#if ZEROCOPY_BUILD
++		/* a kept transfer still says CANCELLED from the last stream, and
++		 * the cancel loop below skips those: start as a fresh one would */
++		dev->xfer[i]->status = LIBUSB_TRANSFER_COMPLETED;
++#endif
+ 		libusb_fill_bulk_transfer(dev->xfer[i],
+ 						dev->devh,
+ 						0x81,
+@@ -4279,6 +4370,12 @@
+ 		InterlockedIncrement(&dev->xfer_inflight);
+ #endif
+ 		r = libusb_submit_transfer(dev->xfer[i]);
++#if ZEROCOPY_BUILD
++		if (r == 0)
++			__atomic_fetch_add(&dev->zc_inflight, 1, __ATOMIC_SEQ_CST);
++		else
++			zc_submit_failed = 1;
++#endif
+ #ifdef _WIN32
+ 		if (r < 0) {
+ 			InterlockedDecrement(&dev->xfer_inflight);
+@@ -4369,13 +4466,77 @@
+ 	if (raw_io && dev->xfer_inflight == 0)
+ 		rtlsdr_raw_io(dev->devh, 0, 0);
+ #endif
++#if ZEROCOPY_BUILD
++	if (dev->use_zerocopy && dev->xfer) {
++		/* The cancel loop above can end while transfers are still being
++		 * cancelled (a second libusb_cancel_transfer on one returns
++		 * NOT_FOUND, taken for done). Kept buffers are resubmitted by the
++		 * next stream, so wait (<= 5 s) until every transfer has finished. */
++		struct timeval waittv = { 0, 50000 };
++		int rounds;
++
++		for (rounds = 0; __atomic_load_n(&dev->zc_inflight, __ATOMIC_SEQ_CST) > 0 && rounds < 100; rounds++)
++			libusb_handle_events_timeout_completed(dev->ctx, &waittv, NULL);
++	}
++	if (dev->use_zerocopy && dev->xfer &&
++	    __atomic_load_n(&dev->zc_inflight, __ATOMIC_SEQ_CST) > 0) {
++		/* never free (or reuse) a transfer libusb still owns: leak it */
++		fprintf(stderr, "rtlsdr_read_async: %d transfers did not finish cancelling - their buffers are leaked\n",
++			__atomic_load_n(&dev->zc_inflight, __ATOMIC_SEQ_CST));
++		dev->xfer = NULL;
++		dev->xfer_buf = NULL;
++		dev->zc_buf_num = 0;
++		dev->zc_buf_len = 0;
++	} else if (!dev->use_zerocopy || zc_submit_failed || dev->dev_lost) {
++		/* user-space buffers (as before), or a stream that never fully
++		 * started / a lost device: give the usbfs memory back */
++		_rtlsdr_free_async_buffers(dev);
++	}
++	/* else: map once - keep the zero-copy buffers until rtlsdr_close */
++
++	/* a transfer that completed while cancelling is not resubmitted any
++	 * more, so the cancel loop's libusb_cancel_transfer() on it returned
++	 * NOT_FOUND: not an error of a stream that ran */
++	if (r == LIBUSB_ERROR_NOT_FOUND && !zc_submit_failed && !dev->dev_lost)
++		r = 0;
++#else
+ 	_rtlsdr_free_async_buffers(dev);
++#endif
+ 
+ 	dev->async_status = next_status;
+ 
+ 	return r;
+ }
+ 
++int rtlsdr_prealloc_async(rtlsdr_dev_t *dev, uint32_t buf_num, uint32_t buf_len)
++{
++	if (!dev)
++		return -1;
++#if ZEROCOPY_BUILD
++	if (RTLSDR_INACTIVE != dev->async_status)
++		return -2;
++
++	/* same geometry rules as rtlsdr_read_async() */
++	dev->xfer_buf_num = buf_num > 0 ? buf_num : DEFAULT_BUF_NUMBER;
++	dev->xfer_buf_len = (buf_len > 0 && buf_len % 512 == 0) ? buf_len : DEFAULT_BUF_LENGTH;
++
++	if (_rtlsdr_alloc_async_buffers(dev) < 0) {
++		_rtlsdr_free_async_buffers(dev);
++		return -3;
++	}
++	if (!dev->use_zerocopy) {
++		/* fell back to user space: those stay per stream, as before */
++		_rtlsdr_free_async_buffers(dev);
++		return 1;
++	}
++	return 0;
++#else
++	(void)buf_num;
++	(void)buf_len;
++	return 1;	/* no zero-copy in this build: nothing to map */
++#endif
++}
++
+ int rtlsdr_cancel_async(rtlsdr_dev_t *dev)
+ {
+ 	#ifdef _ENABLE_RPC
+--- a/include/rtl-sdr.h
++++ b/include/rtl-sdr.h
+@@ -596,6 +596,23 @@
+ 				 uint32_t buf_len);
+ 
+ /*!
++ * Map the transfer buffers for rtlsdr_read_async() now, ahead of the stream
++ * start (Linux usbfs zero-copy builds only - ENABLE_ZEROCOPY). They are kept
++ * until rtlsdr_close() (or a read with another geometry), so starting a
++ * stream only submits the transfers: mapping them on the start path takes
++ * long enough for the RTL2832 FIFO to overflow, which skews the start of
++ * this device against others started at the same time.
++ *
++ * \param dev the device handle given by rtlsdr_open()
++ * \param buf_num and buf_len as for rtlsdr_read_async() (0 = default)
++ * \return 0 zero-copy buffers mapped and kept, 1 nothing done (no zero-copy
++ *  in this build, or it fell back to user-space buffers, which stay per
++ *  stream), < 0 error (-2: a stream is running)
++ */
++#define RTLSDR_HAS_PREALLOC_ASYNC 1
++RTLSDR_API int rtlsdr_prealloc_async(rtlsdr_dev_t *dev, uint32_t buf_num, uint32_t buf_len);
++
++/*!
+  * Cancel all pending asynchronous operations on the device.
+  * Due to incomplete concurrency implementation, this should
+  * only be called from within the callback function, so it is

@@ -130,7 +130,9 @@ static std::string build_state_message() {
         // --ext_noise: CH0's bias tee powers the add-on array's noise source
         + ",\"external_noise\":"
         + (external_noise_mode.load(std::memory_order_relaxed) ? "true" : "false")
-        + ",\"operating_mode\":\"" + operating_mode_name(operating_mode.load(std::memory_order_relaxed)) + "\"";
+        + ",\"operating_mode\":\"" + operating_mode_name(operating_mode.load(std::memory_order_relaxed)) + "\""
+        // channels whose lag calibration finds no correlation peak (8092 status: same field)
+        + ",\"lag_no_peak\":" + lag_no_peak_json();
     {
         // Last calibration check (periodic or Check Calibration)
         static const char* const results[] = {"none", "ok", "drifted", "no_verdict"};

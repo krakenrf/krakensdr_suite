@@ -174,5 +174,6 @@ Performance
 There is no automated test suite. On hardware: every channel reaches
 CONVERGED within ~25-30 s, Check Calibration (`check_calibration`) reports
 |lag| 0 and |phase| < 1 deg, and `coherence_events` in the status JSON stays
-0 across retunes, gain changes and element-count changes. Hardware
+0 (and `lag_no_peak` empty) across retunes, gain changes and element-count
+changes. Hardware
 measurements are made by scripts that drive 8092 and read the 8091 headers.

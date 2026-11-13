@@ -212,3 +212,70 @@ on every platform. The two notes below were bullets of the Windows section.
   capture-time frequencies in the 8091 header (it reports current_frequency,
   set after ALL tuners, for every channel), retuning the displayed channel
   first, an interruptible sweep, an averaging reset on a retune
+
+## Zero-copy USB buffers (investigated 2026-11-12/13)
+
+The fork builds without libusb's usbfs zero-copy buffers (`ENABLE_ZEROCOPY
+0`): krakenrf/librtlsdr d8ececb (2021-12-13) switched it off with the message
+"causes sync errors with rtl-sdr", no cause recorded. Upstream osmocom has
+it on (with f68bb2f's check for the kernel usbfs mmap() bug).
+
+Measured on x86_64 Ubuntu (kernel 6.8) with a 5-channel KrakenSDR:
+- Byte-exact loss test (`heimdall_v2/tools/zctest.c`, counter test mode,
+  heimdall's 32 x 32 KB transfers, idle and under CPU load): no lost,
+  corrupted, short or duplicated buffer, zero-copy off or on.
+- heimdall start series (cold start, then 5->4->5 element changes): plain
+  zero-copy skews the streams' start - cold-start max |lag| 4060 / 6567 /
+  10435 samples (min / median / max of the starts) against 675 / 1171 /
+  2168 with it off, convergence median 31 s against 25 s. The buffers are
+  mapped in `rtlsdr_read_async()`, i.e. after `rtlsdr_reset_buffer()`, and
+  that delays each reader's first transfer by a different amount. With a
+  simulated slow mapping (100 us per buffer) plain zero-copy failed to
+  converge in 4 of 4 starts - 2-3 channels beyond the correlator's
+  +-16384 samples (heimdall_v2/docs/dev/calibration.md, *No-peak warning*).
+  With the buffers mapped at open (`rtlsdr_prealloc_async()`): 679 / 1159
+  / 1705 samples, convergence median 24 s; with that and the slow mapping
+  3 of 3 starts converged (max |lag| <= 987).
+- CPU: zero-copy saves the copy from the kernel's buffers - reader threads
+  37.7 s -> 33.0 s CPU per 600 s, about 1.3 % of one core for the whole
+  process.
+
+The patch (`heimdall_v2/tools/librtlsdr-zerocopy-map-once.patch`, applied to
+this worktree's `../librtlsdr`, NOT yet in the krakenrf fork): zero-copy
+stays OFF by default (`#ifndef ENABLE_ZEROCOPY`; build with
+`-DENABLE_ZEROCOPY=1` to enable it); in a zero-copy build the buffers are
+mapped once per handle and kept until `rtlsdr_close()` (or a read with
+another geometry), and the new `rtlsdr_prealloc_async(dev, buf_num,
+buf_len)` maps them ahead of the stream (macro `RTLSDR_HAS_PREALLOC_ASYNC`;
+returns 1 = nothing done without zero-copy, so the default build behaves as
+before); upstream's usbfs-mmap-bug check (falls back to user-space buffers);
+and the stop path waits (<= 5 s) for every cancelled transfer before the
+buffers are reused, leaking them rather than freeing a transfer libusb still
+owns. heimdall calls `rtlsdr_prealloc_async()` in `init_rtlsdr_device()`
+just before `rtlsdr_reset_buffer()`, under `#ifdef RTLSDR_HAS_PREALLOC_ASYNC`
+- the Dockerfile's pinned `LIBRTLSDR_COMMIT` (578b43d) and any unpatched
+clone lack it, and heimdall builds against them unchanged.
+
+The patch set with zero-copy OFF (the default), hardware check 2026-11-13
+(heimdall with the patched library and its `rtlsdr_prealloc_async()` call,
+same machine): 10 cold starts, each followed by a 5->4->5 element change and
+`check_calibration` - cold-start max |lag| 504 / 1009 / 3051 samples (min /
+median / max), after the element changes 210 / 669 / 1155; convergence
+21.3 / 25.7 / 27.5 s cold, 20.5-27.3 s after the element changes; every
+check OK (|lag| 0.0, |phase| 0.2-0.3 deg); `coherence_events` 0. One start
+pinned to one core (`taskset`): max |lag| 8973, 33.0 s, element changes
+30.5 / 32.3 s. Retunes (100 <-> 433 MHz), gain changes, a Full
+Recalibration, wideband-scan and independent mode and back, a calibration
+hold: all reconverged, `coherence_events` 0. Plain zero-copy ON (no
+prealloc call possible with that library), 4 starts: max |lag| 419 /
+4907 / 11593, convergence 24.0-35.8 s, element changes 26.0-32.8 s,
+`coherence_events` 0. The earlier OFF baseline: 675 / 1171 / 2168, 23-29 s.
+
+Not measured: any Raspberry Pi. Before turning zero-copy on there, run on a
+Pi 4 and a Pi 5 (heimdall stopped): `zctest -s 1000,1001,1002,1003,1004 -t
+600` against an OFF and an ON (`-DENABLE_ZEROCOPY=1`) library, idle and
+under load (`-p`, and `-r 5 -R` for the restart path; build line in
+`heimdall_v2/tools/README.md`), then a heimdall start series per library
+(at least 10 cold starts with the 5->4->5 element change and
+`check_calibration`): first lags, convergence times, `coherence_events`
+and `lag_no_peak`, and the reader threads' CPU.

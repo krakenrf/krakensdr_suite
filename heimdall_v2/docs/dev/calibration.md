@@ -44,6 +44,57 @@ the **register-only** actuator `rtlsdr_set_sample_freq_correction_f()`
   in ~25 s; −10,635 under full CPU load converged monotonically, zero
   coherence events.
 
+**No-peak warning (added 2026-11-13; warning only)**: the correlator sees
+lags within ±`NUM_SAMPLES` (16384) and the peak shrinks with the block
+overlap. If the dongles' streams are paired further apart than that, there is
+no peak at all: the servo chases noise (readings jump by thousands of samples,
+the register swings to ±6000 counts) and never locks - before this, heimdall
+logged nothing, counted no coherence event and stayed unconverged.
+`check_lag_no_peak()` (compensation.cpp) runs on every fresh reading of a
+SERVOING channel, so only in coherent mode with the noise source on.
+`process_correlations()` publishes per channel the correlation peak / mean
+magnitude (`peak_ratios`, summed in the loop that already builds the trace).
+A channel warns once per calibration attempt when it has servoed
+`LAG_NO_PEAK_WARN_S` (60 s) without a lock AND the median peak / mean of its
+last `LAG_NO_PEAK_READINGS` (32) readings is below `LAG_NO_PEAK_RATIO` (8):
+one stderr line (contains "WARNING", so the dashboard's ALERT line shows it),
+and `lag_no_peak` in the 8092 status / web STATE lists the channel until it
+locks or a new attempt starts (servo engage, `reset_lag_compensation_all_channels`).
+The time counts only servoing on fresh readings (gaps capped at 0.5 s per
+reading) and stops while a calibration is held, the discrete scanner runs, an
+element-count change reconfigures, or with plain `--kerberos`. Measured
+2026-11-13 (x86_64, 5-channel KrakenSDR; the fault reproduced with a librtlsdr
+build that maps zero-copy buffers 100 us each at stream start, see
+`../../../docs/dev/librtlsdr-fork.md`, *Zero-copy USB buffers*):
+- No peak: 8 of 8 such starts left 2-3 channels unlocked; their readings
+  4.2-6.8 peak / mean (window medians 4.9-5.1 when the warning fired), lags
+  jumping within about +-8000. The warning fired 60.0 s after the servo
+  engaged (60.9-61.0 s after process start), once per channel, the field set
+  at the next 2 Hz status; with a 80 s calibration hold in between it fired
+  at 141 s (24 s before the hold + 36 s after), after a 60 s wideband-scan
+  detour 60 s after the return (the servos re-engage there: a new attempt).
+- With a peak: 221 channel acquisitions that locked (19 healthy starts on the
+  default and plain zero-copy libraries, element-count changes, retunes, gain
+  changes, Full Recalibrations, mode switches, a hold, one run on one core,
+  and the in-range channels of the fault starts): first lags up to 14173,
+  the slowest lock after 38.5 s of servoing; peak / mean never below 22.8
+  except a segment's first reading (a stale set: 4.7-5.5 after a recovery's
+  flush, 13.5-13.9 after a mode switch), typically 36-200 (~190 at lag 0).
+  No warning, `lag_no_peak` stayed `[]`.
+- Not measured: the Raspberry Pi (fewer readings per second; the window is
+  32 readings, the time is wall time) and the `--wideband` variant (weaker
+  noise coupling may lower the healthy ratios).
+
+What fixes it, measured: a Full Recalibration (`reset_lag_compensation`, web
+Full Recalibration) converged 4 of 4 times (26-34 s), lags then within a few
+thousand samples; an element-count change too (1 of 1). It does not restart
+the streams, but its L1 flush waits for a quiet point and drops every queue at
+once, so the next sets are paired by arrival time - inferred cause: at startup
+(no such flush) the drain pairs each stream's first buffers by count, and a
+stream whose first transfers came late starts that many samples behind. A
+return from wideband scan or independent mode does not flush and does not fix
+it (measured once).
+
 **Why not timed "bursts" on the PLL path** (`rtlsdr_set_freq_correction`,
 the historical approach — code removed July 2026): that call retunes the
 tuner LO by ppm×RF (10 kHz at 100 ppm/100 MHz), which destroys the

@@ -247,7 +247,12 @@ plots.
 Newline-delimited JSON commands; the server also **broadcasts a status JSON at 2 Hz**
 with `settings` (center_freq, gain, sample_rate, rtl_tcp_channel), `num_channels`,
 `operating_mode` (`coherent`/`wideband`), `wideband_enabled`, `cooldown_active` /
-`cooldown_remaining_ms`, and the coherence fields `coherence_events` + `recovering`.
+`cooldown_remaining_ms`, the coherence fields `coherence_events` + `recovering`, and
+`lag_no_peak`: the channels whose lag calibration has found no correlation peak for
+60 s (normally `[]`; the dongles' streams most likely started more than +-16384
+samples apart - run a Full Recalibration / `reset_lag_compensation`, and restart
+heimdall if the channel shows up again; heimdall also logs one warning line per
+channel to stderr).
 
 ```bash
 echo '{"command":"set_frequency","frequency":433000000}' | nc localhost 8092

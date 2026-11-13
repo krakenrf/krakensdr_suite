@@ -180,6 +180,25 @@
 #define PERIODIC_RECAL_LAG_THRESHOLD    1.0f   // avg |residual lag| in samples above this == bad
 #define PERIODIC_RECAL_PHASE_THRESHOLD  10.0f  // avg |residual phase| in degrees above this == bad
 
+// Lag acquisition that cannot converge (warning only - nothing is restarted).
+// The correlator sees lags within +-NUM_SAMPLES; dongle streams that started
+// further apart give no correlation peak at all, and the servo chases noise
+// for good. A channel still acquiring after LAG_NO_PEAK_WARN_S of servoing on
+// the noise source (time with the noise off, outside coherent mode or under a
+// calibration hold is not counted) whose correlation peak / mean magnitude
+// over the last LAG_NO_PEAK_READINGS readings has a median below
+// LAG_NO_PEAK_RATIO gets one stderr warning per calibration attempt and is
+// listed in the status JSON's "lag_no_peak". Measured on x86_64 with a
+// 5-channel KrakenSDR (2026-11-13, 221 channel acquisitions that locked,
+// first lags up to 14173, one run on one core): the slowest lock took 38.5 s
+// of servoing (60 s = 1.56x); a channel with a peak never read below 22.8
+// after its first reading (8 = 2.9x under that; the first one can be a stale
+// set, 4.7-13.9); channels with no peak read 4.2-6.8, window medians 4.9-5.1.
+// No Raspberry Pi measurement.
+#define LAG_NO_PEAK_WARN_S      60     // s of active acquisition without a lock
+#define LAG_NO_PEAK_RATIO       8.0f   // median peak / mean |correlation| below this == no peak
+#define LAG_NO_PEAK_READINGS    32     // readings in the median window
+
 // Processing delays (microseconds)
 #define PROCESS_LOOP_DELAY      10000   // Delay in main processing loop
 

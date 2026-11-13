@@ -39,8 +39,14 @@ void recovery_settings_changed_locked(const char* what);  // state_mutex held
 
 void begin_retune_cooldown(const char* what);
 
-// Lag compensation functions
-bool process_channel_lag_compensation(int channel, float lag);
+// Lag compensation functions. peak_ratio: the reading's correlation peak /
+// mean magnitude (no-peak detector, config.h LAG_NO_PEAK_*).
+bool process_channel_lag_compensation(int channel, float lag, float peak_ratio);
+
+// The channels the no-peak detector flagged (warned, not locked since, no
+// new attempt) as a JSON array, e.g. "[2,3]"; "[]" outside coherent mode.
+// For the 8092 status JSON and the web STATE message ("lag_no_peak").
+std::string lag_no_peak_json();
 
 // A recalibration requested while the discrete scanner was hopping (retune,
 // gain, start_scanner interrupting one): run by the lag driver once the scan

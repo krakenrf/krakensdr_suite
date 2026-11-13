@@ -367,6 +367,7 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
         {
             std::lock_guard<std::mutex> rlock(correlation_result.data_mutex);
             correlation_result.lags.clear();
+            correlation_result.peak_ratios.clear();
             correlation_result.phases.clear();
             correlation_result.amplitudes.clear();
             correlation_result.channel_states.clear();
