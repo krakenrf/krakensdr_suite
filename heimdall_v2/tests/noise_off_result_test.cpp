@@ -112,7 +112,7 @@ int main() {
         expect(r.outcome == O::MISSING_RECEIVER && !r.all_acknowledged(),
                "incomplete executor is never reported as successful");
     }
-    // M3B: an extra OPEN handle outside the selected coherent set can retain
+    // An extra OPEN handle outside the selected coherent set can retain
     // energized GPIO0. All selected channels' ACKs are insufficient.
     {
         auto r = checked_standard_noise_off(5, 8, 8,
@@ -178,7 +178,7 @@ int main() {
     }
     // The checked OFF write and CONVERGED publication share device_io_mutex.
     // A direct BIAS_TEE_ENABLE contender cannot enter between those actions,
-    // although the command can re-enable noise AFTER publication (R4 open).
+    // although the command can re-enable noise AFTER publication.
     {
         std::recursive_mutex io;
         std::atomic<bool> write_started{false}, contender_trying{false};
@@ -213,7 +213,7 @@ int main() {
         expect(receipt.all_acknowledged(), "contended receipt still ACK");
         expect(saw_off_at_publish && !interleaved.load(),
                "no re-enable BETWEEN GPIO write and CONVERGED publication");
-        expect(noise_on, "future manual noise-enable remains outside M3B guard");
+        expect(noise_on, "future manual noise-enable remains outside terminal guard");
     }
     NoiseOffReceipt unsupported;
     unsupported.outcome = O::UNSUPPORTED_PATH;

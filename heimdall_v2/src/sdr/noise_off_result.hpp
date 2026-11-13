@@ -112,7 +112,7 @@ inline void record_unexpected_open_receivers(
 // the SAME device-I/O lock. The phase state lock is owned by the caller and
 // must be outermost; callbacks must not acquire a second lock or block.
 // This covers the instant of terminal publication, NOT future manual noise
-// enables or the broader R4 lifecycle-admission boundary.
+// enables or the broader lifecycle-admission boundary.
 template <class IoMutex, class WriteOff, class Publish, class Refuse>
 NoiseOffReceipt guarded_noise_off_terminal(
         IoMutex& io, WriteOff&& write_off,

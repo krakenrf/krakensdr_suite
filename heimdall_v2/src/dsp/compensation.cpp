@@ -30,7 +30,7 @@ static void complete_phase_calibration_locked() {
     // can interleave between the receipt and the terminal state update.
     //
     // No other mutex (including FFT control) is acquired inside that I/O
-    // critical section. Future noise-enable commands still need R4 admission.
+    // critical section. Future noise-enable requests require a separate lifecycle gate.
     const auto publish_converged = []() {
         phase_compensation->state = PhaseCompensatorState::CONVERGED;
         phase_compensation->per_bin_measured = true;
