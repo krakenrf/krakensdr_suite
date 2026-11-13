@@ -279,3 +279,104 @@ under load (`-p`, and `-r 5 -R` for the restart path; build line in
 (at least 10 cold starts with the 5->4->5 element change and
 `check_calibration`): first lags, convergence times, `coherence_events`
 and `lag_no_peak`, and the reader threads' CPU.
+
+## FIFO hold: starting several streams together (2026-11-13)
+
+Not yet in the krakenrf fork either: part of
+`heimdall_v2/tools/librtlsdr-zerocopy-map-once.patch`, applied to this
+worktree's `../librtlsdr`. Two calls (macro `RTLSDR_HAS_FIFO_HOLD`):
+`rtlsdr_set_fifo_hold(dev, 1 / 0)` empties the RTL2832's USB FIFO and keeps
+it empty / releases it, and `rtlsdr_release_fifos(devs, n, timeout_ms,
+done_us)` waits until each device's `rtlsdr_read_async()` (running in its own thread)
+has submitted its transfers, then releases all the held FIFOs with
+asynchronous control transfers submitted back to back and waits for them (a
+release not confirmed is repeated synchronously, so no FIFO stays held;
+`done_us`, if not NULL, gets each release's completion time in us after the
+first was submitted - heimdall logs them, "USB streams released together",
+with their spread).
+`rtlsdr_read_async()` itself only gained the flag that it has submitted.
+heimdall uses them on Linux (`HELD_STREAM_START`, heimdall_v2/src/sdr/sdr_init.hpp;
+heimdall_v2/docs/dev/calibration.md, *Stream start*).
+
+What the hardware does, measured on x86_64 Ubuntu (kernel 6.8), the
+5-channel KrakenSDR behind its one hub, with a scratch tool that starts
+the five streams like heimdall (noise source on, 2.4 MSPS, 32 x 32 KB
+transfers, SCHED_RR readers) and cross-correlates buffers 12-15 of each
+stream against channel 0, paired by count:
+- `USB_EPA_CTL` 0x1002 (what `rtlsdr_reset_buffer()` writes first, and the
+  value the init leaves) makes the bulk endpoint STALL: a transfer pending
+  meanwhile ends with `LIBUSB_TRANSFER_STALL`, which the async callback
+  does not resubmit - with the releases one after another every stream was
+  dead (0 buffers) in most starts, with each thread releasing its own 3 of
+  12 starts lost a dongle. Bit 12 (0x1000) alone does the same; bit 1
+  (0x0002) alone empties the FIFO and holds it with the endpoint NAKing:
+  0 stalls in every run since. The hold therefore writes 0x0002, and
+  `rtlsdr_reset_buffer()` must never be called while transfers are queued.
+- Without a hold every stream starts with the FIFO's stale content: in the
+  RTL2832's counter test mode the first buffer of every one of 120 stream
+  starts held 3248 or 3760 bytes (two values a 512-byte USB packet apart)
+  from before, then a gap; held and released, none (20 starts here, and
+3510 stream starts in the zctest runs below; zctest's own restart series
+without the hold: 397 of 400).
+- A synchronous control write takes 1.65-2.0 ms here (one thread, no
+  stream running; `rtlsdr_reset_buffer()` = 2 writes, 3.9 ms during
+  streaming) - not the ~0.25 ms of a plain high-speed control transfer.
+  Five releases written one after another started the streams 7.3 ms
+  (median) apart, and five threads each releasing one dongle at the same
+  moment 0.13 ms; five asynchronous ones submitted back to back completed
+  within 0.03 ms (median, max 0.15) of each other.
+- Max |lag| per start (min / median / max samples; 15 starts each,
+  stress cases 8-10):
+
+  | start | normal | heimdall pinned to one core | zero-copy, mapping 100 us per buffer, no prealloc |
+  |---|---|---|---|
+  | as today (each reader submits when it runs) | 220 / 633 / 1948 | 6738 / 7336 / 27248 | 25542 / 41820 / 42371 |
+  | readers released together (gate) | 105 / 682 / 1384 | 7314 / 7728 / 8600 | 21000 / 34614 / 42112 |
+  | each reader holds, submits, releases its own | 173 / 347 / 995 | 1249 / 7038 / 7649 | 20806 / 42168 / 42621 |
+  | held, five threads release together (sync) | 211 / 357 / 962 | - | - |
+  | held, `rtlsdr_release_fifos` (async, back to back) | 145 / 286 / 411 | 151 / 252 / 410 | 153 / 290 / 324 |
+
+  Only the coordinated release is independent of when each reader gets to
+  run. Its floor, ~120 us (~290 samples), is the timing of the release on
+  the device side: the completions come back within 0.03 ms, the stream
+  starts do not.
+- A FIFO reset during streaming (the alternative: reset all five once they
+  run and flush): `rtlsdr_reset_buffer()` on all five every 2 s for 300 s,
+  in counter test mode - every stream died at the first reset (pending
+  transfers STALLed with 1.5-21 KB in them, nothing more until the stop,
+  `rtlsdr_read_async()` then returned -5). With the 0x0002 hold + release
+  instead, 148 resets: the streams continue, but each reset loses 1.75-2.24
+  ms of samples per dongle - different per dongle by 0.17 ms on average
+  (407 samples), at most 0.40 ms (970) - inside a transfer, so it shifts
+  each channel's alignment instead of re-anchoring it, and 77 buffers came
+  out with more than one discontinuity (the FIFO cut mid-packet). Not used.
+- What it predicts elsewhere: on Windows control transfers take 3-4 ms and
+  run one at a time for everything behind one root port (*above*), so even
+  asynchronous releases would complete ~3.5 ms apart - the five streams
+  ~14 ms (~34000 samples) apart, worse than starting them at the first
+  transfer as now; heimdall does not use the hold there. The Raspberry Pi's
+  control transfers take ~2.4 ms, like this machine's, and run concurrently
+  (heimdall's parallel tuning is ~5x faster than one by one there), so the
+  release should behave as here - not measured yet.
+
+Library checks (zctest with `-W`: the FIFO held at open and before every
+restart, all streams released by one `rtlsdr_release_fifos()`):
+zero-copy OFF and ON (`-DENABLE_ZEROCOPY=1`) builds, 300 s each: idle
+(1 release) - 0 gaps, 0 corrupt, 0 short buffers, 0 timing steps, 0 startup
+gaps on all five; the restart series (`-r 1.5`, same handles, 200 restarts x
+5 = 1000 stops per build) and the close / reopen series (`-r 2 -R`, 150 x 5
+= 750 stops per build) - the same zeros, every `rtlsdr_release_fifos()` call
+found all streams submitted (202 / 203 / 700 / 717 calls, 0 late, 0 errors,
+the longest 1.8-9.9 ms), and the zero-copy build never reported a transfer
+still in flight at a stop (it prints "transfers did not finish cancelling"
+when one is): 3500 stops, no such line, stderr empty.
+
+The stop path in the zero-copy-OFF build: preprocessed with the default
+`ENABLE_ZEROCOPY 0`, `rtlsdr_cancel_async`, the async callback,
+`rtlsdr_close` and the buffer allocation / freeing are identical to
+578b43d's, and `rtlsdr_read_async` differs only by the three stores of the
+new "submitted" flag - the map-once patch's waits for cancelled transfers
+are all under `ZEROCOPY_BUILD`. A slower stop measured with an OFF build of
+the patched library (Raspberry Pi 5: 1.4-1.5 s against 0.4-0.5 s) therefore
+does not come from code the patch compiles into the library's stop path
+(compared on x86_64; the guards are not architecture-specific).

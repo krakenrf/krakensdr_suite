@@ -11,10 +11,14 @@
 #include "../net/tcp_data_server.hpp"
 #include "../net/rtl_tcp_server.hpp"
 #include <rtl-sdr.h>
+#include <algorithm>
 #include <chrono>
+#include <climits>
+#include <condition_variable>
 #include <cstdio>
 #include <iostream>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 #ifdef _WIN32
@@ -42,6 +46,39 @@ namespace {
 std::thread drain_thread;
 std::thread conversion_thread;
 std::vector<std::thread> compensation_threads;
+
+#if !HELD_STREAM_START
+// Without the held start (Windows, macOS, a fork without the FIFO hold) the
+// USB readers start together: each gets ready (thread running, realtime
+// priority set) and waits here until start_pipeline_threads() opens the gate.
+// Under CPU load on every core the readers otherwise got going milliseconds
+// apart (docs/dev/calibration.md, *Stream start*). A stop opens it too; a
+// waiting reader then sees running == false and doesn't stream.
+struct ReaderStartGate {
+    std::mutex m;
+    std::condition_variable cv;
+    int waiting = 0;
+    bool open = true;
+} start_gate;
+
+void wait_start_gate(const SDRDevice* dev_ptr) {
+    std::unique_lock<std::mutex> lk(start_gate.m);
+    if (start_gate.open) return;
+    start_gate.waiting++;
+    start_gate.cv.notify_all();
+    // shutdown (release_hardware) clears running without opening the gate
+    while (!start_gate.open && dev_ptr->running.load() && global_running.load())
+        start_gate.cv.wait_for(lk, std::chrono::milliseconds(20));
+}
+
+void open_start_gate() {
+    {
+        std::lock_guard<std::mutex> lk(start_gate.m);
+        start_gate.open = true;
+    }
+    start_gate.cv.notify_all();
+}
+#endif
 
 #ifdef _WIN32
 // USB stream supervision (read_async_supervised)
@@ -129,6 +166,21 @@ void start_pipeline_threads() {
     // overflows and samples are silently lost. Give it realtime priority.
     usb_readers_started.store(0, std::memory_order_release);
     usb_readers_down.store(0, std::memory_order_release);
+    // No reader runs here (none yet, or stop_pipeline_threads joined them):
+    // an earlier run's arrival stamps must not count as this run's - the
+    // drain's startup flush waits for every stream's own first packets
+    for (auto& d : devices) {
+        if (!d) continue;
+        d->last_arrival_ns.store(0, std::memory_order_relaxed);
+        d->prev_arrival_ns.store(0, std::memory_order_relaxed);
+    }
+#if !HELD_STREAM_START
+    {
+        std::lock_guard<std::mutex> lk(start_gate.m);
+        start_gate.waiting = 0;
+        start_gate.open = false;
+    }
+#endif
     for (int i = 0; i < num_elements; i++) {
         SDRDevice* dev_ptr = devices[i].get();
         if (!dev_ptr || !dev_ptr->dev) continue;
@@ -143,6 +195,9 @@ void start_pipeline_threads() {
             std::cout << "Starting async read for channel " << device_index
                  << " (Serial: " << dev_ptr->serial_number
                  << ", Physical device: " << dev_ptr->device_id << ")" << std::endl;
+#if !HELD_STREAM_START
+            wait_start_gate(dev_ptr);
+#endif
             // A stop that lands before this point must not start streaming.
 #ifdef _WIN32
             // read_async_supervised checks that too, and restarts a stream
@@ -170,6 +225,53 @@ void start_pipeline_threads() {
         });
     }
 
+#if HELD_STREAM_START
+    // Every FIFO was left held by init_rtlsdr_device(): start all streams
+    // together once each reader has queued its transfers (the library waits
+    // for that, at most STREAM_START_WAIT_MS; a reader later than that starts
+    // late, and the drain's startup flush still pairs it by arrival).
+    {
+        rtlsdr_dev_t* held[NUM_DEVICES] = {};
+        int n = 0;
+        for (int i = 0; i < num_elements && n < NUM_DEVICES; i++)
+            if (devices[i] && devices[i]->dev) held[n++] = devices[i]->dev;
+        if (n > 0) {
+            int done_us[NUM_DEVICES];
+            const int rc = rtlsdr_release_fifos(held, n, STREAM_START_WAIT_MS, done_us);
+            if (rc != 0)
+                std::cerr << "USB streams: " << (rc == 1 ? "a reader was not ready in time - its stream started late"
+                                                         : "releasing a USB buffer failed")
+                          << " (" << rc << ")" << std::endl;
+            // when each release completed (us after the first was sent): their
+            // spread is about how far apart the streams started
+            int lo = INT32_MAX, hi = INT32_MIN;
+            std::string per;
+            for (int i = 0; i < n; i++) {
+                per += (i ? " " : "") + std::to_string(done_us[i]);
+                if (done_us[i] < 0) continue;
+                lo = std::min(lo, done_us[i]);
+                hi = std::max(hi, done_us[i]);
+            }
+            std::cout << "USB streams released together: completed at " << per << " us (spread "
+                      << (hi >= lo ? hi - lo : -1) << " us)" << std::endl;
+        }
+    }
+#else
+    {
+        int readers = 0;
+        for (int i = 0; i < num_elements; i++)
+            if (devices[i] && devices[i]->dev) readers++;
+        std::unique_lock<std::mutex> lk(start_gate.m);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(STREAM_START_WAIT_MS);
+        while (start_gate.waiting < readers && global_running.load() &&
+               start_gate.cv.wait_until(lk, deadline) != std::cv_status::timeout) {}
+        if (start_gate.waiting < readers)
+            std::cerr << "USB readers: " << start_gate.waiting << " of " << readers << " ready after "
+                      << STREAM_START_WAIT_MS << " ms - starting them anyway" << std::endl;
+    }
+    open_start_gate();
+#endif
+
     drain_thread = std::thread([]() { sample_processor(devices); });
     conversion_thread = std::thread([]() {
         conversion_worker(devices, tcp_data_server.get(), rtl_tcp_server.get());
@@ -196,6 +298,9 @@ void stop_pipeline_threads() {
     for (auto& device : devices) {
         if (device) device->running = false;
     }
+#if !HELD_STREAM_START
+    open_start_gate();
+#endif
     const auto cancel_start = std::chrono::steady_clock::now();
     bool warned = false;
     for (;;) {

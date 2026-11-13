@@ -55,8 +55,13 @@ is in the fork: zero-copy stays off by default (`-DENABLE_ZEROCOPY=1`
 enables it), zero-copy buffers are mapped once per handle and kept until
 `rtlsdr_close()`, `rtlsdr_prealloc_async()` maps them ahead of the stream
 start (`RTLSDR_HAS_PREALLOC_ASYNC`; heimdall calls it in
-`init_rtlsdr_device()`), upstream's usbfs-mmap-bug check, and the stop path
-waits for every cancelled transfer. Apply it in `../librtlsdr` with
+`init_rtlsdr_device()`), upstream's usbfs-mmap-bug check, the stop path
+waits for every cancelled transfer, and (added 2026-11-13) the FIFO hold:
+`rtlsdr_set_fifo_hold()` / `rtlsdr_release_fifos()` (`RTLSDR_HAS_FIFO_HOLD`;
+heimdall holds every dongle's FIFO at open and starts all streams together
+on Linux - `../../docs/dev/librtlsdr-fork.md`, *FIFO hold*). Regenerated
+against krakenrf/librtlsdr 578b43d's `src/librtlsdr.c` and
+`include/rtl-sdr.h`. Apply it in `../librtlsdr` with
 `patch -p1 < ../heimdall_v2/tools/librtlsdr-zerocopy-map-once.patch` and
 rebuild the static library (`make -C heimdall_v2` does). Details and
 measurements: `../../docs/dev/librtlsdr-fork.md`, *Zero-copy USB buffers*.

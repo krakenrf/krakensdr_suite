@@ -20,6 +20,20 @@ std::vector<DeviceMapping> enumerate_devices_by_serial();
 // an N-element open needs), so a gap ends the count.
 int count_expected_devices_present();
 
+// Held stream start (docs/dev/calibration.md, *Stream start*): with a fork
+// that has rtlsdr_set_fifo_hold / rtlsdr_release_fifos, init_rtlsdr_device()
+// leaves each dongle's USB FIFO held empty, and start_pipeline_threads()
+// releases all of them together once every USB reader has queued its
+// transfers - the streams then start within ~0.1 ms of each other instead of
+// whenever each reader's first transfer happened to go out. Linux only: on
+// Windows control transfers take 3-4 ms each and run one at a time, so the
+// releases themselves would start the streams that far apart.
+#if defined(RTLSDR_HAS_FIFO_HOLD) && defined(__linux__)
+#define HELD_STREAM_START 1
+#else
+#define HELD_STREAM_START 0
+#endif
+
 // Device initialization functions
 bool init_rtlsdr_device(SDRDevice* sdr);
 // Startup entry point: creates one SDRDevice object per expected serial (the

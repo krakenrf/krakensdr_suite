@@ -145,6 +145,16 @@
 // samples; 32 ~= 218 ms at the cost of harmless latency and ~1 MB/device.
 #define RTL_USB_BUF_COUNT       32
 
+// Stream start (docs/dev/calibration.md, *Stream start*). With the fork's
+// FIFO hold (Linux) the streams start together once every USB reader has
+// queued its transfers, without it the readers start together once all wait
+// at the start gate - at most this long after the readers were created (a
+// reader later than that starts late). STARTUP_FLUSH_WAIT_MS bounds how long
+// the sample drain waits for every stream's first two packets before its
+// startup flush, which pairs the streams' buffers by arrival time.
+#define STREAM_START_WAIT_MS    1000
+#define STARTUP_FLUSH_WAIT_MS   1000
+
 // Bound on consecutive per-device L1 read timeouts in the sample drain before
 // declaring coherence lost. At 100 ms/timeout this is ~3 s of one device being
 // starved while the others overflow - a stuck/unplugged dongle, not a hiccup.

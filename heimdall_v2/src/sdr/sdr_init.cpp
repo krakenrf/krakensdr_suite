@@ -423,7 +423,12 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
                   << std::endl;
 #endif
 
-#if USB_RESET_ON_INIT
+#if HELD_STREAM_START
+    // Empty the FIFO and keep it so until start_pipeline_threads() releases
+    // every dongle's at once (see sdr_init.hpp). Not rtlsdr_reset_buffer():
+    // its reset value STALLs transfers queued meanwhile.
+    check(rtlsdr_set_fifo_hold(sdr->dev, 1), "holding the USB buffer", true);
+#elif USB_RESET_ON_INIT
     check(rtlsdr_reset_buffer(sdr->dev), "resetting the USB buffer", true);
 #endif
 

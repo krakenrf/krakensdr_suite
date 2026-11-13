@@ -166,6 +166,7 @@ loss under high CPU load.
 2. **Sample Drain** (`sample_processor` in sdr_pipeline.cpp):
    - Pulls one block from every device's L1 in lockstep into an aligned raw set, then hands it to the `l2_raw_buffer` staging queue. **No conversion/compensation/TCP here** — keeps the drain fast. Runs at realtime priority.
    - On staging overflow it drops the oldest **whole aligned set** (coherence-safe). The drain also OWNS the L1 flush (recovery / retune): `clear_l1_buffer()` posts a request that the drain serves between sets, dropping any partial set, and `flush_l1_now()` waits for a quiet point (every active device's `last_arrival_ns` - stamped at the END of the callback, after the enqueue - within half a packet period of the others and of now) so each device loses the same round of packets. A stamp taken before the enqueue let one device keep a packet the others lost: a whole-packet slip the lag servo then had to slew off. The quiet point also requires each device's last inter-arrival gap (`prev_arrival_ns` -> `last_arrival_ns`) to be 0.5-1.5 periods: a reader thread catching up after a stall delivers an OLD round late and then in a burst, which the last-arrival times alone can't tell from the current round. No quiet point within 4 periods: flush anyway, with a (10 s throttled) warning. A persistently stalled device trips `STUCK_DEVICE_MAX_TIMEOUTS` → `signal_coherence_lost()`.
+   - **Stream start**: on Linux (fork with `RTLSDR_HAS_FIFO_HOLD`) every dongle's USB FIFO is held empty from `init_rtlsdr_device()` until `start_pipeline_threads()` releases all of them together (`rtlsdr_release_fifos`, once every reader has queued its transfers; elsewhere the reader threads wait at a gate and call `rtlsdr_read_async` together); and every pipeline start, before its first set, the drain waits for each stream's first two packets and flushes once at a quiet point (`startup_flush`), so the streams' buffers pair by arrival time instead of by count. Why and the measurements: calibration.md, *Stream start*.
 
 3. **Conversion Worker** (`conversion_worker` in sdr_pipeline.cpp):
    - Consumes `l2_raw_buffer` **in order**; converts uint8 IQ → complex with phase/lag/EQ compensation (`samples_to_complex_with_compensation`, per channel, written in place into a recycled `l2_buffer_pool` set). Everything applied set-wide (phase vector × forward comp, noise-source state, per-bin EQ, spectral inversion) is read ONCE per set (`SetConversionState`), so a set straddling a change is converted the same way on every channel.
@@ -280,7 +281,7 @@ OUT retry) apply on every platform and to the installed `rtl_*`
 tools too (only fewer USB transfers for them): docs/dev/librtlsdr-fork.md,
 *Drag retunes* above.
 `init_rtlsdr_device()` fails a channel whose sample rate, center frequency or
-USB buffer reset can't be set (a silently mistuned dongle breaks coherence);
+USB buffer hold / reset can't be set (a silently mistuned dongle breaks coherence);
 other setup calls only warn.
 
 **System Libraries:**

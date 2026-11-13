@@ -93,7 +93,112 @@ once, so the next sets are paired by arrival time - inferred cause: at startup
 (no such flush) the drain pairs each stream's first buffers by count, and a
 stream whose first transfers came late starts that many samples behind. A
 return from wideband scan or independent mode does not flush and does not fix
-it (measured once).
+it (measured once). The inferred cause was confirmed and fixed 2026-11-13:
+*Stream start* below.
+
+**Stream start (added 2026-11-13)**: the first lag of each channel is the
+offset between the dongles' stream starts - nothing else. Each stream used to
+start whenever its reader thread's first transfer went out (plus up to ~0.8
+ms of stale FIFO content, `../../../docs/dev/librtlsdr-fork.md`, *FIFO
+hold*), and the drain paired the streams' buffers by count from each one's
+first packet. Measured (heimdall, per stream: first-callback time, then the
+servo-engaged lag): lag = -2.4 x (first callback_i - first callback_0) in us,
+residual median 76-97 samples, max 324-664, over 770 channel starts in all
+variants below. Two parts: whole buffers by which a late stream is paired
+behind (only when a reader is held up - one CPU core, a slow buffer mapping),
+and the sub-buffer offset of the starts. Now:
+- **Held start** (Linux, fork with `RTLSDR_HAS_FIFO_HOLD`):
+  `init_rtlsdr_device()` holds each dongle's USB FIFO empty
+  (`rtlsdr_set_fifo_hold`) instead of resetting it, and
+  `start_pipeline_threads()`, once the readers are created, calls
+  `rtlsdr_release_fifos()`: it waits (`STREAM_START_WAIT_MS`) until every
+  reader has queued its transfers and releases all FIFOs with asynchronous
+  control transfers back to back - the streams start within ~0.1 ms and
+  with no stale data. One thread submitting all five asynchronously, not
+  five waiting threads each writing one: both issue the releases in
+  parallel (a control write takes ~1.9 ms here, the Pi 5's
+  `rtlsdr_reset_buffer` 3.6-3.9 ms, and five at once take no longer than
+  one there), but the threads add their wake-up jitter - scratch tool, 15
+  starts each: async 145 / 286 / 411 samples max |lag|, threads 211 / 357 /
+  962. heimdall logs (stdout) each release's completion and their spread,
+  "USB streams released together: completed at ... us (spread N us)", and
+  the drain each stream's first packet, "Sample drain: first packets at
+  ... us" - first lag ~= -2.4 x that difference - so a Pi's spread can be
+  read from a verbose log. Not on Windows (control transfers 3-4 ms, one at
+  a time: the releases would spread the starts by ~14 ms) or macOS (not
+  measured), nor with an unpatched fork: those use the reader gate below.
+- **Startup flush** (every platform): the drain, before its first set of
+  each pipeline start, waits for every stream's second packet
+  (`STARTUP_FLUSH_WAIT_MS`) and flushes once at a quiet point
+  (`startup_flush()`, the existing `flush_l1_now()` + `flush_downstream()`),
+  so buffers pair by arrival time: whatever held a reader up, the lag stays
+  within one packet - about half a packet (8192 samples) when the streams'
+  packet times lie within half a period of each other, up to almost a whole
+  one (16384, the correlator's edge, little overlap left) when they spread
+  wider: then there is no quiet point and the flush pairs each stream's next
+  packet. Lags below that are unchanged.
+  An element-count change already had such a flush (its recovery flushes ~40
+  ms after the streams start - why it fixed the no-peak starts); a cold start
+  had none.
+- **Reader gate** (only without the held start): the USB reader threads get
+  ready (realtime priority set) and wait; `start_pipeline_threads()` lets
+  them call `rtlsdr_read_async` together (bounded by
+  `STREAM_START_WAIT_MS`; a stop opens the gate). Unloaded no gain - each
+  stream's own buffer allocation and submit still spread them - but under
+  CPU load on every core it kept the readers from starting milliseconds
+  apart (table below; the final code built against the unpatched fork:
+  1056 / 1172 / 1791 unloaded, 3 starts; 774 / 979 / 5177 under load, 4).
+- Not done: a FIFO reset of running streams
+  (`rtlsdr_reset_buffer()` STALLs the queued transfers - every stream died;
+  with the hold value the streams survive but each loses a different 1.75-2.24
+  ms mid-buffer, which shifts the alignment instead of re-anchoring it:
+  librtlsdr-fork.md, *FIFO hold*).
+
+Measured 2026-11-13 (x86_64, 5-channel KrakenSDR, 2.4 MSPS; each start a
+cold start, then 5->4->5 element changes and `check_calibration`; the
+variants interleaved in rounds; max |first lag| per start and convergence to
+CONVERGED, min / median / max):
+
+| variant | starts | max \|lag\| cold | after 5->4 / 4->5 | converged cold s | 5->4 / 4->5 s |
+|---|---|---|---|---|---|
+| before | 10 | 254 / 820 / 1568 | 659 / 746 (median) | 20.0 / 23.4 / 26.5 | 23.2 / 25.6 |
+| reader gate (A) | 10 | 344 / 906 / 1480 | 458 / 1061 | 21.8 / 23.5 / 26.8 | 25.3 / 27.5 |
+| startup flush (C) | 10 | 410 / 1003 / 1560 | 766 / 888 | 22.3 / 24.9 / 31.5 | 24.0 / 26.6 |
+| A + C | 10 | 208 / 950 / 1675 | 674 / 718 | 22.8 / 23.6 / 27.8 | 25.1 / 26.2 |
+| held start (B) | 10 | 47 / 264 / 411 | 247 / 280 | 20.0 / 22.0 / 24.8 | 24.4 / 23.6 |
+| B + C | 10 | 99 / 232 / 426 | 320 / 320 | 19.3 / 21.0 / 23.8 | 23.6 / 23.5 |
+| A + B + C | 10 | 160 / 258 / 453 | 345 / 326 | 19.0 / 23.2 / 24.3 | 22.5 / 22.4 |
+| final code (B + C), a second series | 10 | 92 / 320 / 436 | 261 / 292 | 20.0 / 22.0 / 24.3 | 24.0 / 23.9 |
+| before, same series | 10 | 621 / 1136 / 1949 | 494 / 864 | 22.0 / 24.4 / 30.0 | 23.1 / 26.4 |
+
+Stress cases, 4 starts each (max |lag| cold; converged cold s; min / median /
+max):
+
+| variant | one CPU core (`taskset`) | all cores busy (a busy loop each) | zero-copy mapping 100 us per buffer, no prealloc |
+|---|---|---|---|
+| before | 7753 / 8669 / 9074; 30.8 / 32.2 / 42.8 | 379 / 4618 / 5454; 24.8 / 30.4 / 32.0 | no lock in 4 of 4 (2-3 channels each, 12 no-peak warnings) |
+| A | 1873 / 6270 / 7736; 27.5 / 32.5 / 34.0 | - | no lock in 4 of 4 (10 warnings) |
+| C | 7812 / 8605 / 8839; 31.0 / 31.4 / 32.8 | - | 6918 / 10068 / 14032; 32.3 / 37.5 / 41.0 |
+| A + C | 2041 / 7873 / 8356; 27.3 / 34.1 / 35.3 | 496 / 791 / 1434; 22.8 / 23.4 / 24.8 | 7521 / 9849 / 13086; 32.8 / 35.5 / 40.8 |
+| B | - | - | 239 / 288 / 370; 21.3 / 23.9 / 24.5 |
+| B + C (final code) | 152 / 215 / 398; 21.8 / 23.3 / 23.8 | 134 / 229 / 284; 19.8 / 21.8 / 23.3 | 156 / 267 / 362; 20.3 / 20.6 / 23.0 |
+| A + B + C | 230 / 336 / 436; 21.0 / 22.6 / 24.0 | - | - |
+
+(The no-lock "lags" are noise readings, not listed.) Zero-copy ON with
+`rtlsdr_prealloc_async` (`-DENABLE_ZEROCOPY=1`), 4 starts each: before 794 /
+1202 / 1505, A + C 859 / 1203 / 1449, B + C 137 / 263 / 377 (converged 20.3 /
+21.6 / 23.0 s).
+
+Every check OK (|lag| 0.0), `coherence_events` 0, `lag_no_peak` empty and no
+failed start in all of these except the slow-mapping starts marked "no lock"
+(those warned, as designed). Retunes, gain changes, a Full Recalibration,
+wideband-scan and independent mode and back and a calibration hold with the
+final code: all reconverged as before, `coherence_events` 0. Not measured:
+any Raspberry Pi, Windows, macOS, the `--wideband` and `--kerberos`
+variants. The lag servo removes ~858 samples/s, so the ~600 samples saved
+on a normal start are worth well under a second of the ~21-25 s; what the
+change buys is the stress cases, where a held-up reader used to start a
+channel thousands of samples - or out of range - behind.
 
 **Why not timed "bursts" on the PLL path** (`rtlsdr_set_freq_correction`,
 the historical approach — code removed July 2026): that call retunes the

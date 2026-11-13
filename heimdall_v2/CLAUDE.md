@@ -124,8 +124,10 @@ Calibration
 
 Hardware and replies
 - `init_rtlsdr_device()` fails a channel whose sample rate, centre frequency
-  or buffer reset can't be set (a mistuned dongle breaks coherence); other
-  setup calls only warn.
+  or buffer hold / reset can't be set (a mistuned dongle breaks coherence);
+  other setup calls only warn.
+- Never `rtlsdr_reset_buffer()` with transfers queued: it STALLs them and the
+  stream dies (stream start: `docs/dev/calibration.md` *Stream start*).
 - Tune through `for_each_tuner`: one by one on Windows (parallel control
   transfers time out there), parallel threads on Linux - each thread touches
   only its own handle and result slot, and the shared atomics are written
