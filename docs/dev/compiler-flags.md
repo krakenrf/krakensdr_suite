@@ -60,7 +60,15 @@ the component files win.
   so an existing build picks new flags up
 - `-mcpu=native` / `-march=native` builds run only on the kind of CPU they
   were built on (a Pi 5 build on a Pi 4: illegal instruction) - build on
-  the device (install.sh, the Dockerfile do)
+  the device (install.sh, the Dockerfile do). Since 2026-11-15 the flags
+  stamps and liquid-dsp's `build/commit` also name the CPU that "native"
+  stood for (`/proc/cpuinfo` "CPU part" on ARM, "model name" on x86; Linux
+  only, and only with a native flag), so a tree copied from another kind
+  of CPU (heimdall on a Pi 4: status 132 at every start) rebuilds on the
+  next `make` instead of looking up to date; the first make after this
+  change recompiles everything once. Checked on x86_64 only (the stamp
+  round-trips; another CPU name in it forces the rebuild) - not yet run on
+  a Pi. whisper.cpp's build is not covered (`make whisper` again)
 - Measured on the Pi 5 (GCC 14.2, Debian 13; job scratch 63520c26, results
   in ~/flagtest_527fd2/out on the Pi; A = main, B = these flags):
   heimdall's correlation per 5-channel set (micro-benchmark, one core)
