@@ -160,6 +160,15 @@ Simply use the command:
 
 In any terminal window, with your KrakenSDR connected and powered up.
 
+If heimdall or kraken_doa isn't built yet on this machine - or was built for
+another CPU (an SD card moved from a Pi 5 to a Pi 4) or before a `git pull` -
+`./run.sh` builds it first and then starts as usual. While it builds (10-30
+minutes on a Raspberry Pi the first time) the usual web addresses below show
+a progress bar and switch to the real web UI when it is ready; the build log
+is `logs/build.log`. If the build fails, an older working build is started
+with a warning, or the page shows the error (missing packages: run
+`./install.sh` once). `NO_AUTOBUILD=1 ./run.sh` skips the build.
+
 The Web UI can then be accessed at:
 
 **Heimdall:** http://krakensdr.local:8070 or http://PI_IP_ADDR:8070
