@@ -232,7 +232,9 @@ while zero-copy was still off): zero-copy is compiled in on Linux by default
 (`ENABLE_ZEROCOPY 1`; `-DENABLE_ZEROCOPY=0` leaves it out), and a handle
 uses it only if its application called `rtlsdr_prealloc_async()` - heimdall
 does, at open; rtl_test / rtl_fm / rtl_tcp and any other user of the library
-get user-space buffers as before. Not for every handle because (measured)
+get user-space buffers as before. heimdall's terminal dashboard shows the
+result on its SYSTEM line (`zerocopy on` / `off`, `k/n` when some dongles
+fell back; `n/a` off Linux). Not for every handle because (measured)
 mapping inside `rtlsdr_read_async` delays the stream start, and on a Pi the
 mapped buffers are slow to read byte by byte (zctest's callback 7-10x
 slower), while one memcpy per buffer - heimdall's callback - is cheaper than

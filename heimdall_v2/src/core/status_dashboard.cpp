@@ -661,6 +661,26 @@ void render() {
 #else
           << col::DIM << "n/a" << col::RST;
 #endif
+        // usbfs zero-copy USB buffers (the fork's rtlsdr_prealloc_async, set
+        // per dongle in init_rtlsdr_device): on = every active dongle, off =
+        // none (a fork without it, or its fallback), k/n = some fell back
+        o << col::DIM << "  zerocopy " << col::RST;
+#ifdef __linux__
+        {
+            int active = 0, zc = 0;
+            const int n = std::min(active_num_elements.load(), static_cast<int>(devices.size()));
+            for (int i = 0; i < n; i++) {
+                if (!devices[i] || !devices[i]->init_success.load(std::memory_order_relaxed)) continue;
+                active++;
+                if (devices[i]->zero_copy.load(std::memory_order_relaxed)) zc++;
+            }
+            if (active > 0 && zc == active) o << col::GRN << "on" << col::RST;
+            else if (zc == 0) o << col::DIM << "off" << col::RST;
+            else o << col::YEL << zc << "/" << active << col::RST;
+        }
+#else
+        o << col::DIM << "n/a" << col::RST;
+#endif
         add(o.str());
     }
 

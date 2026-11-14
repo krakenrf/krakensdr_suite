@@ -421,9 +421,14 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
     // then stay per stream, as before. The RTL callback must keep copying
     // each buffer out in one go: on a Pi the mapped memory is slow to read
     // byte by byte (docs/dev/librtlsdr-fork.md, *Zero-copy USB buffers*).
-    if (rtlsdr_prealloc_async(sdr->dev, RTL_USB_BUF_COUNT, NUM_SAMPLES * 2) < 0)
+    // (0 = zero-copy buffers mapped and kept, 1 = none: user-space buffers)
+    const int prealloc_rc = rtlsdr_prealloc_async(sdr->dev, RTL_USB_BUF_COUNT, NUM_SAMPLES * 2);
+    sdr->zero_copy.store(prealloc_rc == 0, std::memory_order_relaxed);
+    if (prealloc_rc < 0)
         std::cerr << "Channel " << sdr->index << ": could not map the USB transfer buffers ahead of the stream"
                   << std::endl;
+#else
+    sdr->zero_copy.store(false, std::memory_order_relaxed);
 #endif
 
 #if HELD_STREAM_START
