@@ -144,7 +144,7 @@ run_kraken_doa() {
     done
     mkdir -p "$DATA/kraken_doa"
     link_files "$DATA/kraken_doa" "$APP/kraken_doa_v2" \
-        kraken_doa.html array_calculator.html opus-decoder.js opus-decoder.min.js
+        kraken_doa.html array_calculator.html opus-decoder.min.js
     cd "$DATA/kraken_doa"
     # self-installed digital voice codecs (README "Digital voice codecs"):
     # libmbe.so.1 and the ETSI TETRA cdecoder / sdecoder in /data/codecs

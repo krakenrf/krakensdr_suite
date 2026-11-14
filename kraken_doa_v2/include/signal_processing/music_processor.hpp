@@ -286,6 +286,7 @@ private:
     uint64_t streamPosOf(size_t g) const;  // caller holds accumulator_.buffer_mutex
     std::chrono::steady_clock::time_point last_input_time_{};
     float last_input_rate_hz_ = 0.0f;
+    int last_input_bw_hz_ = 0;           // its bandwidth (a change at the same rate rebuilt the filters)
     float last_input_offset_hz_ = 0.0f;  // VFO offset the previous block was decimated with
     size_t eff_snapshot_len_ = 256;      // snapshot length of the current frame (<= configured)
     float spectrum_offset_deg_ = 0.0f;   // array offset baked into the current pseudospectrum

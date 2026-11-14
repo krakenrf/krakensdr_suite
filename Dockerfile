@@ -3,8 +3,10 @@
 # KrakenSDR suite (heimdall + kraken_doa) as one image; docker-compose.yml runs
 # it as two containers. See DOCKER.md.
 #
-# Build ON the device that runs it: kraken_doa compiles with -march=native, so
-# an image built on a Pi 5 can die with "Illegal instruction" on a Pi 4.
+# Build ON the device that runs it: kraken_doa, heimdall and the plugins are
+# compiled for the build CPU (-march=native / -mcpu=native, the Makefiles'
+# flags), so an image built on a Pi 5 can die with "Illegal instruction" on a
+# Pi 4, and a cross-build on a PC isn't supported.
 #
 #   docker compose build             (or: docker build -t krakensdr:local .)
 #   docker compose build --build-arg JOBS=2   # 4 GB Pi; JOBS=1 on 2 GB
@@ -81,6 +83,15 @@ RUN mkdir -p /src/v2t \
          && cp kraken_doa_v2/transcribe/build/kraken_whisper /src/v2t/; \
        fi
 
+# Licences -> the image's /usr/share/doc/krakensdr (scripts/collect-licenses.sh):
+# the suite's own, the third-party notices, the licence files of what was
+# built from source here (librtlsdr fork, uWebSockets, liquid-dsp, whisper.cpp
+# ...) and SOURCE.txt (where the GPL programs' source is). The Debian runtime
+# packages keep theirs in /usr/share/doc/<package>
+COPY LICENSE LICENSE
+COPY scripts/collect-licenses.sh scripts/collect-licenses.sh
+RUN bash scripts/collect-licenses.sh /src/licenses rtlsdr=/src/librtlsdr uws=/src/uws-kraken
+
 # Runtime packages = whatever owns the shared libraries the binaries load, so
 # the runtime stage follows the Debian release without a hand-kept list
 RUN for b in heimdall_v2/heimdall kraken_doa_v2/kraken_doa librtlsdr/build/src/rtl_test \
@@ -105,7 +116,6 @@ COPY --from=build /src/heimdall_v2/heimdall /src/heimdall_v2/index.html heimdall
 COPY --from=build /src/kraken_doa_v2/kraken_doa \
                   /src/kraken_doa_v2/kraken_doa.html \
                   /src/kraken_doa_v2/array_calculator.html \
-                  /src/kraken_doa_v2/opus-decoder.js \
                   /src/kraken_doa_v2/opus-decoder.min.js kraken_doa_v2/
 # decoder plugins (built ones: plugins/<id>/build/decoder); kraken_doa finds
 # them through KRAKEN_PLUGIN_DIR (entrypoint)
@@ -113,6 +123,7 @@ COPY --from=build /src/kraken_doa_v2/plugins/ kraken_doa_v2/plugins/
 # Voice to Text helper (empty with WHISPER=0); KRAKEN_TRANSCRIBE_DIR (entrypoint)
 COPY --from=build /src/v2t/ kraken_doa_v2/transcribe/build/
 COPY --from=build /src/librtlsdr/build/src/rtl_test /src/librtlsdr/build/src/rtl_eeprom /usr/local/bin/
+COPY --from=build /src/licenses/ /usr/share/doc/krakensdr/
 COPY docker/entrypoint.sh /usr/local/bin/krakensdr-entrypoint
 RUN chmod 755 /usr/local/bin/krakensdr-entrypoint
 

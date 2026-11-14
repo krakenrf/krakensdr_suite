@@ -74,6 +74,20 @@
                                            // runtime-adjustable from the client UI
 #define WB_RF_MIN_HZ        24000000ULL    // lowest RF the front end usefully passes
 
+// Board MCU (EFM8 behind the moRFeus VID/PID, fw-krakendown). Retunes use
+// 's' (RAM only); 'w' also saves to the MCU Flash (8-page ring, ~160k saves
+// in the board's life) and is sent only at a clean exit, once, so the board
+// powers up at the last LO. 0 disables that save.
+#define WB_SAVE_LO_ON_EXIT  1
+#define WB_HID_REPLY_MS     100            // reply timeout per HID command
+// Board telemetry (INA219 input current / voltage, SHT4x or Si7020 temperature
+// and humidity), polled only on firmware >= WB_MIN_SENSOR_FW: older
+// firmware rewrote its Flash on every read.
+#define WB_MIN_SENSOR_FW    20261109
+#define WB_MIN_SI70XX_FW    20261110       // Si7020 (Testunit_3v0) driver
+#define WB_TELEMETRY_PERIOD_MS 1000
+#define WB_R_SHUNT_MOHM     0              // R6: 0 = auto (3v0 100, 3v2 10 mOhm)
+
 // Antenna ring auto-selection: the three concentric rings are frequency-
 // scaled copies of the array, picked by the tuned RF (outer below CENTER_MIN,
 // center below INNER_MIN, inner above). Must match the client's constants.
@@ -131,6 +145,16 @@
 // samples; 32 ~= 218 ms at the cost of harmless latency and ~1 MB/device.
 #define RTL_USB_BUF_COUNT       32
 
+// Stream start (docs/dev/calibration.md, *Stream start*). With the fork's
+// FIFO hold (Linux) the streams start together once every USB reader has
+// queued its transfers, without it the readers start together once all wait
+// at the start gate - at most this long after the readers were created (a
+// reader later than that starts late). STARTUP_FLUSH_WAIT_MS bounds how long
+// the sample drain waits for every stream's first two packets before its
+// startup flush, which pairs the streams' buffers by arrival time.
+#define STREAM_START_WAIT_MS    1000
+#define STARTUP_FLUSH_WAIT_MS   1000
+
 // Bound on consecutive per-device L1 read timeouts in the sample drain before
 // declaring coherence lost. At 100 ms/timeout this is ~3 s of one device being
 // starved while the others overflow - a stuck/unplugged dongle, not a hiccup.
@@ -165,6 +189,25 @@
 // never triggers a disruptive (~30-60 s, noise-source) recalibration.
 #define PERIODIC_RECAL_LAG_THRESHOLD    1.0f   // avg |residual lag| in samples above this == bad
 #define PERIODIC_RECAL_PHASE_THRESHOLD  10.0f  // avg |residual phase| in degrees above this == bad
+
+// Lag acquisition that cannot converge (warning only - nothing is restarted).
+// The correlator sees lags within +-NUM_SAMPLES; dongle streams that started
+// further apart give no correlation peak at all, and the servo chases noise
+// for good. A channel still acquiring after LAG_NO_PEAK_WARN_S of servoing on
+// the noise source (time with the noise off, outside coherent mode or under a
+// calibration hold is not counted) whose correlation peak / mean magnitude
+// over the last LAG_NO_PEAK_READINGS readings has a median below
+// LAG_NO_PEAK_RATIO gets one stderr warning per calibration attempt and is
+// listed in the status JSON's "lag_no_peak". Measured on x86_64 with a
+// 5-channel KrakenSDR (2026-11-13, 221 channel acquisitions that locked,
+// first lags up to 14173, one run on one core): the slowest lock took 38.5 s
+// of servoing (60 s = 1.56x); a channel with a peak never read below 22.8
+// after its first reading (8 = 2.9x under that; the first one can be a stale
+// set, 4.7-13.9); channels with no peak read 4.2-6.8, window medians 4.9-5.1.
+// No Raspberry Pi measurement.
+#define LAG_NO_PEAK_WARN_S      60     // s of active acquisition without a lock
+#define LAG_NO_PEAK_RATIO       8.0f   // median peak / mean |correlation| below this == no peak
+#define LAG_NO_PEAK_READINGS    32     // readings in the median window
 
 // Processing delays (microseconds)
 #define PROCESS_LOOP_DELAY      10000   // Delay in main processing loop

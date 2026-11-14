@@ -7,7 +7,7 @@ system identity SYS; its BCH check bits are the SYNC 0xC4D7) and an address
 codeword (Aloha, grants, acknowledgements, clear-down, broadcasts ...).
 Codewords: 48 bits + BCH(63,48) + parity, single-bit errors corrected. Voice
 is analogue NBFM on the granted traffic channel. Details:
-`kraken_doa_v2/CLAUDE.md`.
+`kraken_doa_v2/docs/dev/digital-decoders.md`.
 
 ## ID separation (DoA per site)
 A control channel slot is the SITE's transmission and its CCSC names the

@@ -6,11 +6,12 @@
 #include <stdexcept>
 #include <string>
 
-// Finiteness from the IEEE-754 exponent bits (all ones = inf or NaN). The
-// client builds with -Ofast, which implies -ffinite-math-only: the compiler
-// then assumes inf/NaN never occur and folds std::isfinite()/std::isnan() to
-// constants, so they cannot be used to reject hostile input here. Integer
-// tests on the bit pattern are not affected by fast-math.
+// Finiteness from the IEEE-754 exponent bits (all ones = inf or NaN). Under
+// -ffinite-math-only (part of -Ofast, which the client built with until
+// 2026-10-23 - its Makefile now adds -fno-finite-math-only) the compiler
+// assumes inf/NaN never occur and folds std::isfinite()/std::isnan() to
+// constants, so they cannot reject hostile input there. Integer tests on the
+// bit pattern are right under any flags.
 inline bool is_finite_value(float v) {
     return (std::bit_cast<uint32_t>(v) & 0x7F800000u) != 0x7F800000u;
 }

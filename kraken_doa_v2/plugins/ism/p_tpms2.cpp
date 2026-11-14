@@ -1,9 +1,20 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The decoders in this file follow rtl_433's
+// (https://github.com/merbanan/rtl_433, GPL-2.0-or-later), re-implemented in
+// C++ for the KrakenSDR plugin API (2026):
+//   src/devices/schraeder.c - Copyright (C) 2016 Benjamin Larsson and 2017
+//     Christian W. Zuckschwerdt <zany@triq.net>
+//   src/devices/tpms_gm.c - Copyright (C) 2025 Eric Blevins
+//   src/devices/steelmate.c - Copyright (C) 2016 Benjamin Larsson; Copyright
+//     (C) 2016 John Jore; Copyright (C) 2025 Bruno OCTAU (ProfBoc75)
+
 // Tyre pressure sensors (TPMS), part 2: the ones sliced as Manchester with
 // mid-bit edges (zero-bit slicer: high->low = 1, a 0 in front of every
 // row) - Schrader (generic, EG53MA4, MRXBC5A4 / BMW), GM aftermarket and
 // Steelmate.
-//
-// protocol notes: rtl_433 documentation; own implementation.
 
 #include "ism.hpp"
 

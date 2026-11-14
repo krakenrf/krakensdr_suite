@@ -18,6 +18,9 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
 #endif
 
 #ifdef _WIN32
@@ -229,6 +232,20 @@ int64_t fs_mtime_ms(const std::string& path) {
     return static_cast<int64_t>(st.st_mtim.tv_sec) * 1000 + st.st_mtim.tv_nsec / 1000000;
 }
 
+#ifdef __APPLE__
+// free + speculative + inactive + purgeable pages (as platform::mem_info)
+uint64_t fs_mem_available() {
+    vm_statistics64_data_t vm;
+    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+    vm_size_t page = 0;
+    if (host_page_size(mach_host_self(), &page) != KERN_SUCCESS ||
+        host_statistics64(mach_host_self(), HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&vm), &count) !=
+            KERN_SUCCESS)
+        return 0;
+    return (static_cast<uint64_t>(vm.free_count) + vm.speculative_count + vm.inactive_count + vm.purgeable_count) *
+           page;
+}
+#else
 uint64_t fs_mem_available() {
     std::ifstream f("/proc/meminfo");
     std::string line;
@@ -242,6 +259,7 @@ uint64_t fs_mem_available() {
     }
     return 0;
 }
+#endif
 
 bool fs_portable_name(std::string_view) { return true; }
 

@@ -1,3 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The decoders in this file follow rtl_433's
+// (https://github.com/merbanan/rtl_433, GPL-2.0-or-later), re-implemented in
+// C++ for the KrakenSDR plugin API (2026):
+//   src/devices/oregon_scientific.c - Copyright (C) 2015 Helge Weissig, Denis
+//     Bodor, Tommy Vestermark, Karl Lattimer, deennoo, pclov3r, onlinux,
+//     Pasquale Fiorillo.
+//   src/devices/oregon_scientific_v1.c - rtl_433 contributors
+//   src/devices/oregon_scientific_sl109h.c - rtl_433 contributors
+//   src/pulse_slicer.c (the OSv1 slicer: the v1 bits) - Copyright (C) 2015
+//     Tommy Vestermark
+
 // Oregon Scientific weather sensors, protocol versions 2.1 and 3:
 //   v2.1: THGR122N / THGR228N / THGR968, THN132N / THR228N / AWR129, THN129 /
 //         RTHN129, RTGN318 / RTGN129 / RTGR328N, THGR328N, BTHR918 / BHTR968 /
@@ -5,8 +20,6 @@
 //   v3:   THGR810 / THGN801, THN802, UV800 (UVN800), PCR800 (rain), WGR800 (wind)
 // plus the version 1 thermometers ("Oregon-v1") and the Oregon SL109H
 // thermo-hygro sensor (a different, PPM protocol).
-//
-// protocol notes: rtl_433 documentation; own implementation.
 //
 // v2.1 / v3: 433.92 MHz OOK Manchester, ~1024 bit/s (half bit ~488 us).
 // Nibbles are sent LSB first; n[0..3] = sensor id, n4 channel, n5 n6 rolling

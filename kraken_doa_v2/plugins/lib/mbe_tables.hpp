@@ -3,9 +3,18 @@
 // Tables for the IMBE / AMBE paths of the digital decoders.
 //
 // IMBE 7200x4400 quantizer and bit-allocation tables (from TIA-102.BABA), the
-// Golay(23,12) / Hamming(15,11) correction tables and the synthesis window: from mbelib, Copyright (C) 2010 mbelib Author
-// (GPG 0xEA5EFE2C). Frame deinterleave tables (P25 iW..iZ, DMR rW..rZ,
-// D-STAR dW/dX, NXDN nW..nZ): from DSD, Copyright (C) 2010 DSD Author (GPG 0x3F1D7FD0).
+// Golay(23,12) / Hamming(15,11) correction tables and the synthesis window:
+// from mbelib (github.com/szechyjs/mbelib),
+//
+//   Copyright (C) 2010 mbelib Author
+//   GPG Key ID: 0xEA5EFE2C (9E7A 5527 9CDC EBF7 BF1B  D772 4F98 E863 EA5E FE2C)
+//
+// Frame deinterleave tables (P25 iW..iZ, DMR rW..rZ, D-STAR dW/dX, NXDN
+// nW..nZ): from DSD (github.com/szechyjs/dsd),
+//
+//   Copyright (C) 2010 DSD Author
+//   GPG Key ID: 0x3F1D7FD0 (74EF 430D F7F2 0A48 FCE6  F630 FAA2 635D 3F1D 7FD0)
+//
 // Both under the ISC licence:
 //
 //   Permission to use, copy, modify, and/or distribute this software for any

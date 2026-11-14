@@ -4,6 +4,7 @@
 #include "core/config.hpp"
 #include "core/log_sanitize.hpp"
 #include "core/platform.hpp"
+#include "core/utils.hpp"
 #include "sdr/sdr_device.hpp"
 #include "sdr/sdr_pipeline.hpp"
 #include "sdr/downconverter.hpp"
@@ -493,6 +494,12 @@ void render() {
                                                                 : "LOW")
               << col::DIM << "  IF " << col::RST << f3(WB_VARIANT_IF_HZ / 1e6) << " MHz";
             add(w.str());
+            const std::string tl = downconverter_telemetry_line();
+            if (!tl.empty()) {
+                ostringstream b;
+                b << label("WB BOARD") << tl;
+                add(b.str());
+            }
         }
     }
 
@@ -645,7 +652,35 @@ void render() {
           << col::DIM << "cpu " << col::RST << uc << f1(hw.cpu) << "%" << col::RST
           << col::DIM << "  temp " << col::RST << tc
           << (hw.temp < 0 ? string("n/a") : f1(hw.temp) + "\xc2\xb0" + "C") << col::RST
-          << col::DIM << "  ram " << col::RST << (long)hw.ram_used << "/" << (long)hw.ram_total << "MB";
+          << col::DIM << "  ram " << col::RST << (long)hw.ram_used << "/" << (long)hw.ram_total << "MB"
+          // mlockall (core/utils): off = no unlimited memlock limit (yellow:
+          // heimdall runs, its pages can be swapped); Linux only
+          << col::DIM << "  memlock " << col::RST
+#ifdef __linux__
+          << (memory_locked() ? string(col::GRN) + "on" + col::RST : string(col::YEL) + "off" + col::RST);
+#else
+          << col::DIM << "n/a" << col::RST;
+#endif
+        // usbfs zero-copy USB buffers (the fork's rtlsdr_prealloc_async, set
+        // per dongle in init_rtlsdr_device): on = every active dongle, off =
+        // none (a fork without it, or its fallback), k/n = some fell back
+        o << col::DIM << "  zerocopy " << col::RST;
+#ifdef __linux__
+        {
+            int active = 0, zc = 0;
+            const int n = std::min(active_num_elements.load(), static_cast<int>(devices.size()));
+            for (int i = 0; i < n; i++) {
+                if (!devices[i] || !devices[i]->init_success.load(std::memory_order_relaxed)) continue;
+                active++;
+                if (devices[i]->zero_copy.load(std::memory_order_relaxed)) zc++;
+            }
+            if (active > 0 && zc == active) o << col::GRN << "on" << col::RST;
+            else if (zc == 0) o << col::DIM << "off" << col::RST;
+            else o << col::YEL << zc << "/" << active << col::RST;
+        }
+#else
+        o << col::DIM << "n/a" << col::RST;
+#endif
         add(o.str());
     }
 

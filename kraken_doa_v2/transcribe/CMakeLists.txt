@@ -25,6 +25,13 @@ add_executable(kraken_whisper kraken_whisper.cpp)
 target_include_directories(kraken_whisper PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include)
 target_link_libraries(kraken_whisper PRIVATE whisper)
 target_compile_options(kraken_whisper PRIVATE -Wall -Wextra)
+# Use a GPU backend compiled into whisper.cpp (Metal: GGML_METAL=ON) - set by
+# setup.sh from WHISPER_GPU (default: on Apple Silicon only). Off = CPU only,
+# even where a backend is compiled in
+option(KRAKEN_WHISPER_GPU "let kraken_whisper use the GPU backend whisper.cpp was built with" OFF)
+if(KRAKEN_WHISPER_GPU)
+    target_compile_definitions(kraken_whisper PRIVATE KRAKEN_WHISPER_GPU=1)
+endif()
 
 # Windows (MSYS2 UCRT64 / MinGW-w64, setup.sh's MinGW branch): built like the
 # suite's other .exe files (see ../Makefile) - win_init.cpp (binary stdin /

@@ -4,10 +4,10 @@ brief: Short description of gr-krakensdr_v2
 tags: # Tags are arbitrary, but look at CGRAN what other authors are using
   - sdr
 author:
-  - Author Name <authors@email.address>
+  - KrakenRF Inc.
 copyright_owner:
-  - Copyright Owner 1
-license:
+  - KrakenRF Inc.
+license: GPL-3.0-or-later
 gr_supported_version:
   - 3.X
 repo: # Put the URL of the repository here

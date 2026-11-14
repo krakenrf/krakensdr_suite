@@ -5,7 +5,7 @@ searched at once: frame sync, LICH, SACCH (CRC-6) and FACCH1 (CRC-12) with
 the punctured rate-1/2 K=5 code, the frame scrambler; layer 3: VCALL (unit /
 talkgroup, cipher), TX_REL, data calls, trunking control channel (site /
 service information, grants). Voice: AMBE+2 through a user-installed mbelib.
-Details: `kraken_doa_v2/CLAUDE.md`.
+Details: `kraken_doa_v2/docs/dev/digital-decoders.md`.
 
 ## ID separation (DoA per unit)
 Each call is a talker (`host.talker`): the VCALL's source unit ID (FACCH1 or

@@ -1,8 +1,12 @@
 # KrakenSDR decoder plugins: SDK
 
+<!-- SPDX-License-Identifier: MIT - Copyright (c) 2026 KrakenRF Inc. -->
+This guide and the SDK (`sdk/`) are under the MIT License (`sdk/LICENSE`):
+a plugin may have a licence of its own - see *Licensing a plugin*.
+
 Every decoder in the receiver's **Digital Decoder** (sidebar → 🔐 Digital
 Decoder → Mode) is a plugin - the protocols that ship with the suite (P25,
-DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS, ADS-B) as well as the ones you add.
+DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG / FLEX pagers, APRS, ADS-B) as well as the ones you add.
 Plugins are written by hand or by the **🤖 AI assistant** (the web UI's
 right-hand column), which has an LLM agent capture and analyse a signal, then
 write, build and test a plugin for it - in Claude Code's sandbox; the receiver
@@ -30,10 +34,12 @@ plugins/
 │                         (P25/DMR 4FSK sync), dig_vocoder (IMBE, mbelib AMBE,
 │                         TETRA ACELP), dig_common (front ends, the Bridge below),
 │                         radar_pri / radar_scan (PRI patterns, antenna scan / main
-│                         beam - radar, ssr1030)
+│                         beam - radar, ssr1030), acars_msg.hpp (ACARS block fields -
+│                         acars, vdl2)
 ├── p25/ dmr/ tetra/ dstar/ nxdn/ mpt1327/   the shipped protocol decoders
-├── pocsag/ aprs/         more shipped decoders (APRS was written by the AI lab)
-├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points
+├── pagers/ aprs/         more shipped decoders (POCSAG + FLEX; APRS was written by the AI lab)
+├── adsb/                 ADS-B / Mode S at 2.4 MHz - an example of map points; multichannel: every
+│                         antenna combined, per-message MRC / MVDR beams, its own pulse covariances
 ├── radiosonde/           weather balloon sondes (RS41, DFM, M10/M20, iMet-4/-54, LMS6, MRZ):
 │                         several protocols side by side, Reed-Solomon, Viterbi, balloon map points
 ├── ism/                  ISM band devices (433 MHz etc.) in the whole 2.4 MHz: a burst detector,
@@ -44,12 +50,22 @@ plugins/
 ├── ssr1030/              1030 MHz interrogations (SSR / Mode S / TCAS): Mode S DPSK at 0.6
 │                         samples per chip by a sequence estimator against the receiver's
 │                         measured response; interrogators told apart by train / level / code
+├── acars/                VHF ACARS (ARINC 618): 2400 bit/s MSK on AM, NRZI detected coherently against a
+│                         2400 Hz reference, odd parity + CRC-16 BCS with soft-decision repair; a packet
+│                         talker per aircraft (registration), ground stations from their squitters
+├── vdl2/                 VDL Mode 2 (136.x MHz): D8PSK bursts, unique word correlator, coherent + differential
+│                         demodulators side by side, descrambler, header FEC, RS(255,249) errors + erasures
+│                         (rs.cpp), HDLC / AVLC, ACARS over AVLC, ground station XID (map); a packet talker
+│                         per burst = its sender's address (aircraft ICAO hex, ground station)
 ├── uat/                  978 MHz UAT (US ADS-B + ground uplink): CPFSK at 2.3 samples per bit,
 │                         Reed-Solomon GF(256), FIS-B headers / DLAC text; TIS-B = the ground station's
 ├── flarm/                FLARM (ID + bearing only: encrypted payload) / OGN trackers (LDPC soft
 │                         decoding, TEA de-whitening, stealth honoured) on every channel in the 2.4 MHz
-├── ctcss/                CTCSS tones / DCS codes under analog FM (FFT search + narrowband tracker,
-│                         Golay DCS words): a transmission talker per tone, tone squelch, no voice
+├── analog_id/            Radio IDs on analog FM (was ctcss/): CTCSS tones / DCS codes (FFT search +
+│                         narrowband tracker, Golay DCS words) and the in-band ID bursts - MDC1200
+│                         (coherent MSK), FleetSync 1200 / 2400 / II, 5-tone selcall, DTMF, tone
+│                         bursts; a transmission talker named by the radio's ID, else its tone;
+│                         ID / tone squelch, no voice
 ├── beacon406/            406 MHz distress beacons (Cospas-Sarsat): bursts on every channel of a 100 kHz
 │                         VFO, biphase-L demodulator, BCH syndrome tables, every protocol; a packet
 │                         talker per 15-hex ID on its own channel; distress vs self-test
@@ -62,10 +78,17 @@ plugins/
 │                         the raw samples, pulse trains (period, modes from the collar's own rate),
 │                         region / vendor profiles (profiles.hpp), coded (Lotek / Motus-style) tags;
 │                         a packet talker per collar on its 1 kHz channel
+├── rds/                  FM broadcast at the VFO's own rate: every antenna combined before the FM
+│                         discriminator (multichannel), RDS / RBDS (biphase BPSK, block sync + soft
+│                         correction, every group type), RDS2 streams, the MPX's subcarriers classified
+│                         (SCA FM audio / FSK data / DARC), SCA or main-programme audio; a packet talker
+│                         per station (PI) per RDS group
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
-    ├── CXXFLAGS          optional: extra compiler flags for this plugin (e.g. -O3)
+    ├── CXXFLAGS          optional: extra compiler flags for this plugin (e.g.
+    │                     -funroll-loops; the defaults are already -O3
+    │                     -fno-math-errno -fcx-fortran-rules, -mcpu=native on a Pi)
     ├── tools/            test-signal generator (real framing / FEC / CRC, several
     │                     transmitters with their IDs) - see ID separation below
     ├── README.md         what it decodes, ID separation, sources/specs used, test results
@@ -112,6 +135,7 @@ public:
 
 KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
                           .name = "My decoder",           // shown in the mode list
+                          .category = "Two-way radio",    // its group in the mode list (below)
                           .description = "one line",      // the panel's help text
                           .version = "1.0",
                           .sample_rate = 48000,           // rate process() receives (0 = the VFO's own)
@@ -132,6 +156,14 @@ KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
 
 The fields of `kp::Info` must be given **in this order** (C++20 designated
 initializers); any of them can be left out.
+
+**Category**: the heading the decoder is listed under in the mode lists
+(VFO card, decoder tab, saved-frequency editor). The shipped plugins use
+`Two-way radio`, `Aviation`, `Marine & distress`, `Paging & packet`,
+`ISM & IoT`, `Telemetry & tracking` and `Broadcast & cellular` (listed in
+that order); pick one of them where it fits - case doesn't matter - or a
+name of your own (listed after those, by name). Without one the plugin is
+listed under `Other`, last.
 
 **Options** (`kp::Option`: key, label, default, choices, help) are the
 decoder's own settings. The panel shows them while the plugin is selected (in
@@ -264,8 +296,9 @@ events, text messages and map points are logged without any code in the
 plugin. Raw frames are the one thing to add: while `host.raw_wanted()` is
 true, pass each frame that passed its checks to `host.raw(text)` - one line,
 printable, compact (hex for binary frames, e.g. ADS-B `"8D4840D6... -14.8"`
-= the Mode S message + level in dB; APRS the TNC2 packet; POCSAG "RIC n
-F<f> <baud>" + the message codewords). Check `raw_wanted()` first: building
+= the Mode S message + level in dB; APRS the TNC2 packet; pagers "POCSAG
+RIC n F<f> <baud>" + the message codewords, "FLEX <speed> <cycle.frame>
+<phase> capcode n V<type>" + the vector and message words). Check `raw_wanted()` first: building
 the text costs CPU and it is usually off. The offline test prints raw frames
 with `--raw`. Map points are logged with their `info` lines (as a JSON
 object), so put every detail worth keeping there ("Squawk: 7700"). Start
@@ -407,14 +440,14 @@ take in what proved it (the sync word, a preamble); keep it under 3 s.
 Talker spans and packets (`host.talker`) count as confirmed samples too.
 The squelch stays open 1.5 s after the last valid frame - right for frames
 a few hundred ms apart; a decoder of a continuous signal that reports short
-pieces (ctcss: every 50 ms while the tone is there) sets
-`.squelch_hold_s` (ctcss 0.35), so the squelch closes soon after the
+pieces (analog_id: every 50 ms while the tone is there) sets
+`.squelch_hold_s` (analog_id 0.35), so the squelch closes soon after the
 signal ends instead of passing 1.5 s of noise after every transmission.
 The shipped plugins: the lib protocols report through
 `RxContext::valid_at` (`dig::report_valid(ctx, mode, start, end)` with the
 receiver's own sample indexes; `Bridge::clock(rate)` + `restart_clock()`
-map them - `Bridge::talkers(rate)` includes it), pocsag reports each synced
-batch, aprs / v23_telemetry each frame from its length, radiosonde each
+map them - `Bridge::talkers(rate)` includes it), pagers reports each synced
+POCSAG batch and each FLEX block, aprs / v23_telemetry each frame from its length, radiosonde each
 frame from its FSK receiver (`FskRx::clock`). `decoder --file` counts
 them ("valid frames with their samples: N, covering X s"; each one with
 `--verbose`).
@@ -500,8 +533,8 @@ mixed from all of them. Every new decoder of such a signal does this.
   not a sender further back or a recipient: an APRS frame repeated by a
   digipeater is the digipeater's (the last path entry marked repeated - "*";
   an alias-only repeat names nobody: no talker), a repeater output carries
-  every radio at the repeater's bearing, a pager's RIC is the recipient
-  (POCSAG: no talker). A downlink's base station is its cell / site (TETRA
+  every radio at the repeater's bearing, a pager's RIC / capcode is the
+  recipient (POCSAG / FLEX: no talker). A downlink's base station is its cell / site (TETRA
   MCC-MNC + colour code, the MPT1327 SYS); a signal with no ID of its own
   (iMet-4 sondes) gets none - one talker would merge every such transmitter.
 - **Packets** (`t.packet = true`) for bursts: one call per frame that passed
@@ -513,10 +546,14 @@ mixed from all of them. Every new decoder of such a signal does this.
   sample indexes (`dig::Bridge::clock(rate)` maps them; tetra, mpt1327).
 - **Transmissions** (`host.talker` / `talker_end`) for voice calls: the
   frame boundaries of the call, a new id ending the previous one. Also for
-  an analog transmitter named by its sub-audible tone (ctcss: `CTCSS 88.5`
-  from the carrier's / tone's onset to its reverse burst / end) - such a
-  plugin decodes no voice (`.voice` false), so Voice to Text transcribes the
-  VFO's analog audio and names each transcript after its talker.
+  an analog transmitter named by its radio ID or sub-audible tone
+  (analog_id: `MDC 1234` / `CTCSS 88.5` from the carrier's / tone's onset to
+  its reverse burst / end) - such a plugin decodes no voice (`.voice`
+  false), so Voice to Text transcribes the VFO's analog audio and names
+  each transcript after its talker. A talker whose ID is only known later
+  (a post-ID at the end of the transmission) can be reported then, from the
+  transmission's start: the host keeps DoA frames no span claims for 6 s
+  (`FRAME_WAIT_S`), so report it within ~5 s of the start.
 - **The channel**: `freq_hz` / `bw_hz` of the transmitter inside the VFO
   (Hz from your input's 0 Hz - after the host's AFC, so a decoder whose
   `freq_error` centres the signal gives 0) - kraken_doa filters exactly that
@@ -563,16 +600,17 @@ at KNOWN bearings:
 Examples: `aprs/tools/aprs_gen.py`, `ais/tools/ais_gen.py`,
 `dstar/tools/dstar_gen.py`, `nxdn/tools/nxdn_gen.py`, `tetra/tools/tetra_gen.py`,
 `mpt1327/tools/mpt1327_gen.py`, `ils/tools/ils_gen.py`,
-`pocsag/tools/pocsag_gen.py`, `v23_telemetry/tools/v23_gen.py`,
+`pagers/tools/pocsag_gen.py`, `pagers/tools/flex_gen.py`, `v23_telemetry/tools/v23_gen.py`,
 `p25/tools/p25_gen.py`, `dmr/tools/dmr_gen.py`,
 `radiosonde/tools/sonde_gen.py`; a 2.4 MHz
 scene of several transmitters is too big for uca_scene.py's in-memory
 mixing (5 antennas x 12 s = 2.3 GB complex128): `radar/tools/radar_gen.py`
 writes its scene at known bearings itself, in 0.1 s pieces (so do
 `ssr1030/tools/ssr_gen.py`, `uat/tools/uat_gen.py`, `adsb/tools/adsb_gen.py`,
-`dme/tools/dme_gen.py`, `ism/tools/ism_gen.py` and
+`dme/tools/dme_gen.py`, `ism/tools/ism_gen.py`,
 `flarm/tools/flarm_gen.py` - the last two with simultaneous packets on
-different channels of one VFO).
+different channels of one VFO - and `rds/tools/rds_gen.py`: FM stations,
+also at 480 kHz for an offline test).
 
 **Who transmits, again**: a message ABOUT a transmitter isn't always FROM
 it - UAT's TIS-B / ADS-R messages describe aircraft but are sent by a
@@ -649,7 +687,7 @@ least recently played go).
   ANT0), like everywhere in the scenes. `expect`: per transmitter its
   talker `tid` (exact) and bearing, or only a bearing (any talker within
   tolerance - radars, DTV paths); `tol` per row overrides `tol_deg`
-  (default 5). A decoder whose signal names no transmitter (pocsag,
+  (default 5). A decoder whose signal names no transmitter (pagers,
   v23_telemetry) checks `{"vfo": 0, "bearing": B}` - the VFO's own DoA
   (its MUSIC plot; put `DEC_SQUELCH_METHOD:0:DIGITAL` +
   `DEC_SQUELCH_ENABLE:0:1` in `commands`, so it comes from the decoded
@@ -722,7 +760,8 @@ libfec (`kraken_doa_v2/liquid.mk`), so its FEC schemes that need libfec
 objects (`fftfilt`, `spgram`, `firpfbch*`, `ofdmframe*`, `qdetector`) run
 on liquid's own, slower FFT. FFTs: `#include "kraken_fft.hpp"`
 (sdk/) - pffft (vendored in `kraken_doa_v2/external/pffft`, BSD-style
-licence) behind FFTW-like plans, linked through `lib/build/libkrakendig.a`:
+licence) behind FFTW-like plans, linked through `lib/build/libkrakendig.a`
+(a plugin with a licence of its own: pffft's objects directly):
 
 ```cpp
 kfft_complex* in  = kfft_alloc_complex(n);   // float[2] per sample (in[i][0] re, [1] im)
@@ -760,6 +799,15 @@ else POSIX-only (fork, pipes, signals other than INT / TERM, `/dev/...` paths)
 needs an `#ifdef _WIN32` branch, and `long` is 32-bit there (LLP64): Hz,
 sample counts and times are `int64_t`, printed with `%lld` / PRId64.
 
+**macOS** (Apple clang + Homebrew, see docs/dev/macos.md): the same
+commands; the Makefile force-includes `kraken_doa_v2/mac/posix_compat.h`
+(pipe2, fdatasync, `st_mtim`, std::bit_cast for older libc++ ...) and
+`kraken_doa_v2/mac/fast_complex.h`, which makes `std::complex` `*`, `*=`
+and `std::norm` as fast as GCC's `-fcx-fortran-rules` on Linux - write
+complex arithmetic normally, no helper needed. Apple
+clang 14 (macOS 12) can't capture a structured binding in a lambda - name it
+in the capture (`[&key = k]`).
+
 `--rf HZ` is the RF at the recording's centre (`host.rf_hz()` = it +
 `--offset`); `ai/sigtool.py` captures carry it in their `.json` sidecar
 (`rf_hz`), which is used when `--rf` isn't given.
@@ -772,12 +820,12 @@ resamples to your `sample_rate` exactly like the live path and feeds it in
 summary:
 
 ```
-=== POCSAG summary ===
+=== Pagers (POCSAG + FLEX) summary ===
 input: 6.16 s, decode time 0.05 s (0.8% of real time)
 VALID FRAMES: 5 (first at 1.400 s)
 events: 5
 facts:
-  Bit rate               2400 bit/s
+  POCSAG                 2400 bit/s, deviation 4.5 kHz
   ...
 ```
 
@@ -798,6 +846,41 @@ version of the suite.
 Plugins are selected per VFO and that choice is saved with the VFO settings
 (`PLUGIN:<id>`); a receiver without the plugin shows it as missing.
 
+## Licensing a plugin
+
+The SDK - `sdk/` and this guide - and the Windows / macOS helpers every plugin
+links (`kraken_doa_v2/win/`, `kraken_doa_v2/mac/`) are under the MIT License (`sdk/LICENSE`), so a plugin
+can be under any licence. A plugin folder WITHOUT a `LICENSE` file is part of
+the KrakenSDR DoA software (KrakenSDR Source Available Licence,
+`kraken_doa_v2/LICENSE`). Put a `LICENSE` file in it (and an SPDX line in
+each of its files, e.g. `// SPDX-License-Identifier: GPL-2.0-or-later`) and
+the plugin is under that licence instead - `plugins/ism` is GPL-2.0-or-later,
+because it follows rtl_433's device decoders; `plugins/flarm` is GPL-3.0,
+because its OGN parity-check matrix comes from the OGN project's GPL-3.0
+diy-tracker.
+
+kraken_doa runs every plugin as a process of its own and talks to it only
+through the pipe protocol in `kraken_plugin.hpp`, so a plugin with its own
+licence is a separate program. It is built only from:
+
+- its own files,
+- the SDK (`kraken_plugin.hpp`, `kraken_dsp.hpp`, `kraken_fft.hpp`,
+  `plugin_host.cpp`) and the Windows helpers - MIT,
+- pffft (BSD-style, through `kraken_fft.hpp`) and liquid-dsp (MIT).
+
+`plugins/Makefile` enforces this: such a plugin is compiled without `-Ilib` /
+`-I../include` and linked with pffft's objects instead of
+`lib/build/libkrakendig.a`, and the build stops when one of its sources
+includes a header from anywhere else (`../lib/...` too). Its generators in
+`tools/` are built the same way (`make_testsignal.py`, the Windows prebuild).
+So it can't use `lib/` (dig_common, dig_fec, dig_fsk4, the vocoders ...) -
+and don't copy code from there or from kraken_doa either: that code is under
+the source-available licence. The other way round, code taken or translated
+from a GPL / LGPL project belongs ONLY in such a plugin, under a licence that
+project's licence allows (GPL-2.0-or-later code: GPL-2.0-or-later or
+GPL-3.0-or-later), with its copyright notices kept and the files it follows
+named in each file.
+
 ## The shared library (`lib/`)
 
 The shipped protocol decoders are thin plugins around `lib/` (`p25/decoder.cpp`
@@ -805,7 +888,8 @@ is ~50 lines). Their receivers were written against an `RxContext` /
 `Report` interface; `dig::Bridge` (dig_common.hpp) maps it onto `kp::Host`,
 and `dig::FmFrontEnd` (48 kHz -> 12.5 kHz channel filter -> discriminator in
 Hz) / `dig::RrcFrontEnd` give them their input. Your plugin can use any of it
-(`#include "dig_fec.hpp"` etc.).
+(`#include "dig_fec.hpp"` etc.) - unless it has a licence of its own (above):
+`lib/` is under the KrakenSDR Source Available Licence.
 
 ## Example
 
@@ -826,9 +910,12 @@ Morse idents (`lib/navaid.hpp`), talker packets for a DoA per beacon.
 `plugins/ils/`: ILS / VOR / marker beacons - AM tone depths, the VOR radial
 from two 30 Hz phases, block-wise FFT processing.
 
-`plugins/pocsag/decoder.cpp`: POCSAG pagers (2-FSK, 512/1200/2400 bit/s
-demodulated in parallel, BCH(31,21) correction with a parity check against
-miscorrection, numeric and alphanumeric messages). The protocol plugins (`p25/`,
+`plugins/pagers/`: pagers - `pocsag.hpp` POCSAG (2-FSK, 512/1200/2400
+bit/s demodulated in parallel, BCH(31,21) correction with a parity check
+against miscorrection, numeric and alphanumeric messages) and `flex.cpp`
+FLEX (1600 / 3200 / 6400 bit/s, 2- and 4-level FSK, interleaved blocks,
+fragmented messages; a symbol grid from the sync, timing followed per
+block) on one front end (`decoder.cpp`). The protocol plugins (`p25/`,
 `dmr/`, `nxdn/`, `dstar/`, `tetra/`, `mpt1327/`) show more advanced
 techniques: 4FSK sync correlation, soft-decision Viterbi, Reed-Solomon,
 interleaving, TDMA burst handling, vocoders; `aprs/` an AFSK modem with

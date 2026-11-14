@@ -449,12 +449,7 @@ void TetraReceiver::voice_slot(const uint8_t* bits) {
     voice_tn_ms_ = t;
     std::string who = "Timeslot " + std::to_string(tn_) + (last_call_.empty() ? "" : " (" + last_call_ + ")");
     if (!TetraCodec::available()) {
-#ifdef _WIN32
-        // never there on Windows (lib/dig_vocoder.cpp) - nothing to install
-        if (ctx_.voice_state) ctx_.voice_state(who + ": ACELP codec not available on Windows");
-#else
         if (ctx_.voice_state) ctx_.voice_state(who + ": ACELP codec not installed (README: Digital voice codecs)");
-#endif
         return;
     }
     if (t - encrypted_ms_ < 60000) {

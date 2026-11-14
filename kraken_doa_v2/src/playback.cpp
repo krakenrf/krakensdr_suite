@@ -867,8 +867,9 @@ std::string start_gen(const std::string& id) {
     kproc::SpawnOptions o;
     // python3 -I tool ... (Windows: the interpreter kproc found, in UTF-8 mode,
     // with -E instead of -I: -I also hides the user site-packages, where the
-    // Microsoft Store Python's pip installs numpy + scipy)
-#ifdef _WIN32
+    // Microsoft Store Python's pip installs numpy + scipy; macOS the same -
+    // Apple's python3 has no writable site-packages, pip installs with --user)
+#if defined(_WIN32) || defined(__APPLE__)
     const char* const isolate = "-E";
 #else
     const char* const isolate = "-I";
@@ -913,16 +914,6 @@ std::string start_gen(const std::string& id) {
 }
 
 // --- start / stop ------------------------------------------------------------------
-int bw_index_for(double khz) {
-    int best = 0;
-    double bd = 1e18;
-    for (int i = 0; i < NUM_BANDWIDTH_OPTIONS; i++) {
-        const double d = std::fabs(BANDWIDTH_OPTIONS[i].bandwidth_mhz * 1000.0 - khz);
-        if (d < bd) bd = d, best = i;
-    }
-    return best;
-}
-
 void run_internal(const std::string& cmd) {
     g_internal.store(true);
     ControlHandler::handle_websocket_message(cmd);
@@ -945,8 +936,10 @@ void apply_session(const std::string& id) {
     if (demod.empty()) demod = "NBFM";
     std::string mode = str(side, "vfo_mode");
     if (mode.find(',') != std::string::npos || mode.find(';') != std::string::npos) mode = "OFF";
-    snprintf(dec, sizeof dec, "DECIMATORS:0|%.2f,%d,%s,0,-60.00,0,0,%s,,0,0", off_hz, bw_index_for(num(side, "vfo_bw_khz", 2400)),
-             demod.c_str(), mode.c_str());
+    // the entry's bandwidth exactly (last field, Hz); field 2 the nearest index
+    const int bw_hz = clamp_bandwidth_hz(num(side, "vfo_bw_khz", 2400) * 1000.0);
+    snprintf(dec, sizeof dec, "DECIMATORS:0|%.2f,%d,%s,0,-60.00,0,0,%s,,0,0,%d", off_hz, nearest_bandwidth_index(bw_hz),
+             demod.c_str(), mode.c_str(), bw_hz);
     run_internal("OPERATING_MODE:coherent");
     run_internal(dec);
     run_internal("DOA:1");

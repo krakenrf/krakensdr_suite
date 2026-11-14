@@ -5,7 +5,7 @@ D-STAR (JARL) digital voice, GMSK 4800 bit/s: the RF header (scrambler,
 callsigns, flags), the slow data of the voice frames (text message, GPS /
 DPRS -> map points, header copy), the end pattern. Voice: AMBE through a
 user-installed mbelib (README "Digital voice codecs"). Details:
-`kraken_doa_v2/CLAUDE.md`.
+`kraken_doa_v2/docs/dev/digital-decoders.md`.
 
 ## ID separation (DoA per callsign)
 Each transmission is a talker (`host.talker`): the MY callsign of its RF

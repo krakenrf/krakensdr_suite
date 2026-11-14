@@ -33,6 +33,7 @@ private:
 
 KRAKEN_PLUGIN(NxdnPlugin, {.id = "nxdn",
                    .name = "NXDN",
+                   .category = "Two-way radio",
                    .description = "NXDN (Kenwood NEXEDGE / Icom IDAS), NXDN48 (6.25 kHz) and NXDN96 (12.5 kHz). RAN, talkgroup and unit IDs, call start / end, encryption; trunking control channels: system / site, control channel, voice and data channel grants. Voice: AMBE+2 (mbelib). Bandwidth 12 kHz.",
                    .version = "2.0",
                    .sample_rate = 48000,

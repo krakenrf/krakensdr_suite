@@ -1,10 +1,24 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The decoders in this file follow rtl_433's
+// (https://github.com/merbanan/rtl_433, GPL-2.0-or-later), re-implemented in
+// C++ for the KrakenSDR plugin API (2026):
+//   src/devices/bresser_5in1.c - Copyright (C) 2018 Daniel Krueger; Copyright
+//     (C) 2019 Christian W. Zuckschwerdt <zany@triq.net>
+//   src/devices/bresser_6in1.c - Copyright (C) 2019 Christian W. Zuckschwerdt
+//     <zany@triq.net>
+//   src/devices/bresser_7in1.c - Copyright (C) 2019 Christian W. Zuckschwerdt
+//     <zany@triq.net>
+//   src/devices/bresser_3ch.c - Copyright (C) 2015 Christian W. Zuckschwerdt
+//     <zany@triq.net>
+
 // Bresser weather sensors: 5-in-1 (26-byte frame) incl. the Professional Rain
 // Gauge, the 6-in-1 family (new 5-in-1, 7-in-1 indoor, soil, pool, 3-in-1
 // wind gauge, T/H sensors; Froggit WH6000, Ventus C8488A, Ambient TX-31xx),
 // the 7-in-1 / 8-in-1 / 3-in-1 stations and air-quality sensors (PM, CO2,
 // HCHO/VOC), and the 3CH thermo-hygro sensor (also Renkforce DM-7511).
-//
-// protocol notes: rtl_433 documentation; own implementation.
 
 #include "ism.hpp"
 

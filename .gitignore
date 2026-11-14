@@ -43,3 +43,30 @@ ggml-*.bin.part
 /krakensdr.exe
 /windows/build/
 /dist/
+
+# Voice codecs the user builds (README / WINDOWS.md "Digital voice codecs"),
+# in ANY folder: never committed - the ETSI TETRA codec may not be
+# redistributed, AMBE is DVSI's. The ETSI programs (Linux names, the
+# tetra-* install names, Windows .exe), mbelib's library, the ETSI zip and an
+# osmo-tetra / mbelib checkout (osmo-tetra/codec/ holds the ETSI sources).
+# .githooks/pre-push blocks them too
+cdecoder
+sdecoder
+ccoder
+scoder
+cdecoder.exe
+sdecoder.exe
+ccoder.exe
+scoder.exe
+tetra-cdecoder
+tetra-sdecoder
+tetra-cdecoder.exe
+tetra-sdecoder.exe
+libmbe*.dll
+mbe.dll
+libmbe.so*
+libmbe*.dylib
+etsi_tetra_codec.zip
+en_30039502*.zip
+osmo-tetra/
+mbelib/

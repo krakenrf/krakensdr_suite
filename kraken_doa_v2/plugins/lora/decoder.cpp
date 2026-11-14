@@ -53,7 +53,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdarg>
-#include <malloc.h>
+#ifndef __APPLE__
+#include <malloc.h>   // mallopt (glibc); macOS has <malloc/malloc.h>
+#endif
 #include <time.h>
 #include <map>
 #include <memory>
@@ -1619,6 +1621,7 @@ private:
 
 KRAKEN_PLUGIN(LoraDecoder, {.id = "lora",
                             .name = "LoRa / Meshtastic / LoRaWAN",
+                            .category = "ISM & IoT",
                             .description = "LoRa chirp-spread-spectrum packets in the 2.4 MHz the tuner receives, in any "
                                            "country: Meshtastic (node table, text / position / nodeinfo on the public default "
                                            "channel; every firmware region), LoRaWAN uplinks + gateway downlinks + class-B "

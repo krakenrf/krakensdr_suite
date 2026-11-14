@@ -1,4 +1,6 @@
 #pragma once
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 KrakenRF Inc. - the plugin SDK (plugins/sdk/LICENSE)
 
 // Header-only DSP / bit helpers for decoder plugins. Plain C++ (no external
 // dependencies) so a plugin stays readable; liquid-dsp (<liquid/liquid.h>)

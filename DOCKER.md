@@ -91,9 +91,13 @@ The first build compiles everything and takes about 5 minutes on a Pi 5
 (longer on a Pi 4), plus about 10 minutes for Voice to Text's speech-to-text
 engine (whisper.cpp) - `WHISPER=0` in `.env` leaves that out.
 Later builds reuse the dependency layers and only recompile the apps. Build
-the image **on the machine that will run it**: kraken_doa compiles with
-`-march=native`, so an image built on a Pi 5 can crash with "Illegal
-instruction" on a Pi 4.
+the image **on the machine that will run it**: kraken_doa, heimdall and the
+decoder plugins are all compiled for the CPU they are built on
+(`-march=native` / `-mcpu=native` - the Makefiles' flags, the same as a
+native install), so an image built on a Pi 5 can crash with "Illegal
+instruction" on a Pi 4, and an image cross-built on a PC for the Pi isn't
+supported. After updating the sources, run `docker compose build` again:
+the running image keeps the binaries (and compiler flags) it was built with.
 
 The build runs 3 compile jobs. That's right for an 8 GB Pi. On a smaller
 Pi, set `JOBS=2` (4 GB) or `JOBS=1` (2 GB) in `.env`, because each job needs
@@ -260,6 +264,12 @@ services:
   - The runtime stage installs only the Debian packages that own the
     libraries the binaries load, which `ldd` finds at build time, plus
     `openssl` and `usbutils`.
+  - Licences: `/usr/share/doc/krakensdr/` holds the suite's licences, the
+    third-party notices, the licence files of what was built from source and
+    `SOURCE.txt` (`scripts/collect-licenses.sh`); the Debian packages keep
+    theirs in `/usr/share/doc/<package>/`. If you publish the image, publish
+    the source it was built from with it (heimdall and the librtlsdr fork are
+    GPL).
 - **`docker/entrypoint.sh`** runs each app in its own directory under
   `/data`, with the web files linked in. The apps save their state in their
   working directory, so it ends up in `docker-data/`.
@@ -271,7 +281,7 @@ services:
   - Empty variables from compose are removed, because the apps treat an
     empty variable as set.
   - The decoder plugins in `kraken_doa_v2/plugins/` (all the decoders: P25,
-    DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG, APRS) are built
+    DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG / FLEX, APRS) are built
     into the image, and kraken_doa finds them through `KRAKEN_PLUGIN_DIR`.
     The AI assistant is not available in Docker (its panel stays hidden):
     the image has no LLM CLI and no compiler. Create plugins on a native
@@ -287,6 +297,10 @@ services:
   - `ulimits: rtprio: 30` lets heimdall raise its USB reader and sample-drain
     threads to SCHED_RR 30. It's the same as `LimitRTPRIO=30` in the native
     boot service.
+  - `ulimits: memlock: -1` (unlimited) lets heimdall lock its memory in RAM
+    (`mlockall`), so the pages those threads use can't be swapped out. It's
+    the same as `LimitMEMLOCK=infinity` in the native boot service. heimdall
+    locks only with an unlimited limit.
   - `ulimits: core: 0`: containers inherit the Docker daemon's unlimited core
     size, so every crash wrote a ~280 MB core file into `docker-data/`.
   - Log rotation (3 × 10 MB) and health checks: the control port (8092)
@@ -335,6 +349,9 @@ Also tested:
 - **"SCHED_RR unavailable" in the heimdall log**: the `ulimits: rtprio`
   setting is missing from the compose file. heimdall still runs, but at
   normal priority, which risks USB overruns under load.
+- **"Memory locking unavailable" in the heimdall log**: the `ulimits:
+  memlock` setting is missing from the compose file. heimdall runs as
+  before, without its memory locked.
 - **Port already in use / "address in use"**: the native stack is running.
   Stop it with `./run.sh stop` and `sudo systemctl disable --now krakensdr`.
 - **"Illegal instruction"**: the image was built on a different CPU. Rebuild

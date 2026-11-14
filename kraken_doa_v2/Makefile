@@ -1,6 +1,10 @@
 # Makefile for KrakenSDR DoA with MUSIC DoA and Raw Data Buffering
 CXX = g++
-CXXFLAGS = -std=c++20 -Ofast -Wall -Wextra -pthread
+# -O3 -ffast-math without -ffinite-math-only (it folds std::isfinite /
+# std::isnan to constants). It was -Ofast = this + -ffinite-math-only +
+# -fallow-store-data-races (stores other threads may race with); the same
+# speed on the Pi 5 - docs/dev/compiler-flags.md
+CXXFLAGS = -std=c++20 -O3 -ffast-math -fno-finite-math-only -Wall -Wextra -pthread
 INCLUDES = -isystem $(LIQUID_INC) -Iinclude -Iplugins/sdk -Iexternal/pffft -IuWebSockets/src -IuWebSockets/uSockets/src -I/usr/include/eigen3
 LDFLAGS = -L/usr/local/lib
 # liquid-dsp: built from source as a static library without FFTW / libfec
@@ -43,14 +47,55 @@ ifeq ($(WINDOWS),1)
            -lws2_32 -lcrypt32 -lbcrypt -lgdi32 -luser32 -ladvapi32 -lwinmm
 endif
 
+# macOS (Apple clang + Homebrew: eigen, openssl@3, opus, cmake, pkg-config -
+# `make deps-macos`): the Linux build plus the shims of mac/posix_compat.h
+# and mac/fast_complex.h (std::complex * / norm without libc++'s inf / NaN
+# recovery; both force-included) and Homebrew's include / library paths
+# (OpenSSL is keg-only). Everything macOS-specific is under MACOS
+# (plugins/Makefile and liquid.mk too)
+MACOS := $(if $(filter Darwin,$(shell uname -s)),1,)
+ifeq ($(MACOS),1)
+# one deployment target for everything (this macOS version, as CMake picks
+# it for librtlsdr / liquid-dsp): no "built for newer macOS" link warnings
+export MACOSX_DEPLOYMENT_TARGET ?= $(shell sw_vers -productVersion | cut -d. -f1-2)
+endif
+ifeq ($(MACOS),1)
+    BREW_PREFIX := $(or $(shell brew --prefix 2>/dev/null),/usr/local)
+    OPENSSL_PREFIX := $(or $(shell brew --prefix openssl@3 2>/dev/null),$(BREW_PREFIX)/opt/openssl@3)
+    CXXFLAGS += -include mac/posix_compat.h -include mac/fast_complex.h
+    INCLUDES += -I$(BREW_PREFIX)/include/eigen3 -I$(OPENSSL_PREFIX)/include -I$(BREW_PREFIX)/include
+    LDFLAGS = -L$(OPENSSL_PREFIX)/lib -L$(BREW_PREFIX)/lib
+    # platform.cpp's keep_system_awake (an IOKit power assertion)
+    LIBS += -framework IOKit -framework CoreFoundation
+endif
+
 # Detect ARM architecture for NEON optimizations
 ARCH := $(shell uname -m)
+# macOS on Apple Silicon says arm64 (Linux: aarch64) - the same 64-bit ARM
+# with NEON. `override`: also when ARCH=arm64 is given on the command line
+ifeq ($(ARCH),arm64)
+override ARCH := aarch64
+endif
+# the aarch64 CPU flag: this CPU (-mcpu=native) - except on macOS, where
+# older Apple clang rejects "native" on arm64 and its default target is
+# already the M1 (NEON, dot product, fp16); `make MAC_CPU=-mcpu=apple-m2`
+# for a newer chip's extras
+MAC_CPU ?=
+AARCH64_CPU = -mcpu=native
+ifeq ($(MACOS),1)
+AARCH64_CPU = $(MAC_CPU)
+endif
 ifeq ($(WINDOWS),1)
     CXXFLAGS += $(WIN_MARCH) $(WIN_ASFLAGS) $(WIN_DEFS) -DLIBUS_USE_LIBUV -include win/posix_compat.h
     $(info Windows build (MinGW-w64): $(WIN_MARCH))
 else ifeq ($(ARCH),aarch64)
-    # ARM 64-bit (Raspberry Pi 4/5, etc.)
+    # ARM 64-bit (Raspberry Pi 4/5, etc.; Apple Silicon: AARCH64_CPU above)
+ifeq ($(MACOS),1)
+    CXXFLAGS += $(AARCH64_CPU)
+    PFFFT_CFLAGS := $(filter-out -march=native,$(PFFFT_CFLAGS)) $(AARCH64_CPU)
+else
     CXXFLAGS += -march=native -mtune=native
+endif
     PFFFT_CFLAGS += -DPFFFT_ENABLE_NEON
     $(info Detected ARM64 architecture - NEON optimizations will be enabled)
 else ifeq ($(ARCH),armv7l)
@@ -104,10 +149,10 @@ TARGET = kraken_doa.exe
 # linked to a temporary name, then moved: Windows can't overwrite a running
 # exe, MSYS2's mv moves the busy one aside (a rebuild while the stack runs)
 LINK_TMP = .tmp
-# every object depends on this stamp of WIN_MARCH (rule below): another
-# WIN_MARCH recompiles everything, not only the files that changed
-WIN_MARCH_STAMP = $(OBJDIR)/.win_march
 endif
+# every object depends on this stamp of the compiler flags (rule below):
+# other flags recompile everything, not only the files that changed
+FLAGS_STAMP = $(OBJDIR)/.flags
 
 # Source files (updated with IQ converter)
 SIGNAL_PROCESSING_SRCS = \
@@ -154,6 +199,7 @@ APP_SRCS = \
 	$(SRCDIR)/main.cpp \
 	$(SRCDIR)/station_info.cpp \
 	$(SRCDIR)/doa_logger.cpp \
+	$(SRCDIR)/wb_board.cpp \
 	$(SRCDIR)/channel_manager.cpp \
 	$(SRCDIR)/control_handler.cpp \
 	$(SRCDIR)/settings_store.cpp \
@@ -170,6 +216,8 @@ APP_SRCS = \
 	$(SRCDIR)/geo_http.cpp \
 	$(SRCDIR)/incidents.cpp \
 	$(SRCDIR)/saved_freqs.cpp \
+	$(SRCDIR)/sf_scan_plan.cpp \
+	$(SRCDIR)/sf_scanner.cpp \
 	$(SRCDIR)/decoder_log.cpp \
 	$(SRCDIR)/rdf_engine.cpp \
 	$(SRCDIR)/rdf_mapper.cpp \
@@ -201,7 +249,7 @@ DEPS = $(ALL_SRCS:$(SRCDIR)/%.cpp=$(DEPDIR)/%.d)
 OBJDIRS = $(OBJDIR) $(OBJDIR)/signal_processing $(OBJDIR)/networking $(OBJDIR)/digital $(OBJDIR)/utils $(OBJDIR)/pffft
 DEPDIRS = $(DEPDIR) $(DEPDIR)/signal_processing $(DEPDIR)/networking $(DEPDIR)/digital $(DEPDIR)/utils
 
-.PHONY: all clean distclean install deps check-uws debug help print-% run status plugins whisper whisper-update
+.PHONY: all clean distclean install deps deps-macos check-uws debug help print-% run status plugins whisper whisper-update
 
 # Default target
 all: check-uws $(OBJDIRS) $(DEPDIRS) $(TARGET) plugins whisper-update
@@ -213,6 +261,8 @@ include liquid.mk
 # is opt-in: `make whisper` = transcribe/setup.sh (clone the pinned whisper.cpp,
 # build, download the default model). Once set up, every `make` keeps it up
 # to date (a failure only warns - kraken_doa runs without it).
+# `make whisper WHISPER_GPU=auto|on|off`: Metal on Apple Silicon by default
+# (transcribe/setup.sh; the choice is remembered for later builds)
 whisper:
 	@transcribe/setup.sh
 
@@ -237,6 +287,9 @@ plugins: $(LIQUID_A)
 USOCKETS_FLAGS = WITH_OPENSSL=1
 ifeq ($(WINDOWS),1)
 USOCKETS_FLAGS = WITH_OPENSSL=1 WITH_LIBUV=1 WITH_LTO=0 CC=gcc CXX=g++
+endif
+ifeq ($(MACOS),1)
+USOCKETS_FLAGS += CFLAGS=-I$(OPENSSL_PREFIX)/include CXXFLAGS=-I$(OPENSSL_PREFIX)/include
 endif
 check-uws:
 	@if [ ! -d uWebSockets ]; then \
@@ -279,16 +332,16 @@ endif
 	@echo "Run with: ./$(TARGET)"
 
 # Compile source files and generate dependencies
-$(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(LIQUID_H) $(WIN_MARCH_STAMP) | $(OBJDIRS) $(DEPDIRS) check-uws
+$(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(LIQUID_H) $(FLAGS_STAMP) | $(OBJDIRS) $(DEPDIRS) check-uws
 	@echo "Compiling $<..."
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MP -MF $(DEPDIR)/$*.d -c $< -o $@
 
-$(OBJDIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) $(WIN_MARCH_STAMP) | $(OBJDIRS)
+$(OBJDIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) $(FLAGS_STAMP) | $(OBJDIRS)
 	@echo "Compiling $<..."
 	$(CC) $(PFFFT_CFLAGS) -c $< -o $@
 
 # Windows process setup + manifest resource (see WIN_OBJS)
-$(OBJDIR)/win/win_init.o: win/win_init.cpp win/posix_compat.h $(WIN_MARCH_STAMP) | $(OBJDIRS)
+$(OBJDIR)/win/win_init.o: win/win_init.cpp win/posix_compat.h $(FLAGS_STAMP) | $(OBJDIRS)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -296,22 +349,34 @@ $(OBJDIR)/win/app_res.o: win/app.rc win/app.manifest | $(OBJDIRS)
 	@mkdir -p $(dir $@)
 	windres --include-dir win -O coff $< -o $@
 
-ifeq ($(WINDOWS),1)
-# The WIN_MARCH the objects were built with. Rewritten (and so newer than
-# every object) only when it differs, e.g. `make WIN_MARCH=-march=x86-64-v2`
-# for a CPU without AVX2: the objects of the default x86-64-v3 build would
-# otherwise stay in the exe and still crash there (liquid.mk rebuilds
-# liquid-dsp itself; plugins/Makefile has a stamp of its own)
-ifneq ($(shell cat $(WIN_MARCH_STAMP) 2>/dev/null),$(strip $(WIN_MARCH)))
-$(WIN_MARCH_STAMP): win-march-changed
+# The flags the objects were built with (CXXFLAGS incl. WIN_MARCH, pffft's).
+# Rewritten (and so newer than every object) only when they differ: a
+# Makefile with other flags (a build from before keeps its old objects
+# otherwise), or on Windows `make WIN_MARCH=-march=x86-64-v2` for a CPU
+# without AVX2 - the objects of the default x86-64-v3 build would stay in the
+# exe and still crash there (liquid.mk rebuilds liquid-dsp itself;
+# plugins/Makefile has a stamp of its own). It was WIN_MARCH on Windows only
+# "native" names no CPU: the same flags text stands for different instruction
+# sets on a Pi 4 (Cortex-A72) and a Pi 5 (A76: LSE atomics, dot product), so a
+# tree whose objects were built on another kind of CPU (a copied folder, an SD
+# card moved to another Pi) looked up to date and died with "Illegal
+# instruction" (status 132). The stamp therefore also names this machine's
+# CPU(s) - /proc/cpuinfo's "CPU part" (ARM) / "model name" (x86) - whenever
+# the flags say native; no /proc/cpuinfo (macOS) = nothing added
+HOST_CPU :=
+ifneq ($(findstring native,$(CXX) $(CXXFLAGS) | $(CC) $(PFFFT_CFLAGS)),)
+HOST_CPU := $(shell sed -n -E 's/^(CPU part|model name)[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo 2>/dev/null | LC_ALL=C sort -u | LC_ALL=C tr -c 'A-Za-z0-9._\n-' '_' | paste -sd+ -)
 endif
-$(WIN_MARCH_STAMP):
+FLAGS_TEXT = $(strip $(CXX) $(CXXFLAGS) | $(CC) $(PFFFT_CFLAGS)$(if $(HOST_CPU), | cpu $(HOST_CPU)))
+ifneq ($(shell cat $(FLAGS_STAMP) 2>/dev/null),$(FLAGS_TEXT))
+$(FLAGS_STAMP): flags-changed
+endif
+$(FLAGS_STAMP):
 	@mkdir -p $(dir $@)
-	@echo '$(strip $(WIN_MARCH))' > $@
+	@echo '$(FLAGS_TEXT)' > $@
 
-.PHONY: win-march-changed
-win-march-changed:
-endif
+.PHONY: flags-changed
+flags-changed:
 
 # Include dependency files (only if they exist and we're not cleaning)
 ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
@@ -338,6 +403,10 @@ deps:
 	sudo apt-get install -y libssl-dev libz-dev libsqlite3-dev
 	@echo "System dependencies installed!"
 	@echo "uWebSockets and liquid-dsp will be fetched and built locally when you run 'make'"
+
+# macOS (Homebrew)
+deps-macos:
+	brew install cmake pkg-config eigen openssl@3 opus
 
 # Install target (optional system-wide installation)
 install: $(TARGET)

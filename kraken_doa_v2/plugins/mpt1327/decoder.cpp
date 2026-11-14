@@ -33,6 +33,7 @@ private:
 
 KRAKEN_PLUGIN(Mpt1327Plugin, {.id = "mpt1327",
                    .name = "MPT1327",
+                   .category = "Two-way radio",
                    .description = "MPT1327 analogue trunking (1200 bit/s FFSK signalling on NBFM). Control channel: system identity, neighbour sites, access mode, channel grants (idents as prefix-ident), acknowledgements, clear-downs. Voice is analogue FM on the granted traffic channel: listen there with NBFM. Bandwidth 12 kHz.",
                    .version = "2.1",
                    .sample_rate = 48000,

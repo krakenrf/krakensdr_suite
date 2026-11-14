@@ -821,6 +821,7 @@ private:
 
 KRAKEN_PLUGIN(Uat, {.id = "uat",
                     .name = "UAT (978 MHz)",
+                    .category = "Aviation",
                     .description = "UAT - the US 978 MHz ADS-B link (general aviation) and its ground stations: "
                                    "aircraft position, altitude, velocity, callsign / squawk, category, emergency; "
                                    "TIS-B / ADS-R traffic and the FIS-B products ground stations uplink. Picking it "

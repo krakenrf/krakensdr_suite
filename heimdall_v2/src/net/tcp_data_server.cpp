@@ -225,22 +225,26 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
     // Data layout: [All Ch0 samples][All Ch1 samples][All Ch2 samples]...
     for (uint32_t ch = 0; ch < num_channels; ch++) {
         if (ch < channel_data.size() && channel_data[ch].size() == expected_samples) {
-            // Channel has correct data
-            for (size_t s = 0; s < expected_samples; s++) {
-                const auto& sample = channel_data[ch][s];
-                
-                // Convert float (-1 to +1) back to uint8 with the exact inverse
-                // of every decoder (heimdall's iq_lut, the DoA client, the GR
-                // source: (u - 127.5) / 127.5), so a code round-trips unchanged.
-                // (x*127 + 128 mapped zero to 128 = +0.5 LSB: an identical DC
-                // term on every channel, and merged codes 127/128.)
-                uint8_t i_val = static_cast<uint8_t>(clamp(
-                    roundf(sample.real() * 127.5f + 127.5f), 0.0f, 255.0f));
-                uint8_t q_val = static_cast<uint8_t>(clamp(
-                    roundf(sample.imag() * 127.5f + 127.5f), 0.0f, 255.0f));
-                
-                packet.push_back(i_val);
-                packet.push_back(q_val);
+            // Channel has correct data.
+            // Convert float (-1 to +1) back to uint8 with the exact inverse
+            // of every decoder (heimdall's iq_lut, the DoA client, the GR
+            // source: (u - 127.5) / 127.5), so a code round-trips unchanged.
+            // (x*127 + 128 mapped zero to 128 = +0.5 LSB: an identical DC
+            // term on every channel, and merged codes 127/128.)
+            // I and Q alike over the interleaved floats, into space sized once
+            // (a push_back per byte + roundf kept it scalar: 4x slower). The
+            // rounding is roundf's, half away from zero, for v >= 0 (below 0
+            // clamps to 0 either way) - the same byte as
+            // clamp(roundf(v), 0, 255) for every non-NaN float (checked).
+            const size_t at = packet.size();
+            packet.resize(at + 2 * expected_samples);
+            const float* __restrict src = reinterpret_cast<const float*>(channel_data[ch].data());
+            uint8_t* __restrict dst = packet.data() + at;
+            for (size_t k = 0; k < 2 * expected_samples; k++) {
+                const float v = src[k] * 127.5f + 127.5f;
+                const float t = std::trunc(v);
+                const float r = (v - t >= 0.5f) ? t + 1.0f : t;
+                dst[k] = static_cast<uint8_t>(static_cast<int>(clamp(r, 0.0f, 255.0f)));
             }
         } else {
             // Channel data is missing or wrong size - send zeros (reuses the

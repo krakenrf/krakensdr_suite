@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- SPDX-License-Identifier: MIT
+     Copyright (c) 2026 KrakenRF Inc. - MIT so that decoder plugins of any licence
+     can link it (licence text: kraken_doa_v2/plugins/sdk/LICENSE, root LICENSE) -->
 <!-- Windows application manifest, linked into every .exe of the suite (win/app.rc).
      activeCodePage UTF-8: the narrow (char*) Win32 / C runtime APIs - fopen, open,
      stat, CreateFileA, getenv, argv - take and return UTF-8, as on Linux, so file

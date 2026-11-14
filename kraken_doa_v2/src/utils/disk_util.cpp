@@ -25,6 +25,9 @@
 #include <mutex>
 #else
 #include <sys/statvfs.h>
+#ifdef __APPLE__
+#include <sys/mount.h>
+#endif
 #endif
 #include <unistd.h>
 #include <vector>
@@ -52,6 +55,17 @@ struct Mount {
     std::string dev, mp, type;
 };
 
+#ifdef __APPLE__
+// no /proc/mounts: the kernel's mount table (MNT_NOWAIT: no statfs of each
+// file system - a dead network mount can't block)
+std::vector<Mount> read_mounts() {
+    std::vector<Mount> all;
+    struct statfs* fs = nullptr;
+    const int n = getmntinfo(&fs, MNT_NOWAIT);
+    for (int i = 0; i < n; i++) all.push_back({fs[i].f_mntfromname, fs[i].f_mntonname, fs[i].f_fstypename});
+    return all;
+}
+#else
 std::vector<Mount> read_mounts() {
     std::vector<Mount> all;
     std::ifstream pm("/proc/mounts");
@@ -65,6 +79,7 @@ std::vector<Mount> read_mounts() {
     }
     return all;
 }
+#endif
 
 // the mount point holding the absolute path p
 const Mount* mount_of(const std::vector<Mount>& all, const std::string& p) {
@@ -134,11 +149,13 @@ std::string mounts_json(const std::string& dir_abs, std::string* mount_of_dir) {
         // the folder's own drive is always listed
         const bool want = m.mp == *mount_of_dir ||
                           ((m.mp == "/" || m.mp.rfind("/media/", 0) == 0 || m.mp.rfind("/mnt/", 0) == 0 ||
-                            m.mp.rfind("/run/media/", 0) == 0 || m.mp.rfind("/srv", 0) == 0) &&
+                            m.mp.rfind("/run/media/", 0) == 0 || m.mp.rfind("/srv", 0) == 0 ||
+                            m.mp.rfind("/Volumes/", 0) == 0) &&   // macOS: external drives
                            m.type != "tmpfs" && m.type != "devtmpfs" && m.type != "squashfs" && m.type != "overlay" &&
                            m.type != "autofs" && m.type != "proc" && m.type != "sysfs" &&
                            // statvfs on a dead network mount blocks (this runs on the uWS loop)
                            m.type.rfind("nfs", 0) != 0 && m.type != "cifs" && m.type != "smb3" &&
+                           m.type != "smbfs" && m.type != "afpfs" && m.type != "webdav" && m.type != "devfs" &&
                            m.type.rfind("fuse.", 0) != 0);
         if (!want || std::find(listed.begin(), listed.end(), m.mp) != listed.end()) continue;
         listed.push_back(m.mp);

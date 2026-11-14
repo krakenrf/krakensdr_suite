@@ -11,7 +11,11 @@
 #   transcribe/setup.sh --update           rebuild if set up already (kraken_doa's make)
 #   transcribe/setup.sh --list             the models that can be downloaded
 #
-# Environment: JOBS (parallel compile jobs, default 3 - never more on a Pi),
+# Environment: WHISPER_GPU = auto (default: the GPU through Metal on Apple
+# Silicon, the CPU everywhere else) | on (Metal on any Mac - refused off
+# macOS: no GPU backend is tested there) | off (CPU only); remembered for
+# later builds (transcribe/build/.gpu_mode) until given again.
+# JOBS (parallel compile jobs, default 3 - never more on a Pi),
 # WHISPER_CMAKE_ARGS (extra CMake options, e.g. -DGGML_NATIVE=OFF for an image
 # that must run on other CPUs), KRAKEN_WHISPER_MODELS (model folder, default
 # transcribe/models).
@@ -19,6 +23,8 @@
 # builds build/kraken_whisper.exe for the CPU level of WIN_MARCH (default
 # x86-64-v3 = AVX2 / FMA, like the rest of the suite; -march=native = this PC
 # only); JOBS defaults to one per core and GB of free memory.
+# macOS: the same script (Xcode command line tools + brew install cmake);
+# Accelerate, and Metal on Apple Silicon (WHISPER_GPU above).
 # After it: tick "Transcribe" on a VFO card in kraken_doa (no restart needed).
 set -euo pipefail
 
@@ -27,9 +33,11 @@ SELF=$(readlink -f "$0")
 # kraken_whisper.exe; the MSYS / Cygwin shells would build a program that
 # needs their POSIX DLL
 WINDOWS=0
+MACOS=0
 EXE=
 case "$(uname -s)" in
     MINGW*) WINDOWS=1; EXE=.exe ;;
+    Darwin) MACOS=1 ;;
     MSYS*|CYGWIN*)
         echo "setup.sh: run this in the MSYS2 UCRT64 shell, not the MSYS / Cygwin one (the helper must be a native Windows program)" >&2
         exit 1 ;;
@@ -108,7 +116,8 @@ fetch() {   # fetch <url> <file>: atomic, resumable-safe
     echo "  downloading $(basename "$out") ..."
     mkdir -p "$(dirname "$out")"
     "${curl[@]}" -fL --retry 3 --progress-bar -o "$out.part" "$url" || { rm -f "$out.part"; die "download failed: $url"; }
-    [ "$(stat -c %s "$out.part")" -gt 100000 ] || { rm -f "$out.part"; die "download too small: $url"; }
+    # wc -c, not stat -c %s: the same on GNU and BSD (macOS)
+    [ "$(wc -c < "$out.part" | tr -d ' ')" -gt 100000 ] || { rm -f "$out.part"; die "download too small: $url"; }
     mv "$out.part" "$out"
 }
 
@@ -130,11 +139,42 @@ win_cmake_args() {
         *x86-64*) isa=(-DGGML_NATIVE=OFF -DGGML_SSE42=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DGGML_BMI2=OFF) ;;
         *) isa=("${v3[@]}") ;;
     esac
-    WIN_ARGS=(-G Ninja -DGGML_OPENMP=OFF "${isa[@]}"
+    PLATFORM_ARGS=(-G Ninja -DGGML_OPENMP=OFF "${isa[@]}"
               -DCMAKE_C_FLAGS=-Wa,-muse-unaligned-vector-move -DCMAKE_CXX_FLAGS=-Wa,-muse-unaligned-vector-move)
 }
 
+# WHISPER_GPU -> GPU_ARGS (CMake options) and GPU_MODE (what is remembered).
+# Unset: the mode the last build used (else auto), so kraken_doa's make
+# (--update) keeps a choice made with WHISPER_GPU=off / on.
+# KRAKEN_WHISPER_GPU (transcribe/CMakeLists.txt) lets kraken_whisper use the
+# GPU backend compiled in; GGML_METAL compiles Metal in (or leaves it out)
+resolve_gpu() {
+    GPU_MODE=${WHISPER_GPU:-$(cat build/.gpu_mode 2>/dev/null || echo auto)}
+    local use
+    case "$GPU_MODE" in
+        auto) if [ $MACOS = 1 ] && [ "$(uname -m)" = arm64 ]; then use=1; else use=0; fi ;;
+        on)   [ $MACOS = 1 ] || die "WHISPER_GPU=on: GPU builds are supported on macOS (Metal) only - leave it unset or off here"
+              use=1 ;;
+        off)  use=0 ;;
+        *)    die "WHISPER_GPU must be auto, on or off (not '$GPU_MODE')" ;;
+    esac
+    GPU_NAME=CPU
+    if [ $use = 1 ]; then
+        # EMBED_LIBRARY explicitly: its default is GGML_METAL's at the FIRST
+        # configure - a build/ first made with Metal off kept it off, and the
+        # helper then looked for kernels/*.metal next to itself (model load
+        # failed)
+        GPU_ARGS=(-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DKRAKEN_WHISPER_GPU=ON)
+        GPU_NAME="GPU (Metal)"
+    elif [ $MACOS = 1 ]; then
+        GPU_ARGS=(-DGGML_METAL=OFF -DGGML_METAL_EMBED_LIBRARY=OFF -DKRAKEN_WHISPER_GPU=OFF)
+    else
+        GPU_ARGS=(-DKRAKEN_WHISPER_GPU=OFF)
+    fi
+}
+
 build() {
+    resolve_gpu
     # Windows: core.longpaths (the checkout's deepest paths pass 260
     # characters under a long folder), core.autocrlf off (Git for Windows
     # would check the scripts out with CRLF)
@@ -155,6 +195,10 @@ build() {
         if [ -z "${PROCESSOR_ARCHITECTURE:-}" ] && [ "$(uname -m)" = x86_64 ]; then
             export PROCESSOR_ARCHITECTURE=AMD64
         fi
+    elif [ $MACOS = 1 ]; then
+        for t in git cmake c++ make; do
+            command -v $t >/dev/null || die "$t is missing (xcode-select --install; brew install cmake)"
+        done
     else
         for t in git cmake g++ make; do command -v $t >/dev/null || die "$t is missing (sudo apt install git cmake build-essential)"; done
     fi
@@ -170,13 +214,20 @@ build() {
         rm -rf build
     fi
     [ "$(git -C whisper.cpp rev-parse HEAD)" = "$WHISPER_COMMIT" ] || die "whisper.cpp is not at $WHISPER_COMMIT"
-    if [ "$quiet" = 1 ] && [ -f build/CMakeCache.txt ]; then
+    # incremental only while the GPU choice is the one the build was configured with
+    if [ "$quiet" = 1 ] && [ -f build/CMakeCache.txt ] && [ "$(cat build/.gpu_args 2>/dev/null)" = "${GPU_ARGS[*]}" ]; then
         # kraken_doa's make: incremental, silent unless something is rebuilt
         out=$(cmake --build build --target kraken_whisper -j "$JOBS" 2>&1) || { echo "$out"; exit 1; }
         echo "$out" | grep -q "Linking" && echo "Rebuilt transcribe/build/kraken_whisper$EXE"
         return 0
     fi
-    WIN_ARGS=()
+    # Intel Macs: their integrated GPUs are often slower than the CPU path
+    # (Accelerate - measured on a MacBook Air 2015: 4.6 s Metal, 2.6 s CPU
+    # for jfk.wav), old GPU drivers add risk: Metal there only when asked for
+    if [ $MACOS = 1 ] && [ "$(uname -m)" = x86_64 ] && [ "$GPU_NAME" != CPU ]; then
+        echo "WHISPER_GPU=on on an Intel Mac: Metal may well be slower than the CPU here"
+    fi
+    PLATFORM_ARGS=()
     if [ $WINDOWS = 1 ]; then
         win_cmake_args
         # a build/ configured for another generator (an earlier try) can't be reused
@@ -185,11 +236,13 @@ build() {
         fi
         echo "Building kraken_whisper.exe ($JOBS jobs, ${WIN_MARCH:--march=x86-64-v3} - a few minutes on a PC) ..."
     else
-        echo "Building kraken_whisper ($JOBS jobs - takes ~10 min on a Pi 5) ..."
+        echo "Building kraken_whisper ($JOBS jobs, $GPU_NAME - takes ~10 min on a Pi 5) ..."
     fi
     # shellcheck disable=SC2086
-    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${WIN_ARGS[@]+"${WIN_ARGS[@]}"} ${WHISPER_CMAKE_ARGS:-} >/dev/null
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} "${GPU_ARGS[@]}" ${WHISPER_CMAKE_ARGS:-} >/dev/null
     cmake --build build --target kraken_whisper -j "$JOBS"
+    echo "$GPU_MODE" > build/.gpu_mode
+    echo "${GPU_ARGS[*]}" > build/.gpu_args
     echo "Built transcribe/build/kraken_whisper$EXE"
 }
 
@@ -203,7 +256,7 @@ for a in "$@"; do
         --models-only) do_build=0 ;;
         --build-only) do_models=0 ;;
         --update) [ -x build/kraken_whisper$EXE ] || exit 0; do_models=0; quiet=1 ;;
-        -h|--help) sed -n '2,22p' "$SELF" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,28p' "$SELF" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) die "unknown option $a (see --help)" ;;
         *) known_model "$a" || { list_models; die "unknown model $a"; }; models+=("$a") ;;
     esac
@@ -215,7 +268,8 @@ if [ $do_models = 1 ]; then
         models=(base.en)
     fi
     echo "Models -> $MODELS_DIR"
-    for m in "${models[@]}"; do fetch "$MODEL_URL/ggml-$m.bin" "$MODELS_DIR/ggml-$m.bin"; done
+    # (${a[@]+...}: bash 3.2 - macOS's - calls an empty array unbound under set -u)
+    for m in ${models[@]+"${models[@]}"}; do fetch "$MODEL_URL/ggml-$m.bin" "$MODELS_DIR/ggml-$m.bin"; done
     # voice activity detection: skips noise / silence before whisper (which
     # otherwise "hears" words in noise)
     fetch "$VAD_URL/ggml-$VAD_MODEL.bin" "$MODELS_DIR/ggml-$VAD_MODEL.bin"

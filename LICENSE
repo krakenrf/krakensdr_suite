@@ -1,0 +1,104 @@
+KrakenSDR suite - licences
+==========================
+
+Copyright (c) 2026 KrakenRF Inc.
+
+The KrakenSDR suite is made of separate programs under different licences:
+
+  heimdall_v2/       Heimdall receiver server        GNU General Public License
+                                                     version 3 or later
+                                                     (heimdall_v2/LICENSE)
+
+  gr-krakensdr_v2/   GNU Radio module                GNU General Public License
+                                                     version 3 or later
+                                                     (gr-krakensdr_v2/LICENSE)
+
+  kraken_doa_v2/     KrakenSDR DoA software,         KrakenSDR Source Available
+                     including its decoder plugins   Licence 1.0
+                     and their library plugins/lib   (kraken_doa_v2/LICENSE)
+                     - except the parts below
+
+  The plugin SDK: kraken_doa_v2/plugins/sdk/,        MIT License
+  kraken_doa_v2/plugins/SDK.md, and the Windows      (kraken_doa_v2/plugins/sdk/
+  process helpers every program of the suite         LICENSE)
+  links (kraken_doa_v2/win/ and heimdall_v2/win/)
+  + the macOS shims (kraken_doa_v2/mac/ and
+  heimdall_v2/mac/)
+
+  A decoder plugin folder kraken_doa_v2/plugins/<id>/ that holds a LICENSE
+  file of its own is under that licence:
+    plugins/ism/     ISM device decoder (follows     GNU General Public License
+                     rtl_433's decoders)             version 2 or later
+                                                     (plugins/ism/LICENSE)
+    plugins/flarm/   FLARM / OGN trackers (the OGN   GNU General Public License
+                     parity-check matrix from the    version 3
+                     OGN project's diy-tracker)      (plugins/flarm/LICENSE)
+
+  The build, install, run and packaging scripts in the repository root
+  (install.sh, install-pi-service.sh, run.sh, run.bat, build_windows.bat,
+  Dockerfile, docker-compose.yml) and in docker/, windows/, scripts/ and
+  .githooks/                                         MIT License (below)
+
+  The documentation in the repository root (README.md, DOCKER.md,
+  WINDOWS.md, CLAUDE.md) and in docs/                KrakenSDR Source Available
+                                                     Licence 1.0
+
+The KrakenSDR DoA software is free for personal and hobbyist use, and
+organisations may evaluate it free of charge for up to 180 days (testing, not
+yet relying on it in their work). Deploying it and other commercial use need
+a licence from KrakenRF Inc. - contact thekraken@krakenrf.com. Commercial
+licences include kraken_doa_v2/COMMERCIAL_TERMS.md.
+
+The programs communicate with each other over network connections (TCP ports
+8091 / 8092); each one is used and distributed under its own licence. Files
+that appear in more than one program (the portability helpers under
+heimdall_v2/src/core and kraken_doa_v2/include/utils, external/pffft ...) are
+under the licence of the program whose folder they are in; the Windows
+helpers (heimdall_v2/win, kraken_doa_v2/win) are MIT in both.
+
+Every decoder plugin is a program of its own too: kraken_doa starts it as a
+separate process and exchanges samples and results with it through pipes, in
+the protocol documented in kraken_doa_v2/plugins/sdk/kraken_plugin.hpp. A
+plugin under a licence of its own is built only from its own files, the MIT
+plugin SDK, pffft and liquid-dsp - never from kraken_doa_v2/plugins/lib or
+the rest of kraken_doa (kraken_doa_v2/plugins/Makefile enforces this). Its
+licence therefore covers that plugin alone, not kraken_doa or the other
+plugins, and theirs doesn't cover it.
+
+Third-party components keep their own licences; see
+heimdall_v2/THIRD_PARTY_NOTICES.md and kraken_doa_v2/THIRD_PARTY_NOTICES.md.
+
+
+Contributions
+-------------
+
+By submitting a contribution to any part of the suite, you license it under
+the licence of the part you contribute to AND grant KrakenRF Inc. the rights
+described in section 5 ("Contributions") of the KrakenSDR Source Available
+Licence (kraken_doa_v2/LICENSE). This lets KrakenRF use the same code in the
+GPL programs and in the source-available software.
+
+
+MIT License (for the scripts listed above; the plugin SDK's copy is
+kraken_doa_v2/plugins/sdk/LICENSE)
+------------------------------------------------------------------
+
+Copyright (c) 2026 KrakenRF Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

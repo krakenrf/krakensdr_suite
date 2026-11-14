@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 KrakenRF Inc. - the plugin SDK (plugins/sdk/LICENSE)
 """Test transmissions for ID separation: single-channel recordings (real or
 from a plugin's generator) placed in time, frequency and DIRECTION onto
 kraken_doa's uniform circular array - every transmitter at its own known

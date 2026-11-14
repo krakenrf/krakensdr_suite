@@ -1,7 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The decoders in this file follow rtl_433's
+// (https://github.com/merbanan/rtl_433, GPL-2.0-or-later), re-implemented in
+// C++ for the KrakenSDR plugin API (2026):
+//   src/devices/efergy_e2_classic.c - Copyright (C) 2015 Robert Högberg
+//     <robert.hogberg@gmail.com>
+//   src/devices/current_cost.c - Copyright (C) 2015 Emmanuel Navarro
+//     <enavarro222@gmail.com>; CurrentCost EnviR added by Neil Cowburn
+//     <git@neilcowburn.com>
+
 // Energy monitors: Efergy e2 classic (current clamp) and CurrentCost TX /
 // OptiSmart / EnviR (power and impulse-counter transmitters).
-//
-// protocol notes: rtl_433 documentation; own implementation.
 
 #include "ism.hpp"
 

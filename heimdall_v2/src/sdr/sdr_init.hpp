@@ -20,6 +20,20 @@ std::vector<DeviceMapping> enumerate_devices_by_serial();
 // an N-element open needs), so a gap ends the count.
 int count_expected_devices_present();
 
+// Held stream start (docs/dev/calibration.md, *Stream start*): with a fork
+// that has rtlsdr_set_fifo_hold / rtlsdr_release_fifos, init_rtlsdr_device()
+// leaves each dongle's USB FIFO held empty, and start_pipeline_threads()
+// releases all of them together once every USB reader has queued its
+// transfers - the streams then start within ~0.1 ms of each other instead of
+// whenever each reader's first transfer happened to go out. Linux only: on
+// Windows control transfers take 3-4 ms each and run one at a time, so the
+// releases themselves would start the streams that far apart.
+#if defined(RTLSDR_HAS_FIFO_HOLD) && defined(__linux__)
+#define HELD_STREAM_START 1
+#else
+#define HELD_STREAM_START 0
+#endif
+
 // Device initialization functions
 bool init_rtlsdr_device(SDRDevice* sdr);
 // Startup entry point: creates one SDRDevice object per expected serial (the
@@ -105,7 +119,8 @@ struct SdrUpdateResult {
 // was applied, see SdrUpdateResult.
 bool update_sdr_settings(uint64_t frequency = 0, int gain = -999, const std::vector<std::unique_ptr<SDRDevice>>& devices = {},
                          SdrUpdateResult* result = nullptr);
-// The end of a drag: update_sdr_settings retunes that follow one another
+// The end of a drag: update_sdr_settings (coherent) and
+// setup_wideband_frequencies (wideband scan) retunes that follow one another
 // within 400 ms (or before this finished the previous one, up to 1 s) take
 // the fork's fast path (rtlsdr_set_center_freq_fast: the
 // R820T's PLL autotune clock stays at 128 kHz); this puts those tuners back

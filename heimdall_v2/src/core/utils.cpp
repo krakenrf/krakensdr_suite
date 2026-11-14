@@ -1,6 +1,7 @@
 #include "utils.hpp"
 #include "config.hpp"
 #include <array>
+#include <atomic>
 #include <pthread.h>
 #include <sched.h>
 #include <cstring>
@@ -8,6 +9,11 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <avrt.h>
+#endif
+#ifdef __linux__
+#include <cerrno>
+#include <sys/mman.h>
+#include <sys/resource.h>
 #endif
 
 void append_big_endian(std::vector<uint8_t>& vec, uint32_t value) {
@@ -80,12 +86,16 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
 #else
     // Optional CPU pinning. Off by default (cpu < 0): real isolation needs
     // isolcpus on the kernel cmdline, which we can't assume on an arbitrary Pi.
+#ifdef __APPLE__
+    if (cpu >= 0) ok = false;  // macOS has no CPU pinning (affinity tags are hints only)
+#else
     if (cpu >= 0) {
         cpu_set_t set;
         CPU_ZERO(&set);
         CPU_SET(cpu, &set);
         if (pthread_setaffinity_np(self, sizeof(set), &set) != 0) ok = false;
     }
+#endif
 
     // SCHED_RR (round-robin), NOT SCHED_FIFO. We run up to NUM_DEVICES (5) USB
     // reader threads at the SAME priority on a 4-core Pi. Under SCHED_FIFO equal
@@ -107,6 +117,18 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
         struct sched_param param;
         std::memset(&param, 0, sizeof(param));
         param.sched_priority = std::min(std::max(rt_priority, pmin), pmax);
+#ifdef __APPLE__
+        // macOS has ONE priority scale (15..47 for SCHED_RR, as for normal
+        // threads) and a normal thread runs at 31 - Linux's SCHED_RR 15 / 20
+        // landed BELOW every ordinary thread there, in the tiers macOS treats
+        // as utility / background work (20 = QOS_CLASS_UTILITY): the drain
+        // fell behind under load (L1 overflow) and the USB readers, which
+        // resubmit the transfers, could be held off long enough for the
+        // RTL2832's FIFO to drop 188-byte packets - silent 94-sample slips.
+        // Mapped above the default and the user-initiated tier (37):
+        // RT_PRIO_USB_READER 20 -> 41, RT_PRIO_SAMPLE_DRAIN 15 -> 39 (order kept)
+        param.sched_priority = std::min(pmax, 32 + (rt_priority * 9 + 10) / 20);
+#endif
         const int rc = pthread_setschedparam(self, SCHED_RR, &param);
         if (rc != 0) {
             // Almost always EPERM: running without rtprio limits or CAP_SYS_NICE.
@@ -125,6 +147,75 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
     }
 #endif
     return ok;
+}
+
+// mlockall for the realtime threads' sake: a page fault in a USB reader or the
+// sample drain (a swapped-out or reclaimed page) can hold it off long enough for
+// the RTL2832's FIFO to drop a packet. MCL_ONFAULT, not plain MCL_FUTURE: that
+// would fault in and pin every new writable mapping whole - each thread's
+// 8 MB stack - though most of it is never touched; with MCL_ONFAULT only
+// touched pages are locked. The cost: glibc gives freed memory of a thread's
+// malloc arena (and a finished thread's cached stack) back with
+// madvise(MADV_DONTNEED), which fails on a locked mapping, so that memory
+// stays resident - resident memory follows its high-water mark. If the kernel
+// rejects MCL_ONFAULT (before 4.4) there is no fallback to plain MCL_FUTURE,
+// for the stacks' sake.
+// Only with an unlimited RLIMIT_MEMLOCK: the kernel counts each locked
+// mapping's FULL size against the limit (VmLck in /proc/<pid>/status), touched
+// or not, so a finite limit is soon reached and later mmaps fail - malloc,
+// thread creation. The soft limit is raised to unlimited if the kernel allows
+// it: always when the hard limit is unlimited, otherwise only with
+// CAP_SYS_RESOURCE (root on the host, a privileged container). That kernel
+// check stands in for a privilege test: euid 0 is not one (root in a default
+// Docker container or a user namespace has no CAP_IPC_LOCK, so the limit still
+// applies). A process with CAP_IPC_LOCK but not CAP_SYS_RESOURCE and a finite
+// limit is skipped, although it could lock - grant it the limit instead.
+namespace { std::atomic<bool> g_memory_locked{false}; }
+bool memory_locked() { return g_memory_locked.load(std::memory_order_relaxed); }
+
+bool lock_process_memory() {
+#ifdef __linux__
+    const auto report = [](const std::string& why, const char* fix) {
+        std::cerr << "Memory locking unavailable (" << why
+                  << "); running normally, but page faults can still stall the realtime USB threads. " << fix
+                  << std::endl;
+    };
+    static constexpr const char* limit_fix =
+        "To enable, allow unlimited locked memory (/etc/security/limits.conf: '<user> - memlock unlimited'; "
+        "systemd service: LimitMEMLOCK=infinity).";
+#ifdef MCL_ONFAULT
+    struct rlimit old_rl{};
+    if (getrlimit(RLIMIT_MEMLOCK, &old_rl) != 0) {
+        report(std::string("getrlimit: ") + std::strerror(errno), limit_fix);
+        return false;
+    }
+    if (old_rl.rlim_cur != RLIM_INFINITY) {
+        const struct rlimit unlimited{RLIM_INFINITY, RLIM_INFINITY};
+        if (setrlimit(RLIMIT_MEMLOCK, &unlimited) != 0) {
+            // (the hard limit is finite here: below an unlimited one the soft
+            // limit can always be raised)
+            report("locked-memory limit " + std::to_string(old_rl.rlim_max / 1024) + " KB, not unlimited",
+                   limit_fix);
+            return false;
+        }
+    }
+    if (mlockall(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT) != 0) {
+        const int err = errno;
+        setrlimit(RLIMIT_MEMLOCK, &old_rl);  // put the limit back as it was
+        report(std::string("mlockall: ") + std::strerror(err),
+               err == EINVAL ? "MCL_ONFAULT needs Linux 4.4 or later." : limit_fix);
+        return false;
+    }
+    g_memory_locked.store(true, std::memory_order_relaxed);
+    std::cout << "Memory locked (mlockall, on fault): pages in use stay in RAM" << std::endl;
+    return true;
+#else
+    report("built with C library headers that have no MCL_ONFAULT", "Rebuild with glibc 2.23 or later.");
+    return false;
+#endif
+#else
+    return false;  // Windows / macOS: not implemented
+#endif
 }
 
 const float* iq_lut() {

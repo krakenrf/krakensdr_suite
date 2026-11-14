@@ -12,6 +12,7 @@
 #include <vector>
 #include <array>
 #include <complex>
+#include <cstdio>
 
 // Forward declarations for functions defined elsewhere
 extern void clear_l2_buffer();
@@ -359,6 +360,43 @@ void reset_phase_state_locked(PhaseCompensatorState state) {
 
 std::atomic<bool> scanner_cal_deferred{false};
 
+// The calibration hold's end (steady_clock ns, 0 = not held) - see compensation.hpp
+static std::atomic<int64_t> calibration_hold_until_ns{0};
+
+static int64_t steady_ns_now() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+bool calibration_held() {
+    return steady_ns_now() < calibration_hold_until_ns.load(std::memory_order_acquire);
+}
+
+void set_calibration_hold(int hold_ms) {
+    const bool was = calibration_held();
+    if (hold_ms > 0) {
+        hold_ms = std::min(hold_ms, 30000);
+        calibration_hold_until_ns.store(steady_ns_now() + static_cast<int64_t>(hold_ms) * 1000000,
+                                        std::memory_order_release);
+        if (!was) std::cout << "Calibration hold: retunes don't recalibrate (lease " << hold_ms << " ms)" << std::endl;
+        return;
+    }
+    calibration_hold_until_ns.store(0, std::memory_order_release);
+    if (!was || !phase_compensation) return;   // no hold in effect: an ordinary cooldown runs its course
+    std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+    // a cooldown waiting for the hold: expired now - the lag driver starts the
+    // calibration on its next tick
+    if (phase_compensation->state == PhaseCompensatorState::WAITING_FOR_STABILITY &&
+        phase_compensation->cooldown_active) {
+        phase_compensation->last_frequency_change =
+            std::chrono::steady_clock::now() -
+            std::chrono::milliseconds(phase_compensation->stability_delay_override_ms.load());
+        std::cout << "Calibration hold released: calibrating now" << std::endl;
+    } else if (was) {
+        std::cout << "Calibration hold released" << std::endl;
+    }
+}
+
 void recovery_settings_changed_locked(const char* what) {
     if (!recovery_in_progress.load(std::memory_order_acquire)) return;
     const auto st = phase_compensation->state;
@@ -461,6 +499,7 @@ void reset_lag_compensation_all_channels() {
             device->compensation.zero_lag_count = 0;
             device->compensation.lag_compensation_locked = false;
             device->compensation.frac_delay = 0.0f;
+            device->compensation.lag_no_peak.store(false, std::memory_order_release);
 
             std::cout << "Channel " << device->index << " lag compensation unlocked and reset" << std::endl;
         }
@@ -755,7 +794,8 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
     auto preempted = []() {
         return !global_running.load() || recovery_in_progress.load(std::memory_order_acquire) ||
                reconfig_in_progress.load(std::memory_order_acquire) ||
-               discrete_scanner.enabled.load();  // a scan started mid-check
+               discrete_scanner.enabled.load() ||  // a scan started mid-check
+               calibration_held();                 // a client's scan searching
     };
     auto sleep_slice = [&](milliseconds total) {
         const auto deadline = steady_clock::now() + total;
@@ -918,6 +958,7 @@ void periodic_calibration_monitor(CorrelationResult& correlation_result) {
         const bool checkable =
             operating_mode.load() == OperatingMode::COHERENT &&
             !discrete_scanner.enabled.load() &&
+            !calibration_held() &&
             !recovery_in_progress.load(std::memory_order_acquire) &&
             !reconfig_in_progress.load(std::memory_order_acquire) &&
             !force_recalibration.load(std::memory_order_acquire) &&
@@ -945,7 +986,75 @@ void periodic_calibration_monitor(CorrelationResult& correlation_result) {
     std::cout << "Periodic calibration monitor exiting" << std::endl;
 }
 
-bool process_channel_lag_compensation(int channel, float lag) {
+// No-peak detector (config.h LAG_NO_PEAK_*), one call per fresh reading of a
+// SERVOING channel - so only in coherent mode with the noise source on (the
+// caller returns before that otherwise). The correlator sees lags within
+// +-NUM_SAMPLES; streams that started further apart leave no correlation peak
+// (peak / mean ~4-5, readings jumping by thousands of samples) and the servo
+// chases noise without ever locking. Warns once per calibration attempt (the
+// servo engage resets it); lag_no_peak stays set until the channel locks or a
+// new attempt starts. Caller holds compensation_mutex.
+static void check_lag_no_peak(int channel, ChannelCompensation& comp, float lag, float peak_ratio,
+                              std::chrono::steady_clock::time_point now) {
+    const int slot = comp.peak_ring_count % LAG_NO_PEAK_READINGS;
+    comp.peak_ratio_ring[slot] = peak_ratio;
+    comp.lag_ring[slot] = lag;
+    comp.peak_ring_count++;
+
+    // Active acquisition time: gaps (FFT off, noise off, another mode) are
+    // capped, so only time spent servoing on fresh readings counts
+    const float dt = std::chrono::duration<float>(now - comp.acq_last_reading).count();
+    comp.acq_last_reading = now;
+    // Never while a calibration is held / deferred for the scanner, an
+    // element-count change reconfigures, or with plain --kerberos (no
+    // automatic calibration there)
+    if (calibration_held() || discrete_scanner.enabled.load() ||
+        reconfig_in_progress.load(std::memory_order_acquire) || kerberos_manual_cal_only()) return;
+    comp.acq_active_s += std::clamp(dt, 0.0f, 0.5f);
+
+    if (comp.no_peak_warned || comp.acq_active_s < static_cast<float>(LAG_NO_PEAK_WARN_S) ||
+        comp.peak_ring_count < LAG_NO_PEAK_READINGS) return;
+
+    float r[LAG_NO_PEAK_READINGS];
+    std::copy(comp.peak_ratio_ring, comp.peak_ratio_ring + LAG_NO_PEAK_READINGS, r);
+    std::nth_element(r, r + LAG_NO_PEAK_READINGS / 2, r + LAG_NO_PEAK_READINGS);
+    const float med_ratio = r[LAG_NO_PEAK_READINGS / 2];
+    if (!(med_ratio < LAG_NO_PEAK_RATIO)) return;
+
+    const auto [lo, hi] = std::minmax_element(comp.lag_ring, comp.lag_ring + LAG_NO_PEAK_READINGS);
+    comp.no_peak_warned = true;
+    comp.lag_no_peak.store(true, std::memory_order_release);
+    char msg[640];
+    std::snprintf(msg, sizeof(msg),
+        "Channel %d: lag calibration WARNING - no lock after %d s and no correlation peak against "
+        "channel %d (peak/mean %.1f, a lock needs > %.0f; last %d lag readings between %ld and %ld). "
+        "Likely the dongles' sample streams started more than +-%d samples apart, so there is no peak "
+        "to lock to. Run Full Recalibration (its buffer flush re-pairs the streams); if this warning "
+        "comes back, restart heimdall.",
+        channel, static_cast<int>(comp.acq_active_s), REF_CHANNEL, med_ratio,
+        static_cast<double>(LAG_NO_PEAK_RATIO), LAG_NO_PEAK_READINGS, std::lround(*lo), std::lround(*hi),
+        NUM_SAMPLES);
+    std::cerr << msg << std::endl;
+}
+
+std::string lag_no_peak_json() {
+    std::string s = "[";
+    if (operating_mode.load() == OperatingMode::COHERENT) {
+        const int n = std::min(active_num_elements.load(), static_cast<int>(devices.size()));
+        for (int i = 0; i < n; i++) {
+            const auto& d = devices[i];
+            // (not d->dev: a reconfiguration rewrites it; channels past the
+            // active count are skipped, and a new calibration clears the flag)
+            if (!d || i == REF_CHANNEL) continue;
+            if (!d->compensation.lag_no_peak.load(std::memory_order_acquire)) continue;
+            if (s.size() > 1) s += ",";
+            s += std::to_string(i);
+        }
+    }
+    return s + "]";
+}
+
+bool process_channel_lag_compensation(int channel, float lag, float peak_ratio) {
     // Skip lag compensation outside coherent mode (wideband scan / independent)
     if (operating_mode.load() != OperatingMode::COHERENT) return false;
 
@@ -997,6 +1106,8 @@ bool process_channel_lag_compensation(int channel, float lag) {
             constexpr float count_rate = kRegStep * SAMPLE_RATE;  // samples/s per count
 
             if (!device->dev) break;
+
+            check_lag_no_peak(channel, comp, lag, peak_ratio, now);
 
             comp.servo_readings[comp.servo_reading_count % 5] = lag;
             comp.servo_reading_count++;
@@ -1129,7 +1240,8 @@ bool process_channel_lag_compensation(int channel, float lag) {
             if ((comp.servo_update_count % 4) == 0) {
                 std::cout << "Channel " << channel << " servo: med lag=" << med
                           << ", counts=" << comp.servo_counts
-                          << ", kick_est=" << comp.kick_estimate << std::endl;
+                          << ", kick_est=" << comp.kick_estimate
+                          << ", peak/mean=" << peak_ratio << std::endl;
             }
 
             // Lock after 8 consecutive quiet control updates (~2s) with the
@@ -1138,8 +1250,9 @@ bool process_channel_lag_compensation(int channel, float lag) {
                 if (++comp.zero_lag_count >= 8) {
                     comp.state = LagCompensatorState::CONVERGED;
                     comp.lag_compensation_locked = true;
+                    comp.lag_no_peak.store(false, std::memory_order_release);
                     std::cout << "Channel " << channel << " LAG CONVERGED via servo! (med lag="
-                              << med << ") [LOCKED]" << std::endl;
+                              << med << ", after " << comp.acq_active_s << " s) [LOCKED]" << std::endl;
                     return true;
                 }
             } else if (comp.servo_counts == 0 && median_settled) {
@@ -1173,7 +1286,14 @@ bool process_channel_lag_compensation(int channel, float lag) {
             comp.kick_pending = false;
             comp.med_at_freeze = 0.0f;
             comp.updates_since_write = 0;
-            std::cout << "Channel " << channel << " servo engaged (lag=" << lag << ")" << std::endl;
+            // A new calibration attempt for the no-peak detector
+            comp.acq_active_s = 0.0f;
+            comp.acq_last_reading = now;
+            comp.peak_ring_count = 0;
+            comp.no_peak_warned = false;
+            comp.lag_no_peak.store(false, std::memory_order_release);
+            std::cout << "Channel " << channel << " servo engaged (lag=" << lag
+                      << ", peak/mean=" << peak_ratio << ")" << std::endl;
             break;
             
         case LagCompensatorState::CONVERGED:
@@ -1227,14 +1347,95 @@ static void park_stale_servo(int channel) {
     comp.state = LagCompensatorState::MEASURING;
 }
 
+// Lag check during a phase recalibration. A retune / gain change recalibrates
+// phase only and keeps every lag machine CONVERGED, and a CONVERGED lag machine
+// ignores its readings - so a sample slip since the lag was acquired (the
+// RTL2832U FIFO drops whole 188-byte TS packets = multiples of 94 samples when
+// its bulk reads run dry, invisible on the USB bus) survived the recal, which
+// still reached CONVERGED on a misaligned array. The recal runs on the noise
+// source, so its lag readings are as good as an acquisition's: a channel off by
+// more than PERIODIC_RECAL_LAG_THRESHOLD on RECAL_LAG_BAD_READINGS consecutive
+// settled readings goes back to the servo, and the phase stage waits for it
+// (WAITING_FOR_LAG_COMPLETION -> MEASURING_INITIAL_PHASE). A channel within
+// tolerance is left alone. Returns the updated consecutive-bad count.
+static constexpr int RECAL_LAG_BAD_READINGS = 2;
+
+static int check_lag_during_phase_recal(int channel, float lag, int bad_count,
+                                        CorrelationResult& correlation_result) {
+    if (!phase_compensation || operating_mode.load() != OperatingMode::COHERENT ||
+        !bias_tee_enabled.load(std::memory_order_acquire)) return 0;
+
+    PhaseCompensatorState st;
+    {
+        std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+        st = phase_compensation->state;
+    }
+    if (st != PhaseCompensatorState::MEASURING_INITIAL_PHASE &&
+        st != PhaseCompensatorState::APPLYING_COMPENSATION &&
+        st != PhaseCompensatorState::VERIFYING_CONVERGENCE &&
+        st != PhaseCompensatorState::MEASURING_PER_BIN) return 0;
+
+    // Same settle gate as the phase measurement: readings from before the noise
+    // source reached the stream correlate the antenna signals, not the array
+    const long long since_noise_on_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count() -
+        phase_compensation->noise_on_ns.load(std::memory_order_relaxed);
+    if (since_noise_on_ns < static_cast<long long>(PhaseCompensationData::NOISE_SETTLE_MS) * 1000000LL)
+        return 0;
+
+    if (!(std::abs(lag) > PERIODIC_RECAL_LAG_THRESHOLD)) return 0;
+    if (++bad_count < RECAL_LAG_BAD_READINGS) return bad_count;
+
+    auto device_it = std::find_if(devices.begin(), devices.end(),
+        [channel](const auto& dev) { return dev && dev->index == channel; });
+    if (device_it == devices.end()) return 0;
+    auto& device = *device_it;
+    {
+        std::lock_guard<std::mutex> lock(device->compensation_mutex);
+        auto& comp = device->compensation;
+        if (comp.state != LagCompensatorState::CONVERGED) return 0;  // already acquiring
+        // MEASURING re-engages the servo (zeroes the register, which a
+        // CONVERGED channel holds at 0 anyway) on the next fresh reading
+        comp.state = LagCompensatorState::MEASURING;
+        comp.zero_lag_count = 0;
+        comp.lag_compensation_locked = false;
+        comp.frac_delay = 0.0f;
+        comp.initial_calibration_complete = false;
+    }
+    {
+        // The phase driver reads channel_states, which the correlation thread
+        // refreshes only with its next set: without this, a stale CONVERGED
+        // entry let WAITING_FOR_LAG_COMPLETION pass straight back to measuring
+        std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
+        correlation_result.channel_states[channel] = LagCompensatorState::MEASURING;
+    }
+    {
+        std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+        const auto now_st = phase_compensation->state;
+        if (now_st == PhaseCompensatorState::MEASURING_INITIAL_PHASE ||
+            now_st == PhaseCompensatorState::APPLYING_COMPENSATION ||
+            now_st == PhaseCompensatorState::VERIFYING_CONVERGENCE ||
+            now_st == PhaseCompensatorState::MEASURING_PER_BIN) {
+            reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION);
+        }
+    }
+    std::cerr << "Channel " << channel << ": lag " << lag
+              << " samples during the phase recalibration (sample slip) - re-acquiring its lag"
+              << std::endl;
+    return 0;
+}
+
 void channel_lag_compensation_processor(int channel, CorrelationResult& correlation_result) {
     std::cout << "Starting lag compensation for channel " << channel << std::endl;
+    int recal_lag_bad = 0;  // consecutive out-of-tolerance readings (check_lag_during_phase_recal)
 
     uint64_t last_processed_sequence = 0;
     auto last_fresh = std::chrono::steady_clock::now();
 
     while (global_running && pipeline_running.load(std::memory_order_acquire)) {
         std::optional<float> current_lag;
+        float current_peak_ratio = 0.0f;
         std::map<int, float> current_phases;
         uint64_t current_sequence = 0;
         // With FFT off the correlation thread still advances data_sequence
@@ -1262,6 +1463,9 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
             if (current_sequence > last_processed_sequence) {
                 fresh = correlation_result.data_ready;
                 current_lag = correlation_result.lags[channel];
+                if (auto it = correlation_result.peak_ratios.find(channel);
+                    it != correlation_result.peak_ratios.end())
+                    current_peak_ratio = it->second;
                 current_phases = correlation_result.phases;
                 phases_measured = correlation_result.phases_measured;
                 for (const auto& [ch, st] : correlation_result.channel_states) {
@@ -1324,8 +1528,12 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                 // If FFT is enabled, continue with compensation processing for monitoring
             }
             
-            if (fresh) process_channel_lag_compensation(channel, *current_lag);
-            
+            if (fresh) {
+                recal_lag_bad = check_lag_during_phase_recal(channel, *current_lag, recal_lag_bad,
+                                                             correlation_result);
+                process_channel_lag_compensation(channel, *current_lag, current_peak_ratio);
+            }
+
             if (channel == (REF_CHANNEL == 0 ? 1 : 0)) {
                 if (auto current_state = get_phase_compensation_state()) {
                     switch (*current_state) {
@@ -1348,8 +1556,10 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
 
                                     int delay_ms = phase_compensation->stability_delay_override_ms.load();
                                     // Never start a calibration while the discrete
-                                    // scanner hops - wait for it to stop.
-                                    if (elapsed >= delay_ms && !discrete_scanner.enabled.load()) {
+                                    // scanner hops - wait for it to stop - nor while
+                                    // a client holds the calibration (its scan
+                                    // searching; a release expires the wait)
+                                    if (elapsed >= delay_ms && !discrete_scanner.enabled.load() && !calibration_held()) {
                                         std::cout << "Frequency stable for " << delay_ms << "ms, starting calibration..." << std::endl;
                                         phase_compensation->cooldown_active = false;
                                         should_start_calibration = true;

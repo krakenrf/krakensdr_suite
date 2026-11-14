@@ -375,6 +375,7 @@ private:
 
 KRAKEN_PLUGIN(Aprs, {.id = "aprs",
                      .name = "APRS (AX.25 1200)",
+                     .category = "Paging & packet",
                      .description = "APRS / AX.25 packet, 1200 bit/s Bell 202 AFSK on NBFM: callsigns, path, positions",
                      .version = "1.1",
                      .sample_rate = FS,

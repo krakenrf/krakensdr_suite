@@ -1,146 +1,178 @@
-// InterMet iMet-54 (and iMet-50): 2-FSK 4798 baud, NRZ, bytes in 8N1
-// framing (start bit, 8 data bits msb first, stop bit). Preamble 0x00 0xAA
-// repeated, sync 0x24 x4 + 0x42; then 64-bit blocks transposed 8x8 (bit
-// interleaving) carrying Hamming(8,4) codewords, two nibbles per byte. A
-// frame is 108 bytes: serial (32 bit), time of day (HHMMSSmmm, decimal),
-// latitude / longitude (degrees + minutes/100, x 1e6), altitude (dm, MSL),
-// temperature, raw humidity and humidity-sensor temperature (big-endian
-// float32; 1e9 = not available), status; a CRC-32 over the first 52 bytes.
-// No velocity (the plugin derives it from successive positions).
+// InterMet iMet-54 (family "iMet-54").
 //
-// Protocol as documented by the open-source radiosonde community (rs1729/RS
-// "imet54mod"); independent implementation, validated against the
-// radiosonde_auto_rx test recording.
+// 2-FSK 4800 bit/s, every byte an 8N1 UART character. Before each frame at
+// least ten 00 55 pairs, 24 24 24 24 and a header byte; then the main block:
+// 14 groups of 8 bytes, each group bit-interleaved over 8 Hamming(8,4)
+// codewords = 4 decoded bytes (56 bytes: serial, time, position, PTU, flags,
+// CRC-32), then a second block. Layout and coding from ra-firmware (DF9DQ,
+// BSD-3-Clause). The firmware on the test recording sends no CRC that matches
+// any variant: its frames are taken when no codeword needed a correction.
 
-#include "sonde.hpp"
+#include "families.hpp"
 
+#include <algorithm>
 #include <cstdio>
-#include <memory>
+#include <cstring>
 
 namespace sonde {
+
 namespace {
 
-// 0x00 0xAA 0x24 0x24 in 8N1, msb first
-const char* HEADER = "0000000001" "0101010101" "0001001001" "0001001001";
-constexpr int RAW_BITS = 2200;                  // 220 8N1 bytes after the header
-constexpr int FRAME_BYTES = 108;
-constexpr int CRC_POS = 0x34;
-// Hamming(8,4) codeword (bits LSB first) of each nibble
-const uint8_t HAM[16] = {0x00, 0x87, 0x99, 0x1E, 0xAA, 0x2D, 0x33, 0xB4, 0x4B, 0xCC, 0xD2, 0x55, 0xE1, 0x66, 0x78, 0xFF};
+// the 40 bits of 8N1 "00 55 24 24" (the last preamble pair + two sync bytes)
+const char* IMET54_SYNC = "0000000001010101010100010010010001001001";
+// codeword byte (bit order of the de-interleaver) of each nibble
+const uint8_t IMET54_HAM[16] = {0x00, 0x87, 0x99, 0x1E, 0xAA, 0x2D, 0x33, 0xB4, 0x4B, 0xCC, 0xD2, 0x55, 0xE1, 0x66, 0x78, 0xFF};
+constexpr int NSYM = 2200;                   // 220 UART bytes
+constexpr int SKIP = 3;                      // the two remaining 24s + the header
+constexpr int MAIN_GROUPS = 14;              // 112 bytes -> 56
+constexpr int B2_GROUPS = 13;                // the first 104 bytes of block 2 -> 52
+constexpr uint32_t NOT_AVAILABLE = 0x4E6E6B28;   // float 1e9
 
-// CRC-32 (IEEE 802.3 polynomial, msb first, init 0, final xor 0x63D60875)
-// over the first 52 bytes with each 32-bit word byte-reversed
-bool crc_ok(const uint8_t* b) {
-    uint32_t rem = 0;
-    for (int i = 0; i < CRC_POS; i++) {
-        rem ^= static_cast<uint32_t>(b[(i & ~3) + 3 - (i & 3)]) << 24;
-        for (int k = 0; k < 8; k++) rem = (rem & 0x80000000u) ? (rem << 1) ^ 0x04C11DB7u : rem << 1;
+// one group of 8 received bytes -> 4 bytes; returns corrections, -1 = a
+// codeword more than one bit from every codeword
+int decode_group(const uint8_t* in, uint8_t* out) {
+    int fixes = 0;
+    uint8_t nib[8];
+    for (int m = 0; m < 8; m++) {
+        unsigned cw = 0;
+        for (int i = 0; i < 8; i++) cw |= ((in[i] >> (7 - m)) & 1u) << i;
+        int best = -1, bd = 9;
+        for (int k = 0; k < 16; k++) {
+            const int d = __builtin_popcount(IMET54_HAM[k] ^ cw);
+            if (d < bd) {
+                bd = d;
+                best = k;
+            }
+        }
+        if (bd > 1) return -1;
+        fixes += bd;
+        nib[m] = static_cast<uint8_t>(best);
     }
-    return (rem ^ 0x63D60875u) == u32be(b + CRC_POS);
+    for (int t = 0; t < 4; t++) out[t] = static_cast<uint8_t>(nib[2 * t + 1] << 4 | nib[2 * t]);
+    return fixes;
 }
 
-float f32be(const uint8_t* p) {
-    const uint32_t v = u32be(p);
-    float f;
-    std::memcpy(&f, &v, 4);
-    return f;
-}
-
-class Imet54 : public Type {
+class Imet54 : public Family {
 public:
-    explicit Imet54(double fs) : fs_(fs) {
-        FskConfig c;
-        c.baud = 4798;
-        for (const char* p = HEADER; *p; p++) c.sync.push_back(*p == '1');
-        c.max_sync_err = 3;
-        c.frame_syms = RAW_BITS;
-        rx_.init(c, fs);
-        rx_.on_frame = [this](const FskFrame& f) { frame(f); };
+    Imet54() {
+        FskParams p;
+        p.rate = 4798;
+        p.sync = IMET54_SYNC;
+        p.max_err = 3;
+        p.nsym = NSYM;
+        p.phases = 8;
+        rx_.init(p);
     }
-    void push(const float* narrow, const float*, size_t n, double t0) override {
-        rx_.clock(t0);
-        for (size_t i = 0; i < n; i++) rx_.push(narrow[i]);
-    }
+
     void reset() override {
         rx_.reset();
-        last_t0_ = -1e12;
+        dup_.reset();
+    }
+
+    void process(const float* narrow, const float*, size_t n, int64_t idx, const Ctx& ctx, std::vector<Record>& out) override {
+        caps_.clear();
+        rx_.process(narrow, n, idx, caps_);
+        for (const auto& c : caps_) {
+            if (dup_.near(c.pos0, 0.3)) continue;
+            if (decode(c, ctx, out)) dup_.accept(c.pos0);
+        }
     }
 
 private:
-    void frame(const FskFrame& f);
     FskRx rx_;
-    double fs_, last_t0_ = -1e12;
-};
+    std::vector<FskCapture> caps_;
+    DupWindow dup_;
 
-void Imet54::frame(const FskFrame& f) {
-    if (std::fabs(f.t0 - last_t0_) < 0.3 * fs_) return;
-    // 8N1: keep the 8 data bits of every 10, skip the remaining sync (3 bytes)
-    uint8_t bits[RAW_BITS];
-    int nb = 0;
-    for (int i = 0; i < RAW_BITS; i++)
-        if (i % 10 > 0 && i % 10 < 9) bits[nb++] = f.soft[i] > 0;
-    const uint8_t* in = bits + 24;
-    const int blocks = (nb - 24) / 64;
-    uint8_t nib[2 * FRAME_BYTES] = {0};
-    int corrected = 0, n = 0;
-    for (int blk = 0; blk < blocks && n < 2 * FRAME_BYTES; blk++) {
-        uint8_t d[64];
-        for (int i = 0; i < 8; i++)
-            for (int j = 0; j < 8; j++) d[8 * j + i] = in[64 * blk + 8 * i + j];
-        for (int c = 0; c < 8 && n < 2 * FRAME_BYTES; c++) {
-            uint8_t byte = 0;
-            for (int j = 0; j < 8; j++) byte |= d[8 * c + j] << j;
-            // nearest codeword (distance <= 1 corrects one error)
-            int best = -1, bd = 9;
-            for (int v = 0; v < 16; v++) {
-                const int dist = __builtin_popcount(HAM[v] ^ byte);
-                if (dist < bd) { bd = dist; best = v; }
-            }
-            if (bd > 1 && n < 2 * CRC_POS) return;    // the checked part must decode
-            corrected += bd;
-            nib[n++] = static_cast<uint8_t>(best);
+    bool decode(const FskCapture& c, const Ctx& ctx, std::vector<Record>& out) {
+        // UART: of every 10 bits keep 1..8 (LSB first)
+        uint8_t u[NSYM / 10];
+        for (int j = 0; j < NSYM / 10; j++) {
+            unsigned v = 0;
+            for (int b = 0; b < 8; b++) v |= (c.sym[static_cast<size_t>(10 * j + 1 + b)] > 0 ? 1u : 0u) << b;
+            u[j] = static_cast<uint8_t>(v);
         }
-    }
-    uint8_t b[FRAME_BYTES];
-    for (int i = 0; i < FRAME_BYTES; i++) b[i] = static_cast<uint8_t>(nib[2 * i] << 4 | nib[2 * i + 1]);
-    // the CRC (or, without one, an error-free first half) and the status bits
-    if (!crc_ok(b) && corrected) return;
-    if ((u16be(b + 0x2A) & 0x30) != 0x30) return;
-    const int32_t tv = i32be(b + 4);
-    if (tv < 0 || tv > 235959999) return;
-    auto deg = [](int32_t v) { const int d = v / 1000000; return d + (v / 1e6 - d) * 100.0 / 60.0; };
-    const double lat = deg(i32be(b + 8)), lon = deg(i32be(b + 12)), alt = i32be(b + 16) / 10.0;
-    if (std::fabs(lat) > 90 || std::fabs(lon) > 180 || alt < -400 || alt > 60000) return;
-    last_t0_ = f.t0;
+        const uint8_t header = u[SKIP - 1];
+        uint8_t d[4 * (MAIN_GROUPS + B2_GROUPS)];
+        int fixes = 0;
+        bool main_ok = true, all_ok = true;
+        for (int g = 0; g < MAIN_GROUPS + B2_GROUPS; g++) {
+            const int f = decode_group(u + SKIP + 8 * g, d + 4 * g);
+            if (f < 0) {
+                all_ok = false;
+                if (g < 13) main_ok = false;   // main bytes 0..51
+                std::memset(d + 4 * g, 0, 4);
+            } else {
+                fixes += f;
+            }
+        }
+        if (!main_ok) return false;
+        // the documented CRC-32 (header + main bytes 0..51), else no correction at all
+        uint8_t cb[53];
+        cb[0] = header;
+        std::memcpy(cb + 1, d, 52);
+        const bool crc = crc32_mpeg2(cb, 53) == u32le(d + 52);
+        if (!crc && !(all_ok && fixes == 0)) return false;
+        const uint16_t flags = u16le(d + 40);
+        if ((flags & 0x0030) != 0x0030) return false;
+        const uint32_t tv = u32le(d + 4);
+        if (tv > 235959999) return false;
+        const auto latlon = [](int32_t v) {
+            const int deg = v / 1000000;
+            const double min = (v - deg * 1000000) / 1e4;
+            return deg + min / 60;
+        };
+        const double lat = latlon(static_cast<int32_t>(u32le(d + 8))), lon = latlon(static_cast<int32_t>(u32le(d + 12)));
+        const double alt = static_cast<int32_t>(u32le(d + 16)) / 10.0;
+        if (std::fabs(lat) > 90 || std::fabs(lon) > 180 || !(alt > -400 && alt < 60000)) return false;
 
-    Frame o;
-    o.type = "iMet-54";
-    o.dc_hz = f.dc_hz;
-    o.t_start = f.t_start;
-    o.t_end = f.t_end;
-    o.serial = std::to_string(u32be(b));
-    o.tod = (tv / 10000000) * 3600 + (tv / 100000 % 100) * 60 + (tv % 100000) / 1000.0;
-    if (!(lat == 0 && lon == 0)) { o.lat = lat; o.lon = lon; o.alt = alt; }
-    // temperature, raw humidity, humidity-sensor temperature: 1e9 = not available
-    int na = 0;
-    double t = NAN, rh = NAN, trh = NAN;
-    if (u32be(b + 0x1C) == 0x4E6E6B28) na++; else { const float v = f32be(b + 0x1C); if (v > -120 && v < 80) t = v; }
-    if (u32be(b + 0x20) == 0x4E6E6B28) na++; else rh = std::max(0.0f, std::min(100.0f, f32be(b + 0x20)));
-    if (u32be(b + 0x24) == 0x4E6E6B28) na++; else { const float v = f32be(b + 0x24); if (v > -120 && v < 80) trh = v; }
-    o.temp = t;
-    o.temp_rh = trh;
-    // humidity at the air's temperature (sensor reading at its own)
-    if (std::isfinite(t) && std::isfinite(trh) && std::isfinite(rh)) o.rh = std::max(0.0, std::min(100.0, rh * svp_hw(trh) / svp_hw(t)));
-    // iMet-50: no PTU block
-    int sum = 0;
-    for (int i = 0x2C; i < 0x52; i++) sum += b[i];
-    o.subtype = (sum == 0 && (u16be(b + 0x2A) & 0xF0F) == 0 && na == 3) ? "iMet-50" : "iMet-54";
-    if (want_raw) o.raw = hex(b, FRAME_BYTES);
-    if (out) out(o);
-}
+        Record r;
+        r.family = "iMet-54";
+        r.serial = std::to_string(u32le(d));
+        const int hh = static_cast<int>(tv / 10000000), mm = static_cast<int>(tv / 100000 % 100);
+        const double ss = (tv % 100000) / 1000.0;
+        r.tod = hh * 3600.0 + mm * 60.0 + ss;
+        if (!(lat == 0 && lon == 0)) {
+            r.lat = lat;
+            r.lon = lon;
+            r.alt = alt;
+        }
+        const uint32_t ft = u32le(d + 28), fh = u32le(d + 32), fu = u32le(d + 36);
+        const double T = ft == NOT_AVAILABLE ? NAN : f32le(d + 28);
+        const double RHs = fh == NOT_AVAILABLE ? NAN : f32le(d + 32);
+        const double TU = fu == NOT_AVAILABLE ? NAN : f32le(d + 36);
+        if (T > -120 && T < 80) r.T = T;
+        if (TU > -120 && TU < 80) r.TU = TU;
+        // humidity measured at the sensor's temperature, moved to the air
+        // temperature: only with all three
+        if (std::isfinite(RHs) && std::isfinite(r.T) && std::isfinite(r.TU)) {
+            const double rh = std::clamp(RHs, 0.0, 100.0);
+            r.RH = std::clamp(rh * svp_hyland_wexler(r.TU + 273.15) / svp_hyland_wexler(r.T + 273.15), 0.0, 100.0);
+        }
+        const int32_t pr = static_cast<int32_t>(u32le(d + 24)), pt = static_cast<int32_t>(u32le(d + 20));
+        if (pr != 0) r.P = pr / 100.0;
+        if (pt != 0) r.extras.emplace_back("Pressure sensor temp.", fmt2(pt / 100.0));
+        // the 108 decoded bytes as big-endian 32-bit words (the raw text's order)
+        uint8_t be[108];
+        for (int i = 0; i < 108; i++) be[i] = d[4 * (i / 4) + 3 - i % 4];
+        bool zero = true;
+        for (int i = 0x2C; i <= 0x51; i++)
+            if (be[i]) zero = false;
+        r.model = zero && (flags & 0x0F0F) == 0 && ft == NOT_AVAILABLE && fh == NOT_AVAILABLE && fu == NOT_AVAILABLE ? "iMet-50" : "iMet-54";
+        set_span(r, c, ctx);
+        if (ctx.raw) r.hex = hex_upper(be, sizeof be);
+        out.push_back(std::move(r));
+        return true;
+    }
+
+    static std::string fmt2(double v) {
+        char b[48];
+        snprintf(b, sizeof b, "%.2f °C", v);
+        return b;
+    }
+};
 
 }  // namespace
 
-std::unique_ptr<Type> make_imet54(double fs) { return std::make_unique<Imet54>(fs); }
+std::unique_ptr<Family> make_imet54() { return std::make_unique<Imet54>(); }
 
 }  // namespace sonde

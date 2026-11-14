@@ -247,7 +247,12 @@ plots.
 Newline-delimited JSON commands; the server also **broadcasts a status JSON at 2 Hz**
 with `settings` (center_freq, gain, sample_rate, rtl_tcp_channel), `num_channels`,
 `operating_mode` (`coherent`/`wideband`), `wideband_enabled`, `cooldown_active` /
-`cooldown_remaining_ms`, and the coherence fields `coherence_events` + `recovering`.
+`cooldown_remaining_ms`, the coherence fields `coherence_events` + `recovering`, and
+`lag_no_peak`: the channels whose lag calibration has found no correlation peak for
+60 s (normally `[]`; the dongles' streams most likely started more than +-16384
+samples apart - run a Full Recalibration / `reset_lag_compensation`, and restart
+heimdall if the channel shows up again; heimdall also logs one warning line per
+channel to stderr).
 
 ```bash
 echo '{"command":"set_frequency","frequency":433000000}' | nc localhost 8092
@@ -259,6 +264,7 @@ echo '{"command":"set_frequency","frequency":433000000}' | nc localhost 8092
 | `set_gain` | `gain` (dB, `-1`=auto) | Set gain on all channels |
 | `set_rtl_tcp_channel` | `channel` | Choose RTL-TCP source channel |
 | `set_stability_delay` | `delay_ms` | Override retune cooldown |
+| `hold_calibration` | `hold_ms` (0–30000) | Hold the calibration: retunes / gain changes enter the cooldown but don't recalibrate for `hold_ms` from now (a lease to renew); `0` releases and starts a pending calibration at once. Used by the DoA client's saved-frequency scan while it searches |
 | `set_operating_mode` | `mode` (`coherent`/`wideband`/`independent`) | Switch the operating mode (wideband spreads the tuners around the current frequency; coherent retunes all and recalibrates) |
 | `set_independent_tuner` | `channel`, `frequency?` (Hz), `gain?` (dB, `-1`=auto) | Independent mode: tune one tuner / set its gain |
 | `set_wideband_mode` | `enable`, `base_frequency?` | Enter/leave wideband scan mode (older form of `set_operating_mode`) |
@@ -326,6 +332,13 @@ reboots regardless of USB enumeration order.
 process is granted it; otherwise they log once and run at normal priority. To enable,
 add `<user> - rtprio 30` to `/etc/security/limits.conf` or grant `CAP_SYS_NICE`.
 
+**Memory locking (optional, Linux):** at startup heimdall locks its memory in RAM
+(`mlockall` with `MCL_ONFAULT`: only pages it touches), so the realtime threads don't
+stall on a swapped-out page. It does so only when the locked-memory limit is unlimited;
+otherwise it logs once and runs as before. To enable, add `<user> - memlock unlimited`
+to `/etc/security/limits.conf` (`LimitMEMLOCK=infinity` in a systemd unit). install.sh
+and `install-pi-service.sh` set both limits.
+
 ---
 
 ## Dependencies
@@ -338,7 +351,18 @@ in 2026-10; no system FFT library).
 
 ## Further reading
 
-- `CLAUDE.md` — detailed architecture, threading, and coherence-recovery notes.
+- `CLAUDE.md` (rules and invariants) and `docs/dev/` — detailed architecture, threading, calibration and coherence-recovery notes.
 - `../kraken_doa_v2/` — the FFT / FM / MUSIC DoA client that consumes port 8091.
-</content>
-</invoke>
+
+## Licence
+
+Copyright (c) 2026 KrakenRF Inc. Heimdall is free software: you can
+redistribute it and/or modify it under the terms of the GNU General Public
+License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version - see `LICENSE`. It is
+distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. Third-party components: `THIRD_PARTY_NOTICES.md`.
+
+The DoA client (`../kraken_doa_v2/`) is a separate program under its own
+licence (`../kraken_doa_v2/LICENSE`).

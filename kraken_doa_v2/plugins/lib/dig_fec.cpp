@@ -520,38 +520,50 @@ bool dmr_embedded_lc(const uint8_t* raw, uint8_t* out72) {
 // ---------------------------------------------------------------------------
 // TETRA
 // ---------------------------------------------------------------------------
+// Scrambling (EN 300 392-2 8.2.5): the generator's 32 cells start as the
+// 30-bit extended colour code - MCC (10 bits), MNC (14), colour code (6) -
+// followed by two 1s
 uint32_t tetra_scramb_init(uint32_t mcc, uint32_t mnc, uint32_t cc) {
-    uint32_t v = (cc & 0x3F) | ((mnc & 0x3FFF) << 6) | ((mcc & 0x3FF) << 20);
-    return (v << 2) | 3;
+    const uint32_t ecc = ((mcc & 0x3FFu) << 20) | ((mnc & 0x3FFFu) << 6) | (cc & 0x3Fu);
+    return (ecc << 2) | 0x3u;
 }
 
-void tetra_scramble(uint8_t* bits, int n, uint32_t lfsr) {
-    // taps 32 26 23 22 16 12 11 10 8 7 5 4 2 1 (EN 300 392-2 8.2.5)
-    auto st = [](uint32_t x, int y) { return (x >> (32 - y)) & 1; };
+namespace {
+// The generator's polynomial c(x) = 1 + x + x^2 + x^4 + x^5 + x^7 + x^8 +
+// x^10 + x^11 + x^12 + x^16 + x^22 + x^23 + x^26 + x^32: its term x^k is
+// cell 32 - k (cell 31 holds the latest output bit)
+constexpr uint32_t scramb_taps() {
+    const int k[] = {1, 2, 4, 5, 7, 8, 10, 11, 12, 16, 22, 23, 26, 32};
+    uint32_t m = 0;
+    for (int e : k) m |= 1u << (32 - e);
+    return m;
+}
+}  // namespace
+
+void tetra_scramble(uint8_t* bits, int n, uint32_t state) {
+    constexpr uint32_t TAPS = scramb_taps();
     for (int i = 0; i < n; i++) {
-        uint32_t bit = st(lfsr, 32) ^ st(lfsr, 26) ^ st(lfsr, 23) ^ st(lfsr, 22) ^ st(lfsr, 16) ^
-                       st(lfsr, 12) ^ st(lfsr, 11) ^ st(lfsr, 10) ^ st(lfsr, 8) ^ st(lfsr, 7) ^
-                       st(lfsr, 5) ^ st(lfsr, 4) ^ st(lfsr, 2) ^ st(lfsr, 1);
-        lfsr = (lfsr >> 1) | (bit << 31);
-        bits[i] ^= static_cast<uint8_t>(bit);
+        const uint32_t s = static_cast<uint32_t>(__builtin_popcount(state & TAPS) & 1);
+        bits[i] ^= static_cast<uint8_t>(s);
+        state = (state >> 1) | (s << 31);
     }
 }
 
+// (K, a) block interleaving (EN 300 392-2 8.2.4.1) puts bit k (1..K) at
+// position 1 + (a k mod K); reading those positions in order undoes it
 void tetra_block_deinterleave(const uint8_t* in, uint8_t* out, int K, int a) {
-    for (int i = 1; i <= K; i++) {
-        int k = 1 + (a * i) % K;
-        out[i - 1] = in[k - 1];
-    }
+    for (int k = 0; k < K; k++) out[k] = in[(a * (k + 1)) % K];
 }
 
 Bits tetra_rcpc23_decode(const float* soft3, int n3, int n2) {
-    // depuncture rate 2/3 (P = 1,2,5, t = 3, period 8) into the rate-1/4
-    // mother code, then Viterbi K=5 with G1..G4 (EN 300 392-2 8.2.3.1)
+    // Rate 2/3 from the K = 5 rate-1/4 mother code (EN 300 392-2 8.2.3.1): of
+    // every 8 mother-code bits (2 input bits) the 1st, 2nd and 5th are sent;
+    // the rest stay erasures (0) for the Viterbi decoder with G1..G4
     std::vector<float> mother(static_cast<size_t>(n2) * 4, 0.0f);
-    static const int P[4] = {0, 1, 2, 5};
-    for (int j = 1; j <= n3; j++) {
-        int k = 8 * ((j - 1) / 3) + P[j - 3 * ((j - 1) / 3)];
-        if (k - 1 < static_cast<int>(mother.size())) mother[k - 1] = soft3[j - 1];
+    static const int SENT[3] = {0, 1, 4};
+    for (int j = 0; j < n3; j++) {
+        const size_t k = 8 * static_cast<size_t>(j / 3) + static_cast<size_t>(SENT[j % 3]);
+        if (k < mother.size()) mother[k] = soft3[j];
     }
     return viterbi_decode(mother.data(), n2, 5, {0x13, 0x1D, 0x17, 0x1B}, true);
 }

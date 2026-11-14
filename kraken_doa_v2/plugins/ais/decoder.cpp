@@ -639,6 +639,7 @@ private:
 
 KRAKEN_PLUGIN(Ais, {.id = "ais",
                     .name = "AIS (ships)",
+                    .category = "Marine & distress",
                     .description = "Marine AIS on both channels (161.975 / 162.025 MHz, GMSK 9600 bit/s): MMSI, name, "
                                    "callsign, type, position, speed, course, destination; base stations, aids to "
                                    "navigation, SAR aircraft, AIS-SART / MOB / EPIRB. Picking it tunes the VFO to "

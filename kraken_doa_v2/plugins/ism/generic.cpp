@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. KrakenSDR's own code (it does not follow rtl_433's pulse
+// analyzer).
+
 // Unknown signals: a package no protocol decoded is sliced by its own
 // timing (pulse widths -> PWM, gap widths -> PPM, else NRZ at the shortest
 // width). A row of >= 12 bits that the package sends at least twice is a

@@ -1,3 +1,27 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The decoders in this file follow rtl_433's
+// (https://github.com/merbanan/rtl_433, GPL-2.0-or-later), re-implemented in
+// C++ for the KrakenSDR plugin API (2026):
+//   src/devices/fineoffset.c - Copyright (C) 2017 Tommy Vestermark; Enhanced
+//     (C) 2019 Christian W. Zuckschwerdt <zany@triq.net>; Added WH51 Soil
+//     Moisture Sensor (C) 2019 Marco Di Leo
+//   src/devices/fineoffset_wh1080.c - rtl_433 contributors
+//   src/devices/fineoffset_wh1050.c - 2016 Nicola Quiriti ('ovrheat');
+//     Modifications 2016 by Don More; 2023 Bruno OCTAU (ProfBoc75) for TFA
+//     30.3151 FSK
+//   src/devices/ecowitt.c - Copyright 2019 Google LLC.
+//   src/devices/fineoffset_wn34.c - Copyright (C) 2022 \@anthyz
+//   src/devices/fineoffset_wh52.c - Copyright (C) 2026 Andreas Braunlich
+//     <andreasbraunlich@gmail.com>
+//   src/devices/ambientweather_wh31e.c - Copyright (C) 2018 Christian W.
+//     Zuckschwerdt <zany@triq.net> based on protocol analysis by James Cuff
+//     and Michele Clamp, EcoWitt WH40 analysis by Helmut Bachmann, Ecowitt
+//     WS68 analysis by Tolip Wen improved by Bruno Octau, EcoWitt WH31B
+//     analysis by Michael Turk, EcoWitt WN20 analysis by Ryan Romanchuk.
+
 // Fine Offset Electronics sensors and their many rebrands (Ecowitt, Ambient
 // Weather, Froggit, Misol, Telldus, Digitech, ...):
 //   OOK PWM 433 MHz: WH2 / WH2A / WH5 / Telldus-Proove / TFA 30.3225 /
@@ -8,8 +32,6 @@
 //     WN34 / WN34D / WN38, WH52 soil, WH1080 FSK, Ambient WH31E / Ecowitt
 //     WH31B thermo-hygro (+ their radio-clock frame), WH40 / WN20 rain,
 //     WS68 wind / light / UV
-//
-// protocol notes: rtl_433 documentation; own implementation.
 //
 // The common check is CRC-8 with polynomial 0x31 (MSB first, init 0) and, on
 // most FSK devices, an 8-bit sum of the bytes after it.

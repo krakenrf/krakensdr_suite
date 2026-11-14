@@ -13,24 +13,20 @@ namespace dig {
 
 namespace {
 
-// NID: BCH(63,16) - encoder as in the standard's shift register form
+// NID: BCH(63,16), systematic - the 47 parity bits are the remainder of
+// m(x) x^47 divided by the generator polynomial g(x) = 6331141367235453
+// (octal, TIA-102.BAAA); codeword bit 62 is the first bit sent
+uint64_t nid_codeword(uint32_t m) {
+    constexpr uint64_t G = 06331141367235453ULL;
+    uint64_t r = static_cast<uint64_t>(m) << 47;
+    for (int i = 62; i >= 47; i--)
+        if ((r >> i) & 1) r ^= G << (i - 47);
+    return (static_cast<uint64_t>(m) << 47) | r;
+}
+
 std::vector<uint64_t> build_nid_table() {
-    static const int g[48] = {1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1,
-                              1, 1, 0, 1, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1};
     std::vector<uint64_t> t(65536);
-    for (uint32_t m = 0; m < 65536; m++) {
-        int data[16];
-        for (int i = 0; i < 16; i++) data[i] = (m >> (15 - i)) & 1;
-        int bb[47] = {0};
-        for (int i = 15; i >= 0; i--) {
-            int fb = data[i] ^ bb[46];
-            for (int j = 46; j > 0; j--) bb[j] = (fb && g[j]) ? (bb[j - 1] ^ fb) : bb[j - 1];
-            bb[0] = g[0] && fb;
-        }
-        uint64_t cw = m;
-        for (int i = 0; i < 47; i++) cw = (cw << 1) | static_cast<uint64_t>(bb[i]);
-        t[m] = cw;   // 63 bits, first transmitted bit = bit 62
-    }
+    for (uint32_t m = 0; m < 65536; m++) t[m] = nid_codeword(m);
     return t;
 }
 

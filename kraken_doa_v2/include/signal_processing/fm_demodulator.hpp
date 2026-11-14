@@ -3,6 +3,7 @@
 #include <vector>
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <complex>
 #include <liquid/liquid.h>
@@ -31,6 +32,12 @@ private:
     // Audio buffer
     AudioRingBuffer audio_ring_buffer;
     std::atomic<bool> initial_fill_complete{false};
+    std::atomic<bool> first_fill_logged_{false};
+    // Latency control - get_audio_buffer's thread (the ring's reader) only
+    size_t lat_min_ = SIZE_MAX;   // the least fill before a read this window
+    int lat_reads_ = 0;
+    bool fade_in_ = false;        // the first read after (re)buffering
+    std::vector<float> xfade_;
 
     // Opus encoder for audio compression
     OpusEncoder* opus_encoder = nullptr;   // made by the first get_opus_packet()

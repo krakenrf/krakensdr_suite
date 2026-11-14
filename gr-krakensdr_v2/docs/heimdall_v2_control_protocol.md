@@ -188,9 +188,22 @@ One line per broadcast, terminated `"}\n"`:
 
   // Always present:
   "coherence_events": 0,             // running count of detected desync events
-  "recovering": false                // true while a coherence recovery (flush + full recal) is in flight
+  "recovering": false,               // true while a coherence recovery (flush + full recal) is in flight
+  "lag_no_peak": []                  // channels whose lag calibration finds no correlation peak (below)
 }
 ```
+
+`lag_no_peak` (added 2026-11-13): the channel numbers whose lag calibration has
+servoed for `LAG_NO_PEAK_WARN_S` (60 s) without a lock while the median
+correlation peak / mean magnitude of its last 32 readings stayed below
+`LAG_NO_PEAK_RATIO` (8) - no peak in the correlator's +-16384-sample range,
+typically because the dongles' streams started further apart than that; the
+calibration then never converges on its own. A channel enters the list together
+with heimdall's one-line stderr warning and leaves it when it locks or a new
+calibration starts (Full Recalibration / `reset_lag_compensation`, an
+element-count change). Always `[]` outside coherent mode. The remedy is a Full
+Recalibration (its buffer flush re-pairs the streams), else a heimdall restart.
+The web STATE message carries the same field.
 
 **Important — what is NOT in this JSON:** the numeric `phase_state` and per-channel lag state are **not** broadcast on port 8092. They travel in the **data-port packet header (port 8091)**, big-endian uint32s (`tcp_data_server.cpp:88–166`):
 

@@ -83,7 +83,9 @@ static void maybe_run_coherence_monitor(const std::vector<ComplexBuffer>& comple
 
         float peak_mag = 0.0f; int peak_idx = 0; double sum_mag = 0.0;
         for (int i = 0; i < CORRELATION_SIZE; i++) {
-            const float m = std::abs(ctime[i]);
+            // sqrt(norm), not std::abs: that is a hypotf call per element
+            // (overflow-safe, unneeded at these magnitudes) - this vectorizes
+            const float m = std::sqrt(std::norm(ctime[i]));
             sum_mag += m;
             if (m > peak_mag) { peak_mag = m; peak_idx = i; }
         }
@@ -414,6 +416,7 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
 
     // Correlation processing for lag detection
     std::map<int, float> current_lags;
+    std::map<int, float> current_peak_ratios;
     current_lags[REF_CHANNEL] = 0.0f;
     
     // Process each channel against reference for lag detection. The per-pair
@@ -434,8 +437,9 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
         corr_plan->cross_correlate(ref_fft, channel_ffts[ch]);
         auto* correlation_time = corr_plan->get_correlation_time();
         
+        // |a| < |b| as norms: the same order without two hypotf calls per step
         auto max_it = std::max_element(correlation_time, correlation_time + CORRELATION_SIZE,
-                                 [](const auto& a, const auto& b) { return std::abs(a) < std::abs(b); });
+                                 [](const auto& a, const auto& b) { return std::norm(a) < std::norm(b); });
         
         int peak_index = std::distance(correlation_time, max_it);
         ParabolicPeak refined_peak = gaussian_interpolation(correlation_time, peak_index, CORRELATION_SIZE);
@@ -526,11 +530,20 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
         // Store correlation data at the correct index
         staged_scale[corr_idx] = refined_peak.refined_magnitude;
         float scale = refined_peak.refined_magnitude > 0 ? 1.0f / refined_peak.refined_magnitude : 1.0f;
-        
-        std::transform(correlation_time, correlation_time + CORRELATION_SIZE,
-                 staged_corr[corr_idx].begin(),
-                 [scale](const auto& val) { return std::abs(val) * scale; });
-        
+
+        // ...and the peak / mean magnitude for the no-peak detector
+        // (LAG_NO_PEAK_RATIO), summed in the same pass
+        float* trace = staged_corr[corr_idx].data();
+        double mag_sum = 0.0;
+        for (int i = 0; i < CORRELATION_SIZE; i++) {
+            const float m = std::sqrt(std::norm(correlation_time[i]));
+            mag_sum += m;
+            trace[i] = m * scale;
+        }
+        const double mag_mean = mag_sum / CORRELATION_SIZE;
+        current_peak_ratios[ch] = mag_mean > 0.0
+            ? static_cast<float>(std::sqrt(std::norm(*max_it)) / mag_mean) : 0.0f;
+
         corr_idx++;
     }
     
@@ -649,6 +662,7 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
     {
         std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
         correlation_result.lags = current_lags;
+        correlation_result.peak_ratios = current_peak_ratios;
         correlation_result.phases = current_phases;
         correlation_result.amplitudes = current_amplitudes;
         correlation_result.phases_measured = phases_measured;

@@ -13,13 +13,15 @@
 //         modulated again for the plugins), cf32
 // Build (from kraken_doa_v2, liquid-dsp built by `make` first):
 //   g++ -std=c++20 -O2 -Iinclude -isystem liquid-dsp/build-kraken/include tools/digi_test.cpp src/digital/*.cpp
-//       src/utils/process_posix.cpp src/utils/fs_compat.cpp liquid-dsp/build-kraken/libliquid.a
+//       src/utils/process_posix.cpp src/utils/fs_compat.cpp src/ai_sandbox.cpp src/geo_address.cpp
+//       liquid-dsp/build-kraken/libliquid.a
 // Windows (MSYS2 UCRT64 shell): process_win.cpp instead, the Windows flags and
 // win/win_init.cpp, static (no MinGW DLLs needed):
 //   g++ -std=c++20 -O2 -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -DNOGDI
 //       -D_USE_MATH_DEFINES -D_FILE_OFFSET_BITS=64 -include win/posix_compat.h -Iinclude
 //       -isystem liquid-dsp/build-kraken/include tools/digi_test.cpp src/digital/*.cpp src/utils/process_win.cpp
-//       src/utils/fs_compat.cpp win/win_init.cpp liquid-dsp/build-kraken/libliquid.a -static -lws2_32 -lwinmm -lbcrypt
+//       src/utils/fs_compat.cpp src/ai_sandbox.cpp src/geo_address.cpp win/win_init.cpp
+//       liquid-dsp/build-kraken/libliquid.a -static -lws2_32 -lwinmm -lbcrypt
 #include "digital/digital_decoder.hpp"
 #include "digital/dig_plugin.hpp"
 #include <liquid/liquid.h>

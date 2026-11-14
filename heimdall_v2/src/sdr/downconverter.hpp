@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <string>
 
 // ---- KrakenSDR Wideband (downconverter) variant ----
 // The Wideband hardware puts a mixer in front of every tuner, all fed by ONE
@@ -103,3 +104,28 @@ bool downconverter_set_side(MixerSide side, uint64_t rf_hz);
 // Set the LO output drive current (0-7). Shared by all mixers (one LO), so a
 // change is common-mode across channels and needs no phase recalibration.
 bool downconverter_set_current(int current);
+
+// ---- Board MCU firmware and telemetry (fw-krakendown, Testunit_3v0 / 3v2) ----
+// The MCU answers every 17-byte command with a 16-byte input report
+// [cmd][addr][8 data bytes]... or "Invalid param." for an address it does
+// not know. heimdall reads every reply (a stale reply can never be taken for
+// a later one), tunes with 's' (RAM only, no Flash wear) and probes the
+// firmware version ('r' 136) at start. On fw >= WB_MIN_SENSOR_FW a 1 Hz
+// poller reads the INA219 (input current / voltage) and the humidity sensor
+// (SHT4x on 3v2, Si7020 on 3v0); every query goes through the same mutex as
+// the retunes, and a retune never waits for more than one query.
+
+// fw date code (0 = older than fw20261109, which has no version readout;
+// -1 = no answer) and build number (0 before fw20261110.3)
+int64_t downconverter_fw_date();
+uint32_t downconverter_fw_build();
+
+// The fields appended to the status JSON "downconverter" object: ,"fw":{..}
+// and ,"telemetry":{..} (revision, vin_v, iin_a, temp_c, rh_pct, alarms ...).
+// Empty when the downconverter is not enabled.
+std::string downconverter_status_json_fields();
+
+// One status line for the terminal dashboard, e.g.
+// "3v0  4.76 V  2.83 A  36.2 C  16 %RH  fw20261110.3"; empty if no telemetry.
+std::string downconverter_telemetry_line();
+

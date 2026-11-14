@@ -243,15 +243,19 @@ bool MUSICProcessor::processDecimatedIQ(const SharedDecimator::MultiChannelDecim
     // after a retune or a squelch opening (at narrow bandwidths).
     const auto now = std::chrono::steady_clock::now();
     // A VFO offset change is a discontinuity too: samples mixed down at two
-    // offsets must never share a frame.
+    // offsets must never share a frame. So is a bandwidth change at the same
+    // rate (any width: 26 -> 27 kHz both run at 30 kS/s) - the decimator
+    // rebuilt its filters, their restart is no signal.
     if (last_input_time_ != std::chrono::steady_clock::time_point{} &&
         (now - last_input_time_ > MAX_INPUT_GAP ||
          decimated_data.output_rate_hz != last_input_rate_hz_ ||
+         decimated_data.bandwidth_hz != last_input_bw_hz_ ||
          std::abs(decimated_data.freq_offset_hz - last_input_offset_hz_) > 0.5f)) {
         clearAccumulatorLocked();
     }
     last_input_time_ = now;
     last_input_rate_hz_ = decimated_data.output_rate_hz;
+    last_input_bw_hz_ = decimated_data.bandwidth_hz;
     last_input_offset_hz_ = decimated_data.freq_offset_hz;
 
     // Copy into the accumulator (input is only read)

@@ -157,7 +157,7 @@ struct TalkerInfo {
     int frames = 0;                // frames used, all transmissions
     int64_t first_ms = 0, last_ms = 0;   // first / last heard (system clock)
     // transmissions (not packets / spatial): the latest one's length and
-    // all of them together (s, from their spans - the ctcss plugin's tones)
+    // all of them together (s, from their spans - the analog_id plugin's tones)
     double dur_s = 0, air_s = 0;
     bool packet = false;           // a packet talker (aircraft, ship): tx = packets, no heat map
     double avg_s = 0;              // packets averaged over (s, 0 = PACKET_TAU_S)

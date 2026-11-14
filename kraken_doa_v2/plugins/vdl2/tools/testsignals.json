@@ -1,0 +1,131 @@
+[
+{
+ "id": "vdl2-three-aircraft",
+ "title": "VDL Mode 2: three aircraft and a ground station",
+ "description": "D8PSK 31.5 kbit/s bursts on 136.975 MHz. Aircraft 3C6544 (D-AIBC, 60 deg, carrier +600 Hz), 7C1234 (VH-ABC, 200 deg, -900 Hz) and A1B2C3 (N123AB, 120 deg, +200 Hz) send ACARS over AVLC, X.25 data and receive-ready frames; the ground station 1A2B3C (320 deg, -300 Hz) sends its XID (airport coverage NZAA, a position near the station), an ACARS uplink and link control. Each burst names its sender: expect talkers 3C6544, 7C1234, A1B2C3 and GS 1A2B3C at those bearings, and the ground station on the map.",
+ "rf_hz": 136975000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 12,
+ "vfo": {
+  "bw_khz": 25
+ },
+ "steps": [
+  [
+   "{tools}/vdl2_gen.py",
+   "AC1.cf32",
+   "--offset",
+   "600",
+   "--at",
+   "0.6",
+   "aoa:A3C6544>G1A2B3C:down:D-AIBC:H1:3:M01ALH0123POSITION REPORT /FL360 /ETA 0815",
+   "--at",
+   "4.1",
+   "data:A3C6544>G1A2B3C:180",
+   "--at",
+   "8.2",
+   "rr:A3C6544>G1A2B3C"
+  ],
+  [
+   "{tools}/vdl2_gen.py",
+   "AC2.cf32",
+   "--offset",
+   "-900",
+   "--at",
+   "1.6",
+   "aoa:A7C1234>G1A2B3C:down:VH-ABC:5Z:4:M02AQF0012REQUEST WEATHER NZAA",
+   "--at",
+   "6.0",
+   "aoa:A7C1234>G1A2B3C:down:VH-ABC:_d:5:S12AQF0012"
+  ],
+  [
+   "{tools}/vdl2_gen.py",
+   "AC3.cf32",
+   "--offset",
+   "200",
+   "--at",
+   "3.0",
+   "aoa:AA1B2C3>G1A2B3C:down:N123AB:H1:6:M03AXY0456FUEL 0123 WX OK",
+   "--at",
+   "9.5",
+   "data:AA1B2C3>G1A2B3C:400"
+  ],
+  [
+   "{tools}/vdl2_gen.py",
+   "GS.cf32",
+   "--offset",
+   "-300",
+   "--at",
+   "0.2",
+   "xid:G1A2B3C:NZAA:{lat+0.1}:{lon+0.1}",
+   "--at",
+   "2.3",
+   "aoa:G1A2B3C>A3C6544:up:D-AIBC:SA:B:UPLINK TEXT FOR D-AIBC",
+   "--at",
+   "7.0",
+   "rr:G1A2B3C>A7C1234",
+   "--at",
+   "10.6",
+   "xid:G1A2B3C:NZAA:{lat+0.1}:{lon+0.1}"
+  ]
+ ],
+ "scene": {
+  "rate": 48000,
+  "snr_db": 25,
+  "seed": 7,
+  "sources": [
+   {
+    "name": "3C6544",
+    "file": "AC1.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 60
+   },
+   {
+    "name": "7C1234",
+    "file": "AC2.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 200,
+    "gain_db": -2
+   },
+   {
+    "name": "A1B2C3",
+    "file": "AC3.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 120,
+    "gain_db": 1
+   },
+   {
+    "name": "GS 1A2B3C",
+    "file": "GS.cf32",
+    "rate": 48000,
+    "at": 0,
+    "bearing": 320,
+    "gain_db": 3
+   }
+  ]
+ },
+ "expect": [
+  {
+   "tid": "3C6544",
+   "bearing": 60
+  },
+  {
+   "tid": "7C1234",
+   "bearing": 200
+  },
+  {
+   "tid": "A1B2C3",
+   "bearing": 120
+  },
+  {
+   "tid": "GS 1A2B3C",
+   "bearing": 320
+  },
+  {
+   "event": "REQUEST WEATHER NZAA"
+  }
+ ]
+}
+]

@@ -1,8 +1,20 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The decoders in this file follow rtl_433's
+// (https://github.com/merbanan/rtl_433, GPL-2.0-or-later), re-implemented in
+// C++ for the KrakenSDR plugin API (2026):
+//   src/devices/honeywell.c - Copyright (C) 2016 adam1010; Copyright (C) 2019
+//     Christian W. Zuckschwerdt <zany@triq.net>
+//   src/devices/interlogix.c - Copyright (C) 2017 Brent Bailey
+//     <bailey.brent@gmail.com>
+//   src/devices/dsc.c - Copyright (C) 2015 Tommy Vestermark; Copyright (C)
+//     2015 Robert C. Terzi
+
 // Alarm-system sensors: Honeywell / Ademco 5800 series (also 2GIG DW10/DW11,
 // GB1 and the Resolution RE208 repeater, 345 MHz), Interlogix / GE / UTC
 // (319.5 MHz) and DSC (433 MHz) contacts, motion and smoke sensors.
-//
-// protocol notes: rtl_433 documentation; own implementation.
 
 #include "ism.hpp"
 

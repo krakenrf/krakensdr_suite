@@ -24,13 +24,15 @@ struct sqlite3_stmt;
 
 // One bearing line for one decimator at one instant. Mirrors a DOA_value.html row.
 struct DoaRecord {
-    int64_t  timestamp_ms = 0;     // capture time (system_clock) — the written timestamp
-    int64_t  source_stamp_ms = 0;  // MUSIC frame stamp — dedup key only, never written
+    int64_t  timestamp_ms = 0;     // capture time; internal logging/record provenance
+    // Android Doppler compatibility adjustment (2026): keep source-frame identity.
+    int64_t  source_stamp_ms = 0;  // MUSIC frame stamp — legacy freshness + dedup key
     int      decimator_id = 0;
     float    app_bearing = 0;      // 360 - bearing, wrapped to [0,360); sub-degree
                                    // (parabolic-interpolated peak), as in DOA_value.html
     double   confidence = 0.0;
-    double   power_db = 0.0;
+    double   power_db = 0.0;          // Internal MUSIC eigenvalue-derived metric
+    double   legacy_power_db = -100.0; // Legacy Android RF-like peak [-100, 0] dB
     uint64_t freq_hz = 0;
     std::string antenna;           // "UCA" / "ULA" / "Custom"
     std::string station_id_csv;    // comma/newline-stripped callsign
@@ -43,6 +45,15 @@ struct DoaRecord {
 // True while the server is pulsing the noise source for a retune calibration;
 // bearings computed then are garbage and must not be logged/served.
 bool doa_is_calibrating();
+
+// A VFO's received power as V1 and the Android app report it ("power"): the
+// peak of the averaged FFT across the VFO passband in dBFS, clamped to
+// [-100, 0] (-100 also = no FFT data yet). Read from the FFT of the VFO's
+// tuner - the active channel in coherent mode, its own tuner_channel in
+// wideband scan / independent mode, as the FFT squelch does. The one source
+// for DOA_value.html field 4 and system_status decimator_squelch[].power_dbfs
+// (the app's V2 connection), so both connection methods report one scale.
+float vfo_power_dbfs(int tuner_channel, float offset_hz, int bandwidth_hz);
 
 // Snapshot the current bearing rows for all enabled decimators. Caller must
 // have already checked doa_is_calibrating() (returns rows regardless).

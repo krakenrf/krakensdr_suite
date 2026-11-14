@@ -1,7 +1,7 @@
 #pragma once
 
 // Incident map: street addresses in the text messages decoder plugins send
-// (kp::Host::message - POCSAG text pages) are looked up online in
+// (kp::Host::message - POCSAG / FLEX text pages) are looked up online in
 // OpenStreetMap (Nominatim, geo_http.hpp; finding the address in the text:
 // geo_address.hpp), within radius_km of the station (Station Information;
 // GEO_RADIUS_KM:, persisted, default 300 km - set in the decoder tab), and
@@ -13,7 +13,7 @@
 // restart); the same address paged again within 2 h updates the incident
 // (pages count) instead of adding one. Each records the VFO + frequency it
 // was received on; they are listed in the page's tab of the plugin (e.g.
-// POCSAG) - also after that VFO is gone - and shown on the map while any
+// pagers) - also after that VFO is gone - and shown on the map while any
 // decoder running that plugin has "Plot on map" on.
 
 #include <cstdint>

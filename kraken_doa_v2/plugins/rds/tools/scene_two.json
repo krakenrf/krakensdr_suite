@@ -1,0 +1,21 @@
+{
+ "rate": 2400000, "offset_hz": 400000, "rf_hz": 98.5e6, "seconds": 12, "channels": 5, "radius_m": 0.12,
+ "seed": 7, "noise_lsb": 2.0,
+ "stations": [
+  {"name": "Kraken FM", "bearing": 60, "at": 0.3, "until": 5.8, "cnr_db": 28,
+   "pi": "9201", "ps": "KRAKEN", "pty": 10, "tp": 1, "ta": [[3.0, 4.5]], "ms": 1, "stereo": true,
+   "ecc": "F1", "lang": 9, "pin": [22, 14, 30], "ct": "2026-10-22T03:04", "lto": 26, "ct_period_s": 4,
+   "basic_per_extra": 2,
+   "rt": ["Now playing Song of the Sea by The Krakens"],
+   "rtplus": [["item.title", "Song of the Sea"], ["item.artist", "The Krakens"]],
+   "af": [98.5, 101.2, 104.7], "ptyn": "DEBUG", "lps": "Kraken FM – debug playback",
+   "eon": [{"pi": "9202", "ps": "KRAKEN 2", "af": [99.1], "pty": 1}],
+   "sca": [{"hz": 67000, "type": "audio", "dev_hz": 6000, "inj_hz": 7000, "tones": [523, 659, 784]}]},
+  {"name": "KRKN", "bearing": 200, "at": 6.2, "until": 11.7, "cnr_db": 28,
+   "callsign": "KRKN", "ps": "KRKN-FM", "pty": 4, "tp": 0, "ms": 0, "stereo": true, "ecc": "A0",
+   "basic_per_extra": 4,
+   "rt": ["The talk of the town on KRKN"],
+   "sca": [{"hz": 92000, "type": "fsk", "baud": 4800, "dev_hz": 4500, "inj_hz": 6000}],
+   "rds2": [{"hz": 66500, "dev_hz": 2000}]}
+ ]
+}

@@ -511,6 +511,7 @@ private:
 KRAKEN_PLUGIN(SsrDecoder,
               {.id = "ssr1030",
                .name = "SSR / Mode S / TCAS interrogations (1030 MHz)",
+               .category = "Aviation",
                .description = "The 1030 MHz uplink: interrogations of secondary radars (SSR, Mode S), fixed "
                               "multilateration interrogators and aircraft TCAS / ACAS - Mode A / C with SLS and "
                               "all-call P4, whisper-shout, Mode S UF formats read from the DPSK (target addresses, "

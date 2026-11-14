@@ -33,6 +33,7 @@ private:
 
 KRAKEN_PLUGIN(DstarPlugin, {.id = "dstar",
                    .name = "D-STAR",
+                   .category = "Two-way radio",
                    .description = "D-STAR digital voice (6.25 kHz). Callsigns from the radio header (MY / UR / RPT1 / RPT2), the slow-data text message and GPS / DPRS. Voice: AMBE (mbelib, README \"Digital voice codecs\"). Bandwidth 12 kHz.",
                    .version = "2.0",
                    .sample_rate = 48000,

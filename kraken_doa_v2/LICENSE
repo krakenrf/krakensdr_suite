@@ -1,0 +1,289 @@
+KrakenSDR Source Available Licence
+Version 1.0
+
+Copyright (c) 2026 KrakenRF Inc. All rights not expressly granted in this
+Licence are reserved.
+
+This Licence applies to the KrakenSDR DoA software: everything in the
+kraken_doa_v2 folder of the KrakenSDR suite
+(https://github.com/krakenrf/krakensdr_suite), including its decoder plugins
+and their plugin library, its web pages, tools, scripts and documentation,
+except where a file or folder says that it is under a different licence (see
+section 6: the plugin SDK, the Windows helpers and the decoder plugins with a
+LICENSE file of their own).
+
+Summary (for convenience only; it is not part of the Licence): personal and
+hobbyist use is free - you may use, study, change and share the Software for
+those purposes, free of charge, under this Licence. A company or other
+organisation may also evaluate the Software free of charge for up to 180
+days, to find out whether it meets its needs: it may test it, but not yet
+rely on it for its real work. Deploying the Software - using it in
+operations, relying on or acting on its results in your work, or using it to
+provide a product or service - and any other commercial use needs a
+separate licence from KrakenRF Inc. Contact thekraken@krakenrf.com for
+details.
+
+
+1. Definitions
+
+"Licensor" means KrakenRF Inc.
+
+"Software" means the material this Licence applies to, in source code or
+object code form, and any part of it.
+
+"You" means the individual or organisation that receives the Software or
+exercises any right under this Licence.
+
+"Personal Use" means use by an individual for their own private purposes,
+without any anticipated commercial application, such as personal study,
+experimentation, private research shared for the benefit of public knowledge,
+and private entertainment.
+
+"Hobbyist Use" means use for a hobby or amateur pursuit (such as amateur
+radio, radio listening, direction-finding "fox hunts" or other radio
+experimentation), without any anticipated commercial application, by an
+individual, or by a non-profit club or association of hobbyists (such as an
+amateur radio club) for its members' hobby activities.
+
+"Evaluation Use" means use of the Software by or for an organisation, or by
+an individual with a commercial application in mind, only to find out
+whether the Software meets their needs before they take a Commercial
+Licence, where all of the following apply:
+
+  (a) the use is testing: installing and setting up the Software, trying its
+      features, measuring its performance, trials with test transmissions,
+      known transmitters or recordings, running it alongside the
+      organisation's existing equipment to compare results, and reporting the
+      evaluation's findings within the organisation to decide whether to take
+      a licence;
+  (b) nothing depends on it: the Software is not used operationally - its
+      results are not acted on, relied on or passed on in the organisation's
+      work (for example to locate, track, monitor, identify or take action
+      against a real transmitter, vehicle or person, or in any safety,
+      security, emergency, enforcement or investigative task), and it is not
+      used to provide any product or service or to earn revenue;
+  (c) it is used only by the organisation's own employees and contractors;
+      and
+  (d) it lasts no longer than 180 days from the day the organisation first
+      uses the Software (the "Evaluation Period"), or longer if the Licensor
+      agrees in writing. The Evaluation Period does not start again when the
+      Software is installed again or updated, or when other people of the
+      same organisation evaluate it.
+
+"Permitted Use" means Personal Use, Hobbyist Use and Evaluation Use.
+
+"Commercial Licence" means a licence for Commercial Use granted by the
+Licensor in writing (see section 4).
+
+"Commercial Use" means any use of the Software that is not Permitted Use. It
+includes, for example:
+
+  (a) use by or on behalf of a company, business, government body, military,
+      police or other organisation (other than a hobby club as described
+      above, and other than Evaluation Use), including use by its
+      employees, contractors or volunteers in the course of their work or
+      duties for it;
+  (b) use in the course of any trade, profession or paid work, or to provide
+      any product or service, paid or not, such as consulting, surveying,
+      spectrum monitoring, direction-finding, signal detection or tracking
+      services;
+  (c) selling, renting, leasing or charging for access to the Software, or
+      selling or renting hardware or software that includes it or has it
+      installed;
+  (d) making the Software or its functions available to others as a hosted,
+      cloud or network service;
+  (e) using the Software in the development, testing, demonstration or
+      support of a commercial product or service (other than Evaluation Use
+      of the Software itself); and
+  (f) deployment: using the Software operationally in any of the ways
+      paragraph (b) of Evaluation Use excludes, at any time - also during
+      the Evaluation Period - or continuing to use it for an organisation
+      after its Evaluation Period ends.
+
+Use that meets every condition of Evaluation Use is not Commercial Use, even
+where one of the examples above would otherwise describe it.
+
+"Third-Party Components" means software, data and other material in or used
+by the Software that the Licensor does not own and that is licensed under its
+own terms, as listed in THIRD_PARTY_NOTICES.md.
+
+
+2. Licence grant
+
+Subject to the terms of this Licence, the Licensor grants You a worldwide,
+royalty-free, non-exclusive, non-transferable licence, for Permitted Use
+only, to:
+
+  (a) run and use the Software;
+  (b) read, study and copy its source code;
+  (c) modify it and make works based on it ("Modified Versions"); and
+  (d) distribute copies of the Software and of Modified Versions, in source
+      code or object code form, as set out in section 3.
+
+You may not sublicense the Software except as section 3 allows.
+
+
+3. Distribution
+
+When You distribute the Software or a Modified Version, You must:
+
+  (a) distribute it free of charge (You may recover only the actual cost of
+      any physical media or shipping);
+  (b) give every recipient a copy of this Licence, and keep intact all
+      copyright, licence and attribution notices, including
+      THIRD_PARTY_NOTICES.md and the notices of Third-Party Components;
+  (c) distribute it only under this Licence, without granting additional
+      rights or imposing additional restrictions; and
+  (d) for a Modified Version, state clearly in the modified files that You
+      changed them, and not present the Modified Version as the original or
+      as made, endorsed or supported by the Licensor.
+
+
+4. Commercial use and other uses
+
+This Licence does not permit Commercial Use, or any other use that is not
+Permitted Use. That use requires a Commercial Licence from the Licensor. An
+organisation evaluating the Software needs one as soon as it starts to use
+the Software operationally, and at the latest when its Evaluation Period
+ends. For details, contact:
+
+    thekraken@krakenrf.com
+
+A Commercial Licence includes the Licensor's standard commercial terms
+(COMMERCIAL_TERMS.md in the kraken_doa_v2 folder) unless it says otherwise.
+A separate licence agreed in writing with the Licensor takes precedence over
+this Licence for the licensee who agreed to it.
+
+
+5. Contributions
+
+If You submit a contribution to the Licensor for inclusion in the Software
+(for example code, documentation or data sent as a pull request, patch or
+issue attachment), then, unless You and the Licensor agree otherwise in
+writing:
+
+  (a) You grant the Licensor and its successors a perpetual, worldwide,
+      non-exclusive, royalty-free, irrevocable licence to use, copy, modify,
+      distribute and sublicense the contribution, and works based on it,
+      under any terms, including this Licence, commercial licences and open
+      source licences;
+  (b) You grant the Licensor and its successors a perpetual, worldwide,
+      non-exclusive, royalty-free, irrevocable licence under any patent
+      claims You can license that the contribution infringes, to make, use,
+      sell, offer for sale, import and otherwise dispose of the contribution
+      and the Software that includes it; and
+  (c) You confirm that the contribution is Your own original work, or that
+      You otherwise have the right to grant these licences, and that You
+      have identified any third-party material in it and the terms it is
+      under.
+
+
+6. Third-party components and other programs
+
+Third-Party Components are licensed under their own terms, which are listed
+or referenced in THIRD_PARTY_NOTICES.md. Those terms, not this Licence, apply
+to the Third-Party Components, and nothing in this Licence limits any right
+those terms give You.
+
+Other programs in the KrakenSDR suite that carry a different licence (in
+particular the Heimdall receiver server in the heimdall_v2 folder and the GNU
+Radio module in the gr-krakensdr_v2 folder, both under the GNU General Public
+License version 3 or later) are separate works and are not part of the
+Software. The Software communicates with them over network connections.
+
+Not part of the Software either: the plugin SDK (the plugins/sdk folder and
+plugins/SDK.md) and the Windows helpers in the win folder, which are under the
+MIT License (plugins/sdk/LICENSE); and every decoder plugin whose folder
+(plugins/<id>) holds a LICENSE file of its own - plugins/ism, under the GNU
+General Public License version 2 or later, and plugins/flarm, under the GNU
+General Public License version 3. Such a plugin is a
+separate program: the Software starts it as a process of its own and
+exchanges data with it through pipes, and it is built without the plugin
+library or other parts of the Software. It is licensed only under the terms
+in its folder.
+
+Software that You obtain and install separately (for example voice codecs,
+speech-recognition models or an AI assistant) is under its own terms. You are
+responsible for having the rights, including any patent rights, needed to
+obtain and use it.
+
+
+7. Patents
+
+The Licensor grants You a licence, for Permitted Use only, under any patent
+claims the Licensor can license that would be infringed by the Software as
+the Licensor provides it. If You, or anyone acting for You, start a legal
+claim alleging that the Software infringes a patent, every licence You have
+under this Licence ends immediately.
+
+
+8. Names and trademarks
+
+This Licence does not grant any right to use the names, logos or trademarks
+of the Licensor (including "KrakenSDR" and "KrakenRF"), except to describe
+accurately where the Software comes from.
+
+
+9. Lawful use
+
+The Software can receive, decode, record and locate radio transmissions. The
+laws on receiving, decoding, recording, disclosing and using radio
+transmissions, on privacy and on direction finding differ between countries.
+You are responsible for using the Software lawfully. This Licence does not
+give permission to receive, decode or use any transmission.
+
+
+10. Termination
+
+If You breach this Licence, Your licence ends automatically. If it is Your
+first breach and You stop and fix it within 30 days after the Licensor
+notifies You of it, Your licence is reinstated. Sections 5, 9, 11, 12, 13
+and 14 continue to apply after this Licence ends.
+
+
+11. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OR CONDITION OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OR CONDITION OF MERCHANTABILITY,
+SATISFACTORY QUALITY, FITNESS FOR A PARTICULAR PURPOSE, ACCURACY, OR
+NON-INFRINGEMENT. THE SOFTWARE IS NOT DESIGNED OR CERTIFIED FOR SAFETY OF
+LIFE, NAVIGATION, EMERGENCY OR OTHER CRITICAL USE, AND YOU MUST NOT RELY ON
+IT FOR SUCH USE. YOU USE THE SOFTWARE AT YOUR OWN RISK.
+
+
+12. Limitation of liability
+
+TO THE EXTENT PERMITTED BY LAW, THE LICENSOR AND THE CONTRIBUTORS ARE NOT
+LIABLE TO YOU FOR ANY DAMAGES OR LOSS OF ANY KIND, WHETHER DIRECT, INDIRECT,
+SPECIAL, INCIDENTAL OR CONSEQUENTIAL, INCLUDING LOSS OF DATA, PROFITS OR
+BUSINESS, ARISING OUT OF OR IN CONNECTION WITH THIS LICENCE OR THE USE OF OR
+INABILITY TO USE THE SOFTWARE, HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY
+(INCLUDING NEGLIGENCE), EVEN IF THEY HAVE BEEN ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGES. WHERE LIABILITY CANNOT BE EXCLUDED BY LAW, IT IS LIMITED TO
+THE AMOUNT YOU PAID FOR THE SOFTWARE UNDER THIS LICENCE, IF ANY.
+
+
+13. Consumer law and business use
+
+Nothing in this Licence excludes, restricts or modifies any guarantee,
+condition, right or remedy that a law gives You and that cannot lawfully be
+excluded, restricted or modified - for example under the Consumer Guarantees
+Act 1993 (New Zealand), the Australian Consumer Law or the consumer law of
+the country where You live. Sections 11 and 12 apply to You only as far as
+that law allows; where it allows the Licensor's liability to be limited
+rather than excluded, it is limited as section 12 says.
+
+If You use the Software for the purposes of a business (including Evaluation
+Use), You agree that, to the extent permitted by section 43 of the Consumer
+Guarantees Act 1993 (New Zealand), the provisions of that Act do not apply,
+and that it is fair and reasonable for You and the Licensor to be bound by
+this section.
+
+
+14. General
+
+If any provision of this Licence is held unenforceable, it is changed only as
+far as needed to make it enforceable, and the rest of the Licence continues
+to apply. The Licensor not enforcing a provision is not a waiver of it. This
+Licence is the entire agreement between You and the Licensor about its
+subject, except for any separate licence agreed under section 4.

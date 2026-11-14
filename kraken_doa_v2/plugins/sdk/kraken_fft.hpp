@@ -1,9 +1,11 @@
 #pragma once
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 KrakenRF Inc. - the plugin SDK (plugins/sdk/LICENSE)
 // kraken_fft.hpp - the FFT of kraken_doa and of every decoder plugin: PFFFT
 // (kraken_doa_v2/external/pffft, FFTPACK / BSD-style licence - it replaced
 // FFTW, GPL) behind FFTW-like plans. Header-only; link pffft.c +
 // pffft_common.c (kraken_doa's Makefile does; plugins get them in
-// lib/build/libkrakendig.a).
+// lib/build/libkrakendig.a, a plugin with its own LICENSE as the objects).
 //
 //   kfft_complex* in  = kfft_alloc_complex(n);   // float[2] per sample, 64-byte aligned
 //   kfft_complex* out = kfft_alloc_complex(n);

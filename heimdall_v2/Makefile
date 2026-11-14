@@ -17,6 +17,17 @@ TARGET = heimdall.exe
 LINK_TMP = .tmp
 endif
 
+# macOS (Apple clang + Homebrew: eigen, openssl@3, libusb, cmake, pkg-config -
+# `make deps-macos`): the Linux build plus the shims of mac/posix_compat.h
+# (force-included) and Homebrew's keg-only OpenSSL. Everything macOS-specific
+# is under MACOS.
+MACOS := $(if $(filter Darwin,$(shell uname -s)),1,)
+ifeq ($(MACOS),1)
+# one deployment target for everything (this macOS version, as CMake picks
+# it for librtlsdr / liquid-dsp): no "built for newer macOS" link warnings
+export MACOSX_DEPLOYMENT_TARGET ?= $(shell sw_vers -productVersion | cut -d. -f1-2)
+endif
+
 # Source files organized by module
 CORE_SOURCES = src/core/utils.cpp src/core/settings.cpp src/core/forward_comp.cpp src/core/status_dashboard.cpp \
                src/core/platform.cpp src/core/fs_compat.cpp
@@ -31,6 +42,8 @@ SOURCES = $(CORE_SOURCES) $(SDR_SOURCES) $(DSP_SOURCES) $(NET_SOURCES) $(WEB_SOU
 
 # Object files (in build directory)
 BUILD_DIR = build
+# the compiler flags the objects were built with (rule further down)
+FLAGS_STAMP = $(BUILD_DIR)/.flags
 # FFT: pffft, vendored in external/pffft (plain C, BSD-style licence; replaced
 # FFTW 2026-10-17) - the correlation FFTs (src/dsp/fft_plan.cpp)
 PFFFT_OBJECTS = $(BUILD_DIR)/pffft/pffft.o $(BUILD_DIR)/pffft/pffft_common.o
@@ -80,7 +93,25 @@ RTLSDR_DIR  = ../librtlsdr
 RTLSDR_REPO = https://github.com/krakenrf/librtlsdr
 RTLSDR_LIB  = $(RTLSDR_DIR)/build/src/librtlsdr.a
 LIBUSB_LIBS := $(shell pkg-config --libs libusb-1.0 2>/dev/null || echo -lusb-1.0)
-RTLSDR_CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DLINK_RTLTOOLS_AGAINST_STATIC_LIB=ON -DINSTALL_UDEV_RULES=ON
+# -ULIBUSB_FOUND (every platform): the fork's FindLibUSB wraps everything,
+# its add_definitions(-DHAVE_LIBUSB_HANDLE_EVENTS_TIMEOUT_COMPLETED=1
+# -DHAVE_LIBUSB_ERROR_NAME=1) too, in if(NOT LIBUSB_FOUND), and
+# LIBUSB_FOUND is cached - so the cmake run below on an existing build dir
+# (a pull, a changed librtlsdr.c) compiled the library without them. Without
+# the first, librtlsdr.c maps libusb_handle_events_timeout_completed() to
+# libusb_handle_events_timeout(): a cancel then waits out read_async's 1 s
+# event timeout (heimdall's stop and every stream restart took ~1 s longer,
+# measured on a Pi 5).
+RTLSDR_CMAKE_FLAGS = -DCMAKE_BUILD_TYPE=Release -DLINK_RTLTOOLS_AGAINST_STATIC_LIB=ON -DINSTALL_UDEV_RULES=ON \
+    -ULIBUSB_FOUND
+# a build dir already compiled without the defines (configured again before
+# the line above) is configured again once: CMake's cache says libusb has the
+# call, the library's compile flags don't define it
+RTLSDR_FLAGS_MAKE = $(RTLSDR_DIR)/build/src/CMakeFiles/rtlsdr_static.dir/flags.make
+ifneq ($(shell grep -qs '^HAVE_LIBUSB_HANDLE_EVENTS_TIMEOUT_COMPLETED:INTERNAL=1' $(RTLSDR_DIR)/build/CMakeCache.txt && \
+    test -f $(RTLSDR_FLAGS_MAKE) && ! grep -qs 'DHAVE_LIBUSB_HANDLE_EVENTS_TIMEOUT_COMPLETED' $(RTLSDR_FLAGS_MAKE) && echo yes),)
+RTLSDR_RECONFIGURE = rtlsdr-reconfigure
+endif
 # heimdall requires the fork at krakenrf/librtlsdr 578b43d or later, on every
 # platform: the drag calls rtlsdr_set_center_freq_fast / rtlsdr_finish_tune
 # (RTLSDR_TUNE_KEEP_AUTOTUNE; an older fork builds heimdall's full retune
@@ -142,7 +173,8 @@ RTLSDR_CMAKE_FLAGS = -G "MSYS Makefiles" -DCMAKE_BUILD_TYPE=Release -DLINK_RTLTO
 # path, which -static doesn't change - the tools needed MSYS2's
 # libusb-1.0.dll. -ULIBUSB_FOUND: with LIBUSB_FOUND cached FindLibUSB skips
 # everything, its -DHAVE_LIBUSB_* defines too, so a reconfigure of an existing
-# build dir compiled the library without them (unlike a fresh one)
+# build dir compiled the library without them (unlike a fresh one); it is
+# also what makes FindLibUSB take the path below
 RTLSDR_CMAKE_FLAGS += -ULIBUSB_FOUND \
     -DLIBUSB_LIBRARIES:FILEPATH=$(shell pkg-config --variable=libdir libusb-1.0)/libusb-1.0.a
 # a build dir configured with the import library (before the line above) is
@@ -158,7 +190,12 @@ endif
 RTLSDR_SRCS = $(wildcard $(RTLSDR_DIR)/src/*.c $(RTLSDR_DIR)/src/*.h $(RTLSDR_DIR)/include/*.h)
 
 # C++20 required for uWebSockets
-CFLAGS = -Wall -Wextra -std=c++20 -D_GNU_SOURCE -DUWS_NO_ZLIB
+# -fno-math-errno: sqrt & co. without an errno path (loops with them
+# vectorize); -fcx-fortran-rules: complex * and / without C99's inf / NaN
+# recovery (a __mulsc3 / __divsc3 call that keeps a complex loop - the
+# cross-spectrum - from vectorizing; division keeps its range scaling).
+# Unlike -ffast-math neither touches NaN tests or the order of sums
+CFLAGS = -Wall -Wextra -std=c++20 -D_GNU_SOURCE -DUWS_NO_ZLIB -fno-math-errno -fcx-fortran-rules
 CFLAGS += -I. -Isrc -Isrc/core -Isrc/sdr -Isrc/dsp -Isrc/net -Isrc/web -Iexternal
 CFLAGS += -I$(RTLSDR_DIR)/include   # the fork's headers, never a system rtl-sdr.h
 LDFLAGS = $(RTLSDR_LIB) $(LIBUSB_LIBS) -lpthread -lm -lz
@@ -174,8 +211,32 @@ endif
 # Add SSL if available (optional for uWebSockets)
 LDFLAGS += -lssl -lcrypto
 
+# macOS: Apple clang has no -fcx-fortran-rules (GCC only) - mac/fast_complex.h
+# takes libc++'s inf / NaN recovery out of std::complex * and norm instead;
+# OpenSSL from Homebrew is keg-only (not in the default search paths)
+ifeq ($(MACOS),1)
+    CFLAGS := $(filter-out -fcx-fortran-rules,$(CFLAGS)) -include mac/posix_compat.h -include mac/fast_complex.h
+    OPENSSL_PREFIX := $(or $(shell brew --prefix openssl@3 2>/dev/null),/usr/local/opt/openssl@3)
+    CFLAGS += -I$(OPENSSL_PREFIX)/include
+    LDFLAGS += -L$(OPENSSL_PREFIX)/lib -framework IOKit -framework CoreFoundation
+endif
+
 # Architecture detection
 ARCH := $(shell uname -m)
+# macOS on Apple Silicon says arm64 (Linux: aarch64) - the same 64-bit ARM
+# with NEON. `override`: also when ARCH=arm64 is given on the command line
+ifeq ($(ARCH),arm64)
+override ARCH := aarch64
+endif
+# the aarch64 CPU flag: this CPU (-mcpu=native) - except on macOS, where
+# older Apple clang rejects "native" on arm64 and its default target is
+# already the M1 (NEON, dot product, fp16); `make MAC_CPU=-mcpu=apple-m2`
+# for a newer chip's extras
+MAC_CPU ?=
+AARCH64_CPU = -mcpu=native
+ifeq ($(MACOS),1)
+AARCH64_CPU = $(MAC_CPU)
+endif
 
 # pffft is C (CC above is g++): built with gcc, its SIMD named explicitly on
 # ARM - without -DPFFFT_ENABLE_NEON it silently builds its scalar code
@@ -193,9 +254,6 @@ ifeq ($(WINDOWS),1)
     WIN_MARCH ?= -march=x86-64-v3 -mtune=generic
     CFLAGS += -O3 $(WIN_MARCH) -Wa,-muse-unaligned-vector-move
     PFFFT_CFLAGS += $(WIN_MARCH) -Wa,-muse-unaligned-vector-move
-    # every object depends on this stamp of WIN_MARCH (rule below): another
-    # WIN_MARCH recompiles everything, not only the files that changed
-    WIN_MARCH_STAMP = $(BUILD_DIR)/.win_march
     # Windows 10+ API, windows.h without min/max macros and GDI (its ERROR
     # macro), M_PI & co. under -std=c++20, 64-bit off_t / stat sizes, libuv
     # under uSockets, and the POSIX functions MinGW lacks (win/posix_compat.h,
@@ -206,8 +264,12 @@ ifeq ($(WINDOWS),1)
               -include win/posix_compat.h
     PFFFT_CFLAGS += -DPFFFT_STATIC_DEFINE
 else ifeq ($(ARCH),aarch64)
-    CFLAGS += -O3 -march=armv8-a -mtune=cortex-a72 -ftree-vectorize
-    PFFFT_CFLAGS += -march=armv8-a -mtune=cortex-a72 -DPFFFT_ENABLE_NEON
+    # -mcpu=native: this CPU's instructions AND its tuning (a Pi 5: Cortex-A76,
+    # LSE atomics inline; it was -march=armv8-a -mtune=cortex-a72, the Pi 4's
+    # core). Like kraken_doa and the plugins, the build then runs only on the
+    # kind of CPU it was built on
+    CFLAGS += -O3 $(AARCH64_CPU)
+    PFFFT_CFLAGS += $(AARCH64_CPU) -DPFFFT_ENABLE_NEON
 else ifeq ($(ARCH),x86_64)
     CFLAGS += -O3 -march=native -mtune=native
     PFFFT_CFLAGS += -march=native
@@ -266,18 +328,18 @@ $(BUILD_DIR):
 # `all`'s prerequisites (check-deps and the target) otherwise build in
 # PARALLEL, and the link races the uWebSockets clone/build. The fork's static
 # library is order-only here too: its headers must exist before compiling.
-$(BUILD_DIR)/%.o: src/%.cpp $(WIN_MARCH_STAMP) | $(BUILD_DIR) check-uws $(RTLSDR_LIB)
+$(BUILD_DIR)/%.o: src/%.cpp $(FLAGS_STAMP) | $(BUILD_DIR) check-uws $(RTLSDR_LIB)
 	@echo "Compiling $<..."
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -MP -IuWebSockets/src -IuWebSockets/uSockets/src -c $< -o $@
 
-$(BUILD_DIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) $(WIN_MARCH_STAMP) | $(BUILD_DIR)
+$(BUILD_DIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) $(FLAGS_STAMP) | $(BUILD_DIR)
 	@echo "Compiling $<..."
 	@mkdir -p $(dir $@)
 	$(PFFFT_CC) $(PFFFT_CFLAGS) -c $< -o $@
 
 # Windows process setup + manifest resource (see WIN_OBJECTS)
-$(BUILD_DIR)/win/win_init.o: win/win_init.cpp win/posix_compat.h $(WIN_MARCH_STAMP) | $(BUILD_DIR)
+$(BUILD_DIR)/win/win_init.o: win/win_init.cpp win/posix_compat.h $(FLAGS_STAMP) | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -285,21 +347,37 @@ $(BUILD_DIR)/win/app_res.o: win/app.rc win/app.manifest | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	windres --include-dir win -O coff $< -o $@
 
-ifeq ($(WINDOWS),1)
-# The WIN_MARCH the objects were built with. Rewritten (and so newer than
-# every object) only when it differs, e.g. `make WIN_MARCH=-march=x86-64-v2`
-# for a CPU without AVX2: the objects of the default x86-64-v3 build would
-# otherwise stay in the exe and still crash there
-ifneq ($(shell cat $(WIN_MARCH_STAMP) 2>/dev/null),$(strip $(WIN_MARCH)))
-$(WIN_MARCH_STAMP): win-march-changed
+# The compiler flags the objects were built with (every platform). Rewritten
+# (and so newer than every object) only when they differ, so a flags change
+# recompiles everything, not only the files that changed - e.g. `make
+# WIN_MARCH=-march=x86-64-v2` for a CPU without AVX2 (the objects of the
+# default x86-64-v3 build would otherwise stay in the exe and still crash
+# there), or new optimisation flags reaching an existing build
+# "native" names no CPU: the same flags text stands for different instruction
+# sets on a Pi 4 (Cortex-A72) and a Pi 5 (A76: LSE atomics, dot product), so a
+# tree whose objects were built on another kind of CPU (a copied folder, an SD
+# card moved to another Pi) looked up to date and died with "Illegal
+# instruction" (status 132). The stamp therefore also names this machine's
+# CPU(s) - /proc/cpuinfo's "CPU part" (ARM) / "model name" (x86) - whenever
+# the flags say native; no /proc/cpuinfo (macOS) = nothing added
+HOST_CPU :=
+ifneq ($(findstring native,$(CC) $(CFLAGS) | $(PFFFT_CC) $(PFFFT_CFLAGS)),)
+HOST_CPU := $(shell sed -n -E 's/^(CPU part|model name)[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo 2>/dev/null | LC_ALL=C sort -u | LC_ALL=C tr -c 'A-Za-z0-9._\n-' '_' | paste -sd+ -)
 endif
-$(WIN_MARCH_STAMP):
+FLAGS_TEXT = $(strip $(CC) $(CFLAGS) | $(PFFFT_CC) $(PFFFT_CFLAGS)$(if $(HOST_CPU), | cpu $(HOST_CPU)))
+ifneq ($(shell cat $(FLAGS_STAMP) 2>/dev/null),$(FLAGS_TEXT))
+$(FLAGS_STAMP): flags-changed
+endif
+$(FLAGS_STAMP):
 	@mkdir -p $(dir $@)
-	@echo '$(strip $(WIN_MARCH))' > $@
+	@echo '$(FLAGS_TEXT)' > $@
 
-.PHONY: win-march-changed rtlsdr-reconfigure
-win-march-changed rtlsdr-reconfigure:
-endif
+.PHONY: flags-changed
+flags-changed:
+# forcing prerequisite of the fork's library: configure its build dir again
+# (every platform: the -DHAVE_LIBUSB_* check above; Windows: the import library)
+.PHONY: rtlsdr-reconfigure
+rtlsdr-reconfigure:
 # forcing prerequisites of the fork's library (every platform, see RTLSDR_FIX_MARK)
 .PHONY: rtlsdr-update rtlsdr-check
 rtlsdr-update rtlsdr-check:
@@ -412,6 +490,10 @@ deps-arch:
 	    make \
 	    openssl
 
+# For macOS (Homebrew)
+deps-macos:
+	brew install cmake libusb eigen openssl@3 pkg-config
+
 # Clean build artifacts
 clean:
 	rm -f $(TARGET)
@@ -501,6 +583,7 @@ help:
 	@echo "  deps             - Install system dependencies (Debian/Ubuntu)"
 	@echo "  deps-fedora      - Install dependencies for Fedora/RHEL"
 	@echo "  deps-arch        - Install dependencies for Arch Linux"
+	@echo "  deps-macos       - Install dependencies for macOS (Homebrew)"
 	@echo "  clean            - Remove build artifacts"
 	@echo "  distclean        - Remove everything including uWebSockets"
 	@echo "  rebuild          - Clean and rebuild"
@@ -525,4 +608,4 @@ help:
 	@echo "Modules: $(words $(SOURCES)) source files"
 	@echo ""
 
-.PHONY: all check-deps check-uws check-eigen install-uws deps deps-fedora deps-arch clean distclean rebuild run status debug help
+.PHONY: all check-deps check-uws check-eigen install-uws deps deps-fedora deps-arch deps-macos clean distclean rebuild run status debug help

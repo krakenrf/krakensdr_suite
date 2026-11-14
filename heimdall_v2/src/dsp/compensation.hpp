@@ -39,13 +39,34 @@ void recovery_settings_changed_locked(const char* what);  // state_mutex held
 
 void begin_retune_cooldown(const char* what);
 
-// Lag compensation functions
-bool process_channel_lag_compensation(int channel, float lag);
+// Lag compensation functions. peak_ratio: the reading's correlation peak /
+// mean magnitude (no-peak detector, config.h LAG_NO_PEAK_*).
+bool process_channel_lag_compensation(int channel, float lag, float peak_ratio);
+
+// The channels the no-peak detector flagged (warned, not locked since, no
+// new attempt) as a JSON array, e.g. "[2,3]"; "[]" outside coherent mode.
+// For the 8092 status JSON and the web STATE message ("lag_no_peak").
+std::string lag_no_peak_json();
 
 // A recalibration requested while the discrete scanner was hopping (retune,
 // gain, start_scanner interrupting one): run by the lag driver once the scan
 // stops - a calibration can't converge across hops.
 extern std::atomic<bool> scanner_cal_deferred;
+
+// Calibration HOLD (control port `hold_calibration`, the DoA client's
+// saved-frequency scan while it searches): a retune / gain change still
+// enters the cooldown (noise off, WAITING_FOR_STABILITY - clients hold DoA)
+// but the cooldown doesn't expire into a calibration, and the periodic check
+// stands down, so the array hops between bands without calibrating each one.
+// A LEASE: hold_ms > 0 holds until that many ms from now (renewed by the
+// client; a client that stops renewing - stopped, crashed - lets it lapse
+// and the pending calibration runs as usual); 0 releases at once, and the
+// cooldown the hold kept pending is taken as expired: the calibration starts
+// on the lag driver's next tick (a signal was found - its DoA wants it now;
+// a 0 with no hold in effect leaves an ordinary cooldown alone). A coherence
+// recovery is not held (it needs the full recalibration).
+void set_calibration_hold(int hold_ms);
+bool calibration_held();
 void reset_lag_compensation_all_channels();
 
 // Coherence recovery: full flush + recalibration triggered after a detected

@@ -1,10 +1,29 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The decoders in this file follow rtl_433's
+// (https://github.com/merbanan/rtl_433, GPL-2.0-or-later), re-implemented in
+// C++ for the KrakenSDR plugin API (2026):
+//   src/devices/fordremote.c - rtl_433 contributors
+//   src/devices/somfy_rts.c - Copyright (C) 2020 Matthias Schulz
+//     <mschulz@seemoo.tu-darmstadt.de>
+//   src/devices/newkaku.c - rtl_433 contributors
+//   src/devices/nexa.c - Copyright (C) 2017 Christian Juncker Brædstrup
+//   src/devices/proove.c - Copyright (C) 2016 Ask Jakobsen, Christian Juncker
+//     Brædstrup
+//   src/devices/kerui.c - Copyright (C) 2016 Karl Lattimer
+//   src/devices/chuango.c - Copyright (C) 2015 Tommy Vestermark
+//   src/devices/smoke_gs558.c - Copyright (C) 2017 Christian W. Zuckschwerdt
+//     <zany@triq.net>
+//   src/devices/generic_motion.c - Copyright (C) 2015 Christian W.
+//     Zuckschwerdt <zany@triq.net>
+
 // Remotes and simple sensors with a protocol of their own: Ford car key,
 // Somfy RTS (blinds), self-learning KlikAanKlikUit / Nexa / Proove (HomeEasy
 // style), and fixed-code sensors on the EV1527 waveform whose codes carry a
 // meaning: Kerui, Chuango, the GS 558 smoke detector and a generic 433.3 MHz
 // motion sensor. Plain EV1527 / PT2262 codes are p_fixedcode.cpp's.
-//
-// protocol notes: rtl_433 documentation; own implementation.
 
 #include "ism.hpp"
 

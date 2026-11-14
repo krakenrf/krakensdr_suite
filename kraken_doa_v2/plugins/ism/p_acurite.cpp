@@ -1,3 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The decoders in this file follow rtl_433's
+// (https://github.com/merbanan/rtl_433, GPL-2.0-or-later), re-implemented in
+// C++ for the KrakenSDR plugin API (2026):
+//   src/devices/acurite.c - Copyright (c) 2015, Jens Jenson, Helge Weissig,
+//     David Ray Thompson, Robert Terzi; Enhanced Acurite-606TX by Boing
+//     <dhs.mobil@gmail.com>
+
 // Acurite sensors:
 //   "TXR" family (one framing, a message type in byte 2): 592TXR / 592TX /
 //   06002RM tower, 5-n-1 (VN1TXC, 06004RM, 06014RM), 3-n-1 (Notos), 06045M
@@ -5,8 +16,6 @@
 //   899 rain, 1190 / 1192 leak, Optimus 6-in-1 (06188M);
 //   609TXC, 606TX / Technoline TX960, 986 and 985 fridge / freezer, 590TX,
 //   00275RM / 00276RM room monitor.
-//
-// protocol notes: rtl_433 documentation; own implementation.
 
 #include "ism.hpp"
 

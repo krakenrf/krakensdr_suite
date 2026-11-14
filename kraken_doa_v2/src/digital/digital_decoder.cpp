@@ -51,7 +51,7 @@ constexpr size_t MAX_PAYLOAD = 1u << 20;   // kp::wire::MAX_PAYLOAD
 constexpr double POS_MAP_SECONDS = 60;
 // a talker packet (kp::Talker::packet) longer than this is not one
 constexpr double MAX_PACKET_S = 0.25;   // ADS-B 120 us .. AIS 5 slots (133 ms)
-constexpr double MAX_SIGNAL_SPAN_S = 3.0;   // a valid frame's samples (Host::valid(start, end)): RS41 0.9 s, POCSAG batch at 512 bit/s 1.1 s
+constexpr double MAX_SIGNAL_SPAN_S = 3.0;   // a valid frame's samples (Host::valid(start, end)): RS41 0.9 s, POCSAG batch at 512 bit/s 1.1 s, FLEX block 0 with its syncs 0.28 s
 
 std::mutex record_mu;
 RecordHandler record_handler;
@@ -152,7 +152,7 @@ void set_message_handler(MessageHandler h) {
 
 void set_station_location(bool valid, double lat, double lon) {
     std::string t;
-    // is_finite_value, not std::isfinite: kraken_doa builds with -Ofast
+    // is_finite_value, not std::isfinite: right under fast-math flags too
     if (valid && is_finite_value(lat) && is_finite_value(lon) && std::fabs(lat) <= 90 && std::fabs(lon) <= 180) {
         char b[64];
         snprintf(b, sizeof b, "%.6f,%.6f", lat, lon);

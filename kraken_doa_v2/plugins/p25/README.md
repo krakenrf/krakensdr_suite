@@ -31,7 +31,7 @@ output every unit's bearing is the repeater's.
 - Real recordings: the dsd-samples P25 discriminator files (FM-modulated to
   cf32) and a live trunked capture (iq_143.0.u8: two radios, unit 2010621 /
   3250, per-talker DoA 59.9 / 200.0 deg end to end) - see
-  kraken_doa_v2/CLAUDE.md *DoA per talker*.
+  kraken_doa_v2/docs/dev/doa-per-talker.md.
 - Generator `tools/p25_gen.py` (HDU, LDU1 / LDU2 with link control and
   encryption sync, placeholder IMBE frames with valid FEC - Golay(23,12),
   Hamming(15,11), the PN whitening; TDU / TDULC; status symbols; C4FM with
@@ -42,7 +42,7 @@ output every unit's bearing is the repeater's.
   level. Offline (`decoder --file scene.cf32 --channels 5 --uca 0.12 --rf
   453612500`, 20 dB SNR): all 58 frames decoded, IMBE 9 / 9 frames clean,
   bearings 60.0 / 200.0 / 300.0 deg; end to end through the playback: see
-  kraken_doa_v2/CLAUDE.md *Debug playback*. The generated symbol levels
+  kraken_doa_v2/docs/dev/debug-playback.md. The generated symbol levels
   match the real recordings' (equally spaced, outer = 3 x inner).
 - More real recordings (2026-10-16; verified against them, not in this
   repo): sigidwiki's P25 IF files (24 kHz IQ, the system named in the file

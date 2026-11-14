@@ -1,4 +1,15 @@
 #pragma once
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 KrakenRF Inc.
+// Part of the KrakenSDR `ism` decoder plugin, licensed under the GNU General
+// Public License version 2 or (at your option) any later version - see LICENSE
+// in this folder. The bit-row helpers, checks and slicers declared in this
+// file (bits.cpp) follow rtl_433's (https://github.com/merbanan/rtl_433,
+// GPL-2.0-or-later), re-implemented in C++ for the KrakenSDR plugin API
+// (2026):
+//   src/bitbuffer.c - Copyright (C) 2015 Tommy Vestermark
+//   src/bit_util.c - Copyright (C) 2015 Tommy Vestermark
+//   src/pulse_slicer.c - Copyright (C) 2015 Tommy Vestermark
 
 // ISM band device decoder: shared types.
 //

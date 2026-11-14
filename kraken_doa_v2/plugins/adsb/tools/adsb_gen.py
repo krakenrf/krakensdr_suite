@@ -14,7 +14,9 @@ DF17 extended squitters - identification (TC 4, category + 8-character
 callsign), airborne position (TC 11: 25 ft barometric altitude, CPR even /
 odd in turn, NZ 15), airborne velocity (TC 19 subtype 1: east / north
 ground speed, vertical rate) - and DF11 all-call replies (interrogator
-code 0: the parity = the CRC). Pulse-position modulation (preamble at 0 /
+code 0: the parity = the CRC); with "replies" also address / parity
+replies to an interrogator (DF4 / DF20 altitude, DF5 / DF21 identity in
+turn: the parity = the CRC XOR the address). Pulse-position modulation (preamble at 0 /
 1 / 3.5 / 4.5 us, 1 us bits, 0.5 us pulses) built at 24 MHz with ~70 ns
 edges and integrated to 2.4 MHz - the sub-sample timing is random, as is
 each message's carrier phase; each aircraft has its own carrier offset.
@@ -29,7 +31,8 @@ SCENE (JSON):
   "sources": [{"name": "C81A2B", "icao": "C81A2B", "callsign": "ANZ123",
      "cat": 3 (A1..A7), "alt_ft": 23000, "gs_kt": 420, "track": 310,
      "vrate_fpm": -1200, "range_km": 60, "bearing": 40, "level_db": 22,
-     "df_hz": 50000, "rate": 1.0 (x the messages per second below)}],
+     "df_hz": 50000, "rate": 1.0 (x the messages per second below),
+     "replies": 0 (address / parity replies per second), "squawk": 1234}],
   "collisions": [{"t": 1.5, "a": "C81A2B", "b": "7C4A51", "dt_us": 40}]
                                  an extra position message of a at t and a
                                  velocity message of b dt_us later (overlapping)
@@ -38,7 +41,9 @@ Per aircraft and second: 2 positions (even / odd in turn), 2 velocities,
 1 DF11, an identification every 2.5 s (the first right at its start) - with
 random jitter, so some messages of different aircraft overlap. Positions
 are kept fixed: the playback loops the file, and a moving aircraft would
-jump back at every loop (the plugin rejects a jump faster than ~Mach 2.5).
+jump back at every loop (the plugin rejects a jump faster than ~Mach 2.5);
+"moving": true (scene) flies them on with their ground speed and track
+(the truth then also has lat_end / lon_end) - for offline tests only.
 Bearings as the MUSIC DoA plot shows them (CCW from ANT0); antennas on
 kraken_doa's UCA - ANT0 on +x, the others CLOCKWISE (as uca_scene.py).
 
@@ -75,6 +80,33 @@ def df17(icao, me):
 def df11(icao):
     b = bytes([(11 << 3) | 5]) + icao.to_bytes(3, 'big')
     return b + crc24(b).to_bytes(3, 'big')
+
+
+def ac13(alt_ft):
+    """13-bit altitude code, 25 ft (Q = 1, M = 0)"""
+    n = int(round((alt_ft + 1000) / 25.0))
+    return ((n >> 5) << 7) | (((n >> 4) & 1) << 5) | 0x10 | (n & 0xF)
+
+
+def id13(squawk):
+    """13-bit identity code C1 A1 C2 A2 C4 A4 X B1 D1 B2 D2 B4 D4 of a 4-digit octal squawk"""
+    a, b, c, d = (int(ch) for ch in '%04d' % int(squawk))
+    pos = {'C1': 0, 'A1': 1, 'C2': 2, 'A2': 3, 'C4': 4, 'A4': 5, 'B1': 7, 'D1': 8, 'B2': 9, 'D2': 10, 'B4': 11, 'D4': 12}
+    v = 0
+    for name, digit in (('A', a), ('B', b), ('C', c), ('D', d)):
+        for w in (1, 2, 4):
+            if digit & w:
+                v |= 1 << (12 - pos[name + str(w)])
+    return v
+
+
+def reply(icao, df, alt_ft, squawk):
+    """address / parity reply: DF4 / DF20 altitude, DF5 / DF21 identity (flight status 0 airborne,
+    Comm-B MB empty); the parity = the CRC XOR the address"""
+    code = ac13(alt_ft) if df in (4, 20) else id13(squawk)
+    head = (df << 27) | (code & 0x1FFF)      # DF(5) FS(3)=0 DR(5)=0 UM(6)=0 code(13)
+    b = head.to_bytes(4, 'big') + (bytes(7) if df >= 20 else b'')
+    return b + (crc24(b) ^ icao).to_bytes(3, 'big')
 
 
 def me_ident(callsign, cat):
@@ -147,16 +179,22 @@ def ppm(msg, phase_hi):
     return e.reshape(-1, OS).mean(axis=1)
 
 
-def message(s, kind):
-    """aircraft s's next message of a kind (positions even / odd in turn)"""
+def message(s, kind, t=0.0):
+    """aircraft s's next message of a kind (positions even / odd in turn) at time t"""
     icao = int(s['icao'], 16)
     if kind == 'pos':
         s['_odd'] = not s['_odd']
-        return df17(icao, me_position(s['_lat'], s['_lon'], float(s['alt_ft']), s['_odd']))
+        lat, lon = s['_lat'], s['_lon']
+        if s.get('_moving'):   # flown on with its ground speed and track since t = 0
+            lat, lon = destination(lat, lon, float(s['track']), float(s['gs_kt']) * 1.852 * t / 3600.0)
+        return df17(icao, me_position(lat, lon, float(s['alt_ft']), s['_odd']))
     if kind == 'vel':
         return df17(icao, me_velocity(float(s['gs_kt']), float(s['track']), float(s.get('vrate_fpm', 0))))
     if kind == 'df11':
         return df11(icao)
+    if kind == 'reply':
+        s['_reply'] = (s.get('_reply', -1) + 1) % 4
+        return reply(icao, (4, 5, 20, 21)[s['_reply']], float(s['alt_ft']), s.get('squawk', 1234))
     return df17(icao, me_ident(s['callsign'], int(s.get('cat', 3))))
 
 
@@ -199,20 +237,24 @@ def main():
         s['_steer'] = np.exp(2j * np.pi * R / lam * np.cos(np.deg2rad(b) - phi))
         s['_amp'] = math.sqrt(noise_p * 10 ** (float(s.get('level_db', 20)) / 10))
         s['_lat'], s['_lon'] = destination(st[0], st[1], (360 - b) % 360, float(s['range_km']))
+        s['_moving'] = bool(scene.get('moving', False))
         src[s['name']] = si
         s['_odd'] = False
         rate = float(s.get('rate', 1.0))
         t = float(s.get('t0', rng.uniform(0.05, 0.4)))
         items.append((t, message(s, 'ident'), si))
         # the regular messages, each kind on its own jittered clock
-        for kind, per_s in (('pos', 2.0), ('vel', 2.0), ('df11', 1.0), ('ident', 0.4)):
+        kinds = [('pos', 2.0), ('vel', 2.0), ('df11', 1.0), ('ident', 0.4)]
+        if float(s.get('replies', 0)) > 0:
+            kinds.append(('reply', float(s['replies'])))
+        for kind, per_s in kinds:
             tt = t + rng.uniform(0.01, 1.0 / (per_s * rate))
             while tt < T - 0.0002:
-                items.append((tt, message(s, kind), si))
+                items.append((tt, message(s, kind, tt), si))
                 tt += rng.uniform(0.8, 1.2) / (per_s * rate)
     for c in scene.get('collisions', []):
         a, bb = scene['sources'][src[c['a']]], scene['sources'][src[c['b']]]
-        items.append((float(c['t']), message(a, 'pos'), src[c['a']]))
+        items.append((float(c['t']), message(a, 'pos', float(c['t'])), src[c['a']]))
         items.append((float(c['t']) + float(c['dt_us']) * 1e-6, message(bb, 'vel'), src[c['b']]))
     items.sort(key=lambda x: x[0])
     for si, s in enumerate(scene['sources']):
@@ -220,6 +262,9 @@ def main():
         truth.append({'name': s['name'], 'icao': s['icao'].upper(), 'callsign': s['callsign'], 'bearing': float(s['bearing']),
                       'lat': s['_lat'], 'lon': s['_lon'], 'alt_ft': s['alt_ft'], 'level_db': s.get('level_db', 20),
                       'messages': sent})
+        if s['_moving']:   # where it is at the end
+            truth[-1]['lat_end'], truth[-1]['lon_end'] = destination(
+                s['_lat'], s['_lon'], float(s['track']), float(s['gs_kt']) * 1.852 * T / 3600.0)
         print('%-8s %-8s bearing %6.1f  %5.1f km  %5.0f ft  %3d messages  level %4.1f dB  df %+.0f kHz' % (
             s['icao'], s['callsign'], float(s['bearing']), float(s['range_km']), float(s['alt_ft']), len(sent),
             float(s.get('level_db', 20)), float(s.get('df_hz', 0)) / 1e3))

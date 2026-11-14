@@ -1,4 +1,7 @@
 #pragma once
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 KrakenRF Inc. - MIT so that decoder plugins of any licence
+// can link it (licence text: kraken_doa_v2/plugins/sdk/LICENSE, root LICENSE)
 // POSIX functions the MinGW-w64 UCRT runtime lacks, with their Linux meaning,
 // so Linux code compiles unchanged on Windows. Force-included into every C++
 // file of a Windows build (`-include win/posix_compat.h`, see the Makefiles);

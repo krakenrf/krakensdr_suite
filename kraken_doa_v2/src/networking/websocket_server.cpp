@@ -10,6 +10,7 @@
 #include "control_handler.hpp"
 #include "message_builders.hpp"
 #include "decoder_log.hpp"
+#include "wb_board.hpp"
 #include "rdf_mapper.hpp"
 #include "array_cal.hpp"
 #include "voice2text.hpp"
@@ -32,11 +33,14 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <array>
+#include <cctype>
 #include <charconv>
+#include <type_traits>
 #include <iomanip>
 #include <cstdlib>
 #include <iterator>
 #include <algorithm>
+#include <thread>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -239,8 +243,22 @@ void handle_fft_view(WS* ws, string_view args) {
     uint32_t seq = 0, bins = 0;
     double lo = 0, hi = 0;
     auto num = [](string_view t, auto& v) {
-        auto r = std::from_chars(t.data(), t.data() + t.size(), v);
-        return r.ec == std::errc() && r.ptr == t.data() + t.size();
+#if !defined(__cpp_lib_to_chars)
+        // a libc++ without floating-point from_chars (Apple clang < 15):
+        // strtod on a copy, the whole field, no leading space / sign games
+        if constexpr (std::is_floating_point_v<std::remove_reference_t<decltype(v)>>) {
+            if (t.empty() || t.size() > 64 || !(std::isdigit(static_cast<unsigned char>(t[0])) || t[0] == '-' || t[0] == '.'))
+                return false;
+            const std::string s(t);
+            char* end = nullptr;
+            v = std::strtod(s.c_str(), &end);
+            return end == s.c_str() + s.size();
+        } else
+#endif
+        {
+            auto r = std::from_chars(t.data(), t.data() + t.size(), v);
+            return r.ec == std::errc() && r.ptr == t.data() + t.size();
+        }
     };
     if (!num(f[0], disp) || !num(f[1], seq) || !num(f[2], lo) || !num(f[3], hi) || !num(f[4], bins)) return;
     // is_finite_value, not std::isfinite: -Ofast folds that to true
@@ -506,10 +524,10 @@ string WebSocketServer::load_html_content() {
 }
 
 void WebSocketServer::verify_ssl_certificates() {
-#ifdef _WIN32
-    // Windows has no install step (install.sh makes the pair with the
-    // openssl CLI on Linux) and no openssl.exe: a missing pair is made here,
-    // in-process - the same kind, self-signed for 10 years
+#if defined(_WIN32) || defined(__APPLE__)
+    // Windows / macOS have no install step (install.sh makes the pair with
+    // the openssl CLI on Linux; Windows has no openssl.exe): a missing pair
+    // is made here, in-process - the same kind, self-signed for 10 years
     {
         bool created = false;
         string err;
@@ -528,7 +546,7 @@ void WebSocketServer::verify_ssl_certificates() {
         // listen-failure path below for why).
         StatusDashboard::end();
         cerr << "ERROR: Cannot read SSL certificate files" << endl;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
         cerr << "kraken_doa makes " << SSL_CERT_FILE << " + " << SSL_KEY_FILE
              << " when they are missing - check that its folder is writable" << endl;
 #else
@@ -687,6 +705,49 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                     });
                 }
             });
+        })
+        .get("/wb_telemetry/history", [](auto* res, auto* req) {
+            if (!request_allowed(req)) { refuse_request(res, req); return; }
+            // Wideband board telemetry sheet: the logged history of the last
+            // ?range= seconds as JSON (wb_board_history_json). The log files
+            // are read on a worker thread - a month of rows takes a while on a
+            // Pi and must not stall the spectrum stream on the uWS loop.
+            if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
+                res->writeStatus("401 Unauthorized")->end("Access token required");
+                return;
+            }
+            const long range = strtol(std::string(req->getQuery("range")).c_str(), nullptr, 10);
+            auto aborted = std::make_shared<bool>(false);
+            res->onAborted([aborted]() { *aborted = true; });
+            std::thread([res, aborted, range]() {
+                std::string body = wb_board_history_json(range > 0 ? range : 3600);
+                if (!loop) return;
+                loop->defer([res, aborted, body = std::move(body)]() {
+                    if (*aborted) return;
+                    res->writeHeader("Content-Type", "application/json")->writeHeader("Cache-Control", "no-store")->end(body);
+                });
+            }).detach();
+        })
+        .get("/wb_telemetry/export.csv", [](auto* res, auto* req) {
+            if (!request_allowed(req)) { refuse_request(res, req); return; }
+            // ... and the logged rows of that range as a CSV download
+            if (auth_required() && !token_matches(req->getHeader("x-kraken-token"))) {
+                res->writeStatus("401 Unauthorized")->end("Access token required");
+                return;
+            }
+            const long range = strtol(std::string(req->getQuery("range")).c_str(), nullptr, 10);
+            auto aborted = std::make_shared<bool>(false);
+            res->onAborted([aborted]() { *aborted = true; });
+            std::thread([res, aborted, range]() {
+                std::string name;
+                std::string path = wb_board_export_csv(range > 0 ? range : 3600, &name);
+                if (!loop) return;
+                loop->defer([res, aborted, path = std::move(path), name = std::move(name)]() {
+                    if (*aborted) return;
+                    if (path.empty()) { res->writeStatus("500 Internal Server Error")->end("Cannot write the export file"); return; }
+                    stream_download(res, path, name);
+                });
+            }).detach();
         })
         .get("/voice_clip/*", [](auto* res, auto* req) {
             if (!request_allowed(req)) { refuse_request(res, req); return; }
@@ -898,17 +959,17 @@ void WebSocketServer::web_server_main() {
                     }
                 }, 50, 50);
                 
-                int audio_timer_ms = static_cast<int>(round(AUDIO_PACKET_TIME_MS));
-#ifdef _WIN32
-                // Windows: libuv (uSockets' event loop there) re-arms a
-                // repeating timer from the moment it ran, so late wake-ups add
-                // up (Linux's timerfd doesn't drift): one packet per 40 ms tick
-                // went out ~1 % slower than the mixer filled (17 % without 1 ms
-                // timers), its buffer overran and the audio dropped out. The
-                // timer ticks at half the period instead and each tick sends
-                // the packets due by the steady clock.
-                audio_timer_ms = std::max(1, audio_timer_ms / 2);
-#endif
+                // The timer ticks at half the packet period and each tick
+                // sends the packets due by the steady clock. One packet per
+                // 40 ms tick ran slower than the mixer filled on BOTH
+                // platforms: Windows' libuv re-arms a repeating timer from the
+                // moment it ran, so late wake-ups add up (~1 %, 17 % without
+                // 1 ms timers - the buffer overran, the audio dropped out);
+                // Linux's timerfd doesn't drift, but uSockets reads its
+                // expiration count and runs the callback ONCE - every tick a
+                // busy loop missed (high CPU) was a packet never sent, so the
+                // mixer's buffers fell that much further behind for good
+                const int audio_timer_ms = std::max(1, static_cast<int>(round(AUDIO_PACKET_TIME_MS)) / 2);
                 us_timer_set(audio_timer, [](struct us_timer_t* /*timer*/) {
                     if (!global_ssl_app) return;
 
@@ -916,16 +977,16 @@ void WebSocketServer::web_server_main() {
                         return;
                     }
 
-                    int packets = 1;
-#ifdef _WIN32
                     static int64_t due_us = 0;
                     const int64_t now_us = chrono::duration_cast<chrono::microseconds>(
                         chrono::steady_clock::now().time_since_epoch()).count();
                     const int64_t period_us = static_cast<int64_t>(AUDIO_PACKET_TIME_MS * 1000.0f);
-                    // first tick, back from a stall or from FM off: no burst of old packets
+                    // first tick, back from a stall or from FM off: no burst of
+                    // old packets (what the mixer holds meanwhile is trimmed -
+                    // get_audio_buffer's latency control)
                     if (due_us == 0 || now_us - due_us > 200000) due_us = now_us;
+                    int packets;
                     for (packets = 0; packets < 3 && due_us <= now_us; packets++) due_us += period_us;
-#endif
                     for (int i = 0; i < packets; i++) {
                         auto audio_message = MessageBuilders::build_audio_message();
                         if (!audio_message.empty()) {
@@ -1092,10 +1153,11 @@ void WebSocketServer::doa_http_server_thread() {
                     res->writeStatus("403 Forbidden")->end("request refused");
                     return;
                 }
-                // Last fully-computed payload, served verbatim while a retune
-                // calibration is in progress. Confined to this thread's event
-                // loop (the only place this handler runs), so no lock needed.
+                // Android Doppler compatibility adjustment (2026):
+                // Retain a complete message per source-frame set, not per HTTP poll.
+                // This handler owns its cache on the same event-loop thread.
                 static std::string last_good_message;
+                static std::string last_source_key;
 
                 // "Retune calibration in progress": while the server retunes it
                 // pulses the noise source, and bearings computed on that injected
@@ -1113,20 +1175,28 @@ void WebSocketServer::doa_http_server_thread() {
                     return;
                 }
 
-                // Build the body from the shared capture/format helpers so the
-                // served CSV stays byte-identical to what the logger writes.
-                std::string message;
-                for (const DoaRecord& rec : capture_doa_records()) {
-                    message += format_doa_csv_line(rec);
+                // Rebuild the whole legacy CSV only if a MUSIC source frame
+                // changes; different HTTP polls must not invent measurements.
+                auto records = capture_doa_records();
+                std::string source_key;
+                for (const DoaRecord& rec : records) {
+                    const int64_t stamp = rec.source_stamp_ms > 0
+                        ? rec.source_stamp_ms : rec.timestamp_ms;
+                    source_key += std::to_string(rec.decimator_id) + ":" +
+                                  std::to_string(stamp) + ";";
                 }
-
-                // Calibration is settled here: this is a trustworthy frame, so
-                // remember it as the value to hold during the next retune cycle.
-                last_good_message = message;
+                if (last_good_message.empty() || source_key != last_source_key) {
+                    std::string message;
+                    for (const DoaRecord& rec : records) {
+                        message += format_doa_csv_line(rec);
+                    }
+                    last_good_message = std::move(message);
+                    last_source_key = std::move(source_key);
+                }
 
                 res->writeHeader("Content-Type", "text/html; charset=utf-8")
                    ->writeHeader("Cache-Control", "no-cache, no-store, must-revalidate")
-                   ->end(message);
+                   ->end(last_good_message);
             })
             .get("/*", [](auto* res, auto* /*req*/) {
                 res->writeStatus("404 Not Found")->end("Not found");

@@ -5,7 +5,7 @@ decoder tunes there): A 161.975 MHz (-25 kHz), B 162.025 MHz (+25 kHz).
 GMSK 9600 bit/s per channel: FM discriminator, 2 x 8 slicers, NRZI, HDLC,
 CRC-16/X.25; messages 1-3, 4 / 11, 5, 9, 18 / 19, 21, 24, 27 -> table, map
 points, facts, events (SART / MOB / EPIRB as "⚠"), NMEA raw frames.
-Details: `kraken_doa_v2/CLAUDE.md` *AIS*.
+Details: `kraken_doa_v2/docs/dev/plugin-ais.md`.
 
 ## ID separation (DoA per ship)
 Every frame is a talker packet of its MMSI (the map point / table key): its

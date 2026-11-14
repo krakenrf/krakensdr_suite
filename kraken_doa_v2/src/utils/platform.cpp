@@ -2,6 +2,7 @@
 // kraken_doa_v2/src/utils/ except for the #include line below.
 #include "utils/platform.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -21,6 +22,12 @@
 #include <sstream>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <IOKit/pwr_mgt/IOPMLib.h>
+#include <mach-o/dyld.h>
+#include <mach/mach.h>
+#include <sys/sysctl.h>
+#endif
 #endif
 
 namespace platform {
@@ -322,7 +329,7 @@ void raise_process_priority() { SetPriorityClass(GetCurrentProcess(), ABOVE_NORM
 
 const char* os_name() { return "windows"; }
 
-#else  // Linux
+#else  // Linux (+ macOS where noted)
 
 void install_stop_handler(void (*on_stop)(int sig)) {
     signal(SIGINT, on_stop);
@@ -346,10 +353,17 @@ void console_init() {}
 void fast_exit(int code) { _Exit(code); }
 
 std::string exe_dir() {
+#ifdef __APPLE__
+    char raw[PATH_MAX], buf[PATH_MAX];
+    uint32_t size = sizeof raw;
+    if (_NSGetExecutablePath(raw, &size) != 0 || !realpath(raw, buf)) return ".";
+    std::string p(buf);
+#else
     char buf[PATH_MAX];
     const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
     if (n <= 0) return ".";
     std::string p(buf, static_cast<size_t>(n));
+#endif
     const size_t k = p.find_last_of('/');
     return k == std::string::npos ? std::string(".") : (k == 0 ? std::string("/") : p.substr(0, k));
 }
@@ -368,6 +382,40 @@ bool console_size(int* cols, int* rows) {
     return true;
 }
 
+#ifdef __APPLE__
+bool cpu_times(uint64_t* idle, uint64_t* total) {
+    host_cpu_load_info_data_t info;
+    mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;
+    if (host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, reinterpret_cast<host_info_t>(&info), &count) !=
+        KERN_SUCCESS)
+        return false;
+    *idle = info.cpu_ticks[CPU_STATE_IDLE];
+    *total = *idle + info.cpu_ticks[CPU_STATE_USER] + info.cpu_ticks[CPU_STATE_SYSTEM] + info.cpu_ticks[CPU_STATE_NICE];
+    return true;
+}
+
+// available = what macOS can hand out without swapping: free + speculative +
+// inactive + purgeable pages (close to MemAvailable on Linux)
+bool mem_info(uint64_t* total_bytes, uint64_t* available_bytes) {
+    uint64_t total = 0;
+    size_t len = sizeof total;
+    if (sysctlbyname("hw.memsize", &total, &len, nullptr, 0) != 0) return false;
+    vm_statistics64_data_t vm;
+    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+    vm_size_t page = 0;
+    if (host_page_size(mach_host_self(), &page) != KERN_SUCCESS ||
+        host_statistics64(mach_host_self(), HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&vm), &count) !=
+            KERN_SUCCESS)
+        return false;
+    const uint64_t pages =
+        static_cast<uint64_t>(vm.free_count) + vm.speculative_count + vm.inactive_count + vm.purgeable_count;
+    *total_bytes = total;
+    *available_bytes = std::min<uint64_t>(pages * page, total);
+    return true;
+}
+
+float cpu_temperature_c() { return -1.0f; }  // needs the SMC (IOKit) - not read
+#else
 bool cpu_times(uint64_t* idle, uint64_t* total) {
     std::ifstream f("/proc/stat");
     std::string cpu;
@@ -405,6 +453,7 @@ float cpu_temperature_c() {
     if (!(f >> milli)) return -1.0f;
     return static_cast<float>(milli) / 1000.0f;
 }
+#endif
 
 std::string host_name() {
     char buf[256];
@@ -415,11 +464,28 @@ std::string host_name() {
 
 std::string host_fqdn() { return {}; }
 
+#ifdef __APPLE__
+// a Mac idle-sleeps after a few minutes (laptops and desktops alike): the USB
+// streams stop, and every wake costs a full recalibration. The assertion
+// (what `caffeinate -i` takes) lasts until the process ends; the display may
+// still sleep
+void keep_system_awake() {
+    static IOPMAssertionID id = kIOPMNullAssertionID;
+    if (id == kIOPMNullAssertionID)
+        IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleSystemSleep, kIOPMAssertionLevelOn,
+                                    CFSTR("KrakenSDR receiving"), &id);
+}
+#else
 void keep_system_awake() {}
+#endif
 
 void raise_process_priority() {}
 
+#ifdef __APPLE__
+const char* os_name() { return "macos"; }   // the UIs show the Linux texts for anything but "windows"
+#else
 const char* os_name() { return "linux"; }
+#endif
 
 #endif
 

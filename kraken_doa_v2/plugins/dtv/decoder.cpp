@@ -262,6 +262,7 @@ private:
 KRAKEN_PLUGIN(DtvPlugin,
               {.id = "dtv",
                .name = "Digital TV (DVB-T/T2, ISDB-T, ATSC 1.0/3.0, DTMB)",
+               .category = "Broadcast & cellular",
                .description = "Broadcast TV signals: standard, mode, channel, DVB-T TPS (constellation, code rate, guard, cell ID, "
                               "bit rate), ISDB-T TMCC (layers, emergency warning flag) and the echo profile - plus optional path "
                               "separation: every path the signal arrives on (a reflection, or another transmitter of a single "

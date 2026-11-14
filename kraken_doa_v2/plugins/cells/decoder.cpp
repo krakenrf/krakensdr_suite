@@ -68,7 +68,7 @@ constexpr double META_BURST_S = 0.2;       // processing time per burst for the 
 constexpr double META_CELL_S = 0.1;        // ... and per cell
 
 std::string fmt(const char* f, double v) {
-    char b[64];
+    char b[160];   // the "the VFO sees N % of it ..." note is ~90 characters
     snprintf(b, sizeof b, f, v);
     return b;
 }
@@ -926,6 +926,7 @@ private:
 KRAKEN_PLUGIN(CellsPlugin,
               {.id = "cells",
                .name = "LTE / 5G NR Cell Decoder",
+               .category = "Broadcast & cellular",
                .description = "The public broadcast information of every LTE / 5G NR cell on a carrier - LTE: MIB (bandwidth, antenna ports, "
                               "frame number), SIB1 (operator MCC-MNC, tracking area, cell identity / eNB, band, access rules), SIB2 - SIB5 "
                               "(uplink, random access, power, neighbour cells and carriers); NR: cell ID and sync block - and each cell's own "
