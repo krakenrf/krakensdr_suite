@@ -138,9 +138,40 @@ bandwidth, while still keeping the decimation efficient"; config.hpp,
   `decimator_bandwidth` handler) / `setDecimatorBandwidthHzFromUI`; the old
   index functions wrap them; an older receiver (no `bandwidth_hz` in its
   decimator_info, `bwServerHz`) gets the nearest index. Bar edge drags (main
-  display `pointerMove`, panes `paneMove`) give `bwUserHz` = 3 significant
-  figures (a pixel is ~0.3 % of a bar) and keep the offset inside the band as
-  the bar grows; the tooltip adds "(runs at 300 kS/s)" for a custom width.
+  display + waterfall `pointerDown` / `pointerMove`, panes `paneDown` /
+  `paneMove`, both through `bwEdgeDragBegin` / `bwEdgeDragHz`) give
+  `bwUserHz` = 3 significant figures (a pixel is ~0.3 % of a bar) and keep
+  the offset inside the band as the bar grows (now only when the inner edge
+  is dragged - the outer one stops at the plot border); the tooltip adds "(runs at
+  300 kS/s)" for a custom width. A drag never makes a VFO wider than the
+  band the display shows (`vfoBandMhz()` = tuners x 2.4 MHz x edge clip,
+  1.92 MHz at 0.8; a pane's sr x edge clip) and the dragged edge stays on
+  the plot (pointer x clamped - a touch drag / a pane's captured pointer goes
+  on outside it). Other paths may still set more (the BW box, a decoder's
+  `min_vfo_rate` - LoRa's 2.4 MHz -, saved frequencies, the AI assistant, a
+  later edge-clip change, zoom): the side beyond the plot is drawn clipped,
+  its edge `PANE_CLIP_EDGE_PX` inside the border (main display, waterfall -
+  now clamped to its plot area, not the canvas with the axis gutter - and
+  panes), and dragging that edge starts from where it is DRAWN; it only
+  comes in (outward, or pressed without moving = the width it had, also one
+  wider than the band: a touch on the edge must not cut a decoder's 2.4 MHz
+  to 1.92; zoomed in, the first pixel inward therefore drops the whole
+  hidden part). The user's
+  report 2026-11-15 ("still possible to drag pull the bandwidth larger than
+  the displayed bandwidth. And once pulled larger, it can no longer be
+  pulled smaller again"): the main display's drag was capped only at 2.4
+  MHz, a pane's followed the pointer out of the pane (a154709 had made a
+  pane's clipped edges grabbable, nothing more), and every drag counted from
+  the HIDDEN edge - the pointer first had to cover the off-plot part before
+  the edge moved (2.4 MHz at 1x: 100 px in on a 916 px plot left 1.98 MHz,
+  the bar unchanged; zoomed to +-30 kHz, 300 px in took 200 -> 161 kHz, the
+  bar still full width). Checked in headless Chromium over CDP with real
+  mouse events (job scratch, not kept): main display, waterfall and pane -
+  growth capped at the band, a 2.4 MHz VFO's clipped edge followed the
+  pointer from the first pixel, zoomed in too, outward wobble on a clipped
+  edge kept the width (the VFO's own, after review: the first version cut it
+  to the band on a mere press), ordinary widen / narrow / 1 kHz and wideband scan's
+  2.4 MHz unchanged.
   The card's BW row: ONE number box in kHz (the user's request 2026-10-21 -
   first it was a list of the 59 `BW_EFFICIENT` sizes + "(custom)" and a ✎
   text field): `<input type=number id=dec-bw-<id> min 1 max 2400 step any>`;

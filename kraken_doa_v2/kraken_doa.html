@@ -2584,7 +2584,7 @@ let ws,fftPlot,audioEngine,activeChannel=0,currentAveraging=85,
     fmEnabled=true,doaEnabled=true,currentTopology='UCA',
     audioInitialized=false,currentBandwidth=7,currentCenterFreq=100,currentFrequencies=[],
     currentMagnitudes=[],isDragging=false,dragStartX=0,isDraggingEdge=false,draggedEdge=null,pendingOffsetTimeout=null,
-    dragStartBandwidth=null,dragStartOffset=null,activeDecimatorId=0,currentEdgeClip=0.8,fullFrequencies=[],fullMagnitudes=[],
+    edgeDrag=null,dragStartOffset=null,activeDecimatorId=0,currentEdgeClip=0.8,fullFrequencies=[],fullMagnitudes=[],
     // spectrum views (FFT type 7, "SPECTRUM VIEWS" block): the last main
     // frame, the views asked for per display ({lo, hi, bins, at, t})
     specMain=null,specViewSent={},specViewSeq=0,
@@ -2861,7 +2861,8 @@ const BW_EFFICIENT = (() => {   // ascending Hz
   return a;
 })();
 let bwServerHz = false;   // the receiver takes SET_DECIMATOR_BW_HZ (its decimator_info has bandwidth_hz)
-// a pane VFO's side clipped at the plot border keeps its edge this far inside (paneDrawOverlay)
+// a VFO's side clipped at the plot border keeps its edge this far inside
+// (paneDrawOverlay, drawBox, WaterfallDisplay.drawOverlay; bwEdgeDragBegin)
 const PANE_CLIP_EDGE_PX = 5;
 function bwClampHz(hz) {
   hz = Math.round(+hz);
@@ -2918,14 +2919,47 @@ function refreshWidebandCoverage() {
   if (wbs) wbs.textContent = 'Status: Enabled (~' + widebandCoverageMhz() + ' MHz coverage)';
 }
 
-function maxOffsetHz(bwMhz) {
-  // Wideband: the stitched spectrum is every open tuner's edge-clipped
-  // 2.4 MHz side by side (FFTProcessor::stitch_wideband_fft). The old fixed
-  // 9.6 MHz assumed 5 tuners at 0.8 clip and then clipped it again - too
-  // narrow on 5 tuners, past the edge on a 4-tuner KerberosSDR.
+// The band (MHz) the main display shows at 1x: the tuner's edge-clipped
+// 2.4 MHz, or in wideband scan mode every open tuner's side by side
+// (FFTProcessor::stitch_wideband_fft). The old fixed 9.6 MHz assumed 5
+// tuners at 0.8 clip and then clipped it again - too narrow on 5 tuners,
+// past the edge on a 4-tuner KerberosSDR.
+function vfoBandMhz() {
   const tuners = widebandEnabled ? activeNumElements : 1;
-  const visible = tuners * 2.4 * currentEdgeClip;
-  return Math.max(0, (visible - bwMhz) * 500000);
+  return tuners * 2.4 * currentEdgeClip;
+}
+function maxOffsetHz(bwMhz) {
+  return Math.max(0, (vfoBandMhz() - bwMhz) * 500000);
+}
+
+// ---- Bar-edge drags (main display + waterfall: pointerDown / pointerMove;
+// independent panes: paneDown / paneMove) ----
+// The edge follows the pointer (its x held inside the plot) and the centre
+// stays, so the width changes by twice the movement - but never past the
+// band the display shows (bandMhz: vfoBandMhz / the pane's sr x edge clip).
+// Before, the main display's drag went up to 2.4 MHz (wider than the 1.92
+// MHz of a 0.8 edge clip) and a pane's followed the pointer out of the pane.
+// A VFO can still be wider than the plot (a typed width, a decoder's 2.4
+// MHz, a narrower edge clip, zoomed in): its side beyond the plot is drawn
+// clipped, the edge just inside the border (PANE_CLIP_EDGE_PX). A drag of
+// such an edge counts from where it is DRAWN, not from the hidden edge:
+// from the hidden edge the pointer first had to cover the hidden part
+// before anything moved (12 % of the plot for 2.4 MHz at 1x, more than the
+// whole plot zoomed in) - the user's report "once pulled larger, it can no
+// longer be pulled smaller again". A clipped edge only comes in: moved
+// outward (or just pressed), the VFO keeps the width it had - also one wider
+// than the band (a decoder's 2.4 MHz must survive a touch on its edge).
+function bwEdgeDragBegin(edge, centreMhz, bwMhz, drawnMhz, clipped) {
+  const toEdge = edge === 'left' ? centreMhz - drawnMhz : drawnMhz - centreMhz;
+  clipped = !!clipped && toEdge > 0;   // (the centre off the plot too: as before)
+  return {edge, bw0Hz: Math.round(bwMhz * 1e6), b0: clipped ? Math.min(bwMhz, 2 * toEdge) : bwMhz, clipped};
+}
+// the width (Hz) for drag dr after the pointer moved dfMhz
+function bwEdgeDragHz(dr, dfMhz, bandMhz) {
+  const maxHz = bandMhz > 0 ? bwClampHz(bandMhz * 1e6) : BW_MAX_HZ;
+  const grow = dr.edge === 'left' ? -dfMhz : dfMhz;   // > 0 = outward
+  if (dr.clipped && grow >= 0) return dr.bw0Hz;   // also a press with no movement: unchanged
+  return Math.min(bwUserHz((dr.b0 + 2 * grow) * 1e6), maxHz);
 }
 
 // Center frequency of the FFT frame currently on screen (null until the first
@@ -3033,7 +3067,7 @@ window.addEventListener('mouseup', () => {
     isDragging = false;
     isDraggingEdge = false;
     draggedEdge = null;
-    dragStartBandwidth = null;
+    edgeDrag = null;
     dragStartOffset = null;
     // Same server-echo protection the canvas handlers apply on drag end
     if (pendingOffsetTimeout) clearTimeout(pendingOffsetTimeout);
@@ -3339,8 +3373,8 @@ class WaterfallDisplay {
         }
 
         ctx.fillStyle = color + 'aa';
-        ctx.fillRect(box.x - 2, h/2 - 12, 4, 24);
-        ctx.fillRect(box.x + box.w - 2, h/2 - 12, 4, 24);
+        ctx.fillRect((box.xl ?? box.x) - 2, h/2 - 12, 4, 24);
+        ctx.fillRect((box.xr ?? box.x + box.w) - 2, h/2 - 12, 4, 24);
       });
       this.drawLockedLines(decimatorInfo, centerFreq);
       return;
@@ -3377,12 +3411,18 @@ class WaterfallDisplay {
       let pxMax = this.plotLeft + ((freqMax - minFreq) / freqRange) * this.plotWidth;
       const pxCenter = this.plotLeft + ((selCenter - minFreq) / freqRange) * this.plotWidth;
 
-      // Clamp both edges to canvas bounds
-      pxMin = Math.max(0, Math.min(w, pxMin));
-      pxMax = Math.max(0, Math.min(w, pxMax));
+      // Clamp both edges to the plot area (the data's; the canvas also has
+      // the axis gutters): a clipped side keeps its edge just inside, as on
+      // the spectrum (drawBox)
+      const pl = this.plotLeft, pr = this.plotLeft + this.plotWidth;
+      const clipL = pxMin < pl, clipR = pxMax > pr;
+      pxMin = Math.max(pl, Math.min(pr, pxMin));
+      pxMax = Math.max(pl, Math.min(pr, pxMax));
 
       const bx = Math.min(pxMin, pxMax);
       const bw = Math.abs(pxMax - pxMin);
+      const inset = bw > 4 * PANE_CLIP_EDGE_PX ? PANE_CLIP_EDGE_PX : 0;
+      const xl = clipL ? bx + inset : bx, xr = clipR ? bx + bw - inset : bx + bw;
 
       // Store box info
       const handleHeight = 24;
@@ -3395,8 +3435,9 @@ class WaterfallDisplay {
         y: 0,
         w: bw,
         h: h,
-        left_edge: {x: bx-5, y: 0, w: 10, h: h},
-        right_edge: {x: bx+bw-5, y: 0, w: 10, h: h},
+        left_edge: {x: xl-5, y: 0, w: 10, h: h},
+        right_edge: {x: xr-5, y: 0, w: 10, h: h},
+        xl, xr, clipL, clipR,
         handleMiddle: {x: bx, y: handleY, w: bw, h: handleHeight},
         handleColor: handleColor,
         color: color,
@@ -3421,8 +3462,8 @@ class WaterfallDisplay {
 
       // Draw edge handles
       ctx.fillStyle = color + 'aa';
-      ctx.fillRect(bx - 2, h/2 - 12, 4, 24);
-      ctx.fillRect(bx + bw - 2, h/2 - 12, 4, 24);
+      ctx.fillRect(xl - 2, h/2 - 12, 4, 24);
+      ctx.fillRect(xr - 2, h/2 - 12, 4, 24);
 
       // Draw center line (dashed)
       ctx.strokeStyle = color + '88';
@@ -3452,7 +3493,7 @@ class WaterfallDisplay {
     } else {
       const activeBox = this.overlay.boxes.find(b => b.id === activeDecimatorId);
       if (activeBox && this.overlay.hoveredEdge) {
-        const edgeX = this.overlay.hoveredEdge === 'left' ? activeBox.x : activeBox.x + activeBox.w;
+        const edgeX = this.overlay.hoveredEdge === 'left' ? activeBox.xl : activeBox.xr;
         ctx.fillStyle = activeBox.color + 'aa';
         ctx.fillRect(edgeX - 3, h/2 - 16, 6, 32);
         this.overlay.style.cursor = 'ew-resize';
@@ -4817,8 +4858,8 @@ function drawBox() {
 
       // Draw edge handles
       ctx.fillStyle = color;
-      ctx.fillRect(box.x-2, h/2-15, 4, 30);
-      ctx.fillRect(box.x+box.w-2, h/2-15, 4, 30);
+      ctx.fillRect((box.xl ?? box.x)-2, h/2-15, 4, 30);
+      ctx.fillRect((box.xr ?? box.x+box.w)-2, h/2-15, 4, 30);
 
       // Draw label
       ctx.fillStyle = color;
@@ -4849,6 +4890,11 @@ function drawBox() {
 
     let pxMin = u.valToPos(minF, 'x');
     let pxMax = u.valToPos(maxF, 'x');
+    // a side beyond the plot (zoomed in, or a VFO wider than the band shown)
+    // is drawn at the border, its edge PANE_CLIP_EDGE_PX inside it (the
+    // panes' rule; at the border half the edge was off the canvas) - see
+    // bwEdgeDragBegin for how such an edge drags
+    const clipL = pxMin < 0, clipR = pxMax > w;
 
     pxMin = Math.max(0, Math.min(w, pxMin));
     pxMax = Math.max(0, Math.min(w, pxMax));
@@ -4863,6 +4909,8 @@ function drawBox() {
       bx = (pxMin + pxMax) / 2 - MIN_BOX_PX / 2;
       bw2 = MIN_BOX_PX;
     }
+    const inset = bw2 > 4 * PANE_CLIP_EDGE_PX ? PANE_CLIP_EDGE_PX : 0;
+    const xl = clipL ? bx + inset : bx, xr = clipR ? bx + bw2 - inset : bx + bw2;
 
     // Middle grab handle dimensions
     const handleHeight = 24;
@@ -4876,8 +4924,9 @@ function drawBox() {
       y: 0,
       w: bw2,
       h: h,
-      left_edge: {x: bx-5, y: 0, w: 10, h: h},
-      right_edge: {x: bx+bw2-5, y: 0, w: 10, h: h},
+      left_edge: {x: xl-5, y: 0, w: 10, h: h},
+      right_edge: {x: xr-5, y: 0, w: 10, h: h},
+      xl, xr, clipL, clipR,
       handleMiddle: {x: bx, y: handleY, w: bw2, h: handleHeight},
       handleColor: handleColor,
       color: color,
@@ -4902,8 +4951,8 @@ function drawBox() {
 
     // Draw edge handles (for resizing) - positioned at middle
     ctx.fillStyle = color;
-    ctx.fillRect(bx-2, h/2-15, 4, 30);
-    ctx.fillRect(bx+bw2-2, h/2-15, 4, 30);
+    ctx.fillRect(xl-2, h/2-15, 4, 30);
+    ctx.fillRect(xr-2, h/2-15, 4, 30);
 
     // Draw label (at top)
     ctx.fillStyle = color;
@@ -4925,7 +4974,7 @@ function drawBox() {
       c.style.cursor = 'grab';
     }
   } else if (activeBox && c.hoveredEdge) {
-    const edgeX = c.hoveredEdge === 'left' ? activeBox.x : activeBox.x + activeBox.w;
+    const edgeX = c.hoveredEdge === 'left' ? activeBox.xl : activeBox.xr;
     ctx.fillStyle = activeBox.color + 'cc'; // 80% opacity
     ctx.fillRect(edgeX - 3, h/2-20, 6, 40);
     c.style.cursor = 'ew-resize';
@@ -5074,6 +5123,7 @@ const fftSurface = {
   canMap: () => true,
   xToMhz: x => fftPlot.posToVal(x, 'x'),
   dxToMhz: dx => fftPlot.posToVal(dx, 'x') - fftPlot.posToVal(0, 'x'),
+  plotX: () => [0, fftPlot.over.clientWidth],   // the plot area's x range (the 'fo' canvas is it)
   hoverRedraw: () => drawBox()
 };
 const wfSurface = {
@@ -5089,6 +5139,7 @@ const wfSurface = {
     const f = waterfall.lastFrequencies;
     return (dx / waterfall.plotWidth) * (f[f.length - 1] - f[0]);
   },
+  plotX: () => [waterfall.plotLeft, waterfall.plotLeft + waterfall.plotWidth],
   hoverRedraw: (c, cursor) => {
     c.style.cursor = cursor;
     waterfall.drawOverlay(decimatorInfo, barCenterFreq(), activeDecimatorId);
@@ -5223,12 +5274,18 @@ function pointerDown(s, e) {
     for(const box of c.boxes) {
       if(box.id !== activeDecimatorId) continue;
       const edge = inRect(x, y, box.left_edge) ? 'left' : inRect(x, y, box.right_edge) ? 'right' : null;
-      if(edge) {
+      const dec = edge ? decimatorInfo.find(d => d.id === box.id) : null;
+      if(dec) {
         isDraggingEdge = true;
         draggedEdge = edge;
-        dragStartX = x;
-        dragStartBandwidth = box.bandwidth_hz / 1e6;
-        dragStartOffset = box.offset_hz;
+        const [px0, px1] = s.plotX();
+        dragStartX = Math.max(px0, Math.min(px1, x));
+        // from the edge where it is drawn (bwEdgeDragBegin; the decimator's
+        // own width / offset - a pan lock's saved boxes are only pixels)
+        const left = edge === 'left';
+        edgeDrag = bwEdgeDragBegin(edge, barCenterFreq() + dec.freq_offset_hz / 1e6, decBwMhz(dec),
+                                   s.xToMhz(left ? (box.xl ?? box.x) : (box.xr ?? box.x + box.w)), left ? box.clipL : box.clipR);
+        dragStartOffset = dec.freq_offset_hz;
         e.preventDefault();
         drawBox();
         return;
@@ -5254,16 +5311,10 @@ function pointerDown(s, e) {
     const fo = $id('fo');
     if (fo && fo.boxes) {
       scrollDragSavedBoxes = fo.boxes.map(box => ({
-        id: box.id,
-        x: box.x,
-        y: box.y,
-        w: box.w,
-        h: box.h,
+        ...box,   // (id, x / w, the edges xl / xr / clipL / clipR, colours, ...)
         handleMiddle: box.handleMiddle ? {...box.handleMiddle} : null,
         left_edge: {...box.left_edge},
-        right_edge: {...box.right_edge},
-        color: box.color,
-        handleColor: box.handleColor
+        right_edge: {...box.right_edge}
       }));
     }
     c.style.cursor = 'grabbing';
@@ -5322,10 +5373,11 @@ function pointerMove(s, e) {
   }
 
   if(isDraggingEdge) {
-    const df=s.dxToMhz(x-dragStartX);
-    const dbw=draggedEdge==='left'?dragStartBandwidth-df*2:dragStartBandwidth+df*2;
-    // any width (3 significant figures), or the nearest efficient size
-    const newHz = bwUserHz(dbw * 1e6);
+    // the edge stays on the plot (a touch drag goes on outside the canvas)
+    const [px0, px1] = s.plotX();
+    const df=s.dxToMhz(Math.max(px0, Math.min(px1, x))-dragStartX);
+    // any width (3 significant figures), no wider than the band shown
+    const newHz = bwEdgeDragHz(edgeDrag, df, vfoBandMhz());
     showBwTooltip(e, newHz / 1e6);
 
     // Find active decimator info
@@ -5463,7 +5515,7 @@ function pointerUp(s, e) {
     isDraggingEdge=false;
     suppressNextClick = true;
     draggedEdge=null;
-    dragStartBandwidth=null;
+    edgeDrag=null;
     dragStartOffset=null;
     // Set timeout to protect against server overwriting our local offset
     if (pendingOffsetTimeout) clearTimeout(pendingOffsetTimeout);
@@ -9208,9 +9260,9 @@ function paneDrawOverlay(p) {
     // clipped to the plot area (zoomed in, or a VFO wider than the band the
     // pane shows - 2.4 MHz with the edge clip -, a VFO can be partly or wholly
     // outside it). A clipped side keeps its edge just inside the plot border
-    // (PANE_CLIP_EDGE_PX, as the main display's at the canvas border): the
-    // edge drag changes the width from where it started, so it resizes
-    // alike - without it a full-width VFO couldn't be resized at all
+    // (PANE_CLIP_EDGE_PX, as the main display's): its edge drag starts from
+    // where the edge is drawn (bwEdgeDragBegin) - without the edge a
+    // full-width VFO couldn't be resized at all
     const L = p.L, R = p.sw - 4;
     if (x1 < L || x0 > R) continue;
     const clipL = x0 < L, clipR = x1 > R;
@@ -9324,9 +9376,11 @@ function paneDown(p, e) {
     return;
   }
   if (ht && ht.kind === 'edge') {
-    // bandwidth: the edge moves, the centre stays (like the main display)
-    const s = paneSpan(p), W = Math.max(10, p.sw - p.L - 4);
-    paneDrag = {p, id: ht.bar.id, edge: ht.edge, x0: x, bw0: ht.bar.bw, mhzPerPx: (s[1] - s[0]) / W, pointerId: e.pointerId};
+    // bandwidth: the edge moves, the centre stays (like the main display);
+    // a clipped side from where its edge is drawn (bwEdgeDragBegin)
+    const s = paneSpan(p), W = Math.max(10, p.sw - p.L - 4), b = ht.bar, left = ht.edge === 'left';
+    paneDrag = {p, id: b.id, edge: ht.edge, x0: Math.max(p.L, Math.min(p.sw - 4, x)), mhzPerPx: (s[1] - s[0]) / W, pointerId: e.pointerId,
+                ed: bwEdgeDragBegin(ht.edge, p.freqMhz + b.offset_hz / 1e6, b.bw, paneFreqAt(p, left ? b.xl : b.xr), left ? b.clipL : b.clipR)};
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
     e.preventDefault();
     return;
@@ -9376,10 +9430,10 @@ function paneMove(p, e) {
     return;
   }
   if (paneDrag.edge) {
-    const df = (x - paneDrag.x0) * paneDrag.mhzPerPx;
-    const dbw = paneDrag.edge === 'left' ? paneDrag.bw0 - df * 2 : paneDrag.bw0 + df * 2;
-    // any width (3 significant figures), or the nearest efficient size
-    const hz = bwUserHz(dbw * 1e6);
+    // the edge stays on the plot (the captured pointer goes on outside the pane)
+    const df = (Math.max(p.L, Math.min(p.sw - 4, x)) - paneDrag.x0) * paneDrag.mhzPerPx;
+    // any width (3 significant figures), no wider than the pane's band
+    const hz = bwEdgeDragHz(paneDrag.ed, df, (p.sr / 1e6) * currentEdgeClip);
     showBwTooltip(e, hz / 1e6);
     const d = (decimatorInfo || []).find(z => z.id === paneDrag.id);
     if (d && hz !== decBwHz(d)) {
