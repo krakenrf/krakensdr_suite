@@ -65,7 +65,7 @@ STATUS_FILE_LIMIT = 1 << 20
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(SCRIPT_DIR)
 
-REASONS = {200: "OK", 400: "Bad Request", 405: "Method Not Allowed",
+REASONS = {403: "Forbidden", 200: "OK", 400: "Bad Request", 405: "Method Not Allowed",
            431: "Request Header Fields Too Large", 503: "Service Unavailable"}
 
 COMMON_HEADERS = (
@@ -194,6 +194,50 @@ def drain(conn):
         pass
 
 
+def _allowed_names():
+    names = ["localhost"]
+    try:
+        h = socket.gethostname().lower().rstrip(".")
+    except OSError:
+        h = ""
+    if h:
+        bare = h.split(".", 1)[0]
+        names.append(h)
+        names += [bare + sfx for sfx in ("", ".local", ".lan", ".home", ".localdomain", ".home.arpa")]
+    for item in os.environ.get("KRAKEN_ALLOWED_HOSTS", "").split(","):
+        item = item.strip().lower().rstrip(".")
+        if item:
+            names.append(item)
+    return frozenset(names)
+
+
+ALLOWED_NAMES = _allowed_names()
+
+
+def host_allowed(host):
+    """The Host header names this machine: an IP literal, localhost, the
+    hostname (+ .local & co.) or a KRAKEN_ALLOWED_HOSTS name; none = allowed
+    (the same rules as heimdall_v2/src/core/host_check.hpp)."""
+    if not host:
+        return True
+    if host.startswith("["):                       # [IPv6]:port
+        end = host.find("]")
+        if end < 0:
+            return False
+        try:
+            socket.inet_pton(socket.AF_INET6, host[1:end])
+            return True
+        except (OSError, ValueError):
+            return False
+    host = host.rsplit(":", 1)[0] if ":" in host else host
+    host = host.lower().rstrip(".")
+    try:
+        socket.inet_pton(socket.AF_INET, host)
+        return True
+    except (OSError, ValueError):
+        return host in ALLOWED_NAMES
+
+
 def handle_request(conn, page, status_path):
     head = read_head(conn)
     if head is None:
@@ -215,6 +259,11 @@ def handle_request(conn, page, status_path):
         if sep:
             headers[k.strip().lower()] = v.strip().lower()
 
+    # Host allow-list (DNS rebinding), the rules of the apps' host_check.hpp
+    if not host_allowed(headers.get(b"host", b"").decode("latin-1")):
+        respond(conn, 403, "text/plain; charset=utf-8", b"Host not allowed\n")
+        drain(conn)
+        return
     if b"websocket" in headers.get(b"upgrade", b""):
         # an open tab of the real UI reconnecting: no 101, it retries later
         respond(conn, 503, "text/plain; charset=utf-8",

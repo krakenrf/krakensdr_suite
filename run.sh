@@ -294,8 +294,10 @@ fi
 # full 10 s. `keep` leaves the session itself open (see inside_session).
 stop_session() {
     local pids pid alive
-    pids=$(tmux list-panes -s -t "$SESSION" -F '#{pane_pid} #{pane_start_command}' 2>/dev/null |
-           awk '/__supervise|__client_pane|__build_pane/ {print $1}')
+    # live panes only: a dead one's pid (remain-on-exit) may be reused - or a
+    # zombie tmux hasn't reaped yet (seen after a failed build), which held this 10 s
+    pids=$(tmux list-panes -s -t "$SESSION" -F '#{pane_pid} #{pane_dead} #{pane_start_command}' 2>/dev/null |
+           awk '$2 == "0" && /__supervise|__client_pane|__build_pane/ {print $1}')
     for pid in $pids; do
         kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
     done
@@ -332,7 +334,9 @@ stop_stale() {
     uid=$(id -u)
     my_pgid=$(ps -o pgid= -p $$ | tr -d ' ')
     pids=$( { pgrep -u "$uid" -x heimdall; pgrep -u "$uid" -x kraken_doa
-              pgrep -u "$uid" -f -- "$SELF __(supervise|client_pane|build_pane)"; } 2>/dev/null | sort -un)
+              pgrep -u "$uid" -f -- "$SELF __(supervise|client_pane|build_pane)"
+              # a headless run's build (its group = that run.sh): two makes in one tree
+              pgrep -u "$uid" -f -- "$AUTOBUILD build"; } 2>/dev/null | sort -un)
     for pid in $pids; do
         pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
         # our own process group is this run, never stale
@@ -391,7 +395,8 @@ stop_build_page() {
     [[ -f "$BUILD_PAGE_PID" ]] && pid="$(head -n 1 "$BUILD_PAGE_PID" 2>/dev/null | tr -dc '0-9')"
     build_page_pid_ok "$pid" && pids="$pid"
     # one whose pidfile isn't written yet (still binding) or is gone
-    for p in $(pgrep -u "$(id -u)" -f -- "$BUILD_PAGE" 2>/dev/null); do
+    # (with its first argument: not an editor or a `less` that has the file open)
+    for p in $(pgrep -u "$(id -u)" -f -- "$BUILD_PAGE --status" 2>/dev/null); do
         [[ " $pids " == *" $p "* ]] || pids="$pids $p"
     done
     pids="${pids# }"
@@ -502,9 +507,10 @@ build_and_report() {
         return 0
     fi
     err="$(build_error)"
-    # an app is fine when it was built now, or its older build was made for this CPU
-    if { "$AUTOBUILD" check heimdall >/dev/null 2>&1 || [[ "$h_old" == "1" ]]; } &&
-       { "$AUTOBUILD" check kraken_doa >/dev/null 2>&1 || [[ "$k_old" == "1" ]]; }; then
+    # an app is fine when it was built now, or its older build was made for this
+    # CPU and is still there (a failed link deletes the executable)
+    if { "$AUTOBUILD" check heimdall >/dev/null 2>&1 || [[ "$h_old" == "1" && -x "$HEIMDALL_DIR/heimdall" ]]; } &&
+       { "$AUTOBUILD" check kraken_doa >/dev/null 2>&1 || [[ "$k_old" == "1" && -x "$KRAKEN_DIR/kraken_doa" ]]; }; then
         echo "${RED}${BOLD}" >&2
         echo "  !!! THE BUILD FAILED - starting the OLDER build that is still here !!!" >&2
         echo "  ${err:-see ${BUILD_LOG}}" >&2

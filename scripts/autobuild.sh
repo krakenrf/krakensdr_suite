@@ -43,6 +43,9 @@ usage() { sed -n '/^# Usage:/,/^# Bash 3.2/s/^# \{0,1\}//p' "${BASH_SOURCE[0]}";
 HOST_CPU="$(sed -n -E 's/^(CPU part|model name)[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo 2>/dev/null |
             LC_ALL=C sort -u | LC_ALL=C tr -c 'A-Za-z0-9._\n-' '_' | paste -sd+ - 2>/dev/null)"
 ARCH="$(uname -m)"
+# macOS force-includes mac/posix_compat.h + mac/fast_complex.h (both apps' Makefiles)
+MAC_DIR_H="" MAC_DIR_K=""
+[[ "$(uname -s)" == Darwin ]] && MAC_DIR_H="$H/mac" MAC_DIR_K="$K/mac"
 
 REASONS=""
 need() { REASONS="${REASONS}${REASONS:+; }$*"; }
@@ -73,6 +76,15 @@ stamp_ok() {
         [[ "$strict" == 1 ]] && need "$(rel "$f") names no CPU (built before the stamp did, maybe elsewhere)" && return 1
     fi
     return 0
+}
+
+# A flags stamp newer than what is built from it ($2): make rewrote it at the
+# start of a build that didn't get to the end (interrupted, or failed) - the
+# executable may still be the one for the old flags / another CPU
+stamp_older() {
+    [[ "$1" -nt "$2" ]] || return 0
+    need "$(rel "$1") is newer than $(rel "$2") (a build for new flags did not finish)"
+    return 1
 }
 
 # liquid-dsp's stamp (LIQUID_STAMP in liquid.mk): "<commit>[ cpu <id>]"
@@ -142,8 +154,9 @@ check_heimdall() {   # sets REASONS; 0 = up to date
     local exe="$H/heimdall" ref f
     if [[ ! -x "$exe" ]]; then need "no executable $(rel "$exe")"; return 1; fi
     stamp_ok "$H/build/.flags" 1 || return 1
+    stamp_older "$H/build/.flags" "$exe" || return 1
     ref="$(ref_file "$exe" "$OK_STAMP_H")"
-    f="$(newer_source "$ref" "$H/src" "$H/external" "$H/config.h" "$H/Makefile")"
+    f="$(newer_source "$ref" "$H/src" "$H/external" "$H/config.h" "$H/Makefile" ${MAC_DIR_H:+"$MAC_DIR_H"})"
     [[ -n "$f" ]] && { need "$(rel "$f") is newer than the build"; return 1; }
     uws_ok "$H" || return 1
     local lib="$R/build/src/librtlsdr.a"
@@ -160,11 +173,13 @@ check_kraken() {
     local exe="$K/kraken_doa" ref f
     if [[ ! -x "$exe" ]]; then need "no executable $(rel "$exe")"; return 1; fi
     stamp_ok "$K/obj/.flags" 1 || return 1
+    stamp_older "$K/obj/.flags" "$exe" || return 1
     liquid_ok 1 || return 1
     if [[ ! -f "$K/plugins/lib/build/libkrakendig.a" ]]; then need "decoder plugins not built"; return 1; fi
     stamp_ok "$K/plugins/lib/build/.flags" 1 || return 1
+    stamp_older "$K/plugins/lib/build/.flags" "$K/plugins/lib/build/libkrakendig.a" || return 1
     ref="$(ref_file "$exe" "$OK_STAMP_K")"
-    f="$(newer_source "$ref" "$K/src" "$K/include" "$K/external" "$K/Makefile" "$K/liquid.mk" "$K/plugins")"
+    f="$(newer_source "$ref" "$K/src" "$K/include" "$K/external" "$K/Makefile" "$K/liquid.mk" "$K/plugins" ${MAC_DIR_K:+"$MAC_DIR_K"})"
     [[ -n "$f" ]] && { need "$(rel "$f") is newer than the build"; return 1; }
     uws_ok "$K" || return 1
     return 0
@@ -255,8 +270,9 @@ mkdir -p "$(dirname "$STATUS")" "$(dirname "$LOG")" || exit 1
 export AB_ROOT="$ROOT" AB_JOBS="$JOBS" AB_STATUS="$STATUS" AB_LOG="$LOG" AB_APPS="$APPS" AB_WHY="$WHY"
 export AB_OK_H="$OK_STAMP_H" AB_OK_K="$OK_STAMP_K"
 # The build itself: python runs make, parses its output for the progress and
-# writes the status file (the progress model: docs/dev/run-and-deploy.md)
-exec python3 - <<'PY'
+# writes the status file (the progress model: docs/dev/run-and-deploy.md).
+# The arguments only name it in `ps` (run.sh's stale sweep finds a build by them)
+exec python3 - "$ROOT/scripts/autobuild.sh" build <<'PY'
 import json, os, re, shutil, signal, subprocess, sys, threading, time
 from collections import deque
 
@@ -355,6 +371,8 @@ def deps_newer(dfile, obj_t, base):
 
 def stale_objects(app_dir, srcs, objdir, depdir, all_stale):
     out = []
+    # the objects depend on the flags stamp (an interrupted build after a flags change)
+    stamp_t = mtime(os.path.join(app_dir, objdir, ".flags")) or 0
     for s in srcs:
         rel = s[len("src/"):]
         obj = os.path.join(app_dir, objdir, rel[:-4] + ".o")
@@ -362,7 +380,7 @@ def stale_objects(app_dir, srcs, objdir, depdir, all_stale):
             out.append(s); continue
         ot = mtime(obj)
         st = mtime(os.path.join(app_dir, s))
-        if ot is None or st is None or st > ot:
+        if ot is None or st is None or st > ot or stamp_t > ot:
             out.append(s); continue
         dfile = os.path.join(app_dir, depdir, rel[:-4] + ".d")
         if deps_newer(dfile, ot, app_dir):
@@ -419,7 +437,7 @@ def plan_heimdall():
         add("h:" + s, app, "heimdall", W_HOBJ, "Compiling " + s)
     for p in ("pffft", "pffft_common"):
         o = os.path.join(H, "build", "pffft", p + ".o")
-        if all_stale or mtime(o) is None:
+        if all_stale or (mtime(o) or 0) < (mtime(os.path.join(H, "build", ".flags")) or 1):
             add("h:external/pffft/%s.c" % p, app, "heimdall", W_PFFFT, "Compiling external/pffft/%s.c" % p)
     exe = os.path.join(H, "heimdall")
     if stale or rtl_build or mtime(exe) is None or all_stale or \
@@ -446,7 +464,8 @@ def plan_kraken():
     for s in stale:
         add("k:" + s, app, "kraken_doa", W_KOBJ, "Compiling " + s)
     for p in ("pffft", "pffft_common"):
-        if all_stale or mtime(os.path.join(K, "obj", "pffft", p + ".o")) is None:
+        if all_stale or (mtime(os.path.join(K, "obj", "pffft", p + ".o")) or 0) < \
+                (mtime(os.path.join(K, "obj", ".flags")) or 1):
             add("k:external/pffft/%s.c" % p, app, "kraken_doa", W_PFFFT, "Compiling external/pffft/%s.c" % p)
     exe = os.path.join(K, "kraken_doa")
     if stale or liquid or all_stale or mtime(exe) is None:
@@ -465,12 +484,18 @@ def plan_plugins(liquid):
                 hdr_t = max(hdr_t, mtime(os.path.join(P, d, f)) or 0)
     lib_objs = [(f[:-4], os.path.join(P, "lib", f)) for f in sorted(os.listdir(os.path.join(P, "lib")))
                 if f.endswith(".cpp")] if os.path.isdir(os.path.join(P, "lib")) else []
-    lib_objs += [("pffft", None), ("pffft_common", None), ("kproc", None), ("fs_compat", None)]
+    # objects from kraken_doa's own files (plugins/Makefile): their sources only
+    # (a changed fs_compat.cpp relinks every plugin - it went unplanned, 91 % at 6 of 34 steps)
+    own = {"pffft": ["external/pffft/pffft.c", "external/pffft/pffft.h"],
+           "pffft_common": ["external/pffft/pffft_common.c", "external/pffft/pffft.h"],
+           "kproc": ["src/utils/process_posix.cpp", "include/utils/process.hpp"],
+           "fs_compat": ["src/utils/fs_compat.cpp", "include/utils/fs_compat.hpp"]}
     lib_stale = False
-    for name, src in lib_objs:
+    for name, src in lib_objs + [(n, None) for n in own]:
         o = os.path.join(lbd, name + ".o")
         ot = mtime(o)
-        if all_stale or ot is None or (src and ((mtime(src) or 0) > ot or hdr_t > ot)):
+        own_t = max([mtime(os.path.join(K, f)) or 0 for f in own.get(name, [])] or [0])
+        if all_stale or ot is None or own_t > ot or (src and ((mtime(src) or 0) > ot or hdr_t > ot)):
             w = W_PFFFT if name.startswith("pffft") else W_LIBOBJ
             add("p:lib/" + name, app, "decoder plugins", w, "Compiling plugins/lib " + name)
             lib_stale = True
@@ -726,7 +751,7 @@ def summarize_error(lines, app):
         if RE_NET.search(l):
             return "%s build failed - a download failed (network needed for the first build): %s" % (app, l.strip()[:300])
     for l in lines:
-        if re.search(r"(fatal error|\berror:)", l):
+        if re.search(r"(fatal error|\berror:|undefined reference to)", l):
             return "%s build failed: %s" % (app, l.strip()[:300])
     for l in lines:
         if RE_ERR.search(l) and not l.startswith("make") :
@@ -849,7 +874,21 @@ def main():
             os.makedirs(os.path.dirname(OK_STAMP[a]), exist_ok=True)
             with open(OK_STAMP[a], "w") as f:
                 f.write("%d\n" % int(t_app))
-            os.utime(OK_STAMP[a], (t_app, t_app))
+            # A source dated in the future (the clock went back: a Pi without
+            # an RTC booting offline) would be "newer than the build" at every
+            # start until the clock catches up - the stamp is dated past it
+            t_ok = t_app
+            now = time.time()
+            for root, dirs, files in os.walk(APP_DIR[a]):
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                for fn in files:
+                    if fn.endswith((".cpp", ".hpp", ".h", ".c", ".mk")) or fn in ("Makefile", "CXXFLAGS", "LICENSE"):
+                        t = mtime(os.path.join(root, fn)) or 0
+                        if t > now:
+                            t_ok = max(t_ok, t)
+            if t_ok > t_app:
+                emit("autobuild: warning - source files are dated in the future (is the clock right?)")
+            os.utime(OK_STAMP[a], (t_ok, t_ok))
         except OSError:
             pass
         emit("autobuild: %s built in %d s" % (a, time.time() - t_app))

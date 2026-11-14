@@ -84,7 +84,9 @@ Flow (run.sh):
    reasons are printed.
 2. The old session is stopped and the stale-process sweep runs as before,
    then any leftover page server (`stop_build_page`: logs/build_page.pid,
-   plus a `pgrep -f` for one whose pidfile isn't written). Only then is
+   plus a `pgrep -f` for `build_page.py --status` whose pidfile isn't
+   written - with the argument, so an editor with the file open is left
+   alone). Only then is
    anything built: the ports are free and no running binary is relinked.
 3. Build with the page up (`build_and_report`): a first status file is
    written (a stale "done" would make the page reload at once), the page
@@ -107,14 +109,21 @@ Flow (run.sh):
    right after creating the session, as before. Headless (`NO_TMUX=1`): the
    build runs in the foreground, then `run_headless`.
 5. `stop_session` and the stale sweep include `__build_pane` panes (their
-   process group holds make and the compilers); `run.sh stop` also stops the
-   page server.
+   process group holds make and the compilers), and the sweep also stops the
+   process group of any other `autobuild.sh build` of this tree (a headless
+   run's build: its python runs as `python3 - <root>/scripts/autobuild.sh
+   build`), so two starts never run two makes in one tree (tested: the first
+   run ends "Build interrupted", the second builds alone); `run.sh stop` also
+   stops the page server.
 
 Failure policy:
 - `autobuild.sh runnable` is evaluated per app BEFORE the build (the build
   rewrites the flags stamps before it relinks). After a failed build an app
   is usable if `check` now passes for it (it was built in this run) or it
-  was runnable before. Both usable -> a loud warning (stderr) with the error
+  was runnable before and its executable is still there (a failed link
+  deletes it: ld removes its output, make the target of an interrupted
+  recipe - this used to announce "starting the OLDER build" with no heimdall
+  left to start). Both usable -> a loud warning (stderr) with the error
   and the apps start (a pull that doesn't compile, no network).
 - Otherwise the status stays "failed" with the error, the page server stays
   up showing it (detached, pidfile), the error is printed and run.sh exits 1
@@ -153,13 +162,19 @@ make, no network, nothing written). An app needs a build when:
   `kraken_doa_v2/plugins/lib/build/.flags`) is missing, or its `| cpu <id>`
   part isn't this machine's CPU (`HOST_CPU`: the same sed pipeline over
   /proc/cpuinfo as the Makefiles - keep them alike), or it names no CPU but
-  says `native` (made before the CPU part existed);
+  says `native` (made before the CPU part existed), or it is newer than
+  what is built from it (the executable; `libkrakendig.a` for the plugins'
+  stamp): make rewrites a stamp at the START of a build for new flags or
+  another CPU, so an interrupted build of a tree copied from another CPU
+  otherwise left this CPU's stamp next to the other CPU's executable and
+  looked up to date (tested: SIGINT 3 s into such a build);
 - liquid-dsp: `libliquid.a` or its `build-kraken/commit` stamp missing, the
   commit isn't `LIQUID_COMMIT` of liquid.mk, or its ` cpu <id>` differs (or
   is missing on x86_64 / aarch64 / armv7l, where liquid.mk adds one);
 - a source (`*.cpp *.hpp *.h *.c Makefile *.mk CXXFLAGS LICENSE`, `build`
   dirs pruned) is newer than the reference: heimdall `src external config.h
-  Makefile`; kraken_doa `src include external Makefile liquid.mk plugins`;
+  Makefile`; kraken_doa `src include external Makefile liquid.mk plugins`
+  (plus each app's `mac/` on macOS, force-included there);
   the reference is the newer of the executable and the success stamp
   (`build/.autobuild_ok` / `obj/.autobuild_ok`, touched to the build's START
   time after a successful build). The success stamp stops rebuild loops for
@@ -170,7 +185,14 @@ make, no network, nothing written). An app needs a build when:
 - heimdall: `librtlsdr/build/src/librtlsdr.a` missing, a fork source newer
   than it, or `librtlsdr.c` without `rtlsdr_finish_tune` (RTLSDR_FIX_MARK).
 Not covered (make doesn't rebuild for them either): compiler / system
-library upgrades, whisper (optional, kraken_doa's make updates it).
+library upgrades, whisper (optional, kraken_doa's make updates it). Also
+not covered: a single plugin's missing `build/decoder` (e.g. a build
+interrupted among the plugins; kraken_doa runs without it, make would build
+it). A source dated in the future (a clock that went back, e.g. a Pi
+without RTC booted offline after a pull) is built once, with a warning: the
+success stamp is then dated past the newest such file, so later starts
+don't rebuild until something newer arrives (before 2026-11-15's review fix
+each start rebuilt until the clock passed it).
 
 ### Status file contract (read by scripts/build_page.py)
 
