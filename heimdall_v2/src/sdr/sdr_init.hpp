@@ -2,6 +2,7 @@
 
 #include "../core/types.hpp"
 #include "sdr_device.hpp"
+#include "noise_off_result.hpp"
 #include <vector>
 #include <memory>
 #include <string>
@@ -62,6 +63,11 @@ bool reopen_device_after_stream_loss(SDRDevice* sdr);
 // low-side injection reaches past uint32); in downconverter mode it programs
 // the LO while the tuners stay parked at the IF.
 void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDRDevice>>& devices);
+// Explicit GPIO0 OFF acknowledgements for the standard internal-noise coherent path.
+// Does not replace the legacy noise switcher for other board/mode paths.
+// A successful receipt confirms driver writes only, not physical voltage.
+NoiseOffReceipt set_standard_internal_noise_off_checked(
+    const std::vector<std::unique_ptr<SDRDevice>>& devices);
 // Per-port antenna bias tees (standard KrakenSDR): bit N of mask powers the
 // bias tee on channel N via GPIO N+1 of the channel-0 chip (GPIO0 is the
 // noise source; cf. rtl_biast -g). Updates antenna_bias_tee_mask, which is

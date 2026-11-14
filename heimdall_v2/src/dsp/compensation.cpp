@@ -3,6 +3,7 @@
 #include "../sdr/sdr_device.hpp"
 #include "../sdr/sdr_pipeline.hpp"
 #include "../sdr/sdr_init.hpp"
+#include "../sdr/downconverter.hpp"
 #include "../sdr/pipeline_control.hpp"
 #include "../core/config.hpp"
 #include <algorithm>
@@ -24,26 +25,68 @@ extern void clear_l1_buffer();
 // turn off the noise-source bias-tee, and auto-disable FFT. Assumes the caller
 // holds phase_compensation->state_mutex.
 static void complete_phase_calibration_locked() {
-    phase_compensation->state = PhaseCompensatorState::CONVERGED;
-    phase_compensation->per_bin_measured = true;
-    // Clears any in-flight coherence recovery: reconvergence ends the recal that
-    // a coherence event armed (harmless no-op for normal startup/settings recal,
-    // where the flag is already false).
-    recovery_in_progress.store(false, std::memory_order_release);
-    std::cout << "Phase: CONVERGED!" << std::endl;
+    // This function's caller owns phase_compensation->state_mutex. The standard
+    // path must keep device_io_mutex around BOTH the checked GPIO0 OFF writes
+    // AND publication of CONVERGED. Otherwise a direct noise-enable command
+    // can interleave between the receipt and the terminal state update.
+    //
+    // No other mutex (including FFT control) is acquired inside that I/O
+    // critical section. Future noise-enable requests require a separate lifecycle gate.
+    const auto publish_converged = []() {
+        phase_compensation->state = PhaseCompensatorState::CONVERGED;
+        phase_compensation->per_bin_measured = true;
+        for (const auto& device : devices)
+            if (device) device->compensation.initial_calibration_complete.store(
+                true, std::memory_order_release);
+        l2_raw_cap.store(L2_RAW_MAX, std::memory_order_relaxed);
+        kerberos_cal_stale.store(false, std::memory_order_release);
+        recovery_in_progress.store(false, std::memory_order_release);
+    };
 
-    for (const auto& device : devices) {
-        if (device) device->compensation.initial_calibration_complete = true;
+#if ENABLE_BIAS_TEE
+    const bool standard_internal =
+        operating_mode.load(std::memory_order_acquire) == OperatingMode::COHERENT &&
+        !kerberos_mode.load(std::memory_order_acquire) &&
+        !downconverter.enabled.load(std::memory_order_acquire) &&
+        !external_noise_mode.load(std::memory_order_acquire);
+    if (standard_internal) {
+        const auto receipt = guarded_noise_off_terminal(
+            device_io_mutex,
+            [&]() { return set_standard_internal_noise_off_checked(devices); },
+            [&]() { publish_converged(); },
+            [&](const NoiseOffReceipt&) {
+                reset_phase_state_locked(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION);
+                for (const auto& device : devices)
+                    if (device) device->compensation.initial_calibration_complete.store(
+                        false, std::memory_order_release);
+                l2_raw_cap.store(L2_RAW_MAX, std::memory_order_relaxed);
+                recovery_in_progress.store(false, std::memory_order_release);
+            });
+        if (!receipt.all_acknowledged()) {
+            // Do not acquire FFT control while device_io_mutex is held:
+            // existing lock order is phase -> device_io (innermost).
+            {
+                std::lock_guard<std::mutex> fft_lock(fft_control.control_mutex);
+                fft_control.fft_enabled = false;
+                fft_control.auto_disabled = true;
+                fft_control.user_override = false;
+            }
+            std::cerr << "Phase: convergence REFUSED: standard noise GPIO0 OFF "
+                      << noise_off_outcome_name(receipt.outcome)
+                      << "; calibration halted, receiver state requires review"
+                      << std::endl;
+            return;
+        }
+    } else
+#endif
+    {
+        // Specialized boards and GPIO-disabled builds retain their original
+        // calibration completion path, pending a board-specific OFF contract.
+        publish_converged();
+        set_bias_tee_all_devices(false, devices);
     }
 
-    // C5: calibration done - restore the wide L2-raw cap for the steady-state cushion.
-    l2_raw_cap.store(L2_RAW_MAX, std::memory_order_relaxed);
-
-    // A fresh convergence supersedes any stale-calibration flag (--kerberos).
-    kerberos_cal_stale.store(false, std::memory_order_release);
-
-    set_bias_tee_all_devices(false, devices);
-
+    std::cout << "Phase: CONVERGED!" << std::endl;
     std::lock_guard<std::mutex> fft_lock(fft_control.control_mutex);
     fft_control.fft_enabled = false;
     fft_control.auto_disabled = true;
@@ -1637,8 +1680,12 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                             const bool timed_out = elapsed > 15;
 
                             if (design_ok) {
-                                per_bin_cal.ready.store(true, std::memory_order_release);
                                 complete_phase_calibration_locked();
+                                // A GPIO0 OFF failure refuses convergence. Do not
+                                // expose the newly designed FIR until the noise
+                                // shutdown and terminal state both succeeded.
+                                if (phase_compensation->state == PhaseCompensatorState::CONVERGED)
+                                    per_bin_cal.ready.store(true, std::memory_order_release);
                             } else if (!enabled || !fft_on || timed_out) {
                                 std::cout << "Per-bin: finishing without equalizer (enabled=" << enabled
                                           << ", fft_on=" << fft_on << ", timed_out=" << timed_out << ")" << std::endl;
