@@ -57,7 +57,18 @@ on every platform. The two notes below were bullets of the Windows section.
   the `rtl_*` tools in /usr/local stay until install.sh runs again. The
   library is rebuilt / checked against the fork's sources on every platform
   (`RTLSDR_SRCS` + touch in the Makefile, `IS_NEWER_THAN` in CMakeLists.txt:
-  a new header with an old library would fail the link). heimdall opens /
+  a new header with an old library would fail the link). That rebuild runs
+  `cmake` again on the existing `build/` dir, and the fork's FindLibUSB
+  sets its `-DHAVE_LIBUSB_HANDLE_EVENTS_TIMEOUT_COMPLETED=1` /
+  `-DHAVE_LIBUSB_ERROR_NAME=1` only while `LIBUSB_FOUND` is not cached: a
+  reconfigured library lost them, so `libusb_handle_events_timeout_completed`
+  became plain `libusb_handle_events_timeout` and every stream cancel
+  (heimdall's stop, a restart) waited out read_async's 1 s event timeout
+  (measured on a Pi 5, 2026-11-13: SIGTERM stop 1.4-1.5 s vs 0.4-0.5 s for
+  a freshly configured build). The Makefile passes `-ULIBUSB_FOUND` on every
+  platform and configures a build dir again once when its CMake cache has
+  the call but the library's `flags.make` lacks the define. install.sh and
+  the Dockerfile always configure a fresh `build/`. heimdall opens /
   tunes the dongles ONE BY ONE on Windows (`for_each_tuner`, sdr_init.cpp):
   concurrent control transfers to the KrakenSDR's dongles time out (-7);
   Linux keeps its parallel threads (each its own handle)
