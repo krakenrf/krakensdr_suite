@@ -224,9 +224,45 @@ on every platform. The two notes below were bullets of the Windows section.
   set after ALL tuners, for every channel), retuning the displayed channel
   first, an interruptible sweep, an averaging reset on a retune
 
-## Zero-copy USB buffers (investigated 2026-11-12/13)
+## Zero-copy USB buffers (investigated 2026-11-12/14)
 
-The fork builds without libusb's usbfs zero-copy buffers (`ENABLE_ZEROCOPY
+**State since 2026-11-14** (librtlsdr 701a832 + 3ad1746, on the local
+`master`; the rest of this section is the history that led there, written
+while zero-copy was still off): zero-copy is compiled in on Linux by default
+(`ENABLE_ZEROCOPY 1`; `-DENABLE_ZEROCOPY=0` leaves it out), and a handle
+uses it only if its application called `rtlsdr_prealloc_async()` - heimdall
+does, at open; rtl_test / rtl_fm / rtl_tcp and any other user of the library
+get user-space buffers as before. Not for every handle because (measured)
+mapping inside `rtlsdr_read_async` delays the stream start, and on a Pi the
+mapped buffers are slow to read byte by byte (zctest's callback 7-10x
+slower), while one memcpy per buffer - heimdall's callback - is cheaper than
+without zero-copy. Measurements, 5-channel KrakenSDR, 5 elements:
+- Pi 4 (Rev 1.5, VL805, 1 GB), plain zero-copy mapped at stream start, no
+  start-sync: 5 of 8 cold starts never converged (first lags 8651 / 11976 /
+  13468 where it did; first callback 28-32 ms after the stream start against
+  7 ms) - the 2021 "sync errors". Mapped at open: 8 of 8, 1894 / 2598 / 5780
+  (unpatched fork 2655 / 3720 / 5328). Pi 5: plain zero-copy converged 8 of
+  8 (1741 / 2088 / 3651; fork 991 / 1404 / 1773).
+- Pi 4, four 60 min soaks with retunes, gain and element-count changes and a
+  Full Recalibration, zero-copy on vs off, both with the held stream start
+  (order on, off, off, on): `coherence_events` 0, no non-routine stderr
+  line, 8 of 8 calibration checks OK in all four; readers 12.4-12.5 % vs
+  15.6-15.8 % of one core, whole process 31.7 % vs 34.7-34.9 %, VmRSS 95.0
+  vs 102.4-103.1 MB. Pi 5, one 600 s soak each (no start-sync): readers 22.6
+  vs 30.2 s, process 60.7 vs 69.0 s.
+- The default library on the Pi 4 (2026-11-14): heimdall logs "Allocating 32
+  zero-copy buffers" per dongle, 6 of 6 starts and a 30 min soak clean, the
+  usbfs budget back to 511 x 32 KB after exit; zctest and rtl_test without
+  the prealloc call get user-space buffers with the fork's timings.
+- "Detected Kernel usbfs mmap() bug" never appeared (Pi OS kernel 6.18).
+- Not measured: zero-copy under CPU load on a Pi 4 (it overheats under
+  synthetic load), a soak with the held start on a Pi 5, `--wideband`,
+  `--kerberos`. Three times a dongle stopped delivering at a stream
+  (re)start on the Pi 4 - twice with zero-copy off on the old code, once
+  with the default library; only a USB reset of that dongle revived it.
+  Unexplained; heimdall does not recover from it.
+
+The fork built without libusb's usbfs zero-copy buffers (`ENABLE_ZEROCOPY
 0`): krakenrf/librtlsdr d8ececb (2021-12-13) switched it off with the message
 "causes sync errors with rtl-sdr", no cause recorded. Upstream osmocom has
 it on (with f68bb2f's check for the kernel usbfs mmap() bug).
@@ -251,10 +287,11 @@ Measured on x86_64 Ubuntu (kernel 6.8) with a 5-channel KrakenSDR:
   37.7 s -> 33.0 s CPU per 600 s, about 1.3 % of one core for the whole
   process.
 
-The patch (`heimdall_v2/tools/librtlsdr-zerocopy-map-once.patch`, applied to
-this worktree's `../librtlsdr`, NOT yet in the krakenrf fork): zero-copy
-stays OFF by default (`#ifndef ENABLE_ZEROCOPY`; build with
-`-DENABLE_ZEROCOPY=1` to enable it); in a zero-copy build the buffers are
+The patch (`heimdall_v2/tools/librtlsdr-zerocopy-map-once.patch` = the
+local librtlsdr `master`'s two commits against 578b43d; not pushed to the
+krakenrf fork as of 2026-11-14): as first written zero-copy stayed OFF by
+default (see the state paragraph above for today's default); in a zero-copy
+build the buffers are
 mapped once per handle and kept until `rtlsdr_close()` (or a read with
 another geometry), and the new `rtlsdr_prealloc_async(dev, buf_num,
 buf_len)` maps them ahead of the stream (macro `RTLSDR_HAS_PREALLOC_ASYNC`;
@@ -282,8 +319,8 @@ prealloc call possible with that library), 4 starts: max |lag| 419 /
 4907 / 11593, convergence 24.0-35.8 s, element changes 26.0-32.8 s,
 `coherence_events` 0. The earlier OFF baseline: 675 / 1171 / 2168, 23-29 s.
 
-Not measured: any Raspberry Pi. Before turning zero-copy on there, run on a
-Pi 4 and a Pi 5 (heimdall stopped): `zctest -s 1000,1001,1002,1003,1004 -t
+(Written before the Pi runs - their results are in the state paragraph
+above.) The check that was planned for a Pi 4 and a Pi 5 (heimdall stopped): `zctest -s 1000,1001,1002,1003,1004 -t
 600` against an OFF and an ON (`-DENABLE_ZEROCOPY=1`) library, idle and
 under load (`-p`, and `-r 5 -R` for the restart path; build line in
 `heimdall_v2/tools/README.md`), then a heimdall start series per library
@@ -293,9 +330,12 @@ and `lag_no_peak`, and the reader threads' CPU.
 
 ## FIFO hold: starting several streams together (2026-11-13)
 
-Not yet in the krakenrf fork either: part of
-`heimdall_v2/tools/librtlsdr-zerocopy-map-once.patch`, applied to this
-worktree's `../librtlsdr`. Two calls (macro `RTLSDR_HAS_FIFO_HOLD`):
+Part of the same two commits on the local librtlsdr `master` (and of
+`heimdall_v2/tools/librtlsdr-zerocopy-map-once.patch`); not pushed to the
+krakenrf fork as of 2026-11-14. Pi 4 (2026-11-14, 8 starts each): cold-start
+max |first lag| 2416 / 3695 / 8089 before, 332 / 611 / 1382 with the held
+start (zero-copy on: 472 / 760 / 1655); release completion spread 270 / 498
+/ 577 us; against the unpatched fork (gate + flush) 2062 / 2346 / 3228. Two calls (macro `RTLSDR_HAS_FIFO_HOLD`):
 `rtlsdr_set_fifo_hold(dev, 1 / 0)` empties the RTL2832's USB FIFO and keeps
 it empty / releases it, and `rtlsdr_release_fifos(devs, n, timeout_ms,
 done_us)` waits until each device's `rtlsdr_read_async()` (running in its own thread)

@@ -413,11 +413,14 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
 #endif
 
 #ifdef RTLSDR_HAS_PREALLOC_ASYNC
-    // Zero-copy builds of the fork: map the USB transfer buffers now. Mapped
-    // in rtlsdr_read_async instead, it delays each reader's first transfer
-    // (the RTL2832 FIFO overflows meanwhile) and the channels start skewed by
-    // thousands of samples, against a lag range of +-NUM_SAMPLES. Returns 1
-    // without zero-copy: the buffers then stay per stream, as before.
+    // Ask the fork for usbfs zero-copy transfer buffers (Linux; its default
+    // since 3ad1746, only for a handle that makes this call) and map them
+    // now. Mapped in rtlsdr_read_async instead, it delays each reader's first
+    // transfer and the channels start skewed by thousands of samples, against
+    // a lag range of +-NUM_SAMPLES. Returns 1 without zero-copy: the buffers
+    // then stay per stream, as before. The RTL callback must keep copying
+    // each buffer out in one go: on a Pi the mapped memory is slow to read
+    // byte by byte (docs/dev/librtlsdr-fork.md, *Zero-copy USB buffers*).
     if (rtlsdr_prealloc_async(sdr->dev, RTL_USB_BUF_COUNT, NUM_SAMPLES * 2) < 0)
         std::cerr << "Channel " << sdr->index << ": could not map the USB transfer buffers ahead of the stream"
                   << std::endl;

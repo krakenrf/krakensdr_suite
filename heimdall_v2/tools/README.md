@@ -21,12 +21,16 @@ Build it against the fork's static library (from `heimdall_v2/`; verified
 gcc -O2 -Wall -I../librtlsdr/include -o zctest tools/zctest.c ../librtlsdr/build/src/librtlsdr.a -lusb-1.0 -lpthread -lm
 ```
 
-For a zero-copy build of the library, configure a separate build directory
-(the source tree is not touched) and link that `librtlsdr.a` instead:
+Zero-copy is compiled into the library by default since 2026-11-14 and used
+only by a handle that calls `rtlsdr_prealloc_async()`. This zctest does not
+call it, so it tests the user-space buffer path (the Pi measurements of the
+zero-copy path used a variant with a prealloc option that is not in the
+repo). For a library without the zero-copy code, configure a separate build directory (the source
+tree is not touched) and link that `librtlsdr.a` instead:
 
 ```bash
-cmake -S ../librtlsdr -B /tmp/rtlsdr-zc -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-DENABLE_ZEROCOPY=1
-cmake --build /tmp/rtlsdr-zc -j3 --target rtlsdr_static     # -j3 at most on a Pi
+cmake -S ../librtlsdr -B /tmp/rtlsdr-nozc -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-DENABLE_ZEROCOPY=0
+cmake --build /tmp/rtlsdr-nozc -j3 --target rtlsdr_static     # -j3 at most on a Pi
 ```
 
 Run it with heimdall (and anything else using the dongles) stopped - it
@@ -51,8 +55,10 @@ RTL2832 FIFO may overflow before the transfers are submitted.
 ## librtlsdr-zerocopy-map-once.patch
 
 The change to krakenrf/librtlsdr from that investigation, kept here until it
-is in the fork: zero-copy stays off by default (`-DENABLE_ZEROCOPY=1`
-enables it), zero-copy buffers are mapped once per handle and kept until
+is in the fork (the two commits on the local librtlsdr `master`, 701a832
+and 3ad1746): zero-copy is compiled in on Linux and used by a handle that
+calls `rtlsdr_prealloc_async()` (`-DENABLE_ZEROCOPY=0` leaves it out),
+zero-copy buffers are mapped once per handle and kept until
 `rtlsdr_close()`, `rtlsdr_prealloc_async()` maps them ahead of the stream
 start (`RTLSDR_HAS_PREALLOC_ASYNC`; heimdall calls it in
 `init_rtlsdr_device()`), upstream's usbfs-mmap-bug check, the stop path
