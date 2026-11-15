@@ -684,7 +684,8 @@ least recently played go).
   "{tools}/scene_x.json", "seconds": 6, "station": "{station}"}}` writes an
   in-repo scene with some keys replaced
 - A step that is a `.py` runs with python3 -I (numpy / scipy); a `.cpp` is
-  compiled once into `testsignal_cache/.bin/` (`g++ -std=c++20 -O2
+  compiled once into `testsignal_cache/.bin/` - again when it or a `*.h` /
+  `*.hpp` in its folder or your plugin folder is newer (`g++ -std=c++20 -O2
   -I<plugin> -Isdk -I../external/pffft ... lib/build/libkrakendig.a` - so
   a generator can use `kraken_fft.hpp`). Working directory = a scratch folder in
   the cache; placeholders `{tools}` (your tools/), `{sdk}`, `{plugins}`,

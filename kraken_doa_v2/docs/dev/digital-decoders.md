@@ -221,8 +221,14 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   focus, so the first test missed it)
 - UI (kraken_doa.html, "Digital decoders" block): any number of VFOs decode
   at once. Each VFO card (Decimators box, `updateDecimatorList`) has a
-  "Digital decoder" tick (`digToggle`: DIGITAL_MODE AUTO or the mode picked
-  while off, remembered per VFO in localStorage) and a mode list
+  "Digital decoder" tick (`digToggle` -> `digOnMode`: DIGITAL_MODE with the
+  VFO's last mode other than Off as decimator_info reported it (`digLastOn`,
+  this page, dropped when the VFO goes), else the mode picked in this
+  browser (`digWanted`, per VFO in localStorage), else AUTO. Before
+  2026-11 it was only the latter two, so a mode set elsewhere - a debug
+  playback's entry, a saved frequency, another page, the AI assistant -
+  came back as AUTO after an untick / tick, and a manual-only decoder (dab,
+  adsb ...) silently stopped) and a mode list
   (`digSetModeFor`: picking a decoder also switches it on) plus a state line
   (`digRenderCards`, also run at the end of updateDecimatorList, which
   rebuilds the cards). The mode lists (VFO card + the tab's Mode) are

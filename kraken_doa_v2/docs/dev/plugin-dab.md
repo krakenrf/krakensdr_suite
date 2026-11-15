@@ -80,7 +80,10 @@ generator's scene format are in `plugins/dab/README.md`.
   like LoRa's `node`: only some report a position (an ensemble sending FIG
   0/22 - few do), and the Dist / Δ pos columns appear only when a listed
   talker has one; its "Plot on map" hint adds "only when the ensemble sends
-  its transmitters' positions"
+  its transmitters' positions". With them the Ensemble column is left out
+  (`noInfo` in `rdfRenderPanel`; the label, the same on every row plus
+  " · N km", goes into the row's tooltip): with it the table was 377 px in
+  the 370 px list and Nulls was cut off (end-to-end test, 2026-11-16)
 - Text from the air: labels / dynamic label converted to UTF-8 (EBU Latin,
   UCS-2, UTF-8) and passed through the plugin's own `dab::printable_utf8`
   (`dab_tables.cpp`: controls and invalid bytes `\xNN`, valid multi-byte

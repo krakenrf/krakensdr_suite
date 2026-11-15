@@ -26,7 +26,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   testsignal_cache --lat --lon` (nice 10, own process group; PROGRESS lines
   read by a thread; `PLAYBACK_GEN_CANCEL` = SIGTERM to the group). The
   driver runs the entry's `steps` (generators; .cpp compiled once into
-  `.bin/`) in `testsignal_cache/.work-<id>/`, then `uca_scene.py --clean`
+  `.bin/`, again when the .cpp or a `*.h` / `*.hpp` in its folder or its
+  plugin folder is newer - until 2026-11-16 only the .cpp counted, and a
+  header-only change to dab_gen_*.hpp kept the stale binary; the Windows
+  prebuilt `tools/build/NAME.exe` is taken under the same test) in `testsignal_cache/.work-<id>/`, then `uca_scene.py --clean`
   (narrow) or takes the step's 2.4 MHz `output` (cf32 -> cu8 at rms 0.15),
   and writes `<id>.dat` + the FLAT sidecar `<id>.json` (format, rate,
   channels, samples, tuner_hz, band_offset_hz, radius_m, noise_rms,

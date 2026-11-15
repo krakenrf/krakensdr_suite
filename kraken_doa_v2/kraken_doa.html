@@ -2710,6 +2710,14 @@ const digDemodBefore = (() => {
 function digDemodBeforeSave() {
   try { localStorage.setItem('kraken_dig_demod_before', JSON.stringify(digDemodBefore)); } catch (e) {}
 }
+// A VFO's last decoder mode other than Off, as the receiver reported it
+// (decimator_info): VFO id -> mode. Ticking the decoder on again goes back
+// to it, also when the mode was set elsewhere (a debug playback, a saved
+// frequency, another page, the AI assistant) - digWanted only knows this
+// browser's picks, and Auto detect never runs a manual-only decoder (dab,
+// adsb ...). Dropped when the VFO is removed (a new VFO can get its id).
+// This page only; digRenderCards reads it
+const digLastOn = {};
 // transcripts' DoA lobes shown on the 🗺 map (id -> {L, col, el}) and those
 // asked for (mapDrawNow -> v2tLobeDraw reads them)
 let v2tLobes = new Map(), v2tLobeWant = new Set();
@@ -10976,7 +10984,9 @@ function addTouchHandlers(el, down, move, up) {
         send('DIGITAL_HISTORY:' + d.id);
       }
       if (mode === 'OFF') { delete digHistoryAsked[d.id]; delete digStatus[d.id]; }
+      else digLastOn[d.id] = mode;
     }
+    for (const k of Object.keys(digLastOn)) if (!info.some(d => d.id === +k)) delete digLastOn[k];
     // removed VFOs: their events stay in their modes' tabs (digArchive)
     for (const k of Object.keys(digEvents)) {
       const id = +k;
@@ -10993,9 +11003,13 @@ function addTouchHandlers(el, down, move, up) {
     digRenderAll();
   }
 
+  // the mode a VFO's decoder goes on with (and its list shows while off): the
+  // one it last ran, else the one picked in this browser, else Auto detect
+  function digOnMode(id) { return digLastOn[id] || digWanted[id] || 'AUTO'; }
+
   // Tick on a VFO card: decoder on (with the mode picked in its list) / off
   function digToggle(id, on) {
-    const mode = on ? (digWanted[id] || 'AUTO') : 'OFF';
+    const mode = on ? digOnMode(id) : 'OFF';
     send('DIGITAL_MODE:' + id + ':' + mode);
     const d = digDec(id);
     if (d) d.digital_mode = mode;
@@ -11154,7 +11168,7 @@ function addTouchHandlers(el, down, move, up) {
       const mode = d.digital_mode || 'OFF';
       const on = mode !== 'OFF';
       en.checked = on;
-      digFillSelect($id('dec-dig-mode-' + d.id), on ? mode : (digWanted[d.id] || 'AUTO'));
+      digFillSelect($id('dec-dig-mode-' + d.id), on ? mode : digOnMode(d.id));
       const [col, txt] = digStateOf(d.id);
       const stEl = $id('dec-dig-state-' + d.id);
       if (stEl) {
@@ -15010,10 +15024,15 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const posCols = listed.some(([t, c]) => c && RDF_POS_KINDS.has(rdfKind(t)));
       // analog FM transmitters (analog_id: radio IDs / tones): the transmissions' lengths
       const toneCols = ts.some(t => rdfKind(t) === 'tone');
+      // DAB transmitters with the position columns: no Ensemble column (the
+      // label is the same on every row, its " · N km" is the Dist column) -
+      // with it the table was 377 px in the 370 px list and Nulls was cut
+      // off. The label goes into the row's tooltip (and the line above)
+      const noInfo = posCols && kinds === 'transmitter';
       const [scol, sdir] = rdfSortOf(kinds);
       const th = (col, text, tip) => `<th data-sort="${col}" title="${tip ? digEsc(tip) + ' - ' : ''}Sort by this column (again: reversed)">` +
         `${text}${col === scol ? (sdir > 0 ? ' ▲' : ' ▼') : ''}</th>`;
-      tl = '<table><tr><th></th>' + (multi ? th('vfo', 'VFO') : '') + th('name', head[0]) + th('info', head[1]) +
+      tl = '<table><tr><th></th>' + (multi ? th('vfo', 'VFO') : '') + th('name', head[0]) + (noInfo ? '' : th('info', head[1])) +
         (posCols ? th('dist', 'Dist', 'Distance from the station to its reported position') : '') + th('brg', 'Bearing') +
         (posCols ? th('dpos', 'Δ pos', 'DF bearing minus the bearing to its reported position') : '') +
         th('heard', 'Heard') +
@@ -15021,13 +15040,14 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
         th('tx', head[2]) + '</tr>';
       for (const [t, c] of listed) {
         const k = rdfGk(t.vfo, t.tid), ap = air ? rdfAirParts(t) : null;
-        const tip = air ? `${rdfTalkerName(t)}${ap.rest ? ' · ' + ap.rest : ''} - show its DoA on the map` : `Show this ${rdfKind(t)}'s DoA on the map`;
+        const tip = air ? `${rdfTalkerName(t)}${ap.rest ? ' · ' + ap.rest : ''} - show its DoA on the map`
+          : noInfo && t.label ? `${t.label} - show this ${rdfKind(t)}'s DoA on the map` : `Show this ${rdfKind(t)}'s DoA on the map`;
         tl += `<tr class="t${k === tsel ? ' sel' : ''}" data-k="${digEsc(k)}" title="${digEsc(tip)}">` +
           `<td class="air">${t.active ? '●' : ''}</td>` + (multi ? `<td>D${t.vfo}</td>` : '') +
           (air ? `<td><b>${rdfIcon(t)}${digEsc(ap.cs)}</b></td><td class="dim">${digEsc(t.tid)}</td>`
                : `<td><span class="clip nm" title="${digEsc(t.tid)}">${rdfIcon(t)}${digEsc(t.tid)}</span>` +
                  (t.sp && t.sp[3] && rdfKind(t) === 'path' ? '<span class="ref" title="The main (strongest) path: the other paths\' delays are counted from it">main</span>' : '') + '</td>' +
-                 `<td class="dim"><span class="clip" title="${digEsc(t.label || '')}">${digEsc(t.label || '')}</span></td>`) +
+                 (noInfo ? '' : `<td class="dim"><span class="clip" title="${digEsc(t.label || '')}">${digEsc(t.label || '')}</span></td>`)) +
           (posCols ? `<td class="n">${c ? (c.km < 10 ? c.km.toFixed(1) : Math.round(c.km)) + ' km' : ''}</td>` : '') +
           `<td class="n">${rdfBearingTxt(t)}</td>` + (posCols ? `<td class="n">${c && c.err !== null ? rdfSigned(c.err) : ''}</td>` : '') +
           `<td class="n dim">${t.active ? 'now' : rdfAge(t.age)}</td>` +
