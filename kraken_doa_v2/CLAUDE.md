@@ -49,7 +49,7 @@ make -C plugins PLUGIN=<id>    # one plugin (a plugin that fails to compile only
   `saved_freqs`, `sf_scanner` / `sf_scan_plan`, `continuous_scanner`,
   `scanner_manager`, `recorder*` / `sigmf` / `playback`, `voice2text`,
   `decoder_log`, `incidents` / `geo_*`, `rdf_engine` / `rdf_mapper`,
-  `talker_doa`, `array_cal`, `station_info`, `ai_*`.
+  `talker_doa`, `vfo_level`, `array_cal`, `station_info`, `ai_*`.
 - `plugins/<id>/` decoders, `plugins/lib/` (libkrakendig), `plugins/sdk/`
   (plugin API `kraken_plugin.hpp` + `plugin_host.cpp`); the plugin guide is
   `plugins/SDK.md`.
@@ -58,7 +58,7 @@ make -C plugins PLUGIN=<id>    # one plugin (a plugin that fails to compile only
   THE MAP", "👁 VIEWSHED", ...), which the topic files cite.
 - `tools/`: offline benches and validators (`decim_bench.cpp`,
   `digi_test.cpp`, `replay_validate.mjs`, `pathloss_validate.mjs`,
-  `rdf_sim.cpp`, `fast_log_test.cpp`).
+  `range_validate.mjs`, `rdf_sim.cpp`, `fast_log_test.cpp`).
 
 ## Threads and the command path
 
@@ -202,6 +202,7 @@ the job's scratch directory (not committed). The established setup:
 | Viewshed; path loss (P.1812, ITM, P.2108, coverage) | `viewshed.md`, `path-loss.md` |
 | Incident map (pager addresses) | `incident-map.md` |
 | Mobile direction finding; log replay | `mobile-df.md`, `log-replay.md` |
+| Range from signal strength (level -> dBm, calibration, the sweep, the posterior); a VFO's level on mouseover | `range.md` |
 | Array calibration from ADS-B (experimental) | `array-calibration.md` |
 | Debug playback | `debug-playback.md` |
 | IQ & audio recorder, SigMF, playback of recordings | `recorder.md` |

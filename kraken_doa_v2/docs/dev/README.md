@@ -51,6 +51,7 @@ every session needs and points here.
 | `plugin-uat.md` | UAT plugin |
 | `plugin-vdl2.md` | VDL Mode 2 plugin |
 | `plugin-wildlife.md` | Wildlife collars plugin |
+| `range.md` | Range from signal strength, a VFO's level on mouseover |
 | `recorder.md` | IQ & audio recorder and playback of recordings |
 | `reference.md` | Hot paths, development tasks, key files, common issues, testing, dependencies |
 | `saved-frequencies.md` | Saved frequencies and map markers |

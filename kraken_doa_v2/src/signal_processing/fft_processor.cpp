@@ -18,14 +18,62 @@ namespace {
     // mag, and their exponential average into avg (alpha 1 = a copy). A
     // straight loop the compiler vectorizes with fast_db10 (utils/
     // fast_log.hpp); the callers do the DC-centring wrap as two runs - the
-    // wrapped index (a mask) kept the old loop scalar, a libm log2f per bin
-    void bins_to_db(const kfft_complex* src, int count, float scale, float alpha, float* mag, float* avg) {
+    // wrapped index (a mask) kept the old loop scalar, a libm log2f per bin.
+    // Returns the bins' summed power (📏 band_power's ADC load)
+    float bins_to_db(const kfft_complex* src, int count, float scale, float alpha, float* mag, float* avg) {
+        float sum = 0.0f;
         for (int i = 0; i < count; i++) {
             const float power = (src[i][0] * src[i][0] + src[i][1] * src[i][1]) * scale + 1e-15f;
+            sum += power;
             const float db = fast_db10(power);
             mag[i] = db;
             avg[i] = alpha * db + (1.0f - alpha) * avg[i];
         }
+        return sum;
+    }
+
+    // 📏 each channel's latest frame: the sum of its bins' power (the scale's
+    // units, the window in it) - band_power's ADC load. Under fft_mutex
+    float channel_frame_power[MAX_CHANNELS] = {};
+    // ... and the samples in it (fewer than the FFT size = zero-padded: the
+    // bins are correlated further apart - band_power's noise quantile)
+    int channel_frame_samples[MAX_CHANNELS] = {};
+
+    // 📏 the band power a band of n raw bins must exceed to be a signal, as a
+    // multiple of its mean noise: the noise's own upper quantile for a false
+    // alarm probability of ~1e-5 per sample (10 / s: one false moment in ~3 h).
+    // A raw bin's power is exponential, n of them sum to ~Gamma - shape
+    // n_eff < n, from the sum's variance: neighbouring Hamming bins are
+    // correlated (power rho 0.39 / 0.018 at 1 / 2 bins; zero-padded by `pad`
+    // the window's w^2 spectrum is sampled pad times finer). The quantile by
+    // Wilson-Hilferty (normal in the cube root; above the exact Gamma's for
+    // shapes 1-10), Z for 4e-6: the correlated sum's tail is heavier than the
+    // moment-matched Gamma's - twice the false moments at 3-80 bins (measured,
+    // the true noise). Plus the mean noise's own error: nfloor's 10th
+    // percentile of 0.8 fft / pad independent bins, sd sqrt(0.09 / M) /
+    // (0.9 x 0.1054) relative - 11 % at FFT 1024 (3x the false moments
+    // without it), 2.8 % at 16384 - in the cube root's spread
+    double noise_quantile(int n, double pad, int fft_size) {
+        auto sinc = [](double x) { return std::fabs(x) < 1e-9 ? 1.0 : std::sin(M_PI * x) / (M_PI * x); };
+        // w^2 = 0.3974 - 0.4968 cos + 0.1058 cos 2x over the frame: its spectrum
+        // at f resolution bins
+        auto w2 = [&](double f) {
+            return 0.3974 * sinc(f) + 0.2484 * (sinc(f - 1) + sinc(f + 1)) + 0.0529 * (sinc(f - 2) + sinc(f + 2));
+        };
+        double var = n;   // in mean^2: n + 2 sum (n - d) rho(d)
+        const int dmax = std::min(n - 1, static_cast<int>(std::ceil(4 * pad)));
+        for (int d = 1; d <= dmax; d++) {
+            const double r = w2(d / pad) / 0.3974;
+            var += 2.0 * (n - d) * r * r;
+        }
+        const double k = static_cast<double>(n) * n / var;
+        constexpr double Z = 4.4654;   // the normal's 1 - 4e-6 quantile
+        const double m = 1 - 1 / (9 * k), v = 1 / (9 * k);   // the cube root's mean / variance
+        const double s = 3.164 * std::sqrt(pad / (0.8 * fft_size));
+        // y = m + Z sqrt(v + y^2 s^2 / 9): the estimate's error scales the quantile
+        const double a = Z * Z * s * s / 9;
+        const double y = (m + std::sqrt(a * m * m + (1 - a) * Z * Z * v)) / (1 - a);
+        return y * y * y;
     }
 
     // Helper: Calculate noise floor from FFT data using 10th percentile method
@@ -373,9 +421,12 @@ void FFTProcessor::process_channel_fft(const std::complex<float>* iq_data, size_
     // runs (actual_scale accounts for zero-padding; alpha 1 on a reset = a
     // copy into the average)
     const int half = fft_size / 2;
-    bins_to_db(ctx.fft_out + half, half, actual_scale, alpha, fft_magnitudes[channel].data(), fft_averaged[channel].data());
-    bins_to_db(ctx.fft_out, half, actual_scale, alpha, fft_magnitudes[channel].data() + half,
-               fft_averaged[channel].data() + half);
+    float frame_power = bins_to_db(ctx.fft_out + half, half, actual_scale, alpha, fft_magnitudes[channel].data(),
+                                   fft_averaged[channel].data());
+    frame_power += bins_to_db(ctx.fft_out, half, actual_scale, alpha, fft_magnitudes[channel].data() + half,
+                              fft_averaged[channel].data() + half);
+    channel_frame_power[channel] = frame_power;   // (📏 the whole frame's power: band_power's ADC load)
+    channel_frame_samples[channel] = static_cast<int>(max_samples);
 
     // The channel's noise floor for this frame (the 0 dB reference of the
     // display, squelch and scanner) - remembered when a signal fills the band
@@ -801,6 +852,45 @@ float FFTProcessor::get_range_peak_db(int channel, float offset_hz, float bandwi
 
     // Normalize peak relative to noise floor (so 0dB = noise floor)
     return peak - noise_floor;
+}
+
+bool FFTProcessor::band_power(int channel, float offset_hz, float bandwidth_hz, int exclude_dc_bins, BandPower* out) {
+    if (channel < 0 || channel >= MAX_CHANNELS || !(bandwidth_hz > 0)) return false;
+    std::lock_guard<std::mutex> lock(fft_mutex);
+    const auto& raw = fft_magnitudes[channel];
+    const int fft_size = current_fft_size.load();
+    if (raw.size() < static_cast<size_t>(fft_size) || fft_size < 64) return false;
+    float noise_db;
+    if (!nfloor::bin_noise_db(channel, fft_size, &noise_db)) return false;
+    const float hz_per_bin = static_cast<float>(SAMPLE_RATE) / static_cast<float>(fft_size);
+    const int center_bin = fft_size / 2;
+    const int min_bin = std::max(0, center_bin + static_cast<int>(std::lround((offset_hz - bandwidth_hz / 2.0f) / hz_per_bin)));
+    const int max_bin = std::min(fft_size - 1, center_bin + static_cast<int>(std::lround((offset_hz + bandwidth_hz / 2.0f) / hz_per_bin)));
+    if (min_bin > max_bin) return false;
+    // sum_k |X_k|^2 scale = mean |x w|^2 (scale 1 / (samples x fft size) - also
+    // when zero-padded); a Hamming window's mean w^2 = 0.54^2 + 0.46^2 / 2
+    constexpr double WIN_POWER = 0.3974;
+    constexpr float DB_TO_LN = 0.230258509f;   // ln(10) / 10
+    double band = 0;
+    int used = 0;
+    const int in_band = max_bin - min_bin + 1;
+    for (int i = min_bin; i <= max_bin; i++) {
+        if (exclude_dc_bins > 0 && std::abs(i - center_bin) <= exclude_dc_bins) continue;
+        band += std::exp(raw[i] * DB_TO_LN);
+        used++;
+    }
+    if (!used) return false;
+    band *= static_cast<double>(in_band) / used;
+    const double noise = in_band * std::pow(10.0, noise_db / 10.0);
+    out->sig = (band - noise) / WIN_POWER;
+    out->noise = noise / WIN_POWER;
+    // (the bins left out: the rest's quantile, scaled up with them)
+    const int samples = channel_frame_samples[channel];
+    const double pad = samples > 0 && samples < fft_size ? static_cast<double>(fft_size) / samples : 1.0;
+    out->thresh = out->noise * std::max(1.0, noise_quantile(used, pad, fft_size) - 1.0);
+    out->total = channel_frame_power[channel] / WIN_POWER;
+    out->bins = in_band;
+    return true;
 }
 
 bool FFTProcessor::check_squelch_in_range(int channel, float squelch_threshold_db,

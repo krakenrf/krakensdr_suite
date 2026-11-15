@@ -19,6 +19,7 @@
 #include "utils/json_escape.hpp"
 #include "utils/parse_num.hpp"
 #include "incidents.hpp"
+#include "vfo_level.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -609,7 +610,8 @@ string MessageBuilders::build_system_status_message() {
         json << ",\"cal_state\":\"" << cal_state << "\"";
     }
 
-    // Per-decimator squelch states (+ MUSIC's auto source estimate)
+    // Per-decimator squelch states (+ MUSIC's auto source estimate, + 📏 the
+    // received level - vfo_level.hpp: the page's hover readout on each VFO)
     json << ",\"decimator_squelch\":[";
     auto info_list = decimator_manager.getDecimatorInfoList();
     bool first = true;
@@ -629,7 +631,10 @@ string MessageBuilders::build_system_status_message() {
         json << "{\"id\":" << info.id
              << ",\"open\":" << (info.squelch_open ? "true" : "false")
              << ",\"est_sources\":" << est_sources
-             << ",\"power_dbfs\":" << power << "}";
+             << ",\"power_dbfs\":" << power;
+        vlvl::Level lv;
+        if (vlvl::level(info.id, &lv)) vlvl::write_json(json, lv);
+        json << "}";
     }
     json << "]";
 

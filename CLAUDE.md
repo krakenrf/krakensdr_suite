@@ -178,7 +178,8 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
 - Scanning: `saved-frequency-scan.md` (the discrete, continuous and
   saved-frequency scanners are mutually exclusive), `saved-frequencies.md`
 - Map: `map.md`, `map-search.md`, `station-on-map.md`, `osm-masts.md`,
-  `viewshed.md`, `path-loss.md`, `incident-map.md`, `mobile-df.md`,
+  `viewshed.md`, `path-loss.md`, `range.md` (range from signal strength,
+  a VFO's level on mouseover), `incident-map.md`, `mobile-df.md`,
   `log-replay.md`
 - Recording and playback: `recorder.md` (`SIGMF.md`), `debug-playback.md`,
   `decoder-log.md`, `voice-to-text.md`
