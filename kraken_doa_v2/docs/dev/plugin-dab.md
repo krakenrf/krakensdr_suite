@@ -165,9 +165,46 @@ generator's scene format are in `plugins/dab/README.md`.
   random FIBs, the audio fuzzer, hostile AAC stand-ins). CPU (plugin's own):
   1.0-1.1 % of real time with one antenna, 1.5-1.7 % with five, 1.3 % with
   Layer II audio; audio 2.2 ms (Layer II) - 5.4 ms (HE-AAC) per second
-- Not done: a live test with the array (all tests offline: generator scenes
-  and published recordings, one antenna each for the real ones), a Pi 5 CPU
-  measurement (~3x expected), Windows / macOS builds of the plugin
-  and of the codec check with the AAC loader, the page's DF panel with real
-  DAB talkers (static checks only), reconfiguration and announcements (no
-  test signal has them), DL Plus / MOT / data services
+- Review + end-to-end test (2026-11-16, before the first commit to main): an
+  independent review with reproducers (a harness that feeds `on_frame` FIBs
+  it encodes itself) found: a reconfiguration announced 6 s ahead (clause
+  6.5's lead = the CIF count's lower part's whole period) was applied ~5 s
+  early - now an absolute target CIF, applied once, the sub-channel following
+  without a break (12 coded cases: 0 lost, 0 wrong); a switch between two
+  services of the same codec and bit rate kept the audio layer's state (a
+  dynamic label stitched from both) - a programme change now resets it and
+  removes the programme's facts; `fig2_`, next-configuration services and
+  the row map grew without bound on a hostile FIC (+49.5 MB in 300 s) - now
+  capped (64 services, 256 FIG 2 sets, 32 rows / s) and cleared on reset;
+  another EId on the block left the old rows / talkers - 3 frames in a row
+  now drop the old ensemble; lost CIFs never reached the audio layer; the
+  TII gate's power iteration on the noise-subtracted (indefinite) covariance
+  gave shares > 1 - now a Jacobi eigen-decomposition, the packet carries the
+  PSD part; valid spans / talker packets could straddle samples the host
+  dropped - now sent one frame late and only for contiguous frames. The
+  debug playback through a TEST build (isolated ports, headless Chromium)
+  then found what offline tests can't: the first version of the lost-CIF fix
+  took CIF numbers from FIG 0/0 and, in a LOOPED playback (the count steps
+  back 200 CIFs per 4.8 s loop), drifted until the modulo-5000 difference
+  wrapped - +2400 "lost" and a 0.2 s dropout every 62 s. Now the sample count
+  numbers contiguous CIFs and the transmitted count only sets an offset
+  (followed after 3 consistent frames): 21 loops = 100.8 s, 0 lost, 0 bad,
+  no silent 10 ms block. Playback results: both catalogue entries 6 / 6 and
+  4 / 4 Check rows; bearings over 6-7 loops 40.0 / 150.0 / 259.7 and 299.9
+  deg; talkers 2.4-2.8 s after Play; tones 1125.0 / 1750.0 / 599.8 Hz from
+  the recorder's audio; FIG 0/22 points at 22 / 35 / 48 km with Δ pos within
+  0.2 deg; plugin 3-5 % of a core on an i7-11800H (5 antennas), RSS flat at
+  33 MB, 0 dropped. Page fixes from it: re-ticking a VFO's Digital decoder
+  goes back to the mode it last ran (`digLastOn`; was Auto detect, which
+  never runs a manual-only decoder), the transmitter list drops its Ensemble
+  column when the position columns show (was 7 px too wide);
+  make_testsignal.py rebuilds a generator when one of its headers is newer
+- Not done: a test on the air with the real array (the generator scenes
+  through the offline test and the debug playback, and published
+  recordings - one antenna each - are all there is; no real transmitter's
+  bearing has been checked against its site), a Pi 5 CPU measurement (~3x
+  expected), Windows / macOS builds of the plugin and of the codec check
+  with the AAC loader (no MinGW / zig on the build machine: only gcc 11 and
+  clang 14 syntax checks), reconfiguration on a real or generated RF signal
+  (only the harness's coded FIBs / sub-channel) and announcements (no test
+  signal has them), DL Plus / MOT / data services

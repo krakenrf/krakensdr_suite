@@ -118,6 +118,10 @@ public:
         last_start_ = 0;
         cif_abs_ = -1;
         cif_anchored_ = false;
+        prev_timing_ok_ = false;
+        tx_off_ = 0;
+        step_d_ = 0;
+        step_n_ = 0;
         msc_next_cif_ = -1;
         held_ = false;
         pv_ = false;
@@ -256,7 +260,14 @@ private:
     // CIF numbering: the absolute index of the latest frame's first CIF (from
     // the FIG 0/0 CIF count, else the frame's distance in samples)
     int64_t cif_abs_ = -1;
-    bool cif_anchored_ = false;    // cif_abs_ follows a FIG 0/0 CIF count
+    bool cif_anchored_ = false;    // tx_off_ is known (a FIG 0/0 CIF count was seen)
+    int64_t tx_off_ = 0;           // the FIG 0/0 CIF count = cif_abs_ + tx_off_ (mod 5000)
+    bool prev_timing_ok_ = false;  // the previous frame's start was where the tracking expected it
+    // a step of the transmitted count with contiguous frames: the new offset (relative) and the
+    // frames in a row it held for
+    int64_t step_d_ = 0;
+    int step_n_ = 0;
+    static constexpr int COUNT_CONFIRM = 3;
     int64_t msc_next_cif_ = -1;    // the next CIF the MSC decoder expects
     // the latest frame's MSC soft bits, held until the next frame (see on_frame)
     bool held_ = false;
@@ -297,6 +308,7 @@ private:
         // a gap in the input or a fade: the receiver searches again; the
         // "lost" event comes from update_ui when the FIC stays away for 3 s
         host.fact("Sync", "lost - searching");
+        prev_timing_ok_ = false;   // (the next frame comes from a new search)
     }
 
     std::string ens_label() const {
@@ -371,22 +383,48 @@ private:
         }
         if (ens_.cif_count == cif_before && cif_before >= 0) ens_.cif_count = (cif_before + 4) % 5000;   // no FIG 0/0 this time
 
-        // ---- CIF numbering: the FIG 0/0 CIF count where there is one, else the sample count
+        // ---- CIF numbering. cif_abs_ counts the CIFs that passed; the FIG 0/0 CIF count is
+        // cif_abs_ + tx_off_ (mod 5000). While the frames follow each other in the samples the
+        // sample count is the authority for how many CIFs passed: a transmitted count that
+        // steps (a looped recording, a multiplexer restart) only moves tx_off_ - once the new
+        // offset holds for COUNT_CONFIRM frames in a row (one corrupted count is ignored); the
+        // CIFs stay contiguous for the de-interleaver. Across a gap in the input (the frame
+        // timing not contiguous) the count says how many CIFs passed.
         int64_t cif = cif_abs_ < 0 ? 0 : cif_abs_ + 4 * nf;
+        // the frame start where the tracking expected it, and the previous frame's too (no
+        // failed phase reference, no new search in between): the samples say "the next frame"
+        const bool timing_ok = f.prs_ok && std::isfinite(f.timing_err) && std::fabs(f.timing_err) < CONTIG_ERR;
+        const bool next_frame = cif_abs_ >= 0 && nf == 1 && timing_ok && prev_timing_ok_;
+        prev_timing_ok_ = timing_ok;
+        bool count_agrees = true;   // (no count in this frame: nothing against it)
         if (figs_.frame_cif >= 0) {
             const int64_t c = figs_.frame_cif;
             if (cif_abs_ < 0) {
                 cif = c;
+                tx_off_ = 0;
+                step_n_ = 0;
             } else {
-                int64_t d = ((c - cif) % 5000 + 5000) % 5000;   // the count nearest the estimate
+                int64_t d = ((c - (cif + tx_off_)) % 5000 + 5000) % 5000;   // the count nearest the expected one
                 if (d >= 2500) d -= 5000;
                 if (!cif_anchored_) {
-                    // the first count: renumber (the sub-channel restarts, nothing is known to be lost)
-                    cif += d;
-                    msc_.reset();
-                    msc_next_cif_ = -1;
+                    tx_off_ += d;   // the first count (the first frames had none): just the offset
+                    step_n_ = 0;
+                } else if (d == 0) {
+                    step_n_ = 0;
+                } else if (next_frame) {
+                    if (step_n_ > 0 && d == step_d_) {
+                        step_n_++;
+                    } else {
+                        step_d_ = d;
+                        step_n_ = 1;
+                    }
+                    if (step_n_ >= COUNT_CONFIRM) count_step(d);
+                    // (until it is confirmed the frame's position is in doubt - an input that
+                    // dropped exactly whole frames looks the same: no valid span, no talker)
+                    else count_agrees = false;
                 } else if (cif + d > cif_abs_) {
-                    cif += d;   // (d != 0: samples were dropped or inserted)
+                    cif += d;   // a gap in the input: these CIFs were lost
+                    step_n_ = 0;
                 }
             }
             cif_anchored_ = true;
@@ -394,7 +432,7 @@ private:
         const bool consecutive = cif_abs_ >= 0 && cif == cif_abs_ + 4;
         cif_abs_ = cif;
         // the input is contiguous from the previous frame's phase reference to this one's
-        const bool contig = consecutive && f.prs_ok && std::isfinite(f.timing_err) && std::fabs(f.timing_err) < CONTIG_ERR;
+        const bool contig = consecutive && timing_ok && count_agrees;
         // the previous frame's span: valid when this one shows that no samples went missing in it
         if (pv_ && contig) host.valid(pv_a_, pv_b_);
         pv_ = false;
@@ -424,12 +462,13 @@ private:
                 const int lower = static_cast<int>((figs_.frame_cif + figs_.frame_fig00_at) % 5000 % 250);
                 int d = (figs_.frame_occ - lower + 250) % 250;
                 if (d == 0) d = 250;
+                // (a distance from the announcing CIF: right whatever the transmitted count's offset)
                 const int64_t target = at + d;
                 // (a configuration stays for at least 250 CIFs: an announcement for less after the last change is stale)
                 if (target - reconf_done_cif_ >= 250 && (!reconf_pending_ || target != reconf_cif_)) {
                     if (!reconf_pending_)
                         host.event("Multiplex reconfiguration announced, in " + fmt("%.2f s", static_cast<double>(target - at) * 0.024) +
-                                       " (CIF count " + std::to_string(target % 5000) + ")",
+                                       " (CIF count " + std::to_string(((target + tx_off_) % 5000 + 5000) % 5000) + ")",
                                    30);
                     reconf_pending_ = true;
                     reconf_cif_ = target;
@@ -558,6 +597,20 @@ private:
         const double a = std::sin(dla / 2) * std::sin(dla / 2) +
                          std::cos(la1 * d2r) * std::cos(la2 * d2r) * std::sin(dlo / 2) * std::sin(dlo / 2);
         return 2 * r * std::asin(std::min(1.0, std::sqrt(a)));
+    }
+
+    // The transmitted CIF count stepped by d with the input contiguous, confirmed: re-anchor
+    // (nothing lost, nothing reset - the CIFs went on without a break).
+    void count_step(int64_t d) {
+        tx_off_ += d;
+        step_n_ = 0;
+        // (a pending reconfiguration needs nothing: its target is a distance from the
+        // announcing CIF, and the transmitter announces in every frame's FIG 0/0 up to the
+        // change - the first announcement under the new count sets the target by the new
+        // count's lower part, as clause 6.5 defines it; flags 00 under the new count withdraw it)
+        if (verbose_)
+            host.log("CIF count stepped by " + std::to_string(static_cast<long long>(d)) +
+                     " with the frames contiguous: renumbered (nothing lost)");
     }
 
     // ---------------------------------------------------------------- the selected service

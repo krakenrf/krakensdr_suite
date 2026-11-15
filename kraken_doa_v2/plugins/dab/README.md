@@ -127,12 +127,22 @@ or EEP A / B, Viterbi, energy dispersal -> one logical frame (kbps x 3 bytes) pe
 CIF. It runs always (0.2-0.3 % CPU here): the dynamic label needs it; only the PCM
 decoding depends on someone listening.
 
-CIFs are numbered by the FIG 0/0 CIF count (the sample count where there is
-none); CIFs skipped in an outage are erasures, so the audio layer keeps its
-timeline (more than 250: the sub-channel starts over). A frame's CIFs go to the
-de-interleaver one frame late (96 ms of audio latency): when the next frame shows
-a jump in the input (CIF count not +4, or the frame start >= 400 samples off -
-samples the host dropped), they are erasures instead of garbage.
+CIFs are numbered by the sample count while the frames follow each other (the
+phase reference of this frame and of the previous one where the tracking expected
+it, no new search); the FIG 0/0 CIF count gives the absolute number through an
+offset. When the transmitted count steps with the frames contiguous (a looped
+recording or debug playback, a multiplexer restart), the offset follows once the
+new count holds for 3 frames in a row - nothing is lost or reset, a single
+corrupted count is ignored; meanwhile those frames give no valid span or talker
+packet. Across a gap in the input (the frame timing not contiguous) the count
+says how many CIFs passed: CIFs skipped in an outage are erasures, so the audio
+layer keeps its timeline (more than 250: the sub-channel starts over). A frame's
+CIFs go to the de-interleaver one frame late (96 ms of audio latency): when the
+next frame shows a jump in the input (the frame start >= 400 samples off -
+samples the host dropped), they are erasures instead of garbage; a count that is
+not +4 with the timing contiguous does not make them erasures. An input that
+drops an exact number of whole frames can't be told from a count step: nothing
+is counted as lost then, the audio layer's own checks reject the stitched frames.
 
 ### TII (`dab_tii.cpp`)
 
