@@ -290,7 +290,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   detection the plugins use, run by kraken_doa with its environment
   (KRAKEN_MBELIB, KRAKEN_TETRA_CODEC_DIR, PATH) via
   `dig::codec_status_message()` on a worker thread, on AI_STATE (page
-  connect) and `PLUGIN_CODECS` ("↻ Check again") -> `{"codecs":{checked,
+  connect) and `PLUGIN_CODECS` ("↻ Check codecs") -> `{"codecs":{checked,
   imbe_ok, imbe, ambe_ok, ambe, acelp_ok, acelp}}`. Running plugins dlopen
   mbelib once, so a newly installed codec needs the decoder switched off and
   on

@@ -235,7 +235,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   preventDefault'ed (no optimistic update - the list's broadcast redraws).
   `#sfs` panel above the categories: ▶ Scan (`sfsStart`, the selected VFO) /
   ■ Stop / ⏸ Hold / ⏭ Skip, "N ticked", ⚙ settings (squelch, delay, dwell,
-  longest stay, "VFOs: one per active frequency" - `#sfs-multi`, its row
+  longest stay, "VFO per signal" - `#sfs-multi`, its row
   hidden for a receiver without `multi` -, tick all / none), the status
   (`sfsRender`: a line per frequency listened to, 🔊 name · MHz · dB · time
   → its VFO ("a new VFO…" while being made) - `sfsLocks(st)` = `locks`, or

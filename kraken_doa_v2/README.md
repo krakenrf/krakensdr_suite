@@ -83,7 +83,11 @@ browsers stay in sync. The browser sends back short text commands (`FREQ:100.5`,
 
 ## Sidebar features
 
-The collapsible left sidebar groups all controls. Top bar (always visible) has the
+The left sidebar groups all controls in boxes. Click a box's header to collapse or
+open it, and use the small ↑ / ↓ buttons at its top right to move it up or down;
+the order and the collapsed boxes are remembered in the browser (also over a
+restart). **Collapse all / Open all / ↺ Order** at the bottom of the sidebar act on
+every box. Explanations are behind the **?** icons and tooltips. Top bar (always visible) has the
 **center-frequency dial, gain slider, FFT channel selector, audio on/off + volume**,
 live hardware stats, and status badges (connection / coherent mode / calibration /
 cooldown / scanner).

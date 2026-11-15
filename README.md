@@ -199,7 +199,7 @@ AMBE+2 is a commercially licensed codec (DVSI), and the ETSI codec may not be
 redistributed. You can build them yourself for personal use; whether that is
 allowed where you live is your responsibility. The sidebar's "🔐 Digital
 Decoders" box shows which codecs are installed and the install steps for the
-missing ones (press "↻ Check again" after installing).
+missing ones (press "↻ Check codecs" after installing).
 
 Windows: the same codecs, built in MSYS2 - see WINDOWS.md, "Digital voice
 codecs".
@@ -320,7 +320,7 @@ pause, so its text follows the station live, 10-20 s behind. With no pause
 (music), the cut falls on the quietest moment and the next piece repeats the
 0.3 s before it, so a word cut there is whole in one of them.
 
-The audio ("Keep the audio to play back", on by default) is saved as Ogg Opus
+The audio ("Keep the audio", on by default) is saved as Ogg Opus
 (16 kbit/s, about 7 MB per hour of speech; any audio player plays it - the
 text, VFO, frequency and bearing are in its tags) in the Decoder Logging
 folder: `voice_clips/YYYY-MM-DD/<id>.opus` (by default
@@ -370,7 +370,7 @@ playback - the way to get the audio of a VFO out of an IQ recording.
 **⬆ Upload** takes a `.sigmf` archive (from another KrakenSDR, or any SigMF
 recording at 2.4 MHz or 2.4 MHz / N) to open it here.
 
-"Save the station's position with it" (on by default) writes the station's
+"Include the station position" (on by default) writes the station's
 position and GPS track into IQ recordings - untick it before recording
 something you will share. The old **Local Recording** box (DoA bearings to
 CSV / SQLite) is now called **📝 DoA Recording**.

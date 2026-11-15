@@ -105,6 +105,8 @@ The page (`kraken_doa.html`)
   `const`s exist.
 - The sidebar is scaled with CSS `zoom`: anything inside it positioned with
   `position:fixed` from `getBoundingClientRect()` must divide by the zoom.
+- No explanations on sidebar controls: short labels, the rest in a `?` help
+  tip or a `title`; a new box needs its own `data-sb` key (`docs/dev/sidebar.md`).
 - Shared state (saved frequencies, scan ticks, settings) lives in the
   receiver: the page sends a command and redraws from the broadcast every
   page gets - no optimistic updates.
@@ -183,6 +185,7 @@ the job's scratch directory (not committed). The established setup:
 | Config constants, MUSIC DoA, UCA element ordering | `configuration.md` |
 | Arbitrary VFO bandwidth, the decimator (plans, block FIRs, shared pass, measurements) | `vfo-bandwidth.md` |
 | Operating modes, VFO cards, VFO tuning step, spectrum zoom, independent panes | `operating-modes.md` |
+| The sidebar: boxes (collapse, move, remembered layout), rules for its controls | `sidebar.md` |
 | KrakenSDR Wideband (downconverter) variant | `wideband-variant.md` |
 | Patch / 3D topology; antenna array calculator | `patch-3d-topology.md`, `array-calculator.md` |
 | Spectrum views (FFT message type 7) | `spectrum-views.md` |

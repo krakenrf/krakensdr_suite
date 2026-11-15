@@ -1095,6 +1095,120 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
   .doa-display {width:calc(50% - 10px);min-width:280px}
 }
 
+/* ===== Sidebar look =====
+   Boxes with a header bar (↑ ↓ move the box, the chevron / header collapses
+   it - sbBoxInit), one label column, compact controls. Explanations belong in
+   the "?" tips and titles, not on the controls. Scoped to .sidebar: .btn and
+   .ctrl-row are also used by the dialogs and the panels. */
+.sidebar {background:#121a31;padding:8px 6px}
+.sidebar .sb-section {flex:none;padding:0;background:#171d35;border:1px solid #1c3158;border-radius:7px;margin-bottom:7px}
+.sidebar .sb-header {gap:3px;padding:5px 5px 5px 9px;border-radius:6px;min-height:22px}
+.sidebar .sb-section:not(.collapsed) > .sb-header {background:#1a2545;border-bottom:1px solid #1c3158;border-radius:6px 6px 0 0}
+.sidebar .sb-header:hover {background:#1e2b50}
+.sidebar .sb-header h3 {flex:1 1 auto;min-width:0;display:flex;align-items:center;font-size:13.5px;font-weight:600;color:#a8cbf5}
+.sb-title {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar .sb-header .acal-badge,.sidebar .sb-header .v2t-badge,.sidebar .sb-header .sf-count {margin:0 2px 0 4px;flex:none;white-space:nowrap}
+.sb-tools {display:flex;flex:none;margin-right:3px}
+.sb-mv {display:flex;align-items:center;justify-content:center;width:18px;height:20px;padding:0;background:none;border:none;border-radius:4px;color:#4f6f9c;cursor:pointer}
+.sb-mv:hover:not(:disabled),.sb-mv:focus-visible {background:#27447a;color:#d6e8ff;outline:none}
+.sb-mv:disabled {opacity:.3;cursor:default}
+.sidebar .sb-toggle {display:flex;align-items:center;justify-content:center;width:18px;height:20px;flex:none;color:#7f9cc7;transition:transform .15s}
+.sidebar .sb-section.collapsed .sb-toggle {transform:rotate(-90deg)}
+.sidebar .sb-content {margin-top:0;padding:8px 9px 9px}
+.sb-section.sb-moved {animation:sbmoved .7s ease-out}
+@keyframes sbmoved {from {box-shadow:0 0 0 2px #4fc3f7,0 0 14px rgba(79,195,247,.55)} to {box-shadow:0 0 0 2px transparent}}
+/* the footer box: receiver links, then the layout buttons */
+.sb-layout {display:flex;gap:5px;margin-top:9px;padding-top:9px;border-top:1px solid #1f355c}
+.sb-layout .btn {flex:1 1 auto;padding-left:4px;padding-right:4px}
+/* rows: label column | control | unit / value */
+.sidebar .ctrl-row {margin:5px 0;gap:6px;min-height:26px}
+.sidebar .ctrl-row > label:first-child:not([style]) {flex:0 0 100px;min-width:0;display:flex;align-items:center;font-size:12.5px;color:#93a6c2;white-space:nowrap}
+.sidebar input[type="number"],.sidebar input[type="text"],.sidebar input[type="password"],.sidebar input[type="search"],.sidebar select,
+.sidebar .ctrl-row input[type="number"],.sidebar .ctrl-row input[type="text"],.sidebar .ctrl-row select,.sidebar .sf-bar input,
+#decimator-list input[type="text"],#decimator-list input[type="number"],#decimator-list select {
+  background:#0f162a;border:1px solid #223b66;color:#e4ecf8;border-radius:5px;padding:3px 7px;font-size:12.5px;height:26px;box-sizing:border-box}
+.sidebar .dd-btn {background:#0f162a;border-color:#223b66;border-radius:5px;padding:4px 20px 4px 7px;color:#e4ecf8}
+.sidebar a {color:#79b4f5}
+.sidebar input[type="number"]:focus,.sidebar input[type="text"]:focus,.sidebar input[type="password"]:focus,.sidebar input[type="search"]:focus,.sidebar select:focus {
+  border-color:#4a9ff5;outline:none;box-shadow:0 0 0 2px rgba(74,159,245,.22)}
+.sidebar .ctrl-row > select {flex:1 1 0;width:auto;max-width:none;min-width:0}
+.sidebar .ctrl-row > input[type="number"],.sidebar .ctrl-row > input[type="text"],.sidebar .ctrl-row > input[type="password"] {flex:1 1 50px;min-width:0}
+.sidebar .sb-content > .ctrl-row:first-child {margin-top:0}
+.sidebar .sb-content > :last-child {margin-bottom:0}
+.sidebar .ctrl-row > .u {flex:none;min-width:16px;font-size:11.5px;color:#7f93a8}
+.sidebar .sv,.sidebar .cv {font-size:12px;color:#8fc0f5;font-variant-numeric:tabular-nums}
+.sidebar .sv {flex:0 0 46px;min-width:0;text-align:right}
+.sidebar .cv {margin-left:0}
+.sidebar input[type="checkbox"]:not(.sfs-ck):not(.sw),.sidebar input[type="radio"] {accent-color:#3d8bf0}
+/* sliders: one look; min-width 0 keeps the value on the slider's line */
+.sidebar input[type="range"] {-webkit-appearance:none;appearance:none;flex:1 1 50px;min-width:0;max-width:none;height:4px;margin:0;background:#26426f;border-radius:2px;outline:none;cursor:pointer}
+.sidebar input[type="range"]::-webkit-slider-thumb {-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#4a9ff5;border:2px solid #121a31;box-shadow:0 0 0 1px #4a9ff5;cursor:pointer}
+.sidebar input[type="range"]::-moz-range-thumb {width:11px;height:11px;border-radius:50%;background:#4a9ff5;border:2px solid #121a31;box-shadow:0 0 0 1px #4a9ff5;cursor:pointer}
+.sidebar input[type="range"]:focus-visible {box-shadow:0 0 0 3px rgba(74,159,245,.3)}
+.sidebar .rec-pb input[type="range"] {margin:7px 0}
+/* buttons */
+.sidebar .btn {background:#1b3763;border:1px solid #2a4d83;color:#cfe2fb;border-radius:5px;padding:4px 10px;font-size:12.5px;line-height:16px}
+.sidebar .btn:hover {background:#24477c;border-color:#3a63a3}
+.sidebar .btn:disabled {opacity:.45;cursor:default}
+.sidebar .btn.sm {padding:2px 8px;font-size:12px}
+.sidebar .btn.primary {background:#1f6fd1;border-color:#3a86e4;color:#fff}
+.sidebar .btn.primary:hover {background:#2a7de0}
+.sidebar .btn.on {background:#1d6b33;border-color:#2c8a45;color:#d6f5dd}
+.sidebar .btn.off {background:#7d2424;border-color:#a33333;color:#ffdcdc}
+.sidebar .btn.danger {background:#4a1d24;border-color:#7d2d38;color:#ffc9c9}
+.sidebar .btn.danger:hover {background:#7d2424;border-color:#a33333}
+/* a scanner's Start button: blue while idle, red (Stop) while it runs */
+#scanner-start-btn.off,#cont-scanner-start-btn.off {background:#1f6fd1;border-color:#3a86e4;color:#fff}
+#scanner-start-btn.on,#cont-scanner-start-btn.on {background:#7d2424;border-color:#a33333;color:#ffdcdc}
+/* the topology choice: one segmented control */
+#topo-group {gap:0;border:1px solid #2a4d83;border-radius:5px;overflow:hidden}
+#topo-group .btn.tb {border:none;border-radius:0;border-left:1px solid #2a4d83;margin-left:-1px;padding:4px 6px;font-size:12px}
+#topo-group .btn.tb.sel {background:#1f6fd1;color:#fff}
+#topo-group .btn.tb:not(.sel) {background:#131b33;color:#8fa3c0}
+#topo-group .btn.tb:not(.sel):hover {background:#1b2a4c;color:#cfe2fb}
+/* on / off switches: buttons marked data-sw (their .on / .off class is the
+   state, the ON / OFF text stays for screen readers) and checkboxes .sw */
+.sidebar .btn[data-sw],.sidebar input[type="checkbox"].sw {--sw-h:20px;--sw-k:#93a6c2;--sw-x:calc(var(--sw-h) / 2 - 1px);
+  -webkit-appearance:none;appearance:none;position:relative;flex:none;box-sizing:border-box;width:calc(var(--sw-h) * 1.8);height:var(--sw-h);min-height:0;margin:0;padding:0;
+  border:1px solid #34446a;border-radius:var(--sw-h);background-color:#222c47;cursor:pointer;font-size:0;line-height:0;color:transparent;
+  background-image:radial-gradient(circle at var(--sw-x) 50%,var(--sw-k) calc(var(--sw-h) / 2 - 4px),transparent calc(var(--sw-h) / 2 - 3.2px));
+  transition:background-color .15s,border-color .15s}
+.sidebar .btn[data-sw].on,.sidebar input[type="checkbox"].sw:checked {--sw-k:#fff;--sw-x:calc(100% - var(--sw-h) / 2 + 1px);background-color:#2a8f45;border-color:#37ad57}
+.sidebar .btn[data-sw]:hover,.sidebar input[type="checkbox"].sw:hover {border-color:#5b78ad}
+.sidebar .btn[data-sw].on:hover,.sidebar input[type="checkbox"].sw:checked:hover {border-color:#5fd07d}
+.sidebar .btn[data-sw]:focus-visible,.sidebar input[type="checkbox"].sw:focus-visible {outline:2px solid #4a9ff5;outline-offset:1px}
+.sidebar input[type="checkbox"].sw:disabled {opacity:.45;cursor:default}
+/* panels, separators, notes, help icons */
+.sidebar .tp {background:#131a30;border-color:#1f355c;border-radius:6px;padding:7px 8px;margin:7px 0}
+.sidebar .sec {border-top-color:#1f355c;margin-top:9px;padding-top:8px}
+.sidebar .bi {border-radius:5px;padding:5px 7px;margin:6px 0;font-size:11.5px}
+.sidebar .help {width:15px;height:15px;min-width:15px;margin-left:5px;font-size:10px;background:transparent;border-color:#3a5f96;color:#79a9e6}
+.sidebar .help:hover,.sidebar .help.tip-open {background:#1f6fd1;border-color:#1f6fd1;color:#fff}
+.sb-sub {display:flex;align-items:center;font-size:12px;font-weight:600;color:#8fb8ea;margin:8px 0 3px}
+.sb-note {font-size:11px;color:#7f93a8;line-height:1.4}
+.sb-note:empty {display:none}
+/* status lines: name left, value right */
+.sidebar .kv {display:flex;justify-content:space-between;gap:10px;font-size:12px;line-height:1.75;color:#b6c8e0}
+.sidebar .kv > span:first-child {flex:none;color:#6f87a6}
+.sidebar .kv > span:last-child {min-width:0;text-align:right;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+/* VFO cards */
+#decimator-list .dec-item {background:#131a30;border-color:#1f355c;border-radius:6px;padding:7px}
+#decimator-list .dec-row {margin:5px 0;gap:6px}
+#decimator-list .dec-row label {min-width:52px;color:#93a6c2}
+#decimator-list .dec-row.dec-sep {border-top:1px solid #1f355c;padding-top:7px;margin-top:7px}
+#decimator-list .dec-row label.dec-chk {display:flex;align-items:center;gap:6px;color:#c8d6e5;cursor:pointer}
+#decimator-list .btn.dec-x {background:transparent;border-color:transparent;color:#8d9fbb;padding:2px 7px}
+#decimator-list .btn.dec-x:hover {background:#7d2424;border-color:#a33333;color:#fff}
+@media (max-width:900px), (pointer:coarse) and (max-width:1280px) {
+  .sb-mv {width:32px;height:32px}
+  .sidebar .sb-toggle {width:28px;height:32px}
+  .sidebar input[type="range"] {height:6px}
+  .sidebar input[type="range"]::-webkit-slider-thumb {width:22px;height:22px}
+  .sidebar input[type="range"]::-moz-range-thumb {width:18px;height:18px}
+  .sidebar .btn[data-sw],.sidebar input[type="checkbox"].sw {--sw-h:26px}
+  .sidebar .ctrl-row input[type="number"],.sidebar .ctrl-row input[type="text"],.sidebar .ctrl-row input[type="password"],.sidebar .ctrl-row select {height:32px}
+}
+
 /* ===== Mobile / touch layout (small screens and touch tablets only) ===== */
 .menu-btn {display:none;background:#0f3460;color:#7cb3f0;border:1px solid #1a4a7a;border-radius:4px;font-size:20px;width:42px;height:42px;cursor:pointer;align-items:center;justify-content:center;padding:0;flex-shrink:0}
 .sidebar-backdrop {display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.55);z-index:999;opacity:0;pointer-events:none;transition:opacity 0.25s ease}
@@ -1225,31 +1339,31 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       <button class="sidebar-close" onclick="toggleSidebar(false)">✕</button>
     </div>
     <!-- Mobile-only: top-bar tuner/audio controls are moved here by applyMobileRelocation() -->
-    <div class="sb-section mobile-only" id="sb-mobile-controls">
+    <div class="sb-section mobile-only" data-sb="mobile-controls" id="sb-mobile-controls">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🎛️ Tuner &amp; Audio</h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">🎛️ Tuner &amp; Audio</span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content" id="mobile-controls-slot"></div>
     </div>
     <!-- Mobile-only: spectrum/waterfall display controls are moved here by applyMobileRelocation() -->
-    <div class="sb-section mobile-only" id="sb-mobile-display">
+    <div class="sb-section mobile-only" data-sb="mobile-display" id="sb-mobile-display">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📊 Display</h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">📊 Display</span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content" id="mobile-display-slot"></div>
     </div>
     <!-- Decimator Management -->
-    <div class="sb-section">
+    <div class="sb-section" data-sb="vfos">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>⚙️ Decimators</h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">⚙️ Decimators</span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div style="display:flex;gap:5px;margin-bottom:8px">
-          <button onclick="addDecimator()" class="btn primary" style="flex:1">+ Add</button>
-          <button onclick="requestDecimatorInfo()" class="btn" style="flex:1">↻ Refresh</button>
+          <button onclick="addDecimator()" class="btn primary" style="flex:1">+ Add VFO</button>
+          <button onclick="requestDecimatorInfo()" class="btn" title="Refresh the VFO list from the receiver">↻</button>
         </div>
         <div id="decimator-list">
           <!-- Decimator controls will be dynamically added here -->
@@ -1258,19 +1372,19 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- DoA Settings -->
-    <div class="sb-section coh-only">
+    <div class="sb-section coh-only" data-sb="doa">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🎯 MUSIC DoA</h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">🎯 MUSIC DoA</span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div class="ctrl-row">
-          <label>DoA:</label>
-          <button id="dot" class="btn on" onclick="tdo()">ON</button>
+          <label>DoA</label>
+          <button id="dot" class="btn on" data-sw onclick="tdo()">ON</button>
           <span class="cv" id="dos">Active</span>
         </div>
         <div class="ctrl-row">
-          <label>Topology:</label>
+          <label>Array</label>
           <div class="tb-group" id="topo-group">
             <button id="ucb" class="btn tb sel" onclick="sto('UCA')">UCA</button>
             <button id="ulb" class="btn tb" onclick="sto('ULA')">ULA</button>
@@ -1282,27 +1396,26 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <div class="tp" id="ucp">
           <div class="array-diagram" id="uca-diagram"></div>
           <div class="ctrl-row">
-            <label>Radius:</label>
+            <label>Radius</label>
             <input type="number" id="arr" value="50" min="10" step="1" style="width:60px" oninput="sar()" onchange="sar()">
-            <span style="font-size:10px">mm</span>
+            <span class="u">mm</span>
           </div>
-          <div id="uca-spacing-factor" style="font-size:10px;color:#888;margin-top:4px;"></div>
+          <div id="uca-spacing-factor" class="sb-note"></div>
         </div>
         <div class="tp hide" id="wbp">
           <div class="array-diagram" id="wb-diagram"></div>
-          <div class="bi info" id="wb-topo-status">Ring: Outer — radius 127.5 mm (auto)</div>
-          <div style="font-size:10px;color:#888;margin-top:4px;">Radius follows the antenna ring selected by the tuned frequency: Outer &lt;1&nbsp;GHz (127.5&nbsp;mm), Center 1–2.5&nbsp;GHz (51&nbsp;mm), Inner &gt;2.5&nbsp;GHz (20.4&nbsp;mm)</div>
+          <div class="bi info" id="wb-topo-status" title="The radius follows the antenna ring selected by the tuned frequency: Outer below 1 GHz (127.5 mm), Center 1-2.5 GHz (51 mm), Inner above 2.5 GHz (20.4 mm)">Ring: Outer — radius 127.5 mm (auto)</div>
         </div>
         <div class="tp hide" id="ulp">
           <div class="array-diagram" id="ula-diagram"></div>
           <div class="ctrl-row">
-            <label>Spacing:</label>
+            <label>Spacing</label>
             <input type="number" id="els" value="30" min="5" step="1" style="width:60px" oninput="ses()" onchange="ses()">
-            <span style="font-size:10px">mm</span>
+            <span class="u">mm</span>
           </div>
-          <div id="ula-spacing-factor" style="font-size:10px;color:#888;margin-top:4px;"></div>
+          <div id="ula-spacing-factor" class="sb-note"></div>
           <div class="ctrl-row" style="margin-top:6px;">
-            <label>Direction:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">A linear array can't tell front from back. Truncate the output to one half-plane to resolve the mirror ambiguity.</span></span></label>
+            <label>Direction<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">A linear array can't tell front from back. Truncate the output to one half-plane to resolve the mirror ambiguity.</span></span></label>
             <select id="ula-mode" onchange="setUlaMode(this.value)" style="flex:1">
               <option value="BOTH">Both (mirror)</option>
               <option value="FORWARD">Forward only</option>
@@ -1310,8 +1423,8 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             </select>
           </div>
           <div class="ctrl-row">
-            <label>FB Averaging:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Forward-backward averaging doubles the effective snapshot count and helps decorrelate multipath reflections. Linear arrays only.</span></span></label>
-            <button id="fbb" class="btn off" onclick="toggleFBAveraging()">OFF</button>
+            <label>FB average<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Forward-backward averaging doubles the effective snapshot count and helps decorrelate multipath reflections. Linear arrays only.</span></span></label>
+            <button id="fbb" class="btn off" data-sw onclick="toggleFBAveraging()">OFF</button>
           </div>
         </div>
         <div class="tp hide" id="cup">
@@ -1325,7 +1438,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           </div>
           <div class="bi info" id="custom-3d-info" style="display:none;color:#ff9800;">3D array detected - elevation spectrum enabled</div>
           <div class="ctrl-row" style="margin-top:6px;">
-            <label>Direction:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">An array whose elements all stand in one vertical plane facing forward (e.g. an upright patch panel) can't tell front from back. Truncate the output to one half-plane to resolve the mirror ambiguity. Leave on Both for arrays that see all around.</span></span></label>
+            <label>Direction<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">An array whose elements all stand in one vertical plane facing forward (e.g. an upright patch panel) can't tell front from back. Truncate the output to one half-plane to resolve the mirror ambiguity. Leave on Both for arrays that see all around.</span></span></label>
             <select id="custom-mode" onchange="setCustomMode(this.value)" style="flex:1">
               <option value="BOTH">Both (all around)</option>
               <option value="FORWARD">Forward only</option>
@@ -1336,7 +1449,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         <div class="tp hide" id="l3p">
           <div class="array-diagram" id="layout-diagram"></div>
           <div class="ctrl-row">
-            <label>Layout:</label>
+            <label>Layout</label>
             <select id="layout-shape" onchange="onLayoutShape(this.value)" style="flex:1;min-width:0">
               <optgroup label="Patch panel (upright, facing forward)">
                 <option value="p-centre">Square + centre</option>
@@ -1354,19 +1467,19 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             </select>
           </div>
           <div class="ctrl-row">
-            <label id="layout-size-label">Radius:</label>
+            <label id="layout-size-label">Radius</label>
             <input type="number" id="layout-size" min="5" step="1" style="width:60px" oninput="onLayoutSize()" onchange="onLayoutSize()">
-            <span style="font-size:10px">mm</span>
+            <span class="u">mm</span>
           </div>
           <div class="ctrl-row" id="layout-height-row">
-            <label>Height:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Height of the raised element(s) above the ring.</span></span></label>
+            <label>Height<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Height of the raised element(s) above the ring.</span></span></label>
             <input type="number" id="layout-height" min="0" step="1" style="width:60px" oninput="onLayoutSize()" onchange="onLayoutSize()">
-            <span style="font-size:10px">mm</span>
+            <span class="u">mm</span>
           </div>
-          <div id="layout-info" style="font-size:10px;color:#888;margin-top:4px;"></div>
+          <div id="layout-info" class="sb-note"></div>
           <div class="bi info hide" id="layout-warn" style="color:#ff9800;"></div>
           <div class="ctrl-row" style="margin-top:6px;">
-            <label>Direction:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">A patch panel can't tell front from back: keep Forward only (set automatically when a patch layout is picked). 3D arrays see all around: Both.</span></span></label>
+            <label>Direction<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">A patch panel can't tell front from back: keep Forward only (set automatically when a patch layout is picked). 3D arrays see all around: Both.</span></span></label>
             <select id="layout-mode" onchange="setCustomMode(this.value)" style="flex:1">
               <option value="BOTH">Both (all around)</option>
               <option value="FORWARD">Forward only</option>
@@ -1379,22 +1492,22 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         </div>
         <div class="sec">
           <div class="ctrl-row">
-            <label>Snapshots:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">More snapshots = smoother covariance estimate but slower to update.</span></span></label>
+            <label>Snapshots<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">More snapshots = smoother covariance estimate but slower to update.</span></span></label>
             <input type="range" class="slider" id="music-num-snapshots" min="8" max="128" value="32" step="8" oninput="updateMusicNumSnapshots(this.value)">
             <span class="sv" id="music-num-snapshots-val">32</span>
           </div>
           <div class="ctrl-row">
-            <label>Snap Length:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Longer snapshots = better resolution but need more data per estimate.</span></span></label>
+            <label>Snap length<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Longer snapshots = better resolution but need more data per estimate.</span></span></label>
             <input type="range" class="slider" id="music-snapshot-length" min="64" max="1024" value="256" step="64" oninput="updateMusicSnapshotLength(this.value)">
             <span class="sv" id="music-snapshot-length-val">256</span>
           </div>
           <div class="ctrl-row">
-            <label>Averaging:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Exponentially smooths the covariance across updates for steadier bearings on weak or fluttering signals. Higher = smoother but slower to react.</span></span></label>
+            <label>Averaging<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Exponentially smooths the covariance across updates for steadier bearings on weak or fluttering signals. Higher = smoother but slower to react.</span></span></label>
             <input type="range" class="slider" id="music-cov-avg" min="0" max="95" value="0" step="5" oninput="updateCovarianceAveraging(this.value)">
             <span class="sv" id="music-cov-avg-val">Off</span>
           </div>
           <div class="ctrl-row">
-            <label>Signal Sources:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Expected number of emitters to resolve. Auto counts eigenvalues standing 6 dB above the noise floor AND within 12 dB of the strongest signal - leakage from calibration residuals and multipath is ignored.</span></span></label>
+            <label>Sources<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Expected number of emitters to resolve. Auto counts eigenvalues standing 6 dB above the noise floor AND within 12 dB of the strongest signal - leakage from calibration residuals and multipath is ignored.</span></span></label>
             <select id="music-signal-sources" onchange="updateMusicSignalSources(this.value)" style="width:70px">
               <option value="0">Auto</option>
               <option value="1">1</option>
@@ -1405,28 +1518,28 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
             <span class="cv" id="est-sources-val" style="display:none"></span>
           </div>
           <div class="ctrl-row">
-            <label>Array Offset:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Rotates the reported bearing to match the array's physical mounting.</span></span></label>
+            <label>Array offset<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Rotates the reported bearing to match the array's physical mounting.</span></span></label>
             <input type="number" id="music-array-offset" min="-359" max="359" step="1" value="0" style="width:60px" onchange="updateArrayOffset(this.value)">
-            <span style="font-size:10px">deg</span>
+            <span class="u">°</span>
           </div>
         </div>
       </div>
     </div>
 
     <!-- Beamforming/Diversity -->
-    <div class="sb-section coh-only">
+    <div class="sb-section coh-only" data-sb="beamforming">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📡 Beamforming/Diversity<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip"><span id="bf-info">Coherently combines all <span id="bf-num-elements">5</span> antenna channels steered to DoA angle for ~7dB SNR improvement.</span></span></span></h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">📡 Beamforming/Diversity</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip"><span id="bf-info">Coherently combines all <span id="bf-num-elements">5</span> antenna channels steered to DoA angle for ~7dB SNR improvement.</span></span></span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div class="ctrl-row">
-          <label>Enable:</label>
-          <button id="bft" class="btn off" onclick="toggleBeamforming()">OFF</button>
+          <label>Enable</label>
+          <button id="bft" class="btn off" data-sw onclick="toggleBeamforming()">OFF</button>
           <span class="cv" id="bfs">Disabled</span>
         </div>
         <div class="ctrl-row">
-          <label>Mode:</label>
+          <label>Mode</label>
           <select id="bf-mode" onchange="setBeamformingMode(this.value)">
             <option value="DAS">Delay-and-Sum</option>
             <option value="FREQ_DAS">Freq-Domain DAS</option>
@@ -1436,72 +1549,60 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         </div>
         <div id="beamform-controls">
           <div class="ctrl-row">
-            <label>Steering:</label>
+            <label>Steering</label>
             <span class="cv" id="bf-steering" style="color:#4fc3f7;font-weight:bold">--°</span>
           </div>
           <div class="ctrl-row">
-            <label>Confidence:</label>
+            <label>Confidence</label>
             <span class="cv" id="bf-confidence">--%</span>
             <div style="flex:1;height:6px;background:#0f3460;border-radius:3px;margin-left:8px">
               <div id="bf-conf-bar" style="height:100%;width:0%;background:#4fc3f7;border-radius:3px;transition:width 0.2s"></div>
             </div>
           </div>
           <div class="ctrl-row">
-            <label>SNR Boost:</label>
+            <label>SNR boost</label>
             <span class="cv" id="bf-snr" style="color:#81c784">+0.0 dB</span>
           </div>
-          <div class="ctrl-row" style="margin-top:8px;border-top:1px solid #333;padding-top:8px">
-            <label>Manual Steer:</label>
-            <button id="manual-steer-btn" class="btn off" onclick="toggleManualSteering()">OFF</button>
+          <div class="ctrl-row" style="margin-top:8px;border-top:1px solid #1f355c;padding-top:8px">
+            <label>Manual steer<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Steers the beam to a fixed angle instead of the DoA bearing (for diagnostics).</span></span></label>
+            <button id="manual-steer-btn" class="btn off" data-sw onclick="toggleManualSteering()">OFF</button>
           </div>
           <div id="manual-steer-controls" style="display:none">
-            <div class="ctrl-row">
-              <label>Angle:</label>
+            <div class="ctrl-row" style="flex-wrap:nowrap">
+              <label>Angle</label>
               <input type="range" id="manual-steer-slider" min="0" max="360" value="0"
-                     oninput="setManualSteeringAngle(this.value)" style="flex:1">
-              <span class="cv" id="manual-steer-val" style="min-width:40px">0°</span>
+                     oninput="setManualSteeringAngle(this.value)">
+              <input type="number" id="manual-steer-input" min="0" max="360" value="0" title="0-360°"
+                     onchange="setManualSteeringAngle(this.value)" style="flex:0 0 54px">
+              <span class="u">°</span>
+              <span id="manual-steer-val" hidden>0°</span>
             </div>
-            <div class="ctrl-row">
-              <input type="number" id="manual-steer-input" min="0" max="360" value="0"
-                     onchange="setManualSteeringAngle(this.value)" style="width:60px;background:#0a1628;border:1px solid #1a3a5c;color:#e0e0e0;padding:4px;border-radius:4px">
-              <span style="font-size:10px;color:#888;margin-left:8px">degrees (0-360)</span>
-            </div>
-            <div class="bi" style="font-size:10px;color:#ffa726;margin-top:4px">
-              ⚠️ Manual override active - DoA steering disabled
-            </div>
+            <div class="bi">⚠ The DoA bearing is not steering the beam</div>
           </div>
         </div>
         <div id="mvdr-controls" style="display:none">
           <div class="ctrl-row">
-            <label>Regularization:</label>
+            <label>Regularization<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Lower = more adaptive (nulls interference). Higher = more like Delay-and-Sum (steadier on a stable signal).</span></span></label>
             <input type="range" id="mvdr-loading" min="10" max="90" value="50"
-                   oninput="setMVDRLoading(this.value/100)" style="flex:1">
-            <span class="cv" id="mvdr-loading-val">50%</span>
+                   oninput="setMVDRLoading(this.value/100)">
+            <span class="sv" id="mvdr-loading-val">50%</span>
           </div>
           <div class="ctrl-row">
-            <label>Condition:</label>
+            <label>Condition</label>
             <span class="cv" id="mvdr-condition" style="color:#ffa726">--</span>
-          </div>
-          <div class="bi" style="font-size:10px;color:#888;margin-top:4px">
-            Lower = more adaptive (nulls interference)<br>
-            Higher = more like DAS (stable signal)
           </div>
         </div>
         <div id="diversity-controls" style="display:none">
           <div class="ctrl-row">
-            <label>Best Channel:</label>
+            <label>Best channel<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Selection diversity uses the channel with the best SNR: no array gain, but robust to multipath fading on single channels.</span></span></label>
             <span class="cv" id="div-selected-channel" style="color:#4fc3f7;font-weight:bold">Ch 0</span>
             <span class="cv" id="div-selected-snr" style="margin-left:8px">-- dB</span>
           </div>
           <div class="ctrl-row" style="flex-wrap:wrap;gap:4px">
-            <label style="width:100%;font-size:10px;color:#888">Channel SNRs:</label>
+            <label style="width:100%;font-size:11px;color:#7f93a8">Channel SNRs</label>
             <div id="snr-displays-container" style="display:flex;flex-wrap:wrap;gap:4px">
               <!-- Dynamically generated by updateSNRDisplaysHTML() -->
             </div>
-          </div>
-          <div class="bi" style="font-size:10px;color:#888;margin-top:4px">
-            Selects best SNR channel (no array gain).<br>
-            Robust to multipath fading on single channel.
           </div>
         </div>
 
@@ -1511,18 +1612,18 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- Wideband Mode -->
 
     <!-- Station Information -->
-    <div class="sb-section">
+    <div class="sb-section" data-sb="station">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📡 Station Information<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Callsign &amp; location are published to DOA_value.html and the API. <b>Mobile App</b> takes location from a phone app (pending — reports 0's for now); <b>Static</b> uses the values above; <span class="os-lin"><b>KrakenPi GPS</b> uses the gpsd-connected receiver.</span><span class="os-win"><b>Receiver GPS</b> uses gpsd - Windows has none of its own: a gpsd on the network (KRAKEN_GPSD_HOST).</span></span></span></h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">📡 Station Information</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Callsign &amp; location are published to DOA_value.html and the API. <b>Mobile App</b> takes location from a phone app (pending — reports 0's for now); <b>Static</b> uses the values above; <span class="os-lin"><b>KrakenPi GPS</b> uses the gpsd-connected receiver.</span><span class="os-win"><b>Receiver GPS</b> uses gpsd - Windows has none of its own: a gpsd on the network (KRAKEN_GPSD_HOST).</span></span></span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div class="ctrl-row">
-          <label>Callsign:</label>
+          <label>Callsign</label>
           <input type="text" id="station-id" value="KrakenSDR" maxlength="64" style="flex:1" onchange="setStationId()">
         </div>
         <div class="ctrl-row">
-          <label>Location:</label>
+          <label>Location</label>
           <select id="location-source" onchange="setLocationSource(this.value)" style="flex:1">
             <option value="mobile">Mobile App</option>
             <option value="static">Static</option>
@@ -1531,32 +1632,32 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         </div>
         <div id="static-location-fields" style="display:none">
           <div class="ctrl-row">
-            <label>Latitude:</label>
+            <label>Latitude</label>
             <input type="number" id="static-lat" value="0" step="any" style="width:115px" onchange="setStaticLocation()">
           </div>
           <div class="ctrl-row">
-            <label>Longitude:</label>
+            <label>Longitude</label>
             <input type="number" id="static-lon" value="0" step="any" style="width:115px" onchange="setStaticLocation()">
           </div>
           <div class="ctrl-row">
-            <label>Heading:</label>
+            <label>Heading</label>
             <input type="number" id="static-heading" value="0" min="0" max="360" step="any" style="width:80px" onchange="setStaticLocation()">
-            <span style="font-size:10px">&deg;</span>
+            <span class="u">°</span>
           </div>
           <div class="ctrl-row">
-            <button class="btn sm" onclick="getGpsForStatic()">📍 Get GPS Data</button>
+            <button class="btn sm" onclick="getGpsForStatic()">📍 From GPS</button>
             <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Fills Latitude &amp; Longitude from the connected GPS (gpsd). Heading stays manual.</span></span>
-            <span id="get-gps-status" style="font-size:10px;color:#888"></span>
+            <span id="get-gps-status" class="sb-note"></span>
           </div>
         </div>
       </div>
     </div>
 
     <!-- KrakenSDR Wideband board telemetry (heimdall --wideband; hidden otherwise) -->
-    <div class="sb-section" id="wb-section" style="display:none">
+    <div class="sb-section" data-sb="wideband-board" id="wb-section" style="display:none">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🔌 Wideband Board<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The downconverter board's own sensors, read by heimdall once a second: input voltage and current (INA219, measured before the eFuse), board temperature and humidity (SHT40 on Testunit_3v2, Si7020 on 3v0), the LO as set and as read back from the board, firmware and board revision. Orange = warning, red = alarm; an alarm clears 30 s after the value is back in range. Grey = no fresh reading. Logged to wb_logs/ (wb_telemetry.csv every 10 s, wb_events.csv on every change). Testunit_3v0 cannot measure above 3.2 A.</span></span></h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">🔌 Wideband Board</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The downconverter board's own sensors, read by heimdall once a second: input voltage and current (INA219, measured before the eFuse), board temperature and humidity (SHT40 on Testunit_3v2, Si7020 on 3v0), the LO as set and as read back from the board, firmware and board revision. Orange = warning, red = alarm; an alarm clears 30 s after the value is back in range. Grey = no fresh reading. Logged to wb_logs/ (wb_telemetry.csv every 10 s, wb_events.csv on every change). Testunit_3v0 cannot measure above 3.2 A.</span></span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div id="wb-fw-warn" style="display:none;font-size:12px;color:#ffd9a0;background:#3a2a10;border:1px solid #b3822c;border-radius:4px;padding:4px 6px;margin-bottom:6px"></div>
@@ -1574,14 +1675,14 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- GPS Status -->
-    <div class="sb-section">
+    <div class="sb-section" data-sb="gps">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📍 GPS Status<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Location &amp; heading come from gpsd. A compass heading is used when the receiver provides one; otherwise heading is inferred from movement (course over ground). With no GPS, all values are 0.<span class="os-win"> Windows has no gpsd of its own: set KRAKEN_GPSD_HOST (and KRAKEN_GPSD_PORT) to one on the network, or use a Static location.</span></span></span></h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">📍 GPS Status</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Location &amp; heading come from gpsd. A compass heading is used when the receiver provides one; otherwise heading is inferred from movement (course over ground). With no GPS, all values are 0.<span class="os-win"> Windows has no gpsd of its own: set KRAKEN_GPSD_HOST (and KRAKEN_GPSD_PORT) to one on the network, or use a Static location.</span></span></span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div class="ctrl-row">
-          <label>Status:</label>
+          <label>Status</label>
           <span class="cv" id="gps-status-cv">
             <span id="gps-dot" style="color:#777">&#9679;</span>
             <span id="gps-status-text">No GPS</span>
@@ -1592,22 +1693,22 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- Web Mapper -->
-    <div class="sb-section coh-only">
+    <div class="sb-section coh-only" data-sb="web-mapper">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🌐 Web Mapper<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Streams DoA bearings to the KrakenSDR web mapper (built in — no separate middleware needed). <b>KrakenPro Cloud</b> relays to map.krakenrf.com and needs your KrakenPro API key; <b>Local Network</b> broadcasts the records to LAN map clients over WebSocket. Each VFO's squelch is respected: with squelch off its bearings always transmit; with squelch on, only while the squelch is open. Callsign &amp; location come from the Station Information panel above.</span></span></h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">🌐 Web Mapper</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Streams DoA bearings to the KrakenSDR web mapper (built in — no separate middleware needed). <b>KrakenPro Cloud</b> relays to map.krakenrf.com and needs your KrakenPro API key; <b>Local Network</b> broadcasts the records to LAN map clients over WebSocket. Each VFO's squelch is respected: with squelch off its bearings always transmit; with squelch on, only while the squelch is open. Callsign &amp; location come from the Station Information panel above.</span></span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div class="ctrl-row">
-          <label>Enable:</label>
-          <input type="checkbox" id="wm-enable" onchange="setWebMapperEnable(this.checked)">
+          <label>Enable</label>
+          <input type="checkbox" class="sw" id="wm-enable" onchange="setWebMapperEnable(this.checked)">
           <span class="cv" id="wm-state-cv">
             <span id="wm-dot" style="color:#777">&#9679;</span>
             <span id="wm-state-text">Disabled</span>
           </span>
         </div>
         <div class="ctrl-row">
-          <label>Output:</label>
+          <label>Output</label>
           <select id="wm-mode" onchange="setWebMapperMode(this.value)" style="flex:1">
             <option value="remote" selected>KrakenPro Cloud</option>
             <option value="local">Local Network</option>
@@ -1615,82 +1716,82 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         </div>
         <div id="wm-remote-fields">
           <div class="ctrl-row">
-            <label>Pro Key:</label>
+            <label>Pro key</label>
             <input type="password" id="wm-key" placeholder="KrakenPro API key" autocomplete="off" style="flex:1;min-width:0" onchange="setWebMapperKey()">
             <button class="btn sm" type="button" title="Show/hide key" onclick="toggleWebMapperKeyVisible()">&#128065;</button>
           </div>
           <div class="ctrl-row">
-            <label>Server:</label>
+            <label>Server</label>
             <input type="text" id="wm-url" value="wss://map.krakenrf.com:2096" style="flex:1;min-width:0" onchange="setWebMapperUrl()">
           </div>
         </div>
         <div id="wm-local-fields" style="display:none">
           <div class="ctrl-row">
-            <label>WS Port:</label>
+            <label>WS port</label>
             <input type="number" id="wm-ws-port" value="8021" min="1" max="65535" style="width:80px" onchange="setWebMapperWsPort()">
             <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Local map clients connect to <b>ws://&lt;this device&gt;:&lt;port&gt;</b> and receive one JSON record per VFO bearing.</span></span>
           </div>
         </div>
-        <div id="wm-status" style="font-size:12px;color:#8aa8c7;line-height:1.8;margin-top:4px">
-          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Records sent</span><span id="wm-records">0</span></div>
+        <div id="wm-status" style="margin-top:4px">
+          <div class="kv"><span>Records sent</span><span id="wm-records">0</span></div>
         </div>
       </div>
     </div>
 
     <!-- DoA Recording (doa_logger.cpp): bearings to a file. Not the 📼 recorder below (IQ / audio) -->
-    <div class="sb-section coh-only">
+    <div class="sb-section coh-only" data-sb="doa-recording">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📝 DoA Recording<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Logs the <b>DoA results</b> (bearing, confidence and the lobe of every VFO) to a file <b>on this device's disk</b> (<span class="os-lin">the KrakenPi</span><span class="os-win">the receiver's computer</span>), not your browser - for IQ samples or audio use the <b>📼 IQ &amp; Audio Recorder</b>. <b>Legacy CSV</b> matches DOA_value.html line-for-line; <b>SQLite</b> is a compact, app-readable database for plotting on a map - <b>🗺 Replay</b> under Saved Recordings plays one back on this page's map (track, bearings, heat map). The interval applies to both formats; below the actual DoA data rate it logs at the data rate, and duplicate frames are never written.</span></span></h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">📝 DoA Recording</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Logs the <b>DoA results</b> (bearing, confidence and the lobe of every VFO) to a file <b>on this device's disk</b> (<span class="os-lin">the KrakenPi</span><span class="os-win">the receiver's computer</span>), not your browser - for IQ samples or audio use the <b>📼 IQ &amp; Audio Recorder</b>. <b>Legacy CSV</b> matches DOA_value.html line-for-line; <b>SQLite</b> is a compact, app-readable database for plotting on a map - <b>🗺 Replay</b> under Saved Recordings plays one back on this page's map (track, bearings, heat map). The interval applies to both formats; below the actual DoA data rate it logs at the data rate, and duplicate frames are never written.</span></span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div class="ctrl-row">
-          <label>Format:</label>
+          <label>Format</label>
           <select id="log-format" onchange="setLogFormat(this.value)" style="flex:1">
             <option value="sqlite" selected>SQLite Database</option>
             <option value="csv">Legacy CSV</option>
           </select>
         </div>
         <div class="ctrl-row">
-          <label>Record every:</label>
-          <input type="number" id="log-interval" value="1" min="0.001" max="60" step="0.001" style="width:78px" onchange="setLogInterval()">
-          <span style="font-size:11px;color:#8aa8c7">s (1ms&ndash;60s)</span>
+          <label title="How often a record is written: 1 ms - 60 s">Every</label>
+          <input type="number" id="log-interval" value="1" min="0.001" max="60" step="0.001" title="1 ms - 60 s" onchange="setLogInterval()">
+          <span class="u">s</span>
         </div>
         <div class="ctrl-row">
-          <label>Filename:</label>
+          <label>File name</label>
           <input type="text" id="log-path" placeholder="(auto-named)" style="flex:1;min-width:0" onchange="setLogFile()">
           <button class="btn sm" title="Auto-name from current date &amp; time" onclick="autoNameLog()">🕐</button>
         </div>
         <div class="ctrl-row">
           <button id="log-toggle-btn" class="btn" style="flex:1" onclick="toggleLogging()">&#9679; Start Recording</button>
         </div>
-        <div id="log-status" style="font-size:12px;color:#8aa8c7;line-height:1.8;margin-top:4px">
-          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Status</span><span id="log-state"><span style="color:#777">&#9679;</span> Stopped</span></div>
-          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">File</span><span id="log-file" style="text-align:right;word-break:break-all">&mdash;</span></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Size</span><span id="log-size">&mdash;</span></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Entries</span><span id="log-entries">0</span></div>
+        <div id="log-status" style="margin-top:4px">
+          <div class="kv"><span>Status</span><span id="log-state"><span style="color:#777">&#9679;</span> Stopped</span></div>
+          <div class="kv"><span>File</span><span id="log-file">&mdash;</span></div>
+          <div class="kv"><span>Size</span><span id="log-size">&mdash;</span></div>
+          <div class="kv"><span>Entries</span><span id="log-entries">0</span></div>
         </div>
         <div style="margin-top:10px;border-top:1px solid #0f3460;padding-top:8px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
-            <span style="color:#7cb3f0;font-size:12px;font-weight:bold">Saved Recordings</span>
+            <span class="sb-sub" style="margin:0">Saved recordings</span>
             <button class="btn sm" title="Refresh list" onclick="refreshRecordings()">&#8635;</button>
           </div>
           <div id="rec-list" style="max-height:170px;overflow-y:auto;border:1px solid #0f3460;border-radius:4px;background:#1a1a2e"></div>
           <div class="ctrl-row" style="margin-top:6px;gap:6px">
             <button id="rec-download-btn" class="btn sm" style="flex:1" onclick="downloadSelected()">&#11015; Download</button>
             <button id="rec-replay-btn" class="btn sm" style="flex:1" onclick="replaySelected()" title="Play the selected recording back on the 🗺 map: the track, bearings, lobes and the heat map of where the transmitter is (the map's ⏯ Replay)">🗺 Replay</button>
-            <button class="btn sm" style="flex:1;background:#5a1f1f;border-color:#8b2525;color:#ffd9d9" onclick="deleteSelected()">&#128465; Delete</button>
+            <button class="btn sm danger" style="flex:1" onclick="deleteSelected()">&#128465; Delete</button>
           </div>
         </div>
       </div>
     </div>
 
     <!-- 📼 IQ & Audio Recorder (recorder.cpp, recorder_audio.cpp; playback: playback.cpp) - all modes -->
-    <div class="sb-section" id="iqr-section">
+    <div class="sb-section" data-sb="recorder" id="iqr-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📼 IQ &amp; Audio Recorder<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Records to <b>this device's disk</b> (<span class="os-lin">the KrakenPi</span><span class="os-win">the receiver's computer</span>):<br><b>IQ</b> (coherent mode): the raw samples of <b>every antenna</b>, phase-calibrated - the whole 2.4 MHz (as heimdall sends it, 2 bytes per sample per antenna: 24 MB/s with 5 antennas) or just one VFO's band (much smaller). Saved in the open <b>SigMF</b> format: one recording per antenna + a collection file tying them together, in one folder; downloaded as one <code>.sigmf</code> archive. <b>Open</b> plays a recording back through the receiver - spectrum, VFOs, decoders, DoA, the map - as if the antennas picked it up again.<br><b>Audio</b>: what one or more VFOs demodulate (their demod - NBFM / AM / WBFM - or with demod <i>Digital</i> their decoder's voice), a WAV or Opus file per VFO.<br><br>A recording stops at its time limit, when you press Stop, or before the drive is full (a reserve is kept free). It doesn't start when it can't fit. An SD card writes ~8-20 MB/s: a full-band recording of 5 antennas is then held in memory and written after it ends - only short ones fit; use the VFO band or a USB SSD for long ones.</span></span></h3>
+        <h3><span class="sb-title">📼 IQ &amp; Audio Recorder</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Records to <b>this device's disk</b> (<span class="os-lin">the KrakenPi</span><span class="os-win">the receiver's computer</span>):<br><b>IQ</b> (coherent mode): the raw samples of <b>every antenna</b>, phase-calibrated - the whole 2.4 MHz (as heimdall sends it, 2 bytes per sample per antenna: 24 MB/s with 5 antennas) or just one VFO's band (much smaller). Saved in the open <b>SigMF</b> format: one recording per antenna + a collection file tying them together, in one folder; downloaded as one <code>.sigmf</code> archive. <b>Open</b> plays a recording back through the receiver - spectrum, VFOs, decoders, DoA, the map - as if the antennas picked it up again.<br><b>Audio</b>: what one or more VFOs demodulate (their demod - NBFM / AM / WBFM - or with demod <i>Digital</i> their decoder's voice), a WAV or Opus file per VFO.<br><br>A recording stops at its time limit, when you press Stop, or before the drive is full (a reserve is kept free). It doesn't start when it can't fit. An SD card writes ~8-20 MB/s: a full-band recording of 5 antennas is then held in memory and written after it ends - only short ones fit; use the VFO band or a USB SSD for long ones.</span></span></h3>
         <span class="acal-badge" id="iqr-badge"></span>
-        <span class="sb-toggle">▼</span>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div id="iqr-pbbox"></div>
@@ -1699,18 +1800,18 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <button data-v="audio" onclick="recSet('RECORDER_MODE:audio')" title="The demodulated audio of one or more VFOs">🔊 Audio</button>
         </div>
         <div id="iqr-iq-opts">
-          <label class="rec-opt"><input type="radio" name="rec-iq" value="full" onchange="recSet('RECORDER_IQ:full')"> <span><b>Full band</b> - 2.4 MHz, every antenna <span class="rec-meta" id="iqr-iq-full-rate"></span></span></label>
-          <label class="rec-opt"><input type="radio" name="rec-iq" value="band" onchange="recSet('RECORDER_IQ:band')"> <span><b>VFO band</b> - one VFO's bandwidth, every antenna <span class="rec-meta" id="iqr-iq-band-rate"></span></span></label>
+          <label class="rec-opt"><input type="radio" name="rec-iq" value="full" onchange="recSet('RECORDER_IQ:full')"> <span title="The whole 2.4 MHz of every antenna"><b>Full band</b> <span class="rec-meta" id="iqr-iq-full-rate"></span></span></label>
+          <label class="rec-opt"><input type="radio" name="rec-iq" value="band" onchange="recSet('RECORDER_IQ:band')"> <span title="Only one VFO's bandwidth, of every antenna: much smaller"><b>One VFO's band</b> <span class="rec-meta" id="iqr-iq-band-rate"></span></span></label>
           <div class="ctrl-row" id="iqr-band-row" style="margin-left:22px">
-            <label>VFO:</label>
+            <label>VFO</label>
             <select id="iqr-band-vfo" style="flex:1;min-width:0" onchange="recSet('RECORDER_BAND_VFO:' + this.value)"></select>
           </div>
         </div>
         <div id="iqr-audio-opts">
-          <div style="font-size:12px;color:#7cb3f0;font-weight:bold;margin:4px 0 2px">VFOs <span class="rec-meta">(set a VFO's demod to <i>Digital</i> to record its decoder's voice)</span></div>
+          <div class="sb-sub" style="margin-top:4px">VFOs<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Tick the VFOs to record. A VFO with its demod on <i>Digital</i> records its decoder's voice.</span></span></div>
           <div id="iqr-vfos" class="rec-vfos"></div>
           <div class="ctrl-row">
-            <label>Format:</label>
+            <label>Format</label>
             <select id="iqr-afmt" style="flex:1;min-width:0" onchange="recSetFormat(this.value)">
               <option value="wav:48000">WAV 48 kHz (16-bit)</option>
               <option value="wav:16000">WAV 16 kHz (voice)</option>
@@ -1722,19 +1823,19 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
               <option value="opus:96">Opus 96 kbit/s (broadcast FM)</option>
             </select>
           </div>
-          <label class="rec-chk" title="With the VFO's squelch on: the time the squelch is closed is left out instead of recorded as silence (the file only holds the transmissions). Digital: only the decoded voice"><input type="checkbox" id="iqr-askip" onchange="recSet('RECORDER_AUDIO_SKIP:' + (this.checked ? 1 : 0))"> Leave out silence (closed squelch)</label>
+          <label class="rec-chk" title="With the VFO's squelch on: the time the squelch is closed is left out instead of recorded as silence (the file only holds the transmissions). Digital: only the decoded voice"><input type="checkbox" id="iqr-askip" onchange="recSet('RECORDER_AUDIO_SKIP:' + (this.checked ? 1 : 0))"> Skip silence</label>
         </div>
         <div class="ctrl-row">
-          <label>Length:</label>
+          <label>Length</label>
           <select id="iqr-dur" style="flex:1;min-width:0" onchange="recSet('RECORDER_DURATION:' + this.value)"></select>
         </div>
         <div class="ctrl-row">
-          <input type="text" id="iqr-name" placeholder="name (optional)" maxlength="64" style="flex:1;min-width:0" onchange="send('RECORDER_NAME:' + this.value.trim())">
+          <input type="text" id="iqr-name" placeholder="Name" title="A name for the recording (optional)" maxlength="64" style="flex:1;min-width:0" onchange="send('RECORDER_NAME:' + this.value.trim())">
         </div>
         <div class="ctrl-row">
-          <input type="text" id="iqr-notes" placeholder="notes (optional, saved with it)" maxlength="500" style="flex:1;min-width:0" onchange="send('RECORDER_NOTES:' + this.value.trim())">
+          <input type="text" id="iqr-notes" placeholder="Notes" title="Notes saved with the recording (optional)" maxlength="500" style="flex:1;min-width:0" onchange="send('RECORDER_NOTES:' + this.value.trim())">
         </div>
-        <label class="rec-chk" title="The station's position (and, from a GPS, its track while recording) and heading go into the recording - playback puts the map and the bearings' north back where it was made"><input type="checkbox" id="iqr-loc" onchange="recSet('RECORDER_LOCATION:' + (this.checked ? 1 : 0))"> Save the station's position with it</label>
+        <label class="rec-chk" title="The station's position (and, from a GPS, its track while recording) and heading go into the recording - playback puts the map and the bearings' north back where it was made"><input type="checkbox" id="iqr-loc" onchange="recSet('RECORDER_LOCATION:' + (this.checked ? 1 : 0))"> Include the station position</label>
         <div id="iqr-need" class="rec-note"></div>
         <div class="ctrl-row" style="margin-top:4px">
           <button id="iqr-go" class="btn" style="flex:1" onclick="recToggle()">● Start Recording</button>
@@ -1756,7 +1857,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         </div>
         <div style="margin-top:8px;border-top:1px solid #0f3460;padding-top:6px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-            <span style="color:#7cb3f0;font-size:12px;font-weight:bold">Recordings <span class="rec-meta" id="iqr-count"></span></span>
+            <span class="sb-sub" style="margin:0;gap:5px">Recordings <span class="rec-meta" id="iqr-count"></span></span>
             <span>
               <button class="btn sm" title="Upload a SigMF archive (.sigmf) from this computer - e.g. one downloaded from another KrakenSDR - to open it here" onclick="$id('iqr-up-file').click()">⬆ Upload</button>
               <button class="btn sm" title="Refresh the list" onclick="send('RECORDER_LIST')">&#8635;</button>
@@ -1764,32 +1865,32 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           </div>
           <input type="file" id="iqr-up-file" accept=".sigmf" style="display:none" onchange="recUpload(this)">
           <div id="iqr-up" class="rec-note"></div>
-          <label class="rec-chk" title="Open puts the VFOs back the way they were when the recording was made (else your VFOs stay, at the same offsets). Either way your own setup returns when the playback stops"><input type="checkbox" id="iqr-pb-vfos"> Open with the recording's VFOs</label>
+          <label class="rec-chk" title="Open puts the VFOs back the way they were when the recording was made (else your VFOs stay, at the same offsets). Either way your own setup returns when the playback stops"><input type="checkbox" id="iqr-pb-vfos"> Open with its VFOs</label>
           <div id="iqr-list" class="rec-list"></div>
         </div>
       </div>
     </div>
 
     <!-- Display Controls -->
-    <div class="sb-section">
+    <div class="sb-section" data-sb="display">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🖥️ Display</h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">🖥️ Display</span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div class="ctrl-row">
-          <label>Averaging:</label>
+          <label>Averaging</label>
           <input type="range" id="asl" class="slider" min="0" max="100" value="85" oninput="ua(this.value)">
           <span class="sv" id="av">85%</span>
         </div>
         <div class="ctrl-row">
-          <label>Edge Clip:</label>
+          <label>Edge clip</label>
           <input type="number" id="ecl" value="0.8" min="0.1" max="1.0" step="0.05" style="width:50px">
           <button class="btn sm" onclick="sec()">Set</button>
           <span class="cv" id="cec">80%</span>
         </div>
         <div class="ctrl-row coh-only">
-          <label>DOA Angles:<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Unit Circle: 0&deg; at the top = the ANT0 direction, increasing counter-clockwise (90&deg; left, 180&deg; bottom, 270&deg; right; array elements run clockwise from ANT0). Compass: 0&deg;=North (top), clockwise, with N/E/S/W markers - point ANT0 north for true bearings.</span></span></label>
+          <label>DoA angles<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Unit Circle: 0&deg; at the top = the ANT0 direction, increasing counter-clockwise (90&deg; left, 180&deg; bottom, 270&deg; right; array elements run clockwise from ANT0). Compass: 0&deg;=North (top), clockwise, with N/E/S/W markers - point ANT0 north for true bearings.</span></span></label>
           <select id="doa-convention" onchange="setDoaConvention(this.value)" style="flex:1">
             <option value="unit">Unit Circle</option>
             <option value="compass" selected>Compass (N/E/S/W)</option>
@@ -1799,14 +1900,14 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- FFT Settings -->
-    <div class="sb-section">
+    <div class="sb-section" data-sb="fft">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📊 FFT Settings</h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">📊 FFT Settings</span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div class="ctrl-row">
-          <label>FFT Size:</label>
+          <label>FFT size<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">A larger FFT shows finer detail when zoomed in, and costs more CPU.</span></span></label>
           <select id="fft-size-sel" onchange="setFFTSize(this.value)">
             <option value="1024">1024</option>
             <option value="2048">2048</option>
@@ -1818,21 +1919,18 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           </select>
         </div>
         <div class="ctrl-row">
-          <label title="For a slow connection (mobile data, VPN): this browser asks for half the spectrum points - about one per two pixels of the plot. Saved in this browser only">Slow link:</label>
-          <input type="checkbox" id="spec-slow" title="For a slow connection (mobile data, VPN): this browser asks for half the spectrum points - about one per two pixels of the plot. Saved in this browser only" onchange="specSlowSet(this.checked)">
+          <label title="For a slow connection (mobile data, VPN): this browser asks for half the spectrum points - about one per two pixels of the plot. Saved in this browser only">Slow link</label>
+          <input type="checkbox" class="sw" id="spec-slow" title="For a slow connection (mobile data, VPN): this browser asks for half the spectrum points - about one per two pixels of the plot. Saved in this browser only" onchange="specSlowSet(this.checked)">
         </div>
-        <div style="font-size:11px;color:#888;margin-top:8px">
-          Points sent: <span id="fft-points-sent" title="Spectrum points per frame to this browser: about one per pixel of the plot (half with Slow link), at most 4096. Zoomed in, the same points cover less spectrum - more detail, down to one FFT bin, at the same data rate" style="color:#7cb3f0">-</span><br>
-          <span style="font-size:10px;color:#666">Higher FFT = finer detail when zoomed in, more CPU</span>
-        </div>
+        <div class="kv" title="Spectrum points per frame to this browser: about one per pixel of the plot (half with Slow link), at most 4096. Zoomed in, the same points cover less spectrum - more detail, down to one FFT bin, at the same data rate"><span>Points sent</span><span id="fft-points-sent">-</span></div>
       </div>
     </div>
 
     <!-- Discrete Scanner -->
-    <div class="sb-section wb-only">
+    <div class="sb-section wb-only" data-sb="scanner">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📻 Scanner<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Requires wideband mode.</span></span></h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">📻 Scanner</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Requires wideband mode.</span></span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div style="text-align:center;margin-bottom:8px">
@@ -1847,20 +1945,20 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <button onclick="saveScannerFile()" class="btn sm" style="flex:1">Save</button>
           <button onclick="createNewScanner()" class="btn sm" style="flex:1">New</button>
         </div>
-        <div style="font-size:9px;color:#666;margin-bottom:8px" id="scanner-file-name">No file loaded</div>
+        <div class="sb-note" style="margin-bottom:6px" id="scanner-file-name">No file loaded</div>
         <div class="ctrl-row">
-          <label>Squelch:</label>
+          <label>Squelch</label>
           <input type="range" id="scan-squelch" class="slider" min="0" max="80" value="20" oninput="updateScannerSquelch(this.value)">
           <span class="sv" id="scan-squelch-val">20</span>
         </div>
         <div class="ctrl-row">
-          <label>Show Squelch:</label>
-          <input type="checkbox" id="show-scanner-squelch" onchange="toggleShowScannerSquelch(this.checked)">
+          <label title="Draw the squelch level on the spectrum">Show level</label>
+          <input type="checkbox" class="sw" id="show-scanner-squelch" onchange="toggleShowScannerSquelch(this.checked)">
         </div>
         <div class="ctrl-row">
-          <label>Dwell:</label>
+          <label>Dwell</label>
           <input type="number" id="scan-dwell" value="500" min="500" max="5000" step="50" style="width:60px" onchange="updateScannerDwell(this.value)" onblur="enforceDwellMin()">
-          <span style="font-size:10px">ms</span>
+          <span class="u">ms</span>
         </div>
         <div class="sec">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
@@ -1878,11 +1976,11 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- 📻 Saved frequencies (saved_freqs.cpp) + the map markers - all modes -->
-    <div class="sb-section" id="sf-section">
+    <div class="sb-section" data-sb="saved-frequencies" id="sf-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>📻 Saved Frequencies<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Your list of frequencies, kept on the receiver (every browser sees the same list). <b>Click one to tune</b> the selected VFO to it (also its demod, bandwidth and decoder, when the entry has them); the receiver retunes when it is outside the band shown. Each needs a name and a frequency; a category, a location, demod, bandwidth, decoder, tone / code and notes are optional. Group them in categories (⚙ Categories: add your own, rename, recolour). A frequency with a <b>location</b> appears on the 🗺 map: the marker there lists every frequency saved at that place. Saved frequencies are marked on the spectrum (👁 on a category hides its marks); click a mark to tune. ☆ Save on a VFO card saves that VFO's frequency.<br><br><b>Scan:</b> tick the frequencies to scan - or a whole category with the box in its heading (also the frequencies added to it later; untick single ones to leave them out) - and press ▶ Scan. The selected VFO is tuned to each one that is active, received the way the entry says, and heard while it is (plus the Delay). Coherent mode watches one tuner band at a time (the array recalibrates after each retune); independent mode watches a band on every tuner no other VFO is on.</span></span></h3>
+        <h3><span class="sb-title">📻 Saved Frequencies</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Your list of frequencies, kept on the receiver (every browser sees the same list). <b>Click one to tune</b> the selected VFO to it (also its demod, bandwidth and decoder, when the entry has them); the receiver retunes when it is outside the band shown. Each needs a name and a frequency; a category, a location, demod, bandwidth, decoder, tone / code and notes are optional. Group them in categories (⚙ Categories: add your own, rename, recolour). A frequency with a <b>location</b> appears on the 🗺 map: the marker there lists every frequency saved at that place. Saved frequencies are marked on the spectrum (👁 on a category hides its marks); click a mark to tune. ☆ Save on a VFO card saves that VFO's frequency.<br><br><b>Scan:</b> tick the frequencies to scan - or a whole category with the box in its heading (also the frequencies added to it later; untick single ones to leave them out) - and press ▶ Scan. The selected VFO is tuned to each one that is active, received the way the entry says, and heard while it is (plus the Delay). Coherent mode watches one tuner band at a time (the array recalibrates after each retune); independent mode watches a band on every tuner no other VFO is on.</span></span></h3>
         <span class="sf-count" id="sf-count"></span>
-        <span class="sb-toggle">▼</span>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div class="sf-bar">
@@ -1905,11 +2003,11 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           </div>
           <div class="sfs-status" id="sfs-status"></div>
           <div class="sfs-set" id="sfs-set" style="display:none">
-            <div class="ctrl-row"><label title="A frequency is active when its strongest spectrum bin is this far above the noise floor">Squelch:</label><input type="range" id="sfs-sq" class="slider" min="3" max="40" step="0.5" value="12" oninput="$id('sfs-sq-v').textContent = (+this.value).toFixed(1) + ' dB'; sfsSqPreview(this.value)" onchange="sfsSet('SQUELCH', this.value)"><span class="sv" id="sfs-sq-v">12.0 dB</span></div>
-            <div class="ctrl-row"><label title="How long the VFO stays on a frequency after its transmission ends (for the answer)">Delay:</label><input type="number" id="sfs-hang" min="0" max="60" step="0.5" value="2" onchange="sfsSet('HANG', this.value * 1000)"><span class="u" title="after a transmission ends">s after it ends</span></div>
-            <div class="ctrl-row"><label title="With more bands than tuners: how long each band is watched before the next one">Dwell:</label><input type="number" id="sfs-dwell" min="0.5" max="60" step="0.5" value="2" onchange="sfsSet('DWELL', this.value * 1000)"><span class="u">s per band</span></div>
-            <div class="ctrl-row"><label title="Go on to the next active frequency after this long on one that stays active (broadcast stations, a stuck carrier) - it gets its turn again on the next pass. Only clean time counts, not the array's calibration after a retune. 0 = no limit">Longest stay:</label><input type="number" id="sfs-max" min="0" max="3600" step="1" value="0" onchange="sfsSet('MAX', this.value * 1000)"><span class="u" title="0 = no limit">s (0 = off)</span></div>
-            <div class="ctrl-row" id="sfs-multi-row"><label title="How many VFOs the scan uses">VFOs:</label><label class="sfs-chk" title="Every frequency active at the same time in the band watched gets a VFO of its own - all heard (🔊) and, with 🗣 Transcribe ticked on the scan's VFO, all transcribed at once. The extra VFOs start as copies of the scan's VFO as it was when the scan started (demod, bandwidth, decoder, squelch, Transcribe), with each frequency's own settings on top. Each one goes when its frequency ends (Delay, Longest stay) and when the scan stops - they are never saved. At most 16 VFOs in all. Off: one VFO, the frequencies take turns"><input type="checkbox" id="sfs-multi" onchange="sfsSet('MULTI', this.checked ? 1 : 0)">one per active frequency</label></div>
+            <div class="ctrl-row"><label title="A frequency is active when its strongest spectrum bin is this far above the noise floor">Squelch</label><input type="range" id="sfs-sq" class="slider" min="3" max="40" step="0.5" value="12" oninput="$id('sfs-sq-v').textContent = (+this.value).toFixed(1) + ' dB'; sfsSqPreview(this.value)" onchange="sfsSet('SQUELCH', this.value)"><span class="sv" id="sfs-sq-v">12.0 dB</span></div>
+            <div class="ctrl-row"><label title="How long the VFO stays on a frequency after its transmission ends (for the answer)">Delay</label><input type="number" id="sfs-hang" min="0" max="60" step="0.5" value="2" onchange="sfsSet('HANG', this.value * 1000)"><span class="u">s</span></div>
+            <div class="ctrl-row"><label title="With more bands than tuners: how long each band is watched before the next one">Dwell</label><input type="number" id="sfs-dwell" min="0.5" max="60" step="0.5" value="2" onchange="sfsSet('DWELL', this.value * 1000)"><span class="u">s</span></div>
+            <div class="ctrl-row"><label title="Go on to the next active frequency after this long on one that stays active (broadcast stations, a stuck carrier) - it gets its turn again on the next pass. Only clean time counts, not the array's calibration after a retune. 0 = no limit">Longest stay</label><input type="number" id="sfs-max" min="0" max="3600" step="1" value="0" onchange="sfsSet('MAX', this.value * 1000)"><span class="u" title="0 = no limit">s</span></div>
+            <div class="ctrl-row" id="sfs-multi-row"><label title="How many VFOs the scan uses: one for all, or one per active frequency">VFO per signal</label><label class="sfs-chk" title="Every frequency active at the same time in the band watched gets a VFO of its own - all heard (🔊) and, with 🗣 Transcribe ticked on the scan's VFO, all transcribed at once. The extra VFOs start as copies of the scan's VFO as it was when the scan started (demod, bandwidth, decoder, squelch, Transcribe), with each frequency's own settings on top. Each one goes when its frequency ends (Delay, Longest stay) and when the scan stops - they are never saved. At most 16 VFOs in all. Off: one VFO, the frequencies take turns"><input type="checkbox" class="sw" id="sfs-multi" onchange="sfsSet('MULTI', this.checked ? 1 : 0)"></label></div>
             <div class="sel">Tick <a href="#" onclick="sfsAll(true);return false" title="Every category (also the frequencies added later)">all</a> · <a href="#" onclick="sfsAll(false);return false" title="Untick everything">none</a></div>
           </div>
         </div>
@@ -1919,10 +2017,10 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- Continuous Scanner -->
-    <div class="sb-section coh-only">
+    <div class="sb-section coh-only" data-sb="continuous-scanner">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🔍 Continuous Scanner<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Scans for active signals within the current bandwidth, dwelling on each one in turn.</span></span></h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">🔍 Continuous Scanner</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Scans for active signals within the current bandwidth, dwelling on each one in turn.</span></span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div style="text-align:center;margin-bottom:8px">
@@ -1933,58 +2031,58 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <button id="cont-scanner-stop-btn" onclick="stopContinuousScanner()" class="btn" style="flex:1;display:none">◼ Stop</button>
         </div>
         <div class="ctrl-row">
-          <label>Squelch:</label>
+          <label>Squelch</label>
           <input type="range" id="cont-scan-squelch" class="slider" min="5" max="50" value="15" oninput="updateContScanSquelch(this.value)">
           <span class="sv" id="cont-scan-squelch-val">15 dB</span>
         </div>
         <div class="ctrl-row">
-          <label>Show Squelch:</label>
-          <input type="checkbox" id="show-cont-scanner-squelch" onchange="toggleShowContScannerSquelch(this.checked)">
+          <label title="Draw the squelch level on the spectrum">Show level</label>
+          <input type="checkbox" class="sw" id="show-cont-scanner-squelch" onchange="toggleShowContScannerSquelch(this.checked)">
         </div>
         <div class="ctrl-row">
-          <label>Dwell:</label>
+          <label>Dwell</label>
           <input type="number" id="cont-scan-dwell" value="2000" min="500" max="30000" step="100" style="width:70px" onchange="updateContScanDwell(this.value)">
-          <span style="font-size:10px">ms</span>
+          <span class="u">ms</span>
         </div>
         <div class="ctrl-row">
-          <label>Decay (s):</label>
+          <label>Decay (s)</label>
           <input type="range" id="cont-scan-decay" class="slider" min="0" max="30" value="5" step="0.5" oninput="updateContScanDecay(this.value)">
           <span class="sv" id="cont-scan-decay-val">5.0</span>
         </div>
         <div class="sec">
-          <div style="font-size:11px;color:#888;margin-bottom:5px">Wideband Scan:</div>
           <div class="ctrl-row">
-            <label>Enable:</label>
-            <input type="checkbox" id="cont-scan-wideband-enable" onchange="toggleContScanWideband(this.checked)">
+            <label title="Step through a frequency range wider than the tuner's band">Range scan</label>
+            <input type="checkbox" class="sw" id="cont-scan-wideband-enable" onchange="toggleContScanWideband(this.checked)">
           </div>
           <div class="ctrl-row">
-            <label>Start MHz:</label>
-            <input type="number" id="cont-scan-start-mhz" value="88" min="24" max="1766" step="0.1" style="width:80px" onchange="updateContScanWidebandRange()">
+            <label>From</label>
+            <input type="number" id="cont-scan-start-mhz" value="88" min="24" max="1766" step="0.1" onchange="updateContScanWidebandRange()">
+            <span class="u">MHz</span>
           </div>
           <div class="ctrl-row">
-            <label>End MHz:</label>
-            <input type="number" id="cont-scan-end-mhz" value="108" min="24" max="1766" step="0.1" style="width:80px" onchange="updateContScanWidebandRange()">
+            <label>To</label>
+            <input type="number" id="cont-scan-end-mhz" value="108" min="24" max="1766" step="0.1" onchange="updateContScanWidebandRange()">
+            <span class="u">MHz</span>
           </div>
-          <div id="cont-scan-band-progress" style="font-size:11px;color:#888;margin-top:5px"></div>
+          <div id="cont-scan-band-progress" class="sb-note"></div>
         </div>
         <div class="sec">
-          <div style="font-size:11px;color:#888;margin-bottom:5px">Tracked Signals:</div>
+          <div class="sb-sub" style="margin-top:0">Tracked signals</div>
           <div id="cont-scan-tracked" style="font-size:12px;color:#666">None</div>
         </div>
       </div>
     </div>
 
     <!-- Digital voice/data decoder (one per VFO) -->
-    <div class="sb-section" id="sb-digital">
+    <div class="sb-section" data-sb="digital-decoders" id="sb-digital">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🔐 Digital Decoders<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The voice codecs the digital decoders can use, and the installed decoder plugins. <b>Auto detect</b> on a plugin = it runs when a VFO's decoder is on Auto detect (untick the ones you never need: each costs CPU). Plugins are plain source folders (plugins/&lt;id&gt;/): to add one, <span class="os-win os-win-pkg">build it in the KrakenSDR source folder (build_windows.bat - this package has no sources or compiler), copy its kraken_doa_v2\plugins\&lt;id&gt;\build\decoder.exe into the same place in this folder</span><span class="os-win-src">copy its folder into kraken_doa_v2/plugins/, run </span><span class="os-lin">make in kraken_doa_v2</span><span class="os-win os-win-src">build_windows.bat (or make in kraken_doa_v2 in the MSYS2 UCRT64 shell)</span> and press ↻. To decode a VFO, tick <b>Digital decoder</b> on it in the Decimators box and pick <b>Auto detect</b> or a decoder; any number of VFOs can decode at once, each with its own tab in the panel under the waterfall. Voice plays with Demod "Digital" (or Listen in the VFO's tab). The AMBE and TETRA codecs are not shipped (licensing): you build them yourself, for personal use - whether that is allowed where you live is your responsibility.</span></span></h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">🔐 Digital Decoders</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The voice codecs the digital decoders can use, and the installed decoder plugins. <b>Auto detect</b> on a plugin = it runs when a VFO's decoder is on Auto detect (untick the ones you never need: each costs CPU). Plugins are plain source folders (plugins/&lt;id&gt;/): to add one, <span class="os-win os-win-pkg">build it in the KrakenSDR source folder (build_windows.bat - this package has no sources or compiler), copy its kraken_doa_v2\plugins\&lt;id&gt;\build\decoder.exe into the same place in this folder</span><span class="os-win-src">copy its folder into kraken_doa_v2/plugins/, run </span><span class="os-lin">make in kraken_doa_v2</span><span class="os-win os-win-src">build_windows.bat (or make in kraken_doa_v2 in the MSYS2 UCRT64 shell)</span> and press ↻. To decode a VFO, tick <b>Digital decoder</b> on it in the Decimators box and pick <b>Auto detect</b> or a decoder; any number of VFOs can decode at once, each with its own tab in the panel under the waterfall. Voice plays with Demod "Digital" (or Listen in the VFO's tab). The AMBE and TETRA codecs are not shipped (licensing): you build them yourself, for personal use - whether that is allowed where you live is your responsibility.</span></span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div id="dig-codecs-box"><div class="dig-help">Checking the voice codecs…</div></div>
-        <div class="ctrl-row" style="justify-content:space-between;margin-bottom:0">
-          <span class="dig-help" style="margin:0">Switch a decoder off and on after installing a codec.</span>
-          <button class="btn sm" type="button" onclick="send('PLUGIN_CODECS')" title="Look for the codecs again (after installing one)">↻ Check again</button>
+        <div class="ctrl-row" style="justify-content:flex-end;margin-bottom:0">
+          <button class="btn sm" type="button" onclick="send('PLUGIN_CODECS')" title="Look for the voice codecs again after installing one - then switch the decoder off and on">↻ Check codecs</button>
         </div>
         <div class="ctrl-row dig-plug-head" onclick="digTogglePlugins()" title="Show / hide the decoder plugins">
           <span style="font-size:12px;color:#888;min-width:0"><span id="dig-plug-caret" class="dig-plug-caret">▶</span> Decoder plugins <span id="dig-plug-count"></span></span>
@@ -2001,33 +2099,32 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 
 
     <!-- Decoder Logging (decoder_log.cpp) - all modes -->
-    <div class="sb-section" id="declog-section">
+    <div class="sb-section" data-sb="decoder-logging" id="declog-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🗂 Decoder Logging<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Saves what the <b>digital decoders</b> report (every VFO with a decoder on) to files <b>on this device's disk</b>: one JSON Lines file per day (<code>decoders-YYYY-MM-DD.jsonl</code>). At midnight the day's file is closed and gzipped; days older than <b>Keep</b> are deleted (only these files - nothing else in the folder). To spare the <span class="os-lin">SD card</span><span class="os-win">disk</span> the records are collected in memory and written every few seconds; writing pauses when less than 100 MB is free. Raw frames (ADS-B, APRS, POCSAG / FLEX pagers) can be large - ADS-B near an airport is roughly 100-300 MB a day before gzip.</span></span></h3>
-        <span class="sb-toggle">▼</span>
+        <h3><span class="sb-title">🗂 Decoder Logging</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Saves what the <b>digital decoders</b> report (every VFO with a decoder on) to files <b>on this device's disk</b>: one JSON Lines file per day (<code>decoders-YYYY-MM-DD.jsonl</code>). At midnight the day's file is closed and gzipped; days older than <b>Keep</b> are deleted (only these files - nothing else in the folder). To spare the <span class="os-lin">SD card</span><span class="os-win">disk</span> the records are collected in memory and written every few seconds; writing pauses when less than 100 MB is free. Raw frames (ADS-B, APRS, POCSAG / FLEX pagers) can be large - ADS-B near an airport is roughly 100-300 MB a day before gzip.</span></span></h3>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div class="ctrl-row">
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1">
-            <input type="checkbox" id="dl-enable" onchange="dlSetEnabled(this.checked)"> Log decoder data to disk
-          </label>
+          <label for="dl-enable">Log to disk</label>
+          <input type="checkbox" class="sw" id="dl-enable" onchange="dlSetEnabled(this.checked)">
         </div>
-        <div style="font-size:12px;color:#7cb3f0;font-weight:bold;margin:6px 0 2px">What to log</div>
+        <div class="sb-sub">What to log</div>
         <div id="dl-types" style="font-size:12px;color:#c8d6e5;line-height:1.9">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Each decoder's event log lines (calls, talkgroups, new aircraft, ...)"><input type="checkbox" data-t="event" onchange="dlSetTypes()"> Events</label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Text messages, e.g. POCSAG / FLEX alphanumeric pages (sender + text)"><input type="checkbox" data-t="message" onchange="dlSetTypes()"> Text messages</label>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Positions the decoders put on the map (aircraft, APRS stations, DMR / D-STAR GPS)"><input type="checkbox" data-t="position" onchange="dlSetTypes()"> Positions, each object every
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Positions the decoders put on the map (aircraft, APRS stations, DMR / D-STAR GPS) - each object at most this often"><input type="checkbox" data-t="position" onchange="dlSetTypes()"> Positions, every
             <input type="number" id="dl-pos-s" min="1" max="3600" value="10" style="width:52px" onclick="event.stopPropagation()" onchange="dlSetPosS()"> s</label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Raw frames: ADS-B Mode S messages (hex + level), APRS packets (TNC2), POCSAG / FLEX codewords"><input type="checkbox" data-t="raw" onchange="dlSetTypes()"> Raw frames <span style="color:#8aa8c7">(large)</span></label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Addresses found in pager messages (incident map)"><input type="checkbox" data-t="incident" onchange="dlSetTypes()"> Incidents</label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="What was said on the VFOs with 🗣 Transcribe ticked (Voice to Text): the text, talker, bearing"><input type="checkbox" data-t="voice" onchange="dlSetTypes()"> Voice transcripts</label>
         </div>
         <div class="ctrl-row" style="margin-top:6px">
-          <label>Keep:</label>
-          <input type="number" id="dl-days" min="0" max="3650" value="7" style="width:62px" onchange="dlSetDays()">
-          <span style="font-size:11px;color:#8aa8c7">days (0 = forever)</span>
+          <label title="Days of log files kept; 0 = forever">Keep</label>
+          <input type="number" id="dl-days" min="0" max="3650" value="7" title="0 = keep forever" onchange="dlSetDays()">
+          <span class="u">days</span>
         </div>
-        <div style="font-size:12px;color:#7cb3f0;font-weight:bold;margin:8px 0 2px">Save to</div>
+        <div class="sb-sub">Save to</div>
         <div class="ctrl-row">
           <select id="dl-drive" style="flex:1;min-width:0;max-width:none" onchange="dlPickDrive(this.value)" title="Drives on this device (free space)"></select>
         </div>
@@ -2036,31 +2133,31 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <button class="btn sm" onclick="dlApplyDir()" title="Use this folder">Apply</button>
         </div>
         <div id="dl-dir-err" style="display:none;font-size:11px;color:#ff8a80;margin-top:2px"></div>
-        <div id="dl-status" style="font-size:12px;color:#8aa8c7;line-height:1.8;margin-top:6px">
-          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Status</span><span id="dl-state">&mdash;</span></div>
-          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">Folder</span><span id="dl-path" style="text-align:right;word-break:break-all">&mdash;</span></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Disk free</span><span id="dl-free">&mdash;</span></div>
+        <div id="dl-status" style="margin-top:6px">
+          <div class="kv"><span>Status</span><span id="dl-state">&mdash;</span></div>
+          <div class="kv"><span>Folder</span><span id="dl-path">&mdash;</span></div>
+          <div class="kv"><span>Disk free</span><span id="dl-free">&mdash;</span></div>
           <div title="Disk used" style="height:6px;background:#1a1a2e;border:1px solid #0f3460;border-radius:3px;overflow:hidden;margin:2px 0 4px"><div id="dl-free-bar" style="height:100%;width:0;background:#3d7ab8"></div></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Today</span><span id="dl-today">&mdash;</span></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Est. per day</span><span id="dl-perday">&mdash;</span></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">All logs</span><span id="dl-all">&mdash;</span></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:#6f87a6">Disk lasts</span><span id="dl-lasts">&mdash;</span></div>
+          <div class="kv"><span>Today</span><span id="dl-today">&mdash;</span></div>
+          <div class="kv"><span>Per day</span><span id="dl-perday">&mdash;</span></div>
+          <div class="kv"><span>All logs</span><span id="dl-all">&mdash;</span></div>
+          <div class="kv"><span>Disk lasts</span><span id="dl-lasts">&mdash;</span></div>
         </div>
-        <div id="dl-note" style="font-size:11px;color:#6f87a6;margin-top:4px"></div>
+        <div id="dl-note" class="sb-note" style="margin-top:4px"></div>
       </div>
     </div>
 
     <!-- 🗣 Voice to Text (voice2text.cpp, transcribe/) - all modes -->
-    <div class="sb-section" id="v2t-section">
+    <div class="sb-section" data-sb="voice-to-text" id="v2t-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🗣 Voice to Text<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Writes down what is said on the VFOs whose <b>🗣 Transcribe</b> box is ticked (on the VFO cards above) - any number at once, whichever one you listen to. Analog voice is demodulated with the VFO's demod (NBFM / AM / WBFM); a VFO with its <b>digital decoder</b> on gives the decoded voice (P25, DMR, D-STAR, NXDN, TETRA - the voice codec must be installed). It runs <b>on this device</b> with a free speech-to-text model (OpenAI's Whisper, via whisper.cpp): nothing is sent anywhere. Each transmission is cut out by the VFO's squelch (with the squelch off: while a signal stands 10 dB over the noise), or by the decoder's voice frames and talker changes, and is transcribed when it ends - a few seconds later. Noise and data bursts are skipped (voice activity detection). The transcripts are in the <b>🗣 Voice</b> tab under the waterfall - with the talker's ID for digital radios, the bearing in coherent mode with DoA on, and the audio to check them - and go to the <b>Decoder Logging</b> files when that is on (type "Voice transcripts").</span></span></h3>
+        <h3><span class="sb-title">🗣 Voice to Text</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Writes down what is said on the VFOs whose <b>🗣 Transcribe</b> box is ticked (on the VFO cards above) - any number at once, whichever one you listen to. Analog voice is demodulated with the VFO's demod (NBFM / AM / WBFM); a VFO with its <b>digital decoder</b> on gives the decoded voice (P25, DMR, D-STAR, NXDN, TETRA - the voice codec must be installed). It runs <b>on this device</b> with a free speech-to-text model (OpenAI's Whisper, via whisper.cpp): nothing is sent anywhere. Each transmission is cut out by the VFO's squelch (with the squelch off: while a signal stands 10 dB over the noise), or by the decoder's voice frames and talker changes, and is transcribed when it ends - a few seconds later. Noise and data bursts are skipped (voice activity detection). The transcripts are in the <b>🗣 Voice</b> tab under the waterfall - with the talker's ID for digital radios, the bearing in coherent mode with DoA on, and the audio to check them - and go to the <b>Decoder Logging</b> files when that is on (type "Voice transcripts").</span></span></h3>
         <span class="v2t-badge" id="v2t-badge"></span>
-        <span class="sb-toggle">▼</span>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <div id="v2t-install" class="dig-help" style="display:none"></div>
         <div class="ctrl-row" id="v2t-model-row">
-          <label title="The speech model. Bigger = more accurate but slower; .en models are English only">Model:</label>
+          <label title="The speech model. Bigger = more accurate but slower; .en models are English only">Model</label>
           <select id="v2t-model" style="flex:1;min-width:0;max-width:none" onchange="v2tSetModel(this.value)"></select>
         </div>
         <div class="ctrl-row" style="gap:6px" id="v2t-dl-row">
@@ -2069,12 +2166,12 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
         </div>
         <div id="v2t-dl-state" style="display:none;font-size:11px;color:#8aa8c7;margin:-2px 0 4px"></div>
         <div class="ctrl-row" id="v2t-lang-row">
-          <label title="The language spoken (multilingual models only)">Language:</label>
+          <label title="The language spoken (multilingual models only)">Language</label>
           <select id="v2t-lang" style="flex:1;min-width:0" onchange="send('VOICE2TEXT_LANGUAGE:' + this.value)"></select>
           <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:12px" title="Write the text in English, whatever language is spoken (multilingual models)"><input type="checkbox" id="v2t-translate" onchange="send('VOICE2TEXT_TRANSLATE:' + (this.checked ? 1 : 0))"> → English</label>
         </div>
         <div class="ctrl-row">
-          <label title="CPU cores the speech model may use. It runs below the receiver's priority; more = faster transcripts">CPU cores:</label>
+          <label title="CPU cores the speech model may use. It runs below the receiver's priority; more = faster transcripts">CPU cores</label>
           <select id="v2t-threads" onchange="send('VOICE2TEXT_THREADS:' + this.value)">
             <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
           </select>
@@ -2084,15 +2181,15 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <input type="text" id="v2t-prompt" maxlength="300" style="flex:1;min-width:0" placeholder="Words to expect: callsigns, places…" title="Vocabulary hint for the model: callsigns, unit names, place names, phrases - spelled as you want them written. Helps with names it would otherwise mishear." onkeydown="if(event.key==='Enter')v2tApplyPrompt()">
           <button class="btn sm" type="button" onclick="v2tApplyPrompt()" title="Use these words">Apply</button>
         </div>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#c8d6e5;margin-top:4px" title="Voice activity detection: the speech in each transmission is found first, noise / tones / data bursts are skipped. Without it the model may 'hear' words in noise."><input type="checkbox" id="v2t-vad" onchange="send('VOICE2TEXT_VAD:' + (this.checked ? 1 : 0))"> Skip non-speech (voice detection)</label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#c8d6e5;margin-top:2px" title="Keep each transcript's audio to play it back in the Voice tab: Opus files (~7 MB an hour of speech) in the Decoder Logging folder (voice_clips/, one folder a day), deleted after the same Keep days as the log files. Not saved while that disk has less than 100 MB free."><input type="checkbox" id="v2t-keep" onchange="send('VOICE2TEXT_KEEP_AUDIO:' + (this.checked ? 1 : 0))"> Keep the audio to play back</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#c8d6e5;margin-top:4px" title="Voice activity detection: the speech in each transmission is found first, noise / tones / data bursts are skipped. Without it the model may 'hear' words in noise."><input type="checkbox" id="v2t-vad" onchange="send('VOICE2TEXT_VAD:' + (this.checked ? 1 : 0))"> Skip non-speech</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#c8d6e5;margin-top:2px" title="Keep each transcript's audio to play it back in the Voice tab: Opus files (~7 MB an hour of speech) in the Decoder Logging folder (voice_clips/, one folder a day), deleted after the same Keep days as the log files. Not saved while that disk has less than 100 MB free."><input type="checkbox" id="v2t-keep" onchange="send('VOICE2TEXT_KEEP_AUDIO:' + (this.checked ? 1 : 0))"> Keep the audio</label>
         <div id="v2t-clips" style="font-size:11px;color:#6f87a6;margin:1px 0 0 22px;word-break:break-all"></div>
-        <div id="v2t-status" style="font-size:12px;color:#8aa8c7;line-height:1.8;margin-top:6px">
-          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">Status</span><span id="v2t-state" style="text-align:right">&mdash;</span></div>
-          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">VFOs</span><span id="v2t-vfos" style="text-align:right">&mdash;</span></div>
-          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">Waiting</span><span id="v2t-queue">&mdash;</span></div>
-          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">Transcribed</span><span id="v2t-done" style="text-align:right">&mdash;</span></div>
-          <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:#6f87a6">To disk</span><span id="v2t-log" style="text-align:right">&mdash;</span></div>
+        <div id="v2t-status" style="margin-top:6px">
+          <div class="kv"><span>Status</span><span id="v2t-state">&mdash;</span></div>
+          <div class="kv"><span>VFOs</span><span id="v2t-vfos">&mdash;</span></div>
+          <div class="kv"><span>Waiting</span><span id="v2t-queue">&mdash;</span></div>
+          <div class="kv"><span>Transcribed</span><span id="v2t-done">&mdash;</span></div>
+          <div class="kv"><span>To disk</span><span id="v2t-log">&mdash;</span></div>
         </div>
         <div class="ctrl-row" style="margin-top:6px">
           <button class="btn sm" type="button" onclick="infoPanelOpen('voice')" title="The transcripts, in the panel under the waterfall">⤢ Transcripts</button>
@@ -2101,17 +2198,17 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- 🧪 Experimental: features still being developed (coherent mode for now - its only one is) -->
-    <div class="sb-section coh-only collapsed" id="exp-section">
+    <div class="sb-section coh-only collapsed" data-sb="experimental" id="exp-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🧪 Experimental<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Features that are still being developed and tested: they may change, and may not work well at every site yet.</span></span></h3>
+        <h3><span class="sb-title">🧪 Experimental</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Features that are still being developed and tested: they may change, and may not work well at every site yet.</span></span></h3>
         <span class="acal-badge" id="acal-badge" title="Array calibration"></span>
-        <span class="sb-toggle">▶</span>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
         <!-- ✈ Array calibration from ADS-B aircraft (array_cal.cpp) -->
         <div id="acal-section">
           <div class="exp-sub-h">✈ Array Calibration<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Uses <b>ADS-B aircraft</b> as transmitters at known positions to measure what the noise-source calibration can't see: <b>cable length differences</b> between the antennas, where each antenna <b>really stands</b>, and how the whole array is <b>turned</b> (mounting / heading).<br><br>Needs: a VFO with the <b>ADS-B decoder</b> (1090 MHz) and DoA on, the station location and heading (Station Information: a static location, or GPS with a compass), the array standing still. Press <b>Collect</b> and leave it running while aircraft come from many directions (tens of minutes at a busy site, longer elsewhere).<br><br>The result is checked on aircraft it wasn't fitted on. <b>Apply</b> uses it for MUSIC and beamforming on <b>every frequency</b>: delays and positions carry over. Differences between the antennas themselves (and multipath) don't - they show as "Unexpl.". The calibration belongs to this array setup: change the radius or elements and it is not used.</span></span></div>
-          <div class="acal-box" id="acal-use">No calibration in use.</div>
+          <div class="acal-box" id="acal-use">No calibration in use</div>
           <div class="ctrl-row" style="gap:6px">
             <button id="acal-collect" class="btn" style="flex:1" onclick="acalCollect()">▶ Collect aircraft</button>
             <button class="btn sm" onclick="acalReset()" title="Forget the aircraft packets collected so far">Reset</button>
@@ -2127,14 +2224,14 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- 🧪 Debug Playback: decoders' test transmissions through the real pipeline (playback.cpp) -->
-    <div class="sb-section collapsed" id="pb-section">
+    <div class="sb-section collapsed" data-sb="debug-playback" id="pb-section">
       <div class="sb-header" onclick="toggleSection(this)">
-        <h3>🧪 Debug Playback<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Plays a decoder's <b>synthetic test transmission</b> (several transmitters with known IDs at known bearings on a 5-element UCA) through the real receiver as if the antennas had picked it up: spectrum, waterfall, VFO, decoder, DoA and the map's 📡 DF panel - to see and check a decoder without the real signal.<br><br>While it plays: heimdall's data is disconnected and <b>nothing is sent to heimdall</b>; the frequency / gain can't be changed; <b>your settings are not saved</b> - the VFO, decoder and array set up for the playback are a sandbox, and Stop puts your own settings back (also after a restart). Nothing goes out either: web mapper, decoder log, Voice to Text, DoA recording, incidents are paused.<br><br><b>Generate</b> builds a test transmission once (the plugins' own generators, a few seconds of CPU; kept in testsignal_cache/). <b>Check</b> compares the bearings in the DF panel with the ones the test transmission was made with.</span></span></h3>
+        <h3><span class="sb-title">🧪 Debug Playback</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Plays a decoder's <b>synthetic test transmission</b> (several transmitters with known IDs at known bearings on a 5-element UCA) through the real receiver as if the antennas had picked it up: spectrum, waterfall, VFO, decoder, DoA and the map's 📡 DF panel - to see and check a decoder without the real signal.<br><br>While it plays: heimdall's data is disconnected and <b>nothing is sent to heimdall</b>; the frequency / gain can't be changed; <b>your settings are not saved</b> - the VFO, decoder and array set up for the playback are a sandbox, and Stop puts your own settings back (also after a restart). Nothing goes out either: web mapper, decoder log, Voice to Text, DoA recording, incidents are paused.<br><br><b>Generate</b> builds a test transmission once (the plugins' own generators, a few seconds of CPU; kept in testsignal_cache/). <b>Check</b> compares the bearings in the DF panel with the ones the test transmission was made with.</span></span></h3>
         <span class="acal-badge" id="pb-badge"></span>
-        <span class="sb-toggle">▶</span>
+        <span class="sb-toggle"></span>
       </div>
       <div class="sb-content">
-        <div class="acal-box" id="pb-state">Not playing - the receiver shows the antennas.</div>
+        <div class="acal-box" id="pb-state">Not playing</div>
         <div id="pb-check"></div>
         <div id="pb-list"></div>
       </div>
@@ -2142,14 +2239,20 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 
     <!-- Settings Persistence / Reset -->
     <div class="sb-section">
-      <div class="sb-content" style="padding-top:12px">
+      <div class="sb-content">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
           <button onclick="openHeimdall()" class="btn" style="flex:1">&#128225; Open Heimdall Server</button>
           <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Opens the Heimdall server web interface (port 8070) on this same device in a new browser tab.</span></span>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
-          <button onclick="resetSettingsToDefault()" class="btn" style="flex:1;background:#5a1f1f;border-color:#8b2525;color:#ffd9d9">&#8634; Reset Settings to Default</button>
+          <button onclick="resetSettingsToDefault()" class="btn danger" style="flex:1">&#8634; Reset Settings to Default</button>
           <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Settings are saved automatically to a file on the device and restored when the program restarts (shared by all browsers). Reset reverts everything to factory defaults.</span></span>
+        </div>
+        <!-- the boxes' layout (sbBoxInit): kept in this browser, not a receiver setting -->
+        <div class="sb-layout">
+          <button type="button" class="btn sm" onclick="sbBoxCollapseAll(true)" title="Collapse every box">Collapse all</button>
+          <button type="button" class="btn sm" onclick="sbBoxCollapseAll(false)" title="Open every box">Open all</button>
+          <button type="button" class="btn sm" onclick="sbBoxReset()" title="Put the boxes back in their original order (↑ ↓ on a box moves it; the order and the collapsed boxes are remembered in this browser)">↺ Order</button>
         </div>
       </div>
     </div>
@@ -4814,13 +4917,128 @@ function applyUiSetting(rest) {
   }
 }
 
-// Sidebar section toggle
-function toggleSection(header) {
-  const section = header.parentElement;
-  section.classList.toggle('collapsed');
-  const toggle = header.querySelector('.sb-toggle');
-  if(toggle) toggle.textContent = section.classList.contains('collapsed') ? '▶' : '▼';
+// ============================================================================
+// SIDEBAR BOXES: collapse, move up / down, remembered per browser
+// ----------------------------------------------------------------------------
+// Every box (.sb-section) with a data-sb key gets ↑ / ↓ buttons in its header
+// (sbBoxInit). The order of the boxes and which ones are collapsed are kept in
+// localStorage (SB_KEY), like the sidebar's width: a layout is a per-screen
+// choice (a phone and a desktop want different ones) and it survives a
+// restart of the receiver and of the browser. A move swaps the box with the
+// nearest VISIBLE one - boxes hidden by the operating mode (.coh-only, ...)
+// keep their place in the order. A box this page doesn't know yet (added by a
+// later version) lands after the box it follows in the markup. The footer box
+// (no data-sb) is not movable.
+// ============================================================================
+const SB_KEY = 'kraken_sb';
+const SB_ARROW = d => `<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+let sbBoxDefault = [];   // [{key, collapsed}] as the markup has them
+function sbBoxes() { return Array.from(document.querySelectorAll('.sidebar > .sb-section[data-sb]')); }
+function sbBoxShown(el) { return getComputedStyle(el).display !== 'none'; }
+function sbBoxSave() {
+  const closed = {};
+  const boxes = sbBoxes();
+  boxes.forEach(s => { closed[s.dataset.sb] = s.classList.contains('collapsed') ? 1 : 0; });
+  try { localStorage.setItem(SB_KEY, JSON.stringify({v: 1, order: boxes.map(s => s.dataset.sb), closed})); } catch (e) {}
 }
+// Put the boxes in the order of `keys` (keys of boxes that don't exist are
+// ignored; boxes missing from it go after their markup predecessor)
+function sbBoxOrder(keys) {
+  const sb = document.querySelector('.sidebar');
+  const byKey = {};
+  sbBoxes().forEach(s => { byKey[s.dataset.sb] = s; });
+  const want = [];
+  (keys || []).forEach(k => { if (byKey[k] && !want.includes(k)) want.push(k); });
+  sbBoxDefault.forEach((d, i) => {
+    if (want.includes(d.key) || !byKey[d.key]) return;
+    let at = 0;
+    for (let j = i - 1; j >= 0; j--) { const p = want.indexOf(sbBoxDefault[j].key); if (p >= 0) { at = p + 1; break; } }
+    want.splice(at, 0, d.key);
+  });
+  const end = sb.querySelector(':scope > .sb-section:not([data-sb])');   // the footer box
+  want.forEach(k => sb.insertBefore(byKey[k], end));
+}
+// ↑ of the first and ↓ of the last visible box have nothing to swap with
+function sbBoxButtons() {
+  const vis = sbBoxes().filter(sbBoxShown);
+  vis.forEach((s, i) => {
+    const up = s.querySelector('.sb-mv[data-d="-1"]'), dn = s.querySelector('.sb-mv[data-d="1"]');
+    if (up) up.disabled = i === 0;
+    if (dn) dn.disabled = i === vis.length - 1;
+  });
+}
+function sbBoxMove(sec, dir) {
+  const vis = sbBoxes().filter(sbBoxShown), other = vis[vis.indexOf(sec) + dir];
+  if (!other || !vis.includes(sec)) return;
+  const sb = sec.parentElement, hdr = sec.querySelector('.sb-header');
+  const y0 = hdr.getBoundingClientRect().top;
+  const ref = dir < 0 ? other : other.nextSibling;
+  // moveBefore (Chromium 133+) keeps focus and the scroll position of lists
+  // inside the box; insertBefore elsewhere
+  try { if (sb.moveBefore) sb.moveBefore(sec, ref); else sb.insertBefore(sec, ref); }
+  catch (e) { sb.insertBefore(sec, ref); }
+  // keep the header - and the button just pressed - under the pointer, so it
+  // can be pressed again (the sidebar is zoomed: screen px -> its own px)
+  const z = parseFloat(getComputedStyle(sb).zoom) || 1;
+  sb.scrollTop += (hdr.getBoundingClientRect().top - y0) / z;
+  sec.classList.remove('sb-moved'); void sec.offsetWidth; sec.classList.add('sb-moved');
+  sbBoxSave();
+  sbBoxButtons();
+  const btn = sec.querySelector('.sb-mv[data-d="' + dir + '"]');
+  if (btn && !btn.disabled) btn.focus({preventScroll: true});
+}
+function sbBoxInit() {
+  const sb = document.querySelector('.sidebar');
+  if (!sb) return;
+  const boxes = sbBoxes();
+  sbBoxDefault = boxes.map(s => ({key: s.dataset.sb, collapsed: s.classList.contains('collapsed')}));
+  boxes.forEach(sec => {
+    const hdr = sec.querySelector(':scope > .sb-header'), tog = hdr && hdr.querySelector('.sb-toggle');
+    if (!hdr || hdr.querySelector('.sb-tools')) return;
+    const tools = document.createElement('span');
+    tools.className = 'sb-tools';
+    tools.innerHTML =
+      `<button type="button" class="sb-mv" data-d="-1" title="Move this box up" aria-label="Move up">${SB_ARROW('M5 8.5 V1.8 M2.2 4.6 L5 1.8 L7.8 4.6')}</button>` +
+      `<button type="button" class="sb-mv" data-d="1" title="Move this box down" aria-label="Move down">${SB_ARROW('M5 1.5 V8.2 M2.2 5.4 L5 8.2 L7.8 5.4')}</button>`;
+    tools.addEventListener('click', e => {
+      e.stopPropagation();   // not a click on the header (that collapses)
+      const b = e.target.closest('.sb-mv');
+      if (b && !b.disabled) sbBoxMove(sec, +b.dataset.d);
+    });
+    hdr.insertBefore(tools, tog);
+    if (tog) tog.innerHTML = SB_ARROW('M2 3.5 L5 6.5 L8 3.5');
+  });
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(SB_KEY) || 'null'); } catch (e) {}
+  if (saved && Array.isArray(saved.order)) sbBoxOrder(saved.order);
+  if (saved && saved.closed && typeof saved.closed === 'object')
+    sbBoxes().forEach(s => { if (s.dataset.sb in saved.closed) s.classList.toggle('collapsed', !!saved.closed[s.dataset.sb]); });
+  sbBoxButtons();
+  // the operating mode / the wideband board / the phone layout show and hide boxes
+  new MutationObserver(sbBoxButtons).observe(document.body, {attributes: true, attributeFilter: ['class']});
+  const wb = $id('wb-section');
+  if (wb) new MutationObserver(sbBoxButtons).observe(wb, {attributes: true, attributeFilter: ['style']});
+  window.addEventListener('resize', sbBoxButtons);
+}
+// The footer's buttons: every box collapsed / open, and the order and the
+// collapsed boxes the page ships with
+function sbBoxCollapseAll(c) {
+  sbBoxes().forEach(s => s.classList.toggle('collapsed', !!c));
+  sbBoxSave();
+}
+function sbBoxReset() {
+  sbBoxOrder(sbBoxDefault.map(d => d.key));
+  sbBoxes().forEach(s => { const d = sbBoxDefault.find(x => x.key === s.dataset.sb); s.classList.toggle('collapsed', !!(d && d.collapsed)); });
+  try { localStorage.removeItem(SB_KEY); } catch (e) {}
+  sbBoxButtons();
+  document.querySelector('.sidebar').scrollTop = 0;
+}
+// Collapse / open a box (a click on its header)
+function toggleSection(header) {
+  header.parentElement.classList.toggle('collapsed');
+  sbBoxSave();
+}
+sbBoxInit();
 
 // A locked VFO (its decoder has a fixed frequency - ADS-B - or takes its
 // tuner's whole band - Cell / Digital TV; see vfoLocked):
@@ -6118,7 +6336,7 @@ function tdo() {
   const b=$id('dot');
   b.textContent=doaEnabled?'ON':'OFF';
   b.className='btn '+(doaEnabled?'on':'off');
-  $id('dos').textContent='Status: '+(doaEnabled?'Active':'Disabled');
+  $id('dos').textContent=doaEnabled?'Active':'Disabled';
   send('DOA:'+(doaEnabled?'1':'0'));
 }
 
@@ -6143,7 +6361,7 @@ function toggleBeamforming() {
       const doaBtn = $id('dot');
       doaBtn.textContent = 'ON';
       doaBtn.className = 'btn on';
-      $id('dos').textContent = 'Status: Active (auto-enabled for beamforming)';
+      $id('dos').textContent = 'Active (for beamforming)';
     }
   } else {
     // Reset display when disabled
@@ -6526,12 +6744,13 @@ function buildSpacingInfo(factor, extra, apertureM, wavelength) {
   else if (factor >= 0.4) color = '#4caf50';
   else color = '#ff9800';
 
-  let html = `Spacing: <span style="color:${color};font-weight:bold">${factor.toFixed(3)}λ</span>${extra} @ ${currentCenterFreq.toFixed(1)} MHz`;
-
+  const tip = `Element spacing in wavelengths at ${currentCenterFreq.toFixed(1)} MHz. Best 0.4-0.5λ; above 0.5λ bearings become ambiguous, below 0.15λ noisy.`;
+  let html = `<span title="${tip}">Spacing <span style="color:${color};font-weight:bold">${factor.toFixed(3)}λ</span>${extra}</span>`;
+  let warn = '';
   if (factor > 0.5) {
-    html += `<br><span style="color:#f44336;font-weight:bold">WARNING: Array is too large for this frequency</span>`;
+    warn = `<br><span style="color:#ff7961;font-weight:bold" title="${tip}">⚠ Too large for ${currentCenterFreq.toFixed(1)} MHz</span>`;
   } else if (factor < 0.15) {
-    html += `<br><span style="color:#f44336;font-weight:bold">WARNING: Array is too small for this frequency</span>`;
+    warn = `<br><span style="color:#ff7961;font-weight:bold" title="${tip}">⚠ Too small for ${currentCenterFreq.toFixed(1)} MHz</span>`;
   }
 
   // Estimated bearing resolution: Rayleigh limit (λ/aperture) divided by 10,
@@ -6542,9 +6761,9 @@ function buildSpacingInfo(factor, extra, apertureM, wavelength) {
   if (apertureM > 0) {
     const resDeg = (wavelength / apertureM) * (180 / Math.PI) / 10;
     const resText = resDeg > 90 ? '&gt;90' : resDeg.toFixed(1);
-    html += `<br>Est. resolution: ~${resText}° (Rayleigh/10)`;
+    html += ` · <span title="Estimated bearing resolution: the Rayleigh limit / 10, the usual rule of thumb for MUSIC (optimistic: good SNR, calibrated channels)">resolution ~${resText}°</span>`;
   }
-  return html;
+  return html + warn;
 }
 
 // Calculate and display spacing factor (d/lambda)
@@ -6588,7 +6807,7 @@ function updateSpacingFactor() {
     for (const a of ps) for (const b of ps) apH = Math.max(apH, Math.hypot(a.x - b.x, a.y - b.y));
     const apV = (Math.max(...zs) - Math.min(...zs)) / 1000;
     let html = buildSpacingInfo(dM / wavelength, ` (${(dM*1000).toFixed(1)}mm)`, apH / 1000, wavelength);
-    if (apV > 0) html += `<br>Est. elevation resolution: ~${Math.min(90, (wavelength / apV) * (180 / Math.PI) / 10).toFixed(1)}°`;
+    if (apV > 0) html += `<br>Elevation resolution ~${Math.min(90, (wavelength / apV) * (180 / Math.PI) / 10).toFixed(1)}°`;
     layEl.innerHTML = html;
   } else if (layEl) layEl.innerHTML = '';
 }
@@ -6805,7 +7024,7 @@ function refreshLayoutPanel() {
   if (!sel) return;
   for (const o of sel.options) { o.textContent = layoutLabel(o.value, n); o.disabled = !!layoutProblem(o.value, n); }
   sel.value = L.shape;
-  $id('layout-size-label').textContent = layoutSizeIsSpacing(L.shape) ? 'Spacing:' : 'Radius:';
+  $id('layout-size-label').textContent = layoutSizeIsSpacing(L.shape) ? 'Spacing' : 'Radius';
   $id('layout-height-row').classList.toggle('hide', layoutIsPatch(L.shape));
   const idle = el => document.activeElement !== el;
   if (L.size > 0 && idle($id('layout-size'))) $id('layout-size').value = L.size;
@@ -8040,7 +8259,7 @@ function updateDecimatorList(info) {
         </span>
         <span style="display:flex;gap:4px">
           <button onclick="sfNewFromVfo(${dec.id})" class="btn sm" title="Save this VFO's frequency (📻 Saved Frequencies)">☆ Save</button>
-          <button onclick="removeDecimator(${dec.id})" class="btn sm" style="background:#b71c1c">✕</button>
+          <button onclick="removeDecimator(${dec.id})" class="btn sm dec-x" title="Remove this VFO">✕</button>
         </span>
       </div>
       <div class="dec-row" id="dec-freq-row-${dec.id}">
@@ -8054,14 +8273,14 @@ function updateDecimatorList(info) {
         <button type="button" class="btn sm vfd-ed" id="dec-freq-ed-${dec.id}" onclick="vfdEdit(${dec.id})" title="${VFD_ED_TIP}">✎</button>
       </div>
       <div class="dec-row indep-only">
-        <label>Tuner:</label>
+        <label>Tuner</label>
         <select id="dec-tuner-${dec.id}" onchange="setDecimatorTuner(${dec.id}, this.value)" style="flex:1"
                 title="Independent mode: the tuner (pane) this VFO receives from">
           ${Array.from({length: Math.max(1, activeNumElements)}, (_, t) => `<option value="${t}" ${t === (dec.tuner || 0) ? 'selected' : ''}>T${t}</option>`).join('')}
         </select>
       </div>
       <div class="dec-row" id="dec-bw-row-${dec.id}">
-        <label>BW:</label>
+        <label>BW</label>
         <input type="number" class="dec-bw-in" id="dec-bw-${dec.id}" min="1" max="2400" step="any" inputmode="decimal"
                value="${bwKhzText(decBwHz(dec))}" data-hz="${decBwHz(dec)}" title="${bwTitle(decBwHz(dec))}"
                onkeydown="if(event.key==='Enter'){event.target.blur()}else if(event.key==='Escape'){this.value=this.dataset.orig;event.target.blur()}"
@@ -8070,7 +8289,7 @@ function updateDecimatorList(info) {
         <span class="dec-bw-unit">kHz</span>
       </div>
       <div class="dec-row">
-        <label>Demod:</label>
+        <label>Demod</label>
         <select id="dec-demod-${dec.id}" onchange="decDemodPicked(${dec.id}, this.value)" style="flex:1">
           <option value="WBFM" ${dec.demod_mode === 'WBFM' ? 'selected' : ''}>WBFM</option>
           <option value="NBFM" ${dec.demod_mode === 'NBFM' ? 'selected' : ''}>NBFM</option>
@@ -8078,8 +8297,8 @@ function updateDecimatorList(info) {
           <option value="DIGITAL" ${dec.demod_mode === 'DIGITAL' ? 'selected' : ''} title="Decoded digital voice (P25 / DMR / D-STAR / TETRA / NXDN) from this VFO's digital decoder">Digital</option>
         </select>
       </div>
-      <div class="dec-row" style="border-top:1px solid #444;padding-top:6px;margin-top:4px">
-        <label style="display:flex;align-items:center;gap:4px" title="Decode the digital signal in this VFO (P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG / FLEX pagers, APRS, ... - any decoder plugin). Several VFOs can decode at once; each gets a tab in the panel under the waterfall.">
+      <div class="dec-row dec-sep">
+        <label class="dec-chk" title="Decode the digital signal in this VFO (P25, DMR, TETRA, D-STAR, NXDN, MPT1327, POCSAG / FLEX pagers, APRS, ... - any decoder plugin). Several VFOs can decode at once; each gets a tab in the panel under the waterfall.">
           <input type="checkbox" id="dec-dig-en-${dec.id}" onchange="digToggle(${dec.id}, this.checked)">
           <span>Digital decoder</span>
         </label>
@@ -8090,14 +8309,14 @@ function updateDecimatorList(info) {
       </div>
       <div class="dec-row dec-dig-state" id="dec-dig-state-${dec.id}"></div>
       <div class="dec-row">
-        <label style="display:flex;align-items:center;gap:4px" title="Voice to Text: write down what is said on this VFO (its analog demod, or its digital decoder's voice). Transcripts: the 🗣 Voice tab under the waterfall.">
+        <label class="dec-chk" title="Voice to Text: write down what is said on this VFO (its analog demod, or its digital decoder's voice). Transcripts: the 🗣 Voice tab under the waterfall.">
           <input type="checkbox" id="dec-v2t-${dec.id}" ${dec.transcribe ? 'checked' : ''} onchange="v2tToggle(${dec.id}, this.checked)">
           <span>🗣 Transcribe</span>
         </label>
         <span class="dec-v2t-state" id="dec-v2t-state-${dec.id}"></span>
       </div>
-      <div class="dec-row" style="border-top:1px solid #444;padding-top:6px;margin-top:4px">
-        <label style="display:flex;align-items:center;gap:4px">
+      <div class="dec-row dec-sep">
+        <label class="dec-chk">
           <input type="checkbox" id="dec-squelch-enable-${dec.id}" ${squelchEnabled ? 'checked' : ''}
                  onchange="toggleDecimatorSquelch(${dec.id}, this.checked)">
           <span>Squelch</span>
@@ -8114,10 +8333,10 @@ function updateDecimatorList(info) {
       <div class="dec-row" style="display:${squelchEnabled && sqMethod === 'FFT' ? 'flex' : 'none'}" id="dec-squelch-controls-${dec.id}">
         <input type="range" id="dec-squelch-level-${dec.id}" min="0" max="80" value="${squelchLevel}"
                oninput="updateDecimatorSquelchLevel(${dec.id}, this.value)" style="flex:1">
-        <span id="dec-squelch-val-${dec.id}" style="width:45px;text-align:right;font-size:10px">${squelchLevel} dB</span>
+        <span id="dec-squelch-val-${dec.id}" class="sv">${squelchLevel} dB</span>
       </div>
       <div class="dec-row" style="display:${squelchEnabled && sqMethod === 'DIGITAL' ? 'flex' : 'none'}" id="dec-squelch-dig-${dec.id}">
-        <span style="font-size:10px;color:#888;line-height:1.35">Opens on frames the decoder confirms (stays open 1.5 s after the last - Analog FM IDs: 0.35 s); the DoA comes from exactly their samples</span>
+        <span class="sb-note" title="Opens on frames the decoder confirms (stays open 1.5 s after the last - Analog FM IDs: 0.35 s); the DoA comes from exactly their samples">Opens on decoded frames</span>
       </div>
     `;
 
@@ -8492,7 +8711,7 @@ function connect() {
             }
             const doaStatus = $id('dos');
             if(doaStatus) {
-              doaStatus.textContent = 'Status: ' + (doaEnabled ? 'Active' : 'Disabled');
+              doaStatus.textContent = doaEnabled ? 'Active' : 'Disabled';
             }
           }
           else if(msg.beamforming) {
@@ -12409,7 +12628,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     // the calibration in use
     let u;
     if (!A) {
-      u = 'No calibration in use - MUSIC and beamforming use the nominal array.';
+      u = '<span title="MUSIC and beamforming use the nominal array">No calibration in use</span>';
     } else {
       const when = A.t ? new Date(A.t).toLocaleString() : '';
       u = `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" ${A.enabled ? 'checked' : ''} onchange="acalUse(this.checked)"> <b>Use the calibration</b></label>` +
@@ -12431,8 +12650,6 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         (d.last_s !== null && d.collecting ? ` · last ${d.last_s < 60 ? d.last_s.toFixed(0) + ' s' : Math.round(d.last_s / 60) + ' min'} ago` : '');
     } else if (d.collecting && (!d.state || d.state === 'ok')) {
       st += 'Waiting for aircraft positions - needs a VFO with the ADS-B decoder at 1090 MHz and DoA on';
-    } else if (!d.collecting) {
-      st += '<span style="color:#6f87a6">Collect while aircraft fly around the station; the result is fitted and checked as packets come in.</span>';
     }
     const rj = d.rejected || {}, rjs = [];
     if (rj.near) rjs.push(`${rj.near} nearer than 5 km`);
@@ -12612,7 +12829,6 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (d.buffered) extra.push(`${dlBytes(d.buffered)} waiting to be written`);
     if (d.dropped) extra.push(`${d.dropped} records dropped (disk not writable)`);
     if (d.compressing) extra.push(`gzipping ${d.compressing} file${d.compressing === 1 ? '' : 's'}…`);
-    extra.push(`Written every ${d.flush_s} s; a new file each day at midnight, older days gzipped.`);
     $id('dl-note').textContent = extra.join(' · ');
   }
 
@@ -12635,7 +12851,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     ['he', 'Hebrew'], ['hi', 'Hindi'], ['ja', 'Japanese'], ['ko', 'Korean'], ['zh', 'Chinese'], ['id', 'Indonesian'],
     ['ms', 'Malay'], ['tl', 'Tagalog'], ['vi', 'Vietnamese'], ['th', 'Thai']];
   const V2T_STATE = {
-    off: ['#777', 'Idle - no VFO transcribing'], starting: ['#ffb74d', 'Starting the model…'],
+    off: ['#777', 'Idle'], starting: ['#ffb74d', 'Starting the model…'],
     ready: ['#4caf50', 'Ready'], busy: ['#4caf50', 'Transcribing…'], error: ['#ff8a80', 'Error'],
     'not installed': ['#ff8a80', 'Not installed'], 'no model': ['#ffb74d', 'Model not downloaded']};
   let v2tAudio = null, v2tPlaying = null, v2tShown = [];
@@ -12737,6 +12953,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
   }
 
+  // a "?" with the long version of a note (initHelpTips shows it)
+  const v2tHelp = (html) => `<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">${html}</span></span>`;
   function v2tRenderBox() {
     const s = v2tStatus;
     if (!s) return;
@@ -12745,22 +12963,21 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const inst = $id('v2t-install');
     let ih = '';
     if (!s.installed && serverPkg)
-      ih = 'This package was made without Voice to Text (and has no sources or compiler to build it). In the KrakenSDR ' +
-           'source folder: <code>set WHISPER=1</code>, run <code>build_windows.bat</code>, then make the package again ' +
-           '(windows/package.sh) - or copy its <code>kraken_doa_v2\\transcribe\\build\\kraken_whisper.exe</code> into the ' +
-           'same place in this folder. Free, and everything stays on this device.';
+      ih = 'This package was made without Voice to Text.' +
+           v2tHelp('It has no sources or compiler to build it. In the KrakenSDR source folder: <code>set WHISPER=1</code>, run ' +
+                   '<code>build_windows.bat</code>, then make the package again (windows/package.sh) - or copy its ' +
+                   '<code>kraken_doa_v2\\transcribe\\build\\kraken_whisper.exe</code> into the same place in this folder. ' +
+                   'Free, and everything stays on this device.');
     else if (!s.installed && serverWin)
-      ih = 'The speech-to-text engine isn\'t set up on this receiver yet. On the receiver, run once in the MSYS2 UCRT64 shell ' +
-           '(C:\\msys64\\ucrt64.exe), in the KrakenSDR folder:<br>' +
-           '<code>cd kraken_doa_v2 && make whisper</code><br>(builds whisper.cpp - a few minutes on a PC - and ' +
-           'downloads the base.en model, 142 MB). Free, and everything stays on this device.';
+      ih = 'Not set up yet. Run once on the receiver:<br><code>cd kraken_doa_v2 && make whisper</code>' +
+           v2tHelp('In the MSYS2 UCRT64 shell (C:\\msys64\\ucrt64.exe), in the KrakenSDR folder. It builds whisper.cpp - a few minutes on a PC - ' +
+                   'and downloads the base.en model (142 MB). Free, and everything stays on this device.');
     else if (!s.installed)
-      ih = 'The speech-to-text engine isn\'t set up on this receiver yet. On the receiver, run once:<br>' +
-           '<code>cd kraken_doa_v2 && make whisper</code><br>(builds whisper.cpp - about 10 min on a Pi 5 - and ' +
-           'downloads the base.en model, 142 MB). Free, and everything stays on this device. ' +
-           'Docker: the image includes it - rebuild it without <code>WHISPER=0</code>.';
+      ih = 'Not set up yet. Run once on the receiver:<br><code>cd kraken_doa_v2 && make whisper</code>' +
+           v2tHelp('It builds whisper.cpp - about 10 min on a Pi 5 - and downloads the base.en model (142 MB). Free, and everything ' +
+                   'stays on this device. Docker: the image includes it - rebuild it without WHISPER=0.');
     else if (!s.models.length)
-      ih = 'No speech model yet: pick one below and press ⬇ Get (base.en is a good start).';
+      ih = 'No speech model yet: ⬇ Get one below (base.en is a good start).';
     v2tSetHtml(inst, ih);
     inst.style.display = ih ? '' : 'none';
     // model: the installed ones (+ the chosen one if it isn't)
@@ -12826,8 +13043,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     let ch = '';
     if (s.clip_dir !== undefined) {
       const kept = s.clip_days > 0 ? `kept ${s.clip_days} day${s.clip_days > 1 ? 's' : ''}` : 'kept forever';
-      ch = `${s.clips} clip${s.clips === 1 ? '' : 's'}, ${s.clip_mb} MB · ${kept} (Decoder Logging's Keep)` +
-           `<br><span title="The Decoder Logging folder">${digEsc(s.clip_dir || '')}</span>`;
+      ch = `<span title="In ${digEsc(s.clip_dir || '')} (the Decoder Logging folder); kept as long as its log files (Keep)">` +
+           `${s.clips} clip${s.clips === 1 ? '' : 's'}, ${s.clip_mb} MB · ${kept}</span>`;
       if (s.clip_low)
         ch += `<br><span style="color:#ffb74d">⚠ less than 100 MB free there (${s.clip_free_mb} MB): audio not saved</span>`;
       else if (s.clip_error)
@@ -12843,7 +13060,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     v2tSetHtml($id('v2t-state'), st);
     const vf = s.vfos.length ? s.vfos.map(v => `<span style="color:${getDecimatorColor(v.id)};font-weight:bold">D${v.id}</span> ` +
         digEsc(v2tSrcName(v.src)) + (v.rec ? ` <span style="color:#ef5350" title="Collecting a transmission">&#9679; ${v.secs.toFixed(0)} s</span>` : '')).join(', ')
-      : '<span style="color:#6f87a6">none - tick 🗣 Transcribe on a VFO</span>';
+      : '<span style="color:#6f87a6" title="Tick 🗣 Transcribe on a VFO card">none</span>';
     v2tSetHtml($id('v2t-vfos'), vf);
     let q = s.queue ? `${s.queue} (${s.queued_s} s of audio)` : 'nothing';
     if (s.dropped) q += ` · <span style="color:#ffb74d" title="Transmissions dropped because the model couldn't keep up: fewer VFOs, a smaller model or more CPU cores">⚠ ${s.dropped} dropped</span>`;
@@ -13309,7 +13526,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     recSelected = null;
   }
 
-  // Latest GPS fix from system_status.gps (for the "Get GPS Data" button).
+  // Latest GPS fix from system_status.gps (for the "📍 From GPS" button).
   let lastGpsFix = null;
 
   // Static mode: snapshot the current gpsd fix into the Lat/Lon fields. Heading
@@ -13334,7 +13551,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // GPS status panel update (sidebar). Renders gpsd connection state, fix, and
   // whatever the receiver is currently outputting (position, sats, heading).
   function updateGpsStatus(g) {
-    lastGpsFix = g;  // remember the latest fix for the "Get GPS Data" button
+    lastGpsFix = g;  // remember the latest fix for the "📍 From GPS" button
     const dot = $id('gps-dot');
     const txt = $id('gps-status-text');
     const details = $id('gps-details');
@@ -15862,7 +16079,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       }
     }
     if (!h) h = sfFreqs.length ? '<div class="sf-empty">Nothing matches the search.</div>'
-      : '<div class="sf-empty">No saved frequencies yet. <b>+ Add</b> saves the selected VFO\'s frequency (☆ Save on a VFO card does too); right-click the 🗺 map to save one at a place.</div>';
+      : '<div class="sf-empty" title="+ Add or ☆ Save on a VFO card saves that VFO\'s frequency; a right-click on the 🗺 map saves one at a place">No saved frequencies yet</div>';
     if (el.dataset.html !== h) {
       el.dataset.html = h;
       el.innerHTML = h;
@@ -16010,7 +16227,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     let h = '', live = false;
     const plural = k => `${k} frequenc${k === 1 ? 'y' : 'ies'}`;
     if (!run) {
-      h = st.msg ? `Stopped: ${digEsc(st.msg)}` : cnt ? '' : 'Tick the frequencies to scan - or a whole category in its heading.';
+      h = st.msg ? `Stopped: ${digEsc(st.msg)}` : cnt ? '' : '<span title="Tick the frequencies to scan - or a whole category with the box in its heading">Nothing ticked to scan</span>';
     } else {
       const vfo = `D${st.vfo}`, w = st.watch || [];
       // every frequency listened to (one VFO per active frequency: several),
@@ -25724,7 +25941,7 @@ function pbRender() {
       '<span class="pb-meta">Heimdall disconnected, nothing sent to it; your settings come back on Stop.</span>' +
       '<div class="pb-row"><button class="pb-stop" onclick="pbStop()">■ Stop playback</button></div>';
   } else {
-    head = 'Not playing - the receiver shows the antennas.';
+    head = 'Not playing';
   }
   if (st.gen && st.gen.error) head += '<div class="pb-bad" style="margin-top:3px">Generating ' + pbEsc(st.gen.id) + ' failed: ' + pbEsc(st.gen.error) + '</div>';
   set('pb-state', '<div style="font-size:12px;line-height:1.5">' + head + '</div>');
@@ -25954,15 +26171,17 @@ function recRender() {
   if (need.why) n = '<span class="rec-bad">⚠ ' + recEsc(need.why) + '</span>';
   else if (iq && !coherent) n = '<span class="rec-bad">⚠ IQ recording needs coherent mode</span>';
   else {
-    n = 'Needs ' + recFmtRate(need.bps) + (iq ? ' (' + M + ' antennas × ' + (S.iq === 'band' ? (need.rate / 1e3).toFixed(1) + ' kHz ci16' : '2.4 MHz cu8') + ')'
-                                              : ' (' + need.files + ' file' + (need.files === 1 ? '' : 's') + ')');
+    // the details (what the rate is made of, how the drive's speed is known,
+    // what a slow drive means) are in the tooltips
+    n = '<span title="' + (iq ? M + ' antennas × ' + (S.iq === 'band' ? (need.rate / 1e3).toFixed(1) + ' kHz ci16' : '2.4 MHz cu8')
+                              : need.files + ' file' + (need.files === 1 ? '' : 's')) + '">Needs ' + recFmtRate(need.bps) + '</span>';
     if (st.speed && st.speed.mbps) {
       const slow = st.speed.mbps * 1e6 < need.bps;
-      n += ' · drive ' + st.speed.mbps.toFixed(1) + ' MB/s' + (st.speed.live ? ' (seen recording)' : ' (tested)');
-      if (slow) n += '<br><span class="rec-warn">The drive is slower: held in memory (' + recFmtB(need.mem) + '), at most ' + recFmtLong(need.ram_s) +
-                     ', then written out. For longer: the VFO band, or a faster drive (USB SSD).</span>';
+      n += ' · <span title="The drive\'s write speed, ' + (st.speed.live ? 'seen while recording' : 'from the write speed test') + '">drive ' + st.speed.mbps.toFixed(1) + ' MB/s</span>';
+      if (slow) n += '<br><span class="rec-warn" title="The drive is slower than the recording: it is held in memory (' + recFmtB(need.mem) +
+                     ') and written out after it ends. For longer recordings: one VFO\'s band, or a faster drive (USB SSD).">⚠ Slow drive: at most ' + recFmtLong(need.ram_s) + '</span>';
     } else if (iq && need.bps > 8e6) {
-      n += '<br><span class="rec-meta">' + (serverWin ? 'A slow drive' : 'An SD card') + ' may not keep up - ⏱ Test write speed (Drive, below).</span>';
+      n += ' · <span class="rec-meta" title="' + (serverWin ? 'A slow drive' : 'An SD card') + ' may not keep up: ⏱ Test write speed under Drive, below">drive not tested</span>';
     }
   }
   set('iqr-need', n);

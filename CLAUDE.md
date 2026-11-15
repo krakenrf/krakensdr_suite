@@ -170,7 +170,8 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   `noise-floor.md`
 - VFOs: `vfo-bandwidth.md` (any width 1 kHz - 2.4 MHz, the decimator),
   `vfo-audio.md`, `operating-modes.md` (also VFO cards, the tuning step,
-  zoom)
+  zoom), `sidebar.md` (the boxes: move, collapse, the remembered layout;
+  how sidebar controls are written)
 - Decoders (every decoder is a plugin): `decoder-plugins.md`,
   `digital-decoders.md`, `digital-voice.md`, `digital-squelch.md`,
   `doa-per-talker.md`, `fixed-frequency-decoders.md`, and

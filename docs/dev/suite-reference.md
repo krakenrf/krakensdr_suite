@@ -363,7 +363,7 @@ bandwidth*)**:
   *Calibration hold*): retunes skip the 3 s cooldown + noise-source
   calibration, so bands take turns in well under a second; a lock releases
   it and the calibration starts at once (the VFO muted until it has run).
-  ⚙ "VFOs: one per active frequency" (`SFSCAN_MULTI:`, persisted, off by
+  ⚙ "VFO per signal" (`SFSCAN_MULTI:`, persisted, off by
   default; the user's request 2026-10-22, for Voice to Text): every
   frequency active at once in the band(s) watched is listened to at once -
   its VFO the first, a VFO the SCAN MAKES each further one (a copy of its VFO

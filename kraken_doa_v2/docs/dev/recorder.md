@@ -180,7 +180,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   (📡 / 📦 / 🔊; ▶ Open, ⬇ download - streamed into a file with the File
   System Access API where the browser has it, else via a blob after asking
   above 1.5 GB -, audio ▶ listen / ⬇ per file, 🗑), ⬆ Upload (XHR progress,
-  free-space check first), "Open with the recording's VFOs"; the playback's
+  free-space check first), "Open with its VFOs"; the playback's
   transport (position slider, pause, loop, recorded-at time, stop) at the
   top of the box; body class `pb-rec`: the banner / overlay "📼 PLAYBACK - not
   live" in purple with the name + position
