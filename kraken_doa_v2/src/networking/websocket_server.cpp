@@ -70,6 +70,10 @@ struct PerSocketData {
 constexpr uint32_t SUB_FFT   = 1u << 0;
 constexpr uint32_t SUB_AUDIO = 1u << 1;
 constexpr uint32_t SUB_DOA   = 1u << 2;
+// Reconstructed decoder pictures (binary type 8). NOT part of SUB_ALL: a page
+// opts in only while its decoder panel shows a video-capable plugin, so idle
+// browsers never carry the (up to ~1 MB) frames.
+constexpr uint32_t SUB_VIDEO = 1u << 3;
 constexpr uint32_t SUB_ALL   = SUB_FFT | SUB_AUDIO | SUB_DOA;
 
 // pub/sub topics. "ctl" carries control-plane traffic (sync_cmd echoes,
@@ -79,6 +83,7 @@ constexpr string_view TOPIC_CTL   = "ctl";
 constexpr string_view TOPIC_FFT   = "fft";     // shared spectrum (types 0 / 6 / 4) - pages without views
 constexpr string_view TOPIC_AUDIO = "audio";
 constexpr string_view TOPIC_DOA   = "doa";
+constexpr string_view TOPIC_VIDEO = "video";   // reconstructed decoder pictures (type 8), opt-in
 
 // Shared API token, loaded once. Empty => auth disabled (fail-open).
 const string& auth_token() {
@@ -148,6 +153,7 @@ constexpr int AUTH_MAX_FAILURES = 5;             // wrong tokens per IP...
 constexpr int64_t AUTH_FAILURE_WINDOW_MS = 60000;  // ...per window, then refused
 std::unordered_map<ClientWS*, int64_t> g_pending_auth;           // socket -> opened (steady ms)
 std::unordered_set<ClientWS*> g_spec_sockets;  // sockets with spectrum views (uWS loop only)
+std::unordered_set<ClientWS*> g_video_sockets;  // sockets subscribed to decoder video (uWS loop only)
 std::unordered_map<std::string, std::pair<int, int64_t>> g_auth_failures;  // ip -> (count, window start)
 
 int64_t steady_ms() {
@@ -209,6 +215,7 @@ uint32_t parse_sub_mask(string_view list) {
         if      (tok == "FFT")   mask |= SUB_FFT;
         else if (tok == "AUDIO") mask |= SUB_AUDIO;
         else if (tok == "DOA")   mask |= SUB_DOA;
+        else if (tok == "VIDEO") mask |= SUB_VIDEO;
         else if (tok == "ALL")   mask |= SUB_ALL;
         if (comma == string_view::npos) break;
         start = comma + 1;
@@ -225,6 +232,10 @@ void apply_subscriptions(WS* ws, uint32_t mask) {
     else ws->unsubscribe(TOPIC_FFT);
     if (mask & SUB_AUDIO) ws->subscribe(TOPIC_AUDIO); else ws->unsubscribe(TOPIC_AUDIO);
     if (mask & SUB_DOA)   ws->subscribe(TOPIC_DOA);   else ws->unsubscribe(TOPIC_DOA);
+    // publish_video sends per socket (its own backpressure drop), so track the
+    // subscribers in a set rather than relying on the topic alone
+    if (mask & SUB_VIDEO) { ws->subscribe(TOPIC_VIDEO); g_video_sockets.insert(ws); }
+    else { ws->unsubscribe(TOPIC_VIDEO); g_video_sockets.erase(ws); }
 }
 
 // FFT_VIEW:<display>:<seq>:<lo Hz>:<hi Hz>:<points> (see .message). A bad one
@@ -873,7 +884,8 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
                 string ack = string("{\"subscribed\":{\"fft\":")
                     + ((mask & SUB_FFT)   ? "true" : "false")
                     + ",\"audio\":" + ((mask & SUB_AUDIO) ? "true" : "false")
-                    + ",\"doa\":"   + ((mask & SUB_DOA)   ? "true" : "false") + "}}";
+                    + ",\"doa\":"   + ((mask & SUB_DOA)   ? "true" : "false")
+                    + ",\"video\":" + ((mask & SUB_VIDEO) ? "true" : "false") + "}}";
                 ws->send(ack, uWS::TEXT);
                 return;
             }
@@ -894,6 +906,7 @@ uWS::SSLApp WebSocketServer::create_ssl_app() {
         .close = [](auto* ws, int code, string_view reason) {
             g_pending_auth.erase(ws);
             g_spec_sockets.erase(ws);
+            g_video_sockets.erase(ws);
             int remaining = --ws_client_count;  // keep the live dashboard count in sync
             if (remaining < 0) { ws_client_count.store(0); remaining = 0; }
             std::cout << "[WS] Client DISCONNECTED! Code=" << code
@@ -1134,6 +1147,23 @@ void WebSocketServer::broadcast_json_message(const string& json) {
     loop->defer([json_copy = std::move(json_copy)]() {
         if (global_ssl_app) {
             global_ssl_app->publish(TOPIC_CTL, json_copy, uWS::TEXT, false);
+        }
+    });
+}
+
+void WebSocketServer::publish_video(string msg) {
+    if (!global_ssl_app || !loop || msg.empty()) return;
+    // publish() is not thread safe and the frame comes from the decoder's
+    // worker thread, so defer onto the uWS loop (the only thread-safe entry).
+    // A dedicated video frame can be ~1 MB - drop it for a socket whose send
+    // buffer is already deep rather than queueing or closing the connection.
+    constexpr unsigned VIDEO_MAX_BUFFERED = 512 * 1024;
+    loop->defer([msg = std::move(msg)]() {
+        if (!global_ssl_app) return;
+        for (ClientWS* ws : g_video_sockets) {
+            PerSocketData* ud = ws->getUserData();
+            if (!(ud->sub_mask & SUB_VIDEO) || ws->getBufferedAmount() > VIDEO_MAX_BUFFERED) continue;
+            ws->send(msg, uWS::BINARY, true);
         }
     });
 }

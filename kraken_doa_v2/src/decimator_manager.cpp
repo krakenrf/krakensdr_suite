@@ -7,6 +7,8 @@
 #include "control_handler.hpp"
 #include "config.hpp"
 #include "channel_manager.hpp"
+#include "message_builders.hpp"
+#include "networking/websocket_server.hpp"
 #include "signal_processing/fft_processor.hpp"
 #include "voice2text.hpp"
 #include <atomic>
@@ -384,6 +386,13 @@ void DecimatorManager::ensureDigital(DecimatorInstance& inst) {
     // on the uWS loop like a browser's command (only the VFO's id is held)
     const int id = inst.id;
     inst.digital->set_tune_handler([id](double rf_hz) { return ControlHandler::request_plugin_tune(id, rf_hz); });
+    // reconstructed pictures (kp::Info::video plugins) -> the decoder panel's
+    // canvas, as a binary frame carrying this VFO's id (type 8)
+    inst.digital->set_video_handler([id](const dig::VideoFrameReport& f) {
+        std::string msg = MessageBuilders::build_video_message(id, f.width, f.height, f.format, f.label,
+                                                               f.pixels.data(), f.pixels.size());
+        if (!msg.empty()) WebSocketServer::publish_video(std::move(msg));
+    });
 }
 
 bool DecimatorManager::setSquelchEnabled(int id, bool enabled) {

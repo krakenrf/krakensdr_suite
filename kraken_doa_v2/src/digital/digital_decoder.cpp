@@ -43,7 +43,7 @@ constexpr uint32_t W_SAMPLES = 1, W_OPTION = 2, W_RESET = 3, W_VOICE_WANTED = 4,
                    W_TABLE_REMOVE = 27, W_MESSAGE = 28, W_RAW = 29, W_TALKER = 30, W_TALKER_END = 31,
                    W_TABLE_KEEP = 32, W_TALKER_FORGET = 33, W_AUDIO_CHANNEL = 34, W_SAMPLES_MC = 8,
                    W_SAMPLES_ARRAY = 9, W_SPATIAL = 35, W_PLOT = 36, W_TUNE = 37, W_TABLE_DETAIL = 38,
-                   W_SPATIAL_REMOVE = 39;
+                   W_SPATIAL_REMOVE = 39, W_VIDEO = 40;
 // a plugin's retune requests (kp::Host::tune): at most one per this
 constexpr int64_t TUNE_MIN_GAP_MS = 2000;
 constexpr size_t MAX_PAYLOAD = 1u << 20;   // kp::wire::MAX_PAYLOAD
@@ -1092,6 +1092,9 @@ private:
             case W_PLOT:
                 on_plot(r, p, len);
                 break;
+            case W_VIDEO:
+                on_video(r, p, len);
+                break;
             case W_TUNE: {
                 // kp::Host::tune - only plugins that declare kp::Info::tunes
                 const double hz = num_or_nan(std::string(p, std::min<size_t>(len, 32)));
@@ -1205,6 +1208,32 @@ private:
                  json_escape(f[i + 2].substr(0, 32)) + "\"]";
         o += "]}";
         report_.plot_set(r.id, std::move(o));
+    }
+
+    // kp::wire::VIDEO: uint16 width, height; uint8 format, flags; uint16
+    // label_len; label; then width*height*bpp pixel bytes (bpp = 1 GRAY8 /
+    // 3 RGB24), all little-endian. Forwarded as a binary frame to the panel's
+    // canvas; a frame whose length doesn't match its header is dropped.
+    void on_video(Runner& r, const char* p, size_t len) {
+        constexpr size_t HDR = 8;   // width, height, format, flags, label_len
+        if (len < HDR) return;
+        const auto* u = reinterpret_cast<const uint8_t*>(p);
+        const uint32_t w = static_cast<uint32_t>(u[0]) | (static_cast<uint32_t>(u[1]) << 8);
+        const uint32_t h = static_cast<uint32_t>(u[2]) | (static_cast<uint32_t>(u[3]) << 8);
+        const uint8_t format = u[4];
+        const uint32_t label_len = static_cast<uint32_t>(u[6]) | (static_cast<uint32_t>(u[7]) << 8);
+        if (format > 1 || w == 0 || h == 0) return;
+        const size_t bpp = format == 1 ? 3 : 1;
+        const size_t npix = static_cast<size_t>(w) * static_cast<size_t>(h) * bpp;
+        if (HDR + label_len + npix != len) return;   // header and payload must agree
+        VideoFrameReport vf;
+        vf.width = static_cast<int>(w);
+        vf.height = static_cast<int>(h);
+        vf.format = format;
+        vf.label.assign(p + HDR, label_len);
+        vf.pixels.assign(u + HDR + label_len, u + HDR + label_len + npix);
+        owner_->deliver_video(vf);
+        (void)r;
     }
 
     // kp::wire::MAP_POINT: id, lat, lon, label, kind, heading, altitude_m,
@@ -1729,6 +1758,20 @@ void DigitalDecoder::deliver_spatial(const SpatialReport& s) {
         h = spatial_handler_;
     }
     if (h) h(s);
+}
+
+void DigitalDecoder::set_video_handler(VideoHandler h) {
+    std::lock_guard<std::mutex> lk(talker_mu_);
+    video_handler_ = std::move(h);
+}
+
+void DigitalDecoder::deliver_video(const VideoFrameReport& f) {
+    VideoHandler h;
+    {
+        std::lock_guard<std::mutex> lk(talker_mu_);
+        h = video_handler_;
+    }
+    if (h) h(f);
 }
 
 void DigitalDecoder::process(const std::complex<float>* x, size_t n, float rate_hz, double rf_hz, uint64_t pos,

@@ -1,0 +1,22 @@
+[
+ {
+  "id": "tempest-1024x768",
+  "title": "TEMPEST: 1024x768 @ 60 Hz screen leakage",
+  "description": "Synthetic unintended video emanation of a 1024x768 @ 60 Hz display (a test pattern of luma bars, a checkerboard and UI panels) at 2.4 MHz around 520 MHz - the 8th harmonic of the 65 MHz pixel clock - with the leaking device at array bearing 35 deg. Expect the decoder to auto-detect '1024x768 @ 60 Hz', show a reconstructed picture in its video panel, and (coherent mode with DoA on) a 'screen' talker near 35 deg in the DF panel. 3 s, looped.",
+  "rf_hz": 520000000.0,
+  "tuner_offset_hz": 0,
+  "seconds": 3,
+  "vfo": {"bw_khz": 2400},
+  "steps": [
+   ["{tools}/tempest_gen.py", "tempest.cu8",
+    "--mode", "1024x768@60", "--bearing", "35", "--seconds", "3",
+    "--snr", "26", "--noise-lsb", "3", "--rf", "520000000", "--offset", "300000", "--seed", "7"]
+  ],
+  "output": "tempest.cu8",
+  "expect": [
+   {"event": "Detected 1024x768 @ 60 Hz"},
+   {"bearing": 35}
+  ],
+  "tol_deg": 6
+ }
+]

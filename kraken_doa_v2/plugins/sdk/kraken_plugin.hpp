@@ -185,6 +185,26 @@ struct Plot {
     std::vector<PlotMarker> markers;
 };
 
+// A reconstructed picture for the decoder's tab (Host::video_frame): a
+// width x height raster of pixels, drawn on a <canvas> in the panel and
+// replaced by the next one. For decoders that rebuild an image from the
+// signal - analog TV (PAL/NTSC luma) and screen-leakage reconstruction
+// (TEMPEST). Send a few per second at most. The pixel buffer is row-major,
+// top-left first; format picks the bytes per pixel. Keep width*height*bpp
+// under kp::wire::MAX_PAYLOAD (1 MB) - downscale a bigger raster first (a
+// GRAY8 frame may be up to ~1000x1000, an RGB24 one ~590x590); a frame over
+// the limit is dropped, not truncated. Set Info::video so the panel shows
+// the display.
+struct VideoFrame {
+    int width = 0;
+    int height = 0;
+    // 0 = GRAY8 (1 byte/pixel, 0 black .. 255 white),
+    // 1 = RGB24 (3 bytes/pixel: R, G, B)
+    int format = 0;
+    const uint8_t* pixels = nullptr;   // width*height*bpp bytes, row-major
+    std::string label;                 // caption overlaid on the frame, e.g. "1024x768 @ 60 Hz" ("" = none)
+};
+
 // Array plugins: one block of every antenna's samples (process_array)
 struct ArrayBlock {
     int m = 0;                      // antennas: the array's elements in coherent mode, else 1 (the VFO's tuner)
@@ -246,6 +266,9 @@ struct Info {
     bool array = false;
     double array_burst_s = 0.25;
     double array_period_s = 1.0;
+    // true: rebuilds a picture and sends it with Host::video_frame - the panel
+    // shows a video display canvas (analog TV, screen-leakage reconstruction)
+    bool video = false;
     // May ask the host to retune (Host::tune) - e.g. to search for a carrier
     // the VFO doesn't see yet. kraken_doa honours tune() only from plugins
     // that declare it
@@ -367,6 +390,10 @@ public:
     virtual void spatial_remove(const std::string& id) { (void)id; }
     // A line plot for the decoder's tab (see Plot)
     virtual void plot(const Plot& p) { (void)p; }
+    // A reconstructed picture for the decoder's tab (see VideoFrame): the
+    // latest frame is drawn on a canvas and replaces the previous one. Set
+    // Info::video. The default (an older host) drops it.
+    virtual void video_frame(const VideoFrame& f) { (void)f; }
     // Ask the host to retune so that rf_hz is at 0 Hz of the input (Info::tunes
     // plugins only): in coherent mode the receiver retunes - every VFO on it
     // moves along -, in independent mode the VFO's own tuner. Fire and
@@ -483,5 +510,11 @@ constexpr uint32_t PLOT = 36;
 constexpr uint32_t TUNE = 37;          // rf_hz (decimal text): Host::tune
 constexpr uint32_t TABLE_DETAIL = 38;  // key '\0' label '\0' value '\0' label '\0' value ...
 constexpr uint32_t SPATIAL_REMOVE = 39;  // id ("" = all of this plugin's): Host::spatial_remove
+// A reconstructed picture (Host::video_frame). Payload, little-endian:
+// uint16 width, uint16 height, uint8 format (0 GRAY8, 1 RGB24), uint8 flags
+// (reserved 0), uint16 label_len, label_len bytes (UTF-8, no NUL), then
+// width*height*bpp pixel bytes row-major (bpp = 1 GRAY8 / 3 RGB24). The whole
+// payload stays under MAX_PAYLOAD; a larger frame is dropped by the sender.
+constexpr uint32_t VIDEO = 40;
 // (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends)
 }  // namespace kp::wire

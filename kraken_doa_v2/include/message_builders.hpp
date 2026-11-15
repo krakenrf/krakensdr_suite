@@ -69,6 +69,13 @@ public:
     // old-format frames' spacing)
     static bool beamformed_spectrum(int decimator_id, BeamformedSpectrum& out);
     static std::string build_beamformed_fft_message(const BeamformedSpectrum& bf, double point_step_hz);
+    // A reconstructed picture a decoder plugin sent (kp::Host::video_frame),
+    // for the decoder panel's canvas. Binary message type 8; little-endian
+    // layout after the type: uint32 vfo_id, uint16 width, uint16 height,
+    // uint8 format (0 GRAY8, 1 RGB24), uint8 flags, uint16 label_len, label
+    // bytes, then width*height*bpp raw pixel bytes. "" if the sizes disagree.
+    static std::string build_video_message(int vfo_id, int width, int height, int format, const std::string& label,
+                                           const uint8_t* pixels, size_t pixel_len);
     // {"decimator_info":[...]} snapshot of every decimator for the UI. In
     // wideband mode offsets are converted to be relative to the wideband
     // center.

@@ -106,6 +106,7 @@ int print_info() {
               << ",\"voice\":" << (i.voice ? "true" : "false") << ",\"messages\":" << (i.messages ? "true" : "false")
               << ",\"talkers\":" << (i.talkers ? "true" : "false") << ",\"lock_vfo\":" << (i.lock_vfo ? "true" : "false")
               << ",\"multichannel\":" << (i.multichannel ? "true" : "false") << ",\"array\":" << (i.array ? "true" : "false")
+              << ",\"video\":" << (i.video ? "true" : "false")
               << ",\"array_burst_s\":" << i.array_burst_s << ",\"array_period_s\":" << i.array_period_s
               << ",\"tunes\":" << (i.tunes ? "true" : "false") << ",\"squelch_hold_s\":" << i.squelch_hold_s;
     // options twice: as JSON for people, and tab-separated for kraken_doa's
@@ -232,6 +233,45 @@ public:
     void plot(const kp::Plot& pl) override {
         const std::string p = plot_payload(pl);
         send(kp::wire::PLOT, p.data(), p.size());
+    }
+    // kp::wire::VIDEO: uint16 width, height; uint8 format, flags; uint16
+    // label_len; label; then width*height*bpp pixel bytes, all little-endian.
+    // The whole payload must stay under MAX_PAYLOAD - drop the label to make
+    // it fit, else drop the frame (log once); never truncate a sent frame.
+    void video_frame(const kp::VideoFrame& f) override {
+        const int w = f.width, h = f.height;
+        if (w < 1 || h < 1 || w > 65535 || h > 65535 || !f.pixels) return;
+        const uint8_t format = f.format == 1 ? 1 : 0;
+        const int bpp = format == 1 ? 3 : 1;
+        const size_t npix = static_cast<size_t>(w) * static_cast<size_t>(h) * static_cast<size_t>(bpp);
+        const size_t fixed = 8;   // width, height, format, flags, label_len
+        size_t label_len = std::min<size_t>(f.label.size(), 65535);
+        if (fixed + label_len + npix > kp::wire::MAX_PAYLOAD) {
+            label_len = 0;   // first drop the caption to make room
+            if (fixed + npix > kp::wire::MAX_PAYLOAD) {
+                static bool warned = false;
+                if (!warned) {
+                    warned = true;
+                    std::cerr << "video_frame: " << (fixed + npix) << " bytes exceeds the " << kp::wire::MAX_PAYLOAD
+                              << " byte limit - dropping (downscale the raster)" << std::endl;
+                }
+                return;
+            }
+        }
+        std::string p;
+        p.reserve(fixed + label_len + npix);
+        auto put16 = [&](unsigned v) {
+            p.push_back(static_cast<char>(v & 0xff));
+            p.push_back(static_cast<char>((v >> 8) & 0xff));
+        };
+        put16(static_cast<unsigned>(w));
+        put16(static_cast<unsigned>(h));
+        p.push_back(static_cast<char>(format));
+        p.push_back(0);   // flags (reserved)
+        put16(static_cast<unsigned>(label_len));
+        p.append(f.label.data(), label_len);
+        p.append(reinterpret_cast<const char*>(f.pixels), npix);
+        send(kp::wire::VIDEO, p.data(), p.size());
     }
     bool tune(double rf_hz) override {
         if (!std::isfinite(rf_hz) || rf_hz <= 0) return false;

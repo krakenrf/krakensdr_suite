@@ -83,6 +83,15 @@ plugins/
 │                         correction, every group type), RDS2 streams, the MPX's subcarriers classified
 │                         (SCA FM audio / FSK data / DARC), SCA or main-programme audio; a packet talker
 │                         per station (PI) per RDS group
+├── analogtv/             off-air analog TV (PAL 625/50, NTSC 525/60, SECAM=PAL geometry): negative-AM
+│                         envelope, broadcast H/V sync recovery, interlaced raster -> a grayscale luma
+│                         PICTURE on the decoder tab's video canvas (host.video_frame; lock_vfo, the
+│                         2.4 MHz slice gives a soft ~150 px/line image). Shares plugins/lib/video_raster
+├── tempest/              screen-leakage (TEMPEST / Van Eck) reconstruction: full-band AM-magnitude,
+│                         autocorrelation auto-detection of frame rate + line count snapped to VESA/CVT
+│                         modes (pixel_clock = htotal x vtotal x fps), manual overrides, heavy frame
+│                         averaging -> a PICTURE (host.video_frame); multichannel -> the source's bearing
+│                         as a "screen" talker packet. lock_vfo + manual_only. Shares video_raster
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
@@ -151,6 +160,7 @@ KRAKEN_PLUGIN(MyDecoder, {.id = "mydec",
                           .talkers = false,               // true: reports who transmits (host.talker)
                           .lock_vfo = false,              // true: the VFO stays on its tuner's centre (below)
                           .multichannel = false,          // true: takes every antenna (process_multi, below)
+                          .video = false,                 // true: rebuilds a picture (host.video_frame, below)
                           .squelch_hold_s = 0})           // > 0: the Digital squelch's hold (below)
 ```
 
@@ -279,6 +289,7 @@ Older hosts refuse such a plugin ("bad sample_rate").
 | `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the user ticked "Raw frames") |
 | `host.talker(t)` / `host.talker_end(at_s, channel)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`, channel, packet): the DoA is split per radio / aircraft (set `.talkers = true`, below) |
 | `host.talker_forget(id)` | drops a talker now - its bearing, history and row in the 📡 DF list (wire TALKER_FORGET 33; ism: its unknown devices when "Unknown signals" is set to Ignore) |
+| `host.video_frame(f)` | a reconstructed picture (`kp::VideoFrame`: width, height, format, pixels, label) drawn on a canvas in the decoder's tab - analog TV, screen-leakage (TEMPEST); set `.video = true` (see below) |
 
 **Voice.** Set `.voice = true` if the decoder sends audio (`host.audio`):
 only then does its panel tab offer the Listen button.
@@ -503,6 +514,20 @@ dashed `threshold`, `markers` {x, label, talker} - clicking a marker with a
 talker shows that talker alone on the map. The latest plot replaces the
 previous; send at most a few a second. A table row whose key is a talker id
 selects that talker the same way.
+
+### Video frames
+
+A decoder that rebuilds a picture from the signal - analog TV (PAL/NTSC
+luma), screen-leakage reconstruction (TEMPEST) - sets `.video = true` and
+sends each frame with `host.video_frame(kp::VideoFrame)`: `width` x `height`
+pixels, `format` 0 = GRAY8 (1 byte/pixel, 0 black .. 255 white) or 1 = RGB24
+(3 bytes R, G, B), `pixels` row-major top-left first, and an optional `label`
+drawn as a caption (e.g. "1024x768 @ 60 Hz"). The panel shows a canvas per VFO
+running the plugin; the latest frame replaces the previous one, so send at
+most a few a second. The whole frame must stay under 1 MB (`kp::wire::MAX_PAYLOAD`)
+- a GRAY8 raster up to ~1000x1000, RGB24 ~590x590 - so downscale a bigger
+picture before sending; a frame over the limit is dropped (logged once), never
+truncated. Older hosts without the video channel drop it.
 
 The offline test runs array plugins on multichannel recordings (cf32,
 sample-major: antenna 0..m-1 of sample 0, then of sample 1, ...; `channels`
