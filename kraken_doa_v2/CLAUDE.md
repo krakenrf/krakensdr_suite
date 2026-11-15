@@ -156,6 +156,10 @@ Sandboxes and secrets
 - The AI assistant controls the receiver only through `apply_command`
   (refused while "Read only" is on) and may not edit `plugins/*/LICENSE*`;
   keep new MCP control tools on that path (`docs/dev/ai-assistant.md`).
+- `POWER:` (restart / reboot / shutdown, `power.cpp`) is taken only from a
+  page's own socket (`ControlHandler::handle_page_message`), never from
+  the replay, the assistant, a test transmission's commands or the
+  scanners, and is never persisted (`docs/dev/power.md`).
 
 ## Testing a change
 
@@ -214,4 +218,5 @@ the job's scratch directory (not committed). The established setup:
 | Voice to Text | `voice-to-text.md` |
 | AI assistant (MCP server, bridge, lockdown, sandbox, map layers, IQ capture) | `ai-assistant.md` |
 | Web mapper output | `web-mapper.md` |
+| ↻ Restart / ⏻ Shut down from the page (power commands, platforms, privileges, safety) | `power.md` |
 | Hot paths, DC correction, FFT dB, AM loops, MUSIC gates, dev tasks, key files, common issues | `reference.md` |

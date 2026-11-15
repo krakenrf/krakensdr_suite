@@ -1017,6 +1017,24 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .sf-dlg .err:empty {display:none}
 .sf-dlg .b {display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center}
 .sf-dlg .b .sp {flex:1}
+/* ⏻ / ↻ power: the footer row, its dialog, the notice over the whole page */
+.sb-power {display:flex;align-items:center;gap:6px;margin-top:8px}
+.sb-power .btn {flex:1 1 0;min-width:0}
+/* the power symbol drawn (U+23FB is missing from many fonts) */
+.pw-svg {width:1em;height:1em;vertical-align:-.15em;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round}
+.pw-dlg {width:340px}
+.pw-dlg .pw-q {margin:6px 0 2px;font-size:12.5px;color:#c8d6e5}
+.pw-dlg .b .btn {flex:1 1 auto}
+.pw-notice {position:fixed;inset:0;z-index:3000;background:rgba(6,10,22,.86);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box}
+.pw-box {width:380px;max-width:100%;text-align:center;background:#171d35;border:1px solid #2a4d83;border-radius:9px;box-shadow:0 6px 30px rgba(0,0,0,.6);padding:22px 18px 18px;color:#dbe8ff}
+.pw-box .pw-ic {font-size:34px;line-height:1;color:#4fc3f7;margin-bottom:10px}
+.pw-box .pw-ic.spin {animation:pwspin 1.6s linear infinite;display:inline-block}
+@keyframes pwspin {to {transform:rotate(360deg)}}
+.pw-box .pw-t {font-size:18px;font-weight:bold;margin-bottom:6px}
+.pw-box .pw-s {font-size:13px;color:#93a6c2;overflow-wrap:anywhere}
+.pw-box.fail .pw-ic {color:#ff8a80}
+.pw-box .pw-dry {display:inline-block;margin-top:10px;padding:2px 8px;border-radius:9px;background:#3a2f10;color:#ffd27a;font-size:11px}
+.pw-box .btn {margin-top:14px;min-width:90px}
 .sf-toast {position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2100;max-width:90vw;box-sizing:border-box;background:rgba(16,24,44,.97);border:1px solid #4fc3f7;color:#fff;border-radius:4px;padding:7px 14px;font-size:12px;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,.6);transition:opacity .3s;opacity:0}
 .sf-toast.show {opacity:1}
 .sf-toast.err {border-color:#ff8a80}
@@ -2354,6 +2372,12 @@ body.map-on .doa-header .rp-tab.sel {color:#a8cbf5;font-weight:600;border-bottom
           <button onclick="resetSettingsToDefault()" class="btn danger" style="flex:1">&#8634; Reset Settings to Default</button>
           <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Settings are saved automatically to a file on the device and restored when the program restarts (shared by all browsers). Reset reverts everything to factory defaults.</span></span>
         </div>
+        <!-- ⏻ / ↻ (see ⏻ POWER): only what the receiver offers ({"power":...}) -->
+        <div class="sb-power" id="pw-row" style="display:none">
+          <button type="button" class="btn" id="pw-restart" onclick="pwOpen('restart')" title="Restart the software (heimdall + this program) or reboot the computer">↻ Restart</button>
+          <button type="button" class="btn danger" id="pw-shutdown" onclick="pwOpen('shutdown')" title="Power the receiver's computer off safely: recordings are finished and settings saved first"><svg class="pw-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v8.5M6.34 7.34A8 8 0 1 0 17.66 7.34"/></svg> Shut down</button>
+          <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip"><b>Restart</b>: the software (heimdall and this program start again, the array recalibrates, ~30 s) or the whole computer.<br><b>Shut down</b>: powers the computer off - unplug it once it is off (Raspberry Pi: the green LED has stopped blinking).<br><br>First a running recording (IQ, audio, DoA) is finished and the settings and logs are written. Every open page shows what is happening and reconnects by itself after a restart.</span></span>
+        </div>
         <!-- the boxes' layout (sbBoxInit): kept in this browser, not a receiver setting -->
         <div class="sb-layout">
           <button type="button" class="btn sm" onclick="sbBoxCollapseAll(true)" title="Collapse every box">Collapse all</button>
@@ -2796,6 +2820,24 @@ body.map-on .doa-header .rp-tab.sel {color:#a8cbf5;font-weight:600;border-bottom
       <span class="sp"></span>
       <button type="button" class="btn danger" id="sf-del" onclick="sfDlgDelete()">🗑 Delete</button>
     </div>
+  </div>
+</div>
+
+<!-- ⏻ / ↻ Restart / Shut down: the confirmation, and the notice every page shows (see ⏻ POWER) -->
+<div class="sf-dlg-bg" id="pw-dlg-bg" style="display:none" onpointerdown="if(event.target===this)pwDlgClose()">
+  <div class="sf-dlg pw-dlg" id="pw-dlg" role="dialog" aria-modal="true" aria-labelledby="pw-dlg-title">
+    <div class="sf-dlg-h"><span id="pw-dlg-title"></span><span class="x" onclick="pwDlgClose()" title="Cancel (Esc)">✕</span></div>
+    <div class="pw-q" id="pw-dlg-q"></div>
+    <div class="b" id="pw-dlg-b"></div>
+  </div>
+</div>
+<div class="pw-notice" id="pw-notice" style="display:none" role="alertdialog" aria-modal="true" aria-labelledby="pw-n-t">
+  <div class="pw-box" id="pw-box">
+    <div><span class="pw-ic" id="pw-n-ic"></span></div>
+    <div class="pw-t" id="pw-n-t"></div>
+    <div class="pw-s" id="pw-n-s"></div>
+    <div class="pw-dry" id="pw-n-dry" title="KRAKEN_POWER_DRY_RUN: the receiver only logs the command">Dry run</div>
+    <div><button type="button" class="btn" id="pw-n-ok" onclick="pwNoticeHide()">OK</button></div>
   </div>
 </div>
 <div class="sf-toast" id="sf-toast"></div>
@@ -8638,6 +8680,9 @@ function connect() {
       connEl.style.background='#2e7d32';
       connEl.style.color='#fff';
     }
+    // ⏻ / ↻ back after a restart / reboot: the notice goes (also with an
+    // older receiver, which sends no power state)
+    pwOnOpen();
 
     // The backend is the source of truth for settings: it replays current
     // state (sync_cmd messages) to us on connect, and the FFT header carries
@@ -8675,6 +8720,7 @@ function connect() {
   };
   
   ws.onclose=()=>{
+    pwOnClose();
     const connEl = $id('status-connection');
     if (connEl) {
       connEl.textContent='Disconnected';
@@ -8758,6 +8804,7 @@ function connect() {
             }
           }
           else if(msg.operating_mode) { opOnMessage(msg.operating_mode); }
+          else if(msg.power) { pwOnState(msg.power); }
           else if(msg.decimator_freq_offset) {
             // Continuous scanner (or server) moved a tuning bar
             const dec = decimatorInfo.find(d => d.id === msg.decimator_freq_offset.id);
@@ -25890,6 +25937,122 @@ function resetSettingsToDefault(){
 function openHeimdall(){
   window.open('http://' + location.hostname + ':8070', '_blank');
 }
+
+// ============================================================================
+// ⏻ POWER: Restart / Shut down (power.cpp, docs/dev/power.md)
+// ----------------------------------------------------------------------------
+// The receiver says what it offers - {"power":{actions:[restart, reboot,
+// shutdown], busy, phase, dry_run[, error][, note]}} in the hello and on every
+// change; an older receiver sends none and the buttons stay hidden. A button
+// opens a confirmation; POWER:<action> goes to the receiver, which finishes the
+// recordings, writes its files and tells every page (busy + phase): the notice
+// covers the page until the socket comes back (restart / reboot: the page
+// reconnects by itself and the notice goes; a failure shows why).
+// ============================================================================
+// the power symbol, drawn (U+23FB is missing from many fonts); as the footer button's
+const PW_SVG = '<svg class="pw-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v8.5M6.34 7.34A8 8 0 1 0 17.66 7.34"/></svg>';
+const PW_TXT = {
+  restart:  {ic: '↻', t: 'Restarting…', s: 'This page reconnects by itself', no: 'Not restarted'},
+  reboot:   {ic: '↻', t: 'Rebooting…', s: 'This page reconnects by itself', no: 'Not rebooted'},
+  shutdown: {ic: PW_SVG, t: 'Shutting down…', s: 'Safe to unplug when the green LED stops blinking', no: 'Not shut down'},
+};
+let pwState = {actions: [], busy: '', phase: '', dry_run: false};
+let pwAsked = 0, pwAskedAction = '';   // this page's request (its refusal is shown here only)
+let pwShown = '';                      // the action the notice is about ('' = hidden)
+let pwLost = false;                    // the socket closed while the notice was up
+function pwHas(a) { return (pwState.actions || []).includes(a); }
+function pwOnState(p) {
+  if (!p || typeof p !== 'object') return;
+  pwState = p;
+  const rs = pwHas('restart') || pwHas('reboot'), sd = pwHas('shutdown');
+  $id('pw-restart').style.display = rs ? '' : 'none';
+  $id('pw-shutdown').style.display = sd ? '' : 'none';
+  $id('pw-row').style.display = rs || sd ? '' : 'none';
+  if (!rs && !sd) pwDlgClose();
+  if (p.busy) {
+    pwAsked = 0;   // taken: a later refusal is someone else's
+    pwDlgClose();
+    pwNotice(p.busy, p.phase === 'running' ? 'running' : 'preparing', '');
+    return;
+  }
+  // an error: the action the notice shows, or this page's request just sent
+  const mine = pwShown || (Date.now() - pwAsked < 15000 && (!p.for || p.for === pwAskedAction) ? pwAskedAction : '');
+  if (p.error && mine) { pwAsked = 0; pwNotice(mine, 'failed', p.error); }
+  else if (p.note && pwShown) pwNotice(pwShown, 'note', p.note);
+  else if (!p.error && !p.note) pwNoticeHide();   // idle: e.g. the receiver came back
+}
+function pwNotice(a, phase, text) {
+  const t = PW_TXT[a] || PW_TXT.restart;
+  const fail = phase === 'failed', done = fail || phase === 'note';
+  pwShown = a;
+  $id('pw-box').classList.toggle('fail', fail);
+  const ic = $id('pw-n-ic');
+  ic.innerHTML = fail ? '⚠' : t.ic;   // constants only
+  ic.classList.toggle('spin', !done && a !== 'shutdown');
+  $id('pw-n-t').textContent = fail ? t.no : done ? 'Dry run' : t.t;
+  $id('pw-n-s').textContent = done ? text : phase === 'preparing' ? 'Finishing recordings, saving' : t.s;
+  $id('pw-n-s').title = !done && a === 'shutdown' ? 'Raspberry Pi: the green ACT LED. Another computer: once it is off' : '';
+  $id('pw-n-dry').style.display = pwState.dry_run && !done ? '' : 'none';
+  $id('pw-n-ok').style.display = done ? '' : 'none';
+  $id('pw-notice').style.display = 'flex';
+  if (done) $id('pw-n-ok').focus();
+}
+function pwNoticeHide() {
+  pwShown = '';
+  pwLost = false;
+  $id('pw-notice').style.display = 'none';
+}
+function pwDlgClose() { $id('pw-dlg-bg').style.display = 'none'; }
+// which = 'restart' (software / computer) | 'shutdown'
+function pwOpen(which) {
+  const b = $id('pw-dlg-b');
+  b.innerHTML = '';
+  const btn = (text, cls, title, action, icon) => {
+    const e = document.createElement('button');
+    e.type = 'button';
+    e.className = 'btn ' + cls;
+    e.textContent = text;
+    if (icon) e.insertAdjacentHTML('afterbegin', icon + ' ');
+    if (title) e.title = title;
+    e.onclick = action ? () => pwSend(action) : pwDlgClose;
+    b.appendChild(e);
+    return e;
+  };
+  let first;
+  if (which === 'shutdown') {
+    $id('pw-dlg-title').innerHTML = PW_SVG + '&nbsp;Shut down';
+    $id('pw-dlg-q').textContent = 'Power off the receiver’s computer?';
+    first = btn('Shut down', 'danger', 'Recordings are finished and settings saved first', 'shutdown', PW_SVG);
+  } else {
+    $id('pw-dlg-title').textContent = '↻ Restart';
+    $id('pw-dlg-q').textContent = 'Restart what?';
+    if (pwHas('restart')) first = btn('Restart software', 'primary', 'heimdall and this program start again (~30 s; the array recalibrates)', 'restart');
+    if (pwHas('reboot')) {
+      const r = btn('Reboot computer', first ? '' : 'primary', 'The whole computer restarts (1-2 min)', 'reboot');
+      first = first || r;
+    }
+  }
+  btn('Cancel', '', '', null);
+  $id('pw-dlg-bg').style.display = 'flex';
+  if (first) first.focus();
+}
+function pwSend(action) {
+  pwDlgClose();
+  if (!ws || ws.readyState !== 1) {
+    pwAskedAction = action;
+    pwNotice(action, 'failed', 'Not connected to the receiver');
+    return;
+  }
+  pwAsked = Date.now();
+  pwAskedAction = action;
+  send('POWER:' + action);
+}
+// the socket: closing while the notice is up is expected; coming back ends it
+function pwOnClose() { if (pwShown) pwLost = true; }
+function pwOnOpen() { if (pwLost) pwNoticeHide(); }
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $id('pw-dlg-bg').style.display !== 'none') { e.preventDefault(); pwDlgClose(); }
+});
 
 // ============================================================================
 // HELP TOOLTIPS

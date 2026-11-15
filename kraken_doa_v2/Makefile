@@ -228,7 +228,8 @@ APP_SRCS = \
 	$(SRCDIR)/playback.cpp \
 	$(SRCDIR)/sigmf.cpp \
 	$(SRCDIR)/recorder.cpp \
-	$(SRCDIR)/recorder_audio.cpp
+	$(SRCDIR)/recorder_audio.cpp \
+	$(SRCDIR)/power.cpp
 
 ALL_SRCS = $(SIGNAL_PROCESSING_SRCS) $(NETWORKING_SRCS) $(DIGITAL_SRCS) $(UTILS_SRCS) $(APP_SRCS)
 

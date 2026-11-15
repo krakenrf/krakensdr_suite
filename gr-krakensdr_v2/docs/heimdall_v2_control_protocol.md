@@ -147,6 +147,21 @@ plus, when enabled: `"tuner_frequencies":[...]`, `"usable_bandwidth_per_tuner":<
 ```
 (`current_frequency` only when `num_groups > 0`.)
 
+### 2.15 `restart` (added 2026-11-16, checked right after `get_status`)
+```json
+{"command":"restart"}
+```
+- Only when heimdall was started by a supervisor that restarts it: the
+  environment variable `KRAKEN_RESTART_EXIT` (2-125) is set (run.sh's
+  supervisor and headless loop, `docker-compose.yml`, krakensdr.exe).
+  Otherwise `{"status":"error","message":"not started by a supervisor that
+  restarts it (run.sh, Docker, krakensdr.exe)"}`.
+- Success: `{"status":"success","message":"restarting"}`, then the normal
+  shutdown (dongles released) and exit with that status; the supervisor
+  starts heimdall again. kraken_doa's ↻ Restart software sends it on a
+  connection of its own (`kraken_doa_v2/docs/dev/power.md`). Like every
+  command on this port it needs no authentication.
+
 ---
 
 ## 3. The 2 Hz status broadcast (exact schema, `broadcast_status()` lines 53–147)

@@ -132,6 +132,16 @@ shows the error (for missing packages, run `./install.sh` once).
 runs `run.sh` at every boot; `./install-pi-service.sh --uninstall` removes
 it. For a hardware variant: `VARIANT_FLAGS=--wideband ./install-pi-service.sh`.
 
+**Restart and shut down from the web page.** At the bottom of the DOA
+page's sidebar, **↻ Restart** restarts the software (both programs) or
+reboots the computer, and **⏻ Shut down** powers it off - unplug a Pi once
+its green LED has stopped blinking. Recordings are finished and settings
+saved first. The page shows only what works on your installation: the
+software restart needs `run.sh` (or Docker / `krakensdr.exe`); rebooting
+and shutting down need the permission `install-pi-service.sh` sets up (on a
+desktop, a logged-in user usually has it already; not in Docker).
+`KRAKEN_NO_POWER=1 ./run.sh` hides the buttons.
+
 ## Features
 
 Everything below is on the KrakenSDR DOA page. Each feature has a detailed

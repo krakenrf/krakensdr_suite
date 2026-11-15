@@ -34,6 +34,7 @@ constexpr const char* DEFAULT_DIR = "decoder_logs";
 
 void start();      // worker thread + the decoders' record handler
 void stop();       // shutdown: write what is buffered, close the file
+void flush();      // write what is buffered now (power.cpp, before a shutdown); keeps logging
 
 void set_enabled(bool on);
 // comma-separated subset of event,message,position,raw,incident,voice; false

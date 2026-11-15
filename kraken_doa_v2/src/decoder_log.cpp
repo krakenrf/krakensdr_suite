@@ -415,6 +415,12 @@ void stop() {
     close_locked(s);
 }
 
+void flush() {
+    State& s = S();
+    std::lock_guard<std::mutex> io(s.io);
+    flush_locked(s);
+}
+
 void set_enabled(bool on) {
     State& s = S();
     std::lock_guard<std::mutex> lk(s.mu);

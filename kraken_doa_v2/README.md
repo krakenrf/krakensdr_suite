@@ -107,6 +107,15 @@ cooldown / scanner).
 | **🔍 Continuous Scanner** | Sweeps for active signals automatically — either within the current bandwidth or across a **wideband MHz range** (e.g. 88–108). Adjustable squelch, dwell, and signal-decay; lists tracked signals as they appear. |
 | **📻 Saved Frequencies ▶ Scan** | Scans the saved frequencies you tick — one by one, or a whole category (also entries added to it later). The selected VFO goes to each active one with its demod / bandwidth / decoder / gain and is heard while it is (+ Delay). Every frequency in a tuner band is watched at once; coherent mode takes the bands in turn (recalibrating after each retune), independent mode watches a band on every free tuner, wideband mode one band as wide as the tuner spread (~10.8 MHz). Skip, Hold, Squelch, Dwell, Longest stay; "one VFO per active frequency" hears / transcribes everything active in the band at once (the extra VFOs are made and removed by the scan). Coherent, wideband or independent mode. |
 
+**↻ Restart / ⏻ Shut down** (at the bottom of the sidebar, where the receiver offers
+them): restart the software (heimdall + this program; needs `run.sh`, Docker or
+`krakensdr.exe`, which start them again), reboot the computer, or power it off so a
+Pi can be unplugged safely. A running IQ / audio / DoA recording is finished and the
+settings and logs are written first, and every open page shows what is happening
+and reconnects by itself after a restart. `KRAKEN_NO_POWER=1` hides the buttons,
+`KRAKEN_POWER=restart` offers only the software restart; details in
+`docs/dev/power.md`.
+
 The main area shows the **spectrum + waterfall** (click/drag the tuning bar to set the
 listen frequency - it lands on a multiple of the top bar's **Step**, 1 Hz to 100 kHz;
 hold Shift while dragging to tune finely, to the Hz; waterfall has speed, colormap,
