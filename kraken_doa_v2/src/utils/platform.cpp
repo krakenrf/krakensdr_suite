@@ -7,30 +7,51 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #include <winsock2.h>
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include <atomic>
 #include <cwchar>
 #include <string>
 #else
 #include <climits>
+#include <ctime>
 #include <fstream>
 #include <sstream>
 #include <sys/ioctl.h>
 #include <unistd.h>
 #ifdef __APPLE__
 #include <IOKit/pwr_mgt/IOPMLib.h>
+#include <libproc.h>
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
+#include <mach/mach_time.h>
 #include <sys/sysctl.h>
+#else
+#include <cstring>
+#include <dirent.h>
+#include <fcntl.h>
 #endif
 #endif
 
 namespace platform {
+
+namespace {
+// One live process below this one. `start` tells a reused pid from the
+// process that had it before (any unit, only compared for equality).
+struct ProcCpu {
+    int64_t pid;
+    uint64_t start;
+    uint64_t cpu_ns;
+};
+bool list_descendants(std::vector<ProcCpu>* out);   // per platform, below; without this process
+}  // namespace
 
 #ifdef _WIN32
 
@@ -308,6 +329,63 @@ bool mem_info(uint64_t* total_bytes, uint64_t* available_bytes) {
 
 float cpu_temperature_c() { return -1.0f; }
 
+bool process_cpu_ns(uint64_t* ns) {
+    FILETIME c, e, k, u;
+    if (!GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u)) return false;
+    *ns = (ft64(k) + ft64(u)) * 100;   // 100 ns units
+    return true;
+}
+
+int cpu_count() {
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    return si.dwNumberOfProcessors > 0 ? static_cast<int>(si.dwNumberOfProcessors) : 1;
+}
+
+namespace {
+bool list_descendants(std::vector<ProcCpu>* out) {
+    struct Row {
+        DWORD pid, ppid;
+        bool taken;
+    };
+    std::vector<Row> rows;
+    const HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe;
+    pe.dwSize = sizeof pe;
+    for (BOOL more = Process32FirstW(snap, &pe); more; more = Process32NextW(snap, &pe))
+        rows.push_back({pe.th32ProcessID, pe.th32ParentProcessID, false});
+    CloseHandle(snap);
+
+    FILETIME c, e, k, u;
+    if (!GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u)) return false;
+    struct Node {
+        DWORD pid;
+        uint64_t created;
+    };
+    const DWORD self = GetCurrentProcessId();
+    std::vector<Node> tree{{self, ft64(c)}};
+    for (size_t i = 0; i < tree.size(); i++) {
+        const Node parent = tree[i];
+        for (Row& r : rows) {
+            if (r.taken || r.ppid != parent.pid || r.pid == self || r.pid == 0) continue;
+            const HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, r.pid);
+            if (!h) continue;
+            const BOOL ok = GetProcessTimes(h, &c, &e, &k, &u);
+            CloseHandle(h);
+            // Windows keeps a parent pid after that process is gone and gives
+            // the number to a new one: a "child" older than its parent
+            // belonged to the pid's previous owner
+            if (!ok || ft64(c) < parent.created) continue;
+            r.taken = true;
+            tree.push_back({r.pid, ft64(c)});
+            out->push_back({static_cast<int64_t>(r.pid), ft64(c), (ft64(k) + ft64(u)) * 100});
+        }
+    }
+    return true;
+}
+}  // namespace
+
 std::string host_name() {
     wchar_t buf[256];
     DWORD n = 256;
@@ -415,6 +493,47 @@ bool mem_info(uint64_t* total_bytes, uint64_t* available_bytes) {
 }
 
 float cpu_temperature_c() { return -1.0f; }  // needs the SMC (IOKit) - not read
+
+namespace {
+bool list_descendants(std::vector<ProcCpu>* out) {
+    int mib[3] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL};
+    size_t len = 0;
+    if (sysctl(mib, 3, nullptr, &len, nullptr, 0) != 0) return false;
+    std::vector<kinfo_proc> procs((len + len / 8) / sizeof(kinfo_proc) + 16);   // room for new ones
+    len = procs.size() * sizeof(kinfo_proc);
+    if (sysctl(mib, 3, procs.data(), &len, nullptr, 0) != 0) return false;
+    procs.resize(len / sizeof(kinfo_proc));
+
+    // proc_pid_rusage counts in Mach time units (1 ns on Intel, 125/3 ns on
+    // Apple silicon)
+    static const mach_timebase_info_data_t tb = [] {
+        mach_timebase_info_data_t t{1, 1};
+        mach_timebase_info(&t);
+        if (t.denom == 0) t.numer = t.denom = 1;
+        return t;
+    }();
+    const pid_t self = getpid();
+    std::vector<pid_t> tree{self};
+    std::vector<bool> taken(procs.size(), false);
+    for (size_t i = 0; i < tree.size(); i++) {
+        const pid_t parent = tree[i];
+        for (size_t j = 0; j < procs.size(); j++) {
+            const kinfo_proc& kp = procs[j];
+            const pid_t pid = kp.kp_proc.p_pid;
+            if (taken[j] || kp.kp_eproc.e_ppid != parent || pid == self || pid <= 0) continue;
+            taken[j] = true;
+            tree.push_back(pid);
+            rusage_info_v2 ri;
+            if (proc_pid_rusage(pid, RUSAGE_INFO_V2, reinterpret_cast<rusage_info_t*>(&ri)) != 0) continue;
+            const timeval& st = kp.kp_proc.p_starttime;
+            out->push_back({static_cast<int64_t>(pid),
+                            static_cast<uint64_t>(st.tv_sec) * 1000000ull + static_cast<uint64_t>(st.tv_usec),
+                            (ri.ri_user_time + ri.ri_system_time) * tb.numer / tb.denom});
+        }
+    }
+    return true;
+}
+}  // namespace
 #else
 bool cpu_times(uint64_t* idle, uint64_t* total) {
     std::ifstream f("/proc/stat");
@@ -453,7 +572,75 @@ float cpu_temperature_c() {
     if (!(f >> milli)) return -1.0f;
     return static_cast<float>(milli) / 1000.0f;
 }
+
+namespace {
+// /proc/<pid>/stat of every process (a few hundred small reads), then the
+// ones below this process by their parent pids. /proc lists processes, not
+// threads, and a child's parent is the process, whichever thread started it.
+bool list_descendants(std::vector<ProcCpu>* out) {
+    struct Row {
+        long pid, ppid;
+        unsigned long long ticks, start;
+        bool taken;
+    };
+    std::vector<Row> rows;
+    DIR* dir = opendir("/proc");
+    if (!dir) return false;
+    char path[64], buf[1024];
+    while (const dirent* e = readdir(dir)) {
+        if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+        std::snprintf(path, sizeof path, "/proc/%.20s/stat", e->d_name);
+        const int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) continue;   // exited meanwhile
+        const ssize_t n = read(fd, buf, sizeof buf - 1);
+        close(fd);
+        if (n <= 0) continue;
+        buf[n] = '\0';
+        // "pid (comm) state ppid pgrp session tty tpgid flags minflt cminflt
+        // majflt cmajflt utime stime cutime cstime priority nice threads
+        // itrealvalue starttime ..."; comm may hold spaces and ')'
+        const char* p = std::strrchr(buf, ')');
+        Row r{};
+        unsigned long long ut = 0, st = 0;
+        if (!p || std::sscanf(p + 1,
+                              " %*c %ld %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu %*d %*d %*d %*d %*d %*d %llu",
+                              &r.ppid, &ut, &st, &r.start) != 4)
+            continue;
+        r.pid = std::atol(e->d_name);
+        r.ticks = ut + st;
+        rows.push_back(r);
+    }
+    closedir(dir);
+
+    long hz = sysconf(_SC_CLK_TCK);
+    if (hz <= 0) hz = 100;
+    const long self = getpid();
+    std::vector<long> tree{self};
+    for (size_t i = 0; i < tree.size(); i++) {
+        const long parent = tree[i];
+        for (Row& r : rows) {
+            if (r.taken || r.ppid != parent || r.pid == self) continue;
+            r.taken = true;
+            tree.push_back(r.pid);
+            out->push_back({r.pid, r.start, r.ticks * 1000000000ull / static_cast<unsigned long long>(hz)});
+        }
+    }
+    return true;
+}
+}  // namespace
 #endif
+
+bool process_cpu_ns(uint64_t* ns) {
+    timespec ts{};
+    if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts) != 0) return false;
+    *ns = static_cast<uint64_t>(ts.tv_sec) * 1000000000ull + static_cast<uint64_t>(ts.tv_nsec);
+    return true;
+}
+
+int cpu_count() {
+    const long n = sysconf(_SC_NPROCESSORS_ONLN);
+    return n > 0 ? static_cast<int>(n) : 1;
+}
 
 std::string host_name() {
     char buf[256];
@@ -488,5 +675,29 @@ const char* os_name() { return "linux"; }
 #endif
 
 #endif
+
+bool process_tree_cpu_ns(uint64_t* ns) {
+    static std::mutex mtx;
+    static std::vector<ProcCpu> prev;    // the descendants at the previous call, sorted by pid
+    static uint64_t descendants_ns = 0;  // what they used between the calls so far
+    uint64_t self = 0;
+    if (!process_cpu_ns(&self)) return false;
+    std::lock_guard<std::mutex> lock(mtx);
+    std::vector<ProcCpu> cur;
+    if (list_descendants(&cur)) {
+        std::sort(cur.begin(), cur.end(), [](const ProcCpu& a, const ProcCpu& b) { return a.pid < b.pid; });
+        for (const ProcCpu& c : cur) {
+            const auto p = std::lower_bound(prev.begin(), prev.end(), c.pid,
+                                            [](const ProcCpu& a, int64_t pid) { return a.pid < pid; });
+            // a process seen for the first time only sets its baseline: its
+            // whole CPU time so far in one step would show as a spike
+            if (p != prev.end() && p->pid == c.pid && p->start == c.start && c.cpu_ns > p->cpu_ns)
+                descendants_ns += c.cpu_ns - p->cpu_ns;
+        }
+        prev = std::move(cur);
+    }
+    *ns = self + descendants_ns;
+    return true;
+}
 
 }  // namespace platform
