@@ -34,6 +34,7 @@
 #include "vfo_level.hpp"
 #include "array_cal.hpp"
 #include "recorder.hpp"
+#include "power.hpp"
 #include "digital/dig_plugin.hpp"
 #include <iostream>
 #include <thread>
@@ -311,6 +312,10 @@ int main(int argc, char* argv[]) {
     SettingsStore::load();
     SettingsStore::start();
 
+    // ⏻ / ↻ the page's Shut down / Restart: which this installation offers
+    // (the reboot / shutdown check runs on a worker thread)
+    power::init();
+
     // Decoder plugins (plugins/<id>/build/decoder) - before the settings
     // replay, which may select one on a VFO - and the AI assistant
     dig::PluginRegistry::instance().scan();
@@ -523,9 +528,12 @@ int main(int argc, char* argv[]) {
 
     FFTProcessor::cleanup();
 
-    cout << "Shutdown complete" << endl;
+    // ↻ Restart from the page: the status the supervisor restarts on (power.hpp)
+    const int exit_status = power::exit_code();
+    cout << "Shutdown complete" << (exit_status ? " - restarting (exit status " + to_string(exit_status) + ")" : "")
+         << endl;
     cout.flush();
     // _Exit on Linux; Windows: TerminateProcess, after putting the console's
     // code page / modes back (see platform.hpp)
-    platform::fast_exit(0);
+    platform::fast_exit(exit_status);
 }

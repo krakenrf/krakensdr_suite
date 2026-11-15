@@ -35,7 +35,9 @@
 #include "geo_address.hpp"   // geo::json_parse
 #include "digital/dig_plugin.hpp"
 #include "utils/parse_num.hpp"
+#include "power.hpp"
 #include <string>
+#include <utility>
 #include <sstream>
 #include <iostream>
 #include <algorithm>
@@ -570,6 +572,8 @@ vector<string> ControlHandler::get_connect_sync_messages() {
     out.push_back(build_wb_variant_json());
     // Operating mode + independent mode's per-tuner tuning
     out.push_back(build_operating_mode_json());
+    // ⏻ / ↻ the power actions this installation offers (and one in progress)
+    out.push_back(power::state_message());
     std::lock_guard<std::mutex> lock(sync_store_mutex);
     for (const auto& [key, cmd] : sync_replay_store) {
         out.push_back(make_sync_cmd_json(cmd));
@@ -2722,10 +2726,27 @@ void ControlHandler::handle_websocket_message(string_view message) {
     apply_command(message);
 }
 
+// Set only around a page's own command; apply_command takes it at once, so a
+// command dispatched from inside that one (RESET_SETTINGS' defaults, the power
+// sequence's RECORDER_STOP) doesn't count as the page's. thread_local: a
+// dispatch on another thread (a rule break, but) can't see the loop's flag.
+static thread_local bool g_from_page = false;
+
+void ControlHandler::handle_page_message(string_view message) {
+    g_from_page = true;
+    apply_command(message);
+    g_from_page = false;
+}
+
 string ControlHandler::apply_command(string_view message) {
+    const bool from_page = std::exchange(g_from_page, false);
     // A malformed number in any command (stof/stoi throwing) must not
     // propagate into the uWS event loop, which would exit(1) the process.
     try {
+        // ⏻ / ↻ (power.cpp): a page's buttons only - not persisted (not in
+        // the settings schema), not echoed, never replayed
+        if (power::is_command(message))
+            return power::handle_command(message, from_page && !g_replaying_settings.load());
         // Debug playback (playback.hpp): its own commands, and what can't run
         // while a test transmission plays (told to every page)
         if (playback::handle_command(message)) return "";

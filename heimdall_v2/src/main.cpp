@@ -41,6 +41,7 @@ std::atomic<uint32_t> antenna_bias_tee_mask{0};
 std::atomic<int> rtl_tcp_channel{0};
 std::atomic<bool> global_running{true};
 std::atomic<bool> fatal_exit{false};
+std::atomic<int> restart_exit_status{0};
 std::atomic<OperatingMode> operating_mode{OperatingMode::COHERENT};
 std::atomic<int> active_num_elements{NUM_DEVICES};  // Resolved in main(): -n flag > persisted setting > devices detected on USB
 
@@ -809,6 +810,7 @@ int main(int argc, char* argv[]) {
     dash.stop();
 
     if (shutdown_signal) std::cout << "\nReceived signal " << shutdown_signal << ", shutting down..." << std::endl;
+    else if (restart_exit_status.load()) std::cout << "\nRestart requested, shutting down..." << std::endl;
     else std::cout << "\nShutting down..." << std::endl;
     global_running = false;  // signal every worker loop to stop
 
@@ -825,7 +827,12 @@ int main(int argc, char* argv[]) {
     // _Exit on Linux; on Windows TerminateProcess, since _Exit (ExitProcess)
     // runs every DLL's detach code there after killing the other threads -
     // a thread killed holding a lock that code needs would hang the exit.
-    std::cout << "Heimdall shutdown complete." << std::endl;
+    // a restart request (the control port's "restart") exits with the status
+    // the supervisor restarts on; a signal that came as well still restarts -
+    // the supervisor knows whether it was asked to stop
+    const int status = fatal_exit.load() ? 1 : restart_exit_status.load();
+    std::cout << "Heimdall shutdown complete." << (status > 1 ? " Exit status " + std::to_string(status) + " (restart)." : "")
+              << std::endl;
     std::cout.flush();
-    platform::fast_exit(fatal_exit.load() ? 1 : 0);
+    platform::fast_exit(status);
 }

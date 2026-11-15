@@ -32,6 +32,7 @@
 #include "config.hpp"
 #include "continuous_scanner.hpp"
 #include "control_handler.hpp"
+#include "power.hpp"
 #include "decimator_manager.hpp"
 #include "decoder_log.hpp"
 #include "digital/dig_plugin.hpp"
@@ -1127,6 +1128,11 @@ std::string readonly_refusal() {
 
 std::string cmd(const std::string& c) {
     std::cout << "AI assistant: " << c.substr(0, 200) << std::endl;
+    // ⏻ / ↻ restart, reboot, shut down: the user's buttons only (power.cpp
+    // refuses every caller but a page's socket too - this says it to the model)
+    if (power::is_command(c))
+        return "Refused: restarting, rebooting or shutting down is only for the user (the page's Restart / Shut down "
+               "buttons) - the assistant may not do it";
     return ControlHandler::apply_command(c);
 }
 

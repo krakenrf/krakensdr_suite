@@ -138,6 +138,16 @@ show the version of the code, e.g. `r294 · 63a4917` (commit count and commit;
 follows every `git pull` by itself; `heimdall_v2/heimdall --version` prints it
 too. Please include it when you report a problem.
 
+**Restart and shut down from the web page.** At the bottom of the DOA
+page's sidebar, **↻ Restart** restarts the software (both programs) or
+reboots the computer, and **⏻ Shut down** powers it off - unplug a Pi once
+its green LED has stopped blinking. Recordings are finished and settings
+saved first. The page shows only what works on your installation: the
+software restart needs `run.sh` (or Docker / `krakensdr.exe`); rebooting
+and shutting down need the permission `install-pi-service.sh` sets up (on a
+desktop, a logged-in user usually has it already; not in Docker).
+`KRAKEN_NO_POWER=1 ./run.sh` hides the buttons.
+
 ## Features
 
 Everything below is on the KrakenSDR DOA page. Each feature has a detailed

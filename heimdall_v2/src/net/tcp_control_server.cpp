@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <thread>
 
 namespace {
@@ -589,6 +590,27 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
     // "Unknown command".
     if (json_str.find("\"get_status\"") != std::string::npos) {
         return build_status_json(true);
+    }
+
+    // Restart: {"command":"restart"} (kraken_doa's ↻ Restart software). The
+    // normal shutdown (dongles released, noise source off), then exit with
+    // KRAKEN_RESTART_EXIT - the status the supervisor that started heimdall
+    // restarts it on (run.sh's supervisor / headless loop, Docker's restart
+    // policy, krakensdr.exe set it). Without one nothing would start heimdall
+    // again, so it is refused.
+    if (json_str.find("\"restart\"") != std::string::npos) {
+        const char* e = std::getenv("KRAKEN_RESTART_EXIT");
+        char* end = nullptr;
+        const long code = e && *e ? std::strtol(e, &end, 10) : 0;
+        if (!e || !*e || !end || *end != '\0' || code < 2 || code > 125) {
+            std::cout << "Restart request refused: no supervisor restarts heimdall (KRAKEN_RESTART_EXIT unset or not 2-125)" << std::endl;
+            return "{\"status\":\"error\",\"message\":\"not started by a supervisor that restarts it (run.sh, Docker, "
+                   "krakensdr.exe)\"}";
+        }
+        std::cout << "Restart requested via control port - shutting down, exit status " << code << std::endl;
+        restart_exit_status.store(static_cast<int>(code));
+        global_running = false;
+        return "{\"status\":\"success\",\"message\":\"restarting\"}";
     }
 
     // A number field "key":<n> (false if absent / not a finite number)

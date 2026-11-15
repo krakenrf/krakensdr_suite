@@ -76,6 +76,11 @@ Apple Silicon Mac.
   notice). Tested: tmux split (both dashboards), convergence wait, `stop`
   (session + a stale run in another process group), the supervisor's crash
   restart, headless start / SIGTERM
+- The web page's ↻ Restart software works through run.sh as on Linux
+  (`KRAKEN_RESTART_EXIT`); reboot / shut down only with a sudo rule
+  (`sudo -n /sbin/shutdown -r|-h now`, checked with `sudo -n -l`), else
+  hidden - nothing installs one (`kraken_doa_v2/docs/dev/power.md`;
+  2026-11-16, not run on a Mac)
 - Voice to Text: `transcribe/setup.sh` as on Linux (wc -c for the download
   size - BSD stat has no -c; Homebrew hints; `${models[@]+...}`: bash 3.2
   calls an empty array unbound under set -u - `make whisper` failed once the

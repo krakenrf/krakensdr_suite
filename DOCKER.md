@@ -124,6 +124,12 @@ docker compose down           # stop and remove the containers
    Independent mode (the DoA page's Mode selector) no calibration runs, so it
    starts straight away.
 
+The DOA page's **↻ Restart → Restart software** works here too: both apps
+exit with status 75 (`KRAKEN_RESTART_EXIT` in `docker-compose.yml`) and the
+`restart: unless-stopped` policy starts them again. A container can't reboot
+or power off the host, so those buttons are not offered; `KRAKEN_NO_POWER=1`
+in `.env` hides the restart button as well.
+
 The logs show errors only, as in `run.sh`'s headless mode. The apps' live
 terminal dashboards aren't available in Docker. For full log output, put
 `HEIMDALL_VERBOSE_LOG=1` / `KRAKEN_DOA_VERBOSE_LOG=1` in `.env` and run
