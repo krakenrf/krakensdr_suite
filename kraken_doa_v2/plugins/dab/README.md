@@ -98,18 +98,41 @@ language / complementary code bytes), 0/18, 0/19 (V1.x region byte; alarms only
 when FIG 0/0 enables them), 0/22, 1/0, 1/1, 1/4, 1/5, 2/0, 2/1, 2/4, 2/5 (Ver 1,
 segments, UTF-8 / UTF-16). Every FIG and field length is checked against its
 FIB; a field that doesn't fit ends that FIG. Next-configuration MCI (C/N = 1) is
-kept apart and taken over at the occurrence change. Services / sub-channels the
-MCI stops describing for 30 s are dropped.
+kept apart and taken over once, at the first CIF of the new configuration: the
+earliest CIF after the announcing one whose CIF count's lower part equals the
+occurrence change (clause 6.5 - a reconfiguration is announced up to 6 s = 250
+CIFs ahead). The selected sub-channel follows it without a break: the new CU
+allocation from that CIF r0, the new protection profile from logical frame r0
+(r0 - 15 when the sub-channel shrinks, annex D); the de-interleaver keeps its
+memory across the change. Services / sub-channels (current and next) the MCI
+stops describing for 30 s are dropped. The database is bounded, whatever the
+FIC carries: 64 services per configuration (the least recently signalled one
+goes), 256 FIG 2 segment sets (incomplete ones dropped after 30 s).
+
+A FIG 0/0 with another EId in 3 frames in a row means another ensemble on the
+block (driving from one multiplex's area into the next): the old one's table
+rows, map points and talkers are removed, one "Ensemble lost" event, then a cold
+start of the ensemble with the sync kept. A single one (a corrupted FIB that
+passed its CRC) is ignored.
 
 ### MSC (`dab_msc.cpp`)
 
 Only the selected programme's primary audio component: its CUs of every CIF
 (only those OFDM symbols are demodulated), time de-interleaving over 16 CIFs
-(table 21; a missing CIF = erasures, more than 4 missing = a lost frame for the
-audio layer), de-puncturing from the UEP profile (table 15 via the table 8 index)
+(table 21; a missing CIF = erasures; a logical frame is decoded while code rate /
+share of CIFs present <= 0.8, with at least 8 and at most 12 of its 16 CIFs
+present - EEP 2-A 8, EEP 3-A / UEP 3 10 - else it is a lost frame for the audio
+layer), de-puncturing from the UEP profile (table 15 via the table 8 index)
 or EEP A / B, Viterbi, energy dispersal -> one logical frame (kbps x 3 bytes) per
 CIF. It runs always (0.2-0.3 % CPU here): the dynamic label needs it; only the PCM
 decoding depends on someone listening.
+
+CIFs are numbered by the FIG 0/0 CIF count (the sample count where there is
+none); CIFs skipped in an outage are erasures, so the audio layer keeps its
+timeline (more than 250: the sub-channel starts over). A frame's CIFs go to the
+de-interleaver one frame late (96 ms of audio latency): when the next frame shows
+a jump in the input (CIF count not +4, or the frame start >= 400 samples off -
+samples the host dropped), they are erasures instead of garbage.
 
 ### TII (`dab_tii.cpp`)
 
@@ -146,8 +169,12 @@ EId-MainId-SubId, label = the ensemble label + the distance when FIG 0/22 and th
 station position are known) with its own spatial covariance (`t.m` / `t.cov`):
 the sum of `v v^H` over its carriers that no other code detected in the same null
 symbol uses, minus the noise covariance of the empty carriers of that symbol;
-sent only when the main eigenvalue holds >= 50 % of the raw trace and >= 80 % after
-the noise is removed. `start_s` / `end_s` = that null symbol's 1 ms window. Talkers
+sent only when the main eigenvalue holds >= 50 % of the raw trace and, after the
+noise is removed, >= 80 % of the sum of the eigenvalues' magnitudes (the
+subtracted matrix can be indefinite: all eigenvalues from a Jacobi solver); the
+packet carries its positive semi-definite part (negative eigenvalues set to 0).
+Packets only from frames whose null symbol is contiguous with the previous
+frame. `start_s` / `end_s` = that null symbol's 1 ms window. Talkers
 only while the FIC decodes (EId known, a good FIB in the last second). Through
 `process()` (one antenna) the transmitters are listed in the facts, without
 packets.
@@ -161,7 +188,8 @@ DF panel shows the DF error against it.
 On the 🗺 Map's 📡 DF panel the talkers are "DAB transmitters" 🗼 (list columns
 TII / Ensemble / Nulls - the null symbols that gave a packet -, sorted by TII
 code); the Dist and Δ pos columns appear only for a transmitter whose ensemble
-sent its FIG 0/22 position.
+sent its FIG 0/22 position, and take the Ensemble column's place (the label is
+then in the row's tooltip).
 
 ## Options
 
@@ -177,17 +205,26 @@ rate), Ensemble, Country, Date / time, Services, Programme, Sub-channel (logical
 frames, lost, channel bit errors), Codec / Voice codec / Audio frames / RS
 corrections / Text (from the audio layer), Transmitters (TII), Antennas;
 "CPU" with "Log all messages" (the plugin's time per stage, % of real time).
+The programme's facts (Sub-channel, Codec, Voice codec, Audio frames, RS
+corrections, Text) are removed when the programme changes or no service matches
+the option, and set again once the new programme provides them.
 
-Events: ensemble found / lost (no FIC for 3 s), the services (one summary, then
-each new one), the programme, a service gone, multiplex reconfiguration
-announced / done, announcements (FIG 0/19; alarms marked ⚠), each transmitter
-confirmed / no longer received, the dynamic label (900 s dedup).
+The services table: one row per service, an unchanged row sent again every 15 s
+(the page's "Seen"), at most 32 rows a second.
+
+Events: ensemble found / lost (no FIC for 3 s, or another EId on the block), the
+services (one summary, then each new one), the programme, a service gone,
+multiplex reconfiguration announced (with the time to it) / done / withdrawn,
+announcements (FIG 0/19; alarms marked ⚠), each transmitter confirmed / no
+longer received, the dynamic label (900 s dedup).
 
 Raw frames (decoder log): one line per FIB that passed its CRC:
 `FIB <CIF count>.<0..2> <30 data bytes in hex>`.
 
 `host.valid(start, end)` for every 96 ms transmission frame with at least 2 FIBs
-passing their CRC.
+passing their CRC - one frame late, and only when the input was contiguous
+through it (the frame's start and the next one's where the tracking expected
+them, CIF count +4): a frame that straddles samples the host dropped gives none.
 
 ## Audio layer
 
@@ -239,7 +276,8 @@ PS synthesis; a stereo core is decoded to stereo and downmixed in the plugin
 indicators, length codes 4-48 and the end marker; continuation without a
 contents indicator; interrupted data groups. DLS data groups (application
 types 2 / 3), checked by their CRC; segments by toggle, first / last, SegNum
-(up to 8 x 16 bytes); "clear display" reports an empty label. DL Plus, MOT
+(up to 8 x 16 bytes); "clear display" reports an empty label (the receiver
+removes the Text fact, no event). DL Plus, MOT
 and user applications are skipped. Character sets (TS 101 756 table 1): 0
 EBU Latin (annex C table C.2, checked against C.1 and against the receiver's
 own table), 6 UCS-2, 15 UTF-8 (validated, bad sequences -> U+FFFD); 0x0A /
