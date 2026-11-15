@@ -179,7 +179,7 @@ rewrite keeps the look); every slider row on one line; no box overflowing
 sideways; phone layout (finger-sized buttons, a tap moves a box); no JS
 errors.
 
-2026-11-16, the rest of the page (37 checks, the same setup; live content
+2026-11-16, the rest of the page (35 checks, the same setup; live content
 from the 🧪 Debug Playback's ADS-B test transmission): the Audio switch
 toggles and keeps its knob (also moved into the phone's sidebar); every new
 `?` opens inside the window and on top - spectrum header, both Viewshed
