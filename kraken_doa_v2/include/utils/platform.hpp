@@ -86,6 +86,26 @@ bool cpu_times(uint64_t* idle, uint64_t* total);
 bool mem_info(uint64_t* total_bytes, uint64_t* available_bytes);
 float cpu_temperature_c();
 
+// CPU time the program has used so far (user + kernel, all threads), in
+// nanoseconds: cumulative counters like cpu_times - use the difference of
+// two calls. Divided by the wall time between the calls times cpu_count()
+// it is the program's share of the whole machine, the scale cpu_times'
+// busy share has (one full core of four = 25 %).
+//  process_cpu_ns:      this process alone
+//  process_tree_cpu_ns: this process and every live process below it
+//    (kraken_doa: the decoder plugins, the whisper / AI / test-signal helpers
+//    and what those start). Each call lists the processes (Linux: every
+//    /proc/<pid>/stat; Windows: a Toolhelp snapshot; macOS: sysctl KERN_PROC)
+//    and adds what each descendant used since the previous call, so call it
+//    about once a second, not per frame. A descendant counts from the call
+//    that first sees it to the last call before it exits: short-lived
+//    helpers are under-counted, and an exit never makes the counter jump.
+//    Thread-safe.
+// cpu_count: logical CPUs online (at least 1).
+bool process_cpu_ns(uint64_t* ns);
+bool process_tree_cpu_ns(uint64_t* ns);
+int cpu_count();
+
 // This machine's host name ("" if unknown) and, on Windows, its DNS FQDN
 // when it is in a domain ("" otherwise; always "" on Linux, where the host
 // name is what gethostname gives).

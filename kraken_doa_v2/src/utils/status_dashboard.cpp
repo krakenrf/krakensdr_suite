@@ -441,6 +441,7 @@ void render() {
     }
 
     HardwareStats hw = get_hardware_stats();
+    const float program_cpu = get_program_cpu_usage();
     int ch = active_channel.load();
     float center_hz = ChannelManager::get_frequency(ch);
     float gain_db   = ChannelManager::get_gain(ch);
@@ -527,7 +528,10 @@ void render() {
         const char* tc = hw.cpu_temp_c > 75 ? col::RED : hw.cpu_temp_c > 65 ? col::YEL : col::GRN;
         const char* uc = hw.cpu_usage_pct > 90 ? col::RED : hw.cpu_usage_pct > 70 ? col::YEL : col::GRN;
         o << label("SYSTEM")
-          << col::DIM << "cpu " << col::RST << uc << f1(hw.cpu_usage_pct) << "%" << col::RST
+          // kraken_doa with its child processes (decoder plugins, helpers),
+          // then the whole machine's load (same scale)
+          << col::DIM << "cpu kraken_doa " << col::RST << f1(program_cpu) << "%"
+          << col::DIM << "  total " << col::RST << uc << f1(hw.cpu_usage_pct) << "%" << col::RST
           << col::DIM << "  temp " << col::RST << tc
           << (hw.cpu_temp_c < 0 ? string("n/a") : f1(hw.cpu_temp_c) + "\xc2\xb0" + "C") << col::RST
           << col::DIM << "  ram " << col::RST << (long)hw.ram_used_mb << "/" << (long)hw.ram_total_mb << "MB";

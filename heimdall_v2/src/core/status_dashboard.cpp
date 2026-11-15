@@ -256,16 +256,40 @@ long uptime_seconds() {
 // /proc/stat, /proc/meminfo, /sys/class/thermal; Windows: GetSystemTimes,
 // GlobalMemoryStatusEx, no temperature (shown as n/a) - see platform.hpp
 // ---------------------------------------------------------------------------
-struct HwStats { float cpu = 0, temp = -1, ram_used = 0, ram_total = 0; };
+struct HwStats { float cpu = 0, cpu_own = 0, temp = -1, ram_used = 0, ram_total = 0; };
 
-float read_cpu_usage() {
-    static uint64_t pt = 0, pi = 0;
-    uint64_t idle = 0, total = 0;
-    if (!platform::cpu_times(&idle, &total)) return 0.0f;
-    const long long dt = static_cast<long long>(total - pt), di = static_cast<long long>(idle - pi);
-    pt = total; pi = idle;
-    if (dt <= 0) return 0.0f;
-    return 100.0f * (1.0f - static_cast<float>(di) / static_cast<float>(dt));
+// The machine's CPU load and heimdall's own part of it, both as a share of
+// the whole machine (every core busy = 100 %, one full core of four = 25 %)
+// and over the same window: sampled at most twice a second and held in
+// between - a 250 ms frame is too short a window, the numbers jitter.
+void read_cpu_usage(float& total_pct, float& own_pct) {
+    static uint64_t prev_total = 0, prev_idle = 0, prev_own_ns = 0;
+    static steady_clock::time_point prev_t;
+    static bool have_total = false, have_own = false;
+    static float total_cached = 0.0f, own_cached = 0.0f;
+    const steady_clock::time_point now = steady_clock::now();
+    if ((!have_total && !have_own) || now - prev_t >= milliseconds(500)) {
+        const double wall_ns = duration<double, std::nano>(now - prev_t).count();
+        uint64_t idle = 0, total = 0, own_ns = 0;
+        if (platform::cpu_times(&idle, &total)) {
+            const long long dt = static_cast<long long>(total - prev_total);
+            const long long di = static_cast<long long>(idle - prev_idle);
+            if (have_total && dt > 0)
+                total_cached = 100.0f * (1.0f - static_cast<float>(di) / static_cast<float>(dt));
+            prev_total = total; prev_idle = idle;
+            have_total = true;
+        }
+        if (platform::process_cpu_ns(&own_ns)) {
+            if (have_own && wall_ns > 0 && own_ns >= prev_own_ns)
+                own_cached = static_cast<float>(100.0 * static_cast<double>(own_ns - prev_own_ns) /
+                                                (wall_ns * platform::cpu_count()));
+            prev_own_ns = own_ns;
+            have_own = true;
+        }
+        prev_t = now;
+    }
+    total_pct = total_cached;
+    own_pct = own_cached;
 }
 void read_ram(float& used, float& total) {
     uint64_t mt = 0, ma = 0;   // bytes
@@ -276,7 +300,7 @@ void read_ram(float& used, float& total) {
 HwStats get_hw() {
     HwStats h;
     h.temp = platform::cpu_temperature_c();
-    h.cpu = read_cpu_usage();
+    read_cpu_usage(h.cpu, h.cpu_own);
     read_ram(h.ram_used, h.ram_total);
     return h;
 }
@@ -649,7 +673,9 @@ void render() {
         const char* uc = hw.cpu > 90 ? col::RED : hw.cpu > 70 ? col::YEL : col::GRN;
         ostringstream o;
         o << label("SYSTEM")
-          << col::DIM << "cpu " << col::RST << uc << f1(hw.cpu) << "%" << col::RST
+          // heimdall's own share, then the whole machine's load (same scale)
+          << col::DIM << "cpu heimdall " << col::RST << f1(hw.cpu_own) << "%"
+          << col::DIM << "  total " << col::RST << uc << f1(hw.cpu) << "%" << col::RST
           << col::DIM << "  temp " << col::RST << tc
           << (hw.temp < 0 ? string("n/a") : f1(hw.temp) + "\xc2\xb0" + "C") << col::RST
           << col::DIM << "  ram " << col::RST << (long)hw.ram_used << "/" << (long)hw.ram_total << "MB"

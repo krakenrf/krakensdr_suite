@@ -1,95 +1,38 @@
-KrakenSDR V2 software. The new V2 software moves away from Python and implements everything in C++, which has resulted in massive speed improvements on slow hardware like the Pi 4 and Pi 5.
+# KrakenSDR Suite V2
 
-We are now able to have a real time spectrum and audio demodulation at the same time that the MUSIC DoA is run.
+Software for the 5-channel KrakenSDR, the 4-channel KerberosSDR and the
+KrakenSDR Wideband: radio direction finding, a live spectrum with as many
+receivers (VFOs) as you need, audio, a map, and decoders for digital voice,
+aircraft, ships, pagers, sensors and more.
 
-The **Mode** selector in the top bar of the KrakenSDR DOA page picks how the receiver's tuners are used:
+V2 is written in C++ instead of Python. It is fast enough to show the
+spectrum, play audio and run MUSIC direction finding at the same time on a
+Raspberry Pi 4 or 5.
 
-- **Coherent** (default): all tuners work as one phase-calibrated antenna array - MUSIC DoA, beamforming, the web mapper and DoA logging.
-- **Wideband**: the tuners sit side by side for one wide stitched spectrum (about 5 x 1.9 MHz on a KrakenSDR); the discrete scanner runs in this mode. No DoA.
-- **Independent**: every tuner is its own receiver with its own frequency and gain - the page shows one spectrum + waterfall per tuner in a grid. Each pane has its own frequency digits (click the top / bottom half of a digit, or use the mouse wheel on it) and gain slider - the top bar's frequency and gain are hidden in this mode, and put VFOs (demodulation, digital decoders) on any pane: drag a pane's spectrum to tune that tuner (like the main display), drag a VFO bar to move it, click a pane to move the selected VFO there, or pick the tuner on the VFO's card. No DoA, and no calibration runs (the noise source stays off).
+**The suite is in beta.**
 
-In every mode the spectrum zooms with the mouse wheel (or the Zoom slider under the waterfall, up to 32x; in Independent mode the pane under the cursor / the selected pane), and the bar between the spectrum and the waterfall can be dragged to change the split (in Independent mode it moves every pane at once; double-click for the default).
+It is made of two programs:
 
-The DoA panel and the DoA / coherent-only sidebar sections are hidden outside Coherent mode. The mode and Independent mode's per-tuner tuning are remembered across restarts. Switching back to Coherent retunes every tuner to the common frequency and runs a phase recalibration. (The KrakenSDR Wideband hardware variant only has Coherent mode: its tuners are fixed at the IF.)
+| Program | What it does | Web page |
+|---|---|---|
+| **Heimdall** | Reads the tuners and keeps them coherent (sample and phase calibrated) | `http://krakensdr.local:8070` |
+| **KrakenSDR DOA** | Everything you use: spectrum, VFOs, audio, direction finding, decoders, map, recorder | `https://krakensdr.local:8080` |
 
-Any number of VFOs can decode digital radio signals at once - P25 Phase 1, DMR, TETRA, D-STAR, NXDN, MPT1327 (analogue trunking control channels), pagers (POCSAG and FLEX at every speed), APRS, ADS-B aircraft (1090 MHz), AIS ships (161.975 / 162.025 MHz), ISM band devices (315 / 345 / 433 / 868 / 915 MHz weather stations, tyre pressure sensors, key fobs, alarm sensors, energy meters), radiosondes (weather balloons, 400-406 MHz), DME / TACAN beacons (962-1213 MHz: Morse ident, channel and its VOR / ILS pairing, the beacon's exact frequency, TACAN bearing, aircraft interrogations - and a DoA per beacon on the map), pulse radars (airport / en-route surveillance radars on 1215-1400 MHz and other pulsed radars: pulse width, chirp, PRF and PRI pattern, antenna rotation, beam width - and a DoA per radar) and the VHF / UHF navigation aids (ILS localizer and glide slope with the course / glide path deviation, VOR radial, marker beacons, their Morse idents) - with automatic mode detection: tick "Digital decoder" on a VFO in the Decimators box and pick "Auto detect" or a decoder. Each decoder mode gets its own tab in the panel under the waterfall ("🔐 Decoders" button, or ⤢ on the VFO), showing every VFO that runs it: a settings row per VFO, the decoded data (tables with VFO and frequency columns), and one event log of all of them. There is always a tab for every installed decoder (an unused one offers to start it on a VFO); when a VFO is switched to another mode or removed, what it received stays in the old mode's tab; the sidebar "Digital Decoders" box lists the installed voice codecs and decoder plugins. It shows network/site identities, talkgroups, radio IDs, callsigns, messages and call activity, and can play the voice (P25 built in; DMR, D-STAR, NXDN and TETRA with codecs you install yourself - see "Digital voice codecs" below). Every decoder is a plugin, so new ones can be added.
+It runs on the Raspberry Pi 4 / 5 (the main target), x86_64 Linux, Windows
+10 / 11 and macOS, natively or (on Linux) in Docker.
 
-**Radiosondes**: the Radiosonde decoder follows weather balloons on 400-406 MHz - Vaisala RS41 (-SG, -SGP; -SGM is encrypted), Graw DFM-06/09/17, Meteomodem M10 and M20, InterMet iMet-4 and iMet-54, Lockheed Martin LMS6-403 and Meteo-Radiy MRZ, all at once (whichever type is on the frequency is shown). Put a 24-50 kHz VFO on the sonde (most stations launch around 23:15 and 11:15 UTC; an RS41 also tells you the frequency it is set to) and pick "Radiosonde" or Auto detect. Its tab shows everything the sonde reports: position, altitude, climb rate, temperature, humidity, dew point, pressure (measured, or estimated from the altitude), wind (from the balloon's drift), battery, burst / kill timers and more, a table of all sondes heard, and an event log that turns the ascent into a sounding - each standard pressure level (850, 700, 500 hPa ...) with its height, temperature, humidity, dew point and wind - plus the burst and the landing. With "🗺 Plot on map" the sonde is a balloon on the map with its whole flight track; follow it to where it lands. Not decoded: RS92, the 1680 MHz sondes, Meisei, MTS01.
+## Contents
 
-The **🗺 Map** button (under the waterfall) opens a street / satellite map in the right-hand pane - in Coherent mode as a tab next to MUSIC DoA, in the other modes on its own. It shows the positions the decoders report - ADS-B aircraft, AIS ships (and base stations, aids to navigation), APRS stations and objects, DMR radios sending GPS, D-STAR GPS / DPRS - with their tracks; click a marker for its details (callsign, altitude, speed, squawk, distance and bearing from the station). A decoder's positions appear once you tick "🗺 Plot on map" in its tab under the waterfall (off by default; remembered per VFO). The ADS-B tab also lists every aircraft in a table with all its decoded data (sort by any column, click a row to show the aircraft on the map). The Listen button only appears for decoders that carry voice.
+- [Install](#install)
+- [Run](#run)
+- [Features](#features)
+- [Optional setup](#optional-setup): voice codecs, Voice to Text, the AI assistant, plugins
+- [More documentation](#more-documentation)
+- [Licence](#licence)
 
-**Saved frequencies**: the sidebar's "📻 Saved Frequencies" box keeps your own list of frequencies on the receiver, so every browser sees the same list and it survives a restart (`kraken_doa_v2/saved_frequencies.json`). Each entry needs a name and a frequency; it can also have a category, a location, how to receive it (demod, bandwidth, gain, digital decoder - the gain is "Keep the VFO's" unless you pick "Current gain", which stores the gain set right now, or one of the gain steps), a tone or code (CTCSS, NAC, colour code) and notes. **+ Add** (or **☆ Save** on a VFO card) opens the editor filled in with the selected VFO's frequency, demod and bandwidth; type the frequency in MHz, or with kHz / GHz. Entries are grouped by category - Airband, Broadcast, Business band, Amateur, Marine and Emergency services to start with; **⚙ Categories** adds your own, renames, recolours or deletes them (deleting a category keeps its frequencies, uncategorised). Click an entry to tune the selected VFO to it - with the entry's demod, bandwidth, gain and decoder when it has them (a gain is only sent when it differs from the current one, since changing the gain recalibrates the array): inside the band shown the VFO just moves, otherwise the receiver retunes with the VFO on the frequency. The search box finds entries by name, frequency, category, location, tone or notes. Saved frequencies are also marked on the spectrum with their names (in the category's colour; 👁 on a category hides its marks, "Show on spectrum" all of them): click a mark to tune there.
+## Install
 
-**Scanning saved frequencies**: tick the frequencies to scan in the 📻 Saved Frequencies list (the box at the left of each entry), or a whole category with the box in its heading - a ticked category also takes the frequencies you add to it later, and you can untick single entries to leave them out - then press **▶ Scan**. The selected VFO is put on each ticked frequency that is active, received the way the entry says (demod, bandwidth, decoder, gain), and heard while it is active plus the **Delay** after it (so the answer is heard too); between transmissions it is muted. The receiver does the scanning, so it carries on with no browser open (Decoder Logging, Voice to Text and DoA keep working on what it finds). Every ticked frequency in the band the tuner covers is watched at once - a frequency is active when its strongest spectrum bin is **Squelch** dB above the noise floor (while the scan runs that level is drawn on the spectrum as a dotted yellow line) - and the receiver only retunes for frequencies in another band: in coherent mode one band at a time, each for **Dwell** - while it searches the array is NOT recalibrated after each retune (that took ~3.5 s per band), only when it finds a signal: the calibration then starts at once and the VFO is heard as soon as it has run (about a second), with DoA as usual; in independent mode every tuner that no other VFO is using watches a band of its own, so a KrakenSDR watches up to five bands at once with no calibration; in wideband mode the tuners sit side by side as one band about 10.8 MHz wide (5 tuners at the default edge clip) - each frequency is watched on the tuner nearest it, kept off the seams between tuners - with no calibration either. The list is scanned in passes: while it listens, **⏭ Skip** goes on to the next active frequency and **⏸ Hold** stays on this one; **Longest stay** goes on after that long on a frequency that stays active (broadcast stations, a stuck carrier) - only clean listening time counts, not the array's calibration. A frequency left that way waits until the others have had their turn and comes back on the next pass, so a list of broadcast stations is played one after the other, round and round. Right after a retune the VFO is already put on the band's first frequency (with its demod, bandwidth and decoder), so it is in place the moment the array has recalibrated; while the array calibrates the VFO is muted. The entry being listened to is marked 🔊 in the list, others active at that moment get a dot. With **VFOs: one per active frequency** ticked in the scan's ⚙ settings, every frequency active at the same time in the band gets a VFO of its own instead of taking turns: the selected VFO takes the first, and the scan makes a new VFO for each further one - a copy of the selected VFO as it was when the scan started (demod, bandwidth, decoder, squelch, 🗣 Transcribe), with the frequency's own settings on top - so they are all heard, decoded and transcribed at once. Each made VFO goes when its frequency ends (Delay, Longest stay) and when the scan stops; they are never saved. Removing one by hand leaves that frequency out until the next pass. At most 16 VFOs in all (the audio recorder records the VFOs that were there when it started). Retuning by hand, changing the mode or removing the VFO stops the scan; the VFO stays where it was. Frequencies outside the tuner range, or whose decoder needs a VFO of its own (ADS-B, AIS, ISM, ...), are left out - hover the "left out" line to see why. The scan runs in coherent, wideband and independent mode, but not alongside the other scanners.
-
-**Your own markers**: a saved frequency's **location** is a marker on the 🗺 map, and the two are one feature: a marker lists every saved frequency at that place. In the editor, pick an existing marker as the location, or "+ New location" and type the position, use the station's, or press "🗺 Pick on map" and click the place (or a marker); a new location within 15 m of an existing marker joins that marker. On the map, right-click (on a phone or tablet: press and hold) and choose "📍 Add Marker" to pin a place - a repeater site, a transmitter you found, a fox-hunt start - or "📻 Save a frequency here". Click a marker to see its details at the bottom right of the map: position, distance and bearing from the station, every frequency saved there (click one to tune the selected VFO; ✎ edits it; "+ Frequency" adds one) and notes. A marker takes the colour of its frequencies' category when they share one. Right-click a marker to add a frequency to it, edit or delete it (deleting a marker keeps its frequencies in the list, without a location). Markers made before this version (`map_markers.json`) are taken over automatically on the first start.
-
-**Searching the map, 🏠 home and 🎯 the transmitter**: the 🔍 button at the top of the map's right-hand buttons opens a search box. Type coordinates in any usual form and press Enter to go there - decimal degrees (`-36.8485, 174.7622`), degrees and minutes (`S 36 50.908 E 174 45.730`), degrees minutes seconds (`36°50'54.5"S 174°45'43.8"E`), with signs or N / S / E / W in either order - or UTM (`60H 300477 5919601`), MGRS (`60HUE0047719600`), a Maidenhead grid locator (`RF73jd`) or a map link with a position in it (Google Maps, OpenStreetMap, Apple Maps, `geo:`); these work without internet. Your markers and saved frequencies (by name, notes or frequency), the decoders' map points (an aircraft's callsign ...), OpenStreetMap masts and the assistant's map points are listed as you type. For addresses, cities and places press Enter: your browser asks OpenStreetMap's Nominatim (online; only when you press Enter, at most once a second, preferring places near what the map shows), goes to the first place found and keeps the others in the list. A result is marked with an orange pin; click it for its position in every form (decimal, degrees minutes seconds, grid locator, UTM, MGRS), its distance and bearing from the station, and "📍 Add as marker"; ✕ in the box clears the search and the pin. 🏠 goes back to the station. 🎯 goes to the estimated transmitter - the 📡 DF heat map's estimate (bearings collected while driving) or a replayed drive's - with its 95 % region in view; with several estimates on the map, press it again for the next. It is greyed out while there is no estimate.
-
-**Masts from OpenStreetMap**: the map's "Masts" button shows the radio masts, towers and antennas mapped in OpenStreetMap. They are loaded online, by your browser, from OpenStreetMap's Overpass server: first everything within about 150 km of the station (Station Information) in one go, then other areas you zoom in on. Your browser keeps them for a week, so they show at any zoom and without internet; the server is often busy and limits how often one connection may ask, so new areas can take a few seconds or a retry to appear (the status line at the bottom left says so). The colour says what OpenStreetMap lists the site for - broadcast (radio / TV), mobile phone, microwave link, amateur radio, or not stated. Click one for everything OpenStreetMap knows about it: type and construction, what it's used for (e.g. "Mobile phone (LTE, UMTS)"), operator, height, and its other tags, with a link to it on openstreetmap.org. "📍 Add as marker" turns it into one of your own markers, so you can add its frequencies and notes. OpenStreetMap is mapped by volunteers, so coverage varies and it has no frequencies: for those, see your country's radio licence register.
-
-**Viewshed (line of sight)**: the map's "Viewshed" button shows which ground is in line of sight of the station's antenna, over the terrain, anywhere in the world. Line of sight is always worked out from the station's position (other antennas are placed in Signal mode). It has its own antenna height above the ground and radius (up to 1000 km - aircraft at 10 km drop below the horizon at about 450 km, weather balloons at 30-35 km at about 750-800 km). The target height says how high the other antenna is - above the ground (2 m for a handheld or a car), or above sea level for aircraft (e.g. 3000 m) - and changes the picture at once. Point at the map (tap on a touch screen) to see whether a place is in sight from each viewshed, and if not, how high an antenna there would need to be. The station's viewshed follows the station when it moves; a viewshed's point can be moved by clicking it (a white ring shows it is selected) and dragging it. Earth curvature is included, with the usual radio refraction (k = 4/3; light or none can be picked for the line of sight - the Signal mode always uses radio refraction, as its propagation models are for radio waves), and every line of sight follows the great circle, as the real one does. The terrain comes from the AWS Terrain Tiles (SRTM and national elevation models), loaded online by your browser: in the finest detail around the antenna (about 8 m), where a nearby hill decides most of what is hidden, and coarser further out (about 60 m at 30 km, 1 km at 300 km, 4 km at 1000 km), so every distance is seen at about the same angular detail. A 30 km viewshed downloads about 8 MB the first time, 300 km about 15 MB, 1000 km about 17 MB, then it works from the browser's cache; working it out takes a few seconds. Moving a viewshed's point (or changing its antenna height) reuses the terrain already loaded and cleaned, and only loads the tiles it hasn't got yet, so an update takes a couple of seconds even at 1000 km. Known errors in that data (e.g. a strip of impossible "mountains" in the sea north of the Coromandel) are removed. It is the bare terrain: buildings and trees are not included, and the sea counts as 0 m. Radio signals also reach somewhat past the line of sight, so treat it as a guide to where signals are clearly blocked, not a coverage prediction - for that, switch the viewshed to its Signal mode (below).
-
-**Viewshed Signal mode (path loss: coverage and link budget, also without line of sight)**: the viewshed panel switches between "👁 Line of sight" (the viewshed above, unchanged) and "📶 Signal", which works out how often the signal gets through between each viewshed point (site) and a radio at the target height - also where there is no line of sight, as radio bends over hills (diffraction) and scatters off the atmosphere far beyond the horizon. The map is coloured by that reliability (a smooth gradient: dark green at 99 % or better, through light green at 90 %, yellow at 75 % and orange at 50 % to red at 0 % - every place within the radius gets a colour; below the reliability you want it fades out), over the whole radius - not only where the line of sight reaches -, and a black line can mark the edge of the line of sight (tick "Line of sight edge", next to the wanted reliability; off by default). The map shows where a transmitter's signal gets through, for receivers at the other antenna's height. The station isn't part of Signal mode: right-click the map and pick "📶 Add TX antenna here" to place each transmitter (TX 1, TX 2, ...); each one's coverage is coloured. Select an antenna and press Delete to remove it. The target height can be above the ground or above sea level (an aircraft, a weather balloon, a drone). In both modes the panel calls each site's antenna and the other end's "TX antenna" or "RX antenna" by these roles (line of sight works both ways, so there the role only names the ends). **Polarization**: set the TX and RX antennas' polarization (vertical, horizontal, circular, or a custom angle from horizontal); a mismatch costs signal - two linear antennas lose cos² of the angle between them (crossed: ~20 dB with a direct path), linear to circular 3 dB - but less where an antenna stands low among clutter, since scattering off buildings and trees mixes the polarizations (crossed antennas lose ~9 dB with a receiver at 2 m in the suburbs, ~6 dB in a city, the full ~20 dB over open ground or sea or above the clutter). The path itself keeps the polarization, so the mismatch is the same everywhere on the map - it doesn't change at the horizon. The panel shows the mismatch, the map and the link budget include it, and the propagation models use the TX antenna's horizontal or vertical (circular counts as vertical). With several transmitters shown, every place takes the best of them. The panel says "% covered" for each TX site (the area that reaches the reliability you want; an RX site's row shows its link's transmitter), and pointing at the map shows, per transmitter, the reliability there, the received level and the path loss. Power, antennas, receiver, fading and the wanted reliability repaint at once; the frequency, clutter, the TX antenna's polarization, a site's position or height, or the target height work it out again (a 30 km site takes some seconds to half a minute in the browser, 300 km longer). Once a site's signal is worked out, switching between the two modes needs no new calculation (the line of sight is the same in both). The calculation runs in your browser, spread over its CPU cores (one less than it has, up to 8 in all), so a desktop or laptop is much faster than a phone or the Pi's own browser. The map uses the model picked under the transmitter power: ITU-R P.1812 (the default) or Longley-Rice / ITM, both worked out along the terrain to every place, or free space (no terrain) - Longley-Rice is much slower: it takes several times as long as P.1812. **Path loss analysis**: right-click the map (long press on a touch screen) and pick "📶 Path loss analysis from TX 1 to here" - a receiver there, at the other antenna's height, linked to the selected TX antenna (else TX 1; the item appears once a TX antenna is placed): the line is coloured by how good the link is, and a strip at the bottom of the map shows the terrain profile between them (with the Earth's bulge, the direct line, the first Fresnel zone and - beyond the horizon - the ridge that decides it), the loss by four models side by side - ITU-R P.1812 (the ITU's terrain method: diffraction by "delta-Bullington" plus troposcatter), Longley-Rice / ITM (the NTIA model most coverage tools use) and free space - and the link budget: the received level (dBm and µV), the signal-to-noise ratio, the margin over what the receiver needs, and how often (%) the link works once fading is counted in. Markers and OpenStreetMap masts have the same buttons ("📶 Path loss from TX 1", "📶 Add TX antenna" / "👁 Line of sight"). The far end can be clicked (a white ring shows it is selected) and dragged; click a model's row to base the budget and the map on it; ✕ removes the link. Enter the frequency and transmitter power in the Signal settings; "Antennas, receiver, channel" opens the rest: antenna gains and cable losses, the receiver's bandwidth, noise figure and the signal-to-noise ratio it needs (this gives its sensitivity), the clutter around the transmitter and the receiver (none, water, open, suburban, urban / forest, dense urban - ITU-R P.2108: a low antenna among buildings or trees loses up to ~20 dB; with the other end in the air it depends on how high that is in the sky), the fading (auto: Rician, its K-factor the one you set where the path is clear, falling smoothly where terrain blocks the path and towards Rayleigh far beyond the horizon where troposcatter carries the signal - the Earth's bulge over open sea doesn't lower it; or a fixed Rician K, Rayleigh, or none for a fixed link between masts), and the location variability; "Wanted reliability" (e.g. 90 % of times and places) sets what counts as covered. All of it is the median path loss (50 % of the time; ducting and other rare propagation are left out) over the bare terrain - buildings and trees count only through the clutter setting -, so expect real signals to scatter several dB around it. The models were checked against their published references: Longley-Rice against NTIA's own test cases and C++ code, P.1812 against the ITU's validation data, P.2108 against its validation table (`kraken_doa_v2/tools/pathloss_validate.mjs`).
-
-**📏 A VFO's signal level (mouseover)**: point at a VFO's bar on the spectrum, the waterfall or an independent-mode tuner pane to see its received level: in dBFS (the signal's power in the VFO's band, the noise taken out, against the receiver's digital full scale - 0 dBFS is the largest signal the 8-bit ADC can represent, so real signals read negative), the signal-to-noise ratio in the VFO's band, and in dBm at the receiver input (dBFS − the tuner gain + the receiver calibration of the range panel below - until you calibrate it, a nominal one built from published measurements of R820T / R820T2 receivers by other people: it depends on the gain setting and falls off above about 1 GHz, good to about ±3 dB at VHF / UHF, less sure toward the band's ends). It is measured while the signal is clearly above the noise in the VFO's band - a wide VFO (12.5 kHz) from about +3 dB, a 1 kHz one needs about +10 dB to register every time, and reads a dB or two high when weaker - (and the VFO's squelch, if on, is open) and held after it ends ("last heard … ago"); with the tuner AGC on there is no dBm (its gain isn't known), and near full scale it warns that the level reads low. Not the spectrum's own scale: the spectrum is drawn in dB above its noise floor, per FFT bin.
-
-**📏 Range from signal strength (one DoA lobe → where the transmitter probably is)**: in coherent mode, "Range" in the map's 📡 DF panel works out how far away the transmitter of the selected lobe probably is - from how strong its signal arrives - and draws it as a heat map along the lobe. Select the VFO (or, with a digital decoder that names its radios, one radio) in the DF panel as usual; kraken_doa measures each VFO's level while its signal is there (the power in the VFO's band, without the noise; a radio's own while it is the only one transmitting on its VFO), and the page turns it into dBm at the receiver input from the tuner gain and the receiver's calibration (the tuner AGC must be off). You enter your estimate of the transmitter - its power (in watts), antenna gain (dBi) and cable loss (dB), or its EIRP directly (in watts; the panel shows it in dBm and dBW too) (with typical ones to pick: a 5 W handheld, a PMR446 radio, a vehicle radio, a repeater, a 10 mW ISM device), how far off that estimate may be, its antenna height and surroundings - and your own antenna's gain, cable and height. The difference between what it sends and what arrives is the path loss the signal took; the same propagation models as the Signal mode (ITU-R P.1812 over the terrain by default, Longley-Rice or free space; ITU-R P.2108 clutter) work out the path loss from the station to every place around it, and every place is weighed by how well its loss explains the measured level (with the location variability, the models' error, your EIRP and calibration uncertainties and the fading) and by the lobe's bearing. The map shows the most likely places in red, through yellow and green to blue at the edge of the 99 % region - a hill between the station and a place makes a strong signal from there unlikely, a clear path over water makes a distant transmitter possible. The panel gives the bearing, the distance (the median, the range holding half of the probability and the 90 % range) and the most likely spot (✕ on the map: the single most likely place per square metre, always on the deepest red - it can be nearer than the median distance, since the lobe widens with distance and further out more ground shares the probability), the size of the 50 % and 90 % regions, and warns when the probability reaches the edge of the radius, the signal is weak or near full scale, or no place fits the level (check the EIRP or the calibration). Point at the map to see how likely a place is, its path loss and the level a transmitter there would give. When the signal ends the last estimate is kept ("held") until the next one; Clear forgets it. **Calibration**: the absolute level needs it - uncalibrated, the page uses a nominal calibration from published measurements of R820T / R820T2 receivers (signal generators, ADC overload points: about −64 to −70 dBm reaches full scale at the top gain setting) - it follows the gain setting and the tuner's loss of gain above about 1 GHz, good to about ±3 dB at VHF / UHF, less toward the band's ends (it says so). The panel shows the calibration in use for the selected signal ("C = … dB ± …"); a calibration adds a correction to that nominal, which then carries over to other gains and frequencies. "Known level…" sets it from a signal of known strength at the receiver input (a signal generator through an attenuator); "Known transmitter…" from a transmitter whose place and EIRP you know (a repeater or broadcast station from a licence register): tune the selected VFO to it, right-click its place on the map → "📏 Known transmitter here", enter its EIRP and antenna height and press Calibrate - its path loss to the station by the model says what level should arrive. The tuner's gain changes with frequency, so calibrate near the frequencies you measure. The estimate is only as good as the EIRP guess and the calibration: with a few dB of uncertainty the distance range is wide (a factor of 2 or more), and buildings and trees count only through the clutter setting. While driving with GPS the terrain is worked out again only once the station has moved on (30 m, or 0.5 % of the radius if that is more; at most every 30 seconds) - the estimate keeps updating in between and says how far back it was worked out; a fixed station moved on the map is followed at once. An estimate is only made while the signal's level is fresh: when the transmitter stops, the last one is held. On the KrakenSDR Wideband (downconverter) variant the nominal calibration doesn't know the downconverter's conversion loss (it says so, ±7 dB) - calibrate there. The terrain loads like the viewshed's (a 30 km radius takes a few seconds on a PC, longer in the Pi's own browser); the settings are kept per browser.
-
-**Incident map (pagers)**: street addresses in POCSAG / FLEX text pages ("STRUC1 SMOKE ISSUING 12 QUEEN ST AUCKLAND CENTRAL...") become incidents: the address is found in the text (a house number, street name and type such as ST / RD / AVE; a suburb or town and a cross street named in the message help pick the right one) and looked up online in OpenStreetMap (Nominatim) within a distance of the station - set it in the Pagers tab (default 300 km; the station location comes from Station Information). Incidents are listed in the Pagers tab (VFO and frequency, time, address, area, how exactly it was located, the message; the same address paged again - also on another VFO, e.g. fire and ambulance pagers - counts as one incident) and shown as red markers on the 🗺 Map when "Plot on map" is ticked; they are kept 24 hours. The lookup needs internet: without it the pages wait and are tried again every minute for half an hour. It reads addresses in the usual forms of Latin-script countries: "12 Queen St", "123 N Main St", "350 5th Ave" (English-speaking countries), "55 rue du Faubourg Saint-Honoré", "Calle Mayor 1", "Via del Corso 100", "Rua Augusta 100", "ul. Marszałkowska 10" (type before the name), "Friedrichstr. 43", "Prinsengracht 263", "Drottninggatan 50", "Karl Johans gate 22", "Váci utca 1" (German, Dutch, Nordic, Hungarian), with the house number before or after. Not found: other scripts (Cyrillic, Greek, Arabic, Asian), route numbers (SH1, I-95), landmarks, and names the page abbreviates differently from OpenStreetMap. The station (Station Information in the sidebar) is drawn with range rings. To move it on the map, click it (it turns cyan, in a ring) and drag it; the line from it shows its heading - drag the round handle at its end to turn it. Or right-click (long press) anywhere and pick "📡 Set station here". This sets a fixed (static) location; if the station was following the GPS, you are asked first. Map tiles come from OpenStreetMap (street) and Esri World Imagery (satellite) and need an internet connection; without one the map still works on a plain latitude / longitude grid, with a notice. Drag to pan, mouse wheel or +/− to zoom; drag the pane's left edge to make it wider.
-
-**Decoder logging**: sidebar → 🗂 Decoder Logging saves what the digital decoders report to disk: events (each decoder's log lines), text messages (pager texts), positions (aircraft, APRS stations, DMR / D-STAR GPS - each object at most every N seconds), raw frames (ADS-B Mode S messages, APRS packets, POCSAG / FLEX codewords) and incidents - tick the types you want. One file per day, `decoders-YYYY-MM-DD.jsonl` (one JSON record per line: time, VFO, frequency, decoder, type and the data); at midnight the finished day is gzipped, and days older than "Keep" (default 7, 0 = forever) are deleted - only these files, nothing else in the folder. To spare the SD card the records are collected in memory and written every 5 seconds; writing pauses when less than 100 MB is free. The box shows the free space on the drive the logs go to, today's size and an estimate per day, and lets you pick the folder: the default is `decoder_logs` in kraken_doa's folder, or pick a USB drive / other mounted disk from the list. Raw ADS-B frames near a busy airport are roughly 100-300 MB a day before gzip. Positions are logged with the decoder's details (for aircraft: squawk, vertical rate, speeds, category, emergency status). Anything unusual is logged as an event starting with ⚠ - for ADS-B: emergencies (7500 / 7600 / 7700) and when they end, squawk changes, the special squawks 7400 / 7777 / 0000, unusual aircraft types (UAV, balloon, parachutist, ultralight, high performance, space vehicle), climbs or descents of 6000 ft/min or more, and 400 kt or faster below 10000 ft; pilot IDENTs are logged too.
-
-**Voice to Text**: tick "🗣 Transcribe" on a VFO card and what is said on that VFO is written down - by a free speech-to-text model (OpenAI's Whisper, via whisper.cpp) running on the receiver itself: no account, no internet once it is set up, nothing sent anywhere (set it up once, see "Voice to Text" below). Any number of VFOs at once, whichever one you listen to. Analog voice is demodulated with the VFO's demod (NBFM, AM - e.g. airband -, WBFM); a VFO with its digital decoder on gives the decoded voice instead (P25, DMR, D-STAR, NXDN, TETRA - the voice codec must be installed, see "Digital voice codecs"), with the radio's ID and talkgroup. Each transmission is cut out by the VFO's squelch (with the squelch off: while a signal stands 10 dB over the noise) or by the digital decoder's calls and talker changes, and appears in the **🗣 Voice** tab under the waterfall a few seconds after it ends (one longer than 25 s in parts, cut where the speech pauses; broadcast FM - or anything on air longer than 30 s - in pieces of about 10 s, so its text follows the station): time, VFO, frequency, mode, who (digital radios), the bearing during the transmission (coherent mode with DoA on - click it to see the transmission's DoA lobe on the map), its length, the text, and ▶ to play the audio and check it (compressed, about 7 MB per hour of speech, and kept as long as Decoder Logging keeps its files). Search the transcripts, show one VFO's, or download them as a CSV file; with Decoder Logging on (type "Voice transcripts") they also go to the daily log files. Noise, data bursts and tones are skipped (voice activity detection), so an open squelch doesn't fill the log with invented words. The 🗣 Voice to Text sidebar box picks the model (base.en by default: on a Pi 5 it transcribes about 2-3 times faster than real time on 2-3 CPU cores; small.en is more accurate but slower than real time; models without ".en" do other languages, and can translate them to English), the CPU cores it may use (it runs at a lower priority than the receiver), and "Words to expect" - callsigns, unit and place names spelled as you want them, which helps the model with names it would otherwise mishear. Expect radio-quality transcripts: clear speech comes out well, weak or clipped signals and unusual names less so - the audio is kept so you can check.
-
-**Direction finding on the map (coherent mode)**: the 🗺 Map shows each VFO's live DoA lobe around the station, turned to true north with the station's heading, and the bearing line. While you drive, it builds a heat map of where the transmitter is: bearings are taken every 15-60 m of driving (none while stopped or turning), each is drawn as a faint line from where it was taken, and together they give the most likely transmitter position with its 95 % uncertainty ellipse ("TX ±120 m"). The right pane's "⊞ Both" tab shows the MUSIC DoA plots and the map at once (drag the divider between them). Use the "📡 DF" panel at the bottom left of the map to pick the VFO (or All), switch Lobe / Lines / Heat, set the grid range (± km; the heat map moves smoothly with the vehicle and keeps a confident estimate in view; the panel warns when the transmitter seems to be outside it), centre on the estimate, or reset. It needs the station position and heading: Station Information → GPS (gpsd; the GPS course is used above 7 km/h, or a compass if gpsd has one); the array's ANT0 must face the front of the vehicle. The receiver also measures whether all bearings are rotated (array mounted a few degrees off) and says so. Retuning a VFO starts a new heat map; the bearings are saved and picked up again after a restart on the same frequency (24 h).
-
-**Replaying a DoA log on the map**: the map's "Replay" button plays back a DoA log of a drive - one saved by the **KrakenSDR Android app** (its CSV logs in every layout it has written since 2021, or its newer SQLite `.sqlite` / `.db` files) or by this receiver's **📝 DoA Recording** (its box has a 🗺 Replay button for a saved recording). Open the file with 📂 or drop it on the map; an SQLite log still being written may have a `-wal` file next to it - pick both. The file is read in your browser: nothing is uploaded or sent to the receiver, and it works without internet (apart from the map tiles). A strip at the bottom of the map is the player: ▶ / ⏸, speeds from 0.5× to 500×, step row by row (← / →, Space plays / pauses), and a timeline to click or drag along - a tick per row, coloured and sized by the signal's power, white dots where a bearing went into the heat map; long pauses (a stop, a log added to on another day) are shortened to a few seconds. Click anywhere on the drive's track to jump to that moment. Follow keeps the vehicle in the middle of the map as it plays (dragging the map turns Follow off, zooming keeps it). The map shows the track (driven so far solid, still to come dashed), the vehicle, each moment's DoA lobe and bearing, the bearing lines taken along the way (Lines: the last 30 s, 2 or 10 min, or all), the signal's power along the way (Power), and the heat map with its estimate and 95 % ellipse **as it was known at that moment** - worked out with the same method as the live direction finding above (bearings every 15-60 m of driving, not while slow or turning), so a log replays what the live map would have shown, and you can watch the estimate close in. A log with several signals (VFOs / frequencies) has a list to pick one. Logs from the oldest app versions hold bearings only (no lobe): they are used as bearings. Range (±km) sets the heat map's grid as in the DF panel. A CSV log that was opened in Excel (or another spreadsheet) and saved again still works: Excel writes the timestamps as `1.68843E+12`, rounding them to 2.8 hours, so the times are rebuilt from the track (about one GPS fix every 1.6 s) - the strip says so, and if you know how long the drive took, enter it ("The drive took ... min") for the right playback pace; the positions, bearings and the heat map are unaffected. Excel's other save formats (`;` with decimal commas, "Unicode text") are read too.
-
-**Direction finding per radio (P25, DMR, NXDN, D-STAR)**: with a VFO's digital decoder on P25, DMR, NXDN or D-STAR, the receiver knows which radio (unit / radio ID, or the D-STAR callsign) is transmitting and when, and cuts the VFO's signal at those points: each radio's bearing is computed only from its own transmissions, so several radios sharing one channel no longer blur into one bearing. In the map's "📡 DF" panel, pick a radio from the list (or the ID selector): you see its latest bearing (plus earlier transmissions as faint lines) and, while driving, its own heat map and position estimate. "Every radio" shows all their bearings at once, labelled with their IDs; "Whole signal" is the plain VFO view. Needs the coherent mode with DoA on; works on encrypted calls too, since the IDs are sent in the clear. On a repeater's output every radio's bearing is the repeater's own (DMR and NXDN labels say "via repeater") - listen on the repeater's input frequency, or to direct (simplex) traffic, to find the radios. **Every decoder whose signal names its transmitter does this ("ID separation")** - besides the radios above: **APRS** stations (each frame by the station that actually transmitted it - the sender, or the digipeater that repeated it), **radiosondes** (each sonde by its serial number, so two sondes on one frequency - a new launch and yesterday's still sending from the ground - keep their own bearings), **TETRA** base stations (each cell by its network and colour code, so cells sharing a frequency elsewhere in the network are told apart), **MPT1327** sites (the control channel's system identity), **VOR / ILS** navaids (their Morse ident), **pulse radars** (each by its signature - its pulses and their timing - with the bearing taken only from its main beam pointing at you), DME beacons, ISM devices, and **ADS-B and AIS**: with the ADS-B or AIS decoder on a VFO, every aircraft / ship (also AIS base stations and aids to navigation) gets its own lobe from its own packets ("Every aircraft" / "Every ship", or pick one in the list); with "🗺 Plot on map" ticked in the decoder's tab the panel also shows how far each DF bearing is from the bearing to its reported position, and the median over all of them ("Position check") - a handy test of the array and its heading/mounting. AIS: picking the decoder tunes a 100 kHz VFO to 162.000 MHz, which holds both AIS channels; a ship's packets are filtered to their own channel before the DoA, so two ships transmitting at once on the two channels don't mix. Each of these shows in the DF panel's list with its own icon (📻 APRS station, 🎈 sonde, 🗼 site, 🧭 navaid, 📡 beacon / radar, 📟 device, ✈, ⛴). Plugins provide it through the plugin API (`host.talker`; `kraken_doa_v2/plugins/SDK.md`, section "ID separation" - required for every new decoder of a signal with transmitter IDs, with a test at known bearings: `plugins/sdk/tools/uca_scene.py` and the decoders' own test-signal generators in `plugins/<id>/tools/`).
-
-**Array calibration from aircraft (experimental - sidebar → 🧪 Experimental → ✈ Array Calibration, coherent mode)**: the noise source calibrates the receivers inside the KrakenSDR, but not what is outside - cables of slightly different length, antennas that aren't exactly where the settings say, an array turned a little on its mast. ADS-B aircraft report where they are, so each of their messages is a transmitter at a known direction. With the ADS-B decoder running on a VFO (DoA on) and the station location and heading set (a static location, or GPS with a compass; the array standing still), press **Collect** and leave it while aircraft come from many directions. Every 20 s the receiver fits each antenna's cable delay and position error and the array's rotation, and checks the result on aircraft it wasn't fitted on (their bearing error without and with the calibration). **Apply** uses it for MUSIC and beamforming on every frequency: delays and positions are physical, so they carry over. Differences between the antennas themselves (and multipath) don't - they show as "Unexpl." per antenna. The calibration is saved (`array_cal.json`) and only used while the array settings (elements, radius / positions) are the ones it was made for. Packets from aircraft nearer than 5 km, below 2° elevation (aircraft on the ground or near the horizon, whose signal often only arrives reflected) or above 60° are left out, and so is any aircraft whose bearing disagrees with its reported position by more than 25° (a blocked or reflected path - the result lists them).
-
-**Digital squelch**: on a VFO with its digital decoder on, the squelch can be set to **Digital** (VFO card → Squelch → "Digital (decoded frames)"): it opens only while the decoder receives frames that pass their checks (and for 1.5 s after the last), and the VFO's bearing is computed from exactly those frames' samples - so another transmitter, noise or interference on the same channel between the frames never gets into the bearing, the map lobe, the logs or the web mapper. No level to set. It works with every shipped decoder; in Independent / Wideband mode it gates the audio. (The eigenvalue squelch methods were removed; such saved settings use FFT Peak.)
-
-**Wideband signals (DVB-T, LTE) on the spectrum**: the spectrum, the FFT squelch and the scanner measure levels from the receiver's noise floor. A signal wider than the 2.4 MHz the receiver sees fills the whole band, so there is no noise left to measure - it used to be drawn at almost 0 dB (only its edge showed its real height) and a squelch inside it never opened. The receiver now remembers its own noise floor for each tuner and gain (in `noise_floors.json`, kept across restarts) and uses that while a signal fills the band, so DVB-T or LTE shows at its real height above the noise. In Coherent mode it tells such a signal from a genuine rise of the noise (an active antenna, interference) by comparing two antennas - noise differs between them, a signal doesn't. The receiver has to have seen ordinary noise once at that gain (any normal frequency will do); in Independent / Wideband mode, where it can't compare antennas, a band-filling signal slowly sinks by about 1 dB per minute.
-
-**ADS-B**: pick "ADS-B (1090 MHz)" as a VFO's digital decoder - that sets the VFO to 2.4 MHz bandwidth and tunes it and its tuner to 1090.000 MHz (in Coherent mode the whole array, in Independent mode just that VFO's tuner); the VFO is then shown as a single line at the centre of the spectrum. ADS-B is never part of Auto detect. Set the station location for distances and range checks. It needs a 1090 MHz antenna on the VFO's channel - in Coherent mode the CH selector's antenna; keep beamforming off for ADS-B (the beamformer follows one direction, the aircraft are all around). Independent mode lets one tuner sit on 1090 MHz while the others do something else.
-
-**ISM band devices (433 MHz etc.)**: pick "ISM devices (433 MHz etc.)" as a VFO's digital decoder and tune the receiver to the band - 433.92, 868.3, 915, 315 or 345 MHz. The VFO moves to the tuner's centre with the full 2.4 MHz bandwidth (drawn as a single line that can't be moved or resized, like ADS-B) and the decoder covers the whole 2.4 MHz - 433.92 MHz covers 432.72-435.12 MHz - decoding the licence-free devices in it: weather stations and thermometers (Acurite, LaCrosse, Oregon Scientific, Fine Offset / Ecowitt / Ambient Weather, Bresser, Hideki / TFA, Nexus, Rubicson, Prologue, inFactory, ThermoPro...), tyre pressure sensors (Toyota, Ford, Citroen / Peugeot, Renault, Hyundai / Kia, Schrader, BMW, Nissan, Steelmate, Jansite...), key fobs and remotes (KeeLoq garage / car remotes, Ford, Somfy RTS, KlikAanKlikUit / Nexa, EV1527 / PT2262 fixed-code fobs and sensors), alarm sensors (Honeywell 5800 / 2GIG, Interlogix, DSC, Kerui, Chuango, smoke and motion sensors) and energy meters (Efergy, CurrentCost) - about 140 device models (69 protocol decoders), OOK and FSK. Its tab shows a table of the devices heard (model, id, reading - temperature, humidity, wind, rain, tyre pressure, button / door state -, battery, the device's own frequency, signal) and logs new devices, button presses, alarms and low batteries. **Every device gets its own DoA**: each transmission is cut out of the band at the device's own frequency and its bearing computed from just that, so in the map's "📡 DF" panel you can pick one sensor or key fob and see its bearing - one per transmission, or averaged over 1 / 10 minutes for a fixed sensor (decoder option "DoA per device"). Devices transmitting at the same moment on different frequencies are kept apart. Signals no protocol knows show up as "Unknown" devices when they repeat a code, with a DoA of their own - handy for hunting an unidentified transmitter.
-
-**Pulse radars (L-band ATC / surveillance)**: pick "Pulse radar (L-band ATC / surveillance)" as a VFO's digital decoder and tune the receiver to the radar (airport and en-route surveillance radars use 1215-1400 MHz; wind profilers and other pulsed radars work too). Like the ISM decoder it takes the whole 2.4 MHz the tuner receives. It measures what every radar in the band sends, like a radar intercept receiver: its pulses (width, frequency, a chirp's sweep - modern solid-state radars send long chirped pulses, often with a short pulse on another frequency), how often (PRF) and in which pattern (constant, staggered, switching between PRIs in blocks, jittered, alternating PRI sets), how fast its antenna turns and how wide its beam is. Its tab lists the radars (open a row for all the details) and plots the strongest one's pulse level over one turn of its antenna - the main beam pointing at you, its sidelobes, and the reflections it lights. **Every radar gets its own DoA** in the map's "📡 DF" panel, taken only from its main beam passing over you (the strongest, direct signal - not the reflections). A nearby radar's main beam is strong enough to overload the receiver at normal gain: the decoder says so, and still takes the bearing from the edges of the beam; a lower gain also shows the beam's width. See `kraken_doa_v2/plugins/radar/README.md`.
-
-**SSR / Mode S / TCAS interrogations (1030 MHz)**: pick "SSR / Mode S / TCAS interrogations (1030 MHz)" as a VFO's digital decoder - like ADS-B it sets the VFO to 2.4 MHz and tunes to 1030.000 MHz. This is the other half of ADS-B / Mode S: the questions that secondary surveillance radars, airport multilateration systems and aircraft collision-avoidance systems (TCAS) send, which the 1090 MHz replies answer. It reads every interrogation - Mode A / C with their side-lobe suppression and all-call pulses, TCAS whisper-shout sequences, and the Mode S messages themselves (even at 2.4 MHz, where each bit is shorter than a sample: they are read as a whole sequence against the receiver's measured response): whom each one asks (the aircraft's address), the radar's interrogator code (II / SI), a TCAS aircraft's own address. It tells the interrogators apart - a rotating radar by its pulse train and code, a fixed multilateration station by its steady level, a TCAS by its whisper-shout and broadcasts - and shows for each its PRF and pattern, how fast its antenna turns and how wide its beam is. **Every interrogator gets its own DoA** in the map's "📡 DF" panel (🛰 ground, ✈ aircraft) - a radar's only from its main beam passing over you. See `kraken_doa_v2/plugins/ssr1030/README.md`.
-
-**ACARS (aircraft datalink, VHF)**: pick "ACARS (VHF 2400 bit/s)" as the digital decoder of a VFO (12.5-25 kHz, demod AM to listen) on an ACARS channel in the airband - which one depends on where you are (e.g. 131.550, 131.725, 131.825, 130.025, 129.125 or 136.900 MHz). It decodes the short text messages airliners and their ground stations exchange: the aircraft's registration, the flight number, the message label (with a name for common ones - link test, squitter, general response ...) and the text, both from the aircraft (↓) and to it (↑); a message sent in several blocks is also shown put together. Weak blocks with a few bit errors are repaired, and each one's checksum is verified, so nothing is shown from noise. **Each aircraft gets its own DoA** in the map's "📡 DF" panel (✈, named by its registration, labelled with its flight), and a ground station that announces itself (its squitter) gets one too (🗼); other messages from ground stations don't say which station sent them and get no bearing. Message contents aren't interpreted further. For the newer, faster datalink see VDL Mode 2 below. See `kraken_doa_v2/plugins/acars/README.md`.
-
-**VDL Mode 2 (aircraft datalink, 136.x MHz)**: pick "VDL Mode 2 (aircraft datalink)" as the digital decoder of a 25 kHz VFO on a VDL2 channel - 136.975 MHz is used worldwide, others depend on the region (e.g. 136.725 / 136.775 / 136.825 / 136.875 MHz in Europe, 136.650 / 136.700 / 136.800 MHz in North America); put a VFO on each one you want. VDL Mode 2 is the digital successor of ACARS (31.5 kbit/s) and carries most airline ACARS messages today: the decoder shows them like the ACARS decoder (registration, flight, label, text), names every aircraft by its ICAO address (the same hex code ADS-B shows) and every ground station by its own address and the airports it serves, and puts the ground stations on the 🗺 Map at the position they broadcast (to about 10 km). Damaged bursts are repaired by their error-correcting code, and every frame's checksum is verified. **Every burst names its sender, so each aircraft and each ground station gets its own DoA** in the map's "📡 DF" panel (✈ / 🗼). The ATN messages some aircraft exchange over VDL2 (controller-pilot datalink) are counted but not decoded. See `kraken_doa_v2/plugins/vdl2/README.md`.
-
-**UAT (978 MHz, United States)**: pick "UAT (978 MHz)" as a VFO's digital decoder - like ADS-B it sets the VFO to 2.4 MHz and tunes to 978.000 MHz. UAT is the US's second ADS-B link, used by general aviation below 18 000 ft: it decodes each aircraft's position, altitudes, speed, track, vertical rate, callsign or squawk, category and emergency status, the traffic the FAA's ground stations rebroadcast (TIS-B radar targets, ADS-R) and what those ground stations uplink - their position and the FIS-B weather / NOTAM products they send, with the text ones (METAR, TAF, PIREP, winds aloft) readable in the station's row. Aircraft and ground stations appear on the 🗺 Map, and **every aircraft and every ground station gets its own DoA** in the map's "📡 DF" panel (a TIS-B message is the ground station's signal, so it counts for the station, not the aircraft it describes). See `kraken_doa_v2/plugins/uat/README.md`.
-
-**FLARM / OGN trackers (gliders, light aircraft)**: pick "FLARM / OGN trackers (868 / 915 MHz)" as a VFO's digital decoder. It takes the whole 2.4 MHz the tuner receives and listens to every FLARM channel inside it; if there is none it tunes the receiver to the band of your region (Europe and New Zealand: 868.8 MHz covers 868.2 / 868.4 / 869.25 MHz; Australia, the Americas: 921.6 / 915.2 MHz, where FLARM hops over many channels and 5-6 of them are heard). **FLARM** aircraft are shown by their radio ID and their bearing only: the rest of a FLARM packet is encrypted with keys FLARM hasn't published, and it is not decoded. **OGN trackers** (the Open Glider Network's open protocol) also give their position, altitude, climb, speed, aircraft type and registration, and appear on the 🗺 Map - except trackers that ask not to be tracked (stealth): those keep their bearing, but their position is never shown, mapped or logged. **Every aircraft gets its own DoA** in the map's "📡 DF" panel (🪂 / ✈), also when several transmit at the same moment on different channels. See `kraken_doa_v2/plugins/flarm/README.md`.
-
-**Analog FM IDs (CTCSS / DCS, MDC1200, FleetSync, 5-tone, DTMF, 1750 Hz)**: pick "Analog FM IDs" as the digital decoder of a 12-24 kHz VFO on an FM channel - a repeater, a simplex frequency, PMR446, a business channel (it was called "CTCSS / DCS tones"; VFOs set to that load as this one). It finds what a transmitter sends to say who it is: the sub-audible tone (CTCSS, 67-254 Hz, every standard and non-standard tone radios offer, its frequency measured to about 0.01 Hz) or digital code (DCS, e.g. 023N - also shown as the code it equals when read inverted, 047I), and the radios' **ID bursts**: **MDC1200** (Motorola: the unit ID of a PTT ID at key-up or release, status, message, emergency, call alert - and commands a console sends to a radio), **FleetSync** (Kenwood: fleet and unit, 1200 and 2400 bit/s, FleetSync II), **5-tone selcall** (ZVEI, DZVEI, CCIR, EEA, EIA, NATEL ...), **DTMF** sequences (a PTT ID / ANI) and **tone bursts** (the 1750 Hz repeater access tone). It also shows how a transmission ended (the transmitter's reverse burst, the DCS turn-off code, tone or carrier off). **Each transmission gets its own DoA, named after the radio's own ID** (MDC1200 / FleetSync, then selcall / DTMF, else its tone or code) in the map's "📡 DF" panel (🆔 / 🔢 / 🔔, with its number of transmissions, last heard, the last transmission's length and the air time) - so radios sharing one CTCSS tone are told apart when they send an ID. With the VFO's squelch set to "Digital" the squelch opens only while a tone, code or ID is there; the decoder's "ID / tone squelch" option (e.g. 88.5, 023N, MDC 1029 or FleetSync 100-1001) restricts that to chosen transmitters - their audio and their bearing, like a radio's tone squelch or selective call. Some 5-tone sequences read two ways (DZVEI's tones are ZVEI's moved up one): the other reading is shown, and the "Selcall standard" option picks the one in use. Listening to the FM audio keeps working, and Voice to Text writes down the analog speech, naming each transcript after its radio. See `kraken_doa_v2/plugins/analog_id/README.md`.
-**406 MHz distress beacons (EPIRB / ELT / PLB)**: pick "406 MHz distress beacons (EPIRB / ELT / PLB)" as a VFO's digital decoder - it tunes the VFO to 406.050 MHz at 100 kHz and listens to every Cospas-Sarsat channel (406.0-406.1 MHz) at once. Each burst of a first-generation beacon is checked (its BCH codes, up to 3 + 2 bit errors corrected) and decoded: the 15-hex beacon ID, the country, the type (EPIRB for ships, ELT for aircraft, PLB for people, SSAS ship security alerts), what identifies it (MMSI, aircraft address or registration, serial number, call sign) and the position it sends, which appears on the 🗺 Map. A SELF-TEST burst is shown as a test, never as an alert; any other burst is a **⚠ DISTRESS** alert (event, highlighted row, ⚠ on the map and in the DF list). **If you hear a distress beacon, report it to the rescue coordination centre** (New Zealand: RCCNZ, 0508 472 269) with its ID, time, frequency and bearing - the receiver reports nothing by itself. Each beacon gets **its own DoA** in the map's "📡 DF" panel (🆘, every burst its own bearing by default), kept for 24 hours - direction finding is how beacons are found. Second-generation beacons (spread spectrum on 406.050 MHz) are detected and get a bearing, but are not decoded yet; the 121.5 MHz homing signal isn't covered. See `kraken_doa_v2/plugins/beacon406/README.md`.
-
-**LoRa / Meshtastic / LoRaWAN**: pick "LoRa / Meshtastic / LoRaWAN" as a VFO's digital decoder - the VFO sits on its tuner's full 2.4 MHz, so tune the receiver to the band. It works **in any country**: by default (Region / LoRaWAN plan "Auto") it listens to every Meshtastic region's and every LoRaWAN regional plan's channels that fall inside the 2.4 MHz you tuned to (e.g. 902-928 MHz: Meshtastic US + ANZ, LoRaWAN US915 + AU915 + AS923; 863-870 MHz: EU_868 + EU868 ...), and a **plan-free search** finds any other LoRa signal anywhere in the 2.4 MHz - private links, unknown networks - at any spreading factor (SF5-12) and bandwidth (62.5-500 kHz; down to 7.8 kHz as an option), and keeps listening on its channel once it has decoded it. A specific region / plan can be chosen instead. **Meshtastic**: the header is always shown (which node, to whom, hop count); the message is decoded **only on the public default channel** - its key is published, so anything sent there is readable by anyone - giving text messages, node names, and positions (shown on the 🗺 Map). A packet on a private channel shows only its header; its key is never guessed or broken. **LoRaWAN**: the clear header (device address, frame counter, port, join device IDs) and class-B beacons (with the gateway's position when it sends one) are shown - the data itself is encrypted with keys you don't have; a downlink or beacon is sent by a gateway, so its bearing is the gateway's ("GW 927.5"), not the device's. Other LoRa is shown as raw frames, named by frequency, SF and sync word. Each transmitter (and the relaying node when a Meshtastic packet was repeated) gets **its own DoA** in the map's "📡 DF" panel (📶) - also when many transmit at the same moment: every decoded packet is de-spread with its own chirp on every antenna ("separation by code"), and two gateways answering on one channel are told apart by their directions. 2.4 GHz LoRa is outside the RTL-SDR's range. See `kraken_doa_v2/plugins/lora/README.md`.
-
-**Wildlife tracking collars / tags**: pick "Wildlife tracking collars / tags (pulsed VHF / UHF)" as a VFO's digital decoder to find the pulsing transmitters on deer, wolves, livestock, birds, bats and other animals - in any country - and get **a bearing for each one** in the map's "📡 DF" panel (🐾). It works at any VFO width: a 2.4 MHz VFO on the tuner's centre surveys a whole band, a narrow VFO follows one collar. Each collar is listed by its frequency in MHz, pulse rate, pulse length, signal strength and mode, read from the collar's own behaviour: **baseline** (the rate it was first heard at), **⚠ possible mortality** (its rate rose - most mortality sensors double it after hours without movement - and stayed for 2 minutes), back to baseline ("moving again"), or **activity** (it switches back and forth between rates). The "Region / vendor profile" option adds what is specific to a country or vendor: North America / Europe / Australia (a doubling = mortality, their wildlife bands named), Motus (the 166.380 / 150.100 / 151.500 MHz tag frequencies) and New Zealand (DOC channel numbers, the 30 / 48 / 60 ppm rates, and the data Wildtech kiwi / kakapo transmitters send every 10 minutes - time since death, Chick Timer / Egg Timer numbers). Other transmitters' data streams are shown as their pulse groups. Lotek / Motus-style coded tags (4-pulse bursts) are told apart by their pulse pattern, also when several share one frequency. Name your collars in the decoder's options ("150.512=Elk 7, 160.734=Kaka 3"); the decoder tab plots the strength of the last collar heard, pulse by pulse - handy while walking. See `kraken_doa_v2/plugins/wildlife/README.md`.
-
-**FM broadcast: RDS / RBDS and SCA subcarriers**: pick "RDS / RBDS + SCA (FM broadcast)" as the digital decoder of a VFO on an FM station (Demod WBFM, 240 kHz wide - 300-400 kHz to also get SCA subcarriers above 80 kHz). It decodes the station's RDS (RBDS in North America): the PI code (and the call sign it encodes for US / Canadian stations), country, station name (PS, with scrolling names flagged), programme type (RDS or RBDS list - chosen from the country code or your location), RadioText and RadioText+ "now playing" title / artist, Enhanced RadioText and Long PS (UTF-8), clock time, alternative frequencies, traffic programme / announcements (TA on / off in the log), other networks (EON), the open data applications (TMC, DAB links ...) and the RDS2 data streams. It also measures the stereo pilot and finds every **SCA subcarrier** in the multiplex (67 / 92 kHz and any other): FM audio channels (reading services, background music), FSK data (with its bit rate), DARC-like data - each with its deviation and injection. **Listen** plays an SCA's audio, or the station's main programme in mono when there is none (option "Audio"), and Voice to Text can transcribe it; click it again ("🔊 Listening") to go back to the VFO's normal WBFM audio. In coherent mode with DoA on, every antenna is combined before the FM demodulation, which makes RDS decode from much weaker stations (about 7 dB with 5 antennas). **Each station gets its own DoA** in the map's "📡 DF" panel (🎙, by its PI), so two stations taking turns on one frequency (DX, or driving from one transmitter's area into another's) each get their bearing. See `kraken_doa_v2/plugins/rds/README.md`.
-
-**Digital TV** (DVB-T, DVB-T2, ISDB-T, ATSC 1.0 / 3.0, DTMB): on a 2.4 MHz VFO anywhere inside a TV channel (Decimators box → Digital decoder → "Digital TV") the decoder shows what the signal says about itself - the standard and its mode, the channel (measured centre and channel number), DVB-T's transmission parameters (constellation, code rate, guard interval, cell ID, bit rate - read from the TPS carriers and error-checked), ISDB-T's TMCC (the hierarchical layers, one-seg, and the emergency warning flag, logged as a ⚠ event) - and an echo profile of the paths the signal arrives on. Service names and the programme guide are not available: they need the whole 6-8 MHz channel decoded.
-
-**Path separation** (coherent mode, off by default - the "Path separation" button in the Digital TV tab): a TV signal reaches the antennas on several paths - reflections off hills and buildings and, in a single frequency network (SFN), the other transmitters sending the same signal - which looks like one signal arriving from several directions at once, so a VFO's bearing is a mix. With path separation on, the decoder tells the paths apart by their delays: with DoA on, it measures every antenna's channel impulse response against the signal's known pilots / training and gives each path its own DoA lobe - a talker "Path-1", "Path-2" ... on the 🗺 Map's 📡 DF panel (lobe, bearing, heat map while driving), the strongest marked "main" and the others' delays counted from it. The tab shows the delay profile with a marker per path and a table (delay from the main path and from the first to arrive, extra path in km, power); click a marker or a row to show that path alone on the map. Whether a path is another transmitter or a reflection can't be told from the signal - both are identical copies; a path whose bearing points at a broadcast mast (the map's Masts layer) is likely a transmitter. It analyses every antenna, about three times the CPU of the decoder alone. (It was called "SFN separation" before; DAB was part of that earlier decoder and will return as a decoder of its own.) See `kraken_doa_v2/plugins/dtv/README.md`.
-
-**LTE / 5G NR Cell Decoder** (coherent mode for bearings): reads the public information every LTE / 5G NR cell on a carrier broadcasts to all phones, and gives each cell its own bearing. Pick it for a VFO (Decimators box → Digital decoder → "LTE / 5G NR Cell Decoder"), with DoA on: the VFO becomes the whole 2.4 MHz band, drawn as one locked line at the centre like ADS-B, and you tune the receiver into an LTE / NR carrier. Near the carrier's centre it finds it on the LTE / NR raster itself; further away it retunes the receiver step by step (up to 10 MHz each way by default - every retune makes the receiver recalibrate for a few seconds) and centres it on the carrier it finds. It finds the cells (LTE FDD and TDD, NR with 15 / 30 kHz SS blocks) by their physical cell ID and lists them in its tab: operator (MCC-MNC and country), tracking area code, cell identity (eNB and sector), band, EARFCN, bandwidth, antenna ports, power and timing - open a row (▸) for everything else the cell broadcasts (MIB, SIB1, SIB2: access rules, uplink frequency, random access, power settings...; SIB3 - SIB5 when they come inside the VFO). On a carrier wider than the 2.4 MHz VFO it reads the part it sees and combines repeated transmissions until each message's checksum passes (SIB1 / SIB2 of a 10 MHz carrier in seconds). Each cell also becomes a talker "LTE-123" / "NR-456" on the 🗺 Map's 📡 DF panel (lobe, bearing, heat map while driving) - a cell's signals are scrambled with its cell ID, so correlating with them separates the cells even when they arrive at the same time. The "Frequency offset" it reports is the network's carrier against your receiver: base stations are accurate to 0.05 ppm, so it calibrates the KrakenSDR. Only broadcast system information is decoded - nothing addressed to a phone (calls, data, paging). See `kraken_doa_v2/plugins/cells/README.md`.
-
-New decoders can be added as plugins, and the **🤖 AI assistant** (the column on the right) can write them for you - it also answers questions about what the receiver shows and decodes, looks transmitters up online and controls the receiver; see "AI assistant and decoder plugins" below.
-
-The KrakenSDR Suite V2 software is currently in beta.
-
-Install:
+### Raspberry Pi and Linux
 
 ```
 git clone https://github.com/krakenrf/krakensdr_suite
@@ -97,9 +40,13 @@ cd krakensdr_suite
 ./install.sh
 ```
 
-You may need to reboot after running ./install.
+This installs the packages it needs and builds both programs and every
+decoder. You may need to reboot afterwards. `WHISPER=1 ./install.sh` also
+sets up [Voice to Text](#voice-to-text).
 
-Docker install (instead of install.sh / run.sh):
+### Docker (Linux)
+
+Use this instead of `install.sh` / `run.sh`:
 
 ```
 # Docker + Compose (Raspberry Pi OS / Debian trixie; on Bookworm or Ubuntu use
@@ -116,95 +63,298 @@ cd krakensdr_suite
 docker compose up -d                   # first run builds the image (~5 min on a Pi 5)
 ```
 
-The containers then start automatically at every boot. Don't run the native
-stack (run.sh or its boot service) at the same time. See [DOCKER.md](DOCKER.md)
-for settings, hardware variants and troubleshooting.
+The containers then start at every boot. Don't run the native install
+(`run.sh` or its boot service) at the same time. Settings, hardware variants
+and troubleshooting are in [DOCKER.md](DOCKER.md).
 
-Docker does not work on macOS: Docker Desktop runs the containers in a
-Linux virtual machine that can't reach the Mac's USB devices, so heimdall
-finds no dongles. Use the native macOS install below.
-
-Windows 10 / 11 install (native: heimdall.exe, kraken_doa.exe and the decoder
-plugins as ordinary Windows programs):
+### Windows 10 / 11
 
 ```
 git clone https://github.com/krakenrf/krakensdr_suite
 cd krakensdr_suite
 build_windows.bat                      # installs MSYS2 (the compiler) if needed, builds everything
-run.bat                                # starts both apps (run.bat stop stops them)
+run.bat                                # starts both programs (run.bat stop stops them)
 ```
 
-Each tuner needs the WinUSB driver once (Zadig). See [WINDOWS.md](WINDOWS.md)
-for the driver step, options and troubleshooting.
+Each tuner needs the WinUSB driver once (Zadig). The driver step, options
+and troubleshooting are in [WINDOWS.md](WINDOWS.md).
 
-macOS install (Intel, tested on macOS 12 with Apple clang 14; needs the
-Xcode command line tools and [Homebrew](https://brew.sh)):
+### macOS
+
+Tested on an Intel Mac with macOS 12. It needs the Xcode command line tools
+and [Homebrew](https://brew.sh).
 
 ```
 git clone https://github.com/krakenrf/krakensdr_suite
 cd krakensdr_suite
-./install.sh                           # Homebrew packages, the librtlsdr fork, both apps
-./run.sh                               # both apps in a tmux split, as on the Pi
-```
-
-No driver step (libusb reaches the dongles directly). While the receiver
-runs, the Mac doesn't idle-sleep (the display still may). Voice to Text
-(`make whisper`, or `WHISPER=1 ./install.sh`), the AI assistant (`python3 ai/kraken_ai.py setup`; macOS's
-own sandbox, nothing to install) and the Debug Playback test transmissions
-(`python3 -m pip install --user numpy scipy`) work as below. Docker does
-not work on macOS (no USB passthrough to its containers) - use this install.
-
-To Run:
-
-Simply use the command:
-
-```
+./install.sh                           # Homebrew packages and both programs
 ./run.sh
 ```
 
-In any terminal window, with your KrakenSDR connected and powered up.
+There is no driver step. The Mac doesn't idle-sleep while the receiver runs
+(the display still may). Docker doesn't work on macOS, because its
+containers can't reach the Mac's USB devices.
 
-If heimdall or kraken_doa isn't built yet on this machine - or was built for
-another CPU (an SD card moved from a Pi 5 to a Pi 4) or before a `git pull` -
-`./run.sh` builds it first and then starts as usual. While it builds (10-30
-minutes on a Raspberry Pi the first time) the usual web addresses below show
-a progress bar and switch to the real web UI when it is ready; the build log
-is `logs/build.log`. If the build fails, an older working build is started
-with a warning, or the page shows the error (missing packages: run
-`./install.sh` once). `NO_AUTOBUILD=1 ./run.sh` skips the build.
+## Run
 
-The Web UI can then be accessed at:
+Connect and power the KrakenSDR, then in any terminal:
 
-**Heimdall:** http://krakensdr.local:8070 or http://PI_IP_ADDR:8070
+```
+./run.sh          # both programs in a split terminal (tmux)
+./run.sh stop     # stop them
+```
 
-**KrakenSDR DOA:** https://krakensdr.local:8080, or https://PI_IP_ADDR:8080 (note, remember the 's' in  https)
+Then open the web pages from any computer on the network:
 
-## Digital voice codecs
+- **KrakenSDR DOA:** `https://krakensdr.local:8080` or `https://PI_IP_ADDR:8080` (note the `s` in https)
+- **Heimdall:** `http://krakensdr.local:8070` or `http://PI_IP_ADDR:8070`
 
-A VFO's digital decoder can play the voice of P25, DMR, D-STAR, NXDN and TETRA
-calls. Click "🔊 Listen" in the VFO's decoder tab (panel under the waterfall),
-or pick Demod "Digital" on a VFO whose speaker (🔊 next to its D0 / D1 ... title) is green. Encrypted calls are shown and muted - they can't be decoded.
+Options:
+
+| Option | Use |
+|---|---|
+| `--wideband`, `-w` | KrakenSDR Wideband (downconverter) |
+| `--kerberos` | KerberosSDR. Calibration is manual: disconnect the antennas and start it from Heimdall's web page |
+| `--kerberos_sw` | KerberosSDR with antenna switches, for automatic calibration |
+| `--ext_noise` | Add-on antenna array with its own noise source on the CH0 bias tee |
+| `NO_TMUX=1 ./run.sh` | No terminal dashboards; log to `logs/` instead |
+| `NO_AUTOBUILD=1 ./run.sh` | Don't build first (see below) |
+
+**Automatic build.** If a program isn't built yet, was built for another CPU
+(an SD card moved from a Pi 5 to a Pi 4) or is older than a `git pull`,
+`run.sh` builds it first. That takes 10-30 minutes on a Pi the first time.
+Meanwhile the web addresses above show a progress bar, and they switch to
+the real page when it is ready. The build log is `logs/build.log`. If the
+build fails, an older working build is started with a warning, or the page
+shows the error (for missing packages, run `./install.sh` once).
+
+**Start at boot (Pi).** `./install-pi-service.sh` installs a service that
+runs `run.sh` at every boot; `./install-pi-service.sh --uninstall` removes
+it. For a hardware variant: `VARIANT_FLAGS=--wideband ./install-pi-service.sh`.
+
+## Features
+
+Everything below is on the KrakenSDR DOA page. Each feature has a detailed
+description, linked under [More documentation](#more-documentation).
+
+### Modes
+
+The **Mode** selector in the top bar picks how the tuners are used:
+
+| Mode | Tuners | Use |
+|---|---|---|
+| **Coherent** (default) | One phase-calibrated antenna array | Direction finding, beamforming, the web mapper, DoA logging |
+| **Wideband** | Side by side, one stitched spectrum (about 5 x 1.9 MHz on a KrakenSDR) | A wide view and the discrete scanner. No direction finding |
+| **Independent** | Each its own receiver with its own frequency and gain | One spectrum and waterfall per tuner. No direction finding, no calibration |
+
+The mode is remembered across restarts. Switching back to Coherent retunes
+every tuner to the common frequency and recalibrates. The KrakenSDR Wideband
+hardware only has Coherent mode.
+
+In every mode the mouse wheel zooms the spectrum (up to 32x), and the bar
+between spectrum and waterfall can be dragged to change the split. Levels
+are drawn in dB above the receiver's noise floor. The receiver remembers
+that floor, so a signal that fills the whole band (DVB-T, LTE) still shows
+at its real height.
+
+### VFOs and audio
+
+A VFO is one receiver inside the band, from 1 kHz to 2.4 MHz wide. Add as
+many as you need: each one demodulates NBFM, AM or WBFM for listening in the
+browser, has its own squelch, and can run a digital decoder. In Independent
+mode a VFO can sit on any tuner's pane.
+
+Point at a VFO's bar to see its signal level in dBFS, its signal-to-noise
+ratio and an estimate in dBm at the receiver input.
+
+### Decoders
+
+Tick **Digital decoder** on a VFO and pick a decoder, or **Auto detect**.
+Each decoder has a tab in the panel under the waterfall (the **🔐 Decoders**
+button) with its settings, the decoded data and an event log. Any number of
+VFOs can decode at once.
+
+| Decoder | What you get |
+|---|---|
+| [P25 Phase 1](kraken_doa_v2/plugins/p25/README.md), [DMR](kraken_doa_v2/plugins/dmr/README.md), [D-STAR](kraken_doa_v2/plugins/dstar/README.md), [NXDN](kraken_doa_v2/plugins/nxdn/README.md), [TETRA](kraken_doa_v2/plugins/tetra/README.md) | Networks, talkgroups, radio IDs, callsigns, call activity, GPS positions (DMR, D-STAR), and the voice (see [Digital voice codecs](#digital-voice-codecs)) |
+| [MPT1327](kraken_doa_v2/plugins/mpt1327/README.md) | Analogue trunking control channels |
+| [Analog FM IDs](kraken_doa_v2/plugins/analog_id/README.md) | CTCSS / DCS tones, MDC1200, FleetSync, 5-tone selcall, DTMF, 1750 Hz tone bursts |
+| [Pagers](kraken_doa_v2/plugins/pagers/README.md) | POCSAG and FLEX at every speed. Street addresses in the pages become incidents on the map |
+| [APRS](kraken_doa_v2/plugins/aprs/README.md) | Stations, objects, positions, messages |
+| [ADS-B](kraken_doa_v2/plugins/adsb/README.md) (1090 MHz) | Aircraft with position, altitude, speed, squawk; a sortable table of all aircraft |
+| [UAT](kraken_doa_v2/plugins/uat/README.md) (978 MHz, United States) | Aircraft, rebroadcast traffic, ground stations and their weather / NOTAM text |
+| [SSR / Mode S / TCAS interrogations](kraken_doa_v2/plugins/ssr1030/README.md) (1030 MHz) | The radars, multilateration stations and aircraft that ask the questions ADS-B answers |
+| [ACARS](kraken_doa_v2/plugins/acars/README.md), [VDL Mode 2](kraken_doa_v2/plugins/vdl2/README.md) | Aircraft datalink messages: registration, flight, label, text; VDL2 ground stations on the map |
+| [FLARM / OGN](kraken_doa_v2/plugins/flarm/README.md) (868 / 915 MHz) | Gliders and light aircraft. OGN trackers give a position; FLARM is encrypted, so only its ID and bearing |
+| [DME / TACAN](kraken_doa_v2/plugins/dme/README.md) (962-1213 MHz) | Morse ident, channel and its VOR / ILS pairing, TACAN bearing, aircraft interrogations |
+| [ILS / VOR / markers](kraken_doa_v2/plugins/ils/README.md) | Localizer and glide slope deviation, VOR radial, marker beacons, Morse idents |
+| [Pulse radar](kraken_doa_v2/plugins/radar/README.md) (1215-1400 MHz and others) | Pulse width, chirp, PRF and PRI pattern, antenna rotation, beam width |
+| [AIS](kraken_doa_v2/plugins/ais/README.md) (162 MHz) | Ships, base stations, aids to navigation |
+| [406 MHz distress beacons](kraken_doa_v2/plugins/beacon406/README.md) | EPIRB / ELT / PLB: beacon ID, country, type, position. Self-tests are shown as tests |
+| [Radiosondes](kraken_doa_v2/plugins/radiosonde/README.md) (400-406 MHz) | Weather balloons (RS41, DFM, M10 / M20, iMet, LMS6, MRZ): position, weather data, flight track, a sounding |
+| [ISM devices](kraken_doa_v2/plugins/ism/README.md) (315 / 345 / 433 / 868 / 915 MHz) | About 140 device models: weather stations, tyre pressure sensors, key fobs, alarm sensors, energy meters |
+| [LoRa / Meshtastic / LoRaWAN](kraken_doa_v2/plugins/lora/README.md) | Meshtastic's public default channel (text, node names, positions); the clear headers of everything else |
+| [Wildlife collars and tags](kraken_doa_v2/plugins/wildlife/README.md) | Each pulsing transmitter by frequency and pulse rate, with mortality and activity changes |
+| [RDS / RBDS + SCA](kraken_doa_v2/plugins/rds/README.md) (FM broadcast) | Station name, RadioText, programme type, alternative frequencies; SCA subcarriers, with audio |
+| [Digital TV](kraken_doa_v2/plugins/dtv/README.md) | DVB-T / T2, ISDB-T, ATSC, DTMB: standard, mode, transmission parameters, an echo profile, a bearing per path |
+| [LTE / 5G NR cells](kraken_doa_v2/plugins/cells/README.md) | Each cell's operator, tracking area, cell identity, band and the system information it broadcasts |
+| [V.23 telemetry](kraken_doa_v2/plugins/v23_telemetry/README.md) | 1200 bit/s AFSK telemetry frames |
+
+Things to know:
+
+- **Decoders that tune for you.** ADS-B, UAT, the 1030 MHz decoder, AIS and
+  the 406 MHz beacon decoder put the VFO on their own frequency when picked.
+- **Whole-band decoders.** ISM, FLARM, LoRa, pulse radar, Digital TV and
+  LTE / NR cells use the tuner's full 2.4 MHz: tune the receiver to the
+  band. Auto detect leaves out ADS-B and any decoder that needs a wider VFO
+  than the one it runs on.
+- **Only what is sent in the clear is decoded.** Encrypted calls are shown
+  and muted. No keys are guessed or broken: Meshtastic private channels,
+  LoRaWAN payloads and FLARM packets stay unread, and of LTE / NR only the
+  broadcast system information is read, never anything addressed to a phone.
+- **Distress beacons.** If you hear a real 406 MHz beacon, report it to
+  your rescue coordination centre with its ID, time, frequency and bearing.
+  The receiver reports nothing by itself.
+- **Digital squelch.** On a VFO with a decoder, set the squelch to
+  **Digital**: it opens only while valid frames arrive, and the bearing is
+  computed from those frames alone.
+- **On the map.** Tick **🗺 Plot on map** in a decoder's tab to show the
+  positions it decodes.
+
+### Direction finding
+
+Direction finding needs Coherent mode.
+
+- **Live bearing.** MUSIC DoA for every VFO, as a plot and as a lobe and
+  bearing line on the map.
+- **A bearing per transmitter.** When a signal names its transmitter (a
+  radio ID, callsign, aircraft address, ship, sonde serial, cell ID ...),
+  each one gets a bearing from its own transmissions only. Several radios
+  on one channel no longer blur into one bearing. Pick a transmitter in the
+  map's **📡 DF** panel. On a repeater's output every radio's bearing is the
+  repeater's: listen on its input frequency to find the radios.
+- **Finding a transmitter while driving.** The map collects a bearing every
+  15-60 m of driving and builds a heat map with the most likely position
+  and its 95 % ellipse. It needs the station's position and heading
+  (Station Information → GPS, through gpsd), and the array's ANT0 must face
+  the front of the vehicle.
+- **Range from signal strength.** From one bearing, the signal's level and
+  your estimate of the transmitter's power, the map shows how far away the
+  transmitter probably is, using the terrain. It is only as good as the
+  power estimate and the receiver's level calibration.
+- **Replay.** The map's **Replay** button plays back a drive logged by the
+  KrakenSDR Android app (CSV or SQLite) or by this receiver's **📝 DoA
+  Recording**. The file is read in your browser and not uploaded.
+- **Array calibration from aircraft** (experimental). ADS-B aircraft report
+  where they are, so they can calibrate the cable lengths, antenna positions
+  and rotation of the array: sidebar → **🧪 Experimental**.
+
+### Map
+
+The **🗺 Map** button under the waterfall opens a street or satellite map.
+
+- **Decoded positions**: aircraft, ships, APRS stations, radios sending
+  GPS, sondes and more, with their tracks. Click a marker for its details.
+- **Your own markers**: right-click (long press on a touch screen) →
+  **📍 Add Marker**. A marker lists the saved frequencies at that place.
+- **Search** (🔍): coordinates in any usual form, UTM, MGRS, Maidenhead
+  locators and map links work offline; addresses and places are looked up
+  online. 🏠 goes to the station, 🎯 to the estimated transmitter.
+- **Masts**: the radio masts and towers mapped in OpenStreetMap.
+- **Viewshed**: the ground in line of sight of the station's antenna, over
+  the terrain, up to 1000 km.
+- **Viewshed Signal mode**: coverage of a transmitter you place, also
+  beyond the line of sight (ITU-R P.1812, Longley-Rice or free space), and a
+  path loss analysis between two points with the terrain profile and the
+  link budget.
+- **Incident map**: street addresses in pager messages, looked up online
+  and shown as markers for 24 hours.
+- **The station**: click and drag it to move it, or right-click →
+  **📡 Set station here**.
+
+Map tiles, terrain, masts and address lookups come from the internet,
+loaded by your browser. Without a connection the map still works on a plain
+latitude / longitude grid.
+
+### Saved frequencies and scanning
+
+The sidebar's **📻 Saved Frequencies** box keeps your list on the receiver
+(`kraken_doa_v2/saved_frequencies.json`), so every browser sees it. An
+entry has a name and a frequency, and
+optionally a category, a location (a map marker), how to receive it (demod,
+bandwidth, gain, decoder), a tone or code and notes. Click an entry to tune
+the selected VFO to it. Entries are also marked on the spectrum.
+
+To scan, tick entries or whole categories and press **▶ Scan**. The
+selected VFO goes to each ticked frequency that is active and is heard until
+it ends. Every ticked frequency inside the band is watched at once; the
+receiver retunes only for other bands. The receiver does the scanning, so it
+carries on with no browser open. Options include a VFO of its own for each
+active frequency, so that all are heard, decoded and transcribed at once.
+
+### Recording and logging
+
+- **📼 IQ & Audio Recorder**: the calibrated IQ samples of every antenna
+  (the whole 2.4 MHz, or one VFO's band) as a [SigMF](https://sigmf.org)
+  recording, and VFO audio as WAV or Opus. **▶ Open** plays an IQ recording
+  back through the receiver as if the antennas picked it up again. The
+  full band is 24 MB/s with 5 antennas, too fast for an SD card: use a USB
+  SSD or record one VFO's band. IQ recordings include the station's position
+  and GPS track; untick "Include the station position" before
+  recording something you will share. Format:
+  [SIGMF.md](kraken_doa_v2/SIGMF.md).
+- **🗂 Decoder Logging**: what the decoders report (events, messages,
+  positions, raw frames, incidents), one JSON-lines file per day in
+  `kraken_doa_v2/decoder_logs/` (or a drive you pick), gzipped at midnight
+  and kept 7 days by default.
+- **📝 DoA Recording**: the bearings to CSV or SQLite.
+- **🗣 Voice to Text**: tick **Transcribe** on a VFO and what is said there
+  is written down by a speech-to-text model running on the receiver. No
+  account, nothing sent anywhere. It works on analog voice and on decoded
+  digital voice, and keeps each transmission's time, radio ID, bearing and
+  audio. Set it up once: [Voice to Text](#voice-to-text).
+
+### AI assistant
+
+The **🤖 Assistant** column on the right is a chat with an AI agent (Claude
+Code) that sees and controls the receiver. It can:
+
+- answer questions about what the page shows: "what is the signal on D0?",
+  "which aircraft did we hear in the last hour?";
+- work out who is transmitting, from the decoded data, your saved
+  frequencies, your own files in `kraken_doa_v2/ai/knowledge/` and the
+  internet;
+- do things: "put a DMR decoder on 439.475", "look for an active weather
+  balloon";
+- draw on the map: licensed sites, bearing lines, line-of-sight checks;
+- write a decoder plugin for a signal: capture, analyse, write, build, test.
+
+A **Read only** switch stops it changing anything. It is off until you set
+it up: [AI assistant setup](#ai-assistant-setup).
+
+## Optional setup
+
+### Digital voice codecs
+
+A decoder can play the voice of a call: click **🔊 Listen** in its tab, or
+set the VFO's demod to **Digital**. Encrypted calls can't be decoded.
 
 | System | Voice codec | Needs |
 |---|---|---|
 | P25 Phase 1 | IMBE | nothing - built in |
-| DMR | AMBE+2 | mbelib, installed by you (below) |
-| D-STAR | AMBE | mbelib, installed by you (below) |
-| NXDN (NXDN48 and NXDN96) | AMBE+2 | mbelib, installed by you (below) |
-| MPT1327 | analogue FM | nothing - listen to the granted traffic channel with NBFM |
-| TETRA | ACELP | the ETSI reference codec, built by you (below) |
+| DMR | AMBE+2 | mbelib, installed by you |
+| D-STAR | AMBE | mbelib, installed by you |
+| NXDN (NXDN48 and NXDN96) | AMBE+2 | mbelib, installed by you |
+| TETRA | ACELP | the ETSI reference codec, built by you |
+| MPT1327 | analogue FM | nothing - listen to the traffic channel with NBFM |
 
-The AMBE / AMBE+2 and TETRA codecs are not shipped with this software:
-AMBE+2 is a commercially licensed codec (DVSI), and the ETSI codec may not be
-redistributed. You can build them yourself for personal use; whether that is
-allowed where you live is your responsibility. The sidebar's "🔐 Digital
-Decoders" box shows which codecs are installed and the install steps for the
-missing ones (press "↻ Check codecs" after installing).
+The AMBE and TETRA codecs are not shipped with this software: AMBE+2 is
+commercially licensed (DVSI), and the ETSI codec may not be redistributed.
+You can build them yourself for personal use; whether that is allowed where
+you live is your responsibility. The sidebar's **🔐 Digital Decoders** box
+shows which codecs are installed.
 
-Windows: the same codecs, built in MSYS2 - see WINDOWS.md, "Digital voice
-codecs".
-
-### DMR, D-STAR and NXDN voice: mbelib
+**DMR, D-STAR and NXDN: mbelib**
 
 ```
 sudo apt-get install -y git cmake build-essential
@@ -216,12 +366,10 @@ sudo make install
 sudo ldconfig
 ```
 
-Then restart the KrakenSDR software (`./run.sh`, or reboot when it runs as a
-service). kraken_doa finds `libmbe.so.1` in the system library path; set
-`KRAKEN_MBELIB=/path/to/libmbe.so.1` to use one elsewhere. API-compatible
-mbelib forks work too.
+kraken_doa finds `libmbe.so.1` in the system library path. Set
+`KRAKEN_MBELIB=/path/to/libmbe.so.1` to use one elsewhere.
 
-### TETRA voice: ETSI codec (via osmo-tetra's patches)
+**TETRA: the ETSI codec, with osmo-tetra's patches**
 
 ```
 sudo apt-get install -y git build-essential unzip patch wget
@@ -236,17 +384,17 @@ sudo install -m 755 cdecoder /usr/local/bin/tetra-cdecoder
 sudo install -m 755 sdecoder /usr/local/bin/tetra-sdecoder
 ```
 
-Then restart the KrakenSDR software. kraken_doa runs `tetra-cdecoder` and
-`tetra-sdecoder` from the PATH; or set `KRAKEN_TETRA_CODEC_DIR` to a directory
-holding `cdecoder` and `sdecoder`. TETRA voice plays about half a second late
-(the codec programs buffer their output), and only on cells without air
+kraken_doa runs `tetra-cdecoder` and `tetra-sdecoder` from the PATH. Or set
+`KRAKEN_TETRA_CODEC_DIR` to a folder holding `cdecoder` and `sdecoder`.
+TETRA voice plays about half a second late, and only on cells without air
 interface encryption.
 
-### Docker
+After installing either codec, restart the KrakenSDR software (`./run.sh`,
+or reboot when it runs as a service).
 
-Build the codecs on the host as above (the `sudo make install` / `install`
-steps can be skipped), then copy them into the container's data directory and
-restart the client:
+**Docker.** Build the codecs on the host as above (the `sudo make install` /
+`install` steps can be skipped), copy the ones you built into the
+container's data folder and restart the client:
 
 ```
 sudo mkdir -p docker-data/codecs
@@ -255,35 +403,22 @@ sudo cp osmo-tetra/codec/c-code/cdecoder osmo-tetra/codec/c-code/sdecoder docker
 docker compose restart kraken_doa
 ```
 
-(paths relative to where you cloned mbelib and osmo-tetra; copy only the ones
-you built)
+**Windows.** The same codecs, built in MSYS2: see [WINDOWS.md](WINDOWS.md).
 
-## Voice to Text
+### Voice to Text
 
-Speech on the VFOs written down by a local, free speech-to-text model
-([whisper.cpp](https://github.com/ggml-org/whisper.cpp), MIT licence - OpenAI's
-Whisper models). Set it up once on the receiver (about 10 minutes on a Pi 5):
+Voice to Text uses [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
+with OpenAI's Whisper models, on the receiver itself. Set it up once (about
+10 minutes on a Pi 5):
 
 ```
 cd krakensdr_suite/kraken_doa_v2
 make whisper
 ```
 
-This builds the speech-to-text helper (`transcribe/build/kraken_whisper`,
-whisper.cpp at a tested version) and downloads the default model (base.en,
-142 MB) plus a small voice detection model into `transcribe/models/`. No
-restart is needed: tick "🗣 Transcribe" on a VFO. `./install.sh` does it too
-when run as `WHISPER=1 ./install.sh`; after that, `make` keeps the helper up
-to date.
-
-On a Mac with Apple Silicon the helper runs on the GPU (Metal), which
-leaves the CPU to the receiver; elsewhere on the CPU. `make whisper
-WHISPER_GPU=off` (or `on`, macOS only) forces it either way - the choice is
-kept for later builds.
-
-Other models: pick one in the sidebar box's download list and press "⬇ Get",
-or on the receiver `transcribe/setup.sh --models-only small.en`
-(`transcribe/setup.sh --list` shows them all):
+This builds the helper and downloads the default model (base.en, 142 MB).
+No restart is needed: tick **🗣 Transcribe** on a VFO. `WHISPER=1 ./install.sh`
+does the same during the install.
 
 | Model | Download | On a Pi 5 | |
 |---|---|---|---|
@@ -293,303 +428,176 @@ or on the receiver `transcribe/setup.sh --models-only small.en`
 | small.en / small.en-q5_1 | 466 / 181 MB | ~2x slower than real time | most accurate on a Pi; for quiet channels |
 | tiny, base, small (+ -q5_1) | as above | as above | any language, or translated to English |
 
-The receiver keeps working while the model is busy: transmissions wait in a
-queue (up to 40 / 10 minutes of audio; the oldest are dropped beyond that -
-the box shows it). If they pile up, give it more CPU cores, use a smaller model
-or transcribe fewer VFOs. The model process only runs while a VFO transcribes
-and stops 2 minutes after the last one is unticked (base.en uses ~280 MB of
-RAM). Transcripts are kept in `kraken_doa_v2/transcripts.jsonl` (the latest
-1000 are shown).
+Get other models from the sidebar's **🗣 Voice to Text** box (**⬇ Get**), or
+with `transcribe/setup.sh --models-only small.en` (`transcribe/setup.sh --list`
+shows them all). The box also sets the CPU
+cores the model may use and the "Words to expect": callsigns and names
+spelled as you want them.
 
-Direction of each transmission: in coherent mode with DoA on, every
-transcript keeps its DoA lobe - the MUSIC spectrum averaged over the
-transmission - and where the station was. Click the 🧭 bearing in its row
-and the 🗺 map opens with that lobe drawn from the station, dashed, in a pale
-colour of its own (white, then violet, blue, ...), so it never looks like a
-VFO's live lobe; its tag at the tip names the VFO, time and bearing, and its
-✕ (or clicking the bearing again) removes it. Show several to compare
-transmissions. Without a station heading at the time (GPS before the vehicle
-moves, no compass) the bearing reads "arr" and the lobe is drawn relative to
-the array, its front towards north.
+- Transcripts appear in the **🗣 Voice** tab a few seconds after each
+  transmission ends. Long transmissions and broadcasts come in parts.
+- In Coherent mode with DoA on, each transcript keeps its bearing. Click it
+  to draw that transmission's lobe on the map.
+- While the model is busy, transmissions wait in a queue. If they pile up,
+  give it more CPU cores, use a smaller model or transcribe fewer VFOs.
+- The audio is kept as Ogg Opus (about 7 MB per hour of speech) in the
+  Decoder Logging folder, at most 2 GB, and follows that box's "Keep" days.
+- On a Mac with Apple Silicon the model runs on the GPU;
+  `make whisper WHISPER_GPU=off` forces the CPU.
+- Docker: the image includes the helper. Get the models with **⬇ Get**.
 
-Long transmissions and broadcasts: a transmission is one transcript up to 25 s;
-a longer one is cut into parts where the speech pauses (part 1, 2, ... in the
-tab). Broadcast FM (a WBFM VFO), and anything on air longer than 30 s (AM
-broadcast, a weather channel), comes in pieces of about 8-15 s, each cut at a
-pause, so its text follows the station live, 10-20 s behind. With no pause
-(music), the cut falls on the quietest moment and the next piece repeats the
-0.3 s before it, so a word cut there is whole in one of them.
+Expect radio-quality transcripts: clear speech comes out well, weak signals
+and unusual names less so. The audio is kept so you can check.
 
-The audio ("Keep the audio", on by default) is saved as Ogg Opus
-(16 kbit/s, about 7 MB per hour of speech; any audio player plays it - the
-text, VFO, frequency and bearing are in its tags) in the Decoder Logging
-folder: `voice_clips/YYYY-MM-DD/<id>.opus` (by default
-`kraken_doa_v2/decoder_logs/voice_clips/`, also when Decoder Logging itself is
-off). It follows Decoder Logging's settings: a day's clips are deleted after
-its "Keep" days (0 = kept forever), and with less than 100 MB free on that
-drive no clips are written (the transcripts go on; the box says so). At most
-2 GB of clips are kept in all - beyond that the oldest go first. Pick another
-drive in Decoder Logging to keep more; clips already saved stay in the old
-folder (the 🗣 Voice tab plays only those in the current one).
+### AI assistant setup
 
-Docker: the image includes the helper (`WHISPER=0` in `.env` leaves it out);
-get the models with the sidebar's "⬇ Get" - they are kept in
-`docker-data/whisper_models/`.
+Once, on the receiver:
 
-## IQ & audio recording (📼)
-
-The sidebar box **📼 IQ & Audio Recorder** records to the receiver's disk:
-
-- **IQ** (coherent mode): the raw, phase-calibrated samples of every
-  antenna - either the whole 2.4 MHz (2 bytes per sample per antenna: 24
-  MB/s with 5 antennas) or just one VFO's band (e.g. 1 MB/s at 50 kHz). The
-  recording is a [SigMF](https://sigmf.org) collection - one SigMF
-  recording per antenna plus a collection file - in one folder; **⬇**
-  downloads it as a single `.sigmf` archive. Details and how to read it
-  elsewhere: `kraken_doa_v2/SIGMF.md`.
-- **Audio**: what one or more VFOs demodulate (NBFM / AM / WBFM, or with the
-  VFO's demod set to *Digital* its decoder's voice), as WAV or Opus, one file
-  per VFO; optionally only while the squelch is open.
-
-Pick a length (10 s to 24 h) or **Unlimited** (until the drive's reserve is
-reached); a recording that can't fit is refused, and the list shows how big
-each length would be. An SD card writes roughly 8-20 MB/s - too slow for a
-full-band recording, which is then held in memory and written after it
-ends: only short ones (about a minute) fit. **⏱ Test write speed** (under
-Drive) measures the drive; for long full-band recordings use a USB SSD
-(pick it under Drive), or record the VFO band.
-
-**▶ Open** plays an IQ recording back through the receiver - spectrum,
-waterfall, VFOs, decoders, DoA and the map work as if the antennas picked it
-up again, with pause, seek and loop. The recording's array settings come
-with it (and its VFOs, if you tick that), and the station is put where the
-recording was made (moving along its GPS track for a mobile recording). As
-with the debug playback, heimdall is disconnected meanwhile and your own
-settings come back when you press Stop. Audio recordings can run during a
-playback - the way to get the audio of a VFO out of an IQ recording.
-**⬆ Upload** takes a `.sigmf` archive (from another KrakenSDR, or any SigMF
-recording at 2.4 MHz or 2.4 MHz / N) to open it here.
-
-"Include the station position" (on by default) writes the station's
-position and GPS track into IQ recordings - untick it before recording
-something you will share. The old **Local Recording** box (DoA bearings to
-CSV / SQLite) is now called **📝 DoA Recording**.
-
-## AI assistant and decoder plugins
-
-### Decoder plugins
-
-Every decoder in a VFO's decoder list is a plugin: a folder of C++
-source in `kraken_doa_v2/plugins/<id>/`, which `./install.sh` / `make` builds.
-The suite ships P25, DMR, TETRA, D-STAR, NXDN, MPT1327, Pagers (POCSAG + FLEX),
-APRS (AX.25 1200 bit/s packet; written by the AI assistant's predecessor, the AI Signal Lab) and ADS-B
-(1090 MHz aircraft, plotted on the 🗺 Map). "Auto detect"
-runs every decoder ticked "Auto detect" in the sidebar's plugin list (Digital
-Decoders box, "Decoder plugins") - all of them by default; untick the ones you never need, since each
-costs CPU on every VFO in Auto detect. ADS-B has no Auto detect tick: it is
-only used when picked. Decoders that need a much wider VFO than the one Auto
-detect runs on are left out there. A decoder's own settings - the DMR timeslot,
-the P25 NAC - appear in the panel while that decoder is selected, or once
-Auto detect has locked onto it. Plugins run as separate processes, so a
-faulty one cannot crash the receiver. To write one by hand, see
-[kraken_doa_v2/plugins/SDK.md](kraken_doa_v2/plugins/SDK.md).
-
-To add a plugin, or move one to another KrakenSDR, copy its folder (without
-`build/`) into the receiver's `kraken_doa_v2/plugins/`, then build it and
-press ↻ next to "Decoder plugins" in the Digital Decoders box (or restart the
-software):
-
-```bash
-cd ~/krakensdr_suite/kraken_doa_v2      # wherever the suite is installed
-make -j3                                # builds kraken_doa + every plugin
-# or just the one plugin:
-make -C plugins PLUGIN=<id>
-```
-
-Run the same `make` after editing a plugin's source; decoders that are using
-it restart on the new build by themselves. The plugin compiles against the
-receiver's own `plugins/sdk/` and `plugins/lib/`, so the receiving KrakenSDR
-should run the same (or a newer) version of this software. A plugin is
-native code that runs on your receiver: only install plugins from people you
-trust.
-
-### Debug playback (test transmissions)
-
-The sidebar box **🧪 Debug Playback** plays a decoder's synthetic test
-transmission - several transmitters with known IDs at known bearings,
-received on a 5-element circular array - through the receiver as if the
-antennas had picked it up: spectrum, waterfall, the decoder, the DoA and
-the 🗺 Map's 📡 DF panel. Use it to see what a decoder shows, or to check
-it still finds every transmitter at the right bearing (**Check** compares
-the DF panel with the bearings the test was made with). Press **⚙
-Generate** once per test (the decoders' own generators, a few seconds to a
-minute of CPU; stored in `kraken_doa_v2/testsignal_cache/`, at most 3 GB),
-then **▶ Play**.
-
-While it plays, a red **DEBUG PLAYBACK - not live** banner sits in the top
-bar and over the spectrum; heimdall's data is disconnected and nothing is
-sent to heimdall (its tuning stays as it was); retuning, gain and the
-scanners are refused; the VFO, decoder and array settings the test sets up
-are NOT saved - **Stop** puts your own settings back, and so does a restart
-in the middle of a playback. Nothing from a playback goes out: web mapper,
-decoder data log, Voice to Text, DoA recording and incident lookups pause.
-Generating needs python3 with numpy and scipy (installed by `install.sh`;
-not in the Docker image - generate on the host and copy the files into
-`docker-data/kraken_doa/testsignal_cache/`). Test transmissions exist for
-AIS, APRS, D-STAR, NXDN, TETRA, MPT1327, VOR, CTCSS / DCS and analog radio IDs, pulse radar,
-1030 MHz interrogations, UAT, FLARM / OGN, 406 MHz distress beacons, LoRa /
-Meshtastic, wildlife collars, DVB-T, LTE, ADS-B, DME / TACAN, ISM devices,
-POCSAG, FLEX, V.23 telemetry, P25, DMR, radiosondes, FM broadcast RDS / SCA,
-ACARS and VDL Mode 2 - every decoder. POCSAG, FLEX
-and V.23 name no transmitter, so their
-Check is the decoded messages and the VFO's own bearing (Digital squelch).
-A busy receiver plays a test slower than real time rather than skipping
-parts of it.
-
-### AI assistant
-
-The **🤖 Assistant** column on the right of the web UI is a chat with an AI
-agent (Claude Code) that sees and drives the receiver:
-
-- **Questions about the screen and the data**: "what is the signal on D0?",
-  "what are the strongest signals here?", "which aircraft did we hear in the
-  last hour?". Each question carries what your page shows (zoom window,
-  selected VFO, open tab, map view); the agent reads the spectrum (also a
-  peak hold for bursty signals), the decoders' facts, events and tables, the
-  bearings (per VFO and per transmitter ID), decoded positions, Voice to Text
-  transcripts and the decoder data log, and can record + analyse a signal.
-- **Who is transmitting**: it combines the decoded data (callsigns, IDs),
-  the signal's level, bandwidth and bearing with your saved frequencies, the
-  files you put in `kraken_doa_v2/ai/knowledge/` (e.g. an export of your
-  country's licence register) and the internet (licence registers, frequency
-  tables, sigidwiki, radioreference, SondeHub ...). What it identifies is
-  remembered on the receiver and marked with an "AI" badge on the spectrum.
-- **Doing things**: "look for an active weather balloon", "put a DMR decoder
-  on 439.475", "add a VFO on that signal and listen to it". It tunes, adds and
-  changes VFOs, decoders, squelch and saved frequencies through the same
-  commands the page uses, and every change shows in the chat (amber steps).
-  The **Read only** switch at the top of the panel stops it changing anything
-  (for every page using the receiver).
-- **Decoder plugins**: "write a decoder for this signal" - it captures,
-  analyses, writes, builds and tests a plugin, which then appears in every
-  VFO's decoder list.
-- **The map**: "plot the licensed sites on 162.4 MHz", "draw the bearing
-  from D0", "is that tower in line of sight of us?". It draws layers on the
-  🗺 map - transmitter sites it found online or in your knowledge files,
-  bearing lines, areas, any data with a position (also a GeoJSON or CSV
-  file) - listed in the map's **🤖 AI layers** panel (click an item for its
-  details; hide a layer here, ✕ removes it for everyone), and it uses the
-  map's Viewshed panel (line of sight from the station, the coverage of a
-  candidate transmitter, a path loss link with its budget) to check its
-  answers. The viewshed runs in your browser, so it uses the page you asked
-  from.
-
-The panel can be resized (drag its left edge), collapsed to a strip (⟩), and
-keeps your earlier conversations (🕘; ＋ starts a new one). On a phone it is
-a 🤖 button that opens it full screen.
-
-Setting it up (once, on the Pi):
-
-1. Install Claude Code and log in once (a Claude subscription or an
-   Anthropic API key):
+1. Install Claude Code and log in (a Claude subscription or an Anthropic
+   API key):
 
    ```
    curl -fsSL https://claude.ai/install.sh | bash
    claude          # log in, then /exit
    ```
 
-2. Enable the assistant, which checks the login first:
+2. Enable the assistant:
 
    ```
    cd krakensdr_suite/kraken_doa_v2
    python3 ai/kraken_ai.py setup
    ```
 
-   It stays off until you do this - the web UI can't switch it on, because
-   it lets UI users run an AI agent on the Pi that controls the receiver and
-   compiles code. If other people can reach your receiver's web UI, set an
-   API token (`KRAKEN_API_TOKEN` / the `api_token` file) first.
-   `python3 ai/kraken_ai.py disable` switches it off again.
-   Windows: `py -3 ai/kraken_ai.py setup` in the `kraken_doa_v2` folder of
-   the PC (Claude Code from PowerShell: `irm https://claude.ai/install.ps1 |
-   iex`). Claude Code has no sandbox on Windows, so the assistant has no
-   shell there (no plugin builds or scripts), and a plugin it changed runs
-   only after `py -3 ai/kraken_ai.py trust <id>` - see WINDOWS.md.
+`python3 ai/kraken_ai.py disable` switches it off again. The web page can't
+switch it on, because the assistant lets anyone using the page run an AI
+agent on the receiver that controls it and compiles code. **If other people
+can reach your receiver's web page, set an API token first**
+(`KRAKEN_API_TOKEN`, or the `api_token` file).
 
 What it can and can't do:
 
-- It reads the `kraken_doa_v2` folder (not the API token, the settings file
-  with the web mapper key, the TLS key or its own configuration), and writes
-  only its conversation folder (`ai/sessions/<id>/`), decoder plugin folders
-  (`plugins/<id>/` - never `plugins/sdk`, `plugins/lib` or the plugins
-  Makefile) and `ai/knowledge/`. None of your own Claude Code settings, MCP
-  servers, CLAUDE.md files or memory are loaded into it.
-- Its shell commands run in Claude Code's sandbox (`bubblewrap` + `socat`,
-  installed by `install.sh`; on a Mac the system's own sandbox): the same write limits enforced by the
-  operating system, the credentials in your home folder unreadable, and no
-  network. Without the sandbox it has no shell: it still answers, looks
-  things up and controls the receiver, but can't build plugins or run
-  scripts (the panel says so).
-- A plugin it changed is run by the receiver in a sandbox too (`bwrap`; on
-  a Mac `sandbox-exec`: read-only files, no network) - also the shipped plugins, which it may
-  improve. `python3 ai/kraken_ai.py sandboxed` lists them; after checking
-  what it changed, `python3 ai/kraken_ai.py trust <id>` runs one normally
-  again.
-- It controls the receiver only through its own tool server
-  (`127.0.0.1:8079`, a new secret on every start): tuning, gain, VFOs,
-  decoders, DoA on/off and saved frequencies - no settings resets, folders,
-  web mapper or array setup.
-- Web pages and decoded messages can contain text written to mislead an AI;
-  it is told never to follow instructions found there and never to send
-  local files or keys anywhere, and its shell has no network - but what you
-  ask about may go to the sites it searches.
+- **Files.** It reads the `kraken_doa_v2` folder, except the API token, the
+  settings file, the TLS key and its own configuration. It writes only its
+  conversation folder, decoder plugin folders and `ai/knowledge/`. Your own
+  Claude Code settings, MCP servers and memory are not loaded into it.
+- **Shell.** Its commands run in a sandbox that enforces those write
+  limits, hides the credentials in your home folder and has no network.
+  Without the sandbox it has no shell: it still answers and controls the
+  receiver, but can't build plugins.
+- **Plugins it changed** are run in a sandbox too. List them with
+  `python3 ai/kraken_ai.py sandboxed`; after checking what it changed,
+  `python3 ai/kraken_ai.py trust <id>` runs one normally again.
+- **Receiver control.** Tuning, gain, VFOs, decoders, DoA on / off and
+  saved frequencies only. No settings resets, folders, web mapper or array
+  setup.
+- **Misleading text.** Web pages and decoded messages can contain text
+  written to mislead an AI. The assistant is told never to follow
+  instructions found there and never to send local files or keys anywhere.
+  What you ask about may still go to the sites it searches.
 
-Usage counts against your Claude plan or API budget. A question about the
-screen costs a cent or two (API-equivalent), a search like the weather
-balloon about $0.10-0.30, a decoder plugin about $1-5. The panel's ⚙ picks
-the model (Sonnet, Opus - the most capable and dearest -, Haiku - fast and
-cheap -, Fable) and the effort (how much it thinks first: higher is better
-on hard tasks, slower and dearer) for every page. "Default" shows in
-brackets what it will run: the model is `"model"` in `ai/ai_config.json`, or
-your Claude account's default when that is empty; the effort is the picked
-model's own default level (your Claude Code `effortLevel` setting doesn't
-apply to the assistant).
+**Cost.** Usage counts against your Claude plan or API budget. A question
+about the screen costs a cent or two (API-equivalent), a search such as the
+weather balloon about $0.10-0.30, a decoder plugin about $1-5. The panel's
+⚙ picks the model and the effort.
 
-Other LLM command-line tools can be used instead:
-`python3 ai/kraken_ai.py setup --backend command --command "your-cli args"`
-(the prompt goes to its stdin, and it runs in the conversation's folder).
-Such a tool gets none of the restrictions above and no access to the
-receiver's tools; its own configuration decides what it may do. The
-assistant needs the native install (it is not available in Docker). The
-plugins that ship with the suite work in Docker as well.
+**Limits.** The assistant needs the native install; it is not available in
+Docker. On Windows it has no shell, so it can't build plugins there (see
+[WINDOWS.md](WINDOWS.md)).
+
+**Other LLM tools.** Another LLM command-line tool can be used instead. It
+gets none of the restrictions above and no access to the receiver's tools:
+
+```
+python3 ai/kraken_ai.py setup --backend command --command "your-cli args"
+```
+
+### Decoder plugins
+
+Every decoder is a plugin: a folder of C++ source in
+`kraken_doa_v2/plugins/<id>/`, built by `./install.sh` or `make`. Plugins
+run as separate processes, so a faulty one can't crash the receiver.
+
+To add a plugin, or move one to another KrakenSDR, copy its folder (without
+`build/`) into `kraken_doa_v2/plugins/`, then build it:
+
+```bash
+cd ~/krakensdr_suite/kraken_doa_v2      # wherever the suite is installed
+make -j3                                # kraken_doa and every plugin
+make -C plugins PLUGIN=<id>             # or just one plugin
+```
+
+Then press ↻ next to "Decoder plugins" in the **🔐 Digital Decoders** box,
+or restart the software. The same box picks which decoders take part in
+Auto detect; untick the ones you never need, since each costs CPU.
+
+A plugin is native code that runs on your receiver: **only install plugins
+from people you trust.** To write one, see
+[plugins/SDK.md](kraken_doa_v2/plugins/SDK.md), or ask the AI assistant.
+
+### Debug playback
+
+The sidebar's **🧪 Debug Playback** box plays a decoder's synthetic test
+transmission through the receiver: several transmitters with known IDs at
+known bearings, as if the antennas had picked them up. Use it to see what a
+decoder shows, or to check that it still finds every transmitter at the
+right bearing (**Check**). Press **⚙ Generate** once per test, then
+**▶ Play**. There is a test for every decoder.
+
+While it plays, a red **DEBUG PLAYBACK - not live** banner is shown, the
+live signal is disconnected and nothing is logged or sent out. **Stop**
+puts your own settings back.
+
+Generating needs python3 with numpy and scipy. `install.sh` installs them on
+Linux; on macOS run `python3 -m pip install --user numpy scipy`. They are
+not in the Docker image: generate on the host and copy the files into
+`docker-data/kraken_doa/testsignal_cache/`.
+
+## More documentation
+
+| Topic | Where |
+|---|---|
+| Docker | [DOCKER.md](DOCKER.md) |
+| Windows | [WINDOWS.md](WINDOWS.md) |
+| Each decoder | `kraken_doa_v2/plugins/<id>/README.md` (linked in the [decoder table](#decoders)) |
+| Each feature in detail | [kraken_doa_v2/docs/dev/](kraken_doa_v2/docs/dev/README.md), one file per feature |
+| Heimdall: calibration and internals | [heimdall_v2/README.md](heimdall_v2/README.md), [heimdall_v2/docs/dev/](heimdall_v2/docs/dev/) |
+| The whole suite in one file | [docs/dev/suite-reference.md](docs/dev/suite-reference.md) |
+| Writing a decoder plugin | [kraken_doa_v2/plugins/SDK.md](kraken_doa_v2/plugins/SDK.md) |
+| IQ recording format | [kraken_doa_v2/SIGMF.md](kraken_doa_v2/SIGMF.md) |
+| GNU Radio source block | [gr-krakensdr_v2/](gr-krakensdr_v2/) |
+
+The files under `docs/dev/` are developer notes, but they describe each
+feature completely, including its limits and how it was tested.
 
 ## Licence
 
 The suite is made of separate programs under different licences (details:
-[`LICENSE`](LICENSE)):
+[LICENSE](LICENSE)):
 
-- **KrakenSDR DoA software** (`kraken_doa_v2/`, including its decoder
-  plugins, except as below): [KrakenSDR Source Available Licence](kraken_doa_v2/LICENSE) -
-  **free for personal and hobbyist use**; you may use, study, change and share
-  it for that. **Organisations may evaluate it free for up to 180 days** - test
-  it and compare it with their equipment, but not yet rely on it in their
-  work. **Deploying it, and any other commercial use, requires a licence**
-  from KrakenRF Inc. ([standard terms](kraken_doa_v2/COMMERCIAL_TERMS.md)) -
-  contact thekraken@krakenrf.com for details.
-- **Heimdall receiver server** (`heimdall_v2/`) and the **GNU Radio module**
-  (`gr-krakensdr_v2/`): [GNU General Public License v3 or later](heimdall_v2/LICENSE).
+- **KrakenSDR DOA** (`kraken_doa_v2/`, including its decoder plugins, except
+  as below): the [KrakenSDR Source Available Licence](kraken_doa_v2/LICENSE).
+  **Free for personal and hobbyist use**: you may use, study, change and
+  share it for that. **Organisations may evaluate it free for up to 180
+  days**: test it and compare it with their equipment, but not yet rely on
+  it in their work. **Deploying it, and any other commercial use, requires
+  a licence** from KrakenRF Inc.
+  ([standard terms](kraken_doa_v2/COMMERCIAL_TERMS.md)). Contact
+  thekraken@krakenrf.com.
+- **Heimdall** (`heimdall_v2/`) and the **GNU Radio module**
+  (`gr-krakensdr_v2/`): the
+  [GNU General Public License v3 or later](heimdall_v2/LICENSE).
 - The **plugin SDK** (`kraken_doa_v2/plugins/sdk/`, `plugins/SDK.md`, the
-  Windows / macOS helpers in `win/` and `mac/`) and the build, install and run scripts: MIT.
-- A **decoder plugin with a `LICENSE` file of its own** is a separate program
-  under that licence: the **ISM device decoder** (`kraken_doa_v2/plugins/ism/`,
+  Windows / macOS helpers in `win/` and `mac/`) and the build, install and
+  run scripts: MIT.
+- A **decoder plugin with its own `LICENSE` file** is a separate program
+  under that licence: the ISM device decoder (`kraken_doa_v2/plugins/ism/`,
   following rtl_433's decoders) is under the
   [GNU General Public License v2 or later](kraken_doa_v2/plugins/ism/LICENSE),
-  and the **FLARM / OGN tracker decoder** (`kraken_doa_v2/plugins/flarm/`,
-  with the OGN project's parity-check matrix) under the
+  and the FLARM / OGN decoder (`kraken_doa_v2/plugins/flarm/`, with the OGN
+  project's parity-check matrix) under the
   [GNU General Public License v3](kraken_doa_v2/plugins/flarm/LICENSE).
 
 Third-party components keep their own licences:
-[`kraken_doa_v2/THIRD_PARTY_NOTICES.md`](kraken_doa_v2/THIRD_PARTY_NOTICES.md),
-[`heimdall_v2/THIRD_PARTY_NOTICES.md`](heimdall_v2/THIRD_PARTY_NOTICES.md).
-The Windows package and the Docker image carry every licence text
-(`licenses/`, `/usr/share/doc/krakensdr/`).
+[kraken_doa_v2/THIRD_PARTY_NOTICES.md](kraken_doa_v2/THIRD_PARTY_NOTICES.md),
+[heimdall_v2/THIRD_PARTY_NOTICES.md](heimdall_v2/THIRD_PARTY_NOTICES.md).
+The Windows package and the Docker image carry every licence text.
