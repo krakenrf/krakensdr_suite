@@ -1241,7 +1241,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       <div class="sb-content" id="mobile-display-slot"></div>
     </div>
     <!-- Decimator Management -->
-    <div class="sb-section">
+    <div class="sb-section" id="sb-decimators">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>⚙️ Decimators</h3>
         <span class="sb-toggle">▼</span>
@@ -1258,7 +1258,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- DoA Settings -->
-    <div class="sb-section coh-only">
+    <div class="sb-section coh-only" id="sb-music-doa">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>🎯 MUSIC DoA</h3>
         <span class="sb-toggle">▼</span>
@@ -1414,7 +1414,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- Beamforming/Diversity -->
-    <div class="sb-section coh-only">
+    <div class="sb-section coh-only" id="sb-beamforming">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>📡 Beamforming/Diversity<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip"><span id="bf-info">Coherently combines all <span id="bf-num-elements">5</span> antenna channels steered to DoA angle for ~7dB SNR improvement.</span></span></span></h3>
         <span class="sb-toggle">▼</span>
@@ -1511,7 +1511,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <!-- Wideband Mode -->
 
     <!-- Station Information -->
-    <div class="sb-section">
+    <div class="sb-section" id="sb-station-info">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>📡 Station Information<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Callsign &amp; location are published to DOA_value.html and the API. <b>Mobile App</b> takes location from a phone app (pending — reports 0's for now); <b>Static</b> uses the values above; <span class="os-lin"><b>KrakenPi GPS</b> uses the gpsd-connected receiver.</span><span class="os-win"><b>Receiver GPS</b> uses gpsd - Windows has none of its own: a gpsd on the network (KRAKEN_GPSD_HOST).</span></span></span></h3>
         <span class="sb-toggle">▼</span>
@@ -1574,7 +1574,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- GPS Status -->
-    <div class="sb-section">
+    <div class="sb-section" id="sb-gps-status">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>📍 GPS Status<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Location &amp; heading come from gpsd. A compass heading is used when the receiver provides one; otherwise heading is inferred from movement (course over ground). With no GPS, all values are 0.<span class="os-win"> Windows has no gpsd of its own: set KRAKEN_GPSD_HOST (and KRAKEN_GPSD_PORT) to one on the network, or use a Static location.</span></span></span></h3>
         <span class="sb-toggle">▼</span>
@@ -1592,7 +1592,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- Web Mapper -->
-    <div class="sb-section coh-only">
+    <div class="sb-section coh-only" id="sb-web-mapper">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>🌐 Web Mapper<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Streams DoA bearings to the KrakenSDR web mapper (built in — no separate middleware needed). <b>KrakenPro Cloud</b> relays to map.krakenrf.com and needs your KrakenPro API key; <b>Local Network</b> broadcasts the records to LAN map clients over WebSocket. Each VFO's squelch is respected: with squelch off its bearings always transmit; with squelch on, only while the squelch is open. Callsign &amp; location come from the Station Information panel above.</span></span></h3>
         <span class="sb-toggle">▼</span>
@@ -1638,7 +1638,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- DoA Recording (doa_logger.cpp): bearings to a file. Not the 📼 recorder below (IQ / audio) -->
-    <div class="sb-section coh-only">
+    <div class="sb-section coh-only" id="sb-doa-recording">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>📝 DoA Recording<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Logs the <b>DoA results</b> (bearing, confidence and the lobe of every VFO) to a file <b>on this device's disk</b> (<span class="os-lin">the KrakenPi</span><span class="os-win">the receiver's computer</span>), not your browser - for IQ samples or audio use the <b>📼 IQ &amp; Audio Recorder</b>. <b>Legacy CSV</b> matches DOA_value.html line-for-line; <b>SQLite</b> is a compact, app-readable database for plotting on a map - <b>🗺 Replay</b> under Saved Recordings plays one back on this page's map (track, bearings, heat map). The interval applies to both formats; below the actual DoA data rate it logs at the data rate, and duplicate frames are never written.</span></span></h3>
         <span class="sb-toggle">▼</span>
@@ -1771,7 +1771,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- Display Controls -->
-    <div class="sb-section">
+    <div class="sb-section" id="sb-display">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>🖥️ Display</h3>
         <span class="sb-toggle">▼</span>
@@ -1799,7 +1799,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- FFT Settings -->
-    <div class="sb-section">
+    <div class="sb-section" id="sb-fft-settings">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>📊 FFT Settings</h3>
         <span class="sb-toggle">▼</span>
@@ -1829,7 +1829,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- Discrete Scanner -->
-    <div class="sb-section wb-only">
+    <div class="sb-section wb-only" id="sb-scanner">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>📻 Scanner<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Requires wideband mode.</span></span></h3>
         <span class="sb-toggle">▼</span>
@@ -1919,7 +1919,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     </div>
 
     <!-- Continuous Scanner -->
-    <div class="sb-section coh-only">
+    <div class="sb-section coh-only" id="sb-continuous-scanner">
       <div class="sb-header" onclick="toggleSection(this)">
         <h3>🔍 Continuous Scanner<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Scans for active signals within the current bandwidth, dwelling on each one in turn.</span></span></h3>
         <span class="sb-toggle">▼</span>
@@ -4814,13 +4814,53 @@ function applyUiSetting(rest) {
   }
 }
 
-// Sidebar section toggle
-function toggleSection(header) {
+// Sidebar section expansion is a per-browser display preference, not a
+// receiver/server setting. Saved by stable section ID (never DOM order).
+const SIDEBAR_COLLAPSE_KEY = 'kraken_sidebar_collapsed_v1';
+
+function sidebarCollapsePreferences() {
+  try {
+    const value = JSON.parse(localStorage.getItem(SIDEBAR_COLLAPSE_KEY) || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch (e) { return {}; } // Private browsing / disabled storage
+}
+
+function rememberSidebarSection(section) {
+  if (!section.id) return;
+  try {
+    const saved = sidebarCollapsePreferences();
+    saved[section.id] = section.classList.contains('collapsed');
+    localStorage.setItem(SIDEBAR_COLLAPSE_KEY, JSON.stringify(saved));
+  } catch (e) {} // Still let the UI work with storage unavailable
+}
+
+function sidebarSectionArrow(section, header) {
+  const toggle = header.querySelector('.sb-toggle');
+  if (toggle) toggle.textContent = section.classList.contains('collapsed') ? '▶' : '▼';
+}
+
+function toggleSection(header, remember = true) {
   const section = header.parentElement;
   section.classList.toggle('collapsed');
-  const toggle = header.querySelector('.sb-toggle');
-  if(toggle) toggle.textContent = section.classList.contains('collapsed') ? '▶' : '▼';
+  sidebarSectionArrow(section, header);
+  if (remember) rememberSidebarSection(section);
 }
+
+// The HTML (including the sidebar) is already parsed above this script.
+// Without a saved preference, retain each section's original HTML default.
+function restoreSidebarSections() {
+  const saved = sidebarCollapsePreferences();
+  document.querySelectorAll('.sidebar .sb-section[id]').forEach(section => {
+    const header = section.querySelector(':scope > .sb-header');
+    if (!header) return;
+    if (Object.prototype.hasOwnProperty.call(saved, section.id) &&
+        typeof saved[section.id] === 'boolean') {
+      section.classList.toggle('collapsed', saved[section.id]);
+    }
+    sidebarSectionArrow(section, header);
+  });
+}
+restoreSidebarSections();
 
 // A locked VFO (its decoder has a fixed frequency - ADS-B - or takes its
 // tuner's whole band - Cell / Digital TV; see vfoLocked):
@@ -24803,7 +24843,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     const sec = $id('wb-section');
     if (!sec) return;
     if (typeof mobileLayoutMQ !== 'undefined' && mobileLayoutMQ.matches) toggleSidebar(true);
-    if (sec.classList.contains('collapsed')) toggleSection(sec.querySelector('.sb-header'));
+    if (sec.classList.contains('collapsed')) toggleSection(sec.querySelector('.sb-header'), false);
     sec.scrollIntoView({behavior: 'smooth', block: 'nearest'});
   }
   function wbSpan(text, level, stale) {
