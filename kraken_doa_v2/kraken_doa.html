@@ -1118,6 +1118,24 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 .sidebar .sb-content {margin-top:0;padding:8px 9px 9px}
 .sb-section.sb-moved {animation:sbmoved .7s ease-out}
 @keyframes sbmoved {from {box-shadow:0 0 0 2px #4fc3f7,0 0 14px rgba(79,195,247,.55)} to {box-shadow:0 0 0 2px transparent}}
+/* dragging a box by its header (sbBoxDrag...): a grip shows on hover; while
+   dragging every box is header-only, the box floats, a dashed slot marks
+   where it lands */
+.sidebar .sb-section[data-sb] > .sb-header {position:relative;cursor:grab;-webkit-touch-callout:none}
+.sidebar .sb-section[data-sb] > .sb-header::before {content:"";position:absolute;left:2px;top:50%;width:5px;height:10px;margin-top:-5px;
+  background:radial-gradient(circle,#6283b5 .8px,transparent 1.2px) 0 0/2.5px 3.34px;opacity:0;transition:opacity .15s;pointer-events:none}
+.sidebar .sb-section[data-sb] > .sb-header:hover::before,.sidebar .sb-section.sb-drag-box > .sb-header::before {opacity:1}
+@media (hover:none) {.sidebar .sb-section[data-sb] > .sb-header::before {opacity:.6}}
+.sidebar .sb-header.sb-press {background:#253a66;transition:background .4s ease-in}
+.sidebar.sb-dragging > .sb-section[data-sb] > .sb-content {display:none}
+.sidebar.sb-dragging > .sb-section[data-sb] > .sb-header {border-bottom-color:transparent;border-radius:6px}
+.sidebar.sb-dragging > .sb-section[data-sb]:not(.sb-drag-box) > .sb-header {background:none}
+.sidebar .sb-section.sb-drag-box {position:absolute;z-index:30;margin:0;border-color:#4a9ff5;background:#1d2b52;
+  box-shadow:0 12px 26px rgba(0,0,0,.6),0 0 0 1px #4a9ff5;opacity:.96}
+.sidebar .sb-section.sb-drag-box > .sb-header {background:#22345f}
+.sb-drag-pad {flex:none}
+.sb-drop-ph {flex:none;box-sizing:border-box;margin-bottom:7px;border:1.5px dashed #4a9ff5;border-radius:7px;background:rgba(74,159,245,.1)}
+html.sb-drag-on,html.sb-drag-on * {cursor:grabbing !important;user-select:none !important;-webkit-user-select:none !important}
 /* the footer box: receiver links, then the layout buttons */
 .sb-layout {display:flex;gap:5px;margin-top:9px;padding-top:9px;border-top:1px solid #1f355c}
 .sb-layout .btn {flex:1 1 auto;padding-left:4px;padding-right:4px}
@@ -2358,7 +2376,7 @@ body.map-on .doa-header .rp-tab.sel {color:#a8cbf5;font-weight:600;border-bottom
         <div class="sb-layout">
           <button type="button" class="btn sm" onclick="sbBoxCollapseAll(true)" title="Collapse every box">Collapse all</button>
           <button type="button" class="btn sm" onclick="sbBoxCollapseAll(false)" title="Open every box">Open all</button>
-          <button type="button" class="btn sm" onclick="sbBoxReset()" title="Put the boxes back in their original order (↑ ↓ on a box moves it; the order and the collapsed boxes are remembered in this browser)">↺ Order</button>
+          <button type="button" class="btn sm" onclick="sbBoxReset()" title="Put the boxes back in their original order (↑ ↓ on a box or dragging its header moves it; the order and the collapsed boxes are remembered in this browser)">↺ Order</button>
         </div>
       </div>
     </div>
@@ -5024,10 +5042,11 @@ function applyUiSetting(rest) {
 }
 
 // ============================================================================
-// SIDEBAR BOXES: collapse, move up / down, remembered per browser
+// SIDEBAR BOXES: collapse, move up / down or drag, remembered per browser
 // ----------------------------------------------------------------------------
 // Every box (.sb-section) with a data-sb key gets ↑ / ↓ buttons in its header
-// (sbBoxInit). The order of the boxes and which ones are collapsed are kept in
+// (sbBoxInit), and a box can be dragged by its header (sbBoxDrag...). The
+// order of the boxes and which ones are collapsed are kept in
 // localStorage (SB_KEY), like the sidebar's width: a layout is a per-screen
 // choice (a phone and a desktop want different ones) and it survives a
 // restart of the receiver and of the browser. A move swaps the box with the
@@ -5093,6 +5112,229 @@ function sbBoxMove(sec, dir) {
   const btn = sec.querySelector('.sb-mv[data-d="' + dir + '"]');
   if (btn && !btn.disabled) btn.focus({preventScroll: true});
 }
+// ---- Drag a box by its header (pointer events: mouse, pen and touch) ----
+// Mouse / pen: the drag starts after SB_DRAG_PX of movement, so a click still
+// collapses the box. Touch: after a press of SB_DRAG_HOLD ms that doesn't move
+// (more than SB_DRAG_SLOP), so a swipe that starts on a header still scrolls
+// the sidebar. While dragging every box shows only its header (.sb-dragging
+// on the sidebar - their open / collapsed state is untouched), the box is
+// taken out of the flow (position:absolute in the sidebar's scrolled content)
+// and follows the pointer, and a placeholder (.sb-drop-ph) stands where it
+// will land. The drop position counts only VISIBLE boxes, like sbBoxMove:
+// moving down puts the box right after the visible box above the gap, moving
+// up right before the one below it, so hidden boxes keep their order. The
+// footer box stays last. Escape, pointercancel and a lost window focus put
+// the box back. The click that follows a drag is swallowed (sbBoxDragEat).
+// The sidebar is zoomed: rects are screen px, its scrollTop / offsets its own
+// px (divide by the zoom).
+const SB_DRAG_PX = 5, SB_DRAG_HOLD = 400, SB_DRAG_SLOP = 8, SB_DRAG_EDGE = 44;
+let sbBoxDragState = null;   // the press / drag in progress
+let sbBoxDragEat = 0;        // performance.now() until which a click is swallowed
+function sbBoxDragZoom(sb) { return parseFloat(getComputedStyle(sb).zoom) || 1; }
+function sbBoxDragDown(e) {
+  if (sbBoxDragState || !e.isPrimary || e.button !== 0) return;
+  const hdr = e.target.closest('.sb-header'), sec = hdr && hdr.parentElement;
+  if (!sec || !sec.matches('.sidebar > .sb-section[data-sb]')) return;
+  // the header's own controls (↑ ↓, the ? tip, a badge's link) are not handles
+  if (e.target.closest('button, input, select, textarea, a, label, .help, .sb-tools, [contenteditable]')) return;
+  sbBoxDragEat = 0;
+  const d = sbBoxDragState = {sec, hdr, sb: sec.parentElement, id: e.pointerId, touch: e.pointerType === 'touch',
+                              x0: e.clientX, y0: e.clientY, y: e.clientY, on: false, dead: false, timer: 0, raf: 0};
+  if (d.touch) {
+    hdr.classList.add('sb-press');
+    d.timer = setTimeout(sbBoxDragStart, SB_DRAG_HOLD);
+  }
+  window.addEventListener('pointermove', sbBoxDragMoveEv, true);
+  window.addEventListener('pointerup', sbBoxDragUpEv, true);
+  window.addEventListener('pointercancel', sbBoxDragCancelEv, true);
+  window.addEventListener('keydown', sbBoxDragKeyEv, true);
+  window.addEventListener('blur', sbBoxDragCancelEv);
+}
+function sbBoxDragMoveEv(e) {
+  const d = sbBoxDragState;
+  if (!d || e.pointerId !== d.id || d.dead) return;
+  d.y = e.clientY;
+  if (!d.on) {
+    const dist = Math.hypot(e.clientX - d.x0, e.clientY - d.y0);
+    if (d.touch) { if (dist > SB_DRAG_SLOP) sbBoxDragEnd(); }   // a swipe: the sidebar scrolls
+    else if (dist >= SB_DRAG_PX) sbBoxDragStart();
+    return;
+  }
+  e.preventDefault();
+  sbBoxDragTrack();
+}
+function sbBoxDragStart() {
+  const d = sbBoxDragState;
+  if (!d || d.on || d.dead) return;
+  clearTimeout(d.timer);
+  d.hdr.classList.remove('sb-press');
+  const sec = d.sec, sb = d.sb, z = sbBoxDragZoom(sb);
+  d.on = true;
+  d.scroll0 = sb.scrollTop;
+  d.vis = sbBoxes().filter(s => s !== sec && sbBoxShown(s));   // the boxes it can land between
+  d.from = d.vis.filter(s => s.compareDocumentPosition(sec) & Node.DOCUMENT_POSITION_FOLLOWING).length;
+  d.to = d.from;
+  d.foot = sb.querySelector(':scope > .sb-section:not([data-sb])');
+  const hy = d.hdr.getBoundingClientRect().top;
+  if (getComputedStyle(sb).position === 'static') { sb.style.position = 'relative'; d.pos = true; }
+  sb.classList.add('sb-dragging');
+  document.documentElement.classList.add('sb-drag-on');
+  const h = sec.offsetHeight;   // header only now
+  const ph = d.ph = document.createElement('div');
+  ph.className = 'sb-drop-ph';
+  ph.style.height = h + 'px';
+  sb.insertBefore(ph, sec);
+  sec.classList.add('sb-drag-box');
+  sec.style.left = ph.offsetLeft + 'px';
+  sec.style.width = ph.offsetWidth + 'px';
+  // the boxes shrank to their headers: scroll so the box's slot stays where
+  // its header was, under the pointer. The short list mostly can't scroll that
+  // far - a spacer above it (or below the footer) makes up the difference, so
+  // nothing jumps and a small move is a small move.
+  let st = sb.scrollTop + (ph.getBoundingClientRect().top - hy) / z;
+  d.pads = [];
+  const pad = (hgt, before) => {
+    const p = document.createElement('div');
+    p.className = 'sb-drag-pad';
+    p.style.height = hgt + 'px';
+    sb.insertBefore(p, before);
+    d.pads.push(p);
+  };
+  if (st < 0) { pad(-st, sb.querySelector(':scope > .sb-section')); st = 0; }
+  const stMax = sb.scrollHeight - sb.clientHeight;
+  if (st > stMax) pad(st - stMax, null);
+  sb.scrollTop = st;
+  d.grab = d.y - ph.getBoundingClientRect().top;
+  d.scrollSeen = sb.scrollTop;
+  try { d.hdr.setPointerCapture(d.id); } catch (e) {}
+  try { window.getSelection().removeAllRanges(); } catch (e) {}
+  if (d.touch && navigator.vibrate && navigator.userActivation && navigator.userActivation.hasBeenActive) {
+    try { navigator.vibrate(12); } catch (e) {}
+  }
+  sbBoxDragTrack();
+  d.raf = requestAnimationFrame(sbBoxDragTick);
+}
+// Place the box under the pointer (inside the list) and the placeholder where
+// the box's middle is
+function sbBoxDragTrack() {
+  const d = sbBoxDragState;
+  if (!d || !d.on) return;
+  const sb = d.sb, sec = d.sec, z = sbBoxDragZoom(sb), r = sb.getBoundingClientRect();
+  const h = sec.offsetHeight;
+  // inside the list: from its first box to the footer
+  const min = Math.min(d.ph.offsetTop, d.vis.length ? d.vis[0].offsetTop : Infinity);
+  const max = (d.foot ? d.foot.offsetTop : sb.scrollHeight) - h;
+  const top = Math.max(min, Math.min(max, (d.y - d.grab - r.top) / z + sb.scrollTop - sb.clientTop));
+  sec.style.top = top + 'px';
+  const mid = r.top + (top - sb.scrollTop + sb.clientTop + h / 2) * z;
+  let to = 0;
+  d.vis.forEach(s => { const b = s.getBoundingClientRect(); if (b.top + b.height / 2 < mid) to++; });
+  if (to === d.to) return;
+  d.to = to;
+  sb.insertBefore(d.ph, sbBoxDragRef(d));
+}
+// Where the box goes for the gap d.to (the node to insert before)
+function sbBoxDragRef(d) {
+  if (d.to === d.from) return d.sec;                          // where it was
+  if (d.to > d.from) return d.vis[d.to - 1].nextSibling;      // right after the visible box above
+  return d.vis[d.to];                                         // right before the visible box below
+}
+// Scroll the sidebar while the pointer is near its top / bottom edge
+function sbBoxDragTick() {
+  const d = sbBoxDragState;
+  if (!d || !d.on) return;
+  const sb = d.sb, r = sb.getBoundingClientRect(), z = sbBoxDragZoom(sb);
+  let top = r.top;
+  const mh = sb.querySelector(':scope > .sidebar-mobile-header');   // sticky on phones
+  if (mh && mh.offsetParent) top = Math.max(top, mh.getBoundingClientRect().bottom);
+  let v = 0;
+  if (d.y < top + SB_DRAG_EDGE) v = -Math.min(1.5, (top + SB_DRAG_EDGE - d.y) / SB_DRAG_EDGE);
+  else if (d.y > r.bottom - SB_DRAG_EDGE) v = Math.min(1.5, (d.y - (r.bottom - SB_DRAG_EDGE)) / SB_DRAG_EDGE);
+  if (v) sb.scrollTop += v * 16 / z;
+  if (sb.scrollTop !== d.scrollSeen) { d.scrollSeen = sb.scrollTop; sbBoxDragTrack(); }   // also a wheel scroll
+  d.raf = requestAnimationFrame(sbBoxDragTick);
+}
+// Back to the normal layout; `drop` = put the box at the placeholder
+function sbBoxDragFinish(drop) {
+  const d = sbBoxDragState, sb = d.sb, sec = d.sec;
+  cancelAnimationFrame(d.raf);
+  const moved = drop && d.to !== d.from;
+  const y0 = d.ph.getBoundingClientRect().top;
+  if (moved) {
+    try { if (sb.moveBefore) sb.moveBefore(sec, d.ph); else sb.insertBefore(sec, d.ph); }
+    catch (e) { sb.insertBefore(sec, d.ph); }
+  }
+  d.ph.remove();
+  d.pads.forEach(p => p.remove());
+  sec.classList.remove('sb-drag-box');
+  sec.style.top = sec.style.left = sec.style.width = '';
+  sb.classList.remove('sb-dragging');
+  document.documentElement.classList.remove('sb-drag-on');
+  if (d.pos) sb.style.position = '';
+  try { d.hdr.releasePointerCapture(d.id); } catch (e) {}
+  if (moved) {
+    // the boxes open again: keep the dropped header where it was let go
+    sb.scrollTop += (d.hdr.getBoundingClientRect().top - y0) / sbBoxDragZoom(sb);
+    sec.classList.remove('sb-moved'); void sec.offsetWidth; sec.classList.add('sb-moved');
+    sbBoxSave();
+    sbBoxButtons();
+  } else sb.scrollTop = d.scroll0;
+  d.on = false;
+}
+// The end of the press (release, a swipe, a cancel): stop listening
+function sbBoxDragEnd() {
+  const d = sbBoxDragState;
+  if (!d) return;
+  clearTimeout(d.timer);
+  d.hdr.classList.remove('sb-press');
+  if (d.on) sbBoxDragFinish(false);
+  window.removeEventListener('pointermove', sbBoxDragMoveEv, true);
+  window.removeEventListener('pointerup', sbBoxDragUpEv, true);
+  window.removeEventListener('pointercancel', sbBoxDragCancelEv, true);
+  window.removeEventListener('keydown', sbBoxDragKeyEv, true);
+  window.removeEventListener('blur', sbBoxDragCancelEv);
+  sbBoxDragState = null;
+}
+function sbBoxDragUpEv(e) {
+  const d = sbBoxDragState;
+  if (!d || e.pointerId !== d.id) return;
+  const dragged = d.on || d.dead;   // a drag, or a press that Escape cancelled
+  if (d.on) sbBoxDragFinish(true);
+  if (dragged) sbBoxDragEat = performance.now() + 600;   // the click on the header that follows
+  sbBoxDragEnd();
+}
+function sbBoxDragCancelEv(e) {
+  const d = sbBoxDragState;
+  if (!d || (e.type === 'pointercancel' && e.pointerId !== d.id)) return;
+  sbBoxDragEnd();
+}
+// Escape: the box goes back; the press stays "used" until the release
+function sbBoxDragKeyEv(e) {
+  const d = sbBoxDragState;
+  if (!d || e.key !== 'Escape') return;
+  if (d.on) { e.preventDefault(); e.stopPropagation(); sbBoxDragFinish(false); }
+  clearTimeout(d.timer);
+  d.hdr.classList.remove('sb-press');
+  d.dead = true;
+}
+function sbBoxDragInit(sb) {
+  sb.addEventListener('pointerdown', sbBoxDragDown);
+  // after a drag the release still makes a click on the header: not a collapse
+  window.addEventListener('click', e => {
+    if (sbBoxDragEat && performance.now() < sbBoxDragEat) { e.stopPropagation(); e.preventDefault(); }
+    sbBoxDragEat = 0;
+  }, true);
+  // touch: once the box is lifted the finger drags it instead of scrolling.
+  // On the headers only: a non-passive touch listener makes the browser wait
+  // for this page's busy main thread before it scrolls, and a swipe that
+  // starts in a box's content shouldn't.
+  sbBoxes().forEach(s => {
+    const h = s.querySelector(':scope > .sb-header');
+    if (h) h.addEventListener('touchmove', e => { if (sbBoxDragState && sbBoxDragState.on && e.cancelable) e.preventDefault(); }, {passive: false});
+  });
+  // the long press doesn't open the context menu
+  sb.addEventListener('contextmenu', e => { if (sbBoxDragState && (sbBoxDragState.on || sbBoxDragState.touch)) e.preventDefault(); });
+}
 function sbBoxInit() {
   const sb = document.querySelector('.sidebar');
   if (!sb) return;
@@ -5104,8 +5346,8 @@ function sbBoxInit() {
     const tools = document.createElement('span');
     tools.className = 'sb-tools';
     tools.innerHTML =
-      `<button type="button" class="sb-mv" data-d="-1" title="Move this box up" aria-label="Move up">${SB_ARROW('M5 8.5 V1.8 M2.2 4.6 L5 1.8 L7.8 4.6')}</button>` +
-      `<button type="button" class="sb-mv" data-d="1" title="Move this box down" aria-label="Move down">${SB_ARROW('M5 1.5 V8.2 M2.2 5.4 L5 8.2 L7.8 5.4')}</button>`;
+      `<button type="button" class="sb-mv" data-d="-1" title="Move this box up (or drag its header)" aria-label="Move up">${SB_ARROW('M5 8.5 V1.8 M2.2 4.6 L5 1.8 L7.8 4.6')}</button>` +
+      `<button type="button" class="sb-mv" data-d="1" title="Move this box down (or drag its header)" aria-label="Move down">${SB_ARROW('M5 1.5 V8.2 M2.2 5.4 L5 8.2 L7.8 5.4')}</button>`;
     tools.addEventListener('click', e => {
       e.stopPropagation();   // not a click on the header (that collapses)
       const b = e.target.closest('.sb-mv');
@@ -5120,6 +5362,7 @@ function sbBoxInit() {
   if (saved && saved.closed && typeof saved.closed === 'object')
     sbBoxes().forEach(s => { if (s.dataset.sb in saved.closed) s.classList.toggle('collapsed', !!saved.closed[s.dataset.sb]); });
   sbBoxButtons();
+  sbBoxDragInit(sb);
   // the operating mode / the wideband board / the phone layout show and hide boxes
   new MutationObserver(sbBoxButtons).observe(document.body, {attributes: true, attributeFilter: ['class']});
   const wb = $id('wb-section');

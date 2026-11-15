@@ -16,7 +16,7 @@ the dialogs. Each feature's own controls are in that feature's topic file.
   `data-sb`: it has no header and stays last.
 - `sbBoxInit()` (comment title "SIDEBAR BOXES", runs once at script load)
   adds ↑ / ↓ buttons (`.sb-mv`) and the chevron to every keyed header, then
-  applies the stored layout. A click on the header collapses / opens the box
+  applies the stored layout and sets up the drag (`sbBoxDragInit`). A click on the header collapses / opens the box
   (`toggleSection`); the buttons stop the click from reaching the header.
 - **Move** (`sbBoxMove`): the box swaps with the nearest *visible* box in
   that direction. Boxes hidden by the operating mode (`.coh-only`,
@@ -29,6 +29,57 @@ the dialogs. Each feature's own controls are in that feature's topic file.
   changes, the Wideband Board box appears, or the window is resized).
   `moveBefore` is used where the browser has it (it keeps focus and inner
   scroll positions), `insertBefore` elsewhere.
+- **Drag** (`sbBoxDrag…`, added 2026-11-16): a box is dragged by its header.
+  Pointer events on the sidebar (mouse, pen and touch), not HTML5
+  drag-and-drop (no touch support, no control over the look).
+  - Start: mouse / pen after 5 px of movement (`SB_DRAG_PX`), so a click
+    still collapses. Touch after a 400 ms press (`SB_DRAG_HOLD`) that stays
+    within 8 px (`SB_DRAG_SLOP`): a swipe that starts on a header scrolls the
+    sidebar as before (the press is dropped on the slop or on the browser's
+    `pointercancel`); the header darkens during the hold (`.sb-press`) and a
+    short vibration marks the lift where the browser allows it. Chosen over a
+    dedicated grip with `touch-action:none` because the whole header is the
+    target (a grip is a small finger target and would take room from the
+    title) and a long press is how phones reorder lists. Once lifted, a
+    non-passive `touchmove` listener stops the scroll; it sits on the headers
+    only, so a swipe that starts in a box's content never waits for this
+    page's busy main thread. The long press's context menu is suppressed.
+  - Not handles: the ↑ / ↓ buttons, the `?`, and any button, input, select,
+    link or label in the header. The footer box has no header and can't be
+    dragged.
+  - While dragging, the sidebar has `.sb-dragging`: every keyed box shows
+    only its header (the 800 px boxes would make the drag awkward; the
+    `collapsed` classes are not touched, the chevrons keep showing the real
+    state). The box is `position:absolute` in the sidebar's scrolled content
+    (the sidebar gets `position:relative` on the desktop for the drag), lifted
+    (shadow, blue border) and follows the pointer; a dashed placeholder
+    (`.sb-drop-ph`) stands where it will land. Right at the lift the sidebar
+    scrolls so the box's slot is where its header was, under the pointer; the
+    short header-only list usually can't scroll that far, and a spacer
+    (`.sb-drag-pad`) above the list (or below the footer) makes up the
+    difference - an empty band at the top while dragging, but nothing jumps
+    and a small move is a small move. The box stays between the first box and
+    the footer. Near the sidebar's top / bottom edge (44 px, below the phone
+    drawer's sticky header) it auto-scrolls, faster closer to the edge.
+  - The placeholder goes where the middle of the dragged box is, counting
+    only visible boxes. Moving down it lands right after the visible box above
+    the gap, moving up right before the one below - the same as `sbBoxMove`,
+    so boxes hidden by the mode keep their relative order. Back at its own
+    slot it returns to exactly where it was.
+  - Drop: the box moves to the placeholder (`moveBefore`), the boxes open
+    again and the sidebar scrolls so the dropped header stays where it was let
+    go, with the `sb-moved` flash; then `sbBoxSave()` and `sbBoxButtons()`.
+    A drop at the original slot changes nothing and restores the scroll
+    position. Escape, `pointercancel` and the window losing focus cancel the
+    same way. The click that the release makes on the header is swallowed (a
+    capture listener on window, for 600 ms after the release; also after an
+    Escape while the button was still down); the next real click collapses as
+    usual.
+  - Look: `cursor:grab` on keyed headers, a six-dot grip in the header's left
+    padding that shows on hover (always, faint, on touch screens);
+    `grabbing` and no text selection on the whole page while dragging
+    (`html.sb-drag-on`). The ↑ / ↓ tooltips mention the drag; no text on the
+    controls.
 - **Remembered**: the order and which boxes are collapsed, in
   `localStorage['kraken_sb']` = `{v:1, order:[keys], closed:{key:0|1}}`,
   written on every move and collapse. It is per browser, like the sidebar
@@ -135,3 +186,28 @@ modes, Range, Replay, a decoder's description; no long note left in those
 panels; the waterfall sliders still work; a decoder option button toggles
 and is lit while on; short dialog labels; the independent mode's title; no
 JS errors on desktop and phone. The 53 sidebar checks pass unchanged.
+
+2026-11-16, dragging boxes (78 checks, the same setup; mouse through
+`Input.dispatchMouseEvent` press / moves / release, touch through
+`Input.dispatchTouchEvent` in a 400x800 phone emulation; three runs, no
+flakes): drag down 5 places and up 4; the placeholder where the box lands
+while dragging; order saved and kept over a reload; the dropped box in view
+near where it was let go; footer last; no text selected; a plain click (also
+with 3 px of jitter) still collapses, the release after a drop doesn't, the
+next real click does; ↑ / ↓ and `?` still work, a press on them that moves is
+no drag; first / last ↑ / ↓ disabled states after dragging the first box down
+and the last one up; Escape mid-drag puts the box and the scroll position
+back and the release then doesn't collapse; independent mode: drag down and
+up across hidden boxes, which keep their relative order (down = right after
+the visible box above, up = right before the one below); auto-scroll in a
+560 px high window carries the first box past the end of the list (the last
+box started off-screen) and back to the top; zoomed sidebar (420 px): the
+lifted box has the slot's left edge and width, stays under the pointer, drops
+where let go; phone: a swipe that starts on a header scrolls and is no drag, a
+tap collapses / opens, a 200 ms press doesn't lift, a 600 ms one does with the
+box under the finger and the placeholder still in place, moving drags (no
+pointercancel, no scroll), drop 4 places down, touchcancel puts the box back;
+no JS errors. The 53 sidebar and 37 page checks pass unchanged. Not tested:
+a real phone (Android's long-press handling, iOS Safari, which has no
+`moveBefore`), the hover-only grip (headless Chromium reports `hover:none`, so
+the grip shows faintly there as on a touch screen).

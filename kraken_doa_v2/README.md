@@ -84,8 +84,13 @@ browsers stay in sync. The browser sends back short text commands (`FREQ:100.5`,
 ## Sidebar features
 
 The left sidebar groups all controls in boxes. Click a box's header to collapse or
-open it, and use the small ↑ / ↓ buttons at its top right to move it up or down;
-the order and the collapsed boxes are remembered in the browser (also over a
+open it. To move a box, drag it by its header to a new place (with a mouse just
+drag; on a touch screen hold the header for a moment until the box lifts, then
+drag - a quick swipe still scrolls the sidebar; Esc cancels), or use the small
+↑ / ↓ buttons at its top right to move it one place up or down. While you drag,
+every box shows only its header, so the whole list fits; the sidebar scrolls when
+you reach its top or bottom edge. The order and the collapsed boxes are
+remembered in the browser (also over a
 restart). **Collapse all / Open all / ↺ Order** at the bottom of the sidebar act on
 every box. Explanations are behind the **?** icons and tooltips. Top bar (always visible) has the
 **center-frequency dial, gain slider, FFT channel selector, audio on/off + volume**,
