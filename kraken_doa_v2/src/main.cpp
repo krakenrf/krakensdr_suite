@@ -20,6 +20,8 @@
 #include "utils/system_stats.hpp"
 #include "utils/status_dashboard.hpp"
 #include "utils/platform.hpp"
+#include "utils/version_info.hpp"
+#include "app_version.hpp"
 #include "channel_manager.hpp"
 #include "settings_store.hpp"
 #include "doa_logger.hpp"
@@ -180,6 +182,8 @@ int main(int argc, char* argv[]) {
     // (kraken_doa.html, server.crt, doa_settings.json, plugins/ ...). No-op on
     // Linux, where run.sh / the Docker entrypoint set the cwd.
     platform::chdir_to_exe_dir_if_missing("kraken_doa.html");
+    // The version indicator (docs/dev/version.md) asks git through kproc
+    app_version_init();
 
     // Parse command line arguments
     // Pre-connect default only: once data flows, the element count follows
@@ -197,6 +201,12 @@ int main(int argc, char* argv[]) {
             num_elements = static_cast<int>(n);
         } else if (strcmp(argv[i], "-w") == 0 || strcmp(argv[i], "--wideband") == 0) {
             wb_variant_enabled = true;
+        } else if (strcmp(argv[i], "--version") == 0) {
+            // the suite's version (git of the work tree, ./VERSION or the
+            // compiled-in one) - the text the web UI's sidebar shows
+            appver::resolve_now();
+            cout << appver::describe() << flush;
+            return 0;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             cout << "Usage: " << argv[0] << " [options]\n"
                  << "Options:\n"
@@ -205,6 +215,7 @@ int main(int argc, char* argv[]) {
                  << "  -w, --wideband          KrakenSDR Wideband variant: web UI gains RF tuning across the\n"
                  << "                          downconverter range plus high/low/below mixing-side control\n"
                  << "                          (IF " << WB_VARIANT_IF_HZ / 1e6 << " MHz; start heimdall with --wideband too)\n"
+                 << "  --version               Print the version (e.g. r294 \xC2\xB7 63a4917) and exit\n"
                  << "  -h, --help              Show this help message\n";
             return 0;
         } else {
@@ -272,6 +283,11 @@ int main(int argc, char* argv[]) {
              << " MHz, high/low mixing-side control in web UI)" << endl;
     }
     cout << "=======================================================================" << endl;
+
+    // The version: resolved and logged ("Version: ...") by a background
+    // thread, which keeps it current for the web UI (git can take a second
+    // on a Pi's SD card - never on the startup path or the uWS loop)
+    appver::start();
 
     // Initialize components
     FFTProcessor::initialize();  // per-channel FFT contexts (pffft)

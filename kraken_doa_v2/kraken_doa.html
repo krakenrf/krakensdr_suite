@@ -1210,6 +1210,9 @@ input[type="checkbox"].sw:disabled {opacity:.45;cursor:default}
 .sb-sub {display:flex;align-items:center;font-size:12px;font-weight:600;color:#8fb8ea;margin:8px 0 3px}
 .sb-note {font-size:11px;color:#7f93a8;line-height:1.4}
 .sb-note:empty {display:none}
+/* the footer box's last line: the version (sbVersionRender) */
+.sb-version {margin-top:8px;font-size:10.5px;line-height:1.3;color:#5a7298;text-align:center;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;cursor:default}
+.sb-version:empty {display:none}
 /* status lines: name left, value right */
 .sidebar .kv {display:flex;justify-content:space-between;gap:10px;font-size:12px;line-height:1.75;color:#b6c8e0}
 .sidebar .kv > span:first-child {flex:none;color:#6f87a6}
@@ -2378,6 +2381,8 @@ body.map-on .doa-header .rp-tab.sel {color:#a8cbf5;font-weight:600;border-bottom
           <button type="button" class="btn sm" onclick="sbBoxCollapseAll(false)" title="Open every box">Open all</button>
           <button type="button" class="btn sm" onclick="sbBoxReset()" title="Put the boxes back in their original order (↑ ↓ on a box or dragging its header moves it; the order and the collapsed boxes are remembered in this browser)">↺ Order</button>
         </div>
+        <!-- the version (system_status.version, sbVersionRender); empty and hidden until a receiver sends one -->
+        <div class="sb-version" id="sb-version"></div>
       </div>
     </div>
   </div>
@@ -25379,6 +25384,36 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     recRender();
   }
 
+  // The version line at the bottom of the sidebar (docs/dev/version.md):
+  // system_status.version = {text "r294 · 63a4917", count, hash, date, branch,
+  // modified, shallow, source git|file|build|unknown, build = the program's
+  // compiled-in text when it differs}; heimdall_version the same object from
+  // heimdall's control-port status (absent until heard). A receiver that sends
+  // no version (older than the field) leaves the line empty and hidden.
+  let sbVersionLast = '';
+  function sbVersionRender(v, hv) {
+    const el = $id('sb-version');
+    if (!el || !v || typeof v !== 'object') return;
+    const key = JSON.stringify([v, hv || null]);
+    if (key === sbVersionLast) return;
+    sbVersionLast = key;
+    const text = v.text || 'Version unknown';
+    const when = d => String(d || '').replace(/^(\d{4}-\d\d-\d\d)T(\d\d:\d\d)(?::\d\d)?(.*)$/, '$1 $2 $3').trim();
+    const src = {git: 'From git', file: 'From the VERSION file', build: 'Compiled in', unknown: 'Not known'};
+    const tip = ['kraken_doa ' + text];
+    if (v.date) tip.push('Commit ' + when(v.date));
+    if (v.branch) tip.push('Branch ' + v.branch);
+    if (v.shallow) tip.push('Shallow clone: no commit count');
+    if (v.modified) tip.push('Tracked files changed locally');
+    tip.push(src[v.source] || 'Not known');
+    if (v.build) tip.push('Program built from ' + v.build);
+    if (hv && typeof hv === 'object') {
+      tip.push(hv.text ? (hv.text === v.text ? 'heimdall: the same' : 'heimdall ' + hv.text) : 'heimdall: version not known');
+    }
+    el.textContent = text;
+    el.title = tip.join('\n');
+  }
+
   // ---- KrakenSDR Wideband board telemetry (system_status.wb_telemetry) ----
   // heimdall's "downconverter" object: fw {date, build, telemetry_ok, set_cmd},
   // telemetry {revision, vin_v, iin_a, iin_saturated, temp_c, rh_pct,
@@ -25715,6 +25750,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
 
   function updateSystemStatus(status) {
     setServerOs(status.platform || (status.hw && status.hw.os), status.source_tree);
+    sbVersionRender(status.version, status.heimdall_version);
     // KerberosSDR manual-calibration warnings (heimdall --kerberos). The
     // server never recalibrates automatically there: warn when uncalibrated
     // or when a settings change made the calibration stale.

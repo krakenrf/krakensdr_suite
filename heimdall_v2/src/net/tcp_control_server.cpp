@@ -6,6 +6,7 @@
 #include "../sdr/sdr_pipeline.hpp"
 #include "../dsp/compensation.hpp"
 #include "../core/config.hpp"
+#include "../core/version_info.hpp"
 #include <iostream>
 #include <sstream>
 #include <algorithm>
@@ -357,6 +358,10 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
                // channels whose lag calibration finds no correlation peak
                // (stream skew beyond +-NUM_SAMPLES; config.h LAG_NO_PEAK_*)
                << ",\"lag_no_peak\":" << lag_no_peak_json();
+
+    // the suite's version (core/version_info.hpp; kraken_doa shows it in its
+    // sidebar's tooltip)
+    status_json << ",\"version\":" << appver::json();
 
     status_json << "}";
     return status_json.str();
