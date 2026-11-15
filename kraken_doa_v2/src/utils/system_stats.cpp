@@ -85,6 +85,31 @@ static float read_cpu_usage() {
     return cached;
 }
 
+float get_program_cpu_usage() {
+    static std::mutex mtx;
+    static std::chrono::steady_clock::time_point last_sample{};
+    static bool have_prev = false;
+    static uint64_t prev_ns = 0;
+    static float cached = 0.0f;
+
+    std::lock_guard<std::mutex> lock(mtx);
+    const auto now = std::chrono::steady_clock::now();
+    if (have_prev && now - last_sample < std::chrono::milliseconds(1000)) return cached;
+
+    uint64_t ns = 0;
+    if (!platform::process_tree_cpu_ns(&ns)) return cached;
+    if (have_prev) {
+        const double wall_ns = std::chrono::duration<double, std::nano>(now - last_sample).count();
+        if (wall_ns > 0 && ns >= prev_ns)
+            cached = static_cast<float>(100.0 * static_cast<double>(ns - prev_ns) /
+                                        (wall_ns * platform::cpu_count()));
+    }
+    prev_ns = ns;
+    last_sample = now;
+    have_prev = true;
+    return cached;
+}
+
 // Read RAM usage from /proc/meminfo
 static void read_ram_usage(float& used_mb, float& total_mb) {
 #if defined(_WIN32) || defined(__APPLE__)

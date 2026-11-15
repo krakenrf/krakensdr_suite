@@ -324,6 +324,24 @@ that runs for years accumulates an errors-only log that cannot grow unbounded
 from routine output. Set `HEIMDALL_VERBOSE_LOG=1` / `KRAKEN_DOA_VERBOSE_LOG=1`
 to restore full output to files for debugging.
 
+Each dashboard's SYSTEM line shows two CPU figures on one scale, the share of
+the whole machine (every core busy = 100 %, one full core of a Pi's four =
+25 %): `cpu heimdall` / `cpu kraken_doa` is what that program uses, `total`
+is the machine's load from everything. kraken_doa's figure includes its
+child processes (decoder plugins, the whisper / AI / test-signal helpers and
+what those start), heimdall has none. `top` shows a process in percent of ONE
+core: divide by the core count to compare. The counters are
+`platform::process_cpu_ns`, `process_tree_cpu_ns` and `cpu_count`
+(`platform.hpp`, shared by both apps); the process-tree one reads the process
+list, so kraken_doa samples it once a second and only for the dashboard (the
+web page's CPU figure is still the machine total). Measured on x86_64 Linux
+(2026-11-15, 5-channel KrakenSDR): one process-list sample takes 1.4 ms with
+~390 processes; both figures agree with `top` / `ps` (heimdall 50.8 % of a
+core = 3.2 % of 16 cores; kraken_doa 1.7 %, 2.2 % with an RDS decoder
+plugin running, 1.6 % after it stopped). The Windows (Toolhelp snapshot,
+`GetProcessTimes`) and macOS (`sysctl KERN_PROC`, `proc_pid_rusage`)
+versions are compile-checked only, not yet run.
+
 All cout/cerr output is made terminal-safe (`SanitizingBuf` installed in
 each `main()`, and the TUI's log capture): log lines carry client-chosen
 strings (WebSocket commands and close reasons, filenames, settings values),
