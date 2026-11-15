@@ -1,4 +1,6 @@
 #include "wb_board.hpp"
+#include "app_version.hpp"
+#include "utils/version_info.hpp"
 #include "utils/platform.hpp"
 #include "message_builders.hpp"
 #include "globals.hpp"
@@ -582,6 +584,10 @@ string MessageBuilders::build_system_status_message() {
     json << ",\"noise_source\":" << (scanner_manager.isNoiseSourceActive() ? "true" : "false");
     json << ",\"active_elements\":" << active_num_elements.load();
     json << ",\"platform\":\"" << platform::os_name() << "\"";   // the UI's per-OS instructions
+    // The suite's version (utils/version_info.hpp; the sidebar's footer line) and
+    // heimdall's, from its control-port status (app_version.hpp; absent until heard)
+    json << ",\"version\":" << appver::json();
+    if (const std::string hv = heimdall_version_json(); !hv.empty()) json << ",\"heimdall_version\":" << hv;
 #ifdef _WIN32
     // running from the source folder (kraken_doa_v2/Makefile in the cwd) or
     // from a package (windows/package.sh: no sources, Makefile or MSYS2) -

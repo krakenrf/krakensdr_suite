@@ -3,6 +3,7 @@
 // ============================================
 
 #include "wb_board.hpp"
+#include "app_version.hpp"
 #include "networking/data_receiver.hpp"
 #include "playback.hpp"
 #include "recorder.hpp"
@@ -1467,9 +1468,10 @@ static mutex control_socket_mutex;
 
 // Read whatever heimdall has pushed at us. It answers every command and
 // broadcasts a status JSON at 2 Hz to every control client. Channel metadata
-// arrives on the 8091 data stream instead; the only thing taken from here is
+// arrives on the 8091 data stream instead; the only things taken from here are
 // the Wideband board's "downconverter" object (wb_board.cpp: board telemetry
-// for the UI and its log) - everything else is discarded.
+// for the UI and its log) and heimdall's "version" (app_version.cpp) -
+// everything else is discarded.
 // Left unread it fills our 128 KB receive buffer in about two minutes, the
 // window closes, and heimdall's control server eventually wedges on a blocking
 // send() - taking its accept loop and command handling down with it.
@@ -1482,6 +1484,7 @@ static void drain_control_socket_locked() {
         ssize_t n = control_client.receive_data(scratch, sizeof(scratch));
         if (n > 0) {
             wb_board_ingest(scratch, static_cast<size_t>(n));
+            heimdall_version_ingest(scratch, static_cast<size_t>(n));
             if (static_cast<size_t>(n) < sizeof(scratch)) break;  // drained
             continue;                                             // more waiting
         }

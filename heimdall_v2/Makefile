@@ -30,7 +30,7 @@ endif
 
 # Source files organized by module
 CORE_SOURCES = src/core/utils.cpp src/core/settings.cpp src/core/forward_comp.cpp src/core/status_dashboard.cpp \
-               src/core/platform.cpp src/core/fs_compat.cpp
+               src/core/platform.cpp src/core/fs_compat.cpp src/core/version_info.cpp src/core/run_capture.cpp
 SDR_SOURCES = src/sdr/sdr_device.cpp src/sdr/sdr_init.cpp src/sdr/sdr_pipeline.cpp src/sdr/pipeline_control.cpp src/sdr/downconverter.cpp src/sdr/kerberos_gpio.cpp
 DSP_SOURCES = src/dsp/fft_plan.cpp src/dsp/correlation.cpp src/dsp/compensation.cpp
 NET_SOURCES = src/net/tcp_common.cpp src/net/tcp_data_server.cpp src/net/tcp_control_server.cpp src/net/rtl_tcp_server.cpp
@@ -332,6 +332,20 @@ $(BUILD_DIR)/%.o: src/%.cpp $(FLAGS_STAMP) | $(BUILD_DIR) check-uws $(RTLSDR_LIB
 	@echo "Compiling $<..."
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -MP -IuWebSockets/src -IuWebSockets/uSockets/src -c $< -o $@
+
+# The version compiled in (docs/dev/version.md): ../scripts/version.sh writes
+# $(BUILD_DIR)/build_version.h on every make but replaces it only when it
+# changed, so a new commit recompiles version_info.cpp alone (+ the link).
+# Its own rule: only this file gets -I$(BUILD_DIR) (a target-specific variable
+# would also reach the flags stamp). No script / no git: an empty header
+VERSION_H = $(BUILD_DIR)/build_version.h
+$(VERSION_H): FORCE | $(BUILD_DIR)
+	@sh ../scripts/version.sh --header $@ 2>/dev/null || [ -f $@ ] || echo '/* no version */' > $@
+FORCE:
+$(BUILD_DIR)/core/version_info.o: src/core/version_info.cpp $(VERSION_H) $(FLAGS_STAMP) | $(BUILD_DIR) check-uws $(RTLSDR_LIB)
+	@echo "Compiling $<..."
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -I$(BUILD_DIR) -MMD -MP -c $< -o $@
 
 $(BUILD_DIR)/pffft/%.o: external/pffft/%.c external/pffft/pffft.h external/pffft/pffft_priv_impl.h $(wildcard external/pffft/simd/*.h) $(FLAGS_STAMP) | $(BUILD_DIR)
 	@echo "Compiling $<..."

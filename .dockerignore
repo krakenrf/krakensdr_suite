@@ -13,6 +13,10 @@
 !kraken_doa_v2/LICENSE
 !kraken_doa_v2/THIRD_PARTY_NOTICES.md
 !kraken_doa_v2/COMMERCIAL_TERMS.md
+# the version shown in the web UIs (Dockerfile: scripts/version.sh reads the
+# git metadata in the build stage only; docs/dev/version.md)
+!.git/
+!scripts/version.sh
 !heimdall_v2/Makefile
 !heimdall_v2/config.h
 !heimdall_v2/index.html

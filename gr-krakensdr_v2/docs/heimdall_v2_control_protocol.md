@@ -20,7 +20,7 @@ Source of truth: `/home/krakenrf/krakensdr_v2/heimdall_v2/src/net/tcp_control_se
 2. **Unsolicited status broadcasts** — from the `tcp_status_broadcaster` thread (`src/main.cpp:74–84`): `broadcast_status()` every **500 ms (2 Hz)**, terminated `"}\n"`. Skipped entirely while no clients are connected. A client must therefore read line-by-line and distinguish: broadcasts have a top-level `"settings"` key and no `"status"` key; responses have `"status"`.
 
 Unknown command → `{"status":"error","message":"Unknown command"}`.
-**Note:** `get_status` (mentioned in docs/CLAUDE.md) is **not implemented** — it returns the Unknown-command error. The 2 Hz broadcast is the status mechanism.
+`{"command":"get_status"}` returns the broadcast's object (section 3) with `"status":"success"` added (`build_status_json(true)`; answered also during an element-count reconfiguration, which refuses every other command). The 2 Hz broadcast is the main status mechanism.
 
 ---
 
@@ -189,9 +189,29 @@ One line per broadcast, terminated `"}\n"`:
   // Always present:
   "coherence_events": 0,             // running count of detected desync events
   "recovering": false,               // true while a coherence recovery (flush + full recal) is in flight
-  "lag_no_peak": []                  // channels whose lag calibration finds no correlation peak (below)
+  "lag_no_peak": [],                 // channels whose lag calibration finds no correlation peak (below)
+  "version": {                       // the suite's version (below)
+    "text": "r294 · 63a4917",
+    "count": 294, "hash": "63a4917", "date": "2026-11-16T00:23:16+13:00",
+    "branch": "main", "modified": false, "source": "git"
+  }
 }
 ```
+
+`version` (added 2026-11-16, `src/core/version_info.hpp`, `docs/dev/version.md`
+at the repository root): the suite's version as heimdall knows it. `text` is
+what the web UIs show: `r<commits on HEAD> · <hash>`, on a shallow clone
+`<commit date> · <hash>`, with ` · modified` appended when tracked files differ
+from the commit; `""` when not known. `count` (absent on a shallow clone, which
+then has `"shallow":true`), `hash`, `date` (commit date, ISO 8601) and `branch`
+(absent on a detached HEAD) are the parts; `modified` is always present;
+`source` says where it came from: `git` (the work tree heimdall runs in, re-read
+in the background), `file` (`./VERSION`: Docker image, Windows package), `build`
+(compiled in by the Makefile) or `unknown`; `build` (only when it differs from
+`text`) is the compiled-in text - the program was built from another commit
+than the tree it runs in. kraken_doa reads this object from the broadcast and
+shows it in its sidebar's version tooltip. The web STATE message carries the
+same field.
 
 `lag_no_peak` (added 2026-11-13): the channel numbers whose lag calibration has
 servoed for `LAG_NO_PEAK_WARN_S` (60 s) without a lock while the median

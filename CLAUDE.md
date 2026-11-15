@@ -21,6 +21,7 @@ measurements and decisions; when they disagree with the code, the code wins.
 | Compiler flags and the measurements behind them | `docs/dev/compiler-flags.md` |
 | Licence of each part, audits, clean-room rewrites | `docs/dev/licensing.md`, `LICENSE` |
 | Long-form suite overview (architecture, configuration, every feature, algorithms) | `docs/dev/suite-reference.md` |
+| Version indicator (from git; VERSION file, compiled-in fallbacks; Docker, package) | `docs/dev/version.md` |
 | 8091 data / 8092 control wire protocols | `gr-krakensdr_v2/docs/heimdall_v2_data_protocol.md`, `..._control_protocol.md` |
 | User docs | `README.md`, `DOCKER.md`, `WINDOWS.md` |
 
@@ -208,8 +209,8 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
   `mac/posix_compat.h` are force-included and define POSIX names only with
   their Linux meaning.
 - Keep shared copies identical in both apps: `host_check.hpp`,
-  `log_sanitize.hpp`, `net_compat.hpp`, `platform.*` and `fs_compat.*` (only
-  the include path differs), `win/`, `mac/` (`posix_compat.h`,
+  `log_sanitize.hpp`, `net_compat.hpp`, `platform.*`, `fs_compat.*` and
+  `version_info.*` (only the include path differs), `win/`, `mac/` (`posix_compat.h`,
   `fast_complex.h`),
   `external/pffft/`. Also keep equal: `UWS_COMMIT` in both Makefiles and the
   Dockerfile; the `WB_*` constants in both config files;

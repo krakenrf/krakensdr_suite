@@ -275,6 +275,8 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
     <div class="info">Real-time cross-correlation with auto compensation</div>
     <div id="plots" class="plots"></div>
     <div class="info">Click and drag on graphs to zoom • Double-click to reset zoom</div>
+    <!-- the version (STATE.version, applyVersionState); hidden until a heimdall sends one -->
+    <div class="info" id="version-line" hidden></div>
     
     <script>
         const parseTemplateVar = (t, f) => {
@@ -1156,6 +1158,31 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             $('wb-alarm').style.color = bad.length ? '#dc3545' : '';
         };
 
+        // The version line at the bottom (docs/dev/version.md): STATE.version =
+        // {text "r294 · 63a4917", count, hash, date, branch, modified, shallow,
+        // source git|file|build|unknown, build}; an older heimdall sends none
+        let versionLast = '';
+        const applyVersionState = st => {
+            const v = st.version;
+            if (!v || typeof v !== 'object') return;
+            const key = JSON.stringify(v);
+            if (key === versionLast) return;
+            versionLast = key;
+            const when = d => String(d || '').replace(/^(\d{4}-\d\d-\d\d)T(\d\d:\d\d)(?::\d\d)?(.*)$/, '$1 $2 $3').trim();
+            const src = {git: 'From git', file: 'From the VERSION file', build: 'Compiled in', unknown: 'Not known'};
+            const tip = [];
+            if (v.date) tip.push('Commit ' + when(v.date));
+            if (v.branch) tip.push('Branch ' + v.branch);
+            if (v.shallow) tip.push('Shallow clone: no commit count');
+            if (v.modified) tip.push('Tracked files changed locally');
+            tip.push(src[v.source] || 'Not known');
+            if (v.build) tip.push('Program built from ' + v.build);
+            const el = $('version-line');
+            el.textContent = 'heimdall ' + (v.text || 'version unknown');
+            el.title = tip.join('\n');
+            el.hidden = false;
+        };
+
         const handleTextMessage = msg => {
             if (msg.startsWith('STATE:')) {
                 try {
@@ -1166,6 +1193,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                     applyKerberosState(st);
                     applyModeState(st);
                     applyWidebandState(st);
+                    applyVersionState(st);
                     if (Number.isFinite(st.rf_min_hz) && Number.isFinite(st.rf_max_hz)) {
                         $('freq-input').min = st.rf_min_hz / 1e6;
                         $('freq-input').max = st.rf_max_hz / 1e6;

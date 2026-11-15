@@ -235,6 +235,10 @@ git pull
 docker compose up -d --build
 ```
 
+The web pages show the version the image was built from (bottom of the
+sidebar, e.g. `r294 · 63a4917`). The build reads it from the clone's `.git`;
+an image built from a source archive without it shows "Version unknown".
+
 ## 8. Hardware variants
 
 - **Standard KrakenSDR**, **`--ext_noise`** and **`--kerberos`** need only USB

@@ -12,6 +12,7 @@
 #include "../core/host_check.hpp"
 #include "../core/settings.hpp"
 #include "../core/forward_comp.hpp"
+#include "../core/version_info.hpp"
 #include "App.h"  // uWebSockets main header
 #ifdef _WIN32
 #include "../net/tcp_common.hpp"  // listen_error_detail
@@ -132,7 +133,9 @@ static std::string build_state_message() {
         + (external_noise_mode.load(std::memory_order_relaxed) ? "true" : "false")
         + ",\"operating_mode\":\"" + operating_mode_name(operating_mode.load(std::memory_order_relaxed)) + "\""
         // channels whose lag calibration finds no correlation peak (8092 status: same field)
-        + ",\"lag_no_peak\":" + lag_no_peak_json();
+        + ",\"lag_no_peak\":" + lag_no_peak_json()
+        // the suite's version (core/version_info.hpp): the page's footer line
+        + ",\"version\":" + appver::json();
     {
         // Last calibration check (periodic or Check Calibration)
         static const char* const results[] = {"none", "ok", "drifted", "no_verdict"};
