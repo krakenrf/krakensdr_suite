@@ -287,13 +287,28 @@ std::string PluginRegistry::list_json() const {
 std::string codec_status_message() {
     const std::string tool = kproc::exe_path(PluginRegistry::dir() + "/lib/build/codecs");
     std::string out;
-    if (!is_exe(tool) || !run_and_capture({tool}, 5000, &out))
+    if (!is_exe(tool))
+        return std::string("{\"codecs\":{\"checked\":false,\"error\":\"codec check not built (") + BUILD_HINT + ")\"}}";
+    // the tool has the dab plugin's AAC loader compiled in (plugins/Makefile):
+    // when the AI assistant changed that folder it runs only sandboxed, like
+    // the plugin (ai_sandbox.hpp; a changed plugins/lib marks every plugin)
+    std::vector<std::string> argv{tool};
+    if (aisandbox::must_sandbox_dir(PluginRegistry::dir() + "/dab")) {
+        argv = aisandbox::wrap(argv);
+        if (argv.empty())
+            return std::string("{\"codecs\":{\"checked\":false,\"error\":\"") +
+                   json_escape(std::string("the codec check contains plugins/dab, which the AI assistant changed: it runs "
+                                           "only in a sandbox - ") + aisandbox::NO_SANDBOX_FIX) + "\"}}";
+    }
+    if (!run_and_capture(argv, 5000, &out))
         return std::string("{\"codecs\":{\"checked\":false,\"error\":\"codec check not built (") + BUILD_HINT + ")\"}}";
     std::ostringstream o;
     o << "{\"codecs\":{\"checked\":true";
-    for (const char* k : {"imbe", "ambe", "acelp"}) {
+    // aac (DAB+, the dab plugin's AAC library loader): only when the tool
+    // reports it - it is built in only with the plugin folder there
+    for (const char* k : {"imbe", "ambe", "acelp", "aac"}) {
         std::string ok, st;
-        json_find(out, std::string(k) + "_ok", ok);
+        if (!json_find(out, std::string(k) + "_ok", ok) && std::string(k) == "aac") continue;
         json_find(out, k, st);
         o << ",\"" << k << "_ok\":" << (ok == "true" ? "true" : "false") << ",\"" << k << "\":\"" << json_escape(st) << "\"";
     }

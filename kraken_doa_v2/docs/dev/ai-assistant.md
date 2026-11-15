@@ -154,7 +154,8 @@ the internet and writes / changes decoder plugins):
   a folder whose ctime moved during a turn (`turn_started` - 2 s ..
   `turn_finished`) is added to `ai/state/sandboxed_plugins.json`; its
   `--info` scan, its decoder process (`PluginProcess::start`) and a debug
-  playback generator are wrapped in `bwrap --ro-bind / / --dev /dev --proc
+  playback generator (and, for `dab`, the codec check `lib/build/codecs`,
+  which compiles in its AAC loader - `codec_status_message`) are wrapped in `bwrap --ro-bind / / --dev /dev --proc
   /proc --tmpfs /tmp [--bind <rw>] --unshare-net --unshare-ipc
   --die-with-parent --new-session` (read-only filesystem, no network).
   Without bwrap such a plugin doesn't run ("install bubblewrap"). A crash

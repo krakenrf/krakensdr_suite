@@ -18,7 +18,8 @@
  ],
  "transmitters": [
   {"name": "North", "main": 12, "sub": 3, "bearing": 40, "delay_us": 0, "level_db": 0, "phase_deg": 0, "range_km": 22},
-  {"name": "Harbour", "main": 12, "sub": 7, "bearing": 150, "delay_us": 37.5, "level_db": -4, "phase_deg": 120, "range_km": 35},
+  {"name": "Harbour", "main": 12, "sub": 7, "bearing": 150, "delay_us": 37.5, "level_db": -4, "phase_deg": 120, "range_km": 35,
+   "tii_pair_phase": "k+1"},
   {"name": "Ridge", "main": 31, "sub": 15, "bearing": 260, "delay_us": 112.25, "level_db": -8, "phase_deg": 250, "range_km": 48}
  ]
 }

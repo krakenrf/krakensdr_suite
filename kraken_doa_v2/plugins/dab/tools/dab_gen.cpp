@@ -34,7 +34,9 @@
 // Scene file: see the README notes (plugins/dab/README.md) - keys "rf_hz",
 // "seconds", "rate", "channels", "radius_m", "snr_db", "seed", "cfo_hz",
 // "sco_ppm", "offset_khz", "station", "ensemble" {...}, "services" [...],
-// "transmitters" [...].
+// "transmitters" [...] (per transmitter "tii_pair_phase": "k" = the standard's
+// phi_k on both carriers of a TII pair, default, or "k+1" = phi_k+1 on the
+// second, as some transmitters on the air do).
 //
 // Tables: dab_gen_tables.hpp (transcribed by a script from the EN 300 401 /
 // TS 103 466 PDFs), dab_gen_aac_tables.hpp (AAC Huffman code books, Apache-2.0,
@@ -250,6 +252,10 @@ struct Transmitter {
     int main_id = 1, sub_id = 1;
     double bearing = 0, delay_us = 0, level_db = 0, phase_deg = 0, range_km = 20;
     double lat = 0, lon = 0;
+    // the phase reference value on the second carrier of each TII pair:
+    // false = phi_k of the first carrier (EN 300 401 clause 14.8, both carriers
+    // alike), true = phi_k+1 (seen on several transmitters on the air)
+    bool pair_k1 = false;
     std::vector<cf> tii;   // null symbol samples (kNull)
 };
 
@@ -786,9 +792,8 @@ struct Generator {
         for (auto& t : tx) {
             std::vector<cd> z(kK + 1, cd(0, 0));
             for (int k0 : tii_carriers(t.sub_id, t.main_id)) {
-                const cd v = std::polar(1.0, prs_phase(k0));
-                z[static_cast<size_t>(k0 + 768)] = v;
-                z[static_cast<size_t>(k0 + 1 + 768)] = v;
+                z[static_cast<size_t>(k0 + 768)] = std::polar(1.0, prs_phase(k0));
+                z[static_cast<size_t>(k0 + 1 + 768)] = std::polar(1.0, prs_phase(t.pair_k1 ? k0 + 1 : k0));
             }
             t.tii.assign(kNull, cf(0, 0));
             ofdm(z, kNull - kFft, kNull, t.tii.data());
@@ -1117,6 +1122,9 @@ int main(int argc, char** argv) {
             t.level_db = v.num("level_db", 0);
             t.phase_deg = v.num("phase_deg", std::fmod(37.0 * static_cast<double>(G.tx.size() + 1), 360.0));
             t.range_km = v.num("range_km", 20);
+            const std::string pp = v.str("tii_pair_phase", "k");
+            if (pp != "k" && pp != "k+1") throw std::runtime_error("tii_pair_phase \"k\" (the standard) or \"k+1\"");
+            t.pair_k1 = pp == "k+1";
             if (t.delay_us < 0 || t.delay_us > 246) throw std::runtime_error("delay_us 0..246 (the guard interval)");
             std::tie(t.lat, t.lon) = destination(S.lat, S.lon, std::fmod(360.0 - t.bearing + 720.0, 360.0), t.range_km);
             G.tx.push_back(t);
@@ -1156,11 +1164,13 @@ int main(int argc, char** argv) {
             const auto& t = G.tx[i];
             const std::string tid = hex(E.eid, 4) + "-" + (t.main_id < 10 ? "0" : "") + std::to_string(t.main_id) + "-" +
                                     (t.sub_id < 10 ? "0" : "") + std::to_string(t.sub_id);
-            std::fprintf(stderr, "  %-6s TII %s (MainId %2d SubId %2d)  bearing %6.1f  delay %7.3f us  level %+5.1f dB  phase %5.1f  %.5f %.5f\n",
-                         t.name.c_str(), tid.c_str(), t.main_id, t.sub_id, t.bearing, t.delay_us, t.level_db, t.phase_deg, t.lat, t.lon);
+            std::fprintf(stderr, "  %-6s TII %s (MainId %2d SubId %2d)  bearing %6.1f  delay %7.3f us  level %+5.1f dB  phase %5.1f  %.5f %.5f%s\n",
+                         t.name.c_str(), tid.c_str(), t.main_id, t.sub_id, t.bearing, t.delay_us, t.level_db, t.phase_deg, t.lat, t.lon,
+                         t.pair_k1 ? "  pairs phi k/k+1" : "");
             js << (i ? "," : "") << "\n  {\"name\": " << json_str(t.name) << ", \"tid\": \"" << tid << "\", \"main\": " << t.main_id
                << ", \"sub\": " << t.sub_id << ", \"bearing\": " << t.bearing << ", \"delay_us\": " << t.delay_us << ", \"level_db\": "
-               << t.level_db << ", \"phase_deg\": " << t.phase_deg << ", \"lat\": " << t.lat << ", \"lon\": " << t.lon << ", \"tii_carriers\": [";
+               << t.level_db << ", \"phase_deg\": " << t.phase_deg << ", \"tii_pair_phase\": \"" << (t.pair_k1 ? "k+1" : "k")
+               << "\", \"lat\": " << t.lat << ", \"lon\": " << t.lon << ", \"tii_carriers\": [";
             const auto tc = tii_carriers(t.sub_id, t.main_id);
             for (size_t k = 0; k < tc.size(); k++) js << (k ? ", " : "") << tc[k];
             js << "]}";

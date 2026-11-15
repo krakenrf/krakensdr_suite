@@ -18,7 +18,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   ssr1030, uat, flarm, beacon406, lora (six), wildlife (five), dtv, cells,
   adsb, dme, ism, pocsag, v23_telemetry, p25, dmr, radiosonde (the last
   three since 2026-10-16 - their earlier tests used public recordings),
-  rds (2026-10-22)
+  rds (2026-10-22); since 2026-11-16 41 in 29 with dab (two WIDE entries,
+  `dab-sfn-three` / `dab-single-offset`: the generator writes the 5-antenna
+  cu8 itself; talkers + `{"event"}` rows - *DAB / DAB+*)
 - Generation: `PLAYBACK_GEN:<id>` forks `python3 -I
   plugins/sdk/tools/make_testsignal.py <id> --plugins DIR --cache
   testsignal_cache --lat --lon` (nice 10, own process group; PROGRESS lines

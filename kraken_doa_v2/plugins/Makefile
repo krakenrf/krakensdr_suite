@@ -120,8 +120,11 @@ ifeq ($(WINDOWS),1)
 WIN_OBJS := sdk/build/win_init.o sdk/build/app_res.o
 endif
 
-# codec check (kraken_doa's "Digital Decoders" box): what the plugins find
+# codec check (kraken_doa's "Digital Decoders" box): what the plugins find.
+# With the dab plugin folder here also its AAC library loader (DAB+ audio; a
+# self-contained file); without the folder the tool builds without it
 CODECS := lib/build/codecs$(EXE)
+CODECS_AAC := $(wildcard dab/audio_aaclib.cpp)
 
 .PHONY: all clean list
 all: $(TARGETS) $(CODECS)
@@ -130,8 +133,8 @@ all: $(TARGETS) $(CODECS)
 LIQUID_ROOT := ..
 include ../liquid.mk
 
-$(CODECS): lib/tools/codecs.cpp $(LIB_A) $(LIB_HDRS) $(LIQUID_H) $(LIQUID_A) $(WIN_OBJS) $(FLAGS_STAMP)
-	$(CXX) $(CXXFLAGS) -o $@.tmp $< $(WIN_OBJS) $(LIB_A) $(LIQUID_A) $(LIBS)
+$(CODECS): lib/tools/codecs.cpp $(CODECS_AAC) $(CODECS_AAC:.cpp=.hpp) $(LIB_A) $(LIB_HDRS) $(LIQUID_H) $(LIQUID_A) $(WIN_OBJS) $(FLAGS_STAMP)
+	$(CXX) $(CXXFLAGS) $(if $(CODECS_AAC),-DKRAKEN_CODECS_AAC) -o $@.tmp $< $(CODECS_AAC) $(WIN_OBJS) $(LIB_A) $(LIQUID_A) $(LIBS)
 	@mv -f $@.tmp $@
 
 list:

@@ -37,6 +37,7 @@ every session needs and points here.
 | `plugin-analog-id.md` | Analog FM IDs plugin |
 | `plugin-beacon406.md` | 406 MHz distress beacons plugin |
 | `plugin-cells.md` | LTE / 5G NR Cell Decoder plugin |
+| `plugin-dab.md` | DAB / DAB+ plugin |
 | `plugin-dme.md` | DME / TACAN plugin |
 | `plugin-dtv.md` | Digital TV plugin |
 | `plugin-flarm.md` | FLARM / OGN plugin |

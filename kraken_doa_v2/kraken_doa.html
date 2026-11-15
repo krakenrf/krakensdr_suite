@@ -11238,6 +11238,16 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
      win_note: 'Then copy <code>cdecoder.exe</code> and <code>sdecoder.exe</code> into the kraken_doa_v2 folder, next to ' +
        'kraken_doa.exe, as <code>tetra-cdecoder.exe</code> and <code>tetra-sdecoder.exe</code> (or set ' +
        'KRAKEN_TETRA_CODEC_DIR to the folder holding cdecoder.exe and sdecoder.exe and restart the software), and '},
+    // DAB+ audio: Fraunhofer FDK AAC, loaded by the dab plugin at run time
+    // (plugins/dab/audio_aaclib.hpp, KRAKEN_AAC_LIB) - reported only by a
+    // receiver whose codec check was built with that plugin
+    {key: 'aac', name: 'HE-AAC v2 (libfdk-aac)', used: 'DAB+',
+     install: `sudo apt-get install -y libfdk-aac2   # Debian: needs the non-free component; Ubuntu: multiverse
+# macOS: brew install fdk-aac`,
+     install_win: `# in the MSYS2 UCRT64 shell (C:\\msys64\\ucrt64.exe)
+pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
+     win_note: 'Then copy <code>C:\\msys64\\ucrt64\\bin\\libfdk-aac-2.dll</code> into the kraken_doa_v2 folder, next to kraken_doa.exe (or set ' +
+       'KRAKEN_AAC_LIB to its full path and restart the software), and '},
   ];
   let digCodecsLast = null;   // the last {"codecs"}: drawn again when the receiver's OS becomes known
   function digOnCodecs(c) {
@@ -11248,16 +11258,19 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (!c || !c.checked) {
       html = `<div class="dig-warn" style="display:block">${digEsc((c && c.error) || 'The codec check failed.')}</div>`;
     } else {
-      html = DIG_CODECS.map(k => {
+      // a codec the receiver doesn't report is left out (aac: an older
+      // receiver, or one without the dab plugin)
+      html = DIG_CODECS.filter(k => (k.key + '_ok') in c).map(k => {
         const ok = !!c[k.key + '_ok'];
-        const st = String(c[k.key] || '').replace(/\s*\(see README[^)]*\)/, '');
+        // "not installed (libfdk-aac2)": the hint stays, "not installed" once
+        const st = String(c[k.key] || '').replace(/\s*\(see README[^)]*\)/, '').replace(/^not installed(?= \()/, '');
         // a package (windows/package.sh) has no MSYS2: build it on any PC that has
         let inst = serverWin ? k.install_win : k.install;
         if (serverPkg && inst)
           inst = '# needs MSYS2 (https://www.msys2.org - not part of this package; any PC with it will do)\n' + inst;
         return `<div class="dig-codec ${ok ? 'ok' : 'missing'}">` +
           `<div class="h"><span class="i">${ok ? '✔' : '✗'}</span><b>${digEsc(k.name)}</b><span class="u">${digEsc(k.used)}</span></div>` +
-          `<div class="s">${ok ? digEsc(st) : 'Not installed' + (st && st !== 'not installed' ? ' — ' + digEsc(st) : '')}</div>` +
+          `<div class="s">${ok ? digEsc(st) : 'Not installed' + (st && st !== 'not installed' ? (st.startsWith(' (') ? '' : ' — ') + digEsc(st) : '')}</div>` +
           (!ok && inst ? `<details><summary>How to install</summary><pre>${digEsc(inst)}</pre>` +
             (serverWin ? '<div class="dig-help">' + (k.win_note || 'Then ') + 'switch the decoders off and on, or restart the KrakenSDR software.</div></details>'
               : '<div class="dig-help">Then switch the decoders off and on, or restart the KrakenSDR software. Docker: README, "Digital voice codecs".</div></details>') : '') +
@@ -14485,7 +14498,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // nearest first like ships, TETRA / MPT1327 sites, VOR / ILS navaids,
   // pulse radars and 1030 MHz interrogators by name, 406 MHz distress
   // beacons newest first, LoRa nodes nearest first (Meshtastic POSITION
-  // packets), the others by name.
+  // packets), DAB transmitters by their TII code (few ensembles send their
+  // positions), the others by name.
   // Ties are broken by name, ID and VFO, so rows with equal values (heard in
   // the same second) never swap; empty values go last either way. Radios
   // stay above packet talkers. Returns [talker, rdfPosCheck] pairs
@@ -14493,7 +14507,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                         device: ['name', 1], path: ['info', 1], cell: ['info', 1], station: ['dist', 1], sonde: ['dist', 1],
                         site: ['name', 1], navaid: ['name', 1], radar: ['name', 1], interrogator: ['name', 1],
                         gs: ['name', 1], flarm: ['dist', 1], sar: ['heard', 1], collar: ['name', 1], node: ['dist', 1],
-                        broadcast: ['name', 1], talker: ['heard', 1]};
+                        broadcast: ['name', 1], transmitter: ['name', 1], talker: ['heard', 1]};
   const RDF_SORT_KEYS = {
     vfo: t => t.vfo,
     name: t => rdfShortName(t).toLowerCase(),
@@ -14806,17 +14820,19 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   const RDF_PK_KIND = {ais: 'ship', adsb: 'aircraft', dme: 'beacon', ism: 'device', aprs: 'station',
                        radiosonde: 'sonde', tetra: 'site', mpt1327: 'site', ils: 'navaid', radar: 'radar',
                        ssr1030: 'interrogator', uat: 'aircraft', flarm: 'flarm', beacon406: 'sar', lora: 'node',
-                       wildlife: 'collar', rds: 'broadcast', acars: 'aircraft', vdl2: 'aircraft'};
+                       wildlife: 'collar', rds: 'broadcast', acars: 'aircraft', vdl2: 'aircraft', dab: 'transmitter'};
   // kinds that report where they are (their decoder's map points, same id):
-  // Dist / Δ pos columns, the position check
-  const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde', 'gs', 'flarm', 'sar', 'node']);
+  // Dist / Δ pos columns, the position check. Some only now and then: LoRa
+  // nodes (POSITION packets), DAB transmitters (only an ensemble that sends
+  // its TII database, FIG 0/22)
+  const RDF_POS_KINDS = new Set(['aircraft', 'ship', 'station', 'sonde', 'gs', 'flarm', 'sar', 'node', 'transmitter']);
   // what one of their packets is called
   const RDF_PK_UNIT = {beacon: 'pulse pair', device: 'transmission', site: 'slot', sonde: 'frame', navaid: 'block', radar: 'pulse',
                        interrogator: 'interrogation', gs: 'frame', sar: 'burst', node: 'frame', collar: 'pulse',
-                       broadcast: 'group'};
+                       broadcast: 'group', transmitter: 'null symbol'};
   // how a kind is named in "Every ...", counts and the position check
   const RDF_KIND_WORD = {flarm: 'aircraft', gs: 'ground station', sar: 'distress beacon', broadcast: 'broadcast station',
-                         tone: 'analog transmitter'};
+                         tone: 'analog transmitter', transmitter: 'DAB transmitter'};
   function rdfKind(t) {
     // a plugin's spatial talker: a mobile network cell (cells plugin, by
     // its physical cell ID) or a path of a TV signal (dtv plugin with path
@@ -14862,7 +14878,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       return /^(MDC|FleetSync) /.test(t.tid) ? '🆔 ' : /^(DTMF|ZVEI|DZVEI|CCIR|EEA|EIA|NATEL|MODAT) /.test(t.tid) ? '🔢 ' : '🔔 ';
     return {ship: '⛴ ', aircraft: '✈ ', beacon: '📡 ', device: '📟 ', path: '📶 ', cell: '📱 ', station: '📻 ',
             sonde: '🎈 ', site: '🗼 ', navaid: '🧭 ', radar: '📡 ', gs: '🗼 ', tone: '🔔 ', sar: '🆘 ', node: '📶 ',
-            collar: '🐾 ', broadcast: '🎙 '}[k] || '';
+            collar: '🐾 ', broadcast: '🎙 ', transmitter: '🗼 '}[k] || '';
   }
   function rdfKinds(ts) {   // one word for a list of talkers: the common kind, else 'talker'
     const ks = new Set(ts.map(rdfKind));
@@ -14919,7 +14935,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         const c = rdfPosCheck(t);
         if (c) line += `<br>Reported position: ${c.brg.toFixed(1)}°, ${c.km.toFixed(1)} km` +
           (c.err !== null ? ` · DF error <b>${rdfSigned(c.err)}</b>` : '');
-        else if (pos) line += '<br><span style="color:#8296b4">Tick "🗺 Plot on map" in its decoder tab to compare with its reported position</span>';
+        else if (pos) line += '<br><span style="color:#8296b4">Tick "🗺 Plot on map" in its decoder tab to compare with its reported position' +
+          (rdfKind(t) === 'transmitter' ? ' (only when the ensemble sends its transmitters\' positions, FIG 0/22 - most don\'t)' : '') + '</span>';
         h += (h ? '<br>' : '') + line;
       } else if (t && t.sp) {
         // a path of a TV signal (a reflection, or another transmitter of a
@@ -14982,6 +14999,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
                     collar: ['Collar (MHz)', 'Name · ppm · mode', 'Pulses'],
                     node: ['Node', 'Name · packet', 'Frames'],
                     broadcast: ['Station (PI)', 'Call sign · PS · MHz', 'Groups'],
+                    transmitter: ['TII', 'Ensemble', 'Nulls'],
                     talker: ['ID', 'Info', 'Tx']};
       const head = heads[kinds] || heads.talker;
       // position columns while a listed talker has a reported position (its

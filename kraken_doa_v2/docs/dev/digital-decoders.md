@@ -15,7 +15,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   ssr1030 (see *1030 MHz interrogations*), uat (see *UAT*), flarm (see
   *FLARM / OGN*), analog_id (see *Analog FM IDs*; was ctcss), beacon406 (see *406 MHz
   distress beacons*), lora (see *LoRa / Meshtastic / LoRaWAN*), wildlife (see
-  *Wildlife collars*), rds (see *RDS / RBDS + SCA*), acars (see *ACARS*), vdl2 (see *VDL Mode 2*), dtv and cells
+  *Wildlife collars*), rds (see *RDS / RBDS + SCA*), acars (see *ACARS*), vdl2 (see *VDL Mode 2*), dab (see
+  *DAB / DAB+*; multichannel, a talker per transmitter by its TII code), dtv and cells
   (ARRAY plugins - see *Digital TV* and *LTE / 5G NR Cell Decoder*)
 - Which plugins run in Auto detect is the USER's choice: the "Auto detect"
   tick per plugin in the sidebar's plugin list (Digital Decoders box), all on by

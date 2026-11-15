@@ -196,6 +196,7 @@ VFOs can decode at once.
 | [LoRa / Meshtastic / LoRaWAN](kraken_doa_v2/plugins/lora/README.md) | Meshtastic's public default channel (text, node names, positions); the clear headers of everything else |
 | [Wildlife collars and tags](kraken_doa_v2/plugins/wildlife/README.md) | Each pulsing transmitter by frequency and pulse rate, with mortality and activity changes |
 | [RDS / RBDS + SCA](kraken_doa_v2/plugins/rds/README.md) (FM broadcast) | Station name, RadioText, programme type, alternative frequencies; SCA subcarriers, with audio |
+| [DAB / DAB+](kraken_doa_v2/plugins/dab/README.md) (digital radio, Band III) | The ensemble, its services and their programme types, date and time; one programme's audio and dynamic label (DAB+ audio: see [Digital voice codecs](#digital-voice-codecs)); every transmitter of the single frequency network by its TII code, with a bearing each |
 | [Digital TV](kraken_doa_v2/plugins/dtv/README.md) | DVB-T / T2, ISDB-T, ATSC, DTMB: standard, mode, transmission parameters, an echo profile, a bearing per path |
 | [LTE / 5G NR cells](kraken_doa_v2/plugins/cells/README.md) | Each cell's operator, tracking area, cell identity, band and the system information it broadcasts |
 | [V.23 telemetry](kraken_doa_v2/plugins/v23_telemetry/README.md) | 1200 bit/s AFSK telemetry frames |
@@ -204,9 +205,9 @@ Things to know:
 
 - **Decoders that tune for you.** ADS-B, UAT, the 1030 MHz decoder, AIS and
   the 406 MHz beacon decoder put the VFO on their own frequency when picked.
-- **Whole-band decoders.** ISM, FLARM, LoRa, pulse radar, Digital TV and
-  LTE / NR cells use the tuner's full 2.4 MHz: tune the receiver to the
-  band. Auto detect leaves out ADS-B and any decoder that needs a wider VFO
+- **Whole-band decoders.** ISM, FLARM, LoRa, pulse radar, Digital TV, DAB
+  and LTE / NR cells use the tuner's full 2.4 MHz: tune the receiver to the
+  band (DAB: to the block, e.g. 12C = 227.360 MHz). Auto detect leaves out ADS-B and any decoder that needs a wider VFO
   than the one it runs on.
 - **Only what is sent in the clear is decoded.** Encrypted calls are shown
   and muted. No keys are guessed or broken: Meshtastic private channels,
@@ -347,12 +348,15 @@ set the VFO's demod to **Digital**. Encrypted calls can't be decoded.
 | NXDN (NXDN48 and NXDN96) | AMBE+2 | mbelib, installed by you |
 | TETRA | ACELP | the ETSI reference codec, built by you |
 | MPT1327 | analogue FM | nothing - listen to the traffic channel with NBFM |
+| DAB | MPEG Layer II | nothing - built in |
+| DAB+ | HE-AAC v2 | libfdk-aac, installed by you |
 
 The AMBE and TETRA codecs are not shipped with this software: AMBE+2 is
 commercially licensed (DVSI), and the ETSI codec may not be redistributed.
 You can build them yourself for personal use; whether that is allowed where
-you live is your responsibility. The sidebar's **🔐 Digital Decoders** box
-shows which codecs are installed.
+you live is your responsibility. Nor is the AAC decoder for DAB+ (Fraunhofer
+FDK AAC, libfdk-aac): install it from your system's packages. The sidebar's
+**🔐 Digital Decoders** box shows which codecs are installed.
 
 **DMR, D-STAR and NXDN: mbelib**
 
@@ -389,8 +393,22 @@ kraken_doa runs `tetra-cdecoder` and `tetra-sdecoder` from the PATH. Or set
 TETRA voice plays about half a second late, and only on cells without air
 interface encryption.
 
-After installing either codec, restart the KrakenSDR software (`./run.sh`,
-or reboot when it runs as a service).
+**DAB+: libfdk-aac**
+
+```
+sudo apt-get install -y libfdk-aac2
+```
+
+On Debian the package is in the `non-free` component (enable it in the APT
+sources, then `sudo apt-get update`); Raspberry Pi OS normally has it
+enabled, Ubuntu has it in `multiverse`. Older releases ship `libfdk-aac1`,
+which works too. macOS: `brew install fdk-aac`. Set
+`KRAKEN_AAC_LIB=/path/to/libfdk-aac.so.2` to use one elsewhere (`none`
+turns it off). Without it the DAB decoder still shows everything of a DAB+
+service except its audio.
+
+After installing a codec, restart the KrakenSDR software (`./run.sh`, or
+reboot when it runs as a service).
 
 **Docker.** Build the codecs on the host as above (the `sudo make install` /
 `install` steps can be skipped), copy the ones you built into the
@@ -400,6 +418,7 @@ container's data folder and restart the client:
 sudo mkdir -p docker-data/codecs
 sudo cp -L mbelib/build/libmbe.so.1 docker-data/codecs/
 sudo cp osmo-tetra/codec/c-code/cdecoder osmo-tetra/codec/c-code/sdecoder docker-data/codecs/
+sudo cp -L /usr/lib/$(uname -m)-linux-gnu/libfdk-aac.so.2 docker-data/codecs/   # DAB+, after installing libfdk-aac2 on the host
 docker compose restart kraken_doa
 ```
 

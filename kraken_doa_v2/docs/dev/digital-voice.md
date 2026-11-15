@@ -66,12 +66,33 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   correlation with the spoken input 0.948 (codec delay 40 samples). ccoder
   writes a 1 as 0x0081 (129), TetraCodec sends -127 - cdecoder decodes both
   the same
+- DAB / DAB+ (the dab plugin, not `plugins/lib`; *plugin-dab*): MPEG Layer
+  II through the vendored minimp3 (CC0, built in); DAB+ HE-AAC v2 through
+  Fraunhofer FDK AAC, which `plugins/dab/audio_aaclib.cpp` dlopens at first
+  use the way `MbeLib` does: `$KRAKEN_AAC_LIB` (`none` / `off` disables
+  it), else `libfdk-aac.so.2`, `/usr/local/lib/libfdk-aac.so.2`,
+  `libfdk-aac.so.1` (Windows `libfdk-aac-2.dll` ..., macOS
+  `libfdk-aac.2.dylib` + the Homebrew paths). Decoder module versions
+  below 2.x and a library missing a function are refused. Never shipped or
+  linked (THIRD_PARTY_NOTICES section 3); without it DAB+ still syncs, its
+  RS / AU CRCs and the dynamic label run, only PCM is missing
 - Codec availability: the sidebar box (above), and each voice plugin sets a "Voice codec" fact (e.g.
   "AMBE+2: libmbe.so.1 (mbelib 1.3.0)" / "not installed"), and its voice
-  state says "... codec not installed" while someone listens
+  state says "... codec not installed" while someone listens. The box's
+  data is `plugins/lib/build/codecs` (`lib/tools/codecs.cpp`): imbe / ambe
+  / acelp always, and since 2026-11-16 `aac_ok` / `aac` ("HE-AAC v2
+  (libfdk-aac)", DAB+) when the tool was built with `plugins/dab/` there -
+  plugins/Makefile compiles `dab/audio_aaclib.cpp` (self-contained) into it
+  with `-DKRAKEN_CODECS_AAC` only if that file exists - so a `plugins/dab`
+  the AI assistant changed makes kraken_doa run the tool sandboxed
+  (`aisandbox::wrap`; refused without a sandbox, *AI assistant*), as the
+  plugin itself. kraken_doa forwards the aac keys only when the tool printed
+  them, and the page lists only the
+  codecs the receiver reports (an older receiver: no AAC row; an older page
+  ignores the keys)
 - Docker: the entrypoint exports `KRAKEN_MBELIB` / `KRAKEN_TETRA_CODEC_DIR`
-  when `/data/codecs` holds libmbe.so.1 / cdecoder + sdecoder (inherited by
-  the plugin processes)
+  / `KRAKEN_AAC_LIB` when `/data/codecs` holds libmbe.so.1 / cdecoder +
+  sdecoder / libfdk-aac.so.2 (inherited by the plugin processes)
 - Tested: offline (regression incl. voice), through the real Opus audio
   stream with a fake heimdall replaying recordings of all four, and live:
   DMR Tier III traffic-channel speech here; P25 calls here are AES-256 and

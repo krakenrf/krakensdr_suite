@@ -83,6 +83,11 @@ plugins/
 │                         correction, every group type), RDS2 streams, the MPX's subcarriers classified
 │                         (SCA FM audio / FSK data / DARC), SCA or main-programme audio; a packet talker
 │                         per station (PI) per RDS group
+├── dab/                  DAB / DAB+ ensembles in the 2.4 MHz (lock_vfo): mode I OFDM at the native rate
+│                         (2400-point FFT, no resampler), FIC / MSC Viterbi, Layer II (vendored minimp3)
+│                         and DAB+ (the user's libfdk-aac, loaded at run time) audio; a packet talker
+│                         per transmitter of the single frequency network by its TII code, with a
+│                         spatial covariance of that code's own carriers (multichannel)
 └── <id>/                 ONE plugin = one folder, named by its id
     ├── decoder.cpp       required: the decoder class + KRAKEN_PLUGIN(...)
     ├── *.cpp / *.hpp     optional extra sources (all .cpp files are compiled)
@@ -511,7 +516,9 @@ in the `.json` sidecar or `--channels M`), in bursts like the live host
 antennas on kraken_doa's clockwise UCA and prints each spatial talker's
 MUSIC bearing at the end. `plugins/dtv/tools/sfn_gen.cpp` writes synthetic
 single frequency networks in that format, `plugins/cells/tools/cell_gen.cpp`
-LTE / NR cells.
+LTE / NR cells, `plugins/dab/tools/dab_gen.cpp` DAB networks (each
+transmitter with its own TII code - packet talkers with their own
+covariances, `t.cov`).
 
 ## ID separation (required when the signal has per-transmitter IDs)
 
@@ -609,8 +616,10 @@ writes its scene at known bearings itself, in 0.1 s pieces (so do
 `ssr1030/tools/ssr_gen.py`, `uat/tools/uat_gen.py`, `adsb/tools/adsb_gen.py`,
 `dme/tools/dme_gen.py`, `ism/tools/ism_gen.py`,
 `flarm/tools/flarm_gen.py` - the last two with simultaneous packets on
-different channels of one VFO - and `rds/tools/rds_gen.py`: FM stations,
-also at 480 kHz for an offline test).
+different channels of one VFO - `rds/tools/rds_gen.py`: FM stations,
+also at 480 kHz for an offline test - and `dab/tools/dab_gen.cpp`: a DAB
+single frequency network, every transmitter with its TII code, delay and
+level).
 
 **Who transmits, again**: a message ABOUT a transmitter isn't always FROM
 it - UAT's TIS-B / ADS-R messages describe aircraft but are sent by a

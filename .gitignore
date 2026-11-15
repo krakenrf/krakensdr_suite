@@ -48,7 +48,8 @@ ggml-*.bin.part
 # in ANY folder: never committed - the ETSI TETRA codec may not be
 # redistributed, AMBE is DVSI's. The ETSI programs (Linux names, the
 # tetra-* install names, Windows .exe), mbelib's library, the ETSI zip and an
-# osmo-tetra / mbelib checkout (osmo-tetra/codec/ holds the ETSI sources).
+# osmo-tetra / mbelib checkout (osmo-tetra/codec/ holds the ETSI sources),
+# and the AAC library for DAB+ (libfdk-aac, the user's system package).
 # .githooks/pre-push blocks them too
 cdecoder
 sdecoder
@@ -66,6 +67,9 @@ libmbe*.dll
 mbe.dll
 libmbe.so*
 libmbe*.dylib
+libfdk-aac*.so*
+libfdk-aac*.dylib
+libfdk-aac*.dll
 etsi_tetra_codec.zip
 en_30039502*.zip
 osmo-tetra/
