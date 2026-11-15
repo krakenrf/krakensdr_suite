@@ -257,7 +257,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   card shows "Searching…"). The tabs are ALWAYS all there (`digTabList`):
   every built plugin (+ one this receiver lacks that still has events /
   incidents here) - those a VFO runs first, then the rest, each group by name - selectable with no VFO running it and no
-  data yet; such an idle tab says so and offers "Start it on: D0 D1 ..."
+  data yet; such an idle tab says so and offers "Start on D0 D1 ..."
   (`digSetModeFor`). The panel follows a VFO whose mode is picked
   (`digSetModeFor` / `digToggle` -> `infoPanelOpen('dec:<id>')`). A tab
   (`infoRenderDecoder`) shows: a settings row per VFO in it

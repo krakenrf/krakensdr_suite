@@ -449,6 +449,7 @@ body:not(.ai-dk-col) .ai-strip {display:none !important}
 .help:hover,.help.tip-open{background:#1565c0;color:#fff}
 .help .tip{display:none;position:fixed;left:0;top:0;z-index:2000;width:max-content;max-width:240px;background:#0d3c61;border:1px solid #1565c0;color:#cfe8ff;padding:8px 10px;border-radius:5px;font-size:12px;font-weight:normal;line-height:1.5;text-align:left;box-shadow:0 6px 20px rgba(0,0,0,0.55);white-space:normal;pointer-events:none}
 .help.tip-open .tip{display:block}
+.help.wide .tip{max-width:400px}
 .sec {border-top:1px solid #0f3460;margin-top:10px;padding-top:10px}
 .hide {display:none}
 
@@ -1166,18 +1167,22 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
 #topo-group .btn.tb.sel {background:#1f6fd1;color:#fff}
 #topo-group .btn.tb:not(.sel) {background:#131b33;color:#8fa3c0}
 #topo-group .btn.tb:not(.sel):hover {background:#1b2a4c;color:#cfe2fb}
-/* on / off switches: buttons marked data-sw (their .on / .off class is the
-   state, the ON / OFF text stays for screen readers) and checkboxes .sw */
-.sidebar .btn[data-sw],.sidebar input[type="checkbox"].sw {--sw-h:20px;--sw-k:#93a6c2;--sw-x:calc(var(--sw-h) / 2 - 1px);
+/* on / off switches, anywhere on the page: buttons marked data-sw (their
+   .on / .off class is the state, the ON / OFF text stays for screen readers)
+   and checkboxes .sw */
+:is(.sidebar .btn,.top-bar .tb-btn,#mobile-controls-slot .tb-btn)[data-sw],input[type="checkbox"].sw {--sw-h:20px;--sw-k:#93a6c2;--sw-x:calc(var(--sw-h) / 2 - 1px);
   -webkit-appearance:none;appearance:none;position:relative;flex:none;box-sizing:border-box;width:calc(var(--sw-h) * 1.8);height:var(--sw-h);min-height:0;margin:0;padding:0;
   border:1px solid #34446a;border-radius:var(--sw-h);background-color:#222c47;cursor:pointer;font-size:0;line-height:0;color:transparent;
   background-image:radial-gradient(circle at var(--sw-x) 50%,var(--sw-k) calc(var(--sw-h) / 2 - 4px),transparent calc(var(--sw-h) / 2 - 3.2px));
   transition:background-color .15s,border-color .15s}
-.sidebar .btn[data-sw].on,.sidebar input[type="checkbox"].sw:checked {--sw-k:#fff;--sw-x:calc(100% - var(--sw-h) / 2 + 1px);background-color:#2a8f45;border-color:#37ad57}
-.sidebar .btn[data-sw]:hover,.sidebar input[type="checkbox"].sw:hover {border-color:#5b78ad}
-.sidebar .btn[data-sw].on:hover,.sidebar input[type="checkbox"].sw:checked:hover {border-color:#5fd07d}
-.sidebar .btn[data-sw]:focus-visible,.sidebar input[type="checkbox"].sw:focus-visible {outline:2px solid #4a9ff5;outline-offset:1px}
-.sidebar input[type="checkbox"].sw:disabled {opacity:.45;cursor:default}
+:is(.sidebar .btn,.top-bar .tb-btn,#mobile-controls-slot .tb-btn)[data-sw].on,input[type="checkbox"].sw:checked {--sw-k:#fff;--sw-x:calc(100% - var(--sw-h) / 2 + 1px);background-color:#2a8f45;border-color:#37ad57;
+  background-image:radial-gradient(circle at var(--sw-x) 50%,var(--sw-k) calc(var(--sw-h) / 2 - 4px),transparent calc(var(--sw-h) / 2 - 3.2px))}
+:is(.sidebar .btn,.top-bar .tb-btn,#mobile-controls-slot .tb-btn)[data-sw].off {background-color:#222c47;border-color:#34446a;
+  background-image:radial-gradient(circle at var(--sw-x) 50%,var(--sw-k) calc(var(--sw-h) / 2 - 4px),transparent calc(var(--sw-h) / 2 - 3.2px))}
+:is(.sidebar .btn,.top-bar .tb-btn,#mobile-controls-slot .tb-btn)[data-sw]:hover,input[type="checkbox"].sw:hover {border-color:#5b78ad}
+:is(.sidebar .btn,.top-bar .tb-btn,#mobile-controls-slot .tb-btn)[data-sw].on:hover,input[type="checkbox"].sw:checked:hover {border-color:#5fd07d}
+:is(.sidebar .btn,.top-bar .tb-btn,#mobile-controls-slot .tb-btn)[data-sw]:focus-visible,input[type="checkbox"].sw:focus-visible {outline:2px solid #4a9ff5;outline-offset:1px}
+input[type="checkbox"].sw:disabled {opacity:.45;cursor:default}
 /* panels, separators, notes, help icons */
 .sidebar .tp {background:#131a30;border-color:#1f355c;border-radius:6px;padding:7px 8px;margin:7px 0}
 .sidebar .sec {border-top-color:#1f355c;margin-top:9px;padding-top:8px}
@@ -1205,9 +1210,110 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
   .sidebar input[type="range"] {height:6px}
   .sidebar input[type="range"]::-webkit-slider-thumb {width:22px;height:22px}
   .sidebar input[type="range"]::-moz-range-thumb {width:18px;height:18px}
-  .sidebar .btn[data-sw],.sidebar input[type="checkbox"].sw {--sw-h:26px}
+  :is(.sidebar .btn,.top-bar .tb-btn,#mobile-controls-slot .tb-btn)[data-sw],input[type="checkbox"].sw {--sw-h:26px}
   .sidebar .ctrl-row input[type="number"],.sidebar .ctrl-row input[type="text"],.sidebar .ctrl-row input[type="password"],.sidebar .ctrl-row select {height:32px}
 }
+
+/* ===== Page look (everything outside the sidebar) =====
+   The same controls and chrome as the sidebar: one button, input, slider and
+   switch look, panels with a header bar, pill tabs. Component rules further
+   up keep their layout; this block only restyles. */
+/* buttons */
+.btn {background:#1b3763;border:1px solid #2a4d83;color:#cfe2fb;border-radius:5px;padding:4px 10px;font-size:12.5px;line-height:16px}
+.btn:hover {background:#24477c;border-color:#3a63a3}
+.btn:disabled {opacity:.45;cursor:default}
+.btn.sm {padding:2px 8px;font-size:12px}
+.btn.primary {background:#1f6fd1;border-color:#3a86e4;color:#fff}
+.btn.primary:hover {background:#2a7de0}
+.btn.on {background:#1d6b33;border-color:#2c8a45;color:#d6f5dd}
+.btn.off {background:#7d2424;border-color:#a33333;color:#ffdcdc}
+.btn.danger {background:#4a1d24;border-color:#7d2d38;color:#ffc9c9}
+.btn.danger:hover {background:#7d2424;border-color:#a33333}
+input[type="checkbox"],input[type="radio"] {accent-color:#3d8bf0}
+/* text boxes and selects of the bars, panels and dialogs */
+.top-bar select,.top-bar input[type="number"],.wf-controls select,.wf-controls input[type="number"],.info-row input[type="text"],.info-row select,
+.tpane-head select,.tpane-head input[type="number"],.sf-dlg input,.sf-dlg select,.sf-dlg textarea,.wb-sheet select,.wb-sheet input[type="number"],
+.ai-dk-set select,.ai-dk-in textarea,.map-vs select,.map-vs input[type="number"],.map-vs input[type="text"],.map-lr select,.map-lr input[type="number"],
+.map-df select,.map-df input[type="number"],.map-mk input,.map-mk textarea,.map-srch-row input,.dig-set select,.dig-set input[type="number"],.dig-set input[type="text"] {
+  background:#0f162a;border:1px solid #223b66;color:#e4ecf8;border-radius:5px}
+.top-bar select:focus,.top-bar input[type="number"]:focus,.wf-controls select:focus,.info-row input:focus,.info-row select:focus,.tpane-head select:focus,
+.sf-dlg input:focus,.sf-dlg select:focus,.sf-dlg textarea:focus,.wb-sheet select:focus,.ai-dk-set select:focus,.ai-dk-in textarea:focus,.map-vs select:focus,
+.map-vs input:focus,.map-lr select:focus,.map-lr input:focus,.map-df select:focus,.map-df input:focus,.map-mk input:focus,.map-mk textarea:focus,.map-srch-row input:focus {
+  border-color:#4a9ff5;outline:none;box-shadow:0 0 0 2px rgba(74,159,245,.22)}
+.top-bar select,.top-bar input[type="number"] {height:28px;padding:3px 7px;font-size:12.5px}
+.wf-controls select {height:26px;padding:2px 6px}
+.info-row input[type="text"],.info-row select {height:26px;padding:3px 7px}
+.sf-dlg input,.sf-dlg select {height:28px;padding:3px 8px;font-size:12.5px}
+.sf-dlg textarea {padding:6px 8px;font-size:12.5px}
+/* sliders */
+.wf-controls input[type="range"],.top-bar .tb-slider,.tpane-head input[type="range"],.map-pane input[type="range"],.info-panel input[type="range"],.wb-sheet input[type="range"] {
+  -webkit-appearance:none;appearance:none;height:4px;padding:0;margin:0;border:none;background:#26426f;border-radius:2px;outline:none;cursor:pointer}
+.wf-controls input[type="range"]::-webkit-slider-thumb,.top-bar .tb-slider::-webkit-slider-thumb,.tpane-head input[type="range"]::-webkit-slider-thumb,
+.map-pane input[type="range"]::-webkit-slider-thumb,.info-panel input[type="range"]::-webkit-slider-thumb,.wb-sheet input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#4a9ff5;border:2px solid #141c36;box-shadow:0 0 0 1px #4a9ff5;cursor:pointer}
+.wf-controls input[type="range"]::-moz-range-thumb,.top-bar .tb-slider::-moz-range-thumb,.tpane-head input[type="range"]::-moz-range-thumb,
+.map-pane input[type="range"]::-moz-range-thumb,.info-panel input[type="range"]::-moz-range-thumb,.wb-sheet input[type="range"]::-moz-range-thumb {
+  width:11px;height:11px;border-radius:50%;background:#4a9ff5;border:2px solid #141c36;box-shadow:0 0 0 1px #4a9ff5;cursor:pointer}
+/* top bar */
+.top-bar {background:#141c36;border-bottom-color:#1c3158;gap:13px}
+.top-bar .tb-label {font-size:12.5px;color:#93a6c2}
+.top-bar .tb-sep {background:#243a63;height:22px;margin:0 2px}
+.top-bar .tb-btn {background:#1b3763;border:1px solid #2a4d83;color:#cfe2fb;border-radius:5px;padding:4px 10px;font-size:12.5px;line-height:16px}
+.top-bar .tb-btn:hover {background:#24477c;border-color:#3a63a3}
+.top-bar .tb-btn.on {background:#1f6fd1;border-color:#3a86e4;color:#fff}
+.top-bar .tb-btn.off {background:#1b3763;border-color:#2a4d83;color:#cfe2fb}
+.top-bar .tb-vol,.top-bar .gain-value {font-size:12.5px;font-variant-numeric:tabular-nums}
+.top-bar .status-badge {font-size:12.5px;font-weight:600;padding:4px 12px;border-radius:999px;letter-spacing:.2px}
+.top-bar .tele-chip {border-color:#2a4d83;border-radius:999px;background:rgba(10,16,32,.55);padding-right:11px}
+.top-bar .tele-chip .tele-lbl {border-radius:999px 0 0 999px;padding-left:10px;background:#22395a}
+.freq-selector {background:#0a1020;border-color:#223b66;border-radius:6px}
+/* spectrum / DoA panels */
+.spectrum-doa-container {padding:8px;gap:8px}
+.spectrum-panel,.doa-panel {background:#141a30;border-color:#1c3158;border-radius:7px}
+.spectrum-header,.doa-header {background:#1a2545;border-bottom-color:#1c3158}
+.spectrum-header .title,.doa-header .title {font-size:13.5px;font-weight:600;color:#a8cbf5}
+.spectrum-header .help {margin-left:auto}
+.wf-controls {background:#161f3b;border-top-color:#1c3158;gap:12px}
+.wf-controls label {color:#93a6c2;gap:6px}
+.wf-controls .wf-sep {width:1px;height:18px;background:#243a63}
+.wf-controls .wf-val {color:#8fc0f5;font-variant-numeric:tabular-nums}
+.doa-display {background:#171d35;border-color:#1c3158;border-radius:7px}
+.doa-display .ti {background:#14233f;color:#8fc0f5;border-radius:5px}
+body.map-on .doa-header .rp-tab {color:#7f93b4}
+body.map-on .doa-header .rp-tab.sel {color:#a8cbf5;font-weight:600;border-bottom-color:#4a9ff5}
+.tpane {background:#141a30;border-color:#1c3158;border-radius:7px}
+.tpane-head {background:#1a2545}
+.hsplit,.info-resize,body.rp-both .rp-vsplit {background:#1c3158}
+/* the panel under the waterfall */
+.info-panel {background:#131a30;border-top-color:#1c3158}
+.info-tabs {background:#1a2545;border-bottom-color:#1c3158;padding:4px 8px}
+.info-tab {background:#131b33;color:#8fa3c0;border-color:#223b66;border-radius:5px}
+.info-tab:hover {color:#cfe2fb;border-color:#2a4d83}
+.info-tab.sel {background:#1f6fd1;border-color:#3a86e4;color:#fff}
+.info-close {color:#7f9cc7;border-radius:4px;padding:1px 6px}
+.info-close:hover {background:#27447a;color:#d6e8ff}
+.dig-log,.dig-table-wrap {background:#0d1324;border-color:#1c3158;border-radius:5px}
+/* map */
+.map-btn,.map-seg button {background:rgba(20,30,58,.92);border-color:#2a4d83;color:#cfe2fb;border-radius:5px}
+.map-btn:hover,.map-seg button:hover {background:#24477c}
+.map-btn.on,.map-seg button.on,#map-btn.on {background:#1f6fd1;border-color:#3a86e4;color:#fff}
+.map-seg button {border-radius:0}
+.map-seg button:first-child {border-radius:5px 0 0 5px}
+.map-seg button:last-child {border-radius:0 5px 5px 0}
+.map-vs,.map-df,.map-lr,.map-plk,.map-srch,.map-pop,.map-menu,.map-mk,.map-pick,.map-srch-res {border-radius:7px}
+.map-vs,.map-df,.map-srch {background:rgba(18,26,49,.94);border-color:#2a4d83}
+/* dialogs and sheets */
+.sf-dlg,.wb-sheet {background:#171d35;border-color:#2a4d83;border-radius:9px}
+.sf-dlg {padding:12px 14px}
+.sf-dlg .lbl {color:#93a6c2;font-size:11.5px}
+.sf-dlg .sub,.wb-sheet .sec {background:#131a30;border-color:#1f355c;border-radius:6px}
+.sf-toast {border-radius:7px;border-color:#3a86e4}
+/* AI assistant */
+.ai-dock {background:#131a30;border-left-color:#1c3158}
+.ai-dk-head {background:#1a2545;border-bottom-color:#1c3158}
+.ai-dk-set {background:#141c36;border-bottom-color:#1c3158}
+.ai-dk-in {border-top-color:#1c3158}
+.ai-dk-in textarea {border-radius:6px}
 
 /* ===== Mobile / touch layout (small screens and touch tablets only) ===== */
 .menu-btn {display:none;background:#0f3460;color:#7cb3f0;border:1px solid #1a4a7a;border-radius:4px;font-size:20px;width:42px;height:42px;cursor:pointer;align-items:center;justify-content:center;padding:0;flex-shrink:0}
@@ -2302,11 +2408,11 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
            RF; these pick the mixing side and show the resulting LO. -->
       <div class="tb-group" id="wbv-group" style="display:none">
         <span class="tb-label" id="wbv-ring-ind" title="Active antenna ring - selected automatically by the tuned frequency: Outer below 1 GHz, Center 1-2.5 GHz, Inner above 2.5 GHz. Ring changes trigger a phase recalibration.">Ring: Outer</span>
-        <span class="tb-label" style="margin-left:6px" title="Downconverter mixing side - follows the frequency automatically; pick an alternative here when more than one side can reach it (image dodging). High = LO above (LO = IF + RF), Low = LO = IF - RF, Below = LO under the RF (LO = RF - IF)">Mix:</span>
+        <span class="tb-label" style="margin-left:6px" title="Downconverter mixing side - follows the frequency automatically; pick an alternative here when more than one side can reach it (image dodging). High = LO above (LO = IF + RF), Low = LO = IF - RF, Below = LO under the RF (LO = RF - IF)">Mix</span>
         <button class="tb-btn" id="wbv-high" onclick="setMixerSide('high')" title="High-side injection: LO = IF + RF (spectrum inversion corrected in software). RF 24 - 4132 MHz.">High</button>
         <button class="tb-btn" id="wbv-low" onclick="setMixerSide('low')" title="Low-side injection: LO = IF - RF (upright spectrum). RF 24 - 1183 MHz.">Low</button>
         <button class="tb-btn" id="wbv-below" onclick="setMixerSide('below')" title="LO below the RF: LO = RF - IF (upright spectrum). The only side above 4.1 GHz; RF 1353 - 6668 MHz.">Below</button>
-        <span class="tb-label" style="margin-left:6px" title="LO synthesizer output drive current (0 = lowest, 7 = highest)">Cur:</span>
+        <span class="tb-label" style="margin-left:6px" title="LO synthesizer output drive current (0 = lowest, 7 = highest)">Cur</span>
         <select id="wbv-cur" onchange="setLoCurrent(this.value)" title="LO synthesizer output drive current (0 = lowest, 7 = highest)">
           <option value="0">0</option>
           <option value="1">1</option>
@@ -2323,7 +2429,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       <!-- Operating mode: Coherent (DoA array) / Wideband (tuners side by side,
            one stitched spectrum) / Independent (every tuner its own receiver) -->
       <div class="tb-group" id="tb-mode">
-        <span class="tb-label">Mode:</span>
+        <span class="tb-label">Mode</span>
         <select id="opmode" onchange="setOpMode(this.value)" title="Coherent: the tuners work as one phase-calibrated array (DoA, beamforming). Wideband: the tuners sit side by side for one wide stitched spectrum (no DoA). Independent: every tuner is its own receiver with its own frequency and gain, one spectrum + waterfall each (no DoA).">
           <option value="coherent">Coherent</option>
           <option value="wideband">Wideband</option>
@@ -2333,14 +2439,14 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       <div class="tb-sep not-indep"></div>
       <!-- Gain -->
       <div class="tb-group gain-group not-indep" id="tb-gain">
-        <span class="tb-label">Gain:</span>
+        <span class="tb-label">Gain</span>
         <input type="range" id="gn-slider" class="gain-slider" min="0" max="29" value="29" oninput="updateGainDisplay(this.value);sgn()">
         <span class="gain-value" id="gn-value">49.6 dB</span>
       </div>
       <div class="tb-sep coh-only"></div>
       <!-- FFT Channel -->
       <div class="tb-group coh-only" id="tb-ch">
-        <span class="tb-label">CH:</span>
+        <span class="tb-label" title="The antenna channel the spectrum and waterfall show">CH</span>
         <select id="chs" onchange="sac()">
           <option value="0">0</option>
           <option value="1">1</option>
@@ -2353,14 +2459,14 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       <!-- VFO tuning step (every mode, per browser): a tuning-bar drag or a
            click on the spectrum puts the VFO on a multiple of it -->
       <div class="tb-group" id="tb-step">
-        <span class="tb-label">Step:</span>
+        <span class="tb-label">Step</span>
         <select id="vfo-step" onchange="setVfoStep(this.value)" title="VFO tuning step: dragging a tuning bar or clicking the spectrum puts the VFO on a multiple of this - of its frequency, counted from 0 Hz (12.5 kHz: 446.0125, 446.0250 ... MHz). Hold Shift while dragging to tune finely: 1/100 of the movement, to the Hz, off the step. The VFO card's digits and typed or saved frequencies stay exact."></select>
       </div>
       <div class="tb-sep"></div>
       <!-- Audio -->
       <div class="tb-group" id="tb-audio">
-        <span class="tb-label">Audio:</span>
-        <button id="fmt" class="tb-btn on" onclick="tfm()">ON</button>
+        <span class="tb-label">Audio</span>
+        <button id="fmt" class="tb-btn on" data-sw onclick="tfm()" title="Audio on / off">ON</button>
         <input type="range" id="vsl" class="tb-slider" min="0" max="100" value="50" oninput="uv(this.value)">
         <span class="tb-vol" id="vv">50%</span>
       </div>
@@ -2388,7 +2494,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       <div class="spectrum-panel">
         <div class="spectrum-header">
           <span class="title" id="fpt">Channel 0 (WBFM)</span>
-          <span class="hint" title="A drag or a click puts the VFO on a multiple of the top bar's Step; hold Shift while dragging to tune finely (1/100 of the movement, to the Hz)">Click/drag tuning bar · Shift = fine</span>
+          <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Click the spectrum or drag a tuning bar to tune the selected VFO: it lands on a multiple of the top bar's Step. Hold <b>Shift</b> while dragging to tune finely (1/100 of the movement, to the Hz). Drag a bar's edge to change its bandwidth. Mouse wheel: zoom.</span></span>
         </div>
         <div class="spectrum-content">
           <div id="pb-overlay"><span id="pb-overlay-k">DEBUG PLAYBACK - not live</span></div>
@@ -2402,11 +2508,11 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <div id="indep-grid"></div>
         </div>
         <div class="wf-controls" id="wf-controls-bar">
-          <label>FFT Y:<input type="range" id="fft-ymax" min="10" max="100" value="60" step="10" oninput="updateFFTYAxis(this.value);sendUI('FFT_Y',this.value)" style="width:50px"><span id="fft-ymax-val">60</span></label>
-          <label title="Spectrum zoom - or use the mouse wheel on the spectrum (in independent mode: the selected pane)">Zoom:<input type="range" id="zoom-sl" min="0" max="125" value="0" oninput="zoomFromSlider(this.value)" style="width:70px"><span id="zoom-val" style="min-width:34px">1.0x</span><span id="zoom-res" title="Spacing of the displayed spectrum points. Zooming in sends the same number of points over less spectrum - more detail, down to the FFT's own bin width, at the same data rate" style="color:#888;margin-left:4px;min-width:44px"></span></label>
-          <span style="color:#555">|</span>
-          <label>Speed: <input type="range" id="wf-speed" min="1" max="10" value="5" oninput="updateWaterfallSpeed(this.value);sendUI('WF_SPEED',this.value)"></label>
-          <label>Color:
+          <label title="Top of the spectrum's dB scale">Scale<input type="range" id="fft-ymax" min="10" max="100" value="60" step="10" oninput="updateFFTYAxis(this.value);sendUI('FFT_Y',this.value)" style="width:50px"><span id="fft-ymax-val" class="wf-val">60</span></label>
+          <label title="Spectrum zoom - or use the mouse wheel on the spectrum (in independent mode: the selected pane)">Zoom<input type="range" id="zoom-sl" min="0" max="125" value="0" oninput="zoomFromSlider(this.value)" style="width:70px"><span id="zoom-val" class="wf-val" style="min-width:34px">1.0x</span><span id="zoom-res" title="Spacing of the displayed spectrum points. Zooming in sends the same number of points over less spectrum - more detail, down to the FFT's own bin width, at the same data rate" style="color:#888;margin-left:4px;min-width:44px"></span></label>
+          <span class="wf-sep"></span>
+          <label title="Waterfall speed">Speed <input type="range" id="wf-speed" min="1" max="10" value="5" oninput="updateWaterfallSpeed(this.value);sendUI('WF_SPEED',this.value)"></label>
+          <label title="Waterfall colours">Colors
             <select id="wf-colormap" onchange="updateWaterfallColormap(this.value);sendUI('WF_COLORMAP',this.value)">
               <option value="sdryoussef" selected>SDR# (Youssef)</option>
               <option value="sdrpp">SDR++</option>
@@ -2417,18 +2523,18 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           </label>
           <div style="display:flex;align-items:center;gap:8px">
             <label style="display:flex;align-items:center;gap:4px">
-              <span>Min:</span>
+              <span>Min</span>
               <input type="range" id="wf-min" min="-20" max="60" value="-10" oninput="updateWaterfallRange();sendUI('WF_MIN',this.value)" style="width:80px">
-              <span id="wf-min-val" style="width:45px;text-align:right">-10 dB</span>
+              <span id="wf-min-val" class="wf-val" style="width:45px;text-align:right">-10 dB</span>
             </label>
             <label style="display:flex;align-items:center;gap:4px">
-              <span>Max:</span>
+              <span>Max</span>
               <input type="range" id="wf-max" min="10" max="80" value="50" oninput="updateWaterfallRange();sendUI('WF_MAX',this.value)" style="width:80px">
-              <span id="wf-max-val" style="width:45px;text-align:right">50 dB</span>
+              <span id="wf-max-val" class="wf-val" style="width:45px;text-align:right">50 dB</span>
             </label>
-            <label style="display:flex;align-items:center;gap:3px;cursor:pointer">
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Set the waterfall's Min / Max from the signal levels">
               <input type="checkbox" id="wf-autorange" checked onchange="toggleAutoRange(this.checked);sendUI('WF_AUTO',this.checked?1:0)">
-              <span style="font-size:11px">Auto</span>
+              <span>Auto</span>
             </label>
           </div>
           <span class="wf-panel-btns" style="margin-left:auto;display:flex;gap:4px">
@@ -2569,7 +2675,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
           <!-- ⏯ a DoA log played back: transport, timeline, the moment's row + heat map (⏯ LOG REPLAY) -->
           <div class="map-lr" id="map-lr" tabindex="-1" style="display:none"></div>
           <div class="map-status" id="map-status"></div>
-          <div class="map-offline" id="map-offline" style="display:none">Map tiles can't be loaded (no internet connection?) - positions are still shown on a plain grid.</div>
+          <div class="map-offline" id="map-offline" style="display:none" title="The map tiles can't be loaded (no internet connection?) - positions are still shown, on a plain grid">No map tiles (offline?) - plain grid</div>
           <div class="map-attr" id="map-attr"></div>
           <div class="map-pop" id="map-pop" style="display:none"></div>
           <div class="map-mk" id="map-mk" style="display:none"></div>
@@ -2608,7 +2714,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <div class="ai-dk-msgs" id="ai-dk-msgs"></div>
     <div class="ai-dk-chips" id="ai-dk-chips"></div>
     <div class="ai-dk-in">
-      <textarea id="ai-dk-q" rows="2" placeholder="Ask about what you see, a signal, the decoded data - or tell it what to do"
+      <textarea id="ai-dk-q" rows="2" placeholder="Ask, or tell it what to do…"
         onkeydown="aiInputKey(event)" oninput="aiInputGrow()"></textarea>
       <button class="btn primary" type="button" id="ai-dk-send" onclick="aiSendOrStop()">Send</button>
     </div>
@@ -2628,21 +2734,21 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <div class="sf-dlg-h"><span id="sf-dlg-title">📻 Save frequency</span><span class="x" onclick="sfDlgCancel()" title="Cancel (Esc)">✕</span></div>
     <div class="lbl">Name <b>*</b></div>
     <input type="text" id="sf-f-name" maxlength="80" style="width:100%" placeholder="e.g. Auckland Tower">
-    <div class="lbl">Frequency <b>*</b> (MHz - or add kHz / GHz)</div>
+    <div class="lbl">Frequency <b>*</b></div>
     <div class="row">
-      <input type="text" id="sf-f-mhz" inputmode="decimal" placeholder="118.700">
+      <input type="text" id="sf-f-mhz" inputmode="decimal" placeholder="118.700 MHz" title="In MHz - or add kHz / GHz (446006.25 kHz, 1.09 GHz)">
       <button type="button" class="btn sm" onclick="sfDlgFromVfo()" title="The selected VFO's frequency, demod, bandwidth and decoder">⟵ Selected VFO</button>
     </div>
     <div class="lbl">Category</div>
     <select id="sf-f-cat" onchange="sfDlgSync(true)"></select>
     <input type="text" id="sf-f-newcat" maxlength="40" placeholder="Name of the new category" style="width:100%;margin-top:4px;display:none">
-    <div class="lbl">Location (a marker on the 🗺 map)</div>
+    <div class="lbl" title="A marker on the 🗺 map that lists every frequency saved at that place">Location</div>
     <select id="sf-f-loc" onchange="sfDlgSync(true)"></select>
     <div class="info" id="sf-f-locinfo" style="display:none"></div>
     <div class="sub" id="sf-f-newloc" style="display:none">
-      <div class="lbl">Location name (blank = the frequency's name)</div>
-      <input type="text" id="sf-f-locname" maxlength="80" style="width:100%" placeholder="e.g. Mt Eden repeater site">
-      <div class="lbl">Position (latitude, longitude)</div>
+      <div class="lbl">Location name</div>
+      <input type="text" id="sf-f-locname" maxlength="80" style="width:100%" placeholder="e.g. Mt Eden repeater site" title="Blank = the frequency's name">
+      <div class="lbl">Position</div>
       <div class="row">
         <input type="text" id="sf-f-lat" inputmode="decimal" placeholder="latitude">
         <input type="text" id="sf-f-lon" inputmode="decimal" placeholder="longitude">
@@ -2688,7 +2794,7 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
       <button type="button" class="btn" onclick="sfDlgTune()" title="Tune the selected VFO to what is entered here (without saving)">Tune</button>
       <button type="button" class="btn" onclick="sfDlgCancel()">Cancel</button>
       <span class="sp"></span>
-      <button type="button" class="btn" id="sf-del" onclick="sfDlgDelete()" style="background:#7f1d1d">🗑 Delete</button>
+      <button type="button" class="btn danger" id="sf-del" onclick="sfDlgDelete()">🗑 Delete</button>
     </div>
   </div>
 </div>
@@ -5959,8 +6065,8 @@ function sac() {
 
 function updatePlotTitle() {
   if (opMode === 'independent') {
-    $id('fpt').textContent = 'Independent tuners (' + Math.max(1, panes.length || activeNumElements) +
-      ') - each pane has its own frequency and gain; drag a pane to tune it, drag a VFO bar, or click to place the selected VFO';
+    $id('fpt').textContent = 'Independent tuners (' + Math.max(1, panes.length || activeNumElements) + ')';
+    $id('fpt').title = 'Each pane has its own frequency and gain: drag a pane to tune it, drag a VFO bar, or click to place the selected VFO';
     return;
   }
   if(widebandEnabled) {
@@ -10776,8 +10882,8 @@ function addTouchHandlers(el, down, move, up) {
       case 'ready': s = `online lookup (OpenStreetMap): ${g.found || 0} found, ${g.not_found || 0} messages without an address`; break;
       case 'offline': s = `address search unavailable (${g.error || 'no internet'}) - ${g.queued || 0} message(s) waiting, trying again every minute`; break;
       case 'error': s = `address search: ${g.error}`; break;
-      case 'no_station': s = 'set the station location (sidebar → Station Information): addresses are looked up around it'; break;
-      default: s = 'addresses are looked up online (OpenStreetMap) as messages arrive';
+      case 'no_station': s = 'needs the station location (Station Information)'; break;
+      default: s = '';   // (the row's tooltip says how the lookup works)
     }
     if (g.queued && g.state !== 'offline') s += ` · ${g.queued} waiting`;
     const r = g.radius_km || 300;
@@ -11927,9 +12033,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   }
   function aiEmptyHtml() {
     const ro = aiState && aiState.readonly;
-    return `<div class="ai-dk-empty">Ask about what you see on the receiver, the signals and what was decoded - or ask it to do something:` +
-           ` tune, add VFOs, pick decoders, look things up online, write a decoder plugin.` +
-           (ro ? '<br><b>Read only</b> is on: it can look, not change anything.' : '') + '</div>';
+    return `<div class="ai-dk-empty">Ask about what you see - or tell it what to do.` +
+           helpTip('It can explain the signals and what was decoded, and act on the receiver: tune, add VFOs, pick decoders, look things up online, write a decoder plugin.' +
+                   (ro ? '<br><br><b>Read only</b> is on: it can look, not change anything.' : '')) + '</div>';
   }
   const AI_CHIPS = [
     ['What is on D0?', () => 'What is the signal on D' + activeDecimatorId + '? Identify it if you can.'],
@@ -11982,11 +12088,14 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (rol) rol.classList.toggle('on', !!st.readonly);
     // warnings: no API token, no sandbox
     const w = [];
-    if (st.enabled && !st.token) w.push('No API token is set: anyone who can open this page can drive the assistant (it controls the receiver and runs code here). See README → API token.');
+    // [the warning, its tooltip]
+    if (st.enabled && !st.token) w.push(['⚠ No API token: anyone who opens this page can use the assistant',
+      'It controls the receiver and runs code on it. Set an API token: README → API token.']);
     if (st.enabled && st.backend === 'claude' && st.sandbox === false)
-      w.push('No sandbox for its shell (' + (st.sandbox_why || (serverWin ? 'none on Windows' : 'bubblewrap + socat')) + '): it can answer and use the receiver, but not build plugins or run scripts.');
+      w.push(['⚠ No sandbox: it can\'t build plugins or run scripts',
+        'No sandbox for its shell (' + (st.sandbox_why || (serverWin ? 'none on Windows' : 'bubblewrap + socat')) + '): it can answer and use the receiver only.']);
     const warn = $id('ai-dk-warn');
-    const wh = w.map(digEsc).join('<br>');
+    const wh = w.map(([t, tip]) => `<span title="${digEsc(tip)}">${digEsc(t)}</span>`).join('<br>');
     if (warn && warn.dataset.html !== wh) { warn.dataset.html = wh; warn.innerHTML = wh; }
     // history or the conversation
     $id('ai-dk-hist').style.display = aiHistOpen ? '' : 'none';
@@ -12032,8 +12141,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       const el = $id(id);
       if (el.dataset.html !== html && document.activeElement !== el) { el.dataset.html = html; el.innerHTML = html; }
     }
-    const sn = busy ? 'Applies from the next question' : 'For every page using this receiver; kept over restarts';
+    const sn = busy ? 'from the next question' : '';
     if ($id('ai-dk-set-n').textContent !== sn) $id('ai-dk-set-n').textContent = sn;
+    $id('ai-dk-set').title = 'For every page using this receiver; kept over restarts';
     const foot = $id('ai-dk-foot');
     const [rm, re] = aiRunsWith(st), f = [rm, re ? 'effort ' + re : ''].filter(Boolean).join(' · ');
     if (foot.textContent !== f) foot.textContent = f;
@@ -12261,9 +12371,15 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
   }
 
+  // An on / off option's button text after its name: nothing for plain On /
+  // Off (the button is lit while on), ": state" for anything else
+  function digOnOffText(cur) {
+    const t = (cur || '').replace(/\s*\(.*\)\s*$/, '');
+    return /^(on|off|yes|no)?$/i.test(t) ? '' : ': ' + digEsc(t);
+  }
   // One VFO's settings row in a tab: VFO + state, mode, Listen, the plugin's
   // options, Log all, Invert, Plot on map, bandwidth / plugin problems
-  function digVfoRowHtml(id, tab) {
+  function digVfoRowHtml(id, tab, about = '') {
     const d = digDec(id);
     const mode = d ? (d.digital_mode || 'OFF') : 'OFF';
     const st = digStatus[id];
@@ -12284,12 +12400,12 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         const cur = (op.choices.find(c => c[0] === (on ? '1' : '0')) || ['', on ? 'On' : 'Off'])[1];
         opts += `<button type="button" class="btn sm dig-opt-tog${on ? ' primary' : ''}" data-key="${digEsc(key)}" aria-pressed="${on}"` +
                 ` title="${digEsc((op.help ? op.help + '\n\n' : '') + 'Now: ' + cur + ' - click to turn ' + (on ? 'off' : 'on'))}"` +
-                ` onclick="digSetOptFor(${id}, this.dataset.key, '${on ? '0' : '1'}')">${on ? '●' : '○'} ${digEsc(op.label || op.key)}: ${digEsc(cur.replace(/\s*\(.*\)\s*$/, ''))}</button>`;
+                ` onclick="digSetOptFor(${id}, this.dataset.key, '${on ? '0' : '1'}')">${on ? '●' : '○'} ${digEsc(op.label || op.key)}${digOnOffText(cur)}</button>`;
       } else if (op.choices && op.choices.length)
-        opts += `<label${tip}>${digEsc(op.label || op.key)}: <select data-key="${digEsc(key)}" onchange="digSetOptFor(${id}, this.dataset.key, this.value)">` +
+        opts += `<label${tip}>${digEsc(op.label || op.key)} <select data-key="${digEsc(key)}" onchange="digSetOptFor(${id}, this.dataset.key, this.value)">` +
                 op.choices.map(c => `<option value="${digEsc(c[0])}"${c[0] === v ? ' selected' : ''}>${digEsc(c[1])}</option>`).join('') + '</select></label>';
       else
-        opts += `<label${tip}>${digEsc(op.label || op.key)}: <input type="text" data-key="${digEsc(key)}" value="${digEsc(v)}" placeholder="${digEsc(op.default || 'default')}" style="width:70px"` +
+        opts += `<label${tip}>${digEsc(op.label || op.key)} <input type="text" data-key="${digEsc(key)}" value="${digEsc(v)}" placeholder="${digEsc(op.default || 'default')}" style="width:70px"` +
                 ` onkeydown="if(event.key==='Enter'){event.target.blur()}" onchange="digSetOptFor(${id}, this.dataset.key, this.value.trim())"></label>`;
     }
     const needK = digMinRateK(mode);
@@ -12315,7 +12431,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const [col, txt] = digStateOf(id);
     return `<div class="info-dec-settings dig-vfo-row">` +
         `<span class="dig-vfo" style="border-color:${getDecimatorColor(id)}" title="${digEsc(txt)}"><span style="color:${col}">●</span> D${id} · ${digMhzOf(id)} MHz</span>` +
-        `<label>Mode: <select class="dig-mode-sel" data-vfo="${id}" onchange="digSetModeFor(${id}, this.value)">${digModeOptions(mode)}</select></label>` +
+        about +
+        `<label>Mode <select class="dig-mode-sel" data-vfo="${id}" onchange="digSetModeFor(${id}, this.value)">${digModeOptions(mode)}</select></label>` +
         (hasVoice ? `<button class="btn sm${listening ? ' primary' : ''}" type="button" onclick="digListenFor(${id})" title="${digEsc(listenTip)}">${listening ? '🔊 Listening' : '🔊 Listen'}</button>` : '') +
         (voice ? `<span class="v">${digEsc(voice)}</span>` : '') +
         opts +
@@ -12338,7 +12455,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const empty = !tab;
     body.classList.toggle('empty', empty);
     if (empty) {
-      const t = '<div class="dig-help" style="padding:8px">No VFO is decoding. Tick <b>Digital decoder</b> on a VFO in the Decimators box (sidebar) - each decoder mode gets a tab here, showing every VFO that runs it.</div>';
+      const t = '<div class="dig-help" style="padding:8px">No VFO is decoding - tick <b>Digital decoder</b> on a VFO card.' +
+                helpTip('Each decoder gets a tab here, showing every VFO that runs it.') + '</div>';
       if ($id('info-dec-top').innerHTML !== t) $id('info-dec-top').innerHTML = t;
       $id('info-dec-cols').style.display = 'none';
       $id('info-dec-table').style.display = 'none';
@@ -12352,13 +12470,13 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     // settings rows (rebuilt only when something changed and nothing in them has focus)
     const help = (plugin || {}).description || '';
     // nobody runs it: start it on a VFO from here
-    const idle = ids.length ? '' : `<div class="info-dec-settings dig-vfo-row"><span class="v">No VFO decodes ${digEsc(name)} now.</span>` +
-      (decimatorInfo.length ? ' Start it on: ' + decimatorInfo.map(d =>
+    const about = help ? helpTip('<b>' + digEsc(name) + '</b><br>' + digEsc(help), true) : '';
+    const idle = ids.length ? '' : `<div class="info-dec-settings dig-vfo-row"><span class="v">Not running</span>${about}` +
+      (decimatorInfo.length ? ' Start on ' + decimatorInfo.map(d =>
         `<button class="btn sm" type="button" onclick="digSetModeFor(${d.id}, 'PLUGIN:${digEsc(tab)}')" title="D${d.id} ${digMhzOf(d.id)} MHz${d.digital_mode && d.digital_mode !== 'OFF' ? ' (now ' + digEsc(digModeLabel(d.digital_mode)) + ')' : ''}">` +
         `<span class="dig-vfo-dot" style="background:${getDecimatorColor(d.id)}"></span>D${d.id}</button>`).join(' ') : '') + `</div>`;
-    const top = idle + ids.map(id => digVfoRowHtml(id, tab)).join('') +
-      (plugin && plugin.messages ? digIncidentsRow(tab) : '') +
-      (help ? `<div class="dig-help" style="margin:2px 0 0 0">${digEsc(help)}</div>` : '');
+    const top = idle + ids.map((id, i) => digVfoRowHtml(id, tab, i ? '' : about)).join('') +
+      (plugin && plugin.messages ? digIncidentsRow(tab) : '');
     const topEl = $id('info-dec-top');
     // only an input / list being edited (or an open mode list) holds the
     // rebuild back: a clicked button keeps the focus, and an on / off option
@@ -13084,7 +13202,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       if (['not installed', 'no model', 'error'].includes(s.state))
         h = `<span style="color:#ffb74d">⚠ ${digEsc((V2T_STATE[s.state] || [, s.state])[1])}${s.error ? ': ' + digEsc(s.error) : ''} - see the 🗣 Voice to Text box in the sidebar</span>`;
       else if (!s.vfos.length)
-        h = 'No VFO is transcribing: tick <b>🗣 Transcribe</b> on a VFO card (Decimators box).';
+        h = 'No VFO is transcribing - tick <b>🗣 Transcribe</b> on a VFO card.';
       else {
         const rec = s.vfos.filter(v => v.rec);
         h = rec.length ? rec.map(v => `<span style="color:#ef5350">&#9679;</span> <span style="color:${getDecimatorColor(v.id)};font-weight:bold">D${v.id}</span> ${v.secs.toFixed(0)} s`).join(' &nbsp; ')
@@ -13151,9 +13269,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     list.dataset.key = key;
     if (!v2tShown.length) {
       list.innerHTML = `<div class="dig-help" style="padding:6px">${v2tList.length ? 'Nothing matches.' :
-        'No transcripts yet. Each transmission appears here a few seconds after it ends (one longer than 25 s in ' +
+        'No transcripts yet' + helpTip('Each transmission appears here a few seconds after it ends (one longer than 25 s in ' +
         'parts); a continuous signal (broadcast FM, or anything on air longer than 30 s) in pieces of about 10 s, ' +
-        'cut where the speech pauses.'}</div>`;
+        'cut where the speech pauses.')}</div>`;
       return;
     }
     // newest first, at most 400 rows (the CSV export has them all)
@@ -14932,15 +15050,16 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (s === null || s === undefined) return '';
     return s < 60 ? Math.round(s) + ' s' : s < 3600 ? Math.round(s / 60) + ' min' : (s / 3600).toFixed(1) + ' h';
   }
+  // [what the panel says, the tooltip]
   const RDF_STATE = {
-    no_fix: 'No GPS position - the map needs the station location (sidebar → Station Information, GPS)',
-    no_heading: 'No heading yet - drive a little so the GPS course is known (or fit a compass)',
-    slow: 'Stopped / slow: bearings are only collected above 7 km/h (the GPS course is unreliable below)',
-    turning: 'Turning: bearings paused (the heading lags in turns)',
-    static: 'Static location: the lobe is shown; drive with GPS (Station Information) to build a heat map',
-    calibrating: 'Calibrating: bearings paused',
-    doa_off: 'DoA is off (MUSIC DoA box)',
-    not_coherent: 'Direction finding needs the coherent mode',
+    no_fix: ['No station position', 'The map needs the station location: Station Information in the sidebar (a static location or GPS)'],
+    no_heading: ['No heading yet - drive a little', 'The GPS course is only known while moving (or fit a compass)'],
+    slow: ['Too slow: bearings paused', 'Bearings are only collected above 7 km/h - the GPS course is unreliable below'],
+    turning: ['Turning: bearings paused', 'The heading lags in turns'],
+    static: ['Static location: lobe only', 'The lobe is shown; drive with GPS (Station Information) to build a heat map'],
+    calibrating: ['Calibrating: bearings paused', ''],
+    doa_off: ['DoA is off', 'Switch it on in the MUSIC DoA box'],
+    not_coherent: ['Needs coherent mode', 'Direction finding needs the tuners as one array: Mode in the top bar'],
   };
   // one map's heat-map status (records, next gate, estimate)
   function rdfMapLine(name, col, key, live) {
@@ -15114,9 +15233,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const rg = $id('map-df-range');
     if (document.activeElement !== rg) rg.value = rdfStatus.range_km;
     let h = '';
-    if (!vs.length) h = '<span class="w">No VFO has DoA results (DoA on, coherent mode, a signal in the VFO).</span>';
-    else if (!rdfStatus.on) h = '<span class="w">Collecting is off - the lobes are shown, no heat map is built.</span>';
-    else if (RDF_STATE[rdfStatus.state]) h = `<span class="w">${digEsc(RDF_STATE[rdfStatus.state])}</span>`;
+    if (!vs.length) h = '<span class="w" title="It needs DoA on, the coherent mode and a signal in the VFO">No DoA results yet</span>';
+    else if (!rdfStatus.on) h = '<span class="w" title="The lobes are shown; no heat map is built until Collect is ticked">Not collecting</span>';
+    else if (RDF_STATE[rdfStatus.state]) h = `<span class="w" title="${digEsc(RDF_STATE[rdfStatus.state][1])}">${digEsc(RDF_STATE[rdfStatus.state][0])}</span>`;
     if (tsel === '') {
       for (const id of rdfSelIds()) h += (h ? '<br>' : '') + rdfMapLine('D' + id, getDecimatorColor(id), rdfGk(id, ''), vs.find(x => x.id === id));
     } else if (tsel !== '*') {
@@ -15546,8 +15665,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       else if (lrOpen) msg = '';   // ⏯ a log replay: its strip says it all
       else {
         const plot = decimatorInfo.filter(d => d.digital_mode && d.digital_mode !== 'OFF');
-        msg = plot.length ? 'No positions yet from the running decoders' :
-          'No positions yet - set a VFO\'s digital decoder to one that reports positions, e.g. ADS-B (1090 MHz) on a 2.4 MHz VFO at 1090 MHz';
+        msg = plot.length ? 'No positions yet' : 'No positions - no decoder is running';
       }
     }
     if (st.textContent !== msg) st.textContent = msg;
@@ -15639,7 +15757,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
             '<button type="button" onclick="mapMenuClose();sfNew({lat:mapMenuAt.la,lon:mapMenuAt.lo})" title="Save a frequency transmitted from here (a new marker)">📻 Save a frequency here</button>' +
             (plMenuOn() ? `<button type="button" onclick="vsAddAt('tx')" title="${vsAddTip('here')}">${vsAddLabel('here')}</button>` : '') +
             plMenuItem() + rgMenuItem() +
-            `<button type="button" onclick="mapSetStationAt()" title="Put the station (Station Information) here - a fixed location; its heading is kept">📡 Set station here${mapStaticSource() ? '' : ' (fixed location)'}</button>`;
+            `<button type="button" onclick="mapSetStationAt()" title="Put the station (Station Information) here - a fixed location; its heading is kept">📡 Set station here</button>`;
     const mk = mkGet(mkHit(x, y));
     if (mk) {
       const n = digEsc(mk.name);
@@ -15802,10 +15920,10 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     el.innerHTML =
       `<div class="h"><span>✎ Edit marker</span><span class="x" onclick="mkCancelEdit()" title="Cancel">✕</span></div>` +
       `<div class="lbl">Name</div><div class="row"><input type="text" id="mk-name" maxlength="80" ${enter}></div>` +
-      `<div class="lbl">Position (latitude, longitude)</div>` +
-      `<div class="row"><input type="text" id="mk-lat" inputmode="decimal" ${enter}><input type="text" id="mk-lon" inputmode="decimal" ${enter}></div>` +
+      `<div class="lbl">Position</div>` +
+      `<div class="row"><input type="text" id="mk-lat" inputmode="decimal" placeholder="latitude" ${enter}><input type="text" id="mk-lon" inputmode="decimal" placeholder="longitude" ${enter}></div>` +
       `<div class="lbl">Notes</div><textarea id="mk-notes" rows="4" maxlength="4000"></textarea>` +
-      `<div class="lbl">The frequencies saved here are listed in the marker's panel (+ Frequency there adds one).</div>` +
+
       `<div class="err" id="mk-err"></div>` +
       `<div class="b" style="margin-top:6px"><button type="button" class="map-btn on" onclick="mkSave()">Save</button>` +
       `<button type="button" class="map-btn" onclick="mkCancelEdit()">Cancel</button></div>`;
@@ -20307,7 +20425,15 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     el.dataset.built = '1';
     el.innerHTML =
       `<div class="map-vs-h"><span class="t">👁 Viewshed</span>` +
-      `<span class="hint vs-sig">right-click the map to add a TX antenna</span><span class="hint vs-los">from the station</span>` +
+      `<span class="vs-sig">${helpTip('<b>📶 Signal</b>: how often a transmitter\'s signal is good enough for receivers around it. The station isn\'t part of it: ' +
+        'right-click the map → "Add TX antenna here" to place transmitters - each one\'s coverage is coloured, worked out for receivers at that site\'s antenna height.<br><br>' +
+        'The median path loss by the chosen model (ITU-R P.1812: diffraction over the terrain + troposcatter; Longley-Rice: NTIA\'s ITM) + clutter (ITU-R P.2108), ' +
+        'with shadowing (P.1546) and fading. The black line ("Line of sight edge") is the edge of the line of sight.<br><br>' +
+        'Right-click the map → "📶 Path loss analysis from TX 1 to here" for the terrain profile and link budget to a place. ' +
+        'Bare terrain: buildings and trees only through the clutter setting.', true)}</span>` +
+      `<span class="vs-los">${helpTip('<b>👁 Line of sight</b> from the station - or any place: right-click the map, a marker or a mast. Over the terrain only: buildings and trees ' +
+        'aren\'t in the data, the sea counts as 0 m. Radio also reaches a little past it (diffraction).<br><br>Point at the map for details; at a row\'s "% in sight" for its cell size.', true)}</span>` +
+      `<span class="hint vs-sig">right-click the map: add a TX</span>` +
       `<span class="x" id="map-vs-fold" onclick="mapSet('vsOpen', !mapState.vsOpen)" title="Fold / unfold"></span></div>` +
       `<div class="map-vs-body"><div class="map-vs-row"><div class="map-seg vs-mode" id="map-vs-mode">` +
       `<button type="button" data-m="los" onclick="vsSetMode('los')" title="Where an antenna at the target height is in sight of each site">👁 Line of sight</button>` +
@@ -20322,13 +20448,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       `<option value="1">No bending (k = 1)</option></select></div>` +
       `<div class="map-pl vs-sig" id="map-vs-sig"></div>` +
       `<div id="map-vs-list"></div><div class="map-vs-hov" id="map-vs-hov"></div><div id="map-vs-link" class="map-pl vs-sig"></div>` +
-      `<div class="map-vs-note vs-sig">The station isn't part of the signal: right-click the map → "Add TX antenna here" to place transmitters - each one's coverage is coloured, ` +
-      `worked out for receivers at that site's antenna height. Signal: the median path loss by the chosen model (50 % of the time; ITU-R P.1812: diffraction over the terrain + troposcatter, Longley-Rice: NTIA's ITM, both per place along its terrain profile) + clutter (ITU-R P.2108), ` +
-      `with shadowing (P.1546) and fading, as how often the receiver gets what it needs; the black line (switch: "Line of sight edge") is the edge of the line of sight. ` +
-      `Right-click the map → "📶 Path loss analysis from TX 1 to here" for the terrain profile and link budget from a TX antenna (the selected one, else the first) to a place. Bare terrain: buildings and trees only through the clutter setting.</div>` +
-      `<div class="map-vs-note vs-los">Line of sight over the terrain only: buildings and trees aren't in the data, the sea counts as 0 m. ` +
-      `Radio also reaches a little past it (diffraction). Point at the map for details; at a row's "% in sight" for its cell size. ` +
-      `Terrain: AWS Terrain Tiles (<a href="${VS_TERRAIN_INFO}" target="_blank" rel="noopener noreferrer">sources ↗</a>)</div></div>`;
+      `<div class="map-vs-note">Terrain: AWS Terrain Tiles (<a href="${VS_TERRAIN_INFO}" target="_blank" rel="noopener noreferrer">sources ↗</a>)</div></div>`;
   }
   function vsRowBuild(it) {
     const r = document.createElement('div');
@@ -20351,7 +20471,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (!it.on) return ['hidden', ''];
     if (vsState.mode === 'sig' && it.role === 'rx') {   // (📶 a receiver isn't coloured - its link's TX is)
       const l = vsLinkItem();
-      if (!l || l.rxId !== it.id) return [`an RX antenna - not coloured (path loss analyses run from TX antennas)`, ''];
+      if (!l || l.rxId !== it.id) return ['RX antenna: not coloured', ''];
       const lr = vsRes.get(l.id), lf = vsFail.get(l.id);
       if (vsJob && vsJob.id === l.id) {
         const p = vsJob.prog;
@@ -21618,22 +21738,23 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   }
   // why there is nothing to work with (the source line)
   function rgNoSource() {
-    if (opMode !== 'coherent') return 'Coherent mode only (it needs a DoA lobe)';
+    if (opMode !== 'coherent') return '<span title="It needs a DoA lobe">Coherent mode only</span>';
     if (!rdfStatus) return 'Waiting for the DoA lobes…';
-    if (!rdfStatus.station) return 'No station position (Station Information: a static location or GPS)';
+    if (!rdfStatus.station) return '<span title="Station Information in the sidebar: a static location or GPS">No station position</span>';
     const s = rgSource();
-    if (!s) return 'No VFO with DoA: add a VFO in coherent mode with DoA on';
-    return `${digEsc(s.name)}: no DoA lobe yet (a heading is needed - Station Information; the signal on, its squelch open)`;
+    if (!s) return '<span title="Add a VFO in coherent mode with DoA on">No VFO with DoA</span>';
+    return `<span title="A heading is needed (Station Information), the signal on and its squelch open">${digEsc(s.name)}: no DoA lobe yet</span>`;
   }
   // the measured level -> the numbers the posterior needs (base: the margin
   // of a place = base - its loss)
   function rgInputs(sn) {
     const L = sn.lvl;
-    if (!L) return {why: sn.pk ? 'No level for a packet decoder\'s radios (aircraft, ships...): their packets share the VFO\'s band'
-                               : sn.key.endsWith('|') ? 'No level yet: it is measured while the signal is above the noise in the VFO\'s band (its squelch open)'
-                               : 'No level for this radio yet: it is measured while it is the only one transmitting on its VFO'};
-    if (sn.stale) return {why: `No recent level (last heard ${rgAgeTxt(rgLvlAge(L))} ago): the estimate waits for the signal - it needs the level while the lobe is measured`};
-    if (L.gain < 0) return {why: 'The tuner AGC is on: its gain isn\'t known, so the level can\'t be turned into dBm - set a fixed gain'};
+    // why: what the panel says; tip: the reason, in its tooltip
+    if (!L) return sn.pk ? {why: 'No level for a packet decoder\'s radios', tip: 'The packets of its radios (aircraft, ships...) share the VFO\'s band'}
+                 : sn.key.endsWith('|') ? {why: 'No level yet', tip: 'It is measured while the signal is above the noise in the VFO\'s band (its squelch open)'}
+                 : {why: 'No level for this radio yet', tip: 'It is measured while it is the only one transmitting on its VFO'};
+    if (sn.stale) return {why: `No recent level (last heard ${rgAgeTxt(rgLvlAge(L))} ago)`, tip: 'The estimate waits for the signal: it needs the level while the lobe is measured'};
+    if (L.gain < 0) return {why: 'Tuner AGC on: set a fixed gain', tip: 'With the AGC on the tuner\'s gain isn\'t known, so the level can\'t be turned into dBm'};
     const prx = L.dbfs - L.gain + rgCal(L.gain, sn.mhz), sigma = rgSigma(sn.mhz, L.gain);
     return {ok: true, prx, sigma, base: rgEirp() + rgState.gr - rgState.lr - prx, snr: L.dbfs - L.noise};
   }
@@ -21971,7 +22092,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (!sn || !rgFits(rgRes, sn, RG_ORG_USE)) return;
     const inp = rgInputs(sn);
     if (!inp.ok) {
-      if (!rgEst || rgEst.why !== inp.why) { rgEst = {why: inp.why}; rgRes.shown = false; rgRender(); mapDraw(); }
+      if (!rgEst || rgEst.why !== inp.why) { rgEst = {why: inp.why, tip: inp.tip}; rgRes.shown = false; rgRender(); mapDraw(); }
       rgPostKey = '';
       return;
     }
@@ -22146,7 +22267,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   // it - its path loss to the station by the model -> the level expected
   function rgMenuItem() {
     return rgReady && rgState.on && opMode === 'coherent'
-      ? `<button type="button" onclick="rgCalTxAt()" title="Calibrate the receiver for the 📏 range on a transmitter here whose EIRP you know (a repeater, a broadcast station from a licence register): tune the DF panel's selected VFO to it first">📏 Known transmitter here (calibrate)</button>` : '';
+      ? `<button type="button" onclick="rgCalTxAt()" title="Calibrate the receiver for the 📏 range on a transmitter here whose EIRP you know (a repeater, a broadcast station from a licence register): tune the DF panel's selected VFO to it first">📏 Known transmitter here</button>` : '';
   }
   function rgCalTxAt() {
     const at = mapMenuAt;
@@ -22263,7 +22384,13 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const sel = (k, opts, tip) => `<select data-k="${k}" title="${tip}" onchange="rgSet('${k}',this.value)">${opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>`;
     const envs = PL_ENVS.map((t, i) => [i, t]);
     el.innerHTML =
-      `<div class="map-vs-h"><span class="t">📏 Range from signal strength</span><span class="hint">the DF panel's lobe</span>` +
+      `<div class="map-vs-h"><span class="t">📏 Range</span>` +
+      helpTip('<b>Range from signal strength</b>: where the transmitter of the DF panel\'s selected lobe probably is - the measured level (dBFS - gain + the calibration = dBm at the receiver input) against ' +
+        'the path loss from the station to each place (the model over the terrain, with a transmitter at the TX antenna height there) and the lobe\'s bearing.<br><br>' +
+        'Coloured by how likely: the red core is the most likely, out to the 50 / 90 / 99 % regions; the ✕ is the single most likely spot - ' +
+        'the median distance can lie further out, as the lobe widens with distance.<br><br>Only as good as the EIRP guess (in watts) and the calibration: calibrate on a ' +
+        'known transmitter (right-click it on the map) for absolute levels. Bare terrain: buildings and trees only through the clutter setting.', true) +
+      `<span class="hint">the DF panel's lobe</span>` +
       `<span class="x rg-fold" onclick="rgSet('open', !rgState.open)" title="Fold / unfold"></span></div>` +
       `<div class="map-vs-body">` +
       `<div class="rg-src"></div><div class="rg-job pl-note"></div>` +
@@ -22272,7 +22399,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       `<div class="map-vs-row rg-btns"><button type="button" class="map-btn" onclick="rgCentre()" title="Centre the map on the most likely spot">◎ Most likely</button>` +
       `<button type="button" class="map-btn" onclick="rgClear()" title="Forget the held lobe and level (the estimate shows again with the next ones)">Clear</button></div>` +
       `<div class="map-vs-hov rg-hov"></div>` +
-      `<div class="pl-set-h" onclick="rgSet('cfg', !rgState.cfg)"><span class="rg-cfg-f"></span> Transmitter, our antenna, calibration, model</div>` +
+      `<div class="pl-set-h" onclick="rgSet('cfg', !rgState.cfg)" title="The transmitter, our antenna, the calibration and the model"><span class="rg-cfg-f"></span> Settings</div>` +
       `<div class="rg-cfg">` +
       `<div class="map-vs-row"><span class="pl-l">Transmitter</span>${sel('txMode', [['ptx', 'power + antenna'], ['eirp', 'EIRP']], 'Give the transmitter\'s power, antenna gain and cable loss - or its EIRP (effective isotropic radiated power; ERP + 2.15 dB) directly')}` +
       `<select onchange="rgPreset(this.value);this.value=''" title="Fill in a typical transmitter"><option value="">typical…</option>${RG_PRESETS.map(([t], i) => `<option value="${i}">${t}</option>`).join('')}</select></div>` +
@@ -22313,11 +22440,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       `<div class="map-vs-row"><span class="pl-l">Fading</span>${sel('fade', [['auto', 'auto: Rician, K lower behind terrain'], ['rician', 'Rician, the same K everywhere'], ['rayleigh', 'Rayleigh'], ['none', 'none (averaged out)']], 'Fast (multipath) fading of the measured level around its local mean - none when the transmitter moved while it was measured (a vehicle) and the level averaged it out')}` +
       `<label class="rg-k">K ${num('K', 40, '1', 'Rician K-factor (dB) of a clear path')} dB</label></div>` +
       `<div class="map-vs-row rg-sig pl-note"></div></div>` +
-      `<div class="map-vs-note">Where the transmitter of the DF panel's selected lobe probably is: the measured level (dBFS - gain + the calibration = dBm at the receiver input) against ` +
-      `the path loss from the station to each place (the model over the terrain, with a transmitter at the TX antenna height there) and the lobe's bearing. ` +
-      `Coloured by how likely: the red core is the most likely, out to the 50 / 90 / 99 % regions; the ✕ is the single most likely spot (per square metre, on the deepest red) - ` +
-      `the median distance can lie further out, as the lobe widens with distance. The transmitter's power and EIRP are entered in watts. Only as good as the EIRP guess and the calibration - calibrate on a ` +
-      `known transmitter (right-click it on the map) for absolute levels. Bare terrain: buildings and trees only through the clutter setting.</div></div></div>`;
+      `</div></div>`;
   }
   function rgCentre() { if (rgEst && rgEst.lat !== undefined) { mapCenterOn(rgEst.lat, rgEst.lon); mapDraw(); } }
   // (an estimate in flight is ignored when it comes - it would bring the cleared one back)
@@ -22385,8 +22508,8 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     vis('.rg-sigc', !!s.calHow);
     set('.rg-calh', s.calHow ? `calibrated from ${digEsc(s.calHow)}${s.calF ? ` at ${plF(s.calF, 3)} MHz, ${plF(s.calG)} dB gain` : ''}` +
                     (s.calF && sn && Math.abs(Math.log2(sn.mhz / s.calF)) > 0.5 ? ' <span class="w">- far from this frequency: the model\'s gain roll-off carries it, less surely</span>' : '')
-                  : `<span class="w">uncalibrated: the nominal from published R820T measurements, ± ${plF(cSd)} dB - ` +
-                    `${dc ? RG_CAL_DC_TXT : 'calibrate on a known transmitter for better'}</span>`);
+                  : `<span class="w" title="The nominal calibration from published R820T measurements - ${dc ? RG_CAL_DC_TXT : 'calibrate on a known transmitter for better'}">` +
+                    `uncalibrated: ± ${plF(cSd)} dB</span>`);
     vis('.rg-kl', rgUiKl);
     vis('.rg-kt', rgUiKt);
     vis('.rg-kt2', rgUiKt && !!s.calTx);
@@ -22418,7 +22541,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     // the estimate
     let st = '';
     const E = rgEst;
-    if (E && E.why) st = `<span class="w">${digEsc(E.why)}</span>`;
+    if (E && E.why) st = `<span class="w" title="${digEsc(E.tip || '')}">${digEsc(E.why)}</span>`;
     else if (E && E.empty) {
       const sg = E.inp ? E.inp.sigma : 6;
       st = E.mMax < 0 ? `<span class="e">⚠ The signal is stronger than this transmitter could give anywhere within ${rgRes ? rgRes.r : s.r} km ` +
@@ -24729,7 +24852,10 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     let mh = '';
     if (lrLoadMsg && lrLoadMsg.busy) mh = `<span class="lr-dim">${escapeHtml(lrLoadMsg.busy)}</span>`;
     else if (lrLoadMsg && lrLoadMsg.err) mh = `<span class="e">${escapeHtml(lrLoadMsg.err)}</span>`;
-    if (!lr) mh += `<div class="lr-help">Play back a <b>DoA log</b> of a drive on the map: the KrakenSDR Android app's log (<b>.csv</b>, or <b>.sqlite</b> - with its <b>-wal</b> file if there is one) or a <b>📝 DoA Recording</b> of this receiver (its box: 🗺 Replay). <button type="button" class="map-btn" onclick="lrOpenDialog()">📂 Open a log…</button> or drop the file on the map. It is read here in the browser - nothing is uploaded. The track, the bearings, each moment's DoA lobe and the heat map of where the transmitter is (the live mobile DF's) - at any speed, back and forth.</div>`;
+    if (!lr) mh += `<div class="lr-help"><button type="button" class="map-btn" onclick="lrOpenDialog()">📂 Open a DoA log…</button> or drop it on the map` +
+      helpTip('Plays back a <b>DoA log</b> of a drive on the map: the KrakenSDR Android app\'s log (<b>.csv</b>, or <b>.sqlite</b> - with its <b>-wal</b> file if there is one) ' +
+        'or a <b>📝 DoA Recording</b> of this receiver (its box: 🗺 Replay).<br><br>The track, the bearings, each moment\'s DoA lobe and the heat map of where the transmitter is - ' +
+        'at any speed, back and forth. It is read here in the browser: nothing is uploaded.', true) + `</div>`;
     // timestamps a spreadsheet rounded: how the times were rebuilt + the drive's length to set
     const R = lr && lr.info.retimed;
     if (R) {
@@ -25160,8 +25286,9 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
              '</span> &nbsp;' + wbEsc(e.e.replace(/^alarm_/, '').replace(/_/g, ' ')) + ': <span class="' + cls + '">' + wbEsc(e.d) + '</span></div>'; }).join('')
       : '<span class="info">none</span>';
     const lg = h.log || {};
-    $id('wb-log-info').textContent = 'On the SD card: ' + ((lg.bytes || 0) / 1048576).toFixed(1) + ' MB in ' + (lg.files || 0) + ' file' + (lg.files === 1 ? '' : 's') +
-      (lg.oldest ? ', from ' + lg.oldest : '') + ' (wb_logs/, one file per day; older days are deleted).';
+    $id('wb-log-info').textContent = ((lg.bytes || 0) / 1048576).toFixed(1) + ' MB in ' + (lg.files || 0) + ' file' + (lg.files === 1 ? '' : 's') +
+      (lg.oldest ? ', from ' + lg.oldest : '');
+    $id('wb-log-info').title = 'On the receiver\'s disk, in wb_logs/: one file per day; older days are deleted';
   }
   // live tiles + the log settings in force (every status message while the sheet is open)
   function wbSheetLive() {
@@ -25352,23 +25479,27 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     if (kb) {
       if (status.kerberos) {
         const cal = status.cal_state || 'uncalibrated';
-        let text, bg, border, color;
+        let text, tip, bg, border, color;
         if (cal === 'calibrated') {
-          text = '✅ KerberosSDR: calibrated. Changing frequency or gain will make the calibration stale.';
+          text = '✅ KerberosSDR calibrated';
+          tip = 'Changing the frequency or the gain makes the calibration stale.';
           bg = '#15321a'; border = '#2c7a3f'; color = '#a8e6b3';
         } else if (cal === 'calibrating') {
-          text = '⏳ KerberosSDR: CALIBRATING - keep all antennas DISCONNECTED until this banner shows "calibrated" (~30-60 s).';
+          text = '⏳ KerberosSDR calibrating - keep ALL antennas disconnected';
+          tip = 'Keep every antenna disconnected until this banner shows "calibrated" (about 30-60 s).';
           bg = '#333013'; border = '#a89b2c'; color = '#f0e68c';
         } else if (cal === 'stale') {
-          text = '⚠️ KerberosSDR: calibration is STALE (settings changed since calibrating) - DoA output is unreliable. ' +
-                 'Disconnect ALL antennas, recalibrate from the heimdall web UI (port 8070), then reconnect them.';
+          text = '⚠️ KerberosSDR calibration is STALE - DoA unreliable: recalibrate with ALL antennas disconnected';
+          tip = 'The settings changed since calibrating, so the DoA output is unreliable. Disconnect ALL antennas, ' +
+                'recalibrate from the heimdall web UI (port 8070), then reconnect them.';
           bg = '#3a2a10'; border = '#b3822c'; color = '#ffd9a0';
         } else {
-          text = '🚨 KerberosSDR: UNCALIBRATED - DoA output is INVALID. Disconnect ALL antennas, ' +
-                 'recalibrate from the heimdall web UI (port 8070), then reconnect them.';
+          text = '🚨 KerberosSDR UNCALIBRATED - DoA invalid: calibrate with ALL antennas disconnected';
+          tip = 'The DoA output is invalid. Disconnect ALL antennas, calibrate from the heimdall web UI (port 8070), then reconnect them.';
           bg = '#3a1515'; border = '#b33'; color = '#ffb3b3';
         }
         kb.textContent = text;
+        kb.title = tip;
         kb.style.background = bg;
         kb.style.borderBottomColor = border;
         kb.style.color = color;
@@ -25769,6 +25900,10 @@ function openHeimdall(){
 // overflow clipping and never runs off-screen. Event delegation is used so it
 // also covers any icons added later.
 // ============================================================================
+// A "?" icon with its popup, for text built in JS: helpTip(html) - `wide` for long texts
+function helpTip(html, wide) {
+  return '<span class="help' + (wide ? ' wide' : '') + '" tabindex="0" role="button" aria-label="Help">?<span class="tip">' + html + '</span></span>';
+}
 function initHelpTips(){
   let shown=null, pinned=null;
   const tipOf=(h)=>h.querySelector('.tip');

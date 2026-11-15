@@ -1,9 +1,10 @@
-# The sidebar: boxes, their order, and how controls are written
+# The sidebar's boxes, and how controls and text are written on the page
 
 The left sidebar of `kraken_doa.html` is a column of boxes (`.sb-section`),
 one per feature. This file covers the box chrome (collapse, move, what is
-remembered) and the rules the controls inside follow. Each feature's own
-controls are in that feature's topic file.
+remembered) and the rules every control and text on the page follows - the
+sidebar first, then the top bar, the waterfall bar, the panels, the map and
+the dialogs. Each feature's own controls are in that feature's topic file.
 
 ## Boxes
 
@@ -45,10 +46,11 @@ controls are in that feature's topic file.
   `sbApply` / `sbWidth`; the box code uses the `sbBox…` prefix. (A second
   `function sbSave` silently replaced the first one during development.)
 
-## Rules for controls in the sidebar
+## Rules for controls and text
 
-The sidebar was reworked on 2026-11-15 at the user's request: it was too
-text heavy, with explanations written on the controls.
+The sidebar was reworked on 2026-11-15 at the user's request - it was too
+text heavy, with explanations written on the controls - and the rest of the
+page got the same treatment on 2026-11-16.
 
 - **No explanations on the controls.** A label is one to three words. What a
   control does, its limits ("0 = forever", "1 ms - 60 s") and advice go in a
@@ -75,13 +77,40 @@ text heavy, with explanations written on the controls.
   destructive ones, `.sm` small). The scanners' Start buttons are blue while
   idle and red while running (by id, their handlers also rewrite
   `className`).
-- The styles are scoped to `.sidebar` (block "Sidebar look" in the CSS):
-  `.btn` and `.ctrl-row` are also used by dialogs and panels, which keep
-  their look. The phone layout moves top-bar controls into the sidebar
-  (`#mobile-controls-slot`); their id-scoped rules win over the sidebar's.
+- Two CSS blocks hold the look: "Sidebar look" (scoped to `.sidebar`: the
+  box chrome, the label column) and "Page look" (the same buttons, text
+  boxes, sliders and switches for the top bar, the waterfall bar, the
+  panels, the map, the dialogs and the assistant; panels with a header bar,
+  pill tabs and badges). Both sit before the phone rules. The phone layout
+  moves top-bar controls into the sidebar (`#mobile-controls-slot`); their
+  id-scoped rules win, which is why the switch selector lists that id and
+  repeats its `background-image` in the on / off states (a `background`
+  shorthand there would drop the knob).
 - The sidebar is scaled with CSS `zoom` (dragged width): anything positioned
   from `getBoundingClientRect()` inside it divides by the zoom, and box
   widths are designed for 290 px.
+
+### Outside the sidebar
+
+- **In JS-built text** use `helpTip(html, wide)` for the `?` (a global
+  function; `wide` for long texts - `initHelpTips` places the popup, also
+  from inside the map's panels and the tabs under the waterfall).
+- **Panels with a long "how it works" note** (Viewshed's two modes, Range,
+  Replay, a decoder's description, the Voice tab) carry it in a `?` next to
+  the panel's title or first row - never as a paragraph in the panel.
+- **States** are two to five words with the reason in the `title`: the DF
+  panel's `RDF_STATE` is `[text, tooltip]`, the range's `why` has a `tip`,
+  the assistant's warnings are `[text, tooltip]`, the KerberosSDR banner
+  keeps what to do (antennas disconnected) and puts the rest in its
+  tooltip. Diagnostics that carry numbers (the range's warnings, a replay's
+  rebuilt times) stay as they are.
+- **Bars**: labels without colons (`Mode`, `Gain`, `Scale`, `Zoom`); the
+  top bar's Audio is a switch (`data-sw` on the `.tb-btn`); a decoder
+  option that is on / off is a button lit while on (its name only -
+  `digOnOffText` adds ": state" for anything that isn't On / Off).
+- The top bar's background stays the calibration state's colour.
+- Not covered: heimdall's own page (`heimdall_v2/index.html`, a light page
+  of its own) and `array_calculator.html` (already in this style).
 
 ## Tests (2026-11-15, headless Chromium, real mouse / touch events)
 
@@ -97,3 +126,12 @@ missing boxes; a broken store; the switches (the old handlers' `className`
 rewrite keeps the look); every slider row on one line; no box overflowing
 sideways; phone layout (finger-sized buttons, a tap moves a box); no JS
 errors.
+
+2026-11-16, the rest of the page (37 checks, the same setup; live content
+from the 🧪 Debug Playback's ADS-B test transmission): the Audio switch
+toggles and keeps its knob (also moved into the phone's sidebar); every new
+`?` opens inside the window and on top - spectrum header, both Viewshed
+modes, Range, Replay, a decoder's description; no long note left in those
+panels; the waterfall sliders still work; a decoder option button toggles
+and is lit while on; short dialog labels; the independent mode's title; no
+JS errors on desktop and phone. The 53 sidebar checks pass unchanged.

@@ -280,7 +280,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`).
   -> dBm, SNR, held), the sweep's status, the readout + warnings (edge > 5
   %, SNR < 10 dB: may read high, total > -8 dBFS: near full scale - lower the
   gain, uncalibrated, held, no place fits), legend, ◎ / Clear, hover, then
-  the fold "Transmitter, our antenna, calibration, model" (`rgState.cfg`,
+  the fold "Settings" (the transmitter, our antenna, calibration, model - `rgState.cfg`,
   open the first time: the map is narrow - the readout first): power +
   antenna - cable or EIRP (W) + presets (`RG_PRESETS`: handheld 5 W -3
   dBi 1.5 m, PMR446 0.5 W ERP, vehicle 25 W, base / repeater 50 W 6 dBi 25
