@@ -19,7 +19,12 @@
 // Per transmitter, from every antenna (process_multi): the spatial
 // covariance over its own carriers (those no other code detected in the
 // same null symbol uses), minus the noise covariance of the empty carriers
-// of that symbol, if its main eigenvalue holds the signal.
+// of that symbol, if its main eigenvalue holds the signal: the raw
+// covariance's largest eigenvalue >= 0.5 of its trace, and the subtracted
+// one's (an indefinite Hermitian matrix: all its eigenvalues from a Jacobi
+// solver) >= 0.8 of the sum of their magnitudes. The packet carries the
+// positive semi-definite part of the subtracted covariance (negative
+// eigenvalues set to 0).
 //
 // Delay against the strongest transmitter: both carriers of a pair carry
 // the same phase (z = A_c,p(k) e^(j phi_k) + A_c,p(k-1) e^(j phi_k-1)) - or,
@@ -43,7 +48,7 @@ struct TiiPacket {
     int p = 0, c = 0;
     int m = 0;
     std::vector<std::complex<float>> cov;   // m x m, row-major
-    double share = 0;                       // main eigenvalue / trace (noise removed)
+    double share = 0;                       // main eigenvalue / sum of |eigenvalues| (noise removed), 0..1
     int carriers = 0;
 };
 

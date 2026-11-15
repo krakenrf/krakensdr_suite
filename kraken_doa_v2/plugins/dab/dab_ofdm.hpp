@@ -47,6 +47,12 @@ struct Frame {
     int64_t start = 0;            // frame start (first sample of the null symbol), input sample index
     double start_exact = 0;
     double prs_metric = 0;        // normalised differential correlation with the phase reference (0..1)
+    bool prs_ok = false;          // the phase reference was found (prs_metric above the threshold): the
+                                  // soft bits are usable; false = the frame's MSC bits are erasures
+    // the frame start measured at the phase reference minus where the tracking
+    // expected it (samples; NAN = not measured). Large = the input jumped (a
+    // gap or a timing jump since the previous frame)
+    double timing_err = 0;
     double snr_db = 0;            // signal / noise per carrier (PRS power vs the null symbol's empty carriers)
     double mer_db = 0;            // modulation error ratio of the FIC symbols (phase error vs the QPSK points)
     double cfo_hz = 0;            // carrier offset of the ensemble's centre from the input's 0 Hz

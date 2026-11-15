@@ -108,17 +108,49 @@ struct FicEvents {
     std::function<void(const std::string&)> event;              // reconfiguration, announcements
 };
 
+// Bounds on what the FIC can make the database hold (a hostile or corrupted
+// FIC must cost a bounded amount of memory): FIG 0/7 counts at most 63
+// services, a sub-channel id has 6 bits, a component count 4 bits
+constexpr size_t MAX_SERVICES = 64;     // per map (current, next); the least recently signalled one goes
+constexpr size_t MAX_FIG2_SETS = 256;   // FIG 2 label segment sets being assembled
+constexpr double FIG2_MAX_AGE = 30;     // s: an incomplete segment set older than this is dropped
+
 class FigParser {
 public:
     explicit FigParser(Ensemble& e) : e_(e) {}
+    // before the FIBs of one transmission frame
+    void begin_frame() {
+        frame_cif = -1;
+        frame_flags = 0;
+        frame_occ = -1;
+        frame_fig00_at = 0;
+        foreign_eid = -1;
+    }
     // one FIB that passed its CRC; cif = its CIF's index in the frame (0..3)
     void fib(const uint8_t* fib, int cif, double now);
+    // drops the parser's own state (segments, counters) - with Ensemble::clear()
+    void clear() {
+        fig2_.clear();
+        fig_count.clear();
+        malformed = 0;
+        begin_frame();
+    }
     FicEvents ev;
     // counters of FIGs seen, by type/ext (for the details)
     std::map<int, uint64_t> fig_count;
     uint64_t malformed = 0;
+    // from this frame's FIG 0/0 (of the current ensemble): the CIF count of
+    // the frame's first CIF (0..4999, -1 = none), the change flags and the
+    // occurrence change (-1 = none), and the index (0..3) of the CIF whose FIB
+    // carried it (mode I: always 0, clause 6.4.1)
+    int frame_cif = -1, frame_flags = 0, frame_occ = -1, frame_fig00_at = 0;
+    // a FIG 0/0 with ANOTHER EId than the ensemble's was seen in this frame
+    // (it is not applied: the receiver decides whether the ensemble changed)
+    int foreign_eid = -1;
+    size_t fig2_sets() const { return fig2_.size(); }
 private:
     Ensemble& e_;
+    int cif_ = 0;   // the CIF index of the FIB being parsed
     void fig0(const uint8_t* d, int n, double now);
     void fig1(const uint8_t* d, int n, double now);
     void fig2(const uint8_t* d, int n, double now);
@@ -131,6 +163,7 @@ private:
         bool enc16 = false;
         std::string part[8];
         uint8_t have = 0;
+        double t = 0;   // last segment
     };
     std::map<uint64_t, Seg> fig2_;   // (ext, id, scids) -> segments
 };

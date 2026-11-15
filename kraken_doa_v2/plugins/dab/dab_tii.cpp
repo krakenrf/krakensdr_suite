@@ -18,27 +18,89 @@ struct Cand {
     bool keep = true;
 };
 
-// main eigenvalue of a Hermitian m x m matrix (power iteration) / its trace
-double main_share(const std::vector<cd>& R, int m) {
-    double tr = 0;
-    for (int a = 0; a < m; a++) tr += R[static_cast<size_t>(a * m + a)].real();
-    if (!(tr > 0)) return 0;
-    std::vector<cd> u(static_cast<size_t>(m), cd(1, 0)), v(static_cast<size_t>(m));
-    double lam = 0;
-    for (int it = 0; it < 50; it++) {
-        double nn = 0;
-        for (int a = 0; a < m; a++) {
-            cd s = 0;
-            for (int b = 0; b < m; b++) s += R[static_cast<size_t>(a * m + b)] * u[static_cast<size_t>(b)];
-            v[static_cast<size_t>(a)] = s;
-            nn += std::norm(s);
-        }
-        nn = std::sqrt(nn);
-        if (!(nn > 0)) return 0;
-        for (int a = 0; a < m; a++) u[static_cast<size_t>(a)] = v[static_cast<size_t>(a)] / nn;
-        lam = nn;
+// Eigen-decomposition of a Hermitian m x m matrix (row-major), m <= 8: cyclic
+// complex Jacobi rotations. lam: the m real eigenvalues; V (optional): the
+// eigenvectors as columns (row-major). Hermitian matrices that are not positive
+// semi-definite (a covariance with the noise subtracted) are fine.
+void hermitian_eig(const std::vector<cd>& R, int m, double* lam, std::vector<cd>* V) {
+    std::vector<cd> A = R;
+    auto at = [m](std::vector<cd>& M, int r, int c) -> cd& { return M[static_cast<size_t>(r * m + c)]; };
+    if (V) {
+        V->assign(static_cast<size_t>(m * m), cd(0, 0));
+        for (int a = 0; a < m; a++) at(*V, a, a) = 1;
     }
-    return lam / tr;
+    double scale = 0;
+    for (const auto& x : A) scale += std::norm(x);
+    for (int sweep = 0; sweep < 50 && scale > 0; sweep++) {
+        double off = 0;
+        for (int p = 0; p < m; p++)
+            for (int q = p + 1; q < m; q++) off += std::norm(at(A, p, q));
+        if (!(off > 1e-26 * scale)) break;
+        for (int p = 0; p < m; p++)
+            for (int q = p + 1; q < m; q++) {
+                const cd apq = at(A, p, q);
+                const double r = std::abs(apq);
+                if (!(r > 0)) continue;
+                // the 2 x 2 problem [[a_pp, r], [r, a_qq]] after taking out apq's phase: U = [[c, s e^(j phi)], [-s e^(-j phi), c]]
+                const cd ph = apq / r;
+                const double th = (at(A, q, q).real() - at(A, p, p).real()) / (2 * r);
+                const double t = (th >= 0 ? 1.0 : -1.0) / (std::fabs(th) + std::sqrt(th * th + 1));
+                const double c = 1 / std::sqrt(t * t + 1), s = t * c;
+                const cd sp = s * ph, sm = s * std::conj(ph);
+                for (int k = 0; k < m; k++) {   // A U
+                    const cd x = at(A, k, p), y = at(A, k, q);
+                    at(A, k, p) = c * x - sm * y;
+                    at(A, k, q) = sp * x + c * y;
+                }
+                for (int k = 0; k < m; k++) {   // U^H (A U)
+                    const cd x = at(A, p, k), y = at(A, q, k);
+                    at(A, p, k) = c * x - sp * y;
+                    at(A, q, k) = sm * x + c * y;
+                }
+                at(A, p, q) = at(A, q, p) = 0;
+                if (V)
+                    for (int k = 0; k < m; k++) {
+                        const cd x = at(*V, k, p), y = at(*V, k, q);
+                        at(*V, k, p) = c * x - sm * y;
+                        at(*V, k, q) = sp * x + c * y;
+                    }
+            }
+    }
+    for (int a = 0; a < m; a++) lam[a] = at(A, a, a).real();
+}
+
+// the main eigenvalue's share of a Hermitian matrix: lambda_max / sum |lambda_i|. For a
+// covariance (positive semi-definite) that is lambda_max / trace; a noise-subtracted one
+// can have negative eigenvalues - they count against it (and the share is never above 1,
+// nor positive when no eigenvalue is)
+double main_share(const std::vector<cd>& R, int m) {
+    double lam[8];
+    if (m < 1 || m > 8) return 0;
+    hermitian_eig(R, m, lam, nullptr);
+    double mx = lam[0], sa = 0;
+    for (int a = 0; a < m; a++) {
+        mx = std::max(mx, lam[a]);
+        sa += std::fabs(lam[a]);
+    }
+    return mx > 0 && sa > 0 ? mx / sa : 0;
+}
+
+// R -> its positive semi-definite part (the negative eigenvalues set to 0); false = nothing positive
+bool psd_part(std::vector<cd>& R, int m) {
+    double lam[8];
+    std::vector<cd> V;
+    if (m < 1 || m > 8) return false;
+    hermitian_eig(R, m, lam, &V);
+    std::fill(R.begin(), R.end(), cd(0, 0));
+    bool any = false;
+    for (int i = 0; i < m; i++) {
+        if (!(lam[i] > 0)) continue;
+        any = true;
+        for (int a = 0; a < m; a++)
+            for (int b = 0; b < m; b++)
+                R[static_cast<size_t>(a * m + b)] += lam[i] * V[static_cast<size_t>(a * m + i)] * std::conj(V[static_cast<size_t>(b * m + i)]);
+    }
+    return any;
 }
 
 }   // namespace
@@ -320,6 +382,8 @@ void Tii::process(const cfl* const* car, int m, double now, bool want_cov, std::
             for (size_t j = 0; j < R.size(); j++) R[j] -= static_cast<double>(own.size()) * Rn[j];
         const double share = main_share(R, m);
         if (raw_share < 0.5 || share < 0.8) continue;
+        // what goes out is a covariance: the subtraction's negative eigenvalues (noise) set to 0
+        if (!psd_part(R, m)) continue;
         TiiPacket pk;
         pk.p = p;
         pk.c = cands[n].c;

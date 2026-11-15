@@ -28,6 +28,12 @@ namespace dab {
 struct SubchannelConfig {
     bool dabplus = false;    // FIG 0/2 ASCTy: 0 = DAB (Layer II), 63 = DAB+ (HE-AAC v2)
     int bitrate_kbps = 0;    // the sub-channel's bit rate: a logical frame is bitrate_kbps * 3 bytes
+    // which stream it is: another service or sub-channel is another stream
+    // (configure() then starts from scratch even when codec and bit rate are
+    // the same); the receiver keeps them across a multiplex reconfiguration
+    // that only moves the sub-channel
+    uint32_t sid = 0;
+    int subch = -1;
 
     bool operator==(const SubchannelConfig&) const = default;
 };
@@ -39,7 +45,8 @@ struct AudioSink {
     // decoded audio: 8 kHz mono, +-1 (already downmixed and resampled)
     virtual void pcm(const float* mono, size_t n) = 0;
     // a complete dynamic label that differs from the previous one: UTF-8,
-    // NOT yet escaped (the receiver passes it through kp::printable)
+    // NOT yet escaped (the receiver passes it through kp::printable); "" =
+    // the broadcaster cleared the display (DL "clear display" command)
     virtual void dynamic_label(const std::string& utf8) = 0;
     // debug output (the receiver sends it to host.log)
     virtual void log(const std::string& text) = 0;

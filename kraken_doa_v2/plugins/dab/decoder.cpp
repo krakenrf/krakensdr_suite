@@ -28,8 +28,10 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <deque>
 #include <map>
 #include <memory>
@@ -41,6 +43,12 @@ namespace {
 
 using dab::cf;
 
+// v rounded to the decimals it is printed with, a negative zero made +0 ("-0 Hz" otherwise)
+double no_neg_zero(double v, int decimals) {
+    const double k = std::pow(10.0, decimals);
+    const double r = std::round(v * k) / k;
+    return r == 0 ? 0.0 : r;
+}
 std::string fmt(const char* f, double v) {
     char b[96];
     snprintf(b, sizeof b, f, v);
@@ -86,37 +94,73 @@ public:
         reset();
     }
 
+    // a retune (the host clears the table, the map and the talkers itself)
     void reset() override {
         rx_.reset();
+        clear_state();
+        frames_ = 0;
+        fic_bits_ = fic_errs_ = 0;
+        pk_sent_ = 0;
+        snr_ = mer_ = 0;
+        host.fact("Sync", "searching for a DAB ensemble");
+    }
+
+    // everything learnt from the ensemble, and the programme's decoding
+    void clear_state() {
         ens_.clear();
-        figs_.fig_count.clear();
+        figs_.clear();
         msc_.clear();
-        audio_.reset();
+        audio_.configure(dab::SubchannelConfig{});   // nothing: the next service starts from scratch
+        pend_cfg_valid_ = false;
         tii_.reset();
         fib_hist_.clear();
         frame_no_ = -1;
         last_start_ = 0;
+        cif_abs_ = -1;
+        cif_anchored_ = false;
+        msc_next_cif_ = -1;
+        held_ = false;
+        pv_ = false;
         found_ = false;
         found_at_ = 0;
         announced_.clear();
         rows_.clear();
         tx_announced_.clear();
+        talkers_sent_.clear();
+        map_ids_.clear();
         sel_sid_ = 0;
+        sel_subch_ = -1;
         prog_announced_ = 0xFFFFFFFFu;
         sel_valid_ = false;
         sel_label_.clear();
         last_ui_ = -1e9;
         last_good_fic_ = -1e9;
-        frames_ = 0;
         lf_ok_ = lf_lost_ = 0;
         msc_bits_ = msc_errs_ = 0;
-        fic_bits_ = fic_errs_ = 0;
-        pk_sent_ = 0;
-        snr_ = mer_ = 0;
         reconf_pending_ = false;
-        map_ids_.clear();
-        rx_.want_symbols(std::vector<uint8_t>(72, 0));
-        host.fact("Sync", "searching for a DAB ensemble");
+        reconf_cif_ = 0;
+        reconf_done_cif_ = INT64_MIN / 2;
+        cand_eid_ = -1;
+        cand_n_ = 0;
+        want_.assign(72, 0);
+        rx_.want_symbols(want_);
+    }
+
+    // another ensemble on the block (FIG 0/0 with a new EId, confirmed):
+    // what the old one put on the screen goes, then a cold start of the
+    // ensemble (the OFDM sync is kept)
+    void drop_ensemble(int new_eid) {
+        const std::string old = ens_label();
+        for (const auto& kv : rows_) host.table_remove(kv.first);
+        for (const auto& id : map_ids_) host.map_remove(id);
+        for (const auto& id : talkers_sent_) host.talker_forget(id);
+        for (const char* k : {"Ensemble", "Country", "Date / time", "Services", "Alarm announcements", "Programme", "Sub-channel", "Codec",
+                              "Voice codec", "Audio frames", "RS corrections", "Text", "Transmitters (TII)"})
+            host.fact(k, "");
+        host.voice_state("");
+        if (ens_.eid >= 0)
+            host.event("Ensemble lost: " + old + " (another ensemble, EId " + hex(static_cast<uint32_t>(new_eid), 4) + ", on the block)", 5);
+        clear_state();
     }
 
     void option(const std::string& key, const std::string& value) override {
@@ -161,6 +205,10 @@ public:
     // ---- dab::AudioSink
     void pcm(const float* mono, size_t n) override { host.audio(mono, n); }
     void dynamic_label(const std::string& utf8) override {
+        if (utf8.empty()) {   // the broadcaster cleared the display
+            host.fact("Text", "");
+            return;
+        }
         const std::string t = dab::printable_utf8(utf8);
         host.fact("Text", t);
         host.event("💬 " + (sel_label_.empty() ? std::string("") : dab::printable_utf8(sel_label_) + ": ") + t, 900);
@@ -176,7 +224,7 @@ private:
     dab::SubchannelDecoder audio_;
     dab::Tii tii_;
     std::vector<dab::TiiPacket> pk_;
-    std::vector<uint8_t> lf_;
+    std::vector<uint8_t> want_;   // the MSC symbols asked of the front end
 
     double t0_ = 0;   // host time of input sample 0
     int m_ = 1;
@@ -190,10 +238,14 @@ private:
     bool found_ = false;
     double found_at_ = 0, last_ui_ = -1e9, last_good_fic_ = -1e9;
     std::set<uint32_t> announced_;
-    std::map<std::string, std::string> rows_;   // key -> last row text sent
-    std::map<std::string, double> row_sent_;
+    // the services table as sent: key -> its text, label, when sent
+    struct Row {
+        std::string text, label;
+        double sent = 0;
+    };
+    std::map<std::string, Row> rows_;
     std::set<int> tx_announced_;
-    std::set<std::string> map_ids_;
+    std::set<std::string> map_ids_, talkers_sent_;
     uint32_t sel_sid_ = 0, prog_announced_ = 0xFFFFFFFFu;
     bool sel_valid_ = false;
     std::string sel_label_;
@@ -201,8 +253,33 @@ private:
     uint64_t lf_ok_ = 0, lf_lost_ = 0, pk_sent_ = 0;
     uint64_t msc_bits_ = 0, msc_errs_ = 0, fic_bits_ = 0, fic_errs_ = 0;
     double snr_ = 0, mer_ = 0, cfo_ = 0, ppm_ = 0;
+    // CIF numbering: the absolute index of the latest frame's first CIF (from
+    // the FIG 0/0 CIF count, else the frame's distance in samples)
+    int64_t cif_abs_ = -1;
+    bool cif_anchored_ = false;    // cif_abs_ follows a FIG 0/0 CIF count
+    int64_t msc_next_cif_ = -1;    // the next CIF the MSC decoder expects
+    // the latest frame's MSC soft bits, held until the next frame (see on_frame)
+    bool held_ = false;
+    int64_t held_cif_ = 0;
+    std::vector<int8_t> held_msc_;
+    std::vector<uint8_t> held_ok_;
+    // the previous frame's valid span, sent once the next frame shows the input stayed contiguous
+    bool pv_ = false;
+    double pv_a_ = 0, pv_b_ = 0;
+    // multiplex reconfiguration: the absolute CIF of the next configuration
     bool reconf_pending_ = false;
-    int reconf_occ_ = -1;
+    int64_t reconf_cif_ = 0, reconf_done_cif_ = 0;
+    // a new configuration's bit rate reaches the audio layer with its first logical frame
+    dab::SubchannelConfig pend_cfg_;
+    bool pend_cfg_valid_ = false;
+    // a FIG 0/0 with another EId: switch after EID_CONFIRM frames in a row
+    int cand_eid_ = -1, cand_n_ = 0;
+    static constexpr int EID_CONFIRM = 3;
+    static constexpr double CONTIG_ERR = 400;     // samples: a frame start further off = the input jumped
+    static constexpr int64_t MAX_GAP_CIFS = 250;  // CIFs lost in an outage beyond this (6 s): start the sub-channel over
+    static constexpr int ROW_BUDGET = 32;         // table rows sent per second at most
+    static constexpr double ROW_REFRESH_S = 15;   // an unchanged row is sent again after this long
+    static constexpr int SERVICE_EVENT_BUDGET = 8;   // service found / gone events per second at most
 
     // CPU time per stage (verbose fact)
     using Clock = std::chrono::steady_clock;
@@ -244,8 +321,9 @@ private:
     void on_frame(const dab::Frame& f) {
         const double tf = t_of(static_cast<double>(f.start));
         frames_++;
-        if (frame_no_ < 0) frame_no_ = 0;
-        else frame_no_ += std::max<int64_t>(1, static_cast<int64_t>(std::llround(static_cast<double>(f.start - last_start_) / dab::FRAME)));
+        // frames since the previous one, by the sample count (the FIG 0/0 CIF count corrects it below)
+        const int64_t nf = frame_no_ < 0 ? 0 : std::max<int64_t>(1, std::llround(static_cast<double>(f.start - last_start_) / dab::FRAME));
+        frame_no_ = frame_no_ < 0 ? 0 : frame_no_ + nf;
         last_start_ = f.start;
         snr_ = f.snr_db;
         mer_ = f.mer_db;
@@ -262,6 +340,7 @@ private:
         fib_hist_.push_back({tf, good});
         while (!fib_hist_.empty() && tf - fib_hist_.front().first > 10) fib_hist_.pop_front();
         const int cif_before = ens_.cif_count;
+        figs_.begin_frame();
         for (int i = 0; i < 12; i++) {
             if (!ok[i]) continue;
             figs_.fib(fibs[i], i / 3, tf);
@@ -272,75 +351,143 @@ private:
                 for (int b = 0; b < 30; b++) s += hex(fibs[i][b], 2);
                 host.raw(s);
             }
+            if (figs_.foreign_eid >= 0) break;   // the rest of the frame is the other ensemble's
+        }
+        // ---- another ensemble? (a FIG 0/0 with a new EId in EID_CONFIRM frames in a row: one
+        // corrupted FIG that passes its CRC must not throw the ensemble away)
+        if (figs_.foreign_eid >= 0) {
+            if (figs_.foreign_eid == cand_eid_) cand_n_++;
+            else {
+                cand_eid_ = figs_.foreign_eid;
+                cand_n_ = 1;
+            }
+            if (cand_n_ >= EID_CONFIRM) {
+                drop_ensemble(cand_eid_);
+                cpu_fic_ += secs(ta);
+                return;   // the next frame's FIG 0/0 starts the new ensemble
+            }
+        } else if (figs_.frame_cif >= 0) {
+            cand_n_ = 0;
         }
         if (ens_.cif_count == cif_before && cif_before >= 0) ens_.cif_count = (cif_before + 4) % 5000;   // no FIG 0/0 this time
+
+        // ---- CIF numbering: the FIG 0/0 CIF count where there is one, else the sample count
+        int64_t cif = cif_abs_ < 0 ? 0 : cif_abs_ + 4 * nf;
+        if (figs_.frame_cif >= 0) {
+            const int64_t c = figs_.frame_cif;
+            if (cif_abs_ < 0) {
+                cif = c;
+            } else {
+                int64_t d = ((c - cif) % 5000 + 5000) % 5000;   // the count nearest the estimate
+                if (d >= 2500) d -= 5000;
+                if (!cif_anchored_) {
+                    // the first count: renumber (the sub-channel restarts, nothing is known to be lost)
+                    cif += d;
+                    msc_.reset();
+                    msc_next_cif_ = -1;
+                } else if (cif + d > cif_abs_) {
+                    cif += d;   // (d != 0: samples were dropped or inserted)
+                }
+            }
+            cif_anchored_ = true;
+        }
+        const bool consecutive = cif_abs_ >= 0 && cif == cif_abs_ + 4;
+        cif_abs_ = cif;
+        // the input is contiguous from the previous frame's phase reference to this one's
+        const bool contig = consecutive && f.prs_ok && std::isfinite(f.timing_err) && std::fabs(f.timing_err) < CONTIG_ERR;
+        // the previous frame's span: valid when this one shows that no samples went missing in it
+        if (pv_ && contig) host.valid(pv_a_, pv_b_);
+        pv_ = false;
         if (good >= 2) {
             last_good_fic_ = tf;
-            host.valid(tf, t_of(static_cast<double>(f.start + dab::FRAME)));
+            if (contig) {   // (and its null symbol is contiguous with the previous frame)
+                pv_ = true;
+                pv_a_ = tf;
+                pv_b_ = t_of(static_cast<double>(f.start + dab::FRAME));
+            }
         }
         if (verbose_) {
-            char b[160];
-            snprintf(b, sizeof b, "frame %lld: PRS %.2f, SNR %.1f dB, MER %.1f dB, CFO %+.1f Hz, %d/12 FIBs ok", static_cast<long long>(frame_no_),
-                     f.prs_metric, f.snr_db, f.mer_db, f.cfo_hz, good);
+            char b[200];
+            snprintf(b, sizeof b, "frame %lld (CIF %lld): PRS %.2f%s, timing %+.1f, SNR %.1f dB, MER %.1f dB, CFO %+.1f Hz, %d/12 FIBs ok",
+                     static_cast<long long>(frame_no_), static_cast<long long>(cif), f.prs_metric, f.prs_ok ? "" : " (failed)",
+                     std::isfinite(f.timing_err) ? f.timing_err : 0.0, f.snr_db, f.mer_db, f.cfo_hz, good);
             host.log(b);
         }
 
-        // ---- reconfiguration (FIG 0/0 change flags + occurrence change)
-        if (ens_.change_flags && ens_.occurrence >= 0 && !reconf_pending_) {
-            reconf_pending_ = true;
-            reconf_occ_ = ens_.occurrence;
-            host.event("Multiplex reconfiguration announced (from CIF " + std::to_string(reconf_occ_) + " mod 250)", 30);
-        }
-        if (reconf_pending_ && ens_.cif_count >= 0) {
-            const int dist = ((reconf_occ_ - ens_.cif_count % 250) + 250) % 250;
-            if (dist < 4 || dist > 200) {
-                if (!ens_.next_subch.empty()) {
-                    ens_.subch = ens_.next_subch;
-                    ens_.next_subch.clear();
+        // ---- reconfiguration announced (FIG 0/0 change flags + occurrence change, clause 6.5):
+        // the next configuration applies from the earliest CIF after the announcing one whose
+        // CIF count's lower part equals the occurrence change
+        if (figs_.frame_cif >= 0) {
+            const int64_t at = cif + figs_.frame_fig00_at;   // the announcing CIF
+            // (a pending one that is due by now is applied below, not moved 250 CIFs on)
+            if (figs_.frame_flags && figs_.frame_occ >= 0 && !(reconf_pending_ && at >= reconf_cif_)) {
+                const int lower = static_cast<int>((figs_.frame_cif + figs_.frame_fig00_at) % 5000 % 250);
+                int d = (figs_.frame_occ - lower + 250) % 250;
+                if (d == 0) d = 250;
+                const int64_t target = at + d;
+                // (a configuration stays for at least 250 CIFs: an announcement for less after the last change is stale)
+                if (target - reconf_done_cif_ >= 250 && (!reconf_pending_ || target != reconf_cif_)) {
+                    if (!reconf_pending_)
+                        host.event("Multiplex reconfiguration announced, in " + fmt("%.2f s", static_cast<double>(target - at) * 0.024) +
+                                       " (CIF count " + std::to_string(target % 5000) + ")",
+                                   30);
+                    reconf_pending_ = true;
+                    reconf_cif_ = target;
                 }
-                for (auto& kv : ens_.next_services) {
-                    auto it = ens_.services.find(kv.first);
-                    if (it == ens_.services.end()) ens_.services[kv.first] = kv.second;
-                    else it->second.comps = kv.second.comps;
-                }
-                ens_.next_services.clear();
-                reconf_pending_ = false;
-                host.event("Multiplex reconfiguration", 30);
-                sel_valid_ = false;
+            } else if (!figs_.frame_flags && reconf_pending_ && at < reconf_cif_) {
+                reconf_pending_ = false;   // withdrawn before it happened
+                host.event("Multiplex reconfiguration withdrawn", 30);
             }
         }
-        if (!ens_.change_flags) reconf_pending_ = false;
 
         cpu_fic_ += secs(ta);
         ta = Clock::now();
-        // ---- the selected programme's sub-channel
-        if (msc_.active()) {
-            const int start = msc_.start_cu();
-            lf_.resize(static_cast<size_t>(msc_.frame_bytes()));
-            for (int c = 0; c < 4; c++) {
-                const int64_t cif = frame_no_ * 4 + c;
-                const int o0 = 64 * start, o1 = 64 * (start + msc_.size_cu()) - 1;
-                bool have = true;
-                for (int s = o0 / dab::SYM_BITS; s <= o1 / dab::SYM_BITS; s++) have = have && f.msc_ok[18 * c + s];
-                const int8_t* bits = have ? f.msc + static_cast<size_t>(18 * c) * dab::SYM_BITS + o0 : nullptr;
-                const int r = msc_.push_cif(bits, cif, lf_.data());
-                if (r > 0) {
-                    lf_ok_++;
-                    msc_bits_ += static_cast<uint64_t>(msc_.last_bits);
-                    msc_errs_ += static_cast<uint64_t>(msc_.last_bit_errors);
-                    audio_.push_frame(lf_.data(), lf_.size(), host.voice_wanted());
-                } else if (r < 0) {
-                    lf_lost_++;
-                    audio_.push_lost();
-                }
+        // ---- the selected programme's sub-channel. A frame's CIFs go to the de-interleaver one
+        // frame late: only the next frame shows whether the input stayed contiguous through this
+        // one (a frame that straddles a jump in the input - samples dropped by the host - has the
+        // wrong samples after the jump: its CIFs are erasures then, not data)
+        if (held_) {
+            held_ = false;
+            const bool jumped = cif != held_cif_ + 4 || (std::isfinite(f.timing_err) && std::fabs(f.timing_err) >= CONTIG_ERR);
+            for (int c = 0; c < 4; c++) step_cif(held_cif_ + c, jumped ? nullptr : held_msc_.data(), held_ok_.data(), c);
+            msc_next_cif_ = held_cif_ + 4;
+        }
+        if (msc_.active() && msc_next_cif_ >= 0 && cif > msc_next_cif_) {
+            // CIFs skipped (frames lost in an outage): erasures, so that the audio layer keeps its
+            // timeline - after a long outage the sub-channel starts over instead
+            if (cif - msc_next_cif_ > MAX_GAP_CIFS) {
+                msc_.reset();
+                audio_.reset();
+                lf_lost_ += static_cast<uint64_t>(cif - msc_next_cif_);
+            } else {
+                for (int64_t k = msc_next_cif_; k < cif; k++) step_cif(k, nullptr, nullptr, 0);
             }
         }
+        if (msc_.active()) {
+            // hold this frame's soft bits (the symbols computed) until the next frame
+            held_msc_.resize(static_cast<size_t>(72) * dab::SYM_BITS);
+            held_ok_.assign(72, 0);
+            if (f.prs_ok)
+                for (int s = 0; s < 72; s++)
+                    if (f.msc_ok[s]) {
+                        held_ok_[static_cast<size_t>(s)] = 1;
+                        std::memcpy(&held_msc_[static_cast<size_t>(s) * dab::SYM_BITS], f.msc + static_cast<size_t>(s) * dab::SYM_BITS, dab::SYM_BITS);
+                    }
+            held_ = true;
+            held_cif_ = cif;
+            msc_next_cif_ = cif;
+        } else {
+            for (int c = 0; c < 4; c++) step_cif(cif + c, nullptr, nullptr, c);   // (a reconfiguration due)
+        }
+        update_want();
 
         cpu_msc_ += secs(ta);
         ta = Clock::now();
         // ---- TII
         if (f.null_m >= 1) {
-            const bool talk = f.null_m >= 2 && fic_decodes();
+            // (the null symbol lies between the previous frame's phase reference and this one's:
+            // with a jump in the input there its samples are not where the time says)
+            const bool talk = f.null_m >= 2 && fic_decodes() && contig;
             tii_.process(f.null_car, f.null_m, tf, talk, pk_);
             if (talk) {
                 const double ts = t_of(static_cast<double>(f.null_w0)), te = t_of(static_cast<double>(f.null_w0 + dab::NFFT));
@@ -356,6 +503,7 @@ private:
                     t.m = p.m;
                     t.cov = p.cov;
                     host.talker(t);
+                    talkers_sent_.insert(t.id);
                     pk_sent_++;
                 }
             }
@@ -413,7 +561,93 @@ private:
     }
 
     // ---------------------------------------------------------------- the selected service
-    void select_service() {
+    // CIF k (CIF index c of a held frame's soft bits msc / symbols computed ok; nullptr = not
+    // received): a reconfiguration due from it on, then the sub-channel's part of it
+    void step_cif(int64_t k, const int8_t* msc, const uint8_t* ok, int c) {
+        if (reconf_pending_ && k >= reconf_cif_) apply_reconfiguration(k);
+        if (!msc_.active()) return;
+        int start = 0, size = 0;
+        msc_.alloc(k, &start, &size);
+        const int8_t* bits = nullptr;
+        if (msc && ok && size > 0) {
+            const int o0 = 64 * start, o1 = 64 * (start + size) - 1;
+            bool have = true;
+            for (int s = o0 / dab::SYM_BITS; have && s <= o1 / dab::SYM_BITS; s++) have = ok[18 * c + s] != 0;
+            if (have) bits = msc + static_cast<size_t>(18 * c) * dab::SYM_BITS + o0;
+        }
+        push_cif(bits, k);
+    }
+
+    // One CIF of the sub-channel to the MSC decoder, the logical frame it completes to the audio layer
+    void push_cif(const int8_t* bits, int64_t k) {
+        const int r = msc_.push_cif(bits, k);
+        if (r > 0) {
+            lf_ok_++;
+            msc_bits_ += static_cast<uint64_t>(msc_.last_bits);
+            msc_errs_ += static_cast<uint64_t>(msc_.last_bit_errors);
+            // a reconfiguration's new bit rate: from its first logical frame on
+            if (pend_cfg_valid_ && msc_.frame_bytes() == pend_cfg_.bitrate_kbps * 3) {
+                audio_.configure(pend_cfg_);
+                pend_cfg_valid_ = false;
+            }
+            audio_.push_frame(msc_.frame(), static_cast<size_t>(msc_.frame_bytes()), host.voice_wanted());
+        } else if (r < 0) {
+            lf_lost_++;
+            audio_.push_lost();
+        }
+    }
+
+    // the OFDM symbols the sub-channel needs next frame: its allocation, and the
+    // next one while a reconfiguration is pending
+    void update_want() {
+        std::vector<uint8_t> want72(72, 0);
+        auto add = [&want72](int start, int size) {
+            if (size <= 0) return;
+            const int s0 = 64 * start / dab::SYM_BITS, s1 = (64 * (start + size) - 1) / dab::SYM_BITS;
+            for (int cc = 0; cc < 4; cc++)
+                for (int s = s0; s <= s1 && s < 18; s++) want72[static_cast<size_t>(18 * cc + s)] = 1;
+        };
+        if (msc_.active()) {
+            int st = 0, sz = 0;
+            msc_.alloc(-1, &st, &sz);   // the current allocation
+            add(st, sz);
+            msc_.alloc(INT64_MAX, &st, &sz);   // a scheduled one
+            add(st, sz);
+            if (reconf_pending_ && sel_subch_ >= 0) {
+                auto it = ens_.next_subch.find(sel_subch_);
+                if (it != ens_.next_subch.end()) add(it->second.start, it->second.prot.size_cu);
+            }
+        }
+        if (want72 != want_) {
+            want_ = want72;
+            rx_.want_symbols(want72);
+        }
+    }
+
+    // the next configuration becomes the current one at CIF k (the first CIF of the new configuration)
+    void apply_reconfiguration(int64_t k) {
+        reconf_pending_ = false;
+        reconf_done_cif_ = reconf_cif_;
+        for (const auto& kv : ens_.next_subch) ens_.subch[kv.first] = kv.second;
+        for (const auto& kv : ens_.next_services) {
+            auto it = ens_.services.find(kv.first);
+            if (it == ens_.services.end()) {
+                if (ens_.services.size() < dab::MAX_SERVICES) ens_.services[kv.first] = kv.second;
+            } else {
+                it->second.comps = kv.second.comps;
+                it->second.last_seen = std::max(it->second.last_seen, kv.second.last_seen);
+            }
+        }
+        const bool had = !ens_.next_subch.empty() || !ens_.next_services.empty();
+        ens_.next_subch.clear();
+        ens_.next_services.clear();
+        host.event(std::string("Multiplex reconfiguration") + (had ? "" : " (the next configuration was not received)"), 30);
+        select_service(k);
+    }
+
+    // at_cif >= 0: called for a multiplex reconfiguration taking effect at that CIF - the same
+    // service on the same sub-channel follows it without a break
+    void select_service(int64_t at_cif = -1) {
         // audio services with a known sub-channel, by SId
         const dab::Service* pick = nullptr;
         std::string want = service_opt_;
@@ -449,10 +683,8 @@ private:
                     break;
                 }
         if (!pick) {
-            if (msc_.active()) {
-                msc_.clear();
-                rx_.want_symbols(std::vector<uint8_t>(72, 0));
-            }
+            if (msc_.active() || sel_subch_ >= 0 || sel_sid_) new_programme();
+            sel_sid_ = 0;
             sel_label_.clear();
             sel_subch_ = -1;
             return;
@@ -461,31 +693,61 @@ private:
         const dab::SubChannel& sc = ens_.subch.at(c->subch);
         sel_label_ = pick->label.empty() ? hex(pick->sid, 4) : pick->label;
         if (c->ca) {   // conditional access: not decoded
-            msc_.clear();
-            rx_.want_symbols(std::vector<uint8_t>(72, 0));
+            if (msc_.active() || sel_sid_ != pick->sid) new_programme();
             sel_sid_ = pick->sid;
             sel_subch_ = -1;
             return;
         }
-        const bool same = msc_.active() && sel_sid_ == pick->sid && msc_.start_cu() == sc.start && msc_.protection() == sc.prot;
-        if (same) return;
+        dab::SubchannelConfig cfg;
+        cfg.dabplus = c->type == 63;
+        cfg.bitrate_kbps = sc.prot.kbps;
+        cfg.sid = pick->sid;
+        cfg.subch = sc.id;
+        const bool same_stream = msc_.active() && sel_sid_ == pick->sid && sel_subch_ == sc.id;
+        if (same_stream && msc_.start_cu() == sc.start && msc_.protection() == sc.prot) return;
+        // (a reconfiguration on its way: the database may show the new configuration a little
+        // before the MSC reaches its first CIF - it follows then, without a break)
+        if (same_stream && at_cif < 0 && reconf_pending_) return;
+        if (same_stream && at_cif >= 0) {
+            // the reconfiguration moves / resizes / re-protects this sub-channel (annex D): the
+            // de-interleaver and the audio layer carry on
+            if (msc_.reconfigure(sc.start, sc.prot, at_cif)) {
+                pend_cfg_ = cfg;
+                pend_cfg_valid_ = true;
+                update_want();
+                return;
+            }
+            host.log("sub-channel " + std::to_string(sc.id) + ": no coding profile");
+            new_programme();
+            return;
+        }
+        // another service or sub-channel (or an unannounced change): start from scratch
+        new_programme();
         sel_sid_ = pick->sid;
         sel_subch_ = sc.id;
         if (!msc_.configure(sc.start, sc.prot)) {
             host.log("sub-channel " + std::to_string(sc.id) + ": no coding profile");
             return;
         }
-        dab::SubchannelConfig cfg;
-        cfg.dabplus = c->type == 63;
-        cfg.bitrate_kbps = sc.prot.kbps;
         audio_.configure(cfg);
+        update_want();
+    }
+
+    // the programme changes: nothing of the previous one's decoding or facts stays
+    void new_programme() {
+        msc_.clear();
+        msc_next_cif_ = -1;
+        held_ = false;
+        audio_.configure(dab::SubchannelConfig{});
+        pend_cfg_valid_ = false;
         lf_ok_ = lf_lost_ = msc_bits_ = msc_errs_ = 0;
-        std::vector<uint8_t> want72(72, 0);
-        for (int cc = 0; cc < 4; cc++) {
-            const int s0 = 64 * sc.start / dab::SYM_BITS, s1 = (64 * (sc.start + sc.prot.size_cu) - 1) / dab::SYM_BITS;
-            for (int s = s0; s <= s1; s++) want72[static_cast<size_t>(18 * cc + s)] = 1;
-        }
-        rx_.want_symbols(want72);
+        clear_programme_facts();
+        update_want();
+    }
+
+    // what describes the programme being decoded (not the Programme fact itself)
+    void clear_programme_facts() {
+        for (const char* k : {"Text", "Codec", "Voice codec", "Audio frames", "RS corrections", "Sub-channel"}) host.fact(k, "");
     }
 
     std::string type_of(const dab::Service& s, const dab::Component* c) const {
@@ -503,25 +765,33 @@ private:
 
     // ---------------------------------------------------------------- facts, table, events
     void update_ui(double now) {
-        // purge what the MCI stopped describing
-        for (auto it = ens_.subch.begin(); it != ens_.subch.end();)
-            it = now - it->second.seen > 30 ? ens_.subch.erase(it) : std::next(it);
-        for (auto it = ens_.services.begin(); it != ens_.services.end();) {
-            const bool stale = it->second.last_seen > 0 ? now - it->second.last_seen > 30 : now - it->second.first_seen > 30;
-            if (stale) {
-                const std::string key = hex(it->second.sid, it->second.data ? 8 : 4);
-                if (rows_.count(key)) {
-                    host.table_remove(key);
-                    rows_.erase(key);
-                    if (!it->second.label.empty())
-                        host.event("Service gone: " + dab::printable_utf8(it->second.label) + " (SId " + key + ")", 60);
-                }
-                announced_.erase(it->second.sid);
-                it = ens_.services.erase(it);
-            } else {
-                ++it;
+        // purge what the MCI stopped describing (the current and the next configuration)
+        for (auto* m : {&ens_.subch, &ens_.next_subch})
+            for (auto it = m->begin(); it != m->end();) it = now - it->second.seen > 30 ? m->erase(it) : std::next(it);
+        for (auto* m : {&ens_.services, &ens_.next_services})
+            for (auto it = m->begin(); it != m->end();) {
+                const bool stale = it->second.last_seen > 0 ? now - it->second.last_seen > 30 : now - it->second.first_seen > 30;
+                it = stale ? m->erase(it) : std::next(it);
             }
+        // the table and the announced set follow the database (services also go when a full
+        // database makes room for new ones)
+        int ev_budget = SERVICE_EVENT_BUDGET;
+        std::set<std::string> keys;
+        for (const auto& kv : ens_.services)
+            if (!kv.second.comps.empty()) keys.insert(hex(kv.second.sid, kv.second.data ? 8 : 4));
+        for (auto it = rows_.begin(); it != rows_.end();) {
+            if (keys.count(it->first)) {
+                ++it;
+                continue;
+            }
+            host.table_remove(it->first);
+            if (!it->second.label.empty() && ev_budget > 0) {
+                ev_budget--;
+                host.event("Service gone: " + it->second.label + " (SId " + it->first + ")", 60);
+            }
+            it = rows_.erase(it);
         }
+        for (auto it = announced_.begin(); it != announced_.end();) it = ens_.services.count(*it) ? std::next(it) : announced_.erase(it);
         const bool fic_ok = fic_decodes();
         int g = 0, tot = 0;
         const double q = fic_ratio(&g, &tot);
@@ -529,9 +799,9 @@ private:
         if (rx_.locked()) {
             host.fact("SNR", fmt("%.1f dB", snr_) + fmt(" (MER of the FIC symbols %.1f dB)", mer_));
             const double rf = host.rf_hz();
-            std::string fo = fmt("%+.0f Hz", cfo_);
+            std::string fo = fmt("%+.0f Hz", no_neg_zero(cfo_, 0));
             if (std::fabs(cfo_) >= 1000) fo += fmt(" (the ensemble is %.0f kHz off the VFO centre)", cfo_ / 1000);
-            fo += fmt(", sample clock %+.1f ppm", ppm_);
+            fo += fmt(", sample clock %+.1f ppm", no_neg_zero(ppm_, 1));
             host.fact("Frequency offset", fo);
             if (std::isfinite(rf)) host.fact("Block", dab::band_block(host.rf_inverted() ? rf - cfo_ : rf + cfo_));
             std::string fq = fmt("%.0f %% of FIBs pass their CRC (last 10 s)", 100 * q);
@@ -581,6 +851,7 @@ private:
         }
         // services
         int naudio = 0, nall = 0;
+        int row_budget = ROW_BUDGET;
         std::vector<std::string> names;
         for (const auto& kv : ens_.services) {
             const dab::Service& s = kv.second;
@@ -588,10 +859,10 @@ private:
             nall++;
             const dab::Component* c = s.primary();
             if (c && c->tmid == 0) naudio++;
-            update_row(s);
-            if (!announced_.count(s.sid) && !s.label.empty()) {
+            update_row(s, row_budget);
+            if (!announced_.count(s.sid) && !s.label.empty() && (now - found_at_ <= 3 || ev_budget > 0)) {
                 announced_.insert(s.sid);
-                if (now - found_at_ > 3)
+                if (now - found_at_ > 3 && ev_budget-- > 0)
                     host.event("Service: " + dab::printable_utf8(s.label) + " (SId " + hex(s.sid, s.data ? 8 : 4) + ", " + type_of(s, c) +
                                    (c && ens_.subch.count(c->subch) ? ", " + std::to_string(ens_.subch.at(c->subch).prot.kbps) + " kbit/s" : "") + ")",
                                600);
@@ -617,7 +888,7 @@ private:
         update_map();
     }
 
-    void update_row(const dab::Service& s) {
+    void update_row(const dab::Service& s, int& budget) {
         const std::string key = hex(s.sid, s.data ? 8 : 4);
         const dab::Component* c = s.primary();
         const dab::SubChannel* sc = nullptr;
@@ -682,17 +953,33 @@ private:
         for (const auto& x : det) all += x.first + '\x1e' + x.second + '\x1f';
         auto it = rows_.find(key);
         const double now = now_s();
-        if (it != rows_.end() && it->second == all && now - row_sent_[key] < 300) return;
-        rows_[key] = all;
-        row_sent_[key] = now;
-        host.table_row(key, cells);
-        host.table_detail(key, det);
+        const bool same = it != rows_.end() && it->second.text == all;
+        // an unchanged row is refreshed every ROW_REFRESH_S (the table's "Seen" column)
+        if (same && now - it->second.sent < ROW_REFRESH_S) return;
+        if (budget <= 0) return;   // (sent in a later second: the host traffic stays bounded)
+        budget--;
+        Row& r = rows_[key];
+        if (!same) {
+            // first sent at a phase of its own within the refresh period, so that the rows'
+            // refreshes spread over the seconds instead of all going out in one status
+            unsigned h = 0;
+            for (char ch : key) h = h * 31u + static_cast<unsigned char>(ch);
+            r.sent = it == rows_.end() ? now - static_cast<double>(h % static_cast<unsigned>(ROW_REFRESH_S)) : now;
+            r.text = all;
+            r.label = s.label.empty() ? std::string() : dab::printable_utf8(s.label);
+            host.table_row(key, cells);
+            host.table_detail(key, det);
+            return;
+        }
+        r.sent = now;
+        host.table_row(key, cells);   // (the detail is unchanged: not sent again)
     }
 
     void update_programme_facts() {
         const dab::AudioStatus& st = audio_.status();
         if (sel_label_.empty()) {
             host.fact("Programme", ens_.services.empty() ? "" : "no audio service matches \"" + kp::printable(service_opt_) + "\"");
+            clear_programme_facts();
             host.voice_state("");
             return;
         }
@@ -713,15 +1000,20 @@ private:
                            (c && c->type == 63 ? "DAB+" : "DAB") + " " + std::to_string(msc_.protection().kbps) + " kbit/s)",
                        5);
         }
-        std::string fr = std::to_string(lf_ok_) + " logical frames decoded";
-        if (lf_lost_) fr += ", " + std::to_string(lf_lost_) + " lost";
-        if (msc_bits_) fr += fmt(", %.2f %% channel bit errors", 100.0 * static_cast<double>(msc_errs_) / static_cast<double>(msc_bits_));
+        // (each fact only once this programme provides it: "" = no fact)
+        std::string fr;
+        if (msc_.active()) {
+            fr = std::to_string(lf_ok_) + " logical frames decoded";
+            if (lf_lost_) fr += ", " + std::to_string(lf_lost_) + " lost";
+            if (msc_bits_) fr += fmt(", %.2f %% channel bit errors", 100.0 * static_cast<double>(msc_errs_) / static_cast<double>(msc_bits_));
+        }
         host.fact("Sub-channel", fr);
-        if (!st.codec.empty()) host.fact("Codec", st.codec);
-        if (!st.decoder.empty()) host.fact("Voice codec", st.decoder);
-        host.fact("Audio frames", std::to_string(st.frames_ok) + " ok, " + std::to_string(st.frames_bad) + " bad");
-        if (st.rs_corrected || st.rs_failed)
-            host.fact("RS corrections", std::to_string(st.rs_corrected) + " code words corrected, " + std::to_string(st.rs_failed) + " failed");
+        host.fact("Codec", st.codec);
+        host.fact("Voice codec", st.decoder);
+        host.fact("Audio frames", st.frames_ok || st.frames_bad ? std::to_string(st.frames_ok) + " ok, " + std::to_string(st.frames_bad) + " bad" : "");
+        host.fact("RS corrections", st.rs_corrected || st.rs_failed ? std::to_string(st.rs_corrected) + " code words corrected, " +
+                                                                          std::to_string(st.rs_failed) + " failed"
+                                                                    : "");
         std::string vs = dab::printable_utf8(sel_label_);
         if (host.voice_wanted() && !st.can_decode)
             vs += st.decoder.empty() ? std::string(": codec not installed") : ": " + st.decoder;
@@ -738,9 +1030,9 @@ private:
             const std::string id = talker_id(ens_.eid, t.p, t.c);
             std::string s = id;
             const double rel = ref >= 0 && tx.at(ref).snr_lin > 0 && t.snr_lin > 0 ? 10 * std::log10(t.snr_lin / tx.at(ref).snr_lin) : 0;
-            s += kv.first == ref ? " (strongest" : fmt(" (%+.1f dB", rel);
+            s += kv.first == ref ? " (strongest" : fmt(" (%+.1f dB", no_neg_zero(rel, 1));
             double us;
-            if (kv.first != ref && tii_.delay_us(t, &us)) s += fmt(", %+.1f us", us);
+            if (kv.first != ref && tii_.delay_us(t, &us)) s += fmt(", %+.1f us", no_neg_zero(us, 1));
             s += fmt(", SNR %.0f dB", 10 * std::log10(std::max(1e-3, t.snr_lin)));
             if (verbose_)
                 s += fmt(", coarse %.1f", t.tau_coarse) + fmt(" coh %.2f", t.coherence) + fmt(" fine %.1f samples", t.tau_fine) +
@@ -752,7 +1044,7 @@ private:
             if (!tx_announced_.count(kv.first) && fic_decodes()) {
                 tx_announced_.insert(kv.first);
                 host.event("📡 Transmitter " + id + " (MainId " + std::to_string(t.p) + ", SubId " + std::to_string(t.c) + ")" +
-                               (kv.first == ref ? " - the strongest" : fmt(", %+.1f dB against the strongest", rel)),
+                               (kv.first == ref ? " - the strongest" : fmt(", %+.1f dB against the strongest", no_neg_zero(rel, 1))),
                            600);
             }
         }

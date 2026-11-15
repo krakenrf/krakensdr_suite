@@ -527,9 +527,11 @@ void OfdmRx::track_frame() {
     // 3. timing from the impulse response
     const bool good = metric >= PRS_MIN;
     double tf = 0, tp = 0;
+    double timing_err = NAN;
     if (good && impulse_timing(&tf, &tp)) {
         const double meas = static_cast<double>(w1) + tf - useful_start(1);
         const double err = meas - s0_;
+        timing_err = err;
         if (std::fabs(err) > 400) {
             s0_ = meas;
         } else {
@@ -592,6 +594,8 @@ void OfdmRx::track_frame() {
     f.start_exact = s0_;
     f.start = static_cast<int64_t>(std::llround(s0_));
     f.prs_metric = metric;
+    f.prs_ok = good;
+    f.timing_err = timing_err;
     f.snr_db = noise > 0 && prs_pow > noise ? 10 * std::log10((prs_pow - noise) / noise) : -99;
     f.mer_db = mer_n > 0 && mer_acc > 0 ? -10 * std::log10(mer_acc / mer_n) : 0;
     f.cfo_hz = f_tot_;

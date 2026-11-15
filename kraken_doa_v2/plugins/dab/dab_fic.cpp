@@ -79,6 +79,12 @@ inline int16_t s16(const uint8_t* p) { return static_cast<int16_t>(static_cast<u
 Service& FigParser::service(std::map<uint32_t, Service>& m, uint32_t sid, bool data, double now) {
     auto it = m.find(sid);
     if (it == m.end()) {
+        if (m.size() >= MAX_SERVICES) {   // full: the least recently signalled one goes
+            auto old = m.begin();
+            for (auto j = m.begin(); j != m.end(); ++j)
+                if (std::max(j->second.first_seen, j->second.last_seen) < std::max(old->second.first_seen, old->second.last_seen)) old = j;
+            m.erase(old);
+        }
         Service s;
         s.sid = sid;
         s.data = data;
@@ -101,12 +107,9 @@ void FigParser::fib(const uint8_t* fib, int cif, double now) {
         const uint8_t* d = fib + pos + 1;
         if (type == 0 && len >= 1) {
             fig_count[(0 << 8) | (d[0] & 31)]++;
-            if ((d[0] & 31) == 0 && len >= 5) {
-                // FIG 0/0 refers to this FIB's CIF; keep the count of CIF 0 of the frame
-                const int c = ((d[3] & 31) * 250 + d[4]);
-                if (c < 5000) e_.cif_count = (c - cif + 5000) % 5000;
-            }
+            cif_ = cif;
             fig0(d, len, now);
+            if (foreign_eid >= 0) return;   // another ensemble's FIB: not parsed
         } else if (type == 1) {
             fig_count[(1 << 8) | (d[0] & 7)]++;
             fig1(d, len, now);
@@ -129,14 +132,24 @@ void FigParser::fig0(const uint8_t* d0, int n0, double now) {
             if (n < 4) { malformed++; return; }
             const int eid = static_cast<int>(be16(d));
             if (e_.eid >= 0 && eid != e_.eid) {
-                Ensemble fresh;
-                e_ = fresh;
-                if (ev.event) ev.event("ensemble identifier changed");
+                // another ensemble (or a corrupted FIG that passed the CRC):
+                // the receiver decides, nothing of it is applied
+                foreign_eid = eid;
+                return;
             }
             e_.eid = eid;
             e_.change_flags = d[2] >> 6;
             e_.alarm = (d[2] >> 5) & 1;
-            e_.occurrence = (e_.change_flags && n >= 5) ? d[4] : -1;
+            e_.occurrence = (e_.change_flags && n >= 5 && d[4] < 250) ? d[4] : -1;
+            // FIG 0/0 refers to this FIB's CIF; keep the count of CIF 0 of the frame
+            const int c = (d[2] & 31) * 250 + d[3];
+            if ((d[2] & 31) < 20 && d[3] < 250 && frame_cif < 0) {   // (the frame's first: mode I has it in CIF 0)
+                e_.cif_count = (c - cif_ + 5000) % 5000;
+                frame_cif = e_.cif_count;
+                frame_flags = e_.change_flags;
+                frame_occ = e_.occurrence;
+                frame_fig00_at = cif_;
+            }
             return;
         }
         case 1: {   // sub-channel organisation
@@ -179,7 +192,7 @@ void FigParser::fig0(const uint8_t* d0, int n0, double now) {
                 if (i + 2 * nc > n) { malformed++; return; }
                 Service& s = service(m, sid, pd, now);
                 s.ca_id = caid;
-                if (!cn) s.last_seen = now;
+                s.last_seen = now;   // (next configuration: in its own map, aged out the same way)
                 std::vector<Component> comps;
                 for (int c = 0; c < nc; c++, i += 2) {
                     Component k;
@@ -525,11 +538,22 @@ void FigParser::fig2(const uint8_t* d, int n, double now) {
         id = idlen == 4 ? be32(p) : be16(p);
     }
     const uint64_t key = (static_cast<uint64_t>(ext) << 40) | (static_cast<uint64_t>(scids & 15) << 32) | id;
+    if (fig2_.size() >= MAX_FIG2_SETS && !fig2_.count(key)) {
+        // full: drop the sets not continued for a while, else the oldest
+        for (auto it = fig2_.begin(); it != fig2_.end();) it = now - it->second.t > FIG2_MAX_AGE ? fig2_.erase(it) : std::next(it);
+        if (fig2_.size() >= MAX_FIG2_SETS) {
+            auto old = fig2_.begin();
+            for (auto it = fig2_.begin(); it != fig2_.end(); ++it)
+                if (it->second.t < old->second.t) old = it;
+            fig2_.erase(old);
+        }
+    }
     Seg& s = fig2_[key];
     if (s.toggle != toggle) {
         s = Seg();
         s.toggle = toggle;
     }
+    s.t = now;
     const uint8_t* body = p + idlen;
     int blen = n - 1 - idlen;
     if (seg == 0) {
