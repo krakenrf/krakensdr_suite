@@ -381,6 +381,8 @@ MbeLib::MbeLib() {
     init_ = reinterpret_cast<decltype(init_)>(dlsym(h, "mbe_initMbeParms"));
     ambe2450_ = reinterpret_cast<decltype(ambe2450_)>(dlsym(h, "mbe_processAmbe3600x2450Framef"));
     ambe2400_ = reinterpret_cast<decltype(ambe2400_)>(dlsym(h, "mbe_processAmbe3600x2400Framef"));
+    // optional (YSF DN): the 49 parameter bits without the 72-bit frame's FEC
+    ambe49_ = reinterpret_cast<decltype(ambe49_)>(dlsym(h, "mbe_processAmbe2450Dataf"));
     auto ver = reinterpret_cast<void (*)(char*)>(dlsym(h, "mbe_printVersion"));
     if (!init_ || !ambe2450_ || !ambe2400_) {
         status_ = used + " lacks the AMBE functions";
@@ -410,10 +412,26 @@ int MbeLib::decode(bool dstar, char fr[4][24], void* state, float* out) const {
     return errs2;
 }
 
+int MbeLib::decode49(const char d[49], int errs, void* state, float* out) const {
+    if (!has_ambe49()) return -1;
+    uint8_t* s = static_cast<uint8_t*>(state);
+    // mbelib writes one err_str character per error (+ a marker): keep it short
+    int e = std::clamp(errs, 0, 32), e2 = e;
+    char err_str[64];
+    char ambe_d[49];
+    std::memcpy(ambe_d, d, 49);
+    ambe49_(out, &e, &e2, err_str, ambe_d, s, s + 4096, s + 8192, 3);
+    for (int n = 0; n < 160; n++) out[n] = std::clamp(out[n] * OUT_SCALE, -1.0f, 1.0f);
+    return e2;
+}
+
 AmbeStream::AmbeStream(bool dstar) : dstar_(dstar), state_(MbeLib::STATE_BYTES) { reset(); }
 AmbeStream::~AmbeStream() = default;
 void AmbeStream::reset() { MbeLib::instance().init_state(state_.data()); }
 int AmbeStream::decode(char fr[4][24], float* out) { return MbeLib::instance().decode(dstar_, fr, state_.data(), out); }
+int AmbeStream::decode49(const char d[49], int errs, float* out) {
+    return MbeLib::instance().decode49(d, errs, state_.data(), out);
+}
 
 }  // namespace dig
 

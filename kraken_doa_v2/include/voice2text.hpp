@@ -8,7 +8,7 @@
 // the VFO snapshot). The audio is the VFO's own - not the 🔊 live audio - so
 // any number of VFOs are transcribed at once, whatever is being listened to:
 //  - a VFO with its digital decoder on: the decoder's voice (P25 / DMR /
-//    D-STAR / NXDN / TETRA vocoder output, dig::set_voice_tap_handler), cut
+//    D-STAR / NXDN / YSF / TETRA vocoder output, dig::set_voice_tap_handler), cut
 //    into transmissions by the voice frames and the talker (unit ID) changes;
 //  - otherwise its analog demodulation (NBFM / AM / WBFM - the VFO's demod)
 //    of the stream the FM audio gets, cut by the VFO's squelch (or, with the

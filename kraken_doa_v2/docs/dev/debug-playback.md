@@ -12,13 +12,13 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   8091 packets - spectrum, waterfall, VFO, decoder, DoA, the 📡 DF panel.
   Catalogue IN THE PLUGINS: `plugins/<id>/tools/testsignals.json` (a list;
   format + how to add one: plugins/SDK.md *Test transmissions for the debug
-  playback*). 39 entries in 28 catalogues (2026-10-25) - EVERY decoder:
-  acars, vdl2, ais, aprs, dstar, nxdn, tetra, mpt1327, ils (VOR), analog_id (two: the
+  playback*). 40 entries in 29 catalogues (2026-11-16) - EVERY decoder:
+  acars, vdl2, ais, aprs, dstar, nxdn, ysf, tetra, mpt1327, ils (VOR), analog_id (two: the
   CTCSS tones + `analog-ids-six`, radio IDs), radar,
   ssr1030, uat, flarm, beacon406, lora (six), wildlife (five), dtv, cells,
   adsb, dme, ism, pocsag, v23_telemetry, p25, dmr, radiosonde (the last
   three since 2026-10-16 - their earlier tests used public recordings),
-  rds (2026-10-22)
+  rds (2026-10-22), ysf (2026-11-16)
 - Generation: `PLAYBACK_GEN:<id>` forks `python3 -I
   plugins/sdk/tools/make_testsignal.py <id> --plugins DIR --cache
   testsignal_cache --lat --lon` (nice 10, own process group; PROGRESS lines
@@ -164,4 +164,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   (load 5-9) it passed its 12 % limit and stopped probing (once the one
   link learned at 446.069 instead of 446.100: 0 / 5) - open, for the lora
   plugin. Settings file identical after every run, 0 notices
+- Test 2026-11-16 (ysf, x86_64 scratch test build, ports 4708x, no
+  heimdall): `ysf-three-radios`, 45 s, Check 3 / 3 - talkers ZL1AAA 50.0,
+  ZL2BBB 170.0, ZL3CCC 285.0 (each +0.0), 0 packets dropped, the plugin
+  running with 0 dropped, every call's start / end event in the decoder log
 

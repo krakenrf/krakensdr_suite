@@ -47,7 +47,7 @@ fi
 #   libusb - librtlsdr (heimdall) reaches the dongles through WinUSB with it
 #   libuv - uSockets' event loop on Windows (no epoll)
 #   eigen3 (both apps), openssl (uWS TLS, web mapper), opus, zlib, sqlite3
-#   dlfcn - dlopen() for the optional mbelib DLL (DMR / D-STAR / NXDN voice)
+#   dlfcn - dlopen() for the optional mbelib DLL (DMR / D-STAR / NXDN / YSF DN voice)
 PACKAGES=(
     make git patch diffutils
     mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja

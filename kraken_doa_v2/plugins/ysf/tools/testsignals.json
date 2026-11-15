@@ -1,0 +1,30 @@
+[
+{
+ "id": "ysf-three-radios",
+ "title": "YSF: three radios taking turns on one 70 cm channel",
+ "description": "Yaesu System Fusion C4FM calls on 438.5 MHz, direct, destination ALL (header / CC / terminator frames with FICH, DCH callsign data, seeded random voice bits): ZL1AAA (50 deg) twice - DN (V/D mode 2) first, Voice FR (VW) last -, ZL2BBB (170 deg) in VW, ZL3CCC (285 deg) in DN, each at its own carrier offset and level. Expect talkers ZL1AAA, ZL2BBB and ZL3CCC at those bearings.",
+ "rf_hz": 438500000.0,
+ "tuner_offset_hz": 300000,
+ "seconds": 13,
+ "vfo": {"bw_khz": 24},
+ "steps": [
+  ["{tools}/ysf_gen.py", "zl1aaa.cf32", "--seed", "11",
+   "--at", "0.4", "--dur", "2.5", "--src", "ZL1AAA", "--mode", "dn",
+   "--at", "9.8", "--dur", "2.4", "--src", "ZL1AAA", "--mode", "vw"],
+  ["{tools}/ysf_gen.py", "zl2bbb.cf32", "--seed", "12",
+   "--at", "3.7", "--dur", "2.4", "--src", "ZL2BBB", "--mode", "vw"],
+  ["{tools}/ysf_gen.py", "zl3ccc.cf32", "--seed", "13",
+   "--at", "6.9", "--dur", "2.2", "--src", "ZL3CCC", "--mode", "dn"]
+ ],
+ "scene": {"rate": 48000, "snr_db": 20, "seed": 31, "sources": [
+  {"name": "ZL1AAA", "file": "zl1aaa.cf32", "rate": 48000, "at": 0, "bearing": 50, "gain_db": -2, "shift_hz": 150},
+  {"name": "ZL2BBB", "file": "zl2bbb.cf32", "rate": 48000, "at": 0, "bearing": 170, "gain_db": 1, "shift_hz": -220},
+  {"name": "ZL3CCC", "file": "zl3ccc.cf32", "rate": 48000, "at": 0, "bearing": 285, "gain_db": -3, "shift_hz": 80}
+ ]},
+ "expect": [
+  {"tid": "ZL1AAA", "bearing": 50},
+  {"tid": "ZL2BBB", "bearing": 170},
+  {"tid": "ZL3CCC", "bearing": 285}
+ ]
+}
+]

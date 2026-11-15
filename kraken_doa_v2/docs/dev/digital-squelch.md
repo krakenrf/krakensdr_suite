@@ -48,7 +48,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   sample indexes, `Bridge::clock(rate)` / `restart_clock()` (in
   `talkers(rate)` too): p25 (frame_a_..frame_b_, a TSDU ends after its last
   good TSBK), dmr (burst), nxdn (frame; the CAC path computes its own),
-  dstar (RF header; a superframe from the previous data sync), tetra (the
+  ysf (a 100 ms frame whose FICH passed, from its FS), dstar (RF header; a superframe from the previous data sync), tetra (the
   slot), mpt1327 (CCSC / SYNT + address codeword). Standalone: pagers (a
   synced POCSAG batch with <= 2 bad codewords - replaces the old valid() per
   address codeword -, a FLEX block with <= 1 lost word per phase), aprs + v23_telemetry (frame end - length at 1200 bit/s),

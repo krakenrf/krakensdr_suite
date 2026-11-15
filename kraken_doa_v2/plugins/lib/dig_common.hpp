@@ -1,9 +1,9 @@
 #pragma once
 
 // Shared code of the digital-radio plugins that ship with the suite (P25,
-// DMR, TETRA, D-STAR, NXDN, MPT1327): the receiver-side types those decoders
-// were written against (RxContext, Report, SampleBuf, SymSrc), mapped onto
-// the plugin API (kp::Host), plus the front ends they share. Linked into
+// DMR, TETRA, D-STAR, NXDN, MPT1327, YSF): the receiver-side types those
+// decoders were written against (RxContext, Report, SampleBuf, SymSrc), mapped
+// onto the plugin API (kp::Host), plus the front ends they share. Linked into
 // every plugin as plugins/lib/build/libkrakendig.a - a plugin of your own
 // can use it too (FEC: dig_fec.hpp, 4FSK sync: dig_fsk4.hpp, vocoders:
 // dig_vocoder.hpp).
@@ -22,7 +22,7 @@ namespace dig {
 
 // Which protocol a call is about. Inside one plugin it only matters to code
 // that handles two protocols at once (the 4FSK receiver: P25 / DMR).
-enum class Mode : int { OFF = 0, AUTO = 1, P25 = 2, DMR = 3, TETRA = 4, DSTAR = 5, NXDN = 6, MPT1327 = 7 };
+enum class Mode : int { OFF = 0, AUTO = 1, P25 = 2, DMR = 3, TETRA = 4, DSTAR = 5, NXDN = 6, MPT1327 = 7, YSF = 8 };
 
 inline int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
