@@ -5,6 +5,7 @@
 #include "../sdr/sdr_init.hpp"
 #include "../sdr/pipeline_control.hpp"
 #include "../core/config.hpp"
+#include "../core/calibration_evidence_guard.hpp"
 #include <algorithm>
 #include <iostream>
 #include <thread>
@@ -184,6 +185,15 @@ void apply_phase_compensation_once(const std::map<int, float>& measured_phases) 
         return;
     }
 
+    // A successful eigen solve can still represent a partial channel set.
+    // Never average missing/NaN channel evidence into a valid calibration.
+    if (!kraken_calibration::complete_finite_phase_evidence(
+            measured_phases, active_num_elements.load(), REF_CHANNEL)) {
+        phase_compensation->stable_nonzero_count = 0;
+        phase_compensation->phase_accum_count = 0;
+        return;
+    }
+
     // PHASE-ONLY calibration: the correction is a unit phasor per channel, no
     // gain. Introduced while the IF VGA was under the RTL2832 AGC, when a
     // dongle's gain hunted by up to ~2.5 dB between snapshots and a gain
@@ -264,6 +274,14 @@ bool check_phase_convergence(const std::map<int, float>& current_phases) {
     }
 
     std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+    // Vacuous std::all_of on missing phase channels previously advanced the
+    // convergence counter. A rejected set must neither count as successful
+    // nor spend the retry budget; the next valid set starts a new streak.
+    if (!kraken_calibration::complete_finite_phase_evidence(
+            current_phases, active_num_elements.load(), REF_CHANNEL)) {
+        phase_compensation->convergence_count = 0;
+        return false;
+    }
     phase_compensation->checks_since_compensation++;
 
     float max_phase_error = 0.0f;
@@ -1468,9 +1486,9 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                     current_peak_ratio = it->second;
                 current_phases = correlation_result.phases;
                 phases_measured = correlation_result.phases_measured;
-                for (const auto& [ch, st] : correlation_result.channel_states) {
-                    if (ch != REF_CHANNEL && st != LagCompensatorState::CONVERGED) lag_all_converged = false;
-                }
+                lag_all_converged = kraken_calibration::all_lag_states_converged(
+                    correlation_result.channel_states, active_num_elements.load(),
+                    REF_CHANNEL, LagCompensatorState::CONVERGED);
                 last_processed_sequence = current_sequence;
             }
         }
@@ -1578,9 +1596,9 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                             bool all_lag_converged;
                             {
                                 std::lock_guard<std::mutex> rl(correlation_result.data_mutex);
-                                all_lag_converged = std::all_of(correlation_result.channel_states.begin(),
-                                    correlation_result.channel_states.end(),
-                                    [](const auto& pair) { return pair.second == LagCompensatorState::CONVERGED; });
+                                all_lag_converged = kraken_calibration::all_lag_states_converged(
+                                    correlation_result.channel_states, active_num_elements.load(),
+                                    REF_CHANNEL, LagCompensatorState::CONVERGED);
                             }
 
                             if (all_lag_converged && phase_compensation) {
