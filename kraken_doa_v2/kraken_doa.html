@@ -2442,20 +2442,20 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:#1a4
     <div id="set-mp-keyrow">
       <div class="lbl" id="set-mp-keylbl">API key</div>
       <div class="row">
-        <input type="password" id="set-mp-key" autocomplete="off" spellcheck="false" autocapitalize="off" oninput="setDlgMsg('')">
+        <input type="password" id="set-mp-key" autocomplete="off" spellcheck="false" autocapitalize="off" oninput="setDlgEdit()">
         <button type="button" class="btn sm" id="set-mp-show" onclick="setDlgShowKey()" title="Show / hide the key">Show</button>
       </div>
       <div class="info" id="set-mp-keyhelp"></div>
     </div>
     <div class="sub" id="set-mp-custom" style="display:none">
-      <div class="lbl">Tile URL <b>*</b> - {z} {x} {y}; also {-y} (TMS row), {s} (a / b / c), {key}</div>
-      <input type="text" id="set-mp-url" style="width:100%" spellcheck="false" autocapitalize="off" placeholder="https://tiles.example.com/{z}/{x}/{y}.png?key={key}" oninput="setDlgMsg('')">
+      <div class="lbl">Tile URL <b>*</b> - {z} {x} {y}; also {-y} (TMS row), {s} (a / b / c), {key}. https:// - on an https page an http:// server only works on this machine (localhost / 127.0.0.1)</div>
+      <input type="text" id="set-mp-url" style="width:100%" spellcheck="false" autocapitalize="off" placeholder="https://tiles.example.com/{z}/{x}/{y}.png?key={key}" oninput="setDlgEdit()">
       <div class="grid2">
-        <div><div class="lbl">Deepest zoom of its tiles</div><input type="number" id="set-mp-max" min="1" max="22" step="1" style="width:100%"></div>
-        <div><div class="lbl">&nbsp;</div><label class="ck"><input type="checkbox" id="set-mp-dark"> Dark map or imagery</label></div>
+        <div><div class="lbl">Deepest zoom of its tiles</div><input type="number" id="set-mp-max" min="1" max="22" step="1" style="width:100%" oninput="setDlgEdit()"></div>
+        <div><div class="lbl">&nbsp;</div><label class="ck"><input type="checkbox" id="set-mp-dark" onchange="setDlgEdit()"> Dark map or imagery</label></div>
       </div>
       <div class="lbl">Attribution (shown on the map, as the provider asks)</div>
-      <input type="text" id="set-mp-attr" maxlength="200" style="width:100%" placeholder="© Example Maps · © OpenStreetMap contributors">
+      <input type="text" id="set-mp-attr" maxlength="200" style="width:100%" placeholder="© Example Maps · © OpenStreetMap contributors" oninput="setDlgEdit()">
     </div>
     <div class="info" id="set-mp-msg"></div>
     <div class="b">
@@ -2616,6 +2616,14 @@ const mapProvCfg = (() => {
   return d;
 })();
 let mapProvErr = '';           // why the provider's tiles can't load (Google's session), for the offline notice
+// the provider's attribution for the view (mapAttrDyn): the text fetched for
+// provider|layer k, the request wanted (its view), its debounce / retry timer
+let mapDynAttr = {k: '', h: ''}, mapDynWant = '', mapDynT = 0;
+let mapDynZ = {k: '', z: 0};   // Google's deepest zoom for the view, for provider|layer k (0 = the layer's max)
+let mapDynN = 0;               // bumped when the provider changes: an older reply applies nothing
+let mapDynFails = 0, mapDynRetry = 0, mapDynRetryMs = 15000;   // failed attribution fetches back off from mapDynRetryMs
+// Google's session tokens per map type (gmSession; localStorage kraken_map_gs)
+const gmSess = (() => { try { return JSON.parse(localStorage.getItem('kraken_map_gs') || '{}'); } catch (e) { return {}; } })();
 // 🔍 the map search (see 🔍 MAP SEARCH): the text searched, the rows listed
 // (+ the highlighted one, the list shown), OpenStreetMap's rows for srchOnlQ,
 // the status line, the online request running (for which text), the answers
@@ -13192,6 +13200,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   const MAPTILER_ATTR = '© ' + mapA('https://www.maptiler.com/copyright/', 'MapTiler') + ' ' + OSM_ATTR;
   const STADIA_ATTR = '© ' + mapA('https://stadiamaps.com/', 'Stadia Maps') + ' © ' + mapA('https://openmaptiles.org/', 'OpenMapTiles') + ' ' + OSM_ATTR;
   const TF_ATTR = 'Maps © ' + mapA('https://www.thunderforest.com/', 'Thunderforest') + ', data ' + OSM_ATTR;
+  const AZ_ATTR = '© Microsoft, © TomTom';
   const AZURE = (ts, z, x, y, c) => `https://atlas.microsoft.com/map/tile?api-version=2024-04-01&tilesetId=${ts}&zoom=${z}&x=${x}&y=${y}&tileSize=256&subscription-key=${c.k}`;
   const mbx = (style, o) => Object.assign({max: 22, tile: 512, osm: true, attr: MAPBOX_ATTR,
     url: (z, x, y, c) => `https://api.mapbox.com/styles/v1/mapbox/${style}/tiles/512/${z}/${x}/${y}?access_token=${c.k}`}, o);
@@ -13229,27 +13238,33 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         terrain: gml('Terrain', 'terrain', {gmLayers: ['layerRoadmap'], light: true}),
       },
       // the copyright for the view, and the deepest zoom there (it varies)
+      // (Google's viewport API takes west > east across the antimeridian).
+      // Tiles are <img> loads with no readable status, so this request is
+      // the probe of the session: refused (400 / 401 / 403 / 404) = Google
+      // dropped it before its expiry (revoked, or a wrong clock): make a new one
       attrq: (lk, L, z, [w, s, e, n], c) => {
         const sess = gmSession(L.gm, L.gmLayers, c);
         if (!sess) return Promise.reject('wait');
         return fetch(`https://tile.googleapis.com/tile/v1/viewport?session=${sess}&key=${c.k}&zoom=${z}&north=${n}&south=${s}&east=${e}&west=${w}`)
-          .then(r => r.ok ? r.json() : Promise.reject(r.status))
-          .then(j => {
-            const zs = Array.isArray(j.maxZoomRects) ? j.maxZoomRects.map(r => +r.maxZoom).filter(v => v > 0) : [];
-            if (zs.length) L.zmax = Math.max(...zs);
-            return j.copyright ? escapeHtml(j.copyright) : '';
-          });
+          .then(r => {
+            if (r.ok) { gmSessOk(L.gm); return r.json(); }
+            if ([400, 401, 403, 404].includes(r.status) && gmReject(L.gm, sess, r.status)) return Promise.reject('wait');
+            return Promise.reject(r.status);
+          })
+          .then(j => ({h: j.copyright ? escapeHtml(j.copyright) : '', zr: Array.isArray(j.maxZoomRects) ? j.maxZoomRects : []}));
       }},
     azure: {name: 'Azure Maps (Microsoft)', key: {label: 'Subscription key', get: 'https://portal.azure.com/#create/Microsoft.Maps',
               help: 'A key of an Azure Maps account. It opens every Azure Maps API of that account, so use an account kept for this.'},
       layers: {
-        street: {name: 'Street', max: 22, light: true, ts: 'microsoft.base.road', url: (z, x, y, c) => AZURE('microsoft.base.road', z, x, y, c)},
-        satellite: {name: 'Satellite', max: 19, bg: '#141a22', ts: 'microsoft.imagery', url: (z, x, y, c) => AZURE('microsoft.imagery', z, x, y, c),
+        // attr: until (or while) the fetched credit for the view is missing
+        street: {name: 'Street', max: 22, light: true, attr: AZ_ATTR, attrFb: true, ts: 'microsoft.base.road', url: (z, x, y, c) => AZURE('microsoft.base.road', z, x, y, c)},
+        satellite: {name: 'Satellite', max: 19, bg: '#141a22', attr: AZ_ATTR, attrFb: true, ts: 'microsoft.imagery', url: (z, x, y, c) => AZURE('microsoft.imagery', z, x, y, c),
                     labels: (z, x, y, c) => AZURE('microsoft.base.hybrid.road', z, x, y, c)},
-        dark: {name: 'Dark', max: 22, ts: 'microsoft.base.darkgrey', url: (z, x, y, c) => AZURE('microsoft.base.darkgrey', z, x, y, c)},
+        dark: {name: 'Dark', max: 22, attr: AZ_ATTR, attrFb: true, ts: 'microsoft.base.darkgrey', url: (z, x, y, c) => AZURE('microsoft.base.darkgrey', z, x, y, c)},
       },
+      // bounds across the antimeridian (west > east): the whole longitude range
       attrq: (lk, L, z, [w, s, e, n], c) =>
-        fetch(`https://atlas.microsoft.com/map/attribution?api-version=2024-04-01&tilesetId=${L.ts}&zoom=${z}&bounds=${w},${s},${e},${n}&subscription-key=${c.k}`)
+        fetch(`https://atlas.microsoft.com/map/attribution?api-version=2024-04-01&tilesetId=${L.ts}&zoom=${z}&bounds=${w > e ? -180 : w},${s},${w > e ? 180 : e},${n}&subscription-key=${c.k}`)
           .then(r => r.ok ? r.json() : Promise.reject(r.status))
           .then(j => (Array.isArray(j.copyrights) ? j.copyrights : [])
             // HTML links: their text only (DOMParser runs nothing, loads nothing)
@@ -13284,9 +13299,17 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         dark: here('explore.night', 'png8', {name: 'Night'}),
       }},
     custom: {name: 'Custom tile URL', key: {label: 'API key (fills {key} in the URL)', optional: true}, custom: true,
-      layers: {custom: {name: 'Custom', max: 19, url: (z, x, y, c) => mapCustomUrl(c.cu.url, z, x, y, c.k)}}},
+      layers: {custom: {name: 'Custom', max: 19, url: (z, x, y, c) => mapMixedBlocked(c.cu.url) ? null : mapCustomUrl(c.cu.url, z, x, y, c.k)}}},
   };
   const mapHas = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  // an http:// tile URL on an https page: the browser blocks it (mixed
+  // content) - unless it is on this machine (loopback is exempt)
+  function mapMixedBlocked(t, proto = location.protocol) {
+    const m = proto === 'https:' && /^http:\/\/(\[[^\]]*\]|[^\/:?#]*)/i.exec(t || '');
+    if (!m) return false;
+    const h = m[1].toLowerCase();
+    return !(h === 'localhost' || h.endsWith('.localhost') || h === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(h));
+  }
   // a {z} {x} {y} template: {-y} = the TMS row, {s} = a subdomain a / b / c, {key}
   function mapCustomUrl(t, z, x, y, k) {
     if (!/^https?:\/\//i.test(t || '')) return null;
@@ -13318,14 +13341,48 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     return Object.assign({}, L, {max: Math.max(1, Math.min(22, Math.round(+cu.max) || 19)), light: !cu.dark,
                                  bg: cu.dark ? '#141a22' : undefined, attr: escapeHtml(cu.attr || '')});
   }
-  // the deepest zoom with tiles (Google tells it for the view shown)
-  function mapLayerMax(L) { return L.zmax ? Math.min(L.max, L.zmax) : L.max; }
+  // the deepest zoom with tiles (Google tells it for the view shown: mapDynZ)
+  function mapLayerMax(L) {
+    const z = mapDynZ.z && mapDynZ.k === mapProvId() + '|' + mapLayerKey() ? mapDynZ.z : 0;
+    return z ? Math.min(L.max, z) : L.max;
+  }
+  // the zoom limit from Google's maxZoomRects (they can nest: a deep city
+  // inside a shallower country): the deepest of the rects holding the view's
+  // centre - what the user looks at; none holds it - the shallowest of all,
+  // so no part of the view asks for tiles that don't exist. 0 = no limit
+  function mapZoomFor(rs, lat, lon) {
+    const ok = rs.filter(r => +r.maxZoom > 0);
+    if (!ok.length) return 0;
+    const inLon = r => +r.west <= +r.east ? lon >= +r.west && lon <= +r.east : lon >= +r.west || lon <= +r.east;
+    const at = ok.filter(r => lat >= +r.south && lat <= +r.north && inLon(r)).map(r => +r.maxZoom);
+    return at.length ? Math.max(...at) : Math.min(...ok.map(r => +r.maxZoom));
+  }
 
   // Google Map Tiles API: the tiles need a session token (createSession, a
   // POST), one per map type, valid about two weeks - kept in localStorage
   // (kraken_map_gs, with a hash of the key it is for) so the browser's HTTP
   // cache of the tiles survives a reload. Failures back off like tiles do.
-  const gmSess = (() => { try { return JSON.parse(localStorage.getItem('kraken_map_gs') || '{}'); } catch (e) { return {}; } })();
+  // (gmSess: see the globals block)
+  function gmSessSave() {
+    try { localStorage.setItem('kraken_map_gs', JSON.stringify(gmSess, (k, v) => k === 'busy' ? undefined : v)); } catch (x) {}
+  }
+  // the viewport request refused session s: drop it so gmSession makes a new
+  // one - the first time at once, again only after a back-off (rej counts
+  // refusals until one is accepted; a bad key can't loop createSession).
+  // false = this session was already replaced
+  function gmReject(type, s, status) {
+    const e = gmSess[type];
+    if (!e || e.s !== s) return false;
+    e.rej = (e.rej || 0) + 1;
+    e.s = ''; e.exp = 0;
+    if (e.rej > 1) e.retry = Date.now() + Math.min(300000, 15000 * Math.pow(2, e.rej - 2));
+    mapProvErr = 'Google Maps refused the session (HTTP ' + status + '); a new one is being made';
+    mapTileErrAt = Date.now();
+    gmSessSave();
+    mapDraw();   // the tiles ask gmSession for the new one
+    return true;
+  }
+  function gmSessOk(type) { const e = gmSess[type]; if (e && e.rej) { e.rej = 0; gmSessSave(); } }
   function gmHash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0).toString(36); }
   function gmSession(type, layers, c) {
     const kh = gmHash(c.k);
@@ -13355,7 +13412,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     gmCreateReq(type, layers, c.k).then(j => {
       e.s = String(j.session); e.exp = +j.expiry || Date.now() / 1000 + 86400; e.fails = 0; e.retry = 0;
       mapProvErr = '';
-      try { localStorage.setItem('kraken_map_gs', JSON.stringify(gmSess, (k, v) => k === 'busy' ? undefined : v)); } catch (x) {}
+      gmSessSave();
     }, err => {
       e.fails = (e.fails || 0) + 1;
       e.retry = Date.now() + Math.min(300000, 15000 * Math.pow(2, e.fails - 1));
@@ -13365,8 +13422,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   }
 
   // the provider's attribution for the area shown (attrq), fetched once the
-  // view has been still for a second; until then the layer's own attr only
-  let mapDynAttr = {k: '', h: ''}, mapDynWant = '', mapDynT = 0;
+  // view has been still for a second; until then the layer's own attr only.
+  // A failed fetch is tried again after mapDynRetryMs, doubling to 5 min,
+  // even if the view stays. (mapDyn*: see the globals block)
   function mapViewBounds() {
     const W = mapWorld();
     const [s, w] = mapUnproj(mapState.mx - mapW / 2 / W, mapState.my + mapH / 2 / W);
@@ -13380,19 +13438,36 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const id = mapProvId(), P = MAP_PROVIDERS[id];
     if (!P.attrq || !mapW) return '';
     const lk = mapLayerKey(), L = P.layers[lk], at = id + '|' + lk;
-    const z = Math.max(0, Math.min(mapLayerMax(L), Math.round(mapState.z)));
+    if (mapDynZ.k !== at) mapDynZ = {k: at, z: 0};   // another provider / layer: its own limit
+    // keyed on the view's own zoom, not the limited one: a limit that
+    // arrives must not make the same view ask again
+    const zv = Math.max(0, Math.min(L.max, Math.round(mapState.z)));
     const b = mapViewBounds();
-    const want = at + '|' + z + '|' + b.map(v => v.toFixed(2)).join(',');
+    const want = at + '|' + zv + '|' + b.map(v => v.toFixed(2)).join(',');
     if (want !== mapDynWant) {
       mapDynWant = want;
       clearTimeout(mapDynT);
+      const n = mapDynN, cen = mapUnproj(mapState.mx, mapState.my);
+      const live = () => mapDynWant === want && mapDynN === n;
       mapDynT = setTimeout(() => {
-        P.attrq(lk, L, z, b, mapProvCtx(id)).then(h => {
-          if (mapDynWant !== want) return;
+        P.attrq(lk, L, Math.min(zv, mapLayerMax(L)), b, mapProvCtx(id)).then(r => {
+          if (!live()) return;   // a reply for a view (or provider) already left
+          mapDynFails = 0; mapDynRetry = 0;
+          const h = typeof r === 'string' ? r : r.h;
           mapDynAttr = {k: at, h};
+          if (r.zr) {
+            const zl = mapZoomFor(r.zr, cen[0], ((cen[1] + 180) % 360 + 360) % 360 - 180);
+            if (zl !== mapDynZ.z) { mapDynZ = {k: at, z: zl}; mapDraw(); }   // tiles at the new limit, unasked
+          }
           mapAttrUpdate();
-        }, err => { if (err === 'wait' && mapDynWant === want) mapDynWant = ''; });   // no session yet: again on the next draw
-      }, 1000);
+        }, err => {
+          if (!live()) return;
+          if (err === 'wait') { mapDynWant = ''; return; }   // no session yet: again on the next draw
+          mapDynFails++;
+          mapDynRetry = Date.now() + Math.min(300000, mapDynRetryMs * Math.pow(2, mapDynFails - 1));
+          mapDynT = setTimeout(() => { if (live()) { mapDynWant = ''; mapDraw(); } }, mapDynRetry - Date.now());
+        });
+      }, Math.max(1000, mapDynRetry - Date.now()));
     }
     return mapDynAttr.k === at ? mapDynAttr.h : '';
   }
@@ -13796,7 +13871,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (mapState.masts) osm.push('masts');
     for (const p of mapPts.values()) if (p.k === 'incident') { osm.push('addresses'); break; }
     const L = mapLayer(), dyn = mapAttrDyn();
-    const h = [L.attr, dyn].filter(Boolean).join(' · ') +
+    const h = [dyn && L.attrFb ? '' : L.attr, dyn].filter(Boolean).join(' · ') +   // attrFb: attr only stands in for dyn
       (osm.length && !L.osm ? ' · ' + osm.join(' + ') + ' ' + OSM_ATTR : '') +
       (mapState.vs ? ' · terrain: Mapzen, SRTM, GMTED2010, ETOPO1 &amp; others' : '');
     if (at.dataset.html !== h) { at.dataset.html = h; at.innerHTML = h; }
@@ -14011,18 +14086,23 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   function setDlgProv() {
     setDlgRead();
     setDlgCfg.p = $id('set-mp-prov').value;
+    setDlgTestN++;   // a Test running was for the other provider
     setDlgFill();
   }
+  // a key / custom field edited: a Test running is no longer for these settings
+  function setDlgEdit() { setDlgTestN++; setDlgMsg(''); }
   function setDlgShowKey() {
     const k = $id('set-mp-key'), show = k.type === 'password';
     k.type = show ? 'text' : 'password';
     $id('set-mp-show').textContent = show ? 'Hide' : 'Show';
   }
   // what's missing for the provider picked ('' = nothing)
-  function setDlgCheck() {
+  function setDlgCheck(proto = location.protocol) {
     const id = setDlgCfg.p, P = MAP_PROVIDERS[id];
     if (P.key && !P.key.optional && !setDlgCfg.keys[id]) return 'Enter the ' + P.key.label.toLowerCase() + ' - or pick OpenStreetMap, which needs none.';
     if (P.custom && !mapCustomUrl(setDlgCfg.cu.url, 0, 0, 0, '')) return 'The tile URL must start with https:// (or http://).';
+    if (P.custom && mapMixedBlocked(setDlgCfg.cu.url, proto))
+      return 'This page is https, so the browser blocks tiles from an http:// server (mixed content) - serve the tiles over https, or from this machine (http://localhost or http://127.0.0.1).';
     if (P.custom && !/\{z\}/.test(setDlgCfg.cu.url)) return 'The tile URL needs {z}, {x} and {y} (or {-y}).';
     return '';
   }
@@ -14067,8 +14147,12 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     mapProvCfg.cu = setDlgCfg.cu;
     try { localStorage.setItem('kraken_map_prov', JSON.stringify(mapProvCfg)); } catch (e) {}
     // a fresh start for the notices and the attribution of the new tiles
+    // (and of Google's sessions: a re-saved key starts with new ones)
     mapTileErrAt = 0; mapProvErr = '';
-    mapDynAttr = {k: '', h: ''}; mapDynWant = '';
+    clearTimeout(mapDynT); mapDynN++;   // the old provider's pending / running request applies nothing
+    mapDynAttr = {k: '', h: ''}; mapDynWant = ''; mapDynZ = {k: '', z: 0}; mapDynFails = 0; mapDynRetry = 0;
+    for (const k of Object.keys(gmSess)) delete gmSess[k];
+    try { localStorage.removeItem('kraken_map_gs'); } catch (e) {}
     setDlgClose();
     mapUpdateControls();
     mapDraw();
@@ -15421,12 +15505,15 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
     if (st.textContent !== msg) st.textContent = msg;
     // offline: tiles failing and none loaded for a while
-    const off = mapTileErrAt && Date.now() - mapTileErrAt < 60000 && Date.now() - mapTileOk > 30000;
+    // (a blocked custom http:// URL requests nothing: say so at once)
+    const blk = mapProv().custom && mapMixedBlocked(mapProvCfg.cu.url);
+    const off = blk || mapTileErrAt && Date.now() - mapTileErrAt < 60000 && Date.now() - mapTileOk > 30000;
     const ob = $id('map-offline');
     if (ob.style.display !== (off ? 'block' : 'none')) ob.style.display = off ? 'block' : 'none';
     if (off) {
       const P = mapProv();
-      const t = (mapProvErr && P === MAP_PROVIDERS.google ? mapProvErr + ' - ' :
+      const t = (blk ? "Map tiles can't be loaded: the custom tile URL is http://, which this https page may not load (mixed content) - serve the tiles over https, or from this machine (⚙ Settings) - " :
+                 mapProvErr && P === MAP_PROVIDERS.google ? mapProvErr + ' - ' :
                  P.key ? "Map tiles can't be loaded (no internet connection, or the " + P.name + ' key is wrong or not allowed for this page? See ⚙ Settings) - ' :
                  "Map tiles can't be loaded (no internet connection?) - ") + 'positions are still shown on a plain grid.';
       if (ob.textContent !== t) ob.textContent = t;
