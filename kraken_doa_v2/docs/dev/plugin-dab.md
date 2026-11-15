@@ -189,7 +189,10 @@ generator's scene format are in `plugins/dab/README.md`.
   wrapped - +2400 "lost" and a 0.2 s dropout every 62 s. Now the sample count
   numbers contiguous CIFs and the transmitted count only sets an offset
   (followed after 3 consistent frames): 21 loops = 100.8 s, 0 lost, 0 bad,
-  no silent 10 ms block. Playback results: both catalogue entries 6 / 6 and
+  no silent 10 ms block offline; in the playback 36 loops = 171 s per
+  service (Layer II and DAB+, both entries): 0 lost, 0 bad, no silent
+  stretch in the recorder's audio, ~3 of 50 valid frames withheld per seam
+  (the count unconfirmed), the DF packet count rising every loop. Playback results: both catalogue entries 6 / 6 and
   4 / 4 Check rows; bearings over 6-7 loops 40.0 / 150.0 / 259.7 and 299.9
   deg; talkers 2.4-2.8 s after Play; tones 1125.0 / 1750.0 / 599.8 Hz from
   the recorder's audio; FIG 0/22 points at 22 / 35 / 48 km with Δ pos within
