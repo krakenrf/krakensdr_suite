@@ -174,6 +174,8 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
     //   bit 9 (0x200) = calibration STALE (settings changed since calibrating)
     //   bit 10 (0x400) = wideband scan mode (tuners spread, no calibration)
     //   bit 11 (0x800) = independent mode (every tuner its own receiver)
+    //   bit 12 (0x1000) = generic RTL-SDRs: no coherent array, coherent mode
+    //                     unavailable (set on every frame, with 0x800 / 0x400)
     // --kerberos_sw is intentionally NOT flagged: calibration is automatic
     // there, so the client should behave exactly as with a KrakenSDR.
     auto phase_state = get_phase_compensation_state_nonblocking();
@@ -184,6 +186,7 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
     }
     if (mode == OperatingMode::WIDEBAND_SCAN) phase_state_value |= 0x400u;
     if (independent) phase_state_value |= 0x800u;
+    if (generic_rtlsdr()) phase_state_value |= 0x1000u;
     uint32_t noise_source_active = bias_tee_enabled.load() ? 1 : 0;
 
     append_big_endian(packet, phase_state_value);

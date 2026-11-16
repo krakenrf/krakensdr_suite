@@ -52,6 +52,17 @@ Fixed 32-byte header, then per-channel metadata, then payload:
 
 (`data_receiver.cpp:148-161, 252-287`; decode helpers in `include/utils/endian_utils.hpp`: `read_be32` = `memcpy` + unconditional `__builtin_bswap32` — i.e. assumes little-endian host; `read_le_float` = raw `memcpy`, host/LE float.)
 
+`phase_comp_state`: the low byte is the `PhaseCompensatorState`; the higher
+bits are flags every consumer masks off - `0x100` KerberosSDR manual mode,
+`0x200` calibration stale, `0x400` wideband scan, `0x800` independent mode,
+`0x1000` generic RTL-SDRs (heimdall started without a KrakenSDR: no coherent
+array, coherent mode unavailable; set on every frame together with `0x800`
+or `0x400`). In that generic mode `num_channels` can be **1** (a single
+dongle); heimdall's own GR source (`krakensdr_source_impl.cc`) accepts 1-16.
+
+Wire check (generic mode, one R820T dongle, 2026-11-16): `channels=1
+samples=16384 phase_state=0x1800 noise=0`, 2.400 MS/s over 10 s.
+
 Per-channel metadata is pushed into `ChannelManager::update_channel_info(ch, freq, gain)` for every packet (`data_receiver.cpp:286`), which also stores `tuner_frequencies[ch]` (uint64, `src/channel_manager.cpp:68-80`).
 
 ### 1.5 num_channels / num_samples changes mid-stream
