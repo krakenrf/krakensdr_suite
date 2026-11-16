@@ -54,6 +54,8 @@ Options (saved per VFO):
 | **Contrast** | Normal | Per-frame percentile stretch: Normal 0.5-99.5 %, High 2-98 % (punchier), Full 0-100 % (no clipping). |
 | **Gamma** | 1.0 | Brightness curve: >1 lifts shadows, <1 deepens them (1 = linear). |
 | **Line nudge (Hz)** | 0 | Fine nudge to the assumed line rate if the picture won't lock or tears diagonally. Normally 0; try a few Hz either way. |
+| **Picture quality** | default | WebP compression quality for the picture sent to the browser: a number 1–100, or `low`/`medium`/`high` (40/65/90), or `default` (host ~75). The 720 × active frame is small either way, so this is mainly a bandwidth/fidelity knob; the plugin passes raw pixels and the host (built with libwebp) compresses them. |
+| **Lossless** | Off | Send the picture losslessly instead of lossy WebP. |
 
 ## How it works
 

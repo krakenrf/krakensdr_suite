@@ -73,7 +73,11 @@ locks the VFO at the tuner centre at >= 2 MHz, like *dtv*), `.sample_rate=0`
 
 Options (saved per VFO): `standard` (auto|pal|ntsc|secam), `invert` (0/1),
 `deinterlace` (weave|bob|off), `contrast` (normal|high|full), `gamma` (0.2-5),
-`line_adjust` (Hz, +-2000, a manual nudge for a stubborn lock).
+`line_adjust` (Hz, +-2000, a manual nudge for a stubborn lock), `quality` (WebP
+quality for the picture: 1-100, or low/medium/high = 40/65/90, or `default` =
+host ~75) and `lossless` (0/1). The frame is small either way (720 x active),
+so `quality` is mainly a bandwidth/fidelity knob; the plugin passes raw pixels
+and the host (built with libwebp) compresses them.
 
 Facts: Standard, Line rate (Hz), Field rate (Hz), Samples/line, and the Note on
 the bandwidth limit. One-off lock event: `"Locked PAL 625/50"` /

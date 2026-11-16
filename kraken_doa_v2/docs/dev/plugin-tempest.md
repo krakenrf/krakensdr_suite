@@ -63,13 +63,35 @@ One-off lock event (also what the debug playback checks):
 `.talkers=true`, `.manual_only=true` (it must never run in Auto-detect - it
 would false-trigger on anything).
 
-Options (saved per VFO): `mode` (auto | a listed DMT mode | manual), `refresh_lo`
-/ `refresh_hi` (the auto search window, default 50/90 Hz), `fps` / `lines` /
-`pixel_clock_mhz` / `samples_per_line` (used when `mode=manual`), `h_offset` /
-`v_offset` (nudge the alignment), `invert`, `gamma`, `contrast`
+Options (saved per VFO): `mode` (auto | a listed display mode | manual),
+`refresh_lo` / `refresh_hi` (the auto search window, default 50/90 Hz), `fps` /
+`lines` / `pixel_clock_mhz` / `samples_per_line` (used when `mode=manual`),
+`h_offset` / `v_offset` (nudge the alignment), `invert`, `gamma`, `contrast`
 (normal|high|low), `average` (EMA factor, default 0.1), `autolock` (freeze the
-detected timing), `crop` (active-only vs full raster, default active), `doa`
-(report the source bearing, default on).
+detected timing), `crop` (active-only vs full raster, default active),
+`quality` (WebP quality for the picture: 1-100, or low/medium/high = 40/65/90,
+or `default` = host ~75; default 75), `lossless` (lossless WebP, for a frozen /
+heavily averaged still), `max_display_px` (longest-side cap on the emitted
+picture, 64-4096, default 3840 = native 4K), `doa` (report the source bearing,
+default on).
+
+Supported display modes (the `mode` choice list): the VESA DMT modes 640x480,
+800x600, 1024x768, 1280x720, 1280x1024, 1366x768, 1600x900 and 1920x1080 (all
+@60), plus the CVT reduced-blanking / CTA-861 high-resolution modes
+1920x1200@60, 2560x1440@60 (QHD), 2560x1600@60 (WQXGA), the ultrawides
+2560x1080@60 and 3440x1440@60, and 3840x2160 at 30 and 60 Hz (4K UHD). All live
+in `video::display_modes` (`plugins/lib/video_raster.cpp`); the CVT-RB rows are
+reproduced exactly by this file's `cvt_mode(w, h, 60, reduced=true)`, the 4K
+rows are the CTA-861 timings (htotal 4400, vtotal 2250; 594.0 MHz at 60 Hz,
+half at 30 Hz).
+
+**Auto-detect works reliably for 640x480..1920x1080**; the high-res modes are
+best **forced**: 2560x1440 and 3440x1440 share a line rate (both vtotal 1481,
+~88.8 kHz) so Auto can report either; 4K @60 has only ~18 samples per line, so
+its line comb aliases with harmonic-related lower modes (e.g. 1280x720, whose
+line period is exactly 3x) and Auto can mis-pick it; 4K @30 (30 Hz) is below
+the default 50-90 Hz refresh window. Forcing the mode fixes the geometry and
+detection is then exact (verified below).
 
 Facts surfaced in the UI: detected frame/line rate, total lines, matched mode +
 error, estimated pixel clock, "Tune near" (the clock's VHF/UHF harmonics),
@@ -87,9 +109,27 @@ never affects the picture.
 
 ## Output
 
-GRAY8, ~4 frames/s. `crop=1` (default) sends the active area (1024x768 =
-0.79 MB, under the 1 MiB wire cap); `crop=0` sends the full raster downscaled to
-fit; larger active rasters (e.g. 1280x1024) are box-downscaled under the limit.
+GRAY8, ~4 frames/s, sent at the **native active resolution up to 4K**. The host
+compresses each frame to WebP before the wire (`plugins/sdk/plugin_host.cpp`,
+built with libwebp), so even a 3840x2160 frame (8.29M raw bytes) crosses the
+decoder video wire in ~19 KB (1080p ~7 KB), well under the 1 MiB
+`kp::wire::MAX_PAYLOAD`. The plugin always passes **raw** pixels and sets the
+`VideoFrame.quality` / `.lossless` hints from the `quality` / `lossless` options.
+
+`max_display_px` caps the **longest side** (default 3840): past the cap the
+frame is box-downscaled. `crop=1` (default) sends the active area, `crop=0` the
+full raster (htotal x vtotal, up to 4400x2250 for 4K, downscaled past the cap).
+
+**4K is CPU- and memory-heavy.** The resample / accumulate / render cost grows
+with the output pixel count (a 4K float frame is ~33 MB; the EMA average and the
+shift-aligned add touch two or three of those). Above ~1440p (`CADENCE_PX_REF`)
+the accumulate and video cadences are stretched in proportion so the per-second
+pixel work stays bounded - a **Pi** may sustain only a low frame rate at 4K. At
+or below ~1440p the cadence is unchanged, so default-resolution performance does
+not regress. **No-libwebp caveat:** without libwebp the host can only send raw
+pixels under the 1 MiB cap, where a GRAY8 frame over ~1000x1000 is **dropped**
+(not truncated) - on such a build lower `max_display_px` (e.g. 960) to keep the
+picture visible.
 
 ## Limitations (surfaced in the UI and README)
 
@@ -117,11 +157,25 @@ fit; larger active rasters (e.g. 1280x1024) are box-downscaled under the limit.
   1280x1024 / 1366x768 / 1920x1080 @60 detect correctly; bearings exact at
   15/75/110/190/250/300 deg. Noise -> no lock. Decode ~9 % of real time at
   2.4 MHz x 5 antennas (x86). macOS clang-14 + Linux GCC both compile.
-- Debug playback: `tools/testsignals.json` id `tempest-1024x768` (wide cu8,
-  tuner_offset 0, 3 s loop) expects `{"event":"Detected 1024x768 @ 60 Hz"}` and
-  `{"bearing":35}`. `make_testsignal.py --check` passes; it builds and decodes
-  to the expected event + bearing. (Generators need numpy; the debug playback
-  runs them with the environment's `python3 -I`.)
+- High-resolution (offline, cf32, SNR 26 dB, 5 antennas @2.4 MHz, reconstruction
+  correlated against the generator's dpix edge map, vertical = per-row profile):
+  - **2560x1440@60** (bearing 50 deg): forced -> mode EXACT (1481 lines,
+    88.8 kHz, 241.5 MHz, err 0 %); reconstruction **vertical corr 0.998**; DoA
+    50.0 deg. Under Auto it reports 3440x1440 (the shared-line-rate twin) - also
+    exact geometry, only the width label differs.
+  - **3840x2160@60** (4K, 594 MHz fundamental, bearing 35 deg): forced -> mode
+    EXACT (2250 lines, 135.0 kHz, 594.0 MHz, 60.00 Hz, err 0 %); reconstruction
+    **vertical corr 0.999**, horizontal 0.45 (only ~18 px/line at 2.4 MHz); DoA
+    35.0 deg. Under Auto the 17.8-sample line comb aliases to 1280x720, so force
+    4K. Decode ~30 % of real time at 2.4 MHz x 5 antennas (x86); the per-frame
+    resample/render dominates (vs ~9 % for 1024x768) - the cadence scaling keeps
+    it bounded. 1024x768 regression unchanged (~8 %).
+- Debug playback: `tools/testsignals.json` ids `tempest-1024x768` (wide cu8,
+  3 s loop) and `tempest-4k` (3840x2160@60 forced via the VFO `mode` opt, 2 s)
+  expect `{"event":"Detected ... @ 60 Hz"}` and `{"bearing":35}`.
+  `make_testsignal.py --check` passes (42 transmissions, ids unique). (Generators
+  need numpy; the debug playback runs them with the environment's `python3 -I` -
+  on this dev box use `/usr/bin/python3`, which has numpy.)
 
 ## Licence
 

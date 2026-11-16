@@ -11,8 +11,10 @@ Native build (2026-10-23, the user's request), the same Makefiles: every
 macOS part sits under `MACOS := $(if $(filter Darwin,$(shell uname -s)),1,)`
 (heimdall, kraken_doa, plugins/Makefile); the Linux build is unchanged.
 `./install.sh` works there (Homebrew in place of apt, no sudo: `brew
-install cmake pkg-config libusb eigen openssl@3 opus tmux` for what's
-missing; the librtlsdr fork built but NOT installed into /usr/local -
+install cmake pkg-config libusb eigen openssl@3 opus webp tmux` for what's
+missing (`webp` is libwebp - the decoder plugins' Makefile finds it through
+pkg-config and compresses video frames to WebP; leave it out and the plugins
+send raw pixels); the librtlsdr fork built but NOT installed into /usr/local -
 Homebrew's prefix, its own librtlsdr would collide; rtl_test in
 librtlsdr/build/src; no udev rules / DVB blacklist / limits.conf; RAM from
 `sysctl hw.memsize` for JOBS), or `make deps-macos` + make in either app. Tested on a MacBook Air 2015 (Intel,

@@ -72,10 +72,12 @@ public:
     // A reconstructed picture a decoder plugin sent (kp::Host::video_frame),
     // for the decoder panel's canvas. Binary message type 8; little-endian
     // layout after the type: uint32 vfo_id, uint16 width, uint16 height,
-    // uint8 format (0 GRAY8, 1 RGB24), uint8 flags, uint16 label_len, label
-    // bytes, then width*height*bpp raw pixel bytes. "" if the sizes disagree.
-    static std::string build_video_message(int vfo_id, int width, int height, int format, const std::string& label,
-                                           const uint8_t* pixels, size_t pixel_len);
+    // uint8 format (0 GRAY8, 1 RGB24), uint8 encoding (0 raw pixels, 1 WebP
+    // bitstream), uint16 label_len, label bytes, then the image data (for
+    // encoding 0, width*height*bpp raw pixel bytes; for encoding 1, an opaque
+    // WebP blob the browser decodes). "" if the sizes disagree.
+    static std::string build_video_message(int vfo_id, int width, int height, int format, int encoding,
+                                           const std::string& label, const uint8_t* pixels, size_t pixel_len);
     // {"decimator_info":[...]} snapshot of every decimator for the UI. In
     // wideband mode offsets are converted to be relative to the wideband
     // center.

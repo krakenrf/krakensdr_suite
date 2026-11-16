@@ -241,6 +241,23 @@ const DisplayMode kModes[] = {
     {1600, 900, 60, 1800, 1000, 108000000.0, "1600x900@60"},   // CVT reduced-blanking
     {1680, 1050, 60, 2240, 1089, 146250000.0, "1680x1050@60"},
     {1920, 1080, 60, 2200, 1125, 148500000.0, "1920x1080@60"},
+    // --- high-resolution / QHD / 4K / ultrawide (VESA CVT reduced-blanking v1
+    //     and CTA-861) ---
+    // Each pixel_clock == htotal*vtotal*actual_refresh. The five CVT-RB rows
+    // below are reproduced exactly by cvt_mode(w, h, 60, /*reduced=*/true) (the
+    // generator in this file), i.e. they are the published reduced-blanking
+    // timings; the two 4K rows are the CTA-861 UHD timings (htotal 4400, vtotal
+    // 2250; 594.0 MHz for 60 Hz, half that for 30 Hz). Keep this ORDER: on a
+    // line-rate tie the TEMPEST auto-detector takes the first match, and
+    // 2560x1440 and 3440x1440 share a line rate (both vtotal 1481, ~88.8 kHz),
+    // so the 16:9 QHD mode must precede the ultrawide for the common case.
+    {1920, 1200, 60, 2080, 1235, 154000000.0, "1920x1200@60"},   // CVT-RB, 59.95 Hz
+    {2560, 1440, 60, 2720, 1481, 241500000.0, "2560x1440@60"},   // CVT-RB (QHD), 59.95 Hz
+    {2560, 1600, 60, 2720, 1646, 268500000.0, "2560x1600@60"},   // CVT-RB (WQXGA), 59.97 Hz
+    {2560, 1080, 60, 2720, 1111, 181250000.0, "2560x1080@60"},   // CVT-RB ultrawide, 59.98 Hz
+    {3440, 1440, 60, 3600, 1481, 319750000.0, "3440x1440@60"},   // CVT-RB ultrawide (UWQHD), 59.97 Hz
+    {3840, 2160, 30, 4400, 2250, 297000000.0, "3840x2160@30"},   // CTA-861 4K UHD @30, 30.00 Hz
+    {3840, 2160, 60, 4400, 2250, 594000000.0, "3840x2160@60"},   // CTA-861 4K UHD @60, 60.00 Hz
 };
 }  // namespace
 

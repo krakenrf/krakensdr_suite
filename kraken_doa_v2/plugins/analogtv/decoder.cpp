@@ -79,6 +79,17 @@ double num_opt(const std::string& v, double fallback) {
     return (end != v.c_str() && std::isfinite(x)) ? x : fallback;
 }
 
+// WebP quality hint from the option: a preset or a number 1..100, else -1 (host default)
+int quality_opt(const std::string& v) {
+    if (v.empty() || v == "default") return -1;
+    if (v == "low") return 40;
+    if (v == "medium") return 65;
+    if (v == "high") return 90;
+    const double q = num_opt(v, NAN);
+    if (!std::isfinite(q)) return -1;
+    return static_cast<int>(clampd(q, 1, 100) + 0.5);
+}
+
 class AnalogTv : public kp::Decoder {
 public:
     explicit AnalogTv(kp::Host& h) : Decoder(h) {}
@@ -153,6 +164,10 @@ public:
             gamma_ = clampd(num_opt(value, 1.0), 0.2, 5.0);
         } else if (key == "line_adjust") {
             line_adjust_hz_ = clampd(num_opt(value, 0.0), -2000.0, 2000.0);
+        } else if (key == "quality") {
+            quality_ = quality_opt(value);
+        } else if (key == "lossless") {
+            lossless_ = value == "1";
         } else if (key == "verbose") {
             verbose_opt_ = value == "1";
         }
@@ -181,6 +196,8 @@ private:
     std::string contrast_ = "normal";
     double gamma_ = 1.0;
     double line_adjust_hz_ = 0;
+    int quality_ = -1;        // WebP quality hint for the host (-1 = host default ~75)
+    bool lossless_ = false;   // lossless WebP (frames are small; mostly a fidelity knob)
     bool verbose_opt_ = false;
 
     void clear_facts() {
@@ -364,6 +381,8 @@ private:
         vf.format = 0;   // GRAY8
         vf.pixels = pix_.data();
         vf.label = label;
+        vf.quality = quality_;     // host compresses the raw pixels to WebP at this quality
+        vf.lossless = lossless_;
         host.video_frame(vf);
 
         // facts + lock event + a valid span over the samples that built the frame
@@ -468,7 +487,13 @@ KRAKEN_PLUGIN(AnalogTv,
                             "Brightness curve: >1 lifts shadows, <1 deepens them (1 = linear). Range 0.2-5."},
                            {"line_adjust", "Line nudge (Hz)", "0", "",
                             "Fine nudge to the assumed line rate (Hz) if the picture won't lock or tears diagonally. "
-                            "Normally 0; try a few Hz either way."}},
+                            "Normally 0; try a few Hz either way."},
+                           {"quality", "Picture quality", "default", "",
+                            "WebP compression quality for the picture sent to the browser: a number 1-100, or "
+                            "low/medium/high (40/65/90), or 'default' for the host default (~75). Higher is sharper "
+                            "but larger (analog-TV frames are small either way)."},
+                           {"lossless", "Lossless", "0", "0=Off|1=On",
+                            "Send the picture losslessly instead of lossy WebP."}},
                .manual_only = false,
                .voice = false,
                .talkers = false,

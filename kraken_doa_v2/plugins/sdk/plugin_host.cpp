@@ -63,6 +63,14 @@
 
 #include <liquid/liquid.h>
 #include <unistd.h>
+// libwebp is a PLUGIN-ONLY, permissive (BSD) dependency: the plugin host
+// compresses video frames to WebP when built with it (plugins/Makefile adds
+// -DHAVE_WEBP and the link when pkg-config finds libwebp). The main kraken_doa
+// app does NOT link or include it - it forwards the opaque blob. Without it the
+// host sends raw pixels (encoding 0), so the feature builds and runs either way.
+#ifdef HAVE_WEBP
+#include <webp/encode.h>
+#endif
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -125,6 +133,14 @@ int print_info() {
     }
     std::cout << "],\"options_tsv\":\"" << jesc(tsv) << "\"}" << std::endl;
     return 0;
+}
+
+// 64-bit FNV-1a: cheap content hash for video_frame change detection (an
+// unchanged screen is not resent). Seed carries the geometry so a same-size
+// buffer of different pixels, or the same pixels at a different size, differ.
+uint64_t fnv1a(const uint8_t* p, size_t n, uint64_t h = 1469598103934665603ull) {
+    for (size_t i = 0; i < n; i++) h = (h ^ p[i]) * 1099511628211ull;
+    return h;
 }
 
 // decimal text for the wire, "" = NAN
@@ -234,32 +250,88 @@ public:
         const std::string p = plot_payload(pl);
         send(kp::wire::PLOT, p.data(), p.size());
     }
-    // kp::wire::VIDEO: uint16 width, height; uint8 format, flags; uint16
-    // label_len; label; then width*height*bpp pixel bytes, all little-endian.
-    // The whole payload must stay under MAX_PAYLOAD - drop the label to make
-    // it fit, else drop the frame (log once); never truncate a sent frame.
+    // kp::wire::VIDEO: uint16 width, height; uint8 format, encoding; uint16
+    // label_len; label; then the image data (encoding 0 = width*height*bpp raw
+    // pixel bytes, encoding 1 = a WebP bitstream), all little-endian. The host
+    // compresses to WebP when built with libwebp (-DHAVE_WEBP) and the result
+    // is smaller / needed; otherwise it sends raw pixels (encoding 0), exactly
+    // as before. An unchanged frame (same geometry + pixels as the last one
+    // sent) is skipped, so a static screen costs ~no bandwidth. The whole
+    // payload must stay under MAX_PAYLOAD - drop the label to make it fit, else
+    // drop the frame (log once); never truncate a sent frame. width/height are
+    // always the frame's own size (the compressed blob is small, so large
+    // frames - up to 4K - now fit where the raw raster would not).
     void video_frame(const kp::VideoFrame& f) override {
         const int w = f.width, h = f.height;
         if (w < 1 || h < 1 || w > 65535 || h > 65535 || !f.pixels) return;
         const uint8_t format = f.format == 1 ? 1 : 0;
         const int bpp = format == 1 ? 3 : 1;
         const size_t npix = static_cast<size_t>(w) * static_cast<size_t>(h) * static_cast<size_t>(bpp);
-        const size_t fixed = 8;   // width, height, format, flags, label_len
+
+        // change detection: skip a frame identical to the last one SENT
+        const uint64_t hv = fnv1a(f.pixels, npix,
+                                  fnv1a(reinterpret_cast<const uint8_t*>(&format), 1,
+                                        (static_cast<uint64_t>(w) << 32) ^ static_cast<uint64_t>(h)));
+        if (video_have_hash_ && hv == video_hash_) return;
+
+        // pick the payload: a WebP blob when it was built in and helps, else raw
+        const uint8_t* img = f.pixels;
+        size_t img_len = npix;
+        uint8_t encoding = 0;
+#ifdef HAVE_WEBP
+        uint8_t* webp_out = nullptr;
+        // libwebp refuses dimensions over 16383; a frame that large (very rare)
+        // falls back to raw / is dropped below if it won't fit
+        if (w <= 16383 && h <= 16383) {
+            const uint8_t* rgb = f.pixels;
+            if (format == 0) {   // expand GRAY8 -> RGB (r=g=b) into a reusable buffer
+                video_rgb_.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
+                const uint8_t* g = f.pixels;
+                uint8_t* d = video_rgb_.data();
+                for (size_t i = 0, px = static_cast<size_t>(w) * static_cast<size_t>(h); i < px; i++) {
+                    d[3 * i] = d[3 * i + 1] = d[3 * i + 2] = g[i];
+                }
+                rgb = video_rgb_.data();
+            }
+            const int stride = w * 3;
+            size_t sz = 0;
+            if (f.lossless) {
+                sz = WebPEncodeLosslessRGB(rgb, w, h, stride, &webp_out);
+            } else {
+                const float q = f.quality < 0 ? 75.0f : static_cast<float>(std::clamp(f.quality, 1, 100));
+                sz = WebPEncodeRGB(rgb, w, h, stride, q, &webp_out);
+            }
+            // use WebP if it fits and it is smaller than raw OR raw wouldn't fit
+            if (webp_out && sz > 0 && 8 + sz <= kp::wire::MAX_PAYLOAD &&
+                (sz < npix || 8 + npix > kp::wire::MAX_PAYLOAD)) {
+                encoding = 1;
+                img = webp_out;
+                img_len = sz;
+            } else if (webp_out) {
+                WebPFree(webp_out);
+                webp_out = nullptr;
+            }
+        }
+#endif
+        const size_t fixed = 8;   // width, height, format, encoding, label_len
         size_t label_len = std::min<size_t>(f.label.size(), 65535);
-        if (fixed + label_len + npix > kp::wire::MAX_PAYLOAD) {
+        if (fixed + label_len + img_len > kp::wire::MAX_PAYLOAD) {
             label_len = 0;   // first drop the caption to make room
-            if (fixed + npix > kp::wire::MAX_PAYLOAD) {
+            if (fixed + img_len > kp::wire::MAX_PAYLOAD) {
                 static bool warned = false;
                 if (!warned) {
                     warned = true;
-                    std::cerr << "video_frame: " << (fixed + npix) << " bytes exceeds the " << kp::wire::MAX_PAYLOAD
-                              << " byte limit - dropping (downscale the raster)" << std::endl;
+                    std::cerr << "video_frame: " << (fixed + img_len) << " bytes exceeds the " << kp::wire::MAX_PAYLOAD
+                              << " byte limit - dropping (downscale the raster, or build with libwebp)" << std::endl;
                 }
+#ifdef HAVE_WEBP
+                if (webp_out) WebPFree(webp_out);
+#endif
                 return;
             }
         }
         std::string p;
-        p.reserve(fixed + label_len + npix);
+        p.reserve(fixed + label_len + img_len);
         auto put16 = [&](unsigned v) {
             p.push_back(static_cast<char>(v & 0xff));
             p.push_back(static_cast<char>((v >> 8) & 0xff));
@@ -267,11 +339,16 @@ public:
         put16(static_cast<unsigned>(w));
         put16(static_cast<unsigned>(h));
         p.push_back(static_cast<char>(format));
-        p.push_back(0);   // flags (reserved)
+        p.push_back(static_cast<char>(encoding));
         put16(static_cast<unsigned>(label_len));
         p.append(f.label.data(), label_len);
-        p.append(reinterpret_cast<const char*>(f.pixels), npix);
+        p.append(reinterpret_cast<const char*>(img), img_len);
         send(kp::wire::VIDEO, p.data(), p.size());
+#ifdef HAVE_WEBP
+        if (webp_out) WebPFree(webp_out);
+#endif
+        video_hash_ = hv;   // only a frame actually sent updates the change-detection state
+        video_have_hash_ = true;
     }
     bool tune(double rf_hz) override {
         if (!std::isfinite(rf_hz) || rf_hz <= 0) return false;
@@ -431,6 +508,11 @@ public:
 private:
     int fd_;
     double rate_;
+    // video_frame change detection + the GRAY8 -> RGB scratch buffer the WebP
+    // encoder reuses (nothing when built without libwebp)
+    uint64_t video_hash_ = 0;
+    bool video_have_hash_ = false;
+    std::vector<uint8_t> video_rgb_;
     static std::string fmt_hz(double v) {
         char b[40];
         snprintf(b, sizeof b, "%.3f", v);

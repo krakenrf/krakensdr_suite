@@ -389,7 +389,7 @@ void DecimatorManager::ensureDigital(DecimatorInstance& inst) {
     // reconstructed pictures (kp::Info::video plugins) -> the decoder panel's
     // canvas, as a binary frame carrying this VFO's id (type 8)
     inst.digital->set_video_handler([id](const dig::VideoFrameReport& f) {
-        std::string msg = MessageBuilders::build_video_message(id, f.width, f.height, f.format, f.label,
+        std::string msg = MessageBuilders::build_video_message(id, f.width, f.height, f.format, f.encoding, f.label,
                                                                f.pixels.data(), f.pixels.size());
         if (!msg.empty()) WebSocketServer::publish_video(std::move(msg));
     });

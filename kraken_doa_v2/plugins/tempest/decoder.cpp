@@ -51,7 +51,7 @@ constexpr double FRAME_CONF_MIN = 0.12;   // frame autocorr prominence (0..1)
 constexpr double FRAME_PEAK_MIN = 0.20;   // frame autocorr peak (normalized)
 constexpr double LINE_PEAK_MIN = 0.12;    // line-comb autocorr peak
 constexpr int MIN_VTOTAL = 400;           // plausible total lines (blanking included)
-constexpr int MAX_VTOTAL = 1300;
+constexpr int MAX_VTOTAL = 2400;          // >= 4K's 2250 (3840x2160 CTA-861)
 constexpr double LINE_RATE_MIN = 30000;   // horizontal line rate search (Hz): the line
 constexpr double LINE_RATE_MAX = 140000;  // period lies in [fs/MAX, fs/MIN] (e.g. 17..80 @ 2.4 MHz)
 constexpr double REFRESH_GATE = 0.08;     // a mode's refresh must be this close to the coarse frame rate
@@ -65,8 +65,18 @@ constexpr double VIDEO_S = 0.25;          // send a picture this often (a few/s)
 constexpr double COV_WIN_S = 0.20;        // one DoA covariance packet per this window
 constexpr double BLANK_S = 0.5;           // re-find the blanking offset this often
 
-// keep the sent GRAY8 frame comfortably under kp::wire::MAX_PAYLOAD (1 MiB)
-constexpr size_t MAX_VIDEO_PX = 1000000;
+// Default longest-side cap for the emitted picture (option max_display_px): large
+// enough to send 3840x2160 (4K) natively. The host compresses to WebP under the
+// wire cap, so a 4K GRAY8 frame (8.29M raw bytes) travels in ~19 KB. Without
+// libwebp the host can only send RAW pixels under kp::wire::MAX_PAYLOAD (1 MiB),
+// where a GRAY8 frame over ~1000x1000 is dropped - lower this cap on such a build.
+constexpr int DEFAULT_MAX_DISPLAY_PX = 3840;
+
+// Above ~1440p the per-frame resample/accumulate/render cost grows with the
+// output pixel count, so the accumulate and video cadences are stretched to keep
+// the per-second pixel work bounded; at or below this (~3.7 Mpx) the cadence is
+// unchanged, so the default-resolution performance does not regress.
+constexpr double CADENCE_PX_REF = 2560.0 * 1440.0;
 
 double pnum(const std::string& s) {
     if (s.empty()) return NAN;
@@ -177,9 +187,29 @@ public:
         } else if (key == "crop") {
             const bool c = value != "0";
             if (c != crop_) { crop_ = c; acc_w_ = acc_h_ = 0; }
+        } else if (key == "quality") {
+            quality_ = parse_quality(value);
+        } else if (key == "lossless") {
+            lossless_ = value == "1";
+        } else if (key == "max_display_px") {
+            const double v = pnum(value);
+            max_display_px_ = std::isfinite(v) && v > 0
+                                  ? std::clamp(static_cast<int>(std::lround(v)), 64, 4096)
+                                  : DEFAULT_MAX_DISPLAY_PX;
         } else if (key == "doa") {
             doa_ = value != "0";
         }
+    }
+
+    // WebP quality from the option: a preset or a number 1..100, else host default
+    static int parse_quality(const std::string& v) {
+        if (v.empty() || v == "default") return -1;
+        if (v == "low") return 40;
+        if (v == "medium") return 65;
+        if (v == "high") return 90;
+        const double q = pnum(v);
+        if (!std::isfinite(q)) return -1;
+        return std::clamp(static_cast<int>(std::lround(q)), 1, 100);
     }
 
 private:
@@ -229,6 +259,9 @@ private:
     double ema_ = 0.1;
     bool autolock_ = false;
     bool crop_ = true;
+    int quality_ = 75;          // WebP quality hint for the host (default ~75)
+    bool lossless_ = false;     // lossless WebP (a frozen/averaged still)
+    int max_display_px_ = DEFAULT_MAX_DISPLAY_PX;   // longest-side cap on the emitted picture
     bool doa_ = true;
 
     void ensure_fs() {
@@ -287,9 +320,10 @@ private:
             }
         }
         if (locked_) {
+            const double cad = cadence_factor();   // >1 for big (>1440p) rasters
             if (t >= next_blank_) { find_blanking(); next_blank_ = t + BLANK_S; }
-            if (t >= next_acc_) { add_frame(); next_acc_ = t + ACC_S; }
-            if (t >= next_video_) { send_video(); next_video_ = t + VIDEO_S; }
+            if (t >= next_acc_) { add_frame(); next_acc_ = t + ACC_S * cad; }
+            if (t >= next_video_) { send_video(); next_video_ = t + VIDEO_S * cad; }
         }
         // DoA covariance window (end on the block boundary)
         if (doa_ && locked_ && cov_m_ >= 2 && std::isfinite(cwin_start_) && now_end(n) - cwin_start_ >= COV_WIN_S)
@@ -616,7 +650,9 @@ private:
     void find_blanking() {
         if (htotal_ <= 0 || vtotal_ <= 0) return;
         const int W = htotal_, H = vtotal_;
-        if (static_cast<size_t>(W) * H > 4000000) return;   // guard (never for real modes)
+        // guard against an absurd manual pixel clock; a 4K full raster is
+        // 4400x2250 = 9.9M, so admit up to 12M (a ~40 MB float raster at 4K)
+        if (static_cast<size_t>(W) * H > 12000000) return;
         const double spl = frame_period_ / vtotal_;
         const double spp = spl / htotal_;
         const double origin = scan_origin();
@@ -638,6 +674,21 @@ private:
         const double fs0 = static_cast<double>(buf_base_) + origin + v_eff * spl + h_eff * spp;
         phase_ = fs0 - std::floor(fs0 / frame_period_) * frame_period_;   // in [0, frame_period)
         have_phase_ = true;
+    }
+
+    // the pixel count the reconstruction works on (what resample/render cost
+    // scales with): the active area when cropping, else the full raster
+    double recon_px() const {
+        const bool crop = crop_ && width_ > 0 && height_ > 0 && (width_ < htotal_ || height_ < vtotal_);
+        const double W = crop ? width_ : htotal_;
+        const double H = crop ? height_ : vtotal_;
+        return W * H;
+    }
+    // >1 stretches the accumulate / video cadence for large (>1440p) rasters so
+    // the per-second pixel work stays bounded; 1 at or below ~1440p (no change)
+    double cadence_factor() const {
+        const double f = recon_px() / CADENCE_PX_REF;
+        return f > 1.0 ? f : 1.0;
     }
 
     // -------- reconstruction --------
@@ -684,10 +735,13 @@ private:
 
         int W = acc_w_, H = acc_h_;
         const uint8_t* px = gray_.data();
-        // downscale (box average) so W*H fits under the payload limit
-        if (static_cast<size_t>(W) * H > MAX_VIDEO_PX) {
-            int d = 2;
-            while (static_cast<size_t>((W + d - 1) / d) * ((H + d - 1) / d) > MAX_VIDEO_PX) d++;
+        // The host compresses to WebP, so send the native active-area frame (up
+        // to 4K). The max_display_px option caps the LONGEST side: a user on a
+        // no-libwebp build (raw pixels only, 1 MiB wire cap) or who wants less
+        // CPU lowers it; the default (3840) passes 4K. Box-downscale past the cap.
+        const int cap = max_display_px_ > 0 ? max_display_px_ : DEFAULT_MAX_DISPLAY_PX;
+        if (std::max(W, H) > cap) {
+            const int d = (std::max(W, H) + cap - 1) / cap;
             const int ow = (W + d - 1) / d, oh = (H + d - 1) / d;
             out8_.assign(static_cast<size_t>(ow) * oh, 0);
             for (int r = 0; r < oh; r++)
@@ -711,6 +765,8 @@ private:
         f.format = 0;   // GRAY8
         f.pixels = px;
         f.label = mode_label_;
+        f.quality = quality_;     // host compresses raw pixels to WebP at this quality
+        f.lossless = lossless_;
         host.video_frame(f);
     }
 
@@ -791,9 +847,15 @@ KRAKEN_PLUGIN(Tempest,
                .options = {{"mode", "Display mode", "auto",
                             "auto=Auto detect|640x480@60=640x480 @ 60|800x600@60=800x600 @ 60|1024x768@60=1024x768 @ 60|"
                             "1280x720@60=1280x720 @ 60|1280x1024@60=1280x1024 @ 60|1366x768@60=1366x768 @ 60|"
-                            "1600x900@60=1600x900 @ 60|1920x1080@60=1920x1080 @ 60|manual=Manual",
-                            "Auto detect finds the mode from the signal; pick a mode to force it, or Manual to set the "
-                            "timing fields below by hand"},
+                            "1600x900@60=1600x900 @ 60|1920x1080@60=1920x1080 @ 60|1920x1200@60=1920x1200 @ 60|"
+                            "2560x1440@60=2560x1440 @ 60 (QHD)|2560x1600@60=2560x1600 @ 60|"
+                            "2560x1080@60=2560x1080 @ 60 (ultrawide)|3440x1440@60=3440x1440 @ 60 (ultrawide)|"
+                            "3840x2160@30=3840x2160 @ 30 (4K)|3840x2160@60=3840x2160 @ 60 (4K)|manual=Manual",
+                            "Auto detect finds the mode from the signal; pick a mode to force it (incl. 1440p/4K/ultrawide), "
+                            "or Manual to set the timing fields below by hand. Force the high-res modes: 2560x1440 and "
+                            "3440x1440 share a line rate so Auto can report either, 4K @60 has so few samples per line that "
+                            "Auto can alias it to a lower mode, and 4K @30 sits below the default refresh window (force it or "
+                            "lower Refresh search min). Auto is reliable for the 640x480..1920x1080 modes"},
                            {"refresh_lo", "Refresh search min (Hz)", "50", "",
                             "Auto detect: the lowest frame rate to look for (the frame-period autocorrelation window)"},
                            {"refresh_hi", "Refresh search max (Hz)", "90", "",
@@ -819,6 +881,15 @@ KRAKEN_PLUGIN(Tempest,
                             "Freeze the detected timing so it stops re-estimating and drifting once the picture is good"},
                            {"crop", "Crop to active area", "1", "0=Full raster|1=Active only",
                             "Show only the visible picture, or the whole raster including the blanking bands"},
+                           {"quality", "Picture quality", "75", "",
+                            "WebP compression quality for the picture sent to the browser: a number 1-100, or low/medium/high "
+                            "(40/65/90), or 'default' for the host default (~75). Higher is sharper but larger"},
+                           {"lossless", "Lossless", "0", "0=Off|1=On",
+                            "Send the picture losslessly (best for a frozen / heavily averaged still). Larger than lossy"},
+                           {"max_display_px", "Max picture size (px)", "3840", "",
+                            "Longest-side cap on the emitted picture (64-4096). 3840 sends up to 4K natively (the host "
+                            "compresses it). Lower it for less CPU, or on a build without libwebp (there the raw picture is "
+                            "capped at ~1 MB and larger frames are dropped)"},
                            {"doa", "Bearing to source", "1", "0=Off|1=On",
                             "Coherent mode with DoA on: estimate a direction to the leaking device (shown in the DF panel). "
                             "Never affects the picture"}},

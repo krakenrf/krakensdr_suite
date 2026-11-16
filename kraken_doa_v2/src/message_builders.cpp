@@ -846,12 +846,17 @@ string MessageBuilders::build_beamformed_fft_message(const BeamformedSpectrum& b
     return msg.to_string();
 }
 
-string MessageBuilders::build_video_message(int vfo_id, int width, int height, int format, const string& label,
-                                            const uint8_t* pixels, size_t pixel_len) {
+string MessageBuilders::build_video_message(int vfo_id, int width, int height, int format, int encoding,
+                                            const string& label, const uint8_t* pixels, size_t pixel_len) {
     if (width <= 0 || height <= 0 || width > 65535 || height > 65535) return string();
     const uint8_t fmt = format == 1 ? 1 : 0;
-    const size_t bpp = fmt == 1 ? 3 : 1;
-    if (pixel_len != static_cast<size_t>(width) * static_cast<size_t>(height) * bpp) return string();
+    const uint8_t enc = encoding == 1 ? 1 : 0;
+    if (enc == 0) {   // raw pixels: the length must match the geometry
+        const size_t bpp = fmt == 1 ? 3 : 1;
+        if (pixel_len != static_cast<size_t>(width) * static_cast<size_t>(height) * bpp) return string();
+    } else if (pixel_len == 0) {   // WebP blob: an opaque, non-empty bitstream
+        return string();
+    }
     const size_t label_len = std::min<size_t>(label.size(), 65535);
 
     BinaryMessage msg;
@@ -860,7 +865,7 @@ string MessageBuilders::build_video_message(int vfo_id, int width, int height, i
     msg.add_value(static_cast<uint16_t>(width));
     msg.add_value(static_cast<uint16_t>(height));
     msg.add_value(fmt);
-    msg.add_value(uint8_t(0));    // flags (reserved)
+    msg.add_value(enc);           // 0 raw pixels, 1 WebP bitstream
     msg.add_value(static_cast<uint16_t>(label_len));
     if (label_len) msg.add_array(label.data(), label_len);
     if (pixel_len) msg.add_array(pixels, pixel_len);

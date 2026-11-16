@@ -48,12 +48,16 @@ fi
 #   libuv - uSockets' event loop on Windows (no epoll)
 #   eigen3 (both apps), openssl (uWS TLS, web mapper), opus, zlib, sqlite3
 #   dlfcn - dlopen() for the optional mbelib DLL (DMR / D-STAR / NXDN voice)
+#   libwebp - the decoder plugins link it (static) to compress video frames;
+#             plugin-only and BSD, and static so no DLL is bundled (UNTESTED
+#             here: wired to match the Makefile's pkg-config gate)
 PACKAGES=(
     make git patch diffutils
     mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
     mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-libusb mingw-w64-ucrt-x86_64-libuv
     mingw-w64-ucrt-x86_64-eigen3 mingw-w64-ucrt-x86_64-openssl mingw-w64-ucrt-x86_64-opus
     mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-sqlite3 mingw-w64-ucrt-x86_64-dlfcn
+    mingw-w64-ucrt-x86_64-libwebp   # WebP compression of decoder video frames (plugins only; linked static)
 )
 if [[ "${SKIP_DEPS:-0}" == "1" ]]; then
     say "Skipping the MSYS2 package install (SKIP_DEPS=1)"

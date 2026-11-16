@@ -522,12 +522,27 @@ luma), screen-leakage reconstruction (TEMPEST) - sets `.video = true` and
 sends each frame with `host.video_frame(kp::VideoFrame)`: `width` x `height`
 pixels, `format` 0 = GRAY8 (1 byte/pixel, 0 black .. 255 white) or 1 = RGB24
 (3 bytes R, G, B), `pixels` row-major top-left first, and an optional `label`
-drawn as a caption (e.g. "1024x768 @ 60 Hz"). The panel shows a canvas per VFO
-running the plugin; the latest frame replaces the previous one, so send at
-most a few a second. The whole frame must stay under 1 MB (`kp::wire::MAX_PAYLOAD`)
-- a GRAY8 raster up to ~1000x1000, RGB24 ~590x590 - so downscale a bigger
-picture before sending; a frame over the limit is dropped (logged once), never
-truncated. Older hosts without the video channel drop it.
+drawn as a caption (e.g. "1024x768 @ 60 Hz"). You always pass **raw pixels**;
+the host compresses them for you. The panel shows a canvas per VFO running the
+plugin; the latest frame replaces the previous one, so send at most a few a
+second.
+
+The host compresses each frame to **WebP** (libwebp) before it goes on the
+wire, and the browser decodes it natively (built in, no download). This makes
+large frames practical: a compressed screen is a few KB, so pictures up to 4K
+(3840x2160) now pass where the raw raster would be far over the 1 MB pipe limit
+(`kp::wire::MAX_PAYLOAD`). Two optional hints on `kp::VideoFrame` steer it:
+`quality` (1..100, -1 = the host default ~75) for the lossy encode, and
+`lossless = true` for a frozen or heavily averaged still you want pixel-exact.
+The host also keeps a hash of the last frame it sent and **skips an identical
+one**, so a static screen costs ~no bandwidth - just keep sending frames.
+
+If the host was built without libwebp (the `make` note says so), it falls back
+to sending raw pixels unchanged; then the whole frame must stay under 1 MB (a
+GRAY8 raster up to ~1000x1000, RGB24 ~590x590) - downscale a bigger picture, as
+a frame that still won't fit is dropped (logged once), never truncated. Either
+way the hints are harmless to set. Older hosts without the video channel drop
+the frame.
 
 The offline test runs array plugins on multichannel recordings (cf32,
 sample-major: antenna 0..m-1 of sample 0, then of sample 1, ...; `channels`

@@ -82,13 +82,20 @@ interpolation) into the active `width×height` grid, anchored to that phase so
 rows never shear or wrap, and added to a running average
 (`video::FrameAccumulator`, EMA with a small shift realignment). The average is
 rendered to 8-bit grayscale with a percentile contrast stretch and sent a few
-times a second with `host.video_frame()`; a raster over 1 MB is downscaled first.
+times a second with `host.video_frame()`, at the **native active resolution up
+to 4K**: the host compresses each frame to WebP, so a 3840×2160 frame (8.29M raw
+bytes) crosses the wire in ~19 KB (1080p ~7 KB). `max_display_px` caps the
+longest side (default 3840); past it the frame is box-downscaled. 4K
+reconstruction is CPU/memory-heavy (a 4K float frame is ~33 MB), so above ~1440p
+the frame cadence is stretched to stay bounded — a Raspberry Pi may manage only
+a low frame rate at 4K. Without libwebp the host can send only raw pixels under
+the 1 MB wire cap and drops anything larger, so lower `max_display_px` there.
 
 ## Manual controls (options, saved per VFO)
 
 | Option | Default | Meaning |
 |---|---|---|
-| `mode` | `auto` | `auto`, a specific listed mode (`1024x768@60`, …) to force it, or `manual` |
+| `mode` | `auto` | `auto`, a specific listed mode to force it, or `manual` (see the mode list below) |
 | `refresh_lo` / `refresh_hi` | 50 / 90 | auto-detect refresh search window (Hz) |
 | `fps` | — | manual frame rate (Hz) |
 | `lines` | — | manual total lines (vtotal, blanking included) |
@@ -101,10 +108,23 @@ times a second with `host.video_frame()`; a raster over 1 MB is downscaled first
 | `average` | 0.1 | frame-average strength (EMA factor 0–1; smaller = steadier, slower) |
 | `autolock` | 0 | freeze the detected timing so it stops re-estimating / drifting |
 | `crop` | 1 | show only the active area, or the full raster incl. blanking |
+| `quality` | 75 | WebP quality for the picture: 1–100, or `low`/`medium`/`high` (40/65/90), or `default` (host ~75) |
+| `lossless` | 0 | send the picture losslessly (best for a frozen / heavily averaged still) |
+| `max_display_px` | 3840 | longest-side cap on the emitted picture (64–4096); 3840 sends 4K natively, lower it for less CPU or on a no-libwebp build |
 | `doa` | 1 | estimate a bearing to the source (coherent mode only; never affects the picture) |
 
 When `mode` is not `manual`, auto-detect drives the timing; manual offsets,
-averaging, contrast and crop still apply.
+averaging, contrast, crop and the picture-quality controls still apply.
+
+**Supported display modes** (the `mode` list): VESA DMT **640×480, 800×600,
+1024×768, 1280×720, 1280×1024, 1366×768, 1600×900, 1920×1080** (all @60), and
+the high-resolution **1920×1200@60, 2560×1440@60 (QHD), 2560×1600@60 (WQXGA),
+2560×1080@60 and 3440×1440@60 (ultrawide), 3840×2160@30 and 3840×2160@60 (4K
+UHD)**. The high-res modes are published VESA CVT reduced-blanking / CTA-861
+timings. **Auto detect is reliable for 640×480…1920×1080**; the high-res modes
+are best **forced**, because at 2.4 MHz their very short lines are ambiguous —
+2560×1440 and 3440×1440 share a line rate, 4K@60 (≈18 samples/line) aliases to a
+harmonic-related lower mode, and 4K@30 is below the default 50–90 Hz window.
 
 ## Direction finding of the source (secondary)
 
@@ -163,15 +183,23 @@ on a 1024×768@60 scene (pixel clock 65 MHz, 8th harmonic at 520 MHz, bearing
   several bearings (15°, 75°, 110°, 190°, 250°, 300°).
 - **Noise:** on a pure-noise file the decoder stays in "searching", emits no
   event and reports no bearing — no false lock.
-- **Cost:** decode time ~9 % of real time at 2.4 MHz × 5 antennas (x86); the
-  once-a-second autocorrelation FFT dominates, the per-frame resample/average is
-  cheap. Output frames are GRAY8, ~4/s, cropped active (1024×768 ≈ 0.79 MB) or
-  the downscaled full raster (≈ 672×403) when `crop=0`.
+- **Cost:** decode time ~9 % of real time at 2.4 MHz × 5 antennas (x86) for
+  1024×768; the once-a-second autocorrelation FFT dominates, the per-frame
+  resample/average is cheap. Output frames are GRAY8, native active size up to
+  4K, WebP-compressed by the host (4K ≈ 19 KB, 1080p ≈ 7 KB on the wire).
 
-Debug playback: `tools/testsignals.json` has one wide-scene entry
-(`tempest-1024x768`) that plays the 1024×768@60 leakage through the real
-pipeline and checks `{"event": "Detected 1024x768 @ 60 Hz"}` and
-`{"bearing": 35}`.
+- **High-resolution (forced mode):** a 2560×1440@60 and a 3840×2160@60 (4K)
+  scene both detect **exactly** (2560×1440: 1481 lines / 88.8 kHz / 241.5 MHz;
+  4K: 2250 lines / 135.0 kHz / 594.0 MHz, err 0 %), with **vertical-structure
+  correlation 0.998 and 0.999** against the generator's edge map (horizontal is
+  bandwidth-limited to ~27 and ~18 px/line respectively), and DoA exact (50°,
+  35°). 4K decode is ~30 % of real time (x86); the cadence scaling keeps it
+  bounded and does not regress the ≤1440p default. 1024×768 is unchanged.
+
+Debug playback: `tools/testsignals.json` has `tempest-1024x768` (1024×768@60) and
+`tempest-4k` (3840×2160@60, mode forced via the VFO option, 2 s) that play the
+leakage through the real pipeline and check `{"event": "Detected … @ 60 Hz"}`
+and `{"bearing": 35}`.
 
 ## Deep (neural) reconstruction — not implemented
 

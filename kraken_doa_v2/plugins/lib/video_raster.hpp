@@ -136,7 +136,15 @@ struct DisplayMode {
         return t > 0 ? pixel_clock_hz / t : 0;
     }
 };
-// The DMT table (the common 4:3 / 16:9 / 16:10 / 5:4 modes) and its length.
+// The mode table and its length: the common 4:3 / 16:9 / 16:10 / 5:4 DMT modes
+// plus the high-resolution / QHD / 4K / ultrawide CVT-RB and CTA-861 modes (up
+// to 3840x2160). All fields are 32-bit, but a 3840x2160 raster is 8.29M pixels,
+// so a consumer that forms pixel indices or allocates per-pixel buffers must use
+// size_t / int64_t for any product that can exceed 2^31 (the resampler,
+// accumulator and render below already do). A float frame at that size is ~33 MB
+// and the resample / accumulate / render cost scales with the output pixel
+// count: 4K reconstruction is memory- and CPU-heavy, and a Raspberry Pi may
+// sustain only a low frame rate at 4K - keep the per-frame cadence modest there.
 const DisplayMode* display_modes(size_t* count);
 
 // CVT (VESA Coordinated Video Timings 1.2) generator for a mode not in the

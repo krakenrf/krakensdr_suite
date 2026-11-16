@@ -91,6 +91,29 @@ ifeq ($(ARCH),armv7l)
     PFFFT_CFLAGS += -mfpu=neon -DPFFFT_ENABLE_NEON
 endif
 
+# libwebp (BSD-3-Clause): the plugin host (sdk/plugin_host.cpp) compresses
+# video frames to WebP when it is present, which lets large (up to 4K) frames
+# fit the 1 MB pipe and cuts a static screen to ~0 bandwidth. PLUGIN-ONLY and
+# permissive, so it may link into any plugin including the own-licence GPL ones
+# (ism / flarm) - the main kraken_doa app never links or includes it. Gated by
+# pkg-config + -DHAVE_WEBP so a toolchain without libwebp still builds the raw
+# fallback. Found by pkg-config on every platform (apt libwebp-dev, Homebrew
+# webp, MSYS2 mingw-w64-ucrt-x86_64-libwebp).
+WEBP_CFLAGS :=
+WEBP_LIBS :=
+ifeq ($(shell pkg-config --exists libwebp 2>/dev/null && echo 1),1)
+WEBP_CFLAGS := -DHAVE_WEBP $(shell pkg-config --cflags libwebp)
+ifeq ($(WINDOWS),1)
+# the Windows plugin exes are fully static (-static), so pull libwebp's private
+# deps (libsharpyuv, -lm) in with --static - no DLL to bundle
+WEBP_LIBS := $(shell pkg-config --libs --static libwebp)
+else
+WEBP_LIBS := $(shell pkg-config --libs libwebp)
+endif
+else
+$(info Note: libwebp not found via pkg-config - decoder video frames will be sent UNCOMPRESSED (raw pixels, capped at 1 MB). Install libwebp-dev / webp for WebP compression.)
+endif
+
 ifdef PLUGIN
 PLUGINS := $(PLUGIN)
 else
@@ -137,9 +160,12 @@ $(CODECS): lib/tools/codecs.cpp $(LIB_A) $(LIB_HDRS) $(LIQUID_H) $(LIQUID_A) $(W
 list:
 	@echo $(PLUGINS)
 
+# plugin_host.o is the only object that uses libwebp (WEBP_CFLAGS adds
+# -DHAVE_WEBP + its include path when present); every decoder links it, so the
+# decoder link line adds WEBP_LIBS
 $(HOST_OBJ): sdk/plugin_host.cpp $(SDK_HDRS) $(LIQUID_H) $(FLAGS_STAMP)
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(WEBP_CFLAGS) -c $< -o $@
 
 lib/build/%.o: lib/%.cpp $(LIB_HDRS) $(SDK_HDRS) $(LIQUID_H) $(FLAGS_STAMP)
 	@mkdir -p lib/build
@@ -187,7 +213,9 @@ HOST_CPU :=
 ifneq ($(findstring native,$(CXX) $(CXXFLAGS) | $(CC) $(PFFFT_CFLAGS)),)
 HOST_CPU := $(shell sed -n -E 's/^(CPU part|model name)[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo 2>/dev/null | LC_ALL=C sort -u | LC_ALL=C tr -c 'A-Za-z0-9._\n-' '_' | paste -sd+ -)
 endif
-FLAGS_TEXT = $(strip $(CXX) $(CXXFLAGS) | $(CC) $(PFFFT_CFLAGS)$(if $(HOST_CPU), | cpu $(HOST_CPU)))
+# WEBP_CFLAGS / WEBP_LIBS are in the stamp too, so libwebp appearing or
+# disappearing (and so -DHAVE_WEBP) rebuilds plugin_host.o and relinks
+FLAGS_TEXT = $(strip $(CXX) $(CXXFLAGS) | $(CC) $(PFFFT_CFLAGS) | webp $(WEBP_CFLAGS) $(WEBP_LIBS)$(if $(HOST_CPU), | cpu $(HOST_CPU)))
 ifneq ($(shell cat $(FLAGS_STAMP) 2>/dev/null),$(FLAGS_TEXT))
 $(FLAGS_STAMP): flags-changed
 endif
@@ -238,7 +266,7 @@ licence_check = $(if $(call own_licence,$(1)),@bad=$$($(CXX) $(call plugin_cxxfl
 	@test -f $*/decoder.cpp || { echo "no plugin '$*' (expected plugins/$*/decoder.cpp)"; exit 1; }
 	@mkdir -p $*/build
 	$(call licence_check,$*,$(wildcard $*/*.cpp))
-	$(CXX) $(call plugin_cxxflags,$*) $(call extra_flags,$*) -I$* -o $*/build/decoder.tmp $(wildcard $*/*.cpp) $(HOST_OBJ) $(WIN_OBJS) $(call plugin_lib,$*) $(LIQUID_A) $(LIBS)
+	$(CXX) $(call plugin_cxxflags,$*) $(call extra_flags,$*) -I$* -o $*/build/decoder.tmp $(wildcard $*/*.cpp) $(HOST_OBJ) $(WIN_OBJS) $(call plugin_lib,$*) $(LIQUID_A) $(WEBP_LIBS) $(LIBS)
 	@mv -f $*/build/decoder.tmp $*/build/decoder$(EXE)
 	@echo "built plugin $* -> $*/build/decoder$(EXE)$(if $(call own_licence,$*), (own licence: plugin SDK + pffft only))"
 

@@ -1215,23 +1215,32 @@ private:
     // 3 RGB24), all little-endian. Forwarded as a binary frame to the panel's
     // canvas; a frame whose length doesn't match its header is dropped.
     void on_video(Runner& r, const char* p, size_t len) {
-        constexpr size_t HDR = 8;   // width, height, format, flags, label_len
+        constexpr size_t HDR = 8;   // width, height, format, encoding, label_len
         if (len < HDR) return;
         const auto* u = reinterpret_cast<const uint8_t*>(p);
         const uint32_t w = static_cast<uint32_t>(u[0]) | (static_cast<uint32_t>(u[1]) << 8);
         const uint32_t h = static_cast<uint32_t>(u[2]) | (static_cast<uint32_t>(u[3]) << 8);
         const uint8_t format = u[4];
+        const uint8_t encoding = u[5];   // 0 = raw pixels, 1 = WebP bitstream
         const uint32_t label_len = static_cast<uint32_t>(u[6]) | (static_cast<uint32_t>(u[7]) << 8);
-        if (format > 1 || w == 0 || h == 0) return;
-        const size_t bpp = format == 1 ? 3 : 1;
-        const size_t npix = static_cast<size_t>(w) * static_cast<size_t>(h) * bpp;
-        if (HDR + label_len + npix != len) return;   // header and payload must agree
+        if (format > 1 || encoding > 1 || w == 0 || h == 0) return;
+        if (len < HDR + label_len) return;   // the label must fit
+        size_t data_len;
+        if (encoding == 0) {   // raw: the pixel count must match the geometry exactly
+            const size_t bpp = format == 1 ? 3 : 1;
+            data_len = static_cast<size_t>(w) * static_cast<size_t>(h) * bpp;
+            if (HDR + label_len + data_len != len) return;
+        } else {   // WebP: a variable-length blob - the host forwards it opaquely
+            data_len = len - HDR - label_len;
+            if (data_len == 0) return;
+        }
         VideoFrameReport vf;
         vf.width = static_cast<int>(w);
         vf.height = static_cast<int>(h);
         vf.format = format;
+        vf.encoding = encoding;
         vf.label.assign(p + HDR, label_len);
-        vf.pixels.assign(u + HDR + label_len, u + HDR + label_len + npix);
+        vf.pixels.assign(u + HDR + label_len, u + HDR + label_len + data_len);
         owner_->deliver_video(vf);
         (void)r;
     }

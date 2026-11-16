@@ -128,13 +128,16 @@ using SpatialHandler = std::function<void(const SpatialReport&)>;
 // A reconstructed picture a plugin sent (kp::Host::video_frame): a
 // width x height raster drawn on the decoder panel's canvas (analog TV,
 // screen-leakage reconstruction). format 0 = GRAY8 (1 byte/pixel), 1 = RGB24
-// (3 bytes/pixel); pixels is width*height*bpp bytes, row-major, top-left
-// first. Delivered on the decoder's worker thread; unset = dropped.
+// (3 bytes/pixel). The host forwards the image data opaquely: encoding 0 =
+// width*height*bpp raw pixel bytes (row-major, top-left first), encoding 1 = a
+// WebP bitstream the browser decodes natively (the main app never decodes it).
+// Delivered on the decoder's worker thread; unset = dropped.
 struct VideoFrameReport {
     int width = 0, height = 0;
-    int format = 0;              // 0 GRAY8, 1 RGB24
+    int format = 0;              // 0 GRAY8, 1 RGB24 (describes the source frame)
+    int encoding = 0;            // 0 raw pixels, 1 WebP bitstream
     std::string label;           // caption ("" = none)
-    std::vector<uint8_t> pixels; // width*height*bpp bytes, row-major
+    std::vector<uint8_t> pixels; // the image data (raw pixels, or the WebP blob)
 };
 using VideoHandler = std::function<void(const VideoFrameReport&)>;
 

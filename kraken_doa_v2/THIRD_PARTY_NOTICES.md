@@ -53,6 +53,7 @@ These are not under the KrakenSDR Source Available Licence (its section 6):
 | Eigen | the system's (Debian 3.4, MSYS2 5.x), headers only, unmodified | kraken_doa | MPL-2.0 | https://gitlab.com/libeigen/eigen |
 | OpenSSL | 3.x | kraken_doa | Apache-2.0 | https://www.openssl.org/source/ |
 | Opus (libopus) | the system's | kraken_doa | BSD-3-Clause (text E) | https://opus-codec.org/ |
+| libwebp | the system's (Debian/MSYS2; linked only when present, else the plugins send raw video) | decoder plugins (compresses `host.video_frame` pictures to WebP; the main app does not link it) | BSD-3-Clause - Copyright (c) 2010 Google Inc. | https://chromium.googlesource.com/webm/libwebp |
 | zlib | the system's | kraken_doa | zlib | https://zlib.net/ |
 | SQLite | the system's | kraken_doa | public domain | https://sqlite.org/ |
 | libuv | MSYS2's (Windows only) | kraken_doa.exe | MIT | https://github.com/libuv/libuv |

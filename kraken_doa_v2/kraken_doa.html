@@ -9872,29 +9872,47 @@ function specOnFrame(v, buf) {
 
 // A reconstructed decoder picture (binary type 8, kp::Host::video_frame):
 // uint32 vfo_id, uint16 width, height, uint8 format (0 GRAY8 / 1 RGB24),
-// flags, uint16 label_len, label, then width*height*bpp raw pixel bytes,
-// little-endian. Drawn on the panel's <canvas id="dvideo-${vfo_id}">.
+// uint8 encoding (0 = raw pixels, 1 = WebP bitstream), uint16 label_len,
+// label, then the image data - width*height*bpp raw pixel bytes for encoding
+// 0, or a WebP blob the browser decodes natively for encoding 1 (built-in, no
+// CDN) - all little-endian. Drawn on the panel's <canvas id="dvideo-${vfo_id}">.
 const videoFrames = {};   // vfo id -> {w, h, label, t} (latest)
+const videoDecode = {};   // vfo id -> {busy, pending} for the async WebP decode (latest-only)
 let videoSubOn = false;   // are we subscribed to the VIDEO stream (a video panel is open)?
+// the caption overlay (both code paths); canvas fillText is safe - the label
+// is never inserted into HTML
+function videoDrawLabel(ctx, h, label) {
+  if (!label) return;
+  const fs = Math.max(9, Math.min(28, Math.round(h / 24)));
+  ctx.font = fs + 'px system-ui, sans-serif';
+  ctx.textBaseline = 'bottom';
+  const tw = ctx.measureText(label).width;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(2, h - fs - 5, tw + 8, fs + 5);
+  ctx.fillStyle = '#eaf2ff';
+  ctx.fillText(label, 6, h - 2);
+}
 function videoOnFrame(v, buf) {
   if (buf.byteLength < 16) return;
   const vfo = v.getUint32(4, true);
   const w = v.getUint16(8, true), h = v.getUint16(10, true);
-  const format = v.getUint8(12);   // v.getUint8(13) = flags (reserved)
+  const format = v.getUint8(12), encoding = v.getUint8(13);
   const labelLen = v.getUint16(14, true);
-  if (!w || !h || format > 1) return;
-  const bpp = format === 1 ? 3 : 1;
-  const pxOff = 16 + labelLen, nbytes = w * h * bpp;
-  if (buf.byteLength < pxOff + nbytes) return;   // header and payload disagree
+  if (!w || !h || format > 1 || encoding > 1) return;
+  const dataOff = 16 + labelLen;
+  if (buf.byteLength < dataOff) return;
   let label = '';
   if (labelLen) { try { label = new TextDecoder().decode(new Uint8Array(buf, 16, labelLen)); } catch (e) { label = ''; } }
+  if (encoding === 1) { videoOnWebp(vfo, w, h, label, new Uint8Array(buf, dataOff, buf.byteLength - dataOff)); return; }
+  const bpp = format === 1 ? 3 : 1, nbytes = w * h * bpp;
+  if (buf.byteLength < dataOff + nbytes) return;   // header and payload disagree
   const cv = document.getElementById('dvideo-' + vfo);
   if (!cv) return;   // the panel isn't showing this VFO's video
   if (cv.width !== w) cv.width = w;
   if (cv.height !== h) cv.height = h;
   const ctx = cv.getContext('2d');
   if (!ctx) return;
-  const src = new Uint8Array(buf, pxOff, nbytes);   // zero-copy view
+  const src = new Uint8Array(buf, dataOff, nbytes);   // zero-copy view
   const img = ctx.createImageData(w, h), px = new Uint32Array(img.data.buffer), n = w * h;
   if (format === 1) {
     for (let i = 0, j = 0; i < n; i++, j += 3)
@@ -9903,17 +9921,41 @@ function videoOnFrame(v, buf) {
     for (let i = 0; i < n; i++) { const g = src[i]; px[i] = (0xff000000 | (g << 16) | (g << 8) | g) >>> 0; }
   }
   ctx.putImageData(img, 0, 0);
-  if (label) {
-    const fs = Math.max(9, Math.min(28, Math.round(h / 24)));
-    ctx.font = fs + 'px system-ui, sans-serif';
-    ctx.textBaseline = 'bottom';
-    const tw = ctx.measureText(label).width;
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(2, h - fs - 5, tw + 8, fs + 5);
-    ctx.fillStyle = '#eaf2ff';
-    ctx.fillText(label, 6, h - 2);   // canvas fillText is safe: the label is never inserted into HTML
-  }
+  videoDrawLabel(ctx, h, label);
   videoFrames[vfo] = {w, h, label, t: Date.now()};
+}
+// A WebP frame: decode it with the browser's built-in createImageBitmap. That
+// is async, so keep only ONE decode in flight per canvas and remember just the
+// newest pending blob - a stale decode that finishes after a newer one arrived
+// is dropped, so the canvas always shows the latest frame. The Blob constructor
+// copies the bytes synchronously, so the view into the WebSocket buffer is safe
+// to hand off. A bad blob is ignored.
+function videoOnWebp(vfo, w, h, label, bytes) {
+  const blob = new Blob([bytes], {type: 'image/webp'});   // copies synchronously
+  const st = videoDecode[vfo] || (videoDecode[vfo] = {busy: false, pending: null});
+  const job = {w, h, label, blob};
+  if (st.busy) { st.pending = job; return; }   // keep only the newest
+  videoRunWebp(vfo, st, job);
+}
+function videoRunWebp(vfo, st, job) {
+  st.busy = true;
+  createImageBitmap(job.blob).then(bmp => {
+    try {
+      const cv = document.getElementById('dvideo-' + vfo);
+      const ctx = cv && cv.getContext('2d');
+      if (ctx) {
+        if (cv.width !== job.w) cv.width = job.w;
+        if (cv.height !== job.h) cv.height = job.h;
+        ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
+        videoDrawLabel(ctx, job.h, job.label);
+        videoFrames[vfo] = {w: job.w, h: job.h, label: job.label, t: Date.now()};
+      }
+    } finally { bmp.close(); videoWebpNext(vfo, st); }
+  }).catch(() => videoWebpNext(vfo, st));   // bad blob: ignore the frame
+}
+function videoWebpNext(vfo, st) {
+  st.busy = false;
+  if (st.pending) { const j = st.pending; st.pending = null; videoRunWebp(vfo, st, j); }
 }
 // the window [w0, w1] (MHz) zoom z shows of the span lo1..hi1 (its 1x view);
 // keeps z.off inside it, like zoomSlice
