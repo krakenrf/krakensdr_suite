@@ -157,6 +157,7 @@ page got the same treatment on 2026-11-16.
   destructive ones, `.sm` small). The scanners' Start buttons are blue while
   idle and red while running (by id, their handlers also rewrite
   `className`).
+- Colours: only the palette's tokens (*theme.md*).
 - Two CSS blocks hold the look: "Sidebar look" (scoped to `.sidebar`: the
   box chrome, the label column) and "Page look" (the same buttons, text
   boxes, sliders and switches for the top bar, the waterfall bar, the

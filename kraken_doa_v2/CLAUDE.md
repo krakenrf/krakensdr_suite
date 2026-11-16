@@ -58,7 +58,8 @@ make -C plugins PLUGIN=<id>    # one plugin (a plugin that fails to compile only
   THE MAP", "👁 VIEWSHED", ...), which the topic files cite.
 - `tools/`: offline benches and validators (`decim_bench.cpp`,
   `digi_test.cpp`, `replay_validate.mjs`, `pathloss_validate.mjs`,
-  `range_validate.mjs`, `rdf_sim.cpp`, `fast_log_test.cpp`).
+  `range_validate.mjs`, `rdf_sim.cpp`, `fast_log_test.cpp`,
+  `theme_palette.py`: the page's colour palette and its check).
 
 ## Threads and the command path
 
@@ -108,6 +109,10 @@ The page (`kraken_doa.html`)
 - No explanations on the controls, anywhere on the page: short labels and
   states, the rest in a `?` help tip (`helpTip()` in JS) or a `title`; a new
   sidebar box needs its own `data-sb` key (`docs/dev/sidebar.md`).
+- Colours come from the palette: `var(--token)` in the CSS, the token's hex
+  in JS / canvas code; data palettes (VFO colours, colour scales, category
+  swatches) are never changed (`docs/dev/theme.md`,
+  `tools/theme_palette.py --check`).
 - Shared state (saved frequencies, scan ticks, settings) lives in the
   receiver: the page sends a command and redraws from the broadcast every
   page gets - no optimistic updates.
@@ -193,6 +198,7 @@ the job's scratch directory (not committed). The established setup:
 | Arbitrary VFO bandwidth, the decimator (plans, block FIRs, shared pass, measurements) | `vfo-bandwidth.md` |
 | Operating modes, VFO cards, VFO tuning step, spectrum zoom, independent panes | `operating-modes.md` |
 | The sidebar's boxes (collapse, move, remembered layout); how controls and text are written on the whole page | `sidebar.md` |
+| The colour palette (tokens, the reasoning, rules, data colours that stay) | `theme.md` |
 | KrakenSDR Wideband (downconverter) variant | `wideband-variant.md` |
 | Patch / 3D topology; antenna array calculator | `patch-3d-topology.md`, `array-calculator.md` |
 | Spectrum views (FFT message type 7) | `spectrum-views.md` |
