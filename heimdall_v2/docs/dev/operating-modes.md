@@ -88,8 +88,8 @@ decided once in main() before the dongles open, never changed (no hotplug).
 - N = 1: no compensation thread (none per non-reference channel),
   `process_correlations` returns the set to the pool (it leaked it when the
   page's FFT graphs were on), the correlation message has 0 pairs.
-- Known, not changed: in today's KrakenSDR path `restore_operating_mode()`
-  reads `persisted_tuner_freq/gain` after `set_operating_mode()` ->
-  `note_mode()` has overwritten them with the common tuning, so independent
-  mode's per-tuner tuning is not restored on a KrakenSDR restart.
+- Fixed 2026-11-16: the KrakenSDR's `restore_operating_mode()` now also
+  snapshots `persisted_tuner_freq/gain` before the mode switch (it read them
+  after `note_mode()` had overwritten them with the common tuning, so
+  independent mode's per-tuner tuning was lost on a restart).
 

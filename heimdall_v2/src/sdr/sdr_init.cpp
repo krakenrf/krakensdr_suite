@@ -1518,11 +1518,17 @@ void restore_operating_mode(const std::vector<std::unique_ptr<SDRDevice>>& devic
         if (set_operating_mode(OperatingMode::WIDEBAND_SCAN, devices))
             setup_wideband_frequencies(current_frequency.load(), devices);
     } else if (m == static_cast<int>(OperatingMode::INDEPENDENT)) {
+        // The saved per-tuner tuning first: set_operating_mode and every
+        // set_independent_tuner refresh it from the live state (note_mode)
+        uint32_t freq[NUM_DEVICES];
+        int gain[NUM_DEVICES];
+        for (int i = 0; i < NUM_DEVICES; i++) {
+            freq[i] = settings::persisted_tuner_freq[i].load();
+            gain[i] = settings::persisted_tuner_gain[i].load();
+        }
         if (!set_operating_mode(OperatingMode::INDEPENDENT, devices)) return;
         for (int i = 0; i < std::min(active_num_elements.load(), NUM_DEVICES); i++) {
-            const uint32_t f = settings::persisted_tuner_freq[i].load();
-            const int g = settings::persisted_tuner_gain[i].load();
-            if (f > 0 || g != -999) set_independent_tuner(i, f, g, devices, nullptr);
+            if (freq[i] > 0 || gain[i] != -999) set_independent_tuner(i, freq[i], gain[i], devices, nullptr);
         }
     }
 }
