@@ -838,8 +838,8 @@ a good decoder reports nothing there.
 
 A plugin is just its source folder: copy `plugins/<id>/` (without `build/`)
 into the other receiver's `kraken_doa_v2/plugins/`, run `make` in
-`kraken_doa_v2` (or `make -C plugins PLUGIN=<id>`), then press ↻ next to
-"Decoder plugins" in the web UI's Digital Decoders box (or restart). It
+`kraken_doa_v2` (or `make -C plugins PLUGIN=<id>`), then press ↻ Rescan next to
+"Decoder plugins" in the web UI's ⚙ Settings → Decoders (or restart). It
 builds against that receiver's `sdk/` and `lib/`, so both should run the same
 version of the suite.
 

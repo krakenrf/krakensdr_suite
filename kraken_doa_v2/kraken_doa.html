@@ -213,10 +213,6 @@ body.pb-rec #pb-overlay span {color:rgba(199,175,245,.8);border-color:rgba(154,1
 .ai-result table {border-collapse:collapse;font-size:11px;margin:4px 0}
 .ai-result td,.ai-result th {border:1px solid var(--l1);padding:2px 4px;text-align:left;vertical-align:top}
 .ai-result a {color:var(--ac-t)}
-.dig-plug-head {justify-content:space-between;margin-top:10px;border-top:1px solid var(--l1);padding-top:6px;cursor:pointer;user-select:none}
-.dig-plug-head:hover > span:first-child {color:var(--t2) !important}
-.dig-plug-caret {display:inline-block;width:10px;font-size:9px;transition:transform 0.15s}
-.dig-plug-head.open .dig-plug-caret {transform:rotate(90deg)}
 .ai-plugin {border:1px solid var(--l1);border-radius:3px;padding:4px 6px;margin:4px 0;font-size:12px}
 .ai-plugin .nm {color:var(--t0);font-weight:bold}
 .ai-plugin .ai-auto {font-size:11px;color:var(--t3);display:flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;min-width:0}
@@ -1066,8 +1062,30 @@ body.rp-both .rp-vsplit:hover, body.rp-both .rp-vsplit.dragging {background:var(
 .pw-box .btn {margin-top:14px;min-width:90px}
 .sf-toast {position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2100;max-width:90vw;box-sizing:border-box;background:rgba(17,21,27,.97);border:1px solid var(--ac-t);color:#fff;border-radius:4px;padding:7px 14px;font-size:12px;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,.6);transition:opacity .3s;opacity:0}
 /* ⚙ Settings (the map provider and its API key) */
-.set-dlg {width:460px}
-.set-dlg .sec {font-weight:bold;color:var(--ac-t);font-size:13px;margin:8px 0 2px;padding-top:6px;border-top:1px solid var(--l1)}
+/* ⚙ Settings: a fixed size, so the tabs stay put; each pane scrolls by itself */
+.sf-dlg.set-dlg {width:540px;height:540px;display:flex;flex-direction:column;overflow:hidden;padding-bottom:0}
+.set-tabs {flex:none;display:flex;gap:2px;margin:6px -14px 0;padding:0 14px;border-bottom:1px solid var(--l2)}
+.set-tabs button {background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:7px 11px;color:var(--t3);font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap}
+.set-tabs button:hover {color:var(--t0)}
+.set-tabs button.on {color:var(--ac-t);border-bottom-color:var(--ac)}
+.set-tabs button:focus-visible {outline:2px solid var(--ac);outline-offset:-2px}
+.set-tabs .n {color:var(--warn-t);margin-left:5px;font-size:11.5px}
+.set-pane {display:none;flex:1;min-height:0;overflow-y:auto;margin:0 -14px;padding:6px 14px 12px}
+.set-pane.on {display:block}
+.set-pane[data-t="map"].on {display:flex;flex-direction:column}
+.set-pane[data-t="map"] > * {flex:none}
+.set-pane[data-t="map"] > .b {margin-top:auto;padding-top:10px}
+.set-dlg .sec {display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:bold;color:var(--ac-t);font-size:13px;margin:12px 0 6px;padding-top:10px;border-top:1px solid var(--l1)}
+.set-pane > .sec:first-child {margin-top:4px;padding-top:0;border-top:0}
+.set-dlg .dig-codec,.set-dlg .ai-plugin {border-radius:6px;padding:7px 9px;margin:0 0 6px}
+.set-dlg .dig-codec .s,.set-dlg .dig-codec .u,.set-dlg .ai-plugin .ds,.set-dlg .dig-help {font-size:11.5px}
+.set-dlg .ai-plugin .ai-auto input {margin:0}
+.set-dlg .dig-codec.warn {border-color:#5a4520}
+.set-dlg .dig-codec.warn .i {color:var(--warn-t)}
+.set-dlg .dig-codec .how {margin:6px 0 0 18px;color:var(--t2);font-size:11.5px;line-height:1.5}
+.set-dlg .dig-codec .how code {color:var(--t0)}
+.set-dlg .dig-codec pre {font-size:11px;padding:6px 8px;margin:5px 0;color:var(--t0);line-height:1.5}
+.set-dlg .dig-codec .wn {margin:3px 0 0 18px;color:var(--warn-t2);font-size:11.5px}
 .set-dlg .info a {color:var(--ac-t)}
 .set-dlg .ok {color:var(--ok-t)}
 .set-dlg .bad {color:var(--bad-t)}
@@ -1258,6 +1276,8 @@ input[type="checkbox"].sw:disabled {opacity:.45;cursor:default}
 /* panels, separators, notes, help icons */
 .sidebar .tp {background:var(--s2);border-color:var(--l1);border-radius:6px;padding:7px 8px;margin:7px 0}
 .sidebar .sec {border-top-color:var(--l1);margin-top:9px;padding-top:8px}
+.sidebar #gps-sec > .ctrl-row {margin:0}
+.sidebar #gps-details:empty {display:none}
 .sidebar .bi {border-radius:5px;padding:5px 7px;margin:6px 0;font-size:11.5px}
 .sidebar .help {width:15px;height:15px;min-width:15px;margin-left:5px;font-size:10px;background:transparent;border-color:var(--t6);color:#75aae5}
 .sidebar .help:hover,.sidebar .help.tip-open {background:var(--ac);border-color:var(--ac);color:#fff}
@@ -1918,6 +1938,17 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
             <span id="get-gps-status" class="sb-note"></span>
           </div>
         </div>
+        <!-- GPS (gpsd): the fix and what the receiver reports - updateGpsStatus() -->
+        <div class="sec" id="gps-sec">
+          <div class="ctrl-row">
+            <label>GPS<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Location &amp; heading come from gpsd. A compass heading is used when the receiver provides one; otherwise heading is inferred from movement (course over ground). With no GPS, all values are 0.<span class="os-win"> Windows has no gpsd of its own: set KRAKEN_GPSD_HOST (and KRAKEN_GPSD_PORT) to one on the network, or use a Static location.</span></span></span></label>
+            <span class="cv" id="gps-status-cv">
+              <span id="gps-dot" style="color:#707883">&#9679;</span>
+              <span id="gps-status-text">No GPS</span>
+            </span>
+          </div>
+          <div id="gps-details" style="font-size:12px;color:#9aa6b4;line-height:1.8;margin-top:4px"></div>
+        </div>
       </div>
     </div>
 
@@ -1939,24 +1970,6 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
         <canvas id="wb-trend" width="280" height="76" style="width:100%;height:76px;margin-top:6px;background:#11151b;border-radius:4px"></canvas>
         <div style="font-size:10px;color:#707883;display:flex;justify-content:space-between"><span><span style="color:#7ab8f7">■</span> current (A)</span><span>last hour</span><span><span style="color:#f4c170">■</span> temperature (°C)</span></div>
         <button class="btn" style="width:100%;margin-top:6px" onclick="wbSheetOpen()">📈 Telemetry history, log &amp; CSV</button>
-      </div>
-    </div>
-
-    <!-- GPS Status -->
-    <div class="sb-section" data-sb="gps">
-      <div class="sb-header" onclick="toggleSection(this)">
-        <h3><span class="sb-title">📍 GPS Status</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Location &amp; heading come from gpsd. A compass heading is used when the receiver provides one; otherwise heading is inferred from movement (course over ground). With no GPS, all values are 0.<span class="os-win"> Windows has no gpsd of its own: set KRAKEN_GPSD_HOST (and KRAKEN_GPSD_PORT) to one on the network, or use a Static location.</span></span></span></h3>
-        <span class="sb-toggle"></span>
-      </div>
-      <div class="sb-content">
-        <div class="ctrl-row">
-          <label>Status</label>
-          <span class="cv" id="gps-status-cv">
-            <span id="gps-dot" style="color:#707883">&#9679;</span>
-            <span id="gps-status-text">No GPS</span>
-          </span>
-        </div>
-        <div id="gps-details" style="font-size:12px;color:#9aa6b4;line-height:1.8;margin-top:4px"></div>
       </div>
     </div>
 
@@ -2147,34 +2160,6 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
       </div>
       <div class="sb-content">
         <div class="ctrl-row">
-          <label>Averaging</label>
-          <input type="range" id="asl" class="slider" min="0" max="100" value="85" oninput="ua(this.value)">
-          <span class="sv" id="av">85%</span>
-        </div>
-        <div class="ctrl-row">
-          <label>Edge clip</label>
-          <input type="number" id="ecl" value="0.8" min="0.1" max="1.0" step="0.05" style="width:50px">
-          <button class="btn sm" onclick="sec()">Set</button>
-          <span class="cv" id="cec">80%</span>
-        </div>
-        <div class="ctrl-row coh-only">
-          <label>DoA angles<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Unit Circle: 0&deg; at the top = the ANT0 direction, increasing counter-clockwise (90&deg; left, 180&deg; bottom, 270&deg; right; array elements run clockwise from ANT0). Compass: 0&deg;=North (top), clockwise, with N/E/S/W markers - point ANT0 north for true bearings.</span></span></label>
-          <select id="doa-convention" onchange="setDoaConvention(this.value)" style="flex:1">
-            <option value="unit">Unit Circle</option>
-            <option value="compass" selected>Compass (N/E/S/W)</option>
-          </select>
-        </div>
-      </div>
-    </div>
-
-    <!-- FFT Settings -->
-    <div class="sb-section" data-sb="fft">
-      <div class="sb-header" onclick="toggleSection(this)">
-        <h3><span class="sb-title">📊 FFT Settings</span></h3>
-        <span class="sb-toggle"></span>
-      </div>
-      <div class="sb-content">
-        <div class="ctrl-row">
           <label>FFT size<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">A larger FFT shows finer detail when zoomed in, and costs more CPU.</span></span></label>
           <select id="fft-size-sel" onchange="setFFTSize(this.value)">
             <option value="1024">1024</option>
@@ -2187,10 +2172,28 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
           </select>
         </div>
         <div class="ctrl-row">
+          <label>Averaging</label>
+          <input type="range" id="asl" class="slider" min="0" max="100" value="85" oninput="ua(this.value)">
+          <span class="sv" id="av">85%</span>
+        </div>
+        <div class="ctrl-row">
+          <label>Edge clip</label>
+          <input type="number" id="ecl" value="0.8" min="0.1" max="1.0" step="0.05" style="width:50px">
+          <button class="btn sm" onclick="sec()">Set</button>
+          <span class="cv" id="cec">80%</span>
+        </div>
+        <div class="ctrl-row">
           <label title="For a slow connection (mobile data, VPN): this browser asks for half the spectrum points - about one per two pixels of the plot. Saved in this browser only">Slow link</label>
           <input type="checkbox" class="sw" id="spec-slow" title="For a slow connection (mobile data, VPN): this browser asks for half the spectrum points - about one per two pixels of the plot. Saved in this browser only" onchange="specSlowSet(this.checked)">
         </div>
         <div class="kv" title="Spectrum points per frame to this browser: about one per pixel of the plot (half with Slow link), at most 4096. Zoomed in, the same points cover less spectrum - more detail, down to one FFT bin, at the same data rate"><span>Points sent</span><span id="fft-points-sent">-</span></div>
+        <div class="ctrl-row coh-only">
+          <label>DoA angles<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Unit Circle: 0&deg; at the top = the ANT0 direction, increasing counter-clockwise (90&deg; left, 180&deg; bottom, 270&deg; right; array elements run clockwise from ANT0). Compass: 0&deg;=North (top), clockwise, with N/E/S/W markers - point ANT0 north for true bearings.</span></span></label>
+          <select id="doa-convention" onchange="setDoaConvention(this.value)" style="flex:1">
+            <option value="unit">Unit Circle</option>
+            <option value="compass" selected>Compass (N/E/S/W)</option>
+          </select>
+        </div>
       </div>
     </div>
 
@@ -2342,30 +2345,6 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
     </div>
 
     <!-- Digital voice/data decoder (one per VFO) -->
-    <div class="sb-section" data-sb="digital-decoders" id="sb-digital">
-      <div class="sb-header" onclick="toggleSection(this)">
-        <h3><span class="sb-title">🔐 Digital Decoders</span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The voice codecs the digital decoders can use, and the installed decoder plugins. <b>Auto detect</b> on a plugin = it runs when a VFO's decoder is on Auto detect (untick the ones you never need: each costs CPU). Plugins are plain source folders (plugins/&lt;id&gt;/): to add one, <span class="os-win os-win-pkg">build it in the KrakenSDR source folder (build_windows.bat - this package has no sources or compiler), copy its kraken_doa_v2\plugins\&lt;id&gt;\build\decoder.exe into the same place in this folder</span><span class="os-win-src">copy its folder into kraken_doa_v2/plugins/, run </span><span class="os-lin">make in kraken_doa_v2</span><span class="os-win os-win-src">build_windows.bat (or make in kraken_doa_v2 in the MSYS2 UCRT64 shell)</span> and press ↻. To decode a VFO, tick <b>Digital decoder</b> on it in the Decimators box and pick <b>Auto detect</b> or a decoder; any number of VFOs can decode at once, each with its own tab in the panel under the waterfall. Voice plays with Demod "Digital" (or Listen in the VFO's tab). The AMBE and TETRA codecs are not shipped (licensing): you build them yourself, for personal use - whether that is allowed where you live is your responsibility.</span></span></h3>
-        <span class="sb-toggle"></span>
-      </div>
-      <div class="sb-content">
-        <div id="dig-codecs-box"><div class="dig-help">Checking the voice codecs…</div></div>
-        <div class="ctrl-row" style="justify-content:flex-end;margin-bottom:0">
-          <button class="btn sm" type="button" onclick="send('PLUGIN_CODECS')" title="Look for the voice codecs again after installing one - then switch the decoder off and on">↻ Check codecs</button>
-        </div>
-        <div class="ctrl-row dig-plug-head" onclick="digTogglePlugins()" title="Show / hide the decoder plugins">
-          <span style="font-size:12px;color:#7f8995;min-width:0"><span id="dig-plug-caret" class="dig-plug-caret">▶</span> Decoder plugins <span id="dig-plug-count"></span></span>
-          <span style="display:flex;gap:4px">
-            <button class="btn sm" type="button" onclick="event.stopPropagation(); send('PLUGINS_RESCAN')" title="Re-read the plugins folder (after copying a plugin in and running make)">↻</button>
-          </span>
-        </div>
-        <!-- collapsed by default (open state kept in localStorage) -->
-        <div id="dig-plug-body" style="display:none">
-          <div id="ai-plugins"><div class="dig-help">No plugins yet.</div></div>
-        </div>
-      </div>
-    </div>
-
-
     <!-- Decoder Logging (decoder_log.cpp) - all modes -->
     <div class="sb-section" data-sb="decoder-logging" id="declog-section">
       <div class="sb-header" onclick="toggleSection(this)">
@@ -2908,12 +2887,19 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
 </div>
 <button type="button" class="ai-fab" id="ai-fab" onclick="aiDockCollapse(false)" title="AI assistant">🤖</button>
 
-<!-- ⚙ Settings (see ⚙ SETTINGS) -->
+<!-- ⚙ Settings (see ⚙ SETTINGS): one tab each for the map provider, the
+     digital decoders (voice codecs, plugins) and the optional features that
+     are set up on the receiver (assistant, Voice to Text) -->
 <div class="sf-dlg-bg" id="set-dlg-bg" style="display:none" onpointerdown="if(event.target===this)setDlgClose()">
   <div class="sf-dlg set-dlg" id="set-dlg" role="dialog" aria-modal="true" aria-labelledby="set-dlg-title">
     <div class="sf-dlg-h"><span id="set-dlg-title">⚙ Settings</span><span class="x" onclick="setDlgClose()" title="Close (Esc)">✕</span></div>
-    <div class="sec">🗺 Map<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Kept in this browser only: each browser (and device) has its own provider and key. The browser fetches the tiles itself, with the key in their URLs - it never goes to the receiver.</span></span></div>
-    <div class="lbl">Map provider</div>
+    <div class="set-tabs" role="tablist">
+      <button type="button" role="tab" data-t="map" onclick="setDlgTab('map')">🗺 Map</button>
+      <button type="button" role="tab" data-t="dec" onclick="setDlgTab('dec')">🔐 Decoders<span class="n" id="set-tab-dec-n"></span></button>
+      <button type="button" role="tab" data-t="addons" onclick="setDlgTab('addons')">🧩 Add-ons</button>
+    </div>
+    <div class="set-pane" data-t="map" role="tabpanel">
+    <div class="lbl">Map provider<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Kept in this browser only: each browser (and device) has its own provider and key. The browser fetches the tiles itself, with the key in their URLs - it never goes to the receiver.</span></span></div>
     <select id="set-mp-prov" onchange="setDlgProv()"></select>
     <div id="set-mp-keyrow">
       <div class="lbl" id="set-mp-keylbl">API key</div>
@@ -2939,6 +2925,20 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
       <span class="sp"></span>
       <button type="button" class="btn sm" onclick="setDlgClose()">Cancel</button>
       <button type="button" class="btn sm primary" onclick="setDlgSave()">Save</button>
+    </div>
+    </div>
+    <!-- Decoders: the voice codecs (digOnCodecs) and the decoder plugins (aiRenderPlugins) -->
+    <div class="set-pane" data-t="dec" role="tabpanel">
+      <div class="sec"><span>Voice codecs<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The voice codecs the digital decoders can use. The AMBE and TETRA codecs are not shipped (licensing): you build them yourself, for personal use - whether that is allowed where you live is your responsibility.</span></span></span>
+        <button class="btn sm" type="button" onclick="send('PLUGIN_CODECS')" title="Look for the voice codecs again after installing one - then switch the decoder off and on">↻ Check</button></div>
+      <div id="dig-codecs-box"><div class="dig-help">Checking the voice codecs…</div></div>
+      <div class="sec"><span>Decoder plugins <span id="dig-plug-count"></span><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip"><b>Auto detect</b> on a plugin = it runs when a VFO's decoder is on Auto detect (untick the ones you never need: each costs CPU). Plugins are plain source folders (plugins/&lt;id&gt;/): to add one, <span class="os-win os-win-pkg">build it in the KrakenSDR source folder (build_windows.bat - this package has no sources or compiler), copy its kraken_doa_v2\plugins\&lt;id&gt;\build\decoder.exe into the same place in this folder</span><span class="os-win-src">copy its folder into kraken_doa_v2/plugins/, run </span><span class="os-lin">make in kraken_doa_v2</span><span class="os-win os-win-src">build_windows.bat (or make in kraken_doa_v2 in the MSYS2 UCRT64 shell)</span> and press ↻. To decode a VFO, tick <b>Digital decoder</b> on it in the Decimators box and pick <b>Auto detect</b> or a decoder; any number of VFOs can decode at once, each with its own tab in the panel under the waterfall. Voice plays with Demod "Digital" (or Listen in the VFO's tab).</span></span></span>
+        <button class="btn sm" type="button" onclick="send('PLUGINS_RESCAN')" title="Re-read the plugins folder (after copying a plugin in and running make)">↻ Rescan</button></div>
+      <div id="ai-plugins"><div class="dig-help">No plugins yet.</div></div>
+    </div>
+    <!-- Add-ons: is the assistant / Voice to Text set up on the receiver, and how to (setDlgAddons) -->
+    <div class="set-pane" data-t="addons" role="tabpanel">
+      <div id="set-addons"></div>
     </div>
   </div>
 </div>
@@ -8191,7 +8191,7 @@ function ua(v) {
   send('AVG:'+(1-v/100).toFixed(3));
 }
 
-// FFT Settings functions
+// FFT settings (the Display box)
 let currentFFTSize = 4096;
 
 function setFFTSize(size) {
@@ -10830,7 +10830,7 @@ function specViewFlush(disp) {
   st.lo = w.lo; st.hi = w.hi; st.bins = w.bins; st.at = Date.now(); st.want = null;
 }
 // the zoom control's resolution readout: the displayed points' spacing; and
-// FFT Settings' "Points sent": the frame's points
+// the Display box's "Points sent": the frame's points
 function specShowRes(fr) {
   const el = $id('zoom-res'), pe = $id('fft-points-sent');
   const n = String(fr.mags.length);
@@ -12066,7 +12066,7 @@ function addTouchHandlers(el, down, move, up) {
     }
   }
 
-  // Sidebar "Digital Decoders" box: the voice codecs the decoders can use,
+  // ⚙ Settings, Decoders tab: the voice codecs the decoders can use,
   // as the plugins find them ({"codecs":{...}}, plugins/lib/tools/codecs.cpp)
   // and how to install the missing ones (same steps as the README). A
   // Windows receiver gets install_win + win_note instead: mbelib built as a
@@ -12255,6 +12255,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     if (!st.busy) aiAskedHere = false;
     aiDockApply();
     aiQueueRender();
+    setDlgAddons();
   }
   function aiOnEvent(x) {
     if (x.seq <= aiLastSeq) return;
@@ -12819,7 +12820,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
         (serverWin ? 'build_windows.bat' : 'make') + '.</div>';
     } else {
       html = digPlugins.map(p => `<div class="ai-plugin">
-          <div style="display:flex;align-items:baseline;gap:6px">
+          <div style="display:flex;align-items:center;gap:6px">
             <span style="flex:1;min-width:0"><span class="nm">${digEsc(p.name)}</span> <span style="color:#7f8995">${digEsc(p.id)}${p.version ? ' v' + digEsc(p.version) : ''}</span></span>
             ${p.manual_only ? '' : `<label class="ai-auto" title="Run this decoder when a VFO's Digital Decoder is on Auto detect. Untick decoders you never need: each one costs CPU on every VFO in Auto detect.">
               <input type="checkbox" ${p.auto ? 'checked' : ''} onchange="send('PLUGIN_AUTO:${p.id}:' + (this.checked ? 1 : 0))"> Auto detect</label>`}
@@ -12830,32 +12831,14 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
           </div>`).join('');
     }
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
-    // the collapsed header still tells: how many, and whether one has a problem
+    // the heading: how many; the tab: whether one has a problem
     const bad = digPlugins.filter(p => p.error || p.stale || !p.built).length;
     const cnt = $id('dig-plug-count');
-    const ch = digPlugins.length ? `(${digPlugins.length})` +
-      (bad ? ` <span style="color:#f4c170" title="${bad} plugin(s) need attention - open the list">⚠ ${bad}</span>` : '') : '';
-    if (cnt && cnt.innerHTML !== ch) cnt.innerHTML = ch;
+    const ch = digPlugins.length ? `(${digPlugins.length})` : '';
+    if (cnt && cnt.textContent !== ch) cnt.textContent = ch;
+    const tn = $id('set-tab-dec-n');
+    if (tn) { tn.textContent = bad ? '⚠ ' + bad : ''; tn.title = bad ? bad + ' plugin(s) need attention' : ''; }
   }
-
-  // "Decoder plugins" list (Digital Decoders box): collapsed by default,
-  // open state kept in this browser
-  function digTogglePlugins(open) {
-    const body = $id('dig-plug-body');
-    if (!body) return;
-    if (open === undefined) open = body.style.display === 'none';
-    try { localStorage.setItem('kraken_dig_plugins_open', open ? '1' : '0'); } catch (e) {}
-    body.style.display = open ? '' : 'none';
-    document.querySelector('.dig-plug-head').classList.toggle('open', open);
-  }
-  (function () {
-    let open = false;
-    try { open = localStorage.getItem('kraken_dig_plugins_open') === '1'; } catch (e) {}
-    if (open) {
-      const body = document.getElementById('dig-plug-body');
-      if (body) { body.style.display = ''; document.querySelector('.dig-plug-head').classList.add('open'); }
-    }
-  })();
 
   // --- Bottom panel (under the waterfall): one tab per decoder mode + Voice --
   // infoTab: 'dig:<plugin id>' | 'voice'. Also accepted by
@@ -13669,27 +13652,31 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
 
   // a "?" with the long version of a note (initHelpTips shows it)
   const v2tHelp = (html) => `<span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">${html}</span></span>`;
+  // Voice to Text is not installed: what to run on the receiver (the box, and ⚙ Settings → Add-ons)
+  function v2tInstallHtml() {
+    if (serverPkg)
+      return 'This package was made without Voice to Text.' +
+           v2tHelp('It has no sources or compiler to build it. In the KrakenSDR source folder: <code>set WHISPER=1</code>, run ' +
+                   '<code>build_windows.bat</code>, then make the package again (windows/package.sh) - or copy its ' +
+                   '<code>kraken_doa_v2\\transcribe\\build\\kraken_whisper.exe</code> into the same place in this folder. ' +
+                   'Free, and everything stays on this device.');
+    if (serverWin)
+      return 'Not set up yet. Run once on the receiver:<br><code>cd kraken_doa_v2 && make whisper</code>' +
+           v2tHelp('In the MSYS2 UCRT64 shell (C:\\msys64\\ucrt64.exe), in the KrakenSDR folder. It builds whisper.cpp - a few minutes on a PC - ' +
+                   'and downloads the base.en model (142 MB). Free, and everything stays on this device.');
+    return 'Not set up yet. Run once on the receiver:<br><code>cd kraken_doa_v2 && make whisper</code>' +
+           v2tHelp('It builds whisper.cpp - about 10 min on a Pi 5 - and downloads the base.en model (142 MB). Free, and everything ' +
+                   'stays on this device. Docker: the image includes it - rebuild it without WHISPER=0.');
+  }
   function v2tRenderBox() {
+    setDlgAddons();
     const s = v2tStatus;
     if (!s) return;
     const idle = (el) => el && document.activeElement !== el;
     // not set up yet: what to run on the receiver
     const inst = $id('v2t-install');
     let ih = '';
-    if (!s.installed && serverPkg)
-      ih = 'This package was made without Voice to Text.' +
-           v2tHelp('It has no sources or compiler to build it. In the KrakenSDR source folder: <code>set WHISPER=1</code>, run ' +
-                   '<code>build_windows.bat</code>, then make the package again (windows/package.sh) - or copy its ' +
-                   '<code>kraken_doa_v2\\transcribe\\build\\kraken_whisper.exe</code> into the same place in this folder. ' +
-                   'Free, and everything stays on this device.');
-    else if (!s.installed && serverWin)
-      ih = 'Not set up yet. Run once on the receiver:<br><code>cd kraken_doa_v2 && make whisper</code>' +
-           v2tHelp('In the MSYS2 UCRT64 shell (C:\\msys64\\ucrt64.exe), in the KrakenSDR folder. It builds whisper.cpp - a few minutes on a PC - ' +
-                   'and downloads the base.en model (142 MB). Free, and everything stays on this device.');
-    else if (!s.installed)
-      ih = 'Not set up yet. Run once on the receiver:<br><code>cd kraken_doa_v2 && make whisper</code>' +
-           v2tHelp('It builds whisper.cpp - about 10 min on a Pi 5 - and downloads the base.en model (142 MB). Free, and everything ' +
-                   'stays on this device. Docker: the image includes it - rebuild it without WHISPER=0.');
+    if (!s.installed) ih = v2tInstallHtml();
     else if (!s.models.length)
       ih = 'No speech model yet: ⬇ Get one below (base.en is a good start).';
     v2tSetHtml(inst, ih);
@@ -14262,7 +14249,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     }
   }
 
-  // GPS status panel update (sidebar). Renders gpsd connection state, fix, and
+  // GPS status (the Station Information box). Renders gpsd connection state, fix, and
   // whatever the receiver is currently outputting (position, sats, heading).
   function updateGpsStatus(g) {
     lastGpsFix = g;  // remember the latest fix for the "📍 From GPS" button
@@ -15209,12 +15196,87 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     c.restore();
   }
 
-  // --- ⚙ SETTINGS: the map provider and its API key (the top bar's ⚙) --------
+  // --- ⚙ SETTINGS (the top bar's ⚙): tabs - the map provider and its API key
+  // (below), the decoders' voice codecs and plugins (digOnCodecs,
+  // aiRenderPlugins), and the Add-ons' setup state (setDlgAddons) ------------
   // The dialog edits a copy of mapProvCfg - with the key of every provider,
   // so going through the list loses none - and Save stores it in
   // localStorage kraken_map_prov: per browser, like the map's view
   let setDlgCfg = null, setDlgTestN = 0;
-  function setDlgOpen() {
+  let setDlgTabId = 'map';   // the tab shown; kept while the page is open
+  function setDlgTab(t) {
+    if (!document.querySelector('.set-pane[data-t="' + t + '"]')) t = 'map';
+    setDlgTabId = t;
+    for (const e of document.querySelectorAll('.set-tabs button, .set-pane')) {
+      const on = e.dataset.t === t;
+      e.classList.toggle('on', on);
+      if (e.tagName === 'BUTTON') e.setAttribute('aria-selected', on ? 'true' : 'false');
+    }
+    if (t === 'addons') setDlgAddons();
+  }
+  // Add-ons: the optional features that are set up on the receiver, not from
+  // the page - the assistant (ai_state) and Voice to Text (the voice2text
+  // status) -, each with its state and, while it is not set up, what to run.
+  // Drawn again whenever either state or the receiver's OS arrives.
+  function setDlgAddons() {
+    const el = $id('set-addons');
+    if (!el) return;
+    const card = (cls, name, state, lines) => `<div class="dig-codec ${cls}">` +
+      `<div class="h"><span class="i">${cls === 'ok' ? '✔' : cls === 'warn' ? '⚠' : cls === 'missing' ? '✗' : '…'}</span><b>${name}</b><span class="u">${state}</span></div>` +
+      lines.join('') + '</div>';
+    const pre = (t) => '<pre>' + digEsc(t) + '</pre>';
+    // --- the assistant
+    const a = (typeof aiState !== 'undefined') ? aiState : null;
+    const claude = serverWin
+      ? '# Claude Code, in PowerShell (it needs Git for Windows; a Claude subscription or an Anthropic API key)\nirm https://claude.ai/install.ps1 | iex\nclaude          # log in, then /exit'
+      : '# Claude Code (a Claude subscription or an Anthropic API key)\ncurl -fsSL https://claude.ai/install.sh | bash\nclaude          # log in, then /exit';
+    const setup = serverWin ? '# switch the assistant on\ncd kraken_doa_v2\npy -3 ai\\kraken_ai.py setup'
+                            : '# switch the assistant on\ncd kraken_doa_v2\npython3 ai/kraken_ai.py setup';
+    const off = serverWin ? 'py -3 ai\\kraken_ai.py disable' : 'python3 ai/kraken_ai.py disable';
+    let h;
+    if (!a) {
+      h = card('', '🤖 AI assistant', 'Checking…', []);
+    } else if (!a.enabled) {
+      h = card('missing', '🤖 AI assistant', 'Not set up', [
+        '<div class="how">Run once on the receiver:' +
+        helpTip('The assistant answers questions about what the receiver shows and can operate it. The page can\'t switch it on itself: ' +
+                'it lets anyone using the page run an AI agent on the receiver that controls it and compiles code. If other people can ' +
+                'reach this page, set an API token first (README, "API token"). More: README, "AI assistant setup".', true) +
+        pre(claude + '\n' + setup) + 'Its 🤖 button then opens it - no restart needed.</div>']);
+    } else if (a.backend === 'claude' && !a.cli) {
+      h = card('warn', '🤖 AI assistant', 'Claude Code not found', [
+        '<div class="how">It is switched on, but the receiver has no Claude Code to run. On the receiver:' + pre(claude) + '</div>']);
+    } else {
+      const what = a.backend === 'claude' ? 'Claude Code' + (a.version ? ' ' + digEsc(a.version) : '') : 'backend "' + digEsc(a.backend || '') + '"';
+      const lines = ['<div class="s">' + what + (a.readonly ? ' · read only' : '') +
+        helpTip('Switch it off again on the receiver: <code>' + digEsc(off) + '</code>') + '</div>'];
+      if (!a.token) lines.push('<div class="wn">⚠ No API token: anyone who opens this page can use the assistant' +
+        helpTip('It controls the receiver and runs code on it. Set an API token: README, "API token".') + '</div>');
+      if (a.backend === 'claude' && a.sandbox === false) lines.push('<div class="wn">⚠ No sandbox: it can\'t build plugins or run scripts' +
+        helpTip('No sandbox for its shell (' + digEsc(a.sandbox_why || (serverWin ? 'none on Windows' : 'bubblewrap + socat')) +
+                '): it can answer and use the receiver only.') + '</div>');
+      h = card('ok', '🤖 AI assistant', 'Set up', lines);
+    }
+    // --- Voice to Text
+    const v = v2tStatus;
+    if (!v) {
+      h += card('', '🗣 Voice to Text', 'Checking…', []);
+    } else if (!v.installed) {
+      h += card('missing', '🗣 Voice to Text', 'Not set up', ['<div class="how">' + v2tInstallHtml().replace(/^Not set up yet\. /, '') + '</div>']);
+    } else if (!(v.models || []).length) {
+      h += card('warn', '🗣 Voice to Text', 'No speech model', [
+        '<div class="how">Installed. Download a speech model with <b>⬇ Get</b> in the sidebar\'s 🗣 Voice to Text box (base.en is a good start).</div>']);
+    } else {
+      const cur = v.models.find(m => m.name === v.model);
+      h += card('ok', '🗣 Voice to Text', 'Set up', ['<div class="s">' +
+        (cur ? 'Model ' + digEsc(cur.name) + ' (' + cur.mb + ' MB)' : 'Model ' + digEsc(v.model || '') + ' - not downloaded') +
+        (v.models.length > 1 ? ' · ' + v.models.length + ' models downloaded' : '') + '</div>'].concat(
+        v.state === 'error' ? ['<div class="wn">⚠ ' + digEsc(v.error || 'Error') + '</div>'] : []));
+    }
+    if (el.dataset.html !== h) { el.dataset.html = h; el.innerHTML = h; }
+  }
+  // tab: 'map' | 'dec' | 'addons'; none = the tab shown last
+  function setDlgOpen(tab) {
     setDlgCfg = JSON.parse(JSON.stringify(mapProvCfg));
     if (!mapHas(MAP_PROVIDERS, setDlgCfg.p)) setDlgCfg.p = 'osm';
     const sel = $id('set-mp-prov');
@@ -15229,8 +15291,9 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     $id('set-mp-key').type = 'password';
     $id('set-mp-show').textContent = 'Show';
     setDlgFill();
+    setDlgTab(tab || setDlgTabId);
     $id('set-dlg-bg').style.display = 'flex';
-    sel.focus();
+    if (setDlgTabId === 'map') sel.focus();
   }
   function setDlgClose() {
     $id('set-dlg-bg').style.display = 'none';
@@ -15340,7 +15403,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   document.addEventListener('keydown', e => {
     if (!setDlgCfg) return;
     if (e.key === 'Escape') { e.preventDefault(); setDlgClose(); }
-    else if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT') { e.preventDefault(); setDlgSave(); }
+    else if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT' && e.target.closest('.set-pane[data-t="map"]')) { e.preventDefault(); setDlgSave(); }
   });
 
   // --- 📡 STATION ON THE MAP: select, drag, heading; viewshed points too ------
@@ -26166,6 +26229,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     aiRender();
     aiRenderPlugins();
     v2tRenderBox();
+    setDlgAddons();
     recRender();
   }
 

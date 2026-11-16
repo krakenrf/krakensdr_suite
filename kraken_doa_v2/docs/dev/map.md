@@ -70,7 +70,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 - The top bar's ⚙ (`#settings-btn`, at the right end, as tall as the chips' and the telemetry's lines;
   on the phone's bar on the status chips' line - *sidebar.md*, "Top bar and
   rail") opens the Settings dialog (`#set-dlg-bg`, the saved-frequency dialog's
-  `.sf-dlg` look; "⚙ SETTINGS" section of the page). Its 🗺 Map part picks
+  `.sf-dlg` look; "⚙ SETTINGS" section of the page; its tabs - *sidebar.md*,
+  "Settings dialog"). Its 🗺 Map tab picks
   the provider and takes its API key: OpenStreetMap + Esri (default, no
   key), Mapbox (public token, `styles/v1` raster tiles, 512 px), Google
   Maps (Map Tiles API), Azure Maps, MapTiler, Thunderforest, Stadia Maps

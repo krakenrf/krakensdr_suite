@@ -408,7 +408,7 @@ the data rate doesn't; the beamformed overlays (type 4) follow each page's
 spacing. Frames carry start + step instead of a frequency per point and only
 the max envelope, and go permessage-deflate compressed: a page took ~250
 KB/s before, ~20 KB/s now. The "Downsampling" setting is gone (FFT_DECIMATION
-ignored); FFT Settings' "Slow link" tick (per browser) asks for half the
+ignored); the Display box's "Slow link" switch (per browser) asks for half the
 points. Pages that never send `FFT_VIEW` (an open tab from before) keep
 getting the old type 0 / 6 frames at 2048 points per tuner band
 
@@ -559,7 +559,7 @@ decoders `kraken_doa_v2/plugins/`
   event log (a VFO switched to another mode or removed leaves its lines in
   the old mode's tab); a VFO in Auto detect shows up in the tab of the
   decoder it detected -
-  waterfall (its settings + data); the sidebar "🔐 Digital Decoders" box shows
+  waterfall (its settings + data); ⚙ Settings → Decoders shows
   which voice codecs are installed (+ install steps for missing ones, from
   `plugins/lib/build/codecs` - the plugins' own detection) and the plugin list
   (Auto detect ticks, ↻ re-scan); WS

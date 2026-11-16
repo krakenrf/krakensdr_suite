@@ -1,7 +1,7 @@
 // Which digital voice codecs the decoder plugins can use, as the plugins
 // themselves find them (same MbeLib / TetraCodec code, same environment:
 // KRAKEN_MBELIB, KRAKEN_TETRA_CODEC_DIR, PATH). kraken_doa runs it for the
-// sidebar's "Digital Decoders" box. Prints one flat JSON object.
+// ⚙ Settings dialog (Decoders tab). Prints one flat JSON object.
 
 #include <cstdio>
 #include <string>

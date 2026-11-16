@@ -170,7 +170,7 @@ librtlsdr fork and its tools, libusb). Pass the folder on with the package
   `build_windows.bat` (or `make -C kraken_doa_v2 whisper` in an MSYS2 UCRT64
   shell) builds whisper.cpp and fetches the base.en model.
 - **Digital voice codecs** (not shipped - licensing, see the README's
-  "Digital voice codecs"; the web UI's "🔐 Digital Decoders" box shows the
+  "Digital voice codecs"; the web UI's ⚙ Settings → Decoders shows the
   steps below for a missing one). Build them in the MSYS2 UCRT64 shell
   (`C:\msys64\ucrt64.exe`) and put the results in the `kraken_doa_v2` folder,
   next to `kraken_doa.exe`:

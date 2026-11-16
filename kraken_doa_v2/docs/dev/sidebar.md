@@ -190,6 +190,53 @@ page got the same treatment on 2026-11-16.
   option that is on / off is a button lit while on (its name only -
   `digOnOffText` adds ": state" for anything that isn't On / Off).
 
+### What moved out of boxes of their own (2026-11-17)
+
+The user asked for fewer boxes: three were folded away, and their `data-sb`
+keys (`gps`, `fft`, `digital-decoders`) are retired - never reuse them. A
+layout stored with them still loads (`sbBoxOrder` skips keys it has no box
+for).
+
+- **GPS status** is the last part of *Station Information* (`#gps-sec`: the
+  "GPS" row with the old box's `?`, then `#gps-details`; `updateGpsStatus`
+  is unchanged). It is shown for every Location source: "📍 From GPS" of a
+  static location uses the same fix.
+- **FFT size, Slow link, Points sent** are in *Display* (FFT size first).
+- **Digital Decoders** is the Decoders tab of the Settings dialog.
+
+### Settings dialog (2026-11-17)
+
+`#set-dlg` (the top bar's ⚙, `setDlgOpen(tab)`) has tabs (`.set-tabs`
+buttons and `.set-pane`s with the same `data-t`; `setDlgTab(t)`; the tab
+shown last is kept while the page is open, `setDlgTabId`). The dialog has a
+fixed size (540 x 540 px, less on a small screen) so the tabs stay put, and
+each pane scrolls by itself.
+
+- **🗺 Map** (`map`): the tile provider and its key - *map.md*. Test /
+  Cancel / Save belong to this tab only (Enter in one of its fields saves;
+  Enter elsewhere in the dialog does nothing). The other tabs have nothing
+  to save: what they show is the receiver's state, and a tick acts at once.
+- **🔐 Decoders** (`dec`): the voice codecs (`#dig-codecs-box`,
+  `digOnCodecs`, ↻ Check = `PLUGIN_CODECS`) and the decoder plugins
+  (`#ai-plugins`, `aiRenderPlugins`, ↻ Rescan = `PLUGINS_RESCAN`, the Auto
+  detect ticks) - *digital-decoders.md*. The list is always open (the box
+  had it collapsed); `#set-tab-dec-n` on the tab counts plugins that need
+  attention.
+- **🧩 Add-ons** (`addons`, `setDlgAddons()` -> `#set-addons`): the two
+  optional features that are set up on the receiver and not from the page,
+  each a card in the codecs' look with its state and, while it is not set
+  up, the commands for the receiver's OS:
+  - 🤖 AI assistant, from `ai_state`: *Not set up* (install Claude Code,
+    then `kraken_ai.py setup`) / *Claude Code not found* (enabled, backend
+    "claude", no CLI) / *Set up* (the CLI's version or the backend; the
+    dock's two warnings - no API token, no sandbox).
+  - 🗣 Voice to Text, from the voice2text status: *Not set up*
+    (`v2tInstallHtml()`, the same text as the Voice to Text box) / *No
+    speech model* / *Set up* (the model).
+  It is drawn again when either state or the receiver's OS arrives
+  (`aiOnState`, `v2tRenderBox`, `setServerOs`), so a dialog left open
+  follows a setup done meanwhile.
+
 ### Top bar and rail (2026-11-16)
 
 The user found the top bar cluttered, busy and ugly; the mode chip
@@ -216,8 +263,8 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   selector stands next to them. Remove a chip's element only together with
   its script: the countdown's timer was inside `if (cooldownEl)`.
 - **`.tb-right`** is a grid: the chips on its first line, the telemetry on
-  its second, and the ⚙ Settings button (`#settings-btn`, the map provider -
-  *map.md*) in a column of its own as tall as both lines (46 px wide, a
+  its second, and the ⚙ Settings button (`#settings-btn` - "Settings dialog"
+  above) in a column of its own as tall as both lines (46 px wide, a
   26 px icon - the user asked for it "two rows big", 2026-11-17).
   `min-width:436px` reserves the room of one chip that comes and goes (the
   scanner's 95 px, or the RTL-SDR chip's 93 px: 95 + 170 + 104 + the gaps +

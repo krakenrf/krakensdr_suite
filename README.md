@@ -381,8 +381,8 @@ set the VFO's demod to **Digital**. Encrypted calls can't be decoded.
 The AMBE and TETRA codecs are not shipped with this software: AMBE+2 is
 commercially licensed (DVSI), and the ETSI codec may not be redistributed.
 You can build them yourself for personal use; whether that is allowed where
-you live is your responsibility. The sidebar's **🔐 Digital Decoders** box
-shows which codecs are installed.
+you live is your responsibility. **⚙ Settings → Decoders** (the cog at the
+right of the top bar) shows which codecs are installed.
 
 **DMR, D-STAR and NXDN: mbelib**
 
@@ -498,7 +498,9 @@ Once, on the receiver:
    python3 ai/kraken_ai.py setup
    ```
 
-`python3 ai/kraken_ai.py disable` switches it off again. The web page can't
+`python3 ai/kraken_ai.py disable` switches it off again. In the web page,
+**⚙ Settings → Add-ons** shows whether the assistant and Voice to Text are
+set up, and the steps while they are not. The web page can't
 switch it on, because the assistant lets anyone using the page run an AI
 agent on the receiver that controls it and compiles code. **If other people
 can reach your receiver's web page, set an API token first**
@@ -556,8 +558,8 @@ make -j3                                # kraken_doa and every plugin
 make -C plugins PLUGIN=<id>             # or just one plugin
 ```
 
-Then press ↻ next to "Decoder plugins" in the **🔐 Digital Decoders** box,
-or restart the software. The same box picks which decoders take part in
+Then press ↻ Rescan next to "Decoder plugins" in **⚙ Settings → Decoders**,
+or restart the software. The same list picks which decoders take part in
 Auto detect; untick the ones you never need, since each costs CPU.
 
 A plugin is native code that runs on your receiver: **only install plugins

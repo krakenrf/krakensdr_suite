@@ -163,6 +163,9 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   The status `error` = `last_error`, kept until the helper loads (READY) or
   a job goes through (a crash's message used to be overwritten by
   "starting" within ms)
+- Set up or not is also shown in ⚙ Settings → Add-ons (`setDlgAddons`, from
+  the same status; the "not installed" text is `v2tInstallHtml()` in both
+  places) - *sidebar.md*, "Settings dialog".
 - Pushes: `{"voice2text":{"new":[..]}}` (1 s timer, `take_new_message`) and
   `{"voice2text":{"status":{..}}}` when it changed (state off | starting |
   ready | busy | error | not installed | no model, error, installed,
