@@ -16,7 +16,12 @@ generator's scene format are in `plugins/dab/README.md`.
   name; "" = "First audio service (name)"; a setting outside the list gets
   its own entry "plus → Kraken Plus"; sent on a change only, emptied on
   reset; the option is still declared as a text field, so an older
-  kraken_doa shows that). It replaced nothing: DAB was
+  kraken_doa shows that; through the debug playback: the list appears with
+  the Services fact ~3 s after Play, all 6 picks of `dab-single-offset`
+  decode their own tone, an open list is not rebuilt by the 4 Hz pushes, a
+  second page follows a pick, the list costs 170-260 bytes per push. Open:
+  1 of 8 DAB+ picks counted 3 bad access units right after the switch, the
+  audio unaffected). It replaced nothing: DAB was
   removed from the old `sfn` plugin (now `dtv`) in 2026-10 to become this
   plugin (*Digital TV*). Written from EN 300 401 V2.2.1 (+ V1.4.1 for FIG
   0/22), TS 103 466, TS 102 563, TS 102 980, TS 101 756, TS 103 461 alone; no
