@@ -63,6 +63,8 @@ atomic<int> active_num_elements{DOA_DEFAULT_ELEMENTS};  // Synced from the serve
 // KerberosSDR support mode (synced from the packet header's high bits)
 atomic<bool> server_kerberos_mode{false};
 atomic<bool> server_cal_stale{false};
+// heimdall runs generic RTL-SDRs, no KrakenSDR (header flag 0x1000)
+atomic<bool> server_generic_rtlsdr{false};
 atomic<int> active_channel{0};
 
 atomic<bool> data_ready{false};

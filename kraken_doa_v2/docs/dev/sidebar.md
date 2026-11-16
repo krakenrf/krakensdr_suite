@@ -215,6 +215,21 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   its text never moves a control or another chip. No mode chip: the Mode
   selector stands next to them. Remove a chip's element only together with
   its script: the countdown's timer was inside `if (cooldownEl)`.
+- **`.tb-right`** is a grid: the chips on its first line, the telemetry and
+  the ⚙ Settings button (`#settings-btn`, the map provider - *map.md*) on
+  its second; `min-width:384px` reserves the room of the scanner chip, so a
+  chip that comes and goes can't wrap the bar either. With generic RTL-SDR
+  dongles an "RTL-SDR" chip (`#status-generic`) stands first. The phone
+  layout puts ⚙ at the end of the chips' line.
+- **Merged with main 2026-11-17** (map providers' ⚙ Settings dialog, generic
+  RTL-SDR mode): main had put ⚙ after the chips and "(RTL-SDR)" on the mode
+  chip - with ⚙ on the chips' line the scanner chip wrapped the bar at
+  1700 px, hence the second line and the reserved width. Main's new lines
+  were brought into the palette the way the page was converted (*theme.md*;
+  only literals that the converted page didn't already hold), and the
+  dialog's long labels (the tile URL's placeholders, the attribution, the
+  note about where the key is kept) moved into `?` tips and titles. 31
+  checks for the merged parts; the six other suites pass.
 - **Bar colour**: the calibration state still colours the bar, but lightly -
   a faint tint and a 2 px line at its lower edge (`.top-bar.cal-*`); the
   chip names the state. The playback's red line (`body.pb-on`) wins over it.

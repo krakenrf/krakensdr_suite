@@ -490,7 +490,8 @@ void render() {
           << col::DIM << "  sr " << col::RST << f2(SAMPLE_RATE / 1e6f) << "M"
           << col::DIM << "  elems " << col::RST << active_num_elements.load() << "/" << DOA_NUM_ELEMENTS
           << col::DIM << "  mode " << col::RST
-          << (wideband_mode_enabled.load() ? "wideband" : independent_mode_enabled.load() ? "independent" : "coherent");
+          << (wideband_mode_enabled.load() ? "wideband" : independent_mode_enabled.load() ? "independent" : "coherent")
+          << (server_generic_rtlsdr.load() ? " (generic RTL-SDR)" : "");
         add(o.str());
     }
     {

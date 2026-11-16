@@ -583,6 +583,8 @@ string MessageBuilders::build_system_status_message() {
     json << ",\"phase_state\":" << phase_state;
     json << ",\"noise_source\":" << (scanner_manager.isNoiseSourceActive() ? "true" : "false");
     json << ",\"active_elements\":" << active_num_elements.load();
+    // generic RTL-SDRs, no KrakenSDR: no coherent mode (operating_mode has it too)
+    json << ",\"generic_rtlsdr\":" << (server_generic_rtlsdr.load(std::memory_order_relaxed) ? "true" : "false");
     json << ",\"platform\":\"" << platform::os_name() << "\"";   // the UI's per-OS instructions
     // The suite's version (utils/version_info.hpp; the sidebar's footer line) and
     // heimdall's, from its control-port status (app_version.hpp; absent until heard)

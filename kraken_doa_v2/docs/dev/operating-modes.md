@@ -39,6 +39,39 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 - `note_server_mode()`: the data receiver reads heimdall's mode from the
   phase-state flags (0x400 / 0x800, once seen) and adopts a mismatch that
   outlasts the client's own change by 3 s (heimdall restored its saved mode)
+- Generic RTL-SDR mode (2026-11-16; heimdall found no KrakenSDR and runs the
+  plain dongles attached, ONE or more, always outside coherent): header flag
+  bit 12 (0x1000, with 0x800 / 0x400) -> `server_generic_rtlsdr` (stored
+  after the header sanity gate, like the mode bits; a debug playback's
+  packets clear it - a playback is a coherent array). `generic_mode_refusal(m)`
+  (control_handler.cpp): coherent refused, wideband with < 2 tuners refused;
+  `OPERATING_MODE:` then changes nothing, broadcasts `operating_mode` with
+  `"error"` (not during the settings replay) and throws `CommandRejected`
+  (the AI assistant gets the reason); `SCANNER_START` refused (its lock
+  switches to coherent); MCP `set_doa` on refused. `note_server_mode` follows
+  heimdall AT ONCE when the client is coherent in generic mode (no 3 s wait)
+  and does not save that mode - a KrakenSDR's saved mode stays the user's.
+  The settings replay waits for the first packet (or 3 s after connect), so
+  it meets heimdall's channel count and flag: the forced switch to
+  independent runs first, the saved `OPERATING_MODE:coherent` is refused
+  quietly, `DOA:1` only parks. `{"operating_mode":{...,"generic_rtlsdr":bool
+  [,"error"]}}`, also `system_status.generic_rtlsdr`, MCP get_screen
+  `receiver.generic_rtlsdr` / `coherent_available`, the dashboard's mode.
+  Page: `genericRtl`, `opModeOptionsSync()` disables Coherent ("needs a
+  KrakenSDR") and, with one tuner, Wideband in the Mode selector (the
+  selector's title says why), and the top bar shows an "RTL-SDR" chip
+  (`#status-generic`, from `system_status.generic_rtlsdr` - the mode chip
+  that carried "(RTL-SDR)" is gone, *sidebar.md*); everything coherent-only is already hidden
+  outside coherent (`.coh-only`). Calibration, element count, noise source
+  and bias tees are heimdall's 8070 UI only - the client sends none of them.
+  N = 1: `active_num_elements` follows a 1-channel header too (was >= 2 only:
+  TUNER_FREQ, the replayed TUNERS and the saved-frequency scan used 5
+  tuners); MUSIC / beamformer stay off (`packet_elements >= 2`, they clamp
+  to 2); a VFO on a tuner that is gone moves to tuner 0
+  (`clamp_vfo_tuners`, also in the snapshot replay; not saved); the page
+  takes `active_elements >= 1`. IQ recording stays coherent-only (no IQ
+  recorder here). Test: job scratch fake_heimdall.py (1 / 2 / 5 channels) +
+  wsclient.py against a port-moved test build
 - Multi-tuner gates (`multi_tuner_mode()`): every channel converted and
   FFT'd, MUSIC/beamforming off, each VFO decimates `tuner_channel`, FFT squelch
   reads that tuner, digital RF label = `exact_tuner_hz(tuner) + offset`

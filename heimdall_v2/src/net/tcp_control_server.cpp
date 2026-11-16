@@ -243,6 +243,11 @@ std::string rf_range_error(const std::string& given) {
     return "{\"status\":\"error\",\"message\":\"Frequency " + g.substr(0, 24) + " out of range (" +
            std::to_string(rf_min / 1000000) + "-" + std::to_string(rf_max / 1000000) + " MHz)\"}";
 }
+
+// Calibration commands in generic RTL-SDR mode (no array, no noise source)
+const char* const GENERIC_NO_CALIBRATION_REPLY =
+    "{\"status\":\"error\",\"message\":\"no calibration with generic RTL-SDRs - they run as independent "
+    "receivers (coherent mode needs a KrakenSDR / KerberosSDR)\"}";
 }  // namespace
 
 void TcpControlServer::stop() {
@@ -279,6 +284,8 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
 
     // KerberosSDR support mode: manual-calibration workflow state for client UIs.
     status_json << ",\"external_noise\":" << (external_noise_mode.load() ? "true" : "false");
+    // generic RTL-SDRs, no KrakenSDR: no coherent mode, no calibration
+    status_json << ",\"generic_rtlsdr\":" << (generic_rtlsdr() ? "true" : "false");
     // a client's scan holds the calibration (hold_calibration)
     status_json << ",\"calibration_hold\":" << (calibration_held() ? "true" : "false");
     if (kerberos_mode.load()) {
@@ -639,9 +646,12 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
         const bool changed = set_operating_mode(target, devices);
         if (changed && target == OperatingMode::WIDEBAND_SCAN)
             setup_wideband_frequencies(current_frequency.load(), devices);
-        if (!changed && operating_mode.load() != target)
+        if (!changed && operating_mode.load() != target) {
+            if (const char* why = generic_mode_refusal(target))
+                return "{\"status\":\"error\",\"message\":\"" + std::string(why) + "\"}";
             return "{\"status\":\"error\",\"message\":\"" + std::string(operating_mode_name(target)) +
                    " mode refused (not available on this hardware)\"}";
+        }
         return "{\"status\":\"success\",\"operating_mode\":\"" +
                std::string(operating_mode_name(operating_mode.load())) + "\"}";
     }
@@ -685,6 +695,14 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
             n = std::stoi(json_str.substr(pos, end_pos - pos));
         } catch (...) {
             return "{\"status\":\"error\",\"message\":\"Invalid num_elements value\"}";
+        }
+        // Generic RTL-SDR mode: the count is what was opened at startup
+        if (generic_rtlsdr()) {
+            if (n == active_num_elements.load())
+                return "{\"status\":\"success\",\"num_elements\":" + std::to_string(n) + ",\"message\":\"already active\"}";
+            std::string err;
+            reconfigure_num_elements_precheck(n, err);
+            return "{\"status\":\"error\",\"message\":\"" + err + "\"}";
         }
         const int max_n = static_cast<int>(expected_serials.size());
         if (n < 2 || n > max_n) {
@@ -1096,6 +1114,8 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
                     return "{\"status\":\"success\",\"wideband_enabled\":" + std::string(enable ? "true" : "false") + "}";
                 } else if (enable != (operating_mode.load() == OperatingMode::WIDEBAND_SCAN)) {
                     // Not already there: refused (Wideband variant, scanner, ...)
+                    if (const char* why = generic_mode_refusal(OperatingMode::WIDEBAND_SCAN); enable && why)
+                        return "{\"status\":\"error\",\"message\":\"" + std::string(why) + "\"}";
                     return "{\"status\":\"error\",\"message\":\"Wideband scan mode change refused\"}";
                 } else {
                     return "{\"status\":\"success\",\"message\":\"Already in requested mode\"}";
@@ -1195,6 +1215,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
     // periodic monitor measures the residual lag/phase at its next tick and
     // recalibrates only if drifted. Result in the web STATE (cal_check).
     if (json_str.find("\"check_calibration\"") != std::string::npos) {
+        if (generic_rtlsdr()) return GENERIC_NO_CALIBRATION_REPLY;
         if (kerberos_manual_cal_only()) {
             return "{\"status\":\"error\",\"message\":\"not available in KerberosSDR manual mode\"}";
         }
@@ -1209,6 +1230,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
     // neither once calibrated (FFT auto-off idles the machines): the sub-sample
     // trim just vanished, and mid-VERIFYING it could latch a false CONVERGED.
     if (json_str.find("\"reset_lag_compensation\"") != std::string::npos) {
+        if (generic_rtlsdr()) return GENERIC_NO_CALIBRATION_REPLY;
         force_recalibration.store(true, std::memory_order_release);
         std::cout << "Lag reset requested via control port (full recalibration)" << std::endl;
         return "{\"status\":\"success\",\"message\":\"Full recalibration (lag + phase) started\"}";

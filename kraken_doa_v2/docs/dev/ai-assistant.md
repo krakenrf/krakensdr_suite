@@ -74,7 +74,10 @@ the internet and writes / changes decoder plugins):
     -> any whole Hz / a decoder's minimum (the narrowest efficient size), demod, decoder - fixed-
     frequency and `lock_vfo` decoders handled the way the page does it -,
     squelch, listen, transcribe), `set_decoder_option`, `remove_vfo`,
-    `set_doa`, `save_frequency` (SF_SET, id `ai<ms>`). All through
+    `set_doa` (on is refused with generic RTL-SDRs: no coherent mode -
+    get_screen `receiver.generic_rtlsdr` / `coherent_available:false`;
+    *Operating modes*), `save_frequency` (SF_SET, id `ai<ms>`). There is no
+    mode tool; an `OPERATING_MODE:coherent` would be refused the same way. All through
     `ControlHandler::apply_command` = the WebSocket path (validation,
     playback refusals, persistence, echo to every page), which returns the
     refusal text instead of sending it to a socket

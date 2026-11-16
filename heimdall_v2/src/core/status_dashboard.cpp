@@ -506,6 +506,15 @@ void render() {
           << col::DIM << "  bias " << col::RST << onoff(bias_tee_enabled.load());
         add(o.str());
 
+        // Generic RTL-SDR mode: say why there is no calibration below
+        if (generic_rtlsdr()) {
+            ostringstream g;
+            g << label("HARDWARE") << col::YEL << "generic RTL-SDR x" << nelem << col::RST
+              << col::DIM << "  no KrakenSDR found: independent receivers only - no coherent mode, "
+                             "no calibration, noise source / bias tees never switched" << col::RST;
+            add(g.str());
+        }
+
         // Wideband (downconverter) variant: the freq above is the RF; show how
         // it is reached (LO, injection side, fixed IF the tuners sit at).
         if (downconverter.enabled.load()) {

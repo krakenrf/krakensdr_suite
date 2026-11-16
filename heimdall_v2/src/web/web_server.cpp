@@ -108,6 +108,15 @@ static void refuse_cross_origin(Res* res, uWS::HttpRequest* req) {
     res->writeStatus("403 Forbidden")->end("cross-origin request refused");
 }
 
+// Generic RTL-SDR mode: a calibration / GPIO command from the page is refused
+// (the page hides those controls; this catches a stale page or a script)
+static bool generic_refused(const char* what) {
+    if (!generic_rtlsdr()) return false;
+    std::cerr << "Web: " << what << " refused - not available with generic RTL-SDRs "
+                 "(independent receivers, no calibration, no GPIOs)" << std::endl;
+    return true;
+}
+
 // Periodic-recal + forward-comp state pushed to the UI as a TEXT frame (the
 // binary broadcast feed carries correlation/FFT data). Sent on connect and
 // re-broadcast at a low rate from the timer so the counters / settings stay live.
@@ -132,6 +141,8 @@ static std::string build_state_message() {
         + ",\"external_noise\":"
         + (external_noise_mode.load(std::memory_order_relaxed) ? "true" : "false")
         + ",\"operating_mode\":\"" + operating_mode_name(operating_mode.load(std::memory_order_relaxed)) + "\""
+        // generic RTL-SDRs (no KrakenSDR): no coherent mode, no calibration (8092 status: same field)
+        + ",\"generic_rtlsdr\":" + (generic_rtlsdr() ? "true" : "false")
         // channels whose lag calibration finds no correlation peak (8092 status: same field)
         + ",\"lag_no_peak\":" + lag_no_peak_json()
         // the suite's version (core/version_info.hpp): the page's footer line
@@ -387,18 +398,21 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                         std::cout << "Periodic calibration check: Disabled" << std::endl;
                     }},
                     {"CHECK_CAL", []() {
+                        if (generic_refused("Check Calibration")) return;
                         // "Check Calibration": the periodic monitor runs its
                         // non-destructive check now (recalibrates only if drifted)
                         calibration_check_requested.store(true, std::memory_order_release);
                         std::cout << "Calibration check requested via web UI" << std::endl;
                     }},
                     {"FORCE_RECAL", []() {
+                        if (generic_refused("Full Recalibration")) return;
                         // Routed through the coherence watchdog so all recalibration
                         // stays serialized on one thread (see coherence_watchdog).
                         force_recalibration.store(true, std::memory_order_release);
                         std::cout << "Force recalibration requested via web UI" << std::endl;
                     }},
                     {"RESET_LAG_COMPENSATION", []() {
+                        if (generic_refused("Lag reset")) return;
                         // Legacy command (the old "Reset Lag Compensation" button, kept for
                         // scripts). Re-measuring lag needs the noise source
                         // on and the lag/phase machines running, and a new lag lock
@@ -562,6 +576,7 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                     try {
                         const uint32_t mask = static_cast<uint32_t>(std::stoul(std::string(mask_str)))
                                               & ((1u << NUM_DEVICES) - 1);
+                        if (generic_refused("Antenna bias tees")) return;
                         apply_antenna_bias_tees(mask, devices);
                         settings::save();  // remember across restarts
                     } catch (const std::exception&) {

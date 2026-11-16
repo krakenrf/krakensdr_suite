@@ -70,6 +70,8 @@ std::atomic<int> persisted_gain{-999};
 std::atomic<int> persisted_mode{0};
 std::atomic<uint32_t> persisted_tuner_freq[8] = {};
 std::atomic<int> persisted_tuner_gain[8] = {-999, -999, -999, -999, -999, -999, -999, -999};
+std::atomic<uint32_t> persisted_generic_tuner_freq[8] = {};
+std::atomic<int> persisted_generic_tuner_gain[8] = {-999, -999, -999, -999, -999, -999, -999, -999};
 static_assert(NUM_DEVICES <= 8, "persisted_tuner_* hold 8 tuners");
 
 namespace {
@@ -90,6 +92,21 @@ void note_tuning(uint64_t frequency_hz, int gain) {
 
 void note_mode() {
     const OperatingMode m = operating_mode.load();
+    if (generic_rtlsdr()) {
+        // Generic RTL-SDR mode: only the per-tuner tuning of independent mode
+        // (the forced mode itself is not the user's choice); a channel not
+        // open this run keeps what was saved for it
+        if (m == OperatingMode::INDEPENDENT) {
+            const int n = std::min(active_num_elements.load(), NUM_DEVICES);
+            for (int i = 0; i < n; i++) {
+                persisted_generic_tuner_freq[i].store(wideband_config.get_tuner_frequency(i), std::memory_order_release);
+                persisted_generic_tuner_gain[i].store(wideband_config.get_tuner_gain(i), std::memory_order_release);
+            }
+            tuning_changed_ms.store(steady_ms(), std::memory_order_release);
+            tuning_dirty.store(true, std::memory_order_release);
+        }
+        return;
+    }
     persisted_mode.store(static_cast<int>(m), std::memory_order_release);
     for (int i = 0; i < NUM_DEVICES; i++) {
         persisted_tuner_freq[i].store(m == OperatingMode::INDEPENDENT ? wideband_config.get_tuner_frequency(i) : 0,
@@ -180,6 +197,16 @@ void load() {
             const int m = val == "wideband" ? 1 : val == "independent" ? 2 : 0;
             persisted_mode.store(m, std::memory_order_release);
             if (m) std::cout << "Settings: operating_mode = " << val << std::endl;
+        } else if (key.rfind("generic_tuner_freq", 0) == 0 || key.rfind("generic_tuner_gain", 0) == 0) {
+            try {
+                const int ch = std::stoi(key.substr(18));
+                if (ch >= 0 && ch < NUM_DEVICES) {
+                    if (key[14] == 'f') persisted_generic_tuner_freq[ch].store(static_cast<uint32_t>(std::stoul(val)));
+                    else persisted_generic_tuner_gain[ch].store(std::stoi(val));
+                }
+            } catch (...) {
+                std::cerr << "Settings: invalid " << key << " '" << val << "'" << std::endl;
+            }
         } else if (key.rfind("tuner_freq", 0) == 0 || key.rfind("tuner_gain", 0) == 0) {
             try {
                 const int ch = std::stoi(key.substr(10));
@@ -274,6 +301,13 @@ void save() {
                     f << "tuner_gain" << i << "=" << tg << "\n";
             }
         }
+    }
+    // Generic RTL-SDR mode's own per-tuner tuning (none = nothing written)
+    for (int i = 0; i < NUM_DEVICES; i++) {
+        if (const uint32_t tf = persisted_generic_tuner_freq[i].load(std::memory_order_acquire); tf > 0)
+            f << "generic_tuner_freq" << i << "=" << tf << "\n";
+        if (const int tg = persisted_generic_tuner_gain[i].load(std::memory_order_acquire); tg != -999)
+            f << "generic_tuner_gain" << i << "=" << tg << "\n";
     }
     f << "forward_comp_enabled=" << (forward_comp.enabled.load(std::memory_order_acquire) ? 1 : 0) << "\n";
     f << "forward_comp_amplitude=" << (forward_comp.correct_amplitude.load(std::memory_order_acquire) ? 1 : 0) << "\n";

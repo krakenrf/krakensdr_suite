@@ -543,7 +543,10 @@ static bool apply_decimator_snapshot(const string& snap) {
         decimator_manager.setSquelchEnabled(id, v.sq_en);
         decimator_manager.setSquelchLevel(id, v.sq_db);
         decimator_manager.setSquelchMethod(id, v.sq_method);
-        if (auto inst = decimator_manager.getDecimator(id)) inst->tuner_channel = v.tuner;
+        // a tuner this receiver doesn't have (a snapshot from a bigger array -
+        // a KrakenSDR's VFOs on one generic dongle): tuner 0
+        if (auto inst = decimator_manager.getDecimator(id))
+            inst->tuner_channel = v.tuner < std::clamp(active_num_elements.load(), 1, MAX_CHANNELS) ? v.tuner : 0;
         if (v.digital != dig::Mode::OFF) decimator_manager.setDigitalOptions(id, v.dopts);
         decimator_manager.setDigitalMode(id, v.digital, v.plugin);
         decimator_manager.setTranscribe(id, v.transcribe);
@@ -695,7 +698,7 @@ static long long steady_ms_now() {
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-string ControlHandler::build_operating_mode_json() {
+string ControlHandler::build_operating_mode_json(const string& error) {
     ostringstream o;
     o << "{\"operating_mode\":{\"mode\":\"" << mode_name(operating_mode_index()) << "\",\"tuners\":[";
     for (int i = 0; i < MAX_CHANNELS; i++) {
@@ -703,8 +706,42 @@ string ControlHandler::build_operating_mode_json() {
         o << "{\"f\":" << static_cast<long long>(llround(indep_tuner_freq_hz[i].load()))
           << ",\"g\":" << indep_tuner_gain_db[i].load() << "}";
     }
-    o << "]}}";
+    // generic RTL-SDRs (no KrakenSDR): the page disables Coherent (and
+    // Wideband with one tuner: system_status active_elements)
+    o << "],\"generic_rtlsdr\":" << (server_generic_rtlsdr.load() ? "true" : "false");
+    if (!error.empty()) o << ",\"error\":\"" << json_escape(error) << "\"";
+    o << "}}";
     return o.str();
+}
+
+// Why heimdall can't run mode m now ("" = it can): generic RTL-SDRs have no
+// coherent array, and one tuner no wideband scan. A debug playback is a
+// coherent array of its own (its packets never set the generic flag)
+static string generic_mode_refusal(int m) {
+    if (!server_generic_rtlsdr.load() || playback::active()) return "";
+    if (m == 0) return "coherent mode needs a KrakenSDR - generic RTL-SDRs run as independent receivers";
+    if (m == 1 && min(active_num_elements.load(), num_channels.load()) < 2)
+        return "the wideband scan needs two or more tuners";
+    return "";
+}
+
+void ControlHandler::on_generic_rtlsdr_changed() {
+    broadcast(build_operating_mode_json());
+}
+
+void ControlHandler::clamp_vfo_tuners() {
+    const int n = std::clamp(active_num_elements.load(), 1, MAX_CHANNELS);
+    bool moved = false;
+    for (const auto& inst : decimator_manager.getAllDecimators()) {
+        if (!inst || inst->being_deleted.load()) continue;
+        const int t = inst->tuner_channel.load();
+        if (t < n) continue;
+        inst->tuner_channel = 0;
+        moved = true;
+        cout << "VFO " << inst->id << ": tuner " << t << " is gone (" << n << " tuner" << (n == 1 ? "" : "s")
+             << ") - on tuner 0 now" << endl;
+    }
+    if (moved) broadcast(MessageBuilders::build_decimator_info_message());
 }
 
 bool ControlHandler::apply_operating_mode_state(int mode) {
@@ -813,14 +850,22 @@ static void persist_after_sf_scan() {
 void ControlHandler::note_server_mode(int mode) {
     static std::atomic<bool> pending{false};
     if (mode == operating_mode_index()) return;
+    // The client in coherent mode against generic RTL-SDRs (the startup
+    // default, a coherent request heimdall refused): it can't be - follow at
+    // once, and don't save it (a KrakenSDR's saved mode stays the user's)
+    auto forced = [] {
+        return operating_mode_index() == 0 && !generic_mode_refusal(0).empty();
+    };
     // A change the client made itself is still on its way through heimdall
-    if (steady_ms_now() - g_mode_change_ms.load(std::memory_order_relaxed) < 3000) return;
+    if (!forced() && steady_ms_now() - g_mode_change_ms.load(std::memory_order_relaxed) < 3000) return;
     if (!loop || pending.exchange(true)) return;
-    loop->defer([mode] {
+    loop->defer([mode, forced] {
         pending = false;
+        const bool force = forced();
         if (mode == operating_mode_index() ||
-            steady_ms_now() - g_mode_change_ms.load(std::memory_order_relaxed) < 3000) return;
-        cout << "heimdall is in " << mode_name(mode) << " mode - following it" << endl;
+            (!force && steady_ms_now() - g_mode_change_ms.load(std::memory_order_relaxed) < 3000)) return;
+        cout << "heimdall is in " << mode_name(mode) << " mode - following it"
+             << (force ? " (generic RTL-SDRs: no coherent mode)" : "") << endl;
         if (mode == 2) {
             // what the tuners actually run (the header's float frequency)
             for (int i = 0; i < min(num_channels.load(), MAX_CHANNELS); i++)
@@ -829,7 +874,7 @@ void ControlHandler::note_server_mode(int mode) {
         if (mode != 1 && scanner_manager.isRunning()) scanner_manager.stop();
         if (sfscan::running()) sfscan::stop(string("heimdall switched to ") + mode_name(mode) + " mode");
         apply_operating_mode_state(mode);
-        SettingsStore::record(string("OPERATING_MODE:") + mode_name(mode));
+        if (!force) SettingsStore::record(string("OPERATING_MODE:") + mode_name(mode));
     });
 }
 
@@ -1779,7 +1824,9 @@ void ControlHandler::handle_message_impl(string_view message) {
             if (size_t c2 = rest_s.find(':'); c2 != string::npos) {
                 tuner = stoi(rest_s.substr(c2 + 1));
                 rest_s = rest_s.substr(0, c2);
-                if (tuner < 0 || tuner >= MAX_CHANNELS) throw CommandRejected("no such tuner");
+                if (tuner < 0 || tuner >= MAX_CHANNELS ||
+                    (independent_mode_enabled.load() && tuner >= active_num_elements.load()))
+                    throw CommandRejected("no such tuner");
             }
             float offset_khz = stof_finite(rest_s);
             float offset_hz = offset_khz * 1000.0f;
@@ -2360,6 +2407,15 @@ void ControlHandler::handle_message_impl(string_view message) {
             broadcast(build_operating_mode_json());
             throw CommandRejected("only coherent mode exists on the KrakenSDR Wideband variant");
         }
+        // Generic RTL-SDRs (no KrakenSDR): heimdall refuses coherent mode (and
+        // the wideband scan with one tuner) - nothing changes here either, so
+        // the client never disagrees with it. The pages resync; the error is
+        // shown unless it is the settings replay (a KrakenSDR session's saved
+        // coherent mode, refused quietly on every start)
+        if (const string why = generic_mode_refusal(mode); !why.empty()) {
+            broadcast(build_operating_mode_json(g_replaying_settings.load() ? string() : why));
+            throw CommandRejected(why);
+        }
         // The discrete scanner needs wideband mode; the continuous one coherent
         if (mode != 1 && scanner_manager.isRunning()) {
             cout << "Leaving wideband mode: stopping the discrete scanner" << endl;
@@ -2480,6 +2536,11 @@ void ControlHandler::handle_message_impl(string_view message) {
         if (continuous_scanner.isRunning() || sfscan::running()) {
             broadcast("{\"scanner_stopped\":true}");  // resets the browser's Start button
             throw CommandRejected(sfscan::running() ? "stop the saved-frequency scan first" : "stop the continuous scanner first");
+        }
+        // it locks onto a signal by switching to coherent mode (DoA)
+        if (const string why = generic_mode_refusal(0); !why.empty()) {
+            broadcast("{\"scanner_stopped\":true}");
+            throw CommandRejected("the discrete scanner locks in coherent mode: " + why);
         }
         if (!scanner_manager.start()) {
             // The browser switched its button to "running" already: tell

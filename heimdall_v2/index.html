@@ -1123,6 +1123,15 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             if (typeof st.operating_mode !== 'string') return;
             const b = $('mode-banner');
             const m = st.operating_mode;
+            if (st.generic_rtlsdr === true) {
+                // Generic RTL-SDRs: no KrakenSDR, so never coherent
+                const n = Number.isFinite(st.num_elements) ? st.num_elements : 1;
+                b.textContent = `🔌 Generic RTL-SDR (no KrakenSDR found): ${n} independent receiver${n === 1 ? '' : 's'}` +
+                    (m === 'wideband' ? ', now in wideband scan mode (tuners side by side)' : ', each with its own frequency and gain') +
+                    '. Coherent mode, DoA and calibration are unavailable; the noise source and bias tees are never switched.';
+                b.style.display = 'block';
+                return;
+            }
             if (m === 'coherent') { b.style.display = 'none'; return; }
             b.textContent = (m === 'independent'
                 ? '🔀 Independent mode: every tuner is its own receiver (own frequency and gain). '
@@ -1183,6 +1192,17 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             el.hidden = false;
         };
 
+        // --- Generic RTL-SDRs (STATE.generic_rtlsdr): hide what needs a KrakenSDR
+        // (element count, calibration, noise source, bias tees). Fixed for
+        // the server's lifetime; nothing changes on a KrakenSDR.
+        const applyGenericState = st => {
+            if (st.generic_rtlsdr !== true) return;
+            ['bias-control-group', 'biastee-control-group', 'perbin-control-group', 'recal-control-group']
+                .forEach(id => { $(id).style.display = 'none'; });
+            $('num-elements-select').closest('.card').style.display = 'none';
+            $('check-cal-btn').parentElement.style.display = 'none';
+        };
+
         const handleTextMessage = msg => {
             if (msg.startsWith('STATE:')) {
                 try {
@@ -1194,6 +1214,7 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
                     applyModeState(st);
                     applyWidebandState(st);
                     applyVersionState(st);
+                    applyGenericState(st);
                     if (Number.isFinite(st.rf_min_hz) && Number.isFinite(st.rf_max_hz)) {
                         $('freq-input').min = st.rf_min_hz / 1e6;
                         $('freq-input').max = st.rf_max_hz / 1e6;
@@ -1294,7 +1315,8 @@ var uPlot=function(){"use strict";const l="u-off",e="u-label",t="width",n="heigh
             updatePerBin(perBinState === 1);
 
             // Detect active element count change and reinitialize UI
-            if (nDev !== activeElements && nDev >= 2 && nDev <= ND) {
+            // (1: a single generic RTL-SDR)
+            if (nDev !== activeElements && nDev >= 1 && nDev <= ND) {
                 log(`Active elements changed: ${activeElements} -> ${nDev}`);
                 activeElements = nDev;
                 // Reinitialize UI components for new element count

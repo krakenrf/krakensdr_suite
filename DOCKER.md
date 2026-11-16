@@ -168,6 +168,7 @@ that changed.
 #   --kerberos_sw KerberosSDR with CKOVAL antenna switches (see below)
 VARIANT_FLAGS=
 
+# (ordinary RTL-SDRs without KrakenSDR serials: heimdall starts after 10 s)
 KRAKEN_TUNERS=5        # dongles to wait for at startup (4 for a KerberosSDR, 0 = don't wait)
 WAIT_TIMEOUT=300       # seconds kraken_doa waits for convergence (0 = forever)
 KRAKEN_DATA_DIR=./docker-data   # where settings and recordings are kept
