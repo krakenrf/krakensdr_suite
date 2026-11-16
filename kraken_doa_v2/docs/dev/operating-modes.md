@@ -18,7 +18,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   (`doa_enabled_before_wideband`), returning restores it; DOA:/BEAMFORMING:
   outside coherent only update what is restored. It broadcasts
   `{"operating_mode":{"mode","tuners":[{f,g}]}}` (also sent on connect).
-  The coherent `active_channel` (CH selector) is saved on leaving coherent
+  The coherent `active_channel` (the antenna selector on the spectrum's header, `#chs`) is saved on leaving coherent
   and put back on return (the first VFO heard - 🔊 - moves it to its tuner meanwhile).
   The handler saves the mode itself (`SettingsStore::record`): OPERATING_MODE
   is in `is_query_command` (no sync_cmd echo), which also skips the generic

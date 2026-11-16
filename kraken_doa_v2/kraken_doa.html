@@ -362,9 +362,6 @@ body.pb-rec #pb-overlay span {color:rgba(190,170,255,.8);border-color:rgba(150,1
 .ai-dock-rs {flex:0 0 5px;width:5px;cursor:col-resize;background:#0f3460;touch-action:none}
 .ai-dock-rs:hover,.ai-dock-rs.dragging {background:#1976d2}
 body.ai-rs {cursor:col-resize;user-select:none}
-.ai-strip {flex:0 0 30px;width:30px;background:#16213e;border-left:1px solid #0f3460;display:flex;flex-direction:column;align-items:center;gap:8px;padding-top:8px;cursor:pointer;user-select:none}
-.ai-strip:hover {background:#1a2a4a}
-.ai-strip .v {writing-mode:vertical-rl;transform:rotate(180deg);font-size:12px;color:#8aa8c7;letter-spacing:1px}
 .ai-dk-head {display:flex;align-items:center;gap:6px;padding:6px 8px;background:#16213e;border-bottom:1px solid #0f3460;flex-shrink:0}
 .ai-dk-head .t {font-weight:bold;color:#7cb3f0;font-size:13px;white-space:nowrap}
 .ai-dk-head .sp {flex:1}
@@ -414,13 +411,12 @@ body.ai-rs {cursor:col-resize;user-select:none}
 .ai-dk-in textarea:focus {outline:none;border-color:#1976d2}
 .ai-dk-foot {font-size:10px;color:#6f87a6;padding:0 8px 5px;flex-shrink:0;min-height:0}
 .ai-dk-foot:empty {display:none}
-body.ai-dk-off .ai-dock,body.ai-dk-off .ai-dock-rs,body.ai-dk-off .ai-strip {display:none !important}
+body.ai-dk-off .ai-dock,body.ai-dk-off .ai-dock-rs,body.ai-dk-off .rail-ai {display:none !important}
 body.ai-dk-col .ai-dock,body.ai-dk-col .ai-dock-rs {display:none !important}
-body:not(.ai-dk-col) .ai-strip {display:none !important}
 .ai-fab {display:none}
 @media (max-width:900px), (pointer:coarse) and (max-width:1280px) {
   .ai-dock {position:fixed;top:0;right:0;bottom:0;left:0;width:auto;max-width:none;z-index:1002;border-left:none}
-  .ai-dock-rs,.ai-strip {display:none !important}
+  .ai-dock-rs,.rail {display:none !important}
   .ai-fab {display:flex;position:fixed;right:14px;bottom:14px;width:48px;height:48px;border-radius:50%;background:#1565c0;color:#fff;font-size:24px;align-items:center;justify-content:center;z-index:1001;box-shadow:0 2px 8px rgba(0,0,0,0.5);cursor:pointer;border:none}
   body:not(.ai-dk-col) .ai-fab,body.ai-dk-off .ai-fab {display:none}
 }
@@ -1354,6 +1350,70 @@ body.map-on .doa-header .rp-tab.sel {color:#a8cbf5;font-weight:600;border-bottom
 .ai-dk-in {border-top-color:#1c3158}
 .ai-dk-in textarea {border-radius:6px}
 
+/* ===== Top bar and right-hand rail =====
+   Top bar, left to right: ☰, the frequency, then fields with a small label
+   above the control (Step, Gain, Audio, Mode), and at the right the status
+   chips and the telemetry. The spectrum's own controls are on the spectrum
+   (the antenna shown: its header); the panels' buttons are on the rail. */
+.top-bar {gap:18px;padding:6px 12px;min-height:58px}
+.top-bar .tb-sep {display:none}
+.top-bar .tb-group.fld {display:grid;align-items:center;column-gap:8px;row-gap:3px}
+.top-bar .tb-group.fld > .tb-label {grid-area:l;font-size:10px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:#7f93b4;line-height:12px}
+.top-bar #tb-step,.top-bar #tb-mode {grid-template-areas:"l" "c"}
+.top-bar #tb-step select,.top-bar #tb-mode select {grid-area:c}
+.top-bar #tb-gain {grid-template-columns:1fr auto;grid-template-areas:"l v" "c c"}
+.top-bar #tb-gain .gain-slider {grid-area:c;width:140px;margin:11px 0}
+.top-bar #tb-gain .gain-value {grid-area:v;min-width:0;text-align:right;font-size:11.5px;line-height:12px}
+/* (the Wideband downconverter variant's mixer: side, LO drive; ring and LO as its readout) */
+.top-bar #wbv-group {grid-template-columns:auto 1fr;grid-template-areas:"l v" "c c"}
+.top-bar #wbv-group .wbv-info {grid-area:v;text-align:right;font-size:11.5px;line-height:12px;color:#8fc0f5;white-space:nowrap}
+.top-bar #wbv-group .wbv-ctl {grid-area:c;display:flex;align-items:center;gap:8px}
+.top-bar .wbv-seg {display:flex}
+.top-bar .wbv-seg .tb-btn {border-radius:0;margin-left:-1px;height:28px;padding:0 10px}
+.top-bar .wbv-seg .tb-btn:first-child {border-radius:5px 0 0 5px;margin-left:0}
+.top-bar .wbv-seg .tb-btn:last-child {border-radius:0 5px 5px 0}
+.top-bar .wbv-seg .tb-btn.on {position:relative;z-index:1}
+.top-bar #tb-audio {grid-template-columns:auto 1fr auto;grid-template-areas:"l l v" "s c c"}
+.top-bar #tb-audio #fmt {grid-area:s}
+.top-bar #tb-audio .tb-slider {grid-area:c;width:92px;margin:11px 0}
+.top-bar #tb-audio .tb-vol {grid-area:v;min-width:0;text-align:right;font-size:11.5px;line-height:12px;color:#8fc0f5}
+/* status chips: a dark pill with a dot in the state's colour (the scripts set
+   the chip's background to that colour; the inset shadow darkens the pill,
+   the dot inherits the colour) */
+.top-bar .tb-right {margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.top-bar .status-badges {margin-left:0;gap:6px;align-items:center}
+.top-bar .tele-group {margin-left:0;order:0}
+.top-bar .tele-chip {padding-top:1px;padding-bottom:1px;font-size:11px}
+.top-bar .tele-chip .tele-lbl {padding-top:2px;padding-bottom:2px;margin:-1px 0;font-size:9px}
+.top-bar .status-badge {display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:12px;font-weight:600;letter-spacing:.2px;
+  padding:4px 12px 4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.16);box-shadow:inset 0 0 0 100px rgba(11,17,34,.7)}
+.top-bar .status-badge::before {content:'';flex:none;width:8px;height:8px;border-radius:50%;background:inherit;box-shadow:0 0 0 1px rgba(255,255,255,.22)}
+.top-bar #status-scanner {min-width:0}
+/* the calibration state tints the bar lightly and colours its lower edge
+   (the chip names the state) */
+.top-bar.cal-uncalibrated {background:linear-gradient(to bottom,#261a2b 0%,#191628 100%);border-bottom-color:#b0404c;box-shadow:inset 0 -2px 0 #b0404c}
+.top-bar.cal-measuring {background:linear-gradient(to bottom,#28241f 0%,#1a1924 100%);border-bottom-color:#b58c1f;box-shadow:inset 0 -2px 0 #b58c1f}
+.top-bar.cal-calibrated {background:linear-gradient(to bottom,#15272b 0%,#141c2c 100%);border-bottom-color:#2f9e4f;box-shadow:inset 0 -2px 0 #2f9e4f}
+.top-bar.cal-cooldown {background:linear-gradient(to bottom,#2a201f 0%,#1b1824 100%);border-bottom-color:#c9571f;box-shadow:inset 0 -2px 0 #c9571f}
+/* the antenna shown, on the spectrum's header */
+.spectrum-header {justify-content:flex-start;gap:10px}
+.spectrum-header .spec-ch {background:#0f162a;border:1px solid #223b66;color:#e4ecf8;border-radius:5px;height:24px;padding:0 4px;font-size:12px}
+.spectrum-header .spec-ch:focus {border-color:#4a9ff5;outline:none;box-shadow:0 0 0 2px rgba(74,159,245,.22)}
+/* the rail */
+.rail {flex:0 0 34px;width:34px;display:flex;flex-direction:column;gap:3px;padding:6px 3px;background:#141c36;border-left:1px solid #1c3158;user-select:none}
+.rail-panels {display:flex;flex-direction:column;gap:3px}
+.rail-btn {position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 0 10px;background:none;border:1px solid transparent;border-radius:6px;color:#8fa3c0;font-size:12px;cursor:pointer}
+.rail-btn .i {font-size:15px;line-height:1}
+.rail-btn .v {writing-mode:vertical-rl;transform:rotate(180deg);letter-spacing:.8px}
+.rail-btn:hover {background:#1e2b50;color:#d6e8ff}
+.rail-btn:focus-visible {outline:2px solid #4a9ff5;outline-offset:-2px}
+.rail-btn.on {background:#1f6fd1;border-color:#3a86e4;color:#fff}
+.rail-btn .n {position:absolute;top:2px;right:1px;min-width:14px;padding:0 3px;border-radius:8px;background:#ef5350;color:#fff;font-size:9.5px;line-height:14px;text-align:center}
+.rail-btn .n:empty {display:none}
+.rail-ai {margin-top:6px;padding-top:12px;border-top-color:#22375e;border-radius:0 0 6px 6px}
+.rail-ai .ai-dot {font-size:9px;line-height:1}
+body:not(.ai-dk-col):not(.ai-dk-off) .rail-ai {background:#1f6fd1;border-color:#3a86e4;color:#fff;border-radius:6px}
+
 /* ===== Mobile / touch layout (small screens and touch tablets only) ===== */
 /* ☰ in the top bar (toggleSidebar): on the desktop it hides / shows the
    whole sidebar (body.sb-hidden, lit while hidden); in the phone layout it
@@ -1379,6 +1439,13 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   .sidebar-backdrop {display:block}
   body.sidebar-open .sidebar-backdrop {opacity:1;pointer-events:auto}
   .menu-btn {display:flex;width:42px;height:42px;font-size:20px}
+  .top-bar .tb-right {margin-left:0;width:100%;align-items:flex-start}
+  .top-bar .tb-group.fld {display:flex;flex-direction:row;align-items:center;gap:6px}
+  .top-bar .tb-group.fld > .tb-label {font-size:13px;font-weight:normal;letter-spacing:0;text-transform:none;color:#93a6c2}
+  #mobile-display-slot .rail-panels {display:flex;flex-direction:row;justify-content:flex-end;gap:6px;margin-top:10px}
+  #mobile-display-slot .rail-btn {flex-direction:row;gap:6px;padding:0 12px;min-height:34px;background:#1b3763;border-color:#2a4d83;color:#cfe2fb;font-size:13px}
+  #mobile-display-slot .rail-btn .v {writing-mode:horizontal-tb;transform:none;letter-spacing:0}
+  #mobile-display-slot .rail-btn.on {background:#1f6fd1;border-color:#3a86e4;color:#fff}
   /* (the drawer is not the desktop's hidden sidebar) */
   body.sb-hidden .sidebar {display:flex}
   body.sb-hidden .menu-btn {background:#1b3763;border-color:#2a4d83;color:#cfe2fb}
@@ -2438,7 +2505,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
          border-bottom:1px solid #b3822c;background:#3a2a10;color:#ffd9a0;cursor:pointer" onclick="wbOpenSection()"></div>
     <!-- Top Bar -->
     <div class="top-bar">
-      <!-- Hamburger (mobile only) -->
+      <!-- ☰: hides / shows the sidebar (the phone layout: its drawer) -->
       <button type="button" class="menu-btn" id="menu-btn" onclick="toggleSidebar()" title="Hide the sidebar" aria-label="Sidebar" aria-controls="sidebar" aria-expanded="true">☰</button>
       <!-- 🧪 Debug playback: shown while a test transmission plays instead of heimdall's data -->
       <div id="pb-banner" title="A synthetic test transmission is playing through the receiver instead of the antennas. Nothing is sent to heimdall, settings are not saved and are put back when it stops."><span id="pb-banner-k">🧪 DEBUG PLAYBACK - not live</span><span class="pb-bt" id="pb-banner-t"></span><button onclick="pbStop()">■ Stop</button></div>
@@ -2463,29 +2530,45 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
       <!-- KrakenSDR Wideband (downconverter) variant controls - shown only when
            the backend runs with --wideband. Frequency digits above are the true
            RF; these pick the mixing side and show the resulting LO. -->
-      <div class="tb-group" id="wbv-group" style="display:none">
-        <span class="tb-label" id="wbv-ring-ind" title="Active antenna ring - selected automatically by the tuned frequency: Outer below 1 GHz, Center 1-2.5 GHz, Inner above 2.5 GHz. Ring changes trigger a phase recalibration.">Ring: Outer</span>
-        <span class="tb-label" style="margin-left:6px" title="Downconverter mixing side - follows the frequency automatically; pick an alternative here when more than one side can reach it (image dodging). High = LO above (LO = IF + RF), Low = LO = IF - RF, Below = LO under the RF (LO = RF - IF)">Mix</span>
-        <button class="tb-btn" id="wbv-high" onclick="setMixerSide('high')" title="High-side injection: LO = IF + RF (spectrum inversion corrected in software). RF 24 - 4132 MHz.">High</button>
-        <button class="tb-btn" id="wbv-low" onclick="setMixerSide('low')" title="Low-side injection: LO = IF - RF (upright spectrum). RF 24 - 1183 MHz.">Low</button>
-        <button class="tb-btn" id="wbv-below" onclick="setMixerSide('below')" title="LO below the RF: LO = RF - IF (upright spectrum). The only side above 4.1 GHz; RF 1353 - 6668 MHz.">Below</button>
-        <span class="tb-label" style="margin-left:6px" title="LO synthesizer output drive current (0 = lowest, 7 = highest)">Cur</span>
-        <select id="wbv-cur" onchange="setLoCurrent(this.value)" title="LO synthesizer output drive current (0 = lowest, 7 = highest)">
-          <option value="0">0</option>
-          <option value="1">1</option>
-          <option value="2">2</option>
-          <option value="3" selected>3</option>
-          <option value="4">4</option>
-          <option value="5">5</option>
-          <option value="6">6</option>
-          <option value="7">7</option>
-        </select>
-        <span class="tb-label" id="wbv-readout" style="margin-left:6px" title="Downconverter LO and fixed IF">LO --</span>
+      <div class="tb-group fld" id="wbv-group" style="display:none">
+        <span class="tb-label" title="Downconverter mixing side - follows the frequency automatically; pick an alternative here when more than one side can reach it (image dodging). High = LO above (LO = IF + RF), Low = LO = IF - RF, Below = LO under the RF (LO = RF - IF)">Mixer</span>
+        <span class="wbv-info"><span id="wbv-ring-ind" title="Active antenna ring - selected automatically by the tuned frequency: Outer below 1 GHz, Center 1-2.5 GHz, Inner above 2.5 GHz. Ring changes trigger a phase recalibration.">Ring: Outer</span> · <span id="wbv-readout" title="Downconverter LO and fixed IF">LO --</span></span>
+        <span class="wbv-ctl">
+          <span class="wbv-seg"><button class="tb-btn" id="wbv-high" onclick="setMixerSide('high')" title="High-side injection: LO = IF + RF (spectrum inversion corrected in software). RF 24 - 4132 MHz.">High</button><button class="tb-btn" id="wbv-low" onclick="setMixerSide('low')" title="Low-side injection: LO = IF - RF (upright spectrum). RF 24 - 1183 MHz.">Low</button><button class="tb-btn" id="wbv-below" onclick="setMixerSide('below')" title="LO below the RF: LO = RF - IF (upright spectrum). The only side above 4.1 GHz; RF 1353 - 6668 MHz.">Below</button></span>
+          <select id="wbv-cur" onchange="setLoCurrent(this.value)" title="LO synthesizer output drive current (0 = lowest, 7 = highest)">
+            <option value="0">Drive 0</option>
+            <option value="1">Drive 1</option>
+            <option value="2">Drive 2</option>
+            <option value="3" selected>Drive 3</option>
+            <option value="4">Drive 4</option>
+            <option value="5">Drive 5</option>
+            <option value="6">Drive 6</option>
+            <option value="7">Drive 7</option>
+          </select>
+        </span>
       </div>
-      <div class="tb-sep not-indep"></div>
+      <!-- VFO tuning step (every mode, per browser): a tuning-bar drag or a
+           click on the spectrum puts the VFO on a multiple of it -->
+      <div class="tb-group fld" id="tb-step">
+        <span class="tb-label">Step</span>
+        <select id="vfo-step" onchange="setVfoStep(this.value)" title="VFO tuning step: dragging a tuning bar or clicking the spectrum puts the VFO on a multiple of this - of its frequency, counted from 0 Hz (12.5 kHz: 446.0125, 446.0250 ... MHz). Hold Shift while dragging to tune finely: 1/100 of the movement, to the Hz, off the step. The VFO card's digits and typed or saved frequencies stay exact."></select>
+      </div>
+      <!-- Gain -->
+      <div class="tb-group fld gain-group not-indep" id="tb-gain">
+        <span class="tb-label">Gain</span>
+        <input type="range" id="gn-slider" class="gain-slider" min="0" max="29" value="29" oninput="updateGainDisplay(this.value);sgn()">
+        <span class="gain-value" id="gn-value">49.6 dB</span>
+      </div>
+      <!-- Audio -->
+      <div class="tb-group fld" id="tb-audio">
+        <span class="tb-label">Audio</span>
+        <button id="fmt" class="tb-btn on" data-sw onclick="tfm()" title="Audio on / off">ON</button>
+        <input type="range" id="vsl" class="tb-slider" min="0" max="100" value="50" oninput="uv(this.value)">
+        <span class="tb-vol" id="vv">50%</span>
+      </div>
       <!-- Operating mode: Coherent (DoA array) / Wideband (tuners side by side,
            one stitched spectrum) / Independent (every tuner its own receiver) -->
-      <div class="tb-group" id="tb-mode">
+      <div class="tb-group fld" id="tb-mode">
         <span class="tb-label">Mode</span>
         <select id="opmode" onchange="setOpMode(this.value)" title="Coherent: the tuners work as one phase-calibrated array (DoA, beamforming). Wideband: the tuners sit side by side for one wide stitched spectrum (no DoA). Independent: every tuner is its own receiver with its own frequency and gain, one spectrum + waterfall each (no DoA).">
           <option value="coherent">Coherent</option>
@@ -2493,39 +2576,16 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
           <option value="independent">Independent</option>
         </select>
       </div>
-      <div class="tb-sep not-indep"></div>
-      <!-- Gain -->
-      <div class="tb-group gain-group not-indep" id="tb-gain">
-        <span class="tb-label">Gain</span>
-        <input type="range" id="gn-slider" class="gain-slider" min="0" max="29" value="29" oninput="updateGainDisplay(this.value);sgn()">
-        <span class="gain-value" id="gn-value">49.6 dB</span>
-      </div>
-      <div class="tb-sep coh-only"></div>
-      <!-- FFT Channel -->
-      <div class="tb-group coh-only" id="tb-ch">
-        <span class="tb-label" title="The antenna channel the spectrum and waterfall show">CH</span>
-        <select id="chs" onchange="sac()">
-          <option value="0">0</option>
-          <option value="1">1</option>
-          <option value="2">2</option>
-          <option value="3">3</option>
-          <option value="4">4</option>
-        </select>
-      </div>
-      <div class="tb-sep"></div>
-      <!-- VFO tuning step (every mode, per browser): a tuning-bar drag or a
-           click on the spectrum puts the VFO on a multiple of it -->
-      <div class="tb-group" id="tb-step">
-        <span class="tb-label">Step</span>
-        <select id="vfo-step" onchange="setVfoStep(this.value)" title="VFO tuning step: dragging a tuning bar or clicking the spectrum puts the VFO on a multiple of this - of its frequency, counted from 0 Hz (12.5 kHz: 446.0125, 446.0250 ... MHz). Hold Shift while dragging to tune finely: 1/100 of the movement, to the Hz, off the step. The VFO card's digits and typed or saved frequencies stay exact."></select>
-      </div>
-      <div class="tb-sep"></div>
-      <!-- Audio -->
-      <div class="tb-group" id="tb-audio">
-        <span class="tb-label">Audio</span>
-        <button id="fmt" class="tb-btn on" data-sw onclick="tfm()" title="Audio on / off">ON</button>
-        <input type="range" id="vsl" class="tb-slider" min="0" max="100" value="50" oninput="uv(this.value)">
-        <span class="tb-vol" id="vv">50%</span>
+      <!-- Status, pushed to the right: the chips that come and go first, then
+           the ones that stay - a chip that appears or changes its text must
+           not move a control. The operating mode has no chip: the Mode
+           selector next to them shows it. The cooldown countdown is in the
+           calibration chip. -->
+      <div class="tb-right">
+      <div class="status-badges">
+        <span class="status-badge" id="status-scanner" style="display:none" title="The discrete scanner"></span>
+        <span class="status-badge" id="status-calibration" title="The array's calibration (heimdall) - the bar's colour follows it">Calibrating</span>
+        <span class="status-badge" id="status-connection" style="background:#b71c1c" title="This page's connection to the receiver">Disconnected</span>
       </div>
       <!-- Hardware Stats -->
       <span class="tele-group">
@@ -2535,13 +2595,6 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
         <span class="hw-stats tele-chip" id="wb-chip" style="display:none;cursor:pointer" title="Wideband board: supply voltage, supply current, board temperature (click for the history charts, the log settings and the CSV download)" onclick="wbSheetOpen()">
           <span class="tele-lbl">WB board</span><span id="wb-chip-val"></span></span>
       </span>
-      <!-- Status Badges (pushed to right) -->
-      <div class="status-badges">
-        <span class="status-badge" id="status-connection" style="background:#b71c1c">Disconnected</span>
-        <span class="status-badge" id="status-mode">Coherent</span>
-        <span class="status-badge" id="status-calibration">Calibrating</span>
-        <span class="status-badge" id="status-cooldown" style="visibility:hidden">Cooldown</span>
-        <span class="status-badge" id="status-scanner">Idle</span>
       </div>
     </div>
 
@@ -2550,7 +2603,15 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
       <!-- Spectrum Panel (FFT + Waterfall) -->
       <div class="spectrum-panel">
         <div class="spectrum-header">
-          <span class="title" id="fpt">Channel 0 (WBFM)</span>
+          <span class="title" id="fpt">Spectrum</span>
+          <!-- which antenna's signal the spectrum + waterfall show (coherent mode; the DoA uses all of them) -->
+          <select id="chs" class="spec-ch coh-only" onchange="sac()" aria-label="Antenna shown" title="Which antenna the spectrum and waterfall show (tuner channel CH 0, 1, ...). The DoA always uses all of them.">
+            <option value="0">Antenna 0</option>
+            <option value="1">Antenna 1</option>
+            <option value="2">Antenna 2</option>
+            <option value="3">Antenna 3</option>
+            <option value="4">Antenna 4</option>
+          </select>
           <span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">Click the spectrum or drag a tuning bar to tune the selected VFO: it lands on a multiple of the top bar's Step. Hold <b>Shift</b> while dragging to tune finely (1/100 of the movement, to the Hz). Drag a bar's edge to change its bandwidth. Mouse wheel: zoom.</span></span>
         </div>
         <div class="spectrum-content">
@@ -2594,11 +2655,6 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
               <span>Auto</span>
             </label>
           </div>
-          <span class="wf-panel-btns" style="margin-left:auto;display:flex;gap:4px">
-            <button class="btn sm" type="button" id="map-btn" onclick="mapToggle()" title="Street / satellite map in the right-hand pane: positions the decoders report (e.g. ADS-B aircraft)">🗺 Map</button>
-            <button class="btn sm" type="button" onclick="infoPanelOpen('dec')" title="Digital decoders: one tab per decoder mode">🔐 Decoders</button>
-            <button class="btn sm" type="button" onclick="infoPanelOpen('voice')" title="Voice to Text: what was said on the VFOs with Transcribe ticked">🗣 Voice</button>
-          </span>
         </div>
         <!-- Bottom panel: more room for the digital decoders' data and the
              Voice to Text transcripts (tabs) -->
@@ -2777,11 +2833,20 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
     </div>
     <div class="ai-dk-foot" id="ai-dk-foot"></div>
   </aside>
-  <div class="ai-strip" id="ai-strip" onclick="aiDockCollapse(false)" title="Open the AI assistant">
-    <span style="font-size:16px">🤖</span>
-    <span class="ai-dot" id="ai-strip-dot">&#9679;</span>
-    <span class="v">Assistant</span>
-  </div>
+  <!-- The rail at the right edge: one button per panel - 🗺 Map (the right-hand
+       pane), 🔐 Decoders and 🗣 Voice (the panel under the waterfall), lit
+       while open - and 🤖 Assistant while the assistant is enabled on the
+       receiver (opens / collapses its dock). The phone layout has no rail:
+       the panel buttons move into the drawer's Display box
+       (applyMobileRelocation), the assistant keeps its floating button. -->
+  <nav class="rail" id="rail" aria-label="Panels">
+    <span class="rail-panels" id="rail-panels">
+      <button type="button" class="rail-btn" id="map-btn" onclick="mapToggle()" title="Street / satellite map in the right-hand pane: positions the decoders report (e.g. ADS-B aircraft)"><span class="i">🗺</span><span class="v">Map</span></button>
+      <button type="button" class="rail-btn" id="rail-dec" onclick="railPanel('dec')" title="Digital decoders: one tab per decoder, in the panel under the waterfall"><span class="i">🔐</span><span class="v">Decoders</span></button>
+      <button type="button" class="rail-btn" id="rail-voice" onclick="railPanel('voice')" title="Voice to Text: what was said on the VFOs with Transcribe ticked"><span class="i">🗣</span><span class="v">Voice</span><span class="n" id="rail-voice-n"></span></button>
+    </span>
+    <button type="button" class="rail-btn rail-ai" id="rail-ai" onclick="aiDockToggle()" title="AI assistant"><span class="i">🤖</span><span class="ai-dot" id="ai-strip-dot">&#9679;</span><span class="v">Assistant</span></button>
+  </nav>
 </div>
 <button type="button" class="ai-fab" id="ai-fab" onclick="aiDockCollapse(false)" title="AI assistant">🤖</button>
 
@@ -6376,7 +6441,8 @@ function updatePlotTitle() {
     const heard = decimatorInfo.filter(decAudioOn);
     const what = heard.length === 1 ? heard[0].demod_mode :
                  heard.length ? heard.map(d => 'D' + d.id + ' ' + d.demod_mode).join(', ') : 'no VFO heard';
-    $id('fpt').textContent='Channel '+activeChannel+(fmEnabled?' ('+what+')':'');
+    // (which antenna: the selector next to the title)
+    $id('fpt').textContent = 'Spectrum' + (fmEnabled ? ' · ' + what : '');
   }
 }
 
@@ -7075,7 +7141,7 @@ function updateChannelSelector() {
   // Rebuild options for active elements only
   sel.innerHTML = '';
   for (let i = 0; i < activeNumElements; i++) {
-    sel.innerHTML += '<option value="' + i + '">' + i + '</option>';
+    sel.innerHTML += '<option value="' + i + '">Antenna ' + i + '</option>';
   }
 
   // Restore selection if still valid, otherwise select first channel
@@ -10779,16 +10845,16 @@ if (mobileLayoutMQ.addEventListener) {
   });
 }
 
-// On mobile, move the gain/CH/audio top-bar groups and the waterfall display
-// controls into the sidebar (and back on desktop). Moving the real DOM nodes
+// On mobile, move the gain / step / audio top-bar groups, the waterfall display
+// controls and the rail's panel buttons into the sidebar (and back on desktop). Moving the real DOM nodes
 // keeps element IDs and event handlers intact, so the JS that drives them
 // works unchanged in either location.
 const MOBILE_RELOCATIONS = [
   {id: 'tb-gain', slot: 'mobile-controls-slot'},
-  {id: 'tb-ch', slot: 'mobile-controls-slot'},
   {id: 'tb-step', slot: 'mobile-controls-slot'},
   {id: 'tb-audio', slot: 'mobile-controls-slot'},
   {id: 'wf-controls-bar', slot: 'mobile-display-slot'},
+  {id: 'rail-panels', slot: 'mobile-display-slot'},   // 🗺 Map / 🔐 Decoders / 🗣 Voice (the phone has no rail)
 ];
 function applyMobileRelocation() {
   const mobile = mobileLayoutMQ.matches;
@@ -12092,6 +12158,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     document.documentElement.style.setProperty('--ai-w', Math.round(aiDock.w) + 'px');
     if (wasOff !== !on || wasCol !== aiDock.collapsed) setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
   }
+  function aiDockToggle() { aiDockCollapse(!aiDock.collapsed); }
   function aiDockCollapse(c) {
     aiDock.collapsed = !!c;
     aiDockSave();
@@ -12657,6 +12724,23 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     p.style.display = 'none';
     try { localStorage.setItem('kraken_info_panel', JSON.stringify({open: false, tab: infoTab})); } catch (e) {}
     setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+    railSync();
+  }
+
+  // The rail's 🔐 Decoders / 🗣 Voice: open the panel on that tab - or close
+  // it when it already shows it. railSync lights the button of what is shown
+  // and puts the count of unseen transcripts on 🗣.
+  function railPanel(kind) {
+    const p = $id('info-panel'), open = !!p && p.style.display !== 'none';
+    if (open && (kind === 'voice') === (infoTab === 'voice')) infoPanelClose();
+    else infoPanelOpen(kind);
+  }
+  function railSync() {
+    const p = $id('info-panel'), open = !!p && p.style.display !== 'none';
+    const d = $id('rail-dec'), v = $id('rail-voice'), n = $id('rail-voice-n');
+    if (d) d.classList.toggle('on', open && infoTab !== 'voice');
+    if (v) v.classList.toggle('on', open && infoTab === 'voice');
+    if (n) n.textContent = (typeof v2tUnseen !== 'undefined' && v2tUnseen && !(open && infoTab === 'voice')) ? String(v2tUnseen) : '';
   }
 
   function infoOpen(tab) {
@@ -12697,6 +12781,7 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
             (v2tRec ? '<span style="color:#ef5350">&#9679;</span> ' : '') + '🗣 Voice' +
             (v2tUnseen && infoTab !== 'voice' ? ` <span class="v2t-new">${v2tUnseen}</span>` : '') + '</button>';
     if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+    railSync();
     // a newly selected tab scrolled into the strip (only on a change - the
     // strip stays where the user scrolled it otherwise)
     if (el.dataset.sel !== infoTab) {
@@ -14069,12 +14154,15 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
   let cooldownEndTime = null;
   let cooldownTickTimer = null;
   function updateCooldownBadge() {
-    const el = $id('status-cooldown');
-    if (!el || cooldownEndTime === null) return;
+    // (in the calibration chip; not in wideband / independent mode, whose chip says Disabled)
+    const el = $id('status-calibration');
+    if (!el || cooldownEndTime === null || lastStatusWideband) return;
     // Hold at 1s if the server keeps the cooldown active past the local
     // anchor (its duration is runtime-configurable) — never show 0s.
     const remainingSec = Math.max(1, Math.ceil((cooldownEndTime - Date.now()) / 1000));
-    el.textContent = 'Cooldown ' + remainingSec + 's';
+    el.textContent = 'Cooldown ' + remainingSec + ' s';
+    el.style.background = '#ff5722';
+    el.style.color = '#fff';
   }
   // Re-anchor the countdown when the user triggers a new cooldown while one
   // is already running (phase_state stays 5, so the transition-based anchor
@@ -25422,6 +25510,8 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
       calEl.textContent = stateName + (status.noise_source ? ' (Noise On)' : '');
       calEl.style.background = stateColor;
       calEl.style.color = '#fff';
+      // a cooldown: its countdown instead (cal_live arrives between the status messages)
+      if (status.phase_state === 5 || status.cooldown_active) updateCooldownBadge();
     }
 
     // Update top bar background color based on calibration state
@@ -25911,24 +26001,6 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     // Update web mapper panel (connection state / record count)
     if (status.web_mapper) updateWebMapperStatus(status.web_mapper);
 
-    // Update mode indicator
-    const modeEl = $id('status-mode');
-    if (modeEl) {
-      if (status.wideband) {
-        modeEl.textContent = 'Wideband';
-        modeEl.style.background = '#e65100';
-        modeEl.style.color = '#fff';
-      } else if (status.independent) {
-        modeEl.textContent = 'Independent';
-        modeEl.style.background = '#6a1b9a';
-        modeEl.style.color = '#fff';
-      } else {
-        modeEl.textContent = 'Coherent';
-        modeEl.style.background = '#1565c0';
-        modeEl.style.color = '#fff';
-      }
-    }
-
     // Update calibration indicator (also pushed on every change: cal_live)
     lastStatusWideband = !!(status.wideband || status.independent);
     updateCalIndicator(status.phase_state, status.noise_source, lastStatusWideband, status.cooldown_active);
@@ -25942,8 +26014,9 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     // not the remaining time, so anchor a local deadline when it starts and
     // tick it down between status updates. The server stays authoritative
     // for when the badge disappears.
-    const cooldownEl = $id('status-cooldown');
-    if (cooldownEl) {
+    // The countdown shows in the calibration chip (its width is fixed, so
+    // nothing in the bar moves).
+    {
       const isCooldown = status.phase_state === 5 || status.cooldown_active;
       if (isCooldown) {
         if (cooldownEndTime === null) {
@@ -25951,11 +26024,9 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
           if (!cooldownTickTimer) cooldownTickTimer = setInterval(updateCooldownBadge, 200);
         }
         updateCooldownBadge();
-        cooldownEl.style.visibility = 'visible';   // hidden, not removed: the row must not reflow
       } else {
         cooldownEndTime = null;
         if (cooldownTickTimer) { clearInterval(cooldownTickTimer); cooldownTickTimer = null; }
-        cooldownEl.style.visibility = 'hidden';
       }
     }
 
@@ -25973,10 +26044,9 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     // Update scanner indicator
     const scanEl = $id('status-scanner');
     if (scanEl) {
+      scanEl.style.display = scannerRunning ? '' : 'none';   // no "Idle" chip
       if (!scannerRunning) {
-        scanEl.textContent = 'Idle';
-        scanEl.style.background = '#555';
-        scanEl.style.color = '#aaa';
+        scanEl.textContent = '';
       } else if (scannerState === 'LOCKED') {
         scanEl.textContent = 'Locked';
         scanEl.style.background = '#4caf50';

@@ -188,7 +188,62 @@ page got the same treatment on 2026-11-16.
   top bar's Audio is a switch (`data-sw` on the `.tb-btn`); a decoder
   option that is on / off is a button lit while on (its name only -
   `digOnOffText` adds ": state" for anything that isn't On / Off).
-- The top bar's background stays the calibration state's colour.
+
+### Top bar and rail (2026-11-16)
+
+The user found the top bar cluttered, busy and ugly; the mode chip
+duplicated the Mode selector; "CH" did not say that it picks the displayed
+channel; and the panels' buttons should sit on the right-hand bar with the
+Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
+
+- **Order**: ☰, the frequency, then fields - Step, Gain, Audio, Mode - and at
+  the right `.tb-right`: the status chips above the telemetry chips. A
+  field is a `.tb-group.fld`: a small upper-case label above its control
+  (a grid; Gain's and Audio's value sits on the label's line). The
+  separators are gone. One row from about 1650 px of window (with the
+  sidebar); narrower, the right block wraps under the controls. The
+  Wideband variant's mixer (`#wbv-group`: side, LO drive, ring / LO as its
+  readout) is a field too - styled from a forced display only, no
+  downconverter was at hand.
+- **Chips** (`.status-badge`): a dark pill with a dot in the state's
+  colour - the scripts still set the chip's `background` to that colour;
+  an inset shadow darkens the pill and the dot (`::before`) inherits it.
+  Left to right: the scanner (only while a scanner runs - no "Idle" chip),
+  the calibration (fixed width; the cooldown countdown shows in it:
+  `updateCooldownBadge`), the connection. So a chip that appears or changes
+  its text never moves a control or another chip. No mode chip: the Mode
+  selector stands next to them. Remove a chip's element only together with
+  its script: the countdown's timer was inside `if (cooldownEl)`.
+- **Bar colour**: the calibration state still colours the bar, but lightly -
+  a faint tint and a 2 px line at its lower edge (`.top-bar.cal-*`); the
+  chip names the state. The playback's red line (`body.pb-on`) wins over it.
+- **The antenna shown** (`#chs`, was "CH" in the top bar): a selector on the
+  spectrum's header reading "Antenna N" (`updateChannelSelector`), next to
+  the title, which is now "Spectrum · <demods heard>" (`updatePlotTitle`).
+  Coherent mode only. The phone layout no longer moves it into the drawer.
+- **The rail** (`#rail`, at the right edge after the assistant's dock): one
+  button per panel - `#map-btn` (`mapToggle`), `#rail-dec` / `#rail-voice`
+  (`railPanel`: opens the panel under the waterfall on that tab, or closes
+  it when it already shows it) - lit while their panel shows (`railSync`,
+  called from `infoRenderTabs` and `infoPanelClose`; 🗣 carries the count of
+  unseen transcripts), and `#rail-ai` while the assistant is enabled
+  (`aiDockToggle`; lit while its dock is open - by CSS from the body
+  classes). It replaces the collapsed assistant's strip (`#ai-strip`) and
+  the three buttons at the end of the waterfall bar. The phone layout has
+  no rail: `applyMobileRelocation` moves `#rail-panels` into the drawer's
+  Display box (where the buttons were before), the assistant keeps its
+  floating button.
+- Tests (48 checks, headless Chromium, real mouse / touch): the bar's
+  content and order, one row at 1700 px, labels above controls, the chips
+  at rest; the scanner chip appearing and going without anything moving;
+  the calibration chip's texts at a fixed width, the cooldown in it, the
+  bar's class; the antenna selector (place, wording, it switches the
+  channel, rebuilt options, hidden in independent mode); the rail (Map,
+  Decoders, Voice toggle and light up, the panel's own ✕ and a panel opened
+  from elsewhere keep the buttons right, the assistant's button with the
+  assistant enabled); no overflow at 1100 px; phone: no rail, the buttons in
+  the drawer, a tap opens the map, back on the desktop they return to the
+  rail; no JS errors. The other suites pass unchanged (53 + 78 + 35 + 33).
 - Not covered: heimdall's own page (`heimdall_v2/index.html`, a light page
   of its own) and `array_calculator.html` (already in this style).
 

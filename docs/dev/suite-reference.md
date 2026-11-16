@@ -734,8 +734,8 @@ stalls), crossfaded; details `kraken_doa_v2/CLAUDE.md` *VFO audio*
 **🗺 Map (right-hand pane)** (details: `kraken_doa_v2/CLAUDE.md` *Map*):
 - Street (OpenStreetMap) / satellite (Esri World Imagery) map drawn by the
   page itself (no map library, no CDN): without internet it keeps working on
-  a lat/lon grid with a notice. Opened with the 🗺 Map button under the
-  waterfall; a tab next to MUSIC DoA in coherent mode, the whole right pane
+  a lat/lon grid with a notice. Opened with the 🗺 Map button on the right-hand
+  rail; a tab next to MUSIC DoA in coherent mode, the whole right pane
   otherwise; resizable; view settings per browser (localStorage)
 - 🔍 Search (2026-10-21; kraken_doa_v2/CLAUDE.md *🔍 Map search*):
   coordinates in the usual forms, UTM, MGRS, grid locators, map links and
@@ -1340,7 +1340,7 @@ see the client CLAUDE.md
   0x400 / 0x800 - the client follows heimdall's mode from them
   (`ControlHandler::note_server_mode`, after a 3 s grace for its own changes)
 - The DoA panel and DoA/coherent sidebar sections (MUSIC DoA, Beamforming,
-  Web Mapper, DoA Recording, continuous scanner, CH selector) are hidden
+  Web Mapper, DoA Recording, continuous scanner, the spectrum's antenna selector) are hidden
   outside coherent; the discrete scanner section only shows in wideband
 - The assistant's IQ captures (`capture_iq`, done inside kraken_doa -
   `ai_capture.cpp`) record the tuner whose band holds the signal outside

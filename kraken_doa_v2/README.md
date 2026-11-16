@@ -95,9 +95,12 @@ you reach its top or bottom edge. The order and the collapsed boxes are
 remembered in the browser (also over a
 restart). **Collapse all / Open all / ↺ Order** at the bottom of the sidebar act on
 every box. Explanations are behind the **?** icons and tooltips. Top bar (always visible) has the
-**center-frequency dial, gain slider, FFT channel selector, audio on/off + volume**,
-live hardware stats, and status badges (connection / coherent mode / calibration /
-cooldown / scanner).
+**center-frequency dial, tuning step, gain slider, audio on/off + volume and the
+operating mode**, and at the right the status chips (calibration - with the cooldown
+countdown -, connection, and the scanner while one runs) above the live hardware
+stats. The antenna whose signal the spectrum shows is chosen on the spectrum's
+header. The rail at the right edge opens and closes the panels: **🗺 Map**,
+**🔐 Decoders**, **🗣 Voice** and, when enabled, the **🤖 Assistant**.
 
 | Section | What it does |
 |---------|--------------|

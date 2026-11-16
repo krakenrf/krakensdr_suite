@@ -111,7 +111,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   Not in independent / wideband mode or with DoA off (one channel, as
   before; checked through the engine with digi_test u8 vs u8mc). Antenna 0
   of the array here hears far less than the others (its noise 5 dB higher):
-  the single-channel decoder used the CH selector's antenna
+  the single-channel decoder used the antenna selector's antenna
 - Detector fixes found on a 30 s live recording at sens 8 (same day): a
   package continues on max(threshold - 2, 7.5) dB (6 dB: noise kept 93 %
   of package regions active - packages ran to 1.2 s, merged transmissions,

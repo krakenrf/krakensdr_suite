@@ -51,7 +51,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   click = popup (the plugin's "key: value" info lines + position, distance
   / bearing from the station, age); status line = counts per VFO decoder
 - Right-hand pane: `.doa-panel#right-pane` holds the DoA displays and
-  `#map-pane`. `mapToggle()` (🗺 Map button under the waterfall, ✕, the
+  `#map-pane`. `mapToggle()` (🗺 Map button on the right-hand rail, ✕, the
   decoder tab's "Show map") / `rpShow('doa'|'map')` (header tabs, coherent
   only) -> `rpApply()`: body classes `map-on` (pane shown in every mode)
   and `rp-map` (map tab visible - always outside coherent); width
