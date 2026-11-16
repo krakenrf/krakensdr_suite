@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<!--
+  scripts/build_page.html - the page scripts/build_page.py shows on the web UI
+  ports while run.sh builds the software. Polls /__build/status; when the
+  build is done (or the server goes away) it probes its own URL until the
+  answer no longer carries X-KrakenSDR-Build, i.e. the real UI is up, and
+  reloads. Self-contained: no external resources (the Pi may be offline).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Building KrakenSDR</title>
+<style>
+:root {--bg:#1a1a2e;--panel:#16213e;--border:#0f3460;--text:#e0e0e0;--dim:#8aa8c7;--accent:#4fc3f7;
+  --warn:#ffb74d;--err:#ff8a80;--mono:'Consolas',ui-monospace,'Menlo','Monaco','Courier New',monospace}
+* {box-sizing:border-box}
+body {margin:0;background:var(--bg);color:var(--text);font:14px Arial,sans-serif;line-height:1.45}
+main {max-width:720px;margin:0 auto;padding:24px 16px 40px}
+h1 {font-size:20px;margin:0 0 2px;color:#fff}
+h1 span {color:var(--accent)}
+.sub {color:var(--dim);margin:0 0 18px}
+.card {background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:16px}
+.row {display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+#phase {font-weight:bold;font-size:15px;overflow-wrap:anywhere}
+#pct {font:bold 22px var(--mono);color:var(--accent)}
+.bar {height:14px;background:#0a0a15;border:1px solid var(--border);border-radius:7px;overflow:hidden;margin:10px 0}
+#fill {height:100%;width:0;background:linear-gradient(90deg,#1a4a7a,var(--accent));border-radius:7px;
+  transition:width .9s ease-out}
+.bar.indet #fill {width:30% !important;animation:slide 1.6s ease-in-out infinite alternate;transition:none}
+@keyframes slide {from {margin-left:0} to {margin-left:70%}}
+#step {font:12px var(--mono);color:var(--dim);overflow-wrap:anywhere;min-height:1.45em}
+.meta {color:var(--dim);font-size:12px;margin-top:6px}
+#stale {color:var(--warn);font-size:12px;margin-top:6px}
+#errbox {border-color:#7a2a2a;background:#2a1520}
+#errbox h2 {color:var(--err);font-size:16px;margin:0 0 8px}
+#errtext {font:12px var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 10px}
+code {font:12px var(--mono);background:#0a0a15;border:1px solid var(--border);border-radius:3px;padding:1px 4px}
+#waitbox h2 {font-size:16px;margin:0 0 6px;color:var(--accent)}
+details {margin-top:14px}
+summary {cursor:pointer;color:var(--dim)}
+#log {margin:8px 0 0;max-height:300px;overflow:auto;background:#10101e;border:1px solid var(--border);
+  border-radius:4px;padding:6px 8px;font:11px var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;color:#cfd8e6}
+.spin {display:inline-block;width:12px;height:12px;border:2px solid var(--border);border-top-color:var(--accent);
+  border-radius:50%;animation:rot 1s linear infinite;vertical-align:-1px;margin-right:6px}
+@keyframes rot {to {transform:rotate(360deg)}}
+[hidden] {display:none !important}
+</style>
+</head>
+<body>
+<main>
+  <h1><span>KrakenSDR</span> - building the software on this device</h1>
+  <p class="sub">This page follows the build and opens the KrakenSDR web interface by itself when it is ready.</p>
+
+  <div class="card" id="progbox">
+    <div class="row"><div id="phase">Preparing the build...</div><div id="pct">0%</div></div>
+    <div class="bar" id="bar"><div id="fill"></div></div>
+    <div id="step"></div>
+    <div class="meta" id="meta"></div>
+    <div id="stale" hidden></div>
+  </div>
+
+  <div class="card" id="errbox" hidden>
+    <h2>The build failed</h2>
+    <pre id="errtext"></pre>
+    <div>On the device, run <code>./install.sh</code> once (it installs what the build needs and builds
+      everything), then start KrakenSDR again with <code>./run.sh</code>. This page will follow a new
+      build by itself.</div>
+  </div>
+
+  <div class="card" id="waitbox" hidden>
+    <h2><span class="spin"></span>Starting KrakenSDR...</h2>
+    <div id="waittext">The build is done. The web interface opens here as soon as it answers.</div>
+    <div class="meta" id="waitmeta"></div>
+  </div>
+
+  <details id="logbox">
+    <summary>Build output</summary>
+    <pre id="log">(no output yet)</pre>
+  </details>
+</main>
+<script>
+(function () {
+  'use strict';
+  var POLL_MS = 1000, PROBE_MS = 1500, STALE_S = 30;
+  var $ = function (id) { return document.getElementById(id); };
+  var mode = 'progress';          // progress | failed | waiting
+  var build = null, maxPct = 0;   // build = "started" of the build shown; maxPct never goes back within it
+  var fails = 0, waitSince = 0, failedOpened = false;
+  var isHttps = location.protocol === 'https:';
+
+  function setText(id, s) { var e = $(id); if (e && e.textContent !== s) e.textContent = s; }
+  function num(v) { return typeof v === 'number' && isFinite(v) ? v : 0; }
+  function str(v) { return v === undefined || v === null ? '' : String(v); }
+  function dur(s) {
+    s = Math.max(0, Math.floor(s));
+    var m = Math.floor(s / 60), r = s % 60;
+    return m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min'
+                   : m + ':' + (r < 10 ? '0' : '') + r;
+  }
+  function show(m) {
+    mode = m;
+    $('progbox').hidden = m !== 'progress';
+    $('errbox').hidden = m !== 'failed';
+    $('waitbox').hidden = m !== 'waiting';
+  }
+
+  function setLog(lines) {
+    var log = $('log');
+    var atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+    var t = Array.isArray(lines) && lines.length ? lines.map(str).join('\n') : '(no output yet)';
+    if (log.textContent !== t) {
+      log.textContent = t;
+      if (atBottom) log.scrollTop = log.scrollHeight;
+    }
+  }
+
+  function render(st) {
+    var state = str(st.state) || 'starting';
+    var now = num(st.now) || Date.now() / 1000;
+    var started = num(st.started);
+    if (started && started !== build) { build = started; maxPct = 0; }
+    setLog(st.log_tail);
+
+    if (state === 'done') { startWaiting(); return; }
+    if (state === 'failed') {
+      show('failed');
+      setText('errtext', str(st.error) || 'The build stopped with an error (see the build output below).');
+      if (!failedOpened) { $('logbox').open = true; failedOpened = true; }
+      document.title = 'KrakenSDR build failed';
+      return;
+    }
+    failedOpened = false;
+    show('progress');
+    var pct = Math.min(100, Math.max(0, Math.round(num(st.percent))));
+    if (pct > maxPct) maxPct = pct;
+    var starting = state !== 'building';
+    $('bar').className = starting ? 'bar indet' : 'bar';
+    $('fill').style.width = maxPct + '%';
+    setText('pct', starting ? '' : maxPct + '%');
+    setText('phase', str(st.phase) || (starting ? 'Preparing the build...' : 'Building...'));
+    setText('step', str(st.step));
+    var meta = [];
+    if (num(st.total) > 0) meta.push('step ' + num(st.done) + ' of ' + num(st.total));
+    if (started) meta.push('elapsed ' + dur(now - started));
+    setText('meta', meta.join(' · '));
+    var upd = num(st.updated), quiet = upd ? now - upd : 0;
+    var staleEl = $('stale');
+    if (state === 'building' && quiet > STALE_S) {
+      staleEl.hidden = false;
+      setText('stale', 'No progress reported for ' + (quiet < 120 ? Math.floor(quiet) + ' s' : dur(quiet)) +
+              ' - a large file can take a while to compile on a Raspberry Pi.');
+    } else {
+      staleEl.hidden = true;
+    }
+    document.title = starting ? 'Building KrakenSDR' : 'Building KrakenSDR - ' + maxPct + '%';
+  }
+
+  function startWaiting() {
+    if (mode !== 'waiting') {
+      waitSince = Date.now();
+      show('waiting');
+      setText('waittext', isHttps
+        ? 'The build is done. The DoA web interface starts once the receiver (heimdall) has calibrated ' +
+          'its channels - this can take a minute. This page opens it by itself.'
+        : 'The build is done. The web interface opens here as soon as it answers - this takes a few seconds.');
+      document.title = 'Starting KrakenSDR...';
+    }
+    var w = (Date.now() - waitSince) / 1000;
+    setText('waitmeta', 'waiting ' + dur(w) +
+      (w > 180 ? ' - if nothing happens, check the terminal or the logs of ./run.sh on the device' : ''));
+  }
+
+  function isBuildPage(r) { return r.headers.get('X-KrakenSDR-Build') !== null; }
+
+  function poll() {
+    fetch('/__build/status', {cache: 'no-store'}).then(function (r) {
+      if (!isBuildPage(r)) { location.reload(); return 'stop'; }   // the real UI answers already
+      return r.json().then(function (st) { fails = 0; render(st || {}); });
+    }).catch(function () {
+      // the build server stops when the build ends; a single miss may be a blip
+      if (++fails >= 2) startWaiting();
+    }).then(function (res) { if (res !== 'stop') schedule(); });
+  }
+
+  function probe() {
+    fetch(location.href, {cache: 'no-store'}).then(function (r) {
+      if (!isBuildPage(r)) { location.reload(); return 'stop'; }    // the real UI is up
+      // still the build server: a new build may have started
+      return fetch('/__build/status', {cache: 'no-store'}).then(function (s) { return s.json(); })
+        .then(function (st) {
+          fails = 0;
+          if (st && st.state !== 'done') render(st); else startWaiting();
+        });
+    }).catch(function () { startWaiting(); })
+      .then(function (res) { if (res !== 'stop') schedule(); });
+  }
+
+  function schedule() { setTimeout(mode === 'waiting' ? probe : poll, mode === 'waiting' ? PROBE_MS : POLL_MS); }
+
+  show('progress');
+  poll();
+})();
+</script>
+</body>
+</html>

@@ -22,6 +22,14 @@ struct HardwareStats {
 // utils/platform.hpp)
 HardwareStats get_hardware_stats();
 
+// CPU used by kraken_doa and the processes it started (decoder plugins, the
+// whisper / AI / test-signal helpers), as a share of the whole machine: the
+// scale of HardwareStats::cpu_usage_pct (every core busy = 100). For the
+// terminal dashboard: sampled at most once a second (each sample reads the
+// process list - platform::process_tree_cpu_ns) and held in between; 0 until
+// the second sample. Thread-safe.
+float get_program_cpu_usage();
+
 class SystemStats {
 private:
     static constexpr size_t MAX_THREADS = 32;  // Max tracked threads

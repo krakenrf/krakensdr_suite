@@ -289,7 +289,9 @@ the end of `kraken_doa_v2/CLAUDE.md`). Decoders also have
 ### Testing run.sh
 - Running a copy of run.sh still stops the live stack: it replaces the tmux
   session `krakensdr` and sweeps stale heimdall / kraken_doa processes. Give
-  the copy its own `TMUX_SESSION` and stub out `stop_stale`.
+  the copy its own `TMUX_SESSION` and stub out `stop_stale`. run.sh also
+  builds a stale / missing app first (`scripts/autobuild.sh`) with a page on
+  8070 / 8080: `NO_AUTOBUILD=1`, or `BUILD_PAGE_HTTP_PORT` / `_HTTPS_PORT`.
 
 ## Dependencies
 
