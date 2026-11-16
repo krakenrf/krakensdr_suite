@@ -168,8 +168,10 @@ the job's scratch directory (not committed). The established setup:
 - A TEST build: a copy of the tree with the ports in `include/config.hpp`
   moved (e.g. 2808x / 2809x) plus `KRAKEN_AI_MCP_PORT`, run from a scratch
   directory (its own `doa_settings.json`). Never test against the live
-  stack's ports or settings. On Windows also give the exe another name - the
-  launcher's stale-process sweep stops any `kraken_doa.exe`.
+  stack's ports or settings. Give the test exe another name (e.g.
+  `kraken_doa_test`): the stale-process sweep of `run.sh` (`pgrep -x`) and
+  of the Windows launcher stops any `kraken_doa` / `kraken_doa.exe`, so a
+  live stack started meanwhile ends a test server of that name mid-test.
 - A fake heimdall in Python that streams synthetic 8091 packets (a UCA
   scene with tones / signals at known bearings, the noise flag, retunes) and
   obeys 8092 commands.
