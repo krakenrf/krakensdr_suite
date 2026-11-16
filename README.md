@@ -280,6 +280,11 @@ The **🗺 Map** button under the waterfall opens a street or satellite map.
   and shown as markers for 24 hours.
 - **The station**: click and drag it to move it, or right-click →
   **📡 Set station here**.
+- **Map provider**: OpenStreetMap and Esri imagery need no key. With your
+  own API key you can switch to Mapbox, Google Maps, Azure Maps, MapTiler,
+  Thunderforest, Stadia Maps, HERE or any tile URL: **⚙** in the top bar,
+  next to the scanner badge. The provider and key are kept in that browser
+  only, and **Test** checks the key before you save it.
 
 Map tiles, terrain, masts and address lookups come from the internet,
 loaded by your browser. Without a connection the map still works on a plain
