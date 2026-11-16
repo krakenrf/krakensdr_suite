@@ -431,8 +431,18 @@ body.ai-rs {cursor:col-resize;user-select:none}
 .ai-dk-in textarea:focus {outline:none;border-color:var(--ac)}
 .ai-dk-foot {font-size:10px;color:var(--t5);padding:0 8px 5px;flex-shrink:0;min-height:0}
 .ai-dk-foot:empty {display:none}
-body.ai-dk-off .ai-dock,body.ai-dk-off .ai-dock-rs,body.ai-dk-off .rail-ai {display:none !important}
-body.ai-dk-col .ai-dock,body.ai-dk-col .ai-dock-rs {display:none !important}
+/* ai-dk-off: the assistant is not set up on the receiver - no dock, unless
+   the rail's 🤖 opened it to say how to set it up (ai-dk-how; then the dock
+   holds only that note). ai-dk-col: set up, the dock collapsed. */
+body.ai-dk-off:not(.ai-dk-how) .ai-dock,body.ai-dk-off:not(.ai-dk-how) .ai-dock-rs {display:none !important}
+body.ai-dk-col:not(.ai-dk-off) .ai-dock,body.ai-dk-col:not(.ai-dk-off) .ai-dock-rs {display:none !important}
+.ai-dk-setup {display:none;padding:12px 10px;font-size:12.5px;line-height:1.55;color:var(--t2)}
+.ai-dk-setup b {color:var(--t0)}
+.ai-dk-setup code {display:block;margin:6px 0;padding:6px 8px;background:var(--s1);border:1px solid var(--l1);border-radius:5px;font-size:11.5px;color:var(--t0);overflow-wrap:anywhere;user-select:all}
+.ai-dk-setup .n {color:var(--t4);font-size:11.5px}
+body.ai-dk-off .ai-dk-setup {display:block}
+body.ai-dk-off .ai-dk-msgs,body.ai-dk-off .ai-dk-chips,body.ai-dk-off .ai-dk-in,body.ai-dk-off .ai-dk-foot,body.ai-dk-off .ai-dk-warn,body.ai-dk-off .ai-dk-set,
+body.ai-dk-off .ai-dk-hist,body.ai-dk-off .ai-dk-head .ai-on {display:none !important}
 .ai-fab {display:none}
 @media (max-width:900px), (pointer:coarse) and (max-width:1280px) {
   .ai-dock {position:fixed;top:0;right:0;bottom:0;left:0;width:auto;max-width:none;z-index:1002;border-left:none}
@@ -1447,7 +1457,7 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .rail-btn .n:empty {display:none}
 .rail-ai {margin-top:6px;padding-top:12px;border-top-color:var(--l2);border-radius:0 0 6px 6px}
 .rail-ai .ai-dot {font-size:9px;line-height:1}
-body:not(.ai-dk-col):not(.ai-dk-off) .rail-ai {background:var(--ac);border-color:var(--ac-h);color:#fff;border-radius:6px}
+body:not(.ai-dk-col):not(.ai-dk-off) .rail-ai,body.ai-dk-off.ai-dk-how .rail-ai {background:var(--ac);border-color:var(--ac-h);color:#fff;border-radius:6px}
 
 /* ===== Mobile / touch layout (small screens and touch tablets only) ===== */
 /* ☰ in the top bar (toggleSidebar): on the desktop it hides / shows the
@@ -2847,12 +2857,20 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
       <span class="t">🤖 Assistant</span>
       <span class="ai-dot" id="ai-dk-dot" title="">&#9679;</span>
       <span class="sp"></span>
-      <label class="ai-ro" id="ai-dk-ro-l" title="Read only: the assistant may look at the receiver, but not tune, change VFOs / decoders or save anything. Applies to every page using this receiver">
+      <label class="ai-ro ai-on" id="ai-dk-ro-l" title="Read only: the assistant may look at the receiver, but not tune, change VFOs / decoders or save anything. Applies to every page using this receiver">
         <input type="checkbox" id="ai-dk-ro" onchange="aiSetReadonly(this.checked)"> Read only</label>
-      <button type="button" id="ai-dk-set-btn" onclick="aiToggleSettings()" title="Model and effort">⚙</button>
-      <button type="button" onclick="aiNewChat()" title="New conversation">＋</button>
-      <button type="button" id="ai-dk-hist-btn" onclick="aiToggleHistory()" title="Earlier conversations">🕘</button>
-      <button type="button" onclick="aiDockCollapse(true)" title="Collapse the assistant to a strip">⟩</button>
+      <button type="button" class="ai-on" id="ai-dk-set-btn" onclick="aiToggleSettings()" title="Model and effort">⚙</button>
+      <button type="button" class="ai-on" onclick="aiNewChat()" title="New conversation">＋</button>
+      <button type="button" class="ai-on" id="ai-dk-hist-btn" onclick="aiToggleHistory()" title="Earlier conversations">🕘</button>
+      <button type="button" onclick="aiDockCollapse(true)" title="Close (the 🤖 button on the right-hand rail opens it again)">⟩</button>
+    </div>
+    <!-- shown instead of the conversation while the assistant is not set up on the receiver (body.ai-dk-off) -->
+    <div class="ai-dk-setup" id="ai-dk-setup">
+      <b>Not set up on this receiver</b><span class="help" tabindex="0" role="button" aria-label="Help">?<span class="tip">The assistant answers questions about what the receiver shows and can operate it. It needs Claude Code installed and logged in on the receiver first (a Claude subscription or an Anthropic API key) - see README, "AI assistant". The page can't switch it on itself: it lets anyone using the page run an AI agent on the receiver.</span></span>
+      <div>Run once on the receiver:</div>
+      <code class="os-lin">cd kraken_doa_v2 &amp;&amp; python3 ai/kraken_ai.py setup</code>
+      <code class="os-win">cd kraken_doa_v2 &amp;&amp; py -3 ai\kraken_ai.py setup</code>
+      <div class="n">It opens here by itself once it is set up.</div>
     </div>
     <div class="ai-dk-warn" id="ai-dk-warn"></div>
     <div class="ai-dk-set" id="ai-dk-set" style="display:none">
@@ -2874,8 +2892,9 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   </aside>
   <!-- The rail at the right edge: one button per panel - 🗺 Map (the right-hand
        pane), 🔐 Decoders and 🗣 Voice (the panel under the waterfall), lit
-       while open - and 🤖 Assistant while the assistant is enabled on the
-       receiver (opens / collapses its dock). The phone layout has no rail:
+       while open - and 🤖 Assistant, always there: it opens / collapses the
+       assistant's dock, or, while the assistant is not set up on the
+       receiver, a dock that says how to set it up. The phone layout has no rail:
        the panel buttons move into the drawer's Display box
        (applyMobileRelocation), the assistant keeps its floating button. -->
   <nav class="rail" id="rail" aria-label="Panels">
@@ -12294,11 +12313,28 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
     const wasOff = b.classList.contains('ai-dk-off'), wasCol = b.classList.contains('ai-dk-col');
     b.classList.toggle('ai-dk-off', !on);
     b.classList.toggle('ai-dk-col', aiDock.collapsed);
+    const hadHow = b.classList.contains('ai-dk-how');
+    if (on && hadHow) b.classList.remove('ai-dk-how');   // set up meanwhile: the real dock takes over
     document.documentElement.style.setProperty('--ai-w', Math.round(aiDock.w) + 'px');
-    if (wasOff !== !on || wasCol !== aiDock.collapsed) setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+    const ra = $id('rail-ai');
+    if (ra) ra.title = on ? 'AI assistant' : 'AI assistant - not set up on this receiver (click for how)';
+    if (wasOff !== !on || wasCol !== aiDock.collapsed || (on && hadHow)) setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
   }
-  function aiDockToggle() { aiDockCollapse(!aiDock.collapsed); }
+  // The rail's 🤖. Set up: open / collapse the dock (remembered). Not set up:
+  // open / close the dock with the note that says how to (ai-dk-how; not
+  // remembered - it is help, not a layout choice).
+  function aiDockHow(show) {
+    const b = document.body;
+    if (b.classList.contains('ai-dk-how') === !!show) return;
+    b.classList.toggle('ai-dk-how', !!show);
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+  }
+  function aiDockToggle() {
+    if (!(aiState && aiState.enabled)) { aiDockHow(!document.body.classList.contains('ai-dk-how')); return; }
+    aiDockCollapse(!aiDock.collapsed);
+  }
   function aiDockCollapse(c) {
+    if (c && document.body.classList.contains('ai-dk-how')) { aiDockHow(false); return; }   // the note's ⟩
     aiDock.collapsed = !!c;
     aiDockSave();
     aiDockApply();

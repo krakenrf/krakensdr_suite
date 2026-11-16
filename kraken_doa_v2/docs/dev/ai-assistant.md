@@ -11,10 +11,18 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
 assistant that sees the screen, controls the receiver through MCP, searches
 the internet and writes / changes decoder plugins):
 - Page: a docked right-hand column (`#ai-dock`, after `.main-content`; body
-  class `ai-dk-off` while the assistant isn't enabled - the page is as
-  before then). While enabled its 🤖 button is on the right-hand rail
-  (`#rail-ai`, `aiDockToggle()`: opens / collapses the dock, lit while it is
-  open - *sidebar.md*, "Top bar and rail"); ⟩ in the dock collapses it too; the left edge (`#ai-dock-rs`) resizes it
+  class `ai-dk-off` while the assistant isn't enabled). Its 🤖 button is
+  always on the right-hand rail (`#rail-ai`, `aiDockToggle()` - *sidebar.md*,
+  "Top bar and rail"): enabled, it opens / collapses the dock and is lit
+  while it is open; not enabled, it opens the dock with only a note that
+  says how to set the assistant up (`#ai-dk-setup`: the `kraken_ai.py setup`
+  command for the receiver's OS; body class `ai-dk-how`, not remembered;
+  everything marked `.ai-on`, the conversation and the question box are
+  hidden; an `ai_state` with `enabled:true` swaps the real dock in). The
+  user asked for the button to stay (2026-11-17): on a receiver without
+  `ai/ai_config.json` - a per-checkout, untracked file, so a stack run from
+  another worktree has none - it had vanished with nothing to say why.
+  ⟩ in the dock collapses it too; the left edge (`#ai-dock-rs`) resizes it
   (260 px .. 60 % of the window), width + collapsed state per browser
   (localStorage `kraken_ai_dock`). Phone (<= 900 px): a floating 🤖 button
   (`#ai-fab`) opens it full-screen. Header: Read only switch (`#ai-dk-ro`),

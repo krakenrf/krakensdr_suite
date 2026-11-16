@@ -247,9 +247,10 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   (`railPanel`: opens the panel under the waterfall on that tab, or closes
   it when it already shows it) - lit while their panel shows (`railSync`,
   called from `infoRenderTabs` and `infoPanelClose`; 🗣 carries the count of
-  unseen transcripts), and `#rail-ai` while the assistant is enabled
+  unseen transcripts), and `#rail-ai`, the assistant's, always there
   (`aiDockToggle`; lit while its dock is open - by CSS from the body
-  classes). It replaces the collapsed assistant's strip (`#ai-strip`) and
+  classes; while the assistant is not set up on the receiver it opens a
+  dock that only says how to set it up - *ai-assistant.md*). It replaces the collapsed assistant's strip (`#ai-strip`) and
   the three buttons at the end of the waterfall bar. The phone layout has
   no rail: `applyMobileRelocation` moves `#rail-panels` into the drawer's
   Display box (where the buttons were before), the assistant keeps its
