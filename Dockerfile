@@ -30,14 +30,15 @@ ARG UWS_COMMIT=fe7da4cb05622b8d004718ec3ca05101782eb1c2
 ARG LIBRTLSDR_REPO=https://github.com/krakenrf/librtlsdr
 ARG LIBRTLSDR_COMMIT=578b43ddd971786e84e2a6ab3c338ee48c8739c3
 
-# libwebp-dev: the decoder plugins link libwebp (BSD) to compress video frames;
-# the main app never links it. The runtime shared library (libwebp7) needs no
-# hand-adding - the runtime stage below derives its packages from ldd of every
-# binary, which includes the plugin decoders.
+# libjpeg-dev (libjpeg-turbo, IJG/BSD-3-Clause/zlib): the decoder plugins link
+# -ljpeg to compress video frames; the main app never links it. The runtime
+# shared library (libjpeg-turbo8) needs no hand-adding - the runtime stage below
+# derives its packages from ldd of every binary, which includes the plugin
+# decoders.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git pkg-config ca-certificates \
         libusb-1.0-0-dev libeigen3-dev libssl-dev \
-        libopus-dev libwebp-dev zlib1g-dev libsqlite3-dev \
+        libopus-dev libjpeg-dev zlib1g-dev libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

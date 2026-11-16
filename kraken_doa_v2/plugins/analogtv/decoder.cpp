@@ -61,10 +61,10 @@ constexpr float FRAME_EMA = 0.6f;   // light temporal smoothing (prefer freshnes
 // on no signal, a rolling picture on a weak one), like a real TV / TempestSDR.
 // It never calls host.valid(), never fires a lock event and never touches the
 // lock / periodicity / debounce state - purely what gets drawn while searching.
-// Capped in rate and sent at a lower WebP quality (it is a throwaway preview,
+// Capped in rate and sent at a lower JPEG quality (it is a throwaway preview,
 // and noise frames never dedup, so a modest rate + quality bounds bandwidth).
 constexpr double FREE_RUN_FPS = 12.0;   // free-run preview cadence (<= locked build rate)
-constexpr int FREE_RUN_QUALITY = 50;    // lower WebP quality for the preview
+constexpr int FREE_RUN_QUALITY = 50;    // lower JPEG quality for the preview
 
 // Noise-rejection lock gate. A lucky sync-tip / field-sync cadence can appear
 // in complex-Gaussian noise (whose Rayleigh envelope has heavy-tailed spikes),
@@ -110,14 +110,11 @@ double num_opt(const std::string& v, double fallback) {
     return (end != v.c_str() && std::isfinite(x)) ? x : fallback;
 }
 
-// WebP quality hint from the option: a preset or a number 1..100, else -1 (host default)
+// JPEG quality from the option (the slider sends a plain number 1..100); a
+// non-finite value falls back to a sensible default.
 int quality_opt(const std::string& v) {
-    if (v.empty() || v == "default") return -1;
-    if (v == "low") return 40;
-    if (v == "medium") return 65;
-    if (v == "high") return 90;
     const double q = num_opt(v, NAN);
-    if (!std::isfinite(q)) return -1;
+    if (!std::isfinite(q)) return 60;
     return static_cast<int>(clampd(q, 1, 100) + 0.5);
 }
 
@@ -255,8 +252,8 @@ private:
     std::string contrast_ = "normal";
     double gamma_ = 1.0;
     double line_adjust_hz_ = 0;
-    int quality_ = -1;        // WebP quality hint for the host (-1 = host default ~75)
-    bool lossless_ = false;   // lossless WebP (frames are small; mostly a fidelity knob)
+    int quality_ = 60;        // JPEG quality for the host (set by the slider)
+    bool lossless_ = false;   // max-quality JPEG (frames are small; mostly a fidelity knob)
     bool free_run_ = true;    // show a live preview while unlocked (display only)
     bool verbose_opt_ = false;
 
@@ -479,7 +476,7 @@ private:
         vf.format = 0;   // GRAY8
         vf.pixels = pix_.data();
         vf.label = label;
-        vf.quality = quality_;     // host compresses the raw pixels to WebP at this quality
+        vf.quality = quality_;     // host compresses the raw pixels to JPEG at this quality
         vf.lossless = lossless_;
         host.video_frame(vf);
 
@@ -639,12 +636,11 @@ KRAKEN_PLUGIN(AnalogTv,
                            {"line_adjust", "Line nudge (Hz)", "0", "",
                             "Fine nudge to the assumed line rate (Hz) if the picture won't lock or tears diagonally. "
                             "Normally 0; try a few Hz either way."},
-                           {"quality", "Picture quality", "default", "",
-                            "WebP compression quality for the picture sent to the browser: a number 1-100, or "
-                            "low/medium/high (40/65/90), or 'default' for the host default (~75). Higher is sharper "
-                            "but larger (analog-TV frames are small either way)."},
+                           {"quality", "Picture quality", "60", "range:10:95:5",
+                            "JPEG quality: lower = less bandwidth/CPU, higher = sharper (analog-TV frames are small "
+                            "either way)."},
                            {"lossless", "Lossless", "0", "0=Off|1=On",
-                            "Send the picture losslessly instead of lossy WebP."}},
+                            "Send the picture at maximum JPEG quality instead of the quality slider's setting."}},
                .manual_only = false,
                .voice = false,
                .talkers = false,

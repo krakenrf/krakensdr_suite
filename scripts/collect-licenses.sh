@@ -81,9 +81,9 @@ put() {
         cp "$f" "$DEST/third-party/$name/"
     done
 }
-# libwebp (BSD-3-Clause): compiled into the decoder plugin binaries when
-# present. Its licence file lives in the distro / MSYS2 package (handled below),
-# so nothing repo-local to copy here.
+# libjpeg-turbo (IJG / BSD-3-Clause / zlib): compiled into the decoder plugin
+# binaries when present. Its licence file lives in the distro / MSYS2 package
+# (handled below), so nothing repo-local to copy here.
 put pffft "$ROOT/kraken_doa_v2/external/pffft/LICENSE.txt"
 put concurrentqueue "$ROOT/heimdall_v2/external/concurrentqueue/LICENSE.md"
 put librtlsdr "$RTLSDR_DIR/COPYING" "$RTLSDR_DIR/AUTHORS"
@@ -97,16 +97,16 @@ put whisper.cpp "$WHISPER_DIR/LICENSE"
 
 if [[ -n $MSYS2 && -d $MSYS2/share/licenses ]]; then
     # what the static Windows programs link from MSYS2
-    for p in crt winpthreads libwinpthread libgcc libstdc++ libusb libuv openssl opus libwebp zlib sqlite3 eigen dlfcn; do
+    for p in crt winpthreads libwinpthread libgcc libstdc++ libusb libuv openssl opus libjpeg-turbo zlib sqlite3 eigen dlfcn; do
         [[ -d $MSYS2/share/licenses/$p ]] || continue
         mkdir -p "$DEST/third-party/msys2-$p"
         cp -r "$MSYS2/share/licenses/$p/." "$DEST/third-party/msys2-$p/"
     done
 else
     [[ -f /usr/share/doc/libeigen3-dev/copyright ]] && put eigen /usr/share/doc/libeigen3-dev/copyright
-    # libwebp (BSD-3-Clause), compiled into the plugin decoders on Debian/Ubuntu
-    for d in libwebp7 libwebp6 libwebp-dev; do
-        [[ -f /usr/share/doc/$d/copyright ]] && { put webp /usr/share/doc/$d/copyright; break; }
+    # libjpeg-turbo (IJG/BSD-3-Clause/zlib), compiled into the plugin decoders on Debian/Ubuntu
+    for d in libjpeg-turbo8 libjpeg62-turbo libjpeg-dev; do
+        [[ -f /usr/share/doc/$d/copyright ]] && { put jpeg-turbo /usr/share/doc/$d/copyright; break; }
     done
 fi
 

@@ -22,7 +22,7 @@
  {
   "id": "tempest-4k",
   "title": "TEMPEST: 3840x2160 @ 60 Hz (4K) screen leakage",
-  "description": "Synthetic unintended video emanation of a 3840x2160 @ 60 Hz (4K UHD) display at 2.4 MHz around 594 MHz - the pixel-clock fundamental (594 MHz) - with the leaking device at array bearing 35 deg. The mode is FORCED here (at 2.4 MHz the 4K line rate aliases with lower modes under Auto detect, since only ~18 samples span a line). The host compresses the reconstructed picture to WebP, so a 4K frame (8.29M pixels) crosses the wire in ~19 KB. Expect the decoder to report 'Detected 3840x2160 @ 60 Hz', show a reconstructed picture, and a 'screen' talker near 35 deg. 2 s, looped. 4K reconstruction is CPU- and memory-heavy - a Pi manages only a low frame rate.",
+  "description": "Synthetic unintended video emanation of a 3840x2160 @ 60 Hz (4K UHD) display at 2.4 MHz around 594 MHz - the pixel-clock fundamental (594 MHz) - with the leaking device at array bearing 35 deg. The mode is FORCED here (at 2.4 MHz the 4K line rate aliases with lower modes under Auto detect, since only ~18 samples span a line). The picture is RECONSTRUCTED at the full 4K geometry; the emitted frame is box-downscaled to the max_display_px cap (default 1280 longest side) and the host compresses it to JPEG. Expect the decoder to report 'Detected 3840x2160 @ 60 Hz', show a reconstructed picture, and a 'screen' talker near 35 deg. 2 s, looped. 4K reconstruction is CPU- and memory-heavy - a Pi manages only a low frame rate.",
   "rf_hz": 594000000.0,
   "tuner_offset_hz": 0,
   "seconds": 2,

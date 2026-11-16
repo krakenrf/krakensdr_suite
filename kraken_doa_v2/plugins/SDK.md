@@ -181,9 +181,14 @@ Auto detect: once it has locked onto this plugin) - `choices` = `"value=Label|..
 makes a list, `""` a text field; exactly two choices with the values `0`
 and `1` (`"0=Off|1=On"`) make an on / off button ("● Label: On"; a
 choice's text after its name in brackets is left off the button and shown
-in its tooltip). They arrive through `option(key, value)`:
-the default when the plugin starts, then whatever the user picks (`""` =
-back to the default). They are saved per VFO.
+in its tooltip). A `choices` of the form `"range:MIN:MAX[:STEP]"` (e.g.
+`"range:10:95:5"`, STEP defaults to 1) makes a **slider** (`<input
+type="range">`) with the live numeric value shown beside it; the default and
+saved value come from `default` / the stored value, and dragging it sends the
+number through `option(key, value)` like any other option (debounced while
+dragging). Use it for a numeric knob such as the video `quality`. They arrive
+through `option(key, value)`: the default when the plugin starts, then
+whatever the user picks (`""` = back to the default). They are saved per VFO.
 
 **Auto detect**: when a VFO's decoder is on "Auto detect", every plugin the
 user left ticked (sidebar plugin list, "Auto detect"; all are by default)
@@ -527,22 +532,27 @@ the host compresses them for you. The panel shows a canvas per VFO running the
 plugin; the latest frame replaces the previous one, so send at most a few a
 second.
 
-The host compresses each frame to **WebP** (libwebp) before it goes on the
-wire, and the browser decodes it natively (built in, no download). This makes
-large frames practical: a compressed screen is a few KB, so pictures up to 4K
-(3840x2160) now pass where the raw raster would be far over the 1 MB pipe limit
+The host compresses each frame to **JPEG** (libjpeg-turbo) before it goes on
+the wire, and the browser decodes it natively (built in, no download). A GRAY8
+frame is encoded as a **native grayscale JPEG** (one plane - the fastest and
+smallest path), an RGB24 frame as a 3-component JPEG. This makes large frames
+practical: a compressed screen is a few KB, so pictures up to 4K (3840x2160)
+pass where the raw raster would be far over the 1 MB pipe limit
 (`kp::wire::MAX_PAYLOAD`). Two optional hints on `kp::VideoFrame` steer it:
-`quality` (1..100, -1 = the host default ~75) for the lossy encode, and
-`lossless = true` for a frozen or heavily averaged still you want pixel-exact.
-The host also keeps a hash of the last frame it sent and **skips an identical
-one**, so a static screen costs ~no bandwidth - just keep sending frames. The
-skip is time-bounded: an unchanged frame is still re-sent about **every 1.5 s**
-as a keyframe (a few KB/s for a static screen), so a frame dropped in transit
+`quality` (1..100, -1 = the host default ~60) for the lossy encode, and
+`lossless = true`, which uses maximum JPEG quality for a frozen or heavily
+averaged still (JPEG has no truly lossless mode). A plugin that lets the user
+set the quality should expose it as a **slider** (see the `range:` option form
+below), feeding the value straight to `VideoFrame.quality`. The host also keeps
+a hash of the last frame it sent and **skips an identical one**, so a static
+screen costs ~no bandwidth - just keep sending frames. The skip is
+time-bounded: an unchanged frame is still re-sent about **every 1.5 s** as a
+keyframe (a few KB/s for a static screen), so a frame dropped in transit
 (back-pressure) self-heals within that interval and a newly-opened video panel
 fills in without waiting for the picture to change. A changed frame, or any
 geometry change, always sends immediately.
 
-If the host was built without libwebp (the `make` note says so), it falls back
+If the host was built without libjpeg (the `make` note says so), it falls back
 to sending raw pixels unchanged; then the whole frame must stay under 1 MB (a
 GRAY8 raster up to ~1000x1000, RGB24 ~590x590) - downscale a bigger picture, as
 a frame that still won't fit is dropped (logged once), never truncated. Either

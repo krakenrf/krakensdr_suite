@@ -90,9 +90,9 @@ die()  { echo "${RED}${BOLD}Error:${RST} $*" >&2; exit 1; }
 # the rest:
 #   libusb-1.0-0-dev/libusb-dev - required to build librtlsdr
 #   libopus-dev  - kraken links -lopus (missing from its `make deps`, added here)
-#   libwebp-dev  - the decoder plugins link -lwebp to compress video frames
-#                  (plugin-only, BSD; the main app never links it - without it
-#                  the plugins fall back to sending raw pixels)
+#   libjpeg-dev  - the decoder plugins link -ljpeg (libjpeg-turbo) to compress
+#                  video frames (plugin-only, IJG/BSD-3-Clause/zlib; the main app
+#                  never links it - without it the plugins fall back to raw pixels)
 #   zlib1g-dev   - both link -lz
 #   libsqlite3-dev - kraken links -lsqlite3
 #   tmux         - used by run.sh for the split-screen dashboards
@@ -105,7 +105,7 @@ PACKAGES=(
     libeigen3-dev                            # eigenvalue decomposition (both)
     libssl-dev libcrypto++-dev               # SSL for uWebSockets (both)
     libopus-dev                              # Opus audio codec (kraken)
-    libwebp-dev                              # WebP compression of decoder video frames (plugins only; BSD)
+    libjpeg-dev                              # JPEG compression of decoder video frames (plugins only; libjpeg-turbo, IJG/BSD-3-Clause/zlib)
     zlib1g-dev                               # zlib -lz (both)
     libsqlite3-dev                           # settings store (kraken)
     tmux                                     # split-screen dashboards (run.sh)
@@ -118,7 +118,7 @@ PACKAGES=(
 # needed unless a GPS is attached - `brew install gpsd`), openssl's CLI
 # (macOS has one; kraken_doa makes its certificate itself anyway) and the AI
 # assistant's sandboxes (macOS has its own: sandbox-exec)
-BREW_PACKAGES=(cmake pkg-config libusb eigen openssl@3 opus webp tmux)
+BREW_PACKAGES=(cmake pkg-config libusb eigen openssl@3 opus jpeg-turbo tmux)
 
 if [[ "${SKIP_DEPS:-0}" == "1" ]]; then
     say "Skipping dependency install (SKIP_DEPS=1)"

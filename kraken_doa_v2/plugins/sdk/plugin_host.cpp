@@ -53,6 +53,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
@@ -63,13 +64,17 @@
 
 #include <liquid/liquid.h>
 #include <unistd.h>
-// libwebp is a PLUGIN-ONLY, permissive (BSD) dependency: the plugin host
-// compresses video frames to WebP when built with it (plugins/Makefile adds
-// -DHAVE_WEBP and the link when pkg-config finds libwebp). The main kraken_doa
-// app does NOT link or include it - it forwards the opaque blob. Without it the
-// host sends raw pixels (encoding 0), so the feature builds and runs either way.
-#ifdef HAVE_WEBP
-#include <webp/encode.h>
+// libjpeg-turbo is a PLUGIN-ONLY, permissive (IJG / BSD-3-Clause / zlib)
+// dependency: the plugin host compresses video frames to JPEG when built with
+// it (plugins/Makefile adds -DHAVE_JPEG and the link when pkg-config finds
+// libjpeg). The main kraken_doa app does NOT link or include it - it forwards
+// the opaque blob. Without it the host sends raw pixels (encoding 0), so the
+// feature builds and runs either way. <cstdio> must precede <jpeglib.h>
+// (jpeglib.h uses FILE but does not include <stdio.h> itself).
+#ifdef HAVE_JPEG
+#include <csetjmp>
+#include <cstdio>
+#include <jpeglib.h>
 #endif
 #ifdef _WIN32
 #include <fcntl.h>
@@ -142,6 +147,56 @@ uint64_t fnv1a(const uint8_t* p, size_t n, uint64_t h = 1469598103934665603ull) 
     for (size_t i = 0; i < n; i++) h = (h ^ p[i]) * 1099511628211ull;
     return h;
 }
+
+#ifdef HAVE_JPEG
+// libjpeg-turbo error manager that longjmps instead of calling exit(): the
+// default error_exit aborts the whole process, so a single bad frame could
+// kill the plugin. With this, an encode failure just returns 0 and the host
+// falls back to raw pixels / drops the frame.
+struct jpeg_err_jmp {
+    struct jpeg_error_mgr pub;
+    jmp_buf jb;
+};
+void jpeg_error_longjmp(j_common_ptr cinfo) {
+    std::longjmp(reinterpret_cast<jpeg_err_jmp*>(cinfo->err)->jb, 1);
+}
+
+// Encode an interleaved 8-bit buffer to a baseline JPEG in memory. comp = 1
+// encodes GRAY8 natively (one plane, JCS_GRAYSCALE - the whole speed/size win,
+// no expand to RGB); comp = 3 encodes RGB24 (JCS_RGB). Returns the JPEG byte
+// count and sets *out to a malloc'd buffer the caller must free(); 0 on failure
+// (*out is then null). quality is 1..100.
+size_t jpeg_encode_mem(const uint8_t* pixels, int w, int h, int comp, int quality, uint8_t** out) {
+    *out = nullptr;
+    unsigned long outsize = 0;
+    struct jpeg_compress_struct cinfo;
+    struct jpeg_err_jmp jerr;
+    cinfo.err = jpeg_std_error(&jerr.pub);
+    jerr.pub.error_exit = jpeg_error_longjmp;
+    if (setjmp(jerr.jb)) {   // a libjpeg error lands here
+        jpeg_destroy_compress(&cinfo);
+        if (*out) { free(*out); *out = nullptr; }
+        return 0;
+    }
+    jpeg_create_compress(&cinfo);
+    jpeg_mem_dest(&cinfo, out, &outsize);   // libjpeg malloc/reallocs *out
+    cinfo.image_width = static_cast<JDIMENSION>(w);
+    cinfo.image_height = static_cast<JDIMENSION>(h);
+    cinfo.input_components = comp;
+    cinfo.in_color_space = comp == 1 ? JCS_GRAYSCALE : JCS_RGB;
+    jpeg_set_defaults(&cinfo);
+    jpeg_set_quality(&cinfo, std::clamp(quality, 1, 100), TRUE);
+    jpeg_start_compress(&cinfo, TRUE);
+    const size_t stride = static_cast<size_t>(w) * comp;
+    while (cinfo.next_scanline < cinfo.image_height) {
+        JSAMPROW row = const_cast<JSAMPROW>(pixels + static_cast<size_t>(cinfo.next_scanline) * stride);
+        jpeg_write_scanlines(&cinfo, &row, 1);
+    }
+    jpeg_finish_compress(&cinfo);
+    jpeg_destroy_compress(&cinfo);
+    return static_cast<size_t>(outsize);
+}
+#endif
 
 // decimal text for the wire, "" = NAN
 std::string wnum(double v, int prec = 6) {
@@ -252,13 +307,14 @@ public:
     }
     // kp::wire::VIDEO: uint16 width, height; uint8 format, encoding; uint16
     // label_len; label; then the image data (encoding 0 = width*height*bpp raw
-    // pixel bytes, encoding 1 = a WebP bitstream), all little-endian. The host
-    // compresses to WebP when built with libwebp (-DHAVE_WEBP) and the result
-    // is smaller / needed; otherwise it sends raw pixels (encoding 0), exactly
-    // as before. An unchanged frame (same geometry + pixels as the last one
-    // sent) is skipped, so a static screen costs ~no bandwidth. The whole
-    // payload must stay under MAX_PAYLOAD - drop the label to make it fit, else
-    // drop the frame (log once); never truncate a sent frame. width/height are
+    // pixel bytes, encoding 2 = a JPEG bitstream), all little-endian. The host
+    // compresses to JPEG when built with libjpeg-turbo (-DHAVE_JPEG) and the
+    // result is smaller / needed; otherwise it sends raw pixels (encoding 0),
+    // exactly as before. GRAY8 frames are encoded as native grayscale (one
+    // plane). An unchanged frame (same geometry + pixels as the last one sent)
+    // is skipped, so a static screen costs ~no bandwidth. The whole payload
+    // must stay under MAX_PAYLOAD - drop the label to make it fit, else drop
+    // the frame (log once); never truncate a sent frame. width/height are
     // always the frame's own size (the compressed blob is small, so large
     // frames - up to 4K - now fit where the raw raster would not).
     void video_frame(const kp::VideoFrame& f) override {
@@ -280,42 +336,29 @@ public:
             std::chrono::duration<double>(now - video_last_send_).count() < VIDEO_KEYFRAME_S)
             return;
 
-        // pick the payload: a WebP blob when it was built in and helps, else raw
+        // pick the payload: a JPEG blob when it was built in and helps, else raw
         const uint8_t* img = f.pixels;
         size_t img_len = npix;
         uint8_t encoding = 0;
-#ifdef HAVE_WEBP
-        uint8_t* webp_out = nullptr;
-        // libwebp refuses dimensions over 16383; a frame that large (very rare)
-        // falls back to raw / is dropped below if it won't fit
-        if (w <= 16383 && h <= 16383) {
-            const uint8_t* rgb = f.pixels;
-            if (format == 0) {   // expand GRAY8 -> RGB (r=g=b) into a reusable buffer
-                video_rgb_.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
-                const uint8_t* g = f.pixels;
-                uint8_t* d = video_rgb_.data();
-                for (size_t i = 0, px = static_cast<size_t>(w) * static_cast<size_t>(h); i < px; i++) {
-                    d[3 * i] = d[3 * i + 1] = d[3 * i + 2] = g[i];
-                }
-                rgb = video_rgb_.data();
-            }
-            const int stride = w * 3;
-            size_t sz = 0;
-            if (f.lossless) {
-                sz = WebPEncodeLosslessRGB(rgb, w, h, stride, &webp_out);
-            } else {
-                const float q = f.quality < 0 ? 75.0f : static_cast<float>(std::clamp(f.quality, 1, 100));
-                sz = WebPEncodeRGB(rgb, w, h, stride, q, &webp_out);
-            }
-            // use WebP if it fits and it is smaller than raw OR raw wouldn't fit
-            if (webp_out && sz > 0 && 8 + sz <= kp::wire::MAX_PAYLOAD &&
+#ifdef HAVE_JPEG
+        uint8_t* jpeg_out = nullptr;
+        {
+            // GRAY8 (format 0) encodes as native grayscale (1 component - no
+            // expand to RGB); RGB24 (format 1) as 3 components. lossless frames
+            // (a frozen / heavily averaged still) use max quality, since JPEG
+            // has no true lossless mode.
+            const int comp = format == 1 ? 3 : 1;
+            const int q = f.lossless ? 100 : (f.quality < 0 ? 60 : std::clamp(f.quality, 1, 100));
+            const size_t sz = jpeg_encode_mem(f.pixels, w, h, comp, q, &jpeg_out);
+            // use JPEG if it fits and it is smaller than raw OR raw wouldn't fit
+            if (jpeg_out && sz > 0 && 8 + sz <= kp::wire::MAX_PAYLOAD &&
                 (sz < npix || 8 + npix > kp::wire::MAX_PAYLOAD)) {
-                encoding = 1;
-                img = webp_out;
+                encoding = 2;
+                img = jpeg_out;
                 img_len = sz;
-            } else if (webp_out) {
-                WebPFree(webp_out);
-                webp_out = nullptr;
+            } else if (jpeg_out) {
+                free(jpeg_out);
+                jpeg_out = nullptr;
             }
         }
 #endif
@@ -328,10 +371,10 @@ public:
                 if (!warned) {
                     warned = true;
                     std::cerr << "video_frame: " << (fixed + img_len) << " bytes exceeds the " << kp::wire::MAX_PAYLOAD
-                              << " byte limit - dropping (downscale the raster, or build with libwebp)" << std::endl;
+                              << " byte limit - dropping (downscale the raster, or build with libjpeg)" << std::endl;
                 }
-#ifdef HAVE_WEBP
-                if (webp_out) WebPFree(webp_out);
+#ifdef HAVE_JPEG
+                if (jpeg_out) free(jpeg_out);
 #endif
                 return;
             }
@@ -350,8 +393,8 @@ public:
         p.append(f.label.data(), label_len);
         p.append(reinterpret_cast<const char*>(img), img_len);
         send(kp::wire::VIDEO, p.data(), p.size());
-#ifdef HAVE_WEBP
-        if (webp_out) WebPFree(webp_out);
+#ifdef HAVE_JPEG
+        if (jpeg_out) free(jpeg_out);
 #endif
         video_hash_ = hv;   // only a frame actually sent updates the change-detection state
         video_have_hash_ = true;
@@ -515,15 +558,14 @@ public:
 private:
     int fd_;
     double rate_;
-    // video_frame change detection + the GRAY8 -> RGB scratch buffer the WebP
-    // encoder reuses (nothing when built without libwebp)
+    // video_frame change detection (the JPEG encoder feeds the GRAY8 / RGB24
+    // buffer directly - no scratch buffer needed)
     uint64_t video_hash_ = 0;
     bool video_have_hash_ = false;
-    std::vector<uint8_t> video_rgb_;
     // Periodic keyframe: an unchanged frame is still re-sent once this long has
     // passed since the last ACTUAL send, so a frame lost to back-pressure heals
     // and a newly-subscribed browser gets the current picture. A static screen
-    // then costs only ~1 WebP keyframe / 1.5 s (a few KB/s), not every frame.
+    // then costs only ~1 JPEG keyframe / 1.5 s (a few KB/s), not every frame.
     static constexpr double VIDEO_KEYFRAME_S = 1.5;
     std::chrono::steady_clock::time_point video_last_send_{};
     static std::string fmt_hz(double v) {

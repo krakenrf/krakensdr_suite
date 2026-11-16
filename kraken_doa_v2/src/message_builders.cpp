@@ -850,11 +850,11 @@ string MessageBuilders::build_video_message(int vfo_id, int width, int height, i
                                             const string& label, const uint8_t* pixels, size_t pixel_len) {
     if (width <= 0 || height <= 0 || width > 65535 || height > 65535) return string();
     const uint8_t fmt = format == 1 ? 1 : 0;
-    const uint8_t enc = encoding == 1 ? 1 : 0;
+    const uint8_t enc = encoding == 0 ? 0 : 2;   // 0 raw pixels, 2 JPEG (opaque)
     if (enc == 0) {   // raw pixels: the length must match the geometry
         const size_t bpp = fmt == 1 ? 3 : 1;
         if (pixel_len != static_cast<size_t>(width) * static_cast<size_t>(height) * bpp) return string();
-    } else if (pixel_len == 0) {   // WebP blob: an opaque, non-empty bitstream
+    } else if (pixel_len == 0) {   // JPEG blob: an opaque, non-empty bitstream
         return string();
     }
     const size_t label_len = std::min<size_t>(label.size(), 65535);
@@ -865,7 +865,7 @@ string MessageBuilders::build_video_message(int vfo_id, int width, int height, i
     msg.add_value(static_cast<uint16_t>(width));
     msg.add_value(static_cast<uint16_t>(height));
     msg.add_value(fmt);
-    msg.add_value(enc);           // 0 raw pixels, 1 WebP bitstream
+    msg.add_value(enc);           // 0 raw pixels, 2 JPEG bitstream
     msg.add_value(static_cast<uint16_t>(label_len));
     if (label_len) msg.add_array(label.data(), label_len);
     if (pixel_len) msg.add_array(pixels, pixel_len);

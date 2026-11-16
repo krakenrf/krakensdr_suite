@@ -129,15 +129,15 @@ using SpatialHandler = std::function<void(const SpatialReport&)>;
 // width x height raster drawn on the decoder panel's canvas (analog TV,
 // screen-leakage reconstruction). format 0 = GRAY8 (1 byte/pixel), 1 = RGB24
 // (3 bytes/pixel). The host forwards the image data opaquely: encoding 0 =
-// width*height*bpp raw pixel bytes (row-major, top-left first), encoding 1 = a
-// WebP bitstream the browser decodes natively (the main app never decodes it).
+// width*height*bpp raw pixel bytes (row-major, top-left first), encoding 2 = a
+// JPEG bitstream the browser decodes natively (the main app never decodes it).
 // Delivered on the decoder's worker thread; unset = dropped.
 struct VideoFrameReport {
     int width = 0, height = 0;
     int format = 0;              // 0 GRAY8, 1 RGB24 (describes the source frame)
-    int encoding = 0;            // 0 raw pixels, 1 WebP bitstream
+    int encoding = 0;            // 0 raw pixels, 2 JPEG bitstream
     std::string label;           // caption ("" = none)
-    std::vector<uint8_t> pixels; // the image data (raw pixels, or the WebP blob)
+    std::vector<uint8_t> pixels; // the image data (raw pixels, or the JPEG blob)
 };
 using VideoHandler = std::function<void(const VideoFrameReport&)>;
 

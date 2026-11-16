@@ -203,11 +203,12 @@ struct VideoFrame {
     int format = 0;
     const uint8_t* pixels = nullptr;   // width*height*bpp bytes, row-major
     std::string label;                 // caption overlaid on the frame, e.g. "1024x768 @ 60 Hz" ("" = none)
-    // Encoding hints (the host compresses before the wire; see the VIDEO wire
-    // note). quality: WebP quality 1..100 for a lossy encode, -1 = host default
-    // (~75). lossless: encode this frame losslessly (a frozen / heavily
-    // averaged still). Ignored when the host can't compress (it then sends raw
-    // pixels). You always pass raw pixels here regardless.
+    // Encoding hints (the host compresses to JPEG before the wire; see the
+    // VIDEO wire note). quality: JPEG quality 1..100 for a lossy encode, -1 =
+    // host default (~60). lossless: encode this frame at max quality (JPEG has
+    // no true lossless mode) - for a frozen / heavily averaged still. Both are
+    // ignored when the host can't compress (it then sends raw pixels). You
+    // always pass raw pixels here regardless.
     int quality = -1;
     bool lossless = false;
 };
@@ -519,15 +520,16 @@ constexpr uint32_t TABLE_DETAIL = 38;  // key '\0' label '\0' value '\0' label '
 constexpr uint32_t SPATIAL_REMOVE = 39;  // id ("" = all of this plugin's): Host::spatial_remove
 // A reconstructed picture (Host::video_frame). Payload, little-endian:
 // uint16 width, uint16 height, uint8 format (0 GRAY8, 1 RGB24), uint8 encoding
-// (0 = raw pixels, 1 = WebP bitstream), uint16 label_len, label_len bytes
+// (0 = raw pixels, 2 = JPEG bitstream), uint16 label_len, label_len bytes
 // (UTF-8, no NUL), then the image data: for encoding 0, width*height*bpp raw
-// pixel bytes row-major (bpp = 1 GRAY8 / 3 RGB24); for encoding 1, a WebP
+// pixel bytes row-major (bpp = 1 GRAY8 / 3 RGB24); for encoding 2, a JPEG
 // bitstream of the width x height frame (the browser decodes it natively;
-// format still says whether the source was gray or colour). The host encodes
-// to WebP when it was built with libwebp (and the result is smaller),
-// otherwise it sends raw; either way the payload stays under MAX_PAYLOAD and a
-// frame that still would not fit is dropped, never truncated. width/height are
-// the frame's own size (not downscaled for the wire once compressed).
+// GRAY8 is a native grayscale JPEG, format still says whether the source was
+// gray or colour). The host encodes to JPEG when it was built with
+// libjpeg-turbo (and the result is smaller), otherwise it sends raw; either
+// way the payload stays under MAX_PAYLOAD and a frame that still would not fit
+// is dropped, never truncated. width/height are the frame's own size (not
+// downscaled for the wire once compressed).
 constexpr uint32_t VIDEO = 40;
 // (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends)
 }  // namespace kp::wire

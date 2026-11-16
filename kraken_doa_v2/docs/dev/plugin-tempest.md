@@ -92,11 +92,12 @@ Options (saved per VFO): `mode` (auto | a listed display mode | manual),
 `v_offset` (nudge the alignment), `invert`, `gamma`, `contrast`
 (normal|high|low), `average` (EMA factor, default 0.1), `autolock` (freeze the
 detected timing), `crop` (active-only vs full raster, default active),
-`quality` (WebP quality for the picture: 1-100, or low/medium/high = 40/65/90,
-or `default` = host ~75; default 75), `lossless` (lossless WebP, for a frozen /
-heavily averaged still), `max_display_px` (longest-side cap on the emitted
-picture, 64-4096, default 3840 = native 4K), `doa` (report the source bearing,
-default on).
+`quality` (a **slider**, `choices="range:10:95:5"`, default 60 - the JPEG
+quality the host encodes the picture at: lower = less bandwidth/CPU, higher =
+sharper), `lossless` (max-quality JPEG, for a frozen / heavily averaged still),
+`max_display_px` (a preset dropdown 640/960/1280/1920/3840, default 1280 -
+longest-side cap on the **emitted** picture only; see Output), `doa` (report the
+source bearing, default on).
 
 Supported display modes (the `mode` choice list): the VESA DMT modes 640x480,
 800x600, 1024x768, 1280x720, 1280x1024, 1366x768, 1600x900 and 1920x1080 (all
@@ -132,16 +133,25 @@ never affects the picture.
 
 ## Output
 
-GRAY8, ~4 frames/s, sent at the **native active resolution up to 4K**. The host
-compresses each frame to WebP before the wire (`plugins/sdk/plugin_host.cpp`,
-built with libwebp), so even a 3840x2160 frame (8.29M raw bytes) crosses the
-decoder video wire in ~19 KB (1080p ~7 KB), well under the 1 MiB
-`kp::wire::MAX_PAYLOAD`. The plugin always passes **raw** pixels and sets the
-`VideoFrame.quality` / `.lossless` hints from the `quality` / `lossless` options.
+GRAY8, ~4 frames/s. The **reconstruction always runs at the display's full
+geometry** (`htotal_` x `vtotal_` / the active area), so a 4K monitor is received
+and reconstructed in full - `max_display_px` is a **display / transmission cap
+only**: `send_video()` box-downscales just the EMITTED frame when its longest
+side exceeds the cap (default 1280), never feeding that back into
+`add_frame` / detection. The host then compresses each emitted frame to JPEG
+before the wire (`plugins/sdk/plugin_host.cpp`, built with libjpeg-turbo; GRAY8
+is a native grayscale JPEG). Measured sizes at quality 60: a 1280x720 frame is
+~40-70 KB, and a 4K reconstruction emitted at the 1280 cap (1280x720) is the same
+~40-70 KB; raising `max_display_px` to 3840 to emit the native 4K raster puts a
+few hundred KB on the wire - all well under the 1 MiB `kp::wire::MAX_PAYLOAD`. The
+plugin always passes **raw** pixels and sets the `VideoFrame.quality` /
+`.lossless` hints from the `quality` / `lossless` options.
 
-`max_display_px` caps the **longest side** (default 3840): past the cap the
-frame is box-downscaled. `crop=1` (default) sends the active area, `crop=0` the
-full raster (htotal x vtotal, up to 4400x2250 for 4K, downscaled past the cap).
+`max_display_px` caps the **longest side** of the emitted frame (default 1280,
+presets 640/960/1280/1920/3840): past the cap the frame is box-downscaled.
+`crop=1` (default) reconstructs/sends the active area, `crop=0` the full raster
+(htotal x vtotal, up to 4400x2250 for 4K); either way the emitted frame is
+downscaled past the cap while the reconstruction stays at full geometry.
 
 **4K is CPU- and memory-heavy.** The resample / accumulate / render cost grows
 with the output pixel count (a 4K float frame is ~33 MB; the EMA average and the
@@ -149,10 +159,10 @@ shift-aligned add touch two or three of those). Above ~1440p (`CADENCE_PX_REF`)
 the accumulate and video cadences are stretched in proportion so the per-second
 pixel work stays bounded - a **Pi** may sustain only a low frame rate at 4K. At
 or below ~1440p the cadence is unchanged, so default-resolution performance does
-not regress. **No-libwebp caveat:** without libwebp the host can only send raw
+not regress. **No-libjpeg caveat:** without libjpeg the host can only send raw
 pixels under the 1 MiB cap, where a GRAY8 frame over ~1000x1000 is **dropped**
-(not truncated) - on such a build lower `max_display_px` (e.g. 960) to keep the
-picture visible.
+(not truncated) - the default 1280 cap keeps the emitted picture visible there,
+and lowering it (e.g. 960) shrinks it further.
 
 ## Limitations (surfaced in the UI and README)
 

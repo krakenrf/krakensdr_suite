@@ -64,8 +64,8 @@ Options (saved per VFO):
 | **Contrast** | Normal | Per-frame percentile stretch: Normal 0.5-99.5 %, High 2-98 % (punchier), Full 0-100 % (no clipping). |
 | **Gamma** | 1.0 | Brightness curve: >1 lifts shadows, <1 deepens them (1 = linear). |
 | **Line nudge (Hz)** | 0 | Fine nudge to the assumed line rate if the picture won't lock or tears diagonally. Normally 0; try a few Hz either way. |
-| **Picture quality** | default | WebP compression quality for the picture sent to the browser: a number 1–100, or `low`/`medium`/`high` (40/65/90), or `default` (host ~75). The 720 × active frame is small either way, so this is mainly a bandwidth/fidelity knob; the plugin passes raw pixels and the host (built with libwebp) compresses them. |
-| **Lossless** | Off | Send the picture losslessly instead of lossy WebP. |
+| **Picture quality** | 60 | JPEG quality for the picture sent to the browser (a slider, 10–95): lower = less bandwidth/CPU, higher = sharper. The 720 × active frame is small either way, so this is mainly a bandwidth/fidelity knob; the plugin passes raw pixels and the host (built with libjpeg-turbo) compresses them (GRAY8 → native grayscale JPEG). |
+| **Lossless** | Off | Send the picture at maximum JPEG quality instead of the quality slider's setting. |
 
 ## How it works
 
@@ -112,7 +112,7 @@ gamma options). It is purely a preview: it never calls `host.valid()`, never
 emits a `Locked` event, and never touches the lock, periodicity or debounce
 state, so the facts stay at `searching` and the noise-rejection gate is
 unchanged. It is capped at **~12 fps**, drawn at **720 × active** (PAL 576 /
-NTSC 480), and sent at a lower WebP quality (a throwaway preview; noise frames
+NTSC 480), and sent at a lower JPEG quality (a throwaway preview; noise frames
 never dedup, so the modest size + rate bound the bandwidth). The moment a real
 raster locks, the synced reconstruction takes over unchanged. The **Free-run
 preview** option (default on) turns it off for the original blank-until-lock

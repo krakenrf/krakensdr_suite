@@ -1221,16 +1221,16 @@ private:
         const uint32_t w = static_cast<uint32_t>(u[0]) | (static_cast<uint32_t>(u[1]) << 8);
         const uint32_t h = static_cast<uint32_t>(u[2]) | (static_cast<uint32_t>(u[3]) << 8);
         const uint8_t format = u[4];
-        const uint8_t encoding = u[5];   // 0 = raw pixels, 1 = WebP bitstream
+        const uint8_t encoding = u[5];   // 0 = raw pixels, 2 = JPEG bitstream
         const uint32_t label_len = static_cast<uint32_t>(u[6]) | (static_cast<uint32_t>(u[7]) << 8);
-        if (format > 1 || encoding > 1 || w == 0 || h == 0) return;
+        if (format > 1 || encoding > 2 || w == 0 || h == 0) return;
         if (len < HDR + label_len) return;   // the label must fit
         size_t data_len;
         if (encoding == 0) {   // raw: the pixel count must match the geometry exactly
             const size_t bpp = format == 1 ? 3 : 1;
             data_len = static_cast<size_t>(w) * static_cast<size_t>(h) * bpp;
             if (HDR + label_len + data_len != len) return;
-        } else {   // WebP: a variable-length blob - the host forwards it opaquely
+        } else {   // JPEG: a variable-length blob - the host forwards it opaquely
             data_len = len - HDR - label_len;
             if (data_len == 0) return;
         }

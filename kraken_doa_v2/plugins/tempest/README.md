@@ -82,14 +82,18 @@ interpolation) into the active `width×height` grid, anchored to that phase so
 rows never shear or wrap, and added to a running average
 (`video::FrameAccumulator`, EMA with a small shift realignment). The average is
 rendered to 8-bit grayscale with a percentile contrast stretch and sent a few
-times a second with `host.video_frame()`, at the **native active resolution up
-to 4K**: the host compresses each frame to WebP, so a 3840×2160 frame (8.29M raw
-bytes) crosses the wire in ~19 KB (1080p ~7 KB). `max_display_px` caps the
-longest side (default 3840); past it the frame is box-downscaled. 4K
-reconstruction is CPU/memory-heavy (a 4K float frame is ~33 MB), so above ~1440p
-the frame cadence is stretched to stay bounded — a Raspberry Pi may manage only
-a low frame rate at 4K. Without libwebp the host can send only raw pixels under
-the 1 MB wire cap and drops anything larger, so lower `max_display_px` there.
+times a second with `host.video_frame()`. The **reconstruction always runs at
+the display's full geometry**, so a 4K monitor is received and reconstructed in
+full; `max_display_px` is a **display / transmission cap** that box-downscales
+only the emitted frame when its longest side exceeds the cap (default **1280**,
+presets 640/960/1280/1920/3840). The host then compresses each emitted frame to
+JPEG (GRAY8 → native grayscale), so a 1280×720 frame is a few tens of KB on the
+wire; raising `max_display_px` to 3840 emits the native 4K raster at a few
+hundred KB — all under the 1 MB wire cap. 4K reconstruction is CPU/memory-heavy
+(a 4K float frame is ~33 MB), so above ~1440p the frame cadence is stretched to
+stay bounded — a Raspberry Pi may manage only a low frame rate at 4K. Without
+libjpeg the host can send only raw pixels under the 1 MB wire cap and drops
+anything larger, so the default 1280 cap keeps the picture visible there.
 
 ## Manual controls (options, saved per VFO)
 
@@ -109,9 +113,9 @@ the 1 MB wire cap and drops anything larger, so lower `max_display_px` there.
 | `average` | 0.1 | frame-average strength (EMA factor 0–1; smaller = steadier, slower) |
 | `autolock` | 0 | freeze the detected timing so it stops re-estimating / drifting |
 | `crop` | 1 | show only the active area, or the full raster incl. blanking |
-| `quality` | 75 | WebP quality for the picture: 1–100, or `low`/`medium`/`high` (40/65/90), or `default` (host ~75) |
-| `lossless` | 0 | send the picture losslessly (best for a frozen / heavily averaged still) |
-| `max_display_px` | 3840 | longest-side cap on the emitted picture (64–4096); 3840 sends 4K natively, lower it for less CPU or on a no-libwebp build |
+| `quality` | 60 | JPEG quality for the picture (a slider, 10–95): lower = less bandwidth/CPU, higher = sharper |
+| `lossless` | 0 | send the picture at maximum JPEG quality (best for a frozen / heavily averaged still) |
+| `max_display_px` | 1280 | longest-side cap on the **emitted** picture only (presets 640/960/1280/1920/3840); reconstruction stays at the display's full geometry, so 4K is still received in full. 3840 emits the native raster; lower it for less bandwidth/CPU or on a no-libjpeg build |
 | `doa` | 1 | estimate a bearing to the source (coherent mode only; never affects the picture) |
 
 When `mode` is not `manual`, auto-detect drives the timing; manual offsets,
@@ -129,7 +133,7 @@ stay at `searching` and the confidence gate is unchanged; no bearing is ever
 produced while unlocked. The preview raster is **capped to a 720-px longest
 side regardless of the mode** (a 4K mode must not make the preview huge - it is
 resampled straight into the small raster, which is also cheaper), at **~12 fps**
-and a lower WebP quality (noise frames never dedup, so the modest size + rate
+and a lower JPEG quality (noise frames never dedup, so the modest size + rate
 bound the bandwidth). The moment the real timing locks, the synced
 reconstruction at the native active resolution takes over unchanged. The
 `free_run` option (default on) turns it off for a blank-until-lock canvas.
@@ -212,8 +216,10 @@ on a 1024×768@60 scene (pixel clock 65 MHz, 8th harmonic at 520 MHz, bearing
   on noise (x86); on a locked signal it does not run.
 - **Cost:** decode time ~9 % of real time at 2.4 MHz × 5 antennas (x86) for
   1024×768; the once-a-second autocorrelation FFT dominates, the per-frame
-  resample/average is cheap. Output frames are GRAY8, native active size up to
-  4K, WebP-compressed by the host (4K ≈ 19 KB, 1080p ≈ 7 KB on the wire).
+  resample/average is cheap. Output frames are GRAY8, reconstructed at the
+  display's full geometry and emitted at the `max_display_px` cap (default
+  1280), JPEG-compressed by the host (a 1280×720 frame is a few tens of KB on
+  the wire).
 
 - **High-resolution (forced mode):** a 2560×1440@60 and a 3840×2160@60 (4K)
   scene both detect **exactly** (2560×1440: 1481 lines / 88.8 kHz / 241.5 MHz;

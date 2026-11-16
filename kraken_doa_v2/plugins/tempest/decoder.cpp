@@ -65,12 +65,16 @@ constexpr double VIDEO_S = 0.25;          // send a picture this often (a few/s)
 constexpr double COV_WIN_S = 0.20;        // one DoA covariance packet per this window
 constexpr double BLANK_S = 0.5;           // re-find the blanking offset this often
 
-// Default longest-side cap for the emitted picture (option max_display_px): large
-// enough to send 3840x2160 (4K) natively. The host compresses to WebP under the
-// wire cap, so a 4K GRAY8 frame (8.29M raw bytes) travels in ~19 KB. Without
-// libwebp the host can only send RAW pixels under kp::wire::MAX_PAYLOAD (1 MiB),
-// where a GRAY8 frame over ~1000x1000 is dropped - lower this cap on such a build.
-constexpr int DEFAULT_MAX_DISPLAY_PX = 3840;
+// Default longest-side cap for the EMITTED picture (option max_display_px).
+// Display / transmission ONLY: reconstruction and mode detection always use the
+// monitor's full geometry (htotal_ x vtotal_ / the active area), so a 4K display
+// is still fully received and reconstructed - send_video() box-downscales only
+// the OUTPUT frame when it exceeds this. 1280 keeps the transmitted picture small
+// and cheap to JPEG-encode; raise it (up to native 3840) for a sharper emitted
+// picture, lower it for less bandwidth / CPU. On a build without libjpeg the host
+// can only send RAW pixels under kp::wire::MAX_PAYLOAD (1 MiB), where a GRAY8
+// frame over ~1000x1000 is dropped - keep this modest on such a build.
+constexpr int DEFAULT_MAX_DISPLAY_PX = 1280;
 
 // Above ~1440p the per-frame resample/accumulate/render cost grows with the
 // output pixel count, so the accumulate and video cadences are stretched to keep
@@ -87,7 +91,7 @@ constexpr double CADENCE_PX_REF = 2560.0 * 1440.0;
 // so a 4K mode must NOT make the preview huge; this bounds the bandwidth / CPU).
 constexpr double FREE_RUN_S = 1.0 / 12.0;   // ~12 fps preview cadence
 constexpr int FREE_RUN_MAX_PX = 720;        // longest-side cap for the preview raster
-constexpr int FREE_RUN_QUALITY = 50;        // lower WebP quality for the preview
+constexpr int FREE_RUN_QUALITY = 50;        // lower JPEG quality for the preview
 constexpr const char* FREE_RUN_DEFAULT_MODE = "1024x768@60";   // assumed geometry when none is chosen
 
 double pnum(const std::string& s) {
@@ -200,7 +204,8 @@ public:
             const bool c = value != "0";
             if (c != crop_) { crop_ = c; acc_w_ = acc_h_ = 0; }
         } else if (key == "quality") {
-            quality_ = parse_quality(value);
+            const double v = pnum(value);
+            quality_ = std::isfinite(v) ? std::clamp(static_cast<int>(std::lround(v)), 1, 100) : 60;
         } else if (key == "lossless") {
             lossless_ = value == "1";
         } else if (key == "max_display_px") {
@@ -213,17 +218,6 @@ public:
         } else if (key == "free_run") {
             free_run_ = value != "0";   // display-only; does not affect detection
         }
-    }
-
-    // WebP quality from the option: a preset or a number 1..100, else host default
-    static int parse_quality(const std::string& v) {
-        if (v.empty() || v == "default") return -1;
-        if (v == "low") return 40;
-        if (v == "medium") return 65;
-        if (v == "high") return 90;
-        const double q = pnum(v);
-        if (!std::isfinite(q)) return -1;
-        return std::clamp(static_cast<int>(std::lround(q)), 1, 100);
     }
 
 private:
@@ -273,8 +267,8 @@ private:
     double ema_ = 0.1;
     bool autolock_ = false;
     bool crop_ = true;
-    int quality_ = 75;          // WebP quality hint for the host (default ~75)
-    bool lossless_ = false;     // lossless WebP (a frozen/averaged still)
+    int quality_ = 60;          // JPEG quality for the host (set by the slider)
+    bool lossless_ = false;     // max-quality JPEG (a frozen / averaged still)
     int max_display_px_ = DEFAULT_MAX_DISPLAY_PX;   // longest-side cap on the emitted picture
     bool doa_ = true;
     bool free_run_ = true;      // show a live preview while unlocked (display only)
@@ -759,10 +753,13 @@ private:
 
         int W = acc_w_, H = acc_h_;
         const uint8_t* px = gray_.data();
-        // The host compresses to WebP, so send the native active-area frame (up
-        // to 4K). The max_display_px option caps the LONGEST side: a user on a
-        // no-libwebp build (raw pixels only, 1 MiB wire cap) or who wants less
-        // CPU lowers it; the default (3840) passes 4K. Box-downscale past the cap.
+        // The host compresses to JPEG. max_display_px caps the LONGEST side of
+        // the EMITTED frame ONLY (display / transmission): the reconstruction
+        // above (gray_, acc_w_ x acc_h_) always ran at the display's full
+        // geometry, so a 4K monitor is still received and reconstructed in full -
+        // we box-downscale only this output. Default 1280; raise for a sharper
+        // picture, lower for less CPU / on a no-libjpeg build (raw pixels only,
+        // 1 MiB wire cap). Box-downscale past the cap.
         const int cap = max_display_px_ > 0 ? max_display_px_ : DEFAULT_MAX_DISPLAY_PX;
         if (std::max(W, H) > cap) {
             const int d = (std::max(W, H) + cap - 1) / cap;
@@ -789,7 +786,7 @@ private:
         f.format = 0;   // GRAY8
         f.pixels = px;
         f.label = mode_label_;
-        f.quality = quality_;     // host compresses raw pixels to WebP at this quality
+        f.quality = quality_;     // host compresses raw pixels to JPEG at this quality
         f.lossless = lossless_;
         host.video_frame(f);
     }
@@ -967,15 +964,17 @@ KRAKEN_PLUGIN(Tempest,
                             "Freeze the detected timing so it stops re-estimating and drifting once the picture is good"},
                            {"crop", "Crop to active area", "1", "0=Full raster|1=Active only",
                             "Show only the visible picture, or the whole raster including the blanking bands"},
-                           {"quality", "Picture quality", "75", "",
-                            "WebP compression quality for the picture sent to the browser: a number 1-100, or low/medium/high "
-                            "(40/65/90), or 'default' for the host default (~75). Higher is sharper but larger"},
+                           {"quality", "Picture quality", "60", "range:10:95:5",
+                            "JPEG quality: lower = less bandwidth/CPU, higher = sharper."},
                            {"lossless", "Lossless", "0", "0=Off|1=On",
-                            "Send the picture losslessly (best for a frozen / heavily averaged still). Larger than lossy"},
-                           {"max_display_px", "Max picture size (px)", "3840", "",
-                            "Longest-side cap on the emitted picture (64-4096). 3840 sends up to 4K natively (the host "
-                            "compresses it). Lower it for less CPU, or on a build without libwebp (there the raw picture is "
-                            "capped at ~1 MB and larger frames are dropped)"},
+                            "Send the picture at maximum JPEG quality (best for a frozen / heavily averaged still). "
+                            "Larger than the quality slider's setting."},
+                           {"max_display_px", "Max picture size", "1280",
+                            "640=640 px|960=960 px|1280=1280 px|1920=1920 px|3840=3840 px (native 4K)",
+                            "Longest-side cap on the EMITTED picture only - reconstruction always uses the display's full "
+                            "geometry, so a 4K monitor is still fully received and reconstructed. Lower = less bandwidth/CPU; "
+                            "3840 sends the native raster. On a build without libjpeg the raw picture is capped at ~1 MB and "
+                            "larger frames are dropped."},
                            {"doa", "Bearing to source", "1", "0=Off|1=On",
                             "Coherent mode with DoA on: estimate a direction to the leaking device (shown in the DF panel). "
                             "Never affects the picture"}},

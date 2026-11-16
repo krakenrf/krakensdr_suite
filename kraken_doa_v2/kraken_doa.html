@@ -9872,12 +9872,12 @@ function specOnFrame(v, buf) {
 
 // A reconstructed decoder picture (binary type 8, kp::Host::video_frame):
 // uint32 vfo_id, uint16 width, height, uint8 format (0 GRAY8 / 1 RGB24),
-// uint8 encoding (0 = raw pixels, 1 = WebP bitstream), uint16 label_len,
+// uint8 encoding (0 = raw pixels, 2 = JPEG bitstream), uint16 label_len,
 // label, then the image data - width*height*bpp raw pixel bytes for encoding
-// 0, or a WebP blob the browser decodes natively for encoding 1 (built-in, no
+// 0, or a JPEG blob the browser decodes natively for encoding 2 (built-in, no
 // CDN) - all little-endian. Drawn on the panel's <canvas id="dvideo-${vfo_id}">.
 const videoFrames = {};   // vfo id -> {w, h, label, t} (latest)
-const videoDecode = {};   // vfo id -> {busy, pending, since, gen} for the async WebP decode (latest-only)
+const videoDecode = {};   // vfo id -> {busy, pending, since, gen} for the async JPEG decode (latest-only)
 const VIDEO_DECODE_WATCHDOG_MS = 3000;   // a decode stuck longer than this is treated as failed, so a hung createImageBitmap can't wedge the canvas
 let videoSubOn = false;   // are we subscribed to the VIDEO stream (a video panel is open)?
 // the caption overlay (both code paths); canvas fillText is safe - the label
@@ -9899,12 +9899,12 @@ function videoOnFrame(v, buf) {
   const w = v.getUint16(8, true), h = v.getUint16(10, true);
   const format = v.getUint8(12), encoding = v.getUint8(13);
   const labelLen = v.getUint16(14, true);
-  if (!w || !h || format > 1 || encoding > 1) return;
+  if (!w || !h || format > 1 || (encoding !== 0 && encoding !== 2)) return;
   const dataOff = 16 + labelLen;
   if (buf.byteLength < dataOff) return;
   let label = '';
   if (labelLen) { try { label = new TextDecoder().decode(new Uint8Array(buf, 16, labelLen)); } catch (e) { label = ''; } }
-  if (encoding === 1) { videoOnWebp(vfo, w, h, label, new Uint8Array(buf, dataOff, buf.byteLength - dataOff)); return; }
+  if (encoding === 2) { videoOnJpeg(vfo, w, h, label, new Uint8Array(buf, dataOff, buf.byteLength - dataOff)); return; }
   const bpp = format === 1 ? 3 : 1, nbytes = w * h * bpp;
   if (buf.byteLength < dataOff + nbytes) return;   // header and payload disagree
   const cv = document.getElementById('dvideo-' + vfo);
@@ -9925,14 +9925,14 @@ function videoOnFrame(v, buf) {
   videoDrawLabel(ctx, h, label);
   videoFrames[vfo] = {w, h, label, t: Date.now()};
 }
-// A WebP frame: decode it with the browser's built-in createImageBitmap. That
+// A JPEG frame: decode it with the browser's built-in createImageBitmap. That
 // is async, so keep only ONE decode in flight per canvas and remember just the
 // newest pending blob - a stale decode that finishes after a newer one arrived
 // is dropped, so the canvas always shows the latest frame. The Blob constructor
 // copies the bytes synchronously, so the view into the WebSocket buffer is safe
 // to hand off. A bad blob is ignored.
-function videoOnWebp(vfo, w, h, label, bytes) {
-  const blob = new Blob([bytes], {type: 'image/webp'});   // copies synchronously
+function videoOnJpeg(vfo, w, h, label, bytes) {
+  const blob = new Blob([bytes], {type: 'image/jpeg'});   // copies synchronously
   const st = videoDecode[vfo] || (videoDecode[vfo] = {busy: false, pending: null, since: 0, gen: 0});
   const job = {w, h, label, blob};
   // watchdog: a decode that never settled (a hung / lost createImageBitmap)
@@ -9941,16 +9941,16 @@ function videoOnWebp(vfo, w, h, label, bytes) {
   // dropping any stale pending too, since THIS frame is the newest.
   if (st.busy && Date.now() - st.since > VIDEO_DECODE_WATCHDOG_MS) { st.busy = false; st.pending = null; }
   if (st.busy) { st.pending = job; return; }   // keep only the newest
-  videoRunWebp(vfo, st, job);
+  videoRunJpeg(vfo, st, job);
 }
-function videoRunWebp(vfo, st, job) {
+function videoRunJpeg(vfo, st, job) {
   const token = ++st.gen;   // identifies this run; a watchdog-abandoned run has a stale token and is ignored when it finally settles
   st.busy = true;
   st.since = Date.now();
   let p;
   try {
     p = createImageBitmap(job.blob);   // a SYNC throw here must still clear busy, not wedge the canvas
-  } catch (e) { videoWebpNext(vfo, st, token); return; }
+  } catch (e) { videoJpegNext(vfo, st, token); return; }
   p.then(bmp => {
     if (st.gen !== token) { bmp.close(); return; }   // superseded by the watchdog: drop this stale frame
     try {
@@ -9963,13 +9963,13 @@ function videoRunWebp(vfo, st, job) {
         videoDrawLabel(ctx, job.h, job.label);
         videoFrames[vfo] = {w: job.w, h: job.h, label: job.label, t: Date.now()};
       }
-    } finally { bmp.close(); videoWebpNext(vfo, st, token); }
-  }).catch(() => videoWebpNext(vfo, st, token));   // bad blob: ignore the frame
+    } finally { bmp.close(); videoJpegNext(vfo, st, token); }
+  }).catch(() => videoJpegNext(vfo, st, token));   // bad blob: ignore the frame
 }
-function videoWebpNext(vfo, st, token) {
+function videoJpegNext(vfo, st, token) {
   if (token !== undefined && st.gen !== token) return;   // this run was abandoned by the watchdog; a newer run owns the state now
   st.busy = false;
-  if (st.pending) { const j = st.pending; st.pending = null; videoRunWebp(vfo, st, j); }
+  if (st.pending) { const j = st.pending; st.pending = null; videoRunJpeg(vfo, st, j); }
 }
 // the window [w0, w1] (MHz) zoom z shows of the span lo1..hi1 (its 1x view);
 // keeps z.off inside it, like zoomSlice
@@ -11135,6 +11135,23 @@ function addTouchHandlers(el, down, move, up) {
 
   function digSetOptFor(id, key, val) { send('DIGITAL_OPT:' + id + ':' + key + ':' + val); }
 
+  // range-slider options (choices "range:MIN:MAX[:STEP]"): update the live
+  // value readout on every drag and send the option debounced (~150 ms) so a
+  // drag doesn't flood the receiver; the final onchange sends it at once.
+  const digSliderTimers = {};
+  function digSliderInput(id, el) {
+    const span = el.nextElementSibling;
+    if (span && span.classList.contains('dig-slider-val')) span.textContent = el.value;
+    const tk = id + ':' + el.dataset.key, val = el.value;
+    if (digSliderTimers[tk]) clearTimeout(digSliderTimers[tk]);
+    digSliderTimers[tk] = setTimeout(() => { delete digSliderTimers[tk]; digSetOptFor(id, el.dataset.key, val); }, 150);
+  }
+  function digSliderChange(id, el) {
+    const tk = id + ':' + el.dataset.key;
+    if (digSliderTimers[tk]) { clearTimeout(digSliderTimers[tk]); delete digSliderTimers[tk]; }
+    digSetOptFor(id, el.dataset.key, el.value);
+  }
+
   // The demod "🔊 Listening" goes back to: the one the VFO had before
   // Digital, else WBFM on a VFO as wide as an FM broadcast channel (Digital
   // set by another page), else none (it is only muted, as before)
@@ -12174,12 +12191,28 @@ explorer .                      # the folder with cdecoder.exe and sdecoder.exe`
       // exactly the choices 0 / 1: an on / off button (dtv's Path separation...)
       const tog = op.choices && op.choices.length === 2 && op.choices.every(c => c[0] === '0' || c[0] === '1') &&
                   op.choices[0][0] !== op.choices[1][0];
+      // a single choice "range:MIN:MAX[:STEP]": a slider (the quality knob...)
+      const isRange = op.choices && op.choices.length === 1 && String(op.choices[0][0]).startsWith('range:');
       if (tog) {
         const on = v === '1';
         const cur = (op.choices.find(c => c[0] === (on ? '1' : '0')) || ['', on ? 'On' : 'Off'])[1];
         opts += `<button type="button" class="btn sm dig-opt-tog${on ? ' primary' : ''}" data-key="${digEsc(key)}" aria-pressed="${on}"` +
                 ` title="${digEsc((op.help ? op.help + '\n\n' : '') + 'Now: ' + cur + ' - click to turn ' + (on ? 'off' : 'on'))}"` +
                 ` onclick="digSetOptFor(${id}, this.dataset.key, '${on ? '0' : '1'}')">${on ? '●' : '○'} ${digEsc(op.label || op.key)}: ${digEsc(cur.replace(/\s*\(.*\)\s*$/, ''))}</button>`;
+      } else if (isRange) {
+        // range:MIN:MAX[:STEP] -> an <input type=range> with a live value readout
+        const parts = String(op.choices[0][0]).split(':');
+        let mn = Number(parts[1]), mx = Number(parts[2]);
+        if (!isFinite(mn)) mn = 0;
+        if (!isFinite(mx)) mx = 100;
+        const stp = parts.length > 3 && isFinite(Number(parts[3])) && Number(parts[3]) > 0 ? Number(parts[3]) : 1;
+        let cur = Number(v);
+        if (!isFinite(cur)) cur = Number(op.default);
+        if (!isFinite(cur)) cur = mn;
+        opts += `<label class="dig-opt-range"${tip}>${digEsc(op.label || op.key)}: ` +
+                `<input type="range" min="${mn}" max="${mx}" step="${stp}" value="${cur}" data-key="${digEsc(key)}"` +
+                ` oninput="digSliderInput(${id}, this)" onchange="digSliderChange(${id}, this)">` +
+                `<span class="dig-slider-val" style="margin-left:4px;min-width:2.4em;display:inline-block">${digEsc(String(cur))}</span></label>`;
       } else if (op.choices && op.choices.length)
         opts += `<label${tip}>${digEsc(op.label || op.key)}: <select data-key="${digEsc(key)}" onchange="digSetOptFor(${id}, this.dataset.key, this.value)">` +
                 op.choices.map(c => `<option value="${digEsc(c[0])}"${c[0] === v ? ' selected' : ''}>${digEsc(c[1])}</option>`).join('') + '</select></label>';
