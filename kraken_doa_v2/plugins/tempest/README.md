@@ -96,6 +96,7 @@ the 1 MB wire cap and drops anything larger, so lower `max_display_px` there.
 | Option | Default | Meaning |
 |---|---|---|
 | `mode` | `auto` | `auto`, a specific listed mode to force it, or `manual` (see the mode list below) |
+| `free_run` | 1 | show a live, unsynced preview while still searching (like a TempestSDR while you tune); **display only**, never affects detection / the lock / the bearing. Off = blank canvas until lock |
 | `refresh_lo` / `refresh_hi` | 50 / 90 | auto-detect refresh search window (Hz) |
 | `fps` | — | manual frame rate (Hz) |
 | `lines` | — | manual total lines (vtotal, blanking included) |
@@ -115,6 +116,23 @@ the 1 MB wire cap and drops anything larger, so lower `max_display_px` there.
 
 When `mode` is not `manual`, auto-detect drives the timing; manual offsets,
 averaging, contrast, crop and the picture-quality controls still apply.
+
+**Free-run preview (display only).** While the decoder is **not** locked
+(searching, or a weak / unsynced leakage), it maps the raw magnitude envelope
+straight onto the assumed geometry - the forced mode's active size, else a
+**1024×768** default - and sends it with `video_frame`, so the canvas always
+shows a live image, exactly as a TempestSDR shows snow with no input and a
+rolling picture as you tune a harmonic in. The brightness mapping is the locked
+path's (the `invert` / contrast / gamma options). It is purely a preview: it
+never touches the detection, lock, confidence gate or DoA state, so the facts
+stay at `searching` and the confidence gate is unchanged; no bearing is ever
+produced while unlocked. The preview raster is **capped to a 720-px longest
+side regardless of the mode** (a 4K mode must not make the preview huge - it is
+resampled straight into the small raster, which is also cheaper), at **~12 fps**
+and a lower WebP quality (noise frames never dedup, so the modest size + rate
+bound the bandwidth). The moment the real timing locks, the synced
+reconstruction at the native active resolution takes over unchanged. The
+`free_run` option (default on) turns it off for a blank-until-lock canvas.
 
 **Supported display modes** (the `mode` list): VESA DMT **640×480, 800×600,
 1024×768, 1280×720, 1280×1024, 1366×768, 1600×900, 1920×1080** (all @60), and
@@ -183,6 +201,15 @@ on a 1024×768@60 scene (pixel clock 65 MHz, 8th harmonic at 520 MHz, bearing
   several bearings (15°, 75°, 110°, 190°, 250°, 300°).
 - **Noise:** on a pure-noise file the decoder stays in "searching", emits no
   event and reports no bearing — no false lock.
+- **Free-run preview** (capturing host; the offline `--file` host drops
+  `video_frame`): on complex-Gaussian noise it emits a continuous, **changing**
+  720×540 image (the 1024×768 default downscaled to the 720-px cap) at the
+  ~12 fps cap with **no event and no lock** (still `searching`); forcing
+  1920×1080 it previews at 720×405 (the cap holds for high-res modes). On a real
+  1024×768 scene it emits ~3 free-run frames and then switches to the synced
+  1024×768 reconstruction on `Detected`. With `free_run=0`, no frames appear
+  until lock, and detection is unchanged. The preview adds ~2-3 % of real time
+  on noise (x86); on a locked signal it does not run.
 - **Cost:** decode time ~9 % of real time at 2.4 MHz × 5 antennas (x86) for
   1024×768; the once-a-second autocorrelation FFT dominates, the per-frame
   resample/average is cheap. Output frames are GRAY8, native active size up to

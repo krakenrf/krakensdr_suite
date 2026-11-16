@@ -46,11 +46,19 @@ below), so it will not lock instantly or on noise - it shows `Locked PAL
 625/50` (or `NTSC 525/60`) and the picture appears on the video canvas; the
 VFO's **Digital** squelch opens while it is locked.
 
+While it is still searching (no signal, or a weak / unsynced one), the canvas
+shows a **free-run preview** - the raw envelope mapped straight onto a nominal
+raster, exactly as an analog TV shows snow with no input and a rolling picture
+as you tune one in. This is display-only (see *Free-run preview* below); it
+never affects detection or the lock. Turn it off to get a blank canvas until
+lock.
+
 Options (saved per VFO):
 
 | Option | Default | What it does |
 |---|---|---|
 | **TV standard** | Auto | `Auto` picks PAL vs NTSC from the measured line rate. `PAL`, `NTSC`, `SECAM` force one. SECAM shares PAL geometry and cannot be told apart by timing, so it uses PAL geometry. |
+| **Free-run preview** | On | Show a live, unsynced picture while still searching (snow with no signal, a rolling picture with a weak one), like a real TV tuning in. **Display only** - never affects detection or the lock. Off = a blank canvas until it locks (the original behaviour). |
 | **Invert brightness** | Off | Off = normal broadcast (negative AM: sync tips are the strongest carrier, peak white the weakest). On flips black/white - for a baseband-composite or positive-modulation input. |
 | **Deinterlace** | Weave | `Weave` interleaves both fields into a full-height frame (best vertical detail, can comb on fast motion). `Bob` stretches the newest field to full height (softer, no comb, freshest). `Off` shows one field at half height. |
 | **Contrast** | Normal | Per-frame percentile stretch: Normal 0.5-99.5 %, High 2-98 % (punchier), Full 0-100 % (no clipping). |
@@ -92,6 +100,23 @@ Options (saved per VFO):
 On a confident lock it reports each frame's samples with
 `host.valid(start, end)` (drives the "receiving" state and the Digital
 squelch) and emits `Locked <standard>` once.
+
+**Free-run preview (display only).** Whenever the decoder is **not** locked
+(searching, or a weak / unsynced signal), it also maps the raw AM envelope
+straight onto the nominal raster for the selected standard - **auto defaults
+to PAL 625/50** - and sends it with `video_frame`, so the canvas always shows a
+live image: snow with no input, a rolling / tearing picture with a weak signal
+(the roll is correct - there is no sync to anchor to). The brightness mapping
+is identical to the locked path (negative-AM invert, the `invert` / contrast /
+gamma options). It is purely a preview: it never calls `host.valid()`, never
+emits a `Locked` event, and never touches the lock, periodicity or debounce
+state, so the facts stay at `searching` and the noise-rejection gate is
+unchanged. It is capped at **~12 fps**, drawn at **720 × active** (PAL 576 /
+NTSC 480), and sent at a lower WebP quality (a throwaway preview; noise frames
+never dedup, so the modest size + rate bound the bandwidth). The moment a real
+raster locks, the synced reconstruction takes over unchanged. The **Free-run
+preview** option (default on) turns it off for the original blank-until-lock
+behaviour.
 
 **Noise rejection.** A sync + field cadence can appear by luck in complex
 Gaussian noise (whose envelope is Rayleigh, with heavy-tailed spikes the sync
@@ -176,6 +201,14 @@ limited by the ~125 active samples per line, as expected for a 2.4 MHz slice.
 Complex Gaussian noise (several seeds and lengths) and uniform noise produce
 **no lock and no valid frames** - the line-rate periodicity + persistence gate
 above rejects them, including when a standard is forced.
+
+The free-run preview was checked with a capturing host (the offline `--file`
+host drops `video_frame`): on complex-Gaussian noise it emits a continuous,
+**changing** 720 × 576 image at the ~12 fps cap with **0 valid frames / 0 lock
+events** (still `searching`); on a real card it emits 2-3 free-run frames and
+then switches to the synced 720 × 576 (PAL) / 720 × 480 (NTSC) reconstruction
+on lock; with the option off, no frames appear until lock. The preview adds
+~2-3 % of real time on noise (x86); on a locked signal it does not run.
 
 `tools/testsignals.json` registers the PAL test card for the sidebar's
 **🧪 Debug Playback** (a wide 2.4 MHz, 5-antenna scene written straight to

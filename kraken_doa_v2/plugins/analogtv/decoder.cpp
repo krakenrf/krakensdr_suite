@@ -56,6 +56,16 @@ constexpr int OUT_W = 720;          // output width (upscaled from ~125 native a
 constexpr double BUILD_FPS = 15.0;  // attempt a reconstruction at most this often (live frame rate; keeps CPU low)
 constexpr float FRAME_EMA = 0.6f;   // light temporal smoothing (prefer freshness; motion must not smear)
 
+// Free-run preview (display only): while NOT locked, map the raw envelope onto
+// the nominal raster and emit it so the canvas always shows a live image (snow
+// on no signal, a rolling picture on a weak one), like a real TV / TempestSDR.
+// It never calls host.valid(), never fires a lock event and never touches the
+// lock / periodicity / debounce state - purely what gets drawn while searching.
+// Capped in rate and sent at a lower WebP quality (it is a throwaway preview,
+// and noise frames never dedup, so a modest rate + quality bounds bandwidth).
+constexpr double FREE_RUN_FPS = 12.0;   // free-run preview cadence (<= locked build rate)
+constexpr int FREE_RUN_QUALITY = 50;    // lower WebP quality for the preview
+
 // Noise-rejection lock gate. A lucky sync-tip / field-sync cadence can appear
 // in complex-Gaussian noise (whose Rayleigh envelope has heavy-tailed spikes),
 // so a matched line rate + field cadence alone is not enough to declare a lock.
@@ -144,15 +154,24 @@ public:
         // attempt a reconstruction at most BUILD_FPS per second of input
         if (env_.size() < min_build) return;
         const double now = host.time() + static_cast<double>(n) / rate_;
-        if (last_build_t_ > -1e8 && now - last_build_t_ < 1.0 / BUILD_FPS) return;
-        last_build_t_ = now;
-        reconstruct();
+        if (last_build_t_ <= -1e8 || now - last_build_t_ >= 1.0 / BUILD_FPS) {
+            last_build_t_ = now;
+            reconstruct();
+        }
+        // free-run preview while still searching (display only; reconstruct()
+        // emits nothing until it is fully locked). locked_ may have just been
+        // set above, in which case the synced frame already went out.
+        if (free_run_ && !locked_ && (last_free_t_ <= -1e8 || now - last_free_t_ >= 1.0 / FREE_RUN_FPS)) {
+            last_free_t_ = now;
+            emit_free_run();
+        }
     }
 
     void reset() override {
         env_.clear();
         buf_t0_ = 0;
         last_build_t_ = -1e9;
+        last_free_t_ = -1e9;
         envelope_.reset();
         locked_ = false;
         locked_name_.clear();
@@ -196,6 +215,8 @@ public:
             quality_ = quality_opt(value);
         } else if (key == "lossless") {
             lossless_ = value == "1";
+        } else if (key == "free_run") {
+            free_run_ = value != "0";   // display-only; does not affect the lock state
         } else if (key == "verbose") {
             verbose_opt_ = value == "1";
         }
@@ -206,6 +227,7 @@ private:
     std::vector<float> env_;
     double buf_t0_ = 0;
     double last_build_t_ = -1e9;
+    double last_free_t_ = -1e9;   // free-run preview cadence
     video::Envelope envelope_;   // plain |x|
     video::PeriodFinder pf_line_;   // line-period periodicity confidence (noise rejection)
 
@@ -223,6 +245,8 @@ private:
     std::vector<float> field_buf_;   // one field, active_field_lines x OUT_W
     std::vector<float> frame_buf_;   // woven frame, OUT_H x OUT_W
     std::vector<uint8_t> pix_;       // GRAY8 output
+    std::vector<float> free_f_;      // free-run resample scratch (reused)
+    std::vector<uint8_t> free_pix_;  // free-run GRAY8 output
 
     // options
     std::string std_opt_ = "auto";
@@ -233,6 +257,7 @@ private:
     double line_adjust_hz_ = 0;
     int quality_ = -1;        // WebP quality hint for the host (-1 = host default ~75)
     bool lossless_ = false;   // lossless WebP (frames are small; mostly a fidelity knob)
+    bool free_run_ = true;    // show a live preview while unlocked (display only)
     bool verbose_opt_ = false;
 
     void clear_facts() {
@@ -530,6 +555,52 @@ private:
             host.fact("Standard", "searching");
         }
     }
+
+    // Free-run preview: map the raw AM envelope onto the nominal raster for the
+    // selected standard (auto -> PAL 625/50) and emit it, so the canvas shows a
+    // live image while unlocked. Display only: no host.valid(), no lock event,
+    // no touch of the lock / periodicity / debounce state, and the facts stay at
+    // "searching". The brightness mapping is identical to the locked path
+    // (negative-AM: sync dark, white bright; the invert option flips it). With
+    // no sync the image rolls / tears - correct and expected.
+    void emit_free_run() {
+        size_t cnt = 0;
+        const video::TvStandard* tv = video::tv_standards(&cnt);
+        const video::TvStandard* st = &tv[0];        // auto / pal / secam -> PAL geometry
+        if (std_opt_ == "ntsc" && cnt > 1) st = &tv[1];
+        else if (std_opt_ == "secam" && cnt > 2) st = &tv[2];
+        const double spl = st->line_rate_hz > 0 ? rate_ / st->line_rate_hz : 0;
+        if (!(spl > 2)) return;
+        const int H = st->active_lines;
+        if (H < 2 || env_.size() < static_cast<size_t>(spl * H) + 2) return;   // not enough yet
+
+        const Geo g = geo_for(*st);
+        const double active_samp = g.active_us * 1e-6 * rate_;
+        video::FreeRunOpts fo;
+        fo.width = OUT_W;
+        fo.height = H;
+        fo.samples_per_line = spl;
+        fo.samples_per_pixel = active_samp / OUT_W;   // read only the active span, as the locked path
+        fo.stretch.invert = !invert_;                 // minimum envelope = white (negative AM)
+        fo.stretch.gamma = static_cast<float>(gamma_);
+        if (contrast_ == "high") { fo.stretch.lo_pct = 2.0f; fo.stretch.hi_pct = 98.0f; }
+        else if (contrast_ == "full") { fo.stretch.lo_pct = 0.0f; fo.stretch.hi_pct = 100.0f; }
+        else { fo.stretch.lo_pct = 0.5f; fo.stretch.hi_pct = 99.5f; }
+
+        video::free_run_frame(env_.data(), env_.size(), fo, free_f_, free_pix_);
+        if (free_pix_.size() != static_cast<size_t>(OUT_W) * H) return;
+
+        const std::string label = std::string(st->name) + " - free-run (searching)";
+        kp::VideoFrame vf;
+        vf.width = OUT_W;
+        vf.height = H;
+        vf.format = 0;   // GRAY8
+        vf.pixels = free_pix_.data();
+        vf.label = label;
+        vf.quality = FREE_RUN_QUALITY;   // a lower-quality throwaway preview
+        vf.lossless = false;
+        host.video_frame(vf);
+    }
 };
 
 }  // namespace
@@ -550,6 +621,10 @@ KRAKEN_PLUGIN(AnalogTv,
                             "auto=Auto detect|pal=PAL 625/50|ntsc=NTSC 525/60|secam=SECAM (PAL geometry)",
                             "Which standard to decode. Auto picks PAL vs NTSC from the measured line rate. SECAM shares "
                             "PAL geometry and cannot be told apart by timing."},
+                           {"free_run", "Free-run preview", "1", "1=On|0=Off",
+                            "Show a live, unsynced picture while the decoder is still searching (snow with no signal, a "
+                            "rolling picture with a weak one), like a real TV tuning in. Display only - it never affects "
+                            "detection or the lock. Off: a blank canvas until it locks."},
                            {"invert", "Invert brightness", "0", "0=Off|1=On",
                             "Off: normal broadcast (negative AM - the sync tips are the strongest carrier, peak white the "
                             "weakest). On: flips black/white, for a baseband-composite or positive-modulation input."},

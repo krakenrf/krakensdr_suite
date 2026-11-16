@@ -498,9 +498,9 @@ void FrameAccumulator::add(const float* frame, int max_shift, int* out_dx, int* 
     push(f);
 }
 
-void FrameAccumulator::render(std::vector<uint8_t>& out, const StretchOpts& o) const {
-    const size_t px = static_cast<size_t>(w_) * h_;
-    if (frames_ == 0 || px == 0) {
+void render_gray8(const float* img, int width, int height, std::vector<uint8_t>& out, const StretchOpts& o) {
+    const size_t px = static_cast<size_t>(width) * height;
+    if (!img || width <= 0 || height <= 0 || px == 0) {
         out.clear();
         return;
     }
@@ -508,7 +508,7 @@ void FrameAccumulator::render(std::vector<uint8_t>& out, const StretchOpts& o) c
     float lo = 0, hi = 0;
     bool any = false;
     for (size_t i = 0; i < px; i++) {
-        const float v = avg_[i];
+        const float v = img[i];
         if (!std::isfinite(v)) continue;
         if (!any) {
             lo = hi = v;
@@ -527,7 +527,7 @@ void FrameAccumulator::render(std::vector<uint8_t>& out, const StretchOpts& o) c
     const double scale = (NB - 1) / static_cast<double>(hi - lo);
     long long total = 0;
     for (size_t i = 0; i < px; i++) {
-        const float v = avg_[i];
+        const float v = img[i];
         if (!std::isfinite(v)) continue;
         int b = static_cast<int>((v - lo) * scale);
         if (b < 0) b = 0;
@@ -555,7 +555,7 @@ void FrameAccumulator::render(std::vector<uint8_t>& out, const StretchOpts& o) c
     const bool do_gamma = std::isfinite(o.gamma) && o.gamma > 0 && std::fabs(o.gamma - 1.0f) > 1e-3f;
     const float ginv = do_gamma ? 1.0f / o.gamma : 1.0f;
     for (size_t i = 0; i < px; i++) {
-        float t = (avg_[i] - plo) * inv;
+        float t = (img[i] - plo) * inv;
         if (!std::isfinite(t)) t = 0;
         if (t < 0) t = 0;
         if (t > 1) t = 1;
@@ -563,6 +563,38 @@ void FrameAccumulator::render(std::vector<uint8_t>& out, const StretchOpts& o) c
         if (do_gamma) t = std::pow(t, ginv);
         out[i] = static_cast<uint8_t>(t * 255.0f + 0.5f);
     }
+}
+
+void FrameAccumulator::render(std::vector<uint8_t>& out, const StretchOpts& o) const {
+    if (frames_ == 0 || w_ <= 0 || h_ <= 0) {
+        out.clear();
+        return;
+    }
+    render_gray8(avg_.data(), w_, h_, out, o);
+}
+
+// === 5b. Free-run preview ==================================================
+void free_run_frame(const float* env, size_t n, const FreeRunOpts& o, std::vector<float>& scratch,
+                    std::vector<uint8_t>& out) {
+    if (!env || o.width <= 0 || o.height <= 0 || !(o.samples_per_line > 0)) {
+        out.clear();
+        return;
+    }
+    const size_t px = static_cast<size_t>(o.width) * o.height;
+    scratch.assign(px, 0.0f);
+    RasterMap m;
+    m.width = o.width;
+    m.height = o.height;
+    m.samples_per_line = o.samples_per_line;
+    m.samples_per_pixel = o.samples_per_pixel;
+    // anchor to the newest samples so the preview is live and rolls as the
+    // buffer advances (there is no sync, so the absolute phase is arbitrary)
+    const double need = o.samples_per_line * o.height;
+    double origin = static_cast<double>(n) - need;
+    if (!(origin > 0)) origin = 0;
+    m.origin = origin;
+    resample(env, n, m, scratch.data());
+    render_gray8(scratch.data(), o.width, o.height, out, o.stretch);
 }
 
 // === 6a. Broadcast H/V sync ================================================

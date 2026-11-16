@@ -55,6 +55,28 @@ near-static, so **averaging many aligned frames** is the main SNR win.
 One-off lock event (also what the debug playback checks):
 `"Detected 1024x768 @ 60 Hz"` (`"Detected {W}x{H} @ {round(refresh)} Hz"`).
 
+## Free-run preview (display only)
+
+So the canvas is never blank while searching (a real TempestSDR free-runs the
+raster), `tick()` emits a **free-run** frame whenever `!locked_` (gated by the
+`free_run` option, default on). `send_free_run()` takes the assumed geometry -
+the forced DMT mode, else `FREE_RUN_DEFAULT_MODE` (`1024x768@60`) - and maps the
+raw magnitude envelope straight onto it with the shared `video::free_run_frame`
+helper, using the nominal `samples_per_line = fs/line_rate` and
+`samples_per_pixel = spl/htotal` and the locked path's invert/contrast/gamma.
+There is no sync recovery and no frame averaging, so the image is live and
+rolls. The preview raster is **capped to `FREE_RUN_MAX_PX` (720) on the longest
+side** regardless of the mode (a 4K mode must not make the preview huge) -
+`send_free_run()` scales the active W/H down and divides both resample strides
+by the same scale, so it resamples straight into the small raster (cheaper than
+resampling full-res then downscaling). `~12 fps` (`FREE_RUN_S`), label
+`"<W>x<H> - free-run (searching)"`, `quality = 50`. It is **strictly
+display-only**: it never touches the detection, lock, confidence gate or DoA
+state (`accumulate_cov` already refuses while `!locked_`), so the facts stay
+`searching` and no bearing is produced while unlocked. The moment `try_detect`
+sets `locked_`, the `if (locked_)` render block in the same `tick()` takes over
+and free-run is skipped.
+
 ## Info and options
 
 `.id="tempest"`, `.name="TEMPEST screen"`, `.category="EMSEC"`,
@@ -66,7 +88,8 @@ would false-trigger on anything).
 Options (saved per VFO): `mode` (auto | a listed display mode | manual),
 `refresh_lo` / `refresh_hi` (the auto search window, default 50/90 Hz), `fps` /
 `lines` / `pixel_clock_mhz` / `samples_per_line` (used when `mode=manual`),
-`h_offset` / `v_offset` (nudge the alignment), `invert`, `gamma`, `contrast`
+`free_run` (0/1, default 1 - the unlocked preview above), `h_offset` /
+`v_offset` (nudge the alignment), `invert`, `gamma`, `contrast`
 (normal|high|low), `average` (EMA factor, default 0.1), `autolock` (freeze the
 detected timing), `crop` (active-only vs full raster, default active),
 `quality` (WebP quality for the picture: 1-100, or low/medium/high = 40/65/90,
@@ -170,6 +193,16 @@ picture visible.
     4K. Decode ~30 % of real time at 2.4 MHz x 5 antennas (x86); the per-frame
     resample/render dominates (vs ~9 % for 1024x768) - the cadence scaling keeps
     it bounded. 1024x768 regression unchanged (~8 %).
+- Free-run preview: a throwaway harness with a capturing `kp::Host` (the
+  offline `--file` host drops `video_frame`) drives `process()` with
+  complex-Gaussian noise and with a 1024x768@60 card. Noise (mode auto) -> a
+  continuous, **changing** 720x540 preview (the 1024x768 default under the
+  720-px cap) at the ~12 fps cap with **no event / no lock** (still
+  `searching`); forcing 1920x1080 -> 720x405 (the cap holds for high-res). Card
+  -> ~3 free-run frames then the switch to the synced 1024x768 reconstruction on
+  `Detected`; `free_run=0` -> no frames until lock, detection unchanged.
+  ASan+UBSan clean on all these paths. Preview decode cost on noise ~2-3 % of
+  real time (x86); it does not run once locked.
 - Debug playback: `tools/testsignals.json` ids `tempest-1024x768` (wide cu8,
   3 s loop) and `tempest-4k` (3840x2160@60 forced via the VFO `mode` opt, 2 s)
   expect `{"event":"Detected ... @ 60 Hz"}` and `{"bearing":35}`.

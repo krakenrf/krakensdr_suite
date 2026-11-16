@@ -78,6 +78,18 @@ constexpr int DEFAULT_MAX_DISPLAY_PX = 3840;
 // unchanged, so the default-resolution performance does not regress.
 constexpr double CADENCE_PX_REF = 2560.0 * 1440.0;
 
+// Free-run preview (display only): while NOT locked, map the raw magnitude
+// envelope onto the assumed geometry (the forced mode, else a default) and emit
+// it, so the canvas always shows a live image (snow with no signal, a rolling
+// picture with a weak one) like a TempestSDR while you tune. It never touches
+// the detection, lock or DoA state - purely what gets drawn while searching.
+// Capped to a small preview raster and a modest rate (noise frames never dedup,
+// so a 4K mode must NOT make the preview huge; this bounds the bandwidth / CPU).
+constexpr double FREE_RUN_S = 1.0 / 12.0;   // ~12 fps preview cadence
+constexpr int FREE_RUN_MAX_PX = 720;        // longest-side cap for the preview raster
+constexpr int FREE_RUN_QUALITY = 50;        // lower WebP quality for the preview
+constexpr const char* FREE_RUN_DEFAULT_MODE = "1024x768@60";   // assumed geometry when none is chosen
+
 double pnum(const std::string& s) {
     if (s.empty()) return NAN;
     char* e = nullptr;
@@ -131,7 +143,7 @@ public:
         env_ = video::Envelope{};
         drop_lock();
         acc_w_ = acc_h_ = 0;
-        next_detect_ = next_acc_ = next_video_ = next_blank_ = 0;
+        next_detect_ = next_acc_ = next_video_ = next_blank_ = next_free_ = 0;
         cov_m_ = 0;
         cov_n_ = 0;
         covR_.clear();
@@ -198,6 +210,8 @@ public:
                                   : DEFAULT_MAX_DISPLAY_PX;
         } else if (key == "doa") {
             doa_ = value != "0";
+        } else if (key == "free_run") {
+            free_run_ = value != "0";   // display-only; does not affect detection
         }
     }
 
@@ -263,6 +277,12 @@ private:
     bool lossless_ = false;     // lossless WebP (a frozen/averaged still)
     int max_display_px_ = DEFAULT_MAX_DISPLAY_PX;   // longest-side cap on the emitted picture
     bool doa_ = true;
+    bool free_run_ = true;      // show a live preview while unlocked (display only)
+
+    // free-run preview state (display only; never touches the lock / DoA state)
+    double next_free_ = 0;
+    std::vector<float> free_f_;      // free-run resample scratch (reused)
+    std::vector<uint8_t> free_pix_;  // free-run GRAY8 output
 
     void ensure_fs() {
         if (!(fs_ > 0) || !std::isfinite(fs_)) {
@@ -324,6 +344,10 @@ private:
             if (t >= next_blank_) { find_blanking(); next_blank_ = t + BLANK_S; }
             if (t >= next_acc_) { add_frame(); next_acc_ = t + ACC_S * cad; }
             if (t >= next_video_) { send_video(); next_video_ = t + VIDEO_S * cad; }
+        } else if (free_run_ && t >= next_free_) {
+            // live preview while searching (display only; never affects detection)
+            send_free_run();
+            next_free_ = t + FREE_RUN_S;
         }
         // DoA covariance window (end on the block boundary)
         if (doa_ && locked_ && cov_m_ >= 2 && std::isfinite(cwin_start_) && now_end(n) - cwin_start_ >= COV_WIN_S)
@@ -770,6 +794,63 @@ private:
         host.video_frame(f);
     }
 
+    // -------- free-run preview (display only) --------
+    // Map the raw magnitude envelope straight onto the assumed geometry (the
+    // forced mode, else FREE_RUN_DEFAULT_MODE) downscaled to a small preview
+    // raster, and emit it so the canvas shows a live image while unlocked. No
+    // sync recovery, no frame averaging (it must look live and moving), and it
+    // never touches the lock / detection / DoA state. The brightness mapping is
+    // the locked path's (invert / contrast / gamma options).
+    void send_free_run() {
+        const video::DisplayMode* dm =
+            (opt_mode_ != "auto" && opt_mode_ != "manual") ? mode_by_name(opt_mode_) : nullptr;
+        if (!dm) dm = mode_by_name(FREE_RUN_DEFAULT_MODE);
+        if (!dm || !(dm->line_rate_hz() > 0) || dm->htotal <= 0) return;
+        const int aw = dm->width > 0 ? dm->width : dm->htotal;    // active width (fall back to the full raster)
+        const int ah = dm->height > 0 ? dm->height : dm->vtotal;
+        if (aw < 2 || ah < 2) return;
+        const double spl = fs_ / dm->line_rate_hz();   // nominal source samples per line
+        const double spp = spl / dm->htotal;           // nominal source samples per active pixel
+        if (!(spl > 1)) return;
+
+        // cap the preview to FREE_RUN_MAX_PX on the longest side - a 4K mode must
+        // not make the preview huge. Resample straight into the small raster
+        // (fewer output pixels = cheaper): each preview row / column then spans
+        // 1/scale source samples, so it still covers the full active area.
+        double scale = static_cast<double>(FREE_RUN_MAX_PX) / std::max(aw, ah);
+        if (scale > 1.0) scale = 1.0;
+        const int pw = std::max(2, static_cast<int>(std::lround(aw * scale)));
+        const int ph = std::max(2, static_cast<int>(std::lround(ah * scale)));
+
+        video::FreeRunOpts fo;
+        fo.width = pw;
+        fo.height = ph;
+        fo.samples_per_line = spl / scale;    // ph rows span the full active height
+        fo.samples_per_pixel = spp / scale;   // pw cols span the full active width
+        fo.stretch.lo_pct = lo_pct_;
+        fo.stretch.hi_pct = hi_pct_;
+        fo.stretch.invert = invert_;
+        fo.stretch.gamma = static_cast<float>(gamma_);
+
+        const double need = fo.samples_per_line * ph;
+        if (static_cast<double>(ebuf_.size()) < need + 2) return;   // not enough buffered yet
+
+        video::free_run_frame(ebuf_.data(), ebuf_.size(), fo, free_f_, free_pix_);
+        if (free_pix_.size() != static_cast<size_t>(pw) * ph) return;
+
+        char lbl[64];
+        std::snprintf(lbl, sizeof lbl, "%dx%d - free-run (searching)", aw, ah);
+        kp::VideoFrame f;
+        f.width = pw;
+        f.height = ph;
+        f.format = 0;   // GRAY8
+        f.pixels = free_pix_.data();
+        f.label = lbl;
+        f.quality = FREE_RUN_QUALITY;   // a lower-quality throwaway preview
+        f.lossless = false;
+        host.video_frame(f);
+    }
+
     // -------- DoA (secondary, defensive) --------
     void accumulate_cov(const cf* const* x, int m, size_t n) {
         if (!doa_ || m < 2 || m > 8 || n == 0) { cov_m_ = m; return; }
@@ -856,6 +937,11 @@ KRAKEN_PLUGIN(Tempest,
                             "3440x1440 share a line rate so Auto can report either, 4K @60 has so few samples per line that "
                             "Auto can alias it to a lower mode, and 4K @30 sits below the default refresh window (force it or "
                             "lower Refresh search min). Auto is reliable for the 640x480..1920x1080 modes"},
+                           {"free_run", "Free-run preview", "1", "1=On|0=Off",
+                            "Show a live, unsynced picture while still searching (snow with no signal, a rolling picture "
+                            "with a weak one), like a TempestSDR while you tune - using the forced mode's geometry, else a "
+                            "default, at a small preview size. Display only: it never affects detection, the lock or the "
+                            "bearing. Off: a blank canvas until it locks."},
                            {"refresh_lo", "Refresh search min (Hz)", "50", "",
                             "Auto detect: the lowest frame rate to look for (the frame-period autocorrelation window)"},
                            {"refresh_hi", "Refresh search max (Hz)", "90", "",

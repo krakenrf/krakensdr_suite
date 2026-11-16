@@ -89,6 +89,27 @@ and several lengths, and uniform noise, both auto and with a forced standard ->
 0 locks, 0 valid frames, "searching"). The lock now takes ~0.19 s rather than
 ~0.05 s (the debounce), still far inside any test clip.
 
+## Free-run preview (display only)
+
+So the video canvas is never blank or frozen while searching (as a real TV
+free-runs the raster and shows snow / a rolling picture), `process()` emits a
+**free-run** frame whenever the decoder is NOT locked (searching or the
+acquisition debounce). It maps the raw envelope straight onto the nominal raster
+for the selected standard (auto defaults to **PAL 625/50**) via the shared
+`video::free_run_frame` helper - `OUT_W` (720) wide, `active_lines` tall,
+`samples_per_line = rate / line_rate` and `samples_per_pixel = active_us / OUT_W`
+(the same active-span mapping and the same negative-AM invert / contrast / gamma
+as the locked path) - with **no sync and no frame averaging**, so the image is
+live and rolls (correct: there is no sync to anchor to). Label
+`"<std> - free-run (searching)"`, `quality = 50` (a throwaway preview), capped at
+`FREE_RUN_FPS` (12). It is **strictly display-only**: `emit_free_run()` never
+calls `host.valid()`, never fires a lock event, and never touches `locked_`,
+`confirms_`, `pending_*`, the period finder or the facts (they stay
+`searching`), so the noise-rejection gate above is untouched. Gated by the
+`free_run` option (default on; off restores the blank-until-lock behaviour). The
+cadence is independent of the reconstruct() build rate; once the real raster
+locks, `locked_` is set and the synced path takes over (free-run is skipped).
+
 ## Info and options
 
 `.id="analogtv"`, `.name="Analog TV"`, `.category="Broadcast & cellular"`,
@@ -97,11 +118,12 @@ locks the VFO at the tuner centre at >= 2 MHz, like *dtv*), `.sample_rate=0`
 (the VFO's own rate - effectively the full 2.4 MHz), `.min_vfo_rate=2000000`,
 `.video=true`.
 
-Options (saved per VFO): `standard` (auto|pal|ntsc|secam), `invert` (0/1),
-`deinterlace` (weave|bob|off), `contrast` (normal|high|full), `gamma` (0.2-5),
-`line_adjust` (Hz, +-2000, a manual nudge for a stubborn lock), `quality` (WebP
-quality for the picture: 1-100, or low/medium/high = 40/65/90, or `default` =
-host ~75) and `lossless` (0/1). The frame is small either way (720 x active),
+Options (saved per VFO): `standard` (auto|pal|ntsc|secam), `free_run` (0/1,
+default 1 - the unlocked preview above), `invert` (0/1), `deinterlace`
+(weave|bob|off), `contrast` (normal|high|full), `gamma` (0.2-5), `line_adjust`
+(Hz, +-2000, a manual nudge for a stubborn lock), `quality` (WebP quality for
+the picture: 1-100, or low/medium/high = 40/65/90, or `default` = host ~75) and
+`lossless` (0/1). The frame is small either way (720 x active),
 so `quality` is mainly a bandwidth/fidelity knob; the plugin passes raw pixels
 and the host (built with libwebp) compresses them.
 
@@ -136,6 +158,15 @@ field; off = half height. ~15 fps, well under the 1 MiB wire cap.
   `searching`. Before the gate, Gaussian noise produced 4-10 false
   `Locked PAL|NTSC` events per 3 s clip (uniform noise did not, which is why it
   was missed). Reproduce with complex-Gaussian cf32, not `/dev/urandom`.
+- Free-run preview: a throwaway harness with a capturing `kp::Host` (the
+  offline `--file` host drops `video_frame`) drives `process()` with
+  complex-Gaussian noise and with the PAL/NTSC cards. Noise -> a continuous,
+  **changing** 720x576 image at the ~12 fps cap (32/33 consecutive frames
+  differ) with **0 valid frames / 0 lock events** (still `searching`); a card ->
+  2-3 free-run frames then the switch to the synced 720x576 (PAL) / 720x480
+  (NTSC) reconstruction on `Locked`; `free_run=0` -> no frames until lock, lock
+  unchanged. ASan+UBSan clean on all these paths. Decode cost of the preview on
+  noise ~2-3 % of real time (x86); it does not run once locked.
 - Debug playback: `tools/testsignals.json` id `analogtv-pal-testcard` - a wide
   2.4 MHz, 5-antenna, 3 s PAL scene (cu8, lock_vfo, tuner_offset 0, rf
   183.25 MHz). `make_testsignal.py --check` passes; building it produces the

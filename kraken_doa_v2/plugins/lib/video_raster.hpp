@@ -211,6 +211,13 @@ struct StretchOpts {
     bool invert = false;    // swap black / white (AM video is often inverted)
     float gamma = 1.0f;     // output = in^(1/gamma); 1 = linear, >1 lifts shadows
 };
+// Render one width x height float image to GRAY8 (width*height bytes,
+// row-major) with the StretchOpts percentile stretch - the same mapping
+// FrameAccumulator::render uses (it calls this). Non-finite pixels count as
+// black; out is resized. Allocation-free apart from out. A free function so a
+// one-off (non-averaged) frame can reuse the identical mapping.
+void render_gray8(const float* img, int width, int height, std::vector<uint8_t>& out,
+                  const StretchOpts& o = StretchOpts{});
 class FrameAccumulator {
 public:
     // ema in (0,1] (ignored when boxcar_n > 0); boxcar_n > 0 keeps the last N
@@ -251,6 +258,29 @@ private:
     void best_shift(const float* frame, int max_shift, int* dx, int* dy) const;
     void push(const float* frame);
 };
+
+// === 5b. Free-run preview (no sync, no lock, no averaging) =================
+// A live, UNSYNCED grayscale preview for the moments a reconstructor has NOT
+// locked: map the most-recent envelope straight onto a nominal W x H raster at
+// a fixed (fractional) line period and render it, with no frame averaging, so
+// the picture is live and moving - snow on noise, a rolling / tearing picture
+// on a weak signal, exactly what an analog TV or a TempestSDR shows while you
+// tune. It is DISPLAY-ONLY: it recovers no timing and must never touch a
+// detector's lock state. Keep the raster small (a preview) and the call rate
+// modest; both plugins cap it that way. Reuses resample() + render_gray8().
+struct FreeRunOpts {
+    int width = 0, height = 0;
+    double samples_per_line = 0;   // source samples per output row (fractional, > 0)
+    double samples_per_pixel = 0;  // source samples per output column (0 => samples_per_line / width)
+    StretchOpts stretch;           // invert / percentile / gamma, as the locked render
+};
+// Resample the newest ~(samples_per_line * height) samples of env[0..n) onto
+// the raster (anchored to the buffer tail, so it rolls as the buffer advances)
+// and render GRAY8 into out (resized to width*height). scratch is a
+// caller-owned float work buffer, reused across calls (no per-call heap churn
+// after warm-up). No-op (out cleared) on bad geometry.
+void free_run_frame(const float* env, size_t n, const FreeRunOpts& o,
+                    std::vector<float>& scratch, std::vector<uint8_t>& out);
 
 // === 6. Sync helpers =======================================================
 
