@@ -2,7 +2,7 @@
 {
  "id": "ysf-three-radios",
  "title": "YSF: three radios taking turns on one 70 cm channel",
- "description": "Yaesu System Fusion C4FM calls on 438.5 MHz, direct, destination ALL (header / CC / terminator frames with FICH, DCH callsign data, seeded random voice bits): ZL1AAA (50 deg) twice - DN (V/D mode 2) first, Voice FR (VW) last -, ZL2BBB (170 deg) in VW, ZL3CCC (285 deg) in DN, each at its own carrier offset and level. Expect talkers ZL1AAA, ZL2BBB and ZL3CCC at those bearings.",
+ "description": "Yaesu System Fusion C4FM calls on 438.5 MHz, direct, destination ALL (header / CC / terminator frames with FICH, DCH callsign data; seeded voice bits - real IMBE frames in VW, a buzz): ZL1AAA (50 deg) twice - DN (V/D mode 2) first, Voice FR (VW) last -, ZL2BBB (170 deg) in VW, ZL3CCC (285 deg) in DN, each at its own carrier offset and level. Expect talkers ZL1AAA, ZL2BBB and ZL3CCC at those bearings.",
  "rf_hz": 438500000.0,
  "tuner_offset_hz": 300000,
  "seconds": 13,

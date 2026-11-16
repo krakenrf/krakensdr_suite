@@ -154,7 +154,10 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     de-whitened, 27 bits x 3 by soft majority + 22) -> 49 bits ->
     mbelib's `mbe_processAmbe2450Dataf` (`MbeLib::decode49`, optional),
     Voice FR (VW) 5 x 144 (sub header FT 1 / FN 0: CSD3 + VCH 3, 4) ->
-    `ImbeDecoder` (iW..iZ, P25's order). A call = valid frames < 1 s apart
+    `ImbeDecoder` in the YSF order (`vw_plain_index`: the plain IMBE
+    codewords c0..c7 as a 24 x 6 block, read two rows per 12 air bits; at
+    first P25's iW..iZ order, wrong - corrected 2026-11-16 after the dsdcc
+    check). A call = valid frames < 1 s apart
     (two headers in a row = one; a repeated TC is no new call); its event
     waits for source + destination + CSD2 (late entry: at most 8 frames);
     a lone FICH with no DCH and no second frame gives no call events.
@@ -167,12 +170,14 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
     the 7-bit SQL code; CS = 10 not enforced. NOT in the standard: the bit
     order inside the voice frames (DN's 49 bits passed as received =
     mbelib's u0 u1 u2 u3 order, the 27 triplicated bits then being u0, u1
-    and u2's top 3; V/D 1 as DMR's 72-bit frame; VW as the IMBE frame in
-    TIA-102.BABA order - the alternative, codewords c0..c7 in a row, isn't
-    tried). The plugin's generator (`tools/ysf_gen.py`, written
-    independently from the same document) agrees bit for bit, but sends
-    random voice bits: no off-air recording or other decoder checked, and
-    DN / V/D 1 / VW audio is untested on real radios.
+    and u2's top 3; V/D 1 as DMR's 72-bit frame; VW in the order the
+    reference decoders document). The plugin's generator
+    (`tools/ysf_gen.py`, written independently from the same document;
+    VW = real IMBE frames) agrees bit for bit; dsdcc (GPL, run in scratch
+    as a reference only, 2026-11-16) reads the generator's frames, CSD and
+    voice bits the same way (DN 174 / 175, V/D 1 100 / 100, VW 161 / 169
+    frames bit-exact - the rest its own symbol errors; plugin README).
+    No off-air recording checked; AMBE+2 audio never run (no mbelib).
     `KRAKEN_YSF_DUMP=1`: frames, DCH units, voice bits to stderr
   - `Mpt1327Receiver` (plugins/mpt1327): MPT1327 / MPT1343 analogue
     trunking signalling, 1200 bit/s FFSK (1 = 1200 Hz, 0 = 1800 Hz) on the

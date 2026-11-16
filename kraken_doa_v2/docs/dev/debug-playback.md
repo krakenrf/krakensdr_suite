@@ -168,4 +168,6 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   heimdall): `ysf-three-radios`, 45 s, Check 3 / 3 - talkers ZL1AAA 50.0,
   ZL2BBB 170.0, ZL3CCC 285.0 (each +0.0), 0 packets dropped, the plugin
   running with 0 dropped, every call's start / end event in the decoder log
+  (generator then still with random VW voice bits; regenerated with real
+  IMBE frames the same 50.0 / 170.0 / 285.0 offline)
 

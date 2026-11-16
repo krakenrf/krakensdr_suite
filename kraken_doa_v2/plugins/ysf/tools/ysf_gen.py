@@ -37,17 +37,22 @@ whitening, CRC-16, K=5 code, interleave) and the voice channels.
 Per-call options given before the first --at are defaults for every call.
 
 Voice: the standard puts DVSI AMBE+2 frames into the voice channels but does
-not define their bits, so they are seeded random bits: V/D 2 - 49 bits per
-20 ms, coded as sect. 4.5 (3) specifies (27 bits x3 + 22 + 1 zero, PN(9,5)
-whitening, 4 x 26 interleave -> VCH 72 + VeCH 32); V/D 1 - the 72-bit VCH
-(49 + 23 vocoder FEC) as random bits; Voice FR - the 144-bit VCH (88 + 56)
-as random bits. OUT.json has every frame's FICH word, DCH unit and voice
-bits, so a decoder's output can be compared bit for bit.
+not define their bits: V/D 2 - seeded random 49 bits per 20 ms, coded as
+sect. 4.5 (3) specifies (27 bits x3 + 22 + 1 zero, PN(9,5) whitening, 4 x 26
+interleave -> VCH 72 + VeCH 32); V/D 1 - the 72-bit VCH (49 + 23 vocoder
+FEC) as random bits; Voice FR - real IMBE 7200x4400 frames (seeded 88 voice
+bits, a valid pitch, Golay / Hamming FEC and the PN scrambling) in the
+on-air order dsdcc documents (not in Yaesu's standard; vw_plain_index): they
+decode as a buzz, not speech. OUT.json has every frame's FICH word, DCH unit
+and voice bits as sent (VW: + `voice88`, the 88 voice bits), so a decoder's
+output can be compared bit for bit.
 
 One radio's calls as complex baseband (cf32) + OUT.json. Put several radios
 at their own bearings with plugins/sdk/tools/uca_scene.py.
 """
 import json
+import os
+import re
 import sys
 
 import numpy as np
@@ -180,6 +185,62 @@ def vd2_voice(v49):
     return out[:72], out[72:]
 
 
+# --- Voice FR: IMBE 7200x4400 frames ------------------------------------------
+# The standard gives only 144 bits (88 voice + 56 FEC) per 20 ms; the frame is
+# the IMBE full-rate one (c0..c3 Golay(23,12), c4..c6 Hamming(15,11), c7 7
+# bits, c1..c6 scrambled by the PN seeded with u0), and where its bits go on
+# air is the order the reference decoders document (dsdcc's VFR interleave),
+# not something in Yaesu's document. FEC generators: kraken_doa's IMBE tables.
+TABLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'lib', 'mbe_tables.hpp')
+
+
+def table(name):
+    src = open(TABLES).read()
+    m = re.search(r'\b' + name + r'\[\d+\]\s*=\s*\{([^}]*)\}', src)
+    return [int(v, 0) for v in m.group(1).replace('\n', ' ').split(',') if v.strip()]
+
+
+GOLAY_GEN = table('golayGenerator')
+HAMMING_GEN = table('hammingGenerator')
+
+
+def vw_plain_index(j):
+    # air bit j -> plain index (c0 at 0..22 first bit first, ... c7 137..143):
+    # 24 rows x 6 columns (index = 24 column + row); each 12 air bits are row
+    # 2r in column order 0..5, then row 2r + 1 in the order 1 0 3 2 5 4
+    g, r = divmod(j, 12)
+    return 2 * g + 24 * r if r < 6 else 2 * g + 1 + 24 * (1, 0, 3, 2, 5, 4)[r - 6]
+
+
+def imbe_vw(rng):
+    """Seeded 88 voice bits (a valid pitch index b0) -> (144 air bits, the 88)."""
+    d = list(rng.integers(0, 2, 88))
+    b0 = int(rng.integers(0, 208))          # 0..207 = a voiced / unvoiced pitch
+    for i, k in enumerate((0, 1, 2, 3, 4, 5, 85, 86)):
+        d[k] = (b0 >> (7 - i)) & 1
+    val = lambda b: int(''.join(map(str, b)), 2)
+    uw = [val(d[12 * i:12 * i + 12]) for i in range(4)] + \
+         [val(d[48 + 11 * i:59 + 11 * i]) for i in range(3)] + [val(d[81:88])]
+    plain = []
+    for i in range(4):                      # Golay(23,12): 12 data + 11 parity
+        ecc = 0
+        for k in range(12):
+            if (uw[i] >> (11 - k)) & 1:
+                ecc ^= GOLAY_GEN[k]
+        plain += u((uw[i] << 11) | ecc, 23)
+    for i in range(4, 7):                   # Hamming(15,11): 11 data + 4 parity
+        blk = uw[i] << 4
+        for k in range(4):
+            blk |= (bin(blk & HAMMING_GEN[k] & 0x7FF0).count('1') & 1) << (3 - k)
+        plain += u(blk, 15)
+    plain += u(uw[7], 7)
+    p = uw[0] << 4                          # PN over c1..c6 (114 bits)
+    for i in range(23, 137):
+        p = (p * 173 + 13849) & 0xFFFF
+        plain[i] ^= p >> 15
+    return [plain[vw_plain_index(j)] for j in range(144)], d
+
+
 def frame_syms(fich_w, payload):
     bits = u(FS, 40) + fich_encode(fich_w) + payload
     assert len(bits) == 960, len(bits)
@@ -217,11 +278,14 @@ def call(c, rng):
 
     log, syms = [], []
 
-    def emit(kind, fn, ft, payload, unit=None, voice=None):
+    def emit(kind, fn, ft, payload, unit=None, voice=None, voice88=None):
         w = fich(dict(base, fi=FI[kind], fn=fn, ft=ft))
-        log.append({'sym': len(syms), 'fi': kind, 'fn': fn, 'ft': ft, 'fich': '%08X' % w,
-                    'dch': bits_hex(unit) if unit is not None else None,
-                    'voice': [''.join(map(str, v)) for v in voice] if voice else []})
+        e = {'sym': len(syms), 'fi': kind, 'fn': fn, 'ft': ft, 'fich': '%08X' % w,
+             'dch': bits_hex(unit) if unit is not None else None,
+             'voice': [''.join(map(str, v)) for v in voice] if voice else []}
+        if voice88:
+            e['voice88'] = [''.join(map(str, v)) for v in voice88]
+        log.append(e)
         syms.extend(frame_syms(w, payload))
 
     def hc_tc(kind):
@@ -240,12 +304,16 @@ def call(c, rng):
             if j == 0:
                 # 4.4 (2) Fig. 4-21: CC0 sub header, FT 1 / FN 0: CSD3 in DCH(0..4),
                 # 72 reserved bits (sent as zeros), VCH(3), VCH(4)
-                v = [list(rng.integers(0, 2, 144)) for _ in range(2)]
-                emit('cc', 0, 1, dch_encode(csd3) + [0] * 72 + v[0] + v[1], unit=csd3, voice=v)
+                f = [imbe_vw(rng) for _ in range(2)]
+                v = [a for a, _ in f]
+                emit('cc', 0, 1, dch_encode(csd3) + [0] * 72 + v[0] + v[1], unit=csd3, voice=v,
+                     voice88=[b for _, b in f])
             else:
                 # Fig. 4-22: 5 x 144-bit full-rate VCH; FT 1 / FN 1 once, then FT 0 / FN 0
-                v = [list(rng.integers(0, 2, 144)) for _ in range(5)]
-                emit('cc', 1 if j == 1 else 0, 1 if j == 1 else 0, sum(v, []), voice=v)
+                f = [imbe_vw(rng) for _ in range(5)]
+                v = [a for a, _ in f]
+                emit('cc', 1 if j == 1 else 0, 1 if j == 1 else 0, sum(v, []), voice=v,
+                     voice88=[b for _, b in f])
     else:
         ft = len(units) - 1
         n = max(ft + 1, n)

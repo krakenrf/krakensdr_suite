@@ -34,16 +34,19 @@ is no new one.
 
 Voice (only while someone listens): VW through the built-in IMBE decoder -
 the standard gives the VW frame only as 144 bits, 88 voice + 56 FEC, at 7200
-bit/s, which is the IMBE full-rate frame; its bits are taken in the
-vocoder's interleaved order (the one P25 carries). V/D mode 1 and DN through
-a user-installed mbelib (README: Digital voice codecs): V/D mode 1's 72-bit
-frames like DMR's; DN's 49 parameter bits through mbelib's
-`mbe_processAmbe2450Dataf` (optional: an mbelib without it means no DN
-voice, said in the voice status), in the order received (u0 12, u1 12, u2
-11, u3 14 bits, mbelib's own order - the standard only says "49 bits").
+bit/s, which is the IMBE full-rate frame; where its bits go on air isn't in
+the standard - the plugin uses the YSF order as the reference decoders
+document it (24 x 6 block, `vw_plain_index` in ysf.cpp; checked against
+dsdcc, below). V/D mode 1 and DN through a user-installed mbelib (README:
+Digital voice codecs): V/D mode 1's 72-bit frames like DMR's; DN's 49
+parameter bits through mbelib's `mbe_processAmbe2450Dataf` (optional: an
+mbelib without it means no DN voice, said in the voice status), in the
+order received (u0 12, u1 12, u2 11, u3 14 bits, mbelib's own order - the
+standard only says "49 bits"; dsdcc does the same).
 
 Debug: `KRAKEN_YSF_DUMP=1` writes every frame's FICH, DCH units, CSD fields,
-voice bits as handed to the codec and every sync attempt to stderr.
+voice bits as handed to the codec (VW: also its 88 voice bits) and every
+sync attempt to stderr.
 
 ## ID separation (DoA per station)
 Each transmission is a talker (`host.talker`): the source callsign
@@ -59,8 +62,9 @@ station's bearing is the repeater's.
 
 ## Tests (2026-11, x86_64, offline)
 Generator `tools/ysf_gen.py`, written independently from the same standard
-(black box here): every frame's FICH word, DCH unit and voice bits in its
-JSON sidecar.
+(black box here until the dsdcc check below): every frame's FICH word, DCH
+unit and voice bits in its JSON sidecar (VW: real IMBE frames, + their 88
+voice bits).
 
 - Bit-exact against the sidecar (`KRAKEN_YSF_DUMP=1`): the generator
   engineer's 10 example files - DN, VW, V/D mode 1, DN / V/D mode 1 with
@@ -68,14 +72,15 @@ JSON sidecar.
   individual (CM 3), Radio ID mode (CM 1), two calls 1 s apart (DN then VW)
   - 217 frames, 969 voice frames; plus one of my own from the same
   generator (V/D mode 1, VoIP + MR 2, DG-ID 99: 17 frames, 75 voice
-  frames). Every frame found, every FICH, DCH unit and voice frame equal,
-  no extra frames; each call started and ended once with the fields as set.
+  frames). Every frame found, every FICH, DCH unit and voice frame equal
+  (VW: the 144 air bits and the 88 voice bits, 169 frames), no extra
+  frames; each call started and ended once with the fields as set.
   Re-checked from a clean rebuild by a second session (2026-11-16): the 10
   files pass, a DN call at 9 dB SNR and +700 Hz offset 22 / 22 frames.
-- VW audio: placeholder IMBE frames with valid FEC (`p25_gen.py`'s) in a
-  VW call: 97/97 frames clean through `ImbeDecoder` (2 s call), 9.9 s of
-  audio from a 10 s call. (`ysf_gen.py` sends random voice bits, which
-  aren't IMBE frames.)
+- VW audio through `ImbeDecoder` on the generator's own files: `vw`
+  97 / 97 frames clean (1.94 s), `two_calls` 72 / 72, the catalogue scene's
+  VW calls all clean. The frames are placeholders (seeded voice bits, valid
+  FEC): a buzz, not speech.
 - Coding round trips with injected errors (scattered channel bit errors):
   FICH >= 99.5 % up to 8 errors of 200, 96 % at 11; DCH 160 bits 100 % up
   to 6 of 360, 95 % at 15; DCH 80 bits 100 % up to 4 of 200, 96 % at 10;
@@ -108,12 +113,37 @@ JSON sidecar.
   samples dropped, every call's start / end event in the decoder log.
 - CPU: 0.7 % of real time (10 min of noise: 4.1 s; the nxdn plugin 6.4 s,
   p25 4.2 s); 1.5 % while decoding VW audio.
+- Independent decoder (2026-11-16): dsdcc's `dsdccx` (f4exb, GPL - built in
+  scratch without mbelib, run only; `-fy`, the generator's files
+  FM-demodulated to 48 kHz) reads every Communication and Terminator frame
+  as set, e.g. `YSF>C V2 GC 0:5 WL042|ZL3CCC    >ALL       |...` (DG-ID 42),
+  `YSF>T V2 GC 0:0 WL---|ZL1AAA    >ALL       |ZL1RPT    >ZL1RPT    |12345`
+  (repeater, Rem4), `YSF>C V2 IN 0:5 NL---|ZL2BBB    >ZL1AAA    |...`
+  (narrow, individual), `YSF>C VF GC 0:1 ...|AB123` (the VW sub header's
+  CSD3), V1, Radio ID mode `99999:12345`. Headers: read when the call
+  starts the file; after 1 s of noise its first FICH fails (its level
+  acquisition), also for a header right after another call (1 of 3 read).
+  Voice frames, compared bit by bit through a scratch tool linked against
+  libdsdcc (its recovered frames before the vocoder; 80 dB, no lead): DN
+  174 / 175 equal (49 bits after its majority; one with one bit off), V/D
+  mode 1 100 / 100 (72 bits), VW 161 / 169 (its de-interleaved,
+  descrambled 144 bits; the other 8: 1-2 bits off, twice in c0's data so
+  its descrambling of the rest went wrong - the same frames at 40 and 80
+  dB, while the plugin reads every bit of these files: its symbol
+  decisions, not the layout). Found with it: the plugin first fed VW frames
+  to the IMBE decoder in P25's order - now the YSF order, and `ysf_gen.py`
+  sends real IMBE frames in it. dsdcc's own 88 VW bits after its FEC step
+  match only 4 / 169: its Golay / Hamming helpers read a codeword last bit
+  first while its PN seed and layout take the first bit first, so its
+  corrections flip data bits; the first-bit-first reading (the one the seed
+  needs for c1..c6 to descramble at all) is the one used here.
 
-Not verified (2026-11): no off-air recording and no independent
-reference decoder were available - the only YSF signals were the two
-generators written from the same document, so a shared misreading of the
-standard would go unnoticed. The bit order inside the voice frames (DN's 49
-bits, the 72- and 144-bit frames) isn't in the standard at all: the
-generator sends random bits, so the tests show the right bits reach the
-codec, not that they sound right. AMBE+2 audio (DN, V/D mode 1) was not
-exercised at all: mbelib wasn't installed.
+Not verified (2026-11): no off-air recording - the only YSF signals were
+the generator's, so a misreading shared by Yaesu's document, the generator,
+the plugin and dsdcc would go unnoticed. dsdcc confirms the framing (FS,
+FICH, every DCH unit, the CSD fields) and where the voice bits sit (DN's
+VCH / VeCH, whitening and majority, V/D mode 1's VCH, VW's interleave and
+scrambling); the bit order inside the AMBE+2 frames rests on mbelib's
+convention, which dsdcc shares. AMBE+2 audio (DN, V/D mode 1) was not
+exercised at all - mbelib wasn't installed; VW audio only with placeholder
+frames, never with speech.

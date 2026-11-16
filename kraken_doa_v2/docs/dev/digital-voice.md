@@ -36,15 +36,18 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   syncs). D-STAR: 21 AMBE frames per superframe (frame 0 is before the data
   sync), dW/dX tables, stops at the end pattern
 - YSF (2026-11): VW's 144-bit full-rate frames (88 + 56 bits at 7200 bit/s
-  = the IMBE frame) through `ImbeDecoder` in iW..iZ order; V/D mode 1's
+  = the IMBE frame) through `ImbeDecoder`, de-interleaved in the YSF order
+  (`vw_plain_index` in plugins/ysf/ysf.cpp - not P25's iW..iZ); V/D mode 1's
   72-bit AMBE+2 frames through `AmbeStream` with rW..rZ (as DMR); DN's 49
   bits (after the plugin's own majority / de-whitening) through mbelib's
   `mbe_processAmbe2450Dataf` (`MbeLib::decode49` / `AmbeStream::decode49`,
   dlsym'd as optional - without it the voice status says DN needs it; the
   error count passed is the triplets that disagreed). Yaesu's standard
-  doesn't give the bit order inside any voice frame: these are the
-  choices, untested on real radios (no recording, no other decoder; the
-  generator sends random voice bits; mbelib not installed when written)
+  doesn't give the bit order inside any voice frame: all three placements
+  checked against dsdcc's recovered frames (2026-11-16; the VW order was
+  P25's before - wrong); untested on real radios (no off-air recording),
+  AMBE+2 audio never run (mbelib not installed), VW audio only with the
+  generator's placeholder IMBE frames
 - TETRA: `TetraCodec` runs the ETSI programs as `cdecoder /dev/stdin
   /dev/stdout | sdecoder ...` (posix_spawn, non-blocking pipes, 690-word
   test-frame blocks of descrambled type-4 soft bits). Full-slot traffic

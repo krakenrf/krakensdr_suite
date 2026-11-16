@@ -356,9 +356,9 @@ you live is your responsibility. The sidebar's **🔐 Digital Decoders** box
 shows which codecs are installed.
 
 Yaesu System Fusion voice is untested on real radios: the decoder was
-written from Yaesu's standard alone, which doesn't give the bit order inside
-the voice frames, and hasn't been checked against an off-air recording or
-another decoder yet.
+written from Yaesu's standard and checked against another decoder (dsdcc),
+which reads its test signals' frames and voice bits the same way, but not
+yet against an off-air recording.
 
 **DMR, D-STAR, NXDN and Yaesu System Fusion (DN, V/D mode 1): mbelib**
 

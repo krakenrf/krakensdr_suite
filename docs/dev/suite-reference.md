@@ -574,7 +574,8 @@ decoders `kraken_doa_v2/plugins/`
   AMBE use a user-installed mbelib (dlopen, `KRAKEN_MBELIB`; DN through its
   `mbe_processAmbe2450Dataf`, optional) - Fusion voice untested on real
   radios (written from Yaesu's standard, which doesn't give the voice frames'
-  bit order; no recording or other decoder checked), TETRA
+  bit order; the placement checked against dsdcc, VW's corrected to the
+  on-air order then; no off-air recording), TETRA
   ACELP the user-built ETSI codec programs (`tetra-cdecoder` /
   `tetra-sdecoder` on PATH or `KRAKEN_TETRA_CODEC_DIR`; Windows also
   `tetra-*.exe` in the kraken_doa_v2 folder, fed through named pipes - the

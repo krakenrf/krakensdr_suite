@@ -481,8 +481,8 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   dmr / dstar / nxdn on the dsd / dsdcc samples identical; the others only
   add their talker lines (+ the D-STAR fix). No live check: no AIS
   (162 MHz, 7 min) or APRS (144.575 MHz, 3 min) traffic at the station
-- Tests 2026-11-16 (YSF, generator `ysf/tools/ysf_gen.py`, no real
-  recording): ZL1AAA (DN twice) 40°, ZL2BBB (VW) 160°, ZL3CCC (V/D mode 1)
+- Tests 2026-11-16 (YSF, generator `ysf/tools/ysf_gen.py` - its frames
+  and callsigns read the same by dsdcc -, no real recording): ZL1AAA (DN twice) 40°, ZL2BBB (VW) 160°, ZL3CCC (V/D mode 1)
   280°, 20 dB, 0.3 s apart: 40.0 / 160.0 / 280.0 offline; catalogue
   `ysf-three-radios` 50.0 / 170.0 / 285.0 offline and through a scratch
   kraken_doa debug playback (45 s, Check 3 / 3, each +0.0, 0 packets

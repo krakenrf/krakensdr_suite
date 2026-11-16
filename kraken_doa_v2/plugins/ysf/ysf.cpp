@@ -471,22 +471,68 @@ void YsfReceiver::voice_out(const std::vector<float>& pcm, const char* codec, in
 }
 
 // Voice FR: each VCH is a 144-bit 7200x4400 full-rate frame. The standard
-// names only the rate and the 88 + 56 split, which is the IMBE frame (4
-// Golay(23,12) + 3 Hamming(15,11) + 7 bits); its bits are taken in the
-// vocoder's own interleaved order (the one P25 carries, TIA-102.BABA)
+// names only the rate and the 88 + 56 split, which is the IMBE frame: c0..c3
+// Golay(23,12), c4..c6 Hamming(15,11), c7 7 bits, c1..c6 scrambled by the PN
+// seeded with c0's data. Where its 144 bits go on air is NOT in Yaesu's
+// standard; this is the on-air order as the reference decoders document it
+// (dsdcc's VFR interleave, checked against dsdcc 2026-11): in the plain
+// order (c0 at 0..22 first bit first, c1 23..45, .. c4 92..106, .. c7
+// 137..143) the bits form 24 rows x 6 columns (index = 24 column + row);
+// each 12 air bits are rows 2r and 2r + 1 - row 2r in column order 0..5,
+// row 2r + 1 in the order 1 0 3 2 5 4.
+namespace {
+int vw_plain_index(int j) {
+    static const int odd[6] = {1, 0, 3, 2, 5, 4};
+    const int g = j / 12, r = j % 12;
+    return r < 6 ? 2 * g + 24 * r : 2 * g + 1 + 24 * odd[r - 6];
+}
+
+// plain bit k -> ImbeDecoder's [8][23] layout (bit 22 / 14 / 6 = a codeword's first)
+void vw_place(char fr[8][23], int k, char b) {
+    if (k < 92) fr[k / 23][22 - k % 23] = b;
+    else if (k < 137) fr[4 + (k - 92) / 15][14 - (k - 92) % 15] = b;
+    else fr[7][6 - (k - 137)] = b;
+}
+
+// For the dump: the 88 voice bits in the vocoder's order (u0..u3
+// Golay-corrected, u4..u6 as received, u7)
+void vw_info(const uint8_t* air, uint8_t* d) {
+    uint8_t c[144];
+    for (int j = 0; j < 144; j++) c[vw_plain_index(j)] = air[j];
+    auto golay = [](const uint8_t* b) {
+        const uint32_t w = bits_to_u32(b, 23);
+        uint32_t m = 0;
+        golay24().decode((w << 1) | static_cast<uint32_t>(popcount64(w) & 1), &m, 3);
+        return m;
+    };
+    const uint32_t u0 = golay(c);
+    uint32_t v = u0 << 4;
+    for (int i = 23; i < 137; i++) {
+        v = (v * 173 + 13849) & 0xFFFF;
+        c[i] ^= static_cast<uint8_t>(v >> 15);
+    }
+    for (int w = 0; w < 4; w++) u64_to_bits(w ? golay(c + 23 * w) : u0, 12, d + 12 * w);
+    for (int w = 0; w < 3; w++)
+        for (int i = 0; i < 11; i++) d[48 + 11 * w + i] = c[92 + 15 * w + i];
+    for (int i = 0; i < 7; i++) d[81 + i] = c[137 + i];
+}
+}  // namespace
+
 void YsfReceiver::voice_vw(const uint8_t* bits, int nframes, int first) {
     if (dump_)
-        for (int k = 0; k < nframes; k++) dump_bits("VW", frame_a_, first + k, bits + 144 * k, 144);
+        for (int k = 0; k < nframes; k++) {
+            dump_bits("VW", frame_a_, first + k, bits + 144 * k, 144);
+            uint8_t d[88];
+            vw_info(bits + 144 * k, d);
+            dump_bits("VW88", frame_a_, first + k, d, 88);
+        }
     if (!ctx_.voice_wanted || !ctx_.voice_wanted()) return;
     std::vector<float> pcm(static_cast<size_t>(160 * nframes));
     int clean = 0;
     for (int k = 0; k < nframes; k++) {
         const uint8_t* v = bits + 144 * k;
         char fr[8][23] = {{0}};
-        for (int j = 0; j < 72; j++) {
-            fr[mbe_tables::iW[j]][mbe_tables::iX[j]] = static_cast<char>(v[2 * j]);
-            fr[mbe_tables::iY[j]][mbe_tables::iZ[j]] = static_cast<char>(v[2 * j + 1]);
-        }
+        for (int j = 0; j < 144; j++) vw_place(fr, vw_plain_index(j), static_cast<char>(v[j]));
         if (imbe_.decode(fr, pcm.data() + 160 * k) >= 0) clean++;
     }
     voice_out(pcm, "IMBE full rate", clean, nframes);
