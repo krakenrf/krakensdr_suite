@@ -55,13 +55,39 @@ envelope maxima**. Hence:
    picture trips the median-based vsync threshold and injects spurious field
    starts; the interlace partner field is found by stepping back exactly one
    field period.
-4. Each field is resampled onto a 720-wide grid snapped to the nearest sync
+4. **Noise-rejection gate** (before declaring a lock). A matched line/field
+   rate is not enough: a lucky sync-tip + field cadence appears in complex
+   Gaussian noise (its envelope is Rayleigh, with heavy-tailed spikes the sync
+   tracker latches onto - note this is why *uniform* random bytes never
+   reproduced it but Gaussian noise did). So the lock is gated on:
+   - **Genuine line-rate periodicity**: `video::PeriodFinder` (the same
+     confidence gate *tempest* uses) over the most-recent ~32 k envelope
+     samples must give autocorrelation `confidence >= 0.35` and `peak >= 0.30`
+     at the detected line period, and the autocorrelation period must agree
+     with the sync-derived samples-per-line (within 8 %). Measured separation:
+     a real test card at the generator's SNR (and at ~2x it) gives confidence
+     >= 0.89 / peak >= 0.95; complex-Gaussian noise gives <= 0.033 / <= 0.019 -
+     a ~10x margin on either side of the thresholds. Noise has a cadence but no
+     raster, so its line-period autocorrelation is flat and it fails outright.
+   - **Persistence**: the matched standard and samples-per-line must hold over
+     `LOCK_DEBOUNCE` (3) consecutive builds (noise's samples-per-line jumps
+     build to build), so a single lucky field pair never locks.
+   The autocorrelation FFT is the only added cost, so it runs on a candidate
+   (all the cheap gates already passed - sparse on noise) and, once locked, at
+   most once a second (`CONF_RECHECK_S`), not on every block. Decode time is
+   unchanged (~6 % of real time; lower on noise, since the gate short-circuits
+   the reconstruction). No user option: the margin is wide enough that it needs
+   no tuning. This fixed a pre-existing false-lock on Gaussian noise.
+5. Each field is resampled onto a 720-wide grid snapped to the nearest sync
    tip; two fields are woven to 720 x active_lines; `FrameAccumulator` renders
    GRAY8 with a percentile stretch. ~15 frames/s.
 
-`host.valid(start, end)` fires only on a genuine sync + field-cadence lock, so
-the plugin never steals Auto-detect and never locks on noise (verified: pure
-Gaussian noise -> 0 valid frames, "searching").
+`host.valid(start, end)` and the one-off `Locked` event fire only after the
+periodicity + persistence gate passes, so the plugin never steals Auto-detect
+and never locks on noise (verified: complex Gaussian noise across >= 10 seeds
+and several lengths, and uniform noise, both auto and with a forced standard ->
+0 locks, 0 valid frames, "searching"). The lock now takes ~0.19 s rather than
+~0.05 s (the debounce), still far inside any test clip.
 
 ## Info and options
 
@@ -96,11 +122,20 @@ field; off = half height. ~15 fps, well under the 1 MiB wire cap.
   `python3` lacked numpy; `/usr/bin/python3` has it. The debug playback runs the
   generator with the environment's `python3 -I`, which on a real install has
   numpy/scipy.)
-- Offline (`plugins/analogtv/build/decoder --file out.cf32`): locks, prints the
-  standard, reconstructs. Pearson correlation vs the generator's ground-truth
-  test card (best over a small shift): **PAL 0.91, NTSC 0.90**. Decode time
-  ~6-8 % of real time (x86 `-march=native`, 15 fps). ASan + UBSan clean across
-  PAL/NTSC, all deinterlace modes, forced standard, invert, and noise.
+- Offline (`plugins/analogtv/build/decoder --file out.cf32`): locks (first
+  valid frame ~0.19 s, after the persistence debounce), prints the standard,
+  reconstructs. Pearson correlation vs the generator's ground-truth test card
+  (best over a small shift): **PAL 0.91, NTSC 0.90** (unchanged by the
+  noise-rejection gate, which only gates *when* a lock starts, not the
+  reconstruction). Decode time ~6 % of real time (x86 `-march=native`, 15 fps).
+  ASan + UBSan clean across PAL/NTSC, all deinterlace modes, forced standard,
+  invert, and noise.
+- Noise rejection (the fixed false-lock): complex Gaussian noise (`.cf32` at
+  2.4 MHz, >= 10 seeds, 2-6 s, various amplitudes) and uniform noise, both auto
+  and with a forced standard, give 0 locks / 0 valid frames / 0 events /
+  `searching`. Before the gate, Gaussian noise produced 4-10 false
+  `Locked PAL|NTSC` events per 3 s clip (uniform noise did not, which is why it
+  was missed). Reproduce with complex-Gaussian cf32, not `/dev/urandom`.
 - Debug playback: `tools/testsignals.json` id `analogtv-pal-testcard` - a wide
   2.4 MHz, 5-antenna, 3 s PAL scene (cu8, lock_vfo, tuner_offset 0, rf
   183.25 MHz). `make_testsignal.py --check` passes; building it produces the

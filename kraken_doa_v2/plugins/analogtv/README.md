@@ -40,9 +40,11 @@ PAL System B channel; 61.25 MHz for NTSC channel 3), then pick **Analog TV**
 on a VFO (Decimators box → Digital decoder → Analog TV, under *Broadcast &
 cellular*). The decoder **locks the VFO** to the tuner's centre at the
 widest bandwidth (2.4 MHz) and draws it as a single line - you move it by
-tuning the receiver. After about 0.1 s it shows `Locked PAL 625/50` (or
-`NTSC 525/60`) and the picture appears on the video canvas; the VFO's
-**Digital** squelch opens while it is locked.
+tuning the receiver. After a couple of tenths of a second - it confirms a
+genuine raster over a few fields before locking (the noise-rejection gate
+below), so it will not lock instantly or on noise - it shows `Locked PAL
+625/50` (or `NTSC 525/60`) and the picture appears on the video canvas; the
+VFO's **Digital** squelch opens while it is locked.
 
 Options (saved per VFO):
 
@@ -89,9 +91,30 @@ Options (saved per VFO):
 
 On a confident lock it reports each frame's samples with
 `host.valid(start, end)` (drives the "receiving" state and the Digital
-squelch) and emits `Locked <standard>` once. It only `valid()`s on a genuine
-sync + field-cadence lock, so it does not steal **Auto detect** from other
-decoders and does not lock on noise.
+squelch) and emits `Locked <standard>` once.
+
+**Noise rejection.** A sync + field cadence can appear by luck in complex
+Gaussian noise (whose envelope is Rayleigh, with heavy-tailed spikes the sync
+tracker latches onto), so a matched line/field rate alone is not enough. Before
+locking, the decoder also requires:
+
+- **Genuine line-rate periodicity.** The envelope's autocorrelation
+  (`video::PeriodFinder`, the same confidence gate the *tempest* plugin uses)
+  must show a strong, prominent peak at the detected line period, and that
+  period must agree with the sync-derived samples-per-line. Noise has a lucky
+  cadence but no raster, so its line-period autocorrelation is flat and it
+  fails this outright (measured: a real test card gives autocorrelation
+  confidence/peak ~0.9-1.0, noise < 0.04).
+- **Persistence.** The matched standard and samples-per-line must hold over
+  several consecutive builds before the lock is declared, so a single lucky
+  field pair never counts.
+
+The autocorrelation is the only added cost, so it runs on a candidate (all the
+cheap gates already passed) and, once locked, at most once a second - not on
+every block. The result: it only `valid()`s on a genuine, persistent raster, so
+it does not steal **Auto detect** from other decoders and does not lock on noise
+(verified: complex Gaussian noise across many seeds and lengths, and uniform
+noise, produce 0 locks, 0 valid frames, standard `searching`).
 
 ## Standards and timing (ITU-R BT.470 / BT.1700)
 
@@ -138,14 +161,21 @@ full `process()` path):
 
 | Standard | Lock | Line rate (true) | Field rate | Reconstruction correlation | Decode time |
 |---|---|---|---|---|---|
-| PAL 625/50  | 0.05 s | 15625.7 Hz (15625)      | 50.00 Hz  | **0.91** | ~6 % of real time |
-| NTSC 525/60 | 0.05 s | 15733.5 Hz (15734.266)  | 59.94 Hz  | **0.90** | ~7 % of real time |
+| PAL 625/50  | ~0.19 s | 15625.7 Hz (15625)      | 50.00 Hz  | **0.91** | ~6 % of real time |
+| NTSC 525/60 | ~0.19 s | 15733.5 Hz (15734.266)  | 59.94 Hz  | **0.90** | ~6 % of real time |
+
+Lock takes a couple of tenths of a second (not instant) because of the
+noise-rejection persistence gate above; the autocorrelation gate adds no
+measurable decode time (it short-circuits the reconstruction on a non-raster
+candidate, so decode time on noise is if anything lower).
 
 Correlation is the Pearson correlation between the reconstructed 720 × active
 frame and the ground-truth test card (best over a small shift search), i.e.
 large-scale structure is recovered faithfully; the fine horizontal detail is
 limited by the ~125 active samples per line, as expected for a 2.4 MHz slice.
-Pure Gaussian noise produces **no lock and no valid frames**.
+Complex Gaussian noise (several seeds and lengths) and uniform noise produce
+**no lock and no valid frames** - the line-rate periodicity + persistence gate
+above rejects them, including when a standard is forced.
 
 `tools/testsignals.json` registers the PAL test card for the sidebar's
 **🧪 Debug Playback** (a wide 2.4 MHz, 5-antenna scene written straight to
