@@ -83,7 +83,9 @@ browsers stay in sync. The browser sends back short text commands (`FREQ:100.5`,
 
 ## Sidebar features
 
-The left sidebar groups all controls in boxes. Click a box's header to collapse or
+The left sidebar groups all controls in boxes. The **☰** button at the left of the
+top bar hides the whole sidebar and brings it back (remembered in the browser),
+giving its room to the spectrum. Click a box's header to collapse or
 open it. To move a box, drag it by its header to a new place (with a mouse just
 drag; on a touch screen hold the header for a moment until the box lifts, then
 drag - a quick swipe still scrolls the sidebar; Esc cancels), or use the small

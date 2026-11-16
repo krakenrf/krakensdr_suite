@@ -1355,7 +1355,14 @@ body.map-on .doa-header .rp-tab.sel {color:#a8cbf5;font-weight:600;border-bottom
 .ai-dk-in textarea {border-radius:6px}
 
 /* ===== Mobile / touch layout (small screens and touch tablets only) ===== */
-.menu-btn {display:none;background:#0f3460;color:#7cb3f0;border:1px solid #1a4a7a;border-radius:4px;font-size:20px;width:42px;height:42px;cursor:pointer;align-items:center;justify-content:center;padding:0;flex-shrink:0}
+/* ☰ in the top bar (toggleSidebar): on the desktop it hides / shows the
+   whole sidebar (body.sb-hidden, lit while hidden); in the phone layout it
+   opens the drawer */
+.menu-btn {display:flex;background:#1b3763;color:#cfe2fb;border:1px solid #2a4d83;border-radius:5px;font-size:16px;width:30px;height:30px;cursor:pointer;align-items:center;justify-content:center;padding:0;flex-shrink:0}
+.menu-btn:hover {background:#24477c;border-color:#3a63a3}
+.menu-btn:focus-visible {outline:2px solid #4a9ff5;outline-offset:1px}
+body.sb-hidden .menu-btn {background:#1f6fd1;border-color:#3a86e4;color:#fff}
+body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
 .sidebar-backdrop {display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.55);z-index:999;opacity:0;pointer-events:none;transition:opacity 0.25s ease}
 .sidebar-mobile-header {display:none}
 .mobile-only {display:none}
@@ -1371,7 +1378,10 @@ body.map-on .doa-header .rp-tab.sel {color:#a8cbf5;font-weight:600;border-bottom
   .sidebar-resizer {display:none}
   .sidebar-backdrop {display:block}
   body.sidebar-open .sidebar-backdrop {opacity:1;pointer-events:auto}
-  .menu-btn {display:flex}
+  .menu-btn {display:flex;width:42px;height:42px;font-size:20px}
+  /* (the drawer is not the desktop's hidden sidebar) */
+  body.sb-hidden .sidebar {display:flex}
+  body.sb-hidden .menu-btn {background:#1b3763;border-color:#2a4d83;color:#cfe2fb}
   .sidebar-mobile-header {display:flex;justify-content:space-between;align-items:center;margin:-10px -10px 10px -10px;padding:10px;background:#0f3460;position:sticky;top:-10px;z-index:5}
   .sidebar-mobile-header span {color:#7cb3f0;font-weight:bold;font-size:15px}
   .sidebar-close {background:none;border:none;color:#7cb3f0;font-size:22px;cursor:pointer;padding:0 8px;line-height:1}
@@ -1477,7 +1487,7 @@ body.map-on .doa-header .rp-tab.sel {color:#a8cbf5;font-weight:600;border-bottom
 <body class="ai-dk-off">
 <div class="app-container">
   <!-- LEFT SIDEBAR -->
-  <div class="sidebar">
+  <div class="sidebar" id="sidebar">
     <!-- Mobile-only drawer header -->
     <div class="sidebar-mobile-header">
       <span>Settings</span>
@@ -2429,7 +2439,7 @@ body.map-on .doa-header .rp-tab.sel {color:#a8cbf5;font-weight:600;border-bottom
     <!-- Top Bar -->
     <div class="top-bar">
       <!-- Hamburger (mobile only) -->
-      <button class="menu-btn" onclick="toggleSidebar()" title="Settings">☰</button>
+      <button type="button" class="menu-btn" id="menu-btn" onclick="toggleSidebar()" title="Hide the sidebar" aria-label="Sidebar" aria-controls="sidebar" aria-expanded="true">☰</button>
       <!-- 🧪 Debug playback: shown while a test transmission plays instead of heimdall's data -->
       <div id="pb-banner" title="A synthetic test transmission is playing through the receiver instead of the antennas. Nothing is sent to heimdall, settings are not saved and are put back when it stops."><span id="pb-banner-k">🧪 DEBUG PLAYBACK - not live</span><span class="pb-bt" id="pb-banner-t"></span><button onclick="pbStop()">■ Stop</button></div>
       <!-- Center Frequency (SDR#-style) - FIRST. Hidden in independent mode
@@ -10723,17 +10733,48 @@ function initSidebarResize() {
 }
 initSidebarResize();
 
-// --- Mobile sidebar drawer ---
+// --- The sidebar as a whole: the phone's drawer, the desktop's hide ---
+// ☰ in the top bar (toggleSidebar). Phone layout: the sidebar is a drawer
+// (body.sidebar-open). Desktop: the whole sidebar hides (body.sb-hidden) and
+// the spectrum takes its room - kept per browser in localStorage, like its
+// width; a resize event refits the plots. toggleSidebar(true) shows it in
+// either layout (code that points the user at a box calls it).
+const SB_HIDE_KEY = 'kraken_sidebar_hidden';
+const mobileLayoutMQ = window.matchMedia('(max-width:900px), (pointer:coarse) and (max-width:1280px)');
+function sbHideBtn() {
+  const btn = $id('menu-btn');
+  if (!btn) return;
+  const b = document.body, mobile = mobileLayoutMQ.matches;
+  const shown = mobile ? b.classList.contains('sidebar-open') : !b.classList.contains('sb-hidden');
+  btn.title = mobile ? 'Settings' : shown ? 'Hide the sidebar' : 'Show the sidebar';
+  btn.setAttribute('aria-expanded', shown ? 'true' : 'false');
+}
+function sbHiddenSet(hide) {
+  const b = document.body;
+  if (b.classList.contains('sb-hidden') === !!hide) return;
+  b.classList.toggle('sb-hidden', !!hide);
+  try { if (hide) localStorage.setItem(SB_HIDE_KEY, '1'); else localStorage.removeItem(SB_HIDE_KEY); } catch (e) {}
+  sbHideBtn();
+  // the spectrum, the waterfall, the panes and the map take / give back the room
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+}
 function toggleSidebar(open) {
   const b = document.body;
-  const want = (open === undefined) ? !b.classList.contains('sidebar-open') : open;
-  b.classList.toggle('sidebar-open', want);
+  if (mobileLayoutMQ.matches) {
+    b.classList.toggle('sidebar-open', (open === undefined) ? !b.classList.contains('sidebar-open') : !!open);
+    sbHideBtn();
+  } else {
+    sbHiddenSet((open === undefined) ? !b.classList.contains('sb-hidden') : !open);
+  }
 }
+// (before the plots are made: they size themselves to the room they find)
+try { if (localStorage.getItem(SB_HIDE_KEY) === '1') document.body.classList.add('sb-hidden'); } catch (e) {}
+sbHideBtn();
 // Close the drawer if the layout switches back to desktop (e.g. tablet rotation)
-const mobileLayoutMQ = window.matchMedia('(max-width:900px), (pointer:coarse) and (max-width:1280px)');
 if (mobileLayoutMQ.addEventListener) {
   mobileLayoutMQ.addEventListener('change', e => {
-    if (!e.matches) toggleSidebar(false);
+    if (!e.matches) document.body.classList.remove('sidebar-open');
+    sbHideBtn();
     applyMobileRelocation();
   });
 }
@@ -25470,7 +25511,7 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
   function wbOpenSection() {
     const sec = $id('wb-section');
     if (!sec) return;
-    if (typeof mobileLayoutMQ !== 'undefined' && mobileLayoutMQ.matches) toggleSidebar(true);
+    toggleSidebar(true);   // the phone's drawer / a hidden sidebar
     if (sec.classList.contains('collapsed')) toggleSection(sec.querySelector('.sb-header'));
     sec.scrollIntoView({behavior: 'smooth', block: 'nearest'});
   }

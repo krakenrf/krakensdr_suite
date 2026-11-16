@@ -98,6 +98,34 @@ the dialogs. Each feature's own controls are in that feature's topic file.
   `sbApply` / `sbWidth`; the box code uses the `sbBox…` prefix. (A second
   `function sbSave` silently replaced the first one during development.)
 
+## Hiding the whole sidebar
+
+The ☰ button at the left of the top bar (`#menu-btn`, `toggleSidebar()`)
+hides and shows the whole sidebar on the desktop; in the phone layout the
+same button opens the drawer, as before.
+
+- Desktop: `body.sb-hidden` hides `.sidebar` and its resizer strip
+  (`display:none`), the main area takes the room, and a `resize` event
+  refits the spectrum, the waterfall, the panes and the map (as the width
+  drag does). The button is lit while the sidebar is hidden and its
+  `title` / `aria-expanded` say which way it goes (`sbHideBtn`).
+- Remembered per browser in `localStorage['kraken_sidebar_hidden']` ('1' or
+  absent), like the width and the box layout; applied at script load, before
+  the plots are made, so they start at the right width.
+- `toggleSidebar(true)` shows the sidebar in either layout (drawer open /
+  not hidden): code that points the user at a box calls it
+  (`wbOpenSection`). `toggleSidebar(false)` closes the drawer / hides.
+- The phone layout ignores `sb-hidden` (its CSS puts the drawer back) and
+  never changes the stored desktop state; a layout switch back to the
+  desktop only closes the drawer.
+- Tests (2026-11-16, 33 checks, headless Chromium with real mouse, key and
+  touch events): hide / show by click and by Enter; the main area, the
+  spectrum, the waterfall and the map gain and give back the room; the
+  state over a reload and a browser restart (plots made at the full width);
+  `wbOpenSection` brings a hidden sidebar back; independent mode; the box
+  layout untouched; phone: the stored state doesn't hide the drawer, the
+  tap opens it, the button keeps its size and is not lit; no JS errors.
+
 ## Rules for controls and text
 
 The sidebar was reworked on 2026-11-15 at the user's request - it was too
