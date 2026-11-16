@@ -9877,7 +9877,8 @@ function specOnFrame(v, buf) {
 // 0, or a WebP blob the browser decodes natively for encoding 1 (built-in, no
 // CDN) - all little-endian. Drawn on the panel's <canvas id="dvideo-${vfo_id}">.
 const videoFrames = {};   // vfo id -> {w, h, label, t} (latest)
-const videoDecode = {};   // vfo id -> {busy, pending} for the async WebP decode (latest-only)
+const videoDecode = {};   // vfo id -> {busy, pending, since, gen} for the async WebP decode (latest-only)
+const VIDEO_DECODE_WATCHDOG_MS = 3000;   // a decode stuck longer than this is treated as failed, so a hung createImageBitmap can't wedge the canvas
 let videoSubOn = false;   // are we subscribed to the VIDEO stream (a video panel is open)?
 // the caption overlay (both code paths); canvas fillText is safe - the label
 // is never inserted into HTML
@@ -9932,14 +9933,26 @@ function videoOnFrame(v, buf) {
 // to hand off. A bad blob is ignored.
 function videoOnWebp(vfo, w, h, label, bytes) {
   const blob = new Blob([bytes], {type: 'image/webp'});   // copies synchronously
-  const st = videoDecode[vfo] || (videoDecode[vfo] = {busy: false, pending: null});
+  const st = videoDecode[vfo] || (videoDecode[vfo] = {busy: false, pending: null, since: 0, gen: 0});
   const job = {w, h, label, blob};
+  // watchdog: a decode that never settled (a hung / lost createImageBitmap)
+  // would leave busy=true forever and every later frame would pile into pending
+  // and never draw. If it has been busy too long, abandon it and start fresh -
+  // dropping any stale pending too, since THIS frame is the newest.
+  if (st.busy && Date.now() - st.since > VIDEO_DECODE_WATCHDOG_MS) { st.busy = false; st.pending = null; }
   if (st.busy) { st.pending = job; return; }   // keep only the newest
   videoRunWebp(vfo, st, job);
 }
 function videoRunWebp(vfo, st, job) {
+  const token = ++st.gen;   // identifies this run; a watchdog-abandoned run has a stale token and is ignored when it finally settles
   st.busy = true;
-  createImageBitmap(job.blob).then(bmp => {
+  st.since = Date.now();
+  let p;
+  try {
+    p = createImageBitmap(job.blob);   // a SYNC throw here must still clear busy, not wedge the canvas
+  } catch (e) { videoWebpNext(vfo, st, token); return; }
+  p.then(bmp => {
+    if (st.gen !== token) { bmp.close(); return; }   // superseded by the watchdog: drop this stale frame
     try {
       const cv = document.getElementById('dvideo-' + vfo);
       const ctx = cv && cv.getContext('2d');
@@ -9950,10 +9963,11 @@ function videoRunWebp(vfo, st, job) {
         videoDrawLabel(ctx, job.h, job.label);
         videoFrames[vfo] = {w: job.w, h: job.h, label: job.label, t: Date.now()};
       }
-    } finally { bmp.close(); videoWebpNext(vfo, st); }
-  }).catch(() => videoWebpNext(vfo, st));   // bad blob: ignore the frame
+    } finally { bmp.close(); videoWebpNext(vfo, st, token); }
+  }).catch(() => videoWebpNext(vfo, st, token));   // bad blob: ignore the frame
 }
-function videoWebpNext(vfo, st) {
+function videoWebpNext(vfo, st, token) {
+  if (token !== undefined && st.gen !== token) return;   // this run was abandoned by the watchdog; a newer run owns the state now
   st.busy = false;
   if (st.pending) { const j = st.pending; st.pending = null; videoRunWebp(vfo, st, j); }
 }

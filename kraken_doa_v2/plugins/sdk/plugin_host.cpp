@@ -268,11 +268,17 @@ public:
         const int bpp = format == 1 ? 3 : 1;
         const size_t npix = static_cast<size_t>(w) * static_cast<size_t>(h) * static_cast<size_t>(bpp);
 
-        // change detection: skip a frame identical to the last one SENT
+        // change detection: skip a frame identical to the last one SENT, but
+        // only WITHIN the keyframe interval - past it, an unchanged frame is
+        // re-sent anyway (see VIDEO_KEYFRAME_S) so a dropped frame self-heals
+        // and a freshly-opened panel fills in.
         const uint64_t hv = fnv1a(f.pixels, npix,
                                   fnv1a(reinterpret_cast<const uint8_t*>(&format), 1,
                                         (static_cast<uint64_t>(w) << 32) ^ static_cast<uint64_t>(h)));
-        if (video_have_hash_ && hv == video_hash_) return;
+        const auto now = std::chrono::steady_clock::now();
+        if (video_have_hash_ && hv == video_hash_ &&
+            std::chrono::duration<double>(now - video_last_send_).count() < VIDEO_KEYFRAME_S)
+            return;
 
         // pick the payload: a WebP blob when it was built in and helps, else raw
         const uint8_t* img = f.pixels;
@@ -349,6 +355,7 @@ public:
 #endif
         video_hash_ = hv;   // only a frame actually sent updates the change-detection state
         video_have_hash_ = true;
+        video_last_send_ = now;   // reset the keyframe timer on every real send
     }
     bool tune(double rf_hz) override {
         if (!std::isfinite(rf_hz) || rf_hz <= 0) return false;
@@ -513,6 +520,12 @@ private:
     uint64_t video_hash_ = 0;
     bool video_have_hash_ = false;
     std::vector<uint8_t> video_rgb_;
+    // Periodic keyframe: an unchanged frame is still re-sent once this long has
+    // passed since the last ACTUAL send, so a frame lost to back-pressure heals
+    // and a newly-subscribed browser gets the current picture. A static screen
+    // then costs only ~1 WebP keyframe / 1.5 s (a few KB/s), not every frame.
+    static constexpr double VIDEO_KEYFRAME_S = 1.5;
+    std::chrono::steady_clock::time_point video_last_send_{};
     static std::string fmt_hz(double v) {
         char b[40];
         snprintf(b, sizeof b, "%.3f", v);

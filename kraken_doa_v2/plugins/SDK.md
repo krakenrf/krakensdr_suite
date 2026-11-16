@@ -535,7 +535,12 @@ large frames practical: a compressed screen is a few KB, so pictures up to 4K
 `quality` (1..100, -1 = the host default ~75) for the lossy encode, and
 `lossless = true` for a frozen or heavily averaged still you want pixel-exact.
 The host also keeps a hash of the last frame it sent and **skips an identical
-one**, so a static screen costs ~no bandwidth - just keep sending frames.
+one**, so a static screen costs ~no bandwidth - just keep sending frames. The
+skip is time-bounded: an unchanged frame is still re-sent about **every 1.5 s**
+as a keyframe (a few KB/s for a static screen), so a frame dropped in transit
+(back-pressure) self-heals within that interval and a newly-opened video panel
+fills in without waiting for the picture to change. A changed frame, or any
+geometry change, always sends immediately.
 
 If the host was built without libwebp (the `make` note says so), it falls back
 to sending raw pixels unchanged; then the whole frame must stay under 1 MB (a
