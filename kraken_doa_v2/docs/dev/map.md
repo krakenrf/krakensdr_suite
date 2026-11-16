@@ -67,7 +67,7 @@ folder (index: `README.md` here, or the table in `kraken_doa_v2/CLAUDE.md`);
   heimdall streaming a synthetic 1090 MHz recording
 
 **Tile providers (⚙ Settings, 2026-10-25):**
-- The top bar's ⚙ (`#settings-btn`, at the right end beside the telemetry;
+- The top bar's ⚙ (`#settings-btn`, at the right end, as tall as the chips' and the telemetry's lines;
   on the phone's bar on the status chips' line - *sidebar.md*, "Top bar and
   rail") opens the Settings dialog (`#set-dlg-bg`, the saved-frequency dialog's
   `.sf-dlg` look; "⚙ SETTINGS" section of the page). Its 🗺 Map part picks

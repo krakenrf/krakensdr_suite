@@ -1385,14 +1385,14 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
    above the control (Step, Gain, Audio, Mode), and at the right the status
    chips and the telemetry. The spectrum's own controls are on the spectrum
    (the antenna shown: its header); the panels' buttons are on the rail. */
-.top-bar {gap:18px;padding:6px 12px;min-height:58px}
+.top-bar {gap:14px;padding:6px 12px;min-height:58px}
 .top-bar .tb-sep {display:none}
 .top-bar .tb-group.fld {display:grid;align-items:center;column-gap:8px;row-gap:3px}
 .top-bar .tb-group.fld > .tb-label {grid-area:l;font-size:10px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--t4);line-height:12px}
 .top-bar #tb-step,.top-bar #tb-mode {grid-template-areas:"l" "c"}
 .top-bar #tb-step select,.top-bar #tb-mode select {grid-area:c}
 .top-bar #tb-gain {grid-template-columns:1fr auto;grid-template-areas:"l v" "c c"}
-.top-bar #tb-gain .gain-slider {grid-area:c;width:140px;margin:11px 0}
+.top-bar #tb-gain .gain-slider {grid-area:c;width:120px;margin:11px 0}
 .top-bar #tb-gain .gain-value {grid-area:v;min-width:0;text-align:right;font-size:11.5px;line-height:12px}
 /* (the Wideband downconverter variant's mixer: side, LO drive; ring and LO as its readout) */
 .top-bar #wbv-group {grid-template-columns:auto 1fr;grid-template-areas:"l v" "c c"}
@@ -1405,18 +1405,19 @@ body.map-on .doa-header .rp-tab.sel {color:var(--t2);font-weight:600;border-bott
 .top-bar .wbv-seg .tb-btn.on {position:relative;z-index:1}
 .top-bar #tb-audio {grid-template-columns:auto 1fr auto;grid-template-areas:"l l v" "s c c"}
 .top-bar #tb-audio #fmt {grid-area:s}
-.top-bar #tb-audio .tb-slider {grid-area:c;width:92px;margin:11px 0}
+.top-bar #tb-audio .tb-slider {grid-area:c;width:80px;margin:11px 0}
 .top-bar #tb-audio .tb-vol {grid-area:v;min-width:0;text-align:right;font-size:11.5px;line-height:12px;color:var(--ac-t)}
 /* status chips: a dark pill with a dot in the state's colour (the scripts set
    the chip's background to that colour; the inset shadow darkens the pill,
    the dot inherits the colour) */
-/* the right block: the chips above, the telemetry and ⚙ below. Its width is
-   reserved for a chip that comes and goes (the scanner's), so that one
+/* the right block: the chips above the telemetry, ⚙ beside both. Its width
+   is reserved for a chip that comes and goes (the scanner's), so that one
    appearing never wraps the bar or moves a control */
-.top-bar .tb-right {margin-left:auto;min-width:384px;display:grid;grid-template-columns:1fr auto;grid-template-areas:"chips chips" "tele cog";justify-items:end;align-items:center;gap:4px 8px}
+.top-bar .tb-right {margin-left:auto;min-width:436px;display:grid;grid-template-columns:1fr auto;grid-template-areas:"chips cog" "tele cog";justify-items:end;align-items:center;gap:4px 8px}
 .top-bar .status-badges {grid-area:chips;margin-left:0;gap:6px;align-items:center}
 .top-bar .tele-group {grid-area:tele;margin-left:0;order:0}
-.top-bar .tb-cog {grid-area:cog;width:22px;height:22px;font-size:13px}
+/* ⚙ Settings: as tall as both lines of the block */
+.top-bar .tb-cog {grid-area:cog;align-self:stretch;width:46px;height:auto;min-height:46px;font-size:26px;border-radius:9px}
 .top-bar .tele-chip {padding-top:1px;padding-bottom:1px;font-size:11px}
 .top-bar .tele-chip .tele-lbl {padding-top:2px;padding-bottom:2px;margin:-1px 0;font-size:9px}
 .top-bar .status-badge {display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:12px;font-weight:600;letter-spacing:.2px;
@@ -1474,7 +1475,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   body.sidebar-open .sidebar-backdrop {opacity:1;pointer-events:auto}
   .menu-btn {display:flex;width:42px;height:42px;font-size:20px}
   .top-bar .tb-right {margin-left:0;width:100%;min-width:0;grid-template-areas:"chips cog" "tele tele";justify-items:start}
-  .top-bar .tb-cog {width:30px;height:30px;font-size:16px;justify-self:end}
+  .top-bar .tb-cog {align-self:center;width:42px;height:42px;min-height:0;font-size:24px;justify-self:end}
   .top-bar .tb-group.fld {display:flex;flex-direction:row;align-items:center;gap:6px}
   .top-bar .tb-group.fld > .tb-label {font-size:13px;font-weight:normal;letter-spacing:0;text-transform:none;color:var(--t3)}
   #mobile-display-slot .rail-panels {display:flex;flex-direction:row;justify-content:flex-end;gap:6px;margin-top:10px}
@@ -1492,7 +1493,6 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
   .top-bar .tb-sep {display:none}
   .top-bar .hw-stats {display:none}
   .top-bar .status-badge {font-size:11px;padding:3px 8px}
-  .top-bar .tb-cog {font-size:14px;padding:2px 7px}
   .top-bar .status-badges .status-badge {min-width:0 !important}
   .top-bar #status-cooldown[style*="hidden"] {display:none}
   .top-bar .status-badges {flex-wrap:wrap}
@@ -2632,7 +2632,7 @@ body.sb-hidden .sidebar,body.sb-hidden .sidebar-resizer {display:none}
         <span class="hw-stats tele-chip" id="wb-chip" style="display:none;cursor:pointer" title="Wideband board: supply voltage, supply current, board temperature (click for the history charts, the log settings and the CSV download)" onclick="wbSheetOpen()">
           <span class="tele-lbl">WB board</span><span id="wb-chip-val"></span></span>
       </span>
-      <!-- ⚙ Settings (the map provider): beside the telemetry; the phone layout puts it on the chips' line -->
+      <!-- ⚙ Settings (the map provider): as tall as the chips' and the telemetry's lines together; the phone layout puts it on the chips' line -->
       <button type="button" class="tb-cog" id="settings-btn" onclick="setDlgOpen()" title="Settings: the map provider (OpenStreetMap, Mapbox, Google Maps, ...) and its API key" aria-label="Settings">⚙</button>
       </div>
     </div>

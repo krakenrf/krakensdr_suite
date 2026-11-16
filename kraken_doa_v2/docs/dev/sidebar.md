@@ -215,16 +215,21 @@ Assistant button. What it is now (CSS block "Top bar and right-hand rail"):
   its text never moves a control or another chip. No mode chip: the Mode
   selector stands next to them. Remove a chip's element only together with
   its script: the countdown's timer was inside `if (cooldownEl)`.
-- **`.tb-right`** is a grid: the chips on its first line, the telemetry and
-  the ⚙ Settings button (`#settings-btn`, the map provider - *map.md*) on
-  its second; `min-width:384px` reserves the room of the scanner chip, so a
-  chip that comes and goes can't wrap the bar either. With generic RTL-SDR
-  dongles an "RTL-SDR" chip (`#status-generic`) stands first. The phone
-  layout puts ⚙ at the end of the chips' line.
+- **`.tb-right`** is a grid: the chips on its first line, the telemetry on
+  its second, and the ⚙ Settings button (`#settings-btn`, the map provider -
+  *map.md*) in a column of its own as tall as both lines (46 px wide, a
+  26 px icon - the user asked for it "two rows big", 2026-11-17).
+  `min-width:436px` reserves the room of one chip that comes and goes (the
+  scanner's 95 px, or the RTL-SDR chip's 93 px: 95 + 170 + 104 + the gaps +
+  the ⚙ column), so such a chip can't wrap the bar or move a control. To
+  keep the bar on one row at 1700 px with that, the bar's gap is 14 px and
+  the Gain / Audio sliders are 120 / 80 px. With generic RTL-SDR dongles
+  an "RTL-SDR" chip (`#status-generic`) stands first. The phone layout puts
+  ⚙ (42 px) at the end of the chips' line.
 - **Merged with main 2026-11-17** (map providers' ⚙ Settings dialog, generic
   RTL-SDR mode): main had put ⚙ after the chips and "(RTL-SDR)" on the mode
   chip - with ⚙ on the chips' line the scanner chip wrapped the bar at
-  1700 px, hence the second line and the reserved width. Main's new lines
+  1700 px, hence its own place in the grid and the reserved width. Main's new lines
   were brought into the palette the way the page was converted (*theme.md*;
   only literals that the converted page didn't already hold), and the
   dialog's long labels (the tile URL's placeholders, the attribution, the
