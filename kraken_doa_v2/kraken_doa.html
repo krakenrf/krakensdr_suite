@@ -10738,6 +10738,15 @@ function addTouchHandlers(el, down, move, up) {
     if (mode === 'AUTO') return st && st.detected ? digPlugin(st.detected) : null;
     return digPlugin(digModePlugin(mode));
   }
+  // an option's run-time choices in a VFO's decoder status ("choices": {"<plugin>.<key>":
+  // [[value, label], ...]}, kp::Host::option_choices) as [[value, label]], null = none (an
+  // older receiver, or the plugin hasn't sent a list: the declared list / text field)
+  function digDynChoices(st, key) {
+    const l = st && st.choices && st.choices[key];
+    if (!Array.isArray(l)) return null;
+    const out = l.filter(c => Array.isArray(c) && c.length >= 2).slice(0, 200).map(c => [String(c[0]), String(c[1])]);
+    return out.length ? out : null;
+  }
   function digDec(id) { return decimatorInfo.find(x => x.id === id) || null; }
   function digModeOf(id) { const d = digDec(id); return d && d.digital_mode ? d.digital_mode : 'OFF'; }
   function digActiveIds() { return decimatorInfo.filter(d => d.digital_mode && d.digital_mode !== 'OFF').map(d => d.id); }
@@ -12084,10 +12093,20 @@ pacman -S --needed mingw-w64-ucrt-x86_64-fdk-aac`,
       const key = p.id + '.' + op.key;
       const v = vals[key] !== undefined ? vals[key] : op.default;
       const tip = op.help ? ` title="${digEsc(op.help)}"` : '';
+      // choices the plugin sent at run time (kp::Host::option_choices - dab: the ensemble's
+      // programmes) replace the declared list / text field
+      const dyn = digDynChoices(st, key);
       // exactly the choices 0 / 1: an on / off button (dtv's Path separation...)
-      const tog = op.choices && op.choices.length === 2 && op.choices.every(c => c[0] === '0' || c[0] === '1') &&
+      const tog = !dyn && op.choices && op.choices.length === 2 && op.choices.every(c => c[0] === '0' || c[0] === '1') &&
                   op.choices[0][0] !== op.choices[1][0];
-      if (tog) {
+      if (dyn) {
+        // the value actually set always shows: one that is none of the choices (a part of a
+        // name typed before, a catalogue entry's setting, a SId of another ensemble) gets an
+        // entry of its own instead of the list showing its first choice
+        const list = dyn.some(c => c[0] === v) ? dyn : [[v, v === '' ? 'Default' : v]].concat(dyn);
+        opts += `<label${tip}>${digEsc(op.label || op.key)}: <select class="dig-opt-dyn" data-key="${digEsc(key)}" style="max-width:260px" onchange="digSetOptFor(${id}, this.dataset.key, this.value)">` +
+                list.map(c => `<option value="${digEsc(c[0])}"${c[0] === v ? ' selected' : ''}>${digEsc(c[1])}</option>`).join('') + '</select></label>';
+      } else if (tog) {
         const on = v === '1';
         const cur = (op.choices.find(c => c[0] === (on ? '1' : '0')) || ['', on ? 'On' : 'Off'])[1];
         opts += `<button type="button" class="btn sm dig-opt-tog${on ? ' primary' : ''}" data-key="${digEsc(key)}" aria-pressed="${on}"` +

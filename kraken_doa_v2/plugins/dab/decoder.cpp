@@ -103,6 +103,10 @@ public:
         pk_sent_ = 0;
         snr_ = mer_ = 0;
         host.fact("Sync", "searching for a DAB ensemble");
+        // (the host forgets the list on a retune itself; said anyway, and sent again once
+        // the services are known)
+        if (!choices_sent_.empty()) host.option_choices("service", {});
+        choices_sent_.clear();
     }
 
     // everything learnt from the ensemble, and the programme's decoding
@@ -165,6 +169,7 @@ public:
         if (ens_.eid >= 0)
             host.event("Ensemble lost: " + old + " (another ensemble, EId " + hex(static_cast<uint32_t>(new_eid), 4) + ", on the block)", 5);
         clear_state();
+        update_choices();   // the old ensemble's programmes go from the list
     }
 
     void option(const std::string& key, const std::string& value) override {
@@ -172,6 +177,7 @@ public:
             service_opt_ = value;
             sel_valid_ = false;
             select_service();
+            update_choices();   // (a setting outside the list gets its entry)
         } else if (key == "verbose") {
             verbose_ = value == "1";
         } else if (key == "log_raw") {
@@ -234,6 +240,7 @@ private:
     int m_ = 1;
     bool verbose_ = false;
     std::string service_opt_;
+    std::string choices_sent_;   // the Programme list as last sent (update_choices), serialised
     // FIC statistics: (frame time, good, total) of the last 10 s
     std::deque<std::pair<double, int>> fib_hist_;
     int64_t frame_no_ = -1;
@@ -698,6 +705,57 @@ private:
         select_service(k);
     }
 
+    // a service's audio component, if it has one with a known sub-channel (the services the
+    // Programme option can select)
+    const dab::Component* audio_comp(const dab::Service& s) const {
+        const dab::Component* c = s.primary();
+        if (!c || c->tmid != 0 || !ens_.subch.count(c->subch)) return nullptr;
+        return c;
+    }
+
+    // The Programme option's list in the panel (kp::Host::option_choices): "" = the first
+    // audio service, then every audio service by name, its SId as the value (stable, and what
+    // the option matches first). A setting that is none of these values (a part of a name, a
+    // SId in lower case, a service this ensemble doesn't carry) gets an entry of its own that
+    // says what it selects, so the list shows the programme being decoded. Sent on a change.
+    void update_choices() {
+        std::vector<std::pair<std::string, std::pair<std::string, std::string>>> by_name;   // sort key, (value, label)
+        const dab::Service* first = nullptr;
+        auto name_of = [](const dab::Service& s) {
+            return s.label.empty() ? "SId " + hex(s.sid, s.data ? 8 : 4) : dab::printable_utf8(s.label);
+        };
+        for (const auto& kv : ens_.services) {   // (by SId: the first is the lowest)
+            const dab::Service& s = kv.second;
+            const dab::Component* c = audio_comp(s);
+            if (!c) continue;
+            if (!first) first = &s;
+            const std::string name = name_of(s);
+            std::string l = name + " · " + (c->type == 63 ? "DAB+" : c->type == 0 ? "DAB" : "audio") + " " +
+                            std::to_string(ens_.subch.at(c->subch).prot.kbps) + "k";
+            if (c->ca || s.ca_id) l += " · conditional access";
+            std::string key = name;
+            for (auto& ch : key) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            by_name.push_back({key + '\x1f' + hex(s.sid, 8), {hex(s.sid, s.data ? 8 : 4), dab::utf8_truncate(l, 80)}});
+        }
+        std::vector<std::pair<std::string, std::string>> list;
+        if (first) {
+            std::sort(by_name.begin(), by_name.end());
+            list.push_back({"", "First audio service (" + dab::utf8_truncate(name_of(*first), 48) + ")"});
+            bool listed = service_opt_.empty();
+            for (const auto& x : by_name) listed = listed || x.second.first == service_opt_;
+            if (!listed)
+                list.push_back({service_opt_, dab::utf8_truncate(kp::printable(service_opt_), 40) +
+                                                  (sel_label_.empty() ? std::string(" (no such service here)")
+                                                                      : " → " + dab::utf8_truncate(dab::printable_utf8(sel_label_), 36))});
+            for (auto& x : by_name) list.push_back(std::move(x.second));
+        }
+        std::string all;
+        for (const auto& [v, l] : list) all += v + '\x1e' + l + '\x1f';
+        if (all == choices_sent_) return;
+        choices_sent_ = all;
+        host.option_choices("service", list);
+    }
+
     // at_cif >= 0: called for a multiplex reconfiguration taking effect at that CIF - the same
     // service on the same sub-channel follows it without a break
     void select_service(int64_t at_cif = -1) {
@@ -709,11 +767,6 @@ private:
         auto lower = [](std::string s) {
             for (auto& ch : s) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
             return s;
-        };
-        auto audio_comp = [this](const dab::Service& s) -> const dab::Component* {
-            const dab::Component* c = s.primary();
-            if (!c || c->tmid != 0 || !ens_.subch.count(c->subch)) return nullptr;
-            return c;
         };
         bool is_hex = !want.empty() && want.size() <= 8;
         for (char ch : want) is_hex = is_hex && std::isxdigit(static_cast<unsigned char>(ch));
@@ -865,7 +918,10 @@ private:
             host.event("Ensemble lost: " + ens_label() + " (no FIC for 3 s)", 5);
             found_ = false;
         }
-        if (ens_.eid < 0) return;
+        if (ens_.eid < 0) {
+            update_choices();   // (none)
+            return;
+        }
         if (!found_ && fic_ok && !ens_.label.empty()) {
             found_ = true;
             if (found_at_ == 0) found_at_ = now;
@@ -936,6 +992,7 @@ private:
         // the programme
         if (!sel_valid_ || now - found_at_ > 0) select_service();
         sel_valid_ = true;
+        update_choices();
         update_programme_facts();
         update_tii_facts(now);
         update_map();

@@ -180,6 +180,28 @@ in its tooltip). They arrive through `option(key, value)`:
 the default when the plugin starts, then whatever the user picks (`""` =
 back to the default). They are saved per VFO.
 
+A list that is only known at run time - the programmes of the DAB ensemble
+being received - comes from `host.option_choices(key, {{value, label},
+...})` instead: the panel then draws that option as a list of these
+choices, whatever its declaration says (dab's `service` is declared as a
+text field, so an older kraken_doa, or the panel before the first list,
+still offers one). Pairs rather than the `"value=Label|..."` text, so a
+label from the air with `|` or `=` in it can't add entries. A new list
+replaces the previous one; `{}` takes it back to the declaration. Limits:
+100 choices, values <= 100 bytes without control characters (others are
+dropped - they couldn't be set), labels <= 80 bytes (cut at a character
+boundary; `""` = the value), 32 KB for all of a decoder's lists. Send it
+when the list changes, not on every update. It is run-time state: the host
+forgets it when the plugin restarts, on `reset()` (a retune) and when the
+decoder is switched - send it again then; nothing of it is saved. The
+setting itself stays whatever text the user or a saved setting gave: if it
+isn't one of the values (an older setting, a part of a name), the panel adds
+it as an entry of its own so the list shows what is set - better, give it an
+entry yourself that says what it selects (dab: `"jazz → Kraken Jazz"`).
+Choose values that stay valid (dab: the service's SId, not its position in
+the list). An older host ignores the message (wire `OPTION_CHOICES` 40); the
+offline test prints the final lists in its summary.
+
 **Auto detect**: when a VFO's decoder is on "Auto detect", every plugin the
 user left ticked (sidebar plugin list, "Auto detect"; all are by default)
 runs side by side - except plugins that set `.manual_only = true` (they get
@@ -284,6 +306,7 @@ Older hosts refuse such a plugin ("bad sample_rate").
 | `host.raw_wanted()` / `host.raw(text)` | one raw frame as text for the decoder data log (only while `raw_wanted()` - the user ticked "Raw frames") |
 | `host.talker(t)` / `host.talker_end(at_s, channel)` | who is transmitting (`kp::Talker`: radio ID, label, start / confirmed end in `host.time()`, channel, packet): the DoA is split per radio / aircraft (set `.talkers = true`, below) |
 | `host.talker_forget(id)` | drops a talker now - its bearing, history and row in the 📡 DF list (wire TALKER_FORGET 33; ism: its unknown devices when "Unknown signals" is set to Ignore) |
+| `host.option_choices(key, choices)` | the choices of one of your options known only at run time (`{{value, label}, ...}`; dab: the ensemble's programmes): the panel shows the option as that list; `{}` = none (see Options above; wire OPTION_CHOICES 40, ignored by older hosts) |
 
 **Voice.** Set `.voice = true` if the decoder sends audio (`host.audio`):
 only then does its panel tab offer the Listen button.

@@ -47,6 +47,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace kp {
@@ -55,7 +56,9 @@ using cf = std::complex<float>;
 
 // A setting the panel shows for this decoder (sent with Decoder::option()).
 // choices "" = free text, else "value=Label|value=Label|..." (a list).
-// The value "" means "default" (the user cleared it).
+// The value "" means "default" (the user cleared it). A list only known at
+// run time (the services of a DAB ensemble) comes from
+// Host::option_choices instead.
 struct Option {
     const char* key = "";           // [a-z0-9_], <= 32 chars
     const char* label = "";
@@ -367,6 +370,26 @@ public:
     virtual void spatial_remove(const std::string& id) { (void)id; }
     // A line plot for the decoder's tab (see Plot)
     virtual void plot(const Plot& p) { (void)p; }
+    // The choices of one of Info::options, known only at run time (the
+    // services a DAB ensemble carries): the panel shows the option as a list
+    // of these (value, label) pairs instead of its declared choices / text
+    // field; a pick arrives through Decoder::option() as usual. Replaces the
+    // previous list; {} = none (back to the declaration). Pairs, not the
+    // "value=Label|..." text: a label from the air can't add entries. At
+    // most 100 choices, value <= 100 bytes without control characters
+    // (others are dropped), label <= 80 bytes (longer is cut; "" = the
+    // value), 32 KB for all of a decoder's lists. The setting stays free
+    // text: one that is none of the values gets an entry of its own in the
+    // panel - better, list it yourself saying what it selects. Values should
+    // stay valid (an ID, not a position). Send it when the list changes, not
+    // on every update. The host
+    // forgets it when the plugin restarts and on reset() (a retune) - send
+    // it again then. An older host ignores it (the text field / declared
+    // list stays).
+    virtual void option_choices(const std::string& key, const std::vector<std::pair<std::string, std::string>>& choices) {
+        (void)key;
+        (void)choices;
+    }
     // Ask the host to retune so that rf_hz is at 0 Hz of the input (Info::tunes
     // plugins only): in coherent mode the receiver retunes - every VFO on it
     // moves along -, in independent mode the VFO's own tuner. Fire and
@@ -483,5 +506,11 @@ constexpr uint32_t PLOT = 36;
 constexpr uint32_t TUNE = 37;          // rf_hz (decimal text): Host::tune
 constexpr uint32_t TABLE_DETAIL = 38;  // key '\0' label '\0' value '\0' label '\0' value ...
 constexpr uint32_t SPATIAL_REMOVE = 39;  // id ("" = all of this plugin's): Host::spatial_remove
+// key '\0' value '\0' label '\0' value '\0' label ... (only the key = no
+// choices): Host::option_choices. Hosts before it ignore the type (as every
+// unknown type)
+constexpr uint32_t OPTION_CHOICES = 40;
+// Host::option_choices limits (both ends enforce them)
+constexpr size_t CHOICES_MAX = 100, CHOICE_VALUE_MAX = 100, CHOICE_LABEL_MAX = 80;
 // (raw_wanted() is the OPTION "log_raw=0|1" kraken_doa sends)
 }  // namespace kp::wire

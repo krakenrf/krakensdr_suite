@@ -207,6 +207,25 @@ then in the row's tooltip).
 |---|---|---|
 | `service` | "" | the programme to decode: "" = the first audio service (lowest SId); a SId in hex (`C221`) or a case-insensitive part of the label |
 
+The panel shows `service` ("Programme") as a list of the ensemble's audio
+services once they are known (`kp::Host::option_choices`): "First audio
+service (<its name>)" for "", then every audio service by name
+(case-insensitive) as "BR-KLASSIK · DAB+ 144k", its SId as the value - the
+SId, not the name or a position, because it stays the same while labels and
+the line-up change. Data services aren't listed (there is nothing to play).
+A setting that is none of these values - a part of a name typed before the
+list existed, a test catalogue's `"service": "Plus"`, a SId in lower case or
+from another ensemble - keeps working as before (SId first, then a part of
+the label) and gets an entry of its own that says what it selects
+(`plus → Kraken Plus`, or `C221 (no such service here)`), so the list always
+shows the programme being decoded. The list is sent only when it changes
+(a service or label comes or goes, the setting changes; at most once a
+second from the facts update), replaced when another ensemble appears on the
+block, and emptied on a retune / reset (the receiver forgets it then too).
+Until the services are known the option is the text field, as it always is
+on a kraken_doa from before the list. Bounded by the database (64 services:
+at most 66 entries).
+
 ## Facts, events, raw frames
 
 Facts: Sync, SNR (+ MER of the FIC symbols), Frequency offset (+ sample clock),

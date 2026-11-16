@@ -10,7 +10,13 @@ generator's scene format are in `plugins/dab/README.md`.
   cellular; 2.4 MHz, `lock_vfo` (the VFO is the tuner's band: tune to the
   block), `multichannel`, `voice`, `talkers`, `map`, `manual_only` (Auto
   detect never picks it); option `service` ("" = the lowest-SId audio
-  service, a SId in hex, or part of a label). It replaced nothing: DAB was
+  service, a SId in hex, or part of a label), shown in the panel as a list
+  of the audio services (2026-11-16, `update_choices` ->
+  `kp::Host::option_choices`: value = SId, label "name · DAB+ 144k", by
+  name; "" = "First audio service (name)"; a setting outside the list gets
+  its own entry "plus → Kraken Plus"; sent on a change only, emptied on
+  reset; the option is still declared as a text field, so an older
+  kraken_doa shows that). It replaced nothing: DAB was
   removed from the old `sfn` plugin (now `dtv`) in 2026-10 to become this
   plugin (*Digital TV*). Written from EN 300 401 V2.2.1 (+ V1.4.1 for FIG
   0/22), TS 103 466, TS 102 563, TS 102 980, TS 101 756, TS 103 461 alone; no

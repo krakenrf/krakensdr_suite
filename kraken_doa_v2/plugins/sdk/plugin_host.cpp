@@ -94,6 +94,40 @@ std::string jesc(const std::string& s) {
     return o;
 }
 
+// Host::option_choices as kraken_doa keeps them (it checks again): each
+// field up to a NUL (the wire's separator), a value that is too long, has
+// a control character or repeats an earlier one dropped, a label's control
+// characters made spaces and cut to CHOICE_LABEL_MAX at a character
+// boundary ("" = the value), at most CHOICES_MAX
+using Choices = std::vector<std::pair<std::string, std::string>>;
+bool option_key_ok(const std::string& k) {   // kp::Option::key: [a-z0-9_], 1..32
+    if (k.empty() || k.size() > 32) return false;
+    for (char c : k)
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
+    return true;
+}
+Choices clean_choices(const Choices& in) {
+    Choices out;
+    for (const auto& [v0, l0] : in) {
+        if (out.size() >= kp::wire::CHOICES_MAX) break;
+        const std::string v = v0.substr(0, v0.find('\0'));
+        std::string l = l0.substr(0, l0.find('\0'));
+        bool ok = v.size() <= kp::wire::CHOICE_VALUE_MAX;
+        for (unsigned char c : v) ok = ok && c >= 0x20 && c != 0x7F;
+        for (const auto& o : out) ok = ok && o.first != v;
+        if (!ok) continue;
+        for (char& c : l)
+            if (static_cast<unsigned char>(c) < 0x20 || c == 0x7F) c = ' ';
+        if (l.size() > kp::wire::CHOICE_LABEL_MAX) {
+            size_t e = kp::wire::CHOICE_LABEL_MAX;
+            while (e > 0 && (static_cast<unsigned char>(l[e]) & 0xC0) == 0x80) e--;
+            l.resize(e);
+        }
+        out.emplace_back(v, l.empty() ? v : l);
+    }
+    return out;
+}
+
 int print_info() {
     kp::Info i = kp_plugin_info();
     std::cout << "{\"api\":1,\"id\":\"" << jesc(i.id) << "\",\"name\":\"" << jesc(i.name)
@@ -232,6 +266,17 @@ public:
     void plot(const kp::Plot& pl) override {
         const std::string p = plot_payload(pl);
         send(kp::wire::PLOT, p.data(), p.size());
+    }
+    void option_choices(const std::string& key, const Choices& choices) override {
+        if (!option_key_ok(key)) return;
+        std::string p = key;
+        for (const auto& [v, l] : clean_choices(choices)) {
+            p.push_back('\0');
+            p += v;
+            p.push_back('\0');
+            p += l;
+        }
+        send(kp::wire::OPTION_CHOICES, p.data(), p.size());
     }
     bool tune(double rf_hz) override {
         if (!std::isfinite(rf_hz) || rf_hz <= 0) return false;
@@ -691,6 +736,31 @@ public:
     void plot(const kp::Plot& p) override {
         plot_ = p;
         plots_++;
+    }
+    // Host::option_choices: the latest list per option (as kraken_doa keeps
+    // it), how often it was sent and how often it changed
+    struct Ch { Choices list; uint64_t sent = 0, changed = 0; bool declared = false; };
+    std::map<std::string, Ch> choices_;
+    void option_choices(const std::string& key, const Choices& choices) override {
+        if (!option_key_ok(key)) return;
+        Ch& c = choices_[key];
+        const kp::Info info = kp_plugin_info();
+        c.declared = false;
+        for (const auto& o : info.options) c.declared = c.declared || key == o.key;
+        Choices l = clean_choices(choices);
+        c.sent++;
+        if (l == c.list && c.sent > 1) return;
+        c.changed++;
+        c.list = std::move(l);
+        if (!quiet_) printf("[%9.3f s] (choices) %s: %zu\n", time(), key.c_str(), c.list.size());
+    }
+    void print_choices() const {
+        for (const auto& [k, c] : choices_) {
+            printf("option choices \"%s\": %zu (sent %llu times, %llu changes)%s\n", k.c_str(), c.list.size(),
+                   static_cast<unsigned long long>(c.sent), static_cast<unsigned long long>(c.changed),
+                   c.declared ? "" : " - not one of the plugin's options: kraken_doa ignores it");
+            for (const auto& [v, l] : c.list) printf("  %-10s %s\n", v.empty() ? "\"\"" : v.c_str(), l.c_str());
+        }
     }
     // a recording can't be retuned: shown, refused
     bool tune(double rf_hz) override {
@@ -1360,6 +1430,7 @@ int test_array(const std::string& path, std::string fmt, double rate, int channe
         for (const auto& mk : pl.markers) printf(" %s@%.2f", mk.label.c_str(), mk.x);
         printf("\n");
     }
+    host.print_choices();
     host.print_table(1000);
     return 0;
 }
@@ -1592,6 +1663,7 @@ int test_file(int argc, char** argv) {
                    k.len_us / static_cast<double>(k.n), pos);
         }
     }
+    host.print_choices();
     host.print_table(30);
     if (host.map_updates_ || !host.map_.empty()) {
         printf("map: %llu updates, %zu points\n", static_cast<unsigned long long>(host.map_updates_), host.map_.size());
