@@ -91,6 +91,12 @@ commercial product or service.
   https://operations.osmfoundation.org/policies/
 - **Esri World Imagery** (satellite layer): © Esri and its data providers;
   Esri's terms of use apply.
+- **Optional map providers** (⚙ Settings, only with the user's own API
+  key): Mapbox, Google Maps Platform (Map Tiles API), Azure Maps, MapTiler,
+  Thunderforest, Stadia Maps, HERE, or any tile server the user enters. The
+  browser fetches their tiles under the user's own account and terms; the
+  map shows each one's attribution (Google's and Azure's as their APIs send
+  it for the area shown).
 - **AWS Terrain Tiles** (viewshed / path loss terrain, Mapzen terrarium):
   attributions per data source -
   https://github.com/tilezen/joerd/blob/master/docs/attribution.md
