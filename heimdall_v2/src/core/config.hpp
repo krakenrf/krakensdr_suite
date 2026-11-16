@@ -22,7 +22,10 @@ constexpr int RTL_TCP_PORT = 1234;  // Standard rtl_tcp port
 // --serials s0,s1,... (defined in main.cpp, written only during argument
 // parsing - treated as immutable once threads start). Its length is the
 // runtime device ceiling: 2 <= active_num_elements <= expected_serials.size()
-// <= NUM_DEVICES.
+// <= NUM_DEVICES. Generic RTL-SDR mode (below) replaces it, before any thread
+// starts, with the serials of the dongles actually opened (any values,
+// duplicates or "" possible - display only; they are never looked up), so
+// there 1 <= active_num_elements == expected_serials.size().
 extern std::vector<std::string> expected_serials;
 
 // KerberosSDR support modes (set by --kerberos / --kerberos_sw during
@@ -39,6 +42,17 @@ extern std::atomic<bool> kerberos_cal_stale;
 // source, which stays OFF; CH0's bias tee is then reserved (not a per-port
 // antenna bias tee). Calibration is otherwise unchanged. Defined in main.cpp.
 extern std::atomic<bool> external_noise_mode;
+
+// Generic RTL-SDR mode: no KrakenSDR / KerberosSDR attached (fewer than 2 of
+// the expected serials), no hardware-variant flag and no --serials given, and
+// at least one RTL-SDR on USB. Chosen once in main() before the dongles open,
+// never changed afterwards. heimdall then runs the attached dongles (any
+// serials, opened by USB index, possibly just one) as INDEPENDENT receivers:
+// coherent mode, every calibration and every GPIO write (noise source,
+// antenna bias tees - GPIO0 is the antenna bias tee on an RTL-SDR Blog
+// dongle) are refused. docs/dev/operating-modes.md. Defined in main.cpp.
+extern std::atomic<bool> generic_rtlsdr_mode;
+inline bool generic_rtlsdr() { return generic_rtlsdr_mode.load(std::memory_order_relaxed); }
 
 // True when calibration may ONLY be triggered manually: plain --kerberos has
 // no way to isolate the noise source from the antennas, so every automatic

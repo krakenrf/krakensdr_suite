@@ -151,6 +151,15 @@ The mode is remembered across restarts. Switching back to Coherent retunes
 every tuner to the common frequency and recalibrates. The KrakenSDR Wideband
 hardware only has Coherent mode.
 
+**Ordinary RTL-SDR dongles.** Without a KrakenSDR or KerberosSDR, the suite
+also runs on one or more ordinary RTL-SDR dongles (any serial numbers): just
+plug them in and use `./run.sh` without options. Heimdall then starts in
+Independent mode, every dongle its own receiver (Wideband too, with two or
+more). Coherent mode, direction finding and calibration need a KrakenSDR /
+KerberosSDR and are not available, and Heimdall never switches a dongle's
+bias tee. Heimdall's page and terminal say "generic RTL-SDR" when this is
+the case.
+
 In every mode the mouse wheel zooms the spectrum (up to 32x), and the bar
 between spectrum and waterfall can be dragged to change the split. Levels
 are drawn in dB above the receiver's noise floor. The receiver remembers

@@ -420,6 +420,10 @@ std::string screen_json(const std::string& view_json) {
     o << "{\"page\":" << (view_json.empty() ? "{}" : view_json);
     // receiver
     o << ",\"receiver\":{\"mode\":" << q(mode_name());
+    // plain RTL-SDR dongles, no KrakenSDR: independent receivers only (no
+    // coherent mode - no DoA, beamforming or calibration)
+    if (server_generic_rtlsdr.load())
+        o << ",\"generic_rtlsdr\":true,\"coherent_available\":false";
     const bool multi = multi_tuner_mode();
     if (!multi) {
         double lo = 0, hi = 0;
@@ -1395,6 +1399,9 @@ void t_remove_vfo(const Json& a, Reply r) {
 void t_set_doa(const Json& a, Reply r) {
     if (auto e = readonly_refusal(); !e.empty()) return r(e, true);
     const bool on = bool_arg(a, "on", true);
+    if (on && server_generic_rtlsdr.load() && !playback::active())
+        return r("No DoA here: the receiver runs generic RTL-SDR dongles, not a KrakenSDR - "
+                 "direction finding needs its coherent array", true);
     if (auto e = cmd(std::string("DOA:") + (on ? "1" : "0")); !e.empty()) return r("Refused: " + e, true);
     r(std::string("DoA ") + (on ? "on" : "off") + (multi_tuner_mode() ? " (applies when the receiver is back in coherent mode)" : ""), false);
 }
@@ -1647,7 +1654,8 @@ std::vector<Tool>& tools() {
          true, false, t_set_option},
         {"remove_vfo", "Remove a VFO", "Removes a VFO (not the last one).", OBJ(INTP("vfo", "VFO number"), REQ("\"vfo\"")),
          true, false, t_remove_vfo},
-        {"set_doa", "DoA on / off", "Switches direction finding (MUSIC DoA) on or off (coherent mode).",
+        {"set_doa", "DoA on / off", "Switches direction finding (MUSIC DoA) on or off (coherent mode; not on generic "
+         "RTL-SDR dongles - get_screen receiver.generic_rtlsdr - which have no coherent mode).",
          OBJ(BOOLP("on", "true = on"), REQ("\"on\"")), true, false, t_set_doa},
         {"save_frequency", "Save a frequency",
          "Adds an entry to the user's Saved Frequencies (sidebar): name, frequency, optional demod, bandwidth, decoder, "

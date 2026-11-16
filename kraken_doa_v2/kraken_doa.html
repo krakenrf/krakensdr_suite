@@ -2615,6 +2615,9 @@ let ws,fftPlot,audioEngine,activeChannel=0,currentAveraging=85,
 // Operating mode + independent-mode tuner panes (see OPERATING MODE below).
 // Up here: functions defined above that block use them during page load.
 let opMode = 'coherent';
+// heimdall runs plain RTL-SDR dongles, no KrakenSDR (operating_mode /
+// system_status generic_rtlsdr): no coherent mode, no wideband scan with one
+let genericRtl = false;
 let decListMode = null;      // opMode the VFO cards were built for
 let indepTuners = [];        // [{f: Hz, g: dB}] requested per tuner (0 / -999 = none)
 let selTuner = 0;            // pane the top-bar frequency digits + gain edit
@@ -5820,7 +5823,7 @@ function applyWbVariant(wb) {
     // downconverter variant parks all tuners at the IF - hide those controls.
     // Wideband / Independent need per-tuner retuning; the downconverter
     // variant parks every tuner at the IF - only Coherent exists there
-    document.querySelectorAll('#opmode option').forEach(o => { o.disabled = o.value !== 'coherent'; });
+    opModeOptionsSync();
     const csWb = $id('cont-scan-wideband-enable');
     if (csWb) {
       const sec = csWb.closest('.sec');
@@ -5829,7 +5832,7 @@ function applyWbVariant(wb) {
   } else {
     FREQ_MIN = 24; FREQ_MAX = 1766;
     // Restore the tuner-spread scan controls (e.g. backend restarted without --wideband)
-    document.querySelectorAll('#opmode option').forEach(o => { o.disabled = false; });
+    opModeOptionsSync();
     const csWb = $id('cont-scan-wideband-enable');
     if (csWb) {
       const sec = csWb.closest('.sec');
@@ -6418,6 +6421,9 @@ function onActiveElementsChanged(newCount) {
   // Patch / 3D: layout names/validity follow the count (positions are NOT
   // regenerated: the physical array didn't change - the panel warns instead)
   refreshLayoutPanel();
+
+  // the Mode selector: no wideband scan with one tuner (generic RTL-SDR)
+  opModeOptionsSync();
 }
 
 function updateSNRDisplaysHTML() {
@@ -8954,8 +8960,39 @@ window.addEventListener('resize',()=>{
 // (state declared with the globals at the top: opMode, indepTuners, selTuner,
 // panes, paneDrag)
 
+// Which modes the Mode selector offers: the Wideband (downconverter) variant
+// only coherent; generic RTL-SDRs (no KrakenSDR) no coherent, and no wideband
+// scan with one tuner. A disabled option keeps its place, with the reason
+let opSelTitle = null;
+function opModeOptionsSync() {
+  const sel = $id('opmode');
+  if (!sel) return;
+  if (opSelTitle === null) opSelTitle = sel.title;
+  const oneTuner = activeNumElements < 2;
+  sel.querySelectorAll('option').forEach(o => {
+    const v = o.value;
+    let why = '';
+    if (wbVariant.enabled) { if (v !== 'coherent') why = 'not on the KrakenSDR Wideband variant'; }
+    else if (genericRtl && v === 'coherent') why = 'needs a KrakenSDR';
+    else if (genericRtl && v === 'wideband' && oneTuner) why = 'needs two or more tuners';
+    o.disabled = !!why;
+    o.textContent = (v === 'coherent' ? 'Coherent' : v === 'wideband' ? 'Wideband' : 'Independent') +
+                    (why && genericRtl ? ' (' + why + ')' : '');
+  });
+  sel.title = genericRtl
+    ? 'Generic RTL-SDR dongles (no KrakenSDR): they run as independent receivers - coherent mode (DoA, ' +
+      'beamforming, calibration) needs a KrakenSDR' + (oneTuner ? ', and the wideband scan two or more tuners.' : '.')
+    : opSelTitle;
+}
+
 function setOpMode(m) {
   if (m === opMode) return;
+  if (genericRtl && (m === 'coherent' || (m === 'wideband' && activeNumElements < 2))) {
+    // (the option is disabled; a stale selector) - the receiver would refuse it
+    const sel = $id('opmode');
+    if (sel) sel.value = opMode;
+    return;
+  }
   const prev = opMode;
   if (m === 'wideband') channelBeforeWideband = activeChannel;
   send('OPERATING_MODE:' + m);
@@ -9013,8 +9050,16 @@ function opOnMessage(x) {
   opMsgAt = Date.now();
   opHintMode = null;
   if (Array.isArray(x.tuners)) indepTuners = x.tuners;
+  if (typeof x.generic_rtlsdr === 'boolean') opSetGeneric(x.generic_rtlsdr);
   applyOpModeUI(x.mode);
   panesSyncHeads();
+  if (x.error) pbNotice('Mode: ' + x.error);   // a refused change (another page, the assistant)
+}
+
+function opSetGeneric(on) {
+  if (on === genericRtl) return;
+  genericRtl = on;
+  opModeOptionsSync();
 }
 
 // MHz a VFO's offset is relative to: its tuner in independent mode
@@ -25212,6 +25257,9 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
         modeEl.style.background = '#1565c0';
         modeEl.style.color = '#fff';
       }
+      if (status.generic_rtlsdr) modeEl.textContent += ' (RTL-SDR)';
+      modeEl.title = status.generic_rtlsdr
+        ? 'Generic RTL-SDR dongles, no KrakenSDR: independent receivers only - no coherent array, DoA or calibration' : '';
     }
 
     // Update calibration indicator (also pushed on every change: cal_live)
@@ -25296,9 +25344,11 @@ function updateCalIndicator(phaseState, noiseOn, wideband, cooldownActive) {
     }
 
     // Update active elements count from server
-    if (status.active_elements !== undefined && status.active_elements >= 2) {
+    // (1: a single generic RTL-SDR dongle - independent mode only)
+    if (status.active_elements !== undefined && status.active_elements >= 1) {
       onActiveElementsChanged(status.active_elements);
     }
+    if (typeof status.generic_rtlsdr === 'boolean') opSetGeneric(status.generic_rtlsdr);
   }
 
   // ============================================================================

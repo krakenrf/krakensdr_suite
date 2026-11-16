@@ -147,6 +147,25 @@ plus, when enabled: `"tuner_frequencies":[...]`, `"usable_bandwidth_per_tuner":<
 ```
 (`current_frequency` only when `num_groups > 0`.)
 
+### 2.15 Generic RTL-SDR mode (added 2026-11-16)
+Started without a KrakenSDR / KerberosSDR (fewer than 2 of the serials
+1000-1007 attached, no `--serials` or hardware flag), heimdall runs whatever
+RTL-SDRs are attached - 1 to 8, any serials - as independent receivers. The
+status JSON says `"generic_rtlsdr":true` (always present, `false` otherwise),
+`num_channels` / `max_elements` are the dongles opened (may be 1), and
+`operating_mode` is `independent` (or `wideband` with 2+ tuners). Refused with
+`{"status":"error","message":...}`:
+- `set_operating_mode` `coherent` ("coherent mode needs a KrakenSDR /
+  KerberosSDR - generic RTL-SDRs run as independent receivers"); `wideband`
+  (and `set_wideband_mode` `enable:true`) with a single dongle.
+  `set_wideband_mode` `enable:false` leaves the scan for **independent** mode
+  (and stops a running discrete scanner).
+- `check_calibration`, `reset_lag_compensation`; `set_num_elements` with any
+  count other than the current one.
+
+`set_independent_tuner`, `set_frequency` / `set_gain` (every tuner),
+`set_rtl_tcp_channel` work as in independent mode.
+
 ---
 
 ## 3. The 2 Hz status broadcast (exact schema, `broadcast_status()` lines 53–147)
@@ -164,6 +183,7 @@ One line per broadcast, terminated `"}\n"`:
   "num_channels": 5,                 // active_num_elements
   "operating_mode": "coherent",      // "wideband" iff OperatingMode::WIDEBAND_SCAN, else "coherent"
   "wideband_enabled": false,         // wideband_config.enabled (tuner-spread scan)
+  "generic_rtlsdr": false,           // true: generic RTL-SDRs, no coherent mode (§2.15)
 
   // ONLY when downconverter (--wideband variant) is enabled:
   "downconverter": {
@@ -223,6 +243,10 @@ then uint8 interleaved IQ per channel
   - `4` = `CONVERGED` ← the only "fully calibrated" state
   - `5` = `WAITING_FOR_STABILITY` (retune/gain cooldown)
   - `6` = `MEASURING_PER_BIN` (optional per-bin equalizer measurement)
+  - That is the LOW BYTE; higher bits are flags - mask them off: `0x100`
+    KerberosSDR manual mode, `0x200` calibration stale, `0x400` wideband scan,
+    `0x800` independent, `0x1000` generic RTL-SDRs (no coherent array; set on
+    every frame with `0x800` or `0x400`, §2.15).
 - `noise_source` = `bias_tee_enabled ? 1 : 0` (1 = calibration noise source is routed in; data is NOT antenna signal).
 - Lag states (`LagCompensatorState`, types.hpp:22): `0`=`MEASURING`, `1`=`SERVOING`, `2`=`CONVERGED` — visible only in the web UI/WebSocket, not on 8092/8091.
 
